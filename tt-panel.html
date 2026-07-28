@@ -3,8 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pro League 16:9 Broadcast Studio</title>
+    <title>Pro League 16:9 Broadcast Studio - Scorvix</title>
+    <!-- Socket.io -->
     <script src="/socket.io/socket.io.js"></script>
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+    
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { 
@@ -13,6 +18,32 @@
             display: flex; justify-content: center; align-items: center; 
             height: 100vh; overflow: hidden;
         }
+
+        /* Login Screen Styling */
+        #login-screen {
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background: #090d16;
+            display: flex; justify-content: center; align-items: center;
+            z-index: 9999;
+        }
+        .login-card {
+            background: #111827; padding: 40px; border-radius: 16px;
+            text-align: center; border: 1px solid #1f2937;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.8); width: 380px;
+        }
+        .login-card h2 { font-size: 1.4rem; margin-bottom: 8px; color: #38bdf8; }
+        .login-card p { color: #9ca3af; font-size: 0.9rem; margin-bottom: 25px; }
+        .google-btn {
+            background: #ffffff; color: #1f2937; border: none;
+            padding: 12px 20px; border-radius: 8px; font-weight: bold;
+            cursor: pointer; display: flex; align-items: center;
+            justify-content: center; gap: 12px; width: 100%; font-size: 0.95rem;
+            transition: 0.3s;
+        }
+        .google-btn:hover { background: #f1f5f9; }
+
+        /* Studio Container */
         .studio-container {
             width: 1280px; height: 720px; background: #111827;
             border: 2px solid #1f2937; border-radius: 12px;
@@ -24,7 +55,10 @@
             padding: 0 20px; border-bottom: 2px solid #374151;
         }
         .studio-title { font-size: 16px; font-weight: 900; color: #38bdf8; letter-spacing: 1px; text-transform: uppercase; }
+        
+        .header-actions { display: flex; gap: 10px; align-items: center; }
         .link-btn { background: #0284c7; color: white; border: none; padding: 6px 14px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px; }
+        .logout-btn { background: #dc2626; color: white; border: none; padding: 6px 14px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px; }
 
         .studio-body {
             display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; padding: 15px; background: #0b0f19; overflow-y: auto;
@@ -63,126 +97,185 @@
 </head>
 <body>
 
-<div class="studio-container">
-    <div class="studio-header">
-        <div class="studio-title">🏓 Pro League 16:9 Studio Controller</div>
-        <button class="link-btn" onclick="openOverlayTab()">🔗 Open vMix / OBS Overlay Window</button>
+    <!-- 🌟 Google Login Screen (Pehle yeh dikhega) 🌟 -->
+    <div id="login-screen">
+        <div class="login-card">
+            <h2>Scorvix Studio</h2>
+            <p>Sign in with your Google account to access the control panel.</p>
+            <button class="google-btn" onclick="loginWithGoogle()">
+                <img src="https://www.svgrepo.com/show/475656/google-color.svg" width="20"> 
+                Sign in with Google
+            </button>
+        </div>
     </div>
 
-    <div class="studio-body">
-        
-        <!-- COLUMN 1 -->
-        <div class="panel">
-            <div class="panel-title">1. Editable Texts & Branding</div>
-            <div>
-                <label>Tournament Header Title:</label>
-                <input type="text" id="c-tourney-title" value="TABLE TENNIS SUPER LEAGUE MAHARASHTRA 2025" oninput="sendData()">
+    <!-- 🌟 Main Studio Container (Login ke baad dikhega) 🌟 -->
+    <div class="studio-container" id="main-studio" style="display: none;">
+        <div class="studio-header">
+            <div class="studio-title">🏓 Pro League 16:9 Studio Controller</div>
+            <div class="header-actions">
+                <button class="link-btn" onclick="openOverlayTab()">🔗 Open vMix / OBS Overlay</button>
+                <button class="logout-btn" onclick="logout()">Logout (<span id="user-email-display"></span>)</button>
             </div>
-            <div>
-                <label>Match Format:</label>
-                <select id="c-match-format" onchange="sendData()">
-                    <option value="bestOf5">Best of 5 (First to 3 Sets)</option>
-                    <option value="bestOf7">Best of 7 (First to 4 Sets)</option>
-                </select>
-            </div>
-            <div>
-                <label>Winner Announcement Text:</label>
-                <input type="text" id="c-winner-text" value="PHANTOM STARS WON THE MATCH" oninput="sendData()">
-            </div>
-            <div>
-                <label>Team A Name & Logo:</label>
-                <input type="text" id="c-p1" value="PHANTOM STARS" oninput="sendData()">
-                <input type="file" id="c-img1" accept="image/*" onchange="uploadImage(1)" style="margin-top: 3px;">
-            </div>
-            <div>
-                <label>Team B Name & Logo:</label>
-                <input type="text" id="c-p2" value="MUMBAI MOZARTT" oninput="sendData()">
-                <input type="file" id="c-img2" accept="image/*" onchange="uploadImage(2)" style="margin-top: 3px;">
-            </div>
-            <button style="background: #475569;" onclick="resetMatch()">🔄 Reset Match Score</button>
         </div>
 
-        <!-- COLUMN 2 -->
-        <div class="panel">
-            <div class="panel-title">2. Live Score & Points Editor</div>
+        <div class="studio-body">
             
-            <div class="score-box">
-                <label id="lbl-p1" style="color: #38bdf8;">PHANTOM STARS</label>
-                <div class="score-display" id="disp-p1">0 <span style="font-size: 14px; color: #94a3b8;">(Sets: <span id="disp-p1-sets">0</span>)</span></div>
-                <div class="btn-row">
-                    <button class="btn-plus" onclick="addPoint(1)">+ Point</button>
-                    <button class="btn-minus" onclick="subPoint(1)">-</button>
+            <!-- COLUMN 1 -->
+            <div class="panel">
+                <div class="panel-title">1. Editable Texts & Branding</div>
+                <div>
+                    <label>Tournament Header Title:</label>
+                    <input type="text" id="c-tourney-title" value="TABLE TENNIS SUPER LEAGUE MAHARASHTRA 2025" oninput="sendData()">
+                </div>
+                <div>
+                    <label>Match Format:</label>
+                    <select id="c-match-format" onchange="sendData()">
+                        <option value="bestOf5">Best of 5 (First to 3 Sets)</option>
+                        <option value="bestOf7">Best of 7 (First to 4 Sets)</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Winner Announcement Text:</label>
+                    <input type="text" id="c-winner-text" value="PHANTOM STARS WON THE MATCH" oninput="sendData()">
+                </div>
+                <div>
+                    <label>Team A Name & Logo:</label>
+                    <input type="text" id="c-p1" value="PHANTOM STARS" oninput="sendData()">
+                    <input type="file" id="c-img1" accept="image/*" onchange="uploadImage(1)" style="margin-top: 3px;">
+                </div>
+                <div>
+                    <label>Team B Name & Logo:</label>
+                    <input type="text" id="c-p2" value="MUMBAI MOZARTT" oninput="sendData()">
+                    <input type="file" id="c-img2" accept="image/*" onchange="uploadImage(2)" style="margin-top: 3px;">
+                </div>
+                <button style="background: #475569;" onclick="resetMatch()">🔄 Reset Match Score</button>
+            </div>
+
+            <!-- COLUMN 2 -->
+            <div class="panel">
+                <div class="panel-title">2. Live Score & Points Editor</div>
+                
+                <div class="score-box">
+                    <label id="lbl-p1" style="color: #38bdf8;">PHANTOM STARS</label>
+                    <div class="score-display" id="disp-p1">0 <span style="font-size: 14px; color: #94a3b8;">(Sets: <span id="disp-p1-sets">0</span>)</span></div>
+                    <div class="btn-row">
+                        <button class="btn-plus" onclick="addPoint(1)">+ Point</button>
+                        <button class="btn-minus" onclick="subPoint(1)">-</button>
+                    </div>
+                </div>
+
+                <div class="score-box">
+                    <label id="lbl-p2" style="color: #f97316;">MUMBAI MOZARTT</label>
+                    <div class="score-display" id="disp-p2">0 <span style="font-size: 14px; color: #94a3b8;">(Sets: <span id="disp-p2-sets">0</span>)</span></div>
+                    <div class="btn-row">
+                        <button class="btn-plus" onclick="addPoint(2)">+ Point</button>
+                        <button class="btn-minus" onclick="subPoint(2)">-</button>
+                    </div>
+                </div>
+
+                <div>
+                    <label>Quick Edit Standings Points:</label>
+                    <div class="pt-edit-row">
+                        <input type="text" id="pt-t1-name" value="PHANTOM STARS" oninput="sendData()">
+                        <input type="number" id="pt-t1-played" value="5" oninput="sendData()">
+                        <input type="number" id="pt-t1-pts" value="77" oninput="sendData()">
+                    </div>
+                    <div class="pt-edit-row">
+                        <input type="text" id="pt-t2-name" value="MUMBAI MOZARTT" oninput="sendData()">
+                        <input type="number" id="pt-t2-played" value="5" oninput="sendData()">
+                        <input type="number" id="pt-t2-pts" value="68" oninput="sendData()">
+                    </div>
                 </div>
             </div>
 
-            <div class="score-box">
-                <label id="lbl-p2" style="color: #f97316;">MUMBAI MOZARTT</label>
-                <div class="score-display" id="disp-p2">0 <span style="font-size: 14px; color: #94a3b8;">(Sets: <span id="disp-p2-sets">0</span>)</span></div>
-                <div class="btn-row">
-                    <button class="btn-plus" onclick="addPoint(2)">+ Point</button>
-                    <button class="btn-minus" onclick="subPoint(2)">-</button>
+            <!-- COLUMN 3 -->
+            <div class="panel">
+                <div class="panel-title">3. Graphic On / Off Switcher</div>
+                
+                <label>Match Intro Screen (Team A vs Team B):</label>
+                <div class="toggles-grid">
+                    <button class="toggle-btn bg-purple" onclick="triggerState('intro-in')">Show Intro</button>
+                    <button class="toggle-btn bg-red" onclick="triggerState('intro-out')">Hide Intro</button>
+                </div>
+
+                <label style="margin-top: 4px;">Tournament Header:</label>
+                <div class="toggles-grid">
+                    <button class="toggle-btn bg-green" onclick="triggerState('header-in')">Show</button>
+                    <button class="toggle-btn bg-red" onclick="triggerState('header-out')">Hide</button>
+                </div>
+
+                <label style="margin-top: 4px;">Live Scoreboard:</label>
+                <div class="toggles-grid">
+                    <button class="toggle-btn bg-green" onclick="triggerState('score-in')">Show</button>
+                    <button class="toggle-btn bg-red" onclick="triggerState('score-out')">Hide</button>
+                </div>
+
+                <label style="margin-top: 4px;">Winner Banner:</label>
+                <div class="toggles-grid">
+                    <button class="toggle-btn bg-blue" onclick="triggerState('winner-in')">Show</button>
+                    <button class="toggle-btn bg-red" onclick="triggerState('winner-out')">Hide</button>
+                </div>
+
+                <label style="margin-top: 4px;">Points Table Leaderboard:</label>
+                <div class="toggles-grid">
+                    <button class="toggle-btn bg-blue" onclick="triggerState('table-in')">Show</button>
+                    <button class="toggle-btn bg-red" onclick="triggerState('table-out')">Hide</button>
                 </div>
             </div>
 
-            <div>
-                <label>Quick Edit Standings Points:</label>
-                <div class="pt-edit-row">
-                    <input type="text" id="pt-t1-name" value="PHANTOM STARS" oninput="sendData()">
-                    <input type="number" id="pt-t1-played" value="5" oninput="sendData()">
-                    <input type="number" id="pt-t1-pts" value="77" oninput="sendData()">
-                </div>
-                <div class="pt-edit-row">
-                    <input type="text" id="pt-t2-name" value="MUMBAI MOZARTT" oninput="sendData()">
-                    <input type="number" id="pt-t2-played" value="5" oninput="sendData()">
-                    <input type="number" id="pt-t2-pts" value="68" oninput="sendData()">
-                </div>
-            </div>
         </div>
 
-        <!-- COLUMN 3 -->
-        <div class="panel">
-            <div class="panel-title">3. Graphic On / Off Switcher</div>
-            
-            <label>Match Intro Screen (Team A vs Team B):</label>
-            <div class="toggles-grid">
-                <button class="toggle-btn bg-purple" onclick="triggerState('intro-in')">Show Intro</button>
-                <button class="toggle-btn bg-red" onclick="triggerState('intro-out')">Hide Intro</button>
-            </div>
-
-            <label style="margin-top: 4px;">Tournament Header:</label>
-            <div class="toggles-grid">
-                <button class="toggle-btn bg-green" onclick="triggerState('header-in')">Show</button>
-                <button class="toggle-btn bg-red" onclick="triggerState('header-out')">Hide</button>
-            </div>
-
-            <label style="margin-top: 4px;">Live Scoreboard:</label>
-            <div class="toggles-grid">
-                <button class="toggle-btn bg-green" onclick="triggerState('score-in')">Show</button>
-                <button class="toggle-btn bg-red" onclick="triggerState('score-out')">Hide</button>
-            </div>
-
-            <label style="margin-top: 4px;">Winner Banner:</label>
-            <div class="toggles-grid">
-                <button class="toggle-btn bg-blue" onclick="triggerState('winner-in')">Show</button>
-                <button class="toggle-btn bg-red" onclick="triggerState('winner-out')">Hide</button>
-            </div>
-
-            <label style="margin-top: 4px;">Points Table Leaderboard:</label>
-            <div class="toggles-grid">
-                <button class="toggle-btn bg-blue" onclick="triggerState('table-in')">Show</button>
-                <button class="toggle-btn bg-red" onclick="triggerState('table-out')">Hide</button>
-            </div>
+        <div class="studio-footer">
+            <span id="footer-status-text">Server Status: Live & Connected</span>
+            <div class="status-badge" id="footer-server-turn">Serving: PHANTOM STARS</div>
         </div>
-
     </div>
-
-    <div class="studio-footer">
-        <span id="footer-status-text">Server Status: Live & Connected</span>
-        <div class="status-badge" id="footer-server-turn">Serving: PHANTOM STARS</div>
-    </div>
-</div>
 
 <script>
+    // 🌟 Firebase Configuration (Yahan apni Firebase keys daalni hain) 🌟
+    const firebaseConfig = {
+        apiKey: "YOUR_API_KEY",
+        authDomain: "YOUR_AUTH_DOMAIN",
+        projectId: "YOUR_PROJECT_ID",
+        storageBucket: "YOUR_STORAGE_BUCKET",
+        messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+        appId: "725629580596"
+    };
+
+    // Initialize Firebase
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+
+    // Google Login Function
+    function loginWithGoogle() {
+        const provider = new firebase.auth.GoogleAuthProvider();
+        auth.signInWithPopup(provider).catch(error => {
+            alert("Login Error: " + error.message);
+        });
+    }
+
+    // Logout Function
+    function logout() {
+        auth.signOut();
+    }
+
+    // Auth State Monitor (Check karega ki user logged-in hai ya nahi)
+    auth.onAuthStateChanged(user => {
+        if (user) {
+            // User logged in -> Studio dikhao, Login screen chupao
+            document.getElementById('login-screen').style.display = 'none';
+            document.getElementById('main-studio').style.display = 'grid';
+            document.getElementById('user-email-display').innerText = user.email;
+            console.log("Logged in as:", user.email);
+        } else {
+            // User logged out -> Login screen dikhao, Studio chupao
+            document.getElementById('login-screen').style.display = 'flex';
+            document.getElementById('main-studio').style.display = 'none';
+        }
+    });
+
+    // 🌟 Socket.io & Existing Studio Logic 🌟
     const socket = io();
     let data = { 
         tourneyTitle: "TABLE TENNIS SUPER LEAGUE MAHARASHTRA 2025",
