@@ -2,282 +2,89 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pro League 16:9 Broadcast Studio</title>
-    <script src="/socket.io/socket.io.js"></script>
+    <title>Match Controller</title>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { 
-            background: #090d16; color: #fff; 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            display: flex; justify-content: center; align-items: center; 
-            height: 100vh; overflow: hidden;
-        }
-        .studio-container {
-            width: 1280px; height: 720px; background: #111827;
-            border: 2px solid #1f2937; border-radius: 12px;
-            box-shadow: 0 25px 50px rgba(0,0,0,0.8);
-            display: grid; grid-template-rows: 55px 1fr 65px; overflow: hidden;
-        }
-        .studio-header {
-            background: #1f2937; display: flex; justify-content: space-between; align-items: center;
-            padding: 0 20px; border-bottom: 2px solid #374151;
-        }
-        .studio-title { font-size: 16px; font-weight: 900; color: #38bdf8; letter-spacing: 1px; text-transform: uppercase; }
-        .link-btn { background: #0284c7; color: white; border: none; padding: 6px 14px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px; }
-
-        .studio-body {
-            display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; padding: 15px; background: #0b0f19; overflow-y: auto;
-        }
-        .panel {
-            background: #111827; border: 1px solid #1f2937; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 10px;
-        }
-        .panel-title { font-size: 12px; font-weight: bold; color: #9ca3af; text-transform: uppercase; border-bottom: 1px solid #1f2937; padding-bottom: 4px; }
-
-        label { font-size: 11px; color: #94a3b8; font-weight: bold; margin-bottom: 2px; display: block; }
-        input[type="text"], input[type="file"], input[type="number"] { width: 100%; padding: 6px; background: #090d16; border: 1px solid #374151; color: #fff; border-radius: 4px; font-size: 12px; }
-        
-        .score-box { background: #1f2937; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #374151; }
-        .score-display { font-size: 28px; font-weight: 900; color: #facc15; margin: 4px 0; }
-        .btn-row { display: flex; gap: 6px; justify-content: center; }
-        
-        button { padding: 6px 10px; font-weight: bold; border: none; border-radius: 4px; cursor: pointer; color: white; font-size: 12px; }
-        button:active { transform: scale(0.95); }
-        .btn-plus { background: #10b981; flex: 2; }
-        .btn-minus { background: #ef4444; flex: 1; }
-
-        .toggles-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-        .toggle-btn { padding: 8px; font-size: 12px; font-weight: bold; border-radius: 4px; border: none; cursor: pointer; color: white; text-align: center; }
-        .bg-green { background: #059669; }
-        .bg-red { background: #dc2626; }
-        .bg-blue { background: #2563eb; }
-        .bg-purple { background: #7c3aed; }
-
-        .pt-edit-row { display: grid; grid-template-columns: 1fr 50px 50px; gap: 4px; margin-bottom: 4px; }
-
-        .studio-footer {
-            background: #111827; border-top: 1px solid #1f2937; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; font-size: 12px; color: #9ca3af;
-        }
-        .status-badge { background: #1e293b; padding: 4px 10px; border-radius: 4px; color: #38bdf8; font-weight: bold; border: 1px solid #334155; }
+        body { font-family: Arial, sans-serif; text-align: center; background: #222; color: #fff; padding: 20px; }
+        .control-box { background: #333; padding: 20px; margin: 10px auto; width: 350px; border-radius: 8px; }
+        button { padding: 10px 15px; font-size: 16px; margin: 5px; cursor: pointer; }
+        select { padding: 8px; font-size: 16px; margin-bottom: 10px; width: 100%; }
     </style>
 </head>
 <body>
+    <h1>Table Tennis Controller</h1>
 
-<div class="studio-container">
-    <div class="studio-header">
-        <div class="studio-title">🏓 Pro League 16:9 Studio Controller</div>
-        <button class="link-btn" onclick="openOverlayTab()">🔗 Open vMix / OBS Overlay Window</button>
+    <div class="control-box">
+        <h3>Match Format</h3>
+        <select id="matchFormat" onchange="sendUpdate()">
+            <option value="bestOf5">Best of 5 (First to 3 Sets)</option>
+            <option value="bestOf7">Best of 7 (First to 4 Sets)</option>
+        </select>
     </div>
 
-    <div class="studio-body">
-        
-        <!-- COLUMN 1 -->
-        <div class="panel">
-            <div class="panel-title">1. Editable Texts & Branding</div>
-            <div>
-                <label>Tournament Header Title:</label>
-                <input type="text" id="c-tourney-title" value="TABLE TENNIS SUPER LEAGUE MAHARASHTRA 2025" oninput="sendData()">
-            </div>
-            <div>
-                <label>Winner Announcement Text:</label>
-                <input type="text" id="c-winner-text" value="PHANTOM STARS WON THE MATCH" oninput="sendData()">
-            </div>
-            <div>
-                <label>Team A Name & Logo:</label>
-                <input type="text" id="c-p1" value="PHANTOM STARS" oninput="sendData()">
-                <input type="file" id="c-img1" accept="image/*" onchange="uploadImage(1)" style="margin-top: 3px;">
-            </div>
-            <div>
-                <label>Team B Name & Logo:</label>
-                <input type="text" id="c-p2" value="MUMBAI MOZARTT" oninput="sendData()">
-                <input type="file" id="c-img2" accept="image/*" onchange="uploadImage(2)" style="margin-top: 3px;">
-            </div>
-            <button style="background: #475569;" onclick="resetMatch()">🔄 Reset Match Score</button>
-        </div>
-
-        <!-- COLUMN 2 -->
-        <div class="panel">
-            <div class="panel-title">2. Live Score & Points Editor</div>
-            
-            <div class="score-box">
-                <label id="lbl-p1" style="color: #38bdf8;">PHANTOM STARS</label>
-                <div class="score-display" id="disp-p1">0 <span style="font-size: 14px; color: #94a3b8;">(Sets: <span id="disp-p1-sets">0</span>)</span></div>
-                <div class="btn-row">
-                    <button class="btn-plus" onclick="addPoint(1)">+ Point</button>
-                    <button class="btn-minus" onclick="subPoint(1)">-</button>
-                </div>
-            </div>
-
-            <div class="score-box">
-                <label id="lbl-p2" style="color: #f97316;">MUMBAI MOZARTT</label>
-                <div class="score-display" id="disp-p2">0 <span style="font-size: 14px; color: #94a3b8;">(Sets: <span id="disp-p2-sets">0</span>)</span></div>
-                <div class="btn-row">
-                    <button class="btn-plus" onclick="addPoint(2)">+ Point</button>
-                    <button class="btn-minus" onclick="subPoint(2)">-</button>
-                </div>
-            </div>
-
-            <div>
-                <label>Quick Edit Standings Points:</label>
-                <div class="pt-edit-row">
-                    <input type="text" id="pt-t1-name" value="PHANTOM STARS" oninput="sendData()">
-                    <input type="number" id="pt-t1-played" value="5" oninput="sendData()">
-                    <input type="number" id="pt-t1-pts" value="77" oninput="sendData()">
-                </div>
-                <div class="pt-edit-row">
-                    <input type="text" id="pt-t2-name" value="MUMBAI MOZARTT" oninput="sendData()">
-                    <input type="number" id="pt-t2-played" value="5" oninput="sendData()">
-                    <input type="number" id="pt-t2-pts" value="68" oninput="sendData()">
-                </div>
-            </div>
-        </div>
-
-        <!-- COLUMN 3 -->
-        <div class="panel">
-            <div class="panel-title">3. Graphic On / Off Switcher</div>
-            
-            <label>Match Intro Screen (Team A vs Team B):</label>
-            <div class="toggles-grid">
-                <button class="toggle-btn bg-purple" onclick="triggerState('intro-in')">Show Intro</button>
-                <button class="toggle-btn bg-red" onclick="triggerState('intro-out')">Hide Intro</button>
-            </div>
-
-            <label style="margin-top: 4px;">Tournament Header:</label>
-            <div class="toggles-grid">
-                <button class="toggle-btn bg-green" onclick="triggerState('header-in')">Show</button>
-                <button class="toggle-btn bg-red" onclick="triggerState('header-out')">Hide</button>
-            </div>
-
-            <label style="margin-top: 4px;">Live Scoreboard:</label>
-            <div class="toggles-grid">
-                <button class="toggle-btn bg-green" onclick="triggerState('score-in')">Show</button>
-                <button class="toggle-btn bg-red" onclick="triggerState('score-out')">Hide</button>
-            </div>
-
-            <label style="margin-top: 4px;">Winner Banner:</label>
-            <div class="toggles-grid">
-                <button class="toggle-btn bg-blue" onclick="triggerState('winner-in')">Show</button>
-                <button class="toggle-btn bg-red" onclick="triggerState('winner-out')">Hide</button>
-            </div>
-
-            <label style="margin-top: 4px;">Points Table Leaderboard:</label>
-            <div class="toggles-grid">
-                <button class="toggle-btn bg-blue" onclick="triggerState('table-in')">Show</button>
-                <button class="toggle-btn bg-red" onclick="triggerState('table-out')">Hide</button>
-            </div>
-        </div>
-
+    <div class="control-box">
+        <h2 id="p1Display">Player 1</h2>
+        <p>Score: <span id="p1Score">0</span> | Sets: <span id="p1Sets">0</span></p>
+        <button onclick="changeScore('p1', 1)">+ Score</button>
+        <button onclick="changeScore('p1', -1)">- Score</button>
+        <br>
+        <button onclick="changeSet('p1', 1)">+ Set</button>
+        <button onclick="changeSet('p1', -1)">- Set</button>
     </div>
 
-    <div class="studio-footer">
-        <span id="footer-status-text">Server Status: Live & Connected</span>
-        <div class="status-badge" id="footer-server-turn">Serving: PHANTOM STARS</div>
+    <div class="control-box">
+        <h2 id="p2Display">Player 2</h2>
+        <p>Score: <span id="p2Score">0</span> | Sets: <span id="p2Sets">0</span></p>
+        <button onclick="changeScore('p2', 1)">+ Score</button>
+        <button onclick="changeScore('p2', -1)">- Score</button>
+        <br>
+        <button onclick="changeSet('p2', 1)">+ Set</button>
+        <button onclick="changeSet('p2', -1)">- Set</button>
     </div>
-</div>
 
-<script>
-    const socket = io();
-    let data = { 
-        tourneyTitle: "TABLE TENNIS SUPER LEAGUE MAHARASHTRA 2025",
-        winner: "PHANTOM STARS WON THE MATCH",
-        p1Name: "PHANTOM STARS", p2Name: "MUMBAI MOZARTT", 
-        p1Score: 0, p2Score: 0, p1Sets: 0, p2Sets: 0, 
-        server: 1, img1: "", img2: "", state: "score-in",
-        standings: [
-            { team: "PHANTOM STARS", ties: 5, tiesWon: 5, gamesPlayed: 135, matchesWon: 28, gamesWon: 77, points: 77 },
-            { team: "MUMBAI MOZARTT", ties: 5, tiesWon: 1, gamesPlayed: 135, matchesWon: 23, gamesWon: 68, points: 68 },
-            { team: "PBG PUNE JAGUARS", ties: 5, tiesWon: 3, gamesPlayed: 135, matchesWon: 21, gamesWon: 68, points: 68 },
-            { team: "CENTURY WARRIORS", ties: 5, tiesWon: 3, gamesPlayed: 135, matchesWon: 21, gamesWon: 66, points: 66 },
-            { team: "PING PANTHERS", ties: 5, tiesWon: 1, gamesPlayed: 135, matchesWon: 22, gamesWon: 64, points: 64 },
-            { team: "BAYSIDE SPINNERS TTC", ties: 5, tiesWon: 1, gamesPlayed: 135, matchesWon: 17, gamesWon: 59, points: 59 }
-        ]
-    };
+    <button onclick="resetMatch()" style="background: red; color: white;">Reset Match</button>
 
-    function openOverlayTab() { window.open('/overlay.html', '_blank'); }
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let currentState = {
+            p1Name: 'Player 1',
+            p2Name: 'Player 2',
+            p1Score: 0,
+            p2Score: 0,
+            p1Sets: 0,
+            p2Sets: 0,
+            matchFormat: 'bestOf5'
+        };
 
-    function sendData() {
-        data.tourneyTitle = document.getElementById('c-tourney-title').value;
-        data.winner = document.getElementById('c-winner-text').value;
-        data.p1Name = document.getElementById('c-p1').value;
-        data.p2Name = document.getElementById('c-p2').value;
+        socket.on('updateState', (state) => {
+            currentState = state;
+            document.getElementById('p1Score').innerText = state.p1Score;
+            document.getElementById('p2Score').innerText = state.p2Score;
+            document.getElementById('p1Sets').innerText = state.p1Sets;
+            document.getElementById('p2Sets').innerText = state.p2Sets;
+            document.getElementById('matchFormat').value = state.matchFormat || 'bestOf5';
+        });
 
-        document.getElementById('pt-t1-name').value = data.p1Name;
-        document.getElementById('pt-t2-name').value = data.p2Name;
-        data.standings[0].team = data.p1Name;
-        data.standings[0].ties = parseInt(document.getElementById('pt-t1-played').value) || 0;
-        data.standings[0].points = parseInt(document.getElementById('pt-t1-pts').value) || 0;
-
-        data.standings[1].team = data.p2Name;
-        data.standings[1].ties = parseInt(document.getElementById('pt-t2-played').value) || 0;
-        data.standings[1].points = parseInt(document.getElementById('pt-t2-pts').value) || 0;
-
-        document.getElementById('lbl-p1').innerText = data.p1Name;
-        document.getElementById('lbl-p2').innerText = data.p2Name;
-        document.getElementById('disp-p1').innerHTML = `${data.p1Score} <span style="font-size: 14px; color: #94a3b8;">(Sets: ${data.p1Sets})</span>`;
-        document.getElementById('disp-p2').innerHTML = `${data.p2Score} <span style="font-size: 14px; color: #94a3b8;">(Sets: ${data.p2Sets})</span>`;
-        document.getElementById('footer-server-turn').innerText = `Serving: ${data.server === 1 ? data.p1Name : data.p2Name}`;
-
-        socket.emit('updateScore', data);
-    }
-
-    function uploadImage(player) {
-        const fileInput = document.getElementById(`c-img${player}`);
-        const file = fileInput.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                if(player === 1) data.img1 = e.target.result;
-                if(player === 2) data.img2 = e.target.result;
-                sendData();
-            };
-            reader.readAsDataURL(file);
+        function changeScore(player, val) {
+            if (player === 'p1') currentState.p1Score = Math.max(0, currentState.p1Score + val);
+            if (player === 'p2') currentState.p2Score = Math.max(0, currentState.p2Score + val);
+            sendUpdate();
         }
-    }
 
-    function addPoint(p) {
-        if(p === 1) data.p1Score++; else data.p2Score++;
-        checkRules();
-        sendData();
-    }
-
-    function subPoint(p) {
-        if(p === 1 && data.p1Score > 0) data.p1Score--;
-        if(p === 2 && data.p2Score > 0) data.p2Score--;
-        sendData();
-    }
-
-    function checkRules() {
-        let totalPoints = data.p1Score + data.p2Score;
-        if (data.p1Score >= 10 && data.p2Score >= 10) {
-            data.server = (totalPoints % 2 === 0) ? 1 : 2;
-        } else {
-            data.server = (Math.floor(totalPoints / 2) % 2 === 0) ? 1 : 2;
+        function changeSet(player, val) {
+            if (player === 'p1') currentState.p1Sets = Math.max(0, currentState.p1Sets + val);
+            if (player === 'p2') currentState.p2Sets = Math.max(0, currentState.p2Sets + val);
+            sendUpdate();
         }
-        
-        if ((data.p1Score >= 11 || data.p2Score >= 11) && Math.abs(data.p1Score - data.p2Score) >= 2) {
-            let setWinner = "";
-            if(data.p1Score > data.p2Score) {
-                data.p1Sets++; setWinner = data.p1Name;
-            } else {
-                data.p2Sets++; setWinner = data.p2Name;
-            }
-            data.p1Score = 0; data.p2Score = 0;
 
-            if (data.p1Sets === 3 || data.p2Sets === 3) {
-                data.winner = `${setWinner.toUpperCase()} WON THE MATCH`;
-                document.getElementById('c-winner-text').value = data.winner;
-                data.state = "winner-in";
-            }
+        function sendUpdate() {
+            currentState.matchFormat = document.getElementById('matchFormat').value;
+            socket.emit('updateScore', currentState);
         }
-    }
 
-    function triggerState(st) { data.state = st; socket.emit('updateScore', data); }
-    function resetMatch() {
-        if(confirm("Reset match score?")) {
-            data.p1Score = 0; data.p2Score = 0; data.p1Sets = 0; data.p2Sets = 0; data.server = 1; 
-            sendData();
+        function resetMatch() {
+            socket.emit('resetMatch');
         }
-    }
-</script>
+    </script>
 </body>
 </html>
