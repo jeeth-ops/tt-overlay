@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scorvix - Lower Third Control Panel</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #0f172a;
+            --bg-card: rgba(30, 41, 59, 0.8);
+            --text-main: #f8fafc;
+            --accent: #ef4444;
+            --accent-hover: #dc2626;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+        body { background: var(--bg-dark); color: var(--text-main); padding: 30px; display: flex; justify-content: center; }
+        .panel-container { background: var(--bg-card); padding: 30px; border-radius: 16px; width: 100%; max-width: 500px; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        h2 { margin-bottom: 20px; font-size: 1.5rem; border-bottom: 2px solid var(--accent); padding-bottom: 10px; }
+        .form-group { margin-bottom: 20px; }
+        label { display: block; margin-bottom: 8px; font-weight: 600; color: #94a3b8; font-size: 0.9rem; }
+        input[type="text"] { width: 100%; padding: 12px 16px; background: #1e293b; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: white; font-size: 1rem; }
+        input[type="text"]:focus { outline: none; border-color: var(--accent); }
+        .btn-group { display: flex; gap: 10px; margin-top: 30px; }
+        button { flex: 1; padding: 14px; font-size: 1rem; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; transition: 0.2s; }
+        .btn-show { background: #22c55e; color: white; }
+        .btn-show:hover { background: #16a34a; }
+        .btn-hide { background: var(--accent); color: white; }
+        .btn-hide:hover { background: var(--accent-hover); }
+    </style>
+</head>
+<body>
+
+    <div class="panel-container">
+        <h2>Lower Third Controller</h2>
+        
+        <div class="form-group">
+            <label>Title (Chhota text upar)</label>
+            <input type="text" id="inputTitle" placeholder="e.g. BREAKING NEWS / MATCH HIGHLIGHT">
+        </div>
+
+        <div class="form-group">
+            <label>Main Announcement (Bada text niche)</label>
+            <input type="text" id="inputText" placeholder="e.g. Final match starting in 5 minutes">
+        </div>
+
+        <div class="btn-group">
+            <button class="btn-show" onclick="sendData(true)">SHOW ON STREAM</button>
+            <button class="btn-hide" onclick="sendData(false)">HIDE</button>
+        </div>
+    </div>
+
+    <script>
+        function sendData(isVisible) {
+            const title = document.getElementById('inputTitle').value;
+            const text = document.getElementById('inputText').value;
+
+            fetch('/api/update-tt-data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ltTitle: title, ltText: text, ltVisible: isVisible })
+            })
+            .then(res => res.json())
+            .then(data => {
+                console.log('Updated successfully', data);
+            })
+            .catch(err => console.error('Error:', err));
+        }
+    </script>
+</body>
+</html>
