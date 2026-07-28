@@ -6,7 +6,6 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-// Static files serve karne ke liye root directory set kar di hai
 app.use(express.static(__dirname));
 
 app.get('/', (req, res) => {
@@ -29,13 +28,9 @@ io.on('connection', (socket) => {
     });
 });
 
-// Render ke liye port configuration
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
 });
