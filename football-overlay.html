@@ -3,328 +3,478 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Scorvix - Football Live Overlay</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@600;700;800;900&display=swap" rel="stylesheet">
+    <title>Football Match Overlay - Scorvix</title>
+    <link href="https://fonts.googleapis.com/css2?family=Teko:wght@600;700&family=Inter:wght@600;800&display=swap" rel="stylesheet">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
-        
-        /* Transparent background for OBS / vMix */
-        body {
-            background: transparent;
-            width: 1920px;
-            height: 1080px;
-            overflow: hidden;
-            position: relative;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: transparent; overflow: hidden; font-family: 'Inter', sans-serif; }
 
-        /* Scoreboard Main Wrapper (Top Center) */
-        .scoreboard-wrapper {
+        .overlay-wrapper {
             position: absolute;
             top: 30px;
             left: 50%;
             transform: translateX(-50%);
             display: flex;
+            flex-direction: column;
             align-items: center;
-            background: rgba(11, 15, 25, 0.9);
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 15px 35px rgba(0,0,0,0.6);
-            border: 1px solid rgba(255,255,255,0.12);
-            transition: all 0.3s ease;
+            gap: 6px;
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s ease;
         }
 
-        /* Hidden state via Master Toggle */
-        .scoreboard-wrapper.hidden {
+        .hidden-scoreboard {
+            transform: translateX(-50%) translateY(-120px);
             opacity: 0;
-            transform: translateX(-50%) translateY(-30px);
-            pointer-events: none;
         }
 
-        /* Team Box */
-        .team-box {
+        .scoreboard-container {
             display: flex;
             align-items: center;
-            padding: 10px 18px;
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.95));
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            overflow: hidden;
+        }
+
+        .team-block {
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            height: 52px;
             gap: 12px;
             position: relative;
         }
 
-        .team-logo {
-            width: 32px;
-            height: 32px;
-            object-fit: contain;
+        .team-block.left { background: linear-gradient(90deg, rgba(2, 132, 199, 0.25), transparent); }
+        .team-block.right { background: linear-gradient(-90deg, rgba(220, 38, 38, 0.25), transparent); flex-direction: row-reverse; }
+
+        .team-logo-box {
+            width: 0px;
+            opacity: 0;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: width 0.3s ease, opacity 0.3s ease;
         }
+
+        .team-logo-box.active { width: 32px; opacity: 1; }
+        .team-logo-box img { width: 28px; height: 28px; object-fit: contain; }
 
         .team-name {
             font-size: 1.15rem;
             font-weight: 800;
             color: #ffffff;
-            letter-spacing: 0.8px;
+            letter-spacing: 0.5px;
             text-transform: uppercase;
         }
 
-        /* Score Box */
         .score-box {
-            font-size: 1.35rem;
-            font-weight: 900;
-            color: #ffffff;
-            padding: 10px 20px;
-            background: rgba(0, 0, 0, 0.4);
+            color: white;
+            font-family: 'Teko', sans-serif;
+            font-size: 2.2rem;
+            padding: 0 18px;
+            height: 52px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             min-width: 55px;
-            text-align: center;
+            transition: background 0.3s ease;
         }
 
-        /* Center Clock Container */
-        .clock-container {
-            background: #090d16;
-            padding: 10px 16px;
+        .timer-center {
+            color: #f8fafc;
+            font-family: 'Teko', sans-serif;
+            font-size: 1.8rem;
+            height: 52px;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             border-left: 1px solid rgba(255,255,255,0.1);
             border-right: 1px solid rgba(255,255,255,0.1);
-            min-width: 85px;
+            width: 95px;
+            min-width: 95px;
+            max-width: 95px;
+            letter-spacing: 1px;
+            transition: background 0.3s ease;
         }
 
-        .match-time {
-            font-size: 1.1rem;
-            font-weight: 800;
-            color: #38bdf8;
-            letter-spacing: 0.5px;
-        }
-
-        .match-half {
+        .timer-center span.live-dot {
             font-size: 0.6rem;
-            font-weight: 700;
-            color: #94a3b8;
+            color: #ef4444;
+            text-transform: uppercase;
+            font-family: 'Inter', sans-serif;
+            font-weight: 800;
             letter-spacing: 1px;
-            margin-top: 2px;
+            margin-top: -6px;
         }
 
-        /* Penalty shootout extra info row */
-        .penalties-bar {
-            position: absolute;
-            bottom: -24px;
-            left: 0;
-            width: 100%;
-            background: rgba(15, 23, 42, 0.95);
-            font-size: 0.7rem;
+        .penalty-bar {
+            background: rgba(15, 23, 42, 0.9);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 0 0 6px 6px;
+            padding: 4px 16px;
+            font-size: 0.8rem;
+            color: #38bdf8;
             font-weight: 700;
-            color: #fbbf24;
-            text-align: center;
-            padding: 3px 0;
-            letter-spacing: 1px;
-            border-bottom-left-radius: 6px;
-            border-bottom-right-radius: 6px;
-            border: 1px solid rgba(255,255,255,0.08);
-            border-top: none;
-        }
-
-        /* Action Replay Badge (Top Right) */
-        .replay-badge {
-            position: absolute;
-            top: 30px;
-            right: 40px;
-            background: #eab308;
-            color: #000000;
-            font-size: 1rem;
-            font-weight: 900;
-            padding: 8px 18px;
-            border-radius: 6px;
-            box-shadow: 0 10px 20px rgba(234, 179, 8, 0.4);
             letter-spacing: 1px;
             text-transform: uppercase;
             display: none;
-            animation: pulseReplay 1.5s infinite;
         }
-        .replay-badge.active { display: block; }
+        .penalty-bar.active { display: block; }
 
-        @keyframes pulseReplay {
-            0% { transform: scale(1); }
-            50% { transform: scale(1.05); }
-            100% { transform: scale(1); }
-        }
-
-        /* Fullscreen Status Modal (HT / FT / Penalties) */
-        .status-modal {
-            position: absolute;
-            top: 0; left: 0;
-            width: 100vw; height: 100vh;
-            background: rgba(11, 15, 25, 0.85);
-            backdrop-filter: blur(8px);
+        /* Fullscreen Status Modals */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(5, 8, 15, 0.88);
+            backdrop-filter: blur(10px);
             display: flex;
-            justify-content: center;
             align-items: center;
+            justify-content: center;
             opacity: 0;
             pointer-events: none;
             transition: opacity 0.3s ease;
             z-index: 999;
         }
-        .status-modal.active {
-            opacity: 1;
-            pointer-events: auto;
-        }
 
-        .modal-content-box {
-            text-align: center;
-            border: 3px solid #38bdf8;
-            padding: 30px 70px;
+        .modal-overlay.active { opacity: 1; pointer-events: auto; }
+
+        .modal-card {
+            background: linear-gradient(135deg, #1e293b, #0f172a);
+            border: 2px solid #38bdf8;
+            padding: 35px 45px;
             border-radius: 16px;
-            background: rgba(15, 23, 42, 0.95);
-            box-shadow: 0 25px 60px rgba(0,0,0,0.8);
+            text-align: center;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.8);
+            transform: scale(0.9);
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 22px;
         }
 
-        .modal-title-text {
+        .modal-overlay.active .modal-card { transform: scale(1); }
+
+        .modal-card h1 {
+            font-family: 'Teko', sans-serif;
             font-size: 3.5rem;
-            font-weight: 900;
-            color: #ffffff;
+            color: #f8fafc;
             letter-spacing: 2px;
-            text-transform: uppercase;
-            margin-bottom: 10px;
+            line-height: 1;
         }
 
-        .modal-sub-score {
+        .modal-match-box {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: rgba(15, 23, 42, 0.95);
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            overflow: hidden;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            min-width: 420px;
+        }
+
+        .modal-scoreboard-row {
+            display: flex;
+            align-items: center;
+            width: 100%;
+        }
+
+        .modal-team-block {
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            height: 56px;
+            gap: 12px;
+            flex: 1;
+        }
+        .modal-team-block.left { background: rgba(2, 132, 199, 0.2); justify-content: flex-start; }
+        .modal-team-block.right { background: rgba(220, 38, 38, 0.2); justify-content: flex-end; flex-direction: row-reverse; }
+
+        .modal-logo-box {
+            width: 0px; opacity: 0; overflow: hidden; display: flex; align-items: center; justify-content: center;
+            transition: width 0.3s ease, opacity 0.3s ease;
+        }
+        .modal-logo-box.active { width: 32px; opacity: 1; }
+        .modal-logo-box img { width: 28px; height: 28px; object-fit: contain; }
+
+        .modal-team-name {
+            font-size: 1.15rem;
+            font-weight: 800;
+            color: #ffffff;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        .modal-score-box {
+            color: white;
+            font-family: 'Teko', sans-serif;
+            font-size: 2.4rem;
+            padding: 0 20px;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 60px;
+        }
+
+        .modal-vs-box {
+            background: #090d16;
+            color: #ffffff;
+            font-family: 'Inter', sans-serif;
+            font-size: 1rem;
+            font-weight: 800;
+            padding: 0 16px;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-left: 1px solid rgba(255,255,255,0.1);
+            border-right: 1px solid rgba(255,255,255,0.1);
+            letter-spacing: 2px;
+        }
+
+        .modal-timer-footer {
+            background: #0b1120;
+            width: 100%;
+            padding: 8px;
+            text-align: center;
+            font-family: 'Teko', sans-serif;
             font-size: 1.5rem;
-            font-weight: 700;
-            color: #94a3b8;
+            color: #38bdf8;
+            letter-spacing: 1.5px;
+            border-top: 1px solid rgba(255,255,255,0.08);
+            text-transform: uppercase;
+        }
+
+        /* Fixed Action Replay Badge - Top Right Corner */
+        .replay-badge {
+            position: fixed;
+            top: 25px;
+            right: 25px;
+            background: rgba(202, 138, 4, 0.95);
+            color: #000;
+            font-weight: 800;
+            font-size: 0.9rem;
+            padding: 5px 14px;
+            border-radius: 4px;
             letter-spacing: 1px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            display: none;
+            z-index: 9999;
+            animation: pulseReplay 1.5s infinite;
+        }
+        .replay-badge.active {
+            display: block;
+        }
+
+        @keyframes pulseReplay {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.05); opacity: 0.8; }
+            100% { transform: scale(1); opacity: 1; }
         }
     </style>
 </head>
 <body>
 
-    <!-- Main Scoreboard Container -->
-    <div class="scoreboard-wrapper" id="scoreboardWrapper">
-        <!-- Team A -->
-        <div class="team-box" id="boxA">
-            <img id="logoA" class="team-logo" src="" style="display: none;" alt="">
-            <span class="team-name" id="nameA">TEAM A</span>
-            <div class="score-box" id="scoreA">0</div>
+    <!-- Main Scoreboard -->
+    <div class="overlay-wrapper" id="wrapper">
+        <div class="scoreboard-container">
+            <div class="team-block left" id="blockA">
+                <div class="team-logo-box" id="boxLogoA">
+                    <img id="imgLogoA" src="" alt="">
+                </div>
+                <div class="team-name" id="dispNameA">REAL MADRID</div>
+            </div>
+            <div class="score-box" id="dispScoreA">0</div>
+
+            <div class="timer-center" id="timerCenterBox">
+                <div id="dispTimer">00:00</div>
+                <span class="live-dot">● LIVE</span>
+            </div>
+
+            <div class="score-box" id="dispScoreB">0</div>
+            <div class="team-block right" id="blockB">
+                <div class="team-logo-box" id="boxLogoB">
+                    <img id="imgLogoB" src="" alt="">
+                </div>
+                <div class="team-name" id="dispNameB">BARCELONA</div>
+            </div>
         </div>
 
-        <!-- Center Match Timer -->
-        <div class="clock-container" id="clockContainer">
-            <div class="match-time" id="timerDisplay">00:00</div>
-            <div class="match-half" id="halfDisplay">1ST HALF</div>
+        <div class="penalty-bar" id="penaltyBar">
+            PENALTIES: <span id="dispPenA">0</span> — <span id="dispPenB">0</span>
         </div>
+    </div>
 
-        <!-- Team B -->
-        <div class="team-box" id="boxB">
-            <div class="score-box" id="scoreB">0</div>
-            <span class="team-name" id="nameB">TEAM B</span>
-            <img id="logoB" class="team-logo" src="" style="display: none;" alt="">
-        </div>
+    <!-- Fullscreen Modal -->
+    <div class="modal-overlay" id="modalOverlay">
+        <div class="modal-card" id="modalCardBox">
+            <h1 id="modalTitleText">HALF TIME</h1>
+            
+            <div class="modal-match-box">
+                <div class="modal-scoreboard-row">
+                    <div class="modal-team-block left" id="modalBlockA">
+                        <div class="modal-logo-box" id="modalBoxLogoA">
+                            <img id="modalImgLogoA" src="" alt="">
+                        </div>
+                        <div class="modal-team-name" id="modalDispNameA">REAL MADRID</div>
+                    </div>
+                    <div class="modal-score-box" id="modalDispScoreA">0</div>
 
-        <!-- Penalty Shootout Tag -->
-        <div class="penalties-bar" id="penaltiesBar" style="display: none;">
-            PENALTIES: <span id="penScoreA">0</span> - <span id="penScoreB">0</span>
+                    <div class="modal-vs-box">VS</div>
+
+                    <div class="modal-score-box" id="modalDispScoreB">0</div>
+                    <div class="modal-team-block right" id="modalBlockB">
+                        <div class="modal-logo-box" id="modalBoxLogoB">
+                            <img id="modalImgLogoB" src="" alt="">
+                        </div>
+                        <div class="modal-team-name" id="modalDispNameB">BARCELONA</div>
+                    </div>
+                </div>
+
+                <div class="modal-timer-footer" id="modalTimerFooter">
+                    HALF TIME BREAK • 45:00
+                </div>
+            </div>
         </div>
     </div>
 
     <!-- Action Replay Badge -->
-    <div class="replay-badge" id="replayBadge">⚡ ACTION REPLAY</div>
-
-    <!-- Fullscreen Half Time / Full Time Modal -->
-    <div class="status-modal" id="statusModal">
-        <div class="modal-content-box" id="modalBoxTheme">
-            <div class="modal-title-text" id="modalTitleText">HALF TIME</div>
-            <div class="modal-sub-score" id="modalSubScoreText">REAL MADRID 2 - 1 BARCELONA</div>
-        </div>
-    </div>
+    <div class="replay-badge" id="replayBadge">▶ ACTION REPLAY</div>
 
     <script>
-        function loadOverlayData() {
-            const rawData = localStorage.getItem('scorvix_football');
-            if (!rawData) return;
-            const data = JSON.parse(rawData);
+        function syncOverlay() {
+            const raw = localStorage.getItem('scorvix_football');
+            if (!raw) return;
+            const data = JSON.parse(raw);
 
-            // 1. Master Toggle
-            const wrapper = document.getElementById('scoreboardWrapper');
+            const wrapper = document.getElementById('wrapper');
             if (data.showScoreboard) {
-                wrapper.classList.remove('hidden');
+                wrapper.classList.remove('hidden-scoreboard');
             } else {
-                wrapper.classList.add('hidden');
+                wrapper.classList.add('hidden-scoreboard');
             }
 
-            // 2. Team Names & Scores
-            document.getElementById('nameA').innerText = data.nameA || "TEAM A";
-            document.getElementById('nameB').innerText = data.nameB || "TEAM B";
-            document.getElementById('scoreA').innerText = data.scoreA ?? 0;
-            document.getElementById('scoreB').innerText = data.scoreB ?? 0;
+            const nameA = data.nameA || "TEAM A";
+            const nameB = data.nameB || "TEAM B";
+            const scoreA = data.scoreA;
+            const scoreB = data.scoreB;
 
-            // 3. Team Logos
-            const imgA = document.getElementById('logoA');
-            if (data.showLogoA && data.logoA) {
+            document.getElementById('dispNameA').innerText = nameA;
+            document.getElementById('dispNameB').innerText = nameB;
+            document.getElementById('dispScoreA').innerText = scoreA;
+            document.getElementById('dispScoreB').innerText = scoreB;
+
+            document.getElementById('modalDispNameA').innerText = nameA;
+            document.getElementById('modalDispNameB').innerText = nameB;
+            document.getElementById('modalDispScoreA').innerText = scoreA;
+            document.getElementById('modalDispScoreB').innerText = scoreB;
+
+            if (data.colorA) {
+                document.getElementById('dispScoreA').style.background = data.colorA;
+                document.getElementById('modalDispScoreA').style.background = data.colorA;
+                document.getElementById('blockA').style.background = `linear-gradient(90deg, ${data.colorA}40, transparent)`;
+                document.getElementById('modalBlockA').style.background = `${data.colorA}33`;
+            }
+            if (data.colorB) {
+                document.getElementById('dispScoreB').style.background = data.colorB;
+                document.getElementById('modalDispScoreB').style.background = data.colorB;
+                document.getElementById('blockB').style.background = `linear-gradient(-90deg, ${data.colorB}40, transparent)`;
+                document.getElementById('modalBlockB').style.background = `${data.colorB}33`;
+            }
+            if (data.colorClock) {
+                document.getElementById('timerCenterBox').style.background = data.colorClock;
+            }
+            if (data.colorModal) {
+                document.getElementById('modalCardBox').style.borderColor = data.colorModal;
+                document.getElementById('modalTimerFooter').style.color = data.colorModal;
+            }
+
+            const hasLogoA = data.showLogoA && data.logoA && data.logoA.trim() !== "";
+            const boxA = document.getElementById('boxLogoA');
+            const imgA = document.getElementById('imgLogoA');
+            const modalBoxA = document.getElementById('modalBoxLogoA');
+            const modalImgA = document.getElementById('modalImgLogoA');
+
+            if (hasLogoA) {
                 imgA.src = data.logoA;
-                imgA.style.display = 'block';
+                modalImgA.src = data.logoA;
+                boxA.classList.add('active');
+                modalBoxA.classList.add('active');
             } else {
-                imgA.style.display = 'none';
+                boxA.classList.remove('active');
+                modalBoxA.classList.remove('active');
             }
 
-            const imgB = document.getElementById('logoB');
-            if (data.showLogoB && data.logoB) {
+            const hasLogoB = data.showLogoB && data.logoB && data.logoB.trim() !== "";
+            const boxB = document.getElementById('boxLogoB');
+            const imgB = document.getElementById('imgLogoB');
+            const modalBoxB = document.getElementById('modalBoxLogoB');
+            const modalImgB = document.getElementById('modalImgLogoB');
+
+            if (hasLogoB) {
                 imgB.src = data.logoB;
-                imgB.style.display = 'block';
+                modalImgB.src = data.logoB;
+                boxB.classList.add('active');
+                modalBoxB.classList.add('active');
             } else {
-                imgB.style.display = 'none';
+                boxB.classList.remove('active');
+                modalBoxB.classList.remove('active');
             }
 
-            // 4. Colors
-            if(data.colorA) document.getElementById('boxA').style.borderBottom = `4px solid ${data.colorA}`;
-            if(data.colorB) document.getElementById('boxB').style.borderBottom = `4px solid ${data.colorB}`;
-            if(data.colorClock) document.getElementById('clockContainer').style.backgroundColor = data.colorClock;
-            if(data.colorModal) {
-                document.getElementById('modalBoxTheme').style.borderColor = data.colorModal;
-            }
-
-            // 5. Timer & Half Calculation
-            document.getElementById('timerDisplay').innerText = data.timer || "00:00";
-            let parts = (data.timer || "00:00").split(":");
+            let timerVal = data.timer || "00:00";
+            let parts = timerVal.split(":");
             let currentMins = parseInt(parts[0]) || 0;
             let duration = data.matchDuration || 90;
-            let halfDuration = Math.floor(duration / 2);
 
-            let halfText = "1ST HALF";
-            if (currentMins >= halfDuration) halfText = "2ND HALF";
-            if (currentMins >= duration) halfText = "FT";
-            document.getElementById('halfDisplay').innerText = halfText;
+            let displayString = timerVal;
+            if (currentMins >= duration) {
+                let extraMins = currentMins - duration;
+                displayString = `${duration}+${extraMins}:${parts[1] || '00'}`;
+            }
+            document.getElementById('dispTimer').innerText = displayString;
 
-            // 6. Penalties Shootout
-            const penBar = document.getElementById('penaltiesBar');
-            if (data.penA !== "" || data.penB !== "") {
-                penBar.style.display = 'block';
-                document.getElementById('penScoreA').innerText = data.penA || "0";
-                document.getElementById('penScoreB').innerText = data.penB || "0";
+            const penBar = document.getElementById('penaltyBar');
+            if (data.penA !== "" && data.penB !== "") {
+                penBar.classList.add('active');
+                document.getElementById('dispPenA').innerText = data.penA;
+                document.getElementById('dispPenB').innerText = data.penB;
             } else {
-                penBar.style.display = 'none';
+                penBar.classList.remove('active');
             }
 
-            // 7. Action Replay Badge
+            const modal = document.getElementById('modalOverlay');
+            if (data.activeModal && data.activeModal.trim() !== "") {
+                const title = data.activeModal;
+                document.getElementById('modalTitleText').innerText = title;
+                
+                let footerText = `${title} • ${displayString}`;
+                if(title.includes("PEN")) {
+                    footerText = `PENALTIES SHOOTOUT • ${data.penA || 0} - ${data.penB || 0}`;
+                }
+                document.getElementById('modalTimerFooter').innerText = footerText;
+
+                modal.classList.add('active');
+            } else {
+                modal.classList.remove('active');
+            }
+
             const replay = document.getElementById('replayBadge');
             if (data.showActionReplay) {
                 replay.classList.add('active');
             } else {
                 replay.classList.remove('active');
             }
-
-            // 8. Fullscreen Modals (HT/FT)
-            const modal = document.getElementById('statusModal');
-            if (data.activeModal && data.activeModal !== "") {
-                modal.classList.add('active');
-                document.getElementById('modalTitleText').innerText = data.activeModal;
-                document.getElementById('modalSubScoreText').innerText = `${data.nameA || 'TEAM A'} ${data.scoreA ?? 0} - ${data.scoreB ?? 0} ${data.nameB || 'TEAM B'}`;
-            } else {
-                modal.classList.remove('active');
-            }
         }
 
-        // Real-time listener using storage event & interval sync
-        window.addEventListener('storage', loadOverlayData);
-        setInterval(loadOverlayData, 200);
-
-        // Initial call
-        loadOverlayData();
+        setInterval(syncOverlay, 150);
+        syncOverlay();
     </script>
 </body>
 </html>
