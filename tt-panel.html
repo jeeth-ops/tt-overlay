@@ -10,6 +10,7 @@
     <!-- Firebase SDKs (Compat Version for HTML) -->
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
     
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -228,13 +229,13 @@
         </div>
 
         <div class="studio-footer">
-            <span id="footer-status-text">Server Status: Live & Connected</span>
+            <span id="footer-status-text">Server Status: Live & Connected (Cloud Auto-Save Active)</span>
             <div class="status-badge" id="footer-server-turn">Serving: PHANTOM STARS</div>
         </div>
     </div>
 
 <script>
-    // 🌟 Firebase Configuration (Aapki Exact Keys) 🌟
+    // 🌟 Firebase Configuration 🌟
     const firebaseConfig = {
         apiKey: "AIzaSyAYc_bEB9C4RhhLhPBEJsJRFRUppcR45yo",
         authDomain: "scorvix-faf0e.firebaseapp.com",
@@ -245,9 +246,10 @@
         measurementId: "G-4EXH0QXHF7"
     };
 
-    // Initialize Firebase
+    // Initialize Firebase & Firestore
     firebase.initializeApp(firebaseConfig);
     const auth = firebase.auth();
+    const db = firebase.firestore();
 
     // Google Login Function
     function loginWithGoogle() {
@@ -268,7 +270,7 @@
             document.getElementById('login-screen').style.display = 'none';
             document.getElementById('main-studio').style.display = 'grid';
             document.getElementById('user-email-display').innerText = user.email;
-            console.log("Logged in as:", user.email);
+            loadSavedData(); // Cloud se data load karo jab login ho jaye
         } else {
             document.getElementById('login-screen').style.display = 'flex';
             document.getElementById('main-studio').style.display = 'none';
@@ -319,7 +321,35 @@
         document.getElementById('disp-p2').innerHTML = `${data.p2Score} <span style="font-size: 14px; color: #94a3b8;">(Sets: ${data.p2Sets})</span>`;
         document.getElementById('footer-server-turn').innerText = `Serving: ${data.server === 1 ? data.p1Name : data.p2Name}`;
 
+        // 1. Send via Socket to Overlay
         socket.emit('updateScore', data);
+
+        // 2. Save automatically to Firebase Firestore Cloud
+        db.collection("scorvix").doc("matchState").set(data).catch(err => console.log("Cloud save error:", err));
+    }
+
+    // Load Data from Firestore Cloud on startup
+    function loadSavedData() {
+        db.collection("scorvix").doc("matchState").get().then(doc => {
+            if (doc.exists) {
+                data = doc.data();
+                // Update UI fields from saved cloud data
+                document.getElementById('c-tourney-title').value = data.tourneyTitle || "";
+                document.getElementById('c-match-format').value = data.matchFormat || "bestOf5";
+                document.getElementById('c-winner-text').value = data.winner || "";
+                document.getElementById('c-p1').value = data.p1Name || "";
+                document.getElementById('c-p2').value = data.p2Name || "";
+                if(data.standings && data.standings[0]) {
+                    document.getElementById('pt-t1-played').value = data.standings[0].ties;
+                    document.getElementById('pt-t1-pts').value = data.standings[0].points;
+                }
+                if(data.standings && data.standings[1]) {
+                    document.getElementById('pt-t2-played').value = data.standings[1].ties;
+                    document.getElementById('pt-t2-pts').value = data.standings[1].points;
+                }
+                sendData(); // Push loaded data to socket & screen
+            }
+        }).catch(err => console.log("Cloud load error:", err));
     }
 
     function uploadImage(player) {
@@ -375,7 +405,7 @@
         }
     }
 
-    function triggerState(st) { data.state = st; socket.emit('updateScore', data); }
+    function triggerState(st) { data.state = st; sendData(); }
     function resetMatch() {
         if(confirm("Reset match score?")) {
             data.p1Score = 0; data.p2Score = 0; data.p1Sets = 0; data.p2Sets = 0; data.server = 1; 
