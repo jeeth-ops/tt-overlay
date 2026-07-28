@@ -349,10 +349,8 @@
     <div class="replay-badge" id="replayBadge">▶ ACTION REPLAY</div>
 
     <script>
-        function syncOverlay() {
-            const raw = localStorage.getItem('scorvix_football');
-            if (!raw) return;
-            const data = JSON.parse(raw);
+        function updateUI(data) {
+            if (!data) return;
 
             const wrapper = document.getElementById('wrapper');
             if (data.showScoreboard) {
@@ -473,7 +471,20 @@
             }
         }
 
-        setInterval(syncOverlay, 150);
+        function syncOverlay() {
+            const raw = localStorage.getItem('scorvix_football');
+            if (raw) {
+                updateUI(JSON.parse(raw));
+            }
+        }
+
+        // Real-time instantaneous updates using BroadcastChannel
+        const channel = new BroadcastChannel('scorvix_football_channel');
+        channel.onmessage = function (event) {
+            updateUI(event.data);
+        };
+
+        // Initial sync on load
         syncOverlay();
     </script>
 </body>
