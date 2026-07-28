@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scorvix - Lower Third Controller</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #0f172a;
+            --bg-card: rgba(30, 41, 59, 0.9);
+            --border-color: rgba(255, 255, 255, 0.1);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent: #ef4444;
+            --accent-hover: #dc2626;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
+
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .controller-card {
+            width: 100%;
+            max-width: 500px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            backdrop-filter: blur(10px);
+        }
+
+        h2 {
+            font-size: 1.3rem;
+            font-weight: 700;
+            margin-bottom: 20px;
+            border-bottom: 2px solid var(--accent);
+            padding-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px 15px;
+            color: var(--text-main);
+            font-size: 0.95rem;
+            outline: none;
+            transition: 0.2s;
+        }
+        input[type="text"]:focus { border-color: var(--accent); }
+
+        .overlay-link-box {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .overlay-link-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            outline: none;
+        }
+        
+        .btn-action-group {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn-copy, .btn-open {
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: 0.2s;
+            white-space: nowrap;
+        }
+        .btn-copy { background: #a855f7; }
+        .btn-copy:hover { background: #9333ea; }
+        
+        .btn-open { background: #3b82f6; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+        .btn-open:hover { background: #2563eb; }
+
+        .btn-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 25px;
+        }
+
+        /* --- Click Press / Push Animation Style --- */
+        .btn {
+            flex: 1;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 700;
+            cursor: pointer;
+            border: none;
+            text-align: center;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            transition: transform 0.1s ease, background-color 0.2s ease, box-shadow 0.1s ease;
+        }
+
+        .btn:active {
+            transform: scale(0.95) translateY(2px); /* Click karte hi andar dabne ka effect */
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .btn-show { background: #22c55e; color: white; }
+        .btn-show:hover { background: #16a34a; }
+
+        .btn-hide { background: #ef4444; color: white; }
+        .btn-hide:hover { background: #dc2626; }
+
+        .back-link {
+            display: inline-block;
+            margin-top: 20px;
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+        .back-link:hover { color: var(--text-main); }
+    </style>
+</head>
+<body>
+
+    <div class="controller-card">
+        <h2>Lower Third Controller</h2>
+        
+        <div class="form-group">
+            <label>vMix / OBS Browser Source URL</label>
+            <div class="overlay-link-box">
+                <input type="text" id="overlayUrl" class="overlay-link-input" readonly>
+                <div class="btn-action-group">
+                    <button class="btn-copy" onclick="copyOverlayUrl()">Copy URL</button>
+                    <a id="openTabBtn" href="#" target="_blank" class="btn-open">Open Overlay</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>Title (Chhota text upar)</label>
+            <input type="text" id="ltTitle" placeholder="e.g. MATCH HIGHLIGHT">
+        </div>
+
+        <div class="form-group">
+            <label>Main Announcement (Bada text niche)</label>
+            <input type="text" id="ltText" placeholder="e.g. Announcement text goes here">
+        </div>
+
+        <div class="btn-group">
+            <button class="btn btn-show" onclick="sendUpdate(true)">SHOW ON STREAM</button>
+            <button class="btn btn-hide" onclick="sendUpdate(false)">HIDE</button>
+        </div>
+
+        <a href="/tt-templates" class="back-link">← Back to Templates</a>
+    </div>
+
+    <script>
+        const targetUrl = window.location.origin + '/tt-lowerthird';
+        document.getElementById('overlayUrl').value = targetUrl;
+        document.getElementById('openTabBtn').href = targetUrl;
+
+        function copyOverlayUrl() {
+            const urlInput = document.getElementById('overlayUrl');
+            urlInput.select();
+            navigator.clipboard.writeText(urlInput.value);
+            const copyBtn = document.querySelector('.btn-copy');
+            copyBtn.textContent = 'Copied!';
+            setTimeout(() => copyBtn.textContent = 'Copy URL', 2000);
+        }
+
+        function sendUpdate(isVisible) {
+            const data = {
+                ltTitle: document.getElementById('ltTitle').value,
+                ltText: document.getElementById('ltText').value,
+                ltVisible: isVisible
+            };
+
+            fetch('/api/update-tt-data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+        }
+
+        fetch('/api/tt-data')
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('ltTitle').value = data.ltTitle;
+                document.getElementById('ltText').value = data.ltText;
+            });
+
+        document.querySelectorAll('input[type="text"]').forEach(input => {
+            input.addEventListener('input', () => sendUpdate(true));
+        });
+    </script>
+</body>
+</html>
