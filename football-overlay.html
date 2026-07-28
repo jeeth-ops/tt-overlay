@@ -251,7 +251,6 @@
             text-transform: uppercase;
         }
 
-        /* Fixed Action Replay Badge - Top Right Corner */
         .replay-badge {
             position: fixed;
             top: 25px;
@@ -269,9 +268,7 @@
             z-index: 9999;
             animation: pulseReplay 1.5s infinite;
         }
-        .replay-badge.active {
-            display: block;
-        }
+        .replay-badge.active { display: block; }
 
         @keyframes pulseReplay {
             0% { transform: scale(1); opacity: 1; }
@@ -348,11 +345,13 @@
     <!-- Action Replay Badge -->
     <div class="replay-badge" id="replayBadge">▶ ACTION REPLAY</div>
 
+    <!-- Socket.io Script inclusion -->
+    <script src="/socket.io/socket.io.js"></script>
     <script>
-        function syncOverlay() {
-            const raw = localStorage.getItem('scorvix_football');
-            if (!raw) return;
-            const data = JSON.parse(raw);
+        const socket = io();
+
+        function updateUI(data) {
+            if (!data) return;
 
             const wrapper = document.getElementById('wrapper');
             if (data.showScoreboard) {
@@ -363,8 +362,8 @@
 
             const nameA = data.nameA || "TEAM A";
             const nameB = data.nameB || "TEAM B";
-            const scoreA = data.scoreA;
-            const scoreB = data.scoreB;
+            const scoreA = data.scoreA !== undefined ? data.scoreA : 0;
+            const scoreB = data.scoreB !== undefined ? data.scoreB : 0;
 
             document.getElementById('dispNameA').innerText = nameA;
             document.getElementById('dispNameB').innerText = nameB;
@@ -376,6 +375,7 @@
             document.getElementById('modalDispScoreA').innerText = scoreA;
             document.getElementById('modalDispScoreB').innerText = scoreB;
 
+            // Colors Fix for vMix
             if (data.colorA) {
                 document.getElementById('dispScoreA').style.background = data.colorA;
                 document.getElementById('modalDispScoreA').style.background = data.colorA;
@@ -472,6 +472,19 @@
                 replay.classList.remove('active');
             }
         }
+
+        // LocalStorage fallback taaki direct load pe bhi chale
+        function syncOverlay() {
+            const raw = localStorage.getItem('scorvix_football');
+            if (raw) {
+                updateUI(JSON.parse(raw));
+            }
+        }
+
+        // Socket.io Listener for Live Sync
+        socket.on('liveFootballScore', (data) => {
+            updateUI(data);
+        });
 
         setInterval(syncOverlay, 150);
         syncOverlay();
