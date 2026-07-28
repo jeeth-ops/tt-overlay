@@ -4,277 +4,490 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Football Match Controller - Scorvix</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
-        body { background: #0b0f19; color: #f8fafc; padding: 20px; }
-        .container { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
-        header { display: flex; justify-content: space-between; align-items: center; background: #1e293b; padding: 15px 25px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); }
-        h1 { font-size: 1.5rem; color: #38bdf8; letter-spacing: 1px; }
-        .card { background: #1e293b; border-radius: 12px; padding: 20px; border: 1px solid rgba(255,255,255,0.1); display: flex; flex-direction: column; gap: 15px; }
-        .card h3 { font-size: 1.1rem; color: #cbd5e1; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px; }
-        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
-        .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-        label { font-size: 0.85rem; color: #94a3b8; font-weight: 500; margin-bottom: 5px; display: block; }
-        input[type="text"], input[type="number"], select { width: 100%; padding: 10px 12px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; color: white; font-size: 0.95rem; }
-        input[type="color"] { -webkit-appearance: none; border: none; width: 100%; height: 38px; border-radius: 8px; cursor: pointer; background: none; }
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
+        body { 
+            background: #0b0f19; 
+            color: #f8fafc; 
+            padding: 20px; 
+            min-height: 100vh; 
+            display: flex; 
+            justify-content: center; 
+            align-items: flex-start; 
+        }
+
+        .controller-container {
+            width: 100%;
+            max-width: 1000px;
+            background: #111827;
+            border-radius: 16px;
+            border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+            padding: 28px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .header-title {
+            font-size: 1.35rem;
+            font-weight: 800;
+            color: #38bdf8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #1f2937;
+            padding-bottom: 14px;
+        }
+
+        .grid-layout {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .section-box {
+            background: #1f2937;
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid rgba(255,255,255,0.05);
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .full-width {
+            grid-column: span 2;
+        }
+
+        .section-title {
+            font-size: 0.9rem;
+            font-weight: 700;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .row {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .col {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        label {
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: #cbd5e1;
+        }
+
+        input[type="text"], input[type="number"], select {
+            background: #111827;
+            border: 1px solid #374151;
+            color: white;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            width: 100%;
+        }
+
+        input[type="color"] {
+            -webkit-appearance: none;
+            border: none;
+            width: 100%;
+            height: 42px;
+            border-radius: 8px;
+            cursor: pointer;
+            background: #111827;
+            padding: 4px;
+        }
         input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
-        input[type="color"]::-webkit-color-swatch { border: 1px solid #334155; border-radius: 8px; }
-        .btn-group { display: flex; gap: 10px; flex-wrap: wrap; }
-        button { padding: 10px 16px; border-radius: 8px; border: none; font-weight: 600; cursor: pointer; font-size: 0.9rem; transition: all 0.2s; }
-        .btn-primary { background: #0284c7; color: white; }
-        .btn-primary:hover { background: #0369a1; }
-        .btn-success { background: #16a34a; color: white; }
-        .btn-success:hover { background: #15803d; }
-        .btn-danger { background: #dc2626; color: white; }
-        .btn-danger:hover { background: #b91c1c; }
-        .btn-secondary { background: #475569; color: white; }
-        .btn-secondary:hover { background: #334155; }
-        .toggle-box { display: flex; align-items: center; gap: 10px; cursor: pointer; }
-        .score-ctrl { display: flex; align-items: center; gap: 10px; }
-        .score-ctrl button { width: 40px; height: 40px; font-size: 1.2rem; display: flex; align-items: center; justify-content: center; }
-        .timer-display { font-size: 2rem; font-weight: 700; color: #38bdf8; text-align: center; background: #0f172a; padding: 10px; border-radius: 8px; border: 1px solid #334155; }
+        input[type="color"]::-webkit-color-swatch { border: 1px solid #374151; border-radius: 6px; }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: #38bdf8;
+        }
+
+        .file-upload-wrapper {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+
+        .file-upload-btn {
+            background: #374151;
+            color: white;
+            padding: 10px 12px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 700;
+            cursor: pointer;
+            white-space: nowrap;
+            border: 1px solid #4b5563;
+        }
+        .file-upload-btn:hover { background: #4b5563; }
+        
+        .remove-logo-btn {
+            background: rgba(220, 38, 38, 0.2);
+            color: #f87171;
+            border: 1px solid rgba(220, 38, 38, 0.4);
+            padding: 10px 12px;
+            border-radius: 8px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .remove-logo-btn:hover { background: #dc2626; color: white; }
+
+        .btn-group { display: flex; gap: 8px; align-items: center; }
+
+        button {
+            background: #374151;
+            color: white;
+            border: none;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-weight: 700;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+        button:hover { background: #4b5563; }
+        
+        .btn-primary { background: #0284c7; flex: 1; }
+        .btn-success { background: #16a34a; flex: 1; }
+        .btn-danger { background: #dc2626; padding: 10px 16px; }
+        .btn-warning { background: #ca8a04; color: #000; flex: 1; }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 48px;
+            height: 24px;
+        }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #374151;
+            transition: .3s;
+            border-radius: 24px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px; width: 18px; left: 3px; bottom: 3px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+        input:checked + .slider { background-color: #16a34a; }
+        input:checked + .slider:before { transform: translateX(24px); }
+
+        .action-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
     </style>
 </head>
 <body>
 
-    <div class="container">
-        <header>
-            <h1>SCORVIX FOOTBALL CONTROLLER</h1>
-            <div class="btn-group">
-                <button class="btn-success" onclick="toggleScoreboard(true)">Show Overlay</button>
-                <button class="btn-danger" onclick="toggleScoreboard(false)">Hide Overlay</button>
-            </div>
-        </header>
-
-        <!-- Teams & Scores -->
-        <div class="card">
-            <h3>Teams & Scores</h3>
-            <div class="grid-2">
-                <div>
-                    <label>Team A Name</label>
-                    <input type="text" id="nameA" value="REAL MADRID" oninput="saveData()">
-                </div>
-                <div>
-                    <label>Team B Name</label>
-                    <input type="text" id="nameB" value="BARCELONA" oninput="saveData()">
-                </div>
-            </div>
-            <div class="grid-2">
-                <div class="score-ctrl">
-                    <button class="btn-secondary" onclick="updateScore('A', -1)">-</button>
-                    <div style="flex:1">
-                        <label>Score A</label>
-                        <input type="number" id="scoreA" value="0" oninput="saveData()">
-                    </div>
-                    <button class="btn-primary" onclick="updateScore('A', 1)">+</button>
-                </div>
-                <div class="score-ctrl">
-                    <button class="btn-secondary" onclick="updateScore('B', -1)">-</button>
-                    <div style="flex:1">
-                        <label>Score B</label>
-                        <input type="number" id="scoreB" value="0" oninput="saveData()">
-                    </div>
-                    <button class="btn-primary" onclick="updateScore('B', 1)">+</button>
-                </div>
-            </div>
+    <div class="controller-container">
+        <div class="header-title">
+            <span>Scorvix Football Controller</span>
+            <span style="font-size: 0.8rem; color: #10b981; font-weight: 600;">● Live Connected</span>
         </div>
 
-        <!-- Logos & Colors -->
-        <div class="card">
-            <h3>Customization (Logos & Colors)</h3>
-            <div class="grid-2">
-                <div>
-                    <label>Team A Logo URL</label>
-                    <input type="text" id="logoA" placeholder="https://..." oninput="saveData()">
-                    <div style="margin-top: 8px;">
-                        <label class="toggle-box"><input type="checkbox" id="showLogoA" onchange="saveData()"> Show Team A Logo</label>
+        <div class="grid-layout">
+            
+            <!-- 1. Master Scoreboard Toggle & Teams -->
+            <div class="section-box full-width">
+                <div class="section-title">
+                    <span>Scoreboard Master Control</span>
+                    <label class="switch">
+                        <input type="checkbox" id="masterToggle" checked onchange="saveData()">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                
+                <div class="row">
+                    <div class="col" style="flex: 2;">
+                        <label>Team A Name</label>
+                        <input type="text" id="nameA" value="REAL MADRID" oninput="saveData()">
+                    </div>
+                    <div class="col" style="flex: 2.5;">
+                        <label>Team A Logo (URL or Upload File)</label>
+                        <div class="file-upload-wrapper">
+                            <input type="text" id="logoA" placeholder="https://image-link.png" oninput="saveData()">
+                            <input type="file" id="logoFileA" accept="image/*" style="display: none;" onchange="handleFileUpload(event, 'A')">
+                            <button type="button" class="file-upload-btn" onclick="document.getElementById('logoFileA').click()">📁 Upload</button>
+                            <button type="button" class="remove-logo-btn" onclick="removeLogo('A')">✕</button>
+                        </div>
+                    </div>
+                    <div class="col" style="flex: 0 0 110px; align-items: center;">
+                        <label>Show Logo A</label>
+                        <label class="switch" style="margin-top: 4px;">
+                            <input type="checkbox" id="showLogoA" checked onchange="saveData()">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="col" style="flex: 0 0 160px;">
+                        <label>Team A Score</label>
+                        <div class="btn-group">
+                            <button onclick="updateScore('A', -1)" class="btn-danger">-</button>
+                            <input type="number" id="scoreA" value="0" style="text-align: center;" oninput="saveData()">
+                            <button onclick="updateScore('A', 1)" class="btn-success" style="flex:unset; padding: 10px 16px;">+</button>
+                        </div>
                     </div>
                 </div>
-                <div>
-                    <label>Team B Logo URL</label>
-                    <input type="text" id="logoB" placeholder="https://..." oninput="saveData()">
-                    <div style="margin-top: 8px;">
-                        <label class="toggle-box"><input type="checkbox" id="showLogoB" onchange="saveData()"> Show Team B Logo</label>
+
+                <div class="row">
+                    <div class="col" style="flex: 2;">
+                        <label>Team B Name</label>
+                        <input type="text" id="nameB" value="BARCELONA" oninput="saveData()">
+                    </div>
+                    <div class="col" style="flex: 2.5;">
+                        <label>Team B Logo (URL or Upload File)</label>
+                        <div class="file-upload-wrapper">
+                            <input type="text" id="logoB" placeholder="https://image-link.png" oninput="saveData()">
+                            <input type="file" id="logoFileB" accept="image/*" style="display: none;" onchange="handleFileUpload(event, 'B')">
+                            <button type="button" class="file-upload-btn" onclick="document.getElementById('logoFileB').click()">📁 Upload</button>
+                            <button type="button" class="remove-logo-btn" onclick="removeLogo('B')">✕</button>
+                        </div>
+                    </div>
+                    <div class="col" style="flex: 0 0 110px; align-items: center;">
+                        <label>Show Logo B</label>
+                        <label class="switch" style="margin-top: 4px;">
+                            <input type="checkbox" id="showLogoB" checked onchange="saveData()">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="col" style="flex: 0 0 160px;">
+                        <label>Team B Score</label>
+                        <div class="btn-group">
+                            <button onclick="updateScore('B', -1)" class="btn-danger">-</button>
+                            <input type="number" id="scoreB" value="0" style="text-align: center;" oninput="saveData()">
+                            <button onclick="updateScore('B', 1)" class="btn-success" style="flex:unset; padding: 10px 16px;">+</button>
+                        </div>
                     </div>
                 </div>
             </div>
-            <div class="grid-4">
-                <div>
-                    <label>Team A Color</label>
-                    <input type="color" id="colorA" value="#0284c7" oninput="saveData()">
-                </div>
-                <div>
-                    <label>Team B Color</label>
-                    <input type="color" id="colorB" value="#dc2626" oninput="saveData()">
-                </div>
-                <div>
-                    <label>Clock BG Color</label>
-                    <input type="color" id="colorClock" value="#0f172a" oninput="saveData()">
-                </div>
-                <div>
-                    <label>Modal Border Color</label>
-                    <input type="color" id="colorModal" value="#38bdf8" oninput="saveData()">
-                </div>
-            </div>
-        </div>
 
-        <!-- Match Timer Control -->
-        <div class="card">
-            <h3>Match Timer & Control</h3>
-            <div class="timer-display" id="timerDisplay">00:00</div>
-            <div class="grid-2">
-                <div>
-                    <label>Set Minutes:Seconds</label>
-                    <input type="text" id="timerInput" value="00:00" placeholder="MM:SS">
+            <!-- 2. Match Timer & Settings -->
+            <div class="section-box">
+                <div class="section-title">Match Timer & Settings</div>
+                <div class="row">
+                    <div class="col">
+                        <label>Match Duration Setting</label>
+                        <select id="matchDuration" onchange="saveData()">
+                            <option value="24">24 Mins Match</option>
+                            <option value="30">30 Mins Match</option>
+                            <option value="40">40 Mins Match</option>
+                            <option value="60">60 Mins Match</option>
+                            <option value="90" selected>90 Mins Match (Standard)</option>
+                        </select>
+                    </div>
+                    <div class="col">
+                        <label>Clock Value (MM:SS)</label>
+                        <input type="text" id="timerInput" value="00:00" oninput="manualTimerEdit()">
+                    </div>
                 </div>
-                <div>
-                    <label>Match Duration (Minutes)</label>
-                    <input type="number" id="matchDuration" value="90" oninput="saveData()">
+                <div class="row">
+                    <button class="btn-success" onclick="startTimer()">▶ Start</button>
+                    <button class="btn-warning" onclick="stopTimer()" style="color: #fff;">⏸ Stop</button>
+                    <button class="btn-danger" onclick="resetTimer()" style="flex:1;">⏹ Reset</button>
+                </div>
+                <div class="row">
+                    <button class="btn-primary" onclick="setTimerPreset('Halfway')">Half Time Mark</button>
+                    <button class="btn-primary" onclick="setTimerPreset('Fullway')">Full Time Mark</button>
                 </div>
             </div>
-            <div class="btn-group">
-                <button class="btn-primary" onclick="setCustomTimer()">Set Timer</button>
-                <button class="btn-success" onclick="startTimer()">Start Clock</button>
-                <button class="btn-secondary" onclick="pauseTimer()">Pause Clock</button>
-                <button class="btn-danger" onclick="resetTimer()">Reset Clock</button>
-            </div>
-        </div>
 
-        <!-- Penalties & Extras -->
-        <div class="card">
-            <h3>Penalties & Special Badges</h3>
-            <div class="grid-2">
-                <div>
-                    <label>Penalties A</label>
-                    <input type="text" id="penA" placeholder="e.g. 4" oninput="saveData()">
+            <!-- 3. Overlay Color Palette -->
+            <div class="section-box">
+                <div class="section-title">Overlay Color Palette</div>
+                <div class="row">
+                    <div class="col">
+                        <label>Team A Color</label>
+                        <input type="color" id="colorA" value="#0284c7" oninput="saveData()">
+                    </div>
+                    <div class="col">
+                        <label>Team B Color</label>
+                        <input type="color" id="colorB" value="#dc2626" oninput="saveData()">
+                    </div>
                 </div>
-                <div>
-                    <label>Penalties B</label>
-                    <input type="text" id="penB" placeholder="e.g. 5" oninput="saveData()">
+                <div class="row">
+                    <div class="col">
+                        <label>Center Clock BG</label>
+                        <input type="color" id="colorClock" value="#090d16" oninput="saveData()">
+                    </div>
+                    <div class="col">
+                        <label>Modal Accent Color</label>
+                        <input type="color" id="colorModal" value="#38bdf8" oninput="saveData()">
+                    </div>
                 </div>
             </div>
-            <div class="btn-group">
-                <button class="btn-secondary" onclick="clearPenalties()">Clear Penalties Bar</button>
-                <button class="btn-primary" onclick="toggleReplay()">Toggle Action Replay Badge</button>
-            </div>
-        </div>
 
-        <!-- Fullscreen Modals -->
-        <div class="card">
-            <h3>Fullscreen Modals (Half Time / Full Time / etc.)</h3>
-            <div class="btn-group">
-                <button class="btn-primary" onclick="triggerModal('HALF TIME')">Half Time</button>
-                <button class="btn-primary" onclick="triggerModal('FULL TIME')">Full Time</button>
-                <button class="btn-primary" onclick="triggerModal('EXTRA TIME')">Extra Time</button>
-                <button class="btn-primary" onclick="triggerModal('PENALTIES SHOOTOUT')">Penalties Shootout</button>
-                <button class="btn-danger" onclick="triggerModal('')">Hide Modal</button>
+            <!-- 4. Penalties Shootout -->
+            <div class="section-box">
+                <div class="section-title">
+                    <span>Penalty Shootout</span>
+                    <label class="switch">
+                        <input type="checkbox" id="penToggle" onchange="togglePenalties()">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="row" style="margin-top: auto; margin-bottom: auto;">
+                    <div class="col">
+                        <label>Team A Pens</label>
+                        <input type="number" id="penA" placeholder="0" oninput="saveData()">
+                    </div>
+                    <div class="col">
+                        <label>Team B Pens</label>
+                        <input type="number" id="penB" placeholder="0" oninput="saveData()">
+                    </div>
+                </div>
             </div>
+
+            <!-- 5. Screen Modals (HT / FT) -->
+            <div class="section-box">
+                <div class="section-title">
+                    <span>Fullscreen Status Modal</span>
+                    <label class="switch">
+                        <input type="checkbox" id="modalToggle" onchange="toggleModalSwitch()">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="action-grid" style="margin-top: auto;">
+                    <button class="btn-warning" onclick="setModalTitle('HALF TIME')" style="color:#fff;">Half Time</button>
+                    <button class="btn-warning" onclick="setModalTitle('FULL TIME')" style="color:#fff;">Full Time</button>
+                    <button class="btn-warning" onclick="setModalTitle('PENALTIES')" style="color:#fff;">Penalties</button>
+                </div>
+            </div>
+
+            <!-- 6. Action Replay Badge Control -->
+            <div class="section-box">
+                <div class="section-title">
+                    <span>Action Replay Badge</span>
+                    <label class="switch">
+                        <input type="checkbox" id="arToggle" onchange="toggleActionReplay()">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div style="font-size: 0.85rem; color: #94a3b8; line-height: 1.4;">
+                    Stream ke top-right corner par cinematic yellow replay badge show/hide karein.
+                </div>
+            </div>
+
         </div>
     </div>
 
     <script>
+        window.currentModalTitle = "HALF TIME";
         let timerInterval = null;
-        let totalSeconds = 0;
-        let isRunning = false;
-        let showScoreboardState = true;
-        let showActionReplayState = false;
-        let activeModalState = "";
+
+        // BroadcastChannel for instant real-time sync with vMix
+        const channel = new BroadcastChannel('scorvix_football_channel');
+
+        function handleFileUpload(event, team) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    document.getElementById('logo' + team).value = e.target.result;
+                    saveData();
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function removeLogo(team) {
+            document.getElementById('logo' + team).value = '';
+            document.getElementById('logoFile' + team).value = '';
+            saveData();
+        }
 
         function saveData() {
+            const duration = parseInt(document.getElementById('matchDuration').value) || 90;
             const data = {
-                showScoreboard: showScoreboardState,
+                showScoreboard: document.getElementById('masterToggle').checked,
                 nameA: document.getElementById('nameA').value,
                 nameB: document.getElementById('nameB').value,
-                scoreA: document.getElementById('scoreA').value,
-                scoreB: document.getElementById('scoreB').value,
                 logoA: document.getElementById('logoA').value,
-                showLogoA: document.getElementById('showLogoA').checked,
                 logoB: document.getElementById('logoB').value,
+                showLogoA: document.getElementById('showLogoA').checked,
                 showLogoB: document.getElementById('showLogoB').checked,
+                scoreA: parseInt(document.getElementById('scoreA').value) || 0,
+                scoreB: parseInt(document.getElementById('scoreB').value) || 0,
                 colorA: document.getElementById('colorA').value,
                 colorB: document.getElementById('colorB').value,
                 colorClock: document.getElementById('colorClock').value,
                 colorModal: document.getElementById('colorModal').value,
-                matchDuration: parseInt(document.getElementById('matchDuration').value) || 90,
-                timer: document.getElementById('timerDisplay').innerText,
-                penA: document.getElementById('penA').value,
-                penB: document.getElementById('penB').value,
-                activeModal: activeModalState,
-                showActionReplay: showActionReplayState
+                penA: document.getElementById('penToggle').checked ? (document.getElementById('penA').value || "0") : "",
+                penB: document.getElementById('penToggle').checked ? (document.getElementById('penB').value || "0") : "",
+                timer: document.getElementById('timerInput').value,
+                matchDuration: duration,
+                activeModal: document.getElementById('modalToggle').checked ? window.currentModalTitle : "",
+                showActionReplay: document.getElementById('arToggle').checked
             };
+            
+            // Save locally
             localStorage.setItem('scorvix_football', JSON.stringify(data));
-        }
 
-        function toggleScoreboard(show) {
-            showScoreboardState = show;
-            saveData();
+            // Instantly broadcast to vMix overlay
+            channel.postMessage(data);
         }
 
         function updateScore(team, val) {
-            const input = document.getElementById(team === 'A' ? 'scoreA' : 'scoreB');
+            let input = document.getElementById('score' + team);
             let current = parseInt(input.value) || 0;
-            current = Math.max(0, current + val);
-            input.value = current;
-            saveData();
-        }
-
-        function updateTimerDisplay() {
-            let mins = Math.floor(totalSeconds / 60);
-            let secs = totalSeconds % 60;
-            let formatted = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-            document.getElementById('timerDisplay').innerText = formatted;
+            let updated = current + val;
+            if(updated < 0) updated = 0;
+            input.value = updated;
             saveData();
         }
 
         function startTimer() {
-            if (isRunning) return;
-            isRunning = true;
+            if (timerInterval) return;
             timerInterval = setInterval(() => {
-                totalSeconds++;
-                updateTimerDisplay();
+                let timeStr = document.getElementById('timerInput').value;
+                let parts = timeStr.split(":");
+                let mins = parseInt(parts[0]) || 0;
+                let secs = parseInt(parts[1]) || 0;
+                secs++;
+                if (secs >= 60) { secs = 0; mins++; }
+                document.getElementById('timerInput').value = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+                saveData();
             }, 1000);
         }
 
-        function pauseTimer() {
-            isRunning = false;
-            clearInterval(timerInterval);
-        }
+        function stopTimer() { clearInterval(timerInterval); timerInterval = null; }
+        function resetTimer() { stopTimer(); document.getElementById('timerInput').value = "00:00"; saveData(); }
 
-        function resetTimer() {
-            pauseTimer();
-            totalSeconds = 0;
-            updateTimerDisplay();
-        }
-
-        function setCustomTimer() {
-            let val = document.getElementById('timerInput').value;
-            let parts = val.split(":");
-            if (parts.length === 2) {
-                let m = parseInt(parts[0]) || 0;
-                let s = parseInt(parts[1]) || 0;
-                totalSeconds = (m * 60) + s;
-                updateTimerDisplay();
-            }
-        }
-
-        function clearPenalties() {
-            document.getElementById('penA').value = "";
-            document.getElementById('penB').value = "";
+        function setTimerPreset(type) {
+            stopTimer();
+            let duration = parseInt(document.getElementById('matchDuration').value) || 90;
+            let targetMins = (type === 'Halfway') ? Math.floor(duration / 2) : duration;
+            document.getElementById('timerInput').value = `${String(targetMins).padStart(2, '0')}:00`;
             saveData();
         }
 
-        function toggleReplay() {
-            showActionReplayState = !showActionReplayState;
-            saveData();
-        }
+        function manualTimerEdit() { stopTimer(); saveData(); }
+        function setModalTitle(title) { window.currentModalTitle = title; document.getElementById('modalToggle').checked = true; saveData(); }
+        function toggleModalSwitch() { saveData(); }
+        function togglePenalties() { saveData(); }
+        function toggleActionReplay() { saveData(); }
 
-        function triggerModal(title) {
-            activeModalState = title;
-            saveData();
-        }
-
-        // Initial save sync
         saveData();
     </script>
 </body>
