@@ -6,35 +6,35 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
+// Static files serve karne ke liye root directory set kar di hai
 app.use(express.static(__dirname));
 
-let matchState = {
-    p1Name: 'Player 1',
-    p2Name: 'Player 2',
-    p1Score: 0,
-    p2Score: 0,
-    p1Sets: 0,
-    p2Sets: 0,
-    matchFormat: 'bestOf5' // Default Best of 5
-};
+app.get('/', (req, res) => {
+    res.sendFile(__dirname + '/index.html');
+});
+
+app.get('/overlay', (req, res) => {
+    res.sendFile(__dirname + '/overlay.html');
+});
 
 io.on('connection', (socket) => {
-    socket.emit('updateState', matchState);
+    console.log('A user connected');
 
-    socket.on('updateScore', (newState) => {
-        matchState = newState;
-        io.emit('updateState', matchState);
+    socket.on('updateScore', (data) => {
+        io.emit('liveScore', data);
     });
 
-    socket.on('resetMatch', () => {
-        matchState.p1Score = 0;
-        matchState.p2Score = 0;
-        matchState.p1Sets = 0;
-        matchState.p2Sets = 0;
-        io.emit('updateState', matchState);
+    socket.on('disconnect', () => {
+        console.log('A user disconnected');
     });
 });
 
+// Render ke liye port configuration
+const PORT = process.env.PORT || 3000;
+
+server.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
