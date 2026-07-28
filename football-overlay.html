@@ -3,513 +3,478 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Football Match Controller - Scorvix</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <title>Football Match Overlay - Scorvix</title>
+    <link href="https://fonts.googleapis.com/css2?family=Teko:wght@600;700&family=Inter:wght@600;800&display=swap" rel="stylesheet">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
-        body { 
-            background: #0b0f19; 
-            color: #f8fafc; 
-            padding: 20px; 
-            min-height: 100vh; 
-            display: flex; 
-            justify-content: center; 
-            align-items: flex-start; 
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: transparent; overflow: hidden; font-family: 'Inter', sans-serif; }
 
-        .controller-container {
-            width: 100%;
-            max-width: 1000px;
-            background: #111827;
-            border-radius: 16px;
-            border: 1px solid rgba(255,255,255,0.08);
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
-            padding: 28px;
+        .overlay-wrapper {
+            position: absolute;
+            top: 30px;
+            left: 50%;
+            transform: translateX(-50%);
             display: flex;
             flex-direction: column;
-            gap: 20px;
-        }
-
-        .header-title {
-            font-size: 1.35rem;
-            font-weight: 800;
-            color: #38bdf8;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            display: flex;
-            justify-content: space-between;
             align-items: center;
-            border-bottom: 1px solid #1f2937;
-            padding-bottom: 14px;
+            gap: 6px;
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s ease;
         }
 
-        .grid-layout {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
+        .hidden-scoreboard {
+            transform: translateX(-50%) translateY(-120px);
+            opacity: 0;
         }
 
-        .section-box {
-            background: #1f2937;
-            border-radius: 12px;
-            padding: 20px;
-            border: 1px solid rgba(255,255,255,0.05);
+        .scoreboard-container {
             display: flex;
-            flex-direction: column;
-            gap: 14px;
-        }
-
-        .full-width {
-            grid-column: span 2;
-        }
-
-        .section-title {
-            font-size: 0.9rem;
-            font-weight: 700;
-            color: #94a3b8;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            display: flex;
-            justify-content: space-between;
             align-items: center;
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.95));
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            overflow: hidden;
         }
 
-        .row {
+        .team-block {
             display: flex;
+            align-items: center;
+            padding: 0 16px;
+            height: 52px;
             gap: 12px;
-            align-items: center;
+            position: relative;
         }
 
-        .col {
-            flex: 1;
+        .team-block.left { background: linear-gradient(90deg, rgba(2, 132, 199, 0.25), transparent); }
+        .team-block.right { background: linear-gradient(-90deg, rgba(220, 38, 38, 0.25), transparent); flex-direction: row-reverse; }
+
+        .team-logo-box {
+            width: 0px;
+            opacity: 0;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: width 0.3s ease, opacity 0.3s ease;
+        }
+
+        .team-logo-box.active { width: 32px; opacity: 1; }
+        .team-logo-box img { width: 28px; height: 28px; object-fit: contain; }
+
+        .team-name {
+            font-size: 1.15rem;
+            font-weight: 800;
+            color: #ffffff;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        .score-box {
+            color: white;
+            font-family: 'Teko', sans-serif;
+            font-size: 2.2rem;
+            padding: 0 18px;
+            height: 52px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 55px;
+            transition: background 0.3s ease;
+        }
+
+        .timer-center {
+            color: #f8fafc;
+            font-family: 'Teko', sans-serif;
+            font-size: 1.8rem;
+            height: 52px;
             display: flex;
             flex-direction: column;
-            gap: 6px;
-        }
-
-        label {
-            font-size: 0.78rem;
-            font-weight: 600;
-            color: #cbd5e1;
-        }
-
-        input[type="text"], input[type="number"], select {
-            background: #111827;
-            border: 1px solid #374151;
-            color: white;
-            padding: 10px 14px;
-            border-radius: 8px;
-            font-size: 0.95rem;
-            font-weight: 600;
-            width: 100%;
-        }
-
-        input[type="color"] {
-            -webkit-appearance: none;
-            border: none;
-            width: 100%;
-            height: 42px;
-            border-radius: 8px;
-            cursor: pointer;
-            background: #111827;
-            padding: 4px;
-        }
-        input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
-        input[type="color"]::-webkit-color-swatch { border: 1px solid #374151; border-radius: 6px; }
-
-        input:focus, select:focus {
-            outline: none;
-            border-color: #38bdf8;
-        }
-
-        .file-upload-wrapper {
-            display: flex;
-            gap: 6px;
             align-items: center;
+            justify-content: center;
+            border-left: 1px solid rgba(255,255,255,0.1);
+            border-right: 1px solid rgba(255,255,255,0.1);
+            width: 95px;
+            min-width: 95px;
+            max-width: 95px;
+            letter-spacing: 1px;
+            transition: background 0.3s ease;
         }
 
-        .file-upload-btn {
-            background: #374151;
-            color: white;
-            padding: 10px 12px;
-            border-radius: 8px;
+        .timer-center span.live-dot {
+            font-size: 0.6rem;
+            color: #ef4444;
+            text-transform: uppercase;
+            font-family: 'Inter', sans-serif;
+            font-weight: 800;
+            letter-spacing: 1px;
+            margin-top: -6px;
+        }
+
+        .penalty-bar {
+            background: rgba(15, 23, 42, 0.9);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 0 0 6px 6px;
+            padding: 4px 16px;
             font-size: 0.8rem;
+            color: #38bdf8;
             font-weight: 700;
-            cursor: pointer;
-            white-space: nowrap;
-            border: 1px solid #4b5563;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            display: none;
         }
-        .file-upload-btn:hover { background: #4b5563; }
-        
-        .remove-logo-btn {
-            background: rgba(220, 38, 38, 0.2);
-            color: #f87171;
-            border: 1px solid rgba(220, 38, 38, 0.4);
-            padding: 10px 12px;
-            border-radius: 8px;
-            font-weight: 700;
-            cursor: pointer;
+        .penalty-bar.active { display: block; }
+
+        /* Fullscreen Status Modals */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(5, 8, 15, 0.88);
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+            z-index: 999;
         }
-        .remove-logo-btn:hover { background: #dc2626; color: white; }
 
-        .btn-group { display: flex; gap: 8px; align-items: center; }
+        .modal-overlay.active { opacity: 1; pointer-events: auto; }
 
-        button {
-            background: #374151;
+        .modal-card {
+            background: linear-gradient(135deg, #1e293b, #0f172a);
+            border: 2px solid #38bdf8;
+            padding: 35px 45px;
+            border-radius: 16px;
+            text-align: center;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.8);
+            transform: scale(0.9);
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 22px;
+        }
+
+        .modal-overlay.active .modal-card { transform: scale(1); }
+
+        .modal-card h1 {
+            font-family: 'Teko', sans-serif;
+            font-size: 3.5rem;
+            color: #f8fafc;
+            letter-spacing: 2px;
+            line-height: 1;
+        }
+
+        .modal-match-box {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: rgba(15, 23, 42, 0.95);
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            overflow: hidden;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            min-width: 420px;
+        }
+
+        .modal-scoreboard-row {
+            display: flex;
+            align-items: center;
+            width: 100%;
+        }
+
+        .modal-team-block {
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            height: 56px;
+            gap: 12px;
+            flex: 1;
+        }
+        .modal-team-block.left { background: rgba(2, 132, 199, 0.2); justify-content: flex-start; }
+        .modal-team-block.right { background: rgba(220, 38, 38, 0.2); justify-content: flex-end; flex-direction: row-reverse; }
+
+        .modal-logo-box {
+            width: 0px; opacity: 0; overflow: hidden; display: flex; align-items: center; justify-content: center;
+            transition: width 0.3s ease, opacity 0.3s ease;
+        }
+        .modal-logo-box.active { width: 32px; opacity: 1; }
+        .modal-logo-box img { width: 28px; height: 28px; object-fit: contain; }
+
+        .modal-team-name {
+            font-size: 1.15rem;
+            font-weight: 800;
+            color: #ffffff;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        .modal-score-box {
             color: white;
-            border: none;
-            padding: 10px 14px;
-            border-radius: 8px;
-            font-weight: 700;
-            cursor: pointer;
+            font-family: 'Teko', sans-serif;
+            font-size: 2.4rem;
+            padding: 0 20px;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 60px;
+        }
+
+        .modal-vs-box {
+            background: #090d16;
+            color: #ffffff;
+            font-family: 'Inter', sans-serif;
+            font-size: 1rem;
+            font-weight: 800;
+            padding: 0 16px;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-left: 1px solid rgba(255,255,255,0.1);
+            border-right: 1px solid rgba(255,255,255,0.1);
+            letter-spacing: 2px;
+        }
+
+        .modal-timer-footer {
+            background: #0b1120;
+            width: 100%;
+            padding: 8px;
+            text-align: center;
+            font-family: 'Teko', sans-serif;
+            font-size: 1.5rem;
+            color: #38bdf8;
+            letter-spacing: 1.5px;
+            border-top: 1px solid rgba(255,255,255,0.08);
+            text-transform: uppercase;
+        }
+
+        /* Fixed Action Replay Badge - Top Right Corner */
+        .replay-badge {
+            position: fixed;
+            top: 25px;
+            right: 25px;
+            background: rgba(202, 138, 4, 0.95);
+            color: #000;
+            font-weight: 800;
             font-size: 0.9rem;
+            padding: 5px 14px;
+            border-radius: 4px;
+            letter-spacing: 1px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            display: none;
+            z-index: 9999;
+            animation: pulseReplay 1.5s infinite;
         }
-        button:hover { background: #4b5563; }
-        
-        .btn-primary { background: #0284c7; flex: 1; }
-        .btn-success { background: #16a34a; flex: 1; }
-        .btn-danger { background: #dc2626; padding: 10px 16px; }
-        .btn-warning { background: #ca8a04; color: #000; flex: 1; }
+        .replay-badge.active {
+            display: block;
+        }
 
-        .switch {
-            position: relative;
-            display: inline-block;
-            width: 48px;
-            height: 24px;
+        @keyframes pulseReplay {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.05); opacity: 0.8; }
+            100% { transform: scale(1); opacity: 1; }
         }
-        .switch input { opacity: 0; width: 0; height: 0; }
-        .slider {
-            position: absolute;
-            cursor: pointer;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background-color: #374151;
-            transition: .3s;
-            border-radius: 24px;
-        }
-        .slider:before {
-            position: absolute;
-            content: "";
-            height: 18px; width: 18px; left: 3px; bottom: 3px;
-            background-color: white;
-            transition: .3s;
-            border-radius: 50%;
-        }
-        input:checked + .slider { background-color: #16a34a; }
-        input:checked + .slider:before { transform: translateX(24px); }
-
-        .action-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
     </style>
 </head>
 <body>
 
-    <div class="controller-container">
-        <div class="header-title">
-            <span>Scorvix Football Controller</span>
-            <span style="font-size: 0.8rem; color: #10b981; font-weight: 600;">● Live Connected</span>
+    <!-- Main Scoreboard -->
+    <div class="overlay-wrapper" id="wrapper">
+        <div class="scoreboard-container">
+            <div class="team-block left" id="blockA">
+                <div class="team-logo-box" id="boxLogoA">
+                    <img id="imgLogoA" src="" alt="">
+                </div>
+                <div class="team-name" id="dispNameA">REAL MADRID</div>
+            </div>
+            <div class="score-box" id="dispScoreA">0</div>
+
+            <div class="timer-center" id="timerCenterBox">
+                <div id="dispTimer">00:00</div>
+                <span class="live-dot">● LIVE</span>
+            </div>
+
+            <div class="score-box" id="dispScoreB">0</div>
+            <div class="team-block right" id="blockB">
+                <div class="team-logo-box" id="boxLogoB">
+                    <img id="imgLogoB" src="" alt="">
+                </div>
+                <div class="team-name" id="dispNameB">BARCELONA</div>
+            </div>
         </div>
 
-        <div class="grid-layout">
-            
-            <!-- Overlay Output Link Section -->
-            <div class="section-box full-width" style="background: #1e293b; border: 1px solid #38bdf840;">
-                <div class="section-title">
-                    <span style="color: #38bdf8;">vMix / OBS Overlay Link Output</span>
-                    <span style="font-size: 0.75rem; color: #94a3b8;">Copy this link into your streaming software browser source</span>
-                </div>
-                <div class="row">
-                    <input type="text" id="overlayLinkInput" readonly style="background: #0f172a; color: #38bdf8; font-weight: 700;">
-                    <button class="btn-primary" onclick="copyOverlayLink()" style="flex: unset; padding: 10px 20px;">📋 Copy Link</button>
-                    <a id="openOverlayBtn" href="#" target="_blank" style="text-decoration: none;"><button class="btn-success" style="padding: 10px 16px; height: 100%;">🔗 Preview</button></a>
-                </div>
-            </div>
-
-            <!-- 1. Master Scoreboard Toggle & Teams -->
-            <div class="section-box full-width">
-                <div class="section-title">
-                    <span>Scoreboard Master Control</span>
-                    <label class="switch">
-                        <input type="checkbox" id="masterToggle" checked onchange="saveData()">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                
-                <div class="row">
-                    <div class="col" style="flex: 2;">
-                        <label>Team A Name</label>
-                        <input type="text" id="nameA" value="REAL MADRID" oninput="saveData()">
-                    </div>
-                    <div class="col" style="flex: 2.5;">
-                        <label>Team A Logo (URL or Upload File)</label>
-                        <div class="file-upload-wrapper">
-                            <input type="text" id="logoA" placeholder="https://image-link.png" oninput="saveData()">
-                            <input type="file" id="logoFileA" accept="image/*" style="display: none;" onchange="handleFileUpload(event, 'A')">
-                            <button type="button" class="file-upload-btn" onclick="document.getElementById('logoFileA').click()">📁 Upload</button>
-                            <button type="button" class="remove-logo-btn" onclick="removeLogo('A')">✕</button>
-                        </div>
-                    </div>
-                    <div class="col" style="flex: 0 0 110px; align-items: center;">
-                        <label>Show Logo A</label>
-                        <label class="switch" style="margin-top: 4px;">
-                            <input type="checkbox" id="showLogoA" checked onchange="saveData()">
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                    <div class="col" style="flex: 0 0 160px;">
-                        <label>Team A Score</label>
-                        <div class="btn-group">
-                            <button onclick="updateScore('A', -1)" class="btn-danger">-</button>
-                            <input type="number" id="scoreA" value="0" style="text-align: center;" oninput="saveData()">
-                            <button onclick="updateScore('A', 1)" class="btn-success" style="flex:unset; padding: 10px 16px;">+</button>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="row">
-                    <div class="col" style="flex: 2;">
-                        <label>Team B Name</label>
-                        <input type="text" id="nameB" value="BARCELONA" oninput="saveData()">
-                    </div>
-                    <div class="col" style="flex: 2.5;">
-                        <label>Team B Logo (URL or Upload File)</label>
-                        <div class="file-upload-wrapper">
-                            <input type="text" id="logoB" placeholder="https://image-link.png" oninput="saveData()">
-                            <input type="file" id="logoFileB" accept="image/*" style="display: none;" onchange="handleFileUpload(event, 'B')">
-                            <button type="button" class="file-upload-btn" onclick="document.getElementById('logoFileB').click()">📁 Upload</button>
-                            <button type="button" class="remove-logo-btn" onclick="removeLogo('B')">✕</button>
-                        </div>
-                    </div>
-                    <div class="col" style="flex: 0 0 110px; align-items: center;">
-                        <label>Show Logo B</label>
-                        <label class="switch" style="margin-top: 4px;">
-                            <input type="checkbox" id="showLogoB" checked onchange="saveData()">
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                    <div class="col" style="flex: 0 0 160px;">
-                        <label>Team B Score</label>
-                        <div class="btn-group">
-                            <button onclick="updateScore('B', -1)" class="btn-danger">-</button>
-                            <input type="number" id="scoreB" value="0" style="text-align: center;" oninput="saveData()">
-                            <button onclick="updateScore('B', 1)" class="btn-success" style="flex:unset; padding: 10px 16px;">+</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 2. Match Timer & Settings -->
-            <div class="section-box">
-                <div class="section-title">Match Timer & Settings</div>
-                <div class="row">
-                    <div class="col">
-                        <label>Match Duration Setting</label>
-                        <select id="matchDuration" onchange="saveData()">
-                            <option value="24">24 Mins Match</option>
-                            <option value="30">30 Mins Match</option>
-                            <option value="40">40 Mins Match</option>
-                            <option value="60">60 Mins Match</option>
-                            <option value="90" selected>90 Mins Match (Standard)</option>
-                        </select>
-                    </div>
-                    <div class="col">
-                        <label>Clock Value (MM:SS)</label>
-                        <input type="text" id="timerInput" value="00:00" oninput="manualTimerEdit()">
-                    </div>
-                </div>
-                <div class="row">
-                    <button class="btn-success" onclick="startTimer()">▶ Start</button>
-                    <button class="btn-warning" onclick="stopTimer()" style="color: #fff;">⏸ Stop</button>
-                    <button class="btn-danger" onclick="resetTimer()" style="flex:1;">⏹ Reset</button>
-                </div>
-                <div class="row">
-                    <button class="btn-primary" onclick="setTimerPreset('Halfway')">Half Time Mark</button>
-                    <button class="btn-primary" onclick="setTimerPreset('Fullway')">Full Time Mark</button>
-                </div>
-            </div>
-
-            <!-- 3. Overlay Color Palette -->
-            <div class="section-box">
-                <div class="section-title">Overlay Color Palette</div>
-                <div class="row">
-                    <div class="col">
-                        <label>Team A Color</label>
-                        <input type="color" id="colorA" value="#0284c7" oninput="saveData()">
-                    </div>
-                    <div class="col">
-                        <label>Team B Color</label>
-                        <input type="color" id="colorB" value="#dc2626" oninput="saveData()">
-                    </div>
-                </div>
-                <div class="row">
-                    <div class="col">
-                        <label>Center Clock BG</label>
-                        <input type="color" id="colorClock" value="#090d16" oninput="saveData()">
-                    </div>
-                    <div class="col">
-                        <label>Modal Accent Color</label>
-                        <input type="color" id="colorModal" value="#38bdf8" oninput="saveData()">
-                    </div>
-                </div>
-            </div>
-
-            <!-- 4. Penalties Shootout -->
-            <div class="section-box">
-                <div class="section-title">
-                    <span>Penalty Shootout</span>
-                    <label class="switch">
-                        <input type="checkbox" id="penToggle" onchange="togglePenalties()">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="row" style="margin-top: auto; margin-bottom: auto;">
-                    <div class="col">
-                        <label>Team A Pens</label>
-                        <input type="number" id="penA" placeholder="0" oninput="saveData()">
-                    </div>
-                    <div class="col">
-                        <label>Team B Pens</label>
-                        <input type="number" id="penB" placeholder="0" oninput="saveData()">
-                    </div>
-                </div>
-            </div>
-
-            <!-- 5. Screen Modals (HT / FT) -->
-            <div class="section-box">
-                <div class="section-title">
-                    <span>Fullscreen Status Modal</span>
-                    <label class="switch">
-                        <input type="checkbox" id="modalToggle" onchange="toggleModalSwitch()">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="action-grid" style="margin-top: auto;">
-                    <button class="btn-warning" onclick="setModalTitle('HALF TIME')" style="color:#fff;">Half Time</button>
-                    <button class="btn-warning" onclick="setModalTitle('FULL TIME')" style="color:#fff;">Full Time</button>
-                    <button class="btn-warning" onclick="setModalTitle('PENALTIES')" style="color:#fff;">Penalties</button>
-                </div>
-            </div>
-
-            <!-- 6. Action Replay Badge Control -->
-            <div class="section-box">
-                <div class="section-title">
-                    <span>Action Replay Badge</span>
-                    <label class="switch">
-                        <input type="checkbox" id="arToggle" onchange="toggleActionReplay()">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div style="font-size: 0.85rem; color: #94a3b8; line-height: 1.4;">
-                    Stream ke top-right corner par cinematic yellow replay badge show/hide karein.
-                </div>
-            </div>
-
+        <div class="penalty-bar" id="penaltyBar">
+            PENALTIES: <span id="dispPenA">0</span> — <span id="dispPenB">0</span>
         </div>
     </div>
 
+    <!-- Fullscreen Modal -->
+    <div class="modal-overlay" id="modalOverlay">
+        <div class="modal-card" id="modalCardBox">
+            <h1 id="modalTitleText">HALF TIME</h1>
+            
+            <div class="modal-match-box">
+                <div class="modal-scoreboard-row">
+                    <div class="modal-team-block left" id="modalBlockA">
+                        <div class="modal-logo-box" id="modalBoxLogoA">
+                            <img id="modalImgLogoA" src="" alt="">
+                        </div>
+                        <div class="modal-team-name" id="modalDispNameA">REAL MADRID</div>
+                    </div>
+                    <div class="modal-score-box" id="modalDispScoreA">0</div>
+
+                    <div class="modal-vs-box">VS</div>
+
+                    <div class="modal-score-box" id="modalDispScoreB">0</div>
+                    <div class="modal-team-block right" id="modalBlockB">
+                        <div class="modal-logo-box" id="modalBoxLogoB">
+                            <img id="modalImgLogoB" src="" alt="">
+                        </div>
+                        <div class="modal-team-name" id="modalDispNameB">BARCELONA</div>
+                    </div>
+                </div>
+
+                <div class="modal-timer-footer" id="modalTimerFooter">
+                    HALF TIME BREAK • 45:00
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Action Replay Badge -->
+    <div class="replay-badge" id="replayBadge">▶ ACTION REPLAY</div>
+
     <script>
-        window.currentModalTitle = "HALF TIME";
-        let timerInterval = null;
+        function syncOverlay() {
+            const raw = localStorage.getItem('scorvix_football');
+            if (!raw) return;
+            const data = JSON.parse(raw);
 
-        // Auto-generate correct overlay link pointing to football-overlay.html
-        window.addEventListener('DOMContentLoaded', () => {
-            let loc = window.location.href;
-            let overlayUrl = loc.substring(0, loc.lastIndexOf('/') + 1) + 'football-overlay.html';
-            document.getElementById('overlayLinkInput').value = overlayUrl;
-            document.getElementById('openOverlayBtn').href = overlayUrl;
-        });
+            const wrapper = document.getElementById('wrapper');
+            if (data.showScoreboard) {
+                wrapper.classList.remove('hidden-scoreboard');
+            } else {
+                wrapper.classList.add('hidden-scoreboard');
+            }
 
-        function copyOverlayLink() {
-            let copyText = document.getElementById('overlayLinkInput');
-            copyText.select();
-            copyText.setSelectionRange(0, 99999);
-            navigator.clipboard.writeText(copyText.value);
-            alert("Overlay link copied! Ab ise vMix ya OBS ke Browser Source mein daal do.");
-        }
+            const nameA = data.nameA || "TEAM A";
+            const nameB = data.nameB || "TEAM B";
+            const scoreA = data.scoreA;
+            const scoreB = data.scoreB;
 
-        function handleFileUpload(event, team) {
-            const file = event.target.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    document.getElementById('logo' + team).value = e.target.result;
-                    saveData();
-                };
-                reader.readAsDataURL(file);
+            document.getElementById('dispNameA').innerText = nameA;
+            document.getElementById('dispNameB').innerText = nameB;
+            document.getElementById('dispScoreA').innerText = scoreA;
+            document.getElementById('dispScoreB').innerText = scoreB;
+
+            document.getElementById('modalDispNameA').innerText = nameA;
+            document.getElementById('modalDispNameB').innerText = nameB;
+            document.getElementById('modalDispScoreA').innerText = scoreA;
+            document.getElementById('modalDispScoreB').innerText = scoreB;
+
+            if (data.colorA) {
+                document.getElementById('dispScoreA').style.background = data.colorA;
+                document.getElementById('modalDispScoreA').style.background = data.colorA;
+                document.getElementById('blockA').style.background = `linear-gradient(90deg, ${data.colorA}40, transparent)`;
+                document.getElementById('modalBlockA').style.background = `${data.colorA}33`;
+            }
+            if (data.colorB) {
+                document.getElementById('dispScoreB').style.background = data.colorB;
+                document.getElementById('modalDispScoreB').style.background = data.colorB;
+                document.getElementById('blockB').style.background = `linear-gradient(-90deg, ${data.colorB}40, transparent)`;
+                document.getElementById('modalBlockB').style.background = `${data.colorB}33`;
+            }
+            if (data.colorClock) {
+                document.getElementById('timerCenterBox').style.background = data.colorClock;
+            }
+            if (data.colorModal) {
+                document.getElementById('modalCardBox').style.borderColor = data.colorModal;
+                document.getElementById('modalTimerFooter').style.color = data.colorModal;
+            }
+
+            const hasLogoA = data.showLogoA && data.logoA && data.logoA.trim() !== "";
+            const boxA = document.getElementById('boxLogoA');
+            const imgA = document.getElementById('imgLogoA');
+            const modalBoxA = document.getElementById('modalBoxLogoA');
+            const modalImgA = document.getElementById('modalImgLogoA');
+
+            if (hasLogoA) {
+                imgA.src = data.logoA;
+                modalImgA.src = data.logoA;
+                boxA.classList.add('active');
+                modalBoxA.classList.add('active');
+            } else {
+                boxA.classList.remove('active');
+                modalBoxA.classList.remove('active');
+            }
+
+            const hasLogoB = data.showLogoB && data.logoB && data.logoB.trim() !== "";
+            const boxB = document.getElementById('boxLogoB');
+            const imgB = document.getElementById('imgLogoB');
+            const modalBoxB = document.getElementById('modalBoxLogoB');
+            const modalImgB = document.getElementById('modalImgLogoB');
+
+            if (hasLogoB) {
+                imgB.src = data.logoB;
+                modalImgB.src = data.logoB;
+                boxB.classList.add('active');
+                modalBoxB.classList.add('active');
+            } else {
+                boxB.classList.remove('active');
+                modalBoxB.classList.remove('active');
+            }
+
+            let timerVal = data.timer || "00:00";
+            let parts = timerVal.split(":");
+            let currentMins = parseInt(parts[0]) || 0;
+            let duration = data.matchDuration || 90;
+
+            let displayString = timerVal;
+            if (currentMins >= duration) {
+                let extraMins = currentMins - duration;
+                displayString = `${duration}+${extraMins}:${parts[1] || '00'}`;
+            }
+            document.getElementById('dispTimer').innerText = displayString;
+
+            const penBar = document.getElementById('penaltyBar');
+            if (data.penA !== "" && data.penB !== "") {
+                penBar.classList.add('active');
+                document.getElementById('dispPenA').innerText = data.penA;
+                document.getElementById('dispPenB').innerText = data.penB;
+            } else {
+                penBar.classList.remove('active');
+            }
+
+            const modal = document.getElementById('modalOverlay');
+            if (data.activeModal && data.activeModal.trim() !== "") {
+                const title = data.activeModal;
+                document.getElementById('modalTitleText').innerText = title;
+                
+                let footerText = `${title} • ${displayString}`;
+                if(title.includes("PEN")) {
+                    footerText = `PENALTIES SHOOTOUT • ${data.penA || 0} - ${data.penB || 0}`;
+                }
+                document.getElementById('modalTimerFooter').innerText = footerText;
+
+                modal.classList.add('active');
+            } else {
+                modal.classList.remove('active');
+            }
+
+            const replay = document.getElementById('replayBadge');
+            if (data.showActionReplay) {
+                replay.classList.add('active');
+            } else {
+                replay.classList.remove('active');
             }
         }
 
-        function removeLogo(team) {
-            document.getElementById('logo' + team).value = '';
-            document.getElementById('logoFile' + team).value = '';
-            saveData();
-        }
-
-        function saveData() {
-            const duration = parseInt(document.getElementById('matchDuration').value) || 90;
-            const data = {
-                showScoreboard: document.getElementById('masterToggle').checked,
-                nameA: document.getElementById('nameA').value,
-                nameB: document.getElementById('nameB').value,
-                logoA: document.getElementById('logoA').value,
-                logoB: document.getElementById('logoB').value,
-                showLogoA: document.getElementById('showLogoA').checked,
-                showLogoB: document.getElementById('showLogoB').checked,
-                scoreA: parseInt(document.getElementById('scoreA').value) || 0,
-                scoreB: parseInt(document.getElementById('scoreB').value) || 0,
-                colorA: document.getElementById('colorA').value,
-                colorB: document.getElementById('colorB').value,
-                colorClock: document.getElementById('colorClock').value,
-                colorModal: document.getElementById('colorModal').value,
-                penA: document.getElementById('penToggle').checked ? (document.getElementById('penA').value || "0") : "",
-                penB: document.getElementById('penToggle').checked ? (document.getElementById('penB').value || "0") : "",
-                timer: document.getElementById('timerInput').value,
-                matchDuration: duration,
-                activeModal: document.getElementById('modalToggle').checked ? window.currentModalTitle : "",
-                showActionReplay: document.getElementById('arToggle').checked
-            };
-            localStorage.setItem('scorvix_football', JSON.stringify(data));
-        }
-
-        function updateScore(team, val) {
-            let input = document.getElementById('score' + team);
-            let current = parseInt(input.value) || 0;
-            let updated = current + val;
-            if(updated < 0) updated = 0;
-            input.value = updated;
-            saveData();
-        }
-
-        function startTimer() {
-            if (timerInterval) return;
-            timerInterval = setInterval(() => {
-                let timeStr = document.getElementById('timerInput').value;
-                let parts = timeStr.split(":");
-                let mins = parseInt(parts[0]) || 0;
-                let secs = parseInt(parts[1]) || 0;
-                secs++;
-                if (secs >= 60) { secs = 0; mins++; }
-                document.getElementById('timerInput').value = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-                saveData();
-            }, 1000);
-        }
-
-        function stopTimer() { clearInterval(timerInterval); timerInterval = null; }
-        function resetTimer() { stopTimer(); document.getElementById('timerInput').value = "00:00"; saveData(); }
-
-        function setTimerPreset(type) {
-            stopTimer();
-            let duration = parseInt(document.getElementById('matchDuration').value) || 90;
-            let targetMins = (type === 'Halfway') ? Math.floor(duration / 2) : duration;
-            document.getElementById('timerInput').value = `${String(targetMins).padStart(2, '0')}:00`;
-            saveData();
-        }
-
-        function manualTimerEdit() { stopTimer(); saveData(); }
-        function setModalTitle(title) { window.currentModalTitle = title; document.getElementById('modalToggle').checked = true; saveData(); }
-        function toggleModalSwitch() { saveData(); }
-        function togglePenalties() { saveData(); }
-        function toggleActionReplay() { saveData(); }
-
-        saveData();
+        setInterval(syncOverlay, 150);
+        syncOverlay();
     </script>
 </body>
 </html>
