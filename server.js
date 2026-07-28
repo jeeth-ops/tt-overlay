@@ -9,6 +9,11 @@ const io = new Server(server);
 // Yeh line ensure karti hai ki CSS, images, ya extra files sahi se load ho
 app.use(express.static(__dirname));
 
+// POST data (JSON) ko read karne ke liye zaroori hai
+app.use(express.json());
+
+// ----------------- PURANE ROUTES (JAISE THE WAISE) -----------------
+
 // 1. Home Page (Brand Name & Sports Button ke liye)
 app.get('/', (req, res) => {
     res.sendFile(__dirname + '/index.html');
@@ -28,6 +33,40 @@ app.get('/tt-panel', (req, res) => {
 app.get('/overlay', (req, res) => {
     res.sendFile(__dirname + '/overlay.html');
 });
+
+
+// ----------------- NAYE LOWER THIRD ROUTES & DATA -----------------
+
+// Lower Third ka live data store
+let ttData = {
+    ltTitle: "MATCH HIGHLIGHT",
+    ltText: "Announcement text goes here",
+    ltVisible: false
+};
+
+// 5. Lower Third Overlay file ka route (OBS ke liye)
+app.get('/tt-lowerthird', (req, res) => {
+    res.sendFile(__dirname + '/tt-lowerthird.html');
+});
+
+// 6. Lower Third Control Panel ka route
+app.get('/tt-lowerthird-panel', (req, res) => {
+    res.sendFile(__dirname + '/tt-lowerthird-panel.html');
+});
+
+// 7. Lower Third Data Fetch API (Overlay ke liye)
+app.get('/api/tt-data', (req, res) => {
+    res.json(ttData);
+});
+
+// 8. Lower Third Data Update API (Control Panel ke liye)
+app.post('/api/update-tt-data', (req, res) => {
+    if (req.body.ltTitle !== undefined) ttData.ltTitle = req.body.ltTitle;
+    if (req.body.ltText !== undefined) ttData.ltText = req.body.ltText;
+    if (req.body.ltVisible !== undefined) ttData.ltVisible = req.body.ltVisible;
+    res.json({ success: true, ttData });
+});
+
 
 // Socket.io Connection (Score live update karne ke liye)
 io.on('connection', (socket) => {
