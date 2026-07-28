@@ -13,22 +13,17 @@
             position: absolute;
             top: 30px;
             left: 50%;
-            transform: translateX(-50%) translateY(0);
+            transform: translateX(-50%);
             display: flex;
             flex-direction: column;
             align-items: center;
             gap: 6px;
-            /* Smooth slide & fade transition for vMix */
-            transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.4s ease-in-out;
-            opacity: 1;
-            visibility: visible;
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s ease;
         }
 
         .hidden-scoreboard {
-            transform: translateX(-50%) translateY(-140px) !important;
-            opacity: 0 !important;
-            visibility: hidden !important;
-            pointer-events: none;
+            transform: translateX(-50%) translateY(-120px);
+            opacity: 0;
         }
 
         .scoreboard-container {
@@ -354,21 +349,22 @@
     <div class="replay-badge" id="replayBadge">▶ ACTION REPLAY</div>
 
     <script>
-        function updateUI(data) {
-            if (!data) return;
+        function syncOverlay() {
+            const raw = localStorage.getItem('scorvix_football');
+            if (!raw) return;
+            const data = JSON.parse(raw);
 
             const wrapper = document.getElementById('wrapper');
-            // Master toggle smooth animation check
-            if (data.showScoreboard !== false) {
+            if (data.showScoreboard) {
                 wrapper.classList.remove('hidden-scoreboard');
             } else {
                 wrapper.classList.add('hidden-scoreboard');
             }
 
-            const nameA = data.nameA || "REAL MADRID";
-            const nameB = data.nameB || "BARCELONA";
-            const scoreA = data.scoreA !== undefined ? data.scoreA : 0;
-            const scoreB = data.scoreB !== undefined ? data.scoreB : 0;
+            const nameA = data.nameA || "TEAM A";
+            const nameB = data.nameB || "TEAM B";
+            const scoreA = data.scoreA;
+            const scoreB = data.scoreB;
 
             document.getElementById('dispNameA').innerText = nameA;
             document.getElementById('dispNameB').innerText = nameB;
@@ -445,7 +441,7 @@
             document.getElementById('dispTimer').innerText = displayString;
 
             const penBar = document.getElementById('penaltyBar');
-            if (data.penA !== undefined && data.penA !== "" && data.penB !== undefined && data.penB !== "") {
+            if (data.penA !== "" && data.penB !== "") {
                 penBar.classList.add('active');
                 document.getElementById('dispPenA').innerText = data.penA;
                 document.getElementById('dispPenB').innerText = data.penB;
@@ -477,23 +473,8 @@
             }
         }
 
-        function syncOverlay() {
-            const raw = localStorage.getItem('scorvix_football');
-            if (raw) {
-                updateUI(JSON.parse(raw));
-            }
-        }
-
-        // Real-time instantaneous updates using BroadcastChannel
-        const channel = new BroadcastChannel('scorvix_football_channel');
-        channel.onmessage = function (event) {
-            updateUI(event.data);
-        };
-
-        // Initial sync and dual fallback polling for vMix Browser Source reliability
+        setInterval(syncOverlay, 150);
         syncOverlay();
-        window.addEventListener('storage', syncOverlay);
-        setInterval(syncOverlay, 500); // Polling ensures vMix browser source instantly catches up without lag
     </script>
 </body>
 </html>
