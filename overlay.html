@@ -10,8 +10,34 @@
         body { 
             margin: 0; padding: 0; 
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            background: transparent; overflow: hidden; 
+            background: #0f172a; 
+            overflow: hidden; 
             width: 1920px; height: 1080px; 
+            position: relative;
+        }
+
+        /* --- BACKGROUND VIDEO (Blur & Opacity) --- */
+        .bg-animations {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: -999;
+            overflow: hidden;
+            background-color: #0f172a;
+            pointer-events: none;
+        }
+        .bg-video {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            min-width: 100%;
+            min-height: 100%;
+            transform: translate(-50%, -50%);
+            object-fit: cover;
+            filter: blur(12px) brightness(0.4);
+            opacity: 0.35;
         }
 
         /* Keyframes for Score Pulse Animation */
@@ -22,6 +48,18 @@
         }
         .score-bump {
             animation: pulseScore 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        /* Page Load Animation Keyframes */
+        @keyframes fadeInSlideUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         /* --- 1. TOURNAMENT HEADER BANNER (Glassmorphism & Smooth Slide) --- */
@@ -50,7 +88,7 @@
             opacity: 1; 
         }
 
-        /* --- 2. LIVE SCOREBOARD (Smooth Slide + Glow) --- */
+        /* --- 2. LIVE SCOREBOARD (Smooth Slide + Rounded Corners + Glow) --- */
         #score-container {
             position: absolute;
             bottom: 60px;
@@ -61,7 +99,7 @@
             background: rgba(15, 23, 42, 0.95);
             backdrop-filter: blur(12px);
             color: #ffffff;
-            border-radius: 8px;
+            border-radius: 8px; /* Poore container ka rounded corner */
             box-shadow: 0 25px 50px rgba(0,0,0,0.8);
             font-weight: bold;
             border-left: 6px solid #38bdf8;
@@ -71,6 +109,7 @@
             transform: translateY(120px) scale(0.95);
             opacity: 0;
             transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+            animation: fadeInSlideUp 0.6s ease 0.3s forwards; /* Page load animation */
         }
         #score-container.active { 
             transform: translateY(0) scale(1); 
@@ -86,7 +125,9 @@
             height: 52px;
             transition: background 0.3s ease;
         }
-        .tt-row:last-child { border-bottom: none; }
+        .tt-row:first-child { border-top-right-radius: 6px; }
+        .tt-row:last-child { border-bottom: none; border-bottom-right-radius: 6px; border-bottom-left-radius: 6px; }
+        
         .player-info {
             display: flex; align-items: center; gap: 12px; padding-left: 15px;
             font-size: 16px; letter-spacing: 1px; text-transform: uppercase;
@@ -103,7 +144,25 @@
 
         .scores-group { display: flex; height: 100%; }
         .set-score-box { width: 48px; display: flex; align-items: center; justify-content: center; font-size: 18px; background: rgba(17, 24, 39, 0.9); color: #9ca3af; border-left: 1px solid rgba(31, 41, 55, 0.8); }
-        .main-score-box { width: 60px; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 900; background: #9333ea; color: #ffffff; transition: transform 0.2s ease; }
+        
+        /* Sharp edges hatakar purple section ko rounded kiya gaya hai */
+        .main-score-box { 
+            width: 60px; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            font-size: 24px; 
+            font-weight: 900; 
+            background: #9333ea; 
+            color: #ffffff; 
+            transition: transform 0.2s ease; 
+        }
+        .tt-row:first-child .main-score-box {
+            border-top-right-radius: 6px;
+        }
+        .tt-row:last-child .main-score-box {
+            border-bottom-right-radius: 6px;
+        }
 
         /* --- 3. DYNAMIC INTRO SCREEN (Cinematic Zoom & Fade) --- */
         #intro-container {
@@ -205,6 +264,13 @@
     </style>
 </head>
 <body>
+
+    <!-- Background Video with Blur & Opacity -->
+    <div class="bg-animations">
+        <video autoplay muted loop playsinline class="bg-video">
+            <source src="table tennis video.mp4" type="video/mp4">
+        </video>
+    </div>
 
     <!-- 1. Tournament Header Banner -->
     <div id="header-banner">TABLE TENNIS SUPER LEAGUE MAHARASHTRA 2025</div>
