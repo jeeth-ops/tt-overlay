@@ -88,6 +88,35 @@
             to { opacity: 1; transform: translateY(0); }
         }
 
+        /* Full Screen Strict Login Gate Overlay */
+        #auth-gate {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(16px);
+            z-index: 9999;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: opacity 0.5s ease;
+        }
+        .gate-card {
+            background: var(--bg-card);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 50px 40px;
+            border-radius: 20px;
+            text-align: center;
+            max-width: 400px;
+            width: 90%;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.7);
+        }
+        .gate-card h2 { font-size: 2rem; margin-bottom: 10px; }
+        .gate-card h2 span { color: var(--accent); }
+        .gate-card p { color: var(--text-muted); margin-bottom: 30px; font-size: 0.95rem; }
+
         nav {
             display: flex; 
             justify-content: space-between; 
@@ -142,7 +171,7 @@
         }
         .cta-btn:hover { background: var(--accent-hover); transform: translateY(-3px); box-shadow: 0 8px 25px rgba(244, 63, 94, 0.6); }
 
-        /* Maalik Admin Panel Styles */
+        /* Maalik Control Panel Styles */
         .admin-panel-container { max-width: 800px; margin: 0 auto 50px auto; padding: 0 20px; }
         .admin-box {
             background: var(--bg-card);
@@ -257,6 +286,15 @@
 </head>
 <body>
 
+    <!-- Strict Login Gate (Website kholte hi sabse pehle yeh dikhega) -->
+    <div id="auth-gate">
+        <div class="gate-card">
+            <h2>Scor<span>vix</span> Access</h2>
+            <p>Please sign in with your Google account to access live overlays and controllers.</p>
+            <button id="gate-login-btn" class="cta-btn" style="width: 100%; justify-content: center; font-size: 1rem;">Login with Google</button>
+        </div>
+    </div>
+
     <div class="bg-animations">
         <video autoplay muted loop playsinline class="bg-video">
             <source src="Sequence 04.mp4" type="video/mp4">
@@ -268,8 +306,7 @@
         <div class="logo">Scor<span>vix</span></div>
         <div class="nav-right">
             <span id="user-display"></span>
-            <button id="login-btn" class="auth-btn">Google Login</button>
-            <button id="logout-btn" class="auth-btn btn-danger hidden">Logout</button>
+            <button id="logout-btn" class="auth-btn btn-danger">Logout</button>
             <a href="#sports" class="nav-btn">Get Started</a>
         </div>
     </nav>
@@ -340,12 +377,11 @@
         </div>
     </section>
 
-    <!-- Firebase Scripts & Auth Logic -->
+    <!-- Firebase Scripts & Strict Gate Logic -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
-        // Apna Firebase Config yahan daal lena (Purple Elite wala ya naya)
         const firebaseConfig = {
             apiKey: "YOUR_API_KEY",
             authDomain: "YOUR_AUTH_DOMAIN",
@@ -359,13 +395,14 @@
         const auth = getAuth(app);
         const provider = new GoogleAuthProvider();
 
-        const loginBtn = document.getElementById('login-btn');
+        const gateLoginBtn = document.getElementById('gate-login-btn');
         const logoutBtn = document.getElementById('logout-btn');
         const userDisplay = document.getElementById('user-display');
+        const authGate = document.getElementById('auth-gate');
         const adminPanel = document.getElementById('admin-panel');
 
-        // Google Login Popup
-        loginBtn.addEventListener('click', async () => {
+        // Gate Login Click
+        gateLoginBtn.addEventListener('click', async () => {
             try {
                 await signInWithPopup(auth, provider);
             } catch (error) {
@@ -373,16 +410,20 @@
             }
         });
 
-        // Logout
+        // Logout Click
         logoutBtn.addEventListener('click', async () => {
             await signOut(auth);
         });
 
-        // Global Session & Maalik Check
+        // Strict Session Check
         onAuthStateChanged(auth, (user) => {
             if (user) {
-                loginBtn.classList.add('hidden');
-                logoutBtn.classList.remove('hidden');
+                // User logged in hai -> Gate hatao, andar aane do
+                authGate.style.opacity = '0';
+                setTimeout(() => {
+                    authGate.classList.add('hidden');
+                }, 500);
+
                 userDisplay.innerText = `Hi, ${user.displayName || user.email}`;
 
                 // Sirf chhayajeeth@gmail.com ke liye Admin panel khulega
@@ -392,8 +433,9 @@
                     adminPanel.classList.add('hidden');
                 }
             } else {
-                loginBtn.classList.remove('hidden');
-                logoutBtn.classList.add('hidden');
+                // User logged out hai -> Gate wapas lagao
+                authGate.classList.remove('hidden');
+                authGate.style.opacity = '1';
                 userDisplay.innerText = "";
                 adminPanel.classList.add('hidden');
             }
