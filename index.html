@@ -255,6 +255,7 @@
             position: relative; 
             overflow: hidden;
             display: block;
+            cursor: pointer;
         }
 
         .sport-card:hover { border-color: var(--accent); transform: translateY(-5px); box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
@@ -353,12 +354,12 @@
         <p class="reveal-on-scroll delay-1">Select the sport you want to stream and control</p>
         
         <div class="sports-grid" id="sports-grid-container">
-            <a href="studio.html" class="sport-card reveal-on-scroll delay-1">
+            <div onclick="openTableTennisStudio()" class="sport-card reveal-on-scroll delay-1">
                 <div class="card-content">
                     <div class="sport-icon">🏓</div>
                     <h3>Table Tennis</h3>
                 </div>
-            </a>
+            </div>
             
             <div class="sport-card coming-soon reveal-on-scroll delay-2">
                 <div class="sport-icon">🏏</div>
@@ -376,7 +377,7 @@
 
     <!-- Firebase Scripts & Strict Gate Logic -->
     <script>
-        // 🌟 Firebase Configuration (Secured from your studio code) 🌟
+        // 🌟 Firebase Configuration 🌟
         const firebaseConfig = {
             apiKey: "AIzaSyAYc_bEB9C4RhhLhPBEJsJRFRUppcR45yo",
             authDomain: "scorvix-faf0e.firebaseapp.com",
@@ -395,6 +396,8 @@
         const userDisplay = document.getElementById('user-display');
         const adminPanel = document.getElementById('admin-panel');
 
+        let isUserLoggedIn = false;
+
         // Google Login Function
         function loginWithGoogle() {
             const provider = new firebase.auth.GoogleAuthProvider();
@@ -408,9 +411,21 @@
             auth.signOut();
         }
 
+        // Safe Navigation to Studio Controller
+        function openTableTennisStudio() {
+            if (isUserLoggedIn) {
+                window.location.href = "studio.html";
+            } else {
+                alert("Pehle Google Login karein!");
+                authGate.classList.remove('hidden');
+                authGate.style.opacity = '1';
+            }
+        }
+
         // Strict Session Check
         auth.onAuthStateChanged(user => {
             if (user) {
+                isUserLoggedIn = true;
                 // User logged in hai -> Gate hatao, andar aane do
                 authGate.style.opacity = '0';
                 setTimeout(() => {
@@ -426,6 +441,7 @@
                     adminPanel.classList.add('hidden');
                 }
             } else {
+                isUserLoggedIn = false;
                 // User logged out hai -> Gate wapas lagao
                 authGate.classList.remove('hidden');
                 authGate.style.opacity = '1';
