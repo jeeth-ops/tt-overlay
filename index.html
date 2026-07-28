@@ -23,11 +23,23 @@
             font-family: 'Inter', sans-serif;
         }
 
+        /* --- Page Transition Smooth Setup --- */
         body {
             background-color: var(--bg-dark);
             color: var(--text-main);
             line-height: 1.6;
-            overflow-x: hidden; /* Rokne ke liye taki animation bahar na jaye */
+            overflow-x: hidden;
+            opacity: 0;
+            transform: translateY(15px);
+            transition: opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1), transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        body.page-loaded {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        body.page-leaving {
+            opacity: 0;
+            transform: translateY(-15px);
         }
 
         /* 🌟 Animated Background Elements 🌟 */
@@ -231,5 +243,28 @@
         </div>
     </section>
 
+    <!-- --- Page Transition Script --- -->
+    <script>
+        // Page load hote hi smooth fade-in ho
+        window.addEventListener('DOMContentLoaded', () => {
+            document.body.classList.add('page-loaded');
+        });
+
+        // Jab bhi kisi link par click karke doosre page par jao, toh smooth fade-out ho
+        document.querySelectorAll('a').forEach(link => {
+            link.addEventListener('click', function(e) {
+                let href = this.getAttribute('href');
+                // Agar link same site ka hai aur '#' ya 'javascript' nahi hai
+                if (href && !href.startsWith('#') && !href.startsWith('javascript') && !this.hasAttribute('target')) {
+                    e.preventDefault();
+                    document.body.classList.remove('page-loaded');
+                    document.body.classList.add('page-leaving');
+                    setTimeout(() => {
+                        window.location.href = href;
+                    }, 400); // 0.4 seconds ka smooth animation delay
+                }
+            });
+        });
+    </script>
 </body>
 </html>
