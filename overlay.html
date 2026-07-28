@@ -2,275 +2,85 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pro League Broadcast Overlays</title>
-    <script src="/socket.io/socket.io.js"></script>
+    <title>Stream Overlay</title>
     <style>
-        body { 
-            margin: 0; padding: 0; 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            background: transparent; overflow: hidden; 
-            width: 1920px; height: 1080px; 
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: transparent; margin: 0; }
+        .scoreboard {
+            position: absolute; bottom: 30px; left: 50px;
+            display: flex; background: rgba(0, 0, 0, 0.85);
+            color: white; border-radius: 8px; overflow: hidden;
+            border: 2px solid #444; font-size: 24px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);
         }
+        .player-row { display: flex; align-items: center; padding: 12px 20px; }
+        .player-row:first-child { border-bottom: 2px solid #444; }
+        .name { width: 150px; font-weight: bold; }
+        .sets { background: #333; padding: 5px 15px; margin: 0 15px; border-radius: 4px; font-weight: bold; color: #ffcc00; }
+        .score { font-size: 32px; font-weight: bold; width: 50px; text-align: center; color: #00ffcc; }
 
-        /* --- 1. TOURNAMENT HEADER BANNER --- */
-        #header-banner {
-            position: absolute;
-            top: 40px;
-            left: 50%;
-            transform: translate(-50%, -50px) translateZ(0);
-            background: linear-gradient(135deg, #dc2626, #991b1b);
-            color: #ffffff;
-            padding: 10px 40px;
-            font-size: 18px;
-            font-weight: 900;
-            letter-spacing: 2px;
-            border-radius: 6px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.6);
-            text-transform: uppercase;
-            opacity: 0;
-            transition: transform 0.5s ease, opacity 0.4s ease;
-            pointer-events: none;
+        /* Winner Announcement Banner */
+        #winnerBanner {
+            display: none; position: fixed; top: 30%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: linear-gradient(45deg, #00b09b, #96c93d);
+            color: white; padding: 25px 50px; font-size: 45px; font-weight: bold;
+            border-radius: 12px; box-shadow: 0 15px 35px rgba(0,0,0,0.7);
+            z-index: 9999; text-align: center; border: 3px solid #fff;
+            animation: popUp 0.5s ease-in-out;
         }
-        #header-banner.active { transform: translate(-50%, 0) translateZ(0); opacity: 1; }
-
-        /* --- 2. LIVE SCOREBOARD --- */
-        #score-container {
-            position: absolute;
-            bottom: 60px;
-            left: 60px;
-            display: flex;
-            flex-direction: column;
-            width: 420px;
-            background: #0f172a;
-            color: #ffffff;
-            border-radius: 4px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.8);
-            font-weight: bold;
-            border-left: 5px solid #38bdf8;
-            transform: translateY(100px) translateZ(0);
-            opacity: 0;
-            transition: transform 0.5s ease, opacity 0.4s ease;
+        @keyframes popUp {
+            0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0; }
+            100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
         }
-        #score-container.active { transform: translateY(0) translateZ(0); opacity: 1; }
-
-        .tt-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background: #111827;
-            border-bottom: 2px solid #1f2937;
-            height: 50px;
-        }
-        .tt-row:last-child { border-bottom: none; }
-        .player-info {
-            display: flex; align-items: center; gap: 10px; padding-left: 15px;
-            font-size: 16px; letter-spacing: 1px; text-transform: uppercase;
-            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px;
-        }
-        .player-img { width: 28px; height: 20px; object-fit: cover; border-radius: 2px; display: none; }
-        .server-indicator { font-size: 12px; color: #eab308; margin-left: 5px; display: none; }
-        .active-server .server-indicator { display: inline-block; }
-        .scores-group { display: flex; height: 100%; }
-        .set-score-box { width: 45px; display: flex; align-items: center; justify-content: center; font-size: 18px; background: #111827; color: #9ca3af; border-left: 1px solid #1f2937; }
-        .main-score-box { width: 55px; display: flex; align-items: center; justify-content: center; font-size: 22px; background: #9333ea; color: #ffffff; }
-
-        /* --- 3. DYNAMIC INTRO SCREEN (TEAM A vs TEAM B) --- */
-        #intro-container {
-            position: absolute;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(9, 13, 22, 0.92);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.5s ease;
-            z-index: 100;
-        }
-        #intro-container.active { opacity: 1; pointer-events: auto; }
-        .intro-title-badge {
-            background: #dc2626; color: #fff; padding: 8px 30px; font-size: 20px; font-weight: 900;
-            letter-spacing: 2px; border-radius: 4px; margin-bottom: 40px; text-transform: uppercase;
-            box-shadow: 0 10px 25px rgba(220, 38, 38, 0.5);
-            transform: translateY(-30px); transition: transform 0.6s ease;
-        }
-        .intro-matchup-box {
-            display: flex; align-items: center; gap: 40px;
-            transform: scale(0.85); transition: transform 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-        }
-        #intro-container.active .intro-title-badge,
-        #intro-container.active .intro-matchup-box { transform: translateY(0) scale(1); }
-        
-        .intro-team {
-            font-size: 48px; font-weight: 900; color: #ffffff; text-transform: uppercase;
-            letter-spacing: 2px; text-shadow: 0 10px 25px rgba(0,0,0,0.8);
-            background: #1e293b; padding: 25px 50px; border-radius: 12px; border: 2px solid #334155;
-            max-width: 500px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-        }
-        .intro-vs {
-            font-size: 36px; font-weight: 900; color: #facc15; font-style: italic; text-shadow: 0 0 20px rgba(250, 204, 21, 0.6);
-        }
-
-        /* --- 4. WINNER BANNER --- */
-        #winner-banner {
-            position: absolute;
-            top: 50%; left: 50%;
-            transform: translate(-50%, -50%) scale(0.8) translateZ(0);
-            background: rgba(15, 23, 42, 0.95);
-            border: 2px solid #38bdf8;
-            color: #ffffff;
-            padding: 30px 60px;
-            font-size: 32px; font-weight: 900; letter-spacing: 2px;
-            border-radius: 12px; box-shadow: 0 30px 60px rgba(0,0,0,0.8);
-            text-align: center; text-transform: uppercase; opacity: 0;
-            transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.4s ease;
-            pointer-events: none;
-        }
-        #winner-banner.active { transform: translate(-50%, -50%) scale(1) translateZ(0); opacity: 1; }
-
-        /* --- 5. POINTS TABLE LEADERBOARD --- */
-        #points-table-container {
-            position: absolute;
-            top: 150px; left: 50%;
-            transform: translate(-50%, -50px) translateZ(0);
-            width: 1000px; background: #0f172a; border-radius: 8px;
-            box-shadow: 0 25px 50px rgba(0,0,0,0.8); border: 2px solid #334155;
-            overflow: hidden; opacity: 0;
-            transition: transform 0.5s ease, opacity 0.4s ease; pointer-events: none;
-        }
-        #points-table-container.active { transform: translate(-50%, 0) translateZ(0); opacity: 1; }
-        .pt-header {
-            background: linear-gradient(90deg, #1e293b, #0f172a);
-            display: grid; grid-template-columns: 50px 1fr 70px 90px 120px 110px 110px 90px;
-            padding: 12px 15px; font-weight: 900; font-size: 13px; color: #38bdf8;
-            border-bottom: 2px solid #334155; text-align: center;
-        }
-        .pt-row {
-            display: grid; grid-template-columns: 50px 1fr 70px 90px 120px 110px 110px 90px;
-            padding: 10px 15px; font-size: 14px; font-weight: bold; border-bottom: 1px solid #1e293b;
-            align-items: center; text-align: center; background: rgba(15, 23, 42, 0.95);
-        }
-        .pt-row:nth-child(even) { background: rgba(30, 41, 59, 0.5); }
-        .pt-row div:nth-child(2) { text-align: left; }
     </style>
 </head>
 <body>
 
-    <!-- 1. Tournament Header Banner -->
-    <div id="header-banner">TABLE TENNIS SUPER LEAGUE MAHARASHTRA 2025</div>
-
-    <!-- 2. Dynamic Match Intro Screen (Automatically takes Team A vs Team B names) -->
-    <div id="intro-container">
-        <div class="intro-title-badge" id="intro-tourney-title">TABLE TENNIS SUPER LEAGUE</div>
-        <div class="intro-matchup-box">
-            <div class="intro-team" id="intro-p1">PHANTOM STARS</div>
-            <div class="intro-vs">VS</div>
-            <div class="intro-team" id="intro-p2">MUMBAI MOZARTT</div>
-        </div>
-    </div>
-
-    <!-- 3. Live Scoreboard -->
-    <div id="score-container">
-        <div class="tt-row" id="row-p1">
-            <div class="player-info">
-                <img id="o-img1" class="player-img" src="">
-                <span id="o-p1-name">PLAYER A</span>
-                <span class="server-indicator">◀</span>
+    <div class="scoreboard">
+        <div>
+            <div class="player-row">
+                <span class="name" id="p1Name">Player 1</span>
+                <span class="sets" id="p1Sets">0</span>
+                <span class="score" id="p1Score">0</span>
             </div>
-            <div class="scores-group">
-                <div class="set-score-box" id="o-p1-sets">0</div>
-                <div class="main-score-box" id="o-p1-score">0</div>
-            </div>
-        </div>
-        <div class="tt-row" id="row-p2">
-            <div class="player-info">
-                <img id="o-img2" class="player-img" src="">
-                <span id="o-p2-name">PLAYER B</span>
-                <span class="server-indicator">◀</span>
-            </div>
-            <div class="scores-group">
-                <div class="set-score-box" id="o-p2-sets">0</div>
-                <div class="main-score-box" id="o-p2-score">0</div>
+            <div class="player-row">
+                <span class="name" id="p2Name">Player 2</span>
+                <span class="sets" id="p2Sets">0</span>
+                <span class="score" id="p2Score">0</span>
             </div>
         </div>
     </div>
 
-    <!-- 4. Winner Banner -->
-    <div id="winner-banner">PLAYER A WON THE MATCH</div>
-
-    <!-- 5. Points Table Overlay -->
-    <div id="points-table-container">
-        <div class="pt-header">
-            <div>#</div>
-            <div>POINTS TABLE</div>
-            <div>TIES</div>
-            <div>TIES WON</div>
-            <div>GAMES PLAYED</div>
-            <div>MATCHES WON</div>
-            <div>GAMES WON</div>
-            <div>POINTS</div>
-        </div>
-        <div id="pt-body"></div>
+    <!-- Automatic Winner Overlay Banner -->
+    <div id="winnerBanner">
+        <span id="winnerText">Player 1 Wins!</span>
     </div>
 
+    <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
 
-        socket.on('liveScore', (data) => {
-            // Update texts dynamically
-            document.getElementById('header-banner').innerText = data.tourneyTitle;
-            document.getElementById('intro-tourney-title').innerText = data.tourneyTitle;
-            
-            document.getElementById('o-p1-name').innerText = data.p1Name;
-            document.getElementById('o-p2-name').innerText = data.p2Name;
-            document.getElementById('intro-p1').innerText = data.p1Name;
-            document.getElementById('intro-p2').innerText = data.p2Name;
+        socket.on('updateState', (state) => {
+            document.getElementById('p1Name').innerText = state.p1Name;
+            document.getElementById('p2Name').innerText = state.p2Name;
+            document.getElementById('p1Score').innerText = state.p1Score;
+            document.getElementById('p2Score').innerText = state.p2Score;
+            document.getElementById('p1Sets').innerText = state.p1Sets;
+            document.getElementById('p2Sets').innerText = state.p2Sets;
 
-            document.getElementById('o-p1-score').innerText = data.p1Score;
-            document.getElementById('o-p2-score').innerText = data.p2Score;
-            document.getElementById('o-p1-sets').innerText = data.p1Sets;
-            document.getElementById('o-p2-sets').innerText = data.p2Sets;
+            // Winner Logic (Best of 5 requires 3 sets, Best of 7 requires 4 sets)
+            let targetSets = (state.matchFormat === 'bestOf7') ? 4 : 3;
+            const banner = document.getElementById('winnerBanner');
+            const winnerText = document.getElementById('winnerText');
 
-            let img1 = document.getElementById('o-img1');
-            if(data.img1) { img1.src = data.img1; img1.style.display = 'block'; } else { img1.style.display = 'none'; }
-            let img2 = document.getElementById('o-img2');
-            if(data.img2) { img2.src = data.img2; img2.style.display = 'block'; } else { img2.style.display = 'none'; }
-
-            if (data.server === 1) {
-                document.getElementById('row-p1').classList.add('active-server');
-                document.getElementById('row-p2').classList.remove('active-server');
+            if (state.p1Sets >= targetSets) {
+                winnerText.innerText = `${state.p1Name} Wins the Match!`;
+                banner.style.display = 'block';
+            } else if (state.p2Sets >= targetSets) {
+                winnerText.innerText = `${state.p2Name} Wins the Match!`;
+                banner.style.display = 'block';
             } else {
-                document.getElementById('row-p2').classList.add('active-server');
-                document.getElementById('row-p1').classList.remove('active-server');
+                banner.style.display = 'none';
             }
-
-            // Render Points Table dynamically
-            data.standings.sort((a, b) => b.points - a.points);
-            let ptHTML = "";
-            data.standings.forEach((item, index) => {
-                ptHTML += `<div class="pt-row">
-                    <div>${index + 1}</div>
-                    <div>${item.team}</div>
-                    <div>${item.ties}</div>
-                    <div>${item.tiesWon}</div>
-                    <div>${item.gamesPlayed}</div>
-                    <div>${item.matchesWon}</div>
-                    <div>${item.gamesWon}</div>
-                    <div>${item.points}</div>
-                </div>`;
-            });
-            document.getElementById('pt-body').innerHTML = ptHTML;
-
-            // Visibility States Handling
-            document.getElementById('header-banner').className = data.state === 'header-in' ? 'active' : '';
-            document.getElementById('intro-container').className = data.state === 'intro-in' ? 'active' : '';
-            document.getElementById('score-container').className = data.state === 'score-in' ? 'active' : '';
-            document.getElementById('winner-banner').className = data.state === 'winner-in' ? 'active' : '';
-            document.getElementById('points-table-container').className = data.state === 'table-in' ? 'active' : '';
-            
-            document.getElementById('winner-banner').innerText = data.winner;
         });
     </script>
 </body>
