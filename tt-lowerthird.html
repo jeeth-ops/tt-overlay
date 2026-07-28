@@ -4,95 +4,109 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Scorvix - Lower Third Overlay</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: 'Inter', sans-serif;
-        }
-
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
+        
         body {
             background: transparent;
-            overflow: hidden;
             height: 100vh;
             display: flex;
             align-items: flex-end;
-            padding: 50px;
+            justify-content: center;
+            padding-bottom: 50px;
+            overflow: hidden;
         }
 
-        /* Lower Third Container with Slide Animation */
         .lower-third-container {
             position: relative;
-            opacity: 0;
-            transform: translateY(50px);
-            transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+            width: 650px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
 
-        .lower-third-container.show {
+        /* 1. Main Announcement Box */
+        .lt-body {
+            background: linear-gradient(90deg, #1a0505 0%, #450a0a 50%, #1a0505 100%);
+            color: #ffffff;
+            width: 100%;
+            padding: 16px 24px;
+            text-align: center;
+            font-size: 1.35rem;
+            font-weight: 600;
+            border-bottom: 3px solid #ef4444;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            border-radius: 0 0 6px 6px; /* Neeche se rounded */
+            z-index: 2;
+            
+            /* Animation Defaults */
+            opacity: 0;
+            transform: translateY(60px);
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        /* 2. Title Box - Announcement ke center se bina gap ke upar niklega */
+        .lt-title {
+            background-color: #000000;
+            color: #ef4444;
+            font-size: 0.8rem;
+            padding: 5px 16px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            border-radius: 4px 4px 0 0; /* Upar se rounded */
+            position: absolute;
+            bottom: 100%; /* Ekdum announcement box ke border ke upar chipka rahega */
+            left: 50%;
+            z-index: 1;
+            
+            /* Animation Defaults */
+            opacity: 0;
+            transform: translate(-50%, 15px) scaleY(0.2);
+            transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1) 0.2s;
+        }
+
+        /* Jab Active hoga */
+        .lower-third-container.active .lt-body {
             opacity: 1;
             transform: translateY(0);
         }
 
-        /* Title Box (Top Small Tag) */
-        .lt-title-box {
-            background: #000000;
-            color: #ffffff;
-            font-size: 0.9rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 1.5px;
-            padding: 6px 20px;
-            display: inline-block;
-            border-top: 2px solid #ef4444; /* Red accent */
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
-        }
-
-        /* Main Content Box */
-        .lt-main-box {
-            background: linear-gradient(135deg, rgba(15, 15, 15, 0.95), rgba(30, 0, 0, 0.95));
-            color: #ffffff;
-            padding: 18px 30px;
-            font-size: 1.8rem;
-            font-weight: 800;
-            border-left: 6px solid #ef4444; /* Bold Red Border */
-            border-top: 1px solid rgba(239, 68, 68, 0.3);
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
-            min-width: 500px;
-            max-width: 800px;
-            backdrop-filter: blur(10px);
+        .lower-third-container.active .lt-title {
+            opacity: 1;
+            /* Center se khul kar bina kisi gap ke upar baith jayega */
+            transform: translate(-50%, 0) scaleY(1);
         }
     </style>
 </head>
 <body>
 
-    <div class="lower-third-container" id="ltContainer">
-        <div id="ltTitle" class="lt-title-box">MATCH HIGHLIGHT</div>
-        <div id="ltText" class="lt-main-box">Announcement text goes here</div>
+    <div id="lowerThird" class="lower-third-container">
+        <div id="ltTitle" class="lt-title">MATCH HIGHLIGHT</div>
+        <div id="ltText" class="lt-body">Announcement text goes here</div>
     </div>
 
     <script>
-        // Live data update aur animation ke liye WebSocket ya Server polling
-        function updateData() {
+        function fetchLowerThirdData() {
             fetch('/api/tt-data')
                 .then(res => res.json())
                 .then(data => {
-                    if (data.ltTitle) document.getElementById('ltTitle').innerText = data.ltTitle;
-                    if (data.ltText) document.getElementById('ltText').innerText = data.ltText;
+                    document.getElementById('ltTitle').textContent = data.ltTitle;
+                    document.getElementById('ltText').textContent = data.ltText;
                     
-                    const container = document.getElementById('ltContainer');
+                    const container = document.getElementById('lowerThird');
                     if (data.ltVisible) {
-                        container.classList.add('show');
+                        container.classList.add('active');
                     } else {
-                        container.classList.remove('show');
+                        container.classList.remove('active');
                     }
                 })
                 .catch(err => console.log('Error fetching data:', err));
         }
 
-        setInterval(updateData, 500);
-        updateData();
+        setInterval(fetchLowerThirdData, 500);
+        fetchLowerThirdData();
     </script>
 </body>
 </html>
