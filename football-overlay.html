@@ -13,17 +13,22 @@
             position: absolute;
             top: 30px;
             left: 50%;
-            transform: translateX(-50%);
+            transform: translateX(-50%) translateY(0);
             display: flex;
             flex-direction: column;
             align-items: center;
             gap: 6px;
-            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s ease;
+            /* Smooth slide & fade transition for vMix */
+            transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.4s ease-in-out;
+            opacity: 1;
+            visibility: visible;
         }
 
         .hidden-scoreboard {
-            transform: translateX(-50%) translateY(-120px);
-            opacity: 0;
+            transform: translateX(-50%) translateY(-140px) !important;
+            opacity: 0 !important;
+            visibility: hidden !important;
+            pointer-events: none;
         }
 
         .scoreboard-container {
@@ -353,16 +358,17 @@
             if (!data) return;
 
             const wrapper = document.getElementById('wrapper');
-            if (data.showScoreboard) {
+            // Master toggle smooth animation check
+            if (data.showScoreboard !== false) {
                 wrapper.classList.remove('hidden-scoreboard');
             } else {
                 wrapper.classList.add('hidden-scoreboard');
             }
 
-            const nameA = data.nameA || "TEAM A";
-            const nameB = data.nameB || "TEAM B";
-            const scoreA = data.scoreA;
-            const scoreB = data.scoreB;
+            const nameA = data.nameA || "REAL MADRID";
+            const nameB = data.nameB || "BARCELONA";
+            const scoreA = data.scoreA !== undefined ? data.scoreA : 0;
+            const scoreB = data.scoreB !== undefined ? data.scoreB : 0;
 
             document.getElementById('dispNameA').innerText = nameA;
             document.getElementById('dispNameB').innerText = nameB;
@@ -439,7 +445,7 @@
             document.getElementById('dispTimer').innerText = displayString;
 
             const penBar = document.getElementById('penaltyBar');
-            if (data.penA !== "" && data.penB !== "") {
+            if (data.penA !== undefined && data.penA !== "" && data.penB !== undefined && data.penB !== "") {
                 penBar.classList.add('active');
                 document.getElementById('dispPenA').innerText = data.penA;
                 document.getElementById('dispPenB').innerText = data.penB;
@@ -484,8 +490,10 @@
             updateUI(event.data);
         };
 
-        // Initial sync on load
+        // Initial sync and dual fallback polling for vMix Browser Source reliability
         syncOverlay();
+        window.addEventListener('storage', syncOverlay);
+        setInterval(syncOverlay, 500); // Polling ensures vMix browser source instantly catches up without lag
     </script>
 </body>
 </html>
