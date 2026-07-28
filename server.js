@@ -35,6 +35,24 @@ app.get('/overlay', (req, res) => {
 });
 
 
+// ----------------- NAYE FOOTBALL ROUTES & SOCKETS -----------------
+
+// Football Templates Page route
+app.get('/football-templates', (req, res) => {
+    res.sendFile(__dirname + '/football-templates.html');
+});
+
+// Football Control Panel route
+app.get('/football-panel', (req, res) => {
+    res.sendFile(__dirname + '/football-panel.html');
+});
+
+// Football Overlay route (OBS/vMix ke liye)
+app.get('/football-overlay', (req, res) => {
+    res.sendFile(__dirname + '/football-overlay.html');
+});
+
+
 // ----------------- NAYE LOWER THIRD ROUTES & DATA -----------------
 
 // Lower Third ka live data store
@@ -70,8 +88,14 @@ app.post('/api/update-tt-data', (req, res) => {
 
 // Socket.io Connection (Score live update karne ke liye)
 io.on('connection', (socket) => {
+    // Table Tennis Live Score
     socket.on('updateScore', (data) => {
         io.emit('liveScore', data);
+    });
+
+    // Football Live Score & State Sync
+    socket.on('updateFootballScore', (data) => {
+        io.emit('liveFootballScore', data);
     });
 });
 
