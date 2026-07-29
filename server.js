@@ -86,8 +86,18 @@ app.post('/api/update-tt-data', (req, res) => {
 });
 
 
+// --- FOOTBALL STATE STORAGE FOR INSTANT SYNC ---
+let footballState = {};
+
 // Socket.io Connection (Score live update karne ke liye)
 io.on('connection', (socket) => {
+    console.log('Client connected:', socket.id);
+
+    // Agar koi naya football overlay connect ho ya refresh ho, use turant latest state bhej do
+    if (Object.keys(footballState).length > 0) {
+        socket.emit('liveFootballScore', footballState);
+    }
+
     // Table Tennis Live Score
     socket.on('updateScore', (data) => {
         io.emit('liveScore', data);
@@ -95,7 +105,12 @@ io.on('connection', (socket) => {
 
     // Football Live Score & State Sync
     socket.on('updateFootballScore', (data) => {
-        io.emit('liveFootballScore', data);
+        footballState = data; // Server par state save ho gayi
+        io.emit('liveFootballScore', data); // Connected overlays ko broadcast kar diya
+    });
+
+    socket.on('disconnect', () => {
+        console.log('Client disconnected:', socket.id);
     });
 });
 
