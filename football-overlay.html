@@ -4,293 +4,400 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Football Match Overlay - Scorvix</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@600;700;800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Teko:wght@600;700&family=Inter:wght@600;800&display=swap" rel="stylesheet">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
-        body { 
-            background: transparent; 
-            width: 1920px; 
-            height: 1080px; 
-            overflow: hidden; 
-            position: relative; 
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: transparent; overflow: hidden; font-family: 'Inter', sans-serif; }
 
-        /* Main Scoreboard Wrapper */
-        .scoreboard-wrapper {
+        .overlay-wrapper {
             position: absolute;
-            top: 40px;
+            top: 30px;
             left: 50%;
             transform: translateX(-50%);
             display: flex;
+            flex-direction: column;
             align-items: center;
-            background: rgba(15, 23, 42, 0.92);
-            backdrop-filter: blur(8px);
+            gap: 6px;
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s ease;
+        }
+
+        .hidden-scoreboard {
+            transform: translateX(-50%) translateY(-120px);
+            opacity: 0;
+        }
+
+        .scoreboard-container {
+            display: flex;
+            align-items: center;
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.95));
             border-radius: 8px;
             border: 1px solid rgba(255, 255, 255, 0.15);
-            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.6);
-            transition: all 0.3s ease;
-            opacity: 0;
-            pointer-events: none;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            overflow: hidden;
         }
 
-        .scoreboard-wrapper.visible {
-            opacity: 1;
-            pointer-events: auto;
-        }
-
-        /* Team Block */
         .team-block {
             display: flex;
             align-items: center;
-            padding: 12px 24px;
-            gap: 16px;
+            padding: 0 16px;
+            height: 52px;
+            gap: 12px;
             position: relative;
         }
 
-        .team-block.team-a { border-right: 2px solid rgba(255,255,255,0.1); }
-        .team-block.team-b { border-left: 2px solid rgba(255,255,255,0.1); }
+        .team-block.left { background: linear-gradient(90deg, rgba(2, 132, 199, 0.25), transparent); }
+        .team-block.right { background: linear-gradient(-90deg, rgba(220, 38, 38, 0.25), transparent); flex-direction: row-reverse; }
 
-        .team-logo {
-            width: 38px;
-            height: 38px;
-            object-fit: contain;
-            display: none;
+        .team-logo-box {
+            width: 0px;
+            opacity: 0;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: width 0.3s ease, opacity 0.3s ease;
         }
 
+        .team-logo-box.active { width: 32px; opacity: 1; }
+        .team-logo-box img { width: 28px; height: 28px; object-fit: contain; }
+
         .team-name {
-            font-size: 1.3rem;
+            font-size: 18px;
             font-weight: 800;
             color: #ffffff;
-            letter-spacing: 1px;
+            letter-spacing: 0.5px;
             text-transform: uppercase;
         }
 
-        .team-score {
-            font-size: 1.6rem;
-            font-weight: 900;
-            color: #ffffff;
-            background: rgba(0, 0, 0, 0.4);
-            padding: 4px 14px;
-            border-radius: 6px;
-            min-width: 46px;
-            text-align: center;
+        .score-box {
+            color: white;
+            font-family: 'Teko', sans-serif;
+            font-size: 38px; 
+            padding: 0 18px;
+            height: 52px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 55px;
+            transition: background 0.3s ease;
         }
 
-        .penalties-badge {
-            font-size: 0.75rem;
-            background: #eab308;
-            color: #000;
-            font-weight: 800;
-            padding: 2px 6px;
-            border-radius: 4px;
-            margin-left: 6px;
-        }
-
-        /* Center Clock Block */
-        .clock-block {
-            padding: 14px 22px;
+        .timer-center {
+            color: #f8fafc;
+            font-family: 'Teko', sans-serif;
+            font-size: 30px;
+            height: 52px;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            background: #090d16;
-            min-width: 110px;
-        }
-
-        .match-time {
-            font-size: 1.3rem;
-            font-weight: 900;
-            color: #38bdf8;
+            border-left: 1px solid rgba(255,255,255,0.1);
+            border-right: 1px solid rgba(255,255,255,0.1);
+            width: 95px;
+            min-width: 95px;
+            max-width: 95px;
             letter-spacing: 1px;
+            transition: background 0.3s ease;
         }
 
-        /* Action Replay Badge */
-        .action-replay-badge {
-            position: absolute;
-            top: 40px;
-            right: 50px;
-            background: linear-gradient(135deg, #eab308, #ca8a04);
-            color: #000;
-            font-size: 1.1rem;
-            font-weight: 900;
-            padding: 8px 20px;
-            border-radius: 6px;
-            box-shadow: 0 10px 25px rgba(234, 179, 8, 0.4);
-            letter-spacing: 1.5px;
+        .timer-center span.live-dot {
+            font-size: 11px;
+            color: #ef4444;
+            text-transform: uppercase;
+            font-family: 'Inter', sans-serif;
+            font-weight: 800;
+            letter-spacing: 1px;
+            margin-top: -6px;
+        }
+
+        .penalty-bar {
+            background: rgba(15, 23, 42, 0.9);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 0 0 6px 6px;
+            padding: 4px 16px;
+            font-size: 13px;
+            color: #38bdf8;
+            font-weight: 700;
+            letter-spacing: 1px;
             text-transform: uppercase;
             display: none;
-            animation: pulseReplay 1.5s infinite;
         }
+        .penalty-bar.active { display: block; }
 
-        @keyframes pulseReplay {
-            0% { transform: scale(1); }
-            50% { transform: scale(1.05); }
-            100% { transform: scale(1); }
-        }
-
-        /* Fullscreen Modal (HT / FT / Penalties) */
-        .fullscreen-modal {
-            position: absolute;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0, 0, 0, 0.85);
-            backdrop-filter: blur(12px);
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(5, 8, 15, 0.88);
+            backdrop-filter: blur(10px);
             display: flex;
-            flex-direction: column;
             align-items: center;
             justify-content: center;
             opacity: 0;
             pointer-events: none;
-            transition: opacity 0.4s ease;
-            z-index: 100;
+            transition: opacity 0.3s ease;
+            z-index: 999;
         }
 
-        .fullscreen-modal.active {
-            opacity: 1;
-            pointer-events: auto;
-        }
+        .modal-overlay.active { opacity: 1; pointer-events: auto; }
 
-        .modal-content-box {
-            text-align: center;
-            border: 4px solid #38bdf8;
-            padding: 40px 80px;
+        .modal-card {
+            background: linear-gradient(135deg, #1e293b, #0f172a);
+            border: 2px solid #38bdf8;
+            padding: 35px 45px;
             border-radius: 16px;
+            text-align: center;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.8);
+            transform: scale(0.9);
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 22px;
+        }
+
+        .modal-overlay.active .modal-card { transform: scale(1); }
+
+        .modal-card h1 {
+            font-family: 'Teko', sans-serif;
+            font-size: 60px;
+            color: #f8fafc;
+            letter-spacing: 2px;
+            line-height: 1;
+        }
+
+        .modal-match-box {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
             background: rgba(15, 23, 42, 0.95);
-            box-shadow: 0 25px 60px rgba(0,0,0,0.8);
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            overflow: hidden;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            min-width: 420px;
         }
 
-        .modal-title {
-            font-size: 3.5rem;
-            font-weight: 900;
-            color: #ffffff;
-            letter-spacing: 3px;
-            margin-bottom: 10px;
-            text-transform: uppercase;
+        .modal-scoreboard-row { display: flex; align-items: center; width: 100%; }
+
+        .modal-team-block {
+            display: flex; align-items: center; padding: 0 16px; height: 56px; gap: 12px; flex: 1;
+        }
+        .modal-team-block.left { background: rgba(2, 132, 199, 0.2); justify-content: flex-start; }
+        .modal-team-block.right { background: rgba(220, 38, 38, 0.2); justify-content: flex-end; flex-direction: row-reverse; }
+
+        .modal-logo-box { width: 0px; opacity: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; transition: width 0.3s ease, opacity 0.3s ease; }
+        .modal-logo-box.active { width: 32px; opacity: 1; }
+        .modal-logo-box img { width: 28px; height: 28px; object-fit: contain; }
+
+        .modal-team-name { font-size: 18px; font-weight: 800; color: #ffffff; letter-spacing: 0.5px; text-transform: uppercase; }
+
+        .modal-score-box {
+            color: white; font-family: 'Teko', sans-serif; font-size: 40px; padding: 0 20px; height: 56px; display: flex; align-items: center; justify-content: center; min-width: 60px;
         }
 
-        .modal-score-sub {
-            font-size: 1.8rem;
-            font-weight: 700;
-            color: #94a3b8;
-        }
+        .modal-vs-box { background: #090d16; color: #ffffff; font-family: 'Inter', sans-serif; font-size: 16px; font-weight: 800; padding: 0 16px; height: 56px; display: flex; align-items: center; justify-content: center; border-left: 1px solid rgba(255,255,255,0.1); border-right: 1px solid rgba(255,255,255,0.1); letter-spacing: 2px; }
+
+        .modal-timer-footer { background: #0b1120; width: 100%; padding: 8px; text-align: center; font-family: 'Teko', sans-serif; font-size: 24px; color: #38bdf8; letter-spacing: 1.5px; border-top: 1px solid rgba(255,255,255,0.08); text-transform: uppercase; }
+
+        .replay-badge { position: fixed; top: 25px; right: 25px; background: rgba(202, 138, 4, 0.95); color: #000; font-weight: 800; font-size: 14px; padding: 5px 14px; border-radius: 4px; letter-spacing: 1px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 255, 255, 0.3); display: none; z-index: 9999; animation: pulseReplay 1.5s infinite; }
+        .replay-badge.active { display: block; }
+        @keyframes pulseReplay { 0% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.05); opacity: 0.8; } 100% { transform: scale(1); opacity: 1; } }
     </style>
 </head>
 <body>
 
-    <!-- Scoreboard -->
-    <div id="scoreboardWrapper" class="scoreboard-wrapper">
-        <!-- Team A -->
-        <div class="team-block team-a" id="blockA">
-            <img id="imgLogoA" class="team-logo" src="" alt="Logo A">
-            <span id="txtTeamA" class="team-name">TEAM A</span>
-            <span id="txtScoreA" class="team-score">0</span>
-            <span id="badgePenA" class="penalties-badge" style="display:none;">P: <span id="valPenA">0</span></span>
+    <!-- Main Scoreboard -->
+    <div class="overlay-wrapper" id="wrapper">
+        <div class="scoreboard-container">
+            <div class="team-block left" id="blockA">
+                <div class="team-logo-box" id="boxLogoA"><img id="imgLogoA" src="" alt=""></div>
+                <div class="team-name" id="dispNameA">REAL MADRID</div>
+            </div>
+            <div class="score-box" id="dispScoreA">0</div>
+
+            <div class="timer-center" id="timerCenterBox">
+                <div id="dispTimer">00:00</div>
+                <span class="live-dot">● LIVE</span>
+            </div>
+
+            <div class="score-box" id="dispScoreB">0</div>
+            <div class="team-block right" id="blockB">
+                <div class="team-logo-box" id="boxLogoB"><img id="imgLogoB" src="" alt=""></div>
+                <div class="team-name" id="dispNameB">BARCELONA</div>
+            </div>
         </div>
 
-        <!-- Center Match Clock -->
-        <div class="clock-block" id="clockBg">
-            <span id="txtTimer" class="match-time">00:00</span>
-        </div>
-
-        <!-- Team B -->
-        <div class="team-block team-b" id="blockB">
-            <span id="badgePenB" class="penalties-badge" style="display:none;">P: <span id="valPenB">0</span></span>
-            <span id="txtScoreB" class="team-score">0</span>
-            <span id="txtTeamB" class="team-name">TEAM B</span>
-            <img id="imgLogoB" class="team-logo" src="" alt="Logo B">
+        <div class="penalty-bar" id="penaltyBar">
+            PENALTIES: <span id="dispPenA">0</span> — <span id="dispPenB">0</span>
         </div>
     </div>
-
-    <!-- Action Replay Badge -->
-    <div id="actionReplayBadge" class="action-replay-badge">🎬 ACTION REPLAY</div>
 
     <!-- Fullscreen Modal -->
-    <div id="fullscreenModal" class="fullscreen-modal">
-        <div class="modal-content-box" id="modalBox">
-            <div id="modalTitleText" class="modal-title">HALF TIME</div>
-            <div id="modalScoreText" class="modal-score-sub">REAL MADRID 0 - 0 BARCELONA</div>
+    <div class="modal-overlay" id="modalOverlay">
+        <div class="modal-card" id="modalCardBox">
+            <h1 id="modalTitleText">HALF TIME</h1>
+            <div class="modal-match-box">
+                <div class="modal-scoreboard-row">
+                    <div class="modal-team-block left" id="modalBlockA">
+                        <div class="modal-logo-box" id="modalBoxLogoA"><img id="modalImgLogoA" src="" alt=""></div>
+                        <div class="modal-team-name" id="modalDispNameA">REAL MADRID</div>
+                    </div>
+                    <div class="modal-score-box" id="modalDispScoreA">0</div>
+                    <div class="modal-vs-box">VS</div>
+                    <div class="modal-score-box" id="modalDispScoreB">0</div>
+                    <div class="modal-team-block right" id="modalBlockB">
+                        <div class="modal-logo-box" id="modalBoxLogoB"><img id="modalImgLogoB" src="" alt=""></div>
+                        <div class="modal-team-name" id="modalDispNameB">BARCELONA</div>
+                    </div>
+                </div>
+                <div class="modal-timer-footer" id="modalTimerFooter">HALF TIME BREAK • 45:00</div>
+            </div>
         </div>
     </div>
 
-    <!-- Socket.io client script with direct WebSocket transport -->
+    <div class="replay-badge" id="replayBadge">▶ ACTION REPLAY</div>
+
+    <!-- Socket.io client script -->
     <script src="https://tt-overlay-lph4.onrender.com/socket.io/socket.io.js"></script>
+
     <script>
+        // WebSocket transport forced for millisecond-level sync
         const socket = io("https://tt-overlay-lph4.onrender.com", {
-            transports: ['websocket'],
-            upgrade: false
+            transports: ['websocket']
         });
 
+        // --- vMix Color Fix Function ---
+        function hexToRgba(hex, alpha) {
+            if (!hex) return 'transparent';
+            if (!hex.startsWith('#')) return hex;
+            
+            hex = hex.replace('#', '');
+            if (hex.length === 3) {
+                hex = hex.split('').map(x => x + x).join('');
+            }
+            const r = parseInt(hex.substring(0, 2), 16);
+            const g = parseInt(hex.substring(2, 4), 16);
+            const b = parseInt(hex.substring(4, 6), 16);
+            
+            return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        }
+
         socket.on('liveFootballScore', (data) => {
-            // Master Toggle
-            const wrapper = document.getElementById('scoreboardWrapper');
+            if (!data) return;
+
+            // 1. Scoreboard Master Visibility
+            const wrapper = document.getElementById('wrapper');
             if (data.showScoreboard) {
-                wrapper.classList.add('visible');
+                wrapper.classList.remove('hidden-scoreboard');
             } else {
-                wrapper.classList.remove('visible');
+                wrapper.classList.add('hidden-scoreboard');
             }
 
-            // Teams Name & Scores
-            document.getElementById('txtTeamA').textContent = data.nameA || 'TEAM A';
-            document.getElementById('txtTeamB').textContent = data.nameB || 'TEAM B';
-            document.getElementById('txtScoreA').textContent = data.scoreA ?? 0;
-            document.getElementById('txtScoreB').textContent = data.scoreB ?? 0;
+            // 2. Names & Scores Sync
+            document.getElementById('dispNameA').innerText = data.nameA || "TEAM A";
+            document.getElementById('dispNameB').innerText = data.nameB || "TEAM B";
+            document.getElementById('dispScoreA').innerText = data.scoreA ?? 0;
+            document.getElementById('dispScoreB').innerText = data.scoreB ?? 0;
 
-            // Logos
-            const imgA = document.getElementById('imgLogoA');
-            if (data.logoA && data.showLogoA) {
-                imgA.src = data.logoA;
-                imgA.style.display = 'block';
-            } else {
-                imgA.style.display = 'none';
+            document.getElementById('modalDispNameA').innerText = data.nameA || "TEAM A";
+            document.getElementById('modalDispNameB').innerText = data.nameB || "TEAM B";
+            document.getElementById('modalDispScoreA').innerText = data.scoreA ?? 0;
+            document.getElementById('modalDispScoreB').innerText = data.scoreB ?? 0;
+
+            // 3. Team Colors & vMix RGBA Compatibility
+            if (data.colorA) {
+                const rgbaGradientA = hexToRgba(data.colorA, 0.25);
+                const rgbaModalA = hexToRgba(data.colorA, 0.2);
+                
+                document.getElementById('blockA').style.background = `linear-gradient(90deg, ${rgbaGradientA}, transparent)`;
+                document.getElementById('dispScoreA').style.background = data.colorA;
+                
+                document.getElementById('modalBlockA').style.background = rgbaModalA;
+                document.getElementById('modalDispScoreA').style.background = data.colorA;
             }
 
-            const imgB = document.getElementById('imgLogoB');
-            if (data.logoB && data.showLogoB) {
-                imgB.src = data.logoB;
-                imgB.style.display = 'block';
-            } else {
-                imgB.style.display = 'none';
+            if (data.colorB) {
+                const rgbaGradientB = hexToRgba(data.colorB, 0.25);
+                const rgbaModalB = hexToRgba(data.colorB, 0.2);
+                
+                document.getElementById('blockB').style.background = `linear-gradient(-90deg, ${rgbaGradientB}, transparent)`;
+                document.getElementById('dispScoreB').style.background = data.colorB;
+                
+                document.getElementById('modalBlockB').style.background = rgbaModalB;
+                document.getElementById('modalDispScoreB').style.background = data.colorB;
             }
 
-            // Colors
             if (data.colorClock) {
-                document.getElementById('clockBg').style.backgroundColor = data.colorClock;
+                document.getElementById('timerCenterBox').style.background = data.colorClock;
             }
             if (data.colorModal) {
-                document.getElementById('modalBox').style.borderColor = data.colorModal;
+                document.getElementById('modalCardBox').style.borderColor = data.colorModal;
+                document.getElementById('modalTimerFooter').style.color = data.colorModal;
             }
 
-            // Timer
-            document.getElementById('txtTimer').textContent = data.timer || '00:00';
+            // 4. Logo Handlers
+            const hasLogoA = data.showLogoA && data.logoA && data.logoA.trim() !== "";
+            const boxA = document.getElementById('boxLogoA');
+            const imgA = document.getElementById('imgLogoA');
+            const modalBoxLogoA = document.getElementById('modalBoxLogoA');
+            const modalImgLogoA = document.getElementById('modalImgLogoA');
 
-            // Penalties
-            const penAEl = document.getElementById('badgePenA');
-            const penBEl = document.getElementById('badgePenB');
-            if (data.penA !== "" && data.penA !== undefined) {
-                penAEl.style.display = 'inline-block';
-                document.getElementById('valPenA').textContent = data.penA;
+            if (hasLogoA) { 
+                imgA.src = data.logoA; 
+                modalImgLogoA.src = data.logoA;
+                boxA.classList.add('active'); 
+                modalBoxLogoA.classList.add('active');
+            } else { 
+                boxA.classList.remove('active'); 
+                modalBoxLogoA.classList.remove('active');
+            }
+
+            const hasLogoB = data.showLogoB && data.logoB && data.logoB.trim() !== "";
+            const boxB = document.getElementById('boxLogoB');
+            const imgB = document.getElementById('imgLogoB');
+            const modalBoxLogoB = document.getElementById('modalBoxLogoB');
+            const modalImgLogoB = document.getElementById('modalImgLogoB');
+
+            if (hasLogoB) { 
+                imgB.src = data.logoB; 
+                modalImgLogoB.src = data.logoB;
+                boxB.classList.add('active'); 
+                modalBoxLogoB.classList.add('active');
+            } else { 
+                boxB.classList.remove('active'); 
+                modalBoxLogoB.classList.remove('active');
+            }
+
+            // 5. Timer
+            let timerVal = data.timer || "00:00";
+            document.getElementById('dispTimer').innerText = timerVal;
+
+            // 6. Penalties Shootout Bar
+            const penaltyBar = document.getElementById('penaltyBar');
+            if (data.penA !== "" && data.penA !== undefined && data.penA !== null) {
+                penaltyBar.classList.add('active');
+                document.getElementById('dispPenA').innerText = data.penA;
+                document.getElementById('dispPenB').innerText = data.penB;
             } else {
-                penAEl.style.display = 'none';
+                penaltyBar.classList.remove('active');
             }
 
-            if (data.penB !== "" && data.penB !== undefined) {
-                penBEl.style.display = 'inline-block';
-                document.getElementById('valPenB').textContent = data.penB;
-            } else {
-                penBEl.style.display = 'none';
-            }
-
-            // Action Replay
-            const arBadge = document.getElementById('actionReplayBadge');
-            arBadge.style.display = data.showActionReplay ? 'block' : 'none';
-
-            // Fullscreen Modal
-            const modal = document.getElementById('fullscreenModal');
+            // 7. Fullscreen Modal (HT / FT / Penalties)
+            const modalOverlay = document.getElementById('modalOverlay');
             if (data.activeModal && data.activeModal.trim() !== "") {
-                modal.classList.add('active');
-                document.getElementById('modalTitleText').textContent = data.activeModal;
-                document.getElementById('modalScoreText').textContent = `${data.nameA || 'TEAM A'} ${data.scoreA ?? 0} - ${data.scoreB ?? 0} ${data.nameB || 'TEAM B'}`;
+                modalOverlay.classList.add('active');
+                document.getElementById('modalTitleText').innerText = data.activeModal;
+                document.getElementById('modalTimerFooter').innerText = `${data.activeModal} • ${timerVal}`;
             } else {
-                modal.classList.remove('active');
+                modalOverlay.classList.remove('active');
+            }
+
+            // 8. Action Replay Badge
+            const replayBadge = document.getElementById('replayBadge');
+            if (data.showActionReplay) {
+                replayBadge.classList.add('active');
+            } else {
+                replayBadge.classList.remove('active');
             }
         });
     </script>
