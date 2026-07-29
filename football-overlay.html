@@ -45,8 +45,9 @@
             position: relative;
         }
 
-        .team-block.left { background: linear-gradient(90deg, rgba(2, 132, 199, 0.3), transparent); }
-        .team-block.right { background: linear-gradient(-90deg, rgba(220, 38, 38, 0.3), transparent); flex-direction: row-reverse; }
+        /* Default fallback background gradients */
+        .team-block.left { background: linear-gradient(90deg, rgba(2, 132, 199, 0.4), transparent); }
+        .team-block.right { background: linear-gradient(-90deg, rgba(220, 38, 38, 0.4), transparent); flex-direction: row-reverse; }
 
         .team-logo-box {
             width: 0px;
@@ -79,7 +80,7 @@
             align-items: center;
             justify-content: center;
             min-width: 55px;
-            transition: background 0.3s ease;
+            background: rgba(0, 0, 0, 0.3);
         }
 
         .timer-center {
@@ -97,7 +98,7 @@
             min-width: 95px;
             max-width: 95px;
             letter-spacing: 1px;
-            transition: background 0.3s ease;
+            background: rgba(15, 23, 42, 0.8);
         }
 
         .timer-center span.live-dot {
@@ -220,6 +221,7 @@
             align-items: center;
             justify-content: center;
             min-width: 60px;
+            background: rgba(0,0,0,0.3);
         }
 
         .modal-vs-box {
@@ -342,17 +344,6 @@
     <script>
         const socket = io();
 
-        // Helper function to convert HEX to RGBA for vMix compatibility
-        function hexToRgba(hex, alpha) {
-            if (!hex) return null;
-            let c = hex.replace('#', '');
-            if (c.length === 3) {
-                c = c.split('').map(x => x + x).join('');
-            }
-            const num = parseInt(c, 16);
-            return `rgba(${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}, ${alpha})`;
-        }
-
         function updateUI(data) {
             if (!data) return;
 
@@ -363,46 +354,26 @@
                 wrapper.classList.add('hidden-scoreboard');
             }
 
-            const nameA = data.nameA || "TEAM A";
-            const nameB = data.nameB || "TEAM B";
-            const scoreA = data.scoreA !== undefined ? data.scoreA : 0;
-            const scoreB = data.scoreB !== undefined ? data.scoreB : 0;
+            document.getElementById('dispNameA').innerText = data.nameA || "TEAM A";
+            document.getElementById('dispNameB').innerText = data.nameB || "TEAM B";
+            document.getElementById('dispScoreA').innerText = data.scoreA !== undefined ? data.scoreA : 0;
+            document.getElementById('dispScoreB').innerText = data.scoreB !== undefined ? data.scoreB : 0;
 
-            document.getElementById('dispNameA').innerText = nameA;
-            document.getElementById('dispNameB').innerText = nameB;
-            document.getElementById('dispScoreA').innerText = scoreA;
-            document.getElementById('dispScoreB').innerText = scoreB;
+            document.getElementById('modalDispNameA').innerText = data.nameA || "TEAM A";
+            document.getElementById('modalDispNameB').innerText = data.nameB || "TEAM B";
+            document.getElementById('modalDispScoreA').innerText = data.scoreA !== undefined ? data.scoreA : 0;
+            document.getElementById('modalDispScoreB').innerText = data.scoreB !== undefined ? data.scoreB : 0;
 
-            document.getElementById('modalDispNameA').innerText = nameA;
-            document.getElementById('modalDispNameB').innerText = nameB;
-            document.getElementById('modalDispScoreA').innerText = scoreA;
-            document.getElementById('modalDispScoreB').innerText = scoreB;
-
-            // Safe Color Application using RGBA converter
+            // Direct background styling fallback for bulletproof rendering in vMix
             if (data.colorA) {
-                const solidRgba = hexToRgba(data.colorA, 1);
-                const gradientRgba = hexToRgba(data.colorA, 0.35);
-                const subtleRgba = hexToRgba(data.colorA, 0.2);
-
-                document.getElementById('dispScoreA').style.background = solidRgba;
-                document.getElementById('modalDispScoreA').style.background = solidRgba;
-                document.getElementById('blockA').style.background = `linear-gradient(90deg, ${gradientRgba}, transparent)`;
-                document.getElementById('modalBlockA').style.background = subtleRgba;
+                document.getElementById('dispScoreA').style.backgroundColor = data.colorA;
+                document.getElementById('modalDispScoreA').style.backgroundColor = data.colorA;
+                document.getElementById('blockA').style.backgroundColor = data.colorA;
             }
-
             if (data.colorB) {
-                const solidRgba = hexToRgba(data.colorB, 1);
-                const gradientRgba = hexToRgba(data.colorB, 0.35);
-                const subtleRgba = hexToRgba(data.colorB, 0.2);
-
-                document.getElementById('dispScoreB').style.background = solidRgba;
-                document.getElementById('modalDispScoreB').style.background = solidRgba;
-                document.getElementById('blockB').style.background = `linear-gradient(-90deg, ${gradientRgba}, transparent)`;
-                document.getElementById('modalBlockB').style.background = subtleRgba;
-            }
-
-            if (data.colorClock) {
-                document.getElementById('timerCenterBox').style.background = hexToRgba(data.colorClock, 1) || data.colorClock;
+                document.getElementById('dispScoreB').style.backgroundColor = data.colorB;
+                document.getElementById('modalDispScoreB').style.backgroundColor = data.colorB;
+                document.getElementById('blockB').style.backgroundColor = data.colorB;
             }
 
             const hasLogoA = data.showLogoA && data.logoA && data.logoA.trim() !== "";
