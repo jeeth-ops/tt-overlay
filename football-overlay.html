@@ -62,7 +62,6 @@
         .team-logo-box img { width: 28px; height: 28px; object-fit: contain; }
 
         .team-name {
-            /* Changed rem to px for vMix compatibility */
             font-size: 18px;
             font-weight: 800;
             color: #ffffff;
@@ -73,7 +72,6 @@
         .score-box {
             color: white;
             font-family: 'Teko', sans-serif;
-            /* Changed rem to px for vMix compatibility */
             font-size: 38px; 
             padding: 0 18px;
             height: 52px;
@@ -87,7 +85,6 @@
         .timer-center {
             color: #f8fafc;
             font-family: 'Teko', sans-serif;
-            /* Changed rem to px for vMix compatibility */
             font-size: 30px;
             height: 52px;
             display: flex;
@@ -113,7 +110,6 @@
             margin-top: -6px;
         }
 
-        /* Penalty, Modal, and Replay CSS remains same but with px adjustments if needed */
         .penalty-bar {
             background: rgba(15, 23, 42, 0.9);
             border: 1px solid rgba(255,255,255,0.1);
@@ -261,12 +257,13 @@
 
     <div class="replay-badge" id="replayBadge">▶ ACTION REPLAY</div>
 
-    <!-- Firebase Scripts (Retaining your real-time setup) -->
-    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <!-- Socket.io client script -->
+    <script src="https://tt-overlay-lph4.onrender.com/socket.io/socket.io.js"></script>
 
     <script>
+        const socket = io("https://tt-overlay-lph4.onrender.com");
+
         // --- vMix Color Fix Function ---
-        // Converts standard Hex codes (#ff0000) to RGBA so vMix browser can understand transparencies natively
         function hexToRgba(hex, alpha) {
             if (!hex) return 'transparent';
             if (!hex.startsWith('#')) return hex;
@@ -282,13 +279,10 @@
             return `rgba(${r}, ${g}, ${b}, ${alpha})`;
         }
 
-        function syncOverlay() {
-            // Hum yahan wapas local storage use kar rahe hain taaki tera stackblitz wala method chal sake. 
-            // Agar Node/Socket use kar raha hai toh 'data' variable socket se aayega.
-            const raw = localStorage.getItem('scorvix_football');
-            if (!raw) return;
-            const data = JSON.parse(raw);
+        socket.on('updateScore', (data) => {
+            if (!data) return;
 
+            // 1. Scoreboard Master Visibility
             const wrapper = document.getElementById('wrapper');
             if (data.showScoreboard) {
                 wrapper.classList.remove('hidden-scoreboard');
@@ -296,12 +290,18 @@
                 wrapper.classList.add('hidden-scoreboard');
             }
 
+            // 2. Names & Scores Sync
             document.getElementById('dispNameA').innerText = data.nameA || "TEAM A";
             document.getElementById('dispNameB').innerText = data.nameB || "TEAM B";
-            document.getElementById('dispScoreA').innerText = data.scoreA;
-            document.getElementById('dispScoreB').innerText = data.scoreB;
+            document.getElementById('dispScoreA').innerText = data.scoreA ?? 0;
+            document.getElementById('dispScoreB').innerText = data.scoreB ?? 0;
 
-            // Using direct style assignments with converted RGBA for vMix compatibility
+            document.getElementById('modalDispNameA').innerText = data.nameA || "TEAM A";
+            document.getElementById('modalDispNameB').innerText = data.nameB || "TEAM B";
+            document.getElementById('modalDispScoreA').innerText = data.scoreA ?? 0;
+            document.getElementById('modalDispScoreB').innerText = data.scoreB ?? 0;
+
+            // 3. Team Colors & vMix RGBA Compatibility
             if (data.colorA) {
                 const rgbaGradientA = hexToRgba(data.colorA, 0.25);
                 const rgbaModalA = hexToRgba(data.colorA, 0.2);
@@ -332,25 +332,71 @@
                 document.getElementById('modalTimerFooter').style.color = data.colorModal;
             }
 
-            // ... Baaki sab data sync (logos, timers) same rahega
+            // 4. Logo Handlers
             const hasLogoA = data.showLogoA && data.logoA && data.logoA.trim() !== "";
             const boxA = document.getElementById('boxLogoA');
             const imgA = document.getElementById('imgLogoA');
-            if (hasLogoA) { imgA.src = data.logoA; boxA.classList.add('active'); } 
-            else { boxA.classList.remove('active'); }
+            const modalBoxLogoA = document.getElementById('modalBoxLogoA');
+            const modalImgLogoA = document.getElementById('modalImgLogoA');
+
+            if (hasLogoA) { 
+                imgA.src = data.logoA; 
+                modalImgLogoA.src = data.logoA;
+                boxA.classList.add('active'); 
+                modalBoxLogoA.classList.add('active');
+            } else { 
+                boxA.classList.remove('active'); 
+                modalBoxLogoA.classList.remove('active');
+            }
 
             const hasLogoB = data.showLogoB && data.logoB && data.logoB.trim() !== "";
             const boxB = document.getElementById('boxLogoB');
             const imgB = document.getElementById('imgLogoB');
-            if (hasLogoB) { imgB.src = data.logoB; boxB.classList.add('active'); } 
-            else { boxB.classList.remove('active'); }
+            const modalBoxLogoB = document.getElementById('modalBoxLogoB');
+            const modalImgLogoB = document.getElementById('modalImgLogoB');
 
+            if (hasLogoB) { 
+                imgB.src = data.logoB; 
+                modalImgLogoB.src = data.logoB;
+                boxB.classList.add('active'); 
+                modalBoxLogoB.classList.add('active');
+            } else { 
+                boxB.classList.remove('active'); 
+                modalBoxLogoB.classList.remove('active');
+            }
+
+            // 5. Timer
             let timerVal = data.timer || "00:00";
             document.getElementById('dispTimer').innerText = timerVal;
-        }
 
-        setInterval(syncOverlay, 150);
-        syncOverlay();
+            // 6. Penalties Shootout Bar
+            const penaltyBar = document.getElementById('penaltyBar');
+            if (data.penA !== "" && data.penA !== undefined && data.penA !== null) {
+                penaltyBar.classList.add('active');
+                document.getElementById('dispPenA').innerText = data.penA;
+                document.getElementById('dispPenB').innerText = data.penB;
+            } else {
+                penaltyBar.classList.remove('active');
+            }
+
+            // 7. Fullscreen Modal (HT / FT / Penalties)
+            const modalOverlay = document.getElementById('modalOverlay');
+            if (data.activeModal && data.activeModal.trim() !== "") {
+                modalOverlay.classList.add('active');
+                document.getElementById('modalTitleText').innerText = data.activeModal;
+                document.getElementById('modalTimerFooter').innerText = `${data.activeModal} • ${timerVal}`;
+            } else {
+                modalOverlay.classList.remove('active');
+            }
+
+            // 8. Action Replay Badge
+            const replayBadge = document.getElementById('replayBadge');
+            if (data.showActionReplay) {
+                replayBadge.classList.add('active');
+            } else {
+                replayBadge.classList.remove('active');
+            }
+        });
     </script>
 </body>
 </html>
