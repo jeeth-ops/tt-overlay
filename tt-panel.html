@@ -293,7 +293,7 @@
         p1Name: "PHANTOM STARS", p2Name: "MUMBAI MOZARTT", 
         p1Score: 0, p2Score: 0, p1Sets: 0, p2Sets: 0, 
         server: 1, img1: "", img2: "", state: "score-in",
-        setsHistory: [], // Stores completed sets points e.g., [{p1: 11, p2: 5}, {p1: 9, p2: 11}, ...]
+        setsHistory: [], 
         standings: [
             { team: "PHANTOM STARS", ties: 5, tiesWon: 5, gamesPlayed: 135, matchesWon: 28, gamesWon: 77, points: 77 },
             { team: "MUMBAI MOZARTT", ties: 5, tiesWon: 1, gamesPlayed: 135, matchesWon: 23, gamesWon: 68, points: 68 },
@@ -329,7 +329,6 @@
         document.getElementById('disp-p2').innerHTML = `${data.p2Score} <span style="font-size: 14px; color: #94a3b8;">(Sets: ${data.p2Sets})</span>`;
         document.getElementById('footer-server-turn').innerText = `Serving: ${data.server === 1 ? data.p1Name : data.p2Name}`;
 
-        // Instant Socket update & background non-blocking Firestore sync (Milliseconds response)
         socket.emit('updateScore', data);
         db.collection("scorvix").doc("matchState").set(data).catch(err => console.log("Cloud save error:", err));
     }
@@ -406,7 +405,6 @@
         if ((data.p1Score >= 11 || data.p2Score >= 11) && Math.abs(data.p1Score - data.p2Score) >= 2) {
             let setWinner = "";
             
-            // Save the finished set points to history array automatically
             if(!data.setsHistory) data.setsHistory = [];
             data.setsHistory.push({ p1: data.p1Score, p2: data.p2Score });
 
@@ -423,9 +421,6 @@
                 data.winner = `${setWinner.toUpperCase()} WON THE MATCH`;
                 document.getElementById('c-winner-text').value = data.winner;
                 data.state = "winner-in";
-            } else {
-                // Automatically prompt client/producer view or let them switch to the set score grid view
-                data.state = "sets-grid-in";
             }
         }
     }
