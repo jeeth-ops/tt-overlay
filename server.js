@@ -4,7 +4,14 @@ const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+
+// CORS enabled for Socket.io to prevent connection blocking on Render
+const io = new Server(server, {
+    cors: {
+        origin: "*", 
+        methods: ["GET", "POST"]
+    }
+});
 
 // Yeh line ensure karti hai ki CSS, images, ya extra files sahi se load ho
 app.use(express.static(__dirname));
@@ -103,8 +110,8 @@ io.on('connection', (socket) => {
         io.emit('liveScore', data);
     });
 
-    // Football Live Score & State Sync
-    socket.on('updateFootballScore', (data) => {
+    // FOOTBALL: Live Score & State Sync (Event name fixed to 'liveFootballScore' as emitted by panel)
+    socket.on('liveFootballScore', (data) => {
         footballState = data; // Server par state save ho gayi
         io.emit('liveFootballScore', data); // Connected overlays ko broadcast kar diya
     });
