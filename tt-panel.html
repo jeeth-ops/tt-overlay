@@ -151,6 +151,15 @@
                     <input type="text" id="c-p2" value="MUMBAI MOZARTT" oninput="sendData()">
                     <input type="file" id="c-img2" accept="image/*" onchange="uploadImage(2)" style="margin-top: 3px;">
                 </div>
+                <!-- 🌟 NEW: Scorecard Left Side Logo Control 🌟 -->
+                <div>
+                    <label>Scorecard Side Logo (Left):</label>
+                    <input type="file" id="c-scorecard-logo" accept="image/*" onchange="uploadScorecardLogo()" style="margin-top: 3px;">
+                    <div class="toggles-grid" style="margin-top: 6px;">
+                        <button class="toggle-btn bg-green" onclick="toggleScorecardLogo('in')">Show & Animate</button>
+                        <button class="toggle-btn bg-red" onclick="toggleScorecardLogo('out')">Remove Logo</button>
+                    </div>
+                </div>
                 <button style="background: #475569;" onclick="resetMatch()">🔄 Reset Match Score</button>
             </div>
 
@@ -286,6 +295,7 @@
         p1Name: "PHANTOM STARS", p2Name: "MUMBAI MOZARTT", 
         p1Score: 0, p2Score: 0, p1Sets: 0, p2Sets: 0, 
         server: 1, img1: "", img2: "", state: "score-in",
+        scorecardLogo: "", logoState: "out", // 🌟 Added logo fields
         standings: [
             { team: "PHANTOM STARS", ties: 5, tiesWon: 5, gamesPlayed: 135, matchesWon: 28, gamesWon: 77, points: 77 },
             { team: "MUMBAI MOZARTT", ties: 5, tiesWon: 1, gamesPlayed: 135, matchesWon: 23, gamesWon: 68, points: 68 },
@@ -364,6 +374,30 @@
             };
             reader.readAsDataURL(file);
         }
+    }
+
+    // 🌟 NEW: Scorecard Logo Upload & Animation Triggers 🌟
+    function uploadScorecardLogo() {
+        const fileInput = document.getElementById('c-scorecard-logo');
+        const file = fileInput.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                data.scorecardLogo = e.target.result;
+                data.logoState = "in"; // Automatically animate in when uploaded
+                sendData();
+            };
+            reader.readAsDataURL(file);
+        }
+    }
+
+    function toggleScorecardLogo(st) {
+        data.logoState = st;
+        if(st === 'out') {
+            data.scorecardLogo = "";
+            document.getElementById('c-scorecard-logo').value = "";
+        }
+        sendData();
     }
 
     function addPoint(p) {
