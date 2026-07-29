@@ -431,6 +431,7 @@
         let startTime = 0;
         let elapsedSecondsWhenPaused = 0;
         let isTimerRunning = false;
+        let lastSecond = -1; // PERFORMANCE OPTIMIZATION TRACKER
 
         // Helper to convert MM:SS to total seconds
         function timeStrToSeconds(str) {
@@ -526,6 +527,7 @@
             let currentStr = document.getElementById('timerInput').value;
             elapsedSecondsWhenPaused = timeStrToSeconds(currentStr);
             startTime = Date.now() - (elapsedSecondsWhenPaused * 1000);
+            lastSecond = -1; // Reset tracker
 
             // Tick every 50ms for ultra-smooth milliseconds response and zero drift
             timerInterval = setInterval(() => {
@@ -536,7 +538,12 @@
                 let timeStr = secondsToTimeStr(totalSec);
                 document.getElementById('timerInput').value = timeStr;
                 
-                saveData();
+                // PERFORMANCE FIX: Send update to server ONLY when the second changes (1 time/sec)
+                // Local UI timer still updates smoothly every 50ms without lagging network!
+                if (totalSec !== lastSecond) {
+                    lastSecond = totalSec;
+                    saveData();
+                }
             }, 50); 
         }
 
@@ -552,6 +559,7 @@
         function resetTimer() {
             stopTimer();
             elapsedSecondsWhenPaused = 0;
+            lastSecond = -1;
             document.getElementById('timerInput').value = "00:00";
             saveData();
         }
