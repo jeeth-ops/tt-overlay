@@ -3,400 +3,595 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pro League 16:9 Broadcast Overlay - Scorvix</title>
-    <!-- Socket.io -->
+    <title>Pro League Broadcast Overlays</title>
     <script src="/socket.io/socket.io.js"></script>
-    
-    <!-- Firebase SDKs -->
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
-
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+        * { box-sizing: border-box; }
         body { 
-            background: transparent; 
+            margin: 0; padding: 0; 
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            width: 1920px; height: 1080px; overflow: hidden; 
+            background: transparent; overflow: hidden; 
+            width: 1920px; height: 1080px; 
         }
 
-        /* 🌟 Match Point / Game Point Top Pop-up Banner 🌟 */
-        .alert-banner {
-            position: fixed;
-            top: -90px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: linear-gradient(135deg, #f59e0b, #dc2626);
-            color: #ffffff;
-            padding: 14px 45px;
-            border-radius: 0 0 16px 16px;
-            font-size: 24px;
-            font-weight: 900;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-            box-shadow: 0 15px 35px rgba(220, 38, 38, 0.6);
-            border: 3px solid #fef08a;
-            border-top: none;
-            z-index: 10000;
-            transition: top 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            text-align: center;
-        }
-        .alert-banner.show {
-            top: 0;
-        }
-
-        /* Wrapper to position elements for 16:9 OBS/vMix canvas */
-        .overlay-canvas {
-            position: relative;
-            width: 100%;
-            height: 100%;
-        }
-
-        /* 1. Tournament Header */
-        .tournament-header {
+        /* --- 1. TOURNAMENT HEADER BANNER --- */
+        #header-banner {
             position: absolute;
-            top: 35px;
+            top: 40px;
             left: 50%;
-            transform: translateX(-50%) translateY(-100px);
-            background: linear-gradient(90deg, rgba(15,23,42,0.95), rgba(30,41,59,0.95));
-            color: #38bdf8;
-            padding: 10px 40px;
-            border-radius: 30px;
+            transform: translate(-50%, -60px) scale(0.95);
+            background: linear-gradient(135deg, rgba(220, 38, 38, 0.95), rgba(153, 27, 27, 0.95));
+            backdrop-filter: blur(10px);
+            color: #ffffff;
+            padding: 12px 45px;
             font-size: 18px;
             font-weight: 900;
-            letter-spacing: 1.5px;
-            border: 2px solid #334155;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
-            transition: transform 0.5s ease;
-            z-index: 100;
+            letter-spacing: 2px;
+            border-radius: 8px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.7);
+            border: 1px solid rgba(255, 255, 255, 0.2);
             text-transform: uppercase;
-        }
-        .tournament-header.active { transform: translateX(-50%) translateY(0); }
-
-        /* 2. Live Scoreboard */
-        .scoreboard-container {
-            position: absolute;
-            bottom: 45px;
-            left: 60px;
-            display: flex;
-            align-items: center;
-            background: #0f172a;
-            border-radius: 12px;
-            border: 2px solid #334155;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.7);
-            overflow: hidden;
-            transform: translateY(200px);
             opacity: 0;
-            transition: all 0.5s ease;
-            z-index: 100;
+            transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+            pointer-events: none;
         }
-        .scoreboard-container.active { transform: translateY(0); opacity: 1; }
-
-        .team-box {
-            display: flex;
-            align-items: center;
-            padding: 12px 20px;
-            background: #1e293b;
-            min-width: 280px;
-            justify-content: space-between;
-        }
-        .team-box.team-b { background: #0f172a; }
-        
-        .team-info { display: flex; align-items: center; gap: 12px; }
-        .team-logo { width: 36px; height: 36px; object-fit: contain; border-radius: 4px; background: #0b0f19; padding: 2px; border: 1px solid #475569; }
-        .team-name { font-size: 18px; font-weight: 900; color: #ffffff; letter-spacing: 1px; text-transform: uppercase; }
-
-        .sets-badge {
-            background: #0b0f19; color: #38bdf8; font-size: 16px; font-weight: bold;
-            padding: 4px 10px; border-radius: 6px; border: 1px solid #334155;
+        #header-banner.active { 
+            transform: translate(-50%, 0) scale(1); 
+            opacity: 1; 
         }
 
-        .score-box {
-            background: #0284c7; color: #ffffff; font-size: 32px; font-weight: 900;
-            width: 75px; height: 65px; display: flex; justify-content: center; align-items: center;
-            border-left: 2px solid #334155; border-right: 2px solid #334155;
-        }
-        .team-b-score { background: #0d9488 !important; }
-
-        .server-dot {
-            width: 12px; height: 12px; background: #facc15; border-radius: 50%;
-            box-shadow: 0 0 10px #facc15; display: none; margin-right: 8px;
-        }
-        .serving .server-dot { display: inline-block; }
-
-        /* 3. Set-wise Score Grid */
-        .sets-grid-container {
+        /* --- GAME / MATCH POINT ALERT BANNER --- */
+        #alert-banner {
             position: absolute;
-            bottom: 135px;
+            top: 40px;
+            left: 50%;
+            transform: translate(-50%, -60px) scale(0.95);
+            background: linear-gradient(135deg, rgba(234, 179, 8, 0.95), rgba(202, 138, 4, 0.95));
+            backdrop-filter: blur(10px);
+            color: #0f172a;
+            padding: 12px 45px;
+            font-size: 20px;
+            font-weight: 900;
+            letter-spacing: 2px;
+            border-radius: 8px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.7);
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            text-transform: uppercase;
+            opacity: 0;
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+            pointer-events: none;
+            z-index: 200;
+        }
+        #alert-banner.active {
+            transform: translate(-50%, 0) scale(1);
+            opacity: 1;
+        }
+
+        /* --- 2. LIVE SCOREBOARD --- */
+        #score-container {
+            position: absolute;
+            bottom: 60px;
             left: 60px;
-            background: rgba(15, 23, 42, 0.95);
-            border: 2px solid #334155;
-            border-radius: 10px;
-            padding: 10px 15px;
             display: flex;
             flex-direction: column;
-            gap: 6px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
-            transform: scale(0);
-            transform-origin: bottom left;
-            transition: transform 0.4s ease;
-            z-index: 99;
-        }
-        .sets-grid-container.active { transform: scale(1); }
-        .set-row { display: flex; gap: 10px; align-items: center; justify-content: space-between; font-size: 14px; font-weight: bold; color: #94a3b8; }
-        .set-box { background: #1e293b; padding: 4px 10px; border-radius: 4px; color: #fff; min-width: 35px; text-align: center; border: 1px solid #475569; }
-
-        /* 4. Winner Banner */
-        .winner-banner {
-            position: absolute;
-            top: 50%; left: 50%;
-            transform: translate(-50%, -50%) scale(0);
-            background: linear-gradient(135deg, #1e293b, #0f172a);
-            border: 4px solid #facc15;
-            padding: 30px 60px;
-            border-radius: 20px;
-            text-align: center;
-            box-shadow: 0 25px 60px rgba(0,0,0,0.8);
-            transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            z-index: 200;
-        }
-        .winner-banner.active { transform: translate(-50%, -50%) scale(1); }
-        .winner-title { font-size: 16px; color: #38bdf8; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 8px; }
-        .winner-name { font-size: 36px; color: #facc15; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; }
-
-        /* 5. Points Table Leaderboard */
-        .table-container {
-            position: absolute;
-            top: 50%; left: 50%;
-            transform: translate(-50%, -50%) scale(0);
-            background: #0f172a;
-            border: 2px solid #334155;
-            border-radius: 12px;
-            width: 850px;
-            padding: 25px;
+            width: 410px;
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(12px);
+            color: #ffffff;
+            border-radius: 10px;
+            overflow: hidden; 
             box-shadow: 0 25px 50px rgba(0,0,0,0.8);
-            transition: transform 0.4s ease;
-            z-index: 200;
+            font-weight: bold;
+            border-left: 6px solid #38bdf8;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            border-right: 1px solid rgba(255,255,255,0.1);
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            transform: translateY(120px) scale(0.95);
+            opacity: 0;
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1), width 0.4s ease;
         }
-        .table-container.active { transform: translate(-50%, -50%) scale(1); }
-        .table-title { font-size: 18px; font-weight: 900; color: #38bdf8; margin-bottom: 15px; text-transform: uppercase; text-align: center; letter-spacing: 1px; }
-        table { width: 100%; border-collapse: collapse; font-size: 14px; text-align: center; }
-        th { background: #1e293b; color: #94a3b8; padding: 10px; font-weight: bold; text-transform: uppercase; }
-        td { padding: 10px; border-bottom: 1px solid #1e293b; color: #fff; }
-        tr:nth-child(even) { background: rgba(30, 41, 59, 0.3); }
+        #score-container.active { 
+            transform: translateY(0) scale(1); 
+            opacity: 1; 
+        }
+        #score-container.has-logo { width: 455px; }
+
+        .tt-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(17, 24, 39, 0.8);
+            border-bottom: 2px solid rgba(31, 41, 55, 0.8);
+            height: 52px;
+            transition: background 0.3s ease;
+        }
+        .tt-row:last-child { border-bottom: none; }
+        
+        .player-info {
+            display: flex; 
+            align-items: center; 
+            gap: 10px; 
+            padding-left: 14px;
+            font-size: 16px; 
+            letter-spacing: 1px; 
+            text-transform: uppercase;
+            white-space: nowrap; 
+            overflow: hidden; 
+            text-overflow: ellipsis; 
+            max-width: 270px;
+        }
+
+        .player-img { 
+            width: 32px; 
+            height: 32px; 
+            object-fit: contain; 
+            border-radius: 4px; 
+            background: rgba(0, 0, 0, 0.3); 
+            padding: 2px;
+            display: none; 
+            flex-shrink: 0;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.5); 
+            animation: fadeInLogo 0.3s ease-in-out;
+        }
+
+        @keyframes fadeInLogo {
+            from { opacity: 0; transform: scale(0.6); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .server-indicator { font-size: 14px; color: #eab308; margin-left: 5px; display: none; text-shadow: 0 0 10px #eab308; }
+        .active-server .server-indicator { display: inline-block; animation: blinkServer 1s infinite alternate; }
+        
+        @keyframes blinkServer {
+            from { opacity: 0.4; }
+            to { opacity: 1; }
+        }
+
+        .scores-group { display: flex; height: 100%; }
+        .set-score-box { width: 48px; display: flex; align-items: center; justify-content: center; font-size: 18px; background: rgba(17, 24, 39, 0.9); color: #9ca3af; border-left: 1px solid rgba(31, 41, 55, 0.8); }
+        .main-score-box { width: 60px; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 900; background: #9333ea; color: #ffffff; }
+
+        /* --- 3. DYNAMIC INTRO SCREEN --- */
+        #intro-container {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(9, 13, 22, 0.96);
+            backdrop-filter: blur(15px);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+            z-index: 100;
+        }
+        #intro-container.active { opacity: 1; pointer-events: auto; }
+        
+        .intro-title-badge {
+            background: #dc2626; color: #fff; padding: 10px 35px; font-size: 22px; font-weight: 900;
+            letter-spacing: 3px; border-radius: 6px; margin-bottom: 40px; text-transform: uppercase;
+            box-shadow: 0 15px 35px rgba(220, 38, 38, 0.6);
+            transform: translateY(-40px); opacity: 0;
+            transition: all 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.1s;
+        }
+        .intro-matchup-box {
+            display: flex; align-items: center; gap: 40px;
+            transform: scale(0.85); opacity: 0;
+            transition: all 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.2s;
+        }
+        #intro-container.active .intro-title-badge,
+        #intro-container.active .intro-matchup-box { 
+            transform: translateY(0) scale(1); 
+            opacity: 1; 
+        }
+        
+        .intro-team {
+            font-size: 50px; font-weight: 900; color: #ffffff; text-transform: uppercase;
+            letter-spacing: 2px; text-shadow: 0 15px 30px rgba(0,0,0,0.9);
+            background: rgba(30, 41, 59, 0.8); padding: 30px 60px; border-radius: 16px; 
+            border: 2px solid rgba(51, 65, 85, 0.8); box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+            max-width: 550px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .intro-vs {
+            font-size: 40px; font-weight: 900; color: #facc15; font-style: italic; 
+            text-shadow: 0 0 25px rgba(250, 204, 21, 0.8);
+        }
+
+        /* --- 4. WINNER BANNER --- */
+        #winner-banner {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%) scale(0.7);
+            background: rgba(15, 23, 42, 0.98);
+            backdrop-filter: blur(15px);
+            border: 2px solid #38bdf8;
+            color: #ffffff;
+            padding: 35px 70px;
+            font-size: 34px; font-weight: 900; letter-spacing: 2px;
+            border-radius: 16px; box-shadow: 0 35px 70px rgba(0,0,0,0.9);
+            text-align: center; text-transform: uppercase; opacity: 0;
+            transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            pointer-events: none;
+        }
+        #winner-banner.active { 
+            transform: translate(-50%, -50%) scale(1); 
+            opacity: 1; 
+        }
+
+        /* --- 5. POINTS TABLE LEADERBOARD --- */
+        #points-table-container {
+            position: absolute;
+            top: 140px; left: 50%;
+            transform: translate(-50%, -60px) scale(0.95);
+            width: 1000px; background: rgba(15, 23, 42, 0.96); 
+            backdrop-filter: blur(15px); border-radius: 10px;
+            box-shadow: 0 30px 60px rgba(0,0,0,0.8); border: 2px solid rgba(51, 65, 85, 0.8);
+            overflow: hidden; opacity: 0;
+            transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1); pointer-events: none;
+        }
+        #points-table-container.active { 
+            transform: translate(-50%, 0) scale(1); 
+            opacity: 1; 
+        }
+        .pt-header {
+            background: linear-gradient(90deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.9));
+            display: grid; grid-template-columns: 50px 1fr 70px 90px 120px 110px 110px 90px;
+            padding: 14px 15px; font-weight: 900; font-size: 13px; color: #38bdf8;
+            border-bottom: 2px solid rgba(51, 65, 85, 0.8); text-align: center;
+        }
+        .pt-row {
+            display: grid; grid-template-columns: 50px 1fr 70px 90px 120px 110px 110px 90px;
+            padding: 12px 15px; font-size: 14px; font-weight: bold; border-bottom: 1px solid rgba(30, 41, 59, 0.6);
+            align-items: center; text-align: center; background: rgba(15, 23, 42, 0.9);
+            transition: background 0.2s ease;
+        }
+        .pt-row:nth-child(even) { background: rgba(30, 41, 59, 0.4); }
+        .pt-row div:nth-child(2) { text-align: left; }
+
+        /* --- 6. SET-WISE SCORE GRID OVERLAY --- */
+        #sets-grid-container {
+            position: absolute;
+            bottom: 60px;
+            left: 50%;
+            transform: translate(-50%, 60px) scale(0.95);
+            background: rgba(15, 23, 42, 0.96);
+            backdrop-filter: blur(15px);
+            color: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.8);
+            border: 2px solid rgba(56, 189, 248, 0.5);
+            padding: 20px 25px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            opacity: 0;
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+            pointer-events: none;
+            min-width: 720px;
+        }
+        #sets-grid-container.active {
+            transform: translate(-50%, 0) scale(1);
+            opacity: 1;
+        }
+        .sets-grid-title {
+            font-size: 13px;
+            font-weight: 900;
+            color: #38bdf8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            text-align: center;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding-bottom: 8px;
+        }
+        .sets-grid-row {
+            display: grid;
+            grid-template-columns: 220px repeat(7, 1fr);
+            gap: 6px;
+            align-items: center;
+        }
+        .sets-grid-header-col {
+            font-size: 11px;
+            font-weight: bold;
+            color: #94a3b8;
+            text-align: center;
+            background: rgba(30, 41, 59, 0.8);
+            padding: 6px 4px;
+            border-radius: 4px;
+        }
+        .sets-grid-team-name {
+            font-size: 14px;
+            font-weight: 900;
+            text-transform: uppercase;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .set-box {
+            background: rgba(30, 41, 59, 0.9);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 6px;
+            height: 38px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 15px;
+            font-weight: 900;
+            color: #cbd5e1;
+        }
+        .set-box.winner-set {
+            background: #059669;
+            color: #fff;
+            border-color: #34d399;
+        }
     </style>
 </head>
 <body>
 
-    <!-- Game Point / Match Point Pop-up Banner -->
-    <div id="alert-banner" class="alert-banner">
-        <span id="alert-text">MATCH POINT</span>
+    <!-- 1. Tournament Header Banner -->
+    <div id="header-banner">TABLE TENNIS SUPER LEAGUE MAHARASHTRA 2025</div>
+
+    <!-- Game / Match Point Alert Banner -->
+    <div id="alert-banner">GAME POINT</div>
+
+    <!-- 2. Dynamic Match Intro Screen -->
+    <div id="intro-container">
+        <div class="intro-title-badge" id="intro-tourney-title">TABLE TENNIS SUPER LEAGUE</div>
+        <div class="intro-matchup-box">
+            <div class="intro-team" id="intro-p1">PHANTOM STARS</div>
+            <div class="intro-vs">VS</div>
+            <div class="intro-team" id="intro-p2">MUMBAI MOZARTT</div>
+        </div>
     </div>
 
-    <div class="overlay-canvas">
-        
-        <!-- Tournament Header -->
-        <div class="tournament-header" id="ui-tourney-title">TABLE TENNIS SUPER LEAGUE MAHARASHTRA 2025</div>
-
-        <!-- Set-wise Score Grid Popup -->
-        <div class="sets-grid-container" id="ui-sets-grid">
-            <div class="set-row"><span id="grid-t1-label">TEAM A</span> <div id="grid-p1-sets-list" style="display:flex; gap:5px;"></div></div>
-            <div class="set-row"><span id="grid-t2-label">TEAM B</span> <div id="grid-p2-sets-list" style="display:flex; gap:5px;"></div></div>
-        </div>
-
-        <!-- Live Scoreboard -->
-        <div class="scoreboard-container" id="ui-scoreboard">
-            <!-- Team A -->
-            <div class="team-box" id="box-p1">
-                <div class="team-info">
-                    <div class="server-dot"></div>
-                    <img id="ui-img1" class="team-logo" style="display: none;">
-                    <div class="team-name" id="ui-p1">PHANTOM STARS</div>
-                </div>
-                <div class="sets-badge" id="ui-p1-sets">0</div>
+    <!-- 3. Live Scoreboard -->
+    <div id="score-container">
+        <div class="tt-row" id="row-p1">
+            <div class="player-info">
+                <img id="o-img1" class="player-img" src="">
+                <span id="o-p1-name">PLAYER A</span>
+                <span class="server-indicator">◀</span>
             </div>
-            <div class="score-box" id="ui-score1">0</div>
-
-            <!-- Team B -->
-            <div class="score-box team-b-score" id="ui-score2">0</div>
-            <div class="team-box team-b" id="box-p2">
-                <div class="sets-badge" id="ui-p2-sets">0</div>
-                <div class="team-info">
-                    <div class="team-name" id="ui-p2">MUMBAI MOZARTT</div>
-                    <img id="ui-img2" class="team-logo" style="display: none;">
-                    <div class="server-dot" style="margin-left: 8px; margin-right: 0;"></div>
-                </div>
+            <div class="scores-group">
+                <div class="set-score-box" id="o-p1-sets">0</div>
+                <div class="main-score-box" id="o-p1-score">0</div>
             </div>
         </div>
-
-        <!-- Winner Announcement Banner -->
-        <div class="winner-banner" id="ui-winner-banner">
-            <div class="winner-title">Match Result</div>
-            <div class="winner-name" id="ui-winner-text">PHANTOM STARS WON THE MATCH</div>
+        <div class="tt-row" id="row-p2">
+            <div class="player-info">
+                <img id="o-img2" class="player-img" src="">
+                <span id="o-p2-name">PLAYER B</span>
+                <span class="server-indicator">◀</span>
+            </div>
+            <div class="scores-group">
+                <div class="set-score-box" id="o-p2-sets">0</div>
+                <div class="main-score-box" id="o-p2-score">0</div>
+            </div>
         </div>
-
-        <!-- Points Table Leaderboard -->
-        <div class="table-container" id="ui-table">
-            <div class="table-title">Points Table Leaderboard</div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Rank</th>
-                        <th>Team Name</th>
-                        <th>Played</th>
-                        <th>Points</th>
-                    </tr>
-                </thead>
-                <tbody id="table-body">
-                    <!-- Populated dynamically -->
-                </tbody>
-            </table>
-        </div>
-
     </div>
 
-<script>
-    // Firebase Config (for syncing standalone overlay if opened directly)
-    const firebaseConfig = {
-        apiKey: "AIzaSyAYc_bEB9C4RhhLhPBEJsJRFRUppcR45yo",
-        authDomain: "scorvix-faf0e.firebaseapp.com",
-        projectId: "scorvix-faf0e",
-        storageBucket: "scorvix-faf0e.firebasestorage.app",
-        messagingSenderId: "725629580596",
-        appId: "1:725629580596:web:7737847e7194650f276161",
-        measurementId: "G-4EXH0QXHF7"
-    };
+    <!-- 4. Sets Grid Score Breakdown Overlay -->
+    <div id="sets-grid-container">
+        <div class="sets-grid-title">Match Set-wise Score Breakdown</div>
+        <div id="sets-grid-content"></div>
+    </div>
 
-    firebase.initializeApp(firebaseConfig);
-    const db = firebase.firestore();
+    <!-- 5. Winner Banner -->
+    <div id="winner-banner">PLAYER A WON THE MATCH</div>
 
-    const socket = io();
+    <!-- 6. Points Table Overlay -->
+    <div id="points-table-container">
+        <div class="pt-header">
+            <div>#</div>
+            <div>POINTS TABLE</div>
+            <div>TIES</div>
+            <div>TIES WON</div>
+            <div>GAMES PLAYED</div>
+            <div>MATCHES WON</div>
+            <div>GAMES WON</div>
+            <div>POINTS</div>
+        </div>
+        <div id="pt-body"></div>
+    </div>
 
-    let lastAlertKey = "";
-    let alertTimeout = null;
+    <script>
+        const socket = io();
 
-    function showAlert(text) {
-        const banner = document.getElementById('alert-banner');
-        const alertText = document.getElementById('alert-text');
-        alertText.innerText = text;
-        
-        banner.classList.add('show');
-        
-        if (alertTimeout) clearTimeout(alertTimeout);
-        alertTimeout = setTimeout(() => {
-            banner.classList.remove('show');
-        }, 4000); // 4 Seconds stay duration
-    }
+        let lastAlertState = "";
+        let alertTimeout = null;
 
-    function checkAndTriggerPoints(data) {
-        let p1s = data.p1Score;
-        let p2s = data.p2Score;
-        let p1Sets = data.p1Sets;
-        let p2Sets = data.p2Sets;
-        let targetSets = (data.matchFormat === 'bestOf7') ? 4 : 3;
+        function checkGameMatchPoint(data) {
+            let p1 = parseInt(data.p1Score) || 0;
+            let p2 = parseInt(data.p2Score) || 0;
+            let p1Sets = parseInt(data.p1Sets) || 0;
+            let p2Sets = parseInt(data.p2Sets) || 0;
+            let matchFormat = data.matchFormat || 'bestOf5';
+            let setsNeeded = (matchFormat === 'bestOf7') ? 4 : 3;
 
-        let p1HasGamePoint = (p1s >= 10 && p1s > p2s);
-        let p2HasGamePoint = (p2s >= 10 && p2s > p1s);
+            let p1HasGP = false;
+            let p2HasGP = false;
 
-        let p1IsMatchPoint = p1HasGamePoint && (p1Sets === targetSets - 1);
-        let p2IsMatchPoint = p2HasGamePoint && (p2Sets === targetSets - 1);
+            if ((p1 === 10 && p2 <= 9) || (p1 >= 10 && p2 >= 10 && p1 - p2 === 1)) {
+                p1HasGP = true;
+            }
+            if ((p2 === 10 && p1 <= 9) || (p1 >= 10 && p2 >= 10 && p2 - p1 === 1)) {
+                p2HasGP = true;
+            }
 
-        let currentKey = `${p1s}-${p2s}-${p1Sets}-${p2Sets}`;
+            let p1Name = data.p1Name || 'PLAYER A';
+            let p2Name = data.p2Name || 'PLAYER B';
 
-        // Trigger only when game point / match point status changes
-        if (currentKey !== lastAlertKey) {
-            if (p1IsMatchPoint) {
-                showAlert(`🔥 MATCH POINT: ${data.p1Name} 🔥`);
-                lastAlertKey = currentKey;
-            } else if (p2IsMatchPoint) {
-                showAlert(`🔥 MATCH POINT: ${data.p2Name} 🔥`);
-                lastAlertKey = currentKey;
-            } else if (p1HasGamePoint) {
-                showAlert(`⚠️ GAME POINT: ${data.p1Name} ⚠️`);
-                lastAlertKey = currentKey;
-            } else if (p2HasGamePoint) {
-                showAlert(`⚠️ GAME POINT: ${data.p2Name} ⚠️`);
-                lastAlertKey = currentKey;
-            } else {
-                lastAlertKey = currentKey;
+            let currentAlertText = "";
+            let alertType = "";
+
+            if (p1HasGP) {
+                if (p1Sets === setsNeeded - 1) {
+                    currentAlertText = `${p1Name} - MATCH POINT!`;
+                    alertType = 'mp';
+                } else {
+                    currentAlertText = `${p1Name} - GAME POINT!`;
+                    alertType = 'gp';
+                }
+            } else if (p2HasGP) {
+                if (p2Sets === setsNeeded - 1) {
+                    currentAlertText = `${p2Name} - MATCH POINT!`;
+                    alertType = 'mp';
+                } else {
+                    currentAlertText = `${p2Name} - GAME POINT!`;
+                    alertType = 'gp';
+                }
+            }
+
+            if (currentAlertText && currentAlertText !== lastAlertState) {
+                lastAlertState = currentAlertText;
+                showAlertBanner(currentAlertText, alertType);
+            } else if (!currentAlertText) {
+                lastAlertState = "";
             }
         }
-    }
 
-    function updateOverlay(data) {
-        // Update Texts & Scores
-        document.getElementById('ui-tourney-title').innerText = data.tourneyTitle || "";
-        document.getElementById('ui-p1').innerText = data.p1Name || "";
-        document.getElementById('ui-p2').innerText = data.p2Name || "";
-        document.getElementById('ui-score1').innerText = data.p1Score;
-        document.getElementById('ui-score2').innerText = data.p2Score;
-        document.getElementById('ui-p1-sets').innerText = data.p1Sets;
-        document.getElementById('ui-p2-sets').innerText = data.p2Sets;
-        document.getElementById('ui-winner-text').innerText = data.winner;
+        function showAlertBanner(text, type) {
+            let banner = document.getElementById('alert-banner');
+            banner.innerText = text;
+            if (type === 'mp') {
+                banner.style.background = 'linear-gradient(135deg, rgba(220, 38, 38, 0.95), rgba(153, 27, 27, 0.95))';
+                banner.style.color = '#ffffff';
+            } else {
+                banner.style.background = 'linear-gradient(135deg, rgba(234, 179, 8, 0.95), rgba(202, 138, 4, 0.95))';
+                banner.style.color = '#0f172a';
+            }
+            banner.classList.add('active');
 
-        // Check and trigger automatic Game/Match point alert
-        checkAndTriggerPoints(data);
-
-        // Logos
-        const img1 = document.getElementById('ui-img1');
-        if(data.img1) { img1.src = data.img1; img1.style.display = 'block'; } else { img1.style.display = 'none'; }
-        
-        const img2 = document.getElementById('ui-img2');
-        if(data.img2) { img2.src = data.img2; img2.style.display = 'block'; } else { img2.style.display = 'none'; }
-
-        // Server Indicator
-        const boxP1 = document.getElementById('box-p1');
-        const boxP2 = document.getElementById('box-p2');
-        if(data.server === 1) {
-            boxP1.classList.add('serving');
-            boxP2.classList.remove('serving');
-        } else {
-            boxP1.classList.remove('serving');
-            boxP2.classList.add('serving');
+            if (alertTimeout) clearTimeout(alertTimeout);
+            alertTimeout = setTimeout(() => {
+                banner.classList.remove('active');
+            }, 4000);
         }
 
-        // Sets History Grid
-        document.getElementById('grid-t1-label').innerText = data.p1Name;
-        document.getElementById('grid-t2-label').innerText = data.p2Name;
-        
-        let p1SetsListHtml = '';
-        let p2SetsListHtml = '';
-        if(data.setsHistory && data.setsHistory.length > 0) {
-            data.setsHistory.forEach(set => {
-                p1SetsListHtml += `<div class="set-box">${set.p1}</div>`;
-                p2SetsListHtml += `<div class="set-box">${set.p2}</div>`;
-            });
-        }
-        document.getElementById('grid-p1-sets-list').innerHTML = p1SetsListHtml;
-        document.getElementById('grid-p2-sets-list').innerHTML = p2SetsListHtml;
+        socket.on('liveScore', (data) => {
+            document.getElementById('header-banner').innerText = data.tourneyTitle;
+            document.getElementById('intro-tourney-title').innerText = data.tourneyTitle;
+            
+            document.getElementById('o-p1-name').innerText = data.p1Name;
+            document.getElementById('o-p2-name').innerText = data.p2Name;
+            document.getElementById('intro-p1').innerText = data.p1Name;
+            document.getElementById('intro-p2').innerText = data.p2Name;
 
-        // Standings Table
-        if(data.standings) {
-            let tbody = '';
-            data.standings.forEach((row, index) => {
-                tbody += `<tr><td>${index + 1}</td><td style="text-align:left; font-weight:bold;">${row.team}</td><td>${row.ties}</td><td style="color:#facc15; font-weight:bold;">${row.points}</td></tr>`;
-            });
-            document.getElementById('table-body').innerHTML = tbody;
-        }
+            let p1ScoreBox = document.getElementById('o-p1-score');
+            let p2ScoreBox = document.getElementById('o-p2-score');
 
-        // Graphic States Switcher
-        document.getElementById('ui-tourney-title').className = "tournament-header " + (data.state === 'header-in' ? 'active' : '');
-        document.getElementById('ui-scoreboard').className = "scoreboard-container " + (data.state === 'score-in' ? 'active' : '');
-        document.getElementById('ui-sets-grid').className = "sets-grid-container " + (data.state === 'sets-grid-in' ? 'active' : '');
-        document.getElementById('ui-winner-banner').className = "winner-banner " + (data.state === 'winner-in' ? 'active' : '');
-        document.getElementById('ui-table').className = "table-container " + (data.state === 'table-in' ? 'active' : '');
-    }
+            p1ScoreBox.innerText = data.p1Score;
+            p2ScoreBox.innerText = data.p2Score;
+            document.getElementById('o-p1-sets').innerText = data.p1Sets;
+            document.getElementById('o-p2-sets').innerText = data.p2Sets;
 
-    // Socket Listener
-    socket.on('updateScore', (data) => {
-        updateOverlay(data);
-    });
+            // Check Game / Match Point
+            checkGameMatchPoint(data);
 
-    // Initial load from Firebase
-    db.collection("scorvix").doc("matchState").get().then(doc => {
-        if (doc.exists) {
-            updateOverlay(doc.data());
-        }
-    });
-</script>
+            // Team / Player Logo Handling
+            let hasAnyLogo = false;
+            let img1 = document.getElementById('o-img1');
+            if(data.img1) { 
+                img1.src = data.img1; 
+                img1.style.display = 'block'; 
+                hasAnyLogo = true;
+            } else { 
+                img1.style.display = 'none'; 
+            }
+
+            let img2 = document.getElementById('o-img2');
+            if(data.img2) { 
+                img2.src = data.img2; 
+                img2.style.display = 'block'; 
+                hasAnyLogo = true;
+            } else { 
+                img2.style.display = 'none'; 
+            }
+
+            let scoreContainer = document.getElementById('score-container');
+            if (hasAnyLogo) {
+                scoreContainer.classList.add('has-logo');
+            } else {
+                scoreContainer.classList.remove('has-logo');
+            }
+
+            if (data.server === 1) {
+                document.getElementById('row-p1').classList.add('active-server');
+                document.getElementById('row-p2').classList.remove('active-server');
+            } else {
+                document.getElementById('row-p2').classList.add('active-server');
+                document.getElementById('row-p1').classList.remove('active-server');
+            }
+
+            // Render Set-wise Grid Content dynamically based on format & history
+            let totalSetsCount = (data.matchFormat === 'bestOf7') ? 7 : 5;
+            let gridHTML = `<div class="sets-grid-row" style="margin-bottom: 4px;">
+                <div style="font-size: 11px; font-weight: bold; color: #94a3b8;">TEAM / PLAYER</div>`;
+            for(let i=1; i<=totalSetsCount; i++) {
+                gridHTML += `<div class="sets-grid-header-col">Set ${i}</div>`;
+            }
+            gridHTML += `</div>`;
+
+            let setsHistory = data.setsHistory || [];
+            
+            // Team 1 Row
+            gridHTML += `<div class="sets-grid-row">
+                <div class="sets-grid-team-name" style="color: #38bdf8;">${data.p1Name}</div>`;
+            for(let i=0; i<totalSetsCount; i++) {
+                let setVal = (setsHistory[i]) ? setsHistory[i].p1 : "-";
+                let isWinner = (setsHistory[i] && setsHistory[i].p1 > setsHistory[i].p2);
+                gridHTML += `<div class="set-box ${isWinner ? 'winner-set' : ''}">${setVal}</div>`;
+            }
+            gridHTML += `</div>`;
+
+            // Team 2 Row
+            gridHTML += `<div class="sets-grid-row">
+                <div class="sets-grid-team-name" style="color: #f97316;">${data.p2Name}</div>`;
+            for(let i=0; i<totalSetsCount; i++) {
+                let setVal = (setsHistory[i]) ? setsHistory[i].p2 : "-";
+                let isWinner = (setsHistory[i] && setsHistory[i].p2 > setsHistory[i].p1);
+                gridHTML += `<div class="set-box ${isWinner ? 'winner-set' : ''}">${setVal}</div>`;
+            }
+            gridHTML += `</div>`;
+
+            document.getElementById('sets-grid-content').innerHTML = gridHTML;
+
+            // Render Standings Table
+            if (data.standings) {
+                data.standings.sort((a, b) => b.points - a.points);
+                let ptHTML = "";
+                data.standings.forEach((item, index) => {
+                    ptHTML += `<div class="pt-row">
+                        <div>${index + 1}</div>
+                        <div>${item.team}</div>
+                        <div>${item.ties}</div>
+                        <div>${item.tiesWon}</div>
+                        <div>${item.gamesPlayed}</div>
+                        <div>${item.matchesWon}</div>
+                        <div>${item.gamesWon}</div>
+                        <div>${item.points}</div>
+                    </div>`;
+                });
+                document.getElementById('pt-body').innerHTML = ptHTML;
+            }
+
+            // State Switchers
+            document.getElementById('header-banner').className = data.state === 'header-in' ? 'active' : '';
+            document.getElementById('intro-container').className = data.state === 'intro-in' ? 'active' : '';
+            
+            // Scoreboard and Sets Grid state management
+            if (data.state === 'score-in') {
+                scoreContainer.classList.add('active');
+            } else if (data.state === 'score-out' || data.state === 'sets-grid-in') {
+                scoreContainer.classList.remove('active');
+            }
+
+            document.getElementById('sets-grid-container').className = data.state === 'sets-grid-in' ? 'active' : '';
+            document.getElementById('winner-banner').className = data.state === 'winner-in' ? 'active' : '';
+            document.getElementById('points-table-container').className = data.state === 'table-in' ? 'active' : '';
+            
+            document.getElementById('winner-banner').innerText = data.winner;
+        });
+    </script>
 </body>
 </html>
