@@ -142,25 +142,22 @@
                     <input type="text" id="c-winner-text" value="PHANTOM STARS WON THE MATCH" oninput="sendData()">
                 </div>
                 <div>
-                    <label>Team A Name & Logo:</label>
+                    <label>Team A Name & Logo (Left):</label>
                     <input type="text" id="c-p1" value="PHANTOM STARS" oninput="sendData()">
-                    <input type="file" id="c-img1" accept="image/*" onchange="uploadImage(1)" style="margin-top: 3px;">
-                </div>
-                <div>
-                    <label>Team B Name & Logo:</label>
-                    <input type="text" id="c-p2" value="MUMBAI MOZARTT" oninput="sendData()">
-                    <input type="file" id="c-img2" accept="image/*" onchange="uploadImage(2)" style="margin-top: 3px;">
-                </div>
-                <!-- 🌟 NEW: Scorecard Left Side Logo Control 🌟 -->
-                <div>
-                    <label>Scorecard Side Logo (Left):</label>
-                    <input type="file" id="c-scorecard-logo" accept="image/*" onchange="uploadScorecardLogo()" style="margin-top: 3px;">
-                    <div class="toggles-grid" style="margin-top: 6px;">
-                        <button class="toggle-btn bg-green" onclick="toggleScorecardLogo('in')">Show & Animate</button>
-                        <button class="toggle-btn bg-red" onclick="toggleScorecardLogo('out')">Remove Logo</button>
+                    <div style="display: flex; gap: 5px; margin-top: 3px;">
+                        <input type="file" id="c-img1" accept="image/*" onchange="uploadImage(1)">
+                        <button style="background: #dc2626; padding: 4px 8px; font-size: 10px;" onclick="removeLogo(1)">Remove</button>
                     </div>
                 </div>
-                <button style="background: #475569;" onclick="resetMatch()">🔄 Reset Match Score</button>
+                <div>
+                    <label>Team B Name & Logo (Left):</label>
+                    <input type="text" id="c-p2" value="MUMBAI MOZARTT" oninput="sendData()">
+                    <div style="display: flex; gap: 5px; margin-top: 3px;">
+                        <input type="file" id="c-img2" accept="image/*" onchange="uploadImage(2)">
+                        <button style="background: #dc2626; padding: 4px 8px; font-size: 10px;" onclick="removeLogo(2)">Remove</button>
+                    </div>
+                </div>
+                <button style="background: #475569; margin-top: 5px;" onclick="resetMatch()">🔄 Reset Match Score</button>
             </div>
 
             <!-- COLUMN 2 -->
@@ -255,12 +252,10 @@
         measurementId: "G-4EXH0QXHF7"
     };
 
-    // Initialize Firebase & Firestore
     firebase.initializeApp(firebaseConfig);
     const auth = firebase.auth();
     const db = firebase.firestore();
 
-    // Google Login Function
     function loginWithGoogle() {
         const provider = new firebase.auth.GoogleAuthProvider();
         auth.signInWithPopup(provider).catch(error => {
@@ -268,25 +263,22 @@
         });
     }
 
-    // Logout Function
     function logout() {
         auth.signOut();
     }
 
-    // Auth State Monitor
     auth.onAuthStateChanged(user => {
         if (user) {
             document.getElementById('login-screen').style.display = 'none';
             document.getElementById('main-studio').style.display = 'grid';
             document.getElementById('user-email-display').innerText = user.email;
-            loadSavedData(); // Cloud se data load karo jab login ho jaye
+            loadSavedData();
         } else {
             document.getElementById('login-screen').style.display = 'flex';
             document.getElementById('main-studio').style.display = 'none';
         }
     });
 
-    // 🌟 Studio Logic 🌟
     const socket = io();
     let data = { 
         tourneyTitle: "TABLE TENNIS SUPER LEAGUE MAHARASHTRA 2025",
@@ -295,7 +287,6 @@
         p1Name: "PHANTOM STARS", p2Name: "MUMBAI MOZARTT", 
         p1Score: 0, p2Score: 0, p1Sets: 0, p2Sets: 0, 
         server: 1, img1: "", img2: "", state: "score-in",
-        scorecardLogo: "", logoState: "out", // 🌟 Added logo fields
         standings: [
             { team: "PHANTOM STARS", ties: 5, tiesWon: 5, gamesPlayed: 135, matchesWon: 28, gamesWon: 77, points: 77 },
             { team: "MUMBAI MOZARTT", ties: 5, tiesWon: 1, gamesPlayed: 135, matchesWon: 23, gamesWon: 68, points: 68 },
@@ -331,19 +322,14 @@
         document.getElementById('disp-p2').innerHTML = `${data.p2Score} <span style="font-size: 14px; color: #94a3b8;">(Sets: ${data.p2Sets})</span>`;
         document.getElementById('footer-server-turn').innerText = `Serving: ${data.server === 1 ? data.p1Name : data.p2Name}`;
 
-        // 1. Send via Socket to Overlay
         socket.emit('updateScore', data);
-
-        // 2. Save automatically to Firebase Firestore Cloud
         db.collection("scorvix").doc("matchState").set(data).catch(err => console.log("Cloud save error:", err));
     }
 
-    // Load Data from Firestore Cloud on startup
     function loadSavedData() {
         db.collection("scorvix").doc("matchState").get().then(doc => {
             if (doc.exists) {
                 data = doc.data();
-                // Update UI fields from saved cloud data
                 document.getElementById('c-tourney-title').value = data.tourneyTitle || "";
                 document.getElementById('c-match-format').value = data.matchFormat || "bestOf5";
                 document.getElementById('c-winner-text').value = data.winner || "";
@@ -357,7 +343,7 @@
                     document.getElementById('pt-t2-played').value = data.standings[1].ties;
                     document.getElementById('pt-t2-pts').value = data.standings[1].points;
                 }
-                sendData(); // Push loaded data to socket & screen
+                sendData();
             }
         }).catch(err => console.log("Cloud load error:", err));
     }
@@ -376,26 +362,14 @@
         }
     }
 
-    // 🌟 NEW: Scorecard Logo Upload & Animation Triggers 🌟
-    function uploadScorecardLogo() {
-        const fileInput = document.getElementById('c-scorecard-logo');
-        const file = fileInput.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                data.scorecardLogo = e.target.result;
-                data.logoState = "in"; // Automatically animate in when uploaded
-                sendData();
-            };
-            reader.readAsDataURL(file);
+    function removeLogo(player) {
+        if(player === 1) {
+            data.img1 = "";
+            document.getElementById('c-img1').value = "";
         }
-    }
-
-    function toggleScorecardLogo(st) {
-        data.logoState = st;
-        if(st === 'out') {
-            data.scorecardLogo = "";
-            document.getElementById('c-scorecard-logo').value = "";
+        if(player === 2) {
+            data.img2 = "";
+            document.getElementById('c-img2').value = "";
         }
         sendData();
     }
