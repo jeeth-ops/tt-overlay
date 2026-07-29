@@ -51,7 +51,6 @@
             background: rgba(15, 23, 42, 0.95);
             backdrop-filter: blur(12px);
             color: #ffffff;
-            /* Rounded corners added here like the reference image */
             border-radius: 10px;
             overflow: hidden; 
             box-shadow: 0 25px 50px rgba(0,0,0,0.8);
@@ -67,6 +66,23 @@
         #score-container.active { 
             transform: translateY(0) scale(1); 
             opacity: 1; 
+        }
+
+        /* --- SCORECARD LOGO STYLING --- */
+        #scorecard-logo-container {
+            display: none;
+            padding: 10px;
+            background: rgba(15, 23, 42, 0.98);
+            text-align: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        #scorecard-logo-container.active {
+            display: block;
+        }
+        #scorecard-logo-img {
+            max-height: 45px;
+            max-width: 100%;
+            object-fit: contain;
         }
 
         .tt-row {
@@ -213,6 +229,11 @@
 
     <!-- 3. Live Scoreboard -->
     <div id="score-container">
+        <!-- Scorecard Logo Box Added -->
+        <div id="scorecard-logo-container">
+            <img id="scorecard-logo-img" src="" alt="Scorecard Logo">
+        </div>
+
         <div class="tt-row" id="row-p1">
             <div class="player-info">
                 <img id="o-img1" class="player-img" src="">
@@ -282,6 +303,19 @@
             let img2 = document.getElementById('o-img2');
             if(data.img2) { img2.src = data.img2; img2.style.display = 'block'; } else { img2.style.display = 'none'; }
 
+            // Scorecard Logo Handling
+            let logoContainer = document.getElementById('scorecard-logo-container');
+            let logoImg = document.getElementById('scorecard-logo-img');
+            if (data.scorecardLogo) {
+                logoImg.src = data.scorecardLogo;
+            }
+
+            if (data.logoState === 'active') {
+                logoContainer.classList.add('active');
+            } else {
+                logoContainer.classList.remove('active');
+            }
+
             if (data.server === 1) {
                 document.getElementById('row-p1').classList.add('active-server');
                 document.getElementById('row-p2').classList.remove('active-server');
@@ -291,21 +325,23 @@
             }
 
             // Render Points Table dynamically
-            data.standings.sort((a, b) => b.points - a.points);
-            let ptHTML = "";
-            data.standings.forEach((item, index) => {
-                ptHTML += `<div class="pt-row">
-                    <div>${index + 1}</div>
-                    <div>${item.team}</div>
-                    <div>${item.ties}</div>
-                    <div>${item.tiesWon}</div>
-                    <div>${item.gamesPlayed}</div>
-                    <div>${item.matchesWon}</div>
-                    <div>${item.gamesWon}</div>
-                    <div>${item.points}</div>
-                </div>`;
-            });
-            document.getElementById('pt-body').innerHTML = ptHTML;
+            if (data.standings) {
+                data.standings.sort((a, b) => b.points - a.points);
+                let ptHTML = "";
+                data.standings.forEach((item, index) => {
+                    ptHTML += `<div class="pt-row">
+                        <div>${index + 1}</div>
+                        <div>${item.team}</div>
+                        <div>${item.ties}</div>
+                        <div>${item.tiesWon}</div>
+                        <div>${item.gamesPlayed}</div>
+                        <div>${item.matchesWon}</div>
+                        <div>${item.gamesWon}</div>
+                        <div>${item.points}</div>
+                    </div>`;
+                });
+                document.getElementById('pt-body').innerHTML = ptHTML;
+            }
 
             // Visibility States Handling with Smooth Transitions
             document.getElementById('header-banner').className = data.state === 'header-in' ? 'active' : '';
