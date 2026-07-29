@@ -45,8 +45,8 @@
             position: relative;
         }
 
-        .team-block.left { background: linear-gradient(90deg, rgba(2, 132, 199, 0.25), transparent); }
-        .team-block.right { background: linear-gradient(-90deg, rgba(220, 38, 38, 0.25), transparent); flex-direction: row-reverse; }
+        .team-block.left { background: linear-gradient(90deg, rgba(2, 132, 199, 0.3), transparent); }
+        .team-block.right { background: linear-gradient(-90deg, rgba(220, 38, 38, 0.3), transparent); flex-direction: row-reverse; }
 
         .team-logo-box {
             width: 0px;
@@ -266,15 +266,8 @@
             border: 1px solid rgba(255, 255, 255, 0.3);
             display: none;
             z-index: 9999;
-            animation: pulseReplay 1.5s infinite;
         }
         .replay-badge.active { display: block; }
-
-        @keyframes pulseReplay {
-            0% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.05); opacity: 0.8; }
-            100% { transform: scale(1); opacity: 1; }
-        }
     </style>
 </head>
 <body>
@@ -286,7 +279,7 @@
                 <div class="team-logo-box" id="boxLogoA">
                     <img id="imgLogoA" src="" alt="">
                 </div>
-                <div class="team-name" id="dispNameA">REAL MADRID</div>
+                <div class="team-name" id="dispNameA">TEAM A</div>
             </div>
             <div class="score-box" id="dispScoreA">0</div>
 
@@ -300,7 +293,7 @@
                 <div class="team-logo-box" id="boxLogoB">
                     <img id="imgLogoB" src="" alt="">
                 </div>
-                <div class="team-name" id="dispNameB">BARCELONA</div>
+                <div class="team-name" id="dispNameB">TEAM B</div>
             </div>
         </div>
 
@@ -320,7 +313,7 @@
                         <div class="modal-logo-box" id="modalBoxLogoA">
                             <img id="modalImgLogoA" src="" alt="">
                         </div>
-                        <div class="modal-team-name" id="modalDispNameA">REAL MADRID</div>
+                        <div class="modal-team-name" id="modalDispNameA">TEAM A</div>
                     </div>
                     <div class="modal-score-box" id="modalDispScoreA">0</div>
 
@@ -331,7 +324,7 @@
                         <div class="modal-logo-box" id="modalBoxLogoB">
                             <img id="modalImgLogoB" src="" alt="">
                         </div>
-                        <div class="modal-team-name" id="modalDispNameB">BARCELONA</div>
+                        <div class="modal-team-name" id="modalDispNameB">TEAM B</div>
                     </div>
                 </div>
 
@@ -345,10 +338,20 @@
     <!-- Action Replay Badge -->
     <div class="replay-badge" id="replayBadge">▶ ACTION REPLAY</div>
 
-    <!-- Socket.io Script inclusion -->
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
+
+        // Helper function to convert HEX to RGBA for vMix compatibility
+        function hexToRgba(hex, alpha) {
+            if (!hex) return null;
+            let c = hex.replace('#', '');
+            if (c.length === 3) {
+                c = c.split('').map(x => x + x).join('');
+            }
+            const num = parseInt(c, 16);
+            return `rgba(${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}, ${alpha})`;
+        }
 
         function updateUI(data) {
             if (!data) return;
@@ -375,25 +378,31 @@
             document.getElementById('modalDispScoreA').innerText = scoreA;
             document.getElementById('modalDispScoreB').innerText = scoreB;
 
-            // Colors Fix for vMix
+            // Safe Color Application using RGBA converter
             if (data.colorA) {
-                document.getElementById('dispScoreA').style.background = data.colorA;
-                document.getElementById('modalDispScoreA').style.background = data.colorA;
-                document.getElementById('blockA').style.background = `linear-gradient(90deg, ${data.colorA}40, transparent)`;
-                document.getElementById('modalBlockA').style.background = `${data.colorA}33`;
+                const solidRgba = hexToRgba(data.colorA, 1);
+                const gradientRgba = hexToRgba(data.colorA, 0.35);
+                const subtleRgba = hexToRgba(data.colorA, 0.2);
+
+                document.getElementById('dispScoreA').style.background = solidRgba;
+                document.getElementById('modalDispScoreA').style.background = solidRgba;
+                document.getElementById('blockA').style.background = `linear-gradient(90deg, ${gradientRgba}, transparent)`;
+                document.getElementById('modalBlockA').style.background = subtleRgba;
             }
+
             if (data.colorB) {
-                document.getElementById('dispScoreB').style.background = data.colorB;
-                document.getElementById('modalDispScoreB').style.background = data.colorB;
-                document.getElementById('blockB').style.background = `linear-gradient(-90deg, ${data.colorB}40, transparent)`;
-                document.getElementById('modalBlockB').style.background = `${data.colorB}33`;
+                const solidRgba = hexToRgba(data.colorB, 1);
+                const gradientRgba = hexToRgba(data.colorB, 0.35);
+                const subtleRgba = hexToRgba(data.colorB, 0.2);
+
+                document.getElementById('dispScoreB').style.background = solidRgba;
+                document.getElementById('modalDispScoreB').style.background = solidRgba;
+                document.getElementById('blockB').style.background = `linear-gradient(-90deg, ${gradientRgba}, transparent)`;
+                document.getElementById('modalBlockB').style.background = subtleRgba;
             }
+
             if (data.colorClock) {
-                document.getElementById('timerCenterBox').style.background = data.colorClock;
-            }
-            if (data.colorModal) {
-                document.getElementById('modalCardBox').style.borderColor = data.colorModal;
-                document.getElementById('modalTimerFooter').style.color = data.colorModal;
+                document.getElementById('timerCenterBox').style.background = hexToRgba(data.colorClock, 1) || data.colorClock;
             }
 
             const hasLogoA = data.showLogoA && data.logoA && data.logoA.trim() !== "";
@@ -473,7 +482,6 @@
             }
         }
 
-        // LocalStorage fallback taaki direct load pe bhi chale
         function syncOverlay() {
             const raw = localStorage.getItem('scorvix_football');
             if (raw) {
@@ -481,7 +489,6 @@
             }
         }
 
-        // Socket.io Listener for Live Sync
         socket.on('liveFootballScore', (data) => {
             updateUI(data);
         });
