@@ -40,14 +40,14 @@
             opacity: 1; 
         }
 
-        /* --- 2. LIVE SCOREBOARD (Smooth Animation & Dynamic Expansion on Logo Upload) --- */
+        /* --- 2. LIVE SCOREBOARD --- */
         #score-container {
             position: absolute;
             bottom: 60px;
             left: 60px;
             display: flex;
             flex-direction: column;
-            width: 410px; /* Base width without logo */
+            width: 410px;
             background: rgba(15, 23, 42, 0.95);
             backdrop-filter: blur(12px);
             color: #ffffff;
@@ -67,10 +67,7 @@
             transform: translateY(0) scale(1); 
             opacity: 1; 
         }
-        /* Jab Team A ya Team B ka logo upload hoga, scoreboard thoda animate hoke expand hoga */
-        #score-container.has-logo {
-            width: 455px; 
-        }
+        #score-container.has-logo { width: 455px; }
 
         .tt-row {
             display: flex;
@@ -97,7 +94,6 @@
             max-width: 270px;
         }
 
-        /* Automated Sizing & Positioning for Team Logos on Left */
         .player-img { 
             width: 32px; 
             height: 32px; 
@@ -225,6 +221,82 @@
         }
         .pt-row:nth-child(even) { background: rgba(30, 41, 59, 0.4); }
         .pt-row div:nth-child(2) { text-align: left; }
+
+        /* --- 6. SET-WISE SCORE GRID OVERLAY (Naya Component) --- */
+        #sets-grid-container {
+            position: absolute;
+            bottom: 60px;
+            left: 50%;
+            transform: translate(-50%, 60px) scale(0.95);
+            background: rgba(15, 23, 42, 0.96);
+            backdrop-filter: blur(15px);
+            color: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.8);
+            border: 2px solid rgba(56, 189, 248, 0.5);
+            padding: 20px 25px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            opacity: 0;
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+            pointer-events: none;
+            min-width: 720px;
+        }
+        #sets-grid-container.active {
+            transform: translate(-50%, 0) scale(1);
+            opacity: 1;
+        }
+        .sets-grid-title {
+            font-size: 13px;
+            font-weight: 900;
+            color: #38bdf8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            text-align: center;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding-bottom: 8px;
+        }
+        .sets-grid-row {
+            display: grid;
+            grid-template-columns: 220px repeat(7, 1fr);
+            gap: 6px;
+            align-items: center;
+        }
+        .sets-grid-header-col {
+            font-size: 11px;
+            font-weight: bold;
+            color: #94a3b8;
+            text-align: center;
+            background: rgba(30, 41, 59, 0.8);
+            padding: 6px 4px;
+            border-radius: 4px;
+        }
+        .sets-grid-team-name {
+            font-size: 14px;
+            font-weight: 900;
+            text-transform: uppercase;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .set-box {
+            background: rgba(30, 41, 59, 0.9);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 6px;
+            height: 38px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 15px;
+            font-weight: 900;
+            color: #cbd5e1;
+        }
+        .set-box.winner-set {
+            background: #059669;
+            color: #fff;
+            border-color: #34d399;
+        }
     </style>
 </head>
 <body>
@@ -268,10 +340,16 @@
         </div>
     </div>
 
-    <!-- 4. Winner Banner -->
+    <!-- 4. Sets Grid Score Breakdown Overlay -->
+    <div id="sets-grid-container">
+        <div class="sets-grid-title">Match Set-wise Score Breakdown</div>
+        <div id="sets-grid-content"></div>
+    </div>
+
+    <!-- 5. Winner Banner -->
     <div id="winner-banner">PLAYER A WON THE MATCH</div>
 
-    <!-- 5. Points Table Overlay -->
+    <!-- 6. Points Table Overlay -->
     <div id="points-table-container">
         <div class="pt-header">
             <div>#</div>
@@ -306,7 +384,7 @@
             document.getElementById('o-p1-sets').innerText = data.p1Sets;
             document.getElementById('o-p2-sets').innerText = data.p2Sets;
 
-            // Team / Player Logo Handling (Left to names) with automatic scoreboard smooth expansion
+            // Team / Player Logo Handling
             let hasAnyLogo = false;
             let img1 = document.getElementById('o-img1');
             if(data.img1) { 
@@ -326,7 +404,6 @@
                 img2.style.display = 'none'; 
             }
 
-            // Scoreboard animation class for logo presence
             let scoreContainer = document.getElementById('score-container');
             if (hasAnyLogo) {
                 scoreContainer.classList.add('has-logo');
@@ -342,6 +419,40 @@
                 document.getElementById('row-p1').classList.remove('active-server');
             }
 
+            // Render Set-wise Grid Content dynamically based on format & history
+            let totalSetsCount = (data.matchFormat === 'bestOf7') ? 7 : 5;
+            let gridHTML = `<div class="sets-grid-row" style="margin-bottom: 4px;">
+                <div style="font-size: 11px; font-weight: bold; color: #94a3b8;">TEAM / PLAYER</div>`;
+            for(let i=1; i<=totalSetsCount; i++) {
+                gridHTML += `<div class="sets-grid-header-col">Set ${i}</div>`;
+            }
+            gridHTML += `</div>`;
+
+            let setsHistory = data.setsHistory || [];
+            
+            // Team 1 Row
+            gridHTML += `<div class="sets-grid-row">
+                <div class="sets-grid-team-name" style="color: #38bdf8;">${data.p1Name}</div>`;
+            for(let i=0; i<totalSetsCount; i++) {
+                let setVal = (setsHistory[i]) ? setsHistory[i].p1 : "-";
+                let isWinner = (setsHistory[i] && setsHistory[i].p1 > setsHistory[i].p2);
+                gridHTML += `<div class="set-box ${isWinner ? 'winner-set' : ''}">${setVal}</div>`;
+            }
+            gridHTML += `</div>`;
+
+            // Team 2 Row
+            gridHTML += `<div class="sets-grid-row">
+                <div class="sets-grid-team-name" style="color: #f97316;">${data.p2Name}</div>`;
+            for(let i=0; i<totalSetsCount; i++) {
+                let setVal = (setsHistory[i]) ? setsHistory[i].p2 : "-";
+                let isWinner = (setsHistory[i] && setsHistory[i].p2 > setsHistory[i].p1);
+                gridHTML += `<div class="set-box ${isWinner ? 'winner-set' : ''}">${setVal}</div>`;
+            }
+            gridHTML += `</div>`;
+
+            document.getElementById('sets-grid-content').innerHTML = gridHTML;
+
+            // Render Standings Table
             if (data.standings) {
                 data.standings.sort((a, b) => b.points - a.points);
                 let ptHTML = "";
@@ -360,16 +471,17 @@
                 document.getElementById('pt-body').innerHTML = ptHTML;
             }
 
+            // State Switchers
             document.getElementById('header-banner').className = data.state === 'header-in' ? 'active' : '';
             document.getElementById('intro-container').className = data.state === 'intro-in' ? 'active' : '';
             
-            // Keep scoreboard active when state is score-in
             if (data.state === 'score-in') {
                 scoreContainer.classList.add('active');
             } else if (data.state === 'score-out') {
                 scoreContainer.classList.remove('active');
             }
 
+            document.getElementById('sets-grid-container').className = data.state === 'sets-grid-in' ? 'active' : '';
             document.getElementById('winner-banner').className = data.state === 'winner-in' ? 'active' : '';
             document.getElementById('points-table-container').className = data.state === 'table-in' ? 'active' : '';
             
