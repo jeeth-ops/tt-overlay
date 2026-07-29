@@ -425,7 +425,27 @@
         });
 
         window.currentModalTitle = "HALF TIME";
+
+        // Timestamp-Based Precise Timer Variables
         let timerInterval = null;
+        let startTime = 0;
+        let elapsedSecondsWhenPaused = 0;
+        let isTimerRunning = false;
+
+        // Helper to convert MM:SS to total seconds
+        function timeStrToSeconds(str) {
+            let parts = str.split(":");
+            let mins = parseInt(parts[0]) || 0;
+            let secs = parseInt(parts[1]) || 0;
+            return (mins * 60) + secs;
+        }
+
+        // Helper to convert total seconds to MM:SS
+        function secondsToTimeStr(totalSec) {
+            let mins = Math.floor(totalSec / 60);
+            let secs = totalSec % 60;
+            return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        }
 
         // Auto-generate correct overlay link pointing to football-overlay.html
         window.addEventListener('DOMContentLoaded', () => {
@@ -497,32 +517,62 @@
             saveData();
         }
 
+        // Precise Timestamp-Based Timer Functions
         function startTimer() {
-            if (timerInterval) return;
+            if (isTimerRunning) return;
+            isTimerRunning = true;
+
+            // Get current value from input to support resume or manual edits
+            let currentStr = document.getElementById('timerInput').value;
+            elapsedSecondsWhenPaused = timeStrToSeconds(currentStr);
+            startTime = Date.now() - (elapsedSecondsWhenPaused * 1000);
+
+            // Tick every 50ms for ultra-smooth milliseconds response and zero drift
             timerInterval = setInterval(() => {
-                let timeStr = document.getElementById('timerInput').value;
-                let parts = timeStr.split(":");
-                let mins = parseInt(parts[0]) || 0;
-                let secs = parseInt(parts[1]) || 0;
-                secs++;
-                if (secs >= 60) { secs = 0; mins++; }
-                document.getElementById('timerInput').value = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+                if (!isTimerRunning) return;
+                let now = Date.now();
+                let totalSec = Math.floor((now - startTime) / 1000);
+                
+                let timeStr = secondsToTimeStr(totalSec);
+                document.getElementById('timerInput').value = timeStr;
+                
                 saveData();
-            }, 1000);
+            }, 50); 
         }
 
-        function stopTimer() { clearInterval(timerInterval); timerInterval = null; }
-        function resetTimer() { stopTimer(); document.getElementById('timerInput').value = "00:00"; saveData(); }
+        function stopTimer() {
+            if (!isTimerRunning) return;
+            isTimerRunning = false;
+            clearInterval(timerInterval);
+            timerInterval = null;
+            let currentStr = document.getElementById('timerInput').value;
+            elapsedSecondsWhenPaused = timeStrToSeconds(currentStr);
+        }
+
+        function resetTimer() {
+            stopTimer();
+            elapsedSecondsWhenPaused = 0;
+            document.getElementById('timerInput').value = "00:00";
+            saveData();
+        }
 
         function setTimerPreset(type) {
             stopTimer();
             let duration = parseInt(document.getElementById('matchDuration').value) || 90;
             let targetMins = (type === 'Halfway') ? Math.floor(duration / 2) : duration;
-            document.getElementById('timerInput').value = `${String(targetMins).padStart(2, '0')}:00`;
+            let timeStr = `${String(targetMins).padStart(2, '0')}:00`;
+            document.getElementById('timerInput').value = timeStr;
+            elapsedSecondsWhenPaused = timeStrToSeconds(timeStr);
             saveData();
         }
 
-        function manualTimerEdit() { stopTimer(); saveData(); }
+        function manualTimerEdit() {
+            stopTimer();
+            let currentStr = document.getElementById('timerInput').value;
+            elapsedSecondsWhenPaused = timeStrToSeconds(currentStr);
+            saveData();
+        }
+
         function setModalTitle(title) { window.currentModalTitle = title; document.getElementById('modalToggle').checked = true; saveData(); }
         function toggleModalSwitch() { saveData(); }
         function togglePenalties() { saveData(); }
