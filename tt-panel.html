@@ -219,6 +219,12 @@
                     <button class="toggle-btn bg-red" onclick="triggerState('score-out')">Hide</button>
                 </div>
 
+                <label style="margin-top: 4px;">Set-wise Score Grid (Client Feature):</label>
+                <div class="toggles-grid">
+                    <button class="toggle-btn bg-green" onclick="triggerState('sets-grid-in')">Show Sets</button>
+                    <button class="toggle-btn bg-red" onclick="triggerState('sets-grid-out')">Hide Sets</button>
+                </div>
+
                 <label style="margin-top: 4px;">Winner Banner:</label>
                 <div class="toggles-grid">
                     <button class="toggle-btn bg-blue" onclick="triggerState('winner-in')">Show</button>
@@ -287,6 +293,7 @@
         p1Name: "PHANTOM STARS", p2Name: "MUMBAI MOZARTT", 
         p1Score: 0, p2Score: 0, p1Sets: 0, p2Sets: 0, 
         server: 1, img1: "", img2: "", state: "score-in",
+        setsHistory: [], // Stores completed sets points e.g., [{p1: 11, p2: 5}, {p1: 9, p2: 11}, ...]
         standings: [
             { team: "PHANTOM STARS", ties: 5, tiesWon: 5, gamesPlayed: 135, matchesWon: 28, gamesWon: 77, points: 77 },
             { team: "MUMBAI MOZARTT", ties: 5, tiesWon: 1, gamesPlayed: 135, matchesWon: 23, gamesWon: 68, points: 68 },
@@ -336,6 +343,7 @@
                 document.getElementById('c-winner-text').value = data.winner || "";
                 document.getElementById('c-p1').value = data.p1Name || "";
                 document.getElementById('c-p2').value = data.p2Name || "";
+                if(!data.setsHistory) data.setsHistory = [];
                 if(data.standings && data.standings[0]) {
                     document.getElementById('pt-t1-played').value = data.standings[0].ties;
                     document.getElementById('pt-t1-pts').value = data.standings[0].points;
@@ -397,6 +405,11 @@
         
         if ((data.p1Score >= 11 || data.p2Score >= 11) && Math.abs(data.p1Score - data.p2Score) >= 2) {
             let setWinner = "";
+            
+            // Save the finished set points to history array automatically
+            if(!data.setsHistory) data.setsHistory = [];
+            data.setsHistory.push({ p1: data.p1Score, p2: data.p2Score });
+
             if(data.p1Score > data.p2Score) {
                 data.p1Sets++; setWinner = data.p1Name;
             } else {
@@ -410,6 +423,9 @@
                 data.winner = `${setWinner.toUpperCase()} WON THE MATCH`;
                 document.getElementById('c-winner-text').value = data.winner;
                 data.state = "winner-in";
+            } else {
+                // Automatically prompt client/producer view or let them switch to the set score grid view
+                data.state = "sets-grid-in";
             }
         }
     }
@@ -418,6 +434,7 @@
     function resetMatch() {
         if(confirm("Reset match score?")) {
             data.p1Score = 0; data.p2Score = 0; data.p1Sets = 0; data.p2Sets = 0; data.server = 1; 
+            data.setsHistory = [];
             sendData();
         }
     }
