@@ -14,7 +14,7 @@
             width: 1920px; height: 1080px; 
         }
 
-        /* --- 1. TOURNAMENT HEADER BANNER (Glassmorphism & Smooth Slide) --- */
+        /* --- 1. TOURNAMENT HEADER BANNER --- */
         #header-banner {
             position: absolute;
             top: 40px;
@@ -40,14 +40,14 @@
             opacity: 1; 
         }
 
-        /* --- 2. LIVE SCOREBOARD (Smooth Slide + Rounded Edges) --- */
+        /* --- 2. LIVE SCOREBOARD (Smooth Animation & Dynamic Expansion on Logo Upload) --- */
         #score-container {
             position: absolute;
             bottom: 60px;
             left: 60px;
             display: flex;
             flex-direction: column;
-            width: 440px;
+            width: 410px; /* Base width without logo */
             background: rgba(15, 23, 42, 0.95);
             backdrop-filter: blur(12px);
             color: #ffffff;
@@ -61,11 +61,15 @@
             border-bottom: 1px solid rgba(255,255,255,0.1);
             transform: translateY(120px) scale(0.95);
             opacity: 0;
-            transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1), width 0.4s ease;
         }
         #score-container.active { 
             transform: translateY(0) scale(1); 
             opacity: 1; 
+        }
+        /* Jab Team A ya Team B ka logo upload hoga, scoreboard thoda animate hoke expand hoga */
+        #score-container.has-logo {
+            width: 455px; 
         }
 
         .tt-row {
@@ -83,7 +87,7 @@
             display: flex; 
             align-items: center; 
             gap: 10px; 
-            padding-left: 12px;
+            padding-left: 14px;
             font-size: 16px; 
             letter-spacing: 1px; 
             text-transform: uppercase;
@@ -93,17 +97,23 @@
             max-width: 270px;
         }
 
-        /* Perfect automated sizing and positioning for team/player logos */
+        /* Automated Sizing & Positioning for Team Logos on Left */
         .player-img { 
             width: 32px; 
             height: 32px; 
             object-fit: contain; 
             border-radius: 4px; 
-            background: rgba(0, 0, 0, 0.2); 
+            background: rgba(0, 0, 0, 0.3); 
             padding: 2px;
             display: none; 
             flex-shrink: 0;
             box-shadow: 0 2px 5px rgba(0,0,0,0.5); 
+            animation: fadeInLogo 0.3s ease-in-out;
+        }
+
+        @keyframes fadeInLogo {
+            from { opacity: 0; transform: scale(0.6); }
+            to { opacity: 1; transform: scale(1); }
         }
 
         .server-indicator { font-size: 14px; color: #eab308; margin-left: 5px; display: none; text-shadow: 0 0 10px #eab308; }
@@ -118,7 +128,7 @@
         .set-score-box { width: 48px; display: flex; align-items: center; justify-content: center; font-size: 18px; background: rgba(17, 24, 39, 0.9); color: #9ca3af; border-left: 1px solid rgba(31, 41, 55, 0.8); }
         .main-score-box { width: 60px; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 900; background: #9333ea; color: #ffffff; }
 
-        /* --- 3. DYNAMIC INTRO SCREEN (Cinematic Zoom & Fade) --- */
+        /* --- 3. DYNAMIC INTRO SCREEN --- */
         #intro-container {
             position: absolute;
             top: 0; left: 0; width: 100%; height: 100%;
@@ -165,7 +175,7 @@
             text-shadow: 0 0 25px rgba(250, 204, 21, 0.8);
         }
 
-        /* --- 4. WINNER BANNER (Pop-up Animation) --- */
+        /* --- 4. WINNER BANNER --- */
         #winner-banner {
             position: absolute;
             top: 50%; left: 50%;
@@ -186,7 +196,7 @@
             opacity: 1; 
         }
 
-        /* --- 5. POINTS TABLE LEADERBOARD (Smooth Slide Down) --- */
+        /* --- 5. POINTS TABLE LEADERBOARD --- */
         #points-table-container {
             position: absolute;
             top: 140px; left: 50%;
@@ -280,7 +290,6 @@
         const socket = io();
 
         socket.on('liveScore', (data) => {
-            // Update texts dynamically
             document.getElementById('header-banner').innerText = data.tourneyTitle;
             document.getElementById('intro-tourney-title').innerText = data.tourneyTitle;
             
@@ -292,17 +301,18 @@
             let p1ScoreBox = document.getElementById('o-p1-score');
             let p2ScoreBox = document.getElementById('o-p2-score');
 
-            // Set scores directly without any animation
             p1ScoreBox.innerText = data.p1Score;
             p2ScoreBox.innerText = data.p2Score;
             document.getElementById('o-p1-sets').innerText = data.p1Sets;
             document.getElementById('o-p2-sets').innerText = data.p2Sets;
 
-            // Team / Player Logo Handling (Left to names)
+            // Team / Player Logo Handling (Left to names) with automatic scoreboard smooth expansion
+            let hasAnyLogo = false;
             let img1 = document.getElementById('o-img1');
             if(data.img1) { 
                 img1.src = data.img1; 
                 img1.style.display = 'block'; 
+                hasAnyLogo = true;
             } else { 
                 img1.style.display = 'none'; 
             }
@@ -311,8 +321,17 @@
             if(data.img2) { 
                 img2.src = data.img2; 
                 img2.style.display = 'block'; 
+                hasAnyLogo = true;
             } else { 
                 img2.style.display = 'none'; 
+            }
+
+            // Scoreboard animation class for logo presence
+            let scoreContainer = document.getElementById('score-container');
+            if (hasAnyLogo) {
+                scoreContainer.classList.add('has-logo');
+            } else {
+                scoreContainer.classList.remove('has-logo');
             }
 
             if (data.server === 1) {
@@ -323,7 +342,6 @@
                 document.getElementById('row-p1').classList.remove('active-server');
             }
 
-            // Render Points Table dynamically
             if (data.standings) {
                 data.standings.sort((a, b) => b.points - a.points);
                 let ptHTML = "";
@@ -342,10 +360,16 @@
                 document.getElementById('pt-body').innerHTML = ptHTML;
             }
 
-            // Visibility States Handling with Smooth Transitions
             document.getElementById('header-banner').className = data.state === 'header-in' ? 'active' : '';
             document.getElementById('intro-container').className = data.state === 'intro-in' ? 'active' : '';
-            document.getElementById('score-container').className = data.state === 'score-in' ? 'active' : '';
+            
+            // Keep scoreboard active when state is score-in
+            if (data.state === 'score-in') {
+                scoreContainer.classList.add('active');
+            } else if (data.state === 'score-out') {
+                scoreContainer.classList.remove('active');
+            }
+
             document.getElementById('winner-banner').className = data.state === 'winner-in' ? 'active' : '';
             document.getElementById('points-table-container').className = data.state === 'table-in' ? 'active' : '';
             
