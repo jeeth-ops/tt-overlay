@@ -60,12 +60,9 @@ app.get('/football-overlay', (req, res) => {
 });
 
 
-// ----------------- NAYE LOWER THIRD ROUTES & DATA -----------------
-
-// --- ROOM-WISE STATE STORAGE FOR 500+ MULTI-USER ISOLATION ---
+// ----------------- ROOM-WISE STATE STORAGE (100% ISOLATED) -----------------
 let roomStates = {};
 
-// Helper function to get or initialize room state
 function getRoomState(room) {
     if (!roomStates[room]) {
         roomStates[room] = {
@@ -91,9 +88,14 @@ app.get('/tt-lowerthird-panel', (req, res) => {
     res.sendFile(__dirname + '/tt-lowerthird-panel.html');
 });
 
-// 7. Lower Third Data Fetch API (Overlay ke liye - Query param ?room= ya ?uid= support ke sath)
+// 7. Lower Third Data Fetch API (Overlay ke liye)
 app.get('/api/tt-data', (req, res) => {
-    const room = req.query.room || req.query.uid ? `room-${req.query.uid}` : 'scorvix-master-room';
+    let room = 'scorvix-master-room';
+    if (req.query.room) {
+        room = req.query.room;
+    } else if (req.query.uid) {
+        room = `room-${req.query.uid}`;
+    }
     const state = getRoomState(room);
     res.json(state.ttData);
 });
@@ -111,11 +113,10 @@ app.post('/api/update-tt-data', (req, res) => {
 });
 
 
-// Socket.io Connection with Room Support & Query Param Handling for Overlays
+// Socket.io Connection with Strict Room Isolation
 io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
 
-    // Default room for master/unspecified
     let currentRoom = 'scorvix-master-room';
     socket.activeRoom = currentRoom;
     socket.join(currentRoom);
@@ -130,7 +131,7 @@ io.on('connection', (socket) => {
         console.log(`Overlay socket ${socket.id} joined query room: ${currentRoom}`);
     }
 
-    // Turant latest state bhej do agar is room ki state pehle se saved hai
+    // Turant latest state bhej do agar is room ki state saved hai
     const roomState = getRoomState(currentRoom);
     if (roomState.footballState) {
         socket.emit('liveFootballScore', roomState.footballState);
@@ -139,22 +140,20 @@ io.on('connection', (socket) => {
         socket.emit('liveScore', roomState.ttState);
     }
 
-    // Panel se joinRoom event aane par room properly assign karein
+    // Panel se joinRoom event aane par room properly assign karein (Har user ke liye independent room)
     socket.on('joinRoom', (userData) => {
         let roomName = 'scorvix-master-room';
 
-        if (userData && userData.email === 'chhayajeeth@gmail.com') {
-            roomName = 'scorvix-master-room'; // Master Admin Room
-        } else if (userData && userData.uid) {
-            roomName = `room-${userData.uid}`; // Isolated Client Room
+        // Ab chhayajeeth ho ya koi bhi, sabka unka apna unique room banega (No Data Overwrite)
+        if (userData && userData.uid) {
+            roomName = `room-${userData.uid}`; 
         }
 
         socket.leave(socket.activeRoom);
         socket.join(roomName);
         socket.activeRoom = roomName;
-        console.log(`Socket ${socket.id} switched to room: ${roomName}`);
+        console.log(`Socket ${socket.id} switched to secure room: ${roomName}`);
 
-        // Is room ka purana data ho toh turant bhej do
         const targetState = getRoomState(roomName);
         if (targetState.ttState) {
             socket.emit('liveScore', targetState.ttState);
