@@ -137,7 +137,6 @@
                         <option value="bestOf7">Best of 7 (First to 4 Sets)</option>
                     </select>
                 </div>
-                <!-- YAHAN NAYE POP-UP INPUTS HAIN -->
                 <div>
                     <label>Match Category (Top Black Box):</label>
                     <input type="text" id="c-match-category" value="Mixed Doubles" oninput="sendData()" style="border-left: 3px solid #10b981;">
@@ -146,7 +145,6 @@
                     <label>Team Matchup (Bottom Black Box):</label>
                     <input type="text" id="c-team-matchup" value="SCL vs KB" oninput="sendData()" style="border-left: 3px solid #10b981;">
                 </div>
-                <!-- ============================ -->
                 <div>
                     <label>Winner Announcement Text:</label>
                     <input type="text" id="c-winner-text" value="PHANTOM STARS WON THE MATCH" oninput="sendData()">
@@ -272,6 +270,8 @@
     const auth = firebase.auth();
     const db = firebase.firestore();
 
+    let currentUid = ""; // Store logged-in user's UID
+
     function loginWithGoogle() {
         const provider = new firebase.auth.GoogleAuthProvider();
         auth.signInWithPopup(provider).catch(error => {
@@ -285,11 +285,15 @@
 
     auth.onAuthStateChanged(user => {
         if (user) {
+            currentUid = user.uid;
+            localStorage.setItem("scorvix_uid", currentUid);
             document.getElementById('login-screen').style.display = 'none';
             document.getElementById('main-studio').style.display = 'grid';
             document.getElementById('user-email-display').innerText = user.email;
             loadSavedData();
         } else {
+            currentUid = "";
+            localStorage.removeItem("scorvix_uid");
             document.getElementById('login-screen').style.display = 'flex';
             document.getElementById('main-studio').style.display = 'none';
         }
@@ -316,9 +320,14 @@
         ]
     };
 
-    function openOverlayTab() { window.open('/overlay.html', '_blank'); }
+    function openOverlayTab() { 
+        window.open(`/overlay.html?uid=${currentUid}`, '_blank'); 
+    }
 
     function sendData() {
+        if (!currentUid) return;
+        data.uid = currentUid; // Attach UID to data packet
+
         data.tourneyTitle = document.getElementById('c-tourney-title').value;
         data.matchFormat = document.getElementById('c-match-format').value;
         data.matchCategory = document.getElementById('c-match-category').value;
@@ -344,13 +353,15 @@
         document.getElementById('footer-server-turn').innerText = `Serving: ${data.server === 1 ? data.p1Name : data.p2Name}`;
 
         socket.emit('updateScore', data);
-        db.collection("scorvix").doc("matchState").set(data).catch(err => console.log("Cloud save error:", err));
+        db.collection("scorvix").doc(currentUid).set(data).catch(err => console.log("Cloud save error:", err));
     }
 
     function loadSavedData() {
-        db.collection("scorvix").doc("matchState").get().then(doc => {
+        if (!currentUid) return;
+        db.collection("scorvix").doc(currentUid).get().then(doc => {
             if (doc.exists) {
                 data = doc.data();
+                data.uid = currentUid;
                 document.getElementById('c-tourney-title').value = data.tourneyTitle || "";
                 document.getElementById('c-match-format').value = data.matchFormat || "bestOf5";
                 document.getElementById('c-match-category').value = data.matchCategory || "Mixed Doubles";
@@ -452,4 +463,3 @@
 </script>
 </body>
 </html>
-
