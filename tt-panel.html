@@ -278,7 +278,7 @@
     }
 
     function logout() {
-        localStorage.removeItem('scorvix_uid'); // Clear UID on logout
+        localStorage.removeItem('scorvix_uid'); 
         auth.signOut();
     }
 
@@ -289,27 +289,23 @@
         const savedUid = localStorage.getItem('scorvix_uid');
 
         if (email === 'chhayajeeth@gmail.com') {
-            return db.collection("scorvix").doc("matchState"); // Owner Master Path
+            return db.collection("scorvix_tt").doc("matchState"); 
         } else if (savedUid) {
-            return db.collection("scorvix_users").doc(savedUid); // Isolated Client Path using localStorage UID
+            return db.collection("scorvix_tt_users").doc(savedUid); 
         } else if (user) {
-            return db.collection("scorvix_users").doc(user.uid);
+            return db.collection("scorvix_tt_users").doc(user.uid);
         }
-        return db.collection("scorvix").doc("matchState");
+        return db.collection("scorvix_tt").doc("matchState");
     }
 
     auth.onAuthStateChanged(user => {
         if (user) {
-            // Save UID to localStorage securely on successful auth
             localStorage.setItem('scorvix_uid', user.uid);
-
             document.getElementById('login-screen').style.display = 'none';
             document.getElementById('main-studio').style.display = 'grid';
             document.getElementById('user-email-display').innerText = user.email;
             
-            // Join specific socket room based on user role/UID to prevent 500+ client overlap & crashes
             socket.emit('joinRoom', { email: user.email, uid: user.uid });
-            
             loadSavedData();
         } else {
             document.getElementById('login-screen').style.display = 'flex';
@@ -338,7 +334,10 @@
         ]
     };
 
-    function openOverlayTab() { window.open('/overlay.html', '_blank'); }
+    function openOverlayTab() { 
+        const uid = localStorage.getItem('scorvix_uid') || (auth.currentUser ? auth.currentUser.uid : '');
+        window.open(`/tt-overlay.html?uid=${uid}`, '_blank'); 
+    }
 
     function sendData() {
         data.tourneyTitle = document.getElementById('c-tourney-title').value;
