@@ -67,7 +67,7 @@
             opacity: 1;
         }
 
-        /* --- 2. LIVE SCOREBOARD --- */
+        /* --- 2. LIVE SCOREBOARD & BADGES --- */
         #score-container {
             position: absolute;
             bottom: 60px;
@@ -95,6 +95,40 @@
             opacity: 1; 
         }
         #score-container.has-logo { width: 455px; }
+
+        /* Match Category & Sublabel Badges (Reference Image Style) */
+        .score-category-badge {
+            background: rgba(15, 23, 42, 0.95);
+            color: #ffffff;
+            font-size: 11px;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 6px 12px;
+            width: fit-content;
+            border-top-left-radius: 6px;
+            border-top-right-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-bottom: none;
+            margin-bottom: -1px;
+            display: none;
+        }
+        .score-sublabel-badge {
+            background: rgba(15, 23, 42, 0.95);
+            color: #ffffff;
+            font-size: 11px;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 6px 12px;
+            width: fit-content;
+            border-bottom-left-radius: 6px;
+            border-bottom-right-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-top: none;
+            margin-top: -1px;
+            display: none;
+        }
 
         .tt-row {
             display: flex;
@@ -344,8 +378,11 @@
         </div>
     </div>
 
-    <!-- 3. Live Scoreboard -->
+    <!-- 3. Live Scoreboard with Category & Sublabel Badges -->
     <div id="score-container">
+        <!-- Top Category Badge (e.g. Mixed Doubles) -->
+        <div id="score-category" class="score-category-badge">MIXED DOUBLES</div>
+
         <div class="tt-row" id="row-p1">
             <div class="player-info">
                 <img id="o-img1" class="player-img" src="">
@@ -368,6 +405,9 @@
                 <div class="main-score-box" id="o-p2-score">0</div>
             </div>
         </div>
+
+        <!-- Bottom Sublabel Badge (e.g. SCL vs KB) -->
+        <div id="score-sublabel" class="score-sublabel-badge">SCL vs KB</div>
     </div>
 
     <!-- 4. Sets Grid Score Breakdown Overlay -->
@@ -488,6 +528,23 @@
             // Check Game / Match Point
             checkGameMatchPoint(data);
 
+            // Category & Sublabel Badge Handling
+            let categoryElem = document.getElementById('score-category');
+            if (data.matchCategory || data.matchType) {
+                categoryElem.innerText = data.matchCategory || data.matchType;
+                categoryElem.style.display = 'block';
+            } else {
+                categoryElem.style.display = 'none';
+            }
+
+            let sublabelElem = document.getElementById('score-sublabel');
+            if (data.matchCode || data.subLabel) {
+                sublabelElem.innerText = data.matchCode || data.subLabel;
+                sublabelElem.style.display = 'block';
+            } else {
+                sublabelElem.style.display = 'none';
+            }
+
             // Team / Player Logo Handling
             let hasAnyLogo = false;
             let img1 = document.getElementById('o-img1');
@@ -508,7 +565,6 @@
                 img2.style.display = 'none'; 
             }
 
-            // Adjust width based on logo presence
             let scoreContainer = document.getElementById('score-container');
             if (hasAnyLogo) {
                 scoreContainer.classList.add('has-logo');
@@ -516,20 +572,82 @@
                 scoreContainer.classList.remove('has-logo');
             }
 
-            // Active Server Indicator Logic
-            let rowP1 = document.getElementById('row-p1');
-            let rowP2 = document.getElementById('row-p2');
-            
             if (data.server === 1) {
-                rowP1.classList.add('active-server');
-                rowP2.classList.remove('active-server');
-            } else if (data.server === 2) {
-                rowP2.classList.add('active-server');
-                rowP1.classList.remove('active-server');
+                document.getElementById('row-p1').classList.add('active-server');
+                document.getElementById('row-p2').classList.remove('active-server');
             } else {
-                rowP1.classList.remove('active-server');
-                rowP2.classList.remove('active-server');
+                document.getElementById('row-p2').classList.add('active-server');
+                document.getElementById('row-p1').classList.remove('active-server');
             }
+
+            // Render Set-wise Grid Content dynamically based on format & history
+            let totalSetsCount = (data.matchFormat === 'bestOf7') ? 7 : 5;
+            let gridHTML = `<div class="sets-grid-row" style="margin-bottom: 4px;">
+                <div style="font-size: 11px; font-weight: bold; color: #94a3b8;">TEAM / PLAYER</div>`;
+            for(let i=1; i<=totalSetsCount; i++) {
+                gridHTML += `<div class="sets-grid-header-col">Set ${i}</div>`;
+            }
+            gridHTML += `</div>`;
+
+            let setsHistory = data.setsHistory || [];
+            
+            // Team 1 Row
+            gridHTML += `<div class="sets-grid-row">
+                <div class="sets-grid-team-name" style="color: #38bdf8;">${data.p1Name}</div>`;
+            for(let i=0; i<totalSetsCount; i++) {
+                let setVal = (setsHistory[i]) ? setsHistory[i].p1 : "-";
+                let isWinner = (setsHistory[i] && setsHistory[i].p1 > setsHistory[i].p2);
+                gridHTML += `<div class="set-box ${isWinner ? 'winner-set' : ''}">${setVal}</div>`;
+            }
+            gridHTML += `</div>`;
+
+            // Team 2 Row
+            gridHTML += `<div class="sets-grid-row">
+                <div class="sets-grid-team-name" style="color: #f97316;">${data.p2Name}</div>`;
+            for(let i=0; i<totalSetsCount; i++) {
+                let setVal = (setsHistory[i]) ? setsHistory[i].p2 : "-";
+                let isWinner = (setsHistory[i] && setsHistory[i].p2 > setsHistory[i].p1);
+                gridHTML += `<div class="set-box ${isWinner ? 'winner-set' : ''}">${setVal}</div>`;
+            }
+            gridHTML += `</div>`;
+
+            document.getElementById('sets-grid-content').innerHTML = gridHTML;
+
+            // Render Standings Table
+            if (data.standings) {
+                data.standings.sort((a, b) => b.points - a.points);
+                let ptHTML = "";
+                data.standings.forEach((item, index) => {
+                    ptHTML += `<div class="pt-row">
+                        <div>${index + 1}</div>
+                        <div>${item.team}</div>
+                        <div>${item.ties}</div>
+                        <div>${item.tiesWon}</div>
+                        <div>${item.gamesPlayed}</div>
+                        <div>${item.matchesWon}</div>
+                        <div>${item.gamesWon}</div>
+                        <div>${item.points}</div>
+                    </div>`;
+                });
+                document.getElementById('pt-body').innerHTML = ptHTML;
+            }
+
+            // State Switchers
+            document.getElementById('header-banner').className = data.state === 'header-in' ? 'active' : '';
+            document.getElementById('intro-container').className = data.state === 'intro-in' ? 'active' : '';
+            
+            // Scoreboard and Sets Grid state management
+            if (data.state === 'score-in') {
+                scoreContainer.classList.add('active');
+            } else if (data.state === 'score-out' || data.state === 'sets-grid-in') {
+                scoreContainer.classList.remove('active');
+            }
+
+            document.getElementById('sets-grid-container').className = data.state === 'sets-grid-in' ? 'active' : '';
+            document.getElementById('winner-banner').className = data.state === 'winner-in' ? 'active' : '';
+            document.getElementById('points-table-container').className = data.state === 'table-in' ? 'active' : '';
+            
+            document.getElementById('winner-banner').innerText = data.winner;
         });
     </script>
 </body>
