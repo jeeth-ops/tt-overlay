@@ -1,4 +1,96 @@
-// Socket.io Connection with Strict Room Isolation
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+
+const app = express();
+const server = http.createServer(app);
+
+const io = new Server(server, {
+    cors: {
+        origin: "*", 
+        methods: ["GET", "POST"]
+    }
+});
+
+app.use(express.static(__dirname));
+app.use(express.json());
+
+// Routes
+app.get('/', (req, res) => {
+    res.sendFile(__dirname + '/index.html');
+});
+
+app.get('/tt-templates', (req, res) => {
+    res.sendFile(__dirname + '/tt-templates.html');
+});
+
+app.get('/tt-panel', (req, res) => {
+    res.sendFile(__dirname + '/tt-panel.html');
+});
+
+app.get('/overlay', (req, res) => {
+    res.sendFile(__dirname + '/overlay.html');
+});
+
+app.get('/football-templates', (req, res) => {
+    res.sendFile(__dirname + '/football-templates.html');
+});
+
+app.get('/football-panel', (req, res) => {
+    res.sendFile(__dirname + '/football-panel.html');
+});
+
+app.get('/football-overlay', (req, res) => {
+    res.sendFile(__dirname + '/football-overlay.html');
+});
+
+let roomStates = {};
+
+function getRoomState(room) {
+    if (!roomStates[room]) {
+        roomStates[room] = {
+            ttState: null,
+            footballState: null,
+            ttData: {
+                ltTitle: "MATCH HIGHLIGHT",
+                ltText: "Announcement text goes here",
+                ltVisible: false
+            }
+        };
+    }
+    return roomStates[room];
+}
+
+app.get('/tt-lowerthird', (req, res) => {
+    res.sendFile(__dirname + '/tt-lowerthird.html');
+});
+
+app.get('/tt-lowerthird-panel', (req, res) => {
+    res.sendFile(__dirname + '/tt-lowerthird-panel.html');
+});
+
+app.get('/api/tt-data', (req, res) => {
+    let room = 'scorvix-master-room';
+    if (req.query.room) {
+        room = req.query.room;
+    } else if (req.query.uid) {
+        room = `room-${req.query.uid}`;
+    }
+    const state = getRoomState(room);
+    res.json(state.ttData);
+});
+
+app.post('/api/update-tt-data', (req, res) => {
+    const room = req.body.room || 'scorvix-master-room';
+    const state = getRoomState(room);
+    
+    if (req.body.ltTitle !== undefined) state.ttData.ltTitle = req.body.ltTitle;
+    if (req.body.ltText !== undefined) state.ttData.ltText = req.body.ltText;
+    if (req.body.ltVisible !== undefined) state.ttData.ltVisible = req.body.ltVisible;
+    
+    res.json({ success: true, ttData: state.ttData });
+});
+
 io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
 
@@ -6,7 +98,6 @@ io.on('connection', (socket) => {
     socket.activeRoom = currentRoom;
     socket.join(currentRoom);
 
-    // Agar overlay URL me ?uid=XYZ pass kiya gaya ho (vMix/OBS ke liye)
     const query = socket.handshake.query;
     if (query.uid) {
         currentRoom = `room-${query.uid}`;
@@ -16,7 +107,6 @@ io.on('connection', (socket) => {
         console.log(`Overlay socket ${socket.id} joined query room: ${currentRoom}`);
     }
 
-    // Turant latest state bhej do agar is room ki state saved hai
     const roomState = getRoomState(currentRoom);
     if (roomState.footballState) {
         socket.emit('liveFootballScore', roomState.footballState);
@@ -25,7 +115,6 @@ io.on('connection', (socket) => {
         socket.emit('liveScore', roomState.ttState);
     }
 
-    // Panel se joinRoom event aane par room properly assign karein
     socket.on('joinRoom', (userData) => {
         let roomName = 'scorvix-master-room';
 
@@ -47,7 +136,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Table Tennis Live Score - Automatically switch room if data.uid exists
     socket.on('updateScore', (data) => {
         let room = socket.activeRoom;
         if (data && data.uid) {
@@ -74,7 +162,6 @@ io.on('connection', (socket) => {
         io.to(room).emit('liveScore', data);
     });
 
-    // FOOTBALL: Live Score & State Sync - Automatically switch room if data.uid exists
     socket.on('liveFootballScore', (data) => {
         let room = socket.activeRoom;
         if (data && data.uid) {
@@ -91,4 +178,9 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         console.log('Client disconnected:', socket.id);
     });
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
 });
