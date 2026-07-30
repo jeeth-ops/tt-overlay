@@ -79,7 +79,7 @@
             backdrop-filter: blur(12px);
             color: #ffffff;
             border-radius: 10px;
-            overflow: hidden; 
+            overflow: visible; 
             box-shadow: 0 25px 50px rgba(0,0,0,0.8);
             font-weight: bold;
             border-left: 6px solid #38bdf8;
@@ -96,36 +96,59 @@
         }
         #score-container.has-logo { width: 455px; }
 
-        /* Match Category & Sublabel Badges (Reference Image Style) */
+        /* Match Category & Sublabel Badges (Pop up from behind scorecard after 2s) */
         .score-category-badge {
+            position: absolute;
+            top: 10px;
+            left: 14px;
             background: #000000;
             color: #ffffff;
-            font-size: 12px;
+            font-size: 16px;
             font-weight: bold;
             letter-spacing: 0.5px;
-            padding: 5px 12px;
+            padding: 6px 16px;
             width: fit-content;
-            border-top-left-radius: 4px;
-            border-top-right-radius: 4px;
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            border-bottom: none;
-            margin-bottom: 0px;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+            z-index: -1;
             display: none;
+            opacity: 0;
+            transform: translateY(0);
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+            pointer-events: none;
+            white-space: nowrap;
         }
+        .score-category-badge.badge-active {
+            opacity: 1;
+            transform: translateY(-44px);
+        }
+
         .score-sublabel-badge {
+            position: absolute;
+            bottom: 10px;
+            left: 14px;
             background: #000000;
             color: #ffffff;
-            font-size: 12px;
+            font-size: 16px;
             font-weight: bold;
             letter-spacing: 0.5px;
-            padding: 5px 12px;
+            padding: 6px 16px;
             width: fit-content;
-            border-bottom-left-radius: 4px;
-            border-bottom-right-radius: 4px;
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            border-top: none;
-            margin-top: 0px;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+            z-index: -1;
             display: none;
+            opacity: 0;
+            transform: translateY(0);
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+            pointer-events: none;
+            white-space: nowrap;
+        }
+        .score-sublabel-badge.badge-active {
+            opacity: 1;
+            transform: translateY(44px);
         }
 
         .tt-row {
@@ -378,7 +401,7 @@
 
     <!-- 3. Live Scoreboard with Category & Sublabel Badges -->
     <div id="score-container">
-        <!-- Top Category Badge (e.g. Mixed Doubles) -->
+        <!-- Top Category Badge -->
         <div id="score-category" class="score-category-badge">MIXED DOUBLES</div>
 
         <div class="tt-row" id="row-p1">
@@ -404,7 +427,7 @@
             </div>
         </div>
 
-        <!-- Bottom Sublabel Badge (e.g. SCL vs KB) -->
+        <!-- Bottom Sublabel Badge -->
         <div id="score-sublabel" class="score-sublabel-badge">SCL vs KB</div>
     </div>
 
@@ -437,6 +460,7 @@
 
         let lastAlertState = "";
         let alertTimeout = null;
+        let badgeTimeout = null;
 
         function checkGameMatchPoint(data) {
             let p1 = parseInt(data.p1Score) || 0;
@@ -533,6 +557,7 @@
                 categoryElem.style.display = 'block';
             } else {
                 categoryElem.style.display = 'none';
+                categoryElem.classList.remove('badge-active');
             }
 
             let sublabelElem = document.getElementById('score-sublabel');
@@ -541,6 +566,7 @@
                 sublabelElem.style.display = 'block';
             } else {
                 sublabelElem.style.display = 'none';
+                sublabelElem.classList.remove('badge-active');
             }
 
             // Team / Player Logo Handling
@@ -634,11 +660,21 @@
             document.getElementById('header-banner').className = data.state === 'header-in' ? 'active' : '';
             document.getElementById('intro-container').className = data.state === 'intro-in' ? 'active' : '';
             
-            // Scoreboard and Sets Grid state management
+            // Scoreboard and Sets Grid state management with 2s badge pop-up delay
             if (data.state === 'score-in') {
                 scoreContainer.classList.add('active');
-            } else if (data.state === 'score-out' || data.state === 'sets-grid-in') {
+                if (badgeTimeout) clearTimeout(badgeTimeout);
+                badgeTimeout = setTimeout(() => {
+                    if (data.state === 'score-in') {
+                        categoryElem.classList.add('badge-active');
+                        sublabelElem.classList.add('badge-active');
+                    }
+                }, 2000); // 2 seconds delay
+            } else {
                 scoreContainer.classList.remove('active');
+                categoryElem.classList.remove('badge-active');
+                sublabelElem.classList.remove('badge-active');
+                if (badgeTimeout) clearTimeout(badgeTimeout);
             }
 
             document.getElementById('sets-grid-container').className = data.state === 'sets-grid-in' ? 'active' : '';
