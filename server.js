@@ -140,11 +140,10 @@ io.on('connection', (socket) => {
         socket.emit('liveScore', roomState.ttState);
     }
 
-    // Panel se joinRoom event aane par room properly assign karein (Har user ke liye independent room)
+    // Panel se joinRoom event aane par room properly assign karein
     socket.on('joinRoom', (userData) => {
         let roomName = 'scorvix-master-room';
 
-        // Ab chhayajeeth ho ya koi bhi, sabka unka apna unique room banega (No Data Overwrite)
         if (userData && userData.uid) {
             roomName = `room-${userData.uid}`; 
         }
@@ -163,8 +162,15 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Table Tennis Live Score (Room Isolated)
+    // Table Tennis Live Score (Room Isolated) - Handling both updateScore and liveScore securely
     socket.on('updateScore', (data) => {
+        const room = socket.activeRoom || 'scorvix-master-room';
+        const state = getRoomState(room);
+        state.ttState = data;
+        io.to(room).emit('liveScore', data);
+    });
+
+    socket.on('liveScore', (data) => {
         const room = socket.activeRoom || 'scorvix-master-room';
         const state = getRoomState(room);
         state.ttState = data;
