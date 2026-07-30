@@ -137,7 +137,6 @@
                         <option value="bestOf7">Best of 7 (First to 4 Sets)</option>
                     </select>
                 </div>
-                <!-- YAHAN NAYE POP-UP INPUTS HAIN -->
                 <div>
                     <label>Match Category (Top Black Box):</label>
                     <input type="text" id="c-match-category" value="Mixed Doubles" oninput="sendData()" style="border-left: 3px solid #10b981;">
@@ -146,7 +145,6 @@
                     <label>Team Matchup (Bottom Black Box):</label>
                     <input type="text" id="c-team-matchup" value="SCL vs KB" oninput="sendData()" style="border-left: 3px solid #10b981;">
                 </div>
-                <!-- ============================ -->
                 <div>
                     <label>Winner Announcement Text:</label>
                     <input type="text" id="c-winner-text" value="PHANTOM STARS WON THE MATCH" oninput="sendData()">
@@ -283,11 +281,26 @@
         auth.signOut();
     }
 
+    // Dynamic Database Path Handler for 500+ Users & Owner Separation
+    function getFirestoreRef() {
+        const user = auth.currentUser;
+        if (user && user.email === 'chhayajeeth@gmail.com') {
+            return db.collection("scorvix").doc("matchState"); // Owner Master Path
+        } else if (user) {
+            return db.collection("scorvix_users").doc(user.uid); // Isolated Client Path
+        }
+        return db.collection("scorvix").doc("matchState");
+    }
+
     auth.onAuthStateChanged(user => {
         if (user) {
             document.getElementById('login-screen').style.display = 'none';
             document.getElementById('main-studio').style.display = 'grid';
             document.getElementById('user-email-display').innerText = user.email;
+            
+            // Join specific socket room based on user role/UID to prevent 500+ client overlap & crashes
+            socket.emit('joinRoom', { email: user.email, uid: user.uid });
+            
             loadSavedData();
         } else {
             document.getElementById('login-screen').style.display = 'flex';
@@ -344,11 +357,11 @@
         document.getElementById('footer-server-turn').innerText = `Serving: ${data.server === 1 ? data.p1Name : data.p2Name}`;
 
         socket.emit('updateScore', data);
-        db.collection("scorvix").doc("matchState").set(data).catch(err => console.log("Cloud save error:", err));
+        getFirestoreRef().set(data).catch(err => console.log("Cloud save error:", err));
     }
 
     function loadSavedData() {
-        db.collection("scorvix").doc("matchState").get().then(doc => {
+        getFirestoreRef().get().then(doc => {
             if (doc.exists) {
                 data = doc.data();
                 document.getElementById('c-tourney-title').value = data.tourneyTitle || "";
