@@ -278,22 +278,31 @@
     }
 
     function logout() {
+        localStorage.removeItem('scorvix_uid'); // Clear UID on logout
         auth.signOut();
     }
 
-    // Dynamic Database Path Handler for 500+ Users & Owner Separation
+    // Dynamic Database Path Handler using localStorage 'scorvix_uid' & Owner Check
     function getFirestoreRef() {
         const user = auth.currentUser;
-        if (user && user.email === 'chhayajeeth@gmail.com') {
+        const email = user ? user.email : '';
+        const savedUid = localStorage.getItem('scorvix_uid');
+
+        if (email === 'chhayajeeth@gmail.com') {
             return db.collection("scorvix").doc("matchState"); // Owner Master Path
+        } else if (savedUid) {
+            return db.collection("scorvix_users").doc(savedUid); // Isolated Client Path using localStorage UID
         } else if (user) {
-            return db.collection("scorvix_users").doc(user.uid); // Isolated Client Path
+            return db.collection("scorvix_users").doc(user.uid);
         }
         return db.collection("scorvix").doc("matchState");
     }
 
     auth.onAuthStateChanged(user => {
         if (user) {
+            // Save UID to localStorage securely on successful auth
+            localStorage.setItem('scorvix_uid', user.uid);
+
             document.getElementById('login-screen').style.display = 'none';
             document.getElementById('main-studio').style.display = 'grid';
             document.getElementById('user-email-display').innerText = user.email;
