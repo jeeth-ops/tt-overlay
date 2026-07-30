@@ -3,417 +3,627 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Football Control Panel - Scorvix</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <title>Football Match Controller - Scorvix</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
-        body {
-            background: #0f172a;
-            color: #f8fafc;
-            padding: 20px;
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
+        body { 
+            background: #0b0f19; 
+            color: #f8fafc; 
+            padding: 20px; 
+            min-height: 100vh; 
+            display: flex; 
+            justify-content: center; 
+            align-items: flex-start; 
         }
-        /* Auth Screen Overlay */
-        #authOverlay {
-            position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: #0f172a;
+
+        .controller-container {
+            width: 100%;
+            max-width: 1000px;
+            background: #111827;
+            border-radius: 16px;
+            border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+            padding: 28px;
             display: flex;
             flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            z-index: 9999;
+            gap: 20px;
         }
-        .auth-box {
-            background: #1e293b;
-            padding: 40px;
-            border-radius: 16px;
-            text-align: center;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.6);
-            border: 1px solid #334155;
-            max-width: 400px;
-            width: 100%;
-        }
-        .auth-box h2 { color: #38bdf8; margin-bottom: 10px; font-size: 1.6rem; }
-        .auth-box p { color: #94a3b8; font-size: 0.9rem; margin-bottom: 25px; }
-        .google-btn {
-            background: #ffffff;
-            color: #1e293b;
-            border: none;
-            padding: 12px 20px;
-            border-radius: 8px;
-            font-weight: 700;
-            cursor: pointer;
-            width: 100%;
-            font-size: 1rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            transition: background 0.2s;
-        }
-        .google-btn:hover { background: #f1f5f9; }
 
-        /* Main App Container */
-        .container {
-            max-width: 900px;
-            margin: 0 auto;
-            background: #1e293b;
-            padding: 25px;
-            border-radius: 12px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
-            display: none; /* Hidden until authenticated */
-        }
-        .header-bar {
+        .header-title {
+            font-size: 1.35rem;
+            font-weight: 800;
+            color: #38bdf8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 20px;
+            border-bottom: 1px solid #1f2937;
+            padding-bottom: 14px;
         }
-        h1 {
-            font-size: 1.8rem;
-            color: #38bdf8;
-        }
-        .logout-btn {
-            background: #ef4444;
-            color: white;
-            border: none;
-            padding: 6px 14px;
-            border-radius: 6px;
-            font-weight: 600;
-            cursor: pointer;
-            font-size: 0.85rem;
-        }
-        .logout-btn:hover { background: #dc2626; }
 
-        .section-grid {
+        .grid-layout {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 20px;
-            margin-bottom: 20px;
         }
-        .card {
-            background: #0f172a;
-            padding: 15px;
-            border-radius: 8px;
-            border: 1px solid #334155;
-        }
-        .card h3 {
-            margin-bottom: 12px;
-            font-size: 1.1rem;
-            color: #cbd5e1;
-            border-bottom: 1px solid #334155;
-            padding-bottom: 6px;
-        }
-        label {
-            display: block;
-            font-size: 0.85rem;
-            color: #94a3b8;
-            margin-bottom: 5px;
-        }
-        input, select {
-            width: 100%;
-            padding: 8px 12px;
-            background: #1e293b;
-            border: 1px solid #475569;
-            color: #fff;
-            border-radius: 6px;
-            margin-bottom: 12px;
-            font-size: 0.95rem;
-        }
-        .score-controls {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 12px;
-        }
-        .score-controls button {
-            flex: 1;
-            padding: 8px;
-            font-weight: bold;
-            background: #334155;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .score-controls button:hover { background: #475569; }
-        .score-controls button.inc { background: #16a34a; }
-        .score-controls button.inc:hover { background: #15803d; }
-        
-        .btn-primary {
-            width: 100%;
-            padding: 12px;
-            background: #0284c7;
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-size: 1rem;
-            font-weight: bold;
-            cursor: pointer;
-            transition: background 0.2s;
-            margin-top: 10px;
-        }
-        .btn-primary:hover { background: #0369a1; }
-        .btn-goal { background: #16a34a; }
-        .btn-goal:hover { background: #15803d; }
-        .flex-row { display: flex; gap: 10px; }
-    </style>
 
-    <!-- Firebase SDKs (Compat Version for seamless single-file usage) -->
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+        .section-box {
+            background: #1f2937;
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid rgba(255,255,255,0.05);
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .full-width {
+            grid-column: span 2;
+        }
+
+        .section-title {
+            font-size: 0.9rem;
+            font-weight: 700;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .row {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .col {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        label {
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: #cbd5e1;
+        }
+
+        input[type="text"], input[type="number"], select {
+            background: #111827;
+            border: 1px solid #374151;
+            color: white;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            width: 100%;
+        }
+
+        input[type="color"] {
+            -webkit-appearance: none;
+            border: none;
+            width: 100%;
+            height: 42px;
+            border-radius: 8px;
+            cursor: pointer;
+            background: #111827;
+            padding: 4px;
+        }
+        input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+        input[type="color"]::-webkit-color-swatch { border: 1px solid #374151; border-radius: 6px; }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: #38bdf8;
+        }
+
+        .file-upload-wrapper {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+
+        .file-upload-btn {
+            background: #374151;
+            color: white;
+            padding: 10px 12px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 700;
+            cursor: pointer;
+            white-space: nowrap;
+            border: 1px solid #4b5563;
+        }
+        .file-upload-btn:hover { background: #4b5563; }
+        
+        .remove-logo-btn {
+            background: rgba(220, 38, 38, 0.2);
+            color: #f87171;
+            border: 1px solid rgba(220, 38, 38, 0.4);
+            padding: 10px 12px;
+            border-radius: 8px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .remove-logo-btn:hover { background: #dc2626; color: white; }
+
+        .btn-group { display: flex; gap: 8px; align-items: center; }
+
+        button {
+            background: #374151;
+            color: white;
+            border: none;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-weight: 700;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+        button:hover { background: #4b5563; }
+        
+        .btn-primary { background: #0284c7; flex: 1; }
+        .btn-success { background: #16a34a; flex: 1; }
+        .btn-danger { background: #dc2626; padding: 10px 16px; }
+        .btn-warning { background: #ca8a04; color: #000; flex: 1; }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 48px;
+            height: 24px;
+        }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #374151;
+            transition: .3s;
+            border-radius: 24px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px; width: 18px; left: 3px; bottom: 3px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+        input:checked + .slider { background-color: #16a34a; }
+        input:checked + .slider:before { transform: translateX(24px); }
+
+        .action-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    </style>
 </head>
 <body>
 
-    <!-- Auth Overlay -->
-    <div id="authOverlay">
-        <div class="auth-box">
-            <h2>Scorvix Football</h2>
-            <p>Please sign in with Google to access your private match control panel.</p>
-            <button class="google-btn" onclick="loginWithGoogle()">
-                <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.63-.06-1.25-.19-1.84H9v3.49h4.84c-.21 1.12-.86 2.07-1.82 2.71v2.25h2.94c1.72-1.58 2.78-3.9 2.78-6.61z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.94-2.25c-.81.54-1.84.86-3.02.86-2.34 0-4.32-1.58-5.03-3.71H.96v2.33C2.46 15.83 5.48 18 9 18z"/><path fill="#FBBC05" d="M3.97 10.72c-.18-.54-.28-1.12-.28-1.72s.1-1.18.28-1.72V4.95H.96C.35 6.16 0 7.53 0 9s.35 2.84.96 4.05l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0 5.48 0 2.46 2.17.96 4.95l3.01 2.33c.71-2.13 2.69-3.7 5.03-3.7z"/></svg>
-                Sign in with Google
-            </button>
+    <div class="controller-container">
+        <div class="header-title">
+            <span>Scorvix Football Controller</span>
+            <span style="font-size: 0.8rem; color: #10b981; font-weight: 600;" id="connectionStatus">● Connecting...</span>
+        </div>
+
+        <div class="grid-layout">
+            
+            <!-- Overlay Output Link Section -->
+            <div class="section-box full-width" style="background: #1e293b; border: 1px solid #38bdf840;">
+                <div class="section-title">
+                    <span style="color: #38bdf8;">vMix / OBS Overlay Link Output</span>
+                    <span style="font-size: 0.75rem; color: #94a3b8;">Copy this link into your streaming software browser source</span>
+                </div>
+                <div class="row">
+                    <input type="text" id="overlayLinkInput" readonly style="background: #0f172a; color: #38bdf8; font-weight: 700;">
+                    <button class="btn-primary" onclick="copyOverlayLink()" style="flex: unset; padding: 10px 20px;">📋 Copy Link</button>
+                    <a id="openOverlayBtn" href="#" target="_blank" style="text-decoration: none;"><button class="btn-success" style="padding: 10px 16px; height: 100%;">🔗 Preview</button></a>
+                </div>
+            </div>
+
+            <!-- 1. Master Scoreboard Toggle & Teams -->
+            <div class="section-box full-width">
+                <div class="section-title">
+                    <span>Scoreboard Master Control</span>
+                    <label class="switch">
+                        <input type="checkbox" id="masterToggle" checked onchange="saveData()">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                
+                <div class="row">
+                    <div class="col" style="flex: 2;">
+                        <label>Team A Name</label>
+                        <input type="text" id="nameA" value="REAL MADRID" oninput="saveData()">
+                    </div>
+                    <div class="col" style="flex: 2.5;">
+                        <label>Team A Logo (URL or Upload File)</label>
+                        <div class="file-upload-wrapper">
+                            <input type="text" id="logoA" placeholder="https://image-link.png" oninput="saveData()">
+                            <input type="file" id="logoFileA" accept="image/*" style="display: none;" onchange="handleFileUpload(event, 'A')">
+                            <button type="button" class="file-upload-btn" onclick="document.getElementById('logoFileA').click()">📁 Upload</button>
+                            <button type="button" class="remove-logo-btn" onclick="removeLogo('A')">✕</button>
+                        </div>
+                    </div>
+                    <div class="col" style="flex: 0 0 110px; align-items: center;">
+                        <label>Show Logo A</label>
+                        <label class="switch" style="margin-top: 4px;">
+                            <input type="checkbox" id="showLogoA" checked onchange="saveData()">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="col" style="flex: 0 0 210px;">
+                        <label>Team A Score & Goal</label>
+                        <div class="btn-group">
+                            <button onclick="updateScore('A', -1)" class="btn-danger">-</button>
+                            <input type="number" id="scoreA" value="0" style="text-align: center;" oninput="saveData()">
+                            <button onclick="updateScore('A', 1)" class="btn-success" style="flex:unset; padding: 10px 14px;">+</button>
+                            <button onclick="triggerGoal('A')" class="btn-warning" style="flex:unset; padding: 10px 10px; font-size: 0.8rem;" title="Trigger Smooth Goal Animation">⚽ Goal</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col" style="flex: 2;">
+                        <label>Team B Name</label>
+                        <input type="text" id="nameB" value="BARCELONA" oninput="saveData()">
+                    </div>
+                    <div class="col" style="flex: 2.5;">
+                        <label>Team B Logo (URL or Upload File)</label>
+                        <div class="file-upload-wrapper">
+                            <input type="text" id="logoB" placeholder="https://image-link.png" oninput="saveData()">
+                            <input type="file" id="logoFileB" accept="image/*" style="display: none;" onchange="handleFileUpload(event, 'B')">
+                            <button type="button" class="file-upload-btn" onclick="document.getElementById('logoFileB').click()">📁 Upload</button>
+                            <button type="button" class="remove-logo-btn" onclick="removeLogo('B')">✕</button>
+                        </div>
+                    </div>
+                    <div class="col" style="flex: 0 0 110px; align-items: center;">
+                        <label>Show Logo B</label>
+                        <label class="switch" style="margin-top: 4px;">
+                            <input type="checkbox" id="showLogoB" checked onchange="saveData()">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="col" style="flex: 0 0 210px;">
+                        <label>Team B Score & Goal</label>
+                        <div class="btn-group">
+                            <button onclick="updateScore('B', -1)" class="btn-danger">-</button>
+                            <input type="number" id="scoreB" value="0" style="text-align: center;" oninput="saveData()">
+                            <button onclick="updateScore('B', 1)" class="btn-success" style="flex:unset; padding: 10px 14px;">+</button>
+                            <button onclick="triggerGoal('B')" class="btn-warning" style="flex:unset; padding: 10px 10px; font-size: 0.8rem;" title="Trigger Smooth Goal Animation">⚽ Goal</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. Match Timer & Settings -->
+            <div class="section-box">
+                <div class="section-title">Match Timer & Settings</div>
+                <div class="row">
+                    <div class="col">
+                        <label>Match Duration Setting</label>
+                        <select id="matchDuration" onchange="saveData()">
+                            <option value="24">24 Mins Match</option>
+                            <option value="30">30 Mins Match</option>
+                            <option value="40">40 Mins Match</option>
+                            <option value="60">60 Mins Match</option>
+                            <option value="90" selected>90 Mins Match (Standard)</option>
+                        </select>
+                    </div>
+                    <div class="col">
+                        <label>Clock Value (MM:SS)</label>
+                        <input type="text" id="timerInput" value="00:00" oninput="manualTimerEdit()">
+                    </div>
+                </div>
+                <div class="row">
+                    <button class="btn-success" onclick="startTimer()">▶ Start</button>
+                    <button class="btn-warning" onclick="stopTimer()" style="color: #fff;">⏸ Stop</button>
+                    <button class="btn-danger" onclick="resetTimer()" style="flex:1;">⏹ Reset</button>
+                </div>
+                <div class="row">
+                    <button class="btn-primary" onclick="setTimerPreset('Halfway')">Half Time Mark</button>
+                    <button class="btn-primary" onclick="setTimerPreset('Fullway')">Full Time Mark</button>
+                </div>
+            </div>
+
+            <!-- 3. Overlay Color Palette -->
+            <div class="section-box">
+                <div class="section-title">Overlay Color Palette</div>
+                <div class="row">
+                    <div class="col">
+                        <label>Team A Color</label>
+                        <input type="color" id="colorA" value="#0284c7" oninput="saveData()" onchange="saveData()">
+                    </div>
+                    <div class="col">
+                        <label>Team B Color</label>
+                        <input type="color" id="colorB" value="#dc2626" oninput="saveData()" onchange="saveData()">
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col">
+                        <label>Center Clock BG</label>
+                        <input type="color" id="colorClock" value="#090d16" oninput="saveData()" onchange="saveData()">
+                    </div>
+                    <div class="col">
+                        <label>Modal Accent Color</label>
+                        <input type="color" id="colorModal" value="#38bdf8" oninput="saveData()" onchange="saveData()">
+                    </div>
+                </div>
+            </div>
+
+            <!-- 4. Penalties Shootout -->
+            <div class="section-box">
+                <div class="section-title">
+                    <span>Penalty Shootout</span>
+                    <label class="switch">
+                        <input type="checkbox" id="penToggle" onchange="togglePenalties()">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="row" style="margin-top: auto; margin-bottom: auto;">
+                    <div class="col">
+                        <label>Team A Pens</label>
+                        <input type="number" id="penA" placeholder="0" oninput="saveData()">
+                    </div>
+                    <div class="col">
+                        <label>Team B Pens</label>
+                        <input type="number" id="penB" placeholder="0" oninput="saveData()">
+                    </div>
+                </div>
+            </div>
+
+            <!-- 5. Screen Modals (HT / FT) -->
+            <div class="section-box">
+                <div class="section-title">
+                    <span>Fullscreen Status Modal</span>
+                    <label class="switch">
+                        <input type="checkbox" id="modalToggle" onchange="toggleModalSwitch()">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="action-grid" style="margin-top: auto;">
+                    <button class="btn-warning" onclick="setModalTitle('HALF TIME')" style="color:#fff;">Half Time</button>
+                    <button class="btn-warning" onclick="setModalTitle('FULL TIME')" style="color:#fff;">Full Time</button>
+                    <button class="btn-warning" onclick="setModalTitle('PENALTIES')" style="color:#fff;">Penalties</button>
+                </div>
+            </div>
+
+            <!-- 6. Action Replay Badge Control -->
+            <div class="section-box">
+                <div class="section-title">
+                    <span>Action Replay Badge</span>
+                    <label class="switch">
+                        <input type="checkbox" id="arToggle" onchange="toggleActionReplay()">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div style="font-size: 0.85rem; color: #94a3b8; line-height: 1.4;">
+                    Stream ke top-right corner par cinematic yellow replay badge show/hide karein.
+                </div>
+            </div>
+
         </div>
     </div>
 
-    <!-- Main Panel Container -->
-    <div class="container" id="mainContainer">
-        <div class="header-bar">
-            <h1>⚽ Football Live Control Panel</h1>
-            <button class="logout-btn" onclick="logout()">Sign Out</button>
-        </div>
-
-        <div class="section-grid">
-            <!-- Team A Controls -->
-            <div class="card">
-                <h3>Team A (Home)</h3>
-                <label>Team Name</label>
-                <input type="text" id="nameA" value="REAL MADRID" oninput="saveAndSend()">
-                
-                <label>Score</label>
-                <div class="score-controls">
-                    <button onclick="updateScore('A', -1)">-</button>
-                    <input type="number" id="scoreA" value="0" oninput="saveAndSend()" style="margin-bottom:0; text-align:center;">
-                    <button class="inc" onclick="updateScore('A', 1)">+</button>
-                </div>
-
-                <label>Logo URL</label>
-                <input type="text" id="logoA" placeholder="Image URL" oninput="saveAndSend()">
-                <label><input type="checkbox" id="showLogoA" checked onchange="saveAndSend()"> Show Logo A</label>
-
-                <label>Background Color</label>
-                <input type="color" id="colorA" value="#0b0f19" onchange="saveAndSend()">
-            </div>
-
-            <!-- Team B Controls -->
-            <div class="card">
-                <h3>Team B (Away)</h3>
-                <label>Team Name</label>
-                <input type="text" id="nameB" value="BARCELONA" oninput="saveAndSend()">
-                
-                <label>Score</label>
-                <div class="score-controls">
-                    <button onclick="updateScore('B', -1)">-</button>
-                    <input type="number" id="scoreB" value="0" oninput="saveAndSend()" style="margin-bottom:0; text-align:center;">
-                    <button class="inc" onclick="updateScore('B', 1)">+</button>
-                </div>
-
-                <label>Logo URL</label>
-                <input type="text" id="logoB" placeholder="Image URL" oninput="saveAndSend()">
-                <label><input type="checkbox" id="showLogoB" checked onchange="saveAndSend()"> Show Logo B</label>
-
-                <label>Background Color</label>
-                <input type="color" id="colorB" value="#0b0f19" onchange="saveAndSend()">
-            </div>
-        </div>
-
-        <div class="section-grid">
-            <!-- Match Status & Timer -->
-            <div class="card">
-                <h3>Match Timing & Status</h3>
-                <label>Timer (e.g., 45:00)</label>
-                <input type="text" id="timer" value="00:00" oninput="saveAndSend()">
-
-                <label>Fullscreen Modal Status</label>
-                <select id="activeModal" onchange="saveAndSend()">
-                    <option value="">None (Hidden)</option>
-                    <option value="HALF TIME">Half Time</option>
-                    <option value="FULL TIME">Full Time</option>
-                    <option value="EXTRA TIME">Extra Time</option>
-                    <option value="PENALTIES">Penalties Shootout</option>
-                </select>
-
-                <label><input type="checkbox" id="showScoreboard" checked onchange="saveAndSend()"> Show Scoreboard on Overlay</label>
-            </div>
-
-            <!-- Extras & Effects -->
-            <div class="card">
-                <h3>Effects & Penalties</h3>
-                <label>Penalties Score (Team A - Team B)</label>
-                <div class="flex-row">
-                    <input type="text" id="penA" placeholder="Pen A" oninput="saveAndSend()">
-                    <input type="text" id="penB" placeholder="Pen B" oninput="saveAndSend()">
-                </div>
-
-                <label><input type="checkbox" id="showActionReplay" onchange="saveAndSend()"> Show Action Replay Badge</label>
-
-                <button class="btn-primary btn-goal" onclick="triggerManualGoal()">⚽ Trigger Goal Animation</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Socket.io Client Script -->
+    <!-- Socket.io client script with robust polling + websocket transport for cloud stability -->
     <script src="https://tt-overlay-lph4.onrender.com/socket.io/socket.io.js"></script>
     <script>
-        // TODO: Replace with your actual Firebase project credentials
-        const firebaseConfig = {
-            apiKey: "YOUR_API_KEY",
-            authDomain: "YOUR_AUTH_DOMAIN",
-            projectId: "YOUR_PROJECT_ID",
-            storageBucket: "YOUR_STORAGE_BUCKET",
-            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-            appId: "YOUR_APP_ID"
-        };
-
-        // Initialize Firebase
-        if (!firebase.apps.length) {
-            firebase.initializeApp(firebaseConfig);
-        }
-        const auth = firebase.auth();
-        const db = firebase.firestore();
-
         const socket = io("https://tt-overlay-lph4.onrender.com", {
             transports: ['polling', 'websocket'],
             upgrade: true
         });
-
-        let currentUser = null;
-        let isInitialLoad = true;
-
-        // User-specific Firestore Reference function
-        function getFirestoreRef() {
-            if (!currentUser) return null;
-            return db.collection('users').doc(currentUser.uid).collection('match_data').doc('football_current');
-        }
-
-        // Auth State Observer
-        auth.onAuthStateChanged((user) => {
-            if (user) {
-                currentUser = user;
-                document.getElementById('authOverlay').style.display = 'none';
-                document.getElementById('mainContainer').style.display = 'block';
-                loadUserData();
-            } else {
-                currentUser = null;
-                document.getElementById('authOverlay').style.display = 'flex';
-                document.getElementById('mainContainer').style.display = 'none';
-            }
+        
+        socket.on('connect', () => {
+            document.getElementById('connectionStatus').textContent = '● Live Connected';
+            document.getElementById('connectionStatus').style.color = '#10b981';
+            saveData(); // Connect hote hi turant latest state bhej do
         });
 
-        function loginWithGoogle() {
-            const provider = new firebase.auth.GoogleAuthProvider();
-            auth.signInWithPopup(provider).catch((error) => {
-                alert("Login Error: " + error.message);
-            });
+        socket.on('disconnect', () => {
+            document.getElementById('connectionStatus').textContent = '● Disconnected';
+            document.getElementById('connectionStatus').style.color = '#ef4444';
+        });
+
+        window.currentModalTitle = "HALF TIME";
+
+        // Timestamp-Based Precise Timer Variables
+        let timerInterval = null;
+        let startTime = 0;
+        let elapsedSecondsWhenPaused = 0;
+        let isTimerRunning = false;
+        let lastSecond = -1; // PERFORMANCE OPTIMIZATION TRACKER
+
+        // Helper to convert MM:SS to total seconds
+        function timeStrToSeconds(str) {
+            let parts = str.split(":");
+            let mins = parseInt(parts[0]) || 0;
+            let secs = parseInt(parts[1]) || 0;
+            return (mins * 60) + secs;
         }
 
-        function logout() {
-            auth.signOut();
+        // Helper to convert total seconds to MM:SS
+        function secondsToTimeStr(totalSec) {
+            let mins = Math.floor(totalSec / 60);
+            let secs = totalSec % 60;
+            return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
         }
 
-        // Load data from user-specific Firestore path
-        function loadUserData() {
-            const ref = getFirestoreRef();
-            if (!ref) return;
+        // Auto-generate correct overlay link pointing to football-overlay.html
+        window.addEventListener('DOMContentLoaded', () => {
+            let loc = window.location.href;
+            let overlayUrl = loc.substring(0, loc.lastIndexOf('/') + 1) + 'football-overlay.html';
+            document.getElementById('overlayLinkInput').value = overlayUrl;
+            document.getElementById('openOverlayBtn').href = overlayUrl;
+        });
 
-            ref.get().then((doc) => {
-                if (doc.exists) {
-                    const data = doc.data();
-                    setFields(data);
-                }
-                isInitialLoad = false;
-                sendData(); // Sync initial state to socket/overlay
-            }).catch((error) => {
-                console.error("Error loading data:", error);
-                isInitialLoad = false;
-            });
+        function copyOverlayLink() {
+            let copyText = document.getElementById('overlayLinkInput');
+            copyText.select();
+            copyText.setSelectionRange(0, 99999);
+            navigator.clipboard.writeText(copyText.value);
+            alert("Overlay link copied! Ab ise vMix ya OBS ke Browser Source mein daal do.");
         }
 
-        function setFields(data) {
-            if (data.nameA !== undefined) document.getElementById('nameA').value = data.nameA;
-            if (data.nameB !== undefined) document.getElementById('nameB').value = data.nameB;
-            if (data.scoreA !== undefined) document.getElementById('scoreA').value = data.scoreA;
-            if (data.scoreB !== undefined) document.getElementById('scoreB').value = data.scoreB;
-            if (data.logoA !== undefined) document.getElementById('logoA').value = data.logoA;
-            if (data.logoB !== undefined) document.getElementById('logoB').value = data.logoB;
-            if (data.showLogoA !== undefined) document.getElementById('showLogoA').checked = data.showLogoA;
-            if (data.showLogoB !== undefined) document.getElementById('showLogoB').checked = data.showLogoB;
-            if (data.colorA !== undefined) document.getElementById('colorA').value = data.colorA;
-            if (data.colorB !== undefined) document.getElementById('colorB').value = data.colorB;
-            if (data.timer !== undefined) document.getElementById('timer').value = data.timer;
-            if (data.activeModal !== undefined) document.getElementById('activeModal').value = data.activeModal;
-            if (data.showScoreboard !== undefined) document.getElementById('showScoreboard').checked = data.showScoreboard;
-            if (data.penA !== undefined) document.getElementById('penA').value = data.penA;
-            if (data.penB !== undefined) document.getElementById('penB').value = data.penB;
-            if (data.showActionReplay !== undefined) document.getElementById('showActionReplay').checked = data.showActionReplay;
+        function handleFileUpload(event, team) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    document.getElementById('logo' + team).value = e.target.result;
+                    saveData();
+                };
+                reader.readAsDataURL(file);
+            }
         }
 
-        function updateScore(team, val) {
-            const input = document.getElementById('score' + team);
-            let current = parseInt(input.value) || 0;
-            current = Math.max(0, current + val);
-            input.value = current;
-            saveAndSend();
+        function removeLogo(team) {
+            document.getElementById('logo' + team).value = '';
+            document.getElementById('logoFile' + team).value = '';
+            saveData();
         }
 
-        function triggerManualGoal() {
-            let data = collectData();
-            data.triggerGoalPopup = Date.now();
-            socket.emit('liveFootballScore', data);
-        }
-
-        function collectData() {
-            return {
+        function saveData() {
+            const duration = parseInt(document.getElementById('matchDuration').value) || 90;
+            const data = {
+                showScoreboard: document.getElementById('masterToggle').checked,
                 nameA: document.getElementById('nameA').value,
                 nameB: document.getElementById('nameB').value,
-                scoreA: parseInt(document.getElementById('scoreA').value) || 0,
-                scoreB: parseInt(document.getElementById('scoreB').value) || 0,
                 logoA: document.getElementById('logoA').value,
                 logoB: document.getElementById('logoB').value,
                 showLogoA: document.getElementById('showLogoA').checked,
-                showLogoB: document.getElementById('showLogoB'].checked || true,
+                showLogoB: document.getElementById('showLogoB').checked,
+                scoreA: parseInt(document.getElementById('scoreA').value) || 0,
+                scoreB: parseInt(document.getElementById('scoreB').value) || 0,
                 colorA: document.getElementById('colorA').value,
                 colorB: document.getElementById('colorB').value,
-                timer: document.getElementById('timer').value,
-                activeModal: document.getElementById('activeModal').value,
-                showScoreboard: document.getElementById('showScoreboard').checked,
-                penA: document.getElementById('penA').value,
-                penB: document.getElementById('penB').value,
-                showActionReplay: document.getElementById('showActionReplay').checked
+                colorClock: document.getElementById('colorClock').value,
+                colorModal: document.getElementById('colorModal').value,
+                penA: document.getElementById('penToggle').checked ? (document.getElementById('penA').value || "0") : "",
+                penB: document.getElementById('penToggle').checked ? (document.getElementById('penB').value || "0") : "",
+                timer: document.getElementById('timerInput').value,
+                matchDuration: duration,
+                activeModal: document.getElementById('modalToggle').checked ? window.currentModalTitle : "",
+                showActionReplay: document.getElementById('arToggle').checked
             };
-        }
-
-        function saveAndSend() {
-            if (isInitialLoad) return;
-            const data = collectData();
-
-            // 1. Save to Firestore under user-specific path (`getFirestoreRef()`)
-            const ref = getFirestoreRef();
-            if (ref) {
-                ref.set(data, { merge: true }).catch(err => console.error("Firestore save error:", err));
-            }
-
-            // 2. Emit via Socket.io to overlay
+            
             socket.emit('liveFootballScore', data);
         }
 
-        function sendData() {
-            const data = collectData();
+        function updateScore(team, val) {
+            let input = document.getElementById('score' + team);
+            let current = parseInt(input.value) || 0;
+            let updated = current + val;
+            if(updated < 0) updated = 0;
+            input.value = updated;
+            saveData();
+        }
+
+        // Dedicated Goal Animation Button Handler (Triggers exclusively on manual button click with smooth animation preference)
+        function triggerGoal(team) {
+            let input = document.getElementById('score' + team);
+            let current = parseInt(input.value) || 0;
+            input.value = current + 1;
+
+            const duration = parseInt(document.getElementById('matchDuration').value) || 90;
+            const data = {
+                showScoreboard: document.getElementById('masterToggle').checked,
+                nameA: document.getElementById('nameA').value,
+                nameB: document.getElementById('nameB').value,
+                logoA: document.getElementById('logoA').value,
+                logoB: document.getElementById('logoB').value,
+                showLogoA: document.getElementById('showLogoA').checked,
+                showLogoB: document.getElementById('showLogoB').checked,
+                scoreA: parseInt(document.getElementById('scoreA').value) || 0,
+                scoreB: parseInt(document.getElementById('scoreB').value) || 0,
+                colorA: document.getElementById('colorA').value,
+                colorB: document.getElementById('colorB').value,
+                colorClock: document.getElementById('colorClock').value,
+                colorModal: document.getElementById('colorModal').value,
+                penA: document.getElementById('penToggle').checked ? (document.getElementById('penA').value || "0") : "",
+                penB: document.getElementById('penToggle').checked ? (document.getElementById('penB').value || "0") : "",
+                timer: document.getElementById('timerInput').value,
+                matchDuration: duration,
+                activeModal: document.getElementById('modalToggle').checked ? window.currentModalTitle : "",
+                showActionReplay: document.getElementById('arToggle').checked,
+                goalEvent: team, // Explicit manual goal trigger flag
+                goalAnimationType: 'smooth', // Non-bouncy smooth transition
+                goalTimestamp: Date.now()
+            };
+            
             socket.emit('liveFootballScore', data);
         }
+
+        // Precise Timestamp-Based Timer Functions
+        function startTimer() {
+            if (isTimerRunning) return;
+            isTimerRunning = true;
+
+            // Get current value from input to support resume or manual edits
+            let currentStr = document.getElementById('timerInput').value;
+            elapsedSecondsWhenPaused = timeStrToSeconds(currentStr);
+            startTime = Date.now() - (elapsedSecondsWhenPaused * 1000);
+            lastSecond = -1; // Reset tracker
+
+            // Tick every 50ms for ultra-smooth milliseconds response and zero drift
+            timerInterval = setInterval(() => {
+                if (!isTimerRunning) return;
+                let now = Date.now();
+                let totalSec = Math.floor((now - startTime) / 1000);
+                
+                let timeStr = secondsToTimeStr(totalSec);
+                document.getElementById('timerInput').value = timeStr;
+                
+                // PERFORMANCE FIX: Send update to server ONLY when the second changes (1 time/sec)
+                // Local UI timer still updates smoothly every 50ms without lagging network!
+                if (totalSec !== lastSecond) {
+                    lastSecond = totalSec;
+                    saveData();
+                }
+            }, 50); 
+        }
+
+        function stopTimer() {
+            if (!isTimerRunning) return;
+            isTimerRunning = false;
+            clearInterval(timerInterval);
+            timerInterval = null;
+            let currentStr = document.getElementById('timerInput').value;
+            elapsedSecondsWhenPaused = timeStrToSeconds(currentStr);
+        }
+
+        function resetTimer() {
+            stopTimer();
+            elapsedSecondsWhenPaused = 0;
+            lastSecond = -1;
+            document.getElementById('timerInput').value = "00:00";
+            saveData();
+        }
+
+        function setTimerPreset(type) {
+            stopTimer();
+            let duration = parseInt(document.getElementById('matchDuration').value) || 90;
+            let targetMins = (type === 'Halfway') ? Math.floor(duration / 2) : duration;
+            let timeStr = `${String(targetMins).padStart(2, '0')}:00`;
+            document.getElementById('timerInput').value = timeStr;
+            elapsedSecondsWhenPaused = timeStrToSeconds(timeStr);
+            saveData();
+        }
+
+        function manualTimerEdit() {
+            stopTimer();
+            let currentStr = document.getElementById('timerInput').value;
+            elapsedSecondsWhenPaused = timeStrToSeconds(currentStr);
+            saveData();
+        }
+
+        function setModalTitle(title) { window.currentModalTitle = title; document.getElementById('modalToggle').checked = true; saveData(); }
+        function toggleModalSwitch() { saveData(); }
+        function togglePenalties() { saveData(); }
+        function toggleActionReplay() { saveData(); }
+
+        saveData();
     </script>
 </body>
 </html>
