@@ -508,6 +508,7 @@
                 img2.style.display = 'none'; 
             }
 
+            // Adjust width based on logo presence
             let scoreContainer = document.getElementById('score-container');
             if (hasAnyLogo) {
                 scoreContainer.classList.add('has-logo');
@@ -515,82 +516,20 @@
                 scoreContainer.classList.remove('has-logo');
             }
 
+            // Active Server Indicator Logic
+            let rowP1 = document.getElementById('row-p1');
+            let rowP2 = document.getElementById('row-p2');
+            
             if (data.server === 1) {
-                document.getElementById('row-p1').classList.add('active-server');
-                document.getElementById('row-p2').classList.remove('active-server');
+                rowP1.classList.add('active-server');
+                rowP2.classList.remove('active-server');
+            } else if (data.server === 2) {
+                rowP2.classList.add('active-server');
+                rowP1.classList.remove('active-server');
             } else {
-                document.getElementById('row-p2').classList.add('active-server');
-                document.getElementById('row-p1').classList.remove('active-server');
+                rowP1.classList.remove('active-server');
+                rowP2.classList.remove('active-server');
             }
-
-            // Render Set-wise Grid Content dynamically based on format & history
-            let totalSetsCount = (data.matchFormat === 'bestOf7') ? 7 : 5;
-            let gridHTML = `<div class="sets-grid-row" style="margin-bottom: 4px;">
-                <div style="font-size: 11px; font-weight: bold; color: #94a3b8;">TEAM / PLAYER</div>`;
-            for(let i=1; i<=totalSetsCount; i++) {
-                gridHTML += `<div class="sets-grid-header-col">Set ${i}</div>`;
-            }
-            gridHTML += `</div>`;
-
-            let setsHistory = data.setsHistory || [];
-            
-            // Team 1 Row
-            gridHTML += `<div class="sets-grid-row">
-                <div class="sets-grid-team-name" style="color: #38bdf8;">${data.p1Name}</div>`;
-            for(let i=0; i<totalSetsCount; i++) {
-                let setVal = (setsHistory[i]) ? setsHistory[i].p1 : "-";
-                let isWinner = (setsHistory[i] && setsHistory[i].p1 > setsHistory[i].p2);
-                gridHTML += `<div class="set-box ${isWinner ? 'winner-set' : ''}">${setVal}</div>`;
-            }
-            gridHTML += `</div>`;
-
-            // Team 2 Row
-            gridHTML += `<div class="sets-grid-row">
-                <div class="sets-grid-team-name" style="color: #f97316;">${data.p2Name}</div>`;
-            for(let i=0; i<totalSetsCount; i++) {
-                let setVal = (setsHistory[i]) ? setsHistory[i].p2 : "-";
-                let isWinner = (setsHistory[i] && setsHistory[i].p2 > setsHistory[i].p1);
-                gridHTML += `<div class="set-box ${isWinner ? 'winner-set' : ''}">${setVal}</div>`;
-            }
-            gridHTML += `</div>`;
-
-            document.getElementById('sets-grid-content').innerHTML = gridHTML;
-
-            // Render Standings Table
-            if (data.standings) {
-                data.standings.sort((a, b) => b.points - a.points);
-                let ptHTML = "";
-                data.standings.forEach((item, index) => {
-                    ptHTML += `<div class="pt-row">
-                        <div>${index + 1}</div>
-                        <div>${item.team}</div>
-                        <div>${item.ties}</div>
-                        <div>${item.tiesWon}</div>
-                        <div>${item.gamesPlayed}</div>
-                        <div>${item.matchesWon}</div>
-                        <div>${item.gamesWon}</div>
-                        <div>${item.points}</div>
-                    </div>`;
-                });
-                document.getElementById('pt-body').innerHTML = ptHTML;
-            }
-
-            // State Switchers
-            document.getElementById('header-banner').className = data.state === 'header-in' ? 'active' : '';
-            document.getElementById('intro-container').className = data.state === 'intro-in' ? 'active' : '';
-            
-            // Scoreboard and Sets Grid state management
-            if (data.state === 'score-in') {
-                scoreContainer.classList.add('active');
-            } else if (data.state === 'score-out' || data.state === 'sets-grid-in') {
-                scoreContainer.classList.remove('active');
-            }
-
-            document.getElementById('sets-grid-container').className = data.state === 'sets-grid-in' ? 'active' : '';
-            document.getElementById('winner-banner').className = data.state === 'winner-in' ? 'active' : '';
-            document.getElementById('points-table-container').className = data.state === 'table-in' ? 'active' : '';
-            
-            document.getElementById('winner-banner').innerText = data.winner;
         });
     </script>
 </body>
