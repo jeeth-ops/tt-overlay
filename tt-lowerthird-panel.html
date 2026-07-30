@@ -134,7 +134,7 @@
         }
 
         .btn:active {
-            transform: scale(0.95) translateY(2px); /* Click karte hi andar dabne ka effect */
+            transform: scale(0.95) translateY(2px);
             box-shadow: 0 2px 4px rgba(0,0,0,0.3);
         }
 
@@ -189,7 +189,17 @@
     </div>
 
     <script>
-        const targetUrl = window.location.origin + '/tt-lowerthird';
+        // --- Room/UID Isolation Setup ---
+        const urlParams = new URLSearchParams(window.location.search);
+        let userUid = urlParams.get('uid');
+
+        // Agar URL me uid nahi hai, toh localStorage se check karlo (jaise aapke baaki panels me hota hai)
+        if (!userUid) {
+            userUid = localStorage.getItem('scorvix_uid');
+        }
+
+        // Overlay URL ko UID ke sath generate karo taaki OBS me sahi room connect ho
+        const targetUrl = window.location.origin + '/tt-lowerthird' + (userUid ? `?uid=${userUid}` : '');
         document.getElementById('overlayUrl').value = targetUrl;
         document.getElementById('openTabBtn').href = targetUrl;
 
@@ -204,6 +214,7 @@
 
         function sendUpdate(isVisible) {
             const data = {
+                room: userUid ? `room-${userUid}` : 'scorvix-master-room',
                 ltTitle: document.getElementById('ltTitle').value,
                 ltText: document.getElementById('ltText').value,
                 ltVisible: isVisible
@@ -216,11 +227,13 @@
             });
         }
 
-        fetch('/api/tt-data')
+        // Initial data fetch based on room/uid
+        const apiQuery = userUid ? `?room=room-${userUid}` : '';
+        fetch(`/api/tt-data${apiQuery}`)
             .then(res => res.json())
             .then(data => {
-                document.getElementById('ltTitle').value = data.ltTitle;
-                document.getElementById('ltText').value = data.ltText;
+                document.getElementById('ltTitle').value = data.ltTitle || '';
+                document.getElementById('ltText').value = data.ltText || '';
             });
 
         document.querySelectorAll('input[type="text"]').forEach(input => {
