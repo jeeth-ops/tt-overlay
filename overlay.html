@@ -161,9 +161,9 @@
             transition: background 0.3s ease;
         }
         #row-p1 { border-top-left-radius: 10px; border-top-right-radius: 10px; overflow: hidden; }
-#row-p1 .main-score-box { border-top-right-radius: 10px; }
-#row-p2 { border-bottom-left-radius: 10px; border-bottom-right-radius: 10px; border-bottom: none; overflow: hidden; }
-#row-p2 .main-score-box { border-bottom-right-radius: 10px; }
+        #row-p1 .main-score-box { border-top-right-radius: 10px; }
+        #row-p2 { border-bottom-left-radius: 10px; border-bottom-right-radius: 10px; border-bottom: none; overflow: hidden; }
+        #row-p2 .main-score-box { border-bottom-right-radius: 10px; }
         
         .player-info {
             display: flex; 
@@ -459,7 +459,14 @@
     </div>
 
     <script>
-        const socket = io();
+        // Extract uid from URL parameters (e.g., overlay.html?uid=123)
+        const urlParams = new URLSearchParams(window.location.search);
+        const targetUid = urlParams.get('uid');
+
+        // Pass uid in socket query if needed
+        const socket = io({
+            query: targetUid ? { uid: targetUid } : {}
+        });
 
         let lastAlertState = "";
         let alertTimeout = null;
@@ -534,6 +541,11 @@
         }
 
         socket.on('liveScore', (data) => {
+            // Filter incoming data: if targetUid is specified, ignore data that doesn't match this uid
+            if (targetUid && data.uid && data.uid !== targetUid) {
+                return;
+            }
+
             document.getElementById('header-banner').innerText = data.tourneyTitle;
             document.getElementById('intro-tourney-title').innerText = data.tourneyTitle;
             
