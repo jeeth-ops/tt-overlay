@@ -93,27 +93,78 @@ app.post('/api/update-tt-data', (req, res) => {
 });
 
 
-// --- FOOTBALL STATE STORAGE FOR INSTANT SYNC ---
-let footballState = {};
+// --- ROOM-WISE STATE STORAGE FOR 500+ MULTI-USER ISOLATION ---
+let roomStates = {};
 
-// Socket.io Connection (Score live update karne ke liye)
+// Socket.io Connection with Room Support & Query Param Handling for Overlays
 io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
 
-    // Agar koi naya football overlay connect ho ya refresh ho, use turant latest state bhej do
-    if (Object.keys(footballState).length > 0) {
-        socket.emit('liveFootballScore', footballState);
+    // Default room for master/unspecified
+    let currentRoom = 'scorvix-master-room';
+    socket.activeRoom = currentRoom;
+    socket.join(currentRoom);
+
+    // Agar overlay URL me ?uid=XYZ pass kiya gaya ho (vMix/OBS ke liye)
+    const query = socket.handshake.query;
+    if (query.uid) {
+        currentRoom = `room-${query.uid}`;
+        socket.leave(socket.activeRoom);
+        socket.join(currentRoom);
+        socket.activeRoom = currentRoom;
+        console.log(`Overlay socket ${socket.id} joined query room: ${currentRoom}`);
     }
 
-    // Table Tennis Live Score
-    socket.on('updateScore', (data) => {
-        io.emit('liveScore', data);
+    // Turant latest state bhej do agar is room ki state pehle se saved hai
+    if (roomStates[currentRoom]) {
+        if (roomStates[currentRoom].footballState) {
+            socket.emit('liveFootballScore', roomStates[currentRoom].footballState);
+        }
+        if (roomStates[currentRoom].ttState) {
+            socket.emit('liveScore', roomStates[currentRoom].ttState);
+        }
+    }
+
+    // Panel se joinRoom event aane par room properly assign karein
+    socket.on('joinRoom', (userData) => {
+        let roomName = 'scorvix-master-room';
+
+        if (userData && userData.email === 'chhayajeeth@gmail.com') {
+            roomName = 'scorvix-master-room'; // Master Admin Room
+        } else if (userData && userData.uid) {
+            roomName = `room-${userData.uid}`; // Isolated Client Room
+        }
+
+        socket.leave(socket.activeRoom);
+        socket.join(roomName);
+        socket.activeRoom = roomName;
+        console.log(`Socket ${socket.id} switched to room: ${roomName}`);
+
+        // Is room ka purana data ho toh turant bhej do
+        if (roomStates[roomName]) {
+            if (roomStates[roomName].ttState) {
+                socket.emit('liveScore', roomStates[roomName].ttState);
+            }
+            if (roomStates[roomName].footballState) {
+                socket.emit('liveFootballScore', roomStates[roomName].footballState);
+            }
+        }
     });
 
-    // FOOTBALL: Live Score & State Sync (Event name fixed to 'liveFootballScore' as emitted by panel)
+    // Table Tennis Live Score (Room Isolated)
+    socket.on('updateScore', (data) => {
+        const room = socket.activeRoom || 'scorvix-master-room';
+        if (!roomStates[room]) roomStates[room] = {};
+        roomStates[room].ttState = data;
+        io.to(room).emit('liveScore', data);
+    });
+
+    // FOOTBALL: Live Score & State Sync (Room Isolated)
     socket.on('liveFootballScore', (data) => {
-        footballState = data; // Server par state save ho gayi
-        io.emit('liveFootballScore', data); // Connected overlays ko broadcast kar diya
+        const room = socket.activeRoom || 'scorvix-master-room';
+        if (!roomStates[room]) roomStates[room] = {};
+        roomStates[room].footballState = data;
+        io.to(room).emit('liveFootballScore', data);
     });
 
     socket.on('disconnect', () => {
