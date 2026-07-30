@@ -79,7 +79,7 @@
             backdrop-filter: blur(12px);
             color: #ffffff;
             border-radius: 10px;
-            overflow: visible;
+            overflow: visible; /* Allows badges to pop out */
             box-shadow: 0 25px 50px rgba(0,0,0,0.8);
             font-weight: bold;
             border-left: 6px solid #38bdf8;
@@ -96,6 +96,7 @@
         }
         #score-container.has-logo { width: 455px; }
 
+        /* Match Category & Sublabel Badges (Flush to left, behind scorecard) */
         .score-category-badge {
             position: absolute;
             top: 10px;
@@ -160,9 +161,9 @@
             transition: background 0.3s ease;
         }
         #row-p1 { border-top-left-radius: 10px; border-top-right-radius: 10px; overflow: hidden; }
-        #row-p1 .main-score-box { border-top-right-radius: 10px; }
-        #row-p2 { border-bottom-left-radius: 10px; border-bottom-right-radius: 10px; border-bottom: none; overflow: hidden; }
-        #row-p2 .main-score-box { border-bottom-right-radius: 10px; }
+#row-p1 .main-score-box { border-top-right-radius: 10px; }
+#row-p2 { border-bottom-left-radius: 10px; border-bottom-right-radius: 10px; border-bottom: none; overflow: hidden; }
+#row-p2 .main-score-box { border-bottom-right-radius: 10px; }
         
         .player-info {
             display: flex; 
@@ -549,8 +550,10 @@
             document.getElementById('o-p1-sets').innerText = data.p1Sets;
             document.getElementById('o-p2-sets').innerText = data.p2Sets;
 
+            // Check Game / Match Point
             checkGameMatchPoint(data);
 
+            // Category & Sublabel Badge Handling
             let categoryElem = document.getElementById('score-category');
             if (data.matchCategory || data.matchType) {
                 categoryElem.innerText = data.matchCategory || data.matchType;
@@ -569,6 +572,7 @@
                 sublabelElem.classList.remove('badge-active');
             }
 
+            // Team / Player Logo Handling
             let hasAnyLogo = false;
             let img1 = document.getElementById('o-img1');
             if(data.img1) { 
@@ -603,6 +607,7 @@
                 document.getElementById('row-p1').classList.remove('active-server');
             }
 
+            // Render Set-wise Grid Content dynamically based on format & history
             let totalSetsCount = (data.matchFormat === 'bestOf7') ? 7 : 5;
             let gridHTML = `<div class="sets-grid-row" style="margin-bottom: 4px;">
                 <div style="font-size: 11px; font-weight: bold; color: #94a3b8;">TEAM / PLAYER</div>`;
@@ -613,6 +618,7 @@
 
             let setsHistory = data.setsHistory || [];
             
+            // Team 1 Row
             gridHTML += `<div class="sets-grid-row">
                 <div class="sets-grid-team-name" style="color: #38bdf8;">${data.p1Name}</div>`;
             for(let i=0; i<totalSetsCount; i++) {
@@ -622,6 +628,7 @@
             }
             gridHTML += `</div>`;
 
+            // Team 2 Row
             gridHTML += `<div class="sets-grid-row">
                 <div class="sets-grid-team-name" style="color: #f97316;">${data.p2Name}</div>`;
             for(let i=0; i<totalSetsCount; i++) {
@@ -633,6 +640,7 @@
 
             document.getElementById('sets-grid-content').innerHTML = gridHTML;
 
+            // Render Standings Table
             if (data.standings) {
                 data.standings.sort((a, b) => b.points - a.points);
                 let ptHTML = "";
@@ -651,9 +659,11 @@
                 document.getElementById('pt-body').innerHTML = ptHTML;
             }
 
+            // State Switchers
             document.getElementById('header-banner').className = data.state === 'header-in' ? 'active' : '';
             document.getElementById('intro-container').className = data.state === 'intro-in' ? 'active' : '';
             
+            // Scoreboard and Sets Grid state management with 1-second badge pop-up delay
             if (data.state === 'score-in') {
                 scoreContainer.classList.add('active');
                 if (badgeTimeout) clearTimeout(badgeTimeout);
@@ -662,7 +672,7 @@
                         categoryElem.classList.add('badge-active');
                         sublabelElem.classList.add('badge-active');
                     }
-                }, 1000);
+                }, 1000); // 1 second delay after scorecard appears
             } else {
                 scoreContainer.classList.remove('active');
                 categoryElem.classList.remove('badge-active');
