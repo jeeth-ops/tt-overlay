@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Football Match Controller - Scorvix</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Firebase SDKs (Compat Version) -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
         body { 
@@ -16,6 +22,30 @@
             justify-content: center; 
             align-items: flex-start; 
         }
+
+        /* Login Screen Styling */
+        #login-screen {
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background: #0b0f19;
+            display: flex; justify-content: center; align-items: center;
+            z-index: 9999;
+        }
+        .login-card {
+            background: #111827; padding: 40px; border-radius: 16px;
+            text-align: center; border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 25px 50px rgba(0,0,0,0.8); width: 380px;
+        }
+        .login-card h2 { font-size: 1.4rem; margin-bottom: 8px; color: #38bdf8; border: none; }
+        .login-card p { color: #94a3b8; font-size: 0.9rem; margin-bottom: 25px; }
+        .google-btn {
+            background: #ffffff; color: #1f2937; border: none;
+            padding: 12px 20px; border-radius: 8px; font-weight: bold;
+            cursor: pointer; display: flex; align-items: center;
+            justify-content: center; gap: 12px; width: 100%; font-size: 0.95rem;
+            transition: 0.3s;
+        }
+        .google-btn:hover { background: #f1f5f9; }
 
         .controller-container {
             width: 100%;
@@ -202,10 +232,26 @@
 </head>
 <body>
 
-    <div class="controller-container">
+    <!-- 🌟 Google Login Screen 🌟 -->
+    <div id="login-screen" style="display: none;">
+        <div class="login-card">
+            <h2>Scorvix Football</h2>
+            <p>Sign in with your Google account to access the Football Controller.</p>
+            <button class="google-btn" onclick="loginWithGoogle()">
+                <img src="https://www.svgrepo.com/show/475656/google-color.svg" width="20"> 
+                Sign in with Google
+            </button>
+        </div>
+    </div>
+
+    <!-- 🌟 Main Controller Container 🌟 -->
+    <div class="controller-container" id="main-content" style="display: none;">
         <div class="header-title">
             <span>Scorvix Football Controller</span>
-            <span style="font-size: 0.8rem; color: #10b981; font-weight: 600;" id="connectionStatus">● Connecting...</span>
+            <div style="display: flex; gap: 15px; align-items: center;">
+                <span style="font-size: 0.8rem; color: #10b981; font-weight: 600;" id="connectionStatus">● Connecting...</span>
+                <button onclick="logout()" style="background: #dc2626; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer;">Logout</button>
+            </div>
         </div>
 
         <div class="grid-layout">
@@ -407,9 +453,57 @@
         </div>
     </div>
 
-    <!-- Socket.io client script with robust polling + websocket transport for cloud stability -->
+    <!-- Socket.io client script -->
     <script src="https://tt-overlay-lph4.onrender.com/socket.io/socket.io.js"></script>
     <script>
+        // 🌟 Firebase Configuration 🌟
+        const firebaseConfig = {
+            apiKey: "AIzaSyAYc_bEB9C4RhhLhPBEJsJRFRUppcR45yo",
+            authDomain: "scorvix-faf0e.firebaseapp.com",
+            projectId: "scorvix-faf0e",
+            storageBucket: "scorvix-faf0e.firebasestorage.app",
+            messagingSenderId: "725629580596",
+            appId: "1:725629580596:web:7737847e7194650f276161",
+            measurementId: "G-4EXH0QXHF7"
+        };
+
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const auth = firebase.auth();
+
+        function loginWithGoogle() {
+            const provider = new firebase.auth.GoogleAuthProvider();
+            auth.signInWithPopup(provider).catch(error => {
+                alert("Login Error: " + error.message);
+            });
+        }
+
+        function logout() {
+            localStorage.removeItem('scorvix_uid');
+            auth.signOut();
+        }
+
+        // 🌟 Authentication & Room State Observer 🌟
+        auth.onAuthStateChanged(user => {
+            if (user) {
+                localStorage.setItem('scorvix_uid', user.uid);
+                document.getElementById('login-screen').style.display = 'none';
+                document.getElementById('main-content').style.display = 'block';
+                initController(user.uid);
+            } else {
+                const savedUid = localStorage.getItem('scorvix_uid');
+                if (savedUid) {
+                    document.getElementById('login-screen').style.display = 'none';
+                    document.getElementById('main-content').style.display = 'block';
+                    initController(savedUid);
+                } else {
+                    document.getElementById('login-screen').style.display = 'flex';
+                    document.getElementById('main-content').style.display = 'none';
+                }
+            }
+        });
+
         const socket = io("https://tt-overlay-lph4.onrender.com", {
             transports: ['polling', 'websocket'],
             upgrade: true
@@ -418,7 +512,7 @@
         socket.on('connect', () => {
             document.getElementById('connectionStatus').textContent = '● Live Connected';
             document.getElementById('connectionStatus').style.color = '#10b981';
-            saveData(); // Connect hote hi turant latest state bhej do
+            saveData();
         });
 
         socket.on('disconnect', () => {
@@ -428,14 +522,12 @@
 
         window.currentModalTitle = "HALF TIME";
 
-        // Timestamp-Based Precise Timer Variables
         let timerInterval = null;
         let startTime = 0;
         let elapsedSecondsWhenPaused = 0;
         let isTimerRunning = false;
-        let lastSecond = -1; // PERFORMANCE OPTIMIZATION TRACKER
+        let lastSecond = -1;
 
-        // Helper to convert MM:SS to total seconds
         function timeStrToSeconds(str) {
             let parts = str.split(":");
             let mins = parseInt(parts[0]) || 0;
@@ -443,20 +535,26 @@
             return (mins * 60) + secs;
         }
 
-        // Helper to convert total seconds to MM:SS
         function secondsToTimeStr(totalSec) {
             let mins = Math.floor(totalSec / 60);
             let secs = totalSec % 60;
             return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
         }
 
-        // Auto-generate correct overlay link pointing to football-overlay.html
-        window.addEventListener('DOMContentLoaded', () => {
-            let loc = window.location.href;
-            let overlayUrl = loc.substring(0, loc.lastIndexOf('/') + 1) + 'football-overlay.html';
+        function initController(userUid) {
+            const urlParams = new URLSearchParams(window.location.search);
+            const finalUid = urlParams.get('uid') || userUid;
+
+            let loc = window.location.href.split('?')[0];
+            let baseUrl = loc.substring(0, loc.lastIndexOf('/') + 1);
+            let overlayUrl = baseUrl + 'football-overlay.html' + (finalUid ? `?uid=${finalUid}` : '');
+            
             document.getElementById('overlayLinkInput').value = overlayUrl;
             document.getElementById('openOverlayBtn').href = overlayUrl;
-        });
+
+            window.currentUid = finalUid;
+            saveData();
+        }
 
         function copyOverlayLink() {
             let copyText = document.getElementById('overlayLinkInput');
@@ -485,8 +583,12 @@
         }
 
         function saveData() {
+            const userUid = window.currentUid || localStorage.getItem('scorvix_uid');
+            const roomName = userUid ? `room-${userUid}` : 'scorvix-master-room';
             const duration = parseInt(document.getElementById('matchDuration').value) || 90;
+            
             const data = {
+                room: roomName,
                 showScoreboard: document.getElementById('masterToggle').checked,
                 nameA: document.getElementById('nameA').value,
                 nameB: document.getElementById('nameB').value,
@@ -520,14 +622,17 @@
             saveData();
         }
 
-        // Dedicated Goal Animation Button Handler (Triggers exclusively on manual button click with smooth animation preference)
         function triggerGoal(team) {
             let input = document.getElementById('score' + team);
             let current = parseInt(input.value) || 0;
             input.value = current + 1;
 
+            const userUid = window.currentUid || localStorage.getItem('scorvix_uid');
+            const roomName = userUid ? `room-${userUid}` : 'scorvix-master-room';
             const duration = parseInt(document.getElementById('matchDuration').value) || 90;
+            
             const data = {
+                room: roomName,
                 showScoreboard: document.getElementById('masterToggle').checked,
                 nameA: document.getElementById('nameA').value,
                 nameB: document.getElementById('nameB').value,
@@ -547,26 +652,23 @@
                 matchDuration: duration,
                 activeModal: document.getElementById('modalToggle').checked ? window.currentModalTitle : "",
                 showActionReplay: document.getElementById('arToggle').checked,
-                goalEvent: team, // Explicit manual goal trigger flag
-                goalAnimationType: 'smooth', // Non-bouncy smooth transition
+                goalEvent: team,
+                goalAnimationType: 'smooth',
                 goalTimestamp: Date.now()
             };
             
             socket.emit('liveFootballScore', data);
         }
 
-        // Precise Timestamp-Based Timer Functions
         function startTimer() {
             if (isTimerRunning) return;
             isTimerRunning = true;
 
-            // Get current value from input to support resume or manual edits
             let currentStr = document.getElementById('timerInput').value;
             elapsedSecondsWhenPaused = timeStrToSeconds(currentStr);
             startTime = Date.now() - (elapsedSecondsWhenPaused * 1000);
-            lastSecond = -1; // Reset tracker
+            lastSecond = -1;
 
-            // Tick every 50ms for ultra-smooth milliseconds response and zero drift
             timerInterval = setInterval(() => {
                 if (!isTimerRunning) return;
                 let now = Date.now();
@@ -575,8 +677,6 @@
                 let timeStr = secondsToTimeStr(totalSec);
                 document.getElementById('timerInput').value = timeStr;
                 
-                // PERFORMANCE FIX: Send update to server ONLY when the second changes (1 time/sec)
-                // Local UI timer still updates smoothly every 50ms without lagging network!
                 if (totalSec !== lastSecond) {
                     lastSecond = totalSec;
                     saveData();
@@ -622,8 +722,6 @@
         function toggleModalSwitch() { saveData(); }
         function togglePenalties() { saveData(); }
         function toggleActionReplay() { saveData(); }
-
-        saveData();
     </script>
 </body>
 </html>
