@@ -137,6 +137,7 @@
                         <option value="bestOf7">Best of 7 (First to 4 Sets)</option>
                     </select>
                 </div>
+                <!-- YAHAN NAYE POP-UP INPUTS HAIN -->
                 <div>
                     <label>Match Category (Top Black Box):</label>
                     <input type="text" id="c-match-category" value="Mixed Doubles" oninput="sendData()" style="border-left: 3px solid #10b981;">
@@ -145,6 +146,7 @@
                     <label>Team Matchup (Bottom Black Box):</label>
                     <input type="text" id="c-team-matchup" value="SCL vs KB" oninput="sendData()" style="border-left: 3px solid #10b981;">
                 </div>
+                <!-- ============================ -->
                 <div>
                     <label>Winner Announcement Text:</label>
                     <input type="text" id="c-winner-text" value="PHANTOM STARS WON THE MATCH" oninput="sendData()">
@@ -278,34 +280,14 @@
     }
 
     function logout() {
-        localStorage.removeItem('scorvix_uid'); 
         auth.signOut();
-    }
-
-    // Dynamic Database Path Handler using localStorage 'scorvix_uid' & Owner Check
-    function getFirestoreRef() {
-        const user = auth.currentUser;
-        const email = user ? user.email : '';
-        const savedUid = localStorage.getItem('scorvix_uid');
-
-        if (email === 'chhayajeeth@gmail.com') {
-            return db.collection("scorvix_tt").doc("matchState"); 
-        } else if (savedUid) {
-            return db.collection("scorvix_tt_users").doc(savedUid); 
-        } else if (user) {
-            return db.collection("scorvix_tt_users").doc(user.uid);
-        }
-        return db.collection("scorvix_tt").doc("matchState");
     }
 
     auth.onAuthStateChanged(user => {
         if (user) {
-            localStorage.setItem('scorvix_uid', user.uid);
             document.getElementById('login-screen').style.display = 'none';
             document.getElementById('main-studio').style.display = 'grid';
             document.getElementById('user-email-display').innerText = user.email;
-            
-            socket.emit('joinRoom', { email: user.email, uid: user.uid });
             loadSavedData();
         } else {
             document.getElementById('login-screen').style.display = 'flex';
@@ -334,11 +316,7 @@
         ]
     };
 
- function openOverlayTab() { 
-    const uid = localStorage.getItem('scorvix_uid') || (auth.currentUser ? auth.currentUser.uid : '');
-    window.open(`/overlay.html?uid=${uid}`, '_blank'); 
-}
-    }
+    function openOverlayTab() { window.open('/overlay.html', '_blank'); }
 
     function sendData() {
         data.tourneyTitle = document.getElementById('c-tourney-title').value;
@@ -366,11 +344,11 @@
         document.getElementById('footer-server-turn').innerText = `Serving: ${data.server === 1 ? data.p1Name : data.p2Name}`;
 
         socket.emit('updateScore', data);
-        getFirestoreRef().set(data).catch(err => console.log("Cloud save error:", err));
+        db.collection("scorvix").doc("matchState").set(data).catch(err => console.log("Cloud save error:", err));
     }
 
     function loadSavedData() {
-        getFirestoreRef().get().then(doc => {
+        db.collection("scorvix").doc("matchState").get().then(doc => {
             if (doc.exists) {
                 data = doc.data();
                 document.getElementById('c-tourney-title').value = data.tourneyTitle || "";
@@ -474,3 +452,4 @@
 </script>
 </body>
 </html>
+
