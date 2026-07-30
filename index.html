@@ -410,7 +410,10 @@
 
         // Logout Function
         function logout() {
-            auth.signOut();
+            auth.signOut().then(() => {
+                localStorage.removeItem('scorvix_uid');
+                localStorage.removeItem('scorvix_email');
+            });
         }
 
         // Safe Navigation to TT Templates page
@@ -435,10 +438,15 @@
             }
         }
 
-        // Strict Session Check
+        // Strict Session Check & LocalStorage UID Save
         auth.onAuthStateChanged(user => {
             if (user) {
                 isUserLoggedIn = true;
+                
+                // 🌟 Automatically save UID & Email to localStorage for room isolation 🌟
+                localStorage.setItem('scorvix_uid', user.uid);
+                localStorage.setItem('scorvix_email', user.email);
+
                 authGate.style.opacity = '0';
                 setTimeout(() => {
                     authGate.classList.add('hidden');
@@ -453,6 +461,11 @@
                 }
             } else {
                 isUserLoggedIn = false;
+                
+                // Clear storage on logout
+                localStorage.removeItem('scorvix_uid');
+                localStorage.removeItem('scorvix_email');
+
                 authGate.classList.remove('hidden');
                 authGate.style.opacity = '1';
                 userDisplay.innerText = "";
@@ -501,4 +514,3 @@
     </script>
 </body>
 </html>
-
