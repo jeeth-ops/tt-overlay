@@ -62,12 +62,24 @@ app.get('/football-overlay', (req, res) => {
 
 // ----------------- NAYE LOWER THIRD ROUTES & DATA -----------------
 
-// Lower Third ka live data store
-let ttData = {
-    ltTitle: "MATCH HIGHLIGHT",
-    ltText: "Announcement text goes here",
-    ltVisible: false
-};
+// --- ROOM-WISE STATE STORAGE FOR 500+ MULTI-USER ISOLATION ---
+let roomStates = {};
+
+// Helper function to get or initialize room state
+function getRoomState(room) {
+    if (!roomStates[room]) {
+        roomStates[room] = {
+            ttState: null,
+            footballState: null,
+            ttData: {
+                ltTitle: "MATCH HIGHLIGHT",
+                ltText: "Announcement text goes here",
+                ltVisible: false
+            }
+        };
+    }
+    return roomStates[room];
+}
 
 // 5. Lower Third Overlay file ka route (OBS ke liye)
 app.get('/tt-lowerthird', (req, res) => {
@@ -79,22 +91,25 @@ app.get('/tt-lowerthird-panel', (req, res) => {
     res.sendFile(__dirname + '/tt-lowerthird-panel.html');
 });
 
-// 7. Lower Third Data Fetch API (Overlay ke liye)
+// 7. Lower Third Data Fetch API (Overlay ke liye - Query param ?room= ya ?uid= support ke sath)
 app.get('/api/tt-data', (req, res) => {
-    res.json(ttData);
+    const room = req.query.room || req.query.uid ? `room-${req.query.uid}` : 'scorvix-master-room';
+    const state = getRoomState(room);
+    res.json(state.ttData);
 });
 
 // 8. Lower Third Data Update API (Control Panel ke liye)
 app.post('/api/update-tt-data', (req, res) => {
-    if (req.body.ltTitle !== undefined) ttData.ltTitle = req.body.ltTitle;
-    if (req.body.ltText !== undefined) ttData.ltText = req.body.ltText;
-    if (req.body.ltVisible !== undefined) ttData.ltVisible = req.body.ltVisible;
-    res.json({ success: true, ttData });
+    const room = req.body.room || 'scorvix-master-room';
+    const state = getRoomState(room);
+    
+    if (req.body.ltTitle !== undefined) state.ttData.ltTitle = req.body.ltTitle;
+    if (req.body.ltText !== undefined) state.ttData.ltText = req.body.ltText;
+    if (req.body.ltVisible !== undefined) state.ttData.ltVisible = req.body.ltVisible;
+    
+    res.json({ success: true, ttData: state.ttData });
 });
 
-
-// --- ROOM-WISE STATE STORAGE FOR 500+ MULTI-USER ISOLATION ---
-let roomStates = {};
 
 // Socket.io Connection with Room Support & Query Param Handling for Overlays
 io.on('connection', (socket) => {
@@ -116,13 +131,12 @@ io.on('connection', (socket) => {
     }
 
     // Turant latest state bhej do agar is room ki state pehle se saved hai
-    if (roomStates[currentRoom]) {
-        if (roomStates[currentRoom].footballState) {
-            socket.emit('liveFootballScore', roomStates[currentRoom].footballState);
-        }
-        if (roomStates[currentRoom].ttState) {
-            socket.emit('liveScore', roomStates[currentRoom].ttState);
-        }
+    const roomState = getRoomState(currentRoom);
+    if (roomState.footballState) {
+        socket.emit('liveFootballScore', roomState.footballState);
+    }
+    if (roomState.ttState) {
+        socket.emit('liveScore', roomState.ttState);
     }
 
     // Panel se joinRoom event aane par room properly assign karein
@@ -141,29 +155,28 @@ io.on('connection', (socket) => {
         console.log(`Socket ${socket.id} switched to room: ${roomName}`);
 
         // Is room ka purana data ho toh turant bhej do
-        if (roomStates[roomName]) {
-            if (roomStates[roomName].ttState) {
-                socket.emit('liveScore', roomStates[roomName].ttState);
-            }
-            if (roomStates[roomName].footballState) {
-                socket.emit('liveFootballScore', roomStates[roomName].footballState);
-            }
+        const targetState = getRoomState(roomName);
+        if (targetState.ttState) {
+            socket.emit('liveScore', targetState.ttState);
+        }
+        if (targetState.footballState) {
+            socket.emit('liveFootballScore', targetState.footballState);
         }
     });
 
     // Table Tennis Live Score (Room Isolated)
     socket.on('updateScore', (data) => {
         const room = socket.activeRoom || 'scorvix-master-room';
-        if (!roomStates[room]) roomStates[room] = {};
-        roomStates[room].ttState = data;
+        const state = getRoomState(room);
+        state.ttState = data;
         io.to(room).emit('liveScore', data);
     });
 
     // FOOTBALL: Live Score & State Sync (Room Isolated)
     socket.on('liveFootballScore', (data) => {
         const room = socket.activeRoom || 'scorvix-master-room';
-        if (!roomStates[room]) roomStates[room] = {};
-        roomStates[room].footballState = data;
+        const state = getRoomState(room);
+        state.footballState = data;
         io.to(room).emit('liveFootballScore', data);
     });
 
