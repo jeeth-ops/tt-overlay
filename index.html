@@ -467,65 +467,75 @@
             }
         }
 
-        async function loadDynamicSports() {
-            try {
-                const response = await fetch('/api/get-sports');
-                if (!response.ok) return;
-                const sports = await response.json();
-                
-                const grid = document.getElementById('sports-grid-container');
-                const adminList = document.getElementById('admin-templates-list');
-                
-                if (adminList) {
-                    if (sports.length === 0) {
-                        adminList.innerHTML = `<p style="color: var(--text-muted); font-size: 0.9rem;">No dynamic templates added yet.</p>`;
-                    } else {
-                        adminList.innerHTML = "";
-                        sports.forEach(sport => {
-                            const item = document.createElement('div');
-                            item.className = "admin-template-item";
-                            item.innerHTML = `
-                                <span>${sport.icon || '🎯'} ${sport.name}</span>
-                                <button class="btn-delete-item" onclick="deleteTemplate('${sport.slug}', '${sport.name}')">Remove</button>
-                            `;
-                            adminList.appendChild(item);
-                        });
-                    }
-                }
-
-                if (!grid) return;
-                
-                sports.forEach(sport => {
-                    if (document.getElementById(`card-${sport.slug}`)) return;
-
-                    const card = document.createElement('div');
-                    card.id = `card-${sport.slug}`;
-                    card.className = "sport-card reveal-on-scroll delay-1 revealed";
-                    card.style.cursor = "pointer";
-                    
-                    card.onclick = () => {
-                        if (isUserLoggedIn) {
-                            window.location.href = `/${sport.slug}-templates.html`;
-                        } else {
-                            alert("Pehle Google Login karein!");
-                            authGate.classList.remove('hidden');
-                            authGate.style.opacity = '1';
-                        }
-                    };
-                    
-                    card.innerHTML = `
-                        <div class="card-content">
-                            <div class="sport-icon">${sport.icon || '🎯'}</div>
-                            <h3>${sport.name}</h3>
-                            <div class="badge" style="background: #10b981; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; display: inline-block; margin-top: 5px;">Live</div>
-                        </div>
+    async function loadDynamicSports() {
+    try {
+        const response = await fetch('/api/get-sports');
+        if (!response.ok) return;
+        const sports = await response.json();
+        
+        const grid = document.getElementById('sports-grid-container');
+        const adminList = document.getElementById('admin-templates-list');
+        
+        // Vibrant color palette array for dynamic buttons/cards
+        const vibrantColors = [
+            '#f43f5e', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'
+        ];
+        
+        if (adminList) {
+            if (sports.length === 0) {
+                adminList.innerHTML = `<p style="color: var(--text-muted); font-size: 0.9rem;">No dynamic templates added yet.</p>`;
+            } else {
+                adminList.innerHTML = "";
+                sports.forEach((sport, index) => {
+                    const item = document.createElement('div');
+                    item.className = "admin-template-item";
+                    item.innerHTML = `
+                        <span>${sport.icon || '🎯'} ${sport.name}</span>
+                        <button class="btn-delete-item" onclick="deleteTemplate('${sport.slug}', '${sport.name}')">Remove</button>
                     `;
-                    grid.appendChild(card);
+                    adminList.appendChild(item);
                 });
-            } catch (error) {
-                console.error("Error loading dynamic sports:", error);
             }
         }
+
+        if (!grid) return;
+        
+        sports.forEach((sport, index) => {
+            if (document.getElementById(`card-${sport.slug}`)) return;
+
+            const cardColor = vibrantColors[index % vibrantColors.length];
+            const currentUserUid = localStorage.getItem('scorvix_uid') || 'default_uid';
+
+            const card = document.createElement('div');
+            card.id = `card-${sport.slug}`;
+            card.className = "sport-card reveal-on-scroll delay-1 revealed";
+            card.style.cursor = "pointer";
+            card.style.borderColor = cardColor;
+            
+            card.onclick = () => {
+                if (isUserLoggedIn) {
+                    // Automatically append UID parameter for unique session/overlay link handling
+                    window.location.href = `/${sport.slug}-templates.html?uid=${currentUserUid}`;
+                } else {
+                    alert("Pehle Google Login karein!");
+                    authGate.classList.remove('hidden');
+                    authGate.style.opacity = '1';
+                }
+            };
+            
+            card.innerHTML = `
+                <div class="card-content">
+                    <div class="sport-icon">${sport.icon || '🎯'}</div>
+                    <h3>${sport.name}</h3>
+                    <div class="badge" style="background: ${cardColor}; color: white; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; display: inline-block; margin-top: 10px; font-weight: 600;">Live Template</div>
+                </div>
+            `;
+            grid.appendChild(card);
+        });
+    } catch (error) {
+        console.error("Error loading dynamic sports:", error);
+    }
+}
 
         async function deleteTemplate(slug, name) {
             if (!confirm(`Are you sure you want to remove "${name}" template and its files?`)) return;
