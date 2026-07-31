@@ -1,6 +1,8 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
+const fs = require('fs'); // NAYA: File System module
+const path = require('path'); // NAYA: Path module
 
 const app = express();
 const server = http.createServer(app);
@@ -13,36 +15,73 @@ const io = new Server(server, {
 });
 
 app.use(express.static(__dirname));
-app.use(express.json());
+// Badha hua JSON limit taaki bada code easily server tak aa sake
+app.use(express.json({ limit: '50mb' })); 
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// Routes
-app.get('/', (req, res) => {
-    res.sendFile(__dirname + '/index.html');
+// Routes (Existing ones)
+app.get('/', (req, res) => res.sendFile(__dirname + '/index.html'));
+app.get('/tt-templates', (req, res) => res.sendFile(__dirname + '/tt-templates.html'));
+app.get('/tt-panel', (req, res) => res.sendFile(__dirname + '/tt-panel.html'));
+app.get('/overlay', (req, res) => res.sendFile(__dirname + '/overlay.html'));
+app.get('/football-templates', (req, res) => res.sendFile(__dirname + '/football-templates.html'));
+app.get('/football-panel', (req, res) => res.sendFile(__dirname + '/football-panel.html'));
+app.get('/football-overlay', (req, res) => res.sendFile(__dirname + '/football-overlay.html'));
+app.get('/tt-lowerthird', (req, res) => res.sendFile(__dirname + '/tt-lowerthird.html'));
+app.get('/tt-lowerthird-panel', (req, res) => res.sendFile(__dirname + '/tt-lowerthird-panel.html'));
+
+// --- DYNAMIC TEMPLATE SYSTEM (NEW) ---
+const templatesDB = path.join(__dirname, 'templates.json');
+
+if (!fs.existsSync(templatesDB)) {
+    fs.writeFileSync(templatesDB, JSON.stringify([]));
+}
+
+// Frontend ko sports ki list dene ki API
+app.get('/api/get-sports', (req, res) => {
+    const data = JSON.parse(fs.readFileSync(templatesDB, 'utf8'));
+    res.json(data);
 });
 
-app.get('/tt-templates', (req, res) => {
-    res.sendFile(__dirname + '/tt-templates.html');
-});
+// Naya template create/update karne ki API
+app.post('/api/create-template', (req, res) => {
+    const { sportName, sportIcon, panelCode, overlayCode } = req.body;
+    const slug = sportName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 
-app.get('/tt-panel', (req, res) => {
-    res.sendFile(__dirname + '/tt-panel.html');
-});
+    // Panel aur Overlay ki physical files create/overwrite karo
+    fs.writeFileSync(path.join(__dirname, `${slug}-panel.html`), panelCode);
+    fs.writeFileSync(path.join(__dirname, `${slug}-overlay.html`), overlayCode);
+    
+    // Intermediate landing page banao
+    const landingPageCode = `
+    <!DOCTYPE html>
+    <html>
+    <head><title>${sportName} Controls</title></head>
+    <body style="background:#0f172a; color:white; font-family:sans-serif; text-align:center; padding-top:100px;">
+        <h1>${sportName} Dashboard</h1>
+        <a href="/${slug}-panel.html" style="color:#f43f5e; font-size:20px; display:block; margin:20px;">🎮 Open Controller Panel</a>
+        <a href="/${slug}-overlay.html" style="color:#10b981; font-size:20px; display:block; margin:20px;">📺 Open OBS Overlay</a>
+        <br><br><a href="/" style="color:#94a3b8;">Back to Home</a>
+    </body>
+    </html>
+    `;
+    fs.writeFileSync(path.join(__dirname, `${slug}-templates.html`), landingPageCode);
 
-app.get('/overlay', (req, res) => {
-    res.sendFile(__dirname + '/overlay.html');
+    // JSON DB update karo
+    let templates = JSON.parse(fs.readFileSync(templatesDB, 'utf8'));
+    const existingIndex = templates.findIndex(t => t.slug === slug);
+    
+    if (existingIndex >= 0) {
+        templates[existingIndex].name = sportName;
+        templates[existingIndex].icon = sportIcon || templates[existingIndex].icon;
+    } else {
+        templates.push({ name: sportName, icon: sportIcon || '🎯', slug: slug });
+    }
+    
+    fs.writeFileSync(templatesDB, JSON.stringify(templates));
+    res.json({ success: true, message: "Template deployed successfully!" });
 });
-
-app.get('/football-templates', (req, res) => {
-    res.sendFile(__dirname + '/football-templates.html');
-});
-
-app.get('/football-panel', (req, res) => {
-    res.sendFile(__dirname + '/football-panel.html');
-});
-
-app.get('/football-overlay', (req, res) => {
-    res.sendFile(__dirname + '/football-overlay.html');
-});
+// --- END DYNAMIC SYSTEM ---
 
 let roomStates = {};
 
@@ -61,14 +100,6 @@ function getRoomState(room) {
     return roomStates[room];
 }
 
-app.get('/tt-lowerthird', (req, res) => {
-    res.sendFile(__dirname + '/tt-lowerthird.html');
-});
-
-app.get('/tt-lowerthird-panel', (req, res) => {
-    res.sendFile(__dirname + '/tt-lowerthird-panel.html');
-});
-
 app.get('/api/tt-data', (req, res) => {
     let room = 'scorvix-master-room';
     if (req.query.room) {
@@ -81,13 +112,14 @@ app.get('/api/tt-data', (req, res) => {
 });
 
 app.post('/api/update-tt-data', (req, res) => {
-    const room = req.body.room || 'scorvix-master-room';
+    const room = req.body.room || (req.body.uid ? `room-${req.body.uid}` : 'scorvix-master-room');
     const state = getRoomState(room);
     
     if (req.body.ltTitle !== undefined) state.ttData.ltTitle = req.body.ltTitle;
     if (req.body.ltText !== undefined) state.ttData.ltText = req.body.ltText;
     if (req.body.ltVisible !== undefined) state.ttData.ltVisible = req.body.ltVisible;
     
+    io.to(room).emit('updateLowerThird', state.ttData);
     res.json({ success: true, ttData: state.ttData });
 });
 
@@ -104,20 +136,14 @@ io.on('connection', (socket) => {
         socket.leave(socket.activeRoom);
         socket.join(currentRoom);
         socket.activeRoom = currentRoom;
-        console.log(`Overlay socket ${socket.id} joined query room: ${currentRoom}`);
     }
 
     const roomState = getRoomState(currentRoom);
-    if (roomState.footballState) {
-        socket.emit('liveFootballScore', roomState.footballState);
-    }
-    if (roomState.ttState) {
-        socket.emit('liveScore', roomState.ttState);
-    }
+    if (roomState.footballState) socket.emit('liveFootballScore', roomState.footballState);
+    if (roomState.ttState) socket.emit('liveScore', roomState.ttState);
 
     socket.on('joinRoom', (userData) => {
         let roomName = 'scorvix-master-room';
-
         if (userData && userData.uid) {
             roomName = `room-${userData.uid}`; 
         }
@@ -125,54 +151,26 @@ io.on('connection', (socket) => {
         socket.leave(socket.activeRoom);
         socket.join(roomName);
         socket.activeRoom = roomName;
-        console.log(`Socket ${socket.id} switched to secure room: ${roomName}`);
 
         const targetState = getRoomState(roomName);
-        if (targetState.ttState) {
-            socket.emit('liveScore', targetState.ttState);
-        }
-        if (targetState.footballState) {
-            socket.emit('liveFootballScore', targetState.footballState);
-        }
+        if (targetState.ttState) socket.emit('liveScore', targetState.ttState);
+        if (targetState.footballState) socket.emit('liveFootballScore', targetState.footballState);
     });
 
-    socket.on('updateScore', (data) => {
-        let room = socket.activeRoom;
-        if (data && data.uid) {
-            room = `room-${data.uid}`;
-            socket.leave(socket.activeRoom);
-            socket.join(room);
-            socket.activeRoom = room;
-        }
+    const handleScoreUpdate = (event, stateKey, data) => {
+        const room = socket.activeRoom; 
         const state = getRoomState(room);
-        state.ttState = data;
-        io.to(room).emit('liveScore', data);
-    });
+        state[stateKey] = data;
+        io.to(room).emit(event, data);
+    };
 
-    socket.on('liveScore', (data) => {
-        let room = socket.activeRoom;
-        if (data && data.uid) {
-            room = `room-${data.uid}`;
-            socket.leave(socket.activeRoom);
-            socket.join(room);
-            socket.activeRoom = room;
-        }
-        const state = getRoomState(room);
-        state.ttState = data;
-        io.to(room).emit('liveScore', data);
-    });
+    socket.on('updateScore', (data) => handleScoreUpdate('liveScore', 'ttState', data));
+    socket.on('liveScore', (data) => handleScoreUpdate('liveScore', 'ttState', data));
+    socket.on('liveFootballScore', (data) => handleScoreUpdate('liveFootballScore', 'footballState', data));
 
-    socket.on('liveFootballScore', (data) => {
-        let room = socket.activeRoom;
-        if (data && data.uid) {
-            room = `room-${data.uid}`;
-            socket.leave(socket.activeRoom);
-            socket.join(room);
-            socket.activeRoom = room;
-        }
-        const state = getRoomState(room);
-        state.footballState = data;
-        io.to(room).emit('liveFootballScore', data);
+    socket.on('triggerGoalAnimation', (data) => {
+        const room = socket.activeRoom;
+        io.to(room).emit('playGoalAnimation', data);
     });
 
     socket.on('disconnect', () => {
