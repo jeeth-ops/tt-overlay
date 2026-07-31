@@ -3,11 +3,6 @@
 <head>
 <meta charset="UTF-8">
 <title>Match Intro Overlay — Fullscreen Pink/Gray</title>
-<script>
-  if (new URLSearchParams(window.location.search).get('static') === '1') {
-    document.documentElement.classList.add('static-preview');
-  }
-</script>
 <style>
   :root{
     --pink:#ec4a9b;
@@ -37,14 +32,6 @@
     width:100vw;height:100vh;
     display:flex;align-items:center;justify-content:center;
     perspective:1400px;
-    transition: opacity 0.3s ease, transform 0.3s ease;
-  }
-
-  /* On/Off Visibility Toggle */
-  .stage.hidden {
-    opacity: 0;
-    pointer-events: none;
-    transform: scale(0.95);
   }
 
   /* ============ LAYER 0 — AMBIENT BACKGROUND ============ */
@@ -137,6 +124,7 @@
   @keyframes teamInLeft{ to{opacity:1; transform:translateX(0) scale(1);} }
   @keyframes teamInRight{ to{opacity:1; transform:translateX(0) scale(1);} }
 
+  /* logo frame: fixed square, contain-fit so any source size/ratio balances out */
   .logo-frame{
     width:120px;height:120px;
     border-radius:16px;
@@ -203,16 +191,12 @@
   }
   @keyframes sweep{ to{transform:translateX(100%);} }
 
-  html.static-preview *{
-    animation-duration:0s !important;
-    animation-delay:0s !important;
-    transition-duration:0s !important;
-  }
 </style>
 </head>
 <body>
 
 <div class="stage" id="stage">
+
   <div class="bg-layer" id="bgLayer">
     <div class="bg-tint cyan"></div>
     <div class="bg-tint purple"></div>
@@ -252,17 +236,24 @@
       <span id="venueText">Table Tennis Arena</span>
     </div>
   </div>
+
 </div>
 
-<script src="/socket.io/socket.io.js"></script>
 <script>
-  const MATCH_ID = new URLSearchParams(window.location.search).get('id') || 'default';
-  document.title = 'Match Intro — ' + MATCH_ID;
-
-  const socket = io({
-    query: { uid: 'intro-' + MATCH_ID }
-  });
-
+  const DEFAULT_CONFIG = {
+    league: "TABLE TENNIS",
+    round:  "Quarter Final",
+    venue:  "Table Tennis Arena",
+    teamA:  { name: "Team A", logo: "" },
+    teamB:  { name: "Team B", logo: "" },
+    colors: {
+      pink:"#ec4a9b", pinkSoft:"#f472b6", purple:"#8b6cf0", cyan:"#3fd6ea",
+      headerBg:"#0a0a0f", cardBg:"rgba(14,16,28,.55)",
+      navyDeep:"#060a16", navyMid:"#131c36", navyEnd:"#1b2a4d",
+      bgOpacity:0.3
+    }
+  };
+  const STORAGE_KEY = 'ttMatchIntroConfig';
   const root = document.documentElement.style;
 
   function initialsOf(name){
@@ -316,7 +307,36 @@
     }
   }
 
-  // Floating particles generator
+  function loadSavedConfig(){
+    try{
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if(raw) return JSON.parse(raw);
+    }catch(e){}
+    return null;
+  }
+
+  // 1. apply defaults, then saved config (if any) before paint
+  applyConfig(DEFAULT_CONFIG);
+  applyConfig(loadSavedConfig());
+
+  // 2. live updates while this page is embedded/opened from the control panel
+  window.addEventListener('message', (e) => {
+    if(e.data && e.data.type === 'ttMatchIntroConfig'){
+      applyConfig(e.data.config);
+    }
+    if(e.data && e.data.type === 'ttMatchIntroReplay'){
+      window.playIntro();
+    }
+  });
+
+  // 3. live updates when the panel (same origin, separate tab/window) writes to localStorage
+  window.addEventListener('storage', (e) => {
+    if(e.key === STORAGE_KEY && e.newValue){
+      try{ applyConfig(JSON.parse(e.newValue)); }catch(err){}
+    }
+  });
+
+  // ambient floating particles
   const stage = document.getElementById('stage');
   for (let i = 0; i < 18; i++){
     const p = document.createElement('div');
@@ -331,6 +351,7 @@
     stage.appendChild(p);
   }
 
+  // replay the whole entrance sequence (used by OBS hotkey workflows or the panel's Replay button)
   window.playIntro = function(){
     const card = document.getElementById('card');
     const bg = document.getElementById('bgLayer');
@@ -341,24 +362,8 @@
     void bg.offsetWidth;
     bg.style.animation = null;
   };
-
-  socket.on('liveMatchIntro', (data) => {
-    if(data) {
-      if(data.config) applyConfig(data.config);
-      
-      const stg = document.getElementById('stage');
-      if(data.visible === false) {
-        stg.classList.add('hidden');
-      } else {
-        stg.classList.remove('hidden');
-      }
-
-      if(data.triggerReplay) {
-        window.playIntro();
-      }
-    }
-  });
 </script>
 
 </body>
 </html>
+
