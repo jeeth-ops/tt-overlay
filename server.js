@@ -44,13 +44,33 @@ async function getRoomState(room) {
                 tourneyTitle: "TABLE TENNIS SUPER LEAGUE",
                 p1Name: "Team A", p2Name: "Team B", 
                 p1Score: 0, p2Score: 0, p1Sets: 0, p2Sets: 0, server: 1, img1: "", img2: "", state: "score-in", colors: {
-        bg: "#0e101c",
-        accent: "#ec4a9b",
-        text: "#ffffff"
-    },
+                    bg: "#0e101c",
+                    accent: "#ec4a9b",
+                    text: "#ffffff"
+                },
                 ltTitle: "MATCH HIGHLIGHT", ltText: "Announcement text goes here", ltVisible: false
             },
-            footballState: null,
+            footballState: {
+                showScoreboard: true,
+                nameA: "REAL MADRID",
+                nameB: "BARCELONA",
+                logoA: "",
+                logoB: "",
+                showLogoA: true,
+                showLogoB: true,
+                scoreA: 0,
+                scoreB: 0,
+                colorA: "#0284c7",
+                colorB: "#dc2626",
+                colorClock: "#090d16",
+                colorModal: "#38bdf8",
+                penA: "",
+                penB: "",
+                timer: "00:00",
+                matchDuration: 90,
+                activeModal: "",
+                showActionReplay: false
+            },
             matchIntroState: {
                 league: "TABLE TENNIS",
                 round: "Quarter Final",
@@ -74,6 +94,7 @@ async function getRoomState(room) {
             if (doc.exists) {
                 const data = doc.data();
                 if (data.ttState) roomStates[room].ttState = { ...roomStates[room].ttState, ...data.ttState };
+                if (data.footballState) roomStates[room].footballState = { ...roomStates[room].footballState, ...data.footballState };
                 if (data.matchIntroState) roomStates[room].matchIntroState = { ...roomStates[room].matchIntroState, ...data.matchIntroState };
             }
         } catch (err) {
@@ -153,8 +174,9 @@ io.on('connection', async (socket) => {
         });
     }
     if (roomState.ttState) socket.emit('liveScore', roomState.ttState);
+    if (roomState.footballState) socket.emit('liveFootballScore', roomState.footballState);
 
-    // 🌟 SCOREBOARD PANEL UPDATE HANDLING (Added)
+    // SCOREBOARD PANEL UPDATE HANDLING (Table Tennis)
     socket.on('updateScore', async (data) => {
         let room = socket.activeRoom;
         const targetId = data.id || data.uid || matchIdForClient;
@@ -168,12 +190,33 @@ io.on('connection', async (socket) => {
         const state = await getRoomState(room);
         state.ttState = { ...state.ttState, ...data };
 
-        // Broadcast updated score to overlay
         io.to(room).emit('liveScore', state.ttState);
+
+        if (targetId && targetId !== 'default') {
+            db.collection("scorvix").doc(targetId).set({ ttState: state.ttState }, { merge: true }).catch(err => console.log("DB update error:", err));
+        }
+    });
+
+    // ⚽ FOOTBALL SCOREBOARD PANEL & OVERLAY SOCKET HANDLING
+    socket.on('liveFootballScore', async (data) => {
+        let room = socket.activeRoom;
+        const targetId = data.room ? data.room.replace('room-', '') : matchIdForClient;
+        if (targetId && targetId !== 'default') {
+            room = `room-${targetId}`;
+            socket.leave(socket.activeRoom);
+            socket.join(room);
+            socket.activeRoom = room;
+        }
+
+        const state = await getRoomState(room);
+        state.footballState = { ...state.footballState, ...data };
+
+        // Broadcast updated football data to overlay and panels
+        io.to(room).emit('liveFootballScore', state.footballState);
 
         // Save to Firestore Database
         if (targetId && targetId !== 'default') {
-            db.collection("scorvix").doc(targetId).set({ ttState: state.ttState }, { merge: true }).catch(err => console.log("DB update error:", err));
+            db.collection("scorvix").doc(targetId).set({ footballState: state.footballState }, { merge: true }).catch(err => console.log("DB update error:", err));
         }
     });
 
