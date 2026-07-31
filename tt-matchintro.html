@@ -239,6 +239,7 @@
 
 </div>
 
+<script src="/socket.io/socket.io.js"></script>
 <script>
   const DEFAULT_CONFIG = {
     league: "TABLE TENNIS",
@@ -253,8 +254,26 @@
       bgOpacity:0.3
     }
   };
-  const STORAGE_KEY = 'ttMatchIntroConfig';
+
+  const STORAGE_PREFIX = 'ttMatchIntroConfig_';
+  function getIdFromUrl(){
+    return new URLSearchParams(window.location.search).get('id');
+  }
+  const MATCH_ID = getIdFromUrl() || 'default';
+  const STORAGE_KEY = STORAGE_PREFIX + MATCH_ID;
   const root = document.documentElement.style;
+
+  // Initialize Socket.io connection for real-time OBS sync
+  const socket = io({
+    query: { uid: 'overlay-' + MATCH_ID }
+  });
+
+  socket.on('liveMatchIntro', (data) => {
+    if(data && data.matchId === MATCH_ID){
+      if(data.config) applyConfig(data.config);
+      if(data.triggerReplay) window.playIntro();
+    }
+  });
 
   function initialsOf(name){
     const words = (name||'').trim().split(/\s+/).filter(Boolean);
@@ -321,15 +340,15 @@
 
   // 2. live updates while this page is embedded/opened from the control panel
   window.addEventListener('message', (e) => {
-    if(e.data && e.data.type === 'ttMatchIntroConfig'){
+    if(e.data && e.data.type === 'ttMatchIntroConfig' && (!e.data.id || e.data.id === MATCH_ID)){
       applyConfig(e.data.config);
     }
-    if(e.data && e.data.type === 'ttMatchIntroReplay'){
+    if(e.data && e.data.type === 'ttMatchIntroReplay' && (!e.data.id || e.data.id === MATCH_ID)){
       window.playIntro();
     }
   });
 
-  // 3. live updates when the panel (same origin, separate tab/window) writes to localStorage
+  // 3. live updates when the panel writes to localStorage
   window.addEventListener('storage', (e) => {
     if(e.key === STORAGE_KEY && e.newValue){
       try{ applyConfig(JSON.parse(e.newValue)); }catch(err){}
@@ -351,7 +370,7 @@
     stage.appendChild(p);
   }
 
-  // replay the whole entrance sequence (used by OBS hotkey workflows or the panel's Replay button)
+  // replay the whole entrance sequence
   window.playIntro = function(){
     const card = document.getElementById('card');
     const bg = document.getElementById('bgLayer');
@@ -366,4 +385,3 @@
 
 </body>
 </html>
-
