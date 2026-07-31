@@ -61,6 +61,7 @@ function getRoomState(room) {
         roomStates[room] = {
             ttState: null,
             footballState: null,
+            matchIntroState: null, // <--- Added for Match Intro
             ttData: {
                 ltTitle: "MATCH HIGHLIGHT",
                 ltText: "Announcement text goes here",
@@ -124,6 +125,9 @@ io.on('connection', (socket) => {
     if (roomState.ttState) {
         socket.emit('liveScore', roomState.ttState);
     }
+    if (roomState.matchIntroState) {
+        socket.emit('liveMatchIntro', roomState.matchIntroState); // <--- Added for Match Intro
+    }
 
     socket.on('joinRoom', (userData) => {
         let roomName = 'scorvix-master-room';
@@ -143,6 +147,9 @@ io.on('connection', (socket) => {
         }
         if (targetState.footballState) {
             socket.emit('liveFootballScore', targetState.footballState);
+        }
+        if (targetState.matchIntroState) {
+            socket.emit('liveMatchIntro', targetState.matchIntroState); // <--- Added for Match Intro
         }
     });
 
@@ -184,6 +191,21 @@ io.on('connection', (socket) => {
         state.footballState = data;
         io.to(room).emit('liveFootballScore', data);
     });
+
+    // --- NEW MATCH INTRO SOCKET LISTENER ---
+    socket.on('liveMatchIntro', (data) => {
+        let room = socket.activeRoom;
+        if (data && data.uid) {
+            room = `room-${data.uid}`;
+            socket.leave(socket.activeRoom);
+            socket.join(room);
+            socket.activeRoom = room;
+        }
+        const state = getRoomState(room);
+        state.matchIntroState = data;
+        io.to(room).emit('liveMatchIntro', data);
+    });
+    // ---------------------------------------
 
     socket.on('disconnect', () => {
         console.log('Client disconnected:', socket.id);
