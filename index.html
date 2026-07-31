@@ -183,6 +183,8 @@
             gap: 10px;
             transition: 0.3s; 
             box-shadow: 0 4px 20px rgba(244, 63, 94, 0.4);
+            border: none;
+            cursor: pointer;
         }
         .cta-btn:hover { background: var(--accent-hover); transform: translateY(-3px); box-shadow: 0 8px 25px rgba(244, 63, 94, 0.6); }
 
@@ -196,7 +198,7 @@
             backdrop-filter: blur(12px);
         }
         .admin-box h3 { margin-bottom: 20px; color: var(--text-main); display: flex; align-items: center; gap: 10px; }
-        .admin-form input {
+        .admin-form input, .admin-form textarea {
             width: 100%;
             padding: 12px 16px;
             margin-bottom: 15px;
@@ -206,7 +208,7 @@
             color: white;
             font-size: 1rem;
         }
-        .admin-form input:focus { outline: none; border-color: var(--accent); }
+        .admin-form input:focus, .admin-form textarea:focus { outline: none; border-color: var(--accent); }
 
         .how-it-works { padding: 80px 20px; text-align: center; }
         .how-it-works h2 { font-size: 2.5rem; margin-bottom: 50px; }
@@ -315,24 +317,63 @@
         <a href="#sports" class="cta-btn">Start Streaming ➔</a>
     </section>
 
-   <!-- Maalik Control Panel -->
-<div id="admin-panel" class="admin-panel-container hidden">
-    <div class="admin-box">
-        <h3>⚙️ Maalik Control Panel (Add New Overlay & Code)</h3>
-        <form id="add-template-form" class="admin-form">
-            <input type="text" id="sport-name" placeholder="Sport / Template Name (e.g. Badminton)" required>
-            <input type="text" id="sport-icon" placeholder="Emoji Icon (e.g. 🏸)" required>
-            
-            <label style="color: #94a3b8; font-size: 0.9rem; display: block; margin-top: 10px; margin-bottom: 5px;">Controller Panel Code (HTML/React):</label>
-            <textarea id="panel-code" placeholder="Paste controller panel code here..." rows="5" required style="width: 100%; padding: 10px; background: rgba(15,23,42,0.6); color: white; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; font-family: monospace;"></textarea>
-            
-            <label style="color: #94a3b8; font-size: 0.9rem; display: block; margin-top: 10px; margin-bottom: 5px;">Overlay Code (HTML/React):</label>
-            <textarea id="overlay-code" placeholder="Paste overlay code here..." rows="5" required style="width: 100%; padding: 10px; background: rgba(15,23,42,0.6); color: white; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; font-family: monospace;"></textarea>
-            
-            <button type="submit" class="cta-btn" id="submit-btn" style="padding: 10px 25px; font-size: 1rem; margin-top: 15px;">Plant Template</button>
-        </form>
+    <!-- Maalik Control Panel -->
+    <div id="admin-panel" class="admin-panel-container hidden">
+        <div class="admin-box">
+            <h3>⚙️ Maalik Control Panel (Add New Overlay & Code)</h3>
+            <form id="add-template-form" class="admin-form">
+                <input type="text" id="sport-name" placeholder="Sport / Template Name (e.g. Badminton)" required>
+                <input type="text" id="sport-icon" placeholder="Emoji Icon (e.g. 🏸)" required>
+                
+                <label style="color: var(--text-muted); font-size: 0.9rem; display: block; margin-bottom: 5px;">Controller Panel Code (HTML/JS):</label>
+                <textarea id="panel-code" placeholder="Paste controller panel code here..." rows="4" required style="font-family: monospace;"></textarea>
+                
+                <label style="color: var(--text-muted); font-size: 0.9rem; display: block; margin-bottom: 5px;">Overlay Code (HTML/JS):</label>
+                <textarea id="overlay-code" placeholder="Paste overlay code here..." rows="4" required style="font-family: monospace;"></textarea>
+                
+                <button type="submit" class="cta-btn" id="submit-btn" style="padding: 10px 25px; font-size: 1rem; width: 100%; justify-content: center;">Plant Template</button>
+            </form>
+        </div>
     </div>
-</div>
+
+    <section class="how-it-works">
+        <h2 class="reveal-on-scroll">How it works</h2>
+        <div class="steps-container">
+            <div class="step-card reveal-on-scroll delay-1">
+                <div class="step-number">1</div>
+                <h3>Select your sport</h3>
+                <p>Choose from our TV-style templates built for live broadcasting.</p>
+            </div>
+            <div class="step-card reveal-on-scroll delay-2">
+                <div class="step-number">2</div>
+                <h3>Update settings</h3>
+                <p>Manage scores, team names, and colors live from your phone or laptop.</p>
+            </div>
+            <div class="step-card reveal-on-scroll delay-3">
+                <div class="step-number">3</div>
+                <h3>Paste stream link</h3>
+                <p>Copy your unique overlay URL and paste it into OBS or vMix as a Browser Source.</p>
+            </div>
+        </div>
+    </section>
+
+    <section id="sports" class="sports-section">
+        <h2 class="reveal-on-scroll">Choose Your Sport</h2>
+        <p class="reveal-on-scroll delay-1">Select the sport you want to stream and control</p>
+        
+        <div class="sports-grid" id="sports-grid-container">
+            <div onclick="openTableTennisTemplates()" class="sport-card reveal-on-scroll delay-1">
+                <div class="card-content">
+                    <div class="sport-icon">🏓</div>
+                    <h3>Table Tennis</h3>
+                </div>
+            </div>
+            
+            <div class="sport-card coming-soon reveal-on-scroll delay-2">
+                <div class="sport-icon">🏏</div>
+                <h3>Cricket</h3>
+                <div class="badge">Coming Soon</div>
+            </div>
 
             <!-- Football Card Updated to open football-templates.html -->
             <div onclick="openFootballTemplates()" class="sport-card reveal-on-scroll delay-3">
@@ -405,12 +446,87 @@
             }
         }
 
+        // Load dynamic sports from server API
+        async function loadDynamicSports() {
+            try {
+                const response = await fetch('/api/get-sports');
+                if (!response.ok) return;
+                const sports = await response.json();
+                
+                const grid = document.getElementById('sports-grid-container');
+                if (!grid) return;
+                
+                sports.forEach(sport => {
+                    if (document.getElementById(`card-${sport.slug}`)) return;
+
+                    const card = document.createElement('div');
+                    card.id = `card-${sport.slug}`;
+                    card.className = "sport-card reveal-on-scroll delay-1 revealed";
+                    card.style.cursor = "pointer";
+                    
+                    card.onclick = () => {
+                        if (isUserLoggedIn) {
+                            window.location.href = `/${sport.slug}-templates.html`;
+                        } else {
+                            alert("Pehle Google Login karein!");
+                            authGate.classList.remove('hidden');
+                            authGate.style.opacity = '1';
+                        }
+                    };
+                    
+                    card.innerHTML = `
+                        <div class="card-content">
+                            <div class="sport-icon">${sport.icon || '🎯'}</div>
+                            <h3>${sport.name}</h3>
+                            <div class="badge" style="background: #10b981; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; display: inline-block; margin-top: 5px;">Live</div>
+                        </div>
+                    `;
+                    grid.appendChild(card);
+                });
+            } catch (error) {
+                console.error("Error loading dynamic sports:", error);
+            }
+        }
+
+        // Handle Admin Form Submission
+        document.getElementById('add-template-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('submit-btn');
+            btn.innerText = "Planting Template...";
+            
+            const data = {
+                sportName: document.getElementById('sport-name').value,
+                sportIcon: document.getElementById('sport-icon').value,
+                panelCode: document.getElementById('panel-code').value,
+                overlayCode: document.getElementById('overlay-code').value
+            };
+
+            try {
+                const res = await fetch('/api/create-template', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                if (res.ok) {
+                    alert("Bhai, template successfully plant ho gaya!");
+                    window.location.reload();
+                } else {
+                    alert("Planting mein kuch error aaya.");
+                    btn.innerText = "Plant Template";
+                }
+            } catch (err) {
+                console.error(err);
+                alert("Server connection failed.");
+                btn.innerText = "Plant Template";
+            }
+        });
+
         // Strict Session Check & LocalStorage UID Save
         auth.onAuthStateChanged(user => {
             if (user) {
                 isUserLoggedIn = true;
                 
-                // 🌟 Automatically save UID & Email to localStorage for room isolation 🌟
                 localStorage.setItem('scorvix_uid', user.uid);
                 localStorage.setItem('scorvix_email', user.email);
 
@@ -429,7 +545,6 @@
             } else {
                 isUserLoggedIn = false;
                 
-                // Clear storage on logout
                 localStorage.removeItem('scorvix_uid');
                 localStorage.removeItem('scorvix_email');
 
@@ -444,6 +559,7 @@
     <script>
         window.addEventListener('DOMContentLoaded', () => {
             document.body.classList.add('page-loaded');
+            loadDynamicSports();
         });
 
         document.querySelectorAll('a').forEach(link => {
