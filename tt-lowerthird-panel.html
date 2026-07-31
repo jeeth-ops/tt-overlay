@@ -184,14 +184,29 @@
             <button class="btn btn-hide" onclick="sendUpdate(false)">HIDE</button>
         </div>
 
-        <a href="/tt-templates" class="back-link">← Back to Templates</a>
+        <a id="backLink" href="/tt-templates" class="back-link">← Back to Templates</a>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
-        const socket = io();
+        const urlParams = new URLSearchParams(window.location.search);
+        const uid = urlParams.get('uid');
 
-        const targetUrl = window.location.origin + '/tt-lowerthird';
+        // Socket connection with UID query
+        const socket = io({
+            query: uid ? { uid } : {}
+        });
+
+        // Setup Back link with UID if present
+        if (uid) {
+            document.getElementById('backLink').href = `/tt-templates?uid=${uid}`;
+        }
+
+        // Setup Overlay URL with UID
+        let targetUrl = window.location.origin + '/tt-lowerthird';
+        if (uid) {
+            targetUrl += `?uid=${uid}`;
+        }
         document.getElementById('overlayUrl').value = targetUrl;
         document.getElementById('openTabBtn').href = targetUrl;
 
@@ -208,35 +223,31 @@
             const data = {
                 ltTitle: document.getElementById('ltTitle').value,
                 ltText: document.getElementById('ltText').value,
-                ltVisible: isVisible
+                ltVisible: isVisible,
+                uid: uid
             };
 
-            // Send via HTTP POST
             fetch('/api/update-tt-data', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(data)
             });
 
-            // Send via Socket.io for instant overlay update
             socket.emit('liveLowerThird', data);
         }
 
-        // Fetch initial state
-        fetch('/api/tt-data')
+        // Initial fetch with UID query
+        let fetchUrl = '/api/tt-data';
+        if (uid) {
+            fetchUrl += `?uid=${uid}`;
+        }
+
+        fetch(fetchUrl)
             .then(res => res.json())
             .then(data => {
-                if(data.ltTitle) document.getElementById('ltTitle').value = data.ltTitle;
-                if(data.ltText) document.getElementById('ltText').value = data.ltText;
+                if (data.ltTitle) document.getElementById('ltTitle').value = data.ltTitle;
+                if (data.ltText) document.getElementById('ltText').value = data.ltText;
             });
-
-        // Optional: Auto update text live as you type
-        document.querySelectorAll('input[type="text"]').forEach(input => {
-            input.addEventListener('input', () => {
-                // If you want it to update text live without hiding, keep true or manage visibility state
-                // Yahan hum current visibility state ko maintain rakhne ke liye fetch kar sakte hain ya direct bhejein
-            });
-        });
     </script>
 </body>
 </html>
