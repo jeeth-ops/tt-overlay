@@ -543,16 +543,19 @@
 
         function initController(userUid) {
             const urlParams = new URLSearchParams(window.location.search);
-            const finalUid = urlParams.get('uid') || userUid;
+            // FIXED: Using room query parameter instead of uid to match overlay format
+            const finalUid = urlParams.get('room') || userUid;
 
             let loc = window.location.href.split('?')[0];
             let baseUrl = loc.substring(0, loc.lastIndexOf('/') + 1);
-            let overlayUrl = baseUrl + 'football-overlay.html' + (finalUid ? `?uid=${finalUid}` : '');
+            
+            let roomName = finalUid ? (finalUid.startsWith('room-') ? finalUid : `room-${finalUid}`) : 'default-room';
+            let overlayUrl = baseUrl + 'football-overlay.html' + `?room=${roomName}`;
             
             document.getElementById('overlayLinkInput').value = overlayUrl;
             document.getElementById('openOverlayBtn').href = overlayUrl;
 
-            window.currentUid = finalUid;
+            window.currentRoomName = roomName;
             saveData();
         }
 
@@ -583,8 +586,7 @@
         }
 
         function saveData() {
-            const userUid = window.currentUid || localStorage.getItem('scorvix_uid');
-            const roomName = userUid ? `room-${userUid}` : 'scorvix-master-room';
+            const roomName = window.currentRoomName || (localStorage.getItem('scorvix_uid') ? `room-${localStorage.getItem('scorvix_uid')}` : 'default-room');
             const duration = parseInt(document.getElementById('matchDuration').value) || 90;
             
             const data = {
@@ -627,8 +629,7 @@
             let current = parseInt(input.value) || 0;
             input.value = current + 1;
 
-            const userUid = window.currentUid || localStorage.getItem('scorvix_uid');
-            const roomName = userUid ? `room-${userUid}` : 'scorvix-master-room';
+            const roomName = window.currentRoomName || (localStorage.getItem('scorvix_uid') ? `room-${localStorage.getItem('scorvix_uid')}` : 'default-room');
             const duration = parseInt(document.getElementById('matchDuration').value) || 90;
             
             const data = {
