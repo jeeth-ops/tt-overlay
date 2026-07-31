@@ -118,7 +118,13 @@
 
 <header>
   <h1>Match Intro — Control Panel</h1>
-  <div class="actions">
+  <div class="actions" style="align-items:center;">
+    <div style="display:flex;align-items:center;gap:6px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:6px 10px;">
+      <label style="font-size:11px;color:var(--text-dim);letter-spacing:.5px;">MATCH ID</label>
+      <input type="text" id="fMatchId" style="width:110px;background:transparent;border:none;color:var(--text);font-size:12.5px;font-family:inherit;font-weight:700;letter-spacing:1px;outline:none;">
+    </div>
+    <button class="ghost" id="btnNewId">New ID</button>
+    <button id="btnCopyLink">Copy overlay link</button>
     <button class="ghost" id="btnReset">Reset defaults</button>
     <button id="btnOpenStandalone">Open overlay in new tab</button>
     <button class="primary" id="btnReplay">▶ Replay intro</button>
@@ -128,7 +134,7 @@
 <main>
   <div class="preview-col">
     <div class="preview-frame">
-      <iframe id="previewFrame" src="tt-matchintro.html"></iframe>
+      <iframe id="previewFrame"></iframe>
     </div>
   </div>
 
@@ -212,14 +218,36 @@
     </div>
 
     <p class="hint">
-      Changes here update the preview instantly. <b>Save</b> is automatic. To control the overlay while it's running as a separate OBS Browser Source, keep both files in the same folder and serve them from a local server (or the same file:// origin) so live edits sync through.
+      Changes here update the preview instantly and sync live via Socket.io to OBS/overlays. Each match has its own unique overlay link — click <b>Copy overlay link</b> and use that exact URL as the Browser Source.
     </p>
 
   </div>
 </main>
 
+<script src="/socket.io/socket.io.js"></script>
 <script>
-  const STORAGE_KEY = 'ttMatchIntroConfig';
+  const STORAGE_PREFIX = 'ttMatchIntroConfig_';
+
+  function generateId(){
+    return Math.random().toString(36).slice(2,8);
+  }
+
+  function getIdFromUrl(){
+    return new URLSearchParams(window.location.search).get('id');
+  }
+
+  let MATCH_ID = getIdFromUrl() || generateId();
+  if(!getIdFromUrl()){
+    const url = new URL(window.location.href);
+    url.searchParams.set('id', MATCH_ID);
+    history.replaceState(null, '', url.toString());
+  }
+  let STORAGE_KEY = STORAGE_PREFIX + MATCH_ID;
+
+  // Initialize Socket.io connection like other templates
+  const socket = io({
+    query: { uid: 'panel-' + MATCH_ID }
+  });
 
   const DEFAULTS = {
     league: "TABLE TENNIS",
@@ -267,17 +295,30 @@
     thumbB:document.getElementById('thumbB'),
     fileA:document.getElementById('fileA'),
     fileB:document.getElementById('fileB'),
+    matchId:document.getElementById('fMatchId'),
   };
+  els.matchId.value = MATCH_ID;
 
   const frame = document.getElementById('previewFrame');
   let frameReady = false;
+  frame.src = 'tt-matchintro.html?id=' + encodeURIComponent(MATCH_ID);
   frame.addEventListener('load', () => { frameReady = true; sendUpdate(); });
 
-  function sendUpdate(){
+  function sendUpdate(triggerReplay = false){
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    
+    // Update local iframe preview via postMessage
     if(frameReady){
-      frame.contentWindow.postMessage({ type:'ttMatchIntroConfig', config: state }, '*');
+      frame.contentWindow.postMessage({ type:'ttMatchIntroConfig', id: MATCH_ID, config: state }, '*');
     }
+
+    // Broadcast via Socket.io to all connected overlays (OBS / remote screens)
+    socket.emit('liveMatchIntro', {
+      matchId: MATCH_ID,
+      config: state,
+      visible: true,
+      triggerReplay: triggerReplay
+    });
   }
 
   function populateForm(){
@@ -367,7 +408,10 @@
 
   // ---- top actions ----
   document.getElementById('btnReplay').addEventListener('click', () => {
-    frame.contentWindow.postMessage({ type:'ttMatchIntroReplay' }, '*');
+    sendUpdate(true); // Trigger replay across sockets & iframe
+    if(frameReady){
+      frame.contentWindow.postMessage({ type:'ttMatchIntroReplay', id: MATCH_ID }, '*');
+    }
   });
   document.getElementById('btnReset').addEventListener('click', () => {
     state = JSON.parse(JSON.stringify(DEFAULTS));
@@ -376,14 +420,51 @@
   });
   document.getElementById('btnOpenStandalone').addEventListener('click', () => {
     sendUpdate();
-    window.open('tt-matchintro.html', '_blank');
+    window.open('tt-matchintro.html?id=' + encodeURIComponent(MATCH_ID), '_blank');
+  });
+  document.getElementById('btnCopyLink').addEventListener('click', () => {
+    const url = new URL('tt-matchintro.html', window.location.href);
+    url.searchParams.set('id', MATCH_ID);
+    navigator.clipboard.writeText(url.toString()).then(() => {
+      const btn = document.getElementById('btnCopyLink');
+      const old = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(() => btn.textContent = old, 1400);
+    });
+  });
+  document.getElementById('btnNewId').addEventListener('click', () => {
+    switchMatch(generateId());
+  });
+  els.matchId.addEventListener('change', () => {
+    const val = els.matchId.value.trim();
+    if(val) switchMatch(val); else els.matchId.value = MATCH_ID;
   });
 
-  // ---- load saved state if present ----
-  try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if(raw) state = Object.assign(JSON.parse(JSON.stringify(DEFAULTS)), JSON.parse(raw));
-  }catch(e){}
+  function switchMatch(newId){
+    MATCH_ID = newId;
+    STORAGE_KEY = STORAGE_PREFIX + MATCH_ID;
+    els.matchId.value = MATCH_ID;
+
+    const url = new URL(window.location.href);
+    url.searchParams.set('id', MATCH_ID);
+    history.replaceState(null, '', url.toString());
+
+    loadStateForCurrentId();
+    populateForm();
+
+    frameReady = false;
+    frame.src = 'tt-matchintro.html?id=' + encodeURIComponent(MATCH_ID);
+  }
+
+  function loadStateForCurrentId(){
+    state = JSON.parse(JSON.stringify(DEFAULTS));
+    try{
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if(raw) state = Object.assign(state, JSON.parse(raw));
+    }catch(e){}
+  }
+
+  loadStateForCurrentId();
   populateForm();
 </script>
 
