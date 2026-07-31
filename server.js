@@ -44,7 +44,7 @@ app.get('/football-overlay', (req, res) => {
     res.sendFile(__dirname + '/football-overlay.html');
 });
 
-// --- NEW MATCH INTRO ROUTES ---
+// --- MATCH INTRO ROUTES ---
 app.get('/tt-matchintro', (req, res) => {
     res.sendFile(__dirname + '/tt-matchintro.html');
 });
@@ -52,7 +52,15 @@ app.get('/tt-matchintro', (req, res) => {
 app.get('/tt-matchintro-panel', (req, res) => {
     res.sendFile(__dirname + '/tt-matchintro-panel.html');
 });
-// -----------------------------
+
+// --- LOWER THIRD ROUTES ---
+app.get('/tt-lowerthird', (req, res) => {
+    res.sendFile(__dirname + '/tt-lowerthird.html');
+});
+
+app.get('/tt-lowerthird-panel', (req, res) => {
+    res.sendFile(__dirname + '/tt-lowerthird-panel.html');
+});
 
 let roomStates = {};
 
@@ -61,7 +69,8 @@ function getRoomState(room) {
         roomStates[room] = {
             ttState: null,
             footballState: null,
-            matchIntroState: null, // <--- Added for Match Intro
+            matchIntroState: null,
+            lowerThirdState: null, // Added for Lower Third sync
             ttData: {
                 ltTitle: "MATCH HIGHLIGHT",
                 ltText: "Announcement text goes here",
@@ -71,14 +80,6 @@ function getRoomState(room) {
     }
     return roomStates[room];
 }
-
-app.get('/tt-lowerthird', (req, res) => {
-    res.sendFile(__dirname + '/tt-lowerthird.html');
-});
-
-app.get('/tt-lowerthird-panel', (req, res) => {
-    res.sendFile(__dirname + '/tt-lowerthird-panel.html');
-});
 
 app.get('/api/tt-data', (req, res) => {
     let room = 'scorvix-master-room';
@@ -99,6 +100,9 @@ app.post('/api/update-tt-data', (req, res) => {
     if (req.body.ltText !== undefined) state.ttData.ltText = req.body.ltText;
     if (req.body.ltVisible !== undefined) state.ttData.ltVisible = req.body.ltVisible;
     
+    state.lowerThirdState = state.ttData;
+    io.to(room).emit('liveLowerThird', state.ttData); // Broadcast via socket on HTTP fallback too
+
     res.json({ success: true, ttData: state.ttData });
 });
 
@@ -126,7 +130,12 @@ io.on('connection', (socket) => {
         socket.emit('liveScore', roomState.ttState);
     }
     if (roomState.matchIntroState) {
-        socket.emit('liveMatchIntro', roomState.matchIntroState); // <--- Added for Match Intro
+        socket.emit('liveMatchIntro', roomState.matchIntroState);
+    }
+    if (roomState.lowerThirdState) {
+        socket.emit('liveLowerThird', roomState.lowerThirdState); // Send initial lower third state
+    } else if (roomState.ttData) {
+        socket.emit('liveLowerThird', roomState.ttData);
     }
 
     socket.on('joinRoom', (userData) => {
@@ -149,7 +158,12 @@ io.on('connection', (socket) => {
             socket.emit('liveFootballScore', targetState.footballState);
         }
         if (targetState.matchIntroState) {
-            socket.emit('liveMatchIntro', targetState.matchIntroState); // <--- Added for Match Intro
+            socket.emit('liveMatchIntro', targetState.matchIntroState);
+        }
+        if (targetState.lowerThirdState) {
+            socket.emit('liveLowerThird', targetState.lowerThirdState);
+        } else if (targetState.ttData) {
+            socket.emit('liveLowerThird', targetState.ttData);
         }
     });
 
@@ -192,7 +206,6 @@ io.on('connection', (socket) => {
         io.to(room).emit('liveFootballScore', data);
     });
 
-    // --- NEW MATCH INTRO SOCKET LISTENER ---
     socket.on('liveMatchIntro', (data) => {
         let room = socket.activeRoom;
         if (data && data.uid) {
@@ -205,7 +218,27 @@ io.on('connection', (socket) => {
         state.matchIntroState = data;
         io.to(room).emit('liveMatchIntro', data);
     });
-    // ---------------------------------------
+
+    // --- LOWER THIRD SOCKET LISTENER ---
+    socket.on('liveLowerThird', (data) => {
+        let room = socket.activeRoom;
+        if (data && data.uid) {
+            room = `room-${data.uid}`;
+            socket.leave(socket.activeRoom);
+            socket.join(room);
+            socket.activeRoom = room;
+        }
+        const state = getRoomState(room);
+        state.lowerThirdState = data;
+        
+        // Keep ttData in sync
+        if (data.ltTitle !== undefined) state.ttData.ltTitle = data.ltTitle;
+        if (data.ltText !== undefined) state.ttData.ltText = data.ltText;
+        if (data.ltVisible !== undefined) state.ttData.ltVisible = data.ltVisible;
+
+        io.to(room).emit('liveLowerThird', data);
+    });
+    // -----------------------------------
 
     socket.on('disconnect', () => {
         console.log('Client disconnected:', socket.id);
