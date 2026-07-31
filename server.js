@@ -44,6 +44,16 @@ app.get('/football-overlay', (req, res) => {
     res.sendFile(__dirname + '/football-overlay.html');
 });
 
+// --- NEW MATCH INTRO ROUTES ---
+app.get('/tt-matchintro', (req, res) => {
+    res.sendFile(__dirname + '/tt-matchintro.html');
+});
+
+app.get('/tt-matchintro-panel', (req, res) => {
+    res.sendFile(__dirname + '/tt-matchintro-panel.html');
+});
+// -----------------------------
+
 let roomStates = {};
 
 function getRoomState(room) {
