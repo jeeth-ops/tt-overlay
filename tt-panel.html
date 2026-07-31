@@ -7,7 +7,7 @@
     <!-- Socket.io -->
     <script src="/socket.io/socket.io.js"></script>
     
-    <!-- Firebase SDKs (Compat Version for HTML) -->
+    <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
@@ -21,7 +21,6 @@
             height: 100vh; overflow: hidden;
         }
 
-        /* Login Screen Styling */
         #login-screen {
             position: fixed;
             top: 0; left: 0; width: 100vw; height: 100vh;
@@ -45,7 +44,6 @@
         }
         .google-btn:hover { background: #f1f5f9; }
 
-        /* Studio Container */
         .studio-container {
             width: 1280px; height: 720px; background: #111827;
             border: 2px solid #1f2937; border-radius: 12px;
@@ -88,6 +86,7 @@
         .bg-red { background: #dc2626; }
         .bg-blue { background: #2563eb; }
         .bg-purple { background: #7c3aed; }
+        .bg-orange { background: #d97706; }
 
         .pt-edit-row { display: grid; grid-template-columns: 1fr 50px 50px; gap: 4px; margin-bottom: 4px; }
 
@@ -99,7 +98,6 @@
 </head>
 <body>
 
-    <!-- 🌟 Google Login Screen 🌟 -->
     <div id="login-screen">
         <div class="login-card">
             <h2>Scorvix Studio</h2>
@@ -111,21 +109,20 @@
         </div>
     </div>
 
-    <!-- 🌟 Main Studio Container 🌟 -->
     <div class="studio-container" id="main-studio" style="display: none;">
         <div class="studio-header">
-            <div class="studio-title">🏓 Pro League 16:9 Studio Controller</div>
+            <div class="studio-title">🏓 Pro League 16:9 Studio Master Controller</div>
             <div class="header-actions">
-                <button class="link-btn" onclick="openOverlayTab()">🔗 Open vMix / OBS Overlay</button>
+                <button class="link-btn" onclick="openOverlayTab()">🔗 Open Overlay / Templates</button>
                 <button class="logout-btn" onclick="logout()">Logout (<span id="user-email-display"></span>)</button>
             </div>
         </div>
 
         <div class="studio-body">
             
-            <!-- COLUMN 1 -->
+            <!-- COLUMN 1: Master Global Data Feed -->
             <div class="panel">
-                <div class="panel-title">1. Editable Texts & Branding</div>
+                <div class="panel-title">1. Master Global Data & Branding</div>
                 <div>
                     <label>Tournament Header Title:</label>
                     <input type="text" id="c-tourney-title" value="TABLE TENNIS SUPER LEAGUE MAHARASHTRA 2025" oninput="sendData()">
@@ -138,11 +135,11 @@
                     </select>
                 </div>
                 <div>
-                    <label>Match Category (Top Black Box):</label>
+                    <label>Match Category (Top Box):</label>
                     <input type="text" id="c-match-category" value="Mixed Doubles" oninput="sendData()" style="border-left: 3px solid #10b981;">
                 </div>
                 <div>
-                    <label>Team Matchup (Bottom Black Box):</label>
+                    <label>Team Matchup:</label>
                     <input type="text" id="c-team-matchup" value="SCL vs KB" oninput="sendData()" style="border-left: 3px solid #10b981;">
                 </div>
                 <div>
@@ -158,7 +155,7 @@
                     </div>
                 </div>
                 <div>
-                    <label>Team B Name & Logo (Left):</label>
+                    <label>Team B Name & Logo (Right):</label>
                     <input type="text" id="c-p2" value="MUMBAI MOZARTT" oninput="sendData()">
                     <div style="display: flex; gap: 5px; margin-top: 3px;">
                         <input type="file" id="c-img2" accept="image/*" onchange="uploadImage(2)">
@@ -168,7 +165,7 @@
                 <button style="background: #475569; margin-top: 5px;" onclick="resetMatch()">🔄 Reset Match Score</button>
             </div>
 
-            <!-- COLUMN 2 -->
+            <!-- COLUMN 2: Live Score & Points Editor -->
             <div class="panel">
                 <div class="panel-title">2. Live Score & Points Editor</div>
                 
@@ -205,11 +202,17 @@
                 </div>
             </div>
 
-            <!-- COLUMN 3 -->
+            <!-- COLUMN 3: Graphic On / Off Switcher & Auto Loop -->
             <div class="panel">
-                <div class="panel-title">3. Graphic On / Off Switcher</div>
+                <div class="panel-title">3. Graphic On / Off & Auto Loop</div>
                 
-                <label>Match Intro Screen (Team A vs Team B):</label>
+                <label>Automatic Template Rotation (Auto Loop):</label>
+                <div class="toggles-grid">
+                    <button class="toggle-btn bg-orange" onclick="startAutoCycle()">▶ Start Auto Loop</button>
+                    <button class="toggle-btn bg-red" onclick="stopAutoCycle()">⏹ Stop Loop</button>
+                </div>
+
+                <label style="margin-top: 8px;">Match Intro Screen (Team A vs Team B):</label>
                 <div class="toggles-grid">
                     <button class="toggle-btn bg-purple" onclick="triggerState('intro-in')">Show Intro</button>
                     <button class="toggle-btn bg-red" onclick="triggerState('intro-out')">Hide Intro</button>
@@ -227,7 +230,7 @@
                     <button class="toggle-btn bg-red" onclick="triggerState('score-out')">Hide</button>
                 </div>
 
-                <label style="margin-top: 4px;">Set-wise Score Grid (Client Feature):</label>
+                <label style="margin-top: 4px;">Set-wise Score Grid:</label>
                 <div class="toggles-grid">
                     <button class="toggle-btn bg-green" onclick="triggerState('sets-grid-in')">Show Sets</button>
                     <button class="toggle-btn bg-red" onclick="triggerState('sets-grid-out')">Hide Sets</button>
@@ -249,13 +252,12 @@
         </div>
 
         <div class="studio-footer">
-            <span id="footer-status-text">Server Status: Live & Connected (Milliseconds Response Active)</span>
+            <span id="footer-status-text">Server Status: Live & Connected (Auto Loop Ready)</span>
             <div class="status-badge" id="footer-server-turn">Serving: PHANTOM STARS</div>
         </div>
     </div>
 
 <script>
-    // 🌟 Firebase Configuration 🌟
     const firebaseConfig = {
         apiKey: "AIzaSyAYc_bEB9C4RhhLhPBEJsJRFRUppcR45yo",
         authDomain: "scorvix-faf0e.firebaseapp.com",
@@ -270,7 +272,7 @@
     const auth = firebase.auth();
     const db = firebase.firestore();
 
-    let currentUid = ""; // Store logged-in user's UID
+    let currentUid = "";
 
     function loginWithGoogle() {
         const provider = new firebase.auth.GoogleAuthProvider();
@@ -326,7 +328,7 @@
 
     function sendData() {
         if (!currentUid) return;
-        data.uid = currentUid; // Attach UID to data packet
+        data.uid = currentUid;
 
         data.tourneyTitle = document.getElementById('c-tourney-title').value;
         data.matchFormat = document.getElementById('c-match-format').value;
@@ -453,6 +455,30 @@
     }
 
     function triggerState(st) { data.state = st; sendData(); }
+
+    // --- AUTO TEMPLATE LOOP LOGIC ---
+    let autoLoopInterval = null;
+    const loopStates = ['score-in', 'sets-grid-in', 'table-in'];
+    let loopIndex = 0;
+
+    function startAutoCycle() {
+        if (autoLoopInterval) return;
+        document.getElementById('footer-status-text').innerText = "Auto Loop Active: Rotating Templates every 10s";
+        
+        autoLoopInterval = setInterval(() => {
+            loopIndex = (loopIndex + 1) % loopStates.length;
+            triggerState(loopStates[loopIndex]);
+        }, 10000); // 10 seconds per template
+    }
+
+    function stopAutoCycle() {
+        if (autoLoopInterval) {
+            clearInterval(autoLoopInterval);
+            autoLoopInterval = null;
+            document.getElementById('footer-status-text').innerText = "Server Status: Live & Connected (Auto Loop Stopped)";
+        }
+    }
+
     function resetMatch() {
         if(confirm("Reset match score?")) {
             data.p1Score = 0; data.p2Score = 0; data.p1Sets = 0; data.p2Sets = 0; data.server = 1; 
