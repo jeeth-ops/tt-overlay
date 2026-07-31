@@ -150,6 +150,29 @@ io.on('connection', async (socket) => {
     }
     if (roomState.ttState) socket.emit('liveScore', roomState.ttState);
 
+    // 🌟 SCOREBOARD PANEL UPDATE HANDLING (Added)
+    socket.on('updateScore', async (data) => {
+        let room = socket.activeRoom;
+        const targetId = data.id || data.uid || matchIdForClient;
+        if (targetId && targetId !== 'default') {
+            room = `room-${targetId}`;
+            socket.leave(socket.activeRoom);
+            socket.join(room);
+            socket.activeRoom = room;
+        }
+
+        const state = await getRoomState(room);
+        state.ttState = { ...state.ttState, ...data };
+
+        // Broadcast updated score to overlay
+        io.to(room).emit('liveScore', state.ttState);
+
+        // Save to Firestore Database
+        if (targetId && targetId !== 'default') {
+            db.collection("scorvix").doc(targetId).set({ ttState: state.ttState }, { merge: true }).catch(err => console.log("DB update error:", err));
+        }
+    });
+
     // Match Intro Socket Update Handling
     socket.on('updateMatchIntro', async (data) => {
         let room = socket.activeRoom;
@@ -165,10 +188,9 @@ io.on('connection', async (socket) => {
         if (data.config) {
             state.matchIntroState = data.config;
         } else {
-            state.matchIntroState = data; // Fallback agar direct config object aaye
+            state.matchIntroState = data; 
         }
 
-        // Broadcast with correct formatting that overlay expects
         io.to(room).emit('liveMatchIntro', {
             matchId: targetId,
             config: state.matchIntroState,
