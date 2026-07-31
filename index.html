@@ -266,13 +266,13 @@
         .sports-section h2 { font-size: 2.5rem; margin-bottom: 10px; }
         .sports-section > p { color: var(--text-muted); margin-bottom: 40px; }
         .sports-grid { 
-    display: grid; 
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); 
-    gap: 25px; 
-    justify-content: center; 
-    max-width: 1000px;
-    margin: 0 auto;
-}
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); 
+            gap: 25px; 
+            justify-content: center; 
+            max-width: 1000px;
+            margin: 0 auto;
+        }
         
         .sport-card {
             background: var(--bg-card); 
@@ -346,7 +346,7 @@
         <a href="#sports" class="cta-btn">Start Streaming ➔</a>
     </section>
 
-    <!-- Maalik Control Panel -->
+    <!-- Maalik Control Panel & Analytics Dashboard -->
     <div id="admin-panel" class="admin-panel-container hidden">
         <div class="admin-box">
             <h3>⚙️ Maalik Control Panel</h3>
@@ -367,6 +367,46 @@
                 <h4 style="margin-bottom: 12px; font-size: 1.1rem; color: var(--text-main);">🗑️ Manage / Remove Added Templates</h4>
                 <div id="admin-templates-list">
                     <p style="color: var(--text-muted); font-size: 0.9rem;">Loading added templates...</p>
+                </div>
+            </div>
+
+            <!-- 📊 Professional Analytics Dashboard Section (Only for chhayajeeth@gmail.com) -->
+            <div style="margin-top: 30px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">
+                <h4 style="margin-bottom: 15px; font-size: 1.1rem; color: #38bdf8; display: flex; justify-content: space-between; align-items: center;">
+                    <span>📈 Professional Website Analytics & Usage Report</span>
+                    <span style="font-size: 0.75rem; background: #0284c7; padding: 2px 8px; border-radius: 4px; color: #fff;">Admin Only</span>
+                </h4>
+                
+                <!-- Summary Cards -->
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px;">
+                    <div style="background: rgba(15, 23, 42, 0.8); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+                        <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase;">Total Logins</div>
+                        <div style="font-size: 1.5rem; font-weight: 800; color: #38bdf8;" id="an-total-logins">0</div>
+                    </div>
+                    <div style="background: rgba(15, 23, 42, 0.8); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+                        <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase;">Total Logouts</div>
+                        <div style="font-size: 1.5rem; font-weight: 800; color: #ef4444;" id="an-total-logouts">0</div>
+                    </div>
+                    <div style="background: rgba(15, 23, 42, 0.8); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+                        <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase;">Total Events</div>
+                        <div style="font-size: 1.5rem; font-weight: 800; color: #facc15;" id="an-total-events">0</div>
+                    </div>
+                </div>
+
+                <!-- Data Table -->
+                <div style="max-height: 220px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.05); border-radius: 8px;">
+                    <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem;">
+                        <thead>
+                            <tr style="background: rgba(15, 23, 42, 0.9); color: var(--text-muted); position: sticky; top: 0;">
+                                <th style="padding: 10px 14px;">User Email</th>
+                                <th style="padding: 10px 14px;">Action Type</th>
+                                <th style="padding: 10px 14px;">Timestamp</th>
+                            </tr>
+                        </thead>
+                        <tbody id="an-logs-body">
+                            <tr><td colspan="3" style="padding: 12px; text-align: center; color: var(--text-muted);">Loading analytics data...</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
@@ -433,6 +473,7 @@
 
         firebase.initializeApp(firebaseConfig);
         const auth = firebase.auth();
+        const db = firebase.firestore(); // Firestore instance for analytics database
 
         const authGate = document.getElementById('auth-gate');
         const userDisplay = document.getElementById('user-display');
@@ -440,17 +481,66 @@
 
         let isUserLoggedIn = false;
 
+        // Function to log user activity (Login / Logout) in Firestore
+        function logActivity(email, actionType) {
+            db.collection("analytics_logs").add({
+                email: email,
+                action: actionType,
+                time: new Date().toLocaleString()
+            }).catch(err => console.log("Log error:", err));
+        }
+
         function loginWithGoogle() {
             const provider = new firebase.auth.GoogleAuthProvider();
-            auth.signInWithPopup(provider).catch(error => {
+            auth.signInWithPopup(provider).then((result) => {
+                if (result.user) {
+                    logActivity(result.user.email, "Login");
+                }
+            }).catch(error => {
                 alert("Login Error: " + error.message);
             });
         }
 
         function logout() {
+            if (auth.currentUser) {
+                logActivity(auth.currentUser.email, "Logout");
+            }
             auth.signOut().then(() => {
                 localStorage.removeItem('scorvix_uid');
                 localStorage.removeItem('scorvix_email');
+            });
+        }
+
+        // Live Analytics Dashboard Data Loader
+        function loadAnalyticsDashboard() {
+            db.collection("analytics_logs").orderBy("time", "desc").onSnapshot(snapshot => {
+                let rowsHTML = "";
+                let logins = 0;
+                let logouts = 0;
+                let total = snapshot.size;
+
+                snapshot.forEach(doc => {
+                    let d = doc.data();
+                    if (d.action === "Login") logins++;
+                    if (d.action === "Logout") logouts++;
+
+                    let badgeBg = d.action === "Login" ? "#059669" : "#dc2626";
+
+                    rowsHTML += `<tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                        <td style="padding: 10px 14px; color: #f8fafc;">${d.email || "Unknown User"}</td>
+                        <td style="padding: 10px 14px;"><span style="background: ${badgeBg}; color: #fff; padding: 3px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: bold;">${d.action}</span></td>
+                        <td style="padding: 10px 14px; color: var(--text-muted);">${d.time}</td>
+                    </tr>`;
+                });
+
+                if (total === 0) {
+                    rowsHTML = `<tr><td colspan="3" style="padding: 12px; text-align: center; color: var(--text-muted);">No activity logged yet.</td></tr>`;
+                }
+
+                document.getElementById('an-logs-body').innerHTML = rowsHTML;
+                document.getElementById('an-total-logins').innerText = logins;
+                document.getElementById('an-total-logouts').innerText = logouts;
+                document.getElementById('an-total-events').innerText = total;
             });
         }
 
@@ -483,7 +573,6 @@
         const grid = document.getElementById('sports-grid-container');
         const adminList = document.getElementById('admin-templates-list');
         
-        // Vibrant color palette array for dynamic buttons/cards
         const vibrantColors = [
             '#f43f5e', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'
         ];
@@ -521,7 +610,6 @@
             
             card.onclick = () => {
                 if (isUserLoggedIn) {
-                    // Automatically append UID parameter for unique session/overlay link handling
                     window.location.href = `/${sport.slug}-templates.html?uid=${currentUserUid}`;
                 } else {
                     alert("Pehle Google Login karein!");
@@ -613,8 +701,10 @@
 
                 userDisplay.innerText = `Hi, ${user.displayName || user.email}`;
 
+                // Strict Admin Check: Sirf chhayajeeth@gmail.com ke liye Maalik Panel + Analytics dikhega
                 if (user.email === "chhayajeeth@gmail.com") {
                     adminPanel.classList.remove('hidden');
+                    loadAnalyticsDashboard(); // Live analytics data fetch karna shuru karega
                 } else {
                     adminPanel.classList.add('hidden');
                 }
