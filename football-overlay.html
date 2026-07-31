@@ -79,7 +79,14 @@
             align-items: center;
             justify-content: center;
             min-width: 55px;
-            transition: background 0.3s ease;
+            transition: background 0.3s ease, transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        /* Smooth Goal Flash Animation (Non-bouncy) */
+        .goal-flash {
+            transform: scale(1.12);
+            box-shadow: 0 0 20px #38bdf8;
+            filter: brightness(1.2);
         }
 
         .timer-center {
@@ -123,6 +130,31 @@
             display: none;
         }
         .penalty-bar.active { display: block; }
+
+        /* Goal Banner Notification */
+        .goal-banner {
+            position: fixed;
+            top: 100px;
+            left: 50%;
+            transform: translateX(-50%) translateY(-30px);
+            background: linear-gradient(135deg, #ca8a04, #eab308);
+            color: #000;
+            font-family: 'Teko', sans-serif;
+            font-size: 42px;
+            letter-spacing: 2px;
+            padding: 2px 35px;
+            border-radius: 6px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.4s ease, transform 0.4s ease;
+            z-index: 9998;
+            text-transform: uppercase;
+        }
+        .goal-banner.active {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
 
         .modal-overlay {
             position: fixed;
@@ -232,6 +264,9 @@
         </div>
     </div>
 
+    <!-- Goal Popup Banner -->
+    <div class="goal-banner" id="goalBanner">⚽ GOAL! ⚽</div>
+
     <!-- Fullscreen Modal -->
     <div class="modal-overlay" id="modalOverlay">
         <div class="modal-card" id="modalCardBox">
@@ -261,7 +296,6 @@
     <script src="https://tt-overlay-lph4.onrender.com/socket.io/socket.io.js"></script>
 
     <script>
-        // --- Room Isolation Setup Added ---
         const urlParams = new URLSearchParams(window.location.search);
         const roomId = urlParams.get('room') || 'default-room';
 
@@ -271,7 +305,6 @@
             upgrade: true
         });
 
-        // --- vMix Color Fix Function ---
         function hexToRgba(hex, alpha) {
             if (!hex) return 'transparent';
             if (!hex.startsWith('#')) return hex;
@@ -286,6 +319,8 @@
             
             return `rgba(${r}, ${g}, ${b}, ${alpha})`;
         }
+
+        let lastGoalTimestamp = 0;
 
         socket.on('liveFootballScore', (data) => {
             if (!data) return;
@@ -403,6 +438,24 @@
                 replayBadge.classList.add('active');
             } else {
                 replayBadge.classList.remove('active');
+            }
+
+            // 9. Smooth Goal Animation Trigger (Only on button press)
+            if (data.goalEvent && data.goalTimestamp && data.goalTimestamp !== lastGoalTimestamp) {
+                lastGoalTimestamp = data.goalTimestamp;
+                
+                let targetScoreBox = data.goalEvent === 'A' ? document.getElementById('dispScoreA') : document.getElementById('dispScoreB');
+                let goalBanner = document.getElementById('goalBanner');
+                let teamName = data.goalEvent === 'A' ? (data.nameA || "TEAM A") : (data.nameB || "TEAM B");
+
+                goalBanner.innerText = `⚽ GOAL! - ${teamName} ⚽`;
+                goalBanner.classList.add('active');
+                targetScoreBox.classList.add('goal-flash');
+
+                setTimeout(() => {
+                    goalBanner.classList.remove('active');
+                    targetScoreBox.classList.remove('goal-flash');
+                }, 3000);
             }
         });
     </script>
