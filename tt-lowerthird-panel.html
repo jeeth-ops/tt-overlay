@@ -5,12 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Scorvix - Lower Third Controller</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    
-    <!-- Firebase SDKs (Compat Version) -->
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
-
     <style>
         :root {
             --bg-dark: #0f172a;
@@ -34,30 +28,6 @@
             justify-content: center;
             padding: 20px;
         }
-
-        /* Login Screen Styling */
-        #login-screen {
-            position: fixed;
-            top: 0; left: 0; width: 100vw; height: 100vh;
-            background: #0f172a;
-            display: flex; justify-content: center; align-items: center;
-            z-index: 9999;
-        }
-        .login-card {
-            background: #1e293b; padding: 40px; border-radius: 16px;
-            text-align: center; border: 1px solid rgba(255,255,255,0.1);
-            box-shadow: 0 25px 50px rgba(0,0,0,0.8); width: 380px;
-        }
-        .login-card h2 { font-size: 1.4rem; margin-bottom: 8px; color: #38bdf8; border: none; }
-        .login-card p { color: #94a3b8; font-size: 0.9rem; margin-bottom: 25px; }
-        .google-btn {
-            background: #ffffff; color: #1f2937; border: none;
-            padding: 12px 20px; border-radius: 8px; font-weight: bold;
-            cursor: pointer; display: flex; align-items: center;
-            justify-content: center; gap: 12px; width: 100%; font-size: 0.95rem;
-            transition: 0.3s;
-        }
-        .google-btn:hover { background: #f1f5f9; }
 
         .controller-card {
             width: 100%;
@@ -185,20 +155,7 @@
 </head>
 <body>
 
-    <!-- 🌟 Google Login Screen 🌟 -->
-    <div id="login-screen" style="display: none;">
-        <div class="login-card">
-            <h2>Scorvix Studio</h2>
-            <p>Sign in with your Google account to access the Lower Third controller.</p>
-            <button class="google-btn" onclick="loginWithGoogle()">
-                <img src="https://www.svgrepo.com/show/475656/google-color.svg" width="20"> 
-                Sign in with Google
-            </button>
-        </div>
-    </div>
-
-    <!-- 🌟 Main Controller Card 🌟 -->
-    <div class="controller-card" id="main-content" style="display: none;">
+    <div class="controller-card">
         <h2>Lower Third Controller</h2>
         
         <div class="form-group">
@@ -227,101 +184,18 @@
             <button class="btn btn-hide" onclick="sendUpdate(false)">HIDE</button>
         </div>
 
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px;">
-            <a href="/tt-templates" class="back-link">← Back to Templates</a>
-            <button onclick="logout()" style="background: #dc2626; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer;">Logout</button>
-        </div>
+        <a href="/tt-templates" class="back-link">← Back to Templates</a>
     </div>
 
+    <script src="/socket.io/socket.io.js"></script>
     <script>
-        // 🌟 Firebase Configuration 🌟
-        const firebaseConfig = {
-            apiKey: "AIzaSyAYc_bEB9C4RhhLhPBEJsJRFRUppcR45yo",
-            authDomain: "scorvix-faf0e.firebaseapp.com",
-            projectId: "scorvix-faf0e",
-            storageBucket: "scorvix-faf0e.firebasestorage.app",
-            messagingSenderId: "725629580596",
-            appId: "1:725629580596:web:7737847e7194650f276161",
-            measurementId: "G-4EXH0QXHF7"
-        };
+        const socket = io();
 
-        if (!firebase.apps.length) {
-            firebase.initializeApp(firebaseConfig);
-        }
-        const auth = firebase.auth();
+        const targetUrl = window.location.origin + '/tt-lowerthird';
+        document.getElementById('overlayUrl').value = targetUrl;
+        document.getElementById('openTabBtn').href = targetUrl;
 
-        function loginWithGoogle() {
-            const provider = new firebase.auth.GoogleAuthProvider();
-            auth.signInWithPopup(provider).catch(error => {
-                alert("Login Error: " + error.message);
-            });
-        }
-
-        function logout() {
-            localStorage.removeItem('scorvix_uid');
-            auth.signOut();
-        }
-
-        // 🌟 Authentication & Room State Observer 🌟
-        auth.onAuthStateChanged(user => {
-            if (user) {
-                localStorage.setItem('scorvix_uid', user.uid);
-                document.getElementById('login-screen').style.display = 'none';
-                document.getElementById('main-content').style.display = 'block';
-                initController(user.uid);
-            } else {
-                const savedUid = localStorage.getItem('scorvix_uid');
-                if (savedUid) {
-                    document.getElementById('login-screen').style.display = 'none';
-                    document.getElementById('main-content').style.display = 'block';
-                    initController(savedUid);
-                } else {
-                    document.getElementById('login-screen').style.display = 'flex';
-                    document.getElementById('main-content').style.display = 'none';
-                }
-            }
-        });
-
-        function initController(userUid) {
-            // URL params fallback check
-            const urlParams = new URLSearchParams(window.location.search);
-            const finalUid = urlParams.get('uid') || userUid;
-
-            const targetUrl = window.location.origin + '/tt-lowerthird' + (finalUid ? `?uid=${finalUid}` : '');
-            document.getElementById('overlayUrl').value = targetUrl;
-            document.getElementById('openTabBtn').href = targetUrl;
-
-            // Initial data fetch based on isolated room
-            const apiQuery = finalUid ? `?room=room-${finalUid}` : '';
-            fetch(`/api/tt-data${apiQuery}`)
-                .then(res => res.json())
-                .then(data => {
-                    document.getElementById('ltTitle').value = data.ltTitle || '';
-                    document.getElementById('ltText').value = data.ltText || '';
-                })
-                .catch(err => console.log("Fetch error:", err));
-
-            window.sendUpdate = function(isVisible) {
-                const data = {
-                    room: finalUid ? `room-${finalUid}` : 'scorvix-master-room',
-                    ltTitle: document.getElementById('ltTitle').value,
-                    ltText: document.getElementById('ltText').value,
-                    ltVisible: isVisible
-                };
-
-                fetch('/api/update-tt-data', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
-                }).catch(err => console.log("Update error:", err));
-            }
-
-            document.querySelectorAll('input[type="text"]').forEach(input => {
-                input.addEventListener('input', () => sendUpdate(true));
-            });
-        }
-
-        window.copyOverlayUrl = function() {
+        function copyOverlayUrl() {
             const urlInput = document.getElementById('overlayUrl');
             urlInput.select();
             navigator.clipboard.writeText(urlInput.value);
@@ -329,6 +203,40 @@
             copyBtn.textContent = 'Copied!';
             setTimeout(() => copyBtn.textContent = 'Copy URL', 2000);
         }
+
+        function sendUpdate(isVisible) {
+            const data = {
+                ltTitle: document.getElementById('ltTitle').value,
+                ltText: document.getElementById('ltText').value,
+                ltVisible: isVisible
+            };
+
+            // Send via HTTP POST
+            fetch('/api/update-tt-data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+
+            // Send via Socket.io for instant overlay update
+            socket.emit('liveLowerThird', data);
+        }
+
+        // Fetch initial state
+        fetch('/api/tt-data')
+            .then(res => res.json())
+            .then(data => {
+                if(data.ltTitle) document.getElementById('ltTitle').value = data.ltTitle;
+                if(data.ltText) document.getElementById('ltText').value = data.ltText;
+            });
+
+        // Optional: Auto update text live as you type
+        document.querySelectorAll('input[type="text"]').forEach(input => {
+            input.addEventListener('input', () => {
+                // If you want it to update text live without hiding, keep true or manage visibility state
+                // Yahan hum current visibility state ko maintain rakhne ke liye fetch kar sakte hain ya direct bhejein
+            });
+        });
     </script>
 </body>
 </html>
