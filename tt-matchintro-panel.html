@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Match Intro — Control Panel</title>
+<style>
+  :root{
+    --pink:#ec4a9b; --purple:#8b6cf0; --cyan:#3fd6ea;
+    --bg:#0a0d18; --panel:#11162a; --panel-2:#161c34;
+    --border:rgba(255,255,255,.09);
+    --text:#e9ecf6; --text-dim:#8e96b8;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; min-height:100vh; background:var(--bg); color:var(--text);
+    font-family:'Segoe UI',Arial,sans-serif;
+    display:flex; flex-direction:column;
+  }
+  header{
+    padding:16px 24px; border-bottom:1px solid var(--border);
+    display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;
+  }
+  header h1{
+    font-size:16px; letter-spacing:2px; text-transform:uppercase; font-weight:700;
+    background:linear-gradient(90deg,var(--pink),var(--purple));
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
+  header .actions{ display:flex; gap:8px; flex-wrap:wrap; }
+
+  button{
+    font-family:inherit; font-size:12.5px; font-weight:600; letter-spacing:.5px;
+    padding:9px 14px; border-radius:8px; border:1px solid var(--border);
+    background:var(--panel-2); color:var(--text); cursor:pointer;
+    transition:transform .12s ease, border-color .12s ease;
+  }
+  button:hover{ border-color:rgba(255,255,255,.25); transform:translateY(-1px); }
+  button.primary{ background:linear-gradient(90deg,var(--pink),var(--purple)); border:none; color:#fff; }
+  button.ghost{ background:transparent; }
+  button.danger{ color:#ff8fa3; }
+
+  main{
+    flex:1; display:flex; gap:0; min-height:0;
+  }
+
+  .preview-col{
+    flex:1.15; display:flex; align-items:center; justify-content:center;
+    padding:28px; background:
+      radial-gradient(circle at 20% 20%, rgba(139,108,240,.08), transparent 50%),
+      radial-gradient(circle at 80% 80%, rgba(63,214,234,.06), transparent 50%);
+  }
+  .preview-frame{
+    width:100%; max-width:920px; aspect-ratio:16/9;
+    border-radius:16px; overflow:hidden; border:1px solid var(--border);
+    box-shadow:0 30px 70px rgba(0,0,0,.5);
+    background:#000;
+  }
+  .preview-frame iframe{ width:100%; height:100%; border:0; }
+
+  .controls-col{
+    width:400px; flex-shrink:0; overflow-y:auto;
+    border-left:1px solid var(--border);
+    padding:20px 20px 60px;
+  }
+  .section{
+    margin-bottom:22px; padding-bottom:20px; border-bottom:1px solid var(--border);
+  }
+  .section:last-child{ border-bottom:none; }
+  .section h2{
+    font-size:11px; letter-spacing:2px; text-transform:uppercase; color:var(--text-dim);
+    margin-bottom:14px; font-weight:700;
+  }
+  .field{ margin-bottom:12px; }
+  .field label{
+    display:block; font-size:12px; color:var(--text-dim); margin-bottom:6px;
+  }
+  .field input[type=text]{
+    width:100%; padding:9px 10px; border-radius:7px; border:1px solid var(--border);
+    background:var(--panel-2); color:var(--text); font-size:13px; font-family:inherit;
+  }
+  .field input[type=text]:focus{ outline:none; border-color:var(--purple); }
+
+  .row2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+
+  .color-row{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; gap:10px; }
+  .color-row label{ font-size:12px; color:var(--text-dim); }
+  .color-row input[type=color]{
+    width:38px; height:28px; border:1px solid var(--border); border-radius:6px; padding:0; background:none; cursor:pointer;
+  }
+
+  .slider-row{ margin-bottom:12px; }
+  .slider-row label{ display:flex; justify-content:space-between; font-size:12px; color:var(--text-dim); margin-bottom:6px; }
+  .slider-row input[type=range]{ width:100%; accent-color:var(--purple); }
+
+  .logo-box{
+    display:flex; align-items:center; gap:12px; padding:10px; border:1px dashed var(--border); border-radius:10px;
+    margin-bottom:8px;
+  }
+  .logo-thumb{
+    width:48px; height:48px; border-radius:8px; background:var(--panel-2);
+    display:flex; align-items:center; justify-content:center; overflow:hidden; flex-shrink:0;
+    border:1px solid var(--border);
+  }
+  .logo-thumb img{ max-width:100%; max-height:100%; object-fit:contain; }
+  .logo-thumb span{ font-size:11px; color:var(--text-dim); }
+  .logo-actions{ display:flex; flex-direction:column; gap:6px; flex:1; }
+  .logo-actions .btn-row{ display:flex; gap:6px; }
+  .logo-actions button{ flex:1; padding:6px 8px; font-size:11px; }
+  input[type=file]{ display:none; }
+
+  .hint{ font-size:11.5px; color:var(--text-dim); line-height:1.5; margin-top:10px; }
+  .hint b{ color:var(--text); }
+
+  ::-webkit-scrollbar{ width:8px; }
+  ::-webkit-scrollbar-thumb{ background:var(--panel-2); border-radius:4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Match Intro — Control Panel</h1>
+  <div class="actions" style="align-items:center;">
+    <div style="display:flex;align-items:center;gap:6px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:6px 10px;">
+      <label style="font-size:11px;color:var(--text-dim);letter-spacing:.5px;">MATCH ID</label>
+      <input type="text" id="fMatchId" style="width:110px;background:transparent;border:none;color:var(--text);font-size:12.5px;font-family:inherit;font-weight:700;letter-spacing:1px;outline:none;">
+    </div>
+    <button class="ghost" id="btnNewId">New ID</button>
+    <button id="btnCopyLink">Copy overlay link</button>
+    <button class="ghost" id="btnReset">Reset defaults</button>
+    <button id="btnOpenStandalone">Open overlay in new tab</button>
+    <button class="primary" id="btnReplay">▶ Replay intro</button>
+  </div>
+</header>
+
+<main>
+  <div class="preview-col">
+    <div class="preview-frame">
+      <iframe id="previewFrame"></iframe>
+    </div>
+  </div>
+
+  <div class="controls-col">
+
+    <div class="section">
+      <h2>Text</h2>
+      <div class="field">
+        <label>Top label</label>
+        <input type="text" id="fLeague" value="TABLE TENNIS">
+      </div>
+      <div class="field">
+        <label>Round / subtitle</label>
+        <input type="text" id="fRound" value="Quarter Final">
+      </div>
+      <div class="field">
+        <label>Venue text</label>
+        <input type="text" id="fVenue" value="Table Tennis Arena">
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label>Team A name</label>
+          <input type="text" id="fNameA" value="Team A">
+        </div>
+        <div class="field">
+          <label>Team B name</label>
+          <input type="text" id="fNameB" value="Team B">
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Logos</h2>
+
+      <div class="logo-box">
+        <div class="logo-thumb" id="thumbA"><span>A</span></div>
+        <div class="logo-actions">
+          <label style="margin:0;font-size:12px;color:var(--text-dim);">Team A logo</label>
+          <div class="btn-row">
+            <button id="btnUploadA">Upload</button>
+            <button class="danger" id="btnRemoveA">Remove</button>
+          </div>
+          <input type="file" id="fileA" accept="image/*">
+        </div>
+      </div>
+
+      <div class="logo-box">
+        <div class="logo-thumb" id="thumbB"><span>B</span></div>
+        <div class="logo-actions">
+          <label style="margin:0;font-size:12px;color:var(--text-dim);">Team B logo</label>
+          <div class="btn-row">
+            <button id="btnUploadB">Upload</button>
+            <button class="danger" id="btnRemoveB">Remove</button>
+          </div>
+          <input type="file" id="fileB" accept="image/*">
+        </div>
+      </div>
+
+      <p class="hint">Any logo size or shape works — it's auto-fit and centered in a fixed frame so both sides stay balanced. No logo? It falls back to a neat initials badge.</p>
+    </div>
+
+    <div class="section">
+      <h2>Colors</h2>
+      <div class="color-row"><label>Accent pink</label><input type="color" id="cPink" value="#ec4a9b"></div>
+      <div class="color-row"><label>Accent pink (soft)</label><input type="color" id="cPinkSoft" value="#f472b6"></div>
+      <div class="color-row"><label>Accent purple</label><input type="color" id="cPurple" value="#8b6cf0"></div>
+      <div class="color-row"><label>Accent cyan</label><input type="color" id="cCyan" value="#3fd6ea"></div>
+      <div class="color-row"><label>Header bar</label><input type="color" id="cHeader" value="#0a0a0f"></div>
+      <div class="color-row"><label>Background — dark</label><input type="color" id="cNavyDeep" value="#060a16"></div>
+      <div class="color-row"><label>Background — mid</label><input type="color" id="cNavyMid" value="#131c36"></div>
+      <div class="color-row"><label>Background — light</label><input type="color" id="cNavyEnd" value="#1b2a4d"></div>
+
+      <div class="slider-row">
+        <label><span>Background visibility</span><span id="bgOpacityVal">30%</span></label>
+        <input type="range" id="rBgOpacity" min="0" max="100" value="30">
+      </div>
+      <div class="slider-row">
+        <label><span>Card panel tint</span><span id="cardOpacityVal">55%</span></label>
+        <input type="range" id="rCardOpacity" min="10" max="95" value="55">
+      </div>
+    </div>
+
+    <p class="hint">
+      Changes here update the preview instantly and save automatically per Match ID. Each match has its own unique overlay link — click <b>Copy overlay link</b> and use that exact URL as the Browser Source for that court/match, so multiple matches never overwrite each other. Opening the same link in two tabs (e.g. this panel + OBS) keeps them in sync live since both run on the same site.
+    </p>
+
+  </div>
+</main>
+
+<script>
+  const STORAGE_PREFIX = 'ttMatchIntroConfig_';
+
+  function generateId(){
+    return Math.random().toString(36).slice(2,8);
+  }
+
+  function getIdFromUrl(){
+    return new URLSearchParams(window.location.search).get('id');
+  }
+
+  let MATCH_ID = getIdFromUrl() || generateId();
+  if(!getIdFromUrl()){
+    const url = new URL(window.location.href);
+    url.searchParams.set('id', MATCH_ID);
+    history.replaceState(null, '', url.toString());
+  }
+  let STORAGE_KEY = STORAGE_PREFIX + MATCH_ID;
+
+  const DEFAULTS = {
+    league: "TABLE TENNIS",
+    round:  "Quarter Final",
+    venue:  "Table Tennis Arena",
+    teamA:  { name: "Team A", logo: "" },
+    teamB:  { name: "Team B", logo: "" },
+    colors: {
+      pink:"#ec4a9b", pinkSoft:"#f472b6", purple:"#8b6cf0", cyan:"#3fd6ea",
+      headerBg:"#0a0a0f", cardBg:"rgba(14,16,28,.55)",
+      navyDeep:"#060a16", navyMid:"#131c36", navyEnd:"#1b2a4d",
+      bgOpacity:0.3
+    }
+  };
+
+  let state = JSON.parse(JSON.stringify(DEFAULTS));
+
+  function hexToRgba(hex, alpha){
+    const h = hex.replace('#','');
+    const r = parseInt(h.substring(0,2),16);
+    const g = parseInt(h.substring(2,4),16);
+    const b = parseInt(h.substring(4,6),16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  const els = {
+    league:document.getElementById('fLeague'),
+    round:document.getElementById('fRound'),
+    venue:document.getElementById('fVenue'),
+    nameA:document.getElementById('fNameA'),
+    nameB:document.getElementById('fNameB'),
+    pink:document.getElementById('cPink'),
+    pinkSoft:document.getElementById('cPinkSoft'),
+    purple:document.getElementById('cPurple'),
+    cyan:document.getElementById('cCyan'),
+    header:document.getElementById('cHeader'),
+    navyDeep:document.getElementById('cNavyDeep'),
+    navyMid:document.getElementById('cNavyMid'),
+    navyEnd:document.getElementById('cNavyEnd'),
+    bgOpacity:document.getElementById('rBgOpacity'),
+    bgOpacityVal:document.getElementById('bgOpacityVal'),
+    cardOpacity:document.getElementById('rCardOpacity'),
+    cardOpacityVal:document.getElementById('cardOpacityVal'),
+    thumbA:document.getElementById('thumbA'),
+    thumbB:document.getElementById('thumbB'),
+    fileA:document.getElementById('fileA'),
+    fileB:document.getElementById('fileB'),
+    matchId:document.getElementById('fMatchId'),
+  };
+  els.matchId.value = MATCH_ID;
+
+  const frame = document.getElementById('previewFrame');
+  let frameReady = false;
+  frame.src = 'tt-matchintro.html?id=' + encodeURIComponent(MATCH_ID);
+  frame.addEventListener('load', () => { frameReady = true; sendUpdate(); });
+
+  function sendUpdate(){
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if(frameReady){
+      frame.contentWindow.postMessage({ type:'ttMatchIntroConfig', id: MATCH_ID, config: state }, '*');
+    }
+  }
+
+  function populateForm(){
+    els.league.value = state.league;
+    els.round.value  = state.round;
+    els.venue.value  = state.venue;
+    els.nameA.value  = state.teamA.name;
+    els.nameB.value  = state.teamB.name;
+
+    els.pink.value = state.colors.pink;
+    els.pinkSoft.value = state.colors.pinkSoft;
+    els.purple.value = state.colors.purple;
+    els.cyan.value = state.colors.cyan;
+    els.header.value = state.colors.headerBg;
+    els.navyDeep.value = state.colors.navyDeep;
+    els.navyMid.value = state.colors.navyMid;
+    els.navyEnd.value = state.colors.navyEnd;
+
+    const bgPct = Math.round(state.colors.bgOpacity*100);
+    els.bgOpacity.value = bgPct;
+    els.bgOpacityVal.textContent = bgPct+'%';
+
+    const cardMatch = state.colors.cardBg.match(/[\d.]+\)$/);
+    const cardPct = cardMatch ? Math.round(parseFloat(cardMatch[0])*100) : 55;
+    els.cardOpacity.value = cardPct;
+    els.cardOpacityVal.textContent = cardPct+'%';
+
+    renderThumb('A'); renderThumb('B');
+  }
+
+  function renderThumb(which){
+    const t = which==='A' ? els.thumbA : els.thumbB;
+    const logo = which==='A' ? state.teamA.logo : state.teamB.logo;
+    t.innerHTML = logo ? `<img src="${logo}">` : `<span>${which}</span>`;
+  }
+
+  // ---- text fields ----
+  els.league.addEventListener('input', () => { state.league = els.league.value; sendUpdate(); });
+  els.round.addEventListener('input',  () => { state.round  = els.round.value;  sendUpdate(); });
+  els.venue.addEventListener('input',  () => { state.venue  = els.venue.value;  sendUpdate(); });
+  els.nameA.addEventListener('input',  () => { state.teamA.name = els.nameA.value; sendUpdate(); });
+  els.nameB.addEventListener('input',  () => { state.teamB.name = els.nameB.value; sendUpdate(); });
+
+  // ---- colors ----
+  const colorMap = {
+    pink:'pink', pinkSoft:'pinkSoft', purple:'purple', cyan:'cyan',
+    header:'headerBg', navyDeep:'navyDeep', navyMid:'navyMid', navyEnd:'navyEnd'
+  };
+  Object.keys(colorMap).forEach(key => {
+    els[key].addEventListener('input', () => {
+      state.colors[colorMap[key]] = els[key].value;
+      sendUpdate();
+    });
+  });
+
+  els.bgOpacity.addEventListener('input', () => {
+    const pct = parseInt(els.bgOpacity.value,10);
+    els.bgOpacityVal.textContent = pct+'%';
+    state.colors.bgOpacity = pct/100;
+    sendUpdate();
+  });
+  els.cardOpacity.addEventListener('input', () => {
+    const pct = parseInt(els.cardOpacity.value,10);
+    els.cardOpacityVal.textContent = pct+'%';
+    state.colors.cardBg = hexToRgba(els.header.value, pct/100);
+    sendUpdate();
+  });
+
+  // ---- logos ----
+  document.getElementById('btnUploadA').addEventListener('click', () => els.fileA.click());
+  document.getElementById('btnUploadB').addEventListener('click', () => els.fileB.click());
+  document.getElementById('btnRemoveA').addEventListener('click', () => { state.teamA.logo=''; renderThumb('A'); sendUpdate(); });
+  document.getElementById('btnRemoveB').addEventListener('click', () => { state.teamB.logo=''; renderThumb('B'); sendUpdate(); });
+
+  function handleFile(which, file){
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if(which==='A') state.teamA.logo = reader.result; else state.teamB.logo = reader.result;
+      renderThumb(which);
+      sendUpdate();
+    };
+    reader.readAsDataURL(file);
+  }
+  els.fileA.addEventListener('change', e => handleFile('A', e.target.files[0]));
+  els.fileB.addEventListener('change', e => handleFile('B', e.target.files[0]));
+
+  // ---- top actions ----
+  document.getElementById('btnReplay').addEventListener('click', () => {
+    frame.contentWindow.postMessage({ type:'ttMatchIntroReplay', id: MATCH_ID }, '*');
+  });
+  document.getElementById('btnReset').addEventListener('click', () => {
+    state = JSON.parse(JSON.stringify(DEFAULTS));
+    populateForm();
+    sendUpdate();
+  });
+  document.getElementById('btnOpenStandalone').addEventListener('click', () => {
+    sendUpdate();
+    window.open('tt-matchintro.html?id=' + encodeURIComponent(MATCH_ID), '_blank');
+  });
+  document.getElementById('btnCopyLink').addEventListener('click', () => {
+    const url = new URL('tt-matchintro.html', window.location.href);
+    url.searchParams.set('id', MATCH_ID);
+    navigator.clipboard.writeText(url.toString()).then(() => {
+      const btn = document.getElementById('btnCopyLink');
+      const old = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(() => btn.textContent = old, 1400);
+    });
+  });
+  document.getElementById('btnNewId').addEventListener('click', () => {
+    switchMatch(generateId());
+  });
+  els.matchId.addEventListener('change', () => {
+    const val = els.matchId.value.trim();
+    if(val) switchMatch(val); else els.matchId.value = MATCH_ID;
+  });
+
+  function switchMatch(newId){
+    MATCH_ID = newId;
+    STORAGE_KEY = STORAGE_PREFIX + MATCH_ID;
+    els.matchId.value = MATCH_ID;
+
+    const url = new URL(window.location.href);
+    url.searchParams.set('id', MATCH_ID);
+    history.replaceState(null, '', url.toString());
+
+    loadStateForCurrentId();
+    populateForm();
+
+    frameReady = false;
+    frame.src = 'tt-matchintro.html?id=' + encodeURIComponent(MATCH_ID);
+  }
+
+  function loadStateForCurrentId(){
+    state = JSON.parse(JSON.stringify(DEFAULTS));
+    try{
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if(raw) state = Object.assign(state, JSON.parse(raw));
+    }catch(e){}
+  }
+
+  loadStateForCurrentId();
+  populateForm();
+</script>
+
+</body>
+</html>
