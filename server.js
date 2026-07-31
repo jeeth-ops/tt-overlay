@@ -63,7 +63,7 @@ async function getRoomState(room) {
         };
     }
 
-    if (room.startsWith('room-') || room.length === 6) {
+    if (room.startsWith('room-') || (room.length === 6 && room !== 'scorvix-master-room')) {
         const uid = room.replace('room-', '');
         try {
             const doc = await db.collection("scorvix").doc(uid).get();
@@ -128,32 +128,55 @@ io.on('connection', async (socket) => {
 
     const query = socket.handshake.query;
     const clientId = query.id || query.uid;
-    if (clientId) {
-        currentRoom = `room-${clientId}`;
+    const cleanQueryUid = query.uid ? query.uid.replace('overlay-', '') : null;
+    
+    if (clientId || cleanQueryUid) {
+        const idVal = cleanQueryUid || clientId;
+        currentRoom = `room-${idVal}`;
         socket.leave(socket.activeRoom);
         socket.join(currentRoom);
         socket.activeRoom = currentRoom;
     }
 
     const roomState = await getRoomState(currentRoom);
-    if (roomState.matchIntroState) socket.emit('liveMatchIntro', roomState.matchIntroState);
+    const matchIdForClient = cleanQueryUid || clientId || 'default';
+
+    if (roomState.matchIntroState) {
+        socket.emit('liveMatchIntro', {
+            matchId: matchIdForClient,
+            config: roomState.matchIntroState,
+            triggerReplay: false
+        });
+    }
     if (roomState.ttState) socket.emit('liveScore', roomState.ttState);
 
+    // Match Intro Socket Update Handling
     socket.on('updateMatchIntro', async (data) => {
         let room = socket.activeRoom;
-        const targetId = data.id || data.uid;
-        if (targetId) {
+        const targetId = data.id || data.uid || matchIdForClient;
+        if (targetId && targetId !== 'default') {
             room = `room-${targetId}`;
             socket.leave(socket.activeRoom);
             socket.join(room);
             socket.activeRoom = room;
         }
+        
         const state = await getRoomState(room);
-        state.matchIntroState = data;
-        io.to(room).emit('liveMatchIntro', data);
+        if (data.config) {
+            state.matchIntroState = data.config;
+        } else {
+            state.matchIntroState = data; // Fallback agar direct config object aaye
+        }
 
-        if (targetId) {
-            db.collection("scorvix").doc(targetId).set({ matchIntroState: data }, { merge: true }).catch(err => console.log("DB update error:", err));
+        // Broadcast with correct formatting that overlay expects
+        io.to(room).emit('liveMatchIntro', {
+            matchId: targetId,
+            config: state.matchIntroState,
+            triggerReplay: data.triggerReplay || false
+        });
+
+        if (targetId && targetId !== 'default') {
+            db.collection("scorvix").doc(targetId).set({ matchIntroState: state.matchIntroState }, { merge: true }).catch(err => console.log("DB update error:", err));
         }
     });
 
