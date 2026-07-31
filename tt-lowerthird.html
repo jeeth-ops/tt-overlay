@@ -86,7 +86,13 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
-        const socket = io();
+        const urlParams = new URLSearchParams(window.location.search);
+        const uid = urlParams.get('uid');
+
+        // Socket connection with UID query
+        const socket = io({
+            query: uid ? { uid } : {}
+        });
 
         function updateUI(data) {
             if (!data) return;
@@ -101,13 +107,18 @@
             }
         }
 
-        // Initial fetch
-        fetch('/api/tt-data')
+        // Initial Fetch with UID
+        let fetchUrl = '/api/tt-data';
+        if (uid) {
+            fetchUrl += `?uid=${uid}`;
+        }
+
+        fetch(fetchUrl)
             .then(res => res.json())
             .then(data => updateUI(data))
             .catch(err => console.log('Error fetching data:', err));
 
-        // Real-time listener via Socket.io
+        // Real-time Socket Listener
         socket.on('liveLowerThird', (data) => {
             updateUI(data);
         });
