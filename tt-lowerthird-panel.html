@@ -31,7 +31,7 @@
 
         .controller-card {
             width: 100%;
-            max-width: 500px;
+            max-width: 520px;
             background: var(--bg-card);
             border: 1px solid var(--border-color);
             border-radius: 16px;
@@ -40,12 +40,42 @@
             backdrop-filter: blur(10px);
         }
 
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid var(--accent);
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+
         h2 {
             font-size: 1.3rem;
             font-weight: 700;
-            margin-bottom: 20px;
-            border-bottom: 2px solid var(--accent);
-            padding-bottom: 10px;
+        }
+
+        .match-id-box {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 4px 8px;
+        }
+        .match-id-box label {
+            margin: 0;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+        }
+        .match-id-box input {
+            width: 80px;
+            background: transparent;
+            border: none;
+            color: var(--text-main);
+            font-size: 0.85rem;
+            font-weight: 700;
+            outline: none;
         }
 
         .form-group {
@@ -119,7 +149,6 @@
             margin-top: 25px;
         }
 
-        /* --- Click Press / Push Animation Style --- */
         .btn {
             flex: 1;
             padding: 12px;
@@ -134,7 +163,7 @@
         }
 
         .btn:active {
-            transform: scale(0.95) translateY(2px); /* Click karte hi andar dabne ka effect */
+            transform: scale(0.95) translateY(2px);
             box-shadow: 0 2px 4px rgba(0,0,0,0.3);
         }
 
@@ -157,7 +186,13 @@
 <body>
 
     <div class="controller-card">
-        <h2>Lower Third Controller</h2>
+        <div class="card-header">
+            <h2>Lower Third Controller</h2>
+            <div class="match-id-box">
+                <label>ID:</label>
+                <input type="text" id="fMatchId">
+            </div>
+        </div>
         
         <div class="form-group">
             <label>vMix / OBS Browser Source URL</label>
@@ -189,9 +224,28 @@
     </div>
 
     <script>
-        const targetUrl = window.location.origin + '/tt-lowerthird';
-        document.getElementById('overlayUrl').value = targetUrl;
-        document.getElementById('openTabBtn').href = targetUrl;
+        function generateId() {
+            return Math.random().toString(36).slice(2, 8);
+        }
+
+        const urlParams = new URLSearchParams(window.location.search);
+        let MATCH_ID = urlParams.get('id') || urlParams.get('uid') || generateId();
+
+        if (!urlParams.get('id') && !urlParams.get('uid')) {
+            const newUrl = new URL(window.location.href);
+            newUrl.searchParams.set('id', MATCH_ID);
+            history.replaceState(null, '', newUrl.toString());
+        }
+
+        const matchIdInput = document.getElementById('fMatchId');
+        matchIdInput.value = MATCH_ID;
+
+        function updateUrls() {
+            const targetUrl = window.location.origin + '/tt-lowerthird?id=' + encodeURIComponent(MATCH_ID);
+            document.getElementById('overlayUrl').value = targetUrl;
+            document.getElementById('openTabBtn').href = targetUrl;
+        }
+        updateUrls();
 
         function copyOverlayUrl() {
             const urlInput = document.getElementById('overlayUrl');
@@ -204,6 +258,7 @@
 
         function sendUpdate(isVisible) {
             const data = {
+                id: MATCH_ID,
                 ltTitle: document.getElementById('ltTitle').value,
                 ltText: document.getElementById('ltText').value,
                 ltVisible: isVisible
@@ -216,15 +271,34 @@
             });
         }
 
-        fetch('/api/tt-data')
-            .then(res => res.json())
-            .then(data => {
-                document.getElementById('ltTitle').value = data.ltTitle;
-                document.getElementById('ltText').value = data.ltText;
-            });
+        function loadData() {
+            fetch('/api/tt-data?id=' + encodeURIComponent(MATCH_ID))
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('ltTitle').value = data.ltTitle || '';
+                    document.getElementById('ltText').value = data.ltText || '';
+                });
+        }
+        loadData();
+
+        matchIdInput.addEventListener('change', () => {
+            const val = matchIdInput.value.trim();
+            if (val) {
+                MATCH_ID = val;
+                const newUrl = new URL(window.location.href);
+                newUrl.searchParams.set('id', MATCH_ID);
+                history.replaceState(null, '', newUrl.toString());
+                updateUrls();
+                loadData();
+            } else {
+                matchIdInput.value = MATCH_ID;
+            }
+        });
 
         document.querySelectorAll('input[type="text"]').forEach(input => {
-            input.addEventListener('input', () => sendUpdate(true));
+            if (input.id !== 'fMatchId') {
+                input.addEventListener('input', () => sendUpdate(true));
+            }
         });
     </script>
 </body>
