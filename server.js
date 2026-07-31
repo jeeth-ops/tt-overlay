@@ -43,7 +43,11 @@ async function getRoomState(room) {
             ttState: {
                 tourneyTitle: "TABLE TENNIS SUPER LEAGUE",
                 p1Name: "Team A", p2Name: "Team B", 
-                p1Score: 0, p2Score: 0, p1Sets: 0, p2Sets: 0, server: 1, img1: "", img2: "", state: "score-in",
+                p1Score: 0, p2Score: 0, p1Sets: 0, p2Sets: 0, server: 1, img1: "", img2: "", state: "score-in", colors: {
+        bg: "#0e101c",
+        accent: "#ec4a9b",
+        text: "#ffffff"
+    },
                 ltTitle: "MATCH HIGHLIGHT", ltText: "Announcement text goes here", ltVisible: false
             },
             footballState: null,
