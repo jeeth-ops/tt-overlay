@@ -7,6 +7,14 @@
     <script src="/socket.io/socket.io.js"></script>
     <style>
         * { box-sizing: border-box; }
+        
+        /* --- Dynamic Color CSS Variables --- */
+        :root {
+            --ov-bg: rgba(15, 23, 42, 0.95);
+            --ov-accent: #9333ea;
+            --ov-text: #ffffff;
+        }
+
         body { 
             margin: 0; padding: 0; 
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
@@ -75,14 +83,14 @@
             display: flex;
             flex-direction: column;
             width: 410px;
-            background: rgba(15, 23, 42, 0.95);
+            background: var(--ov-bg);
             backdrop-filter: blur(12px);
-            color: #ffffff;
+            color: var(--ov-text);
             border-radius: 10px;
-            overflow: visible; /* Allows badges to pop out */
+            overflow: visible; 
             box-shadow: 0 25px 50px rgba(0,0,0,0.8);
             font-weight: bold;
-            border-left: 6px solid #38bdf8;
+            border-left: 6px solid var(--ov-accent);
             border-top: 1px solid rgba(255,255,255,0.1);
             border-right: 1px solid rgba(255,255,255,0.1);
             border-bottom: 1px solid rgba(255,255,255,0.1);
@@ -96,7 +104,7 @@
         }
         #score-container.has-logo { width: 455px; }
 
-        /* Match Category & Sublabel Badges (Flush to left, behind scorecard) */
+        /* Match Category & Sublabel Badges */
         .score-category-badge {
             position: absolute;
             top: 10px;
@@ -177,6 +185,7 @@
             overflow: hidden; 
             text-overflow: ellipsis; 
             max-width: 270px;
+            color: var(--ov-text);
         }
 
         .player-img { 
@@ -207,7 +216,7 @@
 
         .scores-group { display: flex; height: 100%; }
         .set-score-box { width: 48px; display: flex; align-items: center; justify-content: center; font-size: 18px; background: rgba(17, 24, 39, 0.9); color: #9ca3af; border-left: 1px solid rgba(31, 41, 55, 0.8); }
-        .main-score-box { width: 60px; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 900; background: #9333ea; color: #ffffff; }
+        .main-score-box { width: 60px; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 900; background: var(--ov-accent); color: var(--ov-text); }
 
         /* --- 3. DYNAMIC INTRO SCREEN --- */
         #intro-container {
@@ -263,8 +272,8 @@
             transform: translate(-50%, -50%) scale(0.7);
             background: rgba(15, 23, 42, 0.98);
             backdrop-filter: blur(15px);
-            border: 2px solid #38bdf8;
-            color: #ffffff;
+            border: 2px solid var(--ov-accent);
+            color: var(--ov-text);
             padding: 35px 70px;
             font-size: 34px; font-weight: 900; letter-spacing: 2px;
             border-radius: 16px; box-shadow: 0 35px 70px rgba(0,0,0,0.9);
@@ -404,7 +413,7 @@
 
     <!-- 3. Live Scoreboard with Category & Sublabel Badges -->
     <div id="score-container">
-        <!-- Top Category Badge (Flush to left, behind scorecard) -->
+        <!-- Top Category Badge -->
         <div id="score-category" class="score-category-badge">MIXED DOUBLES</div>
 
         <div class="tt-row" id="row-p1">
@@ -430,7 +439,7 @@
             </div>
         </div>
 
-        <!-- Bottom Sublabel Badge (Flush to left, behind scorecard) -->
+        <!-- Bottom Sublabel Badge -->
         <div id="score-sublabel" class="score-sublabel-badge">SCL vs KB</div>
     </div>
 
@@ -544,6 +553,13 @@
             // Filter incoming data: if targetUid is specified, ignore data that doesn't match this uid
             if (targetUid && data.uid && data.uid !== targetUid) {
                 return;
+            }
+
+            // 🌟 Apply Dynamic Colors via CSS Root Variables & Direct Elements
+            if (data.colors) {
+                document.documentElement.style.setProperty('--ov-bg', data.colors.bg || 'rgba(15, 23, 42, 0.95)');
+                document.documentElement.style.setProperty('--ov-accent', data.colors.accent || '#9333ea');
+                document.documentElement.style.setProperty('--ov-text', data.colors.text || '#ffffff');
             }
 
             document.getElementById('header-banner').innerText = data.tourneyTitle;
@@ -684,7 +700,7 @@
                         categoryElem.classList.add('badge-active');
                         sublabelElem.classList.add('badge-active');
                     }
-                }, 1000); // 1 second delay after scorecard appears
+                }, 1000); 
             } else {
                 scoreContainer.classList.remove('active');
                 categoryElem.classList.remove('badge-active');
