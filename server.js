@@ -1,8 +1,8 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const fs = require('fs'); // NAYA: File System module
-const path = require('path'); // NAYA: Path module
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
@@ -15,7 +15,6 @@ const io = new Server(server, {
 });
 
 app.use(express.static(__dirname));
-// Badha hua JSON limit taaki bada code easily server tak aa sake
 app.use(express.json({ limit: '50mb' })); 
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
@@ -30,7 +29,7 @@ app.get('/football-overlay', (req, res) => res.sendFile(__dirname + '/football-o
 app.get('/tt-lowerthird', (req, res) => res.sendFile(__dirname + '/tt-lowerthird.html'));
 app.get('/tt-lowerthird-panel', (req, res) => res.sendFile(__dirname + '/tt-lowerthird-panel.html'));
 
-// --- DYNAMIC TEMPLATE SYSTEM (NEW) ---
+// --- DYNAMIC TEMPLATE SYSTEM ---
 const templatesDB = path.join(__dirname, 'templates.json');
 
 if (!fs.existsSync(templatesDB)) {
@@ -81,6 +80,34 @@ app.post('/api/create-template', (req, res) => {
     fs.writeFileSync(templatesDB, JSON.stringify(templates));
     res.json({ success: true, message: "Template deployed successfully!" });
 });
+
+// Template delete karne ki API
+app.post('/api/delete-template', (req, res) => {
+    const { slug } = req.body;
+    if (!slug) return res.status(400).json({ success: false, message: "Slug is required" });
+
+    try {
+        // Physical files delete karo
+        const filesToDelete = [
+            path.join(__dirname, `${slug}-panel.html`),
+            path.join(__dirname, `${slug}-overlay.html`),
+            path.join(__dirname, `${slug}-templates.html`)
+        ];
+        filesToDelete.forEach(file => {
+            if (fs.existsSync(file)) fs.unlinkSync(file);
+        });
+
+        // JSON DB se remove karo
+        let templates = JSON.parse(fs.readFileSync(templatesDB, 'utf8'));
+        templates = templates.filter(t => t.slug !== slug);
+        fs.writeFileSync(templatesDB, JSON.stringify(templates));
+
+        res.json({ success: true, message: "Template deleted successfully!" });
+    } catch (err) {
+        console.error("Error deleting template:", err);
+        res.status(500).json({ success: false, message: "Server error while deleting" });
+    }
+});
 // --- END DYNAMIC SYSTEM ---
 
 let roomStates = {};
@@ -90,6 +117,7 @@ function getRoomState(room) {
         roomStates[room] = {
             ttState: null,
             footballState: null,
+            badmintonState: null,
             ttData: {
                 ltTitle: "MATCH HIGHLIGHT",
                 ltText: "Announcement text goes here",
@@ -141,6 +169,7 @@ io.on('connection', (socket) => {
     const roomState = getRoomState(currentRoom);
     if (roomState.footballState) socket.emit('liveFootballScore', roomState.footballState);
     if (roomState.ttState) socket.emit('liveScore', roomState.ttState);
+    if (roomState.badmintonState) socket.emit('liveBadmintonScore', roomState.badmintonState);
 
     socket.on('joinRoom', (userData) => {
         let roomName = 'scorvix-master-room';
@@ -155,6 +184,7 @@ io.on('connection', (socket) => {
         const targetState = getRoomState(roomName);
         if (targetState.ttState) socket.emit('liveScore', targetState.ttState);
         if (targetState.footballState) socket.emit('liveFootballScore', targetState.footballState);
+        if (targetState.badmintonState) socket.emit('liveBadmintonScore', targetState.badmintonState);
     });
 
     const handleScoreUpdate = (event, stateKey, data) => {
@@ -167,6 +197,7 @@ io.on('connection', (socket) => {
     socket.on('updateScore', (data) => handleScoreUpdate('liveScore', 'ttState', data));
     socket.on('liveScore', (data) => handleScoreUpdate('liveScore', 'ttState', data));
     socket.on('liveFootballScore', (data) => handleScoreUpdate('liveFootballScore', 'footballState', data));
+    socket.on('liveBadmintonScore', (data) => handleScoreUpdate('liveBadmintonScore', 'badmintonState', data));
 
     socket.on('triggerGoalAnimation', (data) => {
         const room = socket.activeRoom;
@@ -174,7 +205,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
-        console.log('Client disconnected:', socket.id);
+        console.log('Client connected/disconnected cleanup:', socket.id);
     });
 });
 
