@@ -37,15 +37,16 @@
             font-weight: 600;
             border-bottom: 3px solid #ef4444;
             box-shadow: 0 10px 30px rgba(0,0,0,0.8);
-            border-radius: 0 0 6px 6px;
+            border-radius: 0 0 6px 6px; /* Neeche se rounded */
             z-index: 2;
             
+            /* Animation Defaults */
             opacity: 0;
             transform: translateY(60px);
             transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
-        /* 2. Title Box */
+        /* 2. Title Box - Announcement ke center se bina gap ke upar niklega */
         .lt-title {
             background-color: #000000;
             color: #ef4444;
@@ -54,18 +55,19 @@
             font-weight: 700;
             letter-spacing: 1.5px;
             text-transform: uppercase;
-            border-radius: 4px 4px 0 0;
+            border-radius: 4px 4px 0 0; /* Upar se rounded */
             position: absolute;
-            bottom: 100%;
+            bottom: 100%; /* Ekdum announcement box ke border ke upar chipka rahega */
             left: 50%;
             z-index: 1;
             
+            /* Animation Defaults */
             opacity: 0;
             transform: translate(-50%, 15px) scaleY(0.2);
             transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1) 0.2s;
         }
 
-        /* Active State */
+        /* Jab Active hoga */
         .lower-third-container.active .lt-body {
             opacity: 1;
             transform: translateY(0);
@@ -73,6 +75,7 @@
 
         .lower-third-container.active .lt-title {
             opacity: 1;
+            /* Center se khul kar bina kisi gap ke upar baith jayega */
             transform: translate(-50%, 0) scaleY(1);
         }
     </style>
@@ -84,44 +87,26 @@
         <div id="ltText" class="lt-body">Announcement text goes here</div>
     </div>
 
-    <script src="/socket.io/socket.io.js"></script>
     <script>
-        const urlParams = new URLSearchParams(window.location.search);
-        const uid = urlParams.get('uid');
-
-        // Socket connection with UID query
-        const socket = io({
-            query: uid ? { uid } : {}
-        });
-
-        function updateUI(data) {
-            if (!data) return;
-            if (data.ltTitle !== undefined) document.getElementById('ltTitle').textContent = data.ltTitle;
-            if (data.ltText !== undefined) document.getElementById('ltText').textContent = data.ltText;
-            
-            const container = document.getElementById('lowerThird');
-            if (data.ltVisible) {
-                container.classList.add('active');
-            } else {
-                container.classList.remove('active');
-            }
+        function fetchLowerThirdData() {
+            fetch('/api/tt-data')
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('ltTitle').textContent = data.ltTitle;
+                    document.getElementById('ltText').textContent = data.ltText;
+                    
+                    const container = document.getElementById('lowerThird');
+                    if (data.ltVisible) {
+                        container.classList.add('active');
+                    } else {
+                        container.classList.remove('active');
+                    }
+                })
+                .catch(err => console.log('Error fetching data:', err));
         }
 
-        // Initial Fetch with UID
-        let fetchUrl = '/api/tt-data';
-        if (uid) {
-            fetchUrl += `?uid=${uid}`;
-        }
-
-        fetch(fetchUrl)
-            .then(res => res.json())
-            .then(data => updateUI(data))
-            .catch(err => console.log('Error fetching data:', err));
-
-        // Real-time Socket Listener
-        socket.on('liveLowerThird', (data) => {
-            updateUI(data);
-        });
+        setInterval(fetchLowerThirdData, 500);
+        fetchLowerThirdData();
     </script>
 </body>
 </html>
