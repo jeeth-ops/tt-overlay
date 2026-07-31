@@ -2,12 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Match Intro Overlay — Fullscreen Pink/Gray</title>
-<script>
-  if (new URLSearchParams(window.location.search).get('static') === '1') {
-    document.documentElement.classList.add('static-preview');
-  }
-</script>
+<title>Match Intro Overlay</title>
 <style>
   :root{
     --pink:#ec4a9b;
@@ -37,9 +32,16 @@
     width:100vw;height:100vh;
     display:flex;align-items:center;justify-content:center;
     perspective:1400px;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+  }
+  
+  /* On/Off Visibility Toggle */
+  .stage.hidden {
+    opacity: 0;
+    pointer-events: none;
+    transform: scale(0.95);
   }
 
-  /* ============ LAYER 0 — AMBIENT BACKGROUND ============ */
   .bg-layer{
     position:absolute;inset:0;
     background:linear-gradient(135deg, var(--navy-deep) 0%, var(--navy-mid) 45%, var(--navy-end) 100%);
@@ -55,31 +57,7 @@
   }
   .bg-tint.cyan{ background:radial-gradient(ellipse at 30% 20%, var(--cyan), transparent 55%); opacity:.18; }
   .bg-tint.purple{ background:radial-gradient(ellipse at 75% 80%, var(--purple), transparent 55%); opacity:.22; }
-  .bg-layer::before{
-    content:'';
-    position:absolute;inset:0;
-    background-image:repeating-linear-gradient(115deg, rgba(255,255,255,.035) 0 2px, transparent 2px 120px);
-    mix-blend-mode:screen;
-  }
-  .bg-layer::after{
-    content:'';
-    position:absolute;inset:0;
-    background:radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,.55) 100%);
-  }
-  @keyframes bgReveal{
-    to{opacity:var(--bg-final-opacity); transform:scale(1); filter:blur(0px);}
-  }
 
-  .particle{
-    position:absolute;border-radius:50%;
-    background:radial-gradient(circle, rgba(255,255,255,.55), transparent 70%);
-    opacity:0;
-    animation:particleFloat 6s ease-in-out infinite, particleFade 1.2s ease forwards;
-  }
-  @keyframes particleFade{ to{opacity:.55;} }
-  @keyframes particleFloat{ 0%,100%{transform:translateY(0px);} 50%{transform:translateY(-22px);} }
-
-  /* ============ CARD ============ */
   .card{
     position:relative;
     width:var(--w-card);
@@ -89,7 +67,7 @@
     border:1px solid rgba(255,255,255,.14);
     border-radius:14px;
     overflow:hidden;
-    box-shadow:0 30px 80px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.04) inset;
+    box-shadow:0 30px 80px rgba(0,0,0,.55);
     opacity:0;
     transform:translateY(26px) scale(.92) rotateX(6deg);
     animation:cardIn .9s cubic-bezier(.2,.85,.25,1) forwards;
@@ -100,86 +78,46 @@
   .header{ background:var(--header-bg); text-align:center; padding:16px 20px 12px; position:relative; }
   .league{
     color:var(--pink); font-size:20px; font-weight:700; letter-spacing:5px; text-transform:uppercase;
-    opacity:0; transform:translateY(-8px);
-    animation:textUp .55s ease forwards; animation-delay:2.0s;
     display:flex;align-items:center;justify-content:center;gap:14px;
   }
   .league .diamond{
     width:7px;height:7px;background:var(--cyan);
     transform:rotate(45deg); box-shadow:0 0 8px var(--cyan);
-    opacity:0; animation:pop .4s ease forwards; flex-shrink:0;
-  }
-  .league .diamond.d1{animation-delay:1.9s;}
-  .league .diamond.d2{animation-delay:2.35s;}
-  @keyframes pop{
-    0%{opacity:0; transform:rotate(45deg) scale(0);}
-    60%{opacity:1; transform:rotate(45deg) scale(1.3);}
-    100%{opacity:1; transform:rotate(45deg) scale(1);}
   }
   .round{
     margin-top:6px; color:var(--cyan); font-size:12.5px; letter-spacing:2.5px; text-transform:uppercase; font-weight:600;
-    opacity:0; transform:translateY(-6px);
-    animation:textUp .55s ease forwards; animation-delay:2.15s;
   }
 
   .body{ display:grid; grid-template-columns:1fr auto 1fr; align-items:center; padding:46px 30px; gap:0; }
-  .team{ display:flex;flex-direction:column;align-items:center;gap:18px; opacity:0; }
-  .team.left{ transform:translateX(-46px) scale(.85); animation:teamInLeft .7s cubic-bezier(.2,.85,.25,1) forwards; animation-delay:1.05s; }
-  .team.right{ transform:translateX(46px) scale(.85); animation:teamInRight .7s cubic-bezier(.2,.85,.25,1) forwards; animation-delay:1.2s; }
-  @keyframes teamInLeft{ to{opacity:1; transform:translateX(0) scale(1);} }
-  @keyframes teamInRight{ to{opacity:1; transform:translateX(0) scale(1);} }
+  .team{ display:flex;flex-direction:column;align-items:center;gap:18px; }
 
-  /* logo frame: fixed square, contain-fit so any source size/ratio balances out */
   .logo-frame{
     width:120px;height:120px;
     border-radius:16px;
     display:flex;align-items:center;justify-content:center;
     background:linear-gradient(160deg, rgba(255,255,255,.14), rgba(255,255,255,.03));
     border:1px solid rgba(255,255,255,.15);
-    box-shadow:0 10px 30px rgba(0,0,0,.35);
     overflow:hidden;
     position:relative;
     padding:14px;
   }
   .logo-frame img{
-    max-width:100%;max-height:100%;width:auto;height:auto;
-    object-fit:contain;
-    filter:drop-shadow(0 4px 10px rgba(0,0,0,.35));
+    max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;
   }
   .logo-frame.no-logo{ background:linear-gradient(160deg, var(--pink), var(--purple)); padding:0; }
-  .logo-frame .initials{
-    color:#fff; font-size:42px; font-weight:800; letter-spacing:1px; display:none;
-  }
+  .logo-frame .initials{ color:#fff; font-size:42px; font-weight:800; display:none; }
   .logo-frame.no-logo .initials{ display:block; }
-  .logo-frame::after{
-    content:'';
-    position:absolute;inset:0;
-    background:linear-gradient(120deg, transparent 40%, rgba(255,255,255,.25) 50%, transparent 60%);
-    transform:translateX(-120%);
-    animation:shine 1.4s ease forwards;
-    animation-delay:1.5s;
-  }
-  .team.right .logo-frame::after{ animation-delay:1.65s; }
-  @keyframes shine{ to{ transform:translateX(120%);} }
 
   .team-name{
     color:#fff; font-size:14px; font-weight:600; letter-spacing:1.5px; text-transform:uppercase;
-    opacity:0; transform:translateY(10px);
-    animation:textUp .5s ease forwards;
     max-width:220px; text-align:center; overflow-wrap:break-word;
   }
-  .team.left .team-name{ animation-delay:2.25s; }
-  .team.right .team-name{ animation-delay:2.4s; }
-
-  @keyframes textUp{ to{opacity:1; transform:translateY(0);} }
 
   .vs-col{ display:flex;align-items:center;justify-content:center; height:100%; padding:0 26px; }
   .divider{
-    width:1px; height:0%;
+    width:1px; height:120px;
     background:linear-gradient(to bottom, transparent, var(--divider) 20%, var(--divider) 80%, transparent);
-    animation:growLine .7s ease forwards; animation-delay:1.35s;
   }
-  @keyframes growLine{ to{height:120px;} }
 
   .venue-bar{
     background:linear-gradient(90deg, var(--pink-soft), var(--purple));
@@ -187,28 +125,12 @@
   }
   .venue-bar span{
     color:#fff; font-size:13px; font-weight:600; letter-spacing:1.5px; text-transform:uppercase;
-    opacity:0; display:inline-block; transform:translateY(10px);
-    animation:textUp .55s ease forwards; animation-delay:2.55s;
   }
-  .venue-bar::before{
-    content:''; position:absolute; inset:0; background:rgba(255,255,255,.25);
-    transform:translateX(-100%); animation:sweep .9s ease forwards; animation-delay:2.2s;
-  }
-  @keyframes sweep{ to{transform:translateX(100%);} }
-
-  /* thumbnail / gallery-card mode: skip animation, show final state instantly */
-  html.static-preview *{
-    animation-duration:0s !important;
-    animation-delay:0s !important;
-    transition-duration:0s !important;
-  }
-
 </style>
 </head>
 <body>
 
 <div class="stage" id="stage">
-
   <div class="bg-layer" id="bgLayer">
     <div class="bg-tint cyan"></div>
     <div class="bg-tint purple"></div>
@@ -217,9 +139,9 @@
   <div class="card" id="card">
     <div class="header">
       <div class="league">
-        <span class="diamond d1"></span>
+        <span class="diamond"></span>
         <span id="leagueText">TABLE TENNIS</span>
-        <span class="diamond d2"></span>
+        <span class="diamond"></span>
       </div>
       <div class="round" id="roundText">Quarter Final</div>
     </div>
@@ -227,7 +149,7 @@
     <div class="body">
       <div class="team left">
         <div class="logo-frame" id="frameA">
-          <img id="teamALogo" src="" alt="Team A logo">
+          <img id="teamALogo" src="" alt="Team A">
           <span class="initials" id="initialsA">A</span>
         </div>
         <div class="team-name" id="teamAName">Team A</div>
@@ -237,7 +159,7 @@
 
       <div class="team right">
         <div class="logo-frame" id="frameB">
-          <img id="teamBLogo" src="" alt="Team B logo">
+          <img id="teamBLogo" src="" alt="Team B">
           <span class="initials" id="initialsB">B</span>
         </div>
         <div class="team-name" id="teamBName">Team B</div>
@@ -248,34 +170,16 @@
       <span id="venueText">Table Tennis Arena</span>
     </div>
   </div>
-
 </div>
 
+<script src="/socket.io/socket.io.js"></script>
 <script>
-  const DEFAULT_CONFIG = {
-    league: "TABLE TENNIS",
-    round:  "Quarter Final",
-    venue:  "Table Tennis Arena",
-    teamA:  { name: "Team A", logo: "" },
-    teamB:  { name: "Team B", logo: "" },
-    colors: {
-      pink:"#ec4a9b", pinkSoft:"#f472b6", purple:"#8b6cf0", cyan:"#3fd6ea",
-      headerBg:"#0a0a0f", cardBg:"rgba(14,16,28,.55)",
-      navyDeep:"#060a16", navyMid:"#131c36", navyEnd:"#1b2a4d",
-      bgOpacity:0.3
-    }
-  };
-
-  // Each overlay instance is identified by ?id=xxxx in its URL, so multiple
-  // matches (different courts / different browser sources) never collide.
   const MATCH_ID = new URLSearchParams(window.location.search).get('id') || 'default';
-  const STORAGE_KEY = 'ttMatchIntroConfig_' + MATCH_ID;
   document.title = 'Match Intro — ' + MATCH_ID;
 
-  // ?static=1 -> used for gallery/thumbnail previews: skips the entrance
-  // animation entirely and shows the final state immediately.
-  const IS_STATIC = new URLSearchParams(window.location.search).get('static') === '1';
-  if (IS_STATIC) document.documentElement.classList.add('static-preview');
+  const socket = io({
+    query: { uid: 'intro-' + MATCH_ID }
+  });
 
   const root = document.documentElement.style;
 
@@ -298,7 +202,6 @@
     if(c.navyDeep) root.setProperty('--navy-deep', c.navyDeep);
     if(c.navyMid) root.setProperty('--navy-mid', c.navyMid);
     if(c.navyEnd) root.setProperty('--navy-end', c.navyEnd);
-    if(typeof c.bgOpacity === 'number') root.setProperty('--bg-final-opacity', c.bgOpacity);
 
     if(cfg.league !== undefined) document.getElementById('leagueText').textContent = cfg.league;
     if(cfg.round  !== undefined) document.getElementById('roundText').textContent  = cfg.round;
@@ -330,53 +233,6 @@
     }
   }
 
-  function loadSavedConfig(){
-    try{
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if(raw) return JSON.parse(raw);
-    }catch(e){}
-    return null;
-  }
-
-  // 1. apply defaults, then saved config (if any) before paint
-  applyConfig(DEFAULT_CONFIG);
-  applyConfig(loadSavedConfig());
-
-  // 2. live updates while this page is embedded/opened from the control panel
-  window.addEventListener('message', (e) => {
-    if(e.data && e.data.type === 'ttMatchIntroConfig'){
-      if(e.data.id && e.data.id !== MATCH_ID) return; // not meant for this instance
-      applyConfig(e.data.config);
-    }
-    if(e.data && e.data.type === 'ttMatchIntroReplay'){
-      if(e.data.id && e.data.id !== MATCH_ID) return;
-      window.playIntro();
-    }
-  });
-
-  // 3. live updates when the panel (same origin, separate tab/window) writes to localStorage
-  window.addEventListener('storage', (e) => {
-    if(e.key === STORAGE_KEY && e.newValue){
-      try{ applyConfig(JSON.parse(e.newValue)); }catch(err){}
-    }
-  });
-
-  // ambient floating particles
-  const stage = document.getElementById('stage');
-  for (let i = 0; i < 18; i++){
-    const p = document.createElement('div');
-    p.className = 'particle';
-    const size = Math.random()*3 + 1;
-    p.style.width = size+'px';
-    p.style.height = size+'px';
-    p.style.left = Math.random()*100+'%';
-    p.style.top = Math.random()*100+'%';
-    p.style.animationDelay = (Math.random()*2)+'s, '+(0.6+Math.random()*0.6)+'s';
-    p.style.animationDuration = (4+Math.random()*4)+'s, 1.2s';
-    stage.appendChild(p);
-  }
-
-  // replay the whole entrance sequence (used by OBS hotkey workflows or the panel's Replay button)
   window.playIntro = function(){
     const card = document.getElementById('card');
     const bg = document.getElementById('bgLayer');
@@ -387,6 +243,24 @@
     void bg.offsetWidth;
     bg.style.animation = null;
   };
+
+  // Listen live from Socket.io
+  socket.on('liveMatchIntro', (data) => {
+    if(data) {
+      if(data.config) applyConfig(data.config);
+      
+      const stage = document.getElementById('stage');
+      if(data.visible === false) {
+        stage.classList.add('hidden');
+      } else {
+        stage.classList.remove('hidden');
+      }
+
+      if(data.triggerReplay) {
+        window.playIntro();
+      }
+    }
+  });
 </script>
 
 </body>
