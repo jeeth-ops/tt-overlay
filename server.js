@@ -1,7 +1,21 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
+const firebase = require('firebase/compat/app');
+require('firebase/compat/firestore');
 
+// Initialize Firebase on the server side for robust state persistence & fetching
+firebase.initializeApp({
+    apiKey: "AIzaSyAYc_bEB9C4RhhLhPBEJsJRFRUppcR45yo",
+    authDomain: "scorvix-faf0e.firebaseapp.com",
+    projectId: "scorvix-faf0e",
+    storageBucket: "scorvix-faf0e.firebasestorage.app",
+    messagingSenderId: "725629580596",
+    appId: "1:725629580596:web:7737847e7194650f276161",
+    measurementId: "G-4EXH0QXHF7"
+});
+
+const db = firebase.firestore();
 const app = express();
 const server = http.createServer(app);
 
@@ -64,7 +78,8 @@ app.get('/tt-lowerthird-panel', (req, res) => {
 
 let roomStates = {};
 
-function getRoomState(room) {
+// Asynchronous helper to get room state, fetching from Firestore if not in memory
+async function getRoomState(room) {
     if (!roomStates[room]) {
         roomStates[room] = {
             // --- CENTRALIZED MASTER STATE FOR TABLE TENNIS ---
@@ -104,32 +119,51 @@ function getRoomState(room) {
             }
         };
     }
+
+    // If it's a user specific room, verify and sync state from Firestore if available
+    if (room.startsWith('room-')) {
+        const uid = room.replace('room-', '');
+        try {
+            const doc = await db.collection("scorvix").doc(uid).get();
+            if (doc.exists) {
+                roomStates[room].ttState = { ...roomStates[room].ttState, ...doc.data() };
+            }
+        } catch (err) {
+            console.log("Firestore sync fetch error:", err);
+        }
+    }
+
     return roomStates[room];
 }
 
-app.get('/api/tt-data', (req, res) => {
+app.get('/api/tt-data', async (req, res) => {
     let room = 'scorvix-master-room';
     if (req.query.room) {
         room = req.query.room;
     } else if (req.query.uid) {
         room = `room-${req.query.uid}`;
     }
-    const state = getRoomState(room);
+    const state = await getRoomState(room);
     res.json(state.ttState);
 });
 
-app.post('/api/update-tt-data', (req, res) => {
+app.post('/api/update-tt-data', async (req, res) => {
     const room = req.body.room || 'scorvix-master-room';
-    const state = getRoomState(room);
+    const state = await getRoomState(room);
     
     // Merge incoming updates into master ttState
     state.ttState = { ...state.ttState, ...req.body };
     io.to(room).emit('liveScore', state.ttState);
 
+    if (room.startsWith('room-')) {
+        const uid = room.replace('room-', '');
+        db.collection("scorvix").doc(uid).set(state.ttState, { merge: true }).catch(err => console.log("DB update error:", err));
+    }
+
     res.json({ success: true, ttState: state.ttState });
 });
 
-io.on('connection', (socket) => {
+io.on('connection', async (socket) => {
     console.log('Client connected:', socket.id);
 
     let currentRoom = 'scorvix-master-room';
@@ -144,7 +178,7 @@ io.on('connection', (socket) => {
         socket.activeRoom = currentRoom;
     }
 
-    const roomState = getRoomState(currentRoom);
+    const roomState = await getRoomState(currentRoom);
     if (roomState.footballState) {
         socket.emit('liveFootballScore', roomState.footballState);
     }
@@ -152,7 +186,7 @@ io.on('connection', (socket) => {
         socket.emit('liveScore', roomState.ttState);
     }
 
-    socket.on('joinRoom', (userData) => {
+    socket.on('joinRoom', async (userData) => {
         let roomName = 'scorvix-master-room';
         if (userData && userData.uid) {
             roomName = `room-${userData.uid}`; 
@@ -162,7 +196,7 @@ io.on('connection', (socket) => {
         socket.join(roomName);
         socket.activeRoom = roomName;
 
-        const targetState = getRoomState(roomName);
+        const targetState = await getRoomState(roomName);
         if (targetState.ttState) {
             socket.emit('liveScore', targetState.ttState);
         }
@@ -171,7 +205,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('updateScore', (data) => {
+    socket.on('updateScore', async (data) => {
         let room = socket.activeRoom;
         if (data && data.uid) {
             room = `room-${data.uid}`;
@@ -179,12 +213,16 @@ io.on('connection', (socket) => {
             socket.join(room);
             socket.activeRoom = room;
         }
-        const state = getRoomState(room);
+        const state = await getRoomState(room);
         state.ttState = data;
         io.to(room).emit('liveScore', data);
+
+        if (data && data.uid) {
+            db.collection("scorvix").doc(data.uid).set(data, { merge: true }).catch(err => console.log("Firestore sync error:", err));
+        }
     });
 
-    socket.on('liveScore', (data) => {
+    socket.on('liveScore', async (data) => {
         let room = socket.activeRoom;
         if (data && data.uid) {
             room = `room-${data.uid}`;
@@ -192,12 +230,16 @@ io.on('connection', (socket) => {
             socket.join(room);
             socket.activeRoom = room;
         }
-        const state = getRoomState(room);
+        const state = await getRoomState(room);
         state.ttState = data;
         io.to(room).emit('liveScore', data);
+
+        if (data && data.uid) {
+            db.collection("scorvix").doc(data.uid).set(data, { merge: true }).catch(err => console.log("Firestore sync error:", err));
+        }
     });
 
-    socket.on('liveFootballScore', (data) => {
+    socket.on('liveFootballScore', async (data) => {
         let room = socket.activeRoom;
         if (data && data.uid) {
             room = `room-${data.uid}`;
@@ -205,7 +247,7 @@ io.on('connection', (socket) => {
             socket.join(room);
             socket.activeRoom = room;
         }
-        const state = getRoomState(room);
+        const state = await getRoomState(room);
         state.footballState = data;
         io.to(room).emit('liveFootballScore', data);
     });
@@ -219,476 +261,3 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
-```[cite: 3]
-
----
-
-### 2. Updated `tt-panel.html`
-*(Isme client jab bhi kuch edit karega, woh Firebase Firestore aur Socket ke zariye turant master state ke taur par save aur sync hoga, jisse baaki templates bina kisi extra input ke seedha yehi data utha lenge)*[cite: 4]
-
-```html
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pro League 16:9 Broadcast Studio - Scorvix</title>
-    <!-- Socket.io -->
-    <script src="/socket.io/socket.io.js"></script>
-    
-    <!-- Firebase SDKs -->
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
-    
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { 
-            background: #090d16; color: #fff; 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            display: flex; justify-content: center; align-items: center; 
-            height: 100vh; overflow: hidden;
-        }
-
-        #login-screen {
-            position: fixed;
-            top: 0; left: 0; width: 100vw; height: 100vh;
-            background: #090d16;
-            display: flex; justify-content: center; align-items: center;
-            z-index: 9999;
-        }
-        .login-card {
-            background: #111827; padding: 40px; border-radius: 16px;
-            text-align: center; border: 1px solid #1f2937;
-            box-shadow: 0 25px 50px rgba(0,0,0,0.8); width: 380px;
-        }
-        .login-card h2 { font-size: 1.4rem; margin-bottom: 8px; color: #38bdf8; }
-        .login-card p { color: #9ca3af; font-size: 0.9rem; margin-bottom: 25px; }
-        .google-btn {
-            background: #ffffff; color: #1f2937; border: none;
-            padding: 12px 20px; border-radius: 8px; font-weight: bold;
-            cursor: pointer; display: flex; align-items: center;
-            justify-content: center; gap: 12px; width: 100%; font-size: 0.95rem;
-            transition: 0.3s;
-        }
-        .google-btn:hover { background: #f1f5f9; }
-
-        .studio-container {
-            width: 1280px; height: 720px; background: #111827;
-            border: 2px solid #1f2937; border-radius: 12px;
-            box-shadow: 0 25px 50px rgba(0,0,0,0.8);
-            display: grid; grid-template-rows: 55px 1fr 65px; overflow: hidden;
-        }
-        .studio-header {
-            background: #1f2937; display: flex; justify-content: space-between; align-items: center;
-            padding: 0 20px; border-bottom: 2px solid #374151;
-        }
-        .studio-title { font-size: 16px; font-weight: 900; color: #38bdf8; letter-spacing: 1px; text-transform: uppercase; }
-        
-        .header-actions { display: flex; gap: 10px; align-items: center; }
-        .link-btn { background: #0284c7; color: white; border: none; padding: 6px 14px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px; }
-        .logout-btn { background: #dc2626; color: white; border: none; padding: 6px 14px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px; }
-
-        .studio-body {
-            display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; padding: 15px; background: #0b0f19; overflow-y: auto;
-        }
-        .panel {
-            background: #111827; border: 1px solid #1f2937; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 10px;
-        }
-        .panel-title { font-size: 12px; font-weight: bold; color: #9ca3af; text-transform: uppercase; border-bottom: 1px solid #1f2937; padding-bottom: 4px; }
-
-        label { font-size: 11px; color: #94a3b8; font-weight: bold; margin-bottom: 2px; display: block; }
-        input[type="text"], input[type="file"], input[type="number"], select { width: 100%; padding: 6px; background: #090d16; border: 1px solid #374151; color: #fff; border-radius: 4px; font-size: 12px; }
-        
-        .score-box { background: #1f2937; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #374151; }
-        .score-display { font-size: 28px; font-weight: 900; color: #facc15; margin: 4px 0; }
-        .btn-row { display: flex; gap: 6px; justify-content: center; }
-        
-        button { padding: 6px 10px; font-weight: bold; border: none; border-radius: 4px; cursor: pointer; color: white; font-size: 12px; }
-        button:active { transform: scale(0.95); }
-        .btn-plus { background: #10b981; flex: 2; }
-        .btn-minus { background: #ef4444; flex: 1; }
-
-        .toggles-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-        .toggle-btn { padding: 8px; font-size: 12px; font-weight: bold; border-radius: 4px; border: none; cursor: pointer; color: white; text-align: center; }
-        .bg-green { background: #059669; }
-        .bg-red { background: #dc2626; }
-        .bg-blue { background: #2563eb; }
-        .bg-purple { background: #7c3aed; }
-
-        .pt-edit-row { display: grid; grid-template-columns: 1fr 50px 50px; gap: 4px; margin-bottom: 4px; }
-
-        .studio-footer {
-            background: #111827; border-top: 1px solid #1f2937; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; font-size: 12px; color: #9ca3af;
-        }
-        .status-badge { background: #1e293b; padding: 4px 10px; border-radius: 4px; color: #38bdf8; font-weight: bold; border: 1px solid #334155; }
-    </style>
-</head>
-<body>
-
-    <div id="login-screen">
-        <div class="login-card">
-            <h2>Scorvix Studio</h2>
-            <p>Sign in with your Google account to access the control panel.</p>
-            <button class="google-btn" onclick="loginWithGoogle()">
-                <img src="https://www.svgrepo.com/show/475656/google-color.svg" width="20"> 
-                Sign in with Google
-            </button>
-        </div>
-    </div>
-
-    <div class="studio-container" id="main-studio" style="display: none;">
-        <div class="studio-header">
-            <div class="studio-title">🏓 Pro League 16:9 Studio Master Controller</div>
-            <div class="header-actions">
-                <button class="link-btn" onclick="openOverlayTab()">🔗 Open Overlay / Templates</button>
-                <button class="logout-btn" onclick="logout()">Logout (<span id="user-email-display"></span>)</button>
-            </div>
-        </div>
-
-        <div class="studio-body">
-            
-            <!-- COLUMN 1: Master Global Data Feed -->
-            <div class="panel">
-                <div class="panel-title">1. Master Global Data & Branding</div>
-                <div>
-                    <label>Tournament Header Title:</label>
-                    <input type="text" id="c-tourney-title" value="TABLE TENNIS SUPER LEAGUE MAHARASHTRA 2025" oninput="sendData()">
-                </div>
-                <div>
-                    <label>Match Format:</label>
-                    <select id="c-match-format" onchange="sendData()">
-                        <option value="bestOf5">Best of 5 (First to 3 Sets)</option>
-                        <option value="bestOf7">Best of 7 (First to 4 Sets)</option>
-                    </select>
-                </div>
-                <div>
-                    <label>Match Category (Top Box):</label>
-                    <input type="text" id="c-match-category" value="Mixed Doubles" oninput="sendData()" style="border-left: 3px solid #10b981;">
-                </div>
-                <div>
-                    <label>Team Matchup:</label>
-                    <input type="text" id="c-team-matchup" value="SCL vs KB" oninput="sendData()" style="border-left: 3px solid #10b981;">
-                </div>
-                <div>
-                    <label>Winner Announcement Text:</label>
-                    <input type="text" id="c-winner-text" value="PHANTOM STARS WON THE MATCH" oninput="sendData()">
-                </div>
-                <div>
-                    <label>Team A Name & Logo (Left):</label>
-                    <input type="text" id="c-p1" value="PHANTOM STARS" oninput="sendData()">
-                    <div style="display: flex; gap: 5px; margin-top: 3px;">
-                        <input type="file" id="c-img1" accept="image/*" onchange="uploadImage(1)">
-                        <button style="background: #dc2626; padding: 4px 8px; font-size: 10px;" onclick="removeLogo(1)">Remove</button>
-                    </div>
-                </div>
-                <div>
-                    <label>Team B Name & Logo (Right):</label>
-                    <input type="text" id="c-p2" value="MUMBAI MOZARTT" oninput="sendData()">
-                    <div style="display: flex; gap: 5px; margin-top: 3px;">
-                        <input type="file" id="c-img2" accept="image/*" onchange="uploadImage(2)">
-                        <button style="background: #dc2626; padding: 4px 8px; font-size: 10px;" onclick="removeLogo(2)">Remove</button>
-                    </div>
-                </div>
-                <button style="background: #475569; margin-top: 5px;" onclick="resetMatch()">🔄 Reset Match Score</button>
-            </div>
-
-            <!-- COLUMN 2: Live Score & Points Editor -->
-            <div class="panel">
-                <div class="panel-title">2. Live Score & Points Editor</div>
-                
-                <div class="score-box">
-                    <label id="lbl-p1" style="color: #38bdf8;">PHANTOM STARS</label>
-                    <div class="score-display" id="disp-p1">0 <span style="font-size: 14px; color: #94a3b8;">(Sets: <span id="disp-p1-sets">0</span>)</span></div>
-                    <div class="btn-row">
-                        <button class="btn-plus" onclick="addPoint(1)">+ Point</button>
-                        <button class="btn-minus" onclick="subPoint(1)">-</button>
-                    </div>
-                </div>
-
-                <div class="score-box">
-                    <label id="lbl-p2" style="color: #f97316;">MUMBAI MOZARTT</label>
-                    <div class="score-display" id="disp-p2">0 <span style="font-size: 14px; color: #94a3b8;">(Sets: <span id="disp-p2-sets">0</span>)</span></div>
-                    <div class="btn-row">
-                        <button class="btn-plus" onclick="addPoint(2)">+ Point</button>
-                        <button class="btn-minus" onclick="subPoint(2)">-</button>
-                    </div>
-                </div>
-
-                <div>
-                    <label>Quick Edit Standings Points:</label>
-                    <div class="pt-edit-row">
-                        <input type="text" id="pt-t1-name" value="PHANTOM STARS" oninput="sendData()">
-                        <input type="number" id="pt-t1-played" value="5" oninput="sendData()">
-                        <input type="number" id="pt-t1-pts" value="77" oninput="sendData()">
-                    </div>
-                    <div class="pt-edit-row">
-                        <input type="text" id="pt-t2-name" value="MUMBAI MOZARTT" oninput="sendData()">
-                        <input type="number" id="pt-t2-played" value="5" oninput="sendData()">
-                        <input type="number" id="pt-t2-pts" value="68" oninput="sendData()">
-                    </div>
-                </div>
-            </div>
-
-            <!-- COLUMN 3: Graphic On / Off Switcher -->
-            <div class="panel">
-                <div class="panel-title">3. Graphic On / Off Switcher</div>
-                
-                <label>Match Intro Screen (Team A vs Team B):</label>
-                <div class="toggles-grid">
-                    <button class="toggle-btn bg-purple" onclick="triggerState('intro-in')">Show Intro</button>
-                    <button class="toggle-btn bg-red" onclick="triggerState('intro-out')">Hide Intro</button>
-                </div>
-
-                <label style="margin-top: 4px;">Tournament Header:</label>
-                <div class="toggles-grid">
-                    <button class="toggle-btn bg-green" onclick="triggerState('header-in')">Show</button>
-                    <button class="toggle-btn bg-red" onclick="triggerState('header-out')">Hide</button>
-                </div>
-
-                <label style="margin-top: 4px;">Live Scoreboard:</label>
-                <div class="toggles-grid">
-                    <button class="toggle-btn bg-green" onclick="triggerState('score-in')">Show</button>
-                    <button class="toggle-btn bg-red" onclick="triggerState('score-out')">Hide</button>
-                </div>
-
-                <label style="margin-top: 4px;">Set-wise Score Grid:</label>
-                <div class="toggles-grid">
-                    <button class="toggle-btn bg-green" onclick="triggerState('sets-grid-in')">Show Sets</button>
-                    <button class="toggle-btn bg-red" onclick="triggerState('sets-grid-out')">Hide Sets</button>
-                </div>
-
-                <label style="margin-top: 4px;">Winner Banner:</label>
-                <div class="toggles-grid">
-                    <button class="toggle-btn bg-blue" onclick="triggerState('winner-in')">Show</button>
-                    <button class="toggle-btn bg-red" onclick="triggerState('winner-out')">Hide</button>
-                </div>
-
-                <label style="margin-top: 4px;">Points Table Leaderboard:</label>
-                <div class="toggles-grid">
-                    <button class="toggle-btn bg-blue" onclick="triggerState('table-in')">Show</button>
-                    <button class="toggle-btn bg-red" onclick="triggerState('table-out')">Hide</button>
-                </div>
-            </div>
-
-        </div>
-
-        <div class="studio-footer">
-            <span id="footer-status-text">Server Status: Live & Connected (Master State Sync Active)</span>
-            <div class="status-badge" id="footer-server-turn">Serving: PHANTOM STARS</div>
-        </div>
-    </div>
-
-<script>
-    const firebaseConfig = {
-        apiKey: "AIzaSyAYc_bEB9C4RhhLhPBEJsJRFRUppcR45yo",
-        authDomain: "scorvix-faf0e.firebaseapp.com",
-        projectId: "scorvix-faf0e",
-        storageBucket: "scorvix-faf0e.firebasestorage.app",
-        messagingSenderId: "725629580596",
-        appId: "1:725629580596:web:7737847e7194650f276161",
-        measurementId: "G-4EXH0QXHF7"
-    };
-
-    firebase.initializeApp(firebaseConfig);
-    const auth = firebase.auth();
-    const db = firebase.firestore();
-
-    let currentUid = "";
-
-    function loginWithGoogle() {
-        const provider = new firebase.auth.GoogleAuthProvider();
-        auth.signInWithPopup(provider).catch(error => {
-            alert("Login Error: " + error.message);
-        });
-    }
-
-    function logout() {
-        auth.signOut();
-    }
-
-    auth.onAuthStateChanged(user => {
-        if (user) {
-            currentUid = user.uid;
-            localStorage.setItem("scorvix_uid", currentUid);
-            document.getElementById('login-screen').style.display = 'none';
-            document.getElementById('main-studio').style.display = 'grid';
-            document.getElementById('user-email-display').innerText = user.email;
-            loadSavedData();
-        } else {
-            currentUid = "";
-            localStorage.removeItem("scorvix_uid");
-            document.getElementById('login-screen').style.display = 'flex';
-            document.getElementById('main-studio').style.display = 'none';
-        }
-    });
-
-    const socket = io();
-    let data = { 
-        tourneyTitle: "TABLE TENNIS SUPER LEAGUE MAHARASHTRA 2025",
-        matchFormat: "bestOf5",
-        matchCategory: "Mixed Doubles",
-        teamMatchup: "SCL vs KB",
-        winner: "PHANTOM STARS WON THE MATCH",
-        p1Name: "PHANTOM STARS", p2Name: "MUMBAI MOZARTT", 
-        p1Score: 0, p2Score: 0, p1Sets: 0, p2Sets: 0, 
-        server: 1, img1: "", img2: "", state: "score-in",
-        setsHistory: [], 
-        standings: [
-            { team: "PHANTOM STARS", ties: 5, tiesWon: 5, gamesPlayed: 135, matchesWon: 28, gamesWon: 77, points: 77 },
-            { team: "MUMBAI MOZARTT", ties: 5, tiesWon: 1, gamesPlayed: 135, matchesWon: 23, gamesWon: 68, points: 68 },
-            { team: "PBG PUNE JAGUARS", ties: 5, tiesWon: 3, gamesPlayed: 135, matchesWon: 21, gamesWon: 68, points: 68 },
-            { team: "CENTURY WARRIORS", ties: 5, tiesWon: 3, gamesPlayed: 135, matchesWon: 21, gamesWon: 66, points: 66 },
-            { team: "PING PANTHERS", ties: 5, tiesWon: 1, gamesPlayed: 135, matchesWon: 22, gamesWon: 64, points: 64 },
-            { team: "BAYSIDE SPINNERS TTC", ties: 5, tiesWon: 1, gamesPlayed: 135, matchesWon: 17, gamesWon: 59, points: 59 }
-        ]
-    };
-
-    function openOverlayTab() { 
-        window.open(`/overlay.html?uid=${currentUid}`, '_blank'); 
-    }
-
-    function sendData() {
-        if (!currentUid) return;
-        data.uid = currentUid;
-
-        data.tourneyTitle = document.getElementById('c-tourney-title').value;
-        data.matchFormat = document.getElementById('c-match-format').value;
-        data.matchCategory = document.getElementById('c-match-category').value;
-        data.teamMatchup = document.getElementById('c-team-matchup').value;
-        data.winner = document.getElementById('c-winner-text').value;
-        data.p1Name = document.getElementById('c-p1').value;
-        data.p2Name = document.getElementById('c-p2').value;
-
-        document.getElementById('pt-t1-name').value = data.p1Name;
-        document.getElementById('pt-t2-name').value = data.p2Name;
-        data.standings[0].team = data.p1Name;
-        data.standings[0].ties = parseInt(document.getElementById('pt-t1-played').value) || 0;
-        data.standings[0].points = parseInt(document.getElementById('pt-t1-pts').value) || 0;
-
-        data.standings[1].team = data.p2Name;
-        data.standings[1].ties = parseInt(document.getElementById('pt-t2-played').value) || 0;
-        data.standings[1].points = parseInt(document.getElementById('pt-t2-pts').value) || 0;
-
-        document.getElementById('lbl-p1').innerText = data.p1Name;
-        document.getElementById('lbl-p2').innerText = data.p2Name;
-        document.getElementById('disp-p1').innerHTML = `${data.p1Score} <span style="font-size: 14px; color: #94a3b8;">(Sets: ${data.p1Sets})</span>`;
-        document.getElementById('disp-p2').innerHTML = `${data.p2Score} <span style="font-size: 14px; color: #94a3b8;">(Sets: ${data.p2Sets})</span>`;
-        document.getElementById('footer-server-turn').innerText = `Serving: ${data.server === 1 ? data.p1Name : data.p2Name}`;
-
-        socket.emit('updateScore', data);
-        db.collection("scorvix").doc(currentUid).set(data).catch(err => console.log("Cloud save error:", err));
-    }
-
-    function loadSavedData() {
-        if (!currentUid) return;
-        db.collection("scorvix").doc(currentUid).get().then(doc => {
-            if (doc.exists) {
-                data = doc.data();
-                data.uid = currentUid;
-                document.getElementById('c-tourney-title').value = data.tourneyTitle || "";
-                document.getElementById('c-match-format').value = data.matchFormat || "bestOf5";
-                document.getElementById('c-match-category').value = data.matchCategory || "Mixed Doubles";
-                document.getElementById('c-team-matchup').value = data.teamMatchup || "SCL vs KB";
-                document.getElementById('c-winner-text').value = data.winner || "";
-                document.getElementById('c-p1').value = data.p1Name || "";
-                document.getElementById('c-p2').value = data.p2Name || "";
-                if(!data.setsHistory) data.setsHistory = [];
-                if(data.standings && data.standings[0]) {
-                    document.getElementById('pt-t1-played').value = data.standings[0].ties;
-                    document.getElementById('pt-t1-pts').value = data.standings[0].points;
-                }
-                if(data.standings && data.standings[1]) {
-                    document.getElementById('pt-t2-played').value = data.standings[1].ties;
-                    document.getElementById('pt-t2-pts').value = data.standings[1].points;
-                }
-                sendData();
-            }
-        }).catch(err => console.log("Cloud load error:", err));
-    }
-
-    function uploadImage(player) {
-        const fileInput = document.getElementById(`c-img${player}`);
-        const file = fileInput.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                if(player === 1) data.img1 = e.target.result;
-                if(player === 2) data.img2 = e.target.result;
-                sendData();
-            };
-            reader.readAsDataURL(file);
-        }
-    }
-
-    function removeLogo(player) {
-        if(player === 1) {
-            data.img1 = "";
-            document.getElementById('c-img1').value = "";
-        }
-        if(player === 2) {
-            data.img2 = "";
-            document.getElementById('c-img2').value = "";
-        }
-        sendData();
-    }
-
-    function addPoint(p) {
-        if(p === 1) data.p1Score++; else data.p2Score++;
-        checkRules();
-        sendData();
-    }
-
-    function subPoint(p) {
-        if(p === 1 && data.p1Score > 0) data.p1Score--;
-        if(p === 2 && data.p2Score > 0) data.p2Score--;
-        sendData();
-    }
-
-    function checkRules() {
-        let totalPoints = data.p1Score + data.p2Score;
-        if (data.p1Score >= 10 && data.p2Score >= 10) {
-            data.server = (totalPoints % 2 === 0) ? 1 : 2;
-        } else {
-            data.server = (Math.floor(totalPoints / 2) % 2 === 0) ? 1 : 2;
-        }
-        
-        if ((data.p1Score >= 11 || data.p2Score >= 11) && Math.abs(data.p1Score - data.p2Score) >= 2) {
-            let setWinner = "";
-            
-            if(!data.setsHistory) data.setsHistory = [];
-            data.setsHistory.push({ p1: data.p1Score, p2: data.p2Score });
-
-            if(data.p1Score > data.p2Score) {
-                data.p1Sets++; setWinner = data.p1Name;
-            } else {
-                data.p2Sets++; setWinner = data.p2Name;
-            }
-            data.p1Score = 0; data.p2Score = 0;
-
-            let targetSets = (data.matchFormat === 'bestOf7') ? 4 : 3;
-
-            if (data.p1Sets >= targetSets || data.p2Sets >= targetSets) {
-                data.winner = `${setWinner.toUpperCase()} WON THE MATCH`;
-                document.getElementById('c-winner-text').value = data.winner;
-                data.state = "winner-in";
-            }
-        }
-    }
-
-    function triggerState(st) { data.state = st; sendData(); }
-    function resetMatch() {
-        if(confirm("Reset match score?")) {
-            data.p1Score = 0; data.p2Score = 0; data.p1Sets = 0; data.p2Sets = 0; data.server = 1; 
-            data.setsHistory = [];
-            sendData();
-        }
-    }
-</script>
-</body>
-</html>
-```[cite: 4]
-
-### Isse kya fayda hoga?
-* **Future Proofing:** Ab jab bhi tu koi naya template banayega, usko bas `socket.on('liveScore', (data) => { ... })` ya `/api/tt-data` se connect karna hoga. Saare master data (`data.p1Name`, `data.img1`, `data.tourneyTitle`, etc.) automatically us template me load ho jayenge.
-* **Zero Extra Effort for Client:** Client ko alag-alag templates me jaakar baar-baar team names ya logos set nahi karne padenge. Woh bas ek jagah panel me edit karega aur saare active overlays / templates par live update ho jayega[cite: 3, 4].
