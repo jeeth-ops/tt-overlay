@@ -94,7 +94,6 @@
             to { opacity: 1; transform: translateY(0); }
         }
 
-        /* Full Screen Strict Login Gate Overlay */
         #auth-gate {
             position: fixed;
             top: 0;
@@ -210,6 +209,30 @@
         }
         .admin-form input:focus, .admin-form textarea:focus { outline: none; border-color: var(--accent); }
 
+        .admin-template-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(15, 23, 42, 0.6);
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        .admin-template-item span { font-weight: 600; }
+        .btn-delete-item {
+            background: #ef4444;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 600;
+            transition: 0.2s;
+        }
+        .btn-delete-item:hover { background: #dc2626; }
+
         .how-it-works { padding: 80px 20px; text-align: center; }
         .how-it-works h2 { font-size: 2.5rem; margin-bottom: 50px; }
         .steps-container { display: flex; justify-content: center; gap: 30px; max-width: 1000px; margin: 0 auto; flex-wrap: wrap; }
@@ -283,7 +306,6 @@
 </head>
 <body>
 
-    <!-- Strict Login Gate -->
     <div id="auth-gate">
         <div class="gate-card">
             <h2>Scor<span>vix</span> Access</h2>
@@ -320,7 +342,7 @@
     <!-- Maalik Control Panel -->
     <div id="admin-panel" class="admin-panel-container hidden">
         <div class="admin-box">
-            <h3>⚙️ Maalik Control Panel (Add New Overlay & Code)</h3>
+            <h3>⚙️ Maalik Control Panel</h3>
             <form id="add-template-form" class="admin-form">
                 <input type="text" id="sport-name" placeholder="Sport / Template Name (e.g. Badminton)" required>
                 <input type="text" id="sport-icon" placeholder="Emoji Icon (e.g. 🏸)" required>
@@ -333,6 +355,13 @@
                 
                 <button type="submit" class="cta-btn" id="submit-btn" style="padding: 10px 25px; font-size: 1rem; width: 100%; justify-content: center;">Plant Template</button>
             </form>
+
+            <div style="margin-top: 30px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">
+                <h4 style="margin-bottom: 12px; font-size: 1.1rem; color: var(--text-main);">🗑️ Manage / Remove Added Templates</h4>
+                <div id="admin-templates-list">
+                    <p style="color: var(--text-muted); font-size: 0.9rem;">Loading added templates...</p>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -375,7 +404,6 @@
                 <div class="badge">Coming Soon</div>
             </div>
 
-            <!-- Football Card Updated to open football-templates.html -->
             <div onclick="openFootballTemplates()" class="sport-card reveal-on-scroll delay-3">
                 <div class="card-content">
                     <div class="sport-icon">⚽</div>
@@ -385,9 +413,7 @@
         </div>
     </section>
 
-    <!-- Firebase Scripts & Strict Gate Logic -->
     <script>
-        // 🌟 Firebase Configuration 🌟
         const firebaseConfig = {
             apiKey: "AIzaSyAYc_bEB9C4RhhLhPBEJsJRFRUppcR45yo",
             authDomain: "scorvix-faf0e.firebaseapp.com",
@@ -398,7 +424,6 @@
             measurementId: "G-4EXH0QXHF7"
         };
 
-        // Initialize Firebase
         firebase.initializeApp(firebaseConfig);
         const auth = firebase.auth();
 
@@ -408,7 +433,6 @@
 
         let isUserLoggedIn = false;
 
-        // Google Login Function
         function loginWithGoogle() {
             const provider = new firebase.auth.GoogleAuthProvider();
             auth.signInWithPopup(provider).catch(error => {
@@ -416,7 +440,6 @@
             });
         }
 
-        // Logout Function
         function logout() {
             auth.signOut().then(() => {
                 localStorage.removeItem('scorvix_uid');
@@ -424,7 +447,6 @@
             });
         }
 
-        // Safe Navigation to TT Templates page
         function openTableTennisTemplates() {
             if (isUserLoggedIn) {
                 window.location.href = "tt-templates.html";
@@ -435,7 +457,6 @@
             }
         }
 
-        // Safe Navigation to Football Templates page
         function openFootballTemplates() {
             if (isUserLoggedIn) {
                 window.location.href = "football-templates.html";
@@ -446,7 +467,6 @@
             }
         }
 
-        // Load dynamic sports from server API
         async function loadDynamicSports() {
             try {
                 const response = await fetch('/api/get-sports');
@@ -454,6 +474,25 @@
                 const sports = await response.json();
                 
                 const grid = document.getElementById('sports-grid-container');
+                const adminList = document.getElementById('admin-templates-list');
+                
+                if (adminList) {
+                    if (sports.length === 0) {
+                        adminList.innerHTML = `<p style="color: var(--text-muted); font-size: 0.9rem;">No dynamic templates added yet.</p>`;
+                    } else {
+                        adminList.innerHTML = "";
+                        sports.forEach(sport => {
+                            const item = document.createElement('div');
+                            item.className = "admin-template-item";
+                            item.innerHTML = `
+                                <span>${sport.icon || '🎯'} ${sport.name}</span>
+                                <button class="btn-delete-item" onclick="deleteTemplate('${sport.slug}', '${sport.name}')">Remove</button>
+                            `;
+                            adminList.appendChild(item);
+                        });
+                    }
+                }
+
                 if (!grid) return;
                 
                 sports.forEach(sport => {
@@ -488,7 +527,28 @@
             }
         }
 
-        // Handle Admin Form Submission
+        async function deleteTemplate(slug, name) {
+            if (!confirm(`Are you sure you want to remove "${name}" template and its files?`)) return;
+
+            try {
+                const res = await fetch('/api/delete-template', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ slug: slug })
+                });
+
+                if (res.ok) {
+                    alert(`Template "${name}" successfully remove ho gaya!`);
+                    window.location.reload();
+                } else {
+                    alert("Deletion mein kuch error aaya.");
+                }
+            } catch (err) {
+                console.error(err);
+                alert("Server connection failed.");
+            }
+        }
+
         document.getElementById('add-template-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = document.getElementById('submit-btn');
@@ -522,7 +582,6 @@
             }
         });
 
-        // Strict Session Check & LocalStorage UID Save
         auth.onAuthStateChanged(user => {
             if (user) {
                 isUserLoggedIn = true;
