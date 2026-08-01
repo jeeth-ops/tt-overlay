@@ -112,6 +112,48 @@ async function getRoomState(room) {
     return roomStates[room];
 }
 
+// Lower Third REST APIs
+app.get('/api/tt-data', async (req, res) => {
+    let room = req.query.id || req.query.uid || 'scorvix-master-room';
+    if (!room.startsWith('room-') && room !== 'scorvix-master-room') room = `room-${room}`;
+    const state = await getRoomState(room);
+    res.json({
+        ltTitle: state.ttState.ltTitle || "MATCH HIGHLIGHT",
+        ltText: state.ttState.ltText || "Announcement text goes here",
+        ltVisible: state.ttState.ltVisible || false
+    });
+});
+
+app.post('/api/update-tt-data', async (req, res) => {
+    let room = req.body.id || req.query.id || req.body.uid || req.query.uid || 'scorvix-master-room';
+    if (!room.startsWith('room-') && room !== 'scorvix-master-room') room = `room-${room}`;
+    const state = await getRoomState(room);
+    
+    if (req.body.ltTitle !== undefined) state.ttState.ltTitle = req.body.ltTitle;
+    if (req.body.ltText !== undefined) state.ttState.ltText = req.body.ltText;
+    if (req.body.ltVisible !== undefined) state.ttState.ltVisible = req.body.ltVisible;
+
+    io.to(room).emit('liveLowerThird', {
+        ltTitle: state.ttState.ltTitle,
+        ltText: state.ttState.ltText,
+        ltVisible: state.ttState.ltVisible
+    });
+
+    if (room.startsWith('room-')) {
+        const uid = room.replace('room-', '');
+        db.collection("scorvix").doc(uid).set({ ttState: state.ttState }, { merge: true }).catch(err => console.log("DB update error:", err));
+    }
+    res.json({ success: true });
+});
+
+// Match Intro REST API
+app.get('/api/matchintro-data', async (req, res) => {
+    let room = req.query.id || req.query.uid || 'scorvix-master-room';
+    if (!room.startsWith('room-') && room !== 'scorvix-master-room') room = `room-${room}`;
+    const state = await getRoomState(room);
+    res.json(state.matchIntroState);
+});
+
 io.on('connection', async (socket) => {
     let currentRoom = 'scorvix-master-room';
     socket.activeRoom = currentRoom;
@@ -120,9 +162,13 @@ io.on('connection', async (socket) => {
     const query = socket.handshake.query;
     const clientId = query.id || query.uid;
     const cleanQueryUid = query.uid ? query.uid.replace('overlay-', '') : null;
-    
-    if (clientId || cleanQueryUid) {
-        const idVal = cleanQueryUid || clientId;
+    // Overlay pages connect with a "room" query param (e.g. ?room=room-xxxxx).
+    // This was not being read before, so overlays never joined the correct
+    // room and stayed stuck in 'scorvix-master-room'.
+    const cleanQueryRoom = query.room ? query.room.replace('room-', '') : null;
+
+    if (clientId || cleanQueryUid || cleanQueryRoom) {
+        const idVal = cleanQueryRoom || cleanQueryUid || clientId;
         currentRoom = `room-${idVal}`;
         socket.leave(socket.activeRoom);
         socket.join(currentRoom);
@@ -130,7 +176,7 @@ io.on('connection', async (socket) => {
     }
 
     const roomState = await getRoomState(currentRoom);
-    const matchIdForClient = cleanQueryUid || clientId || 'default';
+    const matchIdForClient = cleanQueryRoom || cleanQueryUid || clientId || 'default';
 
     if (roomState.matchIntroState) {
         socket.emit('liveMatchIntro', {
@@ -141,6 +187,27 @@ io.on('connection', async (socket) => {
     }
     if (roomState.ttState) socket.emit('liveScore', roomState.ttState);
     if (roomState.footballState) socket.emit('liveFootballScore', roomState.footballState);
+
+    // SCOREBOARD PANEL UPDATE HANDLING (Table Tennis)
+    socket.on('updateScore', async (data) => {
+        let room = socket.activeRoom;
+        const targetId = data.id || data.uid || matchIdForClient;
+        if (targetId && targetId !== 'default') {
+            room = `room-${targetId}`;
+            socket.leave(socket.activeRoom);
+            socket.join(room);
+            socket.activeRoom = room;
+        }
+
+        const state = await getRoomState(room);
+        state.ttState = { ...state.ttState, ...data };
+
+        io.to(room).emit('liveScore', state.ttState);
+
+        if (targetId && targetId !== 'default') {
+            db.collection("scorvix").doc(targetId).set({ ttState: state.ttState }, { merge: true }).catch(err => console.log("DB update error:", err));
+        }
+    });
 
     // ⚽ FOOTBALL SCOREBOARD PANEL & OVERLAY SOCKET HANDLING
     const handleFootballUpdate = async (data) => {
@@ -168,10 +235,40 @@ io.on('connection', async (socket) => {
     socket.on('updateFootballScore', handleFootballUpdate);
     socket.on('liveFootballScore', handleFootballUpdate);
 
+    // Match Intro Socket Update Handling
+    socket.on('updateMatchIntro', async (data) => {
+        let room = socket.activeRoom;
+        const targetId = data.id || data.uid || matchIdForClient;
+        if (targetId && targetId !== 'default') {
+            room = `room-${targetId}`;
+            socket.leave(socket.activeRoom);
+            socket.join(room);
+            socket.activeRoom = room;
+        }
+        
+        const state = await getRoomState(room);
+        if (data.config) {
+            state.matchIntroState = data.config;
+        } else {
+            state.matchIntroState = data; 
+        }
+
+        io.to(room).emit('liveMatchIntro', {
+            matchId: targetId,
+            config: state.matchIntroState,
+            triggerReplay: data.triggerReplay || false
+        });
+
+        if (targetId && targetId !== 'default') {
+            db.collection("scorvix").doc(targetId).set({ matchIntroState: state.matchIntroState }, { merge: true }).catch(err => console.log("DB update error:", err));
+        }
+    });
+
     socket.on('disconnect', () => {});
 });
 
 const PORT = process.env.PORT || 3000;
+
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
