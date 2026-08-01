@@ -61,14 +61,6 @@
         .team-logo-box.active { width: 32px; opacity: 1; }
         .team-logo-box img { width: 28px; height: 28px; object-fit: contain; }
 
-        .team-name {
-            font-size: 18px;
-            font-weight: 800;
-            color: #ffffff;
-            letter-spacing: 0.5px;
-            text-transform: uppercase;
-        }
-
         .score-box {
             color: white;
             font-family: 'Teko', sans-serif;
@@ -80,6 +72,24 @@
             justify-content: center;
             min-width: 55px;
             transition: background 0.3s ease, transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        /* Smooth number-change animation, applied briefly whenever the score updates */
+        .score-box span.digit-wrap {
+            display: inline-block;
+            transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease;
+        }
+        .score-box span.digit-wrap.bump {
+            transform: scale(1.35);
+        }
+
+        .team-name {
+            font-size: 18px;
+            font-weight: 800;
+            color: #ffffff;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            transition: opacity 0.25s ease;
         }
 
         /* Smooth Goal Flash Animation (Non-bouncy) */
@@ -321,6 +331,17 @@
         }
 
         let lastGoalTimestamp = 0;
+        let lastScoreA = null;
+        let lastScoreB = null;
+
+        function updateScoreDisplay(elId, newVal) {
+            const el = document.getElementById(elId);
+            el.innerText = newVal;
+            el.classList.remove('digit-wrap');
+            void el.offsetWidth; // restart animation
+            el.classList.add('digit-wrap', 'bump');
+            setTimeout(() => el.classList.remove('bump'), 280);
+        }
 
         socket.on('liveFootballScore', (data) => {
             if (!data) return;
@@ -333,16 +354,25 @@
                 wrapper.classList.add('hidden-scoreboard');
             }
 
-            // 2. Names & Scores Sync
+            // 2. Names & Scores Sync (animate scores only when they actually change)
             document.getElementById('dispNameA').innerText = data.nameA || "TEAM A";
             document.getElementById('dispNameB').innerText = data.nameB || "TEAM B";
-            document.getElementById('dispScoreA').innerText = data.scoreA ?? 0;
-            document.getElementById('dispScoreB').innerText = data.scoreB ?? 0;
+
+            const newScoreA = data.scoreA ?? 0;
+            const newScoreB = data.scoreB ?? 0;
+            if (lastScoreA === null || newScoreA !== lastScoreA) {
+                updateScoreDisplay('dispScoreA', newScoreA);
+                lastScoreA = newScoreA;
+            }
+            if (lastScoreB === null || newScoreB !== lastScoreB) {
+                updateScoreDisplay('dispScoreB', newScoreB);
+                lastScoreB = newScoreB;
+            }
 
             document.getElementById('modalDispNameA').innerText = data.nameA || "TEAM A";
             document.getElementById('modalDispNameB').innerText = data.nameB || "TEAM B";
-            document.getElementById('modalDispScoreA').innerText = data.scoreA ?? 0;
-            document.getElementById('modalDispScoreB').innerText = data.scoreB ?? 0;
+            document.getElementById('modalDispScoreA').innerText = newScoreA;
+            document.getElementById('modalDispScoreB').innerText = newScoreB;
 
             // 3. Team Colors & vMix RGBA Compatibility
             if (data.colorA) {
@@ -461,3 +491,4 @@
     </script>
 </body>
 </html>
+
