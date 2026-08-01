@@ -82,7 +82,6 @@
             transition: background 0.3s ease, transform 0.3s ease, box-shadow 0.3s ease;
         }
 
-        /* Smooth Goal Flash Animation (Non-bouncy) */
         .goal-flash {
             transform: scale(1.12);
             box-shadow: 0 0 20px #38bdf8;
@@ -131,7 +130,6 @@
         }
         .penalty-bar.active { display: block; }
 
-        /* Goal Banner Notification */
         .goal-banner {
             position: fixed;
             top: 100px;
@@ -238,7 +236,6 @@
 </head>
 <body>
 
-    <!-- Main Scoreboard -->
     <div class="overlay-wrapper" id="wrapper">
         <div class="scoreboard-container">
             <div class="team-block left" id="blockA">
@@ -264,10 +261,8 @@
         </div>
     </div>
 
-    <!-- Goal Popup Banner -->
     <div class="goal-banner" id="goalBanner">⚽ GOAL! ⚽</div>
 
-    <!-- Fullscreen Modal -->
     <div class="modal-overlay" id="modalOverlay">
         <div class="modal-card" id="modalCardBox">
             <h1 id="modalTitleText">HALF TIME</h1>
@@ -282,7 +277,7 @@
                     <div class="modal-score-box" id="modalDispScoreB">0</div>
                     <div class="modal-team-block right" id="modalBlockB">
                         <div class="modal-logo-box" id="modalBoxLogoB"><img id="modalImgLogoB" src="" alt=""></div>
-                        <div class="modal-team-name" id="modalDispNameB">BARCELONA</div>
+                        <div class="modal-modal-team-name" id="modalDispNameB">BARCELONA</div>
                     </div>
                 </div>
                 <div class="modal-timer-footer" id="modalTimerFooter">HALF TIME BREAK • 45:00</div>
@@ -292,7 +287,6 @@
 
     <div class="replay-badge" id="replayBadge">▶ ACTION REPLAY</div>
 
-    <!-- Socket.io client script -->
     <script src="https://tt-overlay-lph4.onrender.com/socket.io/socket.io.js"></script>
 
     <script>
@@ -305,18 +299,20 @@
             upgrade: true
         });
 
+        socket.on('connect', () => {
+            console.log("Connected to server with ID:", socket.id, "Room:", roomId);
+            // Optionally join room if backend uses socket.join()
+            socket.emit('joinRoom', roomId);
+        });
+
         function hexToRgba(hex, alpha) {
             if (!hex) return 'transparent';
             if (!hex.startsWith('#')) return hex;
-            
             hex = hex.replace('#', '');
-            if (hex.length === 3) {
-                hex = hex.split('').map(x => x + x).join('');
-            }
+            if (hex.length === 3) hex = hex.split('').map(x => x + x).join('');
             const r = parseInt(hex.substring(0, 2), 16);
             const g = parseInt(hex.substring(2, 4), 16);
             const b = parseInt(hex.substring(4, 6), 16);
-            
             return `rgba(${r}, ${g}, ${b}, ${alpha})`;
         }
 
@@ -327,7 +323,7 @@
 
             // 1. Scoreboard Master Visibility
             const wrapper = document.getElementById('wrapper');
-            if (data.showScoreboard) {
+            if (data.showScoreboard !== false) {
                 wrapper.classList.remove('hidden-scoreboard');
             } else {
                 wrapper.classList.add('hidden-scoreboard');
@@ -344,32 +340,22 @@
             document.getElementById('modalDispScoreA').innerText = data.scoreA ?? 0;
             document.getElementById('modalDispScoreB').innerText = data.scoreB ?? 0;
 
-            // 3. Team Colors & vMix RGBA Compatibility
+            // 3. Team Colors
             if (data.colorA) {
-                const rgbaGradientA = hexToRgba(data.colorA, 0.25);
-                const rgbaModalA = hexToRgba(data.colorA, 0.2);
-                
-                document.getElementById('blockA').style.background = `linear-gradient(90deg, ${rgbaGradientA}, transparent)`;
+                document.getElementById('blockA').style.background = `linear-gradient(90deg, ${hexToRgba(data.colorA, 0.25)}, transparent)`;
                 document.getElementById('dispScoreA').style.background = data.colorA;
-                
-                document.getElementById('modalBlockA').style.background = rgbaModalA;
+                document.getElementById('modalBlockA').style.background = hexToRgba(data.colorA, 0.2);
                 document.getElementById('modalDispScoreA').style.background = data.colorA;
             }
 
             if (data.colorB) {
-                const rgbaGradientB = hexToRgba(data.colorB, 0.25);
-                const rgbaModalB = hexToRgba(data.colorB, 0.2);
-                
-                document.getElementById('blockB').style.background = `linear-gradient(-90deg, ${rgbaGradientB}, transparent)`;
+                document.getElementById('blockB').style.background = `linear-gradient(-90deg, ${hexToRgba(data.colorB, 0.25)}, transparent)`;
                 document.getElementById('dispScoreB').style.background = data.colorB;
-                
-                document.getElementById('modalBlockB').style.background = rgbaModalB;
+                document.getElementById('modalBlockB').style.background = hexToRgba(data.colorB, 0.2);
                 document.getElementById('modalDispScoreB').style.background = data.colorB;
             }
 
-            if (data.colorClock) {
-                document.getElementById('timerCenterBox').style.background = data.colorClock;
-            }
+            if (data.colorClock) document.getElementById('timerCenterBox').style.background = data.colorClock;
             if (data.colorModal) {
                 document.getElementById('modalCardBox').style.borderColor = data.colorModal;
                 document.getElementById('modalTimerFooter').style.color = data.colorModal;
@@ -383,13 +369,10 @@
             const modalImgLogoA = document.getElementById('modalImgLogoA');
 
             if (hasLogoA) { 
-                imgA.src = data.logoA; 
-                modalImgLogoA.src = data.logoA;
-                boxA.classList.add('active'); 
-                modalBoxLogoA.classList.add('active');
+                imgA.src = data.logoA; modalImgLogoA.src = data.logoA;
+                boxA.classList.add('active'); modalBoxLogoA.classList.add('active');
             } else { 
-                boxA.classList.remove('active'); 
-                modalBoxLogoA.classList.remove('active');
+                boxA.classList.remove('active'); modalBoxLogoA.classList.remove('active');
             }
 
             const hasLogoB = data.showLogoB && data.logoB && data.logoB.trim() !== "";
@@ -399,20 +382,16 @@
             const modalImgLogoB = document.getElementById('modalImgLogoB');
 
             if (hasLogoB) { 
-                imgB.src = data.logoB; 
-                modalImgLogoB.src = data.logoB;
-                boxB.classList.add('active'); 
-                modalBoxLogoB.classList.add('active');
+                imgB.src = data.logoB; modalImgLogoB.src = data.logoB;
+                boxB.classList.add('active'); modalBoxLogoB.classList.add('active');
             } else { 
-                boxB.classList.remove('active'); 
-                modalBoxLogoB.classList.remove('active');
+                boxB.classList.remove('active'); modalBoxLogoB.classList.remove('active');
             }
 
             // 5. Timer
-            let timerVal = data.timer || "00:00";
-            document.getElementById('dispTimer').innerText = timerVal;
+            document.getElementById('dispTimer').innerText = data.timer || "00:00";
 
-            // 6. Penalties Shootout Bar
+            // 6. Penalties Bar
             const penaltyBar = document.getElementById('penaltyBar');
             if (data.penA !== "" && data.penA !== undefined && data.penA !== null) {
                 penaltyBar.classList.add('active');
@@ -422,28 +401,24 @@
                 penaltyBar.classList.remove('active');
             }
 
-            // 7. Fullscreen Modal (HT / FT / Penalties)
+            // 7. Modal
             const modalOverlay = document.getElementById('modalOverlay');
             if (data.activeModal && data.activeModal.trim() !== "") {
                 modalOverlay.classList.add('active');
                 document.getElementById('modalTitleText').innerText = data.activeModal;
-                document.getElementById('modalTimerFooter').innerText = `${data.activeModal} • ${timerVal}`;
+                document.getElementById('modalTimerFooter').innerText = `${data.activeModal} • ${data.timer || "00:00"}`;
             } else {
                 modalOverlay.classList.remove('active');
             }
 
-            // 8. Action Replay Badge
+            // 8. Replay
             const replayBadge = document.getElementById('replayBadge');
-            if (data.showActionReplay) {
-                replayBadge.classList.add('active');
-            } else {
-                replayBadge.classList.remove('active');
-            }
+            if (data.showActionReplay) replayBadge.classList.add('active');
+            else replayBadge.classList.remove('active');
 
-            // 9. Smooth Goal Animation Trigger (Only on button press)
+            // 9. Goal Animation
             if (data.goalEvent && data.goalTimestamp && data.goalTimestamp !== lastGoalTimestamp) {
                 lastGoalTimestamp = data.goalTimestamp;
-                
                 let targetScoreBox = data.goalEvent === 'A' ? document.getElementById('dispScoreA') : document.getElementById('dispScoreB');
                 let goalBanner = document.getElementById('goalBanner');
                 let teamName = data.goalEvent === 'A' ? (data.nameA || "TEAM A") : (data.nameB || "TEAM B");
