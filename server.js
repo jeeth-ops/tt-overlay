@@ -44,6 +44,7 @@ app.get('/tt-lowerthird', (req, res) => res.sendFile(__dirname + '/tt-lowerthird
 app.get('/tt-lowerthird-panel', (req, res) => res.sendFile(__dirname + '/tt-lowerthird-panel.html'));
 
 let roomStates = {};
+const firestoreWriteTimers = {}; // debounce map: targetId -> timeout handle
 
 async function getRoomState(room) {
     if (!roomStates[room]) {
@@ -215,20 +216,31 @@ io.on('connection', async (socket) => {
         const targetId = data.room ? data.room.replace('room-', '') : (data.id || data.uid || matchIdForClient);
         if (targetId && targetId !== 'default') {
             room = `room-${targetId}`;
-            socket.leave(socket.activeRoom);
-            socket.join(room);
-            socket.activeRoom = room;
+            // Only leave/join if the socket isn't already in this room —
+            // avoids unnecessary work on every single keystroke/slider event.
+            if (socket.activeRoom !== room) {
+                socket.leave(socket.activeRoom);
+                socket.join(room);
+                socket.activeRoom = room;
+            }
         }
 
         const state = await getRoomState(room);
         state.footballState = { ...state.footballState, ...data };
 
-        // Broadcast updated football data to overlay and panels
+        // Broadcast updated football data to overlay and panels IMMEDIATELY —
+        // this is what makes the overlay feel instant.
         io.to(room).emit('liveFootballScore', state.footballState);
 
-        // Save to Firestore Database
+        // Save to Firestore, but debounced (max once per 700ms per room).
+        // Without this, rapid updates (e.g. dragging a color picker) queue up
+        // many DB writes back-to-back, which can make later live updates feel
+        // delayed since Node has to work through the backlog.
         if (targetId && targetId !== 'default') {
-            db.collection("scorvix").doc(targetId).set({ footballState: state.footballState }, { merge: true }).catch(err => console.log("DB update error:", err));
+            clearTimeout(firestoreWriteTimers[targetId]);
+            firestoreWriteTimers[targetId] = setTimeout(() => {
+                db.collection("scorvix").doc(targetId).set({ footballState: state.footballState }, { merge: true }).catch(err => console.log("DB update error:", err));
+            }, 700);
         }
     };
 
