@@ -305,6 +305,12 @@
             upgrade: true
         });
 
+        // 🚨 MAIN FIX: Overlay ko connection hone par actively room join karwana 
+        socket.on('connect', () => {
+            console.log("Overlay Connected. Joining Room: " + roomId);
+            socket.emit('joinRoom', roomId);
+        });
+
         function hexToRgba(hex, alpha) {
             if (!hex) return 'transparent';
             if (!hex.startsWith('#')) return hex;
@@ -324,6 +330,9 @@
 
         socket.on('liveFootballScore', (data) => {
             if (!data) return;
+
+            // 🚨 MAIN FIX: Data sirf humare room ka ho tabhi update chalega
+            if (data.room && data.room !== roomId) return;
 
             // 1. Scoreboard Master Visibility
             const wrapper = document.getElementById('wrapper');
