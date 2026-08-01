@@ -198,9 +198,9 @@ io.on('connection', async (socket) => {
     });
 
     // ⚽ FOOTBALL SCOREBOARD PANEL & OVERLAY SOCKET HANDLING
-    socket.on('liveFootballScore', async (data) => {
+    const handleFootballUpdate = async (data) => {
         let room = socket.activeRoom;
-        const targetId = data.room ? data.room.replace('room-', '') : matchIdForClient;
+        const targetId = data.room ? data.room.replace('room-', '') : (data.id || data.uid || matchIdForClient);
         if (targetId && targetId !== 'default') {
             room = `room-${targetId}`;
             socket.leave(socket.activeRoom);
@@ -218,7 +218,10 @@ io.on('connection', async (socket) => {
         if (targetId && targetId !== 'default') {
             db.collection("scorvix").doc(targetId).set({ footballState: state.footballState }, { merge: true }).catch(err => console.log("DB update error:", err));
         }
-    });
+    };
+
+    socket.on('updateFootballScore', handleFootballUpdate);
+    socket.on('liveFootballScore', handleFootballUpdate);
 
     // Match Intro Socket Update Handling
     socket.on('updateMatchIntro', async (data) => {
@@ -252,5 +255,7 @@ io.on('connection', async (socket) => {
     socket.on('disconnect', () => {});
 });
 
-const PORT = process.env.PORT || 3000;
+server.listen(process.env.PORT || 3000, () => {
+    console.log(`Server running on port ${process.env.PORT || 3000}`);
+});
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
