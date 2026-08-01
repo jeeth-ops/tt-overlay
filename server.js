@@ -1,20 +1,18 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const firebase = require('firebase/compat/app');
-require('firebase/compat/firestore');
+const admin = require('firebase-admin');
 
-firebase.initializeApp({
-    apiKey: "AIzaSyAYc_bEB9C4RhhLhPBEJsJRFRUppcR45yo",
-    authDomain: "scorvix-faf0e.firebaseapp.com",
-    projectId: "scorvix-faf0e",
-    storageBucket: "scorvix-faf0e.firebasestorage.app",
-    messagingSenderId: "725629580596",
-    appId: "1:725629580596:web:7737847e7194650f276161",
-    measurementId: "G-4EXH0QXHF7"
+// NOTE: Render ya server environment variables / service account key se initialize karein
+admin.initializeApp({
+    credential: admin.credential.cert({
+        projectId: process.env.FIREBASE_PROJECT_ID || "scorvix-faf0e",
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey: process.env.FIREBASE_PRIVATE_KEY ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n') : undefined
+    })
 });
 
-const db = firebase.firestore();
+const db = admin.firestore();
 const app = express();
 const server = http.createServer(app);
 
