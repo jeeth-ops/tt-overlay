@@ -3,14 +3,24 @@ const http = require('http');
 const { Server } = require('socket.io');
 const admin = require('firebase-admin');
 
-// NOTE: Render ya server environment variables / service account key se initialize karein
-admin.initializeApp({
-    credential: admin.credential.cert({
-        projectId: process.env.FIREBASE_PROJECT_ID || "scorvix-faf0e",
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: process.env.FIREBASE_PRIVATE_KEY ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n') : undefined
-    })
-});
+// Safe Initialization to prevent crashes on Render if environment variables are missing
+try {
+    if (process.env.FIREBASE_PRIVATE_KEY) {
+        admin.initializeApp({
+            credential: admin.credential.cert({
+                projectId: process.env.FIREBASE_PROJECT_ID || "scorvix-faf0e",
+                clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+                privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+            })
+        });
+    } else {
+        admin.initializeApp({
+            projectId: "scorvix-faf0e"
+        });
+    }
+} catch (e) {
+    console.log("Firebase Admin Init Error:", e);
+}
 
 const db = admin.firestore();
 const app = express();
