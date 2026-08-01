@@ -305,12 +305,6 @@
             upgrade: true
         });
 
-        // 🚨 MAIN FIX: Overlay ko connection hone par actively room join karwana 
-        socket.on('connect', () => {
-            console.log("Overlay Connected. Joining Room: " + roomId);
-            socket.emit('joinRoom', roomId);
-        });
-
         function hexToRgba(hex, alpha) {
             if (!hex) return 'transparent';
             if (!hex.startsWith('#')) return hex;
@@ -328,54 +322,17 @@
 
         let lastGoalTimestamp = 0;
 
-    // ⚽ Socket Listener for Live Football Score & Goal Animation
         socket.on('liveFootballScore', (data) => {
             if (!data) return;
 
-            // 🚨 MAIN FIX: Data sirf humare room ka ho tabhi update chalega
-            if (data.room && data.room !== roomId) return;
-
             // 1. Scoreboard Master Visibility
             const wrapper = document.getElementById('wrapper');
-            if (wrapper) {
-                if (data.showScoreboard) {
-                    wrapper.classList.remove('hidden-scoreboard');
-                } else {
-                    wrapper.classList.add('hidden-scoreboard');
-                }
+            if (data.showScoreboard) {
+                wrapper.classList.remove('hidden-scoreboard');
+            } else {
+                wrapper.classList.add('hidden-scoreboard');
             }
 
-            // 2. Team Names & Scores Update
-            if (document.getElementById('nameA')) document.getElementById('nameA').innerText = data.nameA || "TEAM A";
-            if (document.getElementById('nameB')) document.getElementById('nameB').innerText = data.nameB || "TEAM B";
-            if (document.getElementById('dispScoreA')) document.getElementById('dispScoreA').innerText = data.scoreA ?? 0;
-            if (document.getElementById('dispScoreB')) document.getElementById('dispScoreB').innerText = data.scoreB ?? 0;
-
-            // 3. Match Timer Update
-            if (document.getElementById('timer')) document.getElementById('timer').innerText = data.timer || "00:00";
-
-            // 4. Smooth Goal Animation Trigger (Only on button press)
-            if (data.goalEvent && data.goalTimestamp && data.goalTimestamp !== lastGoalTimestamp) {
-                lastGoalTimestamp = data.goalTimestamp;
-                
-                let targetScoreBox = data.goalEvent === 'A' ? document.getElementById('dispScoreA') : document.getElementById('dispScoreB');
-                let goalBanner = document.getElementById('goalBanner');
-                let teamName = data.goalEvent === 'A' ? (data.nameA || "TEAM A") : (data.nameB || "TEAM B");
-
-                if (goalBanner) {
-                    goalBanner.innerText = `⚽ GOAL! - ${teamName} ⚽`;
-                    goalBanner.classList.add('active');
-                }
-                if (targetScoreBox) {
-                    targetScoreBox.classList.add('goal-flash');
-                }
-
-                setTimeout(() => {
-                    if (goalBanner) goalBanner.classList.remove('active');
-                    if (targetScoreBox) targetScoreBox.classList.remove('goal-flash');
-                }, 3000);
-            }
-        });
             // 2. Names & Scores Sync
             document.getElementById('dispNameA').innerText = data.nameA || "TEAM A";
             document.getElementById('dispNameB').innerText = data.nameB || "TEAM B";
