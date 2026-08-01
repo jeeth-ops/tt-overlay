@@ -45,6 +45,11 @@ app.get('/tt-lowerthird-panel', (req, res) => res.sendFile(__dirname + '/tt-lowe
 
 let roomStates = {};
 const firestoreWriteTimers = {}; // debounce map: targetId -> timeout handle
+const hydratedRooms = {}; // room -> true once we've pulled its saved state from Firestore.
+// Without this, getRoomState() below was hitting Firestore on EVERY single
+// call — every button press, every color drag, every socket connect — instead
+// of just once per room. On Render's free plan that network round-trip is
+// what was causing the multi-second lag on every single update.
 
 async function getRoomState(room) {
     if (!roomStates[room]) {
@@ -96,7 +101,14 @@ async function getRoomState(room) {
         };
     }
 
-    if (room.startsWith('room-') || (room.length === 6 && room !== 'scorvix-master-room')) {
+    const isUserRoom = room.startsWith('room-') || (room.length === 6 && room !== 'scorvix-master-room');
+
+    // Only fetch from Firestore the first time this room is seen after a server
+    // start/restart. We mark it hydrated BEFORE the await so two near-simultaneous
+    // calls (e.g. panel connecting + panel immediately emitting an update) don't
+    // both fire a redundant fetch.
+    if (isUserRoom && !hydratedRooms[room]) {
+        hydratedRooms[room] = true;
         const uid = room.replace('room-', '');
         try {
             const doc = await db.collection("scorvix").doc(uid).get();
@@ -108,6 +120,7 @@ async function getRoomState(room) {
             }
         } catch (err) {
             console.log("Firestore fetch error:", err);
+            hydratedRooms[room] = false; // allow retry on next call since this fetch failed
         }
     }
     return roomStates[room];
