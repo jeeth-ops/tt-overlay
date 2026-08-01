@@ -308,6 +308,125 @@
             z-index: 2;
         }
         .hidden { display: none !important; }
+
+        /* ===== Professional Dashboard (Sidebar + Panels) ===== */
+        .admin-box.dashboard-shell {
+            padding: 0;
+            display: flex;
+            align-items: stretch;
+            overflow: hidden;
+        }
+        .dashboard-sidebar {
+            width: 210px;
+            flex-shrink: 0;
+            background: rgba(15, 23, 42, 0.6);
+            border-right: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 22px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .dashboard-sidebar-title {
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+            padding: 0 8px;
+            font-weight: 700;
+        }
+        .db-tab-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            text-align: left;
+            padding: 11px 12px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .db-tab-btn:hover { background: rgba(255, 255, 255, 0.05); color: var(--text-main); }
+        .db-tab-btn.active { background: var(--accent); color: white; }
+
+        .dashboard-content { flex: 1; padding: 30px; min-width: 0; }
+        .db-panel { display: none; }
+        .db-panel.active { display: block; }
+        .db-panel h3 { margin-bottom: 18px; color: var(--text-main); display: flex; align-items: center; gap: 10px; }
+
+        .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-top: 15px; }
+        .stat-card { background: rgba(15, 23, 42, 0.8); padding: 16px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.05); }
+        .stat-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px; }
+        .stat-value { font-size: 1.8rem; font-weight: 800; }
+        .dashboard-hint { color: var(--text-muted); font-size: 0.85rem; margin-top: 16px; }
+
+        .templates-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; }
+        .template-card {
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            padding: 20px 14px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        .template-card:hover { transform: translateY(-3px); border-color: var(--accent); }
+        .template-card-icon { font-size: 2.2rem; }
+        .template-card-name { font-weight: 700; font-size: 0.9rem; }
+
+        .chart-bars {
+            display: flex;
+            align-items: flex-end;
+            gap: 30px;
+            height: 170px;
+            padding: 20px 10px 0 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .chart-bar-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; flex: 1; height: 100%; gap: 8px; }
+        .chart-bar { width: 100%; max-width: 60px; border-radius: 6px 6px 0 0; transition: height 0.5s ease; min-height: 4px; }
+        .chart-bar-col span { font-size: 0.8rem; color: var(--text-muted); font-weight: 600; }
+
+        @media (max-width: 640px) {
+            .dashboard-shell { flex-direction: column; }
+            .dashboard-sidebar { width: 100%; flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+            .stats-grid { grid-template-columns: 1fr; }
+        }
+
+        /* ===== FAQ Section ===== */
+        .faq-section { padding: 40px 20px 100px 20px; max-width: 800px; margin: 0 auto; text-align: center; }
+        .faq-section h2 { font-size: 2.5rem; margin-bottom: 40px; }
+        .faq-container { text-align: left; display: flex; flex-direction: column; gap: 12px; }
+        .faq-item {
+            background: var(--bg-card);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            overflow: hidden;
+            backdrop-filter: blur(12px);
+        }
+        .faq-question {
+            width: 100%;
+            background: transparent;
+            border: none;
+            color: var(--text-main);
+            padding: 18px 22px;
+            font-size: 1rem;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 15px;
+        }
+        .faq-icon { color: var(--accent); font-size: 1.3rem; font-weight: 800; flex-shrink: 0; transition: transform 0.25s ease; }
+        .faq-item.open .faq-icon { transform: rotate(45deg); }
+        .faq-answer { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
+        .faq-item.open .faq-answer { max-height: 300px; }
+        .faq-answer p { padding: 0 22px 18px 22px; color: var(--text-muted); font-size: 0.92rem; line-height: 1.6; }
     </style>
 </head>
 <body>
@@ -347,67 +466,105 @@
 
     <!-- Maalik Control Panel & Analytics Dashboard -->
     <div id="admin-panel" class="admin-panel-container hidden">
-        <div class="admin-box">
-            <h3>⚙️ Maalik Control Panel</h3>
-            <form id="add-template-form" class="admin-form">
-                <input type="text" id="sport-name" placeholder="Sport / Template Name (e.g. Badminton)" required>
-                <input type="text" id="sport-icon" placeholder="Emoji Icon (e.g. 🏸)" required>
-                
-                <label style="color: var(--text-muted); font-size: 0.9rem; display: block; margin-bottom: 5px;">Controller Panel Code (HTML/JS):</label>
-                <textarea id="panel-code" placeholder="Paste controller panel code here..." rows="4" required style="font-family: monospace;"></textarea>
-                
-                <label style="color: var(--text-muted); font-size: 0.9rem; display: block; margin-bottom: 5px;">Overlay Code (HTML/JS):</label>
-                <textarea id="overlay-code" placeholder="Paste overlay code here..." rows="4" required style="font-family: monospace;"></textarea>
-                
-                <button type="submit" class="cta-btn" id="submit-btn" style="padding: 10px 25px; font-size: 1rem; width: 100%; justify-content: center;">Plant Template</button>
-            </form>
+        <div class="admin-box dashboard-shell">
 
-            <div style="margin-top: 30px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">
-                <h4 style="margin-bottom: 12px; font-size: 1.1rem; color: var(--text-main);">🗑️ Manage / Remove Added Templates</h4>
-                <div id="admin-templates-list">
-                    <p style="color: var(--text-muted); font-size: 0.9rem;">Loading added templates...</p>
-                </div>
+            <!-- Sidebar Navigation -->
+            <div class="dashboard-sidebar">
+                <div class="dashboard-sidebar-title">⚙️ Maalik Panel</div>
+                <button class="db-tab-btn active" onclick="switchDbTab('overview', this)">📊 Overview</button>
+                <button class="db-tab-btn" onclick="switchDbTab('add', this)">➕ Add Template</button>
+                <button class="db-tab-btn" onclick="switchDbTab('manage', this)">🗂️ Manage Templates</button>
+                <button class="db-tab-btn" onclick="switchDbTab('analytics', this)">📈 Analytics</button>
             </div>
 
-            <!-- 📊 Professional Analytics Dashboard Section (Only for chhayajeeth@gmail.com) -->
-            <div style="margin-top: 30px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">
-                <h4 style="margin-bottom: 15px; font-size: 1.1rem; color: #38bdf8; display: flex; justify-content: space-between; align-items: center;">
-                    <span>📈 Overlay Usage & User Analytics Report</span>
-                    <span style="font-size: 0.75rem; background: #0284c7; padding: 2px 8px; border-radius: 4px; color: #fff;">Admin Only</span>
-                </h4>
-                
-                <!-- Summary Cards -->
-                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px;">
-                    <div style="background: rgba(15, 23, 42, 0.8); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
-                        <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase;">Total Logins</div>
-                        <div style="font-size: 1.5rem; font-weight: 800; color: #38bdf8;" id="an-total-logins">0</div>
+            <div class="dashboard-content">
+
+                <!-- Overview Panel -->
+                <div class="db-panel active" id="db-panel-overview">
+                    <h3>📊 Dashboard Overview</h3>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-label">Total Logins</div>
+                            <div class="stat-value" id="an-total-logins" style="color:#38bdf8;">0</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Total Logouts</div>
+                            <div class="stat-value" id="an-total-logouts" style="color:#ef4444;">0</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Total Activities</div>
+                            <div class="stat-value" id="an-total-events" style="color:#facc15;">0</div>
+                        </div>
                     </div>
-                    <div style="background: rgba(15, 23, 42, 0.8); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
-                        <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase;">Total Logouts</div>
-                        <div style="font-size: 1.5rem; font-weight: 800; color: #ef4444;" id="an-total-logouts">0</div>
-                    </div>
-                    <div style="background: rgba(15, 23, 42, 0.8); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
-                        <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase;">Total Activities</div>
-                        <div style="font-size: 1.5rem; font-weight: 800; color: #facc15;" id="an-total-events">0</div>
+                    <p class="dashboard-hint">Live counts update automatically as users sign in and open overlays.</p>
+                </div>
+
+                <!-- Add Template Panel -->
+                <div class="db-panel" id="db-panel-add">
+                    <h3>➕ Add New Template</h3>
+                    <form id="add-template-form" class="admin-form">
+                        <input type="text" id="sport-name" placeholder="Sport / Template Name (e.g. Badminton)" required>
+                        <input type="text" id="sport-icon" placeholder="Emoji Icon (e.g. 🏸)" required>
+
+                        <label style="color: var(--text-muted); font-size: 0.9rem; display: block; margin-bottom: 5px;">Controller Panel Code (HTML/JS):</label>
+                        <textarea id="panel-code" placeholder="Paste controller panel code here..." rows="4" required style="font-family: monospace;"></textarea>
+
+                        <label style="color: var(--text-muted); font-size: 0.9rem; display: block; margin-bottom: 5px;">Overlay Code (HTML/JS):</label>
+                        <textarea id="overlay-code" placeholder="Paste overlay code here..." rows="4" required style="font-family: monospace;"></textarea>
+
+                        <button type="submit" class="cta-btn" id="submit-btn" style="padding: 10px 25px; font-size: 1rem; width: 100%; justify-content: center;">Plant Template</button>
+                    </form>
+                </div>
+
+                <!-- Manage Templates Panel -->
+                <div class="db-panel" id="db-panel-manage">
+                    <h3>🗂️ Manage / Remove Added Templates</h3>
+                    <div id="admin-templates-list" class="templates-grid">
+                        <p style="color: var(--text-muted); font-size: 0.9rem;">Loading added templates...</p>
                     </div>
                 </div>
 
-                <!-- Data Table -->
-                <div style="max-height: 240px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.05); border-radius: 8px;">
-                    <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem;">
-                        <thead>
-                            <tr style="background: rgba(15, 23, 42, 0.9); color: var(--text-muted); position: sticky; top: 0;">
-                                <th style="padding: 10px 14px;">User Email</th>
-                                <th style="padding: 10px 14px;">Action Type</th>
-                                <th style="padding: 10px 14px;">Overlay Used</th>
-                                <th style="padding: 10px 14px;">Timestamp</th>
-                            </tr>
-                        </thead>
-                        <tbody id="an-logs-body">
-                            <tr><td colspan="4" style="padding: 12px; text-align: center; color: var(--text-muted);">Loading analytics data...</td></tr>
-                        </tbody>
-                    </table>
+                <!-- Analytics Panel -->
+                <div class="db-panel" id="db-panel-analytics">
+                    <h3>
+                        <span>📈 Overlay Usage & User Analytics</span>
+                        <span style="font-size: 0.75rem; background: #0284c7; padding: 2px 8px; border-radius: 4px; color: #fff; font-weight: 600;">Admin Only</span>
+                    </h3>
+
+                    <!-- Chart -->
+                    <div class="chart-bars">
+                        <div class="chart-bar-col">
+                            <div class="chart-bar" id="bar-logins" style="height: 4%; background: #38bdf8;"></div>
+                            <span>Logins</span>
+                        </div>
+                        <div class="chart-bar-col">
+                            <div class="chart-bar" id="bar-logouts" style="height: 4%; background: #ef4444;"></div>
+                            <span>Logouts</span>
+                        </div>
+                        <div class="chart-bar-col">
+                            <div class="chart-bar" id="bar-events" style="height: 4%; background: #facc15;"></div>
+                            <span>Total Activity</span>
+                        </div>
+                    </div>
+
+                    <!-- Data Table -->
+                    <div style="max-height: 240px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; margin-top: 22px;">
+                        <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem;">
+                            <thead>
+                                <tr style="background: rgba(15, 23, 42, 0.9); color: var(--text-muted); position: sticky; top: 0;">
+                                    <th style="padding: 10px 14px;">User Email</th>
+                                    <th style="padding: 10px 14px;">Action Type</th>
+                                    <th style="padding: 10px 14px;">Overlay Used</th>
+                                    <th style="padding: 10px 14px;">Timestamp</th>
+                                </tr>
+                            </thead>
+                            <tbody id="an-logs-body">
+                                <tr><td colspan="4" style="padding: 12px; text-align: center; color: var(--text-muted);">Loading analytics data...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
+
             </div>
         </div>
     </div>
@@ -455,6 +612,71 @@
                 <div class="card-content">
                     <div class="sport-icon">⚽</div>
                     <h3>Football</h3>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="faq-section">
+        <h2 class="reveal-on-scroll">Frequently Asked Questions</h2>
+        <div class="faq-container">
+            <div class="faq-item reveal-on-scroll delay-1">
+                <button class="faq-question" onclick="toggleFaq(this)">
+                    <span>What is Scorvix?</span>
+                    <span class="faq-icon">+</span>
+                </button>
+                <div class="faq-answer">
+                    <p>Scorvix is a browser-based broadcast graphics tool that lets you control live sports scoreboards and overlays in real time, straight from your phone or laptop — no software installation required.</p>
+                </div>
+            </div>
+
+            <div class="faq-item reveal-on-scroll delay-1">
+                <button class="faq-question" onclick="toggleFaq(this)">
+                    <span>Which streaming software does Scorvix work with?</span>
+                    <span class="faq-icon">+</span>
+                </button>
+                <div class="faq-answer">
+                    <p>Every overlay runs as a browser source, so it works with OBS Studio, vMix, Streamlabs, and any other software that supports browser source inputs.</p>
+                </div>
+            </div>
+
+            <div class="faq-item reveal-on-scroll delay-2">
+                <button class="faq-question" onclick="toggleFaq(this)">
+                    <span>Do I need to install anything?</span>
+                    <span class="faq-icon">+</span>
+                </button>
+                <div class="faq-answer">
+                    <p>No installs needed. Sign in with your Google account, open the control panel in your browser, and paste your unique overlay link into your streaming software.</p>
+                </div>
+            </div>
+
+            <div class="faq-item reveal-on-scroll delay-2">
+                <button class="faq-question" onclick="toggleFaq(this)">
+                    <span>Which sports are currently supported?</span>
+                    <span class="faq-icon">+</span>
+                </button>
+                <div class="faq-answer">
+                    <p>Table Tennis and Football are live right now, with more sports like Cricket on the way soon.</p>
+                </div>
+            </div>
+
+            <div class="faq-item reveal-on-scroll delay-3">
+                <button class="faq-question" onclick="toggleFaq(this)">
+                    <span>Is my data and control panel secure?</span>
+                    <span class="faq-icon">+</span>
+                </button>
+                <div class="faq-answer">
+                    <p>Yes. Every control panel is protected behind Google Sign-In, and each user gets a private, unique overlay room that only they can control.</p>
+                </div>
+            </div>
+
+            <div class="faq-item reveal-on-scroll delay-3">
+                <button class="faq-question" onclick="toggleFaq(this)">
+                    <span>Can I update the scoreboard while I'm live on stream?</span>
+                    <span class="faq-icon">+</span>
+                </button>
+                <div class="faq-answer">
+                    <p>Absolutely — every change you make in the control panel, like score, timer, team colors, or logos, reflects on your live overlay instantly.</p>
                 </div>
             </div>
         </div>
@@ -543,7 +765,30 @@
                 document.getElementById('an-total-logins').innerText = logins;
                 document.getElementById('an-total-logouts').innerText = logouts;
                 document.getElementById('an-total-events').innerText = total;
+
+                // Drive the analytics bar chart heights, scaled against whichever
+                // value is highest so the tallest bar always fills the chart.
+                const maxVal = Math.max(logins, logouts, total, 1);
+                const barLogins = document.getElementById('bar-logins');
+                const barLogouts = document.getElementById('bar-logouts');
+                const barEvents = document.getElementById('bar-events');
+                if (barLogins) barLogins.style.height = Math.max((logins / maxVal) * 100, 4) + '%';
+                if (barLogouts) barLogouts.style.height = Math.max((logouts / maxVal) * 100, 4) + '%';
+                if (barEvents) barEvents.style.height = Math.max((total / maxVal) * 100, 4) + '%';
             });
+        }
+
+        // Switches between the sidebar dashboard panels (Overview / Add Template / Manage / Analytics)
+        function switchDbTab(tabName, btn) {
+            document.querySelectorAll('.db-panel').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('.db-tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById('db-panel-' + tabName).classList.add('active');
+            btn.classList.add('active');
+        }
+
+        // Expands/collapses an FAQ answer
+        function toggleFaq(btn) {
+            btn.closest('.faq-item').classList.toggle('open');
         }
 
         function openTableTennisTemplates() {
@@ -588,9 +833,10 @@
                         adminList.innerHTML = "";
                         sports.forEach((sport) => {
                             const item = document.createElement('div');
-                            item.className = "admin-template-item";
+                            item.className = "template-card";
                             item.innerHTML = `
-                                <span>${sport.icon || '🎯'} ${sport.name}</span>
+                                <div class="template-card-icon">${sport.icon || '🎯'}</div>
+                                <div class="template-card-name">${sport.name}</div>
                                 <button class="btn-delete-item" onclick="deleteTemplate('${sport.slug}', '${sport.name}')">Remove</button>
                             `;
                             adminList.appendChild(item);
