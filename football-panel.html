@@ -380,21 +380,21 @@
                 <div class="row">
                     <div class="col">
                         <label>Team A Color</label>
-                        <input type="color" id="colorA" value="#0284c7" oninput="saveData()" onchange="saveData()">
+                        <input type="color" id="colorA" value="#0284c7" oninput="saveDataThrottled()" onchange="saveData()">
                     </div>
                     <div class="col">
                         <label>Team B Color</label>
-                        <input type="color" id="colorB" value="#dc2626" oninput="saveData()" onchange="saveData()">
+                        <input type="color" id="colorB" value="#dc2626" oninput="saveDataThrottled()" onchange="saveData()">
                     </div>
                 </div>
                 <div class="row">
                     <div class="col">
                         <label>Center Clock BG</label>
-                        <input type="color" id="colorClock" value="#090d16" oninput="saveData()" onchange="saveData()">
+                        <input type="color" id="colorClock" value="#090d16" oninput="saveDataThrottled()" onchange="saveData()">
                     </div>
                     <div class="col">
                         <label>Modal Accent Color</label>
-                        <input type="color" id="colorModal" value="#38bdf8" oninput="saveData()" onchange="saveData()">
+                        <input type="color" id="colorModal" value="#38bdf8" oninput="saveDataThrottled()" onchange="saveData()">
                     </div>
                 </div>
             </div>
@@ -612,6 +612,18 @@
             };
             
             socket.emit('liveFootballScore', data);
+        }
+
+        // Throttled version for high-frequency inputs (color picker drag, fast typing).
+        // Sends at most once every 60ms instead of on every single pixel/keystroke —
+        // keeps the overlay smooth without flooding the socket connection.
+        let saveDataThrottleTimer = null;
+        function saveDataThrottled() {
+            if (saveDataThrottleTimer) return;
+            saveData();
+            saveDataThrottleTimer = setTimeout(() => {
+                saveDataThrottleTimer = null;
+            }, 60);
         }
 
         function updateScore(team, val) {
