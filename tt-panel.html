@@ -511,7 +511,14 @@
         document.getElementById('footer-server-turn').innerText = `Serving: ${data.server === 1 ? data.p1Name : data.p2Name}`;
 
         socket.emit('updateScore', data);
-        db.collection("scorvix").doc(currentUid).set(data).catch(err => console.log("Cloud save error:", err));
+        // Note: persistence to Firestore is handled by the server (debounced,
+        // and correctly nested under `ttState`) whenever it receives this
+        // 'updateScore' event — no need to also write directly from the
+        // browser here. The old direct write also wrote fields at the
+        // document root instead of nested under `ttState`, so the server's
+        // getRoomState() never actually read it back — it was pure overhead
+        // on every single point/keystroke/voice command, made worse the more
+        // panels/viewers were connected at once.
     }
 
     function loadSavedData() {
