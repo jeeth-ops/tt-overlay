@@ -160,6 +160,31 @@ app.post('/api/update-tt-data', async (req, res) => {
     res.json({ success: true });
 });
 
+// 🔗 OBS/vMix Link Activity Logging
+// Panels call this whenever a user copies or previews their overlay link,
+// so it shows up in the Maalik Panel's Analytics tab alongside login/logout
+// and overlay-open events. Kept as its own lightweight route (rather than
+// requiring the panel to load the Firestore client SDK just for this) so any
+// current or future panel can log link activity with one small fetch call.
+app.post('/api/log-link-action', async (req, res) => {
+    try {
+        const { email, action, overlay } = req.body;
+        if (!email || !action) {
+            return res.status(400).json({ success: false, error: 'email and action are required' });
+        }
+        await db.collection('analytics_logs').add({
+            email,
+            action,
+            overlay: overlay || 'Unknown',
+            time: new Date().toLocaleString()
+        });
+        res.json({ success: true });
+    } catch (err) {
+        console.log('Log link action error:', err);
+        res.status(500).json({ success: false });
+    }
+});
+
 // Match Intro REST API
 app.get('/api/matchintro-data', async (req, res) => {
     let room = req.query.id || req.query.uid || 'scorvix-master-room';
