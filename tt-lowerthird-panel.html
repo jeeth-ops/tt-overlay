@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Scorvix - Lower Third Controller</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- QR code generator (renders fully in-browser, no data sent anywhere) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <style>
         :root {
             --bg-dark: #0f172a;
@@ -181,6 +183,55 @@
             font-size: 0.85rem;
         }
         .back-link:hover { color: var(--text-main); }
+
+        /* Mobile Controller section */
+        .mobile-ctrl-box {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid #16a34a40;
+            border-radius: 8px;
+            padding: 14px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+        .mobile-ctrl-left { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+        .mobile-ctrl-input {
+            width: 100%;
+            background: transparent;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 8px 10px;
+            color: #4ade80;
+            font-size: 0.8rem;
+            font-weight: 600;
+            outline: none;
+        }
+        .btn-copy-mobile {
+            background: #16a34a; color: white; border: none;
+            padding: 8px 12px; border-radius: 6px; font-size: 0.8rem;
+            font-weight: 600; cursor: pointer; align-self: flex-start;
+        }
+        .btn-copy-mobile:hover { background: #15803d; }
+        .qr-box {
+            flex-shrink: 0;
+            background: #ffffff;
+            border-radius: 8px;
+            padding: 6px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+        }
+        .qr-box img, .qr-box canvas { display: block; border-radius: 4px; }
+        .qr-download-btn {
+            background: #16a34a; color: white; border: none;
+            padding: 4px 8px; border-radius: 5px; font-size: 0.65rem;
+            font-weight: 700; cursor: pointer; width: 100%;
+        }
+        .qr-download-btn:hover { background: #15803d; }
+        @media (max-width: 480px) {
+            .mobile-ctrl-box { flex-direction: column; align-items: stretch; }
+        }
     </style>
 </head>
 <body>
@@ -201,6 +252,20 @@
                 <div class="btn-action-group">
                     <button class="btn-copy" onclick="copyOverlayUrl()">Copy URL</button>
                     <a id="openTabBtn" href="#" target="_blank" class="btn-open">Open Overlay</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>📱 Control from Mobile — scan to open this same controller on your phone</label>
+            <div class="mobile-ctrl-box">
+                <div class="mobile-ctrl-left">
+                    <input type="text" id="controllerUrl" class="mobile-ctrl-input" readonly>
+                    <button class="btn-copy-mobile" onclick="copyControllerUrl()">Copy Controller Link</button>
+                </div>
+                <div class="qr-box">
+                    <div id="qrCodeBox"></div>
+                    <button class="qr-download-btn" onclick="downloadQrCode()">⬇ Download</button>
                 </div>
             </div>
         </div>
@@ -244,8 +309,49 @@
             const targetUrl = window.location.origin + '/tt-lowerthird?id=' + encodeURIComponent(MATCH_ID);
             document.getElementById('overlayUrl').value = targetUrl;
             document.getElementById('openTabBtn').href = targetUrl;
+
+            // Controller link points back to THIS panel (not the overlay),
+            // pre-locked to the same match id, so scanning it on a phone
+            // opens a mobile-usable copy of this exact controller.
+            const controllerUrl = window.location.origin + '/tt-lowerthird-panel?id=' + encodeURIComponent(MATCH_ID);
+            document.getElementById('controllerUrl').value = controllerUrl;
+            generateQrCode(controllerUrl);
         }
         updateUrls();
+
+        // Renders the controller link as a scannable QR code, entirely in
+        // the browser — no data is sent to any third-party QR service.
+        function generateQrCode(url) {
+            const box = document.getElementById('qrCodeBox');
+            box.innerHTML = '';
+            new QRCode(box, {
+                text: url,
+                width: 100,
+                height: 100,
+                colorDark: '#0f172a',
+                colorLight: '#ffffff',
+                correctLevel: QRCode.CorrectLevel.M
+            });
+        }
+
+        function downloadQrCode() {
+            const canvas = document.getElementById('qrCodeBox').querySelector('canvas');
+            if (!canvas) return;
+            const link = document.createElement('a');
+            link.download = 'scorvix-lowerthird-controller-qr.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+
+        function copyControllerUrl() {
+            const input = document.getElementById('controllerUrl');
+            input.select();
+            navigator.clipboard.writeText(input.value);
+            const btn = document.querySelector('.btn-copy-mobile');
+            const old = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(() => btn.textContent = old, 2000);
+        }
 
         function copyOverlayUrl() {
             const urlInput = document.getElementById('overlayUrl');
@@ -303,3 +409,4 @@
     </script>
 </body>
 </html>
+
