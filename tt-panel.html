@@ -84,6 +84,35 @@
         .btn-plus { background: #10b981; flex: 2; }
         .btn-minus { background: #ef4444; flex: 1; }
 
+        .voice-btn {
+            width: 100%;
+            margin-top: 6px;
+            background: #1e293b;
+            border: 1px solid #475569;
+            color: #cbd5e1;
+            padding: 8px;
+            font-size: 12px;
+            font-weight: bold;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+        }
+        .voice-btn.listening {
+            background: #dc2626;
+            border-color: #f87171;
+            color: #fff;
+            animation: voicePulse 1s ease-in-out infinite;
+        }
+        .voice-btn.voice-success {
+            background: #16a34a;
+            border-color: #4ade80;
+            color: #fff;
+        }
+        @keyframes voicePulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(220,38,38,0.55); }
+            50%      { box-shadow: 0 0 0 9px rgba(220,38,38,0); }
+        }
+
         .toggles-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
         .toggle-btn { padding: 8px; font-size: 12px; font-weight: bold; border-radius: 4px; border: none; cursor: pointer; color: white; text-align: center; }
         .bg-green { background: #059669; }
@@ -233,6 +262,7 @@
                         <button class="btn-plus" onclick="addPoint(1)">+ Point</button>
                         <button class="btn-minus" onclick="subPoint(1)">-</button>
                     </div>
+                    <button class="voice-btn" id="voice-btn-p1" onclick="voicePoint(1)">🎤 Voice Point</button>
                 </div>
 
                 <div class="score-box">
@@ -242,6 +272,7 @@
                         <button class="btn-plus" onclick="addPoint(2)">+ Point</button>
                         <button class="btn-minus" onclick="subPoint(2)">-</button>
                     </div>
+                    <button class="voice-btn" id="voice-btn-p2" onclick="voicePoint(2)">🎤 Voice Point</button>
                 </div>
 
                 <div>
@@ -546,6 +577,66 @@
         sendData();
     }
 
+    // 🎤 Voice Scoring — press the button, say "point", it auto-adds the point
+    // and resets itself for the next press. Uses the browser's built-in Web
+    // Speech API (works reliably in Chrome on Android; needs HTTPS).
+    function voicePoint(player) {
+        const btn = document.getElementById(`voice-btn-p${player}`);
+        if (!btn || btn.classList.contains('listening')) return; // already listening, ignore extra taps
+
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            alert("Voice scoring is not supported in this browser. Use Chrome on Android.");
+            return;
+        }
+
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'en-IN';
+        recognition.continuous = false;
+        recognition.interimResults = false;
+        recognition.maxAlternatives = 1;
+
+        let handled = false;
+        btn.classList.add('listening');
+        btn.innerText = '🎙️ Listening...';
+
+        recognition.onresult = (e) => {
+            const transcript = e.results[0][0].transcript.toLowerCase();
+            if (transcript.includes('point')) {
+                handled = true;
+                addPoint(player); // 🌟 instant, no lag — score updates immediately
+                btn.classList.remove('listening');
+                btn.classList.add('voice-success');
+                btn.innerText = '✅ Point Added';
+                setTimeout(() => {
+                    btn.classList.remove('voice-success');
+                    btn.innerText = '🎤 Voice Point';
+                }, 700);
+            } else {
+                btn.innerText = "⚠️ Didn't catch 'point' — tap again";
+            }
+        };
+
+        recognition.onerror = () => {
+            btn.classList.remove('listening');
+            if (!handled) btn.innerText = '🎤 Voice Point';
+        };
+
+        recognition.onend = () => {
+            btn.classList.remove('listening');
+            if (!handled) {
+                setTimeout(() => { btn.innerText = '🎤 Voice Point'; }, 900);
+            }
+        };
+
+        try {
+            recognition.start();
+        } catch (err) {
+            btn.classList.remove('listening');
+            btn.innerText = '🎤 Voice Point';
+        }
+    }
+
     function addPoint(p) {
         if(p === 1) data.p1Score++; else data.p2Score++;
 
@@ -613,4 +704,3 @@
 </script>
 </body>
 </html>
-
