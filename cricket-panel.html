@@ -5,6 +5,7 @@
 <title>Cricket Panel — Controller</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script src="/socket.io/socket.io.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
   :root{
     --bg: #0b0f1a;
@@ -105,6 +106,21 @@
     transition:.25s; pointer-events:none;
   }
   #toast.show{ opacity:1; transform:translateY(0); }
+
+  .link-row{ display:flex; gap:6px; margin-top:6px; }
+  .link-row input{ flex:1; font-size:11px; }
+  .link-row button{ flex:none; }
+  .qr-wrap{ display:flex; flex-direction:column; align-items:center; gap:8px; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
+  .qr-wrap #qr-code{ background:#fff; padding:8px; border-radius:8px; line-height:0; }
+  .qr-wrap .qr-caption{ font-size:11px; color:var(--text-dim); text-align:center; }
+
+  .freehit-banner{
+    display:none; align-items:center; justify-content:center; gap:8px;
+    background:rgba(250,204,21,.14); border:1px solid #facc15; color:#facc15;
+    border-radius:8px; padding:8px; margin-bottom:10px; font-weight:800; font-size:13px;
+    letter-spacing:.4px;
+  }
+  .freehit-banner.show{ display:flex; }
 </style>
 </head>
 <body>
@@ -212,6 +228,7 @@
 
     <div class="card">
       <h2>Ball Outcome</h2>
+      <div class="freehit-banner" id="freehit-banner">⚡ FREE HIT IN PLAY</div>
       <div class="balls-grid">
         <button class="b-run" data-ball="0">0</button>
         <button class="b-run" data-ball="1">1</button>
@@ -241,6 +258,20 @@
 
   <!-- COLUMN 3: Milestones + theme -->
   <div>
+    <div class="card">
+      <h2>Overlay Link (OBS / vMix Browser Source)</h2>
+      <div class="link-row">
+        <input type="text" id="overlay-link" readonly>
+        <button class="small" id="copy-overlay-link">Copy</button>
+      </div>
+      <button class="full small primary" id="preview-overlay-btn" style="margin-top:8px;">Preview Overlay ↗</button>
+
+      <div class="qr-wrap">
+        <div id="qr-code"></div>
+        <div class="qr-caption">Scan with your phone to open<br>this same controller on mobile</div>
+      </div>
+    </div>
+
     <div class="card">
       <h2>Manual Milestone Trigger</h2>
       <button class="full small" data-milestone="POWERPLAY">Powerplay Over</button>
@@ -297,6 +328,7 @@ function defaultState(){
     visible: true,
     partnershipRuns: 0,
     partnershipBalls: 0,
+    freeHit: false,
     milestonesHit: {}   // e.g. { 'striker-50': true } to avoid re-firing
   };
 }
@@ -321,11 +353,32 @@ function snapshot(){ return JSON.parse(JSON.stringify(state)); }
    ============================================================ */
 let socket = null;
 const dot = document.getElementById('conn-dot');
+let qrInstance = null;
+
+// Builds the OBS/vMix overlay URL + mobile-control QR code for the current
+// Match ID. The QR encodes THIS panel's own URL (with ?room=<matchId>) so
+// scanning it on a phone opens the same controller, already connected to
+// the same match — no login/token step needed, it just reuses the match id.
+function updateShareLinks(matchId){
+  if(!matchId) return;
+  const overlayUrl = `${location.origin}/cricket-overlay?room=${encodeURIComponent(matchId)}`;
+  const panelUrl = `${location.origin}/cricket-panel?room=${encodeURIComponent(matchId)}`;
+
+  document.getElementById('overlay-link').value = overlayUrl;
+
+  const qrEl = document.getElementById('qr-code');
+  qrEl.innerHTML = '';
+  if(window.QRCode){
+    qrInstance = new QRCode(qrEl, { text: panelUrl, width: 140, height: 140 });
+  }
+}
 
 function connect(){
   const matchId = document.getElementById('match-id').value.trim();
   if(!matchId){ toast('Enter a Match ID first'); return; }
   if(socket) { try{ socket.disconnect(); }catch(e){} }
+
+  updateShareLinks(matchId);
 
   socket = io({ query: { uid: matchId } });
 
@@ -343,6 +396,19 @@ function connect(){
   });
 }
 document.getElementById('connect-btn').addEventListener('click', connect);
+
+document.getElementById('copy-overlay-link').addEventListener('click', () => {
+  const input = document.getElementById('overlay-link');
+  input.select();
+  navigator.clipboard?.writeText(input.value).then(
+    () => toast('Overlay link copied'),
+    () => document.execCommand('copy')
+  );
+});
+document.getElementById('preview-overlay-btn').addEventListener('click', () => {
+  const url = document.getElementById('overlay-link').value;
+  if(url) window.open(url, '_blank');
+});
 
 function send(obj){
   if(socket && socket.connected){
@@ -416,6 +482,8 @@ function renderPanel(){
   document.getElementById('striker-name').value = state.striker.name;
   document.getElementById('nonstriker-name').value = state.nonStriker.name;
   document.getElementById('bowler-name').value = state.bowler.name;
+
+  document.getElementById('freehit-banner').classList.toggle('show', !!state.freeHit);
 }
 
 function logMilestone(text){
@@ -580,6 +648,7 @@ function checkMilestones(prevState){
 }
 
 function addLegalBall(runsThisBall){
+  state.freeHit = false;
   state.score.balls++;
   if(state.score.balls >= 6){ state.score.balls = 0; state.score.overs++; state.bowler.overs++; state.bowler.balls=0; state.thisOver = []; }
   else { state.bowler.balls = state.score.balls; }
@@ -607,12 +676,14 @@ function recordBall(kind){
       break;
     }
     case 'W': {
+      const wasFreeHit = state.freeHit;
       state.score.wickets++;
       state.bowler.wickets++;
       state.thisOver.push('W');
       addLegalBall(0);
       state.partnershipRuns = 0; state.partnershipBalls = 0;
       fireEvent('WICKET', 'WICKET!', `${state.bowler.name} to ${state.striker.name}`);
+      if(wasFreeHit) toast('⚠️ Free Hit was active — only Run Out is a valid dismissal');
       break;
     }
     case 'Wd': {
@@ -628,7 +699,10 @@ function recordBall(kind){
       state.bowler.runs += 1;
       state.partnershipRuns += 1;
       state.thisOver.push('Nb');
-      // no-ball does not count as a legal ball (free hit typically follows — operator can note manually)
+      // no-ball does not count as a legal ball; the NEXT legal delivery is
+      // automatically a Free Hit (cleared inside addLegalBall()).
+      state.freeHit = true;
+      fireEvent('FREE_HIT', 'FREE HIT', 'Next ball is a Free Hit');
       break;
     }
     case 'B': {
@@ -729,10 +803,14 @@ document.addEventListener('keydown', (e) => {
   // Reuse a saved match id if this browser used the panel before, otherwise
   // generate a fresh 6-char code (same shape as this app's other room codes)
   // and let the operator share it with whoever sets up the overlay.
+  // A ?room=<id> URL param (from scanning the mobile-control QR code) always
+  // wins, so scanning the QR lands on the SAME match, not a new random one.
+  const urlMatchId = new URLSearchParams(location.search).get('room');
   const savedMatchId = localStorage.getItem('cricket-match-id');
-  document.getElementById('match-id').value = savedMatchId || Math.random().toString(36).slice(2,8);
+  document.getElementById('match-id').value = urlMatchId || savedMatchId || Math.random().toString(36).slice(2,8);
   document.getElementById('match-id').addEventListener('change', (e) => {
     localStorage.setItem('cricket-match-id', e.target.value.trim());
+    updateShareLinks(e.target.value.trim());
   });
   localStorage.setItem('cricket-match-id', document.getElementById('match-id').value);
 
