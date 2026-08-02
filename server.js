@@ -135,7 +135,9 @@ async function getRoomState(room) {
                     headerBg: "#0a0a0f", cardBg: "rgba(14,16,28,.55)",
                     navyDeep: "#060a16", navyMid: "#131c36", navyEnd: "#1b2a4d",
                     bgOpacity: 0.3
-                }
+                },
+                // Team names auto-sync with the TT scorecard until both
+                // sides have real names filled in — see reconcileTeamNames().
             }
         };
     }
@@ -163,6 +165,36 @@ async function getRoomState(room) {
         }
     }
     return roomStates[room];
+}
+
+// 🌟 Keeps team names/logos in sync between the TT scorecard (ttState) and
+// the Match Intro template (matchIntroState) for the SAME match — in
+// whichever order the user fills them in. Whichever side still has the
+// untouched default ("Team A"/"Team B") adopts the other side's real names.
+// Once BOTH sides have real (non-default) names, nothing here touches them
+// again — so a later manual fix on either side stays exactly as typed.
+// Returns 'matchIntro' | 'tt' | false depending on which side (if any) was
+// just filled in, so the caller knows what to broadcast/persist.
+function reconcileTeamNames(state) {
+    if (!state.ttState || !state.matchIntroState) return false;
+    const tt = state.ttState;
+    const mi = state.matchIntroState;
+    const ttHasReal = tt.p1Name && tt.p1Name !== "Team A" && tt.p2Name && tt.p2Name !== "Team B";
+    const miHasReal = mi.teamA && mi.teamA.name && mi.teamA.name !== "Team A" && mi.teamB && mi.teamB.name && mi.teamB.name !== "Team B";
+
+    if (ttHasReal && !miHasReal) {
+        mi.teamA = { ...mi.teamA, name: tt.p1Name, logo: tt.img1 || "" };
+        mi.teamB = { ...mi.teamB, name: tt.p2Name, logo: tt.img2 || "" };
+        return 'matchIntro';
+    }
+    if (miHasReal && !ttHasReal) {
+        tt.p1Name = mi.teamA.name;
+        tt.img1 = mi.teamA.logo || "";
+        tt.p2Name = mi.teamB.name;
+        tt.img2 = mi.teamB.logo || "";
+        return 'tt';
+    }
+    return false;
 }
 
 // Lower Third REST APIs
@@ -229,6 +261,12 @@ app.get('/api/matchintro-data', async (req, res) => {
     let room = req.query.id || req.query.uid || 'scorvix-master-room';
     if (!room.startsWith('room-') && room !== 'scorvix-master-room') room = `room-${room}`;
     const state = await getRoomState(room);
+    const changed = reconcileTeamNames(state);
+    if (changed && room.startsWith('room-')) {
+        const uid = room.replace('room-', '');
+        const patch = changed === 'matchIntro' ? { matchIntroState: state.matchIntroState } : { ttState: state.ttState };
+        db.collection("scorvix").doc(uid).set(patch, { merge: true }).catch(err => console.log("DB update error:", err));
+    }
     res.json(state.matchIntroState);
 });
 
@@ -256,6 +294,7 @@ io.on('connection', async (socket) => {
     const roomState = await getRoomState(currentRoom);
     const matchIdForClient = cleanQueryRoom || cleanQueryUid || clientId || 'default';
 
+    const connectSyncResult = reconcileTeamNames(roomState);
     if (roomState.matchIntroState) {
         socket.emit('liveMatchIntro', {
             matchId: matchIdForClient,
@@ -265,6 +304,11 @@ io.on('connection', async (socket) => {
     }
     if (roomState.ttState) socket.emit('liveScore', roomState.ttState);
     if (roomState.footballState) socket.emit('liveFootballScore', roomState.footballState);
+    if (connectSyncResult && currentRoom.startsWith('room-')) {
+        const uid = currentRoom.replace('room-', '');
+        const patch = connectSyncResult === 'matchIntro' ? { matchIntroState: roomState.matchIntroState } : { ttState: roomState.ttState };
+        db.collection("scorvix").doc(uid).set(patch, { merge: true }).catch(err => console.log("DB update error:", err));
+    }
 
     // SCOREBOARD PANEL UPDATE HANDLING (Table Tennis)
     socket.on('updateScore', async (data) => {
@@ -288,6 +332,20 @@ io.on('connection', async (socket) => {
         delete state.ttState.matchIntroState;
 
         io.to(room).emit('liveScore', state.ttState);
+
+        // 🌟 Keep the Match Intro template's teams in sync in real time too
+        // (not just on next page load) — works both ways, see reconcileTeamNames().
+        const scoreSyncResult = reconcileTeamNames(state);
+        if (scoreSyncResult === 'matchIntro') {
+            io.to(room).emit('liveMatchIntro', {
+                matchId: targetId || matchIdForClient,
+                config: state.matchIntroState,
+                triggerReplay: false
+            });
+            if (targetId && targetId !== 'default') {
+                db.collection("scorvix").doc(targetId).set({ matchIntroState: state.matchIntroState }, { merge: true }).catch(err => console.log("DB update error:", err));
+            }
+        }
 
         // Debounced (max once per 700ms per room) — same fix already applied
         // to football. Without this, every point/voice-command/text-edit fired
@@ -365,6 +423,17 @@ io.on('connection', async (socket) => {
 
         if (targetId && targetId !== 'default') {
             db.collection("scorvix").doc(targetId).set({ matchIntroState: state.matchIntroState }, { merge: true }).catch(err => console.log("DB update error:", err));
+        }
+
+        // 🌟 If TT's team names are still default and Match Intro just got
+        // real ones, push those into the TT scorecard too — so opening the
+        // scorecard next (even on a different device) already has them.
+        const introSyncResult = reconcileTeamNames(state);
+        if (introSyncResult === 'tt') {
+            io.to(room).emit('liveScore', state.ttState);
+            if (targetId && targetId !== 'default') {
+                db.collection("scorvix").doc(targetId).set({ ttState: state.ttState }, { merge: true }).catch(err => console.log("DB update error:", err));
+            }
         }
     });
 
