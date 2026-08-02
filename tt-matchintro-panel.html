@@ -544,6 +544,26 @@
       const raw = localStorage.getItem(STORAGE_KEY);
       if(raw) state = Object.assign(state, JSON.parse(raw));
     }catch(e){}
+
+    // 🌟 Server is the source of truth for the active match — this is what
+    // pulls in the TT scorecard's team names/logos automatically when this
+    // template is opened for the same match, instead of leaving whatever
+    // was last saved on THIS device (or blank "Team A"/"Team B").
+    fetch('/api/matchintro-data?id=' + encodeURIComponent(MATCH_ID))
+      .then(res => res.json())
+      .then(serverState => {
+        if (serverState && serverState.teamA) {
+          state = Object.assign(state, serverState);
+          populateForm();
+          // Update local preview only — do NOT emit 'updateMatchIntro' here,
+          // since that would mark this match as manually customized and
+          // permanently stop it from auto-following the TT scorecard.
+          if (frameReady) {
+            frame.contentWindow.postMessage({ type:'ttMatchIntroConfig', id: MATCH_ID, config: state }, '*');
+          }
+        }
+      })
+      .catch(err => console.log('Match intro fetch error:', err));
   }
 
   loadStateForCurrentId();
