@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <title>Match Intro — Control Panel</title>
+<!-- QR code generator (renders fully in-browser, no data sent anywhere) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
   :root{
     --pink:#ec4a9b; --purple:#8b6cf0; --cyan:#3fd6ea;
@@ -109,6 +111,26 @@
 
   .hint{ font-size:11.5px; color:var(--text-dim); line-height:1.5; margin-top:10px; }
   .hint b{ color:var(--text); }
+
+  /* Mobile Controller section */
+  .mobile-ctrl-box{
+    display:flex; align-items:center; gap:14px; padding:12px;
+    border:1px dashed rgba(34,197,94,.4); border-radius:10px; background:rgba(34,197,94,.05);
+  }
+  .mobile-ctrl-left{ flex:1; display:flex; flex-direction:column; gap:8px; min-width:0; }
+  .mobile-ctrl-input{
+    width:100%; padding:8px 10px; border-radius:7px; border:1px solid var(--border);
+    background:var(--panel-2); color:#4ade80; font-size:11.5px; font-family:inherit; font-weight:600;
+  }
+  .qr-box{
+    flex-shrink:0; background:#fff; border-radius:8px; padding:6px;
+    display:flex; flex-direction:column; align-items:center; gap:5px;
+  }
+  .qr-box canvas{ display:block; border-radius:4px; }
+  .qr-download-btn{
+    background:#16a34a !important; color:#fff !important; border:none !important;
+    padding:5px 8px !important; font-size:10.5px !important; width:100%;
+  }
 
   ::-webkit-scrollbar{ width:8px; }
   ::-webkit-scrollbar-thumb{ background:var(--panel-2); border-radius:4px; }
@@ -221,6 +243,21 @@
       Changes here update the preview instantly and sync live via Socket.io to OBS/overlays. Each match has its own unique overlay link — click <b>Copy overlay link</b> and use that exact URL as the Browser Source.
     </p>
 
+    <div class="section">
+      <h2>📱 Control from Mobile</h2>
+      <div class="mobile-ctrl-box">
+        <div class="mobile-ctrl-left">
+          <input type="text" id="controllerUrl" class="mobile-ctrl-input" readonly>
+          <button id="btnCopyControllerLink" style="align-self:flex-start;">Copy Controller Link</button>
+        </div>
+        <div class="qr-box">
+          <div id="qrCodeBox"></div>
+          <button class="qr-download-btn" id="btnDownloadQr">⬇ Download</button>
+        </div>
+      </div>
+      <p class="hint">Scan with your phone to open this exact match's controller — pre-locked to the same Match ID, no retyping needed.</p>
+    </div>
+
   </div>
 </main>
 
@@ -298,6 +335,46 @@
     matchId:document.getElementById('fMatchId'),
   };
   els.matchId.value = MATCH_ID;
+
+  // Renders the CONTROLLER link (this panel itself, not the overlay) as a
+  // scannable QR code, entirely in-browser — nothing sent to a third-party
+  // QR service. Scanning it opens this exact match's controller on a phone.
+  function updateControllerLink(){
+    const controllerUrl = new URL('tt-matchintro-panel.html', window.location.href);
+    controllerUrl.searchParams.set('id', MATCH_ID);
+    document.getElementById('controllerUrl').value = controllerUrl.toString();
+
+    const box = document.getElementById('qrCodeBox');
+    box.innerHTML = '';
+    new QRCode(box, {
+      text: controllerUrl.toString(),
+      width: 100,
+      height: 100,
+      colorDark: '#0a0d18',
+      colorLight: '#ffffff',
+      correctLevel: QRCode.CorrectLevel.M
+    });
+  }
+  updateControllerLink();
+
+  document.getElementById('btnDownloadQr').addEventListener('click', () => {
+    const canvas = document.getElementById('qrCodeBox').querySelector('canvas');
+    if(!canvas) return;
+    const link = document.createElement('a');
+    link.download = 'scorvix-matchintro-controller-qr.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  });
+
+  document.getElementById('btnCopyControllerLink').addEventListener('click', () => {
+    const input = document.getElementById('controllerUrl');
+    navigator.clipboard.writeText(input.value).then(() => {
+      const btn = document.getElementById('btnCopyControllerLink');
+      const old = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(() => btn.textContent = old, 1400);
+    });
+  });
 
   const frame = document.getElementById('previewFrame');
   let frameReady = false;
@@ -454,6 +531,7 @@
 
     frameReady = false;
     frame.src = 'tt-matchintro.html?id=' + encodeURIComponent(MATCH_ID);
+    updateControllerLink();
   }
 
   function loadStateForCurrentId(){
@@ -470,4 +548,3 @@
 
 </body>
 </html>
-
