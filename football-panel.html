@@ -10,6 +10,8 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+    <!-- QR code generator (renders fully in-browser, no data sent anywhere) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
@@ -228,6 +230,32 @@
         input:checked + .slider:before { transform: translateX(24px); }
 
         .action-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+
+        /* Overlay Link + QR row */
+        .link-qr-row { display: flex; gap: 20px; align-items: stretch; }
+        .link-qr-row .row { flex: 1; }
+        .qr-box {
+            flex-shrink: 0;
+            background: #ffffff;
+            border-radius: 10px;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+        .qr-box img, .qr-box canvas { display: block; border-radius: 4px; }
+        .qr-box-label { font-size: 0.68rem; font-weight: 700; color: #0b0f19; text-transform: uppercase; letter-spacing: 0.5px; }
+        .qr-download-btn {
+            background: #0284c7; color: white; border: none;
+            padding: 5px 10px; border-radius: 6px; font-size: 0.7rem;
+            font-weight: 700; cursor: pointer; width: 100%;
+        }
+        .qr-download-btn:hover { background: #0369a1; }
+        @media (max-width: 640px) {
+            .link-qr-row { flex-direction: column; }
+        }
     </style>
 </head>
 <body>
@@ -262,10 +290,17 @@
                     <span style="color: #38bdf8;">vMix / OBS Overlay Link Output</span>
                     <span style="font-size: 0.75rem; color: #94a3b8;">Copy this link into your streaming software browser source</span>
                 </div>
-                <div class="row">
-                    <input type="text" id="overlayLinkInput" readonly style="background: #0f172a; color: #38bdf8; font-weight: 700;">
-                    <button class="btn-primary" onclick="copyOverlayLink()" style="flex: unset; padding: 10px 20px;">📋 Copy Link</button>
-                    <a id="openOverlayBtn" href="#" target="_blank" style="text-decoration: none;"><button class="btn-success" style="padding: 10px 16px; height: 100%;">🔗 Preview</button></a>
+                <div class="link-qr-row">
+                    <div class="row">
+                        <input type="text" id="overlayLinkInput" readonly style="background: #0f172a; color: #38bdf8; font-weight: 700;">
+                        <button class="btn-primary" onclick="copyOverlayLink()" style="flex: unset; padding: 10px 20px;">📋 Copy Link</button>
+                        <a id="openOverlayBtn" href="#" target="_blank" style="text-decoration: none;" onclick="logLinkAction('OBS Link Previewed')"><button class="btn-success" style="padding: 10px 16px; height: 100%;">🔗 Preview</button></a>
+                    </div>
+                    <div class="qr-box">
+                        <div class="qr-box-label">📱 Scan for Link</div>
+                        <div id="qrCodeBox"></div>
+                        <button class="qr-download-btn" onclick="downloadQrCode()">⬇ Download</button>
+                    </div>
                 </div>
             </div>
 
@@ -555,7 +590,49 @@
             document.getElementById('openOverlayBtn').href = overlayUrl;
 
             window.currentRoomName = roomName;
+            generateQrCode(overlayUrl);
             saveData();
+        }
+
+        // Renders the overlay link as a scannable QR code, entirely in the
+        // browser — nothing is sent to a third-party QR API, so the link
+        // stays private. Useful for quickly grabbing the link on a phone,
+        // sharing with a co-streamer, or pasting into vMix on another PC
+        // without retyping the whole URL.
+        let currentQrCodeInstance = null;
+        function generateQrCode(url) {
+            const box = document.getElementById('qrCodeBox');
+            box.innerHTML = '';
+            currentQrCodeInstance = new QRCode(box, {
+                text: url,
+                width: 110,
+                height: 110,
+                colorDark: '#0b0f19',
+                colorLight: '#ffffff',
+                correctLevel: QRCode.CorrectLevel.M
+            });
+        }
+
+        function downloadQrCode() {
+            const box = document.getElementById('qrCodeBox');
+            const canvas = box.querySelector('canvas');
+            if (!canvas) return;
+            const link = document.createElement('a');
+            link.download = 'scorvix-football-overlay-qr.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+            logLinkAction('OBS QR Downloaded');
+        }
+
+        // Logs link activity (copy/preview/download) to the server so it
+        // shows up in the Maalik Panel's Analytics tab.
+        function logLinkAction(action) {
+            const email = (auth.currentUser && auth.currentUser.email) || 'unknown';
+            fetch('/api/log-link-action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, action, overlay: 'Football' })
+            }).catch(err => console.log('Log link action failed:', err));
         }
 
         function copyOverlayLink() {
@@ -564,6 +641,7 @@
             copyText.setSelectionRange(0, 99999);
             navigator.clipboard.writeText(copyText.value);
             alert("Overlay link copied! Ab ise vMix ya OBS ke Browser Source mein daal do.");
+            logLinkAction('OBS Link Copied');
         }
 
         function handleFileUpload(event, team) {
