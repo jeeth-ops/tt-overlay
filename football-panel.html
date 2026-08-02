@@ -256,6 +256,19 @@
         @media (max-width: 640px) {
             .link-qr-row { flex-direction: column; }
         }
+
+        /* Makes the controller actually usable when opened on a phone via
+           the QR code — collapses the 2-column grid to 1 column, reduces
+           outer padding, and widens tap targets slightly. */
+        @media (max-width: 760px) {
+            body { padding: 10px; align-items: stretch; }
+            .controller-container { padding: 16px; gap: 16px; }
+            .grid-layout { grid-template-columns: 1fr; }
+            .full-width { grid-column: span 1; }
+            .header-title { flex-wrap: wrap; gap: 8px; font-size: 1.1rem; }
+            .row { flex-wrap: wrap; }
+            button { padding: 12px 14px; }
+        }
     </style>
 </head>
 <body>
@@ -290,16 +303,28 @@
                     <span style="color: #38bdf8;">vMix / OBS Overlay Link Output</span>
                     <span style="font-size: 0.75rem; color: #94a3b8;">Copy this link into your streaming software browser source</span>
                 </div>
+                <div class="row">
+                    <input type="text" id="overlayLinkInput" readonly style="background: #0f172a; color: #38bdf8; font-weight: 700;">
+                    <button class="btn-primary" onclick="copyOverlayLink()" style="flex: unset; padding: 10px 20px;">📋 Copy Link</button>
+                    <a id="openOverlayBtn" href="#" target="_blank" style="text-decoration: none;" onclick="logLinkAction('OBS Link Previewed')"><button class="btn-success" style="padding: 10px 16px; height: 100%;">🔗 Preview</button></a>
+                </div>
+            </div>
+
+            <!-- Mobile Controller Section -->
+            <div class="section-box full-width" style="background: #1e293b; border: 1px solid #16a34a40;">
+                <div class="section-title">
+                    <span style="color: #4ade80;">📱 Control from Mobile</span>
+                    <span style="font-size: 0.75rem; color: #94a3b8;">Scan with your phone to open this same match's controller</span>
+                </div>
                 <div class="link-qr-row">
                     <div class="row">
-                        <input type="text" id="overlayLinkInput" readonly style="background: #0f172a; color: #38bdf8; font-weight: 700;">
-                        <button class="btn-primary" onclick="copyOverlayLink()" style="flex: unset; padding: 10px 20px;">📋 Copy Link</button>
-                        <a id="openOverlayBtn" href="#" target="_blank" style="text-decoration: none;" onclick="logLinkAction('OBS Link Previewed')"><button class="btn-success" style="padding: 10px 16px; height: 100%;">🔗 Preview</button></a>
+                        <input type="text" id="controllerLinkInput" readonly style="background: #0f172a; color: #4ade80; font-weight: 700;">
+                        <button class="btn-primary" style="background: #16a34a; flex: unset; padding: 10px 20px;" onclick="copyControllerLink()">📋 Copy Link</button>
                     </div>
                     <div class="qr-box">
-                        <div class="qr-box-label">📱 Scan for Link</div>
+                        <div class="qr-box-label">Scan to Control</div>
                         <div id="qrCodeBox"></div>
-                        <button class="qr-download-btn" onclick="downloadQrCode()">⬇ Download</button>
+                        <button class="qr-download-btn" style="background: #16a34a;" onclick="downloadQrCode()">⬇ Download</button>
                     </div>
                 </div>
             </div>
@@ -585,20 +610,23 @@
             
             let roomName = finalUid ? (finalUid.startsWith('room-') ? finalUid : `room-${finalUid}`) : 'default-room';
             let overlayUrl = baseUrl + 'football-overlay.html' + `?room=${roomName}`;
-            
+            let controllerUrl = baseUrl + 'football-panel.html' + `?room=${roomName}`;
+
             document.getElementById('overlayLinkInput').value = overlayUrl;
             document.getElementById('openOverlayBtn').href = overlayUrl;
+            document.getElementById('controllerLinkInput').value = controllerUrl;
 
             window.currentRoomName = roomName;
-            generateQrCode(overlayUrl);
+            generateQrCode(controllerUrl);
             saveData();
         }
 
-        // Renders the overlay link as a scannable QR code, entirely in the
-        // browser — nothing is sent to a third-party QR API, so the link
-        // stays private. Useful for quickly grabbing the link on a phone,
-        // sharing with a co-streamer, or pasting into vMix on another PC
-        // without retyping the whole URL.
+        // Renders the CONTROLLER link (not the overlay) as a scannable QR
+        // code, entirely in the browser — nothing is sent to a third-party
+        // QR API. Scanning it on a phone opens this same match's controller,
+        // pre-locked to the right room via the ?room= param, so a second
+        // person (or the streamer themselves) can run scores/timer from
+        // their phone without hunting for the link or retyping anything.
         let currentQrCodeInstance = null;
         function generateQrCode(url) {
             const box = document.getElementById('qrCodeBox');
@@ -618,10 +646,10 @@
             const canvas = box.querySelector('canvas');
             if (!canvas) return;
             const link = document.createElement('a');
-            link.download = 'scorvix-football-overlay-qr.png';
+            link.download = 'scorvix-football-controller-qr.png';
             link.href = canvas.toDataURL('image/png');
             link.click();
-            logLinkAction('OBS QR Downloaded');
+            logLinkAction('Mobile Controller QR Downloaded');
         }
 
         // Logs link activity (copy/preview/download) to the server so it
@@ -642,6 +670,15 @@
             navigator.clipboard.writeText(copyText.value);
             alert("Overlay link copied! Ab ise vMix ya OBS ke Browser Source mein daal do.");
             logLinkAction('OBS Link Copied');
+        }
+
+        function copyControllerLink() {
+            let copyText = document.getElementById('controllerLinkInput');
+            copyText.select();
+            copyText.setSelectionRange(0, 99999);
+            navigator.clipboard.writeText(copyText.value);
+            alert("Controller link copied! Mobile browser mein paste karke same match control kar sakte ho.");
+            logLinkAction('Mobile Controller Link Copied');
         }
 
         function handleFileUpload(event, team) {
