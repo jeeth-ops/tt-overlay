@@ -611,6 +611,7 @@
     </div>
 
     <script>
+        console.log('%c[SCORVIX] overlay.html v2 loaded', 'color:#16a34a;font-weight:bold;');
         // Extract uid from URL parameters (e.g., overlay.html?uid=123)
         const urlParams = new URLSearchParams(window.location.search);
         const targetUid = urlParams.get('uid');
@@ -699,7 +700,15 @@
             }
 
             // 🌟 Apply Dynamic Colors via CSS Root Variables & Direct Elements
-            if (data.colors) {
+            // Only touch these when colors actually changed — writing CSS
+            // custom properties forces the browser to recalculate styles for
+            // the WHOLE page (and can restart the scoreboard's running glow
+            // animation), so doing it on every single keystroke — even ones
+            // for unrelated fields like the tournament title — was making
+            // every update feel janky.
+            const colorsKey = data.colors ? JSON.stringify(data.colors) : '';
+            if (data.colors && colorsKey !== window.__lastColorsKey) {
+                window.__lastColorsKey = colorsKey;
                 document.documentElement.style.setProperty('--ov-bg', data.colors.bg || 'rgba(15, 23, 42, 0.95)');
                 document.documentElement.style.setProperty('--ov-accent', data.colors.accent || '#9333ea');
                 document.documentElement.style.setProperty('--ov-text', data.colors.text || '#ffffff');
@@ -733,15 +742,23 @@
             document.getElementById('o-p2-sets').innerText = data.p2Sets;
 
             // 🌟 Points History — auto-built from data.pointsHistory (no manual entry)
-            let phList = document.getElementById('points-history-list');
-            let phHistory = data.pointsHistory || [];
-            let phRecent = phHistory.slice(-6).reverse(); // newest first, last 6 only
-            phList.innerHTML = phRecent.map((item, idx) => `
-                <div class="points-history-row ${idx === 0 ? 'latest' : ''}" style="animation-delay: ${idx * 0.06}s">
-                    <span class="phr-name">${item.name}</span>
-                    <span class="phr-score">${item.score}</span>
-                </div>
-            `).join('');
+            // Only rebuild this HTML when the history actually changed —
+            // rebuilding it on every keystroke of an unrelated field (like
+            // typing the tournament title) was wasted work happening dozens
+            // of times per second while someone typed.
+            const pointsHistoryKey = JSON.stringify(data.pointsHistory || []);
+            if (pointsHistoryKey !== window.__lastPointsHistoryKey) {
+                window.__lastPointsHistoryKey = pointsHistoryKey;
+                let phList = document.getElementById('points-history-list');
+                let phHistory = data.pointsHistory || [];
+                let phRecent = phHistory.slice(-6).reverse(); // newest first, last 6 only
+                phList.innerHTML = phRecent.map((item, idx) => `
+                    <div class="points-history-row ${idx === 0 ? 'latest' : ''}" style="animation-delay: ${idx * 0.06}s">
+                        <span class="phr-name">${item.name}</span>
+                        <span class="phr-score">${item.score}</span>
+                    </div>
+                `).join('');
+            }
 
             // Check Game / Match Point
             checkGameMatchPoint(data);
@@ -801,40 +818,49 @@
             }
 
             // Render Set-wise Grid Content dynamically based on format & history
-            let totalSetsCount = (data.matchFormat === 'bestOf7') ? 7 : 5;
-            let gridHTML = `<div class="sets-grid-row" style="margin-bottom: 4px;">
-                <div style="font-size: 11px; font-weight: bold; color: #94a3b8;">TEAM / PLAYER</div>`;
-            for(let i=1; i<=totalSetsCount; i++) {
-                gridHTML += `<div class="sets-grid-header-col">Set ${i}</div>`;
+            // Skipped entirely when nothing relevant changed — this whole
+            // block (two nested loops + string building) was re-running on
+            // every single keystroke of unrelated fields before.
+            const setsGridKey = JSON.stringify([data.matchFormat, data.setsHistory, data.p1Name, data.p2Name]);
+            if (setsGridKey !== window.__lastSetsGridKey) {
+                window.__lastSetsGridKey = setsGridKey;
+                let totalSetsCount = (data.matchFormat === 'bestOf7') ? 7 : 5;
+                let gridHTML = `<div class="sets-grid-row" style="margin-bottom: 4px;">
+                    <div style="font-size: 11px; font-weight: bold; color: #94a3b8;">TEAM / PLAYER</div>`;
+                for(let i=1; i<=totalSetsCount; i++) {
+                    gridHTML += `<div class="sets-grid-header-col">Set ${i}</div>`;
+                }
+                gridHTML += `</div>`;
+
+                let setsHistory = data.setsHistory || [];
+
+                // Team 1 Row
+                gridHTML += `<div class="sets-grid-row">
+                    <div class="sets-grid-team-name" style="color: #38bdf8;">${data.p1Name}</div>`;
+                for(let i=0; i<totalSetsCount; i++) {
+                    let setVal = (setsHistory[i]) ? setsHistory[i].p1 : "-";
+                    let isWinner = (setsHistory[i] && setsHistory[i].p1 > setsHistory[i].p2);
+                    gridHTML += `<div class="set-box ${isWinner ? 'winner-set' : ''}">${setVal}</div>`;
+                }
+                gridHTML += `</div>`;
+
+                // Team 2 Row
+                gridHTML += `<div class="sets-grid-row">
+                    <div class="sets-grid-team-name" style="color: #f97316;">${data.p2Name}</div>`;
+                for(let i=0; i<totalSetsCount; i++) {
+                    let setVal = (setsHistory[i]) ? setsHistory[i].p2 : "-";
+                    let isWinner = (setsHistory[i] && setsHistory[i].p2 > setsHistory[i].p1);
+                    gridHTML += `<div class="set-box ${isWinner ? 'winner-set' : ''}">${setVal}</div>`;
+                }
+                gridHTML += `</div>`;
+
+                document.getElementById('sets-grid-content').innerHTML = gridHTML;
             }
-            gridHTML += `</div>`;
 
-            let setsHistory = data.setsHistory || [];
-            
-            // Team 1 Row
-            gridHTML += `<div class="sets-grid-row">
-                <div class="sets-grid-team-name" style="color: #38bdf8;">${data.p1Name}</div>`;
-            for(let i=0; i<totalSetsCount; i++) {
-                let setVal = (setsHistory[i]) ? setsHistory[i].p1 : "-";
-                let isWinner = (setsHistory[i] && setsHistory[i].p1 > setsHistory[i].p2);
-                gridHTML += `<div class="set-box ${isWinner ? 'winner-set' : ''}">${setVal}</div>`;
-            }
-            gridHTML += `</div>`;
-
-            // Team 2 Row
-            gridHTML += `<div class="sets-grid-row">
-                <div class="sets-grid-team-name" style="color: #f97316;">${data.p2Name}</div>`;
-            for(let i=0; i<totalSetsCount; i++) {
-                let setVal = (setsHistory[i]) ? setsHistory[i].p2 : "-";
-                let isWinner = (setsHistory[i] && setsHistory[i].p2 > setsHistory[i].p1);
-                gridHTML += `<div class="set-box ${isWinner ? 'winner-set' : ''}">${setVal}</div>`;
-            }
-            gridHTML += `</div>`;
-
-            document.getElementById('sets-grid-content').innerHTML = gridHTML;
-
-            // Render Standings Table
-            if (data.standings) {
+            // Render Standings Table — same idea, skip if unchanged.
+            const standingsKey = JSON.stringify(data.standings || []);
+            if (data.standings && standingsKey !== window.__lastStandingsKey) {
+                window.__lastStandingsKey = standingsKey;
                 data.standings.sort((a, b) => b.points - a.points);
                 let ptHTML = "";
                 data.standings.forEach((item, index) => {
@@ -886,4 +912,3 @@
     </script>
 </body>
 </html>
-
