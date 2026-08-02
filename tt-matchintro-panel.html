@@ -390,10 +390,14 @@
     }
 
     // Broadcast via Socket.io to all connected overlays (OBS / remote screens)
-    socket.emit('liveMatchIntro', {
-      matchId: MATCH_ID,
+    // Server listens for 'updateMatchIntro' with { id, config, triggerReplay }
+    // — the old event name/shape here ('liveMatchIntro' + matchId) didn't
+    // match what server.js expects, so the remote overlay never actually
+    // received these updates (only this panel's own local iframe preview did,
+    // via the separate postMessage call above).
+    socket.emit('updateMatchIntro', {
+      id: MATCH_ID,
       config: state,
-      visible: true,
       triggerReplay: triggerReplay
     });
   }
