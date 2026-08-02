@@ -11,6 +11,8 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+    <!-- QR code generator (renders fully in-browser, no data sent anywhere) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -95,6 +97,46 @@
             background: #111827; border-top: 1px solid #1f2937; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; font-size: 12px; color: #9ca3af;
         }
         .status-badge { background: #1e293b; padding: 4px 10px; border-radius: 4px; color: #38bdf8; font-weight: bold; border: 1px solid #334155; }
+
+        .mobile-link-btn { background: #16a34a; color: white; border: none; padding: 6px 14px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px; }
+
+        /* Mobile Control modal */
+        #mobile-ctrl-modal {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75);
+            z-index: 10000; justify-content: center; align-items: center; padding: 20px;
+        }
+        #mobile-ctrl-modal.open { display: flex; }
+        .mobile-ctrl-card {
+            background: #111827; border: 1px solid #1f2937; border-radius: 14px;
+            padding: 28px; width: 100%; max-width: 360px; text-align: center;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.8);
+        }
+        .mobile-ctrl-card h3 { color: #4ade80; font-size: 1.1rem; margin-bottom: 6px; }
+        .mobile-ctrl-card p { color: #94a3b8; font-size: 0.8rem; margin-bottom: 16px; line-height: 1.5; }
+        .mobile-qr-wrap {
+            background: #fff; border-radius: 10px; padding: 12px; display: inline-flex;
+            margin-bottom: 14px;
+        }
+        #mobileCtrlLinkInput {
+            width: 100%; padding: 8px 10px; background: #090d16; border: 1px solid #374151;
+            color: #4ade80; border-radius: 6px; font-size: 11px; font-weight: 700; margin-bottom: 10px;
+        }
+        .mobile-ctrl-actions { display: flex; gap: 8px; }
+        .mobile-ctrl-actions button { flex: 1; padding: 9px; font-size: 12px; }
+        .btn-close-modal { background: #374151 !important; }
+
+        /* Makes the studio actually usable when opened on a phone (e.g. via
+           the mobile-control QR) — the 1280x720 fixed broadcast layout
+           collapses into a single scrollable column instead of being
+           unusably tiny/cropped. */
+        @media (max-width: 900px) {
+            body { height: auto; min-height: 100vh; overflow-y: auto; align-items: flex-start; padding: 10px; }
+            .studio-container { width: 100%; max-width: 480px; height: auto; }
+            .studio-body { grid-template-columns: 1fr; overflow-y: visible; }
+            .studio-header { flex-wrap: wrap; height: auto; padding: 10px; gap: 8px; }
+            .header-actions { flex-wrap: wrap; }
+            .studio-footer { flex-wrap: wrap; height: auto; padding: 10px; gap: 6px; }
+        }
     </style>
 </head>
 <body>
@@ -117,6 +159,7 @@
             <div class="studio-title">🏓 Pro League 16:9 Studio Controller</div>
             <div class="header-actions">
                 <button class="link-btn" onclick="openOverlayTab()">🔗 Open vMix / OBS Overlay</button>
+                <button class="mobile-link-btn" onclick="openMobileCtrlModal()">📱 Control from Mobile</button>
                 <button class="logout-btn" onclick="logout()">Logout (<span id="user-email-display"></span>)</button>
             </div>
         </div>
@@ -265,6 +308,20 @@
         </div>
     </div>
 
+    <!-- 📱 Mobile Control QR Modal -->
+    <div id="mobile-ctrl-modal">
+        <div class="mobile-ctrl-card">
+            <h3>📱 Control from Mobile</h3>
+            <p>Scan with your phone to open this exact match's controller — pre-locked to the same room, no retyping needed.</p>
+            <div class="mobile-qr-wrap"><div id="mobileQrBox"></div></div>
+            <input type="text" id="mobileCtrlLinkInput" readonly>
+            <div class="mobile-ctrl-actions">
+                <button class="mobile-link-btn" onclick="copyMobileCtrlLink()">📋 Copy Link</button>
+                <button class="btn-close-modal" onclick="closeMobileCtrlModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
 <script>
     // 🌟 Firebase Configuration 🌟
     const firebaseConfig = {
@@ -296,12 +353,21 @@
 
     auth.onAuthStateChanged(user => {
         if (user) {
-            currentUid = user.uid;
+            // If this page was opened via the "Control from Mobile" QR, the
+            // link carries ?room=<uid-of-the-original-session>. That takes
+            // priority over this device's own login, so scanning the QR
+            // (even from a different Google account) joins the SAME match
+            // instead of creating/opening a brand-new empty room.
+            const urlParams = new URLSearchParams(window.location.search);
+            const roomOverride = urlParams.get('room') || urlParams.get('uid');
+            currentUid = roomOverride || user.uid;
+
             localStorage.setItem("scorvix_uid", currentUid);
             document.getElementById('login-screen').style.display = 'none';
             document.getElementById('main-studio').style.display = 'grid';
             document.getElementById('user-email-display').innerText = user.email;
             loadSavedData();
+            setupMobileCtrlLink();
         } else {
             currentUid = "";
             localStorage.removeItem("scorvix_uid");
@@ -309,6 +375,40 @@
             document.getElementById('main-studio').style.display = 'none';
         }
     });
+
+    // 📱 Mobile Control link + QR — points back to THIS panel (not the
+    // overlay), with ?room= locked to the current match, so scanning it
+    // opens a mobile-usable copy of this exact controller.
+    function setupMobileCtrlLink() {
+        const url = window.location.origin + window.location.pathname + `?room=${currentUid}`;
+        document.getElementById('mobileCtrlLinkInput').value = url;
+    }
+
+    function openMobileCtrlModal() {
+        const url = document.getElementById('mobileCtrlLinkInput').value;
+        const box = document.getElementById('mobileQrBox');
+        box.innerHTML = '';
+        new QRCode(box, {
+            text: url,
+            width: 160,
+            height: 160,
+            colorDark: '#090d16',
+            colorLight: '#ffffff',
+            correctLevel: QRCode.CorrectLevel.M
+        });
+        document.getElementById('mobile-ctrl-modal').classList.add('open');
+    }
+
+    function closeMobileCtrlModal() {
+        document.getElementById('mobile-ctrl-modal').classList.remove('open');
+    }
+
+    function copyMobileCtrlLink() {
+        const input = document.getElementById('mobileCtrlLinkInput');
+        input.select();
+        navigator.clipboard.writeText(input.value);
+        alert("Mobile controller link copied! Phone ke browser mein paste karke same match control kar sakte ho.");
+    }
 
     const socket = io();
     let data = { 
