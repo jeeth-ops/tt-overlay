@@ -249,6 +249,31 @@
                 </div>
 
                 <button style="background: #475569; margin-top: 5px;" onclick="resetMatch()">🔄 Reset Match Score</button>
+
+                <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #1f2937;">
+                    <label>💾 Team Presets:</label>
+                    <select id="ttPresetSelect" onchange="loadTtPreset()" style="width: 100%; margin-bottom: 6px;">
+                        <option value="">-- Select saved teams --</option>
+                    </select>
+                    <button style="background: #0284c7; width: 100%; margin-top: 3px;" onclick="saveTtPreset()">💾 Save as Preset</button>
+
+                    <label style="margin-top: 10px; display: block;">📜 Match History:</label>
+                    <button style="background: #ca8a04; color: #000; width: 100%;" onclick="endTtMatchAndSave()">🏁 End Match & Save</button>
+                    <button style="background: #16a34a; width: 100%; margin-top: 5px;" onclick="openTtHistoryModal()">📜 View History</button>
+
+                    <div style="font-size: 10px; color: #94a3b8; margin-top: 8px;">⌨️ Hotkeys: A/Z = P1 point +/-, L/M = P2 point +/-</div>
+                </div>
+            </div>
+
+            <!-- Match History Modal -->
+            <div id="ttHistoryModalOverlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:999; align-items:center; justify-content:center;">
+                <div style="background:#111827; border:1px solid #1f2937; border-radius:12px; padding:20px; width:90%; max-width:520px; max-height:75vh; overflow-y:auto;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                        <h3 style="margin:0; font-size:1.1rem; color:#f8fafc;">📜 Table Tennis Match History</h3>
+                        <button onclick="closeTtHistoryModal()" style="background:#dc2626; padding:6px 12px; border:none; border-radius:6px; color:#fff; cursor:pointer;">✕ Close</button>
+                    </div>
+                    <div id="ttHistoryListBox" style="display:flex; flex-direction:column; gap:8px; color:#f8fafc;">Loading...</div>
+                </div>
             </div>
 
             <!-- COLUMN 2 -->
@@ -393,6 +418,11 @@
             const urlParams = new URLSearchParams(window.location.search);
             const roomOverride = urlParams.get('room') || urlParams.get('uid');
             currentUid = roomOverride || user.uid;
+            // 🌟 loggedInUid is always the REAL Google account uid (never the
+            // room override), so presets/history stay scoped to the actual
+            // person operating this device — even when they're controlling
+            // someone else's match room via a mobile QR link.
+            window.loggedInUid = user.uid;
 
             localStorage.setItem("scorvix_uid", currentUid);
             document.getElementById('login-screen').style.display = 'none';
@@ -400,6 +430,7 @@
             document.getElementById('user-email-display').innerText = user.email;
             loadSavedData();
             setupMobileCtrlLink();
+            loadTtPresetsIntoDropdown();
         } else {
             currentUid = "";
             localStorage.removeItem("scorvix_uid");
@@ -727,6 +758,122 @@
             sendData();
         }
     }
+
+    // ================= 💾 TEAM PRESETS =================
+    // Scoped under presets/{loggedInUid}.tt — loggedInUid is always the
+    // real Google account (see auth observer above), so presets never leak
+    // across users even when this device is controlling someone else's room.
+    function loadTtPresetsIntoDropdown() {
+        if (!window.loggedInUid) return;
+        db.collection('presets').doc(window.loggedInUid).get().then(doc => {
+            const list = (doc.exists && doc.data().tt) ? doc.data().tt : [];
+            const sel = document.getElementById('ttPresetSelect');
+            sel.innerHTML = '<option value="">-- Select saved teams --</option>';
+            list.forEach((p, i) => {
+                const opt = document.createElement('option');
+                opt.value = i;
+                opt.textContent = p.name;
+                sel.appendChild(opt);
+            });
+            window._ttPresets = list;
+        }).catch(err => console.log('Preset load error:', err));
+    }
+
+    function saveTtPreset() {
+        if (!window.loggedInUid) { alert('Pehle login karein!'); return; }
+        const presetName = prompt('Preset ka naam dein (e.g. "Phantom Stars vs Mumbai Mozartt"):');
+        if (!presetName) return;
+
+        const preset = {
+            name: presetName,
+            p1Name: document.getElementById('c-p1').value,
+            p2Name: document.getElementById('c-p2').value,
+            img1: data.img1 || '',
+            img2: data.img2 || ''
+        };
+
+        const ref = db.collection('presets').doc(window.loggedInUid);
+        ref.get().then(doc => {
+            const existing = (doc.exists && doc.data().tt) ? doc.data().tt : [];
+            existing.push(preset);
+            return ref.set({ tt: existing }, { merge: true });
+        }).then(() => {
+            loadTtPresetsIntoDropdown();
+            alert('Preset saved!');
+        }).catch(err => console.log('Preset save error:', err));
+    }
+
+    function loadTtPreset() {
+        const idx = document.getElementById('ttPresetSelect').value;
+        if (idx === '' || !window._ttPresets) return;
+        const p = window._ttPresets[idx];
+        if (!p) return;
+        document.getElementById('c-p1').value = p.p1Name || '';
+        document.getElementById('c-p2').value = p.p2Name || '';
+        data.img1 = p.img1 || '';
+        data.img2 = p.img2 || '';
+        sendData();
+    }
+
+    // ================= 📜 MATCH HISTORY =================
+    function endTtMatchAndSave() {
+        if (!window.loggedInUid) { alert('Pehle login karein!'); return; }
+        if (!confirm('Match end karke history mein save karna hai?')) return;
+
+        const entry = {
+            sport: 'tt',
+            p1Name: document.getElementById('c-p1').value,
+            p2Name: document.getElementById('c-p2').value,
+            p1Sets: data.p1Sets || 0,
+            p2Sets: data.p2Sets || 0,
+            p1Score: data.p1Score || 0,
+            p2Score: data.p2Score || 0,
+            endedAt: new Date().toISOString()
+        };
+
+        db.collection('matchHistory').doc(window.loggedInUid).collection('entries').add(entry)
+            .then(() => alert('Match history mein save ho gaya!'))
+            .catch(err => console.log('History save error:', err));
+    }
+
+    function openTtHistoryModal() {
+        if (!window.loggedInUid) { alert('Pehle login karein!'); return; }
+        document.getElementById('ttHistoryModalOverlay').style.display = 'flex';
+        const box = document.getElementById('ttHistoryListBox');
+        box.innerHTML = 'Loading...';
+        db.collection('matchHistory').doc(window.loggedInUid).collection('entries')
+            .orderBy('endedAt', 'desc').limit(25).get().then(snap => {
+                if (snap.empty) { box.innerHTML = '<div style="color:#94a3b8;">Koi match history nahi mili abhi tak.</div>'; return; }
+                box.innerHTML = '';
+                snap.forEach(doc => {
+                    const d = doc.data();
+                    const row = document.createElement('div');
+                    row.style.cssText = 'background:#1f2937; border-radius:8px; padding:10px 14px; display:flex; justify-content:space-between; align-items:center;';
+                    const dateStr = d.endedAt ? new Date(d.endedAt).toLocaleString() : '';
+                    row.innerHTML = `<div><strong>${d.p1Name} (Sets ${d.p1Sets}) vs ${d.p2Name} (Sets ${d.p2Sets})</strong><br><span style="font-size:0.75rem;color:#94a3b8;">${dateStr}</span></div>`;
+                    box.appendChild(row);
+                });
+            }).catch(err => { console.log('History fetch error:', err); box.innerHTML = 'Error loading history.'; });
+    }
+
+    function closeTtHistoryModal() {
+        document.getElementById('ttHistoryModalOverlay').style.display = 'none';
+    }
+
+    // ================= ⌨️ KEYBOARD HOTKEYS =================
+    // Ignored while typing in any text field/select so hotkeys never
+    // interfere with entering team names, links, etc.
+    document.addEventListener('keydown', (e) => {
+        const tag = (e.target.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+
+        switch (e.key.toLowerCase()) {
+            case 'a': addPoint(1); break;
+            case 'z': subPoint(1); break;
+            case 'l': addPoint(2); break;
+            case 'm': subPoint(2); break;
+        }
+    });
 </script>
 </body>
 </html>
