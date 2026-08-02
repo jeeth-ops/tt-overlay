@@ -1324,6 +1324,22 @@
             loadDynamicSports();
         });
 
+        // Guarantee the background video loops forever, even in browsers where
+        // the native `loop` attribute is unreliable, and resume it if the
+        // browser ever pauses/stalls it (e.g. after a tab was backgrounded).
+        const bgVideoEl = document.querySelector('.bg-video');
+        if (bgVideoEl) {
+            bgVideoEl.addEventListener('ended', () => {
+                bgVideoEl.currentTime = 0;
+                bgVideoEl.play().catch(() => {});
+            });
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden && bgVideoEl.paused) {
+                    bgVideoEl.play().catch(() => {});
+                }
+            });
+        }
+
         // Apple-style frosted nav bar that gains a shadow once the page scrolls
         const mainNav = document.querySelector('nav');
         if (mainNav) {
