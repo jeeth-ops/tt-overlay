@@ -81,6 +81,9 @@ app.get('/tt-matchintro', (req, res) => res.sendFile(__dirname + '/tt-matchintro
 app.get('/tt-matchintro-panel', (req, res) => res.sendFile(__dirname + '/tt-matchintro-panel.html'));
 app.get('/tt-lowerthird', (req, res) => res.sendFile(__dirname + '/tt-lowerthird.html'));
 app.get('/tt-lowerthird-panel', (req, res) => res.sendFile(__dirname + '/tt-lowerthird-panel.html'));
+app.get('/cricket-templates', (req, res) => res.sendFile(__dirname + '/cricket-templates.html'));
+app.get('/cricket-overlay', (req, res) => res.sendFile(__dirname + '/cricket-overlay.html'));
+app.get('/cricket-panel', (req, res) => res.sendFile(__dirname + '/cricket-panel.html'));
 
 let roomStates = {};
 const firestoreWriteTimers = {}; // debounce map: targetId -> timeout handle
@@ -138,6 +141,25 @@ async function getRoomState(room) {
                 },
                 // Team names auto-sync with the TT scorecard until both
                 // sides have real names filled in — see reconcileTeamNames().
+            },
+            cricketState: {
+                format: "T20",
+                customOvers: 20,
+                venue: "",
+                broadcaster: "BCCI.TV",
+                teamA: { name: "India", short: "IND", color: "#1c3a8a", flagUrl: "" },
+                teamB: { name: "Australia", short: "AUS", color: "#f2c200", flagUrl: "" },
+                battingTeam: "A",
+                score: { runs: 0, wickets: 0, overs: 0, balls: 0 },
+                target: null,
+                striker: { name: "Batsman 1", runs: 0, balls: 0, fours: 0, sixes: 0 },
+                nonStriker: { name: "Batsman 2", runs: 0, balls: 0, fours: 0, sixes: 0 },
+                bowler: { name: "Bowler", overs: 0, balls: 0, maidens: 0, runs: 0, wickets: 0 },
+                thisOver: [],
+                partnershipRuns: 0,
+                partnershipBalls: 0,
+                milestonesHit: {},
+                visible: true
             }
         };
     }
@@ -158,6 +180,7 @@ async function getRoomState(room) {
                 if (data.ttState) roomStates[room].ttState = { ...roomStates[room].ttState, ...data.ttState };
                 if (data.footballState) roomStates[room].footballState = { ...roomStates[room].footballState, ...data.footballState };
                 if (data.matchIntroState) roomStates[room].matchIntroState = { ...roomStates[room].matchIntroState, ...data.matchIntroState };
+                if (data.cricketState) roomStates[room].cricketState = { ...roomStates[room].cricketState, ...data.cricketState };
             }
         } catch (err) {
             console.log("Firestore fetch error:", err);
@@ -304,6 +327,7 @@ io.on('connection', async (socket) => {
     }
     if (roomState.ttState) socket.emit('liveScore', roomState.ttState);
     if (roomState.footballState) socket.emit('liveFootballScore', roomState.footballState);
+    if (roomState.cricketState) socket.emit('liveCricketScore', roomState.cricketState);
     if (connectSyncResult && currentRoom.startsWith('room-')) {
         const uid = currentRoom.replace('room-', '');
         const patch = connectSyncResult === 'matchIntro' ? { matchIntroState: roomState.matchIntroState } : { ttState: roomState.ttState };
@@ -396,6 +420,49 @@ io.on('connection', async (socket) => {
 
     socket.on('updateFootballScore', handleFootballUpdate);
     socket.on('liveFootballScore', handleFootballUpdate);
+
+    // 🏏 CRICKET SCOREBOARD PANEL & OVERLAY SOCKET HANDLING
+    // Mirrors handleFootballUpdate: merge partial updates into persisted room
+    // state, broadcast immediately, save to Firestore debounced (700ms) so
+    // rapid ball-by-ball updates don't queue up a DB write per click.
+    const handleCricketUpdate = async (data) => {
+        let room = socket.activeRoom;
+        const targetId = data.room ? data.room.replace('room-', '') : (data.id || data.uid || matchIdForClient);
+        if (targetId && targetId !== 'default') {
+            room = `room-${targetId}`;
+            if (socket.activeRoom !== room) {
+                socket.leave(socket.activeRoom);
+                socket.join(room);
+                socket.activeRoom = room;
+            }
+        }
+
+        const state = await getRoomState(room);
+        state.cricketState = { ...state.cricketState, ...data };
+
+        io.to(room).emit('liveCricketScore', state.cricketState);
+
+        if (targetId && targetId !== 'default') {
+            clearTimeout(firestoreWriteTimers[`cricket-${targetId}`]);
+            firestoreWriteTimers[`cricket-${targetId}`] = setTimeout(() => {
+                db.collection("scorvix").doc(targetId).set({ cricketState: state.cricketState }, { merge: true }).catch(err => console.log("DB update error:", err));
+            }, 700);
+        }
+    };
+
+    socket.on('updateCricketScore', handleCricketUpdate);
+    socket.on('liveCricketScore', handleCricketUpdate);
+
+    // One-off milestone animations (FOUR/SIX/WICKET/50/100/victory/etc.) are
+    // pure broadcast events — they are NOT merged into cricketState and are
+    // NOT written to Firestore, since they're a transient overlay animation
+    // trigger, not part of the persisted scoreboard.
+    socket.on('cricketEvent', (data) => {
+        let room = socket.activeRoom;
+        const targetId = data.room ? data.room.replace('room-', '') : (data.id || data.uid || matchIdForClient);
+        if (targetId && targetId !== 'default') room = `room-${targetId}`;
+        io.to(room).emit('cricketEvent', data.event || data);
+    });
 
     // Match Intro Socket Update Handling
     socket.on('updateMatchIntro', async (data) => {
