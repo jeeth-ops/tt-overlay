@@ -4,27 +4,38 @@
 <meta charset="UTF-8">
 <title>Cricket Overlay</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">
 <script src="/socket.io/socket.io.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 <style>
   /* ============================================================
-     CRICKET BROADCAST OVERLAY
-     Transparent-background page intended as a Browser Source in
-     OBS/vMix. Renders whatever state arrives over WebSocket from
-     cricket-panel.html — this file has zero cricket logic, it
-     only displays + animates.
+     CRICKET BROADCAST OVERLAY — GSAP edition
+     Transparent-background Browser Source for OBS/vMix. Pure
+     display + animation layer — zero cricket logic lives here.
+     State schema & socket events are unchanged from the previous
+     version so cricket-panel.html needs no changes:
+       socket -> 'liveCricketScore' (full state, re-render)
+       socket -> 'cricketEvent'     ({kind,text,sub,durationMs})
      ============================================================ */
 
   :root{
-    --team-a-color: #1c3a8a;      /* India-style blue, editable from panel */
-    --team-b-color: #f2c200;      /* Australia-style gold, editable from panel */
-    --accent: #ff7a00;            /* score orange */
-    --panel-bg: rgba(8, 14, 28, 0.92);
-    --panel-bg-2: rgba(14, 22, 40, 0.96);
-    --glass-border: rgba(255,255,255,0.08);
-    --text-primary: #ffffff;
-    --text-dim: rgba(255,255,255,0.62);
-    --radius: 10px;
-    --font-display: 'Helvetica Neue', Arial, sans-serif;
+    --navy-deep:   #060810;
+    --navy-mid:    #0c1120;
+    --graphite:    #12172a;
+    --hairline:    rgba(255,255,255,0.09);
+    --hairline-2:  rgba(255,255,255,0.05);
+    --text-primary:#f4f6fb;
+    --text-dim:    rgba(244,246,251,0.56);
+    --text-faint:  rgba(244,246,251,0.34);
+    --gold:        #d9b358;
+    --gold-soft:   #f0d998;
+    --crimson:     #d43a52;
+    --team-a:      #2e63d8;
+    --team-b:      #d9b358;
+    --font-num:    'Manrope', sans-serif;
+    --font-ui:     'Inter', sans-serif;
   }
 
   *{ box-sizing:border-box; margin:0; padding:0; }
@@ -32,195 +43,166 @@
   html,body{
     width:100%; height:100%;
     background:transparent;
-    font-family: var(--font-display);
+    font-family:var(--font-ui);
     overflow:hidden;
     -webkit-font-smoothing:antialiased;
   }
 
-  #stage{
-    position:relative;
-    width:100vw;
-    height:100vh;
-  }
+  #stage{ position:relative; width:100vw; height:100vh; }
 
-  /* ---------------- Lower-third scorebug ---------------- */
+  /* ---------------- Main scorebug ---------------- */
 
   #scorebug{
     position:absolute;
-    left:24px; bottom:28px;
+    left:26px; bottom:30px;
     display:flex;
     align-items:stretch;
-    height:64px;
-    border-radius:var(--radius);
+    height:70px;
+    border-radius:12px;
     overflow:hidden;
-    box-shadow: 0 12px 34px rgba(0,0,0,0.45), 0 1px 0 rgba(255,255,255,0.06) inset;
-    opacity:0;
-    transform: translateY(18px);
-    transition: opacity .5s cubic-bezier(.16,1,.3,1), transform .5s cubic-bezier(.16,1,.3,1);
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
+    background:linear-gradient(180deg, var(--navy-mid), var(--navy-deep));
+    border:1px solid var(--hairline);
+    box-shadow:0 18px 44px rgba(0,0,0,0.55), 0 1px 0 rgba(255,255,255,0.05) inset;
+    backdrop-filter:blur(16px);
+    -webkit-backdrop-filter:blur(16px);
+    clip-path:inset(0% 100% 0% 0%);
   }
-  #scorebug.show{ opacity:1; transform:translateY(0); }
 
-  .team-block{
-    display:flex;
-    align-items:center;
-    gap:10px;
-    padding:0 16px;
-    background: var(--panel-bg);
-    position:relative;
+  .seg{
+    display:flex; align-items:center; position:relative;
+    padding:0 18px;
   }
-  .team-block .stripe{
-    position:absolute; left:0; top:0; bottom:0; width:5px;
-  }
-  #teamA-block .stripe{ background: var(--team-a-color); }
-  #teamB-block .stripe{ background: var(--team-b-color); }
+  .seg + .seg{ border-left:1px solid var(--hairline-2); }
 
+  #team-seg{ gap:12px; min-width:190px; }
+  .team-stripe{ position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--team-a); transition:background .4s; }
   .team-flag{
-    width:26px; height:26px; border-radius:50%;
-    background:#333 center/cover no-repeat;
-    flex:none;
-    border:1px solid rgba(255,255,255,0.25);
+    width:28px; height:28px; border-radius:50%;
+    background:#2a3350 center/cover no-repeat;
+    flex:none; border:1px solid rgba(255,255,255,0.22);
   }
-
-  .team-score-col{ display:flex; flex-direction:column; line-height:1; padding-left:2px; }
+  .team-info{ display:flex; flex-direction:column; line-height:1; gap:5px; }
   .team-name{
-    font-size:12px; font-weight:700; letter-spacing:.4px;
-    color:var(--text-primary); text-transform:uppercase;
+    font-size:11.5px; font-weight:800; letter-spacing:1.2px;
+    color:var(--text-dim); text-transform:uppercase; font-family:var(--font-ui);
   }
-  .team-runs{
-    font-size:24px; font-weight:800; color:var(--accent);
-    letter-spacing:.2px; margin-top:2px;
-    font-variant-numeric: tabular-nums;
+  .team-score-row{ display:flex; align-items:baseline; gap:3px; }
+  .digit-col{
+    display:inline-block; overflow:hidden; height:26px; line-height:26px;
+    font-family:var(--font-num); font-weight:800; font-size:25px; color:var(--text-primary);
+    font-variant-numeric:tabular-nums; position:relative;
   }
-  .team-overs{
-    font-size:11px; color:var(--text-dim); font-weight:600; margin-top:1px;
-  }
+  .digit-col .digit-inner{ display:block; }
+  .score-sep{ font-family:var(--font-num); font-weight:700; font-size:22px; color:var(--text-faint); margin:0 1px; }
+  .team-overs{ font-size:11px; color:var(--text-faint); font-weight:600; font-variant-numeric:tabular-nums; }
 
-  .players-block{
-    display:flex; flex-direction:column; justify-content:center;
-    padding:6px 16px;
-    background: var(--panel-bg-2);
-    gap:3px;
-    min-width:190px;
+  #players-seg{ flex-direction:column; justify-content:center; gap:4px; min-width:200px; padding-top:8px; padding-bottom:8px; }
+  .player-row{ display:flex; align-items:baseline; gap:9px; }
+  .player-row .dot{
+    width:5px; height:5px; border-radius:50%; background:var(--gold); flex:none;
+    opacity:0; transition:opacity .3s;
   }
-  .player-row{
-    display:flex; align-items:baseline; gap:8px;
-    font-size:12.5px; color:var(--text-primary); font-weight:600;
+  .player-row.on-strike .dot{ opacity:1; }
+  .player-row .pname{
+    font-size:12.5px; font-weight:700; color:var(--text-primary);
+    max-width:118px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }
-  .player-row .marker{
-    width:6px; height:6px; border-radius:50%; background:var(--accent);
-    flex:none; opacity:0; transition:opacity .3s;
-  }
-  .player-row.on-strike .marker{ opacity:1; }
-  .player-row .pname{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:120px; }
   .player-row .pstat{
-    font-variant-numeric: tabular-nums; color:var(--text-dim); font-weight:600; font-size:12px;
+    font-family:var(--font-num); font-size:11.5px; font-weight:700; color:var(--text-dim);
+    font-variant-numeric:tabular-nums;
   }
 
-  .vs-block{
-    display:flex; align-items:center; justify-content:center;
-    padding:0 14px;
-    background: var(--panel-bg);
-    color: var(--text-dim);
-    font-size:12px; font-weight:700; letter-spacing:.5px;
+  #bowler-seg{ flex-direction:column; justify-content:center; gap:3px; min-width:150px; }
+  .bowler-name{
+    font-size:12.5px; font-weight:700; color:var(--text-primary);
+    max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }
+  .bowler-figs{ font-family:var(--font-num); font-size:16px; font-weight:800; color:var(--gold-soft); font-variant-numeric:tabular-nums; }
 
-  .bowler-block{
-    display:flex; flex-direction:column; justify-content:center;
-    padding:6px 16px;
-    background: var(--panel-bg-2);
-    min-width:150px;
-    gap:2px;
-  }
-  .bowler-name{ font-size:12.5px; font-weight:700; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:150px; }
-  .bowler-figs{ font-size:16px; font-weight:800; color:var(--accent); font-variant-numeric: tabular-nums; }
+  #meta-seg{ flex-direction:column; justify-content:center; gap:3px; min-width:120px; }
+  .meta-label{ font-size:10px; color:var(--text-faint); font-weight:700; letter-spacing:.6px; text-transform:uppercase; }
+  .meta-value{ font-family:var(--font-num); font-size:14px; font-weight:800; color:var(--text-primary); font-variant-numeric:tabular-nums; }
 
-  .broadcaster-block{
-    display:flex; align-items:center; justify-content:center;
-    padding:0 14px;
-    background: var(--panel-bg);
-    color:#fff; font-size:11px; font-weight:800; letter-spacing:.6px;
-  }
+  #broadcaster-seg{ align-items:center; justify-content:center; color:var(--text-faint); font-size:10.5px; font-weight:800; letter-spacing:1px; }
 
-  /* This-over ticker */
-  #this-over{
-    position:absolute;
-    display:flex; gap:4px;
-    left:24px; bottom:12px;
-  }
-
-  #freehit-badge{
-    position:absolute;
-    left:24px; bottom:40px;
-    display:flex; align-items:center; gap:5px;
-    background:#facc15; color:#12100c;
-    font-size:11px; font-weight:900; letter-spacing:.5px;
-    padding:4px 10px; border-radius:20px;
-    box-shadow:0 4px 14px rgba(250,204,21,.5);
-    opacity:0; transform:translateY(6px) scale(.9);
-    transition:opacity .3s, transform .3s cubic-bezier(.34,1.56,.64,1);
-  }
-  #freehit-badge.show{ opacity:1; transform:translateY(0) scale(1); }
-  .ball-pip{
-    width:20px; height:20px; border-radius:50%;
-    display:flex; align-items:center; justify-content:center;
-    font-size:10px; font-weight:800; color:#fff;
-    background:rgba(255,255,255,0.14);
-    border:1px solid rgba(255,255,255,0.18);
-    opacity:0; transform:scale(.4);
-    transition: opacity .3s, transform .3s cubic-bezier(.34,1.56,.64,1);
-  }
-  .ball-pip.show{ opacity:1; transform:scale(1); }
-  .ball-pip.four{ background:#1c8a4a; }
-  .ball-pip.six{ background:#8a1cc4; }
-  .ball-pip.wicket{ background:#c41c2e; }
-  .ball-pip.wide, .ball-pip.noball{ background:rgba(255,255,255,0.14); border-color:var(--accent); color:var(--accent); }
-
-  /* score pulse animation on update */
-  @keyframes pulse{
-    0%{ transform:scale(1); }
-    30%{ transform:scale(1.18); }
-    100%{ transform:scale(1); }
-  }
-  .pulse{ animation: pulse .45s cubic-bezier(.34,1.56,.64,1); }
-
-  /* ---------------- Milestone popup ---------------- */
-  #milestone{
-    position:absolute;
-    top:50%; left:50%;
-    transform: translate(-50%,-40%) scale(.8);
+  /* Gold sweep highlight — for boundaries. A thin light bar that travels
+     across the scorebug once, then fades. Purely additive, non-destructive
+     to layout (position:absolute, GPU-only transform/opacity). */
+  #sweep{
+    position:absolute; top:0; bottom:0; left:0; width:70px;
+    background:linear-gradient(100deg, transparent, rgba(217,179,88,0.55), transparent);
+    transform:translateX(-120px);
     opacity:0;
     pointer-events:none;
-    text-align:center;
-    transition: opacity .35s cubic-bezier(.16,1,.3,1), transform .5s cubic-bezier(.16,1,.3,1);
+    mix-blend-mode:screen;
   }
-  #milestone.show{
-    opacity:1;
-    transform: translate(-50%,-50%) scale(1);
+
+  /* Wicket flash ring */
+  #wicket-flash{
+    position:absolute; inset:0; border-radius:12px;
+    box-shadow:0 0 0 0 rgba(212,58,82,0);
+    pointer-events:none;
+  }
+
+  /* ---------------- This-over ticker ---------------- */
+  #this-over{
+    position:absolute; left:26px; bottom:8px;
+    display:flex; gap:5px;
+  }
+  .pip{
+    width:21px; height:21px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-family:var(--font-num); font-size:10px; font-weight:800; color:#fff;
+    background:rgba(255,255,255,0.10);
+    border:1px solid var(--hairline);
+    opacity:0; transform:scale(.7);
+  }
+  .pip.four{ background:rgba(217,179,88,0.9); color:#1a1408; border-color:transparent; }
+  .pip.six{ background:var(--gold-soft); color:#1a1408; border-color:transparent; }
+  .pip.wicket{ background:var(--crimson); border-color:transparent; }
+  .pip.extra{ color:var(--gold-soft); border-color:var(--gold); }
+
+  /* ---------------- Free hit chip ---------------- */
+  #freehit{
+    position:absolute; left:26px; bottom:106px;
+    display:flex; align-items:center; gap:6px;
+    background:var(--gold); color:#1a1408;
+    font-family:var(--font-ui); font-size:11px; font-weight:800; letter-spacing:.5px;
+    padding:6px 12px; border-radius:20px;
+    opacity:0; transform:translateY(8px);
+    box-shadow:0 8px 20px rgba(217,179,88,0.35);
+  }
+
+  /* ---------------- Milestone card ---------------- */
+  #milestone{
+    position:absolute; top:50%; left:50%;
+    transform:translate(-50%,-50%);
+    text-align:center;
+    opacity:0;
+    pointer-events:none;
+  }
+  #milestone .m-card{
+    padding:22px 46px;
+    border-radius:14px;
+    background:linear-gradient(180deg, var(--navy-mid), var(--navy-deep));
+    border:1px solid var(--hairline);
+    box-shadow:0 24px 60px rgba(0,0,0,0.6);
+    clip-path:inset(0% 50% 0% 50%);
   }
   #milestone .m-label{
-    font-size:64px;
-    font-weight:900;
-    letter-spacing:2px;
-    color:#fff;
-    text-shadow: 0 8px 30px rgba(0,0,0,0.6);
-    -webkit-text-stroke: 1px rgba(255,255,255,0.15);
+    font-family:var(--font-num); font-size:46px; font-weight:800;
+    letter-spacing:1px; color:var(--text-primary);
   }
   #milestone .m-sub{
-    margin-top:6px;
-    font-size:18px;
-    font-weight:700;
-    color: var(--accent);
-    letter-spacing:1px;
+    margin-top:6px; font-family:var(--font-ui); font-size:14px; font-weight:700;
+    color:var(--text-dim); letter-spacing:.6px; text-transform:uppercase;
   }
-  #milestone.four .m-label{ color:#22c55e; }
-  #milestone.six .m-label{ color:#a855f7; }
-  #milestone.wicket .m-label{ color:#ef4444; }
-  #milestone.fifty .m-label, #milestone.hundred .m-label{ color:#facc15; }
-  #milestone.free_hit .m-label{ color:#facc15; }
+  #milestone.four .m-label, #milestone.fifty .m-label{ color:var(--gold-soft); }
+  #milestone.six .m-label, #milestone.hundred .m-label{ color:var(--gold-soft); }
+  #milestone.wicket .m-label{ color:var(--crimson); }
+  #milestone.victory .m-label{ color:var(--gold-soft); }
+  #milestone.free_hit .m-label{ color:var(--gold-soft); }
 
-  /* Connection status (small, only visible if disconnected — helps during setup) */
   #conn-status{
     position:absolute; top:14px; right:14px;
     font-size:11px; font-weight:700; color:#fff;
@@ -235,46 +217,56 @@
 <div id="stage">
 
   <div id="scorebug">
-    <div class="team-block" id="teamA-block">
-      <div class="stripe"></div>
-      <div class="team-flag" id="teamA-flag"></div>
-      <div class="team-score-col">
-        <div class="team-name" id="teamA-name">IND</div>
-        <div class="team-runs" id="teamA-runs">0-0</div>
-        <div class="team-overs" id="teamA-overs">0.0 ov</div>
+    <div id="wicket-flash"></div>
+    <div id="sweep"></div>
+
+    <div class="seg" id="team-seg">
+      <div class="team-stripe" id="team-stripe"></div>
+      <div class="team-flag" id="team-flag"></div>
+      <div class="team-info">
+        <div class="team-name" id="team-name">IND</div>
+        <div class="team-score-row" id="score-row">
+          <!-- digit columns injected here -->
+        </div>
+        <div class="team-overs" id="team-overs">0.0 ov</div>
       </div>
     </div>
 
-    <div class="players-block">
+    <div class="seg" id="players-seg">
       <div class="player-row on-strike" id="striker-row">
-        <div class="marker"></div>
+        <div class="dot"></div>
         <div class="pname" id="striker-name">Batsman 1</div>
         <div class="pstat" id="striker-stat">0 (0)</div>
       </div>
       <div class="player-row" id="nonstriker-row">
-        <div class="marker"></div>
+        <div class="dot"></div>
         <div class="pname" id="nonstriker-name">Batsman 2</div>
         <div class="pstat" id="nonstriker-stat">0 (0)</div>
       </div>
     </div>
 
-    <div class="vs-block">v</div>
-
-    <div class="bowler-block">
+    <div class="seg" id="bowler-seg">
       <div class="bowler-name" id="bowler-name">Bowler</div>
       <div class="bowler-figs" id="bowler-figs">0-0</div>
       <div class="team-overs" id="bowler-overs">0.0 ov</div>
     </div>
 
-    <div class="broadcaster-block" id="broadcaster-label">BCCI.TV</div>
+    <div class="seg" id="meta-seg">
+      <div class="meta-label" id="meta-label">CRR</div>
+      <div class="meta-value" id="meta-value">0.00</div>
+    </div>
+
+    <div class="seg" id="broadcaster-seg"><span id="broadcaster-label">BCCI.TV</span></div>
   </div>
 
   <div id="this-over"></div>
-  <div id="freehit-badge">⚡ FREE HIT</div>
+  <div id="freehit">⚡ FREE HIT</div>
 
   <div id="milestone">
-    <div class="m-label" id="milestone-label">SIX</div>
-    <div class="m-sub" id="milestone-sub"></div>
+    <div class="m-card">
+      <div class="m-label" id="milestone-label">SIX</div>
+      <div class="m-sub" id="milestone-sub"></div>
+    </div>
   </div>
 
   <div id="conn-status">Connecting…</div>
@@ -283,146 +275,246 @@
 
 <script>
 /* ============================================================
-   SHARED STATE SCHEMA (must match cricket-panel.html exactly)
-   ------------------------------------------------------------
-   {
-     format: 'T20'|'ODI'|'Test'|'Custom',
-     teamA: { name, short, color, flagUrl },
-     teamB: { name, short, color, flagUrl },
-     battingTeam: 'A' | 'B',
-     score: { runs, wickets, overs, balls },   // balls = legal balls in current over (0-5+)
-     target: number|null,
-     striker:    { name, runs, balls, fours, sixes },
-     nonStriker: { name, runs, balls, fours, sixes },
-     bowler:     { name, overs, balls, maidens, runs, wickets },
-     thisOver: [ 'runs'|'W'|'Wd'|'Nb'|'.'... up to 6 legal balls, resets each over ],
-     broadcaster: string,
-     visible: boolean   // show/hide the whole scorebug
-   }
-   SOCKET.IO EVENTS (server relays these — see server.js):
-     Server -> client: 'liveCricketScore' with the full state object above -> re-render
-     Server -> client: 'cricketEvent' with { kind, text, sub, durationMs } -> one-off milestone animation
-
-   CONNECTION
-   Add this overlay in OBS/vMix as a Browser Source pointing at:
-     https://<your-server>/cricket-overlay?room=<matchId>
-   <matchId> must match the ID typed into the panel (cricket-panel.html) so
-   both land in the same server-side room.
+   CONNECTION — identical protocol to the previous version.
+   OBS/vMix Browser Source URL: /cricket-overlay?room=<matchId>
    ============================================================ */
+const params = new URLSearchParams(location.search);
+const matchId = params.get('room') || params.get('uid') || params.get('id') || 'default';
+const connStatus = document.getElementById('conn-status');
+connStatus.textContent = 'Connecting…';
+connStatus.classList.add('visible');
 
-  const params = new URLSearchParams(location.search);
-  const matchId = params.get('room') || params.get('uid') || params.get('id') || 'default';
-  const connStatus = document.getElementById('conn-status');
+const socket = io({ query: { room: matchId } });
+socket.on('connect', () => connStatus.classList.remove('visible'));
+socket.on('disconnect', () => { connStatus.classList.add('visible'); connStatus.textContent = 'Overlay disconnected — retrying…'; });
+socket.on('connect_error', () => { connStatus.classList.add('visible'); connStatus.textContent = 'Connection error — retrying…'; });
 
-  connStatus.textContent = 'Connecting…';
-  connStatus.classList.add('visible');
+socket.on('liveCricketScore', (data) => renderState(data));
+socket.on('cricketEvent', (event) => playMilestone(event));
 
-  // Same-origin connection: this file is served by the same Express+socket.io
-  // server it talks to (see server.js -> app.get('/cricket-overlay', ...)).
-  const socket = io({ query: { room: matchId } });
+/* ============================================================
+   DIGIT-LEVEL SCORE RENDERING
+   Score is shown as individual monospaced digit columns so only
+   the digit(s) that actually changed animate — a small mechanical
+   slide (old digit up+out, new digit in from below), not an
+   instant text swap. Non-digit characters ('-', '.') render as
+   plain static separators.
+   ============================================================ */
+const scoreRow = document.getElementById('score-row');
+let lastScoreString = null;
 
-  socket.on('connect', () => { connStatus.classList.remove('visible'); });
-  socket.on('disconnect', () => {
-    connStatus.classList.add('visible');
-    connStatus.textContent = 'Overlay disconnected — retrying…';
+function buildScoreNode(ch){
+  if(ch === '-' || ch === '.'){
+    const sep = document.createElement('span');
+    sep.className = 'score-sep';
+    sep.textContent = ch;
+    return sep;
+  }
+  const col = document.createElement('span');
+  col.className = 'digit-col';
+  const inner = document.createElement('span');
+  inner.className = 'digit-inner';
+  inner.textContent = ch;
+  col.appendChild(inner);
+  return col;
+}
+
+function rollDigit(col, newChar){
+  const inner = col.querySelector('.digit-inner');
+  if(inner.textContent === newChar) return;
+  gsap.to(inner, {
+    yPercent: -100, opacity: 0, duration: 0.16, ease: 'power2.in',
+    onComplete: () => {
+      inner.textContent = newChar;
+      gsap.fromTo(inner, { yPercent: 100, opacity: 0 }, { yPercent: 0, opacity: 1, duration: 0.24, ease: 'power2.out' });
+    }
   });
-  socket.on('connect_error', () => {
-    connStatus.classList.add('visible');
-    connStatus.textContent = 'Connection error — retrying…';
-  });
+}
 
-  socket.on('liveCricketScore', (data) => renderState(data));
-  socket.on('cricketEvent', (event) => playMilestone(event));
+function renderScoreString(str){
+  const chars = str.split('');
+  if(lastScoreString === null || lastScoreString.length !== chars.length){
+    // First render, or the shape changed (e.g. wickets went from 9 to 10) —
+    // rebuild the columns from scratch rather than trying to diff mismatched
+    // lengths.
+    scoreRow.innerHTML = '';
+    chars.forEach(ch => scoreRow.appendChild(buildScoreNode(ch)));
+  } else {
+    const cols = scoreRow.children;
+    chars.forEach((ch, i) => {
+      const node = cols[i];
+      if(node.classList.contains('digit-col')) rollDigit(node, ch);
+      else if(node.textContent !== ch) node.textContent = ch;
+    });
+  }
+  lastScoreString = str;
+}
 
-  // ---------------- Rendering ----------------
-  let lastState = null;
+/* ============================================================
+   FOUR / SIX / WICKET ACCENT MOMENTS
+   Deliberately restrained — a soft gold sweep + brief highlight
+   for boundaries (six a touch stronger than four), a quiet red
+   ring-flash for a wicket. No bounce, no overshoot, no fireworks.
+   ============================================================ */
+function playSweep(strength){
+  gsap.killTweensOf('#sweep');
+  gsap.fromTo('#sweep',
+    { x: -120, opacity: 0 },
+    { x: 640, opacity: strength, duration: 0.9, ease: 'power2.out',
+      onComplete: () => gsap.set('#sweep', { opacity: 0 }) }
+  );
+}
+function playWicketFlash(){
+  gsap.killTweensOf('#wicket-flash');
+  gsap.fromTo('#wicket-flash',
+    { boxShadow: '0 0 0 0 rgba(212,58,82,0.55)' },
+    { boxShadow: '0 0 0 3px rgba(212,58,82,0)', duration: 0.9, ease: 'power2.out' }
+  );
+}
 
-  function pulseEl(el){
-    el.classList.remove('pulse');
-    void el.offsetWidth; // restart animation
-    el.classList.add('pulse');
+/* ============================================================
+   MAIN STATE RENDER
+   ============================================================ */
+let lastState = null;
+let hasEntered = false;
+
+function renderState(s){
+  if(!s || !Object.keys(s).length) return;
+
+  if(s.visible === false){
+    if(hasEntered) animateExit();
+    lastState = s;
+    return;
+  }
+  if(!hasEntered){ animateEntry(); hasEntered = true; }
+
+  document.documentElement.style.setProperty('--team-a', s.teamA?.color || '#2e63d8');
+  document.documentElement.style.setProperty('--team-b', s.teamB?.color || '#d9b358');
+
+  const battingA = s.battingTeam !== 'B';
+  const battingTeam = battingA ? s.teamA : s.teamB;
+  document.getElementById('team-stripe').style.background = battingA ? 'var(--team-a)' : 'var(--team-b)';
+  document.getElementById('team-name').textContent = battingTeam?.short || battingTeam?.name || '';
+  if(battingTeam?.flagUrl) document.getElementById('team-flag').style.backgroundImage = `url(${battingTeam.flagUrl})`;
+
+  const scoreStr = `${s.score?.runs ?? 0}-${s.score?.wickets ?? 0}`;
+  renderScoreString(scoreStr);
+
+  const oversStr = `${s.score?.overs ?? 0}.${s.score?.balls ?? 0} ov`;
+  document.getElementById('team-overs').textContent = s.target
+    ? `${oversStr} · need ${Math.max(s.target - (s.score?.runs ?? 0), 0)}`
+    : oversStr;
+
+  document.getElementById('striker-name').textContent = s.striker?.name || '—';
+  document.getElementById('striker-stat').textContent = `${s.striker?.runs ?? 0} (${s.striker?.balls ?? 0})`;
+  document.getElementById('nonstriker-name').textContent = s.nonStriker?.name || '—';
+  document.getElementById('nonstriker-stat').textContent = `${s.nonStriker?.runs ?? 0} (${s.nonStriker?.balls ?? 0})`;
+
+  document.getElementById('bowler-name').textContent = s.bowler?.name || '—';
+  document.getElementById('bowler-figs').textContent = `${s.bowler?.wickets ?? 0}-${s.bowler?.runs ?? 0}`;
+  document.getElementById('bowler-overs').textContent = `${s.bowler?.overs ?? 0}.${s.bowler?.balls ?? 0} ov`;
+
+  // Meta segment: Required Run Rate while chasing, else Current Run Rate.
+  const totalBalls = (s.score?.overs ?? 0) * 6 + (s.score?.balls ?? 0);
+  const crr = totalBalls > 0 ? ((s.score?.runs ?? 0) / (totalBalls / 6)) : 0;
+  if(s.target){
+    document.getElementById('meta-label').textContent = 'RRR';
+    document.getElementById('meta-value').textContent = crr ? crr.toFixed(2) : '—';
+  } else {
+    document.getElementById('meta-label').textContent = 'CRR';
+    document.getElementById('meta-value').textContent = crr.toFixed(2);
   }
 
-  function renderState(s){
-    const bug = document.getElementById('scorebug');
-    if(s.visible === false){ bug.classList.remove('show'); return; }
-    bug.classList.add('show');
+  if(s.broadcaster) document.getElementById('broadcaster-label').textContent = s.broadcaster;
 
-    document.documentElement.style.setProperty('--team-a-color', s.teamA?.color || '#1c3a8a');
-    document.documentElement.style.setProperty('--team-b-color', s.teamB?.color || '#f2c200');
+  const freehitEl = document.getElementById('freehit');
+  if(!!s.freeHit !== !!(lastState && lastState.freeHit)){
+    if(s.freeHit) gsap.to(freehitEl, { opacity: 1, y: 0, duration: 0.4, ease: 'power2.out' });
+    else gsap.to(freehitEl, { opacity: 0, y: 8, duration: 0.3, ease: 'power2.in' });
+  }
 
-    const battingA = s.battingTeam !== 'B';
-    const battingTeam = battingA ? s.teamA : s.teamB;
-    const bowlingTeam = battingA ? s.teamB : s.teamA;
-
-    document.getElementById('teamA-name').textContent = battingTeam?.short || battingTeam?.name || '';
-    if(battingTeam?.flagUrl) document.getElementById('teamA-flag').style.backgroundImage = `url(${battingTeam.flagUrl})`;
-
-    const runsText = `${s.score?.runs ?? 0}-${s.score?.wickets ?? 0}`;
-    const runsEl = document.getElementById('teamA-runs');
-    if(lastState && runsEl.textContent !== runsText) pulseEl(runsEl);
-    runsEl.textContent = runsText;
-
-    const oversText = `${s.score?.overs ?? 0}.${s.score?.balls ?? 0} ov`;
-    document.getElementById('teamA-overs').textContent = s.target
-      ? `${oversText} · need ${Math.max(s.target - s.score.runs,0)}`
-      : oversText;
-
-    document.getElementById('striker-name').textContent = s.striker?.name || '—';
-    document.getElementById('striker-stat').textContent = `${s.striker?.runs ?? 0} (${s.striker?.balls ?? 0})`;
-    document.getElementById('nonstriker-name').textContent = s.nonStriker?.name || '—';
-    document.getElementById('nonstriker-stat').textContent = `${s.nonStriker?.runs ?? 0} (${s.nonStriker?.balls ?? 0})`;
-
-    document.getElementById('bowler-name').textContent = s.bowler?.name || '—';
-    document.getElementById('bowler-figs').textContent = `${s.bowler?.wickets ?? 0}-${s.bowler?.runs ?? 0}`;
-    document.getElementById('bowler-overs').textContent = `${s.bowler?.overs ?? 0}.${s.bowler?.balls ?? 0} ov`;
-
-    if(s.broadcaster) document.getElementById('broadcaster-label').textContent = s.broadcaster;
-
-    document.getElementById('freehit-badge').classList.toggle('show', !!s.freeHit);
-
-    // this-over pips
+  // This-over ticker — only rebuild + animate if it actually changed.
+  const overKey = JSON.stringify(s.thisOver || []);
+  if(overKey !== lastState?.__overKey){
     const container = document.getElementById('this-over');
     container.innerHTML = '';
     (s.thisOver || []).forEach((b, i) => {
       const pip = document.createElement('div');
-      pip.className = 'ball-pip';
+      pip.className = 'pip';
       let cls = '', label = b;
-      if(b === '4'){ cls = 'four'; }
-      else if(b === '6'){ cls = 'six'; }
-      else if(b === 'W'){ cls = 'wicket'; }
-      else if(b === 'Wd'){ cls = 'wide'; label = 'Wd'; }
-      else if(b === 'Nb'){ cls = 'noball'; label = 'Nb'; }
+      if(b === '4') cls = 'four';
+      else if(b === '6') cls = 'six';
+      else if(b === 'W') cls = 'wicket';
+      else if(b === 'Wd' || b === 'Nb' || b === 'B' || b === 'LB') cls = 'extra';
       pip.classList.add(cls);
       pip.textContent = label;
       container.appendChild(pip);
-      setTimeout(() => pip.classList.add('show'), 30 * i);
+      gsap.to(pip, { opacity: 1, scale: 1, duration: 0.32, ease: 'power2.out', delay: i * 0.035 });
     });
-
-    lastState = s;
+    s.__overKey = overKey;
+  } else {
+    s.__overKey = lastState.__overKey;
   }
 
-  // ---------------- Milestone animation ----------------
-  let milestoneTimer = null;
-  function playMilestone(evt){
-    const el = document.getElementById('milestone');
-    const label = document.getElementById('milestone-label');
-    const sub = document.getElementById('milestone-sub');
+  lastState = s;
+}
 
-    el.className = ''; // reset
-    el.classList.add((evt.kind || '').toLowerCase());
-    label.textContent = evt.text || evt.kind || '';
-    sub.textContent = evt.sub || '';
+/* ============================================================
+   ENTRY / EXIT — choreographed reveal, not an instant appear.
+   ============================================================ */
+function animateEntry(){
+  const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+  tl.to('#scorebug', { clipPath: 'inset(0% 0% 0% 0%)', duration: 0.85 })
+    .from('#team-flag', { opacity: 0, scale: 0.85, duration: 0.4 }, 0.15)
+    .from('#team-name', { opacity: 0, x: -8, duration: 0.35 }, 0.22)
+    .from('.digit-col', { opacity: 0, yPercent: 40, duration: 0.4, stagger: 0.04 }, 0.28)
+    .from('#team-overs', { opacity: 0, duration: 0.3 }, 0.42)
+    .from('#players-seg .player-row', { opacity: 0, x: -6, duration: 0.35, stagger: 0.06 }, 0.4)
+    .from('#bowler-seg > *', { opacity: 0, duration: 0.3, stagger: 0.05 }, 0.5)
+    .from('#meta-seg > *', { opacity: 0, duration: 0.3, stagger: 0.05 }, 0.56)
+    .from('#broadcaster-seg', { opacity: 0, duration: 0.3 }, 0.62);
+}
+function animateExit(){
+  gsap.to('#scorebug', { clipPath: 'inset(0% 100% 0% 0%)', duration: 0.55, ease: 'power2.in' });
+  gsap.to('#this-over .pip', { opacity: 0, duration: 0.25 });
+  hasEntered = false;
+}
 
-    clearTimeout(milestoneTimer);
-    // force reflow so re-triggering the same milestone still animates
-    el.classList.remove('show');
-    void el.offsetWidth;
-    el.classList.add('show');
+/* ============================================================
+   MILESTONE POPUP — used for FOUR/SIX/WICKET/FIFTY/HUNDRED/
+   VICTORY/NEED/POWERPLAY/DRINKS/etc, and drives the boundary /
+   wicket accent moments on the scorebug itself.
+   ============================================================ */
+let milestoneTl = null;
+function playMilestone(evt){
+  const kind = (evt.kind || '').toUpperCase();
 
-    const holdMs = evt.durationMs || 2600;
-    milestoneTimer = setTimeout(() => { el.classList.remove('show'); }, holdMs);
-  }
+  if(kind === 'FOUR') playSweep(0.7);
+  else if(kind === 'SIX') playSweep(1);
+  else if(kind === 'WICKET') playWicketFlash();
+
+  const el = document.getElementById('milestone');
+  const card = el.querySelector('.m-card');
+  const label = document.getElementById('milestone-label');
+  const sub = document.getElementById('milestone-sub');
+
+  el.className = (evt.kind || '').toLowerCase();
+  label.textContent = evt.text || evt.kind || '';
+  sub.textContent = evt.sub || '';
+
+  if(milestoneTl) milestoneTl.kill();
+  gsap.set(card, { clipPath: 'inset(0% 50% 0% 50%)' });
+  gsap.set(el, { opacity: 1 });
+
+  milestoneTl = gsap.timeline();
+  milestoneTl
+    .to(card, { clipPath: 'inset(0% 0% 0% 0%)', duration: 0.5, ease: 'expo.out' })
+    .from(label, { opacity: 0, y: 6, duration: 0.35, ease: 'power2.out' }, 0.1)
+    .from(sub, { opacity: 0, duration: 0.3, ease: 'power2.out' }, 0.22)
+    .to({}, { duration: (evt.durationMs || 2600) / 1000 }) // hold
+    .to(card, { clipPath: 'inset(0% 50% 0% 50%)', duration: 0.4, ease: 'power2.in' })
+    .to(el, { opacity: 0, duration: 0.2 }, '<');
+}
 </script>
 </body>
 </html>
