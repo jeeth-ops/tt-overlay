@@ -421,6 +421,7 @@
         p1Score: 0, p2Score: 0, p1Sets: 0, p2Sets: 0, 
         server: 1, img1: "", img2: "", state: "score-in",
         setsHistory: [], 
+        pointsHistory: [], // 🌟 auto-tracked rally-by-rally point log for the Points History overlay
         // 🌟 Colors Default Object Added
         colors: {
             bg: "#0e101c",
@@ -503,6 +504,7 @@
                 }
 
                 if(!data.setsHistory) data.setsHistory = [];
+                if(!data.pointsHistory) data.pointsHistory = [];
                 if(data.standings && data.standings[0]) {
                     document.getElementById('pt-t1-played').value = data.standings[0].ties;
                     document.getElementById('pt-t1-pts').value = data.standings[0].points;
@@ -544,6 +546,16 @@
 
     function addPoint(p) {
         if(p === 1) data.p1Score++; else data.p2Score++;
+
+        // 🌟 Auto-log this rally into Points History BEFORE checkRules() may reset
+        // the score for a new set, so the logged score reflects the actual point won.
+        if(!data.pointsHistory) data.pointsHistory = [];
+        data.pointsHistory.push({
+            name: (p === 1) ? data.p1Name : data.p2Name,
+            score: `${data.p1Score}-${data.p2Score}`
+        });
+        if(data.pointsHistory.length > 40) data.pointsHistory.shift(); // keep the log from growing forever
+
         checkRules();
         sendData();
     }
@@ -551,6 +563,7 @@
     function subPoint(p) {
         if(p === 1 && data.p1Score > 0) data.p1Score--;
         if(p === 2 && data.p2Score > 0) data.p2Score--;
+        if(data.pointsHistory && data.pointsHistory.length > 0) data.pointsHistory.pop(); // best-effort undo of the log entry
         sendData();
     }
 
@@ -590,6 +603,7 @@
         if(confirm("Reset match score?")) {
             data.p1Score = 0; data.p2Score = 0; data.p1Sets = 0; data.p2Sets = 0; data.server = 1; 
             data.setsHistory = [];
+            data.pointsHistory = [];
             sendData();
         }
     }
