@@ -243,8 +243,16 @@ io.on('connection', async (socket) => {
 
         io.to(room).emit('liveScore', state.ttState);
 
+        // Debounced (max once per 700ms per room) — same fix already applied
+        // to football. Without this, every point/voice-command/text-edit fired
+        // its own immediate Firestore write, and those queued up on Node's
+        // single event loop, delaying processing of the NEXT update (for TT,
+        // football, or anyone else's room) behind it.
         if (targetId && targetId !== 'default') {
-            db.collection("scorvix").doc(targetId).set({ ttState: state.ttState }, { merge: true }).catch(err => console.log("DB update error:", err));
+            clearTimeout(firestoreWriteTimers[targetId + ':tt']);
+            firestoreWriteTimers[targetId + ':tt'] = setTimeout(() => {
+                db.collection("scorvix").doc(targetId).set({ ttState: state.ttState }, { merge: true }).catch(err => console.log("DB update error:", err));
+            }, 700);
         }
     });
 
