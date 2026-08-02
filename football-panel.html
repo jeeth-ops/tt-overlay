@@ -404,6 +404,45 @@
                 </div>
             </div>
 
+            <!-- Team Presets & Match History -->
+            <div class="section-box full-width">
+                <div class="section-title">
+                    <span>💾 Team Presets & 📜 Match History</span>
+                    <span style="font-size: 0.7rem; color: #94a3b8; font-weight: 500;">Hotkeys: Q/W = Team A -/+, O/P = Team B -/+, Space = Timer</span>
+                </div>
+                <div class="row">
+                    <div class="col" style="flex: 2;">
+                        <label>Load Saved Preset</label>
+                        <select id="presetSelect" onchange="loadPreset()" style="width:100%;">
+                            <option value="">-- Select saved teams --</option>
+                        </select>
+                    </div>
+                    <div class="col" style="flex: 0 0 160px;">
+                        <label>&nbsp;</label>
+                        <button class="btn-primary" style="width:100%;" onclick="saveCurrentAsPreset()">💾 Save as Preset</button>
+                    </div>
+                    <div class="col" style="flex: 0 0 160px;">
+                        <label>&nbsp;</label>
+                        <button class="btn-warning" style="width:100%; color:#000;" onclick="endMatchAndSave()">🏁 End Match & Save</button>
+                    </div>
+                    <div class="col" style="flex: 0 0 140px;">
+                        <label>&nbsp;</label>
+                        <button class="btn-success" style="width:100%;" onclick="openHistoryModal()">📜 History</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Match History Modal -->
+            <div id="historyModalOverlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:999; align-items:center; justify-content:center;">
+                <div style="background:#111827; border:1px solid #1f2937; border-radius:12px; padding:20px; width:90%; max-width:520px; max-height:75vh; overflow-y:auto;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                        <h3 style="margin:0; font-size:1.1rem;">📜 Football Match History</h3>
+                        <button onclick="closeHistoryModal()" class="btn-danger" style="padding:6px 12px;">✕ Close</button>
+                    </div>
+                    <div id="historyListBox" style="display:flex; flex-direction:column; gap:8px;">Loading...</div>
+                </div>
+            </div>
+
             <!-- 2. Match Timer & Settings -->
             <div class="section-box">
                 <div class="section-title">Match Timer & Settings</div>
@@ -531,6 +570,7 @@
             firebase.initializeApp(firebaseConfig);
         }
         const auth = firebase.auth();
+        const db = firebase.firestore();
 
         function loginWithGoogle() {
             const provider = new firebase.auth.GoogleAuthProvider();
@@ -617,8 +657,10 @@
             document.getElementById('controllerLinkInput').value = controllerUrl;
 
             window.currentRoomName = roomName;
+            window.currentUid = userUid;
             generateQrCode(controllerUrl);
             saveData();
+            loadPresetsIntoDropdown();
         }
 
         // Renders the CONTROLLER link (not the overlay) as a scannable QR
@@ -872,6 +914,130 @@
         }
 
         function setModalTitle(title) { window.currentModalTitle = title; document.getElementById('modalToggle').checked = true; saveData(); }
+
+        // ================= 💾 TEAM PRESETS =================
+        // Saved per-user (window.currentUid), scoped under presets/{uid}.football
+        // so one user's saved teams/logos are never visible to another user —
+        // this is the SAME uid that already scopes their live match room, so
+        // it stays consistent with the rest of the app's data isolation model.
+        function loadPresetsIntoDropdown() {
+            if (!window.currentUid) return;
+            db.collection('presets').doc(window.currentUid).get().then(doc => {
+                const list = (doc.exists && doc.data().football) ? doc.data().football : [];
+                const sel = document.getElementById('presetSelect');
+                sel.innerHTML = '<option value="">-- Select saved teams --</option>';
+                list.forEach((p, i) => {
+                    const opt = document.createElement('option');
+                    opt.value = i;
+                    opt.textContent = p.name;
+                    sel.appendChild(opt);
+                });
+                window._footballPresets = list;
+            }).catch(err => console.log('Preset load error:', err));
+        }
+
+        function saveCurrentAsPreset() {
+            if (!window.currentUid) { alert('Pehle login karein!'); return; }
+            const presetName = prompt('Preset ka naam dein (e.g. "Real Madrid vs Barcelona"):');
+            if (!presetName) return;
+
+            const preset = {
+                name: presetName,
+                nameA: document.getElementById('nameA').value,
+                nameB: document.getElementById('nameB').value,
+                logoA: document.getElementById('logoA').value,
+                logoB: document.getElementById('logoB').value,
+                colorA: document.getElementById('colorA').value,
+                colorB: document.getElementById('colorB').value
+            };
+
+            const ref = db.collection('presets').doc(window.currentUid);
+            ref.get().then(doc => {
+                const existing = (doc.exists && doc.data().football) ? doc.data().football : [];
+                existing.push(preset);
+                return ref.set({ football: existing }, { merge: true });
+            }).then(() => {
+                loadPresetsIntoDropdown();
+                alert('Preset saved!');
+            }).catch(err => console.log('Preset save error:', err));
+        }
+
+        function loadPreset() {
+            const idx = document.getElementById('presetSelect').value;
+            if (idx === '' || !window._footballPresets) return;
+            const p = window._footballPresets[idx];
+            if (!p) return;
+            document.getElementById('nameA').value = p.nameA || '';
+            document.getElementById('nameB').value = p.nameB || '';
+            document.getElementById('logoA').value = p.logoA || '';
+            document.getElementById('logoB').value = p.logoB || '';
+            if (p.colorA) document.getElementById('colorA').value = p.colorA;
+            if (p.colorB) document.getElementById('colorB').value = p.colorB;
+            saveData();
+        }
+
+        // ================= 📜 MATCH HISTORY =================
+        function endMatchAndSave() {
+            if (!window.currentUid) { alert('Pehle login karein!'); return; }
+            if (!confirm('Match end karke history mein save karna hai?')) return;
+
+            const entry = {
+                sport: 'football',
+                nameA: document.getElementById('nameA').value,
+                nameB: document.getElementById('nameB').value,
+                scoreA: parseInt(document.getElementById('scoreA').value) || 0,
+                scoreB: parseInt(document.getElementById('scoreB').value) || 0,
+                timer: document.getElementById('timerInput').value,
+                endedAt: new Date().toISOString()
+            };
+
+            db.collection('matchHistory').doc(window.currentUid).collection('entries').add(entry)
+                .then(() => alert('Match history mein save ho gaya! Naya match shuru karne ke liye scores reset kar sakte hain.'))
+                .catch(err => console.log('History save error:', err));
+        }
+
+        function openHistoryModal() {
+            if (!window.currentUid) { alert('Pehle login karein!'); return; }
+            document.getElementById('historyModalOverlay').style.display = 'flex';
+            const box = document.getElementById('historyListBox');
+            box.innerHTML = 'Loading...';
+            db.collection('matchHistory').doc(window.currentUid).collection('entries')
+                .orderBy('endedAt', 'desc').limit(25).get().then(snap => {
+                    if (snap.empty) { box.innerHTML = '<div style="color:#94a3b8;">Koi match history nahi mili abhi tak.</div>'; return; }
+                    box.innerHTML = '';
+                    snap.forEach(doc => {
+                        const d = doc.data();
+                        const row = document.createElement('div');
+                        row.style.cssText = 'background:#1f2937; border-radius:8px; padding:10px 14px; display:flex; justify-content:space-between; align-items:center;';
+                        const dateStr = d.endedAt ? new Date(d.endedAt).toLocaleString() : '';
+                        row.innerHTML = `<div><strong>${d.nameA} ${d.scoreA} - ${d.scoreB} ${d.nameB}</strong><br><span style="font-size:0.75rem;color:#94a3b8;">${dateStr}</span></div>`;
+                        box.appendChild(row);
+                    });
+                }).catch(err => { console.log('History fetch error:', err); box.innerHTML = 'Error loading history.'; });
+        }
+
+        function closeHistoryModal() {
+            document.getElementById('historyModalOverlay').style.display = 'none';
+        }
+
+        // ================= ⌨️ KEYBOARD HOTKEYS =================
+        // Ignored while typing in any text field/select so hotkeys never
+        // interfere with entering team names, links, etc.
+        document.addEventListener('keydown', (e) => {
+            const tag = (e.target.tagName || '').toLowerCase();
+            if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+
+            switch (e.key.toLowerCase()) {
+                case 'q': updateScore('A', -1); break;
+                case 'w': updateScore('A', 1); break;
+                case 'o': updateScore('B', -1); break;
+                case 'p': updateScore('B', 1); break;
+                case ' ':
+                    e.preventDefault();
+                    isTimerRunning ? stopTimer() : startTimer();
+                    break;
+            }
+        });
     </script>
 </body>
 </html>
