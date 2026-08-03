@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Football Match Intro Overlay</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+<script src="/socket.io/socket.io.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<style>
+  :root{
+    --navy-deep:#060a16; --navy-mid:#0d1424; --navy-end:#151f38;
+    --accent:#3fd6ea;
+    --team-a:#1c8a4a; --team-b:#c41c2e;
+    --text:#ffffff; --text-dim:rgba(255,255,255,.62);
+    --w-card:820px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{ width:100%; height:100%; background:transparent; overflow:hidden; font-family:'Inter',Arial,sans-serif; }
+
+  .stage{
+    position:relative; width:100vw; height:100vh;
+    display:flex; align-items:center; justify-content:center;
+    perspective:1600px;
+  }
+  .stage.hidden{ opacity:0; pointer-events:none; }
+
+  /* ============ Ambient background ============ */
+  .bg-layer{
+    position:absolute; inset:0;
+    background:linear-gradient(135deg, var(--navy-deep) 0%, var(--navy-mid) 45%, var(--navy-end) 100%);
+    opacity:0;
+  }
+  .bg-glow{ position:absolute; inset:0; mix-blend-mode:screen; pointer-events:none; opacity:0; }
+  .bg-glow.left{ background:radial-gradient(ellipse at 22% 30%, var(--team-a), transparent 55%); }
+  .bg-glow.right{ background:radial-gradient(ellipse at 78% 70%, var(--team-b), transparent 55%); }
+
+  /* ============ Card ============ */
+  .card{
+    position:relative; width:var(--w-card); max-width:92vw;
+    background:rgba(10,13,24,.68);
+    backdrop-filter:blur(16px) saturate(140%);
+    border:1px solid rgba(255,255,255,.14);
+    border-radius:20px;
+    overflow:hidden;
+    box-shadow:0 32px 80px rgba(0,0,0,.55);
+    opacity:0;
+    clip-path:inset(50% 50% 50% 50% round 20px);
+  }
+
+  .header{ background:rgba(5,6,10,.7); text-align:center; padding:16px 20px 12px; }
+  .league-pill{
+    display:inline-flex; align-items:center; gap:10px;
+    padding:7px 20px; border-radius:20px;
+    background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1);
+  }
+  .league-pill .chev{ color:var(--accent); font-size:13px; font-weight:800; }
+  .league-text{ color:#fff; font-size:14px; font-weight:800; letter-spacing:2.5px; text-transform:uppercase; overflow:hidden; }
+  .venue-line{ margin-top:10px; color:var(--text-dim); font-size:12px; font-weight:600; letter-spacing:.5px; overflow:hidden; }
+
+  .body{ display:grid; grid-template-columns:1fr auto 1fr; align-items:center; padding:44px 34px; }
+  .team{ display:flex; flex-direction:column; align-items:center; gap:16px; }
+
+  .logo-ring{
+    position:relative; width:128px; height:128px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .logo-ring::before{
+    content:''; position:absolute; inset:0; border-radius:20px;
+    border:2px solid var(--ring-color, var(--accent));
+    opacity:0; transform:scale(1.14);
+  }
+  .logo-frame{
+    width:112px; height:112px; border-radius:18px;
+    display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(160deg, rgba(255,255,255,.14), rgba(255,255,255,.03));
+    border:1px solid rgba(255,255,255,.15);
+    box-shadow:0 14px 34px rgba(0,0,0,.4);
+    overflow:hidden; position:relative; padding:14px;
+  }
+  .logo-frame img{ max-width:100%; max-height:100%; object-fit:contain; filter:drop-shadow(0 4px 10px rgba(0,0,0,.35)); }
+  .logo-frame.no-logo{ background:linear-gradient(160deg, var(--slot-color, var(--accent)), rgba(0,0,0,.3)); padding:0; }
+  .logo-frame .initials{ color:#fff; font-size:38px; font-weight:900; letter-spacing:1px; display:none; }
+  .logo-frame.no-logo .initials{ display:block; }
+
+  .team-name{
+    color:#fff; font-size:15px; font-weight:700; letter-spacing:1px; text-transform:uppercase;
+    max-width:220px; text-align:center; overflow:hidden;
+  }
+
+  .vs-col{ display:flex; align-items:center; justify-content:center; height:100%; padding:0 28px; }
+  .divider{
+    width:1px; height:0; border-radius:1px;
+    background:linear-gradient(to bottom, transparent, var(--accent), transparent);
+  }
+
+  .footer-bar{
+    background:linear-gradient(90deg, var(--team-a), var(--team-b));
+    text-align:center; padding:13px 20px; position:relative; overflow:hidden;
+  }
+  .footer-bar span{ color:#fff; font-size:13px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; }
+
+  /* ---- word-reveal helper: each word gets a mask + inner slide-up ---- */
+  .word-mask{ display:inline-block; overflow:hidden; vertical-align:top; }
+  .word-inner{ display:inline-block; will-change:transform; }
+
+  #conn-status{
+    position:absolute; top:14px; right:14px; font-size:11px; font-weight:700; color:#fff;
+    background:rgba(0,0,0,.55); padding:5px 10px; border-radius:6px; display:none; letter-spacing:.4px;
+  }
+  #conn-status.visible{ display:block; }
+</style>
+</head>
+<body>
+
+<div class="stage" id="stage">
+  <div class="bg-layer" id="bgLayer"></div>
+  <div class="bg-glow left" id="glowLeft"></div>
+  <div class="bg-glow right" id="glowRight"></div>
+
+  <div class="card" id="card">
+    <div class="header">
+      <div class="league-pill">
+        <span class="chev">›</span>
+        <span class="league-text" id="leagueWrap"></span>
+        <span class="chev" style="transform:scaleX(-1);">›</span>
+      </div>
+      <div class="venue-line" id="venueWrap"></div>
+    </div>
+
+    <div class="body">
+      <div class="team">
+        <div class="logo-ring" id="ringA">
+          <div class="logo-frame" id="frameA">
+            <img id="logoA" src="" alt="">
+            <span class="initials" id="initialsA">A</span>
+          </div>
+        </div>
+        <div class="team-name" id="nameWrapA"></div>
+      </div>
+
+      <div class="vs-col"><div class="divider" id="divider"></div></div>
+
+      <div class="team">
+        <div class="logo-ring" id="ringB">
+          <div class="logo-frame" id="frameB">
+            <img id="logoB" src="" alt="">
+            <span class="initials" id="initialsB">B</span>
+          </div>
+        </div>
+        <div class="team-name" id="nameWrapB"></div>
+      </div>
+    </div>
+
+    <div class="footer-bar">
+      <span id="kickoffWrap"></span>
+    </div>
+  </div>
+
+  <div id="conn-status">Connecting…</div>
+</div>
+
+<script>
+/* ============================================================
+   CONNECTION
+   ============================================================ */
+const MATCH_ID = new URLSearchParams(window.location.search).get('id') || 'default';
+document.title = 'Football Match Intro — ' + MATCH_ID;
+const connStatus = document.getElementById('conn-status');
+connStatus.textContent = 'Connecting…'; connStatus.classList.add('visible');
+
+const socket = io({ query: { uid: 'fmi-' + MATCH_ID } });
+socket.on('connect', () => connStatus.classList.remove('visible'));
+socket.on('disconnect', () => { connStatus.classList.add('visible'); connStatus.textContent = 'Overlay disconnected — retrying…'; });
+socket.on('connect_error', () => { connStatus.classList.add('visible'); connStatus.textContent = 'Connection error — retrying…'; });
+
+// Local iframe preview (used by the panel's own preview pane) — same-origin
+// postMessage, independent of the socket connection above.
+window.addEventListener('message', (e) => {
+  if(!e.data) return;
+  if(e.data.type === 'footballMatchIntroConfig') applyConfig(e.data.config);
+  if(e.data.type === 'footballMatchIntroReplay') playIntro();
+});
+
+socket.on('liveFootballMatchIntro', (payload) => {
+  if(!payload) return;
+  if(payload.config) applyConfig(payload.config);
+  if(payload.triggerReplay) playIntro();
+});
+
+/* ============================================================
+   TEXT UTIL — wraps each word of a string in a masked span pair
+   so it can be revealed with a clean vertical slide, Apple-style.
+   ============================================================ */
+function setWordReveal(container, text){
+  container.innerHTML = '';
+  const words = (text || '').trim().split(/\s+/).filter(Boolean);
+  words.forEach((w, i) => {
+    const mask = document.createElement('span');
+    mask.className = 'word-mask';
+    const inner = document.createElement('span');
+    inner.className = 'word-inner';
+    inner.textContent = w + (i < words.length - 1 ? '\u00A0' : '');
+    mask.appendChild(inner);
+    container.appendChild(mask);
+  });
+  return container.querySelectorAll('.word-inner');
+}
+
+function initialsOf(name){
+  const words = (name||'').trim().split(/\s+/).filter(Boolean);
+  if(words.length===0) return '?';
+  if(words.length===1) return words[0].slice(0,2).toUpperCase();
+  return (words[0][0]+words[1][0]).toUpperCase();
+}
+
+function setLogo(which, src, name, color){
+  const frame = document.getElementById('frame'+which);
+  const img   = document.getElementById('logo'+which);
+  const init  = document.getElementById('initials'+which);
+  const ring  = document.getElementById('ring'+which);
+  ring.style.setProperty('--ring-color', color || 'var(--accent)');
+  if(src){
+    img.src = src; img.style.display = 'block';
+    frame.classList.remove('no-logo');
+  } else {
+    img.removeAttribute('src'); img.style.display = 'none';
+    frame.classList.add('no-logo');
+    frame.style.setProperty('--slot-color', color || 'var(--accent)');
+    init.textContent = initialsOf(name || (which==='A' ? 'Team A' : 'Team B'));
+  }
+}
+
+/* ============================================================
+   APPLY CONFIG — updates content. Text is re-split into words each
+   time (cheap) so late edits still render correctly even mid-animation.
+   ============================================================ */
+let lastConfig = null;
+function applyConfig(cfg){
+  if(!cfg) return;
+  const c = cfg.colors || {};
+  const root = document.documentElement.style;
+  if(c.navyDeep) root.setProperty('--navy-deep', c.navyDeep);
+  if(c.navyMid)  root.setProperty('--navy-mid', c.navyMid);
+  if(c.navyEnd)  root.setProperty('--navy-end', c.navyEnd);
+  if(c.accent)   root.setProperty('--accent', c.accent);
+  if(cfg.teamA?.color) root.setProperty('--team-a', cfg.teamA.color);
+  if(cfg.teamB?.color) root.setProperty('--team-b', cfg.teamB.color);
+
+  setWordReveal(document.getElementById('leagueWrap'), cfg.league);
+  setWordReveal(document.getElementById('venueWrap'), cfg.venue);
+  setWordReveal(document.getElementById('kickoffWrap'), cfg.kickoff);
+  setWordReveal(document.getElementById('nameWrapA'), cfg.teamA?.name);
+  setWordReveal(document.getElementById('nameWrapB'), cfg.teamB?.name);
+
+  setLogo('A', cfg.teamA?.logo, cfg.teamA?.name, cfg.teamA?.color);
+  setLogo('B', cfg.teamB?.logo, cfg.teamB?.name, cfg.teamB?.color);
+
+  const stg = document.getElementById('stage');
+  if(cfg.visible === false) stg.classList.add('hidden');
+  else stg.classList.remove('hidden');
+
+  lastConfig = cfg;
+  if(!hasPlayed){ playIntro(); hasPlayed = true; }
+}
+
+/* ============================================================
+   ENTRY CHOREOGRAPHY
+   1. Background softly emerges.
+   2. Card unmasks open from center (rounded corners intact throughout).
+   3. Each logo gets its OWN distinct entrance — left rotates in from the
+      left with its ring wiping on, right mirrors from the right — never
+      a plain fade, never symmetric-identical.
+   4. Every text line reveals word-by-word with a soft blur-to-focus
+      slide, matching an Apple-keynote feel — no bounce, no overshoot.
+   5. Divider grows, footer bar sweeps in last.
+   ============================================================ */
+let hasPlayed = false;
+let introTl = null;
+
+function playIntro(){
+  if(introTl) introTl.kill();
+
+  // Reset all masked words + logo rings to their pre-reveal state before
+  // replaying (so "Replay" always looks identical to the first run).
+  gsap.set('.word-inner', { yPercent: 130, opacity: 0, filter: 'blur(6px)' });
+  gsap.set('#card', { opacity: 0, clipPath: 'inset(50% 50% 50% 50% round 20px)' });
+  gsap.set('#bgLayer', { opacity: 0 });
+  gsap.set('.bg-glow', { opacity: 0 });
+  gsap.set('#ringA', { opacity: 0, rotateY: -75, x: -30, scale: 0.8 });
+  gsap.set('#ringB', { opacity: 0, rotateY: 75, x: 30, scale: 0.8 });
+  gsap.set('#ringA::before, #ringB::before', {});
+  gsap.set('#divider', { height: 0 });
+
+  const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+  introTl = tl;
+
+  tl.to('#bgLayer', { opacity: 1, duration: 0.9, ease: 'sine.out' }, 0)
+    .to('.bg-glow', { opacity: 0.22, duration: 1.1, ease: 'sine.out' }, 0.1)
+    .to('#card', { opacity: 1, clipPath: 'inset(0% 0% 0% 0% round 20px)', duration: 0.85, ease: 'expo.out' }, 0.25)
+
+    // Logo A: rotates in from the left, ring wipes on with its team color.
+    .to('#ringA', { opacity: 1, rotateY: 0, x: 0, scale: 1, duration: 0.7, ease: 'power3.out' }, 0.55)
+    // Logo B: mirrors from the right — same language, distinct direction.
+    .to('#ringB', { opacity: 1, rotateY: 0, x: 0, scale: 1, duration: 0.7, ease: 'power3.out' }, 0.68)
+
+    .to('.divider', { height: 110, duration: 0.5, ease: 'power2.out' }, 0.9)
+
+    // Text — Apple-style: blur-to-focus + gentle upward slide, staggered
+    // per word, never per-letter (reads cleaner at broadcast sizes).
+    .to('#leagueWrap .word-inner', { yPercent: 0, opacity: 1, filter: 'blur(0px)', duration: 0.55, stagger: 0.05, ease: 'power3.out' }, 1.0)
+    .to('#venueWrap .word-inner',  { yPercent: 0, opacity: 1, filter: 'blur(0px)', duration: 0.5, stagger: 0.03, ease: 'power3.out' }, 1.15)
+    .to('#nameWrapA .word-inner',  { yPercent: 0, opacity: 1, filter: 'blur(0px)', duration: 0.5, stagger: 0.04, ease: 'power3.out' }, 1.25)
+    .to('#nameWrapB .word-inner',  { yPercent: 0, opacity: 1, filter: 'blur(0px)', duration: 0.5, stagger: 0.04, ease: 'power3.out' }, 1.32)
+    .to('#kickoffWrap .word-inner',{ yPercent: 0, opacity: 1, filter: 'blur(0px)', duration: 0.5, stagger: 0.03, ease: 'power3.out' }, 1.5);
+}
+</script>
+</body>
+</html>

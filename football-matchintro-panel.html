@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Football Match Intro — Control Panel</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  :root{
+    --cyan:#3fd6ea; --accent:#3fd6ea;
+    --bg:#0a0d18; --panel:#11162a; --panel-2:#161c34;
+    --border:rgba(255,255,255,.09);
+    --text:#e9ecf6; --text-dim:#8e96b8;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; min-height:100vh; background:var(--bg); color:var(--text);
+    font-family:'Segoe UI',Arial,sans-serif;
+    display:flex; flex-direction:column;
+  }
+  header{
+    padding:16px 24px; border-bottom:1px solid var(--border);
+    display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;
+  }
+  header h1{
+    font-size:16px; letter-spacing:2px; text-transform:uppercase; font-weight:700;
+    background:linear-gradient(90deg,var(--cyan),#3fd6ea88);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
+  header .actions{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+
+  button, select{
+    font-family:inherit; font-size:12.5px; font-weight:600; letter-spacing:.5px;
+    padding:9px 14px; border-radius:8px; border:1px solid var(--border);
+    background:var(--panel-2); color:var(--text); cursor:pointer;
+    transition:transform .12s ease, border-color .12s ease;
+  }
+  button:hover{ border-color:rgba(255,255,255,.25); transform:translateY(-1px); }
+  button.primary{ background:linear-gradient(90deg,#22c55e,#16a34a); border:none; color:#fff; }
+  button.ghost{ background:transparent; }
+  button.danger{ color:#ff8fa3; }
+  button.small{ padding:6px 10px; font-size:11px; }
+
+  main{ flex:1; display:flex; gap:0; min-height:0; }
+
+  .preview-col{
+    flex:1.15; display:flex; align-items:center; justify-content:center;
+    padding:28px; background:
+      radial-gradient(circle at 20% 20%, rgba(63,214,234,.08), transparent 50%),
+      radial-gradient(circle at 80% 80%, rgba(28,138,74,.06), transparent 50%);
+  }
+  .preview-frame{
+    width:100%; max-width:920px; aspect-ratio:16/9;
+    border-radius:16px; overflow:hidden; border:1px solid var(--border);
+    box-shadow:0 30px 70px rgba(0,0,0,.5); background:#0d1f14;
+  }
+  .preview-frame iframe{ width:100%; height:100%; border:0; }
+
+  .controls-col{
+    width:410px; flex-shrink:0; overflow-y:auto;
+    border-left:1px solid var(--border);
+    padding:20px 20px 60px;
+  }
+  .section{ margin-bottom:22px; padding-bottom:20px; border-bottom:1px solid var(--border); }
+  .section:last-child{ border-bottom:none; }
+  .section h2{ font-size:11px; letter-spacing:2px; text-transform:uppercase; color:var(--text-dim); margin-bottom:14px; font-weight:700; }
+  .field{ margin-bottom:12px; }
+  .field label{ display:block; font-size:12px; color:var(--text-dim); margin-bottom:6px; }
+  .field input[type=text]{
+    width:100%; padding:9px 10px; border-radius:7px; border:1px solid var(--border);
+    background:var(--panel-2); color:var(--text); font-size:13px; font-family:inherit;
+  }
+  .field input[type=text]:focus{ outline:none; border-color:var(--cyan); }
+
+  .color-row{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; gap:10px; }
+  .color-row label{ font-size:12px; color:var(--text-dim); }
+  .color-row input[type=color]{
+    width:38px; height:28px; border:1px solid var(--border); border-radius:6px; padding:0; background:none; cursor:pointer;
+  }
+
+  .team-block{ border:1px solid var(--border); border-radius:10px; padding:14px; margin-bottom:12px; }
+  .team-block h3{ font-size:12.5px; margin-bottom:10px; color:var(--text); }
+  .logo-box{
+    display:flex; align-items:center; gap:12px; padding:10px; border:1px dashed var(--border); border-radius:10px;
+    margin-bottom:10px;
+  }
+  .logo-thumb{
+    width:48px; height:48px; border-radius:8px; background:var(--panel-2);
+    display:flex; align-items:center; justify-content:center; overflow:hidden; flex-shrink:0;
+    border:1px solid var(--border);
+  }
+  .logo-thumb img{ max-width:100%; max-height:100%; object-fit:contain; }
+  .logo-thumb span{ font-size:11px; color:var(--text-dim); }
+  .logo-actions{ display:flex; flex-direction:column; gap:6px; flex:1; }
+  .logo-actions .btn-row{ display:flex; gap:6px; }
+  .logo-actions button{ flex:1; padding:6px 8px; font-size:11px; }
+  input[type=file]{ display:none; }
+  .auto-color-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .auto-color-row label{ font-size:12px; color:var(--text-dim); display:flex; align-items:center; gap:6px; }
+
+  .hint{ font-size:11.5px; color:var(--text-dim); line-height:1.5; margin-top:10px; }
+  .hint b{ color:var(--text); }
+
+  .mobile-ctrl-box{
+    display:flex; align-items:center; gap:14px; padding:12px;
+    border:1px dashed rgba(34,197,94,.4); border-radius:10px; background:rgba(34,197,94,.05);
+  }
+  .mobile-ctrl-left{ flex:1; display:flex; flex-direction:column; gap:8px; min-width:0; }
+  .mobile-ctrl-input{
+    width:100%; padding:8px 10px; border-radius:7px; border:1px solid var(--border);
+    background:var(--panel-2); color:#4ade80; font-size:11.5px; font-family:inherit; font-weight:600;
+  }
+  .qr-box{ flex-shrink:0; background:#fff; border-radius:8px; padding:6px; display:flex; flex-direction:column; align-items:center; gap:5px; }
+  .qr-box canvas{ display:block; border-radius:4px; }
+  .qr-download-btn{ background:#16a34a !important; color:#fff !important; border:none !important; padding:5px 8px !important; font-size:10.5px !important; width:100%; }
+
+  .preset-row{ display:flex; gap:8px; margin-bottom:8px; }
+  .preset-row select{ flex:1; }
+  .preset-list-item{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:7px 10px; border:1px solid var(--border); border-radius:7px; margin-bottom:6px; font-size:12px;
+  }
+
+  ::-webkit-scrollbar{ width:8px; }
+  ::-webkit-scrollbar-thumb{ background:var(--panel-2); border-radius:4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Football Match Intro — Control Panel</h1>
+  <div class="actions" style="align-items:center;">
+    <div style="display:flex;align-items:center;gap:6px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:6px 10px;">
+      <label style="font-size:11px;color:var(--text-dim);letter-spacing:.5px;">MATCH ID</label>
+      <input type="text" id="fMatchId" style="width:110px;background:transparent;border:none;color:var(--text);font-size:12.5px;font-family:inherit;font-weight:700;letter-spacing:1px;outline:none;">
+    </div>
+    <button class="ghost" id="btnNewId">New ID</button>
+    <button id="btnCopyLink">Copy overlay link</button>
+    <button class="ghost" id="btnReset">Reset defaults</button>
+    <button class="primary" id="btnOpenStandalone" style="background:linear-gradient(90deg,#22c55e,#16a34a);">🔗 Preview Overlay</button>
+    <button class="primary" id="btnReplay">▶ Replay intro</button>
+  </div>
+</header>
+
+<main>
+  <div class="preview-col">
+    <div class="preview-frame"><iframe id="previewFrame"></iframe></div>
+  </div>
+
+  <div class="controls-col">
+
+    <div class="section">
+      <h2>Presets</h2>
+      <div class="preset-row">
+        <select id="presetSelect"><option value="">— Saved presets —</option></select>
+        <button class="small" id="btnLoadPreset">Load</button>
+      </div>
+      <div class="preset-row">
+        <input type="text" id="presetName" placeholder="Preset name (e.g. Derby Night)" style="flex:1;padding:8px 10px;border-radius:7px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);font-size:12px;">
+        <button class="small primary" id="btnSavePreset">Save</button>
+      </div>
+      <p class="hint">Saves the current text + colors + team setup (not logos, to keep it lightweight) as a reusable preset — great for recurring rivalries or league branding.</p>
+    </div>
+
+    <div class="section">
+      <h2>Text</h2>
+      <div class="field"><label>League / competition</label><input type="text" id="fLeague" value="LAKERS CUP PLAYOFFS"></div>
+      <div class="field"><label>Venue</label><input type="text" id="fVenue" value="American Airlines Center - Dallas, TX"></div>
+      <div class="field"><label>Date / kickoff line</label><input type="text" id="fKickoff" value="Tomorrow, 8PM EST"></div>
+    </div>
+
+    <div class="section">
+      <h2>Teams</h2>
+
+      <div class="team-block">
+        <h3>Team A</h3>
+        <div class="field"><label>Name</label><input type="text" id="fNameA" value="Player A"></div>
+        <div class="logo-box">
+          <div class="logo-thumb" id="thumbA"><span>A</span></div>
+          <div class="logo-actions">
+            <label style="margin:0;font-size:12px;color:var(--text-dim);">Logo / flag</label>
+            <div class="btn-row">
+              <button id="btnUploadA">Upload</button>
+              <button class="danger" id="btnRemoveA">Remove</button>
+            </div>
+            <input type="file" id="fileA" accept="image/*">
+          </div>
+        </div>
+        <div class="auto-color-row">
+          <label><input type="checkbox" id="autoColorA" checked> Auto color from logo</label>
+          <input type="color" id="colorA" value="#1c8a4a">
+        </div>
+      </div>
+
+      <div class="team-block">
+        <h3>Team B</h3>
+        <div class="field"><label>Name</label><input type="text" id="fNameB" value="Player B"></div>
+        <div class="logo-box">
+          <div class="logo-thumb" id="thumbB"><span>B</span></div>
+          <div class="logo-actions">
+            <label style="margin:0;font-size:12px;color:var(--text-dim);">Logo / flag</label>
+            <div class="btn-row">
+              <button id="btnUploadB">Upload</button>
+              <button class="danger" id="btnRemoveB">Remove</button>
+            </div>
+            <input type="file" id="fileB" accept="image/*">
+          </div>
+        </div>
+        <div class="auto-color-row">
+          <label><input type="checkbox" id="autoColorB" checked> Auto color from logo</label>
+          <input type="color" id="colorB" value="#c41c2e">
+        </div>
+      </div>
+      <p class="hint">When "Auto color" is on, each team's accent color is picked automatically from their uploaded logo. Turn it off any time to pick your own color instead — your manual pick sticks even if you upload a new logo later.</p>
+    </div>
+
+    <div class="section">
+      <h2>Background & Accent</h2>
+      <div class="color-row"><label>Background — dark</label><input type="color" id="cNavyDeep" value="#060a16"></div>
+      <div class="color-row"><label>Background — mid</label><input type="color" id="cNavyMid" value="#0d1424"></div>
+      <div class="color-row"><label>Background — light</label><input type="color" id="cNavyEnd" value="#151f38"></div>
+      <div class="color-row"><label>Accent (divider / glow)</label><input type="color" id="cAccent" value="#3fd6ea"></div>
+    </div>
+
+    <p class="hint">
+      Changes here update the preview instantly and sync live via Socket.io — updates reach the overlay in real time, no delay. Each match has its own unique overlay link — click <b>Copy overlay link</b> and use that exact URL as the Browser Source.
+    </p>
+
+    <div class="section">
+      <h2>📱 Control from Mobile</h2>
+      <div class="mobile-ctrl-box">
+        <div class="mobile-ctrl-left">
+          <input type="text" id="controllerUrl" class="mobile-ctrl-input" readonly>
+          <button id="btnCopyControllerLink" style="align-self:flex-start;">Copy Controller Link</button>
+        </div>
+        <div class="qr-box">
+          <div id="qrCodeBox"></div>
+          <button class="qr-download-btn" id="btnDownloadQr">⬇ Download</button>
+        </div>
+      </div>
+      <p class="hint">Scan with your phone to open this exact match's controller — pre-locked to the same Match ID, no retyping needed.</p>
+    </div>
+
+  </div>
+</main>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  const STORAGE_PREFIX = 'footballMatchIntroConfig_';
+  const PRESETS_KEY = 'footballMatchIntroPresets';
+
+  function generateId(){ return Math.random().toString(36).slice(2,8); }
+  function getIdFromUrl(){ return new URLSearchParams(window.location.search).get('id'); }
+
+  let MATCH_ID = getIdFromUrl() || generateId();
+  if(!getIdFromUrl()){
+    const url = new URL(window.location.href);
+    url.searchParams.set('id', MATCH_ID);
+    history.replaceState(null, '', url.toString());
+  }
+  let STORAGE_KEY = STORAGE_PREFIX + MATCH_ID;
+
+  const socket = io({ query: { uid: 'panel-' + MATCH_ID } });
+
+  const DEFAULTS = {
+    league: "LAKERS CUP PLAYOFFS",
+    venue:  "American Airlines Center - Dallas, TX",
+    kickoff:"Tomorrow, 8PM EST",
+    teamA:  { name: "Player A", logo: "", color: "#1c8a4a", colorAuto: true },
+    teamB:  { name: "Player B", logo: "", color: "#c41c2e", colorAuto: true },
+    colors: {
+      navyDeep:"#060a16", navyMid:"#0d1424", navyEnd:"#151f38",
+      accent:"#3fd6ea"
+    }
+  };
+
+  let state = JSON.parse(JSON.stringify(DEFAULTS));
+
+  const els = {
+    league:document.getElementById('fLeague'),
+    venue:document.getElementById('fVenue'),
+    kickoff:document.getElementById('fKickoff'),
+    nameA:document.getElementById('fNameA'),
+    nameB:document.getElementById('fNameB'),
+    colorA:document.getElementById('colorA'),
+    colorB:document.getElementById('colorB'),
+    autoColorA:document.getElementById('autoColorA'),
+    autoColorB:document.getElementById('autoColorB'),
+    navyDeep:document.getElementById('cNavyDeep'),
+    navyMid:document.getElementById('cNavyMid'),
+    navyEnd:document.getElementById('cNavyEnd'),
+    accent:document.getElementById('cAccent'),
+    thumbA:document.getElementById('thumbA'),
+    thumbB:document.getElementById('thumbB'),
+    fileA:document.getElementById('fileA'),
+    fileB:document.getElementById('fileB'),
+    matchId:document.getElementById('fMatchId'),
+  };
+  els.matchId.value = MATCH_ID;
+
+  function updateControllerLink(){
+    const controllerUrl = new URL('football-matchintro-panel.html', window.location.href);
+    controllerUrl.searchParams.set('id', MATCH_ID);
+    document.getElementById('controllerUrl').value = controllerUrl.toString();
+
+    const box = document.getElementById('qrCodeBox');
+    box.innerHTML = '';
+    new QRCode(box, {
+      text: controllerUrl.toString(), width: 100, height: 100,
+      colorDark: '#0a0d18', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M
+    });
+  }
+  updateControllerLink();
+
+  document.getElementById('btnDownloadQr').addEventListener('click', () => {
+    const canvas = document.getElementById('qrCodeBox').querySelector('canvas');
+    if(!canvas) return;
+    const link = document.createElement('a');
+    link.download = 'scorvix-football-matchintro-controller-qr.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  });
+
+  document.getElementById('btnCopyControllerLink').addEventListener('click', () => {
+    navigator.clipboard.writeText(document.getElementById('controllerUrl').value).then(() => {
+      const btn = document.getElementById('btnCopyControllerLink');
+      const old = btn.textContent; btn.textContent = 'Copied!';
+      setTimeout(() => btn.textContent = old, 1400);
+    });
+  });
+
+  const frame = document.getElementById('previewFrame');
+  let frameReady = false;
+  frame.src = 'football-matchintro.html?id=' + encodeURIComponent(MATCH_ID);
+  frame.addEventListener('load', () => { frameReady = true; sendUpdate(); });
+
+  // 🌟 Broadcasts INSTANTLY — no debounce/throttle on the panel side. The
+  // server also relays it immediately; only its own Firestore save (a
+  // separate, unrelated persistence step) is debounced server-side, which
+  // never delays what the overlay actually sees.
+  function sendUpdate(triggerReplay = false){
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if(frameReady){
+      frame.contentWindow.postMessage({ type:'footballMatchIntroConfig', id: MATCH_ID, config: state }, '*');
+    }
+    socket.emit('updateFootballMatchIntro', {
+      id: MATCH_ID,
+      config: state,
+      triggerReplay: triggerReplay
+    });
+  }
+
+  function populateForm(){
+    els.league.value = state.league;
+    els.venue.value = state.venue;
+    els.kickoff.value = state.kickoff;
+    els.nameA.value = state.teamA.name;
+    els.nameB.value = state.teamB.name;
+    els.colorA.value = state.teamA.color;
+    els.colorB.value = state.teamB.color;
+    els.autoColorA.checked = state.teamA.colorAuto;
+    els.autoColorB.checked = state.teamB.colorAuto;
+    els.navyDeep.value = state.colors.navyDeep;
+    els.navyMid.value = state.colors.navyMid;
+    els.navyEnd.value = state.colors.navyEnd;
+    els.accent.value = state.colors.accent;
+    renderThumb('A'); renderThumb('B');
+  }
+
+  function renderThumb(which){
+    const t = which==='A' ? els.thumbA : els.thumbB;
+    const logo = which==='A' ? state.teamA.logo : state.teamB.logo;
+    t.innerHTML = logo ? `<img src="${logo}">` : `<span>${which}</span>`;
+  }
+
+  // ---- text fields (instant push) ----
+  els.league.addEventListener('input', () => { state.league = els.league.value; sendUpdate(); });
+  els.venue.addEventListener('input',  () => { state.venue  = els.venue.value;  sendUpdate(); });
+  els.kickoff.addEventListener('input',() => { state.kickoff= els.kickoff.value;sendUpdate(); });
+  els.nameA.addEventListener('input',  () => { state.teamA.name = els.nameA.value; sendUpdate(); });
+  els.nameB.addEventListener('input',  () => { state.teamB.name = els.nameB.value; sendUpdate(); });
+
+  // ---- manual color pickers ----
+  els.colorA.addEventListener('input', () => { state.teamA.color = els.colorA.value; state.teamA.colorAuto = false; els.autoColorA.checked = false; sendUpdate(); });
+  els.colorB.addEventListener('input', () => { state.teamB.color = els.colorB.value; state.teamB.colorAuto = false; els.autoColorB.checked = false; sendUpdate(); });
+  els.autoColorA.addEventListener('change', () => {
+    state.teamA.colorAuto = els.autoColorA.checked;
+    if(state.teamA.colorAuto && state.teamA.logo) extractDominantColor(state.teamA.logo, hex => { if(hex){ state.teamA.color = hex; els.colorA.value = hex; sendUpdate(); } });
+    else sendUpdate();
+  });
+  els.autoColorB.addEventListener('change', () => {
+    state.teamB.colorAuto = els.autoColorB.checked;
+    if(state.teamB.colorAuto && state.teamB.logo) extractDominantColor(state.teamB.logo, hex => { if(hex){ state.teamB.color = hex; els.colorB.value = hex; sendUpdate(); } });
+    else sendUpdate();
+  });
+
+  // ---- background/accent colors ----
+  const colorMap = { navyDeep:'navyDeep', navyMid:'navyMid', navyEnd:'navyEnd', accent:'accent' };
+  Object.keys(colorMap).forEach(key => {
+    els[key].addEventListener('input', () => { state.colors[colorMap[key]] = els[key].value; sendUpdate(); });
+  });
+
+  // ---- logos ----
+  document.getElementById('btnUploadA').addEventListener('click', () => els.fileA.click());
+  document.getElementById('btnUploadB').addEventListener('click', () => els.fileB.click());
+  document.getElementById('btnRemoveA').addEventListener('click', () => { state.teamA.logo=''; renderThumb('A'); sendUpdate(); });
+  document.getElementById('btnRemoveB').addEventListener('click', () => { state.teamB.logo=''; renderThumb('B'); sendUpdate(); });
+
+  // 🎨 Samples the uploaded logo on a small offscreen canvas and picks the
+  // most common non-transparent, non-near-white/near-black color — a simple,
+  // fast dominant-color extraction that works well for logos/flags/crests.
+  function extractDominantColor(imgSrc, callback){
+    const img = new Image();
+    img.onload = () => {
+      try{
+        const size = 48;
+        const canvas = document.createElement('canvas');
+        canvas.width = size; canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, size, size);
+        const data = ctx.getImageData(0, 0, size, size).data;
+        const buckets = {};
+        for(let i = 0; i < data.length; i += 4){
+          const r = data[i], g = data[i+1], b = data[i+2], a = data[i+3];
+          if(a < 128) continue;
+          const brightness = (r + g + b) / 3;
+          if(brightness > 235 || brightness < 20) continue; // skip near-white/near-black
+          const key = `${Math.round(r/24)*24},${Math.round(g/24)*24},${Math.round(b/24)*24}`;
+          buckets[key] = (buckets[key] || 0) + 1;
+        }
+        let best = null, bestCount = 0;
+        for(const k in buckets){ if(buckets[k] > bestCount){ bestCount = buckets[k]; best = k; } }
+        if(!best){ callback(null); return; }
+        const [r,g,b] = best.split(',').map(Number);
+        callback('#' + [r,g,b].map(v => v.toString(16).padStart(2,'0')).join(''));
+      }catch(e){ callback(null); } // canvas can throw on cross-origin images without CORS headers
+    };
+    img.onerror = () => callback(null);
+    img.src = imgSrc;
+  }
+
+  function handleFile(which, file){
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result;
+      if(which==='A') state.teamA.logo = dataUrl; else state.teamB.logo = dataUrl;
+      renderThumb(which);
+
+      const auto = which==='A' ? els.autoColorA.checked : els.autoColorB.checked;
+      if(auto){
+        extractDominantColor(dataUrl, hex => {
+          if(hex){
+            if(which==='A'){ state.teamA.color = hex; els.colorA.value = hex; }
+            else { state.teamB.color = hex; els.colorB.value = hex; }
+          }
+          sendUpdate();
+        });
+      } else {
+        sendUpdate();
+      }
+    };
+    reader.readAsDataURL(file);
+  }
+  els.fileA.addEventListener('change', e => handleFile('A', e.target.files[0]));
+  els.fileB.addEventListener('change', e => handleFile('B', e.target.files[0]));
+
+  // ---- top actions ----
+  document.getElementById('btnReplay').addEventListener('click', () => {
+    sendUpdate(true);
+    if(frameReady) frame.contentWindow.postMessage({ type:'footballMatchIntroReplay', id: MATCH_ID }, '*');
+  });
+  document.getElementById('btnReset').addEventListener('click', () => {
+    state = JSON.parse(JSON.stringify(DEFAULTS));
+    populateForm();
+    sendUpdate();
+  });
+  document.getElementById('btnOpenStandalone').addEventListener('click', () => {
+    sendUpdate();
+    window.open('football-matchintro.html?id=' + encodeURIComponent(MATCH_ID), '_blank');
+  });
+  document.getElementById('btnCopyLink').addEventListener('click', () => {
+    const url = new URL('football-matchintro.html', window.location.href);
+    url.searchParams.set('id', MATCH_ID);
+    navigator.clipboard.writeText(url.toString()).then(() => {
+      const btn = document.getElementById('btnCopyLink');
+      const old = btn.textContent; btn.textContent = 'Copied!';
+      setTimeout(() => btn.textContent = old, 1400);
+    });
+  });
+  document.getElementById('btnNewId').addEventListener('click', () => switchMatch(generateId()));
+  els.matchId.addEventListener('change', () => {
+    const val = els.matchId.value.trim();
+    if(val) switchMatch(val); else els.matchId.value = MATCH_ID;
+  });
+
+  function switchMatch(newId){
+    MATCH_ID = newId;
+    STORAGE_KEY = STORAGE_PREFIX + MATCH_ID;
+    els.matchId.value = MATCH_ID;
+    const url = new URL(window.location.href);
+    url.searchParams.set('id', MATCH_ID);
+    history.replaceState(null, '', url.toString());
+    loadStateForCurrentId();
+    populateForm();
+    frameReady = false;
+    frame.src = 'football-matchintro.html?id=' + encodeURIComponent(MATCH_ID);
+    updateControllerLink();
+  }
+
+  function loadStateForCurrentId(){
+    state = JSON.parse(JSON.stringify(DEFAULTS));
+    try{
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if(raw) state = { ...state, ...JSON.parse(raw) };
+    }catch(e){}
+  }
+
+  /* ============================================================
+     PRESETS — named, reusable text+color+team setups saved locally
+     ============================================================ */
+  function loadPresets(){
+    try{ return JSON.parse(localStorage.getItem(PRESETS_KEY) || '{}'); }catch(e){ return {}; }
+  }
+  function savePresets(p){ localStorage.setItem(PRESETS_KEY, JSON.stringify(p)); }
+  function refreshPresetList(){
+    const sel = document.getElementById('presetSelect');
+    const presets = loadPresets();
+    sel.innerHTML = '<option value="">— Saved presets —</option>';
+    Object.keys(presets).forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name; opt.textContent = name;
+      sel.appendChild(opt);
+    });
+  }
+  refreshPresetList();
+
+  document.getElementById('btnSavePreset').addEventListener('click', () => {
+    const name = document.getElementById('presetName').value.trim();
+    if(!name) return;
+    const presets = loadPresets();
+    presets[name] = {
+      league: state.league, venue: state.venue, kickoff: state.kickoff,
+      teamA: { name: state.teamA.name, color: state.teamA.color, colorAuto: state.teamA.colorAuto },
+      teamB: { name: state.teamB.name, color: state.teamB.color, colorAuto: state.teamB.colorAuto },
+      colors: { ...state.colors }
+    };
+    savePresets(presets);
+    refreshPresetList();
+    document.getElementById('presetName').value = '';
+  });
+
+  document.getElementById('btnLoadPreset').addEventListener('click', () => {
+    const name = document.getElementById('presetSelect').value;
+    if(!name) return;
+    const presets = loadPresets();
+    const p = presets[name];
+    if(!p) return;
+    state.league = p.league; state.venue = p.venue; state.kickoff = p.kickoff;
+    state.teamA = { ...state.teamA, name: p.teamA.name, color: p.teamA.color, colorAuto: p.teamA.colorAuto };
+    state.teamB = { ...state.teamB, name: p.teamB.name, color: p.teamB.color, colorAuto: p.teamB.colorAuto };
+    state.colors = { ...p.colors };
+    populateForm();
+    sendUpdate();
+  });
+
+  loadStateForCurrentId();
+  populateForm();
+
+  socket.on('liveFootballMatchIntro', (payload) => {
+    if(payload && payload.config){
+      state = { ...state, ...payload.config };
+      populateForm();
+    }
+  });
+</script>
+
+</body>
+</html>
