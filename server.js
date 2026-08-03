@@ -499,7 +499,9 @@ io.on('connection', async (socket) => {
 
         const state = await getRoomState(room);
         if (data.config) {
-            state.footballMatchIntroState = data.config;
+            // Merge (not replace) so fields the panel never sends (e.g. 'visible')
+            // are preserved instead of being wiped out on every panel edit.
+            state.footballMatchIntroState = { ...state.footballMatchIntroState, ...data.config };
         } else {
             state.footballMatchIntroState = { ...state.footballMatchIntroState, ...data };
         }
