@@ -47,13 +47,14 @@
     padding:14px; margin-bottom:14px;
   }
   .card h2{ font-size:12px; text-transform:uppercase; letter-spacing:.6px; color:var(--text-dim); margin-bottom:10px; font-weight:700; }
+  .card h2 .note{ text-transform:none; font-weight:500; color:#5a6580; letter-spacing:0; font-size:11px; }
 
   label{ display:block; font-size:11px; color:var(--text-dim); margin:8px 0 4px; }
   input[type=text], input[type=number], input[type=url], select{
     width:100%; padding:8px 10px; border-radius:7px; border:1px solid var(--border);
     background:var(--panel-2); color:var(--text); font-size:13px;
   }
-  input[type=color]{ width:100%; height:34px; border:1px solid var(--border); border-radius:7px; background:var(--panel-2); }
+  input[type=color]{ width:100%; height:34px; border:1px solid var(--border); border-radius:7px; background:var(--panel-2); padding:2px; }
   .row2{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
   .row3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
 
@@ -82,6 +83,7 @@
   .stat{ background:var(--panel-2); border:1px solid var(--border); border-radius:8px; padding:8px 10px; }
   .stat .k{ font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.4px; }
   .stat .v{ font-size:18px; font-weight:800; margin-top:2px; font-variant-numeric:tabular-nums; }
+  .stat.auto .k::after{ content:' 🔒'; font-size:9px; opacity:.6; }
 
   .ticker-preview{ display:flex; gap:4px; flex-wrap:wrap; margin-top:8px; }
   .pip{ width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:800; background:var(--panel-2); border:1px solid var(--border); }
@@ -103,7 +105,7 @@
   #toast{
     position:fixed; bottom:16px; right:16px; background:var(--panel-2); border:1px solid var(--border);
     padding:10px 14px; border-radius:8px; font-size:12px; opacity:0; transform:translateY(8px);
-    transition:.25s; pointer-events:none;
+    transition:.25s; pointer-events:none; z-index:50;
   }
   #toast.show{ opacity:1; transform:translateY(0); }
 
@@ -121,6 +123,17 @@
     letter-spacing:.4px;
   }
   .freehit-banner.show{ display:flex; }
+
+  /* --- logo uploader --- */
+  .logo-row{ display:flex; align-items:center; gap:10px; margin-top:6px; }
+  .logo-preview{
+    width:44px; height:44px; border-radius:50%; flex:none;
+    background:var(--panel-2) center/70% no-repeat; border:1px solid var(--border);
+  }
+  .logo-actions{ display:flex; flex-direction:column; gap:5px; flex:1; }
+  .logo-actions .filebtn{ position:relative; overflow:hidden; text-align:center; }
+  .logo-actions .filebtn input[type=file]{ position:absolute; inset:0; opacity:0; cursor:pointer; }
+  .logo-meta{ font-size:10px; color:var(--text-dim); }
 </style>
 </head>
 <body>
@@ -152,36 +165,47 @@
         <input type="number" id="custom-overs" value="20" min="1">
       </div>
 
-      <label>Venue / Series</label>
-      <input type="text" id="venue" placeholder="Wankhede Stadium, Mumbai — 3rd T20I">
-
-      <label>Broadcaster label</label>
-      <input type="text" id="broadcaster" value="BCCI.TV">
+      <label>Venue / Stadium (shown as "Live From")</label>
+      <input type="text" id="venue" placeholder="Wankhede Stadium, Mumbai">
 
       <div class="row2">
         <div>
           <label>Team A name</label>
-          <input type="text" id="teamA-name" value="India">
+          <input type="text" id="teamA-name" value="Mumbai Indians">
           <label>Short</label>
-          <input type="text" id="teamA-short" value="IND">
-          <label>Color</label>
-          <input type="color" id="teamA-color" value="#1c3a8a">
-          <label>Flag image URL</label>
-          <input type="text" id="teamA-flag" placeholder="https://…">
+          <input type="text" id="teamA-short" value="MI">
+          <label>Colour</label>
+          <input type="color" id="teamA-color" value="#17337a">
+          <label>Logo</label>
+          <div class="logo-row">
+            <div class="logo-preview" id="teamA-logo-preview"></div>
+            <div class="logo-actions">
+              <button class="small filebtn" type="button">Upload<input type="file" id="teamA-logo-file" accept="image/*"></button>
+              <button class="small ghost" id="teamA-logo-remove" type="button">Remove</button>
+            </div>
+          </div>
+          <div class="logo-meta" id="teamA-logo-meta">No logo — auto-compressed on upload</div>
         </div>
         <div>
           <label>Team B name</label>
-          <input type="text" id="teamB-name" value="Australia">
+          <input type="text" id="teamB-name" value="Royal Challengers Bengaluru">
           <label>Short</label>
-          <input type="text" id="teamB-short" value="AUS">
-          <label>Color</label>
-          <input type="color" id="teamB-color" value="#f2c200">
-          <label>Flag image URL</label>
-          <input type="text" id="teamB-flag" placeholder="https://…">
+          <input type="text" id="teamB-short" value="RCB">
+          <label>Colour</label>
+          <input type="color" id="teamB-color" value="#7a1620">
+          <label>Logo</label>
+          <div class="logo-row">
+            <div class="logo-preview" id="teamB-logo-preview"></div>
+            <div class="logo-actions">
+              <button class="small filebtn" type="button">Upload<input type="file" id="teamB-logo-file" accept="image/*"></button>
+              <button class="small ghost" id="teamB-logo-remove" type="button">Remove</button>
+            </div>
+          </div>
+          <div class="logo-meta" id="teamB-logo-meta">No logo — auto-compressed on upload</div>
         </div>
       </div>
 
-      <label>Batting team (this innings)</label>
+      <label>Batting team (this innings) — controls which side sits on the left, auto-swaps on change</label>
       <select id="batting-team">
         <option value="A">Team A</option>
         <option value="B">Team B</option>
@@ -191,37 +215,50 @@
       <input type="number" id="target" placeholder="e.g. 176">
 
       <div class="toggle-row">
-        <span>Scorebug visible on overlay</span>
+        <span>Scorecard visible on overlay</span>
         <label class="switch"><input type="checkbox" id="visible-toggle" checked><span class="slider"></span></label>
       </div>
+    </div>
 
-      <button class="full primary" id="apply-setup" style="margin-top:12px;">Apply Setup</button>
+    <div class="card">
+      <h2>Theme Colours <span class="note">— everything except the live numbers</span></h2>
+      <div class="row3">
+        <div>
+          <label>Overs badge</label>
+          <input type="color" id="theme-badge" value="#ff7a1a">
+        </div>
+        <div>
+          <label>Bottom bar</label>
+          <input type="color" id="theme-bottombar" value="#0a1330">
+        </div>
+        <div>
+          <label>Progress bar</label>
+          <input type="color" id="theme-progress" value="#f0b429">
+        </div>
+      </div>
     </div>
 
     <div class="card">
       <h2>Players</h2>
       <label>Striker name</label>
-      <input type="text" id="striker-name" value="Suryakumar">
+      <input type="text" id="striker-name" value="S. Yadav">
       <label>Non-striker name</label>
-      <input type="text" id="nonstriker-name" value="Gaikwad">
+      <input type="text" id="nonstriker-name" value="V. Kohli">
       <button class="full small" id="swap-strike" style="margin-top:8px;">Swap Strike (S)</button>
-      <label style="margin-top:10px;">Bowler name</label>
-      <input type="text" id="bowler-name" value="Ellis">
-      <button class="full small" id="new-bowler" style="margin-top:8px;">New Bowler / New Over</button>
     </div>
   </div>
 
   <!-- COLUMN 2: Live ball-by-ball control -->
   <div>
     <div class="card">
-      <h2>Score</h2>
+      <h2>Score <span class="note">— locked fields update automatically</span></h2>
       <div class="stat-grid">
-        <div class="stat"><div class="k">Score</div><div class="v" id="disp-score">0-0</div></div>
-        <div class="stat"><div class="k">Overs</div><div class="v" id="disp-overs">0.0</div></div>
-        <div class="stat"><div class="k">CRR</div><div class="v" id="disp-crr">0.00</div></div>
-        <div class="stat"><div class="k">RRR</div><div class="v" id="disp-rrr">—</div></div>
-        <div class="stat"><div class="k">Partnership</div><div class="v" id="disp-partnership">0 (0)</div></div>
-        <div class="stat"><div class="k">Projected</div><div class="v" id="disp-projected">—</div></div>
+        <div class="stat auto"><div class="k">Score</div><div class="v" id="disp-score">0-0</div></div>
+        <div class="stat auto"><div class="k">Overs</div><div class="v" id="disp-overs">0.0</div></div>
+        <div class="stat auto"><div class="k">Current Run Rate</div><div class="v" id="disp-crr">0.00</div></div>
+        <div class="stat auto"><div class="k">Req. Run Rate</div><div class="v" id="disp-rrr">—</div></div>
+        <div class="stat auto"><div class="k">Partnership</div><div class="v" id="disp-partnership">0 (0)</div></div>
+        <div class="stat auto"><div class="k">Balls Remaining</div><div class="v" id="disp-balls-left">—</div></div>
       </div>
       <div class="ticker-preview" id="over-preview"></div>
     </div>
@@ -256,7 +293,7 @@
     </div>
   </div>
 
-  <!-- COLUMN 3: Milestones + theme -->
+  <!-- COLUMN 3: Milestones + links -->
   <div>
     <div class="card">
       <h2>Overlay Link (OBS / vMix Browser Source)</h2>
@@ -298,7 +335,7 @@
 
 <script>
 /* ============================================================
-   STATE — mirrors the schema documented in cricket-overlay.html
+   STATE
    ============================================================ */
 const FORMAT_RULES = {
   T20:   { oversPerInnings: 20, powerplayEnd: 6,  lastOverFrom: 20 },
@@ -308,28 +345,30 @@ const FORMAT_RULES = {
 };
 
 let state = loadState() || defaultState();
-let history = []; // undo stack of previous state snapshots (deep-ish clones)
+let history = [];
 
 function defaultState(){
   return {
     format: 'T20',
     customOvers: 20,
+    oversPerInnings: 20,
     venue: '',
-    broadcaster: 'BCCI.TV',
-    teamA: { name:'India', short:'IND', color:'#1c3a8a', flagUrl:'' },
-    teamB: { name:'Australia', short:'AUS', color:'#f2c200', flagUrl:'' },
+    teamA: { name:'Mumbai Indians', short:'MI', color:'#17337a', logoUrl:'' },
+    teamB: { name:'Royal Challengers Bengaluru', short:'RCB', color:'#7a1620', logoUrl:'' },
+    theme: { badgeColor:'#ff7a1a', bottomBarColor:'#0a1330', progressColor:'#f0b429' },
     battingTeam: 'A',
     score: { runs:0, wickets:0, overs:0, balls:0 },
     target: null,
-    striker:    { name:'Suryakumar', runs:0, balls:0, fours:0, sixes:0 },
-    nonStriker: { name:'Gaikwad', runs:0, balls:0, fours:0, sixes:0 },
-    bowler:     { name:'Ellis', overs:0, balls:0, maidens:0, runs:0, wickets:0 },
+    striker:    { name:'S. Yadav', runs:0, balls:0, fours:0, sixes:0 },
+    nonStriker: { name:'V. Kohli', runs:0, balls:0, fours:0, sixes:0 },
+    bowler:     { name:'', overs:0, balls:0, maidens:0, runs:0, wickets:0 },
     thisOver: [],
+    ballHistory: [],
     visible: true,
     partnershipRuns: 0,
     partnershipBalls: 0,
     freeHit: false,
-    milestonesHit: {}   // e.g. { 'striker-50': true } to avoid re-firing
+    milestonesHit: {}
   };
 }
 
@@ -346,19 +385,11 @@ function snapshot(){ return JSON.parse(JSON.stringify(state)); }
 
 /* ============================================================
    SOCKET.IO CONNECTION
-   Talks to the shared server.js — same room convention as the football
-   and table-tennis panels: connecting with query {uid: matchId} puts this
-   socket in server-side room `room-<matchId>`. The overlay must be opened
-   with ?room=<matchId> (see cricket-overlay.html) to land in the same room.
    ============================================================ */
 let socket = null;
 const dot = document.getElementById('conn-dot');
 let qrInstance = null;
 
-// Builds the OBS/vMix overlay URL + mobile-control QR code for the current
-// Match ID. The QR encodes THIS panel's own URL (with ?room=<matchId>) so
-// scanning it on a phone opens the same controller, already connected to
-// the same match — no login/token step needed, it just reuses the match id.
 function updateShareLinks(matchId){
   if(!matchId) return;
   const overlayUrl = `${location.origin}/cricket-overlay?room=${encodeURIComponent(matchId)}`;
@@ -386,8 +417,6 @@ function connect(){
   socket.on('disconnect', () => { dot.classList.remove('on'); });
   socket.on('connect_error', () => { dot.classList.remove('on'); });
 
-  // If another panel/browser already pushed state for this match, adopt it
-  // instead of silently overwriting it with local defaults.
   socket.on('liveCricketScore', (serverState) => {
     if(serverState && Object.keys(serverState).length){
       state = { ...state, ...serverState };
@@ -410,14 +439,22 @@ document.getElementById('preview-overlay-btn').addEventListener('click', () => {
   if(url) window.open(url, '_blank');
 });
 
+/* Real-time push: debounced to ~40ms so text/colour edits feel instant on
+   both mobile and laptop without flooding the socket on every keystroke. */
+let pushTimer = null;
 function send(obj){
-  if(socket && socket.connected){
-    socket.emit('updateCricketScore', obj);
-  }
+  if(socket && socket.connected) socket.emit('updateCricketScore', obj);
 }
-function pushState(){
+function pushState(immediate){
   saveLocal();
-  send(state);
+  if(immediate){
+    clearTimeout(pushTimer);
+    send(state);
+    renderPanel();
+    return;
+  }
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(() => { send(state); }, 40);
   renderPanel();
 }
 function fireEvent(kind, text, sub, durationMs){
@@ -426,6 +463,67 @@ function fireEvent(kind, text, sub, durationMs){
   }
   logMilestone(`${kind}${sub ? ' — ' + sub : ''}`);
 }
+
+/* ============================================================
+   LOGO UPLOAD — client-side compression so payloads stay in KB,
+   not MB, over the socket (and safe for mobile uploads).
+   ============================================================ */
+function compressImageToDataURL(file, maxDim, quality){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = () => { img.src = reader.result; };
+    reader.onerror = reject;
+    img.onload = () => {
+      let { width, height } = img;
+      const scale = Math.min(1, maxDim / Math.max(width, height));
+      width = Math.round(width * scale);
+      height = Math.round(height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0,0,width,height);
+      ctx.drawImage(img, 0, 0, width, height);
+      // WEBP gives the smallest footprint; fall back to JPEG if unsupported.
+      let dataUrl = canvas.toDataURL('image/webp', quality);
+      if(!dataUrl.startsWith('data:image/webp')) dataUrl = canvas.toDataURL('image/jpeg', quality);
+      resolve(dataUrl);
+    };
+    img.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+function wireLogoUpload(teamKey){
+  const fileInput = document.getElementById(`${teamKey}-logo-file`);
+  const preview = document.getElementById(`${teamKey}-logo-preview`);
+  const meta = document.getElementById(`${teamKey}-logo-meta`);
+  const removeBtn = document.getElementById(`${teamKey}-logo-remove`);
+
+  fileInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if(!file) return;
+    meta.textContent = 'Compressing…';
+    try{
+      const dataUrl = await compressImageToDataURL(file, 128, 0.72);
+      const kb = Math.round((dataUrl.length * 0.75) / 1024);
+      state[teamKey === 'teamA' ? 'teamA' : 'teamB'].logoUrl = dataUrl;
+      preview.style.backgroundImage = `url(${dataUrl})`;
+      meta.textContent = `Logo set — ~${kb} KB`;
+      pushState(true);
+    }catch(err){
+      meta.textContent = 'Could not read that image';
+    }
+    fileInput.value = '';
+  });
+  removeBtn.addEventListener('click', () => {
+    state[teamKey === 'teamA' ? 'teamA' : 'teamB'].logoUrl = '';
+    preview.style.backgroundImage = '';
+    meta.textContent = 'No logo — auto-compressed on upload';
+    pushState(true);
+  });
+}
+wireLogoUpload('teamA');
+wireLogoUpload('teamB');
 
 /* ============================================================
    RENDER PANEL READOUTS
@@ -438,8 +536,8 @@ function calcCRR(){
   return (state.score.runs / (totalBalls/6));
 }
 function ballsPerInnings(){
-  const rules = FORMAT_RULES[state.format];
   if(state.format === 'Custom') return state.customOvers*6;
+  const rules = FORMAT_RULES[state.format];
   if(rules.oversPerInnings === Infinity) return null;
   return rules.oversPerInnings*6;
 }
@@ -453,11 +551,11 @@ function calcRRR(){
   if(ballsLeft <= 0) return null;
   return (runsNeeded / (ballsLeft/6));
 }
-function calcProjected(){
+function calcBallsLeft(){
   const totalBallsAllowed = ballsPerInnings();
   if(!totalBallsAllowed) return null;
-  const crr = calcCRR();
-  return Math.round(crr * (totalBallsAllowed/6));
+  const ballsBowled = state.score.overs*6 + state.score.balls;
+  return Math.max(totalBallsAllowed - ballsBowled, 0);
 }
 
 function renderPanel(){
@@ -467,8 +565,8 @@ function renderPanel(){
   const rrr = calcRRR();
   document.getElementById('disp-rrr').textContent = rrr === null ? '—' : rrr.toFixed(2);
   document.getElementById('disp-partnership').textContent = `${state.partnershipRuns} (${state.partnershipBalls})`;
-  const proj = calcProjected();
-  document.getElementById('disp-projected').textContent = proj === null ? '—' : proj;
+  const ballsLeft = calcBallsLeft();
+  document.getElementById('disp-balls-left').textContent = ballsLeft === null ? '—' : ballsLeft;
 
   const preview = document.getElementById('over-preview');
   preview.innerHTML = '';
@@ -479,9 +577,27 @@ function renderPanel(){
     preview.appendChild(pip);
   });
 
-  document.getElementById('striker-name').value = state.striker.name;
-  document.getElementById('nonstriker-name').value = state.nonStriker.name;
-  document.getElementById('bowler-name').value = state.bowler.name;
+  // Only reflect values here if the field isn't currently focused, so the
+  // operator's own typing is never clobbered by an incoming state echo.
+  const active = document.activeElement;
+  const maybeSet = (id, val) => { const el = document.getElementById(id); if(el && el !== active) el.value = val; };
+  maybeSet('striker-name', state.striker.name);
+  maybeSet('nonstriker-name', state.nonStriker.name);
+  maybeSet('venue', state.venue);
+  maybeSet('teamA-name', state.teamA.name);
+  maybeSet('teamA-short', state.teamA.short);
+  maybeSet('teamA-color', state.teamA.color);
+  maybeSet('teamB-name', state.teamB.name);
+  maybeSet('teamB-short', state.teamB.short);
+  maybeSet('teamB-color', state.teamB.color);
+  maybeSet('theme-badge', state.theme.badgeColor);
+  maybeSet('theme-bottombar', state.theme.bottomBarColor);
+  maybeSet('theme-progress', state.theme.progressColor);
+  maybeSet('batting-team', state.battingTeam);
+  maybeSet('target', state.target || '');
+  maybeSet('visible-toggle', state.visible);
+  document.getElementById('teamA-logo-preview').style.backgroundImage = state.teamA.logoUrl ? `url(${state.teamA.logoUrl})` : '';
+  document.getElementById('teamB-logo-preview').style.backgroundImage = state.teamB.logoUrl ? `url(${state.teamB.logoUrl})` : '';
 
   document.getElementById('freehit-banner').classList.toggle('show', !!state.freeHit);
 }
@@ -503,62 +619,64 @@ function toast(msg){
 }
 
 /* ============================================================
-   MATCH SETUP
+   LIVE (instant, no "Apply" needed) FIELD BINDINGS
+   Every cosmetic field — names, colours, venue — pushes on
+   every keystroke/change, debounced ~40ms. Auto-computed stats
+   (CRR/RRR/partnership/balls remaining) have no input at all;
+   they are read-only display tiles.
    ============================================================ */
-document.getElementById('format').addEventListener('change', (e) => {
-  document.getElementById('custom-overs-wrap').style.display = e.target.value === 'Custom' ? 'block' : 'none';
-});
+function bindLive(id, apply){
+  const el = document.getElementById(id);
+  const evt = (el.type === 'color' || el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'number') ? 'input' : 'input';
+  el.addEventListener(evt, () => { apply(el); pushState(); });
+}
+bindLive('venue', el => { state.venue = el.value; });
+bindLive('teamA-name', el => { state.teamA.name = el.value; });
+bindLive('teamA-short', el => { state.teamA.short = el.value; });
+bindLive('teamA-color', el => { state.teamA.color = el.value; });
+bindLive('teamB-name', el => { state.teamB.name = el.value; });
+bindLive('teamB-short', el => { state.teamB.short = el.value; });
+bindLive('teamB-color', el => { state.teamB.color = el.value; });
+bindLive('theme-badge', el => { state.theme.badgeColor = el.value; });
+bindLive('theme-bottombar', el => { state.theme.bottomBarColor = el.value; });
+bindLive('theme-progress', el => { state.theme.progressColor = el.value; });
+bindLive('striker-name', el => { state.striker.name = el.value; });
+bindLive('nonstriker-name', el => { state.nonStriker.name = el.value; });
 
-document.getElementById('apply-setup').addEventListener('click', () => {
-  history.push(snapshot());
-  state.format = document.getElementById('format').value;
-  state.customOvers = parseInt(document.getElementById('custom-overs').value) || 20;
-  state.venue = document.getElementById('venue').value;
-  state.broadcaster = document.getElementById('broadcaster').value || 'BCCI.TV';
-  state.teamA = {
-    name: document.getElementById('teamA-name').value,
-    short: document.getElementById('teamA-short').value,
-    color: document.getElementById('teamA-color').value,
-    flagUrl: document.getElementById('teamA-flag').value
-  };
-  state.teamB = {
-    name: document.getElementById('teamB-name').value,
-    short: document.getElementById('teamB-short').value,
-    color: document.getElementById('teamB-color').value,
-    flagUrl: document.getElementById('teamB-flag').value
-  };
-  state.battingTeam = document.getElementById('batting-team').value;
-  const targetVal = document.getElementById('target').value;
-  state.target = targetVal ? parseInt(targetVal) : null;
-  state.visible = document.getElementById('visible-toggle').checked;
+document.getElementById('target').addEventListener('input', (e) => {
+  const v = e.target.value;
+  state.target = v ? parseInt(v) : null;
   pushState();
-  toast('Setup applied');
 });
-
+document.getElementById('batting-team').addEventListener('change', (e) => {
+  history.push(snapshot());
+  state.battingTeam = e.target.value;
+  pushState(true);
+});
 document.getElementById('visible-toggle').addEventListener('change', (e) => {
   state.visible = e.target.checked;
+  pushState(true);
+});
+document.getElementById('format').addEventListener('change', (e) => {
+  document.getElementById('custom-overs-wrap').style.display = e.target.value === 'Custom' ? 'block' : 'none';
+  state.format = e.target.value;
+  state.oversPerInnings = state.format === 'Custom' ? state.customOvers : FORMAT_RULES[state.format].oversPerInnings;
+  pushState(true);
+});
+document.getElementById('custom-overs').addEventListener('input', (e) => {
+  state.customOvers = parseInt(e.target.value) || 20;
+  if(state.format === 'Custom') state.oversPerInnings = state.customOvers;
   pushState();
 });
 
 /* ============================================================
    PLAYERS
    ============================================================ */
-document.getElementById('striker-name').addEventListener('change', (e) => { state.striker.name = e.target.value; pushState(); });
-document.getElementById('nonstriker-name').addEventListener('change', (e) => { state.nonStriker.name = e.target.value; pushState(); });
-document.getElementById('bowler-name').addEventListener('change', (e) => { state.bowler.name = e.target.value; pushState(); });
-
 function swapStrike(){
   const tmp = state.striker; state.striker = state.nonStriker; state.nonStriker = tmp;
-  pushState();
+  pushState(true);
 }
 document.getElementById('swap-strike').addEventListener('click', swapStrike);
-
-document.getElementById('new-bowler').addEventListener('click', () => {
-  history.push(snapshot());
-  state.bowler = { name: document.getElementById('bowler-name').value || 'New Bowler', overs:0, balls:0, maidens:0, runs:0, wickets:0 };
-  state.thisOver = [];
-  pushState();
-});
 
 document.getElementById('new-batsman-btn').addEventListener('click', () => {
   const name = document.getElementById('new-batsman-name').value.trim();
@@ -567,16 +685,15 @@ document.getElementById('new-batsman-btn').addEventListener('click', () => {
   state.striker = { name, runs:0, balls:0, fours:0, sixes:0 };
   state.partnershipRuns = 0; state.partnershipBalls = 0;
   document.getElementById('new-batsman-name').value = '';
-  pushState();
+  pushState(true);
 });
 
 /* ============================================================
    BALL-BY-BALL ENGINE
    ============================================================ */
-function checkMilestones(prevState){
+function checkMilestones(){
   const rules = FORMAT_RULES[state.format];
 
-  // Batsman milestones
   [state.striker, state.nonStriker].forEach(p => {
     [50,100,150,200,250,300].forEach(m => {
       const key = `${p.name}-${m}`;
@@ -587,7 +704,6 @@ function checkMilestones(prevState){
     });
   });
 
-  // Team milestones
   [50,100,150,200,250,300,350,400].forEach(m => {
     const key = `team-${m}`;
     if(state.score.runs >= m && !state.milestonesHit[key]){
@@ -596,7 +712,6 @@ function checkMilestones(prevState){
     }
   });
 
-  // Partnership milestones
   [50,100,150,200].forEach(m => {
     const key = `partnership-${m}-${state.score.wickets}`;
     if(state.partnershipRuns >= m && !state.milestonesHit[key]){
@@ -605,7 +720,6 @@ function checkMilestones(prevState){
     }
   });
 
-  // Powerplay end
   if(rules.powerplayEnd){
     const key = 'powerplay-end';
     if(state.score.overs >= rules.powerplayEnd && state.score.balls === 0 && !state.milestonesHit[key]){
@@ -614,7 +728,6 @@ function checkMilestones(prevState){
     }
   }
 
-  // Last over
   const totalOvers = state.format === 'Custom' ? state.customOvers : FORMAT_RULES[state.format].oversPerInnings;
   if(totalOvers !== Infinity){
     const key = 'last-over';
@@ -624,7 +737,6 @@ function checkMilestones(prevState){
     }
   }
 
-  // Tight finish call-outs (only relevant when chasing)
   if(state.target){
     const totalBallsAllowed = ballsPerInnings();
     const ballsBowled = state.score.overs*6 + state.score.balls;
@@ -650,10 +762,14 @@ function checkMilestones(prevState){
 function addLegalBall(runsThisBall){
   state.freeHit = false;
   state.score.balls++;
-  if(state.score.balls >= 6){ state.score.balls = 0; state.score.overs++; state.bowler.overs++; state.bowler.balls=0; state.thisOver = []; }
-  else { state.bowler.balls = state.score.balls; }
+  if(state.score.balls >= 6){ state.score.balls = 0; state.score.overs++; state.thisOver = []; }
   state.striker.balls++;
   state.partnershipBalls++;
+}
+
+function pushBallHistory(label){
+  state.ballHistory.push(label);
+  if(state.ballHistory.length > 60) state.ballHistory = state.ballHistory.slice(-60);
 }
 
 function recordBall(kind){
@@ -664,11 +780,11 @@ function recordBall(kind){
       const runs = parseInt(kind);
       state.score.runs += runs;
       state.striker.runs += runs;
-      state.bowler.runs += runs;
       state.partnershipRuns += runs;
       if(runs === 4) state.striker.fours++;
       if(runs === 6) state.striker.sixes++;
       state.thisOver.push(String(runs));
+      pushBallHistory(String(runs));
       addLegalBall(runs);
       if(runs === 4) fireEvent('FOUR', 'FOUR!', state.striker.name);
       if(runs === 6) fireEvent('SIX', 'SIX!', state.striker.name);
@@ -678,37 +794,37 @@ function recordBall(kind){
     case 'W': {
       const wasFreeHit = state.freeHit;
       state.score.wickets++;
-      state.bowler.wickets++;
       state.thisOver.push('W');
+      pushBallHistory('W');
       addLegalBall(0);
       state.partnershipRuns = 0; state.partnershipBalls = 0;
-      fireEvent('WICKET', 'WICKET!', `${state.bowler.name} to ${state.striker.name}`);
+      fireEvent('WICKET', 'WICKET!', state.striker.name);
       if(wasFreeHit) toast('⚠️ Free Hit was active — only Run Out is a valid dismissal');
       break;
     }
     case 'Wd': {
       state.score.runs += 1;
-      state.bowler.runs += 1;
       state.partnershipRuns += 1;
       state.thisOver.push('Wd');
-      // wide does not count as a legal ball
+      pushBallHistory('Wd');
+      fireEvent('WIDE', 'WIDE', '');
       break;
     }
     case 'Nb': {
       state.score.runs += 1;
-      state.bowler.runs += 1;
       state.partnershipRuns += 1;
       state.thisOver.push('Nb');
-      // no-ball does not count as a legal ball; the NEXT legal delivery is
-      // automatically a Free Hit (cleared inside addLegalBall()).
+      pushBallHistory('Nb');
       state.freeHit = true;
-      fireEvent('FREE_HIT', 'FREE HIT', 'Next ball is a Free Hit');
+      fireEvent('NO_BALL', 'NO BALL', '');
+      setTimeout(() => fireEvent('FREE_HIT', 'FREE HIT', 'Next ball is a Free Hit'), 900);
       break;
     }
     case 'B': {
       state.score.runs += 1;
       state.partnershipRuns += 1;
       state.thisOver.push('B');
+      pushBallHistory('B');
       addLegalBall(1);
       break;
     }
@@ -716,13 +832,14 @@ function recordBall(kind){
       state.score.runs += 1;
       state.partnershipRuns += 1;
       state.thisOver.push('LB');
+      pushBallHistory('LB');
       addLegalBall(1);
       break;
     }
   }
 
   checkMilestones();
-  pushState();
+  pushState(true);
 }
 
 function swapStrikeSilent(){
@@ -736,7 +853,7 @@ document.querySelectorAll('[data-ball]').forEach(btn => {
 document.getElementById('undo-btn').addEventListener('click', () => {
   if(history.length === 0){ toast('Nothing to undo'); return; }
   state = history.pop();
-  pushState();
+  pushState(true);
   toast('Undone');
 });
 
@@ -762,7 +879,7 @@ document.getElementById('reset-btn').addEventListener('click', () => {
   state = defaultState();
   history = [];
   document.getElementById('milestone-log').innerHTML = '<div>No events yet.</div>';
-  pushState();
+  pushState(true);
 });
 
 /* ============================================================
@@ -770,7 +887,7 @@ document.getElementById('reset-btn').addEventListener('click', () => {
    ============================================================ */
 document.addEventListener('keydown', (e) => {
   const tag = (e.target.tagName || '').toLowerCase();
-  if(tag === 'input' || tag === 'select' || tag === 'textarea') return; // don't hijack typing
+  if(tag === 'input' || tag === 'select' || tag === 'textarea') return;
 
   if(/^[0-6]$/.test(e.key)) recordBall(e.key);
   else if(e.key.toLowerCase() === 'w') recordBall('W');
@@ -782,29 +899,26 @@ document.addEventListener('keydown', (e) => {
    INIT
    ============================================================ */
 (function init(){
-  // hydrate form fields from loaded/default state
   document.getElementById('format').value = state.format;
   document.getElementById('custom-overs').value = state.customOvers;
   document.getElementById('custom-overs-wrap').style.display = state.format === 'Custom' ? 'block' : 'none';
+  if(!state.oversPerInnings) state.oversPerInnings = state.format === 'Custom' ? state.customOvers : FORMAT_RULES[state.format].oversPerInnings;
   document.getElementById('venue').value = state.venue;
-  document.getElementById('broadcaster').value = state.broadcaster;
   document.getElementById('teamA-name').value = state.teamA.name;
   document.getElementById('teamA-short').value = state.teamA.short;
   document.getElementById('teamA-color').value = state.teamA.color;
-  document.getElementById('teamA-flag').value = state.teamA.flagUrl;
   document.getElementById('teamB-name').value = state.teamB.name;
   document.getElementById('teamB-short').value = state.teamB.short;
   document.getElementById('teamB-color').value = state.teamB.color;
-  document.getElementById('teamB-flag').value = state.teamB.flagUrl;
+  document.getElementById('theme-badge').value = state.theme.badgeColor;
+  document.getElementById('theme-bottombar').value = state.theme.bottomBarColor;
+  document.getElementById('theme-progress').value = state.theme.progressColor;
   document.getElementById('batting-team').value = state.battingTeam;
   document.getElementById('target').value = state.target || '';
   document.getElementById('visible-toggle').checked = state.visible;
+  document.getElementById('teamA-logo-preview').style.backgroundImage = state.teamA.logoUrl ? `url(${state.teamA.logoUrl})` : '';
+  document.getElementById('teamB-logo-preview').style.backgroundImage = state.teamB.logoUrl ? `url(${state.teamB.logoUrl})` : '';
 
-  // Reuse a saved match id if this browser used the panel before, otherwise
-  // generate a fresh 6-char code (same shape as this app's other room codes)
-  // and let the operator share it with whoever sets up the overlay.
-  // A ?room=<id> URL param (from scanning the mobile-control QR code) always
-  // wins, so scanning the QR lands on the SAME match, not a new random one.
   const urlMatchId = new URLSearchParams(location.search).get('room');
   const savedMatchId = localStorage.getItem('cricket-match-id');
   document.getElementById('match-id').value = urlMatchId || savedMatchId || Math.random().toString(36).slice(2,8);
