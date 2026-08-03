@@ -259,7 +259,14 @@
   }
   let STORAGE_KEY = STORAGE_PREFIX + MATCH_ID;
 
-  const socket = io({ query: { uid: 'panel-' + MATCH_ID } });
+  // 🩹 FIX: was uid: 'panel-'+MATCH_ID, which put this panel in room-panel-XXXX
+  // while the overlay was in room-fmi-XXXX — two different rooms for the same
+  // match. It "worked" for the panel itself only because its very first
+  // sendUpdate() self-corrected its own room (server re-joins on data.id),
+  // but the overlay never emits anything so it never got that correction.
+  // Now both panel and overlay connect with the same plain "id" key, so they
+  // join room-<MATCH_ID> together immediately — no more waiting/mismatch.
+  const socket = io({ query: { id: MATCH_ID } });
   const CLIENT_ID = 'panel-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
 
   const DEFAULTS = {
