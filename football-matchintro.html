@@ -171,7 +171,14 @@ document.title = 'Football Match Intro — ' + MATCH_ID;
 const connStatus = document.getElementById('conn-status');
 connStatus.textContent = 'Connecting…'; connStatus.classList.add('visible');
 
-const socket = io({ query: { uid: 'fmi-' + MATCH_ID } });
+// 🩹 FIX: previously connected with uid: 'fmi-'+MATCH_ID. The server only
+// strips an 'overlay-' prefix (not 'fmi-'), so this put the overlay in a
+// DIFFERENT socket.io room (room-fmi-XXXX) than the panel/server updates
+// (room-XXXX). Result: panel edits broadcast to a room the overlay was
+// never in, so the overlay only ever showed stale data until reloaded.
+// Using the same plain "id" query key as the panel guarantees both land
+// in the exact same room from the first connection.
+const socket = io({ query: { id: MATCH_ID } });
 socket.on('connect', () => connStatus.classList.remove('visible'));
 socket.on('disconnect', () => { connStatus.classList.add('visible'); connStatus.textContent = 'Overlay disconnected — retrying…'; });
 socket.on('connect_error', () => { connStatus.classList.add('visible'); connStatus.textContent = 'Connection error — retrying…'; });
