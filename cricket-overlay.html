@@ -504,6 +504,18 @@
     <div id="fx-pill"><span class="bolt" id="fx-pill-icon">↗</span><span id="fx-pill-text">WIDE</span></div>
   </div>
 
+  <div id="innings-batting-summary-card" class="summary-card">
+    <div class="sc-header">
+      <div class="sc-title" id="ibs-title">TEAM</div>
+      <div class="sc-sub" id="ibs-sub">BATTING SCORECARD</div>
+    </div>
+    <div id="ibs-batter-rows"></div>
+    <div class="sc-footer">
+      <span id="ibs-overs">OVERS 0.0</span>
+      <span id="ibs-total">TOTAL 0-0</span>
+    </div>
+  </div>
+
   <div id="innings-summary-card" class="summary-card">
     <div class="sc-header">
       <div class="sc-title" id="is-title">TEAM</div>
@@ -556,7 +568,13 @@ socket.on('connect_error', () => { connStatus.classList.add('visible'); connStat
 
 socket.on('liveCricketScore', (data) => renderState(data));
 socket.on('cricketEvent', (event) => playEvent(event));
-socket.on('cricketInningsSummary', (data) => renderInningsSummary(data));
+// Innings-complete graphic is now TWO cards, sequenced: batting scorecard
+// first, then bowling figures — 6100ms covers the batting card's full
+// enter+hold+exit lifecycle (hold 3800ms) before the bowling card starts.
+socket.on('cricketInningsSummary', (data) => {
+  renderInningsBattingSummary(data);
+  setTimeout(() => renderInningsSummary(data), 6100);
+});
 socket.on('cricketMatchSummary', (data) => renderMatchSummary(data));
 
 /* ============================================================
@@ -1099,6 +1117,31 @@ function renderInningsSummary(d){
   document.getElementById('is-total').textContent = `TOTAL ${d.total || '0-0'}`;
 
   playSummaryCard('innings-summary-card', '.sc-row, .sc-fow-row, .sc-footer', 4200);
+}
+
+function renderInningsBattingSummary(d){
+  if(!d) return;
+  document.getElementById('ibs-title').textContent = (d.battingTeamShort || d.battingTeamName || 'BATTING').toUpperCase();
+  document.getElementById('ibs-sub').textContent = [d.format, d.venue].filter(Boolean).join(' · ') || 'BATTING SCORECARD';
+
+  const rowsWrap = document.getElementById('ibs-batter-rows');
+  rowsWrap.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'sc-row sc-row-head';
+  head.innerHTML = '<span class="sc-c-name">Batter</span><span class="sc-c-num">R</span><span class="sc-c-num">B</span><span class="sc-c-num">4s</span><span class="sc-c-num">6s</span><span class="sc-c-num">SR</span>';
+  rowsWrap.appendChild(head);
+  (d.batsmen || []).forEach(b => {
+    const row = document.createElement('div');
+    row.className = 'sc-row';
+    const notOutMark = b.howOut === 'not out' ? ' <i>*</i>' : '';
+    row.innerHTML = `<span class="sc-c-name">${escapeHtml(b.name)}${notOutMark}</span><span class="sc-c-num">${escapeHtml(b.runs)}</span><span class="sc-c-num">${escapeHtml(b.balls)}</span><span class="sc-c-num">${escapeHtml(b.fours)}</span><span class="sc-c-num">${escapeHtml(b.sixes)}</span><span class="sc-c-num">${escapeHtml(b.sr)}</span>`;
+    rowsWrap.appendChild(row);
+  });
+
+  document.getElementById('ibs-overs').textContent = `OVERS ${d.overs || '0.0'}`;
+  document.getElementById('ibs-total').textContent = `TOTAL ${d.total || '0-0'}`;
+
+  playSummaryCard('innings-batting-summary-card', '.sc-row, .sc-footer', 3800);
 }
 
 function fillMsRows(containerId, teamData){
