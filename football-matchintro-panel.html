@@ -260,6 +260,7 @@
   let STORAGE_KEY = STORAGE_PREFIX + MATCH_ID;
 
   const socket = io({ query: { uid: 'panel-' + MATCH_ID } });
+  const CLIENT_ID = 'panel-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
 
   const DEFAULTS = {
     league: "LAKERS CUP PLAYOFFS",
@@ -345,16 +346,22 @@
     socket.emit('updateFootballMatchIntro', {
       id: MATCH_ID,
       config: state,
-      triggerReplay: triggerReplay
+      triggerReplay: triggerReplay,
+      senderId: CLIENT_ID
     });
   }
 
+  function setIfNotFocused(el, value){
+    if(document.activeElement === el) return;
+    el.value = value;
+  }
+
   function populateForm(){
-    els.league.value = state.league;
-    els.venue.value = state.venue;
-    els.kickoff.value = state.kickoff;
-    els.nameA.value = state.teamA.name;
-    els.nameB.value = state.teamB.name;
+    setIfNotFocused(els.league, state.league);
+    setIfNotFocused(els.venue, state.venue);
+    setIfNotFocused(els.kickoff, state.kickoff);
+    setIfNotFocused(els.nameA, state.teamA.name);
+    setIfNotFocused(els.nameB, state.teamB.name);
     els.colorA.value = state.teamA.color;
     els.colorB.value = state.teamB.color;
     els.autoColorA.checked = state.teamA.colorAuto;
@@ -567,10 +574,19 @@
   populateForm();
 
   socket.on('liveFootballMatchIntro', (payload) => {
-    if(payload && payload.config){
-      state = { ...state, ...payload.config };
-      populateForm();
-    }
+    if(!payload || !payload.config) return;
+    // Belt-and-braces: only accept updates tagged with THIS match's id.
+    // Protects this panel from ever showing another match's data even if
+    // the server-side broadcast isn't (or stops being) room-scoped.
+    if(payload.id && payload.id !== MATCH_ID) return;
+    // The server broadcasts every update back to all connected clients,
+    // including whoever sent it. Without this check, that echo would land
+    // back here a moment after you type a character and overwrite the
+    // input with the (now slightly stale) state — visually indistinguishable
+    // from the last keystroke getting undone, worse the faster you type.
+    if(payload.senderId && payload.senderId === CLIENT_ID) return;
+    state = { ...state, ...payload.config };
+    populateForm();
   });
 </script>
 
