@@ -142,6 +142,17 @@
   #last5-seg{ flex:1 1 auto; align-items:center; text-align:center; gap:8px; }
   #last5-seg .lbl{ font-size:10.5px; font-weight:800; letter-spacing:.8px; color:var(--ink-dim); text-transform:uppercase; }
   #last5-row{ display:flex; gap:7px; align-items:center; justify-content:center; }
+
+  /* ---- Innings-break summary (Prev Score / Target / Req. Run Rate) ----
+     Shown in place of #live-segs only during the gap between innings —
+     i.e. current innings is over but "Start Next Innings" hasn't been
+     clicked yet, so no real target exists on the server yet either. */
+  #live-segs{ display:flex; flex:1 1 auto; align-items:stretch; }
+  #break-seg{ flex:1 1 auto; display:none; align-items:stretch; justify-content:space-evenly; }
+  #break-seg .brk-item{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; padding:0 22px; position:relative; }
+  #break-seg .brk-item + .brk-item::before{ content:''; position:absolute; left:0; top:14%; bottom:14%; width:1px; background:var(--hairline); }
+  #break-seg .lbl{ font-size:10.5px; font-weight:800; letter-spacing:.8px; color:var(--ink-dim); text-transform:uppercase; }
+  #break-seg .val{ font-family:var(--font-num); font-weight:900; font-size:min(2.2vw,26px); color:#1c4fd8; font-variant-numeric:tabular-nums; }
   .pip{
     width:26px; height:26px; border-radius:50%; flex:none;
     display:flex; align-items:center; justify-content:center;
@@ -321,6 +332,62 @@
     background:rgba(0,0,0,0.55); padding:5px 10px; border-radius:6px; display:none; letter-spacing:.4px;
   }
   #conn-status.visible{ display:block; }
+
+  /* ============================================================
+     BROADCAST SUMMARY CARDS
+     Innings Bowling Summary (auto after each innings) + Match
+     Summary (auto at match end). Both use the same "box builds,
+     then lines cascade in one-by-one" choreography, and sit
+     centered/above the main scorecard so the live score bar below
+     is never touched or delayed by these.
+     ============================================================ */
+  .summary-card{
+    position:absolute; left:50%; top:40%; transform:translate(-50%,-50%);
+    width:min(46vw,560px); max-width:92vw;
+    background:rgba(8,12,26,0.88); backdrop-filter:blur(16px) saturate(140%);
+    border:1px solid rgba(255,255,255,0.14); border-radius:16px;
+    box-shadow:0 30px 70px rgba(0,0,0,0.5);
+    padding:20px 26px 18px; display:none; flex-direction:column; gap:8px;
+    font-family:var(--font-ui); color:#fff;
+  }
+  .summary-card.wide{ width:min(58vw,720px); }
+
+  .sc-header{ text-align:center; border-bottom:1px solid rgba(255,255,255,0.14); padding-bottom:10px; margin-bottom:4px; }
+  .sc-title{ font-family:var(--font-num); font-weight:900; font-size:min(2.6vw,28px); letter-spacing:1.5px; }
+  .sc-sub{ font-size:11.5px; font-weight:700; letter-spacing:1.5px; color:rgba(255,255,255,0.6); text-transform:uppercase; margin-top:2px; }
+
+  .sc-row{ display:grid; grid-template-columns:1.6fr repeat(5,0.62fr); align-items:center; gap:6px; padding:6px 2px; font-size:min(1.35vw,14px); }
+  .sc-row + .sc-row{ border-top:1px solid rgba(255,255,255,0.07); }
+  .sc-row-head{ color:rgba(255,255,255,0.55); font-size:10.5px; font-weight:800; letter-spacing:1px; text-transform:uppercase; }
+  .sc-c-name{ font-weight:700; }
+  .sc-c-num{ font-family:var(--font-num); font-weight:800; text-align:center; font-variant-numeric:tabular-nums; }
+
+  .sc-fow-row{ margin-top:6px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.14); }
+  .sc-fow-label{ font-size:10px; font-weight:800; letter-spacing:1.2px; color:rgba(255,255,255,0.55); text-transform:uppercase; display:block; margin-bottom:6px; }
+  .sc-fow-list{ display:flex; gap:8px; flex-wrap:wrap; }
+  .sc-fow-item{
+    background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.14); border-radius:6px;
+    padding:3px 9px; font-family:var(--font-num); font-weight:800; font-size:12px;
+  }
+  .sc-footer{
+    display:flex; justify-content:space-between; margin-top:8px; padding-top:10px;
+    border-top:1px solid rgba(255,255,255,0.14); font-family:var(--font-num); font-weight:900;
+    font-size:min(1.6vw,17px); letter-spacing:.5px;
+  }
+
+  .ms-header{ text-align:center; font-family:var(--font-num); font-weight:900; font-size:min(2.2vw,24px); letter-spacing:3px; color:#fff; margin-bottom:4px; }
+  .ms-team{ border-radius:10px; overflow:hidden; margin-bottom:6px; background:rgba(255,255,255,0.04); }
+  .ms-team-bar{ display:flex; justify-content:space-between; align-items:center; padding:9px 14px; font-family:var(--font-num); font-weight:900; font-size:min(1.7vw,18px); letter-spacing:1px; color:#fff; }
+  .ms-rows{ padding:6px 14px 12px; }
+  .ms-row{ display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:5px 0; font-size:min(1.25vw,13px); border-top:1px solid rgba(255,255,255,0.07); }
+  .ms-row:first-child{ border-top:none; }
+  .ms-bat, .ms-bowl{ display:flex; align-items:baseline; gap:6px; }
+  .ms-bat b, .ms-bowl b{ font-family:var(--font-num); color:#f0b429; margin-left:auto; }
+  .ms-bat i, .ms-bowl i{ font-style:normal; color:rgba(255,255,255,0.5); font-size:11px; }
+  .ms-footer{
+    text-align:center; margin-top:6px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.16);
+    font-family:var(--font-num); font-weight:900; font-size:min(1.9vw,19px); letter-spacing:1.5px; color:#f0b429;
+  }
 </style>
 </head>
 <body>
@@ -339,17 +406,33 @@
         </div>
         <div id="overs-badge"><div class="ov-num" id="ov-num">0.0</div><div class="ov-lbl">OVERS</div></div>
         <div id="white-panel">
-          <div class="wseg" id="batters-seg">
-            <div class="brow" id="row-striker"><span class="bname" id="striker-name">Batsman 1</span><span class="bruns bstar" id="striker-runs">0<span id="striker-star">*</span></span><span class="bballs" id="striker-balls">0</span></div>
-            <div class="brow" id="row-nonstriker"><span class="bname" id="nonstriker-name">Batsman 2</span><span class="bruns" id="nonstriker-runs">0</span><span class="bballs" id="nonstriker-balls">0</span></div>
+          <div id="live-segs">
+            <div class="wseg" id="batters-seg">
+              <div class="brow" id="row-striker"><span class="bname" id="striker-name">Batsman 1</span><span class="bruns bstar" id="striker-runs">0<span id="striker-star">*</span></span><span class="bballs" id="striker-balls">0</span></div>
+              <div class="brow" id="row-nonstriker"><span class="bname" id="nonstriker-name">Batsman 2</span><span class="bruns" id="nonstriker-runs">0</span><span class="bballs" id="nonstriker-balls">0</span></div>
+            </div>
+            <div class="wseg" id="crr-seg">
+              <div class="lbl">Current Run Rate</div>
+              <div class="val" id="crr-val">0.00</div>
+            </div>
+            <div class="wseg" id="last5-seg">
+              <div class="lbl">Last 5 Overs</div>
+              <div id="last5-row"></div>
+            </div>
           </div>
-          <div class="wseg" id="crr-seg">
-            <div class="lbl">Current Run Rate</div>
-            <div class="val" id="crr-val">0.00</div>
-          </div>
-          <div class="wseg" id="last5-seg">
-            <div class="lbl">Last 5 Overs</div>
-            <div id="last5-row"></div>
+          <div class="wseg" id="break-seg">
+            <div class="brk-item">
+              <div class="lbl">Score</div>
+              <div class="val" id="break-score">0-0</div>
+            </div>
+            <div class="brk-item">
+              <div class="lbl">Target</div>
+              <div class="val" id="break-target">—</div>
+            </div>
+            <div class="brk-item">
+              <div class="lbl">Req. Run Rate</div>
+              <div class="val" id="break-rrr">—</div>
+            </div>
           </div>
         </div>
       </div>
@@ -421,6 +504,36 @@
     <div id="fx-pill"><span class="bolt" id="fx-pill-icon">↗</span><span id="fx-pill-text">WIDE</span></div>
   </div>
 
+  <div id="innings-summary-card" class="summary-card">
+    <div class="sc-header">
+      <div class="sc-title" id="is-title">TEAM</div>
+      <div class="sc-sub" id="is-sub">BOWLING FIGURES</div>
+    </div>
+    <div id="is-bowler-rows"></div>
+    <div class="sc-fow-row">
+      <span class="sc-fow-label">Fall of Wickets</span>
+      <div class="sc-fow-list" id="is-fow-list"></div>
+    </div>
+    <div class="sc-footer">
+      <span id="is-extras">EXTRAS 0</span>
+      <span id="is-overs">OVERS 0.0</span>
+      <span id="is-total">TOTAL 0-0</span>
+    </div>
+  </div>
+
+  <div id="match-summary-card" class="summary-card wide">
+    <div class="ms-header">MATCH SUMMARY</div>
+    <div class="ms-team" id="ms-team-a">
+      <div class="ms-team-bar" id="ms-bar-a"><span id="ms-name-a">TEAM A</span><span id="ms-score-a"></span></div>
+      <div class="ms-rows" id="ms-rows-a"></div>
+    </div>
+    <div class="ms-team" id="ms-team-b">
+      <div class="ms-team-bar" id="ms-bar-b"><span id="ms-name-b">TEAM B</span><span id="ms-score-b"></span></div>
+      <div class="ms-rows" id="ms-rows-b"></div>
+    </div>
+    <div class="ms-footer" id="ms-result"></div>
+  </div>
+
   <div id="conn-status">Connecting…</div>
 
 </div>
@@ -443,6 +556,8 @@ socket.on('connect_error', () => { connStatus.classList.add('visible'); connStat
 
 socket.on('liveCricketScore', (data) => renderState(data));
 socket.on('cricketEvent', (event) => playEvent(event));
+socket.on('cricketInningsSummary', (data) => renderInningsSummary(data));
+socket.on('cricketMatchSummary', (data) => renderMatchSummary(data));
 
 /* ============================================================
    DIGIT-LEVEL SCORE RENDERING
@@ -570,6 +685,25 @@ function renderState(s){
   document.getElementById('stat-partnership').textContent = `${s.partnershipRuns ?? 0} (${s.partnershipBalls ?? 0})`;
 
   const oversLimit = s.oversPerInnings && s.oversPerInnings !== Infinity ? s.oversPerInnings : null;
+
+  // Innings-break gap: the current innings has ended (all out / overs
+  // complete) but the panel hasn't sent a target yet — it's holding the
+  // overlay on the finished innings until "Start Next Innings" is clicked.
+  // Swap the white panel to a plain Score / Target / Req. Run Rate summary
+  // for that gap, using the exact same "prev score + 1" target formula the
+  // panel applies the moment that button is pressed.
+  const wicketsAllOut = (s.score?.wickets ?? 0) >= 10;
+  const oversAllBowled = oversLimit !== null && totalBalls >= oversLimit * 6;
+  const breakMode = (wicketsAllOut || oversAllBowled) && !s.target;
+  document.getElementById('live-segs').style.display = breakMode ? 'none' : 'flex';
+  document.getElementById('break-seg').style.display = breakMode ? 'flex' : 'none';
+  if(breakMode){
+    document.getElementById('break-score').textContent = scoreStr;
+    const predictedTarget = (s.score?.runs ?? 0) + 1;
+    document.getElementById('break-target').textContent = predictedTarget;
+    document.getElementById('break-rrr').textContent = oversLimit ? (predictedTarget / oversLimit).toFixed(2) : '—';
+  }
+
   if(s.target){
     const runsNeeded = Math.max(s.target - (s.score?.runs ?? 0), 0);
     const totalInningsBalls = oversLimit ? oversLimit * 6 : null;
@@ -895,6 +1029,112 @@ function playGenericBanner(evt){
     .to(el, { opacity: 1, scale: 1, y: 0, duration: 0.4, ease: 'back.out(2.2)' })
     .to(el, { duration: (evt.durationMs || 2200) / 1000 })
     .to(el, { opacity: 0, y: -14, duration: 0.3, ease: 'power2.in' });
+}
+
+/* ============================================================
+   INNINGS BOWLING SUMMARY  /  MATCH SUMMARY
+   Both auto-triggered by the panel (toggleable there), independent
+   of the main scorecard's own render loop — liveCricketScore keeps
+   updating underneath exactly as before, nothing here ever blocks
+   or delays it.
+
+   Choreography for both, per the brief: the box builds first (a
+   center-out clip-path unmask), then every line inside cascades in
+   one after another (Apple-style blur+rise), holds a few seconds,
+   then reverses the same way on exit.
+   ============================================================ */
+function escapeHtml(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function playSummaryCard(cardId, rowsSelector, holdMs){
+  const card = document.getElementById(cardId);
+  const rows = card.querySelectorAll(rowsSelector);
+  gsap.killTweensOf(card);
+  gsap.killTweensOf(rows);
+  card.style.display = 'flex';
+  gsap.set(card, { opacity: 0, scale: 0.94, clipPath: 'inset(50% 50% 50% 50% round 16px)' });
+  gsap.set(rows, { opacity: 0, y: 22, filter: 'blur(6px)' });
+
+  gsap.timeline()
+    .to(card, { opacity: 1, scale: 1, clipPath: 'inset(0% 0% 0% 0% round 16px)', duration: 0.6, ease: 'expo.out' })
+    .to(rows, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.45, stagger: 0.12, ease: 'power3.out' }, 0.3)
+    .to(card, { duration: Math.max(holdMs, 0) / 1000 })
+    .to(rows, { opacity: 0, y: -14, filter: 'blur(4px)', duration: 0.32, stagger: 0.06, ease: 'power2.in' })
+    .to(card, {
+      opacity: 0, scale: 0.95, clipPath: 'inset(50% 50% 50% 50% round 16px)', duration: 0.5, ease: 'power2.in',
+      onComplete: () => { card.style.display = 'none'; }
+    }, '-=0.15');
+}
+
+function renderInningsSummary(d){
+  if(!d) return;
+  document.getElementById('is-title').textContent = (d.bowlingTeamShort || d.bowlingTeamName || 'BOWLING').toUpperCase();
+  document.getElementById('is-sub').textContent = [d.format, d.venue].filter(Boolean).join(' · ') || 'BOWLING FIGURES';
+
+  const rowsWrap = document.getElementById('is-bowler-rows');
+  rowsWrap.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'sc-row sc-row-head';
+  head.innerHTML = '<span class="sc-c-name">Bowler</span><span class="sc-c-num">O</span><span class="sc-c-num">M</span><span class="sc-c-num">R</span><span class="sc-c-num">W</span><span class="sc-c-num">Econ</span>';
+  rowsWrap.appendChild(head);
+  (d.bowlers || []).forEach(b => {
+    const row = document.createElement('div');
+    row.className = 'sc-row';
+    row.innerHTML = `<span class="sc-c-name">${escapeHtml(b.name)}</span><span class="sc-c-num">${escapeHtml(b.overs)}</span><span class="sc-c-num">${escapeHtml(b.maidens)}</span><span class="sc-c-num">${escapeHtml(b.runs)}</span><span class="sc-c-num">${escapeHtml(b.wickets)}</span><span class="sc-c-num">${escapeHtml(b.econ)}</span>`;
+    rowsWrap.appendChild(row);
+  });
+
+  const fowList = document.getElementById('is-fow-list');
+  fowList.innerHTML = '';
+  (d.fallOfWickets || []).forEach(f => {
+    const item = document.createElement('span');
+    item.className = 'sc-fow-item';
+    item.textContent = `${f.wkt}-${f.runs}`;
+    fowList.appendChild(item);
+  });
+
+  document.getElementById('is-extras').textContent = `EXTRAS ${d.extrasTotal ?? 0}`;
+  document.getElementById('is-overs').textContent = `OVERS ${d.overs || '0.0'}`;
+  document.getElementById('is-total').textContent = `TOTAL ${d.total || '0-0'}`;
+
+  playSummaryCard('innings-summary-card', '.sc-row, .sc-fow-row, .sc-footer', 4200);
+}
+
+function fillMsRows(containerId, teamData){
+  const wrap = document.getElementById(containerId);
+  wrap.innerHTML = '';
+  const batsmen = (teamData && teamData.batsmen) || [];
+  const bowlers = (teamData && teamData.bowlers) || [];
+  const n = Math.max(batsmen.length, bowlers.length, 1);
+  for(let i = 0; i < n; i++){
+    const b = batsmen[i], bw = bowlers[i];
+    const row = document.createElement('div');
+    row.className = 'ms-row';
+    row.innerHTML = `
+      <span class="ms-bat">${b ? `${escapeHtml(b.name)} <b>${escapeHtml(b.runs)}</b><i>(${escapeHtml(b.balls)})</i>` : ''}</span>
+      <span class="ms-bowl">${bw ? `${escapeHtml(bw.name)} <b>${escapeHtml(bw.figures)}</b><i>(${escapeHtml(bw.overs)})</i>` : ''}</span>
+    `;
+    wrap.appendChild(row);
+  }
+}
+
+function renderMatchSummary(d){
+  if(!d) return;
+  const colorA = (d.teamA && d.teamA.color) || 'var(--team-a)';
+  const colorB = (d.teamB && d.teamB.color) || 'var(--team-b)';
+  document.getElementById('ms-bar-a').style.background = colorA;
+  document.getElementById('ms-bar-b').style.background = colorB;
+  document.getElementById('ms-name-a').textContent = ((d.teamA && (d.teamA.short || d.teamA.name)) || 'TEAM A').toUpperCase();
+  document.getElementById('ms-score-a').textContent = (d.teamA && d.teamA.score) || '';
+  document.getElementById('ms-name-b').textContent = ((d.teamB && (d.teamB.short || d.teamB.name)) || 'TEAM B').toUpperCase();
+  document.getElementById('ms-score-b').textContent = (d.teamB && d.teamB.score) || '';
+  document.getElementById('ms-result').textContent = d.winnerText || '';
+
+  fillMsRows('ms-rows-a', d.teamA);
+  fillMsRows('ms-rows-b', d.teamB);
+
+  playSummaryCard('match-summary-card', '.ms-row, .ms-footer', 5000);
 }
 </script>
 </body>
