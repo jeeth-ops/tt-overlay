@@ -980,7 +980,9 @@ function checkMatchResult(){
     // If an innings-summary graphic just fired on this SAME ball (defending
     // side bowled the chasing side out/overs-out right as the match ended),
     // give it room to finish its animation before the match summary starts.
-    const delay = inningsSummaryJustFired ? 6500 : 300;
+    // Innings summary is now TWO cards back-to-back (batting, then bowling —
+    // see cricket-overlay.html), so this covers both full lifecycles.
+    const delay = inningsSummaryJustFired ? 12600 : 300;
     const payload = buildMatchSummaryPayload();
     setTimeout(() => { if(socket && socket.connected) socket.emit('cricketMatchSummary', { data: payload }); }, delay);
   }
@@ -1003,17 +1005,36 @@ function buildInningsSummaryPayload(){
   if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0)){
     rows.push({ ...state.bowler });
   }
+
+  // Batting card for the innings: archived batsmen so far, plus the two
+  // still "live" at the crease — they're only archived into battingCard on
+  // Next Innings (after this summary already fired), so fold them in here
+  // the same way `rows` above folds in the still-live bowler.
+  const battingRows = [...state.battingCard[battingKey]];
+  [state.striker, state.nonStriker].forEach(p => {
+    if(p && p.name && !battingRows.some(b => b.name === p.name)){
+      battingRows.push({ name:p.name, runs:p.runs, balls:p.balls, fours:p.fours, sixes:p.sixes, out:false, howOut:'not out' });
+    }
+  });
+
   const extras = state.extras[battingKey];
   return {
     bowlingTeamName: bowlingTeamObj.name,
     bowlingTeamShort: bowlingTeamObj.short,
     bowlingTeamColor: bowlingTeamObj.color,
     battingTeamName: battingTeamObj.name,
+    battingTeamShort: battingTeamObj.short,
+    battingTeamColor: battingTeamObj.color,
     format: state.format,
     venue: state.venue,
     bowlers: rows.map(b => ({
       name: b.name, overs: fmtBowlerOvers(b.overs, b.balls),
       maidens: b.maidens, runs: b.runs, wickets: b.wickets, econ: bowlerEcon(b)
+    })),
+    batsmen: battingRows.map(b => ({
+      name: b.name, runs: b.runs, balls: b.balls, fours: b.fours, sixes: b.sixes,
+      sr: b.balls > 0 ? ((b.runs / b.balls) * 100).toFixed(1) : '0.0',
+      howOut: b.out ? (b.howOut || 'out') : 'not out'
     })),
     fallOfWickets: state.fallOfWickets[battingKey],
     extrasTotal: (extras.wd||0) + (extras.nb||0) + (extras.b||0) + (extras.lb||0),
