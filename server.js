@@ -84,6 +84,8 @@ app.get('/tt-lowerthird-panel', (req, res) => res.sendFile(__dirname + '/tt-lowe
 app.get('/cricket-templates', (req, res) => res.sendFile(__dirname + '/cricket-templates.html'));
 app.get('/cricket-overlay', (req, res) => res.sendFile(__dirname + '/cricket-overlay.html'));
 app.get('/cricket-panel', (req, res) => res.sendFile(__dirname + '/cricket-panel.html'));
+app.get('/football-matchintro', (req, res) => res.sendFile(__dirname + '/football-matchintro.html'));
+app.get('/football-matchintro-panel', (req, res) => res.sendFile(__dirname + '/football-matchintro-panel.html'));
 
 let roomStates = {};
 const firestoreWriteTimers = {}; // debounce map: targetId -> timeout handle
@@ -160,6 +162,19 @@ async function getRoomState(room) {
                 partnershipBalls: 0,
                 milestonesHit: {},
                 visible: true
+            },
+            footballMatchIntroState: {
+                league: "LAKERS CUP PLAYOFFS",
+                venue: "American Airlines Center - Dallas, TX",
+                kickoff: "Tomorrow, 8PM EST",
+                teamA: { name: "Player A", logo: "", color: "#1c8a4a", colorAuto: true },
+                teamB: { name: "Player B", logo: "", color: "#c41c2e", colorAuto: true },
+                colors: {
+                    navyDeep: "#060a16", navyMid: "#0d1424", navyEnd: "#151f38",
+                    headerBg: "#05060a", cardBorder: "rgba(255,255,255,.14)",
+                    accent: "#3fd6ea"
+                },
+                visible: true
             }
         };
     }
@@ -181,6 +196,7 @@ async function getRoomState(room) {
                 if (data.footballState) roomStates[room].footballState = { ...roomStates[room].footballState, ...data.footballState };
                 if (data.matchIntroState) roomStates[room].matchIntroState = { ...roomStates[room].matchIntroState, ...data.matchIntroState };
                 if (data.cricketState) roomStates[room].cricketState = { ...roomStates[room].cricketState, ...data.cricketState };
+                if (data.footballMatchIntroState) roomStates[room].footballMatchIntroState = { ...roomStates[room].footballMatchIntroState, ...data.footballMatchIntroState };
             }
         } catch (err) {
             console.log("Firestore fetch error:", err);
@@ -328,6 +344,7 @@ io.on('connection', async (socket) => {
     if (roomState.ttState) socket.emit('liveScore', roomState.ttState);
     if (roomState.footballState) socket.emit('liveFootballScore', roomState.footballState);
     if (roomState.cricketState) socket.emit('liveCricketScore', roomState.cricketState);
+    if (roomState.footballMatchIntroState) socket.emit('liveFootballMatchIntro', { config: roomState.footballMatchIntroState, triggerReplay: false });
     if (connectSyncResult && currentRoom.startsWith('room-')) {
         const uid = currentRoom.replace('room-', '');
         const patch = connectSyncResult === 'matchIntro' ? { matchIntroState: roomState.matchIntroState } : { ttState: roomState.ttState };
@@ -463,6 +480,44 @@ io.on('connection', async (socket) => {
         if (targetId && targetId !== 'default') room = `room-${targetId}`;
         io.to(room).emit('cricketEvent', data.event || data);
     });
+
+    // 🏈 FOOTBALL MATCH INTRO PANEL & OVERLAY SOCKET HANDLING
+    // Broadcast is ALWAYS immediate (no delay ever added to what viewers see)
+    // — only the Firestore save is debounced, purely to avoid flooding the DB
+    // on rapid edits. That debounce never delays the live update itself.
+    const handleFootballMatchIntroUpdate = async (data) => {
+        let room = socket.activeRoom;
+        const targetId = data.room ? data.room.replace('room-', '') : (data.id || data.uid || matchIdForClient);
+        if (targetId && targetId !== 'default') {
+            room = `room-${targetId}`;
+            if (socket.activeRoom !== room) {
+                socket.leave(socket.activeRoom);
+                socket.join(room);
+                socket.activeRoom = room;
+            }
+        }
+
+        const state = await getRoomState(room);
+        if (data.config) {
+            state.footballMatchIntroState = data.config;
+        } else {
+            state.footballMatchIntroState = { ...state.footballMatchIntroState, ...data };
+        }
+
+        io.to(room).emit('liveFootballMatchIntro', {
+            config: state.footballMatchIntroState,
+            triggerReplay: data.triggerReplay || false
+        });
+
+        if (targetId && targetId !== 'default') {
+            clearTimeout(firestoreWriteTimers[`fmi-${targetId}`]);
+            firestoreWriteTimers[`fmi-${targetId}`] = setTimeout(() => {
+                db.collection("scorvix").doc(targetId).set({ footballMatchIntroState: state.footballMatchIntroState }, { merge: true }).catch(err => console.log("DB update error:", err));
+            }, 700);
+        }
+    };
+    socket.on('updateFootballMatchIntro', handleFootballMatchIntroUpdate);
+    socket.on('liveFootballMatchIntro', handleFootballMatchIntroUpdate);
 
     // Match Intro Socket Update Handling
     socket.on('updateMatchIntro', async (data) => {
