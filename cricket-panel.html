@@ -292,6 +292,30 @@
       <input type="text" id="new-batsman-name" placeholder="Incoming batsman name">
       <button class="full small" id="new-batsman-btn" style="margin-top:8px;">Send In New Batsman</button>
     </div>
+
+    <div class="card">
+      <h2>Current Bowler <span class="note">— feeds the Innings/Match Summary graphics</span></h2>
+      <div class="stat-grid">
+        <div class="stat auto" style="grid-column:1/-1;"><div class="k">Bowler</div><div class="v" id="disp-bowler-name" style="font-size:14px;">—</div></div>
+        <div class="stat auto"><div class="k">Overs</div><div class="v" id="disp-bowler-overs">0.0</div></div>
+        <div class="stat auto"><div class="k">Maidens</div><div class="v" id="disp-bowler-maidens">0</div></div>
+        <div class="stat auto"><div class="k">Runs</div><div class="v" id="disp-bowler-runs">0</div></div>
+        <div class="stat auto"><div class="k">Wickets</div><div class="v" id="disp-bowler-wkts">0</div></div>
+      </div>
+      <label>New bowler coming on</label>
+      <input type="text" id="bowler-name-input" placeholder="Bowler name">
+      <button class="full small" id="set-bowler-btn" style="margin-top:8px;">Set / Change Bowler</button>
+      <label>Dismissal type <span class="note">(applies to the next WICKET)</span></label>
+      <select id="dismissal-type">
+        <option value="Bowled">Bowled</option>
+        <option value="Caught">Caught</option>
+        <option value="LBW">LBW</option>
+        <option value="Stumped">Stumped</option>
+        <option value="Hit Wicket">Hit Wicket</option>
+        <option value="Run Out">Run Out (not credited to bowler)</option>
+        <option value="Retired Hurt">Retired Hurt (not credited to bowler)</option>
+      </select>
+    </div>
   </div>
 
   <!-- COLUMN 3: Milestones + links -->
@@ -322,6 +346,18 @@
     <div class="card">
       <h2>Auto Milestone Log</h2>
       <div class="milestone-log" id="milestone-log"><div>No events yet.</div></div>
+    </div>
+
+    <div class="card">
+      <h2>Auto Summary Graphics <span class="note">— on/off, live</span></h2>
+      <div class="toggle-row">
+        <span>Innings Bowling Summary (auto, right after each innings ends)</span>
+        <label class="switch"><input type="checkbox" id="innings-summary-toggle" checked><span class="slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <span>Match Summary (auto, when the match is won)</span>
+        <label class="switch"><input type="checkbox" id="match-summary-toggle" checked><span class="slider"></span></label>
+      </div>
     </div>
 
     <div class="card">
@@ -360,7 +396,17 @@ function mergeWithDefaults(saved){
     score: { ...def.score, ...(saved.score||{}) },
     striker: { ...def.striker, ...(saved.striker||{}) },
     nonStriker: { ...def.nonStriker, ...(saved.nonStriker||{}) },
-    bowler: { ...def.bowler, ...(saved.bowler||{}) }
+    bowler: { ...def.bowler, ...(saved.bowler||{}) },
+    // Per-innings archives, keyed by team ('A'/'B'), that feed the two
+    // auto-popup graphics (Innings Bowling Summary / Match Summary) — they
+    // accumulate across the WHOLE match and are only cleared on Reset.
+    battingCard: { A: (saved.battingCard && saved.battingCard.A) || [], B: (saved.battingCard && saved.battingCard.B) || [] },
+    bowlingCard: { A: (saved.bowlingCard && saved.bowlingCard.A) || [], B: (saved.bowlingCard && saved.bowlingCard.B) || [] },
+    fallOfWickets: { A: (saved.fallOfWickets && saved.fallOfWickets.A) || [], B: (saved.fallOfWickets && saved.fallOfWickets.B) || [] },
+    extras: {
+      A: { ...def.extras.A, ...((saved.extras && saved.extras.A) || {}) },
+      B: { ...def.extras.B, ...((saved.extras && saved.extras.B) || {}) }
+    }
   };
 }
 let state = mergeWithDefaults(loadState());
@@ -380,7 +426,14 @@ function defaultState(){
     target: null,
     striker:    { name:'S. Yadav', runs:0, balls:0, fours:0, sixes:0 },
     nonStriker: { name:'V. Kohli', runs:0, balls:0, fours:0, sixes:0 },
-    bowler:     { name:'', overs:0, balls:0, maidens:0, runs:0, wickets:0 },
+    bowler:     { name:'', overs:0, balls:0, maidens:0, runs:0, wickets:0, runsThisOver:0 },
+    battingCard: { A: [], B: [] },
+    bowlingCard: { A: [], B: [] },
+    fallOfWickets: { A: [], B: [] },
+    extras: { A: { wd:0, nb:0, b:0, lb:0 }, B: { wd:0, nb:0, b:0, lb:0 } },
+    firstInningsSummary: null,
+    showInningsSummary: true,
+    showMatchSummary: true,
     thisOver: [],
     ballHistory: [],
     visible: true,
@@ -646,6 +699,15 @@ function renderPanel(){
   document.getElementById('teamB-logo-preview').style.backgroundImage = state.teamB.logoUrl ? `url(${state.teamB.logoUrl})` : '';
 
   document.getElementById('freehit-banner').classList.toggle('show', !!state.freeHit);
+
+  document.getElementById('disp-bowler-name').textContent = state.bowler.name || '—';
+  document.getElementById('disp-bowler-overs').textContent = fmtBowlerOvers(state.bowler.overs, state.bowler.balls);
+  document.getElementById('disp-bowler-maidens').textContent = state.bowler.maidens;
+  document.getElementById('disp-bowler-runs').textContent = state.bowler.runs;
+  document.getElementById('disp-bowler-wkts').textContent = state.bowler.wickets;
+  maybeSet('innings-summary-toggle', state.showInningsSummary);
+  maybeSet('match-summary-toggle', state.showMatchSummary);
+
   updateBallButtonsState();
 }
 
@@ -693,7 +755,15 @@ bindLive('nonstriker-name', el => { state.nonStriker.name = el.value; });
 document.getElementById('target').addEventListener('input', (e) => {
   const v = e.target.value;
   state.target = v ? parseInt(v) : null;
-  pushState();
+  // Re-check the result immediately: previously this only happened inside
+  // recordBall(), so if a target was typed/corrected after the chasing
+  // side had already reached or passed it (and no further ball gets
+  // recorded), the WIN banner would never fire — the match would just
+  // sit there "unfinished" per the app even though it's over by the
+  // actual rules of cricket.
+  checkInningsComplete();
+  checkMatchResult();
+  pushState(true, true);
 });
 document.getElementById('batting-team').addEventListener('change', (e) => {
   history.push(snapshot());
@@ -733,6 +803,34 @@ document.getElementById('new-batsman-btn').addEventListener('click', () => {
   state.partnershipRuns = 0; state.partnershipBalls = 0;
   document.getElementById('new-batsman-name').value = '';
   pushState(true);
+});
+
+/* ============================================================
+   BOWLER — a deliberate "Set / Change Bowler" action (not live-typed)
+   so the outgoing bowler's figures get archived under their OWN name
+   before the field switches to the incoming bowler.
+   ============================================================ */
+document.getElementById('set-bowler-btn').addEventListener('click', () => {
+  const name = document.getElementById('bowler-name-input').value.trim();
+  if(!name){ toast('Enter a bowler name first'); return; }
+  if(name === state.bowler.name){ toast('That bowler is already set'); return; }
+  history.push(snapshot());
+  if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0)){
+    state.bowlingCard[bowlingTeamKey()].push({ ...state.bowler });
+  }
+  state.bowler = { name, overs:0, balls:0, maidens:0, runs:0, wickets:0, runsThisOver:0 };
+  document.getElementById('bowler-name-input').value = '';
+  pushState(true);
+  toast(`${name} is now bowling`);
+});
+
+document.getElementById('innings-summary-toggle').addEventListener('change', (e) => {
+  state.showInningsSummary = e.target.checked;
+  pushState(true, true);
+});
+document.getElementById('match-summary-toggle').addEventListener('change', (e) => {
+  state.showMatchSummary = e.target.checked;
+  pushState(true, true);
 });
 
 /* ============================================================
@@ -810,10 +908,16 @@ function checkMilestones(){
      "innings complete" event fires automatically — this is what
      stops a scorer's mis-click from ever reaching the overlay.
    ============================================================ */
+// True once the chasing side has actually reached the target — by the
+// laws of cricket the match ends on this exact ball, so no further balls
+// should ever be recordable past this point.
+function isChaseWon(){
+  return !!state.target && state.score.runs >= state.target;
+}
 function isInningsOver(){
   const totalBallsAllowed = ballsPerInnings();
   const ballsBowled = state.score.overs*6 + state.score.balls;
-  return state.score.wickets >= 10 || (totalBallsAllowed !== null && ballsBowled >= totalBallsAllowed);
+  return state.score.wickets >= 10 || (totalBallsAllowed !== null && ballsBowled >= totalBallsAllowed) || isChaseWon();
 }
 // True during the gap between innings — current innings has ended, next
 // one hasn't been started yet (target not set), and the match itself
@@ -827,12 +931,25 @@ function updateBallButtonsState(){
   const nextBtn = document.getElementById('next-innings-btn');
   if(nextBtn) nextBtn.disabled = !over || !!state.milestonesHit['match-result'];
 }
+// Set true for the rest of the current recordBall() call if
+// checkInningsComplete() actually fired — lets checkMatchResult() delay its
+// own graphic so the two never visually overlap on the overlay.
+let inningsSummaryJustFired = false;
+
 function checkInningsComplete(){
   if(state.milestonesHit['innings-complete']) return;
   if(!isInningsOver()) return;
+  // A target reached mid-over is a match win, not an "innings complete"
+  // (all-out/overs-complete) event — checkMatchResult() owns that banner.
+  if(isChaseWon()) return;
   state.milestonesHit['innings-complete'] = true;
   const reason = state.score.wickets >= 10 ? 'ALL OUT' : 'OVERS COMPLETE';
   fireEvent('INNINGS_COMPLETE', reason, `${state.score.runs}-${state.score.wickets} in ${fmtOvers(state.score.overs, state.score.balls)} overs`, 4000);
+
+  if(state.showInningsSummary && socket && socket.connected){
+    inningsSummaryJustFired = true;
+    socket.emit('cricketInningsSummary', { data: buildInningsSummaryPayload() });
+  }
 }
 function checkMatchResult(){
   if(!state.target) return; // only relevant during the run-chase (2nd innings)
@@ -841,11 +958,13 @@ function checkMatchResult(){
   const bowlingTeam = state.battingTeam === 'A' ? state.teamB : state.teamA;
   const battingShort = battingTeam.short || battingTeam.name;
   const bowlingShort = bowlingTeam.short || bowlingTeam.name;
+  let resultFired = false;
 
   if(state.score.runs >= state.target){
     state.milestonesHit['match-result'] = true;
     const left = 10 - state.score.wickets;
     fireEvent('VICTORY', `${battingShort} WIN`, `by ${left} wicket${left === 1 ? '' : 's'}`, 5000);
+    resultFired = true;
   } else if(isInningsOver()){
     state.milestonesHit['match-result'] = true;
     const margin = state.target - 1 - state.score.runs;
@@ -854,8 +973,109 @@ function checkMatchResult(){
     } else {
       fireEvent('VICTORY', `${bowlingShort} WIN`, `by ${margin} run${margin === 1 ? '' : 's'}`, 5000);
     }
+    resultFired = true;
   }
+
+  if(resultFired && state.showMatchSummary && socket && socket.connected){
+    // If an innings-summary graphic just fired on this SAME ball (defending
+    // side bowled the chasing side out/overs-out right as the match ended),
+    // give it room to finish its animation before the match summary starts.
+    const delay = inningsSummaryJustFired ? 6500 : 300;
+    const payload = buildMatchSummaryPayload();
+    setTimeout(() => { if(socket && socket.connected) socket.emit('cricketMatchSummary', { data: payload }); }, delay);
+  }
+
   updateBallButtonsState();
+}
+
+/* ============================================================
+   SUMMARY GRAPHIC PAYLOADS — built from the archived battingCard /
+   bowlingCard / fallOfWickets / extras, folding in whatever the CURRENT
+   (not-yet-archived) striker/non-striker/bowler are at the moment of firing.
+   ============================================================ */
+function buildInningsSummaryPayload(){
+  const battingKey = state.battingTeam;
+  const bowlingKey = bowlingTeamKey();
+  const bowlingTeamObj = bowlingKey === 'A' ? state.teamA : state.teamB;
+  const battingTeamObj = battingKey === 'A' ? state.teamA : state.teamB;
+
+  const rows = [...state.bowlingCard[bowlingKey]];
+  if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0)){
+    rows.push({ ...state.bowler });
+  }
+  const extras = state.extras[battingKey];
+  return {
+    bowlingTeamName: bowlingTeamObj.name,
+    bowlingTeamShort: bowlingTeamObj.short,
+    bowlingTeamColor: bowlingTeamObj.color,
+    battingTeamName: battingTeamObj.name,
+    format: state.format,
+    venue: state.venue,
+    bowlers: rows.map(b => ({
+      name: b.name, overs: fmtBowlerOvers(b.overs, b.balls),
+      maidens: b.maidens, runs: b.runs, wickets: b.wickets, econ: bowlerEcon(b)
+    })),
+    fallOfWickets: state.fallOfWickets[battingKey],
+    extrasTotal: (extras.wd||0) + (extras.nb||0) + (extras.b||0) + (extras.lb||0),
+    overs: fmtOvers(state.score.overs, state.score.balls),
+    total: `${state.score.runs}-${state.score.wickets}`
+  };
+}
+
+function buildMatchSummaryPayload(){
+  const battingCardA = [...state.battingCard.A];
+  const battingCardB = [...state.battingCard.B];
+  const bowlingCardA = [...state.bowlingCard.A];
+  const bowlingCardB = [...state.bowlingCard.B];
+
+  // Fold in whichever batsmen/bowler are still "live" (not yet archived —
+  // true for the team that was batting/bowling right when the match ended).
+  const liveBattingArr = state.battingTeam === 'A' ? battingCardA : battingCardB;
+  [state.striker, state.nonStriker].forEach(p => {
+    if(p && p.name && !liveBattingArr.some(b => b.name === p.name)){
+      liveBattingArr.push({ name:p.name, runs:p.runs, balls:p.balls, fours:p.fours, sixes:p.sixes, out:false, howOut:'not out' });
+    }
+  });
+  const liveBowlingArr = bowlingTeamKey() === 'A' ? bowlingCardA : bowlingCardB;
+  if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0) && !liveBowlingArr.some(b => b.name === state.bowler.name)){
+    liveBowlingArr.push({ ...state.bowler });
+  }
+
+  const topBatsmen = arr => [...arr].sort((a,b) => b.runs - a.runs).slice(0,4)
+    .map(b => ({ name:b.name, runs:b.runs, balls:b.balls }));
+  const topBowlers = arr => [...arr].sort((a,b) => (b.wickets - a.wickets) || (a.runs - b.runs)).slice(0,4)
+    .map(b => ({ name:b.name, figures:`${b.wickets}-${b.runs}`, overs: fmtBowlerOvers(b.overs, b.balls) }));
+
+  const firstInn = state.firstInningsSummary;
+  const scoreFor = (teamKey) => {
+    if(firstInn && firstInn.team === teamKey) return `${firstInn.runs}-${firstInn.wickets} (${firstInn.overs} ov)`;
+    if(teamKey === state.battingTeam) return `${state.score.runs}-${state.score.wickets} (${fmtOvers(state.score.overs, state.score.balls)} ov)`;
+    return '';
+  };
+
+  const chasingTeam = state.battingTeam === 'A' ? state.teamA : state.teamB;
+  const defendingTeam = state.battingTeam === 'A' ? state.teamB : state.teamA;
+  let winnerText;
+  if(state.score.runs >= state.target){
+    const left = 10 - state.score.wickets;
+    winnerText = `${(chasingTeam.short || chasingTeam.name).toUpperCase()} WON BY ${left} WICKET${left === 1 ? '' : 'S'}`;
+  } else {
+    const margin = state.target - 1 - state.score.runs;
+    winnerText = margin <= 0 ? 'MATCH TIED' : `${(defendingTeam.short || defendingTeam.name).toUpperCase()} WON BY ${margin} RUN${margin === 1 ? '' : 'S'}`;
+  }
+
+  return {
+    venue: state.venue,
+    winnerText,
+    teamA: {
+      name: state.teamA.name, short: state.teamA.short, color: state.teamA.color, score: scoreFor('A'),
+      batsmen: topBatsmen(battingCardA), bowlers: topBowlers(bowlingCardA)
+    },
+    teamB: {
+      name: state.teamB.name, short: state.teamB.short, color: state.teamB.color, score: scoreFor('B'),
+      batsmen: topBatsmen(battingCardB), bowlers: topBowlers(bowlingCardB)
+    }
+  };
 }
 
 function addLegalBall(runsThisBall){
@@ -866,14 +1086,49 @@ function addLegalBall(runsThisBall){
   state.partnershipBalls++;
 }
 
+function bowlingTeamKey(){ return state.battingTeam === 'A' ? 'B' : 'A'; }
+
+/* A legal delivery for the CURRENT bowler — runsChargedToBowler excludes
+   byes/leg-byes (those are extras, not charged against the bowler) but
+   includes runs off the bat. Silently no-ops if no bowler has been set
+   yet, so this feature stays fully optional. */
+function addBowlerBall(runsChargedToBowler){
+  if(!state.bowler.name) return;
+  state.bowler.balls++;
+  state.bowler.runs += runsChargedToBowler;
+  state.bowler.runsThisOver = (state.bowler.runsThisOver || 0) + runsChargedToBowler;
+  if(state.bowler.balls >= 6){
+    state.bowler.balls = 0;
+    state.bowler.overs++;
+    if(state.bowler.runsThisOver === 0) state.bowler.maidens++;
+    state.bowler.runsThisOver = 0;
+  }
+}
+/* Wide / No Ball — charged to the bowler but NOT a legal delivery, so no
+   ball-count increment (mirrors addLegalBall not being called for these). */
+function addBowlerExtra(runsChargedToBowler){
+  if(!state.bowler.name) return;
+  state.bowler.runs += runsChargedToBowler;
+  state.bowler.runsThisOver = (state.bowler.runsThisOver || 0) + runsChargedToBowler;
+}
+function fmtBowlerOvers(o,b){ return `${o}.${b}`; }
+function bowlerEcon(b){
+  const oversFloat = b.overs + (b.balls/6);
+  return oversFloat > 0 ? (b.runs / oversFloat).toFixed(2) : '0.00';
+}
+
 function pushBallHistory(label){
   state.ballHistory.push(label);
   if(state.ballHistory.length > 60) state.ballHistory = state.ballHistory.slice(-60);
 }
 
 function recordBall(kind){
+  inningsSummaryJustFired = false;
   if(isInningsOver()){
-    toast(state.score.wickets >= 10 ? '🚫 All out — 10 wickets already, innings is over' : '🚫 Overs complete for this innings');
+    let msg = '🚫 Overs complete for this innings';
+    if(state.score.wickets >= 10) msg = '🚫 All out — 10 wickets already, innings is over';
+    else if(isChaseWon()) msg = '🏆 Target already reached — match is won, no more balls to record';
+    toast(msg);
     updateBallButtonsState();
     return;
   }
@@ -895,6 +1150,7 @@ function recordBall(kind){
       state.thisOver.push(String(runs));
       pushBallHistory(String(runs));
       addLegalBall(runs);
+      addBowlerBall(runs);
       if(runs === 4) fireEvent('FOUR', 'FOUR!', state.striker.name);
       if(runs === 6) fireEvent('SIX', 'SIX!', state.striker.name);
       if(runs % 2 === 1) swapStrikeSilent();
@@ -902,10 +1158,28 @@ function recordBall(kind){
     }
     case 'W': {
       const wasFreeHit = state.freeHit;
+      const dismissalType = document.getElementById('dismissal-type').value || 'Bowled';
+      const isBowlerWicket = !['Run Out', 'Retired Hurt'].includes(dismissalType);
+      const shortMap = { Bowled:'b', Caught:'c', LBW:'lbw', Stumped:'st', 'Hit Wicket':'hit wkt', 'Run Out':'run out', 'Retired Hurt':'retired hurt' };
+      const dismissalText = (isBowlerWicket && state.bowler.name) ? `${shortMap[dismissalType]} b ${state.bowler.name}` : shortMap[dismissalType];
+
       state.score.wickets++;
       state.thisOver.push('W');
       pushBallHistory('W');
       addLegalBall(0);
+      addBowlerBall(0);
+      if(isBowlerWicket) state.bowler.wickets++;
+
+      // Archive the dismissed batsman + this fall of wicket — this is what
+      // powers the Innings/Match Summary graphics later.
+      state.battingCard[state.battingTeam].push({
+        name: state.striker.name, runs: state.striker.runs, balls: state.striker.balls,
+        fours: state.striker.fours, sixes: state.striker.sixes, out: true, howOut: dismissalText
+      });
+      state.fallOfWickets[state.battingTeam].push({
+        wkt: state.score.wickets, runs: state.score.runs, over: fmtOvers(state.score.overs, state.score.balls)
+      });
+
       state.partnershipRuns = 0; state.partnershipBalls = 0;
       fireEvent('WICKET', 'WICKET!', state.striker.name);
       if(wasFreeHit) toast('⚠️ Free Hit was active — only Run Out is a valid dismissal');
@@ -914,17 +1188,21 @@ function recordBall(kind){
     case 'Wd': {
       state.score.runs += 1;
       state.partnershipRuns += 1;
+      state.extras[state.battingTeam].wd++;
       state.thisOver.push('Wd');
       pushBallHistory('Wd');
+      addBowlerExtra(1);
       fireEvent('WIDE', 'WIDE', '');
       break;
     }
     case 'Nb': {
       state.score.runs += 1;
       state.partnershipRuns += 1;
+      state.extras[state.battingTeam].nb++;
       state.thisOver.push('Nb');
       pushBallHistory('Nb');
       state.freeHit = true;
+      addBowlerExtra(1);
       fireEvent('NO_BALL', 'NO BALL', '');
       setTimeout(() => fireEvent('FREE_HIT', 'FREE HIT', 'Next ball is a Free Hit'), 900);
       break;
@@ -932,17 +1210,21 @@ function recordBall(kind){
     case 'B': {
       state.score.runs += 1;
       state.partnershipRuns += 1;
+      state.extras[state.battingTeam].b++;
       state.thisOver.push('B');
       pushBallHistory('B');
       addLegalBall(1);
+      addBowlerBall(0);
       break;
     }
     case 'LB': {
       state.score.runs += 1;
       state.partnershipRuns += 1;
+      state.extras[state.battingTeam].lb++;
       state.thisOver.push('LB');
       pushBallHistory('LB');
       addLegalBall(1);
+      addBowlerBall(0);
       break;
     }
   }
@@ -980,6 +1262,28 @@ document.getElementById('next-innings-btn').addEventListener('click', () => {
   if(state.target){ toast('Match is already complete — Reset to start a new match'); return; }
 
   history.push(snapshot());
+
+  const oldBattingTeam = state.battingTeam;
+  const oldBowlingTeam = bowlingTeamKey();
+
+  // Archive not-out batsmen — anyone dismissed was already archived at the
+  // moment of their WICKET ball, so this only picks up the two left in.
+  [state.striker, state.nonStriker].forEach(p => {
+    if(p && p.name && !state.battingCard[oldBattingTeam].some(b => b.name === p.name)){
+      state.battingCard[oldBattingTeam].push({ name:p.name, runs:p.runs, balls:p.balls, fours:p.fours, sixes:p.sixes, out:false, howOut:'not out' });
+    }
+  });
+  // Archive this innings' final bowler figures.
+  if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0)){
+    state.bowlingCard[oldBowlingTeam].push({ ...state.bowler });
+  }
+  // Freeze the completed innings' total — the Match Summary graphic needs
+  // this exact figure later, after state.score has moved on to innings 2.
+  state.firstInningsSummary = {
+    team: oldBattingTeam, runs: state.score.runs, wickets: state.score.wickets,
+    overs: fmtOvers(state.score.overs, state.score.balls)
+  };
+
   state.target = state.score.runs + 1;
   state.battingTeam = state.battingTeam === 'A' ? 'B' : 'A';
   state.score = { runs:0, wickets:0, overs:0, balls:0 };
@@ -991,6 +1295,7 @@ document.getElementById('next-innings-btn').addEventListener('click', () => {
   // reset. Falls back to a placeholder only if the field was left blank.
   state.striker = { name: (state.striker.name || '').trim() || 'Batsman 1', runs:0, balls:0, fours:0, sixes:0 };
   state.nonStriker = { name: (state.nonStriker.name || '').trim() || 'Batsman 2', runs:0, balls:0, fours:0, sixes:0 };
+  state.bowler = { name:'', overs:0, balls:0, maidens:0, runs:0, wickets:0, runsThisOver:0 };
   state.freeHit = false;
   // Clear innings-scoped milestones (team totals, powerplay, last-over, "need
   // X off Y", the completed-innings lock) so the 2nd innings fires its own —
@@ -1066,6 +1371,8 @@ document.addEventListener('keydown', (e) => {
   document.getElementById('batting-team').value = state.battingTeam;
   document.getElementById('target').value = state.target || '';
   document.getElementById('visible-toggle').checked = state.visible;
+  document.getElementById('innings-summary-toggle').checked = state.showInningsSummary;
+  document.getElementById('match-summary-toggle').checked = state.showMatchSummary;
   document.getElementById('teamA-logo-preview').style.backgroundImage = state.teamA.logoUrl ? `url(${state.teamA.logoUrl})` : '';
   document.getElementById('teamB-logo-preview').style.backgroundImage = state.teamB.logoUrl ? `url(${state.teamB.logoUrl})` : '';
 
