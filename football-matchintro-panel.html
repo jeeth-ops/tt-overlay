@@ -122,6 +122,17 @@
 
   ::-webkit-scrollbar{ width:8px; }
   ::-webkit-scrollbar-thumb{ background:var(--panel-2); border-radius:4px; }
+
+  /* 🌟 Real-time collaboration toast — flashes when another connected
+     device (phone/second panel) pushes an update, Google-Docs style. */
+  #collabToast{
+    position:fixed; bottom:22px; left:50%; transform:translateX(-50%) translateY(20px);
+    background:#16a34a; color:#fff; font-size:12.5px; font-weight:700;
+    padding:9px 16px; border-radius:20px; box-shadow:0 10px 30px rgba(0,0,0,.4);
+    opacity:0; pointer-events:none; transition:opacity .25s ease, transform .25s ease;
+    z-index:999; letter-spacing:.3px;
+  }
+  #collabToast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
 </style>
 </head>
 <body>
@@ -133,6 +144,7 @@
       <label style="font-size:11px;color:var(--text-dim);letter-spacing:.5px;">MATCH ID</label>
       <input type="text" id="fMatchId" style="width:110px;background:transparent;border:none;color:var(--text);font-size:12.5px;font-family:inherit;font-weight:700;letter-spacing:1px;outline:none;">
     </div>
+    <span id="presenceBadge" style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-dim);background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:6px 10px;">🟢 1 connected</span>
     <button class="ghost" id="btnNewId">New ID</button>
     <button id="btnCopyLink">Copy overlay link</button>
     <button class="ghost" id="btnReset">Reset defaults</button>
@@ -242,6 +254,8 @@
 
   </div>
 </main>
+
+<div id="collabToast">🔄 Updated from another device</div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
@@ -452,11 +466,49 @@
     img.src = imgSrc;
   }
 
+  // 🩹 FIX (root cause of "logo lagate hi sab updates band ho jaate hain"):
+  // raw phone-camera photos can be several MB as base64. Socket.IO's default
+  // per-message limit is 1MB, so sending the full-size logo silently killed
+  // the connection — and since state.teamA/B.logo then permanently held that
+  // oversized string, EVERY later sendUpdate() (even a plain text edit) kept
+  // re-sending it and kept failing the same way. Resizing to a small square
+  // and re-encoding here keeps every logo well under the limit (typically
+  // under 100KB) before it ever touches the socket.
+  function compressImage(file, maxDim, quality){
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          try{
+            let { width, height } = img;
+            if(width > maxDim || height > maxDim){
+              const scale = maxDim / Math.max(width, height);
+              width = Math.round(width * scale);
+              height = Math.round(height * scale);
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = width; canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, width, height); // keep transparency for crests/logos
+            ctx.drawImage(img, 0, 0, width, height);
+            // webp keeps alpha transparency while compressing much better than
+            // PNG for photographic logos; browsers without webp support just
+            // silently fall back to PNG output from toDataURL.
+            resolve(canvas.toDataURL('image/webp', quality));
+          }catch(e){ reject(e); }
+        };
+        img.onerror = () => reject(new Error('image decode failed'));
+        img.src = reader.result;
+      };
+      reader.onerror = () => reject(new Error('file read failed'));
+      reader.readAsDataURL(file);
+    });
+  }
+
   function handleFile(which, file){
     if(!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result;
+    compressImage(file, 360, 0.85).then(dataUrl => {
       if(which==='A') state.teamA.logo = dataUrl; else state.teamB.logo = dataUrl;
       renderThumb(which);
 
@@ -472,8 +524,18 @@
       } else {
         sendUpdate();
       }
-    };
-    reader.readAsDataURL(file);
+    }).catch(() => {
+      // Extremely unlikely fallback (e.g. browser blocks canvas for some
+      // reason) — still try the raw file rather than silently doing nothing.
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result;
+        if(which==='A') state.teamA.logo = dataUrl; else state.teamB.logo = dataUrl;
+        renderThumb(which);
+        sendUpdate();
+      };
+      reader.readAsDataURL(file);
+    });
   }
   els.fileA.addEventListener('change', e => handleFile('A', e.target.files[0]));
   els.fileB.addEventListener('change', e => handleFile('B', e.target.files[0]));
@@ -594,6 +656,26 @@
     if(payload.senderId && payload.senderId === CLIENT_ID) return;
     state = { ...state, ...payload.config };
     populateForm();
+    // 🌟 REAL-TIME COLLABORATION: someone else editing the SAME Match ID
+    // (e.g. from their phone via the QR controller) just changed something
+    // and it landed here instantly — flash a toast so it's visible, not just
+    // a silent field change (Google-Docs-style "someone else is typing").
+    showCollabToast();
+  });
+
+  // 🌟 Presence: how many devices/tabs are connected to this exact match
+  // right now (this panel + the phone controller + the overlay, etc.).
+  let collabToastTimer = null;
+  function showCollabToast(){
+    const toast = document.getElementById('collabToast');
+    toast.classList.add('show');
+    clearTimeout(collabToastTimer);
+    collabToastTimer = setTimeout(() => toast.classList.remove('show'), 1600);
+  }
+  socket.on('presenceUpdate', ({ count }) => {
+    const badge = document.getElementById('presenceBadge');
+    if(!badge) return;
+    badge.textContent = count > 1 ? `🟢 ${count} connected` : '🟢 1 connected';
   });
 </script>
 
