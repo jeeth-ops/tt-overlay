@@ -344,7 +344,24 @@ const FORMAT_RULES = {
   Custom:{ oversPerInnings: 20, powerplayEnd: 6,  lastOverFrom: 20 }
 };
 
-let state = loadState() || defaultState();
+function mergeWithDefaults(saved){
+  const def = defaultState();
+  if(!saved) return def;
+  // Shallow merge for top-level fields, but deep-merge every nested object so
+  // old/partial localStorage data (saved before a field like "theme" existed)
+  // can never leave a nested key undefined and crash init()/renderPanel().
+  return {
+    ...def, ...saved,
+    teamA: { ...def.teamA, ...(saved.teamA||{}) },
+    teamB: { ...def.teamB, ...(saved.teamB||{}) },
+    theme: { ...def.theme, ...(saved.theme||{}) },
+    score: { ...def.score, ...(saved.score||{}) },
+    striker: { ...def.striker, ...(saved.striker||{}) },
+    nonStriker: { ...def.nonStriker, ...(saved.nonStriker||{}) },
+    bowler: { ...def.bowler, ...(saved.bowler||{}) }
+  };
+}
+let state = mergeWithDefaults(loadState());
 let history = [];
 
 function defaultState(){
@@ -419,7 +436,7 @@ function connect(){
 
   socket.on('liveCricketScore', (serverState) => {
     if(serverState && Object.keys(serverState).length){
-      state = { ...state, ...serverState };
+      state = mergeWithDefaults({ ...state, ...serverState });
       renderPanel();
     }
   });
