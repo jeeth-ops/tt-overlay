@@ -270,10 +270,13 @@
   }
 
   function getIdFromUrl(){
-    return new URLSearchParams(window.location.search).get('id');
+    return new URLSearchParams(window.location.search).get('id') || new URLSearchParams(window.location.search).get('uid');
   }
 
-  let MATCH_ID = getIdFromUrl() || generateId();
+  // 🌟 Fall back to the logged-in user's own uid (saved to localStorage by
+  // tt-panel.html/football-panel.html on login) instead of a random
+  // disconnected id, so this lands in the same room as the scorecard.
+  let MATCH_ID = getIdFromUrl() || localStorage.getItem('scorvix_uid') || generateId();
   if(!getIdFromUrl()){
     const url = new URL(window.location.href);
     url.searchParams.set('id', MATCH_ID);
