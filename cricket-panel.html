@@ -70,6 +70,7 @@
   button.ghost{ background:transparent; }
   button.full{ width:100%; }
   button.small{ padding:6px 8px; font-size:12px; }
+  button:disabled{ opacity:.32; cursor:not-allowed; transform:none !important; }
 
   .balls-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:6px; }
   .balls-grid button{ height:46px; font-size:15px; }
@@ -325,7 +326,8 @@
 
     <div class="card">
       <h2>Session</h2>
-      <button class="full small" id="reset-btn">Reset Match (clears everything)</button>
+      <button class="full small" id="next-innings-btn" disabled>Start Next Innings</button>
+      <button class="full small" id="reset-btn" style="margin-top:6px;">Reset Match (clears everything)</button>
     </div>
   </div>
 
@@ -430,13 +432,24 @@ function connect(){
 
   socket = io({ query: { uid: matchId } });
 
-  socket.on('connect', () => { dot.classList.add('on'); toast('Connected'); pushState(); });
+  socket.on('connect', () => {
+    dot.classList.add('on'); toast('Connected');
+    // A freshly-joining/reconnecting overlay must see the last real
+    // broadcast — never an in-progress "next innings" edit the operator
+    // hasn't committed yet by clicking Start.
+    if(isAwaitingNextInnings() && lastBroadcastState){
+      send(lastBroadcastState);
+    } else {
+      pushState(true, true);
+    }
+  });
   socket.on('disconnect', () => { dot.classList.remove('on'); });
   socket.on('connect_error', () => { dot.classList.remove('on'); });
 
   socket.on('liveCricketScore', (serverState) => {
     if(serverState && Object.keys(serverState).length){
       state = mergeWithDefaults({ ...state, ...serverState });
+      lastBroadcastState = snapshot();
       renderPanel();
     }
   });
@@ -457,22 +470,38 @@ document.getElementById('preview-overlay-btn').addEventListener('click', () => {
 });
 
 /* Real-time push: debounced to ~40ms so text/colour edits feel instant on
-   both mobile and laptop without flooding the socket on every keystroke. */
+   both mobile and laptop without flooding the socket on every keystroke.
+
+   EXCEPTION — the gap between innings: once the current innings is over,
+   the overlay must keep showing that innings' final score/target untouched
+   while the operator fills in the next batting team's details (names,
+   venue, target field, etc). None of that should reach the overlay until
+   "Start Next Innings" is actually clicked — at which point everything
+   filled in goes out in one shot and the scoreboard/match switches over.
+   pushState() therefore holds back the socket send (but still updates the
+   panel's own UI + localStorage) whenever isAwaitingNextInnings() is true,
+   unless the caller explicitly passes force=true for an action that must
+   always go through (Start Next Innings, Reset, visibility toggle, Undo). */
 let pushTimer = null;
+let lastBroadcastState = null; // deep snapshot of the last state actually emitted to the server/overlay
 function send(obj){
   if(socket && socket.connected) socket.emit('updateCricketScore', obj);
+  lastBroadcastState = JSON.parse(JSON.stringify(obj));
 }
-function pushState(immediate){
+function pushState(immediate, force){
   saveLocal();
+  renderPanel();
+  if(isAwaitingNextInnings() && !force){
+    clearTimeout(pushTimer);
+    return; // held back — overlay keeps showing the previous innings untouched
+  }
   if(immediate){
     clearTimeout(pushTimer);
     send(state);
-    renderPanel();
     return;
   }
   clearTimeout(pushTimer);
   pushTimer = setTimeout(() => { send(state); }, 40);
-  renderPanel();
 }
 function fireEvent(kind, text, sub, durationMs){
   if(socket && socket.connected){
@@ -617,6 +646,7 @@ function renderPanel(){
   document.getElementById('teamB-logo-preview').style.backgroundImage = state.teamB.logoUrl ? `url(${state.teamB.logoUrl})` : '';
 
   document.getElementById('freehit-banner').classList.toggle('show', !!state.freeHit);
+  updateBallButtonsState();
 }
 
 function logMilestone(text){
@@ -672,7 +702,7 @@ document.getElementById('batting-team').addEventListener('change', (e) => {
 });
 document.getElementById('visible-toggle').addEventListener('change', (e) => {
   state.visible = e.target.checked;
-  pushState(true);
+  pushState(true, true);
 });
 document.getElementById('format').addEventListener('change', (e) => {
   document.getElementById('custom-overs-wrap').style.display = e.target.value === 'Custom' ? 'block' : 'none';
@@ -725,7 +755,8 @@ function checkMilestones(){
     const key = `team-${m}`;
     if(state.score.runs >= m && !state.milestonesHit[key]){
       state.milestonesHit[key] = true;
-      fireEvent('TEAM_MILESTONE', `${m} UP`, `${state.teamA.short || state.teamA.name}`);
+      const battingTeam = state.battingTeam === 'A' ? state.teamA : state.teamB;
+      fireEvent('TEAM_MILESTONE', `${m} UP`, `${battingTeam.short || battingTeam.name}`);
     }
   });
 
@@ -766,14 +797,65 @@ function checkMilestones(){
         fireEvent('NEED', `NEED ${runsNeeded} OFF ${ballsLeft}`, '');
       }
     }
-    if(runsNeeded <= 0){
-      const key = 'victory';
-      if(!state.milestonesHit[key]){
-        state.milestonesHit[key] = true;
-        fireEvent('VICTORY', `${state.teamA.short || state.teamA.name} WIN`, `by ${10-state.score.wickets} wickets`, 4500);
-      }
+  }
+}
+
+/* ============================================================
+   CRICKET RULES ENGINE
+   - Max 10 wickets can ever fall (11 players, last man can't
+     bat alone) — the WICKET button is refused past that.
+   - Overs per innings are capped to whatever the selected
+     format allows (T20 20 / ODI 50 / Test unlimited / Custom).
+   - Once either limit is hit, ALL scoring buttons lock and an
+     "innings complete" event fires automatically — this is what
+     stops a scorer's mis-click from ever reaching the overlay.
+   ============================================================ */
+function isInningsOver(){
+  const totalBallsAllowed = ballsPerInnings();
+  const ballsBowled = state.score.overs*6 + state.score.balls;
+  return state.score.wickets >= 10 || (totalBallsAllowed !== null && ballsBowled >= totalBallsAllowed);
+}
+// True during the gap between innings — current innings has ended, next
+// one hasn't been started yet (target not set), and the match itself
+// isn't over. Used by pushState() to hold back the overlay update.
+function isAwaitingNextInnings(){
+  return isInningsOver() && !state.target && !state.milestonesHit['match-result'];
+}
+function updateBallButtonsState(){
+  const over = isInningsOver();
+  document.querySelectorAll('[data-ball]').forEach(btn => { btn.disabled = over; });
+  const nextBtn = document.getElementById('next-innings-btn');
+  if(nextBtn) nextBtn.disabled = !over || !!state.milestonesHit['match-result'];
+}
+function checkInningsComplete(){
+  if(state.milestonesHit['innings-complete']) return;
+  if(!isInningsOver()) return;
+  state.milestonesHit['innings-complete'] = true;
+  const reason = state.score.wickets >= 10 ? 'ALL OUT' : 'OVERS COMPLETE';
+  fireEvent('INNINGS_COMPLETE', reason, `${state.score.runs}-${state.score.wickets} in ${fmtOvers(state.score.overs, state.score.balls)} overs`, 4000);
+}
+function checkMatchResult(){
+  if(!state.target) return; // only relevant during the run-chase (2nd innings)
+  if(state.milestonesHit['match-result']) return;
+  const battingTeam = state.battingTeam === 'A' ? state.teamA : state.teamB;
+  const bowlingTeam = state.battingTeam === 'A' ? state.teamB : state.teamA;
+  const battingShort = battingTeam.short || battingTeam.name;
+  const bowlingShort = bowlingTeam.short || bowlingTeam.name;
+
+  if(state.score.runs >= state.target){
+    state.milestonesHit['match-result'] = true;
+    const left = 10 - state.score.wickets;
+    fireEvent('VICTORY', `${battingShort} WIN`, `by ${left} wicket${left === 1 ? '' : 's'}`, 5000);
+  } else if(isInningsOver()){
+    state.milestonesHit['match-result'] = true;
+    const margin = state.target - 1 - state.score.runs;
+    if(margin <= 0){
+      fireEvent('MATCH_TIED', 'MATCH TIED', '', 5000);
+    } else {
+      fireEvent('VICTORY', `${bowlingShort} WIN`, `by ${margin} run${margin === 1 ? '' : 's'}`, 5000);
     }
   }
+  updateBallButtonsState();
 }
 
 function addLegalBall(runsThisBall){
@@ -790,6 +872,16 @@ function pushBallHistory(label){
 }
 
 function recordBall(kind){
+  if(isInningsOver()){
+    toast(state.score.wickets >= 10 ? '🚫 All out — 10 wickets already, innings is over' : '🚫 Overs complete for this innings');
+    updateBallButtonsState();
+    return;
+  }
+  if(kind === 'W' && state.score.wickets >= 10){
+    toast('🚫 All out — cannot take an 11th wicket');
+    return;
+  }
+
   history.push(snapshot());
 
   switch(kind){
@@ -856,7 +948,9 @@ function recordBall(kind){
   }
 
   checkMilestones();
-  pushState(true);
+  checkInningsComplete();
+  checkMatchResult();
+  pushState(true, true);
 }
 
 function swapStrikeSilent(){
@@ -870,8 +964,47 @@ document.querySelectorAll('[data-ball]').forEach(btn => {
 document.getElementById('undo-btn').addEventListener('click', () => {
   if(history.length === 0){ toast('Nothing to undo'); return; }
   state = history.pop();
-  pushState(true);
+  pushState(true, true);
   toast('Undone');
+});
+
+/* ============================================================
+   START NEXT INNINGS
+   Only enabled once the current innings is actually over
+   (10 wickets or overs complete). Sets the target for the
+   chasing side, swaps who's batting, and resets per-innings
+   figures — match/team setup (names, colours, logos) untouched.
+   ============================================================ */
+document.getElementById('next-innings-btn').addEventListener('click', () => {
+  if(!isInningsOver()){ toast('Current innings is not over yet'); return; }
+  if(state.target){ toast('Match is already complete — Reset to start a new match'); return; }
+
+  history.push(snapshot());
+  state.target = state.score.runs + 1;
+  state.battingTeam = state.battingTeam === 'A' ? 'B' : 'A';
+  state.score = { runs:0, wickets:0, overs:0, balls:0 };
+  state.thisOver = [];
+  state.ballHistory = [];
+  state.partnershipRuns = 0; state.partnershipBalls = 0;
+  // Keep whatever names the operator already typed into the striker/
+  // non-striker fields while staging this innings — only their stats
+  // reset. Falls back to a placeholder only if the field was left blank.
+  state.striker = { name: (state.striker.name || '').trim() || 'Batsman 1', runs:0, balls:0, fours:0, sixes:0 };
+  state.nonStriker = { name: (state.nonStriker.name || '').trim() || 'Batsman 2', runs:0, balls:0, fours:0, sixes:0 };
+  state.freeHit = false;
+  // Clear innings-scoped milestones (team totals, powerplay, last-over, "need
+  // X off Y", the completed-innings lock) so the 2nd innings fires its own —
+  // player milestones (by name+runs) are left alone since new batsmen won't collide.
+  Object.keys(state.milestonesHit).forEach(key => {
+    if(key.startsWith('team-') || key.startsWith('partnership-') || key.startsWith('need-') ||
+       key === 'innings-complete' || key === 'powerplay-end' || key === 'last-over'){
+      delete state.milestonesHit[key];
+    }
+  });
+
+  fireEvent('INNINGS_BREAK', 'INNINGS BREAK', `Target: ${state.target}`, 4000);
+  pushState(true, true);
+  toast(`2nd innings started — target ${state.target}`);
 });
 
 /* ============================================================
@@ -896,7 +1029,7 @@ document.getElementById('reset-btn').addEventListener('click', () => {
   state = defaultState();
   history = [];
   document.getElementById('milestone-log').innerHTML = '<div>No events yet.</div>';
-  pushState(true);
+  pushState(true, true);
 });
 
 /* ============================================================
