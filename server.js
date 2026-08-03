@@ -28,7 +28,13 @@ const app = express();
 const server = http.createServer(app);
 
 const io = new Server(server, {
-    cors: { origin: "*", methods: ["GET", "POST"] }
+    cors: { origin: "*", methods: ["GET", "POST"] },
+    // 🩹 FIX: default Socket.IO limit is 1MB per message. Uncompressed
+    // phone-camera logo uploads were exceeding that, which silently killed
+    // the connection (see the client-side fix in football-matchintro-panel.html
+    // for the real fix — this is just a safety net so an oversized payload
+    // never nukes the whole connection).
+    maxHttpBufferSize: 8e6
 });
 
 app.use(express.static(__dirname));
@@ -295,6 +301,18 @@ app.post('/api/log-link-action', async (req, res) => {
     }
 });
 
+// 🌟 REAL-TIME COLLABORATION — presence
+// Tells everyone currently in a room how many devices/tabs are connected to
+// that same match right now, so a panel can show "🟢 2 connected" — like
+// seeing other cursors in Google Docs. Called whenever someone joins,
+// switches match ID, or disconnects.
+function broadcastPresence(room) {
+    if (!room) return;
+    const members = io.sockets.adapter.rooms.get(room);
+    const count = members ? members.size : 0;
+    io.to(room).emit('presenceUpdate', { count });
+}
+
 // Match Intro REST API
 app.get('/api/matchintro-data', async (req, res) => {
     let room = req.query.id || req.query.uid || 'scorvix-master-room';
@@ -345,6 +363,7 @@ io.on('connection', async (socket) => {
     if (roomState.footballState) socket.emit('liveFootballScore', roomState.footballState);
     if (roomState.cricketState) socket.emit('liveCricketScore', roomState.cricketState);
     if (roomState.footballMatchIntroState) socket.emit('liveFootballMatchIntro', { config: roomState.footballMatchIntroState, triggerReplay: false });
+    broadcastPresence(currentRoom);
     if (connectSyncResult && currentRoom.startsWith('room-')) {
         const uid = currentRoom.replace('room-', '');
         const patch = connectSyncResult === 'matchIntro' ? { matchIntroState: roomState.matchIntroState } : { ttState: roomState.ttState };
@@ -491,9 +510,12 @@ io.on('connection', async (socket) => {
         if (targetId && targetId !== 'default') {
             room = `room-${targetId}`;
             if (socket.activeRoom !== room) {
+                const prevRoom = socket.activeRoom;
                 socket.leave(socket.activeRoom);
                 socket.join(room);
                 socket.activeRoom = room;
+                broadcastPresence(prevRoom);
+                broadcastPresence(room);
             }
         }
 
@@ -559,6 +581,15 @@ io.on('connection', async (socket) => {
                 db.collection("scorvix").doc(targetId).set({ ttState: state.ttState }, { merge: true }).catch(err => console.log("DB update error:", err));
             }
         }
+    });
+
+    // 🌟 Presence cleanup: 'disconnecting' fires WHILE the socket is still
+    // in its rooms (unlike 'disconnect', which fires after). We grab the
+    // rooms here, then broadcast the updated (post-leave) counts once
+    // Socket.IO has finished removing the socket from them.
+    socket.on('disconnecting', () => {
+        const rooms = [...socket.rooms].filter(r => r !== socket.id);
+        setImmediate(() => rooms.forEach(r => broadcastPresence(r)));
     });
 
     socket.on('disconnect', () => {});
