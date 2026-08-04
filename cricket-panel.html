@@ -306,8 +306,10 @@
         <div class="stat auto"><div class="k">Runs</div><div class="v" id="disp-bowler-runs">0</div></div>
         <div class="stat auto"><div class="k">Wickets</div><div class="v" id="disp-bowler-wkts">0</div></div>
       </div>
-      <label>New bowler coming on</label>
-      <input type="text" id="bowler-name-input" placeholder="Bowler name">
+      <div class="shortcut-hint" id="disp-bowler-note"></div>
+      <label>New bowler coming on <span class="note">— type an earlier bowler's name to resume their figures</span></label>
+      <input type="text" id="bowler-name-input" placeholder="Bowler name" list="bowler-suggestions" autocomplete="off">
+      <datalist id="bowler-suggestions"></datalist>
       <button class="full small" id="set-bowler-btn" style="margin-top:8px;">Set / Change Bowler</button>
       <label>Dismissal type <span class="note">(applies to the next WICKET)</span></label>
       <select id="dismissal-type">
@@ -440,7 +442,7 @@ function defaultState(){
     target: null,
     striker:    { name:'S. Yadav', runs:0, balls:0, fours:0, sixes:0 },
     nonStriker: { name:'V. Kohli', runs:0, balls:0, fours:0, sixes:0 },
-    bowler:     { name:'', overs:0, balls:0, maidens:0, runs:0, wickets:0, runsThisOver:0 },
+    bowler:     { name:'', overs:0, balls:0, maidens:0, runs:0, wickets:0, runsThisOver:0, wicketsThisOver:0 },
     battingCard: { A: [], B: [] },
     bowlingCard: { A: [], B: [] },
     fallOfWickets: { A: [], B: [] },
@@ -766,6 +768,15 @@ function renderPanel(){
   document.getElementById('disp-bowler-maidens').textContent = state.bowler.maidens;
   document.getElementById('disp-bowler-runs').textContent = state.bowler.runs;
   document.getElementById('disp-bowler-wkts').textContent = state.bowler.wickets;
+  const noteEl = document.getElementById('disp-bowler-note');
+  if(state.bowler.name){
+    const overNum = state.bowler.overs + 1;
+    const runsSoFar = state.bowler.runsThisOver || 0;
+    noteEl.textContent = `${state.bowler.name} — over ${overNum} of the innings for them, ${runsSoFar} run${runsSoFar === 1 ? '' : 's'} conceded so far this over.`;
+  } else {
+    noteEl.textContent = '';
+  }
+  updateBowlerSuggestions();
   maybeSet('innings-summary-toggle', state.showInningsSummary);
   maybeSet('match-summary-toggle', state.showMatchSummary);
 
@@ -870,16 +881,63 @@ document.getElementById('new-batsman-btn').addEventListener('click', () => {
    BOWLER — a deliberate "Set / Change Bowler" action (not live-typed)
    so the outgoing bowler's figures get archived under their OWN name
    before the field switches to the incoming bowler.
+
+   Two real-world scoring realities, handled here:
+
+   1. MID-OVER NAME CHANGE. In practice the operator often only updates
+      the bowler field a ball or two late — the new bowler was already
+      the one actually bowling. So whenever this over already has balls
+      recorded (state.bowler.balls > 0), that WHOLE in-progress over —
+      every ball, run and wicket in it — moves to the incoming name
+      rather than staying split between the outgoing and incoming
+      bowler. Only overs that were fully completed under the outgoing
+      name stay credited to them.
+
+   2. RETURNING BOWLER. If the incoming name already has archived
+      figures from an earlier spell this innings, resume that running
+      total (plus whatever this in-progress over carries forward)
+      instead of restarting at 0.0-0-0 — a bowler's figures are one
+      cumulative tally for the innings, not one row per spell.
    ============================================================ */
 document.getElementById('set-bowler-btn').addEventListener('click', () => {
   const name = document.getElementById('bowler-name-input').value.trim();
   if(!name){ toast('Enter a bowler name first'); return; }
   if(name === state.bowler.name){ toast('That bowler is already set'); return; }
   history.push(snapshot());
-  if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0)){
-    state.bowlingCard[bowlingTeamKey()].push({ ...state.bowler });
+
+  const key = bowlingTeamKey();
+
+  // Whatever's happened THIS over so far carries forward to the new name.
+  const carryBalls = state.bowler.balls;
+  const carryRuns = state.bowler.runsThisOver || 0;
+  const carryWkts = state.bowler.wicketsThisOver || 0;
+
+  if(state.bowler.name && (state.bowler.overs > 0 || carryBalls > 0)){
+    // Archive the outgoing bowler's figures MINUS the still-in-progress
+    // over — that over belongs to the incoming bowler, not them.
+    state.bowlingCard[key].push({
+      ...state.bowler,
+      balls: 0, runsThisOver: 0, wicketsThisOver: 0,
+      runs: state.bowler.runs - carryRuns,
+      wickets: state.bowler.wickets - carryWkts
+    });
   }
-  state.bowler = { name, overs:0, balls:0, maidens:0, runs:0, wickets:0, runsThisOver:0 };
+
+  // Resume an earlier spell for this name, if one's archived.
+  const existingIdx = state.bowlingCard[key].findIndex(b => b.name === name);
+  const existing = existingIdx > -1 ? state.bowlingCard[key].splice(existingIdx, 1)[0] : null;
+
+  state.bowler = existing
+    ? {
+        ...existing,
+        balls: carryBalls, runsThisOver: carryRuns, wicketsThisOver: carryWkts,
+        runs: existing.runs + carryRuns, wickets: existing.wickets + carryWkts
+      }
+    : {
+        name, overs:0, balls:carryBalls, maidens:0,
+        runs:carryRuns, wickets:carryWkts, runsThisOver:carryRuns, wicketsThisOver:carryWkts
+      };
+
   document.getElementById('bowler-name-input').value = '';
   pushState(true);
   toast(`${name} is now bowling`);
@@ -1211,6 +1269,24 @@ function addLegalBall(runsThisBall){
 
 function bowlingTeamKey(){ return state.battingTeam === 'A' ? 'B' : 'A'; }
 
+/* Populates the bowler-name <datalist> with every name already bowled by
+   the current bowling team this innings (archived spells + the live
+   bowler), so a returning bowler's name suggests itself the moment the
+   operator starts typing — no need to remember exact spelling, and it's
+   the cue that Set/Change Bowler will resume their cumulative figures. */
+function updateBowlerSuggestions(){
+  const dl = document.getElementById('bowler-suggestions');
+  if(!dl) return;
+  const key = bowlingTeamKey();
+  const names = new Set();
+  (state.bowlingCard[key] || []).forEach(b => { if(b.name) names.add(b.name); });
+  if(state.bowler.name) names.add(state.bowler.name);
+  dl.innerHTML = [...names].map(n => `<option value="${escapeHtmlAttr(n)}"></option>`).join('');
+}
+function escapeHtmlAttr(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
 /* A legal delivery for the CURRENT bowler — runsChargedToBowler excludes
    byes/leg-byes (those are extras, not charged against the bowler) but
    includes runs off the bat. Silently no-ops if no bowler has been set
@@ -1225,6 +1301,7 @@ function addBowlerBall(runsChargedToBowler){
     state.bowler.overs++;
     if(state.bowler.runsThisOver === 0) state.bowler.maidens++;
     state.bowler.runsThisOver = 0;
+    state.bowler.wicketsThisOver = 0;
   }
 }
 /* Wide / No Ball — charged to the bowler but NOT a legal delivery, so no
@@ -1292,7 +1369,10 @@ function recordBall(kind){
       pushBallHistory('W');
       overCompletedThisBall = addLegalBall(0);
       addBowlerBall(0);
-      if(isBowlerWicket) state.bowler.wickets++;
+      if(isBowlerWicket){
+        state.bowler.wickets++;
+        state.bowler.wicketsThisOver = (state.bowler.wicketsThisOver || 0) + 1;
+      }
 
       // Archive the dismissed batsman + this fall of wicket — this is what
       // powers the Innings/Match Summary graphics later.
@@ -1449,7 +1529,7 @@ document.getElementById('next-innings-btn').addEventListener('click', () => {
   // reset. Falls back to a placeholder only if the field was left blank.
   state.striker = { name: (state.striker.name || '').trim() || 'Batsman 1', runs:0, balls:0, fours:0, sixes:0 };
   state.nonStriker = { name: (state.nonStriker.name || '').trim() || 'Batsman 2', runs:0, balls:0, fours:0, sixes:0 };
-  state.bowler = { name:'', overs:0, balls:0, maidens:0, runs:0, wickets:0, runsThisOver:0 };
+  state.bowler = { name:'', overs:0, balls:0, maidens:0, runs:0, wickets:0, runsThisOver:0, wicketsThisOver:0 };
   state.freeHit = false;
   // Clear innings-scoped milestones (team totals, powerplay, last-over, "need
   // X off Y", the completed-innings lock) so the 2nd innings fires its own —
