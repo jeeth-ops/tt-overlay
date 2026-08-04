@@ -146,30 +146,30 @@
   #crr-seg .lbl{ font-size:10.5px; font-weight:800; letter-spacing:.8px; color:var(--ink-dim); text-transform:uppercase; }
   #crr-seg .val{ font-family:var(--font-num); font-weight:900; font-size:min(2.2vw,26px); color:#1c4fd8; font-variant-numeric:tabular-nums; }
 
-  /* ---- Bowler segment: name + which-over badge + figures + a real
-     broadcast-style "this over" ball tracker (always 6 slots, resets
-     every over — unlike a rolling window across the innings). No "BOWLER"
-     label — the position is self-evident from where it sits (mirrors the
-     batters segment having no "BATSMEN" label either), so the name gets
-     to use that vertical space and read bigger instead. ---- */
+  /* ---- Bowler segment: name + W-R figures + overs, all on one line,
+     then a real broadcast-style "this over" ball tracker below (always
+     6 slots, resets every over — unlike a rolling window across the
+     innings). No "BOWLER" label — the position is self-evident from
+     where it sits (mirrors the batters segment having no "BATSMEN"
+     label either), so the name gets to use that vertical space and
+     read bigger instead. Figures are wickets-runs (e.g. "0-41"), not
+     the fuller O.B-M-R-W line — matches the reference broadcast bug,
+     which keeps this row short: name, then W-R, then overs. ---- */
   #bowler-seg{ flex:1 1 auto; align-items:center; text-align:center; justify-content:center; gap:7px; min-width:min(17vw,206px); }
-  #bowler-line{ display:flex; align-items:center; gap:8px; justify-content:center; }
+  #bowler-line{ display:flex; align-items:baseline; gap:9px; justify-content:center; }
   #bowler-name-val{
-    font-family:var(--font-ui); font-weight:900; font-size:min(1.75vw,20px); color:var(--ink);
-    letter-spacing:.1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:min(11.5vw,142px);
+    font-family:var(--font-ui); font-weight:900; font-size:min(1.6vw,19px); color:var(--ink);
+    letter-spacing:.1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:min(9.5vw,118px);
   }
-  /* Small round badge — "which over of the innings is this for THIS
-     bowler" (his 1st, 2nd, 3rd... over) — same accent gradient as the
-     main OVERS badge so it visually reads as the same kind of number. */
-  #bowler-over-chip{
-    flex:none; min-width:22px; height:22px; padding:0 6px; border-radius:11px;
-    background:linear-gradient(160deg, var(--badge-2), var(--badge));
-    color:#fff; font-family:var(--font-num); font-weight:900; font-size:12px;
-    display:flex; align-items:center; justify-content:center; line-height:1;
-    box-shadow:0 2px 6px rgba(0,0,0,0.25);
-  }
+  /* Wickets-runs, e.g. "0-41" — same bold navy as the name, just the
+     cumulative bowling figures in the compact W-R form broadcasts use. */
   #bowler-figures-val{
-    font-family:var(--font-num); font-weight:900; font-size:min(1.45vw,17px); color:#1c4fd8;
+    font-family:var(--font-num); font-weight:900; font-size:min(1.5vw,18px); color:var(--ink);
+    font-variant-numeric:tabular-nums; white-space:nowrap;
+  }
+  /* Overs bowled, e.g. "9.2" — smaller and dimmer, trailing the figures. */
+  #bowler-overs-val{
+    font-family:var(--font-num); font-weight:700; font-size:min(1.1vw,13px); color:var(--ink-dim);
     font-variant-numeric:tabular-nums; white-space:nowrap;
   }
   /* nowrap on purpose: the strip sits inside a fixed-height scoreboard bar,
@@ -214,11 +214,12 @@
     opacity:0; transform:scale(.5);
   }
   .pip.four{ background:#22a35a; border-color:transparent; color:#fff; }
-  .pip.six{ background:#f0b429; border-color:transparent; color:#1a1408; }
+  .pip.six{ background:#f0b429; border-color:transparent; color:#fff; }
   .pip.wicket{ background:#d3253a; border-color:transparent; color:#fff; }
   .pip.extra{ color:#1c4fd8; border-color:#1c4fd8; font-size:9.5px; }
-  /* Dot ball — real-broadcast convention: a dot, not the digit "0" */
-  .pip.zero{ background:#eef1f8; border-color:transparent; color:#9aa4bd; font-size:16px; }
+  /* Dot ball — real-broadcast convention: a solid dark pip with a small
+     white dot mark, not a light/washed-out circle with the digit "0". */
+  .pip.zero{ background:var(--team-a-dark); border-color:transparent; color:#fff; font-size:15px; }
 
   /* ---- Bottom stat bar ---- */
   #bottom-row{
@@ -512,9 +513,9 @@
             <div class="wseg" id="bowler-seg">
               <div id="bowler-line">
                 <span id="bowler-name-val">—</span>
-                <span id="bowler-over-chip" style="display:none;"></span>
+                <span id="bowler-figures-val"></span>
+                <span id="bowler-overs-val"></span>
               </div>
-              <div id="bowler-figures-val"></div>
               <div id="thisover-row"></div>
             </div>
           </div>
@@ -891,25 +892,20 @@ function renderState(s){
 
   setFreeHitChip(s.freeHit);
 
-  // Live bowler name + figures. Overs/maidens/runs/wickets are the bowler's
+  // Live bowler name + figures. Overs/runs/wickets are the bowler's
   // CUMULATIVE innings totals (state.bowler carries a returning bowler's
   // earlier spell forward — see cricket-panel.html), so this always reads
   // as one running total per bowler, exactly like a real broadcast.
+  // Kept compact — name, then "W-R" (e.g. "0-41"), then overs (e.g. "9.2")
+  // — matching the reference bug rather than a fuller O.B-M-R-W line.
   const bowler = s.bowler || {};
   document.getElementById('bowler-name-val').textContent = bowler.name || '—';
   document.getElementById('bowler-figures-val').textContent = bowler.name
-    ? `${bowler.overs ?? 0}.${bowler.balls ?? 0}-${bowler.maidens ?? 0}-${bowler.runs ?? 0}-${bowler.wickets ?? 0}`
+    ? `${bowler.wickets ?? 0}-${bowler.runs ?? 0}`
     : '';
-  // Small badge: which over of the innings THIS bowler is currently on
-  // (his 1st/2nd/3rd... over) — separate from the team's overall over
-  // count, and only shown once a bowler is actually set.
-  const overChip = document.getElementById('bowler-over-chip');
-  if(bowler.name){
-    overChip.style.display = 'flex';
-    overChip.textContent = `Ov ${(bowler.overs ?? 0) + 1}`;
-  } else {
-    overChip.style.display = 'none';
-  }
+  document.getElementById('bowler-overs-val').textContent = bowler.name
+    ? `${bowler.overs ?? 0}.${bowler.balls ?? 0}`
+    : '';
 
   // "This Over" ball tracker — real broadcast style: always a full row of
   // (at least) 6 slots from the very first ball of the over, filling in
