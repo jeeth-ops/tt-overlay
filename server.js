@@ -84,6 +84,8 @@ app.get('/tt-lowerthird-panel', (req, res) => res.sendFile(__dirname + '/tt-lowe
 app.get('/cricket-templates', (req, res) => res.sendFile(__dirname + '/cricket-templates.html'));
 app.get('/cricket-overlay', (req, res) => res.sendFile(__dirname + '/cricket-overlay.html'));
 app.get('/cricket-panel', (req, res) => res.sendFile(__dirname + '/cricket-panel.html'));
+app.get('/cricket-overlay2', (req, res) => res.sendFile(__dirname + '/cricket-overlay2.html'));
+app.get('/cricket-panel2', (req, res) => res.sendFile(__dirname + '/cricket-panel2.html'));
 app.get('/football-matchintro', (req, res) => res.sendFile(__dirname + '/football-matchintro.html'));
 app.get('/football-matchintro-panel', (req, res) => res.sendFile(__dirname + '/football-matchintro-panel.html'));
 
