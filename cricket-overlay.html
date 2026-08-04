@@ -155,8 +155,12 @@
      i.e. current innings is over but "Start Next Innings" hasn't been
      clicked yet, so no real target exists on the server yet either. */
   #live-segs{ display:flex; flex:1 1 auto; align-items:stretch; }
-  #break-seg{ flex:1 1 auto; display:none; align-items:stretch; justify-content:space-evenly; }
-  #break-seg .brk-item{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; padding:0 22px; position:relative; }
+  /* NOTE: .wseg (the shared base class) sets flex-direction:column — without
+     an explicit row override here this whole block inherits that and stacks
+     Score / Target / Req. Run Rate on top of each other instead of spreading
+     across the white panel, so it's stated explicitly below. */
+  #break-seg{ flex:1 1 auto; display:none; flex-direction:row; align-items:stretch; justify-content:space-evenly; }
+  #break-seg .brk-item{ flex:1 1 0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; padding:0 22px; position:relative; }
   #break-seg .brk-item + .brk-item::before{ content:''; position:absolute; left:0; top:14%; bottom:14%; width:1px; background:var(--hairline); }
   #break-seg .lbl{ font-size:10.5px; font-weight:800; letter-spacing:.8px; color:var(--ink-dim); text-transform:uppercase; }
   #break-seg .val{ font-family:var(--font-num); font-weight:900; font-size:min(2.2vw,26px); color:#1c4fd8; font-variant-numeric:tabular-nums; }
@@ -327,11 +331,16 @@
   }
 
   #freehit-chip{
-    position:absolute; left:1.6vw; bottom:calc(2.2vh + min(5.4vw,58px) + min(9.2vw,108px) + 10px);
+    /* Anchored to #scorecard itself (its new parent) rather than the
+       viewport, so it always sits directly above the card and — critically
+       — moves/fades with the card instead of being able to linger on
+       screen after the scorecard has exited. */
+    position:absolute; left:0.2vw; bottom:calc(100% + 10px);
     display:flex; align-items:center; gap:6px;
     background:var(--progress); color:#1a1408; font-weight:900; font-size:12px; letter-spacing:.5px;
     padding:6px 14px; border-radius:20px; opacity:0; transform:translateY(8px);
     box-shadow:0 8px 20px rgba(240,180,41,0.4);
+    pointer-events:none;
   }
 
   #conn-status{
@@ -490,9 +499,9 @@
       <div class="bstat"><div class="lbl">Req. Run Rate</div><div class="val" id="stat-rrr">—</div></div>
       <div class="bstat" id="stat-live"><div class="lbl">Live From</div><div class="val" id="stat-venue">—</div></div>
     </div>
-  </div>
 
-  <div id="freehit-chip"><span class="bolt">⚡</span> FREE HIT</div>
+    <div id="freehit-chip"><span class="bolt">⚡</span> FREE HIT</div>
+  </div>
 
   <div id="fx-layer">
     <div id="fx-redflash"></div>
@@ -712,12 +721,34 @@ function shade(hex, pct){
 let lastState = null;
 let hasEntered = false;
 let currentLeftIsA = true; // which team currently occupies the left cap
+let freeHitVisible = false; // tracked independently of lastState so a missed
+                             // diff (e.g. a re-sync after reconnect) can't
+                             // leave the chip stuck on screen
+let freeHitSafetyTimer = null; // failsafe: a free hit only ever spans a single
+                                // delivery, so if we somehow never receive the
+                                // follow-up "cleared" state (dropped/merged
+                                // update upstream, reconnect mid-flight, etc.)
+                                // force it off after a generous window instead
+                                // of letting it sit there for the rest of the match.
+
+function setFreeHitChip(active){
+  active = !!active;
+  clearTimeout(freeHitSafetyTimer);
+  if(active) freeHitSafetyTimer = setTimeout(() => setFreeHitChip(false), 40000);
+  if(active === freeHitVisible) return;
+  freeHitVisible = active;
+  const el = document.getElementById('freehit-chip');
+  gsap.killTweensOf(el);
+  if(active) gsap.to(el, { opacity: 1, y: 0, duration: 0.4, ease: 'power2.out' });
+  else gsap.to(el, { opacity: 0, y: 8, duration: 0.3, ease: 'power2.in' });
+}
 
 function renderState(s){
   if(!s || !Object.keys(s).length) return;
 
   if(s.visible === false){
     if(hasEntered) animateExit();
+    setFreeHitChip(false); // the whole card is leaving — never leave the chip floating behind
     lastState = s;
     return;
   }
@@ -796,11 +827,7 @@ function renderState(s){
   }
   document.getElementById('stat-venue').textContent = s.venue || '—';
 
-  const freehitEl = document.getElementById('freehit-chip');
-  if(!!s.freeHit !== !!(lastState && lastState.freeHit)){
-    if(s.freeHit) gsap.to(freehitEl, { opacity: 1, y: 0, duration: 0.4, ease: 'power2.out' });
-    else gsap.to(freehitEl, { opacity: 0, y: 8, duration: 0.3, ease: 'power2.in' });
-  }
+  setFreeHitChip(s.freeHit);
 
   // Last-5-balls ticker (rolling window across the whole innings).
   const ballHistory = s.ballHistory || [];
