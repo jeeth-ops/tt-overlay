@@ -630,14 +630,28 @@ socket.on('connect_error', () => { connStatus.classList.add('visible'); connStat
 
 socket.on('liveCricketScore', (data) => renderState(data));
 socket.on('cricketEvent', (event) => playEvent(event));
-// Innings-complete graphic is now TWO cards, sequenced: batting scorecard
-// first, then bowling figures — 6100ms covers the batting card's full
-// enter+hold+exit lifecycle (hold 3800ms) before the bowling card starts.
+// Innings-complete graphic is TWO cards, sequenced: batting scorecard
+// first (15s hold), then bowling figures (15s hold) — 17300ms covers the
+// batting card's full enter+hold+exit lifecycle before the bowling card
+// starts. Stored so a manual re-trigger (Show Now on the panel) cancels
+// any chain already in flight instead of stacking two.
+let inningsSummaryChainTimer = null;
 socket.on('cricketInningsSummary', (data) => {
+  clearTimeout(inningsSummaryChainTimer);
   renderInningsBattingSummary(data);
-  setTimeout(() => renderInningsSummary(data), 6100);
+  inningsSummaryChainTimer = setTimeout(() => renderInningsSummary(data), 17300);
 });
 socket.on('cricketMatchSummary', (data) => renderMatchSummary(data));
+// Manual "Hide Now" from the panel — dismiss whatever summary card(s) are
+// currently up without waiting for their normal hold/exit timing.
+socket.on('cricketHideInningsSummary', () => {
+  clearTimeout(inningsSummaryChainTimer);
+  hideSummaryCard('innings-batting-summary-card', '.sc-row, .sc-footer');
+  hideSummaryCard('innings-summary-card', '.sc-row, .sc-fow-row, .sc-footer');
+});
+socket.on('cricketHideMatchSummary', () => {
+  hideSummaryCard('match-summary-card', '.ms-row, .ms-footer');
+});
 
 /* ============================================================
    DIGIT-LEVEL SCORE RENDERING
@@ -1175,6 +1189,22 @@ function playSummaryCard(cardId, rowsSelector, holdMs){
       onComplete: () => { card.style.display = 'none'; }
     }, '-=0.15');
 }
+// Manual dismiss — used by the panel's "Hide Now" buttons to pull a summary
+// card off screen immediately, regardless of where it is in its normal
+// hold/exit timeline.
+function hideSummaryCard(cardId, rowsSelector){
+  const card = document.getElementById(cardId);
+  if(!card || card.style.display === 'none') return;
+  const rows = card.querySelectorAll(rowsSelector);
+  gsap.killTweensOf(card);
+  gsap.killTweensOf(rows);
+  gsap.timeline()
+    .to(rows, { opacity: 0, y: -14, filter: 'blur(4px)', duration: 0.25, stagger: 0.04, ease: 'power2.in' })
+    .to(card, {
+      opacity: 0, scale: 0.95, clipPath: 'inset(50% 50% 50% 50% round 16px)', duration: 0.35, ease: 'power2.in',
+      onComplete: () => { card.style.display = 'none'; }
+    }, '-=0.1');
+}
 
 function renderInningsSummary(d){
   if(!d) return;
@@ -1208,7 +1238,7 @@ function renderInningsSummary(d){
   document.getElementById('is-overs').textContent = `OVERS ${d.overs || '0.0'}`;
   document.getElementById('is-total').textContent = `TOTAL ${d.total || '0-0'}`;
 
-  playSummaryCard('innings-summary-card', '.sc-row, .sc-fow-row, .sc-footer', 4200);
+  playSummaryCard('innings-summary-card', '.sc-row, .sc-fow-row, .sc-footer', 15000);
 }
 
 function renderInningsBattingSummary(d){
@@ -1234,7 +1264,7 @@ function renderInningsBattingSummary(d){
   document.getElementById('ibs-overs').textContent = `OVERS ${d.overs || '0.0'}`;
   document.getElementById('ibs-total').textContent = `TOTAL ${d.total || '0-0'}`;
 
-  playSummaryCard('innings-batting-summary-card', '.sc-row, .sc-footer', 3800);
+  playSummaryCard('innings-batting-summary-card', '.sc-row, .sc-footer', 15000);
 }
 
 function fillMsRows(containerId, teamData){
@@ -1272,7 +1302,7 @@ function renderMatchSummary(d){
   fillMsRows('ms-rows-a', d.teamA);
   fillMsRows('ms-rows-b', d.teamB);
 
-  playSummaryCard('match-summary-card', '.ms-row, .ms-footer', 5000);
+  playSummaryCard('match-summary-card', '.ms-row, .ms-footer', 15000);
 }
 </script>
 </body>
