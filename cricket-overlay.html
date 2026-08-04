@@ -146,9 +146,24 @@
   #crr-seg .lbl{ font-size:10.5px; font-weight:800; letter-spacing:.8px; color:var(--ink-dim); text-transform:uppercase; }
   #crr-seg .val{ font-family:var(--font-num); font-weight:900; font-size:min(2.2vw,26px); color:#1c4fd8; font-variant-numeric:tabular-nums; }
 
-  #last5-seg{ flex:1 1 auto; align-items:center; text-align:center; gap:8px; }
-  #last5-seg .lbl{ font-size:10.5px; font-weight:800; letter-spacing:.8px; color:var(--ink-dim); text-transform:uppercase; }
-  #last5-row{ display:flex; gap:7px; align-items:center; justify-content:center; }
+  /* ---- Bowler segment: name + figures + a real broadcast-style
+     "this over" ball ticker (resets every over, unlike a rolling window) ---- */
+  #bowler-seg{ flex:1 1 auto; align-items:center; text-align:center; gap:7px; min-width:min(16vw,196px); }
+  #bowler-seg .lbl{ font-size:10.5px; font-weight:800; letter-spacing:.8px; color:var(--ink-dim); text-transform:uppercase; }
+  #bowler-line{ display:flex; align-items:baseline; gap:9px; justify-content:center; }
+  #bowler-name-val{
+    font-family:var(--font-ui); font-weight:800; font-size:min(1.35vw,16px); color:var(--ink);
+    letter-spacing:.1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:min(11vw,140px);
+  }
+  #bowler-figures-val{
+    font-family:var(--font-num); font-weight:800; font-size:min(1.15vw,13px); color:#1c4fd8;
+    font-variant-numeric:tabular-nums; white-space:nowrap;
+  }
+  #thisover-row{ display:flex; gap:5px; align-items:center; justify-content:center; flex-wrap:wrap; }
+  /* Slightly smaller than the base .pip so all 6 balls of an over fit
+     comfortably next to the bowler's name+figures in the same segment. */
+  #thisover-row .pip{ width:22px; height:22px; font-size:10px; }
+  #thisover-row .pip.zero{ font-size:13px; }
 
   /* ---- Innings-break summary (Prev Score / Target / Req. Run Rate) ----
      Shown in place of #live-segs only during the gap between innings —
@@ -175,6 +190,8 @@
   .pip.six{ background:#f0b429; border-color:transparent; color:#1a1408; }
   .pip.wicket{ background:#d3253a; border-color:transparent; color:#fff; }
   .pip.extra{ color:#1c4fd8; border-color:#1c4fd8; font-size:9.5px; }
+  /* Dot ball — real-broadcast convention: a dot, not the digit "0" */
+  .pip.zero{ background:#eef1f8; border-color:transparent; color:#9aa4bd; font-size:16px; }
 
   /* ---- Bottom stat bar ---- */
   #bottom-row{
@@ -465,9 +482,13 @@
               <div class="lbl">Current Run Rate</div>
               <div class="val" id="crr-val">0.00</div>
             </div>
-            <div class="wseg" id="last5-seg">
-              <div class="lbl">Last 5 Overs</div>
-              <div id="last5-row"></div>
+            <div class="wseg" id="bowler-seg">
+              <div class="lbl">Bowler</div>
+              <div id="bowler-line">
+                <span id="bowler-name-val">—</span>
+                <span id="bowler-figures-val"></span>
+              </div>
+              <div id="thisover-row"></div>
             </div>
           </div>
           <div class="wseg" id="break-seg">
@@ -843,28 +864,43 @@ function renderState(s){
 
   setFreeHitChip(s.freeHit);
 
-  // Last-5-balls ticker (rolling window across the whole innings).
-  const ballHistory = s.ballHistory || [];
-  const key = JSON.stringify(ballHistory.slice(-5));
-  if(key !== lastState?.__last5Key){
-    const container = document.getElementById('last5-row');
+  // Live bowler name + figures. Overs/maidens/runs/wickets are the bowler's
+  // CUMULATIVE innings totals (state.bowler carries a returning bowler's
+  // earlier spell forward — see cricket-panel.html), so this always reads
+  // as one running total per bowler, exactly like a real broadcast.
+  const bowler = s.bowler || {};
+  document.getElementById('bowler-name-val').textContent = bowler.name || '—';
+  document.getElementById('bowler-figures-val').textContent = bowler.name
+    ? `${bowler.overs ?? 0}.${bowler.balls ?? 0}-${bowler.maidens ?? 0}-${bowler.runs ?? 0}-${bowler.wickets ?? 0}`
+    : '';
+
+  // "This Over" ball ticker — real broadcast style: a dot for a dot-ball,
+  // the run value for 1/2/3/5, a highlighted pip for 4/6/wicket, a small
+  // tag for extras. Driven by state.thisOver, which the panel resets to
+  // empty at the START of every over, so this is never a rolling window —
+  // it always shows exactly the current over's deliveries, in order.
+  const thisOver = s.thisOver || [];
+  const thisOverKey = JSON.stringify(thisOver);
+  if(thisOverKey !== lastState?.__thisOverKey){
+    const container = document.getElementById('thisover-row');
     container.innerHTML = '';
-    ballHistory.slice(-5).forEach((b, i) => {
+    thisOver.forEach((b, i) => {
       const pip = document.createElement('div');
       pip.className = 'pip';
-      let cls = '';
-      if(b === '4') cls = 'four';
+      let cls = '', label = b;
+      if(b === '0'){ cls = 'zero'; label = '•'; }
+      else if(b === '4') cls = 'four';
       else if(b === '6') cls = 'six';
       else if(b === 'W') cls = 'wicket';
       else if(b === 'Wd' || b === 'Nb' || b === 'B' || b === 'LB') cls = 'extra';
-      pip.classList.add(cls);
-      pip.textContent = b;
+      if(cls) pip.classList.add(cls);
+      pip.textContent = label;
       container.appendChild(pip);
       gsap.to(pip, { opacity: 1, scale: 1, duration: 0.32, ease: 'back.out(2)', delay: i * 0.04 });
     });
-    s.__last5Key = key;
+    s.__thisOverKey = thisOverKey;
   } else {
-    s.__last5Key = lastState.__last5Key;
+    s.__thisOverKey = lastState.__thisOverKey;
   }
 
   lastState = s;
@@ -932,7 +968,7 @@ function animateEntry(){
     .from('#overs-badge > *', { opacity: 0, y: 10, duration: 0.3, stagger: 0.05 }, 0.66)
     .from('#batters-seg .brow', { opacity: 0, x: -10, duration: 0.32, stagger: 0.07 }, 0.72)
     .from('#crr-seg > *', { opacity: 0, y: 8, duration: 0.3, stagger: 0.05 }, 0.78)
-    .from('#last5-seg .lbl', { opacity: 0, duration: 0.3 }, 0.82)
+    .from('#bowler-seg .lbl', { opacity: 0, duration: 0.3 }, 0.82)
     .from('.bstat', { opacity: 0, y: 10, duration: 0.32, stagger: 0.05 }, 0.7);
 }
 function animateExit(){
