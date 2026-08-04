@@ -293,6 +293,7 @@
 
     <div class="card">
       <h2>New Batsman (after wicket)</h2>
+      <div class="shortcut-hint" id="new-batsman-end-hint"></div>
       <input type="text" id="new-batsman-name" placeholder="Incoming batsman name">
       <button class="full small" id="new-batsman-btn" style="margin-top:8px;">Send In New Batsman</button>
     </div>
@@ -456,7 +457,14 @@ function defaultState(){
     partnershipRuns: 0,
     partnershipBalls: 0,
     freeHit: false,
-    milestonesHit: {}
+    milestonesHit: {},
+    // Which end the NEXT incoming batsman fills — 'striker' normally (they
+    // directly replace whoever just got out), but 'nonStriker' when the
+    // wicket fell on the LAST ball of the over: cricket's ends-swap rule
+    // still applies on an over-ending wicket, so the survivor (till-now
+    // non-striker) takes strike for the new over and the new batsman comes
+    // in at the other end. See the 'W' case in recordBall().
+    newBatsmanEnd: 'striker'
   };
 }
 
@@ -777,6 +785,14 @@ function renderPanel(){
     noteEl.textContent = '';
   }
   updateBowlerSuggestions();
+  // Tells the operator which end "Send In New Batsman" will actually seat
+  // them at — matters because after an over-ending wicket that end is the
+  // non-striker's (see newBatsmanEnd docs in defaultState()), not the
+  // obvious "same end as whoever got out".
+  document.getElementById('new-batsman-end-hint').textContent =
+    state.newBatsmanEnd === 'nonStriker'
+      ? "Over ended on that wicket — strike has already rotated, so this batsman comes in at the NON-STRIKER's end."
+      : '';
   maybeSet('innings-summary-toggle', state.showInningsSummary);
   maybeSet('match-summary-toggle', state.showMatchSummary);
 
@@ -871,7 +887,17 @@ document.getElementById('new-batsman-btn').addEventListener('click', () => {
   const name = document.getElementById('new-batsman-name').value.trim();
   if(!name) return;
   history.push(snapshot());
-  state.striker = { name, runs:0, balls:0, fours:0, sixes:0 };
+  const incoming = { name, runs:0, balls:0, fours:0, sixes:0 };
+  // Seat them at whichever end the last wicket left vacant — the striker's
+  // end normally, or the non-striker's end if that wicket fell on the last
+  // ball of the over (strike already rotated automatically — see the 'W'
+  // case in recordBall()).
+  if(state.newBatsmanEnd === 'nonStriker'){
+    state.nonStriker = incoming;
+  } else {
+    state.striker = incoming;
+  }
+  state.newBatsmanEnd = 'striker';
   state.partnershipRuns = 0; state.partnershipBalls = 0;
   document.getElementById('new-batsman-name').value = '';
   pushState(true);
@@ -1387,7 +1413,22 @@ function recordBall(kind){
       state.partnershipRuns = 0; state.partnershipBalls = 0;
       fireEvent('WICKET', 'WICKET!', state.striker.name);
       if(wasFreeHit) toast('⚠️ Free Hit was active — only Run Out is a valid dismissal');
-      if(overCompletedThisBall) toast('ℹ️ Over complete on this wicket — check ends before the next over');
+
+      // Cricket's ends-swap rule doesn't stop applying just because the
+      // wicket ball happened to be the over's last: the survivor (till-now
+      // non-striker) still takes strike for the new over, and the incoming
+      // batsman fills whichever end is now vacant. On any OTHER ball of the
+      // over, the incoming batsman simply replaces the dismissed batsman at
+      // the SAME end — no swap, since the over isn't changing bowlers yet.
+      if(overCompletedThisBall){
+        const dismissed = state.striker;
+        state.striker = state.nonStriker;
+        state.nonStriker = dismissed; // holds the OUT batsman's line until "Send In New Batsman" overwrites it — same as the same-end case below
+        state.newBatsmanEnd = 'nonStriker';
+        toast('ℹ️ Over complete on this wicket — strike has rotated automatically; new batsman comes in at the non-striker\'s end.');
+      } else {
+        state.newBatsmanEnd = 'striker';
+      }
       break;
     }
     case 'Wd': {
@@ -1444,11 +1485,10 @@ function recordBall(kind){
   // Cricket's "swap ends" rule: whoever wasn't on strike for the last ball
   // of the over faces the next one (a different bowler comes on from the
   // other end). Applied after any odd-run mid-over swap above, so the two
-  // rules compose correctly. Skipped when the over-ending ball was a wicket
-  // — the striker's slot is about to be handed to the incoming batsman via
-  // "New batsman", so an automatic swap here would put the wrong batter on
-  // strike; use "Swap Strike" manually afterwards if the new batter isn't
-  // the one who should be facing.
+  // rules compose correctly. Skipped when the over-ending ball was a
+  // wicket — that case already performed its own swap above (survivor to
+  // strike, incoming batsman to the vacant end), so doing it again here
+  // would swap them right back.
   if(overCompletedThisBall && kind !== 'W'){
     swapStrikeSilent();
   }
@@ -1530,6 +1570,7 @@ document.getElementById('next-innings-btn').addEventListener('click', () => {
   state.striker = { name: (state.striker.name || '').trim() || 'Batsman 1', runs:0, balls:0, fours:0, sixes:0 };
   state.nonStriker = { name: (state.nonStriker.name || '').trim() || 'Batsman 2', runs:0, balls:0, fours:0, sixes:0 };
   state.bowler = { name:'', overs:0, balls:0, maidens:0, runs:0, wickets:0, runsThisOver:0, wicketsThisOver:0 };
+  state.newBatsmanEnd = 'striker';
   state.freeHit = false;
   // Clear innings-scoped milestones (team totals, powerplay, last-over, "need
   // X off Y", the completed-innings lock) so the 2nd innings fires its own —
