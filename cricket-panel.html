@@ -353,15 +353,25 @@
     </div>
 
     <div class="card">
-      <h2>Auto Summary Graphics <span class="note">— on/off, live</span></h2>
+      <h2>Summary Graphics <span class="note">— auto on/off + show anytime</span></h2>
       <div class="toggle-row">
-        <span>Innings Bowling Summary (auto, right after each innings ends)</span>
+        <span>Innings Summary (auto, right after each innings ends)</span>
         <label class="switch"><input type="checkbox" id="innings-summary-toggle" checked><span class="slider"></span></label>
       </div>
-      <div class="toggle-row">
-        <span>Match Summary (auto, when the match is won)</span>
+      <div class="row2" style="margin-top:8px;">
+        <button class="small" id="show-innings-summary-btn">Show Now</button>
+        <button class="small ghost" id="hide-innings-summary-btn">Hide Now</button>
+      </div>
+
+      <div class="toggle-row" style="margin-top:16px;">
+        <span>Match Summary (auto, 10s after the match is won)</span>
         <label class="switch"><input type="checkbox" id="match-summary-toggle" checked><span class="slider"></span></label>
       </div>
+      <div class="row2" style="margin-top:8px;">
+        <button class="small" id="show-match-summary-btn">Show Now</button>
+        <button class="small ghost" id="hide-match-summary-btn">Hide Now</button>
+      </div>
+      <div class="shortcut-hint">The toggles above only control whether the pop-up fires automatically. The "Show Now" buttons work anytime, independent of the toggles, and always pull whatever is currently live — nothing needs to be re-entered.</div>
     </div>
 
     <div class="card">
@@ -885,6 +895,34 @@ document.getElementById('match-summary-toggle').addEventListener('change', (e) =
 });
 
 /* ============================================================
+   MANUAL SUMMARY CONTROLS
+   Independent of the auto toggles above — these fire (or dismiss) the
+   overlay's summary cards on demand, always built from whatever is
+   currently live in `state`, so the data is never stale even if the
+   operator hasn't touched the match in a while.
+   ============================================================ */
+document.getElementById('show-innings-summary-btn').addEventListener('click', () => {
+  if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
+  socket.emit('cricketInningsSummary', { data: buildInningsSummaryPayload() });
+  toast('Innings summary shown on overlay');
+});
+document.getElementById('hide-innings-summary-btn').addEventListener('click', () => {
+  if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
+  socket.emit('cricketHideInningsSummary', {});
+  toast('Innings summary hidden');
+});
+document.getElementById('show-match-summary-btn').addEventListener('click', () => {
+  if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
+  socket.emit('cricketMatchSummary', { data: buildMatchSummaryPayload() });
+  toast('Match summary shown on overlay');
+});
+document.getElementById('hide-match-summary-btn').addEventListener('click', () => {
+  if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
+  socket.emit('cricketHideMatchSummary', {});
+  toast('Match summary hidden');
+});
+
+/* ============================================================
    BALL-BY-BALL ENGINE
    ============================================================ */
 function checkMilestones(){
@@ -1030,10 +1068,13 @@ function checkMatchResult(){
   if(resultFired && state.showMatchSummary && socket && socket.connected){
     // If an innings-summary graphic just fired on this SAME ball (defending
     // side bowled the chasing side out/overs-out right as the match ended),
-    // give it room to finish its animation before the match summary starts.
-    // Innings summary is now TWO cards back-to-back (batting, then bowling —
-    // see cricket-overlay.html), so this covers both full lifecycles.
-    const delay = inningsSummaryJustFired ? 12600 : 300;
+    // give it room to finish its full run — batting card (15s hold) then
+    // bowling card (15s hold), back-to-back — before the Match Summary
+    // starts its own 10s post-win pause. Keep this constant in sync with
+    // the hold times / chain timing in cricket-overlay.html.
+    const INNINGS_SUMMARY_TOTAL_MS = 34600; // batting card start -> bowling card fully gone
+    const POST_WIN_PAUSE_MS = 10000; // Match Summary always appears 10s after the win itself
+    const delay = (inningsSummaryJustFired ? INNINGS_SUMMARY_TOTAL_MS : 0) + POST_WIN_PAUSE_MS;
     const payload = buildMatchSummaryPayload();
     setTimeout(() => { if(socket && socket.connected) socket.emit('cricketMatchSummary', { data: payload }); }, delay);
   }
@@ -1127,13 +1168,21 @@ function buildMatchSummaryPayload(){
 
   const chasingTeam = state.battingTeam === 'A' ? state.teamA : state.teamB;
   const defendingTeam = state.battingTeam === 'A' ? state.teamB : state.teamA;
+  // Guarded for manual "Show Now" use, which can fire this at any point in
+  // the match — not just once it's actually over — so it always reads as
+  // an honest in-progress state rather than fabricating a winner.
   let winnerText;
-  if(state.score.runs >= state.target){
+  if(!state.target){
+    winnerText = 'MATCH IN PROGRESS';
+  } else if(state.score.runs >= state.target){
     const left = 10 - state.score.wickets;
     winnerText = `${(chasingTeam.short || chasingTeam.name).toUpperCase()} WON BY ${left} WICKET${left === 1 ? '' : 'S'}`;
-  } else {
+  } else if(isInningsOver()){
     const margin = state.target - 1 - state.score.runs;
     winnerText = margin <= 0 ? 'MATCH TIED' : `${(defendingTeam.short || defendingTeam.name).toUpperCase()} WON BY ${margin} RUN${margin === 1 ? '' : 'S'}`;
+  } else {
+    const runsNeeded = state.target - state.score.runs;
+    winnerText = `${(chasingTeam.short || chasingTeam.name).toUpperCase()} NEED ${runsNeeded} TO WIN`;
   }
 
   return {
