@@ -124,6 +124,10 @@
     letter-spacing:.4px;
   }
   .freehit-banner.show{ display:flex; }
+  #clear-freehit-btn{
+    background:#facc15; color:#1a1408; border:none; border-radius:6px;
+    padding:3px 10px; font-weight:800; font-size:11px; letter-spacing:.3px; cursor:pointer;
+  }
 
   /* --- logo uploader --- */
   .logo-row{ display:flex; align-items:center; gap:10px; margin-top:6px; }
@@ -266,7 +270,7 @@
 
     <div class="card">
       <h2>Ball Outcome</h2>
-      <div class="freehit-banner" id="freehit-banner">⚡ FREE HIT IN PLAY</div>
+      <div class="freehit-banner" id="freehit-banner">⚡ FREE HIT IN PLAY <button type="button" id="clear-freehit-btn" style="margin-left:auto;">Clear</button></div>
       <div class="balls-grid">
         <button class="b-run" data-ball="0">0</button>
         <button class="b-run" data-ball="1">1</button>
@@ -592,6 +596,38 @@ function compressImageToDataURL(file, maxDim, quality){
     reader.readAsDataURL(file);
   });
 }
+/* Samples the uploaded crest and picks its most common "meaningful" colour
+   (skips near-white/near-black/low-saturation pixels, which are almost
+   always background or outline, not brand colour) so the team's cap/panel
+   colour can auto-follow the logo the moment it's uploaded. The colour
+   picker stays fully live afterwards — this only sets the starting point. */
+function extractDominantColor(imgEl){
+  try{
+    const size = 48;
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(imgEl, 0, 0, size, size);
+    const data = ctx.getImageData(0, 0, size, size).data;
+    const buckets = {};
+    for(let i = 0; i < data.length; i += 4){
+      const r = data[i], g = data[i+1], b = data[i+2], a = data[i+3];
+      if(a < 128) continue;
+      const max = Math.max(r,g,b), min = Math.min(r,g,b);
+      const lum = (r+g+b) / 3;
+      if(lum > 235 || lum < 20) continue;   // near-white / near-black
+      if(max - min < 18) continue;          // greys / low saturation
+      const key = `${r>>4}-${g>>4}-${b>>4}`;
+      if(!buckets[key]) buckets[key] = { r, g, b, count: 0 };
+      buckets[key].count++;
+    }
+    let best = null;
+    Object.values(buckets).forEach(bkt => { if(!best || bkt.count > best.count) best = bkt; });
+    if(!best) return null;
+    const toHex = v => v.toString(16).padStart(2, '0');
+    return `#${toHex(best.r)}${toHex(best.g)}${toHex(best.b)}`;
+  }catch(e){ return null; }
+}
 function wireLogoUpload(teamKey){
   const fileInput = document.getElementById(`${teamKey}-logo-file`);
   const preview = document.getElementById(`${teamKey}-logo-preview`);
@@ -608,6 +644,21 @@ function wireLogoUpload(teamKey){
       state[teamKey === 'teamA' ? 'teamA' : 'teamB'].logoUrl = dataUrl;
       preview.style.backgroundImage = `url(${dataUrl})`;
       meta.textContent = `Logo set — ~${kb} KB`;
+
+      // Auto-pick the team colour from the crest itself. The colour input
+      // stays fully editable afterwards — this just gives a sensible
+      // starting point instead of leaving the old/default colour behind.
+      const colorImg = new Image();
+      colorImg.src = dataUrl;
+      await new Promise(res => { colorImg.onload = res; colorImg.onerror = res; });
+      const dominant = extractDominantColor(colorImg);
+      if(dominant){
+        state[teamKey === 'teamA' ? 'teamA' : 'teamB'].color = dominant;
+        const colorInput = document.getElementById(`${teamKey}-color`);
+        if(colorInput) colorInput.value = dominant;
+        meta.textContent = `Logo set — ~${kb} KB · colour auto-matched`;
+      }
+
       pushState(true);
     }catch(err){
       meta.textContent = 'Could not read that image';
@@ -1102,9 +1153,11 @@ function buildMatchSummaryPayload(){
 function addLegalBall(runsThisBall){
   state.freeHit = false;
   state.score.balls++;
-  if(state.score.balls >= 6){ state.score.balls = 0; state.score.overs++; state.thisOver = []; }
+  let overCompleted = false;
+  if(state.score.balls >= 6){ state.score.balls = 0; state.score.overs++; state.thisOver = []; overCompleted = true; }
   state.striker.balls++;
   state.partnershipBalls++;
+  return overCompleted;
 }
 
 function bowlingTeamKey(){ return state.battingTeam === 'A' ? 'B' : 'A'; }
@@ -1159,6 +1212,7 @@ function recordBall(kind){
   }
 
   history.push(snapshot());
+  let overCompletedThisBall = false;
 
   switch(kind){
     case '0': case '1': case '2': case '3': case '4': case '5': case '6': {
@@ -1170,7 +1224,7 @@ function recordBall(kind){
       if(runs === 6) state.striker.sixes++;
       state.thisOver.push(String(runs));
       pushBallHistory(String(runs));
-      addLegalBall(runs);
+      overCompletedThisBall = addLegalBall(runs);
       addBowlerBall(runs);
       if(runs === 4) fireEvent('FOUR', 'FOUR!', state.striker.name);
       if(runs === 6) fireEvent('SIX', 'SIX!', state.striker.name);
@@ -1187,7 +1241,7 @@ function recordBall(kind){
       state.score.wickets++;
       state.thisOver.push('W');
       pushBallHistory('W');
-      addLegalBall(0);
+      overCompletedThisBall = addLegalBall(0);
       addBowlerBall(0);
       if(isBowlerWicket) state.bowler.wickets++;
 
@@ -1204,6 +1258,7 @@ function recordBall(kind){
       state.partnershipRuns = 0; state.partnershipBalls = 0;
       fireEvent('WICKET', 'WICKET!', state.striker.name);
       if(wasFreeHit) toast('⚠️ Free Hit was active — only Run Out is a valid dismissal');
+      if(overCompletedThisBall) toast('ℹ️ Over complete on this wicket — check ends before the next over');
       break;
     }
     case 'Wd': {
@@ -1222,10 +1277,17 @@ function recordBall(kind){
       state.extras[state.battingTeam].nb++;
       state.thisOver.push('Nb');
       pushBallHistory('Nb');
-      state.freeHit = true;
       addBowlerExtra(1);
       fireEvent('NO_BALL', 'NO BALL', '');
-      setTimeout(() => fireEvent('FREE_HIT', 'FREE HIT', 'Next ball is a Free Hit'), 900);
+      // Free Hit only exists in limited-overs cricket (ODI/T20/Custom) —
+      // Test/first-class cricket has no Free Hit provision under the Laws
+      // of Cricket or ICC playing conditions, so skip it for that format.
+      if(state.format !== 'Test'){
+        state.freeHit = true;
+        // Let the No Ball graphic finish its full run (~2.5s: intro + hold +
+        // exit) before Free Hit appears, so the two never overlap on screen.
+        setTimeout(() => fireEvent('FREE_HIT', 'FREE HIT', 'Next ball is a Free Hit'), 2500);
+      }
       break;
     }
     case 'B': {
@@ -1234,7 +1296,7 @@ function recordBall(kind){
       state.extras[state.battingTeam].b++;
       state.thisOver.push('B');
       pushBallHistory('B');
-      addLegalBall(1);
+      overCompletedThisBall = addLegalBall(1);
       addBowlerBall(0);
       break;
     }
@@ -1244,10 +1306,22 @@ function recordBall(kind){
       state.extras[state.battingTeam].lb++;
       state.thisOver.push('LB');
       pushBallHistory('LB');
-      addLegalBall(1);
+      overCompletedThisBall = addLegalBall(1);
       addBowlerBall(0);
       break;
     }
+  }
+
+  // Cricket's "swap ends" rule: whoever wasn't on strike for the last ball
+  // of the over faces the next one (a different bowler comes on from the
+  // other end). Applied after any odd-run mid-over swap above, so the two
+  // rules compose correctly. Skipped when the over-ending ball was a wicket
+  // — the striker's slot is about to be handed to the incoming batsman via
+  // "New batsman", so an automatic swap here would put the wrong batter on
+  // strike; use "Swap Strike" manually afterwards if the new batter isn't
+  // the one who should be facing.
+  if(overCompletedThisBall && kind !== 'W'){
+    swapStrikeSilent();
   }
 
   checkMilestones();
@@ -1262,6 +1336,16 @@ function swapStrikeSilent(){
 
 document.querySelectorAll('[data-ball]').forEach(btn => {
   btn.addEventListener('click', () => recordBall(btn.dataset.ball));
+});
+
+// Manual escape hatch: if the Free Hit indicator ever looks stuck (state
+// desync, a missed update, whatever) the operator can force it off here
+// without needing to touch code or wait for the next delivery.
+document.getElementById('clear-freehit-btn').addEventListener('click', () => {
+  if(!state.freeHit) return;
+  state.freeHit = false;
+  pushState(true, true);
+  toast('Free Hit cleared manually');
 });
 
 document.getElementById('undo-btn').addEventListener('click', () => {
