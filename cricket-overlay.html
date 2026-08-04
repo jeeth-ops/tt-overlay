@@ -148,39 +148,43 @@
 
   /* ---- Bowler segment: name + which-over badge + figures + a real
      broadcast-style "this over" ball tracker (always 6 slots, resets
-     every over — unlike a rolling window across the innings) ---- */
-  #bowler-seg{ flex:1 1 auto; align-items:center; text-align:center; gap:6px; min-width:min(17vw,206px); }
-  #bowler-seg .lbl{ font-size:10.5px; font-weight:800; letter-spacing:.8px; color:var(--ink-dim); text-transform:uppercase; }
+     every over — unlike a rolling window across the innings). No "BOWLER"
+     label — the position is self-evident from where it sits (mirrors the
+     batters segment having no "BATSMEN" label either), so the name gets
+     to use that vertical space and read bigger instead. ---- */
+  #bowler-seg{ flex:1 1 auto; align-items:center; text-align:center; justify-content:center; gap:7px; min-width:min(17vw,206px); }
   #bowler-line{ display:flex; align-items:center; gap:8px; justify-content:center; }
   #bowler-name-val{
-    font-family:var(--font-ui); font-weight:800; font-size:min(1.35vw,16px); color:var(--ink);
-    letter-spacing:.1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:min(10vw,128px);
+    font-family:var(--font-ui); font-weight:900; font-size:min(1.75vw,20px); color:var(--ink);
+    letter-spacing:.1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:min(11.5vw,142px);
   }
   /* Small round badge — "which over of the innings is this for THIS
      bowler" (his 1st, 2nd, 3rd... over) — same accent gradient as the
      main OVERS badge so it visually reads as the same kind of number. */
   #bowler-over-chip{
-    flex:none; min-width:20px; height:20px; padding:0 5px; border-radius:10px;
+    flex:none; min-width:22px; height:22px; padding:0 6px; border-radius:11px;
     background:linear-gradient(160deg, var(--badge-2), var(--badge));
-    color:#fff; font-family:var(--font-num); font-weight:900; font-size:11px;
+    color:#fff; font-family:var(--font-num); font-weight:900; font-size:12px;
     display:flex; align-items:center; justify-content:center; line-height:1;
     box-shadow:0 2px 6px rgba(0,0,0,0.25);
   }
   #bowler-figures-val{
-    font-family:var(--font-num); font-weight:900; font-size:min(1.3vw,16px); color:#1c4fd8;
+    font-family:var(--font-num); font-weight:900; font-size:min(1.45vw,17px); color:#1c4fd8;
     font-variant-numeric:tabular-nums; white-space:nowrap;
   }
   /* nowrap on purpose: the strip sits inside a fixed-height scoreboard bar,
      so a second wrapped line would just get clipped and vanish rather than
      show — instead, when extras (Wd/Nb) push the over past 6 balls, the JS
-     below shrinks pip width/font/gap to keep everything on one line. */
-  #thisover-row{ display:flex; gap:5px; align-items:center; justify-content:center; flex-wrap:nowrap; overflow:hidden; width:100%; }
-  /* Slightly smaller than the base .pip so all 6 balls of an over fit
-     comfortably next to the bowler's name+figures in the same segment.
-     Width/height/font-size below are the 6-ball baseline — the JS
-     overrides them inline per-render once an over runs past 6 balls. */
-  #thisover-row .pip{ width:21px; height:21px; font-size:10px; flex:none; }
-  #thisover-row .pip.zero{ font-size:12px; }
+     below shrinks pip width/font/gap to keep everything on one line. Base
+     gap is roomier now (was 5px, felt cramped) — 6 dots is the common case
+     and has plenty of width to breathe; it only tightens once extras add
+     more dots than that. */
+  #thisover-row{ display:flex; gap:9px; align-items:center; justify-content:center; flex-wrap:nowrap; overflow:hidden; width:100%; }
+  /* Baseline (6-ball) pip size — a touch bigger now there's more breathing
+     room, with matching gap above. The JS overrides both inline per-render
+     once an over runs past 6 balls, shrinking together to stay on one line. */
+  #thisover-row .pip{ width:23px; height:23px; font-size:10.5px; flex:none; }
+  #thisover-row .pip.zero{ font-size:13px; }
   /* A ball that HASN'T happened yet this over — a faint hollow slot, so
      the tracker always shows a full row of 6 from the very first ball
      (exactly like a real broadcast over-tracker), filling in left to
@@ -506,7 +510,6 @@
               <div class="val" id="crr-val">0.00</div>
             </div>
             <div class="wseg" id="bowler-seg">
-              <div class="lbl">Bowler</div>
               <div id="bowler-line">
                 <span id="bowler-name-val">—</span>
                 <span id="bowler-over-chip" style="display:none;"></span>
@@ -932,10 +935,10 @@ function renderState(s){
     // anything beyond scales pip size/font/gap down to fit, with a floor
     // so pips never shrink into unreadable dots.
     const shrink = Math.min(1, 6 / slotCount);
-    const pipSize = Math.max(13, Math.round(21 * shrink));
-    const gapSize = Math.max(2, Math.round(5 * shrink));
-    const dotFontSize = Math.max(9, Math.round(12 * shrink));
-    const numFontSize = Math.max(7, Math.round(10 * shrink));
+    const pipSize = Math.max(14, Math.round(23 * shrink));
+    const gapSize = Math.max(3, Math.round(9 * shrink));
+    const dotFontSize = Math.max(9, Math.round(13 * shrink));
+    const numFontSize = Math.max(7, Math.round(10.5 * shrink));
     container.style.gap = `${gapSize}px`;
     for(let i = 0; i < slotCount; i++){
       const b = thisOver[i];
@@ -1031,7 +1034,6 @@ function animateEntry(){
     .from('#overs-badge > *', { opacity: 0, y: 10, duration: 0.3, stagger: 0.05 }, 0.66)
     .from('#batters-seg .brow', { opacity: 0, x: -10, duration: 0.32, stagger: 0.07 }, 0.72)
     .from('#crr-seg > *', { opacity: 0, y: 8, duration: 0.3, stagger: 0.05 }, 0.78)
-    .from('#bowler-seg .lbl', { opacity: 0, duration: 0.3 }, 0.82)
     .from('.bstat', { opacity: 0, y: 10, duration: 0.32, stagger: 0.05 }, 0.7);
 }
 function animateExit(){
