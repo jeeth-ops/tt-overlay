@@ -4,331 +4,589 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Scorvix - Select Overlay for Cricket</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-dark: #0f172a;
-            --bg-card: rgba(30, 41, 59, 0.85);
-            --border-color: rgba(255, 255, 255, 0.1);
+            /* ---- Token system ---- */
+            --bg-void: #04060c;
+            --bg-dark: #070b16;
+            --bg-card: rgba(19, 25, 44, 0.55);
+            --bg-card-hover: rgba(23, 30, 54, 0.72);
+            --bg-glass: rgba(14, 19, 34, 0.55);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --border-hi: rgba(255, 255, 255, 0.16);
             --text-main: #f8fafc;
-            --text-muted: #94a3b8;
-            --accent: #3b82f6;
+            --text-muted: #93a0b8;
+            --text-faint: #556078;
+
+            --accent: #3b82f6;        /* Cricket Blue */
             --accent-hover: #2563eb;
+            --accent-soft: rgba(59, 130, 246, 0.35);
+            --accent-orange: #f97316; /* Ball Orange */
+            --accent-orange-soft: rgba(249, 115, 22, 0.35);
+
+            --cursor-color: var(--accent);
+            --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+            --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
         }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: 'Inter', sans-serif;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html { color-scheme: dark; }
 
         body {
-            background-color: var(--bg-dark);
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-void);
             color: var(--text-main);
             min-height: 100vh;
             display: flex;
             flex-direction: column;
             align-items: center;
-            padding: 30px 40px;
+            padding: 30px 40px 90px;
             position: relative;
             overflow-x: hidden;
         }
 
-        /* Background Video */
+        .mono { font-family: 'JetBrains Mono', monospace; }
+
+        @media (pointer: fine) {
+            body.cursor-ready, body.cursor-ready * { cursor: none !important; }
+        }
+
+        ::selection { background: var(--accent-soft); color: #fff; }
+
+        /* ================= BACKDROP ================= */
         .bg-animations {
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
             z-index: -999;
             overflow: hidden;
-            background-color: var(--bg-dark);
+            background-color: var(--bg-void);
             pointer-events: none;
         }
         .bg-video {
             position: absolute;
-            top: 50%;
-            left: 50%;
-            min-width: 100%;
-            min-height: 100%;
+            top: 50%; left: 50%;
+            min-width: 100%; min-height: 100%;
             transform: translate(-50%, -50%);
             object-fit: cover;
-            filter: blur(12px) brightness(0.4);
+            filter: blur(14px) brightness(0.32) saturate(1.1);
             opacity: 0.35;
         }
-
-        /* Animations */
-        @keyframes fadeInSlideUp {
-            from { opacity: 0; transform: translateY(30px); }
-            to { opacity: 1; transform: translateY(0); }
+        .bg-scrim {
+            position: absolute; inset: 0;
+            background:
+                radial-gradient(ellipse 60% 45% at 50% -10%, rgba(59,130,246,0.16), transparent 60%),
+                linear-gradient(180deg, rgba(4,6,12,0.55) 0%, rgba(4,6,12,0.88) 70%, var(--bg-void) 100%);
+        }
+        .ambient-blob {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(90px);
+            opacity: 0.32;
+            will-change: transform;
+        }
+        .blob-a {
+            width: 520px; height: 520px;
+            background: radial-gradient(circle, var(--accent) 0%, transparent 70%);
+            top: -160px; left: -120px;
+            animation: driftA 26s ease-in-out infinite alternate;
+        }
+        .blob-b {
+            width: 460px; height: 460px;
+            background: radial-gradient(circle, var(--accent-orange) 0%, transparent 70%);
+            bottom: -180px; right: -100px;
+            animation: driftB 22s ease-in-out infinite alternate;
+        }
+        @keyframes driftA {
+            from { transform: translate(0, 0) scale(1); }
+            to   { transform: translate(60px, 80px) scale(1.15); }
+        }
+        @keyframes driftB {
+            from { transform: translate(0, 0) scale(1); }
+            to   { transform: translate(-70px, -50px) scale(1.1); }
+        }
+        .noise-overlay {
+            position: fixed; inset: 0;
+            z-index: -998;
+            opacity: 0.035;
+            mix-blend-mode: overlay;
+            pointer-events: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
         }
 
-        /* Header Navigation */
+        /* ================= CUSTOM CURSOR ================= */
+        .cursor-dot, .cursor-ring {
+            position: fixed;
+            top: 0; left: 0;
+            pointer-events: none;
+            z-index: 9999;
+            transform: translate(-50%, -50%);
+            will-change: transform;
+        }
+        .cursor-dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: var(--cursor-color);
+            transition: background-color 0.25s var(--ease-out);
+        }
+        .cursor-ring {
+            width: 34px; height: 34px;
+            border-radius: 50%;
+            border: 1.5px solid var(--cursor-color);
+            box-shadow: 0 0 16px 1px color-mix(in srgb, var(--cursor-color) 55%, transparent);
+            transition: width 0.28s var(--ease-spring), height 0.28s var(--ease-spring),
+                        border-color 0.25s var(--ease-out), box-shadow 0.25s var(--ease-out),
+                        opacity 0.2s;
+        }
+        .cursor-ring::before, .cursor-ring::after {
+            content: '';
+            position: absolute;
+            background: var(--cursor-color);
+            opacity: 0.85;
+        }
+        .cursor-ring::before { top: -6px; left: 50%; width: 1px; height: 5px; transform: translateX(-50%); }
+        .cursor-ring::after { left: -6px; top: 50%; width: 5px; height: 1px; transform: translateY(-50%); }
+        .cursor-ring.hovering { width: 54px; height: 54px; }
+        @media (pointer: coarse), (prefers-reduced-motion: reduce) {
+            .cursor-dot, .cursor-ring { display: none; }
+        }
+
+        /* ================= TOP NAV ================= */
         .top-nav {
-            width: 100%;
-            max-width: 1200px;
-            display: flex;
-            align-items: center;
-            gap: 20px;
+            width: 100%; max-width: 1200px;
+            display: flex; align-items: center; gap: 20px;
             margin-bottom: 25px;
             z-index: 10;
-            animation: fadeInSlideUp 0.6s ease forwards;
-        }
-
-        .back-btn {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            color: var(--text-main);
-            padding: 8px 14px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 1rem;
-            transition: 0.2s;
-            backdrop-filter: blur(10px);
-        }
-        .back-btn:hover { background: rgba(255, 255, 255, 0.15); }
-
-        .header-title-group h1 {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: var(--text-main);
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .header-title-group p { font-size: 0.85rem; color: var(--text-muted); margin-top: 2px; }
-        .step-indicator { font-size: 0.75rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.5px; }
-
-        /* Search Filter Bar */
-        .search-filter-bar {
-            width: 100%;
-            max-width: 1200px;
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 15px 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 30px;
-            backdrop-filter: blur(10px);
-            z-index: 10;
-            animation: fadeInSlideUp 0.6s ease 0.15s forwards;
             opacity: 0;
         }
 
-        .search-box {
-            width: 60%;
-            background: rgba(15, 23, 42, 0.6);
+        .back-btn {
+            background: var(--bg-glass);
             border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 10px 15px;
+            color: var(--text-main);
+            width: 38px; height: 38px;
+            display: flex; align-items: center; justify-content: center;
+            border-radius: 10px;
+            font-size: 1rem;
+            transition: transform 0.35s var(--ease-spring), background 0.2s, border-color 0.2s;
+            backdrop-filter: blur(14px) saturate(1.4);
+            -webkit-backdrop-filter: blur(14px) saturate(1.4);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+        }
+        .back-btn:hover { background: rgba(255,255,255,0.1); border-color: var(--border-hi); transform: translateX(-3px); }
+        .back-btn:active { transform: translateX(-3px) scale(0.9); }
+
+        .header-title-group h1 {
+            font-size: 1.5rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            color: var(--text-main);
+            display: flex; align-items: center; gap: 10px;
+        }
+        .header-title-group .emoji-pop {
+            display: inline-block;
+            transition: transform 0.5s var(--ease-spring);
+        }
+        .header-title-group h1:hover .emoji-pop { transform: rotate(-18deg) scale(1.15); }
+        .header-title-group p { font-size: 0.85rem; color: var(--text-muted); margin-top: 3px; }
+
+        .step-indicator {
+            font-size: 0.72rem; font-weight: 600;
+            color: var(--accent);
+            text-transform: uppercase; letter-spacing: 0.8px;
+            display: inline-flex; align-items: center; gap: 6px;
+        }
+        .live-dot {
+            width: 6px; height: 6px; border-radius: 50%;
+            background: var(--accent-orange);
+            box-shadow: 0 0 0 0 rgba(249,115,22,0.6);
+            animation: pulseDot 1.8s ease-in-out infinite;
+        }
+        @keyframes pulseDot {
+            0%   { box-shadow: 0 0 0 0 rgba(249,115,22,0.55); }
+            70%  { box-shadow: 0 0 0 7px rgba(249,115,22,0); }
+            100% { box-shadow: 0 0 0 0 rgba(249,115,22,0); }
+        }
+
+        /* ================= SEARCH / FILTER BAR ================= */
+        .search-filter-bar {
+            width: 100%; max-width: 1200px;
+            background: var(--bg-glass);
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 14px 18px;
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 14px;
+            margin-bottom: 30px;
+            backdrop-filter: blur(18px) saturate(1.5);
+            -webkit-backdrop-filter: blur(18px) saturate(1.5);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 8px 30px rgba(0,0,0,0.25);
+            z-index: 10;
+            opacity: 0;
+        }
+
+        .search-box-wrap {
+            width: 60%;
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+        .search-box {
+            width: 100%;
+            background: rgba(4, 8, 18, 0.55);
+            border: 1px solid var(--border-color);
+            border-radius: 9px;
+            padding: 10px 42px 10px 15px;
             color: var(--text-main);
             font-size: 0.9rem;
+            font-family: inherit;
             outline: none;
+            transition: border-color 0.25s var(--ease-out), box-shadow 0.25s var(--ease-out), background 0.25s;
         }
-        .search-box:focus { border-color: var(--accent); }
+        .search-box::placeholder { color: var(--text-faint); }
+        .search-box:focus {
+            border-color: var(--accent);
+            background: rgba(4, 8, 18, 0.8);
+            box-shadow: 0 0 0 3px var(--accent-soft);
+        }
+        .search-kbd {
+            position: absolute; right: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem; color: var(--text-faint);
+            border: 1px solid var(--border-color);
+            border-radius: 5px; padding: 2px 6px;
+            pointer-events: none;
+            transition: opacity 0.2s;
+        }
+        .search-box:focus ~ .search-kbd,
+        .search-box:not(:placeholder-shown) ~ .search-kbd { opacity: 0; }
 
         .filter-btn {
             background: transparent;
             border: 1px solid var(--border-color);
             padding: 10px 16px;
-            border-radius: 8px;
-            cursor: pointer;
+            border-radius: 9px;
             font-size: 0.9rem;
+            font-family: inherit;
             color: var(--text-main);
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            transition: 0.2s;
+            display: flex; align-items: center; gap: 8px;
+            transition: background 0.2s, border-color 0.2s, transform 0.3s var(--ease-spring);
+            white-space: nowrap;
         }
-        .filter-btn:hover { background: rgba(255, 255, 255, 0.1); }
+        .filter-btn:hover { background: rgba(255,255,255,0.08); border-color: var(--border-hi); }
+        .filter-btn:active { transform: scale(0.95); }
 
-        /* Template Grid Layout */
+        /* ================= GRID ================= */
         .templates-grid {
-            width: 100%;
-            max-width: 1200px;
+            width: 100%; max-width: 1200px;
             display: grid;
             grid-template-columns: repeat(2, 1fr);
             gap: 25px;
             z-index: 10;
-            animation: fadeInSlideUp 0.6s ease 0.3s forwards;
-            opacity: 0;
+            perspective: 1400px;
+        }
+
+        .no-results {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
+            border: 1px dashed var(--border-color);
+            border-radius: 16px;
+            display: none;
+        }
+        .no-results.show { display: block; animation: fadeInSlideUp 0.4s var(--ease-out) forwards; }
+        .no-results strong { color: var(--text-main); display: block; margin-bottom: 6px; font-size: 1.05rem; }
+
+        @keyframes fadeInSlideUp {
+            from { opacity: 0; transform: translateY(24px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes cardIntro {
+            from { opacity: 0; transform: translateY(36px) rotateX(8deg) scale(0.96); }
+            to   { opacity: 1; transform: translateY(0) rotateX(0) scale(1); }
         }
 
         .template-card {
+            --tilt-x: 0deg;
+            --tilt-y: 0deg;
+            --card-accent: var(--accent);
+            --card-accent-soft: var(--accent-soft);
             background: var(--bg-card);
             border: 1px solid var(--border-color);
-            border-radius: 16px;
+            border-radius: 18px;
             overflow: hidden;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-            transition: all 0.3s ease;
-            backdrop-filter: blur(10px);
+            box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28);
+            backdrop-filter: blur(16px) saturate(1.3);
+            -webkit-backdrop-filter: blur(16px) saturate(1.3);
             position: relative;
+            transform-style: preserve-3d;
+            transition: transform 0.35s var(--ease-spring), box-shadow 0.35s var(--ease-out),
+                        border-color 0.3s var(--ease-out), background 0.3s;
+            opacity: 0;
+            will-change: transform;
+        }
+        .template-card.hiding {
+            opacity: 0 !important;
+            transform: scale(0.92) !important;
+            pointer-events: none;
+            position: absolute;
         }
 
         .template-card:hover {
-            transform: translateY(-6px);
-            box-shadow: 0 12px 25px rgba(59, 130, 246, 0.3);
-            border-color: var(--accent);
+            background: var(--bg-card-hover);
+            border-color: var(--card-accent);
+            box-shadow: 0 20px 45px -10px var(--card-accent-soft), 0 4px 18px rgba(0,0,0,0.35);
+        }
+        .template-card::before {
+            content: '';
+            position: absolute; top: 0; left: 0; right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, var(--card-accent), transparent);
+            opacity: 0.7;
         }
 
         .card-preview {
-            width: 100%;
-            height: 200px;
-            background: rgba(9, 13, 22, 0.6);
+            width: 100%; height: 200px;
+            background: rgba(6, 9, 18, 0.55);
             position: relative;
-            display: flex;
-            justify-content: center;
-            align-items: center;
+            display: flex; justify-content: center; align-items: center;
             overflow: hidden;
         }
+        .card-preview::after {
+            content: '';
+            position: absolute; inset: 0;
+            background: radial-gradient(circle at 50% 30%, var(--card-accent-soft), transparent 65%);
+            opacity: 0;
+            transition: opacity 0.4s var(--ease-out);
+        }
+        .template-card:hover .card-preview::after { opacity: 0.5; }
 
-        /* --- Cricket Scorebug Mockup --- */
-        .cr-mockup {
-            width: 88%;
-            display: flex;
-            border-radius: 6px;
+        /* --- Broadcast Scorebug Mockup (Cricket) --- */
+        .bc-mockup {
+            width: 93%;
+            border-radius: 7px;
             overflow: hidden;
             box-shadow: 0 10px 25px rgba(0,0,0,0.8);
             border: 1px solid rgba(255,255,255,0.08);
-            transition: transform 0.4s ease;
-            font-size: 0.62rem;
+            transition: transform 0.5s var(--ease-spring);
+            z-index: 1;
+            font-size: 0.6rem;
         }
-        .template-card:hover .cr-mockup { transform: scale(1.03); }
+        .template-card:hover .bc-mockup { transform: scale(1.035) translateY(-2px); }
 
-        .cr-team {
+        .bc-row-main { display: flex; align-items: stretch; height: 62px; }
+
+        .bc-team {
+            display: flex; align-items: center; justify-content: center;
+            text-align: center;
+            padding: 4px 10px;
+            width: 78px;
+            flex-shrink: 0;
+            color: #ffffff;
+            font-weight: 800;
+            font-size: 0.6rem;
+            line-height: 1.15;
+            letter-spacing: 0.2px;
+        }
+        .bc-team-left {
+            background: linear-gradient(120deg, #5470bd 0%, #16214d 75%);
+            clip-path: polygon(0 0, 100% 0, 86% 100%, 0 100%);
+            padding-right: 16px;
+        }
+        .bc-team-right {
+            background: linear-gradient(120deg, #b23a44 0%, #3b0f14 75%);
+            clip-path: polygon(14% 0, 100% 0, 100% 100%, 0 100%);
+            padding-left: 16px;
+        }
+
+        .bc-score-block {
             background: #0b1329;
-            position: relative;
-            padding: 8px 10px;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            gap: 2px;
+            display: flex; align-items: center; justify-content: center;
+            width: 56px; flex-shrink: 0;
         }
-        .cr-team::before {
-            content: '';
-            position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
-            background: #1c3a8a;
-        }
-        .cr-team-name { font-weight: 700; letter-spacing: 0.5px; color: #f8fafc; font-size: 0.6rem; }
-        .cr-team-score { font-weight: 800; color: #ff7a00; font-size: 1rem; }
-        .cr-team-overs { color: #94a3b8; font-size: 0.55rem; }
+        .bc-score { color: #ffffff; font-weight: 800; font-size: 0.95rem; font-family: 'JetBrains Mono', monospace; }
 
-        .cr-players {
-            background: #101a30;
+        .bc-overs-block {
+            background: linear-gradient(180deg, #f4a83c, #e88a12);
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            width: 48px; flex-shrink: 0;
+            color: #1a1305;
+        }
+        .bc-overs-num { font-weight: 800; font-size: 0.85rem; font-family: 'JetBrains Mono', monospace; line-height: 1; }
+        .bc-overs-label { font-size: 0.42rem; font-weight: 700; letter-spacing: 0.5px; margin-top: 2px; }
+
+        .bc-center {
             flex: 1;
-            padding: 8px 10px;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            gap: 4px;
+            background: linear-gradient(180deg, #e7e9ee, #d7dae2);
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 10px;
+            min-width: 0;
         }
-        .cr-player-row { display: flex; justify-content: space-between; color: #f8fafc; font-weight: 600; }
-        .cr-player-row span:last-child { color: #94a3b8; font-variant-numeric: tabular-nums; }
-        .cr-player-row.on-strike span:first-child::before { content: '● '; color: #ff7a00; }
+        .bc-batsmen { display: flex; flex-direction: column; gap: 2px; }
+        .bc-batsman { display: flex; align-items: baseline; gap: 5px; white-space: nowrap; }
+        .bc-batsman span:first-child { color: #111827; font-weight: 700; font-size: 0.52rem; }
+        .bc-batsman b { color: #2563eb; font-weight: 800; font-size: 0.58rem; }
+        .bc-batsman .bc-balls { color: #4b5563; font-weight: 600; font-size: 0.48rem; }
 
-        .cr-bowler {
-            background: #0b1329;
-            padding: 8px 10px;
+        .bc-crr { text-align: center; padding: 0 8px; }
+        .bc-crr-label { color: #4b5563; font-size: 0.38rem; font-weight: 700; letter-spacing: 0.4px; }
+        .bc-crr-value { color: #2563eb; font-weight: 800; font-size: 0.78rem; font-family: 'JetBrains Mono', monospace; margin-top: 1px; }
+
+        .bc-last5 { color: #6b7280; font-size: 0.4rem; font-weight: 700; letter-spacing: 0.4px; text-align: right; white-space: nowrap; }
+
+        .bc-row-stats {
             display: flex;
-            flex-direction: column;
-            justify-content: center;
+            background: linear-gradient(180deg, #0c1220, #05070c);
+            border-top: 1px solid rgba(255,255,255,0.05);
+        }
+        .bc-stat {
+            flex: 1;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            padding: 6px 4px;
             gap: 2px;
-            min-width: 62px;
+            border-right: 1px solid rgba(255,255,255,0.05);
         }
-        .cr-bowler-name { font-weight: 700; color: #f8fafc; font-size: 0.58rem; }
-        .cr-bowler-figs { font-weight: 800; color: #ff7a00; font-size: 0.85rem; }
+        .bc-stat:last-child { border-right: none; }
+        .bc-stat-label { color: #7c8aa5; font-size: 0.36rem; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; }
+        .bc-stat-value { color: #f8fafc; font-size: 0.56rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
 
-        /* --- Global Add Overlay Hover Button (For ALL Cards) --- */
+        /* --- Add Overlay Button (magnetic, all cards) --- */
         .add-overlay-btn {
             position: absolute;
-            background: var(--accent);
+            background: var(--card-accent);
             color: white;
             border: none;
             padding: 10px 22px;
             border-radius: 30px;
-            font-size: 0.85rem;
-            font-weight: 600;
-            cursor: pointer;
-            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.55);
+            font-size: 0.85rem; font-weight: 600;
+            font-family: inherit;
+            box-shadow: 0 4px 20px var(--card-accent-soft);
             text-decoration: none;
             opacity: 0;
-            top: 50%;
-            left: 50%;
+            top: 50%; left: 50%;
             transform: translate(-50%, -30%);
-            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            transition: opacity 0.3s var(--ease-spring), background 0.2s, transform 0.05s linear;
             z-index: 10;
             pointer-events: none;
+            display: inline-flex; align-items: center; gap: 6px;
         }
         .template-card:hover .add-overlay-btn {
             opacity: 1;
             transform: translate(-50%, -50%);
             pointer-events: auto;
+            transition: opacity 0.3s var(--ease-spring), transform 0.4s var(--ease-spring), background 0.2s;
         }
-        .add-overlay-btn:hover { background: var(--accent-hover); transform: translate(-50%, -50%) scale(1.05); }
+        .add-overlay-btn:hover { background: var(--accent-hover); }
+        .add-overlay-btn:active { filter: brightness(0.9); }
 
         .card-footer {
             padding: 16px 20px;
             text-align: center;
-            font-size: 1.05rem;
-            font-weight: 700;
+            font-size: 1.05rem; font-weight: 700;
             color: var(--text-main);
-            letter-spacing: 0.3px;
+            letter-spacing: 0.2px;
             border-bottom: 1px solid var(--border-color);
         }
 
+        /* Page-exit veil for cinematic navigation */
+        .page-veil {
+            position: fixed; inset: 0;
+            background: var(--bg-void);
+            z-index: 99999;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.32s var(--ease-out);
+        }
+        .page-veil.active { opacity: 1; pointer-events: auto; }
+
         @media (max-width: 900px) {
             .templates-grid { grid-template-columns: 1fr; }
+            .search-box-wrap { width: 100%; }
+            .search-filter-bar { flex-direction: column; align-items: stretch; }
+            .filter-btn { justify-content: center; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+            .ambient-blob { animation: none; }
+            .template-card { transform: none !important; }
         }
     </style>
 </head>
 <body>
 
+    <div class="page-veil" id="pageVeil"></div>
+
+    <div class="cursor-ring" id="cursorRing"></div>
+    <div class="cursor-dot" id="cursorDot"></div>
+
     <div class="bg-animations">
         <video autoplay muted loop playsinline class="bg-video">
             <source src="cricket video.mp4" type="video/mp4">
         </video>
+        <div class="ambient-blob blob-a"></div>
+        <div class="ambient-blob blob-b"></div>
+        <div class="bg-scrim"></div>
     </div>
+    <div class="noise-overlay"></div>
 
-    <div class="top-nav">
-        <button class="back-btn" onclick="history.back()">←</button>
+    <div class="top-nav" id="topNav">
+        <button class="back-btn" onclick="scorvixNavigate(null, () => history.back())" aria-label="Go back">←</button>
         <div class="header-title-group">
-            <span class="step-indicator">Step 2 of 5</span>
-            <h1>🏏 Select an Overlay for Cricket</h1>
+            <span class="step-indicator"><span class="live-dot"></span>Step 2 of 5</span>
+            <h1><span class="emoji-pop">🏏</span> Select an Overlay for Cricket</h1>
             <p>Choose the overlay design you want to use for your stream</p>
         </div>
     </div>
 
-    <div class="search-filter-bar">
-        <input type="text" class="search-box" placeholder="Search from 1 Overlay">
+    <div class="search-filter-bar" id="searchBar">
+        <div class="search-box-wrap">
+            <input type="text" class="search-box" id="searchBox" placeholder="Search from 1 Overlay" autocomplete="off">
+            <span class="search-kbd">/</span>
+        </div>
         <button class="filter-btn">⚙️ Filter</button>
     </div>
 
-    <div class="templates-grid">
+    <div class="templates-grid" id="templatesGrid">
 
         <!-- 1. Broadcast Scorebug Template -->
-        <div class="template-card">
+        <div class="template-card" data-title="Broadcast Scorebug" data-accent="blue" style="--card-accent:var(--accent); --card-accent-soft:var(--accent-soft);">
             <div class="card-footer">
                 Broadcast Scorebug
             </div>
             <div class="card-preview">
-                <div class="cr-mockup">
-                    <div class="cr-team">
-                        <div class="cr-team-name">IND</div>
-                        <div class="cr-team-score">189-2</div>
-                        <div class="cr-team-overs">17.3 ov</div>
+                <div class="bc-mockup">
+                    <div class="bc-row-main">
+                        <div class="bc-team bc-team-left">Mumbai<br>Indians</div>
+                        <div class="bc-score-block"><div class="bc-score">0-0</div></div>
+                        <div class="bc-overs-block">
+                            <div class="bc-overs-num">0.0</div>
+                            <div class="bc-overs-label">OVERS</div>
+                        </div>
+                        <div class="bc-center">
+                            <div class="bc-batsmen">
+                                <div class="bc-batsman"><span>S. Yadav</span><b>0*</b><span class="bc-balls">0</span></div>
+                                <div class="bc-batsman"><span>V. Kohli</span><b>0</b><span class="bc-balls">0</span></div>
+                            </div>
+                            <div class="bc-crr">
+                                <div class="bc-crr-label">CURRENT RUN RATE</div>
+                                <div class="bc-crr-value">0.00</div>
+                            </div>
+                            <div class="bc-last5">LAST 5<br>OVERS</div>
+                        </div>
+                        <div class="bc-team bc-team-right">Royal<br>Challengers<br>Bengaluru</div>
                     </div>
-                    <div class="cr-players">
-                        <div class="cr-player-row on-strike"><span>Suryakumar</span><span>19 (9)</span></div>
-                        <div class="cr-player-row"><span>Gaikwad</span><span>52 (40)</span></div>
-                    </div>
-                    <div class="cr-bowler">
-                        <div class="cr-bowler-name">Ellis</div>
-                        <div class="cr-bowler-figs">1-24</div>
-                        <div class="cr-team-overs">2.3 ov</div>
+                    <div class="bc-row-stats">
+                        <div class="bc-stat"><span class="bc-stat-label">Partnership</span><span class="bc-stat-value">0 (0)</span></div>
+                        <div class="bc-stat"><span class="bc-stat-label">Run Rate</span><span class="bc-stat-value">0.00</span></div>
+                        <div class="bc-stat"><span class="bc-stat-label">Balls Rem.</span><span class="bc-stat-value">120</span></div>
+                        <div class="bc-stat"><span class="bc-stat-label">Req. RR</span><span class="bc-stat-value">—</span></div>
+                        <div class="bc-stat"><span class="bc-stat-label">Live From</span><span class="bc-stat-value">—</span></div>
                     </div>
                 </div>
 
@@ -336,7 +594,157 @@
             </div>
         </div>
 
+        <div class="no-results" id="noResults">
+            <strong>No overlays match "<span id="noResultsQuery"></span>"</strong>
+            Try a different name, or clear the search to see all overlays.
+        </div>
+
     </div>
+
+    <script>
+    (function () {
+        'use strict';
+
+        var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        var fine = window.matchMedia('(pointer: fine)').matches;
+
+        /* ---------------- Cinematic entrance ---------------- */
+        function animateIn(el, delay) {
+            if (reduceMotion) { el.style.opacity = 1; return; }
+            el.style.animation = 'fadeInSlideUp 0.6s ' + delay + 's var(--ease-out) forwards';
+        }
+        animateIn(document.getElementById('topNav'), 0);
+        animateIn(document.getElementById('searchBar'), 0.12);
+
+        var cards = Array.prototype.slice.call(document.querySelectorAll('.template-card'));
+        cards.forEach(function (card, i) {
+            if (reduceMotion) { card.style.opacity = 1; return; }
+            card.style.animation = 'cardIntro 0.7s ' + (0.24 + i * 0.09) + 's var(--ease-spring) forwards';
+        });
+
+        /* ---------------- Custom cursor ---------------- */
+        if (fine && !reduceMotion) {
+            document.body.classList.add('cursor-ready');
+            var dot = document.getElementById('cursorDot');
+            var ring = document.getElementById('cursorRing');
+            var mx = -100, my = -100, rx = -100, ry = -100;
+
+            window.addEventListener('mousemove', function (e) {
+                mx = e.clientX; my = e.clientY;
+                dot.style.transform = 'translate(' + mx + 'px,' + my + 'px) translate(-50%,-50%)';
+            });
+
+            function raf() {
+                rx += (mx - rx) * 0.18;
+                ry += (my - ry) * 0.18;
+                ring.style.transform = 'translate(' + rx + 'px,' + ry + 'px) translate(-50%,-50%)';
+                requestAnimationFrame(raf);
+            }
+            requestAnimationFrame(raf);
+
+            var interactiveSel = 'a, button, input, .template-card';
+            document.addEventListener('mouseover', function (e) {
+                var t = e.target.closest(interactiveSel);
+                if (!t) return;
+                ring.classList.add('hovering');
+                var card = e.target.closest('.template-card');
+                var accent = card ? card.getAttribute('data-accent') : null;
+                if (accent === 'orange') document.documentElement.style.setProperty('--cursor-color', 'var(--accent-orange)');
+                else document.documentElement.style.setProperty('--cursor-color', 'var(--accent)');
+            });
+            document.addEventListener('mouseout', function (e) {
+                var t = e.target.closest(interactiveSel);
+                if (!t) return;
+                ring.classList.remove('hovering');
+                document.documentElement.style.setProperty('--cursor-color', 'var(--accent)');
+            });
+        }
+
+        /* ---------------- 3D tilt + magnetic button per card ---------------- */
+        if (fine && !reduceMotion) {
+            cards.forEach(function (card) {
+                var btn = card.querySelector('.add-overlay-btn');
+
+                card.addEventListener('mousemove', function (e) {
+                    var r = card.getBoundingClientRect();
+                    var px = (e.clientX - r.left) / r.width;
+                    var py = (e.clientY - r.top) / r.height;
+                    var rotY = (px - 0.5) * 10;
+                    var rotX = (0.5 - py) * 10;
+                    card.style.transform = 'perspective(1400px) rotateX(' + rotX + 'deg) rotateY(' + rotY + 'deg) translateY(-4px)';
+
+                    if (btn) {
+                        var br = btn.getBoundingClientRect();
+                        var bcx = br.left + br.width / 2, bcy = br.top + br.height / 2;
+                        var dx = (e.clientX - bcx) * 0.18;
+                        var dy = (e.clientY - bcy) * 0.18;
+                        var dist = Math.hypot(e.clientX - bcx, e.clientY - bcy);
+                        if (dist < 140) {
+                            btn.style.transform = 'translate(calc(-50% + ' + dx + 'px), calc(-50% + ' + dy + 'px))';
+                        }
+                    }
+                });
+
+                card.addEventListener('mouseleave', function () {
+                    card.style.transform = '';
+                    if (btn) btn.style.transform = 'translate(-50%, -50%)';
+                });
+            });
+        }
+
+        /* ---------------- Live search filter ---------------- */
+        var searchBox = document.getElementById('searchBox');
+        var noResults = document.getElementById('noResults');
+        var noResultsQuery = document.getElementById('noResultsQuery');
+
+        function applyFilter() {
+            var q = searchBox.value.trim().toLowerCase();
+            var visible = 0;
+            cards.forEach(function (card) {
+                var title = (card.getAttribute('data-title') || '').toLowerCase();
+                var match = !q || title.indexOf(q) !== -1;
+                card.classList.toggle('hiding', !match);
+                if (match) visible++;
+            });
+            if (visible === 0 && q) {
+                noResultsQuery.textContent = searchBox.value.trim();
+                noResults.classList.add('show');
+            } else {
+                noResults.classList.remove('show');
+            }
+        }
+        searchBox.addEventListener('input', applyFilter);
+
+        document.addEventListener('keydown', function (e) {
+            var tag = document.activeElement && document.activeElement.tagName;
+            if (e.key === '/' && tag !== 'INPUT' && tag !== 'TEXTAREA') {
+                e.preventDefault();
+                searchBox.focus();
+            } else if (e.key === 'Escape' && document.activeElement === searchBox) {
+                searchBox.value = '';
+                applyFilter();
+                searchBox.blur();
+            }
+        });
+
+        /* ---------------- Cinematic navigation veil ---------------- */
+        window.scorvixNavigate = function (href, fallback) {
+            var veil = document.getElementById('pageVeil');
+            if (reduceMotion) { href ? (window.location.href = href) : fallback(); return; }
+            veil.classList.add('active');
+            setTimeout(function () {
+                if (href) window.location.href = href; else fallback();
+            }, 260);
+        };
+
+        document.querySelectorAll('a.add-overlay-btn').forEach(function (a) {
+            a.addEventListener('click', function (e) {
+                e.preventDefault();
+                window.scorvixNavigate(a.getAttribute('href'));
+            });
+        });
+    })();
+    </script>
 
 </body>
 </html>
