@@ -1,410 +1,630 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Scorvix - Select Overlay for Football</title>
-    <link href="https://fonts.googleapis.com/css2?family=Teko:wght@600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --bg-dark: #0f172a;
-            --bg-card: rgba(30, 41, 59, 0.85);
-            --border-color: rgba(255, 255, 255, 0.1);
-            --text-main: #f8fafc;
-            --text-muted: #94a3b8;
-            --accent: #22c55e; 
-            --accent-hover: #16a34a;
-        }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scorvix - Select Overlay for Football</title>
+<link href="https://fonts.googleapis.com/css2?family=Teko:wght@600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+    :root {
+        --bg-dark: #0a0f1a;
+        --bg-card: rgba(30, 41, 59, 0.55);
+        --bg-card-solid: rgba(21, 28, 44, 0.92);
+        --border-color: rgba(255, 255, 255, 0.09);
+        --border-hover: rgba(34, 197, 94, 0.55);
+        --text-main: #f8fafc;
+        --text-muted: #94a3b8;
+        --accent: #22c55e;
+        --accent-2: #16a34a;
+        --accent-glow: rgba(34, 197, 94, 0.35);
+        --radius-lg: 20px;
+        --radius-md: 14px;
+        --ease-premium: cubic-bezier(0.16, 1, 0.3, 1);
+        --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: 'Inter', sans-serif;
-        }
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
 
-        body {
-            /* background-color hatadiya yahan se taaki video background dikhe */
-            color: var(--text-main);
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding: 30px 40px;
-            position: relative;
-            overflow-x: hidden;
-        }
+    html { scroll-behavior: smooth; }
 
-        /* Background Video */
-        .bg-animations {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            z-index: -999;
-            overflow: hidden;
-            background-color: var(--bg-dark);
-            pointer-events: none;
-        }
-        .bg-video {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            min-width: 100%;
-            min-height: 100%;
-            transform: translate(-50%, -50%);
-            object-fit: cover;
-            filter: blur(12px) brightness(0.4);
-            opacity: 0.35;
-        }
+    body {
+        color: var(--text-main);
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 34px 40px 90px;
+        position: relative;
+        overflow-x: hidden;
+        cursor: none;
+    }
 
-        @keyframes fadeInSlideUp {
-            from { opacity: 0; transform: translateY(30px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
+    @media (pointer: coarse) { body { cursor: auto; } }
 
-        /* Header Navigation */
-        .top-nav {
-            width: 100%;
-            max-width: 1200px;
-            display: flex;
-            align-items: center;
-            gap: 20px;
-            margin-bottom: 25px;
-            z-index: 10;
-            animation: fadeInSlideUp 0.6s ease forwards;
-        }
+    ::selection { background: var(--accent-glow); color: #fff; }
 
-        .back-btn {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            color: var(--text-main);
-            padding: 8px 14px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 1rem;
-            transition: 0.2s;
-            backdrop-filter: blur(10px);
-        }
-        .back-btn:hover { background: rgba(255, 255, 255, 0.15); }
+    /* ================= CUSTOM MAGNETIC CURSOR ================= */
+    .cursor-dot, .cursor-ring {
+        position: fixed;
+        top: 0; left: 0;
+        pointer-events: none;
+        z-index: 9999;
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        will-change: transform;
+    }
+    .cursor-dot { width: 6px; height: 6px; background: var(--accent); }
+    .cursor-ring {
+        width: 34px; height: 34px;
+        border: 1.5px solid rgba(34, 197, 94, 0.55);
+        background: rgba(34, 197, 94, 0.06);
+        transition: width .25s var(--ease-premium), height .25s var(--ease-premium),
+                    background .25s var(--ease-premium), border-color .25s var(--ease-premium);
+    }
+    .cursor-ring.is-active { width: 62px; height: 62px; background: rgba(34, 197, 94, 0.12); border-color: var(--accent); }
+    @media (pointer: coarse) { .cursor-dot, .cursor-ring { display: none; } }
 
-        .header-title-group h1 {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: var(--text-main);
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .header-title-group p { font-size: 0.85rem; color: var(--text-muted); margin-top: 2px; }
-        .step-indicator { font-size: 0.75rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.5px; }
+    /* ================= AMBIENT LIVING BACKGROUND ================= */
+    .bg-animations {
+        position: fixed; inset: 0;
+        z-index: -999;
+        overflow: hidden;
+        background-color: var(--bg-dark);
+        pointer-events: none;
+    }
+    .bg-video {
+        position: absolute; top: 50%; left: 50%;
+        min-width: 100%; min-height: 100%;
+        transform: translate(-50%, -50%);
+        object-fit: cover;
+        filter: blur(14px) brightness(0.35) saturate(1.1);
+        opacity: 0.32;
+    }
+    .bg-vignette {
+        position: absolute; inset: 0;
+        background: radial-gradient(ellipse at center, transparent 0%, rgba(10, 15, 26, 0.55) 68%, rgba(10, 15, 26, 0.92) 100%);
+    }
+    .bg-orb {
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(90px);
+        opacity: 0.35;
+        will-change: transform;
+    }
+    .bg-orb.o1 { width: 480px; height: 480px; background: radial-gradient(circle, #22c55e, transparent 70%); top: -140px; left: -120px; animation: driftA 22s ease-in-out infinite; }
+    .bg-orb.o2 { width: 420px; height: 420px; background: radial-gradient(circle, #0284c7, transparent 70%); bottom: -160px; right: -100px; animation: driftB 26s ease-in-out infinite; }
+    .bg-orb.o3 { width: 300px; height: 300px; background: radial-gradient(circle, #dc2626, transparent 70%); top: 40%; left: 60%; opacity: 0.18; animation: driftC 30s ease-in-out infinite; }
 
-        /* Template Single Container */
-        .templates-grid {
-            width: 100%;
-            max-width: 1500px;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 26px;
-            justify-content: center;
-            z-index: 10;
-            animation: fadeInSlideUp 0.6s ease 0.3s forwards;
-            opacity: 0;
-            margin-top: 20px;
-        }
+    @keyframes driftA { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(60px, 40px) scale(1.15); } }
+    @keyframes driftB { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(-50px, -30px) scale(1.1); } }
+    @keyframes driftC { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(-40px, 50px) scale(1.25); } }
 
-        .template-card {
-            width: 700px;
-            max-width: 100%;
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: 16px;
-            overflow: hidden;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-            transition: all 0.3s ease;
-            backdrop-filter: blur(10px);
-            position: relative; 
-        }
-        
-        .template-card:hover {
-            transform: translateY(-6px);
-            box-shadow: 0 12px 25px rgba(34, 197, 94, 0.25);
-            border-color: var(--accent);
-        }
+    .grain { position: absolute; inset: 0; opacity: 0.025; mix-blend-mode: overlay;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
 
-        .card-preview {
-            width: 100%;
-            height: 190px;
-            background: rgba(9, 13, 22, 0.6);
-            position: relative;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            overflow: hidden;
-        }
+    @keyframes fadeInSlideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 
-        /* --- Scoreboard Mockup UI --- */
-        .mock-scoreboard-container {
-            display: flex;
-            align-items: center;
-            background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.95));
-            border-radius: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
-            overflow: hidden;
-            transition: transform 0.4s ease;
-        }
-        .template-card:hover .mock-scoreboard-container { transform: scale(1.03); }
+    /* ================= TOP NAV (glass) ================= */
+    .top-nav {
+        width: 100%; max-width: 1200px;
+        display: flex; align-items: center; gap: 20px;
+        margin-bottom: 22px;
+        z-index: 10;
+        opacity: 0;
+    }
 
-        .mock-team-block {
-            display: flex;
-            align-items: center;
-            padding: 0 14px;
-            height: 48px;
-            gap: 10px;
-        }
-        .mock-team-block.left { background: linear-gradient(90deg, rgba(2, 132, 199, 0.25), transparent); }
-        .mock-team-block.right { background: linear-gradient(-90deg, rgba(220, 38, 38, 0.25), transparent); flex-direction: row-reverse; }
+    .back-btn {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        color: var(--text-main);
+        width: 40px; height: 40px;
+        border-radius: 12px;
+        cursor: none;
+        font-size: 1.05rem;
+        display: flex; align-items: center; justify-content: center;
+        transition: background .25s var(--ease-premium), border-color .25s var(--ease-premium), transform .2s var(--ease-spring);
+        backdrop-filter: blur(16px) saturate(160%);
+        -webkit-backdrop-filter: blur(16px) saturate(160%);
+    }
+    @media (pointer: coarse) { .back-btn { cursor: pointer; } }
+    .back-btn:hover { background: rgba(255, 255, 255, 0.14); border-color: var(--border-hover); }
+    .back-btn:active { transform: scale(0.92); }
 
-        .mock-logo-box {
-            width: 24px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .mock-logo-box img { width: 22px; height: 22px; object-fit: contain; }
+    .header-title-group h1 {
+        font-size: 1.5rem; font-weight: 700; color: var(--text-main);
+        display: flex; align-items: center; gap: 10px;
+        letter-spacing: -0.02em;
+    }
+    .header-title-group p { font-size: 0.85rem; color: var(--text-muted); margin-top: 3px; }
+    .step-indicator {
+        font-size: 0.7rem; font-weight: 700; color: var(--accent);
+        text-transform: uppercase; letter-spacing: 1.2px;
+        display: inline-flex; align-items: center; gap: 6px;
+    }
+    .step-indicator::before {
+        content: ''; width: 5px; height: 5px; border-radius: 50%;
+        background: var(--accent); box-shadow: 0 0 8px var(--accent);
+        animation: blink 1.8s ease-in-out infinite;
+    }
 
-        .mock-team-name {
-            font-size: 15px;
-            font-weight: 800;
-            color: #ffffff;
-            letter-spacing: 0.5px;
-            text-transform: uppercase;
-        }
+    /* ================= SEARCH / FILTER BAR (glass) ================= */
+    .search-filter-bar {
+        width: 100%; max-width: 1200px;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        padding: 13px 18px;
+        display: flex; justify-content: space-between; align-items: center; gap: 14px;
+        margin-bottom: 30px;
+        backdrop-filter: blur(18px) saturate(160%);
+        -webkit-backdrop-filter: blur(18px) saturate(160%);
+        z-index: 10;
+        opacity: 0;
+        transition: border-color .3s var(--ease-premium), box-shadow .3s var(--ease-premium);
+    }
+    .search-filter-bar:focus-within { border-color: var(--border-hover); box-shadow: 0 0 0 4px var(--accent-glow); }
 
-        .mock-score-box {
-            color: white;
-            font-family: 'Teko', sans-serif;
-            font-size: 34px; 
-            padding: 0 16px;
-            height: 48px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-width: 48px;
-        }
-        .mock-score-box.left-score { background: #0284c7; }
-        .mock-score-box.right-score { background: #dc2626; }
+    .search-box-wrap { position: relative; width: 62%; display: flex; align-items: center; }
+    .search-box-wrap svg { position: absolute; left: 13px; width: 15px; height: 15px; color: var(--text-muted); pointer-events: none; }
+    .search-box {
+        width: 100%;
+        background: rgba(9, 13, 22, 0.55);
+        border: 1px solid var(--border-color);
+        border-radius: 9px;
+        padding: 10px 14px 10px 36px;
+        color: var(--text-main);
+        font-size: 0.9rem;
+        outline: none;
+        transition: border-color .2s var(--ease-premium), background .2s var(--ease-premium);
+    }
+    .search-box::placeholder { color: var(--text-muted); }
+    .search-box:focus { border-color: var(--accent); background: rgba(9, 13, 22, 0.8); }
+    .kbd-hint {
+        position: absolute; right: 10px;
+        font-size: 0.65rem; color: var(--text-muted);
+        border: 1px solid var(--border-color); border-radius: 5px;
+        padding: 2px 6px; pointer-events: none;
+        background: rgba(255,255,255,0.03);
+    }
 
-        .mock-timer-center {
-            color: #f8fafc;
-            font-family: 'Teko', sans-serif;
-            font-size: 26px;
-            height: 48px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            background: #0b1329;
-            border-left: 1px solid rgba(255,255,255,0.1);
-            border-right: 1px solid rgba(255,255,255,0.1);
-            width: 85px;
-            letter-spacing: 1px;
-        }
+    .filter-btn {
+        background: transparent;
+        border: 1px solid var(--border-color);
+        padding: 10px 16px;
+        border-radius: 9px;
+        cursor: none;
+        font-size: 0.85rem;
+        color: var(--text-main);
+        display: flex; align-items: center; gap: 8px;
+        transition: background .2s var(--ease-premium), border-color .2s var(--ease-premium), transform .2s var(--ease-spring);
+        white-space: nowrap;
+    }
+    @media (pointer: coarse) { .filter-btn { cursor: pointer; } }
+    .filter-btn:hover { background: rgba(255, 255, 255, 0.08); border-color: var(--border-hover); }
+    .filter-btn:active { transform: scale(0.95); }
 
-        .mock-timer-center span.live-dot {
-            font-size: 9px;
-            color: #ef4444;
-            text-transform: uppercase;
-            font-family: 'Inter', sans-serif;
-            font-weight: 800;
-            letter-spacing: 1px;
-            margin-top: -6px;
-        }
+    /* ================= TEMPLATE GRID ================= */
+    .templates-grid {
+        width: 100%; max-width: 1200px;
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 26px;
+        z-index: 10;
+    }
 
-        /* --- Match Intro Mockup UI --- */
-        .mock-matchintro-container {
-            width: 88%;
-            max-width: 300px;
-            background: rgba(10, 13, 24, 0.9);
-            border: 1px solid rgba(255, 255, 255, 0.14);
-            border-radius: 14px;
-            overflow: hidden;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
-            transition: transform 0.4s ease;
-        }
-        .template-card:hover .mock-matchintro-container { transform: scale(1.03); }
+    .template-card {
+        --mx: 50%; --my: 50%;
+        background: var(--bg-card-solid);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+        backdrop-filter: blur(20px) saturate(160%);
+        -webkit-backdrop-filter: blur(20px) saturate(160%);
+        position: relative;
+        opacity: 0;
+        transform-style: preserve-3d;
+        perspective: 900px;
+        transition: box-shadow .35s var(--ease-premium), border-color .35s var(--ease-premium);
+        will-change: transform;
+    }
 
-        .mi-league-pill {
-            background: rgba(5, 6, 10, 0.7);
-            text-align: center;
-            padding: 10px 14px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            font-size: 10px;
-            font-weight: 800;
-            letter-spacing: 1.5px;
-            text-transform: uppercase;
-            color: #ffffff;
-        }
-        .mi-chev { color: #3fd6ea; font-size: 11px; font-weight: 800; }
+    .template-card::before {
+        content: '';
+        position: absolute; inset: 0;
+        background: radial-gradient(420px circle at var(--mx) var(--my), rgba(34, 197, 94, 0.16), transparent 65%);
+        opacity: 0;
+        transition: opacity .35s ease;
+        pointer-events: none;
+        z-index: 2;
+    }
+    .template-card:hover::before { opacity: 1; }
 
-        .mi-body {
-            display: grid;
-            grid-template-columns: 1fr auto 1fr;
-            align-items: center;
-            padding: 22px 16px;
-        }
-        .mi-team { display: flex; justify-content: center; }
-        .mi-logo-frame {
-            width: 46px;
-            height: 46px;
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: linear-gradient(160deg, rgba(255,255,255,.14), rgba(255,255,255,.03));
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            padding: 6px;
-        }
-        .mi-logo-frame img { max-width: 100%; max-height: 100%; object-fit: contain; }
-        .mi-divider { width: 1px; height: 42px; background: linear-gradient(to bottom, transparent, #3fd6ea, transparent); margin: 0 18px; }
+    .template-card:hover {
+        box-shadow: 0 20px 45px rgba(34, 197, 94, 0.22), 0 4px 20px rgba(0,0,0,0.4);
+        border-color: var(--border-hover);
+    }
 
-        .mi-footer-bar { background: linear-gradient(90deg, #1c8a4a, #c41c2e); text-align: center; padding: 8px 14px; }
-        .mi-footer-bar span { color: #ffffff; font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+    .template-card.is-hidden { display: none; }
 
-        /* --- Add Overlay Button --- */
-        .add-overlay-btn {
-            position: absolute;
-            background: var(--accent);
-            color: white;
-            border: none;
-            padding: 12px 26px;
-            border-radius: 30px;
-            font-size: 0.95rem;
-            font-weight: 600;
-            cursor: pointer;
-            box-shadow: 0 4px 15px rgba(34, 197, 94, 0.5);
-            text-decoration: none;
-            opacity: 0;
-            top: 50%; 
-            left: 50%; 
-            transform: translate(-50%, -30%); 
-            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-            z-index: 10;
-            pointer-events: none; 
-        }
-        .template-card:hover .add-overlay-btn { 
-            opacity: 1; 
-            transform: translate(-50%, -50%); 
-            pointer-events: auto; 
-        }
-        .add-overlay-btn:hover { background: var(--accent-hover); transform: translate(-50%, -50%) scale(1.05); }
+    .card-footer {
+        padding: 16px 20px;
+        text-align: center;
+        font-size: 1.05rem;
+        font-weight: 700;
+        color: var(--text-main);
+        letter-spacing: 0.3px;
+        border-bottom: 1px solid var(--border-color);
+        position: relative;
+        z-index: 3;
+    }
 
-        .card-footer {
-            padding: 16px 20px;
-            text-align: center;
-            font-size: 1.1rem;
-            font-weight: 700;
-            color: var(--text-main);
-            letter-spacing: 0.3px;
-            border-bottom: 1px solid var(--border-color);
-        }
-    </style>
+    .card-preview {
+        width: 100%;
+        height: 200px;
+        background:
+            radial-gradient(circle at 30% 20%, rgba(34,197,94,0.06), transparent 55%),
+            rgba(6, 9, 16, 0.65);
+        position: relative;
+        display: flex; justify-content: center; align-items: center;
+        overflow: hidden;
+    }
+
+    /* --- Scoreboard Mockup --- */
+    .mock-scoreboard-container {
+        display: flex; align-items: center;
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.95));
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+        overflow: hidden;
+        transition: transform .5s var(--ease-premium);
+        transform: translateZ(20px);
+    }
+    .template-card:hover .mock-scoreboard-container { transform: translateZ(30px) scale(1.04); }
+
+    .mock-team-block { display: flex; align-items: center; padding: 0 14px; height: 48px; gap: 10px; }
+    .mock-team-block.left { background: linear-gradient(90deg, rgba(2, 132, 199, 0.25), transparent); }
+    .mock-team-block.right { background: linear-gradient(-90deg, rgba(220, 38, 38, 0.25), transparent); flex-direction: row-reverse; }
+
+    .mock-logo-box { width: 24px; display: flex; align-items: center; justify-content: center; }
+    .mock-logo-box img { width: 22px; height: 22px; object-fit: contain; }
+
+    .mock-team-name { font-size: 15px; font-weight: 800; color: #ffffff; letter-spacing: 0.5px; text-transform: uppercase; }
+
+    .mock-score-box {
+        color: white; font-family: 'Teko', sans-serif; font-size: 34px;
+        padding: 0 16px; height: 48px;
+        display: flex; align-items: center; justify-content: center; min-width: 48px;
+        transition: transform .25s var(--ease-spring);
+    }
+    .mock-score-box.left-score { background: #0284c7; }
+    .mock-score-box.right-score { background: #dc2626; }
+    .template-card:hover .mock-score-box { transform: scale(1.08); }
+
+    .mock-timer-center {
+        color: #f8fafc; font-family: 'Teko', sans-serif; font-size: 26px; height: 48px;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        background: #0b1329;
+        border-left: 1px solid rgba(255,255,255,0.1);
+        border-right: 1px solid rgba(255,255,255,0.1);
+        width: 85px; letter-spacing: 1px;
+    }
+    .mock-timer-center span.live-dot {
+        font-size: 9px; color: #ef4444; text-transform: uppercase;
+        font-family: 'Inter', sans-serif; font-weight: 800; letter-spacing: 1px; margin-top: -6px;
+        animation: blink 1.6s ease-in-out infinite;
+    }
+
+    /* --- Match Intro Mockup --- */
+    .mock-matchintro-container {
+        width: 88%; max-width: 300px;
+        background: rgba(10, 13, 24, 0.9);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+        transition: transform .5s var(--ease-premium);
+        transform: translateZ(20px);
+    }
+    .template-card:hover .mock-matchintro-container { transform: translateZ(30px) scale(1.04); }
+
+    .mi-league-pill {
+        background: rgba(5, 6, 10, 0.7);
+        text-align: center; padding: 10px 14px;
+        display: flex; align-items: center; justify-content: center; gap: 8px;
+        font-size: 10px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: #ffffff;
+    }
+    .mi-chev { color: #3fd6ea; font-size: 11px; font-weight: 800; }
+
+    .mi-body { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 22px 16px; }
+    .mi-team { display: flex; justify-content: center; }
+    .mi-logo-frame {
+        width: 46px; height: 46px; border-radius: 10px;
+        display: flex; align-items: center; justify-content: center;
+        background: linear-gradient(160deg, rgba(255,255,255,.14), rgba(255,255,255,.03));
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        padding: 6px;
+    }
+    .mi-logo-frame img { max-width: 100%; max-height: 100%; object-fit: contain; }
+    .mi-divider { width: 1px; height: 42px; background: linear-gradient(to bottom, transparent, #3fd6ea, transparent); margin: 0 18px; }
+
+    .mi-footer-bar { background: linear-gradient(90deg, #1c8a4a, #c41c2e); text-align: center; padding: 8px 14px; }
+    .mi-footer-bar span { color: #ffffff; font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+
+    /* --- Add Overlay Button (magnetic) --- */
+    .add-overlay-btn-wrap {
+        position: absolute; inset: 0;
+        display: flex; align-items: center; justify-content: center;
+        pointer-events: none;
+        z-index: 4;
+    }
+    .add-overlay-btn {
+        background: var(--accent);
+        color: white; border: none;
+        padding: 12px 26px;
+        border-radius: 30px;
+        font-size: 0.95rem; font-weight: 600;
+        cursor: none;
+        box-shadow: 0 4px 15px rgba(34, 197, 94, 0.5);
+        text-decoration: none;
+        opacity: 0;
+        transform: scale(0.7) translateY(10px);
+        transition: opacity .35s var(--ease-premium), background .2s ease, box-shadow .3s ease;
+        pointer-events: none;
+        display: inline-flex; align-items: center; gap: 6px;
+        will-change: transform;
+    }
+    @media (pointer: coarse) { .add-overlay-btn { cursor: pointer; } }
+    .template-card:hover .add-overlay-btn { opacity: 1; pointer-events: auto; }
+    .add-overlay-btn:hover { background: var(--accent-2); box-shadow: 0 6px 22px rgba(34, 197, 94, 0.65); }
+
+    .no-results {
+        width: 100%; max-width: 1200px;
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--text-muted);
+        font-size: 0.95rem;
+        display: none;
+    }
+    .no-results.show { display: block; }
+
+    @media (max-width: 900px) {
+        .templates-grid { grid-template-columns: 1fr; }
+        .search-box-wrap { width: 100%; }
+        .search-filter-bar { flex-wrap: wrap; }
+        body { padding: 24px 18px 70px; cursor: auto; }
+        .kbd-hint { display: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+    }
+</style>
 </head>
 <body>
 
-    <!-- Background Video -->
-    <div class="bg-animations">
-        <video autoplay muted loop playsinline class="bg-video">
-            <source src="football.mp4" type="video/mp4">
-        </video>
+<div class="cursor-dot" id="cursorDot"></div>
+<div class="cursor-ring" id="cursorRing"></div>
+
+<div class="bg-animations">
+    <video autoplay muted loop playsinline class="bg-video">
+        <source src="football.mp4" type="video/mp4">
+    </video>
+    <div class="bg-orb o1"></div>
+    <div class="bg-orb o2"></div>
+    <div class="bg-orb o3"></div>
+    <div class="bg-vignette"></div>
+    <div class="grain"></div>
+</div>
+
+<div class="top-nav">
+    <button class="back-btn" onclick="history.back()" data-magnetic aria-label="Go back">←</button>
+    <div class="header-title-group">
+        <span class="step-indicator">Step 2 of 5</span>
+        <h1>⚽ Select Overlay for Football</h1>
+        <p>Choose the football scoreboard template for your stream</p>
     </div>
+</div>
 
-    <div class="top-nav">
-        <button class="back-btn" onclick="history.back()">←</button>
-        <div class="header-title-group">
-            <span class="step-indicator">Step 2 of 5</span>
-            <h1>⚽ Select Overlay for Football</h1>
-            <p>Choose the football scoreboard template for your stream</p>
-        </div>
+<div class="search-filter-bar">
+    <div class="search-box-wrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" class="search-box" id="searchBox" placeholder="Search from 2 overlays">
+        <span class="kbd-hint">/</span>
     </div>
+    <button class="filter-btn" data-magnetic>⚙️ Filter</button>
+</div>
 
-    <div class="templates-grid">
-        <!-- Single Football Scoreboard Template -->
-        <div class="template-card">
-            <div class="card-footer">
-                Football Elite Scoreboard
-            </div>
-            <div class="card-preview">
-                <!-- Scoreboard Mockup UI -->
-                <div class="mock-scoreboard-container">
-                    <div class="mock-team-block left">
-                        <div class="mock-logo-box"><img src="https://upload.wikimedia.org/wikipedia/en/thumb/5/56/Real_Madrid_CF.svg/150px-Real_Madrid_CF.svg.png" alt="Real Madrid" onerror="this.onerror=null;this.style.display='none';"></div>
-                        <div class="mock-team-name">REAL MADRID</div>
-                    </div>
-                    <div class="mock-score-box left-score">0</div>
+<div class="templates-grid" id="templatesGrid">
 
-                    <div class="mock-timer-center">
-                        <div>00:00</div>
-                        <span class="live-dot">● LIVE</span>
-                    </div>
-
-                    <div class="mock-score-box right-score">0</div>
-                    <div class="mock-team-block right">
-                        <div class="mock-logo-box"><img src="https://upload.wikimedia.org/wikipedia/en/4/47/FC_Barcelona_%28crest%29.svg" alt="Barcelona"></div>
-                        <div class="mock-team-name">BARCELONA</div>
-                    </div>
+    <!-- Football Elite Scoreboard -->
+    <div class="template-card" data-name="Football Elite Scoreboard">
+        <div class="card-footer">Football Elite Scoreboard</div>
+        <div class="card-preview">
+            <div class="mock-scoreboard-container">
+                <div class="mock-team-block left">
+                    <div class="mock-logo-box"><img src="https://upload.wikimedia.org/wikipedia/en/thumb/5/56/Real_Madrid_CF.svg/150px-Real_Madrid_CF.svg.png" alt="Real Madrid" onerror="this.onerror=null;this.style.display='none';"></div>
+                    <div class="mock-team-name">REAL MADRID</div>
                 </div>
-                
-                <!-- Add Overlay Button with UID forward -->
-                <a id="addOverlayBtn" href="football-panel.html" class="add-overlay-btn">➕ Add Overlay</a>
-            </div>
-        </div>
+                <div class="mock-score-box left-score">0</div>
 
-        <!-- Football Match Intro Template -->
-        <div class="template-card">
-            <div class="card-footer">
-                Football Match Intro
-            </div>
-            <div class="card-preview">
-                <!-- Match Intro Mockup UI -->
-                <div class="mock-matchintro-container">
-                    <div class="mi-league-pill">
-                        <span class="mi-chev">›</span>
-                        <span>LAKERS CUP PLAYOFFS</span>
-                        <span class="mi-chev" style="transform: scaleX(-1);">›</span>
-                    </div>
-                    <div class="mi-body">
-                        <div class="mi-team">
-                            <div class="mi-logo-frame"><img src="https://upload.wikimedia.org/wikipedia/en/thumb/5/56/Real_Madrid_CF.svg/150px-Real_Madrid_CF.svg.png" alt="Team A" onerror="this.onerror=null;this.style.display='none';"></div>
-                        </div>
-                        <div class="mi-divider"></div>
-                        <div class="mi-team">
-                            <div class="mi-logo-frame"><img src="https://upload.wikimedia.org/wikipedia/en/4/47/FC_Barcelona_%28crest%29.svg" alt="Team B"></div>
-                        </div>
-                    </div>
-                    <div class="mi-footer-bar"><span>Tomorrow, 8PM EST</span></div>
+                <div class="mock-timer-center">
+                    <div>00:00</div>
+                    <span class="live-dot">● LIVE</span>
                 </div>
 
-                <!-- Add Overlay Button with UID forward -->
-                <a id="addOverlayBtnIntro" href="football-matchintro-panel.html" class="add-overlay-btn">➕ Add Overlay</a>
+                <div class="mock-score-box right-score">0</div>
+                <div class="mock-team-block right">
+                    <div class="mock-logo-box"><img src="https://upload.wikimedia.org/wikipedia/en/4/47/FC_Barcelona_%28crest%29.svg" alt="Barcelona"></div>
+                    <div class="mock-team-name">BARCELONA</div>
+                </div>
+            </div>
+
+            <div class="add-overlay-btn-wrap">
+                <a id="addOverlayBtn" href="football-panel.html" class="add-overlay-btn" data-magnetic>➕ Add Overlay</a>
             </div>
         </div>
     </div>
 
-    <script>
-        // URL se 'uid' extract karke panel link me pass karna taki session/room break na ho
-        const urlParams = new URLSearchParams(window.location.search);
-        const uid = urlParams.get('uid');
+    <!-- Football Match Intro -->
+    <div class="template-card" data-name="Football Match Intro">
+        <div class="card-footer">Football Match Intro</div>
+        <div class="card-preview">
+            <div class="mock-matchintro-container">
+                <div class="mi-league-pill">
+                    <span class="mi-chev">›</span>
+                    <span>LAKERS CUP PLAYOFFS</span>
+                    <span class="mi-chev" style="transform: scaleX(-1);">›</span>
+                </div>
+                <div class="mi-body">
+                    <div class="mi-team">
+                        <div class="mi-logo-frame"><img src="https://upload.wikimedia.org/wikipedia/en/thumb/5/56/Real_Madrid_CF.svg/150px-Real_Madrid_CF.svg.png" alt="Team A" onerror="this.onerror=null;this.style.display='none';"></div>
+                    </div>
+                    <div class="mi-divider"></div>
+                    <div class="mi-team">
+                        <div class="mi-logo-frame"><img src="https://upload.wikimedia.org/wikipedia/en/4/47/FC_Barcelona_%28crest%29.svg" alt="Team B"></div>
+                    </div>
+                </div>
+                <div class="mi-footer-bar"><span>Tomorrow, 8PM EST</span></div>
+            </div>
 
-        if (uid) {
-            document.getElementById('addOverlayBtn').href = `football-panel.html?uid=${uid}`;
-            document.getElementById('addOverlayBtnIntro').href = `football-matchintro-panel.html?uid=${uid}`;
+            <div class="add-overlay-btn-wrap">
+                <a id="addOverlayBtnIntro" href="football-matchintro-panel.html" class="add-overlay-btn" data-magnetic>➕ Add Overlay</a>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<p class="no-results" id="noResults">No overlays match your search.</p>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script>
+(function () {
+    "use strict";
+
+    /* ============ preserve original business logic: uid forwarding ============ */
+    const urlParams = new URLSearchParams(window.location.search);
+    const uid = urlParams.get('uid');
+    if (uid) {
+        document.getElementById('addOverlayBtn').href = `football-panel.html?uid=${uid}`;
+        document.getElementById('addOverlayBtnIntro').href = `football-matchintro-panel.html?uid=${uid}`;
+    }
+
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const isCoarsePointer = window.matchMedia('(pointer: coarse)').matches;
+    const hasGSAP = typeof gsap !== 'undefined';
+
+    /* ============ entrance choreography ============ */
+    const cards = gsap.utils.toArray('.template-card');
+    if (hasGSAP) {
+        const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+        tl.to('.top-nav', { opacity: 1, y: 0, duration: 0.6, ease: 'power3.out' }, 0)
+          .fromTo('.top-nav', { y: 24 }, { y: 0, duration: 0.6 }, 0)
+          .to('.search-filter-bar', { opacity: 1, duration: 0.6 }, 0.15)
+          .fromTo('.search-filter-bar', { y: 20 }, { y: 0, duration: 0.6 }, 0.15)
+          .to(cards, { opacity: 1, y: 0, duration: 0.7, stagger: 0.12, ease: 'power3.out' }, 0.3)
+          .fromTo(cards, { y: 34 }, { y: 0, duration: 0.7, stagger: 0.12 }, 0.3);
+    } else {
+        document.querySelectorAll('.top-nav, .search-filter-bar, .template-card').forEach(el => el.style.opacity = 1);
+    }
+
+    /* ============ custom magnetic cursor ============ */
+    const cursorDot = document.getElementById('cursorDot');
+    const cursorRing = document.getElementById('cursorRing');
+
+    if (!isCoarsePointer && hasGSAP) {
+        const dotX = gsap.quickTo(cursorDot, "x", { duration: 0.12, ease: "power3" });
+        const dotY = gsap.quickTo(cursorDot, "y", { duration: 0.12, ease: "power3" });
+        const ringX = gsap.quickTo(cursorRing, "x", { duration: 0.35, ease: "power3" });
+        const ringY = gsap.quickTo(cursorRing, "y", { duration: 0.35, ease: "power3" });
+
+        window.addEventListener('mousemove', (e) => {
+            dotX(e.clientX); dotY(e.clientY);
+            ringX(e.clientX); ringY(e.clientY);
+        });
+
+        document.querySelectorAll('a, button, .template-card').forEach(el => {
+            el.addEventListener('mouseenter', () => cursorRing.classList.add('is-active'));
+            el.addEventListener('mouseleave', () => cursorRing.classList.remove('is-active'));
+        });
+
+        /* ---- magnetic pull for buttons ---- */
+        document.querySelectorAll('[data-magnetic]').forEach(el => {
+            const strength = el.classList.contains('add-overlay-btn') ? 0.35 : 0.25;
+            el.addEventListener('mousemove', (e) => {
+                const r = el.getBoundingClientRect();
+                const relX = e.clientX - (r.left + r.width / 2);
+                const relY = e.clientY - (r.top + r.height / 2);
+                gsap.to(el, { x: relX * strength, y: relY * strength, duration: 0.4, ease: 'power3.out' });
+            });
+            el.addEventListener('mouseleave', () => {
+                gsap.to(el, { x: 0, y: 0, duration: 0.5, ease: 'elastic.out(1, 0.4)' });
+            });
+        });
+    } else {
+        document.body.style.cursor = 'auto';
+        cursorDot.style.display = 'none';
+        cursorRing.style.display = 'none';
+    }
+
+    /* ============ 3D tilt + spotlight per card ============ */
+    if (!isCoarsePointer && !reduceMotion) {
+        cards.forEach(card => {
+            const damp = 22;
+            card.addEventListener('mousemove', (e) => {
+                const r = card.getBoundingClientRect();
+                const px = (e.clientX - r.left) / r.width;
+                const py = (e.clientY - r.top) / r.height;
+                card.style.setProperty('--mx', `${px * 100}%`);
+                card.style.setProperty('--my', `${py * 100}%`);
+                if (hasGSAP) {
+                    gsap.to(card, {
+                        rotateY: (px - 0.5) * damp,
+                        rotateX: -(py - 0.5) * damp,
+                        duration: 0.5,
+                        ease: 'power2.out'
+                    });
+                }
+            });
+            card.addEventListener('mouseleave', () => {
+                if (hasGSAP) gsap.to(card, { rotateY: 0, rotateX: 0, duration: 0.6, ease: 'elastic.out(1, 0.5)' });
+            });
+        });
+    }
+
+    /* ============ live search filter ============ */
+    const searchBox = document.getElementById('searchBox');
+    const grid = document.getElementById('templatesGrid');
+    const noResults = document.getElementById('noResults');
+
+    function applyFilter() {
+        const q = searchBox.value.trim().toLowerCase();
+        let visibleCount = 0;
+        cards.forEach(card => {
+            const match = card.dataset.name.toLowerCase().includes(q);
+            card.classList.toggle('is-hidden', !match);
+            if (match) visibleCount++;
+        });
+        noResults.classList.toggle('show', visibleCount === 0);
+    }
+    searchBox.addEventListener('input', applyFilter);
+
+    /* keyboard shortcut: "/" focuses search, Escape clears */
+    window.addEventListener('keydown', (e) => {
+        if (e.key === '/' && document.activeElement !== searchBox) {
+            e.preventDefault();
+            searchBox.focus();
         }
-    </script>
+        if (e.key === 'Escape' && document.activeElement === searchBox) {
+            searchBox.value = '';
+            applyFilter();
+            searchBox.blur();
+        }
+    });
+})();
+</script>
 </body>
 </html>
