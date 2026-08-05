@@ -378,6 +378,12 @@
     </div>
 
     <div class="card">
+      <h2>Cinematic Event Graphics <span class="note">— full-screen, center of picture</span></h2>
+      <div id="fx-config-rows"></div>
+      <div class="shortcut-hint">Each toggle enables/disables that graphic firing automatically during play. "Preview" fires it on the overlay right now regardless of the toggle, using the duration set here. Duration is in seconds.</div>
+    </div>
+
+    <div class="card">
       <h2>Session</h2>
       <button class="full small" id="next-innings-btn" disabled>Start Next Innings</button>
       <button class="full small" id="reset-btn" style="margin-top:6px;">Reset Match (clears everything)</button>
@@ -519,6 +525,7 @@ function connect(){
     } else {
       pushState(true, true);
     }
+    pushFxConfig();
   });
   socket.on('disconnect', () => { dot.classList.remove('on'); });
   socket.on('connect_error', () => { dot.classList.remove('on'); });
@@ -580,9 +587,79 @@ function pushState(immediate, force){
   clearTimeout(pushTimer);
   pushTimer = setTimeout(() => { send(state); }, 40);
 }
+/* ============================================================
+   CINEMATIC EVENT GRAPHICS — enable/disable + duration per event,
+   kept in sync with the overlay's FX engine via cricketEventConfig.
+   ============================================================ */
+const FX_EVENTS = [
+  { kind:'FOUR',     label:'FOUR',     defaultDuration:1.3 },
+  { kind:'SIX',      label:'SIX',      defaultDuration:2.0 },
+  { kind:'WICKET',   label:'WICKET',   defaultDuration:1.8 },
+  { kind:'NO_BALL',  label:'NO BALL',  defaultDuration:1.5 },
+  { kind:'FREE_HIT', label:'FREE HIT', defaultDuration:1.8 },
+  { kind:'WIDE',     label:'WIDE',     defaultDuration:1.2 }
+];
+let fxConfig = {};
+(function initFxConfig(){
+  let saved = {};
+  try{ saved = JSON.parse(localStorage.getItem('cricketFxConfig') || '{}'); }catch(e){}
+  FX_EVENTS.forEach(ev => {
+    fxConfig[ev.kind] = {
+      enabled: saved[ev.kind]?.enabled ?? true,
+      duration: saved[ev.kind]?.duration ?? ev.defaultDuration
+    };
+  });
+})();
+function saveFxConfig(){
+  localStorage.setItem('cricketFxConfig', JSON.stringify(fxConfig));
+}
+function pushFxConfig(){
+  if(!socket || !socket.connected) return;
+  const payload = {};
+  FX_EVENTS.forEach(ev => {
+    payload[ev.kind] = { enabled: fxConfig[ev.kind].enabled, duration: Math.round(fxConfig[ev.kind].duration*1000) };
+  });
+  socket.emit('cricketEventConfig', payload);
+}
+function renderFxConfigRows(){
+  const wrap = document.getElementById('fx-config-rows');
+  wrap.innerHTML = FX_EVENTS.map(ev => `
+    <div class="toggle-row" style="margin-top:12px; align-items:center;">
+      <span style="min-width:90px;">${ev.label}</span>
+      <input type="number" min="0.3" max="6" step="0.1" id="fx-dur-${ev.kind}"
+        value="${fxConfig[ev.kind].duration}" style="width:64px; text-align:center;">
+      <button class="small" id="fx-preview-${ev.kind}" style="padding:4px 10px;">Preview</button>
+      <label class="switch"><input type="checkbox" id="fx-enable-${ev.kind}" ${fxConfig[ev.kind].enabled?'checked':''}><span class="slider"></span></label>
+    </div>
+  `).join('');
+
+  FX_EVENTS.forEach(ev => {
+    document.getElementById(`fx-enable-${ev.kind}`).addEventListener('change', (e) => {
+      fxConfig[ev.kind].enabled = e.target.checked;
+      saveFxConfig(); pushFxConfig();
+    });
+    document.getElementById(`fx-dur-${ev.kind}`).addEventListener('change', (e) => {
+      const v = parseFloat(e.target.value);
+      fxConfig[ev.kind].duration = isNaN(v) ? ev.defaultDuration : Math.max(0.3, Math.min(6, v));
+      e.target.value = fxConfig[ev.kind].duration;
+      saveFxConfig(); pushFxConfig();
+    });
+    document.getElementById(`fx-preview-${ev.kind}`).addEventListener('click', () => {
+      if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
+      socket.emit('cricketEvent', { event: { kind: ev.kind, text: ev.label, sub:'', durationMs: Math.round(fxConfig[ev.kind].duration*1000) } });
+      toast(`${ev.label} previewed on overlay`);
+    });
+  });
+}
+
+renderFxConfigRows();
+
 function fireEvent(kind, text, sub, durationMs){
+  const cfg = fxConfig[kind];
+  if(cfg && !cfg.enabled) { logMilestone(`${kind} (disabled — not sent)`); return; }
+  const finalDuration = cfg ? Math.round(cfg.duration*1000) : durationMs;
   if(socket && socket.connected){
-    socket.emit('cricketEvent', { event: { kind, text, sub, durationMs } });
+    socket.emit('cricketEvent', { event: { kind, text, sub, durationMs: finalDuration } });
   }
   logMilestone(`${kind}${sub ? ' — ' + sub : ''}`);
 }
