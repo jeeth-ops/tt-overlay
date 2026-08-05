@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <title>Cricket Overlay 2 — Broadcast Scorebug</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700;800&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script src="/socket.io/socket.io.js" onerror="console.warn('socket.io client not found — this is fine if you are just previewing with ?demo=1')"></script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
@@ -49,6 +52,19 @@ html,body{
   will-change: transform, opacity;
 }
 #scorebar.hidden{ visibility:hidden; }
+
+/* light-sweep "shine" used during the intro reveal — sits inside #scorebar
+   so it automatically inherits the bar's clip-path, i.e. it only ever
+   paints within the already-revealed portion of the bar as the wipe opens. */
+.bar-shine{
+  position:absolute; top:0; left:0; width:26%; height:100%;
+  background:linear-gradient(78deg,
+    transparent 0%, rgba(255,255,255,.05) 38%,
+    rgba(255,255,255,.65) 49%, rgba(255,255,255,.9) 50%,
+    rgba(255,255,255,.65) 51%, rgba(255,255,255,.05) 62%, transparent 100%);
+  mix-blend-mode:screen; pointer-events:none; opacity:0; z-index:5;
+  will-change:transform,opacity;
+}
 
 /* White panels sit flush against each other — no gap, no coloured frame —
    so the whole bar reads as one continuous connected shape. Only the
@@ -187,6 +203,11 @@ html,body{
 
 /* ============================================================
    SUMMARY CARDS (Innings / Match)
+   International-broadcast typography: condensed, heavily-tracked
+   uppercase headers (Oswald) — the same family of look used by
+   Star Sports / Sky Sports / ICC lower-thirds — with tabular
+   figures (Barlow Condensed) for all stat columns so digits align
+   cleanly column to column.
    ============================================================ */
 .summary-wrap{
   position:absolute; left:50%; top:50%; transform:translate(-50%,-50%) scale(.94);
@@ -195,41 +216,66 @@ html,body{
   background:#0c1330; box-shadow:0 32px 80px rgba(0,0,0,.55);
   border:1px solid rgba(255,255,255,.08);
   will-change:transform,opacity;
+  font-family:'Oswald','Barlow Condensed',Arial,sans-serif;
 }
 .summary-head{
-  padding:28px 40px 20px; display:flex; align-items:center; justify-content:space-between;
+  padding:30px 44px 22px; display:flex; align-items:center; justify-content:space-between;
   background:linear-gradient(90deg, var(--accent-1,#142463), var(--accent-2,#101c4d));
+  border-bottom:3px solid rgba(255,255,255,.14);
 }
-.summary-head .title{ color:#fff; font-weight:900; font-size:30px; letter-spacing:.5px; text-transform:uppercase; }
-.summary-head .meta{ color:#c9d3ef; font-weight:600; font-size:17px; }
-.summary-body{ padding:24px 40px 34px; }
+.summary-head .title{
+  color:#fff; font-weight:800; font-size:38px; letter-spacing:1.4px; text-transform:uppercase;
+  font-family:'Oswald',Arial,sans-serif;
+}
+.summary-head .meta{
+  color:#c9d3ef; font-weight:600; font-size:19px; letter-spacing:.6px; text-transform:uppercase;
+  font-family:'Barlow Condensed',Arial,sans-serif;
+}
+.summary-body{ padding:26px 44px 38px; }
 .summary-table{ width:100%; border-collapse:collapse; }
 .summary-table th{
-  text-align:left; font-size:15px; text-transform:uppercase; letter-spacing:.4px;
-  color:#8a93ad; font-weight:700; padding:9px 10px; border-bottom:1px solid rgba(255,255,255,.12);
+  text-align:left; font-size:16px; text-transform:uppercase; letter-spacing:1.1px;
+  color:#8a93ad; font-weight:700; padding:10px 10px; border-bottom:1px solid rgba(255,255,255,.14);
+  font-family:'Barlow Condensed',Arial,sans-serif;
 }
 .summary-table td{
-  padding:11px 10px; font-size:19px; color:#fff; font-weight:600;
+  padding:13px 10px; font-size:23px; color:#fff; font-weight:600;
   border-bottom:1px solid rgba(255,255,255,.06); font-variant-numeric:tabular-nums;
+  font-family:'Barlow Condensed',Arial,sans-serif;
 }
-.summary-table td.name{ font-weight:800; text-transform:uppercase; }
-.summary-table td.num{ text-align:right; }
-.summary-foot{ display:flex; justify-content:space-between; margin-top:14px; color:#c9d3ef; font-size:17px; font-weight:700; }
-.summary-tabs{ display:flex; gap:10px; margin-top:10px; }
+.summary-table td.name{ font-weight:700; text-transform:uppercase; letter-spacing:.3px; font-family:'Oswald',Arial,sans-serif; }
+.summary-table td.num{ text-align:right; font-weight:700; }
+.summary-foot{ display:flex; justify-content:space-between; margin-top:16px; color:#c9d3ef; font-size:19px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; font-family:'Barlow Condensed',Arial,sans-serif; }
+.summary-tabs{ display:flex; gap:10px; margin-top:12px; }
 .summary-tab{
-  font-size:14px; font-weight:800; letter-spacing:.4px; text-transform:uppercase; color:#8a93ad;
-  padding:6px 14px; border-radius:12px; background:rgba(255,255,255,.06);
+  font-size:15px; font-weight:700; letter-spacing:1px; text-transform:uppercase; color:#8a93ad;
+  padding:7px 16px; border-radius:12px; background:rgba(255,255,255,.06);
+  font-family:'Barlow Condensed',Arial,sans-serif;
 }
 .summary-tab.active{ color:#0c1330; background:#fff; }
 
 .match-teams{ display:flex; gap:24px; }
-.match-team{ flex:1; background:rgba(255,255,255,.04); border-radius:18px; padding:22px; }
-.match-team .tname{ font-weight:900; font-size:21px; color:#fff; text-transform:uppercase; }
-.match-team .tscore{ font-weight:700; font-size:17px; color:#c9d3ef; margin-top:3px; }
-.match-team .row{ display:flex; justify-content:space-between; font-size:17px; color:#e5e9f7; padding:6px 0; border-bottom:1px solid rgba(255,255,255,.06); }
+.match-team{
+  flex:1; background:rgba(255,255,255,.04); border-radius:18px; padding:24px;
+  border-left:4px solid var(--team-color,rgba(255,255,255,.25));
+}
+.match-team .tname{
+  font-weight:800; font-size:27px; color:#fff; text-transform:uppercase; letter-spacing:1px;
+  font-family:'Oswald',Arial,sans-serif;
+}
+.match-team .tscore{
+  font-weight:700; font-size:21px; color:#c9d3ef; margin-top:4px; letter-spacing:.3px;
+  font-variant-numeric:tabular-nums; font-family:'Barlow Condensed',Arial,sans-serif;
+}
+.match-team .row{
+  display:flex; justify-content:space-between; font-size:20px; color:#e5e9f7; padding:7px 0;
+  border-bottom:1px solid rgba(255,255,255,.06); font-variant-numeric:tabular-nums;
+  font-family:'Barlow Condensed',Arial,sans-serif; font-weight:600;
+}
 .match-winner{
-  text-align:center; padding:18px; font-weight:900; font-size:25px; letter-spacing:.5px;
-  color:#fff; text-transform:uppercase; background:rgba(255,255,255,.06); border-radius:16px; margin-bottom:18px;
+  text-align:center; padding:20px; font-weight:800; font-size:31px; letter-spacing:1.2px;
+  color:#fff; text-transform:uppercase; background:rgba(255,255,255,.06); border-radius:16px; margin-bottom:20px;
+  font-family:'Oswald',Arial,sans-serif;
 }
 
 /* ============================================================
@@ -320,7 +366,19 @@ html,body{
   padding:26px 70px; border-radius:20px; box-shadow:0 24px 60px rgba(0,0,0,.55);
   border:1px solid rgba(255,255,255,.25);
 }
-.fx-freehit .fx-title{ font-size:120px; background:linear-gradient(180deg,#fff,#f0d78a); -webkit-background-clip:text; background-clip:text; color:transparent; -webkit-text-stroke:0; }
+/* FIX: background-clip:text was set on .fx-title (the wrapper), but the
+   actual glyphs live inside per-letter .ch spans appended by
+   fxBuildTitleChars() — the wrapper itself has no text of its own once
+   those spans are inserted, so the gradient had nothing to clip to, and
+   color:transparent inherited down into the spans with no background to
+   fill it. Net result: fully invisible "FREE HIT" text. Moving the
+   gradient fill onto .ch itself (same vertical gradient, so every letter
+   still lines up seamlessly) makes it render correctly. */
+.fx-freehit .fx-title{ font-size:120px; -webkit-text-stroke:0; }
+.fx-freehit .fx-title .ch{
+  background:linear-gradient(180deg,#fff,#f0d78a);
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+}
 .fx-bolt{ position:absolute; opacity:0; will-change:transform,opacity; }
 
 /* -- WIDE: minimal elegant swipe -- */
@@ -387,6 +445,8 @@ html,body{
     <div class="slot flag-slot right">
       <div class="flag-box" id="flagRightBox"><img id="flagRightImg" alt=""></div>
     </div>
+
+    <div class="bar-shine" id="barShine"></div>
   </div>
 
   <!-- ============ EVENT BANNER ============ -->
@@ -633,7 +693,8 @@ const el = {
   vsBowlShort: $('vsBowlShort'), vsBatShort: $('vsBatShort'),
   scoreBadge: $('scoreBadge'), inningsBadge: $('inningsBadge'), oversBadge: $('oversBadge'),
   rateLine: $('rateLine'), freehitChip: $('freehitChip'),
-  bowlerName: $('bowlerName'), bowlerFigs: $('bowlerFigs'), bowlerOversTxt: $('bowlerOversTxt')
+  bowlerName: $('bowlerName'), bowlerFigs: $('bowlerFigs'), bowlerOversTxt: $('bowlerOversTxt'),
+  barShine: $('barShine')
 };
 
 function fmtOvers(o,b){ return `${o||0}.${b||0}`; }
@@ -734,37 +795,84 @@ function renderState(state){
 }
 
 /* ============================================================
-   7. INTRO / OUTRO — single smooth fade + rise, no staged
-   clip-path/text reveal. (Previously this ran as several
-   separate phases — panels growing in, then flags sliding in,
-   then text staggering in ~1.5s later — which looked like the
-   bar appearing, redrawing itself, and appearing again instead
-   of one clean motion. Now it's one tween.)
+   7. INTRO / OUTRO
+   Broadcast-style multi-layer reveal: a rounded "curtain" wipe
+   opens the bar from the centre outward, a light-sweep glints
+   across it as it opens, then flags / capsule / text pop in with
+   slight overlap so it reads as ONE continuous move rather than
+   separate sequential phases. Everything after the wipe is timed
+   with negative offsets against the wipe's own finish, which is
+   what keeps a multi-part reveal feeling cohesive instead of
+   janky/staged. Outro is a fast mirror of the same wipe.
    ============================================================ */
 function introAnimation(){
   el.bar.classList.remove('hidden');
-  gsap.killTweensOf(el.bar);
-  gsap.fromTo(el.bar, { opacity:0, y:26 }, { opacity:1, y:0, duration:.45, ease:'premiumOut' });
+  const contentEls = [
+    el.nameTop, el.runsTop, el.ballsTop, el.nameBottom, el.runsBottom, el.ballsBottom,
+    el.bowlerName, el.bowlerFigs, el.bowlerOversTxt, el.vsBowlShort, el.vsBatShort,
+    el.inningsBadge, el.oversBadge, el.rateLine
+  ];
+  gsap.killTweensOf([el.bar, el.capsule, el.flagLeftBox, el.flagRightBox, el.scoreBadge, el.barShine, ...contentEls]);
+
+  gsap.set(el.bar, { opacity:1, y:0, clipPath:'inset(0 50% 0 50% round var(--radius))' });
+  gsap.set([el.flagLeftBox, el.flagRightBox], { scale:.35, opacity:0 });
+  gsap.set(el.capsule, { scale:.72, opacity:0, y:6 });
+  gsap.set(contentEls, { opacity:0, y:9 });
+  gsap.set(el.barShine, { opacity:0, xPercent:-30 });
+
+  const tl = gsap.timeline();
+  // Phase A — the shell wipes open from the centre (curtain reveal) while
+  // the whole bar rises into place; these run together, not in sequence.
+  tl.fromTo(el.bar, { y:30 }, { y:0, duration:.68, ease:'premiumOut' }, 0)
+    .to(el.bar, { clipPath:'inset(0 0% 0 0% round var(--radius))', duration:.6, ease:'premiumOut' }, 0.02)
+    // Phase B — light sweep glints across exactly as the wipe opens; being
+    // a child of #scorebar it's automatically masked to the revealed area.
+    .to(el.barShine, { opacity:1, duration:.08 }, 0.05)
+    .fromTo(el.barShine, { xPercent:-30 }, { xPercent:480, duration:.72, ease:'premiumOut' }, 0.05)
+    .to(el.barShine, { opacity:0, duration:.25 }, 0.55)
+    // Phase C — flags + capsule pop in with a slight overshoot, started
+    // before the wipe fully finishes so the motion overlaps and flows.
+    .to([el.flagLeftBox, el.flagRightBox], { scale:1, opacity:1, duration:.5, stagger:.07, ease:'softOvershoot' }, 0.32)
+    .to(el.capsule, { scale:1, opacity:1, y:0, duration:.55, ease:'softOvershoot' }, 0.38)
+    .fromTo(el.scoreBadge, { scale:1.35 }, { scale:1, duration:.35, ease:'softOvershoot' }, 0.46)
+    // Phase D — all the text content settles in with a fine stagger, the
+    // final flourish that finishes the whole reveal as one motion.
+    .to(contentEls, { opacity:1, y:0, duration:.42, stagger:.02, ease:'premiumOut' }, 0.44);
 }
 function outroAnimation(){
-  gsap.killTweensOf(el.bar);
-  gsap.to(el.bar, {
-    opacity:0, y:26, duration:.35, ease:'premiumInOut',
-    onComplete:() => { el.bar.classList.add('hidden'); gsap.set(el.bar, { y:0 }); }
+  gsap.killTweensOf([el.bar, el.barShine]);
+  const tl = gsap.timeline({
+    onComplete:() => {
+      el.bar.classList.add('hidden');
+      gsap.set(el.bar, { y:0, clipPath:'inset(0 0% 0 0% round var(--radius))' });
+    }
   });
+  tl.to(el.bar, { clipPath:'inset(0 42% 0 42% round var(--radius))', duration:.36, ease:'premiumInOut' }, 0)
+    .to(el.bar, { opacity:0, y:20, duration:.32, ease:'premiumInOut' }, 0.04);
 }
 
 /* ============================================================
    8. LIVE UPDATE ANIMATIONS
    ============================================================ */
+/* Each of these mini-animations can be re-triggered by the NEXT state
+   update before its own tween has finished (rapid ball-by-ball pushes from
+   the panel). Without killing the previous tween first, GSAP can end up
+   with two conflicting tweens racing on the same element/property, and the
+   element gets visually stuck partway through — the "animation stops
+   mid-way" symptom. killTweensOf() before starting a new one guarantees
+   every update always finishes cleanly instead of colliding with the next. */
 function scoreUpdateAnimation(){
+  gsap.killTweensOf(el.scoreBadge);
+  gsap.killTweensOf(el.oversBadge);
   gsap.timeline()
     .to(el.scoreBadge, { scale:1.16, duration:.16, ease:'snap' })
     .to(el.scoreBadge, { scale:1, duration:.28, ease:'premiumOut' });
   gsap.fromTo(el.oversBadge, { opacity:.4 }, { opacity:1, duration:.3 });
 }
 function playerChangeAnimation(){
-  gsap.fromTo([el.nameTop, el.runsTop, el.ballsTop, el.nameBottom, el.runsBottom, el.ballsBottom],
+  const targets = [el.nameTop, el.runsTop, el.ballsTop, el.nameBottom, el.runsBottom, el.ballsBottom];
+  gsap.killTweensOf(targets);
+  gsap.fromTo(targets,
     { yPercent:40, opacity:0 }, { yPercent:0, opacity:1, duration:.4, stagger:.02, ease:'premiumOut' });
 }
 function wicketAnimation(){
@@ -776,6 +884,7 @@ function wicketAnimation(){
   // off the score-diff, restarting the animation mid-flight as soon as the
   // score update arrived — that's what caused the janky/laggy look on
   // wickets. This function only does the small local capsule flash.
+  gsap.killTweensOf(el.capsule);
   const tl = gsap.timeline();
   tl.to(el.capsule, { boxShadow:'0 0 0 6px rgba(207,19,48,.55)', duration:.15 })
     .to(el.capsule, { boxShadow:'0 6px 14px rgba(0,0,0,.35)', duration:.5, ease:'premiumOut' });
@@ -785,15 +894,19 @@ function boundaryAnimation(isSix){
   // already triggered by the panel's dedicated 'cricketEvent' message, so
   // it's intentionally NOT called again here. Only the small local capsule
   // pulse happens on the score-diff.
+  gsap.killTweensOf(el.capsule);
   gsap.timeline()
     .to(el.capsule, { scale:1.05, duration:.14, ease:'snap' })
     .to(el.capsule, { scale:1, duration:.35, ease:'softOvershoot' });
 }
 function recentBallAnimation(pipEl){
+  gsap.killTweensOf(pipEl);
   gsap.fromTo(pipEl, { scale:0 }, { scale:1, duration:.3, ease:'softOvershoot' });
 }
 function bowlerUpdateAnimation(){
-  gsap.fromTo([el.bowlerName, el.bowlerFigs, el.bowlerOversTxt],
+  const targets = [el.bowlerName, el.bowlerFigs, el.bowlerOversTxt];
+  gsap.killTweensOf(targets);
+  gsap.fromTo(targets,
     { yPercent:-40, opacity:0 }, { yPercent:0, opacity:1, duration:.4, stagger:.03, ease:'premiumOut' });
 }
 
@@ -820,9 +933,19 @@ function showEventBanner(kind, sub, durationMs){
    open summary panel. Smooth in on open, smooth out on close.
    ============================================================ */
 const glassEl = $('summary-glass');
-let glassOpenCount = 0;
+// NOTE: this used to be a counter (glassOpenCount++/--) meant to support
+// two summary panels being "open" at once. In practice showInningsSummary()
+// calls clearInningsTimers() on every new call, which cancels the PREVIOUS
+// innings summary's own scheduled hideInningsSummary() timer (and therefore
+// its matching hideGlass() call) whenever the 2nd-innings summary arrives
+// before the 1st one had auto-hidden itself. That left showGlass() called
+// twice but hideGlass() only called once — the counter never returned to
+// 0, so the glass blur/dim never fully cleared and the two panels' fade
+// in/out visually overlapped/stuck. A simple boolean is enough here since
+// only one summary panel is ever meant to be visible at a time.
+let glassVisible = false;
 function showGlass(){
-  glassOpenCount++;
+  glassVisible = true;
   gsap.killTweensOf(glassEl);
   gsap.set(glassEl, { pointerEvents:'auto' });
   gsap.fromTo(glassEl,
@@ -831,12 +954,12 @@ function showGlass(){
       duration:.6, ease:'premiumOut' });
 }
 function hideGlass(){
-  glassOpenCount = Math.max(0, glassOpenCount - 1);
-  if(glassOpenCount > 0) return; // another summary still open
+  glassVisible = false;
   gsap.killTweensOf(glassEl);
   gsap.to(glassEl, {
     opacity:0, backdropFilter:'blur(0px) saturate(1)', webkitBackdropFilter:'blur(0px) saturate(1)',
-    duration:.5, ease:'premiumInOut', onComplete:() => { glassEl.style.pointerEvents='none'; }
+    duration:.5, ease:'premiumInOut',
+    onComplete:() => { if(!glassVisible) glassEl.style.pointerEvents='none'; }
   });
 }
 
@@ -1119,8 +1242,13 @@ function clearInningsTimers(){ inningsTimers.forEach(clearTimeout); inningsTimer
 
 function showInningsSummary(data){
   clearInningsTimers();
-  showGlass();
   const wrap = $('inningsSummary');
+  // If a previous innings summary is still on screen (2nd innings arriving
+  // before the 1st one auto-hid itself), kill its in-flight tween instead of
+  // letting a fresh gsap.set() collide with it — that collision is what
+  // produced the overlapping/non-smooth swap between the two panels.
+  gsap.killTweensOf(wrap);
+  showGlass();
   wrap.style.setProperty('--accent-1', data.battingTeamColor || '#142463');
   wrap.style.setProperty('--accent-2', data.bowlingTeamColor || '#101c4d');
   $('isTitle').textContent = `${data.battingTeamShort || data.battingTeamName} INNINGS`;
@@ -1160,18 +1288,23 @@ function showInningsSummary(data){
 function hideInningsSummary(){
   clearInningsTimers();
   hideGlass();
-  gsap.to($('inningsSummary'), { opacity:0, scale:.94, duration:.4, ease:'premiumInOut', onComplete:() => { $('inningsSummary').style.pointerEvents='none'; } });
+  const wrap = $('inningsSummary');
+  gsap.killTweensOf(wrap);
+  gsap.to(wrap, { opacity:0, scale:.94, duration:.4, ease:'premiumInOut', onComplete:() => { wrap.style.pointerEvents='none'; } });
 }
 
 function showMatchSummary(data){
-  showGlass();
   const wrap = $('matchSummary');
+  gsap.killTweensOf(wrap);
+  showGlass();
   $('msVenue').textContent = data.venue || '';
   $('msWinner').textContent = data.winnerText || '';
 
   const fillTeam = (prefix, team) => {
     $(prefix+'Name').textContent = (team.short || team.name || '').toUpperCase();
-    $(prefix+'Name').parentElement.style.background = `linear-gradient(90deg, ${team.color}22, transparent)`;
+    const teamEl = $(prefix+'Name').parentElement;
+    teamEl.style.background = `linear-gradient(90deg, ${team.color}22, transparent)`;
+    teamEl.style.setProperty('--team-color', team.color || 'rgba(255,255,255,.25)');
     $(prefix+'Score').textContent = team.score || '—';
     const batEl = $(prefix+'Bat'); batEl.innerHTML = (team.batsmen||[]).map(b =>
       `<div class="row"><span>${b.name}</span><span>${b.runs} (${b.balls})</span></div>`).join('');
@@ -1188,7 +1321,9 @@ function showMatchSummary(data){
 }
 function hideMatchSummary(){
   hideGlass();
-  gsap.to($('matchSummary'), { opacity:0, scale:.94, duration:.4, ease:'premiumInOut', onComplete:() => { $('matchSummary').style.pointerEvents='none'; } });
+  const wrap = $('matchSummary');
+  gsap.killTweensOf(wrap);
+  gsap.to(wrap, { opacity:0, scale:.94, duration:.4, ease:'premiumInOut', onComplete:() => { wrap.style.pointerEvents='none'; } });
 }
 
 /* ============================================================
@@ -1226,19 +1361,39 @@ function safeDefaults(state){
 if(!DEMO_MODE && typeof io !== 'undefined'){
   try{
     const socket = io({ query: { uid: roomId } });
-    socket.on('liveCricketScore', (state) => {
+
+    // --- payload unwrapping helpers ------------------------------------
+    // The panel sends some messages wrapped in a container object
+    // (e.g. socket.emit('cricketEvent', { event: {...} }) and
+    // socket.emit('cricketInningsSummary', { data: {...} })) while other
+    // messages are sent as the raw object. Depending on whether a relay
+    // server in between re-shapes these or passes them straight through,
+    // the overlay could end up reading the wrapper instead of the real
+    // payload — fields come back undefined, which is exactly what causes
+    // "FREE HIT" text never appearing and innings/match summaries showing
+    // only half their data. These helpers accept either shape safely.
+    const unwrap = (payload, key) => (payload && typeof payload === 'object' && payload[key]) ? payload[key] : payload;
+
+    const onScoreUpdate = (state) => {
       if(!state || !Object.keys(state).length) return;
       renderState(safeDefaults(state));
-    });
-    socket.on('cricketEvent', (evt) => {
+    };
+    // Listen on both names: the panel emits 'updateCricketScore', but some
+    // server relays re-broadcast it as 'liveCricketScore'. Handling both
+    // means the overlay works regardless of how the relay is set up.
+    socket.on('liveCricketScore', onScoreUpdate);
+    socket.on('updateCricketScore', onScoreUpdate);
+
+    socket.on('cricketEvent', (payload) => {
+      const evt = unwrap(payload, 'event');
       if(!evt || !evt.kind) return;
       if(FX_PLAYERS[evt.kind]) playFx(evt.kind, evt.sub || evt.text || '');
       else showEventBanner(evt.kind, evt.sub || evt.text || '', evt.durationMs || 2200);
     });
     socket.on('cricketEventConfig', (cfg) => updateFxConfig(cfg || {}));
-    socket.on('cricketInningsSummary', (data) => showInningsSummary(data || {}));
+    socket.on('cricketInningsSummary', (payload) => showInningsSummary(unwrap(payload, 'data') || {}));
     socket.on('cricketHideInningsSummary', () => hideInningsSummary());
-    socket.on('cricketMatchSummary', (data) => showMatchSummary(data || {}));
+    socket.on('cricketMatchSummary', (payload) => showMatchSummary(unwrap(payload, 'data') || {}));
     socket.on('cricketHideMatchSummary', () => hideMatchSummary());
   }catch(e){ console.warn('Socket unavailable — open with ?demo=1 to preview without a server.', e); }
 }
