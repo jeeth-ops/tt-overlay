@@ -1466,6 +1466,19 @@ function recordBall(kind){
     case 'W': {
       const wasFreeHit = state.freeHit;
       const dismissalType = document.getElementById('dismissal-type').value || 'Bowled';
+
+      // Laws of Cricket: on a Free Hit the batsman can only be given out
+      // Run Out (Retired Hurt isn't a bowler/fielding dismissal, so it's
+      // always allowed too) — Bowled, Caught, LBW, Stumped and Hit Wicket
+      // do NOT count. Previously this only showed a warning toast and
+      // still recorded the wicket anyway; now it's blocked outright so a
+      // Free-Hit "Bowled" etc. can never wrongly end up on the scorecard.
+      if(wasFreeHit && !['Run Out', 'Retired Hurt'].includes(dismissalType)){
+        history.pop(); // undo the pre-emptive snapshot taken above — nothing actually changed
+        toast(`🚫 Free Hit: ${dismissalType} can't dismiss the batsman (only Run Out counts). Record the ball's runs instead.`);
+        return;
+      }
+
       const isBowlerWicket = !['Run Out', 'Retired Hurt'].includes(dismissalType);
       const shortMap = { Bowled:'b', Caught:'c', LBW:'lbw', Stumped:'st', 'Hit Wicket':'hit wkt', 'Run Out':'run out', 'Retired Hurt':'retired hurt' };
       const dismissalText = (isBowlerWicket && state.bowler.name) ? `${shortMap[dismissalType]} b ${state.bowler.name}` : shortMap[dismissalType];
@@ -1492,7 +1505,7 @@ function recordBall(kind){
 
       state.partnershipRuns = 0; state.partnershipBalls = 0;
       fireEvent('WICKET', 'WICKET!', state.striker.name);
-      if(wasFreeHit) toast('⚠️ Free Hit was active — only Run Out is a valid dismissal');
+      if(wasFreeHit) toast('⚠️ Run Out given on a Free Hit');
 
       // Cricket's ends-swap rule doesn't stop applying just because the
       // wicket ball happened to be the over's last: the survivor (till-now
