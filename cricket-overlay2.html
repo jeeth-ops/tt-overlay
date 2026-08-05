@@ -2,819 +2,824 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Cricket Overlay</title>
+<title>Cricket Overlay 2 — Broadcast Scorebug</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800;900&family=Inter:wght@500;600;700&display=swap" rel="stylesheet">
 <script src="/socket.io/socket.io.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/CustomEase.min.js"></script>
 <style>
-  :root{
-    /* ---- fully editable via the controller's colour pickers ---- */
-    --team-a:      #17337a;   /* Team A colour  -> left side of the centre gradient */
-    --team-b:      #7a1620;   /* Team B colour  -> right side of the centre gradient */
-    --badge:       #ff7a1a;   /* "Overs badge" colour -> the big score chip        */
-    --bottombar:   #0a1330;   /* "Bottom bar" colour  -> centre segment base tone   */
-    --progress:    #f0b429;   /* "Progress bar" colour -> gold accents / run rate   */
+/* ============================================================
+   CRICKET OVERLAY 2 — pixel-matched broadcast scorebug
+   Reference: white capsule bar / navy center pill / green-black
+   outer border / country flags / bowler + batter info / ball dots.
+   Design canvas: 1920x1080, scaled to fit via JS (fitStage()).
+   ============================================================ */
+:root{
+  --navy:        #142463;      /* main text + center pill colour  */
+  --navy-2:      #101c4d;      /* darker navy for pill bg gradient */
+  --red:         #cf1330;      /* score badge                      */
+  --red-2:       #a80f27;
+  --blue:        #2e64ac;      /* session / innings badge          */
+  --blue-2:      #1f4a86;
+  --white:       #ffffff;
+  --dim:         #8a93ad;
 
-    /* fixed look, matches the reference photo */
-    --cream-1: #fbfbf6;
-    --cream-2: #e7e6dc;
-    --navy: #142268;
-    --navy-soft: #3a4680;
-    --grey: #8891ab;
-    --white: #ffffff;
-    --gap: 10px;
-    --seg-h: 106px;
-    font-size: 16px;
-  }
-  *{ box-sizing:border-box; margin:0; padding:0; }
-  html,body{ width:100%; height:100%; background:transparent; overflow:hidden; }
-  body{ font-family:'Poppins',sans-serif; }
+  --bar-w: 1900px;
+  --bar-h: 128px;
+  --radius: 62px;
+}
+*{ box-sizing:border-box; margin:0; padding:0; }
+html,body{
+  width:100%; height:100%; overflow:hidden; background:transparent;
+  font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
+}
+#stage{
+  position:fixed; top:50%; left:50%; width:1920px; height:1080px;
+  transform-origin:center center;
+  will-change: transform;
+}
 
-  #stage{
-    position:fixed; left:0; right:0; bottom:34px;
-    display:flex; justify-content:center; align-items:flex-end;
-    pointer-events:none;
-  }
+/* ---------- outer bar shell ---------- */
+#scorebar{
+  position:absolute; left:50%; bottom:0; transform:translateX(-50%);
+  width:var(--bar-w); height:var(--bar-h);
+  display:flex; align-items:stretch;
+  background:transparent;
+  filter:drop-shadow(0 10px 22px rgba(0,0,0,.4));
+  will-change: transform, opacity;
+}
+#scorebar.hidden{ visibility:hidden; }
 
-  /* ===================== MAIN SCORE BUG ===================== */
-  #scorebug{
-    display:flex; align-items:center; gap:var(--gap);
-    filter: drop-shadow(0 14px 26px rgba(0,0,0,.45));
-  }
-  .seg{
-    height:var(--seg-h); border-radius:999px; display:flex; align-items:center;
-    position:relative; white-space:nowrap;
-  }
+/* White panels sit flush against each other — no gap, no coloured frame —
+   so the whole bar reads as one continuous connected shape. Only the
+   outermost corners (far left / far right) are rounded. */
+.slot{ position:relative; background:var(--white); overflow:hidden; will-change:transform,clip-path; }
+.flag-slot{
+  flex:0 0 12.5%;
+  display:flex; align-items:center; justify-content:center;
+}
+.flag-slot.left{ border-radius: var(--radius) 0 0 var(--radius); }
+.flag-slot.right{ border-radius: 0 var(--radius) var(--radius) 0; }
+.flag-box{
+  width:76%; height:70%; border-radius:10px; overflow:hidden;
+  box-shadow:0 0 0 1px rgba(0,0,0,.15) inset;
+  background:#e8e8e8;
+  transform: translateX(0);
+}
+.flag-box img{ width:100%; height:100%; object-fit:cover; display:block; }
+.flag-fallback{
+  width:100%; height:100%; display:flex; align-items:center; justify-content:center;
+  font-weight:900; font-size:19px; letter-spacing:.5px; color:#fff;
+}
 
-  /* ---- left: logo + batsmen ---- */
-  .seg-left{
-    background:linear-gradient(180deg,var(--cream-1),var(--cream-2));
-    padding:0 26px 0 58px;
-  }
-  .seg-right{
-    background:linear-gradient(180deg,var(--cream-1),var(--cream-2));
-    padding:0 58px 0 26px;
-  }
-  .logo-wrap{
-    position:absolute; top:50%; transform:translateY(-50%);
-    width:76px; height:76px; border-radius:50%;
-    background:radial-gradient(circle at 35% 30%, #fff, #dcdde3);
-    border:4px solid #fff; box-shadow:0 6px 14px rgba(0,0,0,.35);
-    display:flex; align-items:center; justify-content:center;
-    overflow:hidden; z-index:3;
-  }
-  .logo-left{ left:-24px; }
-  .logo-right{ right:-24px; }
-  .logo-wrap img{ width:100%; height:100%; object-fit:cover; }
-  .logo-fallback{ font-weight:900; font-size:19px; color:#fff; letter-spacing:.5px; }
+.info-slot{
+  flex:0 0 25.5%;
+  display:flex; flex-direction:column; justify-content:center;
+  padding:0 30px;
+  gap:8px;
+}
 
-  .batsmen{ display:flex; flex-direction:column; gap:6px; }
-  .bline{ display:flex; align-items:baseline; gap:9px; color:var(--navy); }
-  .bline .arrow{ width:11px; color:var(--progress); font-size:13px; flex:none; }
-  .bline .bname{ font-weight:800; font-size:16px; letter-spacing:.2px; min-width:150px; text-transform:uppercase; }
-  .bline .bruns{ font-weight:900; font-size:19px; min-width:26px; text-align:right; }
-  .bline .bballs{ font-weight:600; font-size:12px; color:var(--grey); min-width:20px; }
-  .bline:not(.onstrike){ opacity:.72; }
-  .bline:not(.onstrike) .arrow{ visibility:hidden; }
+.player-row{
+  display:flex; align-items:baseline; gap:13px; line-height:1;
+}
+.strike-tri{
+  width:0; height:0;
+  border-top:8px solid transparent; border-bottom:8px solid transparent;
+  border-left:12px solid var(--red);
+  opacity:0; flex:none; transform:translateX(-4px);
+}
+.player-row.striker .strike-tri{ opacity:1; }
+.player-name{
+  font-weight:800; font-size:31px; letter-spacing:.2px; color:var(--navy);
+  text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  flex:1 1 auto; min-width:0;
+}
+.player-runs{ font-weight:900; font-size:32px; color:var(--navy); min-width:40px; text-align:right; font-variant-numeric:tabular-nums; }
+.player-balls{ font-weight:600; font-size:20px; color:var(--navy); opacity:.85; min-width:28px; text-align:right; font-variant-numeric:tabular-nums; }
 
-  .bowler{ display:flex; flex-direction:column; align-items:flex-end; gap:2px; margin-right:16px; }
-  .bowler-name{ font-weight:800; font-size:16px; color:var(--navy); text-transform:uppercase; letter-spacing:.3px; }
-  .bowler-figs{ display:flex; align-items:baseline; gap:8px; }
-  .bowler-figs .figs{ font-weight:900; font-size:19px; color:var(--navy); }
-  .bowler-figs .ov{ font-weight:600; font-size:12px; color:var(--grey); }
+/* right (bowler) slot */
+.bowler-row{ display:flex; align-items:baseline; gap:13px; }
+.bowler-name{
+  font-weight:800; font-size:31px; color:var(--navy); text-transform:uppercase;
+  flex:1 1 auto; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.bowler-figs{ font-weight:900; font-size:29px; color:var(--navy); font-variant-numeric:tabular-nums; }
+.bowler-overs{ font-weight:600; font-size:20px; color:var(--navy); opacity:.85; font-variant-numeric:tabular-nums; }
 
-  .pips{ display:flex; gap:5px; margin-right:16px; }
-  .pip{
-    width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center;
-    font-size:10px; font-weight:800; color:#fff; background:transparent; border:2px solid var(--navy-soft);
-  }
-  .pip.empty{ background:transparent; border-color:#c7cadd; }
-  .pip.dot{ background:var(--navy-soft); }
-  .pip.dot::after{ content:''; width:5px; height:5px; border-radius:50%; background:#fff; }
-  .pip.run{ background:var(--navy-soft); }
-  .pip.four{ background:#1fa463; border-color:#1fa463; }
-  .pip.six{ background:var(--progress); border-color:var(--progress); color:#3a2900; }
-  .pip.wicket{ background:#d5364b; border-color:#d5364b; }
-  .pip.extra{ background:transparent; border-color:var(--progress); color:var(--progress); }
+.recent-balls{ display:flex; align-items:center; gap:9px; margin-top:3px; }
+.ball-pip{
+  width:32px; height:32px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  font-weight:800; font-size:14px; color:#fff;
+  border:2.5px solid var(--navy); background:transparent;
+  flex:none; transform:scale(1); will-change:transform,opacity;
+}
+.ball-pip.empty{ background:transparent; }
+.ball-pip.dot::after{ content:''; width:8px; height:8px; border-radius:50%; background:var(--navy); }
+.ball-pip.run{ background:var(--navy); color:#fff; }
+.ball-pip.wicket{ background:var(--red); border-color:var(--red); color:#fff; }
+.ball-pip.extra{ background:#c8781a; border-color:#c8781a; color:#fff; font-size:11px; }
 
-  /* ---- centre: match state ---- */
-  .seg-center{
-    background:linear-gradient(90deg,var(--team-a),var(--bottombar) 46%,var(--bottombar) 54%,var(--team-b));
-    padding:0 30px; flex-direction:column; align-items:center; justify-content:center; gap:4px;
-    min-width:420px;
-  }
-  .center-top{ display:flex; align-items:center; gap:12px; }
-  .match-code{ color:#fff; font-weight:700; font-size:14px; letter-spacing:.4px; opacity:.9; }
-  .match-code b{ color:var(--progress); }
-  .score-chip{
-    background:linear-gradient(135deg,var(--badge),#c23a24);
-    color:#fff; font-weight:900; font-size:30px; letter-spacing:.5px;
-    padding:2px 18px; border-radius:999px; line-height:1.25;
-  }
-  .phase-badge{
-    background:#fff; color:var(--navy); font-weight:800; font-size:12px;
-    padding:4px 11px; border-radius:999px; letter-spacing:.3px;
-  }
-  .overs-text{ color:#fff; font-weight:800; font-size:20px; letter-spacing:.3px; }
-  .center-bottom{
-    color:var(--progress); font-weight:700; font-size:13px; letter-spacing:1px; text-transform:uppercase;
-  }
+/* ---------- center capsule ---------- */
+.center-slot{
+  flex:0 0 24%;
+  display:flex; align-items:center; justify-content:center;
+  background:transparent;
+}
+#capsule{
+  position:relative;
+  width:100%; height:120%;
+  border-radius:50px;
+  background:linear-gradient(180deg,var(--navy),var(--navy-2));
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:5px;
+  box-shadow:0 8px 18px rgba(0,0,0,.35);
+  will-change:transform,clip-path;
+}
+.capsule-top{ display:flex; align-items:center; gap:11px; }
+.vs-text{ color:#c9d3ef; font-weight:700; font-size:22px; letter-spacing:.3px; text-transform:uppercase; }
+.vs-text b{ color:#fff; font-weight:900; font-size:29px; margin:0 2px; }
+.score-badge{
+  background:linear-gradient(180deg,#e0243f,var(--red-2));
+  color:#fff; font-weight:900; font-size:28px; letter-spacing:.3px;
+  padding:5px 18px; border-radius:26px; font-variant-numeric:tabular-nums;
+}
+.innings-badge{
+  background:linear-gradient(180deg,#3d76c9,var(--blue-2));
+  color:#fff; font-weight:800; font-size:19px; padding:4px 13px; border-radius:20px;
+}
+.overs-badge{ color:#fff; font-weight:900; font-size:28px; font-variant-numeric:tabular-nums; }
+.rate-line{
+  color:#fff; font-weight:700; font-size:17px; letter-spacing:.6px; text-transform:uppercase;
+  opacity:.95;
+}
+.rate-line b{ font-weight:900; }
 
-  /* ===================== FREE HIT BANNER ===================== */
-  #freehit-banner{
-    position:fixed; left:50%; bottom:158px; transform:translateX(-50%);
-    background:linear-gradient(135deg,var(--progress),#c98a10); color:#241a02;
-    font-weight:900; font-size:15px; letter-spacing:.8px; padding:9px 22px;
-    border-radius:999px; box-shadow:0 8px 18px rgba(0,0,0,.4); opacity:0; pointer-events:none;
-  }
+/* free hit chip */
+.freehit-chip{
+  position:absolute; top:-18px; left:50%; transform:translateX(-50%) scale(0);
+  background:#facc15; color:#241d02; font-weight:900; font-size:14px;
+  padding:4px 13px; border-radius:14px; letter-spacing:.5px; white-space:nowrap;
+  box-shadow:0 3px 8px rgba(0,0,0,.3);
+}
+.freehit-chip.show{ transform:translateX(-50%) scale(1); }
 
-  /* ===================== EVENT BANNER ===================== */
-  #event-banner{
-    position:fixed; left:50%; top:12%; transform:translateX(-50%);
-    text-align:center; opacity:0; pointer-events:none;
-  }
-  #event-banner .ev-text{
-    background:linear-gradient(90deg,var(--team-a),var(--bottombar),var(--team-b));
-    color:#fff; font-weight:900; font-size:34px; letter-spacing:2px; text-transform:uppercase;
-    padding:14px 46px; border-radius:16px; box-shadow:0 14px 30px rgba(0,0,0,.5);
-  }
-  #event-banner .ev-sub{
-    margin-top:8px; color:var(--progress); font-weight:700; font-size:16px; letter-spacing:1px;
-  }
+/* ============================================================
+   EVENT BANNER (FOUR / SIX / WICKET / milestones etc.)
+   ============================================================ */
+#event-banner{
+  position:absolute; left:50%; bottom:190px; transform:translateX(-50%) translateY(14px) scale(.92);
+  opacity:0; pointer-events:none;
+  display:flex; flex-direction:column; align-items:center; gap:2px;
+  padding:14px 34px; border-radius:16px;
+  background:linear-gradient(180deg,var(--navy),var(--navy-2));
+  box-shadow:0 10px 24px rgba(0,0,0,.4);
+  will-change:transform,opacity;
+}
+#event-banner .kind{ color:#fff; font-weight:900; font-size:30px; letter-spacing:1px; text-transform:uppercase; }
+#event-banner .sub{ color:#c9d3ef; font-weight:700; font-size:15px; text-transform:uppercase; letter-spacing:.4px; }
+#event-banner.kind-FOUR .kind, #event-banner.kind-SIX .kind{ color:#ffd23f; }
+#event-banner.kind-WICKET{ background:linear-gradient(180deg,var(--red),var(--red-2)); }
+#event-banner.kind-VICTORY, #event-banner.kind-HUNDRED, #event-banner.kind-FIFTY{ background:linear-gradient(180deg,#1c8a4a,#0d5c30); }
 
-  /* ===================== SUMMARY CARDS (scorecard-themed) ===================== */
-  /* Palette pulled straight from the score bug's own CSS vars, so a colour
-     change on the bug re-skins these cards automatically — same "kit". */
-  .summary-card{
-    position:fixed; left:50%; top:50%; transform:translate(-50%,-50%) scale(.9);
-    width:660px; max-width:92vw; border-radius:20px; overflow:hidden;
-    background:linear-gradient(180deg,var(--cream-1),var(--cream-2));
-    box-shadow:0 28px 70px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.4) inset;
-    opacity:0; pointer-events:none; font-family:'Poppins',sans-serif;
-  }
-  .summary-card .sc-inner{ position:relative; }
+/* ============================================================
+   SUMMARY CARDS (Innings / Match)
+   ============================================================ */
+.summary-wrap{
+  position:absolute; left:50%; top:50%; transform:translate(-50%,-50%) scale(.94);
+  opacity:0; pointer-events:none;
+  width:920px; border-radius:22px; overflow:hidden;
+  background:#0c1330; box-shadow:0 24px 60px rgba(0,0,0,.55);
+  border:1px solid rgba(255,255,255,.08);
+  will-change:transform,opacity;
+}
+.summary-head{
+  padding:20px 30px 14px; display:flex; align-items:center; justify-content:space-between;
+  background:linear-gradient(90deg, var(--accent-1,#142463), var(--accent-2,#101c4d));
+}
+.summary-head .title{ color:#fff; font-weight:900; font-size:22px; letter-spacing:.5px; text-transform:uppercase; }
+.summary-head .meta{ color:#c9d3ef; font-weight:600; font-size:13px; }
+.summary-body{ padding:18px 30px 26px; }
+.summary-table{ width:100%; border-collapse:collapse; }
+.summary-table th{
+  text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.4px;
+  color:#8a93ad; font-weight:700; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,.12);
+}
+.summary-table td{
+  padding:8px 8px; font-size:14px; color:#fff; font-weight:600;
+  border-bottom:1px solid rgba(255,255,255,.06); font-variant-numeric:tabular-nums;
+}
+.summary-table td.name{ font-weight:800; text-transform:uppercase; }
+.summary-table td.num{ text-align:right; }
+.summary-foot{ display:flex; justify-content:space-between; margin-top:10px; color:#c9d3ef; font-size:13px; font-weight:700; }
+.summary-tabs{ display:flex; gap:8px; margin-top:8px; }
+.summary-tab{
+  font-size:11px; font-weight:800; letter-spacing:.4px; text-transform:uppercase; color:#8a93ad;
+  padding:4px 10px; border-radius:10px; background:rgba(255,255,255,.06);
+}
+.summary-tab.active{ color:#0c1330; background:#fff; }
 
-  /* -- top strip: flags + competition tag, gradient lifted from the centre segment -- */
-  .sc-topbar{
-    display:flex; align-items:center; justify-content:center; gap:14px;
-    background:linear-gradient(90deg,var(--team-a),var(--bottombar) 46%,var(--bottombar) 54%,var(--team-b));
-    padding:10px 18px;
-  }
-  .sc-flag{
-    width:30px; height:20px; border-radius:4px; overflow:hidden; flex:none;
-    box-shadow:0 2px 6px rgba(0,0,0,.4); border:1px solid rgba(255,255,255,.5);
-    display:flex; align-items:center; justify-content:center; background-size:cover; background-position:center;
-  }
-  .sc-flag img{ width:100%; height:100%; object-fit:cover; display:block; }
-  .sc-flag .fb{ font-size:9px; font-weight:900; color:#fff; }
-  .sc-tag{
-    background:var(--badge); color:#fff; font-weight:800; font-size:11px; letter-spacing:1.2px;
-    padding:5px 16px; border-radius:999px; text-transform:uppercase; box-shadow:0 3px 8px rgba(0,0,0,.35);
-  }
+.match-teams{ display:flex; gap:18px; }
+.match-team{ flex:1; background:rgba(255,255,255,.04); border-radius:14px; padding:16px; }
+.match-team .tname{ font-weight:900; font-size:16px; color:#fff; text-transform:uppercase; }
+.match-team .tscore{ font-weight:700; font-size:13px; color:#c9d3ef; margin-top:2px; }
+.match-team .row{ display:flex; justify-content:space-between; font-size:13px; color:#e5e9f7; padding:4px 0; border-bottom:1px solid rgba(255,255,255,.06); }
+.match-winner{
+  text-align:center; padding:14px; font-weight:900; font-size:19px; letter-spacing:.5px;
+  color:#fff; text-transform:uppercase; background:rgba(255,255,255,.06); border-radius:12px; margin-bottom:14px;
+}
 
-  /* -- team header row -- */
-  .sc-header{
-    display:flex; align-items:center; justify-content:space-between; gap:10px;
-    padding:16px 26px 4px; background:linear-gradient(180deg,var(--cream-1),var(--cream-2));
-  }
-  .sc-tname{ font-weight:900; font-size:21px; color:var(--navy); text-transform:uppercase; letter-spacing:.2px; line-height:1.15; }
-  .sc-tname.right{ text-align:right; }
-  .sc-trophy{
-    flex:none; width:38px; height:38px; border-radius:50%;
-    background:radial-gradient(circle at 35% 30%,#fff9e0,var(--progress));
-    display:flex; align-items:center; justify-content:center; font-size:17px;
-    box-shadow:0 4px 12px rgba(0,0,0,.3), 0 0 0 3px #fff inset;
-  }
-  .sc-venue{
-    text-align:center; font-size:11px; font-weight:700; letter-spacing:1px; color:var(--grey);
-    text-transform:uppercase; padding:2px 20px 12px;
-  }
-
-  /* -- accent bands (score / overs strips) -- */
-  .sc-band{ display:flex; }
-  .sc-band > div{
-    flex:1; padding:9px 22px; font-weight:900; color:#fff;
-    background:linear-gradient(90deg,var(--badge),color-mix(in srgb, var(--badge) 65%, #000));
-  }
-  .sc-band > div + div{ background:linear-gradient(90deg,color-mix(in srgb, var(--badge) 65%, #000),var(--badge)); }
-  .sc-band .big{ font-size:22px; letter-spacing:.4px; }
-  .sc-band .small{ font-size:13px; letter-spacing:.6px; text-transform:uppercase; }
-  .sc-band .right{ text-align:right; }
-
-  /* -- two column stat lists (batsmen / bowlers) -- */
-  .sc-cols{ display:flex; }
-  .sc-col{ flex:1; padding:6px 0; }
-  .sc-col + .sc-col{ border-left:1px solid #d8d7cc; }
-  .sc-row{
-    display:flex; align-items:baseline; justify-content:space-between; gap:8px;
-    padding:6px 20px; font-family:'Inter',sans-serif;
-  }
-  .sc-row:nth-child(even){ background:rgba(20,34,104,.045); }
-  .sc-row .nm{ font-weight:700; font-size:13px; color:var(--navy); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .sc-row .dm{ display:block; font-weight:500; font-size:10px; color:var(--grey); text-transform:none; letter-spacing:.2px; }
-  .sc-row .vv{ font-weight:800; font-size:14px; color:var(--navy); white-space:nowrap; font-variant-numeric:tabular-nums; }
-  .sc-row .vv i{ font-style:normal; font-weight:600; font-size:11px; color:var(--grey); margin-left:2px; }
-  .sc-row.not-out .nm{ color:var(--navy); }
-  .sc-row.not-out .nm-text::after{ content:'*'; color:var(--progress); font-weight:900; }
-  .sc-row.best .vv{ color:color-mix(in srgb, var(--badge) 80%, #000); }
-
-  /* -- fall of wickets strip -- */
-  .sc-fow{
-    padding:10px 22px 4px; font-family:'Inter',sans-serif;
-  }
-  .sc-fow .lbl{ font-size:10px; font-weight:800; letter-spacing:1px; color:var(--grey); text-transform:uppercase; margin-bottom:5px; }
-  .sc-fow .chips{ display:flex; flex-wrap:wrap; gap:6px; }
-  .sc-fow .chip{
-    font-size:11px; font-weight:700; color:var(--navy); background:#fff; border:1px solid #d8d7cc;
-    border-radius:999px; padding:3px 9px; white-space:nowrap;
-  }
-  .sc-fow .chip b{ color:var(--badge); }
-
-  /* -- result / total banner -- */
-  .sc-resultband{
-    text-align:center; color:#fff; font-weight:900; font-size:16px; letter-spacing:1px;
-    text-transform:uppercase; padding:13px 20px;
-    background:linear-gradient(90deg,var(--team-a),var(--bottombar) 46%,var(--bottombar) 54%,var(--team-b));
-  }
-  .sc-section-title{
-    font-size:11px; font-weight:800; letter-spacing:1.2px; color:#fff; text-transform:uppercase;
-    padding:8px 22px; background:var(--bottombar);
-  }
-
-  /* -- ambient life: shimmer sweep on the top strip, soft pulse on the trophy -- */
-  .sc-topbar{ position:relative; overflow:hidden; }
-  .sc-topbar::after{
-    content:''; position:absolute; top:0; left:-60%; width:35%; height:100%;
-    background:linear-gradient(115deg,transparent,rgba(255,255,255,.28),transparent);
-    animation:sc-shimmer 3.4s ease-in-out infinite;
-  }
-  @keyframes sc-shimmer{ 0%{ left:-60%; } 55%{ left:130%; } 100%{ left:130%; } }
-  .sc-trophy{ animation:sc-trophy-pulse 2.4s ease-in-out infinite; }
-  @keyframes sc-trophy-pulse{
-    0%,100%{ box-shadow:0 4px 12px rgba(0,0,0,.3), 0 0 0 3px #fff inset, 0 0 0 0 color-mix(in srgb, var(--progress) 55%, transparent); }
-    50%{ box-shadow:0 4px 12px rgba(0,0,0,.3), 0 0 0 3px #fff inset, 0 0 0 9px color-mix(in srgb, var(--progress) 0%, transparent); }
-  }
+@media (prefers-reduced-motion: reduce){
+  *{ animation-duration:.001ms !important; transition-duration:.001ms !important; }
+}
 </style>
 </head>
 <body>
 
 <div id="stage">
-  <div id="scorebug">
-    <div class="seg seg-left" id="segLeft">
-      <div class="logo-wrap logo-left" id="logoBatting"></div>
-      <div class="batsmen">
-        <div class="bline" id="lineNonStriker">
-          <span class="arrow">▸</span><span class="bname"></span><span class="bruns"></span><span class="bballs"></span>
-        </div>
-        <div class="bline onstrike" id="lineStriker">
-          <span class="arrow">▸</span><span class="bname"></span><span class="bruns"></span><span class="bballs"></span>
-        </div>
+
+  <!-- ============ MAIN SCOREBAR ============ -->
+  <div id="scorebar">
+    <div class="slot flag-slot left">
+      <div class="flag-box" id="flagLeftBox"><img id="flagLeftImg" alt=""></div>
+    </div>
+
+    <div class="slot info-slot left" id="infoLeft">
+      <div class="player-row" id="rowTop">
+        <span class="strike-tri"></span>
+        <span class="player-name" id="nameTop">BATSMAN 1</span>
+        <span class="player-runs" id="runsTop">0</span>
+        <span class="player-balls" id="ballsTop">0</span>
+      </div>
+      <div class="player-row" id="rowBottom">
+        <span class="strike-tri"></span>
+        <span class="player-name" id="nameBottom">BATSMAN 2</span>
+        <span class="player-runs" id="runsBottom">0</span>
+        <span class="player-balls" id="ballsBottom">0</span>
       </div>
     </div>
 
-    <div class="seg seg-center" id="segCenter">
-      <div class="center-top">
-        <span class="match-code" id="matchCode"></span>
-        <span class="score-chip" id="scoreChip"></span>
-        <span class="phase-badge" id="phaseBadge"></span>
-        <span class="overs-text" id="oversText"></span>
+    <div class="slot center-slot">
+      <div id="capsule">
+        <div class="freehit-chip" id="freehitChip">FREE HIT</div>
+        <div class="capsule-top">
+          <span class="vs-text" id="vsBowlShort">NZ</span>
+          <span class="vs-text">v <b id="vsBatShort">IND</b></span>
+          <span class="score-badge" id="scoreBadge">0-0</span>
+          <span class="innings-badge" id="inningsBadge">1ST</span>
+          <span class="overs-badge" id="oversBadge">0.0</span>
+        </div>
+        <div class="rate-line" id="rateLine">CURRENT RATE <b>0.00</b></div>
       </div>
-      <div class="center-bottom" id="rateLine"></div>
     </div>
 
-    <div class="seg seg-right" id="segRight">
-      <div class="bowler">
-        <div class="bowler-name" id="bowlerName"></div>
-        <div class="bowler-figs"><span class="figs" id="bowlerFigs"></span><span class="ov" id="bowlerOvers"></span></div>
+    <div class="slot info-slot right" id="infoRight">
+      <div class="bowler-row">
+        <span class="bowler-name" id="bowlerName">BOWLER</span>
+        <span class="bowler-figs" id="bowlerFigs">0-0</span>
+        <span class="bowler-overs" id="bowlerOversTxt">0.0</span>
       </div>
-      <div class="pips" id="overPips"></div>
-      <div class="logo-wrap logo-right" id="logoBowling"></div>
+      <div class="recent-balls" id="recentBalls"></div>
+    </div>
+
+    <div class="slot flag-slot right">
+      <div class="flag-box" id="flagRightBox"><img id="flagRightImg" alt=""></div>
     </div>
   </div>
+
+  <!-- ============ EVENT BANNER ============ -->
+  <div id="event-banner">
+    <div class="kind" id="eventKind">FOUR!</div>
+    <div class="sub" id="eventSub"></div>
+  </div>
+
+  <!-- ============ INNINGS SUMMARY ============ -->
+  <div class="summary-wrap" id="inningsSummary">
+    <div class="summary-head">
+      <div>
+        <div class="title" id="isTitle">INNINGS SUMMARY</div>
+        <div class="meta" id="isMeta">Venue</div>
+      </div>
+      <div style="text-align:right">
+        <div class="title" id="isTotal">0-0</div>
+        <div class="meta" id="isOvers">(0.0 ov)</div>
+      </div>
+    </div>
+    <div class="summary-body">
+      <div class="summary-tabs">
+        <div class="summary-tab" id="tabBat">BATTING</div>
+        <div class="summary-tab" id="tabBowl">BOWLING</div>
+      </div>
+      <div id="isBatWrap">
+        <table class="summary-table" id="isBatTable">
+          <thead><tr><th>Batter</th><th>How Out</th><th class="num">R</th><th class="num">B</th><th class="num">4s</th><th class="num">6s</th><th class="num">SR</th></tr></thead>
+          <tbody id="isBatBody"></tbody>
+        </table>
+        <div class="summary-foot"><span id="isExtras">Extras: 0</span></div>
+      </div>
+      <div id="isBowlWrap" style="display:none">
+        <table class="summary-table" id="isBowlTable">
+          <thead><tr><th>Bowler</th><th class="num">O</th><th class="num">M</th><th class="num">R</th><th class="num">W</th><th class="num">Econ</th></tr></thead>
+          <tbody id="isBowlBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ MATCH SUMMARY ============ -->
+  <div class="summary-wrap" id="matchSummary" style="width:1020px">
+    <div class="summary-head">
+      <div class="title">MATCH SUMMARY</div>
+      <div class="meta" id="msVenue">Venue</div>
+    </div>
+    <div class="summary-body">
+      <div class="match-winner" id="msWinner">MATCH IN PROGRESS</div>
+      <div class="match-teams">
+        <div class="match-team" id="msTeamA">
+          <div class="tname" id="msTeamAName">Team A</div>
+          <div class="tscore" id="msTeamAScore">—</div>
+          <div id="msTeamABat"></div>
+          <div id="msTeamABowl"></div>
+        </div>
+        <div class="match-team" id="msTeamB">
+          <div class="tname" id="msTeamBName">Team B</div>
+          <div class="tscore" id="msTeamBScore">—</div>
+          <div id="msTeamBBat"></div>
+          <div id="msTeamBBowl"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </div>
-
-<div id="freehit-banner">⚡ FREE HIT IN PLAY</div>
-
-<div id="event-banner">
-  <div class="ev-text" id="evText"></div>
-  <div class="ev-sub" id="evSub"></div>
-</div>
-
-<div class="summary-card" id="inningsCard"></div>
-<div class="summary-card" id="matchCard"></div>
 
 <script>
 /* ============================================================
-   STATE + FORMAT RULES  (mirrors the controller panel)
+   0. FIT / SCALE STAGE (1920x1080 design canvas, OBS/vMix safe)
    ============================================================ */
-const FORMAT_RULES = {
-  T20:   { oversPerInnings: 20, powerplayEnd: 6  },
-  ODI:   { oversPerInnings: 50, powerplayEnd: 10 },
-  Test:  { oversPerInnings: null, powerplayEnd: null },
-  Custom:{ oversPerInnings: 20, powerplayEnd: 6  }
+const stage = document.getElementById('stage');
+function fitStage(){
+  const scale = Math.min(window.innerWidth/1920, window.innerHeight/1080);
+  stage.style.transform = `translate(-50%,-50%) scale(${scale})`;
+}
+window.addEventListener('resize', fitStage);
+fitStage();
+
+/* ============================================================
+   1. CUSTOM EASES — premium broadcast motion curves
+   ============================================================ */
+gsap.registerPlugin(CustomEase);
+CustomEase.create('premiumOut',   'M0,0 C0.16,1 0.3,1 1,1');
+CustomEase.create('premiumInOut', 'M0,0 C0.65,0 0.35,1 1,1');
+CustomEase.create('softOvershoot','M0,0 C0.34,1.28 0.64,1 1,1');
+CustomEase.create('snap',         'M0,0 C0.2,0 0,1 1,1');
+
+/* ============================================================
+   2. TINY "SplitText" RECREATION (Club plugin unavailable)
+   Wraps each character of an element in its own span so it can
+   be staggered / revealed independently. Idempotent — safe to
+   call again after textContent changes.
+   ============================================================ */
+function splitChars(el){
+  const text = el.textContent;
+  el.textContent = '';
+  const spans = [...text].map(ch => {
+    const s = document.createElement('span');
+    s.style.display = 'inline-block';
+    s.style.willChange = 'transform,opacity';
+    s.textContent = ch === ' ' ? '\u00A0' : ch;
+    el.appendChild(s);
+    return s;
+  });
+  return spans;
+}
+function revealChars(el, opts={}){
+  const spans = splitChars(el);
+  gsap.set(spans, { yPercent:120, opacity:0 });
+  gsap.to(spans, {
+    yPercent:0, opacity:1, duration:opts.duration||.5, ease:'premiumOut',
+    stagger:opts.stagger||.018, delay:opts.delay||0
+  });
+  return spans;
+}
+
+/* ============================================================
+   3. COUNTRY FLAG RESOLUTION (flagcdn.com), team short/name -> iso2
+   ============================================================ */
+const FLAG_MAP = {
+  IND:'in', AUS:'au', ENG:'gb-eng', NZ:'nz', PAK:'pk', SA:'za', RSA:'za',
+  SL:'lk', BAN:'bd', AFG:'af', ZIM:'zw', IRE:'ie', SCO:'gb-sct', NED:'nl',
+  UAE:'ae', NAM:'na', NEP:'np', USA:'us', CAN:'ca', OMA:'om', OMAN:'om',
+  PNG:'pg', HK:'hk', KEN:'ke', BER:'bm', JPN:'jp', GER:'de', ITA:'it',
+  QAT:'qa', KUW:'kw', SIN:'sg', MAS:'my', THA:'th', PHI:'ph', VAN:'vu',
+  FIJ:'fj', GHA:'gh', NGR:'ng', TAN:'tz', UGA:'ug', BOT:'bw', RWA:'rw',
+  MLT:'mt', SPA:'es', FRA:'fr', SWZ:'ch', WAL:'gb-wls',
+  india:'in', australia:'au', england:'gb-eng', 'new zealand':'nz',
+  pakistan:'pk', 'south africa':'za', 'sri lanka':'lk', bangladesh:'bd',
+  afghanistan:'af', zimbabwe:'zw', ireland:'ie', scotland:'gb-sct',
+  netherlands:'nl', 'united arab emirates':'ae', namibia:'na', nepal:'np',
+  'united states':'us', usa:'us', canada:'ca', oman:'om',
+  'papua new guinea':'pg', 'hong kong':'hk', kenya:'ke', bermuda:'bm'
+};
+// West Indies has no ISO country flag — render a maroon crest fallback.
+function isWestIndies(key){
+  return ['WI','WEST INDIES','WESTINDIES'].includes(String(key).toUpperCase());
+}
+function resolveFlagIso(team){
+  const short = (team.short||'').trim();
+  const name  = (team.name||'').trim().toLowerCase();
+  if(isWestIndies(short) || isWestIndies(name)) return null;
+  return FLAG_MAP[short.toUpperCase()] || FLAG_MAP[short] || FLAG_MAP[name] || null;
+}
+function setFlag(boxEl, imgEl, team){
+  const iso = resolveFlagIso(team);
+  boxEl.style.background = team.color || '#233';
+  if(iso){
+    imgEl.style.display = 'block';
+    imgEl.src = `https://flagcdn.com/w160/${iso}.png`;
+    const fb = boxEl.querySelector('.flag-fallback');
+    if(fb) fb.remove();
+  } else {
+    imgEl.style.display = 'none';
+    let fb = boxEl.querySelector('.flag-fallback');
+    if(!fb){ fb = document.createElement('div'); fb.className='flag-fallback'; boxEl.appendChild(fb); }
+    fb.textContent = (team.short || team.name || '').slice(0,3).toUpperCase();
+  }
+}
+
+/* ============================================================
+   4. BALL PIP RENDERING (Dot / 1-6 / W / Wd / Nb / B / LB)
+   ============================================================ */
+function ballPipClass(kind){
+  if(kind == null) return 'empty';
+  if(kind === '0') return 'dot';
+  if(/^[1-6]$/.test(kind)) return 'run';
+  if(kind === 'W') return 'wicket';
+  return 'extra'; // Wd, Nb, B, LB
+}
+function ballPipLabel(kind){
+  if(kind == null || kind === '0') return '';
+  if(/^[1-6]$/.test(kind)) return kind;
+  if(kind === 'W') return 'W';
+  const map = { Wd:'WD', Nb:'NB', B:'B', LB:'LB' };
+  return map[kind] || kind;
+}
+function renderRecentBalls(thisOver){
+  const wrap = document.getElementById('recentBalls');
+  const slots = (thisOver || []).slice(0,6);
+  while(slots.length < 6) slots.push(null);
+  const isNew = wrap.children.length !== 6;
+  slots.forEach((kind, i) => {
+    let pip = wrap.children[i];
+    if(!pip){
+      pip = document.createElement('div');
+      pip.className = 'ball-pip empty';
+      wrap.appendChild(pip);
+    }
+    const cls = ballPipClass(kind);
+    const changed = pip.dataset.kind !== String(kind);
+    pip.className = 'ball-pip ' + cls;
+    pip.textContent = ballPipLabel(kind);
+    pip.dataset.kind = String(kind);
+    if(changed && kind != null){ recentBallAnimation(pip); }
+  });
+}
+
+/* ============================================================
+   5. STATE + DOM REFS
+   ============================================================ */
+const $ = id => document.getElementById(id);
+let currentState = null;
+let firstRender = true;
+
+const el = {
+  bar: $('scorebar'), capsule: $('capsule'),
+  flagLeftBox: $('flagLeftBox'), flagLeftImg: $('flagLeftImg'),
+  flagRightBox: $('flagRightBox'), flagRightImg: $('flagRightImg'),
+  infoLeft: $('infoLeft'), infoRight: $('infoRight'),
+  rowTop: $('rowTop'), rowBottom: $('rowBottom'),
+  nameTop: $('nameTop'), runsTop: $('runsTop'), ballsTop: $('ballsTop'),
+  nameBottom: $('nameBottom'), runsBottom: $('runsBottom'), ballsBottom: $('ballsBottom'),
+  vsBowlShort: $('vsBowlShort'), vsBatShort: $('vsBatShort'),
+  scoreBadge: $('scoreBadge'), inningsBadge: $('inningsBadge'), oversBadge: $('oversBadge'),
+  rateLine: $('rateLine'), freehitChip: $('freehitChip'),
+  bowlerName: $('bowlerName'), bowlerFigs: $('bowlerFigs'), bowlerOversTxt: $('bowlerOversTxt')
 };
 
-function defaultState(){
-  return {
-    format:'T20', customOvers:20, venue:'',
-    teamA:{ name:'Team A', short:'A', color:'#17337a', logoUrl:'' },
-    teamB:{ name:'Team B', short:'B', color:'#7a1620', logoUrl:'' },
-    theme:{ badgeColor:'#ff7a1a', bottomBarColor:'#0a1330', progressColor:'#f0b429' },
-    battingTeam:'A', score:{ runs:0, wickets:0, overs:0, balls:0 }, target:null,
-    striker:{ name:'', runs:0, balls:0 }, nonStriker:{ name:'', runs:0, balls:0 },
-    bowler:{ name:'', overs:0, balls:0, runs:0, wickets:0 },
-    thisOver:[], visible:true, freeHit:false
-  };
-}
-let state = defaultState();
-
 function fmtOvers(o,b){ return `${o||0}.${b||0}`; }
-function bowlingTeamKey(){ return state.battingTeam === 'A' ? 'B' : 'A'; }
-function calcCRR(){
-  const tb = state.score.overs*6 + state.score.balls;
-  return tb === 0 ? 0 : state.score.runs / (tb/6);
+function calcCRR(score){
+  const totalBalls = (score.overs||0)*6 + (score.balls||0);
+  if(totalBalls === 0) return 0;
+  return score.runs / (totalBalls/6);
 }
-function ballsPerInnings(){
-  const r = state.format === 'Custom' ? { oversPerInnings: state.customOvers } : FORMAT_RULES[state.format];
-  return r.oversPerInnings ? r.oversPerInnings*6 : null;
+function ballsPerInnings(state){
+  if(state.format === 'Custom') return (state.customOvers||20)*6;
+  const rules = { T20:20, ODI:50, Test:Infinity }[state.format] ?? 20;
+  return rules === Infinity ? null : rules*6;
 }
-function calcRRR(){
+function calcRRR(state){
   if(!state.target) return null;
-  const total = ballsPerInnings(); if(!total) return null;
-  const left = total - (state.score.overs*6 + state.score.balls);
+  const total = ballsPerInnings(state);
+  if(!total) return null;
+  const bowled = (state.score.overs||0)*6 + (state.score.balls||0);
+  const left = total - bowled;
   if(left <= 0) return null;
   return (state.target - state.score.runs) / (left/6);
 }
-function computePhase(){
-  const rules = state.format === 'Custom' ? { ...FORMAT_RULES.Custom, oversPerInnings: state.customOvers } : FORMAT_RULES[state.format];
-  if(!rules.oversPerInnings) return null;
-  const oversSoFar = state.score.overs + state.score.balls/6;
-  const pp = rules.powerplayEnd || Math.round(rules.oversPerInnings*.3);
-  if(oversSoFar < pp) return 'P1';
-  if(oversSoFar < rules.oversPerInnings*.8) return 'P2';
-  return 'P3';
-}
 
 /* ============================================================
-   TEXT REVEAL HELPER — "Apple style": soft blur + rise + fade,
-   staggered across the words of an element.
+   6. RENDER — diffs previous vs incoming state, triggers the
+   matching micro-animation only for what actually changed.
    ============================================================ */
-function splitWords(el){
-  const text = el.dataset.raw !== undefined ? el.dataset.raw : el.textContent;
-  el.dataset.raw = text;
-  el.innerHTML = text.split(' ').map(w => `<span class="w" style="display:inline-block">${w}&nbsp;</span>`).join('');
-  return el.querySelectorAll('.w');
-}
-function revealTexts(container, tl, pos){
-  const words = [];
-  container.querySelectorAll('[data-anim]').forEach(el => words.push(...splitWords(el)));
-  tl.fromTo(words,
-    { opacity:0, y:10, filter:'blur(6px)' },
-    { opacity:1, y:0, filter:'blur(0px)', duration:.5, ease:'power3.out', stagger:.028 },
-    pos
-  );
-}
-function escapeHtml(s){
-  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-function flagChip(team){
-  if(team && team.logoUrl) return `<img src="${team.logoUrl}" alt="">`;
-  return `<span class="fb">${escapeHtml((team && team.short) || '').slice(0,3)}</span>`;
-}
-function parseScoreStr(s){
-  if(!s) return { main:'—', overs:'' };
-  const m = String(s).match(/^(.*?)\s*\((.*?)\s*ov\)\s*$/i);
-  if(m) return { main:m[1].trim(), overs:m[2].trim() };
-  return { main:String(s).trim(), overs:'' };
-}
-
-/* ============================================================
-   MAIN SCOREBUG — build once, play forward to show / reverse to hide
-   ============================================================ */
-let bugTL = null;
-function buildBugTimeline(){
-  const tl = gsap.timeline({ paused:true });
-  gsap.set('#logoBatting,#logoBowling', { scale:0, opacity:0 });
-  gsap.set('#segLeft,#segRight', { opacity:0, scale:.85 });
-  gsap.set('#segCenter', { opacity:0, scale:.8, y:8 });
-
-  tl.to('#logoBatting,#logoBowling', { scale:1, opacity:1, duration:.4, ease:'back.out(2)' }, 0);
-  tl.to('#segCenter', { opacity:1, scale:1, y:0, duration:.4, ease:'power3.out' }, .18);
-  tl.to('#segLeft,#segRight', { opacity:1, scale:1, duration:.4, ease:'power3.out' }, .3);
-
-  revealTexts(document.getElementById('segCenter'), tl, .42);
-  revealTexts(document.getElementById('segLeft'), tl, .5);
-  revealTexts(document.getElementById('segRight'), tl, .5);
-  return tl;
-}
-function showBug(){ if(bugTL) bugTL.timeScale(1).play(); }
-function hideBug(){ if(bugTL) bugTL.timeScale(1.25).reverse(); }
-
-/* ============================================================
-   RENDER
-   ============================================================ */
-function teamLogo(el, team){
-  el.innerHTML = team.logoUrl
-    ? `<img src="${team.logoUrl}" alt="${team.short}">`
-    : `<div class="logo-fallback" style="background:${team.color}">${(team.short||'').slice(0,3)}</div>`;
-  if(!team.logoUrl){
-    el.querySelector('.logo-fallback').style.cssText += 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;border-radius:50%;';
-  }
-}
-
-function renderPips(){
-  const wrap = document.getElementById('overPips');
-  wrap.innerHTML = '';
-  const balls = (state.thisOver || []).slice(-6);
-  const slots = [...balls, ...Array(6 - balls.length).fill(null)];
-  slots.forEach(b => {
-    const d = document.createElement('div');
-    if(b === null){ d.className = 'pip empty'; }
-    else if(b === 'W'){ d.className = 'pip wicket'; d.textContent = 'W'; }
-    else if(b === '6'){ d.className = 'pip six'; d.textContent = '6'; }
-    else if(b === '4'){ d.className = 'pip four'; d.textContent = '4'; }
-    else if(b === '0'){ d.className = 'pip dot'; }
-    else if(['Wd','Nb','B','LB'].includes(b)){ d.className = 'pip extra'; d.textContent = b[0]; }
-    else { d.className = 'pip run'; d.textContent = b; }
-    wrap.appendChild(d);
-  });
-}
-
-function applyTheme(){
-  const r = document.documentElement.style;
-  r.setProperty('--team-a', state.teamA.color || '#17337a');
-  r.setProperty('--team-b', state.teamB.color || '#7a1620');
-  r.setProperty('--badge', state.theme.badgeColor || '#ff7a1a');
-  r.setProperty('--bottombar', state.theme.bottomBarColor || '#0a1330');
-  r.setProperty('--progress', state.theme.progressColor || '#f0b429');
-}
-
-function render(){
-  applyTheme();
+function renderState(state){
+  const prev = currentState;
+  currentState = state;
 
   const battingTeam = state.battingTeam === 'A' ? state.teamA : state.teamB;
   const bowlingTeam = state.battingTeam === 'A' ? state.teamB : state.teamA;
-  teamLogo(document.getElementById('logoBatting'), battingTeam);
-  teamLogo(document.getElementById('logoBowling'), bowlingTeam);
+  const striker = state.striker, nonStriker = state.nonStriker;
 
-  const setText = (id, val) => {
-    const el = document.getElementById(id);
-    el.dataset.raw = val;
-    el.setAttribute('data-anim','');
-    el.textContent = val;
-  };
+  // --- flags ---
+  setFlag(el.flagLeftBox, el.flagLeftImg, battingTeam);
+  setFlag(el.flagRightBox, el.flagRightImg, bowlingTeam);
 
-  const ns = document.getElementById('lineNonStriker');
-  const st = document.getElementById('lineStriker');
-  ns.querySelector('.bname').textContent = (state.nonStriker.name || 'Batsman').toUpperCase();
-  ns.querySelector('.bruns').textContent = state.nonStriker.runs || 0;
-  ns.querySelector('.bballs').textContent = state.nonStriker.balls || 0;
-  st.querySelector('.bname').textContent = (state.striker.name || 'Batsman').toUpperCase();
-  st.querySelector('.bruns').textContent = state.striker.runs || 0;
-  st.querySelector('.bballs').textContent = state.striker.balls || 0;
+  // --- player rows: non-striker on top, striker (with ▶) on bottom ---
+  const playerChanged = !prev || prev.striker.name !== striker.name || prev.nonStriker.name !== nonStriker.name;
+  el.nameTop.textContent = (nonStriker.name || '').toUpperCase();
+  el.runsTop.textContent = nonStriker.runs ?? 0;
+  el.ballsTop.textContent = nonStriker.balls ?? 0;
+  el.nameBottom.textContent = (striker.name || '').toUpperCase();
+  el.runsBottom.textContent = striker.runs ?? 0;
+  el.ballsBottom.textContent = striker.balls ?? 0;
+  el.rowTop.classList.remove('striker');
+  el.rowBottom.classList.add('striker');
+  if(playerChanged && !firstRender) playerChangeAnimation();
 
-  setText('matchCode', `${state.teamA.short || 'A'} v ${state.teamB.short || 'B'}`);
-  setText('scoreChip', `${state.score.runs}-${state.score.wickets}`);
-  const phase = computePhase();
-  document.getElementById('phaseBadge').style.display = phase ? '' : 'none';
-  setText('phaseBadge', phase || '');
-  setText('oversText', fmtOvers(state.score.overs, state.score.balls));
+  // --- score / overs / rate ---
+  const newScoreTxt = `${state.score.runs}-${state.score.wickets}`;
+  const scoreChanged = !prev || `${prev.score.runs}-${prev.score.wickets}` !== newScoreTxt;
+  el.scoreBadge.textContent = newScoreTxt;
+  el.oversBadge.textContent = fmtOvers(state.score.overs, state.score.balls);
+  el.vsBowlShort.textContent = (bowlingTeam.short || bowlingTeam.name || '').toUpperCase();
+  el.vsBatShort.textContent = (battingTeam.short || battingTeam.name || '').toUpperCase();
+  el.inningsBadge.textContent = state.target ? '2ND' : '1ST';
 
-  const rrr = calcRRR();
-  setText('rateLine', rrr !== null ? `REQUIRED RATE ${rrr.toFixed(2)}` : `CURRENT RATE ${calcCRR().toFixed(2)}`);
-
-  document.getElementById('bowlerName').textContent = (state.bowler.name || 'Bowler').toUpperCase();
-  document.getElementById('bowlerFigs').textContent = `${state.bowler.wickets||0}-${state.bowler.runs||0}`;
-  document.getElementById('bowlerOvers').textContent = fmtOvers(state.bowler.overs, state.bowler.balls);
-
-  renderPips();
-
-  // free hit
-  gsap.to('#freehit-banner', { opacity: state.freeHit ? 1 : 0, y: state.freeHit ? 0 : 10, duration:.35, ease:'power2.out' });
-}
-
-let bugVisible = false;
-function applyVisibility(){
-  if(state.visible && !bugVisible){ bugVisible = true; showBug(); }
-  else if(!state.visible && bugVisible){ bugVisible = false; hideBug(); }
-}
-
-/* ============================================================
-   EVENT BANNER (milestones)
-   ============================================================ */
-let evTL = null;
-function playEvent(ev){
-  document.getElementById('evText').textContent = ev.text || '';
-  document.getElementById('evSub').textContent = ev.sub || '';
-  if(evTL) evTL.kill();
-  evTL = gsap.timeline();
-  evTL.fromTo('#event-banner', { opacity:0, y:-22, scale:.9 }, { opacity:1, y:0, scale:1, duration:.45, ease:'power3.out' });
-  revealTexts(document.getElementById('event-banner'), evTL, '-=0.15');
-  evTL.to('#event-banner', { opacity:0, y:-14, scale:.94, duration:.4, ease:'power2.in' }, `+=${((ev.durationMs||3500)/1000)}`);
-}
-
-/* ============================================================
-   SUMMARY CARDS — same "kit" as the score bug (theme vars), same
-   build language as the bug: box lands first, then each section
-   cascades in one-by-one with the Apple-style blur/rise reveal,
-   rows sliding in from their own side of the card.
-   ============================================================ */
-const summaryTLs = {};
-function showSummaryCard(id, html){
-  const el = document.getElementById(id);
-  if(summaryTLs[id]) summaryTLs[id].kill();
-  gsap.killTweensOf(el);
-  gsap.killTweensOf(el.querySelectorAll('*'));
-
-  el.innerHTML = `<div class="sc-inner">${html}</div>`;
-  gsap.set(el, { display:'block' });
-  const inner = el.querySelector('.sc-inner');
-  const blocks = [...inner.children];
-
-  const tl = gsap.timeline();
-  tl.eventCallback('onReverseComplete', () => gsap.set(el, { display:'none' }));
-  summaryTLs[id] = tl;
-
-  // 1) the card itself lands
-  tl.fromTo(el, { opacity:0, scale:.86, y:26 }, { opacity:1, scale:1, y:0, duration:.55, ease:'power3.out' });
-
-  // 2) walk the sections top to bottom, each with its own flavour of reveal
-  blocks.forEach((block, idx) => {
-    const gapPos = idx === 0 ? '-=.18' : '<+.09';
-
-    if(block.classList.contains('sc-topbar')){
-      const flags = block.querySelectorAll('.sc-flag');
-      tl.fromTo(block, { opacity:0 }, { opacity:1, duration:.25 }, gapPos);
-      tl.fromTo(flags, { opacity:0, scale:.4, rotate:-20 }, { opacity:1, scale:1, rotate:0, duration:.5, ease:'back.out(2.5)', stagger:.08 }, '<');
-      revealTexts(block, tl, '<+.05');
-
-    } else if(block.classList.contains('sc-header')){
-      const trophy = block.querySelector('.sc-trophy');
-      tl.fromTo(block, { opacity:0 }, { opacity:1, duration:.3 }, gapPos);
-      if(trophy) tl.fromTo(trophy, { opacity:0, scale:0, rotate:-100 }, { opacity:1, scale:1, rotate:0, duration:.6, ease:'back.out(2.6)' }, '<');
-      revealTexts(block, tl, '<+.05');
-
-    } else if(block.classList.contains('sc-venue')){
-      tl.fromTo(block, { opacity:0 }, { opacity:1, duration:.3 }, gapPos);
-      revealTexts(block, tl, '<');
-
-    } else if(block.classList.contains('sc-cols')){
-      const cols = [...block.querySelectorAll('.sc-col')];
-      const rowGroups = cols.map(c => [...c.querySelectorAll('.sc-row')]);
-      const maxLen = rowGroups.reduce((m,r) => Math.max(m, r.length), 0);
-      rowGroups.forEach((rows, ci) => {
-        gsap.set(rows, { opacity:0, x: ci === 0 ? -22 : 22, filter:'blur(6px)' });
-      });
-      for(let r = 0; r < maxLen; r++){
-        const rp = (idx === 0 && r === 0) ? gapPos : '<+.055';
-        rowGroups.forEach(rows => {
-          const rowEl = rows[r];
-          if(rowEl) tl.to(rowEl, { opacity:1, x:0, filter:'blur(0px)', duration:.38, ease:'power3.out' }, rp);
-        });
-      }
-
-    } else if(block.classList.contains('sc-band') || block.classList.contains('sc-section-title')){
-      tl.fromTo(block, { opacity:0, scaleX:.75 }, { opacity:1, scaleX:1, duration:.4, ease:'power2.out', transformOrigin:'left center' }, gapPos);
-      revealTexts(block, tl, '<+.03');
-
-    } else if(block.classList.contains('sc-fow')){
-      tl.fromTo(block, { opacity:0 }, { opacity:1, duration:.3 }, gapPos);
-      const chips = block.querySelectorAll('.chip');
-      tl.fromTo(chips, { opacity:0, y:8, scale:.85 }, { opacity:1, y:0, scale:1, duration:.35, ease:'back.out(2)', stagger:.05 }, '<');
-      revealTexts(block, tl, '<');
-
-    } else if(block.classList.contains('sc-resultband')){
-      tl.fromTo(block, { opacity:0, y:12 }, { opacity:1, y:0, duration:.5, ease:'power3.out' }, gapPos);
-      revealTexts(block, tl, '<+.05');
-
-    } else {
-      tl.fromTo(block, { opacity:0, y:8 }, { opacity:1, y:0, duration:.35 }, gapPos);
-      revealTexts(block, tl, '<');
-    }
-  });
-}
-function hideSummaryCard(id){
-  const el = document.getElementById(id);
-  const tl = summaryTLs[id];
-  if(tl){ tl.timeScale(1.5).reverse(); }
-  else { gsap.to(el, { opacity:0, scale:.9, y:12, duration:.35, ease:'power2.in' }); }
-}
-
-function inningsSummaryHTML(d){
-  const batRows = (d.batsmen || []).map(b => `
-    <div class="sc-row${(!b.howOut || b.howOut === 'not out') ? ' not-out' : ''}">
-      <span class="nm"><span class="nm-text">${escapeHtml(b.name)}</span><span class="dm">${escapeHtml(b.howOut || 'not out')}</span></span>
-      <span class="vv">${b.runs} <i>(${b.balls})</i></span>
-    </div>`).join('');
-
-  const bowlRows = (d.bowlers || []).map((b, i) => `
-    <div class="sc-row${i === 0 ? ' best' : ''}">
-      <span class="nm">${escapeHtml(b.name)}</span>
-      <span class="vv">${b.wickets}-${b.runs} <i>(${b.overs} ov · ${b.econ} econ)</i></span>
-    </div>`).join('');
-
-  const fowChips = (d.fallOfWickets || []).map(w => `<span class="chip"><b>${w.wkt}</b>-${w.runs} <span style="color:#9096a8;">(${w.over})</span></span>`).join('');
-
-  return `
-    <div class="sc-topbar">
-      <span class="sc-flag" style="background:${d.battingTeamColor || '#333'}">${flagChip({ logoUrl:d.battingTeamLogo, short:d.battingTeamShort })}</span>
-      <span class="sc-tag" data-anim>${escapeHtml(d.format || 'MATCH')} • Innings Summary</span>
-      <span class="sc-flag" style="background:${d.bowlingTeamColor || '#333'}">${flagChip({ logoUrl:d.bowlingTeamLogo, short:d.bowlingTeamShort })}</span>
-    </div>
-    <div class="sc-header">
-      <span class="sc-tname left" data-anim>${escapeHtml(d.battingTeamName || 'Batting')}</span>
-      <span class="sc-trophy">🏏</span>
-      <span class="sc-tname right" data-anim style="color:var(--grey);font-size:15px;">vs ${escapeHtml(d.bowlingTeamName || '')}</span>
-    </div>
-    <div class="sc-venue" data-anim>${escapeHtml(d.venue || '')}</div>
-    <div class="sc-band">
-      <div class="big">${escapeHtml(d.total || '0-0')}</div>
-      <div class="small right">${escapeHtml(d.overs || '0.0')} OVERS &nbsp;·&nbsp; ${d.extrasTotal || 0} EXTRAS</div>
-    </div>
-    <div class="sc-cols"><div class="sc-col" style="flex:1 1 100%;">${batRows}</div></div>
-    <div class="sc-section-title" data-anim>Bowling — ${escapeHtml(d.bowlingTeamShort || '')}</div>
-    <div class="sc-cols"><div class="sc-col" style="flex:1 1 100%;">${bowlRows}</div></div>
-    ${fowChips ? `<div class="sc-fow"><div class="lbl" data-anim>Fall of wickets</div><div class="chips">${fowChips}</div></div>` : ''}
-  `;
-}
-
-function matchSummaryHTML(d){
-  const sa = parseScoreStr(d.teamA.score);
-  const sb = parseScoreStr(d.teamB.score);
-  const batRows = arr => (arr && arr.length ? arr : [{ name:'—', runs:0, balls:0 }])
-    .map(b => `<div class="sc-row"><span class="nm">${escapeHtml(b.name)}</span><span class="vv">${b.runs} <i>(${b.balls})</i></span></div>`).join('');
-  const bowlRows = arr => (arr && arr.length ? arr : [{ name:'—', figures:'0-0', overs:'0.0' }])
-    .map((b, i) => `<div class="sc-row${i === 0 ? ' best' : ''}"><span class="nm">${escapeHtml(b.name)}</span><span class="vv">${escapeHtml(b.figures)} <i>(${b.overs})</i></span></div>`).join('');
-
-  return `
-    <div class="sc-topbar">
-      <span class="sc-flag" style="background:${d.teamA.color || '#333'}">${flagChip(d.teamA)}</span>
-      <span class="sc-tag" data-anim>${escapeHtml(d.format || 'MATCH')} SUMMARY</span>
-      <span class="sc-flag" style="background:${d.teamB.color || '#333'}">${flagChip(d.teamB)}</span>
-    </div>
-    <div class="sc-header">
-      <span class="sc-tname left" data-anim>${escapeHtml(d.teamA.name || 'Team A')}</span>
-      <span class="sc-trophy">🏆</span>
-      <span class="sc-tname right" data-anim>${escapeHtml(d.teamB.name || 'Team B')}</span>
-    </div>
-    <div class="sc-venue" data-anim>${escapeHtml(d.venue || '')}</div>
-    <div class="sc-band">
-      <div class="big">${escapeHtml(sa.main)}</div>
-      <div class="big right">${escapeHtml(sb.main)}</div>
-    </div>
-    <div class="sc-cols">
-      <div class="sc-col">${batRows(d.teamA.batsmen)}</div>
-      <div class="sc-col">${batRows(d.teamB.batsmen)}</div>
-    </div>
-    <div class="sc-band">
-      <div class="small">${sa.overs ? escapeHtml(sa.overs) + ' OVERS' : ''}</div>
-      <div class="small right">${sb.overs ? escapeHtml(sb.overs) + ' OVERS' : ''}</div>
-    </div>
-    <div class="sc-cols">
-      <div class="sc-col">${bowlRows(d.teamA.bowlers)}</div>
-      <div class="sc-col">${bowlRows(d.teamB.bowlers)}</div>
-    </div>
-    <div class="sc-resultband" data-anim>${escapeHtml(d.winnerText || '')}</div>
-  `;
-}
-
-/* ============================================================
-   SOCKET
-   ============================================================ */
-function connect(){
-  const matchId = new URLSearchParams(location.search).get('room') || '';
-  const socket = io({ query: { uid: matchId } });
-
-  socket.on('connect', () => { /* silent — this is a display-only surface */ });
-
-  socket.on('liveCricketScore', (serverState) => {
-    if(!serverState || !Object.keys(serverState).length) return;
-    const wasFirstLoad = !bugTL;
-    state = {
-      ...defaultState(), ...serverState,
-      teamA: { ...defaultState().teamA, ...(serverState.teamA||{}) },
-      teamB: { ...defaultState().teamB, ...(serverState.teamB||{}) },
-      theme: { ...defaultState().theme, ...(serverState.theme||{}) },
-      score: { ...defaultState().score, ...(serverState.score||{}) },
-      striker: { ...defaultState().striker, ...(serverState.striker||{}) },
-      nonStriker: { ...defaultState().nonStriker, ...(serverState.nonStriker||{}) },
-      bowler: { ...defaultState().bowler, ...(serverState.bowler||{}) }
-    };
-    render();
-    if(wasFirstLoad){
-      bugTL = buildBugTimeline();
-      if(state.visible){ bugVisible = true; showBug(); }
-    } else {
-      applyVisibility();
-    }
-  });
-
-  socket.on('cricketEvent', (msg) => { if(msg && msg.event) playEvent(msg.event); });
-  socket.on('cricketInningsSummary', (msg) => { if(msg && msg.data) showSummaryCard('inningsCard', inningsSummaryHTML(msg.data)); });
-  socket.on('cricketHideInningsSummary', () => hideSummaryCard('inningsCard'));
-  socket.on('cricketMatchSummary', (msg) => { if(msg && msg.data) showSummaryCard('matchCard', matchSummaryHTML(msg.data)); });
-  socket.on('cricketHideMatchSummary', () => hideSummaryCard('matchCard'));
-}
-
-/* ============================================================
-   DEMO MODE — preview the whole sequence with no server needed.
-   Open the file with ?demo=1 in the URL (or press "D") to loop:
-   score bug -> innings summary -> match summary -> repeat.
-   ============================================================ */
-function runDemo(){
-  const demoState = {
-    format:'T20', venue:'Narendra Modi Stadium, Ahmedabad',
-    teamA:{ name:'India', short:'IND', color:'#17337a', logoUrl:'' },
-    teamB:{ name:'New Zealand', short:'NZ', color:'#7a1620', logoUrl:'' },
-    theme:{ badgeColor:'#ff7a1a', bottomBarColor:'#0a1330', progressColor:'#f0b429' },
-    battingTeam:'A', score:{ runs:216, wickets:7, overs:48, balls:3 }, target:246,
-    striker:{ name:'Dhoni', runs:49, balls:71 }, nonStriker:{ name:'Bhuvneshwar', runs:0, balls:0 },
-    bowler:{ name:'Ferguson', overs:9, balls:2, runs:41, wickets:0 },
-    thisOver:['6','0'], visible:true, freeHit:false
-  };
-
-  const inningsDemoData = {
-    battingTeamName:'England', battingTeamShort:'ENG', battingTeamColor:'#17337a', battingTeamLogo:'',
-    bowlingTeamName:'New Zealand', bowlingTeamShort:'NZ', bowlingTeamColor:'#7a1620', bowlingTeamLogo:'',
-    format:'T20 World Cup', venue:'R. Premadasa Stadium, Colombo',
-    batsmen:[
-      { name:'Salt', runs:2, balls:4, howOut:'c Seifert b Henry' },
-      { name:'Buttler', runs:0, balls:2, howOut:'c Seifert b Ferguson' },
-      { name:'Brook', runs:26, balls:16, howOut:'b Phillips' },
-      { name:'Bethell', runs:21, balls:16, howOut:'b Ravindra' },
-      { name:'Banton', runs:33, balls:24, howOut:'c Chapman b Ravindra' },
-      { name:'C Surran', runs:24, balls:22, howOut:'b Ravindra' },
-      { name:'Jacks', runs:32, balls:18, howOut:'not out' },
-      { name:'Ahmed', runs:19, balls:7, howOut:'not out' }
-    ],
-    bowlers:[
-      { name:'Henry', overs:'2.3', runs:19, wickets:1, econ:'7.60' },
-      { name:'Ferguson', overs:'7', runs:14, wickets:1, econ:'7.00' },
-      { name:'Santner', overs:'11', runs:29, wickets:0, econ:'7.25' },
-      { name:'Phillips', overs:'7', runs:43, wickets:1, econ:'10.75' },
-      { name:'Ravindra', overs:'11', runs:19, wickets:3, econ:'4.75' }
-    ],
-    fallOfWickets:[
-      { wkt:1, runs:2, over:'0.5' }, { wkt:2, runs:50, over:'6.2' }, { wkt:3, runs:58, over:'7.4' },
-      { wkt:4, runs:100, over:'12.1' }, { wkt:5, runs:117, over:'14.6' }
-    ],
-    extrasTotal:4, overs:'19.3', total:'161-6'
-  };
-
-  const matchDemoData = {
-    venue:'Narendra Modi Stadium, Ahmedabad', format:'T20 World Cup — The Final',
-    winnerText:'INDIA WON BY 96 RUNS',
-    teamA:{
-      name:'India', short:'IND', color:'#17337a', logoUrl:'', score:'255-5 (20.0 ov)',
-      batsmen:[{ name:'Samson', runs:89, balls:46 },{ name:'Kishan', runs:54, balls:25 },{ name:'Abhishek', runs:52, balls:21 },{ name:'Dube', runs:26, balls:8 }],
-      bowlers:[{ name:'Neesham', figures:'3-46', overs:'4.0' },{ name:'Ravindra', figures:'1-32', overs:'2.0' },{ name:'Henry', figures:'1-49', overs:'4.0' }]
-    },
-    teamB:{
-      name:'New Zealand', short:'NZ', color:'#7a1620', logoUrl:'', score:'159 (19.0 ov)',
-      batsmen:[{ name:'Seifert', runs:52, balls:26 },{ name:'Santner', runs:43, balls:35 },{ name:'Mitchell', runs:17, balls:11 },{ name:'Allen', runs:9, balls:7 }],
-      bowlers:[{ name:'Bumrah', figures:'4-15', overs:'4.0' },{ name:'Axar', figures:'3-27', overs:'4.0' },{ name:'Abhishek', figures:'1-5', overs:'1.0' }]
-    }
-  };
-
-  state = demoState;
-  render();
-  bugTL = buildBugTimeline();
-
-  const HOLD_BUG = 4000, HOLD_CARD = 6000, GAP = 700;
-  function loop(){
-    bugVisible = true; showBug();
-    setTimeout(() => {
-      hideBug();
-      setTimeout(() => {
-        showSummaryCard('inningsCard', inningsSummaryHTML(inningsDemoData));
-        setTimeout(() => {
-          hideSummaryCard('inningsCard');
-          setTimeout(() => {
-            showSummaryCard('matchCard', matchSummaryHTML(matchDemoData));
-            setTimeout(() => {
-              hideSummaryCard('matchCard');
-              setTimeout(loop, GAP);
-            }, HOLD_CARD);
-          }, GAP);
-        }, HOLD_CARD);
-      }, GAP);
-    }, HOLD_BUG);
-  }
-  loop();
-}
-
-(function init(){
-  gsap.set('#freehit-banner,#event-banner,#inningsCard,#matchCard', { opacity:0 });
-  const params = new URLSearchParams(location.search);
-  if(params.get('demo') === '1'){
-    runDemo();
+  const rrr = calcRRR(state);
+  const rateChanged = !prev; // recompute text always, animate on numeric change below
+  if(rrr !== null){
+    el.rateLine.innerHTML = `REQUIRED RATE <b>${rrr.toFixed(2)}</b>`;
   } else {
-    connect();
+    el.rateLine.innerHTML = `CURRENT RATE <b>${calcCRR(state.score).toFixed(2)}</b>`;
   }
-  window.addEventListener('keydown', (e) => { if(e.key === 'd' || e.key === 'D') runDemo(); });
-})();
+
+  if(scoreChanged && !firstRender){
+    const runsScored = state.score.runs - (prev ? prev.score.runs : 0);
+    if(runsScored === 6) boundaryAnimation(true);
+    else if(runsScored === 4) boundaryAnimation(false);
+    else scoreUpdateAnimation();
+    if(prev && state.score.wickets > prev.score.wickets) wicketAnimation();
+  }
+
+  // --- bowler ---
+  const bowlerChanged = !prev || prev.bowler.name !== state.bowler.name;
+  el.bowlerName.textContent = (state.bowler.name || '—').toUpperCase();
+  el.bowlerFigs.textContent = `${state.bowler.wickets||0}-${state.bowler.runs||0}`;
+  el.bowlerOversTxt.textContent = fmtOvers(state.bowler.overs, state.bowler.balls);
+  if(bowlerChanged && !firstRender) bowlerUpdateAnimation();
+
+  // --- recent balls (current over) ---
+  renderRecentBalls(state.thisOver);
+
+  // --- free hit chip ---
+  el.freehitChip.classList.toggle('show', !!state.freeHit);
+
+  // --- overall visibility ---
+  if(state.visible === false){
+    if(!el.bar.classList.contains('hidden') && !firstRender) outroAnimation();
+  } else {
+    if(el.bar.classList.contains('hidden') || firstRender) introAnimation();
+  }
+
+  firstRender = false;
+}
+
+/* ============================================================
+   7. INTRO / OUTRO — panel build, flags slide, text reveal
+   ============================================================ */
+function introAnimation(){
+  el.bar.classList.remove('hidden');
+  const tl = gsap.timeline({ defaults:{ ease:'premiumOut' } });
+  tl.addLabel('start')
+    .set(el.bar, { opacity:1 })
+    .set('.slot', { clipPath:'inset(0 50% 0 50%)', opacity:0 })
+    .set('#capsule', { scale:.9, opacity:0 })
+    .to('.info-slot.left, .flag-slot.left', { clipPath:'inset(0 0% 0 0%)', opacity:1, duration:.55 }, 'start+=0.05')
+    .to('.info-slot.right, .flag-slot.right', { clipPath:'inset(0 0% 0 0%)', opacity:1, duration:.55 }, 'start+=0.1')
+    .to('#capsule', { scale:1, opacity:1, duration:.5, ease:'softOvershoot' }, 'start+=0.15')
+    .addLabel('panelsDone', 'start+=0.65')
+    .set(el.flagLeftBox, { xPercent:-160, opacity:0 }, 'panelsDone')
+    .set(el.flagRightBox, { xPercent:160, opacity:0 }, 'panelsDone')
+    .to(el.flagLeftBox, { xPercent:0, opacity:1, duration:.55, ease:'softOvershoot' }, 'panelsDone+=0.05')
+    .to(el.flagRightBox, { xPercent:0, opacity:1, duration:.55, ease:'softOvershoot' }, 'panelsDone+=0.05')
+    .addLabel('flagsDone', 'panelsDone+=0.5')
+    .add(() => {
+      revealChars(el.nameTop, { delay:0 });
+      revealChars(el.nameBottom, { delay:.04 });
+      revealChars(el.bowlerName, { delay:.08 });
+      gsap.fromTo([el.runsTop, el.ballsTop, el.runsBottom, el.ballsBottom, el.bowlerFigs, el.bowlerOversTxt],
+        { yPercent:60, opacity:0 }, { yPercent:0, opacity:1, duration:.4, stagger:.03, ease:'premiumOut' });
+    }, 'flagsDone')
+    .fromTo('#capsule .capsule-top > *', { yPercent:50, opacity:0 }, { yPercent:0, opacity:1, duration:.4, stagger:.05, ease:'premiumOut' }, 'flagsDone+=0.05')
+    .fromTo('#scoreBadge', { scale:.9, opacity:0 }, { scale:1, opacity:1, duration:.35, ease:'premiumOut' }, 'flagsDone+=0.1')
+    .fromTo('#rateLine', { opacity:0, y:6 }, { opacity:1, y:0, duration:.35 }, 'flagsDone+=0.18')
+    .fromTo('.ball-pip', { scale:0, opacity:0 }, { scale:1, opacity:1, duration:.28, stagger:.06, ease:'softOvershoot' }, 'flagsDone+=0.22')
+    .fromTo('.strike-tri', { xPercent:-100, opacity:0 }, { xPercent:0, opacity:1, duration:.3, ease:'premiumOut' }, '>-0.1');
+}
+function outroAnimation(){
+  const tl = gsap.timeline({ defaults:{ ease:'premiumInOut' }, onComplete:() => el.bar.classList.add('hidden') });
+  tl.to('.strike-tri', { opacity:0, duration:.2 })
+    .to('.ball-pip', { scale:0, opacity:0, duration:.2, stagger:.03 }, '<')
+    .to(['#rateLine','.capsule-top > *','.player-row','.bowler-row'], { opacity:0, y:-6, duration:.25, stagger:.02 }, '<0.05')
+    .to(el.flagLeftBox, { xPercent:-160, opacity:0, duration:.4 }, '>')
+    .to(el.flagRightBox, { xPercent:160, opacity:0, duration:.4 }, '<')
+    .to('#capsule', { scale:.9, opacity:0, duration:.35 }, '>-0.1')
+    .to('.info-slot, .flag-slot', { clipPath:'inset(0 50% 0 50%)', opacity:0, duration:.4 }, '<')
+    .to(el.bar, { opacity:0, duration:.2 }, '>-0.1');
+}
+
+/* ============================================================
+   8. LIVE UPDATE ANIMATIONS
+   ============================================================ */
+function scoreUpdateAnimation(){
+  gsap.timeline()
+    .to(el.scoreBadge, { scale:1.16, duration:.16, ease:'snap' })
+    .to(el.scoreBadge, { scale:1, duration:.28, ease:'premiumOut' });
+  gsap.fromTo(el.oversBadge, { opacity:.4 }, { opacity:1, duration:.3 });
+}
+function playerChangeAnimation(){
+  gsap.fromTo([el.nameTop, el.runsTop, el.ballsTop, el.nameBottom, el.runsBottom, el.ballsBottom],
+    { yPercent:40, opacity:0 }, { yPercent:0, opacity:1, duration:.4, stagger:.02, ease:'premiumOut' });
+}
+function wicketAnimation(){
+  const tl = gsap.timeline();
+  tl.to(el.capsule, { boxShadow:'0 0 0 6px rgba(207,19,48,.55)', duration:.15 })
+    .to(el.capsule, { boxShadow:'0 6px 14px rgba(0,0,0,.35)', duration:.5, ease:'premiumOut' });
+  showEventBanner('WICKET', currentState && currentState.striker ? currentState.striker.name : '', 2200);
+}
+function boundaryAnimation(isSix){
+  gsap.timeline()
+    .to(el.capsule, { scale:1.05, duration:.14, ease:'snap' })
+    .to(el.capsule, { scale:1, duration:.35, ease:'softOvershoot' });
+  showEventBanner(isSix ? 'SIX' : 'FOUR', '', 1800);
+}
+function recentBallAnimation(pipEl){
+  gsap.fromTo(pipEl, { scale:0 }, { scale:1, duration:.3, ease:'softOvershoot' });
+}
+function bowlerUpdateAnimation(){
+  gsap.fromTo([el.bowlerName, el.bowlerFigs, el.bowlerOversTxt],
+    { yPercent:-40, opacity:0 }, { yPercent:0, opacity:1, duration:.4, stagger:.03, ease:'premiumOut' });
+}
+
+/* ============================================================
+   9. EVENT BANNER (FOUR/SIX/WICKET/milestones/etc.)
+   ============================================================ */
+let bannerTimer = null;
+function showEventBanner(kind, sub, durationMs){
+  const banner = $('event-banner');
+  banner.className = '';
+  banner.classList.add('kind-' + kind);
+  $('eventKind').textContent = kind.replace(/_/g,' ') + (['FOUR','SIX'].includes(kind) ? '!' : '');
+  $('eventSub').textContent = sub || '';
+  clearTimeout(bannerTimer);
+  gsap.killTweensOf(banner);
+  gsap.timeline()
+    .set(banner, { opacity:0, y:14, scale:.92 })
+    .to(banner, { opacity:1, y:0, scale:1, duration:.4, ease:'softOvershoot' })
+    .to(banner, { opacity:0, y:-10, duration:.35, ease:'premiumInOut', delay:Math.max(.3,(durationMs||2200)/1000 - .75) });
+}
+
+/* ============================================================
+   10. INNINGS / MATCH SUMMARY CARDS
+   ============================================================ */
+let inningsTimers = [];
+function clearInningsTimers(){ inningsTimers.forEach(clearTimeout); inningsTimers = []; }
+
+function showInningsSummary(data){
+  clearInningsTimers();
+  const wrap = $('inningsSummary');
+  wrap.style.setProperty('--accent-1', data.battingTeamColor || '#142463');
+  wrap.style.setProperty('--accent-2', data.bowlingTeamColor || '#101c4d');
+  $('isTitle').textContent = `${data.battingTeamShort || data.battingTeamName} INNINGS`;
+  $('isMeta').textContent = [data.venue, data.format].filter(Boolean).join(' · ');
+  $('isTotal').textContent = data.total;
+  $('isOvers').textContent = `(${data.overs} ov)`;
+  $('isExtras').textContent = `Extras: ${data.extrasTotal || 0}`;
+
+  const batBody = $('isBatBody'); batBody.innerHTML = '';
+  (data.batsmen||[]).forEach(b => {
+    batBody.insertAdjacentHTML('beforeend',
+      `<tr><td class="name">${b.name}</td><td>${b.howOut}</td><td class="num">${b.runs}</td><td class="num">${b.balls}</td><td class="num">${b.fours}</td><td class="num">${b.sixes}</td><td class="num">${b.sr}</td></tr>`);
+  });
+  const bowlBody = $('isBowlBody'); bowlBody.innerHTML = '';
+  (data.bowlers||[]).forEach(b => {
+    bowlBody.insertAdjacentHTML('beforeend',
+      `<tr><td class="name">${b.name}</td><td class="num">${b.overs}</td><td class="num">${b.maidens}</td><td class="num">${b.runs}</td><td class="num">${b.wickets}</td><td class="num">${b.econ}</td></tr>`);
+  });
+
+  $('tabBat').classList.add('active'); $('tabBowl').classList.remove('active');
+  $('isBatWrap').style.display = ''; $('isBowlWrap').style.display = 'none';
+
+  const ENTRY=1000, BATTING_HOLD=15000, SWITCH=800, BOWLING_HOLD=15000, EXIT=2800;
+  gsap.timeline()
+    .set(wrap, { opacity:0, scale:.94, pointerEvents:'auto' })
+    .to(wrap, { opacity:1, scale:1, duration:ENTRY/1000, ease:'softOvershoot' });
+
+  inningsTimers.push(setTimeout(() => {
+    gsap.timeline()
+      .to('#isBatWrap', { opacity:0, y:-10, duration:.35 })
+      .add(() => { $('isBatWrap').style.display='none'; $('isBowlWrap').style.display=''; $('tabBat').classList.remove('active'); $('tabBowl').classList.add('active'); })
+      .fromTo('#isBowlWrap', { opacity:0, y:10 }, { opacity:1, y:0, duration:.35 });
+  }, ENTRY + BATTING_HOLD));
+
+  inningsTimers.push(setTimeout(() => hideInningsSummary(), ENTRY + BATTING_HOLD + SWITCH + BOWLING_HOLD + EXIT));
+}
+function hideInningsSummary(){
+  clearInningsTimers();
+  gsap.to($('inningsSummary'), { opacity:0, scale:.94, duration:.4, ease:'premiumInOut', onComplete:() => { $('inningsSummary').style.pointerEvents='none'; } });
+}
+
+function showMatchSummary(data){
+  const wrap = $('matchSummary');
+  $('msVenue').textContent = data.venue || '';
+  $('msWinner').textContent = data.winnerText || '';
+
+  const fillTeam = (prefix, team) => {
+    $(prefix+'Name').textContent = (team.short || team.name || '').toUpperCase();
+    $(prefix+'Name').parentElement.style.background = `linear-gradient(90deg, ${team.color}22, transparent)`;
+    $(prefix+'Score').textContent = team.score || '—';
+    const batEl = $(prefix+'Bat'); batEl.innerHTML = (team.batsmen||[]).map(b =>
+      `<div class="row"><span>${b.name}</span><span>${b.runs} (${b.balls})</span></div>`).join('');
+    const bowlEl = $(prefix+'Bowl'); bowlEl.innerHTML = (team.bowlers||[]).map(b =>
+      `<div class="row"><span>${b.name}</span><span>${b.figures} (${b.overs})</span></div>`).join('');
+  };
+  fillTeam('msTeamA', data.teamA);
+  fillTeam('msTeamB', data.teamB);
+
+  gsap.timeline()
+    .set(wrap, { opacity:0, scale:.94, pointerEvents:'auto' })
+    .to(wrap, { opacity:1, scale:1, duration:1, ease:'softOvershoot' })
+    .fromTo('.match-team', { opacity:0, y:16 }, { opacity:1, y:0, duration:.5, stagger:.1, ease:'premiumOut' }, '-=0.5');
+}
+function hideMatchSummary(){
+  gsap.to($('matchSummary'), { opacity:0, scale:.94, duration:.4, ease:'premiumInOut', onComplete:() => { $('matchSummary').style.pointerEvents='none'; } });
+}
+
+/* ============================================================
+   11. SOCKET.IO — joins the same room as the panel via ?room=
+   ============================================================ */
+const roomId = new URLSearchParams(location.search).get('room') || 'default';
+const socket = io({ query: { uid: roomId } });
+
+socket.on('liveCricketScore', (state) => {
+  if(!state || !Object.keys(state).length) return;
+  // Fill sensible defaults for any field the panel hasn't sent yet, so a
+  // partial/first payload never throws mid-render.
+  const safe = {
+    format:'T20', customOvers:20, venue:'',
+    teamA:{ name:'Team A', short:'A', color:'#17337a' },
+    teamB:{ name:'Team B', short:'B', color:'#7a1620' },
+    battingTeam:'A',
+    score:{ runs:0, wickets:0, overs:0, balls:0 },
+    target:null,
+    striker:{ name:'Batsman 1', runs:0, balls:0 },
+    nonStriker:{ name:'Batsman 2', runs:0, balls:0 },
+    bowler:{ name:'', overs:0, balls:0, runs:0, wickets:0 },
+    thisOver:[], visible:true, freeHit:false,
+    ...state,
+    teamA:{ name:'Team A', short:'A', color:'#17337a', ...(state.teamA||{}) },
+    teamB:{ name:'Team B', short:'B', color:'#7a1620', ...(state.teamB||{}) },
+    score:{ runs:0, wickets:0, overs:0, balls:0, ...(state.score||{}) },
+    striker:{ name:'Batsman 1', runs:0, balls:0, ...(state.striker||{}) },
+    nonStriker:{ name:'Batsman 2', runs:0, balls:0, ...(state.nonStriker||{}) },
+    bowler:{ name:'', overs:0, balls:0, runs:0, wickets:0, ...(state.bowler||{}) }
+  };
+  renderState(safe);
+});
+
+socket.on('cricketEvent', (evt) => {
+  if(!evt || !evt.kind) return;
+  showEventBanner(evt.kind, evt.sub || evt.text || '', evt.durationMs || 2200);
+});
+socket.on('cricketInningsSummary', (data) => showInningsSummary(data || {}));
+socket.on('cricketHideInningsSummary', () => hideInningsSummary());
+socket.on('cricketMatchSummary', (data) => showMatchSummary(data || {}));
+socket.on('cricketHideMatchSummary', () => hideMatchSummary());
+
+/* ============================================================
+   12. INIT — start hidden until the first real state arrives
+   ============================================================ */
+el.bar.classList.add('hidden');
+gsap.set(el.bar, { opacity:0 });
 </script>
 </body>
 </html>
