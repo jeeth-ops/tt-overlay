@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <title>Cricket Overlay 2 — Broadcast Scorebug</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<script src="/socket.io/socket.io.js"></script>
+<script src="/socket.io/socket.io.js" onerror="console.warn('socket.io client not found — this is fine if you are just previewing with ?demo=1')"></script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/CustomEase.min.js"></script>
 <style>
@@ -432,19 +432,33 @@ function resolveFlagIso(team){
   return FLAG_MAP[short.toUpperCase()] || FLAG_MAP[short] || FLAG_MAP[name] || null;
 }
 function setFlag(boxEl, imgEl, team){
-  const iso = resolveFlagIso(team);
   boxEl.style.background = team.color || '#233';
+  const fbExisting = boxEl.querySelector('.flag-fallback');
+
+  // 1) Uploaded club/team logo always wins if present.
+  if(team.logoUrl){
+    imgEl.style.display = 'block';
+    imgEl.style.objectFit = 'contain';
+    imgEl.src = team.logoUrl;
+    if(fbExisting) fbExisting.remove();
+    return;
+  }
+  imgEl.style.objectFit = 'cover';
+
+  // 2) Fall back to a country flag if the team short/name matches one.
+  const iso = resolveFlagIso(team);
   if(iso){
     imgEl.style.display = 'block';
     imgEl.src = `https://flagcdn.com/w160/${iso}.png`;
-    const fb = boxEl.querySelector('.flag-fallback');
-    if(fb) fb.remove();
-  } else {
-    imgEl.style.display = 'none';
-    let fb = boxEl.querySelector('.flag-fallback');
-    if(!fb){ fb = document.createElement('div'); fb.className='flag-fallback'; boxEl.appendChild(fb); }
-    fb.textContent = (team.short || team.name || '').slice(0,3).toUpperCase();
+    if(fbExisting) fbExisting.remove();
+    return;
   }
+
+  // 3) Last resort: coloured chip with the team's short code.
+  imgEl.style.display = 'none';
+  let fb = fbExisting;
+  if(!fb){ fb = document.createElement('div'); fb.className='flag-fallback'; boxEl.appendChild(fb); }
+  fb.textContent = (team.short || team.name || '').slice(0,3).toUpperCase();
 }
 
 /* ============================================================
@@ -611,7 +625,8 @@ function introAnimation(){
   const tl = gsap.timeline({ defaults:{ ease:'premiumOut' } });
   tl.addLabel('start')
     .set(el.bar, { opacity:1 })
-    .set('.slot', { clipPath:'inset(0 50% 0 50%)', opacity:0 })
+    .set('.info-slot, .flag-slot', { clipPath:'inset(0 50% 0 50%)', opacity:0 })
+    .set('.center-slot', { opacity:1, clipPath:'inset(0 0% 0 0%)' })
     .set('#capsule', { scale:.9, opacity:0 })
     .to('.info-slot.left, .flag-slot.left', { clipPath:'inset(0 0% 0 0%)', opacity:1, duration:.55 }, 'start+=0.05')
     .to('.info-slot.right, .flag-slot.right', { clipPath:'inset(0 0% 0 0%)', opacity:1, duration:.55 }, 'start+=0.1')
@@ -633,7 +648,7 @@ function introAnimation(){
     .fromTo('#scoreBadge', { scale:.9, opacity:0 }, { scale:1, opacity:1, duration:.35, ease:'premiumOut' }, 'flagsDone+=0.1')
     .fromTo('#rateLine', { opacity:0, y:6 }, { opacity:1, y:0, duration:.35 }, 'flagsDone+=0.18')
     .fromTo('.ball-pip', { scale:0, opacity:0 }, { scale:1, opacity:1, duration:.28, stagger:.06, ease:'softOvershoot' }, 'flagsDone+=0.22')
-    .fromTo('.strike-tri', { xPercent:-100, opacity:0 }, { xPercent:0, opacity:1, duration:.3, ease:'premiumOut' }, '>-0.1');
+    .fromTo('.player-row.striker .strike-tri', { xPercent:-100, opacity:0 }, { xPercent:0, opacity:1, duration:.3, ease:'premiumOut' }, '>-0.1');
 }
 function outroAnimation(){
   const tl = gsap.timeline({ defaults:{ ease:'premiumInOut' }, onComplete:() => el.bar.classList.add('hidden') });
@@ -776,15 +791,16 @@ function hideMatchSummary(){
 
 /* ============================================================
    11. SOCKET.IO — joins the same room as the panel via ?room=
+   Optional: if the file is opened directly (file://) or the
+   socket.io client failed to load, we just skip live wiring —
+   demo mode (below) still works standalone either way.
    ============================================================ */
-const roomId = new URLSearchParams(location.search).get('room') || 'default';
-const socket = io({ query: { uid: roomId } });
+const params = new URLSearchParams(location.search);
+const DEMO_MODE = params.get('demo') === '1';
+const roomId = params.get('room') || 'default';
 
-socket.on('liveCricketScore', (state) => {
-  if(!state || !Object.keys(state).length) return;
-  // Fill sensible defaults for any field the panel hasn't sent yet, so a
-  // partial/first payload never throws mid-render.
-  const safe = {
+function safeDefaults(state){
+  return {
     format:'T20', customOvers:20, venue:'',
     teamA:{ name:'Team A', short:'A', color:'#17337a' },
     teamB:{ name:'Team B', short:'B', color:'#7a1620' },
@@ -803,23 +819,107 @@ socket.on('liveCricketScore', (state) => {
     nonStriker:{ name:'Batsman 2', runs:0, balls:0, ...(state.nonStriker||{}) },
     bowler:{ name:'', overs:0, balls:0, runs:0, wickets:0, ...(state.bowler||{}) }
   };
-  renderState(safe);
-});
+}
 
-socket.on('cricketEvent', (evt) => {
-  if(!evt || !evt.kind) return;
-  showEventBanner(evt.kind, evt.sub || evt.text || '', evt.durationMs || 2200);
-});
-socket.on('cricketInningsSummary', (data) => showInningsSummary(data || {}));
-socket.on('cricketHideInningsSummary', () => hideInningsSummary());
-socket.on('cricketMatchSummary', (data) => showMatchSummary(data || {}));
-socket.on('cricketHideMatchSummary', () => hideMatchSummary());
+if(!DEMO_MODE && typeof io !== 'undefined'){
+  try{
+    const socket = io({ query: { uid: roomId } });
+    socket.on('liveCricketScore', (state) => {
+      if(!state || !Object.keys(state).length) return;
+      renderState(safeDefaults(state));
+    });
+    socket.on('cricketEvent', (evt) => {
+      if(!evt || !evt.kind) return;
+      showEventBanner(evt.kind, evt.sub || evt.text || '', evt.durationMs || 2200);
+    });
+    socket.on('cricketInningsSummary', (data) => showInningsSummary(data || {}));
+    socket.on('cricketHideInningsSummary', () => hideInningsSummary());
+    socket.on('cricketMatchSummary', (data) => showMatchSummary(data || {}));
+    socket.on('cricketHideMatchSummary', () => hideMatchSummary());
+  }catch(e){ console.warn('Socket unavailable — open with ?demo=1 to preview without a server.', e); }
+}
+
+/* ============================================================
+   11b. DEMO MODE (?demo=1) — no server/panel needed at all.
+   Scripts a full live sequence: intro -> boundaries -> wicket ->
+   bowler change -> innings summary -> match summary, on a loop.
+   Great for previewing in plain Chrome (just open the file and
+   add ?demo=1 to the address bar).
+   ============================================================ */
+function runDemo(){
+  const teamA = { name:'India', short:'IND', color:'#1c3a8a' };
+  const teamB = { name:'New Zealand', short:'NZ', color:'#0a0a0a' };
+  let s = safeDefaults({
+    teamA, teamB, battingTeam:'A', venue:'Eden Park, Auckland', format:'ODI',
+    score:{ runs:210, wickets:6, overs:48, balls:2 },
+    target: 231,
+    striker:{ name:'MS Dhoni', runs:49, balls:71, fours:2, sixes:1 },
+    nonStriker:{ name:'Bhuvneshwar Kumar', runs:0, balls:0, fours:0, sixes:0 },
+    bowler:{ name:'Ferguson', overs:9, balls:2, runs:41, wickets:0 },
+    thisOver:['6','0']
+  });
+  const push = (patch, delay) => setTimeout(() => { s = safeDefaults({ ...s, ...patch }); renderState(s); }, delay);
+
+  renderState(s);
+
+  push({ score:{ ...s.score, runs:214, balls:3 }, striker:{ ...s.striker, runs:53, balls:72, fours:3 }, thisOver:['6','0','4'] }, 3000);
+  showAt(3000, () => showEventBanner('FOUR', 'MS Dhoni', 1800));
+
+  push({ score:{ ...s.score, runs:220, balls:4 }, striker:{ ...s.striker, runs:59, balls:73, sixes:2 }, thisOver:['6','0','4','6'] }, 6500);
+  showAt(6500, () => showEventBanner('SIX', 'MS Dhoni', 1800));
+
+  push({
+    score:{ runs:220, wickets:7, overs:48, balls:5 },
+    striker:{ name:'R. Jadeja', runs:0, balls:0, fours:0, sixes:0 },
+    nonStriker:{ name:'Bhuvneshwar Kumar', runs:0, balls:0, fours:0, sixes:0 },
+    thisOver:['6','0','4','6','W']
+  }, 10000);
+
+  push({ bowler:{ name:'Boult', overs:0, balls:0, runs:0, wickets:0 } }, 13500);
+
+  showAt(17000, () => {
+    showInningsSummary({
+      battingTeamName:'India', battingTeamShort:'IND', battingTeamColor:'#1c3a8a',
+      bowlingTeamName:'New Zealand', bowlingTeamShort:'NZ', bowlingTeamColor:'#0a0a0a',
+      format:'ODI', venue:'Eden Park, Auckland',
+      total:'220-7', overs:'48.5', extrasTotal:12,
+      batsmen:[
+        { name:'R. Sharma', runs:41, balls:38, fours:5, sixes:1, sr:'107.9', howOut:'c Southee b Ferguson' },
+        { name:'V. Kohli', runs:67, balls:70, fours:6, sixes:0, sr:'95.7', howOut:'lbw b Boult' },
+        { name:'MS Dhoni', runs:59, balls:73, fours:3, sixes:2, sr:'80.8', howOut:'not out' },
+        { name:'R. Jadeja', runs:0, balls:1, fours:0, sixes:0, sr:'0.0', howOut:'not out' }
+      ],
+      bowlers:[
+        { name:'Ferguson', overs:'9.2', maidens:0, runs:41, wickets:1, econ:'4.39' },
+        { name:'Boult', overs:'10.0', maidens:1, runs:38, wickets:2, econ:'3.80' }
+      ]
+    });
+  });
+
+  // Demo total innings-summary run is ~34.6s (matches the panel's own
+  // batting -> bowling -> hide timing), then show the match summary.
+  showAt(17000 + 34600 + 1000, () => {
+    showMatchSummary({
+      venue:'Eden Park, Auckland',
+      winnerText:'INDIA WON BY 3 WICKETS',
+      teamA:{ name:'India', short:'IND', color:'#1c3a8a', score:'231-7 (49.4 ov)',
+        batsmen:[{name:'V. Kohli', runs:67, balls:70},{name:'MS Dhoni', runs:59, balls:73}],
+        bowlers:[{name:'R. Jadeja', figures:'2-34', overs:'10.0'}] },
+      teamB:{ name:'New Zealand', short:'NZ', color:'#0a0a0a', score:'230-9 (50.0 ov)',
+        batsmen:[{name:'K. Williamson', runs:71, balls:80},{name:'T. Latham', runs:44, balls:52}],
+        bowlers:[{name:'Ferguson', figures:'2-52', overs:'10.0'}] }
+    });
+  });
+
+  function showAt(delay, fn){ setTimeout(fn, delay); }
+}
 
 /* ============================================================
    12. INIT — start hidden until the first real state arrives
    ============================================================ */
 el.bar.classList.add('hidden');
 gsap.set(el.bar, { opacity:0 });
+if(DEMO_MODE) runDemo();
 </script>
 </body>
 </html>
