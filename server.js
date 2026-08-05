@@ -483,10 +483,10 @@ io.on('connection', async (socket) => {
         io.to(room).emit('cricketEvent', data.event || data);
     });
 
-    // 🏏 Innings-complete / match-result summary graphics (cricket-panel.html).
-    // Same treatment as cricketEvent: pure broadcast, NOT merged into
-    // cricketState and NOT written to Firestore — these are one-off overlay
-    // graphics, not persisted scoreboard fields.
+    // 🏏 Innings-complete / match-result summary graphics (cricket-panel2.html
+    // "Pill Scorebug" variant). Same treatment as cricketEvent: pure
+    // broadcast, NOT merged into cricketState and NOT written to Firestore —
+    // these are one-off overlay graphics, not persisted scoreboard fields.
     socket.on('cricketInningsSummary', (data) => {
         let room = socket.activeRoom;
         const targetId = data.room ? data.room.replace('room-', '') : (data.id || data.uid || matchIdForClient);
@@ -501,23 +501,23 @@ io.on('connection', async (socket) => {
         io.to(room).emit('cricketMatchSummary', data.data || data);
     });
 
-    // 🏏📋 Innings bowling-summary graphic — auto-fires from the panel the
-    // instant an innings ends (all out / overs complete). Same pure-broadcast
-    // treatment as cricketEvent: not merged into cricketState, not persisted.
-    socket.on('cricketInningsSummary', (data) => {
+    // 🏏🙈 Manually hide the innings/match summary card on the overlay
+    // (cricket-panel2's "Hide" buttons). Same pure-broadcast treatment as
+    // cricketEvent — these were previously emitted by the panel but never
+    // relayed by the server, so the overlay never received them and the
+    // summary card stayed stuck on screen until it timed out on its own.
+    socket.on('cricketHideInningsSummary', (data) => {
         let room = socket.activeRoom;
-        const targetId = data.room ? data.room.replace('room-', '') : (data.id || data.uid || matchIdForClient);
+        const targetId = data && data.room ? data.room.replace('room-', '') : (data && (data.id || data.uid)) || matchIdForClient;
         if (targetId && targetId !== 'default') room = `room-${targetId}`;
-        io.to(room).emit('cricketInningsSummary', data.data || data);
+        io.to(room).emit('cricketHideInningsSummary');
     });
 
-    // 🏏🏆 Match-summary graphic — auto-fires from the panel once the match
-    // result is decided. Same pure-broadcast treatment as cricketEvent.
-    socket.on('cricketMatchSummary', (data) => {
+    socket.on('cricketHideMatchSummary', (data) => {
         let room = socket.activeRoom;
-        const targetId = data.room ? data.room.replace('room-', '') : (data.id || data.uid || matchIdForClient);
+        const targetId = data && data.room ? data.room.replace('room-', '') : (data && (data.id || data.uid)) || matchIdForClient;
         if (targetId && targetId !== 'default') room = `room-${targetId}`;
-        io.to(room).emit('cricketMatchSummary', data.data || data);
+        io.to(room).emit('cricketHideMatchSummary');
     });
 
     // 🏈 FOOTBALL MATCH INTRO PANEL & OVERLAY SOCKET HANDLING
