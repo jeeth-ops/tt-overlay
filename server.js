@@ -132,24 +132,46 @@ function buildClipFileName(eventType, ballMeta) {
 // Fire-and-forget — never blocks the clip pipeline. If no folder has
 // been set for this match yet, it just logs and skips (clip file still
 // stays on the server's disk either way).
+//
+// Two ways a match can be connected to Drive, tried in this order:
+//  1. Per-user OAuth (recordingSessions[matchId].driveOAuth) — operator
+//     clicked "Connect Google Drive" and picked their own folder via the
+//     Picker. No manual sharing needed, but the access token only lives
+//     ~1hr — if it's expired/revoked the upload just fails and logs it;
+//     recording itself is completely unaffected either way.
+//  2. Legacy service-account folder (driveFolderId) — operator manually
+//     shared a folder with the service account's email and pasted the link.
 async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
-    if (!driveClient) return;
+    const session = recordingSessions[matchId];
+    const oauth = session && session.driveOAuth;
 
-    let folderId = recordingSessions[matchId] && recordingSessions[matchId].driveFolderId;
-    if (!folderId && matchesCollection) {
-        try {
-            const doc = await matchesCollection.findOne({ matchId });
-            folderId = doc && doc.driveFolderId;
-        } catch (err) { console.log('Mongo drive-folder lookup error:', err); }
+    let uploadClient = null;
+    let folderId = null;
+
+    if (oauth && oauth.accessToken) {
+        const userAuth = new google.auth.OAuth2();
+        userAuth.setCredentials({ access_token: oauth.accessToken });
+        uploadClient = google.drive({ version: 'v3', auth: userAuth });
+        folderId = oauth.folderId;
+    } else if (driveClient) {
+        uploadClient = driveClient;
+        folderId = session && session.driveFolderId;
+        if (!folderId && matchesCollection) {
+            try {
+                const doc = await matchesCollection.findOne({ matchId });
+                folderId = doc && doc.driveFolderId;
+            } catch (err) { console.log('Mongo drive-folder lookup error:', err); }
+        }
     }
-    if (!folderId) {
-        console.log(`No Drive folder set for match ${matchId} — clip stays local only: ${filePath}`);
+
+    if (!uploadClient || !folderId) {
+        console.log(`No Drive connection for match ${matchId} — clip stays local only: ${filePath}`);
         return;
     }
 
     const fileName = buildClipFileName(eventType, ballMeta);
     try {
-        const uploadRes = await driveClient.files.create({
+        const uploadRes = await uploadClient.files.create({
             requestBody: { name: fileName, parents: [folderId] },
             media: { mimeType: 'video/mp4', body: fs.createReadStream(filePath) },
             fields: 'id, webViewLink'
@@ -282,6 +304,47 @@ app.post('/api/set-drive-folder', async (req, res) => {
             await matchesCollection.updateOne({ matchId }, { $set: { matchId, driveFolderId: folderId } }, { upsert: true });
         } catch (err) { console.log('Mongo set-drive-folder error:', err); }
     }
+    res.json({ success: true, folderId });
+});
+
+// 🔗 Per-user Google Drive connect (Picker flow) — operator signs into
+// their OWN Google account in the browser, picks/creates a folder from
+// their own Drive via the Picker widget, and the resulting short-lived
+// access token + folder id land here. No manual "share this folder with
+// our service account" step required. We verify the token can actually
+// see the folder before accepting it, so a stale/bad token fails loudly
+// here instead of silently on the first clip upload. The token is kept
+// in memory only (not persisted to Mongo) since it expires in ~1hr —
+// if it goes stale mid-match the operator just clicks "Connect" again.
+app.post('/api/set-drive-folder-oauth', async (req, res) => {
+    const matchId = safeMatchId(req.body.matchId);
+    const { accessToken, folderId } = req.body;
+    if (!matchId || !accessToken || !folderId) {
+        return res.status(400).json({ success: false, error: 'matchId, accessToken and folderId are required' });
+    }
+
+    try {
+        const userAuth = new google.auth.OAuth2();
+        userAuth.setCredentials({ access_token: accessToken });
+        const drive = google.drive({ version: 'v3', auth: userAuth });
+        await drive.files.get({ fileId: folderId, fields: 'id, name' });
+    } catch (err) {
+        console.log('Drive OAuth verify error:', err.message || err);
+        return res.status(400).json({ success: false, error: 'Could not verify Drive access — please reconnect' });
+    }
+
+    if (!recordingSessions[matchId]) {
+        recordingSessions[matchId] = { startedAt: Date.now(), chunkDir: path.join(RECORDINGS_DIR, matchId), chunks: [], stopped: false };
+    }
+    recordingSessions[matchId].driveOAuth = { accessToken, folderId, connectedAt: Date.now() };
+
+    if (matchesCollection) {
+        try {
+            // Only the folder id is persisted — never the access token.
+            await matchesCollection.updateOne({ matchId }, { $set: { matchId, driveFolderId: folderId, driveMode: 'oauth' } }, { upsert: true });
+        } catch (err) { console.log('Mongo set-drive-folder-oauth error:', err); }
+    }
+
     res.json({ success: true, folderId });
 });
 
