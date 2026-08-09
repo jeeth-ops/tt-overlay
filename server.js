@@ -142,7 +142,6 @@ function buildClipFileName(eventType, ballMeta) {
 //  2. Legacy service-account folder (driveFolderId) — operator manually
 //     shared a folder with the service account's email and pasted the link.
 async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
-    const room = `room-${matchId}`;
     const session = recordingSessions[matchId];
     const oauth = session && session.driveOAuth;
 
@@ -167,7 +166,6 @@ async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
 
     if (!uploadClient || !folderId) {
         console.log(`No Drive connection for match ${matchId} — clip stays local only: ${filePath}`);
-        io.to(room).emit('clipStatus', { stage: 'no_drive_connection', eventType });
         return;
     }
 
@@ -185,18 +183,11 @@ async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
             );
         }
         console.log(`☁️  Uploaded to Drive: ${fileName}`);
-        io.to(room).emit('clipStatus', { stage: 'uploaded', eventType, fileName, url: uploadRes.data.webViewLink });
     } catch (err) {
-        // Surface the REAL Google API error (e.g. insufficient permission,
-        // invalid/expired token, folder not found) back to the panel —
-        // console.log alone is only visible in Render's server logs, not
-        // to the operator, so this was failing silently from their side.
-        const reason = (err && err.errors && err.errors[0] && err.errors[0].message) || err.message || String(err);
-        console.log(`Drive upload error (${fileName}):`, reason);
+        console.log(`Drive upload error (${fileName}):`, err.message || err);
         if (clipsCollection) {
             await clipsCollection.updateOne({ matchId, filePath }, { $set: { driveStatus: 'failed' } }).catch(() => {});
         }
-        io.to(room).emit('clipStatus', { stage: 'upload_failed', eventType, fileName, error: reason });
     }
 }
 
@@ -244,21 +235,7 @@ app.post('/api/recording/start', async (req, res) => {
     if (!fs.existsSync(chunkDir)) fs.mkdirSync(chunkDir, { recursive: true });
 
     const startedAt = Date.now();
-    // Operators normally connect Google Drive BEFORE clicking "Start
-    // Recording" (that's the flow the panel's own hint text describes).
-    // Carry any driveOAuth/driveFolderId already set on this matchId's
-    // session forward instead of blowing it away here — otherwise every
-    // recording starts with Drive silently disconnected and clips never
-    // leave the local disk.
-    const existing = recordingSessions[matchId];
-    recordingSessions[matchId] = {
-        startedAt,
-        chunkDir,
-        chunks: [],
-        stopped: false,
-        driveOAuth: existing && existing.driveOAuth,
-        driveFolderId: existing && existing.driveFolderId
-    };
+    recordingSessions[matchId] = { startedAt, chunkDir, chunks: [], stopped: false };
 
     if (matchesCollection) {
         try {
@@ -377,27 +354,6 @@ app.post('/api/set-drive-folder-oauth', async (req, res) => {
     res.json({ success: true, folderId });
 });
 
-// 🔌 Disconnects the per-user OAuth Drive link for a match — lets the
-// operator pick a different folder (or a different Google account) by
-// hitting "Connect Google Drive" again, without any leftover state from
-// the old folder. Recording itself is unaffected; clips just stay local
-// only until reconnected.
-app.post('/api/disconnect-drive-folder', async (req, res) => {
-    const matchId = safeMatchId(req.body.matchId);
-    if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
-
-    if (recordingSessions[matchId]) {
-        delete recordingSessions[matchId].driveOAuth;
-    }
-    if (matchesCollection) {
-        try {
-            await matchesCollection.updateOne({ matchId }, { $unset: { driveFolderId: '', driveMode: '' } });
-        } catch (err) { console.log('Mongo disconnect-drive-folder error:', err); }
-    }
-    console.log(`🔌 Drive disconnected for match ${matchId}`);
-    res.json({ success: true });
-});
-
 // Finds which chunk files together cover [fromSec, toSec] of the
 // recording, based on each chunk's arrival time relative to startedAt.
 // This is an approximation (chunk arrival ≈ chunk content time, since
@@ -423,13 +379,8 @@ function chunksCoveringRange(session, fromSec, toSec) {
 // and records the clip in MongoDB so the (future) Google Drive step
 // knows what's waiting to be uploaded.
 async function cutClip({ matchId, eventType, eventTimestamp, ballMeta }) {
-    const room = `room-${matchId}`;
     const session = recordingSessions[matchId];
-    if (!session) {
-        console.log(`No recording session for ${matchId} — skipping clip for ${eventType}`);
-        io.to(room).emit('clipStatus', { stage: 'cut_failed', eventType, error: 'No active recording session — was Start Recording clicked?' });
-        return;
-    }
+    if (!session) { console.log(`No recording session for ${matchId} — skipping clip for ${eventType}`); return; }
 
     const offsetSec = (eventTimestamp - session.startedAt) / 1000;
     const fromSec = Math.max(0, offsetSec - 10);
@@ -438,34 +389,43 @@ async function cutClip({ matchId, eventType, eventTimestamp, ballMeta }) {
     if (!fs.existsSync(clipDir)) fs.mkdirSync(clipDir, { recursive: true });
 
     const covering = chunksCoveringRange(session, fromSec, toSec);
-    if (!covering.length) {
-        console.log(`No chunks found covering clip window for ${matchId}/${eventType}`);
-        io.to(room).emit('clipStatus', { stage: 'cut_failed', eventType, error: 'No recorded footage found for this moment' });
-        return;
-    }
+    if (!covering.length) { console.log(`No chunks found covering clip window for ${matchId}/${eventType}`); return; }
 
-    // ffmpeg concat demuxer needs a filelist, and its own paths must be
-    // escaped as it uses a tiny shell-like parser.
-    const listFile = path.join(clipDir, `_list_${Date.now()}.txt`);
-    fs.writeFileSync(listFile, covering.map(c => `file '${c.file.replace(/'/g, "'\\''")}'`).join('\n'));
+    // MediaRecorder's timeslice chunks are NOT independently-valid WebM
+    // files except the very first one (it carries the EBML/Segment
+    // header; every later chunk is a bare Matroska Cluster meant to be
+    // appended directly after it). ffmpeg's concat *demuxer* expects each
+    // listed input to be independently valid on its own, so handing it
+    // non-first chunks used to fail with "Invalid argument". The fix:
+    // raw byte-concatenate every chunk from index 0 through the last
+    // chunk covering our window, in strict order — that reconstructs an
+    // actually-playable file, which we then trim/transcode as before.
+    const lastIndex = covering[covering.length - 1].index;
+    const toStitch = [...session.chunks].sort((a, b) => a.index - b.index).filter(c => c.index <= lastIndex);
 
     const stitchedFile = path.join(clipDir, `_stitched_${Date.now()}.webm`);
     const outFile = path.join(clipDir, `${eventType}_${Date.now()}.mp4`);
 
-    // The concat'd chunks' own start time (first covering chunk's
-    // receivedAt) is our zero point for the -ss trim below.
-    const firstChunkMs = covering[0].receivedAt;
-    const trimStartSec = Math.max(0, (session.startedAt + fromSec * 1000 - firstChunkMs) / 1000);
+    // The stitched file always starts at t=0 of the whole recording now
+    // (since we always include chunk 0), so no extra offset math needed.
+    const trimStartSec = fromSec;
 
     try {
         await new Promise((resolve, reject) => {
-            ffmpeg()
-                .input(listFile)
-                .inputOptions(['-f concat', '-safe 0'])
-                .outputOptions(['-c copy'])
-                .save(stitchedFile)
-                .on('end', resolve)
-                .on('error', reject);
+            const out = fs.createWriteStream(stitchedFile);
+            out.on('error', reject);
+            (async () => {
+                for (const c of toStitch) {
+                    await new Promise((res2, rej2) => {
+                        const rs = fs.createReadStream(c.file);
+                        rs.on('error', rej2);
+                        rs.on('end', res2);
+                        rs.pipe(out, { end: false });
+                    });
+                }
+                out.end();
+                resolve();
+            })().catch(reject);
         });
 
         await new Promise((resolve, reject) => {
@@ -486,13 +446,11 @@ async function cutClip({ matchId, eventType, eventTimestamp, ballMeta }) {
             });
         }
         console.log(`🎬 Clip ready: ${outFile}`);
-        io.to(room).emit('clipStatus', { stage: 'cut', eventType }); // clip exists locally — Drive upload result follows separately
         uploadClipToDrive(matchId, outFile, eventType, ballMeta); // fire-and-forget — never blocks/delays clip cutting
     } catch (err) {
         console.log(`Clip generation error (${matchId}/${eventType}):`, err.message || err);
-        io.to(room).emit('clipStatus', { stage: 'cut_failed', eventType, error: err.message || String(err) });
     } finally {
-        [listFile, stitchedFile].forEach(f => fs.existsSync(f) && fs.unlink(f, () => {}));
+        fs.existsSync(stitchedFile) && fs.unlink(stitchedFile, () => {});
     }
 }
 
@@ -1018,7 +976,6 @@ io.on('connection', async (socket) => {
     socket.on('requestClip', (data) => {
         const matchId = safeMatchId(data.matchId || (data.room ? data.room.replace('room-', '') : null) || matchIdForClient);
         if (!matchId || matchId === 'default') return;
-        io.to(`room-${matchId}`).emit('clipStatus', { stage: 'cutting', eventType: data.eventType });
         const eventTimestamp = data.timestamp || Date.now();
         const waitMs = Math.max(0, (eventTimestamp + 10000) - Date.now()) + 1000; // +1s safety buffer
         setTimeout(() => {
