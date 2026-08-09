@@ -342,6 +342,28 @@
     </div>
 
     <div class="card">
+      <h2>🎬 Match Recording</h2>
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+        <div class="dot" id="rec-dot"></div>
+        <span id="rec-status" style="font-size:13px; opacity:.8;">Not recording</span>
+      </div>
+      <button class="full small primary" id="start-recording-btn">🔴 Start Recording</button>
+      <button class="full small ghost" id="stop-recording-btn" style="margin-top:6px; display:none;">⏹ Stop Recording</button>
+      <div style="font-size:11px; opacity:.6; margin-top:6px;">
+        Connect first, then share the tab/window/screen you're streaming from. FOUR / SIX / WICKET will auto-cut a 20s clip.
+      </div>
+
+      <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,.08);">
+        <label style="font-size:12px; opacity:.8; display:block; margin-bottom:6px;">Google Drive Folder Link</label>
+        <div class="link-row">
+          <input type="text" id="drive-folder-link" placeholder="Paste your shared Drive folder link">
+          <button class="small" id="save-drive-folder-btn">Save</button>
+        </div>
+        <div id="drive-folder-status" style="font-size:11px; opacity:.6; margin-top:4px;"></div>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>Manual Milestone Trigger</h2>
       <button class="full small" data-milestone="POWERPLAY">Powerplay Over</button>
       <button class="full small" data-milestone="DRINKS" style="margin-top:6px;">Drinks Break</button>
@@ -532,6 +554,135 @@ function connect(){
   });
 }
 document.getElementById('connect-btn').addEventListener('click', connect);
+
+/* ============================================================
+   🎬 RECORDING — operator shares their own tab/screen (whatever
+   they're broadcasting through OBS/vMix). Runs entirely in THIS
+   panel tab, a separate browser context from whatever OBS reads as
+   its browser source — so it never touches the live stream itself.
+   Chunks stream to the server in the background as they're produced;
+   nothing is buffered client-side beyond one slice at a time.
+   ============================================================ */
+let recStream = null;
+let recMediaRecorder = null;
+let recChunkIndex = 0;
+let recActive = false;
+
+function currentMatchId(){
+  return document.getElementById('match-id').value.trim();
+}
+
+async function startRecording(){
+  const matchId = currentMatchId();
+  if(!matchId){ toast('Enter a Match ID and Connect first'); return; }
+  if(!socket || !socket.connected){ toast('Connect to the match first'); return; }
+
+  try{
+    recStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: 30 },
+      audio: true
+    });
+  }catch(e){
+    toast('Screen share was cancelled or denied');
+    return;
+  }
+
+  const startRes = await fetch('/api/recording/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ matchId })
+  }).then(r => r.json()).catch(() => null);
+
+  if(!startRes || !startRes.success){
+    toast('Could not start recording session on server');
+    recStream.getTracks().forEach(t => t.stop());
+    recStream = null;
+    return;
+  }
+
+  recChunkIndex = 0;
+  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+    ? 'video/webm;codecs=vp9,opus'
+    : 'video/webm;codecs=vp8,opus';
+  recMediaRecorder = new MediaRecorder(recStream, { mimeType, videoBitsPerSecond: 4_000_000 });
+
+  recMediaRecorder.ondataavailable = (e) => {
+    if(e.data && e.data.size > 0) uploadRecordingChunk(matchId, e.data, recChunkIndex++);
+  };
+  recMediaRecorder.onstop = () => { finishRecordingUI(); };
+
+  // If the operator stops sharing from the browser's own native "Stop
+  // sharing" bar (instead of our button), wind everything down cleanly.
+  recStream.getVideoTracks()[0].addEventListener('ended', () => stopRecording());
+
+  recMediaRecorder.start(2000); // 2s slices — small enough for near-live clip cutting
+  recActive = true;
+  updateRecordingUI(true);
+  toast('Recording started');
+}
+
+function uploadRecordingChunk(matchId, blob, index){
+  fetch(`/api/recording/chunk?matchId=${encodeURIComponent(matchId)}&index=${index}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: blob
+  }).catch(() => {}); // best-effort — a dropped chunk just shrinks that window slightly, never blocks the panel
+}
+
+function stopRecording(){
+  if(recMediaRecorder && recMediaRecorder.state !== 'inactive') recMediaRecorder.stop();
+  if(recStream) recStream.getTracks().forEach(t => t.stop());
+  const matchId = currentMatchId();
+  if(matchId){
+    fetch('/api/recording/stop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ matchId })
+    }).catch(() => {});
+  }
+}
+
+function finishRecordingUI(){
+  recActive = false;
+  recStream = null;
+  recMediaRecorder = null;
+  updateRecordingUI(false);
+  toast('Recording stopped');
+}
+
+function updateRecordingUI(active){
+  document.getElementById('rec-dot').classList.toggle('on', active);
+  document.getElementById('rec-status').textContent = active ? 'Recording…' : 'Not recording';
+  document.getElementById('start-recording-btn').style.display = active ? 'none' : 'block';
+  document.getElementById('stop-recording-btn').style.display = active ? 'block' : 'none';
+}
+
+document.getElementById('start-recording-btn').addEventListener('click', startRecording);
+document.getElementById('stop-recording-btn').addEventListener('click', stopRecording);
+
+/* Drive folder link — saved once per match, server resolves the folder
+   ID and remembers it so every clip cut afterwards uploads there
+   automatically. No need to re-paste unless the operator changes it. */
+document.getElementById('save-drive-folder-btn').addEventListener('click', () => {
+  const matchId = currentMatchId();
+  const folderLink = document.getElementById('drive-folder-link').value.trim();
+  const statusEl = document.getElementById('drive-folder-status');
+  if(!matchId){ toast('Enter a Match ID first'); return; }
+  if(!folderLink){ toast('Paste your Drive folder link first'); return; }
+
+  fetch('/api/set-drive-folder', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ matchId, folderLink })
+  }).then(r => r.json()).then(res => {
+    if(res.success){
+      statusEl.textContent = '✅ Clips will upload to this folder';
+      toast('Drive folder saved');
+    } else {
+      statusEl.textContent = '❌ ' + (res.error || 'Could not save folder');
+    }
+  }).catch(() => { statusEl.textContent = '❌ Network error saving folder'; });
+});
 
 document.getElementById('copy-overlay-link').addEventListener('click', () => {
   const input = document.getElementById('overlay-link');
@@ -1365,6 +1516,8 @@ function recordBall(kind){
 
   history.push(snapshot());
   let overCompletedThisBall = false;
+  const ballTimestamp = Date.now();
+  const runsBefore = state.score.runs;
 
   switch(kind){
     case '0': case '1': case '2': case '3': case '4': case '5': case '6': {
@@ -1497,6 +1650,41 @@ function recordBall(kind){
   checkInningsComplete();
   checkMatchResult();
   pushState(true, true);
+  logBallToDb(kind, runsBefore, ballTimestamp);
+}
+
+// 🍃 Every ball → MongoDB (source of truth), independent of the
+// cricketState broadcast above. Also asks the server to cut a 20s
+// highlight clip (10s before / 10s after) on WICKET / FOUR / SIX.
+function logBallToDb(kind, runsBefore, ballTimestamp){
+  if(!socket || !socket.connected) return;
+  const matchId = currentMatchId();
+  if(!matchId) return;
+
+  socket.emit('logBall', {
+    matchId,
+    innings: state.firstInningsSummary ? 2 : 1,
+    over: state.score.overs,
+    ballInOver: state.score.balls,
+    kind,
+    runs: state.score.runs - runsBefore,
+    battingTeam: state.battingTeam,
+    striker: { name: state.striker.name, runs: state.striker.runs, balls: state.striker.balls },
+    nonStriker: { name: state.nonStriker.name, runs: state.nonStriker.runs, balls: state.nonStriker.balls },
+    bowler: { name: state.bowler.name, overs: state.bowler.overs, balls: state.bowler.balls, runs: state.bowler.runs, wickets: state.bowler.wickets },
+    dismissal: kind === 'W' ? (document.getElementById('dismissal-type').value || 'Bowled') : null,
+    score: { ...state.score },
+    timestamp: ballTimestamp
+  });
+
+  if(kind === 'W' || kind === '4' || kind === '6'){
+    socket.emit('requestClip', {
+      matchId,
+      eventType: kind === 'W' ? 'WICKET' : (kind === '4' ? 'FOUR' : 'SIX'),
+      timestamp: ballTimestamp,
+      ballMeta: { over: state.score.overs, ballInOver: state.score.balls, striker: state.striker.name }
+    });
+  }
 }
 
 function swapStrikeSilent(){
