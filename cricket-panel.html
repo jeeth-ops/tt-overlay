@@ -6,6 +6,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script src="/socket.io/socket.io.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://apis.google.com/js/api.js"></script>
 <style>
   :root{
     --bg: #0b0f1a;
@@ -354,7 +356,13 @@
       </div>
 
       <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,.08);">
-        <label style="font-size:12px; opacity:.8; display:block; margin-bottom:6px;">Google Drive Folder Link</label>
+        <label style="font-size:12px; opacity:.8; display:block; margin-bottom:6px;">Google Drive</label>
+        <button class="full small primary" id="connect-drive-btn">🔗 Connect Google Drive</button>
+        <div id="drive-connect-status" style="font-size:11px; opacity:.6; margin-top:6px;"></div>
+      </div>
+
+      <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,.08);">
+        <label style="font-size:12px; opacity:.8; display:block; margin-bottom:6px;">Or paste a shared Drive folder link (advanced)</label>
         <div class="link-row">
           <input type="text" id="drive-folder-link" placeholder="Paste your shared Drive folder link">
           <button class="small" id="save-drive-folder-btn">Save</button>
@@ -682,6 +690,127 @@ document.getElementById('save-drive-folder-btn').addEventListener('click', () =>
       statusEl.textContent = '❌ ' + (res.error || 'Could not save folder');
     }
   }).catch(() => { statusEl.textContent = '❌ Network error saving folder'; });
+});
+
+/* ============================================================
+   🔗 GOOGLE DRIVE CONNECT (per-user OAuth + Picker)
+   Operator clicks "Connect Google Drive" → Google popup asks them to
+   sign in + grant access to just the files they pick → the Picker
+   opens so they choose (or create) a folder from THEIR OWN Drive →
+   we send the resulting access token + folder id to the server, which
+   uploads clips straight there. No manual "share this folder with our
+   service account email" step needed.
+   The access token is short-lived (~1hr). If it expires mid-match,
+   uploads for that match just start failing quietly server-side —
+   the operator clicking "Connect Google Drive" again fixes it, and
+   recording/clip-cutting are completely unaffected either way.
+   ============================================================ */
+const GOOGLE_CLIENT_ID = '725629580596-nvape323vbn091m4i3j78lediiplu1va.apps.googleusercontent.com';
+const GOOGLE_API_KEY = 'AIzaSyAYc_bEB9C4RhhLhPBEJsJRFRUppcR45yo';
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+
+let gisTokenClient = null;
+let pickerApiLoaded = false;
+let driveConnectedFolder = null; // { id, name } — remembered so silent refresh can re-save without reopening the Picker
+let driveRefreshTimer = null;
+
+function ensurePickerLoaded(cb){
+  if(pickerApiLoaded){ cb(); return; }
+  if(typeof gapi === 'undefined'){ setTimeout(() => ensurePickerLoaded(cb), 300); return; }
+  gapi.load('picker', () => { pickerApiLoaded = true; cb(); });
+}
+
+function initGoogleDriveConnect(){
+  if(typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2){
+    setTimeout(initGoogleDriveConnect, 300); // GIS script not ready yet
+    return;
+  }
+  gisTokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: DRIVE_SCOPE,
+    callback: (tokenResponse) => {
+      if(!tokenResponse || tokenResponse.error){
+        toast('Google Drive connection was cancelled or denied');
+        return;
+      }
+      if(driveConnectedFolder){
+        // This was a silent background refresh (folder already picked) —
+        // just push the fresh token to the server, no need to reopen the Picker.
+        saveDriveOAuthFolder(tokenResponse.access_token, driveConnectedFolder.id, driveConnectedFolder.name, true);
+      } else {
+        openDrivePicker(tokenResponse.access_token);
+      }
+    }
+  });
+}
+initGoogleDriveConnect();
+
+// Google access tokens expire in ~1hr. Once a folder is picked, we keep
+// silently re-requesting a fresh token every 45 min (prompt:'' → no popup,
+// works as long as the operator is still logged into Google in this
+// browser) and push it to the server automatically — so a long match
+// never needs a manual "Connect" click again mid-recording. If the
+// silent request ever fails (e.g. Google session itself expired), we
+// just leave the last-known token in place; uploads resume as soon as
+// the operator reconnects manually.
+function scheduleDriveTokenRefresh(){
+  if(driveRefreshTimer) clearInterval(driveRefreshTimer);
+  driveRefreshTimer = setInterval(() => {
+    if(!gisTokenClient || !driveConnectedFolder) return;
+    gisTokenClient.requestAccessToken({ prompt: '' });
+  }, 45 * 60 * 1000); // every 45 min, comfortably inside the ~60 min token lifetime
+}
+
+function openDrivePicker(accessToken){
+  ensurePickerLoaded(() => {
+    const view = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+      .setSelectFolderEnabled(true)
+      .setIncludeFolders(true);
+
+    const picker = new google.picker.PickerBuilder()
+      .addView(view)
+      .setOAuthToken(accessToken)
+      .setDeveloperKey(GOOGLE_API_KEY)
+      .setTitle('Select or create a folder for recordings')
+      .setCallback((data) => {
+        if(data.action === google.picker.Action.PICKED){
+          const folder = data.docs[0];
+          driveConnectedFolder = { id: folder.id, name: folder.name };
+          saveDriveOAuthFolder(accessToken, folder.id, folder.name, false);
+          scheduleDriveTokenRefresh();
+        }
+      })
+      .build();
+    picker.setVisible(true);
+  });
+}
+
+function saveDriveOAuthFolder(accessToken, folderId, folderName, isSilentRefresh){
+  const matchId = currentMatchId();
+  const statusEl = document.getElementById('drive-connect-status');
+  if(!matchId){ if(!isSilentRefresh) toast('Enter a Match ID and Connect first'); return; }
+
+  fetch('/api/set-drive-folder-oauth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ matchId, accessToken, folderId })
+  }).then(r => r.json()).then(res => {
+    if(res.success){
+      statusEl.textContent = `✅ Connected — clips upload to "${folderName}"`;
+      if(!isSilentRefresh) toast('Google Drive connected');
+    } else {
+      statusEl.textContent = '❌ ' + (res.error || 'Could not connect Drive');
+      if(!isSilentRefresh) toast('Google Drive connection failed — click Connect to retry');
+    }
+  }).catch(() => {
+    if(!isSilentRefresh) statusEl.textContent = '❌ Network error connecting Drive';
+  });
+}
+
+document.getElementById('connect-drive-btn').addEventListener('click', () => {
+  if(!currentMatchId()){ toast('Enter a Match ID and Connect first'); return; }
+  if(!gisTokenClient){ toast('Google sign-in is still loading — try again in a second'); return; }
+  gisTokenClient.requestAccessToken({ prompt: 'consent' });
 });
 
 document.getElementById('copy-overlay-link').addEventListener('click', () => {
