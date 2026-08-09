@@ -142,6 +142,7 @@ function buildClipFileName(eventType, ballMeta) {
 //  2. Legacy service-account folder (driveFolderId) — operator manually
 //     shared a folder with the service account's email and pasted the link.
 async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
+    const room = `room-${matchId}`;
     const session = recordingSessions[matchId];
     const oauth = session && session.driveOAuth;
 
@@ -166,6 +167,7 @@ async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
 
     if (!uploadClient || !folderId) {
         console.log(`No Drive connection for match ${matchId} — clip stays local only: ${filePath}`);
+        io.to(room).emit('clipStatus', { stage: 'no_drive_connection', eventType });
         return;
     }
 
@@ -183,11 +185,18 @@ async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
             );
         }
         console.log(`☁️  Uploaded to Drive: ${fileName}`);
+        io.to(room).emit('clipStatus', { stage: 'uploaded', eventType, fileName, url: uploadRes.data.webViewLink });
     } catch (err) {
-        console.log(`Drive upload error (${fileName}):`, err.message || err);
+        // Surface the REAL Google API error (e.g. insufficient permission,
+        // invalid/expired token, folder not found) back to the panel —
+        // console.log alone is only visible in Render's server logs, not
+        // to the operator, so this was failing silently from their side.
+        const reason = (err && err.errors && err.errors[0] && err.errors[0].message) || err.message || String(err);
+        console.log(`Drive upload error (${fileName}):`, reason);
         if (clipsCollection) {
             await clipsCollection.updateOne({ matchId, filePath }, { $set: { driveStatus: 'failed' } }).catch(() => {});
         }
+        io.to(room).emit('clipStatus', { stage: 'upload_failed', eventType, fileName, error: reason });
     }
 }
 
@@ -414,8 +423,13 @@ function chunksCoveringRange(session, fromSec, toSec) {
 // and records the clip in MongoDB so the (future) Google Drive step
 // knows what's waiting to be uploaded.
 async function cutClip({ matchId, eventType, eventTimestamp, ballMeta }) {
+    const room = `room-${matchId}`;
     const session = recordingSessions[matchId];
-    if (!session) { console.log(`No recording session for ${matchId} — skipping clip for ${eventType}`); return; }
+    if (!session) {
+        console.log(`No recording session for ${matchId} — skipping clip for ${eventType}`);
+        io.to(room).emit('clipStatus', { stage: 'cut_failed', eventType, error: 'No active recording session — was Start Recording clicked?' });
+        return;
+    }
 
     const offsetSec = (eventTimestamp - session.startedAt) / 1000;
     const fromSec = Math.max(0, offsetSec - 10);
@@ -424,7 +438,11 @@ async function cutClip({ matchId, eventType, eventTimestamp, ballMeta }) {
     if (!fs.existsSync(clipDir)) fs.mkdirSync(clipDir, { recursive: true });
 
     const covering = chunksCoveringRange(session, fromSec, toSec);
-    if (!covering.length) { console.log(`No chunks found covering clip window for ${matchId}/${eventType}`); return; }
+    if (!covering.length) {
+        console.log(`No chunks found covering clip window for ${matchId}/${eventType}`);
+        io.to(room).emit('clipStatus', { stage: 'cut_failed', eventType, error: 'No recorded footage found for this moment' });
+        return;
+    }
 
     // ffmpeg concat demuxer needs a filelist, and its own paths must be
     // escaped as it uses a tiny shell-like parser.
@@ -468,9 +486,11 @@ async function cutClip({ matchId, eventType, eventTimestamp, ballMeta }) {
             });
         }
         console.log(`🎬 Clip ready: ${outFile}`);
+        io.to(room).emit('clipStatus', { stage: 'cut', eventType }); // clip exists locally — Drive upload result follows separately
         uploadClipToDrive(matchId, outFile, eventType, ballMeta); // fire-and-forget — never blocks/delays clip cutting
     } catch (err) {
         console.log(`Clip generation error (${matchId}/${eventType}):`, err.message || err);
+        io.to(room).emit('clipStatus', { stage: 'cut_failed', eventType, error: err.message || String(err) });
     } finally {
         [listFile, stitchedFile].forEach(f => fs.existsSync(f) && fs.unlink(f, () => {}));
     }
@@ -998,6 +1018,7 @@ io.on('connection', async (socket) => {
     socket.on('requestClip', (data) => {
         const matchId = safeMatchId(data.matchId || (data.room ? data.room.replace('room-', '') : null) || matchIdForClient);
         if (!matchId || matchId === 'default') return;
+        io.to(`room-${matchId}`).emit('clipStatus', { stage: 'cutting', eventType: data.eventType });
         const eventTimestamp = data.timestamp || Date.now();
         const waitMs = Math.max(0, (eventTimestamp + 10000) - Date.now()) + 1000; // +1s safety buffer
         setTimeout(() => {
