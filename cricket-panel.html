@@ -714,6 +714,7 @@ let gisTokenClient = null;
 let pickerApiLoaded = false;
 let driveConnectedFolder = null; // { id, name } — remembered so silent refresh can re-save without reopening the Picker
 let driveRefreshTimer = null;
+let driveAccessToken = null; // last token we got, kept only so Disconnect can revoke it
 
 function ensurePickerLoaded(cb){
   if(pickerApiLoaded){ cb(); return; }
@@ -787,6 +788,22 @@ function openDrivePicker(accessToken){
   });
 }
 
+function setDriveButtonConnected(folderName){
+  const btn = document.getElementById('connect-drive-btn');
+  btn.textContent = `🔌 Disconnect ("${folderName}")`;
+  btn.classList.remove('primary');
+  btn.classList.add('ghost');
+  btn.dataset.driveConnected = '1';
+}
+
+function setDriveButtonDisconnected(){
+  const btn = document.getElementById('connect-drive-btn');
+  btn.textContent = '🔗 Connect Google Drive';
+  btn.classList.remove('ghost');
+  btn.classList.add('primary');
+  delete btn.dataset.driveConnected;
+}
+
 function saveDriveOAuthFolder(accessToken, folderId, folderName, isSilentRefresh){
   const matchId = currentMatchId();
   const statusEl = document.getElementById('drive-connect-status');
@@ -798,7 +815,9 @@ function saveDriveOAuthFolder(accessToken, folderId, folderName, isSilentRefresh
     body: JSON.stringify({ matchId, accessToken, folderId })
   }).then(r => r.json()).then(res => {
     if(res.success){
+      driveAccessToken = accessToken;
       statusEl.textContent = `✅ Connected — clips upload to "${folderName}"`;
+      setDriveButtonConnected(folderName);
       if(!isSilentRefresh) toast('Google Drive connected');
     } else {
       statusEl.textContent = '❌ ' + (res.error || 'Could not connect Drive');
@@ -809,7 +828,45 @@ function saveDriveOAuthFolder(accessToken, folderId, folderName, isSilentRefresh
   });
 }
 
+// Drops the current match's Drive link server-side, revokes the token
+// so it can't silently keep uploading anywhere, and resets the button
+// back to "Connect" so a different folder (or account) can be picked —
+// e.g. for the next match.
+function disconnectDrive(){
+  const matchId = currentMatchId();
+  const statusEl = document.getElementById('drive-connect-status');
+
+  if(driveRefreshTimer){ clearInterval(driveRefreshTimer); driveRefreshTimer = null; }
+  if(driveAccessToken && typeof google !== 'undefined' && google.accounts && google.accounts.oauth2){
+    google.accounts.oauth2.revoke(driveAccessToken, () => {});
+  }
+  driveConnectedFolder = null;
+  driveAccessToken = null;
+  setDriveButtonDisconnected();
+  statusEl.textContent = '';
+
+  if(!matchId) return; // nothing saved server-side yet, so nothing to clean up there
+  fetch('/api/disconnect-drive-folder', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ matchId })
+  }).then(r => r.json()).then(res => {
+    if(res.success){
+      statusEl.textContent = 'Disconnected — clips stay local until you connect again';
+      toast('Google Drive disconnected');
+    } else {
+      toast('Disconnected locally, but server cleanup failed — safe to ignore');
+    }
+  }).catch(() => {
+    toast('Disconnected locally (offline) — server will still have the old folder saved');
+  });
+}
+
 document.getElementById('connect-drive-btn').addEventListener('click', () => {
+  if(document.getElementById('connect-drive-btn').dataset.driveConnected){
+    disconnectDrive();
+    return;
+  }
   if(!currentMatchId()){ toast('Enter a Match ID and Connect first'); return; }
   if(!gisTokenClient){ toast('Google sign-in is still loading — try again in a second'); return; }
   gisTokenClient.requestAccessToken({ prompt: 'consent' });
