@@ -327,7 +327,13 @@ app.post('/api/set-drive-folder-oauth', async (req, res) => {
         const userAuth = new google.auth.OAuth2();
         userAuth.setCredentials({ access_token: accessToken });
         const drive = google.drive({ version: 'v3', auth: userAuth });
-        await drive.files.get({ fileId: folderId, fields: 'id, name' });
+        try {
+            await drive.files.get({ fileId: folderId, fields: 'id, name' });
+        } catch (firstErr) {
+            // Picker-granted access can take a moment to propagate — one retry after a short wait.
+            await new Promise(r => setTimeout(r, 1500));
+            await drive.files.get({ fileId: folderId, fields: 'id, name' });
+        }
     } catch (err) {
         console.log('Drive OAuth verify error:', err.message || err);
         return res.status(400).json({ success: false, error: 'Could not verify Drive access — please reconnect' });
