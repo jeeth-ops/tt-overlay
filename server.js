@@ -235,7 +235,21 @@ app.post('/api/recording/start', async (req, res) => {
     if (!fs.existsSync(chunkDir)) fs.mkdirSync(chunkDir, { recursive: true });
 
     const startedAt = Date.now();
-    recordingSessions[matchId] = { startedAt, chunkDir, chunks: [], stopped: false };
+    // Operators normally connect Google Drive BEFORE clicking "Start
+    // Recording" (that's the flow the panel's own hint text describes).
+    // Carry any driveOAuth/driveFolderId already set on this matchId's
+    // session forward instead of blowing it away here — otherwise every
+    // recording starts with Drive silently disconnected and clips never
+    // leave the local disk.
+    const existing = recordingSessions[matchId];
+    recordingSessions[matchId] = {
+        startedAt,
+        chunkDir,
+        chunks: [],
+        stopped: false,
+        driveOAuth: existing && existing.driveOAuth,
+        driveFolderId: existing && existing.driveFolderId
+    };
 
     if (matchesCollection) {
         try {
@@ -352,6 +366,27 @@ app.post('/api/set-drive-folder-oauth', async (req, res) => {
     }
 
     res.json({ success: true, folderId });
+});
+
+// 🔌 Disconnects the per-user OAuth Drive link for a match — lets the
+// operator pick a different folder (or a different Google account) by
+// hitting "Connect Google Drive" again, without any leftover state from
+// the old folder. Recording itself is unaffected; clips just stay local
+// only until reconnected.
+app.post('/api/disconnect-drive-folder', async (req, res) => {
+    const matchId = safeMatchId(req.body.matchId);
+    if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
+
+    if (recordingSessions[matchId]) {
+        delete recordingSessions[matchId].driveOAuth;
+    }
+    if (matchesCollection) {
+        try {
+            await matchesCollection.updateOne({ matchId }, { $unset: { driveFolderId: '', driveMode: '' } });
+        } catch (err) { console.log('Mongo disconnect-drive-folder error:', err); }
+    }
+    console.log(`🔌 Drive disconnected for match ${matchId}`);
+    res.json({ success: true });
 });
 
 // Finds which chunk files together cover [fromSec, toSec] of the
