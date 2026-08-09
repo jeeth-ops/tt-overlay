@@ -560,6 +560,19 @@ function connect(){
       renderPanel();
     }
   });
+
+  // 🎬 Real clip/Drive status from the server — this is the ONLY place
+  // that actually tells us whether a clip made it to Drive or not (the
+  // FOUR/SIX/WICKET popup is just the scoring animation, unrelated).
+  socket.on('clipStatus', (data) => {
+    const ev = data.eventType || 'Clip';
+    if(data.stage === 'cutting') toast(`🎬 Cutting ${ev} clip…`);
+    else if(data.stage === 'cut') toast(`✅ ${ev} clip cut — uploading to Drive…`);
+    else if(data.stage === 'cut_failed') toast(`❌ ${ev} clip failed: ${data.error || 'unknown error'}`, 6000);
+    else if(data.stage === 'no_drive_connection') toast(`⚠️ ${ev} clip saved locally — Drive isn't connected for this match`, 6000);
+    else if(data.stage === 'uploaded') toast(`☁️ ${ev} clip uploaded to Drive`);
+    else if(data.stage === 'upload_failed') toast(`❌ ${ev} Drive upload failed: ${data.error || 'unknown error'}`, 6000);
+  });
 }
 document.getElementById('connect-btn').addEventListener('click', connect);
 
@@ -1147,11 +1160,13 @@ function logMilestone(text){
   log.prepend(row);
 }
 
-function toast(msg){
+let toastHideTimer = null;
+function toast(msg, ms){
   const el = document.getElementById('toast');
   el.textContent = msg;
   el.classList.add('show');
-  setTimeout(() => el.classList.remove('show'), 1800);
+  if(toastHideTimer) clearTimeout(toastHideTimer);
+  toastHideTimer = setTimeout(() => el.classList.remove('show'), ms || 1800);
 }
 
 /* ============================================================
