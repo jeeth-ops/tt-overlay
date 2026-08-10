@@ -6,6 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script src="/socket.io/socket.io.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://apis.google.com/js/api.js"></script>
 <style>
@@ -453,6 +454,7 @@
 
     <div class="card">
       <h2>Session</h2>
+      <button class="full small primary" id="download-excel-btn" style="margin-bottom:6px;">📊 Download Match Excel</button>
       <button class="full small" id="next-innings-btn" disabled>Start Next Innings</button>
       <button class="full small" id="reset-btn" style="margin-top:6px;">Reset Match (clears everything)</button>
     </div>
@@ -497,7 +499,12 @@ function mergeWithDefaults(saved){
     extras: {
       A: { ...def.extras.A, ...((saved.extras && saved.extras.A) || {}) },
       B: { ...def.extras.B, ...((saved.extras && saved.extras.B) || {}) }
-    }
+    },
+    // Full match ball-by-ball log for the Excel export — unlike thisOver/
+    // ballHistory (which are display tickers capped at a handful of
+    // balls), this is never trimmed and survives across innings and
+    // localStorage reloads, only cleared on Reset.
+    ballLog: saved.ballLog || []
   };
 }
 let state = mergeWithDefaults(loadState());
@@ -528,6 +535,7 @@ function defaultState(){
     showMatchSummary: true,
     thisOver: [],
     ballHistory: [],
+    ballLog: [],
     visible: true,
     partnershipRuns: 0,
     partnershipBalls: 0,
@@ -1775,6 +1783,15 @@ function recordBall(kind, meta){
   let overCompletedThisBall = false;
   const ballTimestamp = Date.now();
   const runsBefore = state.score.runs;
+  // Captured BEFORE the switch below mutates state — the log entry should
+  // reflect who was actually facing/bowling this ball, not whoever ends up
+  // on strike after any swap the ball itself triggers.
+  const logStrikerName = state.striker.name;
+  const logNonStrikerName = state.nonStriker.name;
+  const logBowlerName = state.bowler.name;
+  const logBattingTeam = state.battingTeam;
+  const logInnings = state.target ? 2 : 1;
+  let logDismissalText = null;
 
   switch(kind){
     case '0': case '1': case '2': case '3': case '4': case '5': case '6': {
@@ -1800,6 +1817,7 @@ function recordBall(kind, meta){
       const shortMap = { Bowled:'b', Caught:'c', LBW:'lbw', Stumped:'st', 'Hit Wicket':'hit wkt', 'Run Out':'run out', 'Retired Hurt':'retired hurt' };
       const dismissalText = (isBowlerWicket && state.bowler.name) ? `${shortMap[dismissalType]} b ${state.bowler.name}` : shortMap[dismissalType];
       lastDismissalType = dismissalType;
+      logDismissalText = dismissalText;
       document.getElementById('disp-last-dismissal').textContent = `${state.striker.name} — ${dismissalText}`;
 
       state.score.wickets++;
@@ -1893,6 +1911,22 @@ function recordBall(kind, meta){
       break;
     }
   }
+
+  // Full match log for the Excel export — one row per ball, never trimmed.
+  state.ballLog.push({
+    innings: logInnings,
+    battingTeam: logBattingTeam,
+    over: fmtOvers(state.score.overs, state.score.balls),
+    ballType: kind,
+    striker: logStrikerName,
+    nonStriker: logNonStrikerName,
+    bowler: logBowlerName,
+    runs: state.score.runs - runsBefore,
+    isWicket: kind === 'W',
+    dismissal: logDismissalText,
+    scoreAfter: `${state.score.runs}-${state.score.wickets}`,
+    timestamp: ballTimestamp
+  });
 
   // Cricket's "swap ends" rule: whoever wasn't on strike for the last ball
   // of the over faces the next one (a different bowler comes on from the
@@ -2096,6 +2130,133 @@ document.querySelectorAll('[data-milestone]').forEach(btn => {
     fireEvent(kind, labels[kind] || kind, '');
   });
 });
+
+/* ============================================================
+   EXCEL EXPORT — builds one workbook from the CURRENT state
+   (works live, mid-match, or after the match is over). Sheets:
+   1. Match Info      — format/venue/teams/toss-less target/result
+   2. Batting A / B   — full scorecard per team, incl. the two
+                         batsmen still in if that innings isn't over
+   3. Bowling A / B   — full bowling figures per team
+   4. Fall of Wickets — per team
+   5. Extras          — wide/no-ball/bye/leg-bye split per team
+   6. Ball by Ball     — every single delivery of the match, in order
+   Nothing here is fetched from a server — it's all built from the
+   panel's own in-memory/localStorage state, so it works even if
+   this tab has never been connected.
+   ============================================================ */
+function battingRowsForExcel(teamKey){
+  const rows = state.battingCard[teamKey].map(b => ({
+    Batsman: b.name, Runs: b.runs, Balls: b.balls,
+    '4s': b.fours, '6s': b.sixes,
+    'S/R': b.balls > 0 ? ((b.runs/b.balls)*100).toFixed(2) : '0.00',
+    'Dismissal': b.howOut
+  }));
+  // Add the two not-out batsmen currently at the crease, if this team is
+  // the one batting right now and the innings hasn't been archived yet.
+  if(state.battingTeam === teamKey){
+    [state.striker, state.nonStriker].forEach(p => {
+      if(p && p.name){
+        rows.push({
+          Batsman: p.name, Runs: p.runs, Balls: p.balls,
+          '4s': p.fours, '6s': p.sixes,
+          'S/R': p.balls > 0 ? ((p.runs/p.balls)*100).toFixed(2) : '0.00',
+          'Dismissal': 'not out'
+        });
+      }
+    });
+  }
+  return rows;
+}
+function bowlingRowsForExcel(teamKey){
+  // Bowling figures are archived under the BOWLING team's key, and the
+  // current bowler (if this team is bowling right now) isn't archived yet.
+  const rows = state.bowlingCard[teamKey].map(b => ({
+    Bowler: b.name, Overs: fmtBowlerOvers(b.overs, b.balls),
+    Maidens: b.maidens, Runs: b.runs, Wickets: b.wickets, Economy: bowlerEcon(b)
+  }));
+  if(bowlingTeamKey() === teamKey && state.bowler.name){
+    rows.push({
+      Bowler: state.bowler.name, Overs: fmtBowlerOvers(state.bowler.overs, state.bowler.balls),
+      Maidens: state.bowler.maidens, Runs: state.bowler.runs, Wickets: state.bowler.wickets,
+      Economy: bowlerEcon(state.bowler)
+    });
+  }
+  return rows;
+}
+function buildAndDownloadExcel(){
+  if(typeof XLSX === 'undefined'){ toast('Excel library failed to load — check your connection'); return; }
+
+  const wb = XLSX.utils.book_new();
+  const teamAName = state.teamA.name || 'Team A';
+  const teamBName = state.teamB.name || 'Team B';
+
+  // --- 1. Match Info ---
+  const infoRows = [
+    { Field: 'Format', Value: state.format },
+    { Field: 'Venue', Value: state.venue || '—' },
+    { Field: 'Team A', Value: teamAName },
+    { Field: 'Team B', Value: teamBName },
+    { Field: 'Currently Batting', Value: state.battingTeam === 'A' ? teamAName : teamBName },
+    { Field: 'Current Score', Value: `${state.score.runs}-${state.score.wickets}` },
+    { Field: 'Overs', Value: fmtOvers(state.score.overs, state.score.balls) },
+    { Field: 'Target', Value: state.target || '—' }
+  ];
+  if(state.firstInningsSummary){
+    const fi = state.firstInningsSummary;
+    const fiTeamName = fi.team === 'A' ? teamAName : teamBName;
+    infoRows.push({ Field: '1st Innings Total', Value: `${fiTeamName}: ${fi.runs}-${fi.wickets} (${fi.overs} ov)` });
+  }
+  infoRows.push({ Field: 'Exported On', Value: new Date().toLocaleString() });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(infoRows), 'Match Info');
+
+  // --- 2 & 3. Batting / Bowling per team ---
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(battingRowsForExcel('A')), `Batting ${state.teamA.short || 'A'}`);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(battingRowsForExcel('B')), `Batting ${state.teamB.short || 'B'}`);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(bowlingRowsForExcel('A')), `Bowling ${state.teamA.short || 'A'}`);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(bowlingRowsForExcel('B')), `Bowling ${state.teamB.short || 'B'}`);
+
+  // --- 4. Fall of Wickets ---
+  const fowRows = [];
+  ['A','B'].forEach(key => {
+    (state.fallOfWickets[key] || []).forEach(f => {
+      fowRows.push({ Team: key === 'A' ? teamAName : teamBName, Wicket: f.wkt, Score: f.runs, Over: f.over });
+    });
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(fowRows), 'Fall of Wickets');
+
+  // --- 5. Extras ---
+  const extrasRows = ['A','B'].map(key => ({
+    Team: key === 'A' ? teamAName : teamBName,
+    Wides: state.extras[key].wd, 'No Balls': state.extras[key].nb,
+    Byes: state.extras[key].b, 'Leg Byes': state.extras[key].lb,
+    Total: state.extras[key].wd + state.extras[key].nb + state.extras[key].b + state.extras[key].lb
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(extrasRows), 'Extras');
+
+  // --- 6. Ball by Ball ---
+  const ballRows = state.ballLog.map((b, i) => ({
+    '#': i + 1,
+    Innings: b.innings,
+    Team: b.battingTeam === 'A' ? teamAName : teamBName,
+    Over: b.over,
+    Ball: b.ballType,
+    Striker: b.striker,
+    'Non-Striker': b.nonStriker,
+    Bowler: b.bowler,
+    Runs: b.runs,
+    Wicket: b.isWicket ? (b.dismissal || 'Out') : '',
+    Score: b.scoreAfter,
+    Time: new Date(b.timestamp).toLocaleTimeString()
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ballRows), 'Ball by Ball');
+
+  const matchId = currentMatchId() || 'match';
+  const fileSafeName = `${matchId}_${teamAName}_vs_${teamBName}`.replace(/[^a-z0-9_-]+/gi, '_').slice(0, 80);
+  XLSX.writeFile(wb, `${fileSafeName}.xlsx`);
+  toast('📊 Excel downloaded');
+}
+document.getElementById('download-excel-btn').addEventListener('click', buildAndDownloadExcel);
 
 /* ============================================================
    RESET
