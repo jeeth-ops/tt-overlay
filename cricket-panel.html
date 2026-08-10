@@ -131,6 +131,39 @@
     padding:3px 10px; font-weight:800; font-size:11px; letter-spacing:.3px; cursor:pointer;
   }
 
+  /* --- Wicket dismissal picker: shown the moment WICKET is pressed, so
+     the operator picks how it happened after the fact rather than
+     pre-arming a dropdown before the ball is even bowled. On a Free
+     Hit, cricket's Laws only allow a Run Out to stand, so every other
+     option is disabled rather than removed (keeps the layout stable and
+     makes the restriction visible instead of silently hiding buttons). --- */
+  .wicket-modal-overlay{
+    display:none; position:fixed; inset:0; background:rgba(5,7,14,.72);
+    z-index:100; align-items:center; justify-content:center; padding:16px;
+  }
+  .wicket-modal-overlay.show{ display:flex; }
+  .wicket-modal{
+    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+    width:100%; max-width:360px; padding:18px; box-shadow:0 20px 50px rgba(0,0,0,.5);
+  }
+  .wicket-modal h3{
+    font-size:14px; letter-spacing:.4px; margin-bottom:2px; display:flex; align-items:center; gap:8px;
+  }
+  .wicket-modal .wm-sub{ font-size:11px; color:var(--text-dim); margin-bottom:12px; }
+  .wicket-modal .wm-freehit-note{
+    display:none; align-items:center; gap:6px; background:rgba(250,204,21,.14); border:1px solid #facc15;
+    color:#facc15; border-radius:7px; padding:7px 9px; font-size:11.5px; font-weight:700;
+    margin-bottom:12px; line-height:1.4;
+  }
+  .wicket-modal.wm-freehit .wm-freehit-note{ display:flex; }
+  .wm-options{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .wm-option{
+    padding:11px 8px; font-size:12.5px; text-align:center; background:var(--panel-2);
+  }
+  .wm-option .wm-credit{ display:block; font-size:9.5px; font-weight:500; color:var(--text-dim); margin-top:2px; }
+  .wm-option:not(:disabled):hover{ border-color:var(--red); color:var(--red); }
+  .wm-cancel{ width:100%; margin-top:12px; }
+
   /* --- logo uploader --- */
   .logo-row{ display:flex; align-items:center; gap:10px; margin-top:6px; }
   .logo-preview{
@@ -314,16 +347,27 @@
       <input type="text" id="bowler-name-input" placeholder="Bowler name" list="bowler-suggestions" autocomplete="off">
       <datalist id="bowler-suggestions"></datalist>
       <button class="full small" id="set-bowler-btn" style="margin-top:8px;">Set / Change Bowler</button>
-      <label>Dismissal type <span class="note">(applies to the next WICKET)</span></label>
-      <select id="dismissal-type">
-        <option value="Bowled">Bowled</option>
-        <option value="Caught">Caught</option>
-        <option value="LBW">LBW</option>
-        <option value="Stumped">Stumped</option>
-        <option value="Hit Wicket">Hit Wicket</option>
-        <option value="Run Out">Run Out (not credited to bowler)</option>
-        <option value="Retired Hurt">Retired Hurt (not credited to bowler)</option>
-      </select>
+      <label>Last dismissal <span class="note">— you'll be asked how, right when WICKET is pressed</span></label>
+      <div class="stat auto" style="margin-top:2px;"><div class="v" id="disp-last-dismissal" style="font-size:13px;">—</div></div>
+    </div>
+  </div>
+
+  <!-- Wicket dismissal picker — appears the instant WICKET is pressed. -->
+  <div class="wicket-modal-overlay" id="wicket-modal-overlay">
+    <div class="wicket-modal" id="wicket-modal">
+      <h3>🏏 How was it out?</h3>
+      <div class="wm-sub" id="wm-batsman-name">—</div>
+      <div class="wm-freehit-note">⚡ Free Hit is in play — only Run Out can dismiss the batsman off this ball. Every other option is disabled.</div>
+      <div class="wm-options">
+        <button type="button" class="wm-option b-wicket" data-dismissal="Bowled">Bowled<span class="wm-credit">→ bowler</span></button>
+        <button type="button" class="wm-option b-wicket" data-dismissal="Caught">Caught<span class="wm-credit">→ bowler</span></button>
+        <button type="button" class="wm-option b-wicket" data-dismissal="LBW">LBW<span class="wm-credit">→ bowler</span></button>
+        <button type="button" class="wm-option b-wicket" data-dismissal="Stumped">Stumped<span class="wm-credit">→ bowler</span></button>
+        <button type="button" class="wm-option b-wicket" data-dismissal="Hit Wicket">Hit Wicket<span class="wm-credit">→ bowler</span></button>
+        <button type="button" class="wm-option b-extra" data-dismissal="Run Out">Run Out<span class="wm-credit">not credited</span></button>
+        <button type="button" class="wm-option b-extra" data-dismissal="Retired Hurt">Retired Hurt<span class="wm-credit">not credited</span></button>
+      </div>
+      <button type="button" class="full ghost wm-cancel" id="wicket-modal-cancel">Cancel</button>
     </div>
   </div>
 
@@ -458,6 +502,7 @@ function mergeWithDefaults(saved){
 }
 let state = mergeWithDefaults(loadState());
 let history = [];
+let lastDismissalType = null; // set by the wicket modal, read by logBallToDb
 
 function defaultState(){
   return {
@@ -1702,7 +1747,7 @@ function pushBallHistory(label){
   if(state.ballHistory.length > 60) state.ballHistory = state.ballHistory.slice(-60);
 }
 
-function recordBall(kind){
+function recordBall(kind, meta){
   inningsSummaryJustFired = false;
   if(isInningsOver()){
     let msg = '🚫 Overs complete for this innings';
@@ -1714,6 +1759,15 @@ function recordBall(kind){
   }
   if(kind === 'W' && state.score.wickets >= 10){
     toast('🚫 All out — cannot take an 11th wicket');
+    return;
+  }
+  // A Free Hit ball is only ever dismissible by a Run Out under the Laws
+  // of Cricket — every other mode of dismissal doesn't count. The modal
+  // already hides/disables the other options while a Free Hit is live,
+  // but this is the hard backstop: nothing gets recorded as a wicket
+  // unless that rule holds, no matter how the call arrived.
+  if(kind === 'W' && state.freeHit && (!meta || meta.dismissalType !== 'Run Out')){
+    toast('⚠️ Free Hit is in play — only Run Out can dismiss this ball');
     return;
   }
 
@@ -1741,10 +1795,12 @@ function recordBall(kind){
     }
     case 'W': {
       const wasFreeHit = state.freeHit;
-      const dismissalType = document.getElementById('dismissal-type').value || 'Bowled';
+      const dismissalType = (meta && meta.dismissalType) || 'Bowled';
       const isBowlerWicket = !['Run Out', 'Retired Hurt'].includes(dismissalType);
       const shortMap = { Bowled:'b', Caught:'c', LBW:'lbw', Stumped:'st', 'Hit Wicket':'hit wkt', 'Run Out':'run out', 'Retired Hurt':'retired hurt' };
       const dismissalText = (isBowlerWicket && state.bowler.name) ? `${shortMap[dismissalType]} b ${state.bowler.name}` : shortMap[dismissalType];
+      lastDismissalType = dismissalType;
+      document.getElementById('disp-last-dismissal').textContent = `${state.striker.name} — ${dismissalText}`;
 
       state.score.wickets++;
       state.thisOver.push('W');
@@ -1768,7 +1824,7 @@ function recordBall(kind){
 
       state.partnershipRuns = 0; state.partnershipBalls = 0;
       fireEvent('WICKET', 'WICKET!', state.striker.name);
-      if(wasFreeHit) toast('⚠️ Free Hit was active — only Run Out is a valid dismissal');
+      if(wasFreeHit) toast('⚠️ Free Hit wicket recorded as a Run Out');
 
       // Cricket's ends-swap rule doesn't stop applying just because the
       // wicket ball happened to be the over's last: the survivor (till-now
@@ -1875,7 +1931,7 @@ function logBallToDb(kind, runsBefore, ballTimestamp){
     striker: { name: state.striker.name, runs: state.striker.runs, balls: state.striker.balls },
     nonStriker: { name: state.nonStriker.name, runs: state.nonStriker.runs, balls: state.nonStriker.balls },
     bowler: { name: state.bowler.name, overs: state.bowler.overs, balls: state.bowler.balls, runs: state.bowler.runs, wickets: state.bowler.wickets },
-    dismissal: kind === 'W' ? (document.getElementById('dismissal-type').value || 'Bowled') : null,
+    dismissal: kind === 'W' ? (lastDismissalType || 'Bowled') : null,
     score: { ...state.score },
     timestamp: ballTimestamp
   });
@@ -1895,7 +1951,56 @@ function swapStrikeSilent(){
 }
 
 document.querySelectorAll('[data-ball]').forEach(btn => {
-  btn.addEventListener('click', () => recordBall(btn.dataset.ball));
+  btn.addEventListener('click', () => {
+    if(btn.dataset.ball === 'W') openWicketModal();
+    else recordBall(btn.dataset.ball);
+  });
+});
+
+/* ============================================================
+   WICKET DISMISSAL PICKER
+   Opens the instant WICKET is pressed (button or 'w' shortcut) so the
+   operator picks Bowled / Caught / LBW / Stumped / Hit Wicket / Run Out /
+   Retired Hurt after the fact, rather than pre-arming a dropdown before
+   the ball is bowled. Bowled/Caught/LBW/Stumped/Hit Wicket are credited
+   to the current bowler's figures; Run Out and Retired Hurt are not.
+   On a Free Hit, every option except Run Out is disabled — that's the
+   only dismissal the Laws of Cricket allow to stand off that ball.
+   ============================================================ */
+function openWicketModal(){
+  if(isInningsOver()){
+    let msg = '🚫 Overs complete for this innings';
+    if(state.score.wickets >= 10) msg = '🚫 All out — 10 wickets already, innings is over';
+    else if(isChaseWon()) msg = '🏆 Target already reached — match is won, no more balls to record';
+    toast(msg);
+    return;
+  }
+  if(state.score.wickets >= 10){ toast('🚫 All out — cannot take an 11th wicket'); return; }
+
+  const overlay = document.getElementById('wicket-modal-overlay');
+  const modal = document.getElementById('wicket-modal');
+  document.getElementById('wm-batsman-name').textContent = state.striker.name ? `${state.striker.name} is out —` : 'Select how the batsman was out';
+
+  modal.classList.toggle('wm-freehit', !!state.freeHit);
+  modal.querySelectorAll('.wm-option').forEach(btn => {
+    btn.disabled = !!state.freeHit && btn.dataset.dismissal !== 'Run Out';
+  });
+
+  overlay.classList.add('show');
+}
+function closeWicketModal(){
+  document.getElementById('wicket-modal-overlay').classList.remove('show');
+}
+document.querySelectorAll('.wm-option').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const dismissalType = btn.dataset.dismissal;
+    closeWicketModal();
+    recordBall('W', { dismissalType });
+  });
+});
+document.getElementById('wicket-modal-cancel').addEventListener('click', closeWicketModal);
+document.getElementById('wicket-modal-overlay').addEventListener('click', (e) => {
+  if(e.target.id === 'wicket-modal-overlay') closeWicketModal();
 });
 
 // Manual escape hatch: if the Free Hit indicator ever looks stuck (state
@@ -2011,7 +2116,8 @@ document.addEventListener('keydown', (e) => {
   if(tag === 'input' || tag === 'select' || tag === 'textarea') return;
 
   if(/^[0-6]$/.test(e.key)) recordBall(e.key);
-  else if(e.key.toLowerCase() === 'w') recordBall('W');
+  else if(e.key.toLowerCase() === 'w') openWicketModal();
+  else if(e.key === 'Escape') closeWicketModal();
   else if(e.key.toLowerCase() === 's') swapStrike();
   else if(e.key.toLowerCase() === 'u') document.getElementById('undo-btn').click();
 });
