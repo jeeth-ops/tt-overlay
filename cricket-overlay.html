@@ -238,142 +238,75 @@
   #stat-balls .bar-fill{ height:100%; width:0%; background:linear-gradient(90deg,var(--progress),#ffd873); }
 
   /* ============================================================
-     BOUNDARY / WICKET / EXTRAS GRAPHICS
+     LIVE EVENT SYSTEM — the scoreboard itself transforms into a
+     broadcast-style event graphic (FOUR / SIX / WICKET / NO BALL /
+     FREE HIT / WIDE / BYE / LEG BYE), holds, then transforms back.
+     Anchored inside #top-row — never a center-screen popup. Colours
+     and growth per event live in EVENT_THEMES in the script below;
+     this stylesheet only defines structure plus the CSS custom
+     properties (--ev-primary / --ev-secondary / --ev-glow /
+     --ev-accent) that JS sets per trigger.
      ============================================================ */
-  #fx-layer{ position:absolute; inset:0; pointer-events:none; }
+  #event-stage{
+    position:absolute; inset:0; z-index:40; overflow:visible;
+    opacity:0; pointer-events:none;
+    --ev-primary:#173f9e; --ev-secondary:#3f6fd6; --ev-glow:rgba(63,111,214,0.5); --ev-accent:#fff;
+  }
+  #event-stage.ev-active{ opacity:1; pointer-events:auto; }
 
-  #fx-big{
-    position:absolute; left:50%; top:44%; bottom:auto;
-    transform:translate(-50%,-50%); text-align:center; opacity:0;
+  #event-bg{
+    position:absolute; left:0; right:0; bottom:0; height:0;
+    display:flex; align-items:center; justify-content:center;
+    border-radius:14px; overflow:hidden; opacity:0;
+    background:linear-gradient(135deg, var(--ev-secondary), var(--ev-primary) 60%, var(--ev-secondary));
+    background-size:150% 150%; background-position:0% 50%;
+    box-shadow:0 26px 60px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.10);
+    will-change:height, clip-path, opacity;
   }
-  /* Shockwave ring — expands and fades out behind the number */
-  #fx-big .fx-ring{
-    position:absolute; left:50%; top:42%; width:min(26vw,300px); height:min(26vw,300px);
-    transform:translate(-50%,-50%) scale(.3); border-radius:50%;
-    border:6px solid currentColor; opacity:0; pointer-events:none;
-  }
-  #fx-big.four .fx-ring{ color:#1c4fd8; }
-  #fx-big.six .fx-ring{ color:#f0b429; }
-  /* Spinning light rays — SIX only, for that "stadium spotlight" feel */
-  #fx-big .fx-rays{
-    position:absolute; left:50%; top:42%; width:min(52vw,580px); height:min(52vw,580px);
-    transform:translate(-50%,-50%); border-radius:50%; opacity:0; pointer-events:none;
-    background:repeating-conic-gradient(from 0deg, rgba(255,255,255,0.35) 0deg 4deg, transparent 4deg 18deg);
-    -webkit-mask-image:radial-gradient(circle, rgba(0,0,0,0.9) 30%, transparent 72%);
-    mask-image:radial-gradient(circle, rgba(0,0,0,0.9) 30%, transparent 72%);
-  }
-  #fx-big .fx-number{
-    position:relative; font-family:var(--font-num); font-weight:900;
-    font-size:min(24vw,300px); line-height:.82;
-    -webkit-text-stroke:3px rgba(255,255,255,0.3);
-    letter-spacing:-2px;
-  }
-  #fx-big.four .fx-number{ color:#1c4fd8; text-shadow:0 0 60px rgba(28,79,216,0.7), 0 18px 0 rgba(0,0,0,0.2); }
-  #fx-big.six .fx-number{ color:#f0b429; text-shadow:0 0 75px rgba(240,180,41,0.75), 0 18px 0 rgba(0,0,0,0.22); }
-  #fx-big .fx-word{
-    position:relative; margin-top:-14px; font-family:var(--font-ui); font-weight:900; font-size:min(3.6vw,42px);
-    letter-spacing:12px; color:#fff; text-shadow:0 4px 18px rgba(0,0,0,0.6);
-  }
-  #fx-big .fx-sub{
-    position:relative; margin-top:10px; font-family:var(--font-ui); font-weight:700; font-size:min(1.6vw,18px);
-    letter-spacing:2px; color:rgba(255,255,255,0.9); text-transform:uppercase;
-  }
-  #fx-burst{ position:absolute; left:50%; top:40%; width:1px; height:1px; }
-  .spark{ position:absolute; left:0; top:0; width:9px; height:9px; border-radius:50%; background:#f0d998; opacity:0; }
-
-  #fx-wicket{
-    position:absolute; left:50%; top:46%; transform:translate(-50%,-50%); text-align:center; opacity:0;
-  }
-  /* Stumps + bails graphic — bails fly off on impact, like a real dismissal replay */
-  #fx-stumps{ position:relative; width:150px; height:96px; margin:0 auto 8px; }
-  #fx-stumps svg{ width:100%; height:100%; overflow:visible; filter:drop-shadow(0 10px 14px rgba(0,0,0,0.4)); }
-  #fx-wicket .fx-stamp{
-    position:relative; font-family:var(--font-num); font-weight:900; font-size:min(11vw,132px); color:#fff;
-    background:linear-gradient(160deg,#e23652,#a8102b);
-    padding:12px 54px; border-radius:12px; letter-spacing:5px;
-    box-shadow:0 26px 60px rgba(168,16,43,0.55);
-    border:3px solid rgba(255,255,255,0.4);
-    display:inline-block; transform:rotate(-3deg);
-  }
-  #fx-wicket .fx-sub{
-    margin-top:12px; font-weight:700; font-size:min(1.6vw,18px); letter-spacing:2px;
-    color:#fff; text-shadow:0 3px 10px rgba(0,0,0,0.6); text-transform:uppercase;
-  }
-  #fx-redflash{ position:absolute; inset:0; background:radial-gradient(circle at 50% 46%, rgba(210,20,50,0.4), transparent 60%); opacity:0; }
-
-  #fx-pill{
-    position:absolute; left:50%; top:46%; transform:translate(-50%,-50%) scale(.6); opacity:0;
-    display:flex; align-items:center; gap:12px;
-    padding:16px 40px; border-radius:50px;
-    font-family:var(--font-ui); font-weight:900; font-size:min(3vw,34px); letter-spacing:3px; color:#fff;
-    box-shadow:0 20px 48px rgba(0,0,0,0.45);
-  }
-  #fx-pill.wide{ background:linear-gradient(120deg,#1c7fd8,#1451a3); }
-  #fx-pill.noball{ background:linear-gradient(120deg,#e2622f,#b8380f); }
-  #fx-pill.freehit{ background:linear-gradient(120deg,#f0b429,#d89412); color:#1a1408; }
-  #fx-pill .bolt{ font-size:1.1em; }
-
-  /* ---- WIDE — a swerving banner: hazard-striped ribbon behind, a dashed
-     arc tracing the ball's line drifting away, and two chevrons pushing
-     outward to sell the "gone wide" motion. ---- */
-  #fx-wide{
-    position:absolute; left:50%; top:44%; transform:translate(-50%,-50%);
-    text-align:center; opacity:0; pointer-events:none;
-  }
-  #fx-wide #wide-stripes{
-    position:absolute; left:50%; top:58%; width:min(50vw,560px); height:min(10.5vw,112px);
-    transform:translate(-50%,-50%);
-    clip-path:polygon(7% 0,100% 0,93% 100%,0% 100%);
-    background:repeating-linear-gradient(115deg, #1c7fd8 0 20px, #1451a3 20px 40px);
-    box-shadow:0 22px 54px rgba(20,64,140,0.55);
-  }
-  #fx-wide #wide-arc-wrap{ position:relative; width:min(40vw,440px); height:min(11vw,110px); margin:0 auto; }
-  #fx-wide #wide-arc-wrap svg{ width:100%; height:100%; overflow:visible; display:block; }
-  #fx-wide #wide-arc-path{ fill:none; stroke:rgba(255,255,255,0.85); stroke-width:4; stroke-linecap:round; }
-  #fx-wide .wide-content{ position:relative; padding-top:10px; }
-  #fx-wide .wide-chevrons{ display:flex; align-items:center; justify-content:center; gap:min(15vw,170px); }
-  #fx-wide .wide-chevron{ font-size:min(2vw,22px); font-weight:900; color:rgba(255,255,255,0.75); letter-spacing:-2px; }
-  #fx-wide .wide-chevron.right{ transform:scaleX(-1); }
-  #fx-wide #wide-word{
-    font-family:var(--font-ui); font-weight:900; font-size:min(4vw,46px); letter-spacing:9px; color:#fff;
-    text-shadow:0 6px 18px rgba(0,0,0,0.45); margin-top:-4px;
-  }
-  #fx-wide #wide-sub{
-    margin-top:6px; font-weight:700; font-size:min(1.4vw,16px); letter-spacing:2px;
-    color:rgba(255,255,255,0.85); text-transform:uppercase;
+  #event-bg::after{
+    content:''; position:absolute; inset:0; pointer-events:none;
+    background:linear-gradient(180deg, rgba(255,255,255,0.16), transparent 46%);
   }
 
-  /* ---- NO BALL — a ball crossing the popping crease, then a rubber-stamp
-     impact on hazard-striped backing, with a quick shake to sell the hit. ---- */
-  #fx-noball{
-    position:absolute; left:50%; top:44%; transform:translate(-50%,-50%);
-    text-align:center; opacity:0; pointer-events:none;
+  #event-glow{
+    position:absolute; left:50%; top:50%; width:66%; height:230%;
+    transform:translate(-50%,-50%); border-radius:50%; pointer-events:none;
+    background:radial-gradient(circle, var(--ev-glow), transparent 68%);
+    mix-blend-mode:screen; opacity:0;
   }
-  #fx-noball #nb-hazard{
-    position:absolute; left:50%; top:50%; width:min(56vw,620px); height:min(14vw,150px);
-    transform:translate(-50%,-50%);
-    background:repeating-linear-gradient(45deg, #f0b429 0 26px, #1a1408 26px 52px);
-    clip-path:polygon(5% 0,100% 0,95% 100%,0 100%);
+
+  #event-lines{ position:absolute; inset:0; display:flex; flex-direction:column; justify-content:center; gap:16%; padding:0 7%; pointer-events:none; }
+  #event-lines .ev-line{ height:2px; background:linear-gradient(90deg, transparent, var(--ev-accent), transparent); opacity:0; transform:scaleX(0); transform-origin:center; }
+
+  #event-impact{ position:absolute; inset:0; pointer-events:none; }
+  #event-impact .ev-impact-line{ position:absolute; left:18%; right:18%; height:3px; background:var(--ev-accent); opacity:0; transform:scaleX(0); box-shadow:0 0 12px var(--ev-glow); }
+  #event-impact .ev-impact-line:nth-child(1){ top:32%; transform-origin:left center; }
+  #event-impact .ev-impact-line:nth-child(2){ top:52%; transform-origin:right center; }
+  #event-impact .ev-impact-line:nth-child(3){ top:70%; transform-origin:left center; }
+
+  #event-particles{ position:absolute; left:50%; top:50%; width:1px; height:1px; pointer-events:none; }
+  #event-particles .ev-spark{ position:absolute; left:0; top:0; width:6px; height:6px; border-radius:50%; opacity:0; }
+
+  #event-hero{ position:relative; z-index:2; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:2% 6%; }
+  #event-number{
+    font-family:var(--font-num); font-weight:900; color:var(--ev-accent);
+    font-size:min(6.2vw,74px); line-height:.8; letter-spacing:-1px;
+    text-shadow:0 3px 10px rgba(0,0,0,0.5), 0 0 42px var(--ev-glow);
   }
-  #fx-noball .nb-stampwrap{ position:relative; padding:14px 10px 6px; }
-  #fx-noball #nb-line{ position:relative; width:min(26vw,260px); height:20px; margin:0 auto 8px; }
-  #fx-noball #nb-line-track{
-    position:absolute; left:0; right:0; top:50%; height:3px; margin-top:-1.5px;
-    background:repeating-linear-gradient(90deg,#fff 0 10px,transparent 10px 20px); opacity:0.75;
+  #event-word{
+    font-family:var(--font-ui); font-weight:900; color:var(--ev-accent);
+    font-size:min(2.3vw,27px); letter-spacing:6px; margin-top:2px;
+    text-shadow:0 3px 10px rgba(0,0,0,0.5);
   }
-  #fx-noball #nb-ball{
-    position:absolute; top:50%; left:0; width:14px; height:14px; margin-top:-7px; border-radius:50%;
-    background:radial-gradient(circle at 35% 30%, #ff6b6b, #a8102b 70%); box-shadow:0 0 10px rgba(255,80,80,0.6);
+  #event-word .ev-char{ display:inline-block; will-change:transform,opacity,filter; }
+  #event-sub{
+    margin-top:6px; font-family:var(--font-ui); font-weight:700; color:var(--ev-accent);
+    font-size:min(1.05vw,12px); letter-spacing:2px; text-transform:uppercase; opacity:.85;
   }
-  #fx-noball #nb-stamp{
-    display:inline-block; font-family:var(--font-num); font-weight:900; font-size:min(5.4vw,58px); color:#fff;
-    background:linear-gradient(160deg,#e2622f,#b8380f); padding:10px 38px; border-radius:10px; letter-spacing:4px;
-    box-shadow:0 24px 54px rgba(184,56,15,0.55); border:3px solid rgba(255,255,255,0.35);
-  }
-  #fx-noball #nb-sub{
-    margin-top:12px; font-weight:700; font-size:min(1.5vw,17px); letter-spacing:2px; color:#fff;
-    text-shadow:0 3px 10px rgba(0,0,0,0.5); text-transform:uppercase;
-  }
+
+  /* BYE / LEG BYE — informational tier: same system, calmer scale */
+  #event-stage.ev-bye #event-word, #event-stage.ev-leg-bye #event-word{ font-size:min(1.8vw,21px); letter-spacing:4px; }
+  #event-stage.ev-bye #event-glow, #event-stage.ev-leg-bye #event-glow{ opacity:.12 !important; }
 
   #freehit-chip{
     /* Anchored to #scorecard itself (its new parent) rather than the
@@ -539,6 +472,27 @@
         <div class="cap-name" id="name-right">TEAM B</div>
         <div class="cap-logo" id="logo-right"><svg viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="12" r="10"/></svg></div>
       </div>
+      <div id="event-stage">
+        <div id="event-bg">
+          <div id="event-glow"></div>
+          <div id="event-lines">
+            <div class="ev-line"></div>
+            <div class="ev-line"></div>
+            <div class="ev-line"></div>
+          </div>
+          <div id="event-impact">
+            <div class="ev-impact-line"></div>
+            <div class="ev-impact-line"></div>
+            <div class="ev-impact-line"></div>
+          </div>
+          <div id="event-particles"></div>
+          <div id="event-hero">
+            <div id="event-number">4</div>
+            <div id="event-word">FOUR</div>
+            <div id="event-sub"></div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div id="bottom-row">
@@ -552,56 +506,6 @@
     <div id="freehit-chip"><span class="bolt">⚡</span> FREE HIT</div>
   </div>
 
-  <div id="fx-layer">
-    <div id="fx-redflash"></div>
-    <div id="fx-burst"></div>
-    <div id="fx-big">
-      <div class="fx-ring" id="fx-ring"></div>
-      <div class="fx-rays" id="fx-rays"></div>
-      <div class="fx-number" id="fx-number">4</div>
-      <div class="fx-word" id="fx-word">FOUR</div>
-      <div class="fx-sub" id="fx-sub"></div>
-    </div>
-    <div id="fx-wicket">
-      <div id="fx-stumps">
-        <svg viewBox="0 0 150 100">
-          <g id="stump-1"><rect x="30" y="20" width="10" height="70" rx="3" fill="#d8a462"/></g>
-          <g id="stump-2"><rect x="70" y="20" width="10" height="70" rx="3" fill="#d8a462"/></g>
-          <g id="stump-3"><rect x="110" y="20" width="10" height="70" rx="3" fill="#d8a462"/></g>
-          <g id="bail-1"><rect x="32" y="13" width="48" height="7" rx="3" fill="#f0d9b0"/></g>
-          <g id="bail-2"><rect x="72" y="13" width="48" height="7" rx="3" fill="#f0d9b0"/></g>
-        </svg>
-      </div>
-      <div class="fx-stamp">OUT</div>
-      <div class="fx-sub" id="fx-wicket-sub"></div>
-    </div>
-    <div id="fx-wide">
-      <div id="wide-stripes"></div>
-      <div class="wide-content">
-        <div id="wide-arc-wrap">
-          <svg viewBox="0 0 440 110"><path id="wide-arc-path" d="M20,95 Q220,5 420,95"/></svg>
-        </div>
-        <div class="wide-chevrons">
-          <span class="wide-chevron left" id="wide-chevron-left">❮❮</span>
-          <span class="wide-chevron right" id="wide-chevron-right">❮❮</span>
-        </div>
-        <div id="wide-word">WIDE</div>
-        <div id="wide-sub"></div>
-      </div>
-    </div>
-    <div id="fx-noball">
-      <div id="nb-hazard"></div>
-      <div class="nb-stampwrap">
-        <div id="nb-line">
-          <div id="nb-line-track"></div>
-          <div id="nb-ball"></div>
-        </div>
-        <div id="nb-stamp">NO BALL</div>
-      </div>
-      <div id="nb-sub"></div>
-    </div>
-    <div id="fx-pill"><span class="bolt" id="fx-pill-icon">↗</span><span id="fx-pill-text">WIDE</span></div>
-  </div>
 
   <div id="innings-batting-summary-card" class="summary-card">
     <div class="sc-header">
@@ -677,7 +581,11 @@ socket.on('connect', () => connStatus.classList.remove('visible'));
 socket.on('disconnect', () => { connStatus.classList.add('visible'); connStatus.textContent = 'Overlay disconnected — retrying…'; });
 socket.on('connect_error', () => { connStatus.classList.add('visible'); connStatus.textContent = 'Connection error — retrying…'; });
 
-socket.on('liveCricketScore', (data) => renderState(data));
+socket.on('liveCricketScore', (data) => {
+  if(data && data.visible === false){ pendingStateUpdate = null; renderState(data); return; }
+  if(eventState !== 'idle'){ pendingStateUpdate = data; }
+  else { renderState(data); }
+});
 socket.on('cricketEvent', (event) => playEvent(event));
 // Innings-complete graphic is TWO cards, sequenced: batting scorecard
 // first (15s hold), then bowling figures (15s hold) — 17300ms covers the
@@ -1042,202 +950,270 @@ function animateExit(){
 }
 
 /* ============================================================
-   BOUNDARY / WICKET / EXTRAS GRAPHICS
-   Each kind gets its own distinct motion signature.
+   LIVE EVENT SYSTEM
+   The scoreboard bar itself transforms into a broadcast event
+   graphic (FOUR / SIX / WICKET / NO_BALL / FREE_HIT / WIDE / BYE /
+   LEG_BYE), holds, then transforms back — always anchored inside
+   #top-row, never a center-screen popup.
+
+   Public API:
+     triggerEvent("FOUR")
+     triggerEvent("SIX", { sub: "Player Name" })
+
+   Config (edit freely):
+     EVENT_DURATION — how long the event graphic holds, in ms
+     TRANSITION_IN  — scoreboard -> event, in ms
+     TRANSITION_OUT — event -> scoreboard, in ms
    ============================================================ */
-function playEvent(evt){
-  const kind = (evt.kind || '').toUpperCase();
-  if(kind === 'FOUR') playFour(evt);
-  else if(kind === 'SIX') playSix(evt);
-  else if(kind === 'WICKET') playWicket(evt);
-  else if(kind === 'WIDE') playWide(evt);
-  else if(kind === 'NO_BALL' || kind === 'NOBALL') playNoBall(evt);
-  else if(kind === 'FREE_HIT') playPill('freehit', 'FREE HIT', '⚡');
-  else playGenericBanner(evt);
+let EVENT_DURATION = 4000;
+let TRANSITION_IN   = 600;
+let TRANSITION_OUT  = 700;
+
+// One place to edit colours, growth (how tall the panel gets relative
+// to the normal bar height) and particle counts for every event kind.
+const EVENT_THEMES = {
+  FOUR:     { label:'FOUR',     number:'4',  showNumber:true,  primary:'#173f9e', secondary:'#3f6fd6', accent:'#ffffff', glow:'rgba(63,111,214,0.55)', growth:1.75, particles:12, particleDist:70  },
+  SIX:      { label:'SIX',      number:'6',  showNumber:true,  primary:'#b8860f', secondary:'#f0b429', accent:'#ffffff', glow:'rgba(240,180,41,0.6)',  growth:1.9,  particles:26, particleDist:130 },
+  WICKET:   { label:'WICKET',   number:null, showNumber:false, primary:'#4a0812', secondary:'#a8102b', accent:'#ffffff', glow:'rgba(210,20,50,0.5)',   growth:1.8,  particles:14, particleDist:80  },
+  NO_BALL:  { label:'NO BALL',  number:null, showNumber:false, primary:'#7a2c0c', secondary:'#e2622f', accent:'#ffffff', glow:'rgba(226,98,47,0.5)',   growth:1.45, particles:0,  particleDist:0   },
+  FREE_HIT: { label:'FREE HIT', number:null, showNumber:false, primary:'#12356b', secondary:'#f0b429', accent:'#ffffff', glow:'rgba(240,180,41,0.5)',  growth:1.45, particles:10, particleDist:60  },
+  WIDE:     { label:'WIDE',     number:null, showNumber:false, primary:'#123a66', secondary:'#1c7fd8', accent:'#ffffff', glow:'rgba(28,127,216,0.45)', growth:1.4,  particles:0,  particleDist:0   },
+  BYE:      { label:'BYE',      number:null, showNumber:false, primary:'#2c3450', secondary:'#5b6788', accent:'#ffffff', glow:'rgba(91,103,136,0.3)',  growth:1.08, particles:0,  particleDist:0   },
+  LEG_BYE:  { label:'LEG BYE',  number:null, showNumber:false, primary:'#2c3450', secondary:'#5b6788', accent:'#ffffff', glow:'rgba(91,103,136,0.3)',  growth:1.08, particles:0,  particleDist:0   }
+};
+
+// Everything on the live bar that visually "recedes" while the event
+// graphic takes over — nothing here is destroyed, only hidden, so the
+// underlying score data stays intact underneath (see the
+// liveCricketScore buffering further down).
+const SB_CONTENT_SELECTOR = '#cap-left .cap-logo, #cap-left .cap-name, #cap-right .cap-logo, #cap-right .cap-name, ' +
+  '#score-value, #overs-badge .ov-num, #overs-badge .ov-lbl, #live-segs, #break-seg, #bottom-row .bstat';
+
+let eventState = 'idle';       // 'idle' | 'running'
+const eventQueue = [];
+let pendingStateUpdate = null; // a liveCricketScore payload held back until the event finishes
+let microTl = null;
+
+function normalizeEventKind(k){
+  if(!k) return '';
+  let s = String(k).toUpperCase().trim().replace(/[\s-]+/g, '_');
+  if(s === 'NOBALL') s = 'NO_BALL';
+  if(s === 'FREEHIT') s = 'FREE_HIT';
+  if(s === 'LEGBYE') s = 'LEG_BYE';
+  return s;
 }
 
-function playFour(evt){
-  const big = document.getElementById('fx-big');
-  big.className = 'four';
-  document.getElementById('fx-number').textContent = '4';
-  document.getElementById('fx-word').textContent = 'FOUR!';
-  document.getElementById('fx-sub').textContent = evt.sub || '';
-  gsap.killTweensOf(big);
-  gsap.killTweensOf('#fx-ring');
-  gsap.set(big, { opacity: 0, rotate: -18, x: 140, y: 40, scale: 0.7, transformOrigin: '50% 50%' });
-  gsap.set('#fx-ring', { opacity: 0, scale: 0.3 });
-  gsap.timeline()
-    .to(big, { opacity: 1, rotate: 0, x: 0, y: 0, scale: 1, duration: 0.55, ease: 'back.out(1.8)' })
-    .to(big, { duration: (evt.durationMs || 1800) / 1000 })
-    .to(big, { opacity: 0, y: -30, scale: 0.9, duration: 0.3, ease: 'power2.in' });
-  gsap.timeline()
-    .to('#fx-ring', { opacity: 0.85, scale: 1, duration: 0.3, ease: 'power2.out' }, 0.05)
-    .to('#fx-ring', { opacity: 0, scale: 1.6, duration: 0.55, ease: 'power2.out' }, 0.3);
-  playSweepBar('#1c4fd8');
+// Public entry point — queues gracefully instead of cutting off
+// whatever is currently on screen (capped so a burst of deliveries
+// can't leave the overlay chasing a long backlog).
+function triggerEvent(kind, opts){
+  const k = normalizeEventKind(kind);
+  if(!EVENT_THEMES[k]) return;
+  if(eventQueue.length >= 3) eventQueue.shift();
+  eventQueue.push({ kind: k, opts: opts || {} });
+  if(eventState === 'idle') advanceEventQueue();
 }
-function playSix(evt){
-  const big = document.getElementById('fx-big');
-  big.className = 'six';
-  document.getElementById('fx-number').textContent = '6';
-  document.getElementById('fx-word').textContent = 'SIX!';
-  document.getElementById('fx-sub').textContent = evt.sub || '';
-  gsap.killTweensOf(big);
-  gsap.killTweensOf(['#fx-ring', '#fx-rays']);
-  gsap.set(big, { opacity: 0, rotate: 24, y: 220, scale: 0.5 });
-  gsap.set('#fx-ring', { opacity: 0, scale: 0.3 });
-  gsap.set('#fx-rays', { opacity: 0, rotate: 0 });
-  const holdSec = (evt.durationMs || 2000) / 1000;
-  gsap.timeline()
-    .to(big, { opacity: 1, rotate: 0, y: 0, scale: 1.08, duration: 0.55, ease: 'expo.out' })
-    .to(big, { scale: 1, duration: 0.18, ease: 'power2.out' })
-    .to(big, { duration: holdSec })
-    .to(big, { opacity: 0, y: -40, scale: 0.9, duration: 0.32, ease: 'power2.in' });
-  gsap.timeline()
-    .to('#fx-ring', { opacity: 0.9, scale: 1, duration: 0.32, ease: 'power2.out' }, 0.05)
-    .to('#fx-ring', { opacity: 0, scale: 1.8, duration: 0.6, ease: 'power2.out' }, 0.32);
-  // Spotlight-style rays spin slowly for as long as the graphic is on screen
-  gsap.timeline()
-    .to('#fx-rays', { opacity: 0.8, duration: 0.25 }, 0.05)
-    .to('#fx-rays', { rotate: 50, duration: holdSec + 0.3, ease: 'none' }, 0.05)
-    .to('#fx-rays', { opacity: 0, duration: 0.3 }, `-=0.3`);
-  burstSparks();
-  playSweepBar('#f0b429');
+function advanceEventQueue(){
+  if(eventQueue.length === 0){ eventState = 'idle'; return; }
+  eventState = 'running';
+  const next = eventQueue.shift();
+  playEventTimeline(next.kind, next.opts, advanceEventQueue);
 }
-function burstSparks(){
-  const layer = document.getElementById('fx-burst');
-  layer.innerHTML = '';
-  const n = 22;
-  for(let i=0;i<n;i++){
+
+// Adapter for the existing socket protocol — 'cricketEvent' payloads
+// keep working exactly as before ({kind, sub, durationMs}).
+function playEvent(evt){
+  triggerEvent(evt && evt.kind, { sub: (evt && (evt.sub || evt.text)) || '', durationMs: evt && evt.durationMs });
+}
+
+function splitEventWord(el){
+  const text = el.textContent;
+  el.textContent = '';
+  const frag = document.createDocumentFragment();
+  const spans = [];
+  for(const ch of text){
+    const span = document.createElement('span');
+    span.className = 'ev-char';
+    span.textContent = ch === ' ' ? '\u00A0' : ch;
+    frag.appendChild(span);
+    spans.push(span);
+  }
+  el.appendChild(frag);
+  return spans;
+}
+
+function burstEventParticles(container, count, color, distance){
+  container.innerHTML = '';
+  if(!count) return;
+  for(let i = 0; i < count; i++){
     const s = document.createElement('div');
-    s.className = 'spark';
-    layer.appendChild(s);
-    const ang = (Math.PI*2/n)*i;
-    const dist = 140 + Math.random()*110;
-    gsap.fromTo(s, { opacity: 1, x:0, y:0, scale: 1 }, {
-      opacity: 0, x: Math.cos(ang)*dist, y: Math.sin(ang)*dist - 50, scale: 0.2,
-      duration: 1.0, ease: 'power2.out', delay: 0.15
-    });
+    s.className = 'ev-spark';
+    s.style.background = color;
+    container.appendChild(s);
+    const ang = (Math.PI * 2 / count) * i + (Math.random() - 0.5) * 0.5;
+    const dist = distance * (0.55 + Math.random() * 0.6);
+    gsap.fromTo(s,
+      { opacity: 1, x: 0, y: 0, scale: 1 },
+      { opacity: 0, x: Math.cos(ang) * dist, y: Math.sin(ang) * dist - dist * 0.18, scale: 0.25,
+        duration: 0.85 + Math.random() * 0.35, ease: 'power2.out', delay: Math.random() * 0.08 });
   }
 }
-function playWicket(evt){
-  const el = document.getElementById('fx-wicket');
-  document.getElementById('fx-wicket-sub').textContent = evt.sub || '';
-  gsap.killTweensOf(el);
-  gsap.killTweensOf(['#bail-1', '#bail-2', '#stump-2']);
-  gsap.set(el, { opacity: 0, scale: 2.2 });
-  gsap.set(['#bail-1', '#bail-2'], { x: 0, y: 0, rotate: 0, opacity: 1 });
-  gsap.set('#stump-2', { x: 0, rotate: 0 });
 
+function shakeElement(el, amount, duration){
   gsap.timeline()
-    .to(el, { opacity: 1, scale: 1, duration: 0.34, ease: 'power4.out' })
-    .to(el, { scale: 1.06, duration: 0.08 })
-    .to(el, { scale: 1, duration: 0.12 })
-    .to(el, { duration: (evt.durationMs || 2200) / 1000 })
-    .to(el, { opacity: 0, scale: 0.9, duration: 0.28, ease: 'power2.in' });
-
-  // Bails fly off in opposite directions and the middle stump kicks back —
-  // the classic dismissal-replay look.
-  gsap.timeline({ delay: 0.18 })
-    .to('#bail-1', { x: -40, y: -62, rotate: -260, opacity: 0, duration: 0.6, ease: 'power2.out' }, 0)
-    .to('#bail-2', { x: 48, y: -48, rotate: 220, opacity: 0, duration: 0.6, ease: 'power2.out' }, 0.03)
-    .to('#stump-2', { x: 18, rotate: 30, duration: 0.5, ease: 'power2.out' }, 0.02);
-
-  gsap.timeline()
-    .to('#fx-redflash', { opacity: 1, duration: 0.12 })
-    .to('#fx-redflash', { opacity: 0, duration: 0.7, ease: 'power2.out' });
+    .to(el, { x: -amount, duration: duration * 0.25, ease: 'power1.inOut' })
+    .to(el, { x: amount,  duration: duration * 0.5,  ease: 'power1.inOut' })
+    .to(el, { x: 0,       duration: duration * 0.25, ease: 'power1.inOut' });
 }
-function playWide(evt){
-  const el = document.getElementById('fx-wide');
-  const arcPath = document.getElementById('wide-arc-path');
-  document.getElementById('wide-sub').textContent = evt.sub || '';
-  gsap.killTweensOf([el, '#wide-stripes', arcPath, '#wide-chevron-left', '#wide-chevron-right', '#wide-word', '#wide-sub']);
 
-  const len = arcPath.getTotalLength();
-  gsap.set(el, { opacity: 0 });
-  gsap.set('#wide-stripes', { scaleX: 0, transformOrigin: 'center' });
-  gsap.set(arcPath, { strokeDasharray: len, strokeDashoffset: len });
-  gsap.set('#wide-chevron-left', { x: 0, opacity: 0 });
-  gsap.set('#wide-chevron-right', { x: 0, opacity: 0 });
-  gsap.set('#wide-word', { opacity: 0, skewX: -12, x: -26 });
-  gsap.set('#wide-sub', { opacity: 0 });
-
-  const holdSec = (evt.durationMs || 1600) / 1000;
-  gsap.timeline()
-    .to(el, { opacity: 1, duration: 0.1 }, 0)
-    // hazard ribbon unfurls behind the message, like the umpire's arms going out
-    .to('#wide-stripes', { scaleX: 1, duration: 0.4, ease: 'power3.out' }, 0)
-    // dashed arc draws itself in, tracing the ball's line drifting away
-    .to(arcPath, { strokeDashoffset: 0, duration: 0.5, ease: 'power2.out' }, 0.08)
-    .to('#wide-word', { opacity: 1, skewX: 0, x: 0, duration: 0.4, ease: 'back.out(2)' }, 0.2)
-    // chevrons push outward to sell the "gone wide" motion
-    .to('#wide-chevron-left', { x: -16, opacity: 1, duration: 0.35, ease: 'power2.out' }, 0.26)
-    .to('#wide-chevron-right', { x: 16, opacity: 1, duration: 0.35, ease: 'power2.out' }, 0.26)
-    .to('#wide-sub', { opacity: 1, duration: 0.3 }, 0.4)
-    .to(el, { duration: holdSec })
-    .to('#wide-chevron-left', { x: -34, opacity: 0, duration: 0.3, ease: 'power2.in' })
-    .to('#wide-chevron-right', { x: 34, opacity: 0, duration: 0.3, ease: 'power2.in' }, '<')
-    .to(el, { opacity: 0, x: 50, scale: 0.94, duration: 0.32, ease: 'power2.in' }, '<');
+function startEventMicroMotion(bg, theme){
+  microTl = gsap.timeline({ repeat: -1, yoyo: true, defaults: { ease: 'sine.inOut' } });
+  microTl.to(bg, { backgroundPosition: '10% 55%', duration: 2.6 }, 0)
+    .to('#event-hero', { scale: 1.012, duration: 2.2 }, 0)
+    .to('#event-glow', { opacity: theme.particles ? 0.6 : 0.16, duration: 2.4 }, 0);
 }
-function playNoBall(evt){
-  const el = document.getElementById('fx-noball');
-  document.getElementById('nb-sub').textContent = evt.sub || '';
-  gsap.killTweensOf([el, '#nb-hazard', '#nb-ball', '#nb-stamp', '#nb-sub']);
-
-  gsap.set(el, { opacity: 0 });
-  gsap.set('#nb-hazard', { opacity: 0 });
-  gsap.set('#nb-ball', { x: 0, opacity: 0 });
-  gsap.set('#nb-stamp', { opacity: 0, scale: 2.6, rotate: -16 });
-  gsap.set('#nb-sub', { opacity: 0 });
-
-  const holdSec = (evt.durationMs || 1600) / 1000;
-  const lineWidth = document.getElementById('nb-line').offsetWidth || 260;
-  gsap.timeline()
-    .to(el, { opacity: 1, duration: 0.08 }, 0)
-    .to('#nb-hazard', { opacity: 0.22, duration: 0.35, ease: 'power2.out' }, 0)
-    // the ball overstepping the popping crease line — the actual "no ball" moment
-    .to('#nb-ball', { x: lineWidth - 14, opacity: 1, duration: 0.45, ease: 'power1.inOut' }, 0.05)
-    // then the stamp slams down like a rubber stamp hitting paper
-    .to('#nb-stamp', { opacity: 1, scale: 1, rotate: -2, duration: 0.3, ease: 'power4.out' }, 0.42)
-    .to('#nb-stamp', { x: -5, duration: 0.05 }, 0.5)
-    .to('#nb-stamp', { x: 5, duration: 0.05 }, 0.55)
-    .to('#nb-stamp', { x: 0, duration: 0.05 }, 0.6)
-    .to('#nb-sub', { opacity: 1, duration: 0.3 }, 0.6)
-    .to(el, { duration: holdSec })
-    .to('#nb-hazard', { opacity: 0, duration: 0.3 })
-    .to(el, { opacity: 0, y: -18, scale: 0.94, duration: 0.3, ease: 'power2.in' }, '<');
-
-  // sharp flash tied to the stamp impact
-  gsap.timeline()
-    .to('#fx-redflash', { opacity: 1, duration: 0.1 }, 0.42)
-    .to('#fx-redflash', { opacity: 0, duration: 0.6, ease: 'power2.out' }, 0.52);
+function stopEventMicroMotion(){
+  if(microTl){ microTl.kill(); microTl = null; }
+  gsap.set('#event-hero', { scale: 1 });
 }
-function playPill(cls, text, icon){
-  const el = document.getElementById('fx-pill');
-  el.className = cls;
-  document.getElementById('fx-pill-text').textContent = text;
-  document.getElementById('fx-pill-icon').textContent = icon;
-  gsap.killTweensOf(el);
-  gsap.set(el, { opacity: 0, scale: 0.6, y: 20 });
-  gsap.timeline()
-    .to(el, { opacity: 1, scale: 1, y: 0, duration: 0.4, ease: 'back.out(2.2)' })
-    .to(el, { duration: 1.1 })
-    .to(el, { opacity: 0, y: -14, duration: 0.28, ease: 'power2.in' });
+
+// Per-event hero flourish — the same shared building blocks
+// (typography, glow, lines, particles, impact) combined differently
+// so every event keeps its own identity inside one motion language.
+function addEventHeroPhase(tl, kind, theme, chars, startAt){
+  const numEl = document.getElementById('event-number');
+  const subEl = document.getElementById('event-sub');
+  const glow = document.getElementById('event-glow');
+  const lines = document.querySelectorAll('#event-lines .ev-line');
+  const impact = document.querySelectorAll('#event-impact .ev-impact-line');
+  const particles = document.getElementById('event-particles');
+
+  switch(kind){
+    case 'FOUR':
+      tl.to(numEl, { opacity: 1, scale: 1, filter: 'blur(0px)', duration: 0.42, ease: 'back.out(1.9)' }, startAt)
+        .to(chars, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.32, stagger: 0.026, ease: 'power3.out' }, '-=0.2')
+        .to(glow, { opacity: 0.55, scale: 1, duration: 0.4, ease: 'power2.out' }, '<')
+        .to(lines, { scaleX: 1, opacity: 1, duration: 0.3, stagger: 0.05, ease: 'power2.out' }, '<0.05')
+        .call(() => burstEventParticles(particles, theme.particles, theme.secondary, theme.particleDist), null, '<0.1')
+        .to(subEl, { opacity: 1, y: 0, duration: 0.3 }, '-=0.1');
+      break;
+    case 'SIX':
+      tl.to(glow, { opacity: 0.78, scale: 1.3, duration: 0.5, ease: 'power2.out' }, startAt)
+        .to(numEl, { opacity: 1, scale: 1.08, filter: 'blur(0px)', duration: 0.5, ease: 'expo.out' }, '<0.05')
+        .to(numEl, { scale: 1, duration: 0.16, ease: 'power2.out' })
+        .to(chars, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.36, stagger: 0.03, ease: 'power3.out' }, '-=0.3')
+        .to(lines, { scaleX: 1, opacity: 1, duration: 0.32, stagger: 0.05, ease: 'power2.out' }, '<')
+        .call(() => burstEventParticles(particles, theme.particles, theme.primary, theme.particleDist), null, '<0.05')
+        .to('#event-hero', { scale: 1.03, duration: 0.22, ease: 'power2.out' }, '<')
+        .to('#event-hero', { scale: 1, duration: 0.24, ease: 'power2.inOut' })
+        .to(subEl, { opacity: 1, y: 0, duration: 0.3 }, '-=0.15');
+      break;
+    case 'WICKET':
+      tl.call(() => shakeElement(document.getElementById('scorecard'), 3, 0.16), null, startAt)
+        .fromTo(chars, { x: -24, opacity: 0, filter: 'blur(4px)' }, { x: 0, opacity: 1, filter: 'blur(0px)', duration: 0.26, stagger: 0.018, ease: 'power4.out' }, startAt)
+        .to(impact, { opacity: 1, scaleX: 1, duration: 0.1, stagger: 0.03 }, '<0.02')
+        .to(impact, { opacity: 0, duration: 0.28 }, '+=0.05')
+        .call(() => burstEventParticles(particles, theme.particles, theme.secondary, theme.particleDist), null, '<')
+        .to(subEl, { opacity: 1, y: 0, duration: 0.3 }, '-=0.1');
+      break;
+    case 'NO_BALL':
+      tl.fromTo(chars, { x: -28, opacity: 0 }, { x: 0, opacity: 1, filter: 'blur(0px)', duration: 0.3, stagger: 0.02, ease: 'power3.out' }, startAt)
+        .to(lines, { scaleX: 1, opacity: 1, duration: 0.3, stagger: 0.06, ease: 'power2.out' }, '<0.05')
+        .to(glow, { opacity: 0.5, duration: 0.18 }, '<')
+        .to(glow, { opacity: 0.22, duration: 0.28 }, '+=0.12')
+        .to(glow, { opacity: 0.5, duration: 0.2 })
+        .to(subEl, { opacity: 1, y: 0, duration: 0.3 }, '-=0.2');
+      break;
+    case 'FREE_HIT':
+      tl.fromTo('#event-hero', { rotate: -2, scale: 0.92 }, { rotate: 0, scale: 1, duration: 0.4, ease: 'back.out(1.7)' }, startAt)
+        .to(chars, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.3, stagger: 0.024, ease: 'power3.out' }, '<0.05')
+        .to(lines, { scaleX: 1, opacity: 1, duration: 0.3, stagger: 0.04, ease: 'power2.out' }, '<')
+        .call(() => burstEventParticles(particles, theme.particles, theme.primary, theme.particleDist), null, '<0.1')
+        .to(subEl, { opacity: 1, y: 0, duration: 0.3 }, '-=0.1');
+      break;
+    case 'WIDE':
+      tl.fromTo(chars, { scaleX: 1.55, opacity: 0 }, { scaleX: 1, opacity: 1, filter: 'blur(0px)', duration: 0.36, stagger: 0.018, ease: 'power3.out' }, startAt)
+        .to(lines, { scaleX: 1, opacity: 1, duration: 0.3, stagger: 0.05, ease: 'power2.out' }, '<')
+        .to(subEl, { opacity: 1, y: 0, duration: 0.3 }, '-=0.15');
+      break;
+    default: // BYE, LEG_BYE
+      tl.fromTo(chars, { y: 10, opacity: 0 }, { y: 0, opacity: 1, filter: 'blur(0px)', duration: 0.3, stagger: 0.018, ease: 'power2.out' }, startAt)
+        .to(subEl, { opacity: 1, y: 0, duration: 0.3 }, '-=0.15');
+  }
 }
-function playSweepBar(color){
-  // brief colour wash across the mid-row to tie the big graphic back to the scorecard
-  gsap.fromTo('#mid-row', { boxShadow: `0 0 0 0 ${color}00` }, { boxShadow: `0 0 30px 4px ${color}55`, duration: 0.3, yoyo:true, repeat:1 });
-}
-function playGenericBanner(evt){
-  const el = document.getElementById('fx-pill');
-  el.className = 'freehit';
-  document.getElementById('fx-pill-text').textContent = evt.text || evt.kind || '';
-  document.getElementById('fx-pill-icon').textContent = '★';
-  gsap.killTweensOf(el);
-  gsap.set(el, { opacity: 0, scale: 0.6, y: 20 });
-  gsap.timeline()
-    .to(el, { opacity: 1, scale: 1, y: 0, duration: 0.4, ease: 'back.out(2.2)' })
-    .to(el, { duration: (evt.durationMs || 2200) / 1000 })
-    .to(el, { opacity: 0, y: -14, duration: 0.3, ease: 'power2.in' });
+
+function playEventTimeline(kind, opts, onDone){
+  const theme = EVENT_THEMES[kind];
+  const stage = document.getElementById('event-stage');
+  const bg = document.getElementById('event-bg');
+  const topRow = document.getElementById('top-row');
+  const numEl = document.getElementById('event-number');
+  const wordEl = document.getElementById('event-word');
+  const subEl = document.getElementById('event-sub');
+  const glow = document.getElementById('event-glow');
+  const lines = document.querySelectorAll('#event-lines .ev-line');
+  const impact = document.querySelectorAll('#event-impact .ev-impact-line');
+
+  stage.className = 'ev-active ev-' + kind.toLowerCase().replace(/_/g, '-');
+  stage.style.setProperty('--ev-primary', theme.primary);
+  stage.style.setProperty('--ev-secondary', theme.secondary);
+  stage.style.setProperty('--ev-glow', theme.glow);
+  stage.style.setProperty('--ev-accent', theme.accent);
+
+  numEl.style.display = theme.showNumber ? '' : 'none';
+  numEl.textContent = theme.number || '';
+  wordEl.textContent = theme.label;
+  const chars = splitEventWord(wordEl);
+  subEl.textContent = opts.sub || '';
+
+  const baseH = topRow.getBoundingClientRect().height || 100;
+  const targetH = baseH * theme.growth;
+  const holdSec = Math.max((opts.durationMs || EVENT_DURATION) / 1000, 0.6);
+  const inSec = TRANSITION_IN / 1000;
+  const outSec = TRANSITION_OUT / 1000;
+
+  gsap.killTweensOf([stage, bg, glow, numEl, subEl, chars, lines, impact, '#event-hero']);
+  if(microTl){ microTl.kill(); microTl = null; }
+
+  gsap.set(bg, { height: baseH * 0.22, opacity: 0, clipPath: 'inset(0% 46% 0% 46% round 14px)' });
+  gsap.set(glow, { opacity: 0, scale: 0.4 });
+  gsap.set(numEl, { opacity: 0, scale: 0.6, filter: 'blur(10px)' });
+  gsap.set(chars, { opacity: 0, y: 14, filter: 'blur(6px)' });
+  gsap.set(subEl, { opacity: 0, y: 8 });
+  gsap.set(lines, { opacity: 0, scaleX: 0 });
+  gsap.set(impact, { opacity: 0, scaleX: 0 });
+
+  const master = gsap.timeline({
+    onComplete: () => {
+      stage.classList.remove('ev-active');
+      if(onDone) onDone();
+    }
+  });
+
+  // ---- transition OUT of the live scoreboard, panel builds ----
+  master.to(SB_CONTENT_SELECTOR, { opacity: 0, scale: 0.93, y: -3, filter: 'blur(5px)', duration: inSec * 0.65, stagger: 0.012, ease: 'power2.in' }, 0)
+    .to(bg, { opacity: 1, height: targetH, clipPath: 'inset(0% 0% 0% 0% round 14px)', duration: inSec, ease: 'expo.out' }, 0.02);
+
+  // ---- hero takeover ----
+  addEventHeroPhase(master, kind, theme, chars, inSec * 0.82);
+  master.addLabel('heroSettled');
+
+  // ---- hold, with barely-visible micro motion ----
+  master.call(() => startEventMicroMotion(bg, theme), null, 'heroSettled')
+    .to({}, { duration: holdSec }, 'heroSettled')
+    .call(() => stopEventMicroMotion(), null, `heroSettled+=${holdSec}`);
+
+  // ---- transition back into the live scoreboard ----
+  master.call(() => { if(pendingStateUpdate){ renderState(pendingStateUpdate); pendingStateUpdate = null; } }, null, `heroSettled+=${holdSec}`)
+    .to(chars, { opacity: 0, y: -8, filter: 'blur(6px)', duration: outSec * 0.4, stagger: 0.008, ease: 'power2.in' }, `heroSettled+=${holdSec}`)
+    .to(numEl, { opacity: 0, scale: 0.7, filter: 'blur(8px)', duration: outSec * 0.4, ease: 'power2.in' }, '<')
+    .to(subEl, { opacity: 0, y: -6, duration: outSec * 0.3 }, '<')
+    .to(glow, { opacity: 0, scale: 1.4, duration: outSec * 0.5 }, '<')
+    .to(lines, { opacity: 0, duration: outSec * 0.3 }, '<')
+    .to(bg, { height: baseH * 0.22, opacity: 0, clipPath: 'inset(0% 46% 0% 46% round 14px)', duration: outSec, ease: 'power2.inOut' }, `-=${outSec * 0.1}`)
+    .to(SB_CONTENT_SELECTOR, { opacity: 1, scale: 1, y: 0, filter: 'blur(0px)', duration: outSec, stagger: 0.02, ease: 'power2.out' }, `-=${outSec * 0.75}`);
+
+  return master;
 }
 
 /* ============================================================
