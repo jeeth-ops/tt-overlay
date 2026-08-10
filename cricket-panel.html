@@ -398,6 +398,19 @@
     </div>
   </div>
 
+  <!-- New bowler prompt — opens automatically the instant an over completes,
+       so the next over never starts without the bowler being set first. -->
+  <div class="wicket-modal-overlay" id="newover-modal-overlay">
+    <div class="wicket-modal" id="newover-modal">
+      <h3>🏏 Over Complete</h3>
+      <div class="wm-sub" id="newover-modal-sub">—</div>
+      <input type="text" id="newover-modal-input" placeholder="Bowler name" list="bowler-suggestions" autocomplete="off"
+        style="width:100%;padding:9px 10px;border-radius:7px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);font-size:13px;margin-bottom:10px;">
+      <button type="button" class="full primary" id="newover-modal-submit">Set Bowler</button>
+      <button type="button" class="full ghost wm-cancel" id="newover-modal-cancel" style="margin-top:8px;">Skip for now</button>
+    </div>
+  </div>
+
   <!-- COLUMN 3: Milestones + links -->
   <div>
     <div class="card">
@@ -1358,10 +1371,12 @@ document.getElementById('new-batsman-btn').addEventListener('click', () => {
       instead of restarting at 0.0-0-0 — a bowler's figures are one
       cumulative tally for the innings, not one row per spell.
    ============================================================ */
-document.getElementById('set-bowler-btn').addEventListener('click', () => {
-  const name = document.getElementById('bowler-name-input').value.trim();
-  if(!name){ toast('Enter a bowler name first'); return; }
-  if(name === state.bowler.name){ toast('That bowler is already set'); return; }
+// Shared by the sidebar "Set / Change Bowler" button AND the automatic
+// "Over Complete" modal below, so both entry points archive/resume figures
+// identically. Returns true if the bowler was actually changed.
+function applyBowlerChange(name){
+  if(!name){ toast('Enter a bowler name first'); return false; }
+  if(name === state.bowler.name){ toast('That bowler is already set'); return false; }
   history.push(snapshot());
 
   const key = bowlingTeamKey();
@@ -1397,9 +1412,14 @@ document.getElementById('set-bowler-btn').addEventListener('click', () => {
         runs:carryRuns, wickets:carryWkts, runsThisOver:carryRuns, wicketsThisOver:carryWkts
       };
 
-  document.getElementById('bowler-name-input').value = '';
   pushState(true);
   toast(`${name} is now bowling`);
+  return true;
+}
+
+document.getElementById('set-bowler-btn').addEventListener('click', () => {
+  const input = document.getElementById('bowler-name-input');
+  if(applyBowlerChange(input.value.trim())) input.value = '';
 });
 
 document.getElementById('innings-summary-toggle').addEventListener('change', (e) => {
@@ -2001,8 +2021,22 @@ function recordBall(kind, meta){
   checkMilestones();
   checkInningsComplete();
   checkMatchResult();
+  // Over just ended and there's more cricket left to bowl → the very next
+  // thing the operator needs to do is name the incoming bowler, so flag it
+  // here and let the caller open the prompt once any wicket flow (new
+  // batsman modal) it's chained after has settled.
+  pendingBowlerPrompt = overCompletedThisBall && !isInningsOver();
   pushState(true, true);
   logBallToDb(kind, runsBefore, ballTimestamp);
+}
+let pendingBowlerPrompt = false;
+// Called right after every recordBall() call site has finished whatever
+// modal flow that ball itself triggers (e.g. new-batsman on a wicket), so
+// the "who's bowling next?" prompt never stacks on top of another modal.
+function maybePromptNewBowler(){
+  if(!pendingBowlerPrompt) return;
+  pendingBowlerPrompt = false;
+  openNewOverModal();
 }
 
 // 🍃 Every ball → MongoDB (source of truth), independent of the
@@ -2049,7 +2083,7 @@ document.querySelectorAll('[data-ball]').forEach(btn => {
     const kind = btn.dataset.ball;
     if(kind === 'W') openWicketModal();
     else if(EXTRAS_RUN_PICKER_KINDS.includes(kind)) openExtrasModal(kind);
-    else recordBall(kind);
+    else { recordBall(kind); maybePromptNewBowler(); }
   });
 });
 
@@ -2090,6 +2124,7 @@ function openExtrasModal(kind){
       const meta = {};
       meta[cfg.metaKey] = i;
       recordBall(kind, meta);
+      maybePromptNewBowler();
     });
     wrap.appendChild(b);
   }
@@ -2190,15 +2225,49 @@ document.getElementById('newbat-modal-submit').addEventListener('click', () => {
   }
   closeNewBatsmanModal();
   fireDeferredWicketAnimation();
+  maybePromptNewBowler();
 });
 document.getElementById('newbat-modal-cancel').addEventListener('click', () => {
   // Skipping doesn't block the animation — the name can still be entered
   // later via the sidebar "Send In New Batsman" control.
   closeNewBatsmanModal();
   fireDeferredWicketAnimation();
+  maybePromptNewBowler();
 });
 document.getElementById('newbat-modal-input').addEventListener('keydown', (e) => {
   if(e.key === 'Enter') document.getElementById('newbat-modal-submit').click();
+});
+
+/* ============================================================
+   NEW OVER — BOWLER PROMPT. Opens automatically the instant an over
+   completes (see maybePromptNewBowler(), called from every recordBall()
+   call site), so the operator names the next bowler right away instead of
+   the field silently carrying the outgoing bowler into the new over.
+   ============================================================ */
+function openNewOverModal(){
+  updateBowlerSuggestions();
+  const oversDone = fmtOvers(state.score.overs, state.score.balls);
+  document.getElementById('newover-modal-sub').textContent =
+    `Over ${oversDone} done${state.bowler.name ? ` (${state.bowler.name})` : ''} — who's bowling next?`;
+  const input = document.getElementById('newover-modal-input');
+  input.value = '';
+  document.getElementById('newover-modal-overlay').classList.add('show');
+  setTimeout(() => input.focus(), 50);
+}
+function closeNewOverModal(){
+  document.getElementById('newover-modal-overlay').classList.remove('show');
+}
+document.getElementById('newover-modal-submit').addEventListener('click', () => {
+  const name = document.getElementById('newover-modal-input').value.trim();
+  applyBowlerChange(name);
+  closeNewOverModal();
+});
+document.getElementById('newover-modal-cancel').addEventListener('click', closeNewOverModal);
+document.getElementById('newover-modal-overlay').addEventListener('click', (e) => {
+  if(e.target.id === 'newover-modal-overlay') closeNewOverModal();
+});
+document.getElementById('newover-modal-input').addEventListener('keydown', (e) => {
+  if(e.key === 'Enter') document.getElementById('newover-modal-submit').click();
 });
 
 // Manual escape hatch: if the Free Hit indicator ever looks stuck (state
@@ -2440,9 +2509,9 @@ document.addEventListener('keydown', (e) => {
   const tag = (e.target.tagName || '').toLowerCase();
   if(tag === 'input' || tag === 'select' || tag === 'textarea') return;
 
-  if(/^[0-6]$/.test(e.key)) recordBall(e.key);
+  if(/^[0-6]$/.test(e.key)){ recordBall(e.key); maybePromptNewBowler(); }
   else if(e.key.toLowerCase() === 'w') openWicketModal();
-  else if(e.key === 'Escape') closeWicketModal();
+  else if(e.key === 'Escape'){ closeWicketModal(); closeNewOverModal(); }
   else if(e.key.toLowerCase() === 's') swapStrike();
   else if(e.key.toLowerCase() === 'u') document.getElementById('undo-btn').click();
 });
