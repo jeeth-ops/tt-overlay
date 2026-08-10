@@ -372,6 +372,32 @@
     </div>
   </div>
 
+  <!-- New batsman name picker — opens right after a dismissal is picked;
+       the WICKET graphic only fires once this is submitted (or skipped),
+       so the incoming batsman's name is locked in before the animation. -->
+  <div class="wicket-modal-overlay" id="newbat-modal-overlay">
+    <div class="wicket-modal" id="newbat-modal">
+      <h3>🏏 New Batsman</h3>
+      <div class="wm-sub" id="newbat-modal-sub">—</div>
+      <input type="text" id="newbat-modal-input" placeholder="Incoming batsman name"
+        style="width:100%;padding:9px 10px;border-radius:7px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);font-size:13px;margin-bottom:10px;">
+      <button type="button" class="full primary" id="newbat-modal-submit">Send In</button>
+      <button type="button" class="full ghost wm-cancel" id="newbat-modal-cancel" style="margin-top:8px;">Skip for now</button>
+    </div>
+  </div>
+
+  <!-- Extras run picker — opens for Bye / Leg Bye / Wide / No Ball so the
+       operator records how many runs were actually run (0-4), instead of
+       every one of those always being hardcoded to exactly 1 run. -->
+  <div class="wicket-modal-overlay" id="extras-modal-overlay">
+    <div class="wicket-modal" id="extras-modal">
+      <h3 id="extras-modal-title">—</h3>
+      <div class="wm-sub" id="extras-modal-sub">—</div>
+      <div class="wm-options" id="extras-modal-options"></div>
+      <button type="button" class="full ghost wm-cancel" id="extras-modal-cancel" style="margin-top:10px;">Cancel</button>
+    </div>
+  </div>
+
   <!-- COLUMN 3: Milestones + links -->
   <div>
     <div class="card">
@@ -1841,7 +1867,12 @@ function recordBall(kind, meta){
       });
 
       state.partnershipRuns = 0; state.partnershipBalls = 0;
-      fireEvent('WICKET', 'WICKET!', state.striker.name);
+      // The WICKET graphic is deferred until the new-batsman name modal
+      // is submitted (or skipped) — see the '.wm-option' click handler
+      // below, which opens that modal right after this call returns.
+      if(!meta || !meta.deferAnimation){
+        fireEvent('WICKET', 'WICKET!', state.striker.name);
+      }
       if(wasFreeHit) toast('⚠️ Free Hit wicket recorded as a Run Out');
 
       // Cricket's ends-swap rule doesn't stop applying just because the
@@ -1862,23 +1893,41 @@ function recordBall(kind, meta){
       break;
     }
     case 'Wd': {
-      state.score.runs += 1;
-      state.partnershipRuns += 1;
-      state.extras[state.battingTeam].wd++;
-      state.thisOver.push('Wd');
-      pushBallHistory('Wd');
-      addBowlerExtra(1);
-      fireEvent('WIDE', 'WIDE', '');
+      // Extra runs actually run (beyond the automatic 1) come from the
+      // extras picker modal — capped at 4, defaults to 0 if not given.
+      const extraRun = (meta && typeof meta.extraRuns === 'number') ? meta.extraRuns : 0;
+      const wdTotal = 1 + extraRun;
+      state.score.runs += wdTotal;
+      state.partnershipRuns += wdTotal;
+      state.extras[state.battingTeam].wd += wdTotal;
+      const wdLabel = extraRun > 0 ? `Wd+${extraRun}` : 'Wd';
+      state.thisOver.push(wdLabel);
+      pushBallHistory(wdLabel);
+      addBowlerExtra(wdTotal);
+      fireEvent('WIDE', 'WIDE', extraRun > 0 ? `+${wdTotal} run${wdTotal===1?'':'s'}` : '');
+      // Runs actually run between the wickets rotate the strike, same as
+      // any other delivery — the automatic penalty run itself doesn't.
+      if(extraRun % 2 === 1) swapStrikeSilent();
       break;
     }
     case 'Nb': {
-      state.score.runs += 1;
-      state.partnershipRuns += 1;
-      state.extras[state.battingTeam].nb++;
-      state.thisOver.push('Nb');
-      pushBallHistory('Nb');
-      addBowlerExtra(1);
-      fireEvent('NO_BALL', 'NO BALL', '');
+      // Runs off the bat come from the extras picker modal — capped at 4,
+      // defaults to 0. The 1-run no-ball penalty is always added on top
+      // and is the only part counted as an "extra"; bat runs are credited
+      // to the striker, same as a normal scoring shot.
+      const batRuns = (meta && typeof meta.runsOffBat === 'number') ? meta.runsOffBat : 0;
+      const nbTotal = 1 + batRuns;
+      state.score.runs += nbTotal;
+      state.striker.runs += batRuns;
+      if(batRuns === 4) state.striker.fours++;
+      state.partnershipRuns += nbTotal;
+      state.extras[state.battingTeam].nb += 1;
+      const nbLabel = batRuns > 0 ? `Nb+${batRuns}` : 'Nb';
+      state.thisOver.push(nbLabel);
+      pushBallHistory(nbLabel);
+      addBowlerExtra(nbTotal);
+      fireEvent('NO_BALL', 'NO BALL', batRuns > 0 ? `+${batRuns} off the bat` : '');
+      if(batRuns % 2 === 1) swapStrikeSilent();
       // Free Hit only exists in limited-overs cricket (ODI/T20/Custom) —
       // Test/first-class cricket has no Free Hit provision under the Laws
       // of Cricket or ICC playing conditions, so skip it for that format.
@@ -1891,23 +1940,31 @@ function recordBall(kind, meta){
       break;
     }
     case 'B': {
-      state.score.runs += 1;
-      state.partnershipRuns += 1;
-      state.extras[state.battingTeam].b++;
-      state.thisOver.push('B');
-      pushBallHistory('B');
-      overCompletedThisBall = addLegalBall(1);
+      // Runs run come from the extras picker modal — capped at 4, defaults
+      // to 1 (the most common case) if not given.
+      const byeRuns = (meta && typeof meta.runs === 'number') ? meta.runs : 1;
+      state.score.runs += byeRuns;
+      state.partnershipRuns += byeRuns;
+      state.extras[state.battingTeam].b += byeRuns;
+      const bLabel = byeRuns === 1 ? 'B' : `B${byeRuns}`;
+      state.thisOver.push(bLabel);
+      pushBallHistory(bLabel);
+      overCompletedThisBall = addLegalBall(byeRuns);
       addBowlerBall(0);
+      if(byeRuns % 2 === 1) swapStrikeSilent();
       break;
     }
     case 'LB': {
-      state.score.runs += 1;
-      state.partnershipRuns += 1;
-      state.extras[state.battingTeam].lb++;
-      state.thisOver.push('LB');
-      pushBallHistory('LB');
-      overCompletedThisBall = addLegalBall(1);
+      const lbRuns = (meta && typeof meta.runs === 'number') ? meta.runs : 1;
+      state.score.runs += lbRuns;
+      state.partnershipRuns += lbRuns;
+      state.extras[state.battingTeam].lb += lbRuns;
+      const lbLabel = lbRuns === 1 ? 'LB' : `LB${lbRuns}`;
+      state.thisOver.push(lbLabel);
+      pushBallHistory(lbLabel);
+      overCompletedThisBall = addLegalBall(lbRuns);
       addBowlerBall(0);
+      if(lbRuns % 2 === 1) swapStrikeSilent();
       break;
     }
   }
@@ -1984,11 +2041,64 @@ function swapStrikeSilent(){
   const tmp = state.striker; state.striker = state.nonStriker; state.nonStriker = tmp;
 }
 
+const EXTRAS_RUN_PICKER_KINDS = ['B', 'LB', 'Wd', 'Nb'];
 document.querySelectorAll('[data-ball]').forEach(btn => {
   btn.addEventListener('click', () => {
-    if(btn.dataset.ball === 'W') openWicketModal();
-    else recordBall(btn.dataset.ball);
+    const kind = btn.dataset.ball;
+    if(kind === 'W') openWicketModal();
+    else if(EXTRAS_RUN_PICKER_KINDS.includes(kind)) openExtrasModal(kind);
+    else recordBall(kind);
   });
+});
+
+/* ============================================================
+   EXTRAS RUN PICKER — Bye / Leg Bye / Wide / No Ball each open this
+   instead of scoring immediately, so the operator picks how many runs
+   were actually run (0-4) rather than every one of these always being
+   hardcoded to exactly 1 run.
+   ============================================================ */
+const EXTRAS_MODAL_CONFIG = {
+  B:  { title: 'Bye — how many runs?',                              metaKey: 'runs' },
+  LB: { title: 'Leg Bye — how many runs?',                          metaKey: 'runs' },
+  Wd: { title: 'Wide — extra runs run (beyond the automatic 1)?',   metaKey: 'extraRuns' },
+  Nb: { title: 'No Ball — runs off the bat?',                       metaKey: 'runsOffBat' }
+};
+function openExtrasModal(kind){
+  if(isInningsOver()){
+    let msg = '🚫 Overs complete for this innings';
+    if(state.score.wickets >= 10) msg = '🚫 All out — 10 wickets already, innings is over';
+    else if(isChaseWon()) msg = '🏆 Target already reached — match is won, no more balls to record';
+    toast(msg);
+    return;
+  }
+  const cfg = EXTRAS_MODAL_CONFIG[kind];
+  if(!cfg) return;
+  document.getElementById('extras-modal-title').textContent = cfg.title;
+  document.getElementById('extras-modal-sub').textContent =
+    `${state.bowler.name || 'Bowler'} to ${state.striker.name || 'Striker'}`;
+  const wrap = document.getElementById('extras-modal-options');
+  wrap.innerHTML = '';
+  for(let i = 0; i <= 4; i++){
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'wm-option';
+    b.textContent = String(i);
+    b.addEventListener('click', () => {
+      closeExtrasModal();
+      const meta = {};
+      meta[cfg.metaKey] = i;
+      recordBall(kind, meta);
+    });
+    wrap.appendChild(b);
+  }
+  document.getElementById('extras-modal-overlay').classList.add('show');
+}
+function closeExtrasModal(){
+  document.getElementById('extras-modal-overlay').classList.remove('show');
+}
+document.getElementById('extras-modal-cancel').addEventListener('click', closeExtrasModal);
+document.getElementById('extras-modal-overlay').addEventListener('click', (e) => {
+  if(e.target.id === 'extras-modal-overlay') closeExtrasModal();
 });
 
 /* ============================================================
@@ -2029,12 +2139,64 @@ document.querySelectorAll('.wm-option').forEach(btn => {
   btn.addEventListener('click', () => {
     const dismissalType = btn.dataset.dismissal;
     closeWicketModal();
-    recordBall('W', { dismissalType });
+    const dismissedName = state.striker.name || 'Batsman';
+    recordBall('W', { dismissalType, deferAnimation: true });
+    openNewBatsmanModal(dismissedName);
   });
 });
 document.getElementById('wicket-modal-cancel').addEventListener('click', closeWicketModal);
 document.getElementById('wicket-modal-overlay').addEventListener('click', (e) => {
   if(e.target.id === 'wicket-modal-overlay') closeWicketModal();
+});
+
+/* ============================================================
+   NEW BATSMAN NAME MODAL (post-wicket) — opens the instant a
+   dismissal type is picked above. The incoming batsman's name is
+   locked in here (or explicitly skipped) BEFORE the WICKET graphic
+   fires, so the animation always follows the name entry, not before.
+   ============================================================ */
+function openNewBatsmanModal(dismissedName){
+  const overlay = document.getElementById('newbat-modal-overlay');
+  document.getElementById('newbat-modal-sub').textContent = `${dismissedName} is out — who's coming in?`;
+  const input = document.getElementById('newbat-modal-input');
+  input.value = '';
+  overlay.dataset.pendingDismissed = dismissedName;
+  overlay.classList.add('show');
+  setTimeout(() => input.focus(), 50);
+}
+function closeNewBatsmanModal(){
+  document.getElementById('newbat-modal-overlay').classList.remove('show');
+}
+function fireDeferredWicketAnimation(){
+  const dismissedName = document.getElementById('newbat-modal-overlay').dataset.pendingDismissed || '';
+  fireEvent('WICKET', 'WICKET!', dismissedName);
+}
+document.getElementById('newbat-modal-submit').addEventListener('click', () => {
+  const name = document.getElementById('newbat-modal-input').value.trim();
+  if(name){
+    history.push(snapshot());
+    const incoming = { name, runs:0, balls:0, fours:0, sixes:0 };
+    // Same seating rule as the sidebar "Send In New Batsman" control —
+    // whichever end the wicket left vacant (see newBatsmanEnd docs above).
+    if(state.newBatsmanEnd === 'nonStriker'){
+      state.nonStriker = incoming;
+    } else {
+      state.striker = incoming;
+    }
+    state.newBatsmanEnd = 'striker';
+    pushState(true);
+  }
+  closeNewBatsmanModal();
+  fireDeferredWicketAnimation();
+});
+document.getElementById('newbat-modal-cancel').addEventListener('click', () => {
+  // Skipping doesn't block the animation — the name can still be entered
+  // later via the sidebar "Send In New Batsman" control.
+  closeNewBatsmanModal();
+  fireDeferredWicketAnimation();
+});
+document.getElementById('newbat-modal-input').addEventListener('keydown', (e) => {
+  if(e.key === 'Enter') document.getElementById('newbat-modal-submit').click();
 });
 
 // Manual escape hatch: if the Free Hit indicator ever looks stuck (state
