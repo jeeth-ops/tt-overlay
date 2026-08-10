@@ -287,8 +287,30 @@
   #event-particles{ position:absolute; left:50%; top:50%; width:1px; height:1px; pointer-events:none; }
   #event-particles .ev-spark{ position:absolute; left:0; top:0; width:6px; height:6px; border-radius:50%; opacity:0; }
 
+  /* ---- Premium FOUR / SIX hero layers ----------------------------------
+     All three sit inside #event-bg (overflow:hidden), so nothing they do
+     can ever visually escape the scoreboard container. */
+  #event-shock{
+    position:absolute; left:50%; top:50%; width:34%; aspect-ratio:1/1;
+    transform:translate(-50%,-50%) scale(0); border-radius:50%; pointer-events:none;
+    border:3px solid var(--ev-accent); opacity:0; mix-blend-mode:screen;
+  }
+  #event-streaks{ position:absolute; inset:0; overflow:hidden; pointer-events:none; }
+  #event-streaks .ev-streak{
+    position:absolute; left:-30%; width:46%; height:3px; border-radius:3px; opacity:0;
+    background:linear-gradient(90deg, transparent, var(--ev-accent), transparent);
+    filter:blur(0.3px);
+  }
+  #event-rays{ position:absolute; left:50%; top:50%; width:1px; height:1px; pointer-events:none; }
+  #event-rays .ev-ray{
+    position:absolute; left:0; top:0; width:2px; height:38%; border-radius:2px;
+    background:linear-gradient(180deg, var(--ev-accent), transparent);
+    transform-origin:top center; opacity:0;
+  }
+
   #event-hero{ position:relative; z-index:2; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:2% 6%; }
   #event-number{
+    position:relative;
     font-family:var(--font-num); font-weight:900; color:var(--ev-accent);
     font-size:min(6.2vw,74px); line-height:.8; letter-spacing:-1px;
     text-shadow:0 3px 10px rgba(0,0,0,0.5), 0 0 42px var(--ev-glow);
@@ -303,6 +325,34 @@
     margin-top:6px; font-family:var(--font-ui); font-weight:700; color:var(--ev-accent);
     font-size:min(1.05vw,12px); letter-spacing:2px; text-transform:uppercase; opacity:.85;
   }
+
+  /* FOUR — dominant, dimensional typography: layered depth via stacked
+     shadows (fakes extrusion cheaply, no extra DOM), horizontal energy. */
+  #event-stage.ev-four #event-number{
+    font-size:min(9.4vw,116px); letter-spacing:-3px;
+    background:linear-gradient(180deg, #ffffff 0%, #f4f8ff 46%, #d9e6ff 100%);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    -webkit-text-stroke:1px rgba(255,255,255,0.55);
+    filter:
+      drop-shadow(0 1px 0 rgba(10,20,50,0.35))
+      drop-shadow(0 3px 0 rgba(10,20,50,0.25))
+      drop-shadow(0 6px 14px rgba(0,0,0,0.45))
+      drop-shadow(0 0 46px var(--ev-glow));
+  }
+  /* SIX — even larger, taller hero, radial power rather than horizontal. */
+  #event-stage.ev-six #event-number{
+    font-size:min(11.2vw,140px); letter-spacing:-4px;
+    background:linear-gradient(180deg, #fffdf3 0%, #ffe9a8 48%, #f6c945 100%);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    -webkit-text-stroke:1px rgba(255,255,255,0.6);
+    filter:
+      drop-shadow(0 1px 0 rgba(60,38,0,0.4))
+      drop-shadow(0 4px 0 rgba(60,38,0,0.28))
+      drop-shadow(0 8px 20px rgba(0,0,0,0.5))
+      drop-shadow(0 0 58px var(--ev-glow));
+  }
+  #event-stage.ev-four #event-word,
+  #event-stage.ev-six #event-word{ letter-spacing:8px; }
 
   /* BYE / LEG BYE — informational tier: same system, calmer scale */
   #event-stage.ev-bye #event-word, #event-stage.ev-leg-bye #event-word{ font-size:min(1.8vw,21px); letter-spacing:4px; }
@@ -486,6 +536,13 @@
             <div class="ev-impact-line"></div>
           </div>
           <div id="event-particles"></div>
+          <div id="event-shock"></div>
+          <div id="event-streaks">
+            <div class="ev-streak"></div>
+            <div class="ev-streak"></div>
+            <div class="ev-streak"></div>
+          </div>
+          <div id="event-rays"></div>
           <div id="event-hero">
             <div id="event-number">4</div>
             <div id="event-word">FOUR</div>
@@ -972,8 +1029,8 @@ let TRANSITION_OUT  = 700;
 // One place to edit colours, growth (how tall the panel gets relative
 // to the normal bar height) and particle counts for every event kind.
 const EVENT_THEMES = {
-  FOUR:     { label:'FOUR',     number:'4',  showNumber:true,  primary:'#173f9e', secondary:'#3f6fd6', accent:'#ffffff', glow:'rgba(63,111,214,0.55)', growth:1.75, particles:12, particleDist:70  },
-  SIX:      { label:'SIX',      number:'6',  showNumber:true,  primary:'#b8860f', secondary:'#f0b429', accent:'#ffffff', glow:'rgba(240,180,41,0.6)',  growth:1.9,  particles:26, particleDist:130 },
+  FOUR:     { label:'FOUR',     number:'4',  showNumber:true,  primary:'#173f9e', secondary:'#3f6fd6', accent:'#ffffff', glow:'rgba(63,111,214,0.55)', growth:1.78, particles:14, particleDist:78,  rays:0,  durationMs:2500 },
+  SIX:      { label:'SIX',      number:'6',  showNumber:true,  primary:'#b8860f', secondary:'#f0b429', accent:'#ffffff', glow:'rgba(240,180,41,0.6)',  growth:1.95, particles:30, particleDist:140, rays:10, durationMs:2700 },
   WICKET:   { label:'WICKET',   number:null, showNumber:false, primary:'#4a0812', secondary:'#a8102b', accent:'#ffffff', glow:'rgba(210,20,50,0.5)',   growth:1.8,  particles:14, particleDist:80  },
   NO_BALL:  { label:'NO BALL',  number:null, showNumber:false, primary:'#7a2c0c', secondary:'#e2622f', accent:'#ffffff', glow:'rgba(226,98,47,0.5)',   growth:1.45, particles:0,  particleDist:0   },
   FREE_HIT: { label:'FREE HIT', number:null, showNumber:false, primary:'#12356b', secondary:'#f0b429', accent:'#ffffff', glow:'rgba(240,180,41,0.5)',  growth:1.45, particles:10, particleDist:60  },
@@ -1059,6 +1116,23 @@ function burstEventParticles(container, count, color, distance){
   }
 }
 
+function burstEventRays(container, count, color){
+  container.innerHTML = '';
+  if(!count) return;
+  for(let i = 0; i < count; i++){
+    const r = document.createElement('div');
+    r.className = 'ev-ray';
+    r.style.background = `linear-gradient(180deg, ${color}, transparent)`;
+    container.appendChild(r);
+    const angle = (360 / count) * i + (Math.random() - 0.5) * 10;
+    gsap.set(r, { rotate: angle, scaleY: 0, opacity: 0 });
+    gsap.to(r, {
+      scaleY: 1, opacity: 0.9, duration: 0.32, ease: 'power2.out', delay: Math.random() * 0.05,
+      onComplete: () => gsap.to(r, { opacity: 0, duration: 0.5, ease: 'power2.in' })
+    });
+  }
+}
+
 function shakeElement(el, amount, duration){
   gsap.timeline()
     .to(el, { x: -amount, duration: duration * 0.25, ease: 'power1.inOut' })
@@ -1087,25 +1161,47 @@ function addEventHeroPhase(tl, kind, theme, chars, startAt){
   const lines = document.querySelectorAll('#event-lines .ev-line');
   const impact = document.querySelectorAll('#event-impact .ev-impact-line');
   const particles = document.getElementById('event-particles');
+  const shock = document.getElementById('event-shock');
+  const streaks = document.querySelectorAll('#event-streaks .ev-streak');
+  const rays = document.getElementById('event-rays');
 
   switch(kind){
+    // FOUR — "Boundary!": speed + precision. Horizontal energy racing
+    // toward the number, a sharp anticipation-dip before the number
+    // snaps in, one clean impact flash, then a tight settle. Reads
+    // fast and controlled rather than explosive.
     case 'FOUR':
-      tl.to(numEl, { opacity: 1, scale: 1, filter: 'blur(0px)', duration: 0.42, ease: 'back.out(1.9)' }, startAt)
-        .to(chars, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.32, stagger: 0.026, ease: 'power3.out' }, '-=0.2')
-        .to(glow, { opacity: 0.55, scale: 1, duration: 0.4, ease: 'power2.out' }, '<')
-        .to(lines, { scaleX: 1, opacity: 1, duration: 0.3, stagger: 0.05, ease: 'power2.out' }, '<0.05')
-        .call(() => burstEventParticles(particles, theme.particles, theme.secondary, theme.particleDist), null, '<0.1')
+      tl.fromTo(numEl, { opacity: 0, scale: 0.55, x: -26, filter: 'blur(14px)' },
+                { opacity: 1, scale: 1.1, x: 0, filter: 'blur(0px)', duration: 0.34, ease: 'power4.out' }, startAt)
+        .to(numEl, { scale: 1, duration: 0.16, ease: 'power2.out' })
+        .to(chars, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.28, stagger: 0.022, ease: 'power3.out' }, '-=0.22')
+        .to(glow, { opacity: 0.5, scale: 1, duration: 0.36, ease: 'power2.out' }, '<')
+        .fromTo(streaks, { x: '-140%', opacity: 0 }, { x: '340%', opacity: 1, duration: 0.5, stagger: 0.05, ease: 'power1.in' }, startAt)
+        .to(streaks, { opacity: 0, duration: 0.18 }, '-=0.08')
+        .to(lines, { scaleX: 1, opacity: 1, duration: 0.26, stagger: 0.04, ease: 'power2.out' }, '<0.02')
+        .call(() => { shock.style.borderColor = theme.accent; }, null, '<')
+        .fromTo(shock, { scale: 0.3, opacity: 0.9 }, { scale: 1.35, opacity: 0, duration: 0.5, ease: 'power2.out' }, '<')
+        .call(() => burstEventParticles(particles, theme.particles, theme.secondary, theme.particleDist), null, '<0.06')
         .to(subEl, { opacity: 1, y: 0, duration: 0.3 }, '-=0.1');
       break;
+    // SIX — "WHAT A SIX!": power + height. Bigger anticipation dip,
+    // number launches upward on overshoot before dropping into place
+    // (mirrors the ball's arc), a wider shockwave, radial rays instead
+    // of horizontal streaks, and a secondary settle pulse so it reads
+    // as clearly bigger than FOUR.
     case 'SIX':
-      tl.to(glow, { opacity: 0.78, scale: 1.3, duration: 0.5, ease: 'power2.out' }, startAt)
-        .to(numEl, { opacity: 1, scale: 1.08, filter: 'blur(0px)', duration: 0.5, ease: 'expo.out' }, '<0.05')
-        .to(numEl, { scale: 1, duration: 0.16, ease: 'power2.out' })
-        .to(chars, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.36, stagger: 0.03, ease: 'power3.out' }, '-=0.3')
-        .to(lines, { scaleX: 1, opacity: 1, duration: 0.32, stagger: 0.05, ease: 'power2.out' }, '<')
+      tl.fromTo(numEl, { opacity: 0, scale: 0.5, y: 34, filter: 'blur(16px)' },
+                { opacity: 1, scale: 1.16, y: -10, filter: 'blur(0px)', duration: 0.46, ease: 'expo.out' }, startAt)
+        .to(numEl, { scale: 1, y: 0, duration: 0.3, ease: 'back.out(2.2)' })
+        .to(chars, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.34, stagger: 0.028, ease: 'power3.out' }, '-=0.34')
+        .to(glow, { opacity: 0.8, scale: 1.35, duration: 0.5, ease: 'power2.out' }, '<-0.1')
+        .call(() => { shock.style.borderColor = theme.accent; }, null, startAt)
+        .fromTo(shock, { scale: 0.25, opacity: 1 }, { scale: 1.7, opacity: 0, duration: 0.65, ease: 'power2.out' }, startAt)
+        .call(() => burstEventRays(rays, theme.rays, theme.accent), null, '<0.05')
         .call(() => burstEventParticles(particles, theme.particles, theme.primary, theme.particleDist), null, '<0.05')
-        .to('#event-hero', { scale: 1.03, duration: 0.22, ease: 'power2.out' }, '<')
-        .to('#event-hero', { scale: 1, duration: 0.24, ease: 'power2.inOut' })
+        .to(lines, { scaleX: 1, opacity: 1, duration: 0.3, stagger: 0.05, ease: 'power2.out' }, '<')
+        .to('#event-hero', { scale: 1.05, duration: 0.2, ease: 'power2.out' }, '-=0.15')
+        .to('#event-hero', { scale: 1, duration: 0.3, ease: 'power2.inOut' })
         .to(subEl, { opacity: 1, y: 0, duration: 0.3 }, '-=0.15');
       break;
     case 'WICKET':
@@ -1166,22 +1262,29 @@ function playEventTimeline(kind, opts, onDone){
   const chars = splitEventWord(wordEl);
   subEl.textContent = opts.sub || '';
 
+  const shock = document.getElementById('event-shock');
+  const streaks = document.querySelectorAll('#event-streaks .ev-streak');
+  const rays = document.getElementById('event-rays');
+
   const baseH = topRow.getBoundingClientRect().height || 100;
   const targetH = baseH * theme.growth;
-  const holdSec = Math.max((opts.durationMs || EVENT_DURATION) / 1000, 0.6);
+  const holdSec = Math.max((opts.durationMs || theme.durationMs || EVENT_DURATION) / 1000, 0.6);
   const inSec = TRANSITION_IN / 1000;
   const outSec = TRANSITION_OUT / 1000;
 
-  gsap.killTweensOf([stage, bg, glow, numEl, subEl, chars, lines, impact, '#event-hero']);
+  gsap.killTweensOf([stage, bg, glow, numEl, subEl, chars, lines, impact, shock, streaks, '#event-hero']);
   if(microTl){ microTl.kill(); microTl = null; }
 
   gsap.set(bg, { height: baseH * 0.22, opacity: 0, clipPath: 'inset(0% 46% 0% 46% round 14px)' });
   gsap.set(glow, { opacity: 0, scale: 0.4 });
-  gsap.set(numEl, { opacity: 0, scale: 0.6, filter: 'blur(10px)' });
+  gsap.set(numEl, { opacity: 0, scale: 0.6, x: 0, y: 0, filter: 'blur(10px)' });
   gsap.set(chars, { opacity: 0, y: 14, filter: 'blur(6px)' });
   gsap.set(subEl, { opacity: 0, y: 8 });
   gsap.set(lines, { opacity: 0, scaleX: 0 });
   gsap.set(impact, { opacity: 0, scaleX: 0 });
+  gsap.set(shock, { opacity: 0, scale: 0.3 });
+  gsap.set(streaks, { opacity: 0, x: '-140%' });
+  rays.innerHTML = '';
 
   const master = gsap.timeline({
     onComplete: () => {
