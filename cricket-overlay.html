@@ -61,7 +61,7 @@
   #top-row{ display:flex; align-items:stretch; height:min(9.2vw,108px); position:relative; }
 
   .cap{
-    position:relative; flex:none; width:min(15.5vw,220px);
+    position:relative; flex:none; width:min(17.5vw,246px);
     display:flex; align-items:center; gap:14px;
     padding:0 18px 0 22px;
     overflow:visible;
@@ -71,6 +71,7 @@
     clip-path:polygon(0 0, 100% 0, 82% 100%, 0 100%);
     border-radius:14px 0 0 14px;
     transform-origin:left center;
+    box-shadow:inset 0 -4px 0 var(--badge);
   }
   #cap-right{
     background:linear-gradient(115deg, var(--team-b-2), var(--team-b) 60%, var(--team-b-2));
@@ -78,11 +79,24 @@
     border-radius:0 14px 14px 0;
     justify-content:flex-end; padding:0 22px 0 18px;
     transform-origin:right center;
+    box-shadow:inset 0 -4px 0 var(--badge);
   }
   .cap::after{
     content:''; position:absolute; inset:0; pointer-events:none;
     background:linear-gradient(180deg, rgba(255,255,255,0.16), transparent 40%);
   }
+  /* Diagonal accent flag — a small wedge of the badge/gold accent colour
+     cutting across the top corner of each cap, echoing the trapezoid's own
+     angle. This is the "catchy" identity mark: a team-colour block on its
+     own is generic broadcast furniture, a contrasting accent slash reads
+     as a considered brand treatment instead. */
+  #cap-left::before, #cap-right::before{
+    content:''; position:absolute; top:0; width:38%; height:46%;
+    background:linear-gradient(115deg, var(--badge), var(--badge-2));
+    opacity:.9; pointer-events:none;
+  }
+  #cap-left::before{ left:0; clip-path:polygon(0 0, 100% 0, 0 100%); }
+  #cap-right::before{ right:0; clip-path:polygon(100% 0, 100% 100%, 0 0); }
   .cap-logo{
     width:min(4.6vw,64px); height:min(4.6vw,64px); border-radius:50%; flex:none;
     background:rgba(255,255,255,0.14) center/86% no-repeat;
@@ -92,28 +106,47 @@
   }
   .cap-logo svg{ width:60%; height:60%; opacity:0.85; }
   /* No logo uploaded for this team — hide the empty circle and let the
-     team name take that space and grow, instead of sitting small & cramped. */
+     team text block take that space and grow, instead of sitting small
+     & cramped. */
   .cap.no-logo .cap-logo{ display:none; }
-  .cap.no-logo .cap-name{ flex:1 1 auto; max-width:none; font-size:min(2.2vw,26px); }
+  .cap.no-logo .cap-text{ flex:1 1 auto; max-width:none; }
+  .cap.no-logo .cap-short{ font-size:min(3vw,35px); }
+
+  /* Team identity block: a bold short-code "wordmark" up top (the catchy,
+     glanceable part — this is what a viewer actually reads at broadcast
+     size) with the full team name as a small uppercase tag underneath,
+     the way real sports bugs pair a crest-code with a caption. Bottom-
+     anchored for the same reason as before: the cap is a slanted
+     trapezoid clipped in tight at the top corner, so anchoring to the
+     bottom keeps everything inside the full-width part of the shape. */
+  .cap-text{
+    display:flex; flex-direction:column; justify-content:flex-end; gap:2px;
+    min-width:0; overflow:hidden; align-self:flex-end;
+  }
+  .cap-short{
+    font-family:var(--font-num); font-weight:900; font-size:min(2.5vw,30px);
+    line-height:1; color:#fff; letter-spacing:.3px;
+    text-shadow:0 2px 8px rgba(0,0,0,0.35);
+    display:flex; align-items:center; gap:7px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .cap-short::before{
+    content:''; flex:none; width:8px; height:8px; transform:rotate(45deg);
+    background:var(--badge); box-shadow:0 0 10px var(--badge);
+  }
   .cap-name{
-    font-family:var(--font-num); font-weight:900; font-size:min(1.7vw,21px);
-    line-height:1.12; color:#fff; letter-spacing:.2px;
-    text-shadow:0 2px 6px rgba(0,0,0,0.3);
-    max-width:118px;
-    /* Bottom-align the (possibly multi-line) name within the cap instead
-       of vertical-centering it. The cap is a slanted trapezoid — its top
-       corner is clipped in tight, only the bottom is full-width — so a
-       centered block pushes the top line up into that clipped corner and
-       gets cut off. Anchoring to the bottom keeps every line inside the
-       full-width part of the shape. JS (fitCapName) auto-shrinks the font
-       just enough so the whole name still fits without shrinking it more
-       than necessary. */
-    align-self:flex-end;
+    font-family:var(--font-ui); font-weight:800; font-size:min(0.85vw,10.5px);
+    line-height:1.28; color:rgba(255,255,255,0.72); letter-spacing:1.2px;
+    text-transform:uppercase; max-width:100%;
+    display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden;
   }
   /* Right-hand cap is clipped on its top-LEFT corner, so pull its text to
-     the right, away from that corner, for extra safety margin. */
-  #cap-right .cap-name{ text-align:right; }
-  #cap-left .cap-name{ text-align:left; }
+     the right, away from that corner, for extra safety margin — and flip
+     the accent tick to the other side of the short-code so it still reads
+     as "leading" the name rather than trailing it. */
+  #cap-right .cap-text{ text-align:right; }
+  #cap-right .cap-short{ flex-direction:row-reverse; }
+  #cap-left .cap-text{ text-align:left; }
 
   #mid-row{
     flex:1 1 auto; display:flex; align-items:stretch;
@@ -148,12 +181,12 @@
   .wseg + .wseg::before{
     content:''; position:absolute; left:0; top:14%; bottom:14%; width:1px; background:var(--hairline);
   }
-  #batters-seg{ flex:0 0 auto; min-width:min(26vw,305px); gap:8px; padding-right:24px; }
-  .brow{ display:flex; align-items:baseline; gap:11px; }
+  #batters-seg{ flex:1 1 0; min-width:min(23vw,260px); gap:9px; padding-right:20px; }
+  .brow{ display:flex; align-items:baseline; gap:16px; }
   .brow .bname{ font-family:var(--font-ui); font-weight:900; font-size:min(2.05vw,25px); color:var(--ink); letter-spacing:.1px; min-width:132px; display:inline-block; }
-  .brow .bruns{ font-family:var(--font-num); font-weight:900; font-size:min(1.9vw,23px); color:#1c4fd8; font-variant-numeric:tabular-nums; }
+  .brow .bruns{ font-family:var(--font-num); font-weight:900; font-size:min(1.9vw,23px); color:#1c4fd8; font-variant-numeric:tabular-nums; margin-left:auto; }
   .brow .bstar{ color:#1c4fd8; }
-  .brow .bballs{ font-family:var(--font-num); font-weight:700; font-size:min(1.3vw,15px); color:var(--ink-dim); margin-left:2px; }
+  .brow .bballs{ font-family:var(--font-num); font-weight:700; font-size:min(1.3vw,15px); color:var(--ink-dim); margin-left:6px; min-width:20px; }
 
   #crr-seg{ flex:0 0 auto; align-items:center; text-align:center; min-width:min(13vw,150px); gap:6px; }
   #crr-seg .lbl{ font-size:10.5px; font-weight:800; letter-spacing:.8px; color:var(--ink-dim); text-transform:uppercase; }
@@ -168,7 +201,7 @@
      read bigger instead. Figures are wickets-runs (e.g. "0-41"), not
      the fuller O.B-M-R-W line — matches the reference broadcast bug,
      which keeps this row short: name, then W-R, then overs. ---- */
-  #bowler-seg{ flex:1 1 auto; align-items:center; text-align:center; justify-content:center; gap:8px; min-width:min(21vw,252px); }
+  #bowler-seg{ flex:1 1 0; align-items:center; text-align:center; justify-content:center; gap:8px; min-width:min(23vw,260px); }
   #bowler-line{ display:flex; align-items:baseline; gap:10px; justify-content:center; }
   #bowler-name-val{
     font-family:var(--font-ui); font-weight:900; font-size:min(2.5vw,30px); color:var(--ink);
@@ -490,7 +523,10 @@
     <div id="top-row">
       <div class="cap" id="cap-left">
         <div class="cap-logo" id="logo-left"><svg viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="12" r="10"/></svg></div>
-        <div class="cap-name" id="name-left">TEAM A</div>
+        <div class="cap-text">
+          <div class="cap-short" id="short-left">TMA</div>
+          <div class="cap-name" id="name-left">TEAM A</div>
+        </div>
       </div>
       <div id="mid-row">
         <div id="score-block">
@@ -533,7 +569,10 @@
         </div>
       </div>
       <div class="cap" id="cap-right">
-        <div class="cap-name" id="name-right">TEAM B</div>
+        <div class="cap-text">
+          <div class="cap-short" id="short-right">TMB</div>
+          <div class="cap-name" id="name-right">TEAM B</div>
+        </div>
         <div class="cap-logo" id="logo-right"><svg viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="12" r="10"/></svg></div>
       </div>
       <div id="event-stage">
@@ -1004,21 +1043,22 @@ function fitCapName(el){
 }
 
 function layoutTeams(s){
+  const shortL = document.getElementById('short-left');
+  const shortR = document.getElementById('short-right');
   const left = document.getElementById('name-left');
   const right = document.getElementById('name-right');
   const A = s.teamA || {}, B = s.teamB || {};
   const leftTeam = currentLeftIsA ? A : B;
   const rightTeam = currentLeftIsA ? B : A;
-  // Logo presence (and therefore the no-logo font-size ceiling) has to be
-  // set BEFORE we measure/fit the name text, otherwise fitCapName reads
-  // the wrong natural size.
   document.getElementById('cap-left').classList.toggle('no-logo', !leftTeam.logoUrl);
   document.getElementById('cap-right').classList.toggle('no-logo', !rightTeam.logoUrl);
-  // Full team name (not just the short code) when there's no logo, so the
-  // name has room to breathe and carries the identity on its own — short
-  // code is used once a logo is present, since the crest already does that job.
-  left.textContent = leftTeam.logoUrl ? (leftTeam.short || leftTeam.name || 'TEAM A') : (leftTeam.name || leftTeam.short || 'TEAM A');
-  right.textContent = rightTeam.logoUrl ? (rightTeam.short || rightTeam.name || 'TEAM B') : (rightTeam.name || rightTeam.short || 'TEAM B');
+  // Bold short-code wordmark up top (the glanceable identity mark) plus
+  // the full name as a small caption underneath — shown together always,
+  // logo or no logo, so every team gets the same catchy treatment.
+  shortL.textContent = badgeText(leftTeam.short, leftTeam.name) || 'TMA';
+  shortR.textContent = badgeText(rightTeam.short, rightTeam.name) || 'TMB';
+  left.textContent = leftTeam.name || leftTeam.short || 'TEAM A';
+  right.textContent = rightTeam.name || rightTeam.short || 'TEAM B';
   setLogo(document.getElementById('logo-left'), leftTeam.logoUrl);
   setLogo(document.getElementById('logo-right'), rightTeam.logoUrl);
   fitCapName(left);
@@ -1072,7 +1112,8 @@ function animateEntry(){
     .to('#bottom-row', { scaleX: 1, duration: 0.5, ease: 'power3.out' }, 0.34)
     // beat 2 — text
     .from('.cap-logo', { opacity: 0, scale: 0.5, duration: 0.35, ease: 'back.out(2.4)', stagger: 0.06 }, 0.55)
-    .from('.cap-name', { opacity: 0, y: 8, duration: 0.32 }, 0.62)
+    .from('.cap-short', { opacity: 0, y: 8, duration: 0.3, stagger: 0.06 }, 0.6)
+    .from('.cap-name', { opacity: 0, y: 6, duration: 0.28, stagger: 0.06 }, 0.68)
     .from('.digit-col', { opacity: 0, yPercent: 60, duration: 0.36, stagger: 0.035 }, 0.6)
     .from('#overs-badge > *', { opacity: 0, y: 10, duration: 0.3, stagger: 0.05 }, 0.66)
     .from('#batters-seg .brow', { opacity: 0, x: -10, duration: 0.32, stagger: 0.07 }, 0.72)
@@ -1127,7 +1168,7 @@ const EVENT_THEMES = {
 // graphic takes over — nothing here is destroyed, only hidden, so the
 // underlying score data stays intact underneath (see the
 // liveCricketScore buffering further down).
-const SB_CONTENT_SELECTOR = '#cap-left .cap-logo, #cap-left .cap-name, #cap-right .cap-logo, #cap-right .cap-name, ' +
+const SB_CONTENT_SELECTOR = '#cap-left .cap-logo, #cap-left .cap-text, #cap-right .cap-logo, #cap-right .cap-text, ' +
   '#score-value, #overs-badge .ov-num, #overs-badge .ov-lbl, #live-segs, #break-seg, #bottom-row .bstat';
 
 let eventState = 'idle';       // 'idle' | 'running'
