@@ -462,9 +462,16 @@
     display:flex; align-items:center; justify-content:center;
     font-family:var(--font-num); font-weight:900; font-size:12.5px; color:var(--bc-blue,#0b3d91);
   }
-  .sc-header-text{ flex:1; text-align:left; min-width:0; }
-  .sc-title{ font-family:var(--font-num); font-weight:900; font-size:min(2.2vw,24px); letter-spacing:1px; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .sc-sub{ font-size:11px; font-weight:800; letter-spacing:1.5px; color:var(--bc-gold,#f5c518); text-transform:uppercase; margin-top:2px; }
+  /* Team logo present — swap the text-badge look for a photo circle
+     (background-image set via JS), same size/border/position, no letters. */
+  .sc-badge.has-logo{ background-color:#fff; background-size:cover; background-position:center; }
+  .sc-header-text{ flex:1 1 auto; text-align:left; min-width:0; }
+  /* Full team name — the actual identity text now lives here (the badge
+     is just the logo-or-shortcode icon), so this never truncates: it
+     wraps onto a 2nd line instead of clipping, same rule the main
+     scorecard caps already follow for long names. */
+  .sc-title{ font-family:var(--font-num); font-weight:900; font-size:min(2.1vw,23px); line-height:1.16; letter-spacing:.6px; color:#fff; white-space:normal; overflow-wrap:break-word; }
+  .sc-sub{ font-size:11px; font-weight:800; letter-spacing:1.5px; color:var(--bc-gold,#f5c518); text-transform:uppercase; margin-top:3px; }
 
   .sc-rows{ padding:10px 20px 2px; }
   .sc-row{ display:grid; grid-template-columns:1.6fr repeat(5,0.62fr); align-items:center; gap:6px; padding:7px 6px; font-size:min(1.3vw,14px); border-radius:6px; }
@@ -493,12 +500,18 @@
   }
   .ms-team{ margin:10px 20px 0; border-radius:8px; overflow:hidden; box-shadow:0 4px 14px rgba(0,0,0,0.14); }
   .ms-team-bar{ display:flex; justify-content:space-between; align-items:center; padding:9px 14px; font-family:var(--font-num); font-weight:900; font-size:min(1.5vw,16px); letter-spacing:1px; color:#fff; }
-  .ms-team-left{ display:flex; align-items:center; gap:8px; min-width:0; }
+  .ms-team-left{ display:flex; align-items:center; gap:8px; min-width:0; flex:1 1 auto; }
   .ms-badge{
-    flex:none; width:24px; height:24px; border-radius:50%; background:rgba(255,255,255,0.22);
+    flex:none; width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,0.22);
     border:1.5px solid rgba(255,255,255,0.75); display:flex; align-items:center; justify-content:center;
     font-family:var(--font-num); font-weight:900; font-size:9.5px; color:#fff;
   }
+  /* Team logo present — same swap as .sc-badge above. */
+  .ms-badge.has-logo{ background-color:rgba(255,255,255,0.9); background-size:cover; background-position:center; }
+  /* Full team name next to the badge — wraps instead of clipping, and
+     gets its own min-width:0 so the flex row lets it actually shrink
+     and wrap rather than pushing the score off the edge. */
+  .ms-team-name{ min-width:0; white-space:normal; overflow-wrap:break-word; line-height:1.18; }
   .ms-rows{ padding:6px 14px 12px; background:#fff; }
   .ms-row{ display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:5px 0; font-size:min(1.2vw,13px); border-top:1px solid rgba(11,61,145,0.1); color:var(--bc-ink,#12213f); }
   .ms-row:first-child{ border-top:none; }
@@ -653,14 +666,14 @@
     <div class="ms-header">MATCH SUMMARY</div>
     <div class="ms-team" id="ms-team-a">
       <div class="ms-team-bar" id="ms-bar-a">
-        <div class="ms-team-left"><span class="ms-badge" id="ms-badge-a">TM</span><span id="ms-name-a">TEAM A</span></div>
+        <div class="ms-team-left"><span class="ms-badge" id="ms-badge-a">TM</span><span class="ms-team-name" id="ms-name-a">TEAM A</span></div>
         <span id="ms-score-a"></span>
       </div>
       <div class="ms-rows" id="ms-rows-a"></div>
     </div>
     <div class="ms-team" id="ms-team-b">
       <div class="ms-team-bar" id="ms-bar-b">
-        <div class="ms-team-left"><span class="ms-badge" id="ms-badge-b">TM</span><span id="ms-name-b">TEAM B</span></div>
+        <div class="ms-team-left"><span class="ms-badge" id="ms-badge-b">TM</span><span class="ms-team-name" id="ms-name-b">TEAM B</span></div>
         <span id="ms-score-b"></span>
       </div>
       <div class="ms-rows" id="ms-rows-b"></div>
@@ -1468,6 +1481,23 @@ function badgeText(short, name){
   return words.slice(0, 3).map(w => w[0]).join('').toUpperCase();
 }
 
+// Fills a summary card's circular team emblem — an actual logo photo when
+// a logoUrl is provided, or the short-code text as a fallback when it
+// isn't. Mirrors the main scorecard's logo-or-no-logo handling so both
+// places behave the same way for a team with no uploaded logo.
+function setBadge(el, logoUrl, shortText){
+  if(!el) return;
+  if(logoUrl){
+    el.style.backgroundImage = `url(${logoUrl})`;
+    el.textContent = '';
+    el.classList.add('has-logo');
+  } else {
+    el.style.backgroundImage = '';
+    el.textContent = shortText || '';
+    el.classList.remove('has-logo');
+  }
+}
+
 function playSummaryCard(cardId, rowsSelector, holdMs){
   const card = document.getElementById(cardId);
   const rows = card.querySelectorAll(rowsSelector);
@@ -1506,8 +1536,11 @@ function hideSummaryCard(cardId, rowsSelector){
 
 function renderInningsSummary(d){
   if(!d) return;
-  document.getElementById('is-badge').textContent = badgeText(d.bowlingTeamShort, d.bowlingTeamName);
-  document.getElementById('is-title').textContent = (d.bowlingTeamShort || d.bowlingTeamName || 'BOWLING').toUpperCase();
+  // Badge: actual logo if the panel sent one, else the short-code text —
+  // title: always the FULL team name, so both are shown clearly, never
+  // just one or the other.
+  setBadge(document.getElementById('is-badge'), d.bowlingTeamLogo, badgeText(d.bowlingTeamShort, d.bowlingTeamName));
+  document.getElementById('is-title').textContent = (d.bowlingTeamName || d.bowlingTeamShort || 'BOWLING').toUpperCase();
   document.getElementById('is-sub').textContent = [d.format, d.venue].filter(Boolean).join(' · ') || 'BOWLING FIGURES';
 
   const rowsWrap = document.getElementById('is-bowler-rows');
@@ -1541,8 +1574,8 @@ function renderInningsSummary(d){
 
 function renderInningsBattingSummary(d){
   if(!d) return;
-  document.getElementById('ibs-badge').textContent = badgeText(d.battingTeamShort, d.battingTeamName);
-  document.getElementById('ibs-title').textContent = (d.battingTeamShort || d.battingTeamName || 'BATTING').toUpperCase();
+  setBadge(document.getElementById('ibs-badge'), d.battingTeamLogo, badgeText(d.battingTeamShort, d.battingTeamName));
+  document.getElementById('ibs-title').textContent = (d.battingTeamName || d.battingTeamShort || 'BATTING').toUpperCase();
   document.getElementById('ibs-sub').textContent = [d.format, d.venue].filter(Boolean).join(' · ') || 'BATTING SCORECARD';
 
   const rowsWrap = document.getElementById('ibs-batter-rows');
@@ -1589,11 +1622,11 @@ function renderMatchSummary(d){
   const colorB = (d.teamB && d.teamB.color) || 'var(--team-b)';
   document.getElementById('ms-bar-a').style.background = colorA;
   document.getElementById('ms-bar-b').style.background = colorB;
-  document.getElementById('ms-badge-a').textContent = badgeText(d.teamA && d.teamA.short, d.teamA && d.teamA.name);
-  document.getElementById('ms-badge-b').textContent = badgeText(d.teamB && d.teamB.short, d.teamB && d.teamB.name);
-  document.getElementById('ms-name-a').textContent = ((d.teamA && (d.teamA.short || d.teamA.name)) || 'TEAM A').toUpperCase();
+  setBadge(document.getElementById('ms-badge-a'), d.teamA && d.teamA.logoUrl, badgeText(d.teamA && d.teamA.short, d.teamA && d.teamA.name));
+  setBadge(document.getElementById('ms-badge-b'), d.teamB && d.teamB.logoUrl, badgeText(d.teamB && d.teamB.short, d.teamB && d.teamB.name));
+  document.getElementById('ms-name-a').textContent = ((d.teamA && (d.teamA.name || d.teamA.short)) || 'TEAM A').toUpperCase();
   document.getElementById('ms-score-a').textContent = (d.teamA && d.teamA.score) || '';
-  document.getElementById('ms-name-b').textContent = ((d.teamB && (d.teamB.short || d.teamB.name)) || 'TEAM B').toUpperCase();
+  document.getElementById('ms-name-b').textContent = ((d.teamB && (d.teamB.name || d.teamB.short)) || 'TEAM B').toUpperCase();
   document.getElementById('ms-score-b').textContent = (d.teamB && d.teamB.score) || '';
   document.getElementById('ms-result').textContent = d.winnerText || '';
 
