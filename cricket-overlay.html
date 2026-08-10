@@ -148,12 +148,12 @@
   .wseg + .wseg::before{
     content:''; position:absolute; left:0; top:14%; bottom:14%; width:1px; background:var(--hairline);
   }
-  #batters-seg{ flex:0 0 auto; min-width:min(22vw,258px); gap:6px; padding-right:24px; }
-  .brow{ display:flex; align-items:baseline; gap:10px; }
-  .brow .bname{ font-family:var(--font-ui); font-weight:800; font-size:min(1.35vw,16px); color:var(--ink); letter-spacing:.2px; min-width:110px; }
-  .brow .bruns{ font-family:var(--font-num); font-weight:900; font-size:min(1.6vw,19px); color:#1c4fd8; font-variant-numeric:tabular-nums; }
+  #batters-seg{ flex:0 0 auto; min-width:min(26vw,305px); gap:8px; padding-right:24px; }
+  .brow{ display:flex; align-items:baseline; gap:11px; }
+  .brow .bname{ font-family:var(--font-ui); font-weight:900; font-size:min(2.05vw,25px); color:var(--ink); letter-spacing:.1px; min-width:132px; display:inline-block; }
+  .brow .bruns{ font-family:var(--font-num); font-weight:900; font-size:min(1.9vw,23px); color:#1c4fd8; font-variant-numeric:tabular-nums; }
   .brow .bstar{ color:#1c4fd8; }
-  .brow .bballs{ font-family:var(--font-num); font-weight:700; font-size:min(1.15vw,13px); color:var(--ink-dim); margin-left:2px; }
+  .brow .bballs{ font-family:var(--font-num); font-weight:700; font-size:min(1.3vw,15px); color:var(--ink-dim); margin-left:2px; }
 
   #crr-seg{ flex:0 0 auto; align-items:center; text-align:center; min-width:min(13vw,150px); gap:6px; }
   #crr-seg .lbl{ font-size:10.5px; font-weight:800; letter-spacing:.8px; color:var(--ink-dim); text-transform:uppercase; }
@@ -168,21 +168,22 @@
      read bigger instead. Figures are wickets-runs (e.g. "0-41"), not
      the fuller O.B-M-R-W line — matches the reference broadcast bug,
      which keeps this row short: name, then W-R, then overs. ---- */
-  #bowler-seg{ flex:1 1 auto; align-items:center; text-align:center; justify-content:center; gap:7px; min-width:min(17vw,206px); }
-  #bowler-line{ display:flex; align-items:baseline; gap:9px; justify-content:center; }
+  #bowler-seg{ flex:1 1 auto; align-items:center; text-align:center; justify-content:center; gap:8px; min-width:min(21vw,252px); }
+  #bowler-line{ display:flex; align-items:baseline; gap:10px; justify-content:center; }
   #bowler-name-val{
-    font-family:var(--font-ui); font-weight:900; font-size:min(1.6vw,19px); color:var(--ink);
-    letter-spacing:.1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:min(9.5vw,118px);
+    font-family:var(--font-ui); font-weight:900; font-size:min(2.5vw,30px); color:var(--ink);
+    letter-spacing:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:min(14.5vw,178px);
+    display:inline-block;
   }
   /* Wickets-runs, e.g. "0-41" — same bold navy as the name, just the
      cumulative bowling figures in the compact W-R form broadcasts use. */
   #bowler-figures-val{
-    font-family:var(--font-num); font-weight:900; font-size:min(1.5vw,18px); color:var(--ink);
+    font-family:var(--font-num); font-weight:900; font-size:min(2vw,24px); color:var(--ink);
     font-variant-numeric:tabular-nums; white-space:nowrap;
   }
   /* Overs bowled, e.g. "9.2" — smaller and dimmer, trailing the figures. */
   #bowler-overs-val{
-    font-family:var(--font-num); font-weight:700; font-size:min(1.1vw,13px); color:var(--ink-dim);
+    font-family:var(--font-num); font-weight:700; font-size:min(1.3vw,15px); color:var(--ink-dim);
     font-variant-numeric:tabular-nums; white-space:nowrap;
   }
   /* nowrap on purpose: the strip sits inside a fixed-height scoreboard bar,
@@ -784,6 +785,27 @@ function setFreeHitChip(active){
   else gsap.to(el, { opacity: 0, y: 8, duration: 0.3, ease: 'power2.in' });
 }
 
+// Updates a name element's text, and — only when the name actually
+// changed (new batsman on strike, new bowler brought on, etc.) — plays a
+// quick, subtle pop so the change reads clearly on air instead of just
+// snapping. Never fires on every ball (runs/balls update separately and
+// don't touch this), and skips the pop on the very first render (the
+// entry timeline already handles that reveal).
+function setNameText(elId, name){
+  const el = document.getElementById(elId);
+  if(!el) return;
+  const text = name || '—';
+  if(el.textContent === text) return;
+  el.textContent = text;
+  if(hasEntered){
+    gsap.killTweensOf(el);
+    gsap.fromTo(el,
+      { opacity: 0.15, y: -6, scale: 0.9 },
+      { opacity: 1, y: 0, scale: 1, duration: 0.4, ease: 'back.out(2.2)' }
+    );
+  }
+}
+
 function renderState(s){
   if(!s || !Object.keys(s).length) return;
 
@@ -814,10 +836,10 @@ function renderState(s){
   renderScoreString(scoreStr);
   document.getElementById('ov-num').textContent = `${s.score?.overs ?? 0}.${s.score?.balls ?? 0}`;
 
-  document.getElementById('striker-name').textContent = s.striker?.name || '—';
+  setNameText('striker-name', s.striker?.name);
   document.getElementById('striker-runs').firstChild.textContent = s.striker?.runs ?? 0;
   document.getElementById('striker-balls').textContent = s.striker?.balls ?? 0;
-  document.getElementById('nonstriker-name').textContent = s.nonStriker?.name || '—';
+  setNameText('nonstriker-name', s.nonStriker?.name);
   document.getElementById('nonstriker-runs').textContent = s.nonStriker?.runs ?? 0;
   document.getElementById('nonstriker-balls').textContent = s.nonStriker?.balls ?? 0;
 
@@ -877,7 +899,7 @@ function renderState(s){
   // Kept compact — name, then "W-R" (e.g. "0-41"), then overs (e.g. "9.2")
   // — matching the reference bug rather than a fuller O.B-M-R-W line.
   const bowler = s.bowler || {};
-  document.getElementById('bowler-name-val').textContent = bowler.name || '—';
+  setNameText('bowler-name-val', bowler.name);
   document.getElementById('bowler-figures-val').textContent = bowler.name
     ? `${bowler.wickets ?? 0}-${bowler.runs ?? 0}`
     : '';
@@ -1055,6 +1077,8 @@ function animateEntry(){
     .from('#overs-badge > *', { opacity: 0, y: 10, duration: 0.3, stagger: 0.05 }, 0.66)
     .from('#batters-seg .brow', { opacity: 0, x: -10, duration: 0.32, stagger: 0.07 }, 0.72)
     .from('#crr-seg > *', { opacity: 0, y: 8, duration: 0.3, stagger: 0.05 }, 0.78)
+    .from('#bowler-line > *', { opacity: 0, y: 8, duration: 0.3, stagger: 0.05 }, 0.78)
+    .from('#thisover-row', { opacity: 0, y: 8, duration: 0.3 }, 0.86)
     .from('.bstat', { opacity: 0, y: 10, duration: 0.32, stagger: 0.05 }, 0.7);
 }
 function animateExit(){
