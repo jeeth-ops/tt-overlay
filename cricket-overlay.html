@@ -94,13 +94,26 @@
   /* No logo uploaded for this team — hide the empty circle and let the
      team name take that space and grow, instead of sitting small & cramped. */
   .cap.no-logo .cap-logo{ display:none; }
-  .cap.no-logo .cap-name{ flex:1 1 auto; max-width:none; font-size:min(2.3vw,27px); }
+  .cap.no-logo .cap-name{ flex:1 1 auto; max-width:none; font-size:min(2.2vw,26px); }
   .cap-name{
     font-family:var(--font-num); font-weight:900; font-size:min(1.7vw,21px);
-    line-height:1.05; color:#fff; letter-spacing:.2px;
+    line-height:1.12; color:#fff; letter-spacing:.2px;
     text-shadow:0 2px 6px rgba(0,0,0,0.3);
     max-width:118px;
+    /* Bottom-align the (possibly multi-line) name within the cap instead
+       of vertical-centering it. The cap is a slanted trapezoid — its top
+       corner is clipped in tight, only the bottom is full-width — so a
+       centered block pushes the top line up into that clipped corner and
+       gets cut off. Anchoring to the bottom keeps every line inside the
+       full-width part of the shape. JS (fitCapName) auto-shrinks the font
+       just enough so the whole name still fits without shrinking it more
+       than necessary. */
+    align-self:flex-end;
   }
+  /* Right-hand cap is clipped on its top-LEFT corner, so pull its text to
+     the right, away from that corner, for extra safety margin. */
+  #cap-right .cap-name{ text-align:right; }
+  #cap-left .cap-name{ text-align:left; }
 
   #mid-row{
     flex:1 1 auto; display:flex; align-items:stretch;
@@ -896,10 +909,10 @@ function renderState(s){
     // anything beyond scales pip size/font/gap down to fit, with a floor
     // so pips never shrink into unreadable dots.
     const shrink = Math.min(1, 6 / slotCount);
-    const pipSize = Math.max(14, Math.round(23 * shrink));
-    const gapSize = Math.max(3, Math.round(9 * shrink));
-    const dotFontSize = Math.max(9, Math.round(13 * shrink));
-    const numFontSize = Math.max(7, Math.round(10.5 * shrink));
+    const pipSize = Math.max(16, Math.round(23 * shrink));
+    const gapSize = Math.max(4, Math.round(9 * shrink));
+    const dotFontSize = Math.max(9.5, Math.round(13 * shrink));
+    const numFontSize = Math.max(8, Math.round(10.5 * shrink));
     container.style.gap = `${gapSize}px`;
     for(let i = 0; i < slotCount; i++){
       const b = thisOver[i];
@@ -938,12 +951,47 @@ function setLogo(el, url){
   else el.style.backgroundImage = '';
 }
 
+// Auto-shrinks a cap-name's font size just enough for the FULL team name
+// to fit — never a hard truncation/ellipsis. Starts from the CSS-defined
+// size (so it stays responsive to viewport/vw scaling) and only steps
+// down if the name still overflows into a 3rd/4th line, capping at a
+// floor so text never becomes unreadably tiny. Re-run on resize since the
+// "natural" starting size is viewport-relative.
+function fitCapName(el){
+  if(!el || !el.isConnected) return;
+  const cap = el.closest('.cap');
+  if(!cap) return;
+  el.style.fontSize = ''; // fall back to CSS (min(vw,px)) to read the natural ceiling
+  const naturalPx = parseFloat(getComputedStyle(el).fontSize);
+  if(!naturalPx) return;
+  const lineHeight = naturalPx * 1.12;
+  // Two lines is the comfortable target — the cap has vertical room for
+  // three, but bottom-anchoring already keeps 3 lines safely inside the
+  // full-width part of the shape, so this just keeps things from looking
+  // cramped/too-small on longer names by preferring 2 lines when it can.
+  const targetMaxHeight = lineHeight * 2 + 1;
+  const minPx = cap.classList.contains('no-logo') ? 14 : 12;
+  let size = naturalPx;
+  el.style.fontSize = size + 'px';
+  let guard = 0;
+  while(el.scrollHeight > targetMaxHeight && size > minPx && guard < 40){
+    size -= 0.5;
+    el.style.fontSize = size + 'px';
+    guard++;
+  }
+}
+
 function layoutTeams(s){
   const left = document.getElementById('name-left');
   const right = document.getElementById('name-right');
   const A = s.teamA || {}, B = s.teamB || {};
   const leftTeam = currentLeftIsA ? A : B;
   const rightTeam = currentLeftIsA ? B : A;
+  // Logo presence (and therefore the no-logo font-size ceiling) has to be
+  // set BEFORE we measure/fit the name text, otherwise fitCapName reads
+  // the wrong natural size.
+  document.getElementById('cap-left').classList.toggle('no-logo', !leftTeam.logoUrl);
+  document.getElementById('cap-right').classList.toggle('no-logo', !rightTeam.logoUrl);
   // Full team name (not just the short code) when there's no logo, so the
   // name has room to breathe and carries the identity on its own — short
   // code is used once a logo is present, since the crest already does that job.
@@ -951,9 +999,21 @@ function layoutTeams(s){
   right.textContent = rightTeam.logoUrl ? (rightTeam.short || rightTeam.name || 'TEAM B') : (rightTeam.name || rightTeam.short || 'TEAM B');
   setLogo(document.getElementById('logo-left'), leftTeam.logoUrl);
   setLogo(document.getElementById('logo-right'), rightTeam.logoUrl);
-  document.getElementById('cap-left').classList.toggle('no-logo', !leftTeam.logoUrl);
-  document.getElementById('cap-right').classList.toggle('no-logo', !rightTeam.logoUrl);
+  fitCapName(left);
+  fitCapName(right);
 }
+
+// Re-fit both names if the browser-source viewport changes size — the
+// natural starting font size is vw-relative, so a resize can change what
+// "fits" even though the text itself hasn't changed.
+let __fitResizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(__fitResizeTimer);
+  __fitResizeTimer = setTimeout(() => {
+    fitCapName(document.getElementById('name-left'));
+    fitCapName(document.getElementById('name-right'));
+  }, 120);
+});
 
 function swapSides(s){
   // A short, unique crossover flip for each cap — left cap tips away to the
