@@ -588,6 +588,70 @@ app.delete('/api/league/:name/match/:matchId', async (req, res) => {
     }
 });
 
+// ================================================================
+// 💬 SUPPORT CHATBOT — answers visitor questions on the marketing site
+// (index.html) using Claude. Grounded with a short product brief so it
+// sticks to real Scorvix features/FAQ instead of guessing at pricing or
+// capabilities that don't exist. Requires ANTHROPIC_API_KEY to be set;
+// safe no-op (friendly error) if it isn't, same pattern as the other
+// optional integrations above.
+// ================================================================
+const SUPPORT_SYSTEM_PROMPT = `You are the support assistant embedded on Scorvix's website (a browser-based broadcast graphics tool for live sports scoreboards/overlays).
+
+Ground truth about Scorvix — only state things from this brief; if asked something not covered here (pricing, roadmap dates, something you're unsure of), say you're not certain and suggest the visitor reach out to the team directly rather than guessing:
+- What it is: a browser-based control panel + browser-source overlay for live sports scoreboards, controllable from a phone or laptop, no software install.
+- Sports supported today: Table Tennis, Football, Cricket (more sports planned).
+- Setup: sign in with Google, open the control panel, paste the unique overlay link into streaming software as a browser source.
+- Works with: OBS Studio, vMix, Streamlabs, or any software supporting browser-source inputs.
+- Live updates: every change in the control panel (score, timer, team colors, logos) reflects on the overlay instantly.
+- Security: each user signs in with Google and gets a private, unique overlay room only they control.
+- Cricket-specific: ball-by-ball scoring, batting/bowling cards, Excel export, and a League/Tournament mode that tracks stats across multiple matches saved under the same league name.
+
+Style: concise, friendly, plain language, no more than a few sentences unless the visitor asks for detail. Never invent features, pricing, or timelines not listed above.`;
+
+app.post('/api/support-chat', async (req, res) => {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+        return res.status(503).json({ success: false, error: 'Support chat is not configured yet.' });
+    }
+    const incoming = Array.isArray(req.body.messages) ? req.body.messages : [];
+    if (!incoming.length) return res.status(400).json({ success: false, error: 'messages required' });
+
+    // Keep only the last 12 turns and hard-cap message length — visitor
+    // input, never trust it blindly for size going into an LLM call.
+    const messages = incoming.slice(-12).map(m => ({
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        content: String(m.content || '').slice(0, 2000)
+    }));
+
+    try {
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': apiKey,
+                'anthropic-version': '2023-06-01'
+            },
+            body: JSON.stringify({
+                model: 'claude-sonnet-4-6',
+                max_tokens: 400,
+                system: SUPPORT_SYSTEM_PROMPT,
+                messages
+            })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            console.log('Support chat API error:', data);
+            return res.status(502).json({ success: false, error: 'Support chat is temporarily unavailable.' });
+        }
+        const reply = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+        res.json({ success: true, reply: reply || "Sorry, I didn't catch that — could you rephrase?" });
+    } catch (err) {
+        console.log('Support chat error:', err);
+        res.status(500).json({ success: false, error: 'Support chat is temporarily unavailable.' });
+    }
+});
+
 // Routes
 app.get('/', (req, res) => res.sendFile(__dirname + '/index.html'));
 app.get('/overlay', (req, res) => res.sendFile(__dirname + '/overlay.html'));
@@ -1067,6 +1131,25 @@ io.on('connection', async (socket) => {
         const targetId = data && data.room ? data.room.replace('room-', '') : (data && (data.id || data.uid)) || matchIdForClient;
         if (targetId && targetId !== 'default') room = `room-${targetId}`;
         io.to(room).emit('cricketHideBowlerStat');
+    });
+
+    // 🏏🏆 Team tournament-record card — same pure-broadcast treatment as
+    // the player/bowler stat cards just above. This pair was missing
+    // entirely, which is why the panel's Team Stat toggle emitted
+    // cricketTeamStat/cricketHideTeamStat but the overlay never received
+    // them (nothing was listening server-side to relay it to the room).
+    socket.on('cricketTeamStat', (data) => {
+        let room = socket.activeRoom;
+        const targetId = data.room ? data.room.replace('room-', '') : (data.id || data.uid || matchIdForClient);
+        if (targetId && targetId !== 'default') room = `room-${targetId}`;
+        io.to(room).emit('cricketTeamStat', data.data || data);
+    });
+
+    socket.on('cricketHideTeamStat', (data) => {
+        let room = socket.activeRoom;
+        const targetId = data && data.room ? data.room.replace('room-', '') : (data && (data.id || data.uid)) || matchIdForClient;
+        if (targetId && targetId !== 'default') room = `room-${targetId}`;
+        io.to(room).emit('cricketHideTeamStat');
     });
 
     // 🍃 Every ball, straight to MongoDB — the permanent source of truth.
