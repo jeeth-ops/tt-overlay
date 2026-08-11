@@ -22,6 +22,11 @@
     --red: #ef4444;
     --purple: #a855f7;
     --radius: 10px;
+    /* One accent per functional group of cards, so the eye can tell which
+       part of the panel it's looking at without reading every heading. */
+    --col-setup: #3b82f6;   /* Match Setup / Match Type / Theme */
+    --col-live: #22c55e;    /* Players / Score / Ball Outcome / Bowler */
+    --col-output: #a855f7;  /* Overlay link, recording, milestones, graphics, session */
   }
   *{ box-sizing:border-box; }
   body{
@@ -42,12 +47,63 @@
   .dot{ width:9px; height:9px; border-radius:50%; background:var(--red); flex:none; }
   .dot.on{ background:var(--green); }
 
+  /* --- Quick-jump nav: sticky row of pills, grouped + color-coded to match
+     the three columns below, so any card can be reached in one click
+     instead of scrolling and hunting for it. --- */
+  #quick-nav{
+    position:sticky; top:64px; z-index:9;
+    display:flex; gap:14px; align-items:center; overflow-x:auto;
+    padding:8px 16px; background:var(--panel); border-bottom:1px solid var(--border);
+    scrollbar-width:thin;
+  }
+  #quick-nav .qn-group{ display:flex; align-items:center; gap:6px; flex:none; }
+  #quick-nav .qn-label{
+    font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.5px;
+    color:var(--text-dim); flex:none; margin-right:2px; white-space:nowrap;
+  }
+  #quick-nav button{
+    flex:none; padding:5px 10px; font-size:11px; font-weight:600; border-radius:20px;
+    background:var(--panel-2); border:1px solid var(--border); color:var(--text-dim);
+    white-space:nowrap;
+  }
+  #quick-nav button:hover{ color:var(--text); }
+  #quick-nav .qn-group.qn-setup .qn-label{ color:var(--col-setup); }
+  #quick-nav .qn-group.qn-live .qn-label{ color:var(--col-live); }
+  #quick-nav .qn-group.qn-output .qn-label{ color:var(--col-output); }
+  #quick-nav .qn-sep{ width:1px; align-self:stretch; background:var(--border); flex:none; }
+  .card.flash{ animation: cardFlash 1s ease; }
+  @keyframes cardFlash{
+    0%{ box-shadow:0 0 0 2px var(--flash-color, var(--accent)); }
+    100%{ box-shadow:0 0 0 0 transparent; }
+  }
+
+  /* --- Column headbands: a coloured strip at the top of each column that
+     names what the whole column is for, so a glance at the top tells you
+     which group ("Setup" vs "Live" vs "Output") you're scrolled into. --- */
+  .col-label{
+    display:flex; align-items:center; gap:6px; font-size:11px; font-weight:800;
+    text-transform:uppercase; letter-spacing:.6px; color:#0c0f16;
+    padding:7px 12px; border-radius:8px; margin-bottom:10px;
+  }
+  .col-setup .col-label{ background:var(--col-setup); }
+  .col-live .col-label{ background:var(--col-live); }
+  .col-output .col-label{ background:var(--col-output); }
+  /* Every card inherits a thin left rail in its column's colour, and its
+     h2 picks up the same colour instead of flat grey — the fastest way to
+     tell cards apart while scanning without needing to read every title. */
+  .col-setup .card{ border-left:3px solid var(--col-setup); }
+  .col-live .card{ border-left:3px solid var(--col-live); }
+  .col-output .card{ border-left:3px solid var(--col-output); }
+  .col-setup .card h2{ color:#8fb4f7; }
+  .col-live .card h2{ color:#7fe3a3; }
+  .col-output .card h2{ color:#cd9bfa; }
+
   .layout{ display:grid; grid-template-columns: 340px 1fr 300px; gap:14px; padding:14px; align-items:start; }
   @media (max-width: 1100px){ .layout{ grid-template-columns:1fr; } }
 
   .card{
     background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
-    padding:14px; margin-bottom:14px;
+    padding:14px; margin-bottom:14px; scroll-margin-top:112px;
   }
   .card h2{ font-size:12px; text-transform:uppercase; letter-spacing:.6px; color:var(--text-dim); margin-bottom:10px; font-weight:700; }
   .card h2 .note{ text-transform:none; font-weight:500; color:#5a6580; letter-spacing:0; font-size:11px; }
@@ -73,15 +129,7 @@
   button.ghost{ background:transparent; }
   button.full{ width:100%; }
   button.small{ padding:6px 8px; font-size:12px; }
-  button.danger{ background:transparent; border-color:var(--red); color:var(--red); }
-  button.danger:hover{ background:rgba(239,68,68,0.12); }
   button:disabled{ opacity:.32; cursor:not-allowed; transform:none !important; }
-
-  /* Match Type segmented control — Single Match vs Tournament. Two plain
-     buttons standing in for a radio group (matches this panel's existing
-     button-driven look rather than introducing native radio styling). */
-  .type-btn{ background:var(--panel-2); }
-  .type-btn.active{ background:var(--accent); border-color:var(--accent); color:#12100c; }
 
   .balls-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:6px; }
   .balls-grid button{ height:46px; font-size:15px; }
@@ -196,11 +244,41 @@
   </div>
 </header>
 
+<nav id="quick-nav">
+  <div class="qn-group qn-setup">
+    <span class="qn-label">⚙️ Setup</span>
+    <button type="button" data-target="card-match-setup">Match Setup</button>
+    <button type="button" data-target="card-match-type">Match Type</button>
+    <button type="button" data-target="card-theme">Theme</button>
+    <button type="button" data-target="card-players">Players</button>
+  </div>
+  <div class="qn-sep"></div>
+  <div class="qn-group qn-live">
+    <span class="qn-label">🎮 Live</span>
+    <button type="button" data-target="card-score">Score</button>
+    <button type="button" data-target="card-ball-outcome">Ball Outcome</button>
+    <button type="button" data-target="card-new-batsman">New Batsman</button>
+    <button type="button" data-target="card-bowler">Bowler</button>
+  </div>
+  <div class="qn-sep"></div>
+  <div class="qn-group qn-output">
+    <span class="qn-label">📡 Output</span>
+    <button type="button" data-target="card-overlay-link">Overlay Link</button>
+    <button type="button" data-target="card-recording">Recording</button>
+    <button type="button" data-target="card-milestone-trigger">Milestone</button>
+    <button type="button" data-target="card-milestone-log">Log</button>
+    <button type="button" data-target="card-summary-graphics">Summary</button>
+    <button type="button" data-target="card-stat-cards">Stat Cards</button>
+    <button type="button" data-target="card-session">Session</button>
+  </div>
+</nav>
+
 <div class="layout">
 
   <!-- COLUMN 1: Match setup -->
-  <div>
-    <div class="card">
+  <div class="col-setup">
+    <div class="col-label">⚙️ Setup</div>
+    <div class="card" id="card-match-setup">
       <h2>Match Setup</h2>
       <label>Format</label>
       <select id="format">
@@ -269,35 +347,36 @@
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" id="card-match-type">
       <h2>🏆 Match Type <span class="note">— single match or tournament</span></h2>
       <div class="row2">
-        <button type="button" class="small type-btn" id="matchtype-single-btn">🎯 Single Match</button>
-        <button type="button" class="small type-btn" id="matchtype-tournament-btn">🏆 Tournament</button>
+        <button type="button" class="small primary" id="mode-single-btn">🏏 Single Match</button>
+        <button type="button" class="small" id="mode-tournament-btn">🏆 Tournament</button>
       </div>
+      <div class="shortcut-hint" id="match-mode-hint">Single Match mode: this match stays on its own — nothing is saved to a tournament.</div>
 
-      <div id="tournament-wrap" style="display:none; margin-top:12px;">
-        <label>Tournament preset</label>
+      <div id="tournament-fields" style="display:none; margin-top:10px;">
+        <label>Tournament <span class="note">(pick an existing one, or start a new one)</span></label>
         <select id="tournament-select">
-          <option value="">— Select a tournament —</option>
+          <option value="">— Select tournament —</option>
           <option value="__new__">+ New Tournament…</option>
         </select>
-        <input type="text" id="league-name" placeholder='New tournament name (e.g. "DY Patil Trophy 2026")' style="display:none; margin-top:8px;">
-
-        <div class="shortcut-hint" id="league-match-count">No tournament selected yet.</div>
+        <div id="new-tournament-wrap" style="display:none; margin-top:8px;">
+          <label>New tournament name <span class="note">(e.g. "DY Patil Trophy 2026")</span></label>
+          <input type="text" id="league-name" placeholder="Type a new tournament name">
+        </div>
+        <div class="shortcut-hint" id="league-match-count">No tournament selected — pick one above, or start a new one, to begin tracking it.</div>
         <div class="row2" style="margin-top:8px;">
           <button class="small primary" id="save-match-league-btn" type="button">💾 Save This Match</button>
           <button class="small ghost" id="view-league-matches-btn" type="button">📋 Matches</button>
         </div>
         <div id="league-matches-list" style="display:none; margin-top:10px; max-height:230px; overflow-y:auto; border-top:1px solid var(--border); padding-top:8px;"></div>
-        <button type="button" class="full small danger" id="delete-tournament-btn" style="margin-top:10px;">🗑 Delete Entire Tournament</button>
-        <div class="shortcut-hint">Saves itself the instant a match is won or tied — this button is only needed to save mid-match or re-save after a correction. Team, batter and bowler "Tournament" cards pull straight from every match saved in this preset, matched automatically by name — nothing to type by hand.</div>
+        <button class="small full" id="delete-tournament-btn" type="button" style="margin-top:10px; border-color:var(--red); color:var(--red);">🗑️ Delete Entire Tournament</button>
+        <div class="shortcut-hint">Saves itself the instant a match is won or tied — this button is only needed to save mid-match or re-save after a correction. Team, batter and bowler "Tournament" cards pull straight from every match saved in this tournament, matched automatically by name — nothing to type by hand. "Delete Entire Tournament" removes every match saved under it, permanently.</div>
       </div>
-
-      <div class="shortcut-hint" id="single-match-hint">Single Match mode — this match stays standalone and won't be added to any tournament. Team/Player/Bowler "Tournament" cards will fall back to the manually typed-in fields.</div>
     </div>
 
-    <div class="card">
+    <div class="card" id="card-theme">
       <h2>Theme Colours <span class="note">— everything except the live numbers</span></h2>
       <div class="row3">
         <div>
@@ -315,8 +394,8 @@
       </div>
     </div>
 
-    <div class="card">
-      <h2>Players</h2>
+    <div class="card" id="card-players">
+      <h2>👥 Players</h2>
       <label>Striker name</label>
       <input type="text" id="striker-name" value="S. Yadav">
       <label>Non-striker name</label>
@@ -326,9 +405,10 @@
   </div>
 
   <!-- COLUMN 2: Live ball-by-ball control -->
-  <div>
-    <div class="card">
-      <h2>Score <span class="note">— locked fields update automatically</span></h2>
+  <div class="col-live">
+    <div class="col-label">🎮 Live Control</div>
+    <div class="card" id="card-score">
+      <h2>🔢 Score <span class="note">— locked fields update automatically</span></h2>
       <div class="stat-grid">
         <div class="stat auto"><div class="k">Score</div><div class="v" id="disp-score">0-0</div></div>
         <div class="stat auto"><div class="k">Overs</div><div class="v" id="disp-overs">0.0</div></div>
@@ -340,8 +420,8 @@
       <div class="ticker-preview" id="over-preview"></div>
     </div>
 
-    <div class="card">
-      <h2>Ball Outcome</h2>
+    <div class="card" id="card-ball-outcome">
+      <h2>🏏 Ball Outcome</h2>
       <div class="freehit-banner" id="freehit-banner">⚡ FREE HIT IN PLAY <button type="button" id="clear-freehit-btn" style="margin-left:auto;">Clear</button></div>
       <div class="balls-grid">
         <button class="b-run" data-ball="0">0</button>
@@ -363,15 +443,15 @@
       </div>
     </div>
 
-    <div class="card">
-      <h2>New Batsman (after wicket)</h2>
+    <div class="card" id="card-new-batsman">
+      <h2>🆕 New Batsman (after wicket)</h2>
       <div class="shortcut-hint" id="new-batsman-end-hint"></div>
       <input type="text" id="new-batsman-name" placeholder="Incoming batsman name">
       <button class="full small" id="new-batsman-btn" style="margin-top:8px;">Send In New Batsman</button>
     </div>
 
-    <div class="card">
-      <h2>Current Bowler <span class="note">— feeds the Innings/Match Summary graphics</span></h2>
+    <div class="card" id="card-bowler">
+      <h2>🎯 Current Bowler <span class="note">— feeds the Innings/Match Summary graphics</span></h2>
       <div class="stat-grid">
         <div class="stat auto" style="grid-column:1/-1;"><div class="k">Bowler</div><div class="v" id="disp-bowler-name" style="font-size:14px;">—</div></div>
         <div class="stat auto"><div class="k">Overs</div><div class="v" id="disp-bowler-overs">0.0</div></div>
@@ -448,9 +528,10 @@
   </div>
 
   <!-- COLUMN 3: Milestones + links -->
-  <div>
-    <div class="card">
-      <h2>Overlay Link (OBS / vMix Browser Source)</h2>
+  <div class="col-output">
+    <div class="col-label">📡 Output &amp; Extras</div>
+    <div class="card" id="card-overlay-link">
+      <h2>🔗 Overlay Link (OBS / vMix Browser Source)</h2>
       <div class="link-row">
         <input type="text" id="overlay-link" readonly>
         <button class="small" id="copy-overlay-link">Copy</button>
@@ -463,7 +544,7 @@
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" id="card-recording">
       <h2>🎬 Match Recording</h2>
       <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
         <div class="dot" id="rec-dot"></div>
@@ -491,8 +572,8 @@
       </div>
     </div>
 
-    <div class="card">
-      <h2>Manual Milestone Trigger</h2>
+    <div class="card" id="card-milestone-trigger">
+      <h2>⚡ Manual Milestone Trigger</h2>
       <button class="full small" data-milestone="POWERPLAY">Powerplay Over</button>
       <button class="full small" data-milestone="DRINKS" style="margin-top:6px;">Drinks Break</button>
       <button class="full small" data-milestone="STRATEGIC_TIMEOUT" style="margin-top:6px;">Strategic Timeout</button>
@@ -500,13 +581,13 @@
       <button class="full small" data-milestone="VICTORY" style="margin-top:6px;">Match Won</button>
     </div>
 
-    <div class="card">
-      <h2>Auto Milestone Log</h2>
+    <div class="card" id="card-milestone-log">
+      <h2>📜 Auto Milestone Log</h2>
       <div class="milestone-log" id="milestone-log"><div>No events yet.</div></div>
     </div>
 
-    <div class="card">
-      <h2>Summary Graphics <span class="note">— auto on/off + show anytime</span></h2>
+    <div class="card" id="card-summary-graphics">
+      <h2>📊 Summary Graphics <span class="note">— auto on/off + show anytime</span></h2>
       <div class="toggle-row">
         <span>Innings Summary (auto, right after each innings ends)</span>
         <label class="switch"><input type="checkbox" id="innings-summary-toggle" checked><span class="slider"></span></label>
@@ -527,8 +608,8 @@
       <div class="shortcut-hint">The toggles above only control whether the pop-up fires automatically. The "Show Now" buttons work anytime, independent of the toggles, and always pull whatever is currently live — nothing needs to be re-entered.</div>
     </div>
 
-    <div class="card">
-      <h2>Player &amp; Bowler Stat Cards <span class="note">— left-slide, on/off anytime</span></h2>
+    <div class="card" id="card-stat-cards">
+      <h2>🃏 Player &amp; Bowler Stat Cards <span class="note">— left-slide, on/off anytime</span></h2>
 
       <div class="toggle-row">
         <span>Player Stat Card</span>
@@ -589,11 +670,11 @@
         </select>
       </div>
 
-      <div class="shortcut-hint">Flip any switch ON and its card slides in from the left with the team's logo, name and colour; flip it OFF and it slides back out. "This Match" updates live, ball by ball. "Tournament" (and the Team card, which is always tournament-scoped) pull automatically from every match saved in the selected Tournament preset above, matched by team/player name — if a name has no saved matches yet, the typed-in fields above are used instead.</div>
+      <div class="shortcut-hint">Flip any switch ON and its card slides in from the left with the team's logo, name and colour; flip it OFF and it slides back out. "This Match" updates live, ball by ball. "Tournament" (and the Team card, which is always tournament-scoped) pull automatically from every match saved under the selected tournament in the Match Type panel, matched by team/player name — if a name has no saved matches yet, the typed-in fields above are used instead.</div>
     </div>
 
-    <div class="card">
-      <h2>Session</h2>
+    <div class="card" id="card-session">
+      <h2>💾 Session</h2>
       <button class="full small primary" id="download-excel-btn" style="margin-bottom:6px;">📊 Download Match Excel</button>
       <button class="full small" id="next-innings-btn" disabled>Start Next Innings</button>
       <button class="full small" id="reset-btn" style="margin-top:6px;">Reset Match (clears everything)</button>
@@ -623,12 +704,6 @@ function mergeWithDefaults(saved){
   // can never leave a nested key undefined and crash init()/renderPanel().
   return {
     ...def, ...saved,
-    // Backward compat: saves from before the Single/Tournament Match Type
-    // toggle existed have no matchType field at all, but DO have a
-    // leagueName if the operator was already using the league feature —
-    // treat that combination as "was already in Tournament mode" so
-    // existing tournaments don't silently vanish from their old UI spot.
-    matchType: saved.matchType || ((saved.leagueName || '').trim() ? 'tournament' : 'single'),
     teamA: { ...def.teamA, ...(saved.teamA||{}) },
     teamB: { ...def.teamB, ...(saved.teamB||{}) },
     theme: { ...def.theme, ...(saved.theme||{}) },
@@ -697,12 +772,12 @@ function defaultState(){
     // League/tournament name this match is tracked under — every match
     // saved (auto, on match end, or via the "Save This Match" button)
     // under the same name feeds the automatic Team/Player/Bowler
-    // "Tournament" cards below, matched purely by name. matchType gates
-    // whether THIS match is eligible to be saved into that tournament at
-    // all — 'single' matches never auto-save, even if a tournament name
-    // is still remembered from a previous session.
-    matchType: 'single',
+    // "Tournament" cards below, matched purely by name.
     leagueName: '',
+    // 'single' = this match is standalone, nothing saved to a tournament.
+    // 'tournament' = leagueName above is the active tournament this match
+    // (and its Save/Delete controls) belongs to.
+    matchMode: 'single',
     tBatMatches: '', tBatRuns: '', tBatAvg: '', tBatSR: '', tBatHS: '',
     tBatFours: '', tBatSixes: '', tBatFifties: '', tBatHundreds: '',
     tBowlMatches: '', tBowlOvers: '', tBowlRuns: '', tBowlWickets: '',
@@ -1652,47 +1727,8 @@ document.getElementById('team-stat-which').addEventListener('change', (e) => {
 });
 
 /* ============================================================
-   MATCH TYPE + LEAGUE / TOURNAMENT CONTROLS
+   LEAGUE / TOURNAMENT CONTROLS
    ============================================================ */
-function setMatchType(type){
-  state.matchType = type === 'tournament' ? 'tournament' : 'single';
-  saveLocal();
-  document.getElementById('matchtype-single-btn').classList.toggle('active', state.matchType === 'single');
-  document.getElementById('matchtype-tournament-btn').classList.toggle('active', state.matchType === 'tournament');
-  document.getElementById('tournament-wrap').style.display = state.matchType === 'tournament' ? 'block' : 'none';
-  document.getElementById('single-match-hint').style.display = state.matchType === 'single' ? 'block' : 'none';
-  if(state.matchType === 'tournament'){
-    renderTournamentSelect();
-    refreshLeagueUI();
-    if((state.leagueName || '').trim()) debouncedSyncLeagueFromServer(state.leagueName);
-  }
-}
-document.getElementById('matchtype-single-btn').addEventListener('click', () => setMatchType('single'));
-document.getElementById('matchtype-tournament-btn').addEventListener('click', () => setMatchType('tournament'));
-
-// Dropdown: pick an existing tournament preset, or "+ New Tournament…" to
-// reveal the name field below it. Selecting an existing name commits it
-// straight away (no separate confirm step needed).
-document.getElementById('tournament-select').addEventListener('change', (e) => {
-  const val = e.target.value;
-  const nameInput = document.getElementById('league-name');
-  if(val === '__new__'){
-    nameInput.style.display = 'block';
-    nameInput.value = '';
-    nameInput.focus();
-    return;
-  }
-  nameInput.style.display = 'none';
-  state.leagueName = val;
-  saveLocal();
-  if(val) addToTournamentRegistry(val);
-  refreshLeagueUI();
-  refreshTournamentCardsIfShown();
-  debouncedSyncLeagueFromServer(state.leagueName);
-});
-// New-tournament name field: live-typing updates state (and the auto
-// stats cards) as before; on blur/Enter the name is committed to the
-// registry and the field swaps back to the dropdown, now showing it.
 document.getElementById('league-name').addEventListener('input', (e) => {
   state.leagueName = e.target.value;
   saveLocal();
@@ -1703,26 +1739,84 @@ document.getElementById('league-name').addEventListener('input', (e) => {
   // laptop/browser already saved under this same league name.
   debouncedSyncLeagueFromServer(state.leagueName);
 });
-document.getElementById('league-name').addEventListener('change', (e) => {
-  const name = e.target.value.trim();
-  if(!name) return;
-  addToTournamentRegistry(name);
-  e.target.style.display = 'none';
-  renderTournamentSelect();
+// Once the operator finishes typing a brand-new tournament name (blur),
+// register it so it shows up in the dropdown from now on — no need to
+// remember/retype it for the next match in the same tournament.
+document.getElementById('league-name').addEventListener('blur', (e) => {
+  const trimmed = e.target.value.trim();
+  if(!trimmed) return;
+  addKnownTournament(trimmed);
+  document.getElementById('tournament-select').value = trimmed;
+  document.getElementById('new-tournament-wrap').style.display = 'none';
 });
+
+/* ---- Single Match vs Tournament mode ---- */
+// Pure UI switch — does not touch state.leagueName. Used both by the
+// click handlers below (which DO decide whether to clear the name) and
+// by init()/Reset (which want to restore the mode without wiping a name
+// that's meant to survive).
+function applyMatchModeUI(mode){
+  const singleBtn = document.getElementById('mode-single-btn');
+  const tourBtn = document.getElementById('mode-tournament-btn');
+  const tourFields = document.getElementById('tournament-fields');
+  const hint = document.getElementById('match-mode-hint');
+  if(mode === 'tournament'){
+    singleBtn.classList.remove('primary');
+    tourBtn.classList.add('primary');
+    tourFields.style.display = 'block';
+    hint.textContent = 'Tournament mode: pick or start a tournament below — its matches (and only its matches) feed the Tournament stat cards.';
+  } else {
+    tourBtn.classList.remove('primary');
+    singleBtn.classList.add('primary');
+    tourFields.style.display = 'none';
+    hint.textContent = 'Single Match mode: this match stays on its own — nothing is saved to a tournament.';
+  }
+}
+function setMatchMode(mode){
+  state.matchMode = mode;
+  applyMatchModeUI(mode);
+  if(mode === 'single'){
+    // Switching a match OUT of tournament tracking just stops THIS match
+    // from being tagged with a tournament name — it does not delete
+    // anything already saved under that tournament.
+    state.leagueName = '';
+    document.getElementById('league-name').value = '';
+    document.getElementById('tournament-select').value = '';
+    document.getElementById('new-tournament-wrap').style.display = 'none';
+  }
+  saveLocal();
+  refreshLeagueUI();
+  refreshTournamentCardsIfShown();
+}
+document.getElementById('mode-single-btn').addEventListener('click', () => setMatchMode('single'));
+document.getElementById('mode-tournament-btn').addEventListener('click', () => setMatchMode('tournament'));
+
+document.getElementById('tournament-select').addEventListener('change', (e) => {
+  const val = e.target.value;
+  const newWrap = document.getElementById('new-tournament-wrap');
+  const nameInput = document.getElementById('league-name');
+  if(val === '__new__'){
+    newWrap.style.display = 'block';
+    nameInput.value = '';
+    nameInput.focus();
+    state.leagueName = '';
+  } else {
+    newWrap.style.display = 'none';
+    state.leagueName = val;
+    nameInput.value = val;
+    if(val) syncLeagueFromServer(val);
+  }
+  saveLocal();
+  refreshLeagueUI();
+  refreshTournamentCardsIfShown();
+});
+
 document.getElementById('save-match-league-btn').addEventListener('click', () => saveMatchToLeague(false));
 document.getElementById('view-league-matches-btn').addEventListener('click', () => {
   const listEl = document.getElementById('league-matches-list');
   const showing = listEl.style.display !== 'none';
   listEl.style.display = showing ? 'none' : 'block';
   if(!showing) renderLeagueMatchesList(currentLeagueMatches());
-});
-document.getElementById('delete-tournament-btn').addEventListener('click', () => {
-  const name = (state.leagueName || '').trim();
-  if(!name){ toast('No tournament selected'); return; }
-  const count = currentLeagueMatches().length;
-  if(!confirm(`Delete the entire "${name}" tournament? This removes all ${count} saved match${count === 1 ? '' : 'es'} and cannot be undone.`)) return;
-  deleteTournamentPreset(name);
 });
 
 /* ============================================================
@@ -1896,7 +1990,7 @@ function checkMatchResult(){
     resultFired = true;
   }
 
-  if(resultFired && state.matchType === 'tournament' && state.leagueName && state.leagueName.trim()){
+  if(resultFired && state.leagueName && state.leagueName.trim()){
     // Auto-add this match to the league database right as the result
     // lands — this is what makes Team/Player/Bowler "Tournament" cards
     // update on their own, match after match, with nothing typed in.
@@ -2082,6 +2176,51 @@ function leagueApiPath(name){
 function withUid(url){
   return `${url}${url.includes('?') ? '&' : '?'}uid=${encodeURIComponent(currentOwnerUid())}`;
 }
+
+/* ---- Known-tournament names — purely local (localStorage), so the
+   "Tournament" dropdown can offer every tournament this browser/account
+   has ever saved a match to, without the operator needing to remember or
+   retype the exact name. Kept separate from the match data itself (which
+   lives in leagueCache/MongoDB), so this is just a convenience index. ---- */
+function knownTournamentsStorageKey(){
+  return 'cricket-known-tournaments::' + currentOwnerUid();
+}
+function getKnownTournaments(){
+  try{
+    const raw = localStorage.getItem(knownTournamentsStorageKey());
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list : [];
+  }catch(e){ return []; }
+}
+function addKnownTournament(name){
+  const trimmed = (name || '').trim();
+  if(!trimmed) return;
+  const list = getKnownTournaments();
+  if(!list.some(n => n.toLowerCase() === trimmed.toLowerCase())){
+    list.push(trimmed);
+    try{ localStorage.setItem(knownTournamentsStorageKey(), JSON.stringify(list)); }catch(e){}
+  }
+  populateTournamentDropdown();
+}
+function removeKnownTournament(name){
+  const trimmed = (name || '').trim().toLowerCase();
+  const list = getKnownTournaments().filter(n => n.toLowerCase() !== trimmed);
+  try{ localStorage.setItem(knownTournamentsStorageKey(), JSON.stringify(list)); }catch(e){}
+  populateTournamentDropdown();
+}
+function populateTournamentDropdown(){
+  const sel = document.getElementById('tournament-select');
+  if(!sel) return;
+  const current = sel.value;
+  const names = getKnownTournaments();
+  sel.innerHTML = '<option value="">— Select tournament —</option>'
+    + names.map(n => `<option value="${escapeHtmlPanel(n)}">${escapeHtmlPanel(n)}</option>`).join('')
+    + '<option value="__new__">+ New Tournament…</option>';
+  if(current === '__new__' || names.some(n => n.toLowerCase() === current.toLowerCase())){
+    sel.value = current;
+  }
+}
+
 const leagueCache = {}; // leagueKey -> matches[], refreshed from the server
 
 function loadLeagueMatchesLocal(name){
@@ -2094,53 +2233,6 @@ function loadLeagueMatchesLocal(name){
 function saveLeagueMatchesLocal(name, matches){
   try{ localStorage.setItem(leagueStorageKey(name), JSON.stringify(matches)); }catch(e){}
 }
-
-// Registry of every tournament name this operator (uid) has ever created —
-// what powers the "Tournament preset" dropdown so they can re-select a
-// past tournament instead of having to retype its exact name. Local-only
-// (per browser) for now: matches themselves already sync across devices
-// via MongoDB by name, but there's no server-side "list my tournaments"
-// endpoint yet, so this registry only remembers what THIS browser has
-// created/selected. Most-recently-used first.
-function tournamentRegistryKey(){
-  return 'cricket-tournament-list::' + currentOwnerUid();
-}
-function loadTournamentRegistry(){
-  try{
-    const raw = localStorage.getItem(tournamentRegistryKey());
-    return raw ? JSON.parse(raw) : [];
-  }catch(e){ return []; }
-}
-function saveTournamentRegistry(list){
-  try{ localStorage.setItem(tournamentRegistryKey(), JSON.stringify(list)); }catch(e){}
-}
-function addToTournamentRegistry(name){
-  const trimmed = (name || '').trim();
-  if(!trimmed) return;
-  const list = loadTournamentRegistry().filter(n => n.toLowerCase() !== trimmed.toLowerCase());
-  list.unshift(trimmed);
-  saveTournamentRegistry(list);
-}
-function removeFromTournamentRegistry(name){
-  const target = (name || '').trim().toLowerCase();
-  saveTournamentRegistry(loadTournamentRegistry().filter(n => n.toLowerCase() !== target));
-}
-// Rebuilds the <select> options from the registry, always including the
-// currently-active tournament name even if it hasn't been formally added
-// to the registry yet (e.g. right after typing a brand new name).
-function renderTournamentSelect(){
-  const sel = document.getElementById('tournament-select');
-  if(!sel) return;
-  const current = (state.leagueName || '').trim();
-  const registry = loadTournamentRegistry();
-  const names = current && !registry.some(n => n.toLowerCase() === current.toLowerCase())
-    ? [current, ...registry] : registry;
-  sel.innerHTML = '<option value="">— Select a tournament —</option>'
-    + names.map(n => `<option value="${escapeHtmlPanel(n)}"${n === current ? ' selected' : ''}>${escapeHtmlPanel(n)}</option>`).join('')
-    + '<option value="__new__">+ New Tournament…</option>';
-  if(!current) sel.value = '';
-}
-
 function currentLeagueMatches(){
   const name = (state.leagueName || '').trim();
   if(!name) return [];
@@ -2236,8 +2328,7 @@ function buildMatchRecordForLeague(){
 // name picks up the change too.
 function saveMatchToLeague(silent){
   const name = (state.leagueName || '').trim();
-  if(!name){ if(!silent) toast('Select or create a tournament first'); return; }
-  addToTournamentRegistry(name);
+  if(!name){ if(!silent) toast('Pick or start a tournament first'); return; }
   const rec = buildMatchRecordForLeague();
   const key = leagueStorageKey(name);
 
@@ -2246,6 +2337,7 @@ function saveMatchToLeague(silent){
   if(idx >= 0) matches[idx] = rec; else matches.push(rec);
   leagueCache[key] = matches;
   saveLeagueMatchesLocal(name, matches);
+  addKnownTournament(name);
   refreshLeagueUI();
   refreshTournamentCardsIfShown();
   if(!silent) toast(`Saved to "${name}" — ${matches.length} match${matches.length === 1 ? '' : 'es'} now tracked`);
@@ -2294,43 +2386,51 @@ function deleteMatchFromLeague(matchId){
       }
     }).catch(() => toast('⚠️ Deleted locally only — could not sync to server'));
 }
-// Deletes an ENTIRE tournament preset — every match saved under it, plus
-// its entry in the tournament dropdown. There's no bulk-delete endpoint
-// on the server, so each match is removed individually via the existing
-// per-match DELETE route; the local cache/registry is cleared immediately
-// (optimistic) so the UI updates right away regardless of how the
-// individual server deletes land.
-function deleteTournamentPreset(name){
+// Deletes every match saved under a tournament — not just the current
+// one — and forgets the tournament itself (it disappears from the
+// dropdown). There's no bulk-delete route on the server, so the matches
+// are removed one by one via the same per-match DELETE endpoint used by
+// deleteMatchFromLeague above.
+function deleteEntireTournament(name){
   const trimmed = (name || '').trim();
   if(!trimmed) return;
   const key = leagueStorageKey(trimmed);
   const matches = (leagueCache[key] || loadLeagueMatchesLocal(trimmed)).slice();
 
   leagueCache[key] = [];
-  try{ localStorage.removeItem(key); }catch(e){}
-  removeFromTournamentRegistry(trimmed);
-  if((state.leagueName || '').trim().toLowerCase() === trimmed.toLowerCase()){
+  try{ localStorage.removeItem(leagueStorageKey(trimmed)); }catch(e){}
+  removeKnownTournament(trimmed);
+
+  if(state.leagueName && state.leagueName.trim().toLowerCase() === trimmed.toLowerCase()){
     state.leagueName = '';
+    document.getElementById('league-name').value = '';
+    document.getElementById('tournament-select').value = '';
+    document.getElementById('new-tournament-wrap').style.display = 'none';
     saveLocal();
   }
-  document.getElementById('league-matches-list').style.display = 'none';
-  renderTournamentSelect();
   refreshLeagueUI();
   refreshTournamentCardsIfShown();
-  toast(`🗑 Deleted tournament "${trimmed}" (${matches.length} match${matches.length === 1 ? '' : 'es'})`);
+  toast(`🗑️ "${trimmed}" and its ${matches.length} match${matches.length === 1 ? '' : 'es'} deleted`);
 
-  if(!currentOwnerUid()) return; // local-only, nothing to sync
+  if(!currentOwnerUid()) return; // local-only, nothing on the server to clean up
   matches.forEach(m => {
     fetch(withUid(`${leagueApiPath(trimmed)}/match/${encodeURIComponent(m.matchId)}`), { method: 'DELETE' }).catch(() => {});
   });
 }
+document.getElementById('delete-tournament-btn').addEventListener('click', () => {
+  const name = (state.leagueName || '').trim();
+  if(!name){ toast('Select a tournament first'); return; }
+  const matchCount = currentLeagueMatches().length;
+  if(!confirm(`Delete the ENTIRE tournament "${name}" — all ${matchCount} saved match${matchCount === 1 ? '' : 'es'} — permanently? This cannot be undone.`)) return;
+  deleteEntireTournament(name);
+});
 function refreshLeagueUI(){
   const name = (state.leagueName || '').trim();
   const countEl = document.getElementById('league-match-count');
   const listEl = document.getElementById('league-matches-list');
   if(!countEl || !listEl) return;
   if(!name){
-    countEl.textContent = 'No tournament selected — pick one above, or create a new one, to start tracking matches.';
+    countEl.textContent = 'No tournament selected — pick one above, or start a new one, to begin tracking it.';
     listEl.innerHTML = '';
     return;
   }
@@ -3300,18 +3400,39 @@ document.getElementById('download-excel-btn').addEventListener('click', buildAnd
    ============================================================ */
 document.getElementById('reset-btn').addEventListener('click', () => {
   if(!confirm('Reset the entire match? This cannot be undone.')) return;
-  // The league name (and whether we're even in Tournament mode) spans
-  // multiple matches — that's the whole point of it — so both survive a
-  // Reset; everything else about the match goes back to defaults, ready
-  // for the next match in the same tournament.
+  // The league name spans multiple matches (that's the whole point of it),
+  // so it survives a Reset — everything else about the match goes back to
+  // defaults as before, ready for the next match in the same tournament.
   const keepLeagueName = state.leagueName;
-  const keepMatchType = state.matchType;
+  const keepMatchMode = state.matchMode;
   state = defaultState();
   state.leagueName = keepLeagueName;
-  state.matchType = keepMatchType;
+  state.matchMode = keepMatchMode || (keepLeagueName ? 'tournament' : 'single');
   history = [];
   document.getElementById('milestone-log').innerHTML = '<div>No events yet.</div>';
+  document.getElementById('league-name').value = state.leagueName || '';
+  if(state.leagueName) document.getElementById('tournament-select').value = state.leagueName;
+  applyMatchModeUI(state.matchMode);
+  refreshLeagueUI();
   pushState(true, true);
+});
+
+/* ============================================================
+   QUICK NAV — click a pill to jump straight to that card instead of
+   scrolling and hunting for it; the target briefly flashes its column
+   colour so it's obvious which card just scrolled into view.
+   ============================================================ */
+document.querySelectorAll('#quick-nav button[data-target]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const card = document.getElementById(btn.getAttribute('data-target'));
+    if(!card) return;
+    card.scrollIntoView({ behavior:'smooth', block:'start' });
+    const accent = getComputedStyle(card).borderLeftColor;
+    card.style.setProperty('--flash-color', accent);
+    card.classList.remove('flash');
+    void card.offsetWidth; // restart the animation if clicked again quickly
+    card.classList.add('flash');
+  });
 });
 
 /* ============================================================
@@ -3381,11 +3502,18 @@ document.addEventListener('keydown', (e) => {
   document.getElementById('league-name').value = state.leagueName || '';
   document.getElementById('team-stat-toggle').checked = state.showTeamStatCard;
   document.getElementById('team-stat-which').value = state.teamStatWhich;
-  setMatchType(state.matchType);
-  // Load this tournament's shared (MongoDB) match history on startup, so a
+  populateTournamentDropdown();
+  if(state.leagueName && state.leagueName.trim()){
+    addKnownTournament(state.leagueName.trim());
+    document.getElementById('tournament-select').value = state.leagueName.trim();
+  }
+  if(!state.matchMode) state.matchMode = state.leagueName ? 'tournament' : 'single';
+  applyMatchModeUI(state.matchMode);
+  refreshLeagueUI();
+  // Load this league's shared (MongoDB) match history on startup, so a
   // panel opened fresh on a second laptop immediately sees whatever the
-  // first laptop already saved under the same tournament name.
-  if(state.matchType === 'tournament' && (state.leagueName || '').trim()) syncLeagueFromServer(state.leagueName);
+  // first laptop already saved under the same league name.
+  syncLeagueFromServer(state.leagueName);
 
   const urlMatchId = new URLSearchParams(location.search).get('room');
   const savedMatchId = localStorage.getItem('cricket-match-id');
