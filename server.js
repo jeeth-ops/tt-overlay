@@ -49,6 +49,7 @@ let mongoDb = null;
 let ballsCollection = null;
 let matchesCollection = null;
 let clipsCollection = null;
+let leaguesCollection = null;
 
 async function connectMongo() {
     const uri = process.env.MONGODB_URI;
@@ -63,11 +64,18 @@ async function connectMongo() {
         ballsCollection = mongoDb.collection('balls');
         matchesCollection = mongoDb.collection('matches');
         clipsCollection = mongoDb.collection('clips');
+        leaguesCollection = mongoDb.collection('leagues');
         // Fast lookups: all balls of a match in bowling order, and one
         // match doc per matchId.
         await ballsCollection.createIndex({ matchId: 1, innings: 1, over: 1, ballInOver: 1 });
         await matchesCollection.createIndex({ matchId: 1 }, { unique: true });
         await clipsCollection.createIndex({ matchId: 1, createdAt: 1 });
+        // One doc per (owner, league) pair — owner-scoped so two different
+        // customers naming a league the same thing (e.g. "Summer Cup") never
+        // collide/overwrite each other. ownerUid comes from the logged-in
+        // Firebase user (see index.html's `scorvix_uid`), matching how the
+        // rest of this app already identifies "whose data is whose".
+        await leaguesCollection.createIndex({ ownerUid: 1, leagueKey: 1 }, { unique: true });
         console.log('🍃 MongoDB connected —', mongoDb.databaseName);
     } catch (err) {
         console.log('MongoDB connection error:', err);
@@ -489,6 +497,94 @@ app.post('/api/create-control-token', async (req, res) => {
     } catch (err) {
         console.log('Control token creation error:', err);
         res.status(500).json({ success: false });
+    }
+});
+
+// ================================================================
+// 🏆 LEAGUE / TOURNAMENT DATABASE — MongoDB-backed so the same league's
+// match history (and the automatic Team/Player/Bowler "Tournament" cards
+// built from it) shows up identically no matter which laptop/browser the
+// cricket-panel is opened from. Keyed by (ownerUid, leagueKey) — leagueKey
+// is the league name, case/whitespace-insensitive, same matching rule the
+// panel already used for its old localStorage-only version of this.
+//
+// ownerUid comes straight from the client (see cricket-panel.html — it
+// reads the same `scorvix_uid` that index.html sets in localStorage after
+// Google sign-in). It is NOT cryptographically verified here, same trust
+// level the rest of this server already uses to route TT/Football rooms.
+// It's still enough to stop two unrelated customers' leagues from ever
+// colliding, which is the actual risk being guarded against — someone
+// deliberately spoofing their own localStorage to read another account's
+// league data would need the stronger Firebase-ID-token verification the
+// /api/create-control-token route uses, which can be layered on later.
+// ================================================================
+function leagueKeyFor(name) {
+    return String(name || '').trim().toLowerCase();
+}
+function ownerUidFrom(req) {
+    const uid = (req.query.uid || (req.body && req.body.uid) || '').toString().trim();
+    return uid || null;
+}
+
+// All matches saved under a league/tournament name, for one owner.
+app.get('/api/league/:name', async (req, res) => {
+    const leagueKey = leagueKeyFor(req.params.name);
+    const ownerUid = ownerUidFrom(req);
+    if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
+    if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
+    if (!leaguesCollection) return res.json({ success: true, matches: [] }); // Mongo not configured — panel falls back to its local cache
+    try {
+        const doc = await leaguesCollection.findOne({ ownerUid, leagueKey });
+        res.json({ success: true, matches: (doc && doc.matches) || [] });
+    } catch (err) {
+        console.log('League fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load league data' });
+    }
+});
+
+// Upserts one match record into a league by matchId — re-saving after a
+// correction (or the panel's automatic save-on-victory) updates the same
+// entry instead of duplicating it, same as the old localStorage version.
+app.post('/api/league/:name/match', async (req, res) => {
+    const leagueKey = leagueKeyFor(req.params.name);
+    const ownerUid = ownerUidFrom(req);
+    const record = req.body;
+    if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
+    if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
+    if (!record || !record.matchId) return res.status(400).json({ success: false, error: 'Match record with matchId required' });
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const doc = await leaguesCollection.findOne({ ownerUid, leagueKey });
+        const matches = (doc && doc.matches) || [];
+        const idx = matches.findIndex(m => m.matchId === record.matchId);
+        if (idx >= 0) matches[idx] = record; else matches.push(record);
+        await leaguesCollection.updateOne(
+            { ownerUid, leagueKey },
+            { $set: { ownerUid, leagueKey, displayName: (req.params.name || '').trim(), matches, updatedAt: Date.now() } },
+            { upsert: true }
+        );
+        res.json({ success: true, matches });
+    } catch (err) {
+        console.log('League save error:', err);
+        res.status(500).json({ success: false, error: 'Could not save match' });
+    }
+});
+
+// Removes one match from a league.
+app.delete('/api/league/:name/match/:matchId', async (req, res) => {
+    const leagueKey = leagueKeyFor(req.params.name);
+    const ownerUid = ownerUidFrom(req);
+    if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
+    if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const doc = await leaguesCollection.findOne({ ownerUid, leagueKey });
+        const matches = ((doc && doc.matches) || []).filter(m => m.matchId !== req.params.matchId);
+        await leaguesCollection.updateOne({ ownerUid, leagueKey }, { $set: { matches, updatedAt: Date.now() } });
+        res.json({ success: true, matches });
+    } catch (err) {
+        console.log('League delete error:', err);
+        res.status(500).json({ success: false, error: 'Could not delete match' });
     }
 });
 
