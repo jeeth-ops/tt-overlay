@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800;900&family=Inter:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800;900&family=Inter:wght@500;600;700;800;900&family=Noto+Sans:wght@500;600;700;800;900&family=Noto+Sans+Devanagari:wght@500;600;700;800;900&display=swap" rel="stylesheet">
 <script src="/socket.io/socket.io.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 <style>
@@ -40,8 +40,8 @@
     --bc-paper:      #f3f6fc;
     --bc-ink:        #12213f;
     --bc-ink-dim:    #5c6c8a;
-    --font-num:      'Manrope', sans-serif;
-    --font-ui:       'Inter', sans-serif;
+    --font-num:      'Manrope', 'Noto Sans', 'Noto Sans Devanagari', sans-serif;
+    --font-ui:       'Inter', 'Noto Sans', 'Noto Sans Devanagari', sans-serif;
   }
 
   *{ box-sizing:border-box; margin:0; padding:0; }
@@ -538,16 +538,15 @@
     --stat-accent: var(--bc-gold,#f5c518);
     position:absolute; left:1.6vw; top:15vh;
     width:min(23vw,296px); max-width:78vw;
-    background:linear-gradient(165deg, rgba(20,28,58,0.97), rgba(9,14,32,0.98));
+    background:linear-gradient(165deg, rgba(54,66,112,0.97), rgba(30,39,72,0.98));
     border-radius:14px; overflow:hidden;
-    box-shadow:0 24px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.07);
+    box-shadow:0 24px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.16);
     display:none; flex-direction:column;
     font-family:var(--font-ui); color:#fff;
     border-left:5px solid var(--stat-accent);
     will-change:transform, opacity, filter;
   }
   #bowler-stat-card{ top:calc(15vh + 168px); }
-  #team-stat-card{ top:calc(15vh + 336px); }
 
   .stat-head{ display:flex; align-items:flex-start; gap:11px; padding:14px 14px 12px; }
   .stat-badge{
@@ -568,10 +567,21 @@
     text-transform:uppercase; margin-top:2px;
   }
   .stat-grid{ display:grid; grid-template-columns:repeat(3,1fr); }
-  .stat-cell{ padding:9px 6px 10px; border-top:1px solid rgba(255,255,255,0.09); }
+  .stat-cell{ padding:9px 6px 10px; border-top:1px solid rgba(255,255,255,0.16); }
   .stat-cell:nth-last-child(-n+3){ padding-bottom:13px; }
-  .stat-cell .lbl{ font-size:8.5px; font-weight:800; letter-spacing:.8px; color:rgba(255,255,255,0.5); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .stat-cell .lbl{ font-size:8.5px; font-weight:800; letter-spacing:.8px; color:rgba(255,255,255,0.68); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .stat-cell .val{ font-family:var(--font-num); font-weight:900; font-size:min(1.5vw,16.5px); color:#fff; margin-top:3px; font-variant-numeric:tabular-nums; }
+
+  /* Team-stat-card now lives inside the light "summary-card" theme (see
+     below) instead of the dark left-slide stack — these overrides make
+     the shared .stat-grid/.stat-cell markup read correctly on that
+     light paper background instead of inheriting the dark-card colours
+     above. */
+  .summary-card .stat-grid{ padding:8px 16px 4px; }
+  .summary-card .stat-cell{ border-top:1px solid var(--hairline,rgba(16,25,58,.1)); }
+  .summary-card .stat-cell:nth-last-child(-n+3){ padding-bottom:15px; }
+  .summary-card .stat-cell .lbl{ color:var(--bc-ink-dim,#5c6c8a); }
+  .summary-card .stat-cell .val{ color:var(--bc-ink,#12213f); }
 </style>
 </head>
 <body>
@@ -754,14 +764,13 @@
     <div class="stat-grid" id="bs-grid"></div>
   </div>
 
-  <div id="team-stat-card" class="stat-card">
-    <div class="stat-head">
-      <div class="stat-badge" id="ts-badge">TM</div>
-      <div class="stat-head-text">
-        <div class="stat-team" id="ts-team">TOURNAMENT</div>
-        <div class="stat-name" id="ts-name">TEAM</div>
+  <div id="team-stat-card" class="summary-card">
+    <div class="sc-header">
+      <div class="sc-badge" id="ts-badge">TM</div>
+      <div class="sc-header-text">
+        <div class="sc-title" id="ts-name">TEAM</div>
+        <div class="sc-sub" id="ts-team">TOURNAMENT RECORD</div>
       </div>
-      <div class="stat-scope" id="ts-scope">TOURNAMENT</div>
     </div>
     <div class="stat-grid" id="ts-grid"></div>
   </div>
@@ -822,7 +831,7 @@ socket.on('cricketBowlerStat', (data) => renderBowlerStatCard(data));
 socket.on('cricketTeamStat', (data) => renderTeamStatCard(data));
 socket.on('cricketHidePlayerStat', () => playStatCardOut('player-stat-card'));
 socket.on('cricketHideBowlerStat', () => playStatCardOut('bowler-stat-card'));
-socket.on('cricketHideTeamStat', () => playStatCardOut('team-stat-card'));
+socket.on('cricketHideTeamStat', () => hideSummaryCard('team-stat-card', '.stat-cell'));
 
 /* ============================================================
    DIGIT-LEVEL SCORE RENDERING
@@ -1617,6 +1626,24 @@ function playSummaryCard(cardId, rowsSelector, holdMs){
       onComplete: () => { card.style.display = 'none'; }
     }, '-=0.15');
 }
+// Same centre-stage zoom-in as playSummaryCard, but with no auto-hide
+// timer chained on the end — used for the tournament team-stat card,
+// which is an operator on/off toggle (like the player/bowler stat
+// cards) rather than a timed popup, but should still enter/exit with
+// the summary cards' colour + animation language, not the left-slide
+// stat-card one.
+function playStatSummaryIn(cardId, rowsSelector){
+  const card = document.getElementById(cardId);
+  const rows = card.querySelectorAll(rowsSelector);
+  gsap.killTweensOf(card);
+  gsap.killTweensOf(rows);
+  card.style.display = 'flex';
+  gsap.set(card, { opacity: 0, scale: 0.94, clipPath: 'inset(50% 50% 50% 50% round 16px)' });
+  gsap.set(rows, { opacity: 0, y: 22, filter: 'blur(6px)' });
+  gsap.timeline()
+    .to(card, { opacity: 1, scale: 1, clipPath: 'inset(0% 0% 0% 0% round 16px)', duration: 0.6, ease: 'expo.out' })
+    .to(rows, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.45, stagger: 0.12, ease: 'power3.out' }, 0.3);
+}
 // Manual dismiss — used by the panel's "Hide Now" buttons to pull a summary
 // card off screen immediately, regardless of where it is in its normal
 // hold/exit timeline.
@@ -1722,9 +1749,8 @@ function renderTeamStatCard(d){
   const card = document.getElementById('team-stat-card');
   card.style.setProperty('--stat-accent', d.teamColor || '#f5c518');
   setBadge(document.getElementById('ts-badge'), d.teamLogo, badgeText(d.teamShort, d.teamName));
-  document.getElementById('ts-team').textContent = 'TOURNAMENT RECORD';
   document.getElementById('ts-name').textContent = (d.teamName || d.teamShort || 'TEAM').toUpperCase();
-  document.getElementById('ts-scope').textContent = 'TOURNAMENT';
+  document.getElementById('ts-team').textContent = 'TOURNAMENT RECORD';
 
   const cells = [
     ['Matches', d.matches], ['Won', d.won], ['Lost', d.lost], ['Tied', d.tied],
@@ -1734,7 +1760,7 @@ function renderTeamStatCard(d){
   fillStatGrid('ts-grid', cells);
 
   if(card.style.display === 'flex') pulseStatGrid('ts-grid');
-  else playStatCardIn('team-stat-card');
+  else playStatSummaryIn('team-stat-card', '.stat-cell');
 }
 
 function renderInningsSummary(d){
