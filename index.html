@@ -11,11 +11,6 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 
-    <!-- GSAP — scroll-driven storytelling + smooth scroll transitions (free, incl. ScrollTrigger/ScrollToPlugin) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.15.0/gsap.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.15.0/ScrollTrigger.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.15.0/ScrollToPlugin.min.js"></script>
-
     <style>
         :root {
             --bg-dark: #0f172a;
@@ -210,7 +205,7 @@
         .btn-danger { background: #ef4444 !important; color: white !important; }
         .btn-danger:hover { background: #dc2626 !important; }
 
-        .hero { text-align: center; padding: 100px 20px; max-width: 900px; margin: 0 auto; position: relative; z-index: 1; }
+        .hero { text-align: center; padding: 100px 20px; max-width: 900px; margin: 0 auto; }
         .hero h1 { font-size: 5.2rem; font-weight: 900; line-height: 1.08; letter-spacing: -2px; margin-bottom: 20px; text-shadow: 0 10px 30px rgba(0,0,0,0.5); }
         .hero h1 span { color: var(--accent); position: relative; }
         .hero p { font-size: 1.3rem; font-weight: 500; color: var(--text-muted); margin-bottom: 40px; }
@@ -947,245 +942,9 @@
         .faq-answer { max-height: 0; overflow: hidden; transition: max-height 0.4s var(--ease-spring); }
         .faq-item.open .faq-answer { max-height: 300px; }
         .faq-answer p { padding: 0 22px 18px 22px; color: var(--text-muted); font-size: 0.92rem; line-height: 1.6; }
-
-        /* ============================================================
-           PRELOADER — branded entrance sequence
-           ============================================================ */
-        #preloader {
-            position: fixed; inset: 0; z-index: 100000;
-            background: var(--bg-dark);
-            display: flex; align-items: center; justify-content: center;
-            flex-direction: column; gap: 22px;
-            transition: opacity 0.6s var(--ease), visibility 0.6s var(--ease);
-        }
-        #preloader.preloader-hidden { opacity: 0; visibility: hidden; pointer-events: none; }
-        .preloader-mark {
-            font-family: 'Space Grotesk', 'Inter', sans-serif;
-            font-size: 2.4rem; font-weight: 800; letter-spacing: -1px; color: var(--text-main);
-            opacity: 0; animation: preloaderMarkIn 0.7s var(--ease-spring) 0.1s forwards;
-        }
-        .preloader-mark span { color: var(--accent); }
-        @keyframes preloaderMarkIn { to { opacity: 1; } }
-        .preloader-bar {
-            width: 180px; height: 3px; border-radius: 3px;
-            background: rgba(255, 255, 255, 0.1); overflow: hidden;
-        }
-        .preloader-bar-fill {
-            height: 100%; width: 0%; border-radius: 3px;
-            background: linear-gradient(90deg, var(--accent), #fb923c);
-            transition: width 0.35s var(--ease);
-        }
-        @media (prefers-reduced-motion: reduce) {
-            .preloader-mark { animation: none; opacity: 1; }
-        }
-
-        /* ============================================================
-           PAGE-TRANSITION CURTAIN — plays before navigating to a
-           template page (tt/football/cricket) so the jump feels
-           continuous instead of an abrupt browser navigation.
-           ============================================================ */
-        #pageCurtain {
-            position: fixed; inset: 0; z-index: 99999;
-            background: var(--bg-dark);
-            opacity: 0; pointer-events: none;
-            transition: opacity 0.45s var(--ease);
-        }
-        #pageCurtain.curtain-active { opacity: 1; pointer-events: all; }
-
-        /* ============================================================
-           HERO 3D LAYER — ambient WebGL visual behind the hero copy
-           ============================================================ */
-        .hero-3d-canvas {
-            position: absolute; inset: 0; z-index: -1;
-            width: 100%; height: 100%;
-            pointer-events: none;
-            opacity: 0; transition: opacity 1.1s var(--ease);
-        }
-        .hero-3d-canvas.hero-3d-ready { opacity: 1; }
-        @media (max-width: 640px) { .hero-3d-canvas { display: none; } }
-        @media (prefers-reduced-motion: reduce) { .hero-3d-canvas { display: none; } }
-
-        /* ============================================================
-           PERSONALIZATION STRIP — small, tasteful, visitor-aware line
-           ============================================================ */
-        .personalized-strip {
-            display: none;
-            align-items: center; gap: 8px;
-            max-width: max-content; margin: 0 auto 22px auto;
-            padding: 8px 18px;
-            font-size: 0.85rem; font-weight: 600; color: var(--text-muted);
-            background: rgba(255, 255, 255, 0.06);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 50px;
-            opacity: 0; transform: translateY(-8px);
-            transition: opacity 0.6s var(--ease-spring), transform 0.6s var(--ease-spring);
-        }
-        .personalized-strip.strip-visible { display: inline-flex; opacity: 1; transform: translateY(0); }
-        .personalized-strip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
-
-        /* ============================================================
-           NAV SEARCH — smart search with live autocomplete
-           ============================================================ */
-        .nav-search-wrap { position: relative; }
-        .nav-search-btn {
-            width: 38px; height: 38px; border-radius: 50%;
-            background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.08);
-            color: var(--text-muted); display: flex; align-items: center; justify-content: center;
-            cursor: pointer; font-size: 1rem;
-            transition: background 0.25s var(--ease), color 0.25s var(--ease), border-color 0.25s var(--ease);
-        }
-        .nav-search-btn:hover { background: rgba(255, 255, 255, 0.12); color: var(--text-main); }
-        .nav-search-panel {
-            position: absolute; top: calc(100% + 12px); right: 0;
-            width: 340px; max-width: 82vw;
-            background: var(--bg-card); border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 16px; backdrop-filter: blur(16px);
-            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
-            opacity: 0; visibility: hidden; transform: translateY(-10px) scale(0.98);
-            transition: opacity 0.3s var(--ease-spring), transform 0.3s var(--ease-spring), visibility 0.3s;
-            z-index: 200; overflow: hidden;
-        }
-        .nav-search-panel.search-open { opacity: 1; visibility: visible; transform: translateY(0) scale(1); }
-        .nav-search-input-row { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
-        .nav-search-input-row span { color: var(--text-muted); font-size: 0.95rem; }
-        #navSearchInput {
-            flex: 1; background: none; border: none; outline: none;
-            color: var(--text-main); font-size: 0.95rem; font-family: inherit;
-        }
-        #navSearchInput::placeholder { color: var(--text-muted); }
-        .nav-search-results { max-height: 320px; overflow-y: auto; padding: 8px; }
-        .nav-search-result {
-            display: block; width: 100%; text-align: left; background: none; border: none;
-            color: var(--text-main); padding: 10px 12px; border-radius: 10px; cursor: pointer;
-            font-family: inherit; transition: background 0.2s var(--ease);
-        }
-        .nav-search-result:hover, .nav-search-result.result-active { background: rgba(255, 255, 255, 0.08); }
-        .nav-search-result .result-tag {
-            display: block; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.5px;
-            text-transform: uppercase; color: var(--accent); margin-bottom: 2px;
-        }
-        .nav-search-result .result-title { font-size: 0.9rem; font-weight: 600; }
-        .nav-search-empty { padding: 18px 16px; color: var(--text-muted); font-size: 0.85rem; text-align: center; }
-
-        /* ============================================================
-           AI ASSISTANT WIDGET
-           ============================================================ */
-        #aiChatToggle {
-            position: fixed; bottom: 24px; right: 24px; z-index: 9500;
-            width: 60px; height: 60px; border-radius: 50%;
-            background: var(--accent); color: white; border: none; cursor: pointer;
-            display: flex; align-items: center; justify-content: center; font-size: 1.5rem;
-            box-shadow: 0 10px 30px rgba(244, 63, 94, 0.5);
-            transition: background 0.3s var(--ease), transform 0.3s var(--ease-spring);
-        }
-        #aiChatToggle:hover { background: var(--accent-hover); transform: scale(1.06); }
-        #aiChatToggle:active { transform: scale(0.94); }
-        #aiChatToggle .chat-ping {
-            position: absolute; top: -3px; right: -3px; width: 14px; height: 14px; border-radius: 50%;
-            background: #38bdf8; border: 2px solid var(--bg-dark);
-        }
-        #aiChatToggle.chat-toggle-hide-ping .chat-ping { display: none; }
-
-        #aiChatPanel {
-            position: fixed; bottom: 96px; right: 24px; z-index: 9500;
-            width: 360px; max-width: calc(100vw - 32px);
-            height: 480px; max-height: calc(100vh - 140px);
-            background: var(--bg-card); border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 20px; backdrop-filter: blur(18px);
-            box-shadow: 0 25px 60px rgba(0,0,0,0.6);
-            display: flex; flex-direction: column; overflow: hidden;
-            opacity: 0; visibility: hidden; transform: translateY(16px) scale(0.97);
-            transition: opacity 0.35s var(--ease-spring), transform 0.35s var(--ease-spring), visibility 0.35s;
-        }
-        #aiChatPanel.chat-open { opacity: 1; visibility: visible; transform: translateY(0) scale(1); }
-        .chat-header {
-            padding: 16px 18px; display: flex; align-items: center; justify-content: space-between;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-            background: rgba(255, 255, 255, 0.03);
-        }
-        .chat-header-title { display: flex; align-items: center; gap: 10px; }
-        .chat-avatar {
-            width: 34px; height: 34px; border-radius: 50%;
-            background: linear-gradient(135deg, var(--accent), #8b6cf0);
-            display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;
-        }
-        .chat-header-title h4 { font-size: 0.95rem; font-weight: 700; }
-        .chat-header-title p { font-size: 0.72rem; color: var(--text-muted); display: flex; align-items: center; gap: 5px; }
-        .chat-header-title p .status-dot { width: 6px; height: 6px; border-radius: 50%; background: #34d399; }
-        .chat-close-btn {
-            background: none; border: none; color: var(--text-muted); font-size: 1.2rem; cursor: pointer;
-            width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-            transition: background 0.2s var(--ease), color 0.2s var(--ease);
-        }
-        .chat-close-btn:hover { background: rgba(255,255,255,0.08); color: var(--text-main); }
-        .chat-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-        .chat-msg { max-width: 85%; padding: 10px 14px; border-radius: 14px; font-size: 0.87rem; line-height: 1.5; animation: chatMsgIn 0.3s var(--ease-spring); }
-        @keyframes chatMsgIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-        .chat-msg.bot { align-self: flex-start; background: rgba(255, 255, 255, 0.07); border-bottom-left-radius: 4px; }
-        .chat-msg.user { align-self: flex-end; background: var(--accent); color: white; border-bottom-right-radius: 4px; }
-        .chat-typing { align-self: flex-start; display: flex; gap: 4px; padding: 12px 14px; background: rgba(255,255,255,0.07); border-radius: 14px; border-bottom-left-radius: 4px; }
-        .chat-typing span { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); animation: chatTyping 1.1s infinite ease-in-out; }
-        .chat-typing span:nth-child(2) { animation-delay: 0.15s; }
-        .chat-typing span:nth-child(3) { animation-delay: 0.3s; }
-        @keyframes chatTyping { 0%, 60%, 100% { transform: translateY(0); opacity: 0.5; } 30% { transform: translateY(-4px); opacity: 1; } }
-        .chat-quick-replies { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 12px 16px; }
-        .chat-quick-reply {
-            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: var(--text-main);
-            font-size: 0.76rem; padding: 6px 12px; border-radius: 50px; cursor: pointer; font-family: inherit;
-            transition: background 0.2s var(--ease), border-color 0.2s var(--ease);
-        }
-        .chat-quick-reply:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.25); }
-        .chat-input-row { display: flex; gap: 8px; padding: 12px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
-        #chatInput {
-            flex: 1; background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 50px; padding: 10px 16px; color: var(--text-main); font-size: 0.87rem; font-family: inherit; outline: none;
-            transition: border-color 0.25s var(--ease);
-        }
-        #chatInput:focus { border-color: var(--accent); }
-        .chat-send-btn {
-            width: 40px; height: 40px; border-radius: 50%; background: var(--accent); border: none; color: white;
-            cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;
-            transition: background 0.25s var(--ease), transform 0.2s var(--ease);
-        }
-        .chat-send-btn:hover { background: var(--accent-hover); }
-        .chat-send-btn:active { transform: scale(0.92); }
-        @media (max-width: 480px) {
-            #aiChatPanel { right: 16px; bottom: 88px; }
-            #aiChatToggle { right: 16px; bottom: 16px; }
-        }
-
-        /* ============================================================
-           SCROLL-STORYTELLING — pinned "How it works" stepper
-           ============================================================ */
-        .how-it-works { position: relative; }
-        .steps-progress-line {
-            position: absolute; left: 50%; top: 60px; bottom: 60px; width: 2px;
-            background: rgba(255, 255, 255, 0.08); transform: translateX(-50%); z-index: 0;
-            display: none;
-        }
-        .steps-progress-line .steps-progress-fill {
-            width: 100%; height: 0%; background: linear-gradient(180deg, var(--accent), #fb923c); transform-origin: top;
-        }
-        @media (min-width: 901px) {
-            .steps-progress-line { display: block; }
-        }
-        .step-card.step-active { border-color: var(--accent); box-shadow: 0 15px 35px rgba(244, 63, 94, 0.25); }
-        .step-card.step-active .step-number { background: var(--accent); box-shadow: 0 0 0 6px rgba(244, 63, 94, 0.15); }
-
-        @media (prefers-reduced-motion: reduce) {
-            #preloader, #pageCurtain { transition: opacity 0.15s linear !important; }
-            .personalized-strip, #aiChatPanel, .nav-search-panel, .chat-msg { transition: none !important; animation: none !important; }
-        }
     </style>
 </head>
 <body>
-
-    <div id="preloader">
-        <div class="preloader-mark">Scor<span>vix</span></div>
-        <div class="preloader-bar"><div class="preloader-bar-fill" id="preloaderFill"></div></div>
-    </div>
-
-    <div id="pageCurtain"></div>
 
     <div id="auth-gate">
         <div class="gate-card">
@@ -1222,17 +981,6 @@
             <a href="#sports" class="nav-pill">Sports</a>
             <a href="#faq" class="nav-pill">FAQ</a>
         </div>
-        <div class="nav-search-wrap">
-            <button type="button" class="nav-search-btn" id="navSearchBtn" aria-label="Search" aria-expanded="false">🔍</button>
-            <div class="nav-search-panel" id="navSearchPanel">
-                <div class="nav-search-input-row">
-                    <span>🔍</span>
-                    <input type="text" id="navSearchInput" placeholder="Search features, sports, FAQs…" autocomplete="off">
-                </div>
-                <div class="nav-search-results" id="navSearchResults"></div>
-            </div>
-        </div>
-
         <div class="nav-right">
             <span id="user-display"></span>
             <button onclick="logout()" class="auth-btn btn-danger">Logout</button>
@@ -1241,8 +989,6 @@
     </nav>
 
     <section class="hero animate-in" id="hero-section">
-        <canvas id="heroCanvas3D" class="hero-3d-canvas" aria-hidden="true"></canvas>
-        <div class="personalized-strip" id="personalizedStrip"><span class="dot"></span><span id="personalizedStripText"></span></div>
         <h1>Add <span>Sports Overlays</span> to your live stream</h1>
         <p>Works alongside OBS, vMix and Streamlabs. Professional TV-style graphics in seconds.</p>
         <a href="#sports" class="cta-btn">Start Streaming ➔</a>
@@ -1685,30 +1431,6 @@
         </div>
     </section>
 
-    <button type="button" id="aiChatToggle" aria-label="Open Scorvix Assistant">
-        💬
-        <span class="chat-ping"></span>
-    </button>
-
-    <div id="aiChatPanel" role="dialog" aria-label="Scorvix Assistant">
-        <div class="chat-header">
-            <div class="chat-header-title">
-                <div class="chat-avatar">🎙️</div>
-                <div>
-                    <h4>Scorvix Assistant</h4>
-                    <p><span class="status-dot"></span> Usually replies instantly</p>
-                </div>
-            </div>
-            <button type="button" class="chat-close-btn" id="chatCloseBtn" aria-label="Close chat">✕</button>
-        </div>
-        <div class="chat-messages" id="chatMessages"></div>
-        <div class="chat-quick-replies" id="chatQuickReplies"></div>
-        <div class="chat-input-row">
-            <input type="text" id="chatInput" placeholder="Ask about Scorvix…" autocomplete="off">
-            <button type="button" class="chat-send-btn" id="chatSendBtn" aria-label="Send">➤</button>
-        </div>
-    </div>
-
     <script>
         const firebaseConfig = {
             apiKey: "AIzaSyAYc_bEB9C4RhhLhPBEJsJRFRUppcR45yo",
@@ -1818,22 +1540,10 @@
             btn.closest('.faq-item').classList.toggle('open');
         }
 
-        // Shared smooth page-transition: fades a full-screen curtain in,
-        // then navigates — used anywhere we send the visitor to another
-        // real page (tt/football/cricket templates) so the jump feels
-        // continuous instead of an abrupt browser navigation.
-        function navigateWithTransition(url) {
-            const curtain = document.getElementById('pageCurtain');
-            const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-            if (!curtain || reducedMotion) { window.location.href = url; return; }
-            curtain.classList.add('curtain-active');
-            setTimeout(() => { window.location.href = url; }, 420);
-        }
-
         function openTableTennisTemplates() {
             if (isUserLoggedIn) {
                 logActivity(auth.currentUser.email, "Overlay Opened", "Table Tennis");
-                navigateWithTransition("tt-templates.html");
+                window.location.href = "tt-templates.html";
             } else {
                 alert("Pehle Google Login karein!");
                 authGate.classList.remove('hidden');
@@ -1844,7 +1554,7 @@
         function openFootballTemplates() {
             if (isUserLoggedIn) {
                 logActivity(auth.currentUser.email, "Overlay Opened", "Football");
-                navigateWithTransition("football-templates.html");
+                window.location.href = "football-templates.html";
             } else {
                 alert("Pehle Google Login karein!");
                 authGate.classList.remove('hidden');
@@ -1855,7 +1565,7 @@
         function openCricketTemplates() {
             if (isUserLoggedIn) {
                 logActivity(auth.currentUser.email, "Overlay Opened", "Cricket");
-                navigateWithTransition("cricket-templates.html");
+                window.location.href = "cricket-templates.html";
             } else {
                 alert("Pehle Google Login karein!");
                 authGate.classList.remove('hidden');
@@ -1911,7 +1621,7 @@
                     card.onclick = () => {
                         if (isUserLoggedIn) {
                             logActivity(auth.currentUser.email, "Overlay Opened", sport.name);
-                            navigateWithTransition(`/${sport.slug}-templates.html?uid=${currentUserUid}`);
+                            window.location.href = `/${sport.slug}-templates.html?uid=${currentUserUid}`;
                         } else {
                             alert("Pehle Google Login karein!");
                             authGate.classList.remove('hidden');
@@ -2407,455 +2117,6 @@
         document.querySelectorAll('.reveal-on-scroll').forEach(el => {
             observer.observe(el);
         });
-    </script>
-
-    <script>
-        // ============================================================
-        // PRELOADER
-        // ============================================================
-        (function setupPreloader() {
-            const preloader = document.getElementById('preloader');
-            const fill = document.getElementById('preloaderFill');
-            if (!preloader) return;
-            let progress = 0;
-            const tick = setInterval(() => {
-                progress = Math.min(90, progress + Math.random() * 18);
-                if (fill) fill.style.width = progress + '%';
-            }, 180);
-            const finish = () => {
-                clearInterval(tick);
-                if (fill) fill.style.width = '100%';
-                setTimeout(() => { preloader.classList.add('preloader-hidden'); }, 260);
-            };
-            if (document.readyState === 'complete') {
-                setTimeout(finish, 400);
-            } else {
-                window.addEventListener('load', () => setTimeout(finish, 250));
-                // Safety net so a slow-loading asset never traps a visitor behind the preloader
-                setTimeout(finish, 4000);
-            }
-        })();
-
-        // Reset the full-screen transition curtain if a visitor lands back
-        // here via the browser's back button (bfcache restore).
-        window.addEventListener('pageshow', () => {
-            const curtain = document.getElementById('pageCurtain');
-            if (curtain) curtain.classList.remove('curtain-active');
-        });
-
-        // ============================================================
-        // PERSONALIZATION — returning-visitor + time-of-day awareness
-        // ============================================================
-        (function setupPersonalization() {
-            const strip = document.getElementById('personalizedStrip');
-            const stripText = document.getElementById('personalizedStripText');
-            let isReturning = false;
-            try {
-                isReturning = !!localStorage.getItem('scorvix_visited_before');
-                localStorage.setItem('scorvix_visited_before', '1');
-            } catch (e) { /* storage unavailable — fall back to generic greeting */ }
-
-            const hour = new Date().getHours();
-            let timeGreeting = 'Hello';
-            if (hour >= 21 || hour < 5) timeGreeting = 'Streaming late tonight?';
-            else if (hour < 12) timeGreeting = 'Good morning';
-            else if (hour < 17) timeGreeting = 'Good afternoon';
-            else timeGreeting = 'Good evening';
-
-            const message = isReturning
-                ? 'Welcome back — pick up where you left off'
-                : timeGreeting + '! Let\'s get your first overlay live';
-
-            if (stripText) stripText.textContent = message;
-            if (strip) requestAnimationFrame(() => strip.classList.add('strip-visible'));
-
-            window.getScorvixPersonalizedGreeting = function () {
-                return isReturning
-                    ? 'Welcome back! Need help picking up your overlay setup, or have a new question?'
-                    : timeGreeting + '! I\'m the Scorvix Assistant — ask me about setup, supported sports, or security.';
-            };
-        })();
-
-        // ============================================================
-        // GSAP SCROLL-STORYTELLING + smooth in-page scrolling
-        // ============================================================
-        (function setupScrollStorytelling() {
-            if (!window.gsap || !window.ScrollTrigger) return;
-            gsap.registerPlugin(ScrollTrigger, window.ScrollToPlugin);
-
-            const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-            if (reducedMotion) return;
-
-            // Ambient blob parallax — subtle depth as the page scrolls
-            gsap.utils.toArray('.ambient-blob').forEach((blob, i) => {
-                gsap.to(blob, {
-                    y: (i % 2 === 0 ? -120 : 120),
-                    ease: 'none',
-                    scrollTrigger: { trigger: document.body, start: 'top top', end: 'bottom bottom', scrub: 1.2 }
-                });
-            });
-
-            // Bento cards — soft scale-in tied to scroll position, layered on the existing fade-up reveal
-            gsap.utils.toArray('.bento-card').forEach((card) => {
-                gsap.fromTo(card, { scale: 0.92 }, {
-                    scale: 1, ease: 'power2.out',
-                    scrollTrigger: { trigger: card, start: 'top 85%', end: 'top 55%', scrub: 0.6 }
-                });
-            });
-
-            // "How it works" — pinned, scroll-scrubbed step-through storytelling (desktop only)
-            const stepSection = document.querySelector('.how-it-works');
-            const steps = gsap.utils.toArray('.step-card');
-            const progressFill = document.querySelector('.steps-progress-fill');
-            if (stepSection && steps.length && window.innerWidth > 900) {
-                const tl = gsap.timeline({
-                    scrollTrigger: {
-                        trigger: stepSection,
-                        start: 'top top+=90',
-                        end: '+=' + (steps.length * 300),
-                        scrub: 0.8,
-                        pin: true,
-                        anticipatePin: 1
-                    }
-                });
-                steps.forEach((step, i) => {
-                    tl.to({}, { duration: 0.3 });
-                    tl.call(() => steps.forEach(s => s.classList.remove('step-active')));
-                    tl.call(() => step.classList.add('step-active'));
-                    if (progressFill) tl.to(progressFill, { height: ((i + 1) / steps.length * 100) + '%', duration: 0.5 }, '<');
-                });
-            }
-
-            window.addEventListener('load', () => setTimeout(() => ScrollTrigger.refresh(), 600));
-        })();
-
-        (function setupSmoothAnchorScroll() {
-            if (!window.gsap) return;
-            const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-            document.addEventListener('click', (e) => {
-                const link = e.target.closest('a[href^="#"]');
-                if (!link) return;
-                const id = link.getAttribute('href');
-                if (!id || id === '#') return;
-                const target = document.querySelector(id);
-                if (!target) return;
-                e.preventDefault();
-                if (reducedMotion || !gsap.plugins || !window.ScrollToPlugin) {
-                    target.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth' });
-                    return;
-                }
-                gsap.to(window, { duration: 1, ease: 'power2.inOut', scrollTo: { y: target, offsetY: 84 } });
-            });
-        })();
-
-        // ============================================================
-        // SMART SEARCH WITH AUTOCOMPLETE
-        // ============================================================
-        (function setupNavSearch() {
-            const btn = document.getElementById('navSearchBtn');
-            const panel = document.getElementById('navSearchPanel');
-            const input = document.getElementById('navSearchInput');
-            const resultsEl = document.getElementById('navSearchResults');
-            if (!btn || !panel || !input || !resultsEl) return;
-
-            function buildIndex() {
-                const items = [];
-                document.querySelectorAll('section[id] > h2').forEach(h2 => {
-                    const section = h2.closest('section[id]');
-                    if (section) items.push({ tag: 'Section', title: h2.textContent.trim(), target: '#' + section.id });
-                });
-                document.querySelectorAll('.faq-item').forEach((item, i) => {
-                    const q = item.querySelector('.faq-question span:first-child');
-                    if (q) items.push({ tag: 'FAQ', title: q.textContent.trim(), target: '#faq', faqIndex: i });
-                });
-                document.querySelectorAll('.sport-card h3').forEach(h3 => {
-                    items.push({ tag: 'Sport', title: h3.textContent.trim(), target: '#sports' });
-                });
-                document.querySelectorAll('.integration-card h4').forEach(h4 => {
-                    items.push({ tag: 'Integration', title: h4.textContent.trim(), target: '#integrations' });
-                });
-                return items;
-            }
-
-            let index = [];
-            let activeIndex = -1;
-
-            function openPanel() {
-                index = buildIndex();
-                panel.classList.add('search-open');
-                btn.setAttribute('aria-expanded', 'true');
-                setTimeout(() => input.focus(), 50);
-                renderResults(input.value);
-            }
-            function closePanel() {
-                panel.classList.remove('search-open');
-                btn.setAttribute('aria-expanded', 'false');
-                activeIndex = -1;
-            }
-
-            function renderResults(query) {
-                const q = query.trim().toLowerCase();
-                const matches = (q ? index.filter(item => item.title.toLowerCase().includes(q)) : index).slice(0, 6);
-                resultsEl.innerHTML = '';
-                activeIndex = -1;
-                if (!matches.length) {
-                    resultsEl.innerHTML = '<div class="nav-search-empty">No matches — try "OBS", "cricket", "mobile"…</div>';
-                    return;
-                }
-                matches.forEach((item) => {
-                    const el = document.createElement('button');
-                    el.type = 'button';
-                    el.className = 'nav-search-result';
-                    el.innerHTML = '<span class="result-tag">' + item.tag + '</span><span class="result-title">' + item.title + '</span>';
-                    el.addEventListener('click', () => goToResult(item));
-                    resultsEl.appendChild(el);
-                });
-            }
-
-            function goToResult(item) {
-                const target = document.querySelector(item.target);
-                closePanel();
-                input.value = '';
-                if (item.tag === 'FAQ') {
-                    const faqItems = document.querySelectorAll('.faq-item');
-                    const faqEl = faqItems[item.faqIndex];
-                    if (faqEl) faqEl.classList.add('open');
-                }
-                if (target) {
-                    if (window.gsap) {
-                        gsap.to(window, { duration: 1, ease: 'power2.inOut', scrollTo: { y: target, offsetY: 84 } });
-                    } else {
-                        target.scrollIntoView({ behavior: 'smooth' });
-                    }
-                }
-            }
-
-            btn.addEventListener('click', () => {
-                panel.classList.contains('search-open') ? closePanel() : openPanel();
-            });
-            document.addEventListener('click', (e) => {
-                if (!panel.contains(e.target) && e.target !== btn) closePanel();
-            });
-            input.addEventListener('input', () => renderResults(input.value));
-            input.addEventListener('keydown', (e) => {
-                const resultEls = Array.from(resultsEl.querySelectorAll('.nav-search-result'));
-                if (e.key === 'ArrowDown') {
-                    e.preventDefault();
-                    activeIndex = Math.min(activeIndex + 1, resultEls.length - 1);
-                    resultEls.forEach((el, i) => el.classList.toggle('result-active', i === activeIndex));
-                    if (resultEls[activeIndex]) resultEls[activeIndex].scrollIntoView({ block: 'nearest' });
-                } else if (e.key === 'ArrowUp') {
-                    e.preventDefault();
-                    activeIndex = Math.max(activeIndex - 1, 0);
-                    resultEls.forEach((el, i) => el.classList.toggle('result-active', i === activeIndex));
-                } else if (e.key === 'Enter') {
-                    if (activeIndex >= 0 && resultEls[activeIndex]) resultEls[activeIndex].click();
-                    else if (resultEls[0]) resultEls[0].click();
-                } else if (e.key === 'Escape') {
-                    closePanel();
-                }
-            });
-        })();
-
-        // ============================================================
-        // AI ASSISTANT — rule-based FAQ matcher (swap getAssistantReply
-        // for a real backend call later if generative answers are wanted)
-        // ============================================================
-        (function setupAIChatWidget() {
-            const toggleBtn = document.getElementById('aiChatToggle');
-            const panel = document.getElementById('aiChatPanel');
-            const closeBtn = document.getElementById('chatCloseBtn');
-            const messagesEl = document.getElementById('chatMessages');
-            const quickRepliesEl = document.getElementById('chatQuickReplies');
-            const inputEl = document.getElementById('chatInput');
-            const sendBtn = document.getElementById('chatSendBtn');
-            if (!toggleBtn || !panel || !messagesEl) return;
-
-            const knowledge = [
-                { keys: ['what is scorvix', 'what does scorvix do', 'about scorvix'], reply: 'Scorvix is a browser-based broadcast graphics tool — control live sports scoreboards and overlays in real time from your phone or laptop, no installs needed.' },
-                { keys: ['obs', 'vmix', 'streamlabs', 'compatible', 'compatibility', 'software'], reply: 'Every overlay runs as a browser source, so it works with OBS Studio, vMix, Streamlabs, or anything else that supports browser sources.' },
-                { keys: ['install', 'download', 'setup', 'set up'], reply: 'No installs needed — sign in with Google, open the control panel in your browser, and paste your unique overlay link into your streaming software.' },
-                { keys: ['sport', 'cricket', 'football', 'table tennis', 'games'], reply: 'Table Tennis, Football, and Cricket are live right now, with more sports on the way.' },
-                { keys: ['secure', 'security', 'private', 'safe', 'data'], reply: 'Every control panel sits behind Google Sign-In, and each user gets a private overlay room only they can control.' },
-                { keys: ['mobile', 'phone', 'anywhere'], reply: 'The control panel works fully on mobile — you can update scores and colors mid-stream without a laptop.' },
-                { keys: ['live', 'update', 'real time', 'realtime', 'during stream'], reply: 'Yes — every change in the control panel (score, timer, colors, logos) reflects on your live overlay instantly.' },
-                { keys: ['login', 'sign in', 'google', 'account'], reply: 'Sign-in is handled through your Google account — tap "Sign in with Google" on the access screen to get started.' },
-                { keys: ['branding', 'logo', 'color', 'team name', 'custom'], reply: 'Team colors, logos, and sponsor branding are all editable live — try the demo editor right in the hero section above!' },
-                { keys: ['contact', 'human', 'support', 'help me', 'talk to someone'], reply: "For anything I can't answer, drop your question here and I'll do my best — or check the FAQ section below." }
-            ];
-
-            function getAssistantReply(query) {
-                const q = query.toLowerCase();
-                let best = null, bestScore = 0;
-                knowledge.forEach(entry => {
-                    entry.keys.forEach(key => {
-                        if (q.includes(key) && key.length > bestScore) { bestScore = key.length; best = entry.reply; }
-                    });
-                });
-                return best || "I'm not sure about that one yet — try asking about supported sports, OBS/vMix setup, security, or mobile control. The FAQ section below covers more.";
-            }
-
-            function addMessage(text, sender) {
-                const el = document.createElement('div');
-                el.className = 'chat-msg ' + sender;
-                el.textContent = text;
-                messagesEl.appendChild(el);
-                messagesEl.scrollTop = messagesEl.scrollHeight;
-            }
-
-            function showTyping() {
-                const el = document.createElement('div');
-                el.className = 'chat-typing';
-                el.id = 'chatTypingIndicator';
-                el.innerHTML = '<span></span><span></span><span></span>';
-                messagesEl.appendChild(el);
-                messagesEl.scrollTop = messagesEl.scrollHeight;
-            }
-            function hideTyping() {
-                const el = document.getElementById('chatTypingIndicator');
-                if (el) el.remove();
-            }
-
-            function botReply(text) {
-                showTyping();
-                setTimeout(() => {
-                    hideTyping();
-                    addMessage(text, 'bot');
-                }, 500 + Math.random() * 400);
-            }
-
-            function sendUserMessage(text) {
-                const trimmed = text.trim();
-                if (!trimmed) return;
-                addMessage(trimmed, 'user');
-                inputEl.value = '';
-                botReply(getAssistantReply(trimmed));
-            }
-
-            const quickReplyPrompts = ['Which software does it support?', 'Is my data secure?', 'Which sports are supported?', 'Does it work on mobile?'];
-            quickReplyPrompts.forEach(prompt => {
-                const chip = document.createElement('button');
-                chip.type = 'button';
-                chip.className = 'chat-quick-reply';
-                chip.textContent = prompt;
-                chip.addEventListener('click', () => sendUserMessage(prompt));
-                quickRepliesEl.appendChild(chip);
-            });
-
-            let greeted = false;
-            function openChat() {
-                panel.classList.add('chat-open');
-                toggleBtn.classList.add('chat-toggle-hide-ping');
-                try { localStorage.setItem('scorvix_chat_seen', '1'); } catch (e) { /* ignore */ }
-                if (!greeted) {
-                    greeted = true;
-                    const greeting = (window.getScorvixPersonalizedGreeting && window.getScorvixPersonalizedGreeting()) ||
-                        "Hi! I'm the Scorvix Assistant. Ask me anything about setup, supported sports, or security.";
-                    botReply(greeting);
-                }
-            }
-            function closeChat() { panel.classList.remove('chat-open'); }
-
-            toggleBtn.addEventListener('click', () => {
-                panel.classList.contains('chat-open') ? closeChat() : openChat();
-            });
-            closeBtn.addEventListener('click', closeChat);
-            sendBtn.addEventListener('click', () => sendUserMessage(inputEl.value));
-            inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendUserMessage(inputEl.value); });
-
-            try { if (localStorage.getItem('scorvix_chat_seen')) toggleBtn.classList.add('chat-toggle-hide-ping'); } catch (e) { /* ignore */ }
-        })();
-    </script>
-
-    <script type="module">
-        import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js';
-
-        // ============================================================
-        // AMBIENT 3D HERO VISUAL — a soft wireframe echoing the overlay
-        // demo card's pink/purple/cyan accents. Purely decorative, so
-        // it fails silently (no WebGL, low-power device, reduced motion).
-        // ============================================================
-        (function initHero3D() {
-            const canvas = document.getElementById('heroCanvas3D');
-            const heroSection = document.getElementById('hero-section');
-            if (!canvas || !heroSection) return;
-            if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-            if (window.innerWidth < 641) return;
-
-            let renderer;
-            try {
-                renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
-            } catch (e) { return; }
-
-            const scene = new THREE.Scene();
-            const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-            camera.position.set(0, 0, 9);
-
-            const geometry = new THREE.IcosahedronGeometry(2.3, 1);
-            const material = new THREE.MeshStandardMaterial({
-                color: 0xec4a9b, emissive: 0x8b6cf0, emissiveIntensity: 0.35,
-                wireframe: true, transparent: true, opacity: 0.5
-            });
-            const mesh = new THREE.Mesh(geometry, material);
-            mesh.position.set(0, -0.6, 0);
-            scene.add(mesh);
-
-            const particleCount = 90;
-            const positions = new Float32Array(particleCount * 3);
-            for (let i = 0; i < particleCount; i++) {
-                positions[i * 3] = (Math.random() - 0.5) * 16;
-                positions[i * 3 + 1] = (Math.random() - 0.5) * 10;
-                positions[i * 3 + 2] = (Math.random() - 0.5) * 10 - 2;
-            }
-            const particleGeo = new THREE.BufferGeometry();
-            particleGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            const particleMat = new THREE.PointsMaterial({ color: 0x3fd6ea, size: 0.045, transparent: true, opacity: 0.55 });
-            const particles = new THREE.Points(particleGeo, particleMat);
-            scene.add(particles);
-
-            scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-            const point = new THREE.PointLight(0x8b6cf0, 1.4, 20);
-            point.position.set(4, 3, 6);
-            scene.add(point);
-
-            function resize() {
-                const rect = heroSection.getBoundingClientRect();
-                const w = Math.max(1, rect.width);
-                const h = Math.max(1, rect.height);
-                renderer.setSize(w, h, false);
-                renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
-                camera.aspect = w / h;
-                camera.updateProjectionMatrix();
-            }
-            resize();
-            window.addEventListener('resize', resize);
-
-            let targetX = 0, targetY = 0;
-            window.addEventListener('mousemove', (e) => {
-                targetX = (e.clientX / window.innerWidth - 0.5) * 0.6;
-                targetY = (e.clientY / window.innerHeight - 0.5) * 0.4;
-            });
-
-            let visible = true;
-            const io = new IntersectionObserver((entries) => {
-                entries.forEach(entry => { visible = entry.isIntersecting; });
-            }, { threshold: 0.05 });
-            io.observe(heroSection);
-
-            function animate() {
-                requestAnimationFrame(animate);
-                if (!visible || document.hidden) return;
-                mesh.rotation.y += 0.0018;
-                mesh.rotation.x += 0.0008;
-                particles.rotation.y += 0.0004;
-                camera.position.x += (targetX - camera.position.x) * 0.03;
-                camera.position.y += (-targetY - camera.position.y) * 0.03;
-                camera.lookAt(0, -0.4, 0);
-                renderer.render(scene, camera);
-            }
-            animate();
-            canvas.classList.add('hero-3d-ready');
-        })();
     </script>
 </body>
 </html>
