@@ -940,6 +940,39 @@ io.on('connection', async (socket) => {
         io.to(room).emit('cricketHideMatchSummary');
     });
 
+    // 🏏🎚️ Left-slide player/bowler stat cards (batting-team / bowling-team
+    // branded, Match or Tournament scope). Same pure-broadcast treatment as
+    // cricketEvent/cricketInningsSummary above — an on/off toggle on the
+    // panel, not persisted scoreboard state, so nothing here touches
+    // cricketState or Firestore.
+    socket.on('cricketPlayerStat', (data) => {
+        let room = socket.activeRoom;
+        const targetId = data.room ? data.room.replace('room-', '') : (data.id || data.uid || matchIdForClient);
+        if (targetId && targetId !== 'default') room = `room-${targetId}`;
+        io.to(room).emit('cricketPlayerStat', data.data || data);
+    });
+
+    socket.on('cricketBowlerStat', (data) => {
+        let room = socket.activeRoom;
+        const targetId = data.room ? data.room.replace('room-', '') : (data.id || data.uid || matchIdForClient);
+        if (targetId && targetId !== 'default') room = `room-${targetId}`;
+        io.to(room).emit('cricketBowlerStat', data.data || data);
+    });
+
+    socket.on('cricketHidePlayerStat', (data) => {
+        let room = socket.activeRoom;
+        const targetId = data && data.room ? data.room.replace('room-', '') : (data && (data.id || data.uid)) || matchIdForClient;
+        if (targetId && targetId !== 'default') room = `room-${targetId}`;
+        io.to(room).emit('cricketHidePlayerStat');
+    });
+
+    socket.on('cricketHideBowlerStat', (data) => {
+        let room = socket.activeRoom;
+        const targetId = data && data.room ? data.room.replace('room-', '') : (data && (data.id || data.uid)) || matchIdForClient;
+        if (targetId && targetId !== 'default') room = `room-${targetId}`;
+        io.to(room).emit('cricketHideBowlerStat');
+    });
+
     // 🍃 Every ball, straight to MongoDB — the permanent source of truth.
     // Fired once per recordBall() call in cricket-panel.html, independent
     // of the cricketState broadcast above (that one's just "what the
