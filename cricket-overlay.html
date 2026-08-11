@@ -521,6 +521,56 @@
     background:linear-gradient(135deg, var(--bc-navy,#071c40), #0c2e63);
     font-family:var(--font-num); font-weight:900; font-size:min(1.7vw,18px); letter-spacing:1.5px; color:var(--bc-gold,#f5c518);
   }
+
+  /* ============================================================
+     LEFT-SLIDE PLAYER / BOWLER STAT CARDS
+     Team-branded broadcast cards that emerge from the left edge of
+     the screen — driven by an operator on/off toggle in the panel,
+     not a timed popup: they stay up until switched off (or replaced
+     by the next player), and refresh their numbers live while shown
+     ("This Match" scope) without re-playing the whole entrance.
+     Motion uses GSAP's expo.out — the same "fast start, silky
+     deceleration, no bounce" curve as the rest of this overlay
+     (mid-row/bottom-row build, digit rolls, summary cards) — so it
+     reads as one consistent design language, not a bolted-on widget.
+     ============================================================ */
+  .stat-card{
+    --stat-accent: var(--bc-gold,#f5c518);
+    position:absolute; left:1.6vw; top:15vh;
+    width:min(23vw,296px); max-width:78vw;
+    background:linear-gradient(165deg, rgba(20,28,58,0.97), rgba(9,14,32,0.98));
+    border-radius:14px; overflow:hidden;
+    box-shadow:0 24px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.07);
+    display:none; flex-direction:column;
+    font-family:var(--font-ui); color:#fff;
+    border-left:5px solid var(--stat-accent);
+    will-change:transform, opacity, filter;
+  }
+  #bowler-stat-card{ top:calc(15vh + 168px); }
+
+  .stat-head{ display:flex; align-items:flex-start; gap:11px; padding:14px 14px 12px; }
+  .stat-badge{
+    flex:none; width:42px; height:42px; border-radius:50%; margin-top:1px;
+    background:radial-gradient(circle at 35% 30%, #ffffff, #dbe6fb 55%, #aec0ea);
+    border:2px solid var(--stat-accent);
+    display:flex; align-items:center; justify-content:center;
+    font-family:var(--font-num); font-weight:900; font-size:12px; color:var(--bc-blue,#0b3d91);
+    box-shadow:0 2px 10px rgba(0,0,0,0.4);
+  }
+  .stat-badge.has-logo{ background-color:#fff; background-size:cover; background-position:center; }
+  .stat-head-text{ min-width:0; flex:1 1 auto; }
+  .stat-team{ font-size:10px; font-weight:800; letter-spacing:1.6px; color:var(--stat-accent); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .stat-name{ font-family:var(--font-num); font-weight:900; font-size:min(1.65vw,19px); line-height:1.16; color:#fff; margin-top:3px; white-space:normal; overflow-wrap:break-word; }
+  .stat-scope{
+    flex:none; font-size:8.5px; font-weight:800; letter-spacing:1.1px; color:#1a1408;
+    background:linear-gradient(160deg, var(--stat-accent), #c99a12); padding:4px 8px; border-radius:20px;
+    text-transform:uppercase; margin-top:2px;
+  }
+  .stat-grid{ display:grid; grid-template-columns:repeat(3,1fr); }
+  .stat-cell{ padding:9px 6px 10px; border-top:1px solid rgba(255,255,255,0.09); }
+  .stat-cell:nth-last-child(-n+3){ padding-bottom:13px; }
+  .stat-cell .lbl{ font-size:8.5px; font-weight:800; letter-spacing:.8px; color:rgba(255,255,255,0.5); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .stat-cell .val{ font-family:var(--font-num); font-weight:900; font-size:min(1.5vw,16.5px); color:#fff; margin-top:3px; font-variant-numeric:tabular-nums; }
 </style>
 </head>
 <body>
@@ -679,6 +729,30 @@
     <div class="ms-footer" id="ms-result"></div>
   </div>
 
+  <div id="player-stat-card" class="stat-card">
+    <div class="stat-head">
+      <div class="stat-badge" id="ps-badge">TM</div>
+      <div class="stat-head-text">
+        <div class="stat-team" id="ps-team">TEAM</div>
+        <div class="stat-name" id="ps-name">PLAYER</div>
+      </div>
+      <div class="stat-scope" id="ps-scope">THIS MATCH</div>
+    </div>
+    <div class="stat-grid" id="ps-grid"></div>
+  </div>
+
+  <div id="bowler-stat-card" class="stat-card">
+    <div class="stat-head">
+      <div class="stat-badge" id="bs-badge">TM</div>
+      <div class="stat-head-text">
+        <div class="stat-team" id="bs-team">TEAM</div>
+        <div class="stat-name" id="bs-name">BOWLER</div>
+      </div>
+      <div class="stat-scope" id="bs-scope">THIS MATCH</div>
+    </div>
+    <div class="stat-grid" id="bs-grid"></div>
+  </div>
+
   <div id="conn-status">Connecting…</div>
 
 </div>
@@ -727,6 +801,13 @@ socket.on('cricketHideInningsSummary', () => {
 socket.on('cricketHideMatchSummary', () => {
   hideSummaryCard('match-summary-card', '.ms-row, .ms-footer');
 });
+// Left-slide player/bowler stat cards — persistent on/off, not timed.
+// A render call while the card is already up just refreshes the numbers
+// (pulseStatGrid) instead of replaying the slide-in.
+socket.on('cricketPlayerStat', (data) => renderPlayerStatCard(data));
+socket.on('cricketBowlerStat', (data) => renderBowlerStatCard(data));
+socket.on('cricketHidePlayerStat', () => playStatCardOut('player-stat-card'));
+socket.on('cricketHideBowlerStat', () => playStatCardOut('bowler-stat-card'));
 
 /* ============================================================
    DIGIT-LEVEL SCORE RENDERING
@@ -1538,6 +1619,88 @@ function hideSummaryCard(cardId, rowsSelector){
     }, '-=0.1');
 }
 
+/* ============================================================
+   LEFT-SLIDE PLAYER / BOWLER STAT CARDS
+   ============================================================ */
+// Entrance: slides + fades + un-blurs in from off-screen left, on the
+// same expo.out deceleration curve as the rest of the overlay's builds.
+function playStatCardIn(cardId){
+  const card = document.getElementById(cardId);
+  if(!card) return;
+  gsap.killTweensOf(card);
+  card.style.display = 'flex';
+  gsap.fromTo(card,
+    { xPercent: -135, opacity: 0, scale: 0.95, filter: 'blur(8px)' },
+    { xPercent: 0, opacity: 1, scale: 1, filter: 'blur(0px)', duration: 0.85, ease: 'expo.out' }
+  );
+}
+// Exit: mirrors the entrance back out to the left — same distance, a
+// touch quicker, so on/off feels like one continuous gesture rather than
+// two unrelated animations.
+function playStatCardOut(cardId){
+  const card = document.getElementById(cardId);
+  if(!card || card.style.display === 'none') return;
+  gsap.killTweensOf(card);
+  gsap.to(card, {
+    xPercent: -135, opacity: 0, scale: 0.95, filter: 'blur(8px)', duration: 0.55, ease: 'expo.in',
+    onComplete: () => { card.style.display = 'none'; }
+  });
+}
+// Card is already on screen and new numbers arrive (e.g. a run scored) —
+// don't replay the whole slide, just give the values a soft up-fade so
+// the update still reads as intentional motion, not a hard jump-cut.
+function pulseStatGrid(gridId){
+  const cells = document.querySelectorAll('#' + gridId + ' .val');
+  gsap.killTweensOf(cells);
+  gsap.fromTo(cells, { opacity: 0.35, y: -5 }, { opacity: 1, y: 0, duration: 0.4, stagger: 0.02, ease: 'power2.out' });
+}
+function fillStatGrid(gridId, pairs){
+  const wrap = document.getElementById(gridId);
+  wrap.innerHTML = '';
+  pairs.forEach(([label, value]) => {
+    const cell = document.createElement('div');
+    cell.className = 'stat-cell';
+    cell.innerHTML = `<div class="lbl">${escapeHtml(label)}</div><div class="val">${escapeHtml(value === undefined || value === null || value === '' ? '—' : value)}</div>`;
+    wrap.appendChild(cell);
+  });
+}
+function renderPlayerStatCard(d){
+  if(!d) return;
+  const card = document.getElementById('player-stat-card');
+  card.style.setProperty('--stat-accent', d.teamColor || '#f5c518');
+  setBadge(document.getElementById('ps-badge'), d.teamLogo, badgeText(d.teamShort, d.teamName));
+  document.getElementById('ps-team').textContent = (d.teamName || d.teamShort || '').toUpperCase();
+  document.getElementById('ps-name').textContent = (d.playerName || 'BATTER').toUpperCase();
+  document.getElementById('ps-scope').textContent = d.scope === 'tournament' ? 'TOURNAMENT' : 'THIS MATCH';
+
+  const cells = d.scope === 'tournament'
+    ? [['Matches', d.matches], ['Runs', d.runs], ['Average', d.average], ['S/R', d.sr],
+       ['High', d.highScore], ['4s', d.fours], ['6s', d.sixes], ['50s', d.fifties], ['100s', d.hundreds]]
+    : [['Runs', d.runs], ['Balls', d.balls], ['S/R', d.sr], ['4s', d.fours], ['6s', d.sixes]];
+  fillStatGrid('ps-grid', cells);
+
+  if(card.style.display === 'flex') pulseStatGrid('ps-grid');
+  else playStatCardIn('player-stat-card');
+}
+function renderBowlerStatCard(d){
+  if(!d) return;
+  const card = document.getElementById('bowler-stat-card');
+  card.style.setProperty('--stat-accent', d.teamColor || '#f5c518');
+  setBadge(document.getElementById('bs-badge'), d.teamLogo, badgeText(d.teamShort, d.teamName));
+  document.getElementById('bs-team').textContent = (d.teamName || d.teamShort || '').toUpperCase();
+  document.getElementById('bs-name').textContent = (d.playerName || 'BOWLER').toUpperCase();
+  document.getElementById('bs-scope').textContent = d.scope === 'tournament' ? 'TOURNAMENT' : 'THIS MATCH';
+
+  const cells = d.scope === 'tournament'
+    ? [['Matches', d.matches], ['Overs', d.overs], ['Wickets', d.wickets], ['Runs', d.runs],
+       ['Economy', d.economy], ['Average', d.average], ['Best', d.best], ['Maidens', d.maidens], ['Dots', d.dots]]
+    : [['Overs', d.overs], ['Maidens', d.maidens], ['Runs', d.runs], ['Wickets', d.wickets], ['Economy', d.economy]];
+  fillStatGrid('bs-grid', cells);
+
+  if(card.style.display === 'flex') pulseStatGrid('bs-grid');
+  else playStatCardIn('bowler-stat-card');
+}
+
 function renderInningsSummary(d){
   if(!d) return;
   // Badge: actual logo if the panel sent one, else the short-code text —
@@ -1642,4 +1805,3 @@ function renderMatchSummary(d){
 </script>
 </body>
 </html>
-
