@@ -1626,6 +1626,10 @@ document.getElementById('league-name').addEventListener('input', (e) => {
   saveLocal();
   refreshLeagueUI();
   refreshTournamentCardsIfShown();
+  // Pull that league's matches from MongoDB (debounced so we're not firing
+  // a request on every keystroke) — this is what picks up matches another
+  // laptop/browser already saved under this same league name.
+  debouncedSyncLeagueFromServer(state.leagueName);
 });
 document.getElementById('save-match-league-btn').addEventListener('click', () => saveMatchToLeague(false));
 document.getElementById('view-league-matches-btn').addEventListener('click', () => {
@@ -1951,32 +1955,92 @@ function buildMatchSummaryPayload(){
 
 /* ============================================================
    LEAGUE / TOURNAMENT DATABASE
-   Stored entirely in this browser's localStorage, keyed by league name,
-   as an array of completed (or in-progress) match records. Every match
-   saved under the same league name — automatically the instant it's
-   won/tied, or manually via "Save This Match" — feeds the automatic
-   Team / Player / Bowler "Tournament" cards further down. Matching is
-   purely by name (team name, batter name, bowler name), case/whitespace
-   -insensitive, so no external server or shared account is required.
+   Backed by MongoDB on the server (via /api/league/:name), so the same
+   league's match history — and the automatic Team / Player / Bowler
+   "Tournament" cards built from it — shows up identically no matter which
+   laptop/browser the panel is opened from (e.g. one machine scoring,
+   another just watching the overlay/graphics). Matching is purely by name
+   (team name, batter name, bowler name), case/whitespace-insensitive.
+
+   Reads/writes are cache-first + optimistic: every read comes from an
+   in-memory cache (leagueCache) that's kept in sync with the server, and
+   every write updates that cache + this browser's localStorage copy
+   *immediately* so scoring never has to wait on a network round-trip —
+   the actual POST/DELETE to MongoDB happens in the background right
+   after. localStorage now only acts as an offline fallback (used if the
+   server hasn't responded yet, or is unreachable), not the source of
+   truth.
    ============================================================ */
 function escapeHtmlPanel(s){
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 function leagueStorageKey(name){
-  return 'cricket-league::' + (name || '').trim().toLowerCase();
+  // Namespaced by owner too, so switching Google accounts in the same
+  // browser (or opening a link meant for someone else) doesn't show this
+  // browser's cached copy of a DIFFERENT customer's league as a fallback.
+  return 'cricket-league::' + currentOwnerUid() + '::' + (name || '').trim().toLowerCase();
 }
-function loadLeagueMatches(name){
+// The logged-in user's Firebase uid — set in localStorage by index.html
+// right after Google sign-in (`scorvix_uid`), and optionally forwarded via
+// ?uid= in the URL the same way the other sport templates already do it.
+// This is what scopes league data to one customer's account so two
+// different customers' leagues (even with the same name) never collide.
+function currentOwnerUid(){
+  const fromUrl = new URLSearchParams(location.search).get('uid');
+  const fromStorage = (() => { try{ return localStorage.getItem('scorvix_uid'); }catch(e){ return null; } })();
+  return (fromUrl || fromStorage || '').trim();
+}
+function leagueApiPath(name){
+  return `/api/league/${encodeURIComponent((name || '').trim())}`;
+}
+function withUid(url){
+  return `${url}${url.includes('?') ? '&' : '?'}uid=${encodeURIComponent(currentOwnerUid())}`;
+}
+const leagueCache = {}; // leagueKey -> matches[], refreshed from the server
+
+function loadLeagueMatchesLocal(name){
   if(!name || !name.trim()) return [];
   try{
     const raw = localStorage.getItem(leagueStorageKey(name));
     return raw ? JSON.parse(raw) : [];
   }catch(e){ return []; }
 }
-function saveLeagueMatchesRaw(name, matches){
+function saveLeagueMatchesLocal(name, matches){
   try{ localStorage.setItem(leagueStorageKey(name), JSON.stringify(matches)); }catch(e){}
 }
 function currentLeagueMatches(){
-  return loadLeagueMatches(state.leagueName);
+  const name = (state.leagueName || '').trim();
+  if(!name) return [];
+  const key = leagueStorageKey(name);
+  return leagueCache[key] || loadLeagueMatchesLocal(name);
+}
+
+// Pulls the latest matches for a league from MongoDB and refreshes the UI
+// once they land — this is what lets a SECOND laptop see matches saved
+// from the first one. Fails silently to the local cache if the server or
+// network isn't reachable (or the operator isn't logged in yet — no uid
+// means no server sync, panel just runs on its local cache until login).
+async function syncLeagueFromServer(name){
+  const trimmed = (name || '').trim();
+  if(!trimmed || !currentOwnerUid()) return;
+  const key = leagueStorageKey(trimmed);
+  try{
+    const res = await fetch(withUid(leagueApiPath(trimmed)));
+    const data = await res.json();
+    if(data && data.success){
+      leagueCache[key] = data.matches || [];
+      saveLeagueMatchesLocal(trimmed, leagueCache[key]);
+      refreshLeagueUI();
+      refreshTournamentCardsIfShown();
+    }
+  }catch(e){
+    // Offline / server unreachable — keep using whatever's cached locally.
+  }
+}
+let leagueSyncDebounce = null;
+function debouncedSyncLeagueFromServer(name){
+  clearTimeout(leagueSyncDebounce);
+  leagueSyncDebounce = setTimeout(() => syncLeagueFromServer(name), 500);
 }
 
 // Builds one match record from the panel's live state — folding in
@@ -2034,25 +2098,67 @@ function buildMatchRecordForLeague(){
 
 // Upserts by matchId, so re-saving after a correction (or the automatic
 // save-on-victory) updates the same entry instead of duplicating it.
+// Updates the local cache immediately (optimistic), then syncs to MongoDB
+// in the background so every other laptop/browser on this same league
+// name picks up the change too.
 function saveMatchToLeague(silent){
   const name = (state.leagueName || '').trim();
   if(!name){ if(!silent) toast('Type a league/tournament name first'); return; }
   const rec = buildMatchRecordForLeague();
-  const matches = loadLeagueMatches(name);
+  const key = leagueStorageKey(name);
+
+  const matches = currentLeagueMatches().slice();
   const idx = matches.findIndex(m => m.matchId === rec.matchId);
   if(idx >= 0) matches[idx] = rec; else matches.push(rec);
-  saveLeagueMatchesRaw(name, matches);
+  leagueCache[key] = matches;
+  saveLeagueMatchesLocal(name, matches);
   refreshLeagueUI();
   refreshTournamentCardsIfShown();
   if(!silent) toast(`Saved to "${name}" — ${matches.length} match${matches.length === 1 ? '' : 'es'} now tracked`);
+
+  // Not logged in (no uid) — stays local-only on this browser, same as
+  // before; nothing to sync to yet.
+  if(!currentOwnerUid()){ if(!silent) toast('⚠️ Not logged in — saved on this device only'); return; }
+
+  fetch(withUid(`${leagueApiPath(name)}/match`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(rec)
+  }).then(res => res.json()).then(data => {
+    if(data && data.success){
+      leagueCache[key] = data.matches;
+      saveLeagueMatchesLocal(name, data.matches);
+      refreshLeagueUI();
+      refreshTournamentCardsIfShown();
+    } else {
+      toast('⚠️ Saved locally only — could not sync to server');
+    }
+  }).catch(() => toast('⚠️ Saved locally only — could not sync to server'));
 }
 function deleteMatchFromLeague(matchId){
   const name = (state.leagueName || '').trim();
   if(!name) return;
-  const matches = loadLeagueMatches(name).filter(m => m.matchId !== matchId);
-  saveLeagueMatchesRaw(name, matches);
+  const key = leagueStorageKey(name);
+
+  const matches = currentLeagueMatches().filter(m => m.matchId !== matchId);
+  leagueCache[key] = matches;
+  saveLeagueMatchesLocal(name, matches);
   refreshLeagueUI();
   refreshTournamentCardsIfShown();
+
+  if(!currentOwnerUid()) return; // local-only, nothing to sync
+
+  fetch(withUid(`${leagueApiPath(name)}/match/${encodeURIComponent(matchId)}`), { method: 'DELETE' })
+    .then(res => res.json()).then(data => {
+      if(data && data.success){
+        leagueCache[key] = data.matches;
+        saveLeagueMatchesLocal(name, data.matches);
+        refreshLeagueUI();
+        refreshTournamentCardsIfShown();
+      } else {
+        toast('⚠️ Deleted locally only — could not sync to server');
+      }
+    }).catch(() => toast('⚠️ Deleted locally only — could not sync to server'));
 }
 function refreshLeagueUI(){
   const name = (state.leagueName || '').trim();
@@ -2064,10 +2170,11 @@ function refreshLeagueUI(){
     listEl.innerHTML = '';
     return;
   }
-  const matches = loadLeagueMatches(name);
+  const matches = currentLeagueMatches();
+  const notLoggedInNote = currentOwnerUid() ? '' : ' (not logged in — only saved on this device)';
   countEl.textContent = matches.length
-    ? `"${name}" — ${matches.length} match${matches.length === 1 ? '' : 'es'} saved.`
-    : `"${name}" — no matches saved yet. Play a match to completion (or hit Save This Match) to start building it.`;
+    ? `"${name}" — ${matches.length} match${matches.length === 1 ? '' : 'es'} saved${notLoggedInNote}.`
+    : `"${name}" — no matches saved yet${notLoggedInNote}. Play a match to completion (or hit Save This Match) to start building it.`;
   if(listEl.style.display !== 'none') renderLeagueMatchesList(matches);
 }
 function renderLeagueMatchesList(matches){
@@ -3108,6 +3215,10 @@ document.addEventListener('keydown', (e) => {
   document.getElementById('team-stat-toggle').checked = state.showTeamStatCard;
   document.getElementById('team-stat-which').value = state.teamStatWhich;
   refreshLeagueUI();
+  // Load this league's shared (MongoDB) match history on startup, so a
+  // panel opened fresh on a second laptop immediately sees whatever the
+  // first laptop already saved under the same league name.
+  syncLeagueFromServer(state.leagueName);
 
   const urlMatchId = new URLSearchParams(location.search).get('room');
   const savedMatchId = localStorage.getItem('cricket-match-id');
