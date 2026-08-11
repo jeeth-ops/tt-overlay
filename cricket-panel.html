@@ -492,6 +492,60 @@
     </div>
 
     <div class="card">
+      <h2>Player &amp; Bowler Stat Cards <span class="note">— left-slide, on/off anytime</span></h2>
+
+      <div class="toggle-row">
+        <span>Player Stat Card</span>
+        <label class="switch"><input type="checkbox" id="player-stat-toggle"><span class="slider"></span></label>
+      </div>
+      <div class="row2" style="margin-top:8px;">
+        <select id="player-stat-which">
+          <option value="striker">Striker</option>
+          <option value="nonStriker">Non-Striker</option>
+        </select>
+        <select id="player-stat-scope">
+          <option value="match">This Match</option>
+          <option value="tournament">Tournament</option>
+        </select>
+      </div>
+      <div class="row3" id="player-tournament-fields" style="margin-top:8px; display:none;">
+        <input type="number" id="pt-matches" placeholder="Matches">
+        <input type="number" id="pt-runs" placeholder="Runs">
+        <input type="number" id="pt-avg" placeholder="Average" step="0.01">
+        <input type="number" id="pt-sr" placeholder="S/R" step="0.01">
+        <input type="number" id="pt-hs" placeholder="High Score">
+        <input type="number" id="pt-fours" placeholder="4s">
+        <input type="number" id="pt-sixes" placeholder="6s">
+        <input type="number" id="pt-fifties" placeholder="50s">
+        <input type="number" id="pt-hundreds" placeholder="100s">
+      </div>
+
+      <div class="toggle-row" style="margin-top:18px;">
+        <span>Bowler Stat Card (current bowler)</span>
+        <label class="switch"><input type="checkbox" id="bowler-stat-toggle"><span class="slider"></span></label>
+      </div>
+      <div class="row2" style="margin-top:8px;">
+        <select id="bowler-stat-scope">
+          <option value="match">This Match</option>
+          <option value="tournament">Tournament</option>
+        </select>
+      </div>
+      <div class="row3" id="bowler-tournament-fields" style="margin-top:8px; display:none;">
+        <input type="number" id="bt-matches" placeholder="Matches">
+        <input type="number" id="bt-overs" placeholder="Overs" step="0.1">
+        <input type="number" id="bt-runs" placeholder="Runs">
+        <input type="number" id="bt-wickets" placeholder="Wickets">
+        <input type="number" id="bt-economy" placeholder="Economy" step="0.01">
+        <input type="number" id="bt-avg" placeholder="Average" step="0.01">
+        <input type="text" id="bt-best" placeholder="Best (e.g. 3/21)">
+        <input type="number" id="bt-maidens" placeholder="Maidens">
+        <input type="number" id="bt-dots" placeholder="Dot Balls">
+      </div>
+
+      <div class="shortcut-hint">Flip either switch ON and the card slides in from the left with the batting/bowling team's logo, name and colour; flip it OFF and it slides back out. "This Match" updates live, ball by ball — "Tournament" pulls the numbers typed above (there's no auto tournament database yet, so those are entered by hand).</div>
+    </div>
+
+    <div class="card">
       <h2>Session</h2>
       <button class="full small primary" id="download-excel-btn" style="margin-bottom:6px;">📊 Download Match Excel</button>
       <button class="full small" id="next-innings-btn" disabled>Start Next Innings</button>
@@ -572,6 +626,21 @@ function defaultState(){
     firstInningsSummary: null,
     showInningsSummary: true,
     showMatchSummary: true,
+    // Left-slide player/bowler stat cards — persistent on/off (not an
+    // auto-fire toggle like the summary graphics above), plus which
+    // batter and which stat scope (this match vs tournament) each card
+    // is currently showing. Tournament numbers are operator-entered
+    // (this build has no ball-by-ball tournament database yet), kept as
+    // flat fields so they round-trip through localStorage untouched.
+    showPlayerStatCard: false,
+    showBowlerStatCard: false,
+    playerStatWhich: 'striker',
+    playerStatScope: 'match',
+    bowlerStatScope: 'match',
+    tBatMatches: '', tBatRuns: '', tBatAvg: '', tBatSR: '', tBatHS: '',
+    tBatFours: '', tBatSixes: '', tBatFifties: '', tBatHundreds: '',
+    tBowlMatches: '', tBowlOvers: '', tBowlRuns: '', tBowlWickets: '',
+    tBowlEcon: '', tBowlAvg: '', tBowlBest: '', tBowlMaidens: '', tBowlDots: '',
     thisOver: [],
     ballHistory: [],
     ballLog: [],
@@ -1019,10 +1088,11 @@ function pushState(immediate, force){
   if(immediate){
     clearTimeout(pushTimer);
     send(state);
+    refreshLiveStatCards();
     return;
   }
   clearTimeout(pushTimer);
-  pushTimer = setTimeout(() => { send(state); }, 40);
+  pushTimer = setTimeout(() => { send(state); refreshLiveStatCards(); }, 40);
 }
 function fireEvent(kind, text, sub, durationMs){
   if(socket && socket.connected){
@@ -1432,6 +1502,72 @@ document.getElementById('match-summary-toggle').addEventListener('change', (e) =
 });
 
 /* ============================================================
+   LEFT-SLIDE PLAYER / BOWLER STAT CARD CONTROLS
+   Unlike the summary toggles above, these ARE the on/off switch for the
+   overlay card itself — flipping one on/off sends the show/hide event
+   immediately, on top of the normal state save.
+   ============================================================ */
+document.getElementById('player-stat-toggle').addEventListener('change', (e) => {
+  state.showPlayerStatCard = e.target.checked;
+  saveLocal();
+  if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
+  if(state.showPlayerStatCard) socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
+  else socket.emit('cricketHidePlayerStat', {});
+});
+document.getElementById('bowler-stat-toggle').addEventListener('change', (e) => {
+  state.showBowlerStatCard = e.target.checked;
+  saveLocal();
+  if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
+  if(state.showBowlerStatCard) socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
+  else socket.emit('cricketHideBowlerStat', {});
+});
+document.getElementById('player-stat-which').addEventListener('change', (e) => {
+  state.playerStatWhich = e.target.value;
+  saveLocal();
+  if(state.showPlayerStatCard && socket && socket.connected) socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
+});
+document.getElementById('player-stat-scope').addEventListener('change', (e) => {
+  state.playerStatScope = e.target.value;
+  document.getElementById('player-tournament-fields').style.display = state.playerStatScope === 'tournament' ? 'grid' : 'none';
+  saveLocal();
+  if(state.showPlayerStatCard && socket && socket.connected) socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
+});
+document.getElementById('bowler-stat-scope').addEventListener('change', (e) => {
+  state.bowlerStatScope = e.target.value;
+  document.getElementById('bowler-tournament-fields').style.display = state.bowlerStatScope === 'tournament' ? 'grid' : 'none';
+  saveLocal();
+  if(state.showBowlerStatCard && socket && socket.connected) socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
+});
+// Tournament number fields — typed in by hand (no ball-by-ball tournament
+// database yet). Any edit re-sends the card live if it's currently ON.
+const PLAYER_TOURNEY_FIELD_MAP = {
+  'pt-matches':'tBatMatches', 'pt-runs':'tBatRuns', 'pt-avg':'tBatAvg', 'pt-sr':'tBatSR', 'pt-hs':'tBatHS',
+  'pt-fours':'tBatFours', 'pt-sixes':'tBatSixes', 'pt-fifties':'tBatFifties', 'pt-hundreds':'tBatHundreds'
+};
+Object.keys(PLAYER_TOURNEY_FIELD_MAP).forEach(id => {
+  document.getElementById(id).addEventListener('input', (e) => {
+    state[PLAYER_TOURNEY_FIELD_MAP[id]] = e.target.value;
+    saveLocal();
+    if(state.showPlayerStatCard && state.playerStatScope === 'tournament' && socket && socket.connected){
+      socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
+    }
+  });
+});
+const BOWLER_TOURNEY_FIELD_MAP = {
+  'bt-matches':'tBowlMatches', 'bt-overs':'tBowlOvers', 'bt-runs':'tBowlRuns', 'bt-wickets':'tBowlWickets',
+  'bt-economy':'tBowlEcon', 'bt-avg':'tBowlAvg', 'bt-best':'tBowlBest', 'bt-maidens':'tBowlMaidens', 'bt-dots':'tBowlDots'
+};
+Object.keys(BOWLER_TOURNEY_FIELD_MAP).forEach(id => {
+  document.getElementById(id).addEventListener('input', (e) => {
+    state[BOWLER_TOURNEY_FIELD_MAP[id]] = e.target.value;
+    saveLocal();
+    if(state.showBowlerStatCard && state.bowlerStatScope === 'tournament' && socket && socket.connected){
+      socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
+    }
+  });
+});
+
+/* ============================================================
    MANUAL SUMMARY CONTROLS
    Independent of the auto toggles above — these fire (or dismiss) the
    overlay's summary cards on demand, always built from whatever is
@@ -1736,6 +1872,72 @@ function buildMatchSummaryPayload(){
       batsmen: topBatsmen(battingCardB), bowlers: topBowlers(bowlingCardB)
     }
   };
+}
+
+/* ============================================================
+   PLAYER / BOWLER STAT CARD PAYLOADS
+   Batter card always uses the BATTING team's identity; bowler card
+   always uses the BOWLING team's — never the opponent's, matching
+   whichever side state.battingTeam currently says is at the crease.
+   ============================================================ */
+function buildPlayerStatPayload(){
+  const battingTeamObj = state.battingTeam === 'A' ? state.teamA : state.teamB;
+  const player = state.playerStatWhich === 'nonStriker' ? state.nonStriker : state.striker;
+  const base = {
+    scope: state.playerStatScope,
+    teamName: battingTeamObj.name, teamShort: battingTeamObj.short,
+    teamColor: battingTeamObj.color, teamLogo: battingTeamObj.logoUrl,
+    playerName: player.name
+  };
+  if(state.playerStatScope === 'tournament'){
+    return {
+      ...base,
+      matches: state.tBatMatches, runs: state.tBatRuns, average: state.tBatAvg, sr: state.tBatSR,
+      highScore: state.tBatHS, fours: state.tBatFours, sixes: state.tBatSixes,
+      fifties: state.tBatFifties, hundreds: state.tBatHundreds
+    };
+  }
+  return {
+    ...base,
+    runs: player.runs, balls: player.balls,
+    sr: player.balls > 0 ? ((player.runs / player.balls) * 100).toFixed(1) : '0.0',
+    fours: player.fours, sixes: player.sixes
+  };
+}
+function buildBowlerStatPayload(){
+  const bowlingTeamObj = bowlingTeamKey() === 'A' ? state.teamA : state.teamB;
+  const base = {
+    scope: state.bowlerStatScope,
+    teamName: bowlingTeamObj.name, teamShort: bowlingTeamObj.short,
+    teamColor: bowlingTeamObj.color, teamLogo: bowlingTeamObj.logoUrl,
+    playerName: state.bowler.name
+  };
+  if(state.bowlerStatScope === 'tournament'){
+    return {
+      ...base,
+      matches: state.tBowlMatches, overs: state.tBowlOvers, wickets: state.tBowlWickets,
+      runs: state.tBowlRuns, economy: state.tBowlEcon, average: state.tBowlAvg,
+      best: state.tBowlBest, maidens: state.tBowlMaidens, dots: state.tBowlDots
+    };
+  }
+  return {
+    ...base,
+    overs: fmtBowlerOvers(state.bowler.overs, state.bowler.balls), maidens: state.bowler.maidens,
+    runs: state.bowler.runs, wickets: state.bowler.wickets, economy: bowlerEcon(state.bowler)
+  };
+}
+// Called after every score-changing action (from pushState) so a card
+// that's currently ON and on "This Match" scope always shows the latest
+// numbers — Tournament-scope cards don't need this since they only
+// change when the operator edits the typed-in fields directly.
+function refreshLiveStatCards(){
+  if(!socket || !socket.connected) return;
+  if(state.showPlayerStatCard && state.playerStatScope === 'match'){
+    socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
+  }
+  if(state.showBowlerStatCard && state.bowlerStatScope === 'match'){
+    socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
+  }
 }
 
 function addLegalBall(runsThisBall){
@@ -2539,6 +2741,31 @@ document.addEventListener('keydown', (e) => {
   document.getElementById('visible-toggle').checked = state.visible;
   document.getElementById('innings-summary-toggle').checked = state.showInningsSummary;
   document.getElementById('match-summary-toggle').checked = state.showMatchSummary;
+  document.getElementById('player-stat-toggle').checked = state.showPlayerStatCard;
+  document.getElementById('bowler-stat-toggle').checked = state.showBowlerStatCard;
+  document.getElementById('player-stat-which').value = state.playerStatWhich;
+  document.getElementById('player-stat-scope').value = state.playerStatScope;
+  document.getElementById('bowler-stat-scope').value = state.bowlerStatScope;
+  document.getElementById('player-tournament-fields').style.display = state.playerStatScope === 'tournament' ? 'grid' : 'none';
+  document.getElementById('bowler-tournament-fields').style.display = state.bowlerStatScope === 'tournament' ? 'grid' : 'none';
+  document.getElementById('pt-matches').value = state.tBatMatches;
+  document.getElementById('pt-runs').value = state.tBatRuns;
+  document.getElementById('pt-avg').value = state.tBatAvg;
+  document.getElementById('pt-sr').value = state.tBatSR;
+  document.getElementById('pt-hs').value = state.tBatHS;
+  document.getElementById('pt-fours').value = state.tBatFours;
+  document.getElementById('pt-sixes').value = state.tBatSixes;
+  document.getElementById('pt-fifties').value = state.tBatFifties;
+  document.getElementById('pt-hundreds').value = state.tBatHundreds;
+  document.getElementById('bt-matches').value = state.tBowlMatches;
+  document.getElementById('bt-overs').value = state.tBowlOvers;
+  document.getElementById('bt-runs').value = state.tBowlRuns;
+  document.getElementById('bt-wickets').value = state.tBowlWickets;
+  document.getElementById('bt-economy').value = state.tBowlEcon;
+  document.getElementById('bt-avg').value = state.tBowlAvg;
+  document.getElementById('bt-best').value = state.tBowlBest;
+  document.getElementById('bt-maidens').value = state.tBowlMaidens;
+  document.getElementById('bt-dots').value = state.tBowlDots;
   document.getElementById('teamA-logo-preview').style.backgroundImage = state.teamA.logoUrl ? `url(${state.teamA.logoUrl})` : '';
   document.getElementById('teamB-logo-preview').style.backgroundImage = state.teamB.logoUrl ? `url(${state.teamB.logoUrl})` : '';
 
