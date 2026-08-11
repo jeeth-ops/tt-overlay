@@ -262,6 +262,19 @@
     </div>
 
     <div class="card">
+      <h2>🏆 League / Tournament <span class="note">— auto stats, all in-browser</span></h2>
+      <label>League / Tournament name <span class="note">(e.g. "DY Patil Trophy 2026")</span></label>
+      <input type="text" id="league-name" placeholder="Type a league name to start tracking it">
+      <div class="shortcut-hint" id="league-match-count">No league name set — Team/Tournament cards will use the manual fields until you add one.</div>
+      <div class="row2" style="margin-top:8px;">
+        <button class="small primary" id="save-match-league-btn" type="button">💾 Save This Match</button>
+        <button class="small ghost" id="view-league-matches-btn" type="button">📋 Matches</button>
+      </div>
+      <div id="league-matches-list" style="display:none; margin-top:10px; max-height:230px; overflow-y:auto; border-top:1px solid var(--border); padding-top:8px;"></div>
+      <div class="shortcut-hint">Saves itself the instant a match is won or tied (once a league name is set here) — this button is only needed to save mid-match or re-save after a correction. Team, batter and bowler "Tournament" cards pull straight from every match saved here, matched automatically by name — nothing to type by hand.</div>
+    </div>
+
+    <div class="card">
       <h2>Theme Colours <span class="note">— everything except the live numbers</span></h2>
       <div class="row3">
         <div>
@@ -542,7 +555,18 @@
         <input type="number" id="bt-dots" placeholder="Dot Balls">
       </div>
 
-      <div class="shortcut-hint">Flip either switch ON and the card slides in from the left with the batting/bowling team's logo, name and colour; flip it OFF and it slides back out. "This Match" updates live, ball by ball — "Tournament" pulls the numbers typed above (there's no auto tournament database yet, so those are entered by hand).</div>
+      <div class="toggle-row" style="margin-top:18px;">
+        <span>Team Tournament Stats</span>
+        <label class="switch"><input type="checkbox" id="team-stat-toggle"><span class="slider"></span></label>
+      </div>
+      <div class="row2" style="margin-top:8px;">
+        <select id="team-stat-which">
+          <option value="A">Team A</option>
+          <option value="B">Team B</option>
+        </select>
+      </div>
+
+      <div class="shortcut-hint">Flip any switch ON and its card slides in from the left with the team's logo, name and colour; flip it OFF and it slides back out. "This Match" updates live, ball by ball. "Tournament" (and the Team card, which is always tournament-scoped) pull automatically from every match saved under the league name in the League / Tournament panel, matched by team/player name — if a name has no saved matches yet, the typed-in fields above are used instead.</div>
     </div>
 
     <div class="card">
@@ -629,14 +653,23 @@ function defaultState(){
     // Left-slide player/bowler stat cards — persistent on/off (not an
     // auto-fire toggle like the summary graphics above), plus which
     // batter and which stat scope (this match vs tournament) each card
-    // is currently showing. Tournament numbers are operator-entered
-    // (this build has no ball-by-ball tournament database yet), kept as
-    // flat fields so they round-trip through localStorage untouched.
+    // is currently showing. tBat*/tBowl* below are the MANUAL fallback
+    // fields — only used when no league name is set, or no saved match
+    // in that league mentions the player by name yet. Whenever a match
+    // is found, the auto-computed numbers from the league database
+    // (see LEAGUE / TOURNAMENT DATABASE below) win instead.
     showPlayerStatCard: false,
     showBowlerStatCard: false,
+    showTeamStatCard: false,
     playerStatWhich: 'striker',
     playerStatScope: 'match',
     bowlerStatScope: 'match',
+    teamStatWhich: 'A',
+    // League/tournament name this match is tracked under — every match
+    // saved (auto, on match end, or via the "Save This Match" button)
+    // under the same name feeds the automatic Team/Player/Bowler
+    // "Tournament" cards below, matched purely by name.
+    leagueName: '',
     tBatMatches: '', tBatRuns: '', tBatAvg: '', tBatSR: '', tBatHS: '',
     tBatFours: '', tBatSixes: '', tBatFifties: '', tBatHundreds: '',
     tBowlMatches: '', tBowlOvers: '', tBowlRuns: '', tBowlWickets: '',
@@ -1268,6 +1301,7 @@ function renderPanel(){
   maybeSet('striker-name', state.striker.name);
   maybeSet('nonstriker-name', state.nonStriker.name);
   maybeSet('venue', state.venue);
+  maybeSet('league-name', state.leagueName || '');
   maybeSet('teamA-name', state.teamA.name);
   maybeSet('teamA-short', state.teamA.short);
   maybeSet('teamA-color', state.teamA.color);
@@ -1568,6 +1602,40 @@ Object.keys(BOWLER_TOURNEY_FIELD_MAP).forEach(id => {
 });
 
 /* ============================================================
+   TEAM TOURNAMENT STAT CARD — always tournament-scoped, auto-computed
+   from the league database (see LEAGUE / TOURNAMENT DATABASE above).
+   ============================================================ */
+document.getElementById('team-stat-toggle').addEventListener('change', (e) => {
+  state.showTeamStatCard = e.target.checked;
+  saveLocal();
+  if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
+  if(state.showTeamStatCard) socket.emit('cricketTeamStat', { data: buildTeamStatPayload() });
+  else socket.emit('cricketHideTeamStat', {});
+});
+document.getElementById('team-stat-which').addEventListener('change', (e) => {
+  state.teamStatWhich = e.target.value;
+  saveLocal();
+  if(state.showTeamStatCard && socket && socket.connected) socket.emit('cricketTeamStat', { data: buildTeamStatPayload() });
+});
+
+/* ============================================================
+   LEAGUE / TOURNAMENT CONTROLS
+   ============================================================ */
+document.getElementById('league-name').addEventListener('input', (e) => {
+  state.leagueName = e.target.value;
+  saveLocal();
+  refreshLeagueUI();
+  refreshTournamentCardsIfShown();
+});
+document.getElementById('save-match-league-btn').addEventListener('click', () => saveMatchToLeague(false));
+document.getElementById('view-league-matches-btn').addEventListener('click', () => {
+  const listEl = document.getElementById('league-matches-list');
+  const showing = listEl.style.display !== 'none';
+  listEl.style.display = showing ? 'none' : 'block';
+  if(!showing) renderLeagueMatchesList(currentLeagueMatches());
+});
+
+/* ============================================================
    MANUAL SUMMARY CONTROLS
    Independent of the auto toggles above — these fire (or dismiss) the
    overlay's summary cards on demand, always built from whatever is
@@ -1738,6 +1806,13 @@ function checkMatchResult(){
     resultFired = true;
   }
 
+  if(resultFired && state.leagueName && state.leagueName.trim()){
+    // Auto-add this match to the league database right as the result
+    // lands — this is what makes Team/Player/Bowler "Tournament" cards
+    // update on their own, match after match, with nothing typed in.
+    saveMatchToLeague(true);
+  }
+
   if(resultFired && state.showMatchSummary && socket && socket.connected){
     // If an innings-summary graphic just fired on this SAME ball (defending
     // side bowled the chasing side out/overs-out right as the match ended),
@@ -1875,6 +1950,258 @@ function buildMatchSummaryPayload(){
 }
 
 /* ============================================================
+   LEAGUE / TOURNAMENT DATABASE
+   Stored entirely in this browser's localStorage, keyed by league name,
+   as an array of completed (or in-progress) match records. Every match
+   saved under the same league name — automatically the instant it's
+   won/tied, or manually via "Save This Match" — feeds the automatic
+   Team / Player / Bowler "Tournament" cards further down. Matching is
+   purely by name (team name, batter name, bowler name), case/whitespace
+   -insensitive, so no external server or shared account is required.
+   ============================================================ */
+function escapeHtmlPanel(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function leagueStorageKey(name){
+  return 'cricket-league::' + (name || '').trim().toLowerCase();
+}
+function loadLeagueMatches(name){
+  if(!name || !name.trim()) return [];
+  try{
+    const raw = localStorage.getItem(leagueStorageKey(name));
+    return raw ? JSON.parse(raw) : [];
+  }catch(e){ return []; }
+}
+function saveLeagueMatchesRaw(name, matches){
+  try{ localStorage.setItem(leagueStorageKey(name), JSON.stringify(matches)); }catch(e){}
+}
+function currentLeagueMatches(){
+  return loadLeagueMatches(state.leagueName);
+}
+
+// Builds one match record from the panel's live state — folding in
+// whichever batsmen/bowler are still "live" (not yet archived), the same
+// approach buildMatchSummaryPayload() uses, so a match saved right as it's
+// won (or mid-match, via the manual button) always captures the two
+// not-out batsmen and the bowler currently on.
+function buildMatchRecordForLeague(){
+  const battingCardA = [...state.battingCard.A];
+  const battingCardB = [...state.battingCard.B];
+  const bowlingCardA = [...state.bowlingCard.A];
+  const bowlingCardB = [...state.bowlingCard.B];
+
+  const liveBattingArr = state.battingTeam === 'A' ? battingCardA : battingCardB;
+  [state.striker, state.nonStriker].forEach(p => {
+    if(p && p.name && !liveBattingArr.some(b => b.name === p.name)){
+      liveBattingArr.push({ name:p.name, runs:p.runs, balls:p.balls, fours:p.fours, sixes:p.sixes, out:false, howOut:'not out' });
+    }
+  });
+  const liveBowlingArr = bowlingTeamKey() === 'A' ? bowlingCardA : bowlingCardB;
+  if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0) && !liveBowlingArr.some(b => b.name === state.bowler.name)){
+    liveBowlingArr.push({ ...state.bowler });
+  }
+
+  const firstInn = state.firstInningsSummary;
+  const scoreForTeam = (teamKey) => {
+    if(firstInn && firstInn.team === teamKey) return { runs:firstInn.runs, wickets:firstInn.wickets, overs:firstInn.overs };
+    if(teamKey === state.battingTeam) return { runs:state.score.runs, wickets:state.score.wickets, overs:fmtOvers(state.score.overs, state.score.balls) };
+    return { runs:0, wickets:0, overs:'0.0' };
+  };
+
+  let winningTeam = null; // 'A' | 'B' | 'TIE' | null (no result decided yet)
+  if(state.target){
+    if(state.score.runs >= state.target) winningTeam = state.battingTeam;
+    else if(isInningsOver()){
+      const margin = state.target - 1 - state.score.runs;
+      winningTeam = margin <= 0 ? 'TIE' : (state.battingTeam === 'A' ? 'B' : 'A');
+    }
+  }
+
+  return {
+    matchId: (document.getElementById('match-id').value || '').trim() || ('local-' + Date.now()),
+    savedAt: new Date().toISOString(),
+    venue: state.venue,
+    format: state.format,
+    teamA: { name: state.teamA.name, short: state.teamA.short },
+    teamB: { name: state.teamB.name, short: state.teamB.short },
+    winningTeam,
+    scoreA: scoreForTeam('A'),
+    scoreB: scoreForTeam('B'),
+    battingCard: { A: battingCardA, B: battingCardB },
+    bowlingCard: { A: bowlingCardA, B: bowlingCardB }
+  };
+}
+
+// Upserts by matchId, so re-saving after a correction (or the automatic
+// save-on-victory) updates the same entry instead of duplicating it.
+function saveMatchToLeague(silent){
+  const name = (state.leagueName || '').trim();
+  if(!name){ if(!silent) toast('Type a league/tournament name first'); return; }
+  const rec = buildMatchRecordForLeague();
+  const matches = loadLeagueMatches(name);
+  const idx = matches.findIndex(m => m.matchId === rec.matchId);
+  if(idx >= 0) matches[idx] = rec; else matches.push(rec);
+  saveLeagueMatchesRaw(name, matches);
+  refreshLeagueUI();
+  refreshTournamentCardsIfShown();
+  if(!silent) toast(`Saved to "${name}" — ${matches.length} match${matches.length === 1 ? '' : 'es'} now tracked`);
+}
+function deleteMatchFromLeague(matchId){
+  const name = (state.leagueName || '').trim();
+  if(!name) return;
+  const matches = loadLeagueMatches(name).filter(m => m.matchId !== matchId);
+  saveLeagueMatchesRaw(name, matches);
+  refreshLeagueUI();
+  refreshTournamentCardsIfShown();
+}
+function refreshLeagueUI(){
+  const name = (state.leagueName || '').trim();
+  const countEl = document.getElementById('league-match-count');
+  const listEl = document.getElementById('league-matches-list');
+  if(!countEl || !listEl) return;
+  if(!name){
+    countEl.textContent = 'No league name set — Team/Tournament cards will use the manual fields until you add one.';
+    listEl.innerHTML = '';
+    return;
+  }
+  const matches = loadLeagueMatches(name);
+  countEl.textContent = matches.length
+    ? `"${name}" — ${matches.length} match${matches.length === 1 ? '' : 'es'} saved.`
+    : `"${name}" — no matches saved yet. Play a match to completion (or hit Save This Match) to start building it.`;
+  if(listEl.style.display !== 'none') renderLeagueMatchesList(matches);
+}
+function renderLeagueMatchesList(matches){
+  const listEl = document.getElementById('league-matches-list');
+  if(!matches.length){ listEl.innerHTML = '<div class="shortcut-hint">No matches saved yet.</div>'; return; }
+  listEl.innerHTML = [...matches].reverse().map(m => {
+    const resultText = m.winningTeam === 'TIE' ? 'Tied'
+      : m.winningTeam === 'A' ? `${m.teamA.short || m.teamA.name} won`
+      : m.winningTeam === 'B' ? `${m.teamB.short || m.teamB.name} won`
+      : 'In progress';
+    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:11.5px;">
+      <div style="min-width:0;">
+        <div style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtmlPanel(m.teamA.short || m.teamA.name)} vs ${escapeHtmlPanel(m.teamB.short || m.teamB.name)}</div>
+        <div style="color:var(--text-dim);">${escapeHtmlPanel(resultText)} · ${m.scoreA.runs}-${m.scoreA.wickets} / ${m.scoreB.runs}-${m.scoreB.wickets}</div>
+      </div>
+      <button type="button" class="small ghost" data-delete-match="${escapeHtmlPanel(m.matchId)}" style="flex:none;">🗑</button>
+    </div>`;
+  }).join('');
+  listEl.querySelectorAll('[data-delete-match]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if(confirm('Remove this match from the league?')) deleteMatchFromLeague(btn.getAttribute('data-delete-match'));
+    });
+  });
+}
+
+/* ---- Automatic aggregation from the league database — teams, batters,
+   bowlers. Each returns null when there's nothing to aggregate (no league
+   set, or the name matches no saved match), so callers can fall back to
+   the manual fields. ---- */
+function computeTeamTournamentStats(teamName){
+  const name = (teamName || '').trim().toLowerCase();
+  if(!name) return null;
+  const matches = currentLeagueMatches();
+  if(!matches.length) return null;
+  let played = 0, won = 0, lost = 0, tied = 0, totalRuns = 0, highest = 0, scoredInnings = 0;
+  matches.forEach(m => {
+    const aName = ((m.teamA && m.teamA.name) || '').trim().toLowerCase();
+    const bName = ((m.teamB && m.teamB.name) || '').trim().toLowerCase();
+    let side = null;
+    if(aName === name) side = 'A'; else if(bName === name) side = 'B';
+    if(!side) return;
+    played++;
+    if(m.winningTeam === 'TIE') tied++;
+    else if(m.winningTeam === side) won++;
+    else if(m.winningTeam) lost++;
+    const sc = side === 'A' ? m.scoreA : m.scoreB;
+    if(sc){
+      totalRuns += (sc.runs || 0);
+      scoredInnings++;
+      if((sc.runs || 0) > highest) highest = sc.runs;
+    }
+  });
+  if(played === 0) return null;
+  return {
+    matches: played, won, lost, tied,
+    winPct: played > 0 ? Math.round((won / played) * 100) : 0,
+    highest, avgScore: scoredInnings > 0 ? Math.round(totalRuns / scoredInnings) : 0
+  };
+}
+function computeBatterTournamentStats(playerName){
+  const name = (playerName || '').trim().toLowerCase();
+  if(!name) return null;
+  const matches = currentLeagueMatches();
+  if(!matches.length) return null;
+  let innings = 0, runs = 0, balls = 0, outs = 0, fours = 0, sixes = 0, fifties = 0, hundreds = 0;
+  let highScore = 0, highScoreNotOut = false;
+  matches.forEach(m => {
+    ['A','B'].forEach(k => {
+      ((m.battingCard && m.battingCard[k]) || []).forEach(b => {
+        if((b.name || '').trim().toLowerCase() !== name) return;
+        innings++;
+        runs += (b.runs || 0); balls += (b.balls || 0);
+        fours += (b.fours || 0); sixes += (b.sixes || 0);
+        if(b.out) outs++;
+        if((b.runs || 0) >= 100) hundreds++; else if((b.runs || 0) >= 50) fifties++;
+        if((b.runs || 0) > highScore || ((b.runs || 0) === highScore && !b.out)){
+          highScore = b.runs || 0; highScoreNotOut = !b.out;
+        }
+      });
+    });
+  });
+  if(innings === 0) return null;
+  return {
+    matches: innings, runs,
+    average: outs > 0 ? (runs / outs).toFixed(2) : (runs > 0 ? runs + '*' : '—'),
+    sr: balls > 0 ? ((runs / balls) * 100).toFixed(1) : '0.0',
+    highScore: highScore + (highScoreNotOut ? '*' : ''),
+    fours, sixes, fifties, hundreds
+  };
+}
+function computeBowlerTournamentStats(playerName){
+  const name = (playerName || '').trim().toLowerCase();
+  if(!name) return null;
+  const matches = currentLeagueMatches();
+  if(!matches.length) return null;
+  let apps = 0, totalBalls = 0, runs = 0, wickets = 0, maidens = 0, bestW = -1, bestR = Infinity;
+  matches.forEach(m => {
+    ['A','B'].forEach(k => {
+      ((m.bowlingCard && m.bowlingCard[k]) || []).forEach(b => {
+        if((b.name || '').trim().toLowerCase() !== name) return;
+        apps++;
+        totalBalls += (b.overs || 0) * 6 + (b.balls || 0);
+        runs += (b.runs || 0); wickets += (b.wickets || 0); maidens += (b.maidens || 0);
+        if((b.wickets || 0) > bestW || ((b.wickets || 0) === bestW && (b.runs || 0) < bestR)){
+          bestW = b.wickets || 0; bestR = b.runs || 0;
+        }
+      });
+    });
+  });
+  if(apps === 0) return null;
+  const oversWhole = Math.floor(totalBalls / 6), oversRem = totalBalls % 6;
+  const oversFloat = oversWhole + oversRem / 6;
+  return {
+    matches: apps, overs: `${oversWhole}.${oversRem}`, runs, wickets, maidens,
+    economy: oversFloat > 0 ? (runs / oversFloat).toFixed(2) : '0.00',
+    average: wickets > 0 ? (runs / wickets).toFixed(2) : '—',
+    best: bestW >= 0 ? `${bestW}/${bestR}` : '—'
+  };
+}
+function buildTeamStatPayload(){
+  const teamObj = state.teamStatWhich === 'A' ? state.teamA : state.teamB;
+  const base = { teamName: teamObj.name, teamShort: teamObj.short, teamColor: teamObj.color, teamLogo: teamObj.logoUrl };
+  const auto = computeTeamTournamentStats(teamObj.name);
+  if(auto) return { ...base, ...auto };
+  return { ...base, matches:'', won:'', lost:'', tied:'', winPct:'', highest:'', avgScore:'' };
+}
+function refreshTournamentCardsIfShown(){
+  if(!socket || !socket.connected) return;
+  if(state.showPlayerStatCard && state.playerStatScope === 'tournament') socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
+  if(state.showBowlerStatCard && state.bowlerStatScope === 'tournament') socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
+  if(state.showTeamStatCard) socket.emit('cricketTeamStat', { data: buildTeamStatPayload() });
+}
+
+/* ============================================================
    PLAYER / BOWLER STAT CARD PAYLOADS
    Batter card always uses the BATTING team's identity; bowler card
    always uses the BOWLING team's — never the opponent's, matching
@@ -1890,6 +2217,8 @@ function buildPlayerStatPayload(){
     playerName: player.name
   };
   if(state.playerStatScope === 'tournament'){
+    const auto = computeBatterTournamentStats(player.name);
+    if(auto) return { ...base, ...auto };
     return {
       ...base,
       matches: state.tBatMatches, runs: state.tBatRuns, average: state.tBatAvg, sr: state.tBatSR,
@@ -1913,6 +2242,8 @@ function buildBowlerStatPayload(){
     playerName: state.bowler.name
   };
   if(state.bowlerStatScope === 'tournament'){
+    const auto = computeBowlerTournamentStats(state.bowler.name);
+    if(auto) return { ...base, ...auto, dots: state.tBowlDots };
     return {
       ...base,
       matches: state.tBowlMatches, overs: state.tBowlOvers, wickets: state.tBowlWickets,
@@ -1932,12 +2263,12 @@ function buildBowlerStatPayload(){
 // change when the operator edits the typed-in fields directly.
 function refreshLiveStatCards(){
   if(!socket || !socket.connected) return;
-  if(state.showPlayerStatCard && state.playerStatScope === 'match'){
-    socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
-  }
-  if(state.showBowlerStatCard && state.bowlerStatScope === 'match'){
-    socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
-  }
+  // Tournament-scope cards are included too (not just "match" scope) —
+  // their auto-computed numbers depend on the current player/team name,
+  // which can change mid-match (e.g. a bowler swap, a name correction).
+  if(state.showPlayerStatCard) socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
+  if(state.showBowlerStatCard) socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
+  if(state.showTeamStatCard) socket.emit('cricketTeamStat', { data: buildTeamStatPayload() });
 }
 
 function addLegalBall(runsThisBall){
@@ -2698,7 +3029,12 @@ document.getElementById('download-excel-btn').addEventListener('click', buildAnd
    ============================================================ */
 document.getElementById('reset-btn').addEventListener('click', () => {
   if(!confirm('Reset the entire match? This cannot be undone.')) return;
+  // The league name spans multiple matches (that's the whole point of it),
+  // so it survives a Reset — everything else about the match goes back to
+  // defaults as before, ready for the next match in the same tournament.
+  const keepLeagueName = state.leagueName;
   state = defaultState();
+  state.leagueName = keepLeagueName;
   history = [];
   document.getElementById('milestone-log').innerHTML = '<div>No events yet.</div>';
   pushState(true, true);
@@ -2768,6 +3104,10 @@ document.addEventListener('keydown', (e) => {
   document.getElementById('bt-dots').value = state.tBowlDots;
   document.getElementById('teamA-logo-preview').style.backgroundImage = state.teamA.logoUrl ? `url(${state.teamA.logoUrl})` : '';
   document.getElementById('teamB-logo-preview').style.backgroundImage = state.teamB.logoUrl ? `url(${state.teamB.logoUrl})` : '';
+  document.getElementById('league-name').value = state.leagueName || '';
+  document.getElementById('team-stat-toggle').checked = state.showTeamStatCard;
+  document.getElementById('team-stat-which').value = state.teamStatWhich;
+  refreshLeagueUI();
 
   const urlMatchId = new URLSearchParams(location.search).get('room');
   const savedMatchId = localStorage.getItem('cricket-match-id');
