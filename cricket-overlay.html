@@ -547,6 +547,7 @@
     will-change:transform, opacity, filter;
   }
   #bowler-stat-card{ top:calc(15vh + 168px); }
+  #team-stat-card{ top:calc(15vh + 336px); }
 
   .stat-head{ display:flex; align-items:flex-start; gap:11px; padding:14px 14px 12px; }
   .stat-badge{
@@ -753,6 +754,18 @@
     <div class="stat-grid" id="bs-grid"></div>
   </div>
 
+  <div id="team-stat-card" class="stat-card">
+    <div class="stat-head">
+      <div class="stat-badge" id="ts-badge">TM</div>
+      <div class="stat-head-text">
+        <div class="stat-team" id="ts-team">TOURNAMENT</div>
+        <div class="stat-name" id="ts-name">TEAM</div>
+      </div>
+      <div class="stat-scope" id="ts-scope">TOURNAMENT</div>
+    </div>
+    <div class="stat-grid" id="ts-grid"></div>
+  </div>
+
   <div id="conn-status">Connecting…</div>
 
 </div>
@@ -806,8 +819,10 @@ socket.on('cricketHideMatchSummary', () => {
 // (pulseStatGrid) instead of replaying the slide-in.
 socket.on('cricketPlayerStat', (data) => renderPlayerStatCard(data));
 socket.on('cricketBowlerStat', (data) => renderBowlerStatCard(data));
+socket.on('cricketTeamStat', (data) => renderTeamStatCard(data));
 socket.on('cricketHidePlayerStat', () => playStatCardOut('player-stat-card'));
 socket.on('cricketHideBowlerStat', () => playStatCardOut('bowler-stat-card'));
+socket.on('cricketHideTeamStat', () => playStatCardOut('team-stat-card'));
 
 /* ============================================================
    DIGIT-LEVEL SCORE RENDERING
@@ -1699,6 +1714,27 @@ function renderBowlerStatCard(d){
 
   if(card.style.display === 'flex') pulseStatGrid('bs-grid');
   else playStatCardIn('bowler-stat-card');
+}
+// Always tournament-scoped — team identity + record built from every
+// match saved under the league name in the panel, matched by team name.
+function renderTeamStatCard(d){
+  if(!d) return;
+  const card = document.getElementById('team-stat-card');
+  card.style.setProperty('--stat-accent', d.teamColor || '#f5c518');
+  setBadge(document.getElementById('ts-badge'), d.teamLogo, badgeText(d.teamShort, d.teamName));
+  document.getElementById('ts-team').textContent = 'TOURNAMENT RECORD';
+  document.getElementById('ts-name').textContent = (d.teamName || d.teamShort || 'TEAM').toUpperCase();
+  document.getElementById('ts-scope').textContent = 'TOURNAMENT';
+
+  const cells = [
+    ['Matches', d.matches], ['Won', d.won], ['Lost', d.lost], ['Tied', d.tied],
+    ['Win %', d.winPct !== undefined && d.winPct !== '' ? `${d.winPct}%` : ''],
+    ['Highest', d.highest], ['Avg Score', d.avgScore]
+  ];
+  fillStatGrid('ts-grid', cells);
+
+  if(card.style.display === 'flex') pulseStatGrid('ts-grid');
+  else playStatCardIn('team-stat-card');
 }
 
 function renderInningsSummary(d){
