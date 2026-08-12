@@ -1152,6 +1152,36 @@ io.on('connection', async (socket) => {
         io.to(room).emit('cricketHideTeamStat');
     });
 
+    // 🏏📜 Player/Team tournament-history overlay cards — same pure-broadcast
+    // treatment as cricketTeamStat/cricketPlayerStat above.
+    socket.on('cricketPlayerHistory', (data) => {
+        let room = socket.activeRoom;
+        const targetId = data.room ? data.room.replace('room-', '') : (data.id || data.uid || matchIdForClient);
+        if (targetId && targetId !== 'default') room = `room-${targetId}`;
+        io.to(room).emit('cricketPlayerHistory', data.data || data);
+    });
+
+    socket.on('cricketHidePlayerHistory', (data) => {
+        let room = socket.activeRoom;
+        const targetId = data && data.room ? data.room.replace('room-', '') : (data && (data.id || data.uid)) || matchIdForClient;
+        if (targetId && targetId !== 'default') room = `room-${targetId}`;
+        io.to(room).emit('cricketHidePlayerHistory');
+    });
+
+    socket.on('cricketTeamHistory', (data) => {
+        let room = socket.activeRoom;
+        const targetId = data.room ? data.room.replace('room-', '') : (data.id || data.uid || matchIdForClient);
+        if (targetId && targetId !== 'default') room = `room-${targetId}`;
+        io.to(room).emit('cricketTeamHistory', data.data || data);
+    });
+
+    socket.on('cricketHideTeamHistory', (data) => {
+        let room = socket.activeRoom;
+        const targetId = data && data.room ? data.room.replace('room-', '') : (data && (data.id || data.uid)) || matchIdForClient;
+        if (targetId && targetId !== 'default') room = `room-${targetId}`;
+        io.to(room).emit('cricketHideTeamHistory');
+    });
+
     // 🍃 Every ball, straight to MongoDB — the permanent source of truth.
     // Fired once per recordBall() call in cricket-panel.html, independent
     // of the cricketState broadcast above (that one's just "what the
