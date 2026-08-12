@@ -221,6 +221,24 @@
   .wm-option:not(:disabled):hover{ border-color:var(--red); color:var(--red); }
   .wm-cancel{ width:100%; margin-top:12px; }
 
+  /* --- scorecard modal: a wider, scrollable variant of the same
+     overlay/box pattern used by the other modals above --- */
+  .scorecard-modal{ max-width:640px; max-height:82vh; overflow-y:auto; }
+  .sc-head{ margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid var(--border); }
+  .sc-title{ font-size:16px; font-weight:800; }
+  .sc-sub{ font-size:11px; color:var(--text-dim); margin-top:2px; }
+  .sc-result{ font-size:12px; font-weight:700; color:var(--accent); margin-top:4px; }
+  .sc-innings{ margin-bottom:16px; }
+  .sc-innings-head{ display:flex; align-items:baseline; justify-content:space-between; margin-bottom:6px; }
+  .sc-team{ font-size:13px; font-weight:800; }
+  .sc-score{ font-size:15px; font-weight:800; font-variant-numeric:tabular-nums; }
+  .sc-overs{ font-size:11px; font-weight:500; color:var(--text-dim); }
+  .sc-table{ width:100%; border-collapse:collapse; font-size:11.5px; }
+  .sc-table th{ text-align:left; color:var(--text-dim); font-weight:700; font-size:10px; text-transform:uppercase; letter-spacing:.3px; padding:4px 6px; border-bottom:1px solid var(--border); }
+  .sc-table td{ padding:4px 6px; border-bottom:1px solid var(--border); font-variant-numeric:tabular-nums; }
+  .sc-extras, .sc-fow{ font-size:10.5px; color:var(--text-dim); margin:6px 2px; }
+  .league-match-row:hover{ background:var(--panel-2); border-radius:6px; }
+
   /* --- logo uploader --- */
   .logo-row{ display:flex; align-items:center; gap:10px; margin-top:6px; }
   .logo-preview{
@@ -354,6 +372,13 @@
         <button type="button" class="small" id="mode-tournament-btn">🏆 Tournament</button>
       </div>
       <div class="shortcut-hint" id="match-mode-hint">Single Match mode: this match stays on its own — nothing is saved to a tournament.</div>
+
+      <div id="single-match-fields" style="margin-top:10px;">
+        <div class="shortcut-hint" id="single-match-count">No single matches saved yet.</div>
+        <button class="small ghost full" id="view-single-matches-btn" type="button" style="margin-top:6px;">📋 My Matches</button>
+        <div id="single-matches-list" style="display:none; margin-top:10px; max-height:320px; overflow-y:auto; border-top:1px solid var(--border); padding-top:8px;"></div>
+        <div class="shortcut-hint">Saves itself the instant a match is won or tied — kept completely separate from any tournament, so it never shows up in a tournament's match list or stat cards. Click a saved match to reopen its full scorecard.</div>
+      </div>
 
       <div id="tournament-fields" style="display:none; margin-top:10px;">
         <label>Tournament <span class="note">(pick an existing one, or start a new one)</span></label>
@@ -529,6 +554,15 @@
         style="width:100%;padding:9px 10px;border-radius:7px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);font-size:13px;margin-bottom:10px;">
       <button type="button" class="full primary" id="newover-modal-submit">Set Bowler</button>
       <button type="button" class="full ghost wm-cancel" id="newover-modal-cancel" style="margin-top:8px;">Skip for now</button>
+    </div>
+  </div>
+
+  <!-- Full read-only scorecard viewer — opened by clicking any match in
+       the Tournament "Matches" list or the Single Match "My Matches" list. -->
+  <div class="wicket-modal-overlay" id="scorecard-modal-overlay">
+    <div class="wicket-modal scorecard-modal" id="scorecard-modal">
+      <div id="scorecard-modal-body"></div>
+      <button type="button" class="full ghost wm-cancel" id="scorecard-modal-close">Close</button>
     </div>
   </div>
 
@@ -1832,16 +1866,19 @@ function applyMatchModeUI(mode){
   const singleBtn = document.getElementById('mode-single-btn');
   const tourBtn = document.getElementById('mode-tournament-btn');
   const tourFields = document.getElementById('tournament-fields');
+  const singleFields = document.getElementById('single-match-fields');
   const hint = document.getElementById('match-mode-hint');
   if(mode === 'tournament'){
     singleBtn.classList.remove('primary');
     tourBtn.classList.add('primary');
     tourFields.style.display = 'block';
+    if(singleFields) singleFields.style.display = 'none';
     hint.textContent = 'Tournament mode: pick or start a tournament below — its matches (and only its matches) feed the Tournament stat cards.';
   } else {
     tourBtn.classList.remove('primary');
     singleBtn.classList.add('primary');
     tourFields.style.display = 'none';
+    if(singleFields) singleFields.style.display = 'block';
     hint.textContent = 'Single Match mode: this match stays on its own — nothing is saved to a tournament.';
   }
 }
@@ -1885,6 +1922,13 @@ document.getElementById('tournament-select').addEventListener('change', (e) => {
 });
 
 document.getElementById('save-match-league-btn').addEventListener('click', () => saveMatchToLeague(false));
+document.getElementById('view-single-matches-btn').addEventListener('click', () => {
+  const listEl = document.getElementById('single-matches-list');
+  const showing = listEl.style.display !== 'none';
+  if(showing){ listEl.style.display = 'none'; return; }
+  listEl.style.display = 'block';
+  renderSingleMatchesList(currentSingleMatches());
+});
 document.getElementById('view-league-matches-btn').addEventListener('click', () => {
   const listEl = document.getElementById('league-matches-list');
   const showing = listEl.style.display !== 'none' && historyPanelView === 'matches';
@@ -2086,6 +2130,11 @@ function checkMatchResult(){
     // lands — this is what makes Team/Player/Bowler "Tournament" cards
     // update on their own, match after match, with nothing typed in.
     saveMatchToLeague(true);
+  } else if(resultFired){
+    // Not tracked under any tournament — save into this browser/account's
+    // own separate single-match history instead, so it's never lost and
+    // never mixes with any tournament's saved matches.
+    saveMatchToSingleHistory(true);
   }
 
   if(resultFired && state.showMatchSummary && socket && socket.connected){
@@ -2462,6 +2511,125 @@ function saveMatchToLeague(silent){
     }
   }).catch(() => toast('⚠️ Saved locally only — could not sync to server'));
 }
+
+/* ============================================================
+   SINGLE MATCH HISTORY — every match played in "Single Match" mode
+   gets saved here instead, so it's never mixed into any tournament's
+   match list, Team/Player/Bowler cards, or points table. Deliberately
+   reuses the exact same storage/sync plumbing as the league system
+   above (leagueStorageKey / leagueCache / leagueApiPath / withUid) but
+   keyed under this one reserved, non-typeable name — a real tournament
+   name can never collide with it because it never appears in the
+   tournament picker and isn't something an operator would ever type.
+   ============================================================ */
+const SINGLE_MATCHES_NAME = '__single_matches__';
+function currentSingleMatches(){
+  const key = leagueStorageKey(SINGLE_MATCHES_NAME);
+  return leagueCache[key] || loadLeagueMatchesLocal(SINGLE_MATCHES_NAME);
+}
+// Upserts by matchId — same rule as saveMatchToLeague: a new match (fresh
+// tournamentMatchId, see ensureTournamentMatchId()) always lands as a NEW
+// entry, never overwriting the previous single match's saved scorecard.
+function saveMatchToSingleHistory(silent){
+  const rec = buildMatchRecordForLeague();
+  const key = leagueStorageKey(SINGLE_MATCHES_NAME);
+  const matches = currentSingleMatches().slice();
+  const idx = matches.findIndex(m => m.matchId === rec.matchId);
+  if(idx >= 0) matches[idx] = rec; else matches.push(rec);
+  leagueCache[key] = matches;
+  saveLeagueMatchesLocal(SINGLE_MATCHES_NAME, matches);
+  refreshSingleHistoryUI();
+  if(!silent) toast(`Saved — ${matches.length} single match${matches.length === 1 ? '' : 'es'} in your history`);
+
+  if(!currentOwnerUid()){ if(!silent) toast('⚠️ Not logged in — saved on this device only'); return; }
+  fetch(withUid(`${leagueApiPath(SINGLE_MATCHES_NAME)}/match`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(rec)
+  }).then(res => res.json()).then(data => {
+    if(data && data.success){
+      leagueCache[key] = data.matches;
+      saveLeagueMatchesLocal(SINGLE_MATCHES_NAME, data.matches);
+      refreshSingleHistoryUI();
+    } else {
+      toast('⚠️ Saved locally only — could not sync to server');
+    }
+  }).catch(() => toast('⚠️ Saved locally only — could not sync to server'));
+}
+function deleteMatchFromSingleHistory(matchId){
+  const key = leagueStorageKey(SINGLE_MATCHES_NAME);
+  const matches = currentSingleMatches().filter(m => m.matchId !== matchId);
+  leagueCache[key] = matches;
+  saveLeagueMatchesLocal(SINGLE_MATCHES_NAME, matches);
+  refreshSingleHistoryUI();
+
+  if(!currentOwnerUid()) return;
+  fetch(withUid(`${leagueApiPath(SINGLE_MATCHES_NAME)}/match/${encodeURIComponent(matchId)}`), { method: 'DELETE' })
+    .then(res => res.json()).then(data => {
+      if(data && data.success){
+        leagueCache[key] = data.matches;
+        saveLeagueMatchesLocal(SINGLE_MATCHES_NAME, data.matches);
+        refreshSingleHistoryUI();
+      } else {
+        toast('⚠️ Deleted locally only — could not sync to server');
+      }
+    }).catch(() => toast('⚠️ Deleted locally only — could not sync to server'));
+}
+async function syncSingleMatchesFromServer(){
+  if(!currentOwnerUid()) return;
+  const key = leagueStorageKey(SINGLE_MATCHES_NAME);
+  try{
+    const res = await fetch(withUid(leagueApiPath(SINGLE_MATCHES_NAME)));
+    const data = await res.json();
+    if(data && data.success){
+      leagueCache[key] = data.matches || [];
+      saveLeagueMatchesLocal(SINGLE_MATCHES_NAME, leagueCache[key]);
+      refreshSingleHistoryUI();
+    }
+  }catch(e){ /* offline — keep using whatever's cached locally */ }
+}
+function refreshSingleHistoryUI(){
+  const countEl = document.getElementById('single-match-count');
+  const listEl = document.getElementById('single-matches-list');
+  if(!countEl || !listEl) return;
+  const matches = currentSingleMatches();
+  const notLoggedInNote = currentOwnerUid() ? '' : ' (not logged in — only saved on this device)';
+  countEl.textContent = matches.length
+    ? `${matches.length} single match${matches.length === 1 ? '' : 'es'} saved${notLoggedInNote}.`
+    : `No single matches saved yet${notLoggedInNote}. Play one to completion (or hit Save This Match) to start building your history.`;
+  if(listEl.style.display !== 'none') renderSingleMatchesList(matches);
+}
+function renderSingleMatchesList(matches){
+  const listEl = document.getElementById('single-matches-list');
+  if(!matches.length){ listEl.innerHTML = '<div class="shortcut-hint">No matches saved yet.</div>'; return; }
+  listEl.innerHTML = [...matches].reverse().map(m => {
+    const resultText = m.winningTeam === 'TIE' ? 'Tied'
+      : m.winningTeam === 'A' ? `${m.teamA.short || m.teamA.name} won`
+      : m.winningTeam === 'B' ? `${m.teamB.short || m.teamB.name} won`
+      : 'In progress';
+    return `<div class="league-match-row" data-view-match="${escapeHtmlPanel(m.matchId)}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:11.5px;cursor:pointer;">
+      <div style="min-width:0;">
+        <div style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtmlPanel(m.teamA.short || m.teamA.name)} vs ${escapeHtmlPanel(m.teamB.short || m.teamB.name)}</div>
+        <div style="color:var(--text-dim);">${escapeHtmlPanel(resultText)} · ${m.scoreA.runs}-${m.scoreA.wickets} / ${m.scoreB.runs}-${m.scoreB.wickets}</div>
+      </div>
+      <button type="button" class="small ghost" data-delete-single-match="${escapeHtmlPanel(m.matchId)}" style="flex:none;">🗑</button>
+    </div>`;
+  }).join('');
+  listEl.querySelectorAll('.league-match-row').forEach(row => {
+    row.addEventListener('click', (e) => {
+      if(e.target.closest('[data-delete-single-match]')) return;
+      const rec = matches.find(x => x.matchId === row.getAttribute('data-view-match'));
+      if(rec) openScorecardModal(rec);
+    });
+  });
+  listEl.querySelectorAll('[data-delete-single-match]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if(confirm('Remove this match from your single-match history?')) deleteMatchFromSingleHistory(btn.getAttribute('data-delete-single-match'));
+    });
+  });
+}
+
 function deleteMatchFromLeague(matchId){
   const name = (state.leagueName || '').trim();
   if(!name) return;
@@ -2550,7 +2718,7 @@ function renderLeagueMatchesList(matches){
       : m.winningTeam === 'A' ? `${m.teamA.short || m.teamA.name} won`
       : m.winningTeam === 'B' ? `${m.teamB.short || m.teamB.name} won`
       : 'In progress';
-    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:11.5px;">
+    return `<div class="league-match-row" data-view-match="${escapeHtmlPanel(m.matchId)}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:11.5px;cursor:pointer;">
       <div style="min-width:0;">
         <div style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtmlPanel(m.teamA.short || m.teamA.name)} vs ${escapeHtmlPanel(m.teamB.short || m.teamB.name)}</div>
         <div style="color:var(--text-dim);">${escapeHtmlPanel(resultText)} · ${m.scoreA.runs}-${m.scoreA.wickets} / ${m.scoreB.runs}-${m.scoreB.wickets}</div>
@@ -2558,12 +2726,91 @@ function renderLeagueMatchesList(matches){
       <button type="button" class="small ghost" data-delete-match="${escapeHtmlPanel(m.matchId)}" style="flex:none;">🗑</button>
     </div>`;
   }).join('');
+  listEl.querySelectorAll('.league-match-row').forEach(row => {
+    row.addEventListener('click', (e) => {
+      if(e.target.closest('[data-delete-match]')) return;
+      const rec = matches.find(x => x.matchId === row.getAttribute('data-view-match'));
+      if(rec) openScorecardModal(rec);
+    });
+  });
   listEl.querySelectorAll('[data-delete-match]').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
       if(confirm('Remove this match from the league?')) deleteMatchFromLeague(btn.getAttribute('data-delete-match'));
     });
   });
 }
+
+/* ============================================================
+   SCORECARD MODAL — a read-only, full scorecard rendered straight from
+   a saved match record (tournament OR single-match history — both use
+   the exact same buildMatchRecordForLeague() shape), so any match ever
+   saved can be reopened and inspected in full at any time, without
+   affecting the live match currently on the panel.
+   ============================================================ */
+function scRow(cells){ return `<tr>${cells.map(c => `<td>${c}</td>`).join('')}</tr>`; }
+function renderScorecardHtml(m){
+  const teamAName = m.teamA.short || m.teamA.name, teamBName = m.teamB.short || m.teamB.name;
+  const resultText = m.winningTeam === 'TIE' ? 'Match tied'
+    : m.winningTeam === 'A' ? `${teamAName} won`
+    : m.winningTeam === 'B' ? `${teamBName} won`
+    : 'Result not decided';
+  const savedDate = m.savedAt ? new Date(m.savedAt).toLocaleString() : '';
+
+  const inningsBlock = (teamKey, oppKey) => {
+    const teamLabel = teamKey === 'A' ? teamAName : teamBName;
+    const score = teamKey === 'A' ? m.scoreA : m.scoreB;
+    const batting = (m.battingCard && m.battingCard[teamKey]) || [];
+    const bowling = (m.bowlingCard && m.bowlingCard[oppKey]) || [];
+    const extr = (m.extras && m.extras[teamKey]) || {};
+    const fow = (m.fallOfWickets && m.fallOfWickets[teamKey]) || [];
+    if(!batting.length && !bowling.length && (!score || (score.runs === 0 && score.wickets === 0 && score.overs === '0.0'))) return '';
+    return `
+      <div class="sc-innings">
+        <div class="sc-innings-head">
+          <span class="sc-team">${escapeHtmlPanel(teamLabel)}</span>
+          <span class="sc-score">${score.runs}/${score.wickets} <span class="sc-overs">(${score.overs} ov)</span></span>
+        </div>
+        <table class="sc-table"><thead><tr><th>Batsman</th><th>Runs</th><th>Balls</th><th>4s</th><th>6s</th><th>S/R</th><th>Dismissal</th></tr></thead>
+        <tbody>${batting.map(b => scRow([escapeHtmlPanel(b.name), b.runs, b.balls, b.fours, b.sixes, b.balls > 0 ? ((b.runs / b.balls) * 100).toFixed(1) : '0.0', escapeHtmlPanel(b.howOut || 'not out')])).join('')}</tbody></table>
+        ${(extr.wd || extr.nb || extr.b || extr.lb) ? `<div class="sc-extras">Extras: Wd ${extr.wd || 0} · NB ${extr.nb || 0} · B ${extr.b || 0} · LB ${extr.lb || 0}</div>` : ''}
+        ${fow.length ? `<div class="sc-fow">Fall of wickets: ${fow.map(f => `${f.wkt}-${f.runs} (${f.over})`).join('  ')}</div>` : ''}
+        <table class="sc-table" style="margin-top:8px;"><thead><tr><th>Bowler</th><th>Overs</th><th>Maidens</th><th>Runs</th><th>Wkts</th><th>Econ</th></tr></thead>
+        <tbody>${bowling.map(b => scRow([escapeHtmlPanel(b.name), `${b.overs}.${b.balls}`, b.maidens, b.runs, b.wickets, (b.overs + b.balls / 6) > 0 ? (b.runs / (b.overs + b.balls / 6)).toFixed(2) : '0.00'])).join('')}</tbody></table>
+      </div>`;
+  };
+
+  const partnerships = m.partnerships;
+  let partnershipsHtml = '';
+  if(partnerships && ((partnerships[1] && partnerships[1].length) || (partnerships[2] && partnerships[2].length))){
+    const rows = [...(partnerships[1] || []).map(p => ({ ...p, inn: 1 })), ...(partnerships[2] || []).map(p => ({ ...p, inn: 2 }))];
+    partnershipsHtml = `<div class="sc-innings"><div class="sc-innings-head"><span class="sc-team">Partnerships</span></div>
+      <table class="sc-table"><thead><tr><th>Inn</th><th>Wkt</th><th>Batters</th><th>Runs</th><th>Balls</th></tr></thead>
+      <tbody>${rows.map(p => scRow([p.inn, p.forWicket, escapeHtmlPanel((p.batters || []).join(' & ')), p.runs, p.balls])).join('')}</tbody></table></div>`;
+  }
+
+  return `
+    <div class="sc-head">
+      <div class="sc-title">${escapeHtmlPanel(teamAName)} vs ${escapeHtmlPanel(teamBName)}</div>
+      <div class="sc-sub">${escapeHtmlPanel(m.format || '')}${m.venue ? ' · ' + escapeHtmlPanel(m.venue) : ''}${savedDate ? ' · Saved ' + escapeHtmlPanel(savedDate) : ''}</div>
+      <div class="sc-result">${escapeHtmlPanel(resultText)}</div>
+    </div>
+    ${inningsBlock('A', 'B')}
+    ${inningsBlock('B', 'A')}
+    ${partnershipsHtml}
+  `;
+}
+function openScorecardModal(m){
+  document.getElementById('scorecard-modal-body').innerHTML = renderScorecardHtml(m);
+  document.getElementById('scorecard-modal-overlay').classList.add('show');
+}
+function closeScorecardModal(){
+  document.getElementById('scorecard-modal-overlay').classList.remove('show');
+}
+document.getElementById('scorecard-modal-close').addEventListener('click', closeScorecardModal);
+document.getElementById('scorecard-modal-overlay').addEventListener('click', (e) => {
+  if(e.target.id === 'scorecard-modal-overlay') closeScorecardModal();
+});
 
 /* ============================================================
    TOURNAMENT HISTORY PANEL — lets the operator open a player or a team
@@ -5075,6 +5322,8 @@ document.addEventListener('keydown', (e) => {
   // panel opened fresh on a second laptop immediately sees whatever the
   // first laptop already saved under the same league name.
   syncLeagueFromServer(state.leagueName);
+  syncSingleMatchesFromServer();
+  refreshSingleHistoryUI();
 
   const urlMatchId = new URLSearchParams(location.search).get('room');
   const savedMatchId = localStorage.getItem('cricket-match-id');
