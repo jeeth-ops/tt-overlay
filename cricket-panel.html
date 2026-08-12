@@ -376,6 +376,8 @@
       <div id="single-match-fields" style="margin-top:10px;">
         <div class="shortcut-hint" id="single-match-count">No single matches saved yet.</div>
         <button class="small ghost full" id="view-single-matches-btn" type="button" style="margin-top:6px;">📋 My Matches</button>
+        <button class="small ghost full" id="copy-match-link-btn" type="button" style="margin-top:6px;">🔗 Copy Public Match Link</button>
+        <div class="shortcut-hint" id="match-link-hint" style="display:none;"></div>
         <div id="single-matches-list" style="display:none; margin-top:10px; max-height:320px; overflow-y:auto; border-top:1px solid var(--border); padding-top:8px;"></div>
         <div class="shortcut-hint">Saves itself the instant a match is won or tied — kept completely separate from any tournament, so it never shows up in a tournament's match list or stat cards. Click a saved match to reopen its full scorecard.</div>
       </div>
@@ -400,6 +402,8 @@
           <button class="small ghost" id="view-team-history-btn" type="button">🏏 Team History</button>
         </div>
         <button class="small ghost full" id="view-points-table-btn" type="button" style="margin-top:6px;">📊 Points Table</button>
+        <button class="small ghost full" id="copy-tournament-link-btn" type="button" style="margin-top:6px;">🔗 Copy Public Tournament Link</button>
+        <div class="shortcut-hint" id="tournament-link-hint" style="display:none;"></div>
         <div id="league-matches-list" style="display:none; margin-top:10px; max-height:320px; overflow-y:auto; border-top:1px solid var(--border); padding-top:8px;"></div>
         <button class="small full" id="delete-tournament-btn" type="button" style="margin-top:10px; border-color:var(--red); color:var(--red);">🗑️ Delete Entire Tournament</button>
         <div class="shortcut-hint">Saves itself the instant a match is won or tied — this button is only needed to save mid-match or re-save after a correction. Team, batter and bowler "Tournament" cards pull straight from every match saved in this tournament, matched automatically by name — nothing to type by hand. "Delete Entire Tournament" removes every match saved under it, permanently.</div>
@@ -2451,6 +2455,11 @@ function buildMatchRecordForLeague(){
     // the "Match ID" connection field (see ensureTournamentMatchId() for
     // why they must never be the same value).
     matchId: ensureTournamentMatchId(),
+    // The live broadcast "Match ID" connection field, captured at save
+    // time — lets the public scorecard system (score-tournament.html /
+    // score-match.html) find this match by whichever id was actually
+    // shared/joined live, even before the permanent record existed.
+    roomId: currentMatchId() || null,
     savedAt: new Date().toISOString(),
     venue: state.venue,
     format: state.format,
@@ -2490,6 +2499,9 @@ function saveMatchToLeague(silent){
   addKnownTournament(name);
   refreshLeagueUI();
   refreshTournamentCardsIfShown();
+  // Match is now permanently saved with its final scorecard — it's no
+  // longer "live", so clear the tournament portal's live pointer.
+  pingTournamentLiveStatus(false);
   if(!silent) toast(`Saved to "${name}" — ${matches.length} match${matches.length === 1 ? '' : 'es'} now tracked`);
 
   // Not logged in (no uid) — stays local-only on this browser, same as
@@ -2588,6 +2600,68 @@ async function syncSingleMatchesFromServer(){
     }
   }catch(e){ /* offline — keep using whatever's cached locally */ }
 }
+/* ============================================================
+   🌐 PUBLIC SCORECARD LINKS
+   Tournament: one permanent link per tournament, minted server-side
+   (idempotent — re-clicking always returns the same link). Standalone
+   match: no server round-trip needed at all — the match's own permanent
+   matchId IS the public id, so the link can be copied even before the
+   match is saved (it'll just show "match not found" until it's finished,
+   or resolve live once ensureLiveStatusPing() below has told the server
+   which room this matchId's connection is broadcasting under).
+   ============================================================ */
+async function copyTournamentPublicLink(){
+  const name = (state.leagueName || '').trim();
+  const hint = document.getElementById('tournament-link-hint');
+  if(!name){ toast('Pick or start a tournament first'); return; }
+  if(!currentOwnerUid()){ toast('⚠️ Log in first — public links are tied to your account'); return; }
+  try{
+    const res = await fetch(withUid(`${leagueApiPath(name)}/public-link`), { method: 'POST' });
+    const data = await res.json();
+    if(data && data.success){
+      const fullUrl = `${location.origin}${data.url}`;
+      await navigator.clipboard.writeText(fullUrl).catch(() => {});
+      if(hint){ hint.style.display = 'block'; hint.textContent = `Copied: ${fullUrl}`; }
+      toast('🔗 Public tournament link copied');
+    } else {
+      toast('⚠️ Could not create public link');
+    }
+  }catch(e){ toast('⚠️ Could not create public link — check connection'); }
+}
+document.getElementById('copy-tournament-link-btn').addEventListener('click', copyTournamentPublicLink);
+
+function copyMatchPublicLink(){
+  const id = ensureTournamentMatchId();
+  const hint = document.getElementById('match-link-hint');
+  const fullUrl = `${location.origin}/score/match/${id}`;
+  navigator.clipboard.writeText(fullUrl).catch(() => {});
+  if(hint){ hint.style.display = 'block'; hint.textContent = `Copied: ${fullUrl} (goes live once the match starts, permanent once it's saved)`; }
+  toast('🔗 Public match link copied');
+}
+document.getElementById('copy-match-link-btn').addEventListener('click', copyMatchPublicLink);
+
+// Tells the server which live room/connection this tournament's current
+// match is broadcasting under, so the public tournament portal's "Live
+// Now" card can join it. Fire-and-forget, debounced, never blocks or
+// affects scoring if it fails — same trust model as the league save
+// calls above. Called whenever a ball is recorded during a tournament
+// match (see recordBall hook) and cleared once the match is saved.
+let liveStatusPingTimer = null;
+function pingTournamentLiveStatus(active){
+  const name = (state.leagueName || '').trim();
+  if(!name || !currentOwnerUid()) return;
+  clearTimeout(liveStatusPingTimer);
+  liveStatusPingTimer = setTimeout(() => {
+    fetch(withUid(`${leagueApiPath(name)}/live-status`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(active === false
+        ? { active: false }
+        : { active: true, roomId: currentMatchId() || null, matchId: ensureTournamentMatchId() })
+    }).catch(() => {}); // best-effort only
+  }, 800);
+}
+
 function refreshSingleHistoryUI(){
   const countEl = document.getElementById('single-match-count');
   const listEl = document.getElementById('single-matches-list');
@@ -3438,6 +3512,9 @@ function pushBallHistory(label){
 
 function recordBall(kind, meta){
   inningsSummaryJustFired = false;
+  // Tell the public tournament portal (if this match is tournament-tracked)
+  // which room to join for its "Live Now" card — see pingTournamentLiveStatus().
+  if(state.matchMode === 'tournament') pingTournamentLiveStatus(true);
   if(isInningsOver()){
     let msg = '🚫 Overs complete for this innings';
     if(state.score.wickets >= 10) msg = '🚫 All out — 10 wickets already, innings is over';
