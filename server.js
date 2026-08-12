@@ -76,6 +76,14 @@ async function connectMongo() {
         // Firebase user (see index.html's `scorvix_uid`), matching how the
         // rest of this app already identifies "whose data is whose".
         await leaguesCollection.createIndex({ ownerUid: 1, leagueKey: 1 }, { unique: true });
+        // Public tournament portal links (see /api/league/:name/public-link) —
+        // sparse because most league docs never mint one.
+        await leaguesCollection.createIndex({ publicToken: 1 }, { unique: true, sparse: true });
+        // Public standalone-match lookups resolve by matchId/roomId inside the
+        // reserved __single_matches__ doc's matches[] array — see
+        // GET /api/public/match/:id.
+        await leaguesCollection.createIndex({ leagueKey: 1, 'matches.matchId': 1 });
+        await leaguesCollection.createIndex({ leagueKey: 1, 'matches.roomId': 1 });
         console.log('🍃 MongoDB connected —', mongoDb.databaseName);
     } catch (err) {
         console.log('MongoDB connection error:', err);
@@ -521,6 +529,7 @@ app.post('/api/create-control-token', async (req, res) => {
 function leagueKeyFor(name) {
     return String(name || '').trim().toLowerCase();
 }
+const SINGLE_MATCHES_LEAGUE_KEY = '__single_matches__'; // must match SINGLE_MATCHES_NAME in cricket-panel.html
 function ownerUidFrom(req) {
     const uid = (req.query.uid || (req.body && req.body.uid) || '').toString().trim();
     return uid || null;
@@ -585,6 +594,235 @@ app.delete('/api/league/:name/match/:matchId', async (req, res) => {
     } catch (err) {
         console.log('League delete error:', err);
         res.status(500).json({ success: false, error: 'Could not delete match' });
+    }
+});
+
+// ================================================================
+// 🌐 PUBLIC SCORECARD SYSTEM
+// Read-only, token-based public access to tournament & standalone match
+// data. Builds entirely on the existing `leagues` collection (tournaments
+// and single matches are both already permanently stored there, upserted
+// by permanent matchId — see /api/league/:name/match above) — no
+// duplicate data store, no risk of drifting from the admin panel's source
+// of truth.
+//
+// Security model: public viewers never see ownerUid or any other
+// internal id. Tournaments are addressed by a random, permanent
+// `publicToken` minted once (via /api/league/:name/public-link) and
+// stored on the league doc. Standalone matches are addressed by the
+// match's own permanent matchId (already a crypto-random UUID minted
+// client-side in cricket-panel.html's ensureTournamentMatchId()) — no
+// extra token needed there. Every /api/public/* route strips ownerUid
+// before responding.
+// ================================================================
+function generatePublicToken() {
+    return crypto.randomBytes(9).toString('base64url'); // ~12 chars, URL-safe
+}
+
+// Real overs string ("12.4" = 12 overs + 4 balls) -> float overs, for NRR.
+function oversToFloat(overs) {
+    const parts = String(overs || '0.0').split('.');
+    const o = parseInt(parts[0], 10) || 0;
+    const b = parseInt(parts[1], 10) || 0;
+    return o + (b / 6);
+}
+function fmtOversLike(o, b) { return `${o || 0}.${b || 0}`; }
+
+// Standard cricket points table: 2 pts win, 1 pt tie, 0 loss/no-result.
+// NRR = (runs scored / overs faced) - (runs conceded / overs bowled),
+// summed across every match saved under this tournament so far.
+function computePointsTable(matches) {
+    const table = {}; // key: lowercased team name -> row
+    const ensure = (name) => {
+        const key = (name || '').trim().toLowerCase();
+        if (!key) return null;
+        if (!table[key]) {
+            table[key] = {
+                team: (name || '').trim(), played: 0, won: 0, lost: 0, tied: 0, noResult: 0,
+                points: 0, runsFor: 0, oversFor: 0, runsAgainst: 0, oversAgainst: 0
+            };
+        }
+        return table[key];
+    };
+    matches.forEach(m => {
+        const rowA = ensure(m.teamA && m.teamA.name);
+        const rowB = ensure(m.teamB && m.teamB.name);
+        if (!rowA || !rowB) return;
+        const scoreA = m.scoreA || { runs: 0, overs: '0.0' };
+        const scoreB = m.scoreB || { runs: 0, overs: '0.0' };
+
+        rowA.played++; rowB.played++;
+        rowA.runsFor += scoreA.runs || 0; rowA.oversFor += oversToFloat(scoreA.overs);
+        rowA.runsAgainst += scoreB.runs || 0; rowA.oversAgainst += oversToFloat(scoreB.overs);
+        rowB.runsFor += scoreB.runs || 0; rowB.oversFor += oversToFloat(scoreB.overs);
+        rowB.runsAgainst += scoreA.runs || 0; rowB.oversAgainst += oversToFloat(scoreA.overs);
+
+        if (m.winningTeam === 'A') { rowA.won++; rowA.points += 2; rowB.lost++; }
+        else if (m.winningTeam === 'B') { rowB.won++; rowB.points += 2; rowA.lost++; }
+        else if (m.winningTeam === 'TIE') { rowA.tied++; rowB.tied++; rowA.points += 1; rowB.points += 1; }
+        else { rowA.noResult++; rowB.noResult++; } // still in progress / no result recorded
+    });
+    return Object.values(table).map(r => ({
+        ...r,
+        nrr: Number((((r.oversFor > 0 ? r.runsFor / r.oversFor : 0) - (r.oversAgainst > 0 ? r.runsAgainst / r.oversAgainst : 0))).toFixed(3))
+    })).sort((a, b) => (b.points - a.points) || (b.nrr - a.nrr));
+}
+
+// Batting/bowling leaderboards aggregated from every saved match's
+// battingCard/bowlingCard — the same full scorecards already persisted
+// per match, just rolled up across the whole tournament.
+function computeLeaderboards(matches) {
+    const batters = {};
+    const bowlers = {};
+    matches.forEach(m => {
+        ['A', 'B'].forEach(k => {
+            (m.battingCard && m.battingCard[k] || []).forEach(b => {
+                if (!b || !b.name) return;
+                const key = b.name.trim().toLowerCase();
+                if (!batters[key]) batters[key] = { name: b.name.trim(), innings: 0, runs: 0, balls: 0, fours: 0, sixes: 0, fifties: 0, hundreds: 0, highScore: 0 };
+                const row = batters[key];
+                row.innings++; row.runs += b.runs || 0; row.balls += b.balls || 0;
+                row.fours += b.fours || 0; row.sixes += b.sixes || 0;
+                if ((b.runs || 0) > row.highScore) row.highScore = b.runs || 0;
+                if ((b.runs || 0) >= 100) row.hundreds++;
+                else if ((b.runs || 0) >= 50) row.fifties++;
+            });
+            (m.bowlingCard && m.bowlingCard[k] || []).forEach(b => {
+                if (!b || !b.name) return;
+                const key = b.name.trim().toLowerCase();
+                if (!bowlers[key]) bowlers[key] = { name: b.name.trim(), innings: 0, overs: 0, runs: 0, wickets: 0, bestFigures: '0/0' };
+                const row = bowlers[key];
+                row.innings++; row.overs += oversToFloat(fmtOversLike(b.overs, b.balls)); row.runs += b.runs || 0; row.wickets += b.wickets || 0;
+                const [bw, br] = row.bestFigures.split('/').map(Number);
+                if ((b.wickets || 0) > bw || ((b.wickets || 0) === bw && (b.runs || 0) < br)) row.bestFigures = `${b.wickets || 0}/${b.runs || 0}`;
+            });
+        });
+    });
+    const topRuns = Object.values(batters).map(r => ({ ...r, average: r.innings ? (r.runs / r.innings).toFixed(2) : '0.00', strikeRate: r.balls ? ((r.runs / r.balls) * 100).toFixed(2) : '0.00' }))
+        .sort((a, b) => b.runs - a.runs).slice(0, 15);
+    const topWickets = Object.values(bowlers).map(r => ({ ...r, overs: Number(r.overs.toFixed(1)), economy: r.overs ? (r.runs / r.overs).toFixed(2) : '0.00' }))
+        .sort((a, b) => (b.wickets - a.wickets) || (a.runs - b.runs)).slice(0, 15);
+    return { topRuns, topWickets };
+}
+
+// Mint (or fetch, if already minted) a tournament's permanent public
+// token. Idempotent — calling it again for the same tournament always
+// returns the same token, so a link the operator already shared never
+// breaks.
+app.post('/api/league/:name/public-link', async (req, res) => {
+    const leagueKey = leagueKeyFor(req.params.name);
+    const ownerUid = ownerUidFrom(req);
+    if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
+    if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
+    if (leagueKey === SINGLE_MATCHES_LEAGUE_KEY) return res.status(400).json({ success: false, error: 'Single matches get their own link per match, not a collection link' });
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const existing = await leaguesCollection.findOne({ ownerUid, leagueKey });
+        if (existing && existing.publicToken) {
+            return res.json({ success: true, token: existing.publicToken, url: `/score/tournament/${existing.publicToken}` });
+        }
+        const token = generatePublicToken();
+        await leaguesCollection.updateOne(
+            { ownerUid, leagueKey },
+            { $set: { ownerUid, leagueKey, displayName: (req.params.name || '').trim(), publicToken: token, updatedAt: Date.now() }, $setOnInsert: { matches: [] } },
+            { upsert: true }
+        );
+        res.json({ success: true, token, url: `/score/tournament/${token}` });
+    } catch (err) {
+        console.log('Public link creation error:', err);
+        res.status(500).json({ success: false, error: 'Could not create public link' });
+    }
+});
+
+// "Which match is currently live" pointer for a tournament's public
+// portal — the panel calls this when a tournament match starts/stops
+// being scored. Deliberately separate from the /match save route: this
+// never touches the permanent matches[] array, so it can never corrupt
+// or overwrite saved match data even if it fails or races.
+app.post('/api/league/:name/live-status', async (req, res) => {
+    const leagueKey = leagueKeyFor(req.params.name);
+    const ownerUid = ownerUidFrom(req);
+    if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
+    if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const { roomId, matchId, active } = req.body || {};
+    try {
+        await leaguesCollection.updateOne(
+            { ownerUid, leagueKey },
+            { $set: active === false
+                ? { liveRoomId: null, liveMatchId: null, updatedAt: Date.now() }
+                : { liveRoomId: roomId || null, liveMatchId: matchId || null, updatedAt: Date.now() } },
+            { upsert: true }
+        );
+        res.json({ success: true });
+    } catch (err) {
+        console.log('Live-status update error:', err);
+        res.status(500).json({ success: false });
+    }
+});
+
+// ---- PUBLIC, READ-ONLY endpoints — no uid/auth, the token itself is the
+// access control, and ownerUid is never included in any response. -------
+
+// Full tournament portal payload: sanitized match list + live pointer +
+// points table + leaderboards, all computed fresh from the same
+// permanent matches[] the admin panel writes to.
+app.get('/api/public/tournament/:token', async (req, res) => {
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const doc = await leaguesCollection.findOne({ publicToken: req.params.token });
+        if (!doc) return res.status(404).json({ success: false, error: 'Tournament not found' });
+        const matches = (doc.matches || []).slice().sort((a, b) => new Date(a.savedAt || 0) - new Date(b.savedAt || 0));
+        res.json({
+            success: true,
+            displayName: doc.displayName || '',
+            matches,
+            live: { roomId: doc.liveRoomId || null, matchId: doc.liveMatchId || null },
+            pointsTable: computePointsTable(matches),
+            leaderboards: computeLeaderboards(matches)
+        });
+    } catch (err) {
+        console.log('Public tournament fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load tournament' });
+    }
+});
+
+// One specific match's full scorecard within a tournament.
+app.get('/api/public/tournament/:token/match/:matchId', async (req, res) => {
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const doc = await leaguesCollection.findOne({ publicToken: req.params.token });
+        if (!doc) return res.status(404).json({ success: false, error: 'Tournament not found' });
+        const match = (doc.matches || []).find(m => m.matchId === req.params.matchId);
+        if (!match) return res.status(404).json({ success: false, error: 'Match not found' });
+        res.json({ success: true, displayName: doc.displayName || '', match });
+    } catch (err) {
+        console.log('Public tournament match fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load match' });
+    }
+});
+
+// A standalone match's public page, addressed by its own permanent
+// matchId (or the live "connection id"/roomId it was broadcast under
+// before it was ever saved). Deliberately searches across ALL owners'
+// __single_matches__ docs by matchId/roomId rather than needing an
+// ownerUid, since a public link never carries one.
+app.get('/api/public/match/:id', async (req, res) => {
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const id = req.params.id;
+    try {
+        const doc = await leaguesCollection.findOne({
+            leagueKey: SINGLE_MATCHES_LEAGUE_KEY,
+            $or: [{ 'matches.matchId': id }, { 'matches.roomId': id }]
+        });
+        const match = doc && (doc.matches || []).find(m => m.matchId === id || m.roomId === id);
+        if (match) return res.json({ success: true, match });
+        // Not saved yet — either still being played (public page falls back
+        // to a live socket join using this id) or the id is simply wrong.
+        res.json({ success: true, match: null, roomId: id });
+    } catch (err) {
+        console.log('Public match fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load match' });
     }
 });
 
@@ -667,6 +905,12 @@ app.get('/cricket-panel', (req, res) => res.sendFile(__dirname + '/cricket-panel
 app.get('/cricket-overlay2', (req, res) => res.sendFile(__dirname + '/cricket-overlay2.html'));
 app.get('/cricket-panel2', (req, res) => res.sendFile(__dirname + '/cricket-panel2.html'));
 app.get('/cricket-scorecard', (req, res) => res.sendFile(__dirname + '/cricket-scorecard.html'));
+// 🌐 Public scorecard system — see the "PUBLIC SCORECARD SYSTEM" section
+// above for the /api/public/* + /api/league/:name/public-link routes
+// these pages call. Both are static shells; all data loads client-side.
+app.get('/score/tournament/:token', (req, res) => res.sendFile(__dirname + '/score-tournament.html'));
+app.get('/score/tournament/:token/match/:matchId', (req, res) => res.sendFile(__dirname + '/score-tournament.html'));
+app.get('/score/match/:id', (req, res) => res.sendFile(__dirname + '/score-match.html'));
 app.get('/football-matchintro', (req, res) => res.sendFile(__dirname + '/football-matchintro.html'));
 app.get('/football-matchintro-panel', (req, res) => res.sendFile(__dirname + '/football-matchintro-panel.html'));
 
