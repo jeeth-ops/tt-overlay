@@ -602,6 +602,32 @@
   .summary-card .stat-cell:nth-last-child(-n+3){ padding-bottom:15px; }
   .summary-card .stat-cell .lbl{ color:var(--bc-ink-dim,#5c6c8a); }
   .summary-card .stat-cell .val{ color:var(--bc-ink,#12213f); }
+
+  /* ============================================================
+     TOURNAMENT HISTORY CARDS — Player History / Team History.
+     Same "summary-card" theme (navy/gold header, white body, zebra
+     rows, dark footer) and team-colour-branded header as the
+     team-stat-card above, but showing a full match-by-match table
+     instead of a fixed stat grid — since a tournament can have many
+     matches, rows run smaller and the card is allowed to grow taller
+     (positioned a bit higher, not dead-centre) so it doesn't get
+     cramped. Operator on/off toggle from the panel, like team-stat-card
+     — not a timed popup.
+     ============================================================ */
+  #player-history-card, #team-history-card{ top:32%; max-height:78vh; }
+  #player-history-card .sc-header, #team-history-card .sc-header{
+    background:
+      linear-gradient(135deg, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.6) 100%),
+      linear-gradient(135deg, var(--stat-accent,#0b3d91), var(--stat-accent,#0b3d91));
+  }
+  #player-history-card .sc-sub, #team-history-card .sc-sub{ color:rgba(255,255,255,0.85); }
+  #player-history-card .sc-rows, #team-history-card .sc-rows{ max-height:44vh; overflow:hidden; }
+  #player-history-card .sc-row{ grid-template-columns:1.15fr repeat(6,0.56fr); font-size:min(1.15vw,12.5px); }
+  #team-history-card .sc-row{ grid-template-columns:1fr 1.1fr 1fr 1fr 0.85fr; font-size:min(1.15vw,12.5px); }
+  #player-history-card .hist-more, #team-history-card .hist-more{
+    text-align:center; font-size:10.5px; font-weight:700; color:var(--bc-ink-dim,#5c6c8a);
+    padding:4px 6px 2px; font-style:italic;
+  }
 </style>
 </head>
 <body>
@@ -795,6 +821,30 @@
     <div class="stat-grid" id="ts-grid"></div>
   </div>
 
+  <div id="player-history-card" class="summary-card wide">
+    <div class="sc-header">
+      <div class="sc-badge" id="ph-badge">TM</div>
+      <div class="sc-header-text">
+        <div class="sc-title" id="ph-name">PLAYER</div>
+        <div class="sc-sub" id="ph-team">TOURNAMENT HISTORY</div>
+      </div>
+    </div>
+    <div class="sc-rows" id="ph-rows"></div>
+    <div class="sc-footer" id="ph-totals"></div>
+  </div>
+
+  <div id="team-history-card" class="summary-card wide">
+    <div class="sc-header">
+      <div class="sc-badge" id="th-badge">TM</div>
+      <div class="sc-header-text">
+        <div class="sc-title" id="th-name">TEAM</div>
+        <div class="sc-sub" id="th-team">TOURNAMENT HISTORY</div>
+      </div>
+    </div>
+    <div class="sc-rows" id="th-rows"></div>
+    <div class="sc-footer" id="th-totals"></div>
+  </div>
+
   <div id="conn-status">Connecting…</div>
 
 </div>
@@ -849,9 +899,13 @@ socket.on('cricketHideMatchSummary', () => {
 socket.on('cricketPlayerStat', (data) => renderPlayerStatCard(data));
 socket.on('cricketBowlerStat', (data) => renderBowlerStatCard(data));
 socket.on('cricketTeamStat', (data) => renderTeamStatCard(data));
+socket.on('cricketPlayerHistory', (data) => renderPlayerHistoryCard(data));
+socket.on('cricketTeamHistory', (data) => renderTeamHistoryCard(data));
 socket.on('cricketHidePlayerStat', () => playStatCardOut('player-stat-card'));
 socket.on('cricketHideBowlerStat', () => playStatCardOut('bowler-stat-card'));
 socket.on('cricketHideTeamStat', () => hideSummaryCard('team-stat-card', '.stat-cell'));
+socket.on('cricketHidePlayerHistory', () => hideSummaryCard('player-history-card', '.sc-row, .sc-footer'));
+socket.on('cricketHideTeamHistory', () => hideSummaryCard('team-history-card', '.sc-row, .sc-footer'));
 
 /* ============================================================
    DIGIT-LEVEL SCORE RENDERING
@@ -1781,6 +1835,92 @@ function renderTeamStatCard(d){
 
   if(card.style.display === 'flex') pulseStatGrid('ts-grid');
   else playStatSummaryIn('team-stat-card', '.stat-cell');
+}
+
+// Caps how many match rows are actually drawn on screen — a 15-20 match
+// tournament would otherwise overflow the card. Totals in the footer are
+// always computed from EVERY saved match (the panel sends the full
+// totals separately); only the row list itself is capped, newest first,
+// with a small "+N earlier matches" note when some are hidden.
+const HISTORY_CARD_MAX_ROWS = 10;
+
+function pulseRows(cardId){
+  const cells = document.querySelectorAll('#' + cardId + ' .sc-row, #' + cardId + ' .sc-footer');
+  gsap.killTweensOf(cells);
+  gsap.fromTo(cells, { opacity: 0.35, y: -5 }, { opacity: 1, y: 0, duration: 0.4, stagger: 0.02, ease: 'power2.out' });
+}
+
+// Operator on/off toggle (like team-stat-card) showing this player's full
+// tournament match-by-match history — team identity in the header, one
+// row per match, running totals in the footer.
+function renderPlayerHistoryCard(d){
+  if(!d) return;
+  const card = document.getElementById('player-history-card');
+  card.style.setProperty('--stat-accent', d.teamColor || '#f5c518');
+  setBadge(document.getElementById('ph-badge'), d.teamLogo, badgeText(d.teamShort, d.teamName));
+  document.getElementById('ph-name').textContent = (d.playerName || 'PLAYER').toUpperCase();
+  document.getElementById('ph-team').textContent = (d.teamName ? `${d.teamName.toUpperCase()} · ` : '') + 'TOURNAMENT HISTORY';
+
+  const rowsWrap = document.getElementById('ph-rows');
+  rowsWrap.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'sc-row sc-row-head';
+  head.innerHTML = '<span class="sc-c-name">Match</span><span class="sc-c-num">R</span><span class="sc-c-num">B</span><span class="sc-c-num">4s</span><span class="sc-c-num">6s</span><span class="sc-c-num">SR</span><span class="sc-c-num">W</span>';
+  rowsWrap.appendChild(head);
+  const allRows = d.rows || [];
+  const shown = allRows.slice(-HISTORY_CARD_MAX_ROWS);
+  shown.forEach((r, i) => {
+    const row = document.createElement('div');
+    row.className = 'sc-row' + (i % 2 === 1 ? ' sc-row-alt' : '');
+    row.innerHTML = `<span class="sc-c-name">${escapeHtml(r.label)}</span><span class="sc-c-num">${escapeHtml(r.runs)}</span><span class="sc-c-num">${escapeHtml(r.balls)}</span><span class="sc-c-num">${escapeHtml(r.fours)}</span><span class="sc-c-num">${escapeHtml(r.sixes)}</span><span class="sc-c-num">${escapeHtml(r.sr)}</span><span class="sc-c-num">${escapeHtml(r.wkts)}</span>`;
+    rowsWrap.appendChild(row);
+  });
+  if(allRows.length > shown.length){
+    const more = document.createElement('div');
+    more.className = 'hist-more';
+    more.textContent = `+ ${allRows.length - shown.length} earlier match${allRows.length - shown.length === 1 ? '' : 'es'} (in totals below)`;
+    rowsWrap.appendChild(more);
+  }
+  document.getElementById('ph-totals').textContent = d.totalsLine || '';
+
+  if(card.style.display === 'flex') pulseRows('player-history-card');
+  else playStatSummaryIn('player-history-card', '.sc-row, .sc-footer');
+}
+
+// Same idea as renderPlayerHistoryCard, for a team's match-by-match
+// tournament record (opponent, score for/against, result each match).
+function renderTeamHistoryCard(d){
+  if(!d) return;
+  const card = document.getElementById('team-history-card');
+  card.style.setProperty('--stat-accent', d.teamColor || '#f5c518');
+  setBadge(document.getElementById('th-badge'), d.teamLogo, badgeText(d.teamShort, d.teamName));
+  document.getElementById('th-name').textContent = (d.teamName || d.teamShort || 'TEAM').toUpperCase();
+  document.getElementById('th-team').textContent = 'TOURNAMENT HISTORY';
+
+  const rowsWrap = document.getElementById('th-rows');
+  rowsWrap.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'sc-row sc-row-head';
+  head.innerHTML = '<span class="sc-c-name">Match</span><span class="sc-c-name">Opponent</span><span class="sc-c-num">For</span><span class="sc-c-num">Against</span><span class="sc-c-num">Result</span>';
+  rowsWrap.appendChild(head);
+  const allRows = d.rows || [];
+  const shown = allRows.slice(-HISTORY_CARD_MAX_ROWS);
+  shown.forEach((r, i) => {
+    const row = document.createElement('div');
+    row.className = 'sc-row' + (i % 2 === 1 ? ' sc-row-alt' : '');
+    row.innerHTML = `<span class="sc-c-name">${escapeHtml(r.label)}</span><span class="sc-c-name">${escapeHtml(r.opponent)}</span><span class="sc-c-num">${escapeHtml(r.own)}</span><span class="sc-c-num">${escapeHtml(r.opp)}</span><span class="sc-c-num">${escapeHtml(r.result)}</span>`;
+    rowsWrap.appendChild(row);
+  });
+  if(allRows.length > shown.length){
+    const more = document.createElement('div');
+    more.className = 'hist-more';
+    more.textContent = `+ ${allRows.length - shown.length} earlier match${allRows.length - shown.length === 1 ? '' : 'es'} (in totals below)`;
+    rowsWrap.appendChild(more);
+  }
+  document.getElementById('th-totals').textContent = d.totalsLine || '';
+
+  if(card.style.display === 'flex') pulseRows('team-history-card');
+  else playStatSummaryIn('team-history-card', '.sc-row, .sc-footer');
 }
 
 function renderInningsSummary(d){
