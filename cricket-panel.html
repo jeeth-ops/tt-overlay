@@ -374,6 +374,7 @@
           <button class="small ghost" id="view-player-history-btn" type="button">👤 Player History</button>
           <button class="small ghost" id="view-team-history-btn" type="button">🏏 Team History</button>
         </div>
+        <button class="small ghost full" id="view-points-table-btn" type="button" style="margin-top:6px;">📊 Points Table</button>
         <div id="league-matches-list" style="display:none; margin-top:10px; max-height:320px; overflow-y:auto; border-top:1px solid var(--border); padding-top:8px;"></div>
         <button class="small full" id="delete-tournament-btn" type="button" style="margin-top:10px; border-color:var(--red); color:var(--red);">🗑️ Delete Entire Tournament</button>
         <div class="shortcut-hint">Saves itself the instant a match is won or tied — this button is only needed to save mid-match or re-save after a correction. Team, batter and bowler "Tournament" cards pull straight from every match saved in this tournament, matched automatically by name — nothing to type by hand. "Delete Entire Tournament" removes every match saved under it, permanently.</div>
@@ -783,6 +784,10 @@ function defaultState(){
     showTeamHistoryCard: false,
     teamHistoryOverlayName: '',
     teamHistorySearch: '',
+    // Points Table overlay card — same manual on/off toggle idea, but
+    // covers the whole tournament at once (no single name to track),
+    // so there's no "...OverlayName" field like the cards above.
+    showPointsTableCard: false,
     playerStatWhich: 'striker',
     playerStatScope: 'match',
     bowlerStatScope: 'match',
@@ -1871,6 +1876,12 @@ document.getElementById('view-team-history-btn').addEventListener('click', () =>
   if(showing){ listEl.style.display = 'none'; return; }
   setHistoryPanelView('team');
 });
+document.getElementById('view-points-table-btn').addEventListener('click', () => {
+  const listEl = document.getElementById('league-matches-list');
+  const showing = listEl.style.display !== 'none' && historyPanelView === 'points';
+  if(showing){ listEl.style.display = 'none'; return; }
+  setHistoryPanelView('points');
+});
 
 /* ============================================================
    MANUAL SUMMARY CONTROLS
@@ -2534,7 +2545,7 @@ function renderLeagueMatchesList(matches){
    tournament (currentLeagueMatches()). Purely a read/browse view —
    doesn't touch any saved data.
    ============================================================ */
-let historyPanelView = 'matches'; // 'matches' | 'player' | 'team'
+let historyPanelView = 'matches'; // 'matches' | 'player' | 'team' | 'points'
 
 function setHistoryPanelView(view){
   historyPanelView = view;
@@ -2548,6 +2559,7 @@ function renderLeagueHistoryPanel(){
   const matches = currentLeagueMatches();
   if(historyPanelView === 'player') renderPlayerHistoryView(matches);
   else if(historyPanelView === 'team') renderTeamHistoryView(matches);
+  else if(historyPanelView === 'points') renderPointsTableView(matches);
   else renderLeagueMatchesList(matches);
 }
 
@@ -2837,6 +2849,69 @@ function buildTeamHistoryPayload(name){
   };
 }
 
+// Points Table panel view — the whole tournament's standings at once
+// (no per-team select, unlike Team History above). Pulls the exact same
+// computeStandings() numbers used by the Tournament Excel Report's
+// Standings sheet, so the panel table, the Excel export, and the overlay
+// card can never disagree with each other.
+function renderPointsTableView(matches){
+  const listEl = document.getElementById('league-matches-list');
+  const standings = computeStandings(matches);
+  if(!standings.length){
+    listEl.innerHTML = `<div class="shortcut-hint">No team data saved in this tournament yet.</div>`;
+    return;
+  }
+
+  const rowsHtml = standings.map((t, i) => `
+    <tr>
+      <td>${i + 1}</td><td>${escapeHtmlPanel(t.name)}</td>
+      <td>${t.played}</td><td>${t.won}</td><td>${t.lost}</td><td>${t.tied}</td>
+      <td>${t.points}</td><td>${t.nrr === null ? '—' : t.nrr}</td>
+    </tr>`).join('');
+
+  const isShownOnOverlay = state.showPointsTableCard;
+
+  listEl.innerHTML = `
+    <div style="font-weight:700;margin-bottom:6px;">Points Table — tournament standings</div>
+    <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <thead><tr style="color:var(--text-dim);text-align:left;">
+          <th>#</th><th>Team</th><th>P</th><th>W</th><th>L</th><th>T</th><th>Pts</th><th>NRR</th>
+        </tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>
+    <div class="shortcut-hint" style="margin-top:8px;">Same numbers as the Tournament Excel Report's Standings sheet — recalculated from every match saved in this tournament, and refreshes automatically each time a match is saved.</div>
+    <button type="button" class="small ${isShownOnOverlay ? '' : 'primary'} full" id="points-table-overlay-toggle" style="margin-top:10px;">
+      ${isShownOnOverlay ? '🔴 Hide from Overlay' : '📡 Show on Overlay'}
+    </button>
+  `;
+  document.getElementById('points-table-overlay-toggle').addEventListener('click', () => {
+    if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
+    if(isShownOnOverlay){
+      state.showPointsTableCard = false;
+      socket.emit('cricketHidePointsTable', {});
+    } else {
+      state.showPointsTableCard = true;
+      socket.emit('cricketPointsTable', { data: buildPointsTablePayload() });
+    }
+    saveLocal();
+    renderPointsTableView(currentLeagueMatches());
+  });
+}
+
+// Payload sent to the overlay for the Points Table card — same standings
+// array as the Excel export, plus a small status line for the footer.
+function buildPointsTablePayload(){
+  const matches = currentLeagueMatches();
+  const standings = computeStandings(matches);
+  return {
+    tournamentName: state.leagueName || '',
+    standings,
+    updatedLine: `Updated after ${matches.length} match${matches.length === 1 ? '' : 'es'}`
+  };
+}
+
 /* ---- Automatic aggregation from the league database — teams, batters,
    bowlers. Each returns null when there's nothing to aggregate (no league
    set, or the name matches no saved match), so callers can fall back to
@@ -2945,6 +3020,11 @@ function refreshTournamentCardsIfShown(){
   if(state.showTeamStatCard) socket.emit('cricketTeamStat', { data: buildTeamStatPayload() });
   if(state.showPlayerHistoryCard && state.playerHistoryOverlayName) socket.emit('cricketPlayerHistory', { data: buildPlayerHistoryPayload(state.playerHistoryOverlayName) });
   if(state.showTeamHistoryCard && state.teamHistoryOverlayName) socket.emit('cricketTeamHistory', { data: buildTeamHistoryPayload(state.teamHistoryOverlayName) });
+  // Points Table — this function already runs every time a match is
+  // saved (including the automatic save-on-victory), so as long as the
+  // operator has switched it on once, it keeps itself in sync after
+  // every match with no further action needed.
+  if(state.showPointsTableCard) socket.emit('cricketPointsTable', { data: buildPointsTablePayload() });
 }
 
 /* ============================================================
