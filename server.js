@@ -1182,6 +1182,24 @@ io.on('connection', async (socket) => {
         io.to(room).emit('cricketHideTeamHistory');
     });
 
+    // 🏆 Points Table overlay card — same pure-broadcast relay as
+    // cricketTeamHistory above (panel builds the standings payload from
+    // the league data it already has locally; server just forwards it to
+    // whoever is watching this room's overlay).
+    socket.on('cricketPointsTable', (data) => {
+        let room = socket.activeRoom;
+        const targetId = data.room ? data.room.replace('room-', '') : (data.id || data.uid || matchIdForClient);
+        if (targetId && targetId !== 'default') room = `room-${targetId}`;
+        io.to(room).emit('cricketPointsTable', data.data || data);
+    });
+
+    socket.on('cricketHidePointsTable', (data) => {
+        let room = socket.activeRoom;
+        const targetId = data && data.room ? data.room.replace('room-', '') : (data && (data.id || data.uid)) || matchIdForClient;
+        if (targetId && targetId !== 'default') room = `room-${targetId}`;
+        io.to(room).emit('cricketHidePointsTable');
+    });
+
     // 🍃 Every ball, straight to MongoDB — the permanent source of truth.
     // Fired once per recordBall() call in cricket-panel.html, independent
     // of the cricketState broadcast above (that one's just "what the
