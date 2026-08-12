@@ -628,6 +628,28 @@
     text-align:center; font-size:10.5px; font-weight:700; color:var(--bc-ink-dim,#5c6c8a);
     padding:4px 6px 2px; font-style:italic;
   }
+
+  /* ============================================================
+     POINTS TABLE CARD — tournament standings (Played/Won/Lost/Tied/
+     Points/NRR for every team), pulled from the same numbers as the
+     Tournament Excel Report. Same "summary-card" theme, operator on/off
+     toggle from the panel (not a timed popup) — identical behaviour to
+     team-stat-card / team-history-card above, just an 8-column row
+     instead of a fixed stat grid or 5-column match log.
+     ============================================================ */
+  #points-table-card{ top:32%; max-height:78vh; }
+  #points-table-card .sc-header{
+    background:
+      linear-gradient(135deg, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.6) 100%),
+      linear-gradient(135deg, var(--stat-accent,#0b3d91), var(--stat-accent,#0b3d91));
+  }
+  #points-table-card .sc-sub{ color:rgba(255,255,255,0.85); }
+  #points-table-card .sc-rows{ max-height:50vh; overflow:hidden; }
+  #points-table-card .sc-row{
+    grid-template-columns:0.4fr 1.5fr 0.55fr 0.55fr 0.55fr 0.55fr 0.65fr 0.75fr;
+    font-size:min(1.1vw,12.5px);
+  }
+  #points-table-card .sc-c-rank{ font-family:var(--font-num); font-weight:800; text-align:center; color:var(--bc-ink-dim,#5c6c8a); }
 </style>
 </head>
 <body>
@@ -845,6 +867,18 @@
     <div class="sc-footer" id="th-totals"></div>
   </div>
 
+  <div id="points-table-card" class="summary-card wide">
+    <div class="sc-header">
+      <div class="sc-badge" id="pt-badge">🏆</div>
+      <div class="sc-header-text">
+        <div class="sc-title" id="pt-name">POINTS TABLE</div>
+        <div class="sc-sub">TOURNAMENT STANDINGS</div>
+      </div>
+    </div>
+    <div class="sc-rows" id="pt-rows"></div>
+    <div class="sc-footer" id="pt-footer"></div>
+  </div>
+
   <div id="conn-status">Connecting…</div>
 
 </div>
@@ -906,6 +940,8 @@ socket.on('cricketHideBowlerStat', () => playStatCardOut('bowler-stat-card'));
 socket.on('cricketHideTeamStat', () => hideSummaryCard('team-stat-card', '.stat-cell'));
 socket.on('cricketHidePlayerHistory', () => hideSummaryCard('player-history-card', '.sc-row, .sc-footer'));
 socket.on('cricketHideTeamHistory', () => hideSummaryCard('team-history-card', '.sc-row, .sc-footer'));
+socket.on('cricketPointsTable', (data) => renderPointsTableCard(data));
+socket.on('cricketHidePointsTable', () => hideSummaryCard('points-table-card', '.sc-row, .sc-footer'));
 
 /* ============================================================
    DIGIT-LEVEL SCORE RENDERING
@@ -1921,6 +1957,35 @@ function renderTeamHistoryCard(d){
 
   if(card.style.display === 'flex') pulseRows('team-history-card');
   else playStatSummaryIn('team-history-card', '.sc-row, .sc-footer');
+}
+
+// Points Table — every team's standings row (P/W/L/T/Pts/NRR), same
+// on/off persistent toggle as renderTeamHistoryCard above: a render
+// call while the card is already up just refreshes the rows in place
+// (pulseRows) instead of replaying the slide-in animation.
+function renderPointsTableCard(d){
+  if(!d) return;
+  const card = document.getElementById('points-table-card');
+  document.getElementById('pt-name').textContent = (d.tournamentName || 'POINTS TABLE').toUpperCase();
+
+  const rowsWrap = document.getElementById('pt-rows');
+  rowsWrap.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'sc-row sc-row-head';
+  head.innerHTML = '<span class="sc-c-rank">#</span><span class="sc-c-name">Team</span><span class="sc-c-num">P</span><span class="sc-c-num">W</span><span class="sc-c-num">L</span><span class="sc-c-num">T</span><span class="sc-c-num">Pts</span><span class="sc-c-num">NRR</span>';
+  rowsWrap.appendChild(head);
+  const standings = d.standings || [];
+  standings.forEach((t, i) => {
+    const row = document.createElement('div');
+    row.className = 'sc-row' + (i % 2 === 1 ? ' sc-row-alt' : '');
+    const nrrText = (t.nrr === null || t.nrr === undefined) ? '—' : t.nrr;
+    row.innerHTML = `<span class="sc-c-rank">${i + 1}</span><span class="sc-c-name">${escapeHtml(t.name)}</span><span class="sc-c-num">${escapeHtml(t.played)}</span><span class="sc-c-num">${escapeHtml(t.won)}</span><span class="sc-c-num">${escapeHtml(t.lost)}</span><span class="sc-c-num">${escapeHtml(t.tied)}</span><span class="sc-c-num">${escapeHtml(t.points)}</span><span class="sc-c-num">${escapeHtml(nrrText)}</span>`;
+    rowsWrap.appendChild(row);
+  });
+  document.getElementById('pt-footer').textContent = d.updatedLine || '';
+
+  if(card.style.display === 'flex') pulseRows('points-table-card');
+  else playStatSummaryIn('points-table-card', '.sc-row, .sc-footer');
 }
 
 function renderInningsSummary(d){
