@@ -549,6 +549,18 @@
       </div>
     </div>
 
+    <div class="card" id="card-scorecard-link">
+      <h2>📋 Scorecard Link (Public View)</h2>
+      <div class="link-row">
+        <input type="text" id="scorecard-link" readonly>
+        <button class="small" id="copy-scorecard-link">Copy</button>
+      </div>
+      <button class="full small primary" id="open-scorecard-btn" style="margin-top:8px;">Open Scorecard ↗</button>
+      <div style="font-size:11px; opacity:.6; margin-top:6px;">
+        Share this link with viewers — opens a live, read-only full scorecard in a new tab.
+      </div>
+    </div>
+
     <div class="card" id="card-recording">
       <h2>🎬 Match Recording</h2>
       <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
@@ -868,8 +880,10 @@ function updateShareLinks(matchId){
   if(!matchId) return;
   const overlayUrl = `${location.origin}/cricket-overlay?room=${encodeURIComponent(matchId)}`;
   const panelUrl = `${location.origin}/cricket-panel?room=${encodeURIComponent(matchId)}`;
+  const scorecardUrl = `${location.origin}/cricket-scorecard?room=${encodeURIComponent(matchId)}`;
 
   document.getElementById('overlay-link').value = overlayUrl;
+  document.getElementById('scorecard-link').value = scorecardUrl;
 
   const qrEl = document.getElementById('qr-code');
   qrEl.innerHTML = '';
@@ -1243,6 +1257,19 @@ document.getElementById('copy-overlay-link').addEventListener('click', () => {
 });
 document.getElementById('preview-overlay-btn').addEventListener('click', () => {
   const url = document.getElementById('overlay-link').value;
+  if(url) window.open(url, '_blank');
+});
+
+document.getElementById('copy-scorecard-link').addEventListener('click', () => {
+  const input = document.getElementById('scorecard-link');
+  input.select();
+  navigator.clipboard?.writeText(input.value).then(
+    () => toast('Scorecard link copied'),
+    () => document.execCommand('copy')
+  );
+});
+document.getElementById('open-scorecard-btn').addEventListener('click', () => {
+  const url = document.getElementById('scorecard-link').value;
   if(url) window.open(url, '_blank');
 });
 
