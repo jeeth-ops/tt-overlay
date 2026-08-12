@@ -3744,19 +3744,23 @@ document.querySelectorAll('[data-milestone]').forEach(btn => {
    this file.
    ============================================================ */
 
-/* ---- Shared visual language ---------------------------------- */
+/* ---- Shared visual language ------------------------------------
+   Deliberately restrained to ONE primary color + ONE subtle accent,
+   plus neutral grays — a clean, official-scorecard feel rather than
+   a colorful dashboard. "secondary" is the same green as "primary",
+   just a lighter tint (hierarchy, not a new hue). "gold"/"goldFill"
+   are the single accent, reserved for genuine highlights (leaders,
+   totals, records) — never used decoratively. ------------------- */
 const XL = {
-  primary:   'FF13472B', // deep pitch green — titles
-  secondary: 'FF1F7A43', // section/column headers
-  gold:      'FFC79A2E', // highlights (result, leader, records)
-  goldFill:  'FFFCF3D8',
-  win:       'FFD9F2E0',
-  loss:      'FFFBE1E1',
-  zebra:     'FFF2F8F4',
+  primary:   'FF14532D', // deep pitch green — the one primary color (titles, strong bands)
+  secondary: 'FF3A7A54', // lighter tint of the SAME green — section labels & column headers
+  gold:      'FFB8862E', // the one accent — muted gold, used sparingly for real highlights only
+  goldFill:  'FFFBF1DE', // light tint of the accent
+  zebra:     'FFF6F7F9', // neutral off-white — alternating rows
   white:     'FFFFFFFF',
-  ink:       'FF1B2430',
-  dim:       'FF5B6B75',
-  border:    'FFC9D4CE'
+  ink:       'FF1C2126', // near-black — body text
+  dim:       'FF6B7280', // neutral gray — meta/secondary text
+  border:    'FFDDE1E6'  // light neutral border
 };
 function xlBorder(){
   const side = { style: 'thin', color: { argb: XL.border } };
@@ -3778,7 +3782,7 @@ function xlTitleBlock(ws, title, subtitle, span){
     const s = ws.getCell(2, 1);
     s.value = subtitle;
     s.font = { italic: true, size: 10.5, color: { argb: XL.dim } };
-    s.fill = xlFill(XL.goldFill);
+    s.fill = xlFill(XL.zebra);
     s.alignment = { horizontal: 'center', vertical: 'middle' };
     ws.getRow(2).height = 18;
   }
@@ -4067,7 +4071,7 @@ async function buildMatchExcelWorkbook(){
       row.eachCell({ includeEmpty: true }, c => { c.border = xlBorder(); });
     });
     const resultRow = ws.addRow(['Result', result.text]);
-    xlBoldRow(resultRow, result.winner ? XL.win : XL.goldFill);
+    xlBoldRow(resultRow, XL.goldFill);
     resultRow.getCell(2).font = { bold: true };
 
     xlCols(ws, [26, 46]);
@@ -4143,11 +4147,20 @@ async function buildMatchExcelWorkbook(){
         const ballsLeft = quotaBalls - ballsAtPoint;
         rrr = ballsLeft > 0 ? runRateFromBalls(Math.max(state.target - rs, 0), ballsLeft) : '—';
       }
-      ws.addRow([
+      const row = ws.addRow([
         i + 1, b.innings, b.battingTeam === 'A' ? teamAShort : teamBShort, b.over, b.ballType,
         b.striker, b.nonStriker, b.bowler, b.runs, b.isWicket ? (b.dismissal || 'Out') : '',
         b.scoreAfter, rrr ? `${crr} / ${rrr}` : crr
       ]);
+      // Subtle event highlighting, restricted to the one accent color:
+      // a wicket tints the whole row (the rarest, most important event);
+      // a boundary just bolds its own run figure. No extra hues added.
+      if(b.isWicket){
+        row.eachCell({ includeEmpty: true }, cell => { cell.fill = xlFill(XL.goldFill); });
+        row.getCell(10).font = { bold: true, color: { argb: XL.ink } };
+      } else if(b.runs === 4 || b.runs === 6){
+        row.getCell(9).font = { bold: true, color: { argb: XL.gold } };
+      }
     });
     xlZebra(ws, start, ws.lastRow.number, 1, 12);
     xlAutoFilter(ws, headerRow.number, 1, 12, Math.max(ws.lastRow.number, headerRow.number));
@@ -4162,7 +4175,8 @@ async function buildMatchExcelWorkbook(){
     const headerRow = xlHeaderRow(ws, ['Innings', 'Over', 'Bowler', 'Team', 'Runs', 'Wickets', 'Balls', 'Score / RR After']);
     const start = ws.lastRow.number + 1;
     computeOverSummary().forEach(o => {
-      ws.addRow([o.innings, o.over, o.bowler, o.team, o.runs, o.wickets, o.sequence, `${o.cumScore} (${o.runRate})`]);
+      const row = ws.addRow([o.innings, o.over, o.bowler, o.team, o.runs, o.wickets, o.sequence, `${o.cumScore} (${o.runRate})`]);
+      if(o.wickets > 0) row.getCell(6).font = { bold: true, color: { argb: XL.gold } };
     });
     xlZebra(ws, start, ws.lastRow.number, 1, 8);
     xlAutoFilter(ws, headerRow.number, 1, 8, Math.max(ws.lastRow.number, headerRow.number));
@@ -4363,7 +4377,7 @@ async function buildTournamentExcelWorkbook(tournamentName, matches){
     const start = ws.lastRow.number + 1;
     standings.forEach((t, i) => {
       const row = ws.addRow([i + 1, t.name, t.played, t.won, t.lost, t.tied, t.points, t.nrr === null ? '—' : t.nrr]);
-      if(i === 0) xlBoldRow(row, XL.win);
+      if(i === 0) xlBoldRow(row, XL.goldFill);
     });
     xlZebra(ws, start, ws.lastRow.number, 1, 8);
     xlAutoFilter(ws, headerRow.number, 1, 8, Math.max(ws.lastRow.number, headerRow.number));
