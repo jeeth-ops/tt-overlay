@@ -370,7 +370,11 @@
           <button class="small primary" id="save-match-league-btn" type="button">💾 Save This Match</button>
           <button class="small ghost" id="view-league-matches-btn" type="button">📋 Matches</button>
         </div>
-        <div id="league-matches-list" style="display:none; margin-top:10px; max-height:230px; overflow-y:auto; border-top:1px solid var(--border); padding-top:8px;"></div>
+        <div class="row2" style="margin-top:6px;">
+          <button class="small ghost" id="view-player-history-btn" type="button">👤 Player History</button>
+          <button class="small ghost" id="view-team-history-btn" type="button">🏏 Team History</button>
+        </div>
+        <div id="league-matches-list" style="display:none; margin-top:10px; max-height:320px; overflow-y:auto; border-top:1px solid var(--border); padding-top:8px;"></div>
         <button class="small full" id="delete-tournament-btn" type="button" style="margin-top:10px; border-color:var(--red); color:var(--red);">🗑️ Delete Entire Tournament</button>
         <div class="shortcut-hint">Saves itself the instant a match is won or tied — this button is only needed to save mid-match or re-save after a correction. Team, batter and bowler "Tournament" cards pull straight from every match saved in this tournament, matched automatically by name — nothing to type by hand. "Delete Entire Tournament" removes every match saved under it, permanently.</div>
       </div>
@@ -767,6 +771,18 @@ function defaultState(){
     showPlayerStatCard: false,
     showBowlerStatCard: false,
     showTeamStatCard: false,
+    // Tournament History overlay cards (Player History / Team History) —
+    // same on/off-toggle idea as the stat cards above, plus which
+    // player/team name is currently shown, so re-saving a match while a
+    // history card is up refreshes it automatically instead of it going
+    // stale. playerHistorySearch/teamHistorySearch just remember the last
+    // thing typed/picked in the panel's own search box (not overlay state).
+    showPlayerHistoryCard: false,
+    playerHistoryOverlayName: '',
+    playerHistorySearch: '',
+    showTeamHistoryCard: false,
+    teamHistoryOverlayName: '',
+    teamHistorySearch: '',
     playerStatWhich: 'striker',
     playerStatScope: 'match',
     bowlerStatScope: 'match',
@@ -787,6 +803,15 @@ function defaultState(){
     thisOver: [],
     ballHistory: [],
     ballLog: [],
+    // Permanent identity of THIS match inside its tournament — completely
+    // separate from the "Match ID" field above (which is only the OBS/vMix
+    // socket room, and gets reused/left-as-is by operators across many
+    // matches). Generated once, the first time this match is saved to a
+    // tournament (see ensureTournamentMatchId()), and only ever cleared by
+    // Reset — so re-saving the SAME match after a correction still upserts
+    // correctly, but starting a NEW match always gets its own fresh id and
+    // can never collide with (overwrite) a previous match's saved record.
+    tournamentMatchId: null,
     visible: true,
     partnershipRuns: 0,
     partnershipBalls: 0,
@@ -802,6 +827,20 @@ function defaultState(){
   };
 }
 
+// Lazily assigns this match's permanent tournament-record id the first
+// time it's needed (first save to a league). Uses crypto.randomUUID()
+// where available; falls back to a timestamp+random string on older
+// browsers/webviews that lack it. Idempotent — calling it again on the
+// same match just returns the id already assigned.
+function ensureTournamentMatchId(){
+  if(!state.tournamentMatchId){
+    state.tournamentMatchId = (window.crypto && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : ('tm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10));
+    saveLocal();
+  }
+  return state.tournamentMatchId;
+}
 function loadState(){
   try{
     const raw = localStorage.getItem('cricket-panel-state');
@@ -1816,9 +1855,21 @@ document.getElementById('tournament-select').addEventListener('change', (e) => {
 document.getElementById('save-match-league-btn').addEventListener('click', () => saveMatchToLeague(false));
 document.getElementById('view-league-matches-btn').addEventListener('click', () => {
   const listEl = document.getElementById('league-matches-list');
-  const showing = listEl.style.display !== 'none';
-  listEl.style.display = showing ? 'none' : 'block';
-  if(!showing) renderLeagueMatchesList(currentLeagueMatches());
+  const showing = listEl.style.display !== 'none' && historyPanelView === 'matches';
+  if(showing){ listEl.style.display = 'none'; return; }
+  setHistoryPanelView('matches');
+});
+document.getElementById('view-player-history-btn').addEventListener('click', () => {
+  const listEl = document.getElementById('league-matches-list');
+  const showing = listEl.style.display !== 'none' && historyPanelView === 'player';
+  if(showing){ listEl.style.display = 'none'; return; }
+  setHistoryPanelView('player');
+});
+document.getElementById('view-team-history-btn').addEventListener('click', () => {
+  const listEl = document.getElementById('league-matches-list');
+  const showing = listEl.style.display !== 'none' && historyPanelView === 'team';
+  if(showing){ listEl.style.display = 'none'; return; }
+  setHistoryPanelView('team');
 });
 
 /* ============================================================
@@ -2309,7 +2360,10 @@ function buildMatchRecordForLeague(){
   }
 
   return {
-    matchId: (document.getElementById('match-id').value || '').trim() || ('local-' + Date.now()),
+    // NOTE: this is the match's own permanent tournament-record id, NOT
+    // the "Match ID" connection field (see ensureTournamentMatchId() for
+    // why they must never be the same value).
+    matchId: ensureTournamentMatchId(),
     savedAt: new Date().toISOString(),
     venue: state.venue,
     format: state.format,
@@ -2448,7 +2502,7 @@ function refreshLeagueUI(){
   countEl.textContent = matches.length
     ? `"${name}" — ${matches.length} match${matches.length === 1 ? '' : 'es'} saved${notLoggedInNote}.`
     : `"${name}" — no matches saved yet${notLoggedInNote}. Play a match to completion (or hit Save This Match) to start building it.`;
-  if(listEl.style.display !== 'none') renderLeagueMatchesList(matches);
+  if(listEl.style.display !== 'none') renderLeagueHistoryPanel();
 }
 function renderLeagueMatchesList(matches){
   const listEl = document.getElementById('league-matches-list');
@@ -2471,6 +2525,316 @@ function renderLeagueMatchesList(matches){
       if(confirm('Remove this match from the league?')) deleteMatchFromLeague(btn.getAttribute('data-delete-match'));
     });
   });
+}
+
+/* ============================================================
+   TOURNAMENT HISTORY PANEL — lets the operator open a player or a team
+   and see their complete tournament history (match-by-match) plus
+   running totals, pulled from every match saved under the selected
+   tournament (currentLeagueMatches()). Purely a read/browse view —
+   doesn't touch any saved data.
+   ============================================================ */
+let historyPanelView = 'matches'; // 'matches' | 'player' | 'team'
+
+function setHistoryPanelView(view){
+  historyPanelView = view;
+  const listEl = document.getElementById('league-matches-list');
+  listEl.style.display = 'block';
+  renderLeagueHistoryPanel();
+}
+function renderLeagueHistoryPanel(){
+  const listEl = document.getElementById('league-matches-list');
+  if(listEl.style.display === 'none') return;
+  const matches = currentLeagueMatches();
+  if(historyPanelView === 'player') renderPlayerHistoryView(matches);
+  else if(historyPanelView === 'team') renderTeamHistoryView(matches);
+  else renderLeagueMatchesList(matches);
+}
+
+// Every distinct batter/bowler name that appears in any saved match,
+// case/whitespace-insensitive de-duped, keeping the first-seen casing.
+function tournamentPlayerNames(matches){
+  const seen = new Map(); // lowercase -> display name
+  matches.forEach(m => {
+    ['A','B'].forEach(k => {
+      ((m.battingCard && m.battingCard[k]) || []).forEach(b => {
+        const n = (b.name || '').trim();
+        if(n && !seen.has(n.toLowerCase())) seen.set(n.toLowerCase(), n);
+      });
+      ((m.bowlingCard && m.bowlingCard[k]) || []).forEach(b => {
+        const n = (b.name || '').trim();
+        if(n && !seen.has(n.toLowerCase())) seen.set(n.toLowerCase(), n);
+      });
+    });
+  });
+  return [...seen.values()].sort((a, b) => a.localeCompare(b));
+}
+
+function renderPlayerHistoryView(matches){
+  const listEl = document.getElementById('league-matches-list');
+  const names = tournamentPlayerNames(matches);
+  const options = names.map(n => `<option value="${escapeHtmlPanel(n)}"></option>`).join('');
+  listEl.innerHTML = `
+    <div style="margin-bottom:8px;">
+      <input type="text" id="player-history-search" list="player-history-names" placeholder="Type a player name…" style="width:100%;">
+      <datalist id="player-history-names">${options}</datalist>
+    </div>
+    <div id="player-history-results" class="shortcut-hint">${names.length ? 'Type or pick a player to see their tournament history.' : 'No player data saved in this tournament yet.'}</div>
+  `;
+  const input = document.getElementById('player-history-search');
+  const renderFor = () => renderPlayerHistoryResults(input.value, currentLeagueMatches());
+  if(state.playerHistorySearch && names.some(n => n.toLowerCase() === state.playerHistorySearch.toLowerCase())){
+    input.value = state.playerHistorySearch;
+    renderFor();
+  }
+  input.addEventListener('input', renderFor);
+  input.addEventListener('change', renderFor);
+}
+
+// Builds this player's per-match rows + which team they last played for —
+// shared by the panel's own table (renderPlayerHistoryResults) and the
+// overlay payload (buildPlayerHistoryPayload), so both always show
+// exactly the same numbers.
+function getPlayerHistoryRows(name, matches){
+  const lower = (name || '').trim().toLowerCase();
+  const rows = [];
+  let lastTeamName = '';
+  matches.forEach((m, i) => {
+    let bat = null, bowl = null, side = null;
+    ['A','B'].forEach(k => {
+      ((m.battingCard && m.battingCard[k]) || []).forEach(b => {
+        if((b.name || '').trim().toLowerCase() === lower){ bat = b; side = k; }
+      });
+      ((m.bowlingCard && m.bowlingCard[k]) || []).forEach(b => {
+        if((b.name || '').trim().toLowerCase() === lower){ bowl = b; side = k; }
+      });
+    });
+    if(!bat && !bowl) return;
+    const teamObj = side === 'A' ? m.teamA : side === 'B' ? m.teamB : null;
+    if(teamObj) lastTeamName = teamObj.name || lastTeamName;
+    const teamLabel = teamObj ? (teamObj.short || teamObj.name) : '—';
+    const sr = bat && bat.balls ? ((bat.runs / bat.balls) * 100).toFixed(1) : (bat ? '0.0' : '—');
+    rows.push({
+      label: `Match ${i + 1}`, team: teamLabel,
+      runs: bat ? bat.runs : '—', balls: bat ? bat.balls : '—',
+      fours: bat ? bat.fours : '—', sixes: bat ? bat.sixes : '—', sr,
+      wkts: bowl ? bowl.wickets : (bat ? 0 : '—')
+    });
+  });
+  return { rows, lastTeamName };
+}
+
+// A currently-configured team (state.teamA/B, which have colour/logo —
+// saved match records don't) whose name matches, so the overlay card can
+// be branded consistently with the rest of the broadcast. Falls back to
+// the default gold accent when the team isn't one of the two loaded now.
+function findLoadedTeamByName(teamName){
+  const lower = (teamName || '').trim().toLowerCase();
+  if(!lower) return null;
+  if((state.teamA.name || '').trim().toLowerCase() === lower) return state.teamA;
+  if((state.teamB.name || '').trim().toLowerCase() === lower) return state.teamB;
+  return null;
+}
+
+function renderPlayerHistoryResults(rawName, matches){
+  const resultsEl = document.getElementById('player-history-results');
+  if(!resultsEl) return;
+  const name = (rawName || '').trim();
+  state.playerHistorySearch = name;
+  saveLocal();
+  if(!name){ resultsEl.innerHTML = 'Type or pick a player to see their tournament history.'; return; }
+
+  const { rows } = getPlayerHistoryRows(name, matches);
+  if(!rows.length){ resultsEl.innerHTML = `No saved matches found for "${escapeHtmlPanel(name)}" in this tournament.`; return; }
+
+  const batTotals = computeBatterTournamentStats(name);
+  const bowlTotals = computeBowlerTournamentStats(name);
+
+  const matchRowsHtml = rows.map(r => `
+    <tr>
+      <td>${escapeHtmlPanel(r.label)}</td><td>${escapeHtmlPanel(r.team)}</td>
+      <td>${r.runs}</td><td>${r.balls}</td><td>${r.fours}</td><td>${r.sixes}</td><td>${r.sr}</td><td>${r.wkts}</td>
+    </tr>`).join('');
+
+  const isShownOnOverlay = state.showPlayerHistoryCard && (state.playerHistoryOverlayName || '').toLowerCase() === name.toLowerCase();
+
+  resultsEl.innerHTML = `
+    <div style="font-weight:700;margin-bottom:6px;">${escapeHtmlPanel(name)} — tournament history</div>
+    <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <thead><tr style="color:var(--text-dim);text-align:left;">
+          <th>Match</th><th>Team</th><th>Runs</th><th>Balls</th><th>4s</th><th>6s</th><th>SR</th><th>Wkts</th>
+        </tr></thead>
+        <tbody>${matchRowsHtml}</tbody>
+      </table>
+    </div>
+    <div style="margin-top:10px;font-weight:700;">Tournament totals</div>
+    <div style="font-size:11px;color:var(--text-dim);line-height:1.7;">
+      ${batTotals ? `Batting — Innings ${batTotals.matches} · Runs ${batTotals.runs} · Avg ${batTotals.average} · SR ${batTotals.sr} · HS ${batTotals.highScore} · 4s ${batTotals.fours} · 6s ${batTotals.sixes} · 50s ${batTotals.fifties} · 100s ${batTotals.hundreds}` : ''}
+      ${bowlTotals ? `<br>Bowling — Matches ${bowlTotals.matches} · Overs ${bowlTotals.overs} · Runs ${bowlTotals.runs} · Wkts ${bowlTotals.wickets} · Econ ${bowlTotals.economy} · Avg ${bowlTotals.average} · Best ${bowlTotals.best} · Maidens ${bowlTotals.maidens}` : ''}
+    </div>
+    <button type="button" class="small ${isShownOnOverlay ? '' : 'primary'} full" id="player-history-overlay-toggle" style="margin-top:10px;">
+      ${isShownOnOverlay ? '🔴 Hide from Overlay' : '📡 Show on Overlay'}
+    </button>
+  `;
+  document.getElementById('player-history-overlay-toggle').addEventListener('click', () => {
+    if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
+    if(isShownOnOverlay){
+      state.showPlayerHistoryCard = false;
+      socket.emit('cricketHidePlayerHistory', {});
+    } else {
+      state.showPlayerHistoryCard = true;
+      state.playerHistoryOverlayName = name;
+      socket.emit('cricketPlayerHistory', { data: buildPlayerHistoryPayload(name) });
+    }
+    saveLocal();
+    renderPlayerHistoryResults(name, currentLeagueMatches());
+  });
+}
+
+// Payload sent to the overlay for the Player History card — team colour/
+// logo come from whichever loaded team (A/B) the name matches, if any.
+function buildPlayerHistoryPayload(name){
+  const matches = currentLeagueMatches();
+  const { rows, lastTeamName } = getPlayerHistoryRows(name, matches);
+  const teamObj = findLoadedTeamByName(lastTeamName);
+  const batTotals = computeBatterTournamentStats(name);
+  const bowlTotals = computeBowlerTournamentStats(name);
+  const totalsParts = [];
+  if(batTotals) totalsParts.push(`INN ${batTotals.matches} · RUNS ${batTotals.runs} · AVG ${batTotals.average} · SR ${batTotals.sr} · HS ${batTotals.highScore}`);
+  if(bowlTotals) totalsParts.push(`${bowlTotals.wickets} WKTS · ECON ${bowlTotals.economy}`);
+  return {
+    playerName: name,
+    teamName: teamObj ? teamObj.name : lastTeamName,
+    teamShort: teamObj ? teamObj.short : '',
+    teamColor: teamObj ? teamObj.color : '',
+    teamLogo: teamObj ? teamObj.logoUrl : '',
+    rows,
+    totalsLine: totalsParts.join('  ·  ')
+  };
+}
+
+function renderTeamHistoryView(matches){
+  const listEl = document.getElementById('league-matches-list');
+  const names = tournamentTeamNames(matches);
+  const optionsHtml = names.map(n => `<option value="${escapeHtmlPanel(n)}">${escapeHtmlPanel(n)}</option>`).join('');
+  listEl.innerHTML = `
+    <div style="margin-bottom:8px;">
+      <select id="team-history-select" style="width:100%;">
+        <option value="">— Select a team —</option>${optionsHtml}
+      </select>
+    </div>
+    <div id="team-history-results" class="shortcut-hint">${names.length ? 'Pick a team to see its tournament history.' : 'No team data saved in this tournament yet.'}</div>
+  `;
+  const sel = document.getElementById('team-history-select');
+  if(state.teamHistorySearch && names.some(n => n.toLowerCase() === state.teamHistorySearch.toLowerCase())){
+    sel.value = state.teamHistorySearch;
+    renderTeamHistoryResults(sel.value, matches);
+  }
+  sel.addEventListener('change', (e) => {
+    renderTeamHistoryResults(e.target.value, currentLeagueMatches());
+  });
+}
+
+// Builds one team's match-by-match rows — shared by the panel's table and
+// the overlay payload.
+function getTeamHistoryRows(name, matches){
+  const lower = (name || '').trim().toLowerCase();
+  const rows = [];
+  matches.forEach((m, i) => {
+    const aName = ((m.teamA && m.teamA.name) || '').trim().toLowerCase();
+    const bName = ((m.teamB && m.teamB.name) || '').trim().toLowerCase();
+    let side = null;
+    if(aName === lower) side = 'A'; else if(bName === lower) side = 'B';
+    if(!side) return;
+    const own = side === 'A' ? m.scoreA : m.scoreB;
+    const opp = side === 'A' ? m.scoreB : m.scoreA;
+    const oppTeam = side === 'A' ? m.teamB : m.teamA;
+    const resultText = m.winningTeam === 'TIE' ? 'Tied'
+      : m.winningTeam === side ? 'Won'
+      : m.winningTeam ? 'Lost' : 'In progress';
+    rows.push({
+      label: `Match ${i + 1}`, opponent: oppTeam ? (oppTeam.short || oppTeam.name) : '—',
+      own: own ? `${own.runs}-${own.wickets} (${own.overs})` : '—',
+      opp: opp ? `${opp.runs}-${opp.wickets} (${opp.overs})` : '—',
+      result: resultText
+    });
+  });
+  return rows;
+}
+
+function renderTeamHistoryResults(teamName, matches){
+  const resultsEl = document.getElementById('team-history-results');
+  if(!resultsEl) return;
+  const name = (teamName || '').trim();
+  state.teamHistorySearch = name;
+  saveLocal();
+  if(!name){ resultsEl.innerHTML = 'Pick a team to see its tournament history.'; return; }
+
+  const rows = getTeamHistoryRows(name, matches);
+  if(!rows.length){ resultsEl.innerHTML = `No saved matches found for "${escapeHtmlPanel(name)}" in this tournament.`; return; }
+
+  const stats = computeTeamTournamentStats(name);
+  const nrr = computeTeamNRR(name, matches);
+  const points = stats ? (stats.won * 2 + stats.tied) : 0;
+
+  const matchRowsHtml = rows.map(r => `
+    <tr>
+      <td>${escapeHtmlPanel(r.label)}</td><td>${escapeHtmlPanel(r.opponent)}</td>
+      <td>${escapeHtmlPanel(r.own)}</td><td>${escapeHtmlPanel(r.opp)}</td><td>${escapeHtmlPanel(r.result)}</td>
+    </tr>`).join('');
+
+  const isShownOnOverlay = state.showTeamHistoryCard && (state.teamHistoryOverlayName || '').toLowerCase() === name.toLowerCase();
+
+  resultsEl.innerHTML = `
+    <div style="font-weight:700;margin-bottom:6px;">${escapeHtmlPanel(name)} — tournament history</div>
+    <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <thead><tr style="color:var(--text-dim);text-align:left;">
+          <th>Match</th><th>Opponent</th><th>For</th><th>Against</th><th>Result</th>
+        </tr></thead>
+        <tbody>${matchRowsHtml}</tbody>
+      </table>
+    </div>
+    <div style="margin-top:10px;font-weight:700;">Tournament totals</div>
+    <div style="font-size:11px;color:var(--text-dim);line-height:1.7;">
+      ${stats ? `Played ${stats.matches} · Won ${stats.won} · Lost ${stats.lost} · Tied ${stats.tied} · Points ${points} · NRR ${nrr === null ? '—' : nrr} · Highest ${stats.highest} · Avg score ${stats.avgScore}` : ''}
+    </div>
+    <button type="button" class="small ${isShownOnOverlay ? '' : 'primary'} full" id="team-history-overlay-toggle" style="margin-top:10px;">
+      ${isShownOnOverlay ? '🔴 Hide from Overlay' : '📡 Show on Overlay'}
+    </button>
+  `;
+  document.getElementById('team-history-overlay-toggle').addEventListener('click', () => {
+    if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
+    if(isShownOnOverlay){
+      state.showTeamHistoryCard = false;
+      socket.emit('cricketHideTeamHistory', {});
+    } else {
+      state.showTeamHistoryCard = true;
+      state.teamHistoryOverlayName = name;
+      socket.emit('cricketTeamHistory', { data: buildTeamHistoryPayload(name) });
+    }
+    saveLocal();
+    renderTeamHistoryResults(name, currentLeagueMatches());
+  });
+}
+
+// Payload sent to the overlay for the Team History card.
+function buildTeamHistoryPayload(name){
+  const matches = currentLeagueMatches();
+  const rows = getTeamHistoryRows(name, matches);
+  const teamObj = findLoadedTeamByName(name);
+  const stats = computeTeamTournamentStats(name);
+  const nrr = computeTeamNRR(name, matches);
+  const points = stats ? (stats.won * 2 + stats.tied) : 0;
+  return {
+    teamName: teamObj ? teamObj.name : name,
+    teamShort: teamObj ? teamObj.short : '',
+    teamColor: teamObj ? teamObj.color : '',
+    teamLogo: teamObj ? teamObj.logoUrl : '',
+    rows,
+    totalsLine: stats ? `P ${stats.matches}  ·  W ${stats.won}  ·  L ${stats.lost}  ·  T ${stats.tied}  ·  PTS ${points}  ·  NRR ${nrr === null ? '—' : nrr}` : ''
+  };
 }
 
 /* ---- Automatic aggregation from the league database — teams, batters,
@@ -2579,6 +2943,8 @@ function refreshTournamentCardsIfShown(){
   if(state.showPlayerStatCard && state.playerStatScope === 'tournament') socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
   if(state.showBowlerStatCard && state.bowlerStatScope === 'tournament') socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
   if(state.showTeamStatCard) socket.emit('cricketTeamStat', { data: buildTeamStatPayload() });
+  if(state.showPlayerHistoryCard && state.playerHistoryOverlayName) socket.emit('cricketPlayerHistory', { data: buildPlayerHistoryPayload(state.playerHistoryOverlayName) });
+  if(state.showTeamHistoryCard && state.teamHistoryOverlayName) socket.emit('cricketTeamHistory', { data: buildTeamHistoryPayload(state.teamHistoryOverlayName) });
 }
 
 /* ============================================================
