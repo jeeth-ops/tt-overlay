@@ -3814,6 +3814,10 @@ const XL = {
 // #rrggbb, ExcelJS cell colors want AARRGGBB) — kept in lockstep with XL
 // above so the embedded chart images and the cell styling never drift apart.
 const XL_HEX = { primary:'#14532D', secondary:'#3A7A54', gold:'#B8862E', cost:'#B2554A', ink:'#1C2126', dim:'#6B7280', border:'#DDE1E6' };
+// One typeface for the whole workbook — modern Office default, closest
+// built-in match to the brief's Aptos/Inter/Helvetica family. Threaded
+// through every text helper below so no cell is left on a stray fallback.
+const XL_FONT = 'Aptos';
 function xlBorder(){
   const side = { style: 'thin', color: { argb: XL.border } };
   return { top: side, left: side, bottom: side, right: side };
@@ -3825,15 +3829,15 @@ function xlTitleBlock(ws, title, subtitle, span){
   ws.mergeCells(1, 1, 1, span);
   const t = ws.getCell(1, 1);
   t.value = title;
-  t.font = { bold: true, size: 15, color: { argb: XL.white } };
+  t.font = { name: XL_FONT, bold: true, size: 17, color: { argb: XL.white } };
   t.fill = xlFill(XL.primary);
   t.alignment = { horizontal: 'center', vertical: 'middle' };
-  ws.getRow(1).height = 26;
+  ws.getRow(1).height = 30;
   if(subtitle){
     ws.mergeCells(2, 1, 2, span);
     const s = ws.getCell(2, 1);
     s.value = subtitle;
-    s.font = { italic: true, size: 10.5, color: { argb: XL.dim } };
+    s.font = { name: XL_FONT, italic: true, size: 10.5, color: { argb: XL.dim } };
     s.fill = xlFill(XL.zebra);
     s.alignment = { horizontal: 'center', vertical: 'middle' };
     ws.getRow(2).height = 18;
@@ -3845,7 +3849,7 @@ function xlSectionLabel(ws, text, span){
   const row = ws.addRow([text]);
   ws.mergeCells(row.number, 1, row.number, span);
   const c = row.getCell(1);
-  c.font = { bold: true, size: 11.5, color: { argb: XL.white } };
+  c.font = { name: XL_FONT, bold: true, size: 11.5, color: { argb: XL.white } };
   c.fill = xlFill(XL.secondary);
   c.alignment = { horizontal: 'left', vertical: 'middle' };
   row.height = 19;
@@ -3854,7 +3858,7 @@ function xlSectionLabel(ws, text, span){
 function xlHeaderRow(ws, headers){
   const row = ws.addRow(headers);
   row.eachCell({ includeEmpty: true }, cell => {
-    cell.font = { bold: true, size: 10.5, color: { argb: XL.white } };
+    cell.font = { name: XL_FONT, bold: true, size: 10.5, color: { argb: XL.white } };
     cell.fill = xlFill(XL.secondary);
     cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
     cell.border = xlBorder();
@@ -3869,13 +3873,18 @@ function xlZebra(ws, firstRow, lastRow, firstCol, lastCol){
     for(let c = firstCol; c <= lastCol; c++){
       const cell = ws.getCell(r, c);
       cell.border = xlBorder();
+      // Keep the shared typeface everywhere, but don't clobber any bold/
+      // color already set on this cell (e.g. wicket/boundary highlighting
+      // applied before xlZebra runs) — merge, don't overwrite.
+      cell.font = Object.assign({ name: XL_FONT, size: 10.5, color: { argb: XL.ink } }, cell.font);
+      if(typeof cell.value === 'number') cell.alignment = Object.assign({ horizontal: 'right' }, cell.alignment);
       if(odd && !cell.fill) cell.fill = xlFill(XL.zebra);
     }
   }
 }
 function xlBoldRow(row, fillArgb){
   row.eachCell({ includeEmpty: true }, cell => {
-    cell.font = { bold: true, size: 10.5 };
+    cell.font = { name: XL_FONT, bold: true, size: 10.5 };
     cell.border = xlBorder();
     cell.fill = xlFill(fillArgb || XL.goldFill);
   });
@@ -3960,7 +3969,7 @@ function xlDrawBarChartPNG(title, items, opts = {}){
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
   ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, width, height);
-  ctx.fillStyle = XL_HEX.primary; ctx.font = 'bold 15px Arial, sans-serif'; ctx.textAlign = 'left';
+  ctx.fillStyle = XL_HEX.primary; ctx.font = 'bold 15px -apple-system, Helvetica, Arial, sans-serif'; ctx.textAlign = 'left';
   ctx.fillText(title, 14, 22);
   ctx.strokeStyle = XL_HEX.border; ctx.beginPath(); ctx.moveTo(14, 30); ctx.lineTo(width - 14, 30); ctx.stroke();
 
@@ -3969,13 +3978,13 @@ function xlDrawBarChartPNG(title, items, opts = {}){
   items.forEach((it, i) => {
     const val = Number(it.value) || 0;
     const y = top + i * (rowH + gap);
-    ctx.fillStyle = XL_HEX.ink; ctx.font = '12px Arial, sans-serif'; ctx.textAlign = 'right';
+    ctx.fillStyle = XL_HEX.ink; ctx.font = '12px -apple-system, Helvetica, Arial, sans-serif'; ctx.textAlign = 'right';
     const label = String(it.label).length > 24 ? String(it.label).slice(0, 23) + '…' : String(it.label);
     ctx.fillText(label, left - 10, y + rowH * 0.66);
     const w = val > 0 ? Math.max((val / maxVal) * chartW, 4) : 0;
     ctx.fillStyle = i === 0 ? highlightColor : barColor;
     if(w > 0){ xlRoundRect(ctx, left, y, w, rowH, 4); ctx.fill(); }
-    ctx.fillStyle = XL_HEX.ink; ctx.font = 'bold 12px Arial, sans-serif'; ctx.textAlign = 'left';
+    ctx.fillStyle = XL_HEX.ink; ctx.font = 'bold 12px -apple-system, Helvetica, Arial, sans-serif'; ctx.textAlign = 'left';
     ctx.fillText(`${val}${unit}`, left + w + 8, y + rowH * 0.66);
   });
   return { dataUrl: canvas.toDataURL('image/png'), width, height };
@@ -3991,9 +4000,9 @@ function xlDrawLineChartPNG(title, subtitle, series, opts = {}){
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
   ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, width, height);
-  ctx.fillStyle = XL_HEX.primary; ctx.font = 'bold 15px Arial, sans-serif'; ctx.textAlign = 'left';
+  ctx.fillStyle = XL_HEX.primary; ctx.font = 'bold 15px -apple-system, Helvetica, Arial, sans-serif'; ctx.textAlign = 'left';
   ctx.fillText(title, 14, 22);
-  if(subtitle){ ctx.fillStyle = XL_HEX.dim; ctx.font = '11px Arial, sans-serif'; ctx.fillText(subtitle, 14, 37); }
+  if(subtitle){ ctx.fillStyle = XL_HEX.dim; ctx.font = '11px -apple-system, Helvetica, Arial, sans-serif'; ctx.fillText(subtitle, 14, 37); }
   ctx.strokeStyle = XL_HEX.border; ctx.beginPath(); ctx.moveTo(14, 44); ctx.lineTo(width - 14, 44); ctx.stroke();
 
   const left = 46, right = 20, top = 62, bottom = 34;
@@ -4003,7 +4012,7 @@ function xlDrawLineChartPNG(title, subtitle, series, opts = {}){
   const maxY = Math.max(...allPts.map(p => p.y), 1);
   const niceMaxY = Math.ceil(maxY / 10) * 10 || 10;
 
-  ctx.font = '10px Arial, sans-serif'; ctx.fillStyle = XL_HEX.dim; ctx.textAlign = 'right';
+  ctx.font = '10px -apple-system, Helvetica, Arial, sans-serif'; ctx.fillStyle = XL_HEX.dim; ctx.textAlign = 'right';
   for(let i = 0; i <= 4; i++){
     const val = Math.round((niceMaxY / 4) * i);
     const y = top + plotH - (val / niceMaxY) * plotH;
@@ -4025,12 +4034,12 @@ function xlDrawLineChartPNG(title, subtitle, series, opts = {}){
   });
 
   const step = maxX > 20 ? 5 : (maxX > 10 ? 2 : 1);
-  ctx.fillStyle = XL_HEX.dim; ctx.textAlign = 'center'; ctx.font = '10px Arial, sans-serif';
+  ctx.fillStyle = XL_HEX.dim; ctx.textAlign = 'center'; ctx.font = '10px -apple-system, Helvetica, Arial, sans-serif';
   for(let x = 0; x <= maxX; x += step) ctx.fillText(String(x), xAt(x), top + plotH + 16);
   ctx.fillText('Over', left + plotW / 2, height - 6);
 
   let legendX = left + 10, legendY = top - 16;
-  ctx.font = '11px Arial, sans-serif';
+  ctx.font = '11px -apple-system, Helvetica, Arial, sans-serif';
   series.forEach(s => {
     ctx.fillStyle = s.color; ctx.fillRect(legendX, legendY - 8, 10, 10);
     ctx.fillStyle = XL_HEX.ink; ctx.textAlign = 'left'; ctx.fillText(s.name, legendX + 14, legendY);
@@ -4120,16 +4129,18 @@ function computeLivePartnerships(){
   [1, 2].forEach(inn => {
     const balls = state.ballLog.filter(b => b.innings === inn);
     if(!balls.length) return;
-    let cur = null, wktSoFar = 0;
+    let cur = null, wktSoFar = 0, prevScoreAfter = '0-0';
     balls.forEach(b => {
       const pairKey = [b.striker, b.nonStriker].sort().join('|');
       if(!cur || cur.pairKey !== pairKey){
         if(cur) byInnings[inn].push(cur);
-        cur = { pairKey, batters: [b.striker, b.nonStriker], runs: 0, balls: 0, forWicket: wktSoFar + 1 };
+        cur = { pairKey, batters: [b.striker, b.nonStriker], runs: 0, balls: 0, forWicket: wktSoFar + 1, startScore: prevScoreAfter, endScore: prevScoreAfter };
       }
       cur.runs += b.runs;
       if(b.ballType !== 'Wd' && b.ballType !== 'Nb') cur.balls++;
       if(b.isWicket) wktSoFar++;
+      cur.endScore = b.scoreAfter;
+      prevScoreAfter = b.scoreAfter;
     });
     if(cur) byInnings[inn].push(cur);
   });
@@ -4238,48 +4249,105 @@ async function buildMatchExcelWorkbook(){
   const teamAName = state.teamA.name || 'Team A', teamBName = state.teamB.name || 'Team B';
   const teamAShort = state.teamA.short || teamAName, teamBShort = state.teamB.short || teamBName;
 
-  /* ---- Match Summary ---- */
-  {
-    const ws = xlNewSheet(wb, 'Match Summary');
-    const result = exportResultText();
-    let r = xlTitleBlock(ws, `${teamAName}  vs  ${teamBName}`, `${state.format}${state.venue ? ' · ' + state.venue : ''} · Exported ${new Date().toLocaleString()}`, 2);
-
-    const firstInn = state.firstInningsSummary;
-    const inn1Team = firstInn ? firstInn.team : state.battingTeam;
-    const inn2Team = firstInn ? state.battingTeam : null;
-    const inn1Name = inn1Team === 'A' ? teamAName : teamBName;
-    const inn1Score = firstInn ? `${firstInn.runs}-${firstInn.wickets} (${firstInn.overs} ov)`
-      : `${state.score.runs}-${state.score.wickets} (${fmtOvers(state.score.overs, state.score.balls)} ov)`;
-    const inn2Name = inn2Team ? (inn2Team === 'A' ? teamAName : teamBName) : null;
-    const inn2Score = inn2Team ? `${state.score.runs}-${state.score.wickets} (${fmtOvers(state.score.overs, state.score.balls)} ov)` : null;
-
-    const infoRows = [
-      ['Format', state.format],
-      ['Venue', state.venue || '—'],
-      ['Team A', teamAName],
-      ['Team B', teamBName],
-      [`Innings 1 — ${inn1Name}`, inn1Score]
-    ];
-    if(inn2Team) infoRows.push([`Innings 2 — ${inn2Name}`, inn2Score]);
-    if(state.target) infoRows.push(['Target', state.target]);
-    if(state.target && !exportResultText().winner) infoRows.push(['Current Required Rate', exportCurrentRRR()]);
-    infoRows.forEach(([label, value]) => {
-      const row = ws.addRow([label, value]);
-      row.getCell(1).font = { bold: true, color: { argb: XL.ink } };
-      row.eachCell({ includeEmpty: true }, c => { c.border = xlBorder(); });
-    });
-    const resultRow = ws.addRow(['Result', result.text]);
-    xlBoldRow(resultRow, XL.goldFill);
-    resultRow.getCell(2).font = { bold: true };
-
-    xlCols(ws, [26, 46]);
-    xlFreezeBelow(ws, r - 1);
-  }
-
-  /* ---- Innings sheets — only the ones that actually happened ---- */
+  /* ---- Innings that have actually happened — computed once up front so
+     both the score band below and the per-innings sheets further down
+     read from the exact same list. ---------------------------------- */
   const firstInn = state.firstInningsSummary;
   const inningsList = [{ num: 1, team: firstInn ? firstInn.team : state.battingTeam }];
   if(firstInn) inningsList.push({ num: 2, team: state.battingTeam });
+
+  /* ---- Match Overview — the score is the strongest visual element on
+     the sheet: one large card per team that has batted, plus a compact
+     KPI strip (Target / Required Rate / Result) and a slim detail table
+     underneath. Nothing here is invented — a team with no innings yet
+     simply doesn't get a score card. ---------------------------------- */
+  {
+    const ws = xlNewSheet(wb, 'Match Overview');
+    const result = exportResultText();
+    const titleText = (state.leagueName && state.leagueName.trim())
+      ? `${state.leagueName.trim()}  ·  ${teamAName}  vs  ${teamBName}`
+      : `${teamAName}  vs  ${teamBName}`;
+    const subtitleParts = [state.format];
+    if(state.venue) subtitleParts.push(state.venue);
+    subtitleParts.push(`Exported ${new Date().toLocaleString()}`);
+    let r = xlTitleBlock(ws, titleText, subtitleParts.join('  ·  '), 6);
+
+    // ---- Score band: one big card per innings played so far ----
+    inningsList.forEach(({ num, team }) => {
+      const teamObj = team === 'A' ? state.teamA : state.teamB;
+      const teamName = teamObj.name || `Team ${team}`;
+      const isArchived = num === 1 && firstInn;
+      const runs = isArchived ? firstInn.runs : state.score.runs;
+      const wkts = isArchived ? firstInn.wickets : state.score.wickets;
+      const oversStr = isArchived ? firstInn.overs : fmtOvers(state.score.overs, state.score.balls);
+      const rr = runRateFromBalls(runs, oversStrToBalls(oversStr));
+
+      const nameRow = ws.addRow([`INNINGS ${num}`, teamName, '', '', '', '']);
+      ws.mergeCells(nameRow.number, 2, nameRow.number, 6);
+      nameRow.getCell(1).font = { name: XL_FONT, bold: true, size: 10, color: { argb: XL.dim } };
+      nameRow.getCell(2).font = { name: XL_FONT, bold: true, size: 15, color: { argb: XL.primary } };
+      nameRow.getCell(1).fill = xlFill(XL.zebra);
+      nameRow.getCell(2).fill = xlFill(XL.zebra);
+
+      const scoreRow = ws.addRow([]);
+      ws.mergeCells(scoreRow.number, 1, scoreRow.number, 3);
+      const scoreCell = ws.getCell(scoreRow.number, 1);
+      scoreCell.value = `${runs} / ${wkts}`;
+      scoreCell.font = { name: XL_FONT, bold: true, size: 30, color: { argb: XL.ink } };
+      scoreCell.alignment = { horizontal: 'left', vertical: 'middle' };
+      ws.mergeCells(scoreRow.number, 4, scoreRow.number, 4);
+      const oversCell = ws.getCell(scoreRow.number, 4);
+      oversCell.value = `${oversStr} ov`;
+      oversCell.font = { name: XL_FONT, size: 13, color: { argb: XL.dim } };
+      oversCell.alignment = { horizontal: 'left', vertical: 'bottom' };
+      ws.mergeCells(scoreRow.number, 5, scoreRow.number, 6);
+      const rrCell = ws.getCell(scoreRow.number, 5);
+      rrCell.value = `RR ${rr}`;
+      rrCell.font = { name: XL_FONT, bold: true, size: 13, color: { argb: XL.secondary } };
+      rrCell.alignment = { horizontal: 'right', vertical: 'bottom' };
+      scoreRow.height = 34;
+      scoreRow.eachCell({ includeEmpty: true }, c => { c.fill = xlFill(XL.zebra); });
+      ws.addRow([]);
+    });
+
+    // ---- KPI strip: Target / Required Rate / Result — only the ones that apply ----
+    if(state.target){
+      const kpiRow = ws.addRow(['Target', state.target, '', 'Current Required Rate', result.winner ? '—' : exportCurrentRRR(), '']);
+      ws.mergeCells(kpiRow.number, 2, kpiRow.number, 3);
+      ws.mergeCells(kpiRow.number, 5, kpiRow.number, 6);
+      [1, 4].forEach(c => { kpiRow.getCell(c).font = { name: XL_FONT, bold: true, size: 10, color: { argb: XL.dim } }; });
+      [2, 5].forEach(c => { kpiRow.getCell(c).font = { name: XL_FONT, bold: true, size: 13, color: { argb: XL.ink } }; });
+      ws.addRow([]);
+    }
+    const resultRow = ws.addRow(['RESULT', result.text, '', '', '', '']);
+    ws.mergeCells(resultRow.number, 2, resultRow.number, 6);
+    resultRow.eachCell({ includeEmpty: true }, c => { c.fill = xlFill(XL.goldFill); c.border = xlBorder(); });
+    resultRow.getCell(1).font = { name: XL_FONT, bold: true, size: 10, color: { argb: XL.gold } };
+    resultRow.getCell(2).font = { name: XL_FONT, bold: true, size: 13, color: { argb: XL.ink } };
+    resultRow.height = 22;
+    ws.addRow([]);
+
+    // ---- Slim match detail table ----
+    xlSectionLabel(ws, 'MATCH DETAILS', 6);
+    const detailRows = [];
+    if(state.leagueName && state.leagueName.trim()) detailRows.push(['Tournament', state.leagueName.trim()]);
+    detailRows.push(['Format', state.format]);
+    if(state.venue) detailRows.push(['Venue', state.venue]);
+    detailRows.push(['Team A', teamAName]);
+    detailRows.push(['Team B', teamBName]);
+    detailRows.push(['Match Status', result.winner ? 'Completed' : (state.target ? 'In progress — 2nd innings' : (firstInn ? 'In progress' : 'In progress — 1st innings'))]);
+    const detailStart = ws.lastRow.number + 1;
+    detailRows.forEach(([label, value]) => {
+      const row = ws.addRow([label, value]);
+      ws.mergeCells(row.number, 2, row.number, 6);
+      row.getCell(1).font = { name: XL_FONT, bold: true, color: { argb: XL.ink } };
+      row.getCell(2).font = { name: XL_FONT, color: { argb: XL.ink } };
+    });
+    xlZebra(ws, detailStart, ws.lastRow.number, 1, 6);
+
+    xlCols(ws, [16, 16, 16, 14, 14, 14]);
+    xlFreezeBelow(ws, r - 1);
+  }
 
   // Computed once, shared by their own sheet below AND by the Charts
   // sheet's worm chart / top-performer bars — same numbers everywhere,
@@ -4318,6 +4386,20 @@ async function buildMatchExcelWorkbook(){
       .map(p => ({ label: `${p.name} (${p.team})`, value: p.wickets }));
     if(topWickets.length){
       const chart = xlDrawBarChartPNG('Top Wicket-Takers', topWickets, { barColor: XL_HEX.secondary, unit: ' wkt' });
+      cursor = xlEmbedImage(wb, ws, chart, cursor);
+    }
+
+    // Extras breakdown — combined across both teams' recorded extras only;
+    // omitted entirely if the match has none, per "only real data".
+    const extrasTotals = { Wide: 0, 'No Ball': 0, Bye: 0, 'Leg Bye': 0 };
+    ['A', 'B'].forEach(k => {
+      const e = state.extras[k] || {};
+      extrasTotals.Wide += e.wd || 0; extrasTotals['No Ball'] += e.nb || 0;
+      extrasTotals.Bye += e.b || 0; extrasTotals['Leg Bye'] += e.lb || 0;
+    });
+    const extrasItems = Object.entries(extrasTotals).filter(([, v]) => v > 0).map(([label, value]) => ({ label, value }));
+    if(extrasItems.length){
+      const chart = xlDrawBarChartPNG('Extras Breakdown', extrasItems, { barColor: XL_HEX.cost, highlightColor: XL_HEX.cost });
       xlEmbedImage(wb, ws, chart, cursor);
     }
   }
@@ -4378,10 +4460,13 @@ async function buildMatchExcelWorkbook(){
   /* ---- Ball by Ball ---- */
   {
     const ws = xlNewSheet(wb, 'Ball by Ball');
-    xlTitleBlock(ws, 'Ball by Ball', `${teamAName} vs ${teamBName} · every delivery, in order`, 12);
-    const headerRow = xlHeaderRow(ws, ['#', 'Innings', 'Team', 'Over', 'Ball', 'Striker', 'Non-Striker', 'Bowler', 'Runs', 'Wicket', 'Score', 'CRR/RRR']);
+    xlTitleBlock(ws, 'Ball by Ball', `${teamAName} vs ${teamBName} · every delivery, in order`, 14);
+    const headerRow = xlHeaderRow(ws, ['#', 'Innings', 'Team', 'Over', 'Ball', 'Striker', 'Non-Striker', 'Bowler', 'Runs', 'Extra', 'Wicket', 'Score', 'CRR', 'RRR']);
     const start = ws.lastRow.number + 1;
     const quotaBalls = ballsPerInnings();
+    // Illegal-delivery labels straight from the same ballType codes the
+    // live scoring buttons already use — no new event taxonomy invented.
+    const EXTRA_LABEL = { Wd: 'Wide', Nb: 'No Ball', B: 'Bye', LB: 'Leg Bye' };
     state.ballLog.forEach((b, i) => {
       const ballsAtPoint = oversStrToBalls(b.over);
       const [rs] = String(b.scoreAfter).split('-').map(n => parseInt(n, 10) || 0);
@@ -4391,64 +4476,102 @@ async function buildMatchExcelWorkbook(){
         const ballsLeft = quotaBalls - ballsAtPoint;
         rrr = ballsLeft > 0 ? runRateFromBalls(Math.max(state.target - rs, 0), ballsLeft) : '—';
       }
+      const extraLabel = EXTRA_LABEL[b.ballType] || '';
       const row = ws.addRow([
         i + 1, b.innings, b.battingTeam === 'A' ? teamAShort : teamBShort, b.over, b.ballType,
-        b.striker, b.nonStriker, b.bowler, b.runs, b.isWicket ? (b.dismissal || 'Out') : '',
-        b.scoreAfter, rrr ? `${crr} / ${rrr}` : crr
+        b.striker, b.nonStriker, b.bowler, b.runs, extraLabel, b.isWicket ? (b.dismissal || 'Out') : '',
+        b.scoreAfter, crr, rrr || '—'
       ]);
-      // Subtle event highlighting, restricted to the one accent color:
-      // a wicket tints the whole row (the rarest, most important event);
-      // a boundary just bolds its own run figure. No extra hues added.
+      // Subtle, deliberately layered event highlighting on ONE accent color:
+      // a wicket tints the whole row (rarest, most important event); a
+      // boundary bolds just its own run figure; a wide/no-ball only tints
+      // its own Extra cell, so illegal deliveries read at a glance without
+      // competing visually with a real wicket row.
       if(b.isWicket){
         row.eachCell({ includeEmpty: true }, cell => { cell.fill = xlFill(XL.goldFill); });
-        row.getCell(10).font = { bold: true, color: { argb: XL.ink } };
+        row.getCell(11).font = { name: XL_FONT, bold: true, color: { argb: XL.ink } };
       } else if(b.runs === 4 || b.runs === 6){
-        row.getCell(9).font = { bold: true, color: { argb: XL.gold } };
+        row.getCell(9).font = { name: XL_FONT, bold: true, color: { argb: XL.gold } };
+      } else if(b.ballType === 'Wd' || b.ballType === 'Nb'){
+        row.getCell(10).fill = xlFill(XL.zebra);
+        row.getCell(10).font = { name: XL_FONT, bold: true, size: 10.5, color: { argb: XL.secondary } };
       }
     });
-    xlZebra(ws, start, ws.lastRow.number, 1, 12);
+    xlZebra(ws, start, ws.lastRow.number, 1, 14);
     xlAddDataBar(ws, 9, start, ws.lastRow.number, XL.secondary); // Runs off each ball
-    xlAutoFilter(ws, headerRow.number, 1, 12, Math.max(ws.lastRow.number, headerRow.number));
+    xlAutoFilter(ws, headerRow.number, 1, 14, Math.max(ws.lastRow.number, headerRow.number));
     xlFreezeBelow(ws, headerRow.number);
-    xlCols(ws, [6, 8, 8, 8, 7, 16, 16, 16, 7, 12, 10, 12]);
+    xlCols(ws, [6, 8, 8, 8, 7, 16, 16, 16, 7, 10, 12, 10, 8, 8]);
   }
 
   /* ---- Over Summary ---- */
   {
     const ws = xlNewSheet(wb, 'Over Summary');
-    xlTitleBlock(ws, 'Over Summary', `${teamAName} vs ${teamBName}`, 8);
+    let cursor = xlTitleBlock(ws, 'Over Summary', `${teamAName} vs ${teamBName}`, 8);
+    xlCols(ws, [9, 7, 16, 8, 7, 9, 26, 16]);
+
+    // Clean bar chart, runs per over, chronological — genuinely improves
+    // scanning a long innings vs reading the raw table top to bottom.
+    if(overSummaryRows.length){
+      const items = overSummaryRows.map(o => ({ label: `Inn${o.innings} · Ov${o.over}`, value: o.runs }));
+      const chart = xlDrawBarChartPNG('Runs Per Over', items, { barColor: XL_HEX.secondary, highlightColor: XL_HEX.gold });
+      cursor = xlEmbedImage(wb, ws, chart, cursor);
+    }
+    // Pad blank rows so the table below starts under the chart image
+    // instead of the sheet's row pointer (unaware of image height) landing
+    // on top of it — addRow only knows about rows it has actually added.
+    while(ws.lastRow.number < cursor - 1) ws.addRow([]);
+
     const headerRow = xlHeaderRow(ws, ['Innings', 'Over', 'Bowler', 'Team', 'Runs', 'Wickets', 'Balls', 'Score / RR After']);
     const start = ws.lastRow.number + 1;
     overSummaryRows.forEach(o => {
       const row = ws.addRow([o.innings, o.over, o.bowler, o.team, o.runs, o.wickets, o.sequence, `${o.cumScore} (${o.runRate})`]);
-      if(o.wickets > 0) row.getCell(6).font = { bold: true, color: { argb: XL.gold } };
+      if(o.wickets > 0) row.getCell(6).font = { name: XL_FONT, bold: true, color: { argb: XL.gold } };
+      // Maiden over — zero runs off the bat and no extras this over —
+      // and a high-scoring over (10+) both get a quiet cue on Runs only,
+      // never the whole row, so the eye still lands on wickets first.
+      if(o.runs === 0 && o.wickets === 0){
+        row.getCell(5).font = { name: XL_FONT, italic: true, color: { argb: XL.secondary } };
+      } else if(o.runs >= 10){
+        row.getCell(5).font = { name: XL_FONT, bold: true, color: { argb: XL.gold } };
+      }
     });
     xlZebra(ws, start, ws.lastRow.number, 1, 8);
     xlAddDataBar(ws, 5, start, ws.lastRow.number, XL.secondary); // Runs per over
     xlAutoFilter(ws, headerRow.number, 1, 8, Math.max(ws.lastRow.number, headerRow.number));
     xlFreezeBelow(ws, headerRow.number);
-    xlCols(ws, [9, 7, 16, 8, 7, 9, 26, 16]);
   }
 
   /* ---- Partnerships ---- */
   {
     const ws = xlNewSheet(wb, 'Partnerships');
-    xlTitleBlock(ws, 'Partnerships', `${teamAName} vs ${teamBName} · reconstructed from the ball-by-ball log`, 6);
-    const headerRow = xlHeaderRow(ws, ['Innings', 'Team', 'Wicket', 'Batters', 'Runs', 'Balls', 'Run Rate']);
+    xlTitleBlock(ws, 'Partnerships', `${teamAName} vs ${teamBName} · reconstructed from the ball-by-ball log`, 8);
+    const headerRow = xlHeaderRow(ws, ['Innings', 'Team', 'Wicket', 'Batters', 'Runs', 'Balls', 'Run Rate', 'Score Range']);
     const start = ws.lastRow.number + 1;
     const byInnings = computeLivePartnerships();
+    const allRows = [];
     [1, 2].forEach(inn => {
       const teamKey = inningsList.find(x => x.num === inn) ? inningsList.find(x => x.num === inn).team : null;
       if(!teamKey) return;
       const teamShort = teamKey === 'A' ? teamAShort : teamBShort;
-      (byInnings[inn] || []).forEach(p => {
-        ws.addRow([inn, teamShort, p.forWicket, p.batters.join(' & '), p.runs, p.balls, runRateFromBalls(p.runs, p.balls)]);
-      });
+      (byInnings[inn] || []).forEach(p => allRows.push({ inn, teamShort, p }));
     });
-    xlZebra(ws, start, ws.lastRow.number, 1, 7);
-    xlAutoFilter(ws, headerRow.number, 1, 7, Math.max(ws.lastRow.number, headerRow.number));
+    const highestRuns = allRows.length ? Math.max(...allRows.map(r => r.p.runs)) : -1;
+    allRows.forEach(({ inn, teamShort, p }) => {
+      const scoreRange = `${p.startScore || '0-0'} → ${p.endScore || '—'}`;
+      const row = ws.addRow([inn, teamShort, p.forWicket, p.batters.join(' & '), p.runs, p.balls, runRateFromBalls(p.runs, p.balls), scoreRange]);
+      // Highlight the highest partnership of the match — the one figure
+      // most worth the eye landing on first in this sheet.
+      if(p.runs === highestRuns && highestRuns > 0){
+        row.eachCell({ includeEmpty: true }, cell => { cell.fill = xlFill(XL.goldFill); });
+        row.getCell(5).font = { name: XL_FONT, bold: true, color: { argb: XL.ink } };
+      }
+    });
+    xlZebra(ws, start, ws.lastRow.number, 1, 8);
+    xlAddDataBar(ws, 5, start, ws.lastRow.number, XL.secondary);
+    xlAutoFilter(ws, headerRow.number, 1, 8, Math.max(ws.lastRow.number, headerRow.number));
     xlFreezeBelow(ws, headerRow.number);
-    xlCols(ws, [9, 10, 9, 30, 8, 8, 10]);
+    xlCols(ws, [9, 10, 9, 28, 8, 8, 10, 16]);
   }
 
   /* ---- Player Match Stats ---- */
