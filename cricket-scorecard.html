@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Live Scorecard — Scorvix</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Live cricket scorecard powered by Scorvix">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="/socket.io/socket.io.js"></script>
+<style>
+  /* ============================================================
+     THEME TOKENS
+     Two hand-tuned palettes (not a simple invert). Green is the
+     single cricket-inspired accent (the pitch); four/six/wicket/extra
+     each get their own distinct hue so the eye can read a ball's
+     outcome without reading the label.
+     ============================================================ */
+  :root{
+    --radius-lg: 16px;
+    --radius-md: 12px;
+    --radius-sm: 8px;
+    --font-display: 'Sora', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  :root[data-theme="dark"]{
+    --bg: #0a0e17;
+    --bg-soft: #0d1220;
+    --panel: #121826;
+    --panel-2: #171f30;
+    --border: #232c40;
+    --border-soft: #1a2233;
+    --text: #eef1f6;
+    --text-dim: #8791a3;
+    --text-faint: #576174;
+    --accent: #22c55e;
+    --accent-soft: rgba(34,197,94,.14);
+    --accent-contrast: #06170c;
+    --four: #3b82f6;
+    --four-soft: rgba(59,130,246,.16);
+    --six: #a855f7;
+    --six-soft: rgba(168,85,247,.16);
+    --wicket: #ef4444;
+    --wicket-soft: rgba(239,68,68,.16);
+    --extra: #f59e0b;
+    --extra-soft: rgba(245,158,11,.16);
+    --live: #ef4444;
+    --shadow: 0 8px 30px rgba(0,0,0,.35);
+    --gradient-hero: radial-gradient(120% 140% at 15% -10%, rgba(34,197,94,.16), transparent 55%), radial-gradient(100% 120% at 100% 0%, rgba(168,85,247,.10), transparent 50%);
+  }
+  :root[data-theme="light"]{
+    --bg: #f4f6f8;
+    --bg-soft: #eef1f4;
+    --panel: #ffffff;
+    --panel-2: #f6f8fa;
+    --border: #e3e7ec;
+    --border-soft: #ececf0;
+    --text: #12161f;
+    --text-dim: #5c6474;
+    --text-faint: #99a1b0;
+    --accent: #128a4a;
+    --accent-soft: rgba(18,138,74,.10);
+    --accent-contrast: #ffffff;
+    --four: #1d5fd6;
+    --four-soft: rgba(29,95,214,.09);
+    --six: #8a1fd4;
+    --six-soft: rgba(138,31,212,.09);
+    --wicket: #d92b2b;
+    --wicket-soft: rgba(217,43,43,.09);
+    --extra: #b46a06;
+    --extra-soft: rgba(180,106,6,.10);
+    --live: #d92b2b;
+    --shadow: 0 8px 24px rgba(20,25,40,.08);
+    --gradient-hero: radial-gradient(120% 140% at 15% -10%, rgba(18,138,74,.08), transparent 55%), radial-gradient(100% 120% at 100% 0%, rgba(138,31,212,.05), transparent 50%);
+  }
+
+  *{ box-sizing:border-box; }
+  html{ scroll-behavior:smooth; }
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--font-body); font-size:14px; line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+    transition:background .25s ease, color .25s ease;
+    padding-bottom:40px;
+  }
+  a{ color:inherit; text-decoration:none; }
+  .tabnum{ font-variant-numeric:tabular-nums; }
+
+  /* ---------- Brand bar ---------- */
+  #brandbar{
+    position:sticky; top:0; z-index:40;
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:10px 18px; background:color-mix(in srgb, var(--panel) 88%, transparent);
+    backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--border);
+  }
+  #brand-id{ display:flex; align-items:center; gap:10px; min-width:0; }
+  #brand-id svg{ flex:none; }
+  #brand-text{ display:flex; flex-direction:column; line-height:1.15; min-width:0; }
+  #brand-text .name{ font-family:var(--font-display); font-weight:800; font-size:15px; letter-spacing:.2px; }
+  #brand-text .tag{ font-size:10.5px; color:var(--text-dim); font-weight:600; letter-spacing:.3px; }
+  #brand-actions{ display:flex; align-items:center; gap:8px; flex:none; }
+  .visit-btn{
+    display:flex; align-items:center; gap:6px; padding:7px 13px; border-radius:99px;
+    background:var(--accent-soft); color:var(--accent); font-weight:700; font-size:12.5px;
+    border:1px solid transparent; transition:transform .12s ease, background .15s ease;
+    white-space:nowrap;
+  }
+  .visit-btn:hover{ transform:translateY(-1px); background:var(--accent); color:var(--accent-contrast); }
+  .icon-btn{
+    display:flex; align-items:center; justify-content:center; width:34px; height:34px;
+    border-radius:99px; background:var(--panel-2); border:1px solid var(--border); cursor:pointer;
+    color:var(--text-dim); transition:background .15s ease, color .15s ease, transform .12s ease;
+    flex:none;
+  }
+  .icon-btn:hover{ color:var(--text); transform:translateY(-1px); }
+  #conn-pill{
+    display:flex; align-items:center; gap:6px; padding:5px 10px 5px 8px; border-radius:99px;
+    background:var(--panel-2); border:1px solid var(--border); font-size:11px; font-weight:700;
+    color:var(--text-dim); letter-spacing:.3px; flex:none;
+  }
+  .conn-dot{ width:7px; height:7px; border-radius:50%; background:var(--text-faint); }
+  .conn-dot.on{ background:var(--live); box-shadow:0 0 0 0 rgba(239,68,68,.6); animation:pulseDot 1.6s infinite; }
+  @keyframes pulseDot{ 0%{box-shadow:0 0 0 0 rgba(239,68,68,.45);} 70%{box-shadow:0 0 0 7px rgba(239,68,68,0);} 100%{box-shadow:0 0 0 0 rgba(239,68,68,0);} }
+
+  /* ---------- Layout ---------- */
+  #wrap{ max-width:1180px; margin:0 auto; padding:16px; display:flex; flex-direction:column; gap:14px; }
+  .card{
+    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius-lg);
+    padding:18px; box-shadow:var(--shadow);
+  }
+  .section-title{
+    display:flex; align-items:center; gap:8px; font-family:var(--font-display); font-weight:700;
+    font-size:13px; text-transform:uppercase; letter-spacing:.6px; color:var(--text-dim); margin-bottom:14px;
+  }
+  .section-title .dash{ width:14px; height:2px; background:var(--accent); border-radius:2px; }
+
+  /* ---------- Hero ---------- */
+  #hero{ position:relative; overflow:hidden; padding:22px; }
+  #hero::before{ content:''; position:absolute; inset:0; background:var(--gradient-hero); pointer-events:none; }
+  #hero-top{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; position:relative; margin-bottom:16px;}
+  .meta-line{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; color:var(--text-dim); font-size:12px; font-weight:600; }
+  .chip{ padding:3px 9px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); font-size:11px; font-weight:700; letter-spacing:.3px; }
+  .chip.live{ background:rgba(239,68,68,.12); color:var(--live); border-color:transparent; display:flex; align-items:center; gap:5px; }
+  .chip.live .lv-dot{ width:6px; height:6px; border-radius:50%; background:var(--live); animation:pulseDot 1.4s infinite; }
+  .chip.result{ background:var(--accent-soft); color:var(--accent); }
+
+  #teams-row{ position:relative; display:grid; grid-template-columns:1fr auto 1fr; gap:16px; align-items:center; }
+  .team-block{ display:flex; align-items:center; gap:12px; min-width:0; }
+  .team-block.right{ flex-direction:row-reverse; text-align:right; }
+  .team-logo{
+    width:46px; height:46px; border-radius:12px; flex:none; display:flex; align-items:center; justify-content:center;
+    font-family:var(--font-display); font-weight:800; font-size:16px; color:#fff; background-size:cover; background-position:center;
+  }
+  .team-name-block{ min-width:0; }
+  .team-name{ font-weight:700; font-size:14.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .team-short{ font-size:11px; color:var(--text-dim); font-weight:600; }
+  #score-center{ text-align:center; }
+  #main-score{ font-family:var(--font-display); font-weight:800; font-size:clamp(30px,6vw,44px); line-height:1; }
+  #main-overs{ font-size:13px; color:var(--text-dim); font-weight:600; margin-top:4px; }
+  #batting-tag{ font-size:10.5px; color:var(--accent); font-weight:700; letter-spacing:.4px; text-transform:uppercase; margin-top:3px; }
+
+  #target-wrap{ position:relative; margin-top:16px; }
+  #target-label{ display:flex; justify-content:space-between; font-size:11.5px; color:var(--text-dim); font-weight:600; margin-bottom:6px; }
+  .progress-track{ height:8px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); overflow:hidden; }
+  .progress-fill{ height:100%; border-radius:99px; background:linear-gradient(90deg, var(--accent), var(--six)); transition:width .5s ease; }
+
+  #stat-strip{ position:relative; display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:16px; }
+  .stat-box{ background:var(--panel-2); border:1px solid var(--border-soft); border-radius:var(--radius-md); padding:10px 12px; }
+  .stat-box .k{ font-size:10px; color:var(--text-dim); text-transform:uppercase; font-weight:700; letter-spacing:.4px; }
+  .stat-box .v{ font-family:var(--font-display); font-size:19px; font-weight:700; margin-top:3px; }
+
+  /* ---------- Players row ---------- */
+  #players-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+  .player-card{ background:var(--panel-2); border:1px solid var(--border-soft); border-radius:var(--radius-md); padding:13px; }
+  .player-card .pc-label{ font-size:10px; text-transform:uppercase; letter-spacing:.4px; color:var(--text-dim); font-weight:700; margin-bottom:8px; }
+  .pc-row{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:5px 0; }
+  .pc-name{ font-weight:700; font-size:13px; display:flex; align-items:center; gap:6px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .strike-dot{ width:6px; height:6px; border-radius:50%; background:var(--accent); flex:none; }
+  .pc-figs{ font-size:12.5px; font-weight:700; color:var(--text-dim); flex:none; }
+  .pc-sub{ font-size:10.5px; color:var(--text-faint); margin-top:2px; }
+  .pship-line{ display:flex; justify-content:space-between; font-size:12px; color:var(--text-dim); margin-top:8px; padding-top:8px; border-top:1px dashed var(--border); }
+  .pship-line b{ color:var(--text); }
+
+  /* ---------- Recent balls ---------- */
+  #balls-scroll{ display:flex; gap:7px; overflow-x:auto; padding-bottom:4px; scrollbar-width:thin; }
+  .ball-chip{
+    flex:none; min-width:32px; height:32px; padding:0 6px; border-radius:9px; display:flex; align-items:center; justify-content:center;
+    font-weight:800; font-size:12.5px; background:var(--panel-2); border:1px solid var(--border); color:var(--text-dim);
+  }
+  .ball-chip.four{ background:var(--four-soft); color:var(--four); border-color:transparent; }
+  .ball-chip.six{ background:var(--six-soft); color:var(--six); border-color:transparent; }
+  .ball-chip.wicket{ background:var(--wicket-soft); color:var(--wicket); border-color:transparent; }
+  .ball-chip.extra{ background:var(--extra-soft); color:var(--extra); border-color:transparent; font-size:10.5px; }
+  .ball-chip.dot{ color:var(--text-faint); }
+
+  /* ---------- Charts row ---------- */
+  #charts-grid{ display:grid; grid-template-columns:1.15fr 1fr; gap:14px; }
+  .chart-card svg{ width:100%; height:auto; display:block; overflow:visible; }
+  .chart-empty{ color:var(--text-faint); font-size:12.5px; padding:20px 0; text-align:center; }
+  .axis-label{ font-size:9.5px; fill:var(--text-faint); font-family:var(--font-body); }
+  .bar-label{ font-size:10px; fill:var(--text-dim); font-family:var(--font-body); font-weight:600; }
+
+  #compare-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .cmp-row{ display:grid; grid-template-columns:70px 1fr 42px; align-items:center; gap:8px; margin-bottom:9px; }
+  .cmp-name{ font-size:11.5px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cmp-track{ height:9px; border-radius:99px; background:var(--panel-2); overflow:hidden; }
+  .cmp-fill{ height:100%; border-radius:99px; transition:width .5s ease; }
+  .cmp-val{ font-size:11.5px; font-weight:700; text-align:right; color:var(--text-dim); }
+
+  /* ---------- Tables ---------- */
+  #tables-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  table{ width:100%; border-collapse:collapse; font-size:12.5px; }
+  thead th{
+    text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:.4px; color:var(--text-faint);
+    font-weight:700; padding:0 8px 8px; border-bottom:1px solid var(--border);
+  }
+  thead th.num, td.num{ text-align:right; }
+  tbody td{ padding:8px 8px; border-bottom:1px solid var(--border-soft); }
+  tbody tr:last-child td{ border-bottom:none; }
+  tbody tr.on-strike td:first-child{ color:var(--accent); font-weight:700; }
+  .howout{ font-size:10.5px; color:var(--text-faint); display:block; margin-top:1px; }
+  .not-out-tag{ color:var(--accent); font-size:10.5px; font-weight:700; }
+
+  /* ---------- Bottom row: partnership / FOW / extras ---------- */
+  #bottom-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; }
+  .fow-item{ display:flex; justify-content:space-between; font-size:12.5px; padding:7px 0; border-bottom:1px dashed var(--border-soft); }
+  .fow-item:last-child{ border-bottom:none; }
+  .fow-wkt{ color:var(--wicket); font-weight:700; }
+  .extras-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .extra-box{ background:var(--panel-2); border-radius:var(--radius-sm); padding:9px 10px; text-align:center; }
+  .extra-box .k{ font-size:10px; color:var(--text-dim); text-transform:uppercase; font-weight:700; }
+  .extra-box .v{ font-family:var(--font-display); font-size:17px; font-weight:700; margin-top:2px; }
+  .extras-total{ text-align:center; margin-top:10px; font-size:12px; color:var(--text-dim); }
+  .pship-big{ text-align:center; padding:8px 0; }
+  .pship-big .v{ font-family:var(--font-display); font-size:26px; font-weight:800; }
+  .pship-big .k{ font-size:11px; color:var(--text-dim); margin-top:4px; }
+  .pship-rr{ text-align:center; font-size:11.5px; color:var(--text-dim); margin-top:6px; }
+
+  /* ---------- Points table ---------- */
+  #points-table th, #points-table td{ text-align:center; }
+  #points-table th:first-child, #points-table td:first-child{ text-align:left; }
+  .pt-updated{ font-size:11px; color:var(--text-faint); margin-top:8px; text-align:right; }
+
+  .empty-state{ text-align:center; color:var(--text-faint); padding:24px 0; font-size:13px; }
+
+  footer{ text-align:center; padding:22px 10px 4px; color:var(--text-faint); font-size:11.5px; }
+  footer a{ color:var(--accent); font-weight:700; }
+
+  /* ---------- Responsive ---------- */
+  @media (max-width:900px){
+    #charts-grid, #compare-grid, #tables-grid, #bottom-grid{ grid-template-columns:1fr; }
+    #players-grid{ grid-template-columns:1fr; }
+    #stat-strip{ grid-template-columns:1fr 1fr; }
+  }
+  @media (max-width:640px){
+    #teams-row{ grid-template-columns:1fr; text-align:center; }
+    .team-block, .team-block.right{ flex-direction:column; text-align:center; }
+    #score-center{ order:-1; margin-bottom:6px; }
+    #brand-text .tag{ display:none; }
+  }
+
+  ::-webkit-scrollbar{ height:6px; width:6px; }
+  ::-webkit-scrollbar-thumb{ background:var(--border); border-radius:99px; }
+</style>
+</head>
+<body>
+
+<div id="brandbar">
+  <a id="brand-id" href="https://tt-overlay-lph4.onrender.com" target="_blank" rel="noopener">
+    <svg width="34" height="34" viewBox="0 0 34 34" fill="none">
+      <rect width="34" height="34" rx="9" fill="var(--accent)"/>
+      <path d="M9 22.5c4-5.5 6.5-9 12-13.5" stroke="var(--accent-contrast)" stroke-width="2.1" stroke-linecap="round"/>
+      <circle cx="22.5" cy="8.7" r="2.6" fill="var(--accent-contrast)"/>
+      <path d="M8 25.5l1.7-1.7" stroke="var(--accent-contrast)" stroke-width="2.1" stroke-linecap="round"/>
+    </svg>
+    <div id="brand-text">
+      <span class="name">Scorecard by Scorvix</span>
+      <span class="tag">Live match data, visualized</span>
+    </div>
+  </a>
+  <div id="brand-actions">
+    <span id="conn-pill"><span class="conn-dot" id="conn-dot"></span><span id="conn-text">Connecting</span></span>
+    <a class="visit-btn" href="https://tt-overlay-lph4.onrender.com" target="_blank" rel="noopener">Visit Website ↗</a>
+    <button class="icon-btn" id="theme-toggle" title="Toggle theme" aria-label="Toggle theme">
+      <svg id="theme-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>
+    </button>
+  </div>
+</div>
+
+<div id="wrap">
+
+  <!-- MATCH HEADER -->
+  <div class="card" id="hero">
+    <div id="hero-top">
+      <div class="meta-line">
+        <span class="chip" id="chip-format">—</span>
+        <span class="chip" id="chip-venue" style="display:none;"></span>
+        <span class="chip" id="chip-tournament" style="display:none;"></span>
+      </div>
+      <div class="meta-line">
+        <span class="chip live" id="chip-status"><span class="lv-dot"></span><span id="chip-status-text">LIVE</span></span>
+      </div>
+    </div>
+
+    <div id="teams-row">
+      <div class="team-block" id="team-block-a">
+        <div class="team-logo" id="logo-a">A</div>
+        <div class="team-name-block">
+          <div class="team-name" id="name-a">Team A</div>
+          <div class="team-short" id="short-a">—</div>
+        </div>
+      </div>
+      <div id="score-center">
+        <div id="main-score" class="tabnum">0-0</div>
+        <div id="main-overs" class="tabnum">(0.0 ov)</div>
+        <div id="batting-tag">—</div>
+      </div>
+      <div class="team-block right" id="team-block-b">
+        <div class="team-logo" id="logo-b">B</div>
+        <div class="team-name-block">
+          <div class="team-name" id="name-b">Team B</div>
+          <div class="team-short" id="short-b">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="target-wrap" style="display:none;">
+      <div id="target-label"><span id="target-need">—</span><span id="target-num">Target —</span></div>
+      <div class="progress-track"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+    </div>
+
+    <div id="stat-strip">
+      <div class="stat-box"><div class="k">Current RR</div><div class="v tabnum" id="stat-crr">0.00</div></div>
+      <div class="stat-box"><div class="k">Required RR</div><div class="v tabnum" id="stat-rrr">—</div></div>
+      <div class="stat-box"><div class="k">Partnership</div><div class="v tabnum" id="stat-pship">0 (0)</div></div>
+      <div class="stat-box"><div class="k">Balls Left</div><div class="v tabnum" id="stat-ballsleft">—</div></div>
+    </div>
+  </div>
+
+  <!-- CURRENT PLAYERS -->
+  <div class="card">
+    <div class="section-title"><span class="dash"></span>At the Crease</div>
+    <div id="players-grid">
+      <div class="player-card">
+        <div class="pc-label">Striker</div>
+        <div class="pc-row"><span class="pc-name"><span class="strike-dot"></span><span id="striker-name">—</span></span><span class="pc-figs tabnum" id="striker-figs">0 (0)</span></div>
+        <div class="pc-sub" id="striker-sr">SR —</div>
+      </div>
+      <div class="player-card">
+        <div class="pc-label">Non-Striker</div>
+        <div class="pc-row"><span class="pc-name"><span id="nonstriker-name">—</span></span><span class="pc-figs tabnum" id="nonstriker-figs">0 (0)</span></div>
+        <div class="pc-sub" id="nonstriker-sr">SR —</div>
+        <div class="pship-line"><span>Partnership</span><b id="pship-inline">0 (0)</b></div>
+      </div>
+      <div class="player-card">
+        <div class="pc-label">Bowler</div>
+        <div class="pc-row"><span class="pc-name"><span id="bowler-name">—</span></span><span class="pc-figs tabnum" id="bowler-figs">0-0-0</span></div>
+        <div class="pc-sub" id="bowler-econ">Econ —</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RECENT BALLS -->
+  <div class="card">
+    <div class="section-title"><span class="dash"></span>Recent Balls</div>
+    <div id="balls-scroll"></div>
+  </div>
+
+  <!-- CHARTS: OVER-BY-OVER + PROGRESSION -->
+  <div id="charts-grid">
+    <div class="card chart-card">
+      <div class="section-title"><span class="dash"></span>Over-by-Over Runs</div>
+      <div id="chart-overs"></div>
+    </div>
+    <div class="card chart-card">
+      <div class="section-title"><span class="dash"></span>Score Progression</div>
+      <div id="chart-progression"></div>
+    </div>
+  </div>
+
+  <!-- COMPARISON CHARTS -->
+  <div id="compare-grid">
+    <div class="card">
+      <div class="section-title"><span class="dash"></span>Batting Comparison</div>
+      <div id="cmp-batting"></div>
+    </div>
+    <div class="card">
+      <div class="section-title"><span class="dash"></span>Bowling Comparison</div>
+      <div id="cmp-bowling"></div>
+    </div>
+  </div>
+
+  <!-- SCORECARD TABLES -->
+  <div id="tables-grid">
+    <div class="card">
+      <div class="section-title"><span class="dash"></span>Batting</div>
+      <table>
+        <thead><tr><th>Batter</th><th class="num">R</th><th class="num">B</th><th class="num">4s</th><th class="num">6s</th><th class="num">SR</th></tr></thead>
+        <tbody id="batting-table-body"></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <div class="section-title"><span class="dash"></span>Bowling</div>
+      <table>
+        <thead><tr><th>Bowler</th><th class="num">O</th><th class="num">M</th><th class="num">R</th><th class="num">W</th><th class="num">Econ</th></tr></thead>
+        <tbody id="bowling-table-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- PARTNERSHIP / FOW / EXTRAS -->
+  <div id="bottom-grid">
+    <div class="card">
+      <div class="section-title"><span class="dash"></span>Partnership</div>
+      <div class="pship-big"><div class="v tabnum" id="pship-big-runs">0 (0)</div><div class="k">Runs (Balls)</div></div>
+      <div class="pship-rr" id="pship-rr">Run rate —</div>
+    </div>
+    <div class="card">
+      <div class="section-title"><span class="dash"></span>Fall of Wickets</div>
+      <div id="fow-list"><div class="empty-state">No wickets yet</div></div>
+    </div>
+    <div class="card">
+      <div class="section-title"><span class="dash"></span>Extras</div>
+      <div class="extras-grid">
+        <div class="extra-box"><div class="k">Wide</div><div class="v tabnum" id="ex-wd">0</div></div>
+        <div class="extra-box"><div class="k">No Ball</div><div class="v tabnum" id="ex-nb">0</div></div>
+        <div class="extra-box"><div class="k">Bye</div><div class="v tabnum" id="ex-b">0</div></div>
+        <div class="extra-box"><div class="k">Leg Bye</div><div class="v tabnum" id="ex-lb">0</div></div>
+      </div>
+      <div class="extras-total" id="ex-total">Total extras: 0</div>
+    </div>
+  </div>
+
+  <!-- TOURNAMENT -->
+  <div class="card" id="tournament-card" style="display:none;">
+    <div class="section-title"><span class="dash"></span>Tournament Points Table</div>
+    <table id="points-table">
+      <thead><tr><th>Team</th><th>P</th><th>W</th><th>L</th><th>T</th><th>Pts</th><th>NRR</th></tr></thead>
+      <tbody id="points-table-body"></tbody>
+    </table>
+    <div class="pt-updated" id="pt-updated"></div>
+  </div>
+
+</div>
+
+<footer>
+  Powered by <a href="https://tt-overlay-lph4.onrender.com" target="_blank" rel="noopener">Scorvix</a> — professional live sports overlays &amp; scorecards
+</footer>
+
+<script>
+/* ============================================================
+   THEME
+   ============================================================ */
+const SUN_PATH = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>';
+const MOON_PATH = '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/>';
+function applyTheme(t){
+  document.documentElement.setAttribute('data-theme', t);
+  document.getElementById('theme-icon').innerHTML = t === 'dark' ? SUN_PATH : MOON_PATH;
+  try{ localStorage.setItem('scorvix-scorecard-theme', t); }catch(e){}
+}
+(function initTheme(){
+  let saved = null;
+  try{ saved = localStorage.getItem('scorvix-scorecard-theme'); }catch(e){}
+  const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  applyTheme(saved || (prefersDark ? 'dark' : 'dark'));
+})();
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  const cur = document.documentElement.getAttribute('data-theme');
+  applyTheme(cur === 'dark' ? 'light' : 'dark');
+});
+
+/* ============================================================
+   FORMAT / MATH HELPERS — mirrors the panel's own scoring rules,
+   read-only (this page never mutates or broadcasts state).
+   ============================================================ */
+const FORMAT_RULES = {
+  T20:   { oversPerInnings: 20 },
+  ODI:   { oversPerInnings: 50 },
+  Test:  { oversPerInnings: Infinity },
+  Custom:{ oversPerInnings: 20 }
+};
+function fmtOvers(o,b){ return `${o||0}.${b||0}`; }
+function ballsPerInnings(state){
+  if(state.format === 'Custom') return (state.customOvers || 20) * 6;
+  const rules = FORMAT_RULES[state.format] || FORMAT_RULES.T20;
+  if(rules.oversPerInnings === Infinity) return null;
+  return rules.oversPerInnings * 6;
+}
+function calcCRR(state){
+  const totalBalls = (state.score.overs||0)*6 + (state.score.balls||0);
+  if(totalBalls === 0) return 0;
+  return (state.score.runs||0) / (totalBalls/6);
+}
+function calcRRR(state){
+  if(!state.target) return null;
+  const totalBallsAllowed = ballsPerInnings(state);
+  if(!totalBallsAllowed) return null;
+  const ballsBowled = (state.score.overs||0)*6 + (state.score.balls||0);
+  const ballsLeft = totalBallsAllowed - ballsBowled;
+  const runsNeeded = state.target - state.score.runs;
+  if(ballsLeft <= 0) return null;
+  return Math.max(runsNeeded,0) / (ballsLeft/6);
+}
+function calcBallsLeft(state){
+  const totalBallsAllowed = ballsPerInnings(state);
+  if(!totalBallsAllowed) return null;
+  const ballsBowled = (state.score.overs||0)*6 + (state.score.balls||0);
+  return Math.max(totalBallsAllowed - ballsBowled, 0);
+}
+function isChaseWon(state){ return !!state.target && state.score.runs >= state.target; }
+function isInningsOver(state){
+  const totalBallsAllowed = ballsPerInnings(state);
+  const ballsBowled = (state.score.overs||0)*6 + (state.score.balls||0);
+  return state.score.wickets >= 10 || (totalBallsAllowed !== null && ballsBowled >= totalBallsAllowed) || isChaseWon(state);
+}
+function bowlingKeyOf(state){ return state.battingTeam === 'A' ? 'B' : 'A'; }
+function bowlerEcon(b){
+  const oversFloat = (b.overs||0) + ((b.balls||0)/6);
+  return oversFloat > 0 ? (b.runs||0) / oversFloat : 0;
+}
+function strikeRate(runs, balls){ return balls > 0 ? (runs/balls)*100 : 0; }
+function teamObj(state, key){ return key === 'A' ? state.teamA : state.teamB; }
+
+function matchStatusText(state){
+  if(state.milestonesHit && state.milestonesHit['match-result']){
+    const battingTeam = teamObj(state, state.battingTeam);
+    const bowlingTeam = teamObj(state, bowlingKeyOf(state));
+    if(state.target && state.score.runs >= state.target){
+      const left = 10 - state.score.wickets;
+      return { badge:'RESULT', text:`${battingTeam.short || battingTeam.name} won by ${left} wicket${left===1?'':'s'}` };
+    }
+    if(state.target){
+      const margin = state.target - 1 - state.score.runs;
+      if(margin <= 0) return { badge:'RESULT', text:'Match Tied' };
+      return { badge:'RESULT', text:`${bowlingTeam.short || bowlingTeam.name} won by ${margin} run${margin===1?'':'s'}` };
+    }
+  }
+  if(isInningsOver(state) && !state.target){
+    return { badge:'BREAK', text:'Innings Break' };
+  }
+  return { badge:'LIVE', text:'Live' };
+}
+
+/* Batting rows for the CURRENT innings: archived (out) batsmen from
+   battingCard, plus striker/non-striker folded in as "not out" — same
+   approach the panel itself uses when building its own summary graphics. */
+function currentBattingRows(state){
+  const key = state.battingTeam;
+  const rows = [...((state.battingCard && state.battingCard[key]) || [])];
+  [state.striker, state.nonStriker].forEach(p => {
+    if(p && p.name && !rows.some(r => r.name === p.name)){
+      rows.push({ name:p.name, runs:p.runs||0, balls:p.balls||0, fours:p.fours||0, sixes:p.sixes||0, out:false, howOut:'not out' });
+    }
+  });
+  return rows;
+}
+function currentBowlingRows(state){
+  const key = bowlingKeyOf(state);
+  const rows = [...((state.bowlingCard && state.bowlingCard[key]) || [])];
+  if(state.bowler && state.bowler.name && !rows.some(r => r.name === state.bowler.name)){
+    rows.push({ ...state.bowler });
+  } else if(state.bowler && state.bowler.name){
+    // live bowler already archived under an older spell entry — refresh figures in place
+    const idx = rows.findIndex(r => r.name === state.bowler.name);
+    if(idx > -1) rows[idx] = { ...state.bowler };
+  }
+  return rows;
+}
+
+/* ============================================================
+   SOCKET CONNECTION — read-only viewer, joins the same room the
+   panel/overlay broadcast into. Never emits updateCricketScore.
+   ============================================================ */
+let socket = null;
+let latestState = null;
+let latestPoints = null;
+
+function getMatchId(){
+  const p = new URLSearchParams(location.search);
+  return p.get('room') || p.get('match') || p.get('id') || '';
+}
+
+function setConn(status){
+  const dot = document.getElementById('conn-dot');
+  const txt = document.getElementById('conn-text');
+  if(status === 'on'){ dot.classList.add('on'); txt.textContent = 'Live'; }
+  else if(status === 'off'){ dot.classList.remove('on'); txt.textContent = 'Reconnecting'; }
+  else { dot.classList.remove('on'); txt.textContent = 'Connecting'; }
+}
+
+function connect(){
+  const matchId = getMatchId();
+  if(!matchId){
+    document.getElementById('wrap').innerHTML = '<div class="card"><div class="empty-state">No match specified. Open this page with <b>?room=YOUR-MATCH-ID</b> in the link the broadcaster shared with you.</div></div>';
+    return;
+  }
+  socket = io({ query: { uid: matchId } });
+  socket.on('connect', () => setConn('on'));
+  socket.on('disconnect', () => setConn('off'));
+  socket.on('connect_error', () => setConn('off'));
+  socket.on('liveCricketScore', (serverState) => {
+    if(serverState && Object.keys(serverState).length){
+      latestState = serverState;
+      render();
+    }
+  });
+  socket.on('cricketPointsTable', (payload) => {
+    latestPoints = (payload && payload.data) || null;
+    renderPoints();
+  });
+  socket.on('cricketHidePointsTable', () => {
+    latestPoints = null;
+    renderPoints();
+  });
+}
+
+/* ============================================================
+   RENDER — cheap change-detection per section so a single ball
+   event doesn't force a full-page rebuild; only sections whose
+   underlying slice of data actually changed get redrawn.
+   ============================================================ */
+const _lastKey = {};
+function changed(section, key){
+  if(_lastKey[section] === key) return false;
+  _lastKey[section] = key;
+  return true;
+}
+
+function render(){
+  const s = latestState;
+  if(!s || !s.score) return;
+  renderHero(s);
+  renderPlayers(s);
+  renderBalls(s);
+  renderCharts(s);
+  renderCompare(s);
+  renderTables(s);
+  renderBottom(s);
+}
+
+function setText(id, val){ const el = document.getElementById(id); if(el) el.textContent = val; }
+
+function renderHero(s){
+  document.getElementById('chip-format').textContent = s.format || 'T20';
+  const venueChip = document.getElementById('chip-venue');
+  if(s.venue){ venueChip.style.display=''; venueChip.textContent = s.venue; } else venueChip.style.display='none';
+  const leagueChip = document.getElementById('chip-tournament');
+  if(s.leagueName){ leagueChip.style.display=''; leagueChip.textContent = '🏆 ' + s.leagueName; } else leagueChip.style.display='none';
+
+  const status = matchStatusText(s);
+  const statusChip = document.getElementById('chip-status');
+  const statusText = document.getElementById('chip-status-text');
+  statusText.textContent = status.text;
+  statusChip.classList.toggle('result', status.badge === 'RESULT');
+  statusChip.querySelector('.lv-dot').style.display = status.badge === 'LIVE' ? '' : 'none';
+
+  const A = s.teamA || {}, B = s.teamB || {};
+  setText('name-a', A.name || 'Team A'); setText('short-a', A.short || '—');
+  setText('name-b', B.name || 'Team B'); setText('short-b', B.short || '—');
+  paintLogo('logo-a', A);
+  paintLogo('logo-b', B);
+  document.getElementById('team-block-a').style.opacity = s.battingTeam === 'A' ? '1' : '.55';
+  document.getElementById('team-block-b').style.opacity = s.battingTeam === 'B' ? '1' : '.55';
+
+  setText('main-score', `${s.score.runs}-${s.score.wickets}`);
+  setText('main-overs', `(${fmtOvers(s.score.overs, s.score.balls)} ov)`);
+  const battingObj = teamObj(s, s.battingTeam);
+  setText('batting-tag', (battingObj.short || battingObj.name || '') + ' batting');
+
+  const targetWrap = document.getElementById('target-wrap');
+  if(s.target){
+    targetWrap.style.display = '';
+    const need = Math.max(s.target - s.score.runs, 0);
+    const ballsLeft = calcBallsLeft(s);
+    setText('target-need', ballsLeft === null ? `Need ${need} runs` : `Need ${need} off ${ballsLeft}`);
+    setText('target-num', `Target ${s.target}`);
+    const pct = Math.min(100, Math.max(0, (s.score.runs / s.target) * 100));
+    document.getElementById('progress-fill').style.width = pct.toFixed(1) + '%';
+  } else {
+    targetWrap.style.display = 'none';
+  }
+
+  setText('stat-crr', calcCRR(s).toFixed(2));
+  const rrr = calcRRR(s);
+  setText('stat-rrr', rrr === null ? '—' : rrr.toFixed(2));
+  setText('stat-pship', `${s.partnershipRuns||0} (${s.partnershipBalls||0})`);
+  const ballsLeft = calcBallsLeft(s);
+  setText('stat-ballsleft', ballsLeft === null ? '—' : ballsLeft);
+}
+
+function paintLogo(id, team){
+  const el = document.getElementById(id);
+  if(!el) return;
+  if(team.logoUrl){
+    el.style.backgroundImage = `url(${team.logoUrl})`;
+    el.textContent = '';
+    el.style.background = `center/cover no-repeat url(${team.logoUrl})`;
+  } else {
+    el.style.backgroundImage = '';
+    el.style.background = team.color || 'var(--accent)';
+    el.textContent = (team.short || team.name || '?').slice(0,2).toUpperCase();
+  }
+}
+
+function renderPlayers(s){
+  setText('striker-name', s.striker && s.striker.name || '—');
+  setText('striker-figs', `${(s.striker&&s.striker.runs)||0} (${(s.striker&&s.striker.balls)||0})`);
+  setText('striker-sr', 'SR ' + strikeRate((s.striker&&s.striker.runs)||0, (s.striker&&s.striker.balls)||0).toFixed(1));
+  setText('nonstriker-name', s.nonStriker && s.nonStriker.name || '—');
+  setText('nonstriker-figs', `${(s.nonStriker&&s.nonStriker.runs)||0} (${(s.nonStriker&&s.nonStriker.balls)||0})`);
+  setText('nonstriker-sr', 'SR ' + strikeRate((s.nonStriker&&s.nonStriker.runs)||0, (s.nonStriker&&s.nonStriker.balls)||0).toFixed(1));
+  setText('pship-inline', `${s.partnershipRuns||0} (${s.partnershipBalls||0})`);
+  const b = s.bowler || {};
+  setText('bowler-name', b.name || '—');
+  setText('bowler-figs', `${fmtOvers(b.overs,b.balls)}-${b.maidens||0}-${b.runs||0}-${b.wickets||0}`);
+  setText('bowler-econ', 'Econ ' + bowlerEcon(b).toFixed(2));
+}
+
+function renderBalls(s){
+  const key = JSON.stringify((s.ballHistory||[]).slice(-24));
+  if(!changed('balls', key)) return;
+  const wrap = document.getElementById('balls-scroll');
+  const recent = (s.ballHistory || []).slice(-24);
+  if(!recent.length){ wrap.innerHTML = '<div class="empty-state">No deliveries bowled yet</div>'; return; }
+  wrap.innerHTML = recent.map(b => {
+    let cls = 'dot';
+    if(b === '4') cls = 'four';
+    else if(b === '6') cls = 'six';
+    else if(b === 'W') cls = 'wicket';
+    else if(/^(Wd|Nb|B|LB)/.test(b)) cls = 'extra';
+    return `<div class="ball-chip ${cls}">${b}</div>`;
+  }).join('');
+  wrap.scrollLeft = wrap.scrollWidth;
+}
+
+/* ---------- Over-by-over + progression, computed from ballLog ---------- */
+function currentInningsLog(s){
+  const innings = s.target ? 2 : 1;
+  return (s.ballLog || []).filter(b => b.innings === innings);
+}
+const LEGAL_KINDS = new Set(['0','1','2','3','4','5','6','W','B','LB']);
+function overBuckets(log){
+  const overs = [];
+  let legalCount = 0, cur = { idx:0, runs:0, wicket:false };
+  log.forEach(b => {
+    if(cur.idx !== Math.floor(legalCount/6)){
+      overs.push(cur);
+      cur = { idx: Math.floor(legalCount/6), runs:0, wicket:false };
+    }
+    cur.runs += (b.runs || 0);
+    if(b.isWicket) cur.wicket = true;
+    if(LEGAL_KINDS.has(b.ballType)) legalCount++;
+  });
+  overs.push(cur);
+  return overs.filter(o => o.runs > 0 || o.wicket || overs.indexOf(o) < overs.length - 1);
+}
+
+function renderCharts(s){
+  const log = currentInningsLog(s);
+  const key = log.length + ':' + (s.score.runs) + ':' + (s.score.wickets);
+  if(!changed('charts', key)) return;
+  renderOverChart(log);
+  renderProgressionChart(log);
+}
+
+function svgWrap(inner, vbW, vbH){
+  return `<svg viewBox="0 0 ${vbW} ${vbH}" preserveAspectRatio="xMidYMid meet">${inner}</svg>`;
+}
+function css(varName){ return getComputedStyle(document.documentElement).getPropertyValue(varName).trim(); }
+
+function renderOverChart(log){
+  const el = document.getElementById('chart-overs');
+  if(!log.length){ el.innerHTML = '<div class="chart-empty">No overs bowled yet this innings</div>'; return; }
+  const overs = overBuckets(log).slice(-12); // last 12 overs, keeps the bar chart legible
+  const W = 560, H = 190, padL = 26, padB = 22, padT = 10;
+  const chartW = W - padL - 10, chartH = H - padB - padT;
+  const maxRuns = Math.max(...overs.map(o => o.runs), 6);
+  const bw = chartW / overs.length;
+  let bars = '';
+  overs.forEach((o, i) => {
+    const h = (o.runs / maxRuns) * chartH;
+    const x = padL + i * bw + bw*0.18;
+    const y = padT + chartH - h;
+    const w = bw * 0.64;
+    const color = o.wicket ? css('--wicket') : css('--accent');
+    bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(h,2).toFixed(1)}" rx="4" fill="${color}" opacity="0.9"/>`;
+    bars += `<text x="${(x+w/2).toFixed(1)}" y="${(y-5).toFixed(1)}" text-anchor="middle" class="bar-label">${o.runs}</text>`;
+    bars += `<text x="${(x+w/2).toFixed(1)}" y="${H-6}" text-anchor="middle" class="axis-label">${o.idx+1}</text>`;
+  });
+  el.innerHTML = svgWrap(bars, W, H);
+}
+
+function renderProgressionChart(log){
+  const el = document.getElementById('chart-progression');
+  if(!log.length){ el.innerHTML = '<div class="chart-empty">No runs on the board yet</div>'; return; }
+  const W = 560, H = 190, padL = 30, padB = 22, padT = 14, padR = 10;
+  const chartW = W - padL - padR, chartH = H - padB - padT;
+  let cum = 0;
+  const points = log.map((b, i) => { cum += (b.runs||0); return { x:i, y:cum, wicket: b.isWicket }; });
+  const maxRuns = Math.max(cum, 10);
+  const stepX = chartW / Math.max(points.length - 1, 1);
+  const px = (i) => padL + i * stepX;
+  const py = (v) => padT + chartH - (v / maxRuns) * chartH;
+  const linePath = points.map((p,i) => `${i===0?'M':'L'}${px(i).toFixed(1)},${py(p.y).toFixed(1)}`).join(' ');
+  const areaPath = `${linePath} L${px(points.length-1).toFixed(1)},${(padT+chartH).toFixed(1)} L${padL},${(padT+chartH).toFixed(1)} Z`;
+  const wicketMarks = points.filter(p => p.wicket).map(p => `<circle cx="${px(p.x).toFixed(1)}" cy="${py(p.y).toFixed(1)}" r="3.4" fill="${css('--wicket')}"/>`).join('');
+  const gridLines = [0,0.5,1].map(f => {
+    const y = padT + chartH - f*chartH;
+    return `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W-padR}" y2="${y.toFixed(1)}" stroke="var(--border-soft)" stroke-width="1"/><text x="${padL-6}" y="${(y+3).toFixed(1)}" text-anchor="end" class="axis-label">${Math.round(f*maxRuns)}</text>`;
+  }).join('');
+  const svg = `
+    ${gridLines}
+    <path d="${areaPath}" fill="${css('--accent')}" opacity="0.12" stroke="none"/>
+    <path d="${linePath}" fill="none" stroke="${css('--accent')}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    ${wicketMarks}
+  `;
+  el.innerHTML = svgWrap(svg, W, H);
+}
+
+/* ---------- Batting / bowling comparison bars ---------- */
+function renderCompare(s){
+  const bat = currentBattingRows(s);
+  const bowl = currentBowlingRows(s);
+  const key = JSON.stringify(bat.map(b=>[b.name,b.runs])) + '|' + JSON.stringify(bowl.map(b=>[b.name,b.wickets,b.runs,b.overs,b.balls]));
+  if(!changed('compare', key)) return;
+
+  const batEl = document.getElementById('cmp-batting');
+  if(!bat.length){ batEl.innerHTML = '<div class="chart-empty">No batters yet</div>'; }
+  else {
+    const maxRuns = Math.max(...bat.map(b=>b.runs), 1);
+    batEl.innerHTML = bat.map(b => `
+      <div class="cmp-row">
+        <div class="cmp-name" title="${escapeHtml(b.name)}">${escapeHtml(b.name)}</div>
+        <div class="cmp-track"><div class="cmp-fill" style="width:${(b.runs/maxRuns*100).toFixed(1)}%; background:var(--four);"></div></div>
+        <div class="cmp-val tabnum">${b.runs}</div>
+      </div>`).join('');
+  }
+
+  const bowlEl = document.getElementById('cmp-bowling');
+  if(!bowl.length){ bowlEl.innerHTML = '<div class="chart-empty">No bowlers yet</div>'; }
+  else {
+    const maxEcon = Math.max(...bowl.map(b=>bowlerEcon(b)), 1);
+    bowlEl.innerHTML = bowl.map(b => `
+      <div class="cmp-row">
+        <div class="cmp-name" title="${escapeHtml(b.name)}">${escapeHtml(b.name)}</div>
+        <div class="cmp-track"><div class="cmp-fill" style="width:${(bowlerEcon(b)/maxEcon*100).toFixed(1)}%; background:var(--six);"></div></div>
+        <div class="cmp-val tabnum">${bowlerEcon(b).toFixed(1)}</div>
+      </div>`).join('');
+  }
+}
+
+/* ---------- Full scorecard tables ---------- */
+function escapeHtml(str){
+  return String(str==null?'':str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function renderTables(s){
+  const bat = currentBattingRows(s);
+  const bowl = currentBowlingRows(s);
+  const key = JSON.stringify(bat) + '|' + JSON.stringify(bowl);
+  if(!changed('tables', key)) return;
+
+  const battingBody = document.getElementById('batting-table-body');
+  if(!bat.length){
+    battingBody.innerHTML = `<tr><td colspan="6" class="empty-state">Innings hasn't started</td></tr>`;
+  } else {
+    battingBody.innerHTML = bat.map(b => {
+      const isStriking = !b.out && s.striker && s.striker.name === b.name;
+      return `<tr class="${isStriking ? 'on-strike' : ''}">
+        <td>${escapeHtml(b.name)}${b.out ? `<span class="howout">${escapeHtml(b.howOut||'out')}</span>` : `<span class="not-out-tag">not out</span>`}</td>
+        <td class="num tabnum">${b.runs}</td>
+        <td class="num tabnum">${b.balls}</td>
+        <td class="num tabnum">${b.fours}</td>
+        <td class="num tabnum">${b.sixes}</td>
+        <td class="num tabnum">${strikeRate(b.runs,b.balls).toFixed(1)}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  const bowlingBody = document.getElementById('bowling-table-body');
+  if(!bowl.length){
+    bowlingBody.innerHTML = `<tr><td colspan="6" class="empty-state">No bowling yet</td></tr>`;
+  } else {
+    bowlingBody.innerHTML = bowl.map(b => `<tr>
+        <td>${escapeHtml(b.name)}</td>
+        <td class="num tabnum">${fmtOvers(b.overs,b.balls)}</td>
+        <td class="num tabnum">${b.maidens||0}</td>
+        <td class="num tabnum">${b.runs||0}</td>
+        <td class="num tabnum">${b.wickets||0}</td>
+        <td class="num tabnum">${bowlerEcon(b).toFixed(2)}</td>
+      </tr>`).join('');
+  }
+}
+
+/* ---------- Partnership / FOW / Extras ---------- */
+function renderBottom(s){
+  const key = JSON.stringify(s.fallOfWickets && s.fallOfWickets[s.battingTeam]) + '|' + JSON.stringify(s.extras && s.extras[s.battingTeam]) + '|' + s.partnershipRuns + ':' + s.partnershipBalls;
+  if(!changed('bottom', key)) return;
+
+  setText('pship-big-runs', `${s.partnershipRuns||0} (${s.partnershipBalls||0})`);
+  const rr = s.partnershipBalls > 0 ? (s.partnershipRuns / (s.partnershipBalls/6)) : 0;
+  setText('pship-rr', 'Run rate ' + rr.toFixed(2));
+
+  const fow = (s.fallOfWickets && s.fallOfWickets[s.battingTeam]) || [];
+  const fowList = document.getElementById('fow-list');
+  if(!fow.length){
+    fowList.innerHTML = '<div class="empty-state">No wickets yet</div>';
+  } else {
+    fowList.innerHTML = fow.map(f => `<div class="fow-item"><span class="fow-wkt">${f.wkt}</span><span class="tabnum">${f.runs}-${f.wkt} <span style="color:var(--text-faint)">(${f.over} ov)</span></span></div>`).join('');
+  }
+
+  const ex = (s.extras && s.extras[s.battingTeam]) || { wd:0,nb:0,b:0,lb:0 };
+  setText('ex-wd', ex.wd||0); setText('ex-nb', ex.nb||0); setText('ex-b', ex.b||0); setText('ex-lb', ex.lb||0);
+  setText('ex-total', 'Total extras: ' + ((ex.wd||0)+(ex.nb||0)+(ex.b||0)+(ex.lb||0)));
+}
+
+/* ---------- Tournament points table (fed via cricketPointsTable broadcast) ---------- */
+function renderPoints(){
+  const card = document.getElementById('tournament-card');
+  if(!latestPoints || !latestPoints.standings || !latestPoints.standings.length){
+    card.style.display = 'none';
+    return;
+  }
+  card.style.display = '';
+  const body = document.getElementById('points-table-body');
+  body.innerHTML = latestPoints.standings.map(r => `<tr>
+      <td style="text-align:left;">${escapeHtml(r.name)}</td>
+      <td class="tabnum">${r.played}</td>
+      <td class="tabnum">${r.won}</td>
+      <td class="tabnum">${r.lost}</td>
+      <td class="tabnum">${r.tied}</td>
+      <td class="tabnum" style="font-weight:700; color:var(--accent);">${r.points}</td>
+      <td class="tabnum">${r.nrr === null || r.nrr === undefined ? '—' : (r.nrr > 0 ? '+' : '') + r.nrr.toFixed(2)}</td>
+    </tr>`).join('');
+  setText('pt-updated', latestPoints.updatedLine || '');
+}
+
+connect();
+</script>
+</body>
+</html>
