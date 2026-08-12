@@ -666,6 +666,7 @@ app.get('/cricket-overlay', (req, res) => res.sendFile(__dirname + '/cricket-ove
 app.get('/cricket-panel', (req, res) => res.sendFile(__dirname + '/cricket-panel.html'));
 app.get('/cricket-overlay2', (req, res) => res.sendFile(__dirname + '/cricket-overlay2.html'));
 app.get('/cricket-panel2', (req, res) => res.sendFile(__dirname + '/cricket-panel2.html'));
+app.get('/cricket-scorecard', (req, res) => res.sendFile(__dirname + '/cricket-scorecard.html'));
 app.get('/football-matchintro', (req, res) => res.sendFile(__dirname + '/football-matchintro.html'));
 app.get('/football-matchintro-panel', (req, res) => res.sendFile(__dirname + '/football-matchintro-panel.html'));
 
