@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script src="/socket.io/socket.io.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://apis.google.com/js/api.js"></script>
 <style>
@@ -675,7 +675,9 @@
 
     <div class="card" id="card-session">
       <h2>💾 Session</h2>
-      <button class="full small primary" id="download-excel-btn" style="margin-bottom:6px;">📊 Download Match Excel</button>
+      <button class="full small primary" id="download-match-excel-btn" style="margin-bottom:6px;">📊 Export Match Excel Report</button>
+      <button class="full small" id="download-tournament-excel-btn" style="margin-bottom:6px;">🏆 Export Tournament Excel Report</button>
+      <div class="shortcut-hint" style="margin-bottom:6px;">Match Report exports the current/selected match. Tournament Report exports every match saved under the tournament picked in the Match Type panel above.</div>
       <button class="full small" id="next-innings-btn" disabled>Start Next Innings</button>
       <button class="full small" id="reset-btn" style="margin-top:6px;">Reset Match (clears everything)</button>
     </div>
@@ -2317,7 +2319,14 @@ function buildMatchRecordForLeague(){
     scoreA: scoreForTeam('A'),
     scoreB: scoreForTeam('B'),
     battingCard: { A: battingCardA, B: battingCardB },
-    bowlingCard: { A: bowlingCardA, B: bowlingCardB }
+    bowlingCard: { A: bowlingCardA, B: bowlingCardB },
+    // Extra detail (added for the Tournament Excel Report — Records/
+    // Highlights, NRR). Optional at read time: older saved matches simply
+    // won't have these keys, and every reader below treats that as "no
+    // data for this match" rather than failing.
+    extras: { A: { ...state.extras.A }, B: { ...state.extras.B } },
+    fallOfWickets: { A: [...state.fallOfWickets.A], B: [...state.fallOfWickets.B] },
+    partnerships: computeLivePartnerships()
   };
 }
 
@@ -3269,35 +3278,265 @@ document.querySelectorAll('[data-milestone]').forEach(btn => {
 });
 
 /* ============================================================
-   EXCEL EXPORT — builds one workbook from the CURRENT state
-   (works live, mid-match, or after the match is over). Sheets:
-   1. Match Info      — format/venue/teams/toss-less target/result
-   2. Batting A / B   — full scorecard per team, incl. the two
-                         batsmen still in if that innings isn't over
-   3. Bowling A / B   — full bowling figures per team
-   4. Fall of Wickets — per team
-   5. Extras          — wide/no-ball/bye/leg-bye split per team
-   6. Ball by Ball     — every single delivery of the match, in order
-   Nothing here is fetched from a server — it's all built from the
-   panel's own in-memory/localStorage state, so it works even if
-   this tab has never been connected.
+   EXCEL EXPORT — two professional report builders on top of
+   ExcelJS (real cell styling, unlike the old xlsx.full lib):
+
+   1. MATCH EXCEL REPORT   — buildMatchExcelWorkbook()
+      Everything about the current/selected match: summary,
+      one sheet per innings that actually happened, ball-by-ball,
+      over summary, partnerships, combined player match stats.
+
+   2. TOURNAMENT EXCEL REPORT — buildTournamentExcelWorkbook()
+      Everything saved under the tournament currently picked in
+      the Match Type panel: standings, team stats, leaderboards,
+      full player statistics, every match result, and records.
+
+   Both work entirely from the panel's own in-memory/localStorage
+   state (+ the league cache) — nothing invented, nothing fetched
+   just for the export. All cricket math (overs, RR/RRR, NRR,
+   economy) matches the scoring engine used live elsewhere in
+   this file.
    ============================================================ */
+
+/* ---- Shared visual language ---------------------------------- */
+const XL = {
+  primary:   'FF13472B', // deep pitch green — titles
+  secondary: 'FF1F7A43', // section/column headers
+  gold:      'FFC79A2E', // highlights (result, leader, records)
+  goldFill:  'FFFCF3D8',
+  win:       'FFD9F2E0',
+  loss:      'FFFBE1E1',
+  zebra:     'FFF2F8F4',
+  white:     'FFFFFFFF',
+  ink:       'FF1B2430',
+  dim:       'FF5B6B75',
+  border:    'FFC9D4CE'
+};
+function xlBorder(){
+  const side = { style: 'thin', color: { argb: XL.border } };
+  return { top: side, left: side, bottom: side, right: side };
+}
+function xlFill(argb){ return { type: 'pattern', pattern: 'solid', fgColor: { argb } }; }
+// One title banner (row 1) + optional subtitle (row 2) + a blank spacer row.
+// Returns the row number the caller should start adding content at.
+function xlTitleBlock(ws, title, subtitle, span){
+  ws.mergeCells(1, 1, 1, span);
+  const t = ws.getCell(1, 1);
+  t.value = title;
+  t.font = { bold: true, size: 15, color: { argb: XL.white } };
+  t.fill = xlFill(XL.primary);
+  t.alignment = { horizontal: 'center', vertical: 'middle' };
+  ws.getRow(1).height = 26;
+  if(subtitle){
+    ws.mergeCells(2, 1, 2, span);
+    const s = ws.getCell(2, 1);
+    s.value = subtitle;
+    s.font = { italic: true, size: 10.5, color: { argb: XL.dim } };
+    s.fill = xlFill(XL.goldFill);
+    s.alignment = { horizontal: 'center', vertical: 'middle' };
+    ws.getRow(2).height = 18;
+  }
+  ws.addRow([]);
+  return ws.lastRow.number + 1;
+}
+function xlSectionLabel(ws, text, span){
+  const row = ws.addRow([text]);
+  ws.mergeCells(row.number, 1, row.number, span);
+  const c = row.getCell(1);
+  c.font = { bold: true, size: 11.5, color: { argb: XL.white } };
+  c.fill = xlFill(XL.secondary);
+  c.alignment = { horizontal: 'left', vertical: 'middle' };
+  row.height = 19;
+  return row;
+}
+function xlHeaderRow(ws, headers){
+  const row = ws.addRow(headers);
+  row.eachCell({ includeEmpty: true }, cell => {
+    cell.font = { bold: true, size: 10.5, color: { argb: XL.white } };
+    cell.fill = xlFill(XL.secondary);
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    cell.border = xlBorder();
+  });
+  row.height = 20;
+  return row;
+}
+// Borders + alternating fill for a block of data rows already added.
+function xlZebra(ws, firstRow, lastRow, firstCol, lastCol){
+  for(let r = firstRow; r <= lastRow; r++){
+    const odd = (r - firstRow) % 2 === 1;
+    for(let c = firstCol; c <= lastCol; c++){
+      const cell = ws.getCell(r, c);
+      cell.border = xlBorder();
+      if(odd && !cell.fill) cell.fill = xlFill(XL.zebra);
+    }
+  }
+}
+function xlBoldRow(row, fillArgb){
+  row.eachCell({ includeEmpty: true }, cell => {
+    cell.font = { bold: true, size: 10.5 };
+    cell.border = xlBorder();
+    cell.fill = xlFill(fillArgb || XL.goldFill);
+  });
+}
+function xlAutoFilter(ws, headerRowNum, firstCol, lastCol, lastRow){
+  ws.autoFilter = {
+    from: { row: headerRowNum, column: firstCol },
+    to: { row: lastRow, column: lastCol }
+  };
+}
+function xlFreezeBelow(ws, rowNum){
+  ws.views = [{ state: 'frozen', xSplit: 0, ySplit: rowNum, showGridLines: false }];
+}
+function xlPrintFriendly(ws){
+  ws.pageSetup = {
+    orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+    margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 }
+  };
+}
+function xlNewSheet(wb, name){
+  // Sheet names are hard-capped at 31 chars by the xlsx format itself.
+  const ws = wb.addWorksheet(name.slice(0, 31));
+  xlPrintFriendly(ws);
+  return ws;
+}
+function xlCols(ws, widths){ widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; }); }
+
+async function xlDownload(wb, filename){
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+function xlSafeFilename(s){
+  return String(s).replace(/[^a-z0-9_-]+/gi, '_').slice(0, 90);
+}
+
+/* ---- Cricket math shared by both reports ---------------------- */
+function oversStrToBalls(overStr){
+  const parts = String(overStr || '0.0').split('.');
+  const ov = parseInt(parts[0], 10) || 0;
+  const ba = Math.min(parseInt(parts[1], 10) || 0, 5);
+  return ov * 6 + ba;
+}
+function ballsToOversStr(balls){
+  const w = Math.floor(balls / 6), b = balls % 6;
+  return `${w}.${b}`;
+}
+function runRateFromBalls(runs, balls){
+  return balls > 0 ? (runs / (balls / 6)).toFixed(2) : '0.00';
+}
+function formatOversQuota(format){
+  if(format === 'T20') return 20;
+  if(format === 'ODI') return 50;
+  return null; // Test / Custom — quota unknown from a saved record, use actual balls faced
+}
+// Live-state result line — mirrors checkMatchResult()/buildMatchSummaryPayload()'s
+// own wording so the report always agrees with what fired on the overlay.
+function exportResultText(){
+  if(!state.target) return { text: 'Match in progress — no result yet', winner: null };
+  const battingTeam = state.battingTeam === 'A' ? state.teamA : state.teamB;
+  const bowlingTeam = state.battingTeam === 'A' ? state.teamB : state.teamA;
+  const battingShort = battingTeam.short || battingTeam.name;
+  const bowlingShort = bowlingTeam.short || bowlingTeam.name;
+  if(state.score.runs >= state.target){
+    const left = 10 - state.score.wickets;
+    return { text: `${battingShort} won by ${left} wicket${left === 1 ? '' : 's'}`, winner: state.battingTeam };
+  }
+  if(isInningsOver()){
+    const margin = state.target - 1 - state.score.runs;
+    if(margin <= 0) return { text: 'Match tied', winner: 'TIE' };
+    return { text: `${bowlingShort} won by ${margin} run${margin === 1 ? '' : 's'}`, winner: bowlingTeamKey() };
+  }
+  const runsNeeded = state.target - state.score.runs;
+  return { text: `${battingShort} need ${runsNeeded} run${runsNeeded === 1 ? '' : 's'} to win`, winner: null };
+}
+function exportCurrentRRR(){
+  if(!state.target) return '—';
+  const quotaBalls = ballsPerInnings();
+  if(quotaBalls === null) return '—';
+  const ballsLeft = quotaBalls - (state.score.overs * 6 + state.score.balls);
+  if(ballsLeft <= 0) return '—';
+  const runsNeeded = state.target - state.score.runs;
+  return runRateFromBalls(Math.max(runsNeeded, 0), ballsLeft);
+}
+// Reconstructs each partnership (pair of batters at the crease together)
+// from the ball-by-ball log — the live state only tracks the CURRENT
+// partnership, not the full history, so this rebuilds it from ballLog,
+// which is never trimmed. Grouped by innings, closed whenever the
+// striker/non-striker pair changes (i.e. a wicket brought in someone new).
+function computeLivePartnerships(){
+  const byInnings = { 1: [], 2: [] };
+  [1, 2].forEach(inn => {
+    const balls = state.ballLog.filter(b => b.innings === inn);
+    if(!balls.length) return;
+    let cur = null, wktSoFar = 0;
+    balls.forEach(b => {
+      const pairKey = [b.striker, b.nonStriker].sort().join('|');
+      if(!cur || cur.pairKey !== pairKey){
+        if(cur) byInnings[inn].push(cur);
+        cur = { pairKey, batters: [b.striker, b.nonStriker], runs: 0, balls: 0, forWicket: wktSoFar + 1 };
+      }
+      cur.runs += b.runs;
+      if(b.ballType !== 'Wd' && b.ballType !== 'Nb') cur.balls++;
+      if(b.isWicket) wktSoFar++;
+    });
+    if(cur) byInnings[inn].push(cur);
+  });
+  return byInnings;
+}
+// Reconstructs one row per over from ballLog (bowler, runs, wickets,
+// ball-by-ball sequence, cumulative score/run-rate after that over).
+function computeOverSummary(){
+  const rows = [];
+  let cur = null;
+  const cumByInnings = { 1: 0, 2: 0 };
+  state.ballLog.forEach(b => {
+    const ballsAtPoint = oversStrToBalls(b.over);
+    const overIndex = ballsAtPoint > 0 ? Math.floor((ballsAtPoint - 1) / 6) : 0;
+    const groupKey = `${b.innings}-${overIndex}`;
+    if(!cur || cur.groupKey !== groupKey){
+      if(cur) rows.push(cur);
+      cur = { groupKey, innings: b.innings, overNum: overIndex + 1, bowler: b.bowler, battingTeam: b.battingTeam, runs: 0, wickets: 0, sequence: [] };
+    }
+    cur.runs += b.runs;
+    if(b.isWicket) cur.wickets++;
+    let tag = String(b.runs);
+    if(b.ballType === 'Wd') tag = `${b.runs}wd`;
+    else if(b.ballType === 'Nb') tag = `${b.runs}nb`;
+    else if(b.isWicket) tag = 'W';
+    cur.sequence.push(tag);
+  });
+  if(cur) rows.push(cur);
+  return rows.map(r => {
+    cumByInnings[r.innings] += r.runs;
+    return {
+      innings: r.innings, over: r.overNum, bowler: r.bowler,
+      team: r.battingTeam === 'A' ? (state.teamA.short || state.teamA.name) : (state.teamB.short || state.teamB.name),
+      runs: r.runs, wickets: r.wickets, sequence: r.sequence.join(' '),
+      cumScore: cumByInnings[r.innings],
+      runRate: runRateFromBalls(cumByInnings[r.innings], r.overNum * 6)
+    };
+  });
+}
+
+/* ---- Row builders reused by both the sheets and the league record ---- */
 function battingRowsForExcel(teamKey){
   const rows = state.battingCard[teamKey].map(b => ({
     Batsman: b.name, Runs: b.runs, Balls: b.balls,
     '4s': b.fours, '6s': b.sixes,
-    'S/R': b.balls > 0 ? ((b.runs/b.balls)*100).toFixed(2) : '0.00',
+    'S/R': b.balls > 0 ? ((b.runs / b.balls) * 100).toFixed(2) : '0.00',
     'Dismissal': b.howOut
   }));
-  // Add the two not-out batsmen currently at the crease, if this team is
-  // the one batting right now and the innings hasn't been archived yet.
   if(state.battingTeam === teamKey){
     [state.striker, state.nonStriker].forEach(p => {
       if(p && p.name){
         rows.push({
           Batsman: p.name, Runs: p.runs, Balls: p.balls,
           '4s': p.fours, '6s': p.sixes,
-          'S/R': p.balls > 0 ? ((p.runs/p.balls)*100).toFixed(2) : '0.00',
+          'S/R': p.balls > 0 ? ((p.runs / p.balls) * 100).toFixed(2) : '0.00',
           'Dismissal': 'not out'
         });
       }
@@ -3306,8 +3545,6 @@ function battingRowsForExcel(teamKey){
   return rows;
 }
 function bowlingRowsForExcel(teamKey){
-  // Bowling figures are archived under the BOWLING team's key, and the
-  // current bowler (if this team is bowling right now) isn't archived yet.
   const rows = state.bowlingCard[teamKey].map(b => ({
     Bowler: b.name, Overs: fmtBowlerOvers(b.overs, b.balls),
     Maidens: b.maidens, Runs: b.runs, Wickets: b.wickets, Economy: bowlerEcon(b)
@@ -3321,79 +3558,543 @@ function bowlingRowsForExcel(teamKey){
   }
   return rows;
 }
-function buildAndDownloadExcel(){
-  if(typeof XLSX === 'undefined'){ toast('Excel library failed to load — check your connection'); return; }
-
-  const wb = XLSX.utils.book_new();
-  const teamAName = state.teamA.name || 'Team A';
-  const teamBName = state.teamB.name || 'Team B';
-
-  // --- 1. Match Info ---
-  const infoRows = [
-    { Field: 'Format', Value: state.format },
-    { Field: 'Venue', Value: state.venue || '—' },
-    { Field: 'Team A', Value: teamAName },
-    { Field: 'Team B', Value: teamBName },
-    { Field: 'Currently Batting', Value: state.battingTeam === 'A' ? teamAName : teamBName },
-    { Field: 'Current Score', Value: `${state.score.runs}-${state.score.wickets}` },
-    { Field: 'Overs', Value: fmtOvers(state.score.overs, state.score.balls) },
-    { Field: 'Target', Value: state.target || '—' }
-  ];
-  if(state.firstInningsSummary){
-    const fi = state.firstInningsSummary;
-    const fiTeamName = fi.team === 'A' ? teamAName : teamBName;
-    infoRows.push({ Field: '1st Innings Total', Value: `${fiTeamName}: ${fi.runs}-${fi.wickets} (${fi.overs} ov)` });
-  }
-  infoRows.push({ Field: 'Exported On', Value: new Date().toLocaleString() });
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(infoRows), 'Match Info');
-
-  // --- 2 & 3. Batting / Bowling per team ---
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(battingRowsForExcel('A')), `Batting ${state.teamA.short || 'A'}`);
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(battingRowsForExcel('B')), `Batting ${state.teamB.short || 'B'}`);
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(bowlingRowsForExcel('A')), `Bowling ${state.teamA.short || 'A'}`);
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(bowlingRowsForExcel('B')), `Bowling ${state.teamB.short || 'B'}`);
-
-  // --- 4. Fall of Wickets ---
-  const fowRows = [];
-  ['A','B'].forEach(key => {
-    (state.fallOfWickets[key] || []).forEach(f => {
-      fowRows.push({ Team: key === 'A' ? teamAName : teamBName, Wicket: f.wkt, Score: f.runs, Over: f.over });
+// One row per player, batting + bowling merged — for the Player Match
+// Stats sheet. Blank cells mean the player didn't bat/bowl, not zero.
+function playerMatchStatsRows(){
+  const map = {};
+  const ensure = (name, team) => {
+    if(!map[name]) map[name] = { name, team, runs:'', balls:'', fours:'', sixes:'', sr:'', overs:'', maidens:'', bowlRuns:'', wickets:'', econ:'' };
+    return map[name];
+  };
+  ['A', 'B'].forEach(k => {
+    const teamShort = k === 'A' ? (state.teamA.short || state.teamA.name) : (state.teamB.short || state.teamB.name);
+    battingRowsForExcel(k).forEach(b => {
+      const e = ensure(b.Batsman, teamShort);
+      e.runs = b.Runs; e.balls = b.Balls; e.fours = b['4s']; e.sixes = b['6s']; e.sr = b['S/R'];
+    });
+    bowlingRowsForExcel(k).forEach(b => {
+      const e = ensure(b.Bowler, teamShort);
+      e.overs = b.Overs; e.maidens = b.Maidens; e.bowlRuns = b.Runs; e.wickets = b.Wickets; e.econ = b.Economy;
     });
   });
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(fowRows), 'Fall of Wickets');
-
-  // --- 5. Extras ---
-  const extrasRows = ['A','B'].map(key => ({
-    Team: key === 'A' ? teamAName : teamBName,
-    Wides: state.extras[key].wd, 'No Balls': state.extras[key].nb,
-    Byes: state.extras[key].b, 'Leg Byes': state.extras[key].lb,
-    Total: state.extras[key].wd + state.extras[key].nb + state.extras[key].b + state.extras[key].lb
-  }));
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(extrasRows), 'Extras');
-
-  // --- 6. Ball by Ball ---
-  const ballRows = state.ballLog.map((b, i) => ({
-    '#': i + 1,
-    Innings: b.innings,
-    Team: b.battingTeam === 'A' ? teamAName : teamBName,
-    Over: b.over,
-    Ball: b.ballType,
-    Striker: b.striker,
-    'Non-Striker': b.nonStriker,
-    Bowler: b.bowler,
-    Runs: b.runs,
-    Wicket: b.isWicket ? (b.dismissal || 'Out') : '',
-    Score: b.scoreAfter,
-    Time: new Date(b.timestamp).toLocaleTimeString()
-  }));
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ballRows), 'Ball by Ball');
-
-  const matchId = currentMatchId() || 'match';
-  const fileSafeName = `${matchId}_${teamAName}_vs_${teamBName}`.replace(/[^a-z0-9_-]+/gi, '_').slice(0, 80);
-  XLSX.writeFile(wb, `${fileSafeName}.xlsx`);
-  toast('📊 Excel downloaded');
+  return Object.values(map);
 }
-document.getElementById('download-excel-btn').addEventListener('click', buildAndDownloadExcel);
+
+/* ============================================================
+   1. MATCH EXCEL REPORT
+   ============================================================ */
+async function buildMatchExcelWorkbook(){
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Cricket Panel';
+  wb.created = new Date();
+  const teamAName = state.teamA.name || 'Team A', teamBName = state.teamB.name || 'Team B';
+  const teamAShort = state.teamA.short || teamAName, teamBShort = state.teamB.short || teamBName;
+
+  /* ---- Match Summary ---- */
+  {
+    const ws = xlNewSheet(wb, 'Match Summary');
+    const result = exportResultText();
+    let r = xlTitleBlock(ws, `${teamAName}  vs  ${teamBName}`, `${state.format}${state.venue ? ' · ' + state.venue : ''} · Exported ${new Date().toLocaleString()}`, 2);
+
+    const firstInn = state.firstInningsSummary;
+    const inn1Team = firstInn ? firstInn.team : state.battingTeam;
+    const inn2Team = firstInn ? state.battingTeam : null;
+    const inn1Name = inn1Team === 'A' ? teamAName : teamBName;
+    const inn1Score = firstInn ? `${firstInn.runs}-${firstInn.wickets} (${firstInn.overs} ov)`
+      : `${state.score.runs}-${state.score.wickets} (${fmtOvers(state.score.overs, state.score.balls)} ov)`;
+    const inn2Name = inn2Team ? (inn2Team === 'A' ? teamAName : teamBName) : null;
+    const inn2Score = inn2Team ? `${state.score.runs}-${state.score.wickets} (${fmtOvers(state.score.overs, state.score.balls)} ov)` : null;
+
+    const infoRows = [
+      ['Format', state.format],
+      ['Venue', state.venue || '—'],
+      ['Team A', teamAName],
+      ['Team B', teamBName],
+      [`Innings 1 — ${inn1Name}`, inn1Score]
+    ];
+    if(inn2Team) infoRows.push([`Innings 2 — ${inn2Name}`, inn2Score]);
+    if(state.target) infoRows.push(['Target', state.target]);
+    if(state.target && !exportResultText().winner) infoRows.push(['Current Required Rate', exportCurrentRRR()]);
+    infoRows.forEach(([label, value]) => {
+      const row = ws.addRow([label, value]);
+      row.getCell(1).font = { bold: true, color: { argb: XL.ink } };
+      row.eachCell({ includeEmpty: true }, c => { c.border = xlBorder(); });
+    });
+    const resultRow = ws.addRow(['Result', result.text]);
+    xlBoldRow(resultRow, result.winner ? XL.win : XL.goldFill);
+    resultRow.getCell(2).font = { bold: true };
+
+    xlCols(ws, [26, 46]);
+    xlFreezeBelow(ws, r - 1);
+  }
+
+  /* ---- Innings sheets — only the ones that actually happened ---- */
+  const firstInn = state.firstInningsSummary;
+  const inningsList = [{ num: 1, team: firstInn ? firstInn.team : state.battingTeam }];
+  if(firstInn) inningsList.push({ num: 2, team: state.battingTeam });
+
+  inningsList.forEach(({ num, team }) => {
+    const oppKey = team === 'A' ? 'B' : 'A';
+    const teamObj = team === 'A' ? state.teamA : state.teamB;
+    const teamName = teamObj.name, teamShort = teamObj.short || teamName;
+    const ws = xlNewSheet(wb, `Innings ${num} - ${teamShort}`);
+
+    const isArchived = num === 1 && firstInn;
+    const scoreLine = isArchived
+      ? `${firstInn.runs}-${firstInn.wickets} (${firstInn.overs} ov)`
+      : `${state.score.runs}-${state.score.wickets} (${fmtOvers(state.score.overs, state.score.balls)} ov)`;
+    xlTitleBlock(ws, `${teamName} — Innings ${num}`, scoreLine, 7);
+
+    xlSectionLabel(ws, 'BATTING', 7);
+    xlHeaderRow(ws, ['Batsman', 'Runs', 'Balls', '4s', '6s', 'S/R', 'Dismissal']);
+    const battingRows = battingRowsForExcel(team);
+    const bStart = ws.lastRow.number + 1;
+    battingRows.forEach(b => ws.addRow([b.Batsman, b.Runs, b.Balls, b['4s'], b['6s'], b['S/R'], b.Dismissal]));
+    xlZebra(ws, bStart, ws.lastRow.number, 1, 7);
+
+    const extr = state.extras[team] || { wd:0, nb:0, b:0, lb:0 };
+    const extrasTotal = (extr.wd||0) + (extr.nb||0) + (extr.b||0) + (extr.lb||0);
+    const teamRuns = isArchived ? firstInn.runs : state.score.runs;
+    const teamWkts = isArchived ? firstInn.wickets : state.score.wickets;
+    const teamOvers = isArchived ? firstInn.overs : fmtOvers(state.score.overs, state.score.balls);
+    const extrasRow = ws.addRow(['Extras', extrasTotal, '', '', '', '', `Wd ${extr.wd||0} · NB ${extr.nb||0} · B ${extr.b||0} · LB ${extr.lb||0}`]);
+    extrasRow.getCell(1).font = { italic: true }; extrasRow.getCell(7).font = { italic: true, size: 9.5 };
+    const totalsRow = ws.addRow(['TOTAL', teamRuns, '', '', '', '', `${teamWkts} wkt${teamWkts === 1 ? '' : 's'} · ${teamOvers} overs`]);
+    xlBoldRow(totalsRow);
+
+    ws.addRow([]);
+    xlSectionLabel(ws, 'BOWLING', 6);
+    xlHeaderRow(ws, ['Bowler', 'Overs', 'Maidens', 'Runs', 'Wickets', 'Economy']);
+    const bowlingRows = bowlingRowsForExcel(oppKey);
+    const wStart = ws.lastRow.number + 1;
+    bowlingRows.forEach(b => ws.addRow([b.Bowler, b.Overs, b.Maidens, b.Runs, b.Wickets, b.Economy]));
+    xlZebra(ws, wStart, ws.lastRow.number, 1, 6);
+
+    ws.addRow([]);
+    xlSectionLabel(ws, 'FALL OF WICKETS', 7);
+    const fow = state.fallOfWickets[team] || [];
+    const fowRow = ws.addRow([fow.length ? fow.map(f => `${f.wkt}-${f.runs} (${f.over})`).join('   ') : 'No wickets fell']);
+    ws.mergeCells(fowRow.number, 1, fowRow.number, 7);
+    fowRow.getCell(1).font = { size: 10.5 };
+    fowRow.getCell(1).alignment = { wrapText: true };
+
+    xlCols(ws, [24, 10, 10, 8, 8, 10, 30]);
+  });
+
+  /* ---- Ball by Ball ---- */
+  {
+    const ws = xlNewSheet(wb, 'Ball by Ball');
+    xlTitleBlock(ws, 'Ball by Ball', `${teamAName} vs ${teamBName} · every delivery, in order`, 12);
+    const headerRow = xlHeaderRow(ws, ['#', 'Innings', 'Team', 'Over', 'Ball', 'Striker', 'Non-Striker', 'Bowler', 'Runs', 'Wicket', 'Score', 'CRR/RRR']);
+    const start = ws.lastRow.number + 1;
+    const quotaBalls = ballsPerInnings();
+    state.ballLog.forEach((b, i) => {
+      const ballsAtPoint = oversStrToBalls(b.over);
+      const [rs] = String(b.scoreAfter).split('-').map(n => parseInt(n, 10) || 0);
+      const crr = runRateFromBalls(rs, ballsAtPoint);
+      let rrr = '';
+      if(b.innings === 2 && state.target && quotaBalls !== null){
+        const ballsLeft = quotaBalls - ballsAtPoint;
+        rrr = ballsLeft > 0 ? runRateFromBalls(Math.max(state.target - rs, 0), ballsLeft) : '—';
+      }
+      ws.addRow([
+        i + 1, b.innings, b.battingTeam === 'A' ? teamAShort : teamBShort, b.over, b.ballType,
+        b.striker, b.nonStriker, b.bowler, b.runs, b.isWicket ? (b.dismissal || 'Out') : '',
+        b.scoreAfter, rrr ? `${crr} / ${rrr}` : crr
+      ]);
+    });
+    xlZebra(ws, start, ws.lastRow.number, 1, 12);
+    xlAutoFilter(ws, headerRow.number, 1, 12, Math.max(ws.lastRow.number, headerRow.number));
+    xlFreezeBelow(ws, headerRow.number);
+    xlCols(ws, [6, 8, 8, 8, 7, 16, 16, 16, 7, 12, 10, 12]);
+  }
+
+  /* ---- Over Summary ---- */
+  {
+    const ws = xlNewSheet(wb, 'Over Summary');
+    xlTitleBlock(ws, 'Over Summary', `${teamAName} vs ${teamBName}`, 8);
+    const headerRow = xlHeaderRow(ws, ['Innings', 'Over', 'Bowler', 'Team', 'Runs', 'Wickets', 'Balls', 'Score / RR After']);
+    const start = ws.lastRow.number + 1;
+    computeOverSummary().forEach(o => {
+      ws.addRow([o.innings, o.over, o.bowler, o.team, o.runs, o.wickets, o.sequence, `${o.cumScore} (${o.runRate})`]);
+    });
+    xlZebra(ws, start, ws.lastRow.number, 1, 8);
+    xlAutoFilter(ws, headerRow.number, 1, 8, Math.max(ws.lastRow.number, headerRow.number));
+    xlFreezeBelow(ws, headerRow.number);
+    xlCols(ws, [9, 7, 16, 8, 7, 9, 26, 16]);
+  }
+
+  /* ---- Partnerships ---- */
+  {
+    const ws = xlNewSheet(wb, 'Partnerships');
+    xlTitleBlock(ws, 'Partnerships', `${teamAName} vs ${teamBName} · reconstructed from the ball-by-ball log`, 6);
+    const headerRow = xlHeaderRow(ws, ['Innings', 'Team', 'Wicket', 'Batters', 'Runs', 'Balls', 'Run Rate']);
+    const start = ws.lastRow.number + 1;
+    const byInnings = computeLivePartnerships();
+    [1, 2].forEach(inn => {
+      const teamKey = inningsList.find(x => x.num === inn) ? inningsList.find(x => x.num === inn).team : null;
+      if(!teamKey) return;
+      const teamShort = teamKey === 'A' ? teamAShort : teamBShort;
+      (byInnings[inn] || []).forEach(p => {
+        ws.addRow([inn, teamShort, p.forWicket, p.batters.join(' & '), p.runs, p.balls, runRateFromBalls(p.runs, p.balls)]);
+      });
+    });
+    xlZebra(ws, start, ws.lastRow.number, 1, 7);
+    xlAutoFilter(ws, headerRow.number, 1, 7, Math.max(ws.lastRow.number, headerRow.number));
+    xlFreezeBelow(ws, headerRow.number);
+    xlCols(ws, [9, 10, 9, 30, 8, 8, 10]);
+  }
+
+  /* ---- Player Match Stats ---- */
+  {
+    const ws = xlNewSheet(wb, 'Player Match Stats');
+    xlTitleBlock(ws, 'Player Match Stats', `${teamAName} vs ${teamBName} · batting & bowling combined`, 11);
+    const headerRow = xlHeaderRow(ws, ['Player', 'Team', 'Runs', 'Balls', '4s', '6s', 'S/R', 'Overs', 'Maidens', 'Runs Conceded', 'Wickets', 'Economy']);
+    const start = ws.lastRow.number + 1;
+    playerMatchStatsRows().forEach(p => {
+      ws.addRow([p.name, p.team, p.runs, p.balls, p.fours, p.sixes, p.sr, p.overs, p.maidens, p.bowlRuns, p.wickets, p.econ]);
+    });
+    xlZebra(ws, start, ws.lastRow.number, 1, 12);
+    xlAutoFilter(ws, headerRow.number, 1, 12, Math.max(ws.lastRow.number, headerRow.number));
+    xlFreezeBelow(ws, headerRow.number);
+    xlCols(ws, [18, 10, 7, 7, 6, 6, 8, 8, 9, 12, 9, 10]);
+  }
+
+  return wb;
+}
+
+async function buildAndDownloadMatchExcel(){
+  if(typeof ExcelJS === 'undefined'){ toast('Excel library failed to load — check your connection'); return; }
+  toast('📊 Building Match Excel Report…');
+  const wb = await buildMatchExcelWorkbook();
+  const teamAName = state.teamA.name || 'Team A', teamBName = state.teamB.name || 'Team B';
+  const matchId = currentMatchId() || 'match';
+  await xlDownload(wb, `${xlSafeFilename(`${matchId}_${teamAName}_vs_${teamBName}_Match_Report`)}.xlsx`);
+  toast('📊 Match Excel Report downloaded');
+}
+document.getElementById('download-match-excel-btn').addEventListener('click', () => {
+  buildAndDownloadMatchExcel().catch(err => { console.error(err); toast('⚠️ Could not build the Match Excel Report'); });
+});
+
+/* ============================================================
+   2. TOURNAMENT EXCEL REPORT
+   ============================================================ */
+function tournamentTeamNames(matches){
+  const names = new Set();
+  matches.forEach(m => {
+    if(m.teamA && m.teamA.name) names.add(m.teamA.name);
+    if(m.teamB && m.teamB.name) names.add(m.teamB.name);
+  });
+  return [...names];
+}
+function computeTeamNRR(teamName, matches){
+  const target = teamName.trim().toLowerCase();
+  let runsFor = 0, ballsFor = 0, runsAgainst = 0, ballsAgainst = 0, played = 0;
+  matches.forEach(m => {
+    const aName = ((m.teamA && m.teamA.name) || '').trim().toLowerCase();
+    const bName = ((m.teamB && m.teamB.name) || '').trim().toLowerCase();
+    let side = null;
+    if(aName === target) side = 'A'; else if(bName === target) side = 'B';
+    if(!side) return;
+    const own = side === 'A' ? m.scoreA : m.scoreB;
+    const opp = side === 'A' ? m.scoreB : m.scoreA;
+    if(!own || !opp) return;
+    played++;
+    const quota = formatOversQuota(m.format);
+    let ownBalls = oversStrToBalls(own.overs);
+    let oppBalls = oversStrToBalls(opp.overs);
+    if(quota){
+      if((own.wickets || 0) >= 10) ownBalls = quota * 6;
+      if((opp.wickets || 0) >= 10) oppBalls = quota * 6;
+    }
+    runsFor += (own.runs || 0); ballsFor += ownBalls;
+    runsAgainst += (opp.runs || 0); ballsAgainst += oppBalls;
+  });
+  if(played === 0 || ballsFor === 0 || ballsAgainst === 0) return null;
+  return ((runsFor / (ballsFor / 6)) - (runsAgainst / (ballsAgainst / 6))).toFixed(3);
+}
+function computeStandings(matches){
+  return tournamentTeamNames(matches).map(name => {
+    const stats = computeTeamTournamentStats(name);
+    const nrr = computeTeamNRR(name, matches);
+    const played = stats ? stats.matches : 0;
+    const won = stats ? stats.won : 0;
+    const lost = stats ? stats.lost : 0;
+    const tied = stats ? stats.tied : 0;
+    return { name, played, won, lost, tied, points: won * 2 + tied, nrr: nrr === null ? null : parseFloat(nrr) };
+  }).sort((a, b) => (b.points - a.points) || ((b.nrr ?? -999) - (a.nrr ?? -999)));
+}
+function aggregateTournamentBatting(matches){
+  const map = {};
+  matches.forEach(m => {
+    ['A', 'B'].forEach(k => {
+      const teamObj = k === 'A' ? m.teamA : m.teamB;
+      const teamLabel = (teamObj && (teamObj.short || teamObj.name)) || '';
+      ((m.battingCard && m.battingCard[k]) || []).forEach(b => {
+        if(!b.name) return;
+        const key = b.name.trim().toLowerCase();
+        if(!map[key]) map[key] = { name: b.name, team: teamLabel, innings: 0, runs: 0, balls: 0, outs: 0, fours: 0, sixes: 0, fifties: 0, hundreds: 0, highScore: 0, highScoreNotOut: false };
+        const e = map[key];
+        e.team = teamLabel;
+        e.innings++; e.runs += (b.runs || 0); e.balls += (b.balls || 0);
+        e.fours += (b.fours || 0); e.sixes += (b.sixes || 0);
+        if(b.out) e.outs++;
+        if((b.runs || 0) >= 100) e.hundreds++; else if((b.runs || 0) >= 50) e.fifties++;
+        if((b.runs || 0) > e.highScore || ((b.runs || 0) === e.highScore && !b.out)){ e.highScore = b.runs || 0; e.highScoreNotOut = !b.out; }
+      });
+    });
+  });
+  return Object.values(map).map(e => ({
+    name: e.name, team: e.team, innings: e.innings, runs: e.runs,
+    average: e.outs > 0 ? (e.runs / e.outs).toFixed(2) : (e.runs > 0 ? e.runs + '*' : '—'),
+    sr: e.balls > 0 ? ((e.runs / e.balls) * 100).toFixed(1) : '0.0',
+    highScoreNum: e.highScore, highScore: e.highScore + (e.highScoreNotOut ? '*' : ''),
+    fours: e.fours, sixes: e.sixes, fifties: e.fifties, hundreds: e.hundreds
+  })).sort((a, b) => b.runs - a.runs);
+}
+function aggregateTournamentBowling(matches){
+  const map = {};
+  matches.forEach(m => {
+    ['A', 'B'].forEach(k => {
+      const teamObj = k === 'A' ? m.teamA : m.teamB;
+      const teamLabel = (teamObj && (teamObj.short || teamObj.name)) || '';
+      ((m.bowlingCard && m.bowlingCard[k]) || []).forEach(b => {
+        if(!b.name) return;
+        const key = b.name.trim().toLowerCase();
+        if(!map[key]) map[key] = { name: b.name, team: teamLabel, matches: 0, balls: 0, runs: 0, wickets: 0, maidens: 0, bestW: -1, bestR: Infinity, fourW: 0, fiveW: 0 };
+        const e = map[key];
+        e.team = teamLabel; e.matches++;
+        e.balls += (b.overs || 0) * 6 + (b.balls || 0);
+        e.runs += (b.runs || 0); e.wickets += (b.wickets || 0); e.maidens += (b.maidens || 0);
+        if((b.wickets || 0) >= 5) e.fiveW++; else if((b.wickets || 0) >= 4) e.fourW++;
+        if((b.wickets || 0) > e.bestW || ((b.wickets || 0) === e.bestW && (b.runs || 0) < e.bestR)){ e.bestW = b.wickets || 0; e.bestR = b.runs || 0; }
+      });
+    });
+  });
+  return Object.values(map).map(e => {
+    const oversWhole = Math.floor(e.balls / 6), oversRem = e.balls % 6, oversFloat = oversWhole + oversRem / 6;
+    return {
+      name: e.name, team: e.team, matches: e.matches, overs: `${oversWhole}.${oversRem}`,
+      runs: e.runs, wickets: e.wickets, maidens: e.maidens,
+      economy: oversFloat > 0 ? (e.runs / oversFloat).toFixed(2) : '0.00',
+      average: e.wickets > 0 ? (e.runs / e.wickets).toFixed(2) : '—',
+      bestW: e.bestW, bestR: e.bestR === Infinity ? 0 : e.bestR,
+      best: e.bestW >= 0 ? `${e.bestW}/${e.bestR === Infinity ? 0 : e.bestR}` : '—',
+      fourW: e.fourW, fiveW: e.fiveW
+    };
+  }).sort((a, b) => (b.wickets - a.wickets) || (a.runs - b.runs));
+}
+function tournamentResultText(m){
+  if(m.winningTeam === 'TIE') return 'Match tied';
+  if(!m.winningTeam) return 'No result / in progress';
+  const winnerObj = m.winningTeam === 'A' ? m.teamA : m.teamB;
+  const winnerName = (winnerObj && (winnerObj.short || winnerObj.name)) || m.winningTeam;
+  const loserScore = m.winningTeam === 'A' ? m.scoreB : m.scoreA;
+  const winnerScore = m.winningTeam === 'A' ? m.scoreA : m.scoreB;
+  // Batting-second win → by wickets; batting-first win (defended) → by runs.
+  // We don't store who batted first per saved match, so use whichever
+  // score has the higher wicket count / lower overs as a reasonable
+  // "won by wickets" signal, falling back to a plain score line.
+  if(winnerScore && loserScore) return `${winnerName} won (${winnerScore.runs}-${winnerScore.wickets} vs ${loserScore.runs}-${loserScore.wickets})`;
+  return `${winnerName} won`;
+}
+
+async function buildTournamentExcelWorkbook(tournamentName, matches){
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Cricket Panel';
+  wb.created = new Date();
+  const sortedByDate = [...matches].sort((a, b) => new Date(a.savedAt || 0) - new Date(b.savedAt || 0));
+  const standings = computeStandings(matches);
+  const battingLeaders = aggregateTournamentBatting(matches);
+  const bowlingLeaders = aggregateTournamentBowling(matches);
+
+  /* ---- Tournament Summary ---- */
+  {
+    const ws = xlNewSheet(wb, 'Tournament Summary');
+    xlTitleBlock(ws, tournamentName, `${matches.length} match${matches.length === 1 ? '' : 'es'} · ${tournamentTeamNames(matches).length} teams · Exported ${new Date().toLocaleString()}`, 7);
+    xlSectionLabel(ws, 'STANDINGS', 7);
+    const headerRow = xlHeaderRow(ws, ['#', 'Team', 'Played', 'Won', 'Lost', 'Tied', 'Points', 'NRR'].slice(0, 8));
+    const start = ws.lastRow.number + 1;
+    standings.forEach((t, i) => {
+      const row = ws.addRow([i + 1, t.name, t.played, t.won, t.lost, t.tied, t.points, t.nrr === null ? '—' : t.nrr]);
+      if(i === 0) xlBoldRow(row, XL.win);
+    });
+    xlZebra(ws, start, ws.lastRow.number, 1, 8);
+    xlAutoFilter(ws, headerRow.number, 1, 8, Math.max(ws.lastRow.number, headerRow.number));
+    xlFreezeBelow(ws, headerRow.number);
+    xlCols(ws, [4, 26, 9, 8, 8, 8, 9, 9]);
+  }
+
+  /* ---- Team Statistics ---- */
+  {
+    const ws = xlNewSheet(wb, 'Team Statistics');
+    xlTitleBlock(ws, 'Team Statistics', tournamentName, 9);
+    const headerRow = xlHeaderRow(ws, ['Team', 'Played', 'Won', 'Lost', 'Tied', 'Win %', 'Highest Total', 'Avg Score', 'NRR']);
+    const start = ws.lastRow.number + 1;
+    tournamentTeamNames(matches).forEach(name => {
+      const s = computeTeamTournamentStats(name);
+      const nrr = computeTeamNRR(name, matches);
+      ws.addRow([name, s ? s.matches : 0, s ? s.won : 0, s ? s.lost : 0, s ? s.tied : 0, s ? `${s.winPct}%` : '0%', s ? s.highest : '—', s ? s.avgScore : '—', nrr === null ? '—' : nrr]);
+    });
+    xlZebra(ws, start, ws.lastRow.number, 1, 9);
+    xlAutoFilter(ws, headerRow.number, 1, 9, Math.max(ws.lastRow.number, headerRow.number));
+    xlFreezeBelow(ws, headerRow.number);
+    xlCols(ws, [26, 9, 8, 8, 8, 9, 14, 11, 9]);
+  }
+
+  /* ---- Batting Leaderboard ---- */
+  {
+    const ws = xlNewSheet(wb, 'Batting Leaderboard');
+    xlTitleBlock(ws, 'Batting Leaderboard', `${tournamentName} · sorted by runs`, 10);
+    const headerRow = xlHeaderRow(ws, ['#', 'Batter', 'Team', 'Inns', 'Runs', 'Average', 'S/R', 'Highest', '4s', '6s']);
+    const start = ws.lastRow.number + 1;
+    battingLeaders.forEach((b, i) => {
+      const row = ws.addRow([i + 1, b.name, b.team, b.innings, b.runs, b.average, b.sr, b.highScore, b.fours, b.sixes]);
+      if(i === 0) xlBoldRow(row, XL.goldFill);
+    });
+    xlZebra(ws, start, ws.lastRow.number, 1, 10);
+    xlAutoFilter(ws, headerRow.number, 1, 10, Math.max(ws.lastRow.number, headerRow.number));
+    xlFreezeBelow(ws, headerRow.number);
+    xlCols(ws, [4, 20, 12, 7, 8, 10, 8, 10, 6, 6]);
+  }
+
+  /* ---- Bowling Leaderboard ---- */
+  {
+    const ws = xlNewSheet(wb, 'Bowling Leaderboard');
+    xlTitleBlock(ws, 'Bowling Leaderboard', `${tournamentName} · sorted by wickets`, 11);
+    const headerRow = xlHeaderRow(ws, ['#', 'Bowler', 'Team', 'Overs', 'Runs', 'Wickets', 'Economy', 'Average', 'Best', '4W', '5W']);
+    const start = ws.lastRow.number + 1;
+    bowlingLeaders.forEach((b, i) => {
+      const row = ws.addRow([i + 1, b.name, b.team, b.overs, b.runs, b.wickets, b.economy, b.average, b.best, b.fourW, b.fiveW]);
+      if(i === 0) xlBoldRow(row, XL.goldFill);
+    });
+    xlZebra(ws, start, ws.lastRow.number, 1, 11);
+    xlAutoFilter(ws, headerRow.number, 1, 11, Math.max(ws.lastRow.number, headerRow.number));
+    xlFreezeBelow(ws, headerRow.number);
+    xlCols(ws, [4, 20, 12, 8, 7, 9, 9, 9, 8, 6, 6]);
+  }
+
+  /* ---- Player Statistics (batting + bowling combined) ---- */
+  {
+    const ws = xlNewSheet(wb, 'Player Statistics');
+    xlTitleBlock(ws, 'Player Statistics', `${tournamentName} · complete batting & bowling record`, 14);
+    const headerRow = xlHeaderRow(ws, ['Player', 'Team', 'Bat Inns', 'Runs', 'Bat Avg', 'S/R', 'Highest', '4s', '6s', 'Wkt Inns', 'Overs', 'Wickets', 'Economy', 'Best']);
+    const start = ws.lastRow.number + 1;
+    const byName = {};
+    battingLeaders.forEach(b => { byName[b.name.toLowerCase()] = { name: b.name, team: b.team, bat: b }; });
+    bowlingLeaders.forEach(b => {
+      const key = b.name.toLowerCase();
+      if(!byName[key]) byName[key] = { name: b.name, team: b.team, bowl: b };
+      else byName[key].bowl = b;
+    });
+    Object.values(byName).sort((a, b) => a.name.localeCompare(b.name)).forEach(p => {
+      const bat = p.bat, bowl = p.bowl;
+      ws.addRow([
+        p.name, p.team,
+        bat ? bat.innings : '', bat ? bat.runs : '', bat ? bat.average : '', bat ? bat.sr : '', bat ? bat.highScore : '', bat ? bat.fours : '', bat ? bat.sixes : '',
+        bowl ? bowl.matches : '', bowl ? bowl.overs : '', bowl ? bowl.wickets : '', bowl ? bowl.economy : '', bowl ? bowl.best : ''
+      ]);
+    });
+    xlZebra(ws, start, ws.lastRow.number, 1, 14);
+    xlAutoFilter(ws, headerRow.number, 1, 14, Math.max(ws.lastRow.number, headerRow.number));
+    xlFreezeBelow(ws, headerRow.number);
+    xlCols(ws, [20, 12, 8, 7, 8, 8, 9, 6, 6, 9, 8, 8, 9, 8]);
+  }
+
+  /* ---- Match Results ---- */
+  {
+    const ws = xlNewSheet(wb, 'Match Results');
+    xlTitleBlock(ws, 'Match Results', tournamentName, 8);
+    const headerRow = xlHeaderRow(ws, ['Date', 'Format', 'Team A', 'Score A', 'Team B', 'Score B', 'Result', 'Venue']);
+    const start = ws.lastRow.number + 1;
+    sortedByDate.forEach(m => {
+      const row = ws.addRow([
+        m.savedAt ? new Date(m.savedAt).toLocaleDateString() : '—', m.format || '—',
+        (m.teamA && (m.teamA.short || m.teamA.name)) || '—', m.scoreA ? `${m.scoreA.runs}-${m.scoreA.wickets} (${m.scoreA.overs})` : '—',
+        (m.teamB && (m.teamB.short || m.teamB.name)) || '—', m.scoreB ? `${m.scoreB.runs}-${m.scoreB.wickets} (${m.scoreB.overs})` : '—',
+        tournamentResultText(m), m.venue || '—'
+      ]);
+      if(m.winningTeam === 'TIE') xlBoldRow(row, XL.goldFill);
+    });
+    xlZebra(ws, start, ws.lastRow.number, 1, 8);
+    xlAutoFilter(ws, headerRow.number, 1, 8, Math.max(ws.lastRow.number, headerRow.number));
+    xlFreezeBelow(ws, headerRow.number);
+    xlCols(ws, [12, 9, 16, 18, 16, 18, 34, 20]);
+  }
+
+  /* ---- Records / Highlights ---- */
+  {
+    const ws = xlNewSheet(wb, 'Records');
+    xlTitleBlock(ws, 'Records & Highlights', tournamentName, 2);
+    const records = [];
+    if(battingLeaders.length){
+      const topRuns = battingLeaders[0];
+      records.push(['Most Runs', `${topRuns.name} (${topRuns.team}) — ${topRuns.runs} runs`]);
+      const topHS = [...battingLeaders].sort((a, b) => b.highScoreNum - a.highScoreNum)[0];
+      records.push(['Highest Individual Score', `${topHS.name} (${topHS.team}) — ${topHS.highScore}`]);
+      const topSixes = [...battingLeaders].sort((a, b) => b.sixes - a.sixes)[0];
+      if(topSixes.sixes > 0) records.push(['Most Sixes', `${topSixes.name} (${topSixes.team}) — ${topSixes.sixes}`]);
+      const topFours = [...battingLeaders].sort((a, b) => b.fours - a.fours)[0];
+      if(topFours.fours > 0) records.push(['Most Fours', `${topFours.name} (${topFours.team}) — ${topFours.fours}`]);
+    }
+    if(bowlingLeaders.length){
+      const topWkts = bowlingLeaders[0];
+      records.push(['Most Wickets', `${topWkts.name} (${topWkts.team}) — ${topWkts.wickets} wkts`]);
+      const topBest = [...bowlingLeaders].sort((a, b) => (b.bestW - a.bestW) || (a.bestR - b.bestR))[0];
+      if(topBest.bestW >= 0) records.push(['Best Bowling Figures', `${topBest.name} (${topBest.team}) — ${topBest.best}`]);
+    }
+    let highestTeamTotal = null;
+    matches.forEach(m => {
+      [{ score: m.scoreA, team: m.teamA }, { score: m.scoreB, team: m.teamB }].forEach(({ score, team }) => {
+        if(score && (!highestTeamTotal || score.runs > highestTeamTotal.runs)){
+          highestTeamTotal = { runs: score.runs, wickets: score.wickets, overs: score.overs, team: (team && (team.short || team.name)) || '' };
+        }
+      });
+    });
+    if(highestTeamTotal) records.push(['Highest Team Total', `${highestTeamTotal.team} — ${highestTeamTotal.runs}-${highestTeamTotal.wickets} (${highestTeamTotal.overs})`]);
+    let highestPartnership = null;
+    matches.forEach(m => {
+      if(!m.partnerships) return;
+      [1, 2].forEach(inn => {
+        (m.partnerships[inn] || []).forEach(p => {
+          if(!highestPartnership || p.runs > highestPartnership.runs){
+            highestPartnership = { runs: p.runs, batters: p.batters.join(' & '), balls: p.balls };
+          }
+        });
+      });
+    });
+    if(highestPartnership) records.push(['Highest Partnership', `${highestPartnership.batters} — ${highestPartnership.runs} (${highestPartnership.balls} balls)`]);
+
+    records.forEach(([label, value]) => {
+      const row = ws.addRow([label, value]);
+      xlBoldRow(row, XL.goldFill);
+      row.getCell(1).font = { bold: true, color: { argb: XL.ink } };
+      row.getCell(2).font = { bold: false, color: { argb: XL.ink } };
+    });
+    if(!records.length){
+      const row = ws.addRow(['No records available yet', 'Play and save more matches to this tournament to populate records.']);
+      row.getCell(1).font = { italic: true };
+    }
+    xlCols(ws, [26, 50]);
+  }
+
+  return wb;
+}
+
+async function buildAndDownloadTournamentExcel(){
+  if(typeof ExcelJS === 'undefined'){ toast('Excel library failed to load — check your connection'); return; }
+  const name = (state.leagueName || '').trim();
+  if(!name){ toast('Pick a tournament in the Match Type panel first'); return; }
+  const matches = currentLeagueMatches();
+  if(!matches.length){ toast(`No matches saved yet under "${name}"`); return; }
+  toast('🏆 Building Tournament Excel Report…');
+  const wb = await buildTournamentExcelWorkbook(name, matches);
+  await xlDownload(wb, `${xlSafeFilename(`${name}_Tournament_Report`)}.xlsx`);
+  toast('🏆 Tournament Excel Report downloaded');
+}
+document.getElementById('download-tournament-excel-btn').addEventListener('click', () => {
+  buildAndDownloadTournamentExcel().catch(err => { console.error(err); toast('⚠️ Could not build the Tournament Excel Report'); });
+});
 
 /* ============================================================
    RESET
