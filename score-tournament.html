@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tournament Scorecard — Scorvix</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Public cricket tournament scorecard powered by Scorvix">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{ --radius-lg:16px; --radius-md:12px; --radius-sm:8px; --font-display:'Sora',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; --font-body:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; }
+  :root[data-theme="dark"]{ --bg:#0a0e17; --bg-soft:#0d1220; --panel:#121826; --panel-2:#171f30; --border:#232c40; --border-soft:#1a2233; --text:#eef1f6; --text-dim:#8791a3; --text-faint:#576174; --accent:#22c55e; --accent-soft:rgba(34,197,94,.14); --accent-contrast:#06170c; --wicket:#ef4444; --wicket-soft:rgba(239,68,68,.16); --live:#ef4444; --shadow:0 8px 30px rgba(0,0,0,.35); --gradient-hero: radial-gradient(120% 140% at 15% -10%, rgba(34,197,94,.16), transparent 55%), radial-gradient(100% 120% at 100% 0%, rgba(168,85,247,.10), transparent 50%); }
+  :root[data-theme="light"]{ --bg:#f4f6f8; --bg-soft:#eef1f4; --panel:#ffffff; --panel-2:#f6f8fa; --border:#e3e7ec; --border-soft:#ececf0; --text:#12161f; --text-dim:#5c6474; --text-faint:#99a1b0; --accent:#128a4a; --accent-soft:rgba(18,138,74,.10); --accent-contrast:#ffffff; --wicket:#d92b2b; --wicket-soft:rgba(217,43,43,.09); --live:#d92b2b; --shadow:0 8px 24px rgba(20,25,40,.08); --gradient-hero: radial-gradient(120% 140% at 15% -10%, rgba(18,138,74,.08), transparent 55%), radial-gradient(100% 120% at 100% 0%, rgba(138,31,212,.05), transparent 50%); }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--font-body); font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased; transition:background .25s ease,color .25s ease; padding-bottom:40px; }
+  a{ color:inherit; text-decoration:none; }
+  .tabnum{ font-variant-numeric:tabular-nums; }
+  #brandbar{ position:sticky; top:0; z-index:40; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 18px; background:color-mix(in srgb, var(--panel) 88%, transparent); backdrop-filter:blur(10px); border-bottom:1px solid var(--border); }
+  #brand-id{ display:flex; align-items:center; gap:10px; min-width:0; }
+  #brand-text{ display:flex; flex-direction:column; line-height:1.15; }
+  #brand-text .name{ font-family:var(--font-display); font-weight:800; font-size:15px; }
+  #brand-text .tag{ font-size:10.5px; color:var(--text-dim); font-weight:600; }
+  .icon-btn{ display:flex; align-items:center; justify-content:center; width:34px; height:34px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); cursor:pointer; color:var(--text-dim); }
+  #wrap{ max-width:1040px; margin:20px auto; padding:0 16px; display:flex; flex-direction:column; gap:14px; }
+  .card{ background:var(--panel); border:1px solid var(--border); border-radius:var(--radius-lg); padding:18px; box-shadow:var(--shadow); }
+  .section-title{ display:flex; align-items:center; gap:8px; font-family:var(--font-display); font-weight:700; font-size:13px; text-transform:uppercase; letter-spacing:.6px; color:var(--text-dim); margin-bottom:14px; }
+  .section-title .dash{ width:14px; height:2px; background:var(--accent); border-radius:2px; }
+  #tourney-hero{ position:relative; overflow:hidden; padding:22px; }
+  #tourney-hero::before{ content:''; position:absolute; inset:0; background:var(--gradient-hero); pointer-events:none; }
+  #tourney-name{ position:relative; font-family:var(--font-display); font-weight:800; font-size:clamp(20px,3.4vw,28px); }
+  #tourney-meta{ position:relative; color:var(--text-dim); font-size:12.5px; font-weight:600; margin-top:4px; }
+  .chip{ padding:3px 9px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); font-size:11px; font-weight:700; }
+  .chip.live{ background:rgba(239,68,68,.12); color:var(--live); border-color:transparent; display:inline-flex; align-items:center; gap:5px; }
+  .chip.live .lv-dot{ width:6px; height:6px; border-radius:50%; background:var(--live); animation:pulseDot 1.4s infinite; }
+  @keyframes pulseDot{ 0%,100%{ opacity:1; } 50%{ opacity:.35; } }
+  #tabs{ display:flex; gap:6px; overflow-x:auto; padding-bottom:2px; }
+  .tab-btn{ flex:none; padding:9px 16px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); font-weight:700; font-size:12.5px; color:var(--text-dim); cursor:pointer; white-space:nowrap; }
+  .tab-btn.active{ background:var(--accent); color:var(--accent-contrast); border-color:transparent; }
+  .tab-panel{ display:none; flex-direction:column; gap:14px; }
+  .tab-panel.active{ display:flex; }
+  .match-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 4px; border-bottom:1px solid var(--border-soft); cursor:pointer; }
+  .match-row:last-child{ border-bottom:none; }
+  .match-row:hover{ background:var(--panel-2); border-radius:var(--radius-sm); }
+  .match-teams{ font-weight:700; font-size:13.5px; }
+  .match-meta{ font-size:11.5px; color:var(--text-dim); margin-top:2px; }
+  .match-score{ text-align:right; font-size:12.5px; color:var(--text-dim); font-weight:600; flex:none; }
+  .match-result{ font-size:11px; color:var(--accent); font-weight:700; margin-top:2px; }
+  table{ width:100%; border-collapse:collapse; font-size:12.5px; }
+  thead th{ text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:.4px; color:var(--text-faint); font-weight:700; padding:0 8px 8px; border-bottom:1px solid var(--border); }
+  thead th.num, td.num{ text-align:right; }
+  #points-table th, #points-table td{ text-align:center; }
+  #points-table th:first-child, #points-table td:first-child{ text-align:left; }
+  tbody td{ padding:8px 8px; border-bottom:1px solid var(--border-soft); }
+  tbody tr:last-child td{ border-bottom:none; }
+  .leaderboard-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .empty-state{ text-align:center; color:var(--text-faint); padding:30px 10px; font-size:13px; }
+  .spinner{ width:28px; height:28px; border-radius:50%; border:3px solid var(--border); border-top-color:var(--accent); animation:spin .8s linear infinite; margin:0 auto 12px; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+  .live-card{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px; background:var(--panel-2); border-radius:var(--radius-md); border:1px solid var(--border-soft); }
+  .watch-btn{ padding:8px 16px; border-radius:99px; background:var(--accent); color:var(--accent-contrast); font-weight:700; font-size:12.5px; flex:none; }
+  footer{ text-align:center; padding:22px 10px 4px; color:var(--text-faint); font-size:11.5px; }
+  footer a{ color:var(--accent); font-weight:700; }
+  @media (max-width:700px){ .leaderboard-grid{ grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+
+<div id="brandbar">
+  <div id="brand-id">
+    <svg width="34" height="34" viewBox="0 0 34 34" fill="none"><rect width="34" height="34" rx="9" fill="var(--accent)"/><path d="M9 22.5c4-5.5 6.5-9 12-13.5" stroke="var(--accent-contrast)" stroke-width="2.1" stroke-linecap="round"/><circle cx="22.5" cy="8.7" r="2.6" fill="var(--accent-contrast)"/></svg>
+    <div id="brand-text"><span class="name">Tournament by Scorvix</span><span class="tag">Public tournament portal</span></div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" title="Toggle theme" aria-label="Toggle theme">
+    <svg id="theme-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>
+  </button>
+</div>
+
+<div id="wrap">
+  <div id="loading-state" class="card"><div class="empty-state"><div class="spinner"></div>Loading tournament…</div></div>
+  <div id="content" style="display:none;"></div>
+</div>
+
+<footer>Powered by <a href="/">Scorvix</a> — live scoring &amp; broadcast graphics</footer>
+
+<script>
+const SUN='M12 4V2M12 22v-2M4.93 4.93 3.51 3.51M20.49 20.49l-1.42-1.42M4 12H2M22 12h-2M4.93 19.07l-1.42 1.42M20.49 3.51l-1.42 1.42M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z';
+const MOON='M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z';
+function applyTheme(t){ document.documentElement.setAttribute('data-theme',t); document.getElementById('theme-icon').innerHTML=`<path d="${t==='dark'?SUN:MOON}"/>`; try{ localStorage.setItem('scorvix-theme',t); }catch(e){} }
+applyTheme((()=>{ try{ return localStorage.getItem('scorvix-theme'); }catch(e){ return null; } })() || (matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'));
+document.getElementById('theme-toggle').addEventListener('click', () => applyTheme(document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark'));
+
+function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmtOvers(o,b){ return `${o||0}.${b||0}`; }
+function strikeRate(r,b){ return b?((r/b)*100).toFixed(1):'0.0'; }
+function economy(r,o,b){ const of=(o||0)+((b||0)/6); return of?(r/of).toFixed(2):'0.00'; }
+function resultText(m){
+  if(m.winningTeam==='TIE') return 'Match Tied';
+  if(m.winningTeam==='A') return `${m.teamA.short||m.teamA.name} won`;
+  if(m.winningTeam==='B') return `${m.teamB.short||m.teamB.name} won`;
+  return 'In progress';
+}
+
+function pathParts(){ return location.pathname.split('/').filter(Boolean); } // ['score','tournament',token,'match'?,matchId?]
+
+async function init(){
+  const parts = pathParts();
+  const token = decodeURIComponent(parts[2] || '');
+  const matchId = parts[3] === 'match' ? decodeURIComponent(parts[4] || '') : null;
+  if(!token){ showEmpty('No tournament specified.'); return; }
+  try{
+    if(matchId){
+      const res = await fetch(`/api/public/tournament/${encodeURIComponent(token)}/match/${encodeURIComponent(matchId)}`);
+      const data = await res.json();
+      if(data && data.success && data.match){ renderSingleMatch(data.match, data.displayName, token); }
+      else { showEmpty('Match not found in this tournament.'); }
+    } else {
+      const res = await fetch(`/api/public/tournament/${encodeURIComponent(token)}`);
+      const data = await res.json();
+      if(data && data.success){ renderPortal(data, token); }
+      else { showEmpty(data.error || 'Tournament not found.'); }
+    }
+  }catch(e){ showEmpty('Could not load this tournament right now — please try again shortly.'); }
+}
+function showEmpty(msg){
+  document.getElementById('loading-state').style.display='none';
+  const c = document.getElementById('content'); c.style.display='';
+  c.innerHTML = `<div class="card"><div class="empty-state">${escapeHtml(msg)}</div></div>`;
+}
+
+/* ---- Tournament portal (live + previous + points table + leaderboards) ---- */
+function renderPortal(data, token){
+  document.getElementById('loading-state').style.display='none';
+  const c = document.getElementById('content'); c.style.display='';
+  document.title = `${data.displayName} — Scorvix`;
+
+  const matches = data.matches || [];
+  const finished = matches.filter(m => m.winningTeam);
+  const inProgress = matches.filter(m => !m.winningTeam);
+  const isLive = !!(data.live && data.live.roomId);
+
+  const heroCard = `
+  <div class="card" id="tourney-hero">
+    <div id="tourney-name">${escapeHtml(data.displayName)}</div>
+    <div id="tourney-meta">${matches.length} match${matches.length===1?'':'es'} played${isLive ? ' · <span class="chip live"><span class="lv-dot"></span>Live now</span>' : ''}</div>
+  </div>`;
+
+  const tabsCard = `
+  <div id="tabs">
+    <button class="tab-btn active" data-tab="matches">Matches</button>
+    <button class="tab-btn" data-tab="points">Points Table</button>
+    <button class="tab-btn" data-tab="leaderboards">Leaderboards</button>
+  </div>`;
+
+  const liveHtml = isLive ? `
+    <div class="card"><div class="section-title"><span class="dash"></span>Live Now</div>
+      <div class="live-card">
+        <div><div class="match-teams">Match in progress</div><div class="match-meta">Follow ball-by-ball updates</div></div>
+        <a class="watch-btn" href="/cricket-scorecard?room=${encodeURIComponent(data.live.roomId)}">Watch Live →</a>
+      </div>
+    </div>` : '';
+
+  const matchRow = (m) => `
+    <div class="match-row" data-goto-match="${escapeHtml(m.matchId)}">
+      <div>
+        <div class="match-teams">${escapeHtml(m.teamA.short||m.teamA.name)} vs ${escapeHtml(m.teamB.short||m.teamB.name)}</div>
+        <div class="match-meta">${escapeHtml(m.venue||'')}${m.venue?' · ':''}${m.savedAt ? new Date(m.savedAt).toLocaleDateString() : ''}</div>
+      </div>
+      <div class="match-score">
+        <div class="tabnum">${m.scoreA.runs}-${m.scoreA.wickets} / ${m.scoreB.runs}-${m.scoreB.wickets}</div>
+        <div class="match-result">${escapeHtml(resultText(m))}</div>
+      </div>
+    </div>`;
+
+  const previousHtml = finished.length
+    ? `<div class="card"><div class="section-title"><span class="dash"></span>Previous Matches</div>${finished.slice().reverse().map(matchRow).join('')}</div>`
+    : `<div class="card"><div class="empty-state">No completed matches yet.</div></div>`;
+
+  const inProgressHtml = inProgress.length
+    ? `<div class="card"><div class="section-title"><span class="dash"></span>In Progress</div>${inProgress.map(matchRow).join('')}</div>` : '';
+
+  // Upcoming fixtures aren't part of the current data model (the panel has
+  // no "schedule a future match" feature yet — matches only exist once
+  // they've started being scored) — shown honestly as empty rather than
+  // faked.
+  const upcomingHtml = `<div class="card"><div class="section-title"><span class="dash"></span>Upcoming Matches</div><div class="empty-state">No upcoming fixtures scheduled yet.</div></div>`;
+
+  const matchesPanel = `<div class="tab-panel active" data-panel="matches">${liveHtml}${inProgressHtml}${previousHtml}${upcomingHtml}</div>`;
+
+  const pt = data.pointsTable || [];
+  const pointsPanel = `<div class="tab-panel" data-panel="points">
+    <div class="card"><div class="section-title"><span class="dash"></span>Points Table</div>
+      ${pt.length ? `<table id="points-table"><thead><tr><th>Team</th><th class="num">P</th><th class="num">W</th><th class="num">L</th><th class="num">T</th><th class="num">Pts</th><th class="num">NRR</th></tr></thead>
+      <tbody>${pt.map(r => `<tr><td>${escapeHtml(r.team)}</td><td class="num tabnum">${r.played}</td><td class="num tabnum">${r.won}</td><td class="num tabnum">${r.lost}</td><td class="num tabnum">${r.tied}</td><td class="num tabnum">${r.points}</td><td class="num tabnum">${r.nrr>0?'+':''}${r.nrr}</td></tr>`).join('')}</tbody></table>`
+      : '<div class="empty-state">No matches played yet.</div>'}
+    </div>
+  </div>`;
+
+  const lb = data.leaderboards || { topRuns: [], topWickets: [] };
+  const leaderboardsPanel = `<div class="tab-panel" data-panel="leaderboards">
+    <div class="leaderboard-grid">
+      <div class="card"><div class="section-title"><span class="dash"></span>Top Run Scorers</div>
+        ${lb.topRuns.length ? `<table><thead><tr><th>Batter</th><th class="num">Inn</th><th class="num">Runs</th><th class="num">HS</th><th class="num">Avg</th><th class="num">SR</th></tr></thead>
+        <tbody>${lb.topRuns.map(r => `<tr><td>${escapeHtml(r.name)}</td><td class="num tabnum">${r.innings}</td><td class="num tabnum">${r.runs}</td><td class="num tabnum">${r.highScore}</td><td class="num tabnum">${r.average}</td><td class="num tabnum">${r.strikeRate}</td></tr>`).join('')}</tbody></table>` : '<div class="empty-state">No batting data yet.</div>'}
+      </div>
+      <div class="card"><div class="section-title"><span class="dash"></span>Top Wicket Takers</div>
+        ${lb.topWickets.length ? `<table><thead><tr><th>Bowler</th><th class="num">Inn</th><th class="num">Ov</th><th class="num">Wkts</th><th class="num">Best</th><th class="num">Econ</th></tr></thead>
+        <tbody>${lb.topWickets.map(r => `<tr><td>${escapeHtml(r.name)}</td><td class="num tabnum">${r.innings}</td><td class="num tabnum">${r.overs}</td><td class="num tabnum">${r.wickets}</td><td class="num tabnum">${escapeHtml(r.bestFigures)}</td><td class="num tabnum">${r.economy}</td></tr>`).join('')}</tbody></table>` : '<div class="empty-state">No bowling data yet.</div>'}
+      </div>
+    </div>
+  </div>`;
+
+  c.innerHTML = heroCard + tabsCard + matchesPanel + pointsPanel + leaderboardsPanel;
+
+  c.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', () => {
+    c.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    c.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    c.querySelector(`.tab-panel[data-panel="${btn.dataset.tab}"]`).classList.add('active');
+  }));
+  c.querySelectorAll('[data-goto-match]').forEach(row => row.addEventListener('click', () => {
+    location.href = `/score/tournament/${encodeURIComponent(token)}/match/${encodeURIComponent(row.dataset.gotoMatch)}`;
+  }));
+}
+
+/* ---- Single match detail within a tournament — same final-scorecard
+   layout as the standalone score-match.html page. ---- */
+function inningsCard(teamLabel, teamObj, score, battingRows, bowlingRows, extras, fow, partnerships){
+  const battingBody = (battingRows||[]).map(b => `<tr><td>${escapeHtml(b.name)}${b.out===false?' <span style="color:var(--accent);">•</span>':''}<span style="display:block;font-size:10.5px;color:var(--text-faint);">${escapeHtml(b.out===false?'not out':(b.howOut||'out'))}</span></td><td class="num tabnum">${b.runs||0}</td><td class="num tabnum">${b.balls||0}</td><td class="num tabnum">${b.fours||0}</td><td class="num tabnum">${b.sixes||0}</td><td class="num tabnum">${strikeRate(b.runs||0,b.balls||0)}</td></tr>`).join('') || '<tr><td colspan="6" style="color:var(--text-faint);">No batting data</td></tr>';
+  const bowlingBody = (bowlingRows||[]).map(b => `<tr><td>${escapeHtml(b.name)}</td><td class="num tabnum">${fmtOvers(b.overs,b.balls)}</td><td class="num tabnum">${b.maidens||0}</td><td class="num tabnum">${b.runs||0}</td><td class="num tabnum">${b.wickets||0}</td><td class="num tabnum">${economy(b.runs||0,b.overs,b.balls)}</td></tr>`).join('') || '<tr><td colspan="6" style="color:var(--text-faint);">No bowling data</td></tr>';
+  const ex = extras || {}; const total=(ex.wd||0)+(ex.nb||0)+(ex.b||0)+(ex.lb||0);
+  return `
+  <div class="card"><div class="section-title"><span class="dash"></span>${escapeHtml(teamLabel)} — ${score.runs||0}-${score.wickets||0} (${score.overs||'0.0'} ov)</div></div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+    <div class="card"><div class="section-title"><span class="dash"></span>Batting</div><table><thead><tr><th>Batter</th><th class="num">R</th><th class="num">B</th><th class="num">4s</th><th class="num">6s</th><th class="num">SR</th></tr></thead><tbody>${battingBody}</tbody></table></div>
+    <div class="card"><div class="section-title"><span class="dash"></span>Bowling</div><table><thead><tr><th>Bowler</th><th class="num">O</th><th class="num">M</th><th class="num">R</th><th class="num">W</th><th class="num">Econ</th></tr></thead><tbody>${bowlingBody}</tbody></table></div>
+  </div>
+  <div class="card"><div class="section-title"><span class="dash"></span>Extras</div><div style="text-align:center;">Wd ${ex.wd||0} · Nb ${ex.nb||0} · B ${ex.b||0} · Lb ${ex.lb||0} · Total ${total}</div></div>`;
+}
+function renderSingleMatch(m, tournamentName, token){
+  document.getElementById('loading-state').style.display='none';
+  const c = document.getElementById('content'); c.style.display='';
+  document.title = `${m.teamA.short||m.teamA.name} vs ${m.teamB.short||m.teamB.name} — Scorvix`;
+  const backLink = `<a href="/score/tournament/${encodeURIComponent(token)}" style="display:inline-block;margin-bottom:4px;color:var(--accent);font-weight:700;font-size:12.5px;">← Back to ${escapeHtml(tournamentName)}</a>`;
+  const heroCard = `
+  <div class="card" id="tourney-hero">
+    ${backLink}
+    <div id="tourney-name" style="margin-top:8px;">${escapeHtml(m.teamA.short||m.teamA.name)} vs ${escapeHtml(m.teamB.short||m.teamB.name)}</div>
+    <div id="tourney-meta">${escapeHtml(m.venue||'')} ${m.venue?'· ':''}${escapeHtml(m.format||'')} · <span class="chip">${escapeHtml(resultText(m))}</span></div>
+  </div>`;
+  const inningsA = inningsCard(`${m.teamA.short||m.teamA.name} Innings`, m.teamA, m.scoreA, (m.battingCard&&m.battingCard.A)||[], (m.bowlingCard&&m.bowlingCard.B)||[], (m.extras&&m.extras.A)||{});
+  const inningsB = inningsCard(`${m.teamB.short||m.teamB.name} Innings`, m.teamB, m.scoreB, (m.battingCard&&m.battingCard.B)||[], (m.bowlingCard&&m.bowlingCard.A)||[], (m.extras&&m.extras.B)||{});
+  c.innerHTML = heroCard + inningsA + inningsB;
+}
+
+init();
+</script>
+</body>
+</html>

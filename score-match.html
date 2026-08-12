@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Match Scorecard — Scorvix</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Public cricket match scorecard powered by Scorvix">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --radius-lg: 16px; --radius-md: 12px; --radius-sm: 8px;
+    --font-display: 'Sora', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0a0e17; --bg-soft:#0d1220; --panel:#121826; --panel-2:#171f30; --border:#232c40; --border-soft:#1a2233;
+    --text:#eef1f6; --text-dim:#8791a3; --text-faint:#576174; --accent:#22c55e; --accent-soft:rgba(34,197,94,.14);
+    --accent-contrast:#06170c; --wicket:#ef4444; --wicket-soft:rgba(239,68,68,.16); --extra:#f59e0b; --extra-soft:rgba(245,158,11,.16);
+    --live:#ef4444; --shadow:0 8px 30px rgba(0,0,0,.35);
+    --gradient-hero: radial-gradient(120% 140% at 15% -10%, rgba(34,197,94,.16), transparent 55%), radial-gradient(100% 120% at 100% 0%, rgba(168,85,247,.10), transparent 50%);
+  }
+  :root[data-theme="light"]{
+    --bg:#f4f6f8; --bg-soft:#eef1f4; --panel:#ffffff; --panel-2:#f6f8fa; --border:#e3e7ec; --border-soft:#ececf0;
+    --text:#12161f; --text-dim:#5c6474; --text-faint:#99a1b0; --accent:#128a4a; --accent-soft:rgba(18,138,74,.10);
+    --accent-contrast:#ffffff; --wicket:#d92b2b; --wicket-soft:rgba(217,43,43,.09); --extra:#b46a06; --extra-soft:rgba(180,106,6,.10);
+    --live:#d92b2b; --shadow:0 8px 24px rgba(20,25,40,.08);
+    --gradient-hero: radial-gradient(120% 140% at 15% -10%, rgba(18,138,74,.08), transparent 55%), radial-gradient(100% 120% at 100% 0%, rgba(138,31,212,.05), transparent 50%);
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--font-body); font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased; transition:background .25s ease,color .25s ease; padding-bottom:40px; }
+  a{ color:inherit; text-decoration:none; }
+  .tabnum{ font-variant-numeric:tabular-nums; }
+  #brandbar{ position:sticky; top:0; z-index:40; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 18px; background:color-mix(in srgb, var(--panel) 88%, transparent); backdrop-filter:blur(10px); border-bottom:1px solid var(--border); }
+  #brand-id{ display:flex; align-items:center; gap:10px; min-width:0; }
+  #brand-text{ display:flex; flex-direction:column; line-height:1.15; }
+  #brand-text .name{ font-family:var(--font-display); font-weight:800; font-size:15px; }
+  #brand-text .tag{ font-size:10.5px; color:var(--text-dim); font-weight:600; }
+  #brand-actions{ display:flex; align-items:center; gap:8px; }
+  .icon-btn{ display:flex; align-items:center; justify-content:center; width:34px; height:34px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); cursor:pointer; color:var(--text-dim); }
+  #wrap{ max-width:960px; margin:20px auto; padding:0 16px; display:flex; flex-direction:column; gap:14px; }
+  .card{ background:var(--panel); border:1px solid var(--border); border-radius:var(--radius-lg); padding:18px; box-shadow:var(--shadow); }
+  .section-title{ display:flex; align-items:center; gap:8px; font-family:var(--font-display); font-weight:700; font-size:13px; text-transform:uppercase; letter-spacing:.6px; color:var(--text-dim); margin-bottom:14px; }
+  .section-title .dash{ width:14px; height:2px; background:var(--accent); border-radius:2px; }
+  #hero{ position:relative; overflow:hidden; padding:22px; }
+  #hero::before{ content:''; position:absolute; inset:0; background:var(--gradient-hero); pointer-events:none; }
+  .meta-line{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; color:var(--text-dim); font-size:12px; font-weight:600; }
+  .chip{ padding:3px 9px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); font-size:11px; font-weight:700; }
+  .chip.result{ background:var(--accent-soft); color:var(--accent); }
+  #teams-row{ position:relative; display:grid; grid-template-columns:1fr auto 1fr; gap:16px; align-items:center; margin-top:14px; }
+  .team-block{ display:flex; align-items:center; gap:12px; min-width:0; }
+  .team-block.right{ flex-direction:row-reverse; text-align:right; }
+  .team-logo{ width:46px; height:46px; border-radius:12px; flex:none; display:flex; align-items:center; justify-content:center; font-family:var(--font-display); font-weight:800; font-size:16px; color:#fff; background:var(--accent); }
+  .team-name{ font-weight:700; font-size:14.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .team-short{ font-size:11px; color:var(--text-dim); font-weight:600; }
+  #score-center{ text-align:center; }
+  .inn-score{ font-family:var(--font-display); font-weight:800; font-size:clamp(24px,5vw,34px); line-height:1; }
+  .inn-overs{ font-size:12px; color:var(--text-dim); font-weight:600; margin-top:2px; }
+  #result-banner{ margin-top:16px; text-align:center; font-family:var(--font-display); font-weight:800; font-size:15px; color:var(--accent); }
+  #tables-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  table{ width:100%; border-collapse:collapse; font-size:12.5px; }
+  thead th{ text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:.4px; color:var(--text-faint); font-weight:700; padding:0 8px 8px; border-bottom:1px solid var(--border); }
+  thead th.num, td.num{ text-align:right; }
+  tbody td{ padding:8px 8px; border-bottom:1px solid var(--border-soft); }
+  tbody tr:last-child td{ border-bottom:none; }
+  .howout{ font-size:10.5px; color:var(--text-faint); display:block; margin-top:1px; }
+  .not-out-tag{ color:var(--accent); font-size:10.5px; font-weight:700; }
+  #bottom-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; }
+  .fow-item{ display:flex; justify-content:space-between; font-size:12.5px; padding:7px 0; border-bottom:1px dashed var(--border-soft); }
+  .fow-item:last-child{ border-bottom:none; }
+  .fow-wkt{ color:var(--wicket); font-weight:700; }
+  .extras-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .extra-box{ background:var(--panel-2); border-radius:var(--radius-sm); padding:9px 10px; text-align:center; }
+  .extra-box .k{ font-size:10px; color:var(--text-dim); text-transform:uppercase; font-weight:700; }
+  .extra-box .v{ font-family:var(--font-display); font-size:17px; font-weight:700; margin-top:2px; }
+  .pship-item{ display:flex; justify-content:space-between; font-size:12.5px; padding:7px 0; border-bottom:1px dashed var(--border-soft); }
+  .pship-item:last-child{ border-bottom:none; }
+  .empty-state{ text-align:center; color:var(--text-faint); padding:40px 20px; font-size:13px; }
+  .spinner{ width:28px; height:28px; border-radius:50%; border:3px solid var(--border); border-top-color:var(--accent); animation:spin .8s linear infinite; margin:0 auto 12px; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+  footer{ text-align:center; padding:22px 10px 4px; color:var(--text-faint); font-size:11.5px; }
+  footer a{ color:var(--accent); font-weight:700; }
+  @media (max-width:900px){ #tables-grid,#bottom-grid{ grid-template-columns:1fr; } }
+  @media (max-width:640px){ #teams-row{ grid-template-columns:1fr; text-align:center; } .team-block,.team-block.right{ flex-direction:column; text-align:center; } #score-center{ order:-1; margin-bottom:6px; } }
+</style>
+</head>
+<body>
+
+<div id="brandbar">
+  <div id="brand-id">
+    <svg width="34" height="34" viewBox="0 0 34 34" fill="none">
+      <rect width="34" height="34" rx="9" fill="var(--accent)"/>
+      <path d="M9 22.5c4-5.5 6.5-9 12-13.5" stroke="var(--accent-contrast)" stroke-width="2.1" stroke-linecap="round"/>
+      <circle cx="22.5" cy="8.7" r="2.6" fill="var(--accent-contrast)"/>
+    </svg>
+    <div id="brand-text"><span class="name">Scorecard by Scorvix</span><span class="tag">Match scorecard</span></div>
+  </div>
+  <div id="brand-actions">
+    <button class="icon-btn" id="theme-toggle" title="Toggle theme" aria-label="Toggle theme">
+      <svg id="theme-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>
+    </button>
+  </div>
+</div>
+
+<div id="wrap">
+  <div id="loading-state" class="card"><div class="empty-state"><div class="spinner"></div>Loading match…</div></div>
+  <div id="content" style="display:none;"></div>
+</div>
+
+<footer>Powered by <a href="/" >Scorvix</a> — live scoring &amp; broadcast graphics</footer>
+
+<script>
+/* ============================================================
+   THEME — same persistence pattern as cricket-scorecard.html
+   ============================================================ */
+const SUN = 'M12 4V2M12 22v-2M4.93 4.93 3.51 3.51M20.49 20.49l-1.42-1.42M4 12H2M22 12h-2M4.93 19.07l-1.42 1.42M20.49 3.51l-1.42 1.42M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z';
+const MOON = 'M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z';
+function applyTheme(t){
+  document.documentElement.setAttribute('data-theme', t);
+  document.getElementById('theme-icon').innerHTML = `<path d="${t === 'dark' ? SUN : MOON}"/>`;
+  try{ localStorage.setItem('scorvix-theme', t); }catch(e){}
+}
+applyTheme((() => { try{ return localStorage.getItem('scorvix-theme'); }catch(e){ return null; } })() || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+});
+
+/* ============================================================
+   LOAD — this URL is the match's ONE permanent public link. If the
+   match is already finished, its full permanent scorecard (both
+   innings, from the same record the admin panel saves) renders right
+   here. If it hasn't been saved yet, it's still being played — we hand
+   off to the live viewer, which is already built to reconnect/refresh
+   automatically as the score updates ball by ball.
+   ============================================================ */
+function matchIdFromPath(){
+  const parts = location.pathname.split('/').filter(Boolean);
+  return decodeURIComponent(parts[parts.length - 1] || '');
+}
+function escapeHtml(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmtOvers(o,b){ return `${o||0}.${b||0}`; }
+function strikeRate(r,b){ return b ? ((r/b)*100).toFixed(1) : '0.0'; }
+function economy(r,o,b){ const of = (o||0)+((b||0)/6); return of ? (r/of).toFixed(2) : '0.00'; }
+
+async function init(){
+  const id = matchIdFromPath();
+  if(!id){ showEmpty('No match specified.'); return; }
+  try{
+    const res = await fetch(`/api/public/match/${encodeURIComponent(id)}`);
+    const data = await res.json();
+    if(data && data.success && data.match){
+      renderFinal(data.match);
+    } else {
+      // Not saved yet — either mid-match or the link is wrong. Hand off
+      // to the live viewer using the same id as the live room; it shows
+      // its own "connecting…" state if nothing's actually live.
+      location.replace(`/cricket-scorecard?room=${encodeURIComponent(id)}`);
+    }
+  }catch(e){
+    showEmpty('Could not load this match right now — please try again shortly.');
+  }
+}
+function showEmpty(msg){
+  document.getElementById('loading-state').style.display = 'none';
+  const c = document.getElementById('content');
+  c.style.display = '';
+  c.innerHTML = `<div class="card"><div class="empty-state">${escapeHtml(msg)}</div></div>`;
+}
+
+function resultText(m){
+  if(m.winningTeam === 'TIE') return 'Match Tied';
+  if(m.winningTeam === 'A') return `${m.teamA.short || m.teamA.name} won`;
+  if(m.winningTeam === 'B') return `${m.teamB.short || m.teamB.name} won`;
+  return 'Result pending';
+}
+
+function inningsCard(teamLabel, teamObj, score, battingRows, bowlingRows, extras, fow, partnerships){
+  const battingBody = (battingRows || []).map(b => `
+    <tr>
+      <td>${escapeHtml(b.name)}${b.out === false || b.howOut === 'not out' ? ' <span class="not-out-tag">•</span>' : ''}
+        <span class="howout">${escapeHtml(b.out === false ? 'not out' : (b.howOut || 'out'))}</span></td>
+      <td class="num tabnum">${b.runs||0}</td>
+      <td class="num tabnum">${b.balls||0}</td>
+      <td class="num tabnum">${b.fours||0}</td>
+      <td class="num tabnum">${b.sixes||0}</td>
+      <td class="num tabnum">${strikeRate(b.runs||0, b.balls||0)}</td>
+    </tr>`).join('') || '<tr><td colspan="6" style="color:var(--text-faint);">No batting data</td></tr>';
+
+  const bowlingBody = (bowlingRows || []).map(b => `
+    <tr>
+      <td>${escapeHtml(b.name)}</td>
+      <td class="num tabnum">${fmtOvers(b.overs, b.balls)}</td>
+      <td class="num tabnum">${b.maidens||0}</td>
+      <td class="num tabnum">${b.runs||0}</td>
+      <td class="num tabnum">${b.wickets||0}</td>
+      <td class="num tabnum">${economy(b.runs||0, b.overs, b.balls)}</td>
+    </tr>`).join('') || '<tr><td colspan="6" style="color:var(--text-faint);">No bowling data</td></tr>';
+
+  const fowHtml = (fow || []).length
+    ? fow.map(f => `<div class="fow-item"><span>${escapeHtml(f.score != null ? f.score : (f.runs != null ? f.runs : ''))}-<span class="fow-wkt">${f.wicket || ''}</span></span><span>${escapeHtml(f.batter || f.name || '')} · ${escapeHtml(fmtOvers(f.overs, f.balls) || '')} ov</span></div>`).join('')
+    : '<div class="empty-state" style="padding:8px 0;">No fall-of-wickets recorded</div>';
+
+  const pshipHtml = (partnerships || []).length
+    ? partnerships.map(p => `<div class="pship-item"><span>${escapeHtml((p.batters||[]).join(' & ') || p.pair || '')}</span><b class="tabnum">${p.runs||0} (${p.balls||0})</b></div>`).join('')
+    : '<div class="empty-state" style="padding:8px 0;">No partnership data</div>';
+
+  const ex = extras || {};
+  const total = (ex.wd||0)+(ex.nb||0)+(ex.b||0)+(ex.lb||0);
+
+  return `
+  <div class="card" id="hero">
+    <div class="meta-line"><span class="chip">${escapeHtml(teamLabel)}</span></div>
+    <div id="teams-row" style="grid-template-columns:1fr;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+        <div class="team-block"><div class="team-logo">${escapeHtml((teamObj.short||teamObj.name||'?').slice(0,2).toUpperCase())}</div>
+          <div><div class="team-name">${escapeHtml(teamObj.name)}</div><div class="team-short">${escapeHtml(teamObj.short||'')}</div></div>
+        </div>
+        <div id="score-center"><div class="inn-score tabnum">${score.runs||0}-${score.wickets||0}</div><div class="inn-overs tabnum">(${score.overs||'0.0'} ov)</div></div>
+      </div>
+    </div>
+  </div>
+  <div id="tables-grid">
+    <div class="card"><div class="section-title"><span class="dash"></span>Batting</div>
+      <table><thead><tr><th>Batter</th><th class="num">R</th><th class="num">B</th><th class="num">4s</th><th class="num">6s</th><th class="num">SR</th></tr></thead><tbody>${battingBody}</tbody></table>
+    </div>
+    <div class="card"><div class="section-title"><span class="dash"></span>Bowling</div>
+      <table><thead><tr><th>Bowler</th><th class="num">O</th><th class="num">M</th><th class="num">R</th><th class="num">W</th><th class="num">Econ</th></tr></thead><tbody>${bowlingBody}</tbody></table>
+    </div>
+  </div>
+  <div id="bottom-grid">
+    <div class="card"><div class="section-title"><span class="dash"></span>Fall of Wickets</div>${fowHtml}</div>
+    <div class="card"><div class="section-title"><span class="dash"></span>Partnerships</div>${pshipHtml}</div>
+    <div class="card"><div class="section-title"><span class="dash"></span>Extras</div>
+      <div class="extras-grid">
+        <div class="extra-box"><div class="k">Wides</div><div class="v tabnum">${ex.wd||0}</div></div>
+        <div class="extra-box"><div class="k">No Balls</div><div class="v tabnum">${ex.nb||0}</div></div>
+        <div class="extra-box"><div class="k">Byes</div><div class="v tabnum">${ex.b||0}</div></div>
+        <div class="extra-box"><div class="k">Leg Byes</div><div class="v tabnum">${ex.lb||0}</div></div>
+      </div>
+      <div style="text-align:center; margin-top:10px; font-size:12px; color:var(--text-dim);">Total extras: ${total}</div>
+    </div>
+  </div>`;
+}
+
+function renderFinal(m){
+  document.getElementById('loading-state').style.display = 'none';
+  const c = document.getElementById('content');
+  c.style.display = '';
+
+  const headerCard = `
+  <div class="card" id="hero">
+    <div class="meta-line">
+      <span class="chip">${escapeHtml(m.format || '')}</span>
+      ${m.venue ? `<span class="chip">${escapeHtml(m.venue)}</span>` : ''}
+      <span class="chip result">FINAL</span>
+    </div>
+    <div id="teams-row">
+      <div class="team-block"><div class="team-logo">${escapeHtml((m.teamA.short||m.teamA.name||'?').slice(0,2).toUpperCase())}</div>
+        <div><div class="team-name">${escapeHtml(m.teamA.name)}</div><div class="team-short">${escapeHtml(m.teamA.short||'')}</div></div></div>
+      <div id="score-center">
+        <div class="inn-score tabnum">${m.scoreA.runs||0}-${m.scoreA.wickets||0} <span style="font-size:14px; color:var(--text-dim);">vs</span> ${m.scoreB.runs||0}-${m.scoreB.wickets||0}</div>
+        <div class="inn-overs tabnum">(${m.scoreA.overs||'0.0'} ov) · (${m.scoreB.overs||'0.0'} ov)</div>
+      </div>
+      <div class="team-block right"><div class="team-logo">${escapeHtml((m.teamB.short||m.teamB.name||'?').slice(0,2).toUpperCase())}</div>
+        <div><div class="team-name">${escapeHtml(m.teamB.name)}</div><div class="team-short">${escapeHtml(m.teamB.short||'')}</div></div></div>
+    </div>
+    <div id="result-banner">${escapeHtml(resultText(m))}</div>
+  </div>`;
+
+  const inningsA = inningsCard(`${m.teamA.short || m.teamA.name} Innings`, m.teamA, m.scoreA,
+    (m.battingCard && m.battingCard.A) || [], (m.bowlingCard && m.bowlingCard.B) || [],
+    (m.extras && m.extras.A) || {}, (m.fallOfWickets && m.fallOfWickets.A) || [],
+    (m.partnerships && (m.partnerships.A || m.partnerships)) || []);
+  const inningsB = inningsCard(`${m.teamB.short || m.teamB.name} Innings`, m.teamB, m.scoreB,
+    (m.battingCard && m.battingCard.B) || [], (m.bowlingCard && m.bowlingCard.A) || [],
+    (m.extras && m.extras.B) || {}, (m.fallOfWickets && m.fallOfWickets.B) || [],
+    (m.partnerships && (m.partnerships.B || m.partnerships)) || []);
+
+  c.innerHTML = headerCard + inningsA + inningsB;
+  document.title = `${m.teamA.short || m.teamA.name} vs ${m.teamB.short || m.teamB.name} — Scorvix`;
+}
+
+init();
+</script>
+</body>
+</html>
