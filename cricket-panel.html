@@ -608,7 +608,7 @@
       <button class="full small primary" id="start-recording-btn">🔴 Start Recording</button>
       <button class="full small ghost" id="stop-recording-btn" style="margin-top:6px; display:none;">⏹ Stop Recording</button>
       <div style="font-size:11px; opacity:.6; margin-top:6px;">
-        Connect first, then share the tab/window/screen you're streaming from. FOUR / SIX / WICKET will auto-cut a 20s clip.
+        Make sure vMix is recording and the Clipper Helper (below) is running on this PC. FOUR / SIX / WICKET will auto-cut a 20s clip and upload it to your Drive folder.
       </div>
 
       <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,.08);">
@@ -625,6 +625,36 @@
         </div>
         <div id="drive-folder-status" style="font-size:11px; opacity:.6; margin-top:4px;"></div>
       </div>
+    </div>
+
+    <div class="card" id="card-clipper-helper">
+      <h2>⬇️ Clipper Helper (install once on this PC)</h2>
+      <div style="font-size:12px; opacity:.75; margin-bottom:10px; line-height:1.5;">
+        A tiny program that runs alongside vMix on this same PC. It's what
+        actually cuts the FOUR/SIX/WICKET clips and uploads them to your
+        Drive folder — no Chrome screen-share needed. One-time setup.
+      </div>
+      <a href="/downloads/ClipperHelper.zip" download>
+        <button class="full small primary">⬇️ Download Clipper Helper (.zip)</button>
+      </a>
+      <div style="font-size:11px; opacity:.6; margin-top:6px;">
+        Unzip it anywhere on this PC — includes ClipperHelper.exe, config.json and setup steps.
+      </div>
+
+      <details style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,.08);">
+        <summary style="cursor:pointer; font-size:12px; opacity:.85; font-weight:600;">📋 Setup instructions (click to expand)</summary>
+        <ol style="font-size:12px; opacity:.8; line-height:1.7; margin:10px 0 0 18px; padding:0;">
+          <li>Unzip the download anywhere, e.g. <code>C:\ClipperHelper\</code>.</li>
+          <li>Create a free Google <b>service account</b> (one-time — see full README inside the zip for exact clicks) and download its JSON key. Rename it to <code>service-account.json</code> and put it in the same folder.</li>
+          <li>Open that JSON file, copy the <code>client_email</code> address.</li>
+          <li>In Google Drive, <b>Share</b> the folder you want clips uploaded to with that email as <b>Editor</b>.</li>
+          <li>Open <code>config.json</code> in Notepad and set <code>vmixRecordingFile</code> to vMix's actual recording file path. (In vMix: Settings → Recording → turn OFF "Add Timestamp to Filename" so the path stays fixed.)</li>
+          <li>Before each match: double-click <code>ClipperHelper.exe</code> and keep the black window open. Start recording in vMix, paste your Drive folder link above and hit Save, then click 🔴 Start Recording here in the panel.</li>
+        </ol>
+        <div style="font-size:11px; opacity:.55; margin-top:10px;">
+          First run on a new PC may show a Windows "Unknown publisher" warning — click <b>More info → Run anyway</b>, it's safe.
+        </div>
+      </details>
     </div>
 
     <div class="card" id="card-milestone-trigger">
@@ -977,16 +1007,13 @@ function connect(){
 document.getElementById('connect-btn').addEventListener('click', connect);
 
 /* ============================================================
-   🎬 RECORDING — operator shares their own tab/screen (whatever
-   they're broadcasting through OBS/vMix). Runs entirely in THIS
-   panel tab, a separate browser context from whatever OBS reads as
-   its browser source — so it never touches the live stream itself.
-   Chunks stream to the server in the background as they're produced;
-   nothing is buffered client-side beyond one slice at a time.
+   🎬 RECORDING — vMix does the actual recording on the operator's own
+   PC. This panel does NOT capture any screen/tab anymore. It only pings
+   a tiny local helper program (running on that same PC, see
+   clipper-helper/README.md) so it knows WHEN the recording started —
+   everything else (cutting clips, uploading to Drive) happens locally.
    ============================================================ */
-let recStream = null;
-let recMediaRecorder = null;
-let recChunkIndex = 0;
+const CLIPPER_HELPER_URL = 'http://localhost:5005'; // the local helper from clipper-helper/
 let recActive = false;
 
 function currentMatchId(){
@@ -996,79 +1023,27 @@ function currentMatchId(){
 async function startRecording(){
   const matchId = currentMatchId();
   if(!matchId){ toast('Enter a Match ID and Connect first'); return; }
-  if(!socket || !socket.connected){ toast('Connect to the match first'); return; }
 
-  try{
-    recStream = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: 30 },
-      audio: true
-    });
-  }catch(e){
-    toast('Screen share was cancelled or denied');
-    return;
-  }
-
-  const startRes = await fetch('/api/recording/start', {
+  const ok = await fetch(`${CLIPPER_HELPER_URL}/recording-start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ matchId })
-  }).then(r => r.json()).catch(() => null);
+    body: JSON.stringify({ startedAt: Date.now() })
+  }).then(r => r.json()).then(r => r.success).catch(() => false);
 
-  if(!startRes || !startRes.success){
-    toast('Could not start recording session on server');
-    recStream.getTracks().forEach(t => t.stop());
-    recStream = null;
+  if(!ok){
+    toast('⚠️ Could not reach the local clipper helper — is it running? (see clipper-helper/README.md)');
     return;
   }
 
-  recChunkIndex = 0;
-  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
-    ? 'video/webm;codecs=vp9,opus'
-    : 'video/webm;codecs=vp8,opus';
-  recMediaRecorder = new MediaRecorder(recStream, { mimeType, videoBitsPerSecond: 4_000_000 });
-
-  recMediaRecorder.ondataavailable = (e) => {
-    if(e.data && e.data.size > 0) uploadRecordingChunk(matchId, e.data, recChunkIndex++);
-  };
-  recMediaRecorder.onstop = () => { finishRecordingUI(); };
-
-  // If the operator stops sharing from the browser's own native "Stop
-  // sharing" bar (instead of our button), wind everything down cleanly.
-  recStream.getVideoTracks()[0].addEventListener('ended', () => stopRecording());
-
-  recMediaRecorder.start(2000); // 2s slices — small enough for near-live clip cutting
   recActive = true;
   updateRecordingUI(true);
-  toast('Recording started');
-}
-
-function uploadRecordingChunk(matchId, blob, index){
-  fetch(`/api/recording/chunk?matchId=${encodeURIComponent(matchId)}&index=${index}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/octet-stream' },
-    body: blob
-  }).catch(() => {}); // best-effort — a dropped chunk just shrinks that window slightly, never blocks the panel
+  toast('Recording marked as started — make sure vMix is recording too!');
 }
 
 function stopRecording(){
-  if(recMediaRecorder && recMediaRecorder.state !== 'inactive') recMediaRecorder.stop();
-  if(recStream) recStream.getTracks().forEach(t => t.stop());
-  const matchId = currentMatchId();
-  if(matchId){
-    fetch('/api/recording/stop', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ matchId })
-    }).catch(() => {});
-  }
-}
-
-function finishRecordingUI(){
   recActive = false;
-  recStream = null;
-  recMediaRecorder = null;
   updateRecordingUI(false);
-  toast('Recording stopped');
+  toast('Recording stopped (remember to stop vMix recording too)');
 }
 
 function updateRecordingUI(active){
@@ -1099,6 +1074,16 @@ document.getElementById('save-drive-folder-btn').addEventListener('click', () =>
     if(res.success){
       statusEl.textContent = '✅ Clips will upload to this folder';
       toast('Drive folder saved');
+      // Extract the folder ID the same way the server does, and hand it
+      // to the local clipper helper too — that's the one actually doing
+      // the uploading now.
+      const folderIdMatch = folderLink.match(/folders\/([a-zA-Z0-9_-]+)/);
+      const folderId = folderIdMatch ? folderIdMatch[1] : folderLink;
+      fetch(`${CLIPPER_HELPER_URL}/set-folder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderId })
+      }).catch(() => toast('⚠️ Clipper helper not running — start it before the match'));
     } else {
       statusEl.textContent = '❌ ' + (res.error || 'Could not save folder');
     }
@@ -3774,12 +3759,12 @@ function logBallToDb(kind, runsBefore, ballTimestamp){
   });
 
   if(kind === 'W' || kind === '4' || kind === '6'){
-    socket.emit('requestClip', {
-      matchId,
-      eventType: kind === 'W' ? 'WICKET' : (kind === '4' ? 'FOUR' : 'SIX'),
-      timestamp: ballTimestamp,
-      ballMeta: { over: state.score.overs, ballInOver: state.score.balls, striker: state.striker.name }
-    });
+    const eventType = kind === 'W' ? 'WICKET' : (kind === '4' ? 'FOUR' : 'SIX');
+    fetch(`${CLIPPER_HELPER_URL}/clip`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ eventType, timestamp: ballTimestamp })
+    }).catch(() => toast('⚠️ Clipper helper not running — clip skipped'));
   }
 }
 
