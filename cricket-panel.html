@@ -634,7 +634,7 @@
         actually cuts the FOUR/SIX/WICKET clips and uploads them to your
         Drive folder — no Chrome screen-share needed. One-time setup.
       </div>
-      <a href="https://github.com/jeeth-ops/tt-overlay/releases/download/v1/ClipperHelper.zip">
+      <a href="https://github.com/jeeth-ops/tt-overlay/releases/download/v2/Clipperhelper.zip">
         <button class="full small primary">⬇️ Download Clipper Helper (.zip)</button>
       </a>
       <div style="font-size:11px; opacity:.6; margin-top:6px;">
@@ -644,15 +644,13 @@
       <details style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,.08);">
         <summary style="cursor:pointer; font-size:12px; opacity:.85; font-weight:600;">📋 Setup instructions (click to expand)</summary>
         <ol style="font-size:12px; opacity:.8; line-height:1.7; margin:10px 0 0 18px; padding:0;">
-          <li>Unzip the download anywhere, e.g. <code>C:\ClipperHelper\</code>.</li>
-          <li>Create a free Google <b>service account</b> (one-time — see full README inside the zip for exact clicks) and download its JSON key. Rename it to <code>service-account.json</code> and put it in the same folder.</li>
-          <li>Open that JSON file, copy the <code>client_email</code> address.</li>
-          <li>In Google Drive, <b>Share</b> the folder you want clips uploaded to with that email as <b>Editor</b>.</li>
-          <li>Open <code>config.json</code> in Notepad and set <code>vmixRecordingFile</code> to vMix's actual recording file path. (In vMix: Settings → Recording → turn OFF "Add Timestamp to Filename" so the path stays fixed.)</li>
-          <li>Before each match: double-click <code>ClipperHelper.exe</code> and keep the black window open. Start recording in vMix, paste your Drive folder link above and hit Save, then click 🔴 Start Recording here in the panel.</li>
+          <li>Unzip anywhere, e.g. <code>C:\ClipperHelper\</code>.</li>
+          <li>Open <code>config.json</code>, set <code>vmixRecordingFile</code> to vMix's recording file path (vMix → Settings → Recording → turn OFF "Add Timestamp to Filename" first).</li>
+          <li>Double-click <code>ClipperHelper.exe</code> before each match, keep the window open.</li>
+          <li>In the panel: click <b>🔗 Connect Google Drive</b> → sign in → pick your folder. Then <b>🔴 Start Recording</b>. Clips now auto-upload on FOUR/SIX/WICKET.</li>
         </ol>
         <div style="font-size:11px; opacity:.55; margin-top:10px;">
-          First run on a new PC may show a Windows "Unknown publisher" warning — click <b>More info → Run anyway</b>, it's safe.
+          "Unknown publisher" warning on first run → click More info → Run anyway. If uploads stop mid-match, click Connect Google Drive again.
         </div>
       </details>
     </div>
@@ -1224,6 +1222,17 @@ function saveDriveOAuthFolder(accessToken, folderId, folderName, isSilentRefresh
   }).catch(() => {
     if(!isSilentRefresh) statusEl.textContent = '❌ Network error connecting Drive';
   });
+
+  // Also hand the SAME token + folder to the local Clipper Helper
+  // (the .exe on this PC, next to vMix) — it's the one that actually
+  // cuts and uploads clips, so it needs this token too. If the helper
+  // isn't running yet, this just fails quietly; the operator can
+  // click "Connect Google Drive" again once it's started.
+  fetch(`${CLIPPER_HELPER_URL}/set-folder`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folderId, folderName, accessToken })
+  }).catch(() => { if(!isSilentRefresh) toast('⚠️ Clipper helper not running — start it, then click Connect Google Drive again'); });
 }
 
 // Drops the current match's Drive link server-side, revokes the token
