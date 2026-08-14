@@ -334,10 +334,16 @@
             position: absolute;
             top: 140px; left: 50%;
             transform: translate(-50%, -60px) scale(0.95);
-            width: 1000px; background: rgba(15, 23, 42, 0.96); 
+            width: 1000px; background: var(--ov-bg);
             backdrop-filter: blur(15px); border-radius: 10px;
             box-shadow: 0 30px 60px rgba(0,0,0,0.8); border: 2px solid rgba(51, 65, 85, 0.8);
+            border-top: 4px solid var(--ov-accent);
             overflow: hidden; opacity: 0;
+            /* Apple-style "box first, text follows": the box itself
+               animates in over 0.6s; row text is a SEPARATE staggered
+               fade (see .pt-row/.th-row animation below) that only starts
+               once the box has mostly finished, via the row's own
+               animation-delay set inline in JS. */
             transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1); pointer-events: none;
         }
         #points-table-container.active { 
@@ -347,17 +353,34 @@
         .pt-header {
             background: linear-gradient(90deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.9));
             display: grid; grid-template-columns: 50px 1fr 70px 90px 120px 110px 110px 90px;
-            padding: 14px 15px; font-weight: 900; font-size: 13px; color: #38bdf8;
+            padding: 14px 15px; font-weight: 900; font-size: 13px; color: var(--ov-accent);
             border-bottom: 2px solid rgba(51, 65, 85, 0.8); text-align: center;
         }
         .pt-row {
             display: grid; grid-template-columns: 50px 1fr 70px 90px 120px 110px 110px 90px;
             padding: 12px 15px; font-size: 14px; font-weight: bold; border-bottom: 1px solid rgba(30, 41, 59, 0.6);
             align-items: center; text-align: center; background: rgba(15, 23, 42, 0.9);
-            transition: background 0.2s ease;
+            color: var(--ov-text);
+            opacity: 1;
         }
         .pt-row:nth-child(even) { background: rgba(30, 41, 59, 0.4); }
         .pt-row div:nth-child(2) { text-align: left; }
+        @keyframes rowFadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        /* "Box first, text follows": .rows-anim is toggled on fresh (with a
+           reflow in between) every time a graphic switches ON, so the
+           staggered row reveal replays every single time — not just on
+           first page load. Each row's own animation-delay (set inline by
+           JS, index-based) is what creates the stagger. */
+        #points-table-container.rows-anim .pt-row,
+        #tournament-history-container.rows-anim .th-row,
+        #team-history-container.rows-anim .th-team-name,
+        #team-history-container.rows-anim .th-stat-row {
+            opacity: 0; transform: translateY(10px);
+            animation: rowFadeIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
 
         /* --- 6. SET-WISE SCORE GRID OVERLAY --- */
         #sets-grid-container {
@@ -435,32 +458,65 @@
             border-color: #34d399;
         }
 
-        /* --- TOURNAMENT HISTORY (Apple-style animated broadcast graphic) --- */
+        /* --- TOURNAMENT HISTORY (Apple-style animated broadcast graphic) ---
+           Same visual language as the Points Table: dark card, accent-color
+           top border, box animates in first, then rows stagger-fade in. */
         #tournament-history-container {
             position: absolute;
             top: 140px; left: 50%;
             transform: translate(-50%, -50px) scale(0.96);
-            width: 900px; background: rgba(15, 23, 42, 0.96);
+            width: 900px; background: var(--ov-bg);
             backdrop-filter: blur(15px); border-radius: 12px;
-            box-shadow: 0 30px 60px rgba(0,0,0,0.8); border: 2px solid rgba(124, 58, 237, 0.6);
+            box-shadow: 0 30px 60px rgba(0,0,0,0.8); border: 2px solid rgba(51, 65, 85, 0.8);
+            border-top: 4px solid var(--ov-accent);
             overflow: hidden; opacity: 0; filter: blur(4px);
             transition: transform 0.55s var(--ease-spring), opacity 0.45s var(--ease-smooth), filter 0.45s var(--ease-smooth);
             pointer-events: none;
         }
         #tournament-history-container.active { transform: translate(-50%, 0) scale(1); opacity: 1; filter: blur(0); }
         .th-title {
-            background: linear-gradient(90deg, rgba(124,58,237,0.9), rgba(88,28,135,0.9));
+            background: linear-gradient(90deg, rgba(30,41,59,0.9), rgba(15,23,42,0.9));
             padding: 14px 20px; font-weight: 900; font-size: 16px; letter-spacing: 1px;
-            text-transform: uppercase; color: #fff;
+            text-transform: uppercase; color: var(--ov-accent);
+            border-bottom: 2px solid rgba(51, 65, 85, 0.8);
         }
         .th-row {
             display: grid; grid-template-columns: 1fr 130px 1fr;
             padding: 11px 20px; font-size: 14px; font-weight: 700;
-            border-bottom: 1px solid rgba(51,65,85,0.6); align-items: center; color: #e2e8f0;
+            border-bottom: 1px solid rgba(51,65,85,0.6); align-items: center; color: var(--ov-text);
         }
         .th-row:nth-child(even) { background: rgba(30,41,59,0.4); }
-        .th-row .th-score { text-align: center; color: #a78bfa; font-weight: 900; }
+        .th-row .th-score { text-align: center; color: var(--ov-accent); font-weight: 900; }
         .th-empty { padding: 20px; text-align: center; color: #94a3b8; font-size: 13px; }
+
+        /* --- TEAM HISTORY (Apple-style animated broadcast graphic) —
+           the 2 teams/players in THIS match, not the whole tournament.
+           Same card language + same accent color as Points Table. --- */
+        #team-history-container {
+            position: absolute;
+            top: 140px; left: 50%;
+            transform: translate(-50%, -50px) scale(0.96);
+            width: 760px; background: var(--ov-bg);
+            backdrop-filter: blur(15px); border-radius: 12px;
+            box-shadow: 0 30px 60px rgba(0,0,0,0.8); border: 2px solid rgba(51, 65, 85, 0.8);
+            border-top: 4px solid var(--ov-accent);
+            overflow: hidden; opacity: 0; filter: blur(4px);
+            transition: transform 0.55s var(--ease-spring), opacity 0.45s var(--ease-smooth), filter 0.45s var(--ease-smooth);
+            pointer-events: none;
+        }
+        #team-history-container.active { transform: translate(-50%, 0) scale(1); opacity: 1; filter: blur(0); }
+        .th-title2 {
+            background: linear-gradient(90deg, rgba(30,41,59,0.9), rgba(15,23,42,0.9));
+            padding: 14px 20px; font-weight: 900; font-size: 16px; letter-spacing: 1px;
+            text-transform: uppercase; color: var(--ov-accent); text-align: center;
+            border-bottom: 2px solid rgba(51, 65, 85, 0.8);
+        }
+        .th-teams { display: grid; grid-template-columns: 1fr 1fr; }
+        .th-team-col { padding: 16px 20px; }
+        .th-team-col:first-child { border-right: 1px solid rgba(51,65,85,0.6); }
+        .th-team-name { font-size: 17px; font-weight: 900; color: var(--ov-text); text-transform: uppercase; margin-bottom: 10px; text-align: center; }
+        .th-stat-row { display: flex; justify-content: space-between; padding: 5px 4px; font-size: 13px; font-weight: 700; color: #cbd5e1; }
+        .th-stat-row span:last-child { color: var(--ov-accent); }
 
         /* --- PLAYER / PAIR STATISTICS (Apple-style animated broadcast graphic) --- */
         #player-stats-container {
@@ -644,6 +700,14 @@
     <div id="tournament-history-container">
         <div class="th-title" id="th-title-text">Tournament History</div>
         <div id="th-body"></div>
+    </div>
+
+    <div id="team-history-container">
+        <div class="th-title2">Team History</div>
+        <div class="th-teams">
+            <div class="th-team-col" id="team-history-a"></div>
+            <div class="th-team-col" id="team-history-b"></div>
+        </div>
     </div>
 
     <div id="player-stats-container">
@@ -916,13 +980,18 @@
             }
 
             // Render Standings Table — same idea, skip if unchanged.
+            // Each row gets its own animation-delay so the "box first, text
+            // follows, then rows cascade in one-by-one" feel replays every
+            // single time the graphic is switched ON (see
+            // activateWithRowAnim() below, which restarts the animation).
+            const ROW_BASE_DELAY = 0.28, ROW_STEP = 0.06;
             const standingsKey = JSON.stringify(data.standings || []);
             if (data.standings && standingsKey !== window.__lastStandingsKey) {
                 window.__lastStandingsKey = standingsKey;
                 data.standings.sort((a, b) => b.points - a.points);
                 let ptHTML = "";
                 data.standings.forEach((item, index) => {
-                    ptHTML += `<div class="pt-row">
+                    ptHTML += `<div class="pt-row" style="animation-delay:${(ROW_BASE_DELAY + index * ROW_STEP).toFixed(2)}s">
                         <div>${index + 1}</div>
                         <div>${item.team}</div>
                         <div>${item.ties}</div>
@@ -934,6 +1003,22 @@
                     </div>`;
                 });
                 document.getElementById('pt-body').innerHTML = ptHTML;
+            }
+
+            // Restarts the box-then-text stagger animation every time a
+            // graphic switches ON (a plain class toggle wouldn't replay a
+            // CSS animation the second time round without this reflow).
+            function activateWithRowAnim(containerId, shouldShow) {
+                const el = document.getElementById(containerId);
+                if (shouldShow) {
+                    el.classList.add('active');
+                    el.classList.remove('rows-anim');
+                    void el.offsetWidth; // force reflow so re-adding the class restarts the animation
+                    el.classList.add('rows-anim');
+                } else {
+                    el.classList.remove('active');
+                    el.classList.remove('rows-anim');
+                }
             }
 
             // State Switchers
@@ -963,12 +1048,15 @@
 
             document.getElementById('sets-grid-container').className = data.state === 'sets-grid-in' ? 'active' : '';
             document.getElementById('winner-banner').className = data.state === 'winner-in' ? 'active' : '';
-            document.getElementById('points-table-container').className = data.state === 'table-in' ? 'active' : '';
+            // Box animates in first (0.6s), rows cascade in after via
+            // activateWithRowAnim — same "box, then text" language for
+            // every one of the tournament/team/points graphics below.
+            activateWithRowAnim('points-table-container', data.state === 'table-in');
             
             document.getElementById('winner-banner').innerText = data.winner;
 
             // 🌟 Tournament History — independent ON/OFF flag (mirrors
-            // Points History), Apple-style blur+slide+scale entrance/exit.
+            // Points History), same box-then-text stagger as Points Table.
             const thKey = JSON.stringify(data.tournamentHistorySnapshot || {});
             if (thKey !== window.__lastTtHistoryKey) {
                 window.__lastTtHistoryKey = thKey;
@@ -976,10 +1064,32 @@
                 document.getElementById('th-title-text').innerText = `🏆 ${snap.tournamentName || 'Tournament'} — History`;
                 const body = document.getElementById('th-body');
                 body.innerHTML = (snap.rows && snap.rows.length)
-                    ? snap.rows.map(r => `<div class="th-row"><div>${r.matchup}</div><div class="th-score">${r.score}</div><div style="text-align:right;">${r.result}</div></div>`).join('')
+                    ? snap.rows.map((r, i) => `<div class="th-row" style="animation-delay:${(ROW_BASE_DELAY + i * ROW_STEP).toFixed(2)}s"><div>${r.matchup}</div><div class="th-score">${r.score}</div><div style="text-align:right;">${r.result}</div></div>`).join('')
                     : '<div class="th-empty">No matches recorded yet in this tournament.</div>';
             }
-            document.getElementById('tournament-history-container').classList.toggle('active', !!data.showTournamentHistory);
+            activateWithRowAnim('tournament-history-container', !!data.showTournamentHistory);
+
+            // 🌟 Team History — the two TEAMS in the current match (e.g.
+            // "IND" and "PAK"), not the whole tournament's match list. Same
+            // computeTtTeamStats() numbers as the in-panel Team History
+            // modal, same box-then-text animation as Points Table.
+            const teamHistKey = JSON.stringify(data.teamHistorySnapshot || {});
+            if (teamHistKey !== window.__lastTeamHistKey) {
+                window.__lastTeamHistKey = teamHistKey;
+                const snap = data.teamHistorySnapshot || { teamA: null, teamB: null };
+                const d = (i) => (ROW_BASE_DELAY + i * ROW_STEP).toFixed(2);
+                const renderTeamCol = (t) => {
+                    if (!t) return `<div class="th-team-name" style="animation-delay:${d(0)}s">—</div>`;
+                    const s = t.stats;
+                    if (!s) return `<div class="th-team-name" style="animation-delay:${d(0)}s">${t.name}</div><div class="th-stat-row" style="animation-delay:${d(1)}s"><span>No matches yet</span><span></span></div>`;
+                    const rows = [['Played', s.played], ['Won', s.won], ['Lost', s.lost], ['Sets Won', s.setsWon], ['Sets Lost', s.setsLost], ['Points', s.points]];
+                    return `<div class="th-team-name" style="animation-delay:${d(0)}s">${t.name}</div>`
+                        + rows.map((r, i) => `<div class="th-stat-row" style="animation-delay:${d(i + 1)}s"><span>${r[0]}</span><span>${r[1]}</span></div>`).join('');
+                };
+                document.getElementById('team-history-a').innerHTML = renderTeamCol(snap.teamA);
+                document.getElementById('team-history-b').innerHTML = renderTeamCol(snap.teamB);
+            }
+            activateWithRowAnim('team-history-container', !!data.showTeamHistory);
 
             // 🌟 Player / Pair Statistics — independent ON/OFF flag, real
             // career numbers pulled from the ttPlayers/ttPairs database.
