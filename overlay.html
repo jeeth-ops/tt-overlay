@@ -435,6 +435,51 @@
             border-color: #34d399;
         }
 
+        /* --- TOURNAMENT HISTORY (Apple-style animated broadcast graphic) --- */
+        #tournament-history-container {
+            position: absolute;
+            top: 140px; left: 50%;
+            transform: translate(-50%, -50px) scale(0.96);
+            width: 900px; background: rgba(15, 23, 42, 0.96);
+            backdrop-filter: blur(15px); border-radius: 12px;
+            box-shadow: 0 30px 60px rgba(0,0,0,0.8); border: 2px solid rgba(124, 58, 237, 0.6);
+            overflow: hidden; opacity: 0; filter: blur(4px);
+            transition: transform 0.55s var(--ease-spring), opacity 0.45s var(--ease-smooth), filter 0.45s var(--ease-smooth);
+            pointer-events: none;
+        }
+        #tournament-history-container.active { transform: translate(-50%, 0) scale(1); opacity: 1; filter: blur(0); }
+        .th-title {
+            background: linear-gradient(90deg, rgba(124,58,237,0.9), rgba(88,28,135,0.9));
+            padding: 14px 20px; font-weight: 900; font-size: 16px; letter-spacing: 1px;
+            text-transform: uppercase; color: #fff;
+        }
+        .th-row {
+            display: grid; grid-template-columns: 1fr 130px 1fr;
+            padding: 11px 20px; font-size: 14px; font-weight: 700;
+            border-bottom: 1px solid rgba(51,65,85,0.6); align-items: center; color: #e2e8f0;
+        }
+        .th-row:nth-child(even) { background: rgba(30,41,59,0.4); }
+        .th-row .th-score { text-align: center; color: #a78bfa; font-weight: 900; }
+        .th-empty { padding: 20px; text-align: center; color: #94a3b8; font-size: 13px; }
+
+        /* --- PLAYER / PAIR STATISTICS (Apple-style animated broadcast graphic) --- */
+        #player-stats-container {
+            position: absolute;
+            bottom: 60px; left: 50%;
+            transform: translate(-50%, 50px) scale(0.96);
+            width: 820px; background: rgba(15, 23, 42, 0.96);
+            backdrop-filter: blur(15px); border-radius: 12px;
+            box-shadow: 0 30px 60px rgba(0,0,0,0.8); border: 2px solid rgba(56, 189, 248, 0.55);
+            overflow: hidden; opacity: 0; filter: blur(4px);
+            transition: transform 0.55s var(--ease-spring), opacity 0.45s var(--ease-smooth), filter 0.45s var(--ease-smooth);
+            pointer-events: none; padding: 16px 20px;
+        }
+        #player-stats-container.active { transform: translate(-50%, 0) scale(1); opacity: 1; filter: blur(0); }
+        .ps-title { font-weight: 900; font-size: 15px; color: #38bdf8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; text-align: center; }
+        .ps-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+        .ps-player { display: flex; justify-content: space-between; padding: 6px 10px; font-size: 13px; font-weight: 700; color: #e2e8f0; border-bottom: 1px solid rgba(51,65,85,0.5); }
+        .ps-player span:last-child { color: #4ade80; }
+
         /* --- 7. POINTS HISTORY (auto-generated from live score data) --- */
         #points-history-container {
             position: absolute;
@@ -596,6 +641,19 @@
     <div id="winner-banner">PLAYER A WON THE MATCH</div>
 
     <!-- 6. Points Table Overlay -->
+    <div id="tournament-history-container">
+        <div class="th-title" id="th-title-text">Tournament History</div>
+        <div id="th-body"></div>
+    </div>
+
+    <div id="player-stats-container">
+        <div class="ps-title">Player / Pair Statistics</div>
+        <div class="ps-cols">
+            <div id="ps-side-a"></div>
+            <div id="ps-side-b"></div>
+        </div>
+    </div>
+
     <div id="points-table-container">
         <div class="pt-header">
             <div>#</div>
@@ -908,6 +966,32 @@
             document.getElementById('points-table-container').className = data.state === 'table-in' ? 'active' : '';
             
             document.getElementById('winner-banner').innerText = data.winner;
+
+            // 🌟 Tournament History — independent ON/OFF flag (mirrors
+            // Points History), Apple-style blur+slide+scale entrance/exit.
+            const thKey = JSON.stringify(data.tournamentHistorySnapshot || {});
+            if (thKey !== window.__lastTtHistoryKey) {
+                window.__lastTtHistoryKey = thKey;
+                const snap = data.tournamentHistorySnapshot || { tournamentName: '', rows: [] };
+                document.getElementById('th-title-text').innerText = `🏆 ${snap.tournamentName || 'Tournament'} — History`;
+                const body = document.getElementById('th-body');
+                body.innerHTML = (snap.rows && snap.rows.length)
+                    ? snap.rows.map(r => `<div class="th-row"><div>${r.matchup}</div><div class="th-score">${r.score}</div><div style="text-align:right;">${r.result}</div></div>`).join('')
+                    : '<div class="th-empty">No matches recorded yet in this tournament.</div>';
+            }
+            document.getElementById('tournament-history-container').classList.toggle('active', !!data.showTournamentHistory);
+
+            // 🌟 Player / Pair Statistics — independent ON/OFF flag, real
+            // career numbers pulled from the ttPlayers/ttPairs database.
+            const psKey = JSON.stringify(data.playerStatsSnapshot || {});
+            if (psKey !== window.__lastTtPlayerStatsKey) {
+                window.__lastTtPlayerStatsKey = psKey;
+                const snap = data.playerStatsSnapshot || { sideA: [], sideB: [] };
+                const rowHtml = (p) => `<div class="ps-player"><span>${p.name}</span><span>${p.won}W-${p.lost}L · Sets ${p.setsWon}-${p.setsLost}</span></div>`;
+                document.getElementById('ps-side-a').innerHTML = (snap.sideA || []).map(rowHtml).join('') || '<div class="ps-player"><span>—</span><span>No data</span></div>';
+                document.getElementById('ps-side-b').innerHTML = (snap.sideB || []).map(rowHtml).join('') || '<div class="ps-player"><span>—</span><span>No data</span></div>';
+            }
+            document.getElementById('player-stats-container').classList.toggle('active', !!data.showPlayerStats);
         });
     </script>
 </body>
