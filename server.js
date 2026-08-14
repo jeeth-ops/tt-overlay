@@ -50,6 +50,9 @@ let ballsCollection = null;
 let matchesCollection = null;
 let clipsCollection = null;
 let leaguesCollection = null;
+let templatesCollection = null;
+let auditLogsCollection = null;
+let settingsCollection = null;
 
 async function connectMongo() {
     const uri = process.env.MONGODB_URI;
@@ -65,6 +68,13 @@ async function connectMongo() {
         matchesCollection = mongoDb.collection('matches');
         clipsCollection = mongoDb.collection('clips');
         leaguesCollection = mongoDb.collection('leagues');
+        // 🛡️ Owner Admin Portal — templates (Broadcasting tab), auditLogs
+        // (every admin action, append-only) and settings (single doc of
+        // safe global config). All three are net-new, real, and start
+        // empty — nothing here is seeded with fake data.
+        templatesCollection = mongoDb.collection('templates');
+        auditLogsCollection = mongoDb.collection('auditLogs');
+        settingsCollection = mongoDb.collection('settings');
         // Fast lookups: all balls of a match in bowling order, and one
         // match doc per matchId.
         await ballsCollection.createIndex({ matchId: 1, innings: 1, over: 1, ballInOver: 1 });
@@ -485,6 +495,66 @@ async function verifyFirebaseIdToken(idToken) {
     }
 }
 
+// ================================================================
+// 🛡️ OWNER ADMIN PORTAL — server-side authorization.
+// This is the ONLY place that decides who is the owner. The rule is
+// exactly: authenticatedUser.email === OWNER_EMAIL, verified against a
+// cryptographically-signed Firebase ID token — never trusted from a
+// client-supplied email/uid the way ownerUid is elsewhere in this file.
+// Set OWNER_EMAIL as an env var in production; the literal below is
+// only a local-dev fallback so this still works before env vars are wired up.
+// ================================================================
+const OWNER_EMAIL = process.env.OWNER_EMAIL || 'chhayajeeth@gmail.com';
+
+// Verifies the token AND returns the decoded token (has .email, .uid) —
+// unlike verifyFirebaseIdToken above (which only hands back a uid), the
+// owner check needs the token's verified email.
+async function verifyIdTokenFull(idToken) {
+    if (!idToken) return null;
+    try {
+        return await admin.auth().verifyIdToken(idToken);
+    } catch (err) {
+        return null;
+    }
+}
+
+function extractIdToken(req) {
+    const authHeader = req.headers.authorization || '';
+    if (authHeader.startsWith('Bearer ')) return authHeader.slice(7);
+    return (req.body && req.body.idToken) || req.query.idToken || null;
+}
+
+// Every /api/admin/* route uses this. On success it attaches
+// req.ownerEmail / req.ownerUid; on failure it responds and stops the
+// chain — the route handler never even runs for a non-owner.
+async function requireOwner(req, res, next) {
+    const idToken = extractIdToken(req);
+    const decoded = await verifyIdTokenFull(idToken);
+    if (!decoded || decoded.email !== OWNER_EMAIL) {
+        return res.status(403).json({ success: false, error: 'Access Denied' });
+    }
+    req.ownerEmail = decoded.email;
+    req.ownerUid = decoded.uid;
+    next();
+}
+
+// Append-only trail of what the owner did, when, to what, and the
+// before/after value — shown in the Audit Logs tab.
+async function logAuditAction(ownerEmail, action, target, previousValue, newValue) {
+    if (!auditLogsCollection) return;
+    try {
+        await auditLogsCollection.insertOne({
+            action, target,
+            previousValue: previousValue === undefined ? null : previousValue,
+            newValue: newValue === undefined ? null : newValue,
+            performedBy: ownerEmail,
+            timestamp: Date.now()
+        });
+    } catch (err) {
+        console.log('Audit log write error:', err);
+    }
+}
+
 // 🔐 Lets the panel owner generate a "control token" so a second device
 // (e.g. phone, via the Control-from-Mobile QR) can operate their SAME match
 // — without exposing their real uid, and without letting anyone who merely
@@ -890,8 +960,311 @@ app.post('/api/support-chat', async (req, res) => {
     }
 });
 
+// ================================================================
+// 🎯 SPORT TEMPLATES — public read, owner-only write.
+// index.html's loadDynamicSports() has been calling /api/get-sports
+// since before this route existed (it was 404ing silently). This is
+// the real implementation, backed by the new `templates` Mongo
+// collection — no mock data, just genuinely empty until the owner
+// adds one from the Admin Portal.
+// ================================================================
+app.get('/api/get-sports', async (req, res) => {
+    if (!templatesCollection) return res.json([]);
+    try {
+        const sports = await templatesCollection.find({}, { projection: { panelCode: 0, overlayCode: 0 } }).sort({ createdAt: 1 }).toArray();
+        res.json(sports.map(s => ({ name: s.name, icon: s.icon, slug: s.slug })));
+    } catch (err) {
+        console.log('get-sports error:', err);
+        res.json([]);
+    }
+});
+
+// ================================================================
+// 🛡️ OWNER ADMIN PORTAL API — every route below requires requireOwner.
+// A normal user hitting any of these (even with a valid login, even by
+// guessing the URL) gets a 403 Access Denied — this is the real
+// server-side enforcement the frontend button/page cannot substitute for.
+// ================================================================
+const adminRouter = express.Router();
+adminRouter.use(requireOwner);
+
+// ---- Dashboard ----
+adminRouter.get('/dashboard', async (req, res) => {
+    try {
+        const [userList, leagueCount, matchCount, ballCount, templateCount, logEventCount] = await Promise.all([
+            admin.auth().listUsers(1000).catch(() => ({ users: [] })),
+            leaguesCollection ? leaguesCollection.countDocuments() : 0,
+            matchesCollection ? matchesCollection.countDocuments() : 0,
+            ballsCollection ? ballsCollection.countDocuments() : 0,
+            templatesCollection ? templatesCollection.countDocuments() : 0,
+            db.collection('analytics_logs').get().then(s => s.size).catch(() => 0)
+        ]);
+        const users = userList.users || [];
+        const now = Date.now();
+        const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+        const newUsers30d = users.filter(u => new Date(u.metadata.creationTime).getTime() > now - THIRTY_DAYS).length;
+        const activeUsers30d = users.filter(u => u.metadata.lastSignInTime && new Date(u.metadata.lastSignInTime).getTime() > now - THIRTY_DAYS).length;
+        res.json({
+            success: true,
+            totalUsers: users.length,
+            newUsers30d,
+            activeUsers30d,
+            disabledUsers: users.filter(u => u.disabled).length,
+            leagues: leagueCount,
+            matches: matchCount,
+            ballsLogged: ballCount,
+            templates: templateCount,
+            activityEvents: logEventCount,
+            liveConnections: io.engine.clientsCount
+        });
+    } catch (err) {
+        console.log('Admin dashboard error:', err);
+        res.status(500).json({ success: false, error: 'Could not load dashboard' });
+    }
+});
+
+// ---- Users ----
+adminRouter.get('/users', async (req, res) => {
+    try {
+        const pageToken = req.query.pageToken || undefined;
+        const result = await admin.auth().listUsers(50, pageToken);
+        res.json({
+            success: true,
+            nextPageToken: result.pageToken || null,
+            users: result.users.map(u => ({
+                uid: u.uid, email: u.email, displayName: u.displayName || null,
+                photoURL: u.photoURL || null, disabled: u.disabled,
+                createdAt: u.metadata.creationTime, lastSignInAt: u.metadata.lastSignInTime || null
+            }))
+        });
+    } catch (err) {
+        console.log('Admin users list error:', err);
+        res.status(500).json({ success: false, error: 'Could not load users' });
+    }
+});
+
+adminRouter.get('/users/search', async (req, res) => {
+    const email = (req.query.email || '').trim();
+    if (!email) return res.status(400).json({ success: false, error: 'email required' });
+    try {
+        const u = await admin.auth().getUserByEmail(email);
+        res.json({ success: true, user: { uid: u.uid, email: u.email, displayName: u.displayName || null, photoURL: u.photoURL || null, disabled: u.disabled, createdAt: u.metadata.creationTime, lastSignInAt: u.metadata.lastSignInTime || null } });
+    } catch (err) {
+        res.status(404).json({ success: false, error: 'No user with that email' });
+    }
+});
+
+adminRouter.post('/users/:uid/disable', async (req, res) => {
+    if (req.params.uid === req.ownerUid) return res.status(400).json({ success: false, error: "You can't disable your own owner account" });
+    try {
+        await admin.auth().updateUser(req.params.uid, { disabled: true });
+        await logAuditAction(req.ownerEmail, 'Suspend user', req.params.uid, { disabled: false }, { disabled: true });
+        res.json({ success: true });
+    } catch (err) {
+        console.log('Disable user error:', err);
+        res.status(500).json({ success: false, error: 'Could not disable user' });
+    }
+});
+
+adminRouter.post('/users/:uid/enable', async (req, res) => {
+    try {
+        await admin.auth().updateUser(req.params.uid, { disabled: false });
+        await logAuditAction(req.ownerEmail, 'Reactivate user', req.params.uid, { disabled: true }, { disabled: false });
+        res.json({ success: true });
+    } catch (err) {
+        console.log('Enable user error:', err);
+        res.status(500).json({ success: false, error: 'Could not enable user' });
+    }
+});
+
+adminRouter.delete('/users/:uid', async (req, res) => {
+    if (req.params.uid === req.ownerUid) return res.status(400).json({ success: false, error: "You can't delete your own owner account" });
+    try {
+        await admin.auth().deleteUser(req.params.uid);
+        await logAuditAction(req.ownerEmail, 'Delete user', req.params.uid, null, null);
+        res.json({ success: true });
+    } catch (err) {
+        console.log('Delete user error:', err);
+        res.status(500).json({ success: false, error: 'Could not delete user' });
+    }
+});
+
+// ---- Broadcasting / Templates ----
+adminRouter.get('/templates', async (req, res) => {
+    if (!templatesCollection) return res.json({ success: true, templates: [] });
+    try {
+        const templates = await templatesCollection.find({}).sort({ createdAt: -1 }).toArray();
+        res.json({ success: true, templates });
+    } catch (err) {
+        res.status(500).json({ success: false, error: 'Could not load templates' });
+    }
+});
+
+adminRouter.post('/templates', async (req, res) => {
+    const { sportName, sportIcon, panelCode, overlayCode } = req.body || {};
+    if (!sportName) return res.status(400).json({ success: false, error: 'sportName required' });
+    if (!templatesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const slug = String(sportName).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    try {
+        const doc = {
+            name: sportName.trim(), icon: sportIcon || '🎯', slug,
+            panelCode: panelCode || '', overlayCode: overlayCode || '',
+            published: true, createdAt: Date.now()
+        };
+        await templatesCollection.updateOne({ slug }, { $set: doc }, { upsert: true });
+        await logAuditAction(req.ownerEmail, 'Create/update template', slug, null, { name: doc.name });
+        res.json({ success: true, template: doc });
+    } catch (err) {
+        console.log('Create template error:', err);
+        res.status(500).json({ success: false, error: 'Could not save template' });
+    }
+});
+
+adminRouter.post('/templates/:slug/publish', async (req, res) => {
+    if (!templatesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const published = !!(req.body && req.body.published);
+    try {
+        await templatesCollection.updateOne({ slug: req.params.slug }, { $set: { published } });
+        await logAuditAction(req.ownerEmail, published ? 'Publish template' : 'Unpublish template', req.params.slug, { published: !published }, { published });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: 'Could not update template' });
+    }
+});
+
+adminRouter.delete('/templates/:slug', async (req, res) => {
+    if (!templatesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        await templatesCollection.deleteOne({ slug: req.params.slug });
+        await logAuditAction(req.ownerEmail, 'Delete template', req.params.slug, null, null);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: 'Could not delete template' });
+    }
+});
+// Kept for backward-compat with any existing client code calling the
+// old (previously missing) route name.
+adminRouter.post('/delete-template', async (req, res) => {
+    if (!templatesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        await templatesCollection.deleteOne({ slug: req.body.slug });
+        await logAuditAction(req.ownerEmail, 'Delete template', req.body.slug, null, null);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: 'Could not delete template' });
+    }
+});
+
+// ---- Cricket Data ----
+adminRouter.get('/cricket', async (req, res) => {
+    try {
+        const [leagues, recentMatches, ballCount] = await Promise.all([
+            leaguesCollection ? leaguesCollection.find({}).project({ ownerUid: 1, leagueKey: 1, displayName: 1, matches: 1, updatedAt: 1 }).sort({ updatedAt: -1 }).limit(50).toArray() : [],
+            matchesCollection ? matchesCollection.find({}).sort({ recordingStartedAt: -1 }).limit(50).toArray() : [],
+            ballsCollection ? ballsCollection.countDocuments() : 0
+        ]);
+        const tournaments = leagues.map(l => ({
+            leagueKey: l.leagueKey, displayName: l.displayName || l.leagueKey,
+            ownerUid: l.ownerUid, matchCount: (l.matches || []).length, updatedAt: l.updatedAt || null
+        }));
+        res.json({ success: true, tournaments, recentMatches, totalBallsLogged: ballCount });
+    } catch (err) {
+        console.log('Admin cricket data error:', err);
+        res.status(500).json({ success: false, error: 'Could not load cricket data' });
+    }
+});
+
+// ---- Analytics ----
+adminRouter.get('/analytics', async (req, res) => {
+    try {
+        const snap = await db.collection('analytics_logs').get();
+        const byDay = {};
+        const byAction = {};
+        const byOverlay = {};
+        snap.forEach(doc => {
+            const d = doc.data();
+            const day = (d.time || '').split(',')[0] || 'Unknown';
+            byDay[day] = (byDay[day] || 0) + 1;
+            byAction[d.action || 'Unknown'] = (byAction[d.action || 'Unknown'] || 0) + 1;
+            if (d.action === 'Overlay Opened') byOverlay[d.overlay || 'Unknown'] = (byOverlay[d.overlay || 'Unknown'] || 0) + 1;
+        });
+        res.json({
+            success: true,
+            totalEvents: snap.size,
+            byDay: Object.entries(byDay).map(([date, count]) => ({ date, count })).slice(-30),
+            byAction: Object.entries(byAction).map(([action, count]) => ({ action, count })),
+            byOverlay: Object.entries(byOverlay).map(([overlay, count]) => ({ overlay, count })).sort((a, b) => b.count - a.count)
+        });
+    } catch (err) {
+        console.log('Admin analytics error:', err);
+        res.status(500).json({ success: false, error: 'Could not load analytics' });
+    }
+});
+
+// ---- System Health ----
+const SERVER_STARTED_AT = Date.now();
+adminRouter.get('/system-health', async (req, res) => {
+    let mongoOk = false;
+    try { if (mongoDb) { await mongoDb.command({ ping: 1 }); mongoOk = true; } } catch (e) { mongoOk = false; }
+    let firestoreOk = false;
+    try { await db.collection('analytics_logs').limit(1).get(); firestoreOk = true; } catch (e) { firestoreOk = false; }
+    res.json({
+        success: true,
+        uptimeSeconds: Math.floor((Date.now() - SERVER_STARTED_AT) / 1000),
+        mongoConnected: mongoOk,
+        firestoreConnected: firestoreOk,
+        websocketConnections: io.engine.clientsCount,
+        activeRecordingSessions: Object.keys(recordingSessions).length,
+        driveUploadConfigured: !!driveClient,
+        memoryUsageMb: Math.round(process.memoryUsage().rss / 1024 / 1024)
+    });
+});
+
+// ---- Audit Logs ----
+adminRouter.get('/audit-logs', async (req, res) => {
+    if (!auditLogsCollection) return res.json({ success: true, logs: [] });
+    try {
+        const logs = await auditLogsCollection.find({}).sort({ timestamp: -1 }).limit(200).toArray();
+        res.json({ success: true, logs });
+    } catch (err) {
+        res.status(500).json({ success: false, error: 'Could not load audit logs' });
+    }
+});
+
+// ---- Settings (safe global config only — one doc) ----
+adminRouter.get('/settings', async (req, res) => {
+    if (!settingsCollection) return res.json({ success: true, settings: {} });
+    try {
+        const doc = await settingsCollection.findOne({ _id: 'global' });
+        res.json({ success: true, settings: (doc && doc.values) || {} });
+    } catch (err) {
+        res.status(500).json({ success: false, error: 'Could not load settings' });
+    }
+});
+
+adminRouter.post('/settings', async (req, res) => {
+    if (!settingsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const values = (req.body && req.body.values) || {};
+    try {
+        const before = await settingsCollection.findOne({ _id: 'global' });
+        await settingsCollection.updateOne({ _id: 'global' }, { $set: { values, updatedAt: Date.now() } }, { upsert: true });
+        await logAuditAction(req.ownerEmail, 'Update settings', 'global', (before && before.values) || {}, values);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: 'Could not save settings' });
+    }
+});
+
+app.use('/api/admin', adminRouter);
+
 // Routes
 app.get('/', (req, res) => res.sendFile(__dirname + '/index.html'));
+// 🛡️ Owner Admin Portal shell. This always serves the static page — it
+// contains no data. Every real fact it shows comes from an authenticated
+// call to /api/admin/*, which requireOwner enforces server-side above.
+// A non-owner opening this URL sees the page's own "Access Denied" state,
+// not any admin data.
+app.get('/admin', (req, res) => res.sendFile(__dirname + '/admin.html'));
 app.get('/overlay', (req, res) => res.sendFile(__dirname + '/overlay.html'));
 app.get('/tt-templates', (req, res) => res.sendFile(__dirname + '/tt-templates.html'));
 app.get('/tt-panel', (req, res) => res.sendFile(__dirname + '/tt-panel.html'));
