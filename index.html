@@ -4,9 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Scorvix - Professional Live Overlays</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="preconnect" href="https://www.gstatic.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
     
     <!-- Firebase Compat SDKs -->
@@ -24,9 +21,6 @@
             --accent-hover: #e11d48;
             --ease: cubic-bezier(0.4, 0, 0.2, 1);
             --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
-            --border-soft: rgba(255, 255, 255, 0.1);
-            --scrollbar-thumb: rgba(255, 255, 255, 0.15);
-            color-scheme: dark;
         }
 
         html {
@@ -210,6 +204,37 @@
         .nav-btn:active, .auth-btn:active { transform: scale(0.96); }
         .btn-danger { background: #ef4444 !important; color: white !important; }
         .btn-danger:hover { background: #dc2626 !important; }
+
+        /* Owner Admin Portal — deliberately quieter than the primary nav
+           buttons (translucent, hairline border) so it reads as a private
+           control, not a marketing CTA. Hidden by default; only shown by
+           JS after Firebase confirms the signed-in email. */
+        #owner-admin-btn {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            background: rgba(244, 63, 94, 0.08);
+            color: var(--text-main);
+            border: 1px solid rgba(244, 63, 94, 0.35);
+            padding: 9px 18px 9px 14px;
+            border-radius: 50px;
+            font-weight: 600;
+            font-size: 0.88rem;
+            cursor: pointer;
+            text-decoration: none;
+            transform: scale(1);
+            transition: background 0.25s var(--ease), border-color 0.25s var(--ease), transform 0.2s var(--ease), box-shadow 0.25s var(--ease);
+        }
+        #owner-admin-btn .gear-icon { display: inline-block; transition: transform 0.4s var(--ease-spring); }
+        #owner-admin-btn:hover {
+            background: rgba(244, 63, 94, 0.16);
+            border-color: rgba(244, 63, 94, 0.6);
+            transform: scale(1.02);
+            box-shadow: 0 6px 18px rgba(244, 63, 94, 0.15);
+        }
+        #owner-admin-btn:hover .gear-icon { transform: rotate(45deg); }
+        #owner-admin-btn:active { transform: scale(0.97); }
+        #owner-admin-btn.visible { display: inline-flex; }
 
         .hero { text-align: center; padding: 100px 20px; max-width: 900px; margin: 0 auto; }
         .hero h1 { font-size: 5.2rem; font-weight: 900; line-height: 1.08; letter-spacing: -2px; margin-bottom: 20px; text-shadow: 0 10px 30px rgba(0,0,0,0.5); }
@@ -495,72 +520,7 @@
             transition: background 0.3s var(--ease), color 0.3s var(--ease);
         }
         .nav-pill:hover { color: var(--text-main); background: rgba(255, 255, 255, 0.08); }
-
-        /* ===== Hamburger (mobile nav trigger) ===== */
-        .hamburger-btn {
-            display: none;
-            width: 42px; height: 42px; border-radius: 12px;
-            border: 1px solid var(--border-soft); background: rgba(255,255,255,0.05);
-            cursor: pointer; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
-            flex-shrink: 0;
-        }
-        .hamburger-btn span {
-            display: block; width: 20px; height: 2px; background: var(--text-main); border-radius: 2px;
-            transition: transform 0.3s var(--ease-spring), opacity 0.2s var(--ease);
-        }
-        .hamburger-btn.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
-        .hamburger-btn.open span:nth-child(2) { opacity: 0; }
-        .hamburger-btn.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
-
-        .mobile-menu {
-            position: fixed; top: 0; right: 0; height: 100vh; width: min(78vw, 320px);
-            background: var(--bg-dark); border-left: 1px solid var(--border-soft);
-            box-shadow: -20px 0 50px rgba(0,0,0,0.4);
-            z-index: 200; padding: 90px 28px 30px;
-            display: flex; flex-direction: column; gap: 6px;
-            transform: translateX(100%);
-            transition: transform 0.4s var(--ease-spring);
-        }
-        .mobile-menu.open { transform: translateX(0); }
-        .mobile-menu a, .mobile-menu button {
-            color: var(--text-main); text-decoration: none; font-size: 1.05rem; font-weight: 600;
-            padding: 14px 6px; border-bottom: 1px solid var(--border-soft);
-            background: none; border-left: none; border-right: none; border-top: none;
-            text-align: left; cursor: pointer; font-family: inherit;
-        }
-        .mobile-menu .nav-btn { margin-top: 16px; text-align: center; border-bottom: none; }
-        .mobile-menu-backdrop {
-            position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 199;
-            opacity: 0; pointer-events: none; transition: opacity 0.35s var(--ease);
-        }
-        .mobile-menu-backdrop.open { opacity: 1; pointer-events: auto; }
-
-        @media (max-width: 900px) {
-            .nav-pills { display: none; }
-            .hamburger-btn { display: flex; }
-        }
-        @media (max-width: 420px) {
-            #user-display { display: none; }
-        }
-        @media (min-width: 901px) {
-            .mobile-menu, .mobile-menu-backdrop { display: none; }
-        }
-
-        /* ===== Broader mobile responsiveness pass ===== */
-        @media (max-width: 640px) {
-            nav { padding: 14px 18px; }
-            .logo { font-size: 1.4rem; }
-            .nav-right { gap: 8px; }
-            .nav-btn, .auth-btn { padding: 8px 14px; font-size: 0.85rem; }
-            .hero { padding: 60px 16px 40px; }
-            .hero h1 { font-size: 2.5rem; letter-spacing: -1px; }
-            .hero p { font-size: 1.05rem; margin-bottom: 28px; }
-            .cta-btn { padding: 14px 28px; font-size: 1.05rem; }
-            .bento-section h2, .sports-section h2, .how-it-works h2,
-            .testimonials-section h2, .faq-section h2, .integrations-section h2 { font-size: 2rem; }
-            .sport-card { width: 100%; padding: 30px 22px; }
-            .step-card { padding: 24px 20px; }
-        }
+        @media (max-width: 900px) { .nav-pills { display: none; } }
 
         /* ===== Bento Grid Feature Showcase ===== */
         .bento-section { padding: 30px 20px 70px 20px; max-width: 1100px; margin: 0 auto; }
@@ -1031,8 +991,8 @@
     <div class="scroll-progress" id="scrollProgress"></div>
 
     <div class="bg-animations">
-        <video muted loop playsinline preload="none" class="bg-video" id="bgVideo">
-            <source data-src="Sequence 04.mp4" type="video/mp4">
+        <video autoplay muted loop playsinline class="bg-video">
+            <source src="Sequence 04.mp4" type="video/mp4">
             Aapka browser video tag support nahi karta.
         </video>
         <div class="ambient-blob b1"></div>
@@ -1054,22 +1014,11 @@
         </div>
         <div class="nav-right">
             <span id="user-display"></span>
+            <a href="/admin" id="owner-admin-btn"><span class="gear-icon">⚙️</span> Owner Admin</a>
             <button onclick="logout()" class="auth-btn btn-danger">Logout</button>
             <a href="#sports" class="nav-btn">Get Started</a>
-            <button class="hamburger-btn" id="hamburgerBtn" aria-label="Open menu" aria-expanded="false">
-                <span></span><span></span><span></span>
-            </button>
         </div>
     </nav>
-
-    <div class="mobile-menu-backdrop" id="mobileMenuBackdrop"></div>
-    <div class="mobile-menu" id="mobileMenu">
-        <a href="#features">Features</a>
-        <a href="#integrations">Integrations</a>
-        <a href="#sports">Sports</a>
-        <a href="#faq">FAQ</a>
-        <a href="#sports" class="nav-btn">Get Started</a>
-    </div>
 
     <section class="hero animate-in" id="hero-section">
         <h1>Add <span>Sports Overlays</span> to your live stream</h1>
@@ -1252,110 +1201,6 @@
     </section>
 
     <!-- Maalik Control Panel & Analytics Dashboard -->
-    <div id="admin-panel" class="admin-panel-container hidden">
-        <div class="admin-box dashboard-shell">
-
-            <!-- Sidebar Navigation -->
-            <div class="dashboard-sidebar">
-                <div class="dashboard-sidebar-title">⚙️ Maalik Panel</div>
-                <button class="db-tab-btn active" onclick="switchDbTab('overview', this)">📊 Overview</button>
-                <button class="db-tab-btn" onclick="switchDbTab('add', this)">➕ Add Template</button>
-                <button class="db-tab-btn" onclick="switchDbTab('manage', this)">🗂️ Manage Templates</button>
-                <button class="db-tab-btn" onclick="switchDbTab('analytics', this)">📈 Analytics</button>
-            </div>
-
-            <div class="dashboard-content">
-
-                <!-- Overview Panel -->
-                <div class="db-panel active" id="db-panel-overview">
-                    <h3>📊 Dashboard Overview</h3>
-                    <div class="stats-grid">
-                        <div class="stat-card">
-                            <div class="stat-label">Total Logins</div>
-                            <div class="stat-value" id="an-total-logins" style="color:#38bdf8;">0</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-label">Total Logouts</div>
-                            <div class="stat-value" id="an-total-logouts" style="color:#ef4444;">0</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-label">Total Activities</div>
-                            <div class="stat-value" id="an-total-events" style="color:#facc15;">0</div>
-                        </div>
-                    </div>
-                    <p class="dashboard-hint">Live counts update automatically as users sign in and open overlays.</p>
-                </div>
-
-                <!-- Add Template Panel -->
-                <div class="db-panel" id="db-panel-add">
-                    <h3>➕ Add New Template</h3>
-                    <form id="add-template-form" class="admin-form">
-                        <input type="text" id="sport-name" placeholder="Sport / Template Name (e.g. Badminton)" required>
-                        <input type="text" id="sport-icon" placeholder="Emoji Icon (e.g. 🏸)" required>
-
-                        <label style="color: var(--text-muted); font-size: 0.9rem; display: block; margin-bottom: 5px;">Controller Panel Code (HTML/JS):</label>
-                        <textarea id="panel-code" placeholder="Paste controller panel code here..." rows="4" required style="font-family: monospace;"></textarea>
-
-                        <label style="color: var(--text-muted); font-size: 0.9rem; display: block; margin-bottom: 5px;">Overlay Code (HTML/JS):</label>
-                        <textarea id="overlay-code" placeholder="Paste overlay code here..." rows="4" required style="font-family: monospace;"></textarea>
-
-                        <button type="submit" class="cta-btn" id="submit-btn" style="padding: 10px 25px; font-size: 1rem; width: 100%; justify-content: center;">Plant Template</button>
-                    </form>
-                </div>
-
-                <!-- Manage Templates Panel -->
-                <div class="db-panel" id="db-panel-manage">
-                    <h3>🗂️ Manage / Remove Added Templates</h3>
-                    <div id="admin-templates-list" class="templates-grid">
-                        <p style="color: var(--text-muted); font-size: 0.9rem;">Loading added templates...</p>
-                    </div>
-                </div>
-
-                <!-- Analytics Panel -->
-                <div class="db-panel" id="db-panel-analytics">
-                    <h3>
-                        <span>📈 Overlay Usage & User Analytics</span>
-                        <span style="font-size: 0.75rem; background: #0284c7; padding: 2px 8px; border-radius: 4px; color: #fff; font-weight: 600;">Admin Only</span>
-                    </h3>
-
-                    <!-- Chart -->
-                    <div class="chart-bars">
-                        <div class="chart-bar-col">
-                            <div class="chart-bar" id="bar-logins" style="height: 4%; background: #38bdf8;"></div>
-                            <span>Logins</span>
-                        </div>
-                        <div class="chart-bar-col">
-                            <div class="chart-bar" id="bar-logouts" style="height: 4%; background: #ef4444;"></div>
-                            <span>Logouts</span>
-                        </div>
-                        <div class="chart-bar-col">
-                            <div class="chart-bar" id="bar-events" style="height: 4%; background: #facc15;"></div>
-                            <span>Total Activity</span>
-                        </div>
-                    </div>
-
-                    <!-- Data Table -->
-                    <div style="max-height: 240px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; margin-top: 22px;">
-                        <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem;">
-                            <thead>
-                                <tr style="background: rgba(15, 23, 42, 0.9); color: var(--text-muted); position: sticky; top: 0;">
-                                    <th style="padding: 10px 14px;">User Email</th>
-                                    <th style="padding: 10px 14px;">Action Type</th>
-                                    <th style="padding: 10px 14px;">Overlay Used</th>
-                                    <th style="padding: 10px 14px;">Timestamp</th>
-                                </tr>
-                            </thead>
-                            <tbody id="an-logs-body">
-                                <tr><td colspan="4" style="padding: 12px; text-align: center; color: var(--text-muted);">Loading analytics data...</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-            </div>
-        </div>
-    </div>
-
     <section class="how-it-works">
         <h2 class="reveal-on-scroll">How it works</h2>
         <div class="steps-container">
@@ -1382,7 +1227,7 @@
         <p class="reveal-on-scroll delay-1">Select the sport you want to stream and control</p>
         
         <div class="sports-grid" id="sports-grid-container">
-            <div class="sport-card reveal-on-scroll delay-1" onclick="openTableTennisTemplates()">
+            <div onclick="openTableTennisTemplates()" class="sport-card reveal-on-scroll delay-1">
                 <div class="sport-card-bg" style="background-image:url('https://commons.wikimedia.org/wiki/Special:FilePath/Competitive_table_tennis.jpg');"></div>
                 <div class="card-content">
                     <div class="sport-icon">🏓</div>
@@ -1390,7 +1235,7 @@
                 </div>
             </div>
             
-            <div class="sport-card reveal-on-scroll delay-2" onclick="openCricketTemplates()">
+            <div onclick="openCricketTemplates()" class="sport-card reveal-on-scroll delay-2">
                 <div class="sport-card-bg" style="background-image:url('https://commons.wikimedia.org/wiki/Special:FilePath/Beau_Webster_2023_Upminster.jpg');"></div>
                 <div class="card-content">
                     <div class="sport-icon">🏏</div>
@@ -1398,7 +1243,7 @@
                 </div>
             </div>
 
-            <div class="sport-card reveal-on-scroll delay-3" onclick="openFootballTemplates()">
+            <div onclick="openFootballTemplates()" class="sport-card reveal-on-scroll delay-3">
                 <div class="sport-card-bg" style="background-image:url('https://commons.wikimedia.org/wiki/Special:FilePath/Football_final_match_photo.jpg');"></div>
                 <div class="card-content">
                     <div class="sport-icon">⚽</div>
@@ -1531,7 +1376,8 @@
 
         const authGate = document.getElementById('auth-gate');
         const userDisplay = document.getElementById('user-display');
-        const adminPanel = document.getElementById('admin-panel');
+        const ownerAdminBtn = document.getElementById('owner-admin-btn');
+        const OWNER_EMAIL = "chhayajeeth@gmail.com"; // display/UX hint only — real enforcement is server-side (see server.js requireOwner)
 
         let isUserLoggedIn = false;
 
@@ -1566,57 +1412,6 @@
             });
         }
 
-        // Live Analytics Dashboard Data Loader with Overlay Tracking
-        function loadAnalyticsDashboard() {
-            db.collection("analytics_logs").orderBy("time", "desc").onSnapshot(snapshot => {
-                let rowsHTML = "";
-                let logins = 0;
-                let logouts = 0;
-                let total = snapshot.size;
-
-                snapshot.forEach(doc => {
-                    let d = doc.data();
-                    if (d.action === "Login") logins++;
-                    if (d.action === "Logout") logouts++;
-
-                    let badgeBg = d.action === "Login" ? "#059669" : (d.action === "Logout" ? "#dc2626" : "#2563eb");
-
-                    rowsHTML += `<tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
-                        <td style="padding: 10px 14px; color: #f8fafc;">${d.email || "Unknown User"}</td>
-                        <td style="padding: 10px 14px;"><span style="background: ${badgeBg}; color: #fff; padding: 3px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: bold;">${d.action}</span></td>
-                        <td style="padding: 10px 14px; color: #38bdf8; font-weight: 600;">${d.overlay || "Dashboard System"}</td>
-                        <td style="padding: 10px 14px; color: var(--text-muted);">${d.time}</td>
-                    </tr>`;
-                });
-
-                if (total === 0) {
-                    rowsHTML = `<tr><td colspan="4" style="padding: 12px; text-align: center; color: var(--text-muted);">No activity logged yet.</td></tr>`;
-                }
-
-                document.getElementById('an-logs-body').innerHTML = rowsHTML;
-                animateCountUp(document.getElementById('an-total-logins'), logins);
-                animateCountUp(document.getElementById('an-total-logouts'), logouts);
-                animateCountUp(document.getElementById('an-total-events'), total);
-
-                // Drive the analytics bar chart heights, scaled against whichever
-                // value is highest so the tallest bar always fills the chart.
-                const maxVal = Math.max(logins, logouts, total, 1);
-                const barLogins = document.getElementById('bar-logins');
-                const barLogouts = document.getElementById('bar-logouts');
-                const barEvents = document.getElementById('bar-events');
-                if (barLogins) barLogins.style.height = Math.max((logins / maxVal) * 100, 4) + '%';
-                if (barLogouts) barLogouts.style.height = Math.max((logouts / maxVal) * 100, 4) + '%';
-                if (barEvents) barEvents.style.height = Math.max((total / maxVal) * 100, 4) + '%';
-            });
-        }
-
-        // Switches between the sidebar dashboard panels (Overview / Add Template / Manage / Analytics)
-        function switchDbTab(tabName, btn) {
-            document.querySelectorAll('.db-panel').forEach(p => p.classList.remove('active'));
-            document.querySelectorAll('.db-tab-btn').forEach(b => b.classList.remove('active'));
-            document.getElementById('db-panel-' + tabName).classList.add('active');
-            btn.classList.add('active');
-        }
 
         // Expands/collapses an FAQ answer
         function toggleFaq(btn) {
@@ -1663,29 +1458,10 @@
                 const sports = await response.json();
                 
                 const grid = document.getElementById('sports-grid-container');
-                const adminList = document.getElementById('admin-templates-list');
                 
                 const vibrantColors = [
                     '#f43f5e', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'
                 ];
-                
-                if (adminList) {
-                    if (sports.length === 0) {
-                        adminList.innerHTML = `<p style="color: var(--text-muted); font-size: 0.9rem;">No dynamic templates added yet.</p>`;
-                    } else {
-                        adminList.innerHTML = "";
-                        sports.forEach((sport) => {
-                            const item = document.createElement('div');
-                            item.className = "template-card";
-                            item.innerHTML = `
-                                <div class="template-card-icon">${sport.icon || '🎯'}</div>
-                                <div class="template-card-name">${sport.name}</div>
-                                <button class="btn-delete-item" onclick="deleteTemplate('${sport.slug}', '${sport.name}')">Remove</button>
-                            `;
-                            adminList.appendChild(item);
-                        });
-                    }
-                }
 
                 if (!grid) return;
                 
@@ -1726,61 +1502,6 @@
             }
         }
 
-        async function deleteTemplate(slug, name) {
-            if (!confirm(`Are you sure you want to remove "${name}" template and its files?`)) return;
-
-            try {
-                const res = await fetch('/api/delete-template', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ slug: slug })
-                });
-
-                if (res.ok) {
-                    alert(`Template "${name}" successfully remove ho gaya!`);
-                    window.location.reload();
-                } else {
-                    alert("Deletion mein kuch error aaya.");
-                }
-            } catch (err) {
-                console.error(err);
-                alert("Server connection failed.");
-            }
-        }
-
-        document.getElementById('add-template-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const btn = document.getElementById('submit-btn');
-            btn.innerText = "Planting Template...";
-            
-            const data = {
-                sportName: document.getElementById('sport-name').value,
-                sportIcon: document.getElementById('sport-icon').value,
-                panelCode: document.getElementById('panel-code').value,
-                overlayCode: document.getElementById('overlay-code').value
-            };
-
-            try {
-                const res = await fetch('/api/create-template', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
-                });
-
-                if (res.ok) {
-                    alert("Bhai, template successfully plant ho gaya!");
-                    window.location.reload();
-                } else {
-                    alert("Planting mein kuch error aaya.");
-                    btn.innerText = "Plant Template";
-                }
-            } catch (err) {
-                console.error(err);
-                alert("Server connection failed.");
-                btn.innerText = "Plant Template";
-            }
-        });
-
         auth.onAuthStateChanged(user => {
             if (user) {
                 isUserLoggedIn = true;
@@ -1795,12 +1516,11 @@
 
                 userDisplay.innerText = `Hi, ${user.displayName || user.email}`;
 
-                if (user.email === "chhayajeeth@gmail.com") {
-                    adminPanel.classList.remove('hidden');
-                    loadAnalyticsDashboard();
-                } else {
-                    adminPanel.classList.add('hidden');
-                }
+                // UX hint only — the button simply links to /admin. The real
+                // gate is server-side: every /api/admin/* call is verified
+                // against a signed Firebase ID token (see requireOwner in
+                // server.js), so this toggle can't be used to bypass anything.
+                if (ownerAdminBtn) ownerAdminBtn.classList.toggle('visible', user.email === OWNER_EMAIL);
             } else {
                 isUserLoggedIn = false;
                 
@@ -1810,7 +1530,7 @@
                 authGate.classList.remove('hidden');
                 authGate.style.opacity = '1';
                 userDisplay.innerText = "";
-                adminPanel.classList.add('hidden');
+                if (ownerAdminBtn) ownerAdminBtn.classList.remove('visible');
             }
         });
     </script>
@@ -1821,63 +1541,17 @@
             loadDynamicSports();
         });
 
-        // ===== Mobile hamburger menu =====
-        (function initMobileMenu() {
-            const hamburger = document.getElementById('hamburgerBtn');
-            const menu = document.getElementById('mobileMenu');
-            const backdrop = document.getElementById('mobileMenuBackdrop');
-            if (!hamburger || !menu || !backdrop) return;
-            function closeMenu() {
-                hamburger.classList.remove('open');
-                hamburger.setAttribute('aria-expanded', 'false');
-                menu.classList.remove('open');
-                backdrop.classList.remove('open');
-                document.body.style.overflow = '';
-            }
-            function openMenu() {
-                hamburger.classList.add('open');
-                hamburger.setAttribute('aria-expanded', 'true');
-                menu.classList.add('open');
-                backdrop.classList.add('open');
-                document.body.style.overflow = 'hidden';
-            }
-            hamburger.addEventListener('click', () => {
-                hamburger.classList.contains('open') ? closeMenu() : openMenu();
-            });
-            backdrop.addEventListener('click', closeMenu);
-            menu.querySelectorAll('a').forEach(link => link.addEventListener('click', closeMenu));
-        })();
-
-        // ===== Lazy-load the heavy ambient background video =====
-        // Keeps first paint fast; the video only starts downloading once the
-        // page has settled, and never blocks the critical rendering path.
-        const bgVideoEl = document.getElementById('bgVideo');
-        function loadBgVideo() {
-            if (!bgVideoEl || bgVideoEl.dataset.loaded) return;
-            const source = bgVideoEl.querySelector('source[data-src]');
-            if (source) {
-                source.src = source.dataset.src;
-                bgVideoEl.load();
-                bgVideoEl.play().catch(() => {});
-                bgVideoEl.dataset.loaded = 'true';
-            }
-        }
-        if ('requestIdleCallback' in window) {
-            window.addEventListener('load', () => requestIdleCallback(loadBgVideo, { timeout: 2500 }));
-        } else {
-            window.addEventListener('load', () => setTimeout(loadBgVideo, 1200));
-        }
-
         // Guarantee the background video loops forever, even in browsers where
         // the native `loop` attribute is unreliable, and resume it if the
         // browser ever pauses/stalls it (e.g. after a tab was backgrounded).
+        const bgVideoEl = document.querySelector('.bg-video');
         if (bgVideoEl) {
             bgVideoEl.addEventListener('ended', () => {
                 bgVideoEl.currentTime = 0;
                 bgVideoEl.play().catch(() => {});
             });
             document.addEventListener('visibilitychange', () => {
-                if (!document.hidden && bgVideoEl.dataset.loaded && bgVideoEl.paused) {
+                if (!document.hidden && bgVideoEl.paused) {
                     bgVideoEl.play().catch(() => {});
                 }
             });
