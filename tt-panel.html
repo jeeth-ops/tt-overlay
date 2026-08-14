@@ -13,6 +13,9 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
     <!-- QR code generator (renders fully in-browser, no data sent anywhere) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <!-- ExcelJS — used for the TT Match/Tournament Excel export (real cell
+         styling, same library family as the rest of the Scorvix reports) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
     
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -205,8 +208,19 @@
                 <div>
                     <label>Match Format:</label>
                     <select id="c-match-format" onchange="sendData()">
-                        <option value="bestOf5">Best of 5 (First to 3 Sets)</option>
-                        <option value="bestOf7">Best of 7 (First to 4 Sets)</option>
+                        <option value="bestOf3">Best of 3 (First to 2 Games)</option>
+                        <option value="bestOf5">Best of 5 (First to 3 Games)</option>
+                        <option value="bestOf7">Best of 7 (First to 4 Games)</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Match Type (Official TT Event):</label>
+                    <select id="c-match-type" onchange="onTtMatchTypeChange()">
+                        <option value="mensSingles">Men's Singles</option>
+                        <option value="womensSingles">Women's Singles</option>
+                        <option value="mensDoubles">Men's Doubles</option>
+                        <option value="womensDoubles">Women's Doubles</option>
+                        <option value="mixedDoubles" selected>Mixed Doubles</option>
                     </select>
                 </div>
                 <div>
@@ -222,21 +236,24 @@
                     <input type="text" id="c-winner-text" value="PHANTOM STARS WON THE MATCH" oninput="sendDataThrottled()">
                 </div>
                 <div>
-                    <label>Team A Name & Logo (Left):</label>
-                    <input type="text" id="c-p1" value="PHANTOM STARS" oninput="sendDataThrottled()">
+                    <label>Side A — Player 1 Name & Logo:</label>
+                    <input type="text" id="c-p1" value="PHANTOM STARS" oninput="onTtPlayerNameInput()">
                     <div style="display: flex; gap: 5px; margin-top: 3px;">
                         <input type="file" id="c-img1" accept="image/*" onchange="uploadImage(1)">
                         <button style="background: #dc2626; padding: 4px 8px; font-size: 10px;" onclick="removeLogo(1)">Remove</button>
                     </div>
+                    <input type="text" id="c-p1-partner" placeholder="Side A — Player 2 (doubles partner)" oninput="onTtPlayerNameInput()" style="display:none; margin-top:4px; border-left:3px solid #7c3aed;">
                 </div>
                 <div>
-                    <label>Team B Name & Logo (Left):</label>
-                    <input type="text" id="c-p2" value="MUMBAI MOZARTT" oninput="sendDataThrottled()">
+                    <label>Side B — Player 1 Name & Logo:</label>
+                    <input type="text" id="c-p2" value="MUMBAI MOZARTT" oninput="onTtPlayerNameInput()">
                     <div style="display: flex; gap: 5px; margin-top: 3px;">
                         <input type="file" id="c-img2" accept="image/*" onchange="uploadImage(2)">
                         <button style="background: #dc2626; padding: 4px 8px; font-size: 10px;" onclick="removeLogo(2)">Remove</button>
                     </div>
+                    <input type="text" id="c-p2-partner" placeholder="Side B — Player 2 (doubles partner)" oninput="onTtPlayerNameInput()" style="display:none; margin-top:4px; border-left:3px solid #7c3aed;">
                 </div>
+                <div id="tt-serve-info" style="font-size:11px; color:#4ade80; font-weight:bold;"></div>
 
                 <!-- 🌟 NAYA: Scoreboard Colors Customization Option -->
                 <div>
@@ -387,6 +404,24 @@
                     <button class="toggle-btn bg-blue" onclick="togglePointsHistory(true)">Show</button>
                     <button class="toggle-btn bg-red" onclick="togglePointsHistory(false)">Hide</button>
                 </div>
+
+                <label style="margin-top: 4px;">Tournament History (Broadcast Graphic):</label>
+                <div class="toggles-grid">
+                    <button class="toggle-btn bg-blue" onclick="toggleTtTournamentHistoryOverlay(true)">Show</button>
+                    <button class="toggle-btn bg-red" onclick="toggleTtTournamentHistoryOverlay(false)">Hide</button>
+                </div>
+
+                <label style="margin-top: 4px;">Player / Pair Statistics (Broadcast Graphic):</label>
+                <div class="toggles-grid">
+                    <button class="toggle-btn bg-blue" onclick="toggleTtPlayerStatsOverlay(true)">Show</button>
+                    <button class="toggle-btn bg-red" onclick="toggleTtPlayerStatsOverlay(false)">Hide</button>
+                </div>
+
+                <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #1f2937;">
+                    <label>📊 Reports & Excel Export:</label>
+                    <button class="full small" style="width:100%; margin-bottom:6px; background:#16a34a;" onclick="exportTtMatchExcel()">📊 Export Current Match Excel</button>
+                    <button class="full small" style="width:100%; background:#0284c7;" onclick="exportTtTournamentExcel()">🏆 Export Tournament Excel</button>
+                </div>
             </div>
 
         </div>
@@ -524,6 +559,23 @@
         setsHistory: [], 
         pointsHistory: [], // 🌟 auto-tracked rally-by-rally point log for the Points History overlay
         pointsHistoryVisible: false, // 🌟 independent show/hide flag, decoupled from the main 'state' field
+
+        // ---- Table Tennis match type + doubles data (native TT logic,
+        // not reused/renamed cricket concepts) ----
+        matchTypeTT: "mixedDoubles", // mensSingles | womensSingles | mensDoubles | womensDoubles | mixedDoubles
+        isDoubles: true,
+        p1Player: "PHANTOM STARS", p1Partner: "", // Side A players (singles: p1Player only)
+        p2Player: "MUMBAI MOZARTT", p2Partner: "", // Side B players
+        serverSlot: 0, // rotates through the 2 (singles) or 4 (doubles) service positions
+        receiverInfo: "", // human-readable "X serving to Y" string shown in panel + overlay
+
+        // ---- Independent ON/OFF broadcast graphics (own booleans, same
+        // pattern as pointsHistoryVisible — so several can be live at once
+        // without fighting over the single `state` field) ----
+        showTournamentHistory: false,
+        showPlayerStats: false,
+        tournamentHistorySnapshot: { tournamentName: "", rows: [] },
+        playerStatsSnapshot: { sideA: [], sideB: [] },
         // 🌟 Colors Default Object Added
         colors: {
             bg: "#0e101c",
@@ -554,8 +606,20 @@
         data.teamMatchup = document.getElementById('c-team-matchup').value;
         data.subLabel = data.teamMatchup; // 🌟 FIX: overlay's bottom badge reads data.subLabel, not data.teamMatchup
         data.winner = document.getElementById('c-winner-text').value;
-        data.p1Name = document.getElementById('c-p1').value;
-        data.p2Name = document.getElementById('c-p2').value;
+
+        // ---- Match type + doubles-aware player names ----
+        data.matchTypeTT = document.getElementById('c-match-type').value;
+        data.isDoubles = (data.matchTypeTT === 'mensDoubles' || data.matchTypeTT === 'womensDoubles' || data.matchTypeTT === 'mixedDoubles');
+        data.p1Player = document.getElementById('c-p1').value;
+        data.p2Player = document.getElementById('c-p2').value;
+        data.p1Partner = document.getElementById('c-p1-partner').value;
+        data.p2Partner = document.getElementById('c-p2-partner').value;
+        // p1Name/p2Name stay as the DISPLAY names the overlay/reports/points
+        // table already read everywhere — for doubles this becomes "A / B"
+        // automatically so nothing downstream (standings, history, links)
+        // needs to know singles vs doubles ever existed.
+        data.p1Name = (data.isDoubles && data.p1Partner) ? `${data.p1Player} / ${data.p1Partner}` : data.p1Player;
+        data.p2Name = (data.isDoubles && data.p2Partner) ? `${data.p2Player} / ${data.p2Partner}` : data.p2Player;
 
         // 🌟 Colors Capture & Send
         data.colors = {
@@ -620,8 +684,12 @@
                 document.getElementById('c-match-category').value = data.matchCategory || "Mixed Doubles";
                 document.getElementById('c-team-matchup').value = data.teamMatchup || "SCL vs KB";
                 document.getElementById('c-winner-text').value = data.winner || "";
-                document.getElementById('c-p1').value = data.p1Name || "";
-                document.getElementById('c-p2').value = data.p2Name || "";
+                document.getElementById('c-p1').value = data.p1Player || data.p1Name || "";
+                document.getElementById('c-p2').value = data.p2Player || data.p2Name || "";
+                document.getElementById('c-p1-partner').value = data.p1Partner || "";
+                document.getElementById('c-p2-partner').value = data.p2Partner || "";
+                document.getElementById('c-match-type').value = data.matchTypeTT || "mixedDoubles";
+                onTtMatchTypeChange();
 
                 // 🌟 Load Saved Colors into Pickers
                 if (data.colors) {
@@ -755,14 +823,58 @@
         sendData();
     }
 
-    function checkRules() {
-        let totalPoints = data.p1Score + data.p2Score;
-        if (data.p1Score >= 10 && data.p2Score >= 10) {
-            data.server = (totalPoints % 2 === 0) ? 1 : 2;
+    // ================= 🏓 TABLE TENNIS SERVICE + GAME RULES =================
+    // Official ITTF rules (not cricket logic, not borrowed from anywhere):
+    //  - Every 2 points the serve changes, EXCEPT once the game reaches
+    //    10-10 (deuce), after which serve alternates every single point.
+    //  - A game is won at 11+ points with a margin of at least 2
+    //    (so 12-10, 13-11, ... are all valid — never "stops at 11").
+    //  - DOUBLES: the four players serve/receive in a fixed rotating
+    //    order established at the start of each game — A1 → B1 → A2 → B2
+    //    → back to A1 — each serving 2 points (1 at deuce), and the
+    //    receiver within the opposing pair also rotates in lock-step so
+    //    the same player never receives twice from the same partner.
+    function ttDoublesServeSequence(){
+        // Order alternates who serves first each GAME (index = games played so far)
+        const gamesPlayed = (data.setsHistory || []).length;
+        return (gamesPlayed % 2 === 0)
+            ? [{side:'A', player: data.p1Player || data.p1Name}, {side:'B', player: data.p2Player || data.p2Name}, {side:'A', player: data.p1Partner || data.p1Name}, {side:'B', player: data.p2Partner || data.p2Name}]
+            : [{side:'B', player: data.p2Player || data.p2Name}, {side:'A', player: data.p1Player || data.p1Name}, {side:'B', player: data.p2Partner || data.p2Name}, {side:'A', player: data.p1Partner || data.p1Name}];
+    }
+    function ttReceiverFor(serverEntry, seq){
+        // ITTF doubles receiving order: receiver is always the player on the
+        // opposing pair who is diagonally "next" in the same 4-slot cycle.
+        const idx = seq.indexOf(serverEntry);
+        return seq[(idx + 1) % 4];
+    }
+    function updateTtServiceState(){
+        const totalPoints = data.p1Score + data.p2Score;
+        const deuce = data.p1Score >= 10 && data.p2Score >= 10;
+        if(!data.isDoubles){
+            // Singles: server changes every 2 points, every 1 point at deuce.
+            data.server = deuce ? ((totalPoints % 2 === 0) ? 1 : 2)
+                                 : ((Math.floor(totalPoints / 2) % 2 === 0) ? 1 : 2);
+            const serverName = data.server === 1 ? (data.p1Player || data.p1Name) : (data.p2Player || data.p2Name);
+            const receiverName = data.server === 1 ? (data.p2Player || data.p2Name) : (data.p1Player || data.p1Name);
+            data.receiverInfo = `${serverName} serving → ${receiverName}`;
         } else {
-            data.server = (Math.floor(totalPoints / 2) % 2 === 0) ? 1 : 2;
+            // Doubles: rotate through 4 slots, 2 pts per slot (1 at deuce).
+            const seq = ttDoublesServeSequence();
+            const slot = deuce ? (totalPoints % 4) : (Math.floor(totalPoints / 2) % 4);
+            data.serverSlot = slot;
+            const serverEntry = seq[slot];
+            const receiverEntry = ttReceiverFor(serverEntry, seq);
+            data.server = serverEntry.side === 'A' ? 1 : 2;
+            data.receiverInfo = `${serverEntry.player} serving → ${receiverEntry.player}`;
         }
-        
+        const infoEl = document.getElementById('tt-serve-info');
+        if(infoEl) infoEl.textContent = '🏓 ' + data.receiverInfo;
+    }
+
+    function checkRules() {
+        updateTtServiceState();
+
+        // Game win: 11+ points, win by 2 — never simply stops at 11.
         if ((data.p1Score >= 11 || data.p2Score >= 11) && Math.abs(data.p1Score - data.p2Score) >= 2) {
             let setWinner = "";
             
@@ -775,8 +887,9 @@
                 data.p2Sets++; setWinner = data.p2Name;
             }
             data.p1Score = 0; data.p2Score = 0;
+            updateTtServiceState(); // re-derive who serves the NEW game (rotation flips each game)
 
-            let targetSets = (data.matchFormat === 'bestOf7') ? 4 : 3;
+            let targetSets = (data.matchFormat === 'bestOf7') ? 4 : (data.matchFormat === 'bestOf3') ? 2 : 3;
 
             if (data.p1Sets >= targetSets || data.p2Sets >= targetSets) {
                 data.winner = `${setWinner.toUpperCase()} WON THE MATCH`;
@@ -787,8 +900,233 @@
         }
     }
 
+    // ---- Match Type UI: shows/hides the doubles partner name fields and
+    // keeps the panel + overlay in sync the moment the type is changed. ----
+    function onTtMatchTypeChange(){
+        const type = document.getElementById('c-match-type').value;
+        const isDoubles = (type === 'mensDoubles' || type === 'womensDoubles' || type === 'mixedDoubles');
+        document.getElementById('c-p1-partner').style.display = isDoubles ? 'block' : 'none';
+        document.getElementById('c-p2-partner').style.display = isDoubles ? 'block' : 'none';
+        const catLabels = { mensSingles: "Men's Singles", womensSingles: "Women's Singles", mensDoubles: "Men's Doubles", womensDoubles: "Women's Doubles", mixedDoubles: "Mixed Doubles" };
+        document.getElementById('c-match-category').value = catLabels[type] || '';
+        sendData();
+    }
+    function onTtPlayerNameInput(){ sendDataThrottled(); }
+
     function triggerState(st) { data.state = st; sendData(); }
     function togglePointsHistory(show) { data.pointsHistoryVisible = show; sendData(); }
+
+    // ================= 🏆 TOURNAMENT HISTORY (broadcast graphic) =================
+    // Snapshot of the currently-selected tournament's saved matches, sent to
+    // the overlay only when switched ON (avoids pushing this on every point).
+    function buildTtTournamentHistorySnapshot(){
+        const name = (ttPanelState.leagueName || '').trim();
+        const matches = currentTtLeagueMatches();
+        const rows = [...matches].reverse().slice(0, 8).map(m => ({
+            matchup: `${m.teamA.name} vs ${m.teamB.name}`,
+            result: m.winningTeam === 'A' ? `${m.teamA.name} won` : m.winningTeam === 'B' ? `${m.teamB.name} won` : 'In progress',
+            score: `${m.scoreA.sets}-${m.scoreB.sets}`
+        }));
+        return { tournamentName: name || 'Single Match', rows };
+    }
+    function toggleTtTournamentHistoryOverlay(show){
+        data.showTournamentHistory = show;
+        if(show) data.tournamentHistorySnapshot = buildTtTournamentHistorySnapshot();
+        sendData();
+    }
+
+    // ================= 👤 PLAYER / PAIR STATISTICS (broadcast graphic) =================
+    // Pulled from the ttPlayers / ttPairs Firestore collections (see
+    // updateTtPlayerStatsOnFinish below) — real career numbers, not the
+    // current match's live score.
+    async function fetchTtPlayerCareerStats(playerName){
+        const key = (playerName || '').trim().toLowerCase();
+        if(!key || !window.loggedInUid) return null;
+        try{
+            const doc = await db.collection('ttPlayers').doc(`${window.loggedInUid}__${key}`).get();
+            return doc.exists ? doc.data() : null;
+        }catch(e){ return null; }
+    }
+    function ttFormatFromMatchType(){
+        return (data.matchTypeTT === 'mensSingles' || data.matchTypeTT === 'womensSingles') ? 'singles'
+             : (data.matchTypeTT === 'mixedDoubles') ? 'mixedDoubles' : 'doubles';
+    }
+    async function buildTtPlayerStatsSnapshot(){
+        const fmt = ttFormatFromMatchType();
+        const names = data.isDoubles
+            ? [data.p1Player, data.p1Partner, data.p2Player, data.p2Partner].filter(Boolean)
+            : [data.p1Player, data.p2Player].filter(Boolean);
+        const sideNamesA = data.isDoubles ? [data.p1Player, data.p1Partner].filter(Boolean) : [data.p1Player];
+        const sideNamesB = data.isDoubles ? [data.p2Player, data.p2Partner].filter(Boolean) : [data.p2Player];
+        async function rowsFor(list){
+            const out = [];
+            for(const n of list){
+                const stats = await fetchTtPlayerCareerStats(n);
+                const s = (stats && stats[fmt]) || { played: 0, won: 0, lost: 0, setsWon: 0, setsLost: 0 };
+                out.push({ name: n, played: s.played || 0, won: s.won || 0, lost: s.lost || 0, setsWon: s.setsWon || 0, setsLost: s.setsLost || 0 });
+            }
+            return out;
+        }
+        return { sideA: await rowsFor(sideNamesA), sideB: await rowsFor(sideNamesB) };
+    }
+    async function toggleTtPlayerStatsOverlay(show){
+        data.showPlayerStats = show;
+        if(show) data.playerStatsSnapshot = await buildTtPlayerStatsSnapshot();
+        sendData();
+    }
+
+    // ================= 📊 PLAYER / PAIR DATABASE (Firestore) =================
+    // Real, persistent career records — separated by format exactly as
+    // required: singles / doubles / mixedDoubles never mixed together.
+    // Doc id is scoped per-owner so two operators' "John Smith" never collide.
+    async function bumpTtPlayerRecord(playerName, format, won, setsWon, setsLost, tournamentName){
+        const name = (playerName || '').trim();
+        if(!name || !window.loggedInUid) return;
+        const ref = db.collection('ttPlayers').doc(`${window.loggedInUid}__${name.toLowerCase()}`);
+        try{
+            await db.runTransaction(async (tx) => {
+                const doc = await tx.get(ref);
+                const cur = doc.exists ? doc.data() : { name, singles: {}, doubles: {}, mixedDoubles: {}, recentMatches: [] };
+                const f = cur[format] || { played: 0, won: 0, lost: 0, setsWon: 0, setsLost: 0, tournaments: [] };
+                f.played = (f.played || 0) + 1;
+                f.won = (f.won || 0) + (won ? 1 : 0);
+                f.lost = (f.lost || 0) + (won ? 0 : 1);
+                f.setsWon = (f.setsWon || 0) + setsWon;
+                f.setsLost = (f.setsLost || 0) + setsLost;
+                if(tournamentName){
+                    f.tournaments = f.tournaments || [];
+                    if(!f.tournaments.includes(tournamentName)) f.tournaments.push(tournamentName);
+                }
+                cur[format] = f;
+                cur.name = name;
+                cur.recentMatches = [{ date: new Date().toISOString(), format, won, setsWon, setsLost }, ...(cur.recentMatches || [])].slice(0, 20);
+                tx.set(ref, cur, { merge: true });
+            });
+        }catch(e){ console.log('Player stats update failed:', e); }
+    }
+    async function bumpTtPairRecord(nameA, nameB, format, won, setsWon, setsLost){
+        const a = (nameA || '').trim(), b = (nameB || '').trim();
+        if(!a || !b || !window.loggedInUid) return;
+        // Pair key is order-independent so "A + B" and "B + A" are the same pair.
+        const pairKey = [a.toLowerCase(), b.toLowerCase()].sort().join('__');
+        const ref = db.collection('ttPairs').doc(`${window.loggedInUid}__${pairKey}`);
+        try{
+            await db.runTransaction(async (tx) => {
+                const doc = await tx.get(ref);
+                const cur = doc.exists ? doc.data() : { players: [a, b], format, played: 0, won: 0, lost: 0, setsWon: 0, setsLost: 0 };
+                cur.played = (cur.played || 0) + 1;
+                cur.won = (cur.won || 0) + (won ? 1 : 0);
+                cur.lost = (cur.lost || 0) + (won ? 0 : 1);
+                cur.setsWon = (cur.setsWon || 0) + setsWon;
+                cur.setsLost = (cur.setsLost || 0) + setsLost;
+                cur.players = [a, b];
+                tx.set(ref, cur, { merge: true });
+            });
+        }catch(e){ console.log('Pair stats update failed:', e); }
+    }
+    async function updateTtPlayerStatsOnFinish(){
+        if(!data.p1Sets && !data.p2Sets) return; // nothing was played
+        const fmt = ttFormatFromMatchType();
+        const aWon = data.p1Sets > data.p2Sets;
+        const tourneyName = (ttPanelState.matchMode === 'tournament') ? (ttPanelState.leagueName || '').trim() : '';
+        const sideAPlayers = data.isDoubles ? [data.p1Player, data.p1Partner].filter(Boolean) : [data.p1Player].filter(Boolean);
+        const sideBPlayers = data.isDoubles ? [data.p2Player, data.p2Partner].filter(Boolean) : [data.p2Player].filter(Boolean);
+        for(const n of sideAPlayers) await bumpTtPlayerRecord(n, fmt, aWon, data.p1Sets, data.p2Sets, tourneyName);
+        for(const n of sideBPlayers) await bumpTtPlayerRecord(n, fmt, !aWon, data.p2Sets, data.p1Sets, tourneyName);
+        if(data.isDoubles && sideAPlayers.length === 2) await bumpTtPairRecord(sideAPlayers[0], sideAPlayers[1], fmt, aWon, data.p1Sets, data.p2Sets);
+        if(data.isDoubles && sideBPlayers.length === 2) await bumpTtPairRecord(sideBPlayers[0], sideBPlayers[1], fmt, !aWon, data.p2Sets, data.p1Sets);
+    }
+
+    // ================= 📊 EXCEL EXPORT (ExcelJS — real TT columns, no raw dumps) =================
+    function ttStyleHeaderRow(row){
+        row.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 12 };
+        row.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } }; c.alignment = { horizontal: 'center', vertical: 'middle' }; });
+        row.height = 22;
+    }
+    async function exportTtMatchExcel(){
+        if(typeof ExcelJS === 'undefined'){ alert('Excel library load nahi hui — internet check karein.'); return; }
+        const wb = new ExcelJS.Workbook();
+        wb.creator = 'Scorvix';
+        wb.created = new Date();
+
+        // Sheet 1 — Match Summary
+        const s1 = wb.addWorksheet('Match Summary');
+        s1.columns = [{ header: 'Field', key: 'k', width: 26 }, { header: 'Value', key: 'v', width: 44 }];
+        ttStyleHeaderRow(s1.getRow(1));
+        const catLabels = { mensSingles: "Men's Singles", womensSingles: "Women's Singles", mensDoubles: "Men's Doubles", womensDoubles: "Women's Doubles", mixedDoubles: "Mixed Doubles" };
+        [
+            ['Tournament / Event', data.tourneyTitle],
+            ['Match Type', catLabels[data.matchTypeTT] || data.matchTypeTT],
+            ['Match Format', data.matchFormat],
+            ['Side A', data.p1Name], ['Side B', data.p2Name],
+            ['Final Game Score', `${data.p1Sets} - ${data.p2Sets}`],
+            ['Result', data.winner || 'In progress'],
+            ['Exported', new Date().toLocaleString()]
+        ].forEach(r => s1.addRow({ k: r[0], v: r[1] }));
+
+        // Sheet 2 — Players / Pairs
+        const s2 = wb.addWorksheet('Players & Pairs');
+        s2.columns = [{ header: 'Side', key: 'side', width: 10 }, { header: 'Player 1', key: 'p1', width: 24 }, { header: 'Player 2 (Doubles)', key: 'p2', width: 24 }];
+        ttStyleHeaderRow(s2.getRow(1));
+        s2.addRow({ side: 'A', p1: data.p1Player, p2: data.p1Partner || '—' });
+        s2.addRow({ side: 'B', p1: data.p2Player, p2: data.p2Partner || '—' });
+
+        // Sheet 3 — Game-by-Game Scores
+        const s3 = wb.addWorksheet('Game Scores');
+        s3.columns = [{ header: 'Game', key: 'g', width: 10 }, { header: data.p1Name, key: 'a', width: 22 }, { header: data.p2Name, key: 'b', width: 22 }, { header: 'Winner', key: 'w', width: 22 }];
+        ttStyleHeaderRow(s3.getRow(1));
+        (data.setsHistory || []).forEach((g, i) => s3.addRow({ g: `Game ${i + 1}`, a: g.p1, b: g.p2, w: g.p1 > g.p2 ? data.p1Name : data.p2Name }));
+
+        // Sheet 4 — Point-by-Point History
+        const s4 = wb.addWorksheet('Match History');
+        s4.columns = [{ header: '#', key: 'n', width: 6 }, { header: 'Point Won By', key: 'name', width: 26 }, { header: 'Running Score', key: 'score', width: 16 }];
+        ttStyleHeaderRow(s4.getRow(1));
+        (data.pointsHistory || []).forEach((p, i) => s4.addRow({ n: i + 1, name: p.name, score: p.score }));
+
+        const buf = await wb.xlsx.writeBuffer();
+        const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `TT-Match-${(data.p1Name || 'A')}-vs-${(data.p2Name || 'B')}.xlsx`.replace(/\s+/g, '_');
+        a.click();
+    }
+    async function exportTtTournamentExcel(){
+        if(typeof ExcelJS === 'undefined'){ alert('Excel library load nahi hui — internet check karein.'); return; }
+        const name = (ttPanelState.leagueName || '').trim();
+        if(!name){ alert('Pehle tournament select karein'); return; }
+        const matches = currentTtLeagueMatches();
+        const standings = computeTtStandings(matches);
+
+        const wb = new ExcelJS.Workbook();
+        wb.creator = 'Scorvix'; wb.created = new Date();
+
+        const s1 = wb.addWorksheet('Tournament Summary');
+        s1.columns = [{ header: 'Field', key: 'k', width: 24 }, { header: 'Value', key: 'v', width: 40 }];
+        ttStyleHeaderRow(s1.getRow(1));
+        [['Tournament', name], ['Total Matches', matches.length], ['Total Players/Pairs', ttTournamentTeamNames(matches).length], ['Exported', new Date().toLocaleString()]]
+            .forEach(r => s1.addRow({ k: r[0], v: r[1] }));
+
+        const s2 = wb.addWorksheet('Standings');
+        s2.columns = [{ header: '#', key: 'n', width: 6 }, { header: 'Player / Pair', key: 'name', width: 28 }, { header: 'Played', key: 'p', width: 10 }, { header: 'Won', key: 'w', width: 10 }, { header: 'Lost', key: 'l', width: 10 }, { header: 'Points', key: 'pts', width: 10 }, { header: 'Sets Won', key: 'sw', width: 12 }, { header: 'Sets Lost', key: 'sl', width: 12 }];
+        ttStyleHeaderRow(s2.getRow(1));
+        standings.forEach((t, i) => s2.addRow({ n: i + 1, name: t.name, p: t.played, w: t.won, l: t.lost, pts: t.points, sw: t.setsWon, sl: t.setsLost }));
+
+        const s3 = wb.addWorksheet('Matches');
+        s3.columns = [{ header: 'Match', key: 'm', width: 12 }, { header: 'Side A', key: 'a', width: 24 }, { header: 'Side B', key: 'b', width: 24 }, { header: 'Score (Games)', key: 'sc', width: 16 }, { header: 'Result', key: 'r', width: 26 }];
+        ttStyleHeaderRow(s3.getRow(1));
+        matches.forEach((m, i) => s3.addRow({
+            m: `Match ${i + 1}`, a: m.teamA.name, b: m.teamB.name,
+            sc: `${m.scoreA.sets}-${m.scoreB.sets}`,
+            r: m.winningTeam === 'A' ? `${m.teamA.name} won` : m.winningTeam === 'B' ? `${m.teamB.name} won` : 'In progress'
+        }));
+
+        const buf = await wb.xlsx.writeBuffer();
+        const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `TT-Tournament-${name}.xlsx`.replace(/\s+/g, '_');
+        a.click();
+    }
     function resetMatch() {
         if(confirm("Reset match score?")) {
             data.p1Score = 0; data.p2Score = 0; data.p1Sets = 0; data.p2Sets = 0; data.server = 1; 
@@ -1165,6 +1503,7 @@
         } else {
             saveTtMatchToSingleHistory(true);
         }
+        updateTtPlayerStatsOnFinish(); // real career stats — singles/doubles/mixed kept separate
     }
 
     // ---- Public links (reuses the same generic /public-link and
