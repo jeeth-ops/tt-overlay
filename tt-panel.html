@@ -257,22 +257,55 @@
                     </select>
                     <button style="background: #0284c7; width: 100%; margin-top: 3px;" onclick="saveTtPreset()">💾 Save as Preset</button>
 
-                    <label style="margin-top: 10px; display: block;">📜 Match History:</label>
-                    <button style="background: #ca8a04; color: #000; width: 100%;" onclick="endTtMatchAndSave()">🏁 End Match & Save</button>
-                    <button style="background: #16a34a; width: 100%; margin-top: 5px;" onclick="openTtHistoryModal()">📜 View History</button>
+                    <label style="margin-top: 10px; display: block;">🏆 Match Type <span style="font-weight:normal; color:#94a3b8;">— single match ya tournament</span>:</label>
+                    <div style="display:flex; gap:6px;">
+                        <button id="tt-mode-single-btn" style="flex:1; background:#0284c7;" onclick="setTtMatchMode('single')">🏓 Single Match</button>
+                        <button id="tt-mode-tournament-btn" style="flex:1; background:#374151;" onclick="setTtMatchMode('tournament')">🏆 Tournament</button>
+                    </div>
+                    <div id="tt-match-mode-hint" style="font-size:10px; color:#94a3b8; margin-top:6px;">Single Match mode: is match ki history alag save hogi, kisi tournament mein nahi jodegi.</div>
 
-                    <div style="font-size: 10px; color: #94a3b8; margin-top: 8px;">⌨️ Hotkeys: A/Z = P1 point +/-, L/M = P2 point +/-</div>
+                    <div id="tt-single-fields" style="margin-top:8px;">
+                        <button style="background:#16a34a; width:100%;" onclick="openTtSingleMatchesList()">📋 My Single Matches</button>
+                        <button style="background:#0284c7; width:100%; margin-top:5px;" onclick="copyTtMatchPublicLink()">🔗 Copy Public Match Link</button>
+                        <div id="tt-match-link-hint" style="display:none; font-size:10px; color:#4ade80; margin-top:4px; word-break:break-all;"></div>
+                    </div>
+
+                    <div id="tt-tournament-fields" style="display:none; margin-top:8px;">
+                        <label>Tournament <span style="font-weight:normal;">(select ya naya banaye)</span>:</label>
+                        <select id="tt-tournament-select" onchange="onTtTournamentSelectChange()" style="margin-bottom:6px;">
+                            <option value="">— Select tournament —</option>
+                            <option value="__new__">+ New Tournament…</option>
+                        </select>
+                        <div id="tt-new-tournament-wrap" style="display:none; margin-bottom:6px;">
+                            <input type="text" id="tt-league-name" placeholder="Naye tournament ka naam likhein">
+                        </div>
+                        <div id="tt-league-match-count" style="font-size:10px; color:#94a3b8; margin-bottom:6px;">Koi tournament select nahi kiya — upar se select ya naya banaye.</div>
+                        <div style="display:flex; gap:6px;">
+                            <button style="background:#16a34a; flex:1;" onclick="saveTtMatchToLeague(false)">💾 Save Match</button>
+                            <button style="background:#374151; flex:1;" onclick="openTtLeagueMatchesList()">📋 Matches</button>
+                        </div>
+                        <div style="display:flex; gap:6px; margin-top:5px;">
+                            <button style="background:#374151; flex:1;" onclick="openTtTeamHistoryView()">🏓 Team History</button>
+                            <button style="background:#374151; flex:1;" onclick="openTtPointsTableView()">📊 Points Table</button>
+                        </div>
+                        <button style="background:#0284c7; width:100%; margin-top:5px;" onclick="copyTtTournamentPublicLink()">🔗 Copy Public Tournament Link</button>
+                        <div id="tt-tournament-link-hint" style="display:none; font-size:10px; color:#4ade80; margin-top:4px; word-break:break-all;"></div>
+                        <button style="background:#7f1d1d; color:#fca5a5; width:100%; margin-top:8px;" onclick="deleteTtTournament()">🗑️ Delete Entire Tournament</button>
+                        <div style="font-size:10px; color:#94a3b8; margin-top:6px;">Match jeetne par khud save ho jaata hai. Team History/Points Table har save ke baad apne aap update hote hain.</div>
+                    </div>
+
+                    <div style="font-size: 10px; color: #94a3b8; margin-top: 10px;">⌨️ Hotkeys: A/Z = P1 point +/-, L/M = P2 point +/-</div>
                 </div>
             </div>
 
-            <!-- Match History Modal -->
+            <!-- Generic Tournament Data Modal — matches list / team history / points table -->
             <div id="ttHistoryModalOverlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:999; align-items:center; justify-content:center;">
-                <div style="background:#111827; border:1px solid #1f2937; border-radius:12px; padding:20px; width:90%; max-width:520px; max-height:75vh; overflow-y:auto;">
+                <div style="background:#111827; border:1px solid #1f2937; border-radius:12px; padding:20px; width:90%; max-width:560px; max-height:75vh; overflow-y:auto;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-                        <h3 style="margin:0; font-size:1.1rem; color:#f8fafc;">📜 Table Tennis Match History</h3>
-                        <button onclick="closeTtHistoryModal()" style="background:#dc2626; padding:6px 12px; border:none; border-radius:6px; color:#fff; cursor:pointer;">✕ Close</button>
+                        <h3 id="ttDataModalTitle" style="margin:0; font-size:1.1rem; color:#f8fafc;">📜 Table Tennis Match History</h3>
+                        <button onclick="closeTtDataModal()" style="background:#dc2626; padding:6px 12px; border:none; border-radius:6px; color:#fff; cursor:pointer;">✕ Close</button>
                     </div>
-                    <div id="ttHistoryListBox" style="display:flex; flex-direction:column; gap:8px; color:#f8fafc;">Loading...</div>
+                    <div id="ttHistoryListBox" style="display:flex; flex-direction:column; gap:8px; color:#f8fafc; font-size:12px;">Loading...</div>
                 </div>
             </div>
 
@@ -431,6 +464,11 @@
             loadSavedData();
             setupMobileCtrlLink();
             loadTtPresetsIntoDropdown();
+            loadTtPanelState();
+            applyTtMatchModeUI(ttPanelState.matchMode);
+            populateTtTournamentDropdown();
+            if(ttPanelState.leagueName) syncTtLeagueFromServer(ttPanelState.leagueName);
+            syncTtSingleMatchesFromServer();
         } else {
             currentUid = "";
             localStorage.removeItem("scorvix_uid");
@@ -744,6 +782,7 @@
                 data.winner = `${setWinner.toUpperCase()} WON THE MATCH`;
                 document.getElementById('c-winner-text').value = data.winner;
                 data.state = "winner-in";
+                autoSaveTtMatchOnFinish();
             }
         }
     }
@@ -755,6 +794,10 @@
             data.p1Score = 0; data.p2Score = 0; data.p1Sets = 0; data.p2Sets = 0; data.server = 1; 
             data.setsHistory = [];
             data.pointsHistory = [];
+            // Fresh match id — a saved match's scorecard should never be
+            // overwritten by whatever gets played next on this panel.
+            ttPanelState.tournamentMatchId = null;
+            saveTtPanelState();
             sendData();
         }
     }
@@ -815,49 +858,497 @@
         sendData();
     }
 
-    // ================= 📜 MATCH HISTORY =================
-    function endTtMatchAndSave() {
-        if (!window.loggedInUid) { alert('Pehle login karein!'); return; }
-        if (!confirm('Match end karke history mein save karna hai?')) return;
+    // ================================================================
+    // 🏆 TOURNAMENT / SINGLE MATCH SYSTEM
+    // Mirrors cricket-panel.html's league system exactly, reusing the
+    // same generic, sport-agnostic /api/league/:name REST endpoints on
+    // the server (no server changes needed — those routes just store
+    // whatever match JSON is posted to them). TT tournaments are kept in
+    // their own namespace ("TT::<name>") so a TT tournament and a
+    // cricket tournament with the same display name never collide or
+    // share data.
+    // ================================================================
+    function escapeHtmlTt(s){
+        return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function currentTtOwnerUid(){ return currentUid || (localStorage.getItem('scorvix_uid') || ''); }
+    function ttLeagueApiName(name){ return 'TT::' + (name || '').trim(); }
+    function ttLeagueApiPath(name){ return `/api/league/${encodeURIComponent(ttLeagueApiName(name))}`; }
+    function ttWithUid(url){ return `${url}${url.includes('?') ? '&' : '?'}uid=${encodeURIComponent(currentTtOwnerUid())}`; }
+    function ttLeagueStorageKey(name){ return 'tt-league::' + currentTtOwnerUid() + '::' + (name || '').trim().toLowerCase(); }
+    const TT_SINGLE_MATCHES_NAME = '__tt_single_matches__';
 
-        const entry = {
+    // ---- panel-local settings (mode, selected tournament, match id) —
+    // never broadcast to the overlay, purely this control panel's memory.
+    let ttPanelState = { matchMode: 'single', leagueName: '', tournamentMatchId: null, teamHistorySearch: '' };
+    function ttPanelStateKey(){ return 'tt-panel-state::' + currentTtOwnerUid(); }
+    function loadTtPanelState(){
+        try{
+            const raw = localStorage.getItem(ttPanelStateKey());
+            if(raw) ttPanelState = Object.assign(ttPanelState, JSON.parse(raw));
+        }catch(e){}
+    }
+    function saveTtPanelState(){
+        try{ localStorage.setItem(ttPanelStateKey(), JSON.stringify(ttPanelState)); }catch(e){}
+    }
+    function ensureTtTournamentMatchId(){
+        if(!ttPanelState.tournamentMatchId){
+            ttPanelState.tournamentMatchId = (window.crypto && crypto.randomUUID)
+                ? crypto.randomUUID()
+                : ('ttm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10));
+            saveTtPanelState();
+        }
+        return ttPanelState.tournamentMatchId;
+    }
+
+    // ---- Match Type toggle ----
+    function setTtMatchMode(mode){
+        ttPanelState.matchMode = mode;
+        saveTtPanelState();
+        applyTtMatchModeUI(mode);
+    }
+    function applyTtMatchModeUI(mode){
+        const singleBtn = document.getElementById('tt-mode-single-btn');
+        const tourBtn = document.getElementById('tt-mode-tournament-btn');
+        const singleFields = document.getElementById('tt-single-fields');
+        const tourFields = document.getElementById('tt-tournament-fields');
+        const hint = document.getElementById('tt-match-mode-hint');
+        if(!singleBtn || !tourBtn) return;
+        if(mode === 'tournament'){
+            singleBtn.style.background = '#374151'; tourBtn.style.background = '#0284c7';
+            singleFields.style.display = 'none'; tourFields.style.display = 'block';
+            hint.textContent = 'Tournament mode: match tournament mein save hoga — Points Table aur Team History apne aap update honge.';
+            populateTtTournamentDropdown();
+            const sel = document.getElementById('tt-tournament-select');
+            if(ttPanelState.leagueName) sel.value = ttPanelState.leagueName;
+            refreshTtLeagueMatchCount();
+            if(ttPanelState.leagueName) syncTtLeagueFromServer(ttPanelState.leagueName);
+        } else {
+            singleBtn.style.background = '#0284c7'; tourBtn.style.background = '#374151';
+            singleFields.style.display = 'block'; tourFields.style.display = 'none';
+            hint.textContent = 'Single Match mode: is match ki history alag save hogi, kisi tournament mein nahi jodegi.';
+        }
+    }
+
+    // ---- Known tournament names (local convenience index, like cricket-panel) ----
+    function ttKnownTournamentsKey(){ return 'tt-known-tournaments::' + currentTtOwnerUid(); }
+    function getKnownTtTournaments(){
+        try{
+            const raw = localStorage.getItem(ttKnownTournamentsKey());
+            const list = raw ? JSON.parse(raw) : [];
+            return Array.isArray(list) ? list : [];
+        }catch(e){ return []; }
+    }
+    function addKnownTtTournament(name){
+        const trimmed = (name || '').trim();
+        if(!trimmed) return;
+        const list = getKnownTtTournaments();
+        if(!list.some(n => n.toLowerCase() === trimmed.toLowerCase())){
+            list.push(trimmed);
+            try{ localStorage.setItem(ttKnownTournamentsKey(), JSON.stringify(list)); }catch(e){}
+        }
+        populateTtTournamentDropdown();
+    }
+    function removeKnownTtTournament(name){
+        const trimmed = (name || '').trim().toLowerCase();
+        const list = getKnownTtTournaments().filter(n => n.toLowerCase() !== trimmed);
+        try{ localStorage.setItem(ttKnownTournamentsKey(), JSON.stringify(list)); }catch(e){}
+        populateTtTournamentDropdown();
+    }
+    function populateTtTournamentDropdown(){
+        const sel = document.getElementById('tt-tournament-select');
+        if(!sel) return;
+        const current = sel.value;
+        const names = getKnownTtTournaments();
+        sel.innerHTML = '<option value="">— Select tournament —</option>'
+            + names.map(n => `<option value="${escapeHtmlTt(n)}">${escapeHtmlTt(n)}</option>`).join('')
+            + '<option value="__new__">+ New Tournament…</option>';
+        if(current === '__new__' || names.some(n => n.toLowerCase() === current.toLowerCase())) sel.value = current;
+    }
+    function onTtTournamentSelectChange(){
+        const sel = document.getElementById('tt-tournament-select');
+        const wrap = document.getElementById('tt-new-tournament-wrap');
+        if(sel.value === '__new__'){
+            wrap.style.display = 'block';
+            return;
+        }
+        wrap.style.display = 'none';
+        ttPanelState.leagueName = sel.value;
+        saveTtPanelState();
+        refreshTtLeagueMatchCount();
+        if(sel.value) syncTtLeagueFromServer(sel.value);
+    }
+    // Resolves the tournament name currently intended — reads the "new
+    // tournament" text box when the dropdown is on __new__, so Save Match
+    // works the very first time without a separate "create" step.
+    function resolveTtActiveTournamentName(){
+        const sel = document.getElementById('tt-tournament-select');
+        if(sel && sel.value === '__new__'){
+            const typed = (document.getElementById('tt-league-name').value || '').trim();
+            return typed;
+        }
+        return (ttPanelState.leagueName || '').trim();
+    }
+
+    const ttLeagueCache = {}; // leagueKey -> matches[]
+    function loadTtLeagueMatchesLocal(name){
+        if(!name || !name.trim()) return [];
+        try{
+            const raw = localStorage.getItem(ttLeagueStorageKey(name));
+            return raw ? JSON.parse(raw) : [];
+        }catch(e){ return []; }
+    }
+    function saveTtLeagueMatchesLocal(name, matches){
+        try{ localStorage.setItem(ttLeagueStorageKey(name), JSON.stringify(matches)); }catch(e){}
+    }
+    function currentTtLeagueMatches(){
+        const name = (ttPanelState.leagueName || '').trim();
+        if(!name) return [];
+        const key = ttLeagueStorageKey(name);
+        return ttLeagueCache[key] || loadTtLeagueMatchesLocal(name);
+    }
+    async function syncTtLeagueFromServer(name){
+        const trimmed = (name || '').trim();
+        if(!trimmed || !currentTtOwnerUid()) return;
+        const key = ttLeagueStorageKey(trimmed);
+        try{
+            const res = await fetch(ttWithUid(ttLeagueApiPath(trimmed)));
+            const d = await res.json();
+            if(d && d.success){
+                ttLeagueCache[key] = d.matches || [];
+                saveTtLeagueMatchesLocal(trimmed, ttLeagueCache[key]);
+                refreshTtLeagueMatchCount();
+            }
+        }catch(e){ /* offline — keep local cache */ }
+    }
+
+    // Builds one TT match record from the live scoreboard `data`.
+    function buildTtMatchRecordForLeague(){
+        let winningTeam = null;
+        if(data.state === 'winner-in' || (data.winner || '').trim()){
+            if(data.p1Sets > data.p2Sets) winningTeam = 'A';
+            else if(data.p2Sets > data.p1Sets) winningTeam = 'B';
+        }
+        return {
+            matchId: ensureTtTournamentMatchId(),
+            roomId: currentUid || null,
             sport: 'tt',
-            p1Name: document.getElementById('c-p1').value,
-            p2Name: document.getElementById('c-p2').value,
-            p1Sets: data.p1Sets || 0,
-            p2Sets: data.p2Sets || 0,
-            p1Score: data.p1Score || 0,
-            p2Score: data.p2Score || 0,
-            endedAt: new Date().toISOString()
+            savedAt: new Date().toISOString(),
+            format: data.matchFormat,
+            category: data.matchCategory,
+            teamA: { name: data.p1Name },
+            teamB: { name: data.p2Name },
+            winningTeam,
+            scoreA: { sets: data.p1Sets || 0, points: data.p1Score || 0 },
+            scoreB: { sets: data.p2Sets || 0, points: data.p2Score || 0 },
+            setsHistory: (data.setsHistory || []).slice()
         };
-
-        db.collection('matchHistory').doc(window.loggedInUid).collection('entries').add(entry)
-            .then(() => alert('Match history mein save ho gaya!'))
-            .catch(err => console.log('History save error:', err));
     }
 
-    function openTtHistoryModal() {
-        if (!window.loggedInUid) { alert('Pehle login karein!'); return; }
+    function refreshTtLeagueMatchCount(){
+        const name = (ttPanelState.leagueName || '').trim();
+        const countEl = document.getElementById('tt-league-match-count');
+        if(!countEl) return;
+        if(!name){ countEl.textContent = 'Koi tournament select nahi kiya — upar se select ya naya banaye.'; return; }
+        const matches = currentTtLeagueMatches();
+        const note = currentTtOwnerUid() ? '' : ' (login nahi hai — sirf is device par saved)';
+        countEl.textContent = matches.length
+            ? `"${name}" — ${matches.length} match${matches.length === 1 ? '' : 'es'} saved${note}.`
+            : `"${name}" — abhi tak koi match save nahi hua${note}.`;
+    }
+
+    function saveTtMatchToLeague(silent){
+        const sel = document.getElementById('tt-tournament-select');
+        let name = resolveTtActiveTournamentName();
+        if(!name){ if(!silent) alert('Pehle tournament select ya naam type karein'); return; }
+        ttPanelState.leagueName = name;
+        saveTtPanelState();
+        if(sel){ sel.value = name; document.getElementById('tt-new-tournament-wrap').style.display = 'none'; }
+
+        const rec = buildTtMatchRecordForLeague();
+        const key = ttLeagueStorageKey(name);
+        const matches = currentTtLeagueMatches().slice();
+        const idx = matches.findIndex(m => m.matchId === rec.matchId);
+        if(idx >= 0) matches[idx] = rec; else matches.push(rec);
+        ttLeagueCache[key] = matches;
+        saveTtLeagueMatchesLocal(name, matches);
+        addKnownTtTournament(name);
+        refreshTtLeagueMatchCount();
+        if(!silent) alert(`Saved to "${name}" — ${matches.length} match${matches.length === 1 ? '' : 'es'} ab track ho rahe hain`);
+
+        if(!currentTtOwnerUid()){ if(!silent) alert('⚠️ Login nahi hai — sirf is device par save hua'); return; }
+        fetch(ttWithUid(`${ttLeagueApiPath(name)}/match`), {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rec)
+        }).then(r => r.json()).then(d => {
+            if(d && d.success){ ttLeagueCache[key] = d.matches; saveTtLeagueMatchesLocal(name, d.matches); refreshTtLeagueMatchCount(); }
+        }).catch(() => { if(!silent) console.log('TT league sync failed — saved locally only'); });
+    }
+
+    function deleteTtMatchFromLeague(matchId){
+        const name = (ttPanelState.leagueName || '').trim();
+        if(!name) return;
+        const key = ttLeagueStorageKey(name);
+        const matches = currentTtLeagueMatches().filter(m => m.matchId !== matchId);
+        ttLeagueCache[key] = matches;
+        saveTtLeagueMatchesLocal(name, matches);
+        refreshTtLeagueMatchCount();
+        openTtLeagueMatchesList();
+        if(!currentTtOwnerUid()) return;
+        fetch(ttWithUid(`${ttLeagueApiPath(name)}/match/${encodeURIComponent(matchId)}`), { method: 'DELETE' })
+            .then(r => r.json()).then(d => { if(d && d.success){ ttLeagueCache[key] = d.matches; saveTtLeagueMatchesLocal(name, d.matches); } }).catch(() => {});
+    }
+
+    function deleteTtTournament(){
+        const name = (ttPanelState.leagueName || '').trim();
+        if(!name){ alert('Pehle ek tournament select karein'); return; }
+        const matches = currentTtLeagueMatches();
+        if(!confirm(`Poora tournament "${name}" — sabhi ${matches.length} match — hamesha ke liye delete karna hai? Yeh undo nahi ho sakta.`)) return;
+        const key = ttLeagueStorageKey(name);
+        ttLeagueCache[key] = [];
+        try{ localStorage.removeItem(ttLeagueStorageKey(name)); }catch(e){}
+        removeKnownTtTournament(name);
+        ttPanelState.leagueName = '';
+        saveTtPanelState();
+        document.getElementById('tt-tournament-select').value = '';
+        document.getElementById('tt-new-tournament-wrap').style.display = 'none';
+        refreshTtLeagueMatchCount();
+        if(currentTtOwnerUid()){
+            matches.forEach(m => fetch(ttWithUid(`${ttLeagueApiPath(name)}/match/${encodeURIComponent(m.matchId)}`), { method: 'DELETE' }).catch(() => {}));
+        }
+        alert(`🗑️ "${name}" aur uske ${matches.length} match delete ho gaye`);
+    }
+
+    // ---- Single Match history (own namespace, never mixed into a tournament) ----
+    function currentTtSingleMatches(){
+        const key = ttLeagueStorageKey(TT_SINGLE_MATCHES_NAME);
+        return ttLeagueCache[key] || loadTtLeagueMatchesLocal(TT_SINGLE_MATCHES_NAME);
+    }
+    function saveTtMatchToSingleHistory(silent){
+        const rec = buildTtMatchRecordForLeague();
+        const key = ttLeagueStorageKey(TT_SINGLE_MATCHES_NAME);
+        const matches = currentTtSingleMatches().slice();
+        const idx = matches.findIndex(m => m.matchId === rec.matchId);
+        if(idx >= 0) matches[idx] = rec; else matches.push(rec);
+        ttLeagueCache[key] = matches;
+        saveTtLeagueMatchesLocal(TT_SINGLE_MATCHES_NAME, matches);
+        if(!silent) alert(`Saved — ${matches.length} single match${matches.length === 1 ? '' : 'es'} history mein`);
+        if(!currentTtOwnerUid()) return;
+        fetch(ttWithUid(`${ttLeagueApiPath(TT_SINGLE_MATCHES_NAME)}/match`), {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rec)
+        }).then(r => r.json()).then(d => { if(d && d.success){ ttLeagueCache[key] = d.matches; saveTtLeagueMatchesLocal(TT_SINGLE_MATCHES_NAME, d.matches); } }).catch(() => {});
+    }
+    function deleteTtMatchFromSingleHistory(matchId){
+        const key = ttLeagueStorageKey(TT_SINGLE_MATCHES_NAME);
+        const matches = currentTtSingleMatches().filter(m => m.matchId !== matchId);
+        ttLeagueCache[key] = matches;
+        saveTtLeagueMatchesLocal(TT_SINGLE_MATCHES_NAME, matches);
+        openTtSingleMatchesList();
+        if(!currentTtOwnerUid()) return;
+        fetch(ttWithUid(`${ttLeagueApiPath(TT_SINGLE_MATCHES_NAME)}/match/${encodeURIComponent(matchId)}`), { method: 'DELETE' })
+            .then(r => r.json()).then(d => { if(d && d.success){ ttLeagueCache[key] = d.matches; saveTtLeagueMatchesLocal(TT_SINGLE_MATCHES_NAME, d.matches); } }).catch(() => {});
+    }
+    async function syncTtSingleMatchesFromServer(){
+        if(!currentTtOwnerUid()) return;
+        const key = ttLeagueStorageKey(TT_SINGLE_MATCHES_NAME);
+        try{
+            const res = await fetch(ttWithUid(ttLeagueApiPath(TT_SINGLE_MATCHES_NAME)));
+            const d = await res.json();
+            if(d && d.success){ ttLeagueCache[key] = d.matches || []; saveTtLeagueMatchesLocal(TT_SINGLE_MATCHES_NAME, ttLeagueCache[key]); }
+        }catch(e){}
+    }
+
+    // ---- Auto-save on match finish — called from checkRules() the
+    // moment a match is won, exactly like cricket-panel's auto-save. ----
+    function autoSaveTtMatchOnFinish(){
+        if(ttPanelState.matchMode === 'tournament' && (ttPanelState.leagueName || '').trim()){
+            saveTtMatchToLeague(true);
+        } else {
+            saveTtMatchToSingleHistory(true);
+        }
+    }
+
+    // ---- Public links (reuses the same generic /public-link and
+    // /api/public/match endpoints cricket-panel uses — no server change
+    // needed since they just serve whatever was posted). ----
+    async function copyTtTournamentPublicLink(){
+        const name = (ttPanelState.leagueName || '').trim();
+        const hint = document.getElementById('tt-tournament-link-hint');
+        if(!name){ alert('Pehle tournament select karein'); return; }
+        if(!currentTtOwnerUid()){ alert('⚠️ Pehle login karein — public link account se juda hota hai'); return; }
+        try{
+            const res = await fetch(ttWithUid(`${ttLeagueApiPath(name)}/public-link`), { method: 'POST' });
+            const d = await res.json();
+            if(d && d.success){
+                const fullUrl = `${location.origin}${d.url}`;
+                await navigator.clipboard.writeText(fullUrl).catch(() => {});
+                if(hint){ hint.style.display = 'block'; hint.textContent = `Copied: ${fullUrl}`; }
+            } else if(hint){ hint.style.display = 'block'; hint.textContent = '⚠️ Link nahi ban paya'; }
+        }catch(e){ if(hint){ hint.style.display = 'block'; hint.textContent = '⚠️ Link nahi ban paya — connection check karein'; } }
+    }
+    function copyTtMatchPublicLink(){
+        const id = ensureTtTournamentMatchId();
+        const hint = document.getElementById('tt-match-link-hint');
+        const fullUrl = `${location.origin}/score/match/${id}`;
+        navigator.clipboard.writeText(fullUrl).catch(() => {});
+        if(hint){ hint.style.display = 'block'; hint.textContent = `Copied: ${fullUrl} (match start hote hi live, save hone par permanent)`; }
+    }
+
+    // ---- Team names / stats aggregation across a tournament's saved matches ----
+    function ttTournamentTeamNames(matches){
+        const set = new Set();
+        matches.forEach(m => {
+            if(m.teamA && m.teamA.name) set.add(m.teamA.name.trim());
+            if(m.teamB && m.teamB.name) set.add(m.teamB.name.trim());
+        });
+        return Array.from(set);
+    }
+    function computeTtTeamStats(teamName, matches){
+        const name = (teamName || '').trim().toLowerCase();
+        if(!name) return null;
+        let played = 0, won = 0, lost = 0, setsWon = 0, setsLost = 0, pointsWon = 0, pointsLost = 0;
+        matches.forEach(m => {
+            const aName = ((m.teamA && m.teamA.name) || '').trim().toLowerCase();
+            const bName = ((m.teamB && m.teamB.name) || '').trim().toLowerCase();
+            let side = null;
+            if(aName === name) side = 'A'; else if(bName === name) side = 'B';
+            if(!side) return;
+            played++;
+            const own = side === 'A' ? m.scoreA : m.scoreB;
+            const opp = side === 'A' ? m.scoreB : m.scoreA;
+            if(own){ setsWon += own.sets || 0; pointsWon += own.points || 0; }
+            if(opp){ setsLost += opp.sets || 0; pointsLost += opp.points || 0; }
+            if(m.winningTeam === side) won++; else if(m.winningTeam) lost++;
+        });
+        if(played === 0) return null;
+        return { played, won, lost, setsWon, setsLost, pointsWon, pointsLost, points: won * 2 };
+    }
+    function getTtTeamHistoryRows(name, matches){
+        const lower = (name || '').trim().toLowerCase();
+        const rows = [];
+        matches.forEach((m, i) => {
+            const aName = ((m.teamA && m.teamA.name) || '').trim().toLowerCase();
+            const bName = ((m.teamB && m.teamB.name) || '').trim().toLowerCase();
+            let side = null;
+            if(aName === lower) side = 'A'; else if(bName === lower) side = 'B';
+            if(!side) return;
+            const own = side === 'A' ? m.scoreA : m.scoreB;
+            const opp = side === 'A' ? m.scoreB : m.scoreA;
+            const oppTeam = side === 'A' ? m.teamB : m.teamA;
+            const result = m.winningTeam === side ? 'Won' : m.winningTeam ? 'Lost' : 'In progress';
+            rows.push({
+                label: `Match ${i + 1}`, opponent: oppTeam ? oppTeam.name : '—',
+                own: own ? `${own.sets} sets (${own.points} pts)` : '—',
+                opp: opp ? `${opp.sets} sets (${opp.points} pts)` : '—',
+                result
+            });
+        });
+        return rows;
+    }
+    function computeTtStandings(matches){
+        return ttTournamentTeamNames(matches).map(name => {
+            const s = computeTtTeamStats(name, matches) || { played: 0, won: 0, lost: 0, setsWon: 0, setsLost: 0, points: 0 };
+            return { name, played: s.played, won: s.won, lost: s.lost, points: s.won * 2, setsWon: s.setsWon, setsLost: s.setsLost, setDiff: s.setsWon - s.setsLost };
+        }).sort((a, b) => (b.points - a.points) || (b.setDiff - a.setDiff));
+    }
+
+    // ---- Generic modal (reused for match lists, team history, points table) ----
+    function openTtDataModal(title){
+        document.getElementById('ttDataModalTitle').textContent = title;
         document.getElementById('ttHistoryModalOverlay').style.display = 'flex';
-        const box = document.getElementById('ttHistoryListBox');
-        box.innerHTML = 'Loading...';
-        db.collection('matchHistory').doc(window.loggedInUid).collection('entries')
-            .orderBy('endedAt', 'desc').limit(25).get().then(snap => {
-                if (snap.empty) { box.innerHTML = '<div style="color:#94a3b8;">Koi match history nahi mili abhi tak.</div>'; return; }
-                box.innerHTML = '';
-                snap.forEach(doc => {
-                    const d = doc.data();
-                    const row = document.createElement('div');
-                    row.style.cssText = 'background:#1f2937; border-radius:8px; padding:10px 14px; display:flex; justify-content:space-between; align-items:center;';
-                    const dateStr = d.endedAt ? new Date(d.endedAt).toLocaleString() : '';
-                    row.innerHTML = `<div><strong>${d.p1Name} (Sets ${d.p1Sets}) vs ${d.p2Name} (Sets ${d.p2Sets})</strong><br><span style="font-size:0.75rem;color:#94a3b8;">${dateStr}</span></div>`;
-                    box.appendChild(row);
-                });
-            }).catch(err => { console.log('History fetch error:', err); box.innerHTML = 'Error loading history.'; });
     }
-
-    function closeTtHistoryModal() {
+    function closeTtDataModal(){
         document.getElementById('ttHistoryModalOverlay').style.display = 'none';
+    }
+    function closeTtHistoryModal(){ closeTtDataModal(); } // kept as an alias for any old callers
+
+    function ttMatchRowHtml(m, onDeleteFn){
+        const resultText = m.winningTeam === 'A' ? `${escapeHtmlTt(m.teamA.name)} won`
+            : m.winningTeam === 'B' ? `${escapeHtmlTt(m.teamB.name)} won` : 'In progress';
+        return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid #1f2937;">
+            <div style="min-width:0;">
+                <div style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtmlTt(m.teamA.name)} vs ${escapeHtmlTt(m.teamB.name)}</div>
+                <div style="color:#94a3b8;">${escapeHtmlTt(resultText)} · Sets ${m.scoreA.sets}-${m.scoreB.sets} · Pts ${m.scoreA.points}-${m.scoreB.points}</div>
+            </div>
+            <button type="button" style="flex:none; background:#374151;" onclick="${onDeleteFn}('${escapeHtmlTt(m.matchId)}')">🗑</button>
+        </div>`;
+    }
+    function openTtLeagueMatchesList(){
+        openTtDataModal('📋 Tournament Matches');
+        const matches = currentTtLeagueMatches();
+        const box = document.getElementById('ttHistoryListBox');
+        box.innerHTML = matches.length
+            ? [...matches].reverse().map(m => ttMatchRowHtml(m, 'deleteTtMatchFromLeague')).join('')
+            : '<div style="color:#94a3b8;">Is tournament mein abhi tak koi match save nahi hua.</div>';
+    }
+    function openTtSingleMatchesList(){
+        openTtDataModal('📋 My Single Matches');
+        const matches = currentTtSingleMatches();
+        const box = document.getElementById('ttHistoryListBox');
+        box.innerHTML = matches.length
+            ? [...matches].reverse().map(m => ttMatchRowHtml(m, 'deleteTtMatchFromSingleHistory')).join('')
+            : '<div style="color:#94a3b8;">Koi single match history nahi mili abhi tak.</div>';
+    }
+    function openTtTeamHistoryView(){
+        openTtDataModal('🏓 Team History');
+        const matches = currentTtLeagueMatches();
+        const names = ttTournamentTeamNames(matches);
+        const box = document.getElementById('ttHistoryListBox');
+        const optionsHtml = names.map(n => `<option value="${escapeHtmlTt(n)}">${escapeHtmlTt(n)}</option>`).join('');
+        box.innerHTML = `
+            <select id="tt-team-history-select" style="width:100%; margin-bottom:8px; padding:6px; background:#090d16; border:1px solid #374151; color:#fff; border-radius:4px;">
+                <option value="">— Select a team —</option>${optionsHtml}
+            </select>
+            <div id="tt-team-history-results" style="color:#94a3b8;">${names.length ? 'Team select karein uski tournament history dekhne ke liye.' : 'Is tournament mein abhi koi team data nahi hai.'}</div>
+        `;
+        const sel = document.getElementById('tt-team-history-select');
+        if(ttPanelState.teamHistorySearch && names.some(n => n.toLowerCase() === ttPanelState.teamHistorySearch.toLowerCase())){
+            sel.value = ttPanelState.teamHistorySearch;
+            renderTtTeamHistoryResults(sel.value, matches);
+        }
+        sel.addEventListener('change', e => renderTtTeamHistoryResults(e.target.value, currentTtLeagueMatches()));
+    }
+    function renderTtTeamHistoryResults(teamName, matches){
+        const resultsEl = document.getElementById('tt-team-history-results');
+        if(!resultsEl) return;
+        const name = (teamName || '').trim();
+        ttPanelState.teamHistorySearch = name;
+        saveTtPanelState();
+        if(!name){ resultsEl.innerHTML = 'Team select karein uski tournament history dekhne ke liye.'; return; }
+        const rows = getTtTeamHistoryRows(name, matches);
+        if(!rows.length){ resultsEl.innerHTML = `"${escapeHtmlTt(name)}" ke liye is tournament mein koi match nahi mila.`; return; }
+        const stats = computeTtTeamStats(name, matches);
+        const rowsHtml = rows.map(r => `<tr><td>${escapeHtmlTt(r.label)}</td><td>${escapeHtmlTt(r.opponent)}</td><td>${escapeHtmlTt(r.own)}</td><td>${escapeHtmlTt(r.opp)}</td><td>${escapeHtmlTt(r.result)}</td></tr>`).join('');
+        resultsEl.innerHTML = `
+            <div style="font-weight:700;margin-bottom:6px;">${escapeHtmlTt(name)} — tournament history</div>
+            <div style="overflow-x:auto;">
+                <table style="width:100%;border-collapse:collapse;font-size:11px;">
+                    <thead><tr style="color:#94a3b8;text-align:left;"><th>Match</th><th>Opponent</th><th>For</th><th>Against</th><th>Result</th></tr></thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            </div>
+            <div style="margin-top:10px;font-weight:700;">Tournament totals</div>
+            <div style="font-size:11px;color:#94a3b8;line-height:1.7;">
+                ${stats ? `Played ${stats.played} · Won ${stats.won} · Lost ${stats.lost} · Points ${stats.points} · Sets ${stats.setsWon}-${stats.setsLost} · Points ${stats.pointsWon}-${stats.pointsLost}` : ''}
+            </div>
+        `;
+    }
+    function openTtPointsTableView(){
+        openTtDataModal('📊 Points Table');
+        const matches = currentTtLeagueMatches();
+        const standings = computeTtStandings(matches);
+        const box = document.getElementById('ttHistoryListBox');
+        if(!standings.length){ box.innerHTML = '<div style="color:#94a3b8;">Is tournament mein abhi koi team data nahi hai.</div>'; return; }
+        const rowsHtml = standings.map((t, i) => `<tr><td>${i + 1}</td><td>${escapeHtmlTt(t.name)}</td><td>${t.played}</td><td>${t.won}</td><td>${t.lost}</td><td>${t.points}</td><td>${t.setsWon}-${t.setsLost}</td></tr>`).join('');
+        box.innerHTML = `
+            <div style="font-weight:700;margin-bottom:6px;">Points Table — tournament standings</div>
+            <div style="overflow-x:auto;">
+                <table style="width:100%;border-collapse:collapse;font-size:11px;">
+                    <thead><tr style="color:#94a3b8;text-align:left;"><th>#</th><th>Team</th><th>P</th><th>W</th><th>L</th><th>Pts</th><th>Sets</th></tr></thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            </div>
+            <div style="margin-top:8px; font-size:10px; color:#94a3b8;">Har match save hone par apne aap recalculate hota hai.</div>
+        `;
     }
 
     // ================= ⌨️ KEYBOARD HOTKEYS =================
