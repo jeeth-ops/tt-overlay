@@ -228,8 +228,8 @@
                     <input type="text" id="c-match-category" value="Mixed Doubles" oninput="sendDataThrottled()" style="border-left: 3px solid #10b981;">
                 </div>
                 <div>
-                    <label>Team Matchup (Bottom Black Box):</label>
-                    <input type="text" id="c-team-matchup" value="SCL vs KB" oninput="sendDataThrottled()" style="border-left: 3px solid #10b981;">
+                    <label>Team Matchup (Bottom Black Box) — auto from names:</label>
+                    <input type="text" id="c-team-matchup" value="SCL vs KB" readonly style="border-left: 3px solid #10b981; opacity:0.85; cursor:not-allowed;">
                 </div>
                 <div>
                     <label>Winner Announcement Text:</label>
@@ -405,7 +405,13 @@
                     <button class="toggle-btn bg-red" onclick="togglePointsHistory(false)">Hide</button>
                 </div>
 
-                <label style="margin-top: 4px;">Tournament History (Broadcast Graphic):</label>
+                <label style="margin-top: 4px;">Team History (Broadcast Graphic — current match's 2 teams):</label>
+                <div class="toggles-grid">
+                    <button class="toggle-btn bg-blue" onclick="toggleTtTeamHistoryOverlay(true)">Show</button>
+                    <button class="toggle-btn bg-red" onclick="toggleTtTeamHistoryOverlay(false)">Hide</button>
+                </div>
+
+                <label style="margin-top: 4px;">Tournament History (Broadcast Graphic — all matches):</label>
                 <div class="toggles-grid">
                     <button class="toggle-btn bg-blue" onclick="toggleTtTournamentHistoryOverlay(true)">Show</button>
                     <button class="toggle-btn bg-red" onclick="toggleTtTournamentHistoryOverlay(false)">Hide</button>
@@ -574,8 +580,10 @@
         // without fighting over the single `state` field) ----
         showTournamentHistory: false,
         showPlayerStats: false,
+        showTeamHistory: false,
         tournamentHistorySnapshot: { tournamentName: "", rows: [] },
         playerStatsSnapshot: { sideA: [], sideB: [] },
+        teamHistorySnapshot: { teamA: null, teamB: null },
         // 🌟 Colors Default Object Added
         colors: {
             bg: "#0e101c",
@@ -603,8 +611,15 @@
         data.tourneyTitle = document.getElementById('c-tourney-title').value;
         data.matchFormat = document.getElementById('c-match-format').value;
         data.matchCategory = document.getElementById('c-match-category').value;
-        data.teamMatchup = document.getElementById('c-team-matchup').value;
-        data.subLabel = data.teamMatchup; // 🌟 FIX: overlay's bottom badge reads data.subLabel, not data.teamMatchup
+        // 🌟 Team Matchup is now AUTO-DERIVED from the two side names — e.g.
+        // "IND" and "PAK" become "IND vs PAK" automatically. This replaces
+        // the old free-text field (which could say anything and easily go
+        // out of sync with the actual player/team names shown everywhere
+        // else). The input field itself is kept read-only below and just
+        // mirrors this computed value.
+        data.teamMatchup = `${data.p1Name || 'TEAM A'} vs ${data.p2Name || 'TEAM B'}`;
+        document.getElementById('c-team-matchup').value = data.teamMatchup;
+        data.subLabel = data.teamMatchup; // overlay's bottom badge reads data.subLabel
         data.winner = document.getElementById('c-winner-text').value;
 
         // ---- Match type + doubles-aware player names ----
@@ -929,6 +944,26 @@
         }));
         return { tournamentName: name || 'Single Match', rows };
     }
+    // ================= 🏓 TEAM HISTORY (broadcast graphic — the 2 teams in THIS match) =================
+    // Reuses the exact same computeTtTeamStats()/getTtTeamHistoryRows() the
+    // in-panel "Team History" modal already uses — same numbers, just also
+    // pushed to the overlay when switched ON.
+    function buildTtTeamHistorySnapshot(){
+        const matches = currentTtLeagueMatches();
+        const teamA = data.p1Name, teamB = data.p2Name;
+        const statsA = computeTtTeamStats(teamA, matches);
+        const statsB = computeTtTeamStats(teamB, matches);
+        return {
+            teamA: { name: teamA, stats: statsA },
+            teamB: { name: teamB, stats: statsB }
+        };
+    }
+    function toggleTtTeamHistoryOverlay(show){
+        data.showTeamHistory = show;
+        if(show) data.teamHistorySnapshot = buildTtTeamHistorySnapshot();
+        sendData();
+    }
+
     function toggleTtTournamentHistoryOverlay(show){
         data.showTournamentHistory = show;
         if(show) data.tournamentHistorySnapshot = buildTtTournamentHistorySnapshot();
