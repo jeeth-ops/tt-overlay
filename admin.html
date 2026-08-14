@@ -156,6 +156,36 @@ label{font-size:.78rem;color:var(--text-muted);display:block;margin:12px 0 6px;f
 .bar-col span{font-size:.72rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
 
 .hl{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border-soft);font-size:.85rem;}
+.tpl-toolbar{display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap;}
+.tpl-toolbar input,.tpl-toolbar select{background:var(--bg-card);border:1px solid var(--border);color:var(--text-main);border-radius:8px;padding:8px 12px;font-size:.82rem;}
+.tpl-toolbar input:focus,.tpl-toolbar select:focus{outline:none;border-color:var(--text-dim);}
+.view-toggle{display:flex;gap:2px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:2px;}
+.view-btn{padding:5px 10px;border-radius:6px;background:transparent;}
+.view-btn.active{background:var(--bg-card-hover);color:var(--text-main);}
+.tpl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;}
+.tpl-grid.is-list{display:flex;flex-direction:column;gap:10px;}
+.tpl-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px;transition:background .2s var(--ease),border-color .2s var(--ease);}
+.tpl-card:hover{background:var(--bg-card-hover);}
+.tpl-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px;}
+.tpl-card-title{font-weight:600;font-size:.95rem;display:flex;align-items:center;gap:8px;}
+.tpl-card-slug{color:var(--text-dim);font-size:.72rem;font-weight:500;}
+.tpl-card-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;}
+.tpl-card-actions .btn{padding:5px 10px;font-size:.74rem;}
+.tpl-overlays{margin-top:12px;border-top:1px solid var(--border-soft);padding-top:10px;}
+.tpl-overlays summary{cursor:pointer;font-size:.78rem;color:var(--text-muted);font-weight:600;list-style:none;display:flex;align-items:center;gap:6px;}
+.tpl-overlays summary::-webkit-details-marker{display:none;}
+.tpl-overlays summary::before{content:'▸';transition:transform .15s var(--ease);}
+.tpl-overlays[open] summary::before{transform:rotate(90deg);}
+.overlay-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:.78rem;border-bottom:1px solid var(--border-soft);}
+.overlay-row:last-child{border-bottom:none;}
+.overlay-add{display:flex;gap:6px;margin-top:8px;}
+.overlay-add input{flex:1;background:var(--bg-dark);border:1px solid var(--border);color:var(--text-main);border-radius:6px;padding:6px 8px;font-size:.76rem;}
+.modal-lg{max-width:760px !important;}
+.modal-lg textarea{width:100%;background:var(--bg-dark);border:1px solid var(--border);color:var(--text-main);border-radius:8px;padding:10px;font-family:monospace;font-size:.78rem;margin-top:6px;}
+.preview-tabs{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;}
+.preview-tabs .btn{padding:5px 12px;font-size:.76rem;}
+.preview-tabs .btn.active{background:var(--text-main);color:var(--bg-dark);}
+.preview-frame{width:100%;height:440px;border:1px solid var(--border);border-radius:10px;background:#fff;}
 .hl:last-child{border-bottom:none;}
 
 .toast-wrap{position:fixed;bottom:24px;right:24px;z-index:1200;display:flex;flex-direction:column;gap:10px;}
@@ -273,7 +303,19 @@ label{font-size:.78rem;color:var(--text-muted);display:block;margin:12px 0 6px;f
       </div>
       <div class="card">
         <h3><span class="t">🗂️ Manage Templates</span></h3>
-        <div id="tplList"></div>
+        <div class="tpl-toolbar">
+          <input id="tplSearch" placeholder="Search templates…" style="flex:1;min-width:160px;">
+          <select id="tplFilter">
+            <option value="all">All</option>
+            <option value="published">Published</option>
+            <option value="unpublished">Unpublished</option>
+          </select>
+          <div class="view-toggle">
+            <button class="btn btn-ghost view-btn active" data-view="grid" id="tplViewGrid" title="Grid view">▦</button>
+            <button class="btn btn-ghost view-btn" data-view="list" id="tplViewList" title="List view">☰</button>
+          </div>
+        </div>
+        <div id="tplList" class="tpl-grid"></div>
       </div>
     </section>
 
@@ -556,26 +598,193 @@ document.getElementById('userSearchClear').onclick = ()=>{
 };
 
 // ===== Broadcasting =====
+let tplCache = [];
+let tplView = 'grid';
+
+function escAttr(s){ return String(s==null?'':s).replace(/"/g,'&quot;'); }
+function escHtml(s){ return String(s==null?'':s).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
 async function loadTemplates(){
   const data = await api('/templates');
+  tplCache = data.templates || [];
+  renderTplList();
+}
+
+function renderTplList(){
   const list = document.getElementById('tplList');
-  if (!data.templates.length){ list.innerHTML = `<div class="empty-state"><div class="ic">📡</div>No templates yet.<div class="hint">Add one above — it appears on the live site instantly.</div></div>`; return; }
-  list.innerHTML = data.templates.map(t=>`
-    <div class="hl">
-      <span>${t.icon||'🎯'} ${t.name} <span style="color:var(--text-dim);font-size:.78rem;">/${t.slug}</span></span>
-      <span style="display:flex;gap:8px;align-items:center;">
+  const q = (document.getElementById('tplSearch').value||'').trim().toLowerCase();
+  const filter = document.getElementById('tplFilter').value;
+  list.className = 'tpl-grid' + (tplView==='list' ? ' is-list' : '');
+
+  const filtered = tplCache.filter(t=>{
+    if (q && !(`${t.name} ${t.slug}`.toLowerCase().includes(q))) return false;
+    if (filter==='published' && !t.published) return false;
+    if (filter==='unpublished' && t.published) return false;
+    return true;
+  });
+
+  if (!tplCache.length){ list.innerHTML = `<div class="empty-state"><div class="ic">📡</div>No templates yet.<div class="hint">Add one above — it appears on the live site instantly.</div></div>`; return; }
+  if (!filtered.length){ list.innerHTML = `<div class="empty-state"><div class="ic">🔍</div>No templates match.<div class="hint">Try a different search or filter.</div></div>`; return; }
+
+  list.innerHTML = filtered.map(t=>{
+    const overlays = t.overlays || [];
+    return `
+    <div class="tpl-card" data-card="${escAttr(t.slug)}">
+      <div class="tpl-card-head">
+        <div class="tpl-card-title">${t.icon||'🎯'} ${escHtml(t.name)}</div>
         ${t.published ? '<span class="badge badge-ok">Published</span>' : '<span class="badge badge-warn">Unpublished</span>'}
-        <button class="btn btn-ghost" data-slug="${t.slug}" data-pub="${!t.published}">${t.published?'Unpublish':'Publish'}</button>
-        <button class="btn btn-danger" data-del="${t.slug}">Remove</button>
-      </span>
-    </div>`).join('');
+      </div>
+      <div class="tpl-card-slug">/${escHtml(t.slug)} · ${overlays.length} overlay${overlays.length===1?'':'s'}</div>
+      <div class="tpl-card-actions">
+        <button class="btn btn-ghost" data-preview="${escAttr(t.slug)}">👁 Preview</button>
+        <button class="btn btn-ghost" data-dup="${escAttr(t.slug)}">📋 Duplicate</button>
+        <button class="btn btn-ghost" data-pub="${escAttr(t.slug)}" data-pubval="${!t.published}">${t.published?'Unpublish':'Publish'}</button>
+        <button class="btn btn-danger" data-del="${escAttr(t.slug)}">Remove</button>
+      </div>
+      <details class="tpl-overlays">
+        <summary>Overlays (${overlays.length})</summary>
+        ${overlays.map(o=>`
+          <div class="overlay-row">
+            <span>${escHtml(o.name)} ${o.published===false?'<span class="badge badge-warn">Off</span>':''}</span>
+            <span style="display:flex;gap:6px;">
+              <button class="btn btn-ghost" data-ov-preview="${escAttr(t.slug)}::${escAttr(o.id)}">Preview</button>
+              <button class="btn btn-danger" data-ov-del="${escAttr(t.slug)}::${escAttr(o.id)}">Delete</button>
+            </span>
+          </div>`).join('') || '<div class="hint" style="padding:6px 0;">No overlays yet.</div>'}
+        <div class="overlay-add">
+          <input placeholder="New overlay name (e.g. Lower Third)" data-ov-name="${escAttr(t.slug)}">
+          <button class="btn btn-primary" style="padding:6px 12px;" data-ov-add="${escAttr(t.slug)}">+ Add</button>
+        </div>
+      </details>
+    </div>`;
+  }).join('');
+
   list.querySelectorAll('[data-pub]').forEach(b=> b.onclick = async ()=>{
-    await api(`/templates/${b.dataset.slug}/publish`, {method:'POST', body: JSON.stringify({published: b.dataset.pub==='true'})});
+    await api(`/templates/${b.dataset.pub}/publish`, {method:'POST', body: JSON.stringify({published: b.dataset.pubval==='true'})});
     toast('Template updated'); loadTemplates();
   });
   list.querySelectorAll('[data-del]').forEach(b=> b.onclick = ()=> confirmModal('Remove this template?','It will disappear from the live site immediately.', async ()=>{
     await api(`/templates/${b.dataset.del}`, {method:'DELETE'}); toast('Template removed'); loadTemplates();
   }));
+  list.querySelectorAll('[data-dup]').forEach(b=> b.onclick = ()=>{
+    const src = tplCache.find(t=>t.slug===b.dataset.dup);
+    inputModal('Duplicate template', `Copies "${escHtml(src.name)}" (panel + all overlays) under a new name.`, `${src.name} Copy`, async (newName)=>{
+      await api(`/templates/${src.slug}/duplicate`, {method:'POST', body: JSON.stringify({newName})});
+      toast('Template duplicated'); loadTemplates();
+    });
+  });
+  list.querySelectorAll('[data-preview]').forEach(b=> b.onclick = ()=> openPreviewModal(tplCache.find(t=>t.slug===b.dataset.preview)));
+  list.querySelectorAll('[data-ov-preview]').forEach(b=> b.onclick = ()=>{
+    const [slug, ovId] = b.dataset.ovPreview.split('::');
+    openPreviewModal(tplCache.find(t=>t.slug===slug), ovId);
+  });
+  list.querySelectorAll('[data-ov-del]').forEach(b=> b.onclick = ()=>{
+    const [slug, ovId] = b.dataset.ovDel.split('::');
+    confirmModal('Delete this overlay?','This cannot be undone.', async ()=>{
+      await api(`/templates/${slug}/overlays/${ovId}`, {method:'DELETE'});
+      toast('Overlay deleted'); loadTemplates();
+    });
+  });
+  list.querySelectorAll('[data-ov-add]').forEach(b=> b.onclick = async ()=>{
+    const input = list.querySelector(`[data-ov-name="${b.dataset.ovAdd}"]`);
+    const name = input.value.trim();
+    if (!name) return toast('Overlay name required','err');
+    b.disabled = true;
+    try {
+      await api(`/templates/${b.dataset.ovAdd}/overlays`, {method:'POST', body: JSON.stringify({name, code:''})});
+      toast('Overlay added — open Preview to paste its code'); loadTemplates();
+    } catch(err){ toast(err.message,'err'); b.disabled = false; }
+  });
+}
+
+document.getElementById('tplSearch').addEventListener('input', renderTplList);
+document.getElementById('tplFilter').addEventListener('change', renderTplList);
+document.getElementById('tplViewGrid').onclick = ()=> setTplView('grid');
+document.getElementById('tplViewList').onclick = ()=> setTplView('list');
+function setTplView(v){
+  tplView = v;
+  document.getElementById('tplViewGrid').classList.toggle('active', v==='grid');
+  document.getElementById('tplViewList').classList.toggle('active', v==='list');
+  renderTplList();
+}
+
+// Preview modal: shows panel + each overlay in tabs, editable + live-rendered
+// via iframe srcdoc. Saves back through the same overlay/panel APIs.
+function openPreviewModal(t, initialOverlayId){
+  if (!t) return;
+  const overlays = t.overlays || [];
+  const tabs = [{ id:'__panel', name:'Panel' }, ...overlays.map(o=>({id:o.id, name:o.name}))];
+  let active = initialOverlayId || tabs[0].id;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop';
+  wrap.innerHTML = `<div class="modal modal-lg">
+    <h3>${t.icon||'🎯'} ${escHtml(t.name)} — Preview</h3>
+    <div class="preview-tabs" id="pvTabs"></div>
+    <textarea id="pvCode" rows="6" spellcheck="false"></textarea>
+    <iframe class="preview-frame" id="pvFrame" style="margin-top:10px;"></iframe>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="pvClose">Close</button>
+      <button class="btn btn-primary" id="pvSave" style="padding:9px 18px;">Save & Refresh</button>
+    </div>
+  </div>`;
+  document.body.appendChild(wrap);
+
+  function codeFor(id){ return id==='__panel' ? (t.panelCode||'') : (overlays.find(o=>o.id===id)?.code || ''); }
+  function renderTabs(){
+    document.getElementById('pvTabs').innerHTML = tabs.map(tb=>
+      `<button class="btn btn-ghost${tb.id===active?' active':''}" data-tab="${escAttr(tb.id)}">${escHtml(tb.name)}</button>`).join('');
+    document.getElementById('pvTabs').querySelectorAll('[data-tab]').forEach(b=> b.onclick = ()=>{ active = b.dataset.tab; renderTabs(); loadTab(); });
+  }
+  function loadTab(){
+    document.getElementById('pvCode').value = codeFor(active);
+    document.getElementById('pvFrame').srcdoc = codeFor(active) || '<body style="font-family:sans-serif;color:#999;padding:20px;">No code saved for this yet — paste some above and hit Save.</body>';
+  }
+  renderTabs(); loadTab();
+
+  document.getElementById('pvCode').addEventListener('input', ()=>{
+    document.getElementById('pvFrame').srcdoc = document.getElementById('pvCode').value;
+  });
+  document.getElementById('pvClose').onclick = ()=> wrap.remove();
+  wrap.addEventListener('click', e=>{ if (e.target===wrap) wrap.remove(); });
+  document.getElementById('pvSave').onclick = async ()=>{
+    const code = document.getElementById('pvCode').value;
+    const btn = document.getElementById('pvSave');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      if (active==='__panel') {
+        await api('/templates', { method:'POST', body: JSON.stringify({ sportName: t.name, sportIcon: t.icon, panelCode: code }) });
+        t.panelCode = code;
+      } else {
+        await api(`/templates/${t.slug}/overlays/${active}`, { method:'PUT', body: JSON.stringify({ code }) });
+        const ov = overlays.find(o=>o.id===active); if (ov) ov.code = code;
+      }
+      toast('Saved');
+      const idx = tplCache.findIndex(x=>x.slug===t.slug); if (idx>=0) tplCache[idx] = t;
+      loadTab();
+    } catch(err){ toast(err.message,'err'); }
+    finally { btn.disabled = false; btn.textContent = 'Save & Refresh'; }
+  };
+}
+
+function inputModal(title, body, placeholder, onConfirm){
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop';
+  wrap.innerHTML = `<div class="modal"><h3>${title}</h3><p>${body}</p>
+    <input id="mInput" placeholder="${escAttr(placeholder||'')}" style="width:100%;background:var(--bg-dark);border:1px solid var(--border);color:var(--text-main);border-radius:8px;padding:9px 12px;font-size:.85rem;margin-top:4px;">
+    <div class="modal-actions"><button class="btn btn-ghost" id="mCancel">Cancel</button><button class="btn btn-primary" id="mConfirm" style="padding:9px 18px;">Confirm</button></div></div>`;
+  document.body.appendChild(wrap);
+  const input = wrap.querySelector('#mInput');
+  input.focus();
+  wrap.querySelector('#mCancel').onclick = ()=> wrap.remove();
+  wrap.addEventListener('click', e=>{ if (e.target===wrap) wrap.remove(); });
+  wrap.querySelector('#mConfirm').onclick = async ()=>{
+    const val = input.value.trim();
+    if (!val) return toast('Please enter a value','err');
+    wrap.remove();
+    try { await onConfirm(val); } catch(err){ toast(err.message,'err'); }
+  };
+  input.addEventListener('keydown', e=>{ if (e.key==='Enter') wrap.querySelector('#mConfirm').click(); });
 }
 document.getElementById('tplSaveBtn').onclick = async ()=>{
   const btn = document.getElementById('tplSaveBtn');
