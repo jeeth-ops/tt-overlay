@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Owner Admin Portal — Scorvix</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+<style>
+:root{
+  --bg-dark:#0f172a; --bg-panel:#131f37; --bg-card:rgba(30,41,59,0.55);
+  --bg-card-hover:rgba(30,41,59,0.85);
+  --border:rgba(255,255,255,0.08); --border-soft:rgba(255,255,255,0.05);
+  --text-main:#f8fafc; --text-muted:#94a3b8; --text-dim:#64748b;
+  --accent:#f43f5e; --accent-soft:rgba(244,63,94,0.12);
+  --ok:#10b981; --ok-soft:rgba(16,185,129,0.12);
+  --warn:#f59e0b; --warn-soft:rgba(245,158,11,0.12);
+  --info:#38bdf8; --info-soft:rgba(56,189,248,0.12);
+  --ease:cubic-bezier(0.4,0,0.2,1); --ease-spring:cubic-bezier(0.16,1,0.3,1);
+  --radius:16px; --radius-sm:10px;
+}
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Inter',sans-serif;}
+html{scroll-behavior:smooth;}
+body{background:var(--bg-dark);color:var(--text-main);min-height:100vh;-webkit-font-smoothing:antialiased;}
+h1,h2,h3,.brand{font-family:'Space Grotesk','Inter',sans-serif;}
+::-webkit-scrollbar{width:8px;height:8px;} ::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.14);border-radius:8px;}
+* { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.14) transparent; }
+@media (prefers-reduced-motion: reduce){
+  *{animation-duration:0.001ms !important; transition-duration:0.001ms !important;}
+}
+button{font-family:inherit;cursor:pointer;}
+
+/* ===== Gate / Access Denied ===== */
+#gate{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:var(--bg-dark);z-index:999;}
+.gate-card{text-align:center;max-width:420px;padding:48px 40px;background:var(--bg-card);border:1px solid var(--border);border-radius:20px;box-shadow:0 30px 60px rgba(0,0,0,0.5);animation:cardIn .5s var(--ease-spring);}
+@keyframes cardIn{from{opacity:0;transform:translateY(14px) scale(.97);}to{opacity:1;transform:translateY(0) scale(1);}}
+.gate-icon{font-size:2.6rem;margin-bottom:18px;}
+.gate-card h2{font-size:1.5rem;margin-bottom:10px;letter-spacing:-.5px;}
+.gate-card p{color:var(--text-muted);font-size:.92rem;line-height:1.6;margin-bottom:26px;}
+.gate-denied .gate-icon{color:var(--accent);}
+.gate-btn{background:var(--text-main);color:var(--bg-dark);border:none;padding:12px 26px;border-radius:50px;font-weight:600;font-size:.9rem;transition:transform .2s var(--ease),background .25s var(--ease);}
+.gate-btn:hover{background:#e2e8f0;transform:translateY(-2px);}
+.gate-btn:active{transform:scale(.96);}
+.spinner{width:34px;height:34px;border-radius:50%;border:3px solid rgba(255,255,255,0.12);border-top-color:var(--accent);animation:spin .8s linear infinite;margin:0 auto 18px;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* ===== Shell ===== */
+#app{display:none;min-height:100vh;}
+#app.ready{display:flex;}
+
+.sidebar{
+  width:260px;flex-shrink:0;background:var(--bg-panel);border-right:1px solid var(--border-soft);
+  display:flex;flex-direction:column;padding:22px 16px;position:sticky;top:0;height:100vh;
+  animation:slideIn .5s var(--ease-spring);
+}
+@keyframes slideIn{from{opacity:0;transform:translateX(-16px);}to{opacity:1;transform:translateX(0);}}
+.brand{display:flex;align-items:center;gap:10px;padding:6px 10px 22px;font-size:1.15rem;font-weight:700;letter-spacing:-.5px;}
+.brand span{color:var(--accent);}
+.brand small{display:block;color:var(--text-dim);font-weight:500;font-size:.68rem;letter-spacing:.06em;text-transform:uppercase;margin-top:2px;font-family:'Inter',sans-serif;}
+
+.nav-item{
+  position:relative;display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:11px;
+  color:var(--text-muted);background:transparent;border:none;width:100%;text-align:left;
+  font-size:.9rem;font-weight:500;transition:background .2s var(--ease),color .2s var(--ease);
+  margin-bottom:2px;
+}
+.nav-item:hover{background:rgba(255,255,255,0.04);color:var(--text-main);}
+.nav-item.active{background:var(--accent-soft);color:var(--text-main);font-weight:600;}
+.nav-item .ic{width:18px;text-align:center;font-size:1rem;}
+.nav-indicator{position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:3px;background:var(--accent);opacity:0;transform:scaleY(.4);transition:opacity .25s var(--ease),transform .25s var(--ease-spring);}
+.nav-item.active .nav-indicator{opacity:1;transform:scaleY(1);}
+
+.sidebar-footer{margin-top:auto;padding-top:16px;border-top:1px solid var(--border-soft);}
+.owner-chip{display:flex;align-items:center;gap:10px;padding:10px;border-radius:12px;background:rgba(255,255,255,0.03);margin-bottom:10px;}
+.owner-avatar{width:32px;height:32px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.85rem;flex-shrink:0;}
+.owner-meta{min-width:0;}
+.owner-meta .em{font-size:.78rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.owner-meta .role{font-size:.72rem;color:var(--accent);font-weight:600;}
+.back-link,.logout-link{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:10px;color:var(--text-muted);font-size:.83rem;text-decoration:none;background:none;border:none;width:100%;text-align:left;transition:background .2s var(--ease),color .2s var(--ease);}
+.back-link:hover,.logout-link:hover{background:rgba(255,255,255,0.04);color:var(--text-main);}
+
+.main{flex:1;min-width:0;padding:32px 40px 60px;}
+.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px;}
+.topbar h1{font-size:1.7rem;letter-spacing:-.6px;}
+.topbar p{color:var(--text-muted);font-size:.88rem;margin-top:4px;}
+.refresh-btn{background:var(--bg-card);border:1px solid var(--border);color:var(--text-muted);padding:8px 16px;border-radius:50px;font-size:.82rem;font-weight:600;display:flex;align-items:center;gap:7px;transition:background .2s var(--ease),color .2s var(--ease),transform .15s var(--ease);}
+.refresh-btn:hover{background:var(--bg-card-hover);color:var(--text-main);}
+.refresh-btn:active{transform:scale(.96);}
+.refresh-btn .spin-ic{transition:transform .5s var(--ease-spring);}
+.refresh-btn.spinning .spin-ic{animation:spin .7s linear infinite;}
+
+.panel{display:none;animation:panelIn .35s var(--ease-spring);}
+.panel.active{display:block;}
+@keyframes panelIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+
+/* ===== Cards / Grid ===== */
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px;margin-bottom:28px;}
+.stat-card{
+  background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;
+  transition:transform .25s var(--ease),box-shadow .25s var(--ease),border-color .25s var(--ease);
+}
+.stat-card:hover{transform:translateY(-2px);box-shadow:0 12px 28px rgba(0,0,0,0.28);border-color:rgba(255,255,255,0.14);}
+.stat-card .lbl{font-size:.78rem;color:var(--text-muted);font-weight:500;margin-bottom:8px;}
+.stat-card .val{font-size:1.9rem;font-weight:700;letter-spacing:-1px;font-family:'Space Grotesk',sans-serif;}
+.stat-card .sub{font-size:.75rem;color:var(--text-dim);margin-top:4px;}
+
+.card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;margin-bottom:20px;}
+.card h3{font-size:1.02rem;margin-bottom:16px;display:flex;align-items:center;gap:8px;justify-content:space-between;}
+.card h3 .t{display:flex;align-items:center;gap:8px;}
+
+table{width:100%;border-collapse:collapse;font-size:.85rem;}
+th{text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:600;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border);}
+td{padding:12px;border-bottom:1px solid var(--border-soft);color:var(--text-main);}
+tr{transition:background .15s var(--ease);}
+tbody tr:hover{background:rgba(255,255,255,0.025);}
+.table-wrap{max-height:420px;overflow-y:auto;border-radius:var(--radius-sm);}
+
+.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:50px;font-size:.72rem;font-weight:600;}
+.badge-ok{background:var(--ok-soft);color:var(--ok);}
+.badge-warn{background:var(--warn-soft);color:var(--warn);}
+.badge-danger{background:var(--accent-soft);color:var(--accent);}
+.badge-info{background:var(--info-soft);color:var(--info);}
+.dot{width:7px;height:7px;border-radius:50%;background:currentColor;}
+
+.btn{border:none;border-radius:8px;padding:7px 14px;font-size:.8rem;font-weight:600;transition:transform .15s var(--ease),background .2s var(--ease),opacity .2s var(--ease);}
+.btn:active{transform:scale(.95);}
+.btn-ghost{background:rgba(255,255,255,0.05);color:var(--text-muted);}
+.btn-ghost:hover{background:rgba(255,255,255,0.09);color:var(--text-main);}
+.btn-danger{background:var(--accent-soft);color:var(--accent);}
+.btn-danger:hover{background:rgba(244,63,94,0.22);}
+.btn-primary{background:var(--text-main);color:var(--bg-dark);padding:10px 20px;}
+.btn-primary:hover{background:#e2e8f0;}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed;}
+
+.empty-state{text-align:center;padding:50px 20px;color:var(--text-muted);}
+.empty-state .ic{font-size:2rem;margin-bottom:10px;opacity:.6;}
+.empty-state .hint{font-size:.8rem;color:var(--text-dim);margin-top:4px;}
+
+.skel{background:linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.09) 37%, rgba(255,255,255,0.04) 63%);background-size:400% 100%;animation:shimmer 1.4s ease infinite;border-radius:8px;}
+@keyframes shimmer{0%{background-position:100% 0;}100%{background-position:-100% 0;}}
+.skel-row{height:14px;margin:8px 0;}
+
+input,select,textarea{
+  background:rgba(255,255,255,0.04);border:1px solid var(--border);color:var(--text-main);
+  padding:10px 14px;border-radius:9px;font-size:.87rem;width:100%;transition:border-color .2s var(--ease),box-shadow .2s var(--ease);
+}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+label{font-size:.78rem;color:var(--text-muted);display:block;margin:12px 0 6px;font-weight:500;}
+.field-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+
+.bars{display:flex;align-items:flex-end;gap:18px;height:140px;padding:10px 4px;}
+.bar-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;height:100%;justify-content:flex-end;}
+.bar{width:100%;border-radius:6px 6px 2px 2px;background:var(--accent);transition:height .6s var(--ease-spring);min-height:4px;}
+.bar-col span{font-size:.72rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
+
+.hl{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border-soft);font-size:.85rem;}
+.hl:last-child{border-bottom:none;}
+
+.toast-wrap{position:fixed;bottom:24px;right:24px;z-index:1200;display:flex;flex-direction:column;gap:10px;}
+.toast{background:var(--bg-panel);border:1px solid var(--border);padding:12px 18px;border-radius:12px;font-size:.85rem;box-shadow:0 12px 30px rgba(0,0,0,0.4);animation:toastIn .3s var(--ease-spring);display:flex;align-items:center;gap:8px;}
+@keyframes toastIn{from{opacity:0;transform:translateY(10px) scale(.95);}to{opacity:1;transform:translateY(0) scale(1);}}
+.toast.leaving{animation:toastOut .25s var(--ease) forwards;}
+@keyframes toastOut{to{opacity:0;transform:translateX(20px);}}
+.toast.ok{border-color:rgba(16,185,129,0.35);} .toast.err{border-color:rgba(244,63,94,0.35);}
+
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:1100;animation:fadeIn .2s var(--ease);}
+@keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
+.modal{background:var(--bg-panel);border:1px solid var(--border);border-radius:18px;padding:26px;max-width:440px;width:90%;animation:modalIn .3s var(--ease-spring);}
+@keyframes modalIn{from{opacity:0;transform:scale(.94) translateY(6px);}to{opacity:1;transform:scale(1) translateY(0);}}
+.modal h3{margin-bottom:8px;}
+.modal p{color:var(--text-muted);font-size:.87rem;line-height:1.55;margin-bottom:20px;}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;}
+
+.search-row{display:flex;gap:10px;margin-bottom:16px;}
+.search-row input{flex:1;}
+
+@media (max-width: 900px){
+  .sidebar{position:fixed;left:0;top:0;bottom:0;transform:translateX(-100%);z-index:900;box-shadow:0 0 40px rgba(0,0,0,0.5);}
+  .sidebar.open{transform:translateX(0);}
+  .main{padding:20px;}
+  .field-row{grid-template-columns:1fr;}
+  .menu-toggle{display:inline-flex !important;}
+}
+.menu-toggle{display:none;background:var(--bg-card);border:1px solid var(--border);color:var(--text-main);width:38px;height:38px;border-radius:10px;align-items:center;justify-content:center;margin-right:10px;}
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <div class="gate-card" id="gateCard">
+    <div class="spinner"></div>
+    <h2>Checking access…</h2>
+    <p>Verifying your session.</p>
+  </div>
+</div>
+
+<div id="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">🛡️ <div>Owner<span> Admin</span><small>Scorvix Control Center</small></div></div>
+
+    <button class="nav-item active" data-panel="dashboard"><span class="nav-indicator"></span><span class="ic">📊</span> Dashboard</button>
+    <button class="nav-item" data-panel="users"><span class="nav-indicator"></span><span class="ic">👥</span> Users</button>
+    <button class="nav-item" data-panel="broadcasting"><span class="nav-indicator"></span><span class="ic">📡</span> Broadcasting</button>
+    <button class="nav-item" data-panel="cricket"><span class="nav-indicator"></span><span class="ic">🏏</span> Cricket Data</button>
+    <button class="nav-item" data-panel="analytics"><span class="nav-indicator"></span><span class="ic">📈</span> Analytics</button>
+    <button class="nav-item" data-panel="health"><span class="nav-indicator"></span><span class="ic">💚</span> System Health</button>
+    <button class="nav-item" data-panel="audit"><span class="nav-indicator"></span><span class="ic">📜</span> Audit Logs</button>
+    <button class="nav-item" data-panel="settings"><span class="nav-indicator"></span><span class="ic">⚙️</span> Settings</button>
+
+    <div class="sidebar-footer">
+      <div class="owner-chip">
+        <div class="owner-avatar" id="ownerInitial">O</div>
+        <div class="owner-meta"><div class="em" id="ownerEmailChip">—</div><div class="role">Owner</div></div>
+      </div>
+      <a class="back-link" href="/">← Back to site</a>
+      <button class="logout-link" id="logoutBtn">⏻ Sign out</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div style="display:flex;align-items:center;">
+        <button class="menu-toggle" id="menuToggle">☰</button>
+        <div><h1 id="pageTitle">Dashboard</h1><p id="pageSub">Live overview of your entire platform.</p></div>
+      </div>
+      <button class="refresh-btn" id="refreshBtn"><span class="spin-ic">↻</span> Refresh</button>
+    </div>
+
+    <!-- DASHBOARD -->
+    <section class="panel active" id="panel-dashboard">
+      <div class="stat-grid" id="dashStats"></div>
+      <div class="card">
+        <h3><span class="t">🔎 System Overview</span></h3>
+        <div id="dashOverview"></div>
+      </div>
+    </section>
+
+    <!-- USERS -->
+    <section class="panel" id="panel-users">
+      <div class="card">
+        <div class="search-row">
+          <input type="text" id="userSearchInput" placeholder="Search by exact email…">
+          <button class="btn btn-ghost" id="userSearchBtn">Search</button>
+          <button class="btn btn-ghost" id="userSearchClear" style="display:none;">Clear</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>User</th><th>Status</th><th>Joined</th><th>Last sign-in</th><th>Actions</th></tr></thead>
+            <tbody id="usersBody"></tbody>
+          </table>
+        </div>
+        <div style="display:flex;justify-content:center;margin-top:16px;">
+          <button class="btn btn-ghost" id="usersLoadMore">Load more</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- BROADCASTING -->
+    <section class="panel" id="panel-broadcasting">
+      <div class="card">
+        <h3><span class="t">➕ Add Template</span></h3>
+        <div class="field-row">
+          <div><label>Sport / Template Name</label><input id="tplName" placeholder="e.g. Badminton"></div>
+          <div><label>Icon (emoji)</label><input id="tplIcon" placeholder="🏸"></div>
+        </div>
+        <label>Controller Panel Code</label>
+        <textarea id="tplPanel" rows="4" style="font-family:monospace;" placeholder="Paste controller panel code…"></textarea>
+        <label>Overlay Code</label>
+        <textarea id="tplOverlay" rows="4" style="font-family:monospace;" placeholder="Paste overlay code…"></textarea>
+        <div style="margin-top:16px;"><button class="btn btn-primary" id="tplSaveBtn">Save Template</button></div>
+      </div>
+      <div class="card">
+        <h3><span class="t">🗂️ Manage Templates</span></h3>
+        <div id="tplList"></div>
+      </div>
+    </section>
+
+    <!-- CRICKET DATA -->
+    <section class="panel" id="panel-cricket">
+      <div class="stat-grid" id="cricketStats"></div>
+      <div class="card">
+        <h3><span class="t">🏆 Tournaments / Leagues</span></h3>
+        <div class="table-wrap">
+          <table><thead><tr><th>Tournament</th><th>Owner UID</th><th>Matches</th><th>Updated</th></tr></thead><tbody id="tournamentsBody"></tbody></table>
+        </div>
+      </div>
+      <div class="card">
+        <h3><span class="t">🎥 Recent Matches</span></h3>
+        <div class="table-wrap">
+          <table><thead><tr><th>Match ID</th><th>Recording</th><th>Started</th></tr></thead><tbody id="matchesBody"></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ANALYTICS -->
+    <section class="panel" id="panel-analytics">
+      <div class="card">
+        <h3><span class="t">📊 Activity by Action</span></h3>
+        <div class="bars" id="analyticsBars"></div>
+      </div>
+      <div class="card">
+        <h3><span class="t">🎯 Most-Opened Overlays</span></h3>
+        <div id="overlayBreakdown"></div>
+      </div>
+      <div class="card">
+        <h3><span class="t">🗓️ Activity by Day (last 30)</span></h3>
+        <div id="dayBreakdown" style="max-height:260px;overflow-y:auto;"></div>
+      </div>
+    </section>
+
+    <!-- SYSTEM HEALTH -->
+    <section class="panel" id="panel-health">
+      <div class="stat-grid" id="healthStats"></div>
+      <div class="card">
+        <h3><span class="t">🩺 Service Status</span></h3>
+        <div id="healthList"></div>
+      </div>
+    </section>
+
+    <!-- AUDIT LOGS -->
+    <section class="panel" id="panel-audit">
+      <div class="card">
+        <h3><span class="t">📜 Owner Action History</span></h3>
+        <div class="table-wrap">
+          <table><thead><tr><th>Action</th><th>Target</th><th>Performed By</th><th>When</th></tr></thead><tbody id="auditBody"></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="panel" id="panel-settings">
+      <div class="card">
+        <h3><span class="t">🌐 Website Settings</span></h3>
+        <label>Site announcement banner text (leave blank to hide)</label>
+        <input id="setBannerText" placeholder="e.g. Scheduled maintenance tonight 11PM–1AM">
+        <label>Support chat enabled</label>
+        <select id="setSupportChat"><option value="true">Enabled</option><option value="false">Disabled</option></select>
+        <label>New sign-ups enabled</label>
+        <select id="setSignups"><option value="true">Enabled</option><option value="false">Disabled</option></select>
+        <div style="margin-top:18px;"><button class="btn btn-primary" id="setSaveBtn">Save Settings</button></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyAYc_bEB9C4RhhLhPBEJsJRFRUppcR45yo",
+  authDomain: "scorvix-faf0e.firebaseapp.com",
+  projectId: "scorvix-faf0e",
+  storageBucket: "scorvix-faf0e.firebasestorage.app",
+  messagingSenderId: "725629580596",
+  appId: "1:725629580596:web:7737847e7194650f276161",
+  measurementId: "G-4EXH0QXHF7"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+
+let idToken = null;
+let usersNextPageToken = null;
+
+// ===== Toast =====
+function toast(msg, type='ok'){
+  const wrap = document.getElementById('toastWrap');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.innerHTML = `<span>${type==='ok'?'✅':'⚠️'}</span> ${msg}`;
+  wrap.appendChild(el);
+  setTimeout(()=>{ el.classList.add('leaving'); setTimeout(()=>el.remove(), 260); }, 3200);
+}
+
+// ===== Auth gate =====
+function showDenied(){
+  document.getElementById('gateCard').innerHTML = `
+    <div class="gate-icon">🚫</div>
+    <h2>Access Denied</h2>
+    <p>This area is restricted to the Scorvix owner account. If you believe this is a mistake, sign in with the correct Google account.</p>
+    <button class="gate-btn" onclick="location.href='/'">Return to site</button>`;
+  document.getElementById('gateCard').parentElement.classList.add('gate-denied');
+}
+
+auth.onAuthStateChanged(async (user) => {
+  if (!user) {
+    document.getElementById('gateCard').innerHTML = `
+      <div class="gate-icon">🔒</div>
+      <h2>Owner sign-in required</h2>
+      <p>Sign in with the Scorvix owner Google account to continue.</p>
+      <button class="gate-btn" onclick="location.href='/'">Go to sign-in</button>`;
+    return;
+  }
+  try {
+    idToken = await user.getIdToken();
+    // Real server-side check — the page shell is public, but nothing
+    // renders until the backend confirms this exact token belongs to
+    // the owner. A non-owner stops here with a 403, no data ever fetched.
+    const res = await fetch('/api/admin/dashboard', { headers: { Authorization: `Bearer ${idToken}` } });
+    if (res.status === 403) { showDenied(); return; }
+    if (!res.ok) throw new Error('health check failed');
+    const data = await res.json();
+
+    document.getElementById('gate').style.opacity = '0';
+    setTimeout(()=> document.getElementById('gate').style.display='none', 350);
+    document.getElementById('app').classList.add('ready');
+    document.getElementById('ownerEmailChip').textContent = user.email;
+    document.getElementById('ownerInitial').textContent = (user.email||'O').charAt(0).toUpperCase();
+
+    renderDashboard(data);
+    initNav();
+  } catch (err) {
+    console.error(err);
+    document.getElementById('gateCard').innerHTML = `
+      <div class="gate-icon">⚠️</div>
+      <h2>Couldn't connect</h2>
+      <p>Something went wrong reaching the server. Try again in a moment.</p>
+      <button class="gate-btn" onclick="location.reload()">Retry</button>`;
+  }
+});
+
+document.getElementById('logoutBtn').onclick = () => auth.signOut().then(()=> location.href='/');
+
+// ===== Nav =====
+function initNav(){
+  document.querySelectorAll('.nav-item').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      const key = btn.dataset.panel;
+      document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+      document.getElementById('panel-'+key).classList.add('active');
+      const titles = {
+        dashboard:['Dashboard','Live overview of your entire platform.'],
+        users:['Users','Every registered Scorvix account.'],
+        broadcasting:['Broadcasting','Overlay templates available to users.'],
+        cricket:['Cricket Data','Tournaments, matches and ball-by-ball logs.'],
+        analytics:['Analytics','Real usage, pulled from activity logs.'],
+        health:['System Health','Live status of every connected service.'],
+        audit:['Audit Logs','Every owner action, permanently recorded.'],
+        settings:['Settings','Safe, global site configuration.']
+      };
+      document.getElementById('pageTitle').textContent = titles[key][0];
+      document.getElementById('pageSub').textContent = titles[key][1];
+      document.getElementById('sidebar').classList.remove('open');
+      loadPanel(key);
+    });
+  });
+  document.getElementById('menuToggle').onclick = ()=> document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('refreshBtn').onclick = ()=>{
+    const btn = document.getElementById('refreshBtn');
+    btn.classList.add('spinning');
+    const active = document.querySelector('.nav-item.active').dataset.panel;
+    loadPanel(active).finally(()=> setTimeout(()=>btn.classList.remove('spinning'), 400));
+  };
+}
+
+async function api(path, opts={}){
+  const res = await fetch('/api/admin'+path, {
+    ...opts,
+    headers: { 'Content-Type':'application/json', Authorization:`Bearer ${idToken}`, ...(opts.headers||{}) }
+  });
+  if (res.status === 403) { showDenied(); document.getElementById('app').classList.remove('ready'); document.getElementById('gate').style.display='flex'; document.getElementById('gate').style.opacity='1'; throw new Error('denied'); }
+  const data = await res.json().catch(()=>({success:false}));
+  if (!res.ok || data.success === false) throw new Error(data.error || 'Request failed');
+  return data;
+}
+
+const loaders = {
+  dashboard: async ()=> renderDashboard(await api('/dashboard')),
+  users: async ()=> loadUsers(true),
+  broadcasting: loadTemplates,
+  cricket: loadCricket,
+  analytics: loadAnalytics,
+  health: loadHealth,
+  audit: loadAudit,
+  settings: loadSettings
+};
+function loadPanel(key){ return (loaders[key] ? loaders[key]() : Promise.resolve()).catch(err=>{ if (err.message!=='denied') toast(err.message,'err'); }); }
+
+// ===== Dashboard =====
+function renderDashboard(d){
+  document.getElementById('dashStats').innerHTML = [
+    ['Total Users', d.totalUsers, `${d.newUsers30d} new in 30d`],
+    ['Active Users (30d)', d.activeUsers30d, `${d.disabledUsers} suspended`],
+    ['Tournaments / Leagues', d.leagues, ''],
+    ['Matches Tracked', d.matches, ''],
+    ['Balls Logged', d.ballsLogged, 'Ball-by-ball, MongoDB'],
+    ['Templates', d.templates, 'Broadcasting library'],
+    ['Activity Events', d.activityEvents, 'Firestore analytics_logs'],
+    ['Live Connections', d.liveConnections, 'Current WebSocket clients'],
+  ].map(([lbl,val,sub])=>`<div class="stat-card"><div class="lbl">${lbl}</div><div class="val">${val}</div>${sub?`<div class="sub">${sub}</div>`:''}</div>`).join('');
+  document.getElementById('dashOverview').innerHTML = `
+    <div class="hl"><span>Users signed up in the last 30 days</span><b>${d.newUsers30d}</b></div>
+    <div class="hl"><span>Users active in the last 30 days</span><b>${d.activeUsers30d}</b></div>
+    <div class="hl"><span>Currently live overlay/panel connections</span><b>${d.liveConnections}</b></div>
+    <div class="hl"><span>Suspended accounts</span><b>${d.disabledUsers}</b></div>`;
+}
+
+// ===== Users =====
+async function loadUsers(reset){
+  const body = document.getElementById('usersBody');
+  if (reset){ body.innerHTML = skeletonRows(5,4); usersNextPageToken = null; }
+  const data = await api('/users' + (usersNextPageToken ? `?pageToken=${usersNextPageToken}` : ''));
+  usersNextPageToken = data.nextPageToken;
+  document.getElementById('usersLoadMore').style.display = usersNextPageToken ? 'inline-flex' : 'none';
+  const rows = data.users.map(userRow).join('');
+  body.innerHTML = (reset ? rows : body.innerHTML + rows) || `<tr><td colspan="5"><div class="empty-state"><div class="ic">👤</div>No users yet.</div></td></tr>`;
+  wireUserActions();
+}
+function userRow(u){
+  return `<tr data-uid="${u.uid}">
+    <td><div style="font-weight:600;">${u.displayName || '—'}</div><div style="color:var(--text-muted);font-size:.78rem;">${u.email||'no email'}</div></td>
+    <td>${u.disabled ? '<span class="badge badge-danger"><span class="dot"></span>Suspended</span>' : '<span class="badge badge-ok"><span class="dot"></span>Active</span>'}</td>
+    <td style="color:var(--text-muted);font-size:.8rem;">${fmtDate(u.createdAt)}</td>
+    <td style="color:var(--text-muted);font-size:.8rem;">${u.lastSignInAt ? fmtDate(u.lastSignInAt) : 'Never'}</td>
+    <td>
+      ${u.disabled
+        ? `<button class="btn btn-ghost act-enable">Reactivate</button>`
+        : `<button class="btn btn-danger act-disable">Suspend</button>`}
+      <button class="btn btn-ghost act-delete">Delete</button>
+    </td>
+  </tr>`;
+}
+function wireUserActions(){
+  document.querySelectorAll('.act-disable').forEach(b=> b.onclick = (e)=> confirmModal('Suspend this user?','They will be immediately signed out and unable to log back in until reactivated.', async ()=>{
+    const uid = e.target.closest('tr').dataset.uid;
+    await api(`/users/${uid}/disable`, {method:'POST'}); toast('User suspended'); loadUsers(true);
+  }));
+  document.querySelectorAll('.act-enable').forEach(b=> b.onclick = async (e)=>{
+    const uid = e.target.closest('tr').dataset.uid;
+    await api(`/users/${uid}/enable`, {method:'POST'}); toast('User reactivated'); loadUsers(true);
+  });
+  document.querySelectorAll('.act-delete').forEach(b=> b.onclick = (e)=> confirmModal('Delete this user?','This permanently removes their account. This cannot be undone.', async ()=>{
+    const uid = e.target.closest('tr').dataset.uid;
+    await api(`/users/${uid}`, {method:'DELETE'}); toast('User deleted'); loadUsers(true);
+  }));
+}
+document.getElementById('usersLoadMore').onclick = ()=> loadUsers(false);
+document.getElementById('userSearchBtn').onclick = async ()=>{
+  const email = document.getElementById('userSearchInput').value.trim();
+  if (!email) return;
+  try {
+    const data = await api(`/users/search?email=${encodeURIComponent(email)}`);
+    document.getElementById('usersBody').innerHTML = userRow(data.user);
+    wireUserActions();
+    document.getElementById('usersLoadMore').style.display = 'none';
+    document.getElementById('userSearchClear').style.display = 'inline-flex';
+  } catch (err) { toast(err.message, 'err'); }
+};
+document.getElementById('userSearchClear').onclick = ()=>{
+  document.getElementById('userSearchInput').value='';
+  document.getElementById('userSearchClear').style.display='none';
+  loadUsers(true);
+};
+
+// ===== Broadcasting =====
+async function loadTemplates(){
+  const data = await api('/templates');
+  const list = document.getElementById('tplList');
+  if (!data.templates.length){ list.innerHTML = `<div class="empty-state"><div class="ic">📡</div>No templates yet.<div class="hint">Add one above — it appears on the live site instantly.</div></div>`; return; }
+  list.innerHTML = data.templates.map(t=>`
+    <div class="hl">
+      <span>${t.icon||'🎯'} ${t.name} <span style="color:var(--text-dim);font-size:.78rem;">/${t.slug}</span></span>
+      <span style="display:flex;gap:8px;align-items:center;">
+        ${t.published ? '<span class="badge badge-ok">Published</span>' : '<span class="badge badge-warn">Unpublished</span>'}
+        <button class="btn btn-ghost" data-slug="${t.slug}" data-pub="${!t.published}">${t.published?'Unpublish':'Publish'}</button>
+        <button class="btn btn-danger" data-del="${t.slug}">Remove</button>
+      </span>
+    </div>`).join('');
+  list.querySelectorAll('[data-pub]').forEach(b=> b.onclick = async ()=>{
+    await api(`/templates/${b.dataset.slug}/publish`, {method:'POST', body: JSON.stringify({published: b.dataset.pub==='true'})});
+    toast('Template updated'); loadTemplates();
+  });
+  list.querySelectorAll('[data-del]').forEach(b=> b.onclick = ()=> confirmModal('Remove this template?','It will disappear from the live site immediately.', async ()=>{
+    await api(`/templates/${b.dataset.del}`, {method:'DELETE'}); toast('Template removed'); loadTemplates();
+  }));
+}
+document.getElementById('tplSaveBtn').onclick = async ()=>{
+  const btn = document.getElementById('tplSaveBtn');
+  const name = document.getElementById('tplName').value.trim();
+  if (!name) return toast('Template name is required','err');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    await api('/templates', { method:'POST', body: JSON.stringify({
+      sportName: name, sportIcon: document.getElementById('tplIcon').value.trim(),
+      panelCode: document.getElementById('tplPanel').value, overlayCode: document.getElementById('tplOverlay').value
+    })});
+    toast('Template saved');
+    ['tplName','tplIcon','tplPanel','tplOverlay'].forEach(id=> document.getElementById(id).value='');
+    loadTemplates();
+  } catch(err){ toast(err.message,'err'); }
+  finally { btn.disabled = false; btn.textContent = 'Save Template'; }
+};
+
+// ===== Cricket Data =====
+async function loadCricket(){
+  const data = await api('/cricket');
+  document.getElementById('cricketStats').innerHTML = [
+    ['Tournaments', data.tournaments.length],
+    ['Recent Matches', data.recentMatches.length],
+    ['Total Balls Logged', data.totalBallsLogged]
+  ].map(([lbl,val])=>`<div class="stat-card"><div class="lbl">${lbl}</div><div class="val">${val}</div></div>`).join('');
+
+  document.getElementById('tournamentsBody').innerHTML = data.tournaments.length ? data.tournaments.map(t=>`
+    <tr><td>${t.displayName}</td><td style="color:var(--text-muted);font-size:.78rem;">${t.ownerUid||'—'}</td><td>${t.matchCount}</td><td style="color:var(--text-muted);font-size:.8rem;">${t.updatedAt?fmtDate(new Date(t.updatedAt).toISOString()):'—'}</td></tr>
+  `).join('') : `<tr><td colspan="4"><div class="empty-state"><div class="ic">🏆</div>No tournaments saved yet.</div></td></tr>`;
+
+  document.getElementById('matchesBody').innerHTML = data.recentMatches.length ? data.recentMatches.map(m=>`
+    <tr><td>${m.matchId}</td><td>${m.recordingStatus||'—'}</td><td style="color:var(--text-muted);font-size:.8rem;">${m.recordingStartedAt?fmtDate(new Date(m.recordingStartedAt).toISOString()):'—'}</td></tr>
+  `).join('') : `<tr><td colspan="3"><div class="empty-state"><div class="ic">🎥</div>No matches recorded yet.</div></td></tr>`;
+}
+
+// ===== Analytics =====
+async function loadAnalytics(){
+  const data = await api('/analytics');
+  const max = Math.max(1, ...data.byAction.map(a=>a.count));
+  document.getElementById('analyticsBars').innerHTML = data.byAction.length ? data.byAction.map(a=>`
+    <div class="bar-col"><div class="bar" style="height:${Math.max((a.count/max)*100,4)}%"></div><span>${a.action} (${a.count})</span></div>
+  `).join('') : `<div class="empty-state"><div class="ic">📊</div>No activity yet.</div>`;
+
+  document.getElementById('overlayBreakdown').innerHTML = data.byOverlay.length ? data.byOverlay.map(o=>`
+    <div class="hl"><span>${o.overlay}</span><b>${o.count}</b></div>
+  `).join('') : `<div class="empty-state"><div class="ic">🎯</div>No overlay opens logged yet.</div>`;
+
+  document.getElementById('dayBreakdown').innerHTML = data.byDay.length ? data.byDay.slice().reverse().map(d=>`
+    <div class="hl"><span>${d.date}</span><b>${d.count}</b></div>
+  `).join('') : `<div class="empty-state"><div class="ic">🗓️</div>No data yet.</div>`;
+}
+
+// ===== System Health =====
+async function loadHealth(){
+  const d = await api('/system-health');
+  document.getElementById('healthStats').innerHTML = [
+    ['Uptime', fmtUptime(d.uptimeSeconds)],
+    ['WebSocket Clients', d.websocketConnections],
+    ['Active Recordings', d.activeRecordingSessions],
+    ['Memory Usage', d.memoryUsageMb+' MB']
+  ].map(([lbl,val])=>`<div class="stat-card"><div class="lbl">${lbl}</div><div class="val" style="font-size:1.4rem;">${val}</div></div>`).join('');
+  const svc = (name, ok)=> `<div class="hl"><span>${name}</span>${ok?'<span class="badge badge-ok"><span class="dot"></span>Operational</span>':'<span class="badge badge-danger"><span class="dot"></span>Down</span>'}</div>`;
+  document.getElementById('healthList').innerHTML =
+    svc('MongoDB', d.mongoConnected) + svc('Firestore', d.firestoreConnected) +
+    svc('Authentication (Firebase)', true) + svc('WebSocket Server', true) +
+    svc('Google Drive Uploads', d.driveUploadConfigured);
+}
+
+// ===== Audit Logs =====
+async function loadAudit(){
+  const data = await api('/audit-logs');
+  const body = document.getElementById('auditBody');
+  body.innerHTML = data.logs.length ? data.logs.map(l=>`
+    <tr><td>${l.action}</td><td style="color:var(--text-muted);font-size:.8rem;">${l.target||'—'}</td><td>${l.performedBy}</td><td style="color:var(--text-muted);font-size:.8rem;">${fmtDate(new Date(l.timestamp).toISOString())}</td></tr>
+  `).join('') : `<tr><td colspan="4"><div class="empty-state"><div class="ic">📜</div>No owner actions recorded yet.<div class="hint">Every suspend, delete, or template change will show up here.</div></div></td></tr>`;
+}
+
+// ===== Settings =====
+async function loadSettings(){
+  const data = await api('/settings');
+  const s = data.settings || {};
+  document.getElementById('setBannerText').value = s.bannerText || '';
+  document.getElementById('setSupportChat').value = s.supportChatEnabled === false ? 'false' : 'true';
+  document.getElementById('setSignups').value = s.signupsEnabled === false ? 'false' : 'true';
+}
+document.getElementById('setSaveBtn').onclick = async ()=>{
+  const btn = document.getElementById('setSaveBtn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    await api('/settings', { method:'POST', body: JSON.stringify({ values: {
+      bannerText: document.getElementById('setBannerText').value.trim(),
+      supportChatEnabled: document.getElementById('setSupportChat').value === 'true',
+      signupsEnabled: document.getElementById('setSignups').value === 'true'
+    }})});
+    toast('Settings saved');
+  } catch(err){ toast(err.message,'err'); }
+  finally { btn.disabled = false; btn.textContent = 'Save Settings'; }
+};
+
+// ===== Helpers =====
+function skeletonRows(rows, cols){
+  return Array.from({length:rows}).map(()=>`<tr>${Array.from({length:cols}).map(()=>`<td><div class="skel skel-row"></div></td>`).join('')}</tr>`).join('');
+}
+function fmtDate(iso){
+  try { return new Date(iso).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}); }
+  catch(e){ return iso; }
+}
+function fmtUptime(sec){
+  const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60);
+  return h>0 ? `${h}h ${m}m` : `${m}m`;
+}
+function confirmModal(title, body, onConfirm){
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop';
+  wrap.innerHTML = `<div class="modal"><h3>${title}</h3><p>${body}</p>
+    <div class="modal-actions"><button class="btn btn-ghost" id="mCancel">Cancel</button><button class="btn btn-danger" id="mConfirm" style="padding:9px 18px;">Confirm</button></div></div>`;
+  document.body.appendChild(wrap);
+  wrap.querySelector('#mCancel').onclick = ()=> wrap.remove();
+  wrap.addEventListener('click', e=>{ if (e.target===wrap) wrap.remove(); });
+  wrap.querySelector('#mConfirm').onclick = async ()=>{ wrap.remove(); try { await onConfirm(); } catch(err){ toast(err.message,'err'); } };
+}
+</script>
+</body>
+</html>
