@@ -971,7 +971,7 @@ app.post('/api/support-chat', async (req, res) => {
 app.get('/api/get-sports', async (req, res) => {
     if (!templatesCollection) return res.json([]);
     try {
-        const sports = await templatesCollection.find({}, { projection: { panelCode: 0, overlayCode: 0 } }).sort({ createdAt: 1 }).toArray();
+        const sports = await templatesCollection.find({}, { projection: { panelCode: 0, overlayCode: 0, overlays: 0 } }).sort({ createdAt: 1 }).toArray();
         res.json(sports.map(s => ({ name: s.name, icon: s.icon, slug: s.slug })));
     } catch (err) {
         console.log('get-sports error:', err);
@@ -1093,12 +1093,26 @@ adminRouter.delete('/users/:uid', async (req, res) => {
 adminRouter.get('/templates', async (req, res) => {
     if (!templatesCollection) return res.json({ success: true, templates: [] });
     try {
-        const templates = await templatesCollection.find({}).sort({ createdAt: -1 }).toArray();
+        const templates = (await templatesCollection.find({}).sort({ createdAt: -1 }).toArray()).map(normalizeTemplate);
         res.json({ success: true, templates });
     } catch (err) {
         res.status(500).json({ success: false, error: 'Could not load templates' });
     }
 });
+
+// A template ("sport") can have MULTIPLE overlays but keeps a single panel.
+// Older docs only have a flat `overlayCode` string (no `overlays` array) —
+// normalizeTemplate() upgrades those in-memory so every other route can
+// assume `overlays` is always an array.
+function normalizeTemplate(doc) {
+    if (!doc) return doc;
+    if (!Array.isArray(doc.overlays)) {
+        doc.overlays = doc.overlayCode
+            ? [{ id: 'default', name: 'Default', code: doc.overlayCode, published: true, createdAt: doc.createdAt || Date.now() }]
+            : [];
+    }
+    return doc;
+}
 
 adminRouter.post('/templates', async (req, res) => {
     const { sportName, sportIcon, panelCode, overlayCode } = req.body || {};
@@ -1106,17 +1120,111 @@ adminRouter.post('/templates', async (req, res) => {
     if (!templatesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     const slug = String(sportName).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     try {
+        const existing = await templatesCollection.findOne({ slug });
+        const now = Date.now();
+        const overlays = existing ? normalizeTemplate(existing).overlays : [];
+        // First save (or re-save with overlay code present) seeds/updates the
+        // "Default" overlay so the simple 2-textarea flow keeps working as-is.
+        if (overlayCode) {
+            const defaultIdx = overlays.findIndex(o => o.id === 'default');
+            const defaultOverlay = { id: 'default', name: 'Default', code: overlayCode, published: true, createdAt: now };
+            if (defaultIdx >= 0) overlays[defaultIdx] = { ...overlays[defaultIdx], code: overlayCode }; else overlays.unshift(defaultOverlay);
+        }
         const doc = {
             name: sportName.trim(), icon: sportIcon || '🎯', slug,
-            panelCode: panelCode || '', overlayCode: overlayCode || '',
-            published: true, createdAt: Date.now()
+            panelCode: panelCode !== undefined ? panelCode : (existing ? existing.panelCode : ''),
+            overlays,
+            published: existing ? existing.published : true,
+            createdAt: existing ? existing.createdAt : now,
+            updatedAt: now
         };
-        await templatesCollection.updateOne({ slug }, { $set: doc }, { upsert: true });
-        await logAuditAction(req.ownerEmail, 'Create/update template', slug, null, { name: doc.name });
+        await templatesCollection.updateOne({ slug }, { $set: doc, $unset: { overlayCode: '' } }, { upsert: true });
+        await logAuditAction(req.ownerEmail, existing ? 'Update template' : 'Create template', slug, null, { name: doc.name });
         res.json({ success: true, template: doc });
     } catch (err) {
         console.log('Create template error:', err);
         res.status(500).json({ success: false, error: 'Could not save template' });
+    }
+});
+
+// ---- Overlays (multiple per sport) ----
+adminRouter.post('/templates/:slug/overlays', async (req, res) => {
+    if (!templatesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const { name, code } = req.body || {};
+    if (!name || !name.trim()) return res.status(400).json({ success: false, error: 'Overlay name required' });
+    try {
+        const doc = normalizeTemplate(await templatesCollection.findOne({ slug: req.params.slug }));
+        if (!doc) return res.status(404).json({ success: false, error: 'Template not found' });
+        const overlay = { id: crypto.randomUUID(), name: name.trim(), code: code || '', published: true, createdAt: Date.now() };
+        doc.overlays.push(overlay);
+        await templatesCollection.updateOne({ slug: req.params.slug }, { $set: { overlays: doc.overlays, updatedAt: Date.now() } });
+        await logAuditAction(req.ownerEmail, 'Add overlay', req.params.slug, null, { overlay: overlay.name });
+        res.json({ success: true, overlay });
+    } catch (err) {
+        console.log('Add overlay error:', err);
+        res.status(500).json({ success: false, error: 'Could not add overlay' });
+    }
+});
+
+adminRouter.put('/templates/:slug/overlays/:overlayId', async (req, res) => {
+    if (!templatesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const { name, code, published } = req.body || {};
+    try {
+        const doc = normalizeTemplate(await templatesCollection.findOne({ slug: req.params.slug }));
+        if (!doc) return res.status(404).json({ success: false, error: 'Template not found' });
+        const idx = doc.overlays.findIndex(o => o.id === req.params.overlayId);
+        if (idx < 0) return res.status(404).json({ success: false, error: 'Overlay not found' });
+        if (name !== undefined) doc.overlays[idx].name = name.trim();
+        if (code !== undefined) doc.overlays[idx].code = code;
+        if (published !== undefined) doc.overlays[idx].published = !!published;
+        await templatesCollection.updateOne({ slug: req.params.slug }, { $set: { overlays: doc.overlays, updatedAt: Date.now() } });
+        await logAuditAction(req.ownerEmail, 'Update overlay', req.params.slug, null, { overlay: doc.overlays[idx].name });
+        res.json({ success: true, overlay: doc.overlays[idx] });
+    } catch (err) {
+        console.log('Update overlay error:', err);
+        res.status(500).json({ success: false, error: 'Could not update overlay' });
+    }
+});
+
+adminRouter.delete('/templates/:slug/overlays/:overlayId', async (req, res) => {
+    if (!templatesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const doc = normalizeTemplate(await templatesCollection.findOne({ slug: req.params.slug }));
+        if (!doc) return res.status(404).json({ success: false, error: 'Template not found' });
+        const overlays = doc.overlays.filter(o => o.id !== req.params.overlayId);
+        await templatesCollection.updateOne({ slug: req.params.slug }, { $set: { overlays, updatedAt: Date.now() } });
+        await logAuditAction(req.ownerEmail, 'Delete overlay', req.params.slug, null, null);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: 'Could not delete overlay' });
+    }
+});
+
+// ---- Duplicate (clone a whole sport + its overlays under a new name) ----
+adminRouter.post('/templates/:slug/duplicate', async (req, res) => {
+    if (!templatesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const { newName, newIcon } = req.body || {};
+    if (!newName || !newName.trim()) return res.status(400).json({ success: false, error: 'New name required' });
+    try {
+        const src = normalizeTemplate(await templatesCollection.findOne({ slug: req.params.slug }));
+        if (!src) return res.status(404).json({ success: false, error: 'Template not found' });
+        const slug = String(newName).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+        const existing = await templatesCollection.findOne({ slug });
+        if (existing) return res.status(409).json({ success: false, error: 'A template with that name already exists' });
+        const now = Date.now();
+        const doc = {
+            name: newName.trim(), icon: newIcon || src.icon, slug,
+            panelCode: src.panelCode || '',
+            overlays: (src.overlays || []).map(o => ({ ...o, id: crypto.randomUUID() })),
+            published: false, createdAt: now, updatedAt: now,
+            duplicatedFrom: src.slug
+        };
+        await templatesCollection.insertOne(doc);
+        await logAuditAction(req.ownerEmail, 'Duplicate template', slug, null, { from: src.slug, name: doc.name });
+        res.json({ success: true, template: doc });
+    } catch (err) {
+        console.log('Duplicate template error:', err);
+        res.status(500).json({ success: false, error: 'Could not duplicate template' });
     }
 });
 
@@ -1278,6 +1386,29 @@ app.get('/cricket-panel', (req, res) => res.sendFile(__dirname + '/cricket-panel
 app.get('/cricket-overlay2', (req, res) => res.sendFile(__dirname + '/cricket-overlay2.html'));
 app.get('/cricket-panel2', (req, res) => res.sendFile(__dirname + '/cricket-panel2.html'));
 app.get('/cricket-scorecard', (req, res) => res.sendFile(__dirname + '/cricket-scorecard.html'));
+
+// 🧩 Generic serving routes for sports added via Admin → Broadcasting →
+// Add Template (the panelCode/overlayCode the owner pastes in). Cricket /
+// Football / Table Tennis keep their own dedicated hardcoded routes above;
+// everything else (including brand-new custom sports) is served here
+// straight out of the `templates` collection — no code changes needed to
+// add a sport. Used for both the real OBS browser-source URLs and the
+// Admin "Preview" button.
+app.get('/t/:slug/panel', async (req, res) => {
+    if (!templatesCollection) return res.status(503).send('Database not configured');
+    const doc = await templatesCollection.findOne({ slug: req.params.slug });
+    if (!doc) return res.status(404).send('Template not found');
+    res.set('Content-Type', 'text/html').send(doc.panelCode || '<!-- No panel code saved for this template yet -->');
+});
+app.get('/t/:slug/overlay/:overlayId', async (req, res) => {
+    if (!templatesCollection) return res.status(503).send('Database not configured');
+    const doc = normalizeTemplate(await templatesCollection.findOne({ slug: req.params.slug }));
+    if (!doc) return res.status(404).send('Template not found');
+    const overlay = doc.overlays.find(o => o.id === req.params.overlayId);
+    if (!overlay) return res.status(404).send('Overlay not found');
+    res.set('Content-Type', 'text/html').send(overlay.code || '<!-- No overlay code saved yet -->');
+});
+
 // 🌐 Public scorecard system — see the "PUBLIC SCORECARD SYSTEM" section
 // above for the /api/public/* + /api/league/:name/public-link routes
 // these pages call. Both are static shells; all data loads client-side.
