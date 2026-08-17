@@ -310,6 +310,57 @@
     background:linear-gradient(180deg, rgba(255,255,255,0.16), transparent 46%);
   }
 
+  /* Broadcast-style diagonal shine that sweeps through the panel on a
+     loop while the graphic holds — the classic "TV graphic is alive"
+     tell that a flat gradient alone can't give. */
+  #event-shine{
+    position:absolute; top:-60%; left:-70%; width:38%; height:220%;
+    transform:rotate(18deg) translateX(0);
+    background:linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent);
+    mix-blend-mode:screen; opacity:0; pointer-events:none; filter:blur(1px);
+  }
+
+  /* Hard white hit-flash — one bright frame the instant the number/word
+     lands, sells "impact" far better than an opacity fade alone. */
+  #event-flash{
+    position:absolute; inset:0; background:#fff; opacity:0;
+    mix-blend-mode:overlay; pointer-events:none;
+  }
+
+  #event-shock2{
+    position:absolute; left:50%; top:50%; width:34%; aspect-ratio:1/1;
+    transform:translate(-50%,-50%) scale(0); border-radius:50%; pointer-events:none;
+    border:2px solid var(--ev-accent); opacity:0; mix-blend-mode:screen;
+  }
+
+  /* Comet — a small racing ball with a fading tail, used to physically
+     sell the shot: streaks flat for FOUR, arcs up-and-away for SIX. */
+  #event-ball{
+    position:absolute; left:50%; top:50%; width:10px; height:10px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #ffffff, var(--ev-accent) 55%, var(--ev-secondary) 100%);
+    box-shadow:0 0 10px 2px var(--ev-glow), -22px 2px 14px -2px var(--ev-glow);
+    opacity:0; pointer-events:none; z-index:3;
+  }
+
+  /* WICKET — a single jagged crack of light striking through the panel,
+     plus two bails popping off the stumps. */
+  #event-crack{
+    position:absolute; left:8%; right:8%; top:50%; height:34px; transform:translateY(-50%);
+    opacity:0; pointer-events:none; z-index:2;
+    background:
+      linear-gradient(100deg, transparent 46%, var(--ev-accent) 49%, var(--ev-accent) 50%, transparent 53%),
+      linear-gradient(80deg, transparent 30%, var(--ev-accent) 32.5%, transparent 35%),
+      linear-gradient(115deg, transparent 66%, var(--ev-accent) 68.5%, transparent 71%);
+    filter:drop-shadow(0 0 10px var(--ev-glow));
+    clip-path:polygon(0 40%,22% 40%,26% 0%,30% 40%,70% 40%,74% 100%,78% 40%,100% 40%,100% 60%,0 60%);
+  }
+  #event-bails{ position:absolute; left:50%; top:38%; width:1px; height:1px; pointer-events:none; z-index:3; }
+  #event-bails .ev-bail{
+    position:absolute; left:0; top:0; width:22px; height:5px; margin:-2px 0 0 -11px;
+    background:linear-gradient(180deg, #f4e4c1, #c9a463); border-radius:2px; opacity:0;
+    box-shadow:0 2px 4px rgba(0,0,0,0.4);
+  }
+
   #event-glow{
     position:absolute; left:50%; top:50%; width:66%; height:230%;
     transform:translate(-50%,-50%); border-radius:50%; pointer-events:none;
@@ -335,11 +386,11 @@
   #event-shock{
     position:absolute; left:50%; top:50%; width:34%; aspect-ratio:1/1;
     transform:translate(-50%,-50%) scale(0); border-radius:50%; pointer-events:none;
-    border:3px solid var(--ev-accent); opacity:0; mix-blend-mode:screen;
+    border:4px solid var(--ev-accent); opacity:0; mix-blend-mode:screen;
   }
   #event-streaks{ position:absolute; inset:0; overflow:hidden; pointer-events:none; }
   #event-streaks .ev-streak{
-    position:absolute; left:-30%; width:46%; height:3px; border-radius:3px; opacity:0;
+    position:absolute; left:-30%; width:52%; height:4px; border-radius:4px; opacity:0;
     background:linear-gradient(90deg, transparent, var(--ev-accent), transparent);
     filter:blur(0.3px);
   }
@@ -714,6 +765,7 @@
       </div>
       <div id="event-stage">
         <div id="event-bg">
+          <div id="event-shine"></div>
           <div id="event-glow"></div>
           <div id="event-lines">
             <div class="ev-line"></div>
@@ -727,12 +779,20 @@
           </div>
           <div id="event-particles"></div>
           <div id="event-shock"></div>
+          <div id="event-shock2"></div>
           <div id="event-streaks">
             <div class="ev-streak"></div>
             <div class="ev-streak"></div>
             <div class="ev-streak"></div>
           </div>
           <div id="event-rays"></div>
+          <div id="event-ball"></div>
+          <div id="event-crack"></div>
+          <div id="event-bails">
+            <div class="ev-bail ev-bail-l"></div>
+            <div class="ev-bail ev-bail-r"></div>
+          </div>
+          <div id="event-flash"></div>
           <div id="event-hero">
             <div id="event-number">4</div>
             <div id="event-word">FOUR</div>
@@ -1487,6 +1547,49 @@ function burstEventRays(container, count, color){
   }
 }
 
+// A hard, bright single-frame "hit flash" — the same language broadcast
+// graphics use the instant a number/word lands, far punchier than an
+// opacity fade alone can sell.
+function flashEvent(el, peak){
+  gsap.timeline()
+    .set(el, { opacity: 0 })
+    .to(el, { opacity: peak != null ? peak : 0.85, duration: 0.05, ease: 'power1.out' })
+    .to(el, { opacity: 0, duration: 0.3, ease: 'power2.in' });
+}
+
+// FOUR — a comet streaks flat across the panel just ahead of the number
+// landing, motion-blurred via a horizontal stretch, then fades.
+function flyBallFour(ball){
+  gsap.timeline()
+    .set(ball, { opacity: 1, x: '-60%', y: '6%', scale: 1, rotate: 0, scaleX: 2.4 })
+    .to(ball, { x: '60%', duration: 0.4, ease: 'power1.in' }, 0)
+    .to(ball, { scaleX: 1, duration: 0.15 }, 0)
+    .to(ball, { opacity: 0, duration: 0.2 }, 0.22);
+}
+
+// SIX — the comet launches from low-center and arcs up and off the top
+// edge, mirroring the ball actually clearing the rope.
+function flyBallSix(ball){
+  gsap.timeline()
+    .set(ball, { opacity: 1, x: '-8%', y: '90%', scale: 1.3, rotate: -20 })
+    .to(ball, { x: '46%', y: '-120%', rotate: 40, duration: 0.62, ease: 'power2.out' }, 0)
+    .to(ball, { scale: 0.5, opacity: 0, duration: 0.3 }, 0.35);
+}
+
+// WICKET — a jagged crack of light strikes through the panel and the
+// bails pop off and tumble away, instead of just text sliding in.
+function breakWicket(crack, bails){
+  gsap.timeline()
+    .fromTo(crack, { opacity: 0, scaleX: 0 }, { opacity: 1, scaleX: 1, duration: 0.09, ease: 'power4.out' }, 0)
+    .to(crack, { opacity: 0, duration: 0.35, ease: 'power2.in' }, 0.16)
+    .fromTo(bails[0], { opacity: 1, x: 0, y: 0, rotate: 0 },
+      { opacity: 1, x: -34, y: -22, rotate: -140, duration: 0.5, ease: 'power2.out' }, 0.03)
+    .to(bails[0], { y: '+=20', opacity: 0, duration: 0.35, ease: 'power1.in' }, 0.4)
+    .fromTo(bails[1], { opacity: 1, x: 0, y: 0, rotate: 0 },
+      { opacity: 1, x: 30, y: -26, rotate: 130, duration: 0.5, ease: 'power2.out' }, 0.06)
+    .to(bails[1], { y: '+=20', opacity: 0, duration: 0.35, ease: 'power1.in' }, 0.42);
+}
+
 function shakeElement(el, amount, duration){
   gsap.timeline()
     .to(el, { x: -amount, duration: duration * 0.25, ease: 'power1.inOut' })
@@ -1494,14 +1597,26 @@ function shakeElement(el, amount, duration){
     .to(el, { x: 0,       duration: duration * 0.25, ease: 'power1.inOut' });
 }
 
+let shineTl = null;
 function startEventMicroMotion(bg, theme){
   microTl = gsap.timeline({ repeat: -1, yoyo: true, defaults: { ease: 'sine.inOut' } });
   microTl.to(bg, { backgroundPosition: '10% 55%', duration: 2.6 }, 0)
     .to('#event-hero', { scale: 1.012, duration: 2.2 }, 0)
     .to('#event-glow', { opacity: theme.particles ? 0.6 : 0.16, duration: 2.4 }, 0);
+
+  // Keep the panel visibly "alive" while it holds — a soft diagonal
+  // shine sweeping through on a loop, the same trick real broadcast
+  // lower-thirds use so a static hold never looks frozen.
+  const shine = document.getElementById('event-shine');
+  gsap.set(shine, { x: '-40%', opacity: 0 });
+  shineTl = gsap.timeline({ repeat: -1, repeatDelay: 1.1 });
+  shineTl.to(shine, { opacity: 0.9, duration: 0.15 }, 0)
+    .to(shine, { x: '220%', duration: 0.9, ease: 'power1.inOut' }, 0)
+    .to(shine, { opacity: 0, duration: 0.2 }, 0.7);
 }
 function stopEventMicroMotion(){
   if(microTl){ microTl.kill(); microTl = null; }
+  if(shineTl){ shineTl.kill(); shineTl = null; }
   gsap.set('#event-hero', { scale: 1 });
 }
 
@@ -1516,53 +1631,77 @@ function addEventHeroPhase(tl, kind, theme, chars, startAt){
   const impact = document.querySelectorAll('#event-impact .ev-impact-line');
   const particles = document.getElementById('event-particles');
   const shock = document.getElementById('event-shock');
+  const shock2 = document.getElementById('event-shock2');
   const streaks = document.querySelectorAll('#event-streaks .ev-streak');
   const rays = document.getElementById('event-rays');
+  const flash = document.getElementById('event-flash');
+  const ball = document.getElementById('event-ball');
+  const crack = document.getElementById('event-crack');
+  const bails = document.querySelectorAll('#event-bails .ev-bail');
 
   switch(kind){
-    // FOUR — "Boundary!": speed + precision. Horizontal energy racing
-    // toward the number, a sharp anticipation-dip before the number
-    // snaps in, one clean impact flash, then a tight settle. Reads
-    // fast and controlled rather than explosive.
+    // FOUR — "Boundary!": speed + precision. A comet races flat across
+    // the panel, a sharp anticipation-dip, the number SNAPS in with a
+    // hard white flash and a punch-scale on the whole hero, then a
+    // tight settle. Reads fast and controlled rather than explosive.
     case 'FOUR':
-      tl.fromTo(numEl, { opacity: 0, scale: 0.55, x: -26, filter: 'blur(14px)' },
-                { opacity: 1, scale: 1.1, x: 0, filter: 'blur(0px)', duration: 0.34, ease: 'power4.out' }, startAt)
-        .to(numEl, { scale: 1, duration: 0.16, ease: 'power2.out' })
-        .to(chars, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.28, stagger: 0.022, ease: 'power3.out' }, '-=0.22')
+      tl.call(() => flyBallFour(ball), null, startAt)
+        .fromTo(numEl, { opacity: 0, scale: 0.55, x: -26, filter: 'blur(14px)' },
+                { opacity: 1, scale: 1.16, x: 0, filter: 'blur(0px)', duration: 0.3, ease: 'power4.out' }, `${startAt}+=0.16`)
+        .call(() => flashEvent(flash, 0.75), null, '<')
+        .fromTo('#event-bg', { scale: 1 }, { scale: 1.018, duration: 0.08, ease: 'power2.out' }, '<')
+        .to('#event-bg', { scale: 1, duration: 0.22, ease: 'power2.out' })
+        .to(numEl, { scale: 1, duration: 0.16, ease: 'power2.out' }, '<')
+        .to(chars, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.28, stagger: 0.022, ease: 'power3.out' }, '-=0.3')
         .to(glow, { opacity: 0.5, scale: 1, duration: 0.36, ease: 'power2.out' }, '<')
-        .fromTo(streaks, { x: '-140%', opacity: 0 }, { x: '340%', opacity: 1, duration: 0.5, stagger: 0.05, ease: 'power1.in' }, startAt)
+        .fromTo(streaks, { x: '-140%', opacity: 0 }, { x: '340%', opacity: 1, duration: 0.45, stagger: 0.045, ease: 'power1.in' }, startAt)
         .to(streaks, { opacity: 0, duration: 0.18 }, '-=0.08')
         .to(lines, { scaleX: 1, opacity: 1, duration: 0.26, stagger: 0.04, ease: 'power2.out' }, '<0.02')
-        .call(() => { shock.style.borderColor = theme.accent; }, null, '<')
-        .fromTo(shock, { scale: 0.3, opacity: 0.9 }, { scale: 1.35, opacity: 0, duration: 0.5, ease: 'power2.out' }, '<')
-        .call(() => burstEventParticles(particles, theme.particles, theme.secondary, theme.particleDist), null, '<0.06')
+        .call(() => { shock.style.borderColor = theme.accent; shock2.style.borderColor = theme.accent; }, null, `${startAt}+=0.16`)
+        .fromTo(shock, { scale: 0.3, opacity: 0.9 }, { scale: 1.35, opacity: 0, duration: 0.5, ease: 'power2.out' }, `${startAt}+=0.16`)
+        .fromTo(shock2, { scale: 0.3, opacity: 0.6 }, { scale: 1.8, opacity: 0, duration: 0.65, ease: 'power2.out' }, `${startAt}+=0.24`)
+        .call(() => burstEventParticles(particles, theme.particles, theme.secondary, theme.particleDist), null, `${startAt}+=0.22`)
         .to(subEl, { opacity: 1, y: 0, duration: 0.3 }, '-=0.1');
       break;
-    // SIX — "WHAT A SIX!": power + height. Bigger anticipation dip,
-    // number launches upward on overshoot before dropping into place
-    // (mirrors the ball's arc), a wider shockwave, radial rays instead
-    // of horizontal streaks, and a secondary settle pulse so it reads
-    // as clearly bigger than FOUR.
+    // SIX — "WHAT A SIX!": power + height. The comet launches low and
+    // arcs off the top like the ball clearing the rope, the number
+    // launches upward on overshoot before dropping in with a bright
+    // flash + hero punch-scale, a double shockwave, radial rays, and a
+    // secondary settle pulse so it unmistakably reads bigger than FOUR.
     case 'SIX':
-      tl.fromTo(numEl, { opacity: 0, scale: 0.5, y: 34, filter: 'blur(16px)' },
-                { opacity: 1, scale: 1.16, y: -10, filter: 'blur(0px)', duration: 0.46, ease: 'expo.out' }, startAt)
-        .to(numEl, { scale: 1, y: 0, duration: 0.3, ease: 'back.out(2.2)' })
+      tl.call(() => flyBallSix(ball), null, startAt)
+        .fromTo(numEl, { opacity: 0, scale: 0.5, y: 34, filter: 'blur(16px)' },
+                { opacity: 1, scale: 1.22, y: -10, filter: 'blur(0px)', duration: 0.42, ease: 'expo.out' }, `${startAt}+=0.24`)
+        .call(() => flashEvent(flash, 1), null, '<')
+        .call(() => shakeElement('#event-hero', 4, 0.18), null, '<')
+        .fromTo('#event-bg', { scale: 1 }, { scale: 1.03, duration: 0.1, ease: 'power2.out' }, '<')
+        .to('#event-bg', { scale: 1, duration: 0.3, ease: 'elastic.out(1,0.6)' })
+        .to(numEl, { scale: 1, y: 0, duration: 0.3, ease: 'back.out(2.2)' }, '<')
         .to(chars, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.34, stagger: 0.028, ease: 'power3.out' }, '-=0.34')
-        .to(glow, { opacity: 0.8, scale: 1.35, duration: 0.5, ease: 'power2.out' }, '<-0.1')
-        .call(() => { shock.style.borderColor = theme.accent; }, null, startAt)
-        .fromTo(shock, { scale: 0.25, opacity: 1 }, { scale: 1.7, opacity: 0, duration: 0.65, ease: 'power2.out' }, startAt)
-        .call(() => burstEventRays(rays, theme.rays, theme.accent), null, '<0.05')
-        .call(() => burstEventParticles(particles, theme.particles, theme.primary, theme.particleDist), null, '<0.05')
+        .to(glow, { opacity: 0.85, scale: 1.35, duration: 0.5, ease: 'power2.out' }, '<-0.1')
+        .call(() => { shock.style.borderColor = theme.accent; shock2.style.borderColor = theme.accent; }, null, `${startAt}+=0.24`)
+        .fromTo(shock, { scale: 0.25, opacity: 1 }, { scale: 1.7, opacity: 0, duration: 0.65, ease: 'power2.out' }, `${startAt}+=0.24`)
+        .fromTo(shock2, { scale: 0.25, opacity: 0.7 }, { scale: 2.3, opacity: 0, duration: 0.85, ease: 'power2.out' }, `${startAt}+=0.36`)
+        .call(() => burstEventRays(rays, theme.rays, theme.accent), null, `${startAt}+=0.29`)
+        .call(() => burstEventParticles(particles, theme.particles, theme.primary, theme.particleDist), null, `${startAt}+=0.29`)
         .to(lines, { scaleX: 1, opacity: 1, duration: 0.3, stagger: 0.05, ease: 'power2.out' }, '<')
-        .to('#event-hero', { scale: 1.05, duration: 0.2, ease: 'power2.out' }, '-=0.15')
+        .to('#event-hero', { scale: 1.06, duration: 0.2, ease: 'power2.out' }, '-=0.15')
         .to('#event-hero', { scale: 1, duration: 0.3, ease: 'power2.inOut' })
         .to(subEl, { opacity: 1, y: 0, duration: 0.3 }, '-=0.15');
       break;
+    // WICKET — a jagged crack of light strikes through, bails pop off
+    // the stumps and tumble away, a sharper double shake, and a
+    // desaturated red flash instead of a friendly white one — this one
+    // should feel like a jolt, not a celebration.
     case 'WICKET':
-      tl.call(() => shakeElement(document.getElementById('scorecard'), 3, 0.16), null, startAt)
+      tl.call(() => { shakeElement(document.getElementById('scorecard'), 5, 0.22); shakeElement(document.getElementById('event-hero'), 3, 0.22); }, null, startAt)
+        .call(() => breakWicket(crack, bails), null, startAt)
+        .call(() => flashEvent(flash, 0.55), null, `${startAt}+=0.02`)
         .fromTo(chars, { x: -24, opacity: 0, filter: 'blur(4px)' }, { x: 0, opacity: 1, filter: 'blur(0px)', duration: 0.26, stagger: 0.018, ease: 'power4.out' }, startAt)
         .to(impact, { opacity: 1, scaleX: 1, duration: 0.1, stagger: 0.03 }, '<0.02')
         .to(impact, { opacity: 0, duration: 0.28 }, '+=0.05')
+        .call(() => { shock.style.borderColor = theme.accent; }, null, startAt)
+        .fromTo(shock, { scale: 0.3, opacity: 0.85 }, { scale: 1.5, opacity: 0, duration: 0.55, ease: 'power2.out' }, startAt)
         .call(() => burstEventParticles(particles, theme.particles, theme.secondary, theme.particleDist), null, '<')
         .to(subEl, { opacity: 1, y: 0, duration: 0.3 }, '-=0.1');
       break;
@@ -1617,8 +1756,14 @@ function playEventTimeline(kind, opts, onDone){
   subEl.textContent = opts.sub || '';
 
   const shock = document.getElementById('event-shock');
+  const shock2 = document.getElementById('event-shock2');
   const streaks = document.querySelectorAll('#event-streaks .ev-streak');
   const rays = document.getElementById('event-rays');
+  const shine = document.getElementById('event-shine');
+  const flash = document.getElementById('event-flash');
+  const ball = document.getElementById('event-ball');
+  const crack = document.getElementById('event-crack');
+  const bails = document.querySelectorAll('#event-bails .ev-bail');
 
   const baseH = topRow.getBoundingClientRect().height || 100;
   const targetH = baseH * theme.growth;
@@ -1626,7 +1771,7 @@ function playEventTimeline(kind, opts, onDone){
   const inSec = TRANSITION_IN / 1000;
   const outSec = TRANSITION_OUT / 1000;
 
-  gsap.killTweensOf([stage, bg, glow, numEl, subEl, chars, lines, impact, shock, streaks, '#event-hero']);
+  gsap.killTweensOf([stage, bg, glow, numEl, subEl, chars, lines, impact, shock, shock2, streaks, shine, flash, ball, crack, bails, '#event-hero']);
   if(microTl){ microTl.kill(); microTl = null; }
 
   gsap.set(bg, { height: baseH * 0.22, opacity: 0, clipPath: 'inset(0% 46% 0% 46% round 14px)' });
@@ -1637,7 +1782,13 @@ function playEventTimeline(kind, opts, onDone){
   gsap.set(lines, { opacity: 0, scaleX: 0 });
   gsap.set(impact, { opacity: 0, scaleX: 0 });
   gsap.set(shock, { opacity: 0, scale: 0.3 });
+  gsap.set(shock2, { opacity: 0, scale: 0.3 });
   gsap.set(streaks, { opacity: 0, x: '-140%' });
+  gsap.set(shine, { opacity: 0, x: 0 });
+  gsap.set(flash, { opacity: 0 });
+  gsap.set(ball, { opacity: 0, x: 0, y: 0, scale: 1, rotate: 0 });
+  gsap.set(crack, { opacity: 0, scaleX: 0 });
+  gsap.set(bails, { opacity: 0, x: 0, y: 0, rotate: 0 });
   rays.innerHTML = '';
 
   const master = gsap.timeline({
