@@ -24,6 +24,9 @@
     --teamB-color-2:#1948c9;
     --panel-bg:#0d0f14;         /* score / bowler / ball-ticker panel */
     --panel-bg-2:#1b1e26;
+    --bat-color:var(--teamA-color-2);   /* set live: current batting team's colour, bleeds through score+batsmen */
+    --bowl-color:var(--teamB-color-2);  /* set live: current bowling team's colour, bleeds through bowler segment */
+    --logo-size:44px;
     --batsmen-bg:#0d0f14;       /* batsmen panel fades dark -> gold */
     --batsmen-bg-2:#8a6100;
     --gold:#f2ba12;             /* score pill / target wedge */
@@ -100,7 +103,8 @@
   /* Team tag blocks — flush on the outer edge (rounded by the bar's own
      overflow:hidden clip), skewed on the inner edge */
   .team-tag{
-    width:var(--team-tag-width); flex:none; justify-content:center;
+    min-width:var(--team-tag-width); width:auto; flex:0 0 auto; justify-content:center;
+    padding:0 26px; gap:10px;
   }
   #team-tag-a{
     background:linear-gradient(155deg,var(--teamA-color-2),var(--teamA-color) 60%);
@@ -110,12 +114,26 @@
     background:linear-gradient(205deg,var(--teamB-color-2),var(--teamB-color) 65%);
     clip-path:polygon(var(--skew) 0,100% 0,100% 100%,0 100%);
   }
-  .team-tag .short{ font-size:var(--team-name-size); font-weight:var(--team-name-weight); letter-spacing:.5px; text-transform:uppercase; line-height:1; color:var(--white); }
+  .team-tag .logo{
+    width:var(--logo-size); height:var(--logo-size); flex:none; object-fit:contain;
+    border-radius:50%; background:rgba(255,255,255,.08); box-shadow:0 0 0 2px rgba(255,255,255,.25);
+  }
+  .team-tag .short{
+    font-size:clamp(24px, var(--team-name-size), var(--team-name-size)); font-weight:var(--team-name-weight);
+    letter-spacing:.5px; text-transform:uppercase; line-height:1; color:var(--white);
+    white-space:nowrap; max-width:340px; overflow:visible;
+  }
+  /* When a team name is long, JS adds .long to shrink it so the full name still fits on one line */
+  .team-tag .short.long{ font-size:calc(var(--team-name-size) * .55); letter-spacing:.2px; }
+  .team-tag .short.longer{ font-size:calc(var(--team-name-size) * .4); letter-spacing:0; }
 
   /* SCORE segment — score pill + powerplay tag + overs on top row,
      CRR/RRR line underneath. One continuous dark panel. */
   #score-block{
-    flex:none; background:linear-gradient(180deg,var(--panel-bg-2),var(--panel-bg) 55%);
+    flex:none;
+    background:
+      linear-gradient(180deg,rgba(255,255,255,.05),rgba(0,0,0,.15) 55%),
+      linear-gradient(90deg,var(--bat-color) 0%,var(--panel-bg-2) 40%,var(--panel-bg) 85%);
     margin-left:calc(var(--skew) * -1);
     clip-path:polygon(var(--skew) 0,100% 0,calc(100% - var(--skew)) 100%,0 100%);
     flex-direction:column; align-items:flex-start; justify-content:center; gap:10px;
@@ -141,7 +159,8 @@
 
   /* BATSMEN segment — two perfectly aligned rows, panel fades toward gold */
   #batsmen-block{
-    flex:none; background:linear-gradient(90deg,var(--batsmen-bg) 55%,var(--batsmen-bg-2));
+    flex:none;
+    background:linear-gradient(90deg,var(--bat-color) 0%,var(--batsmen-bg) 30%,var(--batsmen-bg) 60%,var(--batsmen-bg-2));
     margin-left:calc(var(--skew) * -1);
     clip-path:polygon(var(--skew) 0,100% 0,calc(100% - var(--skew)) 100%,0 100%);
     min-width:400px; padding:0 40px 0 34px;
@@ -167,15 +186,20 @@
   #target-block .t-label{ font-size:var(--target-label-size); font-weight:700; letter-spacing:1.6px; font-style:italic; color:#1a1200; opacity:.82; white-space:nowrap; }
   #target-block .t-value{ font-size:var(--target-value-size); font-weight:800; font-style:italic; color:#151000; white-space:nowrap; line-height:1; }
 
-  /* BOWLER segment — single row: icon + name | divider | figures */
+  /* BOWLER segment — name+icon on the right of the segment (nearest the
+     bowling team's colour), with the ball-by-ball figures organised as a
+     labelled stat row underneath instead of one plain string. */
   #bowler-block{
-    flex:none; background:linear-gradient(180deg,var(--panel-bg-2),var(--panel-bg) 55%);
+    flex:none;
+    background:
+      linear-gradient(180deg,rgba(255,255,255,.05),rgba(0,0,0,.15) 55%),
+      linear-gradient(90deg,var(--panel-bg) 0%,var(--panel-bg-2) 45%,var(--bowl-color) 100%);
     margin-left:calc(var(--skew) * -1);
     clip-path:polygon(calc(var(--skew) + 8px) 0,100% 0,100% 100%,0 100%);
-    min-width:320px; padding:0 24px 0 40px; gap:16px;
+    min-width:320px; padding:0 30px 0 34px;
+    flex-direction:column; align-items:flex-end; justify-content:center; gap:8px;
   }
-  .bowler-row{ display:flex; align-items:center; gap:16px; white-space:nowrap; }
-  .bowler-name{ display:flex; align-items:center; gap:9px; font-size:var(--bowler-name-size); font-weight:600; color:var(--white); }
+  .bowler-name{ display:flex; align-items:center; gap:9px; font-size:var(--bowler-name-size); font-weight:600; color:var(--white); white-space:nowrap; }
   .bowler-name .ball-ico{
     width:18px; height:18px; border-radius:50%; flex:none;
     background:radial-gradient(circle at 35% 30%,#c94b3d,#7a1f14 75%);
@@ -185,8 +209,14 @@
     content:''; position:absolute; left:50%; top:8%; bottom:8%; width:0;
     border-left:1px dashed rgba(255,255,255,.6); transform:translateX(-50%) rotate(8deg);
   }
-  .bowler-divider{ color:var(--divider); font-weight:400; font-size:var(--bowler-figs-size); }
-  .bowler-figs{ font-size:var(--bowler-figs-size); font-weight:600; color:var(--white); white-space:nowrap; }
+  .bowler-figs-row{ display:flex; align-items:stretch; gap:0; white-space:nowrap; }
+  .bowler-figs-row .fig{
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    padding:0 12px; border-left:1px solid rgba(255,255,255,.14);
+  }
+  .bowler-figs-row .fig:first-child{ border-left:none; padding-left:0; }
+  .bowler-figs-row .fig-val{ font-size:var(--bowler-figs-size); font-weight:700; color:var(--white); line-height:1.1; }
+  .bowler-figs-row .fig-lbl{ font-size:11px; font-weight:600; letter-spacing:.6px; color:var(--dim); text-transform:uppercase; line-height:1.2; }
 
   /* BALLS segment — evenly spaced ball-by-ball ticker, same navy panel
      as the bowler segment so the two feel like one unified band */
@@ -196,14 +226,14 @@
   }
   .ticker{ display:flex; align-items:center; gap:10px; width:100%; justify-content:space-between; }
   .pip{
-    width:var(--pip-size); height:var(--pip-size); border-radius:50%; display:flex; align-items:center; justify-content:center;
-    font-size:var(--pip-font-size); font-weight:800; flex:none; background:#eef0f4; color:#111318;
-    border:2px solid rgba(255,255,255,.85);
+    width:var(--pip-size-live, var(--pip-size)); height:var(--pip-size-live, var(--pip-size)); border-radius:50%; display:flex; align-items:center; justify-content:center;
+    font-size:var(--pip-font-size-live, var(--pip-font-size)); font-weight:800; flex:none; background:#eef0f4; color:#111318;
+    border:2px solid rgba(255,255,255,.85); transition:width .2s ease, height .2s ease, font-size .2s ease;
   }
   .pip.empty{ background:rgba(255,255,255,.94); border:2px solid rgba(255,255,255,.85); }
   .pip.boundary{ background:var(--gold); color:#1a1200; border-color:rgba(255,255,255,.85); }
   .pip.wicket{ background:#12141a; color:var(--white); border-color:rgba(255,255,255,.85); }
-  .pip.extra{ background:#f4f5f8; color:#111318; font-size:calc(var(--pip-font-size) - 3px); }
+  .pip.extra{ background:#f4f5f8; color:#111318; font-size:calc(var(--pip-font-size-live, var(--pip-font-size)) - 3px); }
   .pip.dot{ background:#f4f5f8; color:#111318; }
 
 
@@ -269,6 +299,7 @@
        [Bowler] [Ball-by-ball ticker] [MI team tag] -->
   <div id="scorebar" class="off">
     <div class="seg team-tag" id="team-tag-a">
+      <img class="logo hidden" id="tagA-logo" alt="">
       <div class="short" id="tagA-short">MI</div>
     </div>
 
@@ -310,10 +341,12 @@
     </div>
 
     <div class="seg" id="bowler-block">
-      <div class="bowler-row">
-        <span class="bowler-name"><span class="ball-ico"></span><span id="bowler-name">—</span></span>
-        <span class="bowler-divider">|</span>
-        <span class="bowler-figs" id="bowler-figs">0-0 (0.0)</span>
+      <span class="bowler-name"><span class="ball-ico"></span><span id="bowler-name">—</span></span>
+      <div class="bowler-figs-row">
+        <div class="fig"><span class="fig-val" id="bowler-overs">0.0</span><span class="fig-lbl">Ov</span></div>
+        <div class="fig"><span class="fig-val" id="bowler-runs">0</span><span class="fig-lbl">R</span></div>
+        <div class="fig"><span class="fig-val" id="bowler-wkts">0</span><span class="fig-lbl">W</span></div>
+        <div class="fig"><span class="fig-val" id="bowler-econ">0.00</span><span class="fig-lbl">Econ</span></div>
       </div>
     </div>
 
@@ -323,6 +356,7 @@
 
     <div class="seg team-tag" id="team-tag-b">
       <div class="short" id="tagB-short">RCB</div>
+      <img class="logo hidden" id="tagB-logo" alt="">
     </div>
   </div>
 
@@ -409,6 +443,25 @@ socket.on('connect', () => socket.emit('joinRoom', room));
 function fmtOvers(overs, balls){ return `${overs}.${balls}`; }
 function esc(s){ return (s == null ? '' : String(s)); }
 
+// Fills a team tag's logo (if provided) and full team name, shrinking the
+// font in steps so long names still fit on one line instead of clipping.
+function setTeamTag(prefix, team){
+  const logo = document.getElementById(`${prefix}-logo`);
+  const nameEl = document.getElementById(`${prefix}-short`);
+  if(team && team.logo){
+    logo.src = team.logo;
+    logo.classList.remove('hidden');
+  } else {
+    logo.classList.add('hidden');
+    logo.removeAttribute('src');
+  }
+  const name = (team && (team.name || team.short)) || '—';
+  nameEl.textContent = name;
+  nameEl.classList.remove('long', 'longer');
+  if(name.length > 14) nameEl.classList.add('longer');
+  else if(name.length > 7) nameEl.classList.add('long');
+}
+
 function isPowerplay(state){
   const format = state.format;
   const overs = state.score.overs;
@@ -444,8 +497,18 @@ function renderScorebar(state){
   document.documentElement.style.setProperty('--progress-color', state.theme.progressColor || '#f2ba12');
   document.documentElement.style.setProperty('--panel-bg', state.theme.bottomBarColor || '#0d0f14');
 
-  document.getElementById('tagA-short').textContent = state.teamA.short || state.teamA.name || 'A';
-  document.getElementById('tagB-short').textContent = state.teamB.short || state.teamB.name || 'B';
+  // Full team name (falls back to short code), auto-shrunk so long names
+  // never get clipped instead of always showing just the 2-3 letter code.
+  setTeamTag('tagA', state.teamA);
+  setTeamTag('tagB', state.teamB);
+
+  // Batting / bowling team colour bleed — defaults to Team A batting until
+  // the panel sends state.battingTeam ('A' | 'B').
+  const battingIsB = state.battingTeam === 'B';
+  const batColor = battingIsB ? (state.teamB.color || '#0b1a4a') : (state.teamA.color || '#0c0d11');
+  const bowlColor = battingIsB ? (state.teamA.color || '#0c0d11') : (state.teamB.color || '#0b1a4a');
+  document.documentElement.style.setProperty('--bat-color', batColor);
+  document.documentElement.style.setProperty('--bowl-color', bowlColor);
 
   const crr = (() => {
     const balls = state.score.overs * 6 + state.score.balls;
@@ -491,13 +554,38 @@ function renderScorebar(state){
   }
 
   document.getElementById('bowler-name').textContent = state.bowler.name || '—';
-  document.getElementById('bowler-figs').textContent =
-    `${state.bowler.wickets}-${state.bowler.runs} (${fmtOvers(state.bowler.overs, state.bowler.balls)})`;
+  document.getElementById('bowler-overs').textContent = fmtOvers(state.bowler.overs, state.bowler.balls);
+  document.getElementById('bowler-runs').textContent = state.bowler.runs;
+  document.getElementById('bowler-wkts').textContent = state.bowler.wickets;
+  const bBallsBowled = (state.bowler.overs || 0) * 6 + (state.bowler.balls || 0);
+  document.getElementById('bowler-econ').textContent =
+    bBallsBowled > 0 ? ((state.bowler.runs / bBallsBowled) * 6).toFixed(2) : '0.00';
 
+  renderTicker(state.thisOver || []);
+}
+
+// Ball-by-ball ticker — shows every ball bowled this over. A normal over is
+// padded with empty slots up to 6; if extras push the over past 6 balls,
+// nothing gets cut off — the pips just shrink a little so they all still fit.
+function renderTicker(thisOver){
   const ticker = document.getElementById('ticker');
   ticker.innerHTML = '';
-  const balls = (state.thisOver || []).slice(-7);
-  const padded = balls.concat(Array(Math.max(0, 7 - balls.length)).fill(null));
+  const minSlots = 6;
+  const padded = thisOver.length >= minSlots
+    ? thisOver
+    : thisOver.concat(Array(minSlots - thisOver.length).fill(null));
+
+  const basePip = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--pip-size')) || 36;
+  const baseFont = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--pip-font-size')) || 16;
+  if(padded.length > minSlots){
+    const scale = Math.max(minSlots / padded.length, 0.55);
+    document.documentElement.style.setProperty('--pip-size-live', `${(basePip * scale).toFixed(1)}px`);
+    document.documentElement.style.setProperty('--pip-font-size-live', `${(baseFont * scale).toFixed(1)}px`);
+  } else {
+    document.documentElement.style.removeProperty('--pip-size-live');
+    document.documentElement.style.removeProperty('--pip-font-size-live');
+  }
+
   padded.forEach(b => {
     const pip = document.createElement('div');
     if(b == null){ pip.className = 'pip empty'; }
