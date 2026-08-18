@@ -1386,6 +1386,8 @@ app.get('/cricket-panel', (req, res) => res.sendFile(__dirname + '/cricket-panel
 app.get('/cricket-overlay2', (req, res) => res.sendFile(__dirname + '/cricket-overlay2.html'));
 app.get('/cricket-panel2', (req, res) => res.sendFile(__dirname + '/cricket-panel2.html'));
 app.get('/cricket-scorecard', (req, res) => res.sendFile(__dirname + '/cricket-scorecard.html'));
+app.get('/cricket-overlay3', (req, res) => res.sendFile(__dirname + '/cricket-overlay3.html'));
+app.get('/cricket-panel3', (req, res) => res.sendFile(__dirname + '/cricket-panel3.html'));
 
 // 🧩 Generic serving routes for sports added via Admin → Broadcasting →
 // Add Template (the panelCode/overlayCode the owner pastes in). Cricket /
