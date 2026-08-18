@@ -9,116 +9,165 @@
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root{
-    /* Driven live by state.theme / state.teamA.color / state.teamB.color
-       from cricket-panel.html — every colour here is editable from the
-       panel's existing Theme + Team Setup cards, nothing new to learn. */
+    /* ============================================================
+       DESIGN TOKENS — every visible property of the score bar lives
+       here as a CSS variable. Colours/team text are overwritten live
+       from socket data (state.theme / teamA / teamB — same fields the
+       panel's Theme + Team Setup cards already edit); everything else
+       (sizes, weights, radii, spacing, shadow, icon) is a plain value
+       you can tune right here in one place without touching any
+       layout rule below.
+       ============================================================ */
     --teamA-color:#0b0b0b;
     --teamB-color:#17337a;
-    --bar-bg:#0a0a0a;
-    --bar-bg-2:#12141c;
-    --gold: var(--badge-color, #f0b429);
-    --badge-color:#ff7a1a;
-    --progress-color:#f0b429;
+    --bar-bg:#0a0e1a;          /* score/batsmen/bowler segment background */
+    --bar-bg-2:#0a0e1a;
+    --badge-color:#ff7a1a;     /* powerplay badge + target panel colour */
+    --progress-color:#f0c23e;  /* score digits / boundary-ball colour */
     --white:#f5f7fb;
-    --dim:#aab0c0;
+    --dim:#9aa2b5;
     --red:#e6394f;
     --green:#3ddc84;
+
+    /* Structural tokens */
+    --bar-height:64px;
+    --bar-radius:0px;
+    --team-tag-width:120px;
+    --skew:14px;                 /* diagonal-cut steepness between segments */
+    --bar-shadow:0 -2px 10px rgba(0,0,0,.35);
+
+    /* Typography */
+    --font-family:'Barlow Condensed','Oswald',Arial,sans-serif;
+    --team-name-size:28px;
+    --team-name-weight:800;
+    --rr-size:10.5px;
+    --score-size:32px;
+    --score-weight:800;
+    --overs-size:17px;
+    --overs-weight:600;
+    --pp-badge-size:19px;
+    --batter-name-size:15px;
+    --batter-score-size:15px;
+    --batter-weight:600;
+    --target-label-size:12.5px;
+    --target-value-size:19px;
+    --bowler-name-size:15px;
+    --bowler-figs-size:14px;
+    --pip-size:21px;
+    --pip-font-size:10px;
+
+    /* Icons */
+    --strike-icon-color: var(--progress-color);
+    --bowler-icon-color:#c7cbd6;
+    --bowler-icon-border: rgba(255,255,255,.4);
   }
   *{ box-sizing:border-box; }
   html,body{ margin:0; padding:0; background:transparent; overflow:hidden; }
   body{
-    font-family:'Barlow Condensed','Oswald',Arial,sans-serif;
+    font-family:var(--font-family);
     color:var(--white);
     width:100vw; height:100vh;
   }
   .hidden{ display:none !important; }
 
   /* ============================================================
-     MAIN BOTTOM SCORE BAR — pixel-styled after the reference screenshot:
-     [Team A tag] [Score + overs + batsmen] [Target trapezoid]
-     [Bowler + ball ticker] [Team B tag]
+     MAIN BOTTOM SCORE BAR — pixel-styled after the reference:
+     [Team A tag] [Score+overs | striker/non-striker] [Target]
+     [Bowler+figures | ball ticker] [Team B tag]
+     Every text-bearing element below is filled live from socket
+     data in renderScorebar(); nothing shown is baked into the HTML.
      ============================================================ */
   #scorebar{
-    position:fixed; left:0; right:0; bottom:18px;
-    height:76px; display:flex; align-items:stretch;
-    filter:drop-shadow(0 6px 14px rgba(0,0,0,.45));
+    position:fixed; left:0; right:0; bottom:0;
+    height:var(--bar-height); display:flex; align-items:stretch;
+    box-shadow:var(--bar-shadow);
     transition:opacity .35s ease, transform .35s ease;
   }
   #scorebar.off{ opacity:0; transform:translateY(30px); pointer-events:none; }
 
   .seg{ display:flex; align-items:center; position:relative; }
 
-  /* Team tag blocks — slanted outer edge like a real lower-third */
+  /* Team tag blocks — flush on the outer edge, skewed on the inner edge */
   .team-tag{
-    width:118px; flex:none; background:var(--teamA-color);
-    justify-content:center; padding:0 10px;
-    clip-path:polygon(0 0,100% 0,100% 100%,0 100%);
+    width:var(--team-tag-width); flex:none; justify-content:center;
+    border-radius:var(--bar-radius);
   }
-  #team-tag-a{ background:var(--teamA-color); clip-path:polygon(0 0,100% 0,88% 100%,0 100%); padding-right:22px; }
-  #team-tag-b{ background:var(--teamB-color); clip-path:polygon(12% 0,100% 0,100% 100%,0 100%); padding-left:22px; }
-  .team-tag .short{ font-size:30px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; line-height:1; }
-  .team-tag .rr{ font-size:11px; color:var(--dim); font-weight:500; margin-top:4px; white-space:nowrap; }
-  #team-tag-a{ flex-direction:column; align-items:flex-start; padding-left:16px; }
-  #team-tag-b{ flex-direction:column; align-items:flex-end; padding-right:16px; text-align:right; }
+  #team-tag-a{ background:var(--teamA-color); clip-path:polygon(0 0,100% 0,calc(100% - var(--skew)) 100%,0 100%); padding:0 18px 0 18px; }
+  #team-tag-b{ background:var(--teamB-color); clip-path:polygon(var(--skew) 0,100% 0,100% 100%,0 100%); padding:0 18px 0 18px; }
+  .team-tag .short{ font-size:var(--team-name-size); font-weight:var(--team-name-weight); letter-spacing:.5px; text-transform:uppercase; line-height:1; }
+  .team-tag .rr{ font-size:var(--rr-size); color:var(--dim); font-weight:500; margin-top:4px; white-space:nowrap; }
+  #team-tag-a{ flex-direction:column; align-items:flex-start; }
+  #team-tag-b{ flex-direction:column; align-items:flex-end; text-align:right; }
 
-  /* Score + overs + batsmen block */
+  /* Score + overs + batsmen block — one continuous dark panel, no seam */
   #score-block{
-    flex:none; background:var(--bar-bg); padding:6px 18px 6px 22px;
-    margin-left:-14px; clip-path:polygon(6% 0,100% 0,100% 100%,0 100%);
-    display:flex; align-items:center; gap:14px; min-width:360px;
+    flex:none; background:var(--bar-bg); padding:0 20px 0 26px;
+    margin-left:calc(var(--skew) * -1);
+    display:flex; align-items:center; gap:16px; min-width:340px; height:100%;
   }
-  .score-main{ display:flex; align-items:baseline; gap:8px; }
-  .score-main .runs{ font-size:34px; font-weight:800; color:var(--gold); line-height:1; }
+  .score-main{ display:flex; align-items:center; gap:7px; }
+  .score-main .runs{ font-size:var(--score-size); font-weight:var(--score-weight); color:var(--progress-color); line-height:1; white-space:nowrap; }
   .pp-badge{
-    width:20px; height:20px; border-radius:50%; background:var(--badge-color);
-    color:#161200; font-size:12px; font-weight:800; display:flex; align-items:center;
-    justify-content:center; flex:none; align-self:center;
+    width:var(--pp-badge-size); height:var(--pp-badge-size); border-radius:50%; background:var(--badge-color);
+    color:#161200; font-size:11px; font-weight:800; display:flex; align-items:center;
+    justify-content:center; flex:none;
   }
-  .score-main .overs{ font-size:19px; font-weight:600; color:var(--white); white-space:nowrap; }
-  .score-main .overs small{ color:var(--dim); font-weight:500; font-size:13px; }
+  .score-main .overs{ font-size:var(--overs-size); font-weight:var(--overs-weight); color:var(--white); white-space:nowrap; }
+  .score-main .overs small{ color:var(--dim); font-weight:500; font-size:12px; }
 
-  .batters{ display:flex; flex-direction:column; gap:3px; font-size:15px; font-weight:600; }
-  .batters .brow{ display:flex; align-items:center; gap:7px; white-space:nowrap; }
-  .batters .strike-dot{ width:6px; height:6px; border-radius:50%; background:var(--gold); flex:none; opacity:0; }
-  .batters .brow.on .strike-dot{ opacity:1; }
+  /* Two-row rhythm: striker on row 1, non-striker on row 2 — the same
+     row split reused by the target and bowler segments so every
+     segment's two lines stay level with each other across the bar. */
+  .batters{ display:flex; flex-direction:column; justify-content:center; gap:5px; height:100%; }
+  .batters .brow{ display:flex; align-items:center; gap:6px; white-space:nowrap; font-size:var(--batter-name-size); font-weight:var(--batter-weight); }
+  .batters .strike-icon{ width:11px; height:11px; flex:none; opacity:0; color:var(--strike-icon-color); }
+  .batters .brow.on .strike-icon{ opacity:1; }
   .batters .brow.on .bname{ color:var(--white); }
   .batters .brow:not(.on) .bname{ color:var(--dim); font-weight:500; }
-  .batters .bscore{ color:var(--white); font-weight:500; }
+  .batters .bscore{ color:var(--white); font-weight:500; font-size:var(--batter-score-size); }
   .batters .brow:not(.on) .bscore{ color:var(--dim); }
 
-  /* Middle target trapezoid */
+  /* Middle target trapezoid — label row 1, value row 2, same rhythm */
   #target-block{
-    flex:1 1 auto; min-width:70px; background:var(--badge-color);
-    margin-left:-16px; clip-path:polygon(8% 0,100% 0,92% 100%,0 100%);
-    display:flex; align-items:center; justify-content:center; gap:8px;
-    padding:0 26px; overflow:hidden;
+    flex:1 1 auto; min-width:120px; background:var(--badge-color);
+    margin-left:calc(var(--skew) * -1);
+    clip-path:polygon(calc(var(--skew) + 6px) 0,100% 0,calc(100% - var(--skew) - 6px) 100%,0 100%);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px;
+    padding:0 32px; overflow:hidden; height:100%;
   }
-  #target-block .t-label{ font-size:14px; font-weight:700; letter-spacing:1px; font-style:italic; color:#1a1200; opacity:.85; white-space:nowrap; }
-  #target-block .t-value{ font-size:22px; font-weight:800; font-style:italic; color:#151000; white-space:nowrap; }
+  #target-block .t-label{ font-size:var(--target-label-size); font-weight:700; letter-spacing:1.4px; font-style:italic; color:#1a1200; opacity:.82; white-space:nowrap; }
+  #target-block .t-value{ font-size:var(--target-value-size); font-weight:800; font-style:italic; color:#151000; white-space:nowrap; }
 
-  /* Bowler + ticker block */
+  /* Bowler block — name+figures on row 1 (spread apart), ticker on row 2 */
   #bowler-block{
-    flex:none; background:var(--bar-bg-2); margin-left:-16px;
-    clip-path:polygon(8% 0,100% 0,100% 100%,0 100%);
-    display:flex; align-items:center; gap:14px; padding:6px 20px 6px 30px; min-width:400px;
+    flex:none; background:var(--bar-bg-2); margin-left:calc(var(--skew) * -1);
+    clip-path:polygon(calc(var(--skew) + 6px) 0,100% 0,100% 100%,0 100%);
+    display:flex; flex-direction:column; justify-content:center; gap:6px;
+    padding:0 22px 0 34px; min-width:360px; height:100%;
   }
-  .bowler-name{ display:flex; align-items:center; gap:6px; font-size:16px; font-weight:600; white-space:nowrap; }
-  .bowler-name .ball-ico{ width:14px; height:14px; border-radius:50%; background:var(--red); flex:none; box-shadow:inset -2px -2px 0 rgba(0,0,0,.35); }
-  .bowler-figs{ font-size:15px; font-weight:600; color:var(--dim); white-space:nowrap; }
+  .bowler-top{ display:flex; align-items:center; justify-content:space-between; gap:22px; }
+  .bowler-name{ display:flex; align-items:center; gap:7px; font-size:var(--bowler-name-size); font-weight:600; white-space:nowrap; }
+  .bowler-name .ball-ico{
+    width:13px; height:13px; border-radius:50%; flex:none;
+    background:transparent; border:2px solid var(--bowler-icon-color);
+    box-shadow:inset 0 0 0 2px transparent;
+  }
+  .bowler-figs{ font-size:var(--bowler-figs-size); font-weight:600; color:var(--dim); white-space:nowrap; }
 
-  .ticker{ display:flex; gap:6px; margin-left:auto; }
+  .ticker{ display:flex; gap:5px; }
   .pip{
-    width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center;
-    font-size:11px; font-weight:800; flex:none; background:#232838; color:var(--white);
+    width:var(--pip-size); height:var(--pip-size); border-radius:50%; display:flex; align-items:center; justify-content:center;
+    font-size:var(--pip-font-size); font-weight:800; flex:none; background:#3a4258; color:var(--white);
     border:1px solid rgba(255,255,255,.08);
   }
-  .pip.empty{ background:transparent; border:1px dashed rgba(255,255,255,.25); }
-  .pip.boundary{ background:var(--gold); color:#1a1200; }
+  .pip.empty{ background:transparent; border:1.5px dashed rgba(255,255,255,.3); }
+  .pip.boundary{ background:var(--progress-color); color:#1a1200; }
   .pip.wicket{ background:var(--white); color:var(--red); border-color:var(--red); }
-  .pip.extra{ background:#3a4258; color:var(--white); font-size:10px; }
-  .pip.dot{ background:#1c2030; color:var(--dim); }
+  .pip.extra{ background:#5a6280; color:var(--white); font-size:9px; }
+  .pip.dot{ background:#242a3a; color:var(--dim); }
 
   #team-tag-b .short{ align-self:flex-end; }
+
 
   /* ============================================================
      SECONDARY FEATURE CARDS — one-for-one with the panel's other
@@ -134,13 +183,13 @@
     transition:opacity .3s ease, transform .3s ease;
   }
   .glass-card.off{ opacity:0; transform:translateY(-14px); pointer-events:none; }
-  .glass-card h3{ margin:0 0 8px; font-size:11px; letter-spacing:1.2px; text-transform:uppercase; color:var(--gold); font-weight:700; }
+  .glass-card h3{ margin:0 0 8px; font-size:11px; letter-spacing:1.2px; text-transform:uppercase; color:var(--progress-color); font-weight:700; }
   .glass-card .sub{ font-size:11px; color:var(--dim); margin-top:2px; }
 
   /* Milestone / event toast */
   #event-toast{ top:24px; left:50%; transform:translate(-50%,0); text-align:center; min-width:280px; }
   #event-toast.off{ transform:translate(-50%,-14px); }
-  #event-toast .kind{ font-size:22px; font-weight:800; color:var(--gold); letter-spacing:1px; }
+  #event-toast .kind{ font-size:22px; font-weight:800; color:var(--progress-color); letter-spacing:1px; }
   #event-toast .text{ font-size:15px; font-weight:600; margin-top:2px; }
   #event-toast .sub{ text-align:center; }
 
@@ -164,7 +213,7 @@
   /* Innings / Match summary */
   #summary-card{ top:24px; left:50%; transform:translate(-50%,0); width:420px; }
   #summary-card.off{ transform:translate(-50%,-14px); }
-  #summary-card .headline{ font-size:20px; font-weight:800; color:var(--gold); }
+  #summary-card .headline{ font-size:20px; font-weight:800; color:var(--progress-color); }
   #summary-card table{ width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; }
   #summary-card td, #summary-card th{ padding:3px 4px; border-top:1px solid rgba(255,255,255,.07); }
   #summary-card th{ color:var(--dim); font-size:10px; text-transform:uppercase; text-align:left; }
@@ -192,12 +241,12 @@
       </div>
       <div class="batters">
         <div class="brow on" id="row-striker">
-          <span class="strike-dot"></span>
+          <svg class="strike-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 12l5 5L20 6" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span class="bname" id="striker-name">—</span>
           <span class="bscore" id="striker-score">0(0)</span>
         </div>
         <div class="brow" id="row-nonstriker">
-          <span class="strike-dot"></span>
+          <svg class="strike-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 12l5 5L20 6" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span class="bname" id="nonstriker-name">—</span>
           <span class="bscore" id="nonstriker-score">0(0)</span>
         </div>
@@ -210,7 +259,7 @@
     </div>
 
     <div class="seg" id="bowler-block">
-      <div>
+      <div class="bowler-top">
         <div class="bowler-name"><span class="ball-ico"></span><span id="bowler-name">—</span></div>
         <div class="bowler-figs" id="bowler-figs">0-0 (0.0)</div>
       </div>
@@ -339,7 +388,8 @@ function renderScorebar(state){
   document.documentElement.style.setProperty('--teamB-color', state.teamB.color || '#17337a');
   document.documentElement.style.setProperty('--badge-color', state.theme.badgeColor || '#ff7a1a');
   document.documentElement.style.setProperty('--progress-color', state.theme.progressColor || '#f0b429');
-  document.documentElement.style.setProperty('--bar-bg', state.theme.bottomBarColor || '#0a0a0a');
+  document.documentElement.style.setProperty('--bar-bg', state.theme.bottomBarColor || '#0a0e1a');
+  document.documentElement.style.setProperty('--bar-bg-2', state.theme.bottomBarColor || '#0a0e1a');
 
   const battingIsA = state.battingTeam === 'A';
   const battingTeam = battingIsA ? state.teamA : state.teamB;
