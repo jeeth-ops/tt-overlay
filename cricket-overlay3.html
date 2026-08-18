@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Cricket Overlay — Broadcast Bar</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="/socket.io/socket.io.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    /* Driven live by state.theme / state.teamA.color / state.teamB.color
+       from cricket-panel.html — every colour here is editable from the
+       panel's existing Theme + Team Setup cards, nothing new to learn. */
+    --teamA-color:#0b0b0b;
+    --teamB-color:#17337a;
+    --bar-bg:#0a0a0a;
+    --bar-bg-2:#12141c;
+    --gold: var(--badge-color, #f0b429);
+    --badge-color:#ff7a1a;
+    --progress-color:#f0b429;
+    --white:#f5f7fb;
+    --dim:#aab0c0;
+    --red:#e6394f;
+    --green:#3ddc84;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; background:transparent; overflow:hidden; }
+  body{
+    font-family:'Barlow Condensed','Oswald',Arial,sans-serif;
+    color:var(--white);
+    width:100vw; height:100vh;
+  }
+  .hidden{ display:none !important; }
+
+  /* ============================================================
+     MAIN BOTTOM SCORE BAR — pixel-styled after the reference screenshot:
+     [Team A tag] [Score + overs + batsmen] [Target trapezoid]
+     [Bowler + ball ticker] [Team B tag]
+     ============================================================ */
+  #scorebar{
+    position:fixed; left:0; right:0; bottom:18px;
+    height:76px; display:flex; align-items:stretch;
+    filter:drop-shadow(0 6px 14px rgba(0,0,0,.45));
+    transition:opacity .35s ease, transform .35s ease;
+  }
+  #scorebar.off{ opacity:0; transform:translateY(30px); pointer-events:none; }
+
+  .seg{ display:flex; align-items:center; position:relative; }
+
+  /* Team tag blocks — slanted outer edge like a real lower-third */
+  .team-tag{
+    width:118px; flex:none; background:var(--teamA-color);
+    justify-content:center; padding:0 10px;
+    clip-path:polygon(0 0,100% 0,100% 100%,0 100%);
+  }
+  #team-tag-a{ background:var(--teamA-color); clip-path:polygon(0 0,100% 0,88% 100%,0 100%); padding-right:22px; }
+  #team-tag-b{ background:var(--teamB-color); clip-path:polygon(12% 0,100% 0,100% 100%,0 100%); padding-left:22px; }
+  .team-tag .short{ font-size:30px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; line-height:1; }
+  .team-tag .rr{ font-size:11px; color:var(--dim); font-weight:500; margin-top:4px; white-space:nowrap; }
+  #team-tag-a{ flex-direction:column; align-items:flex-start; padding-left:16px; }
+  #team-tag-b{ flex-direction:column; align-items:flex-end; padding-right:16px; text-align:right; }
+
+  /* Score + overs + batsmen block */
+  #score-block{
+    flex:none; background:var(--bar-bg); padding:6px 18px 6px 22px;
+    margin-left:-14px; clip-path:polygon(6% 0,100% 0,100% 100%,0 100%);
+    display:flex; align-items:center; gap:14px; min-width:360px;
+  }
+  .score-main{ display:flex; align-items:baseline; gap:8px; }
+  .score-main .runs{ font-size:34px; font-weight:800; color:var(--gold); line-height:1; }
+  .pp-badge{
+    width:20px; height:20px; border-radius:50%; background:var(--badge-color);
+    color:#161200; font-size:12px; font-weight:800; display:flex; align-items:center;
+    justify-content:center; flex:none; align-self:center;
+  }
+  .score-main .overs{ font-size:19px; font-weight:600; color:var(--white); white-space:nowrap; }
+  .score-main .overs small{ color:var(--dim); font-weight:500; font-size:13px; }
+
+  .batters{ display:flex; flex-direction:column; gap:3px; font-size:15px; font-weight:600; }
+  .batters .brow{ display:flex; align-items:center; gap:7px; white-space:nowrap; }
+  .batters .strike-dot{ width:6px; height:6px; border-radius:50%; background:var(--gold); flex:none; opacity:0; }
+  .batters .brow.on .strike-dot{ opacity:1; }
+  .batters .brow.on .bname{ color:var(--white); }
+  .batters .brow:not(.on) .bname{ color:var(--dim); font-weight:500; }
+  .batters .bscore{ color:var(--white); font-weight:500; }
+  .batters .brow:not(.on) .bscore{ color:var(--dim); }
+
+  /* Middle target trapezoid */
+  #target-block{
+    flex:1 1 auto; min-width:70px; background:var(--badge-color);
+    margin-left:-16px; clip-path:polygon(8% 0,100% 0,92% 100%,0 100%);
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    padding:0 26px; overflow:hidden;
+  }
+  #target-block .t-label{ font-size:14px; font-weight:700; letter-spacing:1px; font-style:italic; color:#1a1200; opacity:.85; white-space:nowrap; }
+  #target-block .t-value{ font-size:22px; font-weight:800; font-style:italic; color:#151000; white-space:nowrap; }
+
+  /* Bowler + ticker block */
+  #bowler-block{
+    flex:none; background:var(--bar-bg-2); margin-left:-16px;
+    clip-path:polygon(8% 0,100% 0,100% 100%,0 100%);
+    display:flex; align-items:center; gap:14px; padding:6px 20px 6px 30px; min-width:400px;
+  }
+  .bowler-name{ display:flex; align-items:center; gap:6px; font-size:16px; font-weight:600; white-space:nowrap; }
+  .bowler-name .ball-ico{ width:14px; height:14px; border-radius:50%; background:var(--red); flex:none; box-shadow:inset -2px -2px 0 rgba(0,0,0,.35); }
+  .bowler-figs{ font-size:15px; font-weight:600; color:var(--dim); white-space:nowrap; }
+
+  .ticker{ display:flex; gap:6px; margin-left:auto; }
+  .pip{
+    width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    font-size:11px; font-weight:800; flex:none; background:#232838; color:var(--white);
+    border:1px solid rgba(255,255,255,.08);
+  }
+  .pip.empty{ background:transparent; border:1px dashed rgba(255,255,255,.25); }
+  .pip.boundary{ background:var(--gold); color:#1a1200; }
+  .pip.wicket{ background:var(--white); color:var(--red); border-color:var(--red); }
+  .pip.extra{ background:#3a4258; color:var(--white); font-size:10px; }
+  .pip.dot{ background:#1c2030; color:var(--dim); }
+
+  #team-tag-b .short{ align-self:flex-end; }
+
+  /* ============================================================
+     SECONDARY FEATURE CARDS — one-for-one with the panel's other
+     broadcast graphics: milestones ticker, player/bowler/team stat,
+     innings/match summary, points table, player/team history.
+     Kept visually consistent with the score bar (same gold/dark
+     palette) but positioned away from it so nothing overlaps.
+     ============================================================ */
+  .glass-card{
+    position:fixed; background:linear-gradient(180deg,rgba(10,12,20,.94),rgba(10,12,20,.88));
+    border:1px solid rgba(255,255,255,.09); border-radius:10px; padding:14px 18px;
+    box-shadow:0 10px 26px rgba(0,0,0,.5); backdrop-filter:blur(6px);
+    transition:opacity .3s ease, transform .3s ease;
+  }
+  .glass-card.off{ opacity:0; transform:translateY(-14px); pointer-events:none; }
+  .glass-card h3{ margin:0 0 8px; font-size:11px; letter-spacing:1.2px; text-transform:uppercase; color:var(--gold); font-weight:700; }
+  .glass-card .sub{ font-size:11px; color:var(--dim); margin-top:2px; }
+
+  /* Milestone / event toast */
+  #event-toast{ top:24px; left:50%; transform:translate(-50%,0); text-align:center; min-width:280px; }
+  #event-toast.off{ transform:translate(-50%,-14px); }
+  #event-toast .kind{ font-size:22px; font-weight:800; color:var(--gold); letter-spacing:1px; }
+  #event-toast .text{ font-size:15px; font-weight:600; margin-top:2px; }
+  #event-toast .sub{ text-align:center; }
+
+  /* Player / Bowler / Team stat cards — left slide-in */
+  .stat-card{ top:24px; left:24px; width:230px; }
+  .stat-card .name{ font-size:20px; font-weight:700; }
+  .stat-card .team{ font-size:12px; color:var(--dim); margin-bottom:6px; }
+  .stat-grid{ display:grid; grid-template-columns:1fr 1fr; gap:6px 14px; margin-top:8px; }
+  .stat-grid .k{ font-size:10px; text-transform:uppercase; color:var(--dim); letter-spacing:.4px; }
+  .stat-grid .v{ font-size:16px; font-weight:700; }
+
+  /* Points table */
+  #points-card{ top:24px; right:24px; width:300px; }
+  #points-card table{ width:100%; border-collapse:collapse; font-size:12px; }
+  #points-card th{ text-align:left; color:var(--dim); font-weight:600; font-size:10px; text-transform:uppercase; padding:3px 4px; }
+  #points-card td{ padding:4px 4px; border-top:1px solid rgba(255,255,255,.07); font-weight:600; }
+  #points-card td:first-child{ text-align:left; }
+  #points-card td, #points-card th{ text-align:center; }
+  #points-card td:first-child, #points-card th:first-child{ text-align:left; }
+
+  /* Innings / Match summary */
+  #summary-card{ top:24px; left:50%; transform:translate(-50%,0); width:420px; }
+  #summary-card.off{ transform:translate(-50%,-14px); }
+  #summary-card .headline{ font-size:20px; font-weight:800; color:var(--gold); }
+  #summary-card table{ width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; }
+  #summary-card td, #summary-card th{ padding:3px 4px; border-top:1px solid rgba(255,255,255,.07); }
+  #summary-card th{ color:var(--dim); font-size:10px; text-transform:uppercase; text-align:left; }
+
+  /* History cards */
+  #player-history-card{ bottom:110px; left:24px; width:260px; }
+  #team-history-card{ bottom:110px; right:24px; width:260px; }
+  .hist-row{ display:flex; justify-content:space-between; font-size:12px; padding:3px 0; border-top:1px solid rgba(255,255,255,.06); }
+</style>
+</head>
+<body>
+
+  <!-- MAIN SCORE BAR -->
+  <div id="scorebar" class="off">
+    <div class="seg team-tag" id="team-tag-a">
+      <div class="short" id="tagA-short">MI</div>
+      <div class="rr" id="tagA-rr">CRR: 0.00&nbsp;&nbsp;RRR: —</div>
+    </div>
+
+    <div class="seg" id="score-block">
+      <div class="score-main">
+        <span class="runs" id="disp-runs">0-0</span>
+        <span class="pp-badge hidden" id="pp-badge">P</span>
+        <span class="overs" id="disp-overs">0.0<small id="disp-balls-left"></small></span>
+      </div>
+      <div class="batters">
+        <div class="brow on" id="row-striker">
+          <span class="strike-dot"></span>
+          <span class="bname" id="striker-name">—</span>
+          <span class="bscore" id="striker-score">0(0)</span>
+        </div>
+        <div class="brow" id="row-nonstriker">
+          <span class="strike-dot"></span>
+          <span class="bname" id="nonstriker-name">—</span>
+          <span class="bscore" id="nonstriker-score">0(0)</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="seg" id="target-block">
+      <span class="t-label" id="target-label">TARGET</span>
+      <span class="t-value" id="target-value">—</span>
+    </div>
+
+    <div class="seg" id="bowler-block">
+      <div>
+        <div class="bowler-name"><span class="ball-ico"></span><span id="bowler-name">—</span></div>
+        <div class="bowler-figs" id="bowler-figs">0-0 (0.0)</div>
+      </div>
+      <div class="ticker" id="ticker"></div>
+    </div>
+
+    <div class="seg team-tag" id="team-tag-b">
+      <div class="short" id="tagB-short">RCB</div>
+      <div class="rr" id="tagB-rr"></div>
+    </div>
+  </div>
+
+  <!-- MILESTONE / BALL EVENT TOAST -->
+  <div class="glass-card off" id="event-toast">
+    <div class="kind" id="event-kind">FOUR!</div>
+    <div class="text" id="event-text"></div>
+    <div class="sub" id="event-sub"></div>
+  </div>
+
+  <!-- PLAYER STAT CARD -->
+  <div class="glass-card stat-card off" id="player-stat-card">
+    <h3 id="ps-scope">Player Stats</h3>
+    <div class="name" id="ps-name">—</div>
+    <div class="team" id="ps-team">—</div>
+    <div class="stat-grid" id="ps-grid"></div>
+  </div>
+
+  <!-- BOWLER STAT CARD -->
+  <div class="glass-card stat-card off" id="bowler-stat-card" style="left:auto; right:24px; top:24px;">
+    <h3 id="bs-scope">Bowler Stats</h3>
+    <div class="name" id="bs-name">—</div>
+    <div class="team" id="bs-team">—</div>
+    <div class="stat-grid" id="bs-grid"></div>
+  </div>
+
+  <!-- TEAM STAT CARD -->
+  <div class="glass-card stat-card off" id="team-stat-card" style="top:auto; bottom:110px; left:50%; transform:translate(-50%,0);">
+    <h3>Team Stats</h3>
+    <div class="name" id="ts-name">—</div>
+    <div class="stat-grid" id="ts-grid"></div>
+  </div>
+
+  <!-- POINTS TABLE -->
+  <div class="glass-card off" id="points-card">
+    <h3 id="pt-title">Points Table</h3>
+    <table>
+      <thead><tr><th>Team</th><th>P</th><th>W</th><th>L</th><th>Pts</th><th>NRR</th></tr></thead>
+      <tbody id="pt-body"></tbody>
+    </table>
+    <div class="sub" id="pt-updated"></div>
+  </div>
+
+  <!-- INNINGS / MATCH SUMMARY -->
+  <div class="glass-card off" id="summary-card">
+    <h3 id="sum-kicker">Innings Summary</h3>
+    <div class="headline" id="sum-headline">—</div>
+    <table>
+      <thead><tr><th>Batter</th><th>R</th><th>B</th><th>4s</th><th>6s</th></tr></thead>
+      <tbody id="sum-batting"></tbody>
+    </table>
+    <table>
+      <thead><tr><th>Bowler</th><th>O</th><th>R</th><th>W</th></tr></thead>
+      <tbody id="sum-bowling"></tbody>
+    </table>
+  </div>
+
+  <!-- PLAYER / TEAM HISTORY -->
+  <div class="glass-card off" id="player-history-card">
+    <h3>Player History</h3>
+    <div class="name" id="ph-name">—</div>
+    <div id="ph-rows"></div>
+  </div>
+  <div class="glass-card off" id="team-history-card">
+    <h3>Team History</h3>
+    <div class="name" id="th-name">—</div>
+    <div id="th-rows"></div>
+  </div>
+
+<script>
+/* ============================================================
+   CONNECTION — same room-based socket.io pattern as the other
+   Scorvix overlays: ?room=<matchId>, joins the same room the
+   cricket-panel.html controller is broadcasting into.
+   ============================================================ */
+const params = new URLSearchParams(location.search);
+const room = params.get('room') || 'default';
+const socket = io({ query: { room } });
+socket.on('connect', () => socket.emit('joinRoom', room));
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+function fmtOvers(overs, balls){ return `${overs}.${balls}`; }
+function esc(s){ return (s == null ? '' : String(s)); }
+
+function isPowerplay(state){
+  const format = state.format;
+  const overs = state.score.overs;
+  if(format === 'T10') return overs < 2;
+  if(format === 'ODI') return overs < 10;
+  if(format === 'T20') return overs < 6;
+  // Custom format: first 20% of the innings, min 1 over.
+  const total = state.oversPerInnings || 20;
+  return overs < Math.max(1, Math.round(total * 0.2));
+}
+
+function pipClass(b){
+  if(b === 'W') return 'pip wicket';
+  if(b === '4' || b === '6') return 'pip boundary';
+  if(b === '0') return 'pip dot';
+  if(/wd|nb|b|lb/i.test(b)) return 'pip extra';
+  return 'pip';
+}
+
+/* ============================================================
+   MAIN SCORE BAR RENDER — driven entirely by the same `state`
+   object cricket-panel.html broadcasts as 'liveCricketScore'.
+   ============================================================ */
+function renderScorebar(state){
+  const bar = document.getElementById('scorebar');
+  if(!state.visible){ bar.classList.add('off'); return; }
+  bar.classList.remove('off');
+
+  // Theme colours — same fields the panel's Theme + Team cards edit.
+  document.documentElement.style.setProperty('--teamA-color', state.teamA.color || '#0b0b0b');
+  document.documentElement.style.setProperty('--teamB-color', state.teamB.color || '#17337a');
+  document.documentElement.style.setProperty('--badge-color', state.theme.badgeColor || '#ff7a1a');
+  document.documentElement.style.setProperty('--progress-color', state.theme.progressColor || '#f0b429');
+  document.documentElement.style.setProperty('--bar-bg', state.theme.bottomBarColor || '#0a0a0a');
+
+  const battingIsA = state.battingTeam === 'A';
+  const battingTeam = battingIsA ? state.teamA : state.teamB;
+  const bowlingTeam = battingIsA ? state.teamB : state.teamA;
+
+  document.getElementById('tagA-short').textContent = state.teamA.short || state.teamA.name || 'A';
+  document.getElementById('tagB-short').textContent = state.teamB.short || state.teamB.name || 'B';
+
+  const crr = (() => {
+    const balls = state.score.overs * 6 + state.score.balls;
+    return balls > 0 ? ((state.score.runs / balls) * 6).toFixed(2) : '0.00';
+  })();
+  let rrr = '—';
+  if(state.target){
+    const ballsBowled = state.score.overs * 6 + state.score.balls;
+    const totalBalls = (state.oversPerInnings || 20) * 6;
+    const ballsLeft = Math.max(totalBalls - ballsBowled, 0);
+    const runsNeeded = state.target - state.score.runs;
+    rrr = ballsLeft > 0 ? Math.max(runsNeeded, 0) / (ballsLeft / 6) : 0;
+    rrr = rrr.toFixed(2);
+  }
+  const crrRrrLine = `CRR: ${crr}&nbsp;&nbsp;RRR: ${rrr}`;
+  document.getElementById('tagA-rr').innerHTML = battingIsA ? crrRrrLine : '';
+  document.getElementById('tagB-rr').innerHTML = !battingIsA ? crrRrrLine : '';
+
+  document.getElementById('disp-runs').textContent = `${state.score.runs}-${state.score.wickets}`;
+  document.getElementById('disp-overs').innerHTML = `${fmtOvers(state.score.overs, state.score.balls)}`;
+  const totalBalls = (state.oversPerInnings || 20) * 6;
+  const ballsBowled = state.score.overs * 6 + state.score.balls;
+  const ballsLeft = Math.max(totalBalls - ballsBowled, 0);
+  document.getElementById('disp-balls-left').textContent = ` (${ballsLeft})`;
+
+  document.getElementById('pp-badge').classList.toggle('hidden', !isPowerplay(state));
+
+  document.getElementById('striker-name').textContent = state.striker.name || 'Batter 1';
+  document.getElementById('striker-score').textContent = `${state.striker.runs}(${state.striker.balls})`;
+  document.getElementById('nonstriker-name').textContent = state.nonStriker.name || 'Batter 2';
+  document.getElementById('nonstriker-score').textContent = `${state.nonStriker.runs}(${state.nonStriker.balls})`;
+
+  const targetBlock = document.getElementById('target-block');
+  if(state.target){
+    targetBlock.style.display = 'flex';
+    document.getElementById('target-label').textContent = 'TARGET';
+    document.getElementById('target-value').textContent = state.target;
+  } else if(state.venue || state.leagueName){
+    targetBlock.style.display = 'flex';
+    document.getElementById('target-label').textContent = state.leagueName ? 'TOURNAMENT' : 'VENUE';
+    document.getElementById('target-value').textContent = state.leagueName || state.venue;
+  } else {
+    targetBlock.style.display = 'none';
+  }
+
+  document.getElementById('bowler-name').textContent = state.bowler.name || '—';
+  const econ = (() => {
+    const balls = state.bowler.overs * 6 + state.bowler.balls;
+    const oversFloat = balls / 6;
+    return oversFloat > 0 ? (state.bowler.runs / oversFloat).toFixed(2) : '0.00';
+  })();
+  document.getElementById('bowler-figs').textContent =
+    `${state.bowler.wickets}-${state.bowler.runs} (${fmtOvers(state.bowler.overs, state.bowler.balls)}) • Econ ${econ}`;
+
+  const ticker = document.getElementById('ticker');
+  ticker.innerHTML = '';
+  const balls = (state.thisOver || []).slice(-6);
+  const padded = Array(Math.max(0, 6 - balls.length)).fill(null).concat(balls);
+  padded.forEach(b => {
+    const pip = document.createElement('div');
+    if(b == null){ pip.className = 'pip empty'; }
+    else { pip.className = pipClass(b); pip.textContent = b; }
+    ticker.appendChild(pip);
+  });
+}
+
+socket.on('liveCricketScore', renderScorebar);
+
+/* ============================================================
+   MILESTONE / BALL EVENT TOAST — mirrors panel's fireEvent()
+   payload: { kind, text, sub, durationMs }.
+   ============================================================ */
+let eventTimer = null;
+socket.on('cricketEvent', (evt) => {
+  const el = document.getElementById('event-toast');
+  document.getElementById('event-kind').textContent = esc(evt.kind);
+  document.getElementById('event-text').textContent = esc(evt.text);
+  document.getElementById('event-sub').textContent = esc(evt.sub);
+  el.classList.remove('off');
+  clearTimeout(eventTimer);
+  eventTimer = setTimeout(() => el.classList.add('off'), evt.durationMs || 3000);
+});
+
+/* ============================================================
+   PLAYER / BOWLER / TEAM STAT CARDS
+   ============================================================ */
+function renderStatGrid(el, pairs){
+  el.innerHTML = pairs.map(([k, v]) => `<div class="k">${k}</div><div class="v">${v}</div>`.replace('<div class="k">', '<div class="k">')).join('');
+  // build as two-column grid: label row then value row per pair, in order
+  el.innerHTML = '';
+  pairs.forEach(([k, v]) => {
+    const kEl = document.createElement('div'); kEl.className = 'k'; kEl.textContent = k;
+    const vEl = document.createElement('div'); vEl.className = 'v'; vEl.textContent = v;
+    el.appendChild(kEl); el.appendChild(vEl);
+  });
+}
+
+socket.on('cricketPlayerStat', (data) => {
+  document.getElementById('player-stat-card').classList.remove('off');
+  document.getElementById('ps-scope').textContent = data.scope === 'tournament' ? 'Tournament Stats' : 'This Match';
+  document.getElementById('ps-name').textContent = data.playerName || '—';
+  document.getElementById('ps-team').textContent = data.teamName || '';
+  if(data.scope === 'tournament'){
+    renderStatGrid(document.getElementById('ps-grid'), [
+      ['Matches', data.matches], ['Runs', data.runs], ['Average', data.average], ['SR', data.sr],
+      ['HS', data.highScore], ['4s', data.fours], ['6s', data.sixes], ['50s/100s', `${data.fifties}/${data.hundreds}`]
+    ]);
+  } else {
+    renderStatGrid(document.getElementById('ps-grid'), [
+      ['Runs', data.runs], ['Balls', data.balls], ['SR', data.sr], ['4s', data.fours], ['6s', data.sixes]
+    ]);
+  }
+});
+socket.on('cricketHidePlayerStat', () => document.getElementById('player-stat-card').classList.add('off'));
+
+socket.on('cricketBowlerStat', (data) => {
+  document.getElementById('bowler-stat-card').classList.remove('off');
+  document.getElementById('bs-scope').textContent = data.scope === 'tournament' ? 'Tournament Stats' : 'This Match';
+  document.getElementById('bs-name').textContent = data.playerName || '—';
+  document.getElementById('bs-team').textContent = data.teamName || '';
+  if(data.scope === 'tournament'){
+    renderStatGrid(document.getElementById('bs-grid'), [
+      ['Matches', data.matches], ['Overs', data.overs], ['Wickets', data.wickets], ['Runs', data.runs],
+      ['Econ', data.economy], ['Avg', data.average], ['Best', data.best], ['Maidens', data.maidens]
+    ]);
+  } else {
+    renderStatGrid(document.getElementById('bs-grid'), [
+      ['Overs', data.overs], ['Maidens', data.maidens], ['Runs', data.runs], ['Wickets', data.wickets], ['Econ', data.economy]
+    ]);
+  }
+});
+socket.on('cricketHideBowlerStat', () => document.getElementById('bowler-stat-card').classList.add('off'));
+
+socket.on('cricketTeamStat', (data) => {
+  document.getElementById('team-stat-card').classList.remove('off');
+  document.getElementById('ts-name').textContent = data.teamName || '—';
+  renderStatGrid(document.getElementById('ts-grid'), [
+    ['Matches', data.matches], ['Won', data.won], ['Lost', data.lost], ['Tied', data.tied],
+    ['Win %', data.winPct], ['Highest', data.highest], ['Avg Score', data.avgScore]
+  ]);
+});
+socket.on('cricketHideTeamStat', () => document.getElementById('team-stat-card').classList.add('off'));
+
+/* ============================================================
+   POINTS TABLE
+   ============================================================ */
+socket.on('cricketPointsTable', (data) => {
+  document.getElementById('points-card').classList.remove('off');
+  document.getElementById('pt-title').textContent = data.tournamentName ? `${data.tournamentName} — Points Table` : 'Points Table';
+  document.getElementById('pt-updated').textContent = data.updatedLine || '';
+  const body = document.getElementById('pt-body');
+  body.innerHTML = '';
+  (data.standings || []).forEach(row => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${esc(row.name)}</td><td>${row.played}</td><td>${row.won}</td><td>${row.lost}</td><td>${row.points}</td><td>${row.nrr == null ? '—' : row.nrr.toFixed(2)}</td>`;
+    body.appendChild(tr);
+  });
+});
+socket.on('cricketHidePointsTable', () => document.getElementById('points-card').classList.add('off'));
+
+/* ============================================================
+   INNINGS / MATCH SUMMARY
+   ============================================================ */
+socket.on('cricketInningsSummary', (data) => {
+  const card = document.getElementById('summary-card');
+  card.classList.remove('off');
+  document.getElementById('sum-kicker').textContent = 'Innings Summary';
+  document.getElementById('sum-headline').textContent = `${data.battingTeamShort || data.battingTeamName}: ${data.total} (${data.overs} ov)`;
+  const battingBody = document.getElementById('sum-batting');
+  battingBody.innerHTML = '';
+  (data.batsmen || []).forEach(b => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${esc(b.name)}${b.howOut !== 'not out' ? '' : ' *'}</td><td>${b.runs}</td><td>${b.balls}</td><td>${b.fours}</td><td>${b.sixes}</td>`;
+    battingBody.appendChild(tr);
+  });
+  const bowlingBody = document.getElementById('sum-bowling');
+  bowlingBody.innerHTML = '';
+  (data.bowlers || []).forEach(b => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${esc(b.name)}</td><td>${b.overs}</td><td>${b.runs}</td><td>${b.wickets}</td>`;
+    bowlingBody.appendChild(tr);
+  });
+  clearTimeout(window.__sumTimer);
+  window.__sumTimer = setTimeout(() => card.classList.add('off'), 12000);
+});
+socket.on('cricketHideInningsSummary', () => document.getElementById('summary-card').classList.add('off'));
+
+socket.on('cricketMatchSummary', (data) => {
+  const card = document.getElementById('summary-card');
+  card.classList.remove('off');
+  document.getElementById('sum-kicker').textContent = 'Match Summary';
+  document.getElementById('sum-headline').textContent = data.winnerText || data.resultText || 'MATCH SUMMARY';
+  const battingBody = document.getElementById('sum-batting');
+  battingBody.innerHTML = '';
+  (data.topBatsmenA || data.topBatsmen || []).forEach(b => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${esc(b.name)}</td><td>${b.runs}</td><td>${b.balls}</td><td></td><td></td>`;
+    battingBody.appendChild(tr);
+  });
+  const bowlingBody = document.getElementById('sum-bowling');
+  bowlingBody.innerHTML = '';
+  (data.topBowlersA || data.topBowlers || []).forEach(b => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${esc(b.name)}</td><td>${b.overs}</td><td></td><td>${b.figures}</td>`;
+    bowlingBody.appendChild(tr);
+  });
+});
+socket.on('cricketHideMatchSummary', () => document.getElementById('summary-card').classList.add('off'));
+
+/* ============================================================
+   PLAYER / TEAM HISTORY CARDS
+   ============================================================ */
+socket.on('cricketPlayerHistory', (data) => {
+  document.getElementById('player-history-card').classList.remove('off');
+  document.getElementById('ph-name').textContent = data.playerName || data.name || '—';
+  const rows = document.getElementById('ph-rows');
+  rows.innerHTML = '';
+  (data.matches || data.rows || []).slice(0, 6).forEach(m => {
+    const row = document.createElement('div');
+    row.className = 'hist-row';
+    row.innerHTML = `<span>${esc(m.opponent || m.vs || m.label || '')}</span><span>${esc(m.summary || m.score || '')}</span>`;
+    rows.appendChild(row);
+  });
+});
+socket.on('cricketHidePlayerHistory', () => document.getElementById('player-history-card').classList.add('off'));
+
+socket.on('cricketTeamHistory', (data) => {
+  document.getElementById('team-history-card').classList.remove('off');
+  document.getElementById('th-name').textContent = data.teamName || data.name || '—';
+  const rows = document.getElementById('th-rows');
+  rows.innerHTML = '';
+  (data.matches || data.rows || []).slice(0, 6).forEach(m => {
+    const row = document.createElement('div');
+    row.className = 'hist-row';
+    row.innerHTML = `<span>${esc(m.opponent || m.vs || m.label || '')}</span><span>${esc(m.result || m.summary || '')}</span>`;
+    rows.appendChild(row);
+  });
+});
+socket.on('cricketHideTeamHistory', () => document.getElementById('team-history-card').classList.add('off'));
+</script>
+</body>
+</html>
