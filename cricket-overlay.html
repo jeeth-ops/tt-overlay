@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800;900&family=Inter:wght@500;600;700;800;900&family=Noto+Sans:wght@500;600;700;800;900&family=Noto+Sans+Devanagari:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Manrope:wght@600;700;800;900&family=Inter:wght@500;600;700;800;900&family=Noto+Sans:wght@500;600;700;800;900&family=Noto+Sans+Devanagari:wght@500;600;700;800;900&display=swap" rel="stylesheet">
 <script src="/socket.io/socket.io.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 <style>
@@ -42,6 +42,7 @@
     --bc-ink-dim:    #5c6c8a;
     --font-num:      'Manrope', 'Noto Sans', 'Noto Sans Devanagari', sans-serif;
     --font-ui:       'Inter', 'Noto Sans', 'Noto Sans Devanagari', sans-serif;
+    --font-event:    'Anton', 'Inter', 'Noto Sans', 'Noto Sans Devanagari', sans-serif;
   }
 
   *{ box-sizing:border-box; margin:0; padding:0; }
@@ -401,54 +402,125 @@
     transform-origin:top center; opacity:0;
   }
 
-  #event-hero{ position:relative; z-index:2; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:2% 6%; }
+  #event-hero{
+    position:relative; z-index:2; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center;
+    padding:1.5% 6%; width:100%; height:100%;
+    /* Typography is sized off the panel's own rendered height (set as a
+       px custom property by JS right before each event plays) rather
+       than viewport width — the panel's height is what growth/theme
+       actually controls, so binding to it is what lets the hero text
+       fill the space it's given instead of guessing at a vw cap. */
+    --ph: var(--panel-h, 100px);
+  }
   #event-number{
     position:relative;
-    font-family:var(--font-num); font-weight:900; color:var(--ev-accent);
-    font-size:min(6.2vw,74px); line-height:.8; letter-spacing:-1px;
+    font-family:var(--font-event); font-weight:400; color:var(--ev-accent);
+    font-size:calc(var(--ph) * 0.62); line-height:.78; letter-spacing:-2px;
     text-shadow:0 3px 10px rgba(0,0,0,0.5), 0 0 42px var(--ev-glow);
   }
+  #event-number::before{
+    content:attr(data-text); position:absolute; inset:0; z-index:-1;
+    color:var(--ev-secondary); opacity:.4; filter:blur(10px);
+    transform:translate(3%, 5%); pointer-events:none;
+  }
   #event-word{
-    font-family:var(--font-ui); font-weight:900; color:var(--ev-accent);
-    font-size:min(2.3vw,27px); letter-spacing:6px; margin-top:2px;
+    position:relative;
+    font-family:var(--font-event); font-weight:400; color:var(--ev-accent);
+    font-size:calc(var(--ph) * 0.24); line-height:.9; letter-spacing:2px; margin-top:calc(var(--ph) * 0.02);
     text-shadow:0 3px 10px rgba(0,0,0,0.5);
+  }
+  #event-word::before{
+    content:attr(data-text); position:absolute; inset:0; z-index:-1;
+    color:var(--ev-secondary); opacity:.4; filter:blur(8px);
+    transform:translate(2.5%, 6%); pointer-events:none;
   }
   #event-word .ev-char{ display:inline-block; will-change:transform,opacity,filter; }
   #event-sub{
-    margin-top:6px; font-family:var(--font-ui); font-weight:700; color:var(--ev-accent);
-    font-size:min(1.05vw,12px); letter-spacing:2px; text-transform:uppercase; opacity:.85;
+    margin-top:calc(var(--ph) * 0.045); font-family:var(--font-ui); font-weight:800; color:var(--ev-accent);
+    font-size:calc(var(--ph) * 0.09); letter-spacing:1.5px; text-transform:uppercase; opacity:.82;
   }
 
   /* FOUR — dominant, dimensional typography: layered depth via stacked
      shadows (fakes extrusion cheaply, no extra DOM), horizontal energy. */
   #event-stage.ev-four #event-number{
-    font-size:min(9.4vw,116px); letter-spacing:-3px;
+    font-size:calc(var(--ph) * 0.74); letter-spacing:-4px;
     background:linear-gradient(180deg, #ffffff 0%, #f4f8ff 46%, #d9e6ff 100%);
     -webkit-background-clip:text; background-clip:text; color:transparent;
-    -webkit-text-stroke:1px rgba(255,255,255,0.55);
+    -webkit-text-stroke:1.5px rgba(255,255,255,0.6);
     filter:
       drop-shadow(0 1px 0 rgba(10,20,50,0.35))
       drop-shadow(0 3px 0 rgba(10,20,50,0.25))
-      drop-shadow(0 6px 14px rgba(0,0,0,0.45))
-      drop-shadow(0 0 46px var(--ev-glow));
+      drop-shadow(0 8px 18px rgba(0,0,0,0.5))
+      drop-shadow(0 0 50px var(--ev-glow));
   }
   /* SIX — even larger, taller hero, radial power rather than horizontal. */
   #event-stage.ev-six #event-number{
-    font-size:min(11.2vw,140px); letter-spacing:-4px;
+    font-size:calc(var(--ph) * 0.82); letter-spacing:-5px;
     background:linear-gradient(180deg, #fffdf3 0%, #ffe9a8 48%, #f6c945 100%);
     -webkit-background-clip:text; background-clip:text; color:transparent;
-    -webkit-text-stroke:1px rgba(255,255,255,0.6);
+    -webkit-text-stroke:1.5px rgba(255,255,255,0.65);
     filter:
       drop-shadow(0 1px 0 rgba(60,38,0,0.4))
       drop-shadow(0 4px 0 rgba(60,38,0,0.28))
-      drop-shadow(0 8px 20px rgba(0,0,0,0.5))
-      drop-shadow(0 0 58px var(--ev-glow));
+      drop-shadow(0 10px 24px rgba(0,0,0,0.55))
+      drop-shadow(0 0 64px var(--ev-glow));
   }
   #event-stage.ev-four #event-word,
-  #event-stage.ev-six #event-word{ letter-spacing:8px; }
+  #event-stage.ev-six #event-word{ font-size:calc(var(--ph) * 0.15); letter-spacing:6px; }
+
+  /* WICKET — the word itself is the hero (no number), so it gets the
+     full dominant treatment: bold crimson gradient fill, hard bevel
+     shadow stack, wide but not empty. */
+  #event-stage.ev-wicket #event-word{
+    font-size:calc(var(--ph) * 0.58); letter-spacing:0px;
+    background:linear-gradient(180deg, #ffffff 0%, #ffd8dc 42%, #ff6b7a 100%);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    -webkit-text-stroke:1.5px rgba(255,255,255,0.55);
+    filter:
+      drop-shadow(0 1px 0 rgba(40,4,10,0.45))
+      drop-shadow(0 3px 0 rgba(40,4,10,0.3))
+      drop-shadow(0 8px 20px rgba(0,0,0,0.5))
+      drop-shadow(0 0 46px var(--ev-glow));
+  }
+  #event-stage.ev-wicket #event-sub{ font-weight:900; letter-spacing:3px; }
+
+  /* NO BALL — long two-word label, so a slightly smaller ratio than
+     WICKET/WIDE keeps it inside the panel without cramming. */
+  #event-stage.ev-no-ball #event-word{
+    font-size:calc(var(--ph) * 0.44); letter-spacing:-0.5px;
+    background:linear-gradient(180deg, #fff4ea 0%, #ffb27a 46%, #f0703a 100%);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    -webkit-text-stroke:1.5px rgba(255,255,255,0.55);
+    filter:
+      drop-shadow(0 1px 0 rgba(50,16,0,0.4))
+      drop-shadow(0 3px 0 rgba(50,16,0,0.28))
+      drop-shadow(0 8px 18px rgba(0,0,0,0.5))
+      drop-shadow(0 0 44px var(--ev-glow));
+  }
+
+  /* WIDE — single word, plenty of room, matches WICKET's scale. */
+  #event-stage.ev-wide #event-word{
+    font-size:calc(var(--ph) * 0.56); letter-spacing:0px;
+    background:linear-gradient(180deg, #eef5ff 0%, #b9d3ff 46%, #4f8dff 100%);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    -webkit-text-stroke:1.5px rgba(255,255,255,0.55);
+    filter:
+      drop-shadow(0 1px 0 rgba(4,20,55,0.4))
+      drop-shadow(0 3px 0 rgba(4,20,55,0.28))
+      drop-shadow(0 8px 18px rgba(0,0,0,0.5))
+      drop-shadow(0 0 44px var(--ev-glow));
+  }
+
+  /* Hero events carry their own energy (shine sweep / streaks / rays /
+     particles) — the plain 3-line grid reads as filler underneath big
+     type, so it stays reserved for the calmer informational tier. */
+  #event-stage.ev-four #event-lines, #event-stage.ev-six #event-lines,
+  #event-stage.ev-wicket #event-lines, #event-stage.ev-no-ball #event-lines,
+  #event-stage.ev-wide #event-lines{ display:none; }
 
   /* BYE / LEG BYE — informational tier: same system, calmer scale */
-  #event-stage.ev-bye #event-word, #event-stage.ev-leg-bye #event-word{ font-size:min(1.8vw,21px); letter-spacing:4px; }
+  #event-stage.ev-bye #event-word, #event-stage.ev-leg-bye #event-word{ font-size:calc(var(--ph) * 0.2); letter-spacing:4px; }
   #event-stage.ev-bye #event-glow, #event-stage.ev-leg-bye #event-glow{ opacity:.12 !important; }
 
   #freehit-chip{
@@ -1693,11 +1765,15 @@ function addEventHeroPhase(tl, kind, theme, chars, startAt){
     // the stumps and tumble away, a sharper double shake, and a
     // desaturated red flash instead of a friendly white one — this one
     // should feel like a jolt, not a celebration.
+    // WICKET — full dominant word treatment: fast wipe-in, hard flash,
+    // scale punch, jagged crack + bails, sharper shake than any other
+    // event so it reads as a jolt rather than a celebration.
     case 'WICKET':
-      tl.call(() => { shakeElement(document.getElementById('scorecard'), 5, 0.22); shakeElement(document.getElementById('event-hero'), 3, 0.22); }, null, startAt)
+      tl.call(() => { shakeElement(document.getElementById('scorecard'), 5, 0.22); shakeElement(document.getElementById('event-hero'), 4, 0.22); }, null, startAt)
         .call(() => breakWicket(crack, bails), null, startAt)
-        .call(() => flashEvent(flash, 0.55), null, `${startAt}+=0.02`)
-        .fromTo(chars, { x: -24, opacity: 0, filter: 'blur(4px)' }, { x: 0, opacity: 1, filter: 'blur(0px)', duration: 0.26, stagger: 0.018, ease: 'power4.out' }, startAt)
+        .call(() => flashEvent(flash, 0.6), null, `${startAt}+=0.02`)
+        .fromTo(chars, { x: -40, opacity: 0, filter: 'blur(6px)' }, { x: 0, opacity: 1, filter: 'blur(0px)', duration: 0.24, stagger: 0.015, ease: 'power4.out' }, startAt)
+        .fromTo('#event-word', { scale: 1.1 }, { scale: 1, duration: 0.28, ease: 'back.out(2.4)' }, '<0.05')
         .to(impact, { opacity: 1, scaleX: 1, duration: 0.1, stagger: 0.03 }, '<0.02')
         .to(impact, { opacity: 0, duration: 0.28 }, '+=0.05')
         .call(() => { shock.style.borderColor = theme.accent; }, null, startAt)
@@ -1705,9 +1781,12 @@ function addEventHeroPhase(tl, kind, theme, chars, startAt){
         .call(() => burstEventParticles(particles, theme.particles, theme.secondary, theme.particleDist), null, '<')
         .to(subEl, { opacity: 1, y: 0, duration: 0.3 }, '-=0.1');
       break;
+    // NO BALL — fast horizontal wipe with a flash and punch, the free
+    // hit / runs note settles in right after as the secondary beat.
     case 'NO_BALL':
-      tl.fromTo(chars, { x: -28, opacity: 0 }, { x: 0, opacity: 1, filter: 'blur(0px)', duration: 0.3, stagger: 0.02, ease: 'power3.out' }, startAt)
-        .to(lines, { scaleX: 1, opacity: 1, duration: 0.3, stagger: 0.06, ease: 'power2.out' }, '<0.05')
+      tl.call(() => flashEvent(flash, 0.5), null, startAt)
+        .fromTo(chars, { x: -36, opacity: 0, filter: 'blur(5px)' }, { x: 0, opacity: 1, filter: 'blur(0px)', duration: 0.28, stagger: 0.016, ease: 'power4.out' }, startAt)
+        .fromTo('#event-word', { scale: 1.08 }, { scale: 1, duration: 0.26, ease: 'back.out(2.2)' }, '<0.05')
         .to(glow, { opacity: 0.5, duration: 0.18 }, '<')
         .to(glow, { opacity: 0.22, duration: 0.28 }, '+=0.12')
         .to(glow, { opacity: 0.5, duration: 0.2 })
@@ -1720,9 +1799,11 @@ function addEventHeroPhase(tl, kind, theme, chars, startAt){
         .call(() => burstEventParticles(particles, theme.particles, theme.primary, theme.particleDist), null, '<0.1')
         .to(subEl, { opacity: 1, y: 0, duration: 0.3 }, '-=0.1');
       break;
+    // WIDE — single hero word: a squeeze-open wipe, flash and punch.
     case 'WIDE':
-      tl.fromTo(chars, { scaleX: 1.55, opacity: 0 }, { scaleX: 1, opacity: 1, filter: 'blur(0px)', duration: 0.36, stagger: 0.018, ease: 'power3.out' }, startAt)
-        .to(lines, { scaleX: 1, opacity: 1, duration: 0.3, stagger: 0.05, ease: 'power2.out' }, '<')
+      tl.call(() => flashEvent(flash, 0.45), null, startAt)
+        .fromTo(chars, { scaleX: 1.6, opacity: 0, filter: 'blur(5px)' }, { scaleX: 1, opacity: 1, filter: 'blur(0px)', duration: 0.34, stagger: 0.016, ease: 'power3.out' }, startAt)
+        .fromTo('#event-word', { scale: 1.08 }, { scale: 1, duration: 0.26, ease: 'back.out(2.2)' }, '<0.05')
         .to(subEl, { opacity: 1, y: 0, duration: 0.3 }, '-=0.15');
       break;
     default: // BYE, LEG_BYE
@@ -1751,7 +1832,9 @@ function playEventTimeline(kind, opts, onDone){
 
   numEl.style.display = theme.showNumber ? '' : 'none';
   numEl.textContent = theme.number || '';
+  numEl.dataset.text = theme.number || '';
   wordEl.textContent = theme.label;
+  wordEl.dataset.text = theme.label;
   const chars = splitEventWord(wordEl);
   subEl.textContent = opts.sub || '';
 
@@ -1767,6 +1850,7 @@ function playEventTimeline(kind, opts, onDone){
 
   const baseH = topRow.getBoundingClientRect().height || 100;
   const targetH = baseH * theme.growth;
+  stage.style.setProperty('--panel-h', targetH + 'px');
   const holdSec = Math.max((opts.durationMs || theme.durationMs || EVENT_DURATION) / 1000, 0.6);
   const inSec = TRANSITION_IN / 1000;
   const outSec = TRANSITION_OUT / 1000;
