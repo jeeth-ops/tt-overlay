@@ -193,13 +193,13 @@
     flex:none;
     background:
       linear-gradient(180deg,rgba(255,255,255,.05),rgba(0,0,0,.15) 55%),
-      linear-gradient(90deg,var(--panel-bg) 0%,var(--panel-bg-2) 45%,var(--bowl-color) 100%);
+      linear-gradient(90deg,var(--panel-bg) 0%,var(--panel-bg-2) 55%,var(--bowl-color) 130%);
     margin-left:calc(var(--skew) * -1);
     clip-path:polygon(calc(var(--skew) + 8px) 0,100% 0,100% 100%,0 100%);
     min-width:320px; padding:0 30px 0 34px;
     flex-direction:column; align-items:flex-end; justify-content:center; gap:8px;
   }
-  .bowler-name{ display:flex; align-items:center; gap:9px; font-size:var(--bowler-name-size); font-weight:600; color:var(--white); white-space:nowrap; }
+  .bowler-name{ display:flex; align-items:center; gap:9px; font-size:calc(var(--bowler-name-size) + 3px); font-weight:700; color:var(--white); white-space:nowrap; }
   .bowler-name .ball-ico{
     width:18px; height:18px; border-radius:50%; flex:none;
     background:radial-gradient(circle at 35% 30%,#c94b3d,#7a1f14 75%);
@@ -209,14 +209,13 @@
     content:''; position:absolute; left:50%; top:8%; bottom:8%; width:0;
     border-left:1px dashed rgba(255,255,255,.6); transform:translateX(-50%) rotate(8deg);
   }
-  .bowler-figs-row{ display:flex; align-items:stretch; gap:0; white-space:nowrap; }
-  .bowler-figs-row .fig{
-    display:flex; flex-direction:column; align-items:center; justify-content:center;
-    padding:0 12px; border-left:1px solid rgba(255,255,255,.14);
-  }
-  .bowler-figs-row .fig:first-child{ border-left:none; padding-left:0; }
-  .bowler-figs-row .fig-val{ font-size:var(--bowler-figs-size); font-weight:700; color:var(--white); line-height:1.1; }
-  .bowler-figs-row .fig-lbl{ font-size:11px; font-weight:600; letter-spacing:.6px; color:var(--dim); text-transform:uppercase; line-height:1.2; }
+  /* Compact figures line under the name — "W-R (Ov)" then a muted econ tag,
+     all on one row, matching the reference layout (not boxed columns). */
+  .bowler-figs-line{ display:flex; align-items:baseline; gap:10px; white-space:nowrap; }
+  .bowler-figs-line .bf-wr{ font-size:var(--bowler-figs-size); font-weight:800; color:var(--white); }
+  .bowler-figs-line .bf-ov{ font-size:calc(var(--bowler-figs-size) - 6px); font-weight:500; color:var(--dim); }
+  .bowler-figs-line .bf-econ{ font-size:calc(var(--bowler-figs-size) - 8px); font-weight:600; color:var(--dim); padding-left:10px; border-left:1px solid rgba(255,255,255,.18); }
+  .bowler-figs-line .bf-econ b{ color:var(--white); font-weight:700; }
 
   /* BALLS segment — evenly spaced ball-by-ball ticker, same navy panel
      as the bowler segment so the two feel like one unified band */
@@ -342,11 +341,10 @@
 
     <div class="seg" id="bowler-block">
       <span class="bowler-name"><span class="ball-ico"></span><span id="bowler-name">—</span></span>
-      <div class="bowler-figs-row">
-        <div class="fig"><span class="fig-val" id="bowler-overs">0.0</span><span class="fig-lbl">Ov</span></div>
-        <div class="fig"><span class="fig-val" id="bowler-runs">0</span><span class="fig-lbl">R</span></div>
-        <div class="fig"><span class="fig-val" id="bowler-wkts">0</span><span class="fig-lbl">W</span></div>
-        <div class="fig"><span class="fig-val" id="bowler-econ">0.00</span><span class="fig-lbl">Econ</span></div>
+      <div class="bowler-figs-line">
+        <span class="bf-wr" id="bowler-wr">0-0</span>
+        <span class="bf-ov" id="bowler-ov">(0.0)</span>
+        <span class="bf-econ">ECON <b id="bowler-econ">0.00</b></span>
       </div>
     </div>
 
@@ -554,9 +552,8 @@ function renderScorebar(state){
   }
 
   document.getElementById('bowler-name').textContent = state.bowler.name || '—';
-  document.getElementById('bowler-overs').textContent = fmtOvers(state.bowler.overs, state.bowler.balls);
-  document.getElementById('bowler-runs').textContent = state.bowler.runs;
-  document.getElementById('bowler-wkts').textContent = state.bowler.wickets;
+  document.getElementById('bowler-wr').textContent = `${state.bowler.wickets}-${state.bowler.runs}`;
+  document.getElementById('bowler-ov').textContent = `(${fmtOvers(state.bowler.overs, state.bowler.balls)})`;
   const bBallsBowled = (state.bowler.overs || 0) * 6 + (state.bowler.balls || 0);
   document.getElementById('bowler-econ').textContent =
     bBallsBowled > 0 ? ((state.bowler.runs / bBallsBowled) * 6).toFixed(2) : '0.00';
