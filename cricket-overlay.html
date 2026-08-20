@@ -487,8 +487,14 @@
       0 1px 0 rgba(60,38,0,0.45), 0 4px 0 rgba(60,38,0,0.3),
       0 12px 26px rgba(0,0,0,0.6), 0 0 58px var(--ev-glow);
   }
+  /* FOUR / SIX are instantly readable from the big digit alone — showing
+     the word underneath it too was the "cramped, no room for both" issue
+     being reported, so the digit is now the single hero and the word is
+     dropped entirely for these two events. */
   #event-stage.ev-four #event-word,
-  #event-stage.ev-six #event-word{ font-size:calc(var(--ph) * 0.16); letter-spacing:7px; }
+  #event-stage.ev-six #event-word{ display:none; }
+  #event-stage.ev-four #event-number{ margin-bottom:calc(var(--ph) * -0.02); }
+  #event-stage.ev-six #event-number{ margin-bottom:calc(var(--ph) * -0.02); }
 
   /* WICKET — the word itself is the hero (no number), so it gets the
      full dominant treatment: bold crimson fill, hard bevel shadow
@@ -518,12 +524,22 @@
       0 10px 20px rgba(0,0,0,0.55), 0 0 40px var(--ev-glow);
   }
 
+  /* FREE HIT — was undersized (falling back to the small base ratio)
+     with the plain 3-line grid showing through behind it; give it the
+     same dominant hero scale as WIDE/WICKET and drop the lines. */
+  #event-stage.ev-free-hit #event-word{
+    font-size:calc(var(--ph) * 0.4); letter-spacing:1px; color:#ffe9a8;
+    text-shadow:
+      0 1px 0 rgba(60,42,0,0.45), 0 3px 0 rgba(60,42,0,0.32),
+      0 10px 20px rgba(0,0,0,0.55), 0 0 40px var(--ev-glow);
+  }
+
   /* Hero events carry their own energy (shine sweep / streaks / rays /
      particles) — the plain 3-line grid reads as filler underneath big
      type, so it stays reserved for the calmer informational tier. */
   #event-stage.ev-four #event-lines, #event-stage.ev-six #event-lines,
   #event-stage.ev-wicket #event-lines, #event-stage.ev-no-ball #event-lines,
-  #event-stage.ev-wide #event-lines{ display:none; }
+  #event-stage.ev-wide #event-lines, #event-stage.ev-free-hit #event-lines{ display:none; }
 
   /* BYE / LEG BYE — informational tier: same system, calmer scale */
   #event-stage.ev-bye #event-word, #event-stage.ev-leg-bye #event-word{ font-size:calc(var(--ph) * 0.22); letter-spacing:5px; }
@@ -1842,7 +1858,13 @@ function playEventTimeline(kind, opts, onDone){
   wordEl.textContent = theme.label;
   wordEl.dataset.text = theme.label;
   const chars = splitEventWord(wordEl);
-  subEl.textContent = opts.sub || '';
+  // Whoever triggers the event (control panel / socket) sometimes sends
+  // a sub-text that's just a restatement of the headline itself (e.g.
+  // sub:"NO BALL" on a NO_BALL event) — showing that under the headline
+  // reads as the same word printed twice. Only show the sub chip when it
+  // actually adds information beyond the headline.
+  const subText = (opts.sub || '').trim();
+  subEl.textContent = subText.toUpperCase() === theme.label.toUpperCase() ? '' : subText;
 
   const shock = document.getElementById('event-shock');
   const shock2 = document.getElementById('event-shock2');
