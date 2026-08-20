@@ -283,8 +283,6 @@
 
                     <div id="tt-single-fields" style="margin-top:8px;">
                         <button style="background:#16a34a; width:100%;" onclick="openTtSingleMatchesList()">📋 My Single Matches</button>
-                        <button style="background:#0284c7; width:100%; margin-top:5px;" onclick="copyTtMatchPublicLink()">🔗 Copy Public Match Link</button>
-                        <div id="tt-match-link-hint" style="display:none; font-size:10px; color:#4ade80; margin-top:4px; word-break:break-all;"></div>
                     </div>
 
                     <div id="tt-tournament-fields" style="display:none; margin-top:8px;">
@@ -421,6 +419,12 @@
                 <div class="toggles-grid">
                     <button class="toggle-btn bg-blue" onclick="toggleTtPlayerStatsOverlay(true)">Show</button>
                     <button class="toggle-btn bg-red" onclick="toggleTtPlayerStatsOverlay(false)">Hide</button>
+                </div>
+
+                <label style="margin-top: 4px;">Points Table (Broadcast Graphic — tournament standings):</label>
+                <div class="toggles-grid">
+                    <button class="toggle-btn bg-blue" onclick="toggleTtPointsTableOverlay(true)">Show</button>
+                    <button class="toggle-btn bg-red" onclick="toggleTtPointsTableOverlay(false)">Hide</button>
                 </div>
 
                 <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #1f2937;">
@@ -581,6 +585,8 @@
         showTournamentHistory: false,
         showPlayerStats: false,
         showTeamHistory: false,
+        showPointsTable: false, // 🌟 independent show/hide flag for the overlay's
+                                 // Points Table graphic, same pattern as the three above
         tournamentHistorySnapshot: { tournamentName: "", rows: [] },
         playerStatsSnapshot: { sideA: [], sideB: [] },
         teamHistorySnapshot: { teamA: null, teamB: null },
@@ -969,6 +975,31 @@
         if(show) data.tournamentHistorySnapshot = buildTtTournamentHistorySnapshot();
         sendData();
     }
+
+    // ================= 📊 POINTS TABLE (broadcast graphic) =================
+    // Reuses computeTtStandings() — the exact same standings math the
+    // in-panel "Points Table" modal (openTtPointsTableView) already uses —
+    // just also pushed to the overlay when switched ON, same independent
+    // on/off toggle pattern as Team/Tournament History above. Overlay's
+    // #points-table-container renders whatever comes in as data.standings.
+    function buildTtPointsTableSnapshot(){
+        const matches = currentTtLeagueMatches();
+        return computeTtStandings(matches).map(t => ({
+            team: t.name,
+            ties: t.played,
+            tiesWon: t.won,
+            gamesPlayed: t.setsWon + t.setsLost,
+            matchesWon: t.won,
+            gamesWon: t.setsWon,
+            points: t.points
+        }));
+    }
+    function toggleTtPointsTableOverlay(show){
+        data.showPointsTable = show;
+        if(show) data.standings = buildTtPointsTableSnapshot();
+        sendData();
+    }
+
 
     // ================= 👤 PLAYER / PAIR STATISTICS (broadcast graphic) =================
     // Pulled from the ttPlayers / ttPairs Firestore collections (see
@@ -1560,11 +1591,9 @@
         }catch(e){ if(hint){ hint.style.display = 'block'; hint.textContent = '⚠️ Link nahi ban paya — connection check karein'; } }
     }
     function copyTtMatchPublicLink(){
-        const id = ensureTtTournamentMatchId();
-        const hint = document.getElementById('tt-match-link-hint');
-        const fullUrl = `${location.origin}/score/match/${id}`;
-        navigator.clipboard.writeText(fullUrl).catch(() => {});
-        if(hint){ hint.style.display = 'block'; hint.textContent = `Copied: ${fullUrl} (match start hote hi live, save hone par permanent)`; }
+        // Removed: table tennis no longer exposes a public /score/match/
+        // scorecard link from the panel. Left as a no-op instead of
+        // deleting outright, in case anything else still calls it.
     }
 
     // ---- Team names / stats aggregation across a tournament's saved matches ----
@@ -1742,5 +1771,3 @@
 </script>
 </body>
 </html>
-
-
