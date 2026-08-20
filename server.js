@@ -1851,6 +1851,26 @@ io.on('connection', async (socket) => {
         io.to(room).emit('cricketHideMatchSummary');
     });
 
+    // 🏏🪙 Toss announcement card — same pure-broadcast treatment as the
+    // summary cards above (not persisted, one-off overlay graphic). This
+    // pair was missing entirely, which is why the panel's "Show Toss on
+    // Overlay" button emitted cricketToss/cricketHideToss but the overlay
+    // never received them (nothing was listening server-side to relay it
+    // to the room).
+    socket.on('cricketToss', (data) => {
+        let room = socket.activeRoom;
+        const targetId = data.room ? data.room.replace('room-', '') : (data.id || data.uid || matchIdForClient);
+        if (targetId && targetId !== 'default') room = `room-${targetId}`;
+        io.to(room).emit('cricketToss', data.data || data);
+    });
+
+    socket.on('cricketHideToss', (data) => {
+        let room = socket.activeRoom;
+        const targetId = data && data.room ? data.room.replace('room-', '') : (data && (data.id || data.uid)) || matchIdForClient;
+        if (targetId && targetId !== 'default') room = `room-${targetId}`;
+        io.to(room).emit('cricketHideToss');
+    });
+
     // 🏏🎚️ Left-slide player/bowler stat cards (batting-team / bowling-team
     // branded, Match or Tournament scope). Same pure-broadcast treatment as
     // cricketEvent/cricketInningsSummary above — an on/off toggle on the
