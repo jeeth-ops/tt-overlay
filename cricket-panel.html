@@ -266,6 +266,7 @@
   <div class="qn-group qn-setup">
     <span class="qn-label">⚙️ Setup</span>
     <button type="button" data-target="card-match-setup">Match Setup</button>
+    <button type="button" data-target="card-toss">Toss</button>
     <button type="button" data-target="card-match-type">Match Type</button>
     <button type="button" data-target="card-theme">Theme</button>
     <button type="button" data-target="card-players">Players</button>
@@ -363,6 +364,30 @@
         <span>Scorecard visible on overlay</span>
         <label class="switch"><input type="checkbox" id="visible-toggle" checked><span class="slider"></span></label>
       </div>
+    </div>
+
+    <div class="card" id="card-toss">
+      <h2>🪙 Toss <span class="note">— who won, and what they chose</span></h2>
+      <label>Toss won by</label>
+      <select id="toss-winner">
+        <option value="">— Not held yet —</option>
+        <option value="A">Team A</option>
+        <option value="B">Team B</option>
+      </select>
+      <label>Elected to</label>
+      <select id="toss-decision">
+        <option value="BAT">Bat First</option>
+        <option value="BOWL">Bowl First (Field)</option>
+      </select>
+      <div class="toggle-row" style="margin-top:10px;">
+        <span>Auto-set "Batting team" from this result</span>
+        <label class="switch"><input type="checkbox" id="toss-auto-batting" checked><span class="slider"></span></label>
+      </div>
+      <div class="row2" style="margin-top:10px;">
+        <button class="small" id="show-toss-btn" type="button">Show Toss on Overlay</button>
+        <button class="small ghost" id="hide-toss-btn" type="button">Hide Now</button>
+      </div>
+      <div class="shortcut-hint" id="toss-hint">Current rule: the toss winner only ever chooses to Bat or Bowl first — there's no separate "field" option, that's just the commentary term for bowling first. With auto-set on, picking a decision here immediately updates the Batting Team field above (and everything downstream — score side, chase target, etc.) so you don't have to set it twice.</div>
     </div>
 
     <div class="card" id="card-match-type">
@@ -803,6 +828,7 @@ function mergeWithDefaults(saved){
     ...def, ...saved,
     teamA: { ...def.teamA, ...(saved.teamA||{}) },
     teamB: { ...def.teamB, ...(saved.teamB||{}) },
+    toss: { ...def.toss, ...(saved.toss||{}) },
     theme: { ...def.theme, ...(saved.theme||{}) },
     score: { ...def.score, ...(saved.score||{}) },
     striker: { ...def.striker, ...(saved.striker||{}) },
@@ -839,6 +865,12 @@ function defaultState(){
     teamB: { name:'Royal Challengers Bengaluru', short:'RCB', color:'#7a1620', logoUrl:'' },
     theme: { badgeColor:'#ff7a1a', bottomBarColor:'#0a1330', progressColor:'#f0b429' },
     battingTeam: 'A',
+    // Toss result — winner ('A'/'B') and what they elected to do
+    // ('BAT'/'BOWL'). Independent of battingTeam so the operator can
+    // record who won the toss even before deciding/confirming who's
+    // actually batting first; toss-decision's change handler is what
+    // keeps battingTeam in sync when auto-set is on.
+    toss: { winner: '', decision: 'BAT' },
     score: { runs:0, wickets:0, overs:0, balls:0 },
     target: null,
     striker:    { name:'S. Yadav', runs:0, balls:0, fours:0, sixes:0 },
@@ -1537,6 +1569,8 @@ function renderPanel(){
   maybeSet('theme-bottombar', state.theme.bottomBarColor);
   maybeSet('theme-progress', state.theme.progressColor);
   maybeSet('batting-team', state.battingTeam);
+  maybeSet('toss-winner', state.toss.winner || '');
+  maybeSet('toss-decision', state.toss.decision || 'BAT');
   maybeSet('target', state.target || '');
   maybeSet('visible-toggle', state.visible);
   document.getElementById('teamA-logo-preview').style.backgroundImage = state.teamA.logoUrl ? `url(${state.teamA.logoUrl})` : '';
@@ -1633,6 +1667,60 @@ document.getElementById('batting-team').addEventListener('change', (e) => {
   state.battingTeam = e.target.value;
   pushState(true);
 });
+
+/* ============================================================
+   TOSS
+   Records who won the toss and what they elected to do. Kept
+   separate from battingTeam (below) so the operator can log the
+   toss result the moment it happens, before ball-by-ball scoring
+   even starts. When "auto-set" is on (default), picking a decision
+   here drives battingTeam directly — bat first -> the toss winner
+   bats; bowl first -> the OTHER team bats — the same standard
+   cricket rule everywhere: the toss only ever decides bat or bowl,
+   never anything else.
+   ============================================================ */
+function applyTossToBattingTeam(){
+  if(!document.getElementById('toss-auto-batting').checked) return;
+  if(!state.toss.winner) return;
+  const battingSide = state.toss.decision === 'BOWL'
+    ? (state.toss.winner === 'A' ? 'B' : 'A')
+    : state.toss.winner;
+  if(state.battingTeam !== battingSide){
+    state.battingTeam = battingSide;
+  }
+}
+function buildTossPayload(){
+  const winnerTeam = state.toss.winner === 'B' ? state.teamB : state.teamA;
+  return {
+    team: { name: winnerTeam.name, short: winnerTeam.short, color: winnerTeam.color, logoUrl: winnerTeam.logoUrl },
+    decision: state.toss.decision,
+    decisionText: state.toss.decision === 'BOWL' ? 'ELECTED TO BOWL FIRST' : 'ELECTED TO BAT FIRST'
+  };
+}
+document.getElementById('toss-winner').addEventListener('change', (e) => {
+  history.push(snapshot());
+  state.toss.winner = e.target.value;
+  applyTossToBattingTeam();
+  pushState(true);
+});
+document.getElementById('toss-decision').addEventListener('change', (e) => {
+  history.push(snapshot());
+  state.toss.decision = e.target.value;
+  applyTossToBattingTeam();
+  pushState(true);
+});
+document.getElementById('show-toss-btn').addEventListener('click', () => {
+  if(!state.toss.winner){ toast('Pick who won the toss first'); return; }
+  if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
+  socket.emit('cricketToss', { data: buildTossPayload() });
+  toast('Toss shown on overlay');
+});
+document.getElementById('hide-toss-btn').addEventListener('click', () => {
+  if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
+  socket.emit('cricketHideToss', {});
+  toast('Toss hidden');
+});
+
 document.getElementById('visible-toggle').addEventListener('change', (e) => {
   state.visible = e.target.checked;
   pushState(true, true);
