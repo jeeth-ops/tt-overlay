@@ -679,6 +679,38 @@
     font-family:var(--font-num); font-weight:900; font-size:min(1.7vw,18px); letter-spacing:1.5px; color:var(--bc-gold,#f5c518);
   }
 
+  /* ---- TOSS card — a coin-flip announcement, not a data table, so it
+     gets its own compact centered layout rather than the row-grid the
+     other summary cards use. Same paper/gold-hairline language, badge
+     rendered in the winning team's own colour like the stat cards. */
+  .toss-card{ align-items:center; padding:22px 28px 26px; gap:0; }
+  .toss-header{
+    font-family:var(--font-num); font-weight:900; font-size:13px; letter-spacing:5px;
+    color:var(--bc-ink-dim,#5c6c8a); margin-bottom:14px;
+  }
+  .toss-badge{
+    width:74px; height:74px; border-radius:50%; margin-bottom:12px;
+    background-color:var(--toss-color,#0b3d91);
+    border:3px solid var(--bc-gold,#f5c518); box-shadow:0 8px 20px rgba(0,0,0,0.3);
+    display:flex; align-items:center; justify-content:center;
+    font-family:var(--font-num); font-weight:900; font-size:20px; color:#fff;
+  }
+  .toss-badge.has-logo{ background-size:cover; background-position:center; color:transparent; }
+  .toss-team-name{
+    font-family:var(--font-num); font-weight:900; font-size:min(2.6vw,28px); letter-spacing:1px;
+    color:var(--bc-ink,#12213f); text-align:center; line-height:1.2; margin-bottom:4px;
+  }
+  .toss-line{
+    font-family:var(--font-ui); font-weight:800; font-size:13px; letter-spacing:2px;
+    color:var(--bc-ink-dim,#5c6c8a); text-transform:uppercase; margin-bottom:14px;
+  }
+  .toss-decision{
+    font-family:var(--font-num); font-weight:900; font-size:min(1.9vw,20px); letter-spacing:1px;
+    color:#fff; text-transform:uppercase; padding:9px 22px; border-radius:999px;
+    background:linear-gradient(135deg, var(--bc-blue,#0b3d91), var(--bc-blue-2,#1a5bb8));
+    box-shadow:0 6px 16px rgba(0,0,0,0.25);
+  }
+
   /* ============================================================
      LEFT-SLIDE PLAYER / BOWLER STAT CARDS
      Team-branded broadcast cards that emerge from the left edge of
@@ -943,6 +975,14 @@
     </div>
   </div>
 
+  <div id="toss-card" class="summary-card toss-card">
+    <div class="toss-header toss-row">TOSS</div>
+    <div class="toss-badge toss-row" id="toss-badge">TM</div>
+    <div class="toss-team-name toss-row" id="toss-team-name">TEAM NAME</div>
+    <div class="toss-line toss-row">WON THE TOSS</div>
+    <div class="toss-decision toss-row" id="toss-decision-text">ELECTED TO BAT FIRST</div>
+  </div>
+
   <div id="match-summary-card" class="summary-card wide">
     <div class="ms-header">MATCH SUMMARY</div>
     <div class="ms-team" id="ms-team-a">
@@ -1071,6 +1111,7 @@ socket.on('cricketInningsSummary', (data) => {
   inningsSummaryChainTimer = setTimeout(() => renderInningsSummary(data), 17300);
 });
 socket.on('cricketMatchSummary', (data) => renderMatchSummary(data));
+socket.on('cricketToss', (data) => renderToss(data));
 // Manual "Hide Now" from the panel — dismiss whatever summary card(s) are
 // currently up without waiting for their normal hold/exit timing.
 socket.on('cricketHideInningsSummary', () => {
@@ -1080,6 +1121,9 @@ socket.on('cricketHideInningsSummary', () => {
 });
 socket.on('cricketHideMatchSummary', () => {
   hideSummaryCard('match-summary-card', '.ms-row, .ms-footer');
+});
+socket.on('cricketHideToss', () => {
+  hideSummaryCard('toss-card', '.toss-row');
 });
 // Left-slide player/bowler stat cards — persistent on/off, not timed.
 // A render call while the card is already up just refreshes the numbers
@@ -2351,6 +2395,20 @@ function renderMatchSummary(d){
   fillMsRows('ms-rows-b', d.teamB);
 
   playSummaryCard('match-summary-card', '.ms-row, .ms-footer', 15000);
+}
+
+// TOSS — a coin-flip announcement, up for a shorter hold than the data
+// summary cards since it's a single fact, not something to read line by
+// line. Team colour drives the badge background so it visually matches
+// that side's colour everywhere else on the overlay.
+function renderToss(d){
+  if(!d) return;
+  const team = d.team || {};
+  document.getElementById('toss-card').style.setProperty('--toss-color', team.color || 'var(--bc-blue,#0b3d91)');
+  setBadge(document.getElementById('toss-badge'), team.logoUrl, badgeText(team.short, team.name));
+  document.getElementById('toss-team-name').textContent = (team.name || team.short || 'TEAM').toUpperCase();
+  document.getElementById('toss-decision-text').textContent = d.decisionText || (d.decision === 'BOWL' ? 'ELECTED TO BOWL FIRST' : 'ELECTED TO BAT FIRST');
+  playSummaryCard('toss-card', '.toss-row', 8000);
 }
 </script>
 </body>
