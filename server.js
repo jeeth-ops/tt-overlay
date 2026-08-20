@@ -1690,9 +1690,16 @@ io.on('connection', async (socket) => {
         const targetId = data.id || data.uid || matchIdForClient;
         if (targetId && targetId !== 'default') {
             room = `room-${targetId}`;
-            socket.leave(socket.activeRoom);
-            socket.join(room);
-            socket.activeRoom = room;
+            // Only leave/join if the socket isn't already in this room —
+            // avoids unnecessary work on every single point/keystroke event.
+            // (Same fix already applied to football/cricket below — without
+            // it, every TT update paid a socket.leave+join cost, which is
+            // what was causing the felt lag on live updates.)
+            if (socket.activeRoom !== room) {
+                socket.leave(socket.activeRoom);
+                socket.join(room);
+                socket.activeRoom = room;
+            }
         }
 
         const state = await getRoomState(room);
