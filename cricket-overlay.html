@@ -315,10 +315,10 @@
      loop while the graphic holds — the classic "TV graphic is alive"
      tell that a flat gradient alone can't give. */
   #event-shine{
-    position:absolute; top:-60%; left:-70%; width:30%; height:220%;
+    position:absolute; top:-60%; left:-70%; width:38%; height:220%;
     transform:rotate(18deg) translateX(0);
-    background:linear-gradient(90deg, transparent, rgba(255,255,255,0.38), transparent);
-    mix-blend-mode:screen; opacity:0; pointer-events:none; filter:blur(3px);
+    background:linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent);
+    mix-blend-mode:screen; opacity:0; pointer-events:none; filter:blur(1px);
   }
 
   /* Hard white hit-flash — one bright frame the instant the number/word
@@ -405,7 +405,7 @@
   #event-hero{
     position:relative; z-index:2; display:flex; flex-direction:column;
     align-items:center; justify-content:center; text-align:center;
-    padding:1.5% 6%; width:100%; height:100%;
+    padding:2.2% 8%; width:100%; height:100%; gap:calc(var(--panel-h, 100px) * 0.018);
     /* Typography is sized off the panel's own rendered height (set as a
        px custom property by JS right before each event plays) rather
        than viewport width — the panel's height is what growth/theme
@@ -427,101 +427,95 @@
   #event-word{
     position:relative;
     font-family:var(--font-event); font-weight:400; color:var(--ev-accent);
-    font-size:calc(var(--ph) * 0.24); line-height:.9; letter-spacing:2px; margin-top:0;
+    font-size:calc(var(--ph) * 0.24); line-height:1; letter-spacing:3px;
     text-shadow:0 3px 10px rgba(0,0,0,0.5);
   }
+  /* NOTE: #event-word's text is split into one <span class="ev-char"> per
+     letter (for the stagger-in animation). CSS `filter` and `background`
+     do NOT inherit from parent to child, so any drop-shadow/gradient-fill
+     declared only on #event-word never reached the actual glyphs — the
+     spans fell back to inherited `color` + `-webkit-text-stroke` alone,
+     i.e. hollow/washed-out outline letters with no solid fill. That was
+     the cause of the "white patches on letters" look. Fix: every event's
+     word treatment is declared with properties that DO inherit (color,
+     text-shadow) so it reaches every letter identically, and any filter
+     lives on #event-word itself only (applies once, to the whole word),
+     never mixed with the per-char blur animation. */
   #event-word::before{
     content:attr(data-text); position:absolute; inset:0; z-index:-1;
-    color:var(--ev-secondary); opacity:.4; filter:blur(8px);
-    transform:translate(2.5%, 6%); pointer-events:none;
+    color:var(--ev-secondary); opacity:.35; filter:blur(9px);
+    transform:translate(2%, 6%); pointer-events:none;
   }
   #event-word .ev-char{ display:inline-block; will-change:transform,opacity,filter; }
-
-  /* Sub line (player name / "+N off the bat") — given its own clear
-     band under the word instead of sitting right on top of it: a
-     generous top margin, a thin centered rule to separate it from the
-     hero type, and a touch more size/weight so it reads as a distinct
-     caption rather than a cramped afterthought. */
   #event-sub{
-    position:relative;
-    margin-top:calc(var(--ph) * 0.05); padding-top:calc(var(--ph) * 0.02);
-    font-family:var(--font-ui); font-weight:800; color:var(--ev-accent);
-    font-size:calc(var(--ph) * 0.095); letter-spacing:2px; text-transform:uppercase; opacity:.92;
+    margin-top:calc(var(--ph) * 0.07); font-family:var(--font-ui); font-weight:800; color:#fff;
+    font-size:calc(var(--ph) * 0.095); letter-spacing:2px; text-transform:uppercase;
+    padding:calc(var(--ph) * 0.028) calc(var(--ph) * 0.09); border-radius:999px;
+    background:rgba(0,0,0,0.32); box-shadow:inset 0 0 0 1px rgba(255,255,255,0.16);
+    display:inline-block;
   }
-  #event-sub::before{
-    content:''; position:absolute; top:0; left:50%; width:15%; min-width:22px; height:2px;
-    background:var(--ev-accent); opacity:.55; transform:translateX(-50%);
-  }
+  #event-sub:empty{ display:none; }
 
-  /* FOUR — dominant, dimensional typography: layered depth via stacked
-     shadows (fakes extrusion cheaply, no extra DOM), horizontal energy. */
+  /* FOUR — dominant, dimensional typography: a crisp near-white fill
+     with a hard bevel shadow stack for depth, horizontal energy. */
   #event-stage.ev-four #event-number{
-    font-size:calc(var(--ph) * 0.74); letter-spacing:-4px;
-    background:linear-gradient(180deg, #ffffff 0%, #f4f8ff 46%, #d9e6ff 100%);
-    -webkit-background-clip:text; background-clip:text; color:transparent;
-    -webkit-text-stroke:1.5px rgba(255,255,255,0.95);
+    font-size:calc(var(--ph) * 0.72); letter-spacing:-4px; color:#eaf2ff;
     filter:
       drop-shadow(0 1px 0 rgba(10,20,50,0.35))
       drop-shadow(0 3px 0 rgba(10,20,50,0.25))
       drop-shadow(0 8px 18px rgba(0,0,0,0.5))
       drop-shadow(0 0 50px var(--ev-glow));
   }
+  #event-stage.ev-four #event-word{
+    color:#eaf2ff;
+    text-shadow:
+      0 1px 0 rgba(10,20,50,0.4), 0 3px 0 rgba(10,20,50,0.28),
+      0 10px 22px rgba(0,0,0,0.55), 0 0 46px var(--ev-glow);
+  }
   /* SIX — even larger, taller hero, radial power rather than horizontal. */
   #event-stage.ev-six #event-number{
-    font-size:calc(var(--ph) * 0.82); letter-spacing:-5px;
-    background:linear-gradient(180deg, #fffdf3 0%, #ffe9a8 48%, #f6c945 100%);
-    -webkit-background-clip:text; background-clip:text; color:transparent;
-    -webkit-text-stroke:1.5px rgba(255,255,255,0.95);
+    font-size:calc(var(--ph) * 0.8); letter-spacing:-5px; color:#ffdf7a;
     filter:
       drop-shadow(0 1px 0 rgba(60,38,0,0.4))
       drop-shadow(0 4px 0 rgba(60,38,0,0.28))
       drop-shadow(0 10px 24px rgba(0,0,0,0.55))
       drop-shadow(0 0 64px var(--ev-glow));
   }
+  #event-stage.ev-six #event-word{
+    color:#ffdf7a;
+    text-shadow:
+      0 1px 0 rgba(60,38,0,0.45), 0 4px 0 rgba(60,38,0,0.3),
+      0 12px 26px rgba(0,0,0,0.6), 0 0 58px var(--ev-glow);
+  }
   #event-stage.ev-four #event-word,
-  #event-stage.ev-six #event-word{ font-size:calc(var(--ph) * 0.15); letter-spacing:6px; margin-top:calc(var(--ph) * 0.035); }
+  #event-stage.ev-six #event-word{ font-size:calc(var(--ph) * 0.16); letter-spacing:7px; }
 
   /* WICKET — the word itself is the hero (no number), so it gets the
-     full dominant treatment: bold crimson gradient fill, hard bevel
-     shadow stack, wide but not empty. */
+     full dominant treatment: bold crimson fill, hard bevel shadow
+     stack, wide but not empty. */
   #event-stage.ev-wicket #event-word{
-    font-size:calc(var(--ph) * 0.58); letter-spacing:0px;
-    background:linear-gradient(180deg, #ffffff 0%, #ffd8dc 42%, #ff6b7a 100%);
-    -webkit-background-clip:text; background-clip:text; color:transparent;
-    -webkit-text-stroke:1.5px rgba(255,255,255,0.95);
-    filter:
-      drop-shadow(0 1px 0 rgba(40,4,10,0.45))
-      drop-shadow(0 3px 0 rgba(40,4,10,0.3))
-      drop-shadow(0 8px 20px rgba(0,0,0,0.5))
-      drop-shadow(0 0 46px var(--ev-glow));
+    font-size:calc(var(--ph) * 0.5); letter-spacing:1px; color:#ffd7db;
+    text-shadow:
+      0 1px 0 rgba(40,4,10,0.5), 0 3px 0 rgba(40,4,10,0.35),
+      0 10px 22px rgba(0,0,0,0.55), 0 0 42px var(--ev-glow);
   }
   #event-stage.ev-wicket #event-sub{ font-weight:900; letter-spacing:3px; }
 
   /* NO BALL — long two-word label, so a slightly smaller ratio than
      WICKET/WIDE keeps it inside the panel without cramming. */
   #event-stage.ev-no-ball #event-word{
-    font-size:calc(var(--ph) * 0.44); letter-spacing:-0.5px;
-    background:linear-gradient(180deg, #fff4ea 0%, #ffb27a 46%, #f0703a 100%);
-    -webkit-background-clip:text; background-clip:text; color:transparent;
-    -webkit-text-stroke:1.5px rgba(255,255,255,0.95);
-    filter:
-      drop-shadow(0 1px 0 rgba(50,16,0,0.4))
-      drop-shadow(0 3px 0 rgba(50,16,0,0.28))
-      drop-shadow(0 8px 18px rgba(0,0,0,0.5))
-      drop-shadow(0 0 44px var(--ev-glow));
+    font-size:calc(var(--ph) * 0.4); letter-spacing:0.5px; color:#ffdcc0;
+    text-shadow:
+      0 1px 0 rgba(50,16,0,0.45), 0 3px 0 rgba(50,16,0,0.32),
+      0 10px 20px rgba(0,0,0,0.55), 0 0 40px var(--ev-glow);
   }
 
   /* WIDE — single word, plenty of room, matches WICKET's scale. */
   #event-stage.ev-wide #event-word{
-    font-size:calc(var(--ph) * 0.56); letter-spacing:0px;
-    background:linear-gradient(180deg, #eef5ff 0%, #b9d3ff 46%, #4f8dff 100%);
-    -webkit-background-clip:text; background-clip:text; color:transparent;
-    -webkit-text-stroke:1.5px rgba(255,255,255,0.95);
-    filter:
-      drop-shadow(0 1px 0 rgba(4,20,55,0.4))
-      drop-shadow(0 3px 0 rgba(4,20,55,0.28))
-      drop-shadow(0 8px 18px rgba(0,0,0,0.5))
-      drop-shadow(0 0 44px var(--ev-glow));
+    font-size:calc(var(--ph) * 0.48); letter-spacing:1px; color:#d6e8ff;
+    text-shadow:
+      0 1px 0 rgba(4,20,55,0.45), 0 3px 0 rgba(4,20,55,0.32),
+      0 10px 20px rgba(0,0,0,0.55), 0 0 40px var(--ev-glow);
   }
 
   /* Hero events carry their own energy (shine sweep / streaks / rays /
@@ -532,7 +526,7 @@
   #event-stage.ev-wide #event-lines{ display:none; }
 
   /* BYE / LEG BYE — informational tier: same system, calmer scale */
-  #event-stage.ev-bye #event-word, #event-stage.ev-leg-bye #event-word{ font-size:calc(var(--ph) * 0.2); letter-spacing:4px; }
+  #event-stage.ev-bye #event-word, #event-stage.ev-leg-bye #event-word{ font-size:calc(var(--ph) * 0.22); letter-spacing:5px; }
   #event-stage.ev-bye #event-glow, #event-stage.ev-leg-bye #event-glow{ opacity:.12 !important; }
 
   #freehit-chip{
@@ -1529,10 +1523,10 @@ let TRANSITION_OUT  = 700;
 const EVENT_THEMES = {
   FOUR:     { label:'FOUR',     number:'4',  showNumber:true,  primary:'#173f9e', secondary:'#3f6fd6', accent:'#ffffff', glow:'rgba(63,111,214,0.55)', growth:1.78, particles:14, particleDist:78,  rays:0,  durationMs:2500 },
   SIX:      { label:'SIX',      number:'6',  showNumber:true,  primary:'#b8860f', secondary:'#f0b429', accent:'#ffffff', glow:'rgba(240,180,41,0.6)',  growth:1.95, particles:30, particleDist:140, rays:10, durationMs:2700 },
-  WICKET:   { label:'WICKET',   number:null, showNumber:false, primary:'#4a0812', secondary:'#a8102b', accent:'#ffffff', glow:'rgba(210,20,50,0.5)',   growth:1.8,  particles:14, particleDist:80  },
-  NO_BALL:  { label:'NO BALL',  number:null, showNumber:false, primary:'#7a2c0c', secondary:'#e2622f', accent:'#ffffff', glow:'rgba(226,98,47,0.5)',   growth:1.45, particles:0,  particleDist:0   },
-  FREE_HIT: { label:'FREE HIT', number:null, showNumber:false, primary:'#12356b', secondary:'#f0b429', accent:'#ffffff', glow:'rgba(240,180,41,0.5)',  growth:1.45, particles:10, particleDist:60  },
-  WIDE:     { label:'WIDE',     number:null, showNumber:false, primary:'#123a66', secondary:'#1c7fd8', accent:'#ffffff', glow:'rgba(28,127,216,0.45)', growth:1.4,  particles:0,  particleDist:0   },
+  WICKET:   { label:'WICKET',   number:null, showNumber:false, primary:'#4a0812', secondary:'#a8102b', accent:'#ffffff', glow:'rgba(210,20,50,0.5)',   growth:1.9,  particles:14, particleDist:80  },
+  NO_BALL:  { label:'NO BALL',  number:null, showNumber:false, primary:'#7a2c0c', secondary:'#e2622f', accent:'#ffffff', glow:'rgba(226,98,47,0.5)',   growth:1.6,  particles:0,  particleDist:0   },
+  FREE_HIT: { label:'FREE HIT', number:null, showNumber:false, primary:'#12356b', secondary:'#f0b429', accent:'#ffffff', glow:'rgba(240,180,41,0.5)',  growth:1.5,  particles:10, particleDist:60  },
+  WIDE:     { label:'WIDE',     number:null, showNumber:false, primary:'#123a66', secondary:'#1c7fd8', accent:'#ffffff', glow:'rgba(28,127,216,0.45)', growth:1.5,  particles:0,  particleDist:0   },
   BYE:      { label:'BYE',      number:null, showNumber:false, primary:'#2c3450', secondary:'#5b6788', accent:'#ffffff', glow:'rgba(91,103,136,0.3)',  growth:1.08, particles:0,  particleDist:0   },
   LEG_BYE:  { label:'LEG BYE',  number:null, showNumber:false, primary:'#2c3450', secondary:'#5b6788', accent:'#ffffff', glow:'rgba(91,103,136,0.3)',  growth:1.08, particles:0,  particleDist:0   }
 };
@@ -1694,7 +1688,7 @@ function startEventMicroMotion(bg, theme){
   const shine = document.getElementById('event-shine');
   gsap.set(shine, { x: '-40%', opacity: 0 });
   shineTl = gsap.timeline({ repeat: -1, repeatDelay: 1.1 });
-  shineTl.to(shine, { opacity: 0.6, duration: 0.15 }, 0)
+  shineTl.to(shine, { opacity: 0.9, duration: 0.15 }, 0)
     .to(shine, { x: '220%', duration: 0.9, ease: 'power1.inOut' }, 0)
     .to(shine, { opacity: 0, duration: 0.2 }, 0.7);
 }
