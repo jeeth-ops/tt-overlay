@@ -319,11 +319,19 @@
   .team-tag .short{
     font-size:clamp(24px, var(--team-name-size), var(--team-name-size)); font-weight:var(--team-name-weight);
     letter-spacing:.5px; text-transform:uppercase; line-height:1; color:var(--white);
-    white-space:nowrap; max-width:340px; overflow:visible;
+    white-space:nowrap; max-width:440px; overflow:visible;
   }
-  /* When a team name is long, JS adds .long to shrink it so the full name still fits on one line */
+  /* When a team name is long, JS adds .long/.longer/.longest to shrink it
+     in steps so the FULL name (e.g. "Royal Challengers Bengaluru") always
+     fits on one line instead of being clipped or cut mid-word. */
   .team-tag .short.long{ font-size:calc(var(--team-name-size) * .55); letter-spacing:.2px; }
   .team-tag .short.longer{ font-size:calc(var(--team-name-size) * .4); letter-spacing:0; }
+  .team-tag .short.longest{ font-size:calc(var(--team-name-size) * .32); letter-spacing:0; }
+  /* When a logo is showing, JS adds .has-logo to the name so it gets a
+     little extra shrink room — logo + full team name never fight for space. */
+  .team-tag .short.has-logo.long{ font-size:calc(var(--team-name-size) * .5); }
+  .team-tag .short.has-logo.longer{ font-size:calc(var(--team-name-size) * .36); }
+  .team-tag .short.has-logo.longest{ font-size:calc(var(--team-name-size) * .28); }
 
   /* SCORE segment — score pill + powerplay tag + overs on top row,
      CRR/RRR line underneath. One continuous dark panel. */
@@ -1062,8 +1070,9 @@ function animateMilestone(data){
 function setTeamTag(prefix, team){
   const logo = document.getElementById(`${prefix}-logo`);
   const nameEl = document.getElementById(`${prefix}-short`);
-  if(team && team.logo){
-    logo.src = team.logo;
+  const hasLogo = !!(team && (team.logoUrl || team.logo));
+  if(hasLogo){
+    logo.src = team.logoUrl || team.logo;
     logo.classList.remove('hidden');
   } else {
     logo.classList.add('hidden');
@@ -1071,8 +1080,10 @@ function setTeamTag(prefix, team){
   }
   const name = (team && (team.name || team.short)) || '—';
   nameEl.textContent = name;
-  nameEl.classList.remove('long', 'longer');
-  if(name.length > 14) nameEl.classList.add('longer');
+  nameEl.classList.remove('long', 'longer', 'longest', 'has-logo');
+  if(hasLogo) nameEl.classList.add('has-logo');
+  if(name.length > 20) nameEl.classList.add('longest');
+  else if(name.length > 14) nameEl.classList.add('longer');
   else if(name.length > 7) nameEl.classList.add('long');
 }
 
