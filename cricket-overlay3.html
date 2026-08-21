@@ -61,12 +61,14 @@
     --batter-name-size:25px;
     --batter-score-size:25px;
     --batter-weight:600;
-    --target-label-size:17px;
+    --target-label-size:15px;
     --target-value-size:42px;
     --bowler-name-size:27px;
     --bowler-figs-size:25px;
-    --pip-size:30px;
-    --pip-font-size:14px;
+    --pip-size:24px;
+    --pip-font-size:12px;
+    --pip-gap:6px;
+    --ticker-max-width:300px;
 
     /* Icons */
     --strike-icon-color: var(--gold);
@@ -183,7 +185,7 @@
     flex-direction:column; align-items:center; justify-content:center; gap:2px;
     padding:0 34px; overflow:hidden;
   }
-  #target-block .t-label{ font-size:var(--target-label-size); font-weight:700; letter-spacing:1.6px; font-style:italic; color:#1a1200; opacity:.82; white-space:nowrap; }
+  #target-block .t-label{ font-size:var(--target-label-size); font-weight:700; letter-spacing:1px; font-style:italic; color:#1a1200; opacity:.82; white-space:nowrap; }
   #target-block .t-value{ font-size:var(--target-value-size); font-weight:800; font-style:italic; color:#151000; white-space:nowrap; line-height:1; }
 
   /* BOWLER segment — name+icon at top, figures line below it, and the
@@ -218,12 +220,19 @@
   .bowler-figs-line .bf-econ b{ color:var(--white); font-weight:700; }
 
   /* Ball-by-ball ticker — now sits inside the bowler card, directly under
-     the figures line, spanning the card's full width. */
-  .ticker{ display:flex; align-items:center; gap:8px; width:100%; justify-content:space-between; }
+     the figures line. Pips pack tightly (not stretched edge-to-edge) and
+     stay right-aligned to match the figures line above them; a normal
+     6-ball over always renders at the base pip size, and only overs that
+     run past 6 balls (wides/no-balls) shrink — just enough to keep every
+     pip inside --ticker-max-width so nothing gets clipped. */
+  .ticker{
+    display:flex; align-items:center; justify-content:flex-end;
+    gap:var(--pip-gap-live, var(--pip-gap)); max-width:var(--ticker-max-width);
+  }
   .pip{
     width:var(--pip-size-live, var(--pip-size)); height:var(--pip-size-live, var(--pip-size)); border-radius:50%; display:flex; align-items:center; justify-content:center;
     font-size:var(--pip-font-size-live, var(--pip-font-size)); font-weight:800; flex:none; background:#eef0f4; color:#111318;
-    border:2px solid rgba(255,255,255,.85); transition:width .2s ease, height .2s ease, font-size .2s ease;
+    border:1.5px solid rgba(255,255,255,.85); transition:width .2s ease, height .2s ease, font-size .2s ease, gap .2s ease;
   }
   .pip.empty{ background:rgba(255,255,255,.94); border:2px solid rgba(255,255,255,.85); }
   .pip.boundary{ background:var(--gold); color:#1a1200; border-color:rgba(255,255,255,.85); }
@@ -531,17 +540,16 @@ function renderScorebar(state){
   document.getElementById('nonstriker-name').textContent = state.nonStriker.name || 'Batter 2';
   document.getElementById('nonstriker-score').textContent = `${state.nonStriker.runs}(${state.nonStriker.balls})`;
 
+  // Second innings shows the chase TARGET; first innings shows the match's
+  // live CURRENT RUN RATE in that same wedge instead of tournament/venue text.
   const targetBlock = document.getElementById('target-block');
+  targetBlock.style.display = 'flex';
   if(state.target){
-    targetBlock.style.display = 'flex';
     document.getElementById('target-label').textContent = 'TARGET';
     document.getElementById('target-value').textContent = state.target;
-  } else if(state.venue || state.leagueName){
-    targetBlock.style.display = 'flex';
-    document.getElementById('target-label').textContent = state.leagueName ? 'TOURNAMENT' : 'VENUE';
-    document.getElementById('target-value').textContent = state.leagueName || state.venue;
   } else {
-    targetBlock.style.display = 'none';
+    document.getElementById('target-label').textContent = 'CURRENT RUN RATE';
+    document.getElementById('target-value').textContent = crr;
   }
 
   document.getElementById('bowler-name').textContent = state.bowler.name || '—';
@@ -555,8 +563,11 @@ function renderScorebar(state){
 }
 
 // Ball-by-ball ticker — shows every ball bowled this over. A normal over is
-// padded with empty slots up to 6; if extras push the over past 6 balls,
-// nothing gets cut off — the pips just shrink a little so they all still fit.
+// padded with empty slots up to 6 and renders at the base pip size (never
+// shrunk, never stretched). If extras push the over past 6 balls, the pips
+// shrink by exactly the amount needed to keep the whole row inside
+// --ticker-max-width, based on their real rendered width — so nothing ever
+// gets cut off, however many balls are bowled this over.
 function renderTicker(thisOver){
   const ticker = document.getElementById('ticker');
   ticker.innerHTML = '';
@@ -565,15 +576,26 @@ function renderTicker(thisOver){
     ? thisOver
     : thisOver.concat(Array(minSlots - thisOver.length).fill(null));
 
-  const basePip = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--pip-size')) || 36;
-  const baseFont = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--pip-font-size')) || 16;
-  if(padded.length > minSlots){
-    const scale = Math.max(minSlots / padded.length, 0.55);
+  const rootStyle = getComputedStyle(document.documentElement);
+  const basePip = parseFloat(rootStyle.getPropertyValue('--pip-size')) || 24;
+  const baseFont = parseFloat(rootStyle.getPropertyValue('--pip-font-size')) || 12;
+  const baseGap = parseFloat(rootStyle.getPropertyValue('--pip-gap')) || 6;
+  const maxWidth = parseFloat(rootStyle.getPropertyValue('--ticker-max-width')) || 300;
+
+  const count = padded.length;
+  const naturalWidth = count * basePip + Math.max(count - 1, 0) * baseGap;
+  // no hard floor on the shrink — an over with a lot of extras should keep
+  // getting smaller rather than ever spilling past the card and getting cut
+  const scale = count > minSlots ? Math.min(1, Math.max(maxWidth / naturalWidth, 0.28)) : 1;
+
+  if(scale < 1){
     document.documentElement.style.setProperty('--pip-size-live', `${(basePip * scale).toFixed(1)}px`);
     document.documentElement.style.setProperty('--pip-font-size-live', `${(baseFont * scale).toFixed(1)}px`);
+    document.documentElement.style.setProperty('--pip-gap-live', `${(baseGap * scale).toFixed(1)}px`);
   } else {
     document.documentElement.style.removeProperty('--pip-size-live');
     document.documentElement.style.removeProperty('--pip-font-size-live');
+    document.documentElement.style.removeProperty('--pip-gap-live');
   }
 
   padded.forEach(b => {
