@@ -303,8 +303,6 @@
                             <button style="background:#374151; flex:1;" onclick="openTtTeamHistoryView()">🏓 Team History</button>
                             <button style="background:#374151; flex:1;" onclick="openTtPointsTableView()">📊 Points Table</button>
                         </div>
-                        <button style="background:#0284c7; width:100%; margin-top:5px;" onclick="copyTtTournamentPublicLink()">🔗 Copy Public Tournament Link</button>
-                        <div id="tt-tournament-link-hint" style="display:none; font-size:10px; color:#4ade80; margin-top:4px; word-break:break-all;"></div>
                         <button style="background:#7f1d1d; color:#fca5a5; width:100%; margin-top:8px;" onclick="deleteTtTournament()">🗑️ Delete Entire Tournament</button>
                         <div style="font-size:10px; color:#94a3b8; margin-top:6px;">Match jeetne par khud save ho jaata hai. Team History/Points Table har save ke baad apne aap update hote hain.</div>
                     </div>
@@ -1575,21 +1573,6 @@
     // ---- Public links (reuses the same generic /public-link and
     // /api/public/match endpoints cricket-panel uses — no server change
     // needed since they just serve whatever was posted). ----
-    async function copyTtTournamentPublicLink(){
-        const name = (ttPanelState.leagueName || '').trim();
-        const hint = document.getElementById('tt-tournament-link-hint');
-        if(!name){ alert('Pehle tournament select karein'); return; }
-        if(!currentTtOwnerUid()){ alert('⚠️ Pehle login karein — public link account se juda hota hai'); return; }
-        try{
-            const res = await fetch(ttWithUid(`${ttLeagueApiPath(name)}/public-link`), { method: 'POST' });
-            const d = await res.json();
-            if(d && d.success){
-                const fullUrl = `${location.origin}${d.url}`;
-                await navigator.clipboard.writeText(fullUrl).catch(() => {});
-                if(hint){ hint.style.display = 'block'; hint.textContent = `Copied: ${fullUrl}`; }
-            } else if(hint){ hint.style.display = 'block'; hint.textContent = '⚠️ Link nahi ban paya'; }
-        }catch(e){ if(hint){ hint.style.display = 'block'; hint.textContent = '⚠️ Link nahi ban paya — connection check karein'; } }
-    }
     function copyTtMatchPublicLink(){
         // Removed: table tennis no longer exposes a public /score/match/
         // scorecard link from the panel. Left as a no-op instead of
