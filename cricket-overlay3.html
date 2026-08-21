@@ -82,7 +82,10 @@
        whole product reads as one consistent broadcast package.
        ============================================================ */
     --glass-font:'Inter','Barlow Condensed',Arial,sans-serif;
-    --glass-bg: linear-gradient(165deg, rgba(24,27,38,.62), rgba(8,9,14,.72));
+    --glass-bg: linear-gradient(135deg,
+      color-mix(in srgb, var(--bat-color) 38%, rgba(18,20,30,.82)) 0%,
+      rgba(14,15,22,.86) 48%,
+      color-mix(in srgb, var(--bowl-color) 38%, rgba(10,11,17,.88)) 100%);
     --glass-border: rgba(255,255,255,.16);
     --glass-inner-highlight: rgba(255,255,255,.10);
     --glass-shadow: 0 30px 70px rgba(0,0,0,.55), 0 2px 0 rgba(255,255,255,.05) inset;
@@ -469,6 +472,10 @@
 
   /* Player / Bowler / Team stat cards — left slide-in */
   .stat-card{ top:24px; left:24px; width:230px; }
+  .stat-card{ border-top:3px solid var(--stat-accent, var(--accent)) !important; }
+  .stat-card .head-row{ display:flex; align-items:center; gap:10px; margin-bottom:2px; }
+  .stat-card .team-logo{ width:30px; height:30px; border-radius:50%; object-fit:contain; background:rgba(255,255,255,.08); flex:none; }
+  .stat-card .team-logo.hidden{ display:none; }
   .stat-card .name{ font-size:20px; font-weight:700; }
   .stat-card .team{ font-size:12px; color:var(--dim); margin-bottom:6px; }
   .stat-grid{ display:grid; grid-template-columns:1fr 1fr; gap:6px 14px; margin-top:8px; }
@@ -727,19 +734,29 @@
     <div class="ms-sub" id="ms-sub"></div>
   </div>
 
-  <!-- PLAYER STAT CARD -->
+  <!-- PLAYER STAT CARD (batting team branding — logo/colour/name) -->
   <div class="glass-card stat-card off" id="player-stat-card">
     <h3 id="ps-scope">Player Stats</h3>
-    <div class="name" id="ps-name">—</div>
-    <div class="team" id="ps-team">—</div>
+    <div class="head-row">
+      <img class="team-logo hidden" id="ps-logo" alt="">
+      <div>
+        <div class="name" id="ps-name">—</div>
+        <div class="team" id="ps-team">—</div>
+      </div>
+    </div>
     <div class="stat-grid" id="ps-grid"></div>
   </div>
 
-  <!-- BOWLER STAT CARD -->
+  <!-- BOWLER STAT CARD (bowling team branding — logo/colour/name) -->
   <div class="glass-card stat-card off" id="bowler-stat-card" style="left:auto; right:24px; top:24px;">
     <h3 id="bs-scope">Bowler Stats</h3>
-    <div class="name" id="bs-name">—</div>
-    <div class="team" id="bs-team">—</div>
+    <div class="head-row">
+      <img class="team-logo hidden" id="bs-logo" alt="">
+      <div>
+        <div class="name" id="bs-name">—</div>
+        <div class="team" id="bs-team">—</div>
+      </div>
+    </div>
     <div class="stat-grid" id="bs-grid"></div>
   </div>
 
@@ -843,8 +860,8 @@ function animateGlassIn(container, contentEls = []){
   if(contentEls.length) gsap.set(contentEls, { autoAlpha: 0, y: 10, scale: 0.97 });
   const tl = gsap.timeline();
   container.__glassTl = tl;
-  tl.to(container, { autoAlpha: 1, scale: 1, y: 0, filter: 'blur(0px)', duration: 0.62, ease: 'back.out(1.5)' })
-    .to(contentEls, { autoAlpha: 1, y: 0, scale: 1, duration: 0.46, ease: EASE_IN, stagger: 0.07 }, '-=0.28');
+  tl.to(container, { autoAlpha: 1, scale: 1, y: 0, filter: 'blur(0px)', duration: 0.95, ease: 'back.out(1.3)' })
+    .to(contentEls, { autoAlpha: 1, y: 0, scale: 1, duration: 0.7, ease: EASE_IN, stagger: 0.1 }, '-=0.4');
   return tl;
 }
 
@@ -854,9 +871,9 @@ function animateGlassOut(container, contentEls = [], onComplete){
   const tl = gsap.timeline({ onComplete: () => { container.style.display = 'none'; onComplete && onComplete(); } });
   container.__glassTl = tl;
   if(contentEls.length){
-    tl.to(contentEls, { autoAlpha: 0, y: -8, scale: 0.97, duration: 0.24, ease: EASE_OUT, stagger: 0.03 });
+    tl.to(contentEls, { autoAlpha: 0, y: -8, scale: 0.97, duration: 0.35, ease: EASE_OUT, stagger: 0.04 });
   }
-  tl.to(container, { autoAlpha: 0, scale: 0.94, y: -10, filter: 'blur(8px)', duration: 0.32, ease: EASE_OUT }, contentEls.length ? '-=0.08' : 0);
+  tl.to(container, { autoAlpha: 0, scale: 0.94, y: -10, filter: 'blur(8px)', duration: 0.5, ease: EASE_OUT }, contentEls.length ? '-=0.1' : 0);
   return tl;
 }
 
@@ -901,10 +918,10 @@ function animateMilestone(data){
 
   const tl = gsap.timeline();
   card.__glassTl = tl;
-  tl.to(card, { autoAlpha: 1, scale: 1, y: 0, filter: 'blur(0px)', duration: 0.65, ease: 'back.out(1.4)' })
-    .to([nameEl, teamEl], { autoAlpha: 1, y: 0, scale: 1, duration: 0.42, ease: EASE_IN, stagger: 0.05 }, '-=0.3')
-    .to(numberEl, { autoAlpha: 1, y: 0, scale: 1, duration: 0.5, ease: 'back.out(2)' }, '-=0.2')
-    .to([labelEl, subEl], { autoAlpha: 1, y: 0, duration: 0.36, ease: EASE_IN, stagger: 0.05 }, '-=0.22');
+  tl.to(card, { autoAlpha: 1, scale: 1, y: 0, filter: 'blur(0px)', duration: 1.0, ease: 'back.out(1.25)' })
+    .to([nameEl, teamEl], { autoAlpha: 1, y: 0, scale: 1, duration: 0.6, ease: EASE_IN, stagger: 0.08 }, '-=0.45')
+    .to(numberEl, { autoAlpha: 1, y: 0, scale: 1, duration: 0.7, ease: 'back.out(1.8)' }, '-=0.3')
+    .to([labelEl, subEl], { autoAlpha: 1, y: 0, duration: 0.5, ease: EASE_IN, stagger: 0.07 }, '-=0.32');
 
   const duration = data.durationMs || 4200;
   clearTimeout(card.__hideTimer);
@@ -1100,6 +1117,27 @@ function renderScorebar(state){
 
   renderTicker(state.thisOver || []);
   fitScorebar();
+  window.__lastState = state;
+}
+
+// Resolves a team's colour + logo from the live state by name/short match,
+// used to brand the player/bowler stat cards with the right team's colour
+// and logo even though those socket payloads only send a team name.
+function resolveTeamBranding(teamName){
+  const st = window.__lastState;
+  if(!st || !teamName) return { color: null, logo: null };
+  const match = [st.teamA, st.teamB].find(t => t && (t.name === teamName || t.short === teamName));
+  return match ? { color: match.color || null, logo: match.logo || null } : { color: null, logo: null };
+}
+function applyStatCardBranding(cardId, logoId, teamName, explicitColor, explicitLogo){
+  const branding = resolveTeamBranding(teamName);
+  const color = explicitColor || branding.color;
+  const logo = explicitLogo || branding.logo;
+  const card = document.getElementById(cardId);
+  card.style.setProperty('--stat-accent', color || 'var(--accent)');
+  const logoEl = document.getElementById(logoId);
+  if(logo){ logoEl.src = logo; logoEl.classList.remove('hidden'); }
+  else { logoEl.classList.add('hidden'); logoEl.removeAttribute('src'); }
 }
 
 // Ball-by-ball ticker — shows every ball bowled this over. A normal over is
@@ -1340,6 +1378,7 @@ socket.on('cricketPlayerStat', (data) => {
   document.getElementById('ps-scope').textContent = data.scope === 'tournament' ? 'Tournament Stats' : 'This Match';
   document.getElementById('ps-name').textContent = data.playerName || '—';
   document.getElementById('ps-team').textContent = data.teamName || '';
+  applyStatCardBranding('player-stat-card', 'ps-logo', data.teamName, data.teamColor, data.teamLogo);
   if(data.scope === 'tournament'){
     renderStatGrid(document.getElementById('ps-grid'), [
       ['Matches', data.matches], ['Runs', data.runs], ['Average', data.average], ['SR', data.sr],
@@ -1350,7 +1389,7 @@ socket.on('cricketPlayerStat', (data) => {
       ['Runs', data.runs], ['Balls', data.balls], ['SR', data.sr], ['4s', data.fours], ['6s', data.sixes]
     ]);
   }
-  showGlassCard(card, '.name, .team, .stat-grid .k, .stat-grid .v');
+  showGlassCard(card, '.team-logo, .name, .team, .stat-grid .k, .stat-grid .v');
 });
 socket.on('cricketHidePlayerStat', () => hideGlassCard(document.getElementById('player-stat-card'), '.name, .team, .stat-grid .k, .stat-grid .v'));
 
@@ -1359,6 +1398,7 @@ socket.on('cricketBowlerStat', (data) => {
   document.getElementById('bs-scope').textContent = data.scope === 'tournament' ? 'Tournament Stats' : 'This Match';
   document.getElementById('bs-name').textContent = data.playerName || '—';
   document.getElementById('bs-team').textContent = data.teamName || '';
+  applyStatCardBranding('bowler-stat-card', 'bs-logo', data.teamName, data.teamColor, data.teamLogo);
   if(data.scope === 'tournament'){
     renderStatGrid(document.getElementById('bs-grid'), [
       ['Matches', data.matches], ['Overs', data.overs], ['Wickets', data.wickets], ['Runs', data.runs],
@@ -1369,7 +1409,7 @@ socket.on('cricketBowlerStat', (data) => {
       ['Overs', data.overs], ['Maidens', data.maidens], ['Runs', data.runs], ['Wickets', data.wickets], ['Econ', data.economy]
     ]);
   }
-  showGlassCard(card, '.name, .team, .stat-grid .k, .stat-grid .v');
+  showGlassCard(card, '.team-logo, .name, .team, .stat-grid .k, .stat-grid .v');
 });
 socket.on('cricketHideBowlerStat', () => hideGlassCard(document.getElementById('bowler-stat-card'), '.name, .team, .stat-grid .k, .stat-grid .v'));
 
@@ -1425,9 +1465,9 @@ socket.on('cricketPointsTable', (data) => {
   gsap.set(rows, { autoAlpha: 0, y: 10 });
   const tl = gsap.timeline();
   card.__glassTl = tl;
-  tl.to(card, { autoAlpha: 1, scale: 1, y: 0, filter: 'blur(0px)', duration: 0.6, ease: 'back.out(1.4)' })
-    .to(header, { autoAlpha: 1, y: 0, duration: 0.4, ease: EASE_IN }, '-=0.28')
-    .to(rows, { autoAlpha: 1, y: 0, duration: 0.36, ease: EASE_IN, stagger: 0.05 }, '-=0.2');
+  tl.to(card, { autoAlpha: 1, scale: 1, y: 0, filter: 'blur(0px)', duration: 1.05, ease: 'back.out(1.25)' })
+    .to(header, { autoAlpha: 1, y: 0, duration: 0.55, ease: EASE_IN }, '-=0.5')
+    .to(rows, { autoAlpha: 1, y: 0, duration: 0.5, ease: EASE_IN, stagger: 0.09 }, '-=0.32');
 });
 socket.on('cricketHidePointsTable', () => {
   const card = document.getElementById('points-card');
