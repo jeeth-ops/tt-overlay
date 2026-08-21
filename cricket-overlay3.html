@@ -136,17 +136,35 @@
     max-width:90%; padding:0 12px;
   }
   #event-overlay .kind{
-    font-size:38px; font-weight:800; letter-spacing:2px; line-height:1;
+    font-size:46px; font-weight:800; letter-spacing:1.5px; line-height:1;
     color:var(--progress-color); font-style:italic; text-transform:uppercase;
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%;
     -webkit-text-stroke:.5px rgba(0,0,0,.25);
     text-shadow:0 2px 0 rgba(0,0,0,.35), 0 10px 24px rgba(0,0,0,.55), 0 0 26px rgba(242,186,18,.35);
   }
+  /* Detail line — batter name / free-hit note / whatever the panel sends
+     as `text`. This is the line the viewer actually reads right after the
+     flash, so it gets real weight and size instead of a caption font. */
   #event-overlay .text{
-    font-size:14px; font-weight:600; margin-top:5px; color:var(--white);
-    letter-spacing:.3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%;
+    font-size:23px; font-weight:700; margin-top:7px; color:var(--white);
+    letter-spacing:.4px; text-transform:uppercase; white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis; max-width:100%;
+    text-shadow:0 2px 6px rgba(0,0,0,.5);
   }
-  #event-overlay .sub{ font-size:11px; color:var(--dim); margin-top:1px; letter-spacing:.3px; }
+  #event-overlay .text:empty{ margin-top:0; }
+  #event-overlay .sub{
+    font-size:19px; font-weight:700; color:var(--white); margin-top:9px;
+    letter-spacing:.3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%;
+    display:inline-flex; align-items:center; gap:7px;
+    padding:6px 18px; border-radius:22px;
+    background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.2);
+    box-shadow:0 2px 10px rgba(0,0,0,.3);
+  }
+  #event-overlay .sub::before{
+    content:''; width:7px; height:7px; border-radius:50%; flex:none;
+    background:var(--progress-color); box-shadow:0 0 6px var(--progress-color);
+  }
+  #event-overlay .sub:empty{ display:none; margin-top:0; padding:0; border:none; background:none; box-shadow:none; }
   #event-overlay .ev-badge{
     display:inline-block; margin-top:9px; padding:4px 15px; border-radius:20px;
     font-size:12px; font-weight:700; letter-spacing:1.4px; text-transform:uppercase;
@@ -169,9 +187,32 @@
     transform:translate(-50%,-50%);
   }
 
-  /* ---- FOUR: quick lateral dash + sweeping light streak ---- */
+  /* Impact ring — shared "hit" flourish for every kind below; colour, width
+     and timing change per kind. Absolutely positioned inside #event-overlay,
+     which already clips to the bar's own shape (overflow:hidden), so this
+     never draws outside the scoreboard however far it expands. */
+  #event-overlay .ev-ring{
+    position:absolute; left:50%; top:50%; width:36px; height:36px;
+    margin:-18px 0 0 -18px; border-radius:50%; border:4px solid var(--gold);
+    opacity:0; z-index:1; pointer-events:none;
+  }
+  @keyframes evRingOut{
+    0%{ transform:scale(.4); opacity:.85; }
+    100%{ transform:scale(7); opacity:0; }
+  }
+  @keyframes evRingPulse{
+    0%{ transform:scale(.5); opacity:0; }
+    25%{ opacity:.6; transform:scale(1.6); }
+    50%{ opacity:0; transform:scale(2.1); }
+    55%{ transform:scale(.5); opacity:0; }
+    75%{ opacity:.5; transform:scale(1.4); }
+    100%{ opacity:0; transform:scale(1.9); }
+  }
+
+  /* ---- FOUR: quick lateral dash + sweeping light streak + gold impact ring ---- */
   #event-overlay.kind-four.show .ev-inner{ animation:evFourIn .55s cubic-bezier(.16,1,.3,1) both; }
   #event-overlay.kind-four.show .ev-sweep{ animation:evSweep .9s cubic-bezier(.4,0,.2,1) .12s both; }
+  #event-overlay.kind-four.show .ev-ring{ animation:evRingOut .5s cubic-bezier(.2,.7,.3,1) .05s both; border-color:var(--gold); }
   @keyframes evFourIn{
     0%{ transform:translateX(-70px) scale(.75); opacity:0; filter:blur(8px); }
     55%{ transform:translateX(8px) scale(1.08); opacity:1; filter:blur(0); }
@@ -185,8 +226,9 @@
     100%{ transform:translateX(220%) skewX(-18deg); opacity:0; }
   }
 
-  /* ---- SIX: big spring pop + radiating gold particles ---- */
+  /* ---- SIX: big spring pop + radiating gold particles + green impact ring ---- */
   #event-overlay.kind-six.show .ev-inner{ animation:evSixPop .7s cubic-bezier(.34,1.56,.64,1) both; }
+  #event-overlay.kind-six.show .ev-ring{ animation:evRingOut .8s cubic-bezier(.2,.7,.3,1) .08s both; border-color:var(--green); border-width:5px; }
   @keyframes evSixPop{
     0%{ transform:scale(.25) rotate(-10deg); opacity:0; filter:blur(12px); }
     45%{ transform:scale(1.28) rotate(5deg); opacity:1; filter:blur(0); }
@@ -207,6 +249,7 @@
   #event-overlay.kind-wicket.show .ev-flash{ background:var(--red); animation:evFlash .5s ease-out both; }
   #event-overlay.kind-wicket.show .ev-crack{ animation:evCrackIn .5s ease-out .05s both; }
   #event-overlay.kind-wicket.show.shake{ animation:evShake .45s ease-in-out .08s both; }
+  #event-overlay.kind-wicket.show .ev-ring{ animation:evRingOut .45s cubic-bezier(.3,.6,.3,1) both; border-color:var(--red); }
   @keyframes evWicketDrop{
     0%{ transform:translateY(-50px) scale(.8); opacity:0; }
     55%{ transform:translateY(6px) scale(1.06); opacity:1; }
@@ -236,6 +279,24 @@
     100%{ transform:translateY(0); opacity:1; filter:blur(0); }
   }
   @keyframes evLine{ 0%{ width:0; opacity:.4; } 100%{ width:120px; opacity:1; } }
+  #event-overlay.kind-wide.show .ev-ring,
+  #event-overlay.kind-noball.show .ev-ring{ animation:evRingPulse 1s ease-in-out .1s both; border-width:3px; }
+  #event-overlay.kind-noball .ev-ring{ border-color:var(--red); }
+  #event-overlay.kind-wide .ev-ring{ border-color:var(--white); }
+
+  /* ---- FREE HIT: upbeat gold-to-green glow, deliberately NOT the red
+     no-ball warning treatment — this is a bonus ball, not an infraction ---- */
+  #event-overlay.kind-freehit.show .ev-inner{ animation:evTopIn .5s cubic-bezier(.16,1,.3,1) both; }
+  #event-overlay.kind-freehit .kind{ font-size:32px; color:var(--green); }
+  #event-overlay.kind-freehit.show .ev-ring{ animation:evRingPulse 1.1s ease-in-out .12s both; border-color:var(--green); border-width:3px; }
+  #event-overlay.kind-freehit .ev-underline{ background:linear-gradient(90deg, var(--green), var(--gold)); }
+  #event-overlay.kind-freehit.show .ev-underline{ animation:evLine .5s cubic-bezier(.4,0,.2,1) .18s both; }
+
+  /* ---- Fallback for any event kind the panel sends that we don't
+     explicitly style — shows the real label instead of guessing "FOUR!" ---- */
+  #event-overlay.kind-generic.show .ev-inner{ animation:evTopIn .5s cubic-bezier(.16,1,.3,1) both; }
+  #event-overlay.kind-generic .kind{ font-size:32px; }
+  #event-overlay.kind-generic.show .ev-ring{ animation:evRingPulse 1s ease-in-out .1s both; border-color:var(--gold); border-width:3px; }
 
   /* ---- Exit: same for every kind — soft collapse back into the bar ---- */
   #event-overlay.hide .ev-inner{ animation:evOut .4s cubic-bezier(.4,0,1,1) both; }
@@ -509,6 +570,7 @@
     <div id="event-overlay">
       <div class="ev-flash"></div>
       <div class="ev-crack"></div>
+      <div class="ev-ring"></div>
       <div class="ev-sweep"></div>
       <div class="ev-inner">
         <div class="kind" id="event-kind">FOUR!</div>
@@ -806,20 +868,27 @@ let eventTimer = null;
 let eventHideTimer = null;
 let lastEventInfo = null; // { kindKey, label, ts } — used to detect a rapid second event (e.g. "no ball" + "four") and merge them into one combo overlay instead of letting two animations collide
 
+// Strips everything but letters/digits before matching, so "No Ball!",
+// "NO-BALL", "no_ball" and "no ball" all resolve the same way — the panel
+// doesn't have to send an exact, punctuation-perfect string.
+function normalizeKind(raw){
+  return String(raw || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
 const EVENT_KIND_MAP = {
   four: 'four', '4': 'four',
   six: 'six', '6': 'six',
   wicket: 'wicket', out: 'wicket', w: 'wicket',
   wide: 'wide', wd: 'wide',
-  noball: 'noball', nb: 'noball', 'no-ball': 'noball', 'no ball': 'noball'
+  noball: 'noball', nb: 'noball',
+  freehit: 'freehit', fh: 'freehit'
 };
 const EVENT_DEFAULT_LABEL = {
-  four: 'FOUR!', six: 'SIX!', wicket: 'OUT!', wide: 'WIDE', noball: 'NO BALL'
+  four: 'FOUR!', six: 'SIX!', wicket: 'OUT!', wide: 'WIDE', noball: 'NO BALL', freehit: 'FREE HIT'
 };
 // Higher priority kind becomes the big headline when two events land close
 // together (e.g. a no-ball that's also hit for four); the lower one becomes
 // the small badge underneath instead of a second, overlapping animation.
-const EVENT_PRIORITY = { wicket: 4, six: 3, four: 2, wide: 1, noball: 1 };
+const EVENT_PRIORITY = { wicket: 5, six: 4, four: 3, freehit: 2, wide: 1, noball: 1 };
 const COMBO_WINDOW_MS = 900;
 
 function clearEventParticles(overlay){
@@ -846,8 +915,11 @@ function spawnSixBurst(overlay){
 socket.on('cricketEvent', (evt) => {
   const overlay = document.getElementById('event-overlay');
   const now = Date.now();
-  const kindKey = EVENT_KIND_MAP[String(evt.kind || '').trim().toLowerCase()] || 'four';
-  const label = evt.kind ? (EVENT_DEFAULT_LABEL[kindKey] || esc(evt.kind)) : EVENT_DEFAULT_LABEL[kindKey];
+  // Unrecognized kind -> 'generic', NOT 'four'. Falling back to 'four' was
+  // why every no-ball / free-hit click (whose kind string didn't exactly
+  // match the map) lit up "FOUR!" instead of its own label.
+  const kindKey = EVENT_KIND_MAP[normalizeKind(evt.kind)] || 'generic';
+  const label = EVENT_DEFAULT_LABEL[kindKey] || (evt.kind ? esc(evt.kind).toUpperCase() : 'EVENT!');
 
   // Detect a rapid follow-up event (same or different kind) fired while the
   // previous one is still showing — merge into a single combo overlay
@@ -873,7 +945,14 @@ socket.on('cricketEvent', (evt) => {
   // always restart cleanly, whether it's a fresh event or a combo
   overlay.className = '';
   document.getElementById('event-kind').textContent = primaryLabel;
-  document.getElementById('event-text').textContent = esc(evt.text || '');
+
+  // "text" carries the detail line (batter name, "FREE HIT" note, etc).
+  // If the panel sends the same word as the headline itself (e.g. text
+  // "FOUR" alongside kind "four"), skip it instead of printing FOUR! twice.
+  const rawText = esc(evt.text || '');
+  const textEl = document.getElementById('event-text');
+  textEl.textContent = (rawText && normalizeKind(rawText) !== normalizeKind(primaryLabel)) ? rawText : '';
+
   document.getElementById('event-sub').textContent = esc(evt.sub || '');
   const badgeEl = document.getElementById('event-badge');
   badgeEl.textContent = badgeLabel;
