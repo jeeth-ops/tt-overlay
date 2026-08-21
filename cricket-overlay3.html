@@ -124,21 +124,39 @@
     position:absolute; inset:0; z-index:40;
     display:flex; flex-direction:column; align-items:center; justify-content:center;
     gap:2px;
-    background:radial-gradient(120% 140% at 50% 50%, rgba(20,22,30,.94), rgba(6,7,10,.97));
+    background:radial-gradient(120% 140% at 50% 50%, rgba(20,22,30,.96), rgba(6,7,10,.98));
     opacity:0; pointer-events:none; overflow:hidden;
   }
   #event-overlay.show{ opacity:1; pointer-events:auto; }
   #event-overlay .ev-flash{
     position:absolute; inset:0; opacity:0; mix-blend-mode:screen;
   }
-  #event-overlay .ev-inner{ position:relative; text-align:center; z-index:2; }
-  #event-overlay .kind{
-    font-size:40px; font-weight:800; letter-spacing:1.5px; line-height:1;
-    color:var(--progress-color); text-shadow:0 4px 18px rgba(0,0,0,.5);
-    font-style:italic;
+  #event-overlay .ev-inner{
+    position:relative; text-align:center; z-index:2;
+    max-width:90%; padding:0 12px;
   }
-  #event-overlay .text{ font-size:16px; font-weight:600; margin-top:4px; color:var(--white); }
-  #event-overlay .sub{ font-size:12px; color:var(--dim); margin-top:1px; }
+  #event-overlay .kind{
+    font-size:38px; font-weight:800; letter-spacing:2px; line-height:1;
+    color:var(--progress-color); font-style:italic; text-transform:uppercase;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%;
+    -webkit-text-stroke:.5px rgba(0,0,0,.25);
+    text-shadow:0 2px 0 rgba(0,0,0,.35), 0 10px 24px rgba(0,0,0,.55), 0 0 26px rgba(242,186,18,.35);
+  }
+  #event-overlay .text{
+    font-size:14px; font-weight:600; margin-top:5px; color:var(--white);
+    letter-spacing:.3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%;
+  }
+  #event-overlay .sub{ font-size:11px; color:var(--dim); margin-top:1px; letter-spacing:.3px; }
+  #event-overlay .ev-badge{
+    display:inline-block; margin-top:9px; padding:4px 15px; border-radius:20px;
+    font-size:12px; font-weight:700; letter-spacing:1.4px; text-transform:uppercase;
+    background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.28); color:var(--white);
+    opacity:0; transform:translateY(6px) scale(.9);
+  }
+  #event-overlay.show .ev-badge.on{ animation:evBadgeIn .4s cubic-bezier(.16,1,.3,1) .3s both; }
+  #event-overlay.kind-wicket .ev-badge{ border-color:rgba(230,57,79,.55); color:var(--red); }
+  #event-overlay.kind-noball .ev-badge{ border-color:rgba(230,57,79,.4); }
+  @keyframes evBadgeIn{ 0%{ opacity:0; transform:translateY(6px) scale(.9); } 100%{ opacity:1; transform:translateY(0) scale(1); } }
   #event-overlay .ev-sweep{
     position:absolute; top:0; bottom:0; width:40%;
     background:linear-gradient(100deg, transparent, rgba(255,255,255,.55), transparent);
@@ -497,6 +515,7 @@
         <div class="text" id="event-text"></div>
         <div class="sub" id="event-sub"></div>
         <div class="ev-underline"></div>
+        <div class="ev-badge" id="event-badge"></div>
       </div>
     </div>
   </div>
@@ -785,6 +804,7 @@ document.addEventListener('DOMContentLoaded', fitScorebar);
    ============================================================ */
 let eventTimer = null;
 let eventHideTimer = null;
+let lastEventInfo = null; // { kindKey, label, ts } — used to detect a rapid second event (e.g. "no ball" + "four") and merge them into one combo overlay instead of letting two animations collide
 
 const EVENT_KIND_MAP = {
   four: 'four', '4': 'four',
@@ -796,13 +816,17 @@ const EVENT_KIND_MAP = {
 const EVENT_DEFAULT_LABEL = {
   four: 'FOUR!', six: 'SIX!', wicket: 'OUT!', wide: 'WIDE', noball: 'NO BALL'
 };
+// Higher priority kind becomes the big headline when two events land close
+// together (e.g. a no-ball that's also hit for four); the lower one becomes
+// the small badge underneath instead of a second, overlapping animation.
+const EVENT_PRIORITY = { wicket: 4, six: 3, four: 2, wide: 1, noball: 1 };
+const COMBO_WINDOW_MS = 900;
 
 function clearEventParticles(overlay){
   overlay.querySelectorAll('.ev-particle').forEach(p => p.remove());
 }
 
 function spawnSixBurst(overlay){
-  const inner = overlay.querySelector('.ev-inner');
   const count = 14;
   for(let i = 0; i < count; i++){
     const p = document.createElement('div');
@@ -817,36 +841,61 @@ function spawnSixBurst(overlay){
     else if(i % 3 === 1) p.style.background = 'var(--green)';
     overlay.appendChild(p);
   }
-  if(inner) inner.appendChild; // no-op guard, keeps inner referenced
 }
 
 socket.on('cricketEvent', (evt) => {
   const overlay = document.getElementById('event-overlay');
+  const now = Date.now();
   const kindKey = EVENT_KIND_MAP[String(evt.kind || '').trim().toLowerCase()] || 'four';
+  const label = evt.kind ? (EVENT_DEFAULT_LABEL[kindKey] || esc(evt.kind)) : EVENT_DEFAULT_LABEL[kindKey];
+
+  // Detect a rapid follow-up event (same or different kind) fired while the
+  // previous one is still showing — merge into a single combo overlay
+  // rather than restarting a second animation on top of the first.
+  const isCombo = overlay.classList.contains('show')
+    && lastEventInfo
+    && (now - lastEventInfo.ts) < COMBO_WINDOW_MS
+    && lastEventInfo.kindKey !== kindKey;
+
+  let primaryKind = kindKey, primaryLabel = label, badgeLabel = '';
+  if(isCombo){
+    const prevWins = (EVENT_PRIORITY[lastEventInfo.kindKey] || 0) >= (EVENT_PRIORITY[kindKey] || 0);
+    primaryKind = prevWins ? lastEventInfo.kindKey : kindKey;
+    primaryLabel = prevWins ? lastEventInfo.label : label;
+    badgeLabel = prevWins ? label : lastEventInfo.label;
+  }
 
   clearTimeout(eventTimer);
   clearTimeout(eventHideTimer);
   clearEventParticles(overlay);
 
-  // reset to a clean, un-animated state so replaying the same kind
-  // back-to-back always restarts its animation from scratch
+  // reset to a clean, un-animated state so the animation classes below
+  // always restart cleanly, whether it's a fresh event or a combo
   overlay.className = '';
-  document.getElementById('event-kind').textContent = esc(evt.kind ? (EVENT_DEFAULT_LABEL[kindKey] || evt.kind) : EVENT_DEFAULT_LABEL[kindKey]);
+  document.getElementById('event-kind').textContent = primaryLabel;
   document.getElementById('event-text').textContent = esc(evt.text || '');
   document.getElementById('event-sub').textContent = esc(evt.sub || '');
+  const badgeEl = document.getElementById('event-badge');
+  badgeEl.textContent = badgeLabel;
+  badgeEl.classList.toggle('on', !!badgeLabel);
 
   void overlay.offsetWidth; // force reflow so the animation classes below restart cleanly
 
-  overlay.classList.add('kind-' + kindKey, 'show');
-  if(kindKey === 'six') spawnSixBurst(overlay);
-  if(kindKey === 'wicket') overlay.classList.add('shake');
+  overlay.classList.add('kind-' + primaryKind, 'show');
+  if(primaryKind === 'six') spawnSixBurst(overlay);
+  if(primaryKind === 'wicket') overlay.classList.add('shake');
+
+  lastEventInfo = { kindKey, label, ts: now };
 
   const duration = evt.durationMs || 2200;
   eventTimer = setTimeout(() => {
     overlay.classList.add('hide');
     eventHideTimer = setTimeout(() => {
-      overlay.classList.remove('show', 'hide', 'kind-' + kindKey, 'shake');
+      overlay.classList.remove('show', 'hide', 'kind-' + primaryKind, 'shake');
       clearEventParticles(overlay);
+      badgeEl.classList.remove('on');
+      badgeEl.textContent = '';
+      lastEventInfo = null;
     }, 450);
   }, duration);
 });
