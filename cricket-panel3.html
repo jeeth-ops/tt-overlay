@@ -1354,7 +1354,14 @@ function pushState(immediate, force){
 }
 function fireEvent(kind, text, sub, durationMs){
   if(socket && socket.connected){
-    socket.emit('cricketEvent', { event: { kind, text, sub, durationMs } });
+    // IMPORTANT: the overlay's listener reads kind/text/sub/durationMs
+    // straight off the top-level payload (evt.kind, not evt.event.kind).
+    // Wrapping these in an extra `event: {...}` envelope meant evt.kind
+    // was always undefined on the overlay side, which silently fell back
+    // to its default ('four') for EVERY event — that was the real cause
+    // of No Ball / Wicket / Wide / milestones all rendering as FOUR.
+    // Keep this flat so it matches the overlay's socket.on('cricketEvent', ...) contract.
+    socket.emit('cricketEvent', { kind, text, sub, durationMs });
   }
   logMilestone(`${kind}${sub ? ' — ' + sub : ''}`);
 }
