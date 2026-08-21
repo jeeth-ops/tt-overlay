@@ -42,12 +42,14 @@
             border: 1px solid rgba(255, 255, 255, 0.2);
             text-transform: uppercase;
             opacity: 0;
+            filter: blur(8px);
             transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
             pointer-events: none;
         }
         #header-banner.active { 
             transform: translate(-50%, 0) scale(1); 
             opacity: 1; 
+            filter: blur(0);
         }
 
         /* --- GAME / MATCH POINT ALERT BANNER --- */
@@ -68,6 +70,7 @@
             border: 1px solid rgba(255, 255, 255, 0.4);
             text-transform: uppercase;
             opacity: 0;
+            filter: blur(8px);
             transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
             pointer-events: none;
             z-index: 200;
@@ -75,6 +78,7 @@
         #alert-banner.active {
             transform: translate(-50%, 0) scale(1);
             opacity: 1;
+            filter: blur(0);
         }
 
         /* --- 2. LIVE SCOREBOARD & BADGES --- */
@@ -321,12 +325,14 @@
             font-size: 34px; font-weight: 900; letter-spacing: 2px;
             border-radius: 16px; box-shadow: 0 35px 70px rgba(0,0,0,0.9);
             text-align: center; text-transform: uppercase; opacity: 0;
+            filter: blur(10px);
             transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
             pointer-events: none;
         }
         #winner-banner.active { 
             transform: translate(-50%, -50%) scale(1); 
             opacity: 1; 
+            filter: blur(0);
         }
 
         /* --- 5. POINTS TABLE LEADERBOARD --- */
@@ -361,25 +367,53 @@
             padding: 12px 15px; font-size: 14px; font-weight: bold; border-bottom: 1px solid rgba(30, 41, 59, 0.6);
             align-items: center; text-align: center; background: rgba(15, 23, 42, 0.9);
             color: var(--ov-text);
-            opacity: 1;
         }
         .pt-row:nth-child(even) { background: rgba(30, 41, 59, 0.4); }
         .pt-row div:nth-child(2) { text-align: left; }
-        @keyframes rowFadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to   { opacity: 1; transform: translateY(0); }
+
+        /* ================= APPLE-STYLE "BOX → COLUMNS → TEXT" REVEAL =================
+           A single, reusable language used by every "show/hide" broadcast graphic
+           (Points Table, Tournament History, Team History, Player Stats, Sets Grid):
+             Stage 1 — the card/box itself scales & fades in (each container's own
+                       "all 0.5-0.6s" transition above).
+             Stage 2 — the header/column row (.av-columns) fades up shortly after,
+                       so the grid structure appears before any data.
+             Stage 3 — each data row/stat (.av-row) fades + un-blurs in with a
+                       per-item stagger, driven purely by CSS transitions (not
+                       keyframes) and a JS-set --i index — which means removing
+                       .active reverses the exact same transition, so the exit
+                       plays the same elegant stagger instead of vanishing instantly. */
+        .av-columns {
+            opacity: 0; transform: translateY(-6px);
+            transition: opacity 0.4s var(--ease-smooth), transform 0.4s var(--ease-smooth);
+            transition-delay: 0.16s;
         }
-        /* "Box first, text follows": .rows-anim is toggled on fresh (with a
-           reflow in between) every time a graphic switches ON, so the
-           staggered row reveal replays every single time — not just on
-           first page load. Each row's own animation-delay (set inline by
-           JS, index-based) is what creates the stagger. */
-        #points-table-container.rows-anim .pt-row,
-        #tournament-history-container.rows-anim .th-row,
-        #team-history-container.rows-anim .th-team-name,
-        #team-history-container.rows-anim .th-stat-row {
-            opacity: 0; transform: translateY(10px);
-            animation: rowFadeIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        .av-row {
+            opacity: 0; transform: translateY(12px); filter: blur(5px);
+            transition: opacity 0.45s var(--ease-smooth), transform 0.45s var(--ease-spring), filter 0.45s var(--ease-smooth);
+            transition-delay: calc(0.26s + (var(--i, 0) * 0.06s));
+        }
+        #points-table-container.active .av-columns,
+        #tournament-history-container.active .av-columns,
+        #team-history-container.active .av-columns,
+        #player-stats-container.active .av-columns,
+        #sets-grid-container.active .av-columns,
+        #points-table-container.active .av-row,
+        #tournament-history-container.active .av-row,
+        #team-history-container.active .av-row,
+        #player-stats-container.active .av-row,
+        #sets-grid-container.active .av-row {
+            opacity: 1; transform: translateY(0); filter: blur(0);
+        }
+        /* While the card is hidden, collapse everyone's delay so a fresh
+           show always restarts the stagger from the top instead of
+           inheriting whatever delay was mid-flight on the way out. */
+        #points-table-container:not(.active) .av-row,
+        #tournament-history-container:not(.active) .av-row,
+        #team-history-container:not(.active) .av-row,
+        #player-stats-container:not(.active) .av-row,
+        #sets-grid-container:not(.active) .av-row {
+            transition-delay: calc(var(--i, 0) * 0.03s);
         }
 
         /* --- 6. SET-WISE SCORE GRID OVERLAY --- */
@@ -689,7 +723,7 @@
 
     <!-- 4. Sets Grid Score Breakdown Overlay -->
     <div id="sets-grid-container">
-        <div class="sets-grid-title">Match Set-wise Score Breakdown</div>
+        <div class="sets-grid-title av-columns">Match Set-wise Score Breakdown</div>
         <div id="sets-grid-content"></div>
     </div>
 
@@ -698,12 +732,12 @@
 
     <!-- 6. Points Table Overlay -->
     <div id="tournament-history-container">
-        <div class="th-title" id="th-title-text">Tournament History</div>
+        <div class="th-title av-columns" id="th-title-text">Tournament History</div>
         <div id="th-body"></div>
     </div>
 
     <div id="team-history-container">
-        <div class="th-title2">Team History</div>
+        <div class="th-title2 av-columns">Team History</div>
         <div class="th-teams">
             <div class="th-team-col" id="team-history-a"></div>
             <div class="th-team-col" id="team-history-b"></div>
@@ -711,7 +745,7 @@
     </div>
 
     <div id="player-stats-container">
-        <div class="ps-title">Player / Pair Statistics</div>
+        <div class="ps-title av-columns">Player / Pair Statistics</div>
         <div class="ps-cols">
             <div id="ps-side-a"></div>
             <div id="ps-side-b"></div>
@@ -719,7 +753,7 @@
     </div>
 
     <div id="points-table-container">
-        <div class="pt-header">
+        <div class="pt-header av-columns">
             <div>#</div>
             <div>POINTS TABLE</div>
             <div>TIES</div>
@@ -947,7 +981,7 @@
             if (setsGridKey !== window.__lastSetsGridKey) {
                 window.__lastSetsGridKey = setsGridKey;
                 let totalSetsCount = (data.matchFormat === 'bestOf7') ? 7 : 5;
-                let gridHTML = `<div class="sets-grid-row" style="margin-bottom: 4px;">
+                let gridHTML = `<div class="sets-grid-row av-columns" style="margin-bottom: 4px;">
                     <div style="font-size: 11px; font-weight: bold; color: #94a3b8;">TEAM / PLAYER</div>`;
                 for(let i=1; i<=totalSetsCount; i++) {
                     gridHTML += `<div class="sets-grid-header-col">Set ${i}</div>`;
@@ -956,8 +990,9 @@
 
                 let setsHistory = data.setsHistory || [];
 
-                // Team 1 Row
-                gridHTML += `<div class="sets-grid-row">
+                // Team 1 Row — Apple-style: box + columns are already on
+                // screen by now, this row fades/un-blurs up on its own beat.
+                gridHTML += `<div class="sets-grid-row av-row" style="--i:0">
                     <div class="sets-grid-team-name" style="color: #38bdf8;">${data.p1Name}</div>`;
                 for(let i=0; i<totalSetsCount; i++) {
                     let setVal = (setsHistory[i]) ? setsHistory[i].p1 : "-";
@@ -966,8 +1001,8 @@
                 }
                 gridHTML += `</div>`;
 
-                // Team 2 Row
-                gridHTML += `<div class="sets-grid-row">
+                // Team 2 Row — follows one beat after Team 1
+                gridHTML += `<div class="sets-grid-row av-row" style="--i:1">
                     <div class="sets-grid-team-name" style="color: #f97316;">${data.p2Name}</div>`;
                 for(let i=0; i<totalSetsCount; i++) {
                     let setVal = (setsHistory[i]) ? setsHistory[i].p2 : "-";
@@ -980,18 +1015,19 @@
             }
 
             // Render Standings Table — same idea, skip if unchanged.
-            // Each row gets its own animation-delay so the "box first, text
-            // follows, then rows cascade in one-by-one" feel replays every
-            // single time the graphic is switched ON (see
-            // activateWithRowAnim() below, which restarts the animation).
-            const ROW_BASE_DELAY = 0.28, ROW_STEP = 0.06;
+            // Each row gets an --i index (used by the shared .av-row CSS,
+            // see "APPLE-STYLE BOX → COLUMNS → TEXT REVEAL" above) so the
+            // "box first, columns next, text cascades in one-by-one" feel
+            // replays every single time the graphic is switched ON — and,
+            // because it's a plain CSS transition rather than a keyframe,
+            // the exact same cascade plays in reverse when it's switched OFF.
             const standingsKey = JSON.stringify(data.standings || []);
             if (data.standings && standingsKey !== window.__lastStandingsKey) {
                 window.__lastStandingsKey = standingsKey;
                 data.standings.sort((a, b) => b.points - a.points);
                 let ptHTML = "";
                 data.standings.forEach((item, index) => {
-                    ptHTML += `<div class="pt-row" style="animation-delay:${(ROW_BASE_DELAY + index * ROW_STEP).toFixed(2)}s">
+                    ptHTML += `<div class="pt-row av-row" style="--i:${index}">
                         <div>${index + 1}</div>
                         <div>${item.team}</div>
                         <div>${item.ties}</div>
@@ -1005,20 +1041,14 @@
                 document.getElementById('pt-body').innerHTML = ptHTML;
             }
 
-            // Restarts the box-then-text stagger animation every time a
-            // graphic switches ON (a plain class toggle wouldn't replay a
-            // CSS animation the second time round without this reflow).
+            // Toggles the "box → columns → text" Apple-style reveal (see the
+            // .av-columns / .av-row CSS rules). Because that reveal is a
+            // plain CSS transition keyed off .active — not a keyframe — a
+            // single class toggle is enough to replay it correctly every
+            // time, in BOTH directions: show cascades text in, hide cascades
+            // it back out before the card itself finishes fading.
             function activateWithRowAnim(containerId, shouldShow) {
-                const el = document.getElementById(containerId);
-                if (shouldShow) {
-                    el.classList.add('active');
-                    el.classList.remove('rows-anim');
-                    void el.offsetWidth; // force reflow so re-adding the class restarts the animation
-                    el.classList.add('rows-anim');
-                } else {
-                    el.classList.remove('active');
-                    el.classList.remove('rows-anim');
-                }
+                document.getElementById(containerId).classList.toggle('active', shouldShow);
             }
 
             // State Switchers
@@ -1046,7 +1076,7 @@
             // Content above (points-history-list) already refreshes automatically with live data.
             document.getElementById('points-history-container').classList.toggle('active', !!data.pointsHistoryVisible);
 
-            document.getElementById('sets-grid-container').className = data.state === 'sets-grid-in' ? 'active' : '';
+            activateWithRowAnim('sets-grid-container', data.state === 'sets-grid-in');
             document.getElementById('winner-banner').className = data.state === 'winner-in' ? 'active' : '';
             // Box animates in first (0.6s), rows cascade in after via
             // activateWithRowAnim — same "box, then text" language for
@@ -1069,7 +1099,7 @@
                 document.getElementById('th-title-text').innerText = `🏆 ${snap.tournamentName || 'Tournament'} — History`;
                 const body = document.getElementById('th-body');
                 body.innerHTML = (snap.rows && snap.rows.length)
-                    ? snap.rows.map((r, i) => `<div class="th-row" style="animation-delay:${(ROW_BASE_DELAY + i * ROW_STEP).toFixed(2)}s"><div>${r.matchup}</div><div class="th-score">${r.score}</div><div style="text-align:right;">${r.result}</div></div>`).join('')
+                    ? snap.rows.map((r, i) => `<div class="th-row av-row" style="--i:${i}"><div>${r.matchup}</div><div class="th-score">${r.score}</div><div style="text-align:right;">${r.result}</div></div>`).join('')
                     : '<div class="th-empty">No matches recorded yet in this tournament.</div>';
             }
             activateWithRowAnim('tournament-history-container', !!data.showTournamentHistory);
@@ -1082,14 +1112,13 @@
             if (teamHistKey !== window.__lastTeamHistKey) {
                 window.__lastTeamHistKey = teamHistKey;
                 const snap = data.teamHistorySnapshot || { teamA: null, teamB: null };
-                const d = (i) => (ROW_BASE_DELAY + i * ROW_STEP).toFixed(2);
                 const renderTeamCol = (t) => {
-                    if (!t) return `<div class="th-team-name" style="animation-delay:${d(0)}s">—</div>`;
+                    if (!t) return `<div class="th-team-name av-row" style="--i:0">—</div>`;
                     const s = t.stats;
-                    if (!s) return `<div class="th-team-name" style="animation-delay:${d(0)}s">${t.name}</div><div class="th-stat-row" style="animation-delay:${d(1)}s"><span>No matches yet</span><span></span></div>`;
+                    if (!s) return `<div class="th-team-name av-row" style="--i:0">${t.name}</div><div class="th-stat-row av-row" style="--i:1"><span>No matches yet</span><span></span></div>`;
                     const rows = [['Played', s.played], ['Won', s.won], ['Lost', s.lost], ['Sets Won', s.setsWon], ['Sets Lost', s.setsLost], ['Points', s.points]];
-                    return `<div class="th-team-name" style="animation-delay:${d(0)}s">${t.name}</div>`
-                        + rows.map((r, i) => `<div class="th-stat-row" style="animation-delay:${d(i + 1)}s"><span>${r[0]}</span><span>${r[1]}</span></div>`).join('');
+                    return `<div class="th-team-name av-row" style="--i:0">${t.name}</div>`
+                        + rows.map((r, i) => `<div class="th-stat-row av-row" style="--i:${i + 1}"><span>${r[0]}</span><span>${r[1]}</span></div>`).join('');
                 };
                 document.getElementById('team-history-a').innerHTML = renderTeamCol(snap.teamA);
                 document.getElementById('team-history-b').innerHTML = renderTeamCol(snap.teamB);
@@ -1102,11 +1131,13 @@
             if (psKey !== window.__lastTtPlayerStatsKey) {
                 window.__lastTtPlayerStatsKey = psKey;
                 const snap = data.playerStatsSnapshot || { sideA: [], sideB: [] };
-                const rowHtml = (p) => `<div class="ps-player"><span>${p.name}</span><span>${p.won}W-${p.lost}L · Sets ${p.setsWon}-${p.setsLost}</span></div>`;
-                document.getElementById('ps-side-a').innerHTML = (snap.sideA || []).map(rowHtml).join('') || '<div class="ps-player"><span>—</span><span>No data</span></div>';
-                document.getElementById('ps-side-b').innerHTML = (snap.sideB || []).map(rowHtml).join('') || '<div class="ps-player"><span>—</span><span>No data</span></div>';
+                const rowHtml = (p, i) => `<div class="ps-player av-row" style="--i:${i}"><span>${p.name}</span><span>${p.won}W-${p.lost}L · Sets ${p.setsWon}-${p.setsLost}</span></div>`;
+                document.getElementById('ps-side-a').innerHTML = (snap.sideA || []).map(rowHtml).join('') || '<div class="ps-player av-row" style="--i:0"><span>—</span><span>No data</span></div>';
+                document.getElementById('ps-side-b').innerHTML = (snap.sideB || []).map(rowHtml).join('') || '<div class="ps-player av-row" style="--i:0"><span>—</span><span>No data</span></div>';
             }
-            document.getElementById('player-stats-container').classList.toggle('active', !!data.showPlayerStats);
+            // Same box-then-columns-then-text language as Points Table /
+            // Tournament History / Team History / Sets Grid.
+            activateWithRowAnim('player-stats-container', !!data.showPlayerStats);
         });
     </script>
 </body>
