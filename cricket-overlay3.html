@@ -112,6 +112,121 @@
 
   .seg{ display:flex; align-items:center; position:relative; height:100%; }
 
+  /* ============================================================
+     BALL-EVENT OVERLAY — sits INSIDE #scorebar as its last child,
+     so #scorebar's own overflow:hidden + border-radius automatically
+     clips it to the exact pill/skewed shape of the live bar. It
+     covers the bar completely while it animates, then fades itself
+     away to reveal the live-updating bar underneath — nothing is
+     ever shown floating elsewhere on screen.
+     ============================================================ */
+  #event-overlay{
+    position:absolute; inset:0; z-index:40;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:2px;
+    background:radial-gradient(120% 140% at 50% 50%, rgba(20,22,30,.94), rgba(6,7,10,.97));
+    opacity:0; pointer-events:none; overflow:hidden;
+  }
+  #event-overlay.show{ opacity:1; pointer-events:auto; }
+  #event-overlay .ev-flash{
+    position:absolute; inset:0; opacity:0; mix-blend-mode:screen;
+  }
+  #event-overlay .ev-inner{ position:relative; text-align:center; z-index:2; }
+  #event-overlay .kind{
+    font-size:40px; font-weight:800; letter-spacing:1.5px; line-height:1;
+    color:var(--progress-color); text-shadow:0 4px 18px rgba(0,0,0,.5);
+    font-style:italic;
+  }
+  #event-overlay .text{ font-size:16px; font-weight:600; margin-top:4px; color:var(--white); }
+  #event-overlay .sub{ font-size:12px; color:var(--dim); margin-top:1px; }
+  #event-overlay .ev-sweep{
+    position:absolute; top:0; bottom:0; width:40%;
+    background:linear-gradient(100deg, transparent, rgba(255,255,255,.55), transparent);
+    transform:translateX(-160%) skewX(-18deg); opacity:0; z-index:1;
+  }
+  #event-overlay .ev-crack{ position:absolute; inset:0; opacity:0; z-index:1; }
+  .ev-particle{
+    position:absolute; left:50%; top:50%; width:7px; height:7px; border-radius:2px;
+    background:var(--gold); opacity:0; z-index:1;
+    transform:translate(-50%,-50%);
+  }
+
+  /* ---- FOUR: quick lateral dash + sweeping light streak ---- */
+  #event-overlay.kind-four.show .ev-inner{ animation:evFourIn .55s cubic-bezier(.16,1,.3,1) both; }
+  #event-overlay.kind-four.show .ev-sweep{ animation:evSweep .9s cubic-bezier(.4,0,.2,1) .12s both; }
+  @keyframes evFourIn{
+    0%{ transform:translateX(-70px) scale(.75); opacity:0; filter:blur(8px); }
+    55%{ transform:translateX(8px) scale(1.08); opacity:1; filter:blur(0); }
+    75%{ transform:translateX(-3px) scale(.99); }
+    100%{ transform:translateX(0) scale(1); }
+  }
+  @keyframes evSweep{
+    0%{ transform:translateX(-160%) skewX(-18deg); opacity:0; }
+    15%{ opacity:.9; }
+    60%{ opacity:.5; }
+    100%{ transform:translateX(220%) skewX(-18deg); opacity:0; }
+  }
+
+  /* ---- SIX: big spring pop + radiating gold particles ---- */
+  #event-overlay.kind-six.show .ev-inner{ animation:evSixPop .7s cubic-bezier(.34,1.56,.64,1) both; }
+  @keyframes evSixPop{
+    0%{ transform:scale(.25) rotate(-10deg); opacity:0; filter:blur(12px); }
+    45%{ transform:scale(1.28) rotate(5deg); opacity:1; filter:blur(0); }
+    68%{ transform:scale(.94) rotate(-2deg); }
+    85%{ transform:scale(1.04) rotate(1deg); }
+    100%{ transform:scale(1) rotate(0deg); }
+  }
+  .ev-particle.fly{ animation:evBurst .85s cubic-bezier(.16,1,.3,1) both; }
+  @keyframes evBurst{
+    0%{ transform:translate(-50%,-50%) translate(0,0) scale(.4) rotate(0deg); opacity:0; }
+    12%{ opacity:1; }
+    100%{ transform:translate(-50%,-50%) translate(var(--px), var(--py)) scale(1.1) rotate(var(--pr)); opacity:0; }
+  }
+
+  /* ---- WICKET: hard drop + red flash + crack lines + shake ---- */
+  #event-overlay.kind-wicket.show .ev-inner{ animation:evWicketDrop .6s cubic-bezier(.36,.07,.19,.97) both; }
+  #event-overlay.kind-wicket .kind{ color:var(--red); }
+  #event-overlay.kind-wicket.show .ev-flash{ background:var(--red); animation:evFlash .5s ease-out both; }
+  #event-overlay.kind-wicket.show .ev-crack{ animation:evCrackIn .5s ease-out .05s both; }
+  #event-overlay.kind-wicket.show.shake{ animation:evShake .45s ease-in-out .08s both; }
+  @keyframes evWicketDrop{
+    0%{ transform:translateY(-50px) scale(.8); opacity:0; }
+    55%{ transform:translateY(6px) scale(1.06); opacity:1; }
+    75%{ transform:translateY(-4px) scale(.97); }
+    100%{ transform:translateY(0) scale(1); }
+  }
+  @keyframes evFlash{ 0%{ opacity:.55; } 100%{ opacity:0; } }
+  @keyframes evCrackIn{ 0%{ opacity:0; transform:scale(.9); } 30%{ opacity:.9; } 100%{ opacity:0; transform:scale(1.02); } }
+  @keyframes evShake{
+    0%,100%{ transform:translateX(0); } 20%{ transform:translateX(-6px); }
+    40%{ transform:translateX(5px); } 60%{ transform:translateX(-3px); } 80%{ transform:translateX(2px); }
+  }
+
+  /* ---- WIDE / NO BALL: slide-down with drawn dashed underline ---- */
+  #event-overlay.kind-wide.show .ev-inner,
+  #event-overlay.kind-noball.show .ev-inner{ animation:evTopIn .5s cubic-bezier(.16,1,.3,1) both; }
+  #event-overlay.kind-wide .kind, #event-overlay.kind-noball .kind{ font-size:30px; color:var(--white); }
+  #event-overlay.kind-noball .kind{ color:var(--red); }
+  #event-overlay .ev-underline{
+    height:3px; width:0; margin:6px auto 0; border-radius:2px;
+    background:linear-gradient(90deg, var(--gold), var(--gold-2));
+  }
+  #event-overlay.kind-wide.show .ev-underline,
+  #event-overlay.kind-noball.show .ev-underline{ animation:evLine .5s cubic-bezier(.4,0,.2,1) .18s both; }
+  @keyframes evTopIn{
+    0%{ transform:translateY(-26px); opacity:0; filter:blur(6px); }
+    100%{ transform:translateY(0); opacity:1; filter:blur(0); }
+  }
+  @keyframes evLine{ 0%{ width:0; opacity:.4; } 100%{ width:120px; opacity:1; } }
+
+  /* ---- Exit: same for every kind — soft collapse back into the bar ---- */
+  #event-overlay.hide .ev-inner{ animation:evOut .4s cubic-bezier(.4,0,1,1) both; }
+  #event-overlay.hide{ transition:opacity .4s ease .05s; opacity:0; }
+  @keyframes evOut{
+    0%{ transform:scale(1); opacity:1; filter:blur(0); }
+    100%{ transform:scale(.85) translateY(-6px); opacity:0; filter:blur(4px); }
+  }
+
   /* Team tag blocks — flush on the outer edge (rounded by the bar's own
      overflow:hidden clip), skewed on the inner edge */
   .team-tag{
@@ -268,13 +383,6 @@
   .glass-card h3{ margin:0 0 8px; font-size:11px; letter-spacing:1.2px; text-transform:uppercase; color:var(--progress-color); font-weight:700; }
   .glass-card .sub{ font-size:11px; color:var(--dim); margin-top:2px; }
 
-  /* Milestone / event toast */
-  #event-toast{ top:24px; left:50%; transform:translate(-50%,0); text-align:center; min-width:280px; }
-  #event-toast.off{ transform:translate(-50%,-14px); }
-  #event-toast .kind{ font-size:22px; font-weight:800; color:var(--progress-color); letter-spacing:1px; }
-  #event-toast .text{ font-size:15px; font-weight:600; margin-top:2px; }
-  #event-toast .sub{ text-align:center; }
-
   /* Player / Bowler / Team stat cards — left slide-in */
   .stat-card{ top:24px; left:24px; width:230px; }
   .stat-card .name{ font-size:20px; font-weight:700; }
@@ -374,14 +482,24 @@
       <div class="short" id="tagB-short">RCB</div>
       <img class="logo hidden" id="tagB-logo" alt="">
     </div>
-  </div>
-  </div>
 
-  <!-- MILESTONE / BALL EVENT TOAST -->
-  <div class="glass-card off" id="event-toast">
-    <div class="kind" id="event-kind">FOUR!</div>
-    <div class="text" id="event-text"></div>
-    <div class="sub" id="event-sub"></div>
+    <!-- BALL-EVENT OVERLAY (four / six / wicket / wide / no-ball) —
+         lives inside #scorebar so it's clipped to the bar's own
+         rounded/skewed shape and never appears floating on screen.
+         It fully covers the bar while it animates, then fades out
+         to reveal the live score underneath. -->
+    <div id="event-overlay">
+      <div class="ev-flash"></div>
+      <div class="ev-crack"></div>
+      <div class="ev-sweep"></div>
+      <div class="ev-inner">
+        <div class="kind" id="event-kind">FOUR!</div>
+        <div class="text" id="event-text"></div>
+        <div class="sub" id="event-sub"></div>
+        <div class="ev-underline"></div>
+      </div>
+    </div>
+  </div>
   </div>
 
   <!-- PLAYER STAT CARD -->
@@ -655,18 +773,82 @@ window.addEventListener('load', fitScorebar);
 document.addEventListener('DOMContentLoaded', fitScorebar);
 
 /* ============================================================
-   MILESTONE / BALL EVENT TOAST — mirrors panel's fireEvent()
-   payload: { kind, text, sub, durationMs }.
+   BALL-EVENT OVERLAY — mirrors panel's fireEvent() payload:
+   { kind, text, sub, durationMs }. kind is matched (case/space/
+   punctuation-insensitive) to one of five creative animations —
+   four / six / wicket / wide / noball — each with its own motion,
+   color and (for six/wicket) extra flourish. The overlay lives
+   inside #scorebar and is clipped to its exact shape, so it always
+   reads as "the scoreboard reacting" rather than a floating popup.
+   When the animation ends it fades itself out, revealing the
+   normal live-updating scorebar underneath.
    ============================================================ */
 let eventTimer = null;
+let eventHideTimer = null;
+
+const EVENT_KIND_MAP = {
+  four: 'four', '4': 'four',
+  six: 'six', '6': 'six',
+  wicket: 'wicket', out: 'wicket', w: 'wicket',
+  wide: 'wide', wd: 'wide',
+  noball: 'noball', nb: 'noball', 'no-ball': 'noball', 'no ball': 'noball'
+};
+const EVENT_DEFAULT_LABEL = {
+  four: 'FOUR!', six: 'SIX!', wicket: 'OUT!', wide: 'WIDE', noball: 'NO BALL'
+};
+
+function clearEventParticles(overlay){
+  overlay.querySelectorAll('.ev-particle').forEach(p => p.remove());
+}
+
+function spawnSixBurst(overlay){
+  const inner = overlay.querySelector('.ev-inner');
+  const count = 14;
+  for(let i = 0; i < count; i++){
+    const p = document.createElement('div');
+    p.className = 'ev-particle fly';
+    const angle = (Math.PI * 2 * i) / count + (Math.random() * 0.3 - 0.15);
+    const dist = 60 + Math.random() * 55;
+    p.style.setProperty('--px', `${Math.cos(angle) * dist}px`);
+    p.style.setProperty('--py', `${Math.sin(angle) * dist}px`);
+    p.style.setProperty('--pr', `${(Math.random() * 240 - 120)}deg`);
+    p.style.animationDelay = `${0.08 + Math.random() * 0.08}s`;
+    if(i % 3 === 0) p.style.background = 'var(--white)';
+    else if(i % 3 === 1) p.style.background = 'var(--green)';
+    overlay.appendChild(p);
+  }
+  if(inner) inner.appendChild; // no-op guard, keeps inner referenced
+}
+
 socket.on('cricketEvent', (evt) => {
-  const el = document.getElementById('event-toast');
-  document.getElementById('event-kind').textContent = esc(evt.kind);
-  document.getElementById('event-text').textContent = esc(evt.text);
-  document.getElementById('event-sub').textContent = esc(evt.sub);
-  el.classList.remove('off');
+  const overlay = document.getElementById('event-overlay');
+  const kindKey = EVENT_KIND_MAP[String(evt.kind || '').trim().toLowerCase()] || 'four';
+
   clearTimeout(eventTimer);
-  eventTimer = setTimeout(() => el.classList.add('off'), evt.durationMs || 3000);
+  clearTimeout(eventHideTimer);
+  clearEventParticles(overlay);
+
+  // reset to a clean, un-animated state so replaying the same kind
+  // back-to-back always restarts its animation from scratch
+  overlay.className = '';
+  document.getElementById('event-kind').textContent = esc(evt.kind ? (EVENT_DEFAULT_LABEL[kindKey] || evt.kind) : EVENT_DEFAULT_LABEL[kindKey]);
+  document.getElementById('event-text').textContent = esc(evt.text || '');
+  document.getElementById('event-sub').textContent = esc(evt.sub || '');
+
+  void overlay.offsetWidth; // force reflow so the animation classes below restart cleanly
+
+  overlay.classList.add('kind-' + kindKey, 'show');
+  if(kindKey === 'six') spawnSixBurst(overlay);
+  if(kindKey === 'wicket') overlay.classList.add('shake');
+
+  const duration = evt.durationMs || 2200;
+  eventTimer = setTimeout(() => {
+    overlay.classList.add('hide');
+    eventHideTimer = setTimeout(() => {
+      overlay.classList.remove('show', 'hide', 'kind-' + kindKey, 'shake');
+      clearEventParticles(overlay);
+    }, 450);
+  }, duration);
 });
 
 /* ============================================================
