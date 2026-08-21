@@ -5,8 +5,9 @@
 <title>Cricket Overlay — Broadcast Bar</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script src="/socket.io/socket.io.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700;800&family=Inter:wght@500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
   :root{
     /* ============================================================
@@ -74,6 +75,20 @@
     --strike-icon-color: var(--gold);
     --bowler-icon-color:#c7cbd6;
     --bowler-icon-border: rgba(255,255,255,.4);
+
+    /* ============================================================
+       PREMIUM GLASSMORPHISM SYSTEM — shared by the milestone graphic,
+       the redesigned points table and every stat/summary card so the
+       whole product reads as one consistent broadcast package.
+       ============================================================ */
+    --glass-font:'Inter','Barlow Condensed',Arial,sans-serif;
+    --glass-bg: linear-gradient(165deg, rgba(24,27,38,.62), rgba(8,9,14,.72));
+    --glass-border: rgba(255,255,255,.16);
+    --glass-inner-highlight: rgba(255,255,255,.10);
+    --glass-shadow: 0 30px 70px rgba(0,0,0,.55), 0 2px 0 rgba(255,255,255,.05) inset;
+    --glass-radius: 28px;
+    --glass-blur: 28px;
+    --accent: var(--gold);
   }
   *{ box-sizing:border-box; }
   html,body{ margin:0; padding:0; background:transparent; overflow:hidden; }
@@ -481,6 +496,134 @@
   #player-history-card{ bottom:110px; left:24px; width:260px; }
   #team-history-card{ bottom:110px; right:24px; width:260px; }
   .hist-row{ display:flex; justify-content:space-between; font-size:12px; padding:3px 0; border-top:1px solid rgba(255,255,255,.06); }
+
+  /* ============================================================
+     MILESTONE GRAPHIC — premium glassmorphism package for 50s,
+     100s, and other big match moments. Rendered large and centred
+     in the broadcast-safe area. Fully driven by animateGlassIn/Out
+     + a small content stagger (see JS "Apple-style" animation
+     system) — the CSS below only defines the resting/look state;
+     GSAP owns every transform/opacity/blur value at runtime, so
+     no CSS transition is declared here (it would fight GSAP).
+     ============================================================ */
+  #milestone-card{
+    position:fixed; left:50%; top:42%; transform:translate(-50%,-50%);
+    width:min(640px, 78vw);
+    padding:46px 56px 40px;
+    background:var(--glass-bg);
+    border:1px solid var(--glass-border);
+    border-radius:var(--glass-radius);
+    box-shadow:var(--glass-shadow);
+    backdrop-filter:blur(var(--glass-blur)) saturate(150%);
+    -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(150%);
+    text-align:center;
+    z-index:60;
+    pointer-events:none;
+    display:none;
+    font-family:var(--glass-font);
+  }
+  #milestone-card::before{
+    /* inner highlight — thin light line along the top edge, the classic
+       "glass catching light" touch, kept subtle so it never looks like
+       a random translucent rectangle */
+    content:''; position:absolute; inset:0; border-radius:inherit; pointer-events:none;
+    background:linear-gradient(180deg, var(--glass-inner-highlight), transparent 40%);
+    -webkit-mask:linear-gradient(#000,#000) content-box, linear-gradient(#000,#000);
+    padding:1px;
+  }
+  #milestone-card.visible{ display:block; }
+  #milestone-card .ms-icon{
+    width:64px; height:64px; margin:0 auto 14px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(circle at 35% 30%, rgba(255,255,255,.18), rgba(255,255,255,.02));
+    border:1px solid var(--glass-border); font-size:30px;
+  }
+  /* Player name — the single, dominant source of truth. Only ONE element
+     in the whole card is ever bound to the player's name (#ms-name); the
+     old bug came from the name being written into two separate nodes —
+     there is now exactly one node it can go into. */
+  #milestone-card .ms-name{
+    font-size:clamp(30px, 5vw, 54px); font-weight:800; letter-spacing:.5px;
+    color:var(--white); line-height:1.05; text-transform:uppercase;
+    text-shadow:0 2px 18px rgba(0,0,0,.4);
+  }
+  #milestone-card .ms-team{
+    margin-top:8px; font-size:15px; font-weight:600; letter-spacing:2px;
+    text-transform:uppercase; color:var(--dim);
+  }
+  #milestone-card .ms-divider{
+    width:64px; height:2px; margin:22px auto; border-radius:2px;
+    background:linear-gradient(90deg, transparent, var(--accent), transparent);
+  }
+  #milestone-card .ms-number{
+    font-size:clamp(64px, 11vw, 128px); font-weight:900; line-height:.9;
+    color:var(--accent); letter-spacing:-2px;
+    text-shadow:0 8px 40px rgba(0,0,0,.5);
+  }
+  #milestone-card .ms-label{
+    margin-top:6px; font-size:20px; font-weight:700; letter-spacing:5px;
+    text-transform:uppercase; color:var(--white); opacity:.92;
+  }
+  #milestone-card .ms-sub{
+    margin-top:16px; font-size:14px; font-weight:600; color:var(--dim); letter-spacing:.4px;
+  }
+
+  /* ============================================================
+     POINTS TABLE — full glassmorphism rebuild, large central card
+     ============================================================ */
+  #points-card{
+    top:50%; left:50%; right:auto; transform:translate(-50%,-50%);
+    width:min(760px, 84vw); max-width:760px;
+    padding:34px 40px 28px;
+    background:var(--glass-bg); border:1px solid var(--glass-border);
+    border-radius:var(--glass-radius); box-shadow:var(--glass-shadow);
+    backdrop-filter:blur(var(--glass-blur)) saturate(150%);
+    -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(150%);
+    font-family:var(--glass-font);
+  }
+  #points-card.off{ display:none; }
+  #points-card .pt-head{ display:flex; align-items:baseline; justify-content:space-between; margin-bottom:22px; }
+  #points-card h3{
+    margin:0; font-size:13px; letter-spacing:2.4px; text-transform:uppercase;
+    color:var(--accent); font-weight:700;
+  }
+  #points-card table{ width:100%; border-collapse:separate; border-spacing:0; font-size:15px; }
+  #points-card thead th{
+    text-align:center; color:var(--dim); font-weight:700; font-size:11px;
+    letter-spacing:1.6px; text-transform:uppercase; padding:0 6px 12px;
+    border-bottom:1px solid rgba(255,255,255,.14);
+  }
+  #points-card thead th:first-child, #points-card thead th:nth-child(2){ text-align:left; }
+  #points-card tbody tr{ transition:none; }
+  #points-card tbody td{
+    padding:14px 6px; text-align:center; font-weight:700; font-size:16px;
+    border-bottom:1px solid rgba(255,255,255,.06);
+  }
+  #points-card tbody tr:last-child td{ border-bottom:none; }
+  #points-card td.pt-pos{
+    width:34px; text-align:left; color:var(--dim); font-weight:800; font-size:14px;
+  }
+  #points-card td.pt-team{ text-align:left; display:flex; align-items:center; gap:12px; font-size:17px; color:var(--white); border-bottom:none; }
+  #points-card td.pt-team img{ width:26px; height:26px; border-radius:50%; object-fit:contain; background:rgba(255,255,255,.08); }
+  #points-card td.pt-pts{ color:var(--accent); font-size:18px; }
+  #points-card .sub{ margin-top:16px; text-align:right; font-size:11px; letter-spacing:.6px; }
+
+  /* ============================================================
+     GLASS ANIMATION UTILITY — new resting styles for the existing
+     stat/summary/history cards so they match the premium look;
+     entrance/exit motion itself lives entirely in GSAP (see script).
+     ============================================================ */
+  .glass-card{
+    background:var(--glass-bg) !important;
+    border:1px solid var(--glass-border) !important;
+    border-radius:20px !important;
+    backdrop-filter:blur(20px) saturate(150%);
+    -webkit-backdrop-filter:blur(20px) saturate(150%);
+    box-shadow:var(--glass-shadow) !important;
+    font-family:var(--glass-font);
+    transition:none !important; /* GSAP now owns all motion for these cards */
+  }
+  .glass-card.off{ display:none; }
 </style>
 </head>
 <body>
@@ -572,6 +715,18 @@
   </div>
   </div>
 
+  <!-- MILESTONE GRAPHIC — 50s/100s/other big moments. Player name is bound
+       to exactly ONE node (#ms-name) anywhere in this markup on purpose. -->
+  <div id="milestone-card">
+    <div class="ms-icon" id="ms-icon">🏏</div>
+    <div class="ms-name" id="ms-name">—</div>
+    <div class="ms-team" id="ms-team"></div>
+    <div class="ms-divider"></div>
+    <div class="ms-number" id="ms-number">50</div>
+    <div class="ms-label" id="ms-label">FIFTY</div>
+    <div class="ms-sub" id="ms-sub"></div>
+  </div>
+
   <!-- PLAYER STAT CARD -->
   <div class="glass-card stat-card off" id="player-stat-card">
     <h3 id="ps-scope">Player Stats</h3>
@@ -597,9 +752,9 @@
 
   <!-- POINTS TABLE -->
   <div class="glass-card off" id="points-card">
-    <h3 id="pt-title">Points Table</h3>
+    <div class="pt-head"><h3 id="pt-title">Points Table</h3></div>
     <table>
-      <thead><tr><th>Team</th><th>P</th><th>W</th><th>L</th><th>Pts</th><th>NRR</th></tr></thead>
+      <thead><tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>L</th><th>Pts</th><th>NRR</th></tr></thead>
       <tbody id="pt-body"></tbody>
     </table>
     <div class="sub" id="pt-updated"></div>
@@ -660,6 +815,108 @@ function setTextPulse(id, text){
 }
 function esc(s){ return (s == null ? '' : String(s)); }
 
+/* ============================================================
+   REUSABLE GLASSMORPHISM ANIMATION SYSTEM (GSAP)
+   "Apple-style" layered entrance: container settles in first
+   (scale + opacity + blur + slight rise), then content staggers
+   in on top of it. Exit is the mirror: content first, container
+   second. Every glass surface in the overlay (milestone, points
+   table, stat/summary/history cards) is driven through these
+   same few functions so the motion language stays consistent.
+   ============================================================ */
+const EASE_IN  = 'cubic-bezier(.16,1,.3,1)';
+const EASE_OUT = 'cubic-bezier(.4,0,1,1)';
+
+// Kills any timeline already running on this element so rapid repeated
+// events (double-click, fast socket bursts) never stack animations.
+function killGlassTween(el){
+  if(el.__glassTl){ el.__glassTl.kill(); el.__glassTl = null; }
+}
+
+// container = the glass card itself. contentEls = ordered array of
+// elements inside it that should stagger in after the container settles.
+function animateGlassIn(container, contentEls = []){
+  if(!container) return;
+  killGlassTween(container);
+  container.style.display = container.id === 'milestone-card' ? 'block' : (container.dataset.displayMode || 'block');
+  gsap.set(container, { autoAlpha: 0, scale: 0.92, y: 18, filter: 'blur(10px)' });
+  if(contentEls.length) gsap.set(contentEls, { autoAlpha: 0, y: 10, scale: 0.97 });
+  const tl = gsap.timeline();
+  container.__glassTl = tl;
+  tl.to(container, { autoAlpha: 1, scale: 1, y: 0, filter: 'blur(0px)', duration: 0.62, ease: 'back.out(1.5)' })
+    .to(contentEls, { autoAlpha: 1, y: 0, scale: 1, duration: 0.46, ease: EASE_IN, stagger: 0.07 }, '-=0.28');
+  return tl;
+}
+
+function animateGlassOut(container, contentEls = [], onComplete){
+  if(!container) return;
+  killGlassTween(container);
+  const tl = gsap.timeline({ onComplete: () => { container.style.display = 'none'; onComplete && onComplete(); } });
+  container.__glassTl = tl;
+  if(contentEls.length){
+    tl.to(contentEls, { autoAlpha: 0, y: -8, scale: 0.97, duration: 0.24, ease: EASE_OUT, stagger: 0.03 });
+  }
+  tl.to(container, { autoAlpha: 0, scale: 0.94, y: -10, filter: 'blur(8px)', duration: 0.32, ease: EASE_OUT }, contentEls.length ? '-=0.08' : 0);
+  return tl;
+}
+
+// Convenience wrapper for the existing .glass-card show/hide calls —
+// keeps their socket handlers one-liners while getting the full
+// container-first/content-second animation for free.
+function showGlassCard(container, contentSelector = ':scope > *'){
+  const content = Array.from(container.querySelectorAll(contentSelector));
+  container.classList.remove('off');
+  animateGlassIn(container, content);
+}
+function hideGlassCard(container, contentSelector = ':scope > *'){
+  const content = Array.from(container.querySelectorAll(contentSelector));
+  animateGlassOut(container, content, () => container.classList.add('off'));
+}
+
+// Milestone-specific stagger: name -> number -> label -> sub, matching the
+// spec's Phase-2 content order (name enters, then the milestone figure,
+// then supporting text) on top of the shared container animation.
+function animateMilestone(data){
+  const card = document.getElementById('milestone-card');
+  killGlassTween(card);
+  document.getElementById('ms-icon').textContent = data.icon || (data.kind === 'wicket' ? '🎯' : '🏆');
+  document.getElementById('ms-name').textContent = data.playerName || data.teamName || '—';
+  document.getElementById('ms-team').textContent = data.teamName && data.playerName ? data.teamName : '';
+  document.getElementById('ms-number').textContent = data.number != null ? data.number : '';
+  document.getElementById('ms-label').textContent = (data.label || '').toUpperCase();
+  document.getElementById('ms-sub').textContent = data.sub || '';
+
+  const nameEl = document.getElementById('ms-name');
+  const numberEl = document.getElementById('ms-number');
+  const labelEl = document.getElementById('ms-label');
+  const subEl = document.getElementById('ms-sub');
+  const teamEl = document.getElementById('ms-team');
+
+  card.classList.add('visible');
+  card.style.display = 'block';
+  gsap.set(card, { autoAlpha: 0, scale: 0.92, y: 18, filter: 'blur(10px)' });
+  gsap.set([nameEl, teamEl], { autoAlpha: 0, y: 12, scale: 0.97 });
+  gsap.set(numberEl, { autoAlpha: 0, y: 14, scale: 0.9 });
+  gsap.set([labelEl, subEl], { autoAlpha: 0, y: 10 });
+
+  const tl = gsap.timeline();
+  card.__glassTl = tl;
+  tl.to(card, { autoAlpha: 1, scale: 1, y: 0, filter: 'blur(0px)', duration: 0.65, ease: 'back.out(1.4)' })
+    .to([nameEl, teamEl], { autoAlpha: 1, y: 0, scale: 1, duration: 0.42, ease: EASE_IN, stagger: 0.05 }, '-=0.3')
+    .to(numberEl, { autoAlpha: 1, y: 0, scale: 1, duration: 0.5, ease: 'back.out(2)' }, '-=0.2')
+    .to([labelEl, subEl], { autoAlpha: 1, y: 0, duration: 0.36, ease: EASE_IN, stagger: 0.05 }, '-=0.22');
+
+  const duration = data.durationMs || 4200;
+  clearTimeout(card.__hideTimer);
+  card.__hideTimer = setTimeout(() => {
+    killGlassTween(card);
+    const outTl = gsap.timeline({ onComplete: () => { card.classList.remove('visible'); card.style.display = 'none'; } });
+    card.__glassTl = outTl;
+    outTl.to([subEl, labelEl, numberEl, teamEl, nameEl], { autoAlpha: 0, y: -8, duration: 0.22, ease: EASE_OUT, stagger: 0.03 })
+      .to(card, { autoAlpha: 0, scale: 0.94, y: -10, filter: 'blur(8px)', duration: 0.3, ease: EASE_OUT }, '-=0.08');
+  }, duration);
+}
+
 // Fills a team tag's logo (if provided) and full team name, shrinking the
 // font in steps so long names still fit on one line instead of clipping.
 function setTeamTag(prefix, team){
@@ -677,6 +934,69 @@ function setTeamTag(prefix, team){
   nameEl.classList.remove('long', 'longer');
   if(name.length > 14) nameEl.classList.add('longer');
   else if(name.length > 7) nameEl.classList.add('long');
+}
+
+// Sets a team-tag slot's live gradient background from that team's own
+// colour, instead of relying on the fixed --teamA-color/--teamB-color
+// variables — needed now that either slot can show either team once
+// innings switching moves the batting side.
+function setTeamTagColor(prefix, color, color2){
+  const el = document.getElementById(`team-tag-${prefix === 'tagA' ? 'a' : 'b'}`);
+  const c1 = color2 || color || '#111';
+  const c2 = color || '#111';
+  const angle = prefix === 'tagA' ? 155 : 205;
+  el.style.background = `linear-gradient(${angle}deg, ${c1}, ${c2} ${prefix === 'tagA' ? '60%' : '65%'})`;
+}
+
+/* ============================================================
+   INNINGS SIDE SWITCH — the physically-batting team always sits
+   in the LEFT tag slot (team-tag-a), matching broadcast convention;
+   the bowling team sits right. When the innings flips, the two
+   slots' content+colour swap with a polished exit->enter (never an
+   instant swap), driven by animateTeamSwitch(). Slot SHAPE (the
+   skewed clip-paths) never moves — only what's inside/behind it.
+   ============================================================ */
+let __lastBattingSide = null; // 'A' | 'B' | null
+function updateTeamSlots(state){
+  const battingIsB = state.battingTeam === 'B';
+  const side = battingIsB ? 'B' : 'A';
+  const leftTeam  = battingIsB ? state.teamB : state.teamA;
+  const rightTeam = battingIsB ? state.teamA : state.teamB;
+  const leftColor  = battingIsB ? [state.teamB.color, state.teamB.color2] : [state.teamA.color, state.teamA.color2];
+  const rightColor = battingIsB ? [state.teamA.color, state.teamA.color2] : [state.teamB.color, state.teamB.color2];
+
+  const changed = __lastBattingSide !== null && __lastBattingSide !== side;
+  const applySlots = () => {
+    setTeamTag('tagA', leftTeam);
+    setTeamTag('tagB', rightTeam);
+    setTeamTagColor('tagA', leftColor[0], leftColor[1]);
+    setTeamTagColor('tagB', rightColor[0], rightColor[1]);
+  };
+
+  if(!changed){
+    applySlots();
+    __lastBattingSide = side;
+    return;
+  }
+
+  __lastBattingSide = side;
+  animateTeamSwitch(applySlots);
+}
+
+// Reusable innings-change transition: old team's tag content exits first
+// (fade + collapse toward centre), THEN the new team's content/colour is
+// swapped in underneath, THEN it enters (fade + settle). Kept subtle and
+// broadcast-friendly — no spin, no flash, no bounce.
+function animateTeamSwitch(applySlots){
+  const tagA = document.getElementById('team-tag-a');
+  const tagB = document.getElementById('team-tag-b');
+  const targets = [tagA, tagB];
+  gsap.killTweensOf(targets);
+  const tl = gsap.timeline();
+  tl.to(targets, { autoAlpha: 0.15, scale: 0.9, filter: 'blur(6px)', duration: 0.32, ease: EASE_OUT, stagger: 0.03 })
+    .add(() => applySlots())
+    .set(targets, { autoAlpha: 0.15, scale: 0.9, filter: 'blur(6px)' })
+    .to(targets, { autoAlpha: 1, scale: 1, filter: 'blur(0px)', duration: 0.46, ease: EASE_IN, stagger: 0.05 });
 }
 
 function isPowerplay(state){
@@ -716,8 +1036,9 @@ function renderScorebar(state){
 
   // Full team name (falls back to short code), auto-shrunk so long names
   // never get clipped instead of always showing just the 2-3 letter code.
-  setTeamTag('tagA', state.teamA);
-  setTeamTag('tagB', state.teamB);
+  // updateTeamSlots also moves the currently-batting team into the LEFT
+  // tag slot, animating the swap the first time state.battingTeam flips.
+  updateTeamSlots(state);
 
   // Batting / bowling team colour bleed — defaults to Team A batting until
   // the panel sends state.battingTeam ('A' | 'B').
@@ -991,8 +1312,31 @@ function renderStatGrid(el, pairs){
   });
 }
 
+// One clean milestone graphic per event — the socket payload maps 1:1 to
+// animateMilestone(), which binds the player's name to a single DOM node
+// (see #ms-name in the markup) so it can never render twice.
+socket.on('cricketMilestone', (data) => {
+  animateMilestone({
+    playerName: data.playerName || data.name,
+    teamName: data.teamName,
+    number: data.number != null ? data.number : (data.milestone || ''),
+    label: data.label || (data.kind === 'wicket' ? 'WICKET' : ''),
+    sub: data.sub || data.dismissal || '',
+    kind: data.kind,
+    icon: data.icon,
+    durationMs: data.durationMs
+  });
+});
+socket.on('cricketHideMilestone', () => {
+  const card = document.getElementById('milestone-card');
+  killGlassTween(card);
+  clearTimeout(card.__hideTimer);
+  gsap.to(card, { autoAlpha: 0, scale: 0.94, y: -10, filter: 'blur(8px)', duration: 0.3, ease: EASE_OUT,
+    onComplete: () => { card.classList.remove('visible'); card.style.display = 'none'; } });
+});
+
 socket.on('cricketPlayerStat', (data) => {
-  document.getElementById('player-stat-card').classList.remove('off');
+  const card = document.getElementById('player-stat-card');
   document.getElementById('ps-scope').textContent = data.scope === 'tournament' ? 'Tournament Stats' : 'This Match';
   document.getElementById('ps-name').textContent = data.playerName || '—';
   document.getElementById('ps-team').textContent = data.teamName || '';
@@ -1006,11 +1350,12 @@ socket.on('cricketPlayerStat', (data) => {
       ['Runs', data.runs], ['Balls', data.balls], ['SR', data.sr], ['4s', data.fours], ['6s', data.sixes]
     ]);
   }
+  showGlassCard(card, '.name, .team, .stat-grid .k, .stat-grid .v');
 });
-socket.on('cricketHidePlayerStat', () => document.getElementById('player-stat-card').classList.add('off'));
+socket.on('cricketHidePlayerStat', () => hideGlassCard(document.getElementById('player-stat-card'), '.name, .team, .stat-grid .k, .stat-grid .v'));
 
 socket.on('cricketBowlerStat', (data) => {
-  document.getElementById('bowler-stat-card').classList.remove('off');
+  const card = document.getElementById('bowler-stat-card');
   document.getElementById('bs-scope').textContent = data.scope === 'tournament' ? 'Tournament Stats' : 'This Match';
   document.getElementById('bs-name').textContent = data.playerName || '—';
   document.getElementById('bs-team').textContent = data.teamName || '';
@@ -1024,42 +1369,83 @@ socket.on('cricketBowlerStat', (data) => {
       ['Overs', data.overs], ['Maidens', data.maidens], ['Runs', data.runs], ['Wickets', data.wickets], ['Econ', data.economy]
     ]);
   }
+  showGlassCard(card, '.name, .team, .stat-grid .k, .stat-grid .v');
 });
-socket.on('cricketHideBowlerStat', () => document.getElementById('bowler-stat-card').classList.add('off'));
+socket.on('cricketHideBowlerStat', () => hideGlassCard(document.getElementById('bowler-stat-card'), '.name, .team, .stat-grid .k, .stat-grid .v'));
 
 socket.on('cricketTeamStat', (data) => {
-  document.getElementById('team-stat-card').classList.remove('off');
+  const card = document.getElementById('team-stat-card');
   document.getElementById('ts-name').textContent = data.teamName || '—';
   renderStatGrid(document.getElementById('ts-grid'), [
     ['Matches', data.matches], ['Won', data.won], ['Lost', data.lost], ['Tied', data.tied],
     ['Win %', data.winPct], ['Highest', data.highest], ['Avg Score', data.avgScore]
   ]);
+  showGlassCard(card, '.name, .stat-grid .k, .stat-grid .v');
 });
-socket.on('cricketHideTeamStat', () => document.getElementById('team-stat-card').classList.add('off'));
+socket.on('cricketHideTeamStat', () => hideGlassCard(document.getElementById('team-stat-card'), '.name, .stat-grid .k, .stat-grid .v'));
 
 /* ============================================================
-   POINTS TABLE
+   POINTS TABLE — large central glass card. Header animates in,
+   then rows stagger in one at a time (container -> header -> rows,
+   per spec); reverse order on the way out.
    ============================================================ */
+function pointsRowHtml(row, i){
+  const logo = row.logo ? `<img src="${esc(row.logo)}" alt="">` : '';
+  const nr = row.nr != null ? row.nr : (row.tied != null ? row.tied : null);
+  return `<td class="pt-pos">${i + 1}</td>` +
+    `<td class="pt-team">${logo}<span>${esc(row.name)}</span></td>` +
+    `<td>${row.played ?? '—'}</td><td>${row.won ?? '—'}</td><td>${row.lost ?? '—'}</td>` +
+    (nr != null ? `<td>${nr}</td>` : '') +
+    `<td class="pt-pts">${row.points ?? '—'}</td>` +
+    `<td>${row.nrr == null ? '—' : Number(row.nrr).toFixed(2)}</td>`;
+}
 socket.on('cricketPointsTable', (data) => {
-  document.getElementById('points-card').classList.remove('off');
+  const card = document.getElementById('points-card');
+  card.classList.remove('off');
   document.getElementById('pt-title').textContent = data.tournamentName ? `${data.tournamentName} — Points Table` : 'Points Table';
   document.getElementById('pt-updated').textContent = data.updatedLine || '';
+
+  const hasNR = (data.standings || []).some(r => r.nr != null || r.tied != null);
+  const headRow = card.querySelector('thead tr');
+  headRow.innerHTML = '<th>#</th><th>Team</th><th>P</th><th>W</th><th>L</th>' + (hasNR ? '<th>NR</th>' : '') + '<th>Pts</th><th>NRR</th>';
+
   const body = document.getElementById('pt-body');
   body.innerHTML = '';
-  (data.standings || []).forEach(row => {
+  (data.standings || []).forEach((row, i) => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${esc(row.name)}</td><td>${row.played}</td><td>${row.won}</td><td>${row.lost}</td><td>${row.points}</td><td>${row.nrr == null ? '—' : row.nrr.toFixed(2)}</td>`;
+    tr.innerHTML = pointsRowHtml(row, i, hasNR);
     body.appendChild(tr);
   });
+
+  killGlassTween(card);
+  const header = card.querySelector('.pt-head');
+  const rows = Array.from(body.querySelectorAll('tr'));
+  gsap.set(card, { autoAlpha: 0, scale: 0.94, y: 16, filter: 'blur(10px)' });
+  gsap.set(header, { autoAlpha: 0, y: 10 });
+  gsap.set(rows, { autoAlpha: 0, y: 10 });
+  const tl = gsap.timeline();
+  card.__glassTl = tl;
+  tl.to(card, { autoAlpha: 1, scale: 1, y: 0, filter: 'blur(0px)', duration: 0.6, ease: 'back.out(1.4)' })
+    .to(header, { autoAlpha: 1, y: 0, duration: 0.4, ease: EASE_IN }, '-=0.28')
+    .to(rows, { autoAlpha: 1, y: 0, duration: 0.36, ease: EASE_IN, stagger: 0.05 }, '-=0.2');
 });
-socket.on('cricketHidePointsTable', () => document.getElementById('points-card').classList.add('off'));
+socket.on('cricketHidePointsTable', () => {
+  const card = document.getElementById('points-card');
+  killGlassTween(card);
+  const header = card.querySelector('.pt-head');
+  const rows = Array.from(card.querySelectorAll('#pt-body tr'));
+  const tl = gsap.timeline({ onComplete: () => card.classList.add('off') });
+  card.__glassTl = tl;
+  tl.to(rows, { autoAlpha: 0, y: -8, duration: 0.2, ease: EASE_OUT, stagger: 0.03 })
+    .to(header, { autoAlpha: 0, y: -6, duration: 0.2, ease: EASE_OUT }, '-=0.1')
+    .to(card, { autoAlpha: 0, scale: 0.94, y: -10, filter: 'blur(8px)', duration: 0.3, ease: EASE_OUT }, '-=0.05');
+});
 
 /* ============================================================
    INNINGS / MATCH SUMMARY
    ============================================================ */
 socket.on('cricketInningsSummary', (data) => {
   const card = document.getElementById('summary-card');
-  card.classList.remove('off');
   document.getElementById('sum-kicker').textContent = 'Innings Summary';
   document.getElementById('sum-headline').textContent = `${data.battingTeamShort || data.battingTeamName}: ${data.total} (${data.overs} ov)`;
   const battingBody = document.getElementById('sum-batting');
@@ -1076,14 +1462,14 @@ socket.on('cricketInningsSummary', (data) => {
     tr.innerHTML = `<td>${esc(b.name)}</td><td>${b.overs}</td><td>${b.runs}</td><td>${b.wickets}</td>`;
     bowlingBody.appendChild(tr);
   });
+  showGlassCard(card, '.headline, table');
   clearTimeout(window.__sumTimer);
-  window.__sumTimer = setTimeout(() => card.classList.add('off'), 12000);
+  window.__sumTimer = setTimeout(() => hideGlassCard(card, '.headline, table'), 12000);
 });
-socket.on('cricketHideInningsSummary', () => document.getElementById('summary-card').classList.add('off'));
+socket.on('cricketHideInningsSummary', () => { clearTimeout(window.__sumTimer); hideGlassCard(document.getElementById('summary-card'), '.headline, table'); });
 
 socket.on('cricketMatchSummary', (data) => {
   const card = document.getElementById('summary-card');
-  card.classList.remove('off');
   document.getElementById('sum-kicker').textContent = 'Match Summary';
   document.getElementById('sum-headline').textContent = data.winnerText || data.resultText || 'MATCH SUMMARY';
   const battingBody = document.getElementById('sum-batting');
@@ -1100,14 +1486,15 @@ socket.on('cricketMatchSummary', (data) => {
     tr.innerHTML = `<td>${esc(b.name)}</td><td>${b.overs}</td><td></td><td>${b.figures}</td>`;
     bowlingBody.appendChild(tr);
   });
+  showGlassCard(card, '.headline, table');
 });
-socket.on('cricketHideMatchSummary', () => document.getElementById('summary-card').classList.add('off'));
+socket.on('cricketHideMatchSummary', () => hideGlassCard(document.getElementById('summary-card'), '.headline, table'));
 
 /* ============================================================
    PLAYER / TEAM HISTORY CARDS
    ============================================================ */
 socket.on('cricketPlayerHistory', (data) => {
-  document.getElementById('player-history-card').classList.remove('off');
+  const card = document.getElementById('player-history-card');
   document.getElementById('ph-name').textContent = data.playerName || data.name || '—';
   const rows = document.getElementById('ph-rows');
   rows.innerHTML = '';
@@ -1117,11 +1504,12 @@ socket.on('cricketPlayerHistory', (data) => {
     row.innerHTML = `<span>${esc(m.opponent || m.vs || m.label || '')}</span><span>${esc(m.summary || m.score || '')}</span>`;
     rows.appendChild(row);
   });
+  showGlassCard(card, '.name, .hist-row');
 });
-socket.on('cricketHidePlayerHistory', () => document.getElementById('player-history-card').classList.add('off'));
+socket.on('cricketHidePlayerHistory', () => hideGlassCard(document.getElementById('player-history-card'), '.name, .hist-row'));
 
 socket.on('cricketTeamHistory', (data) => {
-  document.getElementById('team-history-card').classList.remove('off');
+  const card = document.getElementById('team-history-card');
   document.getElementById('th-name').textContent = data.teamName || data.name || '—';
   const rows = document.getElementById('th-rows');
   rows.innerHTML = '';
@@ -1131,8 +1519,9 @@ socket.on('cricketTeamHistory', (data) => {
     row.innerHTML = `<span>${esc(m.opponent || m.vs || m.label || '')}</span><span>${esc(m.result || m.summary || '')}</span>`;
     rows.appendChild(row);
   });
+  showGlassCard(card, '.name, .hist-row');
 });
-socket.on('cricketHideTeamHistory', () => document.getElementById('team-history-card').classList.add('off'));
+socket.on('cricketHideTeamHistory', () => hideGlassCard(document.getElementById('team-history-card'), '.name, .hist-row'));
 </script>
 </body>
 </html>
