@@ -91,14 +91,22 @@
      Every text-bearing element below is filled live from socket
      data in renderScorebar(); nothing shown is baked into the HTML.
      ============================================================ */
-  #scorebar{
+  #scorebar-viewport{
     position:fixed; left:0; right:0; bottom:0;
+    height:var(--bar-height);
+    overflow:hidden;
+    pointer-events:none;
+  }
+  #scorebar{
+    position:absolute; left:0; bottom:0;
+    width:max-content;
     height:var(--bar-height); display:flex; align-items:stretch;
     box-shadow:var(--bar-shadow);
     border-radius:var(--bar-radius); overflow:hidden;
     transform-origin:left bottom;
     transform:scale(var(--fit-scale, 1));
     transition:opacity .35s ease, transform .35s ease;
+    pointer-events:auto;
   }
   #scorebar.off{ opacity:0; transform:scale(var(--fit-scale, 1)) translateY(30px); pointer-events:none; }
 
@@ -302,7 +310,13 @@
 
   <!-- MAIN SCORE BAR — 7 segments, left to right:
        [CSK team tag] [Score+overs+CRR/RRR] [Batsmen] [Target wedge]
-       [Bowler] [Ball-by-ball ticker] [MI team tag] -->
+       [Bowler] [Ball-by-ball ticker] [MI team tag]
+       #scorebar-viewport is the fixed, viewport-width clipping box.
+       #scorebar itself is sized purely by its own content (width:max-content)
+       so its true natural width is never in doubt — the auto-fit script
+       measures that and scales #scorebar down to match whenever it's wider
+       than the viewport, instead of letting the last segment run off. -->
+  <div id="scorebar-viewport">
   <div id="scorebar" class="off">
     <div class="seg team-tag" id="team-tag-a">
       <img class="logo hidden" id="tagA-logo" alt="">
@@ -360,6 +374,7 @@
       <div class="short" id="tagB-short">RCB</div>
       <img class="logo hidden" id="tagB-logo" alt="">
     </div>
+  </div>
   </div>
 
   <!-- MILESTONE / BALL EVENT TOAST -->
@@ -562,7 +577,7 @@ function renderScorebar(state){
     bBallsBowled > 0 ? ((state.bowler.runs / bBallsBowled) * 6).toFixed(2) : '0.00';
 
   renderTicker(state.thisOver || []);
-  scheduleFit();
+  fitScorebar();
 }
 
 // Ball-by-ball ticker — shows every ball bowled this over. A normal over is
@@ -613,30 +628,34 @@ socket.on('liveCricketScore', renderScorebar);
 
 // ============================================================
 // AUTO-FIT — the bar's segments (team names, batsmen, bowler figures)
-// are all width:auto/nowrap so nothing ever silently truncates. If their
-// combined natural width is wider than the viewport (small OBS canvas,
-// a long team/bowler name, extra balls in the ticker...), the whole bar
-// is scaled down uniformly from the left edge instead of letting the
-// right-most segment (team B's tag) spill off-screen and get clipped.
+// are all width:auto/nowrap so nothing ever silently truncates. #scorebar
+// itself is sized purely by its own content (width:max-content, absolutely
+// positioned — not stretched to 100vw), so its real natural width is
+// unambiguous. Whenever that natural width is wider than the viewport
+// (small OBS canvas, a long team/bowler name, extra balls in the ticker...)
+// the whole bar is scaled down uniformly from the left edge instead of
+// letting the right-most segment (team B's tag) spill off-screen.
 // ============================================================
-let fitRAF = null;
 function fitScorebar(){
   const bar = document.getElementById('scorebar');
-  document.documentElement.style.setProperty('--fit-scale', 1);
-  // measure on the next frame so the reset above has actually applied
-  requestAnimationFrame(() => {
-    const natural = bar.scrollWidth;
-    const available = window.innerWidth;
-    const scale = natural > available ? Math.max(available / natural, 0.55) : 1;
-    document.documentElement.style.setProperty('--fit-scale', scale.toFixed(4));
-  });
+  const viewport = document.getElementById('scorebar-viewport');
+  if(!bar || !viewport) return;
+  // reading offsetWidth forces layout, so this always reflects the latest
+  // DOM/text content — no waiting a frame needed, and transform never
+  // affects offsetWidth (it's a paint-only property), so no reset required
+  const natural = bar.offsetWidth;
+  const available = viewport.clientWidth || window.innerWidth;
+  const scale = natural > available ? Math.max(available / natural, 0.5) : 1;
+  document.documentElement.style.setProperty('--fit-scale', scale.toFixed(4));
 }
+let fitResizeRAF = null;
 function scheduleFit(){
-  if(fitRAF) cancelAnimationFrame(fitRAF);
-  fitRAF = requestAnimationFrame(fitScorebar);
+  if(fitResizeRAF) cancelAnimationFrame(fitResizeRAF);
+  fitResizeRAF = requestAnimationFrame(fitScorebar);
 }
 window.addEventListener('resize', scheduleFit);
-window.addEventListener('load', scheduleFit);
+window.addEventListener('load', fitScorebar);
+document.addEventListener('DOMContentLoaded', fitScorebar);
 
 /* ============================================================
    MILESTONE / BALL EVENT TOAST — mirrors panel's fireEvent()
