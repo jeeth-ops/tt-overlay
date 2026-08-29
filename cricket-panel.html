@@ -798,7 +798,9 @@
       <button class="full small primary" id="download-match-excel-btn" style="margin-bottom:6px;">📊 Export Match Excel Report</button>
       <button class="full small" id="download-tournament-excel-btn" style="margin-bottom:6px;">🏆 Export Tournament Excel Report</button>
       <div class="shortcut-hint" style="margin-bottom:6px;">Match Report exports the current/selected match. Tournament Report exports every match saved under the tournament picked in the Match Type panel above.</div>
+      <button class="full small" id="declare-btn" style="display:none; margin-bottom:6px;">🏳️ Declare Innings (Test)</button>
       <button class="full small" id="next-innings-btn" disabled>Start Next Innings</button>
+      <button class="full small" id="draw-btn" style="display:none; margin-top:6px;">🤝 Match Drawn (Test)</button>
       <button class="full small" id="reset-btn" style="margin-top:6px;">Reset Match (clears everything)</button>
     </div>
   </div>
@@ -848,7 +850,14 @@ function mergeWithDefaults(saved){
     // ballHistory (which are display tickers capped at a handful of
     // balls), this is never trimmed and survives across innings and
     // localStorage reloads, only cleared on Reset.
-    ballLog: saved.ballLog || []
+    ballLog: saved.ballLog || [],
+    // Permanent record of every innings completed so far this match —
+    // {no, team, runs, wickets, overs, declared}. This is what makes a
+    // real 4-innings Test match possible: the old code only ever knew
+    // about "1st innings" vs "2nd innings" (via firstInningsSummary /
+    // state.target), which silently broke the moment a 3rd or 4th
+    // innings needed to start.
+    inningsArchive: saved.inningsArchive || []
   };
 }
 let state = mergeWithDefaults(loadState());
@@ -881,6 +890,15 @@ function defaultState(){
     fallOfWickets: { A: [], B: [] },
     extras: { A: { wd:0, nb:0, b:0, lb:0 }, B: { wd:0, nb:0, b:0, lb:0 } },
     firstInningsSummary: null,
+    // Which innings of the match we're currently in: 1-2 for limited-overs
+    // formats, 1-4 for Test (two innings per side). Drives follow-on /
+    // declaration / target logic below.
+    inningsNumber: 1,
+    inningsArchive: [],
+    // Test-only: current batting side has closed their innings early
+    // (captain's declaration) rather than being bowled out or running out
+    // of overs.
+    declared: false,
     showInningsSummary: true,
     showMatchSummary: true,
     // Left-slide player/bowler stat cards — persistent on/off (not an
@@ -1729,8 +1747,17 @@ document.getElementById('format').addEventListener('change', (e) => {
   document.getElementById('custom-overs-wrap').style.display = e.target.value === 'Custom' ? 'block' : 'none';
   state.format = e.target.value;
   state.oversPerInnings = state.format === 'Custom' ? state.customOvers : FORMAT_RULES[state.format].oversPerInnings;
+  applyTestButtonsVisibility();
   pushState(true);
 });
+// Declare / Draw only make sense in Test cricket — hide them everywhere else.
+function applyTestButtonsVisibility(){
+  const isTest = state.format === 'Test';
+  const declareBtn = document.getElementById('declare-btn');
+  const drawBtn = document.getElementById('draw-btn');
+  if(declareBtn) declareBtn.style.display = isTest ? 'block' : 'none';
+  if(drawBtn) drawBtn.style.display = isTest ? 'block' : 'none';
+}
 document.getElementById('custom-overs').addEventListener('input', (e) => {
   state.customOvers = parseInt(e.target.value) || 20;
   if(state.format === 'Custom') state.oversPerInnings = state.customOvers;
@@ -2164,7 +2191,7 @@ function isChaseWon(){
 function isInningsOver(){
   const totalBallsAllowed = ballsPerInnings();
   const ballsBowled = state.score.overs*6 + state.score.balls;
-  return state.score.wickets >= 10 || (totalBallsAllowed !== null && ballsBowled >= totalBallsAllowed) || isChaseWon();
+  return state.score.wickets >= 10 || (totalBallsAllowed !== null && ballsBowled >= totalBallsAllowed) || isChaseWon() || !!state.declared;
 }
 // True during the gap between innings — current innings has ended, next
 // one hasn't been started yet (target not set), and the match itself
@@ -2190,7 +2217,7 @@ function checkInningsComplete(){
   // (all-out/overs-complete) event — checkMatchResult() owns that banner.
   if(isChaseWon()) return;
   state.milestonesHit['innings-complete'] = true;
-  const reason = state.score.wickets >= 10 ? 'ALL OUT' : 'OVERS COMPLETE';
+  const reason = state.declared ? 'DECLARED' : (state.score.wickets >= 10 ? 'ALL OUT' : 'OVERS COMPLETE');
   fireEvent('INNINGS_COMPLETE', reason, `${state.score.runs}-${state.score.wickets} in ${fmtOvers(state.score.overs, state.score.balls)} overs`, 4000);
 
   if(state.showInningsSummary && socket && socket.connected){
@@ -3642,7 +3669,7 @@ function recordBall(kind, meta){
   const logNonStrikerName = state.nonStriker.name;
   const logBowlerName = state.bowler.name;
   const logBattingTeam = state.battingTeam;
-  const logInnings = state.target ? 2 : 1;
+  const logInnings = state.inningsNumber;
   let logDismissalText = null;
 
   switch(kind){
@@ -3853,7 +3880,7 @@ function logBallToDb(kind, runsBefore, ballTimestamp){
 
   socket.emit('logBall', {
     matchId,
-    innings: state.firstInningsSummary ? 2 : 1,
+    innings: state.inningsNumber,
     over: state.score.overs,
     ballInOver: state.score.balls,
     kind,
@@ -4093,15 +4120,45 @@ document.getElementById('undo-btn').addEventListener('click', () => {
 
 /* ============================================================
    START NEXT INNINGS
-   Only enabled once the current innings is actually over
-   (10 wickets or overs complete). Sets the target for the
-   chasing side, swaps who's batting, and resets per-innings
-   figures — match/team setup (names, colours, logos) untouched.
+   Only enabled once the current innings is actually over (10
+   wickets, declared, or — limited overs only — overs complete).
+   Limited-overs formats (T20/ODI/Custom) only ever have 2
+   innings, so this always sets a target and swaps ends.
+
+   Test cricket has up to 4 innings (2 per side) and the flow
+   branches on which innings just finished:
+     - after innings 1 -> innings 2 always starts (other side bats), no target
+     - after innings 2 -> whoever batted 1st normally bats 3rd, UNLESS they
+       lead by 200+ runs, in which case the captain can enforce the
+       follow-on (current ICC Test Match Playing Conditions, June 2025)
+       and send the team that just batted straight back in
+     - after innings 3 -> the side that has now batted twice is checked
+       for an immediate innings defeat before any 4th innings is offered;
+       otherwise innings 4 starts as a run chase with a proper target
+       (opponent's combined total minus this side's 1st-innings score, +1)
    ============================================================ */
+function teamLabel(key){
+  const t = key === 'A' ? state.teamA : state.teamB;
+  return t.short || t.name || key;
+}
+function fireMatchResultInningsWin(winnerKey, margin){
+  state.milestonesHit['match-result'] = true;
+  fireEvent('VICTORY', `${teamLabel(winnerKey)} WIN`, `by an innings and ${margin} run${margin === 1 ? '' : 's'}`, 5000);
+  if(state.leagueName && state.leagueName.trim()) saveMatchToLeague(true);
+  else saveMatchToSingleHistory(true);
+  if(state.showMatchSummary && socket && socket.connected){
+    const payload = buildMatchSummaryPayload();
+    setTimeout(() => { if(socket && socket.connected) socket.emit('cricketMatchSummary', { data: payload }); }, 10000);
+  }
+  updateBallButtonsState();
+  pushState(true, true);
+  toast(`${teamLabel(winnerKey)} win by an innings and ${margin} run${margin === 1 ? '' : 's'} — no further innings needed`);
+}
 document.getElementById('next-innings-btn').addEventListener('click', () => {
   if(!isInningsOver()){ toast('Current innings is not over yet'); return; }
-  if(state.target){ toast('Match is already complete — Reset to start a new match'); return; }
+  if(state.milestonesHit['match-result']){ toast('Match is already complete — Reset to start a new match'); return; }
 
+  const isTest = state.format === 'Test';
   history.push(snapshot());
 
   const oldBattingTeam = state.battingTeam;
@@ -4118,15 +4175,58 @@ document.getElementById('next-innings-btn').addEventListener('click', () => {
   if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0)){
     state.bowlingCard[oldBowlingTeam].push({ ...state.bowler });
   }
-  // Freeze the completed innings' total — the Match Summary graphic needs
-  // this exact figure later, after state.score has moved on to innings 2.
-  state.firstInningsSummary = {
-    team: oldBattingTeam, runs: state.score.runs, wickets: state.score.wickets,
-    overs: fmtOvers(state.score.overs, state.score.balls)
-  };
 
-  state.target = state.score.runs + 1;
-  state.battingTeam = state.battingTeam === 'A' ? 'B' : 'A';
+  // Permanent record of the innings that just ended.
+  const completedInnings = {
+    no: state.inningsNumber, team: oldBattingTeam,
+    runs: state.score.runs, wickets: state.score.wickets,
+    overs: fmtOvers(state.score.overs, state.score.balls),
+    declared: !!state.declared
+  };
+  state.inningsArchive.push(completedInnings);
+  // Kept for the Match Summary graphic / league record, which only ever
+  // read "the innings that just finished" as a single snapshot.
+  state.firstInningsSummary = { team: completedInnings.team, runs: completedInnings.runs, wickets: completedInnings.wickets, overs: completedInnings.overs };
+
+  let nextTeam;
+  if(!isTest){
+    // Limited-overs: always exactly 2 innings, straight alternation, target
+    // is simply "one more than what the first side scored".
+    nextTeam = oldBattingTeam === 'A' ? 'B' : 'A';
+    state.target = state.score.runs + 1;
+  } else if(state.inningsNumber === 1){
+    nextTeam = oldBattingTeam === 'A' ? 'B' : 'A';
+    state.target = null;
+  } else if(state.inningsNumber === 2){
+    const inn1 = state.inningsArchive[0], inn2 = state.inningsArchive[1];
+    const deficit = inn1.runs - inn2.runs;
+    let followOn = false;
+    if(deficit >= 200){
+      followOn = confirm(`${teamLabel(inn1.team)} lead by ${deficit} runs after the 1st innings — enforce the follow-on and send ${teamLabel(inn2.team)} straight back in?\n\nOK = enforce follow-on (${teamLabel(inn2.team)} bats again)\nCancel = ${teamLabel(inn1.team)} bats again instead`);
+    }
+    nextTeam = followOn ? inn2.team : inn1.team;
+    state.target = null;
+  } else if(state.inningsNumber === 3){
+    // The side that just finished has now batted twice — check for an
+    // outright innings win before offering a 4th innings at all.
+    const twiceTeam = completedInnings.team;
+    const twiceTotal = state.inningsArchive.filter(i => i.team === twiceTeam).reduce((s,i) => s + i.runs, 0);
+    const onceTeam = twiceTeam === 'A' ? 'B' : 'A';
+    const onceTotal = state.inningsArchive.filter(i => i.team === onceTeam).reduce((s,i) => s + i.runs, 0);
+    if(twiceTotal < onceTotal){
+      fireMatchResultInningsWin(onceTeam, onceTotal - twiceTotal);
+      return;
+    }
+    nextTeam = onceTeam;
+    state.target = twiceTotal - onceTotal + 1;
+  } else {
+    toast('Match is already complete — Reset to start a new match');
+    return;
+  }
+
+  state.inningsNumber += 1;
+  state.battingTeam = nextTeam;
+  state.declared = false;
   state.score = { runs:0, wickets:0, overs:0, balls:0 };
   state.thisOver = [];
   state.ballHistory = [];
@@ -4140,7 +4240,7 @@ document.getElementById('next-innings-btn').addEventListener('click', () => {
   state.newBatsmanEnd = 'striker';
   state.freeHit = false;
   // Clear innings-scoped milestones (team totals, powerplay, last-over, "need
-  // X off Y", the completed-innings lock) so the 2nd innings fires its own —
+  // X off Y", the completed-innings lock) so the new innings fires its own —
   // player milestones (by name+runs) are left alone since new batsmen won't collide.
   Object.keys(state.milestonesHit).forEach(key => {
     if(key.startsWith('team-') || key.startsWith('partnership-') || key.startsWith('need-') ||
@@ -4149,9 +4249,58 @@ document.getElementById('next-innings-btn').addEventListener('click', () => {
     }
   });
 
-  fireEvent('INNINGS_BREAK', 'INNINGS BREAK', `Target: ${state.target}`, 4000);
+  const subText = isTest ? `Innings ${state.inningsNumber}${state.target ? ' — Target: ' + state.target : ''}` : `Target: ${state.target}`;
+  fireEvent('INNINGS_BREAK', 'INNINGS BREAK', subText, 4000);
   pushState(true, true);
-  toast(`2nd innings started — target ${state.target}`);
+  toast(isTest
+    ? `Innings ${state.inningsNumber} started (${teamLabel(nextTeam)} batting)${state.target ? ' — target ' + state.target : ''}`
+    : `2nd innings started — target ${state.target}`);
+});
+
+/* ============================================================
+   DECLARE INNINGS (Test only) — a captain can close their own
+   innings at any point without being all out; ends the innings
+   through the normal isInningsOver()/checkInningsComplete() path
+   so every downstream graphic and record behaves exactly as if
+   the side had been bowled out, just tagged "DECLARED" instead.
+   ============================================================ */
+document.getElementById('declare-btn').addEventListener('click', () => {
+  if(state.format !== 'Test') return;
+  if(isInningsOver()){ toast('This innings is already over'); return; }
+  if(!confirm(`Declare ${teamLabel(state.battingTeam)}'s innings closed at ${state.score.runs}-${state.score.wickets}?`)) return;
+  history.push(snapshot());
+  state.declared = true;
+  checkInningsComplete();
+  checkMatchResult();
+  updateBallButtonsState();
+  pushState(true, true);
+  toast(`${teamLabel(state.battingTeam)} declare at ${state.score.runs}-${state.score.wickets}`);
+});
+
+/* ============================================================
+   MATCH DRAWN (Test only) — Test matches are the one format that
+   can end without either side losing all 20 wickets or a target
+   being chased down (time simply runs out). This panel doesn't
+   model days/session clocks, so the draw is called manually by
+   the operator instead of being auto-detected.
+   ============================================================ */
+document.getElementById('draw-btn').addEventListener('click', () => {
+  if(state.format !== 'Test') return;
+  if(state.milestonesHit['match-result']){ toast('Match is already complete'); return; }
+  if(!confirm('Call the match a draw right now? This ends the match.')) return;
+  history.push(snapshot());
+  state.milestonesHit['match-result'] = true;
+  fireEvent('MATCH_DRAWN', 'MATCH DRAWN', '', 5000);
+  if(state.leagueName && state.leagueName.trim()) saveMatchToLeague(true);
+  else saveMatchToSingleHistory(true);
+  if(state.showMatchSummary && socket && socket.connected){
+    const payload = buildMatchSummaryPayload();
+    payload.winnerText = 'MATCH DRAWN';
+    setTimeout(() => { if(socket && socket.connected) socket.emit('cricketMatchSummary', { data: payload }); }, 3000);
+  }
+  updateBallButtonsState();
+  pushState(true, true);
+  toast('Match drawn');
 });
 
 /* ============================================================
@@ -5435,6 +5584,7 @@ document.addEventListener('keydown', (e) => {
   document.getElementById('format').value = state.format;
   document.getElementById('custom-overs').value = state.customOvers;
   document.getElementById('custom-overs-wrap').style.display = state.format === 'Custom' ? 'block' : 'none';
+  applyTestButtonsVisibility();
   if(!state.oversPerInnings) state.oversPerInnings = state.format === 'Custom' ? state.customOvers : FORMAT_RULES[state.format].oversPerInnings;
   document.getElementById('venue').value = state.venue;
   document.getElementById('teamA-name').value = state.teamA.name;
