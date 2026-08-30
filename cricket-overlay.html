@@ -1172,6 +1172,23 @@ function rollDigit(col, newChar){
     }
   });
 }
+// Test cricket only: how many runs the leading side is currently ahead by,
+// once both sides have batted at least once and no target has been set yet
+// (a target being set means we're in the final run-chase innings, where
+// "trail" naturally becomes "runs needed" instead — handled separately).
+// Mirrors the exact same math the panel uses when archiving innings.
+function currentLeadTrail(s){
+  if(s.format !== 'Test' || (s.inningsNumber || 1) <= 1 || s.target) return null;
+  const archive = s.inningsArchive || [];
+  const teamTotal = (key) => {
+    let total = archive.filter(i => i.team === key).reduce((sum, i) => sum + (i.runs || 0), 0);
+    if(key === s.battingTeam) total += (s.score?.runs ?? 0);
+    return total;
+  };
+  const diff = teamTotal('A') - teamTotal('B');
+  if(diff === 0) return { tied: true };
+  return { team: diff > 0 ? 'A' : 'B', amount: Math.abs(diff) };
+}
 function renderScoreString(str){
   const chars = str.split('');
   if(lastScoreString === null || lastScoreString.length !== chars.length){
@@ -1311,22 +1328,45 @@ function renderState(s){
 
   const oversLimit = s.oversPerInnings && s.oversPerInnings !== Infinity ? s.oversPerInnings : null;
 
-  // Innings-break gap: the current innings has ended (all out / overs
-  // complete) but the panel hasn't sent a target yet — it's holding the
-  // overlay on the finished innings until "Start Next Innings" is clicked.
-  // Swap the white panel to a plain Score / Target / Req. Run Rate summary
-  // for that gap, using the exact same "prev score + 1" target formula the
-  // panel applies the moment that button is pressed.
   const wicketsAllOut = (s.score?.wickets ?? 0) >= 10;
   const oversAllBowled = oversLimit !== null && totalBalls >= oversLimit * 6;
-  const breakMode = (wicketsAllOut || oversAllBowled) && !s.target;
+  // Innings-break gap: the current innings has ended (all out / overs
+  // complete / declared) but the panel hasn't sent a target yet — it's
+  // holding the overlay on the finished innings until "Start Next Innings"
+  // is clicked. Swap the white panel to a plain summary for that gap.
+  // Test cricket has 3 different "no target yet" situations here, so the
+  // summary itself branches: right after the very 1st innings there's
+  // nothing to compare yet (2nd side hasn't batted); after the 2nd/3rd
+  // innings, show the actual Lead/Trail instead of a fabricated target
+  // (the "runs+1 predicted target" formula only genuinely applies to
+  // limited-overs, where the very next innings IS always the run-chase).
+  const matchOver = !!(s.milestonesHit && s.milestonesHit['match-result']);
+  const breakMode = (wicketsAllOut || oversAllBowled || s.declared) && !s.target && !matchOver;
   document.getElementById('live-segs').style.display = breakMode ? 'none' : 'flex';
   document.getElementById('break-seg').style.display = breakMode ? 'flex' : 'none';
   if(breakMode){
     document.getElementById('break-score').textContent = scoreStr;
-    const predictedTarget = (s.score?.runs ?? 0) + 1;
-    document.getElementById('break-target').textContent = predictedTarget;
-    document.getElementById('break-rrr').textContent = oversLimit ? (predictedTarget / oversLimit).toFixed(2) : '—';
+    const breakTargetLbl = document.getElementById('break-target').parentElement.querySelector('.lbl');
+    const breakRrrLbl = document.getElementById('break-rrr').parentElement.querySelector('.lbl');
+    if(s.format === 'Test' && (s.inningsNumber || 1) > 1){
+      const lt = currentLeadTrail(s);
+      breakTargetLbl.textContent = lt && lt.team ? (lt.team === s.battingTeam ? 'Lead' : 'Trail') : 'Lead/Trail';
+      document.getElementById('break-target').textContent = (!lt || lt.tied) ? 'Level' : lt.amount;
+      breakRrrLbl.textContent = 'Innings';
+      document.getElementById('break-rrr').textContent = (s.inningsNumber || 1);
+    } else if(s.format === 'Test'){
+      // Just finished the very 1st innings — nothing to compare against yet.
+      breakTargetLbl.textContent = 'Status';
+      document.getElementById('break-target').textContent = 'Opponent to bat';
+      breakRrrLbl.textContent = 'Innings';
+      document.getElementById('break-rrr').textContent = '1';
+    } else {
+      const predictedTarget = (s.score?.runs ?? 0) + 1;
+      breakTargetLbl.textContent = 'Target';
+      document.getElementById('break-target').textContent = predictedTarget;
+      breakRrrLbl.textContent = 'Req. Run Rate';
+      document.getElementById('break-rrr').textContent = oversLimit ? (predictedTarget / oversLimit).toFixed(2) : '—';
+    }
   }
 
   if(s.target){
@@ -1339,6 +1379,21 @@ function renderState(s){
     document.getElementById('bar-fill').style.width = (ballsLeft && totalInningsBalls) ? `${100*(1-ballsLeft/totalInningsBalls)}%` : '0%';
     const rrr = ballsLeft && ballsLeft > 0 ? (runsNeeded / (ballsLeft/6)) : 0;
     document.getElementById('stat-rrr').textContent = ballsLeft ? rrr.toFixed(2) : '—';
+  } else if(s.format === 'Test' && (s.inningsNumber || 1) > 1){
+    // Test, 2nd/3rd innings, no target yet — this slot shows Lead/Trail
+    // instead of a run rate, same as a real Test broadcast graphic.
+    const lt = currentLeadTrail(s);
+    const battingKey = s.battingTeam;
+    if(!lt || lt.tied){
+      document.getElementById('stat-runs-label').textContent = 'Scores Level';
+      document.getElementById('stat-runs').textContent = '—';
+    } else {
+      document.getElementById('stat-runs-label').textContent = lt.team === battingKey ? 'Lead' : 'Trail';
+      document.getElementById('stat-runs').textContent = lt.amount;
+    }
+    document.getElementById('stat-balls-val').textContent = '—';
+    document.getElementById('bar-fill').style.width = '0%';
+    document.getElementById('stat-rrr').textContent = crr.toFixed(2);
   } else {
     const totalInningsBalls = oversLimit ? oversLimit * 6 : null;
     const ballsLeft = totalInningsBalls ? Math.max(totalInningsBalls - totalBalls, 0) : null;
