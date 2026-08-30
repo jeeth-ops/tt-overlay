@@ -899,6 +899,17 @@ function defaultState(){
     // (captain's declaration) rather than being bowled out or running out
     // of overs.
     declared: false,
+    // Final human-readable result line ("INDIA WIN BY AN INNINGS AND 42
+    // RUNS", "MATCH DRAWN", etc.) — set once, the moment the result is
+    // decided, so every graphic/report reads it back instead of each one
+    // re-deriving win/tie/draw text (an innings-victory in particular can't
+    // be reconstructed from state.target, since that scenario never sets one).
+    matchResultText: null,
+    // 'A' | 'B' | 'TIE' | 'DRAW' | null — companion to matchResultText,
+    // used wherever code needs the winning side as a key rather than text
+    // (league saves, Excel exports) without re-deriving it from state.target
+    // (which an innings-victory or a draw never sets).
+    matchWinnerKey: null,
     showInningsSummary: true,
     showMatchSummary: true,
     // Left-slide player/bowler stat cards — persistent on/off (not an
@@ -1837,12 +1848,16 @@ function applyBowlerChange(name){
       ...state.bowler,
       balls: 0, runsThisOver: 0, wicketsThisOver: 0,
       runs: state.bowler.runs - carryRuns,
-      wickets: state.bowler.wickets - carryWkts
+      wickets: state.bowler.wickets - carryWkts,
+      inningsNo: state.inningsNumber
     });
   }
 
-  // Resume an earlier spell for this name, if one's archived.
-  const existingIdx = state.bowlingCard[key].findIndex(b => b.name === name);
+  // Resume an earlier spell for this name IN THIS SAME INNINGS, if one's
+  // archived — scoped to the current innings so a bowler who also bowled
+  // in an earlier innings of a Test (e.g. their team's other spell) never
+  // has that unrelated innings' figures merged in by mistake.
+  const existingIdx = state.bowlingCard[key].findIndex(b => b.name === name && b.inningsNo === state.inningsNumber);
   const existing = existingIdx > -1 ? state.bowlingCard[key].splice(existingIdx, 1)[0] : null;
 
   state.bowler = existing
@@ -2237,14 +2252,20 @@ function checkMatchResult(){
   if(state.score.runs >= state.target){
     state.milestonesHit['match-result'] = true;
     const left = 10 - state.score.wickets;
+    state.matchResultText = `${battingShort.toUpperCase()} WON BY ${left} WICKET${left === 1 ? '' : 'S'}`;
+    state.matchWinnerKey = state.battingTeam;
     fireEvent('VICTORY', `${battingShort} WIN`, `by ${left} wicket${left === 1 ? '' : 's'}`, 5000);
     resultFired = true;
   } else if(isInningsOver()){
     state.milestonesHit['match-result'] = true;
     const margin = state.target - 1 - state.score.runs;
     if(margin <= 0){
+      state.matchResultText = 'MATCH TIED';
+      state.matchWinnerKey = 'TIE';
       fireEvent('MATCH_TIED', 'MATCH TIED', '', 5000);
     } else {
+      state.matchResultText = `${bowlingShort.toUpperCase()} WON BY ${margin} RUN${margin === 1 ? '' : 'S'}`;
+      state.matchWinnerKey = bowlingTeamKey();
       fireEvent('VICTORY', `${bowlingShort} WIN`, `by ${margin} run${margin === 1 ? '' : 's'}`, 5000);
     }
     resultFired = true;
@@ -2289,8 +2310,12 @@ function buildInningsSummaryPayload(){
   const bowlingKey = bowlingTeamKey();
   const bowlingTeamObj = bowlingKey === 'A' ? state.teamA : state.teamB;
   const battingTeamObj = battingKey === 'A' ? state.teamA : state.teamB;
+  const inn = state.inningsNumber;
 
-  const rows = [...state.bowlingCard[bowlingKey]];
+  // Both teams' archive arrays can now hold rows from an EARLIER innings of
+  // the same team (Test cricket), so every lookup here is scoped to the
+  // innings that just ended, not the whole team's history.
+  const rows = rowsForInnings(state.bowlingCard[bowlingKey], inn);
   if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0)){
     rows.push({ ...state.bowler });
   }
@@ -2299,7 +2324,7 @@ function buildInningsSummaryPayload(){
   // still "live" at the crease — they're only archived into battingCard on
   // Next Innings (after this summary already fired), so fold them in here
   // the same way `rows` above folds in the still-live bowler.
-  const battingRows = [...state.battingCard[battingKey]];
+  const battingRows = rowsForInnings(state.battingCard[battingKey], inn);
   [state.striker, state.nonStriker].forEach(p => {
     if(p && p.name && !battingRows.some(b => b.name === p.name)){
       battingRows.push({ name:p.name, runs:p.runs, balls:p.balls, fours:p.fours, sixes:p.sixes, out:false, howOut:'not out' });
@@ -2318,6 +2343,7 @@ function buildInningsSummaryPayload(){
     battingTeamLogo: battingTeamObj.logoUrl,
     format: state.format,
     venue: state.venue,
+    inningsNo: inn,
     bowlers: rows.map(b => ({
       name: b.name, overs: fmtBowlerOvers(b.overs, b.balls),
       maidens: b.maidens, runs: b.runs, wickets: b.wickets, econ: bowlerEcon(b)
@@ -2327,7 +2353,7 @@ function buildInningsSummaryPayload(){
       sr: b.balls > 0 ? ((b.runs / b.balls) * 100).toFixed(1) : '0.0',
       howOut: b.out ? (b.howOut || 'out') : 'not out'
     })),
-    fallOfWickets: state.fallOfWickets[battingKey],
+    fallOfWickets: rowsForInnings(state.fallOfWickets[battingKey], inn),
     extrasTotal: (extras.wd||0) + (extras.nb||0) + (extras.b||0) + (extras.lb||0),
     overs: fmtOvers(state.score.overs, state.score.balls),
     total: `${state.score.runs}-${state.score.wickets}`
@@ -2342,15 +2368,17 @@ function buildMatchSummaryPayload(){
 
   // Fold in whichever batsmen/bowler are still "live" (not yet archived —
   // true for the team that was batting/bowling right when the match ended).
+  // Scoped to THIS innings' number: in a Test, the same name can already
+  // appear in the array from an earlier innings of the same team/bowler.
   const liveBattingArr = state.battingTeam === 'A' ? battingCardA : battingCardB;
   [state.striker, state.nonStriker].forEach(p => {
-    if(p && p.name && !liveBattingArr.some(b => b.name === p.name)){
-      liveBattingArr.push({ name:p.name, runs:p.runs, balls:p.balls, fours:p.fours, sixes:p.sixes, out:false, howOut:'not out' });
+    if(p && p.name && !liveBattingArr.some(b => b.name === p.name && b.inningsNo === state.inningsNumber)){
+      liveBattingArr.push({ name:p.name, runs:p.runs, balls:p.balls, fours:p.fours, sixes:p.sixes, out:false, howOut:'not out', inningsNo: state.inningsNumber });
     }
   });
   const liveBowlingArr = bowlingTeamKey() === 'A' ? bowlingCardA : bowlingCardB;
-  if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0) && !liveBowlingArr.some(b => b.name === state.bowler.name)){
-    liveBowlingArr.push({ ...state.bowler });
+  if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0) && !liveBowlingArr.some(b => b.name === state.bowler.name && b.inningsNo === state.inningsNumber)){
+    liveBowlingArr.push({ ...state.bowler, inningsNo: state.inningsNumber });
   }
 
   const topBatsmen = arr => [...arr].sort((a,b) => b.runs - a.runs).slice(0,4)
@@ -2358,20 +2386,17 @@ function buildMatchSummaryPayload(){
   const topBowlers = arr => [...arr].sort((a,b) => (b.wickets - a.wickets) || (a.runs - b.runs)).slice(0,4)
     .map(b => ({ name:b.name, figures:`${b.wickets}-${b.runs}`, overs: fmtBowlerOvers(b.overs, b.balls) }));
 
-  const firstInn = state.firstInningsSummary;
-  const scoreFor = (teamKey) => {
-    if(firstInn && firstInn.team === teamKey) return `${firstInn.runs}-${firstInn.wickets} (${firstInn.overs} ov)`;
-    if(teamKey === state.battingTeam) return `${state.score.runs}-${state.score.wickets} (${fmtOvers(state.score.overs, state.score.balls)} ov)`;
-    return '';
-  };
-
   const chasingTeam = state.battingTeam === 'A' ? state.teamA : state.teamB;
   const defendingTeam = state.battingTeam === 'A' ? state.teamB : state.teamA;
   // Guarded for manual "Show Now" use, which can fire this at any point in
   // the match — not just once it's actually over — so it always reads as
-  // an honest in-progress state rather than fabricating a winner.
+  // an honest in-progress state rather than fabricating a winner. Once the
+  // result IS decided, state.matchResultText is authoritative (it covers
+  // cases — like a Test innings-victory — that never set a target at all).
   let winnerText;
-  if(!state.target){
+  if(state.milestonesHit['match-result'] && state.matchResultText){
+    winnerText = state.matchResultText;
+  } else if(!state.target){
     winnerText = 'MATCH IN PROGRESS';
   } else if(state.score.runs >= state.target){
     const left = 10 - state.score.wickets;
@@ -2388,11 +2413,11 @@ function buildMatchSummaryPayload(){
     venue: state.venue,
     winnerText,
     teamA: {
-      name: state.teamA.name, short: state.teamA.short, color: state.teamA.color, logoUrl: state.teamA.logoUrl, score: scoreFor('A'),
+      name: state.teamA.name, short: state.teamA.short, color: state.teamA.color, logoUrl: state.teamA.logoUrl, score: teamScoreLine('A'),
       batsmen: topBatsmen(battingCardA), bowlers: topBowlers(bowlingCardA)
     },
     teamB: {
-      name: state.teamB.name, short: state.teamB.short, color: state.teamB.color, logoUrl: state.teamB.logoUrl, score: scoreFor('B'),
+      name: state.teamB.name, short: state.teamB.short, color: state.teamB.color, logoUrl: state.teamB.logoUrl, score: teamScoreLine('B'),
       batsmen: topBatsmen(battingCardB), bowlers: topBowlers(bowlingCardB)
     }
   };
@@ -2546,24 +2571,37 @@ function buildMatchRecordForLeague(){
 
   const liveBattingArr = state.battingTeam === 'A' ? battingCardA : battingCardB;
   [state.striker, state.nonStriker].forEach(p => {
-    if(p && p.name && !liveBattingArr.some(b => b.name === p.name)){
-      liveBattingArr.push({ name:p.name, runs:p.runs, balls:p.balls, fours:p.fours, sixes:p.sixes, out:false, howOut:'not out' });
+    if(p && p.name && !liveBattingArr.some(b => b.name === p.name && b.inningsNo === state.inningsNumber)){
+      liveBattingArr.push({ name:p.name, runs:p.runs, balls:p.balls, fours:p.fours, sixes:p.sixes, out:false, howOut:'not out', inningsNo: state.inningsNumber });
     }
   });
   const liveBowlingArr = bowlingTeamKey() === 'A' ? bowlingCardA : bowlingCardB;
-  if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0) && !liveBowlingArr.some(b => b.name === state.bowler.name)){
-    liveBowlingArr.push({ ...state.bowler });
+  if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0) && !liveBowlingArr.some(b => b.name === state.bowler.name && b.inningsNo === state.inningsNumber)){
+    liveBowlingArr.push({ ...state.bowler, inningsNo: state.inningsNumber });
   }
 
-  const firstInn = state.firstInningsSummary;
+  // Team totals across every innings they've played (1 or 2 for Test) —
+  // authoritative winningTeam comes from matchWinnerKey (set the instant a
+  // result is decided, including innings-victories/draws that never set a
+  // target), falling back to the live target-chase math only while the
+  // match is genuinely still in progress.
   const scoreForTeam = (teamKey) => {
-    if(firstInn && firstInn.team === teamKey) return { runs:firstInn.runs, wickets:firstInn.wickets, overs:firstInn.overs };
-    if(teamKey === state.battingTeam) return { runs:state.score.runs, wickets:state.score.wickets, overs:fmtOvers(state.score.overs, state.score.balls) };
-    return { runs:0, wickets:0, overs:'0.0' };
+    const entries = matchInningsList().filter(e => e.team === teamKey);
+    if(!entries.length) return { runs:0, wickets:0, overs:'0.0' };
+    let totalRuns = 0, totalBalls = 0, lastWkts = 0;
+    entries.forEach(e => {
+      const sc = inningsEntryScore(e);
+      totalRuns += sc.runs;
+      totalBalls += oversStrToBalls(sc.overs);
+      lastWkts = sc.wickets;
+    });
+    return { runs: totalRuns, wickets: lastWkts, overs: fmtOvers(Math.floor(totalBalls / 6), totalBalls % 6) };
   };
 
-  let winningTeam = null; // 'A' | 'B' | 'TIE' | null (no result decided yet)
-  if(state.target){
+  let winningTeam = null; // 'A' | 'B' | 'TIE' | 'DRAW' | null (no result decided yet)
+  if(state.milestonesHit['match-result'] && state.matchWinnerKey){
+    winningTeam = state.matchWinnerKey;
+  } else if(state.target){
     if(state.score.runs >= state.target) winningTeam = state.battingTeam;
     else if(isInningsOver()){
       const margin = state.target - 1 - state.score.runs;
@@ -3626,6 +3664,46 @@ function bowlerEcon(b){
   return oversFloat > 0 ? (b.runs / oversFloat).toFixed(2) : '0.00';
 }
 
+/* ---- Multi-innings helpers (Test needs up to 4 innings per match,
+   2 of them for the same team, so a lot of what used to be a flat
+   per-team lookup now has to be scoped to a specific innings number). ---- */
+function rowsForInnings(arr, inningsNo){
+  return (arr || []).filter(r => r.inningsNo === inningsNo);
+}
+// Which innings number is the run-chase: always the last one — 2nd for
+// limited-overs (only ever 2 innings), 4th for Test (2 innings each side).
+function chaseInningsNumber(){ return state.format === 'Test' ? 4 : 2; }
+function inningsScoreString(runs, wickets, declared){
+  return `${runs}${wickets < 10 ? '/' + wickets : ''}${declared ? ' d' : ''}`;
+}
+// Every innings played so far in the match, in order — completed ones
+// from state.inningsArchive, plus the currently live one (if it isn't
+// in the archive yet, which it never is: an innings only gets archived
+// once "Start Next Innings" is clicked, so the match's LAST innings is
+// always still "live" even after it's over and the match is finished).
+function matchInningsList(){
+  const list = state.inningsArchive.map(i => ({ no: i.no, team: i.team, archived: i }));
+  if(!list.some(x => x.no === state.inningsNumber)){
+    list.push({ no: state.inningsNumber, team: state.battingTeam, archived: null });
+  }
+  return list.sort((a, b) => a.no - b.no);
+}
+function inningsEntryScore(entry){
+  if(entry.archived) return { runs: entry.archived.runs, wickets: entry.archived.wickets, overs: entry.archived.overs, declared: entry.archived.declared };
+  return { runs: state.score.runs, wickets: state.score.wickets, overs: fmtOvers(state.score.overs, state.score.balls), declared: state.declared };
+}
+// "230 & 145/6 (Test)" or "180/6 (limited-overs, single innings)" — one
+// team's full match score line, folding in every innings they've played.
+function teamScoreLine(teamKey){
+  const entries = matchInningsList().filter(e => e.team === teamKey);
+  if(!entries.length) return '';
+  return entries.map(e => {
+    const sc = inningsEntryScore(e);
+    const base = inningsScoreString(sc.runs, sc.wickets, sc.declared);
+    return e.no === state.inningsNumber && !e.archived ? `${base} (${sc.overs} ov)` : base;
+  }).join(' & ');
+}
+
 function pushBallHistory(label){
   state.ballHistory.push(label);
   if(state.ballHistory.length > 60) state.ballHistory = state.ballHistory.slice(-60);
@@ -3713,10 +3791,12 @@ function recordBall(kind, meta){
       // powers the Innings/Match Summary graphics later.
       state.battingCard[state.battingTeam].push({
         name: state.striker.name, runs: state.striker.runs, balls: state.striker.balls,
-        fours: state.striker.fours, sixes: state.striker.sixes, out: true, howOut: dismissalText
+        fours: state.striker.fours, sixes: state.striker.sixes, out: true, howOut: dismissalText,
+        inningsNo: state.inningsNumber
       });
       state.fallOfWickets[state.battingTeam].push({
-        wkt: state.score.wickets, runs: state.score.runs, over: fmtOvers(state.score.overs, state.score.balls)
+        wkt: state.score.wickets, runs: state.score.runs, over: fmtOvers(state.score.overs, state.score.balls),
+        inningsNo: state.inningsNumber
       });
 
       state.partnershipRuns = 0; state.partnershipBalls = 0;
@@ -4143,6 +4223,8 @@ function teamLabel(key){
 }
 function fireMatchResultInningsWin(winnerKey, margin){
   state.milestonesHit['match-result'] = true;
+  state.matchResultText = `${teamLabel(winnerKey).toUpperCase()} WON BY AN INNINGS AND ${margin} RUN${margin === 1 ? '' : 'S'}`;
+  state.matchWinnerKey = winnerKey;
   fireEvent('VICTORY', `${teamLabel(winnerKey)} WIN`, `by an innings and ${margin} run${margin === 1 ? '' : 's'}`, 5000);
   if(state.leagueName && state.leagueName.trim()) saveMatchToLeague(true);
   else saveMatchToSingleHistory(true);
@@ -4167,13 +4249,13 @@ document.getElementById('next-innings-btn').addEventListener('click', () => {
   // Archive not-out batsmen — anyone dismissed was already archived at the
   // moment of their WICKET ball, so this only picks up the two left in.
   [state.striker, state.nonStriker].forEach(p => {
-    if(p && p.name && !state.battingCard[oldBattingTeam].some(b => b.name === p.name)){
-      state.battingCard[oldBattingTeam].push({ name:p.name, runs:p.runs, balls:p.balls, fours:p.fours, sixes:p.sixes, out:false, howOut:'not out' });
+    if(p && p.name && !state.battingCard[oldBattingTeam].some(b => b.name === p.name && b.inningsNo === state.inningsNumber)){
+      state.battingCard[oldBattingTeam].push({ name:p.name, runs:p.runs, balls:p.balls, fours:p.fours, sixes:p.sixes, out:false, howOut:'not out', inningsNo: state.inningsNumber });
     }
   });
   // Archive this innings' final bowler figures.
   if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0)){
-    state.bowlingCard[oldBowlingTeam].push({ ...state.bowler });
+    state.bowlingCard[oldBowlingTeam].push({ ...state.bowler, inningsNo: state.inningsNumber });
   }
 
   // Permanent record of the innings that just ended.
@@ -4181,7 +4263,11 @@ document.getElementById('next-innings-btn').addEventListener('click', () => {
     no: state.inningsNumber, team: oldBattingTeam,
     runs: state.score.runs, wickets: state.score.wickets,
     overs: fmtOvers(state.score.overs, state.score.balls),
-    declared: !!state.declared
+    declared: !!state.declared,
+    // Snapshot this innings' extras before the running counter gets reset
+    // below — needed since, in a Test, the same team's key gets reused for
+    // their 2nd innings and would otherwise mix the two innings' totals.
+    extras: { ...(state.extras[oldBattingTeam] || { wd:0, nb:0, b:0, lb:0 }) }
   };
   state.inningsArchive.push(completedInnings);
   // Kept for the Match Summary graphic / league record, which only ever
@@ -4228,6 +4314,11 @@ document.getElementById('next-innings-btn').addEventListener('click', () => {
   state.battingTeam = nextTeam;
   state.declared = false;
   state.score = { runs:0, wickets:0, overs:0, balls:0 };
+  // Reset the running extras counter for whoever's about to bat — the
+  // innings that just finished had its own extras snapshotted onto
+  // completedInnings.extras above, so nothing is lost even when the same
+  // team (in a Test) bats again later and reuses this same key.
+  state.extras[nextTeam] = { wd:0, nb:0, b:0, lb:0 };
   state.thisOver = [];
   state.ballHistory = [];
   state.partnershipRuns = 0; state.partnershipBalls = 0;
@@ -4290,6 +4381,8 @@ document.getElementById('draw-btn').addEventListener('click', () => {
   if(!confirm('Call the match a draw right now? This ends the match.')) return;
   history.push(snapshot());
   state.milestonesHit['match-result'] = true;
+  state.matchResultText = 'MATCH DRAWN';
+  state.matchWinnerKey = 'DRAW';
   fireEvent('MATCH_DRAWN', 'MATCH DRAWN', '', 5000);
   if(state.leagueName && state.leagueName.trim()) saveMatchToLeague(true);
   else saveMatchToSingleHistory(true);
@@ -4660,6 +4753,12 @@ function formatOversQuota(format){
 // Live-state result line — mirrors checkMatchResult()/buildMatchSummaryPayload()'s
 // own wording so the report always agrees with what fired on the overlay.
 function exportResultText(){
+  // matchResultText/matchWinnerKey are authoritative once a result is
+  // decided — they cover cases (Test innings-victory, a manual draw) that
+  // never set a target and so the old runs-vs-target math below can't see.
+  if(state.milestonesHit['match-result'] && state.matchResultText){
+    return { text: state.matchResultText, winner: state.matchWinnerKey };
+  }
   if(!state.target) return { text: 'Match in progress — no result yet', winner: null };
   const battingTeam = state.battingTeam === 'A' ? state.teamA : state.teamB;
   const bowlingTeam = state.battingTeam === 'A' ? state.teamB : state.teamA;
@@ -4692,8 +4791,8 @@ function exportCurrentRRR(){
 // which is never trimmed. Grouped by innings, closed whenever the
 // striker/non-striker pair changes (i.e. a wicket brought in someone new).
 function computeLivePartnerships(){
-  const byInnings = { 1: [], 2: [] };
-  [1, 2].forEach(inn => {
+  const byInnings = { 1: [], 2: [], 3: [], 4: [] };
+  [1, 2, 3, 4].forEach(inn => {
     const balls = state.ballLog.filter(b => b.innings === inn);
     if(!balls.length) return;
     let cur = null, wktSoFar = 0, prevScoreAfter = '0-0';
@@ -4718,7 +4817,7 @@ function computeLivePartnerships(){
 function computeOverSummary(){
   const rows = [];
   let cur = null;
-  const cumByInnings = { 1: 0, 2: 0 };
+  const cumByInnings = { 1: 0, 2: 0, 3: 0, 4: 0 };
   state.ballLog.forEach(b => {
     const ballsAtPoint = oversStrToBalls(b.over);
     const overIndex = ballsAtPoint > 0 ? Math.floor((ballsAtPoint - 1) / 6) : 0;
@@ -4749,14 +4848,17 @@ function computeOverSummary(){
 }
 
 /* ---- Row builders reused by both the sheets and the league record ---- */
-function battingRowsForExcel(teamKey){
-  const rows = state.battingCard[teamKey].map(b => ({
+// inningsNo required — a team's battingCard/bowlingCard array can now hold
+// rows from an EARLIER innings of the same team (Test), so every per-innings
+// sheet must ask for exactly the innings it's building.
+function battingRowsForExcel(teamKey, inningsNo){
+  const rows = rowsForInnings(state.battingCard[teamKey], inningsNo).map(b => ({
     Batsman: b.name, Runs: b.runs, Balls: b.balls,
     '4s': b.fours, '6s': b.sixes,
     'S/R': b.balls > 0 ? ((b.runs / b.balls) * 100).toFixed(2) : '0.00',
     'Dismissal': b.howOut
   }));
-  if(state.battingTeam === teamKey){
+  if(state.battingTeam === teamKey && state.inningsNumber === inningsNo){
     [state.striker, state.nonStriker].forEach(p => {
       if(p && p.name){
         rows.push({
@@ -4770,12 +4872,12 @@ function battingRowsForExcel(teamKey){
   }
   return rows;
 }
-function bowlingRowsForExcel(teamKey){
-  const rows = state.bowlingCard[teamKey].map(b => ({
+function bowlingRowsForExcel(teamKey, inningsNo){
+  const rows = rowsForInnings(state.bowlingCard[teamKey], inningsNo).map(b => ({
     Bowler: b.name, Overs: fmtBowlerOvers(b.overs, b.balls),
     Maidens: b.maidens, Runs: b.runs, Wickets: b.wickets, Economy: bowlerEcon(b)
   }));
-  if(bowlingTeamKey() === teamKey && state.bowler.name){
+  if(bowlingTeamKey() === teamKey && state.inningsNumber === inningsNo && state.bowler.name){
     rows.push({
       Bowler: state.bowler.name, Overs: fmtBowlerOvers(state.bowler.overs, state.bowler.balls),
       Maidens: state.bowler.maidens, Runs: state.bowler.runs, Wickets: state.bowler.wickets,
@@ -4784,26 +4886,41 @@ function bowlingRowsForExcel(teamKey){
   }
   return rows;
 }
-// One row per player, batting + bowling merged — for the Player Match
-// Stats sheet. Blank cells mean the player didn't bat/bowl, not zero.
+// One row per player, batting + bowling merged across EVERY innings they
+// played (a Test batter who scored in both innings gets one combined row,
+// same as a real match-summary "Player of the Match" style stat sheet) —
+// for the Player Match Stats sheet. Blank cells mean the player didn't
+// bat/bowl at all, not zero.
 function playerMatchStatsRows(){
   const map = {};
   const ensure = (name, team) => {
-    if(!map[name]) map[name] = { name, team, runs:'', balls:'', fours:'', sixes:'', sr:'', overs:'', maidens:'', bowlRuns:'', wickets:'', econ:'' };
+    if(!map[name]) map[name] = { name, team, runs:0, balls:0, fours:0, sixes:0, hasBat:false, oBalls:0, maidens:0, bowlRuns:0, wickets:0, hasBowl:false };
     return map[name];
   };
-  ['A', 'B'].forEach(k => {
-    const teamShort = k === 'A' ? (state.teamA.short || state.teamA.name) : (state.teamB.short || state.teamB.name);
-    battingRowsForExcel(k).forEach(b => {
+  matchInningsList().forEach(({ no, team }) => {
+    const teamShort = team === 'A' ? (state.teamA.short || state.teamA.name) : (state.teamB.short || state.teamB.name);
+    const bowlKey = team === 'A' ? 'B' : 'A'; // whoever bowled AT this batting team
+    const bowlShort = bowlKey === 'A' ? (state.teamA.short || state.teamA.name) : (state.teamB.short || state.teamB.name);
+    battingRowsForExcel(team, no).forEach(b => {
       const e = ensure(b.Batsman, teamShort);
-      e.runs = b.Runs; e.balls = b.Balls; e.fours = b['4s']; e.sixes = b['6s']; e.sr = b['S/R'];
+      e.runs += b.Runs; e.balls += b.Balls; e.fours += b['4s']; e.sixes += b['6s']; e.hasBat = true;
     });
-    bowlingRowsForExcel(k).forEach(b => {
-      const e = ensure(b.Bowler, teamShort);
-      e.overs = b.Overs; e.maidens = b.Maidens; e.bowlRuns = b.Runs; e.wickets = b.Wickets; e.econ = b.Economy;
+    bowlingRowsForExcel(bowlKey, no).forEach(b => {
+      const e = ensure(b.Bowler, bowlShort);
+      e.oBalls += oversStrToBalls(b.Overs); e.maidens += b.Maidens; e.bowlRuns += b.Runs; e.wickets += b.Wickets; e.hasBowl = true;
     });
   });
-  return Object.values(map);
+  return Object.values(map).map(e => ({
+    name: e.name, team: e.team,
+    runs: e.hasBat ? e.runs : '', balls: e.hasBat ? e.balls : '',
+    fours: e.hasBat ? e.fours : '', sixes: e.hasBat ? e.sixes : '',
+    sr: e.hasBat && e.balls > 0 ? ((e.runs / e.balls) * 100).toFixed(2) : (e.hasBat ? '0.00' : ''),
+    overs: e.hasBowl ? fmtBowlerOvers(Math.floor(e.oBalls / 6), e.oBalls % 6) : '',
+    maidens: e.hasBowl ? e.maidens : '',
+    bowlRuns: e.hasBowl ? e.bowlRuns : '',
+    wickets: e.hasBowl ? e.wickets : '',
+    econ: e.hasBowl ? bowlerEcon({ runs: e.bowlRuns, overs: Math.floor(e.oBalls / 6), balls: e.oBalls % 6 }) : ''
+  }));
 }
 
 /* ============================================================
@@ -4818,10 +4935,9 @@ async function buildMatchExcelWorkbook(){
 
   /* ---- Innings that have actually happened — computed once up front so
      both the score band below and the per-innings sheets further down
-     read from the exact same list. ---------------------------------- */
-  const firstInn = state.firstInningsSummary;
-  const inningsList = [{ num: 1, team: firstInn ? firstInn.team : state.battingTeam }];
-  if(firstInn) inningsList.push({ num: 2, team: state.battingTeam });
+     read from the exact same list. Up to 4 entries for a Test (2 per
+     side), always exactly 2 (or 1, mid-1st-innings) for limited overs. */
+  const inningsList = matchInningsList();
 
   /* ---- Match Overview — the score is the strongest visual element on
      the sheet: one large card per team that has batted, plus a compact
@@ -4840,16 +4956,18 @@ async function buildMatchExcelWorkbook(){
     let r = xlTitleBlock(ws, titleText, subtitleParts.join('  ·  '), 6);
 
     // ---- Score band: one big card per innings played so far ----
-    inningsList.forEach(({ num, team }) => {
+    inningsList.forEach((entry) => {
+      const { no, team } = entry;
       const teamObj = team === 'A' ? state.teamA : state.teamB;
       const teamName = teamObj.name || `Team ${team}`;
-      const isArchived = num === 1 && firstInn;
-      const runs = isArchived ? firstInn.runs : state.score.runs;
-      const wkts = isArchived ? firstInn.wickets : state.score.wickets;
-      const oversStr = isArchived ? firstInn.overs : fmtOvers(state.score.overs, state.score.balls);
+      const sc = inningsEntryScore(entry);
+      const runs = sc.runs, wkts = sc.wickets, oversStr = sc.overs;
       const rr = runRateFromBalls(runs, oversStrToBalls(oversStr));
+      const inningsLabel = state.format === 'Test'
+        ? `INNINGS ${no}${sc.declared ? ' (DEC)' : ''}`
+        : `INNINGS ${no}`;
 
-      const nameRow = ws.addRow([`INNINGS ${num}`, teamName, '', '', '', '']);
+      const nameRow = ws.addRow([inningsLabel, teamName, '', '', '', '']);
       ws.mergeCells(nameRow.number, 2, nameRow.number, 6);
       nameRow.getCell(1).font = { name: XL_FONT, bold: true, size: 10, color: { argb: XL.dim } };
       nameRow.getCell(2).font = { name: XL_FONT, bold: true, size: 15, color: { argb: XL.primary } };
@@ -4902,7 +5020,7 @@ async function buildMatchExcelWorkbook(){
     if(state.venue) detailRows.push(['Venue', state.venue]);
     detailRows.push(['Team A', teamAName]);
     detailRows.push(['Team B', teamBName]);
-    detailRows.push(['Match Status', result.winner ? 'Completed' : (state.target ? 'In progress — 2nd innings' : (firstInn ? 'In progress' : 'In progress — 1st innings'))]);
+    detailRows.push(['Match Status', result.winner ? 'Completed' : `In progress — Innings ${state.inningsNumber}`]);
     const detailStart = ws.lastRow.number + 1;
     detailRows.forEach(([label, value]) => {
       const row = ws.addRow([label, value]);
@@ -4931,10 +5049,11 @@ async function buildMatchExcelWorkbook(){
     let cursor = r;
 
     // Worm chart — cumulative score by over, one line per innings.
-    const wormSeries = inningsList.map(({ num, team }, i) => {
+    const wormSeries = inningsList.map((entry, i) => {
+      const { no, team } = entry;
       const teamShort = team === 'A' ? teamAShort : teamBShort;
-      const pts = [{ x: 0, y: 0 }, ...overSummaryRows.filter(o => o.innings === num).map(o => ({ x: o.over, y: o.cumScore }))];
-      return { name: `${teamShort} (Inn ${num})`, color: i === 0 ? XL_HEX.secondary : XL_HEX.gold, points: pts };
+      const pts = [{ x: 0, y: 0 }, ...overSummaryRows.filter(o => o.innings === no).map(o => ({ x: o.over, y: o.cumScore }))];
+      return { name: `${teamShort} (Inn ${no})`, color: i === 0 ? XL_HEX.secondary : XL_HEX.gold, points: pts };
     }).filter(s => s.points.length > 1);
     if(wormSeries.length){
       const worm = xlDrawLineChartPNG('Run Progression (Worm)', 'Cumulative runs, over by over', wormSeries);
@@ -4956,11 +5075,13 @@ async function buildMatchExcelWorkbook(){
       cursor = xlEmbedImage(wb, ws, chart, cursor);
     }
 
-    // Extras breakdown — combined across both teams' recorded extras only;
-    // omitted entirely if the match has none, per "only real data".
+    // Extras across the WHOLE match — summed from each innings' own
+    // snapshot (state.extras[k] only ever holds the CURRENTLY batting
+    // side's running total now that it's reset every innings, so a
+    // completed earlier innings' extras would otherwise be missed).
     const extrasTotals = { Wide: 0, 'No Ball': 0, Bye: 0, 'Leg Bye': 0 };
-    ['A', 'B'].forEach(k => {
-      const e = state.extras[k] || {};
+    matchInningsList().forEach(entry => {
+      const e = entry.archived ? (entry.archived.extras || {}) : (state.extras[entry.team] || {});
       extrasTotals.Wide += e.wd || 0; extrasTotals['No Ball'] += e.nb || 0;
       extrasTotals.Bye += e.b || 0; extrasTotals['Leg Bye'] += e.lb || 0;
     });
@@ -4971,41 +5092,43 @@ async function buildMatchExcelWorkbook(){
     }
   }
 
-  inningsList.forEach(({ num, team }) => {
+  inningsList.forEach((entry) => {
+    const { no, team } = entry;
     const oppKey = team === 'A' ? 'B' : 'A';
     const teamObj = team === 'A' ? state.teamA : state.teamB;
     const teamName = teamObj.name, teamShort = teamObj.short || teamName;
-    const ws = xlNewSheet(wb, `Innings ${num} - ${teamShort}`);
+    // Sheet names must stay unique even when the same team bats twice in a
+    // Test — "Innings 1 - IND" and "Innings 3 - IND" rather than colliding.
+    const ws = xlNewSheet(wb, `Innings ${no} - ${teamShort}`);
 
-    const isArchived = num === 1 && firstInn;
-    const scoreLine = isArchived
-      ? `${firstInn.runs}-${firstInn.wickets} (${firstInn.overs} ov)`
-      : `${state.score.runs}-${state.score.wickets} (${fmtOvers(state.score.overs, state.score.balls)} ov)`;
-    xlTitleBlock(ws, `${teamName} — Innings ${num}`, scoreLine, 7);
+    const sc = inningsEntryScore(entry);
+    const scoreLine = `${sc.runs}-${sc.wickets}${sc.declared ? ' dec' : ''} (${sc.overs} ov)`;
+    xlTitleBlock(ws, `${teamName} — Innings ${no}`, scoreLine, 7);
 
     xlSectionLabel(ws, 'BATTING', 7);
     xlHeaderRow(ws, ['Batsman', 'Runs', 'Balls', '4s', '6s', 'S/R', 'Dismissal']);
-    const battingRows = battingRowsForExcel(team);
+    const battingRows = battingRowsForExcel(team, no);
     const bStart = ws.lastRow.number + 1;
     battingRows.forEach(b => ws.addRow([b.Batsman, b.Runs, b.Balls, b['4s'], b['6s'], b['S/R'], b.Dismissal]));
     const bEnd = ws.lastRow.number;
     xlZebra(ws, bStart, bEnd, 1, 7);
     xlAddDataBar(ws, 2, bStart, bEnd, XL.secondary); // Runs
 
-    const extr = state.extras[team] || { wd:0, nb:0, b:0, lb:0 };
+    // Extras for this specific innings: the archived snapshot if this
+    // innings is done, otherwise the live running total — never the
+    // team's OTHER (already-archived) innings extras, which the plain
+    // state.extras[team] lookup used to return once that team batted twice.
+    const extr = entry.archived ? (entry.archived.extras || { wd:0, nb:0, b:0, lb:0 }) : (state.extras[team] || { wd:0, nb:0, b:0, lb:0 });
     const extrasTotal = (extr.wd||0) + (extr.nb||0) + (extr.b||0) + (extr.lb||0);
-    const teamRuns = isArchived ? firstInn.runs : state.score.runs;
-    const teamWkts = isArchived ? firstInn.wickets : state.score.wickets;
-    const teamOvers = isArchived ? firstInn.overs : fmtOvers(state.score.overs, state.score.balls);
     const extrasRow = ws.addRow(['Extras', extrasTotal, '', '', '', '', `Wd ${extr.wd||0} · NB ${extr.nb||0} · B ${extr.b||0} · LB ${extr.lb||0}`]);
     extrasRow.getCell(1).font = { italic: true }; extrasRow.getCell(7).font = { italic: true, size: 9.5 };
-    const totalsRow = ws.addRow(['TOTAL', teamRuns, '', '', '', '', `${teamWkts} wkt${teamWkts === 1 ? '' : 's'} · ${teamOvers} overs`]);
+    const totalsRow = ws.addRow(['TOTAL', sc.runs, '', '', '', '', `${sc.wickets} wkt${sc.wickets === 1 ? '' : 's'}${sc.declared ? ' (dec)' : ''} · ${sc.overs} overs`]);
     xlBoldRow(totalsRow);
 
     ws.addRow([]);
     xlSectionLabel(ws, 'BOWLING', 6);
     xlHeaderRow(ws, ['Bowler', 'Overs', 'Maidens', 'Runs', 'Wickets', 'Economy']);
-    const bowlingRows = bowlingRowsForExcel(oppKey);
+    const bowlingRows = bowlingRowsForExcel(oppKey, no);
     const wStart = ws.lastRow.number + 1;
     bowlingRows.forEach(b => ws.addRow([b.Bowler, b.Overs, b.Maidens, b.Runs, b.Wickets, b.Economy]));
     const wEnd = ws.lastRow.number;
@@ -5015,7 +5138,7 @@ async function buildMatchExcelWorkbook(){
 
     ws.addRow([]);
     xlSectionLabel(ws, 'FALL OF WICKETS', 7);
-    const fow = state.fallOfWickets[team] || [];
+    const fow = rowsForInnings(state.fallOfWickets[team], no);
     const fowRow = ws.addRow([fow.length ? fow.map(f => `${f.wkt}-${f.runs} (${f.over})`).join('   ') : 'No wickets fell']);
     ws.mergeCells(fowRow.number, 1, fowRow.number, 7);
     fowRow.getCell(1).font = { size: 10.5 };
@@ -5039,7 +5162,7 @@ async function buildMatchExcelWorkbook(){
       const [rs] = String(b.scoreAfter).split('-').map(n => parseInt(n, 10) || 0);
       const crr = runRateFromBalls(rs, ballsAtPoint);
       let rrr = '';
-      if(b.innings === 2 && state.target && quotaBalls !== null){
+      if(b.innings === chaseInningsNumber() && state.target && quotaBalls !== null){
         const ballsLeft = quotaBalls - ballsAtPoint;
         rrr = ballsLeft > 0 ? runRateFromBalls(Math.max(state.target - rs, 0), ballsLeft) : '—';
       }
@@ -5117,8 +5240,9 @@ async function buildMatchExcelWorkbook(){
     const start = ws.lastRow.number + 1;
     const byInnings = computeLivePartnerships();
     const allRows = [];
-    [1, 2].forEach(inn => {
-      const teamKey = inningsList.find(x => x.num === inn) ? inningsList.find(x => x.num === inn).team : null;
+    [1, 2, 3, 4].forEach(inn => {
+      const entry = inningsList.find(x => x.no === inn);
+      const teamKey = entry ? entry.team : null;
       if(!teamKey) return;
       const teamShort = teamKey === 'A' ? teamAShort : teamBShort;
       (byInnings[inn] || []).forEach(p => allRows.push({ inn, teamShort, p }));
@@ -5482,7 +5606,7 @@ async function buildTournamentExcelWorkbook(tournamentName, matches){
     let highestPartnership = null;
     matches.forEach(m => {
       if(!m.partnerships) return;
-      [1, 2].forEach(inn => {
+      [1, 2, 3, 4].forEach(inn => {
         (m.partnerships[inn] || []).forEach(p => {
           if(!highestPartnership || p.runs > highestPartnership.runs){
             highestPartnership = { runs: p.runs, batters: p.batters.join(' & '), balls: p.balls };
