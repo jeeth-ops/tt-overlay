@@ -332,6 +332,9 @@
       <div id="target-label"><span id="target-need">—</span><span id="target-num">Target —</span></div>
       <div class="progress-track"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
     </div>
+    <div id="lead-wrap" style="display:none; text-align:center; font-size:13px; font-weight:700; opacity:.85; margin-top:4px;">
+      <span id="lead-text">—</span>
+    </div>
 
     <div id="stat-strip">
       <div class="stat-box"><div class="k">Current RR</div><div class="v tabnum" id="stat-crr">0.00</div></div>
@@ -591,6 +594,22 @@ function teamScoreLine(state, teamKey){
   }
   return parts.join(' & ');
 }
+// Test cricket only: how far ahead the leading side currently is, once both
+// sides have batted at least once and no target has been set yet (a target
+// means we're in the final chase, where this naturally becomes "runs
+// needed" instead, handled by the existing target-wrap UI).
+function currentLeadTrail(state){
+  if(state.format !== 'Test' || (state.inningsNumber || 1) <= 1 || state.target) return null;
+  const archive = state.inningsArchive || [];
+  const teamTotal = (key) => {
+    let total = archive.filter(i => i.team === key).reduce((sum, i) => sum + (i.runs || 0), 0);
+    if(key === state.battingTeam) total += (state.score?.runs ?? 0);
+    return total;
+  };
+  const diff = teamTotal('A') - teamTotal('B');
+  if(diff === 0) return { tied: true };
+  return { team: diff > 0 ? 'A' : 'B', amount: Math.abs(diff) };
+}
 
 /* ============================================================
    SOCKET CONNECTION — read-only viewer, joins the same room the
@@ -709,16 +728,30 @@ function renderHero(s){
   }
 
   const targetWrap = document.getElementById('target-wrap');
+  const leadWrap = document.getElementById('lead-wrap');
   if(s.target){
     targetWrap.style.display = '';
+    if(leadWrap) leadWrap.style.display = 'none';
     const need = Math.max(s.target - s.score.runs, 0);
     const ballsLeft = calcBallsLeft(s);
     setText('target-need', ballsLeft === null ? `Need ${need} runs` : `Need ${need} off ${ballsLeft}`);
     setText('target-num', `Target ${s.target}`);
     const pct = Math.min(100, Math.max(0, (s.score.runs / s.target) * 100));
     document.getElementById('progress-fill').style.width = pct.toFixed(1) + '%';
+  } else if(leadWrap && s.format === 'Test' && (s.inningsNumber || 1) > 1){
+    targetWrap.style.display = 'none';
+    leadWrap.style.display = '';
+    const lt = currentLeadTrail(s);
+    if(!lt || lt.tied){
+      setText('lead-text', 'Scores level');
+    } else {
+      const teamObj2 = teamObj(s, lt.team);
+      const verb = lt.team === s.battingTeam ? 'lead by' : 'trail by';
+      setText('lead-text', `${teamObj2.short || teamObj2.name} ${verb} ${lt.amount} run${lt.amount === 1 ? '' : 's'}`);
+    }
   } else {
     targetWrap.style.display = 'none';
+    if(leadWrap) leadWrap.style.display = 'none';
   }
 
   setText('stat-crr', calcCRR(s).toFixed(2));
