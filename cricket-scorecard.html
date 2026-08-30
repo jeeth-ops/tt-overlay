@@ -310,6 +310,7 @@
         <div class="team-name-block">
           <div class="team-name" id="name-a">Team A</div>
           <div class="team-short" id="short-a">—</div>
+          <div class="team-prev-score tabnum" id="prev-score-a" style="display:none; font-size:12px; font-weight:700; opacity:.8; margin-top:2px;"></div>
         </div>
       </div>
       <div id="score-center">
@@ -322,6 +323,7 @@
         <div class="team-name-block">
           <div class="team-name" id="name-b">Team B</div>
           <div class="team-short" id="short-b">—</div>
+          <div class="team-prev-score tabnum" id="prev-score-b" style="display:none; font-size:12px; font-weight:700; opacity:.8; margin-top:2px;"></div>
         </div>
       </div>
     </div>
@@ -525,6 +527,11 @@ function teamObj(state, key){ return key === 'A' ? state.teamA : state.teamB; }
 
 function matchStatusText(state){
   if(state.milestonesHit && state.milestonesHit['match-result']){
+    // matchResultText is set by the panel the moment a result is decided —
+    // including cases that never set a target at all (Test innings-victory,
+    // a manually-called draw), which the old runs/wickets-only math here
+    // couldn't reconstruct.
+    if(state.matchResultText) return { badge:'RESULT', text: state.matchResultText };
     const battingTeam = teamObj(state, state.battingTeam);
     const bowlingTeam = teamObj(state, bowlingKeyOf(state));
     if(state.target && state.score.runs >= state.target){
@@ -537,18 +544,22 @@ function matchStatusText(state){
       return { badge:'RESULT', text:`${bowlingTeam.short || bowlingTeam.name} won by ${margin} run${margin===1?'':'s'}` };
     }
   }
-  if(isInningsOver(state) && !state.target){
-    return { badge:'BREAK', text:'Innings Break' };
+  if(isInningsOver(state) && !state.milestonesHit['match-result']){
+    const innNo = state.inningsNumber || 1;
+    return { badge:'BREAK', text: state.format === 'Test' ? `Innings ${innNo} Break` : 'Innings Break' };
   }
   return { badge:'LIVE', text:'Live' };
 }
 
 /* Batting rows for the CURRENT innings: archived (out) batsmen from
    battingCard, plus striker/non-striker folded in as "not out" — same
-   approach the panel itself uses when building its own summary graphics. */
+   approach the panel itself uses when building its own summary graphics.
+   Scoped to state.inningsNumber: in a Test, battingCard[team] can already
+   hold rows from an EARLIER innings of the same team. */
 function currentBattingRows(state){
   const key = state.battingTeam;
-  const rows = [...((state.battingCard && state.battingCard[key]) || [])];
+  const inn = state.inningsNumber || 1;
+  const rows = ((state.battingCard && state.battingCard[key]) || []).filter(r => (r.inningsNo || 1) === inn);
   [state.striker, state.nonStriker].forEach(p => {
     if(p && p.name && !rows.some(r => r.name === p.name)){
       rows.push({ name:p.name, runs:p.runs||0, balls:p.balls||0, fours:p.fours||0, sixes:p.sixes||0, out:false, howOut:'not out' });
@@ -558,7 +569,8 @@ function currentBattingRows(state){
 }
 function currentBowlingRows(state){
   const key = bowlingKeyOf(state);
-  const rows = [...((state.bowlingCard && state.bowlingCard[key]) || [])];
+  const inn = state.inningsNumber || 1;
+  const rows = ((state.bowlingCard && state.bowlingCard[key]) || []).filter(r => (r.inningsNo || 1) === inn);
   if(state.bowler && state.bowler.name && !rows.some(r => r.name === state.bowler.name)){
     rows.push({ ...state.bowler });
   } else if(state.bowler && state.bowler.name){
@@ -567,6 +579,17 @@ function currentBowlingRows(state){
     if(idx > -1) rows[idx] = { ...state.bowler };
   }
   return rows;
+}
+// "230 & 145/6" — a team's full Test match score line, folding in every
+// innings they've played so far (limited-overs formats only ever have one,
+// so this just returns that single score, same as before).
+function teamScoreLine(state, teamKey){
+  const archive = (state.inningsArchive || []).filter(i => i.team === teamKey);
+  const parts = archive.map(i => `${i.runs}${i.wickets < 10 ? '/' + i.wickets : ''}${i.declared ? ' d' : ''}`);
+  if(teamKey === state.battingTeam && !(archive.some(i => i.no === state.inningsNumber))){
+    parts.push(`${state.score.runs}${state.score.wickets < 10 ? '/' + state.score.wickets : ''}${state.declared ? ' d' : ''}`);
+  }
+  return parts.join(' & ');
 }
 
 /* ============================================================
@@ -669,6 +692,22 @@ function renderHero(s){
   const battingObj = teamObj(s, s.battingTeam);
   setText('batting-tag', (battingObj.short || battingObj.name || '') + ' batting');
 
+  // Test cricket: show each side's full match score line (e.g. "230 & 145/6")
+  // under their name, not just the live figure for whoever's batting now —
+  // otherwise a completed 1st innings total simply vanishes from view once
+  // the 2nd/3rd/4th innings starts.
+  const prevA = document.getElementById('prev-score-a');
+  const prevB = document.getElementById('prev-score-b');
+  if(prevA && prevB){
+    if(s.format === 'Test'){
+      const lineA = teamScoreLine(s, 'A'), lineB = teamScoreLine(s, 'B');
+      prevA.style.display = lineA ? '' : 'none'; prevA.textContent = lineA;
+      prevB.style.display = lineB ? '' : 'none'; prevB.textContent = lineB;
+    } else {
+      prevA.style.display = 'none'; prevB.style.display = 'none';
+    }
+  }
+
   const targetWrap = document.getElementById('target-wrap');
   if(s.target){
     targetWrap.style.display = '';
@@ -737,7 +776,7 @@ function renderBalls(s){
 
 /* ---------- Over-by-over + progression, computed from ballLog ---------- */
 function currentInningsLog(s){
-  const innings = s.target ? 2 : 1;
+  const innings = s.inningsNumber || (s.target ? 2 : 1);
   return (s.ballLog || []).filter(b => b.innings === innings);
 }
 const LEGAL_KINDS = new Set(['0','1','2','3','4','5','6','W','B','LB']);
@@ -895,14 +934,16 @@ function renderTables(s){
 
 /* ---------- Partnership / FOW / Extras ---------- */
 function renderBottom(s){
-  const key = JSON.stringify(s.fallOfWickets && s.fallOfWickets[s.battingTeam]) + '|' + JSON.stringify(s.extras && s.extras[s.battingTeam]) + '|' + s.partnershipRuns + ':' + s.partnershipBalls;
+  const inn = s.inningsNumber || 1;
+  const fowAll = (s.fallOfWickets && s.fallOfWickets[s.battingTeam]) || [];
+  const fow = fowAll.filter(f => (f.inningsNo || 1) === inn);
+  const key = JSON.stringify(fow) + '|' + JSON.stringify(s.extras && s.extras[s.battingTeam]) + '|' + s.partnershipRuns + ':' + s.partnershipBalls;
   if(!changed('bottom', key)) return;
 
   setText('pship-big-runs', `${s.partnershipRuns||0} (${s.partnershipBalls||0})`);
   const rr = s.partnershipBalls > 0 ? (s.partnershipRuns / (s.partnershipBalls/6)) : 0;
   setText('pship-rr', 'Run rate ' + rr.toFixed(2));
 
-  const fow = (s.fallOfWickets && s.fallOfWickets[s.battingTeam]) || [];
   const fowList = document.getElementById('fow-list');
   if(!fow.length){
     fowList.innerHTML = '<div class="empty-state">No wickets yet</div>';
