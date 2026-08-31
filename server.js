@@ -10,6 +10,33 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegInstallerPath = require('@ffmpeg-installer/ffmpeg').path;
 ffmpeg.setFfmpegPath(ffmpegInstallerPath);
 const { google } = require('googleapis');
+const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+
+// ================================================================
+// ☁️ CLOUDFLARE R2 — where clips live for their first (public-facing)
+// year on the website. R2 is S3-compatible, so we talk to it with the
+// same AWS SDK everyone uses for S3 — just pointed at Cloudflare's
+// endpoint instead of Amazon's. Safe init (same pattern as Firebase/
+// Mongo/Drive above): missing env vars just disable this feature
+// instead of crashing the whole server.
+// ================================================================
+let r2Client = null;
+const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME;
+const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL; // e.g. https://pub-xxxx.r2.dev  (no trailing slash)
+
+if (process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY) {
+    r2Client = new S3Client({
+        region: 'auto',
+        endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+        credentials: {
+            accessKeyId: process.env.R2_ACCESS_KEY_ID,
+            secretAccessKey: process.env.R2_SECRET_ACCESS_KEY
+        }
+    });
+    console.log('☁️  Cloudflare R2 client ready');
+} else {
+    console.log('⚠️  R2 env vars not set — clips will only go to Drive until they are.');
+}
 
 // Safe Initialization to prevent crashes on Render if environment variables are missing
 try {
@@ -217,6 +244,43 @@ async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
     }
 }
 
+// Uploads a clip to Cloudflare R2 (fire-and-forget, same shape as
+// uploadClipToDrive above) and saves the public playback URL on the
+// clip's Mongo record — this is the URL the scorecard's video player
+// actually points at for anything less than a year old.
+async function uploadClipToR2(matchId, filePath, eventType, ballMeta) {
+    if (!r2Client || !R2_BUCKET_NAME) {
+        console.log(`No R2 connection configured — clip stays Drive-only: ${filePath}`);
+        return;
+    }
+
+    const fileName = buildClipFileName(eventType, ballMeta);
+    const key = `${matchId}/${fileName}`;
+
+    try {
+        await r2Client.send(new PutObjectCommand({
+            Bucket: R2_BUCKET_NAME,
+            Key: key,
+            Body: fs.createReadStream(filePath),
+            ContentType: 'video/mp4'
+        }));
+
+        const publicUrl = `${R2_PUBLIC_URL}/${key}`;
+        if (clipsCollection) {
+            await clipsCollection.updateOne(
+                { matchId, filePath },
+                { $set: { r2Status: 'uploaded', r2Key: key, r2Url: publicUrl } }
+            );
+        }
+        console.log(`☁️  Uploaded to R2: ${key}`);
+    } catch (err) {
+        console.log(`R2 upload error (${key}):`, err.message || err);
+        if (clipsCollection) {
+            await clipsCollection.updateOne({ matchId, filePath }, { $set: { r2Status: 'failed' } }).catch(() => {});
+        }
+    }
+}
+
 const io = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] }
 });
@@ -252,6 +316,77 @@ function safeMatchId(id) {
     // user input directly in a path.
     return String(id || '').replace(/[^a-zA-Z0-9_-]/g, '');
 }
+
+// ================================================================
+// 🧹 DISK CLEANUP — this is the piece that stops the server's disk
+// from filling up over hundreds of matches.
+//
+// IMPORTANT: we never delete chunks mid-match. cutClip() always needs
+// chunk 0 onward to rebuild a valid webm, so removing any chunk before
+// a match ends could silently break the NEXT clip request. Instead we
+// wait until recording has stopped AND every clip that could still be
+// in flight has had time to finish, then delete the whole match's
+// chunk folder in one go. This keeps clip-cutting 100% unaffected
+// while still guaranteeing nothing lives on disk forever.
+// ================================================================
+
+// Longest a clip request can still be pending after "stop" is pressed:
+// requestClip() waits up to (eventTimestamp + 10s) before cutting, so a
+// wicket/four/six recorded in the last few seconds before stop could
+// still need its chunks up to ~11s later. 90s is a generous safety
+// margin on top of that.
+const RECORDING_CLEANUP_DELAY_MS = 90 * 1000;
+
+function deleteRecordingFolder(matchId, chunkDir) {
+    fs.rm(chunkDir, { recursive: true, force: true }, (err) => {
+        if (err) {
+            console.log(`🧹 Cleanup error for match ${matchId}:`, err.message);
+        } else {
+            console.log(`🧹 Cleaned up recording chunks for match ${matchId}`);
+        }
+    });
+    delete recordingSessions[matchId];
+}
+
+function scheduleRecordingCleanup(matchId) {
+    const session = recordingSessions[matchId];
+    if (!session) return;
+    // Avoid double-scheduling if stop is somehow called twice.
+    if (session.cleanupTimer) clearTimeout(session.cleanupTimer);
+    session.cleanupTimer = setTimeout(() => {
+        deleteRecordingFolder(matchId, session.chunkDir);
+    }, RECORDING_CLEANUP_DELAY_MS);
+}
+
+// 🛟 Safety net for crashes / missed "stop" calls: even if a match's
+// stop event never fires (server restart mid-match, operator's tab
+// closing without hitting stop, network drop, etc.), this sweep makes
+// sure a stray folder can never sit on disk forever. Anything older
+// than 12 hours with no in-memory session is almost certainly a dead
+// leftover, since real matches don't run that long.
+const ORPHAN_RECORDING_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+
+function sweepOrphanedRecordings() {
+    fs.readdir(RECORDINGS_DIR, (err, entries) => {
+        if (err) return;
+        entries.forEach((matchId) => {
+            if (recordingSessions[matchId]) return; // still active / pending cleanup
+            const dir = path.join(RECORDINGS_DIR, matchId);
+            fs.stat(dir, (statErr, stats) => {
+                if (statErr || !stats.isDirectory()) return;
+                if (Date.now() - stats.mtimeMs > ORPHAN_RECORDING_MAX_AGE_MS) {
+                    fs.rm(dir, { recursive: true, force: true }, (rmErr) => {
+                        if (!rmErr) console.log(`🧹 Swept orphaned recording folder: ${matchId}`);
+                    });
+                }
+            });
+        });
+    });
+}
+// Run once shortly after boot (catches anything left from before a
+// deploy/restart) and then every hour going forward.
+setTimeout(sweepOrphanedRecordings, 60 * 1000);
+setInterval(sweepOrphanedRecordings, 60 * 60 * 1000);
 
 app.post('/api/recording/start', async (req, res) => {
     const matchId = safeMatchId(req.body.matchId);
@@ -310,6 +445,9 @@ app.post('/api/recording/stop', async (req, res) => {
         } catch (err) { console.log('Mongo recording/stop error:', err); }
     }
     console.log(`⏹ Recording stopped for match ${matchId} (${session.chunks.length} chunks)`);
+    // Clips can still be in flight for a few more seconds — schedule
+    // the actual disk cleanup instead of deleting immediately.
+    scheduleRecordingCleanup(matchId);
     res.json({ success: true, chunkCount: session.chunks.length });
 });
 
@@ -472,7 +610,11 @@ async function cutClip({ matchId, eventType, eventTimestamp, ballMeta }) {
             });
         }
         console.log(`🎬 Clip ready: ${outFile}`);
-        uploadClipToDrive(matchId, outFile, eventType, ballMeta); // fire-and-forget — never blocks/delays clip cutting
+        // Both uploads are fire-and-forget — neither blocks/delays clip
+        // cutting, and one failing (e.g. Drive token expired) never stops
+        // the other from succeeding.
+        uploadClipToR2(matchId, outFile, eventType, ballMeta);
+        uploadClipToDrive(matchId, outFile, eventType, ballMeta);
     } catch (err) {
         console.log(`Clip generation error (${matchId}/${eventType}):`, err.message || err);
     } finally {
