@@ -836,6 +836,7 @@ function mergeWithDefaults(saved){
     striker: { ...def.striker, ...(saved.striker||{}) },
     nonStriker: { ...def.nonStriker, ...(saved.nonStriker||{}) },
     bowler: { ...def.bowler, ...(saved.bowler||{}) },
+    playerHistorySections: { ...def.playerHistorySections, ...(saved.playerHistorySections||{}) },
     // Per-innings archives, keyed by team ('A'/'B'), that feed the two
     // auto-popup graphics (Innings Bowling Summary / Match Summary) — they
     // accumulate across the WHOLE match and are only cleared on Reset.
@@ -932,6 +933,12 @@ function defaultState(){
     showPlayerHistoryCard: false,
     playerHistoryOverlayName: '',
     playerHistorySearch: '',
+    // Which of the 3 Player History sections (This Match / This
+    // Tournament / Every Other Tournament) actually go out to the
+    // overlay — independent of what the panel itself always shows the
+    // operator. Operator-controlled checkboxes next to the "Show on
+    // Overlay" button; unchecked sections are simply left off the card.
+    playerHistorySections: { thisMatch: true, thisTournament: true, otherTournaments: true },
     showTeamHistoryCard: false,
     teamHistoryOverlayName: '',
     teamHistorySearch: '',
@@ -3149,6 +3156,52 @@ function getPlayerHistoryRows(name, matches){
   return { rows, lastTeamName };
 }
 
+// ---- THIS MATCH (live, not-yet-saved) stats for a player -----------------
+// Uses buildMatchRecordForLeague() so an in-progress knock/spell (the
+// batsman still at the crease, the bowler still mid-over) is folded in,
+// exactly like every other "This Match" scope stat card — not just
+// whatever has already been archived to state.battingCard/bowlingCard.
+function getThisMatchPlayerStats(name){
+  const lower = (name || '').trim().toLowerCase();
+  if(!lower) return null;
+  const m = buildMatchRecordForLeague();
+  let runs = 0, balls = 0, fours = 0, sixes = 0, out = false, batInnings = 0;
+  let bOvers = 0, bBalls = 0, bMaidens = 0, bRuns = 0, bWickets = 0, bowlInnings = 0;
+  ['A','B'].forEach(k => {
+    (m.battingCard[k] || []).forEach(b => {
+      if((b.name || '').trim().toLowerCase() !== lower) return;
+      batInnings++; runs += b.runs || 0; balls += b.balls || 0;
+      fours += b.fours || 0; sixes += b.sixes || 0; if(b.out) out = true;
+    });
+    (m.bowlingCard[k] || []).forEach(b => {
+      if((b.name || '').trim().toLowerCase() !== lower) return;
+      bowlInnings++; bOvers += b.overs || 0; bBalls += b.balls || 0;
+      bMaidens += b.maidens || 0; bRuns += b.runs || 0; bWickets += b.wickets || 0;
+    });
+  });
+  if(!batInnings && !bowlInnings) return null;
+  bOvers += Math.floor(bBalls / 6); bBalls = bBalls % 6;
+  const batting = batInnings ? { runs, balls, fours, sixes, out,
+    sr: balls > 0 ? ((runs / balls) * 100).toFixed(1) : '0.0' } : null;
+  const bowling = bowlInnings ? { overs: bOvers, balls: bBalls, maidens: bMaidens, runs: bRuns, wickets: bWickets,
+    economy: bowlerEcon({ overs: bOvers, balls: bBalls, runs: bRuns }) } : null;
+  const battingLine = batting ? `${batting.runs}${batting.out ? '' : '*'} (${batting.balls}b) · 4s ${batting.fours} · 6s ${batting.sixes} · SR ${batting.sr}` : '';
+  const bowlingLine = bowling ? `${fmtBowlerOvers(bowling.overs, bowling.balls)} ov · ${bowling.runs} R · ${bowling.wickets} W · Econ ${bowling.economy}` : '';
+  return { batting, bowling, battingLine, bowlingLine };
+}
+
+// Builds a "Label value · Label value" line from whichever fields actually
+// exist on a stats object — so a leaner backend payload (missing 50s/100s,
+// say) still renders cleanly instead of showing "undefined".
+function formatStatFields(obj, fieldDefs){
+  if(!obj) return '';
+  return fieldDefs
+    .filter(([key]) => obj[key] !== undefined && obj[key] !== null && obj[key] !== '')
+    .map(([key, label]) => `${label} ${obj[key]}`).join(' · ');
+}
+const BATTING_FIELD_DEFS = [['innings','Inn'],['matches','Inn'],['runs','Runs'],['average','Avg'],['sr','SR'],['highScore','HS'],['fours','4s'],['sixes','6s'],['fifties','50s'],['hundreds','100s']];
+const BOWLING_FIELD_DEFS = [['matches','M'],['overs','Ov'],['wickets','Wkts'],['economy','Econ'],['average','Avg'],['best','Best'],['maidens','Mdns']];
+
 // A currently-configured team (state.teamA/B, which have colour/logo —
 // saved match records don't) whose name matches, so the overlay card can
 // be branded consistently with the rest of the broadcast. Falls back to
@@ -3225,10 +3278,11 @@ function renderPlayerHistoryResults(rawName, matches){
   if(!name){ resultsEl.innerHTML = 'Type or pick a player to see their tournament history.'; return; }
 
   const { rows } = getPlayerHistoryRows(name, matches);
-  if(!rows.length){ resultsEl.innerHTML = `No saved matches found for "${escapeHtmlPanel(name)}" in this tournament.`; return; }
-
+  const thisMatch = getThisMatchPlayerStats(name);
   const batTotals = computeBatterTournamentStats(name);
   const bowlTotals = computeBowlerTournamentStats(name);
+
+  if(!rows.length && !thisMatch){ resultsEl.innerHTML = `No data found for "${escapeHtmlPanel(name)}" — not in this match and no saved matches in this tournament.`; return; }
 
   const matchRowsHtml = rows.map(r => `
     <tr>
@@ -3238,8 +3292,22 @@ function renderPlayerHistoryResults(rawName, matches){
 
   const isShownOnOverlay = state.showPlayerHistoryCard && (state.playerHistoryOverlayName || '').toLowerCase() === name.toLowerCase();
 
+  // Three separate sections, kept apart on purpose (never merged into one
+  // combined line): (1) this live/unsaved match, (2) totals + match-by-
+  // match for the tournament currently loaded in this panel, (3) every
+  // OTHER tournament this player has a saved history in. Batting and
+  // bowling are always shown on their own line within each section too.
   resultsEl.innerHTML = `
-    <div style="font-weight:700;margin-bottom:6px;">${escapeHtmlPanel(name)} — tournament history</div>
+    <div style="font-weight:700;margin-bottom:6px;">${escapeHtmlPanel(name)}</div>
+
+    <div style="font-weight:700;">① This Match</div>
+    <div style="font-size:11px;color:var(--text-dim);line-height:1.7;margin-bottom:10px;">
+      ${thisMatch && thisMatch.batting ? `Batting — ${thisMatch.battingLine}` : 'Batting — did not bat yet'}<br>
+      ${thisMatch && thisMatch.bowling ? `Bowling — ${thisMatch.bowlingLine}` : 'Bowling — did not bowl yet'}
+    </div>
+
+    <div style="font-weight:700;">② This Tournament</div>
+    ${rows.length ? `
     <div style="overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;font-size:11px;">
         <thead><tr style="color:var(--text-dim);text-align:left;">
@@ -3247,40 +3315,63 @@ function renderPlayerHistoryResults(rawName, matches){
         </tr></thead>
         <tbody>${matchRowsHtml}</tbody>
       </table>
+    </div>` : ''}
+    <div style="font-size:11px;color:var(--text-dim);line-height:1.7;margin-bottom:10px;">
+      ${batTotals ? `Batting — ${formatStatFields(batTotals, BATTING_FIELD_DEFS)}` : 'Batting — no saved data in this tournament'}<br>
+      ${bowlTotals ? `Bowling — ${formatStatFields(bowlTotals, BOWLING_FIELD_DEFS)}` : 'Bowling — no saved data in this tournament'}
     </div>
-    <div style="margin-top:10px;font-weight:700;">This Tournament — totals</div>
-    <div style="font-size:11px;color:var(--text-dim);line-height:1.7;">
-      ${batTotals ? `Batting — Innings ${batTotals.matches} · Runs ${batTotals.runs} · Avg ${batTotals.average} · SR ${batTotals.sr} · HS ${batTotals.highScore} · 4s ${batTotals.fours} · 6s ${batTotals.sixes} · 50s ${batTotals.fifties} · 100s ${batTotals.hundreds}` : ''}
-      ${bowlTotals ? `<br>Bowling — Matches ${bowlTotals.matches} · Overs ${bowlTotals.overs} · Runs ${bowlTotals.runs} · Wkts ${bowlTotals.wickets} · Econ ${bowlTotals.economy} · Avg ${bowlTotals.average} · Best ${bowlTotals.best} · Maidens ${bowlTotals.maidens}` : ''}
+
+    <div style="font-weight:700;">③ Every Other Tournament Played</div>
+    <div id="player-history-tournament-list" style="font-size:11px;color:var(--text-dim);line-height:1.9;">${currentOwnerUid() ? 'Loading…' : 'Sign in required to load past-tournament history.'}</div>
+
+    <div style="margin-top:12px;font-weight:700;">📡 Show on Overlay:</div>
+    <div style="font-size:11px;display:flex;flex-direction:column;gap:4px;margin:4px 0 8px;">
+      <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="phs-thisMatch" ${state.playerHistorySections.thisMatch ? 'checked' : ''}> ① This Match</label>
+      <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="phs-thisTournament" ${state.playerHistorySections.thisTournament ? 'checked' : ''}> ② This Tournament</label>
+      <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="phs-otherTournaments" ${state.playerHistorySections.otherTournaments ? 'checked' : ''}> ③ Every Other Tournament Played</label>
     </div>
-    <div style="margin-top:10px;font-weight:700;">Career — all tournaments</div>
-    <div id="player-history-career-line" style="font-size:11px;color:var(--text-dim);line-height:1.7;">${currentOwnerUid() ? 'Loading…' : 'Sign in required to load career stats.'}</div>
-    <div style="margin-top:10px;font-weight:700;">Tournament History</div>
-    <div id="player-history-tournament-list" style="font-size:11px;color:var(--text-dim);line-height:1.9;">${currentOwnerUid() ? 'Loading…' : ''}</div>
+    <div class="shortcut-hint">Untick a box to leave that section off the overlay card — pick any one, two, or all three; they never have to go out together.</div>
+
     <button type="button" class="small ${isShownOnOverlay ? '' : 'primary'} full" id="player-history-overlay-toggle" style="margin-top:10px;">
       ${isShownOnOverlay ? '🔴 Hide from Overlay' : '📡 Show on Overlay'}
     </button>
   `;
 
-  // Career line + tournament-by-tournament breakdown load async (server
-  // round-trip across every saved league) — fill in once they resolve,
-  // guarded so a fast second search doesn't have a stale fetch clobber
-  // the currently-displayed player.
-  if(currentOwnerUid()){
-    fetchPlayerCareerStats(name).then(career => {
-      if(state.playerHistorySearch !== name) return; // player changed while this was in flight
-      const el = document.getElementById('player-history-career-line');
-      if(el) el.textContent = career && career.hasData ? career.line : 'No career data yet.';
+  // Section checkboxes just record which blocks go to the overlay — if
+  // the card is already live, re-push immediately so the change is
+  // visible without needing to toggle the card off and on again.
+  ['thisMatch','thisTournament','otherTournaments'].forEach(key => {
+    const box = document.getElementById('phs-' + key);
+    box.addEventListener('change', async () => {
+      state.playerHistorySections[key] = box.checked;
+      saveLocal();
+      if(isShownOnOverlay && socket && socket.connected){
+        socket.emit('cricketPlayerHistory', { data: await buildPlayerHistoryPayload(name) });
+      }
     });
-    fetchPlayerTournamentHistoryPanel(name).then(rows => {
+  });
+
+  // Past-tournament breakdown loads async (server round-trip across every
+  // saved league) — fill in once it resolves, guarded so a fast second
+  // search doesn't have a stale fetch clobber the currently-displayed
+  // player. Each tournament gets its own block with batting and bowling
+  // on separate lines, never merged into one string.
+  if(currentOwnerUid()){
+    fetchPlayerTournamentHistoryPanel(name).then(histRows => {
       if(state.playerHistorySearch !== name) return;
       const el = document.getElementById('player-history-tournament-list');
       if(!el) return;
-      if(!rows.length){ el.textContent = 'No other tournaments recorded yet.'; return; }
-      el.innerHTML = rows.map(t => {
-        const bat = t.batting, bowl = t.bowling;
-        const line = [bat ? `${bat.runs} Runs` : null, bowl ? `${bowl.wickets} Wkts` : null].filter(Boolean).join(' · ') || 'No stats';
-        return `<div>${escapeHtmlPanel(t.leagueName)} — ${line}</div>`;
+      if(!histRows.length){ el.textContent = 'No other tournaments recorded yet.'; return; }
+      el.innerHTML = histRows.map(t => {
+        const batLine = formatStatFields(t.batting, BATTING_FIELD_DEFS);
+        const bowlLine = formatStatFields(t.bowling, BOWLING_FIELD_DEFS);
+        return `
+          <div style="margin-bottom:6px;">
+            <b>${escapeHtmlPanel(t.leagueName)}</b>${t.matchesPlayed ? ` (${t.matchesPlayed} match${t.matchesPlayed === 1 ? '' : 'es'})` : ''}<br>
+            ${batLine ? `Batting — ${batLine}<br>` : ''}
+            ${bowlLine ? `Bowling — ${bowlLine}` : ''}
+            ${!batLine && !bowlLine ? 'No stats' : ''}
+          </div>`;
       }).join('');
     });
   }
@@ -3305,19 +3396,21 @@ function renderPlayerHistoryResults(rawName, matches){
 // Async: career totals + tournament history come from the backend (every
 // saved league), unlike the "this tournament" totals which are computed
 // locally from currentLeagueMatches().
+// Sent to the overlay as three deliberately separate blocks — thisMatch,
+// thisTournament, and tournamentHistory (every OTHER tournament) — each
+// with batting/bowling kept apart, so the on-screen card can render them
+// as distinct sections instead of one merged line.
 async function buildPlayerHistoryPayload(name){
   const matches = currentLeagueMatches();
   const { rows, lastTeamName } = getPlayerHistoryRows(name, matches);
   const teamObj = findLoadedTeamByName(lastTeamName);
+  const thisMatch = getThisMatchPlayerStats(name);
   const batTotals = computeBatterTournamentStats(name);
   const bowlTotals = computeBowlerTournamentStats(name);
-  const totalsParts = [];
-  if(batTotals) totalsParts.push(`INN ${batTotals.matches} · RUNS ${batTotals.runs} · AVG ${batTotals.average} · SR ${batTotals.sr} · HS ${batTotals.highScore}`);
-  if(bowlTotals) totalsParts.push(`${bowlTotals.wickets} WKTS · ECON ${bowlTotals.economy}`);
 
-  const [career, tournamentHistory] = currentOwnerUid()
-    ? await Promise.all([fetchPlayerCareerStats(name), fetchPlayerTournamentHistoryPanel(name)])
-    : [null, []];
+  const tournamentHistory = currentOwnerUid()
+    ? await fetchPlayerTournamentHistoryPanel(name)
+    : [];
 
   return {
     playerName: name,
@@ -3325,16 +3418,26 @@ async function buildPlayerHistoryPayload(name){
     teamShort: teamObj ? teamObj.short : '',
     teamColor: teamObj ? teamObj.color : '',
     teamLogo: teamObj ? teamObj.logoUrl : '',
-    rows,
-    totalsLine: totalsParts.join('  ·  '),
-    careerLine: career && career.hasData ? career.line : '',
+    // Which sections the operator actually wants on screen — the overlay
+    // only renders the ones flagged true here, independent of each other.
+    sections: { ...state.playerHistorySections },
+    thisMatch: thisMatch ? {
+      batting: thisMatch.batting, bowling: thisMatch.bowling,
+      battingLine: thisMatch.battingLine, bowlingLine: thisMatch.bowlingLine
+    } : null,
+    thisTournament: {
+      rows,
+      batting: batTotals, bowling: bowlTotals,
+      battingLine: formatStatFields(batTotals, BATTING_FIELD_DEFS),
+      bowlingLine: formatStatFields(bowlTotals, BOWLING_FIELD_DEFS)
+    },
     tournamentHistory: tournamentHistory.map(t => ({
       leagueName: t.leagueName,
       matchesPlayed: t.matchesPlayed,
-      runs: t.batting ? t.batting.runs : null,
-      average: t.batting ? t.batting.average : null,
-      wickets: t.bowling ? t.bowling.wickets : null,
-      economy: t.bowling ? t.bowling.economy : null
+      batting: t.batting || null,
+      bowling: t.bowling || null,
+      battingLine: formatStatFields(t.batting, BATTING_FIELD_DEFS),
+      bowlingLine: formatStatFields(t.bowling, BOWLING_FIELD_DEFS)
     }))
   };
 }
