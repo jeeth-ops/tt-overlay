@@ -1328,26 +1328,69 @@ function statLineHtml(scope, stats){
     return isBowler
       ? `<div class="cd-stat-row">
           <div class="cd-stat-box"><div class="k">Overs</div><div class="v tabnum">${w.overs}</div></div>
+          <div class="cd-stat-box"><div class="k">Maidens</div><div class="v tabnum">${w.maidens}</div></div>
           <div class="cd-stat-box"><div class="k">Runs</div><div class="v tabnum">${w.runs}</div></div>
           <div class="cd-stat-box"><div class="k">Wkts</div><div class="v tabnum">${w.wickets}</div></div>
           <div class="cd-stat-box"><div class="k">Econ</div><div class="v tabnum">${w.economy}</div></div>
+        </div>
+        <div class="cd-stat-row" style="margin-top:8px;">
+          <div class="cd-stat-box"><div class="k">Wides</div><div class="v tabnum">${w.wides||0}</div></div>
+          <div class="cd-stat-box"><div class="k">No Balls</div><div class="v tabnum">${w.noballs||0}</div></div>
         </div>`
       : `<div class="cd-stat-row">
           <div class="cd-stat-box"><div class="k">Runs</div><div class="v tabnum">${b.runs}${b.out ? '' : '*'}</div></div>
           <div class="cd-stat-box"><div class="k">Balls</div><div class="v tabnum">${b.balls}</div></div>
           <div class="cd-stat-box"><div class="k">4s/6s</div><div class="v tabnum">${b.fours}/${b.sixes}</div></div>
           <div class="cd-stat-box"><div class="k">SR</div><div class="v tabnum">${b.strikeRate}</div></div>
-        </div>`;
+        </div>
+        ${b.out ? `<div style="text-align:center; font-size:11px; color:var(--text-dim); margin-top:6px; font-weight:600;">Out — ${escapeHtml(b.howOut || 'dismissed')}</div>` : ''}`;
   }
   // tournament / career — rollup shape from computeLeaderboards (may be null
   // for either side if this player hasn't batted/bowled in scope yet).
   const bat = stats.batting, bowl = stats.bowling;
   return `<div class="cd-stat-row">
+      <div class="cd-stat-box"><div class="k">Matches</div><div class="v tabnum">${bat ? bat.innings : (bowl ? bowl.innings : 0)}</div></div>
       <div class="cd-stat-box"><div class="k">Runs</div><div class="v tabnum">${bat ? bat.runs : 0}</div></div>
       <div class="cd-stat-box"><div class="k">Bat Avg</div><div class="v tabnum">${bat ? bat.average : '—'}</div></div>
+      <div class="cd-stat-box"><div class="k">SR</div><div class="v tabnum">${bat ? bat.strikeRate : '—'}</div></div>
+    </div>
+    <div class="cd-stat-row" style="margin-top:8px;">
       <div class="cd-stat-box"><div class="k">Wkts</div><div class="v tabnum">${bowl ? bowl.wickets : 0}</div></div>
       <div class="cd-stat-box"><div class="k">Econ</div><div class="v tabnum">${bowl ? bowl.economy : '—'}</div></div>
+      <div class="cd-stat-box"><div class="k">Best</div><div class="v tabnum">${bowl ? bowl.bestFigures : '—'}</div></div>
     </div>`;
+}
+
+// CAREER tab only — one row per tournament this player has ever appeared
+// in (spec: "Tournament History"). Uses the new
+// /api/stats/player/:playerKey/tournaments endpoint.
+async function fetchPlayerTournamentHistory(name){
+  const pk = playerKeyOf(name);
+  const { ownerUid } = getLeagueCtx();
+  if(!pk || !ownerUid) return [];
+  try{
+    const res = await fetch(`${clipApiBase()}/api/stats/player/${encodeURIComponent(pk)}/tournaments?uid=${encodeURIComponent(ownerUid)}`);
+    if(!res.ok) return [];
+    const data = await res.json();
+    return (data && data.success && data.tournaments) || [];
+  } catch(err){ console.warn('Tournament history fetch failed', err); return []; }
+}
+function tournamentHistoryHtml(rows){
+  if(!rows.length) return '';
+  return `<div class="clip-group-label" style="margin-top:16px;">Tournament History</div>` +
+    rows.map(t => {
+      const bat = t.batting, bowl = t.bowling;
+      const line = [
+        bat ? `${bat.runs} runs (avg ${bat.average})` : null,
+        bowl ? `${bowl.wickets} wkts (econ ${bowl.economy})` : null
+      ].filter(Boolean).join(' · ') || 'No stats';
+      return `<div class="hub-history-row" style="cursor:default;">
+          <div>
+            <div class="hh-teams">${escapeHtml(t.leagueName)}</div>
+            <div class="hh-result">${t.matchesPlayed} match${t.matchesPlayed === 1 ? '' : 'es'} · ${escapeHtml(line)}</div>
+          </div>
+        </div>`;
+    }).join('');
 }
 
 async function loadClipDrawerScope(scope){
@@ -1380,6 +1423,15 @@ async function loadClipDrawerScope(scope){
     html += clipGroupHtml('Dismissal', clipsData.batting.dismissal);
   }
   body.innerHTML = html || `<div class="empty-state">No clips yet ${scope === 'match' ? 'this match' : scope === 'tournament' ? 'this tournament' : 'in career'}.</div>`;
+
+  // CAREER tab: append the tournament-by-tournament breakdown below the
+  // clips, so a viewer scrolls straight from "career totals" into
+  // "here's exactly which tournaments made up that total".
+  if(scope === 'career'){
+    const rows = await fetchPlayerTournamentHistory(name);
+    if(rows.length) body.insertAdjacentHTML('beforeend', tournamentHistoryHtml(rows));
+  }
+
   wireClipRows(body);
 }
 
