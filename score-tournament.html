@@ -110,10 +110,15 @@ async function init(){
   if(!token){ showEmpty('No tournament specified.'); return; }
   try{
     if(matchId){
-      const res = await fetch(`/api/public/tournament/${encodeURIComponent(token)}/match/${encodeURIComponent(matchId)}`);
-      const data = await res.json();
-      if(data && data.success && data.match){ renderSingleMatch(data.match, data.displayName, token); }
-      else { showEmpty('Match not found in this tournament.'); }
+      // Past matches render through the exact same page (same hero, same
+      // tables, same clip icons) that live matches use — cricket-scorecard.html
+      // in "history" mode. This keeps ONE code path for every match view
+      // instead of a second, clip-less renderer living here, so a match's
+      // clips only ever load through the one place that scopes them by
+      // matchId (fetchMatchClips / fetchTeamClips / fetchPlayerClips) —
+      // no chance of one match's clips showing up under another.
+      location.replace(`/cricket-scorecard?token=${encodeURIComponent(token)}&match=${encodeURIComponent(matchId)}&history=1`);
+      return;
     } else {
       const res = await fetch(`/api/public/tournament/${encodeURIComponent(token)}`);
       const data = await res.json();
@@ -219,38 +224,11 @@ function renderPortal(data, token){
     c.querySelector(`.tab-panel[data-panel="${btn.dataset.tab}"]`).classList.add('active');
   }));
   c.querySelectorAll('[data-goto-match]').forEach(row => row.addEventListener('click', () => {
-    location.href = `/score/tournament/${encodeURIComponent(token)}/match/${encodeURIComponent(row.dataset.gotoMatch)}`;
+    // Same destination as the matchId branch in init() above — one single
+    // place (cricket-scorecard.html, history mode) renders every past
+    // match, clips included, correctly scoped to that one matchId.
+    location.href = `/cricket-scorecard?token=${encodeURIComponent(token)}&match=${encodeURIComponent(row.dataset.gotoMatch)}&history=1`;
   }));
-}
-
-/* ---- Single match detail within a tournament — same final-scorecard
-   layout as the standalone score-match.html page. ---- */
-function inningsCard(teamLabel, teamObj, score, battingRows, bowlingRows, extras, fow, partnerships){
-  const battingBody = (battingRows||[]).map(b => `<tr><td>${escapeHtml(b.name)}${b.out===false?' <span style="color:var(--accent);">•</span>':''}<span style="display:block;font-size:10.5px;color:var(--text-faint);">${escapeHtml(b.out===false?'not out':(b.howOut||'out'))}</span></td><td class="num tabnum">${b.runs||0}</td><td class="num tabnum">${b.balls||0}</td><td class="num tabnum">${b.fours||0}</td><td class="num tabnum">${b.sixes||0}</td><td class="num tabnum">${strikeRate(b.runs||0,b.balls||0)}</td></tr>`).join('') || '<tr><td colspan="6" style="color:var(--text-faint);">No batting data</td></tr>';
-  const bowlingBody = (bowlingRows||[]).map(b => `<tr><td>${escapeHtml(b.name)}</td><td class="num tabnum">${fmtOvers(b.overs,b.balls)}</td><td class="num tabnum">${b.maidens||0}</td><td class="num tabnum">${b.runs||0}</td><td class="num tabnum">${b.wickets||0}</td><td class="num tabnum">${economy(b.runs||0,b.overs,b.balls)}</td></tr>`).join('') || '<tr><td colspan="6" style="color:var(--text-faint);">No bowling data</td></tr>';
-  const ex = extras || {}; const total=(ex.wd||0)+(ex.nb||0)+(ex.b||0)+(ex.lb||0);
-  return `
-  <div class="card"><div class="section-title"><span class="dash"></span>${escapeHtml(teamLabel)} — ${score.runs||0}-${score.wickets||0} (${score.overs||'0.0'} ov)</div></div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
-    <div class="card"><div class="section-title"><span class="dash"></span>Batting</div><table><thead><tr><th>Batter</th><th class="num">R</th><th class="num">B</th><th class="num">4s</th><th class="num">6s</th><th class="num">SR</th></tr></thead><tbody>${battingBody}</tbody></table></div>
-    <div class="card"><div class="section-title"><span class="dash"></span>Bowling</div><table><thead><tr><th>Bowler</th><th class="num">O</th><th class="num">M</th><th class="num">R</th><th class="num">W</th><th class="num">Econ</th></tr></thead><tbody>${bowlingBody}</tbody></table></div>
-  </div>
-  <div class="card"><div class="section-title"><span class="dash"></span>Extras</div><div style="text-align:center;">Wd ${ex.wd||0} · Nb ${ex.nb||0} · B ${ex.b||0} · Lb ${ex.lb||0} · Total ${total}</div></div>`;
-}
-function renderSingleMatch(m, tournamentName, token){
-  document.getElementById('loading-state').style.display='none';
-  const c = document.getElementById('content'); c.style.display='';
-  document.title = `${m.teamA.short||m.teamA.name} vs ${m.teamB.short||m.teamB.name} — Scorvix`;
-  const backLink = `<a href="/score/tournament/${encodeURIComponent(token)}" style="display:inline-block;margin-bottom:4px;color:var(--accent);font-weight:700;font-size:12.5px;">← Back to ${escapeHtml(tournamentName)}</a>`;
-  const heroCard = `
-  <div class="card" id="tourney-hero">
-    ${backLink}
-    <div id="tourney-name" style="margin-top:8px;">${escapeHtml(m.teamA.short||m.teamA.name)} vs ${escapeHtml(m.teamB.short||m.teamB.name)}</div>
-    <div id="tourney-meta">${escapeHtml(m.venue||'')} ${m.venue?'· ':''}${escapeHtml(m.format||'')} · <span class="chip">${escapeHtml(resultText(m))}</span></div>
-  </div>`;
-  const inningsA = inningsCard(`${m.teamA.short||m.teamA.name} Innings`, m.teamA, m.scoreA, (m.battingCard&&m.battingCard.A)||[], (m.bowlingCard&&m.bowlingCard.B)||[], (m.extras&&m.extras.A)||{});
-  const inningsB = inningsCard(`${m.teamB.short||m.teamB.name} Innings`, m.teamB, m.scoreB, (m.battingCard&&m.battingCard.B)||[], (m.bowlingCard&&m.bowlingCard.A)||[], (m.extras&&m.extras.B)||{});
-  c.innerHTML = heroCard + inningsA + inningsB;
 }
 
 init();
