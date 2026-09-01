@@ -1203,13 +1203,56 @@ async function fetchPlayerStats(name, scope){
   const pk = playerKeyOf(name);
   if(!pk) return null;
   scope = scope || 'match';
-  if(scope === 'match' && !getMatchId()) return null;
-  if(scope !== 'match' && !hasLeagueCtx()) return null;
+  // "This Match" stats are already sitting in the live socket state that
+  // drives the visible batting/bowling tables — no need to round-trip to
+  // the backend (which has no persistence for a live-only match and was
+  // coming back with everything zeroed). Tournament/career scopes still
+  // need the API since they aggregate across matches.
+  if(scope === 'match') return matchStatsForPlayer(name, cdCurrentPlayer && cdCurrentPlayer.role);
+  if(!hasLeagueCtx()) return null;
   try{
     const res = await fetch(`${clipApiBase()}/api/stats/player/${encodeURIComponent(pk)}?${scopeQuery(scope)}`);
     if(!res.ok) return null;
     return await res.json();
   } catch(err){ console.warn('Stats fetch failed', err); return null; }
+}
+
+// Builds the same {success, batting|bowling} shape fetchPlayerStats would
+// return, but read straight from latestState (the live socket data) so the
+// "This Match" tab works with zero backend dependency.
+function matchStatsForPlayer(name, role){
+  if(!latestState) return null;
+  if(role === 'bowler'){
+    const row = currentBowlingRows(latestState).find(r => r.name === name);
+    return row ? {
+      success: true,
+      bowling: {
+        overs: row.overs || 0,
+        maidens: row.maidens || 0,
+        runs: row.runs || 0,
+        wickets: row.wickets || 0,
+        economy: bowlerEcon(row).toFixed(2),
+        wides: row.wides || 0,
+        noballs: row.noballs || 0
+      }
+    } : null;
+  }
+  const battingRow = currentBattingRows(latestState).find(r => r.name === name);
+  if(battingRow){
+    return {
+      success: true,
+      batting: {
+        runs: battingRow.runs || 0,
+        balls: battingRow.balls || 0,
+        fours: battingRow.fours || 0,
+        sixes: battingRow.sixes || 0,
+        strikeRate: strikeRate(battingRow.runs || 0, battingRow.balls || 0).toFixed(1),
+        out: !!battingRow.out,
+        howOut: battingRow.howOut || ''
+      }
+    };
+  }
+  return null;
 }
 
 // Match-wide clip feed for the Match Highlights card — every FOUR/SIX/WICKET
