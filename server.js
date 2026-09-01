@@ -227,7 +227,7 @@ async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
 
     if (!uploadClient || !folderId) {
         console.log(`No Drive connection for match ${matchId} — clip stays local only: ${filePath}`);
-        return;
+        return false;
     }
 
     const fileName = buildClipFileName(eventType, ballMeta);
@@ -244,22 +244,29 @@ async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
             );
         }
         console.log(`☁️  Uploaded to Drive: ${fileName}`);
+        return true;
     } catch (err) {
         console.log(`Drive upload error (${fileName}):`, err.message || err);
         if (clipsCollection) {
             await clipsCollection.updateOne({ matchId, filePath }, { $set: { driveStatus: 'failed' } }).catch(() => {});
         }
+        return false;
     }
 }
 
-// Uploads a clip to Cloudflare R2 (fire-and-forget, same shape as
-// uploadClipToDrive above) and saves the public playback URL on the
-// clip's Mongo record — this is the URL the scorecard's video player
-// actually points at for anything less than a year old.
+// Uploads a clip to Cloudflare R2 (same shape as uploadClipToDrive above)
+// and saves the public playback URL on the clip's Mongo record — this is
+// the URL the scorecard's video player actually points at for anything
+// less than a year old. Mongo NEVER stores the video bytes — only this
+// small metadata doc (matchId, playerKeys, eventType, r2Url/driveUrl). The
+// actual .mp4 lives only in R2 (and optionally Drive); see cutClip below,
+// which deletes the local Render-disk copy once at least one of these
+// uploads confirms success, so Render's disk is never the permanent home
+// for video either.
 async function uploadClipToR2(matchId, filePath, eventType, ballMeta) {
     if (!r2Client || !R2_BUCKET_NAME) {
         console.log(`No R2 connection configured — clip stays Drive-only: ${filePath}`);
-        return;
+        return false;
     }
 
     const fileName = buildClipFileName(eventType, ballMeta);
@@ -281,13 +288,16 @@ async function uploadClipToR2(matchId, filePath, eventType, ballMeta) {
             );
         }
         console.log(`☁️  Uploaded to R2: ${key}`);
+        return true;
     } catch (err) {
         console.log(`R2 upload error (${key}):`, err.message || err);
         if (clipsCollection) {
             await clipsCollection.updateOne({ matchId, filePath }, { $set: { r2Status: 'failed' } }).catch(() => {});
         }
+        return false;
     }
 }
+
 
 const io = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] }
@@ -644,11 +654,27 @@ async function cutClip({ matchId, eventType, eventTimestamp, ballMeta, uid }) {
             });
         }
         console.log(`🎬 Clip ready: ${outFile}`);
-        // Both uploads are fire-and-forget — neither blocks/delays clip
-        // cutting, and one failing (e.g. Drive token expired) never stops
-        // the other from succeeding.
-        uploadClipToR2(matchId, outFile, eventType, ballMeta);
-        uploadClipToDrive(matchId, outFile, eventType, ballMeta);
+        // Upload to R2 + Drive in parallel, THEN delete the local Render-disk
+        // copy — this is the only place video bytes ever touch Render's disk,
+        // and only for the few seconds it takes to push them to cloud storage.
+        // MongoDB never sees the video itself, only this clip doc's metadata
+        // (matchId, player keys, eventType, r2Url/driveUrl) via the
+        // clipsCollection.insertOne above.
+        const [r2Ok, driveOk] = await Promise.all([
+            uploadClipToR2(matchId, outFile, eventType, ballMeta),
+            uploadClipToDrive(matchId, outFile, eventType, ballMeta)
+        ]);
+        if (r2Ok || driveOk) {
+            fs.unlink(outFile, (err) => {
+                if (err) console.log(`Local clip cleanup error (${outFile}):`, err.message || err);
+                else console.log(`🧹 Removed local clip copy (now only in ${r2Ok ? 'R2' : ''}${r2Ok && driveOk ? '/' : ''}${driveOk ? 'Drive' : ''}): ${outFile}`);
+            });
+        } else {
+            // Both uploads failed — keep the local file as a last-resort
+            // fallback instead of losing the clip entirely. It'll be retried
+            // never automatically today; worth adding a retry sweep later.
+            console.log(`⚠️  Both R2 and Drive uploads failed — keeping local copy for now: ${outFile}`);
+        }
     } catch (err) {
         console.log(`Clip generation error (${matchId}/${eventType}):`, err.message || err);
     } finally {
