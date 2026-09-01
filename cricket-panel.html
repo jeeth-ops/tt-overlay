@@ -1111,7 +1111,10 @@ async function startRecording(){
   const ok = await fetch(`${CLIPPER_HELPER_URL}/recording-start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ startedAt: Date.now() })
+    // matchId + mainServerUrl (this site's own address) so the helper
+    // knows WHERE to send finished clips for R2/Drive upload + player
+    // linking (see /api/clips/ingest on the main server).
+    body: JSON.stringify({ startedAt: Date.now(), matchId, mainServerUrl: location.origin })
   }).then(r => r.json()).then(r => r.success).catch(() => false);
 
   if(!ok){
@@ -4288,10 +4291,25 @@ function logBallToDb(kind, runsBefore, ballTimestamp){
 
   if(kind === 'W' || kind === '4' || kind === '6'){
     const eventType = kind === 'W' ? 'WICKET' : (kind === '4' ? 'FOUR' : 'SIX');
+    // ballMeta — same shape the socket 'logBall' event above already
+    // sends — lets the main server link this clip to the real
+    // striker/bowler (see finalizeClip/findCanonicalBall on the server)
+    // so it shows up under the right player in the scorecard.
+    const ballMeta = {
+      innings: state.inningsNumber,
+      over: state.score.overs,
+      ballInOver: state.score.balls,
+      runs: state.score.runs - runsBefore,
+      battingTeam: state.battingTeam,
+      striker: state.striker.name,
+      nonStriker: state.nonStriker.name,
+      bowler: state.bowler.name,
+      dismissal: kind === 'W' ? { type: lastDismissalType || 'Bowled' } : null
+    };
     fetch(`${CLIPPER_HELPER_URL}/clip`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ eventType, timestamp: ballTimestamp })
+      body: JSON.stringify({ eventType, timestamp: ballTimestamp, matchId, ballMeta })
     }).catch(() => toast('⚠️ Clipper helper not running — clip skipped'));
   }
 }
