@@ -370,7 +370,7 @@ async function uploadClipToR2(matchId, filePath, eventType, ballMeta) {
             ContentType: 'video/mp4'
         }));
 
-        const publicUrl = `${R2_PUBLIC_URL}/${key}`;
+        const publicUrl = R2_PUBLIC_URL ? `${R2_PUBLIC_URL}/${key}` : null;
         if (clipsCollection) {
             await clipsCollection.updateOne(
                 { matchId, filePath },
