@@ -710,74 +710,141 @@ async function cutClip({ matchId, eventType, eventTimestamp, ballMeta, uid }) {
                 .on('error', reject);
         });
 
-        if (clipsCollection) {
-            // 🔗 Link this clip to real player identities/dismissal info by
-            // cross-referencing the canonical ball (logged via `logBall`,
-            // the permanent source of truth) instead of trusting only the
-            // ballMeta the panel happened to attach to the clip request.
-            // Falls back gracefully to whatever ballMeta was sent if no
-            // matching ball is found (e.g. Mongo briefly unavailable).
-            const canonicalBall = await findCanonicalBall(matchId, ballMeta);
-            const ownerUid = await resolveOwnerUidForMatch(matchId, uid || (canonicalBall && canonicalBall.ownerUid));
-            const striker = (canonicalBall && canonicalBall.striker) || (ballMeta && ballMeta.striker) || null;
-            const bowler = (canonicalBall && canonicalBall.bowler) || (ballMeta && ballMeta.bowler) || null;
-            const nonStriker = (canonicalBall && canonicalBall.nonStriker) || (ballMeta && ballMeta.nonStriker) || null;
-            const dismissal = (canonicalBall && canonicalBall.dismissal) || (ballMeta && ballMeta.dismissal) || null;
-            const battingTeam = (canonicalBall && canonicalBall.battingTeam) || (ballMeta && ballMeta.battingTeam) || null;
-            // 🌟 Prefer the canonical ball's already-resolved playerIds (same
-            // identity the ball itself was logged under) and only fall back
-            // to a fresh resolve if this clip has no matching ball yet.
-            const strikerPlayerId = (canonicalBall && canonicalBall.strikerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, striker) : null);
-            const nonStrikerPlayerId = (canonicalBall && canonicalBall.nonStrikerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, nonStriker) : null);
-            const bowlerPlayerId = (canonicalBall && canonicalBall.bowlerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, bowler) : null);
-            const fielderPlayerId = (canonicalBall && canonicalBall.dismissalFielderPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, dismissal && dismissal.fielder) : null);
-
-            await clipsCollection.insertOne({
-                matchId, ownerUid: ownerUid || null, eventType, ballMeta: ballMeta || null,
-                eventTimestamp, offsetStartSec: fromSec, offsetEndSec: toSec,
-                filePath: outFile, driveStatus: 'pending', createdAt: Date.now(),
-                // --- player/dismissal linking, for the clips & stats APIs ---
-                over: canonicalBall ? canonicalBall.over : (ballMeta && ballMeta.over),
-                ballInOver: canonicalBall ? canonicalBall.ballInOver : (ballMeta && ballMeta.ballInOver),
-                innings: canonicalBall ? canonicalBall.innings : (ballMeta && ballMeta.innings),
-                runs: canonicalBall ? canonicalBall.runs : (ballMeta && ballMeta.runs),
-                battingTeam,
-                strikerName: striker, strikerKey: playerKey(striker), strikerPlayerId,
-                nonStrikerName: nonStriker, nonStrikerKey: playerKey(nonStriker), nonStrikerPlayerId,
-                bowlerName: bowler, bowlerKey: playerKey(bowler), bowlerPlayerId,
-                dismissalType: dismissal && dismissal.type ? dismissal.type : null,
-                fielderName: dismissal && dismissal.fielder ? dismissal.fielder : null,
-                fielderKey: playerKey(dismissal && dismissal.fielder), fielderPlayerId
-            });
-        }
-        console.log(`🎬 Clip ready: ${outFile}`);
-        // Upload to R2 + Drive in parallel, THEN delete the local Render-disk
-        // copy — this is the only place video bytes ever touch Render's disk,
-        // and only for the few seconds it takes to push them to cloud storage.
-        // MongoDB never sees the video itself, only this clip doc's metadata
-        // (matchId, player keys, eventType, r2Url/driveUrl) via the
-        // clipsCollection.insertOne above.
-        const [r2Ok, driveOk] = await Promise.all([
-            uploadClipToR2(matchId, outFile, eventType, ballMeta),
-            uploadClipToDrive(matchId, outFile, eventType, ballMeta)
-        ]);
-        if (r2Ok || driveOk) {
-            fs.unlink(outFile, (err) => {
-                if (err) console.log(`Local clip cleanup error (${outFile}):`, err.message || err);
-                else console.log(`🧹 Removed local clip copy (now only in ${r2Ok ? 'R2' : ''}${r2Ok && driveOk ? '/' : ''}${driveOk ? 'Drive' : ''}): ${outFile}`);
-            });
-        } else {
-            // Both uploads failed — keep the local file as a last-resort
-            // fallback instead of losing the clip entirely. It'll be retried
-            // never automatically today; worth adding a retry sweep later.
-            console.log(`⚠️  Both R2 and Drive uploads failed — keeping local copy for now: ${outFile}`);
-        }
+        await finalizeClip({ matchId, eventType, eventTimestamp, ballMeta, uid, outFile, offsetStartSec: fromSec, offsetEndSec: toSec });
     } catch (err) {
         console.log(`Clip generation error (${matchId}/${eventType}):`, err.message || err);
     } finally {
         fs.existsSync(stitchedFile) && fs.unlink(stitchedFile, () => {});
     }
 }
+
+// ================================================================
+// 🔗 finalizeClip — shared by BOTH clip pipelines:
+//  1. cutClip() above (browser tab-capture chunks stitched server-side)
+//  2. /api/clips/ingest below (an already-cut .mp4 handed to us whole —
+//     e.g. by ClipperHelper.exe, which cuts locally from the vMix
+//     recording using its own ffmpeg).
+// Both need EXACTLY the same thing done to a finished clip file: link
+// it to real player identities via the canonical ball, insert the
+// Mongo doc the clips/stats APIs read, upload to R2 + Drive, then
+// clean up the local copy. Keeping this in one place means the
+// scorecard's "clips by player" view works identically no matter which
+// pipeline actually produced the clip.
+// ================================================================
+async function finalizeClip({ matchId, eventType, eventTimestamp, ballMeta, uid, outFile, offsetStartSec, offsetEndSec }) {
+    if (clipsCollection) {
+        // 🔗 Link this clip to real player identities/dismissal info by
+        // cross-referencing the canonical ball (logged via `logBall`,
+        // the permanent source of truth) instead of trusting only the
+        // ballMeta the panel happened to attach to the clip request.
+        // Falls back gracefully to whatever ballMeta was sent if no
+        // matching ball is found (e.g. Mongo briefly unavailable).
+        const canonicalBall = await findCanonicalBall(matchId, ballMeta);
+        const ownerUid = await resolveOwnerUidForMatch(matchId, uid || (canonicalBall && canonicalBall.ownerUid));
+        const striker = (canonicalBall && canonicalBall.striker) || (ballMeta && ballMeta.striker) || null;
+        const bowler = (canonicalBall && canonicalBall.bowler) || (ballMeta && ballMeta.bowler) || null;
+        const nonStriker = (canonicalBall && canonicalBall.nonStriker) || (ballMeta && ballMeta.nonStriker) || null;
+        const dismissal = (canonicalBall && canonicalBall.dismissal) || (ballMeta && ballMeta.dismissal) || null;
+        const battingTeam = (canonicalBall && canonicalBall.battingTeam) || (ballMeta && ballMeta.battingTeam) || null;
+        // 🌟 Prefer the canonical ball's already-resolved playerIds (same
+        // identity the ball itself was logged under) and only fall back
+        // to a fresh resolve if this clip has no matching ball yet.
+        const strikerPlayerId = (canonicalBall && canonicalBall.strikerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, striker) : null);
+        const nonStrikerPlayerId = (canonicalBall && canonicalBall.nonStrikerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, nonStriker) : null);
+        const bowlerPlayerId = (canonicalBall && canonicalBall.bowlerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, bowler) : null);
+        const fielderPlayerId = (canonicalBall && canonicalBall.dismissalFielderPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, dismissal && dismissal.fielder) : null);
+
+        await clipsCollection.insertOne({
+            matchId, ownerUid: ownerUid || null, eventType, ballMeta: ballMeta || null,
+            eventTimestamp, offsetStartSec: offsetStartSec ?? null, offsetEndSec: offsetEndSec ?? null,
+            filePath: outFile, driveStatus: 'pending', createdAt: Date.now(),
+            // --- player/dismissal linking, for the clips & stats APIs ---
+            over: canonicalBall ? canonicalBall.over : (ballMeta && ballMeta.over),
+            ballInOver: canonicalBall ? canonicalBall.ballInOver : (ballMeta && ballMeta.ballInOver),
+            innings: canonicalBall ? canonicalBall.innings : (ballMeta && ballMeta.innings),
+            runs: canonicalBall ? canonicalBall.runs : (ballMeta && ballMeta.runs),
+            battingTeam,
+            strikerName: striker, strikerKey: playerKey(striker), strikerPlayerId,
+            nonStrikerName: nonStriker, nonStrikerKey: playerKey(nonStriker), nonStrikerPlayerId,
+            bowlerName: bowler, bowlerKey: playerKey(bowler), bowlerPlayerId,
+            dismissalType: dismissal && dismissal.type ? dismissal.type : null,
+            fielderName: dismissal && dismissal.fielder ? dismissal.fielder : null,
+            fielderKey: playerKey(dismissal && dismissal.fielder), fielderPlayerId
+        });
+    }
+    console.log(`🎬 Clip ready: ${outFile}`);
+    // Upload to R2 + Drive in parallel, THEN delete the local Render-disk
+    // copy — this is the only place video bytes ever touch Render's disk,
+    // and only for the few seconds it takes to push them to cloud storage.
+    // MongoDB never sees the video itself, only this clip doc's metadata
+    // (matchId, player keys, eventType, r2Url/driveUrl) via the
+    // clipsCollection.insertOne above.
+    const [r2Ok, driveOk] = await Promise.all([
+        uploadClipToR2(matchId, outFile, eventType, ballMeta),
+        uploadClipToDrive(matchId, outFile, eventType, ballMeta)
+    ]);
+    if (r2Ok || driveOk) {
+        fs.unlink(outFile, (err) => {
+            if (err) console.log(`Local clip cleanup error (${outFile}):`, err.message || err);
+            else console.log(`🧹 Removed local clip copy (now only in ${r2Ok ? 'R2' : ''}${r2Ok && driveOk ? '/' : ''}${driveOk ? 'Drive' : ''}): ${outFile}`);
+        });
+    } else {
+        // Both uploads failed — keep the local file as a last-resort
+        // fallback instead of losing the clip entirely. It'll be retried
+        // never automatically today; worth adding a retry sweep later.
+        console.log(`⚠️  Both R2 and Drive uploads failed — keeping local copy for now: ${outFile}`);
+    }
+    return { r2Ok, driveOk };
+}
+
+// ================================================================
+// 🖥️ EXTERNAL CLIP INGEST — for ClipperHelper.exe (runs on the
+// operator's own PC next to vMix, cuts the clip itself with its own
+// local ffmpeg from the vMix recording file, then POSTs the finished
+// .mp4 here as raw bytes). We do NOT trust the operator's PC with R2 or
+// Drive credentials — this endpoint receives the plain video file and
+// does the exact same player-linking + R2/Drive upload that the
+// browser tab-capture pipeline (cutClip, above) does, via the shared
+// finalizeClip() function. That's what makes ClipperHelper clips show
+// up in the scorecard's "clips by player" view exactly like any other
+// clip.
+//
+// POST /api/clips/ingest?matchId=...&eventType=FOUR|SIX|WICKET&timestamp=<ms>
+// Body: raw video/mp4 bytes.
+// Header 'X-Ball-Meta': optional JSON string with whatever the panel
+// already knows about the ball (striker/nonStriker/bowler/dismissal/
+// battingTeam/over/ballInOver/innings/runs) — same shape as the
+// ballMeta cutClip() already accepts. Even without it, finalizeClip()
+// still tries to resolve the real player names via findCanonicalBall()
+// using matchId + timestamp-derived over/ballInOver if present.
+// ================================================================
+app.post('/api/clips/ingest', express.raw({ type: '*/*', limit: '60mb' }), async (req, res) => {
+    const matchId = safeMatchId(req.query.matchId);
+    const eventType = String(req.query.eventType || 'CLIP').toUpperCase();
+    const eventTimestamp = parseInt(req.query.timestamp, 10) || Date.now();
+    if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
+    if (!req.body || !req.body.length) return res.status(400).json({ success: false, error: 'Empty clip body' });
+
+    let ballMeta = null;
+    try {
+        if (req.headers['x-ball-meta']) ballMeta = JSON.parse(req.headers['x-ball-meta']);
+    } catch (err) { /* bad JSON from an old helper version — just skip linking-by-ballMeta */ }
+
+    const clipDir = path.join(CLIPS_DIR, matchId);
+    if (!fs.existsSync(clipDir)) fs.mkdirSync(clipDir, { recursive: true });
+    const outFile = path.join(clipDir, `${eventType}_ext_${Date.now()}.mp4`);
+
+    res.json({ success: true }); // acknowledge immediately; upload continues in the background
+
+    try {
+        await new Promise((resolve, reject) => {
+            fs.writeFile(outFile, req.body, (err) => err ? reject(err) : resolve());
+        });
+        await finalizeClip({ matchId, eventType, eventTimestamp, ballMeta, uid: null, outFile });
+    } catch (err) {
+        console.log(`External clip ingest error (${matchId}/${eventType}):`, err.message || err);
+    }
+});
 
 // 🔐 Verifies a Firebase ID token and returns the real, cryptographically-
 // confirmed uid — or null if it's missing/invalid/expired. This is the only
