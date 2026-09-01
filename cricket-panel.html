@@ -456,9 +456,9 @@
     <div class="card" id="card-players">
       <h2>👥 Players</h2>
       <label>Striker name</label>
-      <input type="text" id="striker-name" value="S. Yadav">
+      <input type="text" id="striker-name" value="S. Yadav" list="global-player-suggestions" data-global-suggest="1">
       <label>Non-striker name</label>
-      <input type="text" id="nonstriker-name" value="V. Kohli">
+      <input type="text" id="nonstriker-name" value="V. Kohli" list="global-player-suggestions" data-global-suggest="1">
       <button class="full small" id="swap-strike" style="margin-top:8px;">Swap Strike (S)</button>
     </div>
   </div>
@@ -520,8 +520,14 @@
       </div>
       <div class="shortcut-hint" id="disp-bowler-note"></div>
       <label>New bowler coming on <span class="note">— type an earlier bowler's name to resume their figures</span></label>
-      <input type="text" id="bowler-name-input" placeholder="Bowler name" list="bowler-suggestions" autocomplete="off">
+      <input type="text" id="bowler-name-input" placeholder="Bowler name" list="bowler-suggestions" autocomplete="off" data-global-suggest="1">
       <datalist id="bowler-suggestions"></datalist>
+      <!-- 🌟 Global player search (see /api/players/search) — separate from
+           bowler-suggestions (which only lists names bowled THIS innings)
+           so striker/non-striker fields, which have no innings-local
+           equivalent, still get autocomplete from this scorer's whole
+           player history across every match/device on their account. -->
+      <datalist id="global-player-suggestions"></datalist>
       <button class="full small" id="set-bowler-btn" style="margin-top:8px;">Set / Change Bowler</button>
       <label>Last dismissal <span class="note">— you'll be asked how, right when WICKET is pressed</span></label>
       <div class="stat auto" style="margin-top:2px;"><div class="v" id="disp-last-dismissal" style="font-size:13px;">—</div></div>
@@ -579,7 +585,7 @@
     <div class="wicket-modal" id="newover-modal">
       <h3>🏏 Over Complete</h3>
       <div class="wm-sub" id="newover-modal-sub">—</div>
-      <input type="text" id="newover-modal-input" placeholder="Bowler name" list="bowler-suggestions" autocomplete="off"
+      <input type="text" id="newover-modal-input" placeholder="Bowler name" list="bowler-suggestions" autocomplete="off" data-global-suggest="1"
         style="width:100%;padding:9px 10px;border-radius:7px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);font-size:13px;margin-bottom:10px;">
       <button type="button" class="full primary" id="newover-modal-submit">Set Bowler</button>
       <button type="button" class="full ghost wm-cancel" id="newover-modal-cancel" style="margin-top:8px;">Skip for now</button>
@@ -3882,11 +3888,63 @@ function updateBowlerSuggestions(){
   const names = new Set();
   (state.bowlingCard[key] || []).forEach(b => { if(b.name) names.add(b.name); });
   if(state.bowler.name) names.add(state.bowler.name);
+  // Merge in this scorer's global player history too (see
+  // globalPlayerSuggestCache below) — so a bowler who played for this team
+  // in an EARLIER match/tournament still autocompletes, not just names
+  // already bowled this innings.
+  globalPlayerSuggestCache.forEach(n => names.add(n));
   dl.innerHTML = [...names].map(n => `<option value="${escapeHtmlAttr(n)}"></option>`).join('');
 }
 function escapeHtmlAttr(s){
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+
+/* 🌟 GLOBAL PLAYER AUTOCOMPLETE + PROFILE RESOLUTION (see /api/players/*
+   on the server). Every input tagged data-global-suggest="1" (striker,
+   non-striker, bowler, new-over bowler) gets:
+     1. Debounced typeahead against this scorer's whole player history
+        (not just this match/innings) via /api/players/search, so a name
+        typed once on ANY device/match suggests itself everywhere after.
+     2. A fire-and-forget /api/players/resolve call once a name is
+        committed (blur/change), so a permanent playerId exists for
+        stats/clips even before the player's first ball is bowled — the
+        same find-or-create also happens automatically on logBall, this
+        just makes it happen a little earlier.
+   Both are best-effort: any failure (offline, not logged in, Mongo not
+   configured) silently no-ops and the field behaves exactly as before. */
+let globalPlayerSuggestCache = [];
+let globalPlayerSuggestTimer = null;
+async function fetchGlobalPlayerSuggestions(query){
+  if(!currentOwnerUid() || query.trim().length < 2) return;
+  try{
+    const res = await fetch(withUid(`/api/players/search?q=${encodeURIComponent(query.trim())}`));
+    const data = await res.json();
+    if(!data || !data.success) return;
+    globalPlayerSuggestCache = (data.players || []).map(p => p.displayName).filter(Boolean);
+    const dl = document.getElementById('global-player-suggestions');
+    if(dl) dl.innerHTML = globalPlayerSuggestCache.map(n => `<option value="${escapeHtmlAttr(n)}"></option>`).join('');
+    updateBowlerSuggestions(); // also refresh the merged bowler datalist
+  }catch(e){ /* best-effort only */ }
+}
+function resolveGlobalPlayer(name){
+  const trimmed = (name || '').trim();
+  if(!trimmed || !currentOwnerUid()) return;
+  fetch(withUid('/api/players/resolve'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: trimmed })
+  }).catch(() => {}); // best-effort only
+}
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('[data-global-suggest="1"]').forEach(el => {
+    el.addEventListener('input', () => {
+      clearTimeout(globalPlayerSuggestTimer);
+      const val = el.value;
+      globalPlayerSuggestTimer = setTimeout(() => fetchGlobalPlayerSuggestions(val), 300);
+    });
+    el.addEventListener('change', () => resolveGlobalPlayer(el.value));
+  });
+});
 
 /* A legal delivery for the CURRENT bowler — runsChargedToBowler excludes
    byes/leg-byes (those are extras, not charged against the bowler) but
