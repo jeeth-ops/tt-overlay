@@ -81,6 +81,7 @@ let templatesCollection = null;
 let auditLogsCollection = null;
 let settingsCollection = null;
 let matchRecordsCollection = null;
+let playersCollection = null;
 
 async function connectMongo() {
     const uri = process.env.MONGODB_URI;
@@ -113,6 +114,16 @@ async function connectMongo() {
         // the "old matches won't load" symptom this fixes. Matches now
         // scale to unlimited history with no per-owner size ceiling.
         matchRecordsCollection = mongoDb.collection('matchRecords');
+        // 🌟 GLOBAL PLAYER PROFILES — one permanent playerId per real person,
+        // per owner account, instead of every ball/clip/stats query matching
+        // purely on a lowercased name string (playerKey). A playerId doc
+        // holds every nameKey (spelling variant) that has ever been merged
+        // into it, so "Rohit Sharma" and "Rohit S" typed on two different
+        // devices can be reconciled into one identity without losing either
+        // match's history — see resolvePlayerId() and the /api/players
+        // routes below. nameKeys is intentionally an array (not a single
+        // field) so merges are just a $push, never a rewrite of history.
+        playersCollection = mongoDb.collection('players');
         // Fast lookups: all balls of a match in bowling order, and one
         // match doc per matchId.
         await ballsCollection.createIndex({ matchId: 1, innings: 1, over: 1, ballInOver: 1 });
@@ -143,6 +154,11 @@ async function connectMongo() {
         await matchRecordsCollection.createIndex({ ownerUid: 1, leagueKey: 1, matchId: 1 }, { unique: true });
         await matchRecordsCollection.createIndex({ leagueKey: 1, matchId: 1 });
         await matchRecordsCollection.createIndex({ leagueKey: 1, roomId: 1 });
+        // playerId is globally unique; nameKeys is multikey so a lookup by
+        // any one of a player's known spelling variants, scoped to their
+        // owner, resolves straight to the right playerId doc.
+        await playersCollection.createIndex({ playerId: 1 }, { unique: true });
+        await playersCollection.createIndex({ ownerUid: 1, nameKeys: 1 }, { unique: true });
         console.log('🍃 MongoDB connected —', mongoDb.databaseName);
 
         // 🩹 One-time migration: move any matches still embedded in a league
@@ -708,6 +724,13 @@ async function cutClip({ matchId, eventType, eventTimestamp, ballMeta, uid }) {
             const nonStriker = (canonicalBall && canonicalBall.nonStriker) || (ballMeta && ballMeta.nonStriker) || null;
             const dismissal = (canonicalBall && canonicalBall.dismissal) || (ballMeta && ballMeta.dismissal) || null;
             const battingTeam = (canonicalBall && canonicalBall.battingTeam) || (ballMeta && ballMeta.battingTeam) || null;
+            // 🌟 Prefer the canonical ball's already-resolved playerIds (same
+            // identity the ball itself was logged under) and only fall back
+            // to a fresh resolve if this clip has no matching ball yet.
+            const strikerPlayerId = (canonicalBall && canonicalBall.strikerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, striker) : null);
+            const nonStrikerPlayerId = (canonicalBall && canonicalBall.nonStrikerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, nonStriker) : null);
+            const bowlerPlayerId = (canonicalBall && canonicalBall.bowlerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, bowler) : null);
+            const fielderPlayerId = (canonicalBall && canonicalBall.dismissalFielderPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, dismissal && dismissal.fielder) : null);
 
             await clipsCollection.insertOne({
                 matchId, ownerUid: ownerUid || null, eventType, ballMeta: ballMeta || null,
@@ -719,12 +742,12 @@ async function cutClip({ matchId, eventType, eventTimestamp, ballMeta, uid }) {
                 innings: canonicalBall ? canonicalBall.innings : (ballMeta && ballMeta.innings),
                 runs: canonicalBall ? canonicalBall.runs : (ballMeta && ballMeta.runs),
                 battingTeam,
-                strikerName: striker, strikerKey: playerKey(striker),
-                nonStrikerName: nonStriker, nonStrikerKey: playerKey(nonStriker),
-                bowlerName: bowler, bowlerKey: playerKey(bowler),
+                strikerName: striker, strikerKey: playerKey(striker), strikerPlayerId,
+                nonStrikerName: nonStriker, nonStrikerKey: playerKey(nonStriker), nonStrikerPlayerId,
+                bowlerName: bowler, bowlerKey: playerKey(bowler), bowlerPlayerId,
                 dismissalType: dismissal && dismissal.type ? dismissal.type : null,
                 fielderName: dismissal && dismissal.fielder ? dismissal.fielder : null,
-                fielderKey: playerKey(dismissal && dismissal.fielder)
+                fielderKey: playerKey(dismissal && dismissal.fielder), fielderPlayerId
             });
         }
         console.log(`🎬 Clip ready: ${outFile}`);
@@ -1082,6 +1105,67 @@ function playerKey(name) {
     return String(name || '').trim().toLowerCase() || null;
 }
 
+// ================================================================
+// 🌟 GLOBAL PLAYER PROFILES (playerId) — see playersCollection comment in
+// connectMongo. Every ball/clip is still keyed by nameKey (playerKey(name))
+// for backward compatibility with every existing query in this file; a
+// playerId doc is a thin, mergeable layer ON TOP that groups one or more
+// nameKeys under one permanent identity, so a scorer's typo/variant on a
+// second device doesn't fragment a player's stats.
+// ================================================================
+
+// Find-or-create the playerId for (ownerUid, name). Memoized in-process
+// since this gets called on every single ball logged — avoids a Mongo
+// round-trip for the common case of the same four names repeating over and
+// over within one match.
+const playerIdCache = new Map(); // `${ownerUid}::${nameKey}` -> playerId
+async function resolvePlayerId(ownerUid, name) {
+    const nameKey = playerKey(name);
+    if (!nameKey || !ownerUid || !playersCollection) return null;
+    const cacheKey = `${ownerUid}::${nameKey}`;
+    if (playerIdCache.has(cacheKey)) return playerIdCache.get(cacheKey);
+    try {
+        const existing = await playersCollection.findOne({ ownerUid, nameKeys: nameKey });
+        if (existing) {
+            playerIdCache.set(cacheKey, existing.playerId);
+            return existing.playerId;
+        }
+        const playerId = crypto.randomBytes(6).toString('hex'); // 12-char id
+        await playersCollection.insertOne({
+            playerId, ownerUid, nameKeys: [nameKey],
+            displayName: String(name).trim(),
+            createdAt: Date.now(), updatedAt: Date.now()
+        });
+        playerIdCache.set(cacheKey, playerId);
+        return playerId;
+    } catch (err) {
+        // Unique-index race: two balls for a brand-new player logged at
+        // nearly the same instant can both miss the findOne above and both
+        // try to insert — the loser just re-looks-up instead of erroring.
+        if (err && err.code === 11000) {
+            const existing = await playersCollection.findOne({ ownerUid, nameKeys: nameKey });
+            if (existing) { playerIdCache.set(cacheKey, existing.playerId); return existing.playerId; }
+        }
+        console.log('resolvePlayerId error:', err);
+        return null;
+    }
+}
+
+// Resolves a playerId to every nameKey ever merged into it, so stats/clip
+// queries can match on "any of this player's known spellings" instead of
+// just one. Returns [] if the playerId doesn't exist (caller should treat
+// that as "no results" rather than falling back to raw playerId as a key).
+async function nameKeysForPlayerId(playerId) {
+    if (!playersCollection || !playerId) return [];
+    try {
+        const doc = await playersCollection.findOne({ playerId }, { projection: { nameKeys: 1 } });
+        return (doc && doc.nameKeys) || [];
+    } catch (err) {
+        console.log('nameKeysForPlayerId error:', err);
+        return [];
+    }
+}
+
 // Resolves which owner a matchId belongs to, without requiring the caller
 // to already know it. Fast path: the client can pass `uid` directly (same
 // trust level as ownerUidFrom() above — see the comment on that function).
@@ -1173,13 +1257,40 @@ app.post('/api/league/:name/live-status', async (req, res) => {
     if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     const { roomId, matchId, active } = req.body || {};
     try {
-        await leaguesCollection.updateOne(
-            { ownerUid, leagueKey },
-            { $set: active === false
-                ? { liveRoomId: null, liveMatchId: null, updatedAt: Date.now() }
-                : { liveRoomId: roomId || null, liveMatchId: matchId || null, updatedAt: Date.now() } },
-            { upsert: true }
-        );
+        // 🩹 liveMatches is an ARRAY, not a single field — the same
+        // tournament can have MULTIPLE matches being scored at once, each
+        // on its own device/room (Laptop 1 → Match A, Laptop 2 → Match B,
+        // same tournament, same account). The old singular liveRoomId/
+        // liveMatchId meant a second match starting silently kicked the
+        // first match's viewers off the public portal's "Live Now" card.
+        // liveRoomId/liveMatchId are still kept, mirroring whichever match
+        // most recently pinged, purely so any older frontend reading only
+        // those singular fields keeps working exactly as before.
+        if (active === false) {
+            if (matchId) {
+                await leaguesCollection.updateOne({ ownerUid, leagueKey }, { $pull: { liveMatches: { matchId } } });
+            }
+            const doc = await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { liveMatches: 1 } });
+            const remaining = (doc && doc.liveMatches) || [];
+            const mostRecent = remaining[remaining.length - 1] || null;
+            await leaguesCollection.updateOne(
+                { ownerUid, leagueKey },
+                { $set: { liveRoomId: mostRecent ? mostRecent.roomId : null, liveMatchId: mostRecent ? mostRecent.matchId : null, updatedAt: Date.now() } },
+                { upsert: true }
+            );
+        } else {
+            // Drop any existing entry for this matchId first so a re-ping
+            // (every ball, debounced) never creates duplicate array entries.
+            await leaguesCollection.updateOne({ ownerUid, leagueKey }, { $pull: { liveMatches: { matchId } } });
+            await leaguesCollection.updateOne(
+                { ownerUid, leagueKey },
+                {
+                    $push: { liveMatches: { roomId: roomId || null, matchId: matchId || null, startedAt: Date.now() } },
+                    $set: { liveRoomId: roomId || null, liveMatchId: matchId || null, updatedAt: Date.now() }
+                },
+                { upsert: true }
+            );
+        }
         res.json({ success: true });
     } catch (err) {
         console.log('Live-status update error:', err);
@@ -1190,6 +1301,27 @@ app.post('/api/league/:name/live-status', async (req, res) => {
 // ---- PUBLIC, READ-ONLY endpoints — no uid/auth, the token itself is the
 // access control, and ownerUid is never included in any response. -------
 
+// 🚀 Tiny in-memory TTL cache for the public tournament portal — this is
+// the one endpoint every one of a tournament's viewers polls repeatedly
+// (potentially thousands at once, see the 5,000-concurrent-viewer target),
+// and it does real work every call: pulling every saved match for the
+// league AND recomputing the points table + leaderboards from scratch. A
+// short TTL means a live tournament still updates within a few seconds of
+// a new ball, but a burst of simultaneous requests only recomputes once
+// instead of once per viewer. Deliberately process-memory (not Redis) to
+// avoid a new infra dependency for a single-process win; safe to swap for
+// Redis later if this ever runs across multiple server instances.
+const PUBLIC_CACHE_TTL_MS = 4000;
+const publicTournamentCache = new Map(); // token -> { expiresAt, payload }
+function getCached(cache, key) {
+    const hit = cache.get(key);
+    if (hit && hit.expiresAt > Date.now()) return hit.payload;
+    return null;
+}
+function setCached(cache, key, payload, ttlMs) {
+    cache.set(key, { payload, expiresAt: Date.now() + ttlMs });
+}
+
 // Full tournament portal payload: sanitized match list + live pointer +
 // points table + leaderboards, all computed fresh from matchRecords (one
 // doc per match — see the big comment above matchRecordsCollection's
@@ -1197,17 +1329,24 @@ app.post('/api/league/:name/live-status', async (req, res) => {
 app.get('/api/public/tournament/:token', async (req, res) => {
     if (!leaguesCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     try {
+        const cached = getCached(publicTournamentCache, req.params.token);
+        if (cached) return res.json(cached);
         const doc = await leaguesCollection.findOne({ publicToken: req.params.token });
         if (!doc) return res.status(404).json({ success: false, error: 'Tournament not found' });
         const matches = await getLeagueMatches(doc.ownerUid, doc.leagueKey);
-        res.json({
+        const payload = {
             success: true,
             displayName: doc.displayName || '',
             matches,
-            live: { roomId: doc.liveRoomId || null, matchId: doc.liveMatchId || null },
+            // roomId/matchId: most-recently-active match, for older
+            // frontends. matches: every match currently live under this
+            // tournament at once (see the live-status route comment above).
+            live: { roomId: doc.liveRoomId || null, matchId: doc.liveMatchId || null, matches: doc.liveMatches || [] },
             pointsTable: computePointsTable(matches),
             leaderboards: computeLeaderboards(matches)
-        });
+        };
+        setCached(publicTournamentCache, req.params.token, payload, PUBLIC_CACHE_TTL_MS);
+        res.json(payload);
     } catch (err) {
         console.log('Public tournament fetch error:', err);
         res.status(500).json({ success: false, error: 'Could not load tournament' });
@@ -1321,49 +1460,73 @@ app.get('/api/clips/team/:matchId/:teamKey', async (req, res) => {
 // GET /api/clips/player/:playerKey?scope=match|tournament|career&matchId=&leagueName=&uid=
 // Returns clips grouped the way the scorecard displays them (spec section 4):
 // batting: { fours, sixes, dismissal }, bowling: { wickets }.
-app.get('/api/clips/player/:playerKey', async (req, res) => {
-    if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
-    const pk = playerKey(req.params.playerKey);
-    if (!pk) return res.status(400).json({ success: false, error: 'playerKey required' });
+// Shared core for both /api/clips/player/:playerKey and
+// /api/players/:playerId/clips — pk may be a single nameKey or an array of
+// nameKeys (merged playerId aliases). Returns a result object rather than
+// writing to res, same pattern as runPlayerStatsQuery above.
+async function runPlayerClipsQuery(pk, req) {
+    if (!clipsCollection) return { httpError: 503, message: 'Database not configured' };
+    const pkSet = new Set(Array.isArray(pk) ? pk : [pk]);
+    const pkList = [...pkSet];
     const scope = req.query.scope || 'match';
 
     let matchFilter = null; // null = no matchId restriction (career, or tournament resolved below)
-    try {
-        if (scope === 'match') {
-            if (!req.query.matchId) return res.status(400).json({ success: false, error: 'matchId required for scope=match' });
-            matchFilter = { $in: [safeMatchId(req.query.matchId)] };
-        } else if (scope === 'tournament') {
-            const leagueKey = leagueKeyFor(req.query.leagueName);
-            const ownerUid = ownerUidFrom(req);
-            if (!leagueKey || !ownerUid || !matchRecordsCollection) return res.status(400).json({ success: false, error: 'leagueName and uid required for scope=tournament' });
-            const ids = await matchRecordsCollection.find({ ownerUid, leagueKey }, { projection: { matchId: 1 } }).toArray();
-            matchFilter = { $in: ids.map(m => m.matchId) };
-        }
-        // scope === 'career' (or 'season', best-effort — no explicit season
-        // field exists on matches yet, so career and season currently return
-        // the same set; filter by year client-side using each clip's createdAt
-        // until a real season field is added) — no matchId restriction, just
-        // ownerUid if we have one, so results stay scoped to one account.
-
-        const base = { $or: [{ strikerKey: pk }, { bowlerKey: pk }, { fielderKey: pk }] };
-        if (matchFilter) base.matchId = matchFilter;
+    if (scope === 'match') {
+        if (!req.query.matchId) return { httpError: 400, message: 'matchId required for scope=match' };
+        matchFilter = { $in: [safeMatchId(req.query.matchId)] };
+    } else if (scope === 'tournament') {
+        const leagueKey = leagueKeyFor(req.query.leagueName);
         const ownerUid = ownerUidFrom(req);
-        if (!matchFilter && ownerUid) base.ownerUid = ownerUid;
+        if (!leagueKey || !ownerUid || !matchRecordsCollection) return { httpError: 400, message: 'leagueName and uid required for scope=tournament' };
+        const ids = await matchRecordsCollection.find({ ownerUid, leagueKey }, { projection: { matchId: 1 } }).toArray();
+        matchFilter = { $in: ids.map(m => m.matchId) };
+    }
+    // scope === 'career' (or 'season', best-effort — no explicit season
+    // field exists on matches yet, so career and season currently return
+    // the same set; filter by year client-side using each clip's createdAt
+    // until a real season field is added) — no matchId restriction, just
+    // ownerUid if we have one, so results stay scoped to one account.
 
-        const clips = await clipsCollection.find(base).sort({ createdAt: -1 }).limit(300).toArray();
-        const out = {
-            fours: [], sixes: [], dismissal: [], wickets: []
-        };
-        clips.forEach(c => {
-            const s = serializeClip(c);
-            if (c.strikerKey === pk && c.eventType === 'FOUR') out.fours.push(s);
-            else if (c.strikerKey === pk && c.eventType === 'SIX') out.sixes.push(s);
-            else if (c.strikerKey === pk && c.eventType === 'WICKET') out.dismissal.push(s);
-            if (c.bowlerKey === pk && c.eventType === 'WICKET') out.wickets.push(s);
-        });
-        res.json({ success: true, playerKey: pk, scope, batting: { fours: out.fours, sixes: out.sixes, dismissal: out.dismissal }, bowling: { wickets: out.wickets } });
+    const base = { $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }, { fielderKey: { $in: pkList } }] };
+    if (matchFilter) base.matchId = matchFilter;
+    const ownerUid = ownerUidFrom(req);
+    if (!matchFilter && ownerUid) base.ownerUid = ownerUid;
+
+    const clips = await clipsCollection.find(base).sort({ createdAt: -1 }).limit(300).toArray();
+    const out = { fours: [], sixes: [], dismissal: [], wickets: [] };
+    clips.forEach(c => {
+        const s = serializeClip(c);
+        if (pkSet.has(c.strikerKey) && c.eventType === 'FOUR') out.fours.push(s);
+        else if (pkSet.has(c.strikerKey) && c.eventType === 'SIX') out.sixes.push(s);
+        else if (pkSet.has(c.strikerKey) && c.eventType === 'WICKET') out.dismissal.push(s);
+        if (pkSet.has(c.bowlerKey) && c.eventType === 'WICKET') out.wickets.push(s);
+    });
+    return { scope, batting: { fours: out.fours, sixes: out.sixes, dismissal: out.dismissal }, bowling: { wickets: out.wickets } };
+}
+
+app.get('/api/clips/player/:playerKey', async (req, res) => {
+    const pk = playerKey(req.params.playerKey);
+    if (!pk) return res.status(400).json({ success: false, error: 'playerKey required' });
+    try {
+        const result = await runPlayerClipsQuery(pk, req);
+        if (result.httpError) return res.status(result.httpError).json({ success: false, error: result.message });
+        res.json({ success: true, playerKey: pk, ...result });
     } catch (err) {
         console.log('Player-clips fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load player clips' });
+    }
+});
+
+// GET /api/players/:playerId/clips?scope=match|tournament|career&...
+app.get('/api/players/:playerId/clips', async (req, res) => {
+    const pks = await nameKeysForPlayerId(req.params.playerId);
+    if (!pks.length) return res.status(404).json({ success: false, error: 'Player not found' });
+    try {
+        const result = await runPlayerClipsQuery(pks, req);
+        if (result.httpError) return res.status(result.httpError).json({ success: false, error: result.message });
+        res.json({ success: true, playerId: req.params.playerId, ...result });
+    } catch (err) {
+        console.log('Player-clips (by playerId) fetch error:', err);
         res.status(500).json({ success: false, error: 'Could not load player clips' });
     }
 });
@@ -1478,22 +1641,27 @@ app.get('/api/clips/:clipId/download', async (req, res) => {
 // Adjust here if cricket-panel.html's `kind`/`dismissal.type` strings
 // differ from the values assumed below.
 async function computeMatchPlayerStats(matchId, pk) {
-    const balls = await ballsCollection.find({ matchId, $or: [{ strikerKey: pk }, { bowlerKey: pk }] }).toArray();
+    // pk may be a single nameKey (existing callers) or an array of nameKeys
+    // — a merged playerId's aliases (see nameKeysForPlayerId). Normalize to
+    // a Set once so every ball only pays for one membership check.
+    const pkSet = new Set(Array.isArray(pk) ? pk : [pk]);
+    const isPk = (v) => pkSet.has(v);
+    const balls = await ballsCollection.find({ matchId, $or: [{ strikerKey: { $in: [...pkSet] } }, { bowlerKey: { $in: [...pkSet] } }] }).toArray();
     const bat = { runs: 0, balls: 0, fours: 0, sixes: 0, out: false, howOut: null };
     const bowl = { balls: 0, runs: 0, wickets: 0, wides: 0, noballs: 0 };
     const oversBowled = {}; // `${innings}-${over}` -> { legalBalls, runs }
     balls.forEach(b => {
-        if (b.strikerKey === pk && b.kind !== 'Wd') {
+        if (isPk(b.strikerKey) && b.kind !== 'Wd') {
             bat.balls++;
             if (b.kind !== 'B' && b.kind !== 'LB') bat.runs += b.runs || 0;
             if (b.kind === '4') bat.fours++;
             if (b.kind === '6') bat.sixes++;
         }
-        if (b.strikerKey === pk && b.dismissal) {
+        if (isPk(b.strikerKey) && b.dismissal) {
             bat.out = true;
             bat.howOut = b.dismissal.type || null;
         }
-        if (b.bowlerKey === pk && b.kind !== 'B' && b.kind !== 'LB') {
+        if (isPk(b.bowlerKey) && b.kind !== 'B' && b.kind !== 'LB') {
             const isLegal = b.kind !== 'Wd' && b.kind !== 'Nb';
             if (isLegal) bowl.balls++;
             if (b.kind === 'Wd') bowl.wides++;
@@ -1518,41 +1686,88 @@ async function computeMatchPlayerStats(matchId, pk) {
 // across whatever set of saved matches[] is passed in (one tournament, or
 // every league belonging to an owner for career).
 function computeSinglePlayerRollup(matches, pk) {
+    // pk may be a single nameKey or an array of nameKeys (merged playerId
+    // aliases) — see computeMatchPlayerStats for the same normalization.
+    const pkSet = new Set(Array.isArray(pk) ? pk : [pk]);
     const { topRuns, topWickets } = computeLeaderboards(matches);
     return {
-        batting: topRuns.find(r => playerKey(r.name) === pk) || null,
-        bowling: topWickets.find(r => playerKey(r.name) === pk) || null
+        batting: topRuns.find(r => pkSet.has(playerKey(r.name))) || null,
+        bowling: topWickets.find(r => pkSet.has(playerKey(r.name))) || null
     };
+}
+
+// Shared core for both /api/stats/player/:playerKey and the newer
+// /api/players/:playerId/stats — pk here may be a single nameKey or an
+// array of nameKeys (a merged playerId's aliases). Returns a plain result
+// object (or an { httpError, message } shape) rather than writing to res
+// directly, so both routes can attach their own identifier field
+// (playerKey vs playerId) to the JSON response.
+async function runPlayerStatsQuery(pk, req) {
+    const scope = req.query.scope || 'match';
+    if (scope === 'match') {
+        if (!ballsCollection) return { httpError: 503, message: 'Database not configured' };
+        if (!req.query.matchId) return { httpError: 400, message: 'matchId required for scope=match' };
+        const stats = await computeMatchPlayerStats(safeMatchId(req.query.matchId), pk);
+        return { scope, ...stats };
+    }
+    if (!matchRecordsCollection) return { httpError: 503, message: 'Database not configured' };
+    if (scope === 'tournament') {
+        const leagueKey = leagueKeyFor(req.query.leagueName);
+        const ownerUid = ownerUidFrom(req);
+        if (!leagueKey || !ownerUid) return { httpError: 400, message: 'leagueName and uid required for scope=tournament' };
+        const matches = await getLeagueMatches(ownerUid, leagueKey);
+        const stats = computeSinglePlayerRollup(matches, pk);
+        return { scope, ...stats };
+    }
+    // career (and season, best-effort — see note on the clips endpoint
+    // above): every match across every league this owner has saved.
+    const ownerUid = ownerUidFrom(req);
+    if (!ownerUid) return { httpError: 400, message: 'uid required for scope=career' };
+    const allMatches = await matchRecordsCollection.find({ ownerUid }).toArray();
+    const stats = computeSinglePlayerRollup(allMatches, pk);
+    return { scope, ...stats };
+}
+
+// Shared core for both /api/stats/player/:playerKey/tournaments and
+// /api/players/:playerId/tournaments — same pk-as-string-or-array contract
+// as runPlayerStatsQuery above.
+async function runPlayerTournamentHistory(pk, req) {
+    if (!leaguesCollection || !matchRecordsCollection) return { httpError: 503, message: 'Database not configured' };
+    const ownerUid = ownerUidFrom(req);
+    if (!ownerUid) return { httpError: 400, message: 'uid required' };
+    const pkSet = new Set(Array.isArray(pk) ? pk : [pk]);
+    const leagues = await leaguesCollection.find({ ownerUid, leagueKey: { $ne: SINGLE_MATCHES_LEAGUE_KEY } })
+        .project({ leagueKey: 1, displayName: 1, updatedAt: 1 }).toArray();
+    const tournaments = (await Promise.all(leagues.map(async doc => {
+        const matches = await getLeagueMatches(ownerUid, doc.leagueKey);
+        const stats = computeSinglePlayerRollup(matches, pk);
+        if (!stats.batting && !stats.bowling) return null; // player never appeared in this tournament
+        return {
+            leagueName: doc.displayName || doc.leagueKey,
+            matchesPlayed: matches.filter(m => {
+                return ['A', 'B'].some(k =>
+                    ((m.battingCard && m.battingCard[k]) || []).some(b => pkSet.has(playerKey(b.name))) ||
+                    ((m.bowlingCard && m.bowlingCard[k]) || []).some(b => pkSet.has(playerKey(b.name)))
+                );
+            }).length,
+            updatedAt: doc.updatedAt || 0,
+            batting: stats.batting,
+            bowling: stats.bowling
+        };
+    })))
+        .filter(Boolean)
+        .sort((a, b) => b.updatedAt - a.updatedAt);
+    return { tournaments };
 }
 
 // GET /api/stats/player/:playerKey?scope=match|tournament|career&matchId=&leagueName=&uid=
 app.get('/api/stats/player/:playerKey', async (req, res) => {
     const pk = playerKey(req.params.playerKey);
     if (!pk) return res.status(400).json({ success: false, error: 'playerKey required' });
-    const scope = req.query.scope || 'match';
     try {
-        if (scope === 'match') {
-            if (!ballsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
-            if (!req.query.matchId) return res.status(400).json({ success: false, error: 'matchId required for scope=match' });
-            const stats = await computeMatchPlayerStats(safeMatchId(req.query.matchId), pk);
-            return res.json({ success: true, scope, playerKey: pk, ...stats });
-        }
-        if (!matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
-        if (scope === 'tournament') {
-            const leagueKey = leagueKeyFor(req.query.leagueName);
-            const ownerUid = ownerUidFrom(req);
-            if (!leagueKey || !ownerUid) return res.status(400).json({ success: false, error: 'leagueName and uid required for scope=tournament' });
-            const matches = await getLeagueMatches(ownerUid, leagueKey);
-            const stats = computeSinglePlayerRollup(matches, pk);
-            return res.json({ success: true, scope, playerKey: pk, ...stats });
-        }
-        // career (and season, best-effort — see note on the clips endpoint
-        // above): every match across every league this owner has saved.
-        const ownerUid = ownerUidFrom(req);
-        if (!ownerUid) return res.status(400).json({ success: false, error: 'uid required for scope=career' });
-        const allMatches = await matchRecordsCollection.find({ ownerUid }).toArray();
-        const stats = computeSinglePlayerRollup(allMatches, pk);
-        res.json({ success: true, scope, playerKey: pk, ...stats });
+        const result = await runPlayerStatsQuery(pk, req);
+        if (result.httpError) return res.status(result.httpError).json({ success: false, error: result.message });
+        res.json({ success: true, playerKey: pk, ...result });
     } catch (err) {
         console.log('Player-stats fetch error:', err);
         res.status(500).json({ success: false, error: 'Could not load player stats' });
@@ -1570,34 +1785,132 @@ app.get('/api/stats/player/:playerKey', async (req, res) => {
 app.get('/api/stats/player/:playerKey/tournaments', async (req, res) => {
     const pk = playerKey(req.params.playerKey);
     if (!pk) return res.status(400).json({ success: false, error: 'playerKey required' });
-    if (!leaguesCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
-    const ownerUid = ownerUidFrom(req);
-    if (!ownerUid) return res.status(400).json({ success: false, error: 'uid required' });
     try {
-        const leagues = await leaguesCollection.find({ ownerUid, leagueKey: { $ne: SINGLE_MATCHES_LEAGUE_KEY } })
-            .project({ leagueKey: 1, displayName: 1, updatedAt: 1 }).toArray();
-        const tournaments = (await Promise.all(leagues.map(async doc => {
-            const matches = await getLeagueMatches(ownerUid, doc.leagueKey);
-            const stats = computeSinglePlayerRollup(matches, pk);
-            if (!stats.batting && !stats.bowling) return null; // player never appeared in this tournament
-            return {
-                leagueName: doc.displayName || doc.leagueKey,
-                matchesPlayed: matches.filter(m => {
-                    return ['A', 'B'].some(k =>
-                        ((m.battingCard && m.battingCard[k]) || []).some(b => playerKey(b.name) === pk) ||
-                        ((m.bowlingCard && m.bowlingCard[k]) || []).some(b => playerKey(b.name) === pk)
-                    );
-                }).length,
-                updatedAt: doc.updatedAt || 0,
-                batting: stats.batting,
-                bowling: stats.bowling
-            };
-        })))
-            .filter(Boolean)
-            .sort((a, b) => b.updatedAt - a.updatedAt);
-        res.json({ success: true, playerKey: pk, tournaments });
+        const result = await runPlayerTournamentHistory(pk, req);
+        if (result.httpError) return res.status(result.httpError).json({ success: false, error: result.message });
+        res.json({ success: true, playerKey: pk, ...result });
     } catch (err) {
         console.log('Player-tournament-history fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load tournament history' });
+    }
+});
+
+// ================================================================
+// 🌟 GLOBAL PLAYER PROFILE ROUTES — playerId-addressed versions of the
+// stats/tournaments endpoints above, plus search (typeahead for the
+// scoring panel) and merge (dedup two profiles created for the same real
+// person under slightly different spellings). See playersCollection
+// comment in connectMongo and resolvePlayerId above for the data model.
+// ================================================================
+
+// GET /api/players/search?uid=&q= — typeahead for the panel's player name
+// inputs. Matching on a name that's ALREADY a known player (rather than
+// letting the scorer free-type a fresh variant every time) is what keeps
+// nameKeys from fragmenting in the first place.
+app.get('/api/players/search', async (req, res) => {
+    if (!playersCollection) return res.json({ success: true, players: [] });
+    const ownerUid = ownerUidFrom(req);
+    const q = String(req.query.q || '').trim().toLowerCase();
+    if (!ownerUid || q.length < 2) return res.json({ success: true, players: [] });
+    try {
+        const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const players = await playersCollection.find({ ownerUid, displayName: { $regex: escaped, $options: 'i' } })
+            .project({ playerId: 1, displayName: 1 }).limit(10).toArray();
+        res.json({ success: true, players });
+    } catch (err) {
+        console.log('Player search error:', err);
+        res.status(500).json({ success: false, players: [] });
+    }
+});
+
+// POST /api/players/resolve  { uid, name } — find-or-create a playerId for
+// a name. The panel can call this as soon as a scorer commits a player
+// name (instead of only implicitly via logBall), so the playerId is known
+// before the first ball is even bowled.
+app.post('/api/players/resolve', async (req, res) => {
+    const ownerUid = ownerUidFrom(req) || req.body.uid;
+    const name = req.body.name;
+    if (!ownerUid || !String(name || '').trim()) return res.status(400).json({ success: false, error: 'uid and name required' });
+    try {
+        const playerId = await resolvePlayerId(ownerUid, name);
+        if (!playerId) return res.status(503).json({ success: false, error: 'Database not configured' });
+        res.json({ success: true, playerId });
+    } catch (err) {
+        console.log('Player resolve error:', err);
+        res.status(500).json({ success: false, error: 'Could not resolve player' });
+    }
+});
+
+// POST /api/players/:playerId/merge  { uid, intoNameKeys: [...] } — folds
+// another set of nameKeys (typically every alias of a duplicate playerId
+// created by mistake) into this playerId, then leaves the duplicate doc's
+// nameKeys empty so it stops matching anything new. Historical balls/clips
+// already stamped with the OLD playerId keep that value (we never rewrite
+// history), but since stats are computed live from nameKeys — not from the
+// stamped playerId — merging here immediately unifies their stats. The
+// stamped playerId fields are for provenance/debugging, not the query key.
+app.post('/api/players/:playerId/merge', async (req, res) => {
+    if (!playersCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const ownerUid = ownerUidFrom(req) || req.body.uid;
+    const { fromPlayerId } = req.body || {};
+    if (!ownerUid || !fromPlayerId) return res.status(400).json({ success: false, error: 'uid and fromPlayerId required' });
+    if (fromPlayerId === req.params.playerId) return res.status(400).json({ success: false, error: 'Cannot merge a player into itself' });
+    try {
+        const [into, from] = await Promise.all([
+            playersCollection.findOne({ playerId: req.params.playerId, ownerUid }),
+            playersCollection.findOne({ playerId: fromPlayerId, ownerUid })
+        ]);
+        if (!into || !from) return res.status(404).json({ success: false, error: 'Player not found' });
+        const mergedKeys = [...new Set([...(into.nameKeys || []), ...(from.nameKeys || [])])];
+        await playersCollection.updateOne({ _id: from._id }, { $set: { nameKeys: [], mergedInto: into.playerId, updatedAt: Date.now() } });
+        await playersCollection.updateOne({ _id: into._id }, { $set: { nameKeys: mergedKeys, updatedAt: Date.now() } });
+        res.json({ success: true, playerId: into.playerId, nameKeys: mergedKeys });
+    } catch (err) {
+        console.log('Player merge error:', err);
+        res.status(500).json({ success: false, error: 'Could not merge players' });
+    }
+});
+
+// GET /api/players/:playerId?uid= — profile (display name + known aliases)
+app.get('/api/players/:playerId', async (req, res) => {
+    if (!playersCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const profile = await playersCollection.findOne({ playerId: req.params.playerId });
+        if (!profile) return res.status(404).json({ success: false, error: 'Player not found' });
+        res.json({ success: true, playerId: profile.playerId, displayName: profile.displayName, aliases: profile.nameKeys || [] });
+    } catch (err) {
+        console.log('Player profile fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load player' });
+    }
+});
+
+// GET /api/players/:playerId/stats?scope=match|tournament|career&... — same
+// contract as /api/stats/player/:playerKey, addressed by the permanent
+// playerId instead of a raw name string, and automatically covering every
+// nameKey ever merged into this playerId.
+app.get('/api/players/:playerId/stats', async (req, res) => {
+    const pks = await nameKeysForPlayerId(req.params.playerId);
+    if (!pks.length) return res.status(404).json({ success: false, error: 'Player not found' });
+    try {
+        const result = await runPlayerStatsQuery(pks, req);
+        if (result.httpError) return res.status(result.httpError).json({ success: false, error: result.message });
+        res.json({ success: true, playerId: req.params.playerId, ...result });
+    } catch (err) {
+        console.log('Player-stats (by playerId) fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load player stats' });
+    }
+});
+
+// GET /api/players/:playerId/tournaments?uid=
+app.get('/api/players/:playerId/tournaments', async (req, res) => {
+    const pks = await nameKeysForPlayerId(req.params.playerId);
+    if (!pks.length) return res.status(404).json({ success: false, error: 'Player not found' });
+    try {
+        const result = await runPlayerTournamentHistory(pks, req);
+        if (result.httpError) return res.status(result.httpError).json({ success: false, error: result.message });
+        res.json({ success: true, playerId: req.params.playerId, ...result });
+    } catch (err) {
+        console.log('Player-tournament-history (by playerId) fetch error:', err);
         res.status(500).json({ success: false, error: 'Could not load tournament history' });
     }
 });
@@ -2723,6 +3036,15 @@ io.on('connection', async (socket) => {
             // so this ball — and any clip cut around it — can be found again
             // in career-wide player queries, not just within this one match.
             const ownerUid = await resolveOwnerUidForMatch(matchId, data.uid);
+            // 🌟 Stamp global playerIds alongside the existing name-string
+            // keys (see resolvePlayerId) — additive only, every existing
+            // *Key field and query in this file still works unchanged.
+            const [strikerPlayerId, nonStrikerPlayerId, bowlerPlayerId, dismissalFielderPlayerId] = ownerUid ? await Promise.all([
+                resolvePlayerId(ownerUid, data.striker),
+                resolvePlayerId(ownerUid, data.nonStriker),
+                resolvePlayerId(ownerUid, data.bowler),
+                resolvePlayerId(ownerUid, data.dismissal && data.dismissal.fielder)
+            ]) : [null, null, null, null];
             await ballsCollection.insertOne({
                 matchId,
                 ownerUid: ownerUid || null,
@@ -2734,12 +3056,16 @@ io.on('connection', async (socket) => {
                 battingTeam: data.battingTeam,
                 striker: data.striker,
                 strikerKey: playerKey(data.striker),
+                strikerPlayerId,
                 nonStriker: data.nonStriker,
                 nonStrikerKey: playerKey(data.nonStriker),
+                nonStrikerPlayerId,
                 bowler: data.bowler,
                 bowlerKey: playerKey(data.bowler),
+                bowlerPlayerId,
                 dismissal: data.dismissal || null, // { type: 'Bowled'|'Caught'|'LBW'|'Run Out'|'Stumped'|'Hit Wicket'|..., fielder? }
                 dismissalFielderKey: playerKey(data.dismissal && data.dismissal.fielder),
+                dismissalFielderPlayerId,
                 score: data.score,        // { runs, wickets, overs, balls } snapshot after this ball
                 timestamp: data.timestamp || Date.now()
             });
