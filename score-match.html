@@ -83,6 +83,38 @@
   footer a{ color:var(--accent); font-weight:700; }
   @media (max-width:900px){ #tables-grid,#bottom-grid{ grid-template-columns:1fr; } }
   @media (max-width:640px){ #teams-row{ grid-template-columns:1fr; text-align:center; } .team-block,.team-block.right{ flex-direction:column; text-align:center; } #score-center{ order:-1; margin-bottom:6px; } }
+
+  /* ============================================================
+     CLIPS — per-player clip button + a compact list/video modal.
+     Same /api/clips/* endpoints and clip icon as cricket-scorecard.html,
+     just a lighter single modal here since this is a static finished
+     summary (no live drawer/tabs needed).
+     ============================================================ */
+  th.clip-col, td.clip-col{ width:34px; text-align:center; padding-left:0; padding-right:6px; }
+  .clip-btn{ width:26px; height:26px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); color:var(--text-dim); display:inline-flex; align-items:center; justify-content:center; cursor:pointer; }
+  .clip-btn:hover{ color:var(--accent); border-color:var(--accent); }
+  .clip-btn svg{ width:12px; height:12px; }
+  #clip-modal-backdrop{ display:none; position:fixed; inset:0; background:rgba(4,6,10,.7); z-index:100; align-items:center; justify-content:center; padding:16px; }
+  #clip-modal-backdrop.open{ display:flex; }
+  #clip-modal{ width:min(480px, 100%); max-height:80vh; overflow-y:auto; background:var(--panel); border-radius:var(--radius-lg); box-shadow:0 20px 60px rgba(0,0,0,.5); }
+  #clip-modal-head{ display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--border); position:sticky; top:0; background:var(--panel); }
+  #clip-modal-head h3{ margin:0; font-family:var(--font-display); font-size:14.5px; font-weight:700; }
+  #clip-modal-close{ width:28px; height:28px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); color:var(--text-dim); display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  #clip-modal-body{ padding:10px 12px 16px; }
+  .clip-row{ display:flex; align-items:center; gap:10px; padding:10px; border-radius:var(--radius-sm); border:1px solid var(--border-soft); margin-bottom:8px; cursor:pointer; }
+  .clip-row:hover{ border-color:var(--accent); }
+  .clip-row .cr-badge{ width:26px; height:26px; border-radius:8px; flex:none; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:11.5px; color:#fff; }
+  .clip-row .cr-badge.four{ background:#3b82f6; } .clip-row .cr-badge.six{ background:#a855f7; } .clip-row .cr-badge.wicket{ background:var(--wicket); }
+  .clip-row .cr-over{ font-weight:700; font-size:12.5px; font-family:var(--font-display); }
+  .clip-row .cr-sub{ font-size:11px; color:var(--text-dim); margin-top:1px; }
+  #video-modal-backdrop{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:110; align-items:center; justify-content:center; padding:16px; }
+  #video-modal-backdrop.open{ display:flex; }
+  #video-modal{ width:min(720px,100%); background:#000; border-radius:var(--radius-lg); overflow:hidden; }
+  #video-modal-head{ display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:#0b0e14; }
+  #video-modal-head .vm-title{ color:#fff; font-size:12.5px; font-weight:700; }
+  #video-modal-close{ width:28px; height:28px; border-radius:99px; background:rgba(255,255,255,.1); color:#fff; border:none; cursor:pointer; }
+  #video-modal video{ width:100%; display:block; max-height:70vh; background:#000; }
+  #video-modal-loading{ color:#fff; text-align:center; padding:60px 0; font-size:12.5px; }
 </style>
 </head>
 <body>
@@ -109,6 +141,28 @@
 </div>
 
 <footer>Powered by <a href="/" >Scorvix</a> — live scoring &amp; broadcast graphics</footer>
+
+<!-- Player clip list -->
+<div id="clip-modal-backdrop">
+  <div id="clip-modal">
+    <div id="clip-modal-head">
+      <h3 id="clip-modal-title">Clips</h3>
+      <button id="clip-modal-close" aria-label="Close">✕</button>
+    </div>
+    <div id="clip-modal-body"></div>
+  </div>
+</div>
+
+<!-- Video player -->
+<div id="video-modal-backdrop">
+  <div id="video-modal">
+    <div id="video-modal-head">
+      <span class="vm-title" id="video-modal-title">Clip</span>
+      <button id="video-modal-close" aria-label="Close">✕</button>
+    </div>
+    <div id="video-modal-body"><div id="video-modal-loading">Loading clip…</div></div>
+  </div>
+</div>
 
 <script>
 /* ============================================================
@@ -185,7 +239,8 @@ function inningsCard(teamLabel, teamObj, score, battingRows, bowlingRows, extras
       <td class="num tabnum">${b.fours||0}</td>
       <td class="num tabnum">${b.sixes||0}</td>
       <td class="num tabnum">${strikeRate(b.runs||0, b.balls||0)}</td>
-    </tr>`).join('') || '<tr><td colspan="6" style="color:var(--text-faint);">No batting data</td></tr>';
+      <td class="clip-col">${clipBtnHtml(b.name, 'batter')}</td>
+    </tr>`).join('') || '<tr><td colspan="7" style="color:var(--text-faint);">No batting data</td></tr>';
 
   const bowlingBody = (bowlingRows || []).map(b => `
     <tr>
@@ -195,7 +250,8 @@ function inningsCard(teamLabel, teamObj, score, battingRows, bowlingRows, extras
       <td class="num tabnum">${b.runs||0}</td>
       <td class="num tabnum">${b.wickets||0}</td>
       <td class="num tabnum">${economy(b.runs||0, b.overs, b.balls)}</td>
-    </tr>`).join('') || '<tr><td colspan="6" style="color:var(--text-faint);">No bowling data</td></tr>';
+      <td class="clip-col">${clipBtnHtml(b.name, 'bowler')}</td>
+    </tr>`).join('') || '<tr><td colspan="7" style="color:var(--text-faint);">No bowling data</td></tr>';
 
   const fowHtml = (fow || []).length
     ? fow.map(f => `<div class="fow-item"><span>${escapeHtml(f.score != null ? f.score : (f.runs != null ? f.runs : ''))}-<span class="fow-wkt">${f.wicket || ''}</span></span><span>${escapeHtml(f.batter || f.name || '')} · ${escapeHtml(fmtOvers(f.overs, f.balls) || '')} ov</span></div>`).join('')
@@ -222,10 +278,10 @@ function inningsCard(teamLabel, teamObj, score, battingRows, bowlingRows, extras
   </div>
   <div id="tables-grid">
     <div class="card"><div class="section-title"><span class="dash"></span>Batting</div>
-      <table><thead><tr><th>Batter</th><th class="num">R</th><th class="num">B</th><th class="num">4s</th><th class="num">6s</th><th class="num">SR</th></tr></thead><tbody>${battingBody}</tbody></table>
+      <table><thead><tr><th>Batter</th><th class="num">R</th><th class="num">B</th><th class="num">4s</th><th class="num">6s</th><th class="num">SR</th><th class="clip-col"></th></tr></thead><tbody>${battingBody}</tbody></table>
     </div>
     <div class="card"><div class="section-title"><span class="dash"></span>Bowling</div>
-      <table><thead><tr><th>Bowler</th><th class="num">O</th><th class="num">M</th><th class="num">R</th><th class="num">W</th><th class="num">Econ</th></tr></thead><tbody>${bowlingBody}</tbody></table>
+      <table><thead><tr><th>Bowler</th><th class="num">O</th><th class="num">M</th><th class="num">R</th><th class="num">W</th><th class="num">Econ</th><th class="clip-col"></th></tr></thead><tbody>${bowlingBody}</tbody></table>
     </div>
   </div>
   <div id="bottom-grid">
@@ -280,6 +336,97 @@ function renderFinal(m){
   c.innerHTML = headerCard + inningsA + inningsB;
   document.title = `${m.teamA.short || m.teamA.name} vs ${m.teamB.short || m.teamB.name} — Scorvix`;
 }
+
+/* ============================================================
+   CLIPS — small player clip list + video modal, wired to the same
+   /api/clips/* endpoints cricket-scorecard.html uses. Metadata loads
+   with the button; the actual video only starts streaming once WATCH
+   is tapped inside openVideoModal().
+   ============================================================ */
+const CLIP_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>';
+
+// Mirrors the server's playerKey() exactly (name.trim().toLowerCase()).
+function playerKeyOf(name){ return String(name||'').trim().toLowerCase() || null; }
+
+function clipBtnHtml(name, role){
+  if(!name) return '';
+  return `<button class="clip-btn" data-player="${escapeHtml(name)}" data-role="${role}" aria-label="Clips for ${escapeHtml(name)}">${CLIP_ICON}</button>`;
+}
+
+async function fetchPlayerClips(name){
+  const pk = playerKeyOf(name);
+  const matchId = matchIdFromPath();
+  if(!pk || !matchId) return null;
+  try{
+    const res = await fetch(`/api/clips/player/${encodeURIComponent(pk)}?scope=match&matchId=${encodeURIComponent(matchId)}`);
+    if(!res.ok) return null;
+    return await res.json();
+  } catch(err){ console.warn('Clip fetch failed', err); return null; }
+}
+
+function clipRowHtml(c){
+  const badgeCls = c.eventType === 'FOUR' ? 'four' : c.eventType === 'SIX' ? 'six' : 'wicket';
+  const badgeLabel = c.eventType === 'FOUR' ? '4' : c.eventType === 'SIX' ? '6' : 'W';
+  const overLabel = `${c.over ?? '—'}.${c.ballInOver ?? ''}`;
+  const sub = c.eventType === 'WICKET'
+    ? [c.dismissalType, c.bowler ? 'b. ' + c.bowler : null].filter(Boolean).join(' · ')
+    : (c.bowler ? 'off ' + c.bowler : '');
+  return `<div class="clip-row" data-clip-id="${c.clipId}" data-title="${escapeHtml((c.striker||c.bowler||'') + ' — ' + c.eventType)}">
+    <div class="cr-badge ${badgeCls}">${badgeLabel}</div>
+    <div><div class="cr-over tabnum">Over ${overLabel}</div><div class="cr-sub">${escapeHtml(sub || (c.ready ? 'Tap to watch' : 'Processing…'))}</div></div>
+  </div>`;
+}
+
+async function openPlayerClips(name, role){
+  document.getElementById('clip-modal-title').textContent = `${name} — Clips`;
+  const body = document.getElementById('clip-modal-body');
+  body.innerHTML = '<div class="empty-state">Loading…</div>';
+  document.getElementById('clip-modal-backdrop').classList.add('open');
+
+  const data = await fetchPlayerClips(name);
+  if(!data || !data.success){
+    body.innerHTML = '<div class="empty-state">Could not load clips right now.</div>';
+    return;
+  }
+  const clips = role === 'bowler' ? (data.bowling.wickets || []) : [
+    ...(data.batting.fours || []), ...(data.batting.sixes || []), ...(data.batting.dismissal || [])
+  ];
+  if(!clips.length){
+    body.innerHTML = '<div class="empty-state">No clips for this player yet.</div>';
+    return;
+  }
+  body.innerHTML = clips.map(clipRowHtml).join('');
+  body.querySelectorAll('.clip-row').forEach(row => {
+    row.addEventListener('click', () => openVideoModal(row.dataset.clipId, row.dataset.title));
+  });
+}
+
+document.getElementById('clip-modal-close').addEventListener('click', () => document.getElementById('clip-modal-backdrop').classList.remove('open'));
+document.getElementById('clip-modal-backdrop').addEventListener('click', (e) => { if(e.target.id === 'clip-modal-backdrop') document.getElementById('clip-modal-backdrop').classList.remove('open'); });
+
+function openVideoModal(clipId, title){
+  document.getElementById('video-modal-title').textContent = title || 'Clip';
+  document.getElementById('video-modal-body').innerHTML = '<div id="video-modal-loading">Loading clip…</div>';
+  document.getElementById('video-modal-backdrop').classList.add('open');
+  requestAnimationFrame(() => {
+    document.getElementById('video-modal-body').innerHTML =
+      `<video src="/api/clips/${encodeURIComponent(clipId)}/watch" controls autoplay playsinline></video>`;
+  });
+}
+document.getElementById('video-modal-close').addEventListener('click', () => {
+  document.getElementById('video-modal-backdrop').classList.remove('open');
+  document.getElementById('video-modal-body').innerHTML = '<div id="video-modal-loading">Loading clip…</div>';
+});
+document.getElementById('video-modal-backdrop').addEventListener('click', (e) => { if(e.target.id === 'video-modal-backdrop') document.getElementById('video-modal-close').click(); });
+
+// Delegated click — batting/bowling tables are re-rendered on every
+// load, so a single listener on <body> covers every clip-btn without
+// needing to re-wire after each innerHTML swap.
+document.body.addEventListener('click', (e) => {
+  const btn = e.target.closest('.clip-btn');
+  if(!btn) return;
+  openPlayerClips(btn.dataset.player, btn.dataset.role);
+});
 
 init();
 </script>
