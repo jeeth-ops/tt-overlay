@@ -2675,6 +2675,12 @@ function saveMatchToLeague(silent){
     if(data && data.success){
       leagueCache[key] = data.matches;
       saveLeagueMatchesLocal(name, data.matches);
+      // This match's runs/wickets just changed the tournament + career
+      // totals for every player involved — drop the cached career/
+      // tournament-history lines so the next time anyone opens Player
+      // History (panel or scorecard) it recomputes fresh from the
+      // corrected match data, per the "must remain recalculable" rule.
+      invalidatePlayerStatsCaches();
       refreshLeagueUI();
       refreshTournamentCardsIfShown();
     } else {
@@ -3155,6 +3161,61 @@ function findLoadedTeamByName(teamName){
   return null;
 }
 
+// ---- CAREER (all tournaments) stats ------------------------------------
+// Everything above this point only ever looks at currentLeagueMatches()
+// — i.e. the ONE tournament currently loaded in the panel. "Career" means
+// every tournament this owner has ever saved, which lives server-side
+// across many league docs, so it has to come from the backend's
+// /api/stats/player endpoint (scope=career) rather than being computed
+// locally. Same global playerKey convention as everywhere else
+// (name.trim().toLowerCase()) — one identity across every tournament.
+const careerStatsCache = {}; // playerKey -> { battingLine, bowlingLine } | null (null = fetched, nothing found)
+function playerKeyLocal(name){ return (name || '').trim().toLowerCase() || null; }
+
+async function fetchPlayerCareerStats(name){
+  const pk = playerKeyLocal(name);
+  if(!pk) return null;
+  if(pk in careerStatsCache) return careerStatsCache[pk];
+  const uid = currentOwnerUid();
+  if(!uid) { careerStatsCache[pk] = null; return null; }
+  try{
+    const res = await fetch(withUid(`/api/stats/player/${encodeURIComponent(pk)}?scope=career`));
+    if(!res.ok){ careerStatsCache[pk] = null; return null; }
+    const data = await res.json();
+    if(!data || !data.success){ careerStatsCache[pk] = null; return null; }
+    const bat = data.batting, bowl = data.bowling;
+    const parts = [];
+    if(bat) parts.push(`INN ${bat.innings} · RUNS ${bat.runs} · AVG ${bat.average} · SR ${bat.strikeRate}`);
+    if(bowl) parts.push(`${bowl.wickets} WKTS · ECON ${bowl.economy}`);
+    const result = { hasData: !!(bat || bowl), line: parts.join('  ·  '), batting: bat, bowling: bowl };
+    careerStatsCache[pk] = result;
+    return result;
+  } catch(err){ console.warn('Career stats fetch failed', err); careerStatsCache[pk] = null; return null; }
+}
+// Invalidate a player's cached career line (e.g. after saving a new match
+// that changes their totals) — cheap to just clear everything.
+function clearCareerStatsCache(){ Object.keys(careerStatsCache).forEach(k => delete careerStatsCache[k]); }
+
+// Per-tournament breakdown ("2024 — Tournament A — 421 Runs" style rows),
+// backed by the new /api/stats/player/:playerKey/tournaments endpoint.
+const tournamentHistoryCache = {};
+async function fetchPlayerTournamentHistoryPanel(name){
+  const pk = playerKeyLocal(name);
+  if(!pk) return [];
+  if(pk in tournamentHistoryCache) return tournamentHistoryCache[pk];
+  const uid = currentOwnerUid();
+  if(!uid){ tournamentHistoryCache[pk] = []; return []; }
+  try{
+    const res = await fetch(withUid(`/api/stats/player/${encodeURIComponent(pk)}/tournaments`));
+    if(!res.ok){ tournamentHistoryCache[pk] = []; return []; }
+    const data = await res.json();
+    const rows = (data && data.success && data.tournaments) || [];
+    tournamentHistoryCache[pk] = rows;
+    return rows;
+  } catch(err){ console.warn('Tournament history fetch failed', err); tournamentHistoryCache[pk] = []; return []; }
+}
+function invalidatePlayerStatsCaches(){ clearCareerStatsCache(); Object.keys(tournamentHistoryCache).forEach(k => delete tournamentHistoryCache[k]); }
+
 function renderPlayerHistoryResults(rawName, matches){
   const resultsEl = document.getElementById('player-history-results');
   if(!resultsEl) return;
@@ -3187,16 +3248,44 @@ function renderPlayerHistoryResults(rawName, matches){
         <tbody>${matchRowsHtml}</tbody>
       </table>
     </div>
-    <div style="margin-top:10px;font-weight:700;">Tournament totals</div>
+    <div style="margin-top:10px;font-weight:700;">This Tournament — totals</div>
     <div style="font-size:11px;color:var(--text-dim);line-height:1.7;">
       ${batTotals ? `Batting — Innings ${batTotals.matches} · Runs ${batTotals.runs} · Avg ${batTotals.average} · SR ${batTotals.sr} · HS ${batTotals.highScore} · 4s ${batTotals.fours} · 6s ${batTotals.sixes} · 50s ${batTotals.fifties} · 100s ${batTotals.hundreds}` : ''}
       ${bowlTotals ? `<br>Bowling — Matches ${bowlTotals.matches} · Overs ${bowlTotals.overs} · Runs ${bowlTotals.runs} · Wkts ${bowlTotals.wickets} · Econ ${bowlTotals.economy} · Avg ${bowlTotals.average} · Best ${bowlTotals.best} · Maidens ${bowlTotals.maidens}` : ''}
     </div>
+    <div style="margin-top:10px;font-weight:700;">Career — all tournaments</div>
+    <div id="player-history-career-line" style="font-size:11px;color:var(--text-dim);line-height:1.7;">${currentOwnerUid() ? 'Loading…' : 'Sign in required to load career stats.'}</div>
+    <div style="margin-top:10px;font-weight:700;">Tournament History</div>
+    <div id="player-history-tournament-list" style="font-size:11px;color:var(--text-dim);line-height:1.9;">${currentOwnerUid() ? 'Loading…' : ''}</div>
     <button type="button" class="small ${isShownOnOverlay ? '' : 'primary'} full" id="player-history-overlay-toggle" style="margin-top:10px;">
       ${isShownOnOverlay ? '🔴 Hide from Overlay' : '📡 Show on Overlay'}
     </button>
   `;
-  document.getElementById('player-history-overlay-toggle').addEventListener('click', () => {
+
+  // Career line + tournament-by-tournament breakdown load async (server
+  // round-trip across every saved league) — fill in once they resolve,
+  // guarded so a fast second search doesn't have a stale fetch clobber
+  // the currently-displayed player.
+  if(currentOwnerUid()){
+    fetchPlayerCareerStats(name).then(career => {
+      if(state.playerHistorySearch !== name) return; // player changed while this was in flight
+      const el = document.getElementById('player-history-career-line');
+      if(el) el.textContent = career && career.hasData ? career.line : 'No career data yet.';
+    });
+    fetchPlayerTournamentHistoryPanel(name).then(rows => {
+      if(state.playerHistorySearch !== name) return;
+      const el = document.getElementById('player-history-tournament-list');
+      if(!el) return;
+      if(!rows.length){ el.textContent = 'No other tournaments recorded yet.'; return; }
+      el.innerHTML = rows.map(t => {
+        const bat = t.batting, bowl = t.bowling;
+        const line = [bat ? `${bat.runs} Runs` : null, bowl ? `${bowl.wickets} Wkts` : null].filter(Boolean).join(' · ') || 'No stats';
+        return `<div>${escapeHtmlPanel(t.leagueName)} — ${line}</div>`;
+      }).join('');
+    });
+  }
+
+  document.getElementById('player-history-overlay-toggle').addEventListener('click', async () => {
     if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
     if(isShownOnOverlay){
       state.showPlayerHistoryCard = false;
@@ -3204,7 +3293,7 @@ function renderPlayerHistoryResults(rawName, matches){
     } else {
       state.showPlayerHistoryCard = true;
       state.playerHistoryOverlayName = name;
-      socket.emit('cricketPlayerHistory', { data: buildPlayerHistoryPayload(name) });
+      socket.emit('cricketPlayerHistory', { data: await buildPlayerHistoryPayload(name) });
     }
     saveLocal();
     renderPlayerHistoryResults(name, currentLeagueMatches());
@@ -3213,7 +3302,10 @@ function renderPlayerHistoryResults(rawName, matches){
 
 // Payload sent to the overlay for the Player History card — team colour/
 // logo come from whichever loaded team (A/B) the name matches, if any.
-function buildPlayerHistoryPayload(name){
+// Async: career totals + tournament history come from the backend (every
+// saved league), unlike the "this tournament" totals which are computed
+// locally from currentLeagueMatches().
+async function buildPlayerHistoryPayload(name){
   const matches = currentLeagueMatches();
   const { rows, lastTeamName } = getPlayerHistoryRows(name, matches);
   const teamObj = findLoadedTeamByName(lastTeamName);
@@ -3222,6 +3314,11 @@ function buildPlayerHistoryPayload(name){
   const totalsParts = [];
   if(batTotals) totalsParts.push(`INN ${batTotals.matches} · RUNS ${batTotals.runs} · AVG ${batTotals.average} · SR ${batTotals.sr} · HS ${batTotals.highScore}`);
   if(bowlTotals) totalsParts.push(`${bowlTotals.wickets} WKTS · ECON ${bowlTotals.economy}`);
+
+  const [career, tournamentHistory] = currentOwnerUid()
+    ? await Promise.all([fetchPlayerCareerStats(name), fetchPlayerTournamentHistoryPanel(name)])
+    : [null, []];
+
   return {
     playerName: name,
     teamName: teamObj ? teamObj.name : lastTeamName,
@@ -3229,7 +3326,16 @@ function buildPlayerHistoryPayload(name){
     teamColor: teamObj ? teamObj.color : '',
     teamLogo: teamObj ? teamObj.logoUrl : '',
     rows,
-    totalsLine: totalsParts.join('  ·  ')
+    totalsLine: totalsParts.join('  ·  '),
+    careerLine: career && career.hasData ? career.line : '',
+    tournamentHistory: tournamentHistory.map(t => ({
+      leagueName: t.leagueName,
+      matchesPlayed: t.matchesPlayed,
+      runs: t.batting ? t.batting.runs : null,
+      average: t.batting ? t.batting.average : null,
+      wickets: t.bowling ? t.bowling.wickets : null,
+      economy: t.bowling ? t.bowling.economy : null
+    }))
   };
 }
 
@@ -3525,7 +3631,14 @@ function refreshTournamentCardsIfShown(){
   if(state.showPlayerStatCard && state.playerStatScope === 'tournament') socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
   if(state.showBowlerStatCard && state.bowlerStatScope === 'tournament') socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
   if(state.showTeamStatCard) socket.emit('cricketTeamStat', { data: buildTeamStatPayload() });
-  if(state.showPlayerHistoryCard && state.playerHistoryOverlayName) socket.emit('cricketPlayerHistory', { data: buildPlayerHistoryPayload(state.playerHistoryOverlayName) });
+  if(state.showPlayerHistoryCard && state.playerHistoryOverlayName){
+    // buildPlayerHistoryPayload is async (career/tournament-history come
+    // from the backend) — don't await here so this periodic refresh sweep
+    // stays non-blocking; the emit just fires a beat later once resolved.
+    buildPlayerHistoryPayload(state.playerHistoryOverlayName).then(data => {
+      if(socket && socket.connected) socket.emit('cricketPlayerHistory', { data });
+    });
+  }
   if(state.showTeamHistoryCard && state.teamHistoryOverlayName) socket.emit('cricketTeamHistory', { data: buildTeamHistoryPayload(state.teamHistoryOverlayName) });
   // Points Table — this function already runs every time a match is
   // saved (including the automatic save-on-victory), so as long as the
