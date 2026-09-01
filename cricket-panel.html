@@ -2537,6 +2537,23 @@ function currentLeagueMatches(){
   return leagueCache[key] || loadLeagueMatchesLocal(name);
 }
 
+// Same as currentLeagueMatches() but folds in THIS match's live, not-yet-
+// saved figures too (batting/bowling so far, ball by ball) — so a
+// player's tournament totals (fifties, average, wickets, etc.) keep
+// updating live for every viewer instead of freezing until the match is
+// won/tied or manually saved. Only applies when this match is actually
+// being tracked under the currently-selected tournament; a Single Match
+// has nothing to contribute. Replaces any already-saved copy of this
+// same match (matched by its permanent tournamentMatchId) with the
+// fresher live version, so nothing is ever double-counted.
+function currentLeagueMatchesLive(){
+  const saved = currentLeagueMatches();
+  if(state.matchMode !== 'tournament' || !(state.leagueName || '').trim()) return saved;
+  const live = buildMatchRecordForLeague();
+  const filtered = saved.filter(m => m.matchId !== live.matchId);
+  return [...filtered, live];
+}
+
 // Pulls the latest matches for a league from MongoDB and refreshes the UI
 // once they land — this is what lets a SECOND laptop see matches saved
 // from the first one. Fails silently to the local cache if the server or
@@ -3114,7 +3131,7 @@ function renderPlayerHistoryView(matches){
     <div id="player-history-results" class="shortcut-hint">${names.length ? 'Type or pick a player to see their tournament history.' : 'No player data saved in this tournament yet.'}</div>
   `;
   const input = document.getElementById('player-history-search');
-  const renderFor = () => renderPlayerHistoryResults(input.value, currentLeagueMatches());
+  const renderFor = () => renderPlayerHistoryResults(input.value, currentLeagueMatchesLive());
   if(state.playerHistorySearch && names.some(n => n.toLowerCase() === state.playerHistorySearch.toLowerCase())){
     input.value = state.playerHistorySearch;
     renderFor();
@@ -3252,6 +3269,16 @@ function clearCareerStatsCache(){ Object.keys(careerStatsCache).forEach(k => del
 // Per-tournament breakdown ("2024 — Tournament A — 421 Runs" style rows),
 // backed by the new /api/stats/player/:playerKey/tournaments endpoint.
 const tournamentHistoryCache = {};
+// Filters out whichever tournament is currently loaded in this panel —
+// "Every Other Tournament Played" should never repeat the one already
+// covered by the "This Tournament" section, and the backend endpoint
+// (which just lists every league it has data for) has no way to know
+// which one that is, so it's excluded here by name instead.
+function excludeCurrentTournament(rows){
+  const current = (state.leagueName || '').trim().toLowerCase();
+  if(!current) return rows;
+  return rows.filter(t => (t.leagueName || '').trim().toLowerCase() !== current);
+}
 async function fetchPlayerTournamentHistoryPanel(name){
   const pk = playerKeyLocal(name);
   if(!pk) return [];
@@ -3357,10 +3384,11 @@ function renderPlayerHistoryResults(rawName, matches){
   // player. Each tournament gets its own block with batting and bowling
   // on separate lines, never merged into one string.
   if(currentOwnerUid()){
-    fetchPlayerTournamentHistoryPanel(name).then(histRows => {
+    fetchPlayerTournamentHistoryPanel(name).then(rawHistRows => {
       if(state.playerHistorySearch !== name) return;
       const el = document.getElementById('player-history-tournament-list');
       if(!el) return;
+      const histRows = excludeCurrentTournament(rawHistRows);
       if(!histRows.length){ el.textContent = 'No other tournaments recorded yet.'; return; }
       el.innerHTML = histRows.map(t => {
         const batLine = formatStatFields(t.batting, BATTING_FIELD_DEFS);
@@ -3387,21 +3415,20 @@ function renderPlayerHistoryResults(rawName, matches){
       socket.emit('cricketPlayerHistory', { data: await buildPlayerHistoryPayload(name) });
     }
     saveLocal();
-    renderPlayerHistoryResults(name, currentLeagueMatches());
+    renderPlayerHistoryResults(name, currentLeagueMatchesLive());
   });
 }
 
 // Payload sent to the overlay for the Player History card — team colour/
 // logo come from whichever loaded team (A/B) the name matches, if any.
-// Async: career totals + tournament history come from the backend (every
-// saved league), unlike the "this tournament" totals which are computed
-// locally from currentLeagueMatches().
 // Sent to the overlay as three deliberately separate blocks — thisMatch,
 // thisTournament, and tournamentHistory (every OTHER tournament) — each
 // with batting/bowling kept apart, so the on-screen card can render them
-// as distinct sections instead of one merged line.
+// as distinct sections instead of one merged line. "thisTournament" is
+// computed from currentLeagueMatchesLive(), so it includes this match's
+// live/unsaved figures too, not just what's already been saved.
 async function buildPlayerHistoryPayload(name){
-  const matches = currentLeagueMatches();
+  const matches = currentLeagueMatchesLive();
   const { rows, lastTeamName } = getPlayerHistoryRows(name, matches);
   const teamObj = findLoadedTeamByName(lastTeamName);
   const thisMatch = getThisMatchPlayerStats(name);
@@ -3409,7 +3436,7 @@ async function buildPlayerHistoryPayload(name){
   const bowlTotals = computeBowlerTournamentStats(name);
 
   const tournamentHistory = currentOwnerUid()
-    ? await fetchPlayerTournamentHistoryPanel(name)
+    ? excludeCurrentTournament(await fetchPlayerTournamentHistoryPanel(name))
     : [];
 
   return {
@@ -3665,7 +3692,7 @@ function computeTeamTournamentStats(teamName){
 function computeBatterTournamentStats(playerName){
   const name = (playerName || '').trim().toLowerCase();
   if(!name) return null;
-  const matches = currentLeagueMatches();
+  const matches = currentLeagueMatchesLive();
   if(!matches.length) return null;
   let innings = 0, runs = 0, balls = 0, outs = 0, fours = 0, sixes = 0, fifties = 0, hundreds = 0;
   let highScore = 0, highScoreNotOut = false;
@@ -3696,7 +3723,7 @@ function computeBatterTournamentStats(playerName){
 function computeBowlerTournamentStats(playerName){
   const name = (playerName || '').trim().toLowerCase();
   if(!name) return null;
-  const matches = currentLeagueMatches();
+  const matches = currentLeagueMatchesLive();
   if(!matches.length) return null;
   let apps = 0, totalBalls = 0, runs = 0, wickets = 0, maidens = 0, bestW = -1, bestR = Infinity;
   matches.forEach(m => {
@@ -3818,6 +3845,17 @@ function refreshLiveStatCards(){
   if(state.showPlayerStatCard) socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
   if(state.showBowlerStatCard) socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
   if(state.showTeamStatCard) socket.emit('cricketTeamStat', { data: buildTeamStatPayload() });
+  // Player History card, if it's up, gets the same ball-by-ball refresh —
+  // "This Match" and "This Tournament" (which now folds in this match's
+  // live figures via currentLeagueMatchesLive()) both need to move as the
+  // innings progresses, not just once the match is saved. Async/non-
+  // blocking like the tournament-history sweep below, so a slow backend
+  // round-trip never stalls ball-by-ball scoring.
+  if(state.showPlayerHistoryCard && state.playerHistoryOverlayName){
+    buildPlayerHistoryPayload(state.playerHistoryOverlayName).then(data => {
+      if(socket && socket.connected) socket.emit('cricketPlayerHistory', { data });
+    });
+  }
 }
 
 function addLegalBall(runsThisBall){
