@@ -248,8 +248,9 @@
   tbody td{ padding:8px 8px; border-bottom:1px solid var(--border-soft); }
   tbody tr:last-child td{ border-bottom:none; }
   tbody tr.on-strike td:first-child{ color:var(--accent); font-weight:700; }
-  .howout{ font-size:10.5px; color:var(--text-faint); display:block; margin-top:1px; }
-  .not-out-tag{ color:var(--accent); font-size:10.5px; font-weight:700; }
+  .howout{ font-size:10.5px; color:var(--text-faint); display:block; margin-top:2px; }
+  .not-out-tag{ display:inline-flex; align-items:center; gap:5px; color:var(--accent); font-size:10.5px; font-weight:700; margin-left:8px; }
+  .not-out-tag::before{ content:''; width:4px; height:4px; border-radius:50%; background:var(--accent); flex:none; }
 
   /* ---------- Partnership / FOW / extras — stacked ---------- */
   #bottom-grid{ display:grid; grid-template-columns:1fr; gap:14px; }
@@ -790,7 +791,7 @@ function matchStatusText(state){
       return { badge:'RESULT', text:`${bowlingTeam.short || bowlingTeam.name} won by ${margin} run${margin===1?'':'s'}` };
     }
   }
-  if(isInningsOver(state) && !state.milestonesHit['match-result']){
+  if(isInningsOver(state) && !(state.milestonesHit && state.milestonesHit['match-result'])){
     const innNo = state.inningsNumber || 1;
     return { badge:'BREAK', text: state.format === 'Test' ? `Innings ${innNo} Break` : 'Innings Break' };
   }
@@ -900,6 +901,24 @@ function connect(){
     document.getElementById('wrap').innerHTML = '<div class="card"><div class="empty-state">No match specified. Open this page with <b>?room=YOUR-MATCH-ID</b> in the link the broadcaster shared with you.</div></div>';
     return;
   }
+
+  if(isHistoryMode()){
+    // Completed match viewed from Tournament > Match History (or a
+    // standalone match's own history link): there's no live room to join
+    // anymore, so pull one static snapshot instead of opening a socket,
+    // then render through the exact same pipeline a live match uses —
+    // same hero, same charts, same clip icons.
+    document.getElementById('conn-pill').style.display = 'none';
+    loadMatchSnapshot(matchId);
+    renderHighlights();
+    loadTournamentHub();
+    return;
+  }
+
+  connectLive(matchId);
+}
+
+function connectLive(matchId){
   socket = io({ query: { uid: matchId } });
   socket.on('connect', () => setConn('on'));
   socket.on('disconnect', () => setConn('off'));
@@ -927,6 +946,52 @@ function connect(){
   setInterval(renderHighlights, 20000);
 
   loadTournamentHub();
+}
+
+// ?history=1 marks a link that came from Tournament > Match History (a
+// completed match) rather than a live broadcast — see hub-history-row
+// wiring in loadTournamentHub().
+function isHistoryMode(){
+  return new URLSearchParams(location.search).get('history') === '1';
+}
+
+// One-shot fetch of a finished match's full scorecard state, shaped the
+// same as the liveCricketScore socket payload so it drops straight into
+// the normal render() pipeline (hero, players, tables, charts, all of it).
+// Tournament matches use /api/public/tournament/:token/match/:matchId;
+// standalone (non-tournament) matches use /api/public/match/:id, which
+// can also come back with match:null + a roomId if this "history" link
+// was actually opened while the match is still being played (e.g. an old
+// bookmark reused before the broadcaster finished) — in that case we
+// transparently fall back to a live socket join instead of showing an
+// error, same as a normal live link would.
+async function loadMatchSnapshot(matchId){
+  const token = getTournamentToken();
+  const wrap = document.getElementById('wrap');
+  try{
+    const url = token
+      ? `${clipApiBase()}/api/public/tournament/${encodeURIComponent(token)}/match/${encodeURIComponent(matchId)}`
+      : `${clipApiBase()}/api/public/match/${encodeURIComponent(matchId)}`;
+    const res = await fetch(url);
+    if(!res.ok) throw new Error('bad response');
+    const data = await res.json();
+
+    if(!token && data && data.success && data.match === null){
+      // Standalone match not saved yet — still live. Rejoin as a normal
+      // live viewer using whichever id the API says the room is under.
+      document.getElementById('conn-pill').style.display = '';
+      connectLive(data.roomId || matchId);
+      return;
+    }
+
+    const state = (data && (data.state || data.match || data.score || data)) || null;
+    if(!state || !state.score) throw new Error('no state');
+    latestState = state;
+    render();
+  } catch(err){
+    console.warn('Match snapshot fetch failed', err);
+    wrap.innerHTML = '<div class="card"><div class="empty-state">Could not load this match\'s scorecard right now.</div></div>';
+  }
 }
 
 /* ============================================================
@@ -1691,7 +1756,12 @@ async function loadTournamentHub(){
       historyList.querySelectorAll('.hub-history-row').forEach(row => {
         row.addEventListener('click', () => {
           const mid = row.dataset.matchId;
-          if(mid) location.href = `/score/tournament/${encodeURIComponent(token)}/match/${encodeURIComponent(mid)}`;
+          // Reuse this same scorecard page for the completed match instead
+          // of a separate (plainer) match-history page — same hero, same
+          // batting/bowling clip icons, same Match Highlights card, just
+          // fed from a one-shot snapshot (history=1) instead of a live
+          // socket room. See loadMatchSnapshot().
+          if(mid) location.href = `${location.pathname}?token=${encodeURIComponent(token)}&match=${encodeURIComponent(mid)}&history=1`;
         });
       });
     }
