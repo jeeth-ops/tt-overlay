@@ -2002,8 +2002,24 @@ app.get('/t/:slug/overlay/:overlayId', async (req, res) => {
 // above for the /api/public/* + /api/league/:name/public-link routes
 // these pages call. Both are static shells; all data loads client-side.
 app.get('/score/tournament/:token', (req, res) => res.sendFile(__dirname + '/score-tournament.html'));
-app.get('/score/tournament/:token/match/:matchId', (req, res) => res.sendFile(__dirname + '/score-tournament.html'));
-app.get('/score/match/:id', (req, res) => res.sendFile(__dirname + '/score-match.html'));
+// A specific completed match inside a tournament now reuses the full
+// cricket-scorecard.html viewer (same batting/bowling clip icons, Match
+// Highlights, comparison charts as a live match) instead of the plainer
+// score-tournament.html per-match view — see loadMatchSnapshot()/
+// history=1 mode in cricket-scorecard.html.
+app.get('/score/tournament/:token/match/:matchId', (req, res) => {
+    const qs = new URLSearchParams({ token: req.params.token, match: req.params.matchId, history: '1' });
+    res.redirect(302, `/cricket-scorecard?${qs.toString()}`);
+});
+// A specific standalone (non-tournament) match now also reuses
+// cricket-scorecard.html — if it's finished, history=1 pulls a one-shot
+// snapshot via /api/public/match/:id; if it's still being played (that
+// endpoint comes back with match:null + a roomId), the page transparently
+// falls back to a live socket join instead of showing an error.
+app.get('/score/match/:id', (req, res) => {
+    const qs = new URLSearchParams({ match: req.params.id, history: '1' });
+    res.redirect(302, `/cricket-scorecard?${qs.toString()}`);
+});
 app.get('/football-matchintro', (req, res) => res.sendFile(__dirname + '/football-matchintro.html'));
 app.get('/football-matchintro-panel', (req, res) => res.sendFile(__dirname + '/football-matchintro-panel.html'));
 
