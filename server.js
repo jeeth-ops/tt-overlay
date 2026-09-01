@@ -107,6 +107,14 @@ async function connectMongo() {
         await ballsCollection.createIndex({ matchId: 1, innings: 1, over: 1, ballInOver: 1 });
         await matchesCollection.createIndex({ matchId: 1 }, { unique: true });
         await clipsCollection.createIndex({ matchId: 1, createdAt: 1 });
+        // 🔗 Clip ↔ player linking (see "PLAYER IDENTITY FOR CLIPS & STATS"
+        // below): fast "this player's clips" lookups scoped to one match,
+        // one owner's whole account (career), or filtered by clip type.
+        await clipsCollection.createIndex({ matchId: 1, strikerKey: 1, eventType: 1 });
+        await clipsCollection.createIndex({ matchId: 1, bowlerKey: 1, eventType: 1 });
+        await clipsCollection.createIndex({ ownerUid: 1, strikerKey: 1, createdAt: -1 });
+        await clipsCollection.createIndex({ ownerUid: 1, bowlerKey: 1, createdAt: -1 });
+        await clipsCollection.createIndex({ matchId: 1, battingTeam: 1, eventType: 1 });
         // One doc per (owner, league) pair — owner-scoped so two different
         // customers naming a league the same thing (e.g. "Summer Cup") never
         // collide/overwrite each other. ownerUid comes from the logged-in
@@ -542,7 +550,7 @@ function chunksCoveringRange(session, fromSec, toSec) {
 // Stitches the covering chunks + trims to an exact clip using ffmpeg,
 // and records the clip in MongoDB so the (future) Google Drive step
 // knows what's waiting to be uploaded.
-async function cutClip({ matchId, eventType, eventTimestamp, ballMeta }) {
+async function cutClip({ matchId, eventType, eventTimestamp, ballMeta, uid }) {
     const session = recordingSessions[matchId];
     if (!session) { console.log(`No recording session for ${matchId} — skipping clip for ${eventType}`); return; }
 
@@ -603,10 +611,36 @@ async function cutClip({ matchId, eventType, eventTimestamp, ballMeta }) {
         });
 
         if (clipsCollection) {
+            // 🔗 Link this clip to real player identities/dismissal info by
+            // cross-referencing the canonical ball (logged via `logBall`,
+            // the permanent source of truth) instead of trusting only the
+            // ballMeta the panel happened to attach to the clip request.
+            // Falls back gracefully to whatever ballMeta was sent if no
+            // matching ball is found (e.g. Mongo briefly unavailable).
+            const canonicalBall = await findCanonicalBall(matchId, ballMeta);
+            const ownerUid = await resolveOwnerUidForMatch(matchId, uid || (canonicalBall && canonicalBall.ownerUid));
+            const striker = (canonicalBall && canonicalBall.striker) || (ballMeta && ballMeta.striker) || null;
+            const bowler = (canonicalBall && canonicalBall.bowler) || (ballMeta && ballMeta.bowler) || null;
+            const nonStriker = (canonicalBall && canonicalBall.nonStriker) || (ballMeta && ballMeta.nonStriker) || null;
+            const dismissal = (canonicalBall && canonicalBall.dismissal) || (ballMeta && ballMeta.dismissal) || null;
+            const battingTeam = (canonicalBall && canonicalBall.battingTeam) || (ballMeta && ballMeta.battingTeam) || null;
+
             await clipsCollection.insertOne({
-                matchId, eventType, ballMeta: ballMeta || null,
+                matchId, ownerUid: ownerUid || null, eventType, ballMeta: ballMeta || null,
                 eventTimestamp, offsetStartSec: fromSec, offsetEndSec: toSec,
-                filePath: outFile, driveStatus: 'pending', createdAt: Date.now()
+                filePath: outFile, driveStatus: 'pending', createdAt: Date.now(),
+                // --- player/dismissal linking, for the clips & stats APIs ---
+                over: canonicalBall ? canonicalBall.over : (ballMeta && ballMeta.over),
+                ballInOver: canonicalBall ? canonicalBall.ballInOver : (ballMeta && ballMeta.ballInOver),
+                innings: canonicalBall ? canonicalBall.innings : (ballMeta && ballMeta.innings),
+                runs: canonicalBall ? canonicalBall.runs : (ballMeta && ballMeta.runs),
+                battingTeam,
+                strikerName: striker, strikerKey: playerKey(striker),
+                nonStrikerName: nonStriker, nonStrikerKey: playerKey(nonStriker),
+                bowlerName: bowler, bowlerKey: playerKey(bowler),
+                dismissalType: dismissal && dismissal.type ? dismissal.type : null,
+                fielderName: dismissal && dismissal.fielder ? dismissal.fielder : null,
+                fielderKey: playerKey(dismissal && dismissal.fielder)
             });
         }
         console.log(`🎬 Clip ready: ${outFile}`);
@@ -917,6 +951,69 @@ function computeLeaderboards(matches) {
     return { topRuns, topWickets };
 }
 
+// ================================================================
+// 🔗 PLAYER IDENTITY FOR CLIPS & STATS
+// The codebase already has a de-facto global player key: computeLeaderboards
+// above keys every batter/bowler by `name.trim().toLowerCase()` so the same
+// player rolls up correctly across every match saved under a tournament.
+// We reuse that exact convention (rather than inventing a separate players
+// collection/ID) so a player is automatically the same identity in clips,
+// match stats, tournament stats and career stats — and requires no schema
+// migration of anything already saved.
+// ================================================================
+function playerKey(name) {
+    return String(name || '').trim().toLowerCase() || null;
+}
+
+// Resolves which owner a matchId belongs to, without requiring the caller
+// to already know it. Fast path: the client can pass `uid` directly (same
+// trust level as ownerUidFrom() above — see the comment on that function).
+// Fallback: search leaguesCollection for whichever league (tournament OR
+// the reserved __single_matches__ league) has this matchId saved — this
+// works with ZERO client changes since every match is already saved there
+// by matchId. Used to stamp clips/balls with an ownerUid so a player's
+// clips/stats can be queried across their whole account ("career"), not
+// just within one match.
+const ownerUidByMatchCache = new Map(); // small in-memory memo; matchId -> ownerUid
+async function resolveOwnerUidForMatch(matchId, hintUid) {
+    if (hintUid) { ownerUidByMatchCache.set(matchId, hintUid); return hintUid; }
+    if (ownerUidByMatchCache.has(matchId)) return ownerUidByMatchCache.get(matchId);
+    if (!leaguesCollection) return null;
+    try {
+        const doc = await leaguesCollection.findOne(
+            { 'matches.matchId': matchId },
+            { projection: { ownerUid: 1 } }
+        );
+        const uid = (doc && doc.ownerUid) || null;
+        if (uid) ownerUidByMatchCache.set(matchId, uid);
+        return uid;
+    } catch (err) {
+        console.log('resolveOwnerUidForMatch error:', err);
+        return null;
+    }
+}
+
+// Looks up the canonical ball (written by the `logBall` socket handler,
+// the permanent source of truth) that a requested clip's window is centred
+// on, so the clip can be linked to real player identities/dismissal data
+// instead of trusting only whatever the panel happened to send as ballMeta.
+async function findCanonicalBall(matchId, ballMeta) {
+    if (!ballsCollection || !ballMeta) return null;
+    const query = { matchId };
+    if (ballMeta.innings !== undefined) query.innings = ballMeta.innings;
+    if (ballMeta.over !== undefined) query.over = ballMeta.over;
+    if (ballMeta.ballInOver !== undefined) query.ballInOver = ballMeta.ballInOver;
+    if (Object.keys(query).length <= 1) return null; // nothing specific enough to match on
+    try {
+        // Most-recent match on (over, ballInOver): guards against the rare
+        // case a correction re-logged the same ball, or innings wasn't sent.
+        return await ballsCollection.find(query).sort({ timestamp: -1 }).limit(1).next();
+    } catch (err) {
+        console.log('findCanonicalBall error:', err);
+        return null;
+    }
+}
+
 // Mint (or fetch, if already minted) a tournament's permanent public
 // token. Idempotent — calling it again for the same tournament always
 // returns the same token, so a link the operator already shared never
@@ -1035,6 +1132,269 @@ app.get('/api/public/match/:id', async (req, res) => {
     } catch (err) {
         console.log('Public match fetch error:', err);
         res.status(500).json({ success: false, error: 'Could not load match' });
+    }
+});
+
+// ================================================================
+// 🎬 CLIPS API — read-only, metadata-first (per REQUIREMENT: scorecard
+// loads text/stats + clip metadata only; the actual video is fetched only
+// when the user taps WATCH/DOWNLOAD). Every route here returns clipId +
+// small fields + a playable URL — never raw file paths, R2 keys, or Drive
+// credentials. matchId/strikerKey/bowlerKey/battingTeam are all indexed
+// (see connectMongo above) so these stay fast even with thousands of
+// clips across a tournament.
+// ================================================================
+
+// Trims a raw clip Mongo doc down to exactly what the frontend needs.
+function serializeClip(c) {
+    return {
+        clipId: c._id.toString(),
+        matchId: c.matchId,
+        eventType: c.eventType,                 // 'FOUR' | 'SIX' | 'WICKET'
+        dismissalType: c.dismissalType || null,  // 'Bowled' | 'Caught' | 'LBW' | 'Run Out' | 'Stumped' | 'Hit Wicket' | ...
+        over: c.over, ballInOver: c.ballInOver, innings: c.innings,
+        runs: c.runs, battingTeam: c.battingTeam,
+        striker: c.strikerName || null, bowler: c.bowlerName || null,
+        nonStriker: c.nonStrikerName || null, fielder: c.fielderName || null,
+        ready: !!(c.r2Url || c.driveUrl),
+        watchUrl: `/api/clips/${c._id}/watch`,
+        downloadUrl: `/api/clips/${c._id}/download`,
+        createdAt: c.createdAt
+    };
+}
+
+// GET /api/clips/match/:matchId?type=FOUR|SIX|WICKET&playerKey=...&team=A|B&limit=&skip=
+app.get('/api/clips/match/:matchId', async (req, res) => {
+    if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const matchId = safeMatchId(req.params.matchId);
+    const query = { matchId };
+    if (req.query.type) query.eventType = String(req.query.type).toUpperCase();
+    if (req.query.team) query.battingTeam = String(req.query.team).toUpperCase();
+    if (req.query.playerKey) {
+        const pk = playerKey(req.query.playerKey);
+        query.$or = [{ strikerKey: pk }, { bowlerKey: pk }, { fielderKey: pk }];
+    }
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
+    const skip = Math.max(parseInt(req.query.skip, 10) || 0, 0);
+    try {
+        const clips = await clipsCollection.find(query).sort({ over: 1, ballInOver: 1 }).skip(skip).limit(limit).toArray();
+        res.json({ success: true, clips: clips.map(serializeClip) });
+    } catch (err) {
+        console.log('Clips-by-match fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load clips' });
+    }
+});
+
+// GET /api/clips/team/:matchId/:teamKey — every team wicket clip (run outs,
+// catches, LBW, bowled, stumped, hit wicket, ...) for that side in this match.
+app.get('/api/clips/team/:matchId/:teamKey', async (req, res) => {
+    if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const matchId = safeMatchId(req.params.matchId);
+    const teamKey = String(req.params.teamKey || '').toUpperCase();
+    try {
+        const clips = await clipsCollection.find({ matchId, battingTeam: teamKey, eventType: 'WICKET' })
+            .sort({ over: 1, ballInOver: 1 }).toArray();
+        res.json({ success: true, clips: clips.map(serializeClip) });
+    } catch (err) {
+        console.log('Team-clips fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load team clips' });
+    }
+});
+
+// GET /api/clips/player/:playerKey?scope=match|tournament|career&matchId=&leagueName=&uid=
+// Returns clips grouped the way the scorecard displays them (spec section 4):
+// batting: { fours, sixes, dismissal }, bowling: { wickets }.
+app.get('/api/clips/player/:playerKey', async (req, res) => {
+    if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const pk = playerKey(req.params.playerKey);
+    if (!pk) return res.status(400).json({ success: false, error: 'playerKey required' });
+    const scope = req.query.scope || 'match';
+
+    let matchFilter = null; // null = no matchId restriction (career, or tournament resolved below)
+    try {
+        if (scope === 'match') {
+            if (!req.query.matchId) return res.status(400).json({ success: false, error: 'matchId required for scope=match' });
+            matchFilter = { $in: [safeMatchId(req.query.matchId)] };
+        } else if (scope === 'tournament') {
+            const leagueKey = leagueKeyFor(req.query.leagueName);
+            const ownerUid = ownerUidFrom(req);
+            if (!leagueKey || !ownerUid || !leaguesCollection) return res.status(400).json({ success: false, error: 'leagueName and uid required for scope=tournament' });
+            const doc = await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { 'matches.matchId': 1 } });
+            matchFilter = { $in: ((doc && doc.matches) || []).map(m => m.matchId) };
+        }
+        // scope === 'career' (or 'season', best-effort — no explicit season
+        // field exists on matches yet, so career and season currently return
+        // the same set; filter by year client-side using each clip's createdAt
+        // until a real season field is added) — no matchId restriction, just
+        // ownerUid if we have one, so results stay scoped to one account.
+
+        const base = { $or: [{ strikerKey: pk }, { bowlerKey: pk }, { fielderKey: pk }] };
+        if (matchFilter) base.matchId = matchFilter;
+        const ownerUid = ownerUidFrom(req);
+        if (!matchFilter && ownerUid) base.ownerUid = ownerUid;
+
+        const clips = await clipsCollection.find(base).sort({ createdAt: -1 }).limit(300).toArray();
+        const out = {
+            fours: [], sixes: [], dismissal: [], wickets: []
+        };
+        clips.forEach(c => {
+            const s = serializeClip(c);
+            if (c.strikerKey === pk && c.eventType === 'FOUR') out.fours.push(s);
+            else if (c.strikerKey === pk && c.eventType === 'SIX') out.sixes.push(s);
+            else if (c.strikerKey === pk && c.eventType === 'WICKET') out.dismissal.push(s);
+            if (c.bowlerKey === pk && c.eventType === 'WICKET') out.wickets.push(s);
+        });
+        res.json({ success: true, playerKey: pk, scope, batting: { fours: out.fours, sixes: out.sixes, dismissal: out.dismissal }, bowling: { wickets: out.wickets } });
+    } catch (err) {
+        console.log('Player-clips fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load player clips' });
+    }
+});
+
+// Resolves a clip's actual playable URL server-side — the frontend never
+// talks to R2/Drive directly and no credentials/keys ever reach the client.
+async function resolvePlayableClip(clipId) {
+    if (!clipsCollection) return null;
+    const { ObjectId } = require('mongodb');
+    let _id;
+    try { _id = new ObjectId(clipId); } catch { return null; }
+    return clipsCollection.findOne({ _id });
+}
+
+// GET /api/clips/:clipId/watch — plays inline in the scorecard's own video
+// modal. R2 is preferred (public CDN URL, cheap to redirect to, cached at
+// the edge — see uploadClipToR2 above); if only Drive has it, we proxy the
+// bytes through our own server instead of sending the user to Drive's UI.
+app.get('/api/clips/:clipId/watch', async (req, res) => {
+    try {
+        const clip = await resolvePlayableClip(req.params.clipId);
+        if (!clip) return res.status(404).json({ success: false, error: 'Clip not found' });
+        if (clip.r2Url) return res.redirect(302, clip.r2Url);
+        if (clip.driveFileId && driveClient) {
+            const driveRes = await driveClient.files.get({ fileId: clip.driveFileId, alt: 'media' }, { responseType: 'stream' });
+            res.setHeader('Content-Type', 'video/mp4');
+            driveRes.data.on('error', () => res.end());
+            return driveRes.data.pipe(res);
+        }
+        res.status(202).json({ success: false, error: 'Clip is still processing — try again shortly' });
+    } catch (err) {
+        console.log('Clip watch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load clip' });
+    }
+});
+
+// GET /api/clips/:clipId/download — forces a same-origin download instead
+// of opening the file's Drive/R2 page. R2 clips are fetched server-side and
+// re-streamed with Content-Disposition: attachment (R2 itself doesn't set
+// that header on plain object URLs); Drive clips use the same proxy path
+// as /watch, just with the attachment header added.
+app.get('/api/clips/:clipId/download', async (req, res) => {
+    try {
+        const clip = await resolvePlayableClip(req.params.clipId);
+        if (!clip) return res.status(404).json({ success: false, error: 'Clip not found' });
+        const filename = `${clip.eventType || 'clip'}_over-${clip.over ?? ''}.${clip.ballInOver ?? ''}_${clip.strikerName || clip.bowlerName || ''}.mp4`.replace(/\s+/g, '-');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Type', 'video/mp4');
+        if (clip.r2Url) {
+            const r2Res = await fetch(clip.r2Url);
+            if (!r2Res.ok || !r2Res.body) return res.status(502).json({ success: false, error: 'Could not fetch clip' });
+            const { Readable } = require('stream');
+            return Readable.fromWeb(r2Res.body).pipe(res);
+        }
+        if (clip.driveFileId && driveClient) {
+            const driveRes = await driveClient.files.get({ fileId: clip.driveFileId, alt: 'media' }, { responseType: 'stream' });
+            driveRes.data.on('error', () => res.end());
+            return driveRes.data.pipe(res);
+        }
+        res.status(202).json({ success: false, error: 'Clip is still processing — try again shortly' });
+    } catch (err) {
+        console.log('Clip download error:', err);
+        res.status(500).json({ success: false, error: 'Could not download clip' });
+    }
+});
+
+// ================================================================
+// 📊 PLAYER STATS API — MATCH scope aggregates straight from ballsCollection
+// (the permanent, correction-safe ball-by-ball log), so it's always
+// recomputed fresh rather than cached/stale (REQUIREMENT #13). TOURNAMENT/
+// CAREER scope reuses the same battingCard/bowlingCard rollup logic as
+// computeLeaderboards above, filtered to one player, across every match
+// saved for that league (tournament) or every league this owner has
+// (career) — same global playerKey identity throughout.
+// ================================================================
+
+// Best-effort batting/bowling line for one player from one match's raw
+// balls. Cricket-rule note: byes/leg-byes add to the team total but are
+// NOT credited as batsman runs; wides are NOT a faced ball. Run-outs are
+// NOT credited as a bowler wicket. Adjust here if cricket-panel.html's
+// `kind`/`dismissal.type` strings differ from the values assumed below.
+async function computeMatchPlayerStats(matchId, pk) {
+    const balls = await ballsCollection.find({ matchId, $or: [{ strikerKey: pk }, { bowlerKey: pk }] }).toArray();
+    const bat = { runs: 0, balls: 0, fours: 0, sixes: 0, out: false };
+    const bowl = { balls: 0, runs: 0, wickets: 0, maidens: 0 };
+    balls.forEach(b => {
+        if (b.strikerKey === pk && b.kind !== 'Wd') {
+            bat.balls++;
+            if (b.kind !== 'B' && b.kind !== 'LB') bat.runs += b.runs || 0;
+            if (b.kind === '4') bat.fours++;
+            if (b.kind === '6') bat.sixes++;
+        }
+        if (b.strikerKey === pk && b.dismissal) bat.out = true;
+        if (b.bowlerKey === pk && b.kind !== 'B' && b.kind !== 'LB') {
+            if (b.kind !== 'Wd') bowl.balls++;
+            bowl.runs += b.runs || 0;
+            if (b.dismissal && b.dismissal.type && b.dismissal.type.toLowerCase() !== 'run out') bowl.wickets++;
+        }
+    });
+    return {
+        batting: { runs: bat.runs, balls: bat.balls, fours: bat.fours, sixes: bat.sixes, out: bat.out, strikeRate: bat.balls ? Number(((bat.runs / bat.balls) * 100).toFixed(2)) : 0 },
+        bowling: { overs: `${Math.floor(bowl.balls / 6)}.${bowl.balls % 6}`, runs: bowl.runs, wickets: bowl.wickets, economy: bowl.balls ? Number((bowl.runs / (bowl.balls / 6)).toFixed(2)) : 0 }
+    };
+}
+
+// Filters computeLeaderboards' per-match rollup down to a single player,
+// across whatever set of saved matches[] is passed in (one tournament, or
+// every league belonging to an owner for career).
+function computeSinglePlayerRollup(matches, pk) {
+    const { topRuns, topWickets } = computeLeaderboards(matches);
+    return {
+        batting: topRuns.find(r => playerKey(r.name) === pk) || null,
+        bowling: topWickets.find(r => playerKey(r.name) === pk) || null
+    };
+}
+
+// GET /api/stats/player/:playerKey?scope=match|tournament|career&matchId=&leagueName=&uid=
+app.get('/api/stats/player/:playerKey', async (req, res) => {
+    const pk = playerKey(req.params.playerKey);
+    if (!pk) return res.status(400).json({ success: false, error: 'playerKey required' });
+    const scope = req.query.scope || 'match';
+    try {
+        if (scope === 'match') {
+            if (!ballsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+            if (!req.query.matchId) return res.status(400).json({ success: false, error: 'matchId required for scope=match' });
+            const stats = await computeMatchPlayerStats(safeMatchId(req.query.matchId), pk);
+            return res.json({ success: true, scope, playerKey: pk, ...stats });
+        }
+        if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+        if (scope === 'tournament') {
+            const leagueKey = leagueKeyFor(req.query.leagueName);
+            const ownerUid = ownerUidFrom(req);
+            if (!leagueKey || !ownerUid) return res.status(400).json({ success: false, error: 'leagueName and uid required for scope=tournament' });
+            const doc = await leaguesCollection.findOne({ ownerUid, leagueKey });
+            const stats = computeSinglePlayerRollup((doc && doc.matches) || [], pk);
+            return res.json({ success: true, scope, playerKey: pk, ...stats });
+        }
+        // career (and season, best-effort — see note on the clips endpoint
+        // above): every match across every league this owner has saved.
+        const ownerUid = ownerUidFrom(req);
+        if (!ownerUid) return res.status(400).json({ success: false, error: 'uid required for scope=career' });
+        const leagues = await leaguesCollection.find({ ownerUid }).project({ matches: 1 }).toArray();
+        const allMatches = leagues.flatMap(l => l.matches || []);
+        const stats = computeSinglePlayerRollup(allMatches, pk);
+        res.json({ success: true, scope, playerKey: pk, ...stats });
+    } catch (err) {
+        console.log('Player-stats fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load player stats' });
     }
 });
 
@@ -2129,8 +2489,13 @@ io.on('connection', async (socket) => {
         const matchId = safeMatchId(data.matchId || (data.room ? data.room.replace('room-', '') : null) || matchIdForClient);
         if (!matchId || matchId === 'default') return;
         try {
+            // Best-effort owner resolution (see resolveOwnerUidForMatch above)
+            // so this ball — and any clip cut around it — can be found again
+            // in career-wide player queries, not just within this one match.
+            const ownerUid = await resolveOwnerUidForMatch(matchId, data.uid);
             await ballsCollection.insertOne({
                 matchId,
+                ownerUid: ownerUid || null,
                 innings: data.innings,
                 over: data.over,
                 ballInOver: data.ballInOver,
@@ -2138,9 +2503,13 @@ io.on('connection', async (socket) => {
                 runs: data.runs,
                 battingTeam: data.battingTeam,
                 striker: data.striker,
+                strikerKey: playerKey(data.striker),
                 nonStriker: data.nonStriker,
+                nonStrikerKey: playerKey(data.nonStriker),
                 bowler: data.bowler,
-                dismissal: data.dismissal || null,
+                bowlerKey: playerKey(data.bowler),
+                dismissal: data.dismissal || null, // { type: 'Bowled'|'Caught'|'LBW'|'Run Out'|'Stumped'|'Hit Wicket'|..., fielder? }
+                dismissalFielderKey: playerKey(data.dismissal && data.dismissal.fielder),
                 score: data.score,        // { runs, wickets, overs, balls } snapshot after this ball
                 timestamp: data.timestamp || Date.now()
             });
@@ -2159,7 +2528,7 @@ io.on('connection', async (socket) => {
         const eventTimestamp = data.timestamp || Date.now();
         const waitMs = Math.max(0, (eventTimestamp + 10000) - Date.now()) + 1000; // +1s safety buffer
         setTimeout(() => {
-            cutClip({ matchId, eventType: data.eventType, eventTimestamp, ballMeta: data.ballMeta || null });
+            cutClip({ matchId, eventType: data.eventType, eventTimestamp, ballMeta: data.ballMeta || null, uid: data.uid || null });
         }, waitMs);
     });
 
