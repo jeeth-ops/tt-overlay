@@ -1352,12 +1352,16 @@ app.get('/api/clips/:clipId/download', async (req, res) => {
 // Best-effort batting/bowling line for one player from one match's raw
 // balls. Cricket-rule note: byes/leg-byes add to the team total but are
 // NOT credited as batsman runs; wides are NOT a faced ball. Run-outs are
-// NOT credited as a bowler wicket. Adjust here if cricket-panel.html's
-// `kind`/`dismissal.type` strings differ from the values assumed below.
+// NOT credited as a bowler wicket. A maiden over is one bowled entirely by
+// this bowler (6 legal deliveries, no wides/no-balls) with zero runs
+// conceded off it (including byes/leg-byes charged against the over).
+// Adjust here if cricket-panel.html's `kind`/`dismissal.type` strings
+// differ from the values assumed below.
 async function computeMatchPlayerStats(matchId, pk) {
     const balls = await ballsCollection.find({ matchId, $or: [{ strikerKey: pk }, { bowlerKey: pk }] }).toArray();
-    const bat = { runs: 0, balls: 0, fours: 0, sixes: 0, out: false };
-    const bowl = { balls: 0, runs: 0, wickets: 0, maidens: 0 };
+    const bat = { runs: 0, balls: 0, fours: 0, sixes: 0, out: false, howOut: null };
+    const bowl = { balls: 0, runs: 0, wickets: 0, wides: 0, noballs: 0 };
+    const oversBowled = {}; // `${innings}-${over}` -> { legalBalls, runs }
     balls.forEach(b => {
         if (b.strikerKey === pk && b.kind !== 'Wd') {
             bat.balls++;
@@ -1365,16 +1369,28 @@ async function computeMatchPlayerStats(matchId, pk) {
             if (b.kind === '4') bat.fours++;
             if (b.kind === '6') bat.sixes++;
         }
-        if (b.strikerKey === pk && b.dismissal) bat.out = true;
+        if (b.strikerKey === pk && b.dismissal) {
+            bat.out = true;
+            bat.howOut = b.dismissal.type || null;
+        }
         if (b.bowlerKey === pk && b.kind !== 'B' && b.kind !== 'LB') {
-            if (b.kind !== 'Wd') bowl.balls++;
+            const isLegal = b.kind !== 'Wd' && b.kind !== 'Nb';
+            if (isLegal) bowl.balls++;
+            if (b.kind === 'Wd') bowl.wides++;
+            if (b.kind === 'Nb') bowl.noballs++;
             bowl.runs += b.runs || 0;
             if (b.dismissal && b.dismissal.type && b.dismissal.type.toLowerCase() !== 'run out') bowl.wickets++;
+
+            const overKey = `${b.innings || 1}-${b.over}`;
+            if (!oversBowled[overKey]) oversBowled[overKey] = { legalBalls: 0, runs: 0 };
+            if (isLegal) oversBowled[overKey].legalBalls++;
+            oversBowled[overKey].runs += b.runs || 0;
         }
     });
+    const maidens = Object.values(oversBowled).filter(o => o.legalBalls === 6 && o.runs === 0).length;
     return {
-        batting: { runs: bat.runs, balls: bat.balls, fours: bat.fours, sixes: bat.sixes, out: bat.out, strikeRate: bat.balls ? Number(((bat.runs / bat.balls) * 100).toFixed(2)) : 0 },
-        bowling: { overs: `${Math.floor(bowl.balls / 6)}.${bowl.balls % 6}`, runs: bowl.runs, wickets: bowl.wickets, economy: bowl.balls ? Number((bowl.runs / (bowl.balls / 6)).toFixed(2)) : 0 }
+        batting: { runs: bat.runs, balls: bat.balls, fours: bat.fours, sixes: bat.sixes, out: bat.out, howOut: bat.howOut, strikeRate: bat.balls ? Number(((bat.runs / bat.balls) * 100).toFixed(2)) : 0 },
+        bowling: { overs: `${Math.floor(bowl.balls / 6)}.${bowl.balls % 6}`, maidens, runs: bowl.runs, wickets: bowl.wickets, wides: bowl.wides, noballs: bowl.noballs, economy: bowl.balls ? Number((bowl.runs / (bowl.balls / 6)).toFixed(2)) : 0 }
     };
 }
 
@@ -1421,6 +1437,49 @@ app.get('/api/stats/player/:playerKey', async (req, res) => {
     } catch (err) {
         console.log('Player-stats fetch error:', err);
         res.status(500).json({ success: false, error: 'Could not load player stats' });
+    }
+});
+
+// GET /api/stats/player/:playerKey/tournaments?uid=
+// TOURNAMENT HISTORY — one row per tournament this player has ever
+// appeared in for this owner, each with that tournament's own totals
+// (same rollup as scope=tournament above, just run once per league doc
+// instead of once). This is what powers the "2024 — Tournament A — 421
+// Runs" style breakdown on the player profile, on top of the single
+// flattened scope=career number. Sorted most-recent-first by the
+// tournament's last updatedAt so a player's newest form shows up top.
+app.get('/api/stats/player/:playerKey/tournaments', async (req, res) => {
+    const pk = playerKey(req.params.playerKey);
+    if (!pk) return res.status(400).json({ success: false, error: 'playerKey required' });
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const ownerUid = ownerUidFrom(req);
+    if (!ownerUid) return res.status(400).json({ success: false, error: 'uid required' });
+    try {
+        const leagues = await leaguesCollection.find({ ownerUid, leagueKey: { $ne: SINGLE_MATCHES_LEAGUE_KEY } })
+            .project({ leagueKey: 1, displayName: 1, matches: 1, updatedAt: 1 }).toArray();
+        const tournaments = leagues
+            .map(doc => {
+                const stats = computeSinglePlayerRollup(doc.matches || [], pk);
+                if (!stats.batting && !stats.bowling) return null; // player never appeared in this tournament
+                return {
+                    leagueName: doc.displayName || doc.leagueKey,
+                    matchesPlayed: (doc.matches || []).filter(m => {
+                        return ['A', 'B'].some(k =>
+                            ((m.battingCard && m.battingCard[k]) || []).some(b => playerKey(b.name) === pk) ||
+                            ((m.bowlingCard && m.bowlingCard[k]) || []).some(b => playerKey(b.name) === pk)
+                        );
+                    }).length,
+                    updatedAt: doc.updatedAt || 0,
+                    batting: stats.batting,
+                    bowling: stats.bowling
+                };
+            })
+            .filter(Boolean)
+            .sort((a, b) => b.updatedAt - a.updatedAt);
+        res.json({ success: true, playerKey: pk, tournaments });
+    } catch (err) {
+        console.log('Player-tournament-history fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load tournament history' });
     }
 });
 
