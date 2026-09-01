@@ -984,13 +984,161 @@ async function loadMatchSnapshot(matchId){
       return;
     }
 
-    const state = (data && (data.state || data.match || data.score || data)) || null;
-    if(!state || !state.score) throw new Error('no state');
-    latestState = state;
-    render();
+    const match = data && data.match;
+    if(!match) throw new Error('no match');
+    // NOTE: a saved match record (from /api/public/tournament/:token/match/:id
+    // or /api/public/match/:id) is shaped like a FINISHED scorecard —
+    // teamA/teamB/scoreA/scoreB/battingCard:{A,B}/bowlingCard:{A,B}/... —
+    // it is NOT the single-innings-in-progress shape the live socket sends
+    // (state.score/state.battingTeam/...). Feeding it into latestState+render()
+    // silently failed the `state.score` check below and always landed on
+    // "Could not load this match's scorecard right now." renderFinalSnapshot()
+    // renders this shape directly instead, with the same clip icons.
+    renderFinalSnapshot(match, data.displayName || '');
   } catch(err){
     console.warn('Match snapshot fetch failed', err);
     wrap.innerHTML = '<div class="card"><div class="empty-state">Could not load this match\'s scorecard right now.</div></div>';
+  }
+}
+
+/* ============================================================
+   FINISHED-MATCH SNAPSHOT — a completed match (tournament past
+   match, or a standalone match's permanent link) has TWO finished
+   innings, not one in-progress innings, so it can't reuse render()
+   as-is. This renders both innings' batting/bowling (with the same
+   per-player clip buttons live matches have) using the exact field
+   shapes the saved match record actually has: battingCard.<team> for
+   who batted, bowlingCard.<other team> for who bowled at them,
+   extras/fallOfWickets/partnerships keyed the same way.
+   ============================================================ */
+let finalMatchData = null;
+let finalActiveInnings = 'A';
+
+function finalResultText(m){
+  if(m.winningTeam === 'TIE') return 'Match Tied';
+  if(m.winningTeam === 'A') return `${(m.teamA && (m.teamA.short || m.teamA.name)) || 'Team A'} won`;
+  if(m.winningTeam === 'B') return `${(m.teamB && (m.teamB.short || m.teamB.name)) || 'Team B'} won`;
+  return 'Result pending';
+}
+
+function renderFinalSnapshot(match, displayName){
+  finalMatchData = match;
+  finalActiveInnings = 'A';
+  document.title = `${(match.teamA&&(match.teamA.short||match.teamA.name))||'Team A'} vs ${(match.teamB&&(match.teamB.short||match.teamB.name))||'Team B'} — Scorvix`;
+
+  // Sections that only make sense mid-match — nothing "current" to show
+  // once a match is over.
+  ['target-wrap','lead-wrap'].forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'none'; });
+  const statStrip = document.getElementById('stat-strip'); if(statStrip) statStrip.style.display = 'none';
+  const playersCard = document.getElementById('players-grid'); if(playersCard && playersCard.closest('.card')) playersCard.closest('.card').style.display = 'none';
+  const ballsCard = document.getElementById('balls-scroll'); if(ballsCard && ballsCard.closest('.card')) ballsCard.closest('.card').style.display = 'none';
+  const compareGrid = document.getElementById('compare-grid'); if(compareGrid) compareGrid.style.display = 'none';
+  const chartsGrid = document.getElementById('charts-grid'); if(chartsGrid) chartsGrid.style.display = 'none';
+
+  // Hero: both teams' final score line + result, instead of one live score.
+  document.getElementById('chip-format').textContent = match.format || '';
+  const venueChip = document.getElementById('chip-venue');
+  if(match.venue){ venueChip.style.display=''; venueChip.textContent = match.venue; } else venueChip.style.display='none';
+  const leagueChip = document.getElementById('chip-tournament');
+  if(displayName){ leagueChip.style.display=''; leagueChip.textContent = '🏆 ' + displayName; } else leagueChip.style.display='none';
+  const statusChip = document.getElementById('chip-status');
+  statusChip.classList.add('result');
+  statusChip.querySelector('.lv-dot').style.display = 'none';
+  document.getElementById('chip-status-text').textContent = finalResultText(match);
+
+  const A = match.teamA || {}, B = match.teamB || {};
+  setText('name-a', A.name || 'Team A'); setText('short-a', A.short || '—');
+  setText('name-b', B.name || 'Team B'); setText('short-b', B.short || '—');
+  paintLogo('logo-a', A); paintLogo('logo-b', B);
+  document.getElementById('team-block-a').style.opacity = '1';
+  document.getElementById('team-block-b').style.opacity = '1';
+  const scoreA = match.scoreA || {}, scoreB = match.scoreB || {};
+  setText('main-score', `${scoreA.runs||0}-${scoreA.wickets||0} vs ${scoreB.runs||0}-${scoreB.wickets||0}`);
+  setText('main-overs', `(${scoreA.overs||'0.0'} ov) · (${scoreB.overs||'0.0'} ov)`);
+  setText('batting-tag', '');
+
+  ensureInningsToggle();
+  renderFinalInnings();
+  renderTeamWicketClips({ battingTeam: 'A' });
+}
+
+// Small A/B switch above the batting/bowling tables so both completed
+// innings are reachable — built once, reused on repeat visits.
+function ensureInningsToggle(){
+  if(document.getElementById('final-innings-toggle')) return;
+  const grid = document.getElementById('tables-grid');
+  const bar = document.createElement('div');
+  bar.id = 'final-innings-toggle';
+  bar.style.cssText = 'display:flex; gap:6px; margin:-4px 0 2px;';
+  bar.innerHTML = `<button class="cd-tab active" data-team="A" style="flex:none; padding:6px 14px;">1st Innings</button>
+                    <button class="cd-tab" data-team="B" style="flex:none; padding:6px 14px;">2nd Innings</button>`;
+  grid.parentNode.insertBefore(bar, grid);
+  bar.querySelectorAll('button').forEach(btn => btn.addEventListener('click', () => {
+    bar.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    finalActiveInnings = btn.dataset.team;
+    renderFinalInnings();
+  }));
+}
+
+function renderFinalInnings(){
+  const m = finalMatchData;
+  if(!m) return;
+  const team = finalActiveInnings;
+  const other = team === 'A' ? 'B' : 'A';
+  const bat = (m.battingCard && m.battingCard[team]) || [];
+  const bowl = (m.bowlingCard && m.bowlingCard[other]) || [];
+
+  const battingBody = document.getElementById('batting-table-body');
+  battingBody.innerHTML = bat.length ? bat.map(b => `<tr>
+      <td>${escapeHtml(b.name)}${b.out===false ? '<span class="not-out-tag">not out</span>' : `<span class="howout">${escapeHtml(b.howOut||'out')}</span>`}</td>
+      <td class="num tabnum">${b.runs||0}</td>
+      <td class="num tabnum">${b.balls||0}</td>
+      <td class="num tabnum">${b.fours||0}</td>
+      <td class="num tabnum">${b.sixes||0}</td>
+      <td class="num tabnum">${strikeRate(b.runs||0,b.balls||0).toFixed(1)}</td>
+      <td class="clip-col"><button class="clip-btn" data-player="${escapeHtml(b.name)}" data-role="batter" aria-label="Clips for ${escapeHtml(b.name)}">${CLIP_ICON}</button></td>
+    </tr>`).join('') : `<tr><td colspan="7" class="empty-state">No batting data</td></tr>`;
+
+  const bowlingBody = document.getElementById('bowling-table-body');
+  bowlingBody.innerHTML = bowl.length ? bowl.map(b => `<tr>
+      <td>${escapeHtml(b.name)}</td>
+      <td class="num tabnum">${fmtOvers(b.overs,b.balls)}</td>
+      <td class="num tabnum">${b.maidens||0}</td>
+      <td class="num tabnum">${b.runs||0}</td>
+      <td class="num tabnum">${b.wickets||0}</td>
+      <td class="num tabnum">${bowlerEcon(b).toFixed(2)}</td>
+      <td class="clip-col"><button class="clip-btn" data-player="${escapeHtml(b.name)}" data-role="bowler" aria-label="Clips for ${escapeHtml(b.name)}">${CLIP_ICON}</button></td>
+    </tr>`).join('') : `<tr><td colspan="7" class="empty-state">No bowling data</td></tr>`;
+
+  battingBody.querySelectorAll('.clip-btn').forEach(btn => btn.addEventListener('click', () => openPlayerClipDrawer(btn.dataset.player, 'batter')));
+  bowlingBody.querySelectorAll('.clip-btn').forEach(btn => btn.addEventListener('click', () => openPlayerClipDrawer(btn.dataset.player, 'bowler')));
+
+  // Fall of wickets + extras for the selected innings.
+  const fow = (m.fallOfWickets && m.fallOfWickets[team]) || [];
+  const fowList = document.getElementById('fow-list');
+  fowList.innerHTML = fow.length ? fow.map(f => `<div class="fow-item"><span class="fow-wkt">${f.wicket||''}</span><span class="tabnum">${(f.score!=null?f.score:f.runs)||0}-${f.wicket||''} <span style="color:var(--text-faint)">(${fmtOvers(f.overs,f.balls)} ov)</span></span></div>`).join('') : '<div class="empty-state">No wickets</div>';
+
+  const ex = (m.extras && m.extras[team]) || { wd:0,nb:0,b:0,lb:0 };
+  setText('ex-wd', ex.wd||0); setText('ex-nb', ex.nb||0); setText('ex-b', ex.b||0); setText('ex-lb', ex.lb||0);
+  setText('ex-total', 'Total extras: ' + ((ex.wd||0)+(ex.nb||0)+(ex.b||0)+(ex.lb||0)));
+
+  // Partnerships: finished match has the full list (unlike the live view's
+  // single current-partnership figure) — show them all for this innings.
+  const pships = (m.partnerships && (m.partnerships[team] || (Array.isArray(m.partnerships) ? m.partnerships : []))) || [];
+  const pshipEl = document.getElementById('pship-big-runs');
+  if(pshipEl){
+    const pshipCard = pshipEl.closest('.card');
+    if(pshipCard){
+      pshipCard.querySelector('.pship-rr').style.display = 'none';
+      let list = pshipCard.querySelector('#final-pship-list');
+      if(!list){ list = document.createElement('div'); list.id = 'final-pship-list'; pshipCard.appendChild(list); }
+      list.innerHTML = pships.length
+        ? pships.map(p => `<div class="fow-item"><span>${escapeHtml((p.batters||[]).join(' & ') || p.pair || '')}</span><b class="tabnum">${p.runs||0} (${p.balls||0})</b></div>`).join('')
+        : '<div class="empty-state">No partnership data</div>';
+    }
+    const pshipBig = pshipCard && pshipCard.querySelector('.pship-big');
+    if(pshipBig) pshipBig.style.display = pships.length ? 'none' : '';
   }
 }
 
@@ -1645,9 +1793,12 @@ async function renderTeamWicketClips(s){
 }
 document.getElementById('twc-toggle').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-team]');
-  if(!btn || !latestState) return;
+  // Falls back to a plain {battingTeam} stub in finished-match view, where
+  // there's no live socket state — renderTeamWicketClips only reads that
+  // one field anyway.
+  if(!btn || (!latestState && !finalMatchData)) return;
   twcActiveTeam = btn.dataset.team;
-  renderTeamWicketClips(latestState);
+  renderTeamWicketClips(latestState || { battingTeam: 'A' });
 });
 function renderTables(s){
   const bat = currentBattingRows(s);
