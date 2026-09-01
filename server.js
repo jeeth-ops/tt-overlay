@@ -80,7 +80,6 @@ let leaguesCollection = null;
 let templatesCollection = null;
 let auditLogsCollection = null;
 let settingsCollection = null;
-let matchRecordsCollection = null;
 
 async function connectMongo() {
     const uri = process.env.MONGODB_URI;
@@ -103,16 +102,6 @@ async function connectMongo() {
         templatesCollection = mongoDb.collection('templates');
         auditLogsCollection = mongoDb.collection('auditLogs');
         settingsCollection = mongoDb.collection('settings');
-        // 🩹 FIX (see comment block above matchRecordsCollection's queries
-        // below): one document PER MATCH, instead of every match an owner
-        // has ever saved living inside one giant array field on a single
-        // league document. That old design hits MongoDB's hard 16MB
-        // per-document limit once an owner accumulates enough matches over
-        // months/years — after which saving (and sometimes reading) ANY
-        // match under that owner/league starts failing, which is exactly
-        // the "old matches won't load" symptom this fixes. Matches now
-        // scale to unlimited history with no per-owner size ceiling.
-        matchRecordsCollection = mongoDb.collection('matchRecords');
         // Fast lookups: all balls of a match in bowling order, and one
         // match doc per matchId.
         await ballsCollection.createIndex({ matchId: 1, innings: 1, over: 1, ballInOver: 1 });
@@ -135,79 +124,16 @@ async function connectMongo() {
         // Public tournament portal links (see /api/league/:name/public-link) —
         // sparse because most league docs never mint one.
         await leaguesCollection.createIndex({ publicToken: 1 }, { unique: true, sparse: true });
-        // 🩹 matchRecords indexes — one doc per match now (see comment above
-        // matchRecordsCollection's assignment). ownerUid+leagueKey+matchId is
-        // unique (the owner-scoped save/list/delete path); leagueKey+matchId
-        // and leagueKey+roomId cover the public lookup paths, which never
-        // carry an ownerUid (see GET /api/public/match/:id).
-        await matchRecordsCollection.createIndex({ ownerUid: 1, leagueKey: 1, matchId: 1 }, { unique: true });
-        await matchRecordsCollection.createIndex({ leagueKey: 1, matchId: 1 });
-        await matchRecordsCollection.createIndex({ leagueKey: 1, roomId: 1 });
+        // Public standalone-match lookups resolve by matchId/roomId inside the
+        // reserved __single_matches__ doc's matches[] array — see
+        // GET /api/public/match/:id.
+        await leaguesCollection.createIndex({ leagueKey: 1, 'matches.matchId': 1 });
+        await leaguesCollection.createIndex({ leagueKey: 1, 'matches.roomId': 1 });
         console.log('🍃 MongoDB connected —', mongoDb.databaseName);
-
-        // 🩹 One-time migration: move any matches still embedded in a league
-        // doc's `matches[]` array (the old, size-limited design) into their
-        // own matchRecords documents, then strip the array off the league
-        // doc so it shrinks back down. Guarded by a flag in `settings` so it
-        // only ever runs once, and is safe to leave in permanently — every
-        // future boot just does one cheap findOne and skips.
-        await migrateEmbeddedMatchesToOwnDocs();
     } catch (err) {
         console.log('MongoDB connection error:', err);
     }
 }
-
-// 🩹 See the big comment above matchRecordsCollection's assignment: this
-// moves every match still sitting inside a league doc's old `matches[]`
-// array into its own matchRecords document, then $unsets that array so the
-// league doc stops growing without bound. Runs once (settings flag), is
-// idempotent, and never touches a league doc that has nothing to migrate.
-async function migrateEmbeddedMatchesToOwnDocs() {
-    if (!leaguesCollection || !matchRecordsCollection || !settingsCollection) return;
-    try {
-        const flag = await settingsCollection.findOne({ _id: 'matchRecordsMigration' });
-        if (flag && flag.done) return;
-
-        const cursor = leaguesCollection.find(
-            { matches: { $exists: true, $not: { $size: 0 } } },
-            { projection: { ownerUid: 1, leagueKey: 1, matches: 1 } }
-        );
-        let leaguesMigrated = 0, matchesMigrated = 0;
-        while (await cursor.hasNext()) {
-            const doc = await cursor.next();
-            const matches = doc.matches || [];
-            if (!matches.length) continue;
-            const ops = matches
-                .filter(m => m && m.matchId)
-                .map(m => ({
-                    updateOne: {
-                        filter: { ownerUid: doc.ownerUid, leagueKey: doc.leagueKey, matchId: m.matchId },
-                        update: { $setOnInsert: { ownerUid: doc.ownerUid, leagueKey: doc.leagueKey }, $set: m },
-                        upsert: true
-                    }
-                }));
-            if (ops.length) {
-                await matchRecordsCollection.bulkWrite(ops, { ordered: false });
-                matchesMigrated += ops.length;
-            }
-            // Shrink the league doc back down now that its matches live in
-            // their own documents — this is the whole point of the fix.
-            await leaguesCollection.updateOne({ _id: doc._id }, { $unset: { matches: '' } });
-            leaguesMigrated++;
-        }
-        await settingsCollection.updateOne(
-            { _id: 'matchRecordsMigration' },
-            { $set: { done: true, leaguesMigrated, matchesMigrated, migratedAt: Date.now() } },
-            { upsert: true }
-        );
-        if (leaguesMigrated) {
-            console.log(`🩹 Migrated ${matchesMigrated} matches out of ${leaguesMigrated} oversized league docs into matchRecords.`);
-        }
-    } catch (err) {
-        console.log('matchRecords migration error (will retry next boot):', err);
-    }
-}
-
 connectMongo();
 
 // ================================================================
@@ -881,24 +807,16 @@ function ownerUidFrom(req) {
     return uid || null;
 }
 
-// 🩹 Every match now lives in its own matchRecords document (see the big
-// comment above matchRecordsCollection's assignment in connectMongo) instead
-// of inside a league doc's `matches[]` array. This helper is the read path
-// every "all matches for a league" caller below shares.
-async function getLeagueMatches(ownerUid, leagueKey) {
-    return matchRecordsCollection.find({ ownerUid, leagueKey }).sort({ savedAt: 1 }).toArray();
-}
-
 // All matches saved under a league/tournament name, for one owner.
 app.get('/api/league/:name', async (req, res) => {
     const leagueKey = leagueKeyFor(req.params.name);
     const ownerUid = ownerUidFrom(req);
     if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
     if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
-    if (!matchRecordsCollection) return res.json({ success: true, matches: [] }); // Mongo not configured — panel falls back to its local cache
+    if (!leaguesCollection) return res.json({ success: true, matches: [] }); // Mongo not configured — panel falls back to its local cache
     try {
-        const matches = await getLeagueMatches(ownerUid, leagueKey);
-        res.json({ success: true, matches });
+        const doc = await leaguesCollection.findOne({ ownerUid, leagueKey });
+        res.json({ success: true, matches: (doc && doc.matches) || [] });
     } catch (err) {
         console.log('League fetch error:', err);
         res.status(500).json({ success: false, error: 'Could not load league data' });
@@ -908,11 +826,6 @@ app.get('/api/league/:name', async (req, res) => {
 // Upserts one match record into a league by matchId — re-saving after a
 // correction (or the panel's automatic save-on-victory) updates the same
 // entry instead of duplicating it, same as the old localStorage version.
-// 🩹 This is now a single atomic upsert on that ONE match's own document —
-// no more read-the-whole-league-then-rewrite-the-whole-array, so saving one
-// match can never be slowed down or size-capped by every other match this
-// owner has ever saved, and two saves landing at the same time can't clobber
-// each other's matches the way the old whole-array $set could.
 app.post('/api/league/:name/match', async (req, res) => {
     const leagueKey = leagueKeyFor(req.params.name);
     const ownerUid = ownerUidFrom(req);
@@ -920,22 +833,17 @@ app.post('/api/league/:name/match', async (req, res) => {
     if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
     if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
     if (!record || !record.matchId) return res.status(400).json({ success: false, error: 'Match record with matchId required' });
-    if (!matchRecordsCollection || !leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     try {
-        await matchRecordsCollection.updateOne(
-            { ownerUid, leagueKey, matchId: record.matchId },
-            { $set: { ...record, ownerUid, leagueKey, savedAt: record.savedAt || new Date().toISOString() } },
-            { upsert: true }
-        );
-        // League doc itself stays tiny now — just metadata (displayName,
-        // publicToken, live pointer). matches[] is intentionally never
-        // written here anymore.
+        const doc = await leaguesCollection.findOne({ ownerUid, leagueKey });
+        const matches = (doc && doc.matches) || [];
+        const idx = matches.findIndex(m => m.matchId === record.matchId);
+        if (idx >= 0) matches[idx] = record; else matches.push(record);
         await leaguesCollection.updateOne(
             { ownerUid, leagueKey },
-            { $set: { ownerUid, leagueKey, displayName: (req.params.name || '').trim(), updatedAt: Date.now() } },
+            { $set: { ownerUid, leagueKey, displayName: (req.params.name || '').trim(), matches, updatedAt: Date.now() } },
             { upsert: true }
         );
-        const matches = await getLeagueMatches(ownerUid, leagueKey);
         res.json({ success: true, matches });
     } catch (err) {
         console.log('League save error:', err);
@@ -949,10 +857,11 @@ app.delete('/api/league/:name/match/:matchId', async (req, res) => {
     const ownerUid = ownerUidFrom(req);
     if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
     if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
-    if (!matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     try {
-        await matchRecordsCollection.deleteOne({ ownerUid, leagueKey, matchId: req.params.matchId });
-        const matches = await getLeagueMatches(ownerUid, leagueKey);
+        const doc = await leaguesCollection.findOne({ ownerUid, leagueKey });
+        const matches = ((doc && doc.matches) || []).filter(m => m.matchId !== req.params.matchId);
+        await leaguesCollection.updateOne({ ownerUid, leagueKey }, { $set: { matches, updatedAt: Date.now() } });
         res.json({ success: true, matches });
     } catch (err) {
         console.log('League delete error:', err);
@@ -1095,10 +1004,10 @@ const ownerUidByMatchCache = new Map(); // small in-memory memo; matchId -> owne
 async function resolveOwnerUidForMatch(matchId, hintUid) {
     if (hintUid) { ownerUidByMatchCache.set(matchId, hintUid); return hintUid; }
     if (ownerUidByMatchCache.has(matchId)) return ownerUidByMatchCache.get(matchId);
-    if (!matchRecordsCollection) return null;
+    if (!leaguesCollection) return null;
     try {
-        const doc = await matchRecordsCollection.findOne(
-            { matchId },
+        const doc = await leaguesCollection.findOne(
+            { 'matches.matchId': matchId },
             { projection: { ownerUid: 1 } }
         );
         const uid = (doc && doc.ownerUid) || null;
@@ -1191,15 +1100,14 @@ app.post('/api/league/:name/live-status', async (req, res) => {
 // access control, and ownerUid is never included in any response. -------
 
 // Full tournament portal payload: sanitized match list + live pointer +
-// points table + leaderboards, all computed fresh from matchRecords (one
-// doc per match — see the big comment above matchRecordsCollection's
-// assignment) instead of a legacy matches[] array on the league doc.
+// points table + leaderboards, all computed fresh from the same
+// permanent matches[] the admin panel writes to.
 app.get('/api/public/tournament/:token', async (req, res) => {
-    if (!leaguesCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     try {
         const doc = await leaguesCollection.findOne({ publicToken: req.params.token });
         if (!doc) return res.status(404).json({ success: false, error: 'Tournament not found' });
-        const matches = await getLeagueMatches(doc.ownerUid, doc.leagueKey);
+        const matches = (doc.matches || []).slice().sort((a, b) => new Date(a.savedAt || 0) - new Date(b.savedAt || 0));
         res.json({
             success: true,
             displayName: doc.displayName || '',
@@ -1216,11 +1124,11 @@ app.get('/api/public/tournament/:token', async (req, res) => {
 
 // One specific match's full scorecard within a tournament.
 app.get('/api/public/tournament/:token/match/:matchId', async (req, res) => {
-    if (!leaguesCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     try {
         const doc = await leaguesCollection.findOne({ publicToken: req.params.token });
         if (!doc) return res.status(404).json({ success: false, error: 'Tournament not found' });
-        const match = await matchRecordsCollection.findOne({ ownerUid: doc.ownerUid, leagueKey: doc.leagueKey, matchId: req.params.matchId });
+        const match = (doc.matches || []).find(m => m.matchId === req.params.matchId);
         if (!match) return res.status(404).json({ success: false, error: 'Match not found' });
         res.json({ success: true, displayName: doc.displayName || '', match });
     } catch (err) {
@@ -1232,16 +1140,17 @@ app.get('/api/public/tournament/:token/match/:matchId', async (req, res) => {
 // A standalone match's public page, addressed by its own permanent
 // matchId (or the live "connection id"/roomId it was broadcast under
 // before it was ever saved). Deliberately searches across ALL owners'
-// __single_matches__ matchRecords by matchId/roomId rather than needing an
+// __single_matches__ docs by matchId/roomId rather than needing an
 // ownerUid, since a public link never carries one.
 app.get('/api/public/match/:id', async (req, res) => {
-    if (!matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     const id = req.params.id;
     try {
-        const match = await matchRecordsCollection.findOne({
+        const doc = await leaguesCollection.findOne({
             leagueKey: SINGLE_MATCHES_LEAGUE_KEY,
-            $or: [{ matchId: id }, { roomId: id }]
+            $or: [{ 'matches.matchId': id }, { 'matches.roomId': id }]
         });
+        const match = doc && (doc.matches || []).find(m => m.matchId === id || m.roomId === id);
         if (match) return res.json({ success: true, match });
         // Not saved yet — either still being played (public page falls back
         // to a live socket join using this id) or the id is simply wrong.
@@ -1335,9 +1244,9 @@ app.get('/api/clips/player/:playerKey', async (req, res) => {
         } else if (scope === 'tournament') {
             const leagueKey = leagueKeyFor(req.query.leagueName);
             const ownerUid = ownerUidFrom(req);
-            if (!leagueKey || !ownerUid || !matchRecordsCollection) return res.status(400).json({ success: false, error: 'leagueName and uid required for scope=tournament' });
-            const ids = await matchRecordsCollection.find({ ownerUid, leagueKey }, { projection: { matchId: 1 } }).toArray();
-            matchFilter = { $in: ids.map(m => m.matchId) };
+            if (!leagueKey || !ownerUid || !leaguesCollection) return res.status(400).json({ success: false, error: 'leagueName and uid required for scope=tournament' });
+            const doc = await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { 'matches.matchId': 1 } });
+            matchFilter = { $in: ((doc && doc.matches) || []).map(m => m.matchId) };
         }
         // scope === 'career' (or 'season', best-effort — no explicit season
         // field exists on matches yet, so career and season currently return
@@ -1378,15 +1287,34 @@ async function resolvePlayableClip(clipId) {
     return clipsCollection.findOne({ _id });
 }
 
+// Quick existence check before trusting a saved r2Url — once clips start
+// getting deleted from R2 after ~1 year (retention plan), the Mongo record
+// still has r2Url sitting on it forever unless someone remembers to clear
+// it. A HEAD request is cheap and confirms the object is actually still
+// there before we redirect/stream a viewer to it; on any failure (404,
+// network error, whatever) we treat it as "not on R2 anymore" and let the
+// caller fall back to Drive instead of handing back a dead link.
+async function r2ObjectExists(url) {
+    try {
+        const headRes = await fetch(url, { method: 'HEAD' });
+        return headRes.ok;
+    } catch (err) {
+        return false;
+    }
+}
+
 // GET /api/clips/:clipId/watch — plays inline in the scorecard's own video
 // modal. R2 is preferred (public CDN URL, cheap to redirect to, cached at
-// the edge — see uploadClipToR2 above); if only Drive has it, we proxy the
-// bytes through our own server instead of sending the user to Drive's UI.
+// the edge — see uploadClipToR2 above); if R2 doesn't have it anymore (or
+// never did) and only Drive has it, we proxy the bytes through our own
+// server instead of sending the user to Drive's UI.
 app.get('/api/clips/:clipId/watch', async (req, res) => {
     try {
         const clip = await resolvePlayableClip(req.params.clipId);
         if (!clip) return res.status(404).json({ success: false, error: 'Clip not found' });
-        if (clip.r2Url) return res.redirect(302, clip.r2Url);
+        if (clip.r2Url && await r2ObjectExists(clip.r2Url)) {
+            return res.redirect(302, clip.r2Url);
+        }
         if (clip.driveFileId && driveClient) {
             const driveRes = await driveClient.files.get({ fileId: clip.driveFileId, alt: 'media' }, { responseType: 'stream' });
             res.setHeader('Content-Type', 'video/mp4');
@@ -1403,8 +1331,10 @@ app.get('/api/clips/:clipId/watch', async (req, res) => {
 // GET /api/clips/:clipId/download — forces a same-origin download instead
 // of opening the file's Drive/R2 page. R2 clips are fetched server-side and
 // re-streamed with Content-Disposition: attachment (R2 itself doesn't set
-// that header on plain object URLs); Drive clips use the same proxy path
-// as /watch, just with the attachment header added.
+// that header on plain object URLs); if the R2 fetch fails (object gone —
+// e.g. past the 1-year retention window) we fall back to Drive the same
+// way /watch does, instead of erroring out; Drive clips use the same proxy
+// path as /watch, just with the attachment header added.
 app.get('/api/clips/:clipId/download', async (req, res) => {
     try {
         const clip = await resolvePlayableClip(req.params.clipId);
@@ -1413,10 +1343,18 @@ app.get('/api/clips/:clipId/download', async (req, res) => {
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
         res.setHeader('Content-Type', 'video/mp4');
         if (clip.r2Url) {
-            const r2Res = await fetch(clip.r2Url);
-            if (!r2Res.ok || !r2Res.body) return res.status(502).json({ success: false, error: 'Could not fetch clip' });
-            const { Readable } = require('stream');
-            return Readable.fromWeb(r2Res.body).pipe(res);
+            try {
+                const r2Res = await fetch(clip.r2Url);
+                if (r2Res.ok && r2Res.body) {
+                    const { Readable } = require('stream');
+                    return Readable.fromWeb(r2Res.body).pipe(res);
+                }
+                console.log(`R2 fetch not OK for clip ${clip._id} (status ${r2Res.status}) — falling back to Drive`);
+            } catch (r2Err) {
+                console.log(`R2 fetch error for clip ${clip._id}, falling back to Drive:`, r2Err.message || r2Err);
+            }
+            // R2 missing/failed — fall through to the Drive branch below
+            // instead of returning an error, same recovery as /watch.
         }
         if (clip.driveFileId && driveClient) {
             const driveRes = await driveClient.files.get({ fileId: clip.driveFileId, alt: 'media' }, { responseType: 'stream' });
@@ -1508,20 +1446,21 @@ app.get('/api/stats/player/:playerKey', async (req, res) => {
             const stats = await computeMatchPlayerStats(safeMatchId(req.query.matchId), pk);
             return res.json({ success: true, scope, playerKey: pk, ...stats });
         }
-        if (!matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+        if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
         if (scope === 'tournament') {
             const leagueKey = leagueKeyFor(req.query.leagueName);
             const ownerUid = ownerUidFrom(req);
             if (!leagueKey || !ownerUid) return res.status(400).json({ success: false, error: 'leagueName and uid required for scope=tournament' });
-            const matches = await getLeagueMatches(ownerUid, leagueKey);
-            const stats = computeSinglePlayerRollup(matches, pk);
+            const doc = await leaguesCollection.findOne({ ownerUid, leagueKey });
+            const stats = computeSinglePlayerRollup((doc && doc.matches) || [], pk);
             return res.json({ success: true, scope, playerKey: pk, ...stats });
         }
         // career (and season, best-effort — see note on the clips endpoint
         // above): every match across every league this owner has saved.
         const ownerUid = ownerUidFrom(req);
         if (!ownerUid) return res.status(400).json({ success: false, error: 'uid required for scope=career' });
-        const allMatches = await matchRecordsCollection.find({ ownerUid }).toArray();
+        const leagues = await leaguesCollection.find({ ownerUid }).project({ matches: 1 }).toArray();
+        const allMatches = leagues.flatMap(l => l.matches || []);
         const stats = computeSinglePlayerRollup(allMatches, pk);
         res.json({ success: true, scope, playerKey: pk, ...stats });
     } catch (err) {
@@ -1541,29 +1480,29 @@ app.get('/api/stats/player/:playerKey', async (req, res) => {
 app.get('/api/stats/player/:playerKey/tournaments', async (req, res) => {
     const pk = playerKey(req.params.playerKey);
     if (!pk) return res.status(400).json({ success: false, error: 'playerKey required' });
-    if (!leaguesCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     const ownerUid = ownerUidFrom(req);
     if (!ownerUid) return res.status(400).json({ success: false, error: 'uid required' });
     try {
         const leagues = await leaguesCollection.find({ ownerUid, leagueKey: { $ne: SINGLE_MATCHES_LEAGUE_KEY } })
-            .project({ leagueKey: 1, displayName: 1, updatedAt: 1 }).toArray();
-        const tournaments = (await Promise.all(leagues.map(async doc => {
-            const matches = await getLeagueMatches(ownerUid, doc.leagueKey);
-            const stats = computeSinglePlayerRollup(matches, pk);
-            if (!stats.batting && !stats.bowling) return null; // player never appeared in this tournament
-            return {
-                leagueName: doc.displayName || doc.leagueKey,
-                matchesPlayed: matches.filter(m => {
-                    return ['A', 'B'].some(k =>
-                        ((m.battingCard && m.battingCard[k]) || []).some(b => playerKey(b.name) === pk) ||
-                        ((m.bowlingCard && m.bowlingCard[k]) || []).some(b => playerKey(b.name) === pk)
-                    );
-                }).length,
-                updatedAt: doc.updatedAt || 0,
-                batting: stats.batting,
-                bowling: stats.bowling
-            };
-        })))
+            .project({ leagueKey: 1, displayName: 1, matches: 1, updatedAt: 1 }).toArray();
+        const tournaments = leagues
+            .map(doc => {
+                const stats = computeSinglePlayerRollup(doc.matches || [], pk);
+                if (!stats.batting && !stats.bowling) return null; // player never appeared in this tournament
+                return {
+                    leagueName: doc.displayName || doc.leagueKey,
+                    matchesPlayed: (doc.matches || []).filter(m => {
+                        return ['A', 'B'].some(k =>
+                            ((m.battingCard && m.battingCard[k]) || []).some(b => playerKey(b.name) === pk) ||
+                            ((m.bowlingCard && m.bowlingCard[k]) || []).some(b => playerKey(b.name) === pk)
+                        );
+                    }).length,
+                    updatedAt: doc.updatedAt || 0,
+                    batting: stats.batting,
+                    bowling: stats.bowling
+                };
+            })
             .filter(Boolean)
             .sort((a, b) => b.updatedAt - a.updatedAt);
         res.json({ success: true, playerKey: pk, tournaments });
@@ -1943,24 +1882,14 @@ adminRouter.post('/delete-template', async (req, res) => {
 // ---- Cricket Data ----
 adminRouter.get('/cricket', async (req, res) => {
     try {
-        // 🩹 matchCount now comes from matchRecordsCollection (one doc per
-        // match) via a cheap grouped count, instead of projecting the whole
-        // `matches` array out of every league doc just to read its .length —
-        // that used to mean this single admin page load pulled every match
-        // any of the last 50 active owners had ever saved.
-        const [leagues, matchCounts, recentMatches, ballCount] = await Promise.all([
-            leaguesCollection ? leaguesCollection.find({}).project({ ownerUid: 1, leagueKey: 1, displayName: 1, updatedAt: 1 }).sort({ updatedAt: -1 }).limit(50).toArray() : [],
-            matchRecordsCollection ? matchRecordsCollection.aggregate([
-                { $group: { _id: { ownerUid: '$ownerUid', leagueKey: '$leagueKey' }, count: { $sum: 1 } } }
-            ]).toArray() : [],
+        const [leagues, recentMatches, ballCount] = await Promise.all([
+            leaguesCollection ? leaguesCollection.find({}).project({ ownerUid: 1, leagueKey: 1, displayName: 1, matches: 1, updatedAt: 1 }).sort({ updatedAt: -1 }).limit(50).toArray() : [],
             matchesCollection ? matchesCollection.find({}).sort({ recordingStartedAt: -1 }).limit(50).toArray() : [],
             ballsCollection ? ballsCollection.countDocuments() : 0
         ]);
-        const countKey = (ownerUid, leagueKey) => `${ownerUid}::${leagueKey}`;
-        const countMap = new Map(matchCounts.map(c => [countKey(c._id.ownerUid, c._id.leagueKey), c.count]));
         const tournaments = leagues.map(l => ({
             leagueKey: l.leagueKey, displayName: l.displayName || l.leagueKey,
-            ownerUid: l.ownerUid, matchCount: countMap.get(countKey(l.ownerUid, l.leagueKey)) || 0, updatedAt: l.updatedAt || null
+            ownerUid: l.ownerUid, matchCount: (l.matches || []).length, updatedAt: l.updatedAt || null
         }));
         res.json({ success: true, tournaments, recentMatches, totalBallsLogged: ballCount });
     } catch (err) {
