@@ -83,9 +83,26 @@
     -webkit-font-smoothing:antialiased;
     transition:background .25s ease, color .25s ease;
     padding-bottom:40px;
+    -webkit-tap-highlight-color:transparent;
+    overscroll-behavior-y:none;
   }
   a{ color:inherit; text-decoration:none; }
   .tabnum{ font-variant-numeric:tabular-nums; }
+  button, a, .clip-btn, .icon-btn, .cd-tab{ touch-action:manipulation; }
+  /* Every tappable control gives a quick press-down cue so the UI reads
+     as alive/responsive, not static — matched to iOS/Android's native
+     button-press feel rather than a hover-only desktop affordance. */
+  .icon-btn, .visit-btn, .clip-btn, .cd-tab, .twc-toggle button,
+  #highlights-filter button, .clip-row .cr-actions a, .clip-row .cr-actions button,
+  .clip-row, .hub-history-row, #clip-drawer-close, #video-modal-close{
+    transition:background .15s ease, color .15s ease, border-color .15s ease, transform .12s cubic-bezier(.34,1.56,.64,1), box-shadow .15s ease;
+  }
+  .icon-btn:active, .visit-btn:active, .clip-btn:active:not(:disabled), .cd-tab:active,
+  .twc-toggle button:active, #highlights-filter button:active,
+  .clip-row .cr-actions a:active, .clip-row .cr-actions button:active,
+  .clip-row:active, .hub-history-row:active, #clip-drawer-close:active, #video-modal-close:active{
+    transform:scale(.92);
+  }
 
   /* ---------- Brand bar ---------- */
   #brandbar{
@@ -129,12 +146,22 @@
   .card{
     background:var(--panel); border:1px solid var(--border); border-radius:var(--radius-lg);
     padding:18px; box-shadow:var(--shadow);
+    transition:border-color .2s ease, box-shadow .2s ease, transform .2s ease;
   }
+  /* The scorecard pair (Batting/Bowling) is the primary content now that
+     it sits right under Highlights — give it a touch more visual weight
+     than the surrounding cards instead of blending into the same grid. */
+  .card-featured{ border-top:3px solid var(--accent); position:relative; }
+  .card-featured::after{
+    content:''; position:absolute; inset:0 0 auto 0; height:64px; border-radius:var(--radius-lg) var(--radius-lg) 0 0;
+    background:linear-gradient(180deg, var(--accent-soft), transparent); pointer-events:none;
+  }
+  .card-featured > *{ position:relative; }
   .section-title{
-    display:flex; align-items:center; gap:8px; font-family:var(--font-display); font-weight:700;
-    font-size:13px; text-transform:uppercase; letter-spacing:.6px; color:var(--text-dim); margin-bottom:14px;
+    display:flex; align-items:center; gap:9px; font-family:var(--font-display); font-weight:800;
+    font-size:15px; letter-spacing:.1px; color:var(--text); margin-bottom:14px;
   }
-  .section-title .dash{ width:14px; height:2px; background:var(--accent); border-radius:2px; }
+  .section-title .dash{ width:5px; height:16px; background:var(--accent); border-radius:3px; flex:none; }
 
   /* ---------- Hero ---------- */
   #hero{ position:relative; overflow:hidden; padding:22px; }
@@ -157,7 +184,7 @@
   .team-name{ font-weight:700; font-size:14.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .team-short{ font-size:11px; color:var(--text-dim); font-weight:600; }
   #score-center{ text-align:center; }
-  #main-score{ font-family:var(--font-display); font-weight:800; font-size:clamp(30px,6vw,44px); line-height:1; }
+  #main-score{ font-family:var(--font-display); font-weight:800; font-size:clamp(30px,6vw,44px); line-height:1; text-shadow:0 0 30px var(--accent-soft); }
   #main-overs{ font-size:13px; color:var(--text-dim); font-weight:600; margin-top:4px; }
   #batting-tag{ font-size:10.5px; color:var(--accent); font-weight:700; letter-spacing:.4px; text-transform:uppercase; margin-top:3px; }
 
@@ -184,7 +211,8 @@
   .pship-line b{ color:var(--text); }
 
   /* ---------- Recent balls ---------- */
-  #balls-scroll{ display:flex; gap:7px; overflow-x:auto; padding-bottom:4px; scrollbar-width:thin; }
+  #balls-scroll{ display:flex; gap:7px; overflow-x:auto; padding-bottom:4px; scrollbar-width:thin; -webkit-overflow-scrolling:touch; scroll-snap-type:x proximity; }
+  #balls-scroll .ball-chip{ scroll-snap-align:start; }
   .ball-chip{
     flex:none; min-width:32px; height:32px; padding:0 6px; border-radius:9px; display:flex; align-items:center; justify-content:center;
     font-weight:800; font-size:12.5px; background:var(--panel-2); border:1px solid var(--border); color:var(--text-dim);
@@ -195,8 +223,8 @@
   .ball-chip.extra{ background:var(--extra-soft); color:var(--extra); border-color:transparent; font-size:10.5px; }
   .ball-chip.dot{ color:var(--text-faint); }
 
-  /* ---------- Charts row ---------- */
-  #charts-grid{ display:grid; grid-template-columns:1.15fr 1fr; gap:14px; }
+  /* ---------- Charts row (stacked — one below another) ---------- */
+  #charts-grid{ display:grid; grid-template-columns:1fr; gap:14px; }
   .chart-card svg{ width:100%; height:auto; display:block; overflow:visible; }
   .chart-empty{ color:var(--text-faint); font-size:12.5px; padding:20px 0; text-align:center; }
   .axis-label{ font-size:9.5px; fill:var(--text-faint); font-family:var(--font-body); }
@@ -223,8 +251,8 @@
   .howout{ font-size:10.5px; color:var(--text-faint); display:block; margin-top:1px; }
   .not-out-tag{ color:var(--accent); font-size:10.5px; font-weight:700; }
 
-  /* ---------- Bottom row: partnership / FOW / extras ---------- */
-  #bottom-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; }
+  /* ---------- Partnership / FOW / extras — stacked ---------- */
+  #bottom-grid{ display:grid; grid-template-columns:1fr; gap:14px; }
   .fow-item{ display:flex; justify-content:space-between; font-size:12.5px; padding:7px 0; border-bottom:1px dashed var(--border-soft); }
   .fow-item:last-child{ border-bottom:none; }
   .fow-wkt{ color:var(--wicket); font-weight:700; }
@@ -250,9 +278,12 @@
 
   /* ---------- Responsive ---------- */
   @media (max-width:900px){
-    #charts-grid, #compare-grid, #tables-grid, #bottom-grid, #hub-grid{ grid-template-columns:1fr; }
+    #compare-grid, #tables-grid{ grid-template-columns:1fr; }
     #players-grid{ grid-template-columns:1fr; }
     #stat-strip{ grid-template-columns:1fr 1fr; }
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{ animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important; }
   }
   @media (max-width:640px){
     #teams-row{ grid-template-columns:1fr; text-align:center; }
@@ -263,6 +294,15 @@
 
   ::-webkit-scrollbar{ height:6px; width:6px; }
   ::-webkit-scrollbar-thumb{ background:var(--border); border-radius:99px; }
+
+  /* Desktop-only lift on hover — mouse/trackpad affordance that doesn't
+     get stuck "on" after a tap on touch devices. */
+  @media (hover:hover) and (pointer:fine){
+    .card:hover{ border-color:var(--border-soft); box-shadow:0 10px 34px rgba(0,0,0,.14); }
+    :root[data-theme="light"] .card:hover{ box-shadow:0 10px 28px rgba(20,25,40,.10); }
+    .player-card{ transition:border-color .15s ease, transform .15s ease; }
+    .player-card:hover{ border-color:var(--accent); transform:translateY(-1px); }
+  }
 
   /* ============================================================
      CLIPS — per-player clip button, bottom-sheet drawer (mobile) /
@@ -344,7 +384,7 @@
   #clip-drawer-head h3{ margin:0; font-family:var(--font-display); font-size:15px; font-weight:700; }
   #clip-drawer-head .cd-sub{ font-size:11.5px; color:var(--text-dim); margin-top:2px; font-weight:600; }
   #clip-drawer-close{ width:30px; height:30px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); color:var(--text-dim); display:flex; align-items:center; justify-content:center; cursor:pointer; flex:none; }
-  #clip-drawer-body{ flex:1; overflow-y:auto; padding:16px 18px 24px; }
+  #clip-drawer-body{ flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:16px 18px 24px; }
   #clip-drawer-tabs{ display:none; gap:6px; padding:12px 18px 0; flex:none; }
   #clip-drawer-tabs.show{ display:flex; }
   .cd-tab{
@@ -504,15 +544,22 @@
     <div id="highlights-list"><div class="empty-state">Loading highlights…</div></div>
   </div>
 
-  <!-- CHARTS: OVER-BY-OVER + PROGRESSION -->
-  <div id="charts-grid">
-    <div class="card chart-card">
-      <div class="section-title"><span class="dash"></span>Over-by-Over Runs</div>
-      <div id="chart-overs"></div>
+  <!-- SCORECARD TABLES — batting/bowling, promoted right under Highlights
+       since this is the section people actually came here for. -->
+  <div id="tables-grid">
+    <div class="card card-featured">
+      <div class="section-title"><span class="dash"></span>Batting</div>
+      <table>
+        <thead><tr><th>Batter</th><th class="num">R</th><th class="num">B</th><th class="num">4s</th><th class="num">6s</th><th class="num">SR</th><th class="clip-col"></th></tr></thead>
+        <tbody id="batting-table-body"></tbody>
+      </table>
     </div>
-    <div class="card chart-card">
-      <div class="section-title"><span class="dash"></span>Score Progression</div>
-      <div id="chart-progression"></div>
+    <div class="card card-featured">
+      <div class="section-title"><span class="dash"></span>Bowling</div>
+      <table>
+        <thead><tr><th>Bowler</th><th class="num">O</th><th class="num">M</th><th class="num">R</th><th class="num">W</th><th class="num">Econ</th><th class="clip-col"></th></tr></thead>
+        <tbody id="bowling-table-body"></tbody>
+      </table>
     </div>
   </div>
 
@@ -528,21 +575,15 @@
     </div>
   </div>
 
-  <!-- SCORECARD TABLES -->
-  <div id="tables-grid">
-    <div class="card">
-      <div class="section-title"><span class="dash"></span>Batting</div>
-      <table>
-        <thead><tr><th>Batter</th><th class="num">R</th><th class="num">B</th><th class="num">4s</th><th class="num">6s</th><th class="num">SR</th><th class="clip-col"></th></tr></thead>
-        <tbody id="batting-table-body"></tbody>
-      </table>
+  <!-- CHARTS: OVER-BY-OVER + PROGRESSION -->
+  <div id="charts-grid">
+    <div class="card chart-card">
+      <div class="section-title"><span class="dash"></span>Over-by-Over Runs</div>
+      <div id="chart-overs"></div>
     </div>
-    <div class="card">
-      <div class="section-title"><span class="dash"></span>Bowling</div>
-      <table>
-        <thead><tr><th>Bowler</th><th class="num">O</th><th class="num">M</th><th class="num">R</th><th class="num">W</th><th class="num">Econ</th><th class="clip-col"></th></tr></thead>
-        <tbody id="bowling-table-body"></tbody>
-      </table>
+    <div class="card chart-card">
+      <div class="section-title"><span class="dash"></span>Score Progression</div>
+      <div id="chart-progression"></div>
     </div>
   </div>
 
@@ -592,7 +633,7 @@
   <!-- TOURNAMENT HUB — batting/bowling leaders + match-by-match history.
        Only appears when this link carries ?token=<public tournament token>;
        a plain single-match link never shows this. -->
-  <div id="hub-grid" style="display:none; grid-template-columns:1fr 1fr; gap:14px;">
+  <div id="hub-grid" style="display:none; grid-template-columns:1fr; gap:14px;">
     <div class="card">
       <div class="section-title"><span class="dash"></span>Tournament Batting Leaders</div>
       <table>
