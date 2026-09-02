@@ -31,7 +31,17 @@ if (process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_
         credentials: {
             accessKeyId: process.env.R2_ACCESS_KEY_ID,
             secretAccessKey: process.env.R2_SECRET_ACCESS_KEY
-        }
+        },
+        // 🐛 Newer @aws-sdk/client-s3 versions default to adding a
+        // streaming trailer checksum (x-amz-checksum-crc32) on PutObject.
+        // R2 doesn't handle that the same way S3 does — the request
+        // "succeeds" from the SDK's point of view (no thrown error) but
+        // the object never actually lands in the bucket (0 B, no file
+        // listed, yet the R2 dashboard still counts it as an operation —
+        // exactly what was happening here). Forcing this to
+        // WHEN_REQUIRED stops the SDK from attaching that checksum
+        // unless we explicitly ask for one.
+        requestChecksumCalculation: 'WHEN_REQUIRED'
     });
     console.log('☁️  Cloudflare R2 client ready');
 } else {
@@ -363,10 +373,18 @@ async function uploadClipToR2(matchId, filePath, eventType, ballMeta) {
     const key = `${matchId}/${fileName}`;
 
     try {
+        // Reading the whole clip into a Buffer (clips are only a few MB —
+        // well within memory limits) instead of streaming it lets the SDK
+        // know the exact Content-Length upfront and skips the chunked/
+        // trailer-checksum upload path entirely — the combination that was
+        // causing R2 to accept the request (hence the operation count going
+        // up) but never actually store the bytes (hence 0 B / no object).
+        const fileBuffer = fs.readFileSync(filePath);
         await r2Client.send(new PutObjectCommand({
             Bucket: R2_BUCKET_NAME,
             Key: key,
-            Body: fs.createReadStream(filePath),
+            Body: fileBuffer,
+            ContentLength: fileBuffer.length,
             ContentType: 'video/mp4'
         }));
 
@@ -741,9 +759,12 @@ async function finalizeClip({ matchId, eventType, eventTimestamp, ballMeta, uid,
         // matching ball is found (e.g. Mongo briefly unavailable).
         const canonicalBall = await findCanonicalBall(matchId, ballMeta);
         const ownerUid = await resolveOwnerUidForMatch(matchId, uid || (canonicalBall && canonicalBall.ownerUid));
-        const striker = (canonicalBall && canonicalBall.striker) || (ballMeta && ballMeta.striker) || null;
-        const bowler = (canonicalBall && canonicalBall.bowler) || (ballMeta && ballMeta.bowler) || null;
-        const nonStriker = (canonicalBall && canonicalBall.nonStriker) || (ballMeta && ballMeta.nonStriker) || null;
+        // personName() unwraps any stray {name,...} object (old data, or
+        // any future client that sends one) into a clean string — see the
+        // comment on personName() near playerKey() for why this matters.
+        const striker = personName(canonicalBall && canonicalBall.striker) || personName(ballMeta && ballMeta.striker);
+        const bowler = personName(canonicalBall && canonicalBall.bowler) || personName(ballMeta && ballMeta.bowler);
+        const nonStriker = personName(canonicalBall && canonicalBall.nonStriker) || personName(ballMeta && ballMeta.nonStriker);
         const dismissal = (canonicalBall && canonicalBall.dismissal) || (ballMeta && ballMeta.dismissal) || null;
         const battingTeam = (canonicalBall && canonicalBall.battingTeam) || (ballMeta && ballMeta.battingTeam) || null;
         // 🌟 Prefer the canonical ball's already-resolved playerIds (same
@@ -768,7 +789,7 @@ async function finalizeClip({ matchId, eventType, eventTimestamp, ballMeta, uid,
             nonStrikerName: nonStriker, nonStrikerKey: playerKey(nonStriker), nonStrikerPlayerId,
             bowlerName: bowler, bowlerKey: playerKey(bowler), bowlerPlayerId,
             dismissalType: dismissal && dismissal.type ? dismissal.type : null,
-            fielderName: dismissal && dismissal.fielder ? dismissal.fielder : null,
+            fielderName: personName(dismissal && dismissal.fielder),
             fielderKey: playerKey(dismissal && dismissal.fielder), fielderPlayerId
         });
     }
@@ -1169,7 +1190,21 @@ function computeLeaderboards(matches) {
 // migration of anything already saved.
 // ================================================================
 function playerKey(name) {
-    return String(name || '').trim().toLowerCase() || null;
+    return String(personName(name) || '').trim().toLowerCase() || null;
+}
+
+// 🛡️ Defense-in-depth: some client somewhere (past or future) might send
+// a whole {name, runs, balls,...} object instead of a plain name string
+// for striker/bowler/nonStriker/fielder — that's exactly what silently
+// turned every strikerKey/bowlerKey into the literal text "[object
+// Object]" for every ball ever logged, until the panel-side fix. Every
+// place that turns one of these fields into a name/key now goes through
+// this first, so a stray object never breaks linking again.
+function personName(x) {
+    if (!x) return null;
+    if (typeof x === 'string') return x.trim() || null;
+    if (typeof x === 'object' && typeof x.name === 'string') return x.name.trim() || null;
+    return null; // don't stringify unknown shapes into "[object Object]"
 }
 
 // ================================================================
@@ -1200,7 +1235,7 @@ async function resolvePlayerId(ownerUid, name) {
         const playerId = crypto.randomBytes(6).toString('hex'); // 12-char id
         await playersCollection.insertOne({
             playerId, ownerUid, nameKeys: [nameKey],
-            displayName: String(name).trim(),
+            displayName: personName(name) || String(name).trim(),
             createdAt: Date.now(), updatedAt: Date.now()
         });
         playerIdCache.set(cacheKey, playerId);
@@ -3112,6 +3147,13 @@ io.on('connection', async (socket) => {
                 resolvePlayerId(ownerUid, data.bowler),
                 resolvePlayerId(ownerUid, data.dismissal && data.dismissal.fielder)
             ]) : [null, null, null, null];
+            // 🛡️ Normalize through personName() in case a client sends
+            // {name,...} objects instead of plain strings (see comment on
+            // personName above) — stores the clean name either way.
+            const strikerName = personName(data.striker);
+            const nonStrikerName = personName(data.nonStriker);
+            const bowlerName = personName(data.bowler);
+            const fielderName = personName(data.dismissal && data.dismissal.fielder);
             await ballsCollection.insertOne({
                 matchId,
                 ownerUid: ownerUid || null,
@@ -3121,17 +3163,17 @@ io.on('connection', async (socket) => {
                 kind: data.kind,          // '0'-'6', 'W', 'Wd', 'Nb', 'B', 'LB'
                 runs: data.runs,
                 battingTeam: data.battingTeam,
-                striker: data.striker,
-                strikerKey: playerKey(data.striker),
+                striker: strikerName,
+                strikerKey: playerKey(strikerName),
                 strikerPlayerId,
-                nonStriker: data.nonStriker,
-                nonStrikerKey: playerKey(data.nonStriker),
+                nonStriker: nonStrikerName,
+                nonStrikerKey: playerKey(nonStrikerName),
                 nonStrikerPlayerId,
-                bowler: data.bowler,
-                bowlerKey: playerKey(data.bowler),
+                bowler: bowlerName,
+                bowlerKey: playerKey(bowlerName),
                 bowlerPlayerId,
-                dismissal: data.dismissal || null, // { type: 'Bowled'|'Caught'|'LBW'|'Run Out'|'Stumped'|'Hit Wicket'|..., fielder? }
-                dismissalFielderKey: playerKey(data.dismissal && data.dismissal.fielder),
+                dismissal: data.dismissal ? { type: data.dismissal.type || 'Out', fielder: fielderName } : null,
+                dismissalFielderKey: playerKey(fielderName),
                 dismissalFielderPlayerId,
                 score: data.score,        // { runs, wickets, overs, balls } snapshot after this ball
                 timestamp: data.timestamp || Date.now()
