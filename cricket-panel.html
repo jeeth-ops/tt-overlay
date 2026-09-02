@@ -4281,10 +4281,17 @@ function logBallToDb(kind, runsBefore, ballTimestamp){
     kind,
     runs: state.score.runs - runsBefore,
     battingTeam: state.battingTeam,
-    striker: { name: state.striker.name, runs: state.striker.runs, balls: state.striker.balls },
-    nonStriker: { name: state.nonStriker.name, runs: state.nonStriker.runs, balls: state.nonStriker.balls },
-    bowler: { name: state.bowler.name, overs: state.bowler.overs, balls: state.bowler.balls, runs: state.bowler.runs, wickets: state.bowler.wickets },
-    dismissal: kind === 'W' ? (lastDismissalType || 'Bowled') : null,
+    // 🐛 FIX: server's playerKey()/resolvePlayerId() (used for clip
+    // linking, career stats, everything) expect plain name STRINGS here
+    // — sending the whole {name, runs, balls,...} object made every
+    // strikerKey/bowlerKey in the DB literally the text "[object Object]"
+    // forever, silently breaking all player-clip matching. Runs/balls/
+    // overs for these players are already tracked separately in `score`
+    // and elsewhere — nothing here ever needed the extra fields.
+    striker: state.striker.name,
+    nonStriker: state.nonStriker.name,
+    bowler: state.bowler.name,
+    dismissal: kind === 'W' ? { type: lastDismissalType || 'Bowled' } : null,
     score: { ...state.score },
     timestamp: ballTimestamp
   });
