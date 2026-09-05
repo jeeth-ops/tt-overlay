@@ -1463,11 +1463,15 @@ function renderState(s){
         gsap.set(pip, { opacity: .55, scale: 1 });
       } else {
         let cls = '', label = b;
+        // Matched by prefix/suffix, not exact equality — labels can carry
+        // extra runs appended (e.g. "Wd+2", "Nb+3", "B2", "LB2", "2W" for a
+        // run out with runs completed), and those still need their pip
+        // styling, not just the bare "Wd"/"Nb"/"B"/"LB"/"W" case.
         if(b === '0'){ cls = 'zero'; label = '•'; }
         else if(b === '4') cls = 'four';
         else if(b === '6') cls = 'six';
-        else if(b === 'W') cls = 'wicket';
-        else if(b === 'Wd' || b === 'Nb' || b === 'B' || b === 'LB') cls = 'extra';
+        else if(b.endsWith('W')) cls = 'wicket';
+        else if(b.startsWith('Wd') || b.startsWith('Nb') || b.startsWith('B') || b.startsWith('LB')) cls = 'extra';
         if(cls) pip.classList.add(cls);
         pip.style.fontSize = `${cls === 'zero' ? dotFontSize : numFontSize}px`;
         pip.textContent = label;
