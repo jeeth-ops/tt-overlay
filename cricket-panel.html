@@ -170,6 +170,12 @@
   #toast.show{ opacity:1; transform:translateY(0); }
 
   .link-row{ display:flex; gap:6px; margin-top:6px; }
+  .squad-player-row{ display:flex; align-items:center; gap:6px; padding:5px 6px; border-radius:6px; font-size:12.5px; }
+  .squad-player-row:nth-child(odd){ background:rgba(255,255,255,.03); }
+  .squad-player-row input[type="text"]{ flex:1; min-width:0; padding:5px 6px; font-size:12.5px; margin:0; }
+  .squad-player-row .player-id-badge{ opacity:.45; font-size:10px; white-space:nowrap; }
+  .squad-player-row .remove-player-btn{ background:none; border:none; color:#e05555; cursor:pointer; font-size:14px; padding:0 4px; }
+  .squad-player-row input[type="checkbox"]{ margin:0; }
   .link-row input{ flex:1; font-size:11px; }
   .link-row button{ flex:none; }
   .qr-wrap{ display:flex; flex-direction:column; align-items:center; gap:8px; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
@@ -270,6 +276,7 @@
     <button type="button" data-target="card-match-type">Match Type</button>
     <button type="button" data-target="card-theme">Theme</button>
     <button type="button" data-target="card-players">Players</button>
+    <button type="button" data-target="card-team-squads">Squads</button>
   </div>
   <div class="qn-sep"></div>
   <div class="qn-group qn-live">
@@ -455,11 +462,49 @@
 
     <div class="card" id="card-players">
       <h2>👥 Players</h2>
+      <div id="opener-select-wrap" style="display:none; margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid var(--border);">
+        <label>Opening striker <span class="note">— from batting team's squad</span></label>
+        <select id="striker-roster-select"><option value="">— choose player —</option></select>
+        <label>Opening non-striker</label>
+        <select id="nonstriker-roster-select"><option value="">— choose player —</option></select>
+        <div class="shortcut-hint">Use this at the start of an innings to pick the two openers. The name fields below stay available to fix a typo on whoever's already in — they won't reset that batter's runs.</div>
+      </div>
       <label>Striker name</label>
       <input type="text" id="striker-name" value="S. Yadav" list="global-player-suggestions" data-global-suggest="1">
       <label>Non-striker name</label>
       <input type="text" id="nonstriker-name" value="V. Kohli" list="global-player-suggestions" data-global-suggest="1">
       <button class="full small" id="swap-strike" style="margin-top:8px;">Swap Strike (S)</button>
+    </div>
+
+    <div class="card" id="card-team-squads">
+      <h2>🧑‍🤝‍🧑 Team Squads &amp; Roles <span class="note">— set up both squads before the match starts</span></h2>
+      <div class="row2">
+        <div>
+          <label id="squadA-label">Team A squad</label>
+          <div class="link-row">
+            <input type="text" id="squadA-new-name" placeholder="Player name">
+            <button class="small" id="squadA-add-btn" type="button">Add</button>
+          </div>
+          <div id="squadA-list" style="margin-top:8px; max-height:240px; overflow-y:auto;"></div>
+          <label style="margin-top:10px;">Captain</label>
+          <select id="squadA-captain"><option value="">— None —</option></select>
+          <label>Wicket-Keeper</label>
+          <select id="squadA-wk"><option value="">— None —</option></select>
+        </div>
+        <div>
+          <label id="squadB-label">Team B squad</label>
+          <div class="link-row">
+            <input type="text" id="squadB-new-name" placeholder="Player name">
+            <button class="small" id="squadB-add-btn" type="button">Add</button>
+          </div>
+          <div id="squadB-list" style="margin-top:8px; max-height:240px; overflow-y:auto;"></div>
+          <label style="margin-top:10px;">Captain</label>
+          <select id="squadB-captain"><option value="">— None —</option></select>
+          <label>Wicket-Keeper</label>
+          <select id="squadB-wk"><option value="">— None —</option></select>
+        </div>
+      </div>
+      <div class="shortcut-hint">Each player gets a permanent unique Player ID (shown greyed out) that the rest of the system — batting/bowling dropdowns, ball log, stats — always keys off, never just their name. Untick "XI" to bench someone as a substitute without deleting them; benched players won't appear in the live dropdowns. If a squad is left empty, the Striker/Non-striker/Bowler fields below fall back to free-text entry exactly as before.</div>
     </div>
   </div>
 
@@ -505,6 +550,7 @@
     <div class="card" id="card-new-batsman">
       <h2>🆕 New Batsman (after wicket)</h2>
       <div class="shortcut-hint" id="new-batsman-end-hint"></div>
+      <select id="new-batsman-select" style="display:none;"><option value="">— choose player —</option></select>
       <input type="text" id="new-batsman-name" placeholder="Incoming batsman name">
       <button class="full small" id="new-batsman-btn" style="margin-top:8px;">Send In New Batsman</button>
     </div>
@@ -520,6 +566,7 @@
       </div>
       <div class="shortcut-hint" id="disp-bowler-note"></div>
       <label>New bowler coming on <span class="note">— type an earlier bowler's name to resume their figures</span></label>
+      <select id="bowler-roster-select" style="display:none;"><option value="">— choose player —</option></select>
       <input type="text" id="bowler-name-input" placeholder="Bowler name" list="bowler-suggestions" autocomplete="off" data-global-suggest="1">
       <datalist id="bowler-suggestions"></datalist>
       <!-- 🌟 Global player search (see /api/players/search) — separate from
@@ -560,6 +607,7 @@
     <div class="wicket-modal" id="newbat-modal">
       <h3>🏏 New Batsman</h3>
       <div class="wm-sub" id="newbat-modal-sub">—</div>
+      <select id="newbat-modal-select" style="width:100%;padding:9px 10px;border-radius:7px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);font-size:13px;margin-bottom:10px; display:none;"><option value="">— choose player —</option></select>
       <input type="text" id="newbat-modal-input" placeholder="Incoming batsman name"
         style="width:100%;padding:9px 10px;border-radius:7px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);font-size:13px;margin-bottom:10px;">
       <button type="button" class="full primary" id="newbat-modal-submit">Send In</button>
@@ -585,6 +633,7 @@
     <div class="wicket-modal" id="newover-modal">
       <h3>🏏 Over Complete</h3>
       <div class="wm-sub" id="newover-modal-sub">—</div>
+      <select id="newover-modal-select" style="width:100%;padding:9px 10px;border-radius:7px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);font-size:13px;margin-bottom:10px; display:none;"><option value="">— choose player —</option></select>
       <input type="text" id="newover-modal-input" placeholder="Bowler name" list="bowler-suggestions" autocomplete="off" data-global-suggest="1"
         style="width:100%;padding:9px 10px;border-radius:7px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);font-size:13px;margin-bottom:10px;">
       <button type="button" class="full primary" id="newover-modal-submit">Set Bowler</button>
@@ -864,8 +913,71 @@ function mergeWithDefaults(saved){
     // about "1st innings" vs "2nd innings" (via firstInningsSummary /
     // state.target), which silently broke the moment a 3rd or 4th
     // innings needed to start.
-    inningsArchive: saved.inningsArchive || []
+    inningsArchive: saved.inningsArchive || [],
+    dismissedThisInnings: {
+      A: (saved.dismissedThisInnings && saved.dismissedThisInnings.A) || [],
+      B: (saved.dismissedThisInnings && saved.dismissedThisInnings.B) || []
+    }
   };
+}
+
+/* ============================================================
+   TEAM SQUADS & PLAYER IDENTITY
+   Every player added to a squad gets a permanent, unique Player ID
+   (never derived from their name) so the rest of the system — batting/
+   bowling dropdowns, ball-by-ball log, career stats — never has to
+   guess identity from a name string alone (which breaks the moment two
+   players share a name, or someone's name is respelled mid-match).
+   ============================================================ */
+function genPlayerId(){
+  return 'p_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+function teamObj(key){ return key === 'A' ? state.teamA : state.teamB; }
+function rosterPlayers(key){ return teamObj(key).players || []; }
+function findPlayerById(key, id){
+  if(!id) return null;
+  return rosterPlayers(key).find(p => p.id === id) || null;
+}
+// Players from `key`'s squad who are (a) part of the Playing XI (not
+// benched/substitute) and (b) not already unavailable for this innings —
+// i.e. not out, and not one of the two batters already at the crease.
+function eligibleBatters(key, opts){
+  opts = opts || {};
+  const dismissed = new Set((state.dismissedThisInnings && state.dismissedThisInnings[key]) || []);
+  const excludeIds = new Set(opts.excludeIds || []);
+  return rosterPlayers(key).filter(p => p.isXI !== false && !dismissed.has(p.id) && !excludeIds.has(p.id));
+}
+// Bowling-team players eligible to bowl the NEXT over — excludes whoever
+// bowled the over that just finished (cricket's laws forbid the same
+// bowler taking two overs back-to-back). Doesn't exclude mid-over
+// corrections (those go through applyBowlerChange with carryBalls>0,
+// which never touches lastOverBowlerId in the first place).
+function eligibleBowlersForNext(key){
+  return rosterPlayers(key).filter(p => p.isXI !== false && p.id !== state.lastOverBowlerId);
+}
+function playerBadge(key, id){
+  const t = teamObj(key);
+  if(!id) return '';
+  if(t.captainId === id && t.wkId === id) return ' (C, WK)';
+  if(t.captainId === id) return ' (C)';
+  if(t.wkId === id) return ' (WK)';
+  return '';
+}
+function fillPlayerSelect(selectEl, players, opts){
+  opts = opts || {};
+  const keep = opts.keepValue !== false ? selectEl.value : '';
+  selectEl.innerHTML = '';
+  const blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = opts.placeholder || '— choose player —';
+  selectEl.appendChild(blank);
+  players.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.name + (opts.teamKey ? playerBadge(opts.teamKey, p.id) : '');
+    selectEl.appendChild(opt);
+  });
+  if(keep && players.some(p => p.id === keep)) selectEl.value = keep;
 }
 let state = mergeWithDefaults(loadState());
 let history = [];
@@ -877,8 +989,17 @@ function defaultState(){
     customOvers: 20,
     oversPerInnings: 20,
     venue: '',
-    teamA: { name:'Mumbai Indians', short:'MI', color:'#17337a', logoUrl:'' },
-    teamB: { name:'Royal Challengers Bengaluru', short:'RCB', color:'#7a1620', logoUrl:'' },
+    teamA: { name:'Mumbai Indians', short:'MI', color:'#17337a', logoUrl:'', players: [], captainId: null, wkId: null },
+    teamB: { name:'Royal Challengers Bengaluru', short:'RCB', color:'#7a1620', logoUrl:'', players: [], captainId: null, wkId: null },
+    // 🌟 TEAM/PLAYER MANAGEMENT — per-innings-scoped bookkeeping so the
+    // batting/bowling dropdowns always reflect the real match state. See
+    // eligibleBatters()/eligibleBowlersForNext() below for how these are
+    // consumed. Reset at the start of every new innings (see the "Start
+    // Next Innings" handler) — a batsman out in innings 1 of a Test is
+    // available again in innings 3, and the "last over's bowler" rule
+    // only ever applies to the very next over.
+    dismissedThisInnings: { A: [], B: [] },
+    lastOverBowlerId: null,
     theme: { badgeColor:'#ff7a1a', bottomBarColor:'#0a1330', progressColor:'#f0b429' },
     battingTeam: 'A',
     // Toss result — winner ('A'/'B') and what they elected to do
@@ -889,9 +1010,9 @@ function defaultState(){
     toss: { winner: '', decision: 'BAT' },
     score: { runs:0, wickets:0, overs:0, balls:0 },
     target: null,
-    striker:    { name:'S. Yadav', runs:0, balls:0, fours:0, sixes:0 },
-    nonStriker: { name:'V. Kohli', runs:0, balls:0, fours:0, sixes:0 },
-    bowler:     { name:'', overs:0, balls:0, maidens:0, runs:0, wickets:0, runsThisOver:0, wicketsThisOver:0 },
+    striker:    { name:'S. Yadav', runs:0, balls:0, fours:0, sixes:0, id: null },
+    nonStriker: { name:'V. Kohli', runs:0, balls:0, fours:0, sixes:0, id: null },
+    bowler:     { name:'', overs:0, balls:0, maidens:0, runs:0, wickets:0, runsThisOver:0, wicketsThisOver:0, id: null },
     battingCard: { A: [], B: [] },
     bowlingCard: { A: [], B: [] },
     fallOfWickets: { A: [], B: [] },
@@ -1602,6 +1723,7 @@ function renderPanel(){
   const maybeSet = (id, val) => { const el = document.getElementById(id); if(el && el !== active) el.value = val; };
   maybeSet('striker-name', state.striker.name);
   maybeSet('nonstriker-name', state.nonStriker.name);
+  renderRosterControls();
   maybeSet('venue', state.venue);
   maybeSet('league-name', state.leagueName || '');
   maybeSet('teamA-name', state.teamA.name);
@@ -1682,10 +1804,10 @@ function bindLive(id, apply){
   el.addEventListener(evt, () => { apply(el); pushState(); });
 }
 bindLive('venue', el => { state.venue = el.value; });
-bindLive('teamA-name', el => { state.teamA.name = el.value; });
+bindLive('teamA-name', el => { state.teamA.name = el.value; document.getElementById('squadA-label').textContent = `${el.value || 'Team A'} squad`; });
 bindLive('teamA-short', el => { state.teamA.short = el.value; });
 bindLive('teamA-color', el => { state.teamA.color = el.value; });
-bindLive('teamB-name', el => { state.teamB.name = el.value; });
+bindLive('teamB-name', el => { state.teamB.name = el.value; document.getElementById('squadB-label').textContent = `${el.value || 'Team B'} squad`; });
 bindLive('teamB-short', el => { state.teamB.short = el.value; });
 bindLive('teamB-color', el => { state.teamB.color = el.value; });
 bindLive('theme-badge', el => { state.theme.badgeColor = el.value; });
@@ -1800,11 +1922,193 @@ function swapStrike(){
 }
 document.getElementById('swap-strike').addEventListener('click', swapStrike);
 
-document.getElementById('new-batsman-btn').addEventListener('click', () => {
-  const name = document.getElementById('new-batsman-name').value.trim();
+/* ============================================================
+   TEAM SQUADS UI — add/remove/rename players, toggle Playing XI,
+   set Captain/Wicket-Keeper. Purely additive: teams with an empty
+   squad keep using the original free-text striker/non-striker/bowler
+   fields exactly as before (see renderRosterControls()).
+   ============================================================ */
+function renderSquadList(key){
+  const list = document.getElementById(key === 'A' ? 'squadA-list' : 'squadB-list');
+  list.innerHTML = '';
+  rosterPlayers(key).forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'squad-player-row';
+    row.dataset.id = p.id;
+
+    const xiCb = document.createElement('input');
+    xiCb.type = 'checkbox';
+    xiCb.checked = p.isXI !== false;
+    xiCb.title = 'Playing XI (untick to bench as substitute)';
+    xiCb.addEventListener('change', () => {
+      p.isXI = xiCb.checked;
+      renderRosterControls();
+      pushState(true);
+    });
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.value = p.name;
+    nameInput.addEventListener('input', () => {
+      p.name = nameInput.value;
+      renderSquadSelects(key);
+      renderRosterControls();
+      pushState();
+    });
+
+    const idBadge = document.createElement('span');
+    idBadge.className = 'player-id-badge';
+    idBadge.textContent = p.id;
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'remove-player-btn';
+    removeBtn.textContent = '✕';
+    removeBtn.title = 'Remove from squad';
+    removeBtn.addEventListener('click', () => {
+      if(p.id === state.striker.id || p.id === state.nonStriker.id || p.id === state.bowler.id){
+        toast('Can\'t remove a player currently batting/bowling');
+        return;
+      }
+      const t = teamObj(key);
+      t.players = t.players.filter(x => x.id !== p.id);
+      if(t.captainId === p.id) t.captainId = null;
+      if(t.wkId === p.id) t.wkId = null;
+      renderSquadUI();
+      renderRosterControls();
+      pushState(true);
+    });
+
+    row.appendChild(xiCb);
+    row.appendChild(nameInput);
+    row.appendChild(idBadge);
+    row.appendChild(removeBtn);
+    list.appendChild(row);
+  });
+}
+function renderSquadSelects(key){
+  const capSel = document.getElementById(key === 'A' ? 'squadA-captain' : 'squadB-captain');
+  const wkSel = document.getElementById(key === 'A' ? 'squadA-wk' : 'squadB-wk');
+  const t = teamObj(key);
+  fillPlayerSelect(capSel, rosterPlayers(key), { placeholder: '— None —' });
+  capSel.value = t.captainId || '';
+  fillPlayerSelect(wkSel, rosterPlayers(key), { placeholder: '— None —' });
+  wkSel.value = t.wkId || '';
+}
+function renderSquadUI(){
+  document.getElementById('squadA-label').textContent = `${state.teamA.name || 'Team A'} squad`;
+  document.getElementById('squadB-label').textContent = `${state.teamB.name || 'Team B'} squad`;
+  renderSquadList('A'); renderSquadList('B');
+  renderSquadSelects('A'); renderSquadSelects('B');
+}
+function addSquadPlayer(key){
+  const inputId = key === 'A' ? 'squadA-new-name' : 'squadB-new-name';
+  const input = document.getElementById(inputId);
+  const name = input.value.trim();
+  if(!name) return;
+  const t = teamObj(key);
+  t.players = t.players || [];
+  t.players.push({ id: genPlayerId(), name, isXI: true });
+  input.value = '';
+  renderSquadUI();
+  renderRosterControls();
+  pushState(true);
+}
+document.getElementById('squadA-add-btn').addEventListener('click', () => addSquadPlayer('A'));
+document.getElementById('squadB-add-btn').addEventListener('click', () => addSquadPlayer('B'));
+document.getElementById('squadA-new-name').addEventListener('keydown', e => { if(e.key === 'Enter') addSquadPlayer('A'); });
+document.getElementById('squadB-new-name').addEventListener('keydown', e => { if(e.key === 'Enter') addSquadPlayer('B'); });
+document.getElementById('squadA-captain').addEventListener('change', e => { state.teamA.captainId = e.target.value || null; renderRosterControls(); pushState(true); });
+document.getElementById('squadA-wk').addEventListener('change', e => { state.teamA.wkId = e.target.value || null; renderRosterControls(); pushState(true); });
+document.getElementById('squadB-captain').addEventListener('change', e => { state.teamB.captainId = e.target.value || null; renderRosterControls(); pushState(true); });
+document.getElementById('squadB-wk').addEventListener('change', e => { state.teamB.wkId = e.target.value || null; renderRosterControls(); pushState(true); });
+
+/* ============================================================
+   ROSTER-DRIVEN LIVE CONTROLS — openers, new batsman, bowler.
+   Each swaps between a <select> (when the relevant team has a squad
+   configured) and the original free-text <input> (when it doesn't),
+   so nothing about the existing workflow changes for anyone who
+   hasn't set up squads yet.
+   ============================================================ */
+function renderRosterControls(){
+  const battingKey = state.battingTeam;
+  const bowlingKey = bowlingTeamKey();
+
+  // --- Openers (card-players) ---
+  const openerWrap = document.getElementById('opener-select-wrap');
+  const battingHasRoster = rosterPlayers(battingKey).length > 0;
+  openerWrap.style.display = battingHasRoster ? 'block' : 'none';
+  if(battingHasRoster){
+    const dismissed = new Set((state.dismissedThisInnings && state.dismissedThisInnings[battingKey]) || []);
+    const strikerSel = document.getElementById('striker-roster-select');
+    const nsSel = document.getElementById('nonstriker-roster-select');
+    const availableForStriker = rosterPlayers(battingKey).filter(p => p.isXI !== false && (!dismissed.has(p.id) || p.id === state.striker.id));
+    const availableForNs = rosterPlayers(battingKey).filter(p => p.isXI !== false && (!dismissed.has(p.id) || p.id === state.nonStriker.id));
+    fillPlayerSelect(strikerSel, availableForStriker, { teamKey: battingKey });
+    strikerSel.value = state.striker.id || '';
+    fillPlayerSelect(nsSel, availableForNs, { teamKey: battingKey });
+    nsSel.value = state.nonStriker.id || '';
+  }
+
+  // --- New batsman (sidebar card + modal) ---
+  const nbSelect = document.getElementById('new-batsman-select');
+  const nbInput = document.getElementById('new-batsman-name');
+  if(battingHasRoster){
+    const otherId = state.newBatsmanEnd === 'nonStriker' ? state.striker.id : state.nonStriker.id;
+    const options = eligibleBatters(battingKey, { excludeIds: [otherId].filter(Boolean) });
+    fillPlayerSelect(nbSelect, options, { teamKey: battingKey, keepValue: false });
+    nbSelect.style.display = 'block';
+    nbInput.style.display = 'none';
+  } else {
+    nbSelect.style.display = 'none';
+    nbInput.style.display = 'block';
+  }
+
+  // --- Bowler (sidebar card) ---
+  const bwSelect = document.getElementById('bowler-roster-select');
+  const bwInput = document.getElementById('bowler-name-input');
+  const bowlingHasRoster = rosterPlayers(bowlingKey).length > 0;
+  if(bowlingHasRoster){
+    fillPlayerSelect(bwSelect, eligibleBowlersForNext(bowlingKey), { teamKey: bowlingKey, keepValue: false });
+    bwSelect.style.display = 'block';
+    bwInput.style.display = 'none';
+  } else {
+    bwSelect.style.display = 'none';
+    bwInput.style.display = 'block';
+  }
+}
+document.getElementById('striker-roster-select').addEventListener('change', e => {
+  const id = e.target.value;
+  if(!id) return;
+  const p = findPlayerById(state.battingTeam, id);
+  if(!p) return;
+  history.push(snapshot());
+  state.striker = { name: p.name, id: p.id, runs:0, balls:0, fours:0, sixes:0 };
+  renderRosterControls();
+  pushState(true);
+});
+document.getElementById('nonstriker-roster-select').addEventListener('change', e => {
+  const id = e.target.value;
+  if(!id) return;
+  const p = findPlayerById(state.battingTeam, id);
+  if(!p) return;
+  history.push(snapshot());
+  state.nonStriker = { name: p.name, id: p.id, runs:0, balls:0, fours:0, sixes:0 };
+  renderRosterControls();
+  pushState(true);
+});
+document.getElementById('bowler-roster-select').addEventListener('change', e => {
+  const id = e.target.value;
+  if(!id) return;
+  const p = findPlayerById(bowlingTeamKey(), id);
+  if(!p) return;
+  if(applyBowlerChange(p.name, p.id)) e.target.value = '';
+});
+
+function sendInNewBatsman(name, id){
   if(!name) return;
   history.push(snapshot());
-  const incoming = { name, runs:0, balls:0, fours:0, sixes:0 };
+  const incoming = { name, id: id || null, runs:0, balls:0, fours:0, sixes:0 };
   // Seat them at whichever end the last wicket left vacant — the striker's
   // end normally, or the non-striker's end if that wicket fell on the last
   // ball of the over (strike already rotated automatically — see the 'W'
@@ -1816,8 +2120,21 @@ document.getElementById('new-batsman-btn').addEventListener('click', () => {
   }
   state.newBatsmanEnd = 'striker';
   state.partnershipRuns = 0; state.partnershipBalls = 0;
-  document.getElementById('new-batsman-name').value = '';
+  renderRosterControls();
   pushState(true);
+}
+document.getElementById('new-batsman-btn').addEventListener('click', () => {
+  const select = document.getElementById('new-batsman-select');
+  if(select.style.display !== 'none' && select.value){
+    const p = findPlayerById(state.battingTeam, select.value);
+    if(p) sendInNewBatsman(p.name, p.id);
+    select.value = '';
+    return;
+  }
+  const name = document.getElementById('new-batsman-name').value.trim();
+  if(!name) return;
+  sendInNewBatsman(name, null);
+  document.getElementById('new-batsman-name').value = '';
 });
 
 /* ============================================================
@@ -1845,12 +2162,22 @@ document.getElementById('new-batsman-btn').addEventListener('click', () => {
 // Shared by the sidebar "Set / Change Bowler" button AND the automatic
 // "Over Complete" modal below, so both entry points archive/resume figures
 // identically. Returns true if the bowler was actually changed.
-function applyBowlerChange(name){
+function applyBowlerChange(name, id){
   if(!name){ toast('Enter a bowler name first'); return false; }
-  if(name === state.bowler.name){ toast('That bowler is already set'); return false; }
-  history.push(snapshot());
+  const sameBowler = id ? (id === state.bowler.id) : (name === state.bowler.name && !state.bowler.id);
+  if(sameBowler){ toast('That bowler is already set'); return false; }
 
   const key = bowlingTeamKey();
+
+  // 🏏 Enforce the "no bowler bowls two overs back-to-back" rule whenever
+  // we know the incoming bowler's identity by ID (roster-driven flow) AND
+  // this is a genuine over-boundary change (not a mid-over name fix).
+  if(id && state.bowler.balls === 0 && id === state.lastOverBowlerId){
+    toast("🚫 That bowler just finished the previous over — they can't bowl the next one");
+    return false;
+  }
+
+  history.push(snapshot());
 
   // Whatever's happened THIS over so far carries forward to the new name.
   const carryBalls = state.bowler.balls;
@@ -1867,13 +2194,19 @@ function applyBowlerChange(name){
       wickets: state.bowler.wickets - carryWkts,
       inningsNo: state.inningsNumber
     });
+    // A genuine over-boundary change (no in-progress over being carried
+    // forward) — remember who just bowled it so they can't be picked for
+    // the very next over. Mid-over corrections (carryBalls>0) don't count.
+    if(carryBalls === 0) state.lastOverBowlerId = state.bowler.id || null;
   }
 
-  // Resume an earlier spell for this name IN THIS SAME INNINGS, if one's
-  // archived — scoped to the current innings so a bowler who also bowled
-  // in an earlier innings of a Test (e.g. their team's other spell) never
-  // has that unrelated innings' figures merged in by mistake.
-  const existingIdx = state.bowlingCard[key].findIndex(b => b.name === name && b.inningsNo === state.inningsNumber);
+  // Resume an earlier spell for this name/id IN THIS SAME INNINGS, if
+  // one's archived — scoped to the current innings so a bowler who also
+  // bowled in an earlier innings of a Test never has that unrelated
+  // innings' figures merged in by mistake. Matches by ID when available
+  // (roster-driven), falling back to name for free-text bowlers.
+  const existingIdx = state.bowlingCard[key].findIndex(b =>
+    (id ? b.id === id : b.name === name) && b.inningsNo === state.inningsNumber);
   const existing = existingIdx > -1 ? state.bowlingCard[key].splice(existingIdx, 1)[0] : null;
 
   state.bowler = existing
@@ -1883,7 +2216,7 @@ function applyBowlerChange(name){
         runs: existing.runs + carryRuns, wickets: existing.wickets + carryWkts
       }
     : {
-        name, overs:0, balls:carryBalls, maidens:0,
+        name, id: id || null, overs:0, balls:carryBalls, maidens:0,
         runs:carryRuns, wickets:carryWkts, runsThisOver:carryRuns, wicketsThisOver:carryWkts
       };
 
@@ -1893,6 +2226,12 @@ function applyBowlerChange(name){
 }
 
 document.getElementById('set-bowler-btn').addEventListener('click', () => {
+  const select = document.getElementById('bowler-roster-select');
+  if(select.style.display !== 'none' && select.value){
+    const p = findPlayerById(bowlingTeamKey(), select.value);
+    if(p && applyBowlerChange(p.name, p.id)) select.value = '';
+    return;
+  }
   const input = document.getElementById('bowler-name-input');
   if(applyBowlerChange(input.value.trim())) input.value = '';
 });
@@ -4105,10 +4444,17 @@ function recordBall(kind, meta){
       // Archive the dismissed batsman + this fall of wicket — this is what
       // powers the Innings/Match Summary graphics later.
       state.battingCard[state.battingTeam].push({
-        name: state.striker.name, runs: state.striker.runs, balls: state.striker.balls,
+        name: state.striker.name, id: state.striker.id || null, runs: state.striker.runs, balls: state.striker.balls,
         fours: state.striker.fours, sixes: state.striker.sixes, out: true, howOut: dismissalText,
         inningsNo: state.inningsNumber
       });
+      if(state.striker.id){
+        state.dismissedThisInnings = state.dismissedThisInnings || { A: [], B: [] };
+        state.dismissedThisInnings[state.battingTeam] = state.dismissedThisInnings[state.battingTeam] || [];
+        if(!state.dismissedThisInnings[state.battingTeam].includes(state.striker.id)){
+          state.dismissedThisInnings[state.battingTeam].push(state.striker.id);
+        }
+      }
       state.fallOfWickets[state.battingTeam].push({
         wkt: state.score.wickets, runs: state.score.runs, over: fmtOvers(state.score.overs, state.score.balls),
         inningsNo: state.inningsNumber
@@ -4291,6 +4637,15 @@ function logBallToDb(kind, runsBefore, ballTimestamp){
     striker: state.striker.name,
     nonStriker: state.nonStriker.name,
     bowler: state.bowler.name,
+    // 🌟 Roster player IDs (see TEAM SQUADS section) — additive. When a
+    // squad is set up, these are stable, name-independent identities the
+    // server can key stats/clips off directly instead of guessing from a
+    // name string. null for anyone entered via the legacy free-text
+    // fields, in which case the server falls back to its existing
+    // name-based resolution exactly as before.
+    strikerId: state.striker.id || null,
+    nonStrikerId: state.nonStriker.id || null,
+    bowlerId: state.bowler.id || null,
     dismissal: kind === 'W' ? { type: lastDismissalType || 'Bowled' } : null,
     score: { ...state.score },
     timestamp: ballTimestamp
@@ -4443,11 +4798,23 @@ document.getElementById('wicket-modal-overlay').addEventListener('click', (e) =>
 function openNewBatsmanModal(dismissedName){
   const overlay = document.getElementById('newbat-modal-overlay');
   document.getElementById('newbat-modal-sub').textContent = `${dismissedName} is out — who's coming in?`;
+  const battingKey = state.battingTeam;
+  const hasRoster = rosterPlayers(battingKey).length > 0;
+  const select = document.getElementById('newbat-modal-select');
   const input = document.getElementById('newbat-modal-input');
+  if(hasRoster){
+    const otherId = state.newBatsmanEnd === 'nonStriker' ? state.striker.id : state.nonStriker.id;
+    fillPlayerSelect(select, eligibleBatters(battingKey, { excludeIds: [otherId].filter(Boolean) }), { teamKey: battingKey, keepValue: false });
+    select.style.display = 'block';
+    input.style.display = 'none';
+  } else {
+    select.style.display = 'none';
+    input.style.display = 'block';
+  }
   input.value = '';
   overlay.dataset.pendingDismissed = dismissedName;
   overlay.classList.add('show');
-  setTimeout(() => input.focus(), 50);
+  setTimeout(() => (hasRoster ? select : input).focus(), 50);
 }
 function closeNewBatsmanModal(){
   document.getElementById('newbat-modal-overlay').classList.remove('show');
@@ -4457,19 +4824,13 @@ function fireDeferredWicketAnimation(){
   fireEvent('WICKET', 'WICKET!', dismissedName);
 }
 document.getElementById('newbat-modal-submit').addEventListener('click', () => {
-  const name = document.getElementById('newbat-modal-input').value.trim();
-  if(name){
-    history.push(snapshot());
-    const incoming = { name, runs:0, balls:0, fours:0, sixes:0 };
-    // Same seating rule as the sidebar "Send In New Batsman" control —
-    // whichever end the wicket left vacant (see newBatsmanEnd docs above).
-    if(state.newBatsmanEnd === 'nonStriker'){
-      state.nonStriker = incoming;
-    } else {
-      state.striker = incoming;
-    }
-    state.newBatsmanEnd = 'striker';
-    pushState(true);
+  const select = document.getElementById('newbat-modal-select');
+  if(select.style.display !== 'none' && select.value){
+    const p = findPlayerById(state.battingTeam, select.value);
+    if(p) sendInNewBatsman(p.name, p.id);
+  } else {
+    const name = document.getElementById('newbat-modal-input').value.trim();
+    if(name) sendInNewBatsman(name, null);
   }
   closeNewBatsmanModal();
   fireDeferredWicketAnimation();
@@ -4478,6 +4839,7 @@ document.getElementById('newbat-modal-submit').addEventListener('click', () => {
 document.getElementById('newbat-modal-cancel').addEventListener('click', () => {
   // Skipping doesn't block the animation — the name can still be entered
   // later via the sidebar "Send In New Batsman" control.
+
   closeNewBatsmanModal();
   fireDeferredWicketAnimation();
   maybePromptNewBowler();
@@ -4497,18 +4859,34 @@ function openNewOverModal(){
   const oversDone = fmtOvers(state.score.overs, state.score.balls);
   document.getElementById('newover-modal-sub').textContent =
     `Over ${oversDone} done${state.bowler.name ? ` (${state.bowler.name})` : ''} — who's bowling next?`;
+  const bowlingKey = bowlingTeamKey();
+  const hasRoster = rosterPlayers(bowlingKey).length > 0;
+  const select = document.getElementById('newover-modal-select');
   const input = document.getElementById('newover-modal-input');
+  if(hasRoster){
+    fillPlayerSelect(select, eligibleBowlersForNext(bowlingKey), { teamKey: bowlingKey, keepValue: false });
+    select.style.display = 'block';
+    input.style.display = 'none';
+  } else {
+    select.style.display = 'none';
+    input.style.display = 'block';
+  }
   input.value = '';
   document.getElementById('newover-modal-overlay').classList.add('show');
-  setTimeout(() => input.focus(), 50);
+  setTimeout(() => (hasRoster ? select : input).focus(), 50);
 }
 function closeNewOverModal(){
   document.getElementById('newover-modal-overlay').classList.remove('show');
 }
 document.getElementById('newover-modal-submit').addEventListener('click', () => {
+  const select = document.getElementById('newover-modal-select');
+  if(select.style.display !== 'none' && select.value){
+    const p = findPlayerById(bowlingTeamKey(), select.value);
+    if(p && applyBowlerChange(p.name, p.id)) closeNewOverModal();
+    return;
+  }
   const name = document.getElementById('newover-modal-input').value.trim();
-  applyBowlerChange(name);
-  closeNewOverModal();
+  if(applyBowlerChange(name)) closeNewOverModal();
 });
 document.getElementById('newover-modal-cancel').addEventListener('click', closeNewOverModal);
 document.getElementById('newover-modal-overlay').addEventListener('click', (e) => {
@@ -4659,12 +5037,29 @@ document.getElementById('next-innings-btn').addEventListener('click', () => {
   state.thisOver = [];
   state.ballHistory = [];
   state.partnershipRuns = 0; state.partnershipBalls = 0;
-  // Keep whatever names the operator already typed into the striker/
-  // non-striker fields while staging this innings — only their stats
-  // reset. Falls back to a placeholder only if the field was left blank.
-  state.striker = { name: (state.striker.name || '').trim() || 'Batsman 1', runs:0, balls:0, fours:0, sixes:0 };
-  state.nonStriker = { name: (state.nonStriker.name || '').trim() || 'Batsman 2', runs:0, balls:0, fours:0, sixes:0 };
-  state.bowler = { name:'', overs:0, balls:0, maidens:0, runs:0, wickets:0, runsThisOver:0, wicketsThisOver:0 };
+  // Reset per-innings player-selection bookkeeping — a batter out in the
+  // innings that just finished is available again now, and the "just
+  // bowled the last over" restriction doesn't carry across an innings
+  // break (or a bowling-team change) either.
+  state.dismissedThisInnings = { A: [], B: [] };
+  state.lastOverBowlerId = null;
+  // If the new batting team has a roster set up, don't carry forward
+  // whatever name happened to be sitting in the striker/non-striker
+  // fields (that belonged to the OTHER team last innings) — leave them
+  // blank so the Opener dropdowns (see renderRosterControls()) prompt
+  // the operator to pick the real two openers from THIS team's squad.
+  // Teams without a roster keep the original carry-forward behaviour.
+  if(rosterPlayers(nextTeam).length > 0){
+    state.striker = { name: '', id: null, runs:0, balls:0, fours:0, sixes:0 };
+    state.nonStriker = { name: '', id: null, runs:0, balls:0, fours:0, sixes:0 };
+  } else {
+    // Keep whatever names the operator already typed into the striker/
+    // non-striker fields while staging this innings — only their stats
+    // reset. Falls back to a placeholder only if the field was left blank.
+    state.striker = { name: (state.striker.name || '').trim() || 'Batsman 1', runs:0, balls:0, fours:0, sixes:0, id: null };
+    state.nonStriker = { name: (state.nonStriker.name || '').trim() || 'Batsman 2', runs:0, balls:0, fours:0, sixes:0, id: null };
+  }
+  state.bowler = { name:'', overs:0, balls:0, maidens:0, runs:0, wickets:0, runsThisOver:0, wicketsThisOver:0, id: null };
   state.newBatsmanEnd = 'striker';
   state.freeHit = false;
   // Clear innings-scoped milestones (team totals, powerplay, last-over, "need
@@ -6003,6 +6398,7 @@ document.getElementById('reset-btn').addEventListener('click', () => {
   if(state.leagueName) document.getElementById('tournament-select').value = state.leagueName;
   applyMatchModeUI(state.matchMode);
   refreshLeagueUI();
+  renderSquadUI();
   pushState(true, true);
 });
 
@@ -6116,6 +6512,7 @@ document.addEventListener('keydown', (e) => {
   });
   localStorage.setItem('cricket-match-id', document.getElementById('match-id').value);
 
+  renderSquadUI();
   renderPanel();
   connect();
 })();
