@@ -31,17 +31,7 @@ if (process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_
         credentials: {
             accessKeyId: process.env.R2_ACCESS_KEY_ID,
             secretAccessKey: process.env.R2_SECRET_ACCESS_KEY
-        },
-        // 🐛 Newer @aws-sdk/client-s3 versions default to adding a
-        // streaming trailer checksum (x-amz-checksum-crc32) on PutObject.
-        // R2 doesn't handle that the same way S3 does — the request
-        // "succeeds" from the SDK's point of view (no thrown error) but
-        // the object never actually lands in the bucket (0 B, no file
-        // listed, yet the R2 dashboard still counts it as an operation —
-        // exactly what was happening here). Forcing this to
-        // WHEN_REQUIRED stops the SDK from attaching that checksum
-        // unless we explicitly ask for one.
-        requestChecksumCalculation: 'WHEN_REQUIRED'
+        }
     });
     console.log('☁️  Cloudflare R2 client ready');
 } else {
@@ -90,8 +80,6 @@ let leaguesCollection = null;
 let templatesCollection = null;
 let auditLogsCollection = null;
 let settingsCollection = null;
-let matchRecordsCollection = null;
-let playersCollection = null;
 
 async function connectMongo() {
     const uri = process.env.MONGODB_URI;
@@ -114,39 +102,11 @@ async function connectMongo() {
         templatesCollection = mongoDb.collection('templates');
         auditLogsCollection = mongoDb.collection('auditLogs');
         settingsCollection = mongoDb.collection('settings');
-        // 🩹 FIX (see comment block above matchRecordsCollection's queries
-        // below): one document PER MATCH, instead of every match an owner
-        // has ever saved living inside one giant array field on a single
-        // league document. That old design hits MongoDB's hard 16MB
-        // per-document limit once an owner accumulates enough matches over
-        // months/years — after which saving (and sometimes reading) ANY
-        // match under that owner/league starts failing, which is exactly
-        // the "old matches won't load" symptom this fixes. Matches now
-        // scale to unlimited history with no per-owner size ceiling.
-        matchRecordsCollection = mongoDb.collection('matchRecords');
-        // 🌟 GLOBAL PLAYER PROFILES — one permanent playerId per real person,
-        // per owner account, instead of every ball/clip/stats query matching
-        // purely on a lowercased name string (playerKey). A playerId doc
-        // holds every nameKey (spelling variant) that has ever been merged
-        // into it, so "Rohit Sharma" and "Rohit S" typed on two different
-        // devices can be reconciled into one identity without losing either
-        // match's history — see resolvePlayerId() and the /api/players
-        // routes below. nameKeys is intentionally an array (not a single
-        // field) so merges are just a $push, never a rewrite of history.
-        playersCollection = mongoDb.collection('players');
         // Fast lookups: all balls of a match in bowling order, and one
         // match doc per matchId.
         await ballsCollection.createIndex({ matchId: 1, innings: 1, over: 1, ballInOver: 1 });
         await matchesCollection.createIndex({ matchId: 1 }, { unique: true });
         await clipsCollection.createIndex({ matchId: 1, createdAt: 1 });
-        // 🔗 Clip ↔ player linking (see "PLAYER IDENTITY FOR CLIPS & STATS"
-        // below): fast "this player's clips" lookups scoped to one match,
-        // one owner's whole account (career), or filtered by clip type.
-        await clipsCollection.createIndex({ matchId: 1, strikerKey: 1, eventType: 1 });
-        await clipsCollection.createIndex({ matchId: 1, bowlerKey: 1, eventType: 1 });
-        await clipsCollection.createIndex({ ownerUid: 1, strikerKey: 1, createdAt: -1 });
-        await clipsCollection.createIndex({ ownerUid: 1, bowlerKey: 1, createdAt: -1 });
-        await clipsCollection.createIndex({ matchId: 1, battingTeam: 1, eventType: 1 });
         // One doc per (owner, league) pair — owner-scoped so two different
         // customers naming a league the same thing (e.g. "Summer Cup") never
         // collide/overwrite each other. ownerUid comes from the logged-in
@@ -156,84 +116,16 @@ async function connectMongo() {
         // Public tournament portal links (see /api/league/:name/public-link) —
         // sparse because most league docs never mint one.
         await leaguesCollection.createIndex({ publicToken: 1 }, { unique: true, sparse: true });
-        // 🩹 matchRecords indexes — one doc per match now (see comment above
-        // matchRecordsCollection's assignment). ownerUid+leagueKey+matchId is
-        // unique (the owner-scoped save/list/delete path); leagueKey+matchId
-        // and leagueKey+roomId cover the public lookup paths, which never
-        // carry an ownerUid (see GET /api/public/match/:id).
-        await matchRecordsCollection.createIndex({ ownerUid: 1, leagueKey: 1, matchId: 1 }, { unique: true });
-        await matchRecordsCollection.createIndex({ leagueKey: 1, matchId: 1 });
-        await matchRecordsCollection.createIndex({ leagueKey: 1, roomId: 1 });
-        // playerId is globally unique; nameKeys is multikey so a lookup by
-        // any one of a player's known spelling variants, scoped to their
-        // owner, resolves straight to the right playerId doc.
-        await playersCollection.createIndex({ playerId: 1 }, { unique: true });
-        await playersCollection.createIndex({ ownerUid: 1, nameKeys: 1 }, { unique: true });
+        // Public standalone-match lookups resolve by matchId/roomId inside the
+        // reserved __single_matches__ doc's matches[] array — see
+        // GET /api/public/match/:id.
+        await leaguesCollection.createIndex({ leagueKey: 1, 'matches.matchId': 1 });
+        await leaguesCollection.createIndex({ leagueKey: 1, 'matches.roomId': 1 });
         console.log('🍃 MongoDB connected —', mongoDb.databaseName);
-
-        // 🩹 One-time migration: move any matches still embedded in a league
-        // doc's `matches[]` array (the old, size-limited design) into their
-        // own matchRecords documents, then strip the array off the league
-        // doc so it shrinks back down. Guarded by a flag in `settings` so it
-        // only ever runs once, and is safe to leave in permanently — every
-        // future boot just does one cheap findOne and skips.
-        await migrateEmbeddedMatchesToOwnDocs();
     } catch (err) {
         console.log('MongoDB connection error:', err);
     }
 }
-
-// 🩹 See the big comment above matchRecordsCollection's assignment: this
-// moves every match still sitting inside a league doc's old `matches[]`
-// array into its own matchRecords document, then $unsets that array so the
-// league doc stops growing without bound. Runs once (settings flag), is
-// idempotent, and never touches a league doc that has nothing to migrate.
-async function migrateEmbeddedMatchesToOwnDocs() {
-    if (!leaguesCollection || !matchRecordsCollection || !settingsCollection) return;
-    try {
-        const flag = await settingsCollection.findOne({ _id: 'matchRecordsMigration' });
-        if (flag && flag.done) return;
-
-        const cursor = leaguesCollection.find(
-            { matches: { $exists: true, $not: { $size: 0 } } },
-            { projection: { ownerUid: 1, leagueKey: 1, matches: 1 } }
-        );
-        let leaguesMigrated = 0, matchesMigrated = 0;
-        while (await cursor.hasNext()) {
-            const doc = await cursor.next();
-            const matches = doc.matches || [];
-            if (!matches.length) continue;
-            const ops = matches
-                .filter(m => m && m.matchId)
-                .map(m => ({
-                    updateOne: {
-                        filter: { ownerUid: doc.ownerUid, leagueKey: doc.leagueKey, matchId: m.matchId },
-                        update: { $setOnInsert: { ownerUid: doc.ownerUid, leagueKey: doc.leagueKey }, $set: m },
-                        upsert: true
-                    }
-                }));
-            if (ops.length) {
-                await matchRecordsCollection.bulkWrite(ops, { ordered: false });
-                matchesMigrated += ops.length;
-            }
-            // Shrink the league doc back down now that its matches live in
-            // their own documents — this is the whole point of the fix.
-            await leaguesCollection.updateOne({ _id: doc._id }, { $unset: { matches: '' } });
-            leaguesMigrated++;
-        }
-        await settingsCollection.updateOne(
-            { _id: 'matchRecordsMigration' },
-            { $set: { done: true, leaguesMigrated, matchesMigrated, migratedAt: Date.now() } },
-            { upsert: true }
-        );
-        if (leaguesMigrated) {
-            console.log(`🩹 Migrated ${matchesMigrated} matches out of ${leaguesMigrated} oversized league docs into matchRecords.`);
-        }
-    } catch (err) {
-        console.log('matchRecords migration error (will retry next boot):', err);
-    }
-}
-
 connectMongo();
 
 // ================================================================
@@ -327,7 +219,7 @@ async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
 
     if (!uploadClient || !folderId) {
         console.log(`No Drive connection for match ${matchId} — clip stays local only: ${filePath}`);
-        return false;
+        return;
     }
 
     const fileName = buildClipFileName(eventType, ballMeta);
@@ -344,51 +236,36 @@ async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
             );
         }
         console.log(`☁️  Uploaded to Drive: ${fileName}`);
-        return true;
     } catch (err) {
         console.log(`Drive upload error (${fileName}):`, err.message || err);
         if (clipsCollection) {
             await clipsCollection.updateOne({ matchId, filePath }, { $set: { driveStatus: 'failed' } }).catch(() => {});
         }
-        return false;
     }
 }
 
-// Uploads a clip to Cloudflare R2 (same shape as uploadClipToDrive above)
-// and saves the public playback URL on the clip's Mongo record — this is
-// the URL the scorecard's video player actually points at for anything
-// less than a year old. Mongo NEVER stores the video bytes — only this
-// small metadata doc (matchId, playerKeys, eventType, r2Url/driveUrl). The
-// actual .mp4 lives only in R2 (and optionally Drive); see cutClip below,
-// which deletes the local Render-disk copy once at least one of these
-// uploads confirms success, so Render's disk is never the permanent home
-// for video either.
+// Uploads a clip to Cloudflare R2 (fire-and-forget, same shape as
+// uploadClipToDrive above) and saves the public playback URL on the
+// clip's Mongo record — this is the URL the scorecard's video player
+// actually points at for anything less than a year old.
 async function uploadClipToR2(matchId, filePath, eventType, ballMeta) {
     if (!r2Client || !R2_BUCKET_NAME) {
         console.log(`No R2 connection configured — clip stays Drive-only: ${filePath}`);
-        return false;
+        return;
     }
 
     const fileName = buildClipFileName(eventType, ballMeta);
     const key = `${matchId}/${fileName}`;
 
     try {
-        // Reading the whole clip into a Buffer (clips are only a few MB —
-        // well within memory limits) instead of streaming it lets the SDK
-        // know the exact Content-Length upfront and skips the chunked/
-        // trailer-checksum upload path entirely — the combination that was
-        // causing R2 to accept the request (hence the operation count going
-        // up) but never actually store the bytes (hence 0 B / no object).
-        const fileBuffer = fs.readFileSync(filePath);
         await r2Client.send(new PutObjectCommand({
             Bucket: R2_BUCKET_NAME,
             Key: key,
-            Body: fileBuffer,
-            ContentLength: fileBuffer.length,
+            Body: fs.createReadStream(filePath),
             ContentType: 'video/mp4'
         }));
 
-        const publicUrl = R2_PUBLIC_URL ? `${R2_PUBLIC_URL}/${key}` : null;
+        const publicUrl = `${R2_PUBLIC_URL}/${key}`;
         if (clipsCollection) {
             await clipsCollection.updateOne(
                 { matchId, filePath },
@@ -396,16 +273,13 @@ async function uploadClipToR2(matchId, filePath, eventType, ballMeta) {
             );
         }
         console.log(`☁️  Uploaded to R2: ${key}`);
-        return true;
     } catch (err) {
         console.log(`R2 upload error (${key}):`, err.message || err);
         if (clipsCollection) {
             await clipsCollection.updateOne({ matchId, filePath }, { $set: { r2Status: 'failed' } }).catch(() => {});
         }
-        return false;
     }
 }
-
 
 const io = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] }
@@ -668,7 +542,7 @@ function chunksCoveringRange(session, fromSec, toSec) {
 // Stitches the covering chunks + trims to an exact clip using ffmpeg,
 // and records the clip in MongoDB so the (future) Google Drive step
 // knows what's waiting to be uploaded.
-async function cutClip({ matchId, eventType, eventTimestamp, ballMeta, uid }) {
+async function cutClip({ matchId, eventType, eventTimestamp, ballMeta }) {
     const session = recordingSessions[matchId];
     if (!session) { console.log(`No recording session for ${matchId} — skipping clip for ${eventType}`); return; }
 
@@ -728,144 +602,25 @@ async function cutClip({ matchId, eventType, eventTimestamp, ballMeta, uid }) {
                 .on('error', reject);
         });
 
-        await finalizeClip({ matchId, eventType, eventTimestamp, ballMeta, uid, outFile, offsetStartSec: fromSec, offsetEndSec: toSec });
+        if (clipsCollection) {
+            await clipsCollection.insertOne({
+                matchId, eventType, ballMeta: ballMeta || null,
+                eventTimestamp, offsetStartSec: fromSec, offsetEndSec: toSec,
+                filePath: outFile, driveStatus: 'pending', createdAt: Date.now()
+            });
+        }
+        console.log(`🎬 Clip ready: ${outFile}`);
+        // Both uploads are fire-and-forget — neither blocks/delays clip
+        // cutting, and one failing (e.g. Drive token expired) never stops
+        // the other from succeeding.
+        uploadClipToR2(matchId, outFile, eventType, ballMeta);
+        uploadClipToDrive(matchId, outFile, eventType, ballMeta);
     } catch (err) {
         console.log(`Clip generation error (${matchId}/${eventType}):`, err.message || err);
     } finally {
         fs.existsSync(stitchedFile) && fs.unlink(stitchedFile, () => {});
     }
 }
-
-// ================================================================
-// 🔗 finalizeClip — shared by BOTH clip pipelines:
-//  1. cutClip() above (browser tab-capture chunks stitched server-side)
-//  2. /api/clips/ingest below (an already-cut .mp4 handed to us whole —
-//     e.g. by ClipperHelper.exe, which cuts locally from the vMix
-//     recording using its own ffmpeg).
-// Both need EXACTLY the same thing done to a finished clip file: link
-// it to real player identities via the canonical ball, insert the
-// Mongo doc the clips/stats APIs read, upload to R2 + Drive, then
-// clean up the local copy. Keeping this in one place means the
-// scorecard's "clips by player" view works identically no matter which
-// pipeline actually produced the clip.
-// ================================================================
-async function finalizeClip({ matchId, eventType, eventTimestamp, ballMeta, uid, outFile, offsetStartSec, offsetEndSec }) {
-    if (clipsCollection) {
-        // 🔗 Link this clip to real player identities/dismissal info by
-        // cross-referencing the canonical ball (logged via `logBall`,
-        // the permanent source of truth) instead of trusting only the
-        // ballMeta the panel happened to attach to the clip request.
-        // Falls back gracefully to whatever ballMeta was sent if no
-        // matching ball is found (e.g. Mongo briefly unavailable).
-        const canonicalBall = await findCanonicalBall(matchId, ballMeta);
-        const ownerUid = await resolveOwnerUidForMatch(matchId, uid || (canonicalBall && canonicalBall.ownerUid));
-        // personName() unwraps any stray {name,...} object (old data, or
-        // any future client that sends one) into a clean string — see the
-        // comment on personName() near playerKey() for why this matters.
-        const striker = personName(canonicalBall && canonicalBall.striker) || personName(ballMeta && ballMeta.striker);
-        const bowler = personName(canonicalBall && canonicalBall.bowler) || personName(ballMeta && ballMeta.bowler);
-        const nonStriker = personName(canonicalBall && canonicalBall.nonStriker) || personName(ballMeta && ballMeta.nonStriker);
-        const dismissal = (canonicalBall && canonicalBall.dismissal) || (ballMeta && ballMeta.dismissal) || null;
-        const battingTeam = (canonicalBall && canonicalBall.battingTeam) || (ballMeta && ballMeta.battingTeam) || null;
-        // 🌟 Prefer the canonical ball's already-resolved playerIds (same
-        // identity the ball itself was logged under) and only fall back
-        // to a fresh resolve if this clip has no matching ball yet.
-        const strikerPlayerId = (canonicalBall && canonicalBall.strikerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, striker) : null);
-        const nonStrikerPlayerId = (canonicalBall && canonicalBall.nonStrikerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, nonStriker) : null);
-        const bowlerPlayerId = (canonicalBall && canonicalBall.bowlerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, bowler) : null);
-        const fielderPlayerId = (canonicalBall && canonicalBall.dismissalFielderPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, dismissal && dismissal.fielder) : null);
-
-        await clipsCollection.insertOne({
-            matchId, ownerUid: ownerUid || null, eventType, ballMeta: ballMeta || null,
-            eventTimestamp, offsetStartSec: offsetStartSec ?? null, offsetEndSec: offsetEndSec ?? null,
-            filePath: outFile, driveStatus: 'pending', createdAt: Date.now(),
-            // --- player/dismissal linking, for the clips & stats APIs ---
-            over: canonicalBall ? canonicalBall.over : (ballMeta && ballMeta.over),
-            ballInOver: canonicalBall ? canonicalBall.ballInOver : (ballMeta && ballMeta.ballInOver),
-            innings: canonicalBall ? canonicalBall.innings : (ballMeta && ballMeta.innings),
-            runs: canonicalBall ? canonicalBall.runs : (ballMeta && ballMeta.runs),
-            battingTeam,
-            strikerName: striker, strikerKey: playerKey(striker), strikerPlayerId,
-            nonStrikerName: nonStriker, nonStrikerKey: playerKey(nonStriker), nonStrikerPlayerId,
-            bowlerName: bowler, bowlerKey: playerKey(bowler), bowlerPlayerId,
-            dismissalType: dismissal && dismissal.type ? dismissal.type : null,
-            fielderName: personName(dismissal && dismissal.fielder),
-            fielderKey: playerKey(dismissal && dismissal.fielder), fielderPlayerId
-        });
-    }
-    console.log(`🎬 Clip ready: ${outFile}`);
-    // Upload to R2 + Drive in parallel, THEN delete the local Render-disk
-    // copy — this is the only place video bytes ever touch Render's disk,
-    // and only for the few seconds it takes to push them to cloud storage.
-    // MongoDB never sees the video itself, only this clip doc's metadata
-    // (matchId, player keys, eventType, r2Url/driveUrl) via the
-    // clipsCollection.insertOne above.
-    const [r2Ok, driveOk] = await Promise.all([
-        uploadClipToR2(matchId, outFile, eventType, ballMeta),
-        uploadClipToDrive(matchId, outFile, eventType, ballMeta)
-    ]);
-    if (r2Ok || driveOk) {
-        fs.unlink(outFile, (err) => {
-            if (err) console.log(`Local clip cleanup error (${outFile}):`, err.message || err);
-            else console.log(`🧹 Removed local clip copy (now only in ${r2Ok ? 'R2' : ''}${r2Ok && driveOk ? '/' : ''}${driveOk ? 'Drive' : ''}): ${outFile}`);
-        });
-    } else {
-        // Both uploads failed — keep the local file as a last-resort
-        // fallback instead of losing the clip entirely. It'll be retried
-        // never automatically today; worth adding a retry sweep later.
-        console.log(`⚠️  Both R2 and Drive uploads failed — keeping local copy for now: ${outFile}`);
-    }
-    return { r2Ok, driveOk };
-}
-
-// ================================================================
-// 🖥️ EXTERNAL CLIP INGEST — for ClipperHelper.exe (runs on the
-// operator's own PC next to vMix, cuts the clip itself with its own
-// local ffmpeg from the vMix recording file, then POSTs the finished
-// .mp4 here as raw bytes). We do NOT trust the operator's PC with R2 or
-// Drive credentials — this endpoint receives the plain video file and
-// does the exact same player-linking + R2/Drive upload that the
-// browser tab-capture pipeline (cutClip, above) does, via the shared
-// finalizeClip() function. That's what makes ClipperHelper clips show
-// up in the scorecard's "clips by player" view exactly like any other
-// clip.
-//
-// POST /api/clips/ingest?matchId=...&eventType=FOUR|SIX|WICKET&timestamp=<ms>
-// Body: raw video/mp4 bytes.
-// Header 'X-Ball-Meta': optional JSON string with whatever the panel
-// already knows about the ball (striker/nonStriker/bowler/dismissal/
-// battingTeam/over/ballInOver/innings/runs) — same shape as the
-// ballMeta cutClip() already accepts. Even without it, finalizeClip()
-// still tries to resolve the real player names via findCanonicalBall()
-// using matchId + timestamp-derived over/ballInOver if present.
-// ================================================================
-app.post('/api/clips/ingest', express.raw({ type: '*/*', limit: '60mb' }), async (req, res) => {
-    const matchId = safeMatchId(req.query.matchId);
-    const eventType = String(req.query.eventType || 'CLIP').toUpperCase();
-    const eventTimestamp = parseInt(req.query.timestamp, 10) || Date.now();
-    if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
-    if (!req.body || !req.body.length) return res.status(400).json({ success: false, error: 'Empty clip body' });
-
-    let ballMeta = null;
-    try {
-        if (req.headers['x-ball-meta']) ballMeta = JSON.parse(req.headers['x-ball-meta']);
-    } catch (err) { /* bad JSON from an old helper version — just skip linking-by-ballMeta */ }
-
-    const clipDir = path.join(CLIPS_DIR, matchId);
-    if (!fs.existsSync(clipDir)) fs.mkdirSync(clipDir, { recursive: true });
-    const outFile = path.join(clipDir, `${eventType}_ext_${Date.now()}.mp4`);
-
-    res.json({ success: true }); // acknowledge immediately; upload continues in the background
-
-    try {
-        await new Promise((resolve, reject) => {
-            fs.writeFile(outFile, req.body, (err) => err ? reject(err) : resolve());
-        });
-        await finalizeClip({ matchId, eventType, eventTimestamp, ballMeta, uid: null, outFile });
-    } catch (err) {
-        console.log(`External clip ingest error (${matchId}/${eventType}):`, err.message || err);
-    }
-});
 
 // 🔐 Verifies a Firebase ID token and returns the real, cryptographically-
 // confirmed uid — or null if it's missing/invalid/expired. This is the only
@@ -992,24 +747,16 @@ function ownerUidFrom(req) {
     return uid || null;
 }
 
-// 🩹 Every match now lives in its own matchRecords document (see the big
-// comment above matchRecordsCollection's assignment in connectMongo) instead
-// of inside a league doc's `matches[]` array. This helper is the read path
-// every "all matches for a league" caller below shares.
-async function getLeagueMatches(ownerUid, leagueKey) {
-    return matchRecordsCollection.find({ ownerUid, leagueKey }).sort({ savedAt: 1 }).toArray();
-}
-
 // All matches saved under a league/tournament name, for one owner.
 app.get('/api/league/:name', async (req, res) => {
     const leagueKey = leagueKeyFor(req.params.name);
     const ownerUid = ownerUidFrom(req);
     if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
     if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
-    if (!matchRecordsCollection) return res.json({ success: true, matches: [] }); // Mongo not configured — panel falls back to its local cache
+    if (!leaguesCollection) return res.json({ success: true, matches: [] }); // Mongo not configured — panel falls back to its local cache
     try {
-        const matches = await getLeagueMatches(ownerUid, leagueKey);
-        res.json({ success: true, matches });
+        const doc = await leaguesCollection.findOne({ ownerUid, leagueKey });
+        res.json({ success: true, matches: (doc && doc.matches) || [] });
     } catch (err) {
         console.log('League fetch error:', err);
         res.status(500).json({ success: false, error: 'Could not load league data' });
@@ -1019,11 +766,6 @@ app.get('/api/league/:name', async (req, res) => {
 // Upserts one match record into a league by matchId — re-saving after a
 // correction (or the panel's automatic save-on-victory) updates the same
 // entry instead of duplicating it, same as the old localStorage version.
-// 🩹 This is now a single atomic upsert on that ONE match's own document —
-// no more read-the-whole-league-then-rewrite-the-whole-array, so saving one
-// match can never be slowed down or size-capped by every other match this
-// owner has ever saved, and two saves landing at the same time can't clobber
-// each other's matches the way the old whole-array $set could.
 app.post('/api/league/:name/match', async (req, res) => {
     const leagueKey = leagueKeyFor(req.params.name);
     const ownerUid = ownerUidFrom(req);
@@ -1031,22 +773,17 @@ app.post('/api/league/:name/match', async (req, res) => {
     if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
     if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
     if (!record || !record.matchId) return res.status(400).json({ success: false, error: 'Match record with matchId required' });
-    if (!matchRecordsCollection || !leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     try {
-        await matchRecordsCollection.updateOne(
-            { ownerUid, leagueKey, matchId: record.matchId },
-            { $set: { ...record, ownerUid, leagueKey, savedAt: record.savedAt || new Date().toISOString() } },
-            { upsert: true }
-        );
-        // League doc itself stays tiny now — just metadata (displayName,
-        // publicToken, live pointer). matches[] is intentionally never
-        // written here anymore.
+        const doc = await leaguesCollection.findOne({ ownerUid, leagueKey });
+        const matches = (doc && doc.matches) || [];
+        const idx = matches.findIndex(m => m.matchId === record.matchId);
+        if (idx >= 0) matches[idx] = record; else matches.push(record);
         await leaguesCollection.updateOne(
             { ownerUid, leagueKey },
-            { $set: { ownerUid, leagueKey, displayName: (req.params.name || '').trim(), updatedAt: Date.now() } },
+            { $set: { ownerUid, leagueKey, displayName: (req.params.name || '').trim(), matches, updatedAt: Date.now() } },
             { upsert: true }
         );
-        const matches = await getLeagueMatches(ownerUid, leagueKey);
         res.json({ success: true, matches });
     } catch (err) {
         console.log('League save error:', err);
@@ -1060,10 +797,11 @@ app.delete('/api/league/:name/match/:matchId', async (req, res) => {
     const ownerUid = ownerUidFrom(req);
     if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
     if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
-    if (!matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     try {
-        await matchRecordsCollection.deleteOne({ ownerUid, leagueKey, matchId: req.params.matchId });
-        const matches = await getLeagueMatches(ownerUid, leagueKey);
+        const doc = await leaguesCollection.findOne({ ownerUid, leagueKey });
+        const matches = ((doc && doc.matches) || []).filter(m => m.matchId !== req.params.matchId);
+        await leaguesCollection.updateOne({ ownerUid, leagueKey }, { $set: { matches, updatedAt: Date.now() } });
         res.json({ success: true, matches });
     } catch (err) {
         console.log('League delete error:', err);
@@ -1179,144 +917,6 @@ function computeLeaderboards(matches) {
     return { topRuns, topWickets };
 }
 
-// ================================================================
-// 🔗 PLAYER IDENTITY FOR CLIPS & STATS
-// The codebase already has a de-facto global player key: computeLeaderboards
-// above keys every batter/bowler by `name.trim().toLowerCase()` so the same
-// player rolls up correctly across every match saved under a tournament.
-// We reuse that exact convention (rather than inventing a separate players
-// collection/ID) so a player is automatically the same identity in clips,
-// match stats, tournament stats and career stats — and requires no schema
-// migration of anything already saved.
-// ================================================================
-function playerKey(name) {
-    return String(personName(name) || '').trim().toLowerCase() || null;
-}
-
-// 🛡️ Defense-in-depth: some client somewhere (past or future) might send
-// a whole {name, runs, balls,...} object instead of a plain name string
-// for striker/bowler/nonStriker/fielder — that's exactly what silently
-// turned every strikerKey/bowlerKey into the literal text "[object
-// Object]" for every ball ever logged, until the panel-side fix. Every
-// place that turns one of these fields into a name/key now goes through
-// this first, so a stray object never breaks linking again.
-function personName(x) {
-    if (!x) return null;
-    if (typeof x === 'string') return x.trim() || null;
-    if (typeof x === 'object' && typeof x.name === 'string') return x.name.trim() || null;
-    return null; // don't stringify unknown shapes into "[object Object]"
-}
-
-// ================================================================
-// 🌟 GLOBAL PLAYER PROFILES (playerId) — see playersCollection comment in
-// connectMongo. Every ball/clip is still keyed by nameKey (playerKey(name))
-// for backward compatibility with every existing query in this file; a
-// playerId doc is a thin, mergeable layer ON TOP that groups one or more
-// nameKeys under one permanent identity, so a scorer's typo/variant on a
-// second device doesn't fragment a player's stats.
-// ================================================================
-
-// Find-or-create the playerId for (ownerUid, name). Memoized in-process
-// since this gets called on every single ball logged — avoids a Mongo
-// round-trip for the common case of the same four names repeating over and
-// over within one match.
-const playerIdCache = new Map(); // `${ownerUid}::${nameKey}` -> playerId
-async function resolvePlayerId(ownerUid, name) {
-    const nameKey = playerKey(name);
-    if (!nameKey || !ownerUid || !playersCollection) return null;
-    const cacheKey = `${ownerUid}::${nameKey}`;
-    if (playerIdCache.has(cacheKey)) return playerIdCache.get(cacheKey);
-    try {
-        const existing = await playersCollection.findOne({ ownerUid, nameKeys: nameKey });
-        if (existing) {
-            playerIdCache.set(cacheKey, existing.playerId);
-            return existing.playerId;
-        }
-        const playerId = crypto.randomBytes(6).toString('hex'); // 12-char id
-        await playersCollection.insertOne({
-            playerId, ownerUid, nameKeys: [nameKey],
-            displayName: personName(name) || String(name).trim(),
-            createdAt: Date.now(), updatedAt: Date.now()
-        });
-        playerIdCache.set(cacheKey, playerId);
-        return playerId;
-    } catch (err) {
-        // Unique-index race: two balls for a brand-new player logged at
-        // nearly the same instant can both miss the findOne above and both
-        // try to insert — the loser just re-looks-up instead of erroring.
-        if (err && err.code === 11000) {
-            const existing = await playersCollection.findOne({ ownerUid, nameKeys: nameKey });
-            if (existing) { playerIdCache.set(cacheKey, existing.playerId); return existing.playerId; }
-        }
-        console.log('resolvePlayerId error:', err);
-        return null;
-    }
-}
-
-// Resolves a playerId to every nameKey ever merged into it, so stats/clip
-// queries can match on "any of this player's known spellings" instead of
-// just one. Returns [] if the playerId doesn't exist (caller should treat
-// that as "no results" rather than falling back to raw playerId as a key).
-async function nameKeysForPlayerId(playerId) {
-    if (!playersCollection || !playerId) return [];
-    try {
-        const doc = await playersCollection.findOne({ playerId }, { projection: { nameKeys: 1 } });
-        return (doc && doc.nameKeys) || [];
-    } catch (err) {
-        console.log('nameKeysForPlayerId error:', err);
-        return [];
-    }
-}
-
-// Resolves which owner a matchId belongs to, without requiring the caller
-// to already know it. Fast path: the client can pass `uid` directly (same
-// trust level as ownerUidFrom() above — see the comment on that function).
-// Fallback: search leaguesCollection for whichever league (tournament OR
-// the reserved __single_matches__ league) has this matchId saved — this
-// works with ZERO client changes since every match is already saved there
-// by matchId. Used to stamp clips/balls with an ownerUid so a player's
-// clips/stats can be queried across their whole account ("career"), not
-// just within one match.
-const ownerUidByMatchCache = new Map(); // small in-memory memo; matchId -> ownerUid
-async function resolveOwnerUidForMatch(matchId, hintUid) {
-    if (hintUid) { ownerUidByMatchCache.set(matchId, hintUid); return hintUid; }
-    if (ownerUidByMatchCache.has(matchId)) return ownerUidByMatchCache.get(matchId);
-    if (!matchRecordsCollection) return null;
-    try {
-        const doc = await matchRecordsCollection.findOne(
-            { matchId },
-            { projection: { ownerUid: 1 } }
-        );
-        const uid = (doc && doc.ownerUid) || null;
-        if (uid) ownerUidByMatchCache.set(matchId, uid);
-        return uid;
-    } catch (err) {
-        console.log('resolveOwnerUidForMatch error:', err);
-        return null;
-    }
-}
-
-// Looks up the canonical ball (written by the `logBall` socket handler,
-// the permanent source of truth) that a requested clip's window is centred
-// on, so the clip can be linked to real player identities/dismissal data
-// instead of trusting only whatever the panel happened to send as ballMeta.
-async function findCanonicalBall(matchId, ballMeta) {
-    if (!ballsCollection || !ballMeta) return null;
-    const query = { matchId };
-    if (ballMeta.innings !== undefined) query.innings = ballMeta.innings;
-    if (ballMeta.over !== undefined) query.over = ballMeta.over;
-    if (ballMeta.ballInOver !== undefined) query.ballInOver = ballMeta.ballInOver;
-    if (Object.keys(query).length <= 1) return null; // nothing specific enough to match on
-    try {
-        // Most-recent match on (over, ballInOver): guards against the rare
-        // case a correction re-logged the same ball, or innings wasn't sent.
-        return await ballsCollection.find(query).sort({ timestamp: -1 }).limit(1).next();
-    } catch (err) {
-        console.log('findCanonicalBall error:', err);
-        return null;
-    }
-}
-
 // Mint (or fetch, if already minted) a tournament's permanent public
 // token. Idempotent — calling it again for the same tournament always
 // returns the same token, so a link the operator already shared never
@@ -1359,40 +959,13 @@ app.post('/api/league/:name/live-status', async (req, res) => {
     if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     const { roomId, matchId, active } = req.body || {};
     try {
-        // 🩹 liveMatches is an ARRAY, not a single field — the same
-        // tournament can have MULTIPLE matches being scored at once, each
-        // on its own device/room (Laptop 1 → Match A, Laptop 2 → Match B,
-        // same tournament, same account). The old singular liveRoomId/
-        // liveMatchId meant a second match starting silently kicked the
-        // first match's viewers off the public portal's "Live Now" card.
-        // liveRoomId/liveMatchId are still kept, mirroring whichever match
-        // most recently pinged, purely so any older frontend reading only
-        // those singular fields keeps working exactly as before.
-        if (active === false) {
-            if (matchId) {
-                await leaguesCollection.updateOne({ ownerUid, leagueKey }, { $pull: { liveMatches: { matchId } } });
-            }
-            const doc = await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { liveMatches: 1 } });
-            const remaining = (doc && doc.liveMatches) || [];
-            const mostRecent = remaining[remaining.length - 1] || null;
-            await leaguesCollection.updateOne(
-                { ownerUid, leagueKey },
-                { $set: { liveRoomId: mostRecent ? mostRecent.roomId : null, liveMatchId: mostRecent ? mostRecent.matchId : null, updatedAt: Date.now() } },
-                { upsert: true }
-            );
-        } else {
-            // Drop any existing entry for this matchId first so a re-ping
-            // (every ball, debounced) never creates duplicate array entries.
-            await leaguesCollection.updateOne({ ownerUid, leagueKey }, { $pull: { liveMatches: { matchId } } });
-            await leaguesCollection.updateOne(
-                { ownerUid, leagueKey },
-                {
-                    $push: { liveMatches: { roomId: roomId || null, matchId: matchId || null, startedAt: Date.now() } },
-                    $set: { liveRoomId: roomId || null, liveMatchId: matchId || null, updatedAt: Date.now() }
-                },
-                { upsert: true }
-            );
-        }
+        await leaguesCollection.updateOne(
+            { ownerUid, leagueKey },
+            { $set: active === false
+                ? { liveRoomId: null, liveMatchId: null, updatedAt: Date.now() }
+                : { liveRoomId: roomId || null, liveMatchId: matchId || null, updatedAt: Date.now() } },
+            { upsert: true }
+        );
         res.json({ success: true });
     } catch (err) {
         console.log('Live-status update error:', err);
@@ -1403,52 +976,23 @@ app.post('/api/league/:name/live-status', async (req, res) => {
 // ---- PUBLIC, READ-ONLY endpoints — no uid/auth, the token itself is the
 // access control, and ownerUid is never included in any response. -------
 
-// 🚀 Tiny in-memory TTL cache for the public tournament portal — this is
-// the one endpoint every one of a tournament's viewers polls repeatedly
-// (potentially thousands at once, see the 5,000-concurrent-viewer target),
-// and it does real work every call: pulling every saved match for the
-// league AND recomputing the points table + leaderboards from scratch. A
-// short TTL means a live tournament still updates within a few seconds of
-// a new ball, but a burst of simultaneous requests only recomputes once
-// instead of once per viewer. Deliberately process-memory (not Redis) to
-// avoid a new infra dependency for a single-process win; safe to swap for
-// Redis later if this ever runs across multiple server instances.
-const PUBLIC_CACHE_TTL_MS = 4000;
-const publicTournamentCache = new Map(); // token -> { expiresAt, payload }
-function getCached(cache, key) {
-    const hit = cache.get(key);
-    if (hit && hit.expiresAt > Date.now()) return hit.payload;
-    return null;
-}
-function setCached(cache, key, payload, ttlMs) {
-    cache.set(key, { payload, expiresAt: Date.now() + ttlMs });
-}
-
 // Full tournament portal payload: sanitized match list + live pointer +
-// points table + leaderboards, all computed fresh from matchRecords (one
-// doc per match — see the big comment above matchRecordsCollection's
-// assignment) instead of a legacy matches[] array on the league doc.
+// points table + leaderboards, all computed fresh from the same
+// permanent matches[] the admin panel writes to.
 app.get('/api/public/tournament/:token', async (req, res) => {
-    if (!leaguesCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     try {
-        const cached = getCached(publicTournamentCache, req.params.token);
-        if (cached) return res.json(cached);
         const doc = await leaguesCollection.findOne({ publicToken: req.params.token });
         if (!doc) return res.status(404).json({ success: false, error: 'Tournament not found' });
-        const matches = await getLeagueMatches(doc.ownerUid, doc.leagueKey);
-        const payload = {
+        const matches = (doc.matches || []).slice().sort((a, b) => new Date(a.savedAt || 0) - new Date(b.savedAt || 0));
+        res.json({
             success: true,
             displayName: doc.displayName || '',
             matches,
-            // roomId/matchId: most-recently-active match, for older
-            // frontends. matches: every match currently live under this
-            // tournament at once (see the live-status route comment above).
-            live: { roomId: doc.liveRoomId || null, matchId: doc.liveMatchId || null, matches: doc.liveMatches || [] },
+            live: { roomId: doc.liveRoomId || null, matchId: doc.liveMatchId || null },
             pointsTable: computePointsTable(matches),
             leaderboards: computeLeaderboards(matches)
-        };
-        setCached(publicTournamentCache, req.params.token, payload, PUBLIC_CACHE_TTL_MS);
-        res.json(payload);
+        });
     } catch (err) {
         console.log('Public tournament fetch error:', err);
         res.status(500).json({ success: false, error: 'Could not load tournament' });
@@ -1457,11 +1001,11 @@ app.get('/api/public/tournament/:token', async (req, res) => {
 
 // One specific match's full scorecard within a tournament.
 app.get('/api/public/tournament/:token/match/:matchId', async (req, res) => {
-    if (!leaguesCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     try {
         const doc = await leaguesCollection.findOne({ publicToken: req.params.token });
         if (!doc) return res.status(404).json({ success: false, error: 'Tournament not found' });
-        const match = await matchRecordsCollection.findOne({ ownerUid: doc.ownerUid, leagueKey: doc.leagueKey, matchId: req.params.matchId });
+        const match = (doc.matches || []).find(m => m.matchId === req.params.matchId);
         if (!match) return res.status(404).json({ success: false, error: 'Match not found' });
         res.json({ success: true, displayName: doc.displayName || '', match });
     } catch (err) {
@@ -1473,16 +1017,17 @@ app.get('/api/public/tournament/:token/match/:matchId', async (req, res) => {
 // A standalone match's public page, addressed by its own permanent
 // matchId (or the live "connection id"/roomId it was broadcast under
 // before it was ever saved). Deliberately searches across ALL owners'
-// __single_matches__ matchRecords by matchId/roomId rather than needing an
+// __single_matches__ docs by matchId/roomId rather than needing an
 // ownerUid, since a public link never carries one.
 app.get('/api/public/match/:id', async (req, res) => {
-    if (!matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     const id = req.params.id;
     try {
-        const match = await matchRecordsCollection.findOne({
+        const doc = await leaguesCollection.findOne({
             leagueKey: SINGLE_MATCHES_LEAGUE_KEY,
-            $or: [{ matchId: id }, { roomId: id }]
+            $or: [{ 'matches.matchId': id }, { 'matches.roomId': id }]
         });
+        const match = doc && (doc.matches || []).find(m => m.matchId === id || m.roomId === id);
         if (match) return res.json({ success: true, match });
         // Not saved yet — either still being played (public page falls back
         // to a live socket join using this id) or the id is simply wrong.
@@ -1490,530 +1035,6 @@ app.get('/api/public/match/:id', async (req, res) => {
     } catch (err) {
         console.log('Public match fetch error:', err);
         res.status(500).json({ success: false, error: 'Could not load match' });
-    }
-});
-
-// ================================================================
-// 🎬 CLIPS API — read-only, metadata-first (per REQUIREMENT: scorecard
-// loads text/stats + clip metadata only; the actual video is fetched only
-// when the user taps WATCH/DOWNLOAD). Every route here returns clipId +
-// small fields + a playable URL — never raw file paths, R2 keys, or Drive
-// credentials. matchId/strikerKey/bowlerKey/battingTeam are all indexed
-// (see connectMongo above) so these stay fast even with thousands of
-// clips across a tournament.
-// ================================================================
-
-// Trims a raw clip Mongo doc down to exactly what the frontend needs.
-function serializeClip(c) {
-    return {
-        clipId: c._id.toString(),
-        matchId: c.matchId,
-        eventType: c.eventType,                 // 'FOUR' | 'SIX' | 'WICKET'
-        dismissalType: c.dismissalType || null,  // 'Bowled' | 'Caught' | 'LBW' | 'Run Out' | 'Stumped' | 'Hit Wicket' | ...
-        over: c.over, ballInOver: c.ballInOver, innings: c.innings,
-        runs: c.runs, battingTeam: c.battingTeam,
-        striker: c.strikerName || null, bowler: c.bowlerName || null,
-        nonStriker: c.nonStrikerName || null, fielder: c.fielderName || null,
-        ready: !!(c.r2Url || c.driveUrl),
-        watchUrl: `/api/clips/${c._id}/watch`,
-        downloadUrl: `/api/clips/${c._id}/download`,
-        createdAt: c.createdAt
-    };
-}
-
-// GET /api/clips/match/:matchId?type=FOUR|SIX|WICKET&playerKey=...&team=A|B&limit=&skip=
-app.get('/api/clips/match/:matchId', async (req, res) => {
-    if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
-    const matchId = safeMatchId(req.params.matchId);
-    const query = { matchId };
-    if (req.query.type) query.eventType = String(req.query.type).toUpperCase();
-    if (req.query.team) query.battingTeam = String(req.query.team).toUpperCase();
-    if (req.query.playerKey) {
-        const pk = playerKey(req.query.playerKey);
-        query.$or = [{ strikerKey: pk }, { bowlerKey: pk }, { fielderKey: pk }];
-    }
-    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
-    const skip = Math.max(parseInt(req.query.skip, 10) || 0, 0);
-    try {
-        const clips = await clipsCollection.find(query).sort({ over: 1, ballInOver: 1 }).skip(skip).limit(limit).toArray();
-        res.json({ success: true, clips: clips.map(serializeClip) });
-    } catch (err) {
-        console.log('Clips-by-match fetch error:', err);
-        res.status(500).json({ success: false, error: 'Could not load clips' });
-    }
-});
-
-// GET /api/clips/team/:matchId/:teamKey — every team wicket clip (run outs,
-// catches, LBW, bowled, stumped, hit wicket, ...) for that side in this match.
-app.get('/api/clips/team/:matchId/:teamKey', async (req, res) => {
-    if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
-    const matchId = safeMatchId(req.params.matchId);
-    const teamKey = String(req.params.teamKey || '').toUpperCase();
-    try {
-        const clips = await clipsCollection.find({ matchId, battingTeam: teamKey, eventType: 'WICKET' })
-            .sort({ over: 1, ballInOver: 1 }).toArray();
-        res.json({ success: true, clips: clips.map(serializeClip) });
-    } catch (err) {
-        console.log('Team-clips fetch error:', err);
-        res.status(500).json({ success: false, error: 'Could not load team clips' });
-    }
-});
-
-// GET /api/clips/player/:playerKey?scope=match|tournament|career&matchId=&leagueName=&uid=
-// Returns clips grouped the way the scorecard displays them (spec section 4):
-// batting: { fours, sixes, dismissal }, bowling: { wickets }.
-// Shared core for both /api/clips/player/:playerKey and
-// /api/players/:playerId/clips — pk may be a single nameKey or an array of
-// nameKeys (merged playerId aliases). Returns a result object rather than
-// writing to res, same pattern as runPlayerStatsQuery above.
-async function runPlayerClipsQuery(pk, req) {
-    if (!clipsCollection) return { httpError: 503, message: 'Database not configured' };
-    const pkSet = new Set(Array.isArray(pk) ? pk : [pk]);
-    const pkList = [...pkSet];
-    const scope = req.query.scope || 'match';
-
-    let matchFilter = null; // null = no matchId restriction (career, or tournament resolved below)
-    if (scope === 'match') {
-        if (!req.query.matchId) return { httpError: 400, message: 'matchId required for scope=match' };
-        matchFilter = { $in: [safeMatchId(req.query.matchId)] };
-    } else if (scope === 'tournament') {
-        const leagueKey = leagueKeyFor(req.query.leagueName);
-        const ownerUid = ownerUidFrom(req);
-        if (!leagueKey || !ownerUid || !matchRecordsCollection) return { httpError: 400, message: 'leagueName and uid required for scope=tournament' };
-        const ids = await matchRecordsCollection.find({ ownerUid, leagueKey }, { projection: { matchId: 1 } }).toArray();
-        matchFilter = { $in: ids.map(m => m.matchId) };
-    }
-    // scope === 'career' (or 'season', best-effort — no explicit season
-    // field exists on matches yet, so career and season currently return
-    // the same set; filter by year client-side using each clip's createdAt
-    // until a real season field is added) — no matchId restriction, just
-    // ownerUid if we have one, so results stay scoped to one account.
-
-    const base = { $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }, { fielderKey: { $in: pkList } }] };
-    if (matchFilter) base.matchId = matchFilter;
-    const ownerUid = ownerUidFrom(req);
-    if (!matchFilter && ownerUid) base.ownerUid = ownerUid;
-
-    const clips = await clipsCollection.find(base).sort({ createdAt: -1 }).limit(300).toArray();
-    const out = { fours: [], sixes: [], dismissal: [], wickets: [] };
-    clips.forEach(c => {
-        const s = serializeClip(c);
-        if (pkSet.has(c.strikerKey) && c.eventType === 'FOUR') out.fours.push(s);
-        else if (pkSet.has(c.strikerKey) && c.eventType === 'SIX') out.sixes.push(s);
-        else if (pkSet.has(c.strikerKey) && c.eventType === 'WICKET') out.dismissal.push(s);
-        if (pkSet.has(c.bowlerKey) && c.eventType === 'WICKET') out.wickets.push(s);
-    });
-    return { scope, batting: { fours: out.fours, sixes: out.sixes, dismissal: out.dismissal }, bowling: { wickets: out.wickets } };
-}
-
-app.get('/api/clips/player/:playerKey', async (req, res) => {
-    const pk = playerKey(req.params.playerKey);
-    if (!pk) return res.status(400).json({ success: false, error: 'playerKey required' });
-    try {
-        const result = await runPlayerClipsQuery(pk, req);
-        if (result.httpError) return res.status(result.httpError).json({ success: false, error: result.message });
-        res.json({ success: true, playerKey: pk, ...result });
-    } catch (err) {
-        console.log('Player-clips fetch error:', err);
-        res.status(500).json({ success: false, error: 'Could not load player clips' });
-    }
-});
-
-// GET /api/players/:playerId/clips?scope=match|tournament|career&...
-app.get('/api/players/:playerId/clips', async (req, res) => {
-    const pks = await nameKeysForPlayerId(req.params.playerId);
-    if (!pks.length) return res.status(404).json({ success: false, error: 'Player not found' });
-    try {
-        const result = await runPlayerClipsQuery(pks, req);
-        if (result.httpError) return res.status(result.httpError).json({ success: false, error: result.message });
-        res.json({ success: true, playerId: req.params.playerId, ...result });
-    } catch (err) {
-        console.log('Player-clips (by playerId) fetch error:', err);
-        res.status(500).json({ success: false, error: 'Could not load player clips' });
-    }
-});
-
-// Quick existence check before trusting a saved r2Url — once clips start
-// getting deleted from R2 after ~1 year (retention plan), the Mongo record
-// still has r2Url sitting on it forever unless someone remembers to clear
-// it. A HEAD request is cheap and confirms the object is actually still
-// there before we redirect/stream a viewer to it; on any failure (404,
-// network error, whatever) we treat it as "not on R2 anymore" and let the
-// caller fall back to Drive instead of handing back a dead link.
-async function r2ObjectExists(url) {
-    try {
-        const headRes = await fetch(url, { method: 'HEAD' });
-        return headRes.ok;
-    } catch (err) {
-        return false;
-    }
-}
-
-// Resolves a clip's actual playable URL server-side — the frontend never
-// talks to R2/Drive directly and no credentials/keys ever reach the client.
-async function resolvePlayableClip(clipId) {
-    if (!clipsCollection) return null;
-    const { ObjectId } = require('mongodb');
-    let _id;
-    try { _id = new ObjectId(clipId); } catch { return null; }
-    return clipsCollection.findOne({ _id });
-}
-
-// GET /api/clips/:clipId/watch — plays inline in the scorecard's own video
-// modal. R2 is preferred (public CDN URL, cheap to redirect to, cached at
-// the edge — see uploadClipToR2 above); if R2 doesn't have it anymore (or
-// never did) and only Drive has it, we proxy the bytes through our own
-// server instead of sending the user to Drive's UI.
-app.get('/api/clips/:clipId/watch', async (req, res) => {
-    try {
-        const clip = await resolvePlayableClip(req.params.clipId);
-        if (!clip) return res.status(404).json({ success: false, error: 'Clip not found' });
-        if (clip.r2Url && await r2ObjectExists(clip.r2Url)) {
-            return res.redirect(302, clip.r2Url);
-        }
-        if (clip.driveFileId && driveClient) {
-            const driveRes = await driveClient.files.get({ fileId: clip.driveFileId, alt: 'media' }, { responseType: 'stream' });
-            res.setHeader('Content-Type', 'video/mp4');
-            driveRes.data.on('error', () => res.end());
-            return driveRes.data.pipe(res);
-        }
-        res.status(202).json({ success: false, error: 'Clip is still processing — try again shortly' });
-    } catch (err) {
-        console.log('Clip watch error:', err);
-        res.status(500).json({ success: false, error: 'Could not load clip' });
-    }
-});
-
-// GET /api/clips/:clipId/download — forces a same-origin download instead
-// of opening the file's Drive/R2 page. R2 clips are fetched server-side and
-// re-streamed with Content-Disposition: attachment (R2 itself doesn't set
-// that header on plain object URLs); if the R2 fetch fails (object gone —
-// e.g. past the 1-year retention window) we fall back to Drive the same
-// way /watch does, instead of erroring out; Drive clips use the same proxy
-// path as /watch, just with the attachment header added.
-app.get('/api/clips/:clipId/download', async (req, res) => {
-    try {
-        const clip = await resolvePlayableClip(req.params.clipId);
-        if (!clip) return res.status(404).json({ success: false, error: 'Clip not found' });
-        const filename = `${clip.eventType || 'clip'}_over-${clip.over ?? ''}.${clip.ballInOver ?? ''}_${clip.strikerName || clip.bowlerName || ''}.mp4`.replace(/\s+/g, '-');
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-        res.setHeader('Content-Type', 'video/mp4');
-        if (clip.r2Url) {
-            try {
-                const r2Res = await fetch(clip.r2Url);
-                if (r2Res.ok && r2Res.body) {
-                    const { Readable } = require('stream');
-                    return Readable.fromWeb(r2Res.body).pipe(res);
-                }
-                console.log(`R2 fetch not OK for clip ${clip._id} (status ${r2Res.status}) — falling back to Drive`);
-            } catch (r2Err) {
-                console.log(`R2 fetch error for clip ${clip._id}, falling back to Drive:`, r2Err.message || r2Err);
-            }
-            // R2 missing/failed — fall through to the Drive branch below
-            // instead of returning an error, same recovery as /watch.
-        }
-        if (clip.driveFileId && driveClient) {
-            const driveRes = await driveClient.files.get({ fileId: clip.driveFileId, alt: 'media' }, { responseType: 'stream' });
-            driveRes.data.on('error', () => res.end());
-            return driveRes.data.pipe(res);
-        }
-        res.status(202).json({ success: false, error: 'Clip is still processing — try again shortly' });
-    } catch (err) {
-        console.log('Clip download error:', err);
-        res.status(500).json({ success: false, error: 'Could not download clip' });
-    }
-});
-
-// ================================================================
-// 📊 PLAYER STATS API — MATCH scope aggregates straight from ballsCollection
-// (the permanent, correction-safe ball-by-ball log), so it's always
-// recomputed fresh rather than cached/stale (REQUIREMENT #13). TOURNAMENT/
-// CAREER scope reuses the same battingCard/bowlingCard rollup logic as
-// computeLeaderboards above, filtered to one player, across every match
-// saved for that league (tournament) or every league this owner has
-// (career) — same global playerKey identity throughout.
-// ================================================================
-
-// Best-effort batting/bowling line for one player from one match's raw
-// balls. Cricket-rule note: byes/leg-byes add to the team total but are
-// NOT credited as batsman runs; wides are NOT a faced ball. Run-outs are
-// NOT credited as a bowler wicket. A maiden over is one bowled entirely by
-// this bowler (6 legal deliveries, no wides/no-balls) with zero runs
-// conceded off it (including byes/leg-byes charged against the over).
-// Adjust here if cricket-panel.html's `kind`/`dismissal.type` strings
-// differ from the values assumed below.
-async function computeMatchPlayerStats(matchId, pk) {
-    // pk may be a single nameKey (existing callers) or an array of nameKeys
-    // — a merged playerId's aliases (see nameKeysForPlayerId). Normalize to
-    // a Set once so every ball only pays for one membership check.
-    const pkSet = new Set(Array.isArray(pk) ? pk : [pk]);
-    const isPk = (v) => pkSet.has(v);
-    const balls = await ballsCollection.find({ matchId, $or: [{ strikerKey: { $in: [...pkSet] } }, { bowlerKey: { $in: [...pkSet] } }] }).toArray();
-    const bat = { runs: 0, balls: 0, fours: 0, sixes: 0, out: false, howOut: null };
-    const bowl = { balls: 0, runs: 0, wickets: 0, wides: 0, noballs: 0 };
-    const oversBowled = {}; // `${innings}-${over}` -> { legalBalls, runs }
-    balls.forEach(b => {
-        if (isPk(b.strikerKey) && b.kind !== 'Wd') {
-            bat.balls++;
-            if (b.kind !== 'B' && b.kind !== 'LB') bat.runs += b.runs || 0;
-            if (b.kind === '4') bat.fours++;
-            if (b.kind === '6') bat.sixes++;
-        }
-        if (isPk(b.strikerKey) && b.dismissal) {
-            bat.out = true;
-            bat.howOut = b.dismissal.type || null;
-        }
-        if (isPk(b.bowlerKey) && b.kind !== 'B' && b.kind !== 'LB') {
-            const isLegal = b.kind !== 'Wd' && b.kind !== 'Nb';
-            if (isLegal) bowl.balls++;
-            if (b.kind === 'Wd') bowl.wides++;
-            if (b.kind === 'Nb') bowl.noballs++;
-            bowl.runs += b.runs || 0;
-            if (b.dismissal && b.dismissal.type && b.dismissal.type.toLowerCase() !== 'run out') bowl.wickets++;
-
-            const overKey = `${b.innings || 1}-${b.over}`;
-            if (!oversBowled[overKey]) oversBowled[overKey] = { legalBalls: 0, runs: 0 };
-            if (isLegal) oversBowled[overKey].legalBalls++;
-            oversBowled[overKey].runs += b.runs || 0;
-        }
-    });
-    const maidens = Object.values(oversBowled).filter(o => o.legalBalls === 6 && o.runs === 0).length;
-    return {
-        batting: { runs: bat.runs, balls: bat.balls, fours: bat.fours, sixes: bat.sixes, out: bat.out, howOut: bat.howOut, strikeRate: bat.balls ? Number(((bat.runs / bat.balls) * 100).toFixed(2)) : 0 },
-        bowling: { overs: `${Math.floor(bowl.balls / 6)}.${bowl.balls % 6}`, maidens, runs: bowl.runs, wickets: bowl.wickets, wides: bowl.wides, noballs: bowl.noballs, economy: bowl.balls ? Number((bowl.runs / (bowl.balls / 6)).toFixed(2)) : 0 }
-    };
-}
-
-// Filters computeLeaderboards' per-match rollup down to a single player,
-// across whatever set of saved matches[] is passed in (one tournament, or
-// every league belonging to an owner for career).
-function computeSinglePlayerRollup(matches, pk) {
-    // pk may be a single nameKey or an array of nameKeys (merged playerId
-    // aliases) — see computeMatchPlayerStats for the same normalization.
-    const pkSet = new Set(Array.isArray(pk) ? pk : [pk]);
-    const { topRuns, topWickets } = computeLeaderboards(matches);
-    return {
-        batting: topRuns.find(r => pkSet.has(playerKey(r.name))) || null,
-        bowling: topWickets.find(r => pkSet.has(playerKey(r.name))) || null
-    };
-}
-
-// Shared core for both /api/stats/player/:playerKey and the newer
-// /api/players/:playerId/stats — pk here may be a single nameKey or an
-// array of nameKeys (a merged playerId's aliases). Returns a plain result
-// object (or an { httpError, message } shape) rather than writing to res
-// directly, so both routes can attach their own identifier field
-// (playerKey vs playerId) to the JSON response.
-async function runPlayerStatsQuery(pk, req) {
-    const scope = req.query.scope || 'match';
-    if (scope === 'match') {
-        if (!ballsCollection) return { httpError: 503, message: 'Database not configured' };
-        if (!req.query.matchId) return { httpError: 400, message: 'matchId required for scope=match' };
-        const stats = await computeMatchPlayerStats(safeMatchId(req.query.matchId), pk);
-        return { scope, ...stats };
-    }
-    if (!matchRecordsCollection) return { httpError: 503, message: 'Database not configured' };
-    if (scope === 'tournament') {
-        const leagueKey = leagueKeyFor(req.query.leagueName);
-        const ownerUid = ownerUidFrom(req);
-        if (!leagueKey || !ownerUid) return { httpError: 400, message: 'leagueName and uid required for scope=tournament' };
-        const matches = await getLeagueMatches(ownerUid, leagueKey);
-        const stats = computeSinglePlayerRollup(matches, pk);
-        return { scope, ...stats };
-    }
-    // career (and season, best-effort — see note on the clips endpoint
-    // above): every match across every league this owner has saved.
-    const ownerUid = ownerUidFrom(req);
-    if (!ownerUid) return { httpError: 400, message: 'uid required for scope=career' };
-    const allMatches = await matchRecordsCollection.find({ ownerUid }).toArray();
-    const stats = computeSinglePlayerRollup(allMatches, pk);
-    return { scope, ...stats };
-}
-
-// Shared core for both /api/stats/player/:playerKey/tournaments and
-// /api/players/:playerId/tournaments — same pk-as-string-or-array contract
-// as runPlayerStatsQuery above.
-async function runPlayerTournamentHistory(pk, req) {
-    if (!leaguesCollection || !matchRecordsCollection) return { httpError: 503, message: 'Database not configured' };
-    const ownerUid = ownerUidFrom(req);
-    if (!ownerUid) return { httpError: 400, message: 'uid required' };
-    const pkSet = new Set(Array.isArray(pk) ? pk : [pk]);
-    const leagues = await leaguesCollection.find({ ownerUid, leagueKey: { $ne: SINGLE_MATCHES_LEAGUE_KEY } })
-        .project({ leagueKey: 1, displayName: 1, updatedAt: 1 }).toArray();
-    const tournaments = (await Promise.all(leagues.map(async doc => {
-        const matches = await getLeagueMatches(ownerUid, doc.leagueKey);
-        const stats = computeSinglePlayerRollup(matches, pk);
-        if (!stats.batting && !stats.bowling) return null; // player never appeared in this tournament
-        return {
-            leagueName: doc.displayName || doc.leagueKey,
-            matchesPlayed: matches.filter(m => {
-                return ['A', 'B'].some(k =>
-                    ((m.battingCard && m.battingCard[k]) || []).some(b => pkSet.has(playerKey(b.name))) ||
-                    ((m.bowlingCard && m.bowlingCard[k]) || []).some(b => pkSet.has(playerKey(b.name)))
-                );
-            }).length,
-            updatedAt: doc.updatedAt || 0,
-            batting: stats.batting,
-            bowling: stats.bowling
-        };
-    })))
-        .filter(Boolean)
-        .sort((a, b) => b.updatedAt - a.updatedAt);
-    return { tournaments };
-}
-
-// GET /api/stats/player/:playerKey?scope=match|tournament|career&matchId=&leagueName=&uid=
-app.get('/api/stats/player/:playerKey', async (req, res) => {
-    const pk = playerKey(req.params.playerKey);
-    if (!pk) return res.status(400).json({ success: false, error: 'playerKey required' });
-    try {
-        const result = await runPlayerStatsQuery(pk, req);
-        if (result.httpError) return res.status(result.httpError).json({ success: false, error: result.message });
-        res.json({ success: true, playerKey: pk, ...result });
-    } catch (err) {
-        console.log('Player-stats fetch error:', err);
-        res.status(500).json({ success: false, error: 'Could not load player stats' });
-    }
-});
-
-// GET /api/stats/player/:playerKey/tournaments?uid=
-// TOURNAMENT HISTORY — one row per tournament this player has ever
-// appeared in for this owner, each with that tournament's own totals
-// (same rollup as scope=tournament above, just run once per league doc
-// instead of once). This is what powers the "2024 — Tournament A — 421
-// Runs" style breakdown on the player profile, on top of the single
-// flattened scope=career number. Sorted most-recent-first by the
-// tournament's last updatedAt so a player's newest form shows up top.
-app.get('/api/stats/player/:playerKey/tournaments', async (req, res) => {
-    const pk = playerKey(req.params.playerKey);
-    if (!pk) return res.status(400).json({ success: false, error: 'playerKey required' });
-    try {
-        const result = await runPlayerTournamentHistory(pk, req);
-        if (result.httpError) return res.status(result.httpError).json({ success: false, error: result.message });
-        res.json({ success: true, playerKey: pk, ...result });
-    } catch (err) {
-        console.log('Player-tournament-history fetch error:', err);
-        res.status(500).json({ success: false, error: 'Could not load tournament history' });
-    }
-});
-
-// ================================================================
-// 🌟 GLOBAL PLAYER PROFILE ROUTES — playerId-addressed versions of the
-// stats/tournaments endpoints above, plus search (typeahead for the
-// scoring panel) and merge (dedup two profiles created for the same real
-// person under slightly different spellings). See playersCollection
-// comment in connectMongo and resolvePlayerId above for the data model.
-// ================================================================
-
-// GET /api/players/search?uid=&q= — typeahead for the panel's player name
-// inputs. Matching on a name that's ALREADY a known player (rather than
-// letting the scorer free-type a fresh variant every time) is what keeps
-// nameKeys from fragmenting in the first place.
-app.get('/api/players/search', async (req, res) => {
-    if (!playersCollection) return res.json({ success: true, players: [] });
-    const ownerUid = ownerUidFrom(req);
-    const q = String(req.query.q || '').trim().toLowerCase();
-    if (!ownerUid || q.length < 2) return res.json({ success: true, players: [] });
-    try {
-        const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const players = await playersCollection.find({ ownerUid, displayName: { $regex: escaped, $options: 'i' } })
-            .project({ playerId: 1, displayName: 1 }).limit(10).toArray();
-        res.json({ success: true, players });
-    } catch (err) {
-        console.log('Player search error:', err);
-        res.status(500).json({ success: false, players: [] });
-    }
-});
-
-// POST /api/players/resolve  { uid, name } — find-or-create a playerId for
-// a name. The panel can call this as soon as a scorer commits a player
-// name (instead of only implicitly via logBall), so the playerId is known
-// before the first ball is even bowled.
-app.post('/api/players/resolve', async (req, res) => {
-    const ownerUid = ownerUidFrom(req) || req.body.uid;
-    const name = req.body.name;
-    if (!ownerUid || !String(name || '').trim()) return res.status(400).json({ success: false, error: 'uid and name required' });
-    try {
-        const playerId = await resolvePlayerId(ownerUid, name);
-        if (!playerId) return res.status(503).json({ success: false, error: 'Database not configured' });
-        res.json({ success: true, playerId });
-    } catch (err) {
-        console.log('Player resolve error:', err);
-        res.status(500).json({ success: false, error: 'Could not resolve player' });
-    }
-});
-
-// POST /api/players/:playerId/merge  { uid, intoNameKeys: [...] } — folds
-// another set of nameKeys (typically every alias of a duplicate playerId
-// created by mistake) into this playerId, then leaves the duplicate doc's
-// nameKeys empty so it stops matching anything new. Historical balls/clips
-// already stamped with the OLD playerId keep that value (we never rewrite
-// history), but since stats are computed live from nameKeys — not from the
-// stamped playerId — merging here immediately unifies their stats. The
-// stamped playerId fields are for provenance/debugging, not the query key.
-app.post('/api/players/:playerId/merge', async (req, res) => {
-    if (!playersCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
-    const ownerUid = ownerUidFrom(req) || req.body.uid;
-    const { fromPlayerId } = req.body || {};
-    if (!ownerUid || !fromPlayerId) return res.status(400).json({ success: false, error: 'uid and fromPlayerId required' });
-    if (fromPlayerId === req.params.playerId) return res.status(400).json({ success: false, error: 'Cannot merge a player into itself' });
-    try {
-        const [into, from] = await Promise.all([
-            playersCollection.findOne({ playerId: req.params.playerId, ownerUid }),
-            playersCollection.findOne({ playerId: fromPlayerId, ownerUid })
-        ]);
-        if (!into || !from) return res.status(404).json({ success: false, error: 'Player not found' });
-        const mergedKeys = [...new Set([...(into.nameKeys || []), ...(from.nameKeys || [])])];
-        await playersCollection.updateOne({ _id: from._id }, { $set: { nameKeys: [], mergedInto: into.playerId, updatedAt: Date.now() } });
-        await playersCollection.updateOne({ _id: into._id }, { $set: { nameKeys: mergedKeys, updatedAt: Date.now() } });
-        res.json({ success: true, playerId: into.playerId, nameKeys: mergedKeys });
-    } catch (err) {
-        console.log('Player merge error:', err);
-        res.status(500).json({ success: false, error: 'Could not merge players' });
-    }
-});
-
-// GET /api/players/:playerId?uid= — profile (display name + known aliases)
-app.get('/api/players/:playerId', async (req, res) => {
-    if (!playersCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
-    try {
-        const profile = await playersCollection.findOne({ playerId: req.params.playerId });
-        if (!profile) return res.status(404).json({ success: false, error: 'Player not found' });
-        res.json({ success: true, playerId: profile.playerId, displayName: profile.displayName, aliases: profile.nameKeys || [] });
-    } catch (err) {
-        console.log('Player profile fetch error:', err);
-        res.status(500).json({ success: false, error: 'Could not load player' });
-    }
-});
-
-// GET /api/players/:playerId/stats?scope=match|tournament|career&... — same
-// contract as /api/stats/player/:playerKey, addressed by the permanent
-// playerId instead of a raw name string, and automatically covering every
-// nameKey ever merged into this playerId.
-app.get('/api/players/:playerId/stats', async (req, res) => {
-    const pks = await nameKeysForPlayerId(req.params.playerId);
-    if (!pks.length) return res.status(404).json({ success: false, error: 'Player not found' });
-    try {
-        const result = await runPlayerStatsQuery(pks, req);
-        if (result.httpError) return res.status(result.httpError).json({ success: false, error: result.message });
-        res.json({ success: true, playerId: req.params.playerId, ...result });
-    } catch (err) {
-        console.log('Player-stats (by playerId) fetch error:', err);
-        res.status(500).json({ success: false, error: 'Could not load player stats' });
-    }
-});
-
-// GET /api/players/:playerId/tournaments?uid=
-app.get('/api/players/:playerId/tournaments', async (req, res) => {
-    const pks = await nameKeysForPlayerId(req.params.playerId);
-    if (!pks.length) return res.status(404).json({ success: false, error: 'Player not found' });
-    try {
-        const result = await runPlayerTournamentHistory(pks, req);
-        if (result.httpError) return res.status(result.httpError).json({ success: false, error: result.message });
-        res.json({ success: true, playerId: req.params.playerId, ...result });
-    } catch (err) {
-        console.log('Player-tournament-history (by playerId) fetch error:', err);
-        res.status(500).json({ success: false, error: 'Could not load tournament history' });
     }
 });
 
@@ -2387,24 +1408,14 @@ adminRouter.post('/delete-template', async (req, res) => {
 // ---- Cricket Data ----
 adminRouter.get('/cricket', async (req, res) => {
     try {
-        // 🩹 matchCount now comes from matchRecordsCollection (one doc per
-        // match) via a cheap grouped count, instead of projecting the whole
-        // `matches` array out of every league doc just to read its .length —
-        // that used to mean this single admin page load pulled every match
-        // any of the last 50 active owners had ever saved.
-        const [leagues, matchCounts, recentMatches, ballCount] = await Promise.all([
-            leaguesCollection ? leaguesCollection.find({}).project({ ownerUid: 1, leagueKey: 1, displayName: 1, updatedAt: 1 }).sort({ updatedAt: -1 }).limit(50).toArray() : [],
-            matchRecordsCollection ? matchRecordsCollection.aggregate([
-                { $group: { _id: { ownerUid: '$ownerUid', leagueKey: '$leagueKey' }, count: { $sum: 1 } } }
-            ]).toArray() : [],
+        const [leagues, recentMatches, ballCount] = await Promise.all([
+            leaguesCollection ? leaguesCollection.find({}).project({ ownerUid: 1, leagueKey: 1, displayName: 1, matches: 1, updatedAt: 1 }).sort({ updatedAt: -1 }).limit(50).toArray() : [],
             matchesCollection ? matchesCollection.find({}).sort({ recordingStartedAt: -1 }).limit(50).toArray() : [],
             ballsCollection ? ballsCollection.countDocuments() : 0
         ]);
-        const countKey = (ownerUid, leagueKey) => `${ownerUid}::${leagueKey}`;
-        const countMap = new Map(matchCounts.map(c => [countKey(c._id.ownerUid, c._id.leagueKey), c.count]));
         const tournaments = leagues.map(l => ({
             leagueKey: l.leagueKey, displayName: l.displayName || l.leagueKey,
-            ownerUid: l.ownerUid, matchCount: countMap.get(countKey(l.ownerUid, l.leagueKey)) || 0, updatedAt: l.updatedAt || null
+            ownerUid: l.ownerUid, matchCount: (l.matches || []).length, updatedAt: l.updatedAt || null
         }));
         res.json({ success: true, tournaments, recentMatches, totalBallsLogged: ballCount });
     } catch (err) {
@@ -2546,24 +1557,8 @@ app.get('/t/:slug/overlay/:overlayId', async (req, res) => {
 // above for the /api/public/* + /api/league/:name/public-link routes
 // these pages call. Both are static shells; all data loads client-side.
 app.get('/score/tournament/:token', (req, res) => res.sendFile(__dirname + '/score-tournament.html'));
-// A specific completed match inside a tournament now reuses the full
-// cricket-scorecard.html viewer (same batting/bowling clip icons, Match
-// Highlights, comparison charts as a live match) instead of the plainer
-// score-tournament.html per-match view — see loadMatchSnapshot()/
-// history=1 mode in cricket-scorecard.html.
-app.get('/score/tournament/:token/match/:matchId', (req, res) => {
-    const qs = new URLSearchParams({ token: req.params.token, match: req.params.matchId, history: '1' });
-    res.redirect(302, `/cricket-scorecard?${qs.toString()}`);
-});
-// A specific standalone (non-tournament) match now also reuses
-// cricket-scorecard.html — if it's finished, history=1 pulls a one-shot
-// snapshot via /api/public/match/:id; if it's still being played (that
-// endpoint comes back with match:null + a roomId), the page transparently
-// falls back to a live socket join instead of showing an error.
-app.get('/score/match/:id', (req, res) => {
-    const qs = new URLSearchParams({ match: req.params.id, history: '1' });
-    res.redirect(302, `/cricket-scorecard?${qs.toString()}`);
-});
+app.get('/score/tournament/:token/match/:matchId', (req, res) => res.sendFile(__dirname + '/score-tournament.html'));
+app.get('/score/match/:id', (req, res) => res.sendFile(__dirname + '/score-match.html'));
 app.get('/football-matchintro', (req, res) => res.sendFile(__dirname + '/football-matchintro.html'));
 app.get('/football-matchintro-panel', (req, res) => res.sendFile(__dirname + '/football-matchintro-panel.html'));
 
@@ -2942,6 +1937,21 @@ io.on('connection', async (socket) => {
         }
 
         const state = await getRoomState(room);
+
+        // Guard against a delayed/out-of-order packet (retry, slow network,
+        // or a race between two devices controlling the SAME match) rolling
+        // the authoritative room state backwards. Each panel stamps every
+        // push with _updatedAt (see send() in cricket-panel.html); if this
+        // update is OLDER than what we already have, drop it instead of
+        // merging/broadcasting it. This doesn't resolve true simultaneous
+        // edits from two devices (the later-arriving one still wins), but
+        // it stops a stale packet from silently reverting real progress.
+        const incomingTs = typeof data._updatedAt === 'number' ? data._updatedAt : null;
+        const currentTs = typeof state.cricketState._updatedAt === 'number' ? state.cricketState._updatedAt : null;
+        if (incomingTs !== null && currentTs !== null && incomingTs < currentTs) {
+            return;
+        }
+
         state.cricketState = { ...state.cricketState, ...data };
 
         io.to(room).emit('liveCricketScore', state.cricketState);
@@ -3134,47 +2144,18 @@ io.on('connection', async (socket) => {
         const matchId = safeMatchId(data.matchId || (data.room ? data.room.replace('room-', '') : null) || matchIdForClient);
         if (!matchId || matchId === 'default') return;
         try {
-            // Best-effort owner resolution (see resolveOwnerUidForMatch above)
-            // so this ball — and any clip cut around it — can be found again
-            // in career-wide player queries, not just within this one match.
-            const ownerUid = await resolveOwnerUidForMatch(matchId, data.uid);
-            // 🌟 Stamp global playerIds alongside the existing name-string
-            // keys (see resolvePlayerId) — additive only, every existing
-            // *Key field and query in this file still works unchanged.
-            const [strikerPlayerId, nonStrikerPlayerId, bowlerPlayerId, dismissalFielderPlayerId] = ownerUid ? await Promise.all([
-                resolvePlayerId(ownerUid, data.striker),
-                resolvePlayerId(ownerUid, data.nonStriker),
-                resolvePlayerId(ownerUid, data.bowler),
-                resolvePlayerId(ownerUid, data.dismissal && data.dismissal.fielder)
-            ]) : [null, null, null, null];
-            // 🛡️ Normalize through personName() in case a client sends
-            // {name,...} objects instead of plain strings (see comment on
-            // personName above) — stores the clean name either way.
-            const strikerName = personName(data.striker);
-            const nonStrikerName = personName(data.nonStriker);
-            const bowlerName = personName(data.bowler);
-            const fielderName = personName(data.dismissal && data.dismissal.fielder);
             await ballsCollection.insertOne({
                 matchId,
-                ownerUid: ownerUid || null,
                 innings: data.innings,
                 over: data.over,
                 ballInOver: data.ballInOver,
                 kind: data.kind,          // '0'-'6', 'W', 'Wd', 'Nb', 'B', 'LB'
                 runs: data.runs,
                 battingTeam: data.battingTeam,
-                striker: strikerName,
-                strikerKey: playerKey(strikerName),
-                strikerPlayerId,
-                nonStriker: nonStrikerName,
-                nonStrikerKey: playerKey(nonStrikerName),
-                nonStrikerPlayerId,
-                bowler: bowlerName,
-                bowlerKey: playerKey(bowlerName),
-                bowlerPlayerId,
-                dismissal: data.dismissal ? { type: data.dismissal.type || 'Out', fielder: fielderName } : null,
-                dismissalFielderKey: playerKey(fielderName),
-                dismissalFielderPlayerId,
+                striker: data.striker,
+                nonStriker: data.nonStriker,
+                bowler: data.bowler,
+                dismissal: data.dismissal || null,
                 score: data.score,        // { runs, wickets, overs, balls } snapshot after this ball
                 timestamp: data.timestamp || Date.now()
             });
@@ -3193,7 +2174,7 @@ io.on('connection', async (socket) => {
         const eventTimestamp = data.timestamp || Date.now();
         const waitMs = Math.max(0, (eventTimestamp + 10000) - Date.now()) + 1000; // +1s safety buffer
         setTimeout(() => {
-            cutClip({ matchId, eventType: data.eventType, eventTimestamp, ballMeta: data.ballMeta || null, uid: data.uid || null });
+            cutClip({ matchId, eventType: data.eventType, eventTimestamp, ballMeta: data.ballMeta || null });
         }, waitMs);
     });
 
