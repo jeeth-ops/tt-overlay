@@ -251,6 +251,16 @@
   .howout{ font-size:10.5px; color:var(--text-faint); display:block; margin-top:2px; }
   .not-out-tag{ display:inline-flex; align-items:center; gap:5px; color:var(--accent); font-size:10.5px; font-weight:700; margin-left:8px; }
   .not-out-tag::before{ content:''; width:4px; height:4px; border-radius:50%; background:var(--accent); flex:none; }
+  /* Captain / Wicketkeeper role tags — small pills next to a player's name,
+     same treatment wherever a name appears (tables + at-the-crease cards).
+     Mirrors the badges already shown in the scoring panel. */
+  .role-tag{
+    display:inline-flex; align-items:center; justify-content:center;
+    font-size:9px; font-weight:800; letter-spacing:.3px; line-height:1.6;
+    padding:0 5px; border-radius:5px; margin-left:6px; vertical-align:middle;
+  }
+  .role-tag.role-c{ background:var(--accent-soft); color:var(--accent); }
+  .role-tag.role-wk{ background:var(--four-soft); color:var(--four); }
 
   /* ---------- Partnership / FOW / extras — stacked ---------- */
   #bottom-grid{ display:grid; grid-template-columns:1fr; gap:14px; }
@@ -1091,7 +1101,7 @@ function renderFinalInnings(){
 
   const battingBody = document.getElementById('batting-table-body');
   battingBody.innerHTML = bat.length ? bat.map(b => `<tr>
-      <td>${escapeHtml(b.name)}${b.out===false ? '<span class="not-out-tag">not out</span>' : `<span class="howout">${escapeHtml(b.howOut||'out')}</span>`}</td>
+      <td>${escapeHtml(b.name)}${roleBadgesHtml(b)}${b.out===false ? '<span class="not-out-tag">not out</span>' : `<span class="howout">${escapeHtml(b.howOut||'out')}</span>`}</td>
       <td class="num tabnum">${b.runs||0}</td>
       <td class="num tabnum">${b.balls||0}</td>
       <td class="num tabnum">${b.fours||0}</td>
@@ -1102,7 +1112,7 @@ function renderFinalInnings(){
 
   const bowlingBody = document.getElementById('bowling-table-body');
   bowlingBody.innerHTML = bowl.length ? bowl.map(b => `<tr>
-      <td>${escapeHtml(b.name)}</td>
+      <td>${escapeHtml(b.name)}${roleBadgesHtml(b)}</td>
       <td class="num tabnum">${fmtOvers(b.overs,b.balls)}</td>
       <td class="num tabnum">${b.maidens||0}</td>
       <td class="num tabnum">${b.runs||0}</td>
@@ -1167,6 +1177,28 @@ function render(){
 }
 
 function setText(id, val){ const el = document.getElementById(id); if(el) el.textContent = val; }
+
+// Captain / Wicketkeeper role tags. Reads whichever field name the
+// underlying player data actually uses (the panel already carries this —
+// the public scorecard just wasn't rendering it), so this checks every
+// common spelling rather than assuming one.
+function roleBadgesHtml(p){
+  if(!p) return '';
+  const isCaptain = !!(p.isCaptain ?? p.captain ?? p.is_captain);
+  const isKeeper = !!(p.isWicketKeeper ?? p.isWK ?? p.wicketKeeper ?? p.keeper ?? p.is_wk ?? p.isKeeper);
+  let html = '';
+  if(isCaptain) html += '<span class="role-tag role-c" title="Captain">C</span>';
+  if(isKeeper) html += '<span class="role-tag role-wk" title="Wicketkeeper">WK</span>';
+  return html;
+}
+// Like setText, but for a name span that should also carry the player's
+// role tags (used for the striker/non-striker/bowler cards).
+function setNameWithBadges(id, player, fallback){
+  const el = document.getElementById(id);
+  if(!el) return;
+  const name = (player && player.name) || fallback || '—';
+  el.innerHTML = escapeHtml(name) + roleBadgesHtml(player);
+}
 
 function renderHero(s){
   document.getElementById('chip-format').textContent = s.format || 'T20';
@@ -1261,15 +1293,15 @@ function paintLogo(id, team){
 }
 
 function renderPlayers(s){
-  setText('striker-name', s.striker && s.striker.name || '—');
+  setNameWithBadges('striker-name', s.striker);
   setText('striker-figs', `${(s.striker&&s.striker.runs)||0} (${(s.striker&&s.striker.balls)||0})`);
   setText('striker-sr', 'SR ' + strikeRate((s.striker&&s.striker.runs)||0, (s.striker&&s.striker.balls)||0).toFixed(1));
-  setText('nonstriker-name', s.nonStriker && s.nonStriker.name || '—');
+  setNameWithBadges('nonstriker-name', s.nonStriker);
   setText('nonstriker-figs', `${(s.nonStriker&&s.nonStriker.runs)||0} (${(s.nonStriker&&s.nonStriker.balls)||0})`);
   setText('nonstriker-sr', 'SR ' + strikeRate((s.nonStriker&&s.nonStriker.runs)||0, (s.nonStriker&&s.nonStriker.balls)||0).toFixed(1));
   setText('pship-inline', `${s.partnershipRuns||0} (${s.partnershipBalls||0})`);
   const b = s.bowler || {};
-  setText('bowler-name', b.name || '—');
+  setNameWithBadges('bowler-name', b);
   setText('bowler-figs', `${fmtOvers(b.overs,b.balls)}-${b.maidens||0}-${b.runs||0}-${b.wickets||0}`);
   setText('bowler-econ', 'Econ ' + bowlerEcon(b).toFixed(2));
 }
@@ -1813,7 +1845,7 @@ function renderTables(s){
     battingBody.innerHTML = bat.map(b => {
       const isStriking = !b.out && s.striker && s.striker.name === b.name;
       return `<tr class="${isStriking ? 'on-strike' : ''}">
-        <td>${escapeHtml(b.name)}${b.out ? `<span class="howout">${escapeHtml(b.howOut||'out')}</span>` : `<span class="not-out-tag">not out</span>`}</td>
+        <td>${escapeHtml(b.name)}${roleBadgesHtml(b)}${b.out ? `<span class="howout">${escapeHtml(b.howOut||'out')}</span>` : `<span class="not-out-tag">not out</span>`}</td>
         <td class="num tabnum">${b.runs}</td>
         <td class="num tabnum">${b.balls}</td>
         <td class="num tabnum">${b.fours}</td>
@@ -1829,7 +1861,7 @@ function renderTables(s){
     bowlingBody.innerHTML = `<tr><td colspan="7" class="empty-state">No bowling yet</td></tr>`;
   } else {
     bowlingBody.innerHTML = bowl.map(b => `<tr>
-        <td>${escapeHtml(b.name)}</td>
+        <td>${escapeHtml(b.name)}${roleBadgesHtml(b)}</td>
         <td class="num tabnum">${fmtOvers(b.overs,b.balls)}</td>
         <td class="num tabnum">${b.maidens||0}</td>
         <td class="num tabnum">${b.runs||0}</td>
