@@ -456,9 +456,9 @@
     <div class="card" id="card-players">
       <h2>👥 Players</h2>
       <label>Striker name</label>
-      <input type="text" id="striker-name" value="S. Yadav" list="global-player-suggestions" data-global-suggest="1">
+      <input type="text" id="striker-name" value="S. Yadav">
       <label>Non-striker name</label>
-      <input type="text" id="nonstriker-name" value="V. Kohli" list="global-player-suggestions" data-global-suggest="1">
+      <input type="text" id="nonstriker-name" value="V. Kohli">
       <button class="full small" id="swap-strike" style="margin-top:8px;">Swap Strike (S)</button>
     </div>
   </div>
@@ -520,14 +520,8 @@
       </div>
       <div class="shortcut-hint" id="disp-bowler-note"></div>
       <label>New bowler coming on <span class="note">— type an earlier bowler's name to resume their figures</span></label>
-      <input type="text" id="bowler-name-input" placeholder="Bowler name" list="bowler-suggestions" autocomplete="off" data-global-suggest="1">
+      <input type="text" id="bowler-name-input" placeholder="Bowler name" list="bowler-suggestions" autocomplete="off">
       <datalist id="bowler-suggestions"></datalist>
-      <!-- 🌟 Global player search (see /api/players/search) — separate from
-           bowler-suggestions (which only lists names bowled THIS innings)
-           so striker/non-striker fields, which have no innings-local
-           equivalent, still get autocomplete from this scorer's whole
-           player history across every match/device on their account. -->
-      <datalist id="global-player-suggestions"></datalist>
       <button class="full small" id="set-bowler-btn" style="margin-top:8px;">Set / Change Bowler</button>
       <label>Last dismissal <span class="note">— you'll be asked how, right when WICKET is pressed</span></label>
       <div class="stat auto" style="margin-top:2px;"><div class="v" id="disp-last-dismissal" style="font-size:13px;">—</div></div>
@@ -550,6 +544,29 @@
         <button type="button" class="wm-option b-extra" data-dismissal="Retired Hurt">Retired Hurt<span class="wm-credit">not credited</span></button>
       </div>
       <button type="button" class="full ghost wm-cancel" id="wicket-modal-cancel">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Run Out details picker — opens right after "Run Out" is chosen in the
+       dismissal modal above. Either batsman can be the one run out, and the
+       batters may have completed 0-3 runs before the throw hit the stumps,
+       so both need to be captured instead of always assuming the striker
+       is out for zero runs. -->
+  <div class="wicket-modal-overlay" id="runout-modal-overlay">
+    <div class="wicket-modal" id="runout-modal">
+      <h3>🏃 Run Out</h3>
+      <div id="runout-step-end">
+        <div class="wm-sub">Who's out?</div>
+        <div class="wm-options">
+          <button type="button" class="wm-option b-extra" id="runout-end-striker">—</button>
+          <button type="button" class="wm-option b-extra" id="runout-end-nonstriker">—</button>
+        </div>
+      </div>
+      <div id="runout-step-runs" style="display:none;">
+        <div class="wm-sub">Runs completed before the throw?</div>
+        <div class="wm-options" id="runout-runs-options"></div>
+      </div>
+      <button type="button" class="full ghost wm-cancel" id="runout-modal-cancel" style="margin-top:10px;">Cancel</button>
     </div>
   </div>
 
@@ -585,7 +602,7 @@
     <div class="wicket-modal" id="newover-modal">
       <h3>🏏 Over Complete</h3>
       <div class="wm-sub" id="newover-modal-sub">—</div>
-      <input type="text" id="newover-modal-input" placeholder="Bowler name" list="bowler-suggestions" autocomplete="off" data-global-suggest="1"
+      <input type="text" id="newover-modal-input" placeholder="Bowler name" list="bowler-suggestions" autocomplete="off"
         style="width:100%;padding:9px 10px;border-radius:7px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);font-size:13px;margin-bottom:10px;">
       <button type="button" class="full primary" id="newover-modal-submit">Set Bowler</button>
       <button type="button" class="full ghost wm-cancel" id="newover-modal-cancel" style="margin-top:8px;">Skip for now</button>
@@ -842,7 +859,6 @@ function mergeWithDefaults(saved){
     striker: { ...def.striker, ...(saved.striker||{}) },
     nonStriker: { ...def.nonStriker, ...(saved.nonStriker||{}) },
     bowler: { ...def.bowler, ...(saved.bowler||{}) },
-    playerHistorySections: { ...def.playerHistorySections, ...(saved.playerHistorySections||{}) },
     // Per-innings archives, keyed by team ('A'/'B'), that feed the two
     // auto-popup graphics (Innings Bowling Summary / Match Summary) — they
     // accumulate across the WHOLE match and are only cleared on Reset.
@@ -939,12 +955,6 @@ function defaultState(){
     showPlayerHistoryCard: false,
     playerHistoryOverlayName: '',
     playerHistorySearch: '',
-    // Which of the 3 Player History sections (This Match / This
-    // Tournament / Every Other Tournament) actually go out to the
-    // overlay — independent of what the panel itself always shows the
-    // operator. Operator-controlled checkboxes next to the "Show on
-    // Overlay" button; unchecked sections are simply left off the card.
-    playerHistorySections: { thisMatch: true, thisTournament: true, otherTournaments: true },
     showTeamHistoryCard: false,
     teamHistoryOverlayName: '',
     teamHistorySearch: '',
@@ -1069,6 +1079,13 @@ function connect(){
 
   socket.on('liveCricketScore', (serverState) => {
     if(serverState && Object.keys(serverState).length){
+      // Guard against a delayed/out-of-order broadcast (this device's own
+      // stale echo, or another device's older push arriving late) rolling
+      // this panel's already-more-current local state backwards.
+      if(typeof serverState._updatedAt === 'number' && typeof state._updatedAt === 'number'
+         && serverState._updatedAt < state._updatedAt){
+        return;
+      }
       state = mergeWithDefaults({ ...state, ...serverState });
       lastBroadcastState = snapshot();
       renderPanel();
@@ -1111,10 +1128,7 @@ async function startRecording(){
   const ok = await fetch(`${CLIPPER_HELPER_URL}/recording-start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    // matchId + mainServerUrl (this site's own address) so the helper
-    // knows WHERE to send finished clips for R2/Drive upload + player
-    // linking (see /api/clips/ingest on the main server).
-    body: JSON.stringify({ startedAt: Date.now(), matchId, mainServerUrl: location.origin })
+    body: JSON.stringify({ startedAt: Date.now() })
   }).then(r => r.json()).then(r => r.success).catch(() => false);
 
   if(!ok){
@@ -1410,6 +1424,15 @@ document.getElementById('open-scorecard-btn').addEventListener('click', () => {
 let pushTimer = null;
 let lastBroadcastState = null; // deep snapshot of the last state actually emitted to the server/overlay
 function send(obj){
+  // Stamped on every push so the server can tell an out-of-order/delayed
+  // packet (e.g. a retried request, or a race between two devices on the
+  // same match) from the latest one, and refuse to let an OLDER update
+  // silently roll back a newer score — see handleCricketUpdate in
+  // server.js. This does not resolve true simultaneous edits (two devices
+  // scoring different balls at the same instant still needs one to win),
+  // but it stops a late-arriving stale packet from clobbering a state
+  // that's already moved on.
+  obj._updatedAt = Date.now();
   if(socket && socket.connected) socket.emit('updateCricketScore', obj);
   lastBroadcastState = JSON.parse(JSON.stringify(obj));
 }
@@ -1845,9 +1868,33 @@ document.getElementById('new-batsman-btn').addEventListener('click', () => {
 // Shared by the sidebar "Set / Change Bowler" button AND the automatic
 // "Over Complete" modal below, so both entry points archive/resume figures
 // identically. Returns true if the bowler was actually changed.
+// Laws of Cricket cap a single bowler at 1/5th of the innings' total overs
+// in limited-overs formats (4 of 20 in T20, 10 of 50 in ODI) — Test has no
+// such cap. Returns null when there's no cap to enforce (Test, or overs
+// not yet configured).
+function maxOversPerBowler(){
+  const totalBalls = ballsPerInnings();
+  if(totalBalls === null) return null;
+  return Math.ceil((totalBalls / 6) / 5);
+}
+// Full overs this bowler has already completed THIS innings, across every
+// spell (archived + currently live) — used to enforce the cap above.
+function bowlerOversSoFar(name){
+  const key = bowlingTeamKey();
+  let overs = (state.bowlingCard[key] || [])
+    .filter(b => b.name === name && b.inningsNo === state.inningsNumber)
+    .reduce((sum, b) => sum + (b.overs || 0), 0);
+  if(state.bowler.name === name) overs += state.bowler.overs;
+  return overs;
+}
 function applyBowlerChange(name){
   if(!name){ toast('Enter a bowler name first'); return false; }
   if(name === state.bowler.name){ toast('That bowler is already set'); return false; }
+  const cap = maxOversPerBowler();
+  if(cap !== null && bowlerOversSoFar(name) >= cap){
+    toast(`🚫 ${name} has already bowled the maximum ${cap} over${cap===1?'':'s'} allowed per bowler this innings`, 5000);
+    return false;
+  }
   history.push(snapshot());
 
   const key = bowlingTeamKey();
@@ -2546,23 +2593,6 @@ function currentLeagueMatches(){
   return leagueCache[key] || loadLeagueMatchesLocal(name);
 }
 
-// Same as currentLeagueMatches() but folds in THIS match's live, not-yet-
-// saved figures too (batting/bowling so far, ball by ball) — so a
-// player's tournament totals (fifties, average, wickets, etc.) keep
-// updating live for every viewer instead of freezing until the match is
-// won/tied or manually saved. Only applies when this match is actually
-// being tracked under the currently-selected tournament; a Single Match
-// has nothing to contribute. Replaces any already-saved copy of this
-// same match (matched by its permanent tournamentMatchId) with the
-// fresher live version, so nothing is ever double-counted.
-function currentLeagueMatchesLive(){
-  const saved = currentLeagueMatches();
-  if(state.matchMode !== 'tournament' || !(state.leagueName || '').trim()) return saved;
-  const live = buildMatchRecordForLeague();
-  const filtered = saved.filter(m => m.matchId !== live.matchId);
-  return [...filtered, live];
-}
-
 // Pulls the latest matches for a league from MongoDB and refreshes the UI
 // once they land — this is what lets a SECOND laptop see matches saved
 // from the first one. Fails silently to the local cache if the server or
@@ -2708,12 +2738,6 @@ function saveMatchToLeague(silent){
     if(data && data.success){
       leagueCache[key] = data.matches;
       saveLeagueMatchesLocal(name, data.matches);
-      // This match's runs/wickets just changed the tournament + career
-      // totals for every player involved — drop the cached career/
-      // tournament-history lines so the next time anyone opens Player
-      // History (panel or scorecard) it recomputes fresh from the
-      // corrected match data, per the "must remain recalculable" rule.
-      invalidatePlayerStatsCaches();
       refreshLeagueUI();
       refreshTournamentCardsIfShown();
     } else {
@@ -3140,7 +3164,7 @@ function renderPlayerHistoryView(matches){
     <div id="player-history-results" class="shortcut-hint">${names.length ? 'Type or pick a player to see their tournament history.' : 'No player data saved in this tournament yet.'}</div>
   `;
   const input = document.getElementById('player-history-search');
-  const renderFor = () => renderPlayerHistoryResults(input.value, currentLeagueMatchesLive());
+  const renderFor = () => renderPlayerHistoryResults(input.value, currentLeagueMatches());
   if(state.playerHistorySearch && names.some(n => n.toLowerCase() === state.playerHistorySearch.toLowerCase())){
     input.value = state.playerHistorySearch;
     renderFor();
@@ -3182,52 +3206,6 @@ function getPlayerHistoryRows(name, matches){
   return { rows, lastTeamName };
 }
 
-// ---- THIS MATCH (live, not-yet-saved) stats for a player -----------------
-// Uses buildMatchRecordForLeague() so an in-progress knock/spell (the
-// batsman still at the crease, the bowler still mid-over) is folded in,
-// exactly like every other "This Match" scope stat card — not just
-// whatever has already been archived to state.battingCard/bowlingCard.
-function getThisMatchPlayerStats(name){
-  const lower = (name || '').trim().toLowerCase();
-  if(!lower) return null;
-  const m = buildMatchRecordForLeague();
-  let runs = 0, balls = 0, fours = 0, sixes = 0, out = false, batInnings = 0;
-  let bOvers = 0, bBalls = 0, bMaidens = 0, bRuns = 0, bWickets = 0, bowlInnings = 0;
-  ['A','B'].forEach(k => {
-    (m.battingCard[k] || []).forEach(b => {
-      if((b.name || '').trim().toLowerCase() !== lower) return;
-      batInnings++; runs += b.runs || 0; balls += b.balls || 0;
-      fours += b.fours || 0; sixes += b.sixes || 0; if(b.out) out = true;
-    });
-    (m.bowlingCard[k] || []).forEach(b => {
-      if((b.name || '').trim().toLowerCase() !== lower) return;
-      bowlInnings++; bOvers += b.overs || 0; bBalls += b.balls || 0;
-      bMaidens += b.maidens || 0; bRuns += b.runs || 0; bWickets += b.wickets || 0;
-    });
-  });
-  if(!batInnings && !bowlInnings) return null;
-  bOvers += Math.floor(bBalls / 6); bBalls = bBalls % 6;
-  const batting = batInnings ? { runs, balls, fours, sixes, out,
-    sr: balls > 0 ? ((runs / balls) * 100).toFixed(1) : '0.0' } : null;
-  const bowling = bowlInnings ? { overs: bOvers, balls: bBalls, maidens: bMaidens, runs: bRuns, wickets: bWickets,
-    economy: bowlerEcon({ overs: bOvers, balls: bBalls, runs: bRuns }) } : null;
-  const battingLine = batting ? `${batting.runs}${batting.out ? '' : '*'} (${batting.balls}b) · 4s ${batting.fours} · 6s ${batting.sixes} · SR ${batting.sr}` : '';
-  const bowlingLine = bowling ? `${fmtBowlerOvers(bowling.overs, bowling.balls)} ov · ${bowling.runs} R · ${bowling.wickets} W · Econ ${bowling.economy}` : '';
-  return { batting, bowling, battingLine, bowlingLine };
-}
-
-// Builds a "Label value · Label value" line from whichever fields actually
-// exist on a stats object — so a leaner backend payload (missing 50s/100s,
-// say) still renders cleanly instead of showing "undefined".
-function formatStatFields(obj, fieldDefs){
-  if(!obj) return '';
-  return fieldDefs
-    .filter(([key]) => obj[key] !== undefined && obj[key] !== null && obj[key] !== '')
-    .map(([key, label]) => `${label} ${obj[key]}`).join(' · ');
-}
-const BATTING_FIELD_DEFS = [['innings','Inn'],['matches','Inn'],['runs','Runs'],['average','Avg'],['sr','SR'],['highScore','HS'],['fours','4s'],['sixes','6s'],['fifties','50s'],['hundreds','100s']];
-const BOWLING_FIELD_DEFS = [['matches','M'],['overs','Ov'],['wickets','Wkts'],['economy','Econ'],['average','Avg'],['best','Best'],['maidens','Mdns']];
-
 // A currently-configured team (state.teamA/B, which have colour/logo —
 // saved match records don't) whose name matches, so the overlay card can
 // be branded consistently with the rest of the broadcast. Falls back to
@@ -3240,71 +3218,6 @@ function findLoadedTeamByName(teamName){
   return null;
 }
 
-// ---- CAREER (all tournaments) stats ------------------------------------
-// Everything above this point only ever looks at currentLeagueMatches()
-// — i.e. the ONE tournament currently loaded in the panel. "Career" means
-// every tournament this owner has ever saved, which lives server-side
-// across many league docs, so it has to come from the backend's
-// /api/stats/player endpoint (scope=career) rather than being computed
-// locally. Same global playerKey convention as everywhere else
-// (name.trim().toLowerCase()) — one identity across every tournament.
-const careerStatsCache = {}; // playerKey -> { battingLine, bowlingLine } | null (null = fetched, nothing found)
-function playerKeyLocal(name){ return (name || '').trim().toLowerCase() || null; }
-
-async function fetchPlayerCareerStats(name){
-  const pk = playerKeyLocal(name);
-  if(!pk) return null;
-  if(pk in careerStatsCache) return careerStatsCache[pk];
-  const uid = currentOwnerUid();
-  if(!uid) { careerStatsCache[pk] = null; return null; }
-  try{
-    const res = await fetch(withUid(`/api/stats/player/${encodeURIComponent(pk)}?scope=career`));
-    if(!res.ok){ careerStatsCache[pk] = null; return null; }
-    const data = await res.json();
-    if(!data || !data.success){ careerStatsCache[pk] = null; return null; }
-    const bat = data.batting, bowl = data.bowling;
-    const parts = [];
-    if(bat) parts.push(`INN ${bat.innings} · RUNS ${bat.runs} · AVG ${bat.average} · SR ${bat.strikeRate}`);
-    if(bowl) parts.push(`${bowl.wickets} WKTS · ECON ${bowl.economy}`);
-    const result = { hasData: !!(bat || bowl), line: parts.join('  ·  '), batting: bat, bowling: bowl };
-    careerStatsCache[pk] = result;
-    return result;
-  } catch(err){ console.warn('Career stats fetch failed', err); careerStatsCache[pk] = null; return null; }
-}
-// Invalidate a player's cached career line (e.g. after saving a new match
-// that changes their totals) — cheap to just clear everything.
-function clearCareerStatsCache(){ Object.keys(careerStatsCache).forEach(k => delete careerStatsCache[k]); }
-
-// Per-tournament breakdown ("2024 — Tournament A — 421 Runs" style rows),
-// backed by the new /api/stats/player/:playerKey/tournaments endpoint.
-const tournamentHistoryCache = {};
-// Filters out whichever tournament is currently loaded in this panel —
-// "Every Other Tournament Played" should never repeat the one already
-// covered by the "This Tournament" section, and the backend endpoint
-// (which just lists every league it has data for) has no way to know
-// which one that is, so it's excluded here by name instead.
-function excludeCurrentTournament(rows){
-  const current = (state.leagueName || '').trim().toLowerCase();
-  if(!current) return rows;
-  return rows.filter(t => (t.leagueName || '').trim().toLowerCase() !== current);
-}
-async function fetchPlayerTournamentHistoryPanel(name){
-  const pk = playerKeyLocal(name);
-  if(!pk) return [];
-  if(pk in tournamentHistoryCache) return tournamentHistoryCache[pk];
-  const uid = currentOwnerUid();
-  if(!uid){ tournamentHistoryCache[pk] = []; return []; }
-  try{
-    const res = await fetch(withUid(`/api/stats/player/${encodeURIComponent(pk)}/tournaments`));
-    if(!res.ok){ tournamentHistoryCache[pk] = []; return []; }
-    const data = await res.json();
-    const rows = (data && data.success && data.tournaments) || [];
-    tournamentHistoryCache[pk] = rows;
-    return rows;
-  } catch(err){ console.warn('Tournament history fetch failed', err); tournamentHistoryCache[pk] = []; return []; }
-}
-function invalidatePlayerStatsCaches(){ clearCareerStatsCache(); Object.keys(tournamentHistoryCache).forEach(k => delete tournamentHistoryCache[k]); }
-
 function renderPlayerHistoryResults(rawName, matches){
   const resultsEl = document.getElementById('player-history-results');
   if(!resultsEl) return;
@@ -3314,11 +3227,10 @@ function renderPlayerHistoryResults(rawName, matches){
   if(!name){ resultsEl.innerHTML = 'Type or pick a player to see their tournament history.'; return; }
 
   const { rows } = getPlayerHistoryRows(name, matches);
-  const thisMatch = getThisMatchPlayerStats(name);
+  if(!rows.length){ resultsEl.innerHTML = `No saved matches found for "${escapeHtmlPanel(name)}" in this tournament.`; return; }
+
   const batTotals = computeBatterTournamentStats(name);
   const bowlTotals = computeBowlerTournamentStats(name);
-
-  if(!rows.length && !thisMatch){ resultsEl.innerHTML = `No data found for "${escapeHtmlPanel(name)}" — not in this match and no saved matches in this tournament.`; return; }
 
   const matchRowsHtml = rows.map(r => `
     <tr>
@@ -3328,22 +3240,8 @@ function renderPlayerHistoryResults(rawName, matches){
 
   const isShownOnOverlay = state.showPlayerHistoryCard && (state.playerHistoryOverlayName || '').toLowerCase() === name.toLowerCase();
 
-  // Three separate sections, kept apart on purpose (never merged into one
-  // combined line): (1) this live/unsaved match, (2) totals + match-by-
-  // match for the tournament currently loaded in this panel, (3) every
-  // OTHER tournament this player has a saved history in. Batting and
-  // bowling are always shown on their own line within each section too.
   resultsEl.innerHTML = `
-    <div style="font-weight:700;margin-bottom:6px;">${escapeHtmlPanel(name)}</div>
-
-    <div style="font-weight:700;">① This Match</div>
-    <div style="font-size:11px;color:var(--text-dim);line-height:1.7;margin-bottom:10px;">
-      ${thisMatch && thisMatch.batting ? `Batting — ${thisMatch.battingLine}` : 'Batting — did not bat yet'}<br>
-      ${thisMatch && thisMatch.bowling ? `Bowling — ${thisMatch.bowlingLine}` : 'Bowling — did not bowl yet'}
-    </div>
-
-    <div style="font-weight:700;">② This Tournament</div>
-    ${rows.length ? `
+    <div style="font-weight:700;margin-bottom:6px;">${escapeHtmlPanel(name)} — tournament history</div>
     <div style="overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;font-size:11px;">
         <thead><tr style="color:var(--text-dim);text-align:left;">
@@ -3351,69 +3249,17 @@ function renderPlayerHistoryResults(rawName, matches){
         </tr></thead>
         <tbody>${matchRowsHtml}</tbody>
       </table>
-    </div>` : ''}
-    <div style="font-size:11px;color:var(--text-dim);line-height:1.7;margin-bottom:10px;">
-      ${batTotals ? `Batting — ${formatStatFields(batTotals, BATTING_FIELD_DEFS)}` : 'Batting — no saved data in this tournament'}<br>
-      ${bowlTotals ? `Bowling — ${formatStatFields(bowlTotals, BOWLING_FIELD_DEFS)}` : 'Bowling — no saved data in this tournament'}
     </div>
-
-    <div style="font-weight:700;">③ Every Other Tournament Played</div>
-    <div id="player-history-tournament-list" style="font-size:11px;color:var(--text-dim);line-height:1.9;">${currentOwnerUid() ? 'Loading…' : 'Sign in required to load past-tournament history.'}</div>
-
-    <div style="margin-top:12px;font-weight:700;">📡 Show on Overlay:</div>
-    <div style="font-size:11px;display:flex;flex-direction:column;gap:4px;margin:4px 0 8px;">
-      <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="phs-thisMatch" ${state.playerHistorySections.thisMatch ? 'checked' : ''}> ① This Match</label>
-      <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="phs-thisTournament" ${state.playerHistorySections.thisTournament ? 'checked' : ''}> ② This Tournament</label>
-      <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="phs-otherTournaments" ${state.playerHistorySections.otherTournaments ? 'checked' : ''}> ③ Every Other Tournament Played</label>
+    <div style="margin-top:10px;font-weight:700;">Tournament totals</div>
+    <div style="font-size:11px;color:var(--text-dim);line-height:1.7;">
+      ${batTotals ? `Batting — Innings ${batTotals.matches} · Runs ${batTotals.runs} · Avg ${batTotals.average} · SR ${batTotals.sr} · HS ${batTotals.highScore} · 4s ${batTotals.fours} · 6s ${batTotals.sixes} · 50s ${batTotals.fifties} · 100s ${batTotals.hundreds}` : ''}
+      ${bowlTotals ? `<br>Bowling — Matches ${bowlTotals.matches} · Overs ${bowlTotals.overs} · Runs ${bowlTotals.runs} · Wkts ${bowlTotals.wickets} · Econ ${bowlTotals.economy} · Avg ${bowlTotals.average} · Best ${bowlTotals.best} · Maidens ${bowlTotals.maidens}` : ''}
     </div>
-    <div class="shortcut-hint">Untick a box to leave that section off the overlay card — pick any one, two, or all three; they never have to go out together.</div>
-
     <button type="button" class="small ${isShownOnOverlay ? '' : 'primary'} full" id="player-history-overlay-toggle" style="margin-top:10px;">
       ${isShownOnOverlay ? '🔴 Hide from Overlay' : '📡 Show on Overlay'}
     </button>
   `;
-
-  // Section checkboxes just record which blocks go to the overlay — if
-  // the card is already live, re-push immediately so the change is
-  // visible without needing to toggle the card off and on again.
-  ['thisMatch','thisTournament','otherTournaments'].forEach(key => {
-    const box = document.getElementById('phs-' + key);
-    box.addEventListener('change', async () => {
-      state.playerHistorySections[key] = box.checked;
-      saveLocal();
-      if(isShownOnOverlay && socket && socket.connected){
-        socket.emit('cricketPlayerHistory', { data: await buildPlayerHistoryPayload(name) });
-      }
-    });
-  });
-
-  // Past-tournament breakdown loads async (server round-trip across every
-  // saved league) — fill in once it resolves, guarded so a fast second
-  // search doesn't have a stale fetch clobber the currently-displayed
-  // player. Each tournament gets its own block with batting and bowling
-  // on separate lines, never merged into one string.
-  if(currentOwnerUid()){
-    fetchPlayerTournamentHistoryPanel(name).then(rawHistRows => {
-      if(state.playerHistorySearch !== name) return;
-      const el = document.getElementById('player-history-tournament-list');
-      if(!el) return;
-      const histRows = excludeCurrentTournament(rawHistRows);
-      if(!histRows.length){ el.textContent = 'No other tournaments recorded yet.'; return; }
-      el.innerHTML = histRows.map(t => {
-        const batLine = formatStatFields(t.batting, BATTING_FIELD_DEFS);
-        const bowlLine = formatStatFields(t.bowling, BOWLING_FIELD_DEFS);
-        return `
-          <div style="margin-bottom:6px;">
-            <b>${escapeHtmlPanel(t.leagueName)}</b>${t.matchesPlayed ? ` (${t.matchesPlayed} match${t.matchesPlayed === 1 ? '' : 'es'})` : ''}<br>
-            ${batLine ? `Batting — ${batLine}<br>` : ''}
-            ${bowlLine ? `Bowling — ${bowlLine}` : ''}
-            ${!batLine && !bowlLine ? 'No stats' : ''}
-          </div>`;
-      }).join('');
-    });
-  }
-
-  document.getElementById('player-history-overlay-toggle').addEventListener('click', async () => {
+  document.getElementById('player-history-overlay-toggle').addEventListener('click', () => {
     if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
     if(isShownOnOverlay){
       state.showPlayerHistoryCard = false;
@@ -3421,60 +3267,32 @@ function renderPlayerHistoryResults(rawName, matches){
     } else {
       state.showPlayerHistoryCard = true;
       state.playerHistoryOverlayName = name;
-      socket.emit('cricketPlayerHistory', { data: await buildPlayerHistoryPayload(name) });
+      socket.emit('cricketPlayerHistory', { data: buildPlayerHistoryPayload(name) });
     }
     saveLocal();
-    renderPlayerHistoryResults(name, currentLeagueMatchesLive());
+    renderPlayerHistoryResults(name, currentLeagueMatches());
   });
 }
 
 // Payload sent to the overlay for the Player History card — team colour/
 // logo come from whichever loaded team (A/B) the name matches, if any.
-// Sent to the overlay as three deliberately separate blocks — thisMatch,
-// thisTournament, and tournamentHistory (every OTHER tournament) — each
-// with batting/bowling kept apart, so the on-screen card can render them
-// as distinct sections instead of one merged line. "thisTournament" is
-// computed from currentLeagueMatchesLive(), so it includes this match's
-// live/unsaved figures too, not just what's already been saved.
-async function buildPlayerHistoryPayload(name){
-  const matches = currentLeagueMatchesLive();
+function buildPlayerHistoryPayload(name){
+  const matches = currentLeagueMatches();
   const { rows, lastTeamName } = getPlayerHistoryRows(name, matches);
   const teamObj = findLoadedTeamByName(lastTeamName);
-  const thisMatch = getThisMatchPlayerStats(name);
   const batTotals = computeBatterTournamentStats(name);
   const bowlTotals = computeBowlerTournamentStats(name);
-
-  const tournamentHistory = currentOwnerUid()
-    ? excludeCurrentTournament(await fetchPlayerTournamentHistoryPanel(name))
-    : [];
-
+  const totalsParts = [];
+  if(batTotals) totalsParts.push(`INN ${batTotals.matches} · RUNS ${batTotals.runs} · AVG ${batTotals.average} · SR ${batTotals.sr} · HS ${batTotals.highScore}`);
+  if(bowlTotals) totalsParts.push(`${bowlTotals.wickets} WKTS · ECON ${bowlTotals.economy}`);
   return {
     playerName: name,
     teamName: teamObj ? teamObj.name : lastTeamName,
     teamShort: teamObj ? teamObj.short : '',
     teamColor: teamObj ? teamObj.color : '',
     teamLogo: teamObj ? teamObj.logoUrl : '',
-    // Which sections the operator actually wants on screen — the overlay
-    // only renders the ones flagged true here, independent of each other.
-    sections: { ...state.playerHistorySections },
-    thisMatch: thisMatch ? {
-      batting: thisMatch.batting, bowling: thisMatch.bowling,
-      battingLine: thisMatch.battingLine, bowlingLine: thisMatch.bowlingLine
-    } : null,
-    thisTournament: {
-      rows,
-      batting: batTotals, bowling: bowlTotals,
-      battingLine: formatStatFields(batTotals, BATTING_FIELD_DEFS),
-      bowlingLine: formatStatFields(bowlTotals, BOWLING_FIELD_DEFS)
-    },
-    tournamentHistory: tournamentHistory.map(t => ({
-      leagueName: t.leagueName,
-      matchesPlayed: t.matchesPlayed,
-      batting: t.batting || null,
-      bowling: t.bowling || null,
-      battingLine: formatStatFields(t.batting, BATTING_FIELD_DEFS),
-      bowlingLine: formatStatFields(t.bowling, BOWLING_FIELD_DEFS)
-    }))
+    rows,
+    totalsLine: totalsParts.join('  ·  ')
   };
 }
 
@@ -3701,7 +3519,7 @@ function computeTeamTournamentStats(teamName){
 function computeBatterTournamentStats(playerName){
   const name = (playerName || '').trim().toLowerCase();
   if(!name) return null;
-  const matches = currentLeagueMatchesLive();
+  const matches = currentLeagueMatches();
   if(!matches.length) return null;
   let innings = 0, runs = 0, balls = 0, outs = 0, fours = 0, sixes = 0, fifties = 0, hundreds = 0;
   let highScore = 0, highScoreNotOut = false;
@@ -3732,7 +3550,7 @@ function computeBatterTournamentStats(playerName){
 function computeBowlerTournamentStats(playerName){
   const name = (playerName || '').trim().toLowerCase();
   if(!name) return null;
-  const matches = currentLeagueMatchesLive();
+  const matches = currentLeagueMatches();
   if(!matches.length) return null;
   let apps = 0, totalBalls = 0, runs = 0, wickets = 0, maidens = 0, bestW = -1, bestR = Infinity;
   matches.forEach(m => {
@@ -3770,14 +3588,7 @@ function refreshTournamentCardsIfShown(){
   if(state.showPlayerStatCard && state.playerStatScope === 'tournament') socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
   if(state.showBowlerStatCard && state.bowlerStatScope === 'tournament') socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
   if(state.showTeamStatCard) socket.emit('cricketTeamStat', { data: buildTeamStatPayload() });
-  if(state.showPlayerHistoryCard && state.playerHistoryOverlayName){
-    // buildPlayerHistoryPayload is async (career/tournament-history come
-    // from the backend) — don't await here so this periodic refresh sweep
-    // stays non-blocking; the emit just fires a beat later once resolved.
-    buildPlayerHistoryPayload(state.playerHistoryOverlayName).then(data => {
-      if(socket && socket.connected) socket.emit('cricketPlayerHistory', { data });
-    });
-  }
+  if(state.showPlayerHistoryCard && state.playerHistoryOverlayName) socket.emit('cricketPlayerHistory', { data: buildPlayerHistoryPayload(state.playerHistoryOverlayName) });
   if(state.showTeamHistoryCard && state.teamHistoryOverlayName) socket.emit('cricketTeamHistory', { data: buildTeamHistoryPayload(state.teamHistoryOverlayName) });
   // Points Table — this function already runs every time a match is
   // saved (including the automatic save-on-victory), so as long as the
@@ -3854,17 +3665,6 @@ function refreshLiveStatCards(){
   if(state.showPlayerStatCard) socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
   if(state.showBowlerStatCard) socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
   if(state.showTeamStatCard) socket.emit('cricketTeamStat', { data: buildTeamStatPayload() });
-  // Player History card, if it's up, gets the same ball-by-ball refresh —
-  // "This Match" and "This Tournament" (which now folds in this match's
-  // live figures via currentLeagueMatchesLive()) both need to move as the
-  // innings progresses, not just once the match is saved. Async/non-
-  // blocking like the tournament-history sweep below, so a slow backend
-  // round-trip never stalls ball-by-ball scoring.
-  if(state.showPlayerHistoryCard && state.playerHistoryOverlayName){
-    buildPlayerHistoryPayload(state.playerHistoryOverlayName).then(data => {
-      if(socket && socket.connected) socket.emit('cricketPlayerHistory', { data });
-    });
-  }
 }
 
 function addLegalBall(runsThisBall){
@@ -3891,63 +3691,11 @@ function updateBowlerSuggestions(){
   const names = new Set();
   (state.bowlingCard[key] || []).forEach(b => { if(b.name) names.add(b.name); });
   if(state.bowler.name) names.add(state.bowler.name);
-  // Merge in this scorer's global player history too (see
-  // globalPlayerSuggestCache below) — so a bowler who played for this team
-  // in an EARLIER match/tournament still autocompletes, not just names
-  // already bowled this innings.
-  globalPlayerSuggestCache.forEach(n => names.add(n));
   dl.innerHTML = [...names].map(n => `<option value="${escapeHtmlAttr(n)}"></option>`).join('');
 }
 function escapeHtmlAttr(s){
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
-
-/* 🌟 GLOBAL PLAYER AUTOCOMPLETE + PROFILE RESOLUTION (see /api/players/*
-   on the server). Every input tagged data-global-suggest="1" (striker,
-   non-striker, bowler, new-over bowler) gets:
-     1. Debounced typeahead against this scorer's whole player history
-        (not just this match/innings) via /api/players/search, so a name
-        typed once on ANY device/match suggests itself everywhere after.
-     2. A fire-and-forget /api/players/resolve call once a name is
-        committed (blur/change), so a permanent playerId exists for
-        stats/clips even before the player's first ball is bowled — the
-        same find-or-create also happens automatically on logBall, this
-        just makes it happen a little earlier.
-   Both are best-effort: any failure (offline, not logged in, Mongo not
-   configured) silently no-ops and the field behaves exactly as before. */
-let globalPlayerSuggestCache = [];
-let globalPlayerSuggestTimer = null;
-async function fetchGlobalPlayerSuggestions(query){
-  if(!currentOwnerUid() || query.trim().length < 2) return;
-  try{
-    const res = await fetch(withUid(`/api/players/search?q=${encodeURIComponent(query.trim())}`));
-    const data = await res.json();
-    if(!data || !data.success) return;
-    globalPlayerSuggestCache = (data.players || []).map(p => p.displayName).filter(Boolean);
-    const dl = document.getElementById('global-player-suggestions');
-    if(dl) dl.innerHTML = globalPlayerSuggestCache.map(n => `<option value="${escapeHtmlAttr(n)}"></option>`).join('');
-    updateBowlerSuggestions(); // also refresh the merged bowler datalist
-  }catch(e){ /* best-effort only */ }
-}
-function resolveGlobalPlayer(name){
-  const trimmed = (name || '').trim();
-  if(!trimmed || !currentOwnerUid()) return;
-  fetch(withUid('/api/players/resolve'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: trimmed })
-  }).catch(() => {}); // best-effort only
-}
-document.addEventListener('DOMContentLoaded', () => {
-  document.querySelectorAll('[data-global-suggest="1"]').forEach(el => {
-    el.addEventListener('input', () => {
-      clearTimeout(globalPlayerSuggestTimer);
-      const val = el.value;
-      globalPlayerSuggestTimer = setTimeout(() => fetchGlobalPlayerSuggestions(val), 300);
-    });
-    el.addEventListener('change', () => resolveGlobalPlayer(el.value));
-  });
-});
 
 /* A legal delivery for the CURRENT bowler — runsChargedToBowler excludes
    byes/leg-byes (those are extras, not charged against the bowler) but
@@ -4087,16 +3835,45 @@ function recordBall(kind, meta){
       const dismissalType = (meta && meta.dismissalType) || 'Bowled';
       const isBowlerWicket = !['Run Out', 'Retired Hurt'].includes(dismissalType);
       const shortMap = { Bowled:'b', Caught:'c', LBW:'lbw', Stumped:'st', 'Hit Wicket':'hit wkt', 'Run Out':'run out', 'Retired Hurt':'retired hurt' };
+
+      // Run Out: either batsman can be the one out, and 0-3 runs may have
+      // been completed before the throw hit the stumps — those runs count
+      // toward the team total, the partnership, the bowler's conceded runs
+      // (they're live-ball runs, not byes/extras) and the facing batsman's
+      // personal score, exactly like a normal running shot. If an odd
+      // number were completed, the batters have physically crossed ends —
+      // apply that swap BEFORE working out who's actually at which end,
+      // since "non-striker" from the picker means "whoever was at that end
+      // for this ball", not after any crossing.
+      let runOutRuns = 0;
+      // Capture WHO is out before the odd-run swap below moves the
+      // striker/nonStriker references around — meta.runOutEnd names the
+      // end as it was for THIS ball, and must resolve against the
+      // pre-swap objects, not whatever ends up in that slot afterward.
+      let dismissedBatter = state.striker;
+      if(dismissalType === 'Run Out'){
+        runOutRuns = (meta && typeof meta.runsCompleted === 'number') ? meta.runsCompleted : 0;
+        dismissedBatter = (meta && meta.runOutEnd === 'nonStriker') ? state.nonStriker : state.striker;
+        state.score.runs += runOutRuns;
+        state.striker.runs += runOutRuns;
+        if(runOutRuns % 2 === 1){
+          const tmp = state.striker; state.striker = state.nonStriker; state.nonStriker = tmp;
+        }
+      }
+
       const dismissalText = (isBowlerWicket && state.bowler.name) ? `${shortMap[dismissalType]} b ${state.bowler.name}` : shortMap[dismissalType];
       lastDismissalType = dismissalType;
       logDismissalText = dismissalText;
-      document.getElementById('disp-last-dismissal').textContent = `${state.striker.name} — ${dismissalText}`;
+      document.getElementById('disp-last-dismissal').textContent = `${dismissedBatter.name} — ${dismissalText}`;
 
       state.score.wickets++;
-      state.thisOver.push('W');
-      pushBallHistory('W');
-      overCompletedThisBall = addLegalBall(0);
-      addBowlerBall(0);
+      state.thisOver.push(runOutRuns > 0 ? `${runOutRuns}W` : 'W');
+      pushBallHistory(runOutRuns > 0 ? `${runOutRuns}W` : 'W');
+      overCompletedThisBall = addLegalBall(runOutRuns);
+      // Runs completed on a run out ARE charged to the bowler's conceded
+      // total (they're not byes/leg-byes) — every other wicket type
+      // concedes zero runs to the bowler on the dismissal itself.
+      addBowlerBall(dismissalType === 'Run Out' ? runOutRuns : 0);
       if(isBowlerWicket){
         state.bowler.wickets++;
         state.bowler.wicketsThisOver = (state.bowler.wicketsThisOver || 0) + 1;
@@ -4105,8 +3882,8 @@ function recordBall(kind, meta){
       // Archive the dismissed batsman + this fall of wicket — this is what
       // powers the Innings/Match Summary graphics later.
       state.battingCard[state.battingTeam].push({
-        name: state.striker.name, runs: state.striker.runs, balls: state.striker.balls,
-        fours: state.striker.fours, sixes: state.striker.sixes, out: true, howOut: dismissalText,
+        name: dismissedBatter.name, runs: dismissedBatter.runs, balls: dismissedBatter.balls,
+        fours: dismissedBatter.fours, sixes: dismissedBatter.sixes, out: true, howOut: dismissalText,
         inningsNo: state.inningsNumber
       });
       state.fallOfWickets[state.battingTeam].push({
@@ -4119,24 +3896,33 @@ function recordBall(kind, meta){
       // is submitted (or skipped) — see the '.wm-option' click handler
       // below, which opens that modal right after this call returns.
       if(!meta || !meta.deferAnimation){
-        fireEvent('WICKET', 'WICKET!', state.striker.name);
+        fireEvent('WICKET', 'WICKET!', dismissedBatter.name);
       }
       if(wasFreeHit) toast('⚠️ Free Hit wicket recorded as a Run Out');
 
       // Cricket's ends-swap rule doesn't stop applying just because the
-      // wicket ball happened to be the over's last: the survivor (till-now
-      // non-striker) still takes strike for the new over, and the incoming
-      // batsman fills whichever end is now vacant. On any OTHER ball of the
-      // over, the incoming batsman simply replaces the dismissed batsman at
-      // the SAME end — no swap, since the over isn't changing bowlers yet.
+      // wicket ball happened to be the over's last: the survivor still
+      // takes strike for the new over, and the incoming batsman fills
+      // whichever end is now vacant. On any OTHER ball of the over, the
+      // incoming batsman simply replaces the dismissed batsman at the SAME
+      // end — no swap, since the over isn't changing bowlers yet. This is
+      // written generally so it's correct whichever end (striker or
+      // non-striker) turned out to be the one dismissed.
       if(overCompletedThisBall){
-        const dismissed = state.striker;
-        state.striker = state.nonStriker;
-        state.nonStriker = dismissed; // holds the OUT batsman's line until "Send In New Batsman" overwrites it — same as the same-end case below
-        state.newBatsmanEnd = 'nonStriker';
-        toast('ℹ️ Over complete on this wicket — strike has rotated automatically; new batsman comes in at the non-striker\'s end.');
+        const newStrikerCandidate = state.nonStriker;
+        const newNonStrikerCandidate = state.striker;
+        if(dismissedBatter === newStrikerCandidate){
+          state.striker = dismissedBatter; // placeholder until "Send In New Batsman" overwrites it
+          state.nonStriker = newNonStrikerCandidate; // survivor moves to the non-striker's end
+          state.newBatsmanEnd = 'striker';
+        } else {
+          state.striker = newStrikerCandidate; // survivor moves to the striker's end
+          state.nonStriker = dismissedBatter; // placeholder until "Send In New Batsman" overwrites it
+          state.newBatsmanEnd = 'nonStriker';
+        }
+        toast('ℹ️ Over complete on this wicket — strike has rotated automatically; new batsman comes in at the vacant end.');
       } else {
-        state.newBatsmanEnd = 'striker';
+        state.newBatsmanEnd = (dismissedBatter === state.nonStriker) ? 'nonStriker' : 'striker';
       }
       break;
     }
@@ -4281,42 +4067,20 @@ function logBallToDb(kind, runsBefore, ballTimestamp){
     kind,
     runs: state.score.runs - runsBefore,
     battingTeam: state.battingTeam,
-    // 🐛 FIX: server's playerKey()/resolvePlayerId() (used for clip
-    // linking, career stats, everything) expect plain name STRINGS here
-    // — sending the whole {name, runs, balls,...} object made every
-    // strikerKey/bowlerKey in the DB literally the text "[object Object]"
-    // forever, silently breaking all player-clip matching. Runs/balls/
-    // overs for these players are already tracked separately in `score`
-    // and elsewhere — nothing here ever needed the extra fields.
-    striker: state.striker.name,
-    nonStriker: state.nonStriker.name,
-    bowler: state.bowler.name,
-    dismissal: kind === 'W' ? { type: lastDismissalType || 'Bowled' } : null,
+    striker: { name: state.striker.name, runs: state.striker.runs, balls: state.striker.balls },
+    nonStriker: { name: state.nonStriker.name, runs: state.nonStriker.runs, balls: state.nonStriker.balls },
+    bowler: { name: state.bowler.name, overs: state.bowler.overs, balls: state.bowler.balls, runs: state.bowler.runs, wickets: state.bowler.wickets },
+    dismissal: kind === 'W' ? (lastDismissalType || 'Bowled') : null,
     score: { ...state.score },
     timestamp: ballTimestamp
   });
 
   if(kind === 'W' || kind === '4' || kind === '6'){
     const eventType = kind === 'W' ? 'WICKET' : (kind === '4' ? 'FOUR' : 'SIX');
-    // ballMeta — same shape the socket 'logBall' event above already
-    // sends — lets the main server link this clip to the real
-    // striker/bowler (see finalizeClip/findCanonicalBall on the server)
-    // so it shows up under the right player in the scorecard.
-    const ballMeta = {
-      innings: state.inningsNumber,
-      over: state.score.overs,
-      ballInOver: state.score.balls,
-      runs: state.score.runs - runsBefore,
-      battingTeam: state.battingTeam,
-      striker: state.striker.name,
-      nonStriker: state.nonStriker.name,
-      bowler: state.bowler.name,
-      dismissal: kind === 'W' ? { type: lastDismissalType || 'Bowled' } : null
-    };
     fetch(`${CLIPPER_HELPER_URL}/clip`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ eventType, timestamp: ballTimestamp, matchId, ballMeta })
+      body: JSON.stringify({ eventType, timestamp: ballTimestamp })
     }).catch(() => toast('⚠️ Clipper helper not running — clip skipped'));
   }
 }
@@ -4424,6 +4188,12 @@ document.querySelectorAll('.wm-option').forEach(btn => {
   btn.addEventListener('click', () => {
     const dismissalType = btn.dataset.dismissal;
     closeWicketModal();
+    if(dismissalType === 'Run Out'){
+      // Run Out needs two more facts (which end, how many runs were
+      // completed) before it can be recorded — see openRunOutModal().
+      openRunOutModal();
+      return;
+    }
     const dismissedName = state.striker.name || 'Batsman';
     recordBall('W', { dismissalType, deferAnimation: true });
     openNewBatsmanModal(dismissedName);
@@ -4432,6 +4202,52 @@ document.querySelectorAll('.wm-option').forEach(btn => {
 document.getElementById('wicket-modal-cancel').addEventListener('click', closeWicketModal);
 document.getElementById('wicket-modal-overlay').addEventListener('click', (e) => {
   if(e.target.id === 'wicket-modal-overlay') closeWicketModal();
+});
+
+/* ============================================================
+   RUN OUT DETAILS PICKER — either batsman can be the one run out, and
+   0-3 runs may have been completed before the throw hit the stumps.
+   Two-step picker: pick the end that's out, then how many runs were
+   completed; recordBall() is only called once both are known.
+   ============================================================ */
+function openRunOutModal(){
+  const strikerBtn = document.getElementById('runout-end-striker');
+  const nonStrikerBtn = document.getElementById('runout-end-nonstriker');
+  strikerBtn.textContent = `${state.striker.name || 'Striker'} (striker)`;
+  nonStrikerBtn.textContent = `${state.nonStriker.name || 'Non-striker'} (non-striker)`;
+  document.getElementById('runout-step-end').style.display = '';
+  document.getElementById('runout-step-runs').style.display = 'none';
+  document.getElementById('runout-modal-overlay').classList.add('show');
+}
+function closeRunOutModal(){
+  document.getElementById('runout-modal-overlay').classList.remove('show');
+}
+function pickRunOutEnd(end){
+  // 'striker' or 'nonStriker', referring to who was at that end for THIS
+  // ball, before any swap the completed runs themselves would cause.
+  const dismissedName = (end === 'nonStriker' ? state.nonStriker.name : state.striker.name) || 'Batsman';
+  document.getElementById('runout-step-end').style.display = 'none';
+  const wrap = document.getElementById('runout-runs-options');
+  wrap.innerHTML = '';
+  for(let i = 0; i <= 3; i++){
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'wm-option';
+    b.textContent = String(i);
+    b.addEventListener('click', () => {
+      closeRunOutModal();
+      recordBall('W', { dismissalType: 'Run Out', runOutEnd: end, runsCompleted: i, deferAnimation: true });
+      openNewBatsmanModal(dismissedName);
+    });
+    wrap.appendChild(b);
+  }
+  document.getElementById('runout-step-runs').style.display = '';
+}
+document.getElementById('runout-end-striker').addEventListener('click', () => pickRunOutEnd('striker'));
+document.getElementById('runout-end-nonstriker').addEventListener('click', () => pickRunOutEnd('nonStriker'));
+document.getElementById('runout-modal-cancel').addEventListener('click', closeRunOutModal);
+document.getElementById('runout-modal-overlay').addEventListener('click', (e) => {
+  if(e.target.id === 'runout-modal-overlay') closeRunOutModal();
 });
 
 /* ============================================================
