@@ -56,6 +56,13 @@
     display:flex; flex-direction:column;
     filter:drop-shadow(0 16px 34px rgba(0,0,0,0.45));
     opacity:0;
+    /* A touch bigger overall on the broadcast canvas (vMix felt small at
+       1:1) — scaling the whole shell keeps every internal proportion,
+       gap and font-size ratio exactly as designed. Origin is bottom-
+       center so it grows upward/outward from where it's anchored
+       instead of drifting off the bottom edge or off to one side. */
+    transform:scale(1.14);
+    transform-origin:50% 100%;
   }
 
   /* ---- Top row ---- */
@@ -204,7 +211,7 @@
   #crr-seg.chase-mode{ min-width:min(27vw,308px); }
   #crr-seg .crr-item{
     flex:1 1 0; display:flex; flex-direction:column; align-items:center;
-    justify-content:center; gap:6px; padding:0 16px; position:relative; min-width:0;
+    justify-content:center; text-align:center; gap:6px; padding:0 16px; position:relative; min-width:0;
   }
   /* Narrower per-item padding once there are 3 items sharing the row —
      keeps the whole group compact so batters/bowler segments beside it
@@ -219,8 +226,17 @@
      label is still fully readable, a clipped one is not. Values (.val)
      stay strictly nowrap since they're short by nature (2-3 digits, a
      2-decimal rate) and must never break mid-number. */
-  #crr-seg .lbl{ font-size:10.5px; font-weight:800; letter-spacing:.8px; color:var(--ink-dim); text-transform:uppercase; line-height:1.2; }
-  #crr-seg .val{ font-family:var(--font-num); font-weight:900; font-size:min(2.2vw,26px); color:#1c4fd8; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  /* Labels are allowed to wrap onto a 2nd line rather than ever being
+     forced onto one line and clipped or overlapping a neighbour — a
+     wrapped label is still fully readable, a clipped one is not.
+     Values (.val) stay strictly nowrap since they're short by nature
+     (2-3 digits, a 2-decimal rate) and must never break mid-number.
+     width:100% + text-align:center on BOTH (not just relying on the
+     flex box centering) guarantees the label and the value always sit
+     on the exact same centre line under each other, however wide their
+     own text happens to be. */
+  #crr-seg .lbl{ display:block; width:100%; text-align:center; font-size:10.5px; font-weight:800; letter-spacing:.8px; color:var(--ink-dim); text-transform:uppercase; line-height:1.2; }
+  #crr-seg .val{ display:block; width:100%; text-align:center; font-family:var(--font-num); font-weight:900; font-size:min(2.2vw,26px); color:#1c4fd8; font-variant-numeric:tabular-nums; white-space:nowrap; }
 
   /* Toggle stage: both faces are absolutely stacked in the exact same
      box, so swapping which one is visible never shifts layout, width,
@@ -230,7 +246,7 @@
   .toggle-stage{ position:relative; width:100%; height:58px; }
   .toggle-face{
     position:absolute; inset:0; display:flex; flex-direction:column;
-    align-items:center; justify-content:center; gap:6px; opacity:0;
+    align-items:center; justify-content:center; text-align:center; gap:6px; opacity:0;
   }
   .toggle-face.is-active{ opacity:1; }
 
@@ -916,11 +932,11 @@
               <div class="crr-item" id="rate-item">
                 <div class="toggle-stage" id="rate-toggle-stage">
                   <div class="toggle-face is-active" id="crr-face">
-                    <div class="lbl">Current Run Rate</div>
+                    <div class="lbl">CRR</div>
                     <div class="val" id="crr-val">0.00</div>
                   </div>
                   <div class="toggle-face" id="rrr-face">
-                    <div class="lbl">Required Run Rate</div>
+                    <div class="lbl">RRR</div>
                     <div class="val" id="rrr-val">—</div>
                   </div>
                 </div>
@@ -1534,7 +1550,7 @@ function renderState(s){
   // balls-remaining countdown are meaningful. Test cricket (no overs
   // limit) and first-innings/non-chase states never enter this branch,
   // so Target/RRR/Balls Remaining correctly stay hidden there — the
-  // rate slot just shows plain Current Run Rate, same as before.
+  // rate slot just shows plain CRR, same as before.
   const totalInningsBalls = oversLimit ? oversLimit * 6 : null;
   const ballsLeft = totalInningsBalls ? Math.max(totalInningsBalls - totalBalls, 0) : null;
   const chaseMode = !!(s.target && totalInningsBalls);
