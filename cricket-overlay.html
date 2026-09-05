@@ -188,9 +188,51 @@
   .brow .bstar{ color:#1c4fd8; }
   .brow .bballs{ font-family:var(--font-num); font-weight:700; font-size:min(1.3vw,15px); color:var(--ink-dim); margin-left:6px; min-width:20px; }
 
-  #crr-seg{ flex:0 0 auto; align-items:center; text-align:center; min-width:min(13vw,150px); gap:6px; }
-  #crr-seg .lbl{ font-size:10.5px; font-weight:800; letter-spacing:.8px; color:var(--ink-dim); text-transform:uppercase; }
-  #crr-seg .val{ font-family:var(--font-num); font-weight:900; font-size:min(2.2vw,26px); color:#1c4fd8; font-variant-numeric:tabular-nums; }
+  /* ---- Rate/target segment ----
+     Default (no chase applicable): a single centred item, exactly the
+     old "Current Run Rate" block. Once a limited-overs chase is on
+     (target set + a real overs limit), it becomes a 3-up row —
+     [CRR/RRR toggle] [Target] [Balls Remaining] — evenly spaced with
+     hairline dividers, matching the batters/bowler segment styling.
+     Width grows via the .chase-mode modifier so the two neighbouring
+     flex:1 segments simply give it a bit more room; nothing overlaps
+     because batters-seg/bowler-seg keep their own min-widths. */
+  #crr-seg{
+    flex:0 0 auto; display:flex; flex-direction:row; align-items:stretch;
+    justify-content:center; min-width:min(13vw,150px); transition:min-width .3s ease;
+  }
+  #crr-seg.chase-mode{ min-width:min(27vw,308px); }
+  #crr-seg .crr-item{
+    flex:1 1 0; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; gap:6px; padding:0 16px; position:relative; min-width:0;
+  }
+  /* Narrower per-item padding once there are 3 items sharing the row —
+     keeps the whole group compact so batters/bowler segments beside it
+     never get squeezed, while still giving every number breathing room. */
+  #crr-seg.chase-mode .crr-item{ padding:0 10px; }
+  #crr-seg .crr-item + .crr-item::before{
+    content:''; position:absolute; left:0; top:14%; bottom:14%; width:1px; background:var(--hairline);
+  }
+  /* Labels are allowed to wrap onto a 2nd line (e.g. "Current Run Rate"
+     inside the narrower 3-up chase layout) rather than ever being forced
+     onto one line and clipped or overlapping a neighbour — a wrapped
+     label is still fully readable, a clipped one is not. Values (.val)
+     stay strictly nowrap since they're short by nature (2-3 digits, a
+     2-decimal rate) and must never break mid-number. */
+  #crr-seg .lbl{ font-size:10.5px; font-weight:800; letter-spacing:.8px; color:var(--ink-dim); text-transform:uppercase; line-height:1.2; }
+  #crr-seg .val{ font-family:var(--font-num); font-weight:900; font-size:min(2.2vw,26px); color:#1c4fd8; font-variant-numeric:tabular-nums; white-space:nowrap; }
+
+  /* Toggle stage: both faces are absolutely stacked in the exact same
+     box, so swapping which one is visible never shifts layout, width,
+     or the position of Target/Balls Remaining beside it. Height is
+     fixed to the label+value stack so long values (e.g. "10.75") never
+     reflow the row. */
+  .toggle-stage{ position:relative; width:100%; height:58px; }
+  .toggle-face{
+    position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:6px; opacity:0;
+  }
+  .toggle-face.is-active{ opacity:1; }
 
   /* ---- Bowler segment: name + W-R figures + overs, all on one line,
      then a real broadcast-style "this over" ball tracker below (always
@@ -271,21 +313,9 @@
      white dot mark, not a light/washed-out circle with the digit "0". */
   .pip.zero{ background:var(--team-a-dark); border-color:transparent; color:#fff; font-size:15px; }
 
-  /* ---- Bottom stat bar ---- */
-  #bottom-row{
-    display:flex; align-items:stretch; height:min(5.4vw,58px);
-    background:linear-gradient(180deg, var(--bottombar), var(--bottombar-2));
-    border-radius:0 0 10px 10px;
-    clip-path:polygon(0 0,100% 0,100% 100%,0 100%);
-  }
-  .bstat{ flex:1 1 0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; position:relative; padding:0 8px; }
-  .bstat + .bstat::before{ content:''; position:absolute; left:0; top:18%; bottom:18%; width:1px; background:rgba(255,255,255,0.10); }
-  .bstat .lbl{ font-size:9.5px; font-weight:800; letter-spacing:1px; color:rgba(255,255,255,0.6); text-transform:uppercase; }
-  .bstat .val{ font-family:var(--font-num); font-weight:900; font-size:min(1.7vw,19px); color:#fff; font-variant-numeric:tabular-nums; }
-  #stat-live{ flex:1.35 1 0; }
-  #stat-live .val{ font-size:min(1.15vw,13px); font-weight:800; letter-spacing:.3px; }
-  #stat-balls .bar-track{ position:absolute; left:16%; right:16%; bottom:5px; height:3px; background:rgba(255,255,255,0.14); border-radius:3px; overflow:hidden; }
-  #stat-balls .bar-fill{ height:100%; width:0%; background:linear-gradient(90deg,var(--progress),#ffd873); }
+  /* Bottom black stat bar removed per spec — Target / Balls Remaining
+     now live inline in #crr-seg (see above), and CRR/RRR occupy the
+     same slot on a 15s toggle instead of a separate bar underneath. */
 
   /* ============================================================
      LIVE EVENT SYSTEM — the scoreboard itself transforms into a
@@ -727,7 +757,7 @@
      ("This Match" scope) without re-playing the whole entrance.
      Motion uses GSAP's expo.out — the same "fast start, silky
      deceleration, no bounce" curve as the rest of this overlay
-     (mid-row/bottom-row build, digit rolls, summary cards) — so it
+     (mid-row build, digit rolls, summary cards) — so it
      reads as one consistent design language, not a bolted-on widget.
      ============================================================ */
   .stat-card{
@@ -883,8 +913,26 @@
               <div class="brow" id="row-nonstriker"><span class="bname" id="nonstriker-name">Batsman 2</span><span class="bruns" id="nonstriker-runs">0</span><span class="bballs" id="nonstriker-balls">0</span></div>
             </div>
             <div class="wseg" id="crr-seg">
-              <div class="lbl">Current Run Rate</div>
-              <div class="val" id="crr-val">0.00</div>
+              <div class="crr-item" id="rate-item">
+                <div class="toggle-stage" id="rate-toggle-stage">
+                  <div class="toggle-face is-active" id="crr-face">
+                    <div class="lbl">Current Run Rate</div>
+                    <div class="val" id="crr-val">0.00</div>
+                  </div>
+                  <div class="toggle-face" id="rrr-face">
+                    <div class="lbl">Required Run Rate</div>
+                    <div class="val" id="rrr-val">—</div>
+                  </div>
+                </div>
+              </div>
+              <div class="crr-item" id="target-item" style="display:none">
+                <div class="lbl">Target</div>
+                <div class="val" id="target-val">—</div>
+              </div>
+              <div class="crr-item" id="balls-item" style="display:none">
+                <div class="lbl">Balls Remaining</div>
+                <div class="val" id="balls-remaining-val">—</div>
+              </div>
             </div>
             <div class="wseg" id="bowler-seg">
               <div id="bowler-line">
@@ -955,14 +1003,6 @@
           </div>
         </div>
       </div>
-    </div>
-
-    <div id="bottom-row">
-      <div class="bstat"><div class="lbl">Partnership</div><div class="val" id="stat-partnership">0 (0)</div></div>
-      <div class="bstat"><div class="lbl" id="stat-runs-label">Runs to Win</div><div class="val" id="stat-runs">—</div></div>
-      <div class="bstat" id="stat-balls"><div class="lbl">Balls Remaining</div><div class="val" id="stat-balls-val">—</div><div class="bar-track"><div class="bar-fill" id="bar-fill"></div></div></div>
-      <div class="bstat"><div class="lbl">Req. Run Rate</div><div class="val" id="stat-rrr">—</div></div>
-      <div class="bstat" id="stat-live"><div class="lbl">Live From</div><div class="val" id="stat-venue">—</div></div>
     </div>
 
     <div id="freehit-chip"><span class="bolt">⚡</span> FREE HIT</div>
@@ -1325,12 +1365,89 @@ function setNameText(elId, name){
   }
 }
 
+/* ============================================================
+   CRR / RRR 15-SECOND TOGGLE (chase mode only)
+   Apple-style: both faces are absolutely stacked in the exact same
+   box (#rate-toggle-stage), so switching which one is visible never
+   moves Target/Balls Remaining or reflows the row. A single
+   setInterval drives the swap, independent of how often renderState()
+   runs (every ball) — renderState only ever updates the numbers
+   inside each face; it never resets or restarts the clock. Entering/
+   leaving chase mode is the only thing that starts/stops the timer,
+   so there is never more than one loop alive at once.
+   ============================================================ */
+let chaseToggleTimer = null;   // the single 15s interval, or null when not in chase mode
+let chaseShowingRRR  = false;  // which face is currently the active one
+let inChaseMode      = false;  // whether the last render was in chase mode
+
+function crossfadeToggleFace(showRRR){
+  const outEl = document.getElementById(showRRR ? 'crr-face' : 'rrr-face');
+  const inEl  = document.getElementById(showRRR ? 'rrr-face' : 'crr-face');
+  gsap.killTweensOf([outEl, inEl]);
+  // Both faces are position:absolute + inset:0, so they already occupy the
+  // exact same box — only opacity + a couple px of vertical drift move,
+  // nothing about the surrounding layout (Target/Balls Remaining, segment
+  // width) is touched. The incoming face starts a hair below its resting
+  // spot and the outgoing one drifts a hair above as it fades, so the
+  // motion reads as one continuous handoff rather than two separate cuts.
+  outEl.classList.remove('is-active');
+  inEl.classList.add('is-active');
+  gsap.set(inEl, { opacity: 0, y: 6 });
+  gsap.to(outEl, { opacity: 0, y: -6, duration: 0.4, ease: 'power2.inOut' });
+  gsap.to(inEl,  { opacity: 1, y: 0, duration: 0.5, ease: 'power2.out', delay: 0.05 });
+}
+
+function startChaseToggle(){
+  if(chaseToggleTimer) return; // already running — never stack a second loop
+  chaseShowingRRR = false;
+  chaseToggleTimer = setInterval(() => {
+    chaseShowingRRR = !chaseShowingRRR;
+    crossfadeToggleFace(chaseShowingRRR);
+  }, 15000);
+}
+
+function stopChaseToggle(){
+  if(chaseToggleTimer){ clearInterval(chaseToggleTimer); chaseToggleTimer = null; }
+  chaseShowingRRR = false;
+  // Snap cleanly back to the CRR face with no lingering opacity/position
+  // from a mid-flight animation, ready for the next time chase mode opens.
+  const crrFace = document.getElementById('crr-face');
+  const rrrFace = document.getElementById('rrr-face');
+  gsap.killTweensOf([crrFace, rrrFace]);
+  if(crrFace){ crrFace.classList.add('is-active'); gsap.set(crrFace, { clearProps: 'opacity,y' }); }
+  if(rrrFace){ rrrFace.classList.remove('is-active'); gsap.set(rrrFace, { clearProps: 'opacity,y' }); }
+}
+
+// Shows/hides Target + Balls Remaining and starts/stops the toggle timer
+// exactly on the transition edge (chase just started / just ended) —
+// never on every render — so the 15s cycle is never reset mid-count by
+// a routine ball-by-ball score update.
+function setChaseMode(chaseMode){
+  const seg = document.getElementById('crr-seg');
+  const targetItem = document.getElementById('target-item');
+  const ballsItem = document.getElementById('balls-item');
+  if(chaseMode && !inChaseMode){
+    inChaseMode = true;
+    seg.classList.add('chase-mode');
+    targetItem.style.display = 'flex';
+    ballsItem.style.display = 'flex';
+    startChaseToggle();
+  } else if(!chaseMode && inChaseMode){
+    inChaseMode = false;
+    seg.classList.remove('chase-mode');
+    targetItem.style.display = 'none';
+    ballsItem.style.display = 'none';
+    stopChaseToggle();
+  }
+}
+
 function renderState(s){
   if(!s || !Object.keys(s).length) return;
 
   if(s.visible === false){
     if(hasEntered) animateExit();
     setFreeHitChip(false); // the whole card is leaving — never leave the chip floating behind
+    setChaseMode(false);   // stop the 15s CRR/RRR loop — never let it tick behind a hidden card
     lastState = s;
     return;
   }
@@ -1367,8 +1484,6 @@ function renderState(s){
   const totalBalls = (s.score?.overs ?? 0) * 6 + (s.score?.balls ?? 0);
   const crr = totalBalls > 0 ? ((s.score?.runs ?? 0) / (totalBalls / 6)) : 0;
   document.getElementById('crr-val').textContent = crr.toFixed(2);
-
-  document.getElementById('stat-partnership').textContent = `${s.partnershipRuns ?? 0} (${s.partnershipBalls ?? 0})`;
 
   const oversLimit = s.oversPerInnings && s.oversPerInnings !== Infinity ? s.oversPerInnings : null;
 
@@ -1413,41 +1528,25 @@ function renderState(s){
     }
   }
 
-  if(s.target){
+  // ---- CRR/RRR toggle + Target/Balls Remaining ----
+  // "Chase mode" = a real target AND a real overs limit — i.e. an
+  // ODI/T20/custom limited-overs run-chase, exactly where RRR and a
+  // balls-remaining countdown are meaningful. Test cricket (no overs
+  // limit) and first-innings/non-chase states never enter this branch,
+  // so Target/RRR/Balls Remaining correctly stay hidden there — the
+  // rate slot just shows plain Current Run Rate, same as before.
+  const totalInningsBalls = oversLimit ? oversLimit * 6 : null;
+  const ballsLeft = totalInningsBalls ? Math.max(totalInningsBalls - totalBalls, 0) : null;
+  const chaseMode = !!(s.target && totalInningsBalls);
+
+  if(chaseMode){
     const runsNeeded = Math.max(s.target - (s.score?.runs ?? 0), 0);
-    const totalInningsBalls = oversLimit ? oversLimit * 6 : null;
-    const ballsLeft = totalInningsBalls ? Math.max(totalInningsBalls - totalBalls, 0) : null;
-    document.getElementById('stat-runs-label').textContent = 'Runs to Win';
-    document.getElementById('stat-runs').textContent = runsNeeded;
-    document.getElementById('stat-balls-val').textContent = ballsLeft ?? '—';
-    document.getElementById('bar-fill').style.width = (ballsLeft && totalInningsBalls) ? `${100*(1-ballsLeft/totalInningsBalls)}%` : '0%';
     const rrr = ballsLeft && ballsLeft > 0 ? (runsNeeded / (ballsLeft/6)) : 0;
-    document.getElementById('stat-rrr').textContent = ballsLeft ? rrr.toFixed(2) : '—';
-  } else if(s.format === 'Test' && (s.inningsNumber || 1) > 1){
-    // Test, 2nd/3rd innings, no target yet — this slot shows Lead/Trail
-    // instead of a run rate, same as a real Test broadcast graphic.
-    const lt = currentLeadTrail(s);
-    const battingKey = s.battingTeam;
-    if(!lt || lt.tied){
-      document.getElementById('stat-runs-label').textContent = 'Scores Level';
-      document.getElementById('stat-runs').textContent = '—';
-    } else {
-      document.getElementById('stat-runs-label').textContent = lt.team === battingKey ? 'Lead' : 'Trail';
-      document.getElementById('stat-runs').textContent = lt.amount;
-    }
-    document.getElementById('stat-balls-val').textContent = '—';
-    document.getElementById('bar-fill').style.width = '0%';
-    document.getElementById('stat-rrr').textContent = crr.toFixed(2);
-  } else {
-    const totalInningsBalls = oversLimit ? oversLimit * 6 : null;
-    const ballsLeft = totalInningsBalls ? Math.max(totalInningsBalls - totalBalls, 0) : null;
-    document.getElementById('stat-runs-label').textContent = 'Run Rate';
-    document.getElementById('stat-runs').textContent = crr.toFixed(2);
-    document.getElementById('stat-balls-val').textContent = ballsLeft ?? '—';
-    document.getElementById('bar-fill').style.width = (ballsLeft && totalInningsBalls) ? `${100*(1-ballsLeft/totalInningsBalls)}%` : '0%';
-    document.getElementById('stat-rrr').textContent = '—';
+    document.getElementById('rrr-val').textContent = ballsLeft ? rrr.toFixed(2) : '—';
+    document.getElementById('target-val').textContent = s.target;
+    document.getElementById('balls-remaining-val').textContent = ballsLeft ?? '—';
   }
-  document.getElementById('stat-venue').textContent = s.venue || '—';
+  setChaseMode(chaseMode);
 
   setFreeHitChip(s.freeHit);
 
@@ -1667,12 +1766,10 @@ function animateEntry(){
   gsap.set('#cap-left', { clipPath: 'polygon(0 0,0 0,0 100%,0 100%)' });
   gsap.set('#cap-right', { clipPath: 'polygon(100% 0,100% 0,100% 100%,100% 100%)' });
   gsap.set('#mid-row', { scaleX: 0, transformOrigin: 'center' });
-  gsap.set('#bottom-row', { scaleX: 0, transformOrigin: 'center' });
 
   tl.to('#cap-left', { clipPath: 'polygon(0 0,100% 0,82% 100%,0 100%)', duration: 0.5 }, 0.05)
     .to('#cap-right', { clipPath: 'polygon(18% 0,100% 0,100% 100%,0 100%)', duration: 0.5 }, 0.12)
     .to('#mid-row', { scaleX: 1, duration: 0.55, ease: 'power3.out' }, 0.18)
-    .to('#bottom-row', { scaleX: 1, duration: 0.5, ease: 'power3.out' }, 0.34)
     // beat 2 — text
     .from('.cap-logo', { opacity: 0, scale: 0.5, duration: 0.35, ease: 'back.out(2.4)', stagger: 0.06 }, 0.55)
     .from('.cap-short', { opacity: 0, y: 8, duration: 0.3, stagger: 0.06 }, 0.6)
@@ -1682,13 +1779,11 @@ function animateEntry(){
     .from('#batters-seg .brow', { opacity: 0, x: -10, duration: 0.32, stagger: 0.07 }, 0.72)
     .from('#crr-seg > *', { opacity: 0, y: 8, duration: 0.3, stagger: 0.05 }, 0.78)
     .from('#bowler-line > *', { opacity: 0, y: 8, duration: 0.3, stagger: 0.05 }, 0.78)
-    .from('#thisover-row', { opacity: 0, y: 8, duration: 0.3 }, 0.86)
-    .from('.bstat', { opacity: 0, y: 10, duration: 0.32, stagger: 0.05 }, 0.7);
+    .from('#thisover-row', { opacity: 0, y: 8, duration: 0.3 }, 0.86);
 }
 function animateExit(){
   const tl = gsap.timeline({ defaults: { ease: 'power2.in' }, onComplete: () => { hasEntered = false; } });
-  tl.to('#bottom-row', { scaleX: 0, duration: 0.32 }, 0)
-    .to('#mid-row', { scaleX: 0, duration: 0.36 }, 0.04)
+  tl.to('#mid-row', { scaleX: 0, duration: 0.36 }, 0.04)
     .to('#cap-left', { clipPath: 'polygon(0 0,0 0,0 100%,0 100%)', duration: 0.32 }, 0.1)
     .to('#cap-right', { clipPath: 'polygon(100% 0,100% 0,100% 100%,100% 100%)', duration: 0.32 }, 0.1)
     .to('#scorecard', { opacity: 0, duration: 0.15 }, 0.5);
@@ -1753,7 +1848,7 @@ const EVENT_THEMES = {
 // underlying score data stays intact underneath (see the
 // liveCricketScore buffering further down).
 const SB_CONTENT_SELECTOR = '#cap-left .cap-logo, #cap-left .cap-text, #cap-right .cap-logo, #cap-right .cap-text, ' +
-  '#score-value, #overs-badge .ov-num, #overs-badge .ov-lbl, #live-segs, #break-seg, #bottom-row .bstat';
+  '#score-value, #overs-badge .ov-num, #overs-badge .ov-lbl, #live-segs, #break-seg';
 
 let eventState = 'idle';       // 'idle' | 'running'
 const eventQueue = [];
