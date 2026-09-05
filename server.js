@@ -1253,7 +1253,36 @@ async function resolvePlayerId(ownerUid, name) {
     }
 }
 
-// Resolves a playerId to every nameKey ever merged into it, so stats/clip
+// 🌟 Same job as resolvePlayerId() above, but for callers that already
+// know the player's identity from a client-side roster (see cricket-panel
+// TEAM SQUADS) instead of having to guess it from a name string. Upserts
+// the SAME playersCollection doc under the client's own ID rather than
+// generating a new hex one, so two players who happen to share a name
+// (even on different teams) never collide into a single profile — the
+// exact failure mode name-only resolution can't avoid. Falls back to the
+// normal name-based resolvePlayerId() when no explicit ID is given, so
+// every caller/client that doesn't send one behaves exactly as before.
+async function resolvePlayerIdExplicit(ownerUid, explicitId, name){
+  if(!explicitId) return resolvePlayerId(ownerUid, name);
+  if(!ownerUid || !playersCollection) return explicitId;
+  const nameKey = playerKey(name);
+  try{
+    await playersCollection.updateOne(
+      { playerId: explicitId, ownerUid },
+      {
+        $setOnInsert: { playerId: explicitId, ownerUid, createdAt: Date.now(), displayName: personName(name) || String(name || '').trim() },
+        $set: { updatedAt: Date.now() },
+        ...(nameKey ? { $addToSet: { nameKeys: nameKey } } : {})
+      },
+      { upsert: true }
+    );
+  }catch(err){
+    console.log('resolvePlayerIdExplicit error:', err);
+  }
+  return explicitId;
+}
+
+
 // queries can match on "any of this player's known spellings" instead of
 // just one. Returns [] if the playerId doesn't exist (caller should treat
 // that as "no results" rather than falling back to raw playerId as a key).
@@ -3141,10 +3170,14 @@ io.on('connection', async (socket) => {
             // 🌟 Stamp global playerIds alongside the existing name-string
             // keys (see resolvePlayerId) — additive only, every existing
             // *Key field and query in this file still works unchanged.
+            // Prefers the client's own roster-assigned ID (strikerId/
+            // nonStrikerId/bowlerId — see cricket-panel TEAM SQUADS) when
+            // present, so two players sharing a name never collide into
+            // one profile; falls back to name-based resolution otherwise.
             const [strikerPlayerId, nonStrikerPlayerId, bowlerPlayerId, dismissalFielderPlayerId] = ownerUid ? await Promise.all([
-                resolvePlayerId(ownerUid, data.striker),
-                resolvePlayerId(ownerUid, data.nonStriker),
-                resolvePlayerId(ownerUid, data.bowler),
+                resolvePlayerIdExplicit(ownerUid, data.strikerId, data.striker),
+                resolvePlayerIdExplicit(ownerUid, data.nonStrikerId, data.nonStriker),
+                resolvePlayerIdExplicit(ownerUid, data.bowlerId, data.bowler),
                 resolvePlayerId(ownerUid, data.dismissal && data.dismissal.fielder)
             ]) : [null, null, null, null];
             // 🛡️ Normalize through personName() in case a client sends
