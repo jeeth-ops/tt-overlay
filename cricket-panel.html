@@ -170,12 +170,54 @@
   #toast.show{ opacity:1; transform:translateY(0); }
 
   .link-row{ display:flex; gap:6px; margin-top:6px; }
-  .squad-player-row{ display:flex; align-items:center; gap:6px; padding:5px 6px; border-radius:6px; font-size:12.5px; }
-  .squad-player-row:nth-child(odd){ background:rgba(255,255,255,.03); }
-  .squad-player-row input[type="text"]{ flex:1; min-width:0; padding:5px 6px; font-size:12.5px; margin:0; }
-  .squad-player-row .player-id-badge{ opacity:.45; font-size:10px; white-space:nowrap; }
-  .squad-player-row .remove-player-btn{ background:none; border:none; color:#e05555; cursor:pointer; font-size:14px; padding:0 4px; }
-  .squad-player-row input[type="checkbox"]{ margin:0; }
+  /* ---- Team Squads & Roles: full-width hub. Pulled out of the old
+     340px setup column (where two squads had to share ~160px each,
+     leaving no room for name + ID + controls) into its own full-width
+     card above the 3-column layout, with a real grid so every row's
+     checkbox/name/ID/remove line up under labeled headers. ---- */
+  .squad-hub{ margin-bottom:18px; }
+  .squad-hub > h2{ margin-bottom:18px; }
+  .squad-hub-grid{ display:grid; grid-template-columns:1fr auto 1fr; gap:28px; align-items:start; }
+  @media (max-width: 900px){ .squad-hub-grid{ grid-template-columns:1fr; gap:22px; } .squad-divider{ display:none; } }
+
+  .squad-divider{ position:relative; align-self:stretch; display:flex; align-items:center; justify-content:center; width:36px; }
+  .squad-divider::before{ content:''; position:absolute; top:0; bottom:0; left:50%; width:1px; background:var(--border); }
+  .squad-divider span{ position:relative; z-index:1; background:var(--panel); padding:8px 2px; color:var(--text-dim); font-weight:800; font-size:11px; letter-spacing:.6px; }
+
+  .squad-col-head{ display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; margin-bottom:12px; }
+  .squad-team-title{ margin:0; font-size:15px; font-weight:800; color:var(--text); }
+  .squad-add-row{ margin:0; flex:none; }
+  .squad-add-row input{ width:190px; }
+  .squad-add-row button{ white-space:nowrap; }
+
+  .squad-list-headrow{
+    display:grid; grid-template-columns:34px 1fr 128px 30px; gap:10px;
+    padding:0 12px 8px; font-size:10.5px; text-transform:uppercase; letter-spacing:.5px;
+    color:var(--text-dim); font-weight:700;
+  }
+  .squad-list-headrow span:first-child, .squad-list-headrow span:last-child{ text-align:center; }
+
+  .squad-list{
+    max-height:340px; overflow-y:auto; border:1px solid var(--border); border-radius:10px;
+    background:var(--panel-2); padding:5px;
+  }
+  .squad-list:empty{ display:flex; align-items:center; justify-content:center; min-height:64px; }
+  .squad-list:empty::after{ content:'No players added yet — use "Add" above.'; color:var(--text-dim); font-size:13px; }
+
+  .squad-player-row{ display:grid; grid-template-columns:34px 1fr 128px 30px; gap:10px; align-items:center; padding:10px 12px; border-radius:8px; font-size:13.5px; }
+  .squad-player-row:nth-child(odd){ background:rgba(255,255,255,.035); }
+  .squad-player-row:hover{ background:rgba(255,255,255,.065); }
+  .squad-player-row input[type="text"]{ min-width:0; padding:7px 10px; font-size:13.5px; margin:0; }
+  .squad-player-row .player-id-badge{
+    opacity:.55; font-size:10.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    background:rgba(255,255,255,.05); border:1px solid var(--border); border-radius:5px; padding:4px 7px; text-align:center;
+  }
+  .squad-player-row .remove-player-btn{ justify-self:center; background:none; border:none; color:#e05555; cursor:pointer; font-size:16px; padding:2px 7px; border-radius:6px; }
+  .squad-player-row .remove-player-btn:hover{ background:rgba(239,68,68,.15); }
+  .squad-player-row input[type="checkbox"]{ justify-self:center; width:16px; height:16px; margin:0; }
+
+  .squad-roles-row{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:14px; }
+  .squad-roles-row > div > label{ margin-top:0; }
   .link-row input{ flex:1; font-size:11px; }
   .link-row button{ flex:none; }
   .qr-wrap{ display:flex; flex-direction:column; align-items:center; gap:8px; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
@@ -298,6 +340,58 @@
     <button type="button" data-target="card-session">Session</button>
   </div>
 </nav>
+
+<div style="padding:14px 14px 0;">
+<div class="card squad-hub" id="card-team-squads">
+  <h2>🧑‍🤝‍🧑 Team Squads &amp; Roles <span class="note">— set up both squads before the match starts</span></h2>
+  <div class="squad-hub-grid">
+    <div class="squad-col">
+      <div class="squad-col-head">
+        <label id="squadA-label" class="squad-team-title">Team A squad</label>
+        <div class="link-row squad-add-row">
+          <input type="text" id="squadA-new-name" placeholder="Player name">
+          <button class="small primary" id="squadA-add-btn" type="button">+ Add</button>
+        </div>
+      </div>
+      <div class="squad-list-headrow"><span>XI</span><span>Player name</span><span>Player ID</span><span></span></div>
+      <div id="squadA-list" class="squad-list"></div>
+      <div class="squad-roles-row">
+        <div>
+          <label>Captain</label>
+          <select id="squadA-captain"><option value="">— None —</option></select>
+        </div>
+        <div>
+          <label>Wicket-Keeper</label>
+          <select id="squadA-wk"><option value="">— None —</option></select>
+        </div>
+      </div>
+    </div>
+    <div class="squad-divider"><span>VS</span></div>
+    <div class="squad-col">
+      <div class="squad-col-head">
+        <label id="squadB-label" class="squad-team-title">Team B squad</label>
+        <div class="link-row squad-add-row">
+          <input type="text" id="squadB-new-name" placeholder="Player name">
+          <button class="small primary" id="squadB-add-btn" type="button">+ Add</button>
+        </div>
+      </div>
+      <div class="squad-list-headrow"><span>XI</span><span>Player name</span><span>Player ID</span><span></span></div>
+      <div id="squadB-list" class="squad-list"></div>
+      <div class="squad-roles-row">
+        <div>
+          <label>Captain</label>
+          <select id="squadB-captain"><option value="">— None —</option></select>
+        </div>
+        <div>
+          <label>Wicket-Keeper</label>
+          <select id="squadB-wk"><option value="">— None —</option></select>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="shortcut-hint">Each player gets a permanent unique Player ID (shown greyed out) that the rest of the system — batting/bowling dropdowns, ball log, stats — always keys off, never just their name. Untick "XI" to bench someone as a substitute without deleting them; benched players won't appear in the live dropdowns. If a squad is left empty, the Striker/Non-striker/Bowler fields below fall back to free-text entry exactly as before.</div>
+</div>
+</div>
 
 <div class="layout">
 
@@ -476,36 +570,6 @@
       <button class="full small" id="swap-strike" style="margin-top:8px;">Swap Strike (S)</button>
     </div>
 
-    <div class="card" id="card-team-squads">
-      <h2>🧑‍🤝‍🧑 Team Squads &amp; Roles <span class="note">— set up both squads before the match starts</span></h2>
-      <div class="row2">
-        <div>
-          <label id="squadA-label">Team A squad</label>
-          <div class="link-row">
-            <input type="text" id="squadA-new-name" placeholder="Player name">
-            <button class="small" id="squadA-add-btn" type="button">Add</button>
-          </div>
-          <div id="squadA-list" style="margin-top:8px; max-height:240px; overflow-y:auto;"></div>
-          <label style="margin-top:10px;">Captain</label>
-          <select id="squadA-captain"><option value="">— None —</option></select>
-          <label>Wicket-Keeper</label>
-          <select id="squadA-wk"><option value="">— None —</option></select>
-        </div>
-        <div>
-          <label id="squadB-label">Team B squad</label>
-          <div class="link-row">
-            <input type="text" id="squadB-new-name" placeholder="Player name">
-            <button class="small" id="squadB-add-btn" type="button">Add</button>
-          </div>
-          <div id="squadB-list" style="margin-top:8px; max-height:240px; overflow-y:auto;"></div>
-          <label style="margin-top:10px;">Captain</label>
-          <select id="squadB-captain"><option value="">— None —</option></select>
-          <label>Wicket-Keeper</label>
-          <select id="squadB-wk"><option value="">— None —</option></select>
-        </div>
-      </div>
-      <div class="shortcut-hint">Each player gets a permanent unique Player ID (shown greyed out) that the rest of the system — batting/bowling dropdowns, ball log, stats — always keys off, never just their name. Untick "XI" to bench someone as a substitute without deleting them; benched players won't appear in the live dropdowns. If a squad is left empty, the Striker/Non-striker/Bowler fields below fall back to free-text entry exactly as before.</div>
-    </div>
   </div>
 
   <!-- COLUMN 2: Live ball-by-ball control -->
