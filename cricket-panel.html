@@ -932,6 +932,14 @@ function mergeWithDefaults(saved){
 function genPlayerId(){
   return 'p_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
+// Fresh, unique live-room id — same shape as the very first random default
+// the Match ID field gets on a brand-new page load (see init() below), just
+// callable again later. Used by Reset so every new match broadcasts (and
+// therefore cuts/serves its clips) under its OWN room instead of quietly
+// reusing whatever room the previous match left behind.
+function genMatchRoomId(){
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
 function teamObj(key){ return key === 'A' ? state.teamA : state.teamB; }
 function rosterPlayers(key){ return teamObj(key).players || []; }
 function findPlayerById(key, id){
@@ -6387,6 +6395,11 @@ document.getElementById('reset-btn').addEventListener('click', () => {
   // The league name spans multiple matches (that's the whole point of it),
   // so it survives a Reset — everything else about the match goes back to
   // defaults as before, ready for the next match in the same tournament.
+  // state.tournamentMatchId is part of defaultState()'s reset (goes back to
+  // null) and is lazily re-minted the next time this new match is saved
+  // (see ensureTournamentMatchId()) — so it, and the leagueName above,
+  // already guarantee this match lands as its OWN fresh entry inside the
+  // same tournament, never overwriting the one just finished.
   const keepLeagueName = state.leagueName;
   const keepMatchMode = state.matchMode;
   state = defaultState();
@@ -6399,7 +6412,25 @@ document.getElementById('reset-btn').addEventListener('click', () => {
   applyMatchModeUI(state.matchMode);
   refreshLeagueUI();
   renderSquadUI();
+
+  // Give the new match its OWN live room id — the "Match ID" field is what
+  // the overlay/scorecard's ?room=... link joins, and what every clip gets
+  // tagged with when it's cut. Left untouched, a Reset kept the SAME room
+  // (it only lived in localStorage/the input, which Reset never cleared),
+  // so a player carried over into the next match would show that match's
+  // clips folded in with everything cut under the old match too. A fresh
+  // room id per match keeps each match's clips — and its live broadcast —
+  // cleanly separated, exactly like each match already gets its own
+  // tournamentMatchId above.
+  const newRoomId = genMatchRoomId();
+  const matchIdField = document.getElementById('match-id');
+  matchIdField.value = newRoomId;
+  try{ localStorage.setItem('cricket-match-id', newRoomId); }catch(e){}
+  updateShareLinks(newRoomId);
+  connect(); // reconnect the socket (and this match's live broadcast) under the new room
+
   pushState(true, true);
+  toast('🔄 New match ready — Match ID refreshed. Copy the new Overlay/Scorecard links (and update OBS\'s browser source) before you go live.', 7000);
 });
 
 /* ============================================================
