@@ -806,6 +806,28 @@
     padding:4px 6px 2px; font-style:italic;
   }
 
+  /* Player History card's 3 independently-toggleable sections (This
+     Match / This Tournament / Other Tournaments) — the panel decides
+     which ones actually get sent, so each section here just hides
+     itself via display:none when its data/flag is absent; no fixed
+     count of sections is assumed. */
+  .ph-section{ padding:12px 20px; }
+  .ph-section + .ph-section{ border-top:1px solid var(--hairline,rgba(16,25,58,.1)); }
+  .ph-section-title{
+    font-size:10.5px; font-weight:800; letter-spacing:1.4px; text-transform:uppercase;
+    color:var(--bc-blue,#0b3d91); margin-bottom:6px;
+  }
+  .ph-line{ font-family:var(--font-num); font-weight:800; font-size:min(1.3vw,14px); color:var(--bc-ink,#12213f); padding:2px 0; }
+  .ph-line:empty{ display:none; }
+  .ph-line .ph-line-lbl{
+    display:inline-block; min-width:44px; color:var(--bc-ink-dim,#5c6c8a); font-weight:700;
+    text-transform:uppercase; font-size:10px; letter-spacing:.5px; margin-right:6px;
+  }
+  .ph-other-item{ padding:7px 0; }
+  .ph-other-item + .ph-other-item{ border-top:1px solid var(--hairline,rgba(16,25,58,.08)); }
+  .ph-other-name{ font-family:var(--font-num); font-weight:900; font-size:min(1.4vw,14.5px); color:var(--bc-ink,#12213f); margin-bottom:2px; }
+  .ph-other-name .ph-other-count{ font-weight:700; font-size:10px; color:var(--bc-ink-dim,#5c6c8a); margin-left:4px; }
+
   /* ============================================================
      POINTS TABLE CARD — tournament standings (Played/Won/Lost/Tied/
      Points/NRR for every team), pulled from the same numbers as the
@@ -1042,11 +1064,24 @@
       <div class="sc-badge" id="ph-badge">TM</div>
       <div class="sc-header-text">
         <div class="sc-title" id="ph-name">PLAYER</div>
-        <div class="sc-sub" id="ph-team">TOURNAMENT HISTORY</div>
+        <div class="sc-sub" id="ph-team">PLAYER HISTORY</div>
       </div>
     </div>
-    <div class="sc-rows" id="ph-rows"></div>
-    <div class="sc-footer" id="ph-totals"></div>
+    <div class="ph-section" id="ph-section-match">
+      <div class="ph-section-title">This Match</div>
+      <div class="ph-line" id="ph-match-bat"></div>
+      <div class="ph-line" id="ph-match-bowl"></div>
+    </div>
+    <div class="ph-section" id="ph-section-tournament">
+      <div class="ph-section-title">This Tournament</div>
+      <div class="sc-rows" id="ph-rows"></div>
+      <div class="ph-line" id="ph-tournament-bat"></div>
+      <div class="ph-line" id="ph-tournament-bowl"></div>
+    </div>
+    <div class="ph-section" id="ph-section-other">
+      <div class="ph-section-title">Other Tournaments</div>
+      <div id="ph-other-list"></div>
+    </div>
   </div>
 
   <div id="team-history-card" class="summary-card wide">
@@ -1136,7 +1171,7 @@ socket.on('cricketTeamHistory', (data) => renderTeamHistoryCard(data));
 socket.on('cricketHidePlayerStat', () => playStatCardOut('player-stat-card'));
 socket.on('cricketHideBowlerStat', () => playStatCardOut('bowler-stat-card'));
 socket.on('cricketHideTeamStat', () => hideSummaryCard('team-stat-card', '.stat-cell'));
-socket.on('cricketHidePlayerHistory', () => hideSummaryCard('player-history-card', '.sc-row, .sc-footer'));
+socket.on('cricketHidePlayerHistory', () => hideSummaryCard('player-history-card', '.sc-row, .sc-footer, .ph-section'));
 socket.on('cricketHideTeamHistory', () => hideSummaryCard('team-history-card', '.sc-row, .sc-footer'));
 socket.on('cricketPointsTable', (data) => renderPointsTableCard(data));
 socket.on('cricketHidePointsTable', () => hideSummaryCard('points-table-card', '.sc-row, .sc-footer'));
@@ -1463,15 +1498,11 @@ function renderState(s){
         gsap.set(pip, { opacity: .55, scale: 1 });
       } else {
         let cls = '', label = b;
-        // Matched by prefix/suffix, not exact equality — labels can carry
-        // extra runs appended (e.g. "Wd+2", "Nb+3", "B2", "LB2", "2W" for a
-        // run out with runs completed), and those still need their pip
-        // styling, not just the bare "Wd"/"Nb"/"B"/"LB"/"W" case.
         if(b === '0'){ cls = 'zero'; label = '•'; }
         else if(b === '4') cls = 'four';
         else if(b === '6') cls = 'six';
-        else if(b.endsWith('W')) cls = 'wicket';
-        else if(b.startsWith('Wd') || b.startsWith('Nb') || b.startsWith('B') || b.startsWith('LB')) cls = 'extra';
+        else if(b === 'W') cls = 'wicket';
+        else if(b === 'Wd' || b === 'Nb' || b === 'B' || b === 'LB') cls = 'extra';
         if(cls) pip.classList.add(cls);
         pip.style.fontSize = `${cls === 'zero' ? dotFontSize : numFontSize}px`;
         pip.textContent = label;
@@ -2273,41 +2304,73 @@ function pulseRows(cardId){
   gsap.fromTo(cells, { opacity: 0.35, y: -5 }, { opacity: 1, y: 0, duration: 0.4, stagger: 0.02, ease: 'power2.out' });
 }
 
-// Operator on/off toggle (like team-stat-card) showing this player's full
-// tournament match-by-match history — team identity in the header, one
-// row per match, running totals in the footer.
+// Operator on/off toggle (like team-stat-card) showing this player's
+// history in up to 3 independent sections — This Match, This Tournament,
+// and every OTHER tournament they've played — each shown only when the
+// panel flags it "on" in d.sections AND there's actual data for it, so
+// any combination (one, two, or all three) can be on screen at once.
 function renderPlayerHistoryCard(d){
   if(!d) return;
   const card = document.getElementById('player-history-card');
   card.style.setProperty('--stat-accent', d.teamColor || '#f5c518');
   setBadge(document.getElementById('ph-badge'), d.teamLogo, badgeText(d.teamShort, d.teamName));
   document.getElementById('ph-name').textContent = (d.playerName || 'PLAYER').toUpperCase();
-  document.getElementById('ph-team').textContent = (d.teamName ? `${d.teamName.toUpperCase()} · ` : '') + 'TOURNAMENT HISTORY';
+  document.getElementById('ph-team').textContent = (d.teamName ? `${d.teamName.toUpperCase()} · ` : '') + 'PLAYER HISTORY';
 
+  const sections = d.sections || { thisMatch: true, thisTournament: true, otherTournaments: true };
+
+  // ---- ① This Match ----
+  const matchSection = document.getElementById('ph-section-match');
+  const tm = d.thisMatch;
+  const showMatch = !!sections.thisMatch && tm && (tm.battingLine || tm.bowlingLine);
+  matchSection.style.display = showMatch ? 'block' : 'none';
+  document.getElementById('ph-match-bat').innerHTML = (showMatch && tm.battingLine) ? `<span class="ph-line-lbl">Bat</span>${escapeHtml(tm.battingLine)}` : '';
+  document.getElementById('ph-match-bowl').innerHTML = (showMatch && tm.bowlingLine) ? `<span class="ph-line-lbl">Bowl</span>${escapeHtml(tm.bowlingLine)}` : '';
+
+  // ---- ② This Tournament ----
+  const tournamentSection = document.getElementById('ph-section-tournament');
+  const tt = d.thisTournament || {};
+  const allRows = tt.rows || [];
+  const showTournament = !!sections.thisTournament && (allRows.length || tt.battingLine || tt.bowlingLine);
+  tournamentSection.style.display = showTournament ? 'block' : 'none';
   const rowsWrap = document.getElementById('ph-rows');
   rowsWrap.innerHTML = '';
-  const head = document.createElement('div');
-  head.className = 'sc-row sc-row-head';
-  head.innerHTML = '<span class="sc-c-name">Match</span><span class="sc-c-num">R</span><span class="sc-c-num">B</span><span class="sc-c-num">4s</span><span class="sc-c-num">6s</span><span class="sc-c-num">SR</span><span class="sc-c-num">W</span>';
-  rowsWrap.appendChild(head);
-  const allRows = d.rows || [];
-  const shown = allRows.slice(-HISTORY_CARD_MAX_ROWS);
-  shown.forEach((r, i) => {
-    const row = document.createElement('div');
-    row.className = 'sc-row' + (i % 2 === 1 ? ' sc-row-alt' : '');
-    row.innerHTML = `<span class="sc-c-name">${escapeHtml(r.label)}</span><span class="sc-c-num">${escapeHtml(r.runs)}</span><span class="sc-c-num">${escapeHtml(r.balls)}</span><span class="sc-c-num">${escapeHtml(r.fours)}</span><span class="sc-c-num">${escapeHtml(r.sixes)}</span><span class="sc-c-num">${escapeHtml(r.sr)}</span><span class="sc-c-num">${escapeHtml(r.wkts)}</span>`;
-    rowsWrap.appendChild(row);
-  });
-  if(allRows.length > shown.length){
-    const more = document.createElement('div');
-    more.className = 'hist-more';
-    more.textContent = `+ ${allRows.length - shown.length} earlier match${allRows.length - shown.length === 1 ? '' : 'es'} (in totals below)`;
-    rowsWrap.appendChild(more);
+  if(showTournament && allRows.length){
+    const head = document.createElement('div');
+    head.className = 'sc-row sc-row-head';
+    head.innerHTML = '<span class="sc-c-name">Match</span><span class="sc-c-num">R</span><span class="sc-c-num">B</span><span class="sc-c-num">4s</span><span class="sc-c-num">6s</span><span class="sc-c-num">SR</span><span class="sc-c-num">W</span>';
+    rowsWrap.appendChild(head);
+    const shown = allRows.slice(-HISTORY_CARD_MAX_ROWS);
+    shown.forEach((r, i) => {
+      const row = document.createElement('div');
+      row.className = 'sc-row' + (i % 2 === 1 ? ' sc-row-alt' : '');
+      row.innerHTML = `<span class="sc-c-name">${escapeHtml(r.label)}</span><span class="sc-c-num">${escapeHtml(r.runs)}</span><span class="sc-c-num">${escapeHtml(r.balls)}</span><span class="sc-c-num">${escapeHtml(r.fours)}</span><span class="sc-c-num">${escapeHtml(r.sixes)}</span><span class="sc-c-num">${escapeHtml(r.sr)}</span><span class="sc-c-num">${escapeHtml(r.wkts)}</span>`;
+      rowsWrap.appendChild(row);
+    });
+    if(allRows.length > shown.length){
+      const more = document.createElement('div');
+      more.className = 'hist-more';
+      more.textContent = `+ ${allRows.length - shown.length} earlier match${allRows.length - shown.length === 1 ? '' : 'es'} (in totals below)`;
+      rowsWrap.appendChild(more);
+    }
   }
-  document.getElementById('ph-totals').textContent = d.totalsLine || '';
+  document.getElementById('ph-tournament-bat').innerHTML = (showTournament && tt.battingLine) ? `<span class="ph-line-lbl">Bat</span>${escapeHtml(tt.battingLine)}` : '';
+  document.getElementById('ph-tournament-bowl').innerHTML = (showTournament && tt.bowlingLine) ? `<span class="ph-line-lbl">Bowl</span>${escapeHtml(tt.bowlingLine)}` : '';
+
+  // ---- ③ Every Other Tournament Played ----
+  const otherSection = document.getElementById('ph-section-other');
+  const history = d.tournamentHistory || [];
+  const showOther = !!sections.otherTournaments && history.length;
+  otherSection.style.display = showOther ? 'block' : 'none';
+  document.getElementById('ph-other-list').innerHTML = showOther ? history.map(t => `
+    <div class="ph-other-item">
+      <div class="ph-other-name">${escapeHtml(t.leagueName)}${t.matchesPlayed ? `<span class="ph-other-count">(${escapeHtml(t.matchesPlayed)}M)</span>` : ''}</div>
+      ${t.battingLine ? `<div class="ph-line"><span class="ph-line-lbl">Bat</span>${escapeHtml(t.battingLine)}</div>` : ''}
+      ${t.bowlingLine ? `<div class="ph-line"><span class="ph-line-lbl">Bowl</span>${escapeHtml(t.bowlingLine)}</div>` : ''}
+    </div>`).join('') : '';
 
   if(card.style.display === 'flex') pulseRows('player-history-card');
-  else playStatSummaryIn('player-history-card', '.sc-row, .sc-footer');
+  else playStatSummaryIn('player-history-card', '.sc-row, .sc-footer, .ph-section');
 }
 
 // Same idea as renderPlayerHistoryCard, for a team's match-by-match
