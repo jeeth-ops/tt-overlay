@@ -179,7 +179,11 @@
   }
   #batters-seg{ flex:1 1 0; min-width:min(23vw,260px); gap:9px; padding-right:20px; }
   .brow{ display:flex; align-items:baseline; gap:16px; }
-  .brow .bname{ font-family:var(--font-ui); font-weight:900; font-size:min(2.05vw,25px); color:var(--ink); letter-spacing:.1px; min-width:132px; display:inline-block; }
+  /* Base size is a touch bigger than before — the JS below (fitRowText)
+     shrinks it only as far as needed for the FULL name to still fit on
+     one line next to the runs/balls figures, so short names now render
+     larger while long names never wrap or clip. */
+  .brow .bname{ font-family:var(--font-ui); font-weight:900; font-size:min(2.2vw,27px); color:var(--ink); letter-spacing:.1px; min-width:132px; display:inline-block; white-space:nowrap; }
   .brow .bruns{ font-family:var(--font-num); font-weight:900; font-size:min(1.9vw,23px); color:#1c4fd8; font-variant-numeric:tabular-nums; margin-left:auto; }
   .brow .bstar{ color:#1c4fd8; }
   .brow .bballs{ font-family:var(--font-num); font-weight:700; font-size:min(1.3vw,15px); color:var(--ink-dim); margin-left:6px; min-width:20px; }
@@ -199,10 +203,13 @@
      which keeps this row short: name, then W-R, then overs. ---- */
   #bowler-seg{ flex:1 1 0; align-items:center; text-align:center; justify-content:center; gap:8px; min-width:min(23vw,260px); }
   #bowler-line{ display:flex; align-items:baseline; gap:10px; justify-content:center; }
+  /* Base size bumped up slightly; the ellipsis/max-width clipping that used
+     to cut long bowler names off is gone — fitRowText (JS) now shrinks the
+     font just enough for the FULL name to fit on one line next to the
+     figures/overs instead, same approach as the batsman names above. */
   #bowler-name-val{
-    font-family:var(--font-ui); font-weight:900; font-size:min(2.5vw,30px); color:var(--ink);
-    letter-spacing:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:min(14.5vw,178px);
-    display:inline-block;
+    font-family:var(--font-ui); font-weight:900; font-size:min(2.65vw,32px); color:var(--ink);
+    letter-spacing:0; white-space:nowrap; display:inline-block;
   }
   /* Wickets-runs, e.g. "0-41" — same bold navy as the name, just the
      cumulative bowling figures in the compact W-R form broadcasts use. */
@@ -1354,6 +1361,8 @@ function renderState(s){
   setNameText('nonstriker-name', s.nonStriker?.name);
   document.getElementById('nonstriker-runs').textContent = s.nonStriker?.runs ?? 0;
   document.getElementById('nonstriker-balls').textContent = s.nonStriker?.balls ?? 0;
+  fitRowText(document.getElementById('striker-name'), 13);
+  fitRowText(document.getElementById('nonstriker-name'), 13);
 
   const totalBalls = (s.score?.overs ?? 0) * 6 + (s.score?.balls ?? 0);
   const crr = totalBalls > 0 ? ((s.score?.runs ?? 0) / (totalBalls / 6)) : 0;
@@ -1456,6 +1465,9 @@ function renderState(s){
   document.getElementById('bowler-overs-val').textContent = bowler.name
     ? `${bowler.overs ?? 0}.${bowler.balls ?? 0}`
     : '';
+  // Fit after the figures/overs text is in place, since those siblings'
+  // widths are what determines how much room the name actually has.
+  fitRowText(document.getElementById('bowler-name-val'), 13);
 
   // "This Over" ball tracker — real broadcast style: always a full row of
   // (at least) 6 slots from the very first ball of the over, filling in
@@ -1559,6 +1571,37 @@ function fitCapName(el){
   }
 }
 
+// Auto-shrinks a name span's font size just enough for the FULL text to
+// fit on one line within its flex row — same idea as fitCapName above,
+// but fitting to available ROW WIDTH rather than height, since these
+// names sit on a single line next to runs/figures rather than wrapping.
+// Never truncates/ellipsizes: it only ever turns the dial down on size.
+function fitRowText(el, minPx){
+  if(!el || !el.isConnected) return;
+  const row = el.parentElement;
+  if(!row) return;
+  el.style.fontSize = ''; // fall back to CSS (min(vw,px)) to read the natural ceiling
+  const naturalPx = parseFloat(getComputedStyle(el).fontSize);
+  if(!naturalPx) return;
+  const rowStyle = getComputedStyle(row);
+  const gap = parseFloat(rowStyle.columnGap || rowStyle.gap || '0') || 0;
+  let siblingsWidth = 0;
+  Array.from(row.children).forEach(child => {
+    if(child !== el) siblingsWidth += child.getBoundingClientRect().width;
+  });
+  const gaps = gap * Math.max(row.children.length - 1, 0);
+  const available = row.clientWidth - siblingsWidth - gaps - 4; // small safety buffer
+  if(!(available > 0)) return;
+  let size = naturalPx;
+  el.style.fontSize = size + 'px';
+  let guard = 0;
+  while(el.scrollWidth > available && size > minPx && guard < 60){
+    size -= 0.5;
+    el.style.fontSize = size + 'px';
+    guard++;
+  }
+}
+
 function layoutTeams(s){
   const shortL = document.getElementById('short-left');
   const shortR = document.getElementById('short-right');
@@ -1591,6 +1634,9 @@ window.addEventListener('resize', () => {
   __fitResizeTimer = setTimeout(() => {
     fitCapName(document.getElementById('name-left'));
     fitCapName(document.getElementById('name-right'));
+    fitRowText(document.getElementById('striker-name'), 13);
+    fitRowText(document.getElementById('nonstriker-name'), 13);
+    fitRowText(document.getElementById('bowler-name-val'), 13);
   }, 120);
 });
 
