@@ -637,7 +637,13 @@ async function buildMatchEntry(matchSummary, name){
   const oppTeamObj = (teamKey === 'A' ? snap.teamB : snap.teamA) || (teamKey === 'A' ? matchSummary.teamB : matchSummary.teamA);
   const opponent = (oppTeamObj && (oppTeamObj.short || oppTeamObj.name)) || 'Opponent';
 
-  const clipsData = await fetchClipsForMatch(name, matchSummary.matchId);
+  // CLIPS SCOPE FIX: clips are tagged with the live room id at capture
+  // time, not with the tournament match's own database matchId — same
+  // fix as cricket-scorecard.html's getClipMatchId(). Use the room id
+  // the snapshot carries (once the backend sends it) and only fall back
+  // to matchSummary.matchId when it's missing.
+  const clipMatchId = snap.roomId || matchSummary.matchId;
+  const clipsData = await fetchClipsForMatch(name, clipMatchId);
   return {
     matchId: matchSummary.matchId, opponent,
     venue: matchSummary.venue || '', savedAt: matchSummary.savedAt || null,
