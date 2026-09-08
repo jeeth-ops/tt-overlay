@@ -7,6 +7,14 @@
 <script src="/socket.io/socket.io.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<!-- OCR (Tesseract.js) + PDF rendering (pdf.js) — power "Import Players from
+     List": a scorer uploads a photo/PDF of a printed or handwritten team
+     roster and player names are extracted automatically instead of being
+     typed one by one. Both are loaded lazily-tolerant: if either fails to
+     load (no internet, CDN blocked), the Import button simply reports an
+     error and every existing manual-entry workflow keeps working untouched. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.1.1/tesseract.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://apis.google.com/js/api.js"></script>
 <style>
@@ -218,6 +226,66 @@
 
   .squad-roles-row{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:14px; }
   .squad-roles-row > div > label{ margin-top:0; }
+
+  /* --- Import Players from List: OCR modal. Reuses the wicket-modal shell
+     (see below) so it feels like part of the same app, not a bolt-on. --- */
+  .squad-add-row{ display:flex; gap:6px; }
+  .squad-import-btn{ flex:none; }
+  .wicket-modal.wm-import{ max-width:560px; }
+  .import-step{ display:none; }
+  .import-step.active{ display:block; }
+  .import-drop-zone{
+    border:2px dashed var(--border); border-radius:10px; padding:26px 16px; text-align:center;
+    cursor:pointer; transition:border-color .15s, background .15s;
+  }
+  .import-drop-zone:hover, .import-drop-zone.dragover{ border-color:var(--accent); background:rgba(255,122,0,.06); }
+  .import-drop-zone .idz-icon{ font-size:28px; margin-bottom:6px; }
+  .import-drop-zone .idz-main{ font-size:13px; font-weight:700; }
+  .import-drop-zone .idz-sub{ font-size:11px; color:var(--text-dim); margin-top:4px; }
+  .import-progress{ text-align:center; padding:28px 10px; }
+  .import-progress .ip-spinner{
+    width:34px; height:34px; margin:0 auto 14px; border-radius:50%;
+    border:3px solid var(--border); border-top-color:var(--accent);
+    animation: importSpin .8s linear infinite;
+  }
+  @keyframes importSpin{ to{ transform:rotate(360deg); } }
+  .import-progress .ip-label{ font-size:12.5px; color:var(--text-dim); }
+  .import-progress .ip-pct{ font-size:20px; font-weight:800; margin-top:6px; font-variant-numeric:tabular-nums; }
+
+  .import-review-list{
+    max-height:260px; overflow-y:auto; border:1px solid var(--border); border-radius:10px;
+    background:var(--panel-2); padding:5px; margin-bottom:10px;
+  }
+  .import-review-list:empty{ display:flex; align-items:center; justify-content:center; min-height:50px; }
+  .import-review-list:empty::after{ content:'No players detected — add names manually below.'; color:var(--text-dim); font-size:12.5px; }
+  .import-review-row{
+    display:grid; grid-template-columns:26px 1fr 26px; gap:8px; align-items:center;
+    padding:7px 8px; border-radius:7px; border-left:3px solid transparent;
+  }
+  .import-review-row:nth-child(odd){ background:rgba(255,255,255,.035); }
+  .import-review-row input[type="checkbox"]{ width:15px; height:15px; margin:0; }
+  .import-review-row input[type="text"]{ min-width:0; padding:6px 9px; font-size:13px; margin:0; }
+  .import-review-row.low-conf{ border-left-color:#facc15; }
+  .import-review-row.low-conf input[type="text"]{ border-color:#facc15; }
+  .import-review-row .irr-remove{ justify-self:center; background:none; border:none; color:#e05555; cursor:pointer; font-size:15px; padding:2px 6px; border-radius:6px; }
+  .import-review-row .irr-remove:hover{ background:rgba(239,68,68,.15); }
+  .import-low-conf-hint{ font-size:10.5px; color:#facc15; margin:-4px 0 10px; display:none; }
+  .import-low-conf-hint.show{ display:block; }
+
+  .import-dup-box{
+    background:rgba(255,255,255,.03); border:1px solid var(--border); border-radius:9px;
+    padding:8px 10px; margin-bottom:10px; font-size:12px; display:none;
+  }
+  .import-dup-box.show{ display:block; }
+  .import-dup-box .idb-title{ font-weight:800; color:var(--text-dim); font-size:10.5px; text-transform:uppercase; letter-spacing:.4px; margin-bottom:6px; }
+  .import-dup-row{ display:flex; align-items:center; gap:8px; padding:4px 0; }
+  .import-dup-row input[type="checkbox"]{ width:14px; height:14px; margin:0; }
+  .import-dup-row span{ color:var(--text-dim); }
+
+  .import-add-row{ display:flex; gap:6px; margin-bottom:2px; }
+  .import-add-row input{ flex:1; }
+  .import-add-row button{ flex:none; }
+
   .link-row input{ flex:1; font-size:11px; }
   .link-row button{ flex:none; }
   .qr-wrap{ display:flex; flex-direction:column; align-items:center; gap:8px; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
@@ -405,6 +473,7 @@
         <div class="link-row squad-add-row">
           <input type="text" id="squadA-new-name" placeholder="Player name">
           <button class="small primary" id="squadA-add-btn" type="button">+ Add</button>
+          <button class="small ghost squad-import-btn" id="squadA-import-btn" type="button" title="Import players from a photo/PDF of a printed or handwritten team list">📋 Import from List</button>
         </div>
       </div>
       <div class="squad-list-headrow"><span>XI</span><span>Player name</span><span>Player ID</span><span></span></div>
@@ -427,6 +496,7 @@
         <div class="link-row squad-add-row">
           <input type="text" id="squadB-new-name" placeholder="Player name">
           <button class="small primary" id="squadB-add-btn" type="button">+ Add</button>
+          <button class="small ghost squad-import-btn" id="squadB-import-btn" type="button" title="Import players from a photo/PDF of a printed or handwritten team list">📋 Import from List</button>
         </div>
       </div>
       <div class="squad-list-headrow"><span>XI</span><span>Player name</span><span>Player ID</span><span></span></div>
@@ -443,8 +513,59 @@
       </div>
     </div>
   </div>
-  <div class="shortcut-hint">Each player gets a permanent unique Player ID (shown greyed out) that the rest of the system — batting/bowling dropdowns, ball log, stats — always keys off, never just their name. Untick "XI" to bench someone as a substitute without deleting them; benched players won't appear in the live dropdowns. If a squad is left empty, the Striker/Non-striker/Bowler fields below fall back to free-text entry exactly as before.</div>
+  <div class="shortcut-hint">Each player gets a permanent unique Player ID (shown greyed out) that the rest of the system — batting/bowling dropdowns, ball log, stats — always keys off, never just their name. Untick "XI" to bench someone as a substitute without deleting them; benched players won't appear in the live dropdowns. If a squad is left empty, the Striker/Non-striker/Bowler fields below fall back to free-text entry exactly as before. "📋 Import from List" reads player names out of an uploaded photo/PDF of a printed or handwritten roster, so you don't have to type each one in.</div>
 </div>
+</div>
+
+<!-- Hidden file input shared by both teams' "Import from List" buttons —
+     which team it targets is tracked in importTargetTeam (JS) at the
+     moment the button is clicked. -->
+<input type="file" id="import-file-input" accept="image/png,image/jpeg,image/jpg,.png,.jpg,.jpeg,application/pdf,.pdf" style="display:none;">
+
+<!-- IMPORT PLAYERS FROM LIST — OCR modal. Three steps shown/hidden via
+     .import-step.active: (1) upload, (2) processing, (3) review & confirm.
+     Uses the same wicket-modal shell as every other popup in this app so
+     it looks native rather than bolted on. -->
+<div class="wicket-modal-overlay" id="import-modal-overlay">
+  <div class="wicket-modal wide wm-import" id="import-modal">
+    <h3>📋 Import Players from List</h3>
+    <div class="wm-sub" id="import-modal-sub">Upload a photo or PDF of the team roster.</div>
+
+    <div class="import-step active" id="import-step-upload">
+      <div class="import-drop-zone" id="import-drop-zone">
+        <div class="idz-icon">🖼️</div>
+        <div class="idz-main">Click to choose a photo or PDF</div>
+        <div class="idz-sub">JPG, PNG or PDF · printed or handwritten team list</div>
+      </div>
+    </div>
+
+    <div class="import-step" id="import-step-processing">
+      <div class="import-progress">
+        <div class="ip-spinner"></div>
+        <div class="ip-label" id="import-progress-label">Reading list…</div>
+        <div class="ip-pct" id="import-progress-pct">0%</div>
+      </div>
+    </div>
+
+    <div class="import-step" id="import-step-review">
+      <label>Detected players <span class="note">— untick or edit anything that's wrong</span></label>
+      <div class="import-low-conf-hint" id="import-low-conf-hint">⚠️ Names outlined in yellow look uncertain (poor scan/handwriting) — please double-check them before importing.</div>
+      <div class="import-review-list" id="import-review-list"></div>
+      <div class="import-add-row">
+        <input type="text" id="import-add-name" placeholder="Add a missing player name">
+        <button class="small" type="button" id="import-add-name-btn">+ Add</button>
+      </div>
+      <div class="import-dup-box" id="import-dup-box">
+        <div class="idb-title">Already in this squad — skipped by default</div>
+        <div id="import-dup-list"></div>
+      </div>
+    </div>
+
+    <div class="wm-actions">
+      <button type="button" class="ghost wm-cancel" id="import-modal-cancel">Cancel</button>
+      <button type="button" class="primary" id="import-modal-confirm" style="display:none;">Import Players</button>
+    </div>
+  </div>
 </div>
 
 <div class="layout">
@@ -2251,6 +2372,280 @@ document.getElementById('squadA-captain').addEventListener('change', e => { stat
 document.getElementById('squadA-wk').addEventListener('change', e => { state.teamA.wkId = e.target.value || null; renderRosterControls(); pushState(true); });
 document.getElementById('squadB-captain').addEventListener('change', e => { state.teamB.captainId = e.target.value || null; renderRosterControls(); pushState(true); });
 document.getElementById('squadB-wk').addEventListener('change', e => { state.teamB.wkId = e.target.value || null; renderRosterControls(); pushState(true); });
+
+/* ============================================================
+   IMPORT PLAYERS FROM LIST — upload a photo/PDF of a printed or
+   handwritten team roster, OCR it (Tesseract.js; PDFs are rendered to
+   images first via pdf.js), pull out just the player names, and let the
+   scorer review/edit/deselect before anything is actually added to the
+   squad. Purely additive — "+ Add" / manual editing above is untouched,
+   and imported players end up as completely ordinary squad entries
+   (same {id, name, isXI} shape as addSquadPlayer()), so they automatically
+   work everywhere a manually-typed player already does: striker/non-
+   striker/bowler pickers, catch/run-out fielder dropdowns, scorecards,
+   stats, overlay, Excel export, all of it.
+   ============================================================ */
+let importTargetTeam = null;   // 'A' | 'B' — which squad this import is for
+let importRows = [];           // [{ rowId, name, flagged, checked }] — new (non-duplicate) candidates
+let importDupRows = [];        // [{ rowId, name, checked }] — names that already exist in the squad
+
+function importRowId(){ return 'ir_' + Math.random().toString(36).slice(2, 10); }
+
+function showImportStep(step){
+  ['upload', 'processing', 'review'].forEach(s => {
+    document.getElementById(`import-step-${s}`).classList.toggle('active', s === step);
+  });
+  document.getElementById('import-modal-confirm').style.display = step === 'review' ? 'block' : 'none';
+}
+function openImportModal(key){
+  importTargetTeam = key;
+  importRows = [];
+  importDupRows = [];
+  document.getElementById('import-modal-sub').textContent =
+    `Upload a photo or PDF of the ${teamObj(key).name || (key === 'A' ? 'Team A' : 'Team B')} roster — player names will be read automatically.`;
+  document.getElementById('import-file-input').value = '';
+  document.getElementById('import-review-list').innerHTML = '';
+  document.getElementById('import-dup-list').innerHTML = '';
+  document.getElementById('import-dup-box').classList.remove('show');
+  document.getElementById('import-low-conf-hint').classList.remove('show');
+  showImportStep('upload');
+  document.getElementById('import-modal-overlay').classList.add('show');
+}
+function closeImportModal(){
+  document.getElementById('import-modal-overlay').classList.remove('show');
+  importTargetTeam = null;
+}
+document.getElementById('squadA-import-btn').addEventListener('click', () => openImportModal('A'));
+document.getElementById('squadB-import-btn').addEventListener('click', () => openImportModal('B'));
+document.getElementById('import-modal-cancel').addEventListener('click', closeImportModal);
+document.getElementById('import-modal-overlay').addEventListener('click', e => { if(e.target.id === 'import-modal-overlay') closeImportModal(); });
+
+// --- Upload step: click-to-browse + drag & drop, both routing to the
+// same hidden <input type=file> so there's exactly one place file
+// handling happens. ---
+const importDropZone = document.getElementById('import-drop-zone');
+const importFileInput = document.getElementById('import-file-input');
+importDropZone.addEventListener('click', () => importFileInput.click());
+importDropZone.addEventListener('dragover', e => { e.preventDefault(); importDropZone.classList.add('dragover'); });
+importDropZone.addEventListener('dragleave', () => importDropZone.classList.remove('dragover'));
+importDropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  importDropZone.classList.remove('dragover');
+  const file = e.dataTransfer.files && e.dataTransfer.files[0];
+  if(file) handleImportFile(file);
+});
+importFileInput.addEventListener('change', e => {
+  const file = e.target.files && e.target.files[0];
+  if(file) handleImportFile(file);
+});
+
+function setImportProgress(pct, label){
+  document.getElementById('import-progress-pct').textContent = `${Math.round(pct)}%`;
+  if(label) document.getElementById('import-progress-label').textContent = label;
+}
+
+// PDF → array of canvases (one per page, rendered via pdf.js) so the same
+// OCR path used for photos can just be pointed at page images instead.
+async function pdfFileToCanvases(file){
+  const buf = await file.arrayBuffer();
+  if(typeof pdfjsLib === 'undefined') throw new Error('PDF reader failed to load (no internet?)');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const canvases = [];
+  const maxPages = Math.min(pdf.numPages, 10); // a team roster is never 10+ pages; caps runaway OCR time
+  for(let i = 1; i <= maxPages; i++){
+    const page = await pdf.getPage(i);
+    const viewport = page.getViewport({ scale: 2 }); // upscale for sharper OCR
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    canvases.push(canvas);
+  }
+  return canvases;
+}
+
+async function handleImportFile(file){
+  showImportStep('processing');
+  setImportProgress(0, 'Reading list…');
+  try{
+    if(typeof Tesseract === 'undefined') throw new Error('OCR library failed to load (no internet?)');
+    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+    const sources = isPdf ? await pdfFileToCanvases(file) : [file];
+
+    let fullText = '';
+    for(let i = 0; i < sources.length; i++){
+      const { data } = await Tesseract.recognize(sources[i], 'eng', {
+        logger: m => {
+          if(m.status === 'recognizing text'){
+            // Spread progress evenly across however many pages/images there are.
+            const pageShare = 1 / sources.length;
+            const pct = (i * pageShare + (m.progress || 0) * pageShare) * 100;
+            setImportProgress(pct, sources.length > 1 ? `Reading page ${i + 1} of ${sources.length}…` : 'Reading list…');
+          }
+        }
+      });
+      fullText += '\n' + (data && data.text ? data.text : '');
+    }
+    setImportProgress(100, 'Done');
+    const names = extractPlayerNames(fullText);
+    buildImportReview(names);
+    showImportStep('review');
+  } catch(err){
+    showImportStep('upload');
+    toast(`❌ Couldn't read that file: ${err.message || err}`, 6000);
+  }
+}
+
+// --- Text → player names -------------------------------------------------
+// Heuristic cleanup, not a guarantee — that's exactly why the review step
+// exists. Strips serial numbers ("1.", "01)"), jersey-number prefixes
+// ("#7 "), trailing role tags ("- Captain", "(WK)"), and skips lines that
+// are clearly headers ("TEAM: ...", "PLAYERS", "SQUAD", "PLAYING XI") or
+// too short/numeric to plausibly be a name.
+const IMPORT_HEADER_WORDS = ['team', 'players', 'player list', 'squad', 'playing xi', 'xi', 'roster', 'club', 'lineup', 'line-up'];
+function extractPlayerNames(rawText){
+  const lines = (rawText || '').split(/\r?\n/);
+  const out = [];
+  lines.forEach(raw => {
+    let line = raw.trim();
+    if(!line) return;
+
+    // "TEAM: DOMBIVLI XI" / "CLUB - MUMBAI CC" style header lines
+    const headerMatch = line.match(/^([a-zA-Z ]+)\s*[:\-]\s*.+$/);
+    if(headerMatch && IMPORT_HEADER_WORDS.includes(headerMatch[1].trim().toLowerCase())) return;
+    if(IMPORT_HEADER_WORDS.includes(line.toLowerCase())) return;
+
+    // Leading serial number: "1.", "01)", "12 -"
+    line = line.replace(/^\s*\d{1,2}\s*[\.\)\-]\s*/, '');
+    // Leading jersey-number style prefix: "#7 ", "No.7 "
+    line = line.replace(/^\s*(#|no\.?\s*)\d{1,2}\s+/i, '');
+    // Trailing role tag: "- Captain", "(WK)", "- Wicket Keeper"
+    line = line.replace(/[\-–]\s*(captain|c|vice[\s-]?captain|vc|wk|wicket[\s-]?keeper)\s*$/i, '');
+    line = line.replace(/\(\s*(captain|c|vice[\s-]?captain|vc|wk|wicket[\s-]?keeper)\s*\)\s*$/i, '');
+    line = line.trim().replace(/[|_]+$/, '').trim();
+
+    if(!line) return;
+    const letters = line.replace(/[^a-zA-Z]/g, '');
+    if(letters.length < 3) return; // too short to be a real name — likely noise
+    if(IMPORT_HEADER_WORDS.includes(line.toLowerCase())) return;
+
+    // Flag for review rather than silently trusting OCR: digits mixed
+    // into letters ("JADH4V"), or a very high ratio of non-letter
+    // characters, usually means a misread rather than a clean name.
+    const hasDigitInWord = /[a-zA-Z]\d|\d[a-zA-Z]/.test(line);
+    const nonLetterRatio = 1 - (letters.length / line.replace(/\s/g, '').length || 1);
+    const flagged = hasDigitInWord || nonLetterRatio > 0.35;
+
+    out.push({ name: line.toUpperCase(), flagged });
+  });
+  return out;
+}
+
+// --- Review step ----------------------------------------------------------
+function buildImportReview(names){
+  importRows = [];
+  importDupRows = [];
+  const existing = new Set(rosterPlayers(importTargetTeam).map(p => (p.name || '').trim().toUpperCase()));
+  const seen = new Set(); // de-dupe names detected twice within the same upload
+  names.forEach(n => {
+    if(seen.has(n.name)) return;
+    seen.add(n.name);
+    const row = { rowId: importRowId(), name: n.name, flagged: n.flagged, checked: true };
+    if(existing.has(n.name)){
+      row.checked = false;
+      importDupRows.push(row);
+    } else {
+      importRows.push(row);
+    }
+  });
+  renderImportReview();
+}
+function renderImportReview(){
+  const list = document.getElementById('import-review-list');
+  list.innerHTML = '';
+  let anyFlagged = false;
+  importRows.forEach(row => {
+    if(row.flagged) anyFlagged = true;
+    const el = document.createElement('div');
+    el.className = 'import-review-row' + (row.flagged ? ' low-conf' : '');
+    el.dataset.rowId = row.rowId;
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = row.checked;
+    cb.addEventListener('change', () => { row.checked = cb.checked; });
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.value = row.name;
+    nameInput.addEventListener('input', () => {
+      row.name = nameInput.value.toUpperCase();
+      row.flagged = false; // an edited name has been human-verified — stop flagging it
+      el.classList.remove('low-conf');
+    });
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'irr-remove';
+    removeBtn.textContent = '✕';
+    removeBtn.title = 'Remove from import';
+    removeBtn.addEventListener('click', () => {
+      importRows = importRows.filter(r => r.rowId !== row.rowId);
+      renderImportReview();
+    });
+
+    el.appendChild(cb); el.appendChild(nameInput); el.appendChild(removeBtn);
+    list.appendChild(el);
+  });
+  document.getElementById('import-low-conf-hint').classList.toggle('show', anyFlagged);
+
+  const dupBox = document.getElementById('import-dup-box');
+  const dupList = document.getElementById('import-dup-list');
+  dupList.innerHTML = '';
+  importDupRows.forEach(row => {
+    const el = document.createElement('div');
+    el.className = 'import-dup-row';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = row.checked;
+    cb.title = 'Import anyway as a separate player';
+    cb.addEventListener('change', () => { row.checked = cb.checked; });
+    const span = document.createElement('span');
+    span.textContent = row.name;
+    el.appendChild(cb); el.appendChild(span);
+    dupList.appendChild(el);
+  });
+  dupBox.classList.toggle('show', importDupRows.length > 0);
+}
+document.getElementById('import-add-name-btn').addEventListener('click', () => {
+  const input = document.getElementById('import-add-name');
+  const name = input.value.trim().toUpperCase();
+  if(!name) return;
+  importRows.push({ rowId: importRowId(), name, flagged: false, checked: true });
+  input.value = '';
+  renderImportReview();
+});
+document.getElementById('import-add-name').addEventListener('keydown', e => {
+  if(e.key === 'Enter') document.getElementById('import-add-name-btn').click();
+});
+
+document.getElementById('import-modal-confirm').addEventListener('click', () => {
+  const key = importTargetTeam;
+  if(!key) return;
+  const toAdd = [...importRows, ...importDupRows]
+    .filter(r => r.checked && r.name.trim())
+    .map(r => r.name.trim());
+  if(!toAdd.length){ toast('No players selected to import'); return; }
+  const t = teamObj(key);
+  t.players = t.players || [];
+  toAdd.forEach(name => t.players.push({ id: genPlayerId(), name, isXI: true }));
+  renderSquadUI();
+  renderRosterControls();
+  pushState(true);
+  closeImportModal();
+  toast(`✅ Imported ${toAdd.length} player${toAdd.length === 1 ? '' : 's'} into ${t.name || (key === 'A' ? 'Team A' : 'Team B')}`);
+});
 
 /* ============================================================
    ROSTER-DRIVEN LIVE CONTROLS — openers, new batsman, bowler.
