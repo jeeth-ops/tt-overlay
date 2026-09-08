@@ -1331,6 +1331,7 @@ function fillPlayerSelect(selectEl, players, opts){
 let state = mergeWithDefaults(loadState());
 let history = [];
 let lastDismissalType = null; // set by the wicket modal, read by logBallToDb
+let lastDismissalFielder = null; // set alongside lastDismissalType, read by logBallToDb
 
 function defaultState(){
   return {
@@ -2805,10 +2806,18 @@ function applyBowlerChange(name, id){
 
   history.push(snapshot());
 
-  // Whatever's happened THIS over so far carries forward to the new name.
+  // Whatever's happened THIS over so far carries forward to the new name —
+  // but ONLY when an over is genuinely still in progress (carryBalls > 0),
+  // i.e. a mid-over typo/name correction. When carryBalls is 0 the over is
+  // fully complete (this is a normal over-boundary bowler change), so
+  // nothing should carry forward — even if a wicket fell on the over's
+  // very last ball and left a stale wicketsThisOver/runsThisOver behind on
+  // state.bowler. Without this guard that last-ball wicket would get
+  // subtracted from the outgoing bowler's archived figures and wrongly
+  // credited to the incoming bowler instead.
   const carryBalls = state.bowler.balls;
-  const carryRuns = state.bowler.runsThisOver || 0;
-  const carryWkts = state.bowler.wicketsThisOver || 0;
+  const carryRuns = carryBalls > 0 ? (state.bowler.runsThisOver || 0) : 0;
+  const carryWkts = carryBalls > 0 ? (state.bowler.wicketsThisOver || 0) : 0;
 
   if(state.bowler.name && (state.bowler.overs > 0 || carryBalls > 0)){
     // Archive the outgoing bowler's figures MINUS the still-in-progress
@@ -5098,6 +5107,7 @@ function recordBall(kind, meta){
         dismissalText = (isBowlerWicket && state.bowler.name) ? `${shortMap[dismissalType]} b ${state.bowler.name}` : shortMap[dismissalType];
       }
       lastDismissalType = dismissalType;
+      lastDismissalFielder = fielderName || null;
       logDismissalText = dismissalText;
 
       // Which physical batter is actually given out. For every dismissal
@@ -5381,7 +5391,7 @@ function logBallToDb(kind, runsBefore, ballTimestamp){
     strikerId: state.striker.id || null,
     nonStrikerId: state.nonStriker.id || null,
     bowlerId: state.bowler.id || null,
-    dismissal: kind === 'W' ? { type: lastDismissalType || 'Bowled', fielder: (meta && meta.fielderName) || null } : null,
+    dismissal: kind === 'W' ? { type: lastDismissalType || 'Bowled', fielder: lastDismissalFielder || null } : null,
     score: { ...state.score },
     timestamp: ballTimestamp
   });
