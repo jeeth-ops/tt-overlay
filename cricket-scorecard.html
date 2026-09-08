@@ -460,6 +460,16 @@
   @keyframes rowIn{ from{ opacity:0; transform:translateY(7px); } to{ opacity:1; transform:translateY(0); } }
   .clip-row, .hub-history-row{ animation:rowIn .32s cubic-bezier(.22,1,.36,1) both; }
   .cd-stat-row{ animation:rowIn .32s cubic-bezier(.22,1,.36,1) both; animation-delay:.03s; }
+
+  /* Soft "the number just changed" cue for live score/stat text (see
+     setText()) — a gentle scale+color pulse, not a flash, so the score
+     reads as continuously alive without ever looking glitchy. */
+  @keyframes valPop{
+    0%{ transform:scale(1); color:inherit; }
+    35%{ transform:scale(1.06); color:var(--accent); }
+    100%{ transform:scale(1); color:inherit; }
+  }
+  .val-pop{ display:inline-block; animation:valPop .38s cubic-bezier(.22,1,.36,1); }
 </style>
 </head>
 <body>
@@ -1216,7 +1226,19 @@ function render(){
   renderBottom(s);
 }
 
-function setText(id, val){ const el = document.getElementById(id); if(el) el.textContent = val; }
+function setText(id, val){
+  const el = document.getElementById(id);
+  if(!el) return;
+  const str = String(val);
+  if(el.textContent === str) return;
+  el.textContent = str;
+  // Live figures (score, overs, run rates, batter/bowler figures, etc.)
+  // get a brief, soft highlight so a ball event reads as "the number
+  // changed" rather than silently mutating underneath the viewer.
+  el.classList.remove('val-pop');
+  void el.offsetWidth;
+  el.classList.add('val-pop');
+}
 
 // Captain / Wicketkeeper role tags. Reads whichever field name the
 // underlying player data actually uses (the panel already carries this —
