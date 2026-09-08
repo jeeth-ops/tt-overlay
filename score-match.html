@@ -377,7 +377,7 @@ function clipRowHtml(c){
   </div>`;
 }
 
-async function openPlayerClips(name, role){
+async function openPlayerClips(name){
   document.getElementById('clip-modal-title').textContent = `${name} — Clips`;
   const body = document.getElementById('clip-modal-body');
   body.innerHTML = '<div class="empty-state">Loading…</div>';
@@ -388,9 +388,13 @@ async function openPlayerClips(name, role){
     body.innerHTML = '<div class="empty-state">Could not load clips right now.</div>';
     return;
   }
-  const clips = role === 'bowler' ? (data.bowling.wickets || []) : [
-    ...(data.batting.fours || []), ...(data.batting.sixes || []), ...(data.batting.dismissal || [])
-  ];
+  // Every category together — fours, sixes, wickets taken, and how they
+  // got out — regardless of whether this was opened from the batting or
+  // bowling table, sorted chronologically by when it happened in the match.
+  const clips = [
+    ...(data.batting.fours || []), ...(data.batting.sixes || []),
+    ...(data.bowling.wickets || []), ...(data.batting.dismissal || [])
+  ].sort((a, b) => (a.over - b.over) || (a.ballInOver - b.ballInOver));
   if(!clips.length){
     body.innerHTML = '<div class="empty-state">No clips for this player yet.</div>';
     return;
@@ -425,7 +429,7 @@ document.getElementById('video-modal-backdrop').addEventListener('click', (e) =>
 document.body.addEventListener('click', (e) => {
   const btn = e.target.closest('.clip-btn');
   if(!btn) return;
-  openPlayerClips(btn.dataset.player, btn.dataset.role);
+  openPlayerClips(btn.dataset.player);
 });
 
 init();
