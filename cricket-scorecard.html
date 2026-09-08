@@ -91,17 +91,29 @@
   button, a, .clip-btn, .icon-btn, .cd-tab{ touch-action:manipulation; }
   /* Every tappable control gives a quick press-down cue so the UI reads
      as alive/responsive, not static — matched to iOS/Android's native
-     button-press feel rather than a hover-only desktop affordance. */
-  .icon-btn, .visit-btn, .clip-btn, .cd-tab, .twc-toggle button,
+     button-press feel rather than a hover-only desktop affordance.
+     Bezier is iOS's own "ease-out-back" curve (a hair of overshoot on
+     release) so releases feel springy instead of just linear. */
+  button, a, .icon-btn, .visit-btn, .clip-btn, .cd-tab, .twc-toggle button,
   #highlights-filter button, .clip-row .cr-actions a, .clip-row .cr-actions button,
-  .clip-row, .hub-history-row, #clip-drawer-close, #video-modal-close{
-    transition:background .15s ease, color .15s ease, border-color .15s ease, transform .12s cubic-bezier(.34,1.56,.64,1), box-shadow .15s ease;
+  .clip-row, .hub-history-row, #clip-drawer-close, #video-modal-close,
+  #video-modal, .player-card, .clip-modal-row{
+    transition:background .15s ease, color .15s ease, border-color .15s ease,
+      transform .16s cubic-bezier(.34,1.56,.64,1), box-shadow .15s ease, opacity .15s ease;
   }
-  .icon-btn:active, .visit-btn:active, .clip-btn:active:not(:disabled), .cd-tab:active,
+  button:active, a.visit-btn:active, .icon-btn:active, .clip-btn:active:not(:disabled), .cd-tab:active,
   .twc-toggle button:active, #highlights-filter button:active,
   .clip-row .cr-actions a:active, .clip-row .cr-actions button:active,
-  .clip-row:active, .hub-history-row:active, #clip-drawer-close:active, #video-modal-close:active{
-    transform:scale(.92);
+  .clip-row:active, .hub-history-row:active, #clip-drawer-close:active, #video-modal-close:active,
+  .player-card:active, .clip-modal-row:active{
+    transform:scale(.94);
+  }
+  /* Momentum/rubber-band scrolling everywhere content can overflow, and
+     contained so a drawer/modal's own scroll never "leaks" into a
+     rubber-band bounce on the page behind it — the iOS sheet feel. */
+  html{ scroll-behavior:smooth; -webkit-overflow-scrolling:touch; }
+  #wrap, #clip-drawer-body, #balls-scroll, .lb-table-wrap, #clip-modal-body{
+    -webkit-overflow-scrolling:touch; overscroll-behavior:contain; scroll-behavior:smooth;
   }
 
   /* ---------- Brand bar ---------- */
@@ -420,17 +432,34 @@
   }
 
   /* ---------- Video modal ---------- */
+  /* Always laid out (display:flex, never display:none) so opacity/transform
+     can transition — a display:none/flex swap has no transition at all
+     and used to make this modal just snap open/shut with zero animation. */
   #video-modal-backdrop{
-    position:fixed; inset:0; background:rgba(0,0,0,.78); z-index:90; display:none;
+    position:fixed; inset:0; background:rgba(0,0,0,.78); z-index:90; display:flex;
     align-items:center; justify-content:center; padding:16px;
+    opacity:0; pointer-events:none; transition:opacity .22s ease;
   }
-  #video-modal-backdrop.open{ display:flex; }
-  #video-modal{ width:min(720px, 100%); background:#000; border-radius:var(--radius-lg); overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.6); }
+  #video-modal-backdrop.open{ opacity:1; pointer-events:auto; }
+  #video-modal{
+    width:min(720px, 100%); background:#000; border-radius:var(--radius-lg); overflow:hidden;
+    box-shadow:0 20px 60px rgba(0,0,0,.6);
+    transform:scale(.92) translateY(8px);
+    transition:transform .28s cubic-bezier(.34,1.56,.64,1);
+  }
+  #video-modal-backdrop.open #video-modal{ transform:scale(1) translateY(0); }
   #video-modal-head{ display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:#0b0e14; }
   #video-modal-head .vm-title{ color:#fff; font-size:12.5px; font-weight:700; }
   #video-modal-close{ width:28px; height:28px; border-radius:99px; background:rgba(255,255,255,.1); color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; border:none; }
   #video-modal video{ width:100%; display:block; max-height:70vh; background:#000; }
   #video-modal-loading{ color:#fff; text-align:center; padding:60px 0; font-size:12.5px; }
+
+  /* Freshly-injected list content (clip rows, history rows, stat boxes)
+     eases in instead of popping into place the instant innerHTML is set —
+     this fires automatically on every new element, no JS hooks needed. */
+  @keyframes rowIn{ from{ opacity:0; transform:translateY(7px); } to{ opacity:1; transform:translateY(0); } }
+  .clip-row, .hub-history-row{ animation:rowIn .32s cubic-bezier(.22,1,.36,1) both; }
+  .cd-stat-row{ animation:rowIn .32s cubic-bezier(.22,1,.36,1) both; animation-delay:.03s; }
 </style>
 </head>
 <body>
