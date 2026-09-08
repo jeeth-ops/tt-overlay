@@ -1568,6 +1568,73 @@ app.get('/api/public/match/:id', async (req, res) => {
 });
 
 // ================================================================
+// 🏠 HOMEPAGE TOURNAMENTS DIRECTORY — public, read-only, no auth.
+// This is a single-owner platform (only OWNER_EMAIL can create/manage
+// tournaments via the gated panel), so "all tournaments" really just
+// means "every league this owner has generated a public link for" —
+// same trust model as /api/public/tournament/:token above, just listed
+// instead of requiring the token up front. Cards on the homepage link
+// straight to the existing /score/tournament/:token page, which already
+// renders matches, scorecards, stats and clips — nothing is duplicated
+// here.
+// ================================================================
+let cachedOwnerUid = null;
+async function getOwnerUid() {
+    if (cachedOwnerUid) return cachedOwnerUid;
+    try {
+        const user = await admin.auth().getUserByEmail(OWNER_EMAIL);
+        cachedOwnerUid = user.uid;
+        return cachedOwnerUid;
+    } catch (err) {
+        console.log('getOwnerUid error (owner may not have signed in yet):', err.message);
+        return null;
+    }
+}
+
+const PUBLIC_TOURNAMENTS_CACHE_TTL_MS = 8000;
+let publicTournamentsListCache = null; // { expiresAt, payload }
+
+app.get('/api/public/tournaments', async (req, res) => {
+    if (!leaguesCollection || !matchRecordsCollection) return res.json({ success: true, tournaments: [] });
+    try {
+        if (publicTournamentsListCache && publicTournamentsListCache.expiresAt > Date.now()) {
+            return res.json(publicTournamentsListCache.payload);
+        }
+        const ownerUid = await getOwnerUid();
+        if (!ownerUid) return res.json({ success: true, tournaments: [] });
+
+        const leagues = await leaguesCollection.find({
+            ownerUid,
+            leagueKey: { $ne: SINGLE_MATCHES_LEAGUE_KEY },
+            publicToken: { $exists: true, $ne: null }
+        }).project({ leagueKey: 1, displayName: 1, publicToken: 1, updatedAt: 1, liveMatches: 1 }).toArray();
+
+        const tournaments = await Promise.all(leagues.map(async doc => {
+            const matches = await getLeagueMatches(ownerUid, doc.leagueKey);
+            const isLive = !!(doc.liveMatches && doc.liveMatches.length > 0);
+            return {
+                token: doc.publicToken,
+                name: doc.displayName || doc.leagueKey,
+                status: isLive ? 'live' : (matches.length > 0 ? 'completed' : 'upcoming'),
+                matchCount: matches.length,
+                updatedAt: doc.updatedAt || 0
+            };
+        }));
+
+        tournaments.sort((a, b) => {
+            if ((a.status === 'live') !== (b.status === 'live')) return a.status === 'live' ? -1 : 1;
+            return (b.updatedAt || 0) - (a.updatedAt || 0);
+        });
+
+        const payload = { success: true, tournaments };
+        publicTournamentsListCache = { payload, expiresAt: Date.now() + PUBLIC_TOURNAMENTS_CACHE_TTL_MS };
+        res.json(payload);
+    } catch (err) {
+        console.log('Public tournaments list error:', err);
+        res.status(500).json({ success: false, tournaments: [] });
+    }
+});
+
 // 🎬 CLIPS API — read-only, metadata-first (per REQUIREMENT: scorecard
 // loads text/stats + clip metadata only; the actual video is fetched only
 // when the user taps WATCH/DOWNLOAD). Every route here returns clipId +
