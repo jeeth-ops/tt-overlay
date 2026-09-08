@@ -54,6 +54,44 @@
   tbody td{ padding:8px 8px; border-bottom:1px solid var(--border-soft); }
   tbody tr:last-child td{ border-bottom:none; }
   .leaderboard-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+
+  /* ============================================================
+     LEADERBOARD — visual pass. Cricket-flavoured (Orange/Purple Cap
+     framing, medal ranks, player avatars, relative form bars) instead
+     of a plain data grid, while staying inside the existing token set
+     (fonts/colors/radii) so it still reads as one coherent product.
+     ============================================================ */
+  .lb-card-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:2px; }
+  .cap-badge{ display:inline-flex; align-items:center; gap:6px; font-family:var(--font-display); font-weight:800; font-size:12.5px; letter-spacing:.2px; }
+  .cap-badge .cap-dot{ width:9px; height:9px; border-radius:50%; flex:none; }
+  .cap-badge.orange .cap-dot{ background:#f97316; box-shadow:0 0 0 3px rgba(249,115,22,.18); }
+  .cap-badge.purple .cap-dot{ background:#a855f7; box-shadow:0 0 0 3px rgba(168,85,247,.18); }
+  .lb-leader-strip{ display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:var(--radius-md); margin-bottom:12px; border:1px solid var(--border-soft); }
+  .lb-leader-strip.orange{ background:linear-gradient(90deg, rgba(249,115,22,.14), transparent 85%); }
+  .lb-leader-strip.purple{ background:linear-gradient(90deg, rgba(168,85,247,.14), transparent 85%); }
+  .lb-leader-strip .ls-label{ font-size:10px; text-transform:uppercase; letter-spacing:.5px; font-weight:800; color:var(--text-faint); }
+  .lb-leader-strip .ls-name{ font-family:var(--font-display); font-weight:800; font-size:14px; }
+  .lb-leader-strip .ls-stat{ margin-left:auto; font-family:var(--font-display); font-weight:800; font-size:15px; }
+  .lb-leader-strip.orange .ls-stat{ color:#f97316; }
+  .lb-leader-strip.purple .ls-stat{ color:#a855f7; }
+  .lb-table-wrap{ overflow-x:auto; }
+  .rank-medal{ display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:50%; font-family:var(--font-display); font-weight:800; font-size:10.5px; flex:none; }
+  .rank-medal.r1{ background:linear-gradient(145deg,#ffe08a,#f5b93f); color:#5a3d00; }
+  .rank-medal.r2{ background:linear-gradient(145deg,#e6e9ee,#b9c0cc); color:#3a3f47; }
+  .rank-medal.r3{ background:linear-gradient(145deg,#e8b48a,#c67c46); color:#4a2c10; }
+  .rank-medal.rn{ background:var(--panel-2); border:1px solid var(--border); color:var(--text-faint); }
+  th.rank-col, td.rank-col{ width:30px; padding-right:2px; }
+  .lb-player{ display:flex; align-items:center; gap:8px; min-width:0; }
+  .lb-avatar{ width:24px; height:24px; border-radius:50%; flex:none; display:flex; align-items:center; justify-content:center; font-family:var(--font-display); font-weight:800; font-size:9.5px; color:#fff; }
+  .lb-player-name{ display:flex; flex-direction:column; min-width:0; }
+  .lb-player-name .nm{ font-weight:700; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:110px; }
+  .lb-bar-track{ height:4px; border-radius:2px; background:var(--border-soft); margin-top:4px; width:100%; max-width:110px; overflow:hidden; }
+  .lb-bar-fill{ height:100%; border-radius:2px; }
+  .lb-bar-fill.orange{ background:linear-gradient(90deg,#fbbf24,#f97316); }
+  .lb-bar-fill.purple{ background:linear-gradient(90deg,#d8b4fe,#a855f7); }
+  tr.lb-row-top td{ background:color-mix(in srgb, var(--accent) 5%, transparent); }
+  .lb-hs-cell.milestone{ color:var(--accent); font-weight:800; }
+  .lb-best-cell.standout{ color:var(--wicket); font-weight:800; }
   .empty-state{ text-align:center; color:var(--text-faint); padding:30px 10px; font-size:13px; }
   .spinner{ width:28px; height:28px; border-radius:50%; border:3px solid var(--border); border-top-color:var(--accent); animation:spin .8s linear infinite; margin:0 auto 12px; }
   @keyframes spin{ to{ transform:rotate(360deg); } }
@@ -173,6 +211,74 @@ function resultText(m){
   return 'In progress';
 }
 
+/* ---- Leaderboard visual helpers (avatars, medals, form bars, cap strip) ---- */
+const AVATAR_PALETTE = ['#ef4444','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#6366f1','#a855f7','#ec4899','#0ea5e9'];
+function initials(name){
+  const parts = String(name||'?').trim().split(/\s+/).filter(Boolean);
+  if(!parts.length) return '?';
+  return (parts[0][0] + (parts.length > 1 ? parts[parts.length-1][0] : '')).toUpperCase();
+}
+function avatarColor(name){
+  const s = String(name||'');
+  let h = 0; for(let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i)) >>> 0;
+  return AVATAR_PALETTE[h % AVATAR_PALETTE.length];
+}
+function rankMedalHtml(i){
+  const cls = i===0?'r1':i===1?'r2':i===2?'r3':'rn';
+  return `<span class="rank-medal ${cls}">${i+1}</span>`;
+}
+function lbPlayerCellHtml(name){
+  return `<div class="lb-player"><div class="lb-avatar" style="background:${avatarColor(name)}">${initials(name)}</div>
+    <div class="lb-player-name"><span class="nm">${escapeHtml(name)}</span></div></div>`;
+}
+function barHtml(value, max, variant){
+  const pct = max > 0 ? Math.max(4, Math.round((value / max) * 100)) : 0;
+  return `<div class="lb-bar-track"><div class="lb-bar-fill ${variant}" style="width:${pct}%"></div></div>`;
+}
+
+function runsLeaderboardHtml(rows){
+  const leader = rows[0];
+  const maxRuns = Math.max(...rows.map(r => r.runs), 1);
+  const strip = leader ? `<div class="lb-leader-strip orange"><div class="lb-avatar" style="background:${avatarColor(leader.name)}">${initials(leader.name)}</div>
+    <div><div class="ls-label">Orange Cap holder</div><div class="ls-name">${escapeHtml(leader.name)}</div></div>
+    <div class="ls-stat tabnum">${leader.runs} runs</div></div>` : '';
+  const rowsHtml = rows.map((r, i) => `<tr class="${i===0?'lb-row-top':''}">
+      <td class="rank-col">${rankMedalHtml(i)}</td>
+      <td>${lbPlayerCellHtml(r.name)}${barHtml(r.runs, maxRuns, 'orange')}</td>
+      <td class="num tabnum">${r.innings}</td>
+      <td class="num tabnum" style="font-weight:800;">${r.runs}</td>
+      <td class="num tabnum lb-hs-cell${r.highScore>=50?' milestone':''}">${r.highScore}</td>
+      <td class="num tabnum">${r.average}</td>
+      <td class="num tabnum">${r.strikeRate}</td>
+      <td class="clip-col">${clipBtnHtml(r.name, 'batter')}</td>
+    </tr>`).join('');
+  return `${strip}<div class="lb-table-wrap"><table><thead><tr><th class="rank-col"></th><th>Batter</th><th class="num">Inn</th><th class="num">Runs</th><th class="num">HS</th><th class="num">Avg</th><th class="num">SR</th><th class="clip-col"></th></tr></thead>
+    <tbody>${rowsHtml}</tbody></table></div>`;
+}
+
+function wicketsLeaderboardHtml(rows){
+  const leader = rows[0];
+  const maxWkts = Math.max(...rows.map(r => r.wickets), 1);
+  const strip = leader ? `<div class="lb-leader-strip purple"><div class="lb-avatar" style="background:${avatarColor(leader.name)}">${initials(leader.name)}</div>
+    <div><div class="ls-label">Purple Cap holder</div><div class="ls-name">${escapeHtml(leader.name)}</div></div>
+    <div class="ls-stat tabnum">${leader.wickets} wkts</div></div>` : '';
+  const rowsHtml = rows.map((r, i) => {
+    const bestWkts = parseInt(String(r.bestFigures).split('/')[0], 10) || 0;
+    return `<tr class="${i===0?'lb-row-top':''}">
+      <td class="rank-col">${rankMedalHtml(i)}</td>
+      <td>${lbPlayerCellHtml(r.name)}${barHtml(r.wickets, maxWkts, 'purple')}</td>
+      <td class="num tabnum">${r.innings}</td>
+      <td class="num tabnum">${r.overs}</td>
+      <td class="num tabnum" style="font-weight:800;">${r.wickets}</td>
+      <td class="num tabnum lb-best-cell${bestWkts>=4?' standout':''}">${escapeHtml(r.bestFigures)}</td>
+      <td class="num tabnum">${r.economy}</td>
+      <td class="clip-col">${clipBtnHtml(r.name, 'bowler')}</td>
+    </tr>`;
+  }).join('');
+  return `${strip}<div class="lb-table-wrap"><table><thead><tr><th class="rank-col"></th><th>Bowler</th><th class="num">Inn</th><th class="num">Ov</th><th class="num">Wkts</th><th class="num">Best</th><th class="num">Econ</th><th class="clip-col"></th></tr></thead>
+    <tbody>${rowsHtml}</tbody></table></div>`;
+}
+
 function pathParts(){ return location.pathname.split('/').filter(Boolean); } // ['score','tournament',token,'match'?,matchId?]
 
 async function init(){
@@ -281,13 +387,13 @@ function renderPortal(data, token){
   const lb = data.leaderboards || { topRuns: [], topWickets: [] };
   const leaderboardsPanel = `<div class="tab-panel" data-panel="leaderboards">
     <div class="leaderboard-grid">
-      <div class="card"><div class="section-title"><span class="dash"></span>Top Run Scorers</div>
-        ${lb.topRuns.length ? `<table><thead><tr><th>Batter</th><th class="num">Inn</th><th class="num">Runs</th><th class="num">HS</th><th class="num">Avg</th><th class="num">SR</th><th class="clip-col"></th></tr></thead>
-        <tbody>${lb.topRuns.map(r => `<tr><td>${escapeHtml(r.name)}</td><td class="num tabnum">${r.innings}</td><td class="num tabnum">${r.runs}</td><td class="num tabnum">${r.highScore}</td><td class="num tabnum">${r.average}</td><td class="num tabnum">${r.strikeRate}</td><td class="clip-col">${clipBtnHtml(r.name, 'batter')}</td></tr>`).join('')}</tbody></table>` : '<div class="empty-state">No batting data yet.</div>'}
+      <div class="card">
+        <div class="lb-card-head"><div class="section-title" style="margin-bottom:0;"><span class="dash"></span>Top Run Scorers</div>${lb.topRuns.length ? `<span class="cap-badge orange"><span class="cap-dot"></span>Orange Cap</span>` : ''}</div>
+        ${lb.topRuns.length ? runsLeaderboardHtml(lb.topRuns) : '<div class="empty-state">No batting data yet.</div>'}
       </div>
-      <div class="card"><div class="section-title"><span class="dash"></span>Top Wicket Takers</div>
-        ${lb.topWickets.length ? `<table><thead><tr><th>Bowler</th><th class="num">Inn</th><th class="num">Ov</th><th class="num">Wkts</th><th class="num">Best</th><th class="num">Econ</th><th class="clip-col"></th></tr></thead>
-        <tbody>${lb.topWickets.map(r => `<tr><td>${escapeHtml(r.name)}</td><td class="num tabnum">${r.innings}</td><td class="num tabnum">${r.overs}</td><td class="num tabnum">${r.wickets}</td><td class="num tabnum">${escapeHtml(r.bestFigures)}</td><td class="num tabnum">${r.economy}</td><td class="clip-col">${clipBtnHtml(r.name, 'bowler')}</td></tr>`).join('')}</tbody></table>` : '<div class="empty-state">No bowling data yet.</div>'}
+      <div class="card">
+        <div class="lb-card-head"><div class="section-title" style="margin-bottom:0;"><span class="dash"></span>Top Wicket Takers</div>${lb.topWickets.length ? `<span class="cap-badge purple"><span class="cap-dot"></span>Purple Cap</span>` : ''}</div>
+        ${lb.topWickets.length ? wicketsLeaderboardHtml(lb.topWickets) : '<div class="empty-state">No bowling data yet.</div>'}
       </div>
     </div>
   </div>`;
@@ -370,20 +476,27 @@ function findPlayerRow(card, name){
 }
 
 // For one match: figure out whether/where this player appears (which
-// team's card, so we can label the opponent correctly), pull their line
-// for that match, and fetch that match's clips for them. Returns null if
-// the player didn't bat/bowl in this particular match.
-async function buildMatchEntry(matchSummary, name, role){
+// team's card, so we can label the opponent correctly), pull BOTH their
+// batting and bowling lines for that match (a player can bat in one
+// match and only bowl in another, or do both in the same one), and
+// fetch every clip category for them in this match — fours, sixes,
+// dismissal AND wickets together, not just whichever discipline the
+// leaderboard button happened to be clicked from. Returns null only if
+// the player didn't feature in this match at all.
+async function buildMatchEntry(matchSummary, name){
   const snap = await fetchMatchSnapshot(matchSummary.matchId);
   if(!snap) return null;
 
-  const card = role === 'bowler' ? snap.bowlingCard : snap.battingCard;
-  let teamKey = null, statRow = null;
-  if(card){
-    if(findPlayerRow(card.A, name)){ teamKey = 'A'; statRow = findPlayerRow(card.A, name); }
-    else if(findPlayerRow(card.B, name)){ teamKey = 'B'; statRow = findPlayerRow(card.B, name); }
+  let teamKey = null, battingRow = null, bowlingRow = null;
+  if(snap.battingCard){
+    if(findPlayerRow(snap.battingCard.A, name)){ teamKey = 'A'; battingRow = findPlayerRow(snap.battingCard.A, name); }
+    else if(findPlayerRow(snap.battingCard.B, name)){ teamKey = 'B'; battingRow = findPlayerRow(snap.battingCard.B, name); }
   }
-  if(!teamKey || !statRow) return null; // didn't feature in this match
+  if(snap.bowlingCard){
+    if(findPlayerRow(snap.bowlingCard.A, name)){ teamKey = teamKey || 'A'; bowlingRow = findPlayerRow(snap.bowlingCard.A, name); }
+    else if(findPlayerRow(snap.bowlingCard.B, name)){ teamKey = teamKey || 'B'; bowlingRow = findPlayerRow(snap.bowlingCard.B, name); }
+  }
+  if(!teamKey) return null; // didn't feature in this match
 
   const oppTeamObj = (teamKey === 'A' ? snap.teamB : snap.teamA) || (teamKey === 'A' ? matchSummary.teamB : matchSummary.teamA);
   const opponent = (oppTeamObj && (oppTeamObj.short || oppTeamObj.name)) || 'Opponent';
@@ -392,22 +505,22 @@ async function buildMatchEntry(matchSummary, name, role){
   return {
     matchId: matchSummary.matchId, opponent,
     venue: matchSummary.venue || '', savedAt: matchSummary.savedAt || null,
-    role, statRow, clipsData
+    battingRow, bowlingRow, clipsData
   };
 }
 
-async function buildTournamentPlayerReport(name, role){
+async function buildTournamentPlayerReport(name){
   const matches = (tournamentDataCache && tournamentDataCache.matches) || [];
-  const entries = await Promise.all(matches.map(m => buildMatchEntry(m, name, role)));
+  const entries = await Promise.all(matches.map(m => buildMatchEntry(m, name)));
   return entries.filter(Boolean).sort((a, b) => new Date(b.savedAt || 0) - new Date(a.savedAt || 0));
 }
 
-function matchStatLine(role, statRow){
-  if(role === 'bowler'){
-    return `${statRow.wickets||0}-${statRow.runs||0} (${fmtOvers(statRow.overs, statRow.balls)} ov) · Econ ${economy(statRow.runs||0, statRow.overs, statRow.balls)}`;
-  }
+function battingStatLine(statRow){
   const notOutTag = statRow.out === false ? '*' : '';
-  return `${statRow.runs||0}${notOutTag} (${statRow.balls||0}b) · 4s ${statRow.fours||0} · 6s ${statRow.sixes||0} · SR ${strikeRate(statRow.runs||0, statRow.balls||0)}`;
+  return `Bat: ${statRow.runs||0}${notOutTag} (${statRow.balls||0}b) · 4s ${statRow.fours||0} · 6s ${statRow.sixes||0} · SR ${strikeRate(statRow.runs||0, statRow.balls||0)}`;
+}
+function bowlingStatLine(statRow){
+  return `Bowl: ${statRow.wickets||0}-${statRow.runs||0} (${fmtOvers(statRow.overs, statRow.balls)} ov) · Econ ${economy(statRow.runs||0, statRow.overs, statRow.balls)}`;
 }
 
 function clipGroupHtml(label, clips){
@@ -441,59 +554,68 @@ function wireClipRows(root){
 
 function matchEntryHtml(entry){
   const dateStr = entry.savedAt ? new Date(entry.savedAt).toLocaleDateString() : '';
+  const statLines = [];
+  if(entry.battingRow) statLines.push(battingStatLine(entry.battingRow));
+  if(entry.bowlingRow) statLines.push(bowlingStatLine(entry.bowlingRow));
+
+  // All clip categories for this match, together, regardless of which
+  // leaderboard (batting or bowling) the modal was opened from — a
+  // six and the wicket that dismissed the same player both belong to
+  // the same match card.
   let clipsHtml = '';
   if(entry.clipsData && entry.clipsData.success){
-    clipsHtml = entry.role === 'bowler'
-      ? clipGroupHtml('Wickets', entry.clipsData.bowling.wickets)
-      : clipGroupHtml('Fours', entry.clipsData.batting.fours) + clipGroupHtml('Sixes', entry.clipsData.batting.sixes) + clipGroupHtml('Dismissal', entry.clipsData.batting.dismissal);
+    clipsHtml = clipGroupHtml('Sixes', entry.clipsData.batting.sixes)
+      + clipGroupHtml('Fours', entry.clipsData.batting.fours)
+      + clipGroupHtml('Wickets', entry.clipsData.bowling.wickets)
+      + clipGroupHtml('Dismissal', entry.clipsData.batting.dismissal);
   }
-  if(!clipsHtml) clipsHtml = '<div class="empty-state" style="padding:8px 0;">No clips for this match.</div>';
+  if(!clipsHtml) clipsHtml = '<div class="empty-state" style="padding:8px 0;">No clips recorded for this match.</div>';
   return `<div class="tpm-match">
     <div class="tpm-match-head">
       <div class="tpm-vs">vs ${escapeHtml(entry.opponent)}</div>
       <div class="tpm-date">${escapeHtml(dateStr)}${entry.venue ? ' · ' + escapeHtml(entry.venue) : ''}</div>
     </div>
-    <div class="tpm-statline">${escapeHtml(matchStatLine(entry.role, entry.statRow))}</div>
+    ${statLines.map(s => `<div class="tpm-statline">${escapeHtml(s)}</div>`).join('')}
     ${clipsHtml}
   </div>`;
 }
 
 // Aggregate line across every match shown, so the modal opens on a
 // tournament-wide total before drilling into the match-by-match cards.
-function summaryLineHtml(role, entries){
-  if(role === 'bowler'){
-    let wkts = 0, runs = 0, balls = 0;
-    entries.forEach(e => { wkts += e.statRow.wickets || 0; runs += e.statRow.runs || 0; balls += (e.statRow.overs || 0) * 6 + (e.statRow.balls || 0); });
-    const econ = balls ? (runs / (balls / 6)).toFixed(2) : '0.00';
-    return `<div class="cd-stat-row">
-      <div class="cd-stat-box"><div class="k">Matches</div><div class="v tabnum">${entries.length}</div></div>
-      <div class="cd-stat-box"><div class="k">Wkts</div><div class="v tabnum">${wkts}</div></div>
-      <div class="cd-stat-box"><div class="k">Overs</div><div class="v tabnum">${Math.floor(balls/6)}.${balls%6}</div></div>
-      <div class="cd-stat-box"><div class="k">Econ</div><div class="v tabnum">${econ}</div></div>
-    </div>`;
+// Shows whichever discipline(s) the player actually has entries for —
+// an all-rounder gets both a batting line and a bowling line here.
+function summaryLineHtml(entries){
+  let runs = 0, balls = 0, battingMatches = 0;
+  let wkts = 0, bowlRuns = 0, bowlBalls = 0, bowlingMatches = 0;
+  entries.forEach(e => {
+    if(e.battingRow){ battingMatches++; runs += e.battingRow.runs || 0; balls += e.battingRow.balls || 0; }
+    if(e.bowlingRow){ bowlingMatches++; wkts += e.bowlingRow.wickets || 0; bowlRuns += e.bowlingRow.runs || 0; bowlBalls += (e.bowlingRow.overs || 0) * 6 + (e.bowlingRow.balls || 0); }
+  });
+  const boxes = [`<div class="cd-stat-box"><div class="k">Matches</div><div class="v tabnum">${entries.length}</div></div>`];
+  if(battingMatches){
+    boxes.push(`<div class="cd-stat-box"><div class="k">Runs</div><div class="v tabnum">${runs}</div></div>`);
+    boxes.push(`<div class="cd-stat-box"><div class="k">SR</div><div class="v tabnum">${strikeRate(runs, balls)}</div></div>`);
   }
-  let runs = 0, balls = 0;
-  entries.forEach(e => { runs += e.statRow.runs || 0; balls += e.statRow.balls || 0; });
-  return `<div class="cd-stat-row">
-    <div class="cd-stat-box"><div class="k">Matches</div><div class="v tabnum">${entries.length}</div></div>
-    <div class="cd-stat-box"><div class="k">Runs</div><div class="v tabnum">${runs}</div></div>
-    <div class="cd-stat-box"><div class="k">Balls</div><div class="v tabnum">${balls}</div></div>
-    <div class="cd-stat-box"><div class="k">SR</div><div class="v tabnum">${strikeRate(runs, balls)}</div></div>
-  </div>`;
+  if(bowlingMatches){
+    const econ = bowlBalls ? (bowlRuns / (bowlBalls / 6)).toFixed(2) : '0.00';
+    boxes.push(`<div class="cd-stat-box"><div class="k">Wkts</div><div class="v tabnum">${wkts}</div></div>`);
+    boxes.push(`<div class="cd-stat-box"><div class="k">Econ</div><div class="v tabnum">${econ}</div></div>`);
+  }
+  return `<div class="cd-stat-row" style="flex-wrap:wrap;">${boxes.join('')}</div>`;
 }
 
-async function openTournamentPlayerModal(name, role){
+async function openTournamentPlayerModal(name){
   document.getElementById('clip-modal-title').textContent = `${name} — Tournament Report`;
   const body = document.getElementById('clip-modal-body');
   body.innerHTML = '<div class="empty-state">Loading…</div>';
   document.getElementById('clip-modal-backdrop').classList.add('open');
 
-  const entries = await buildTournamentPlayerReport(name, role);
+  const entries = await buildTournamentPlayerReport(name);
   if(!entries.length){
     body.innerHTML = '<div class="empty-state">No match data found for this player yet.</div>';
     return;
   }
-  body.innerHTML = summaryLineHtml(role, entries) + entries.map(matchEntryHtml).join('');
+  body.innerHTML = summaryLineHtml(entries) + entries.map(matchEntryHtml).join('');
   wireClipRows(body);
 }
 
@@ -525,7 +647,7 @@ document.getElementById('video-modal-backdrop').addEventListener('click', (e) =>
 document.body.addEventListener('click', (e) => {
   const btn = e.target.closest('.clip-btn');
   if(!btn) return;
-  openTournamentPlayerModal(btn.dataset.player, btn.dataset.role);
+  openTournamentPlayerModal(btn.dataset.player);
 });
 
 init();
