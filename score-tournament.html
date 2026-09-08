@@ -92,6 +92,35 @@
   tr.lb-row-top td{ background:color-mix(in srgb, var(--accent) 5%, transparent); }
   .lb-hs-cell.milestone{ color:var(--accent); font-weight:800; }
   .lb-best-cell.standout{ color:var(--wicket); font-weight:800; }
+  .lb-search-wrap{ margin-bottom:10px; }
+  .lb-search-input{ width:100%; padding:8px 12px; border-radius:99px; border:1px solid var(--border); background:var(--panel-2); color:var(--text); font-family:var(--font-body); font-size:12.5px; }
+  .lb-search-input:focus{ outline:none; border-color:var(--accent); }
+
+  /* ---- Hero "at a glance" tournament stat strip ---- */
+  #tourney-stats{ position:relative; display:flex; flex-wrap:wrap; gap:10px; margin-top:14px; }
+  .tstat-chip{ flex:1; min-width:92px; background:color-mix(in srgb, var(--panel) 55%, var(--panel-2)); border:1px solid var(--border-soft); border-radius:var(--radius-md); padding:9px 12px; }
+  .tstat-chip .ts-v{ font-family:var(--font-display); font-weight:800; font-size:17px; }
+  .tstat-chip .ts-k{ font-size:9.5px; text-transform:uppercase; letter-spacing:.4px; color:var(--text-faint); font-weight:700; margin-top:1px; }
+
+  /* ---- Tournament Awards trophy cabinet ---- */
+  #awards-card{ padding-bottom:14px; }
+  .awards-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+  .award-card{ position:relative; overflow:hidden; background:var(--panel-2); border:1px solid var(--border-soft); border-radius:var(--radius-md); padding:12px; cursor:pointer; transition:transform .15s ease, border-color .15s ease; }
+  .award-card:hover{ transform:translateY(-2px); border-color:var(--accent); }
+  .award-card .aw-icon{ font-size:18px; line-height:1; }
+  .award-card .aw-label{ font-family:var(--font-display); font-weight:800; font-size:11.5px; margin-top:6px; }
+  .award-card .aw-sub{ font-size:9.5px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.3px; font-weight:700; }
+  .award-card .aw-player{ display:flex; align-items:center; gap:6px; margin-top:9px; }
+  .award-card .aw-name{ font-weight:700; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .award-card .aw-value{ font-family:var(--font-display); font-weight:800; font-size:13px; color:var(--accent); margin-top:5px; }
+
+  /* ---- Points table: form guide + qualification zone ---- */
+  .form-dot{ display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; border-radius:4px; font-size:8.5px; font-weight:800; color:#fff; margin-right:2px; }
+  .form-dot.win{ background:var(--accent); }
+  .form-dot.loss{ background:var(--wicket); }
+  .form-dot.tie{ background:#a1a1aa; }
+  tr.pt-qualify td:first-child{ box-shadow:inset 3px 0 0 var(--accent); }
+  tr.pt-divider td{ padding:4px 8px; font-size:9px; text-transform:uppercase; letter-spacing:.5px; color:var(--text-faint); text-align:center; border-bottom:1px dashed var(--border); background:var(--panel-2); font-weight:700; }
   .empty-state{ text-align:center; color:var(--text-faint); padding:30px 10px; font-size:13px; }
   .spinner{ width:28px; height:28px; border-radius:50%; border:3px solid var(--border); border-top-color:var(--accent); animation:spin .8s linear infinite; margin:0 auto 12px; }
   @keyframes spin{ to{ transform:rotate(360deg); } }
@@ -279,6 +308,87 @@ function wicketsLeaderboardHtml(rows){
     <tbody>${rowsHtml}</tbody></table></div>`;
 }
 
+/* ---- Tournament-wide "at a glance" stats, computed from every saved
+   match's full battingCard/bowlingCard (not just the top-15 leaderboard
+   rows), so these totals are the real tournament totals. ---- */
+function computeTourneyGlance(matches){
+  let totalRuns=0, totalSixes=0, totalFours=0, totalWickets=0, highestScore=0, highestScorer='';
+  matches.forEach(m => {
+    ['A','B'].forEach(k => {
+      (m.battingCard && m.battingCard[k] || []).forEach(b => {
+        totalRuns += b.runs||0; totalSixes += b.sixes||0; totalFours += b.fours||0;
+        if((b.runs||0) > highestScore){ highestScore = b.runs||0; highestScorer = b.name||''; }
+      });
+      (m.bowlingCard && m.bowlingCard[k] || []).forEach(b => { totalWickets += b.wickets||0; });
+    });
+  });
+  return { totalRuns, totalSixes, totalFours, totalWickets, highestScore, highestScorer };
+}
+function heroStatsHtml(glance){
+  const chips = [
+    { v: glance.totalRuns, k: 'Total Runs' },
+    { v: glance.totalWickets, k: 'Total Wickets' },
+    { v: glance.totalSixes, k: 'Sixes' },
+    { v: glance.totalFours, k: 'Fours' },
+  ];
+  if(glance.highestScore) chips.push({ v: glance.highestScore, k: `Best Knock${glance.highestScorer ? ' · ' + glance.highestScorer : ''}` });
+  return `<div id="tourney-stats">${chips.map(c => `<div class="tstat-chip"><div class="ts-v tabnum">${c.v}</div><div class="ts-k">${escapeHtml(c.k)}</div></div>`).join('')}</div>`;
+}
+
+/* ---- Tournament Awards — derived entirely from the leaderboard rows
+   already loaded (topRuns/topWickets), no extra requests needed. Small
+   sample-size guards (min balls/overs) stop a one-ball cameo from
+   "winning" Best Strike Rate or Best Economy. ---- */
+function computeAwards(lb){
+  const topRuns = lb.topRuns || [], topWickets = lb.topWickets || [];
+  const awards = [];
+  if(topRuns.length) awards.push({ icon:'🏏', label:'Orange Cap', sub:'Most Runs', name:topRuns[0].name, value:`${topRuns[0].runs} runs` });
+  if(topWickets.length) awards.push({ icon:'🎯', label:'Purple Cap', sub:'Most Wickets', name:topWickets[0].name, value:`${topWickets[0].wickets} wkts` });
+  const byHS = topRuns.slice().sort((a,b) => b.highScore - a.highScore)[0];
+  if(byHS && byHS.highScore > 0) awards.push({ icon:'💯', label:'Best Knock', sub:'Highest Score', name:byHS.name, value:`${byHS.highScore}` });
+  const bySixes = topRuns.slice().sort((a,b) => b.sixes - a.sixes)[0];
+  if(bySixes && bySixes.sixes > 0) awards.push({ icon:'🚀', label:'Biggest Hitter', sub:'Most Sixes', name:bySixes.name, value:`${bySixes.sixes} sixes` });
+  const bySR = topRuns.filter(r => r.balls >= 10).sort((a,b) => b.strikeRate - a.strikeRate)[0];
+  if(bySR) awards.push({ icon:'⚡', label:'Fastest Scorer', sub:'Best Strike Rate (min. 10b)', name:bySR.name, value:`SR ${bySR.strikeRate}` });
+  const byEcon = topWickets.filter(r => r.overs >= 2).sort((a,b) => a.economy - b.economy)[0];
+  if(byEcon) awards.push({ icon:'🧊', label:'Most Economical', sub:'Best Economy (min. 2ov)', name:byEcon.name, value:`${byEcon.economy} RPO` });
+  return awards;
+}
+function awardCardHtml(a){
+  return `<div class="award-card" data-player="${escapeHtml(a.name)}">
+    <div class="aw-icon">${a.icon}</div>
+    <div class="aw-label">${escapeHtml(a.label)}</div>
+    <div class="aw-sub">${escapeHtml(a.sub)}</div>
+    <div class="aw-player"><div class="lb-avatar" style="width:20px;height:20px;font-size:8.5px;background:${avatarColor(a.name)}">${initials(a.name)}</div><div class="aw-name">${escapeHtml(a.name)}</div></div>
+    <div class="aw-value tabnum">${a.value}</div>
+  </div>`;
+}
+
+/* ---- Points table form guide — each team's last 5 completed results,
+   as W/L/T dots, keyed the same way computePointsTable keys teams
+   server-side (full team name, trimmed + lowercased) so the two line
+   up regardless of whether the UI displays short names elsewhere. ---- */
+function computeFormGuide(matches){
+  const form = {};
+  const finished = matches.filter(m => m.winningTeam).slice().sort((a,b) => new Date(a.savedAt||0) - new Date(b.savedAt||0));
+  finished.forEach(m => {
+    const aKey = ((m.teamA && m.teamA.name) || '').trim().toLowerCase();
+    const bKey = ((m.teamB && m.teamB.name) || '').trim().toLowerCase();
+    if(!aKey || !bKey) return;
+    if(!form[aKey]) form[aKey] = [];
+    if(!form[bKey]) form[bKey] = [];
+    if(m.winningTeam === 'TIE'){ form[aKey].push('T'); form[bKey].push('T'); }
+    else if(m.winningTeam === 'A'){ form[aKey].push('W'); form[bKey].push('L'); }
+    else if(m.winningTeam === 'B'){ form[aKey].push('L'); form[bKey].push('W'); }
+  });
+  Object.keys(form).forEach(k => { form[k] = form[k].slice(-5); });
+  return form;
+}
+function formDotsHtml(seq){
+  if(!seq || !seq.length) return '<span style="color:var(--text-faint); font-size:11px;">—</span>';
+  return seq.map(r => `<span class="form-dot ${r==='W'?'win':r==='L'?'loss':'tie'}" title="${r==='W'?'Won':r==='L'?'Lost':'Tied'}">${r}</span>`).join('');
+}
+
 function pathParts(){ return location.pathname.split('/').filter(Boolean); } // ['score','tournament',token,'match'?,matchId?]
 
 async function init(){
@@ -326,12 +436,22 @@ function renderPortal(data, token){
   const finished = matches.filter(m => m.winningTeam);
   const inProgress = matches.filter(m => !m.winningTeam);
   const isLive = !!(data.live && data.live.roomId);
+  const glance = computeTourneyGlance(matches);
 
   const heroCard = `
   <div class="card" id="tourney-hero">
     <div id="tourney-name">${escapeHtml(data.displayName)}</div>
     <div id="tourney-meta">${matches.length} match${matches.length===1?'':'es'} played${isLive ? ' · <span class="chip live"><span class="lv-dot"></span>Live now</span>' : ''}</div>
+    ${matches.length ? heroStatsHtml(glance) : ''}
   </div>`;
+
+  const lb = data.leaderboards || { topRuns: [], topWickets: [] };
+  const awards = computeAwards(lb);
+  const awardsCard = awards.length ? `
+  <div class="card" id="awards-card">
+    <div class="section-title"><span class="dash"></span>Tournament Awards</div>
+    <div class="awards-grid">${awards.map(awardCardHtml).join('')}</div>
+  </div>` : '';
 
   const tabsCard = `
   <div id="tabs">
@@ -376,29 +496,45 @@ function renderPortal(data, token){
   const matchesPanel = `<div class="tab-panel active" data-panel="matches">${liveHtml}${inProgressHtml}${previousHtml}${upcomingHtml}</div>`;
 
   const pt = data.pointsTable || [];
+  const formGuide = computeFormGuide(matches);
+  const qualifyCount = pt.length > 4 ? 4 : Math.ceil(pt.length / 2);
+  const pointsRowHtml = (r, i) => `<tr class="${i < qualifyCount ? 'pt-qualify' : ''}"><td>${escapeHtml(r.team)}</td><td class="num tabnum">${r.played}</td><td class="num tabnum">${r.won}</td><td class="num tabnum">${r.lost}</td><td class="num tabnum">${r.tied}</td><td class="num tabnum">${r.points}</td><td class="num tabnum">${r.nrr>0?'+':''}${r.nrr}</td><td>${formDotsHtml(formGuide[r.team.trim().toLowerCase()])}</td></tr>`;
+  const pointsRows = pt.map(pointsRowHtml);
+  if(qualifyCount > 0 && qualifyCount < pt.length) pointsRows.splice(qualifyCount, 0, `<tr class="pt-divider"><td colspan="8">Qualification line</td></tr>`);
   const pointsPanel = `<div class="tab-panel" data-panel="points">
     <div class="card"><div class="section-title"><span class="dash"></span>Points Table</div>
-      ${pt.length ? `<table id="points-table"><thead><tr><th>Team</th><th class="num">P</th><th class="num">W</th><th class="num">L</th><th class="num">T</th><th class="num">Pts</th><th class="num">NRR</th></tr></thead>
-      <tbody>${pt.map(r => `<tr><td>${escapeHtml(r.team)}</td><td class="num tabnum">${r.played}</td><td class="num tabnum">${r.won}</td><td class="num tabnum">${r.lost}</td><td class="num tabnum">${r.tied}</td><td class="num tabnum">${r.points}</td><td class="num tabnum">${r.nrr>0?'+':''}${r.nrr}</td></tr>`).join('')}</tbody></table>`
+      ${pt.length ? `<div class="lb-table-wrap"><table id="points-table"><thead><tr><th>Team</th><th class="num">P</th><th class="num">W</th><th class="num">L</th><th class="num">T</th><th class="num">Pts</th><th class="num">NRR</th><th>Form</th></tr></thead>
+      <tbody>${pointsRows.join('')}</tbody></table></div>`
       : '<div class="empty-state">No matches played yet.</div>'}
     </div>
   </div>`;
 
-  const lb = data.leaderboards || { topRuns: [], topWickets: [] };
   const leaderboardsPanel = `<div class="tab-panel" data-panel="leaderboards">
     <div class="leaderboard-grid">
       <div class="card">
         <div class="lb-card-head"><div class="section-title" style="margin-bottom:0;"><span class="dash"></span>Top Run Scorers</div>${lb.topRuns.length ? `<span class="cap-badge orange"><span class="cap-dot"></span>Orange Cap</span>` : ''}</div>
-        ${lb.topRuns.length ? runsLeaderboardHtml(lb.topRuns) : '<div class="empty-state">No batting data yet.</div>'}
+        ${lb.topRuns.length ? `<div class="lb-search-wrap"><input class="lb-search-input" type="text" placeholder="Search batters…"></div>${runsLeaderboardHtml(lb.topRuns)}` : '<div class="empty-state">No batting data yet.</div>'}
       </div>
       <div class="card">
         <div class="lb-card-head"><div class="section-title" style="margin-bottom:0;"><span class="dash"></span>Top Wicket Takers</div>${lb.topWickets.length ? `<span class="cap-badge purple"><span class="cap-dot"></span>Purple Cap</span>` : ''}</div>
-        ${lb.topWickets.length ? wicketsLeaderboardHtml(lb.topWickets) : '<div class="empty-state">No bowling data yet.</div>'}
+        ${lb.topWickets.length ? `<div class="lb-search-wrap"><input class="lb-search-input" type="text" placeholder="Search bowlers…"></div>${wicketsLeaderboardHtml(lb.topWickets)}` : '<div class="empty-state">No bowling data yet.</div>'}
       </div>
     </div>
   </div>`;
 
-  c.innerHTML = heroCard + tabsCard + matchesPanel + pointsPanel + leaderboardsPanel;
+  c.innerHTML = heroCard + awardsCard + tabsCard + matchesPanel + pointsPanel + leaderboardsPanel;
+
+  c.querySelectorAll('.award-card').forEach(card => card.addEventListener('click', () => openTournamentPlayerModal(card.dataset.player)));
+  c.querySelectorAll('.lb-search-input').forEach(inp => inp.addEventListener('input', () => {
+    const term = inp.value.trim().toLowerCase();
+    const wrap = inp.closest('.card').querySelector('.lb-table-wrap');
+    if(!wrap) return;
+    wrap.querySelectorAll('tbody tr').forEach(tr => {
+      const nameEl = tr.querySelector('.nm');
+      const name = nameEl ? nameEl.textContent.toLowerCase() : '';
+      tr.style.display = (!term || name.includes(term)) ? '' : 'none';
+    });
+  }));
 
   c.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', () => {
     c.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
