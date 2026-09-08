@@ -69,6 +69,21 @@ try {
 
 const db = admin.firestore();
 const app = express();
+
+// ================================================================
+// Hide hosting identity: disable Express's default header, and
+// redirect any request that comes in on the Render default domain
+// (*.onrender.com) over to the real custom domain instead.
+// ================================================================
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+    const host = req.get('host');
+    if (host && host.includes('onrender.com')) {
+        return res.redirect(301, `https://allsportslivestreams.com${req.originalUrl}`);
+    }
+    next();
+});
+
 const server = http.createServer(app);
 
 // ================================================================
