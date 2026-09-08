@@ -62,6 +62,56 @@
   footer{ text-align:center; padding:22px 10px 4px; color:var(--text-faint); font-size:11.5px; }
   footer a{ color:var(--accent); font-weight:700; }
   @media (max-width:700px){ .leaderboard-grid{ grid-template-columns:1fr; } }
+
+  /* ============================================================
+     LEADERBOARD PLAYER CLIPS — same clip icon/list/video-modal
+     pattern as cricket-scorecard.html and score-match.html, but the
+     modal body here is organised MATCH BY MATCH across the whole
+     tournament (opponent + that match's runs/wickets line, then that
+     match's own Four/Six/Dismissal clips) rather than one flat list.
+     ============================================================ */
+  th.clip-col, td.clip-col{ width:34px; text-align:center; padding-left:0; padding-right:6px; }
+  .clip-btn{ width:26px; height:26px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); color:var(--text-dim); display:inline-flex; align-items:center; justify-content:center; cursor:pointer; }
+  .clip-btn:hover{ color:var(--accent); border-color:var(--accent); }
+  .clip-btn svg{ width:12px; height:12px; }
+  #clip-modal-backdrop{ display:none; position:fixed; inset:0; background:rgba(4,6,10,.7); z-index:100; align-items:center; justify-content:center; padding:16px; }
+  #clip-modal-backdrop.open{ display:flex; }
+  #clip-modal{ width:min(520px, 100%); max-height:82vh; overflow-y:auto; background:var(--panel); border-radius:var(--radius-lg); box-shadow:0 20px 60px rgba(0,0,0,.5); }
+  #clip-modal-head{ display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--border); position:sticky; top:0; background:var(--panel); z-index:1; }
+  #clip-modal-head h3{ margin:0; font-family:var(--font-display); font-size:14.5px; font-weight:700; }
+  #clip-modal-close{ width:28px; height:28px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); color:var(--text-dim); display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  #clip-modal-body{ padding:12px 14px 18px; }
+  .cd-stat-row{ display:flex; gap:8px; }
+  .cd-stat-box{ flex:1; background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); padding:8px 10px; text-align:center; }
+  .cd-stat-box .k{ font-size:9.5px; text-transform:uppercase; letter-spacing:.4px; color:var(--text-faint); font-weight:700; }
+  .cd-stat-box .v{ font-family:var(--font-display); font-weight:800; font-size:14px; margin-top:2px; }
+  .clip-group-label{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; color:var(--text-faint); margin:12px 0 6px; }
+  .clip-row{ display:flex; align-items:center; gap:10px; padding:10px; border-radius:var(--radius-sm); border:1px solid var(--border-soft); margin-bottom:8px; cursor:pointer; }
+  .clip-row:hover{ border-color:var(--accent); }
+  .clip-row .cr-badge{ width:26px; height:26px; border-radius:8px; flex:none; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:11.5px; color:#fff; }
+  .clip-row .cr-badge.four{ background:#3b82f6; } .clip-row .cr-badge.six{ background:#a855f7; } .clip-row .cr-badge.wicket{ background:var(--wicket); }
+  .clip-row .cr-info{ flex:1; min-width:0; }
+  .clip-row .cr-over{ font-weight:700; font-size:12.5px; font-family:var(--font-display); }
+  .clip-row .cr-sub{ font-size:11px; color:var(--text-dim); margin-top:1px; }
+  .clip-watch-btn{ width:28px; height:28px; border-radius:99px; background:var(--accent-soft); color:var(--accent); border:none; display:flex; align-items:center; justify-content:center; cursor:pointer; flex:none; }
+  .clip-watch-btn svg{ width:12px; height:12px; }
+  .clip-watch-btn:disabled{ opacity:.35; cursor:default; }
+  /* One block per match inside the "Tournament Report" modal — a small
+     card so a player's clips read as an organised, professional
+     match-by-match breakdown rather than one undifferentiated list. */
+  .tpm-match{ border:1px solid var(--border-soft); border-radius:var(--radius-md); padding:12px; margin-top:12px; }
+  .tpm-match-head{ display:flex; align-items:baseline; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+  .tpm-vs{ font-family:var(--font-display); font-weight:700; font-size:13px; }
+  .tpm-date{ font-size:11px; color:var(--text-dim); font-weight:600; }
+  .tpm-statline{ font-size:12.5px; font-weight:700; color:var(--accent); margin-top:4px; }
+  #video-modal-backdrop{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:110; align-items:center; justify-content:center; padding:16px; }
+  #video-modal-backdrop.open{ display:flex; }
+  #video-modal{ width:min(720px,100%); background:#000; border-radius:var(--radius-lg); overflow:hidden; }
+  #video-modal-head{ display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:#0b0e14; }
+  #video-modal-head .vm-title{ color:#fff; font-size:12.5px; font-weight:700; }
+  #video-modal-close{ width:28px; height:28px; border-radius:99px; background:rgba(255,255,255,.1); color:#fff; border:none; cursor:pointer; }
+  #video-modal video{ width:100%; display:block; max-height:70vh; background:#000; }
+  #video-modal-loading{ color:#fff; text-align:center; padding:60px 0; font-size:12.5px; }
 </style>
 </head>
 <body>
@@ -82,6 +132,28 @@
 </div>
 
 <footer>Powered by <a href="/">Scorvix</a> — live scoring &amp; broadcast graphics</footer>
+
+<!-- Leaderboard player clips — tournament-wide, match-by-match -->
+<div id="clip-modal-backdrop">
+  <div id="clip-modal">
+    <div id="clip-modal-head">
+      <h3 id="clip-modal-title">Clips</h3>
+      <button id="clip-modal-close" aria-label="Close">✕</button>
+    </div>
+    <div id="clip-modal-body"></div>
+  </div>
+</div>
+
+<!-- Video player -->
+<div id="video-modal-backdrop">
+  <div id="video-modal">
+    <div id="video-modal-head">
+      <span class="vm-title" id="video-modal-title">Clip</span>
+      <button id="video-modal-close" aria-label="Close">✕</button>
+    </div>
+    <div id="video-modal-body"><div id="video-modal-loading">Loading clip…</div></div>
+  </div>
+</div>
 
 <script>
 const SUN='M12 4V2M12 22v-2M4.93 4.93 3.51 3.51M20.49 20.49l-1.42-1.42M4 12H2M22 12h-2M4.93 19.07l-1.42 1.42M20.49 3.51l-1.42 1.42M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z';
@@ -138,6 +210,11 @@ function renderPortal(data, token){
   document.getElementById('loading-state').style.display='none';
   const c = document.getElementById('content'); c.style.display='';
   document.title = `${data.displayName} — Scorvix`;
+  // Stashed so the leaderboard clip icons (wired further below) can look
+  // up this tournament's own match list + token without re-fetching the
+  // portal payload — buildTournamentPlayerReport() reads these.
+  tournamentDataCache = data;
+  tournamentTokenCache = token;
 
   const matches = data.matches || [];
   const finished = matches.filter(m => m.winningTeam);
@@ -205,12 +282,12 @@ function renderPortal(data, token){
   const leaderboardsPanel = `<div class="tab-panel" data-panel="leaderboards">
     <div class="leaderboard-grid">
       <div class="card"><div class="section-title"><span class="dash"></span>Top Run Scorers</div>
-        ${lb.topRuns.length ? `<table><thead><tr><th>Batter</th><th class="num">Inn</th><th class="num">Runs</th><th class="num">HS</th><th class="num">Avg</th><th class="num">SR</th></tr></thead>
-        <tbody>${lb.topRuns.map(r => `<tr><td>${escapeHtml(r.name)}</td><td class="num tabnum">${r.innings}</td><td class="num tabnum">${r.runs}</td><td class="num tabnum">${r.highScore}</td><td class="num tabnum">${r.average}</td><td class="num tabnum">${r.strikeRate}</td></tr>`).join('')}</tbody></table>` : '<div class="empty-state">No batting data yet.</div>'}
+        ${lb.topRuns.length ? `<table><thead><tr><th>Batter</th><th class="num">Inn</th><th class="num">Runs</th><th class="num">HS</th><th class="num">Avg</th><th class="num">SR</th><th class="clip-col"></th></tr></thead>
+        <tbody>${lb.topRuns.map(r => `<tr><td>${escapeHtml(r.name)}</td><td class="num tabnum">${r.innings}</td><td class="num tabnum">${r.runs}</td><td class="num tabnum">${r.highScore}</td><td class="num tabnum">${r.average}</td><td class="num tabnum">${r.strikeRate}</td><td class="clip-col">${clipBtnHtml(r.name, 'batter')}</td></tr>`).join('')}</tbody></table>` : '<div class="empty-state">No batting data yet.</div>'}
       </div>
       <div class="card"><div class="section-title"><span class="dash"></span>Top Wicket Takers</div>
-        ${lb.topWickets.length ? `<table><thead><tr><th>Bowler</th><th class="num">Inn</th><th class="num">Ov</th><th class="num">Wkts</th><th class="num">Best</th><th class="num">Econ</th></tr></thead>
-        <tbody>${lb.topWickets.map(r => `<tr><td>${escapeHtml(r.name)}</td><td class="num tabnum">${r.innings}</td><td class="num tabnum">${r.overs}</td><td class="num tabnum">${r.wickets}</td><td class="num tabnum">${escapeHtml(r.bestFigures)}</td><td class="num tabnum">${r.economy}</td></tr>`).join('')}</tbody></table>` : '<div class="empty-state">No bowling data yet.</div>'}
+        ${lb.topWickets.length ? `<table><thead><tr><th>Bowler</th><th class="num">Inn</th><th class="num">Ov</th><th class="num">Wkts</th><th class="num">Best</th><th class="num">Econ</th><th class="clip-col"></th></tr></thead>
+        <tbody>${lb.topWickets.map(r => `<tr><td>${escapeHtml(r.name)}</td><td class="num tabnum">${r.innings}</td><td class="num tabnum">${r.overs}</td><td class="num tabnum">${r.wickets}</td><td class="num tabnum">${escapeHtml(r.bestFigures)}</td><td class="num tabnum">${r.economy}</td><td class="clip-col">${clipBtnHtml(r.name, 'bowler')}</td></tr>`).join('')}</tbody></table>` : '<div class="empty-state">No bowling data yet.</div>'}
       </div>
     </div>
   </div>`;
@@ -230,6 +307,226 @@ function renderPortal(data, token){
     location.href = `/cricket-scorecard?token=${encodeURIComponent(token)}&match=${encodeURIComponent(row.dataset.gotoMatch)}&history=1`;
   }));
 }
+
+/* ============================================================
+   LEADERBOARD PLAYER CLIPS — tournament-wide, organised match by
+   match. Reuses the exact endpoints the rest of the app already
+   relies on for a public (token-scoped) link, so no new backend
+   surface is needed:
+     - /api/public/tournament/:token/match/:matchId  → that ONE
+       match's full saved scorecard (battingCard/bowlingCard), same
+       endpoint cricket-scorecard.html's loadMatchSnapshot() uses.
+     - /api/clips/player/:playerKey?scope=match&matchId=…  → that
+       player's clips for that one match, same endpoint
+       score-match.html's clip modal uses.
+   For every match in this tournament we check whether the tapped
+   player actually appears in that match's card, pull their line for
+   it, and fetch that match's clips for them — then render one
+   compact "match card" per appearance instead of one flat list, so a
+   viewer can see exactly how the player did IN EACH match along with
+   that match's own 4s/6s/dismissal clips.
+   ============================================================ */
+let tournamentDataCache = null;
+let tournamentTokenCache = '';
+const matchSnapshotCache = {}; // matchId -> saved match record | null (cached across every player's modal)
+
+const CLIP_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>';
+const PLAY_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+const DOWNLOAD_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>';
+
+// Mirrors the server's playerKey() exactly (name.trim().toLowerCase()).
+function playerKeyOf(name){ return String(name||'').trim().toLowerCase() || null; }
+function clipApiBase(){ return ''; }
+
+function clipBtnHtml(name, role){
+  if(!name) return '';
+  return `<button class="clip-btn" data-player="${escapeHtml(name)}" data-role="${role}" aria-label="Clips for ${escapeHtml(name)}">${CLIP_ICON}</button>`;
+}
+
+async function fetchMatchSnapshot(matchId){
+  if(Object.prototype.hasOwnProperty.call(matchSnapshotCache, matchId)) return matchSnapshotCache[matchId];
+  try{
+    const res = await fetch(`${clipApiBase()}/api/public/tournament/${encodeURIComponent(tournamentTokenCache)}/match/${encodeURIComponent(matchId)}`);
+    const data = await res.json();
+    const match = (data && data.success && data.match) || null;
+    matchSnapshotCache[matchId] = match;
+    return match;
+  } catch(err){ console.warn('Match snapshot fetch failed', err); matchSnapshotCache[matchId] = null; return null; }
+}
+
+async function fetchClipsForMatch(name, matchId){
+  const pk = playerKeyOf(name);
+  if(!pk) return null;
+  try{
+    const res = await fetch(`${clipApiBase()}/api/clips/player/${encodeURIComponent(pk)}?scope=match&matchId=${encodeURIComponent(matchId)}`);
+    if(!res.ok) return null;
+    return await res.json();
+  } catch(err){ console.warn('Clip fetch failed', err); return null; }
+}
+
+function findPlayerRow(card, name){
+  const pk = playerKeyOf(name);
+  return (card || []).find(r => playerKeyOf(r.name) === pk) || null;
+}
+
+// For one match: figure out whether/where this player appears (which
+// team's card, so we can label the opponent correctly), pull their line
+// for that match, and fetch that match's clips for them. Returns null if
+// the player didn't bat/bowl in this particular match.
+async function buildMatchEntry(matchSummary, name, role){
+  const snap = await fetchMatchSnapshot(matchSummary.matchId);
+  if(!snap) return null;
+
+  const card = role === 'bowler' ? snap.bowlingCard : snap.battingCard;
+  let teamKey = null, statRow = null;
+  if(card){
+    if(findPlayerRow(card.A, name)){ teamKey = 'A'; statRow = findPlayerRow(card.A, name); }
+    else if(findPlayerRow(card.B, name)){ teamKey = 'B'; statRow = findPlayerRow(card.B, name); }
+  }
+  if(!teamKey || !statRow) return null; // didn't feature in this match
+
+  const oppTeamObj = (teamKey === 'A' ? snap.teamB : snap.teamA) || (teamKey === 'A' ? matchSummary.teamB : matchSummary.teamA);
+  const opponent = (oppTeamObj && (oppTeamObj.short || oppTeamObj.name)) || 'Opponent';
+
+  const clipsData = await fetchClipsForMatch(name, matchSummary.matchId);
+  return {
+    matchId: matchSummary.matchId, opponent,
+    venue: matchSummary.venue || '', savedAt: matchSummary.savedAt || null,
+    role, statRow, clipsData
+  };
+}
+
+async function buildTournamentPlayerReport(name, role){
+  const matches = (tournamentDataCache && tournamentDataCache.matches) || [];
+  const entries = await Promise.all(matches.map(m => buildMatchEntry(m, name, role)));
+  return entries.filter(Boolean).sort((a, b) => new Date(b.savedAt || 0) - new Date(a.savedAt || 0));
+}
+
+function matchStatLine(role, statRow){
+  if(role === 'bowler'){
+    return `${statRow.wickets||0}-${statRow.runs||0} (${fmtOvers(statRow.overs, statRow.balls)} ov) · Econ ${economy(statRow.runs||0, statRow.overs, statRow.balls)}`;
+  }
+  const notOutTag = statRow.out === false ? '*' : '';
+  return `${statRow.runs||0}${notOutTag} (${statRow.balls||0}b) · 4s ${statRow.fours||0} · 6s ${statRow.sixes||0} · SR ${strikeRate(statRow.runs||0, statRow.balls||0)}`;
+}
+
+function clipGroupHtml(label, clips){
+  if(!clips || !clips.length) return '';
+  return `<div class="clip-group-label">${escapeHtml(label)} (${clips.length})</div>` + clips.map(clipRowHtml).join('');
+}
+
+function clipRowHtml(c){
+  const badgeCls = c.eventType === 'FOUR' ? 'four' : c.eventType === 'SIX' ? 'six' : 'wicket';
+  const badgeLabel = c.eventType === 'FOUR' ? '4' : c.eventType === 'SIX' ? '6' : 'W';
+  const overLabel = `${c.over ?? '—'}.${c.ballInOver ?? ''}`;
+  const sub = c.eventType === 'WICKET'
+    ? [c.dismissalType, c.bowler ? 'b. ' + c.bowler : null].filter(Boolean).join(' · ')
+    : (c.bowler ? 'off ' + c.bowler : '');
+  const disabled = c.ready ? '' : 'disabled';
+  return `<div class="clip-row" data-clip-id="${c.clipId}" data-title="${escapeHtml((c.striker||c.bowler||'') + ' — ' + c.eventType)}">
+    <div class="cr-badge ${badgeCls}">${badgeLabel}</div>
+    <div class="cr-info"><div class="cr-over tabnum">Over ${overLabel}</div><div class="cr-sub">${escapeHtml(sub || (c.ready ? 'Tap to watch' : 'Processing…'))}</div></div>
+    <button class="clip-watch-btn" ${disabled} aria-label="Watch">${PLAY_ICON}</button>
+  </div>`;
+}
+
+function wireClipRows(root){
+  root.querySelectorAll('.clip-row').forEach(row => {
+    const id = row.dataset.clipId, title = row.dataset.title;
+    const watchBtn = row.querySelector('.clip-watch-btn');
+    if(watchBtn && !watchBtn.disabled) watchBtn.addEventListener('click', (e) => { e.stopPropagation(); openVideoModal(id, title); });
+    row.addEventListener('click', () => { if(watchBtn && !watchBtn.disabled) openVideoModal(id, title); });
+  });
+}
+
+function matchEntryHtml(entry){
+  const dateStr = entry.savedAt ? new Date(entry.savedAt).toLocaleDateString() : '';
+  let clipsHtml = '';
+  if(entry.clipsData && entry.clipsData.success){
+    clipsHtml = entry.role === 'bowler'
+      ? clipGroupHtml('Wickets', entry.clipsData.bowling.wickets)
+      : clipGroupHtml('Fours', entry.clipsData.batting.fours) + clipGroupHtml('Sixes', entry.clipsData.batting.sixes) + clipGroupHtml('Dismissal', entry.clipsData.batting.dismissal);
+  }
+  if(!clipsHtml) clipsHtml = '<div class="empty-state" style="padding:8px 0;">No clips for this match.</div>';
+  return `<div class="tpm-match">
+    <div class="tpm-match-head">
+      <div class="tpm-vs">vs ${escapeHtml(entry.opponent)}</div>
+      <div class="tpm-date">${escapeHtml(dateStr)}${entry.venue ? ' · ' + escapeHtml(entry.venue) : ''}</div>
+    </div>
+    <div class="tpm-statline">${escapeHtml(matchStatLine(entry.role, entry.statRow))}</div>
+    ${clipsHtml}
+  </div>`;
+}
+
+// Aggregate line across every match shown, so the modal opens on a
+// tournament-wide total before drilling into the match-by-match cards.
+function summaryLineHtml(role, entries){
+  if(role === 'bowler'){
+    let wkts = 0, runs = 0, balls = 0;
+    entries.forEach(e => { wkts += e.statRow.wickets || 0; runs += e.statRow.runs || 0; balls += (e.statRow.overs || 0) * 6 + (e.statRow.balls || 0); });
+    const econ = balls ? (runs / (balls / 6)).toFixed(2) : '0.00';
+    return `<div class="cd-stat-row">
+      <div class="cd-stat-box"><div class="k">Matches</div><div class="v tabnum">${entries.length}</div></div>
+      <div class="cd-stat-box"><div class="k">Wkts</div><div class="v tabnum">${wkts}</div></div>
+      <div class="cd-stat-box"><div class="k">Overs</div><div class="v tabnum">${Math.floor(balls/6)}.${balls%6}</div></div>
+      <div class="cd-stat-box"><div class="k">Econ</div><div class="v tabnum">${econ}</div></div>
+    </div>`;
+  }
+  let runs = 0, balls = 0;
+  entries.forEach(e => { runs += e.statRow.runs || 0; balls += e.statRow.balls || 0; });
+  return `<div class="cd-stat-row">
+    <div class="cd-stat-box"><div class="k">Matches</div><div class="v tabnum">${entries.length}</div></div>
+    <div class="cd-stat-box"><div class="k">Runs</div><div class="v tabnum">${runs}</div></div>
+    <div class="cd-stat-box"><div class="k">Balls</div><div class="v tabnum">${balls}</div></div>
+    <div class="cd-stat-box"><div class="k">SR</div><div class="v tabnum">${strikeRate(runs, balls)}</div></div>
+  </div>`;
+}
+
+async function openTournamentPlayerModal(name, role){
+  document.getElementById('clip-modal-title').textContent = `${name} — Tournament Report`;
+  const body = document.getElementById('clip-modal-body');
+  body.innerHTML = '<div class="empty-state">Loading…</div>';
+  document.getElementById('clip-modal-backdrop').classList.add('open');
+
+  const entries = await buildTournamentPlayerReport(name, role);
+  if(!entries.length){
+    body.innerHTML = '<div class="empty-state">No match data found for this player yet.</div>';
+    return;
+  }
+  body.innerHTML = summaryLineHtml(role, entries) + entries.map(matchEntryHtml).join('');
+  wireClipRows(body);
+}
+
+document.getElementById('clip-modal-close').addEventListener('click', () => document.getElementById('clip-modal-backdrop').classList.remove('open'));
+document.getElementById('clip-modal-backdrop').addEventListener('click', (e) => { if(e.target.id === 'clip-modal-backdrop') document.getElementById('clip-modal-backdrop').classList.remove('open'); });
+
+function openVideoModal(clipId, title){
+  document.getElementById('video-modal-title').textContent = title || 'Clip';
+  document.getElementById('video-modal-body').innerHTML = '<div id="video-modal-loading">Loading clip…</div>';
+  document.getElementById('video-modal-backdrop').classList.add('open');
+  const src = `${clipApiBase()}/api/clips/${encodeURIComponent(clipId)}/watch`;
+  const dl = `${clipApiBase()}/api/clips/${encodeURIComponent(clipId)}/download`;
+  requestAnimationFrame(() => {
+    document.getElementById('video-modal-body').innerHTML =
+      `<video src="${src}" controls autoplay playsinline></video>
+       <div style="padding:10px 14px; background:#0b0e14; display:flex; justify-content:flex-end;">
+         <a href="${dl}" style="color:#fff; font-size:11.5px; font-weight:700; display:flex; align-items:center; gap:6px;">${DOWNLOAD_ICON} Download</a>
+       </div>`;
+  });
+}
+document.getElementById('video-modal-close').addEventListener('click', () => {
+  document.getElementById('video-modal-backdrop').classList.remove('open');
+  document.getElementById('video-modal-body').innerHTML = '<div id="video-modal-loading">Loading clip…</div>';
+});
+document.getElementById('video-modal-backdrop').addEventListener('click', (e) => { if(e.target.id === 'video-modal-backdrop') document.getElementById('video-modal-close').click(); });
+
+// Delegated — the leaderboard tables are re-rendered wholesale on load,
+// so one listener on <body> covers every clip-btn without re-wiring.
+document.body.addEventListener('click', (e) => {
+  const btn = e.target.closest('.clip-btn');
+  if(!btn) return;
+  openTournamentPlayerModal(btn.dataset.player, btn.dataset.role);
+});
 
 init();
 </script>
