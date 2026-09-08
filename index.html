@@ -1355,14 +1355,21 @@
 
         function loginWithGoogle() {
             const provider = new firebase.auth.GoogleAuthProvider();
-            auth.signInWithPopup(provider).then((result) => {
-                if (result.user) {
-                    logActivity(result.user.email, "Login", "System Login");
-                }
-            }).catch(error => {
+            auth.signInWithRedirect(provider).catch(error => {
                 alert("Login Error: " + error.message);
             });
         }
+
+        // Handles the result after the user comes back from the Google redirect
+        auth.getRedirectResult().then((result) => {
+            if (result.user) {
+                logActivity(result.user.email, "Login", "System Login");
+            }
+        }).catch(error => {
+            if (error.code !== 'auth/no-auth-event' && error.code) {
+                alert("Login Error: " + error.message);
+            }
+        });
 
         function logout() {
             if (auth.currentUser) {
