@@ -1033,9 +1033,34 @@ app.post('/api/league/:name/match', async (req, res) => {
     if (!record || !record.matchId) return res.status(400).json({ success: false, error: 'Match record with matchId required' });
     if (!matchRecordsCollection || !leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     try {
+        // 🩹 CLIPS FIX: clips are cut and tagged with the live *roomId*
+        // (see cutClip()/io.on('connection') above), never with this
+        // record's matchId — a tournament match's matchId is a separate
+        // UUID minted client-side (ensureTournamentMatchId()), so without
+        // this, clips recorded during the live broadcast become
+        // unreachable the moment the match is saved under its tournament
+        // matchId. The panel already tells us this mapping while the
+        // match is live, via /api/league/:name/live-status (roomId +
+        // matchId together) — so if the save payload itself doesn't carry
+        // a roomId, backfill it from that same league doc here, before
+        // it's potentially lost when a later active:false ping prunes the
+        // liveMatches entry.
+        let roomId = record.roomId || null;
+        if (!roomId) {
+            const liveDoc = await leaguesCollection.findOne(
+                { ownerUid, leagueKey },
+                { projection: { liveMatches: 1, liveMatchId: 1, liveRoomId: 1 } }
+            );
+            if (liveDoc) {
+                const liveEntry = (liveDoc.liveMatches || []).find(lm => lm.matchId === record.matchId);
+                roomId = (liveEntry && liveEntry.roomId)
+                    || (liveDoc.liveMatchId === record.matchId ? liveDoc.liveRoomId : null)
+                    || null;
+            }
+        }
         await matchRecordsCollection.updateOne(
             { ownerUid, leagueKey, matchId: record.matchId },
-            { $set: { ...record, ownerUid, leagueKey, savedAt: record.savedAt || new Date().toISOString() } },
+            { $set: { ...record, roomId: roomId || record.roomId || null, ownerUid, leagueKey, savedAt: record.savedAt || new Date().toISOString() } },
             { upsert: true }
         );
         // League doc itself stays tiny now — just metadata (displayName,
