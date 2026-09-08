@@ -872,6 +872,18 @@ function getMatchId(){
   const p = new URLSearchParams(location.search);
   return p.get('room') || p.get('match') || p.get('id') || '';
 }
+
+// CLIPS SCOPE FIX: a tournament match is saved under its own database
+// matchId, which is NOT the id clips were recorded against (clips are
+// always tagged with the live room's id at capture time — see
+// connectLive()'s socket uid). For a standalone match these two ids are
+// the same value, so nothing below changes for that case. For a
+// tournament match they diverge, so once a finished snapshot loads we
+// remember its original roomId (if the backend sends one) and every
+// clip fetch below prefers that over the URL's ?match=… id. Falls back
+// to getMatchId() until/unless the snapshot provides one.
+let clipScopeOverride = null;
+function getClipMatchId(){ return clipScopeOverride || getMatchId(); }
 // Tournament context, all optional — a single-match link simply won't have
 // these, and every tournament-aware feature below degrades gracefully (tab
 // hidden / card hidden) when they're missing. Two ways a tournament can be
@@ -991,6 +1003,10 @@ async function loadMatchSnapshot(matchId){
 
     const match = data && data.match;
     if(!match) throw new Error('no match');
+    // Prefer the match's own original capture-time room id for clips
+    // (see getClipMatchId() above). Falls back to the URL's matchId if
+    // the backend doesn't send one yet.
+    clipScopeOverride = match.roomId || data.roomId || null;
     // NOTE: a saved match record (from /api/public/tournament/:token/match/:id
     // or /api/public/match/:id) is shaped like a FINISHED scorecard —
     // teamA/teamB/scoreA/scoreB/battingCard:{A,B}/bowlingCard:{A,B}/... —
@@ -1458,7 +1474,7 @@ function clipApiBase(){ return ''; } // same-origin; override here if the scorec
 function scopeQuery(scope){
   const qs = new URLSearchParams({ scope });
   if(scope === 'match'){
-    qs.set('matchId', getMatchId());
+    qs.set('matchId', getClipMatchId());
   } else {
     const { leagueName, ownerUid } = getLeagueCtx();
     if(leagueName) qs.set('leagueName', leagueName);
@@ -1471,7 +1487,7 @@ async function fetchPlayerClips(name, scope){
   const pk = playerKeyOf(name);
   if(!pk) return null;
   scope = scope || 'match';
-  if(scope === 'match' && !getMatchId()) return null;
+  if(scope === 'match' && !getClipMatchId()) return null;
   if(scope !== 'match' && !hasLeagueCtx()) return null;
   try{
     const res = await fetch(`${clipApiBase()}/api/clips/player/${encodeURIComponent(pk)}?${scopeQuery(scope)}`);
@@ -1538,7 +1554,7 @@ function matchStatsForPlayer(name){
 // Match-wide clip feed for the Match Highlights card — every FOUR/SIX/WICKET
 // cut so far, grouped. Metadata-only + lazy WATCH, same as everywhere else.
 async function fetchMatchClips(type){
-  const matchId = getMatchId();
+  const matchId = getClipMatchId();
   if(!matchId) return [];
   try{
     const qs = type ? `?type=${encodeURIComponent(type)}` : '';
@@ -1550,7 +1566,7 @@ async function fetchMatchClips(type){
 }
 
 async function fetchTeamClips(teamKey){
-  const matchId = getMatchId();
+  const matchId = getClipMatchId();
   if(!matchId) return [];
   try{
     const res = await fetch(`${clipApiBase()}/api/clips/team/${encodeURIComponent(matchId)}/${encodeURIComponent(teamKey)}`);
