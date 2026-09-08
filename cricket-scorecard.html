@@ -1489,7 +1489,7 @@ async function fetchPlayerStats(name, scope){
   // the backend (which has no persistence for a live-only match and was
   // coming back with everything zeroed). Tournament/career scopes still
   // need the API since they aggregate across matches.
-  if(scope === 'match') return matchStatsForPlayer(name, cdCurrentPlayer && cdCurrentPlayer.role);
+  if(scope === 'match') return matchStatsForPlayer(name);
   if(!hasLeagueCtx()) return null;
   try{
     const res = await fetch(`${clipApiBase()}/api/stats/player/${encodeURIComponent(pk)}?${scopeQuery(scope)}`);
@@ -1501,39 +1501,38 @@ async function fetchPlayerStats(name, scope){
 // Builds the same {success, batting|bowling} shape fetchPlayerStats would
 // return, but read straight from latestState (the live socket data) so the
 // "This Match" tab works with zero backend dependency.
-function matchStatsForPlayer(name, role){
+function matchStatsForPlayer(name){
   if(!latestState) return null;
-  if(role === 'bowler'){
-    const row = currentBowlingRows(latestState).find(r => r.name === name);
-    return row ? {
-      success: true,
-      bowling: {
-        overs: row.overs || 0,
-        maidens: row.maidens || 0,
-        runs: row.runs || 0,
-        wickets: row.wickets || 0,
-        economy: bowlerEcon(row).toFixed(2),
-        wides: row.wides || 0,
-        noballs: row.noballs || 0
-      }
-    } : null;
-  }
+  // Look up both cards regardless of which one the drawer was opened
+  // from — an all-rounder gets both a batting and a bowling box in the
+  // same "This Match" view instead of only whichever table you clicked.
   const battingRow = currentBattingRows(latestState).find(r => r.name === name);
+  const bowlingRow = currentBowlingRows(latestState).find(r => r.name === name);
+  if(!battingRow && !bowlingRow) return null;
+  const result = { success: true };
   if(battingRow){
-    return {
-      success: true,
-      batting: {
-        runs: battingRow.runs || 0,
-        balls: battingRow.balls || 0,
-        fours: battingRow.fours || 0,
-        sixes: battingRow.sixes || 0,
-        strikeRate: strikeRate(battingRow.runs || 0, battingRow.balls || 0).toFixed(1),
-        out: !!battingRow.out,
-        howOut: battingRow.howOut || ''
-      }
+    result.batting = {
+      runs: battingRow.runs || 0,
+      balls: battingRow.balls || 0,
+      fours: battingRow.fours || 0,
+      sixes: battingRow.sixes || 0,
+      strikeRate: strikeRate(battingRow.runs || 0, battingRow.balls || 0).toFixed(1),
+      out: !!battingRow.out,
+      howOut: battingRow.howOut || ''
     };
   }
-  return null;
+  if(bowlingRow){
+    result.bowling = {
+      overs: bowlingRow.overs || 0,
+      maidens: bowlingRow.maidens || 0,
+      runs: bowlingRow.runs || 0,
+      wickets: bowlingRow.wickets || 0,
+      economy: bowlerEcon(bowlingRow).toFixed(2),
+      wides: bowlingRow.wides || 0,
+      noballs: bowlingRow.noballs || 0
+    };
+  }
+  return result;
 }
 
 // Match-wide clip feed for the Match Highlights card — every FOUR/SIX/WICKET
@@ -1646,11 +1645,20 @@ let cdCurrentPlayer = null; // { name, role }
 
 function statLineHtml(scope, stats){
   if(!stats) return `<div class="empty-state" style="padding:8px 0;">No ${scope} stats yet.</div>`;
-  const isBowler = cdCurrentPlayer && cdCurrentPlayer.role === 'bowler';
   const b = stats.batting, w = stats.bowling;
   if(scope === 'match'){
-    return isBowler
-      ? `<div class="cd-stat-row">
+    // Render both boxes when both exist — an all-rounder's "This Match"
+    // tab shows their batting AND bowling line together, not just
+    // whichever table row the drawer happened to be opened from.
+    const parts = [];
+    if(b) parts.push(`<div class="cd-stat-row">
+          <div class="cd-stat-box"><div class="k">Runs</div><div class="v tabnum">${b.runs}${b.out ? '' : '*'}</div></div>
+          <div class="cd-stat-box"><div class="k">Balls</div><div class="v tabnum">${b.balls}</div></div>
+          <div class="cd-stat-box"><div class="k">4s/6s</div><div class="v tabnum">${b.fours}/${b.sixes}</div></div>
+          <div class="cd-stat-box"><div class="k">SR</div><div class="v tabnum">${b.strikeRate}</div></div>
+        </div>
+        ${b.out ? `<div style="text-align:center; font-size:11px; color:var(--text-dim); margin-top:6px; font-weight:600;">Out — ${escapeHtml(b.howOut || 'dismissed')}</div>` : ''}`);
+    if(w) parts.push(`<div class="cd-stat-row" style="${b ? 'margin-top:10px;' : ''}">
           <div class="cd-stat-box"><div class="k">Overs</div><div class="v tabnum">${w.overs}</div></div>
           <div class="cd-stat-box"><div class="k">Maidens</div><div class="v tabnum">${w.maidens}</div></div>
           <div class="cd-stat-box"><div class="k">Runs</div><div class="v tabnum">${w.runs}</div></div>
@@ -1660,14 +1668,8 @@ function statLineHtml(scope, stats){
         <div class="cd-stat-row" style="margin-top:8px;">
           <div class="cd-stat-box"><div class="k">Wides</div><div class="v tabnum">${w.wides||0}</div></div>
           <div class="cd-stat-box"><div class="k">No Balls</div><div class="v tabnum">${w.noballs||0}</div></div>
-        </div>`
-      : `<div class="cd-stat-row">
-          <div class="cd-stat-box"><div class="k">Runs</div><div class="v tabnum">${b.runs}${b.out ? '' : '*'}</div></div>
-          <div class="cd-stat-box"><div class="k">Balls</div><div class="v tabnum">${b.balls}</div></div>
-          <div class="cd-stat-box"><div class="k">4s/6s</div><div class="v tabnum">${b.fours}/${b.sixes}</div></div>
-          <div class="cd-stat-box"><div class="k">SR</div><div class="v tabnum">${b.strikeRate}</div></div>
-        </div>
-        ${b.out ? `<div style="text-align:center; font-size:11px; color:var(--text-dim); margin-top:6px; font-weight:600;">Out — ${escapeHtml(b.howOut || 'dismissed')}</div>` : ''}`;
+        </div>`);
+    return parts.join('') || `<div class="empty-state" style="padding:8px 0;">No match stats yet.</div>`;
   }
   // tournament / career — rollup shape from computeLeaderboards (may be null
   // for either side if this player hasn't batted/bowled in scope yet).
@@ -1724,7 +1726,7 @@ async function loadClipDrawerScope(scope){
   statline.innerHTML = '';
   document.querySelectorAll('.cd-tab').forEach(t => t.classList.toggle('active', t.dataset.scope === scope));
 
-  const { name, role } = cdCurrentPlayer;
+  const { name } = cdCurrentPlayer;
   const [clipsData, statsData] = await Promise.all([
     fetchPlayerClips(name, scope),
     fetchPlayerStats(name, scope)
@@ -1739,13 +1741,15 @@ async function loadClipDrawerScope(scope){
     return;
   }
   let html = '';
-  if(role === 'bowler'){
-    html += clipGroupHtml('Wickets', clipsData.bowling.wickets);
-  } else {
-    html += clipGroupHtml('Fours', clipsData.batting.fours);
-    html += clipGroupHtml('Sixes', clipsData.batting.sixes);
-    html += clipGroupHtml('Dismissal', clipsData.batting.dismissal);
-  }
+  // Show every clip category together — Sixes, Fours, Wickets taken,
+  // and how they got out — regardless of whether this drawer was opened
+  // from the batting or bowling table. An all-rounder's bowling-wicket
+  // clip shouldn't disappear just because you clicked their name in the
+  // batting card, and vice versa.
+  html += clipGroupHtml('Sixes', clipsData.batting.sixes);
+  html += clipGroupHtml('Fours', clipsData.batting.fours);
+  html += clipGroupHtml('Wickets', clipsData.bowling.wickets);
+  html += clipGroupHtml('Dismissal', clipsData.batting.dismissal);
   body.innerHTML = html || `<div class="empty-state">No clips yet ${scope === 'match' ? 'this match' : scope === 'tournament' ? 'this tournament' : 'in career'}.</div>`;
 
   // CAREER tab: append the tournament-by-tournament breakdown below the
@@ -1767,7 +1771,7 @@ document.getElementById('clip-drawer-tabs').addEventListener('click', (e) => {
 
 async function openPlayerClipDrawer(name, role){
   cdCurrentPlayer = { name, role };
-  openClipDrawer(name, role === 'bowler' ? 'Bowling performance & clips' : 'Batting performance & clips', '');
+  openClipDrawer(name, 'Performance & clips', '');
   const tabs = document.getElementById('clip-drawer-tabs');
   tabs.classList.toggle('show', hasLeagueCtx());
   loadClipDrawerScope('match');
