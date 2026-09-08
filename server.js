@@ -1180,6 +1180,90 @@ function computeLeaderboards(matches) {
 }
 
 // ================================================================
+// 🔴 LIVE OVERLAY FOR THE PUBLIC TOURNAMENT PORTAL
+// A match's matchRecords doc is only (re)written at explicit save points
+// (creation, innings/match completion) — NOT on every ball. So while a
+// match is being scored live, the tournament portal's totals, leaderboard
+// and per-player "Tournament Report" all kept reading that stale saved
+// doc (often still 0 runs / empty cards) even though the live scorecard
+// itself (which reads the socket room's state directly) was already
+// showing the real score.
+//
+// Fix: for any match currently marked live for this tournament, pull that
+// match's live room state (the exact same state cricket-scorecard.html
+// renders from) and use ITS battingCard/bowlingCard/score in place of the
+// stale saved ones — for public display only. The saved matchRecords doc
+// itself is never modified.
+// ================================================================
+
+// Mirrors cricket-scorecard.html's currentBattingRows()/currentBowlingRows():
+// archived (already-out) rows from cricketState.battingCard/bowlingCard for
+// the CURRENT innings, plus the live striker/non-striker/bowler folded in.
+function liveCricketOverlay(cs) {
+    if (!cs) return null;
+    const inn = cs.inningsNumber || 1;
+    const battingCard = { A: [], B: [] };
+    const bowlingCard = { A: [], B: [] };
+    ['A', 'B'].forEach(k => {
+        battingCard[k] = ((cs.battingCard && cs.battingCard[k]) || []).filter(r => (r.inningsNo || 1) === inn).map(r => ({ ...r }));
+        bowlingCard[k] = ((cs.bowlingCard && cs.bowlingCard[k]) || []).filter(r => (r.inningsNo || 1) === inn).map(r => ({ ...r }));
+    });
+    const battingKey = cs.battingTeam;
+    const bowlingKey = battingKey === 'A' ? 'B' : (battingKey === 'B' ? 'A' : null);
+    if (battingKey && battingCard[battingKey]) {
+        [cs.striker, cs.nonStriker].forEach(p => {
+            if (p && p.name && !battingCard[battingKey].some(r => r.name === p.name)) {
+                battingCard[battingKey].push({ name: p.name, runs: p.runs || 0, balls: p.balls || 0, fours: p.fours || 0, sixes: p.sixes || 0, out: false, howOut: 'not out', inningsNo: inn });
+            }
+        });
+    }
+    if (bowlingKey && cs.bowler && cs.bowler.name) {
+        const idx = bowlingCard[bowlingKey].findIndex(r => r.name === cs.bowler.name);
+        if (idx > -1) bowlingCard[bowlingKey][idx] = { ...cs.bowler, inningsNo: inn };
+        else bowlingCard[bowlingKey].push({ ...cs.bowler, inningsNo: inn });
+    }
+
+    // scoreA/scoreB: whichever team already finished an innings gets its
+    // archived total; the team currently in (cs.battingTeam) gets the live
+    // running score. Good enough for limited-overs (the only case this
+    // portal shows scores for pre-completion) — same data teamScoreLine()
+    // in cricket-scorecard.html already derives this from.
+    const archive = cs.inningsArchive || [];
+    const teamScore = (key) => {
+        if (key === cs.battingTeam) return { runs: (cs.score && cs.score.runs) || 0, wickets: (cs.score && cs.score.wickets) || 0, overs: fmtOversLike(cs.score && cs.score.overs, cs.score && cs.score.balls) };
+        const done = archive.filter(i => i.team === key).slice(-1)[0];
+        if (done) return { runs: done.runs || 0, wickets: done.wickets || 0, overs: fmtOversLike(done.overs, done.balls) };
+        return { runs: 0, wickets: 0, overs: '0.0' };
+    };
+
+    return {
+        teamA: cs.teamA || null,
+        teamB: cs.teamB || null,
+        scoreA: teamScore('A'),
+        scoreB: teamScore('B'),
+        battingCard,
+        bowlingCard,
+        winningTeam: null // still in progress — never claim a result from live state
+    };
+}
+
+// Looks up one live match's room state (hydrating from Firestore on first
+// touch, same as a viewer connecting) and converts it to overlay shape.
+// Returns null (silently — falls back to the saved doc) on any failure, so
+// a live-lookup hiccup never breaks the public portal.
+async function getLiveMatchOverlay(roomId) {
+    if (!roomId) return null;
+    try {
+        const room = `room-${String(roomId).replace(/^room-/, '')}`;
+        const state = await getRoomState(room);
+        return state ? liveCricketOverlay(state.cricketState) : null;
+    } catch (err) {
+        console.log('Live overlay fetch error:', err);
+        return null;
+    }
+}
+
+// ================================================================
 // 🔗 PLAYER IDENTITY FOR CLIPS & STATS
 // The codebase already has a de-facto global player key: computeLeaderboards
 // above keys every batter/bowler by `name.trim().toLowerCase()` so the same
@@ -1464,7 +1548,31 @@ app.get('/api/public/tournament/:token', async (req, res) => {
         if (cached) return res.json(cached);
         const doc = await leaguesCollection.findOne({ publicToken: req.params.token });
         if (!doc) return res.status(404).json({ success: false, error: 'Tournament not found' });
-        const matches = await getLeagueMatches(doc.ownerUid, doc.leagueKey);
+        const savedMatches = await getLeagueMatches(doc.ownerUid, doc.leagueKey);
+
+        // Overlay live figures onto whichever of these matches are
+        // currently being scored — see getLiveMatchOverlay() above.
+        const liveMeta = doc.liveMatches || [];
+        const overlayByMatchId = {};
+        await Promise.all(liveMeta.map(async lm => {
+            if (!lm || !lm.matchId) return;
+            const overlay = await getLiveMatchOverlay(lm.roomId);
+            if (overlay) overlayByMatchId[lm.matchId] = overlay;
+        }));
+        const matches = savedMatches.map(m => {
+            const overlay = overlayByMatchId[m.matchId];
+            return overlay ? { ...m, ...overlay, matchId: m.matchId, venue: m.venue, savedAt: m.savedAt } : m;
+        });
+        // A brand-new match that hasn't hit its first save yet won't be in
+        // savedMatches at all — surface it anyway so its live runs/clips
+        // appear immediately instead of only after that first save.
+        const seenIds = new Set(savedMatches.map(m => m.matchId));
+        liveMeta.forEach(lm => {
+            if (!lm || !lm.matchId || seenIds.has(lm.matchId)) return;
+            const overlay = overlayByMatchId[lm.matchId];
+            if (overlay) matches.push({ matchId: lm.matchId, venue: '', savedAt: new Date(lm.startedAt || Date.now()).toISOString(), ...overlay });
+        });
+
         const payload = {
             success: true,
             displayName: doc.displayName || '',
@@ -1490,7 +1598,21 @@ app.get('/api/public/tournament/:token/match/:matchId', async (req, res) => {
     try {
         const doc = await leaguesCollection.findOne({ publicToken: req.params.token });
         if (!doc) return res.status(404).json({ success: false, error: 'Tournament not found' });
-        const match = await matchRecordsCollection.findOne({ ownerUid: doc.ownerUid, leagueKey: doc.leagueKey, matchId: req.params.matchId });
+        const saved = await matchRecordsCollection.findOne({ ownerUid: doc.ownerUid, leagueKey: doc.leagueKey, matchId: req.params.matchId });
+
+        // Same live-overlay treatment as the portal list above, scoped to
+        // this one match — so a player's per-match "Tournament Report" card
+        // (and the clip lookup it triggers, keyed off this same matchId)
+        // shows live runs/wickets even before the match is saved/finished.
+        const liveEntry = (doc.liveMatches || []).find(lm => lm && lm.matchId === req.params.matchId);
+        const overlay = liveEntry ? await getLiveMatchOverlay(liveEntry.roomId) : null;
+
+        let match = saved;
+        if (overlay) {
+            match = saved
+                ? { ...saved, ...overlay, matchId: saved.matchId, venue: saved.venue, savedAt: saved.savedAt }
+                : { matchId: req.params.matchId, venue: '', savedAt: new Date(liveEntry.startedAt || Date.now()).toISOString(), ...overlay };
+        }
         if (!match) return res.status(404).json({ success: false, error: 'Match not found' });
         res.json({ success: true, displayName: doc.displayName || '', match });
     } catch (err) {
