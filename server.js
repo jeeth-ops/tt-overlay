@@ -1180,90 +1180,6 @@ function computeLeaderboards(matches) {
 }
 
 // ================================================================
-// 🔴 LIVE OVERLAY FOR THE PUBLIC TOURNAMENT PORTAL
-// A match's matchRecords doc is only (re)written at explicit save points
-// (creation, innings/match completion) — NOT on every ball. So while a
-// match is being scored live, the tournament portal's totals, leaderboard
-// and per-player "Tournament Report" all kept reading that stale saved
-// doc (often still 0 runs / empty cards) even though the live scorecard
-// itself (which reads the socket room's state directly) was already
-// showing the real score.
-//
-// Fix: for any match currently marked live for this tournament, pull that
-// match's live room state (the exact same state cricket-scorecard.html
-// renders from) and use ITS battingCard/bowlingCard/score in place of the
-// stale saved ones — for public display only. The saved matchRecords doc
-// itself is never modified.
-// ================================================================
-
-// Mirrors cricket-scorecard.html's currentBattingRows()/currentBowlingRows():
-// archived (already-out) rows from cricketState.battingCard/bowlingCard for
-// the CURRENT innings, plus the live striker/non-striker/bowler folded in.
-function liveCricketOverlay(cs) {
-    if (!cs) return null;
-    const inn = cs.inningsNumber || 1;
-    const battingCard = { A: [], B: [] };
-    const bowlingCard = { A: [], B: [] };
-    ['A', 'B'].forEach(k => {
-        battingCard[k] = ((cs.battingCard && cs.battingCard[k]) || []).filter(r => (r.inningsNo || 1) === inn).map(r => ({ ...r }));
-        bowlingCard[k] = ((cs.bowlingCard && cs.bowlingCard[k]) || []).filter(r => (r.inningsNo || 1) === inn).map(r => ({ ...r }));
-    });
-    const battingKey = cs.battingTeam;
-    const bowlingKey = battingKey === 'A' ? 'B' : (battingKey === 'B' ? 'A' : null);
-    if (battingKey && battingCard[battingKey]) {
-        [cs.striker, cs.nonStriker].forEach(p => {
-            if (p && p.name && !battingCard[battingKey].some(r => r.name === p.name)) {
-                battingCard[battingKey].push({ name: p.name, runs: p.runs || 0, balls: p.balls || 0, fours: p.fours || 0, sixes: p.sixes || 0, out: false, howOut: 'not out', inningsNo: inn });
-            }
-        });
-    }
-    if (bowlingKey && cs.bowler && cs.bowler.name) {
-        const idx = bowlingCard[bowlingKey].findIndex(r => r.name === cs.bowler.name);
-        if (idx > -1) bowlingCard[bowlingKey][idx] = { ...cs.bowler, inningsNo: inn };
-        else bowlingCard[bowlingKey].push({ ...cs.bowler, inningsNo: inn });
-    }
-
-    // scoreA/scoreB: whichever team already finished an innings gets its
-    // archived total; the team currently in (cs.battingTeam) gets the live
-    // running score. Good enough for limited-overs (the only case this
-    // portal shows scores for pre-completion) — same data teamScoreLine()
-    // in cricket-scorecard.html already derives this from.
-    const archive = cs.inningsArchive || [];
-    const teamScore = (key) => {
-        if (key === cs.battingTeam) return { runs: (cs.score && cs.score.runs) || 0, wickets: (cs.score && cs.score.wickets) || 0, overs: fmtOversLike(cs.score && cs.score.overs, cs.score && cs.score.balls) };
-        const done = archive.filter(i => i.team === key).slice(-1)[0];
-        if (done) return { runs: done.runs || 0, wickets: done.wickets || 0, overs: fmtOversLike(done.overs, done.balls) };
-        return { runs: 0, wickets: 0, overs: '0.0' };
-    };
-
-    return {
-        teamA: cs.teamA || null,
-        teamB: cs.teamB || null,
-        scoreA: teamScore('A'),
-        scoreB: teamScore('B'),
-        battingCard,
-        bowlingCard,
-        winningTeam: null // still in progress — never claim a result from live state
-    };
-}
-
-// Looks up one live match's room state (hydrating from Firestore on first
-// touch, same as a viewer connecting) and converts it to overlay shape.
-// Returns null (silently — falls back to the saved doc) on any failure, so
-// a live-lookup hiccup never breaks the public portal.
-async function getLiveMatchOverlay(roomId) {
-    if (!roomId) return null;
-    try {
-        const room = `room-${String(roomId).replace(/^room-/, '')}`;
-        const state = await getRoomState(room);
-        return state ? liveCricketOverlay(state.cricketState) : null;
-    } catch (err) {
-        console.log('Live overlay fetch error:', err);
-        return null;
-    }
-}
-
-// ================================================================
 // 🔗 PLAYER IDENTITY FOR CLIPS & STATS
 // The codebase already has a de-facto global player key: computeLeaderboards
 // above keys every batter/bowler by `name.trim().toLowerCase()` so the same
@@ -1548,31 +1464,7 @@ app.get('/api/public/tournament/:token', async (req, res) => {
         if (cached) return res.json(cached);
         const doc = await leaguesCollection.findOne({ publicToken: req.params.token });
         if (!doc) return res.status(404).json({ success: false, error: 'Tournament not found' });
-        const savedMatches = await getLeagueMatches(doc.ownerUid, doc.leagueKey);
-
-        // Overlay live figures onto whichever of these matches are
-        // currently being scored — see getLiveMatchOverlay() above.
-        const liveMeta = doc.liveMatches || [];
-        const overlayByMatchId = {};
-        await Promise.all(liveMeta.map(async lm => {
-            if (!lm || !lm.matchId) return;
-            const overlay = await getLiveMatchOverlay(lm.roomId);
-            if (overlay) overlayByMatchId[lm.matchId] = overlay;
-        }));
-        const matches = savedMatches.map(m => {
-            const overlay = overlayByMatchId[m.matchId];
-            return overlay ? { ...m, ...overlay, matchId: m.matchId, venue: m.venue, savedAt: m.savedAt } : m;
-        });
-        // A brand-new match that hasn't hit its first save yet won't be in
-        // savedMatches at all — surface it anyway so its live runs/clips
-        // appear immediately instead of only after that first save.
-        const seenIds = new Set(savedMatches.map(m => m.matchId));
-        liveMeta.forEach(lm => {
-            if (!lm || !lm.matchId || seenIds.has(lm.matchId)) return;
-            const overlay = overlayByMatchId[lm.matchId];
-            if (overlay) matches.push({ matchId: lm.matchId, venue: '', savedAt: new Date(lm.startedAt || Date.now()).toISOString(), ...overlay });
-        });
-
+        const matches = await getLeagueMatches(doc.ownerUid, doc.leagueKey);
         const payload = {
             success: true,
             displayName: doc.displayName || '',
@@ -1598,21 +1490,7 @@ app.get('/api/public/tournament/:token/match/:matchId', async (req, res) => {
     try {
         const doc = await leaguesCollection.findOne({ publicToken: req.params.token });
         if (!doc) return res.status(404).json({ success: false, error: 'Tournament not found' });
-        const saved = await matchRecordsCollection.findOne({ ownerUid: doc.ownerUid, leagueKey: doc.leagueKey, matchId: req.params.matchId });
-
-        // Same live-overlay treatment as the portal list above, scoped to
-        // this one match — so a player's per-match "Tournament Report" card
-        // (and the clip lookup it triggers, keyed off this same matchId)
-        // shows live runs/wickets even before the match is saved/finished.
-        const liveEntry = (doc.liveMatches || []).find(lm => lm && lm.matchId === req.params.matchId);
-        const overlay = liveEntry ? await getLiveMatchOverlay(liveEntry.roomId) : null;
-
-        let match = saved;
-        if (overlay) {
-            match = saved
-                ? { ...saved, ...overlay, matchId: saved.matchId, venue: saved.venue, savedAt: saved.savedAt }
-                : { matchId: req.params.matchId, venue: '', savedAt: new Date(liveEntry.startedAt || Date.now()).toISOString(), ...overlay };
-        }
+        const match = await matchRecordsCollection.findOne({ ownerUid: doc.ownerUid, leagueKey: doc.leagueKey, matchId: req.params.matchId });
         if (!match) return res.status(404).json({ success: false, error: 'Match not found' });
         res.json({ success: true, displayName: doc.displayName || '', match });
     } catch (err) {
@@ -2720,6 +2598,130 @@ app.get('/football-matchintro-panel', (req, res) => res.sendFile(__dirname + '/f
 
 let roomStates = {};
 const firestoreWriteTimers = {}; // debounce map: targetId -> timeout handle
+
+// ================================================================
+// 🩹 FIX: MATCH SCORECARD ↔ TOURNAMENT SYNC
+//
+// ROOT CAUSE: matchRecordsCollection (the ONLY thing tournament pages read
+// — see /api/public/tournament/:token and getLeagueMatches above) was
+// previously updated ONLY when the panel client explicitly called
+// POST /api/league/:name/match (match start / "save on victory"). Every
+// ball in between was written to ballsCollection (via the logBall socket
+// handler below) and broadcast live over the socket (via
+// updateCricketScore), so the live Match Scorecard page — which reads
+// straight from the socket — was instantly correct, while any Tournament
+// page — which only reads matchRecordsCollection — kept showing whatever
+// was last explicitly saved (typically the match's initial 0-0 shell).
+// Same underlying event, two disconnected read paths.
+//
+// FIX: after every ball is committed to ballsCollection (the permanent
+// source of truth), also rebuild that match's battingCard/bowlingCard/
+// scoreA/scoreB from ballsCollection — using the EXACT same per-ball rules
+// as computeMatchPlayerStats() above (byes/leg-byes aren't batter runs,
+// wides aren't a faced ball, run-outs aren't a bowler wicket) — and $set
+// them onto the SAME matchRecordsCollection doc the tournament already
+// reads. No client changes needed, no new data store, no second scoring
+// system: ballsCollection stays the one source of truth: this just keeps
+// the tournament's read path from going stale. Debounced per matchId
+// (900ms) so a burst of balls doesn't hammer Mongo, mirroring the same
+// debounce pattern already used for Firestore writes above.
+// ================================================================
+const matchRecordSyncTimers = {}; // matchId -> timeout handle
+
+async function buildLiveCardsFromBalls(matchId) {
+    const balls = await ballsCollection.find({ matchId }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
+    const batting = { A: {}, B: {} };     // battingTeam -> strikerKey -> row
+    const bowling = { A: {}, B: {} };     // bowlingTeam (bowler's own team) -> bowlerKey -> row
+    const oversBowled = { A: {}, B: {} }; // bowlingTeam -> `${bowlerKey}::${innings}-${over}` -> { legalBalls, runs }
+    const latestScore = { A: null, B: null };
+
+    balls.forEach(b => {
+        const bt = b.battingTeam === 'B' ? 'B' : 'A';
+        const bowlTeam = bt === 'A' ? 'B' : 'A';
+        if (b.score) latestScore[bt] = b.score;
+
+        if (b.strikerKey && b.kind !== 'Wd') {
+            const key = b.strikerKey;
+            if (!batting[bt][key]) batting[bt][key] = { name: b.striker || key, runs: 0, balls: 0, fours: 0, sixes: 0 };
+            const row = batting[bt][key];
+            row.balls++;
+            if (b.kind !== 'B' && b.kind !== 'LB') row.runs += b.runs || 0;
+            if (b.kind === '4') row.fours++;
+            if (b.kind === '6') row.sixes++;
+        }
+
+        if (b.bowlerKey && b.kind !== 'B' && b.kind !== 'LB') {
+            const key = b.bowlerKey;
+            if (!bowling[bowlTeam][key]) bowling[bowlTeam][key] = { name: b.bowler || key, balls: 0, runs: 0, wickets: 0 };
+            const row = bowling[bowlTeam][key];
+            const isLegal = b.kind !== 'Wd' && b.kind !== 'Nb';
+            if (isLegal) row.balls++;
+            row.runs += b.runs || 0;
+            if (b.dismissal && b.dismissal.type && b.dismissal.type.toLowerCase() !== 'run out') row.wickets++;
+
+            const overKey = `${key}::${b.innings || 1}-${b.over}`;
+            if (!oversBowled[bowlTeam][overKey]) oversBowled[bowlTeam][overKey] = { bowlerKey: key, legalBalls: 0, runs: 0 };
+            if (isLegal) oversBowled[bowlTeam][overKey].legalBalls++;
+            oversBowled[bowlTeam][overKey].runs += b.runs || 0;
+        }
+    });
+
+    const toBattingCard = (team) => Object.values(batting[team]);
+    const toBowlingCard = (team) => Object.entries(bowling[team]).map(([key, row]) => ({
+        name: row.name,
+        overs: Math.floor(row.balls / 6),
+        balls: row.balls % 6, // same (overs, balls) pair shape fmtOversLike()/computeLeaderboards already expect
+        runs: row.runs,
+        wickets: row.wickets,
+        maidens: Object.values(oversBowled[team]).filter(o => o.bowlerKey === key && o.legalBalls === 6 && o.runs === 0).length
+    }));
+    const toScore = (team) => {
+        const s = latestScore[team];
+        return s ? { runs: s.runs || 0, overs: `${s.overs || 0}.${s.balls || 0}` } : { runs: 0, overs: '0.0' };
+    };
+
+    return {
+        battingCard: { A: toBattingCard('A'), B: toBattingCard('B') },
+        bowlingCard: { A: toBowlingCard('A'), B: toBowlingCard('B') },
+        scoreA: toScore('A'),
+        scoreB: toScore('B')
+    };
+}
+
+async function syncMatchRecordFromBalls(ownerUid, matchId) {
+    if (!ballsCollection || !matchRecordsCollection || !ownerUid || !matchId) return;
+    try {
+        // Only UPDATE an existing shell doc (created by the normal
+        // POST /api/league/:name/match save at match start) — never upsert
+        // here, since we don't know leagueKey/teamA/teamB and must not
+        // create/own a competing record for this matchId.
+        const existing = await matchRecordsCollection.findOne({ ownerUid, matchId }, { projection: { leagueKey: 1 } });
+        if (!existing) return;
+        const cards = await buildLiveCardsFromBalls(matchId);
+        await matchRecordsCollection.updateOne(
+            { ownerUid, leagueKey: existing.leagueKey, matchId },
+            { $set: { ...cards, liveSyncedAt: Date.now() } }
+        );
+        // Public tournament portal caches its payload for up to 4s (see
+        // PUBLIC_CACHE_TTL_MS below) — invalidate it now so viewers see
+        // this ball within ~1s instead of waiting out the full TTL.
+        if (leaguesCollection) {
+            const league = await leaguesCollection.findOne({ ownerUid, leagueKey: existing.leagueKey }, { projection: { publicToken: 1 } });
+            if (league && league.publicToken) publicTournamentCache.delete(league.publicToken);
+        }
+    } catch (err) {
+        console.log('syncMatchRecordFromBalls error:', err);
+    }
+}
+
+function scheduleMatchRecordSync(ownerUid, matchId) {
+    if (!ownerUid || !matchId) return;
+    clearTimeout(matchRecordSyncTimers[matchId]);
+    matchRecordSyncTimers[matchId] = setTimeout(() => {
+        syncMatchRecordFromBalls(ownerUid, matchId);
+    }, 900);
+}
+
 const hydratedRooms = {}; // room -> true once we've pulled its saved state from Firestore.
 // Without this, getRoomState() below was hitting Firestore on EVERY single
 // call — every button press, every color drag, every socket connect — instead
@@ -3333,6 +3335,10 @@ io.on('connection', async (socket) => {
                 score: data.score,        // { runs, wickets, overs, balls } snapshot after this ball
                 timestamp: data.timestamp || Date.now()
             });
+
+            // 🩹 Keep the tournament's read path (matchRecordsCollection) from
+            // going stale — see the big comment above buildLiveCardsFromBalls.
+            if (ownerUid) scheduleMatchRecordSync(ownerUid, matchId);
         } catch (err) {
             console.log('logBall Mongo insert error:', err);
         }
