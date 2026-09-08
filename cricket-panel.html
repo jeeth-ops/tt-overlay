@@ -4989,11 +4989,39 @@ function pushBallHistory(label){
   if(state.ballHistory.length > 60) state.ballHistory = state.ballHistory.slice(-60);
 }
 
+// Keeps the backend's saved battingCard/bowlingCard snapshot roughly
+// live during play — WITHOUT touching local match-history UI/cache or
+// the live-status pointer (that stays owned solely by
+// pingTournamentLiveStatus, called separately below). This fixes the
+// public Tournament/Match Report pages showing stale stats (0 runs
+// etc.) for whatever's happened since the last manual "Save this
+// match" or match-end auto-save. Same fire-and-forget, debounced,
+// never-blocks-scoring trust model as pingTournamentLiveStatus — just
+// a longer debounce since this payload is the full scorecard, not a
+// tiny pointer. The final "victory" save (saveMatchToLeague /
+// saveMatchToSingleHistory) still runs as before and remains the
+// authoritative, locally-cached save.
+let matchSyncTimer = null;
+function autoSyncMatchSnapshot(){
+  if(!currentOwnerUid()) return; // not logged in — nothing to sync yet
+  clearTimeout(matchSyncTimer);
+  matchSyncTimer = setTimeout(() => {
+    const rec = buildMatchRecordForLeague();
+    const name = (state.leagueName || '').trim() || SINGLE_MATCHES_NAME;
+    fetch(withUid(`${leagueApiPath(name)}/match`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(rec)
+    }).catch(() => {}); // best-effort only
+  }, 2000);
+}
+
 function recordBall(kind, meta){
   inningsSummaryJustFired = false;
   // Tell the public tournament portal (if this match is tournament-tracked)
   // which room to join for its "Live Now" card — see pingTournamentLiveStatus().
   if(state.matchMode === 'tournament') pingTournamentLiveStatus(true);
+  autoSyncMatchSnapshot();
   if(isInningsOver()){
     let msg = '🚫 Overs complete for this innings';
     if(state.score.wickets >= 10) msg = '🚫 All out — 10 wickets already, innings is over';
