@@ -197,6 +197,14 @@ function fmtOvers(o,b){ return `${o||0}.${b||0}`; }
 function strikeRate(r,b){ return b ? ((r/b)*100).toFixed(1) : '0.0'; }
 function economy(r,o,b){ const of = (o||0)+((b||0)/6); return of ? (r/of).toFixed(2) : '0.00'; }
 
+// CLIPS FIX: this page's URL id is the match's own permanent matchId
+// (a UUID, separate from the live room id clips were actually recorded
+// under — same split as tournament matches). Once the match record
+// loads, prefer its roomId for clip lookups; getClipMatchId() falls
+// back to the URL id for the "not saved yet, still live" handoff below.
+let clipScopeOverride = null;
+function getClipMatchId(){ return clipScopeOverride || matchIdFromPath(); }
+
 async function init(){
   const id = matchIdFromPath();
   if(!id){ showEmpty('No match specified.'); return; }
@@ -204,6 +212,7 @@ async function init(){
     const res = await fetch(`/api/public/match/${encodeURIComponent(id)}`);
     const data = await res.json();
     if(data && data.success && data.match){
+      clipScopeOverride = data.match.roomId || null;
       renderFinal(data.match);
     } else {
       // Not saved yet — either mid-match or the link is wrong. Hand off
@@ -355,7 +364,7 @@ function clipBtnHtml(name, role){
 
 async function fetchPlayerClips(name){
   const pk = playerKeyOf(name);
-  const matchId = matchIdFromPath();
+  const matchId = getClipMatchId();
   if(!pk || !matchId) return null;
   try{
     const res = await fetch(`/api/clips/player/${encodeURIComponent(pk)}?scope=match&matchId=${encodeURIComponent(matchId)}`);
