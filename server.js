@@ -76,9 +76,14 @@ const app = express();
 // (*.onrender.com) over to the real custom domain instead.
 // ================================================================
 app.disable('x-powered-by');
+
+// Never redirect Render's own health check / uptime pings, or the
+// redirect could make Render think the service is down and restart it.
+// Add any other health-check path you've set in Render's dashboard here.
+const HEALTH_CHECK_PATHS = ['/', '/health', '/healthz'];
 app.use((req, res, next) => {
     const host = req.get('host');
-    if (host && host.includes('onrender.com')) {
+    if (host && host.includes('onrender.com') && !HEALTH_CHECK_PATHS.includes(req.path)) {
         return res.redirect(301, `https://allsportslivestreams.com${req.originalUrl}`);
     }
     next();
