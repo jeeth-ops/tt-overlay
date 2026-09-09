@@ -894,6 +894,7 @@ document.documentElement.setAttribute('data-theme', 'dark');
            color so cards still look layered, just without the expensive
            blur pass). */
         @media (max-width: 900px), (pointer: coarse) {
+            .bg-video { display: none !important; }
             .ambient-blob {
                 animation: none !important;
                 filter: blur(40px);
@@ -2185,15 +2186,31 @@ document.documentElement.setAttribute('data-theme', 'dark');
         // browser ever pauses/stalls it (e.g. after a tab was backgrounded).
         const bgVideoEl = document.querySelector('.bg-video');
         if (bgVideoEl) {
-            bgVideoEl.addEventListener('ended', () => {
-                bgVideoEl.currentTime = 0;
-                bgVideoEl.play().catch(() => {});
-            });
-            document.addEventListener('visibilitychange', () => {
-                if (!document.hidden && bgVideoEl.paused) {
+            // A continuously-playing background video with a real-time CSS
+            // blur filter on top of it is the single heaviest thing on this
+            // page — the GPU has to decode every frame AND re-run the blur
+            // over it forever, not just while scrolling. Laptops shrug this
+            // off; budget Android GPUs do not, and it's the main reason the
+            // page never feels as buttery on phones as it does on a laptop,
+            // even after the other fixes. It's purely decorative, so on
+            // touch/narrow screens we just don't play it at all and let the
+            // plain dark background (plus the toned-down blobs) show
+            // instead.
+            if (window.matchMedia('(pointer: coarse), (max-width: 900px)').matches) {
+                bgVideoEl.pause();
+                bgVideoEl.removeAttribute('autoplay');
+                bgVideoEl.style.display = 'none';
+            } else {
+                bgVideoEl.addEventListener('ended', () => {
+                    bgVideoEl.currentTime = 0;
                     bgVideoEl.play().catch(() => {});
-                }
-            });
+                });
+                document.addEventListener('visibilitychange', () => {
+                    if (!document.hidden && bgVideoEl.paused) {
+                        bgVideoEl.play().catch(() => {});
+                    }
+                });
+            }
         }
 
         // ===== Mobile hamburger menu =====
@@ -2243,6 +2260,10 @@ document.documentElement.setAttribute('data-theme', 'dark');
         const scrollProgressEl = document.getElementById('scrollProgress');
         const heroSection = document.getElementById('hero-section');
         const prefersReducedMotionMQ = window.matchMedia('(prefers-reduced-motion: reduce)');
+        // Shared flag for every "skip the desktop-only decorative motion"
+        // branch below — touch devices and narrow/coarse-pointer screens
+        // (phones, most tablets) get the lighter path.
+        const isTouchPerfMode = window.matchMedia('(pointer: coarse), (max-width: 900px)').matches;
 
         let scrollTicking = false;
         function applyScrollEffects() {
@@ -2257,7 +2278,17 @@ document.documentElement.setAttribute('data-theme', 'dark');
                 scrollProgressEl.style.width = Math.min(100, Math.max(0, (scrollY / max) * 100)) + '%';
             }
 
-            if (heroSection && !prefersReducedMotionMQ.matches) {
+            // The hero parallax below writes a new transform+opacity to a
+            // large section on every single scroll frame. On desktop this
+            // is basically free (huge GPU headroom, mouse-wheel scrolling
+            // fires far fewer events). On phones it means the browser has
+            // to recomposite that whole region — box-shadows, gradients,
+            // etc. underneath — on every frame while scrolling through the
+            // hero, which is the main remaining source of scroll jank on
+            // Android. It's a purely decorative flourish, so we skip it
+            // entirely on touch/narrow screens instead of trying to make it
+            // cheaper.
+            if (heroSection && !prefersReducedMotionMQ.matches && !isTouchPerfMode) {
                 if (scrollY < 700) {
                     heroSection.style.transform = `translateY(${scrollY * 0.25}px)`;
                     heroSection.style.opacity = Math.max(1 - scrollY / 500, 0);
@@ -2391,7 +2422,7 @@ document.documentElement.setAttribute('data-theme', 'dark');
                     // Skip the decorative fade-out delay on touch devices —
                     // it's what made buttons feel like they "lag" before
                     // opening the next page on phones.
-                    if (window.matchMedia('(pointer: coarse)').matches) {
+                    if (window.matchMedia('(pointer: coarse), (max-width: 900px)').matches) {
                         window.location.href = href;
                         return;
                     }
