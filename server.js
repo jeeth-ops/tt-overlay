@@ -2667,8 +2667,17 @@ adminRouter.put('/tournament/:ownerUid/:leagueKey/match/:matchId', async (req, r
         if (!existing) return res.status(404).json({ success: false, error: 'Match not found' });
         const league = await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { publicToken: 1, displayName: 1 } });
 
+        // The admin panel round-trips the existing record through the JSON
+        // textarea, which turns Mongo's ObjectId into a plain string _id.
+        // replaceOne() treats _id as immutable, so sending that string back
+        // causes "the (immutable) field '_id' was found to have been
+        // altered" and the whole save fails with a 500 ("Could not save
+        // correction"). Strip whatever _id came in the body and let Mongo
+        // keep the existing document's real _id untouched.
+        const { _id, ...correctionWithoutId } = correction;
+
         const corrected = {
-            ...correction,
+            ...correctionWithoutId,
             ownerUid, leagueKey, matchId,
             roomId: existing.roomId || null,
             savedAt: existing.savedAt
