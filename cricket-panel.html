@@ -3659,6 +3659,23 @@ function buildMatchRecordForLeague(){
 // Updates the local cache immediately (optimistic), then syncs to MongoDB
 // in the background so every other laptop/browser on this same league
 // name picks up the change too.
+// 🔐 Friendlier messaging when the server rejects a tournament write
+// because this account isn't one of the 3 authorized creator accounts (or
+// isn't logged in at all) — distinguishes that from a generic network/sync
+// hiccup, so someone who lands here without permission understands WHY
+// nothing saved, instead of thinking their connection is broken. Purely
+// cosmetic — the actual block already happens server-side regardless of
+// what this shows (see requireAuthorizedCreator in server.js).
+function syncFailureToast(res, fallbackMsg){
+  if(res && res.status === 403){
+    toast('🚫 Access Denied — your account is not authorized to create or manage tournaments');
+  } else if(res && res.status === 401){
+    toast('🚫 Please sign in with an authorized account to sync tournaments');
+  } else {
+    toast(fallbackMsg);
+  }
+}
+
 function saveMatchToLeague(silent){
   const name = (state.leagueName || '').trim();
   if(!name){ if(!silent) toast('Pick or start a tournament first'); return; }
@@ -3686,7 +3703,7 @@ function saveMatchToLeague(silent){
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(rec)
-  }).then(res => res.json()).then(data => {
+  }).then(res => res.json().then(data => ({ res, data }))).then(({ res, data }) => {
     if(data && data.success){
       leagueCache[key] = data.matches;
       saveLeagueMatchesLocal(name, data.matches);
@@ -3699,7 +3716,7 @@ function saveMatchToLeague(silent){
       refreshLeagueUI();
       refreshTournamentCardsIfShown();
     } else {
-      toast('⚠️ Saved locally only — could not sync to server');
+      syncFailureToast(res, '⚠️ Saved locally only — could not sync to server');
     }
   }).catch(() => toast('⚠️ Saved locally only — could not sync to server'));
 }
@@ -3738,13 +3755,13 @@ function saveMatchToSingleHistory(silent){
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(rec)
-  }).then(res => res.json()).then(data => {
+  }).then(res => res.json().then(data => ({ res, data }))).then(({ res, data }) => {
     if(data && data.success){
       leagueCache[key] = data.matches;
       saveLeagueMatchesLocal(SINGLE_MATCHES_NAME, data.matches);
       refreshSingleHistoryUI();
     } else {
-      toast('⚠️ Saved locally only — could not sync to server');
+      syncFailureToast(res, '⚠️ Saved locally only — could not sync to server');
     }
   }).catch(() => toast('⚠️ Saved locally only — could not sync to server'));
 }
@@ -3939,9 +3956,9 @@ function deleteEntireTournament(name){
 
   if(!currentOwnerUid()) return; // local-only, nothing on the server to clean up
   fetch(withUid(leagueApiPath(trimmed)), { method: 'DELETE' })
-    .then(r => r.json())
-    .then(data => {
-      if(!data || !data.success) toast('⚠️ Could not fully delete on server — it may reappear on Tournaments');
+    .then(r => r.json().then(data => ({ res: r, data })))
+    .then(({ res, data }) => {
+      if(!data || !data.success) syncFailureToast(res, '⚠️ Could not fully delete on server — it may reappear on Tournaments');
     })
     .catch(() => toast('⚠️ Could not fully delete on server — it may reappear on Tournaments'));
 }
@@ -3985,14 +4002,14 @@ document.getElementById('mark-tournament-complete-btn').addEventListener('click'
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ completed: nextCompleted })
-  }).then(r => r.json()).then(data => {
+  }).then(res => res.json().then(data => ({ res, data }))).then(({ res, data }) => {
     if(data && data.success){
       tournamentCompletedCache[name.toLowerCase()] = !!data.completed;
       updateMarkCompleteButton();
       refreshTournamentCardsIfShown();
       toast(nextCompleted ? `🏁 "${name}" marked Completed` : `↩️ "${name}" reopened`);
     } else {
-      toast('⚠️ Could not update tournament status');
+      syncFailureToast(res, '⚠️ Could not update tournament status');
     }
   }).catch(() => toast('⚠️ Could not update tournament status — check connection'));
 });
