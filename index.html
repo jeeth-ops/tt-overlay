@@ -673,11 +673,12 @@ document.documentElement.setAttribute('data-theme', 'dark');
             position: relative; 
             z-index: 2;
         }
-        /* ===== Owner-only gating =====
-           The "Choose Your Sport" panel (and the Owner Admin nav button,
-           gated separately above) are hidden from everyone by default and
-           only revealed by JS once Firebase confirms the signed-in email
-           matches OWNER_EMAIL. See auth.onAuthStateChanged below. */
+        /* ===== Creator-only gating =====
+           The "Choose Your Sport" panel is hidden from everyone by default
+           and only revealed by JS once Firebase confirms the signed-in
+           email is one of AUTHORIZED_CREATOR_EMAILS (3 accounts). The
+           separate Owner Admin nav button still checks only OWNER_EMAIL.
+           See auth.onAuthStateChanged below. */
         .sports-section { display: none; }
         .sports-section.owner-visible { display: block; }
         #owner-mode-badge {
@@ -1841,7 +1842,19 @@ document.documentElement.setAttribute('data-theme', 'dark');
         const authGate = document.getElementById('auth-gate');
         const userDisplay = document.getElementById('user-display');
         const ownerAdminBtn = document.getElementById('owner-admin-btn');
-        const OWNER_EMAIL = "chhayajeeth@gmail.com"; // display/UX hint only — real enforcement is server-side (see server.js requireOwner)
+        const OWNER_EMAIL = "chhayajeeth@gmail.com"; // display/UX hint only — real enforcement is server-side (see server.js requireOwner). Gates the full Owner Admin Portal button only.
+
+        // 🔐 Cricket "Select Sport" / tournament create+manage access — 3
+        // authorized Gmail accounts. Display/UX hint only: hiding this panel
+        // does NOT grant access to anything — every route it leads to is
+        // independently verified server-side (see requireAuthorizedCreator
+        // in server.js), which resolves each account's REAL email via the
+        // Firebase Admin SDK rather than trusting anything sent by the browser.
+        const AUTHORIZED_CREATOR_EMAILS = [
+            "workallsportslive@gmail.com",
+            "vinitkrkr1@gmail.com",
+            "chhayajeeth@gmail.com"
+        ];
 
         let isUserLoggedIn = false;
 
@@ -2002,10 +2015,10 @@ document.documentElement.setAttribute('data-theme', 'dark');
             }
         }
 
-        // Elements that only chhayajeeth@gmail.com should ever see: the
-        // "Choose Your Sport" panel and its nav pill. Every other visitor —
-        // signed out, or signed in with a different account — only gets the
-        // public Tournaments section below.
+        // Elements that only the 3 authorized creator accounts should ever
+        // see: the "Choose Your Sport" panel and its nav pill. Every other
+        // visitor — signed out, or signed in with a different account —
+        // only gets the public Tournaments section below.
         const sportsSection = document.getElementById('sports');
         const sportsNavPill = document.getElementById('sports-nav-pill');
         const sportsNavPillMobile = document.getElementById('sports-nav-pill-mobile');
@@ -2039,7 +2052,13 @@ document.documentElement.setAttribute('data-theme', 'dark');
                 // against a signed Firebase ID token (see requireOwner in
                 // server.js), so this toggle can't be used to bypass anything.
                 if (ownerAdminBtn) ownerAdminBtn.classList.toggle('visible', isOwner);
-                applyOwnerGating(isOwner);
+
+                // "Select Sport" / tournament create+manage — the 3
+                // authorized creator accounts, not just the single owner.
+                // Same caveat: UX hint only, server.js requireAuthorizedCreator
+                // is the real gate on every route this panel leads to.
+                const isAuthorizedCreator = AUTHORIZED_CREATOR_EMAILS.includes((user.email || '').toLowerCase());
+                applyOwnerGating(isAuthorizedCreator);
             } else {
                 isUserLoggedIn = false;
 
