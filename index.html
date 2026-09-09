@@ -2097,6 +2097,14 @@ document.documentElement.setAttribute('data-theme', 'dark');
                 // is the real gate on every route this panel leads to.
                 const isAuthorizedCreator = AUTHORIZED_CREATOR_EMAILS.includes((user.email || '').toLowerCase());
                 applyOwnerGating(isAuthorizedCreator);
+
+                // Owner sign-in unlocks the full private+public tournament
+                // list (with creator emails) on the homepage — refetch now
+                // that we actually have an ID token to send. typeof-guarded
+                // since loadTournaments() is declared in a later <script>
+                // block; by the time a real sign-in fires, that block has
+                // already run and defined it.
+                if (isOwner && typeof loadTournaments === 'function') loadTournaments();
             } else {
                 isUserLoggedIn = false;
 
@@ -2111,6 +2119,10 @@ document.documentElement.setAttribute('data-theme', 'dark');
                 if (logoutBtn) logoutBtn.classList.remove('visible');
                 if (ownerAdminBtn) ownerAdminBtn.classList.remove('visible');
                 applyOwnerGating(false);
+
+                // Signing out (e.g. owner logging out) must drop back to the
+                // public-only tournament list — refetch without a token.
+                if (typeof loadTournaments === 'function') loadTournaments();
             }
         });
     </script>
@@ -2131,7 +2143,16 @@ document.documentElement.setAttribute('data-theme', 'dark');
 
         async function loadTournaments() {
             try {
-                const res = await fetch('/api/public/tournaments');
+                const headers = {};
+                // Send the Firebase ID token when we have one — the server
+                // only expands the response (all tournaments, private
+                // included, with creator email) for a verified
+                // chhayajeeth@gmail.com request; everyone else gets back
+                // the exact same public-only payload as before.
+                if (auth.currentUser) {
+                    try { headers['Authorization'] = `Bearer ${await auth.currentUser.getIdToken()}`; } catch (e) { /* ignore */ }
+                }
+                const res = await fetch('/api/public/tournaments', { headers });
                 const data = await res.json();
                 allTournaments = (data && data.tournaments) || [];
             } catch (err) {
@@ -2202,6 +2223,11 @@ document.documentElement.setAttribute('data-theme', 'dark');
                         <div class="tournament-meta">
                             <span>🏟️ ${t.matchCount} match${t.matchCount === 1 ? '' : 'es'}</span>
                         </div>
+                        ${t.createdBy ? `
+                        <div class="tournament-meta" style="margin-top:4px;font-size:.78rem;color:var(--text-muted);">
+                            <span>👤 ${t.createdBy}</span>
+                            <span style="margin-left:8px;padding:2px 8px;border-radius:20px;font-weight:600;${t.isPrivate ? 'background:rgba(245,158,11,0.15);color:#f59e0b;' : 'background:rgba(34,197,94,0.15);color:#22c55e;'}">${t.isPrivate ? 'Private' : 'Public'}</span>
+                        </div>` : ''}
                         <span class="tournament-card-cta">View matches & scorecards →</span>
                     </div>
                 `;
