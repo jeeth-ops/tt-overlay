@@ -882,6 +882,32 @@ document.documentElement.setAttribute('data-theme', 'dark');
             to { transform: scale(2.6); opacity: 0; }
         }
 
+        /* ===== Mobile / touch performance mode =====
+           backdrop-filter + large blurred, animated blobs are cheap on
+           WebKit/macOS (hardware-accelerated compositing) but very GPU-heavy
+           on most Android WebViews/Chrome — this is the "smooth on laptop,
+           laggy on phone" gap. It also makes the fixed-size red blob cover a
+           much bigger share of a small phone screen than a laptop screen,
+           which is why the accent red looks stronger on mobile. On touch /
+           narrow screens we shrink the blobs, drop their blur + animation,
+           and drop backdrop-filter blur (keeping the translucent background
+           color so cards still look layered, just without the expensive
+           blur pass). */
+        @media (max-width: 900px), (pointer: coarse) {
+            .ambient-blob {
+                animation: none !important;
+                filter: blur(40px);
+                opacity: calc(var(--blob-opacity) * 0.6);
+            }
+            .ambient-blob.b1 { width: 220px; height: 220px; }
+            .ambient-blob.b2 { width: 260px; height: 260px; }
+            .ambient-blob.b3 { width: 180px; height: 180px; }
+            * {
+                backdrop-filter: none !important;
+                -webkit-backdrop-filter: none !important;
+            }
+        }
+
         @media (prefers-reduced-motion: reduce) {
             .ambient-blob { animation: none !important; }
             .magnetic-target { transition: none !important; }
@@ -2362,6 +2388,13 @@ document.documentElement.setAttribute('data-theme', 'dark');
                 let href = this.getAttribute('href');
                 if (href && !href.startsWith('#') && !href.startsWith('javascript') && !this.hasAttribute('target')) {
                     e.preventDefault();
+                    // Skip the decorative fade-out delay on touch devices —
+                    // it's what made buttons feel like they "lag" before
+                    // opening the next page on phones.
+                    if (window.matchMedia('(pointer: coarse)').matches) {
+                        window.location.href = href;
+                        return;
+                    }
                     document.body.classList.remove('page-loaded');
                     document.body.classList.add('page-leaving');
                     setTimeout(() => {
