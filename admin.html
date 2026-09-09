@@ -3,163 +3,184 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Owner Admin Portal — All Sports Live</title>
-  <meta name="robots" content="noindex, nofollow">
+<title>Owner Control Center — All Sports Live</title>
+<meta name="robots" content="noindex, nofollow">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
 <style>
 :root{
-  --bg-dark:#0f172a; --bg-panel:#131f37; --bg-card:rgba(30,41,59,0.55);
-  --bg-card-hover:rgba(30,41,59,0.85);
+  --bg-dark:#0b1220; --bg-panel:#111b30; --bg-card:rgba(30,41,59,0.55);
+  --bg-card-hover:rgba(30,41,59,0.85); --bg-input:rgba(255,255,255,0.04);
   --border:rgba(255,255,255,0.08); --border-soft:rgba(255,255,255,0.05);
   --text-main:#f8fafc; --text-muted:#94a3b8; --text-dim:#64748b;
-  --accent:#f43f5e; --accent-soft:rgba(244,63,94,0.12);
+  --accent:#f43f5e; --accent-soft:rgba(244,63,94,0.12); --accent-strong:#fb7185;
+  --brand:#6366f1; --brand-soft:rgba(99,102,241,0.14);
   --ok:#10b981; --ok-soft:rgba(16,185,129,0.12);
   --warn:#f59e0b; --warn-soft:rgba(245,158,11,0.12);
   --info:#38bdf8; --info-soft:rgba(56,189,248,0.12);
+  --shadow:0 12px 28px rgba(0,0,0,0.28); --shadow-lg:0 30px 60px rgba(0,0,0,0.5);
   --ease:cubic-bezier(0.4,0,0.2,1); --ease-spring:cubic-bezier(0.16,1,0.3,1);
-  --radius:16px; --radius-sm:10px;
+  --radius:16px; --radius-sm:10px; --radius-lg:22px;
+  color-scheme: dark;
+}
+html[data-theme="light"]{
+  --bg-dark:#f5f6fa; --bg-panel:#ffffff; --bg-card:#ffffff;
+  --bg-card-hover:#f8f9fc; --bg-input:#f1f2f6;
+  --border:rgba(15,23,42,0.09); --border-soft:rgba(15,23,42,0.06);
+  --text-main:#0f172a; --text-muted:#5b6472; --text-dim:#8891a0;
+  --accent:#e11d48; --accent-soft:rgba(225,29,72,0.09); --accent-strong:#f43f5e;
+  --brand:#4f46e5; --brand-soft:rgba(79,70,229,0.09);
+  --ok:#059669; --ok-soft:rgba(5,150,105,0.09);
+  --warn:#d97706; --warn-soft:rgba(217,119,6,0.09);
+  --info:#0284c7; --info-soft:rgba(2,132,199,0.09);
+  --shadow:0 10px 24px rgba(15,23,42,0.06); --shadow-lg:0 24px 48px rgba(15,23,42,0.12);
+  color-scheme: light;
 }
 *{margin:0;padding:0;box-sizing:border-box;font-family:'Inter',sans-serif;}
 html{scroll-behavior:smooth;}
-body{background:var(--bg-dark);color:var(--text-main);min-height:100vh;-webkit-font-smoothing:antialiased;}
+body{background:var(--bg-dark);color:var(--text-main);min-height:100vh;-webkit-font-smoothing:antialiased;transition:background .35s var(--ease),color .35s var(--ease);}
 h1,h2,h3,.brand{font-family:'Space Grotesk','Inter',sans-serif;}
 ::-webkit-scrollbar{width:8px;height:8px;} ::-webkit-scrollbar-track{background:transparent;}
-::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.14);border-radius:8px;}
-* { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.14) transparent; }
-@media (prefers-reduced-motion: reduce){
-  *{animation-duration:0.001ms !important; transition-duration:0.001ms !important;}
-}
+::-webkit-scrollbar-thumb{background:rgba(128,128,128,0.35);border-radius:8px;}
+* { scrollbar-width: thin; scrollbar-color: rgba(128,128,128,0.35) transparent; }
+@media (prefers-reduced-motion: reduce){ *{animation-duration:0.001ms !important; transition-duration:0.001ms !important;} }
 button{font-family:inherit;cursor:pointer;}
+a{color:inherit;}
 
-/* ===== Gate / Access Denied ===== */
-#gate{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:var(--bg-dark);z-index:999;}
-.gate-card{text-align:center;max-width:420px;padding:48px 40px;background:var(--bg-card);border:1px solid var(--border);border-radius:20px;box-shadow:0 30px 60px rgba(0,0,0,0.5);animation:cardIn .5s var(--ease-spring);}
+/* ===== Gate ===== */
+#gate{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:var(--bg-dark);z-index:999;transition:opacity .35s var(--ease);}
+.gate-card{text-align:center;max-width:420px;padding:48px 40px;background:var(--bg-card);border:1px solid var(--border);border-radius:20px;box-shadow:var(--shadow-lg);animation:cardIn .5s var(--ease-spring);}
 @keyframes cardIn{from{opacity:0;transform:translateY(14px) scale(.97);}to{opacity:1;transform:translateY(0) scale(1);}}
 .gate-icon{font-size:2.6rem;margin-bottom:18px;}
 .gate-card h2{font-size:1.5rem;margin-bottom:10px;letter-spacing:-.5px;}
 .gate-card p{color:var(--text-muted);font-size:.92rem;line-height:1.6;margin-bottom:26px;}
 .gate-denied .gate-icon{color:var(--accent);}
 .gate-btn{background:var(--text-main);color:var(--bg-dark);border:none;padding:12px 26px;border-radius:50px;font-weight:600;font-size:.9rem;transition:transform .2s var(--ease),background .25s var(--ease);}
-.gate-btn:hover{background:#e2e8f0;transform:translateY(-2px);}
+.gate-btn:hover{transform:translateY(-2px);}
 .gate-btn:active{transform:scale(.96);}
-.spinner{width:34px;height:34px;border-radius:50%;border:3px solid rgba(255,255,255,0.12);border-top-color:var(--accent);animation:spin .8s linear infinite;margin:0 auto 18px;}
+.spinner{width:34px;height:34px;border-radius:50%;border:3px solid rgba(128,128,128,0.2);border-top-color:var(--accent);animation:spin .8s linear infinite;margin:0 auto 18px;}
 @keyframes spin{to{transform:rotate(360deg);}}
 
 /* ===== Shell ===== */
 #app{display:none;min-height:100vh;}
 #app.ready{display:flex;}
-
-.sidebar{
-  width:260px;flex-shrink:0;background:var(--bg-panel);border-right:1px solid var(--border-soft);
-  display:flex;flex-direction:column;padding:22px 16px;position:sticky;top:0;height:100vh;
-  animation:slideIn .5s var(--ease-spring);
-}
+.sidebar{width:264px;flex-shrink:0;background:var(--bg-panel);border-right:1px solid var(--border-soft);display:flex;flex-direction:column;padding:22px 16px;position:sticky;top:0;height:100vh;animation:slideIn .5s var(--ease-spring);transition:background .35s var(--ease);}
 @keyframes slideIn{from{opacity:0;transform:translateX(-16px);}to{opacity:1;transform:translateX(0);}}
-.brand{display:flex;align-items:center;gap:10px;padding:6px 10px 22px;font-size:1.15rem;font-weight:700;letter-spacing:-.5px;}
+.brand{display:flex;align-items:center;gap:10px;padding:6px 10px 22px;font-size:1.12rem;font-weight:700;letter-spacing:-.5px;}
 .brand span{color:var(--accent);}
-.brand small{display:block;color:var(--text-dim);font-weight:500;font-size:.68rem;letter-spacing:.06em;text-transform:uppercase;margin-top:2px;font-family:'Inter',sans-serif;}
-
-.nav-item{
-  position:relative;display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:11px;
-  color:var(--text-muted);background:transparent;border:none;width:100%;text-align:left;
-  font-size:.9rem;font-weight:500;transition:background .2s var(--ease),color .2s var(--ease);
-  margin-bottom:2px;
-}
-.nav-item:hover{background:rgba(255,255,255,0.04);color:var(--text-main);}
+.brand small{display:block;color:var(--text-dim);font-weight:500;font-size:.66rem;letter-spacing:.06em;text-transform:uppercase;margin-top:2px;font-family:'Inter',sans-serif;}
+.nav-scroll{flex:1;overflow-y:auto;}
+.nav-item{position:relative;display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:11px;color:var(--text-muted);background:transparent;border:none;width:100%;text-align:left;font-size:.9rem;font-weight:500;transition:background .2s var(--ease),color .2s var(--ease);margin-bottom:2px;}
+.nav-item:hover{background:var(--bg-input);color:var(--text-main);}
 .nav-item.active{background:var(--accent-soft);color:var(--text-main);font-weight:600;}
 .nav-item .ic{width:18px;text-align:center;font-size:1rem;}
 .nav-indicator{position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:3px;background:var(--accent);opacity:0;transform:scaleY(.4);transition:opacity .25s var(--ease),transform .25s var(--ease-spring);}
 .nav-item.active .nav-indicator{opacity:1;transform:scaleY(1);}
-
 .sidebar-footer{margin-top:auto;padding-top:16px;border-top:1px solid var(--border-soft);}
-.owner-chip{display:flex;align-items:center;gap:10px;padding:10px;border-radius:12px;background:rgba(255,255,255,0.03);margin-bottom:10px;}
-.owner-avatar{width:32px;height:32px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.85rem;flex-shrink:0;}
+.owner-chip{display:flex;align-items:center;gap:10px;padding:10px;border-radius:12px;background:var(--bg-input);margin-bottom:10px;}
+.owner-avatar{width:32px;height:32px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.85rem;flex-shrink:0;}
 .owner-meta{min-width:0;}
 .owner-meta .em{font-size:.78rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .owner-meta .role{font-size:.72rem;color:var(--accent);font-weight:600;}
+.theme-toggle{display:flex;gap:4px;background:var(--bg-input);border-radius:10px;padding:3px;margin-bottom:10px;}
+.theme-toggle button{flex:1;padding:7px 0;border:none;background:transparent;border-radius:8px;color:var(--text-muted);font-size:.78rem;font-weight:600;transition:background .2s var(--ease),color .2s var(--ease);}
+.theme-toggle button.active{background:var(--bg-card);color:var(--text-main);box-shadow:0 2px 6px rgba(0,0,0,0.08);}
 .back-link,.logout-link{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:10px;color:var(--text-muted);font-size:.83rem;text-decoration:none;background:none;border:none;width:100%;text-align:left;transition:background .2s var(--ease),color .2s var(--ease);}
-.back-link:hover,.logout-link:hover{background:rgba(255,255,255,0.04);color:var(--text-main);}
+.back-link:hover,.logout-link:hover{background:var(--bg-input);color:var(--text-main);}
 
-.main{flex:1;min-width:0;padding:32px 40px 60px;}
-.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px;}
-.topbar h1{font-size:1.7rem;letter-spacing:-.6px;}
-.topbar p{color:var(--text-muted);font-size:.88rem;margin-top:4px;}
+.main{flex:1;min-width:0;padding:28px 36px 60px;}
+.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;gap:16px;flex-wrap:wrap;}
+.topbar h1{font-size:1.6rem;letter-spacing:-.6px;}
+.topbar p{color:var(--text-muted);font-size:.87rem;margin-top:4px;}
+.topbar-right{display:flex;align-items:center;gap:10px;}
 .refresh-btn{background:var(--bg-card);border:1px solid var(--border);color:var(--text-muted);padding:8px 16px;border-radius:50px;font-size:.82rem;font-weight:600;display:flex;align-items:center;gap:7px;transition:background .2s var(--ease),color .2s var(--ease),transform .15s var(--ease);}
 .refresh-btn:hover{background:var(--bg-card-hover);color:var(--text-main);}
 .refresh-btn:active{transform:scale(.96);}
-.refresh-btn .spin-ic{transition:transform .5s var(--ease-spring);}
+.refresh-btn .spin-ic{display:inline-block;}
 .refresh-btn.spinning .spin-ic{animation:spin .7s linear infinite;}
+
+/* Global search */
+.gsearch{position:relative;width:280px;max-width:40vw;}
+.gsearch input{padding-left:36px;border-radius:50px;}
+.gsearch .gs-ic{position:absolute;left:13px;top:50%;transform:translateY(-50%);color:var(--text-dim);font-size:.85rem;pointer-events:none;}
+.gs-results{position:absolute;top:calc(100% + 8px);left:0;right:0;background:var(--bg-panel);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-lg);max-height:420px;overflow-y:auto;z-index:400;display:none;}
+.gs-results.open{display:block;animation:panelIn .2s var(--ease);}
+.gs-group-label{padding:10px 14px 4px;font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text-dim);font-weight:700;}
+.gs-item{display:flex;flex-direction:column;gap:2px;padding:9px 14px;border-radius:0;background:none;border:none;width:100%;text-align:left;color:var(--text-main);font-size:.85rem;transition:background .15s var(--ease);}
+.gs-item:hover{background:var(--bg-input);}
+.gs-item small{color:var(--text-muted);font-size:.74rem;}
+.gs-empty{padding:18px;text-align:center;color:var(--text-muted);font-size:.83rem;}
 
 .panel{display:none;animation:panelIn .35s var(--ease-spring);}
 .panel.active{display:block;}
 @keyframes panelIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
 
 /* ===== Cards / Grid ===== */
-.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px;margin-bottom:28px;}
-.stat-card{
-  background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;
-  transition:transform .25s var(--ease),box-shadow .25s var(--ease),border-color .25s var(--ease);
-}
-.stat-card:hover{transform:translateY(-2px);box-shadow:0 12px 28px rgba(0,0,0,0.28);border-color:rgba(255,255,255,0.14);}
-.stat-card .lbl{font-size:.78rem;color:var(--text-muted);font-weight:500;margin-bottom:8px;}
-.stat-card .val{font-size:1.9rem;font-weight:700;letter-spacing:-1px;font-family:'Space Grotesk',sans-serif;}
-.stat-card .sub{font-size:.75rem;color:var(--text-dim);margin-top:4px;}
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:26px;}
+.stat-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;transition:transform .25s var(--ease),box-shadow .25s var(--ease),border-color .25s var(--ease),background .35s var(--ease);}
+.stat-card:hover{transform:translateY(-2px);box-shadow:var(--shadow);border-color:var(--accent-soft);}
+.stat-card .lbl{font-size:.76rem;color:var(--text-muted);font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:6px;}
+.stat-card .val{font-size:1.85rem;font-weight:700;letter-spacing:-1px;font-family:'Space Grotesk',sans-serif;}
+.stat-card .sub{font-size:.74rem;color:var(--text-dim);margin-top:4px;}
 
-.card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;margin-bottom:20px;}
-.card h3{font-size:1.02rem;margin-bottom:16px;display:flex;align-items:center;gap:8px;justify-content:space-between;}
+.card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;margin-bottom:20px;transition:background .35s var(--ease),border-color .35s var(--ease);}
+.card h3{font-size:1.01rem;margin-bottom:16px;display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap;}
 .card h3 .t{display:flex;align-items:center;gap:8px;}
+.card-hint{color:var(--text-muted);font-size:.83rem;margin-top:-8px;margin-bottom:16px;line-height:1.5;}
 
 table{width:100%;border-collapse:collapse;font-size:.85rem;}
-th{text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:600;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border);}
+th{text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:600;font-size:.71rem;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border);}
 td{padding:12px;border-bottom:1px solid var(--border-soft);color:var(--text-main);}
 tr{transition:background .15s var(--ease);}
-tbody tr:hover{background:rgba(255,255,255,0.025);}
-.table-wrap{max-height:420px;overflow-y:auto;border-radius:var(--radius-sm);}
+tbody tr:hover{background:var(--bg-input);}
+.table-wrap{max-height:440px;overflow-y:auto;border-radius:var(--radius-sm);}
 
-.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:50px;font-size:.72rem;font-weight:600;}
+.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:50px;font-size:.72rem;font-weight:600;white-space:nowrap;}
 .badge-ok{background:var(--ok-soft);color:var(--ok);}
 .badge-warn{background:var(--warn-soft);color:var(--warn);}
 .badge-danger{background:var(--accent-soft);color:var(--accent);}
 .badge-info{background:var(--info-soft);color:var(--info);}
+.badge-brand{background:var(--brand-soft);color:var(--brand);}
 .dot{width:7px;height:7px;border-radius:50%;background:currentColor;}
 
-.btn{border:none;border-radius:8px;padding:7px 14px;font-size:.8rem;font-weight:600;transition:transform .15s var(--ease),background .2s var(--ease),opacity .2s var(--ease);}
+.btn{border:none;border-radius:9px;padding:8px 15px;font-size:.8rem;font-weight:600;transition:transform .15s var(--ease),background .2s var(--ease),opacity .2s var(--ease),box-shadow .2s var(--ease);}
 .btn:active{transform:scale(.95);}
-.btn-ghost{background:rgba(255,255,255,0.05);color:var(--text-muted);}
-.btn-ghost:hover{background:rgba(255,255,255,0.09);color:var(--text-main);}
+.btn-ghost{background:var(--bg-input);color:var(--text-muted);}
+.btn-ghost:hover{background:var(--bg-card-hover);color:var(--text-main);}
 .btn-danger{background:var(--accent-soft);color:var(--accent);}
 .btn-danger:hover{background:rgba(244,63,94,0.22);}
+.btn-ok{background:var(--ok-soft);color:var(--ok);}
+.btn-ok:hover{background:rgba(16,185,129,0.22);}
 .btn-primary{background:var(--text-main);color:var(--bg-dark);padding:10px 20px;}
-.btn-primary:hover{background:#e2e8f0;}
+.btn-primary:hover{box-shadow:0 6px 16px rgba(0,0,0,0.18);}
 .btn-primary:disabled{opacity:.5;cursor:not-allowed;}
+.btn-sm{padding:5px 11px;font-size:.74rem;}
 
 .empty-state{text-align:center;padding:50px 20px;color:var(--text-muted);}
 .empty-state .ic{font-size:2rem;margin-bottom:10px;opacity:.6;}
 .empty-state .hint{font-size:.8rem;color:var(--text-dim);margin-top:4px;}
 
-.skel{background:linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.09) 37%, rgba(255,255,255,0.04) 63%);background-size:400% 100%;animation:shimmer 1.4s ease infinite;border-radius:8px;}
+.skel{background:linear-gradient(90deg, var(--bg-input) 25%, var(--bg-card-hover) 37%, var(--bg-input) 63%);background-size:400% 100%;animation:shimmer 1.4s ease infinite;border-radius:8px;}
 @keyframes shimmer{0%{background-position:100% 0;}100%{background-position:-100% 0;}}
 .skel-row{height:14px;margin:8px 0;}
+.skel-card{height:158px;border-radius:var(--radius);}
 
-input,select,textarea{
-  background:rgba(255,255,255,0.04);border:1px solid var(--border);color:var(--text-main);
-  padding:10px 14px;border-radius:9px;font-size:.87rem;width:100%;transition:border-color .2s var(--ease),box-shadow .2s var(--ease);
-}
+input,select,textarea{background:var(--bg-input);border:1px solid var(--border);color:var(--text-main);padding:10px 14px;border-radius:9px;font-size:.87rem;width:100%;transition:border-color .2s var(--ease),box-shadow .2s var(--ease),background .35s var(--ease);}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
-label{font-size:.78rem;color:var(--text-muted);display:block;margin:12px 0 6px;font-weight:500;}
+label{font-size:.78rem;color:var(--text-muted);display:block;margin:12px 0 6px;font-weight:600;}
 .field-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.field-hint{font-size:.74rem;color:var(--text-dim);margin-top:4px;}
 
-.bars{display:flex;align-items:flex-end;gap:18px;height:140px;padding:10px 4px;}
-.bar-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;height:100%;justify-content:flex-end;}
-.bar{width:100%;border-radius:6px 6px 2px 2px;background:var(--accent);transition:height .6s var(--ease-spring);min-height:4px;}
-.bar-col span{font-size:.72rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
+.bars{display:flex;align-items:flex-end;gap:16px;height:150px;padding:10px 4px;overflow-x:auto;}
+.bar-col{flex:1;min-width:36px;display:flex;flex-direction:column;align-items:center;gap:8px;height:100%;justify-content:flex-end;}
+.bar{width:100%;border-radius:6px 6px 2px 2px;background:linear-gradient(180deg,var(--accent-strong),var(--accent));transition:height .6s var(--ease-spring);min-height:4px;}
+.bar-col span{font-size:.71rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
 
-.hl{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border-soft);font-size:.85rem;}
+.hl{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border-soft);font-size:.85rem;gap:10px;}
+.hl:last-child{border-bottom:none;}
 .tpl-toolbar{display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap;}
-.tpl-toolbar input,.tpl-toolbar select{background:var(--bg-card);border:1px solid var(--border);color:var(--text-main);border-radius:8px;padding:8px 12px;font-size:.82rem;}
-.tpl-toolbar input:focus,.tpl-toolbar select:focus{outline:none;border-color:var(--text-dim);}
+.tpl-toolbar input,.tpl-toolbar select{background:var(--bg-card);border:1px solid var(--border);color:var(--text-main);border-radius:8px;padding:8px 12px;font-size:.82rem;width:auto;}
 .view-toggle{display:flex;gap:2px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:2px;}
 .view-btn{padding:5px 10px;border-radius:6px;background:transparent;}
 .view-btn.active{background:var(--bg-card-hover);color:var(--text-main);}
@@ -187,34 +208,96 @@ label{font-size:.78rem;color:var(--text-muted);display:block;margin:12px 0 6px;f
 .preview-tabs .btn{padding:5px 12px;font-size:.76rem;}
 .preview-tabs .btn.active{background:var(--text-main);color:var(--bg-dark);}
 .preview-frame{width:100%;height:440px;border:1px solid var(--border);border-radius:10px;background:#fff;}
-.hl:last-child{border-bottom:none;}
 
-.toast-wrap{position:fixed;bottom:24px;right:24px;z-index:1200;display:flex;flex-direction:column;gap:10px;}
-.toast{background:var(--bg-panel);border:1px solid var(--border);padding:12px 18px;border-radius:12px;font-size:.85rem;box-shadow:0 12px 30px rgba(0,0,0,0.4);animation:toastIn .3s var(--ease-spring);display:flex;align-items:center;gap:8px;}
+.toast-wrap{position:fixed;bottom:24px;right:24px;z-index:1200;display:flex;flex-direction:column;gap:10px;max-width:min(360px,90vw);}
+.toast{background:var(--bg-panel);border:1px solid var(--border);padding:12px 18px;border-radius:12px;font-size:.85rem;box-shadow:var(--shadow-lg);animation:toastIn .3s var(--ease-spring);display:flex;align-items:center;gap:8px;}
 @keyframes toastIn{from{opacity:0;transform:translateY(10px) scale(.95);}to{opacity:1;transform:translateY(0) scale(1);}}
 .toast.leaving{animation:toastOut .25s var(--ease) forwards;}
 @keyframes toastOut{to{opacity:0;transform:translateX(20px);}}
 .toast.ok{border-color:rgba(16,185,129,0.35);} .toast.err{border-color:rgba(244,63,94,0.35);}
 
-.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:1100;animation:fadeIn .2s var(--ease);}
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:1100;animation:fadeIn .2s var(--ease);padding:20px;}
 @keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
-.modal{background:var(--bg-panel);border:1px solid var(--border);border-radius:18px;padding:26px;max-width:440px;width:90%;animation:modalIn .3s var(--ease-spring);}
+.modal{background:var(--bg-panel);border:1px solid var(--border);border-radius:18px;padding:26px;max-width:460px;width:100%;max-height:88vh;overflow-y:auto;animation:modalIn .3s var(--ease-spring);}
 @keyframes modalIn{from{opacity:0;transform:scale(.94) translateY(6px);}to{opacity:1;transform:scale(1) translateY(0);}}
 .modal h3{margin-bottom:8px;}
 .modal p{color:var(--text-muted);font-size:.87rem;line-height:1.55;margin-bottom:20px;}
-.modal-actions{display:flex;gap:10px;justify-content:flex-end;}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;}
 
-.search-row{display:flex;gap:10px;margin-bottom:16px;}
-.search-row input{flex:1;}
+.search-row{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;}
+.search-row input{flex:1;min-width:160px;}
 
+/* Diff / impact preview */
+.diff-row{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-radius:10px;background:var(--bg-input);margin-bottom:8px;font-size:.85rem;}
+.diff-row .fld{color:var(--text-muted);font-weight:600;}
+.diff-vals{display:flex;align-items:center;gap:8px;font-family:'Space Grotesk',sans-serif;font-weight:700;}
+.diff-old{color:var(--text-dim);text-decoration:line-through;font-weight:500;}
+.diff-arrow{color:var(--accent);}
+.diff-new{color:var(--ok);}
+.impact-box{background:var(--info-soft);border:1px solid rgba(56,189,248,0.25);border-radius:12px;padding:14px 16px;margin:14px 0;font-size:.83rem;color:var(--text-main);}
+.impact-box b{display:block;margin-bottom:6px;}
+.impact-box ul{margin:6px 0 0 18px;color:var(--text-muted);}
+.save-steps{margin-top:6px;}
+.save-step{display:flex;align-items:center;gap:8px;font-size:.83rem;padding:4px 0;color:var(--text-dim);}
+.save-step.done{color:var(--ok);}
+.save-step .chk{width:16px;height:16px;border-radius:50%;border:2px solid currentColor;display:flex;align-items:center;justify-content:center;font-size:.6rem;flex-shrink:0;}
+
+/* Field editor with pencil affordance */
+.editable-field{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;background:var(--bg-input);border-radius:12px;margin-bottom:8px;}
+.editable-field .ef-main{min-width:0;}
+.editable-field .ef-lbl{font-size:.76rem;color:var(--text-muted);font-weight:600;margin-bottom:2px;}
+.editable-field .ef-val{font-size:1.05rem;font-weight:700;font-family:'Space Grotesk',sans-serif;}
+.pencil-btn{background:var(--bg-card);border:1px solid var(--border);color:var(--text-main);padding:6px 12px;border-radius:8px;font-size:.78rem;font-weight:600;display:flex;align-items:center;gap:5px;flex-shrink:0;transition:background .2s var(--ease);}
+.pencil-btn:hover{background:var(--bg-card-hover);}
+
+/* Tournament explorer */
+.explorer-toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:18px;}
+.explorer-toolbar input{flex:2;min-width:180px;}
+.explorer-toolbar select{flex:1;min-width:130px;width:auto;}
+.tourn-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;}
+.tourn-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:18px;transition:transform .2s var(--ease),box-shadow .2s var(--ease),background .2s var(--ease);animation:cardIn .35s var(--ease-spring) backwards;}
+.tourn-card:hover{transform:translateY(-3px);box-shadow:var(--shadow);border-color:var(--accent-soft);}
+.tourn-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px;}
+.tourn-card-title{font-weight:700;font-size:1rem;font-family:'Space Grotesk',sans-serif;}
+.tourn-card-meta{color:var(--text-muted);font-size:.78rem;margin-bottom:4px;}
+.tourn-card-row{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0;}
+.tourn-card-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;}
+
+/* Tournament detail */
+.detail-header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:18px;}
+.detail-title-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.detail-title{font-size:1.35rem;font-weight:700;font-family:'Space Grotesk',sans-serif;}
+.detail-meta{color:var(--text-muted);font-size:.85rem;margin-top:4px;}
+.tab-strip{display:flex;gap:4px;background:var(--bg-input);border-radius:12px;padding:4px;margin-bottom:18px;overflow-x:auto;}
+.tab-btn{flex:1;white-space:nowrap;padding:9px 14px;border-radius:9px;background:transparent;border:none;color:var(--text-muted);font-size:.83rem;font-weight:600;transition:background .2s var(--ease),color .2s var(--ease);}
+.tab-btn.active{background:var(--bg-card);color:var(--text-main);box-shadow:0 2px 8px rgba(0,0,0,0.1);}
+.subtab-panel{display:none;animation:panelIn .25s var(--ease-spring);}
+.subtab-panel.active{display:block;}
+.match-row-card{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;}
+.match-teams{font-weight:700;font-size:.95rem;}
+.match-score{color:var(--text-muted);font-size:.82rem;margin-top:2px;}
+.match-result{font-size:.78rem;color:var(--text-dim);margin-top:2px;}
+
+/* Mobile-friendly stacked table */
+@media (max-width: 720px){
+  .table-wrap table thead{display:none;}
+  .table-wrap table, .table-wrap tbody, .table-wrap tr, .table-wrap td{display:block;width:100%;}
+  .table-wrap tr{border:1px solid var(--border-soft);border-radius:12px;margin-bottom:10px;padding:6px 4px;background:var(--bg-card);}
+  .table-wrap td{border-bottom:none;padding:8px 12px;display:flex;justify-content:space-between;gap:10px;align-items:center;text-align:right;}
+  .table-wrap td[data-label]::before{content:attr(data-label);color:var(--text-dim);font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;font-weight:700;text-align:left;}
+}
 @media (max-width: 900px){
   .sidebar{position:fixed;left:0;top:0;bottom:0;transform:translateX(-100%);z-index:900;box-shadow:0 0 40px rgba(0,0,0,0.5);}
   .sidebar.open{transform:translateX(0);}
-  .main{padding:20px;}
+  .main{padding:18px;}
   .field-row{grid-template-columns:1fr;}
   .menu-toggle{display:inline-flex !important;}
+  .gsearch{width:100%;max-width:none;order:3;}
+  .topbar-right{width:100%;justify-content:space-between;}
 }
-.menu-toggle{display:none;background:var(--bg-card);border:1px solid var(--border);color:var(--text-main);width:38px;height:38px;border-radius:10px;align-items:center;justify-content:center;margin-right:10px;}
+.menu-toggle{display:none;background:var(--bg-card);border:1px solid var(--border);color:var(--text-main);width:38px;height:38px;border-radius:10px;align-items:center;justify-content:center;margin-right:10px;flex-shrink:0;}
+.sidebar-backdrop{display:none;}
+@media (max-width:900px){ .sidebar.open ~ .sidebar-backdrop{display:block;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:890;} }
 </style>
 </head>
 <body>
@@ -229,19 +312,24 @@ label{font-size:.78rem;color:var(--text-muted);display:block;margin:12px 0 6px;f
 
 <div id="app">
   <aside class="sidebar" id="sidebar">
-    <div class="brand">🛡️ <div>Owner<span> Admin</span><small>All Sports Live Control Center</small></div></div>
+    <div class="brand">🛡️ <div>Owner<span> Control</span><small>All Sports Live</small></div></div>
 
-    <button class="nav-item active" data-panel="dashboard"><span class="nav-indicator"></span><span class="ic">📊</span> Dashboard</button>
-    <button class="nav-item" data-panel="users"><span class="nav-indicator"></span><span class="ic">👥</span> Users</button>
-    <button class="nav-item" data-panel="broadcasting"><span class="nav-indicator"></span><span class="ic">📡</span> Broadcasting</button>
-    <button class="nav-item" data-panel="cricket"><span class="nav-indicator"></span><span class="ic">🏏</span> Cricket Data</button>
-    <button class="nav-item" data-panel="corrections"><span class="nav-indicator"></span><span class="ic">🛠️</span> Corrections</button>
-    <button class="nav-item" data-panel="analytics"><span class="nav-indicator"></span><span class="ic">📈</span> Analytics</button>
-    <button class="nav-item" data-panel="health"><span class="nav-indicator"></span><span class="ic">💚</span> System Health</button>
-    <button class="nav-item" data-panel="audit"><span class="nav-indicator"></span><span class="ic">📜</span> Audit Logs</button>
-    <button class="nav-item" data-panel="settings"><span class="nav-indicator"></span><span class="ic">⚙️</span> Settings</button>
+    <div class="nav-scroll">
+      <button class="nav-item active" data-panel="dashboard"><span class="nav-indicator"></span><span class="ic">🏠</span> Dashboard</button>
+      <button class="nav-item" data-panel="users"><span class="nav-indicator"></span><span class="ic">👥</span> Users</button>
+      <button class="nav-item" data-panel="broadcasting"><span class="nav-indicator"></span><span class="ic">📡</span> Broadcast Templates</button>
+      <button class="nav-item" data-panel="cricket"><span class="nav-indicator"></span><span class="ic">🏏</span> Tournaments</button>
+      <button class="nav-item" data-panel="analytics"><span class="nav-indicator"></span><span class="ic">📈</span> Insights</button>
+      <button class="nav-item" data-panel="health"><span class="nav-indicator"></span><span class="ic">💚</span> System Status</button>
+      <button class="nav-item" data-panel="audit"><span class="nav-indicator"></span><span class="ic">📜</span> Activity History</button>
+      <button class="nav-item" data-panel="settings"><span class="nav-indicator"></span><span class="ic">⚙️</span> Settings</button>
+    </div>
 
     <div class="sidebar-footer">
+      <div class="theme-toggle" id="themeToggle">
+        <button data-theme-val="dark" id="themeDarkBtn">🌙 Dark</button>
+        <button data-theme-val="light" id="themeLightBtn">☀️ Light</button>
+      </div>
       <div class="owner-chip">
         <div class="owner-avatar" id="ownerInitial">O</div>
         <div class="owner-meta"><div class="em" id="ownerEmailChip">—</div><div class="role">Owner</div></div>
@@ -250,21 +338,33 @@ label{font-size:.78rem;color:var(--text-muted);display:block;margin:12px 0 6px;f
       <button class="logout-link" id="logoutBtn">⏻ Sign out</button>
     </div>
   </aside>
+  <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
 
   <main class="main">
     <div class="topbar">
       <div style="display:flex;align-items:center;">
         <button class="menu-toggle" id="menuToggle">☰</button>
-        <div><h1 id="pageTitle">Dashboard</h1><p id="pageSub">Live overview of your entire platform.</p></div>
+        <div><h1 id="pageTitle">Dashboard</h1><p id="pageSub">A simple, visual overview of everything happening on the platform.</p></div>
       </div>
-      <button class="refresh-btn" id="refreshBtn"><span class="spin-ic">↻</span> Refresh</button>
+      <div class="topbar-right">
+        <div class="gsearch">
+          <span class="gs-ic">🔎</span>
+          <input id="gsInput" placeholder="Search tournaments, players, users, templates…" autocomplete="off">
+          <div class="gs-results" id="gsResults"></div>
+        </div>
+        <button class="refresh-btn" id="refreshBtn"><span class="spin-ic">↻</span> Refresh</button>
+      </div>
     </div>
 
     <!-- DASHBOARD -->
     <section class="panel active" id="panel-dashboard">
       <div class="stat-grid" id="dashStats"></div>
       <div class="card">
-        <h3><span class="t">🔎 System Overview</span></h3>
+        <h3><span class="t">⚡ Quick Actions</span></h3>
+        <div class="tourn-card-actions" id="quickActions"></div>
+      </div>
+      <div class="card">
+        <h3><span class="t">🔎 At a Glance</span></h3>
         <div id="dashOverview"></div>
       </div>
     </section>
@@ -272,6 +372,8 @@ label{font-size:.78rem;color:var(--text-muted);display:block;margin:12px 0 6px;f
     <!-- USERS -->
     <section class="panel" id="panel-users">
       <div class="card">
+        <h3><span class="t">👥 Everyone with an account</span></h3>
+        <p class="card-hint">Suspend an account to instantly sign them out and block sign-in, or remove one permanently. Search by their exact email to jump straight to them.</p>
         <div class="search-row">
           <input type="text" id="userSearchInput" placeholder="Search by exact email…">
           <button class="btn btn-ghost" id="userSearchBtn">Search</button>
@@ -292,7 +394,8 @@ label{font-size:.78rem;color:var(--text-muted);display:block;margin:12px 0 6px;f
     <!-- BROADCASTING -->
     <section class="panel" id="panel-broadcasting">
       <div class="card">
-        <h3><span class="t">➕ Add Template</span></h3>
+        <h3><span class="t">➕ Add a Broadcast Template</span></h3>
+        <p class="card-hint">A template is the on-screen scoreboard/overlay package for a sport. Fill this in and it appears on the live site right away.</p>
         <div class="field-row">
           <div><label>Sport / Template Name</label><input id="tplName" placeholder="e.g. Badminton"></div>
           <div><label>Icon (emoji)</label><input id="tplIcon" placeholder="🏸"></div>
@@ -309,8 +412,8 @@ label{font-size:.78rem;color:var(--text-muted);display:block;margin:12px 0 6px;f
           <input id="tplSearch" placeholder="Search templates…" style="flex:1;min-width:160px;">
           <select id="tplFilter">
             <option value="all">All</option>
-            <option value="published">Published</option>
-            <option value="unpublished">Unpublished</option>
+            <option value="published">Published (live)</option>
+            <option value="unpublished">Unpublished (hidden)</option>
           </select>
           <div class="view-toggle">
             <button class="btn btn-ghost view-btn active" data-view="grid" id="tplViewGrid" title="Grid view">▦</button>
@@ -321,50 +424,39 @@ label{font-size:.78rem;color:var(--text-muted);display:block;margin:12px 0 6px;f
       </div>
     </section>
 
-    <!-- CRICKET DATA -->
+    <!-- TOURNAMENTS (explorer + detail + match correction center) -->
     <section class="panel" id="panel-cricket">
-      <div class="stat-grid" id="cricketStats"></div>
-      <div class="card">
-        <h3><span class="t">🏆 Tournaments / Leagues</span></h3>
-        <div class="table-wrap">
-          <table><thead><tr><th>Tournament</th><th>Sport</th><th>Owner UID</th><th>Matches</th><th>Updated</th><th>Status</th></tr></thead><tbody id="tournamentsBody"></tbody></table>
+      <div id="tournExplorerView">
+        <div class="stat-grid" id="cricketStats"></div>
+        <div class="card">
+          <h3><span class="t">🏆 Every Tournament, Every Creator</span></h3>
+          <p class="card-hint">Search, filter and open any tournament — including ones made by workallsportslive@gmail.com and vinitkrkr1@gmail.com — to fix a score, correct a clip, or remove it entirely.</p>
+          <div class="explorer-toolbar">
+            <input id="tExpSearch" placeholder="Search by tournament name or creator email…">
+            <select id="tExpVisibility"><option value="all">Public + Private</option><option value="public">🟢 Public only</option><option value="private">🔒 Private only</option></select>
+            <select id="tExpStatus"><option value="all">Any status</option><option value="live">Live</option><option value="completed">Completed</option><option value="upcoming">Upcoming</option></select>
+            <select id="tExpSort">
+              <option value="updated_desc">Recently updated</option>
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="matches_desc">Most matches</option>
+            </select>
+          </div>
+          <div id="tExpGrid" class="tourn-grid"></div>
+        </div>
+        <div class="card">
+          <h3><span class="t">🎥 Live Recording Sessions</span></h3>
+          <p class="card-hint">Matches currently being recorded for broadcast — separate from tournament scorecards above.</p>
+          <div class="table-wrap">
+            <table><thead><tr><th>Match ID</th><th>Recording</th><th>Started</th></tr></thead><tbody id="matchesBody"></tbody></table>
+          </div>
         </div>
       </div>
-      <div class="card">
-        <h3><span class="t">🎥 Recent Matches</span></h3>
-        <div class="table-wrap">
-          <table><thead><tr><th>Match ID</th><th>Recording</th><th>Started</th></tr></thead><tbody id="matchesBody"></tbody></table>
-        </div>
-      </div>
+
+      <div id="tournDetailView" style="display:none;"></div>
     </section>
 
-    <!-- CORRECTIONS (chhayajeeth@gmail.com only — global owner override) -->
-    <section class="panel" id="panel-corrections">
-      <div class="card">
-        <h3><span class="t">🔎 Find a Tournament</span></h3>
-        <p style="color:var(--text-muted);font-size:.85rem;margin-bottom:14px;">Search across every creator's tournaments — workallsportslive@gmail.com, vinitkrkr1@gmail.com, and your own private ones.</p>
-        <div class="search-row">
-          <input type="text" id="corrSearchInput" placeholder="Search by tournament name…">
-          <button class="btn btn-ghost" id="corrSearchBtn">Search</button>
-        </div>
-        <div class="table-wrap">
-          <table><thead><tr><th>Tournament</th><th>Sport</th><th>Created By</th><th>Visibility</th><th>Matches</th><th>Updated</th><th></th></tr></thead><tbody id="corrTournamentsBody"></tbody></table>
-        </div>
-      </div>
-
-      <div class="card" id="corrDetailCard" style="display:none;">
-        <h3>
-          <span class="t">🏆 <span id="corrDetailTitle">—</span></span>
-          <button class="btn btn-danger" id="corrDeleteTournamentBtn">Delete Tournament</button>
-        </h3>
-        <p id="corrDetailMeta" style="color:var(--text-muted);font-size:.82rem;margin-top:-8px;margin-bottom:16px;"></p>
-        <div class="table-wrap">
-          <table><thead><tr><th>Match</th><th>Score A</th><th>Score B</th><th>Result</th><th></th></tr></thead><tbody id="corrMatchesBody"></tbody></table>
-        </div>
-      </div>
-    </section>
-
-    <!-- ANALYTICS -->
+    <!-- ANALYTICS / INSIGHTS -->
     <section class="panel" id="panel-analytics">
       <div class="card">
         <h3><span class="t">📊 Activity by Action</span></h3>
@@ -389,10 +481,11 @@ label{font-size:.78rem;color:var(--text-muted);display:block;margin:12px 0 6px;f
       </div>
     </section>
 
-    <!-- AUDIT LOGS -->
+    <!-- AUDIT / ACTIVITY HISTORY -->
     <section class="panel" id="panel-audit">
       <div class="card">
-        <h3><span class="t">📜 Owner Action History</span></h3>
+        <h3><span class="t">📜 Every Change You've Made</span></h3>
+        <p class="card-hint">A permanent record of owner actions — score corrections, deletions, suspensions and more.</p>
         <div class="table-wrap">
           <table><thead><tr><th>Action</th><th>Target</th><th>Performed By</th><th>When</th></tr></thead><tbody id="auditBody"></tbody></table>
         </div>
@@ -416,7 +509,6 @@ label{font-size:.78rem;color:var(--text-muted);display:block;margin:12px 0 6px;f
 </div>
 
 <div class="toast-wrap" id="toastWrap"></div>
-
 <script>
 const firebaseConfig = {
   apiKey: "AIzaSyAYc_bEB9C4RhhLhPBEJsJRFRUppcR45yo",
@@ -433,14 +525,39 @@ const auth = firebase.auth();
 let idToken = null;
 let usersNextPageToken = null;
 
+// ===== Theme =====
+function applyTheme(v){
+  document.documentElement.setAttribute('data-theme', v);
+  document.getElementById('themeDarkBtn').classList.toggle('active', v==='dark');
+  document.getElementById('themeLightBtn').classList.toggle('active', v==='light');
+  try{ localStorage.setItem('ownerTheme', v); }catch(e){}
+}
+(function initTheme(){
+  let saved = 'dark';
+  try{ saved = localStorage.getItem('ownerTheme') || (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'); }catch(e){}
+  applyTheme(saved);
+})();
+document.getElementById('themeDarkBtn').onclick = ()=> applyTheme('dark');
+document.getElementById('themeLightBtn').onclick = ()=> applyTheme('light');
+
 // ===== Toast =====
 function toast(msg, type='ok'){
   const wrap = document.getElementById('toastWrap');
   const el = document.createElement('div');
   el.className = `toast ${type}`;
-  el.innerHTML = `<span>${type==='ok'?'✅':'⚠️'}</span> ${msg}`;
+  el.innerHTML = `<span>${type==='ok'?'✅':'⚠️'}</span> <span>${msg}</span>`;
   wrap.appendChild(el);
-  setTimeout(()=>{ el.classList.add('leaving'); setTimeout(()=>el.remove(), 260); }, 3200);
+  setTimeout(()=>{ el.classList.add('leaving'); setTimeout(()=>el.remove(), 260); }, 3400);
+}
+// Friendly wrapper: shows plain-language messages for anything that looks
+// like a raw technical error, while keeping genuinely useful short messages
+// (e.g. "Tournament name is required") as-is. Full detail always goes to
+// the console for debugging.
+function friendlyError(err){
+  console.error(err);
+  const msg = (err && err.message) || '';
+  const looksTechnical = !msg || msg.length > 130 || /^(Error|TypeError|SyntaxError|fetch|Unexpected token|NetworkError|Failed to fetch)/i.test(msg) || /\{|\[|stack|at\s+\w+\s*\(/.test(msg);
+  return looksTechnical ? "We couldn't save this change. Please try again." : msg;
 }
 
 // ===== Auth gate =====
@@ -479,7 +596,10 @@ auth.onAuthStateChanged(async (user) => {
     document.getElementById('ownerInitial').textContent = (user.email||'O').charAt(0).toUpperCase();
 
     renderDashboard(data);
+    loadDashboardExtras();
     initNav();
+    initGlobalSearch();
+    renderQuickActions();
   } catch (err) {
     console.error(err);
     document.getElementById('gateCard').innerHTML = `
@@ -493,32 +613,33 @@ auth.onAuthStateChanged(async (user) => {
 document.getElementById('logoutBtn').onclick = () => auth.signOut().then(()=> location.href='/');
 
 // ===== Nav =====
+function goToPanel(key){
+  document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('active'));
+  const navBtn = document.querySelector(`.nav-item[data-panel="${key}"]`);
+  if (navBtn) navBtn.classList.add('active');
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.getElementById('panel-'+key).classList.add('active');
+  const titles = {
+    dashboard:['Dashboard','A simple, visual overview of everything happening on the platform.'],
+    users:['Users','Every registered All Sports Live account.'],
+    broadcasting:['Broadcast Templates','Scoreboard & overlay packages available to users.'],
+    cricket:['Tournaments','Browse every tournament, fix scores, correct clips, or remove one.'],
+    analytics:['Insights','Real usage, pulled from activity logs.'],
+    health:['System Status','Live status of every connected service.'],
+    audit:['Activity History','Every owner action, permanently recorded.'],
+    settings:['Settings','Safe, global site configuration.']
+  };
+  document.getElementById('pageTitle').textContent = titles[key][0];
+  document.getElementById('pageSub').textContent = titles[key][1];
+  document.getElementById('sidebar').classList.remove('open');
+  loadPanel(key);
+}
 function initNav(){
   document.querySelectorAll('.nav-item').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('active'));
-      btn.classList.add('active');
-      const key = btn.dataset.panel;
-      document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
-      document.getElementById('panel-'+key).classList.add('active');
-      const titles = {
-        dashboard:['Dashboard','Live overview of your entire platform.'],
-        users:['Users','Every registered All Sports Live account.'],
-        broadcasting:['Broadcasting','Overlay templates available to users.'],
-        cricket:['Cricket Data','Tournaments, matches and ball-by-ball logs.'],
-        corrections:['Corrections','Open any creator\u2019s tournament to correct match data, clips, or delete it — chhayajeeth@gmail.com only.'],
-        analytics:['Analytics','Real usage, pulled from activity logs.'],
-        health:['System Health','Live status of every connected service.'],
-        audit:['Audit Logs','Every owner action, permanently recorded.'],
-        settings:['Settings','Safe, global site configuration.']
-      };
-      document.getElementById('pageTitle').textContent = titles[key][0];
-      document.getElementById('pageSub').textContent = titles[key][1];
-      document.getElementById('sidebar').classList.remove('open');
-      loadPanel(key);
-    });
+    btn.addEventListener('click', ()=> goToPanel(btn.dataset.panel));
   });
   document.getElementById('menuToggle').onclick = ()=> document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebarBackdrop').onclick = ()=> document.getElementById('sidebar').classList.remove('open');
   document.getElementById('refreshBtn').onclick = ()=>{
     const btn = document.getElementById('refreshBtn');
     btn.classList.add('spinning');
@@ -539,35 +660,91 @@ async function api(path, opts={}){
 }
 
 const loaders = {
-  dashboard: async ()=> renderDashboard(await api('/dashboard')),
+  dashboard: async ()=> { renderDashboard(await api('/dashboard')); loadDashboardExtras(); },
   users: async ()=> loadUsers(true),
   broadcasting: loadTemplates,
-  cricket: loadCricket,
-  corrections: loadCorrections,
+  cricket: async ()=> { showExplorerView(); await loadCricketExplorer(); },
   analytics: loadAnalytics,
   health: loadHealth,
   audit: loadAudit,
   settings: loadSettings
 };
-function loadPanel(key){ return (loaders[key] ? loaders[key]() : Promise.resolve()).catch(err=>{ if (err.message!=='denied') toast(err.message,'err'); }); }
+function loadPanel(key){ return (loaders[key] ? loaders[key]() : Promise.resolve()).catch(err=>{ if (err.message!=='denied') toast(friendlyError(err),'err'); }); }
+
+function renderQuickActions(){
+  document.getElementById('quickActions').innerHTML = `
+    <button class="btn btn-ghost" id="qaFix">✏️ Fix a match score</button>
+    <button class="btn btn-ghost" id="qaTemplates">📡 Manage templates</button>
+    <button class="btn btn-ghost" id="qaUsers">👥 Look up a user</button>
+    <button class="btn btn-ghost" id="qaActivity">📜 View recent activity</button>
+  `;
+  document.getElementById('qaFix').onclick = ()=> goToPanel('cricket');
+  document.getElementById('qaTemplates').onclick = ()=> goToPanel('broadcasting');
+  document.getElementById('qaUsers').onclick = ()=> goToPanel('users');
+  document.getElementById('qaActivity').onclick = ()=> goToPanel('audit');
+}
+
+// Animated count-up for dashboard numbers — purely cosmetic.
+function animateValue(el, to){
+  const start = 0; const dur = 650; const startTime = performance.now();
+  const isNum = typeof to === 'number' && isFinite(to);
+  if (!isNum){ el.textContent = to; return; }
+  function tick(now){
+    const p = Math.min(1, (now-startTime)/dur);
+    const eased = 1 - Math.pow(1-p, 3);
+    el.textContent = Math.round(start + (to-start)*eased).toLocaleString();
+    if (p<1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
 
 // ===== Dashboard =====
 function renderDashboard(d){
-  document.getElementById('dashStats').innerHTML = [
-    ['Total Users', d.totalUsers, `${d.newUsers30d} new in 30d`],
-    ['Active Users (30d)', d.activeUsers30d, `${d.disabledUsers} suspended`],
-    ['Tournaments / Leagues', d.leagues, ''],
-    ['Matches Tracked', d.matches, ''],
-    ['Balls Logged', d.ballsLogged, 'Ball-by-ball, MongoDB'],
-    ['Templates', d.templates, 'Broadcasting library'],
-    ['Activity Events', d.activityEvents, 'Firestore analytics_logs'],
-    ['Live Connections', d.liveConnections, 'Current WebSocket clients'],
-  ].map(([lbl,val,sub])=>`<div class="stat-card"><div class="lbl">${lbl}</div><div class="val">${val}</div>${sub?`<div class="sub">${sub}</div>`:''}</div>`).join('');
+  const stats = [
+    ['Total Users', d.totalUsers, `${d.newUsers30d} new in 30 days`, '👥'],
+    ['Active Users (30d)', d.activeUsers30d, `${d.disabledUsers} suspended`, '🟢'],
+    ['Tournaments', d.leagues, 'Across every creator', '🏆'],
+    ['Matches Tracked', d.matches, '', '🏏'],
+    ['Balls Logged', d.ballsLogged, 'Ball-by-ball history', '🎯'],
+    ['Templates', d.templates, 'Broadcast library', '📡'],
+    ['Activity Events', d.activityEvents, 'Last 30 days of usage', '📈'],
+    ['Live Connections', d.liveConnections, 'Watching right now', '📶'],
+  ];
+  document.getElementById('dashStats').innerHTML = stats.map(([lbl,val,sub,ic])=>`<div class="stat-card"><div class="lbl">${ic} ${lbl}</div><div class="val" data-count="${typeof val==='number'?val:''}">0</div>${sub?`<div class="sub">${sub}</div>`:''}</div>`).join('');
+  document.querySelectorAll('#dashStats .val').forEach(el=>{
+    const c = el.dataset.count;
+    if (c==='') return; // non-numeric already handled below
+    animateValue(el, Number(c));
+  });
   document.getElementById('dashOverview').innerHTML = `
-    <div class="hl"><span>Users signed up in the last 30 days</span><b>${d.newUsers30d}</b></div>
+    <div class="hl"><span>Users who signed up in the last 30 days</span><b>${d.newUsers30d}</b></div>
     <div class="hl"><span>Users active in the last 30 days</span><b>${d.activeUsers30d}</b></div>
-    <div class="hl"><span>Currently live overlay/panel connections</span><b>${d.liveConnections}</b></div>
+    <div class="hl"><span>People watching live right now</span><b>${d.liveConnections}</b></div>
     <div class="hl"><span>Suspended accounts</span><b>${d.disabledUsers}</b></div>`;
+}
+
+// Extra dashboard context computed from the same tournament-search data
+// the Tournaments tab uses — no new backend endpoints required.
+async function loadDashboardExtras(){
+  try {
+    const data = await api('/tournaments/search');
+    const tournaments = data.tournaments || [];
+    const totalMatches = tournaments.reduce((s,t)=> s + (t.matchCount||0), 0);
+    const liveCount = tournaments.filter(t=> (t.statusOverride||t.publicStatus)==='live' || (t.statusOverride||t.publicStatus)==='ongoing').length;
+    const completedCount = tournaments.filter(t=> (t.statusOverride||t.publicStatus)==='completed').length;
+    const extra = [
+      ['Live Right Now', liveCount, 'Tournaments currently live', '🔴'],
+      ['Completed', completedCount, 'Tournaments wrapped up', '✅'],
+    ];
+    const grid = document.getElementById('dashStats');
+    extra.forEach(([lbl,val,sub,ic])=>{
+      const card = document.createElement('div');
+      card.className = 'stat-card';
+      card.innerHTML = `<div class="lbl">${ic} ${lbl}</div><div class="val">0</div><div class="sub">${sub}</div>`;
+      grid.appendChild(card);
+      animateValue(card.querySelector('.val'), val);
+    });
+  } catch(e){ /* non-critical, dashboard still works without this */ }
 }
 
 // ===== Users =====
@@ -583,28 +760,29 @@ async function loadUsers(reset){
 }
 function userRow(u){
   return `<tr data-uid="${u.uid}">
-    <td><div style="font-weight:600;">${u.displayName || '—'}</div><div style="color:var(--text-muted);font-size:.78rem;">${u.email||'no email'}</div></td>
-    <td>${u.disabled ? '<span class="badge badge-danger"><span class="dot"></span>Suspended</span>' : '<span class="badge badge-ok"><span class="dot"></span>Active</span>'}</td>
-    <td style="color:var(--text-muted);font-size:.8rem;">${fmtDate(u.createdAt)}</td>
-    <td style="color:var(--text-muted);font-size:.8rem;">${u.lastSignInAt ? fmtDate(u.lastSignInAt) : 'Never'}</td>
-    <td>
+    <td data-label="User"><div style="font-weight:600;">${u.displayName || '—'}</div><div style="color:var(--text-muted);font-size:.78rem;">${u.email||'no email'}</div></td>
+    <td data-label="Status">${u.disabled ? '<span class="badge badge-danger"><span class="dot"></span>Suspended</span>' : '<span class="badge badge-ok"><span class="dot"></span>Active</span>'}</td>
+    <td data-label="Joined" style="color:var(--text-muted);font-size:.8rem;">${fmtDate(u.createdAt)}</td>
+    <td data-label="Last sign-in" style="color:var(--text-muted);font-size:.8rem;">${u.lastSignInAt ? fmtDate(u.lastSignInAt) : 'Never'}</td>
+    <td data-label="Actions">
       ${u.disabled
-        ? `<button class="btn btn-ghost act-enable">Reactivate</button>`
-        : `<button class="btn btn-danger act-disable">Suspend</button>`}
-      <button class="btn btn-ghost act-delete">Delete</button>
+        ? `<button class="btn btn-ok act-enable">✅ Reactivate</button>`
+        : `<button class="btn btn-danger act-disable">⛔ Suspend</button>`}
+      <button class="btn btn-ghost act-delete">🗑 Delete</button>
     </td>
   </tr>`;
 }
 function wireUserActions(){
-  document.querySelectorAll('.act-disable').forEach(b=> b.onclick = (e)=> confirmModal('Suspend this user?','They will be immediately signed out and unable to log back in until reactivated.', async ()=>{
+  document.querySelectorAll('.act-disable').forEach(b=> b.onclick = (e)=> confirmModal('Suspend this user?','They will be immediately signed out and unable to log back in until you reactivate them.', async ()=>{
     const uid = e.target.closest('tr').dataset.uid;
     await api(`/users/${uid}/disable`, {method:'POST'}); toast('User suspended'); loadUsers(true);
   }));
   document.querySelectorAll('.act-enable').forEach(b=> b.onclick = async (e)=>{
     const uid = e.target.closest('tr').dataset.uid;
-    await api(`/users/${uid}/enable`, {method:'POST'}); toast('User reactivated'); loadUsers(true);
+    try { await api(`/users/${uid}/enable`, {method:'POST'}); toast('User reactivated'); loadUsers(true); }
+    catch(err){ toast(friendlyError(err),'err'); }
   });
-  document.querySelectorAll('.act-delete').forEach(b=> b.onclick = (e)=> confirmModal('Delete this user?','This permanently removes their account. This cannot be undone.', async ()=>{
+  document.querySelectorAll('.act-delete').forEach(b=> b.onclick = (e)=> confirmModal('Delete this user?','This permanently removes their account and cannot be undone.', async ()=>{
     const uid = e.target.closest('tr').dataset.uid;
     await api(`/users/${uid}`, {method:'DELETE'}); toast('User deleted'); loadUsers(true);
   }));
@@ -619,7 +797,7 @@ document.getElementById('userSearchBtn').onclick = async ()=>{
     wireUserActions();
     document.getElementById('usersLoadMore').style.display = 'none';
     document.getElementById('userSearchClear').style.display = 'inline-flex';
-  } catch (err) { toast(err.message, 'err'); }
+  } catch (err) { toast(friendlyError(err), 'err'); }
 };
 document.getElementById('userSearchClear').onclick = ()=>{
   document.getElementById('userSearchInput').value='';
@@ -627,9 +805,10 @@ document.getElementById('userSearchClear').onclick = ()=>{
   loadUsers(true);
 };
 
-// ===== Broadcasting =====
+// ===== Broadcasting / Templates =====
 let tplCache = [];
 let tplView = 'grid';
+let tplLoadedOnce = false;
 
 function escAttr(s){ return String(s==null?'':s).replace(/"/g,'&quot;'); }
 function escHtml(s){ return String(s==null?'':s).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
@@ -637,6 +816,7 @@ function escHtml(s){ return String(s==null?'':s).replace(/[&<>]/g, c=>({'&':'&am
 async function loadTemplates(){
   const data = await api('/templates');
   tplCache = data.templates || [];
+  tplLoadedOnce = true;
   renderTplList();
 }
 
@@ -662,14 +842,14 @@ function renderTplList(){
     <div class="tpl-card" data-card="${escAttr(t.slug)}">
       <div class="tpl-card-head">
         <div class="tpl-card-title">${t.icon||'🎯'} ${escHtml(t.name)}</div>
-        ${t.published ? '<span class="badge badge-ok">Published</span>' : '<span class="badge badge-warn">Unpublished</span>'}
+        ${t.published ? '<span class="badge badge-ok">🟢 Live</span>' : '<span class="badge badge-warn">Hidden</span>'}
       </div>
       <div class="tpl-card-slug">/${escHtml(t.slug)} · ${overlays.length} overlay${overlays.length===1?'':'s'}</div>
       <div class="tpl-card-actions">
         <button class="btn btn-ghost" data-preview="${escAttr(t.slug)}">👁 Preview</button>
         <button class="btn btn-ghost" data-dup="${escAttr(t.slug)}">📋 Duplicate</button>
-        <button class="btn btn-ghost" data-pub="${escAttr(t.slug)}" data-pubval="${!t.published}">${t.published?'Unpublish':'Publish'}</button>
-        <button class="btn btn-danger" data-del="${escAttr(t.slug)}">Remove</button>
+        <button class="btn btn-ghost" data-pub="${escAttr(t.slug)}" data-pubval="${!t.published}">${t.published?'Hide from site':'Publish'}</button>
+        <button class="btn btn-danger" data-del="${escAttr(t.slug)}">🗑 Remove</button>
       </div>
       <details class="tpl-overlays">
         <summary>Overlays (${overlays.length})</summary>
@@ -690,8 +870,8 @@ function renderTplList(){
   }).join('');
 
   list.querySelectorAll('[data-pub]').forEach(b=> b.onclick = async ()=>{
-    await api(`/templates/${b.dataset.pub}/publish`, {method:'POST', body: JSON.stringify({published: b.dataset.pubval==='true'})});
-    toast('Template updated'); loadTemplates();
+    try { await api(`/templates/${b.dataset.pub}/publish`, {method:'POST', body: JSON.stringify({published: b.dataset.pubval==='true'})}); toast('Template updated'); loadTemplates(); }
+    catch(err){ toast(friendlyError(err),'err'); }
   });
   list.querySelectorAll('[data-del]').forEach(b=> b.onclick = ()=> confirmModal('Remove this template?','It will disappear from the live site immediately.', async ()=>{
     await api(`/templates/${b.dataset.del}`, {method:'DELETE'}); toast('Template removed'); loadTemplates();
@@ -723,7 +903,7 @@ function renderTplList(){
     try {
       await api(`/templates/${b.dataset.ovAdd}/overlays`, {method:'POST', body: JSON.stringify({name, code:''})});
       toast('Overlay added — open Preview to paste its code'); loadTemplates();
-    } catch(err){ toast(err.message,'err'); b.disabled = false; }
+    } catch(err){ toast(friendlyError(err),'err'); b.disabled = false; }
   });
 }
 
@@ -738,8 +918,6 @@ function setTplView(v){
   renderTplList();
 }
 
-// Preview modal: shows panel + each overlay in tabs, editable + live-rendered
-// via iframe srcdoc. Saves back through the same overlay/panel APIs.
 function openPreviewModal(t, initialOverlayId){
   if (!t) return;
   const overlays = t.overlays || [];
@@ -792,7 +970,7 @@ function openPreviewModal(t, initialOverlayId){
       toast('Saved');
       const idx = tplCache.findIndex(x=>x.slug===t.slug); if (idx>=0) tplCache[idx] = t;
       loadTab();
-    } catch(err){ toast(err.message,'err'); }
+    } catch(err){ toast(friendlyError(err),'err'); }
     finally { btn.disabled = false; btn.textContent = 'Save & Refresh'; }
   };
 }
@@ -801,7 +979,7 @@ function inputModal(title, body, placeholder, onConfirm){
   const wrap = document.createElement('div');
   wrap.className = 'modal-backdrop';
   wrap.innerHTML = `<div class="modal"><h3>${title}</h3><p>${body}</p>
-    <input id="mInput" placeholder="${escAttr(placeholder||'')}" style="width:100%;background:var(--bg-dark);border:1px solid var(--border);color:var(--text-main);border-radius:8px;padding:9px 12px;font-size:.85rem;margin-top:4px;">
+    <input id="mInput" placeholder="${escAttr(placeholder||'')}" style="width:100%;margin-top:4px;">
     <div class="modal-actions"><button class="btn btn-ghost" id="mCancel">Cancel</button><button class="btn btn-primary" id="mConfirm" style="padding:9px 18px;">Confirm</button></div></div>`;
   document.body.appendChild(wrap);
   const input = wrap.querySelector('#mInput');
@@ -812,7 +990,7 @@ function inputModal(title, body, placeholder, onConfirm){
     const val = input.value.trim();
     if (!val) return toast('Please enter a value','err');
     wrap.remove();
-    try { await onConfirm(val); } catch(err){ toast(err.message,'err'); }
+    try { await onConfirm(val); } catch(err){ toast(friendlyError(err),'err'); }
   };
   input.addEventListener('keydown', e=>{ if (e.key==='Enter') wrap.querySelector('#mConfirm').click(); });
 }
@@ -829,221 +1007,538 @@ document.getElementById('tplSaveBtn').onclick = async ()=>{
     toast('Template saved');
     ['tplName','tplIcon','tplPanel','tplOverlay'].forEach(id=> document.getElementById(id).value='');
     loadTemplates();
-  } catch(err){ toast(err.message,'err'); }
+  } catch(err){ toast(friendlyError(err),'err'); }
   finally { btn.disabled = false; btn.textContent = 'Save Template'; }
 };
 
-// ===== Cricket Data =====
-async function loadCricket(){
-  const data = await api('/cricket');
-  document.getElementById('cricketStats').innerHTML = [
-    ['Tournaments', data.tournaments.length],
-    ['Recent Matches', data.recentMatches.length],
-    ['Total Balls Logged', data.totalBallsLogged]
-  ].map(([lbl,val])=>`<div class="stat-card"><div class="lbl">${lbl}</div><div class="val">${val}</div></div>`).join('');
-
-  // Status select lets ONLY the signed-in owner (requireOwner verifies the
-  // Bearer idToken's email server-side — see POST /api/admin/tournaments/
-  // :leagueKey/status) force what a tournament's card shows on the public
-  // Tournaments section, e.g. flip Live -> Completed or back, regardless of
-  // the tournament's actual match data. "Auto" clears the override.
-  const STATUS_OPTIONS = ['auto','live','completed','ongoing','upcoming'];
-  document.getElementById('tournamentsBody').innerHTML = data.tournaments.length ? data.tournaments.map(t=>`
-    <tr>
-      <td>${t.displayName}</td>
-      <td style="text-transform:capitalize;">${t.sport||'cricket'}</td>
-      <td style="color:var(--text-muted);font-size:.78rem;">${t.ownerUid||'—'}</td>
-      <td>${t.matchCount}</td>
-      <td style="color:var(--text-muted);font-size:.8rem;">${t.updatedAt?fmtDate(new Date(t.updatedAt).toISOString()):'—'}</td>
-      <td>
-        <select class="tournament-status-select" data-league-key="${t.leagueKey}" style="background:var(--bg2,#1a1a2e);color:inherit;border:1px solid var(--border,#333);border-radius:6px;padding:4px 8px;">
-          ${STATUS_OPTIONS.map(s=>`<option value="${s}" ${((t.statusOverride||'auto')===s)?'selected':''}>${s==='auto'?`Auto (${t.publicStatus})`:s.charAt(0).toUpperCase()+s.slice(1)}</option>`).join('')}
-        </select>
-      </td>
-    </tr>
-  `).join('') : `<tr><td colspan="6"><div class="empty-state"><div class="ic">🏆</div>No tournaments saved yet.</div></td></tr>`;
-
-  document.querySelectorAll('.tournament-status-select').forEach(sel=>{
-    sel.onchange = async ()=>{
-      const leagueKey = sel.dataset.leagueKey;
-      const value = sel.value === 'auto' ? null : sel.value;
-      sel.disabled = true;
-      try{
-        await api(`/tournaments/${encodeURIComponent(leagueKey)}/status`, { method:'POST', body: JSON.stringify({ status: value }) });
-        toast(value ? `Tournament forced to "${value}"` : 'Tournament status reset to Auto');
-        loadCricket();
-      }catch(err){
-        toast(err.message,'err');
-        sel.disabled = false;
-      }
-    };
-  });
-
-  document.getElementById('matchesBody').innerHTML = data.recentMatches.length ? data.recentMatches.map(m=>`
-    <tr><td>${m.matchId}</td><td>${m.recordingStatus||'—'}</td><td style="color:var(--text-muted);font-size:.8rem;">${m.recordingStartedAt?fmtDate(new Date(m.recordingStartedAt).toISOString()):'—'}</td></tr>
-  `).join('') : `<tr><td colspan="3"><div class="empty-state"><div class="ic">🎥</div>No matches recorded yet.</div></td></tr>`;
-}
-
-// ===== Corrections (chhayajeeth@gmail.com only) =====
+// =====================================================================
+// TOURNAMENTS — Explorer, Detail, Match Correction Center, Clips
+// =====================================================================
+let cricketSummary = { tournaments: [], recentMatches: [], totalBallsLogged: 0 };
 let corrState = { ownerUid: null, leagueKey: null, league: null, matches: [] };
 
-async function loadCorrections(){
-  document.getElementById('corrSearchBtn').onclick = ()=> searchCorrTournaments();
-  document.getElementById('corrSearchInput').onkeydown = (e)=>{ if (e.key==='Enter') searchCorrTournaments(); };
-  document.getElementById('corrDeleteTournamentBtn').onclick = ()=> deleteCorrTournament();
-  if (!document.getElementById('corrTournamentsBody').dataset.loaded){
-    document.getElementById('corrTournamentsBody').dataset.loaded = '1';
-    await searchCorrTournaments();
-  }
+function showExplorerView(){
+  document.getElementById('tournExplorerView').style.display = '';
+  document.getElementById('tournDetailView').style.display = 'none';
+  document.getElementById('tournDetailView').innerHTML = '';
+}
+function showDetailView(){
+  document.getElementById('tournExplorerView').style.display = 'none';
+  document.getElementById('tournDetailView').style.display = 'block';
 }
 
-async function searchCorrTournaments(){
-  const body = document.getElementById('corrTournamentsBody');
-  body.innerHTML = skeletonRows(4,7);
-  const q = document.getElementById('corrSearchInput').value.trim();
-  try {
-    const data = await api('/tournaments/search' + (q ? `?q=${encodeURIComponent(q)}` : ''));
-    body.innerHTML = data.tournaments.length ? data.tournaments.map(t=>`
-      <tr>
-        <td>${t.displayName}</td>
-        <td style="text-transform:capitalize;">${t.sport}</td>
-        <td style="color:var(--text-muted);font-size:.8rem;">${t.createdBy}</td>
-        <td>${t.isPrivate ? '<span class="badge badge-warn">Private</span>' : '<span class="badge badge-ok">Public</span>'}</td>
-        <td>${t.matchCount}</td>
-        <td style="color:var(--text-muted);font-size:.8rem;">${t.updatedAt?fmtDate(new Date(t.updatedAt).toISOString()):'—'}</td>
-        <td><button class="btn btn-ghost corr-open-btn" data-owner="${t.ownerUid}" data-league="${t.leagueKey}">Open</button></td>
-      </tr>
-    `).join('') : `<tr><td colspan="7"><div class="empty-state"><div class="ic">🏆</div>No tournaments match that search.</div></td></tr>`;
-    document.querySelectorAll('.corr-open-btn').forEach(btn=>{
-      btn.onclick = ()=> openCorrTournament(btn.dataset.owner, btn.dataset.league);
-    });
-  } catch(err){ toast(err.message,'err'); }
+async function loadCricketExplorer(){
+  document.getElementById('tExpGrid').innerHTML = `<div class="skel skel-card"></div><div class="skel skel-card"></div><div class="skel skel-card"></div>`;
+  const [cricket, search] = await Promise.all([ api('/cricket'), api('/tournaments/search') ]);
+  cricketSummary = { tournaments: search.tournaments || [], recentMatches: cricket.recentMatches || [], totalBallsLogged: cricket.totalBallsLogged || 0 };
+
+  document.getElementById('cricketStats').innerHTML = [
+    ['🏆 Tournaments', cricketSummary.tournaments.length],
+    ['🏏 Total Matches', cricketSummary.tournaments.reduce((s,t)=>s+(t.matchCount||0),0)],
+    ['🎥 Recording Sessions', cricketSummary.recentMatches.length],
+    ['🎯 Balls Logged', cricketSummary.totalBallsLogged]
+  ].map(([lbl,val])=>`<div class="stat-card"><div class="lbl">${lbl}</div><div class="val">${val}</div></div>`).join('');
+
+  document.getElementById('matchesBody').innerHTML = cricketSummary.recentMatches.length ? cricketSummary.recentMatches.map(m=>`
+    <tr><td data-label="Match ID">${m.matchId}</td><td data-label="Recording">${m.recordingStatus||'—'}</td><td data-label="Started" style="color:var(--text-muted);font-size:.8rem;">${m.recordingStartedAt?fmtDate(new Date(m.recordingStartedAt).toISOString()):'—'}</td></tr>
+  `).join('') : `<tr><td colspan="3"><div class="empty-state"><div class="ic">🎥</div>No matches recording right now.</div></td></tr>`;
+
+  wireExplorerToolbar();
+  renderExplorerGrid();
 }
 
-async function openCorrTournament(ownerUid, leagueKey){
+function wireExplorerToolbar(){
+  const s = document.getElementById('tExpSearch');
+  if (s.dataset.wired) { renderExplorerGrid(); return; }
+  s.dataset.wired = '1';
+  let debTimer;
+  s.addEventListener('input', ()=>{
+    clearTimeout(debTimer);
+    debTimer = setTimeout(async ()=>{
+      const q = s.value.trim();
+      try {
+        const data = await api('/tournaments/search' + (q ? `?q=${encodeURIComponent(q)}` : ''));
+        cricketSummary.tournaments = data.tournaments || [];
+        renderExplorerGrid();
+      } catch(err){ toast(friendlyError(err),'err'); }
+    }, 320);
+  });
+  ['tExpVisibility','tExpStatus','tExpSort'].forEach(id=> document.getElementById(id).addEventListener('change', renderExplorerGrid));
+}
+
+function tournamentEffectiveStatus(t){ return t.statusOverride || t.publicStatus || 'upcoming'; }
+
+function renderExplorerGrid(){
+  const grid = document.getElementById('tExpGrid');
+  const vis = document.getElementById('tExpVisibility').value;
+  const status = document.getElementById('tExpStatus').value;
+  const sort = document.getElementById('tExpSort').value;
+
+  let list = cricketSummary.tournaments.slice();
+  if (vis==='public') list = list.filter(t=> !t.isPrivate);
+  if (vis==='private') list = list.filter(t=> t.isPrivate);
+  if (status!=='all') list = list.filter(t=> tournamentEffectiveStatus(t)===status || (status==='live' && tournamentEffectiveStatus(t)==='ongoing'));
+
+  const ts = (t)=> t.updatedAt ? new Date(t.updatedAt).getTime() : 0;
+  if (sort==='updated_desc') list.sort((a,b)=> ts(b)-ts(a));
+  else if (sort==='newest') list.sort((a,b)=> ts(b)-ts(a));
+  else if (sort==='oldest') list.sort((a,b)=> ts(a)-ts(b));
+  else if (sort==='matches_desc') list.sort((a,b)=> (b.matchCount||0)-(a.matchCount||0));
+
+  if (!cricketSummary.tournaments.length){ grid.innerHTML = `<div class="empty-state"><div class="ic">🏆</div>No tournaments saved yet.</div>`; return; }
+  if (!list.length){ grid.innerHTML = `<div class="empty-state"><div class="ic">🔍</div>Nothing matches those filters.<div class="hint">Try widening your search.</div></div>`; return; }
+
+  const STATUS_BADGE = { live:'<span class="badge badge-danger">🔴 Live</span>', ongoing:'<span class="badge badge-danger">🔴 Live</span>', completed:'<span class="badge badge-ok">✅ Completed</span>', upcoming:'<span class="badge badge-info">🕐 Upcoming</span>' };
+
+  grid.innerHTML = list.map((t,i)=>`
+    <div class="tourn-card" style="animation-delay:${Math.min(i*35,300)}ms;">
+      <div class="tourn-card-head">
+        <div class="tourn-card-title">${escHtml(t.displayName)}</div>
+        ${t.isPrivate ? '<span class="badge badge-warn">🔒 Private</span>' : '<span class="badge badge-ok">🟢 Public</span>'}
+      </div>
+      <div class="tourn-card-meta">Created by ${escHtml(t.createdBy||'—')}</div>
+      <div class="tourn-card-meta">Updated ${t.updatedAt?fmtDate(new Date(t.updatedAt).toISOString()):'—'}</div>
+      <div class="tourn-card-row">
+        ${STATUS_BADGE[tournamentEffectiveStatus(t)]||''}
+        <span class="badge badge-brand">🏏 ${t.matchCount||0} match${(t.matchCount||0)===1?'':'es'}</span>
+        <span class="badge badge-info" style="text-transform:capitalize;">${t.sport||'cricket'}</span>
+      </div>
+      <div class="tourn-card-actions">
+        <button class="btn btn-primary btn-sm" data-manage="${escAttr(t.ownerUid)}::${escAttr(t.leagueKey)}">✏️ Manage</button>
+        <button class="btn btn-ghost btn-sm" data-stats="${escAttr(t.ownerUid)}::${escAttr(t.leagueKey)}">📊 Statistics</button>
+        <button class="btn btn-danger btn-sm" data-del="${escAttr(t.ownerUid)}::${escAttr(t.leagueKey)}">🗑 Delete</button>
+      </div>
+    </div>`).join('');
+
+  grid.querySelectorAll('[data-manage]').forEach(b=> b.onclick = ()=>{ const [o,l]=b.dataset.manage.split('::'); openTournamentDetail(o,l,'matches'); });
+  grid.querySelectorAll('[data-stats]').forEach(b=> b.onclick = ()=>{ const [o,l]=b.dataset.stats.split('::'); openTournamentDetail(o,l,'stats'); });
+  grid.querySelectorAll('[data-del]').forEach(b=> b.onclick = async ()=>{
+    const [o,l]=b.dataset.del.split('::');
+    const t = cricketSummary.tournaments.find(x=>x.ownerUid===o && x.leagueKey===l);
+    try {
+      const data = await api(`/tournament/${encodeURIComponent(o)}/${encodeURIComponent(l)}`);
+      corrState = { ownerUid:o, leagueKey:l, league:data.league, matches:data.matches };
+      confirmDeleteTournament();
+    } catch(err){ toast(friendlyError(err),'err'); }
+  });
+}
+
+// ---- Tournament Detail ----
+async function openTournamentDetail(ownerUid, leagueKey, startTab){
   try {
     const data = await api(`/tournament/${encodeURIComponent(ownerUid)}/${encodeURIComponent(leagueKey)}`);
-    corrState = { ownerUid, leagueKey, league: data.league, matches: data.matches };
-    renderCorrDetail();
-  } catch(err){ toast(err.message,'err'); }
+    corrState = { ownerUid, leagueKey, league: data.league, matches: data.matches || [] };
+    showDetailView();
+    renderTournamentDetail(startTab || 'matches');
+    goToPanel('cricket');
+  } catch(err){ toast(friendlyError(err),'err'); }
 }
 
-function renderCorrDetail(){
-  const card = document.getElementById('corrDetailCard');
-  card.style.display = 'block';
-  document.getElementById('corrDetailTitle').textContent = corrState.league.displayName;
-  document.getElementById('corrDetailMeta').textContent =
-    `Created by ${corrState.league.createdBy} · ${corrState.league.isPrivate ? 'Private' : 'Public'} · ${corrState.matches.length} match${corrState.matches.length===1?'':'es'}`;
-  const body = document.getElementById('corrMatchesBody');
-  body.innerHTML = corrState.matches.length ? corrState.matches.map((m,i)=>{
+function playerStatsFromMatches(matches){
+  const bat = {}, bowl = {};
+  matches.forEach(m=>{
+    Object.keys(m||{}).forEach(key=>{
+      if (!Array.isArray(m[key])) return;
+      const isBat = /batting/i.test(key);
+      const isBowl = /bowling/i.test(key);
+      if (!isBat && !isBowl) return;
+      m[key].forEach(entry=>{
+        if (!entry || typeof entry !== 'object') return;
+        const name = entry.name || entry.playerName || entry.batsman || entry.bowler || entry.batsmanName || entry.bowlerName;
+        if (!name) return;
+        if (isBat && typeof entry.runs === 'number'){
+          bat[name] = (bat[name]||0) + entry.runs;
+        }
+        if (isBowl && typeof entry.wickets === 'number'){
+          bowl[name] = (bowl[name]||0) + entry.wickets;
+        }
+      });
+    });
+  });
+  return { bat, bowl };
+}
+
+function renderTournamentDetail(activeTab){
+  const view = document.getElementById('tournDetailView');
+  const league = corrState.league, matches = corrState.matches;
+  const status = tournamentEffectiveStatus({ statusOverride: league.statusOverride, publicStatus: league.publicStatus });
+  view.innerHTML = `
+    <button class="btn btn-ghost btn-sm" id="backToExplorer" style="margin-bottom:14px;">← Back to Tournaments</button>
+    <div class="card">
+      <div class="detail-header">
+        <div>
+          <div class="detail-title-row">
+            <div class="detail-title">🏆 ${escHtml(league.displayName)}</div>
+            ${league.isPrivate ? '<span class="badge badge-warn">🔒 Private</span>' : '<span class="badge badge-ok">🟢 Public</span>'}
+          </div>
+          <div class="detail-meta">Created by ${escHtml(league.createdBy||'—')} · ${matches.length} match${matches.length===1?'':'es'} · ${escHtml((league.sport||'cricket'))}</div>
+        </div>
+        <button class="btn btn-danger" id="detailDeleteBtn">🗑 Delete Tournament</button>
+      </div>
+      <div class="tab-strip">
+        <button class="tab-btn" data-tab="matches">🏏 Matches</button>
+        <button class="tab-btn" data-tab="players">🧑‍🤝‍🧑 Players</button>
+        <button class="tab-btn" data-tab="clips">🎬 Clips</button>
+        <button class="tab-btn" data-tab="stats">📊 Statistics</button>
+        <button class="tab-btn" data-tab="activity">📜 Activity</button>
+      </div>
+      <div class="subtab-panel" id="dtab-matches"></div>
+      <div class="subtab-panel" id="dtab-players"></div>
+      <div class="subtab-panel" id="dtab-clips"></div>
+      <div class="subtab-panel" id="dtab-stats"></div>
+      <div class="subtab-panel" id="dtab-activity"></div>
+    </div>
+  `;
+  document.getElementById('backToExplorer').onclick = ()=>{ showExplorerView(); renderExplorerGrid(); };
+  document.getElementById('detailDeleteBtn').onclick = confirmDeleteTournament;
+
+  const tabs = ['matches','players','clips','stats','activity'];
+  function setTab(key){
+    tabs.forEach(k=>{
+      document.querySelector(`.tab-btn[data-tab="${k}"]`).classList.toggle('active', k===key);
+      document.getElementById('dtab-'+k).classList.toggle('active', k===key);
+    });
+    if (key==='matches') renderDetailMatches();
+    if (key==='players') renderDetailPlayers();
+    if (key==='clips') renderDetailClips();
+    if (key==='stats') renderDetailStats();
+    if (key==='activity') renderDetailActivity();
+  }
+  view.querySelectorAll('.tab-btn').forEach(b=> b.onclick = ()=> setTab(b.dataset.tab));
+  setTab(activeTab);
+}
+
+function matchResultText(m){
+  const a = m.teamA && m.teamA.name || 'Team A', b = m.teamB && m.teamB.name || 'Team B';
+  return m.winningTeam === 'A' ? `${a} won` : m.winningTeam === 'B' ? `${b} won` : m.winningTeam === 'TIE' ? 'Tied' : 'In progress';
+}
+
+function renderDetailMatches(){
+  const el = document.getElementById('dtab-matches');
+  const matches = corrState.matches;
+  if (!matches.length){ el.innerHTML = `<div class="empty-state"><div class="ic">🏏</div>No matches saved under this tournament yet.</div>`; return; }
+  el.innerHTML = matches.map((m,i)=>{
     const a = m.teamA && m.teamA.name || 'Team A', b = m.teamB && m.teamB.name || 'Team B';
     const sa = m.scoreA || {runs:0,overs:'0.0'}, sb = m.scoreB || {runs:0,overs:'0.0'};
-    const result = m.winningTeam === 'A' ? `${a} won` : m.winningTeam === 'B' ? `${b} won` : m.winningTeam === 'TIE' ? 'Tied' : 'In progress';
-    return `<tr>
-      <td>${a} vs ${b}<div style="color:var(--text-dim);font-size:.72rem;">${m.matchId}</div></td>
-      <td>${sa.runs}/${sa.wickets ?? '—'} (${sa.overs})</td>
-      <td>${sb.runs}/${sb.wickets ?? '—'} (${sb.overs})</td>
-      <td>${result}</td>
-      <td style="display:flex;gap:6px;">
-        <button class="btn btn-ghost corr-edit-match" data-idx="${i}">Correct</button>
-        <button class="btn btn-ghost corr-view-clips" data-match="${m.roomId || m.matchId}">Clips</button>
-      </td>
-    </tr>`;
-  }).join('') : `<tr><td colspan="5"><div class="empty-state"><div class="ic">🏏</div>No matches saved under this tournament yet.</div></td></tr>`;
-  document.querySelectorAll('.corr-edit-match').forEach(btn=> btn.onclick = ()=> openMatchEditModal(corrState.matches[Number(btn.dataset.idx)]));
-  document.querySelectorAll('.corr-view-clips').forEach(btn=> btn.onclick = ()=> openClipsModal(btn.dataset.match));
+    return `<div class="match-row-card">
+      <div>
+        <div class="match-teams">${escHtml(a)} vs ${escHtml(b)}</div>
+        <div class="match-score">${sa.runs}/${sa.wickets ?? '—'} (${sa.overs}) &nbsp;·&nbsp; ${sb.runs}/${sb.wickets ?? '—'} (${sb.overs})</div>
+        <div class="match-result">${matchResultText(m)}</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-primary btn-sm" data-idx="${i}" data-act="correct">✏️ Correct Match</button>
+        <button class="btn btn-ghost btn-sm" data-match="${escAttr(m.roomId || m.matchId)}" data-act="clips">🎬 Clips</button>
+      </div>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('[data-act="correct"]').forEach(b=> b.onclick = ()=> openMatchEditModal(corrState.matches[Number(b.dataset.idx)]));
+  el.querySelectorAll('[data-act="clips"]').forEach(b=> b.onclick = ()=> openClipsModal(b.dataset.match));
 }
 
-// Generic modal with arbitrary form HTML + Save handler — same visual
-// language as confirmModal() above, just with fields instead of only text.
+function renderDetailPlayers(){
+  const el = document.getElementById('dtab-players');
+  const { bat, bowl } = playerStatsFromMatches(corrState.matches);
+  const batRows = Object.entries(bat).sort((a,b)=>b[1]-a[1]);
+  const bowlRows = Object.entries(bowl).sort((a,b)=>b[1]-a[1]);
+  if (!batRows.length && !bowlRows.length){
+    el.innerHTML = `<div class="empty-state"><div class="ic">🧑‍🤝‍🧑</div>No per-player batting/bowling data found in these matches.<div class="hint">Player breakdowns appear automatically once matches include batting or bowling cards.</div></div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="field-row">
+      <div>
+        <h3 style="font-size:.9rem;">🏏 Top Run Scorers</h3>
+        <div class="table-wrap">${batRows.length ? `<table><thead><tr><th>Player</th><th>Runs</th></tr></thead><tbody>${batRows.map(([n,r])=>`<tr><td>${escHtml(n)}</td><td>${r}</td></tr>`).join('')}</tbody></table>` : `<div class="empty-state"><div class="ic">🏏</div>No batting data.</div>`}</div>
+      </div>
+      <div>
+        <h3 style="font-size:.9rem;">🎯 Most Wickets</h3>
+        <div class="table-wrap">${bowlRows.length ? `<table><thead><tr><th>Player</th><th>Wickets</th></tr></thead><tbody>${bowlRows.map(([n,w])=>`<tr><td>${escHtml(n)}</td><td>${w}</td></tr>`).join('')}</tbody></table>` : `<div class="empty-state"><div class="ic">🎯</div>No bowling data.</div>`}</div>
+      </div>
+    </div>`;
+}
+
+function renderDetailClips(){
+  const el = document.getElementById('dtab-clips');
+  const matches = corrState.matches;
+  if (!matches.length){ el.innerHTML = `<div class="empty-state"><div class="ic">🎬</div>No matches to show clips for yet.</div>`; return; }
+  el.innerHTML = `<p class="card-hint">Clips are grouped by match. Open a match to view, correct, or remove its clips.</p>` + matches.map(m=>{
+    const a = m.teamA && m.teamA.name || 'Team A', b = m.teamB && m.teamB.name || 'Team B';
+    return `<div class="hl"><span>${escHtml(a)} vs ${escHtml(b)}</span><button class="btn btn-ghost btn-sm" data-match="${escAttr(m.roomId || m.matchId)}">🎬 View Clips</button></div>`;
+  }).join('');
+  el.querySelectorAll('[data-match]').forEach(b=> b.onclick = ()=> openClipsModal(b.dataset.match));
+}
+
+function renderDetailStats(){
+  const el = document.getElementById('dtab-stats');
+  const { bat, bowl } = playerStatsFromMatches(corrState.matches);
+  const topBat = Object.entries(bat).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const topBowl = Object.entries(bowl).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const teamTotals = {};
+  corrState.matches.forEach(m=>{
+    const a = m.teamA && m.teamA.name, b = m.teamB && m.teamB.name;
+    if (a) teamTotals[a] = (teamTotals[a]||0) + ((m.scoreA&&m.scoreA.runs)||0);
+    if (b) teamTotals[b] = (teamTotals[b]||0) + ((m.scoreB&&m.scoreB.runs)||0);
+  });
+  const teamRows = Object.entries(teamTotals).sort((a,b)=>b[1]-a[1]);
+
+  function barChart(title, rows, icon){
+    if (!rows.length) return `<div class="card"><h3><span class="t">${icon} ${title}</span></h3><div class="empty-state"><div class="ic">📊</div>Not enough data yet.</div></div>`;
+    const max = Math.max(1, ...rows.map(r=>r[1]));
+    return `<div class="card"><h3><span class="t">${icon} ${title}</span></h3><div class="bars">${rows.map(([n,v])=>`<div class="bar-col"><div class="bar" style="height:${Math.max((v/max)*100,4)}%"></div><span>${escHtml(n)} (${v})</span></div>`).join('')}</div></div>`;
+  }
+  el.innerHTML = barChart('Top Run Scorers', topBat, '🏏') + barChart('Most Wickets', topBowl, '🎯') + barChart('Team Performance (runs)', teamRows, '🏆');
+}
+
+async function renderDetailActivity(){
+  const el = document.getElementById('dtab-activity');
+  el.innerHTML = `<div class="skel skel-row"></div><div class="skel skel-row"></div>`;
+  try {
+    const data = await api('/audit-logs');
+    const needle = (corrState.league.displayName||'').toLowerCase();
+    const key = (corrState.leagueKey||'').toLowerCase();
+    const logs = (data.logs||[]).filter(l=> (l.target||'').toLowerCase().includes(key) || (needle && (l.target||'').toLowerCase().includes(needle)));
+    el.innerHTML = logs.length ? logs.map(l=>`
+      <div class="hl"><span>${escHtml(l.action)} <span style="color:var(--text-dim);">· ${fmtDate(new Date(l.timestamp).toISOString())}</span></span><b>${escHtml(l.performedBy)}</b></div>
+    `).join('') : `<div class="empty-state"><div class="ic">📜</div>No recorded activity for this tournament yet.</div>`;
+  } catch(err){ el.innerHTML = `<div class="empty-state">${friendlyError(err)}</div>`; }
+}
+
+function confirmDeleteTournament(){
+  const league = corrState.league, matches = corrState.matches;
+  const teamSet = new Set();
+  matches.forEach(m=>{ if (m.teamA&&m.teamA.name) teamSet.add(m.teamA.name); if (m.teamB&&m.teamB.name) teamSet.add(m.teamB.name); });
+  const { bat, bowl } = playerStatsFromMatches(matches);
+  const playerCount = new Set([...Object.keys(bat), ...Object.keys(bowl)]).size;
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop';
+  wrap.innerHTML = `<div class="modal">
+    <h3>Delete "${escHtml(league.displayName)}"?</h3>
+    <div class="impact-box">
+      <b>This will permanently remove:</b>
+      <ul>
+        <li>${matches.length} match${matches.length===1?'':'es'} and their scorecards</li>
+        <li>${teamSet.size} team${teamSet.size===1?'':'s'}</li>
+        ${playerCount ? `<li>${playerCount} player${playerCount===1?'':'s'} with recorded stats</li>` : ''}
+        <li>All associated clips and statistics</li>
+      </ul>
+    </div>
+    <p>This action may permanently remove this tournament and its associated data. It will disappear from the public tournament list and any shared links immediately. <b>This cannot be undone.</b></p>
+    <div class="modal-actions"><button class="btn btn-ghost" id="delCancel">Cancel</button><button class="btn btn-danger" id="delConfirm" style="padding:9px 18px;">Delete Tournament</button></div>
+  </div>`;
+  document.body.appendChild(wrap);
+  wrap.querySelector('#delCancel').onclick = ()=> wrap.remove();
+  wrap.addEventListener('click', e=>{ if (e.target===wrap) wrap.remove(); });
+  wrap.querySelector('#delConfirm').onclick = async ()=>{
+    const btn = wrap.querySelector('#delConfirm');
+    btn.disabled = true; btn.textContent = 'Deleting…';
+    try {
+      await api(`/tournament/${encodeURIComponent(corrState.ownerUid)}/${encodeURIComponent(corrState.leagueKey)}`, { method: 'DELETE' });
+      wrap.remove();
+      toast('Tournament deleted');
+      corrState = { ownerUid: null, leagueKey: null, league: null, matches: [] };
+      showExplorerView();
+      loadCricketExplorer();
+    } catch(err){ toast(friendlyError(err),'err'); wrap.remove(); }
+  };
+}
+
+// ===== Generic modals =====
+function confirmModal(title, body, onConfirm){
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop';
+  wrap.innerHTML = `<div class="modal"><h3>${title}</h3><p>${body}</p>
+    <div class="modal-actions"><button class="btn btn-ghost" id="mCancel">Cancel</button><button class="btn btn-danger" id="mConfirm" style="padding:9px 18px;">Confirm</button></div></div>`;
+  document.body.appendChild(wrap);
+  wrap.querySelector('#mCancel').onclick = ()=> wrap.remove();
+  wrap.addEventListener('click', e=>{ if (e.target===wrap) wrap.remove(); });
+  wrap.querySelector('#mConfirm').onclick = async ()=>{ wrap.remove(); try { await onConfirm(); } catch(err){ toast(friendlyError(err),'err'); } };
+}
+
 function fieldModal(title, bodyHtml, onSave, opts={}){
   const wrap = document.createElement('div');
   wrap.className = 'modal-backdrop';
   wrap.innerHTML = `<div class="modal ${opts.large?'modal-lg':''}"><h3>${title}</h3><div>${bodyHtml}</div>
-    <div class="modal-actions" style="margin-top:18px;"><button class="btn btn-ghost" id="fmCancel">Cancel</button><button class="btn btn-primary" id="fmSave" style="padding:9px 18px;">Save</button></div></div>`;
+    <div class="modal-actions" style="margin-top:18px;"><button class="btn btn-ghost" id="fmCancel">Cancel</button><button class="btn btn-primary" id="fmSave" style="padding:9px 18px;">${opts.saveLabel||'Save'}</button></div></div>`;
   document.body.appendChild(wrap);
   wrap.querySelector('#fmCancel').onclick = ()=> wrap.remove();
   wrap.addEventListener('click', e=>{ if (e.target===wrap) wrap.remove(); });
   wrap.querySelector('#fmSave').onclick = async ()=>{
     const btn = wrap.querySelector('#fmSave');
-    btn.disabled = true; btn.textContent = 'Saving…';
+    btn.disabled = true; btn.textContent = 'Working…';
     try { await onSave(wrap); wrap.remove(); }
-    catch(err){ toast(err.message,'err'); btn.disabled = false; btn.textContent = 'Save'; }
+    catch(err){ if (err && err.message!=='__cancelled__') toast(friendlyError(err),'err'); btn.disabled = false; btn.textContent = opts.saveLabel||'Save'; }
   };
   return wrap;
 }
 
-// Quick fields for the common corrections (runs/overs/wickets/result) plus
-// a full JSON editor underneath for anything else (battingCard, bowlingCard,
-// extras, etc.) — quick fields win if both are edited, since they're applied
-// on top of whatever JSON is in the textarea at save time.
+// Shows a Before -> After preview plus a short "what this may update" note,
+// and only calls doSave() once the owner explicitly confirms. Throwing
+// '__cancelled__' from here keeps the underlying edit modal open so nothing
+// is lost if they back out.
+function confirmDiffAndSave(diffRows, impactLines, doSave){
+  return new Promise((resolve, reject)=>{
+    if (!diffRows.length){ doSave().then(resolve).catch(reject); return; }
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-backdrop';
+    wrap.innerHTML = `<div class="modal">
+      <h3>Review your change${diffRows.length>1?'s':''}</h3>
+      <p>Here's exactly what will change. Nothing is saved until you confirm.</p>
+      ${diffRows.map(r=>`<div class="diff-row"><span class="fld">${escHtml(r.label)}</span><span class="diff-vals"><span class="diff-old">${escHtml(String(r.from))}</span><span class="diff-arrow">→</span><span class="diff-new">${escHtml(String(r.to))}</span></span></div>`).join('')}
+      ${impactLines && impactLines.length ? `<div class="impact-box"><b>This may update:</b><ul>${impactLines.map(l=>`<li>${escHtml(l)}</li>`).join('')}</ul></div>` : ''}
+      <div class="modal-actions"><button class="btn btn-ghost" id="dCancel">Keep Editing</button><button class="btn btn-primary" id="dConfirm" style="padding:9px 18px;">Save & Recalculate</button></div>
+      <div class="save-steps" id="saveSteps" style="display:none;"></div>
+    </div>`;
+    document.body.appendChild(wrap);
+    wrap.querySelector('#dCancel').onclick = ()=>{ wrap.remove(); reject(new Error('__cancelled__')); };
+    wrap.querySelector('#dConfirm').onclick = async ()=>{
+      const btn = wrap.querySelector('#dConfirm');
+      btn.disabled = true; wrap.querySelector('#dCancel').style.display='none';
+      const steps = wrap.querySelector('#saveSteps');
+      steps.style.display = 'block';
+      const stepDefs = ['Saving your change…', 'Match updated', 'Tournament statistics will refresh'];
+      steps.innerHTML = stepDefs.map(s=>`<div class="save-step"><span class="chk"></span>${s}</div>`).join('');
+      try {
+        await doSave();
+        [...steps.children].forEach((row,i)=> setTimeout(()=>{ row.classList.add('done'); row.querySelector('.chk').textContent='✓'; }, i*220));
+        setTimeout(()=>{ wrap.remove(); resolve(); }, stepDefs.length*220 + 250);
+      } catch(err){ wrap.remove(); reject(err); }
+    };
+  });
+}
+
+function skeletonRows(rows, cols){
+  return Array.from({length:rows}).map(()=>`<tr>${Array.from({length:cols}).map(()=>`<td><div class="skel skel-row"></div></td>`).join('')}</tr>`).join('');
+}
+function fmtDate(iso){
+  try { return new Date(iso).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}); }
+  catch(e){ return iso; }
+}
+function fmtUptime(sec){
+  const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60);
+  return h>0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+// ===== Match Correction Center =====
 function openMatchEditModal(match){
   const sa = match.scoreA || {runs:0,overs:'0.0',wickets:0}, sb = match.scoreB || {runs:0,overs:'0.0',wickets:0};
+  const nameA = match.teamA && match.teamA.name || 'Team A', nameB = match.teamB && match.teamB.name || 'Team B';
+
+  // Detect batting/bowling card arrays for per-player correction rows.
+  const batKey = Object.keys(match).find(k=> Array.isArray(match[k]) && /batting/i.test(k));
+  const bowlKey = Object.keys(match).find(k=> Array.isArray(match[k]) && /bowling/i.test(k));
+  const batEntries = batKey ? match[batKey] : [];
+  const bowlEntries = bowlKey ? match[bowlKey] : [];
+
+  const playerRowsHtml = (entries, valueField, prefix, icon, unit)=> entries.map((e,i)=>{
+    const name = e.name || e.playerName || e.batsman || e.bowler || e.batsmanName || e.bowlerName || `Player ${i+1}`;
+    const val = typeof e[valueField]==='number' ? e[valueField] : 0;
+    return `<div class="editable-field">
+      <div class="ef-main"><div class="ef-lbl">${icon} ${escHtml(name)}</div><div class="ef-val">${val} ${unit}</div></div>
+      <input type="number" id="${prefix}_${i}" value="${val}" style="width:90px;">
+    </div>`;
+  }).join('');
+
   const bodyHtml = `
     <div class="field-row">
-      <div><label>${match.teamA&&match.teamA.name||'Team A'} — Runs</label><input id="cmScoreARuns" type="number" value="${sa.runs||0}"></div>
-      <div><label>${match.teamA&&match.teamA.name||'Team A'} — Overs</label><input id="cmScoreAOvers" value="${sa.overs||'0.0'}"></div>
+      <div><label>✏️ ${escHtml(nameA)} — Runs</label><input id="cmScoreARuns" type="number" value="${sa.runs||0}"></div>
+      <div><label>✏️ ${escHtml(nameA)} — Overs</label><input id="cmScoreAOvers" value="${sa.overs||'0.0'}"></div>
     </div>
     <div class="field-row">
-      <div><label>${match.teamA&&match.teamA.name||'Team A'} — Wickets</label><input id="cmScoreAWkts" type="number" value="${sa.wickets||0}"></div>
+      <div><label>✏️ ${escHtml(nameA)} — Wickets</label><input id="cmScoreAWkts" type="number" value="${sa.wickets||0}"></div>
       <div></div>
     </div>
     <div class="field-row">
-      <div><label>${match.teamB&&match.teamB.name||'Team B'} — Runs</label><input id="cmScoreBRuns" type="number" value="${sb.runs||0}"></div>
-      <div><label>${match.teamB&&match.teamB.name||'Team B'} — Overs</label><input id="cmScoreBOvers" value="${sb.overs||'0.0'}"></div>
+      <div><label>✏️ ${escHtml(nameB)} — Runs</label><input id="cmScoreBRuns" type="number" value="${sb.runs||0}"></div>
+      <div><label>✏️ ${escHtml(nameB)} — Overs</label><input id="cmScoreBOvers" value="${sb.overs||'0.0'}"></div>
     </div>
     <div class="field-row">
-      <div><label>${match.teamB&&match.teamB.name||'Team B'} — Wickets</label><input id="cmScoreBWkts" type="number" value="${sb.wickets||0}"></div>
+      <div><label>✏️ ${escHtml(nameB)} — Wickets</label><input id="cmScoreBWkts" type="number" value="${sb.wickets||0}"></div>
       <div>
-        <label>Result</label>
+        <label>🏁 Match Result</label>
         <select id="cmWinningTeam">
           <option value="" ${!match.winningTeam?'selected':''}>In progress / no result</option>
-          <option value="A" ${match.winningTeam==='A'?'selected':''}>${match.teamA&&match.teamA.name||'Team A'} won</option>
-          <option value="B" ${match.winningTeam==='B'?'selected':''}>${match.teamB&&match.teamB.name||'Team B'} won</option>
+          <option value="A" ${match.winningTeam==='A'?'selected':''}>${escHtml(nameA)} won</option>
+          <option value="B" ${match.winningTeam==='B'?'selected':''}>${escHtml(nameB)} won</option>
           <option value="TIE" ${match.winningTeam==='TIE'?'selected':''}>Tied</option>
         </select>
       </div>
     </div>
-    <label>Full match record (advanced — batting/bowling cards, extras, etc.)</label>
-    <textarea id="cmFullJson" rows="12">${JSON.stringify(match, null, 2).replace(/</g,'&lt;')}</textarea>
-    <p style="color:var(--text-dim);font-size:.76rem;margin-top:6px;">The quick fields above are applied on top of this JSON when you save. Edit batting/bowling card entries directly here for player-level corrections.</p>
+    ${batEntries.length ? `<label>🏏 Batsman Runs</label>${playerRowsHtml(batEntries,'runs','cmBat','🏏','runs')}` : ''}
+    ${bowlEntries.length ? `<label>🎯 Bowler Wickets</label>${playerRowsHtml(bowlEntries,'wickets','cmBowl','🎯','wkts')}` : ''}
+    <details style="margin-top:16px;">
+      <summary style="cursor:pointer;font-size:.8rem;color:var(--text-muted);font-weight:600;">⚙️ Advanced — full match record</summary>
+      <p class="field-hint" style="margin:8px 0;">For anything not covered above (extras, ball-by-ball detail, etc). The fields above are applied on top of this when you save.</p>
+      <textarea id="cmFullJson" rows="10">${JSON.stringify(match, null, 2).replace(/</g,'&lt;')}</textarea>
+    </details>
   `;
-  fieldModal(`Correct Match — ${match.teamA&&match.teamA.name||'A'} vs ${match.teamB&&match.teamB.name||'B'}`, bodyHtml, async (wrap)=>{
+  fieldModal(`Correct Match — ${escHtml(nameA)} vs ${escHtml(nameB)}`, bodyHtml, async (wrap)=>{
     let record;
     try { record = JSON.parse(wrap.querySelector('#cmFullJson').value); }
-    catch(e){ throw new Error('Full match record JSON is invalid: ' + e.message); }
-    record.scoreA = { ...(record.scoreA||{}), runs: Number(wrap.querySelector('#cmScoreARuns').value)||0, overs: wrap.querySelector('#cmScoreAOvers').value, wickets: Number(wrap.querySelector('#cmScoreAWkts').value)||0 };
-    record.scoreB = { ...(record.scoreB||{}), runs: Number(wrap.querySelector('#cmScoreBRuns').value)||0, overs: wrap.querySelector('#cmScoreBOvers').value, wickets: Number(wrap.querySelector('#cmScoreBWkts').value)||0 };
-    record.winningTeam = wrap.querySelector('#cmWinningTeam').value || null;
-    await api(`/tournament/${encodeURIComponent(corrState.ownerUid)}/${encodeURIComponent(corrState.leagueKey)}/match/${encodeURIComponent(match.matchId)}`, {
-      method: 'PUT', body: JSON.stringify({ record })
+    catch(e){ throw new Error('The advanced match record isn\u2019t valid — check for a stray comma or bracket.'); }
+
+    const newSA = { runs: Number(wrap.querySelector('#cmScoreARuns').value)||0, overs: wrap.querySelector('#cmScoreAOvers').value, wickets: Number(wrap.querySelector('#cmScoreAWkts').value)||0 };
+    const newSB = { runs: Number(wrap.querySelector('#cmScoreBRuns').value)||0, overs: wrap.querySelector('#cmScoreBOvers').value, wickets: Number(wrap.querySelector('#cmScoreBWkts').value)||0 };
+    const newResult = wrap.querySelector('#cmWinningTeam').value || null;
+
+    const diff = [];
+    if (newSA.runs !== (sa.runs||0)) diff.push({label:`${nameA} Runs`, from: sa.runs||0, to: newSA.runs});
+    if (newSA.wickets !== (sa.wickets||0)) diff.push({label:`${nameA} Wickets`, from: sa.wickets||0, to: newSA.wickets});
+    if (newSA.overs !== (sa.overs||'0.0')) diff.push({label:`${nameA} Overs`, from: sa.overs||'0.0', to: newSA.overs});
+    if (newSB.runs !== (sb.runs||0)) diff.push({label:`${nameB} Runs`, from: sb.runs||0, to: newSB.runs});
+    if (newSB.wickets !== (sb.wickets||0)) diff.push({label:`${nameB} Wickets`, from: sb.wickets||0, to: newSB.wickets});
+    if (newSB.overs !== (sb.overs||'0.0')) diff.push({label:`${nameB} Overs`, from: sb.overs||'0.0', to: newSB.overs});
+    if ((newResult||'') !== (match.winningTeam||'')) diff.push({label:'Result', from: matchResultText(match), to: newResult==='A'?`${nameA} won`:newResult==='B'?`${nameB} won`:newResult==='TIE'?'Tied':'In progress'});
+
+    batEntries.forEach((e,i)=>{
+      const input = wrap.querySelector(`#cmBat_${i}`);
+      if (!input) return;
+      const val = Number(input.value)||0;
+      if (val !== (e.runs||0)){
+        const name = e.name || e.playerName || e.batsman || e.batsmanName || `Player ${i+1}`;
+        diff.push({label:`${name} — Runs`, from: e.runs||0, to: val});
+      }
+      e.runs = val;
     });
-    toast('Match corrected — tournament stats will reflect it on next load');
-    openCorrTournament(corrState.ownerUid, corrState.leagueKey);
-  }, { large: true });
+    bowlEntries.forEach((e,i)=>{
+      const input = wrap.querySelector(`#cmBowl_${i}`);
+      if (!input) return;
+      const val = Number(input.value)||0;
+      if (val !== (e.wickets||0)){
+        const name = e.name || e.playerName || e.bowler || e.bowlerName || `Player ${i+1}`;
+        diff.push({label:`${name} — Wickets`, from: e.wickets||0, to: val});
+      }
+      e.wickets = val;
+    });
+
+    record.scoreA = { ...(record.scoreA||{}), ...newSA };
+    record.scoreB = { ...(record.scoreB||{}), ...newSB };
+    record.winningTeam = newResult;
+    if (batKey) record[batKey] = batEntries;
+    if (bowlKey) record[bowlKey] = bowlEntries;
+
+    const impact = ['Match scorecard', 'This tournament\u2019s standings next time it loads'];
+    if (batEntries.length || bowlEntries.length) impact.push('Player batting/bowling totals shown in the Players tab');
+
+    await confirmDiffAndSave(diff, impact, async ()=>{
+      await api(`/tournament/${encodeURIComponent(corrState.ownerUid)}/${encodeURIComponent(corrState.leagueKey)}/match/${encodeURIComponent(match.matchId)}`, {
+        method: 'PUT', body: JSON.stringify({ record })
+      });
+    });
+    toast('Match corrected');
+    const refreshed = await api(`/tournament/${encodeURIComponent(corrState.ownerUid)}/${encodeURIComponent(corrState.leagueKey)}`);
+    corrState.league = refreshed.league; corrState.matches = refreshed.matches;
+    renderTournamentDetail('matches');
+  }, { large: true, saveLabel: 'Save & Recalculate' });
 }
 
-async function deleteCorrTournament(){
-  if (!corrState.leagueKey) return;
-  confirmModal(
-    'Delete Tournament?',
-    `This permanently deletes <b>${corrState.league.displayName}</b> — all ${corrState.matches.length} match${corrState.matches.length===1?'':'es'}, their scorecards, statistics, and clips. It will disappear from the public tournament list and any shared links immediately. This cannot be undone.`,
-    async ()=>{
-      await api(`/tournament/${encodeURIComponent(corrState.ownerUid)}/${encodeURIComponent(corrState.leagueKey)}`, { method: 'DELETE' });
-      toast('Tournament deleted');
-      document.getElementById('corrDetailCard').style.display = 'none';
-      corrState = { ownerUid: null, leagueKey: null, league: null, matches: [] };
-      searchCorrTournaments();
-    }
-  );
-}
-
-// ---- Clip correction ----
+// ===== Clip Management =====
 async function openClipsModal(matchId){
   const wrap = document.createElement('div');
   wrap.className = 'modal-backdrop';
   wrap.innerHTML = `<div class="modal modal-lg">
-    <h3>Clips — match ${matchId}</h3>
+    <h3>🎬 Clips — Match ${escHtml(matchId)}</h3>
+    <p>Each row is one highlight moment. Fix the player or event if it's wrong, or remove a clip entirely.</p>
     <div class="table-wrap" id="clipsModalBody"><div class="skel skel-row"></div></div>
     <div class="modal-actions" style="margin-top:16px;"><button class="btn btn-ghost" id="clipsModalClose">Close</button></div>
   </div>`;
@@ -1057,46 +1552,57 @@ async function refreshClipsModal(matchId, wrap){
   try {
     const data = await api(`/clips/match/${encodeURIComponent(matchId)}`);
     wrap.querySelector('#clipsModalBody').innerHTML = data.clips.length ? `
-      <table><thead><tr><th>Event</th><th>Over.Ball</th><th>Striker</th><th>Bowler</th><th></th></tr></thead>
+      <table><thead><tr><th>Event</th><th>Over.Ball</th><th>Player</th><th>Bowler</th><th></th></tr></thead>
       <tbody>${data.clips.map(c=>`
         <tr>
-          <td>${c.eventType}${c.dismissalType?` (${c.dismissalType})`:''}</td>
-          <td>${c.over}.${c.ballInOver}</td>
-          <td>${c.strikerName||'—'}</td>
-          <td>${c.bowlerName||'—'}</td>
-          <td style="display:flex;gap:6px;">
-            <button class="btn btn-ghost clip-edit-btn" data-id="${c.clipId}">Edit</button>
-            <button class="btn btn-danger clip-del-btn" data-id="${c.clipId}">Delete</button>
+          <td data-label="Event">${escHtml(c.eventType)}${c.dismissalType?` (${escHtml(c.dismissalType)})`:''}</td>
+          <td data-label="Over.Ball">${c.over}.${c.ballInOver}</td>
+          <td data-label="Player">${escHtml(c.strikerName||'—')}</td>
+          <td data-label="Bowler">${escHtml(c.bowlerName||'—')}</td>
+          <td data-label="Actions" style="display:flex;gap:6px;justify-content:flex-end;">
+            <button class="btn btn-ghost btn-sm clip-edit-btn" data-id="${escAttr(c.clipId)}">✏️ Edit</button>
+            <button class="btn btn-danger btn-sm clip-del-btn" data-id="${escAttr(c.clipId)}">🗑 Remove</button>
           </td>
         </tr>
       `).join('')}</tbody></table>
     ` : `<div class="empty-state"><div class="ic">🎬</div>No clips for this match.</div>`;
     wrap.querySelectorAll('.clip-edit-btn').forEach(btn=>{
       const clip = data.clips.find(c=>c.clipId===btn.dataset.id);
-      btn.onclick = ()=> openClipEditModal(clip, matchId, wrap);
+      btn.onclick = ()=> openClipEditModal(clip, matchId, wrap, data.clips);
     });
     wrap.querySelectorAll('.clip-del-btn').forEach(btn=>{
-      btn.onclick = ()=> confirmModal('Delete Clip?', 'This removes the clip permanently — it will no longer appear in the scorecard or any player\u2019s clip list.', async ()=>{
+      btn.onclick = ()=> confirmModal('Remove this clip?', 'It will no longer appear in the scorecard or any player\u2019s clip list. This cannot be undone.', async ()=>{
         await api(`/clips/${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
-        toast('Clip deleted');
+        toast('Clip removed');
         refreshClipsModal(matchId, wrap);
       });
     });
-  } catch(err){ wrap.querySelector('#clipsModalBody').innerHTML = `<div class="empty-state">${err.message}</div>`; }
+  } catch(err){ wrap.querySelector('#clipsModalBody').innerHTML = `<div class="empty-state">${friendlyError(err)}</div>`; }
 }
 
-function openClipEditModal(clip, matchId, parentWrap){
+function openClipEditModal(clip, matchId, parentWrap, allClips){
+  // Suggest player names seen elsewhere in this match's clips, plus anyone
+  // from the tournament's batting/bowling cards if we have them loaded —
+  // still a free-text field underneath so nothing is ever blocked.
+  const nameSet = new Set();
+  (allClips||[]).forEach(c=>{ [c.strikerName,c.bowlerName,c.nonStrikerName,c.fielderName].forEach(n=> n && nameSet.add(n)); });
+  const { bat, bowl } = playerStatsFromMatches(corrState.matches||[]);
+  Object.keys(bat).forEach(n=>nameSet.add(n));
+  Object.keys(bowl).forEach(n=>nameSet.add(n));
+  const datalistHtml = `<datalist id="clipPlayerNames">${[...nameSet].map(n=>`<option value="${escAttr(n)}">`).join('')}</datalist>`;
+
   const bodyHtml = `
+    ${datalistHtml}
     <div class="field-row">
-      <div><label>Event type</label>
+      <div><label>🎯 What happened</label>
         <select id="ceEventType">
-          ${['FOUR','SIX','WICKET'].map(t=>`<option value="${t}" ${clip.eventType===t?'selected':''}>${t}</option>`).join('')}
+          ${['FOUR','SIX','WICKET'].map(t=>`<option value="${t}" ${clip.eventType===t?'selected':''}>${t==='FOUR'?'Four':t==='SIX'?'Six':'Wicket'}</option>`).join('')}
         </select>
       </div>
-      <div><label>Dismissal type (if wicket)</label><input id="ceDismissalType" value="${clip.dismissalType||''}" placeholder="Bowled / Caught / LBW / Run Out / Stumped / Hit Wicket"></div>
+      <div><label>How out (if wicket)</label><input id="ceDismissalType" value="${escAttr(clip.dismissalType||'')}" placeholder="Bowled / Caught / LBW / Run Out / Stumped / Hit Wicket"></div>
     </div>
     <div class="field-row">
-      <div><label>Batting team</label><input id="ceBattingTeam" value="${clip.battingTeam||''}" placeholder="A or B"></div>
+      <div><label>Batting team</label><input id="ceBattingTeam" value="${escAttr(clip.battingTeam||'')}" placeholder="A or B"></div>
       <div><label>Innings</label><input id="ceInnings" type="number" value="${clip.innings||1}"></div>
     </div>
     <div class="field-row">
@@ -1104,41 +1610,49 @@ function openClipEditModal(clip, matchId, parentWrap){
       <div><label>Ball in over</label><input id="ceBallInOver" type="number" value="${clip.ballInOver||0}"></div>
     </div>
     <div class="field-row">
-      <div><label>Runs</label><input id="ceRuns" type="number" value="${clip.runs||0}"></div>
-      <div><label>Clip's internal match/room ID</label><input id="ceMatchId" value="${clip.matchId||matchId}"></div>
+      <div><label>✏️ Runs on this ball</label><input id="ceRuns" type="number" value="${clip.runs||0}"></div>
+      <div><label>Match/room ID</label><input id="ceMatchId" value="${escAttr(clip.matchId||matchId)}"></div>
     </div>
-    <label>Striker name</label><input id="ceStrikerName" value="${clip.strikerName||''}">
-    <label>Bowler name</label><input id="ceBowlerName" value="${clip.bowlerName||''}">
+    <label>✏️ Which player hit/faced this?</label><input id="ceStrikerName" list="clipPlayerNames" value="${escAttr(clip.strikerName||'')}">
+    <label>✏️ Which player was bowling?</label><input id="ceBowlerName" list="clipPlayerNames" value="${escAttr(clip.bowlerName||'')}">
     <div class="field-row">
-      <div><label>Non-striker name</label><input id="ceNonStrikerName" value="${clip.nonStrikerName||''}"></div>
-      <div><label>Fielder name (catches/run outs)</label><input id="ceFielderName" value="${clip.fielderName||''}"></div>
+      <div><label>Non-striker</label><input id="ceNonStrikerName" list="clipPlayerNames" value="${escAttr(clip.nonStrikerName||'')}"></div>
+      <div><label>Fielder (catches/run outs)</label><input id="ceFielderName" list="clipPlayerNames" value="${escAttr(clip.fielderName||'')}"></div>
     </div>
   `;
   fieldModal('Correct Clip', bodyHtml, async (wrap)=>{
     const val = (id)=> wrap.querySelector('#'+id).value.trim();
-    await api(`/clips/${encodeURIComponent(clip.clipId)}`, {
-      method: 'PUT', body: JSON.stringify({
-        matchId: val('ceMatchId'), eventType: val('ceEventType'), dismissalType: val('ceDismissalType') || null,
-        battingTeam: val('ceBattingTeam'), innings: val('ceInnings'), over: val('ceOver'), ballInOver: val('ceBallInOver'),
-        runs: val('ceRuns'), strikerName: val('ceStrikerName') || null, bowlerName: val('ceBowlerName') || null,
-        nonStrikerName: val('ceNonStrikerName') || null, fielderName: val('ceFielderName') || null
-      })
+    const newVals = {
+      matchId: val('ceMatchId'), eventType: val('ceEventType'), dismissalType: val('ceDismissalType') || null,
+      battingTeam: val('ceBattingTeam'), innings: val('ceInnings'), over: val('ceOver'), ballInOver: val('ceBallInOver'),
+      runs: val('ceRuns'), strikerName: val('ceStrikerName') || null, bowlerName: val('ceBowlerName') || null,
+      nonStrikerName: val('ceNonStrikerName') || null, fielderName: val('ceFielderName') || null
+    };
+    const diff = [];
+    const labels = { eventType:'Event', dismissalType:'Dismissal', strikerName:'Player', bowlerName:'Bowler', runs:'Runs', over:'Over', ballInOver:'Ball in over' };
+    Object.keys(labels).forEach(k=>{
+      const before = clip[k] ?? (k==='runs'?0:'');
+      const after = newVals[k] ?? '';
+      if (String(before) !== String(after)) diff.push({ label: labels[k], from: before===''||before==null?'—':before, to: after===''||after==null?'—':after });
+    });
+    await confirmDiffAndSave(diff, ['This clip', 'The scorecard moment it\u2019s attached to'], async ()=>{
+      await api(`/clips/${encodeURIComponent(clip.clipId)}`, { method: 'PUT', body: JSON.stringify(newVals) });
     });
     toast('Clip corrected');
     refreshClipsModal(matchId, parentWrap);
-  }, { large: true });
+  }, { large: true, saveLabel: 'Save & Recalculate' });
 }
 
-// ===== Analytics =====
+// ===== Insights (Analytics) =====
 async function loadAnalytics(){
   const data = await api('/analytics');
   const max = Math.max(1, ...data.byAction.map(a=>a.count));
   document.getElementById('analyticsBars').innerHTML = data.byAction.length ? data.byAction.map(a=>`
-    <div class="bar-col"><div class="bar" style="height:${Math.max((a.count/max)*100,4)}%"></div><span>${a.action} (${a.count})</span></div>
+    <div class="bar-col"><div class="bar" style="height:${Math.max((a.count/max)*100,4)}%"></div><span>${escHtml(a.action)} (${a.count})</span></div>
   `).join('') : `<div class="empty-state"><div class="ic">📊</div>No activity yet.</div>`;
 
   document.getElementById('overlayBreakdown').innerHTML = data.byOverlay.length ? data.byOverlay.map(o=>`
-    <div class="hl"><span>${o.overlay}</span><b>${o.count}</b></div>
+    <div class="hl"><span>${escHtml(o.overlay)}</span><b>${o.count}</b></div>
   `).join('') : `<div class="empty-state"><div class="ic">🎯</div>No overlay opens logged yet.</div>`;
 
   document.getElementById('dayBreakdown').innerHTML = data.byDay.length ? data.byDay.slice().reverse().map(d=>`
@@ -1146,29 +1660,29 @@ async function loadAnalytics(){
   `).join('') : `<div class="empty-state"><div class="ic">🗓️</div>No data yet.</div>`;
 }
 
-// ===== System Health =====
+// ===== System Status (Health) =====
 async function loadHealth(){
   const d = await api('/system-health');
   document.getElementById('healthStats').innerHTML = [
-    ['Uptime', fmtUptime(d.uptimeSeconds)],
-    ['WebSocket Clients', d.websocketConnections],
-    ['Active Recordings', d.activeRecordingSessions],
-    ['Memory Usage', d.memoryUsageMb+' MB']
+    ['⏱️ Uptime', fmtUptime(d.uptimeSeconds)],
+    ['📶 Live Viewers Connected', d.websocketConnections],
+    ['🎥 Active Recordings', d.activeRecordingSessions],
+    ['💾 Memory Usage', d.memoryUsageMb+' MB']
   ].map(([lbl,val])=>`<div class="stat-card"><div class="lbl">${lbl}</div><div class="val" style="font-size:1.4rem;">${val}</div></div>`).join('');
-  const svc = (name, ok)=> `<div class="hl"><span>${name}</span>${ok?'<span class="badge badge-ok"><span class="dot"></span>Operational</span>':'<span class="badge badge-danger"><span class="dot"></span>Down</span>'}</div>`;
+  const svc = (name, ok)=> `<div class="hl"><span>${name}</span>${ok?'<span class="badge badge-ok"><span class="dot"></span>Working normally</span>':'<span class="badge badge-danger"><span class="dot"></span>Having trouble</span>'}</div>`;
   document.getElementById('healthList').innerHTML =
-    svc('MongoDB', d.mongoConnected) + svc('Firestore', d.firestoreConnected) +
-    svc('Authentication (Firebase)', true) + svc('WebSocket Server', true) +
-    svc('Google Drive Uploads', d.driveUploadConfigured);
+    svc('Database (MongoDB)', d.mongoConnected) + svc('Database (Firestore)', d.firestoreConnected) +
+    svc('Sign-in (Firebase)', true) + svc('Live Connections', true) +
+    svc('Clip/Video Uploads', d.driveUploadConfigured);
 }
 
-// ===== Audit Logs =====
+// ===== Activity History (Audit) =====
 async function loadAudit(){
   const data = await api('/audit-logs');
   const body = document.getElementById('auditBody');
   body.innerHTML = data.logs.length ? data.logs.map(l=>`
-    <tr><td>${l.action}</td><td style="color:var(--text-muted);font-size:.8rem;">${l.target||'—'}</td><td>${l.performedBy}</td><td style="color:var(--text-muted);font-size:.8rem;">${fmtDate(new Date(l.timestamp).toISOString())}</td></tr>
-  `).join('') : `<tr><td colspan="4"><div class="empty-state"><div class="ic">📜</div>No owner actions recorded yet.<div class="hint">Every suspend, delete, or template change will show up here.</div></div></td></tr>`;
+    <tr><td data-label="Action">${escHtml(l.action)}</td><td data-label="Target" style="color:var(--text-muted);font-size:.8rem;">${escHtml(l.target||'—')}</td><td data-label="By">${escHtml(l.performedBy)}</td><td data-label="When" style="color:var(--text-muted);font-size:.8rem;">${fmtDate(new Date(l.timestamp).toISOString())}</td></tr>
+  `).join('') : `<tr><td colspan="4"><div class="empty-state"><div class="ic">📜</div>No owner actions recorded yet.<div class="hint">Every suspend, delete, or correction will show up here.</div></div></td></tr>`;
 }
 
 // ===== Settings =====
@@ -1189,31 +1703,70 @@ document.getElementById('setSaveBtn').onclick = async ()=>{
       signupsEnabled: document.getElementById('setSignups').value === 'true'
     }})});
     toast('Settings saved');
-  } catch(err){ toast(err.message,'err'); }
+  } catch(err){ toast(friendlyError(err),'err'); }
   finally { btn.disabled = false; btn.textContent = 'Save Settings'; }
 };
 
-// ===== Helpers =====
-function skeletonRows(rows, cols){
-  return Array.from({length:rows}).map(()=>`<tr>${Array.from({length:cols}).map(()=>`<td><div class="skel skel-row"></div></td>`).join('')}</tr>`).join('');
-}
-function fmtDate(iso){
-  try { return new Date(iso).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}); }
-  catch(e){ return iso; }
-}
-function fmtUptime(sec){
-  const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60);
-  return h>0 ? `${h}h ${m}m` : `${m}m`;
-}
-function confirmModal(title, body, onConfirm){
-  const wrap = document.createElement('div');
-  wrap.className = 'modal-backdrop';
-  wrap.innerHTML = `<div class="modal"><h3>${title}</h3><p>${body}</p>
-    <div class="modal-actions"><button class="btn btn-ghost" id="mCancel">Cancel</button><button class="btn btn-danger" id="mConfirm" style="padding:9px 18px;">Confirm</button></div></div>`;
-  document.body.appendChild(wrap);
-  wrap.querySelector('#mCancel').onclick = ()=> wrap.remove();
-  wrap.addEventListener('click', e=>{ if (e.target===wrap) wrap.remove(); });
-  wrap.querySelector('#mConfirm').onclick = async ()=>{ wrap.remove(); try { await onConfirm(); } catch(err){ toast(err.message,'err'); } };
+// ===== Global Search =====
+function initGlobalSearch(){
+  const input = document.getElementById('gsInput');
+  const results = document.getElementById('gsResults');
+  let debTimer;
+
+  function close(){ results.classList.remove('open'); results.innerHTML=''; }
+  function open(){ results.classList.add('open'); }
+
+  input.addEventListener('input', ()=>{
+    clearTimeout(debTimer);
+    const q = input.value.trim();
+    if (q.length < 2){ close(); return; }
+    debTimer = setTimeout(()=> runGlobalSearch(q), 300);
+  });
+  input.addEventListener('focus', ()=>{ if (results.innerHTML) open(); });
+  document.addEventListener('click', (e)=>{ if (!e.target.closest('.gsearch')) close(); });
+  document.addEventListener('keydown', (e)=>{ if (e.key==='Escape') close(); });
+
+  async function runGlobalSearch(q){
+    results.innerHTML = `<div class="gs-empty">Searching…</div>`;
+    open();
+    const groups = [];
+    try {
+      const tData = await api(`/tournaments/search?q=${encodeURIComponent(q)}`);
+      if ((tData.tournaments||[]).length) groups.push({ label:'Tournaments', items: tData.tournaments.slice(0,6).map(t=>({
+        title: t.displayName, sub: `by ${t.createdBy||'—'} · ${t.matchCount||0} matches`,
+        onClick: ()=>{ close(); input.value=''; openTournamentDetail(t.ownerUid, t.leagueKey, 'matches'); }
+      })) });
+    } catch(e){ /* ignore */ }
+
+    if (q.includes('@')){
+      try {
+        const uData = await api(`/users/search?email=${encodeURIComponent(q)}`);
+        if (uData.user) groups.push({ label:'Users', items: [{
+          title: uData.user.displayName || uData.user.email, sub: uData.user.email,
+          onClick: ()=>{ close(); goToPanel('users'); document.getElementById('userSearchInput').value = q; document.getElementById('userSearchBtn').click(); }
+        }] });
+      } catch(e){ /* no match — not an error the owner needs to see */ }
+    }
+
+    if (tplLoadedOnce){
+      const matches = tplCache.filter(t=> `${t.name} ${t.slug}`.toLowerCase().includes(q.toLowerCase()));
+      if (matches.length) groups.push({ label:'Templates', items: matches.slice(0,6).map(t=>({
+        title: `${t.icon||'🎯'} ${t.name}`, sub: `/${t.slug}`,
+        onClick: ()=>{ close(); goToPanel('broadcasting'); setTimeout(()=> openPreviewModal(tplCache.find(x=>x.slug===t.slug)), 150); }
+      })) });
+    }
+
+    if (!groups.length){ results.innerHTML = `<div class="gs-empty">No matches. Try a tournament name, creator email, or template name.</div>`; return; }
+    results.innerHTML = groups.map(g=>`
+      <div class="gs-group-label">${g.label}</div>
+      ${g.items.map((it,i)=>`<button class="gs-item" data-g="${g.label}" data-i="${i}"><span>${escHtml(it.title)}</span><small>${escHtml(it.sub||'')}</small></button>`).join('')}
+    `).join('');
+    results.querySelectorAll('.gs-item').forEach(btn=>{
+      const g = groups.find(x=>x.label===btn.dataset.g);
+      const it = g.items[Number(btn.dataset.i)];
+      btn.onclick = it.onClick;
+    });
+  }
 }
 </script>
 </body>
