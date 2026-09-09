@@ -1006,6 +1006,26 @@ app.post('/api/create-control-token', async (req, res) => {
 function leagueKeyFor(name) {
     return String(name || '').trim().toLowerCase();
 }
+
+// 🏷️ SPORT DETECTION — /api/league/:name/match is generic and is called by
+// every panel (cricket-panel, tt-panel, football-panel all point at the
+// same league-save flow), but no caller has ever sent an explicit "which
+// sport is this" field. Historically the only signal has been the
+// tournament name itself (e.g. operators prefixing table-tennis tournaments
+// with "TT::"), which is how a TT tournament ("TT::Amitabh") ended up
+// showing on the public, cricket-only Tournaments section.
+//
+// Going forward, callers SHOULD pass an explicit `sport` in the save-match
+// body (cricket-panel.html / tt-panel.html / football-panel.html can send
+// `sport: 'cricket' | 'tabletennis' | 'football'`) — that's stored as-is and
+// wins over any name guessing. Until every panel is updated to send it, this
+// name-based fallback keeps existing/legacy tournaments correctly sorted.
+function detectSportFromName(name) {
+    const n = String(name || '').trim().toLowerCase();
+    if (/^tt[\s:_-]|table[\s-]?tennis/.test(n)) return 'tabletennis';
+    if (/^(fb|foot)[\s:_-]|football/.test(n)) return 'football';
+    return 'cricket';
+}
 const SINGLE_MATCHES_LEAGUE_KEY = '__single_matches__'; // must match SINGLE_MATCHES_NAME in cricket-panel.html
 function ownerUidFrom(req) {
     const uid = (req.query.uid || (req.body && req.body.uid) || '').toString().trim();
@@ -1086,9 +1106,12 @@ app.post('/api/league/:name/match', async (req, res) => {
         // League doc itself stays tiny now — just metadata (displayName,
         // publicToken, live pointer). matches[] is intentionally never
         // written here anymore.
+        // Prefer an explicit sport sent by the panel; fall back to guessing
+        // from the tournament name for panels that don't send it yet.
+        const sport = record.sport || req.body.sport || detectSportFromName(req.params.name);
         await leaguesCollection.updateOne(
             { ownerUid, leagueKey },
-            { $set: { ownerUid, leagueKey, displayName: (req.params.name || '').trim(), updatedAt: Date.now() } },
+            { $set: { ownerUid, leagueKey, displayName: (req.params.name || '').trim(), sport, updatedAt: Date.now() } },
             { upsert: true }
         );
         const matches = await getLeagueMatches(ownerUid, leagueKey);
@@ -1607,9 +1630,9 @@ app.get('/api/public/tournaments', async (req, res) => {
             ownerUid,
             leagueKey: { $ne: SINGLE_MATCHES_LEAGUE_KEY },
             publicToken: { $exists: true, $ne: null }
-        }).project({ leagueKey: 1, displayName: 1, publicToken: 1, updatedAt: 1, liveMatches: 1 }).toArray();
+        }).project({ leagueKey: 1, displayName: 1, publicToken: 1, updatedAt: 1, liveMatches: 1, sport: 1 }).toArray();
 
-        const tournaments = await Promise.all(leagues.map(async doc => {
+        const allTournaments = await Promise.all(leagues.map(async doc => {
             const matches = await getLeagueMatches(ownerUid, doc.leagueKey);
             const isLive = !!(doc.liveMatches && doc.liveMatches.length > 0);
             return {
@@ -1618,16 +1641,17 @@ app.get('/api/public/tournaments', async (req, res) => {
                 status: isLive ? 'live' : (matches.length > 0 ? 'completed' : 'upcoming'),
                 matchCount: matches.length,
                 updatedAt: doc.updatedAt || 0,
-                // leaguesCollection is only ever written to from cricket-panel's
-                // save/publish flow (see leagueKeyFor / SINGLE_MATCHES_LEAGUE_KEY
-                // above) — Football and Table Tennis don't use the league
-                // concept at all, so every doc here is a cricket tournament.
-                // Tagging it explicitly (instead of leaving it implicit) means
-                // the public tournaments list stays cricket-only even if a
-                // non-cricket league type gets added to this collection later.
-                sport: 'cricket'
+                // Legacy docs saved before `sport` existed on the league doc
+                // don't have it stored — fall back to the same name-based
+                // guess used at save time (see detectSportFromName above).
+                sport: doc.sport || detectSportFromName(doc.displayName || doc.leagueKey)
             };
         }));
+
+        // Public Tournaments section on index.html is cricket-only — Football
+        // and Table Tennis tournaments (e.g. "TT::Amitabh") must never appear
+        // here even though they live in the same leaguesCollection.
+        const tournaments = allTournaments.filter(t => t.sport === 'cricket');
 
         tournaments.sort((a, b) => {
             if ((a.status === 'live') !== (b.status === 'live')) return a.status === 'live' ? -1 : 1;
