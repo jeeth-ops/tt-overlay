@@ -1816,6 +1816,55 @@ let publicTournamentsListCache = null; // { expiresAt, payload }
 app.get('/api/public/tournaments', async (req, res) => {
     if (!leaguesCollection || !matchRecordsCollection) return res.json({ success: true, tournaments: [] });
     try {
+        // 🔐 OWNER VIEW: only when the request carries a verified Firebase ID
+        // token for the exact OWNER_EMAIL account (chhayajeeth@gmail.com —
+        // never trusted from anything client-supplied) do we include EVERY
+        // creator's tournaments here, private ones included, each tagged
+        // with who made it and whether it's private. This response is never
+        // written into publicTournamentsListCache — that cache is shared by
+        // every anonymous visitor, and must never end up holding private
+        // data or creator emails.
+        const requesterEmail = await verifiedRequesterEmail(req);
+        const isOwnerViewer = requesterEmail === OWNER_EMAIL;
+
+        if (isOwnerViewer) {
+            const ownerUids = await Promise.all(AUTHORIZED_CREATOR_EMAILS.map(getUidForEmail));
+            const uidToEmail = new Map(AUTHORIZED_CREATOR_EMAILS.map((email, i) => [ownerUids[i], email]));
+            const validUids = ownerUids.filter(Boolean);
+            if (validUids.length === 0) return res.json({ success: true, tournaments: [] });
+
+            const leagues = await leaguesCollection.find({
+                ownerUid: { $in: validUids },
+                leagueKey: { $ne: SINGLE_MATCHES_LEAGUE_KEY },
+                publicToken: { $exists: true, $ne: null }
+            }).project({ ownerUid: 1, leagueKey: 1, displayName: 1, publicToken: 1, updatedAt: 1, liveMatches: 1, sport: 1, completed: 1, statusOverride: 1, createdBy: 1 }).toArray();
+
+            const allTournaments = await Promise.all(leagues.map(async doc => {
+                const matches = await getLeagueMatches(doc.ownerUid, doc.leagueKey);
+                const isLive = !!(doc.liveMatches && doc.liveMatches.length > 0);
+                const creatorEmail = doc.createdBy || uidToEmail.get(doc.ownerUid) || null;
+                return {
+                    token: doc.publicToken,
+                    name: doc.displayName || doc.leagueKey,
+                    status: doc.statusOverride || (isLive ? 'live' : (doc.completed ? 'completed' : (matches.length > 0 ? 'ongoing' : 'upcoming'))),
+                    matchCount: matches.length,
+                    updatedAt: doc.updatedAt || 0,
+                    sport: doc.sport || detectSportFromName(doc.displayName || doc.leagueKey),
+                    // Owner-only fields — never present in the normal (cached,
+                    // anonymous) response below.
+                    createdBy: creatorEmail || 'Unknown',
+                    isPrivate: isPrivateCreatorEmail(creatorEmail)
+                };
+            }));
+
+            const tournaments = allTournaments.filter(t => t.sport === 'cricket');
+            tournaments.sort((a, b) => {
+                if ((a.status === 'live') !== (b.status === 'live')) return a.status === 'live' ? -1 : 1;
+                return (b.updatedAt || 0) - (a.updatedAt || 0);
+            });
+            return res.json({ success: true, tournaments, ownerView: true });
+        }
+
         if (publicTournamentsListCache && publicTournamentsListCache.expiresAt > Date.now()) {
             return res.json(publicTournamentsListCache.payload);
         }
