@@ -613,7 +613,19 @@ auth.onAuthStateChanged(async (user) => {
 document.getElementById('logoutBtn').onclick = () => auth.signOut().then(()=> location.href='/');
 
 // ===== Nav =====
-function goToPanel(key){
+// 🩹 FIX: added optional `skipLoad` — when true, this only switches which
+// panel/nav-item is visually active and does NOT call loadPanel(key). Needed
+// because openTournamentDetail() (Manage/Statistics buttons, and the global
+// search "Tournaments" results) calls goToPanel('cricket') AFTER it has
+// already fetched one tournament's matches and rendered the Detail view.
+// Without skipLoad, that call used to also run loaders.cricket, which does
+// showExplorerView() + loadCricketExplorer() — wiping out the Detail view we
+// had just built and silently bouncing the owner back to the tournament
+// list. That was the "click Statistics → dumps back to Tournaments page,
+// nothing loads" bug. Every other caller (sidebar nav clicks, quick
+// actions) is unaffected — they still call goToPanel(key) with no second
+// argument, so skipLoad stays false and the panel loads exactly as before.
+function goToPanel(key, skipLoad){
   document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('active'));
   const navBtn = document.querySelector(`.nav-item[data-panel="${key}"]`);
   if (navBtn) navBtn.classList.add('active');
@@ -632,7 +644,7 @@ function goToPanel(key){
   document.getElementById('pageTitle').textContent = titles[key][0];
   document.getElementById('pageSub').textContent = titles[key][1];
   document.getElementById('sidebar').classList.remove('open');
-  loadPanel(key);
+  if (!skipLoad) loadPanel(key);
 }
 function initNav(){
   document.querySelectorAll('.nav-item').forEach(btn=>{
@@ -1128,9 +1140,13 @@ async function openTournamentDetail(ownerUid, leagueKey, startTab){
   try {
     const data = await api(`/tournament/${encodeURIComponent(ownerUid)}/${encodeURIComponent(leagueKey)}`);
     corrState = { ownerUid, leagueKey, league: data.league, matches: data.matches || [] };
+    // 🩹 FIX: skipLoad=true — just make the Tournaments panel visible
+    // (needed when this was opened from Global Search on another panel),
+    // WITHOUT re-running loaders.cricket, which would reset back to the
+    // Explorer grid and undo the Detail view rendered right below.
+    goToPanel('cricket', true);
     showDetailView();
     renderTournamentDetail(startTab || 'matches');
-    goToPanel('cricket');
   } catch(err){ toast(friendlyError(err),'err'); }
 }
 
