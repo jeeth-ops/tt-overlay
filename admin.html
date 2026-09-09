@@ -326,7 +326,7 @@ label{font-size:.78rem;color:var(--text-muted);display:block;margin:12px 0 6px;f
       <div class="card">
         <h3><span class="t">🏆 Tournaments / Leagues</span></h3>
         <div class="table-wrap">
-          <table><thead><tr><th>Tournament</th><th>Owner UID</th><th>Matches</th><th>Updated</th></tr></thead><tbody id="tournamentsBody"></tbody></table>
+          <table><thead><tr><th>Tournament</th><th>Sport</th><th>Owner UID</th><th>Matches</th><th>Updated</th><th>Status</th></tr></thead><tbody id="tournamentsBody"></tbody></table>
         </div>
       </div>
       <div class="card">
@@ -813,9 +813,42 @@ async function loadCricket(){
     ['Total Balls Logged', data.totalBallsLogged]
   ].map(([lbl,val])=>`<div class="stat-card"><div class="lbl">${lbl}</div><div class="val">${val}</div></div>`).join('');
 
+  // Status select lets ONLY the signed-in owner (requireOwner verifies the
+  // Bearer idToken's email server-side — see POST /api/admin/tournaments/
+  // :leagueKey/status) force what a tournament's card shows on the public
+  // Tournaments section, e.g. flip Live -> Completed or back, regardless of
+  // the tournament's actual match data. "Auto" clears the override.
+  const STATUS_OPTIONS = ['auto','live','completed','ongoing','upcoming'];
   document.getElementById('tournamentsBody').innerHTML = data.tournaments.length ? data.tournaments.map(t=>`
-    <tr><td>${t.displayName}</td><td style="color:var(--text-muted);font-size:.78rem;">${t.ownerUid||'—'}</td><td>${t.matchCount}</td><td style="color:var(--text-muted);font-size:.8rem;">${t.updatedAt?fmtDate(new Date(t.updatedAt).toISOString()):'—'}</td></tr>
-  `).join('') : `<tr><td colspan="4"><div class="empty-state"><div class="ic">🏆</div>No tournaments saved yet.</div></td></tr>`;
+    <tr>
+      <td>${t.displayName}</td>
+      <td style="text-transform:capitalize;">${t.sport||'cricket'}</td>
+      <td style="color:var(--text-muted);font-size:.78rem;">${t.ownerUid||'—'}</td>
+      <td>${t.matchCount}</td>
+      <td style="color:var(--text-muted);font-size:.8rem;">${t.updatedAt?fmtDate(new Date(t.updatedAt).toISOString()):'—'}</td>
+      <td>
+        <select class="tournament-status-select" data-league-key="${t.leagueKey}" style="background:var(--bg2,#1a1a2e);color:inherit;border:1px solid var(--border,#333);border-radius:6px;padding:4px 8px;">
+          ${STATUS_OPTIONS.map(s=>`<option value="${s}" ${((t.statusOverride||'auto')===s)?'selected':''}>${s==='auto'?`Auto (${t.publicStatus})`:s.charAt(0).toUpperCase()+s.slice(1)}</option>`).join('')}
+        </select>
+      </td>
+    </tr>
+  `).join('') : `<tr><td colspan="6"><div class="empty-state"><div class="ic">🏆</div>No tournaments saved yet.</div></td></tr>`;
+
+  document.querySelectorAll('.tournament-status-select').forEach(sel=>{
+    sel.onchange = async ()=>{
+      const leagueKey = sel.dataset.leagueKey;
+      const value = sel.value === 'auto' ? null : sel.value;
+      sel.disabled = true;
+      try{
+        await api(`/tournaments/${encodeURIComponent(leagueKey)}/status`, { method:'POST', body: JSON.stringify({ status: value }) });
+        toast(value ? `Tournament forced to "${value}"` : 'Tournament status reset to Auto');
+        loadCricket();
+      }catch(err){
+        toast(err.message,'err');
+        sel.disabled = false;
+      }
+    };
+  });
 
   document.getElementById('matchesBody').innerHTML = data.recentMatches.length ? data.recentMatches.map(m=>`
     <tr><td>${m.matchId}</td><td>${m.recordingStatus||'—'}</td><td style="color:var(--text-muted);font-size:.8rem;">${m.recordingStartedAt?fmtDate(new Date(m.recordingStartedAt).toISOString()):'—'}</td></tr>
