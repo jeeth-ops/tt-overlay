@@ -2604,10 +2604,20 @@ adminRouter.get('/tournaments/search', async (req, res) => {
         const tournaments = await Promise.all(leagues.map(async l => {
             const matchCount = await matchRecordsCollection.countDocuments({ ownerUid: l.ownerUid, leagueKey: l.leagueKey });
             const creatorEmail = l.createdBy || await getVerifiedEmailForUid(l.ownerUid);
+            // 🩹 FIX: statusOverride/publicStatus were being queried (see the
+            // .project() above) but never put on the response object, so the
+            // admin panel's Explorer grid and dashboard "Live Right Now" /
+            // "Completed" counters — which read t.statusOverride/t.publicStatus
+            // (see tournamentEffectiveStatus() and loadDashboardExtras() in
+            // admin.html) — always fell back to 'upcoming' / 0. Same
+            // computation as GET /api/admin/cricket, so both routes now agree.
+            const isLive = !!(l.liveMatches && l.liveMatches.length > 0);
+            const publicStatus = l.statusOverride || (isLive ? 'live' : (l.completed ? 'completed' : (matchCount > 0 ? 'ongoing' : 'upcoming')));
             return {
                 ownerUid: l.ownerUid, leagueKey: l.leagueKey, displayName: l.displayName || l.leagueKey,
                 sport: l.sport || 'cricket', matchCount, updatedAt: l.updatedAt || null,
                 publicToken: l.publicToken || null,
+                publicStatus, statusOverride: l.statusOverride || null,
                 // "Created by" — this is the one place in the whole app this
                 // is ever surfaced (Owner Admin Panel only, never the public
                 // API/homepage).
