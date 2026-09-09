@@ -1231,7 +1231,17 @@ app.post('/api/league/:name/match', requireAuthorizedCreator, async (req, res) =
         const sport = record.sport || req.body.sport || detectSportFromName(req.params.name);
         await leaguesCollection.updateOne(
             { ownerUid, leagueKey },
-            { $set: { ownerUid, leagueKey, displayName: (req.params.name || '').trim(), sport, updatedAt: Date.now() } },
+            {
+                $set: { ownerUid, leagueKey, displayName: (req.params.name || '').trim(), sport, updatedAt: Date.now() },
+                // 🏷️ createdBy: locked in once, on first save, to whichever
+                // authorized creator account actually made it (req.creatorEmail
+                // comes from requireAuthorizedCreator's verified ID token, never
+                // a client-supplied value). $setOnInsert so it's never
+                // overwritten by a later save under the same league — used only
+                // by the Owner Admin Panel to show "Created by" (see
+                // GET /api/admin/tournaments/search); never exposed publicly.
+                $setOnInsert: { createdBy: req.creatorEmail || null }
+            },
             { upsert: true }
         );
         const matches = await getLeagueMatches(ownerUid, leagueKey);
@@ -2505,6 +2515,230 @@ adminRouter.post('/tournaments/:leagueKey/status', async (req, res) => {
     } catch (err) {
         console.log('Tournament status override error:', err);
         res.status(500).json({ success: false, error: 'Could not update tournament status' });
+    }
+});
+
+// ================================================================
+// 🛡️ OWNER GLOBAL CORRECTION & MANAGEMENT — chhayajeeth@gmail.com only.
+// Everything below sits on adminRouter (requireOwner already verified the
+// caller's real Firebase ID token IS chhayajeeth@gmail.com — see the
+// `adminRouter.use(requireOwner)` line above; nothing here re-checks email
+// because the whole router already did). Lets the owner open ANY creator's
+// ANY tournament/match/clip — workallsportslive@gmail.com's,
+// vinitkrkr1@gmail.com's, or their own — and correct it.
+//
+// Deliberately reuses the exact same matchRecordsCollection /
+// leaguesCollection / clipsCollection documents the live scoring panels and
+// public scorecard already read from — no parallel/duplicate data store.
+// Tournament leaderboards, points table and player stats are NEVER stored;
+// computePointsTable()/computeLeaderboards()/runPlayerStatsQuery() already
+// recompute them fresh from matchRecords on every read (see those functions
+// above), so correcting a match's saved record is the entire fix — nothing
+// downstream needs a manual recalculation step. We only need to clear the
+// two short-lived response caches below so the very next read reflects it
+// immediately instead of after their normal TTL.
+// ================================================================
+
+// Finds a league doc across ALL owners by name (partial, case-insensitive)
+// so the owner can locate a tournament without already knowing its ownerUid
+// — the Cricket Data tab's list is capped at 50 most-recently-updated, which
+// isn't enough to find an older tournament to correct.
+adminRouter.get('/tournaments/search', async (req, res) => {
+    if (!leaguesCollection || !matchRecordsCollection) return res.json({ success: true, tournaments: [] });
+    const q = (req.query.q || '').trim();
+    try {
+        const filter = { leagueKey: { $ne: SINGLE_MATCHES_LEAGUE_KEY } };
+        if (q) filter.displayName = { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
+        const leagues = await leaguesCollection.find(filter)
+            .project({ ownerUid: 1, leagueKey: 1, displayName: 1, updatedAt: 1, sport: 1, publicToken: 1, createdBy: 1, completed: 1, statusOverride: 1, liveMatches: 1 })
+            .sort({ updatedAt: -1 }).limit(200).toArray();
+        const tournaments = await Promise.all(leagues.map(async l => {
+            const matchCount = await matchRecordsCollection.countDocuments({ ownerUid: l.ownerUid, leagueKey: l.leagueKey });
+            const creatorEmail = l.createdBy || await getVerifiedEmailForUid(l.ownerUid);
+            return {
+                ownerUid: l.ownerUid, leagueKey: l.leagueKey, displayName: l.displayName || l.leagueKey,
+                sport: l.sport || 'cricket', matchCount, updatedAt: l.updatedAt || null,
+                publicToken: l.publicToken || null,
+                // "Created by" — this is the one place in the whole app this
+                // is ever surfaced (Owner Admin Panel only, never the public
+                // API/homepage).
+                createdBy: creatorEmail || 'Unknown',
+                isPrivate: isPrivateCreatorEmail(creatorEmail)
+            };
+        }));
+        res.json({ success: true, tournaments });
+    } catch (err) {
+        console.log('Admin tournament search error:', err);
+        res.status(500).json({ success: false, error: 'Could not search tournaments' });
+    }
+});
+
+// Full match list for one tournament (any owner) — the correction screen's
+// data source. Same matchRecordsCollection the public scorecard reads.
+adminRouter.get('/tournament/:ownerUid/:leagueKey', async (req, res) => {
+    if (!leaguesCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const { ownerUid } = req.params;
+    const leagueKey = leagueKeyFor(req.params.leagueKey);
+    try {
+        const league = await leaguesCollection.findOne({ ownerUid, leagueKey });
+        if (!league) return res.status(404).json({ success: false, error: 'Tournament not found' });
+        const matches = await getLeagueMatches(ownerUid, leagueKey);
+        const creatorEmail = league.createdBy || await getVerifiedEmailForUid(ownerUid);
+        res.json({
+            success: true,
+            league: {
+                ownerUid, leagueKey, displayName: league.displayName || leagueKey,
+                sport: league.sport || 'cricket', publicToken: league.publicToken || null,
+                createdBy: creatorEmail || 'Unknown', isPrivate: isPrivateCreatorEmail(creatorEmail)
+            },
+            matches
+        });
+    } catch (err) {
+        console.log('Admin tournament fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load tournament' });
+    }
+});
+
+// Correct one match's saved record. Body: { record: {...full corrected
+// match object...} }. Any field can be corrected this way — runs, balls,
+// overs, wickets, battingCard/bowlingCard entries, winningTeam, etc. — the
+// same shape the scoring panel itself saves via POST /api/league/:name/match.
+// Identity fields (ownerUid/leagueKey/matchId/roomId/savedAt) are preserved
+// from the existing doc regardless of what the body sends, so a correction
+// can never accidentally move a match to a different tournament or drop its
+// clip linkage (roomId).
+adminRouter.put('/tournament/:ownerUid/:leagueKey/match/:matchId', async (req, res) => {
+    if (!leaguesCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const { ownerUid, matchId } = req.params;
+    const leagueKey = leagueKeyFor(req.params.leagueKey);
+    const correction = req.body && req.body.record;
+    if (!correction || typeof correction !== 'object') return res.status(400).json({ success: false, error: 'record object required' });
+    try {
+        const existing = await matchRecordsCollection.findOne({ ownerUid, leagueKey, matchId });
+        if (!existing) return res.status(404).json({ success: false, error: 'Match not found' });
+        const league = await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { publicToken: 1, displayName: 1 } });
+
+        const corrected = {
+            ...correction,
+            ownerUid, leagueKey, matchId,
+            roomId: existing.roomId || null,
+            savedAt: existing.savedAt
+        };
+        await matchRecordsCollection.replaceOne({ ownerUid, leagueKey, matchId }, corrected);
+
+        // Nothing to recompute by hand — points table, leaderboards and
+        // player stats are derived fresh from matchRecords on every read.
+        // Just clear the short-lived response caches so the correction is
+        // visible immediately instead of waiting out their TTL.
+        if (league && league.publicToken) publicTournamentCache.delete(league.publicToken);
+        publicTournamentsListCache = null;
+
+        await logAuditAction(req.ownerEmail, 'Owner match correction', `${league && league.displayName || leagueKey} — match ${matchId}`, null, null);
+        res.json({ success: true, match: corrected });
+    } catch (err) {
+        console.log('Owner match correction error:', err);
+        res.status(500).json({ success: false, error: 'Could not save correction' });
+    }
+});
+
+// Deletes an ENTIRE tournament: the league doc, every match saved under it,
+// and every clip belonging to those matches. Frontend shows a confirmation
+// modal before ever calling this (see admin.html) — there is no undo.
+adminRouter.delete('/tournament/:ownerUid/:leagueKey', async (req, res) => {
+    if (!leaguesCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const { ownerUid } = req.params;
+    const leagueKey = leagueKeyFor(req.params.leagueKey);
+    try {
+        const league = await leaguesCollection.findOne({ ownerUid, leagueKey });
+        if (!league) return res.status(404).json({ success: false, error: 'Tournament not found' });
+
+        const matches = await matchRecordsCollection.find({ ownerUid, leagueKey }, { projection: { matchId: 1 } }).toArray();
+        const matchIds = matches.map(m => m.matchId).filter(Boolean);
+
+        if (clipsCollection && matchIds.length) {
+            await clipsCollection.deleteMany({ matchId: { $in: matchIds } });
+        }
+        await matchRecordsCollection.deleteMany({ ownerUid, leagueKey });
+        await leaguesCollection.deleteOne({ ownerUid, leagueKey });
+
+        if (league.publicToken) publicTournamentCache.delete(league.publicToken);
+        publicTournamentsListCache = null;
+
+        await logAuditAction(req.ownerEmail, 'Delete tournament', league.displayName || leagueKey, { matchesDeleted: matchIds.length }, null);
+        res.json({ success: true, deletedMatches: matchIds.length });
+    } catch (err) {
+        console.log('Owner tournament delete error:', err);
+        res.status(500).json({ success: false, error: 'Could not delete tournament' });
+    }
+});
+
+// ---- Clip correction ----
+// Full (untrimmed) clip docs for one match — includes strikerKey/bowlerKey/
+// fielderKey, which the public /api/clips/match/:matchId route deliberately
+// hides (see serializeClip above) but the owner needs to see/edit here.
+adminRouter.get('/clips/match/:matchId', async (req, res) => {
+    if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const clips = await clipsCollection.find({ matchId: safeMatchId(req.params.matchId) }).sort({ over: 1, ballInOver: 1 }).toArray();
+        res.json({ success: true, clips: clips.map(c => ({ ...c, clipId: c._id.toString(), _id: undefined })) });
+    } catch (err) {
+        console.log('Admin clips fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load clips' });
+    }
+});
+
+// Corrects a clip that got attached to the wrong player/event. Any of these
+// fields may be sent; only the ones present are changed. Renaming
+// striker/bowler/fielder also recomputes their *Key (playerKey() —lower-
+// cased, trimmed name) so the clip keeps showing up correctly in that
+// player's stats/clip listings — the *Key, not the *Name, is what
+// scorecard/clip queries actually match on.
+adminRouter.put('/clips/:clipId', async (req, res) => {
+    if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const { ObjectId } = require('mongodb');
+    let _id;
+    try { _id = new ObjectId(req.params.clipId); } catch { return res.status(400).json({ success: false, error: 'Invalid clip id' }); }
+    const body = req.body || {};
+    const set = {};
+    if (body.matchId !== undefined) set.matchId = safeMatchId(body.matchId);
+    if (body.eventType !== undefined) set.eventType = String(body.eventType).toUpperCase();
+    if (body.dismissalType !== undefined) set.dismissalType = body.dismissalType || null;
+    if (body.battingTeam !== undefined) set.battingTeam = String(body.battingTeam).toUpperCase();
+    if (body.over !== undefined) set.over = Number(body.over) || 0;
+    if (body.ballInOver !== undefined) set.ballInOver = Number(body.ballInOver) || 0;
+    if (body.innings !== undefined) set.innings = Number(body.innings) || 1;
+    if (body.runs !== undefined) set.runs = Number(body.runs) || 0;
+    if (body.strikerName !== undefined) { set.strikerName = body.strikerName || null; set.strikerKey = playerKey(body.strikerName); }
+    if (body.bowlerName !== undefined) { set.bowlerName = body.bowlerName || null; set.bowlerKey = playerKey(body.bowlerName); }
+    if (body.nonStrikerName !== undefined) { set.nonStrikerName = body.nonStrikerName || null; }
+    if (body.fielderName !== undefined) { set.fielderName = body.fielderName || null; set.fielderKey = playerKey(body.fielderName); }
+    if (Object.keys(set).length === 0) return res.status(400).json({ success: false, error: 'No correctable fields provided' });
+    try {
+        const result = await clipsCollection.findOneAndUpdate({ _id }, { $set: set }, { returnDocument: 'after' });
+        if (!result || !result.value) return res.status(404).json({ success: false, error: 'Clip not found' });
+        await logAuditAction(req.ownerEmail, 'Owner clip correction', req.params.clipId, null, set);
+        res.json({ success: true, clip: serializeClip(result.value) });
+    } catch (err) {
+        console.log('Owner clip correction error:', err);
+        res.status(500).json({ success: false, error: 'Could not save clip correction' });
+    }
+});
+
+// Removes a clip wrongly attached to a player/event entirely (rather than
+// reassigning it) — e.g. it was never a real four/six/wicket.
+adminRouter.delete('/clips/:clipId', async (req, res) => {
+    if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const { ObjectId } = require('mongodb');
+    let _id;
+    try { _id = new ObjectId(req.params.clipId); } catch { return res.status(400).json({ success: false, error: 'Invalid clip id' }); }
+    try {
+        const result = await clipsCollection.deleteOne({ _id });
+        if (!result.deletedCount) return res.status(404).json({ success: false, error: 'Clip not found' });
+        await logAuditAction(req.ownerEmail, 'Delete clip', req.params.clipId, null, null);
+        res.json({ success: true });
+    } catch (err) {
+        console.log('Owner clip delete error:', err);
+        res.status(500).json({ success: false, error: 'Could not delete clip' });
     }
 });
 
