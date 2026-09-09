@@ -945,6 +945,113 @@ async function requireOwner(req, res, next) {
     next();
 }
 
+// ================================================================
+// 🔐 GMAIL-BASED CREATOR ACCESS CONTROL — cricket "Select Sport" /
+// tournament create/manage.
+//
+// Exactly these 3 Gmail accounts may see "Select Sport", pick Cricket, and
+// create/edit/delete a tournament. Everyone else — signed out, or signed in
+// with any other Gmail — is a read-only visitor of PUBLIC tournaments only.
+//
+// workallsportslive@gmail.com and vinitkrkr1@gmail.com's cricket
+// tournaments are PUBLIC (listed + viewable by anyone). chhayajeeth@gmail.com's
+// are PRIVATE — never listed, searched, or reachable by anyone except
+// chhayajeeth@gmail.com, even via a direct/guessed public link.
+//
+// Configurable via env vars so this list can change without a redeploy of
+// code; the literals are the agreed defaults / local-dev fallback.
+// ================================================================
+const AUTHORIZED_CREATOR_EMAILS = (process.env.AUTHORIZED_CREATOR_EMAILS
+    ? process.env.AUTHORIZED_CREATOR_EMAILS.split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
+    : ['workallsportslive@gmail.com', 'vinitkrkr1@gmail.com', 'chhayajeeth@gmail.com']
+);
+const PRIVATE_CREATOR_EMAILS = new Set(
+    (process.env.PRIVATE_CREATOR_EMAILS || 'chhayajeeth@gmail.com')
+        .split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
+);
+function isAuthorizedCreatorEmail(email) {
+    return !!email && AUTHORIZED_CREATOR_EMAILS.includes(String(email).toLowerCase());
+}
+function isPrivateCreatorEmail(email) {
+    return !!email && PRIVATE_CREATOR_EMAILS.has(String(email).toLowerCase());
+}
+// The 2 authorized emails whose tournaments are public (allowlist minus the
+// private set) — computed once, used by the homepage directory below.
+const PUBLIC_CREATOR_EMAILS = AUTHORIZED_CREATOR_EMAILS.filter(e => !isPrivateCreatorEmail(e));
+
+// uid -> real account email, resolved via Firebase Admin SDK (never trusts
+// a client-supplied email) and cached briefly since these don't change.
+const uidEmailCache = new Map(); // uid -> { email, expiresAt }
+const UID_EMAIL_CACHE_TTL_MS = 5 * 60 * 1000;
+async function getVerifiedEmailForUid(uid) {
+    if (!uid) return null;
+    const hit = uidEmailCache.get(uid);
+    if (hit && hit.expiresAt > Date.now()) return hit.email;
+    try {
+        const user = await admin.auth().getUser(uid);
+        const email = (user.email || '').toLowerCase();
+        uidEmailCache.set(uid, { email, expiresAt: Date.now() + UID_EMAIL_CACHE_TTL_MS });
+        return email;
+    } catch (err) {
+        return null;
+    }
+}
+
+// email -> uid, the reverse lookup, used by the homepage's public
+// tournaments directory (needs each public creator's uid to query leagues).
+const uidByEmailCache = new Map(); // email -> { uid, expiresAt }
+async function getUidForEmail(email) {
+    const key = String(email || '').toLowerCase();
+    if (!key) return null;
+    const hit = uidByEmailCache.get(key);
+    if (hit && hit.expiresAt > Date.now()) return hit.uid;
+    try {
+        const user = await admin.auth().getUserByEmail(key);
+        uidByEmailCache.set(key, { uid: user.uid, expiresAt: Date.now() + UID_EMAIL_CACHE_TTL_MS });
+        return user.uid;
+    } catch (err) {
+        console.log(`getUidForEmail(${key}) — account may not have signed in yet:`, err.message);
+        return null;
+    }
+}
+
+// 🛡️ Real server-side gate for every tournament create/edit/delete route
+// below (NOT just the "Select Sport"/"Create Tournament" buttons being
+// hidden in the UI — those are convenience only). Resolves the REAL
+// account email for the request's ownerUid via the Admin SDK (a client
+// cannot lie about which email a uid belongs to) and rejects unless it's
+// one of the 3 authorized Gmail accounts.
+async function requireAuthorizedCreator(req, res, next) {
+    const ownerUid = ownerUidFrom(req);
+    if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
+    const email = await getVerifiedEmailForUid(ownerUid);
+    if (!isAuthorizedCreatorEmail(email)) {
+        return res.status(403).json({ success: false, error: 'Access Denied: your account is not authorized to create or manage tournaments' });
+    }
+    req.creatorEmail = email;
+    next();
+}
+
+// Resolves whether a league doc belongs to the private creator
+// (chhayajeeth@gmail.com) — used to keep it out of every public
+// list/token/API response for anyone else.
+async function isPrivateLeagueDoc(doc) {
+    if (!doc || !doc.ownerUid) return false;
+    const email = await getVerifiedEmailForUid(doc.ownerUid);
+    return isPrivateCreatorEmail(email);
+}
+
+// The verified (Firebase ID token) email of whoever is making this
+// request, or null if there isn't a valid one attached. Used only to let
+// chhayajeeth@gmail.com view their OWN private tournaments through the
+// public portal routes — everyone else gets a 404 for those, same as if
+// the tournament didn't exist.
+async function verifiedRequesterEmail(req) {
+    const idToken = extractIdToken(req);
+    const decoded = await verifyIdTokenFull(idToken);
+    return decoded ? decoded.email : null;
+}
+
 // Append-only trail of what the owner did, when, to what, and the
 // before/after value — shown in the Audit Logs tab.
 async function logAuditAction(ownerEmail, action, target, previousValue, newValue) {
@@ -1041,7 +1148,11 @@ async function getLeagueMatches(ownerUid, leagueKey) {
 }
 
 // All matches saved under a league/tournament name, for one owner.
-app.get('/api/league/:name', async (req, res) => {
+// 🔐 Gated: only an authorized creator account can read its own
+// tournament-management data through this route (the public, read-only
+// view for everyone else is the separate /api/public/tournament/:token
+// section further below).
+app.get('/api/league/:name', requireAuthorizedCreator, async (req, res) => {
     const leagueKey = leagueKeyFor(req.params.name);
     const ownerUid = ownerUidFrom(req);
     if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
@@ -1073,7 +1184,7 @@ app.get('/api/league/:name', async (req, res) => {
 // match can never be slowed down or size-capped by every other match this
 // owner has ever saved, and two saves landing at the same time can't clobber
 // each other's matches the way the old whole-array $set could.
-app.post('/api/league/:name/match', async (req, res) => {
+app.post('/api/league/:name/match', requireAuthorizedCreator, async (req, res) => {
     const leagueKey = leagueKeyFor(req.params.name);
     const ownerUid = ownerUidFrom(req);
     const record = req.body;
@@ -1132,7 +1243,7 @@ app.post('/api/league/:name/match', async (req, res) => {
 });
 
 // Removes one match from a league.
-app.delete('/api/league/:name/match/:matchId', async (req, res) => {
+app.delete('/api/league/:name/match/:matchId', requireAuthorizedCreator, async (req, res) => {
     const leagueKey = leagueKeyFor(req.params.name);
     const ownerUid = ownerUidFrom(req);
     if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
@@ -1154,7 +1265,7 @@ app.delete('/api/league/:name/match/:matchId', async (req, res) => {
 // matches one-by-one via the route above left an empty "ghost" tournament
 // (0 matches, publicToken still set) behind forever, which is why deleted
 // tournaments kept reappearing on the public Tournaments section.
-app.delete('/api/league/:name', async (req, res) => {
+app.delete('/api/league/:name', requireAuthorizedCreator, async (req, res) => {
     const leagueKey = leagueKeyFor(req.params.name);
     const ownerUid = ownerUidFrom(req);
     if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
@@ -1179,7 +1290,7 @@ app.delete('/api/league/:name', async (req, res) => {
 // "Completed" only ever comes from this explicit flag, set by the operator
 // when the tournament is actually over (see status logic in
 // /api/public/tournaments below).
-app.post('/api/league/:name/complete', async (req, res) => {
+app.post('/api/league/:name/complete', requireAuthorizedCreator, async (req, res) => {
     const leagueKey = leagueKeyFor(req.params.name);
     const ownerUid = ownerUidFrom(req);
     const completed = !!(req.body && req.body.completed);
@@ -1478,7 +1589,7 @@ async function findCanonicalBall(matchId, ballMeta) {
 // token. Idempotent — calling it again for the same tournament always
 // returns the same token, so a link the operator already shared never
 // breaks.
-app.post('/api/league/:name/public-link', async (req, res) => {
+app.post('/api/league/:name/public-link', requireAuthorizedCreator, async (req, res) => {
     const leagueKey = leagueKeyFor(req.params.name);
     const ownerUid = ownerUidFrom(req);
     if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
@@ -1508,7 +1619,7 @@ app.post('/api/league/:name/public-link', async (req, res) => {
 // being scored. Deliberately separate from the /match save route: this
 // never touches the permanent matches[] array, so it can never corrupt
 // or overwrite saved match data even if it fails or races.
-app.post('/api/league/:name/live-status', async (req, res) => {
+app.post('/api/league/:name/live-status', requireAuthorizedCreator, async (req, res) => {
     const leagueKey = leagueKeyFor(req.params.name);
     const ownerUid = ownerUidFrom(req);
     if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
@@ -1588,10 +1699,22 @@ function setCached(cache, key, payload, ttlMs) {
 app.get('/api/public/tournament/:token', async (req, res) => {
     if (!leaguesCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     try {
-        const cached = getCached(publicTournamentCache, req.params.token);
-        if (cached) return res.json(cached);
         const doc = await leaguesCollection.findOne({ publicToken: req.params.token });
         if (!doc) return res.status(404).json({ success: false, error: 'Tournament not found' });
+
+        // 🔒 PRIVACY: chhayajeeth@gmail.com's tournaments are private. Even
+        // with a valid/guessed token, nobody but a verified chhayajeeth
+        // request gets the data — respond exactly like an unknown token so
+        // existence can't be inferred either.
+        if (await isPrivateLeagueDoc(doc)) {
+            const requesterEmail = await verifiedRequesterEmail(req);
+            if (!isPrivateCreatorEmail(requesterEmail)) {
+                return res.status(404).json({ success: false, error: 'Tournament not found' });
+            }
+        }
+
+        const cached = getCached(publicTournamentCache, req.params.token);
+        if (cached) return res.json(cached);
         const matches = await getLeagueMatches(doc.ownerUid, doc.leagueKey);
         const payload = {
             success: true,
@@ -1618,6 +1741,15 @@ app.get('/api/public/tournament/:token/match/:matchId', async (req, res) => {
     try {
         const doc = await leaguesCollection.findOne({ publicToken: req.params.token });
         if (!doc) return res.status(404).json({ success: false, error: 'Tournament not found' });
+
+        // 🔒 Same private-tournament rule as /api/public/tournament/:token above.
+        if (await isPrivateLeagueDoc(doc)) {
+            const requesterEmail = await verifiedRequesterEmail(req);
+            if (!isPrivateCreatorEmail(requesterEmail)) {
+                return res.status(404).json({ success: false, error: 'Tournament not found' });
+            }
+        }
+
         const match = await matchRecordsCollection.findOne({ ownerUid: doc.ownerUid, leagueKey: doc.leagueKey, matchId: req.params.matchId });
         if (!match) return res.status(404).json({ success: false, error: 'Match not found' });
         res.json({ success: true, displayName: doc.displayName || '', match });
@@ -1652,26 +1784,20 @@ app.get('/api/public/match/:id', async (req, res) => {
 
 // ================================================================
 // 🏠 HOMEPAGE TOURNAMENTS DIRECTORY — public, read-only, no auth.
-// This is a single-owner platform (only OWNER_EMAIL can create/manage
-// tournaments via the gated panel), so "all tournaments" really just
-// means "every league this owner has generated a public link for" —
-// same trust model as /api/public/tournament/:token above, just listed
-// instead of requiring the token up front. Cards on the homepage link
-// straight to the existing /score/tournament/:token page, which already
-// renders matches, scorecards, stats and clips — nothing is duplicated
-// here.
+// "All tournaments" means every cricket league that a PUBLIC authorized
+// creator (workallsportslive@gmail.com, vinitkrkr1@gmail.com) has
+// generated a public link for — same trust model as
+// /api/public/tournament/:token above, just listed instead of requiring
+// the token up front. chhayajeeth@gmail.com's tournaments are private and
+// are never included here (getVerifiedEmailForUid/isPrivateLeagueDoc keeps
+// them out even defensively, on top of only querying the 2 public uids).
+// Cards on the homepage link straight to the existing
+// /score/tournament/:token page, which already renders matches,
+// scorecards, stats and clips — nothing is duplicated here.
 // ================================================================
-let cachedOwnerUid = null;
-async function getOwnerUid() {
-    if (cachedOwnerUid) return cachedOwnerUid;
-    try {
-        const user = await admin.auth().getUserByEmail(OWNER_EMAIL);
-        cachedOwnerUid = user.uid;
-        return cachedOwnerUid;
-    } catch (err) {
-        console.log('getOwnerUid error (owner may not have signed in yet):', err.message);
-        return null;
-    }
+async function getPublicCreatorUids() {
+    const uids = await Promise.all(PUBLIC_CREATOR_EMAILS.map(getUidForEmail));
+    return uids.filter(Boolean);
 }
 
 const PUBLIC_TOURNAMENTS_CACHE_TTL_MS = 8000;
@@ -1683,17 +1809,17 @@ app.get('/api/public/tournaments', async (req, res) => {
         if (publicTournamentsListCache && publicTournamentsListCache.expiresAt > Date.now()) {
             return res.json(publicTournamentsListCache.payload);
         }
-        const ownerUid = await getOwnerUid();
-        if (!ownerUid) return res.json({ success: true, tournaments: [] });
+        const ownerUids = await getPublicCreatorUids();
+        if (ownerUids.length === 0) return res.json({ success: true, tournaments: [] });
 
         const leagues = await leaguesCollection.find({
-            ownerUid,
+            ownerUid: { $in: ownerUids },
             leagueKey: { $ne: SINGLE_MATCHES_LEAGUE_KEY },
             publicToken: { $exists: true, $ne: null }
-        }).project({ leagueKey: 1, displayName: 1, publicToken: 1, updatedAt: 1, liveMatches: 1, sport: 1, completed: 1, statusOverride: 1 }).toArray();
+        }).project({ ownerUid: 1, leagueKey: 1, displayName: 1, publicToken: 1, updatedAt: 1, liveMatches: 1, sport: 1, completed: 1, statusOverride: 1 }).toArray();
 
         const allTournaments = await Promise.all(leagues.map(async doc => {
-            const matches = await getLeagueMatches(ownerUid, doc.leagueKey);
+            const matches = await getLeagueMatches(doc.ownerUid, doc.leagueKey);
             const isLive = !!(doc.liveMatches && doc.liveMatches.length > 0);
             return {
                 token: doc.publicToken,
@@ -2364,7 +2490,9 @@ adminRouter.post('/tournaments/:leagueKey/status', async (req, res) => {
     if (!leagueKey) return res.status(400).json({ success: false, error: 'League key required' });
     if (!allowed.includes(status)) return res.status(400).json({ success: false, error: 'status must be live, completed, ongoing, upcoming, or null' });
     try {
-        const ownerUid = await getOwnerUid();
+        // req.ownerUid comes straight from requireOwner's verified ID token
+        // (this whole router is chhayajeeth-only) — no extra lookup needed.
+        const ownerUid = req.ownerUid;
         const before = await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { statusOverride: 1, displayName: 1 } });
         if (!before) return res.status(404).json({ success: false, error: 'Tournament not found' });
         await leaguesCollection.updateOne(
