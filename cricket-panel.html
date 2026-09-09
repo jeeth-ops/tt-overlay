@@ -705,9 +705,11 @@
         <button class="small ghost full" id="view-points-table-btn" type="button" style="margin-top:6px;">📊 Points Table</button>
         <button class="small ghost full" id="copy-tournament-link-btn" type="button" style="margin-top:6px;">🔗 Copy Public Tournament Link</button>
         <div class="shortcut-hint" id="tournament-link-hint" style="display:none;"></div>
+        <button class="small ghost full" id="mark-tournament-complete-btn" type="button" style="margin-top:6px;">🏁 Mark Tournament as Completed</button>
+        <div class="shortcut-hint" id="tournament-complete-hint" style="display:none;"></div>
         <div id="league-matches-list" style="display:none; margin-top:10px; max-height:320px; overflow-y:auto; border-top:1px solid var(--border); padding-top:8px;"></div>
         <button class="small full" id="delete-tournament-btn" type="button" style="margin-top:10px; border-color:var(--red); color:var(--red);">🗑️ Delete Entire Tournament</button>
-        <div class="shortcut-hint">Saves itself the instant a match is won or tied — this button is only needed to save mid-match or re-save after a correction. Team, batter and bowler "Tournament" cards pull straight from every match saved in this tournament, matched automatically by name — nothing to type by hand. "Delete Entire Tournament" removes every match saved under it, permanently.</div>
+        <div class="shortcut-hint">Saves itself the instant a match is won or tied — this button is only needed to save mid-match or re-save after a correction. Team, batter and bowler "Tournament" cards pull straight from every match saved in this tournament, matched automatically by name — nothing to type by hand. "Mark Tournament as Completed" is what actually makes the public Tournaments page show "Completed" — just saving matches no longer does that on its own. "Delete Entire Tournament" removes every match saved under it, permanently.</div>
       </div>
     </div>
 
@@ -3542,6 +3544,11 @@ function currentLeagueMatchesLive(){
 // from the first one. Fails silently to the local cache if the server or
 // network isn't reachable (or the operator isn't logged in yet — no uid
 // means no server sync, panel just runs on its local cache until login).
+// Tracks whether the currently-loaded tournament has been marked completed
+// (see POST /api/league/:name/complete on the server) — keyed by trimmed
+// tournament name, refreshed every time syncLeagueFromServer runs.
+const tournamentCompletedCache = {};
+
 async function syncLeagueFromServer(name){
   const trimmed = (name || '').trim();
   if(!trimmed || !currentOwnerUid()) return;
@@ -3551,6 +3558,7 @@ async function syncLeagueFromServer(name){
     const data = await res.json();
     if(data && data.success){
       leagueCache[key] = data.matches || [];
+      tournamentCompletedCache[trimmed.toLowerCase()] = !!data.completed;
       saveLeagueMatchesLocal(trimmed, leagueCache[key]);
       refreshLeagueUI();
       refreshTournamentCardsIfShown();
@@ -3901,16 +3909,18 @@ function deleteMatchFromLeague(matchId){
       }
     }).catch(() => toast('⚠️ Deleted locally only — could not sync to server'));
 }
-// Deletes every match saved under a tournament — not just the current
-// one — and forgets the tournament itself (it disappears from the
-// dropdown). There's no bulk-delete route on the server, so the matches
-// are removed one by one via the same per-match DELETE endpoint used by
-// deleteMatchFromLeague above.
+// Deletes the ENTIRE tournament — its matches AND the tournament/league
+// record itself — via the single DELETE /api/league/:name route. This used
+// to loop over every match and DELETE them one-by-one, which never removed
+// the league doc itself (name, publicToken, sport, completed flag), so a
+// "deleted" tournament with 0 matches kept reappearing forever on the
+// public Tournaments section on index.html. The single call below removes
+// everything in one shot, server-side, so nothing is left behind.
 function deleteEntireTournament(name){
   const trimmed = (name || '').trim();
   if(!trimmed) return;
   const key = leagueStorageKey(trimmed);
-  const matches = (leagueCache[key] || loadLeagueMatchesLocal(trimmed)).slice();
+  const matchCount = (leagueCache[key] || loadLeagueMatchesLocal(trimmed)).length;
 
   leagueCache[key] = [];
   try{ localStorage.removeItem(leagueStorageKey(trimmed)); }catch(e){}
@@ -3925,12 +3935,15 @@ function deleteEntireTournament(name){
   }
   refreshLeagueUI();
   refreshTournamentCardsIfShown();
-  toast(`🗑️ "${trimmed}" and its ${matches.length} match${matches.length === 1 ? '' : 'es'} deleted`);
+  toast(`🗑️ "${trimmed}" and its ${matchCount} match${matchCount === 1 ? '' : 'es'} deleted`);
 
   if(!currentOwnerUid()) return; // local-only, nothing on the server to clean up
-  matches.forEach(m => {
-    fetch(withUid(`${leagueApiPath(trimmed)}/match/${encodeURIComponent(m.matchId)}`), { method: 'DELETE' }).catch(() => {});
-  });
+  fetch(withUid(leagueApiPath(trimmed)), { method: 'DELETE' })
+    .then(r => r.json())
+    .then(data => {
+      if(!data || !data.success) toast('⚠️ Could not fully delete on server — it may reappear on Tournaments');
+    })
+    .catch(() => toast('⚠️ Could not fully delete on server — it may reappear on Tournaments'));
 }
 document.getElementById('delete-tournament-btn').addEventListener('click', () => {
   const name = (state.leagueName || '').trim();
@@ -3939,11 +3952,57 @@ document.getElementById('delete-tournament-btn').addEventListener('click', () =>
   if(!confirm(`Delete the ENTIRE tournament "${name}" — all ${matchCount} saved match${matchCount === 1 ? '' : 'es'} — permanently? This cannot be undone.`)) return;
   deleteEntireTournament(name);
 });
+
+// Toggles whether a tournament is marked "finished" — this is what the
+// public Tournaments section on index.html actually checks for the
+// "Completed" badge; just having saved matches is no longer enough (a
+// tournament with 5 of 10 matches played should show "Ongoing", not
+// "Completed"). Flips completed -> !completed each click.
+function updateMarkCompleteButton(){
+  const btn = document.getElementById('mark-tournament-complete-btn');
+  const hint = document.getElementById('tournament-complete-hint');
+  if(!btn) return;
+  const name = (state.leagueName || '').trim();
+  if(!name){ btn.disabled = true; btn.textContent = '🏁 Mark Tournament as Completed'; if(hint) hint.style.display = 'none'; return; }
+  btn.disabled = false;
+  const isCompleted = !!tournamentCompletedCache[name.toLowerCase()];
+  btn.textContent = isCompleted ? '↩️ Reopen Tournament (Undo Completed)' : '🏁 Mark Tournament as Completed';
+  if(hint){
+    hint.style.display = isCompleted ? 'block' : 'none';
+    hint.textContent = isCompleted ? `"${name}" is marked Completed on the public Tournaments page.` : '';
+  }
+}
+document.getElementById('mark-tournament-complete-btn').addEventListener('click', () => {
+  const name = (state.leagueName || '').trim();
+  if(!name){ toast('Select a tournament first'); return; }
+  if(!currentOwnerUid()){ toast('⚠️ Login required to update tournament status'); return; }
+  const nextCompleted = !tournamentCompletedCache[name.toLowerCase()];
+  const msg = nextCompleted
+    ? `Mark "${name}" as Completed? It will show "Completed" on the public Tournaments page.`
+    : `Reopen "${name}"? It will go back to showing "Live"/"Ongoing"/"Upcoming" based on its matches.`;
+  if(!confirm(msg)) return;
+  fetch(withUid(`${leagueApiPath(name)}/complete`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ completed: nextCompleted })
+  }).then(r => r.json()).then(data => {
+    if(data && data.success){
+      tournamentCompletedCache[name.toLowerCase()] = !!data.completed;
+      updateMarkCompleteButton();
+      refreshTournamentCardsIfShown();
+      toast(nextCompleted ? `🏁 "${name}" marked Completed` : `↩️ "${name}" reopened`);
+    } else {
+      toast('⚠️ Could not update tournament status');
+    }
+  }).catch(() => toast('⚠️ Could not update tournament status — check connection'));
+});
+
 function refreshLeagueUI(){
   const name = (state.leagueName || '').trim();
   const countEl = document.getElementById('league-match-count');
   const listEl = document.getElementById('league-matches-list');
   if(!countEl || !listEl) return;
+  updateMarkCompleteButton();
   if(!name){
     countEl.textContent = 'No tournament selected — pick one above, or start a new one, to begin tracking it.';
     listEl.innerHTML = '';
