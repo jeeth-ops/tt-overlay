@@ -1482,7 +1482,7 @@ document.documentElement.setAttribute('data-theme', 'dark');
         <div class="gate-card" style="position:relative;">
             <button onclick="closeAuthGate()" class="auth-gate-close" style="position:absolute;top:14px;right:14px;">✕</button>
             <h2>Scor<span>vix</span> Access</h2>
-            <p>Owner sign-in. Everyone else can browse tournaments below without an account.</p>
+            <p id="auth-gate-message">Owner sign-in. Everyone else can browse tournaments below without an account.</p>
             <button class="google-btn" onclick="loginWithGoogle()">
                 <img src="https://www.svgrepo.com/show/475656/google-color.svg" width="20"> 
                 Sign in with Google
@@ -1868,13 +1868,39 @@ document.documentElement.setAttribute('data-theme', 'dark');
             }).catch(err => console.log("Log error:", err));
         }
 
-        function openAuthGate() {
+        // Where to send the visitor once they finish signing in. Persisted
+        // in sessionStorage (not a plain JS variable) because
+        // signInWithRedirect leaves the page and comes back on a fresh
+        // load, which would otherwise lose it. Set right before opening the
+        // gate for a tournament click (see openTournamentAuthGate below);
+        // left empty for the plain owner-sign-in nav button, which should
+        // just close the gate in place.
+        const PENDING_REDIRECT_KEY = 'scorvix_pending_redirect';
+
+        // message: optional custom copy for auth-gate-message, used when the
+        // gate is opened because someone clicked a tournament rather than
+        // the "Sign in" nav button.
+        function openAuthGate(message) {
+            const msgEl = document.getElementById('auth-gate-message');
+            if (msgEl) {
+                msgEl.textContent = message || 'Owner sign-in. Everyone else can browse tournaments below without an account.';
+            }
             authGate.classList.remove('hidden');
             authGate.style.opacity = '1';
         }
         function closeAuthGate() {
             authGate.style.opacity = '0';
             setTimeout(() => authGate.classList.add('hidden'), 300);
+        }
+
+        // Opens the sign-in gate specifically for a tournament the visitor
+        // just clicked. Any signed-in Google account is enough — this isn't
+        // limited to AUTHORIZED_CREATOR_EMAILS, it's just "please sign in
+        // first" for the public scorecard/clips view. Once auth.onAuthStateChanged
+        // sees a user, it follows the saved redirect automatically.
+        function openTournamentAuthGate(url) {
+            try { sessionStorage.setItem(PENDING_REDIRECT_KEY, url); } catch (e) { /* ignore */ }
+            openAuthGate('Sign in with Google to view this tournament\u2019s scorecards and clips.');
         }
 
         function loginWithGoogle() {
@@ -2042,6 +2068,18 @@ document.documentElement.setAttribute('data-theme', 'dark');
 
                 closeAuthGate();
 
+                // If this sign-in happened because someone clicked a
+                // tournament while logged out, send them straight there now
+                // that they're authenticated — the ID token then travels
+                // with the API calls that page makes (see score-tournament.html).
+                let pendingRedirectUrl = null;
+                try { pendingRedirectUrl = sessionStorage.getItem(PENDING_REDIRECT_KEY); } catch (e) { /* ignore */ }
+                if (pendingRedirectUrl) {
+                    try { sessionStorage.removeItem(PENDING_REDIRECT_KEY); } catch (e) { /* ignore */ }
+                    window.location.href = pendingRedirectUrl;
+                    return;
+                }
+
                 userDisplay.innerText = `Hi, ${user.displayName || user.email}`;
                 if (navSigninBtn) navSigninBtn.classList.remove('visible');
                 if (logoutBtn) logoutBtn.classList.add('visible');
@@ -2124,9 +2162,21 @@ document.documentElement.setAttribute('data-theme', 'dark');
             empty.style.display = 'none';
 
             list.forEach(t => {
+                // Not a plain <a href> anymore: anyone can scroll and see
+                // this card, but the actual tournament page (scorecards +
+                // clips) needs a signed-in Google account. Signed-in
+                // visitors go straight through; signed-out visitors get the
+                // sign-in gate first and land here right after.
+                const tournamentUrl = `/score/tournament/${t.token}`;
                 const card = document.createElement('a');
                 card.className = 'tournament-card';
-                card.href = `/score/tournament/${t.token}`;
+                card.href = tournamentUrl;
+                card.addEventListener('click', (e) => {
+                    if (!isUserLoggedIn) {
+                        e.preventDefault();
+                        openTournamentAuthGate(tournamentUrl);
+                    }
+                });
 
                 let statusHtml;
                 if (t.status === 'live') {
