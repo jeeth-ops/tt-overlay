@@ -1049,7 +1049,16 @@ app.get('/api/league/:name', async (req, res) => {
     if (!matchRecordsCollection) return res.json({ success: true, matches: [] }); // Mongo not configured — panel falls back to its local cache
     try {
         const matches = await getLeagueMatches(ownerUid, leagueKey);
-        res.json({ success: true, matches });
+        // Also hand back whether the tournament has been marked completed
+        // (see POST /api/league/:name/complete below), so the panel can show
+        // the real current state of the "Mark Tournament as Completed"
+        // button instead of guessing/always defaulting to "not completed".
+        let completed = false;
+        if (leaguesCollection) {
+            const doc = await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { completed: 1 } });
+            completed = !!(doc && doc.completed);
+        }
+        res.json({ success: true, matches, completed });
     } catch (err) {
         console.log('League fetch error:', err);
         res.status(500).json({ success: false, error: 'Could not load league data' });
@@ -1136,6 +1145,57 @@ app.delete('/api/league/:name/match/:matchId', async (req, res) => {
     } catch (err) {
         console.log('League delete error:', err);
         res.status(500).json({ success: false, error: 'Could not delete match' });
+    }
+});
+
+// 🩹 NEW: deletes an ENTIRE tournament/league — the league doc itself
+// (name, publicToken, sport, live pointer) plus every match saved under it.
+// Nothing previously removed the league doc: deleting all of a tournament's
+// matches one-by-one via the route above left an empty "ghost" tournament
+// (0 matches, publicToken still set) behind forever, which is why deleted
+// tournaments kept reappearing on the public Tournaments section.
+app.delete('/api/league/:name', async (req, res) => {
+    const leagueKey = leagueKeyFor(req.params.name);
+    const ownerUid = ownerUidFrom(req);
+    if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
+    if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
+    if (leagueKey === SINGLE_MATCHES_LEAGUE_KEY) return res.status(400).json({ success: false, error: 'Cannot delete the single-matches bucket' });
+    if (!leaguesCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        await matchRecordsCollection.deleteMany({ ownerUid, leagueKey });
+        await leaguesCollection.deleteOne({ ownerUid, leagueKey });
+        publicTournamentsListCache = null; // don't serve the stale list for up to 8s
+        res.json({ success: true });
+    } catch (err) {
+        console.log('League (tournament) delete error:', err);
+        res.status(500).json({ success: false, error: 'Could not delete tournament' });
+    }
+});
+
+// 🏁 Marks a tournament as finished/not-finished. "Completed" on the public
+// Tournaments section previously just meant "has ≥1 saved match" — which
+// made a tournament that's still ongoing (only 1 of many matches played so
+// far) show as "Completed" the moment its first match was saved. Now
+// "Completed" only ever comes from this explicit flag, set by the operator
+// when the tournament is actually over (see status logic in
+// /api/public/tournaments below).
+app.post('/api/league/:name/complete', async (req, res) => {
+    const leagueKey = leagueKeyFor(req.params.name);
+    const ownerUid = ownerUidFrom(req);
+    const completed = !!(req.body && req.body.completed);
+    if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
+    if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        await leaguesCollection.updateOne(
+            { ownerUid, leagueKey },
+            { $set: { completed, completedAt: completed ? Date.now() : null } }
+        );
+        publicTournamentsListCache = null; // reflect the change immediately, not after up to 8s
+        res.json({ success: true, completed });
+    } catch (err) {
+        console.log('League complete-toggle error:', err);
+        res.status(500).json({ success: false, error: 'Could not update tournament status' });
     }
 });
 
@@ -1630,7 +1690,7 @@ app.get('/api/public/tournaments', async (req, res) => {
             ownerUid,
             leagueKey: { $ne: SINGLE_MATCHES_LEAGUE_KEY },
             publicToken: { $exists: true, $ne: null }
-        }).project({ leagueKey: 1, displayName: 1, publicToken: 1, updatedAt: 1, liveMatches: 1, sport: 1 }).toArray();
+        }).project({ leagueKey: 1, displayName: 1, publicToken: 1, updatedAt: 1, liveMatches: 1, sport: 1, completed: 1, statusOverride: 1 }).toArray();
 
         const allTournaments = await Promise.all(leagues.map(async doc => {
             const matches = await getLeagueMatches(ownerUid, doc.leagueKey);
@@ -1638,7 +1698,14 @@ app.get('/api/public/tournaments', async (req, res) => {
             return {
                 token: doc.publicToken,
                 name: doc.displayName || doc.leagueKey,
-                status: isLive ? 'live' : (matches.length > 0 ? 'completed' : 'upcoming'),
+                // Manual override (set only via the owner-only admin route
+                // POST /api/admin/tournaments/:leagueKey/status) always wins.
+                // Otherwise: 'live' while a match is actually live, 'completed'
+                // only once the operator has explicitly marked the WHOLE
+                // tournament finished (doc.completed) — NOT just "has a saved
+                // match", 'ongoing' once matches exist but it isn't finished
+                // yet, else 'upcoming'.
+                status: doc.statusOverride || (isLive ? 'live' : (doc.completed ? 'completed' : (matches.length > 0 ? 'ongoing' : 'upcoming'))),
                 matchCount: matches.length,
                 updatedAt: doc.updatedAt || 0,
                 // Legacy docs saved before `sport` existed on the league doc
@@ -2282,6 +2349,37 @@ app.get('/api/get-sports', async (req, res) => {
 const adminRouter = express.Router();
 adminRouter.use(requireOwner);
 
+// ---- Tournaments: manual status override (owner-only) ----
+// Lets ONLY the verified owner (requireOwner — real Firebase-token email
+// check, not a client-supplied uid) force what a tournament's card shows on
+// the public Tournaments section — e.g. flip a "Live" card to "Completed"
+// or back — regardless of what the actual match data would compute.
+// status: 'live' | 'completed' | 'ongoing' | 'upcoming' to force it, or
+// null/omitted to clear the override and go back to automatic status.
+adminRouter.post('/tournaments/:leagueKey/status', async (req, res) => {
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const leagueKey = leagueKeyFor(req.params.leagueKey);
+    const allowed = ['live', 'completed', 'ongoing', 'upcoming', null];
+    const status = req.body && req.body.status ? String(req.body.status) : null;
+    if (!leagueKey) return res.status(400).json({ success: false, error: 'League key required' });
+    if (!allowed.includes(status)) return res.status(400).json({ success: false, error: 'status must be live, completed, ongoing, upcoming, or null' });
+    try {
+        const ownerUid = await getOwnerUid();
+        const before = await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { statusOverride: 1, displayName: 1 } });
+        if (!before) return res.status(404).json({ success: false, error: 'Tournament not found' });
+        await leaguesCollection.updateOne(
+            { ownerUid, leagueKey },
+            status ? { $set: { statusOverride: status } } : { $unset: { statusOverride: '' } }
+        );
+        publicTournamentsListCache = null; // reflect the change immediately, not after up to 8s
+        await logAuditAction(req.ownerEmail, 'Tournament status override', before.displayName || leagueKey, before.statusOverride || null, status);
+        res.json({ success: true, status });
+    } catch (err) {
+        console.log('Tournament status override error:', err);
+        res.status(500).json({ success: false, error: 'Could not update tournament status' });
+    }
+});
+
 // ---- Dashboard ----
 adminRouter.get('/dashboard', async (req, res) => {
     try {
@@ -2566,7 +2664,7 @@ adminRouter.get('/cricket', async (req, res) => {
         // that used to mean this single admin page load pulled every match
         // any of the last 50 active owners had ever saved.
         const [leagues, matchCounts, recentMatches, ballCount] = await Promise.all([
-            leaguesCollection ? leaguesCollection.find({}).project({ ownerUid: 1, leagueKey: 1, displayName: 1, updatedAt: 1 }).sort({ updatedAt: -1 }).limit(50).toArray() : [],
+            leaguesCollection ? leaguesCollection.find({}).project({ ownerUid: 1, leagueKey: 1, displayName: 1, updatedAt: 1, liveMatches: 1, sport: 1, completed: 1, statusOverride: 1 }).sort({ updatedAt: -1 }).limit(50).toArray() : [],
             matchRecordsCollection ? matchRecordsCollection.aggregate([
                 { $group: { _id: { ownerUid: '$ownerUid', leagueKey: '$leagueKey' }, count: { $sum: 1 } } }
             ]).toArray() : [],
@@ -2575,10 +2673,19 @@ adminRouter.get('/cricket', async (req, res) => {
         ]);
         const countKey = (ownerUid, leagueKey) => `${ownerUid}::${leagueKey}`;
         const countMap = new Map(matchCounts.map(c => [countKey(c._id.ownerUid, c._id.leagueKey), c.count]));
-        const tournaments = leagues.map(l => ({
-            leagueKey: l.leagueKey, displayName: l.displayName || l.leagueKey,
-            ownerUid: l.ownerUid, matchCount: countMap.get(countKey(l.ownerUid, l.leagueKey)) || 0, updatedAt: l.updatedAt || null
-        }));
+        const tournaments = leagues.map(l => {
+            const matchCount = countMap.get(countKey(l.ownerUid, l.leagueKey)) || 0;
+            const isLive = !!(l.liveMatches && l.liveMatches.length > 0);
+            // Same status computation as the public /api/public/tournaments
+            // route, so what the admin panel shows/edits matches what
+            // visitors actually see on index.html.
+            const publicStatus = l.statusOverride || (isLive ? 'live' : (l.completed ? 'completed' : (matchCount > 0 ? 'ongoing' : 'upcoming')));
+            return {
+                leagueKey: l.leagueKey, displayName: l.displayName || l.leagueKey,
+                ownerUid: l.ownerUid, matchCount, updatedAt: l.updatedAt || null,
+                sport: l.sport || 'cricket', publicStatus, statusOverride: l.statusOverride || null
+            };
+        });
         res.json({ success: true, tournaments, recentMatches, totalBallsLogged: ballCount });
     } catch (err) {
         console.log('Admin cricket data error:', err);
