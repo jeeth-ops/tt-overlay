@@ -235,6 +235,7 @@ label{font-size:.78rem;color:var(--text-muted);display:block;margin:12px 0 6px;f
     <button class="nav-item" data-panel="users"><span class="nav-indicator"></span><span class="ic">👥</span> Users</button>
     <button class="nav-item" data-panel="broadcasting"><span class="nav-indicator"></span><span class="ic">📡</span> Broadcasting</button>
     <button class="nav-item" data-panel="cricket"><span class="nav-indicator"></span><span class="ic">🏏</span> Cricket Data</button>
+    <button class="nav-item" data-panel="corrections"><span class="nav-indicator"></span><span class="ic">🛠️</span> Corrections</button>
     <button class="nav-item" data-panel="analytics"><span class="nav-indicator"></span><span class="ic">📈</span> Analytics</button>
     <button class="nav-item" data-panel="health"><span class="nav-indicator"></span><span class="ic">💚</span> System Health</button>
     <button class="nav-item" data-panel="audit"><span class="nav-indicator"></span><span class="ic">📜</span> Audit Logs</button>
@@ -333,6 +334,32 @@ label{font-size:.78rem;color:var(--text-muted);display:block;margin:12px 0 6px;f
         <h3><span class="t">🎥 Recent Matches</span></h3>
         <div class="table-wrap">
           <table><thead><tr><th>Match ID</th><th>Recording</th><th>Started</th></tr></thead><tbody id="matchesBody"></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- CORRECTIONS (chhayajeeth@gmail.com only — global owner override) -->
+    <section class="panel" id="panel-corrections">
+      <div class="card">
+        <h3><span class="t">🔎 Find a Tournament</span></h3>
+        <p style="color:var(--text-muted);font-size:.85rem;margin-bottom:14px;">Search across every creator's tournaments — workallsportslive@gmail.com, vinitkrkr1@gmail.com, and your own private ones.</p>
+        <div class="search-row">
+          <input type="text" id="corrSearchInput" placeholder="Search by tournament name…">
+          <button class="btn btn-ghost" id="corrSearchBtn">Search</button>
+        </div>
+        <div class="table-wrap">
+          <table><thead><tr><th>Tournament</th><th>Sport</th><th>Created By</th><th>Visibility</th><th>Matches</th><th>Updated</th><th></th></tr></thead><tbody id="corrTournamentsBody"></tbody></table>
+        </div>
+      </div>
+
+      <div class="card" id="corrDetailCard" style="display:none;">
+        <h3>
+          <span class="t">🏆 <span id="corrDetailTitle">—</span></span>
+          <button class="btn btn-danger" id="corrDeleteTournamentBtn">Delete Tournament</button>
+        </h3>
+        <p id="corrDetailMeta" style="color:var(--text-muted);font-size:.82rem;margin-top:-8px;margin-bottom:16px;"></p>
+        <div class="table-wrap">
+          <table><thead><tr><th>Match</th><th>Score A</th><th>Score B</th><th>Result</th><th></th></tr></thead><tbody id="corrMatchesBody"></tbody></table>
         </div>
       </div>
     </section>
@@ -479,6 +506,7 @@ function initNav(){
         users:['Users','Every registered All Sports Live account.'],
         broadcasting:['Broadcasting','Overlay templates available to users.'],
         cricket:['Cricket Data','Tournaments, matches and ball-by-ball logs.'],
+        corrections:['Corrections','Open any creator\u2019s tournament to correct match data, clips, or delete it — chhayajeeth@gmail.com only.'],
         analytics:['Analytics','Real usage, pulled from activity logs.'],
         health:['System Health','Live status of every connected service.'],
         audit:['Audit Logs','Every owner action, permanently recorded.'],
@@ -515,6 +543,7 @@ const loaders = {
   users: async ()=> loadUsers(true),
   broadcasting: loadTemplates,
   cricket: loadCricket,
+  corrections: loadCorrections,
   analytics: loadAnalytics,
   health: loadHealth,
   audit: loadAudit,
@@ -853,6 +882,251 @@ async function loadCricket(){
   document.getElementById('matchesBody').innerHTML = data.recentMatches.length ? data.recentMatches.map(m=>`
     <tr><td>${m.matchId}</td><td>${m.recordingStatus||'—'}</td><td style="color:var(--text-muted);font-size:.8rem;">${m.recordingStartedAt?fmtDate(new Date(m.recordingStartedAt).toISOString()):'—'}</td></tr>
   `).join('') : `<tr><td colspan="3"><div class="empty-state"><div class="ic">🎥</div>No matches recorded yet.</div></td></tr>`;
+}
+
+// ===== Corrections (chhayajeeth@gmail.com only) =====
+let corrState = { ownerUid: null, leagueKey: null, league: null, matches: [] };
+
+async function loadCorrections(){
+  document.getElementById('corrSearchBtn').onclick = ()=> searchCorrTournaments();
+  document.getElementById('corrSearchInput').onkeydown = (e)=>{ if (e.key==='Enter') searchCorrTournaments(); };
+  document.getElementById('corrDeleteTournamentBtn').onclick = ()=> deleteCorrTournament();
+  if (!document.getElementById('corrTournamentsBody').dataset.loaded){
+    document.getElementById('corrTournamentsBody').dataset.loaded = '1';
+    await searchCorrTournaments();
+  }
+}
+
+async function searchCorrTournaments(){
+  const body = document.getElementById('corrTournamentsBody');
+  body.innerHTML = skeletonRows(4,7);
+  const q = document.getElementById('corrSearchInput').value.trim();
+  try {
+    const data = await api('/tournaments/search' + (q ? `?q=${encodeURIComponent(q)}` : ''));
+    body.innerHTML = data.tournaments.length ? data.tournaments.map(t=>`
+      <tr>
+        <td>${t.displayName}</td>
+        <td style="text-transform:capitalize;">${t.sport}</td>
+        <td style="color:var(--text-muted);font-size:.8rem;">${t.createdBy}</td>
+        <td>${t.isPrivate ? '<span class="badge badge-warn">Private</span>' : '<span class="badge badge-ok">Public</span>'}</td>
+        <td>${t.matchCount}</td>
+        <td style="color:var(--text-muted);font-size:.8rem;">${t.updatedAt?fmtDate(new Date(t.updatedAt).toISOString()):'—'}</td>
+        <td><button class="btn btn-ghost corr-open-btn" data-owner="${t.ownerUid}" data-league="${t.leagueKey}">Open</button></td>
+      </tr>
+    `).join('') : `<tr><td colspan="7"><div class="empty-state"><div class="ic">🏆</div>No tournaments match that search.</div></td></tr>`;
+    document.querySelectorAll('.corr-open-btn').forEach(btn=>{
+      btn.onclick = ()=> openCorrTournament(btn.dataset.owner, btn.dataset.league);
+    });
+  } catch(err){ toast(err.message,'err'); }
+}
+
+async function openCorrTournament(ownerUid, leagueKey){
+  try {
+    const data = await api(`/tournament/${encodeURIComponent(ownerUid)}/${encodeURIComponent(leagueKey)}`);
+    corrState = { ownerUid, leagueKey, league: data.league, matches: data.matches };
+    renderCorrDetail();
+  } catch(err){ toast(err.message,'err'); }
+}
+
+function renderCorrDetail(){
+  const card = document.getElementById('corrDetailCard');
+  card.style.display = 'block';
+  document.getElementById('corrDetailTitle').textContent = corrState.league.displayName;
+  document.getElementById('corrDetailMeta').textContent =
+    `Created by ${corrState.league.createdBy} · ${corrState.league.isPrivate ? 'Private' : 'Public'} · ${corrState.matches.length} match${corrState.matches.length===1?'':'es'}`;
+  const body = document.getElementById('corrMatchesBody');
+  body.innerHTML = corrState.matches.length ? corrState.matches.map((m,i)=>{
+    const a = m.teamA && m.teamA.name || 'Team A', b = m.teamB && m.teamB.name || 'Team B';
+    const sa = m.scoreA || {runs:0,overs:'0.0'}, sb = m.scoreB || {runs:0,overs:'0.0'};
+    const result = m.winningTeam === 'A' ? `${a} won` : m.winningTeam === 'B' ? `${b} won` : m.winningTeam === 'TIE' ? 'Tied' : 'In progress';
+    return `<tr>
+      <td>${a} vs ${b}<div style="color:var(--text-dim);font-size:.72rem;">${m.matchId}</div></td>
+      <td>${sa.runs}/${sa.wickets ?? '—'} (${sa.overs})</td>
+      <td>${sb.runs}/${sb.wickets ?? '—'} (${sb.overs})</td>
+      <td>${result}</td>
+      <td style="display:flex;gap:6px;">
+        <button class="btn btn-ghost corr-edit-match" data-idx="${i}">Correct</button>
+        <button class="btn btn-ghost corr-view-clips" data-match="${m.matchId}">Clips</button>
+      </td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="5"><div class="empty-state"><div class="ic">🏏</div>No matches saved under this tournament yet.</div></td></tr>`;
+  document.querySelectorAll('.corr-edit-match').forEach(btn=> btn.onclick = ()=> openMatchEditModal(corrState.matches[Number(btn.dataset.idx)]));
+  document.querySelectorAll('.corr-view-clips').forEach(btn=> btn.onclick = ()=> openClipsModal(btn.dataset.match));
+}
+
+// Generic modal with arbitrary form HTML + Save handler — same visual
+// language as confirmModal() above, just with fields instead of only text.
+function fieldModal(title, bodyHtml, onSave, opts={}){
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop';
+  wrap.innerHTML = `<div class="modal ${opts.large?'modal-lg':''}"><h3>${title}</h3><div>${bodyHtml}</div>
+    <div class="modal-actions" style="margin-top:18px;"><button class="btn btn-ghost" id="fmCancel">Cancel</button><button class="btn btn-primary" id="fmSave" style="padding:9px 18px;">Save</button></div></div>`;
+  document.body.appendChild(wrap);
+  wrap.querySelector('#fmCancel').onclick = ()=> wrap.remove();
+  wrap.addEventListener('click', e=>{ if (e.target===wrap) wrap.remove(); });
+  wrap.querySelector('#fmSave').onclick = async ()=>{
+    const btn = wrap.querySelector('#fmSave');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try { await onSave(wrap); wrap.remove(); }
+    catch(err){ toast(err.message,'err'); btn.disabled = false; btn.textContent = 'Save'; }
+  };
+  return wrap;
+}
+
+// Quick fields for the common corrections (runs/overs/wickets/result) plus
+// a full JSON editor underneath for anything else (battingCard, bowlingCard,
+// extras, etc.) — quick fields win if both are edited, since they're applied
+// on top of whatever JSON is in the textarea at save time.
+function openMatchEditModal(match){
+  const sa = match.scoreA || {runs:0,overs:'0.0',wickets:0}, sb = match.scoreB || {runs:0,overs:'0.0',wickets:0};
+  const bodyHtml = `
+    <div class="field-row">
+      <div><label>${match.teamA&&match.teamA.name||'Team A'} — Runs</label><input id="cmScoreARuns" type="number" value="${sa.runs||0}"></div>
+      <div><label>${match.teamA&&match.teamA.name||'Team A'} — Overs</label><input id="cmScoreAOvers" value="${sa.overs||'0.0'}"></div>
+    </div>
+    <div class="field-row">
+      <div><label>${match.teamA&&match.teamA.name||'Team A'} — Wickets</label><input id="cmScoreAWkts" type="number" value="${sa.wickets||0}"></div>
+      <div></div>
+    </div>
+    <div class="field-row">
+      <div><label>${match.teamB&&match.teamB.name||'Team B'} — Runs</label><input id="cmScoreBRuns" type="number" value="${sb.runs||0}"></div>
+      <div><label>${match.teamB&&match.teamB.name||'Team B'} — Overs</label><input id="cmScoreBOvers" value="${sb.overs||'0.0'}"></div>
+    </div>
+    <div class="field-row">
+      <div><label>${match.teamB&&match.teamB.name||'Team B'} — Wickets</label><input id="cmScoreBWkts" type="number" value="${sb.wickets||0}"></div>
+      <div>
+        <label>Result</label>
+        <select id="cmWinningTeam">
+          <option value="" ${!match.winningTeam?'selected':''}>In progress / no result</option>
+          <option value="A" ${match.winningTeam==='A'?'selected':''}>${match.teamA&&match.teamA.name||'Team A'} won</option>
+          <option value="B" ${match.winningTeam==='B'?'selected':''}>${match.teamB&&match.teamB.name||'Team B'} won</option>
+          <option value="TIE" ${match.winningTeam==='TIE'?'selected':''}>Tied</option>
+        </select>
+      </div>
+    </div>
+    <label>Full match record (advanced — batting/bowling cards, extras, etc.)</label>
+    <textarea id="cmFullJson" rows="12">${JSON.stringify(match, null, 2).replace(/</g,'&lt;')}</textarea>
+    <p style="color:var(--text-dim);font-size:.76rem;margin-top:6px;">The quick fields above are applied on top of this JSON when you save. Edit batting/bowling card entries directly here for player-level corrections.</p>
+  `;
+  fieldModal(`Correct Match — ${match.teamA&&match.teamA.name||'A'} vs ${match.teamB&&match.teamB.name||'B'}`, bodyHtml, async (wrap)=>{
+    let record;
+    try { record = JSON.parse(wrap.querySelector('#cmFullJson').value); }
+    catch(e){ throw new Error('Full match record JSON is invalid: ' + e.message); }
+    record.scoreA = { ...(record.scoreA||{}), runs: Number(wrap.querySelector('#cmScoreARuns').value)||0, overs: wrap.querySelector('#cmScoreAOvers').value, wickets: Number(wrap.querySelector('#cmScoreAWkts').value)||0 };
+    record.scoreB = { ...(record.scoreB||{}), runs: Number(wrap.querySelector('#cmScoreBRuns').value)||0, overs: wrap.querySelector('#cmScoreBOvers').value, wickets: Number(wrap.querySelector('#cmScoreBWkts').value)||0 };
+    record.winningTeam = wrap.querySelector('#cmWinningTeam').value || null;
+    await api(`/tournament/${encodeURIComponent(corrState.ownerUid)}/${encodeURIComponent(corrState.leagueKey)}/match/${encodeURIComponent(match.matchId)}`, {
+      method: 'PUT', body: JSON.stringify({ record })
+    });
+    toast('Match corrected — tournament stats will reflect it on next load');
+    openCorrTournament(corrState.ownerUid, corrState.leagueKey);
+  }, { large: true });
+}
+
+async function deleteCorrTournament(){
+  if (!corrState.leagueKey) return;
+  confirmModal(
+    'Delete Tournament?',
+    `This permanently deletes <b>${corrState.league.displayName}</b> — all ${corrState.matches.length} match${corrState.matches.length===1?'':'es'}, their scorecards, statistics, and clips. It will disappear from the public tournament list and any shared links immediately. This cannot be undone.`,
+    async ()=>{
+      await api(`/tournament/${encodeURIComponent(corrState.ownerUid)}/${encodeURIComponent(corrState.leagueKey)}`, { method: 'DELETE' });
+      toast('Tournament deleted');
+      document.getElementById('corrDetailCard').style.display = 'none';
+      corrState = { ownerUid: null, leagueKey: null, league: null, matches: [] };
+      searchCorrTournaments();
+    }
+  );
+}
+
+// ---- Clip correction ----
+async function openClipsModal(matchId){
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop';
+  wrap.innerHTML = `<div class="modal modal-lg">
+    <h3>Clips — match ${matchId}</h3>
+    <div class="table-wrap" id="clipsModalBody"><div class="skel skel-row"></div></div>
+    <div class="modal-actions" style="margin-top:16px;"><button class="btn btn-ghost" id="clipsModalClose">Close</button></div>
+  </div>`;
+  document.body.appendChild(wrap);
+  wrap.querySelector('#clipsModalClose').onclick = ()=> wrap.remove();
+  wrap.addEventListener('click', e=>{ if (e.target===wrap) wrap.remove(); });
+  await refreshClipsModal(matchId, wrap);
+}
+
+async function refreshClipsModal(matchId, wrap){
+  try {
+    const data = await api(`/clips/match/${encodeURIComponent(matchId)}`);
+    wrap.querySelector('#clipsModalBody').innerHTML = data.clips.length ? `
+      <table><thead><tr><th>Event</th><th>Over.Ball</th><th>Striker</th><th>Bowler</th><th></th></tr></thead>
+      <tbody>${data.clips.map(c=>`
+        <tr>
+          <td>${c.eventType}${c.dismissalType?` (${c.dismissalType})`:''}</td>
+          <td>${c.over}.${c.ballInOver}</td>
+          <td>${c.strikerName||'—'}</td>
+          <td>${c.bowlerName||'—'}</td>
+          <td style="display:flex;gap:6px;">
+            <button class="btn btn-ghost clip-edit-btn" data-id="${c.clipId}">Edit</button>
+            <button class="btn btn-danger clip-del-btn" data-id="${c.clipId}">Delete</button>
+          </td>
+        </tr>
+      `).join('')}</tbody></table>
+    ` : `<div class="empty-state"><div class="ic">🎬</div>No clips for this match.</div>`;
+    wrap.querySelectorAll('.clip-edit-btn').forEach(btn=>{
+      const clip = data.clips.find(c=>c.clipId===btn.dataset.id);
+      btn.onclick = ()=> openClipEditModal(clip, matchId, wrap);
+    });
+    wrap.querySelectorAll('.clip-del-btn').forEach(btn=>{
+      btn.onclick = ()=> confirmModal('Delete Clip?', 'This removes the clip permanently — it will no longer appear in the scorecard or any player\u2019s clip list.', async ()=>{
+        await api(`/clips/${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
+        toast('Clip deleted');
+        refreshClipsModal(matchId, wrap);
+      });
+    });
+  } catch(err){ wrap.querySelector('#clipsModalBody').innerHTML = `<div class="empty-state">${err.message}</div>`; }
+}
+
+function openClipEditModal(clip, matchId, parentWrap){
+  const bodyHtml = `
+    <div class="field-row">
+      <div><label>Event type</label>
+        <select id="ceEventType">
+          ${['FOUR','SIX','WICKET'].map(t=>`<option value="${t}" ${clip.eventType===t?'selected':''}>${t}</option>`).join('')}
+        </select>
+      </div>
+      <div><label>Dismissal type (if wicket)</label><input id="ceDismissalType" value="${clip.dismissalType||''}" placeholder="Bowled / Caught / LBW / Run Out / Stumped / Hit Wicket"></div>
+    </div>
+    <div class="field-row">
+      <div><label>Batting team</label><input id="ceBattingTeam" value="${clip.battingTeam||''}" placeholder="A or B"></div>
+      <div><label>Innings</label><input id="ceInnings" type="number" value="${clip.innings||1}"></div>
+    </div>
+    <div class="field-row">
+      <div><label>Over</label><input id="ceOver" type="number" value="${clip.over||0}"></div>
+      <div><label>Ball in over</label><input id="ceBallInOver" type="number" value="${clip.ballInOver||0}"></div>
+    </div>
+    <div class="field-row">
+      <div><label>Runs</label><input id="ceRuns" type="number" value="${clip.runs||0}"></div>
+      <div><label>Move to match ID</label><input id="ceMatchId" value="${clip.matchId||matchId}"></div>
+    </div>
+    <label>Striker name</label><input id="ceStrikerName" value="${clip.strikerName||''}">
+    <label>Bowler name</label><input id="ceBowlerName" value="${clip.bowlerName||''}">
+    <div class="field-row">
+      <div><label>Non-striker name</label><input id="ceNonStrikerName" value="${clip.nonStrikerName||''}"></div>
+      <div><label>Fielder name (catches/run outs)</label><input id="ceFielderName" value="${clip.fielderName||''}"></div>
+    </div>
+  `;
+  fieldModal('Correct Clip', bodyHtml, async (wrap)=>{
+    const val = (id)=> wrap.querySelector('#'+id).value.trim();
+    await api(`/clips/${encodeURIComponent(clip.clipId)}`, {
+      method: 'PUT', body: JSON.stringify({
+        matchId: val('ceMatchId'), eventType: val('ceEventType'), dismissalType: val('ceDismissalType') || null,
+        battingTeam: val('ceBattingTeam'), innings: val('ceInnings'), over: val('ceOver'), ballInOver: val('ceBallInOver'),
+        runs: val('ceRuns'), strikerName: val('ceStrikerName') || null, bowlerName: val('ceBowlerName') || null,
+        nonStrikerName: val('ceNonStrikerName') || null, fielderName: val('ceFielderName') || null
+      })
+    });
+    toast('Clip corrected');
+    refreshClipsModal(matchId, parentWrap);
+  }, { large: true });
 }
 
 // ===== Analytics =====
