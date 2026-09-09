@@ -1617,7 +1617,15 @@ app.get('/api/public/tournaments', async (req, res) => {
                 name: doc.displayName || doc.leagueKey,
                 status: isLive ? 'live' : (matches.length > 0 ? 'completed' : 'upcoming'),
                 matchCount: matches.length,
-                updatedAt: doc.updatedAt || 0
+                updatedAt: doc.updatedAt || 0,
+                // leaguesCollection is only ever written to from cricket-panel's
+                // save/publish flow (see leagueKeyFor / SINGLE_MATCHES_LEAGUE_KEY
+                // above) — Football and Table Tennis don't use the league
+                // concept at all, so every doc here is a cricket tournament.
+                // Tagging it explicitly (instead of leaving it implicit) means
+                // the public tournaments list stays cricket-only even if a
+                // non-cricket league type gets added to this collection later.
+                sport: 'cricket'
             };
         }));
 
