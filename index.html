@@ -2089,7 +2089,13 @@ document.documentElement.setAttribute('data-theme', 'dark');
             const empty = document.getElementById('tournaments-empty');
             if (!grid) return;
 
-            const list = allTournaments.filter(t => tournamentFilter === 'all' || t.status === tournamentFilter);
+            // Only Cricket tournaments are ever shown here — Football and Table
+            // Tennis don't use the tournaments/leagues concept on the backend,
+            // but we still filter explicitly on t.sport so this stays true
+            // even if a non-cricket tournament is ever added later.
+            const list = allTournaments
+                .filter(t => (t.sport || 'cricket') === 'cricket')
+                .filter(t => tournamentFilter === 'all' || t.status === tournamentFilter);
             grid.innerHTML = '';
 
             if (list.length === 0) {
