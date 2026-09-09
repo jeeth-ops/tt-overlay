@@ -2124,13 +2124,21 @@ document.documentElement.setAttribute('data-theme', 'dark');
         // and images actually finished), with a small minimum floor so a
         // very fast load doesn't just flash the logo for a frame. Once
         // faded out it's removed from the DOM so it can never sit there
-        // eating clicks or scroll.
+        // eating clicks or scroll. A hard safety timeout also forces it
+        // away on very slow/flaky connections (common on mobile data)
+        // where a third-party script or the video never finishes loading
+        // and 'load' would otherwise never fire — the site becomes usable
+        // either way, the loader just isn't allowed to hide it forever.
         (function pageLoader() {
             const loaderEl = document.getElementById('page-loader');
             if (!loaderEl) return;
             const minDisplayMs = 500;
+            const maxWaitMs = 6000;
             const startedAt = performance.now();
+            let hidden = false;
             function hideLoader() {
+                if (hidden) return;
+                hidden = true;
                 const elapsed = performance.now() - startedAt;
                 const wait = Math.max(0, minDisplayMs - elapsed);
                 setTimeout(() => {
@@ -2143,6 +2151,7 @@ document.documentElement.setAttribute('data-theme', 'dark');
             }
             if (document.readyState === 'complete') hideLoader();
             else window.addEventListener('load', hideLoader);
+            setTimeout(hideLoader, maxWaitMs);
         })();
 
         // Guarantee the background video loops forever, even in browsers where
