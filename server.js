@@ -3470,6 +3470,13 @@ app.get('/cricket-panel2', (req, res) => res.sendFile(__dirname + '/cricket-pane
 app.get('/cricket-scorecard', (req, res) => res.sendFile(__dirname + '/cricket-scorecard.html'));
 app.get('/cricket-overlay3', (req, res) => res.sendFile(__dirname + '/cricket-overlay3.html'));
 app.get('/cricket-panel3', (req, res) => res.sendFile(__dirname + '/cricket-panel3.html'));
+// 🖥️ LED Screen Output — ground display page. Static shell only; it joins
+// the SAME Socket.IO room as the existing scoring panel/overlay (via the
+// `uid` query param already handled in io.on('connection') below) and
+// listens to the existing 'liveCricketScore' broadcast. No new scoring
+// state, no new socket events, no separate match-data source — see
+// led-output.html for details. :matchId is read client-side from the URL.
+app.get('/led-output/:matchId', (req, res) => res.sendFile(__dirname + '/led-output.html'));
 
 // 🧩 Generic serving routes for sports added via Admin → Broadcasting →
 // Add Template (the panelCode/overlayCode the owner pastes in). Cricket /
