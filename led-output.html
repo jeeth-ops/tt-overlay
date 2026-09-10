@@ -19,11 +19,19 @@
   *{ box-sizing:border-box; }
   html, body{
     margin:0; padding:0; width:100%; height:100%;
-    background: var(--bg);
+    background:
+      radial-gradient(ellipse 120% 90% at 50% 0%, rgba(255,255,255,0.05), transparent 55%),
+      var(--bg);
     color: var(--text);
     font-family: 'Inter','Segoe UI', Roboto, Arial, sans-serif;
     overflow:hidden;
     -webkit-font-smoothing:antialiased;
+  }
+
+  #topAccent{
+    position:fixed; top:0; left:0; right:0; height:5px;
+    background: linear-gradient(90deg, var(--team-color), rgba(255,255,255,0));
+    z-index:40;
   }
 
   /* ===== connection state ===== */
@@ -74,6 +82,60 @@
     gap: 2.2vh;
   }
   #board.active{ display:flex; }
+
+  .tourney-name{
+    font-size:clamp(15px, 1.6vw, 24px);
+    font-weight:800;
+    letter-spacing:.16em;
+    text-transform:uppercase;
+    color: var(--muted);
+    display:none;
+  }
+  .tourney-name.visible{ display:block; }
+
+  .badge-row{
+    display:flex; align-items:center; gap:10px;
+  }
+  .badge{
+    display:inline-flex; align-items:center; gap:6px;
+    font-size:clamp(11px, 1vw, 15px);
+    font-weight:800;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color: var(--text);
+    background: rgba(255,255,255,0.07);
+    border:1px solid var(--line);
+    padding: 4px 12px;
+    border-radius: 999px;
+  }
+  .badge.live{
+    color:#fff; background: rgba(255,92,92,0.16); border-color: rgba(255,92,92,0.4);
+  }
+  .badge.live .live-dot{
+    width:7px; height:7px; border-radius:50%; background: var(--bad);
+    animation: livePulse 1.6s ease-in-out infinite;
+  }
+  @keyframes livePulse{
+    0%,100%{ opacity:1; } 50%{ opacity:0.35; }
+  }
+
+  .matchup-row{
+    display:flex; align-items:center; gap:1vw;
+    font-size:clamp(16px, 2vw, 26px);
+    font-weight:700;
+    letter-spacing:.03em;
+    text-transform:uppercase;
+    color: rgba(245,247,251,0.55);
+    white-space:nowrap;
+  }
+  .matchup-row .vs{
+    color: var(--muted);
+    font-weight:600;
+    font-size:0.75em;
+  }
+  .matchup-row .other-team{
+    color: rgba(245,247,251,0.75);
+  }
 
   .team-row{
     display:flex; align-items:center; gap:1.4vw;
@@ -152,6 +214,52 @@
     color:var(--muted);
     font-weight:600;
   }
+  .rr-pair{
+    display:flex; gap:2.4vw;
+    margin-left:auto;
+  }
+  .rr-pair .crr-block{ margin-left:0; }
+
+  .this-over-row{
+    display:flex; align-items:center; gap:1vw;
+  }
+  .this-over-label{
+    font-size:clamp(12px, 1.1vw, 16px);
+    letter-spacing:.14em;
+    color:var(--muted);
+    font-weight:700;
+    text-transform:uppercase;
+    white-space:nowrap;
+  }
+  .this-over-balls{
+    display:flex; gap:0.6vw; flex-wrap:wrap;
+  }
+  .ball-chip{
+    min-width: clamp(30px, 2.6vw, 44px);
+    height: clamp(30px, 2.6vw, 44px);
+    padding: 0 6px;
+    border-radius: 50%;
+    display:flex; align-items:center; justify-content:center;
+    font-size:clamp(14px, 1.5vw, 20px);
+    font-weight:800;
+    background: rgba(255,255,255,0.08);
+    color: var(--text);
+    border: 1px solid var(--line);
+  }
+  .ball-chip.boundary{ background: rgba(240,180,41,0.18); border-color: rgba(240,180,41,0.4); color:#f0b429; }
+  .ball-chip.six{ background: rgba(53,208,127,0.18); border-color: rgba(53,208,127,0.4); color: var(--good); }
+  .ball-chip.wicket{ background: rgba(255,92,92,0.18); border-color: rgba(255,92,92,0.45); color: var(--bad); }
+  .ball-chip.extra{ color: var(--muted); }
+  .ball-chip.latest{ box-shadow: 0 0 0 2px var(--team-color); }
+
+  .partnership-line{
+    font-size:clamp(14px, 1.4vw, 19px);
+    font-weight:700;
+    letter-spacing:.08em;
+    color: var(--muted);
+    text-transform:uppercase;
+  }
+  .partnership-line b{ color:var(--text); font-weight:900; }
 
   .divider{ height:1px; background:var(--line); width:100%; margin: 0.6vh 0; }
 
@@ -168,7 +276,7 @@
   .batter-row.on-strike .dot{ background: var(--team-color); box-shadow:0 0 10px var(--team-color); }
   .batter-name{
     font-size:clamp(22px, 3vw, 42px);
-    font-weight:700;
+    font-weight:800;
     text-transform:uppercase;
     color:var(--text);
     flex:1;
@@ -177,7 +285,7 @@
   .batter-name .star{ color: var(--team-color); margin-left:6px; }
   .batter-stats{
     font-size:clamp(22px, 3vw, 42px);
-    font-weight:700;
+    font-weight:900;
     font-variant-numeric: tabular-nums;
     color:var(--text);
     display:flex; align-items:baseline; gap:0.6vw;
@@ -241,6 +349,7 @@
 </style>
 </head>
 <body>
+  <div id="topAccent"></div>
 
   <div id="connState"><span id="connDot"></span><span id="connText">Connecting…</span></div>
   <button id="fsBtn" type="button">⛶ Fullscreen</button>
@@ -252,6 +361,15 @@
   </div>
 
   <div id="board">
+    <div class="badge-row">
+      <span class="badge" id="formatBadge" style="display:none;"></span>
+      <span class="badge" id="inningsBadge" style="display:none;"></span>
+      <span class="badge live"><span class="live-dot"></span>LIVE</span>
+    </div>
+    <div class="tourney-name" id="tourneyName"></div>
+    <div class="matchup-row" id="matchupRow" style="display:none;">
+      <span id="battingTeamShort"></span><span class="vs">VS</span><span class="other-team" id="otherTeamShort"></span>
+    </div>
     <div class="team-row">
       <div class="team-bar" id="teamBar"></div>
       <div class="team-logo" id="teamLogo"></div>
@@ -264,9 +382,15 @@
         <div class="overs-num" id="oversNum">0.0</div>
         <div class="overs-label">OVERS</div>
       </div>
-      <div class="crr-block" id="crrBlock">
-        <div class="crr-num" id="crrNum">0.00</div>
-        <div class="crr-label">CRR</div>
+      <div class="rr-pair">
+        <div class="crr-block" id="crrBlock">
+          <div class="crr-num" id="crrNum">0.00</div>
+          <div class="crr-label">CRR</div>
+        </div>
+        <div class="crr-block" id="rrrBlock" style="display:none;">
+          <div class="crr-num" id="rrrNum" style="color:var(--bad);">0.00</div>
+          <div class="crr-label">RRR</div>
+        </div>
       </div>
     </div>
 
@@ -283,6 +407,13 @@
         <div class="batter-name" id="nonStrikerName">—</div>
         <div class="batter-stats"><span id="nonStrikerRuns" class="num-flip">0</span><span class="balls">(<span id="nonStrikerBalls">0</span>)</span></div>
       </div>
+    </div>
+
+    <div class="partnership-line" id="partnershipLine" style="display:none;"></div>
+
+    <div class="this-over-row" id="thisOverRow" style="display:none;">
+      <div class="this-over-label">This Over</div>
+      <div class="this-over-balls" id="thisOverBalls"></div>
     </div>
 
     <div class="chase-box" id="chaseBox" style="display:none;">
@@ -334,6 +465,10 @@
     waitTitle: document.getElementById('waitTitle'),
     waitSub: document.getElementById('waitSub'),
     board: document.getElementById('board'),
+    tourneyName: document.getElementById('tourneyName'),
+    matchupRow: document.getElementById('matchupRow'),
+    battingTeamShort: document.getElementById('battingTeamShort'),
+    otherTeamShort: document.getElementById('otherTeamShort'),
     teamBar: document.getElementById('teamBar'),
     teamLogo: document.getElementById('teamLogo'),
     teamName: document.getElementById('teamName'),
@@ -342,6 +477,13 @@
     oversNum: document.getElementById('oversNum'),
     crrBlock: document.getElementById('crrBlock'),
     crrNum: document.getElementById('crrNum'),
+    rrrBlock: document.getElementById('rrrBlock'),
+    rrrNum: document.getElementById('rrrNum'),
+    formatBadge: document.getElementById('formatBadge'),
+    inningsBadge: document.getElementById('inningsBadge'),
+    partnershipLine: document.getElementById('partnershipLine'),
+    thisOverRow: document.getElementById('thisOverRow'),
+    thisOverBalls: document.getElementById('thisOverBalls'),
     strikerRow: document.getElementById('strikerRow'),
     nonStrikerRow: document.getElementById('nonStrikerRow'),
     strikerName: document.getElementById('strikerName'),
@@ -402,9 +544,29 @@
     els.board.classList.add('active');
 
     const battingKey = state.battingTeam === 'B' ? 'teamB' : 'teamA';
+    const bowlingKey = battingKey === 'teamB' ? 'teamA' : 'teamB';
     const team = state[battingKey] || {};
+    const otherTeam = state[bowlingKey] || {};
     const color = team.color || '#f0b429';
     document.documentElement.style.setProperty('--team-color', color);
+
+    // Tournament name — shown only when the panel's "Tournament" mode has a
+    // league name set (state.leagueName), exactly like the existing overlay.
+    if(state.leagueName && state.leagueName.trim()){
+      setText(els.tourneyName, state.leagueName.trim().toUpperCase());
+      els.tourneyName.classList.add('visible');
+    } else {
+      els.tourneyName.classList.remove('visible');
+    }
+
+    // Full names of both teams — batting team highlighted, "VS" opponent.
+    if(team.name || otherTeam.name){
+      setText(els.battingTeamShort, (team.name || 'TEAM').toUpperCase());
+      setText(els.otherTeamShort, (otherTeam.name || 'TEAM').toUpperCase());
+      els.matchupRow.style.display = 'flex';
+    } else {
+      els.matchupRow.style.display = 'none';
+    }
 
     setText(els.teamName, (team.name || 'TEAM').toUpperCase());
     if(team.logoUrl){
@@ -412,6 +574,21 @@
       els.teamLogo.classList.add('visible');
     } else {
       els.teamLogo.classList.remove('visible');
+    }
+
+    // Format + innings badges (broadcast-style pills, top-left).
+    if(state.format){
+      setText(els.formatBadge, state.format.toUpperCase());
+      els.formatBadge.style.display = 'inline-flex';
+    } else {
+      els.formatBadge.style.display = 'none';
+    }
+    if(state.inningsNumber){
+      const ord = { 1:'1ST', 2:'2ND', 3:'3RD', 4:'4TH' }[state.inningsNumber] || `${state.inningsNumber}TH`;
+      setText(els.inningsBadge, `${ord} INNINGS`);
+      els.inningsBadge.style.display = 'inline-flex';
+    } else {
+      els.inningsBadge.style.display = 'none';
     }
 
     const score = state.score || { runs:0, wickets:0, overs:0, balls:0 };
@@ -439,6 +616,35 @@
       els.strikerName.innerHTML = striker.name.toUpperCase() + '<span class="star">*</span>';
     }
 
+    // Partnership — existing state.partnershipRuns/partnershipBalls, same
+    // numbers the panel's own "Partnership" stat already displays.
+    if(typeof state.partnershipRuns === 'number' && (striker.name || nonStriker.name)){
+      els.partnershipLine.innerHTML = `PARTNERSHIP <b>${state.partnershipRuns}</b> (${state.partnershipBalls || 0})`;
+      els.partnershipLine.style.display = 'block';
+    } else {
+      els.partnershipLine.style.display = 'none';
+    }
+
+    // This over — existing state.thisOver ball-by-ball ticker (resets each
+    // over in the existing engine), rendered as chips with the latest ball
+    // highlighted. Purely a read-only rendering of existing data.
+    const thisOver = Array.isArray(state.thisOver) ? state.thisOver : [];
+    if(thisOver.length){
+      els.thisOverBalls.innerHTML = thisOver.map((b, i) => {
+        const label = String(b);
+        let cls = 'ball-chip';
+        if(label === '4') cls += ' boundary';
+        else if(label === '6') cls += ' six';
+        else if(label === 'W' || label.startsWith('W')) cls += ' wicket';
+        else if(/[A-Za-z]/.test(label)) cls += ' extra';
+        if(i === thisOver.length - 1) cls += ' latest';
+        return `<div class="${cls}">${label}</div>`;
+      }).join('');
+      els.thisOverRow.style.display = 'flex';
+    } else {
+      els.thisOverRow.style.display = 'none';
+    }
+
     // ===== Target / chase logic — SECOND INNINGS ONLY =====
     // state.target is only ever non-null once the chasing innings has
     // begun (set by the existing scoring panel's "Start Next Innings" /
@@ -454,6 +660,7 @@
         els.chaseNeedLine.style.display = 'none';
         els.chaseResult.style.display = 'block';
         els.chaseResult.textContent = state.matchResultText;
+        els.rrrBlock.style.display = 'none';
       } else {
         const totalAllowed = ballsPerInnings(state);
         const runsNeeded = Math.max(state.target - (score.runs || 0), 0);
@@ -468,22 +675,30 @@
             // rather than show a nonsensical "0 balls" readout.
             els.chaseNeedLine.style.display = 'none';
             els.chaseResult.style.display = 'none';
+            els.rrrBlock.style.display = 'none';
           } else {
             els.chaseNeedLine.style.display = 'block';
             els.chaseResult.style.display = 'none';
             setText(els.needRuns, runsNeeded);
             setText(els.needBalls, ballsLeft);
+            // Required run rate — same derivation as the panel's own RRR,
+            // purely arithmetic on existing target/score/balls fields.
+            const rrr = ballsLeft > 0 ? runsNeeded / (ballsLeft / 6) : 0;
+            setText(els.rrrNum, rrr.toFixed(2));
+            els.rrrBlock.style.display = 'flex';
           }
         } else {
           // Test-match style innings with no fixed overs — no meaningful
           // "balls remaining", so just show the target.
           els.chaseNeedLine.style.display = 'none';
           els.chaseResult.style.display = 'none';
+          els.rrrBlock.style.display = 'none';
         }
       }
     } else {
       // First innings — hide target/need entirely, per spec.
       els.chaseBox.style.display = 'none';
+      els.rrrBlock.style.display = 'none';
     }
 
     // Match finished and this is NOT a chase (e.g. bowled out, innings
