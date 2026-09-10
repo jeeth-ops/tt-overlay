@@ -261,6 +261,44 @@
   }
   .partnership-line b{ color:var(--text); font-weight:900; }
 
+  .bowler-line{
+    font-size:clamp(15px, 1.6vw, 21px);
+    font-weight:700;
+    letter-spacing:.06em;
+    color: rgba(245,247,251,0.7);
+    text-transform:uppercase;
+  }
+  .bowler-line b{ color:var(--text); font-weight:900; }
+  .bowler-line .figures{ color: var(--team-color); font-weight:900; }
+
+  .venue-line{
+    font-size:clamp(12px, 1.1vw, 16px);
+    font-weight:600;
+    letter-spacing:.1em;
+    color: var(--muted);
+    text-transform:uppercase;
+  }
+
+  .freehit-banner{
+    display:none;
+    align-items:center; gap:10px;
+    align-self:flex-start;
+    font-size:clamp(16px, 1.9vw, 28px);
+    font-weight:900;
+    letter-spacing:.12em;
+    text-transform:uppercase;
+    color:#1a1200;
+    background: linear-gradient(90deg, #ffd23f, #ffb800);
+    padding: 8px 22px;
+    border-radius: 10px;
+    box-shadow: 0 4px 18px rgba(255,184,0,0.35);
+  }
+  .freehit-banner.show{ display:flex; animation: freehitPop .5s cubic-bezier(.22,1,.36,1); }
+  @keyframes freehitPop{
+    0%{ transform: scale(0.85); opacity:0; }
+    100%{ transform: scale(1); opacity:1; }
+  }
+
   .divider{ height:1px; background:var(--line); width:100%; margin: 0.6vh 0; }
 
   .batters{
@@ -365,8 +403,10 @@
       <span class="badge" id="formatBadge" style="display:none;"></span>
       <span class="badge" id="inningsBadge" style="display:none;"></span>
       <span class="badge live"><span class="live-dot"></span>LIVE</span>
+      <div class="freehit-banner" id="freehitBanner">🏏 Free Hit</div>
     </div>
     <div class="tourney-name" id="tourneyName"></div>
+    <div class="venue-line" id="venueLine" style="display:none;"></div>
     <div class="matchup-row" id="matchupRow" style="display:none;">
       <span id="battingTeamShort"></span><span class="vs">VS</span><span class="other-team" id="otherTeamShort"></span>
     </div>
@@ -415,6 +455,8 @@
       <div class="this-over-label">This Over</div>
       <div class="this-over-balls" id="thisOverBalls"></div>
     </div>
+
+    <div class="bowler-line" id="bowlerLine" style="display:none;"></div>
 
     <div class="chase-box" id="chaseBox" style="display:none;">
       <div class="chase-target">TARGET <b id="targetNum">0</b></div>
@@ -481,6 +523,9 @@
     rrrNum: document.getElementById('rrrNum'),
     formatBadge: document.getElementById('formatBadge'),
     inningsBadge: document.getElementById('inningsBadge'),
+    freehitBanner: document.getElementById('freehitBanner'),
+    venueLine: document.getElementById('venueLine'),
+    bowlerLine: document.getElementById('bowlerLine'),
     partnershipLine: document.getElementById('partnershipLine'),
     thisOverRow: document.getElementById('thisOverRow'),
     thisOverBalls: document.getElementById('thisOverBalls'),
@@ -558,6 +603,17 @@
     } else {
       els.tourneyName.classList.remove('visible');
     }
+
+    if(state.venue && state.venue.trim()){
+      setText(els.venueLine, state.venue.trim().toUpperCase());
+      els.venueLine.style.display = 'block';
+    } else {
+      els.venueLine.style.display = 'none';
+    }
+
+    // Free Hit — existing state.freeHit flag, same one the panel's own
+    // "freehit-banner" element already toggles.
+    els.freehitBanner.classList.toggle('show', !!state.freeHit);
 
     // Full names of both teams — batting team highlighted, "VS" opponent.
     if(team.name || otherTeam.name){
@@ -643,6 +699,17 @@
       els.thisOverRow.style.display = 'flex';
     } else {
       els.thisOverRow.style.display = 'none';
+    }
+
+    // Bowler figures — existing state.bowler object (name/overs/balls/runs/
+    // wickets), same fields the panel's own bowler card already tracks.
+    const bowler = state.bowler || {};
+    if(bowler.name){
+      const overStr = `${bowler.overs || 0}.${bowler.balls || 0}`;
+      els.bowlerLine.innerHTML = `BOWLING <b>${bowler.name.toUpperCase()}</b> <span class="figures">${bowler.wickets || 0}/${bowler.runs || 0}</span> (${overStr})`;
+      els.bowlerLine.style.display = 'block';
+    } else {
+      els.bowlerLine.style.display = 'none';
     }
 
     // ===== Target / chase logic — SECOND INNINGS ONLY =====
