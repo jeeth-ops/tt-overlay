@@ -1243,13 +1243,152 @@ function renderDetailMatches(){
         <div class="match-result">${matchResultText(m)}</div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button class="btn btn-primary btn-sm" data-idx="${i}" data-act="correct">✏️ Correct Match</button>
+        <button class="btn btn-primary btn-sm" data-idx="${i}" data-act="ballcorrect">🎯 Edit Delivery</button>
+        <button class="btn btn-ghost btn-sm" data-idx="${i}" data-act="correct">✏️ Correct Match (advanced)</button>
         <button class="btn btn-ghost btn-sm" data-match="${escAttr(m.roomId || m.matchId)}" data-act="clips">🎬 Clips</button>
       </div>
     </div>`;
   }).join('');
   el.querySelectorAll('[data-act="correct"]').forEach(b=> b.onclick = ()=> openMatchEditModal(corrState.matches[Number(b.dataset.idx)]));
+  el.querySelectorAll('[data-act="ballcorrect"]').forEach(b=> b.onclick = ()=> openDeliveryListModal(corrState.matches[Number(b.dataset.idx)]));
   el.querySelectorAll('[data-act="clips"]').forEach(b=> b.onclick = ()=> openClipsModal(b.dataset.match));
+}
+
+// ===== Ball-by-Ball Correction (delivery is the source of truth) =====
+// Companion to "Correct Match" above, but instead of editing the cached
+// scoreA/scoreB/battingCard/bowlingCard directly, this opens the exact
+// delivery, lets the owner correct it, previews the derived before/after
+// impact (via POST /cricket/ball/:ballId/preview), and only writes once
+// they confirm (PUT /cricket/ball/:ballId) — the server re-derives every
+// downstream total from the corrected delivery itself. See server.js'
+// "BALL-BY-BALL CORRECTION ENGINE" section for the full recalculation.
+const DISMISSAL_TYPES = ['Bowled','Caught','LBW','Stumped','Run Out','Hit Wicket','Retired Hurt','Retired Out'];
+const EXTRA_TYPE_LABELS = { none: 'None', wide: 'Wide', noball: 'No Ball', bye: 'Bye', legbye: 'Leg Bye' };
+
+function ballLabel(b){
+  if (b.kind === 'W') return 'WICKET';
+  if (b.kind === 'Wd') return `${b.runs} run${b.runs===1?'':'s'} (Wide)`;
+  if (b.kind === 'Nb') return `${b.runs} run${b.runs===1?'':'s'} (No Ball)`;
+  if (b.kind === 'B') return `${b.runs} Bye${b.runs===1?'':'s'}`;
+  if (b.kind === 'LB') return `${b.runs} Leg Bye${b.runs===1?'':'s'}`;
+  return `${b.runs} run${b.runs===1?'':'s'}`;
+}
+
+async function openDeliveryListModal(match){
+  const nameA = match.teamA && match.teamA.name || 'Team A', nameB = match.teamB && match.teamB.name || 'Team B';
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop';
+  wrap.innerHTML = `<div class="modal modal-lg">
+    <h3>Edit Delivery — ${escHtml(nameA)} vs ${escHtml(nameB)}</h3>
+    <p class="field-hint">Pick the exact ball to correct. The scorecard, player stats, bowler stats and this tournament's leaderboard will all be recalculated from the corrected delivery — nothing else is patched directly.</p>
+    <div id="dlvList" style="max-height:60vh;overflow:auto;"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div>
+    <div class="modal-actions" style="margin-top:18px;"><button class="btn btn-ghost" id="dlvClose">Close</button></div>
+  </div>`;
+  document.body.appendChild(wrap);
+  wrap.querySelector('#dlvClose').onclick = ()=> wrap.remove();
+  wrap.addEventListener('click', e=>{ if (e.target===wrap) wrap.remove(); });
+
+  try {
+    const data = await api(`/cricket/match/${encodeURIComponent(match.matchId)}/balls`);
+    const list = wrap.querySelector('#dlvList');
+    if (!data.balls.length){ list.innerHTML = `<div class="empty-state"><div class="ic">🏏</div>No ball-by-ball log found for this match yet.</div>`; return; }
+    let currentInnings = null;
+    list.innerHTML = data.balls.map(b=>{
+      const overLabel = `${b.over}.${b.ballInOver}`;
+      const header = b.innings !== currentInnings ? (currentInnings = b.innings, `<h3 style="font-size:.85rem;margin:14px 0 6px;">Innings ${b.innings}</h3>`) : '';
+      return `${header}<div class="hl" data-ball="${escAttr(b.ballId)}">
+        <span><b>${overLabel}</b> &nbsp;${escHtml(b.bowler||'—')} to ${escHtml(b.striker||'—')} — ${escHtml(ballLabel(b))}${b.dismissal ? ` <span style="color:var(--danger,#c41c2e);">(${escHtml(b.dismissal.type||'Out')})</span>` : ''}</span>
+        <button class="btn btn-ghost btn-sm" data-act="edit">✏️ Edit</button>
+      </div>`;
+    }).join('');
+    list.querySelectorAll('[data-ball]').forEach(row=>{
+      row.querySelector('[data-act="edit"]').onclick = ()=> openDeliveryEditModal(match, data.balls.find(b=>b.ballId===row.dataset.ball), data.roster, wrap);
+    });
+  } catch(err){
+    wrap.querySelector('#dlvList').innerHTML = `<div class="empty-state">${friendlyError(err)}</div>`;
+  }
+}
+
+function openDeliveryEditModal(match, ball, roster, listWrap){
+  const facts = { // mirrors deriveBallFacts() on the server, just for pre-filling the form
+    runsOffBat: ball.kind==='Nb' ? Math.max(0,(ball.runs||0)-1) : (ball.kind==='W'||/^[0-6]$/.test(ball.kind)) ? (ball.runs||0) : 0,
+    extras: ball.kind==='Wd' ? (ball.runs||0) : ball.kind==='Nb' ? 1 : (ball.kind==='B'||ball.kind==='LB') ? (ball.runs||0) : 0,
+    extraType: ball.kind==='Wd'?'wide':ball.kind==='Nb'?'noball':ball.kind==='B'?'bye':ball.kind==='LB'?'legbye':'none'
+  };
+  const rosterOpts = (selected)=> roster.map(n=>`<option value="${escAttr(n)}" ${n===selected?'selected':''}>${escHtml(n)}</option>`).join('');
+
+  const bodyHtml = `
+    <p class="field-hint">Over ${ball.over}.${ball.ballInOver} · Innings ${ball.innings} · Current result: <b>${escHtml(ballLabel(ball))}</b></p>
+    <div class="field-row">
+      <div><label>🏏 Striker</label><select id="dvStriker">${rosterOpts(ball.striker)}</select></div>
+      <div><label>🏏 Non-striker</label><select id="dvNonStriker">${rosterOpts(ball.nonStriker)}</select></div>
+    </div>
+    <div class="field-row">
+      <div><label>🎯 Bowler</label><select id="dvBowler">${rosterOpts(ball.bowler)}</select></div>
+      <div></div>
+    </div>
+    <div class="field-row">
+      <div><label>Runs off bat</label><input id="dvRunsOffBat" type="number" min="0" max="6" value="${facts.runsOffBat}"></div>
+      <div><label>Extras</label><input id="dvExtras" type="number" min="0" max="8" value="${facts.extras}"></div>
+    </div>
+    <div class="field-row">
+      <div><label>Extra type</label>
+        <select id="dvExtraType">${Object.entries(EXTRA_TYPE_LABELS).map(([v,l])=>`<option value="${v}" ${v===facts.extraType?'selected':''}>${l}</option>`).join('')}</select>
+      </div>
+      <div><label>Wicket</label>
+        <select id="dvWicket"><option value="no" ${!ball.dismissal?'selected':''}>No</option><option value="yes" ${ball.dismissal?'selected':''}>Yes</option></select>
+      </div>
+    </div>
+    <div class="field-row" id="dvWicketFields" style="${ball.dismissal?'':'display:none;'}">
+      <div><label>Dismissal type</label>
+        <select id="dvDismissalType">${DISMISSAL_TYPES.map(t=>`<option value="${t}" ${ball.dismissal&&ball.dismissal.type===t?'selected':''}>${t}</option>`).join('')}</select>
+      </div>
+      <div><label>Fielder</label><select id="dvFielder"><option value="">—</option>${rosterOpts(ball.dismissal&&ball.dismissal.fielder)}</select></div>
+    </div>
+  `;
+  const editWrap = fieldModal(`Edit Delivery — ${ball.over}.${ball.ballInOver}`, bodyHtml, async (wrap)=>{
+    const input = {
+      striker: wrap.querySelector('#dvStriker').value,
+      nonStriker: wrap.querySelector('#dvNonStriker').value,
+      bowler: wrap.querySelector('#dvBowler').value,
+      runsOffBat: Number(wrap.querySelector('#dvRunsOffBat').value)||0,
+      extras: Number(wrap.querySelector('#dvExtras').value)||0,
+      extraType: wrap.querySelector('#dvExtraType').value,
+      wicket: wrap.querySelector('#dvWicket').value === 'yes',
+      dismissalType: wrap.querySelector('#dvDismissalType') ? wrap.querySelector('#dvDismissalType').value : null,
+      fielder: wrap.querySelector('#dvFielder') ? wrap.querySelector('#dvFielder').value : null
+    };
+
+    const preview = await api(`/cricket/ball/${encodeURIComponent(ball.ballId)}/preview`, { method: 'POST', body: JSON.stringify(input) });
+    if (preview.errors && preview.errors.length) throw new Error(preview.errors[0]);
+
+    const { before, after } = preview;
+    const diff = [];
+    if (before.ball.kind !== after.ball.kind || before.ball.runs !== after.ball.runs) diff.push({ label: 'This delivery', from: ballLabel(before.ball), to: ballLabel(after.ball) });
+    if (before.ball.striker !== after.ball.striker) diff.push({ label: 'Striker credited', from: before.ball.striker, to: after.ball.striker });
+    if (before.ball.bowler !== after.ball.bowler) diff.push({ label: 'Bowler credited', from: before.ball.bowler, to: after.ball.bowler });
+    ['A','B'].forEach(t=>{
+      const nm = t==='A' ? (match.teamA&&match.teamA.name||'Team A') : (match.teamB&&match.teamB.name||'Team B');
+      const b = before.cards['score'+t], a = after.cards['score'+t];
+      if (b.runs !== a.runs || b.wickets !== a.wickets) diff.push({ label: `${nm} total`, from: `${b.runs}/${b.wickets}`, to: `${a.runs}/${a.wickets}` });
+    });
+    if (!diff.length) diff.push({ label: 'This delivery', from: ballLabel(before.ball), to: ballLabel(after.ball) });
+
+    const impact = ['Batting statistics', 'Bowling statistics', 'Team score & scorecard', "This tournament's leaderboard next time it loads"];
+    if (preview.resultMayNeedReview) impact.push('⚠️ This match is marked completed — please double-check the result is still correct');
+
+    await confirmDiffAndSave(diff, impact, async ()=>{
+      const saved = await api(`/cricket/ball/${encodeURIComponent(ball.ballId)}`, { method: 'PUT', body: JSON.stringify(input) });
+      if (saved.errors && saved.errors.length) throw new Error(saved.errors[0]);
+    });
+    toast('Delivery corrected — scorecard recalculated');
+    if (listWrap) listWrap.remove();
+    openDeliveryListModal(match);
+  }, { large: true, saveLabel: 'Preview & Save' });
+
+  editWrap.querySelector('#dvWicket').addEventListener('change', (e)=>{
+    editWrap.querySelector('#dvWicketFields').style.display = e.target.value === 'yes' ? '' : 'none';
+  });
 }
 
 function renderDetailPlayers(){
