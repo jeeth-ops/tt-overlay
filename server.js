@@ -2810,6 +2810,247 @@ adminRouter.delete('/clips/:clipId', async (req, res) => {
     }
 });
 
+// ================================================================
+// 🎯 BALL-BY-BALL CORRECTION ENGINE (Owner-only)
+//
+// Everything above (Correct Match, Correct Clip) edits a CACHED total
+// directly — exactly the anti-pattern a real scoring system must avoid.
+// This section instead treats one delivery (a document in ballsCollection)
+// as the source of truth: the owner edits the delivery, the engine
+// re-derives kind/runs for it, simulates the WHOLE match's derived state
+// with that one ball swapped in (buildLiveCardsFromBallsArray — same rules
+// buildLiveCardsFromBalls() already uses live), runs consistency checks,
+// and only writes + resyncs matchRecordsCollection if everything holds
+// together. Tournament leaderboards/points table need no extra step here —
+// they already recompute fresh from matchRecordsCollection on every read
+// (see computeLeaderboards/computePointsTable above).
+//
+// ⚠️ KNOWN SCHEMA LIMIT: `kind` on a ball is still a single bucket
+// ('0'-'6' | 'W' | 'Wd' | 'Nb' | 'B' | 'LB'), matching how logBall has
+// always written it. That means a wicket that happens ON a Wide or No
+// Ball (a stumping/run-out off a wide, a run-out off a no-ball) cannot be
+// fully represented yet — buildBallFromCorrection() below deliberately
+// REJECTS that combination rather than silently dropping the extra or the
+// wicket. Fully modelling it needs additive schema fields (separate
+// runsOffBat/extraRuns/extraType on every ball) and a backfill plan for
+// existing matches — a bigger, separate change than this correction UI.
+// ================================================================
+
+const VALID_EXTRA_TYPES = new Set(['none', 'wide', 'noball', 'bye', 'legbye']);
+
+// Derives law-consistent per-delivery facts (Laws 21/22/23/26 of the MCC
+// Laws of Cricket — No ball, Wide, Bye, Leg bye) from the existing single
+// `kind` + team-run-delta `runs` a ball document already stores. Purely
+// read-only/derived — never changes how kind/runs are written elsewhere.
+function deriveBallFacts(kind, runs) {
+    const total = Number(runs) || 0;
+    switch (kind) {
+        case 'Wd': return { legalBall: false, extraType: 'wide', runsOffBat: 0, extraRuns: total };
+        case 'Nb': { const bat = Math.max(0, total - 1); return { legalBall: false, extraType: 'noball', runsOffBat: bat, extraRuns: total - bat }; }
+        case 'B': return { legalBall: true, extraType: 'bye', runsOffBat: 0, extraRuns: total };
+        case 'LB': return { legalBall: true, extraType: 'legbye', runsOffBat: 0, extraRuns: total };
+        default: return { legalBall: true, extraType: 'none', runsOffBat: total, extraRuns: 0 }; // '0'-'6' and 'W'
+    }
+}
+
+// Re-derives the single kind/runs pair from the Edit Delivery screen's
+// composite input (runs off bat, extras, extra type, wicket) — the ONE
+// place in the file that has to understand the richer editable shape.
+// Throws a plain, owner-facing Error on any contradictory combination
+// (see "IMPORTANT — Do not allow contradictory combinations" in the spec)
+// instead of guessing/silently coercing it into something scoreable.
+function buildBallFromCorrection(input) {
+    const runsOffBat = Math.max(0, Number(input.runsOffBat) || 0);
+    const extraRuns = Math.max(0, Number(input.extras) || 0);
+    const extraType = VALID_EXTRA_TYPES.has(input.extraType) ? input.extraType : 'none';
+    const isWicket = !!input.wicket;
+
+    if (extraType === 'wide' && runsOffBat > 0) throw new Error('A Wide cannot carry runs off the bat — the striker never faced it.');
+    if ((extraType === 'bye' || extraType === 'legbye') && runsOffBat > 0) throw new Error('Byes/Leg Byes are never credited as runs off the bat.');
+    if (extraType !== 'none' && extraRuns <= 0 && extraType !== 'noball') throw new Error(`Extra type is "${extraType}" but Extras is 0 — enter the runs run/extra runs.`);
+    if (isWicket && (extraType === 'wide' || extraType === 'noball')) {
+        throw new Error(`A wicket together with a ${extraType === 'wide' ? 'Wide' : 'No Ball'} isn't representable in the current delivery model yet (see the schema-limit note above the correction engine) — record the wicket on a legal delivery, or leave this one as a extra-only ball for now.`);
+    }
+    if (isWicket && extraType === 'none' && ['Bowled', 'LBW', 'Stumped', 'Hit Wicket', 'Caught'].includes(input.dismissalType) && runsOffBat > 0) {
+        throw new Error(`${input.dismissalType} ends the delivery dead — it can't also carry runs off the bat. Use Run Out if runs were completed.`);
+    }
+
+    let kind, totalRuns;
+    if (isWicket && extraType === 'none') { kind = 'W'; totalRuns = runsOffBat; }         // e.g. Run Out completed runs; 0 for a clean dismissal
+    else if (extraType === 'wide') { kind = 'Wd'; totalRuns = extraRuns; }
+    else if (extraType === 'noball') { kind = 'Nb'; totalRuns = 1 + runsOffBat; }          // 1 penalty always + bat runs
+    else if (extraType === 'bye') { kind = 'B'; totalRuns = extraRuns; }
+    else if (extraType === 'legbye') { kind = 'LB'; totalRuns = extraRuns; }
+    else { kind = String(Math.min(6, runsOffBat)); totalRuns = runsOffBat; }               // '0'..'6' off-the-bat delivery
+    return { kind, runs: totalRuns, isWicket };
+}
+
+// Post-correction sanity checks (VALIDATION section of the spec) — run
+// against the SIMULATED full match, before anything is written. Kept
+// conservative: only flags structural impossibilities (more than 10
+// wickets, more than 6 legal balls in one over), never a legitimate but
+// unusual passage of play, so it never blocks a real correction with a
+// false positive.
+function validateCorrectedBalls(balls) {
+    const errors = [];
+    const wicketsByInnings = {}, legalByOver = {};
+    balls.forEach(b => {
+        const ik = b.innings || 1;
+        wicketsByInnings[ik] = (wicketsByInnings[ik] || 0) + (b.dismissal ? 1 : 0);
+        if (deriveBallFacts(b.kind, b.runs).legalBall) {
+            const ok = `${ik}-${b.over}`;
+            legalByOver[ok] = (legalByOver[ok] || 0) + 1;
+        }
+    });
+    Object.entries(wicketsByInnings).forEach(([ik, w]) => { if (w > 10) errors.push(`This correction creates a scoring inconsistency: innings ${ik} would have ${w} wickets — only 10 are possible.`); });
+    Object.entries(legalByOver).forEach(([ok, n]) => { if (n > 6) { const [ik, ov] = ok.split('-'); errors.push(`This correction creates a scoring inconsistency: over ${ov} of innings ${ik} would have ${n} legal deliveries — an over can only have 6. Please review the delivery.`); } });
+    return errors;
+}
+
+// Runs one full delivery correction: validate → simulate → (if clean and
+// not a dry run) write + resync. Returns { before, after, errors } either
+// way, so the SAME function powers both the Preview screen and the real
+// Save & Recalculate — the preview is never a guess at what the save will
+// do, it's the actual save logic run with the write skipped.
+async function correctDelivery(ballId, actorEmail, input, dryRun) {
+    if (!ballsCollection || !matchRecordsCollection) return { errors: ['Database not configured'] };
+    const { ObjectId } = require('mongodb');
+    let _id;
+    try { _id = new ObjectId(ballId); } catch { return { errors: ['Invalid delivery id'] }; }
+    const original = await ballsCollection.findOne({ _id });
+    if (!original) return { errors: ['Delivery not found'] };
+
+    let kind, runs, isWicket;
+    try { ({ kind, runs, isWicket } = buildBallFromCorrection(input)); }
+    catch (err) { return { errors: [err.message] }; }
+
+    const strikerName = input.striker !== undefined ? personName(input.striker) : original.striker;
+    const nonStrikerName = input.nonStriker !== undefined ? personName(input.nonStriker) : original.nonStriker;
+    const bowlerName = input.bowler !== undefined ? personName(input.bowler) : original.bowler;
+    const fielderName = isWicket ? (personName(input.fielder) || null) : null;
+
+    const correctedBall = {
+        ...original,
+        kind, runs,
+        striker: strikerName, strikerKey: playerKey(strikerName),
+        nonStriker: nonStrikerName, nonStrikerKey: playerKey(nonStrikerName),
+        bowler: bowlerName, bowlerKey: playerKey(bowlerName),
+        dismissal: isWicket ? { type: input.dismissalType || 'Bowled', fielder: fielderName } : null,
+        dismissalFielderKey: playerKey(fielderName),
+        correctionOf: original.correctionOf || original._id, // keeps the ORIGINAL id traceable across repeat corrections
+        correctedAt: Date.now(), correctedBy: actorEmail || null
+    };
+
+    // Re-resolve global playerIds for anyone actually renamed, exactly the
+    // way logBall() does for a brand-new ball — keeps career/roster stats
+    // linked to the right profile after a Batter/Bowler Correction.
+    if (original.ownerUid && strikerName !== original.striker) correctedBall.strikerPlayerId = await resolvePlayerId(original.ownerUid, strikerName);
+    if (original.ownerUid && bowlerName !== original.bowler) correctedBall.bowlerPlayerId = await resolvePlayerId(original.ownerUid, bowlerName);
+
+    const allBalls = await ballsCollection.find({ matchId: original.matchId }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
+    const simulated = allBalls.map(b => (String(b._id) === String(_id) ? correctedBall : b));
+
+    const errors = validateCorrectedBalls(simulated);
+    const before = buildLiveCardsFromBallsArray(allBalls);
+    const after = buildLiveCardsFromBallsArray(simulated);
+    const result = { before: { ball: original, cards: before }, after: { ball: correctedBall, cards: after }, errors };
+    if (errors.length || dryRun) return result;
+
+    await ballsCollection.replaceOne({ _id }, correctedBall);
+
+    // Delivery saved — now derive EVERYTHING downstream from it, per the
+    // "AFTER SAVING A CORRECTION" recalculation list: this rebuilds
+    // battingCard/bowlingCard/scoreA/scoreB (batting stats, bowling
+    // stats, extras-affected totals, overs, wickets, team total) onto the
+    // same matchRecordsCollection doc the public scorecard and tournament
+    // pages already read, and busts the short-lived public caches so it's
+    // visible immediately. Current/required run rate, target and match
+    // result are derived FROM scoreA/scoreB by the scorecard/overlay at
+    // render time already, so they follow automatically too — EXCEPT a
+    // final win/loss/tie verdict on an already-completed match, which
+    // this deliberately does not auto-flip (see resultMayNeedReview
+    // below) rather than risk guessing a DLS/target situation wrong.
+    if (original.ownerUid) await syncMatchRecordFromBalls(original.ownerUid, original.matchId);
+
+    // Keep a clip cut around this exact delivery (same innings/over/ball —
+    // identity unchanged) pointing at the corrected player names, per
+    // "CLIP CORRECTION": the clip stays connected to the same event unless
+    // the owner explicitly reassigns the event itself. Best-effort/non-
+    // blocking — a clip metadata miss should never fail the score
+    // correction that already succeeded.
+    if (clipsCollection) {
+        clipsCollection.updateMany(
+            { matchId: original.matchId, innings: original.innings, over: original.over, ballInOver: original.ballInOver },
+            { $set: { strikerName, strikerKey: correctedBall.strikerKey, bowlerName, bowlerKey: correctedBall.bowlerKey, runs: correctedBall.runs } }
+        ).catch(err => console.log('Clip resync after ball correction error:', err));
+    }
+
+    const existingMatch = await matchRecordsCollection.findOne({ matchId: original.matchId }, { projection: { winningTeam: 1 } });
+    result.resultMayNeedReview = !!(existingMatch && existingMatch.winningTeam &&
+        (before.scoreA.runs !== after.scoreA.runs || before.scoreB.runs !== after.scoreB.runs ||
+         before.scoreA.wickets !== after.scoreA.wickets || before.scoreB.wickets !== after.scoreB.wickets));
+
+    return result;
+}
+
+// All deliveries for one match, for the Edit Delivery list — plus the
+// distinct striker/non-striker/bowler names already seen in this match,
+// so the correction screen's dropdowns are populated from real roster
+// names instead of free text.
+adminRouter.get('/cricket/match/:matchId/balls', async (req, res) => {
+    if (!ballsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const matchId = safeMatchId(req.params.matchId);
+        const balls = await ballsCollection.find({ matchId }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
+        const roster = new Set();
+        balls.forEach(b => { [b.striker, b.nonStriker, b.bowler].forEach(n => { if (n) roster.add(n); }); });
+        res.json({
+            success: true,
+            roster: [...roster].sort(),
+            balls: balls.map(b => ({ ...b, ballId: b._id.toString(), _id: undefined }))
+        });
+    } catch (err) {
+        console.log('Admin balls fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load deliveries' });
+    }
+});
+
+// Dry-run: shows the owner exactly what Save & Recalculate would change,
+// without writing anything — powers the "BEFORE / AFTER … This correction
+// will update" preview screen from the spec.
+adminRouter.post('/cricket/ball/:ballId/preview', async (req, res) => {
+    try {
+        const result = await correctDelivery(req.params.ballId, req.ownerEmail, req.body || {}, true);
+        if (result.errors && result.errors.length && !result.before) return res.status(400).json({ success: false, error: result.errors[0] });
+        res.json({ success: true, ...result });
+    } catch (err) {
+        console.log('Ball correction preview error:', err);
+        res.status(500).json({ success: false, error: 'Could not preview correction' });
+    }
+});
+
+// Save & Recalculate — the real write. Refuses to save (400, with the
+// specific inconsistency) rather than ever writing a delivery that fails
+// validateCorrectedBalls(), matching the spec's "don't silently save
+// corrupted data" requirement.
+adminRouter.put('/cricket/ball/:ballId', async (req, res) => {
+    try {
+        const result = await correctDelivery(req.params.ballId, req.ownerEmail, req.body || {}, false);
+        if (!result.before) return res.status(400).json({ success: false, error: (result.errors && result.errors[0]) || 'Could not correct delivery' });
+        if (result.errors && result.errors.length) return res.status(409).json({ success: false, error: result.errors[0] });
+        await logAuditAction(
+            req.ownerEmail, 'Owner delivery correction',
+            `Match ${result.before.ball.matchId} — Innings ${result.before.ball.innings} Over ${result.before.ball.over}.${result.before.ball.ballInOver}`,
+            { kind: result.before.ball.kind, runs: result.before.ball.runs, striker: result.before.ball.striker, bowler: result.before.ball.bowler },
+            { kind: result.after.ball.kind, runs: result.after.ball.runs, striker: result.after.ball.striker, bowler: result.after.ball.bowler }
+        );
+        res.json({ success: true, ...result });
+    } catch (err) {
+        console.log('Ball correction save error:', err);
+        res.status(500).json({ success: false, error: 'Could not save correction' });
+    }
+});
+
 // ---- Dashboard ----
 adminRouter.get('/dashboard', async (req, res) => {
     try {
@@ -3311,15 +3552,40 @@ const matchRecordSyncTimers = {}; // matchId -> timeout handle
 
 async function buildLiveCardsFromBalls(matchId) {
     const balls = await ballsCollection.find({ matchId }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
+    return buildLiveCardsFromBallsArray(balls);
+}
+
+// 🎯 Same exact derivation as buildLiveCardsFromBalls() above, factored out
+// to take an in-memory balls array instead of querying Mongo. This is what
+// lets the ball-correction engine (see adminRouter '/cricket/ball/:ballId'
+// below) SIMULATE "what would this match look like with delivery X
+// corrected" — by swapping one ball in the array — and see the resulting
+// scorecard/stats BEFORE writing anything, exactly like the real
+// buildLiveCardsFromBalls(matchId) does after a write. Keep these two
+// functions' scoring rules identical; buildLiveCardsFromBalls is now a
+// thin DB-fetching wrapper around this one so they can never drift apart.
+function buildLiveCardsFromBallsArray(balls) {
     const batting = { A: {}, B: {} };     // battingTeam -> strikerKey -> row
     const bowling = { A: {}, B: {} };     // bowlingTeam (bowler's own team) -> bowlerKey -> row
     const oversBowled = { A: {}, B: {} }; // bowlingTeam -> `${bowlerKey}::${innings}-${over}` -> { legalBalls, runs }
-    const latestScore = { A: null, B: null };
+    // 🩹 CORRECTION-SAFETY FIX: this used to just forward whichever ball's
+    // client-sent `score` snapshot happened to be logged LAST for a team
+    // ("latestScore") — a live-only convenience that quietly breaks the
+    // moment any earlier ball is corrected, since a stale snapshot from
+    // before the correction would still win. A real correction engine
+    // needs the team total to be a genuine SUM over the (possibly just-
+    // corrected) balls, every time — never a cached/forwarded value. Same
+    // for wickets and legal-ball (over) count. See deriveBallFacts() for
+    // the legal-ball rule this reuses.
+    const teamTotals = { A: { runs: 0, wickets: 0, legalBalls: 0 }, B: { runs: 0, wickets: 0, legalBalls: 0 } };
 
     balls.forEach(b => {
         const bt = b.battingTeam === 'B' ? 'B' : 'A';
         const bowlTeam = bt === 'A' ? 'B' : 'A';
-        if (b.score) latestScore[bt] = b.score;
+        const facts = deriveBallFacts(b.kind, b.runs);
+        teamTotals[bt].runs += b.runs || 0;
+        if (b.dismissal) teamTotals[bt].wickets++;
+        if (facts.legalBall) teamTotals[bt].legalBalls++;
 
         if (b.strikerKey && b.kind !== 'Wd') {
             const key = b.strikerKey;
@@ -3357,8 +3623,8 @@ async function buildLiveCardsFromBalls(matchId) {
         maidens: Object.values(oversBowled[team]).filter(o => o.bowlerKey === key && o.legalBalls === 6 && o.runs === 0).length
     }));
     const toScore = (team) => {
-        const s = latestScore[team];
-        return s ? { runs: s.runs || 0, overs: `${s.overs || 0}.${s.balls || 0}` } : { runs: 0, overs: '0.0' };
+        const t = teamTotals[team];
+        return { runs: t.runs, wickets: t.wickets, overs: `${Math.floor(t.legalBalls / 6)}.${t.legalBalls % 6}` };
     };
 
     return {
