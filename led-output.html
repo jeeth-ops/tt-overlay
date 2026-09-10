@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LED Score Output</title>
+<style>
+  :root{
+    --bg: #05070c;
+    --panel: #0a0f1a;
+    --line: rgba(255,255,255,0.08);
+    --text: #f5f7fb;
+    --muted: #8a93a6;
+    --accent: #f0b429; /* fallback, overridden per-team */
+    --team-color: #17337a;
+    --good: #35d07f;
+    --bad: #ff5c5c;
+  }
+  *{ box-sizing:border-box; }
+  html, body{
+    margin:0; padding:0; width:100%; height:100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter','Segoe UI', Roboto, Arial, sans-serif;
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* ===== connection state ===== */
+  #connState{
+    position:fixed; top:14px; right:18px; z-index:50;
+    display:flex; align-items:center; gap:8px;
+    font-size:13px; color:var(--muted);
+    letter-spacing:.04em; text-transform:uppercase;
+    opacity:0.85;
+    transition:opacity .3s ease;
+  }
+  #connState.hide{ opacity:0; pointer-events:none; }
+  #connDot{ width:9px; height:9px; border-radius:50%; background:var(--bad); box-shadow:0 0 8px var(--bad); }
+  #connDot.on{ background:var(--good); box-shadow:0 0 8px var(--good); }
+
+  #fsBtn{
+    position:fixed; bottom:14px; right:18px; z-index:50;
+    background:rgba(255,255,255,0.06); border:1px solid var(--line);
+    color:var(--muted); font-size:13px; padding:8px 14px;
+    border-radius:8px; cursor:pointer; letter-spacing:.03em;
+    backdrop-filter:blur(6px);
+    transition:opacity .3s ease, background .2s ease;
+  }
+  #fsBtn:hover{ background:rgba(255,255,255,0.12); color:var(--text); }
+  #fsBtn.hide{ opacity:0; pointer-events:none; }
+
+  #waiting{
+    position:fixed; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:18px;
+    text-align:center; padding:40px;
+  }
+  #waiting h1{ font-size:clamp(22px,3vw,34px); font-weight:700; margin:0; color:var(--text); }
+  #waiting p{ font-size:clamp(14px,1.6vw,18px); color:var(--muted); margin:0; max-width:600px; }
+  #waiting .spin{
+    width:44px; height:44px; border-radius:50%;
+    border:3px solid rgba(255,255,255,0.12); border-top-color: var(--team-color, #f0b429);
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+
+  /* ===== main board ===== */
+  #board{
+    position:fixed; inset:0;
+    display:none;
+    flex-direction:column;
+    justify-content:center;
+    padding: 4vh 5vw;
+    gap: 2.2vh;
+  }
+  #board.active{ display:flex; }
+
+  .team-row{
+    display:flex; align-items:center; gap:1.4vw;
+  }
+  .team-logo{
+    width:clamp(48px, 6vw, 90px); height:clamp(48px, 6vw, 90px);
+    border-radius:14px; background-size:cover; background-position:center;
+    background-color:rgba(255,255,255,0.06);
+    border:2px solid var(--team-color);
+    flex-shrink:0;
+    display:none;
+  }
+  .team-logo.visible{ display:block; }
+  .team-name{
+    font-size:clamp(30px, 5.2vw, 78px);
+    font-weight:800;
+    letter-spacing:.02em;
+    text-transform:uppercase;
+    color:var(--text);
+    line-height:1;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .team-bar{
+    width:10px; align-self:stretch; border-radius:6px;
+    background:var(--team-color);
+    flex-shrink:0;
+  }
+
+  .score-row{
+    display:flex; align-items:baseline; gap:2.2vw;
+    flex-wrap:wrap;
+  }
+  .score-main{
+    font-size:clamp(64px, 13vw, 190px);
+    font-weight:900;
+    line-height:0.9;
+    letter-spacing:-.01em;
+    font-variant-numeric: tabular-nums;
+    color:var(--text);
+  }
+  .score-main .wkt{ color: var(--muted); }
+  .overs-block{
+    display:flex; flex-direction:column; align-items:flex-start;
+    gap:0.2vh;
+  }
+  .overs-num{
+    font-size:clamp(34px, 6vw, 78px);
+    font-weight:800;
+    font-variant-numeric: tabular-nums;
+    color:var(--text);
+    line-height:1;
+  }
+  .overs-label{
+    font-size:clamp(13px, 1.4vw, 20px);
+    letter-spacing:.14em;
+    color:var(--muted);
+    font-weight:600;
+  }
+
+  .crr-block{
+    margin-left:auto;
+    display:flex; flex-direction:column; align-items:flex-end;
+    gap:0.2vh;
+  }
+  .crr-num{
+    font-size:clamp(24px, 3.2vw, 44px);
+    font-weight:700;
+    color: var(--team-color);
+    font-variant-numeric: tabular-nums;
+  }
+  .crr-label{
+    font-size:clamp(12px, 1.1vw, 16px);
+    letter-spacing:.12em;
+    color:var(--muted);
+    font-weight:600;
+  }
+
+  .divider{ height:1px; background:var(--line); width:100%; margin: 0.6vh 0; }
+
+  .batters{
+    display:flex; flex-direction:column; gap:1.1vh;
+  }
+  .batter-row{
+    display:flex; align-items:center; gap:1.5vw;
+  }
+  .batter-row .dot{
+    width:10px; height:10px; border-radius:50%;
+    background:transparent; flex-shrink:0;
+  }
+  .batter-row.on-strike .dot{ background: var(--team-color); box-shadow:0 0 10px var(--team-color); }
+  .batter-name{
+    font-size:clamp(22px, 3vw, 42px);
+    font-weight:700;
+    text-transform:uppercase;
+    color:var(--text);
+    flex:1;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .batter-name .star{ color: var(--team-color); margin-left:6px; }
+  .batter-stats{
+    font-size:clamp(22px, 3vw, 42px);
+    font-weight:700;
+    font-variant-numeric: tabular-nums;
+    color:var(--text);
+    display:flex; align-items:baseline; gap:0.6vw;
+    flex-shrink:0;
+  }
+  .batter-stats .balls{
+    font-size:0.55em;
+    color:var(--muted);
+    font-weight:600;
+  }
+
+  .chase-box{
+    margin-top:1vh;
+    display:flex; flex-direction:column; gap:0.6vh;
+    padding: 2vh 2vw;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--line);
+    border-left: 5px solid var(--team-color);
+    border-radius: 12px;
+  }
+  .chase-target{
+    font-size:clamp(16px, 1.7vw, 22px);
+    letter-spacing:.12em;
+    color:var(--muted);
+    font-weight:700;
+  }
+  .chase-target b{ color:var(--text); font-weight:800; }
+  .chase-need{
+    font-size:clamp(28px, 4.2vw, 58px);
+    font-weight:900;
+    color:var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+  .chase-need .hi{ color: var(--team-color); }
+  .chase-result{
+    font-size:clamp(28px, 4.6vw, 62px);
+    font-weight:900;
+    letter-spacing:.02em;
+    color: var(--good);
+    text-transform:uppercase;
+  }
+
+  .num-flip{
+    display:inline-block;
+    transition: transform .35s cubic-bezier(.22,1,.36,1), opacity .35s ease;
+  }
+  .num-flip.bump{
+    animation: bump .4s cubic-bezier(.22,1,.36,1);
+  }
+  @keyframes bump{
+    0%{ transform: translateY(0); opacity:1; }
+    35%{ transform: translateY(-0.12em); opacity:0.4; }
+    100%{ transform: translateY(0); opacity:1; }
+  }
+
+  @media (max-aspect-ratio: 4/3){
+    #board{ padding: 3vh 4vw; gap: 1.8vh; }
+    .crr-block{ margin-left:0; align-items:flex-start; }
+    .score-row{ flex-direction:column; align-items:flex-start; gap:0.6vh; }
+  }
+</style>
+</head>
+<body>
+
+  <div id="connState"><span id="connDot"></span><span id="connText">Connecting…</span></div>
+  <button id="fsBtn" type="button">⛶ Fullscreen</button>
+
+  <div id="waiting">
+    <div class="spin"></div>
+    <h1 id="waitTitle">Connecting to match…</h1>
+    <p id="waitSub">Waiting for live score data from the scoring panel. Nothing to do here — this screen updates automatically.</p>
+  </div>
+
+  <div id="board">
+    <div class="team-row">
+      <div class="team-bar" id="teamBar"></div>
+      <div class="team-logo" id="teamLogo"></div>
+      <div class="team-name" id="teamName">TEAM</div>
+    </div>
+
+    <div class="score-row">
+      <div class="score-main"><span id="scoreRuns" class="num-flip">0</span>/<span id="scoreWkts" class="num-flip wkt">0</span></div>
+      <div class="overs-block">
+        <div class="overs-num" id="oversNum">0.0</div>
+        <div class="overs-label">OVERS</div>
+      </div>
+      <div class="crr-block" id="crrBlock">
+        <div class="crr-num" id="crrNum">0.00</div>
+        <div class="crr-label">CRR</div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="batters">
+      <div class="batter-row" id="strikerRow">
+        <div class="dot"></div>
+        <div class="batter-name" id="strikerName">—</div>
+        <div class="batter-stats"><span id="strikerRuns" class="num-flip">0</span><span class="balls">(<span id="strikerBalls">0</span>)</span></div>
+      </div>
+      <div class="batter-row" id="nonStrikerRow">
+        <div class="dot"></div>
+        <div class="batter-name" id="nonStrikerName">—</div>
+        <div class="batter-stats"><span id="nonStrikerRuns" class="num-flip">0</span><span class="balls">(<span id="nonStrikerBalls">0</span>)</span></div>
+      </div>
+    </div>
+
+    <div class="chase-box" id="chaseBox" style="display:none;">
+      <div class="chase-target">TARGET <b id="targetNum">0</b></div>
+      <div class="chase-need" id="chaseNeedLine">
+        NEED <span class="hi" id="needRuns">0</span> RUNS FROM <span class="hi" id="needBalls">0</span> BALLS
+      </div>
+      <div class="chase-result" id="chaseResult" style="display:none;"></div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+  /* ============================================================
+     LED OUTPUT — read-only display driven entirely by the existing
+     AllSportsLive cricket scoring engine's state (cricketState).
+
+     - Match id comes from the URL: /led-output/:matchId
+     - Joins the SAME Socket.IO room the scoring panel/overlay already
+       use, via the existing `uid` query param handled in server.js
+       (io.on('connection') → currentRoom = `room-${matchId}`).
+     - Listens ONLY to the existing 'liveCricketScore' event — the
+       exact event the panel and overlay already consume. No new
+       scoring/data logic is introduced; ball-legality (wide/no-ball
+       exclusion) is already baked into state.score.overs/balls by the
+       existing engine, so the balls-remaining math below simply reads
+       those numbers the same way cricket-panel.html's calcBallsLeft()
+       does — it does not recompute or duplicate scoring itself.
+     ============================================================ */
+
+  // Extract matchId from /led-output/:matchId (works regardless of any
+  // query string appended for testing).
+  function getMatchIdFromPath(){
+    const parts = location.pathname.split('/').filter(Boolean);
+    const idx = parts.indexOf('led-output');
+    if(idx !== -1 && parts[idx+1]) return decodeURIComponent(parts[idx+1]);
+    // fallback: ?matchId= or ?room= for flexibility during testing
+    const qs = new URLSearchParams(location.search);
+    return qs.get('matchId') || qs.get('room') || qs.get('id') || '';
+  }
+
+  const MATCH_ID = getMatchIdFromPath();
+
+  const els = {
+    connDot: document.getElementById('connDot'),
+    connText: document.getElementById('connText'),
+    connState: document.getElementById('connState'),
+    waiting: document.getElementById('waiting'),
+    waitTitle: document.getElementById('waitTitle'),
+    waitSub: document.getElementById('waitSub'),
+    board: document.getElementById('board'),
+    teamBar: document.getElementById('teamBar'),
+    teamLogo: document.getElementById('teamLogo'),
+    teamName: document.getElementById('teamName'),
+    scoreRuns: document.getElementById('scoreRuns'),
+    scoreWkts: document.getElementById('scoreWkts'),
+    oversNum: document.getElementById('oversNum'),
+    crrBlock: document.getElementById('crrBlock'),
+    crrNum: document.getElementById('crrNum'),
+    strikerRow: document.getElementById('strikerRow'),
+    nonStrikerRow: document.getElementById('nonStrikerRow'),
+    strikerName: document.getElementById('strikerName'),
+    strikerRuns: document.getElementById('strikerRuns'),
+    strikerBalls: document.getElementById('strikerBalls'),
+    nonStrikerName: document.getElementById('nonStrikerName'),
+    nonStrikerRuns: document.getElementById('nonStrikerRuns'),
+    nonStrikerBalls: document.getElementById('nonStrikerBalls'),
+    chaseBox: document.getElementById('chaseBox'),
+    targetNum: document.getElementById('targetNum'),
+    chaseNeedLine: document.getElementById('chaseNeedLine'),
+    needRuns: document.getElementById('needRuns'),
+    needBalls: document.getElementById('needBalls'),
+    chaseResult: document.getElementById('chaseResult'),
+    fsBtn: document.getElementById('fsBtn')
+  };
+
+  if(!MATCH_ID){
+    els.waitTitle.textContent = 'No Match ID in URL';
+    els.waitSub.textContent = 'Open this page as /led-output/YOUR_MATCH_ID (the same Match ID used in the scoring panel).';
+  }
+
+  // Same FORMAT_RULES the scoring panel uses, purely to know how many
+  // legal balls make up one innings for THIS match's format — needed to
+  // compute "balls remaining" for the chase line. This is display-only
+  // arithmetic (identical to cricket-panel.html's ballsPerInnings()); it
+  // does not alter, recompute, or duplicate any scoring decision.
+  const FORMAT_RULES = {
+    T20:   { oversPerInnings: 20 },
+    ODI:   { oversPerInnings: 50 },
+    Test:  { oversPerInnings: Infinity },
+    Custom:{ oversPerInnings: 20 }
+  };
+  function ballsPerInnings(state){
+    if(state.format === 'Custom') return (state.customOvers || 20) * 6;
+    const rules = FORMAT_RULES[state.format] || FORMAT_RULES.T20;
+    if(rules.oversPerInnings === Infinity) return null;
+    return rules.oversPerInnings * 6;
+  }
+
+  let lastState = null;
+
+  function setText(el, val){
+    val = String(val);
+    if(el.textContent === val) return;
+    el.textContent = val;
+    el.classList.remove('bump');
+    // Force reflow so the animation can retrigger on rapid consecutive changes.
+    void el.offsetWidth;
+    el.classList.add('bump');
+  }
+
+  function render(state){
+    if(!state) return;
+    lastState = state;
+
+    els.waiting.style.display = 'none';
+    els.board.classList.add('active');
+
+    const battingKey = state.battingTeam === 'B' ? 'teamB' : 'teamA';
+    const team = state[battingKey] || {};
+    const color = team.color || '#f0b429';
+    document.documentElement.style.setProperty('--team-color', color);
+
+    setText(els.teamName, (team.name || 'TEAM').toUpperCase());
+    if(team.logoUrl){
+      els.teamLogo.style.backgroundImage = `url(${team.logoUrl})`;
+      els.teamLogo.classList.add('visible');
+    } else {
+      els.teamLogo.classList.remove('visible');
+    }
+
+    const score = state.score || { runs:0, wickets:0, overs:0, balls:0 };
+    setText(els.scoreRuns, score.runs || 0);
+    setText(els.scoreWkts, score.wickets || 0);
+    setText(els.oversNum, `${score.overs || 0}.${score.balls || 0}`);
+
+    const totalBalls = (score.overs||0)*6 + (score.balls||0);
+    const crr = totalBalls > 0 ? (score.runs || 0) / (totalBalls/6) : 0;
+    setText(els.crrNum, crr.toFixed(2));
+
+    const striker = state.striker || { name:'', runs:0, balls:0 };
+    const nonStriker = state.nonStriker || { name:'', runs:0, balls:0 };
+    setText(els.strikerName, striker.name ? striker.name.toUpperCase() : '—');
+    setText(els.strikerRuns, striker.runs || 0);
+    setText(els.strikerBalls, striker.balls || 0);
+    setText(els.nonStrikerName, nonStriker.name ? nonStriker.name.toUpperCase() : '—');
+    setText(els.nonStrikerRuns, nonStriker.runs || 0);
+    setText(els.nonStrikerBalls, nonStriker.balls || 0);
+
+    // Add the on-strike "*" marker to the striker's name, matching the
+    // existing scoreboard/overlay convention (see example in the brief:
+    // "ROHIT SHARMA 72*").
+    if(!els.strikerName.querySelector('.star') && striker.name){
+      els.strikerName.innerHTML = striker.name.toUpperCase() + '<span class="star">*</span>';
+    }
+
+    // ===== Target / chase logic — SECOND INNINGS ONLY =====
+    // state.target is only ever non-null once the chasing innings has
+    // begun (set by the existing scoring panel's "Start Next Innings" /
+    // target field flow) — so its presence alone already means "this is
+    // the run chase", exactly as the existing panel treats it.
+    const matchOver = !!state.matchResultText;
+
+    if(state.target){
+      els.chaseBox.style.display = 'flex';
+      setText(els.targetNum, state.target);
+
+      if(matchOver){
+        els.chaseNeedLine.style.display = 'none';
+        els.chaseResult.style.display = 'block';
+        els.chaseResult.textContent = state.matchResultText;
+      } else {
+        const totalAllowed = ballsPerInnings(state);
+        const runsNeeded = Math.max(state.target - (score.runs || 0), 0);
+
+        if(totalAllowed){
+          const ballsBowled = totalBalls;
+          const ballsLeft = Math.max(totalAllowed - ballsBowled, 0);
+
+          if(runsNeeded <= 0 || ballsLeft <= 0){
+            // Chase already resolved (won or overs used up) but the operator
+            // hasn't marked matchResultText yet — just hide the need line
+            // rather than show a nonsensical "0 balls" readout.
+            els.chaseNeedLine.style.display = 'none';
+            els.chaseResult.style.display = 'none';
+          } else {
+            els.chaseNeedLine.style.display = 'block';
+            els.chaseResult.style.display = 'none';
+            setText(els.needRuns, runsNeeded);
+            setText(els.needBalls, ballsLeft);
+          }
+        } else {
+          // Test-match style innings with no fixed overs — no meaningful
+          // "balls remaining", so just show the target.
+          els.chaseNeedLine.style.display = 'none';
+          els.chaseResult.style.display = 'none';
+        }
+      }
+    } else {
+      // First innings — hide target/need entirely, per spec.
+      els.chaseBox.style.display = 'none';
+    }
+
+    // Match finished and this is NOT a chase (e.g. bowled out, innings
+    // win, tie, draw) — still show the result prominently in place of
+    // the (hidden) chase box.
+    if(matchOver && !state.target){
+      els.chaseBox.style.display = 'flex';
+      els.chaseNeedLine.style.display = 'none';
+      document.querySelector('.chase-target').style.display = 'none';
+      els.chaseResult.style.display = 'block';
+      els.chaseResult.textContent = state.matchResultText;
+    } else if(!matchOver) {
+      document.querySelector('.chase-target').style.display = '';
+    }
+  }
+
+  function setConnected(on){
+    els.connDot.classList.toggle('on', on);
+    els.connText.textContent = on ? 'Live' : 'Reconnecting…';
+    if(on){
+      // Fade the connection badge out after a moment once live, so it
+      // doesn't clutter the LED screen — but keep it instantly visible
+      // again the moment connection drops (see setConnected(false) below).
+      clearTimeout(setConnected._t);
+      setConnected._t = setTimeout(() => els.connState.classList.add('hide'), 2500);
+    } else {
+      els.connState.classList.remove('hide');
+    }
+  }
+
+  if(MATCH_ID){
+    // Same connection convention as cricket-panel.html / cricket-overlay:
+    // `uid` query param → server maps it to `room-${uid}` and this
+    // socket only ever receives that room's broadcasts. Socket.IO's
+    // built-in reconnection (on by default) handles temporary network
+    // loss automatically — no custom reconnect logic needed.
+    const socket = io({ query: { uid: MATCH_ID } });
+
+    socket.on('connect', () => setConnected(true));
+    socket.on('disconnect', () => setConnected(false));
+    socket.on('connect_error', () => setConnected(false));
+
+    // The ONLY event this page listens to — the exact live-update event
+    // the existing scoring panel/overlay already use. No new events, no
+    // duplicate state, no separate scoring logic.
+    socket.on('liveCricketScore', (serverState) => {
+      if(serverState && Object.keys(serverState).length){
+        // Merge on top of last known state so a partial update (as the
+        // server sometimes sends) never wipes fields the LED page still
+        // needs to display.
+        const merged = { ...(lastState || {}), ...serverState };
+        // Deep-merge the small set of nested objects this page reads.
+        if(serverState.teamA) merged.teamA = { ...(lastState && lastState.teamA), ...serverState.teamA };
+        if(serverState.teamB) merged.teamB = { ...(lastState && lastState.teamB), ...serverState.teamB };
+        if(serverState.score) merged.score = { ...(lastState && lastState.score), ...serverState.score };
+        if(serverState.striker) merged.striker = { ...(lastState && lastState.striker), ...serverState.striker };
+        if(serverState.nonStriker) merged.nonStriker = { ...(lastState && lastState.nonStriker), ...serverState.nonStriker };
+        render(merged);
+      }
+    });
+  }
+
+  // ===== Fullscreen toggle (for home/laptop/TV testing) =====
+  els.fsBtn.addEventListener('click', () => {
+    if(!document.fullscreenElement){
+      document.documentElement.requestFullscreen?.().catch(()=>{});
+    } else {
+      document.exitFullscreen?.();
+    }
+  });
+  document.addEventListener('fullscreenchange', () => {
+    els.fsBtn.textContent = document.fullscreenElement ? '⤢ Exit Fullscreen' : '⛶ Fullscreen';
+  });
+  // Auto-hide the fullscreen button after inactivity so it never sits on
+  // top of the LED screen during an actual broadcast; any mouse/touch
+  // brings it back.
+  let hideTimer = null;
+  function showControls(){
+    els.fsBtn.classList.remove('hide');
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => els.fsBtn.classList.add('hide'), 4000);
+  }
+  document.addEventListener('mousemove', showControls);
+  document.addEventListener('touchstart', showControls);
+  showControls();
+  </script>
+</body>
+</html>
