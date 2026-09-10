@@ -454,6 +454,7 @@
   <div class="qn-group qn-output">
     <span class="qn-label">📡 Output</span>
     <button type="button" data-target="card-overlay-link">Overlay Link</button>
+    <button type="button" data-target="card-led-link">LED Output</button>
     <button type="button" data-target="card-recording">Recording</button>
     <button type="button" data-target="card-milestone-trigger">Milestone</button>
     <button type="button" data-target="card-milestone-log">Log</button>
@@ -1003,6 +1004,18 @@
       </div>
     </div>
 
+    <div class="card" id="card-led-link">
+      <h2>🖥️ LED Screen Output (Ground Display)</h2>
+      <div class="link-row">
+        <input type="text" id="led-link" readonly>
+        <button class="small" id="copy-led-link">Copy</button>
+      </div>
+      <button class="full small primary" id="open-led-btn" style="margin-top:8px;">Open LED Output ↗</button>
+      <div style="font-size:11px; opacity:.6; margin-top:6px;">
+        Open this link fullscreen on the ground LED control PC (or any laptop/TV for testing). It updates live from this same panel — no manual entry needed there.
+      </div>
+    </div>
+
     <div class="card" id="card-scorecard-link">
       <h2>📋 Scorecard Link (Public View)</h2>
       <div class="link-row">
@@ -1507,9 +1520,11 @@ function updateShareLinks(matchId){
   const overlayUrl = `${location.origin}/cricket-overlay?room=${encodeURIComponent(matchId)}`;
   const panelUrl = `${location.origin}/cricket-panel?room=${encodeURIComponent(matchId)}`;
   const scorecardUrl = `${location.origin}/cricket-scorecard?room=${encodeURIComponent(matchId)}`;
+  const ledUrl = `${location.origin}/led-output/${encodeURIComponent(matchId)}`;
 
   document.getElementById('overlay-link').value = overlayUrl;
   document.getElementById('scorecard-link').value = scorecardUrl;
+  document.getElementById('led-link').value = ledUrl;
 
   const qrEl = document.getElementById('qr-code');
   qrEl.innerHTML = '';
@@ -1865,6 +1880,19 @@ document.getElementById('copy-scorecard-link').addEventListener('click', () => {
 });
 document.getElementById('open-scorecard-btn').addEventListener('click', () => {
   const url = document.getElementById('scorecard-link').value;
+  if(url) window.open(url, '_blank');
+});
+
+document.getElementById('copy-led-link').addEventListener('click', () => {
+  const input = document.getElementById('led-link');
+  input.select();
+  navigator.clipboard?.writeText(input.value).then(
+    () => toast('LED Output link copied'),
+    () => document.execCommand('copy')
+  );
+});
+document.getElementById('open-led-btn').addEventListener('click', () => {
+  const url = document.getElementById('led-link').value;
   if(url) window.open(url, '_blank');
 });
 
