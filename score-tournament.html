@@ -219,6 +219,7 @@
   .watch-btn{ padding:8px 16px; border-radius:99px; background:var(--accent); color:var(--accent-contrast); font-weight:700; font-size:12.5px; flex:none; }
   footer{ text-align:center; padding:22px 10px 4px; color:var(--text-faint); font-size:11.5px; }
   footer a{ color:var(--accent); font-weight:700; }
+  .footer-copyright{ margin-top:4px; }
   @media (max-width:700px){ .leaderboard-grid{ grid-template-columns:1fr; } }
 
   /* ============================================================
@@ -310,7 +311,10 @@
   <div id="content" style="display:none;"></div>
 </div>
 
-<footer>Powered by <a href="/">All Sports Live</a> — live scoring &amp; broadcast graphics</footer>
+<footer>Powered by <a href="/">All Sports Live</a> — live scoring &amp; broadcast graphics
+  <div class="footer-copyright">© <span id="copyright-year"></span> All Sports Live. All rights reserved.</div>
+</footer>
+<script>document.getElementById('copyright-year').textContent = new Date().getFullYear();</script>
 
 <!-- Leaderboard player clips — tournament-wide, match-by-match -->
 <div id="clip-modal-backdrop">
@@ -358,19 +362,31 @@ const auth = firebase.auth();
 let authReadyResolve;
 const authReady = new Promise(res => { authReadyResolve = res; });
 auth.onAuthStateChanged(() => { authReadyResolve(); });
-async function authHeaders(){
+async function authHeaders(forceRefresh){
   await authReady;
   try{
     if(auth.currentUser){
-      const idToken = await auth.currentUser.getIdToken();
+      // forceRefresh=true bypasses the SDK's cached ID token — used on our
+      // one automatic retry below, in case the cached token was stale/near
+      // expiry at the moment of the first request.
+      const idToken = await auth.currentUser.getIdToken(!!forceRefresh);
       return { Authorization: `Bearer ${idToken}` };
     }
-  }catch(e){ /* ignore — fall through to unauthenticated request */ }
+  }catch(e){ console.warn('[auth] getIdToken failed', e); }
   return {};
 }
-async function apiFetch(url, opts){
-  const headers = Object.assign({}, (opts && opts.headers) || {}, await authHeaders());
-  return fetch(url, Object.assign({}, opts, { headers }));
+async function apiFetch(url, opts, _retry){
+  const headers = Object.assign({}, (opts && opts.headers) || {}, await authHeaders(_retry));
+  const res = await fetch(url, Object.assign({}, opts, { headers }));
+  // DIAGNOSTIC: a signed-in user getting a 404 on a private/tournament
+  // fetch usually means either (a) no Authorization header actually went
+  // out, or (b) the token was stale. Log enough to tell the two apart from
+  // DevTools, then retry once with a force-refreshed token before giving up.
+  if(res.status === 404 && !_retry && auth.currentUser){
+    console.warn('[apiFetch] 404 on', url, '— had currentUser, retrying with a fresh ID token');
+    return apiFetch(url, opts, true);
+  }
+  return res;
 }
 
 const SUN='M12 4V2M12 22v-2M4.93 4.93 3.51 3.51M20.49 20.49l-1.42-1.42M4 12H2M22 12h-2M4.93 19.07l-1.42 1.42M20.49 3.51l-1.42 1.42M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z';
@@ -561,7 +577,15 @@ async function init(){
       const res = await apiFetch(`/api/public/tournament/${encodeURIComponent(token)}`);
       const data = await res.json();
       if(data && data.success){ renderPortal(data, token); }
-      else { showEmpty(data.error || 'Tournament not found.'); }
+      else {
+        // DIAGNOSTIC: check this in the console — if signedInAs is empty
+        // while you know you're logged in, the Firebase session did not
+        // restore on this page load (persistence/redirect issue). If
+        // signedInAs shows your email but you still get "not found", the
+        // backend's private-tournament check itself needs a look.
+        console.warn('[tournament] load failed', { token, status: res.status, body: data, signedInAs: auth.currentUser && auth.currentUser.email });
+        showEmpty(data.error || 'Tournament not found.');
+      }
     }
   }catch(e){ showEmpty('Could not load this tournament right now — please try again shortly.'); }
 }
