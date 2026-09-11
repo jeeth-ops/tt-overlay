@@ -796,6 +796,7 @@ function applyTheme(t){
   document.documentElement.setAttribute('data-theme', t);
   document.getElementById('theme-icon').innerHTML = t === 'dark' ? SUN_PATH : MOON_PATH;
   try{ localStorage.setItem('allsportslive-scorecard-theme', t); }catch(e){}
+  if(typeof invalidateChartColorCache === 'function') invalidateChartColorCache();
 }
 (function initTheme(){
   let saved = null;
@@ -1026,7 +1027,11 @@ function connectLive(matchId){
   socket.on('liveCricketScore', (serverState) => {
     if(serverState && Object.keys(serverState).length){
       latestState = serverState;
-      render();
+      // If two updates arrive within the same frame (a quick correction,
+      // a reconnect replaying a few missed events, etc.) this collapses
+      // them into a single render pass instead of running the whole
+      // render pipeline — and every setText reflow inside it — twice.
+      scheduleRender();
     }
   });
   socket.on('cricketPointsTable', (payload) => {
@@ -1270,6 +1275,38 @@ function render(){
   renderBottom(s);
 }
 
+let renderScheduled = false;
+function scheduleRender(){
+  if(renderScheduled) return;
+  renderScheduled = true;
+  requestAnimationFrame(() => {
+    renderScheduled = false;
+    render();
+  });
+}
+
+// Elements queued for the "value changed" pop animation. Restarting a CSS
+// animation needs one forced layout read (offsetWidth) — doing that
+// separately for every field on a busy update (score, overs, both
+// batters' figures, bowler figures...) meant up to 8-10 synchronous
+// layout recalculations back-to-back on a single socket message. Cheap
+// desktops/iPhones absorb that without visibly dropping a frame, but it
+// is the single biggest source of jank on mid/low-end Android CPUs.
+// Queuing the elements and flushing with ONE shared reflow (batched via
+// rAF) turns N forced layouts into 1, regardless of how many fields
+// changed in this update.
+const pendingValPop = new Set();
+let valPopFlushQueued = false;
+function flushValPop(){
+  valPopFlushQueued = false;
+  if(!pendingValPop.size) return;
+  const els = Array.from(pendingValPop);
+  pendingValPop.clear();
+  els.forEach(el => el.classList.remove('val-pop'));
+  // Single shared forced layout for the whole batch, not one per element.
+  void document.body.offsetWidth;
+  els.forEach(el => el.classList.add('val-pop'));
+}
 function setText(id, val){
   const el = document.getElementById(id);
   if(!el) return;
@@ -1279,9 +1316,11 @@ function setText(id, val){
   // Live figures (score, overs, run rates, batter/bowler figures, etc.)
   // get a brief, soft highlight so a ball event reads as "the number
   // changed" rather than silently mutating underneath the viewer.
-  el.classList.remove('val-pop');
-  void el.offsetWidth;
-  el.classList.add('val-pop');
+  pendingValPop.add(el);
+  if(!valPopFlushQueued){
+    valPopFlushQueued = true;
+    requestAnimationFrame(flushValPop);
+  }
 }
 
 // Captain / Wicketkeeper role tags. Reads whichever field name the
@@ -1463,6 +1502,18 @@ function svgWrap(inner, vbW, vbH){
   return `<svg viewBox="0 0 ${vbW} ${vbH}" preserveAspectRatio="xMidYMid meet">${inner}</svg>`;
 }
 function css(varName){ return getComputedStyle(document.documentElement).getPropertyValue(varName).trim(); }
+// getComputedStyle() forces a style recalculation every time it's called.
+// The charts were calling it once per bar and once per wicket-mark inside
+// a loop (up to a dozen+ calls per chart redraw) — cheap on a fast CPU,
+// but a real cost on Android. These two colors only change on a theme
+// toggle, so cache them once per render call and reuse the cached value
+// through the whole loop.
+let chartColorCache = null;
+function getChartColors(){
+  if(!chartColorCache) chartColorCache = { accent: css('--accent'), wicket: css('--wicket') };
+  return chartColorCache;
+}
+function invalidateChartColorCache(){ chartColorCache = null; }
 
 function renderOverChart(log){
   const el = document.getElementById('chart-overs');
@@ -1472,13 +1523,14 @@ function renderOverChart(log){
   const chartW = W - padL - 10, chartH = H - padB - padT;
   const maxRuns = Math.max(...overs.map(o => o.runs), 6);
   const bw = chartW / overs.length;
+  const chartColors = getChartColors();
   let bars = '';
   overs.forEach((o, i) => {
     const h = (o.runs / maxRuns) * chartH;
     const x = padL + i * bw + bw*0.18;
     const y = padT + chartH - h;
     const w = bw * 0.64;
-    const color = o.wicket ? css('--wicket') : css('--accent');
+    const color = o.wicket ? chartColors.wicket : chartColors.accent;
     bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(h,2).toFixed(1)}" rx="4" fill="${color}" opacity="0.9"/>`;
     bars += `<text x="${(x+w/2).toFixed(1)}" y="${(y-5).toFixed(1)}" text-anchor="middle" class="bar-label">${o.runs}</text>`;
     bars += `<text x="${(x+w/2).toFixed(1)}" y="${H-6}" text-anchor="middle" class="axis-label">${o.idx+1}</text>`;
@@ -1499,15 +1551,16 @@ function renderProgressionChart(log){
   const py = (v) => padT + chartH - (v / maxRuns) * chartH;
   const linePath = points.map((p,i) => `${i===0?'M':'L'}${px(i).toFixed(1)},${py(p.y).toFixed(1)}`).join(' ');
   const areaPath = `${linePath} L${px(points.length-1).toFixed(1)},${(padT+chartH).toFixed(1)} L${padL},${(padT+chartH).toFixed(1)} Z`;
-  const wicketMarks = points.filter(p => p.wicket).map(p => `<circle cx="${px(p.x).toFixed(1)}" cy="${py(p.y).toFixed(1)}" r="3.4" fill="${css('--wicket')}"/>`).join('');
+  const chartColors = getChartColors();
+  const wicketMarks = points.filter(p => p.wicket).map(p => `<circle cx="${px(p.x).toFixed(1)}" cy="${py(p.y).toFixed(1)}" r="3.4" fill="${chartColors.wicket}"/>`).join('');
   const gridLines = [0,0.5,1].map(f => {
     const y = padT + chartH - f*chartH;
     return `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W-padR}" y2="${y.toFixed(1)}" stroke="var(--border-soft)" stroke-width="1"/><text x="${padL-6}" y="${(y+3).toFixed(1)}" text-anchor="end" class="axis-label">${Math.round(f*maxRuns)}</text>`;
   }).join('');
   const svg = `
     ${gridLines}
-    <path d="${areaPath}" fill="${css('--accent')}" opacity="0.12" stroke="none"/>
-    <path d="${linePath}" fill="none" stroke="${css('--accent')}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="${areaPath}" fill="${chartColors.accent}" opacity="0.12" stroke="none"/>
+    <path d="${linePath}" fill="none" stroke="${chartColors.accent}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
     ${wicketMarks}
   `;
   el.innerHTML = svgWrap(svg, W, H);
