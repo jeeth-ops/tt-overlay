@@ -53,6 +53,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="/socket.io/socket.io.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
 <style>
   /* ============================================================
      THEME TOKENS
@@ -788,6 +790,44 @@
 
 <script>
 /* ============================================================
+   AUTH (for private-tournament API calls) — same Firebase project
+   as index.html. A tournament link (?token=...) can point at a
+   PRIVATE tournament; the backend only returns that tournament's
+   data for a verified request from one of the authorized creator
+   accounts, so every request that touches /api/public/tournament/*
+   needs to carry the signed-in user's ID token when one exists.
+   Public tournaments ignore the header and work the same either
+   way. Firebase persists sign-in across page loads (same project,
+   same domain), so a user who signed in on the homepage is still
+   recognized here without signing in again.
+   ============================================================ */
+const firebaseConfig = {
+  apiKey: "AIzaSyAYc_bEB9C4RhhLhPBEJsJRFRUppcR45yo",
+  authDomain: "auth.allsportslivestreams.com",
+  projectId: "scorvix-faf0e",
+  storageBucket: "scorvix-faf0e.firebasestorage.app"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+let authReadyResolve;
+const authReady = new Promise(res => { authReadyResolve = res; });
+auth.onAuthStateChanged(() => { authReadyResolve(); });
+async function authHeaders(){
+  await authReady;
+  try{
+    if(auth.currentUser){
+      const idToken = await auth.currentUser.getIdToken();
+      return { Authorization: `Bearer ${idToken}` };
+    }
+  }catch(e){ /* ignore — fall through to unauthenticated request */ }
+  return {};
+}
+async function apiFetch(url, opts){
+  const headers = Object.assign({}, (opts && opts.headers) || {}, await authHeaders());
+  return fetch(url, Object.assign({}, opts, { headers }));
+}
+
+/* ============================================================
    THEME
    ============================================================ */
 const SUN_PATH = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>';
@@ -1077,13 +1117,21 @@ async function loadMatchSnapshot(matchId){
     const url = token
       ? `${clipApiBase()}/api/public/tournament/${encodeURIComponent(token)}/match/${encodeURIComponent(matchId)}`
       : `${clipApiBase()}/api/public/match/${encodeURIComponent(matchId)}`;
-    const res = await fetch(url);
+    const res = await apiFetch(url);
     if(!res.ok) throw new Error('bad response');
     const data = await res.json();
 
-    if(!token && data && data.success && data.match === null){
-      // Standalone match not saved yet — still live. Rejoin as a normal
-      // live viewer using whichever id the API says the room is under.
+    if(data && data.success && data.match === null){
+      // Match not saved as finished yet — still live (this happens for a
+      // tournament's "In Progress" match too, not just a standalone link:
+      // the tournament hub already lists a match before the operator has
+      // marked it finished, so its "history" link can point at a match
+      // that's still being scored). Rejoin as a normal live viewer using
+      // whichever id the API says the room is under, same as a standalone
+      // in-progress link does. Previously this fallback only ran when there
+      // was no ?token=, so opening an in-progress tournament match landed
+      // straight on "Could not load this match's scorecard right now."
+      // instead of connecting to the live feed.
       document.getElementById('conn-pill').style.display = '';
       connectLive(data.roomId || matchId);
       return;
@@ -1638,7 +1686,7 @@ async function fetchPlayerClips(name, scope){
   if(scope === 'match' && !getClipMatchId()) return null;
   if(scope !== 'match' && !hasLeagueCtx()) return null;
   try{
-    const res = await fetch(`${clipApiBase()}/api/clips/player/${encodeURIComponent(pk)}?${scopeQuery(scope)}`);
+    const res = await apiFetch(`${clipApiBase()}/api/clips/player/${encodeURIComponent(pk)}?${scopeQuery(scope)}`);
     if(!res.ok) return null;
     return await res.json();
   } catch(err){ console.warn('Clip fetch failed', err); return null; }
@@ -1656,7 +1704,7 @@ async function fetchPlayerStats(name, scope){
   if(scope === 'match') return matchStatsForPlayer(name);
   if(!hasLeagueCtx()) return null;
   try{
-    const res = await fetch(`${clipApiBase()}/api/stats/player/${encodeURIComponent(pk)}?${scopeQuery(scope)}`);
+    const res = await apiFetch(`${clipApiBase()}/api/stats/player/${encodeURIComponent(pk)}?${scopeQuery(scope)}`);
     if(!res.ok) return null;
     return await res.json();
   } catch(err){ console.warn('Stats fetch failed', err); return null; }
@@ -1706,7 +1754,7 @@ async function fetchMatchClips(type){
   if(!matchId) return [];
   try{
     const qs = type ? `?type=${encodeURIComponent(type)}` : '';
-    const res = await fetch(`${clipApiBase()}/api/clips/match/${encodeURIComponent(matchId)}${qs}`);
+    const res = await apiFetch(`${clipApiBase()}/api/clips/match/${encodeURIComponent(matchId)}${qs}`);
     if(!res.ok) return [];
     const data = await res.json();
     return (data && data.clips) || [];
@@ -1717,7 +1765,7 @@ async function fetchTeamClips(teamKey){
   const matchId = getClipMatchId();
   if(!matchId) return [];
   try{
-    const res = await fetch(`${clipApiBase()}/api/clips/team/${encodeURIComponent(matchId)}/${encodeURIComponent(teamKey)}`);
+    const res = await apiFetch(`${clipApiBase()}/api/clips/team/${encodeURIComponent(matchId)}/${encodeURIComponent(teamKey)}`);
     if(!res.ok) return [];
     const data = await res.json();
     return (data && data.clips) || [];
@@ -1859,7 +1907,7 @@ async function fetchPlayerTournamentHistory(name){
   const { ownerUid } = getLeagueCtx();
   if(!pk || !ownerUid) return [];
   try{
-    const res = await fetch(`${clipApiBase()}/api/stats/player/${encodeURIComponent(pk)}/tournaments?uid=${encodeURIComponent(ownerUid)}`);
+    const res = await apiFetch(`${clipApiBase()}/api/stats/player/${encodeURIComponent(pk)}/tournaments?uid=${encodeURIComponent(ownerUid)}`);
     if(!res.ok) return [];
     const data = await res.json();
     return (data && data.success && data.tournaments) || [];
@@ -2072,7 +2120,7 @@ async function loadTournamentHub(){
   const token = getTournamentToken();
   if(!token) return; // no public tournament context on this link — hub stays hidden
   try{
-    const res = await fetch(`${clipApiBase()}/api/public/tournament/${encodeURIComponent(token)}`);
+    const res = await apiFetch(`${clipApiBase()}/api/public/tournament/${encodeURIComponent(token)}`);
     if(!res.ok) return;
     const data = await res.json();
     if(!data || !data.success) return;
