@@ -53,6 +53,20 @@ document.documentElement.setAttribute('data-theme', 'dark');
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>All Sports Live - Professional Live Overlays</title>
 
+    <!-- Resource hints: opens the connection to each third-party origin
+         (DNS + TLS handshake) while the HTML is still parsing, instead of
+         waiting until the <link>/<script> tag for that origin is reached.
+         Shaves real time off first paint / first interaction on slower
+         mobile networks — no visual or behavioral change. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://www.gstatic.com">
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com">
+    <link rel="dns-prefetch" href="https://fonts.googleapis.com">
+    <link rel="dns-prefetch" href="https://fonts.gstatic.com">
+    <link rel="dns-prefetch" href="https://www.gstatic.com">
+    <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
+
     <!-- Favicon -->
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
@@ -165,6 +179,18 @@ document.documentElement.setAttribute('data-theme', 'dark');
             box-sizing: border-box;
             font-family: 'Inter', sans-serif;
             -webkit-tap-highlight-color: transparent;
+        }
+
+        /* Removes the ~300ms double-tap-zoom delay some mobile browsers
+           (mainly older/mid-range Android WebViews) still add before firing
+           click on anything tappable, without touching pinch-zoom or page
+           scrolling. Purely a touch-latency fix — no visual change. */
+        a, button, input[type="button"], input[type="submit"],
+        .cta-btn, .nav-btn, .auth-btn, .theme-toggle, .nav-hamburger,
+        .mobile-nav-link, .sport-card, .tournament-card, .template-card,
+        .db-tab-btn, .faq-question, .integration-card, .step-card,
+        [role="button"] {
+            touch-action: manipulation;
         }
 
         /* Smooth, GPU-cheap theme switching for the surfaces most visible
@@ -864,8 +890,10 @@ document.documentElement.setAttribute('data-theme', 'dark');
         .tournaments-section h2 { font-size: clamp(1.9rem, 5vw, 3rem); font-weight: 800; letter-spacing: -1px; text-align: center; margin-bottom: 12px; }
         .tournaments-section > p.section-sub { color: var(--text-muted); font-size: 1.05rem; text-align: center; margin-bottom: 45px; }
 
-        .tournament-filters { display: flex; gap: 10px; justify-content: center; margin-bottom: 35px; flex-wrap: wrap; }
+        .tournament-filters { position: relative; display: flex; gap: 10px; justify-content: center; margin-bottom: 35px; flex-wrap: wrap; }
         .tournament-filter-btn {
+            position: relative;
+            z-index: 1;
             background: var(--border-color-soft);
             border: 1px solid var(--border-color);
             color: var(--text-muted);
@@ -877,7 +905,11 @@ document.documentElement.setAttribute('data-theme', 'dark');
             transition: background 0.25s var(--ease), color 0.25s var(--ease), border-color 0.25s var(--ease);
         }
         .tournament-filter-btn:hover { color: var(--text-main); }
-        .tournament-filter-btn.active { background: var(--accent); border-color: var(--accent); color: white; }
+        /* Background now comes from .tournament-filter-indicator gliding
+           underneath (z-index 0) so the fill morphs between chips instead
+           of popping; the active chip itself stays transparent so the
+           indicator shows through cleanly. */
+        .tournament-filter-btn.active { background: transparent; border-color: var(--accent); color: white; }
 
         .tournaments-grid {
             display: grid;
@@ -1088,6 +1120,7 @@ document.documentElement.setAttribute('data-theme', 'dark');
 
         /* ===== Segmented Pill Nav ===== */
         .nav-pills {
+            position: relative;
             display: flex;
             gap: 4px;
             background: var(--border-color-soft);
@@ -1096,6 +1129,8 @@ document.documentElement.setAttribute('data-theme', 'dark');
             border-radius: 50px;
         }
         .nav-pill {
+            position: relative;
+            z-index: 1;
             padding: 8px 20px;
             border-radius: 50px;
             color: var(--text-muted);
@@ -1105,6 +1140,31 @@ document.documentElement.setAttribute('data-theme', 'dark');
             transition: background 0.3s var(--ease), color 0.3s var(--ease);
         }
         .nav-pill:hover { color: var(--text-main); background: var(--border-color-soft); }
+        .nav-pill.active { color: #fff; }
+        /* ===== Morphing slide indicator =====
+           One accent pill that glides + resizes to sit behind whichever
+           nav-pill / filter chip is active, instead of each item popping
+           its own background on/off. Positioned with plain top/height
+           (set once per state change, never inside a scroll/animation
+           loop) and moved/resized purely with `translateX + scaleX` on a
+           1px-wide base — GPU-composited, no layout properties animated. */
+        .nav-pill-indicator, .tournament-filter-indicator {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 1px;
+            border-radius: 50px;
+            background: var(--accent);
+            opacity: 0;
+            z-index: 0;
+            pointer-events: none;
+            transform-origin: left center;
+            transition: transform 0.4s var(--ease-spring), opacity 0.25s var(--ease);
+            will-change: transform;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .nav-pill-indicator, .tournament-filter-indicator { transition: opacity 0.25s var(--ease); }
+        }
         @media (max-width: 900px) { .nav-pills { display: none; } }
         @media (max-width: 900px) {
             nav { padding: 14px 16px; }
@@ -1530,7 +1590,7 @@ document.documentElement.setAttribute('data-theme', 'dark');
 
         @media (max-width: 640px) {
             .dashboard-shell { flex-direction: column; }
-            .dashboard-sidebar { width: 100%; flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid var(--border-color-soft); }
+            .dashboard-sidebar { width: 100%; flex-direction: row; overflow-x: auto; -webkit-overflow-scrolling: touch; border-right: none; border-bottom: 1px solid var(--border-color-soft); }
             .stats-grid { grid-template-columns: 1fr; }
         }
 
@@ -1674,7 +1734,8 @@ document.documentElement.setAttribute('data-theme', 'dark');
             <img src="/logo.png" alt="All Sports Live" style="height:36px;width:36px;border-radius:9px;object-fit:cover;">
             <span><span style="color:var(--brand-orange);">All</span> <span style="color:var(--brand-teal);">Sports</span> <span style="color:var(--accent);">Live</span></span>
         </div>
-        <div class="nav-pills">
+        <div class="nav-pills" id="navPills">
+            <span class="nav-pill-indicator" id="navPillIndicator"></span>
             <a href="#tournaments" class="nav-pill">Tournaments</a>
             <a href="#features" class="nav-pill">Features</a>
             <a href="#faq" class="nav-pill">FAQ</a>
@@ -1876,7 +1937,8 @@ document.documentElement.setAttribute('data-theme', 'dark');
         <h2 class="reveal-on-scroll">Tournaments</h2>
         <p class="section-sub reveal-on-scroll delay-1">Live scores, completed tournaments, scorecards, player stats and clips</p>
 
-        <div class="tournament-filters reveal-on-scroll delay-1">
+        <div class="tournament-filters reveal-on-scroll delay-1" id="tournamentFilters">
+            <span class="tournament-filter-indicator" id="tournamentFilterIndicator"></span>
             <button class="tournament-filter-btn active" data-filter="all" onclick="setTournamentFilter('all', this)">All</button>
             <button class="tournament-filter-btn" data-filter="live" onclick="setTournamentFilter('live', this)">🔴 Live</button>
             <button class="tournament-filter-btn" data-filter="completed" onclick="setTournamentFilter('completed', this)">Completed</button>
@@ -2619,6 +2681,7 @@ document.documentElement.setAttribute('data-theme', 'dark');
             tournamentFilter = filter;
             document.querySelectorAll('.tournament-filter-btn').forEach(b => b.classList.remove('active'));
             if (btnEl) btnEl.classList.add('active');
+            if (typeof moveSlideIndicator === 'function') moveSlideIndicator('tournamentFilterIndicator', 'tournamentFilters', btnEl);
             renderTournaments();
         }
 
@@ -2631,6 +2694,12 @@ document.documentElement.setAttribute('data-theme', 'dark');
             loadDynamicSports();
             const footerYearEl = document.getElementById('footer-year');
             if (footerYearEl) footerYearEl.textContent = new Date().getFullYear();
+            // Position the two slide indicators at their default active
+            // item now that layout has settled (fonts/CSS applied).
+            if (typeof moveSlideIndicator === 'function') {
+                const activeFilterBtn = document.querySelector('.tournament-filter-btn.active');
+                if (activeFilterBtn) moveSlideIndicator('tournamentFilterIndicator', 'tournamentFilters', activeFilterBtn);
+            }
         });
 
         // Preloader: stays up until the window's 'load' event (video, fonts
@@ -2792,6 +2861,82 @@ document.documentElement.setAttribute('data-theme', 'dark');
         window.addEventListener('scroll', onScrollOrResize, { passive: true });
         window.addEventListener('resize', onScrollOrResize, { passive: true });
         applyScrollEffects();
+
+        // ===== Shared morph/slide indicator helper =====
+        // Moves+resizes a single accent pill to sit behind `targetEl` inside
+        // `containerId`, using only translateX + scaleX on a 1px-wide base
+        // (GPU-composited) plus a plain top/height write (a one-off per
+        // click/section-change, not something animated every frame). Used
+        // by both the nav-pill scroll-spy and the tournament filter chips
+        // so switching between them feels like one element gliding rather
+        // than each item popping its own background.
+        function moveSlideIndicator(indicatorId, containerId, targetEl) {
+            const indicator = document.getElementById(indicatorId);
+            const container = document.getElementById(containerId);
+            if (!indicator || !container) return;
+            if (!targetEl || targetEl.offsetParent === null) { indicator.style.opacity = '0'; return; }
+            const cRect = container.getBoundingClientRect();
+            const eRect = targetEl.getBoundingClientRect();
+            indicator.style.height = eRect.height + 'px';
+            indicator.style.top = (eRect.top - cRect.top) + 'px';
+            indicator.style.opacity = '1';
+            indicator.style.transform = `translateX(${eRect.left - cRect.left}px) scaleX(${eRect.width})`;
+        }
+
+        // ===== Nav-pill scroll-spy =====
+        // Highlights whichever section is currently in view by gliding the
+        // same indicator between nav-pills, reusing the IntersectionObserver
+        // pattern already used for scroll-reveal elsewhere on this page
+        // rather than adding another scroll listener.
+        (function navScrollSpy() {
+            const navPillsEl = document.getElementById('navPills');
+            if (!navPillsEl) return;
+            const pillMap = [];
+            navPillsEl.querySelectorAll('.nav-pill').forEach(pill => {
+                const id = (pill.getAttribute('href') || '').replace('#', '');
+                const section = id ? document.getElementById(id) : null;
+                if (section) pillMap.push({ pill, section });
+            });
+            if (!pillMap.length) return;
+
+            let currentPill = null;
+            function setActive(pill) {
+                if (pill === currentPill) return;
+                currentPill = pill;
+                navPillsEl.querySelectorAll('.nav-pill.active').forEach(p => p.classList.remove('active'));
+                if (pill) {
+                    pill.classList.add('active');
+                    moveSlideIndicator('navPillIndicator', 'navPills', pill);
+                } else {
+                    moveSlideIndicator('navPillIndicator', 'navPills', null);
+                }
+            }
+
+            const spyObserver = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (!entry.isIntersecting) return;
+                    const match = pillMap.find(m => m.section === entry.target);
+                    if (match && match.pill.offsetParent !== null) setActive(match.pill);
+                });
+            }, { root: null, rootMargin: '-45% 0px -50% 0px', threshold: 0 });
+
+            pillMap.forEach(m => spyObserver.observe(m.section));
+
+            let spyResizeTicking = false;
+            window.addEventListener('resize', () => {
+                if (spyResizeTicking) return;
+                spyResizeTicking = true;
+                requestAnimationFrame(() => {
+                    spyResizeTicking = false;
+                    if (currentPill) moveSlideIndicator('navPillIndicator', 'navPills', currentPill);
+                });
+            }, { passive: true });
+        })();
+
+        window.addEventListener('resize', () => {
+            const activeFilterBtn = document.querySelector('.tournament-filter-btn.active');
+            if (activeFilterBtn) moveSlideIndicator('tournamentFilterIndicator', 'tournamentFilters', activeFilterBtn);
+        }, { passive: true });
 
         // Animated count-up used by the analytics dashboard's stat cards —
         // purely a display helper, does not touch the underlying data logic.
