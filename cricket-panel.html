@@ -1037,7 +1037,7 @@
       <button class="full small primary" id="start-recording-btn">🔴 Start Recording</button>
       <button class="full small ghost" id="stop-recording-btn" style="margin-top:6px; display:none;">⏹ Stop Recording</button>
       <div style="font-size:11px; opacity:.6; margin-top:6px;">
-        Make sure vMix is recording and the Clipper Helper (below) is running on this PC. FOUR / SIX / WICKET will auto-cut a 20s clip and upload it to your Drive folder.
+        One click does everything now: this also starts Record inside vMix itself (needs the Clipper Helper below, with vMix's Web Controller enabled). FOUR / SIX / WICKET will auto-cut a 20s clip and upload it to your Drive folder.
       </div>
 
       <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,.08);">
@@ -1056,41 +1056,86 @@
       </div>
     </div>
 
+    <div class="card" id="card-live-youtube">
+      <h2>📺 Go Live to YouTube (Browser Only)</h2>
+      <div style="font-size:12px; opacity:.75; margin-bottom:10px; line-height:1.5;">
+        Streams straight from this browser to YouTube using your HDMI capture card — no OBS, no vMix, nothing installed on this PC.
+      </div>
+
+      <label style="font-size:12px; opacity:.8; display:block; margin-bottom:4px;">YouTube Stream Key</label>
+      <div class="link-row" style="margin-bottom:10px;">
+        <input type="password" id="yt-stream-key" placeholder="YouTube Studio → Go Live → Stream key">
+        <button class="small" id="toggle-yt-key-visibility">👁</button>
+      </div>
+
+      <label style="font-size:12px; opacity:.8; display:block; margin-bottom:4px;">Camera (capture card video)</label>
+      <select id="live-video-device" class="full" style="margin-bottom:8px;"></select>
+
+      <label style="font-size:12px; opacity:.8; display:block; margin-bottom:4px;">Audio (capture card audio)</label>
+      <select id="live-audio-device" class="full" style="margin-bottom:10px;"></select>
+
+      <button class="full small ghost" id="refresh-live-devices-btn" style="margin-bottom:10px;">🔄 Refresh Camera List</button>
+
+      <button class="full small primary" id="open-live-output-btn">🖥️ Open Live Output Window</button>
+      <div style="font-size:11px; opacity:.6; margin:6px 0 10px;">
+        Opens a small window showing your camera + overlay combined. Leave it open anywhere on screen — it doesn't need to face the crowd, it's just what gets sent to YouTube.
+      </div>
+
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+        <div class="dot" id="live-dot"></div>
+        <span id="live-status" style="font-size:13px; opacity:.8;">Offline</span>
+      </div>
+      <button class="full small primary" id="start-live-btn">🔴 Go Live</button>
+      <button class="full small ghost" id="stop-live-btn" style="margin-top:6px; display:none;">⏹ End Live</button>
+
+      <div style="font-size:11px; opacity:.6; margin-top:8px;">
+        First time you click "Go Live", Chrome will ask which window/tab to share — pick the <b>Live Output</b> window that just opened. You don't need to share tab audio; audio comes straight from the capture card.
+      </div>
+    </div>
+
     <div class="card" id="card-clipper-helper">
       <h2>⬇️ Clipper Helper (install once on this PC)</h2>
+
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px; padding:8px 10px; background:rgba(255,255,255,.04); border-radius:8px;">
+        <div class="dot" id="clipper-status-dot"></div>
+        <span id="clipper-status-text" style="font-size:13px; opacity:.85;">Checking…</span>
+      </div>
+
       <div style="font-size:12px; opacity:.75; margin-bottom:10px; line-height:1.5;">
-        A tiny program that runs alongside vMix on this same PC. It's what
-        actually cuts the FOUR/SIX/WICKET clips and uploads them to your
-        Drive folder — no Chrome screen-share needed. One-time setup.
+        A tiny program that runs alongside vMix on this same PC. Set up once with a couple of clicks (no file editing) — after that, one click on "Start Recording" above starts vMix's own recording too, cuts FOUR/SIX/WICKET clips, and uploads them to Drive automatically.
       </div>
       <a href="https://github.com/jeeth-ops/tt-overlay/releases/download/v7/ClipperHelper.zip">
         <button class="full small primary">⬇️ Download Clipper Helper (.zip)</button>
       </a>
       <div style="font-size:11px; opacity:.6; margin-top:6px;">
-        Unzip it anywhere on this PC — includes ClipperHelper.exe, config.json and setup steps.
+        Unzip it anywhere on this PC — includes start.bat, server.js and config.json.
       </div>
 
       <details style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,.08);">
-        <summary style="cursor:pointer; font-size:12px; opacity:.85; font-weight:600;">📋 Setup instructions (click to expand)</summary>
+        <summary style="cursor:pointer; font-size:12px; opacity:.85; font-weight:600;">📋 Setup instructions (click to expand) — one-time only</summary>
 
-        <div style="font-size:12px; opacity:.85; font-weight:600; margin-top:10px;">🔧 First time only (do this once on this PC):</div>
+        <div style="font-size:12px; opacity:.85; font-weight:600; margin-top:10px;">🔧 First time only (~2 minutes, no file editing):</div>
         <ol style="font-size:12px; opacity:.8; line-height:1.8; margin:8px 0 0 18px; padding:0;">
           <li>Right-click the downloaded zip → <b>Extract All</b> → choose any folder (e.g. Desktop).</li>
-          <li>In vMix: click <b>Settings → Recording</b>, then <b>Browse</b> next to Filename and pick one fixed file to always record into (e.g. <code>D:\Recording\recording.mp4</code>). Click OK.</li>
-          <li>Inside the unzipped folder, right-click <code>config.json</code> → <b>Open with</b> → <b>Notepad</b>.</li>
-          <li>Find the line with <code>vmixRecordingFile</code> and replace the path in quotes with the exact same file path you picked in vMix. Every single <code>\</code> must be typed twice, like <code>\\</code>.</li>
-          <li>Press <b>Ctrl+S</b> to save, then close Notepad.</li>
+          <li>Install <a href="https://nodejs.org" target="_blank" style="color:#8bb4ff;">Node.js</a> if you don't already have it (Next → Next → Finish, ~2 minutes).</li>
+          <li>In vMix: click <b>Settings → Web Controller</b> and tick <b>Enable Web Controller</b> (keep the default port, 8088).</li>
+          <li>Double-click <code>start.bat</code>. The first time, it quietly installs a few small files (needs internet, takes a few seconds), then a black window opens and a <b>Setup page</b> automatically opens in your browser.</li>
+          <li>On that Setup page, click <b>📁 Choose Folder</b> and pick the folder where vMix saves its recordings (a normal Windows folder browser opens — nothing to type).</li>
+          <li>Click <b>🔌 Save &amp; Test Connection</b> — a green ✅ means one-click Start/Stop is ready. A red ⚠️ just means you'll press Record/Stop in vMix by hand, everything else still works.</li>
+          <li>That's it — this program now auto-starts with Windows (minimized). You will not need to open it manually again, ever.</li>
         </ol>
 
-        <div style="font-size:12px; opacity:.85; font-weight:600; margin-top:14px;">🏏 Every match day:</div>
+        <div style="font-size:12px; opacity:.85; font-weight:600; margin-top:14px;">🏏 Every match day (just 2 clicks):</div>
         <ol style="font-size:12px; opacity:.8; line-height:1.8; margin:8px 0 0 18px; padding:0;">
-          <li>Open that unzipped folder and double-click <code>ClipperHelper.exe</code>. A black window opens — leave it open, don't close it.</li>
-          <li>In this panel, click <b>🔗 Connect Google Drive</b>, sign in with your Google account, and choose the folder where clips should be saved.</li>
-          <li>Start recording in vMix, then click <b>🔴 Start Recording</b> here in the panel.</li>
-          <li>That's it — clips are cut and uploaded automatically whenever you press FOUR / SIX / WICKET.</li>
+          <li>In this panel, click <b>🔗 Connect Google Drive</b>, sign in with your Google account, and choose the folder where clips should be saved (only needed again if the session expired).</li>
+          <li>Click <b>🔴 Start Recording</b> above — this alone now starts vMix's recording too. That's it.</li>
+          <li>Clips are cut and uploaded automatically whenever you press FOUR / SIX / WICKET. Click <b>⏹ Stop Recording</b> when the match ends — this stops vMix's recording too.</li>
         </ol>
 
         <div style="font-size:11px; opacity:.55; margin-top:10px;">
+          Setup page is always reachable again at <code>http://localhost:5005/setup</code> if you ever need to change the folder or re-test the vMix connection.
+        </div>
+        <div style="font-size:11px; opacity:.55; margin-top:6px;">
           If clips stop uploading mid-match, just click "Connect Google Drive" again — takes 2 seconds.
         </div>
       </details>
@@ -1589,6 +1634,28 @@ document.getElementById('connect-btn').addEventListener('click', connect);
 const CLIPPER_HELPER_URL = 'http://localhost:5005'; // the local helper from clipper-helper/
 let recActive = false;
 
+// Live green/red dot in the Clipper Helper card — this is the whole
+// answer to "how do I know it's running" now that no one ever has to
+// manually open it again. Just pings its /status endpoint every few
+// seconds; if it answers, it's running (even minimized in the background).
+async function checkClipperHelperStatus(){
+  const dot = document.getElementById('clipper-status-dot');
+  const text = document.getElementById('clipper-status-text');
+  if(!dot || !text) return; // card not on screen yet
+  try {
+    const s = await fetch(`${CLIPPER_HELPER_URL}/status`, { signal: AbortSignal.timeout(2000) }).then(r => r.json());
+    dot.classList.add('on');
+    text.textContent = s.vmixRecordingFolder
+      ? '🟢 Running — ready for match day'
+      : '🟡 Running — but setup isn\'t finished yet (open the Setup page below)';
+  } catch(e) {
+    dot.classList.remove('on');
+    text.textContent = '🔴 Not running — double-click start.bat on this PC once';
+  }
+}
+checkClipperHelperStatus();
+setInterval(checkClipperHelperStatus, 8000);
+
 function currentMatchId(){
   return document.getElementById('match-id').value.trim();
 }
@@ -1597,29 +1664,41 @@ async function startRecording(){
   const matchId = currentMatchId();
   if(!matchId){ toast('Enter a Match ID and Connect first'); return; }
 
-  const ok = await fetch(`${CLIPPER_HELPER_URL}/recording-start`, {
+  const result = await fetch(`${CLIPPER_HELPER_URL}/recording-start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     // matchId + mainServerUrl (this site's own address) so the helper
     // knows WHERE to send finished clips for R2/Drive upload + player
     // linking (see /api/clips/ingest on the main server).
     body: JSON.stringify({ startedAt: Date.now(), matchId, mainServerUrl: location.origin })
-  }).then(r => r.json()).then(r => r.success).catch(() => false);
+  }).then(r => r.json()).catch(() => ({ success:false }));
 
-  if(!ok){
+  if(!result.success){
     toast('⚠️ Could not reach the local clipper helper — is it running? (see clipper-helper/README.md)');
     return;
   }
 
   recActive = true;
   updateRecordingUI(true);
-  toast('Recording marked as started — make sure vMix is recording too!');
+  // vmixControlled tells us whether the helper actually managed to press
+  // Record inside vMix itself (needs Web Controller enabled there) — if
+  // not, this is the one manual step still left for the operator.
+  toast(result.vmixControlled
+    ? '🔴 Recording started — vMix is recording too, automatically.'
+    : '🔴 Recording marked as started — vMix\'s Web Controller isn\'t reachable, so start Record in vMix by hand too.');
 }
 
 function stopRecording(){
   recActive = false;
   updateRecordingUI(false);
-  toast('Recording stopped (remember to stop vMix recording too)');
+  fetch(`${CLIPPER_HELPER_URL}/recording-stop`, { method: 'POST' })
+    .then(r => r.json())
+    .then(result => {
+      toast(result.vmixControlled
+        ? 'Recording stopped — vMix stopped too, automatically.'
+        : 'Recording stopped (vMix\'s Web Controller isn\'t reachable — stop vMix recording by hand too).');
+    })
+    .catch(() => toast('Recording stopped here, but could not reach the local clipper helper — stop vMix recording by hand.'));
 }
 
 function updateRecordingUI(active){
@@ -1631,6 +1710,174 @@ function updateRecordingUI(active){
 
 document.getElementById('start-recording-btn').addEventListener('click', startRecording);
 document.getElementById('stop-recording-btn').addEventListener('click', stopRecording);
+
+/* ============================================================
+   📺 DIRECT-TO-YOUTUBE LIVE STREAMING — no OBS/vMix, nothing
+   installed on this PC. This tab captures the "Live Output" popup
+   window (camera + overlay already composited there) via
+   getDisplayMedia, mixes in real audio straight from the capture
+   card, and ships webm chunks to this server, which pipes them into
+   ffmpeg → YouTube RTMP. Everything happens inside the browser.
+   ============================================================ */
+let liveOutputWindow = null;
+let liveDisplayStream = null;   // pixels of the Live Output window
+let liveAudioStream = null;     // real capture-card audio
+let liveRecorder = null;
+let liveActive = false;
+
+async function populateLiveDevices(){
+  try {
+    // One throwaway getUserMedia call so device labels aren't blank —
+    // browsers hide labels until permission has been granted once.
+    const tmp = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    tmp.getTracks().forEach(t => t.stop());
+  } catch(e) { /* denied is fine — dropdown just shows unlabeled devices */ }
+
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const videoSel = document.getElementById('live-video-device');
+  const audioSel = document.getElementById('live-audio-device');
+  const prevVideo = videoSel.value, prevAudio = audioSel.value;
+  videoSel.innerHTML = ''; audioSel.innerHTML = '';
+
+  devices.filter(d => d.kind === 'videoinput').forEach((d,i) => {
+    const opt = document.createElement('option');
+    opt.value = d.deviceId; opt.textContent = d.label || `Camera ${i+1}`;
+    videoSel.appendChild(opt);
+  });
+  devices.filter(d => d.kind === 'audioinput').forEach((d,i) => {
+    const opt = document.createElement('option');
+    opt.value = d.deviceId; opt.textContent = d.label || `Mic ${i+1}`;
+    audioSel.appendChild(opt);
+  });
+  if(prevVideo) videoSel.value = prevVideo;
+  if(prevAudio) audioSel.value = prevAudio;
+}
+document.getElementById('refresh-live-devices-btn').addEventListener('click', populateLiveDevices);
+populateLiveDevices();
+
+document.getElementById('toggle-yt-key-visibility').addEventListener('click', () => {
+  const el = document.getElementById('yt-stream-key');
+  el.type = el.type === 'password' ? 'text' : 'password';
+});
+
+function openLiveOutputWindow(){
+  const matchId = currentMatchId();
+  if(!matchId){ toast('Enter a Match ID and Connect first'); return; }
+  const videoDeviceId = document.getElementById('live-video-device').value;
+  if(!videoDeviceId){ toast('No camera found — plug in the capture card and click "Refresh Camera List"'); return; }
+
+  const url = `${location.origin}/live-output.html?room=${encodeURIComponent(matchId)}&video=${encodeURIComponent(videoDeviceId)}`;
+  liveOutputWindow = window.open(url, 'liveOutputWindow', 'width=1280,height=740');
+  toast('Live Output window opened — keep it open, then click "Go Live"');
+}
+document.getElementById('open-live-output-btn').addEventListener('click', openLiveOutputWindow);
+
+async function startLive(){
+  const matchId = currentMatchId();
+  if(!matchId){ toast('Enter a Match ID and Connect first'); return; }
+  const streamKey = document.getElementById('yt-stream-key').value.trim();
+  if(!streamKey){ toast('Paste your YouTube stream key first'); return; }
+  if(!liveOutputWindow || liveOutputWindow.closed){ toast('Open the Live Output window first'); return; }
+
+  const audioDeviceId = document.getElementById('live-audio-device').value;
+
+  try {
+    // Real audio straight from the capture card — cleaner than
+    // capturing whatever the Live Output tab happens to play back.
+    liveAudioStream = await navigator.mediaDevices.getUserMedia({
+      audio: audioDeviceId ? { deviceId: { exact: audioDeviceId } } : true
+    });
+  } catch(e) {
+    toast('⚠️ Could not get audio from the capture card: ' + e.message);
+    return;
+  }
+
+  try {
+    // Captures exactly what's rendered in the Live Output window —
+    // camera + overlay, already composited there.
+    liveDisplayStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: 30 },
+      audio: false,
+      preferCurrentTab: false,
+      selfBrowserSurface: 'exclude'
+    });
+  } catch(e) {
+    toast('⚠️ Screen-share was cancelled — pick the "Live Output" window when Chrome asks.');
+    liveAudioStream.getTracks().forEach(t => t.stop());
+    return;
+  }
+
+  const combined = new MediaStream([
+    ...liveDisplayStream.getVideoTracks(),
+    ...liveAudioStream.getAudioTracks()
+  ]);
+
+  const startRes = await fetch('/api/live/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ matchId, streamKey })
+  }).then(r => r.json()).catch(() => ({ success:false }));
+
+  if(!startRes.success){
+    toast('⚠️ Could not start the YouTube stream: ' + (startRes.error || 'unknown error'));
+    combined.getTracks().forEach(t => t.stop());
+    return;
+  }
+
+  let liveChunkIndex = 0;
+  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=h264,opus')
+    ? 'video/webm;codecs=h264,opus'
+    : 'video/webm;codecs=vp8,opus';
+
+  liveRecorder = new MediaRecorder(combined, { mimeType, videoBitsPerSecond: 4_500_000 });
+  liveRecorder.ondataavailable = async (e) => {
+    if(!e.data || e.data.size === 0) return;
+    const idx = liveChunkIndex++;
+    try {
+      await fetch(`/api/live/chunk?matchId=${encodeURIComponent(matchId)}&index=${idx}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: e.data
+      });
+    } catch(err) { /* one dropped chunk = a brief stutter on YouTube, not a crash */ }
+  };
+  liveRecorder.onstop = () => { combined.getTracks().forEach(t => t.stop()); };
+
+  // If the operator closes the Live Output window, or ends sharing
+  // from Chrome's own "Stop sharing" bar, treat it like "End Live".
+  liveDisplayStream.getVideoTracks()[0].addEventListener('ended', () => { if(liveActive) stopLive(); });
+
+  liveRecorder.start(1000); // 1s chunks — good balance of latency vs overhead
+  liveActive = true;
+  updateLiveUI(true);
+  toast('🔴 Going live on YouTube…');
+}
+
+async function stopLive(){
+  liveActive = false;
+  updateLiveUI(false);
+  if(liveRecorder && liveRecorder.state !== 'inactive') liveRecorder.stop();
+  if(liveDisplayStream) liveDisplayStream.getTracks().forEach(t => t.stop());
+  if(liveAudioStream) liveAudioStream.getTracks().forEach(t => t.stop());
+
+  const matchId = currentMatchId();
+  await fetch('/api/live/stop', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ matchId })
+  }).catch(() => {});
+  toast('Live stream ended');
+}
+
+function updateLiveUI(active){
+  document.getElementById('live-dot').classList.toggle('on', active);
+  document.getElementById('live-status').textContent = active ? 'LIVE on YouTube' : 'Offline';
+  document.getElementById('start-live-btn').style.display = active ? 'none' : 'block';
+  document.getElementById('stop-live-btn').style.display = active ? 'block' : 'none';
+}
+
+document.getElementById('start-live-btn').addEventListener('click', startLive);
+document.getElementById('stop-live-btn').addEventListener('click', stopLive);
 
 /* Drive folder link — saved once per match, server resolves the folder
    ID and remembers it so every clip cut afterwards uploads there
