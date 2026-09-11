@@ -902,9 +902,10 @@ document.documentElement.setAttribute('data-theme', 'dark');
             font-weight: 600;
             font-size: 0.88rem;
             cursor: pointer;
-            transition: background 0.25s var(--ease), color 0.25s var(--ease), border-color 0.25s var(--ease);
+            transition: background 0.25s var(--ease), color 0.25s var(--ease), border-color 0.25s var(--ease), transform 0.3s var(--ease-spring);
         }
         .tournament-filter-btn:hover { color: var(--text-main); }
+        .tournament-filter-btn:active { transform: scale(0.95); }
         /* Background now comes from .tournament-filter-indicator gliding
            underneath (z-index 0) so the fill morphs between chips instead
            of popping; the active chip itself stays transparent so the
@@ -1137,9 +1138,10 @@ document.documentElement.setAttribute('data-theme', 'dark');
             text-decoration: none;
             font-size: 0.88rem;
             font-weight: 600;
-            transition: background 0.3s var(--ease), color 0.3s var(--ease);
+            transition: background 0.3s var(--ease), color 0.3s var(--ease), transform 0.3s var(--ease-spring);
         }
         .nav-pill:hover { color: var(--text-main); background: var(--border-color-soft); }
+        .nav-pill:active { transform: scale(0.94); }
         .nav-pill.active { color: #fff; }
         /* ===== Morphing slide indicator =====
            One accent pill that glides + resizes to sit behind whichever
@@ -1634,13 +1636,15 @@ document.documentElement.setAttribute('data-theme', 'dark');
         .faq-question:active { transform: scale(0.99); }
         .faq-icon { color: var(--accent); font-size: 1.3rem; font-weight: 800; flex-shrink: 0; transition: transform 0.35s var(--ease-spring); }
         .faq-item.open .faq-icon { transform: rotate(45deg); }
-        /* max-height is set inline (to the answer's real scrollHeight) by
-           toggleFaq() so long answers never clip and short ones don't sit
-           through a long empty tail of the transition; 0 here is just the
-           closed resting state. */
-        .faq-answer { max-height: 0; overflow: hidden; transition: max-height 0.4s var(--ease-spring); }
-        .faq-item.open .faq-answer { max-height: 300px; }
-        .faq-answer p { padding: 0 22px 18px 22px; color: var(--text-muted); font-size: 0.92rem; line-height: 1.6; }
+        /* `grid-template-rows: 0fr -> 1fr` instead of a JS-measured
+           max-height: the browser animates the actual content height
+           itself, so there's no `scrollHeight` read + forced-reflow write
+           in JS on every toggle, and rapid open/close clicks blend from
+           whatever height the transition is currently at instead of
+           snapping — a natively interruptible collapse. */
+        .faq-answer { display: grid; grid-template-rows: 0fr; overflow: hidden; transition: grid-template-rows 0.4s var(--ease-spring); }
+        .faq-item.open .faq-answer { grid-template-rows: 1fr; }
+        .faq-answer > p { min-height: 0; overflow: hidden; padding: 0 22px 18px 22px; color: var(--text-muted); font-size: 0.92rem; line-height: 1.6; }
 
         /* ===== Light-theme fine-tuning =====
            A handful of surfaces are photo/graphic tiles that need a
@@ -2376,21 +2380,11 @@ document.documentElement.setAttribute('data-theme', 'dark');
         // back down instead of jumping straight to 0.
         function toggleFaq(btn) {
             const item = btn.closest('.faq-item');
-            const answer = item.querySelector('.faq-answer');
-            const isOpening = !item.classList.contains('open');
-            if (isOpening) {
-                item.classList.add('open');
-                answer.style.maxHeight = answer.scrollHeight + 'px';
-            } else {
-                // Lock in the current pixel height first so the collapse
-                // animates from exactly where it is, then drop to 0 on the
-                // next frame — animating straight from "open" (no inline
-                // value set yet) would jump instead of easing shut.
-                answer.style.maxHeight = answer.scrollHeight + 'px';
-                void answer.offsetHeight;
-                answer.style.maxHeight = '0px';
-                item.classList.remove('open');
-            }
+            // The grid-rows collapse (see .faq-answer CSS) animates purely
+            // from a class toggle, so there's nothing to measure or force a
+            // reflow for here — just flip the state and let the transition
+            // (which is always interruptible mid-flight) handle the rest.
+            item.classList.toggle('open');
         }
 
         function openTableTennisTemplates() {
