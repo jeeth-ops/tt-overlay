@@ -58,6 +58,18 @@ document.documentElement.setAttribute('data-theme', 'dark');
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+    <!-- GSAP: powers the auth-gate entrance/exit and micro-interactions only.
+         Not present elsewhere in the project, added minimally (core only,
+         no plugins) so it doesn't affect anything outside this screen. -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+    <script>
+        // If the CDN is blocked/offline, fall back to the plain CSS
+        // transitions already defined for the auth gate instead of a
+        // broken/inert animation.
+        if (typeof window.gsap === 'undefined') {
+            document.documentElement.classList.add('no-gsap');
+        }
+    </script>
 
     <style>
         /* ===== Design tokens =====
@@ -312,6 +324,8 @@ document.documentElement.setAttribute('data-theme', 'dark');
             display: flex;
             justify-content: center;
             align-items: center;
+            padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) env(safe-area-inset-bottom, 0) env(safe-area-inset-left, 0);
+            box-sizing: border-box;
             transition: opacity 0.4s var(--ease-spring);
         }
         .gate-card {
@@ -323,31 +337,162 @@ document.documentElement.setAttribute('data-theme', 'dark');
             max-width: 400px;
             width: 90%;
             box-shadow: 0 20px 50px rgba(var(--shadow-rgb), 0.7);
-            animation: gateCardIn 0.45s var(--ease-spring);
         }
+        /* Card-in motion now lives in the GSAP timeline (openAuthGate) for
+           one continuous, cancel-safe entrance. This CSS keyframe is kept
+           only as the no-JS / GSAP-failed-to-load fallback. */
         @keyframes gateCardIn {
             from { opacity: 0; transform: scale(0.94) translateY(10px); }
             to { opacity: 1; transform: scale(1) translateY(0); }
         }
-        .gate-card h2 { font-size: 2rem; margin-bottom: 10px; }
+        .no-gsap .gate-card { animation: gateCardIn 0.45s var(--ease-spring); }
+        /* ===== Auth gate: logo hero ===== */
+        .gate-logo-wrap {
+            position: relative;
+            width: 116px;
+            height: 116px;
+            margin: 0 auto 18px;
+            will-change: transform, opacity;
+        }
+        #gate-logo-svg {
+            width: 100%;
+            height: 100%;
+            display: block;
+            border-radius: 24%;
+            box-shadow: 0 10px 30px rgba(var(--shadow-rgb), 0.45), 0 0 0 1px var(--border-color-soft) inset;
+            overflow: visible;
+        }
+        /* Each assembled piece gets its own transform pivot so GSAP's
+           translate/scale/rotate on it looks natural instead of orbiting
+           the whole viewBox's corner. */
+        #gate-logo-svg .logo-arc,
+        #gate-logo-svg .logo-player,
+        #gate-logo-svg .logo-word,
+        #gate-logo-svg .logo-star {
+            transform-box: fill-box;
+            transform-origin: center;
+        }
+        /* Thin diagonal light sweep, GSAP-driven via a background-position
+           tween on transform (translateX of a pseudo layer) rather than
+           animating any layout property. Hidden by default; only shown
+           for the entrance timeline and skipped under reduced motion. */
+        .gate-logo-glow {
+            position: absolute;
+            inset: 0;
+            border-radius: 20px;
+            overflow: hidden;
+            pointer-events: none;
+        }
+        .gate-logo-glow::after {
+            content: '';
+            position: absolute;
+            top: -20%;
+            left: -60%;
+            width: 40%;
+            height: 140%;
+            background: linear-gradient(115deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.55) 50%, rgba(255,255,255,0) 100%);
+            transform: translateX(0%) rotate(0deg);
+            opacity: 0;
+            will-change: transform, opacity;
+        }
+        .gate-logo-glow.sweep-play::after {
+            animation: gateLogoSweep 0.85s ease-out forwards;
+        }
+        @keyframes gateLogoSweep {
+            0% { opacity: 0; transform: translateX(0%); }
+            25% { opacity: 1; }
+            100% { opacity: 0; transform: translateX(340%); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .gate-logo-glow.sweep-play::after { animation: none; opacity: 0; }
+        }
+
+        .gate-heading {
+            font-size: 1.7rem;
+            margin-bottom: 10px;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 0.35em;
+            line-height: 1.2;
+        }
+        .gate-heading-word { display: inline-block; will-change: transform, opacity; }
+        .gate-heading .gw-all { color: var(--brand-orange); }
+        .gate-heading .gw-sports { color: var(--brand-teal); }
+        .gate-heading .gw-live { color: var(--accent); }
+        .gate-heading .gate-heading-suffix { color: var(--text-main); font-weight: 600; }
         .gate-card h2 span { color: var(--accent); }
-        .gate-card p { color: var(--text-muted); margin-bottom: 30px; font-size: 0.95rem; }
+        .gate-card p { color: var(--text-muted); margin-bottom: 26px; font-size: 0.95rem; will-change: transform, opacity; }
+
+        .gate-error {
+            color: #fecaca;
+            background: rgba(239, 68, 68, 0.12);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 10px;
+            padding: 10px 14px;
+            font-size: 0.85rem;
+            margin: -8px 0 18px;
+            text-align: left;
+            overflow: hidden;
+        }
+
         .auth-gate-close {
             background: var(--border-color-soft); border: none; color: var(--text-main);
             width: 30px; height: 30px; border-radius: 50%; font-size: 1rem; cursor: pointer;
-            transition: background 0.2s var(--ease);
+            transition: background 0.2s var(--ease), transform 0.2s var(--ease);
         }
         .auth-gate-close:hover { background: rgba(255,255,255,0.18); }
+        .auth-gate-close:active { transform: scale(0.9); }
 
         .google-btn {
             background: #ffffff; color: #1f2937; border: none;
             padding: 12px 20px; border-radius: 8px; font-weight: bold;
             cursor: pointer; display: flex; align-items: center;
             justify-content: center; gap: 12px; width: 100%; font-size: 0.95rem;
-            transition: background 0.3s var(--ease), transform 0.25s var(--ease), box-shadow 0.25s var(--ease);
+            transition: background 0.3s var(--ease), box-shadow 0.25s var(--ease);
+            will-change: transform;
+            position: relative;
+            overflow: hidden;
         }
-        .google-btn:hover { background: #f1f5f9; transform: scale(1.02); box-shadow: 0 6px 18px rgba(var(--shadow-rgb), 0.2); }
-        .google-btn:active { transform: scale(0.97); }
+        .google-btn:hover { background: #f1f5f9; box-shadow: 0 6px 18px rgba(var(--shadow-rgb), 0.2); }
+        .google-btn:disabled { cursor: default; }
+        .google-btn:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 3px;
+        }
+        .auth-gate-close:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+        }
+        .google-btn-icon { position: relative; width: 20px; height: 20px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; }
+        .google-btn-icon img,
+        .google-btn-icon svg {
+            position: absolute;
+            inset: 0;
+            width: 20px; height: 20px;
+            transition: opacity 0.25s var(--ease), transform 0.25s var(--ease);
+        }
+        .google-btn-spinner, .google-btn-check { opacity: 0; transform: scale(0.6); }
+        .google-btn-spinner circle { transform-origin: center; }
+        .google-btn.is-loading .google-btn-icon img { opacity: 0; transform: scale(0.6); }
+        .google-btn.is-loading .google-btn-spinner { opacity: 1; transform: scale(1); animation: gateSpin 0.85s linear infinite; }
+        .google-btn.is-success .google-btn-icon img,
+        .google-btn.is-success .google-btn-spinner { opacity: 0; transform: scale(0.6); }
+        .google-btn.is-success .google-btn-check { opacity: 1; transform: scale(1); }
+        @keyframes gateSpin { to { transform: rotate(360deg); } }
+        .google-btn-label { will-change: transform, opacity; }
+
+        @media (prefers-reduced-motion: reduce) {
+            .google-btn.is-loading .google-btn-spinner { animation-duration: 1.4s; }
+        }
+
+        @media (max-width: 380px) {
+            .gate-card { padding: 40px 24px; }
+            .gate-heading { font-size: 1.45rem; gap: 0.3em; }
+            .gate-logo-wrap { width: 92px; height: 92px; }
+        }
 
         nav {
             display: flex; 
@@ -1478,14 +1623,67 @@ document.documentElement.setAttribute('data-theme', 'dark');
         <div class="page-loader-bar"><span></span></div>
     </div>
 
-    <div id="auth-gate" class="hidden">
+    <div id="auth-gate" class="hidden" role="dialog" aria-modal="true" aria-labelledby="auth-gate-heading">
         <div class="gate-card" style="position:relative;">
-            <button onclick="closeAuthGate()" class="auth-gate-close" style="position:absolute;top:14px;right:14px;">✕</button>
-            <h2>Scor<span>vix</span> Access</h2>
+            <button onclick="closeAuthGate()" class="auth-gate-close" aria-label="Close" style="position:absolute;top:14px;right:14px;">✕</button>
+            <div class="gate-logo-wrap" id="gate-logo-wrap">
+                <svg id="gate-logo-svg" viewBox="0 0 240 240" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="All Sports Live logo">
+                    <rect x="4" y="4" width="232" height="232" rx="52" fill="#ffffff"></rect>
+                    <path class="logo-arc" id="logo-arc-gray" d="M18,150 Q120,-6 226,70" fill="none" stroke="#67797d" stroke-width="28" stroke-linecap="round"></path>
+                    <path class="logo-arc" id="logo-arc-teal" d="M14,112 Q112,10 214,56" fill="none" stroke="#35b3c1" stroke-width="22" stroke-linecap="round"></path>
+                    <path class="logo-arc" id="logo-arc-orange" d="M34,150 Q128,52 220,104" fill="none" stroke="#f2a648" stroke-width="15" stroke-linecap="round"></path>
+                    <g id="logo-players" fill="#111827">
+                        <g class="logo-player" id="logo-player-1" transform="translate(36,116)">
+                            <circle cx="10" cy="0" r="8"></circle>
+                            <path d="M2,10 L18,10 L22,42 L14,42 L10,22 L6,42 L-2,42 Z"></path>
+                            <path d="M2,14 L-11,4" stroke="#111827" stroke-width="5" stroke-linecap="round"></path>
+                        </g>
+                        <g class="logo-player" id="logo-player-2" transform="translate(78,106)">
+                            <circle cx="10" cy="0" r="8"></circle>
+                            <path d="M2,10 L18,10 L24,46 L15,46 L10,24 L5,46 L-4,46 Z"></path>
+                            <path d="M18,12 L32,-4" stroke="#111827" stroke-width="5" stroke-linecap="round"></path>
+                        </g>
+                        <g class="logo-player" id="logo-player-3" transform="translate(120,100)">
+                            <circle cx="10" cy="0" r="9"></circle>
+                            <path d="M0,11 L20,11 L26,50 L16,50 L10,26 L4,50 L-6,50 Z"></path>
+                            <path d="M0,15 L-14,30" stroke="#111827" stroke-width="5" stroke-linecap="round"></path>
+                            <path d="M20,15 L34,2" stroke="#111827" stroke-width="5" stroke-linecap="round"></path>
+                        </g>
+                        <g class="logo-player" id="logo-player-4" transform="translate(160,108)">
+                            <circle cx="10" cy="0" r="8"></circle>
+                            <path d="M2,10 L18,10 L23,46 L14,46 L10,24 L6,46 L-3,46 Z"></path>
+                            <path d="M2,14 L-11,26" stroke="#111827" stroke-width="5" stroke-linecap="round"></path>
+                        </g>
+                        <g class="logo-player" id="logo-player-5" transform="translate(198,118)">
+                            <circle cx="10" cy="0" r="7"></circle>
+                            <path d="M3,9 L17,9 L21,40 L13,40 L10,22 L7,40 L-1,40 Z"></path>
+                        </g>
+                    </g>
+                    <g id="logo-text" font-family="'Space Grotesk', Arial, sans-serif" font-weight="700">
+                        <text class="logo-word" id="logo-word-all" x="14" y="212" font-size="20" fill="#f2a648">ALL</text>
+                        <text class="logo-word" id="logo-word-sports" x="52" y="212" font-size="20" fill="#35b3c1">SPORTS</text>
+                        <text class="logo-word" id="logo-word-live" x="150" y="212" font-size="20" fill="#ef5a5e">LIVE</text>
+                    </g>
+                    <g id="logo-stars" fill="#1f2937">
+                        <path class="logo-star" id="logo-star-1" transform="translate(96,222)" d="M4,0 5.2,2.6 8,3 6,5 6.4,8 4,6.6 1.6,8 2,5 0,3 2.8,2.6"></path>
+                        <path class="logo-star" id="logo-star-2" transform="translate(116,222)" d="M4,0 5.2,2.6 8,3 6,5 6.4,8 4,6.6 1.6,8 2,5 0,3 2.8,2.6"></path>
+                        <path class="logo-star" id="logo-star-3" transform="translate(136,222)" d="M4,0 5.2,2.6 8,3 6,5 6.4,8 4,6.6 1.6,8 2,5 0,3 2.8,2.6"></path>
+                    </g>
+                </svg>
+                <div class="gate-logo-glow" id="gate-logo-glow"></div>
+            </div>
+            <h2 class="gate-heading" id="auth-gate-heading">
+                <span class="gate-heading-word gw-all">All</span><span class="gate-heading-word gw-sports">Sports</span><span class="gate-heading-word gw-live">Live</span><span class="gate-heading-word gate-heading-suffix">Access</span>
+            </h2>
             <p id="auth-gate-message">Owner sign-in. Everyone else can browse tournaments below without an account.</p>
-            <button class="google-btn" onclick="loginWithGoogle()">
-                <img src="https://www.svgrepo.com/show/475656/google-color.svg" width="20"> 
-                Sign in with Google
+            <p id="auth-gate-error" class="gate-error hidden" role="alert"></p>
+            <button class="google-btn" onclick="handleGoogleSignIn()" id="google-signin-btn">
+                <span class="google-btn-icon">
+                    <img src="https://www.svgrepo.com/show/475656/google-color.svg" width="20" alt="">
+                    <svg class="google-btn-spinner" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="#94a3b8" stroke-width="3" stroke-linecap="round" stroke-dasharray="42 100"></circle></svg>
+                    <svg class="google-btn-check" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="#22c55e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" d="M4 12.5l5 5L20 7"></path></svg>
+                </span>
+                <span class="google-btn-label">Sign in with Google</span>
             </button>
         </div>
     </div>
@@ -1877,6 +2075,54 @@ document.documentElement.setAttribute('data-theme', 'dark');
         // just close the gate in place.
         const PENDING_REDIRECT_KEY = 'scorvix_pending_redirect';
 
+        // ===== Auth-gate motion (GSAP) =====
+        // One timeline builder reused for every open/close so there's never
+        // more than one gate animation running at a time, and a single
+        // place to keep it in sync with prefers-reduced-motion.
+        const gateCard = document.querySelector('#auth-gate .gate-card');
+        const gateLogoWrap = document.getElementById('gate-logo-wrap');
+        const gateLogoGlow = document.getElementById('gate-logo-glow');
+        const gateLogoArcs = ['#logo-arc-gray', '#logo-arc-teal', '#logo-arc-orange'].map(s => document.querySelector(s));
+        const gateLogoPlayers = document.querySelectorAll('.logo-player');
+        const gateLogoWords = document.querySelectorAll('.logo-word');
+        const gateLogoStars = document.querySelectorAll('.logo-star');
+        const gateLogoPieces = [...gateLogoArcs, ...gateLogoPlayers, ...gateLogoWords, ...gateLogoStars];
+        const gateHeadingWords = document.querySelectorAll('.gate-heading-word');
+        const gateMessageEl = document.getElementById('auth-gate-message');
+        const gateGoogleBtn = document.getElementById('google-signin-btn');
+        let gateTimeline = null;
+
+        function reducedMotion() {
+            return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        }
+
+        // Minimal focus handling for the now-labeled dialog: move focus in
+        // on open, return it on close, Escape closes, Tab stays looped
+        // between the gate's two interactive elements.
+        let gateLastFocused = null;
+        const gateFocusables = () => Array.from(authGate.querySelectorAll('button:not([disabled])'));
+
+        document.addEventListener('keydown', (e) => {
+            if (authGate.classList.contains('hidden')) return;
+            if (e.key === 'Escape') {
+                closeAuthGate();
+                return;
+            }
+            if (e.key === 'Tab') {
+                const focusables = gateFocusables();
+                if (!focusables.length) return;
+                const first = focusables[0];
+                const last = focusables[focusables.length - 1];
+                if (e.shiftKey && document.activeElement === first) {
+                    e.preventDefault();
+                    last.focus();
+                } else if (!e.shiftKey && document.activeElement === last) {
+                    e.preventDefault();
+                    first.focus();
+                }
+            }
+        });
+
         // message: optional custom copy for auth-gate-message, used when the
         // gate is opened because someone clicked a tournament rather than
         // the "Sign in" nav button.
@@ -1885,12 +2131,190 @@ document.documentElement.setAttribute('data-theme', 'dark');
             if (msgEl) {
                 msgEl.textContent = message || 'Owner sign-in. Everyone else can browse tournaments below without an account.';
             }
+            resetGoogleBtnState();
+            hideGateError();
+            gateLastFocused = document.activeElement;
             authGate.classList.remove('hidden');
-            authGate.style.opacity = '1';
+            // Deferred so the element is actually focusable post-unhide.
+            setTimeout(() => { if (gateGoogleBtn) gateGoogleBtn.focus(); }, 0);
+
+            if (gateTimeline) gateTimeline.kill();
+
+            if (typeof gsap === 'undefined' || reducedMotion()) {
+                // Fallback / accessibility path: no motion, just show it
+                // fully assembled — the SVG pieces have no hidden state in
+                // markup, only GSAP puts them into a "pre-assembly" state
+                // below, so skipping straight to here is already correct.
+                authGate.style.opacity = '1';
+                if (typeof gsap !== 'undefined') {
+                    gsap.set([gateLogoWrap, ...gateLogoPieces, gateHeadingWords, gateMessageEl, gateGoogleBtn], { clearProps: 'all' });
+                }
+                return;
+            }
+
+            gsap.set(authGate, { opacity: 0 });
+            gsap.set(gateCard, { opacity: 1, y: 0, scale: 1 });
+            gsap.set(gateLogoWrap, { opacity: 1, scale: 1, y: 0 });
+            gsap.set(gateHeadingWords, { opacity: 0, y: 10 });
+            gsap.set(gateMessageEl, { opacity: 0, y: 8 });
+            gsap.set(gateGoogleBtn, { opacity: 0, y: 10 });
+            gateLogoGlow.classList.remove('sweep-play');
+
+            // Pre-assembly state for each logo piece — flown in from a
+            // rough, distinct direction per group so they read as separate
+            // parts converging, not one shape fading in. Transform-only
+            // (translate/scale/rotate), so this stays GPU-cheap even with
+            // this many small pieces.
+            gsap.set(gateLogoArcs[0], { x: -34, y: -6, opacity: 0, rotation: -8 });   // gray, from left
+            gsap.set(gateLogoArcs[1], { x: 18, y: -30, opacity: 0, rotation: 6 });    // teal, from top
+            gsap.set(gateLogoArcs[2], { x: 30, y: 22, opacity: 0, rotation: -6 });    // orange, from bottom-right
+            gsap.set(gateLogoPlayers, { y: 26, opacity: 0, scale: 0.5 });
+            gsap.set(document.getElementById('logo-word-all'), { x: -22, opacity: 0 });
+            gsap.set(document.getElementById('logo-word-sports'), { y: 14, opacity: 0 });
+            gsap.set(document.getElementById('logo-word-live'), { x: 22, opacity: 0 });
+            gsap.set(gateLogoStars, { scale: 0, opacity: 0 });
+
+            // background/backdrop fades in, then the logo assembles piece
+            // by piece — arcs, then players, then wordmark, then stars —
+            // with a light sweep once it lands, then the wordmark below,
+            // then the interface. One continuous timeline throughout.
+            gateTimeline = gsap.timeline({ defaults: { ease: 'power3.out' } })
+                .to(authGate, { opacity: 1, duration: 0.32, ease: 'sine.out' })
+                .to(gateLogoArcs, { x: 0, y: 0, rotation: 0, opacity: 1, duration: 0.4, stagger: 0.07, ease: 'power2.out' }, '-=0.1')
+                .to(gateLogoPlayers, { y: 0, opacity: 1, scale: 1, duration: 0.35, stagger: 0.05, ease: 'back.out(1.7)' }, '-=0.22')
+                .to([document.getElementById('logo-word-all'), document.getElementById('logo-word-sports'), document.getElementById('logo-word-live')],
+                    { x: 0, y: 0, opacity: 1, duration: 0.3, stagger: 0.06 }, '-=0.18')
+                .to(gateLogoStars, { scale: 1, opacity: 1, duration: 0.25, stagger: 0.04, ease: 'back.out(2)' }, '-=0.12')
+                .call(() => gateLogoGlow.classList.add('sweep-play'))
+                .to(gateLogoWrap, { scale: 1.03, duration: 0.15, ease: 'power1.out', yoyo: true, repeat: 1 }, '-=0.3')
+                .to(gateHeadingWords, { opacity: 1, y: 0, duration: 0.4, stagger: 0.05 }, '-=0.3')
+                .to(gateMessageEl, { opacity: 1, y: 0, duration: 0.4 }, '-=0.25')
+                .to(gateGoogleBtn, { opacity: 1, y: 0, duration: 0.4 }, '-=0.25');
         }
+
         function closeAuthGate() {
-            authGate.style.opacity = '0';
-            setTimeout(() => authGate.classList.add('hidden'), 300);
+            // Nothing to animate if it was never shown (e.g. this fires on
+            // every page load for an already-signed-in visitor).
+            if (authGate.classList.contains('hidden') && !gateTimeline) return;
+            if (gateTimeline) gateTimeline.kill();
+            const restoreFocus = () => {
+                if (gateLastFocused && typeof gateLastFocused.focus === 'function') gateLastFocused.focus();
+                gateLastFocused = null;
+            };
+
+            if (typeof gsap === 'undefined' || reducedMotion()) {
+                authGate.style.opacity = '0';
+                setTimeout(() => { authGate.classList.add('hidden'); restoreFocus(); }, reducedMotion() ? 0 : 300);
+                return;
+            }
+
+            gateTimeline = gsap.timeline({
+                defaults: { ease: 'power2.in' },
+                onComplete: () => { authGate.classList.add('hidden'); restoreFocus(); }
+            })
+                .to(gateGoogleBtn, { opacity: 0, y: 6, duration: 0.18 })
+                .to([gateHeadingWords, gateMessageEl], { opacity: 0, y: 6, duration: 0.18 }, '-=0.12')
+                .to(gateLogoWrap, { opacity: 0, scale: 0.92, duration: 0.18 }, '-=0.15')
+                .to(authGate, { opacity: 0, duration: 0.22 }, '-=0.1');
+        }
+
+        // ===== Google button states: idle -> loading -> success/error =====
+        function resetGoogleBtnState() {
+            if (!gateGoogleBtn) return;
+            gateGoogleBtn.classList.remove('is-loading', 'is-success');
+            gateGoogleBtn.disabled = false;
+            gateGoogleBtn.querySelector('.google-btn-label').textContent = 'Sign in with Google';
+        }
+
+        function showGateError(message) {
+            const errEl = document.getElementById('auth-gate-error');
+            if (!errEl) return;
+            errEl.textContent = message;
+            errEl.classList.remove('hidden');
+            if (typeof gsap !== 'undefined' && !reducedMotion()) {
+                gsap.fromTo(errEl, { opacity: 0, y: -6 }, { opacity: 1, y: 0, duration: 0.3, ease: 'power2.out' });
+                gsap.fromTo(gateCard, { x: 0 }, { x: 6, duration: 0.06, yoyo: true, repeat: 3, ease: 'power1.inOut', clearProps: 'x' });
+            } else {
+                errEl.style.opacity = '1';
+            }
+        }
+
+        function hideGateError() {
+            const errEl = document.getElementById('auth-gate-error');
+            if (errEl) errEl.classList.add('hidden');
+        }
+
+        function handleGoogleSignIn() {
+            if (gateGoogleBtn.classList.contains('is-loading')) return;
+            hideGateError();
+            gateGoogleBtn.classList.add('is-loading');
+            gateGoogleBtn.disabled = true;
+            gateGoogleBtn.querySelector('.google-btn-label').textContent = 'Connecting…';
+            if (typeof gsap !== 'undefined' && !reducedMotion()) {
+                gsap.to(gateLogoWrap, { scale: 1.04, duration: 0.18, ease: 'power1.out', yoyo: true, repeat: 1 });
+            }
+            loginWithGoogle();
+        }
+
+        // ===== Button press/hover feel (GSAP, GPU-only properties) =====
+        // Hover elevation only applies on devices that actually have a
+        // hover-capable pointer, so touch never gets a "stuck" hover state.
+        // Press feedback (immediate, tiny scale-down) applies everywhere so
+        // taps feel tactile too. Bound once; guarded against double-binding
+        // if this script ever re-runs.
+        (function initGateButtonFeel() {
+            if (!gateGoogleBtn || gateGoogleBtn.dataset.feelBound) return;
+            gateGoogleBtn.dataset.feelBound = '1';
+            const hoverCapable = window.matchMedia('(hover: hover)').matches;
+
+            const settle = () => {
+                if (typeof gsap === 'undefined' || reducedMotion()) return;
+                gsap.to(gateGoogleBtn, { y: 0, scale: 1, duration: 0.3, ease: 'power2.out' });
+            };
+
+            if (hoverCapable) {
+                gateGoogleBtn.addEventListener('mouseenter', () => {
+                    if (typeof gsap === 'undefined' || reducedMotion() || gateGoogleBtn.disabled) return;
+                    gsap.to(gateGoogleBtn, { y: -2, scale: 1.015, duration: 0.25, ease: 'power2.out' });
+                });
+                gateGoogleBtn.addEventListener('mouseleave', settle);
+            }
+            gateGoogleBtn.addEventListener('pointerdown', () => {
+                if (typeof gsap === 'undefined' || reducedMotion() || gateGoogleBtn.disabled) return;
+                gsap.to(gateGoogleBtn, { scale: 0.97, duration: 0.1, ease: 'power2.out' });
+            });
+            ['pointerup', 'pointercancel', 'pointerleave'].forEach(evt => {
+                gateGoogleBtn.addEventListener(evt, settle);
+            });
+        })();
+
+        // Runs the short "Button → Success → transition" beat when the
+        // gate was actually open for this sign-in, then closes it (or, for
+        // a pending-tournament redirect, hands off to the caller's
+        // navigation). If the gate wasn't open, this is a same-tick no-op
+        // aside from making sure it's closed.
+        function finishGateSignIn(gateWasOpen, afterClose) {
+            if (!gateWasOpen) {
+                closeAuthGate();
+                afterClose && afterClose();
+                return;
+            }
+            if (typeof gsap === 'undefined' || reducedMotion()) {
+                gateGoogleBtn.classList.remove('is-loading');
+                gateGoogleBtn.classList.add('is-success');
+                gateGoogleBtn.querySelector('.google-btn-label').textContent = 'Signed in';
+                closeAuthGate();
+                afterClose && afterClose();
+                return;
+            }
+            gateGoogleBtn.classList.remove('is-loading');
+            gateGoogleBtn.classList.add('is-success');
+            gateGoogleBtn.querySelector('.google-btn-label').textContent = 'Signed in';
+            gsap.fromTo(gateLogoWrap, { scale: 1 }, { scale: 1.06, duration: 0.2, ease: 'power1.out', yoyo: true, repeat: 1 });
+            gsap.delayedCall(0.5, () => {
+                closeAuthGate();
+                afterClose && afterClose();
+            });
         }
 
         // Opens the sign-in gate specifically for a tournament the visitor
@@ -1906,7 +2330,8 @@ document.documentElement.setAttribute('data-theme', 'dark');
         function loginWithGoogle() {
             const provider = new firebase.auth.GoogleAuthProvider();
             auth.signInWithRedirect(provider).catch(error => {
-                alert("Login Error: " + error.message);
+                resetGoogleBtnState();
+                showGateError(error.message || 'Something went wrong signing in. Please try again.');
             });
         }
 
@@ -1917,7 +2342,14 @@ document.documentElement.setAttribute('data-theme', 'dark');
             }
         }).catch(error => {
             if (error.code !== 'auth/no-auth-event' && error.code) {
-                alert("Login Error: " + error.message);
+                // The gate re-renders hidden on this fresh page load, so
+                // open it to actually show the error rather than failing
+                // silently.
+                if (authGate && authGate.classList.contains('hidden')) {
+                    openAuthGate('Sign in with Google to continue.');
+                }
+                resetGoogleBtnState();
+                showGateError(error.message || 'Something went wrong signing in. Please try again.');
             }
         });
 
@@ -2066,19 +2498,25 @@ document.documentElement.setAttribute('data-theme', 'dark');
                 localStorage.setItem('scorvix_uid', user.uid);
                 localStorage.setItem('scorvix_email', user.email);
 
-                closeAuthGate();
-
                 // If this sign-in happened because someone clicked a
                 // tournament while logged out, send them straight there now
                 // that they're authenticated — the ID token then travels
                 // with the API calls that page makes (see score-tournament.html).
                 let pendingRedirectUrl = null;
                 try { pendingRedirectUrl = sessionStorage.getItem(PENDING_REDIRECT_KEY); } catch (e) { /* ignore */ }
-                if (pendingRedirectUrl) {
-                    try { sessionStorage.removeItem(PENDING_REDIRECT_KEY); } catch (e) { /* ignore */ }
-                    window.location.href = pendingRedirectUrl;
-                    return;
-                }
+
+                // Only play the success beat if the gate was actually open
+                // (i.e. this fired right after an interactive sign-in, not
+                // on a page load where the user was already signed in).
+                const gateWasOpen = authGate && !authGate.classList.contains('hidden');
+                finishGateSignIn(gateWasOpen, () => {
+                    if (pendingRedirectUrl) {
+                        try { sessionStorage.removeItem(PENDING_REDIRECT_KEY); } catch (e) { /* ignore */ }
+                        window.location.href = pendingRedirectUrl;
+                    }
+                });
+
+                if (pendingRedirectUrl) return;
 
                 userDisplay.innerText = `Hi, ${user.displayName || user.email}`;
                 if (navSigninBtn) navSigninBtn.classList.remove('visible');
