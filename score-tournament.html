@@ -290,6 +290,8 @@
   #video-modal video{ width:100%; display:block; max-height:70vh; background:#000; }
   #video-modal-loading{ color:#fff; text-align:center; padding:60px 0; font-size:12.5px; }
 </style>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
 </head>
 <body>
 
@@ -333,6 +335,44 @@
 </div>
 
 <script>
+/* ============================================================
+   AUTH (for private-tournament API calls) — same Firebase project
+   as index.html. This page's ?token=... link can point at a PRIVATE
+   tournament, which the backend only serves to a verified request
+   from one of the authorized creator accounts — so every request to
+   /api/public/tournament/* needs to carry the signed-in user's ID
+   token when one exists. Public tournaments ignore the header and
+   work the same either way. Firebase persists sign-in across page
+   loads (same project/domain), so a user who signed in on the
+   homepage before reaching this page via the auth gate is already
+   recognized here without signing in again.
+   ============================================================ */
+const firebaseConfig = {
+  apiKey: "AIzaSyAYc_bEB9C4RhhLhPBEJsJRFRUppcR45yo",
+  authDomain: "auth.allsportslivestreams.com",
+  projectId: "scorvix-faf0e",
+  storageBucket: "scorvix-faf0e.firebasestorage.app"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+let authReadyResolve;
+const authReady = new Promise(res => { authReadyResolve = res; });
+auth.onAuthStateChanged(() => { authReadyResolve(); });
+async function authHeaders(){
+  await authReady;
+  try{
+    if(auth.currentUser){
+      const idToken = await auth.currentUser.getIdToken();
+      return { Authorization: `Bearer ${idToken}` };
+    }
+  }catch(e){ /* ignore — fall through to unauthenticated request */ }
+  return {};
+}
+async function apiFetch(url, opts){
+  const headers = Object.assign({}, (opts && opts.headers) || {}, await authHeaders());
+  return fetch(url, Object.assign({}, opts, { headers }));
+}
+
 const SUN='M12 4V2M12 22v-2M4.93 4.93 3.51 3.51M20.49 20.49l-1.42-1.42M4 12H2M22 12h-2M4.93 19.07l-1.42 1.42M20.49 3.51l-1.42 1.42M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z';
 const MOON='M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z';
 function applyTheme(t){ document.documentElement.setAttribute('data-theme',t); document.getElementById('theme-icon').innerHTML=`<path d="${t==='dark'?SUN:MOON}"/>`; try{ localStorage.setItem('scorvix-theme',t); }catch(e){} }
@@ -518,7 +558,7 @@ async function init(){
       location.replace(`/cricket-scorecard?token=${encodeURIComponent(token)}&match=${encodeURIComponent(matchId)}&history=1`);
       return;
     } else {
-      const res = await fetch(`/api/public/tournament/${encodeURIComponent(token)}`);
+      const res = await apiFetch(`/api/public/tournament/${encodeURIComponent(token)}`);
       const data = await res.json();
       if(data && data.success){ renderPortal(data, token); }
       else { showEmpty(data.error || 'Tournament not found.'); }
@@ -709,7 +749,7 @@ function clipBtnHtml(name, role){
 async function fetchMatchSnapshot(matchId){
   if(Object.prototype.hasOwnProperty.call(matchSnapshotCache, matchId)) return matchSnapshotCache[matchId];
   try{
-    const res = await fetch(`${clipApiBase()}/api/public/tournament/${encodeURIComponent(tournamentTokenCache)}/match/${encodeURIComponent(matchId)}`);
+    const res = await apiFetch(`${clipApiBase()}/api/public/tournament/${encodeURIComponent(tournamentTokenCache)}/match/${encodeURIComponent(matchId)}`);
     const data = await res.json();
     const match = (data && data.success && data.match) || null;
     matchSnapshotCache[matchId] = match;
@@ -721,7 +761,7 @@ async function fetchClipsForMatch(name, matchId){
   const pk = playerKeyOf(name);
   if(!pk) return null;
   try{
-    const res = await fetch(`${clipApiBase()}/api/clips/player/${encodeURIComponent(pk)}?scope=match&matchId=${encodeURIComponent(matchId)}`);
+    const res = await apiFetch(`${clipApiBase()}/api/clips/player/${encodeURIComponent(pk)}?scope=match&matchId=${encodeURIComponent(matchId)}`);
     if(!res.ok) return null;
     return await res.json();
   } catch(err){ console.warn('Clip fetch failed', err); return null; }
