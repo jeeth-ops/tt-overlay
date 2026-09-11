@@ -188,7 +188,7 @@ document.documentElement.setAttribute('data-theme', 'dark');
         a, button, input[type="button"], input[type="submit"],
         .cta-btn, .nav-btn, .auth-btn, .theme-toggle, .nav-hamburger,
         .mobile-nav-link, .sport-card, .tournament-card, .template-card,
-        .db-tab-btn, .faq-question, .integration-card, .step-card,
+        .db-tab-btn, .integration-card, .step-card,
         [role="button"] {
             touch-action: manipulation;
         }
@@ -305,7 +305,7 @@ document.documentElement.setAttribute('data-theme', 'dark');
         /* Display type for headlines — paired with Inter body text for the
            two-typeface contrast that reads as "designed" rather than default. */
         .hero h1, .bento-section h2, .showcase-text h2, .how-it-works h2,
-        .sports-section h2, .testimonials-section h2, .faq-section h2,
+        .sports-section h2, .testimonials-section h2,
         .integrations-section h2, .logo {
             font-family: 'Space Grotesk', 'Inter', sans-serif;
         }
@@ -1146,23 +1146,25 @@ document.documentElement.setAttribute('data-theme', 'dark');
         /* ===== Morphing slide indicator =====
            One accent pill that glides + resizes to sit behind whichever
            nav-pill / filter chip is active, instead of each item popping
-           its own background on/off. Positioned with plain top/height
-           (set once per state change, never inside a scroll/animation
-           loop) and moved/resized purely with `translateX + scaleX` on a
-           1px-wide base — GPU-composited, no layout properties animated. */
+           its own background on/off. Position moves via `transform:
+           translateX` (GPU-composited, cheap); size is a plain `width`
+           transition — NOT `scaleX` — because non-uniform scaling on a
+           thin base element squashes border-radius into flat/square
+           corners instead of a pill. This only ever fires on a click or
+           section change, never inside a scroll/frame loop, so a width
+           transition here doesn't cost anything on scroll performance. */
         .nav-pill-indicator, .tournament-filter-indicator {
             position: absolute;
             top: 0;
             left: 0;
-            width: 1px;
+            width: 0;
             border-radius: 50px;
             background: var(--accent);
             opacity: 0;
             z-index: 0;
             pointer-events: none;
-            transform-origin: left center;
-            transition: transform 0.4s var(--ease-spring), opacity 0.25s var(--ease);
-            will-change: transform;
+            transition: transform 0.4s var(--ease-spring), width 0.4s var(--ease-spring), opacity 0.25s var(--ease);
+            will-change: transform, width;
         }
         @media (prefers-reduced-motion: reduce) {
             .nav-pill-indicator, .tournament-filter-indicator { transition: opacity 0.25s var(--ease); }
@@ -1596,10 +1598,6 @@ document.documentElement.setAttribute('data-theme', 'dark');
             .stats-grid { grid-template-columns: 1fr; }
         }
 
-        /* ===== FAQ Section ===== */
-        .faq-section { padding: 55px 20px 115px 20px; max-width: 800px; margin: 0 auto; text-align: center; }
-        .faq-section h2 { font-size: clamp(1.9rem, 5vw, 3rem); font-weight: 800; letter-spacing: -1px; margin-bottom: 45px; }
-
         .site-footer {
             padding: 26px 20px;
             text-align: center;
@@ -1607,45 +1605,6 @@ document.documentElement.setAttribute('data-theme', 'dark');
             color: var(--text-muted);
             font-size: 0.85rem;
         }
-        .faq-container { text-align: left; display: flex; flex-direction: column; gap: 12px; }
-        .faq-item {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            overflow: hidden;
-            backdrop-filter: blur(12px);
-            transition: border-color 0.3s var(--ease);
-        }
-        .faq-item:hover { border-color: var(--border-color-strong); }
-        .faq-question {
-            width: 100%;
-            background: transparent;
-            border: none;
-            color: var(--text-main);
-            padding: 18px 22px;
-            font-size: 1rem;
-            font-weight: 600;
-            font-family: inherit;
-            cursor: pointer;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 15px;
-            transition: transform 0.15s var(--ease);
-        }
-        .faq-question:active { transform: scale(0.99); }
-        .faq-icon { color: var(--accent); font-size: 1.3rem; font-weight: 800; flex-shrink: 0; transition: transform 0.35s var(--ease-spring); }
-        .faq-item.open .faq-icon { transform: rotate(45deg); }
-        /* `grid-template-rows: 0fr -> 1fr` instead of a JS-measured
-           max-height: the browser animates the actual content height
-           itself, so there's no `scrollHeight` read + forced-reflow write
-           in JS on every toggle, and rapid open/close clicks blend from
-           whatever height the transition is currently at instead of
-           snapping — a natively interruptible collapse. */
-        .faq-answer { display: grid; grid-template-rows: 0fr; overflow: hidden; transition: grid-template-rows 0.4s var(--ease-spring); }
-        .faq-item.open .faq-answer { grid-template-rows: 1fr; }
-        .faq-answer > p { min-height: 0; overflow: hidden; padding: 0 22px 18px 22px; color: var(--text-muted); font-size: 0.92rem; line-height: 1.6; }
-
         /* ===== Light-theme fine-tuning =====
            A handful of surfaces are photo/graphic tiles that need a
            consistently dark scrim to keep white text legible no matter
@@ -1667,13 +1626,13 @@ document.documentElement.setAttribute('data-theme', 'dark');
 
         /* ===== Touch-friendly baseline (mobile) ===== */
         @media (max-width: 640px) {
-            .tournament-filter-btn, .faq-question, .mobile-nav-link, .nav-btn, .auth-btn,
+            .tournament-filter-btn, .mobile-nav-link, .nav-btn, .auth-btn,
             .theme-toggle, .nav-hamburger, .cta-btn, .tournament-card, .sport-card,
             .step-card, .bento-card, .integration-card {
                 min-height: 44px;
             }
             .tournaments-section, .bento-section, .integrations-section,
-            .faq-section, .how-it-works, .sports-section {
+            .how-it-works, .sports-section {
                 padding-left: 16px;
                 padding-right: 16px;
             }
@@ -1742,7 +1701,6 @@ document.documentElement.setAttribute('data-theme', 'dark');
             <span class="nav-pill-indicator" id="navPillIndicator"></span>
             <a href="#tournaments" class="nav-pill">Tournaments</a>
             <a href="#features" class="nav-pill">Features</a>
-            <a href="#faq" class="nav-pill">FAQ</a>
             <a href="#sports" class="nav-pill" id="sports-nav-pill" style="display:none;">Sports Panel</a>
         </div>
         <div class="nav-right">
@@ -1760,7 +1718,6 @@ document.documentElement.setAttribute('data-theme', 'dark');
     <div class="mobile-nav-panel" id="mobileNavPanel">
         <a href="#tournaments" class="mobile-nav-link">Tournaments</a>
         <a href="#features" class="mobile-nav-link">Features</a>
-        <a href="#faq" class="mobile-nav-link">FAQ</a>
         <a href="#sports" class="mobile-nav-link" id="sports-nav-pill-mobile" style="display:none;">Sports Panel</a>
     </div>
 
@@ -1979,71 +1936,6 @@ document.documentElement.setAttribute('data-theme', 'dark');
                 <div class="card-content">
                     <div class="sport-icon">⚽</div>
                     <h3>Football</h3>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <section class="faq-section" id="faq">
-        <h2 class="reveal-on-scroll">Frequently Asked Questions</h2>
-        <div class="faq-container">
-            <div class="faq-item reveal-on-scroll delay-1">
-                <button class="faq-question" onclick="toggleFaq(this)">
-                    <span>What is All Sports Live?</span>
-                    <span class="faq-icon">+</span>
-                </button>
-                <div class="faq-answer">
-                    <p>All Sports Live is a browser-based broadcast graphics tool that lets you control live sports scoreboards and overlays in real time, straight from your phone or laptop — no software installation required.</p>
-                </div>
-            </div>
-
-            <div class="faq-item reveal-on-scroll delay-1">
-                <button class="faq-question" onclick="toggleFaq(this)">
-                    <span>Which streaming software does All Sports Live work with?</span>
-                    <span class="faq-icon">+</span>
-                </button>
-                <div class="faq-answer">
-                    <p>Every overlay runs as a browser source, so it works with OBS Studio, vMix, Streamlabs, and any other software that supports browser source inputs.</p>
-                </div>
-            </div>
-
-            <div class="faq-item reveal-on-scroll delay-2">
-                <button class="faq-question" onclick="toggleFaq(this)">
-                    <span>Do I need to install anything?</span>
-                    <span class="faq-icon">+</span>
-                </button>
-                <div class="faq-answer">
-                    <p>No installs needed. Sign in with your Google account, open the control panel in your browser, and paste your unique overlay link into your streaming software.</p>
-                </div>
-            </div>
-
-            <div class="faq-item reveal-on-scroll delay-2">
-                <button class="faq-question" onclick="toggleFaq(this)">
-                    <span>Which sports are currently supported?</span>
-                    <span class="faq-icon">+</span>
-                </button>
-                <div class="faq-answer">
-                    <p>Table Tennis, Football, and Cricket are live right now, with more sports on the way soon.</p>
-                </div>
-            </div>
-
-            <div class="faq-item reveal-on-scroll delay-3">
-                <button class="faq-question" onclick="toggleFaq(this)">
-                    <span>Is my data and control panel secure?</span>
-                    <span class="faq-icon">+</span>
-                </button>
-                <div class="faq-answer">
-                    <p>Yes. Every control panel is protected behind Google Sign-In, and each user gets a private, unique overlay room that only they can control.</p>
-                </div>
-            </div>
-
-            <div class="faq-item reveal-on-scroll delay-3">
-                <button class="faq-question" onclick="toggleFaq(this)">
-                    <span>Can I update the scoreboard while I'm live on stream?</span>
-                    <span class="faq-icon">+</span>
-                </button>
-                <div class="faq-answer">
-                    <p>Absolutely — every change you make in the control panel, like score, timer, team colors, or logos, reflects on your live overlay instantly.</p>
                 </div>
             </div>
         </div>
@@ -2371,21 +2263,6 @@ document.documentElement.setAttribute('data-theme', 'dark');
             });
         }
 
-
-        // Expands/collapses an FAQ answer. Sets max-height to the answer's
-        // actual content height (rather than a fixed guess) so the reveal
-        // never clips long answers and doesn't leave a dead animation tail
-        // on short ones; closing other open items keeps only one expanded
-        // and lets the collapse use the same measured height on the way
-        // back down instead of jumping straight to 0.
-        function toggleFaq(btn) {
-            const item = btn.closest('.faq-item');
-            // The grid-rows collapse (see .faq-answer CSS) animates purely
-            // from a class toggle, so there's nothing to measure or force a
-            // reflow for here — just flip the state and let the transition
-            // (which is always interruptible mid-flight) handle the rest.
-            item.classList.toggle('open');
-        }
 
         function openTableTennisTemplates() {
             if (isUserLoggedIn) {
@@ -2857,12 +2734,13 @@ document.documentElement.setAttribute('data-theme', 'dark');
         applyScrollEffects();
 
         // ===== Shared morph/slide indicator helper =====
-        // Moves+resizes a single accent pill to sit behind `targetEl` inside
-        // `containerId`, using only translateX + scaleX on a 1px-wide base
-        // (GPU-composited) plus a plain top/height write (a one-off per
-        // click/section-change, not something animated every frame). Used
-        // by both the nav-pill scroll-spy and the tournament filter chips
-        // so switching between them feels like one element gliding rather
+        // Moves the indicator with `translateX` (GPU-composited) and sizes
+        // it with a plain `width` write — not `scaleX`, which squashes
+        // border-radius on a non-uniformly-scaled box into flat/square
+        // corners instead of a pill. Both only run once per click/section-
+        // change, never inside a scroll or animation-frame loop. Used by
+        // both the nav-pill scroll-spy and the tournament filter chips so
+        // switching between them feels like one element gliding rather
         // than each item popping its own background.
         function moveSlideIndicator(indicatorId, containerId, targetEl) {
             const indicator = document.getElementById(indicatorId);
@@ -2873,8 +2751,9 @@ document.documentElement.setAttribute('data-theme', 'dark');
             const eRect = targetEl.getBoundingClientRect();
             indicator.style.height = eRect.height + 'px';
             indicator.style.top = (eRect.top - cRect.top) + 'px';
+            indicator.style.width = eRect.width + 'px';
             indicator.style.opacity = '1';
-            indicator.style.transform = `translateX(${eRect.left - cRect.left}px) scaleX(${eRect.width})`;
+            indicator.style.transform = `translateX(${eRect.left - cRect.left}px)`;
         }
 
         // ===== Nav-pill scroll-spy =====
