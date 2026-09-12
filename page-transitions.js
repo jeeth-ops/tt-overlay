@@ -120,6 +120,7 @@
 
     var ov = document.getElementById('pt-overlay') || document.createElement('div');
     ov.id = 'pt-overlay';
+    ov.setAttribute('aria-hidden', 'true');
     ov.style.background = bg;
     ov.dataset.x = x; ov.dataset.y = y; ov.dataset.r = r;
     if (!ov.isConnected) document.documentElement.appendChild(ov);
