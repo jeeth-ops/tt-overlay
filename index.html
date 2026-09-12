@@ -812,11 +812,23 @@
             padding: 0 22px;
         }
         .live-ticker__item .tk-sport { color: var(--brand-orange); }
+        .live-ticker__item .tk-sport.tk-live { color: #ef4444; }
+        .live-ticker__item .tk-sport.tk-ongoing { color: var(--brand-teal); }
+        .live-ticker__item .tk-sport.tk-upcoming { color: var(--accent); }
+        .live-ticker__item .tk-sport.tk-completed { color: var(--text-muted); }
+        .live-ticker__item .tk-name { color: var(--text-main); }
         .live-ticker__item em { font-style: normal; font-weight: 500; color: var(--text-muted); }
         .live-ticker__dot {
             width: 5px; height: 5px; border-radius: 50%;
             background: var(--accent); flex-shrink: 0;
             box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.18);
+        }
+        .live-ticker__dot.tk-dot-live {
+            background: #ef4444; box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+            animation: tkDotPulse 1.4s ease-in-out infinite;
+        }
+        @keyframes tkDotPulse {
+            0%, 100% { opacity: 1; } 50% { opacity: 0.35; }
         }
         .live-ticker__sep { color: var(--border-color-strong); font-size: 0.7rem; padding: 0 2px; }
         @keyframes tickerScroll {
@@ -1945,30 +1957,10 @@
         <a href="#sports" class="mobile-nav-link" id="sports-nav-pill-mobile" style="display:none;">Sports Panel</a>
     </div>
 
-    <div class="live-ticker" aria-hidden="true">
-        <div class="live-ticker__track">
+    <div class="live-ticker" id="liveTicker" aria-hidden="true">
+        <div class="live-ticker__track" id="liveTickerTrack">
             <div class="live-ticker__set">
-                <span class="live-ticker__item"><span class="live-ticker__dot"></span><span class="tk-sport">LIVE</span> IND 187/4 <em>(32.1 ov)</em> vs AUS · chasing 211</span>
-                <span class="live-ticker__sep">◆</span>
-                <span class="live-ticker__item"><span class="tk-sport">WICKET</span> Australia 3 down · need 45 off 30</span>
-                <span class="live-ticker__sep">◆</span>
-                <span class="live-ticker__item"><span class="tk-sport">MILESTONE</span> Fifty for R. Sharma <em>52* off 38</em></span>
-                <span class="live-ticker__sep">◆</span>
-                <span class="live-ticker__item"><span class="tk-sport">TOSS</span> Mumbai Warriors elect to bowl first</span>
-                <span class="live-ticker__sep">◆</span>
-                <span class="live-ticker__item"><span class="tk-sport">CLIPS</span> Every 4, 6 & wicket ready to download in HD</span>
-                <span class="live-ticker__sep">◆</span>
-            </div>
-            <div class="live-ticker__set">
-                <span class="live-ticker__item"><span class="live-ticker__dot"></span><span class="tk-sport">LIVE</span> IND 187/4 <em>(32.1 ov)</em> vs AUS · chasing 211</span>
-                <span class="live-ticker__sep">◆</span>
-                <span class="live-ticker__item"><span class="tk-sport">WICKET</span> Australia 3 down · need 45 off 30</span>
-                <span class="live-ticker__sep">◆</span>
-                <span class="live-ticker__item"><span class="tk-sport">MILESTONE</span> Fifty for R. Sharma <em>52* off 38</em></span>
-                <span class="live-ticker__sep">◆</span>
-                <span class="live-ticker__item"><span class="tk-sport">TOSS</span> Mumbai Warriors elect to bowl first</span>
-                <span class="live-ticker__sep">◆</span>
-                <span class="live-ticker__item"><span class="tk-sport">CLIPS</span> Every 4, 6 & wicket ready to download in HD</span>
+                <span class="live-ticker__item"><span class="live-ticker__dot"></span><span class="tk-sport">LOADING</span> Fetching live tournaments&hellip;</span>
                 <span class="live-ticker__sep">◆</span>
             </div>
         </div>
@@ -2777,6 +2769,65 @@
                 allTournaments = [];
             }
             renderTournaments();
+            renderTicker();
+        }
+
+        // ===== Top ticker — shows the site's own public tournaments =====
+        // Replaces the old hardcoded demo lines with real data from
+        // allTournaments (already fetched above), so the ticker only ever
+        // shows tournaments that are actually public on this site. Purely
+        // decorative/read-only (matches the original ticker's behaviour) —
+        // not a navigation control, so it isn't wired into the auth-gate
+        // click interceptor.
+        function tkEscape(str) {
+            return String(str == null ? '' : str).replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[c]));
+        }
+
+        function renderTicker() {
+            const track = document.getElementById('liveTickerTrack');
+            if (!track) return;
+
+            const list = allTournaments.filter(t => t.sport === 'cricket' && !t.isPrivate);
+
+            if (list.length === 0) {
+                track.innerHTML = `
+                    <div class="live-ticker__set">
+                        <span class="live-ticker__item"><span class="tk-sport">SCORVIX</span> New public tournaments will show up here as soon as they go live.</span>
+                        <span class="live-ticker__sep">◆</span>
+                    </div>`;
+                return;
+            }
+
+            // Live tournaments first, so the most relevant items are the
+            // ones most likely visible before the loop scrolls them off.
+            const order = { live: 0, ongoing: 1, upcoming: 2, completed: 3 };
+            const sorted = [...list].sort((a, b) =>
+                (order[a.status] ?? 4) - (order[b.status] ?? 4));
+
+            const itemsHtml = sorted.map(t => {
+                let statusClass, statusLabel, dotHtml = '';
+                if (t.status === 'live') {
+                    statusClass = 'tk-live'; statusLabel = 'LIVE';
+                    dotHtml = '<span class="live-ticker__dot tk-dot-live"></span>';
+                } else if (t.status === 'ongoing') {
+                    statusClass = 'tk-ongoing'; statusLabel = 'ONGOING';
+                } else if (t.status === 'completed') {
+                    statusClass = 'tk-completed'; statusLabel = 'COMPLETED';
+                } else {
+                    statusClass = 'tk-upcoming'; statusLabel = 'UPCOMING';
+                }
+                const matchLabel = `${t.matchCount} match${t.matchCount === 1 ? '' : 'es'}`;
+                return `<span class="live-ticker__item">${dotHtml}<span class="tk-sport ${statusClass}">${statusLabel}</span> <span class="tk-name">${tkEscape(t.name)}</span> <em>· ${matchLabel}</em></span>
+                <span class="live-ticker__sep">◆</span>`;
+            }).join('');
+
+            // Two identical sets back-to-back so the CSS animation (which
+            // translates by -50%) loops seamlessly.
+            track.innerHTML = `
+                <div class="live-ticker__set">${itemsHtml}</div>
+                <div class="live-ticker__set">${itemsHtml}</div>`;
         }
 
         function renderTournaments() {
