@@ -1589,6 +1589,11 @@ function connect(){
 
   socket.on('connect', () => {
     dot.classList.add('on'); toast('Connected');
+    // 🩹 Ping the live-room mapping the MOMENT we connect — not just after
+    // the first ball (recordBall). Without this, a link opened in the gap
+    // between "Connect" and "first ball" resolved to the wrong room and
+    // sat stuck on "Connecting".
+    pingTournamentLiveStatus(true);
     // A freshly-joining/reconnecting overlay must see the last real
     // broadcast — never an in-progress "next innings" edit the operator
     // hasn't committed yet by clicking Start.
@@ -4023,6 +4028,11 @@ function saveMatchToSingleHistory(silent){
   leagueCache[key] = matches;
   saveLeagueMatchesLocal(SINGLE_MATCHES_NAME, matches);
   refreshSingleHistoryUI();
+  // Match is now permanently saved — clear the live pointer for this
+  // matchId (mirrors saveMatchToLeague; previously only tournament
+  // matches did this, so a finished standalone match's live pointer
+  // never got cleaned up).
+  pingTournamentLiveStatus(false);
   if(!silent) toast(`Saved — ${matches.length} single match${matches.length === 1 ? '' : 'es'} in your history`);
 
   if(!currentOwnerUid()){ if(!silent) toast('⚠️ Not logged in — saved on this device only'); return; }
@@ -4112,23 +4122,31 @@ function copyMatchPublicLink(){
 }
 document.getElementById('copy-match-link-btn').addEventListener('click', copyMatchPublicLink);
 
-// Tells the server which live room/connection this tournament's current
-// match is broadcasting under, so the public tournament portal's "Live
-// Now" card can join it. Fire-and-forget, debounced, never blocks or
-// affects scoring if it fails — same trust model as the league save
-// calls above. Called whenever a ball is recorded during a tournament
-// match (see recordBall hook) and cleared once the match is saved.
+// Tells the server which live room/connection this match (tournament OR
+// standalone) is broadcasting under, so the public page can join it before
+// the match is ever saved.
+// 🩹 ROOM-ID MISMATCH FIX: this used to only fire for tournament matches
+// (matchMode === 'tournament'). Standalone matches never told the server
+// their live roomId at all, so a "Copy Match Link" shared before the match
+// finished pointed viewers at the wrong socket room (the permanent
+// tournamentMatchId, not the actual "Match ID" connection field) and their
+// scorecard sat on "Connecting" forever. Now runs for both modes, keyed
+// under SINGLE_MATCHES_NAME when there's no tournament.
 let liveStatusPingTimer = null;
 function pingTournamentLiveStatus(active){
-  const name = (state.leagueName || '').trim();
-  if(!name || !currentOwnerUid()) return;
+  const name = (state.leagueName || '').trim() || SINGLE_MATCHES_NAME;
+  if(!currentOwnerUid()) return;
   clearTimeout(liveStatusPingTimer);
   liveStatusPingTimer = setTimeout(() => {
     fetch(withUid(`${leagueApiPath(name)}/live-status`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      // Always include matchId, even when clearing (active:false) — the
+      // server's $pull needs it to remove the right entry from liveMatches.
+      // Previously this was omitted on the false branch, so old live
+      // pointers never actually got cleared, just piled up.
       body: JSON.stringify(active === false
-        ? { active: false }
+        ? { active: false, matchId: state.tournamentMatchId || null }
         : { active: true, roomId: currentMatchId() || null, matchId: ensureTournamentMatchId() })
     }).catch(() => {}); // best-effort only
   }, 800);
@@ -5378,9 +5396,10 @@ function autoSyncMatchSnapshot(){
 
 function recordBall(kind, meta){
   inningsSummaryJustFired = false;
-  // Tell the public tournament portal (if this match is tournament-tracked)
-  // which room to join for its "Live Now" card — see pingTournamentLiveStatus().
-  if(state.matchMode === 'tournament') pingTournamentLiveStatus(true);
+  // Tell the public page (tournament portal's "Live Now" card, or a
+  // standalone match's public link) which room to join — see
+  // pingTournamentLiveStatus(). Now unconditional (was tournament-only).
+  pingTournamentLiveStatus(true);
   autoSyncMatchSnapshot();
   if(isInningsOver()){
     let msg = '🚫 Overs complete for this innings';
