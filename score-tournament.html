@@ -406,15 +406,30 @@ const firebaseConfig = {
   projectId: "scorvix-faf0e",
   storageBucket: "scorvix-faf0e.firebasestorage.app"
 };
-firebase.initializeApp(firebaseConfig);
-const auth = firebase.auth();
-let authReadyResolve;
-const authReady = new Promise(res => { authReadyResolve = res; });
-auth.onAuthStateChanged(() => { authReadyResolve(); });
+// Guarded: if the Firebase CDN scripts above fail to load (ad-blocker,
+// flaky network, corporate firewall, CDN hiccup, etc.), `firebase` is
+// undefined and calling firebase.initializeApp() would throw — which,
+// left unguarded, kills this entire script block before init() ever runs,
+// leaving nothing but the "Loading tournament…" placeholder on the page
+// (and nothing for the page to scroll). Public tournaments don't need
+// auth at all, so we just fall back to no-auth requests in that case.
+let auth = null;
+let authReady = Promise.resolve();
+try{
+  if(typeof firebase !== 'undefined'){
+    firebase.initializeApp(firebaseConfig);
+    auth = firebase.auth();
+    let authReadyResolve;
+    authReady = new Promise(res => { authReadyResolve = res; });
+    auth.onAuthStateChanged(() => { authReadyResolve(); });
+  } else {
+    console.warn('[auth] Firebase SDK did not load — continuing without auth (public tournaments still work)');
+  }
+}catch(e){ console.warn('[auth] Firebase init failed — continuing without auth', e); }
 async function authHeaders(forceRefresh){
   await authReady;
   try{
-    if(auth.currentUser){
+    if(auth && auth.currentUser){
       // forceRefresh=true bypasses the SDK's cached ID token — used on our
       // one automatic retry below, in case the cached token was stale/near
       // expiry at the moment of the first request.
@@ -431,7 +446,7 @@ async function apiFetch(url, opts, _retry){
   // fetch usually means either (a) no Authorization header actually went
   // out, or (b) the token was stale. Log enough to tell the two apart from
   // DevTools, then retry once with a force-refreshed token before giving up.
-  if(res.status === 404 && !_retry && auth.currentUser){
+  if(res.status === 404 && !_retry && auth && auth.currentUser){
     console.warn('[apiFetch] 404 on', url, '— had currentUser, retrying with a fresh ID token');
     return apiFetch(url, opts, true);
   }
@@ -632,7 +647,7 @@ async function init(){
         // restore on this page load (persistence/redirect issue). If
         // signedInAs shows your email but you still get "not found", the
         // backend's private-tournament check itself needs a look.
-        console.warn('[tournament] load failed', { token, status: res.status, body: data, signedInAs: auth.currentUser && auth.currentUser.email });
+        console.warn('[tournament] load failed', { token, status: res.status, body: data, signedInAs: auth && auth.currentUser && auth.currentUser.email });
         showEmpty(data.error || 'Tournament not found.');
       }
     }
