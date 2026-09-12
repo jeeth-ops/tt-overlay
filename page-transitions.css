@@ -1,0 +1,64 @@
+/* ============================================================
+   All Sports Live — shared page-to-page transition system
+   ------------------------------------------------------------
+   Two code paths, picked automatically per browser:
+
+   1) NATIVE — Chromium browsers with cross-document View
+      Transitions (`@view-transition` below). The browser snapshots
+      the outgoing page, swaps documents, then crossfades/scales
+      between the two snapshots using the keyframes below. Zero JS
+      needed for this path.
+
+   2) FALLBACK — every other browser (Safari, Firefox, older
+      Chrome). page-transitions.js drives a JS "iris" wipe: a
+      circle expands from the tapped point to cover the page in
+      its own background colour, the navigation happens underneath
+      it, then the circle shrinks away on the new page to reveal
+      it. #pt-overlay is the element that animation runs on.
+
+   Both paths fully back off under prefers-reduced-motion.
+   Include on every page, high in <head>:
+     <link rel="stylesheet" href="page-transitions.css">
+     <script src="page-transitions.js" defer></script>
+   ============================================================ */
+
+@view-transition {
+  navigation: auto;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-old(root) {
+    animation: pt-vt-out 0.42s cubic-bezier(0.4, 0, 0.2, 1) both;
+  }
+  ::view-transition-new(root) {
+    animation: pt-vt-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @keyframes pt-vt-out {
+    to { opacity: 0; transform: scale(0.97); filter: blur(2px); }
+  }
+  @keyframes pt-vt-in {
+    from { opacity: 0; transform: scale(1.02); filter: blur(2px); }
+  }
+}
+
+/* Fallback iris overlay — only ever created by page-transitions.js
+   on browsers without native cross-document View Transitions. */
+#pt-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  pointer-events: none;
+  will-change: clip-path;
+}
+
+/* Used only when a page is opened with no click-origin to morph from
+   (typed URL, new tab, refresh) — a soft settle instead of a hard
+   snap-in. Never runs on browsers that get the native transition. */
+@media (prefers-reduced-motion: no-preference) {
+  html.pt-fallback-enter body {
+    animation: pt-body-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) both;
+  }
+  @keyframes pt-body-in {
+    from { opacity: 0; transform: translateY(10px); }
+  }
+}
