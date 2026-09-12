@@ -58,15 +58,26 @@
 
     if (reduceMotion || typeof ov.animate !== 'function') { ov.remove(); return; }
 
-    var anim = ov.animate(
-      [
-        { clipPath: 'circle(' + r + 'px at ' + x + 'px ' + y + 'px)' },
-        { clipPath: 'circle(0px at ' + x + 'px ' + y + 'px)' }
-      ],
-      { duration: 460, easing: 'cubic-bezier(.16,1,.3,1)', fill: 'forwards' }
-    );
     var done = function () { ov.remove(); };
-    anim.onfinish = done;
+    // This overlay sits full-viewport with pointer-events:none, so a
+    // browser that throws here (unsupported keyframe shape, etc.)
+    // without this try/catch would leave it on screen forever — visually
+    // frozen, even though the page underneath is fine. Guard it so the
+    // overlay always gets torn down no matter what this animate() call
+    // does.
+    try {
+      var anim = ov.animate(
+        [
+          { clipPath: 'circle(' + r + 'px at ' + x + 'px ' + y + 'px)' },
+          { clipPath: 'circle(0px at ' + x + 'px ' + y + 'px)' }
+        ],
+        { duration: 460, easing: 'cubic-bezier(.16,1,.3,1)', fill: 'forwards' }
+      );
+      anim.onfinish = done;
+    } catch (e) {
+      done();
+      return;
+    }
     setTimeout(done, 620);
   }
 
@@ -132,14 +143,23 @@
     var navigated = false;
     var doGo = function () { if (navigated) return; navigated = true; go(); };
 
-    var anim = ov.animate(
-      [
-        { clipPath: 'circle(0px at ' + x + 'px ' + y + 'px)' },
-        { clipPath: 'circle(' + r + 'px at ' + x + 'px ' + y + 'px)' }
-      ],
-      { duration: 420, easing: 'cubic-bezier(.4,0,.2,1)', fill: 'forwards' }
-    );
-    anim.onfinish = doGo;
+    // If animate() ever throws here (unsupported keyframe shape, etc.)
+    // without this try/catch, doGo() is never scheduled at all — the
+    // click would do nothing, not even navigate. Fall straight through
+    // to the plain navigation instead of leaving the click dead.
+    try {
+      var anim = ov.animate(
+        [
+          { clipPath: 'circle(0px at ' + x + 'px ' + y + 'px)' },
+          { clipPath: 'circle(' + r + 'px at ' + x + 'px ' + y + 'px)' }
+        ],
+        { duration: 420, easing: 'cubic-bezier(.4,0,.2,1)', fill: 'forwards' }
+      );
+      anim.onfinish = doGo;
+    } catch (e) {
+      doGo();
+      return;
+    }
     setTimeout(doGo, 480);
   };
 
