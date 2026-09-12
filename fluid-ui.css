@@ -1,0 +1,123 @@
+/* ============================================================
+   All Sports Live — shared "fluid UI" utility layer
+   ------------------------------------------------------------
+   PURPOSE
+   Adds ONE reusable glassmorphism + micro-interaction system on
+   top of the site's existing design tokens (--panel, --border,
+   --shadow, --bg-card, etc.) so modals, the dashboard sidebar,
+   and any future surface share the exact same premium glass
+   treatment instead of each page reinventing it.
+
+   This file is purely additive:
+   - It never redefines a component's layout, only decorates
+     surfaces that opt in via the `.glass` class.
+   - It changes nothing for elements that don't use these classes.
+   - Every effect degrades gracefully (no backdrop-filter support,
+     prefers-reduced-motion, coarse/touch pointers on low-end
+     Android).
+
+   USAGE
+   Add class="glass" to a modal panel / sidebar / dropdown that
+   already has its own background + border-radius; this layer
+   swaps the flat background for a translucent, blurred one and
+   adds a soft top highlight + hairline border. Works under both
+   [data-theme="dark"] and [data-theme="light"] since both
+   index.html and the score-* pages toggle that same attribute.
+   ============================================================ */
+
+:root {
+  --glass-blur: 20px;
+  --glass-saturate: 160%;
+}
+
+/* Dark surfaces (default site theme + explicit [data-theme="dark"]) */
+:root,
+[data-theme="dark"] {
+  --glass-bg: rgba(255, 255, 255, 0.06);
+  --glass-bg-strong: rgba(20, 26, 40, 0.55);
+  --glass-border: rgba(255, 255, 255, 0.14);
+  --glass-highlight: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="light"] {
+  --glass-bg: rgba(255, 255, 255, 0.55);
+  --glass-bg-strong: rgba(255, 255, 255, 0.65);
+  --glass-border: rgba(15, 23, 42, 0.1);
+  --glass-highlight: rgba(255, 255, 255, 0.6);
+}
+
+.glass {
+  position: relative;
+  background: var(--glass-bg-strong);
+  border: 1px solid var(--glass-border);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+/* Soft top highlight line — the classic "light hitting glass" cue,
+   done with a pseudo-element so it never fights the panel's own
+   border-radius/overflow rules. */
+.glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(180deg, var(--glass-highlight), transparent 40%);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+/* Backdrop scrims (the full-screen dim behind a modal) get a light
+   blur too so the glass panel in front actually has something
+   blurred to sit on top of, without going full frosted-neon. */
+.glass-scrim {
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+/* ---- Android / low-end performance guardrail ----
+   Heavy backdrop-filter blur is one of the more GPU-expensive
+   effects on mid/low-end Android. Coarse-pointer (touch) devices
+   get a lighter blur radius; this keeps the glass *look* without
+   inviting frame drops during scroll/open-close animation. */
+@media (pointer: coarse) {
+  :root {
+    --glass-blur: 12px;
+  }
+  .glass-scrim {
+    -webkit-backdrop-filter: blur(3px);
+    backdrop-filter: blur(3px);
+  }
+}
+
+/* No backdrop-filter support at all (older browsers): fall back to
+   a plain translucent panel, still on-brand, just not blurred. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass {
+    background: var(--glass-bg-strong);
+  }
+  .glass::before { display: none; }
+}
+
+/* ---- Motion tokens shared across pages ----
+   Same easing curves already used piecemeal in the score pages
+   and index.html's cards/buttons, named once so new components
+   can reuse them instead of re-typing cubic-bezier literals. */
+:root {
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.2, 0.4, 1);
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* prefers-reduced-motion: strip the blur transition + any transform
+   entrance so glass panels simply appear, no animated settle. */
+@media (prefers-reduced-motion: reduce) {
+  .glass, .glass::before {
+    transition: none !important;
+    animation: none !important;
+  }
+}
