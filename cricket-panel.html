@@ -591,6 +591,10 @@
       <label>Venue / Stadium (shown as "Live From")</label>
       <input type="text" id="venue" placeholder="Wankhede Stadium, Mumbai">
 
+      <label>YouTube Live Stream Link (shows on the public scorecard)</label>
+      <input type="text" id="stream-url" placeholder="https://youtube.com/watch?v=... or youtu.be/...">
+      <div class="shortcut-hint">Paste your YouTube watch/live link here — it'll show as an embedded video box next to the score on the public scorecard page. Stays there even after the match ends. Leave blank to hide the box.</div>
+
       <div class="row2">
         <div>
           <label>Team A name</label>
@@ -1399,6 +1403,7 @@ function defaultState(){
     customOvers: 20,
     oversPerInnings: 20,
     venue: '',
+    streamUrl: '',
     teamA: { name:'Mumbai Indians', short:'MI', color:'#17337a', logoUrl:'', players: [], captainId: null, wkId: null },
     teamB: { name:'Royal Challengers Bengaluru', short:'RCB', color:'#7a1620', logoUrl:'', players: [], captainId: null, wkId: null },
     // 🌟 TEAM/PLAYER MANAGEMENT — per-innings-scoped bookkeeping so the
@@ -2358,6 +2363,7 @@ function renderPanel(){
   maybeSet('nonstriker-name', state.nonStriker.name);
   renderRosterControls();
   maybeSet('venue', state.venue);
+  maybeSet('stream-url', state.streamUrl || '');
   maybeSet('league-name', state.leagueName || '');
   maybeSet('teamA-name', state.teamA.name);
   maybeSet('teamA-short', state.teamA.short);
@@ -2437,6 +2443,7 @@ function bindLive(id, apply){
   el.addEventListener(evt, () => { apply(el); pushState(); });
 }
 bindLive('venue', el => { state.venue = el.value; });
+bindLive('stream-url', el => { state.streamUrl = el.value.trim(); });
 bindLive('teamA-name', el => { state.teamA.name = el.value; document.getElementById('squadA-label').textContent = `${el.value || 'Team A'} squad`; });
 bindLive('teamA-short', el => { state.teamA.short = el.value; });
 bindLive('teamA-color', el => { state.teamA.color = el.value; });
@@ -3916,6 +3923,7 @@ function buildMatchRecordForLeague(){
     roomId: currentMatchId() || null,
     savedAt: new Date().toISOString(),
     venue: state.venue,
+    streamUrl: state.streamUrl || '',
     format: state.format,
     teamA: { name: state.teamA.name, short: state.teamA.short },
     teamB: { name: state.teamB.name, short: state.teamB.short },
