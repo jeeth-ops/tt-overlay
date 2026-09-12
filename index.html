@@ -1353,6 +1353,75 @@ document.documentElement.setAttribute('data-theme', 'dark');
 
         .hero-demo { position: relative; display: flex; align-items: center; justify-content: center; padding: 0; overflow: hidden; min-height: 320px; }
 
+        /* ===== Hero: "Tap to feel it" clip-download demo =====
+           Replaces the old match-intro demo. Instead of describing the
+           video-icon → HD clip flow in prose, this lets a visitor click
+           the exact icon and watch the download happen — same GPU-cheap
+           rule as everywhere else on the page: only transform, opacity
+           and stroke-dashoffset (a compositor-friendly SVG property) are
+           ever animated. */
+        .clip-demo {
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            gap: 22px; padding: 46px 24px; min-height: 320px; text-align: center;
+        }
+        .clip-demo__score-line { font-family: 'Space Grotesk', 'Inter', sans-serif; font-weight: 700; font-size: 1.3rem; }
+        .clip-demo__overs { font-weight: 500; color: var(--text-muted); font-size: 0.95rem; margin-left: 8px; }
+        .clip-demo__row {
+            display: flex; align-items: center; gap: 18px;
+            background: var(--surface-1); border: 1px solid var(--border-color);
+            border-radius: 14px; padding: 14px 20px;
+        }
+        .clip-demo__player { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+        .clip-demo__name { font-weight: 700; font-size: 1.05rem; }
+        .clip-demo__event { font-size: 0.85rem; font-weight: 700; color: var(--brand-orange); }
+
+        .clip-demo__icon {
+            position: relative;
+            width: 52px; height: 52px; flex-shrink: 0;
+            border-radius: 50%;
+            border: none;
+            background: var(--accent);
+            color: #fff;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer;
+            will-change: transform;
+            animation: clipDemoPulse 1.8s ease-in-out infinite;
+            transition: transform 0.2s var(--ease-spring), background 0.3s var(--ease);
+        }
+        .clip-demo__icon:hover { transform: scale(1.06); }
+        .clip-demo__icon:active { transform: scale(0.94); }
+        .clip-demo__icon.is-loading { animation: none; }
+        .clip-demo__icon.is-done { background: var(--success); animation: none; }
+        @keyframes clipDemoPulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.45); }
+            50% { box-shadow: 0 0 0 10px rgba(var(--accent-rgb), 0); }
+        }
+        .clip-demo__glyph { width: 20px; height: 20px; position: relative; z-index: 1; transition: opacity 0.15s var(--ease); }
+        .clip-demo__glyph--check { position: absolute; opacity: 0; }
+        .clip-demo__icon.is-done .clip-demo__glyph--play { opacity: 0; }
+        .clip-demo__icon.is-done .clip-demo__glyph--check { opacity: 1; }
+        .clip-demo__icon.is-loading .clip-demo__glyph--play { opacity: 0.35; }
+
+        /* Progress ring: two stacked circles, only the foreground one's
+           stroke-dashoffset animates (compositor/paint-cheap on modern
+           browsers, and far lighter than re-rendering a canvas/GIF). */
+        .clip-demo__ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); pointer-events: none; }
+        .clip-demo__ring-track, .clip-demo__ring-fill {
+            fill: none; stroke-width: 3;
+            stroke-dasharray: 119.4; /* 2 * PI * 19, matches the r=19 circles in the markup */
+        }
+        .clip-demo__ring-track { stroke: rgba(255,255,255,0.25); stroke-dashoffset: 0; }
+        .clip-demo__ring-fill { stroke: #fff; stroke-dashoffset: 119.4; transition: stroke-dashoffset 1.1s linear; }
+        .clip-demo__icon.is-loading .clip-demo__ring-fill { stroke-dashoffset: 0; }
+
+        .clip-demo__hint { font-size: 0.85rem; color: var(--text-muted); min-height: 1.2em; transition: opacity 0.25s var(--ease); }
+        .clip-demo__hint.is-swapping { opacity: 0; }
+
+        @media (prefers-reduced-motion: reduce) {
+            .clip-demo__icon { animation: none; }
+            .clip-demo__ring-fill { transition-duration: 0.2s; }
+        }
+
         .hi-stage {
             --hi-pink: #ec4a9b; --hi-pink-soft: #f472b6; --hi-purple: #8b6cf0; --hi-cyan: #3fd6ea;
             --hi-navy-deep: #060a16; --hi-navy-mid: #131c36; --hi-navy-end: #1b2a4d;
@@ -1829,86 +1898,32 @@ document.documentElement.setAttribute('data-theme', 'dark');
         <div class="showcase-browser hero-preview reveal-on-scroll delay-1">
             <div class="browser-topbar">
                 <div class="browser-dots"><span></span><span></span><span></span></div>
-                <div class="browser-address">allsportslivestreams.com/tt-matchintro</div>
+                <div class="browser-address">allsportslivestreams.com/scorecard</div>
                 <div class="hero-live-badge"><span class="dot"></span> LIVE DEMO</div>
             </div>
-            <div class="browser-body hero-demo" id="hero-demo">
-                <div class="hi-stage" id="hiStage">
-                    <div class="hi-bg" id="hiBg">
-                        <div class="hi-tint cyan"></div>
-                        <div class="hi-tint purple"></div>
-                    </div>
-                    <div class="hi-card" id="hiCard">
-                        <div class="hi-header">
-                            <div class="hi-league">
-                                <span class="hi-diamond d1"></span>
-                                <span>TABLE TENNIS</span>
-                                <span class="hi-diamond d2"></span>
-                            </div>
-                            <div class="hi-round">Quarter Final</div>
-                        </div>
-                        <div class="hi-body">
-                            <div class="hi-team left">
-                                <div class="hi-logo-frame"><span class="hi-initials">A</span></div>
-                                <div class="hi-team-name">Team Alpha</div>
-                            </div>
-                            <div class="hi-vs-col"><div class="hi-divider"></div></div>
-                            <div class="hi-team right">
-                                <div class="hi-logo-frame"><span class="hi-initials">B</span></div>
-                                <div class="hi-team-name">Team Bravo</div>
-                            </div>
-                        </div>
-                        <div class="hi-venue-bar"><span>Table Tennis Arena</span></div>
-                    </div>
+            <div class="browser-body clip-demo" id="clipDemo">
+                <div class="clip-demo__score-line">
+                    <span class="clip-demo__team">India 187/4</span>
+                    <span class="clip-demo__overs">(32.1 ov) vs Australia</span>
                 </div>
+                <div class="clip-demo__row">
+                    <div class="clip-demo__player">
+                        <span class="clip-demo__name">R. Sharma</span>
+                        <span class="clip-demo__event">SIX! 🏏</span>
+                    </div>
+                    <button type="button" class="clip-demo__icon" id="clipDemoBtn" aria-label="Tap to download this clip">
+                        <svg class="clip-demo__ring" viewBox="0 0 44 44">
+                            <circle class="clip-demo__ring-track" cx="22" cy="22" r="19"></circle>
+                            <circle class="clip-demo__ring-fill" cx="22" cy="22" r="19"></circle>
+                        </svg>
+                        <svg class="clip-demo__glyph clip-demo__glyph--play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                        <svg class="clip-demo__glyph clip-demo__glyph--check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12 9.5 18 20 6"/></svg>
+                    </button>
+                </div>
+                <p class="clip-demo__hint" id="clipDemoHint">Tap the video icon — see how fast it is</p>
             </div>
         </div>
 
-        <div class="hi-editor reveal-on-scroll delay-2" id="hiEditor">
-            <p class="hi-editor-label">✏️ Try it yourself — edit live below, it updates the card above instantly</p>
-            <div class="hi-editor-grid">
-                <div class="hi-editor-field">
-                    <label for="hiTeamAName">Team A name</label>
-                    <input type="text" id="hiTeamAName" maxlength="18" value="Team Alpha">
-                    <label class="hi-logo-btn">
-                        <input type="file" accept="image/*" id="hiTeamALogo" hidden>
-                        Upload logo
-                    </label>
-                    <button type="button" class="hi-logo-clear hidden" id="hiTeamAClear">Remove logo</button>
-                </div>
-                <div class="hi-editor-field">
-                    <label for="hiTeamBName">Team B name</label>
-                    <input type="text" id="hiTeamBName" maxlength="18" value="Team Bravo">
-                    <label class="hi-logo-btn">
-                        <input type="file" accept="image/*" id="hiTeamBLogo" hidden>
-                        Upload logo
-                    </label>
-                    <button type="button" class="hi-logo-clear hidden" id="hiTeamBClear">Remove logo</button>
-                </div>
-                <div class="hi-editor-field">
-                    <label for="hiLeagueName">League</label>
-                    <input type="text" id="hiLeagueName" maxlength="20" value="TABLE TENNIS">
-                </div>
-                <div class="hi-editor-field">
-                    <label for="hiRoundName">Round</label>
-                    <input type="text" id="hiRoundName" maxlength="24" value="Quarter Final">
-                </div>
-                <div class="hi-editor-field">
-                    <label for="hiVenueName">Venue</label>
-                    <input type="text" id="hiVenueName" maxlength="28" value="Table Tennis Arena">
-                </div>
-                <div class="hi-editor-field hi-editor-colors">
-                    <label>Accent colours</label>
-                    <div class="hi-color-row">
-                        <input type="color" id="hiColorPink" value="#ec4a9b" title="Primary accent">
-                        <input type="color" id="hiColorPurple" value="#8b6cf0" title="Secondary accent">
-                        <input type="color" id="hiColorCyan" value="#3fd6ea" title="Highlight accent">
-                    </div>
-                </div>
-            </div>
-            <button type="button" id="hiResetBtn" class="hi-reset-btn">Reset to default</button>
-            <p class="hi-editor-note">Your edits are saved on this device only — nobody else sees them, and they won't affect any other visitor's view.</p>
-        </div>
     </section>
 
     <!-- Bento-grid Feature Showcase -->
@@ -3020,6 +3035,49 @@ document.documentElement.setAttribute('data-theme', 'dark');
         // by the real tt-matchintro.html overlay (bg reveal -> card -> team
         // logos slide in -> league/round/venue text fades in), on an endless
         // loop so the first thing visitors see is the actual product in motion.
+        // "Tap to feel it" clip-download demo — the whole point is letting
+        // a visitor click the exact video icon described in "How it
+        // works" and watch the download happen, instead of just reading
+        // about it. Self-contained, no network/video involved: the ring
+        // fill is a fixed-duration CSS transition, not a real progress
+        // value.
+        (function clipDownloadDemo(){
+            const btn = document.getElementById('clipDemoBtn');
+            const hint = document.getElementById('clipDemoHint');
+            if (!btn || !hint) return;
+
+            const HINT_DEFAULT = 'Tap the video icon — see how fast it is';
+            const HINT_DONE = '✓ Saved in HD — that fast, every boundary';
+            let busy = false;
+
+            function swapHint(text) {
+                hint.classList.add('is-swapping');
+                setTimeout(() => {
+                    hint.textContent = text;
+                    hint.classList.remove('is-swapping');
+                }, 180);
+            }
+
+            btn.addEventListener('click', () => {
+                if (busy) return;
+                busy = true;
+                btn.classList.add('is-loading');
+                swapHint('Downloading in HD…');
+
+                setTimeout(() => {
+                    btn.classList.remove('is-loading');
+                    btn.classList.add('is-done');
+                    swapHint(HINT_DONE);
+
+                    setTimeout(() => {
+                        btn.classList.remove('is-done');
+                        swapHint(HINT_DEFAULT);
+                        busy = false;
+                    }, 2200);
+                }, 1150);
+            });
+        })();
+
         (function heroMatchIntroDemo(){
             const stage = document.getElementById('hiStage');
             const card = document.getElementById('hiCard');
@@ -3101,9 +3159,9 @@ document.documentElement.setAttribute('data-theme', 'dark');
             if (!stage) return;
 
             const defaults = {
-                teamAName: 'Team Alpha', teamBName: 'Team Bravo',
+                teamAName: 'India', teamBName: 'Australia',
                 teamALogo: null, teamBLogo: null,
-                league: 'TABLE TENNIS', round: 'Quarter Final', venue: 'Table Tennis Arena',
+                league: 'CRICKET', round: 'Final', venue: 'Wankhede Stadium',
                 colorPink: '#ec4a9b', colorPurple: '#8b6cf0', colorCyan: '#3fd6ea'
             };
 
