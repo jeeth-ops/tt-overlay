@@ -1761,8 +1761,28 @@ app.get('/api/public/tournament/:token/match/:matchId', async (req, res) => {
         }
 
         const match = await matchRecordsCollection.findOne({ ownerUid: doc.ownerUid, leagueKey: doc.leagueKey, matchId: req.params.matchId });
-        if (!match) return res.status(404).json({ success: false, error: 'Match not found' });
-        res.json({ success: true, displayName: doc.displayName || '', match });
+        if (match) return res.json({ success: true, displayName: doc.displayName || '', match });
+
+        // 🩹 LIVE FALLBACK FIX: this used to 404 ("Match not found") for any
+        // match that hasn't been saved yet — i.e. every in-progress
+        // tournament match, since matchRecordsCollection only gets a row
+        // via autoSyncMatchSnapshot()/saveMatchToLeague() in cricket-panel.html.
+        // cricket-scorecard.html's loadMatchSnapshot() already expects (and
+        // handles) success:true + match:null + roomId here to fall back to
+        // a live socket join — the standalone /api/public/match/:id route
+        // already does exactly this — but this tournament route never sent
+        // it, so opening an in-progress tournament match's link just showed
+        // "Could not load this match's scorecard right now." (or, once a
+        // page silently ignored the error, sat stuck on "Connecting" with no
+        // room to actually join). doc.liveMatches is kept up to date by
+        // pingTournamentLiveStatus() in cricket-panel.html (fires on Connect
+        // and every ball).
+        const liveEntry = (doc.liveMatches || []).find(lm => lm.matchId === req.params.matchId);
+        if (liveEntry && liveEntry.roomId) {
+            return res.json({ success: true, displayName: doc.displayName || '', match: null, roomId: liveEntry.roomId });
+        }
+
+        return res.status(404).json({ success: false, error: 'Match not found' });
     } catch (err) {
         console.log('Public tournament match fetch error:', err);
         res.status(500).json({ success: false, error: 'Could not load match' });
@@ -1783,8 +1803,38 @@ app.get('/api/public/match/:id', async (req, res) => {
             $or: [{ matchId: id }, { roomId: id }]
         });
         if (match) return res.json({ success: true, match });
-        // Not saved yet — either still being played (public page falls back
-        // to a live socket join using this id) or the id is simply wrong.
+
+        // 🩹 ROOM-ID MISMATCH FIX: `id` here is the match's PERMANENT
+        // tournamentMatchId (what "Copy Match Link" shares), which is NEVER
+        // the same value as the panel's actual live broadcast room (the
+        // "Match ID" connection field / currentMatchId() in
+        // cricket-panel.html — see ensureTournamentMatchId()'s comment
+        // there). Before any ball is recorded, no matchRecordsCollection
+        // entry exists yet to resolve that via the query above, so we used
+        // to just hand `id` straight back as the roomId to join — which
+        // only worked by coincidence and left viewers stuck on
+        // "Connecting" the moment a match link was opened right at kickoff.
+        // The panel now pings /api/league/:name/live-status for standalone
+        // matches too (see pingTournamentLiveStatus() — fires on Connect
+        // and every ball, not just for tournament matches), recording the
+        // real roomId this permanent id is currently broadcasting under.
+        // Look that up here instead of guessing.
+        if (leaguesCollection) {
+            const liveDoc = await leaguesCollection.findOne(
+                { leagueKey: SINGLE_MATCHES_LEAGUE_KEY, 'liveMatches.matchId': id },
+                { projection: { liveMatches: 1 } }
+            );
+            const liveEntry = liveDoc && (liveDoc.liveMatches || []).find(lm => lm.matchId === id);
+            if (liveEntry && liveEntry.roomId) {
+                return res.json({ success: true, match: null, roomId: liveEntry.roomId });
+            }
+        }
+
+        // Not saved yet and no live pointer found either — either the
+        // broadcaster hasn't hit Connect yet, or the id is simply wrong.
+        // Falling back to `id` itself keeps old links (from before this
+        // fix, where the shared id and the room genuinely were the same
+        // value) working exactly as before.
         res.json({ success: true, match: null, roomId: id });
     } catch (err) {
         console.log('Public match fetch error:', err);
