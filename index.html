@@ -7,27 +7,11 @@
      browsers with native cross-document View Transitions. ===== -->
 <script>
 (function () {
+  if (typeof document.startViewTransition === 'function') return;
   try {
     var raw = sessionStorage.getItem('ptTransition');
     if (!raw) return;
     var d = JSON.parse(raw);
-
-    // Morph arrivals (ptNavigateMorph): the clone already grew to
-    // full-screen on the previous page, so just paint that same
-    // flat color here — instantly, on every browser — until
-    // page-transitions.js fades it away. Runs regardless of native
-    // View Transition support, since morph never defers to it.
-    if (d.morph) {
-      var ovm = document.createElement('div');
-      ovm.id = 'pt-overlay';
-      ovm.dataset.morph = '1';
-      ovm.setAttribute('aria-hidden', 'true');
-      ovm.style.cssText = 'position:fixed;inset:0;z-index:2147483647;pointer-events:none;background:' + (d.bg || '#0f172a') + ';';
-      document.documentElement.appendChild(ovm);
-      return;
-    }
-
-    if (typeof document.startViewTransition === 'function') return;
     var x = d.x, y = d.y;
     var r = Math.ceil(Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y)));
     var ov = document.createElement('div');
@@ -2753,22 +2737,10 @@ document.documentElement.setAttribute('data-theme', 'dark');
                 const card = document.createElement('a');
                 card.className = 'tournament-card';
                 card.href = tournamentUrl;
-                // Opts this card out of the site-wide circle-wipe click
-                // handler in page-transitions.js (see data-pt-morph check
-                // there) — this card drives its own navigation below so
-                // it can play the "card grows into the page" animation
-                // instead of the generic point-origin wipe.
-                card.setAttribute('data-pt-morph', '1');
                 card.addEventListener('click', (e) => {
-                    e.preventDefault();
                     if (!isUserLoggedIn) {
+                        e.preventDefault();
                         openTournamentAuthGate(tournamentUrl);
-                        return;
-                    }
-                    if (window.ptNavigateMorph) {
-                        window.ptNavigateMorph(card, tournamentUrl);
-                    } else {
-                        location.href = tournamentUrl;
                     }
                 });
 
