@@ -26,6 +26,37 @@
 </script>
 <link rel="stylesheet" href="/page-transitions.css">
 <link rel="stylesheet" href="/fluid-ui.css">
+<!-- ===== Tournament-card auth gate interceptor — MUST be registered
+     before page-transitions.js loads. page-transitions.js attaches its
+     own click listener on `document` in the capture phase; capture-phase
+     listeners on the same node fire in registration order, and document
+     is an ancestor of every tournament card, so its listener would
+     otherwise always run before any listener we attach later directly on
+     a card (card listeners only run at the "target phase", which comes
+     after every ancestor's capture phase). Registering our own capture
+     listener on `document` here — before the page-transitions.js
+     <script> tag below even loads — guarantees ours runs first, so
+     stopImmediatePropagation() actually stops page-transitions.js from
+     ever navigating a logged-out click to the real tournament page.
+     window.__scorvixLoggedIn / window.__scorvixOpenTournamentGate are
+     wired up later, once Firebase auth and openTournamentAuthGate()
+     exist — but this listener only ever fires from a real user click,
+     long after the rest of the page has finished loading, so both will
+     already be set by then. ===== -->
+<script>
+(function () {
+  window.__scorvixLoggedIn = false;
+  document.addEventListener('click', function (e) {
+    var card = e.target && e.target.closest && e.target.closest('.tournament-card');
+    if (!card || window.__scorvixLoggedIn) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (typeof window.__scorvixOpenTournamentGate === 'function') {
+      window.__scorvixOpenTournamentGate(card.getAttribute('href'));
+    }
+  }, true);
+})();
+</script>
 <script src="/page-transitions.js" defer></script>
 <!-- ===== Theme bootstrap: dark by default everywhere; on mobile only,
      restore the visitor's last choice (dark/light) before first paint so
@@ -2493,6 +2524,10 @@
             try { sessionStorage.setItem(PENDING_REDIRECT_KEY, url); } catch (e) { /* ignore */ }
             openAuthGate('Sign in with Google to view this tournament\u2019s scorecards and clips.');
         }
+        // Bridges the early document-capture interceptor (registered
+        // before page-transitions.js loads, see <head>) to this function
+        // once it actually exists.
+        window.__scorvixOpenTournamentGate = openTournamentAuthGate;
 
         function loginWithGoogle() {
             const provider = new firebase.auth.GoogleAuthProvider();
@@ -2636,6 +2671,7 @@
         auth.onAuthStateChanged(user => {
             if (user) {
                 isUserLoggedIn = true;
+                window.__scorvixLoggedIn = true;
 
                 localStorage.setItem('scorvix_uid', user.uid);
                 localStorage.setItem('scorvix_email', user.email);
@@ -2687,6 +2723,7 @@
                 if (isOwner && typeof loadTournaments === 'function') loadTournaments();
             } else {
                 isUserLoggedIn = false;
+                window.__scorvixLoggedIn = false;
 
                 localStorage.removeItem('scorvix_uid');
                 localStorage.removeItem('scorvix_email');
