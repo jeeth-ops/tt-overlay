@@ -271,6 +271,21 @@
   /* ---------- Hero ---------- */
   #hero{ position:relative; overflow:hidden; padding:22px; }
   #hero::before{ content:''; position:absolute; inset:0; background:var(--gradient-hero); pointer-events:none; }
+  /* ---------- Live stream box (beside the score on wide screens) ---------- */
+  #hero-row{ display:flex; gap:14px; align-items:stretch; }
+  #hero-row #hero{ flex:1; min-width:0; }
+  #stream-box{
+    flex:0 0 380px; display:flex; flex-direction:column; padding:14px; min-width:0;
+  }
+  #stream-embed-wrap{
+    position:relative; width:100%; aspect-ratio:16/9; border-radius:var(--radius-md);
+    overflow:hidden; background:#000; margin-top:2px;
+  }
+  #stream-embed-wrap iframe{ position:absolute; inset:0; width:100%; height:100%; border:0; display:block; }
+  @media (max-width:900px){
+    #hero-row{ flex-direction:column; }
+    #stream-box{ flex:none; width:100%; }
+  }
   #hero-top{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; position:relative; margin-bottom:16px;}
   .meta-line{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; color:var(--text-dim); font-size:12px; font-weight:600; }
   .chip{ padding:3px 9px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); font-size:11px; font-weight:700; letter-spacing:.3px; }
@@ -599,6 +614,7 @@
 
 <div id="wrap">
 
+<div id="hero-row">
   <!-- MATCH HEADER -->
   <div class="card" id="hero">
     <div id="hero-top">
@@ -651,6 +667,19 @@
       <div class="stat-box"><div class="k">Balls Left</div><div class="v tabnum" id="stat-ballsleft">—</div></div>
     </div>
   </div>
+
+  <!-- LIVE STREAM — only shown once the broadcaster pastes a YouTube link
+       in the panel. Stays visible after the match ends too (renderFinalSnapshot
+       calls the same renderStreamBox() with the saved match's streamUrl). -->
+  <div class="card" id="stream-box" style="display:none;">
+    <div class="section-title"><span class="dash"></span>Live Stream</div>
+    <div id="stream-embed-wrap">
+      <iframe id="stream-iframe" src="" title="Match live stream" frameborder="0"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        allowfullscreen loading="lazy"></iframe>
+    </div>
+  </div>
+</div>
 
   <!-- CURRENT PLAYERS -->
   <div class="card">
@@ -1270,6 +1299,7 @@ function finalResultText(m){
 function renderFinalSnapshot(match, displayName){
   finalMatchData = match;
   finalActiveInnings = 'A';
+  renderStreamBox(match.streamUrl);
   document.title = `${(match.teamA&&(match.teamA.short||match.teamA.name))||'Team A'} vs ${(match.teamB&&(match.teamB.short||match.teamB.name))||'Team B'} — All Sports Live`;
 
   // Sections that only make sense mid-match — nothing "current" to show
@@ -1482,7 +1512,45 @@ function setNameWithBadges(id, player, fallback){
   el.innerHTML = escapeHtml(name) + roleBadgesHtml(player);
 }
 
+// ---- Live Stream box ----
+// Accepts any common YouTube URL shape the broadcaster might paste from
+// the panel — watch?v=, youtu.be/, /live/, /embed/, with or without extra
+// query params (?si=, &t=, etc) — and returns just the 11-char video id,
+// or '' if the text isn't a recognisable YouTube link.
+function extractYouTubeId(url){
+  if(!url) return '';
+  const s = String(url).trim();
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtube\.com\/live\/|youtube\.com\/embed\/|youtube\.com\/shorts\/|youtu\.be\/)([A-Za-z0-9_-]{11})/
+  ];
+  for(const re of patterns){
+    const m = s.match(re);
+    if(m) return m[1];
+  }
+  return '';
+}
+let lastStreamId = null;
+function renderStreamBox(streamUrl){
+  const box = document.getElementById('stream-box');
+  const iframe = document.getElementById('stream-iframe');
+  if(!box || !iframe) return;
+  const id = extractYouTubeId(streamUrl);
+  if(!id){
+    box.style.display = 'none';
+    if(lastStreamId !== null){ iframe.src = ''; lastStreamId = null; }
+    return;
+  }
+  box.style.display = '';
+  // Only touch the iframe src when the video actually changes — reassigning
+  // the same src reloads the player and interrupts anyone already watching.
+  if(id !== lastStreamId){
+    iframe.src = `https://www.youtube.com/embed/${id}?rel=0&modestbranding=1&playsinline=1`;
+    lastStreamId = id;
+  }
+}
+
 function renderHero(s){
+  renderStreamBox(s.streamUrl);
   document.getElementById('chip-format').textContent = s.format || 'T20';
   const venueChip = document.getElementById('chip-venue');
   if(s.venue){ venueChip.style.display=''; venueChip.textContent = s.venue; } else venueChip.style.display='none';
