@@ -19,7 +19,7 @@
   'use strict';
 
   var SS_KEY = 'ptTransition';
-  var supportsVT = 'startViewTransition' in document;
+  var supportsVT = typeof document.startViewTransition === 'function';
   var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
   function pageBg() {
