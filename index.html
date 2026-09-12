@@ -306,7 +306,7 @@ document.documentElement.setAttribute('data-theme', 'dark');
            two-typeface contrast that reads as "designed" rather than default. */
         .hero h1, .bento-section h2, .showcase-text h2, .how-it-works h2,
         .sports-section h2, .testimonials-section h2,
-        .integrations-section h2, .logo {
+        .logo {
             font-family: 'Space Grotesk', 'Inter', sans-serif;
         }
         .delay-1 { transition-delay: 0.1s; }
@@ -695,6 +695,68 @@ document.documentElement.setAttribute('data-theme', 'dark');
         #owner-admin-btn:active { transform: scale(0.97); }
         #owner-admin-btn.visible { display: inline-flex; }
 
+        /* ===== Live ticker strip =====
+           A broadcast-style scoreline ticker — the one place on the page
+           that's allowed to be loud/kinetic, since it's the most literal
+           expression of what the product does (put live scores on
+           screen). Sample content only, not wired to real data — it's
+           set dressing for the landing page, not a data widget.
+           Cheap by construction: a single looping `transform: translateX`
+           on one element, nothing else animates, so it costs about the
+           same as a static image once composited. */
+        .live-ticker {
+            position: relative;
+            overflow: hidden;
+            background: linear-gradient(90deg, rgba(var(--accent-rgb), 0.14), rgba(53, 179, 193, 0.14));
+            border-bottom: 1px solid var(--border-color-soft);
+            -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+            mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+        }
+        .live-ticker__track {
+            display: flex;
+            width: max-content;
+            will-change: transform;
+            animation: tickerScroll 32s linear infinite;
+        }
+        .live-ticker:hover .live-ticker__track { animation-play-state: paused; }
+        .live-ticker__set {
+            display: flex;
+            align-items: center;
+            flex-shrink: 0;
+            padding: 9px 0;
+        }
+        .live-ticker__item {
+            display: inline-flex;
+            align-items: baseline;
+            gap: 7px;
+            font-family: 'Space Grotesk', 'Inter', sans-serif;
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.4px;
+            color: var(--text-main);
+            white-space: nowrap;
+            padding: 0 22px;
+        }
+        .live-ticker__item .tk-sport { color: var(--brand-orange); }
+        .live-ticker__item em { font-style: normal; font-weight: 500; color: var(--text-muted); }
+        .live-ticker__dot {
+            width: 5px; height: 5px; border-radius: 50%;
+            background: var(--accent); flex-shrink: 0;
+            box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.18);
+        }
+        .live-ticker__sep { color: var(--border-color-strong); font-size: 0.7rem; padding: 0 2px; }
+        @keyframes tickerScroll {
+            from { transform: translate3d(0, 0, 0); }
+            to   { transform: translate3d(-50%, 0, 0); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .live-ticker__track { animation: none; }
+            .live-ticker { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        }
+        @media (max-width: 560px) {
+            .live-ticker__item { font-size: 0.72rem; padding: 0 16px; }
+        }
+
         .hero { text-align: center; padding: clamp(56px, 12vw, 100px) 20px; max-width: 900px; margin: 0 auto; }
         .hero h1 { font-size: clamp(2.2rem, 8vw, 5.2rem); font-weight: 900; line-height: 1.08; letter-spacing: -1.5px; margin-bottom: 20px; text-shadow: 0 10px 30px rgba(var(--shadow-rgb), 0.5); }
         .hero h1 span { color: var(--accent); position: relative; }
@@ -768,7 +830,21 @@ document.documentElement.setAttribute('data-theme', 'dark');
 
         .how-it-works { padding: 90px 20px; text-align: center; }
         .how-it-works h2 { font-size: clamp(1.9rem, 5vw, 3rem); font-weight: 800; letter-spacing: -1px; margin-bottom: 55px; }
-        .steps-container { display: flex; justify-content: center; gap: 30px; max-width: 1000px; margin: 0 auto; flex-wrap: wrap; }
+        /* Steps are a real sequence (do 1, then 2, then 3), so a big
+           scoreboard-style numeral plus a connecting rule between cards
+           earns its place here — unlike a numbered badge dropped onto
+           non-sequential content, this one is showing actual order. */
+        .steps-container { display: flex; justify-content: center; gap: 30px; max-width: 1000px; margin: 0 auto; flex-wrap: wrap; position: relative; }
+        .steps-container::before {
+            content: '';
+            position: absolute;
+            top: 27px;
+            left: 8%;
+            right: 8%;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--border-color-strong) 15%, var(--border-color-strong) 85%, transparent);
+            z-index: 0;
+        }
         .step-card {
             background: var(--bg-card); 
             padding: 30px; 
@@ -777,20 +853,21 @@ document.documentElement.setAttribute('data-theme', 'dark');
             min-width: 250px;
             border: 1px solid var(--border-color); 
             backdrop-filter: blur(12px); 
+            position: relative;
+            z-index: 1;
+            text-align: left;
             transition: transform 0.4s var(--ease-spring), border-color 0.3s var(--ease), box-shadow 0.4s var(--ease-spring);
         }
-        .step-card:hover { transform: translateY(-6px); border-color: var(--border-color-strong); box-shadow: 0 15px 35px rgba(var(--shadow-rgb), 0.35); }
+        .step-card:hover { transform: translateY(-6px); border-color: var(--brand-teal); box-shadow: 0 15px 35px rgba(var(--shadow-rgb), 0.35); }
         .step-number {
-            background: var(--accent); 
-            color: white; 
-            width: 40px; 
-            height: 40px; 
-            display: flex;
-            align-items: center; 
-            justify-content: center; 
-            border-radius: 50%; 
-            font-weight: bold; 
-            margin: 0 auto 15px auto;
+            font-family: 'Space Grotesk', 'Inter', sans-serif;
+            font-size: 2.4rem;
+            font-weight: 700;
+            line-height: 1;
+            color: transparent;
+            -webkit-text-stroke: 1.5px var(--brand-teal);
+            display: inline-block;
+            margin: 0 0 15px 0;
         }
         .step-card h3 { margin-bottom: 10px; font-size: 1.25rem; font-weight: 700; }
         .step-card p { color: var(--text-muted); font-size: 0.95rem; }
@@ -1192,7 +1269,12 @@ document.documentElement.setAttribute('data-theme', 'dark');
             --card-shadow: rgba(var(--accent-rgb), 0.35);
             background: var(--bg-card);
             border: 1px solid var(--border-color);
-            border-radius: 20px;
+            /* One corner kept square — a "clipped scoreboard panel" cue
+               instead of the uniform four-corner rounding every generic
+               card grid uses. Small, but it's the detail that keeps this
+               from reading as a stock component. */
+            border-radius: 20px 20px 20px 4px;
+            border-left: 2px solid var(--card-color);
             padding: 28px;
             backdrop-filter: blur(12px);
             display: flex;
@@ -1202,26 +1284,32 @@ document.documentElement.setAttribute('data-theme', 'dark');
             overflow: hidden;
             transition: transform 0.4s var(--ease-spring), border-color 0.3s var(--ease), box-shadow 0.4s var(--ease-spring);
         }
-        .bento-card::before {
-            content: '';
+        /* Oversized ghost numeral, outline-only, tucked in the corner —
+           reads as a scoreboard/jersey number rather than decoration.
+           Pure text + a CSS color property, no gradients or blurred
+           shapes to rasterize. */
+        .bento-tag {
             position: absolute;
-            width: 200px;
-            height: 200px;
-            top: -70px;
-            right: -70px;
-            background: radial-gradient(circle, var(--card-color) 0%, transparent 70%);
-            opacity: 0.16;
-            border-radius: 50%;
-            pointer-events: none;
+            top: 8px;
+            right: 18px;
+            font-family: 'Space Grotesk', 'Inter', sans-serif;
+            font-size: 3rem;
+            font-weight: 700;
+            line-height: 1;
+            color: transparent;
+            -webkit-text-stroke: 1px var(--card-color);
+            opacity: 0.35;
             z-index: 0;
+            pointer-events: none;
             transition: opacity 0.4s var(--ease), transform 0.5s var(--ease-spring);
         }
+        .bento-card.large .bento-tag { font-size: 4.2rem; }
         .bento-card:hover {
             transform: translateY(-6px);
             border-color: var(--card-color);
-            box-shadow: 0 22px 45px var(--card-shadow), 0 8px 20px rgba(var(--shadow-rgb), 0.3);
+            box-shadow: 0 18px 38px var(--card-shadow), 0 8px 20px rgba(var(--shadow-rgb), 0.28);
         }
-        .bento-card:hover::before { opacity: 0.32; transform: scale(1.25) translate(-12px, 12px); }
+        .bento-card:hover .bento-tag { opacity: 0.6; transform: translateY(-3px); }
         .bento-card .bento-icon {
             width: 54px;
             height: 54px;
@@ -1420,23 +1508,6 @@ document.documentElement.setAttribute('data-theme', 'dark');
         }
         .hi-reset-btn:hover { background: var(--border-color); border-color: var(--accent); }
         .hi-editor-note { margin-top: 12px; font-size: 0.72rem; color: var(--text-muted); }
-
-        /* ===== Integrations strip ===== */
-        .integrations-section { padding: 70px 20px; max-width: 1100px; margin: 0 auto; text-align: center; }
-        .integrations-section h2 { font-size: 2rem; font-weight: 700; letter-spacing: -1px; margin-bottom: 10px; }
-        .integrations-section > p { color: var(--text-muted); font-size: 1rem; margin-bottom: 40px; }
-        .integrations-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
-        @media (max-width: 800px) { .integrations-grid { grid-template-columns: repeat(2, 1fr); } }
-        .integration-card {
-            background: var(--bg-card); border: 1px solid var(--border-color-soft); border-radius: 14px;
-            padding: 26px 18px; display: flex; flex-direction: column; align-items: center; gap: 10px;
-            backdrop-filter: blur(10px);
-            transition: transform 0.4s var(--ease-spring), border-color 0.3s var(--ease), box-shadow 0.4s var(--ease-spring);
-        }
-        .integration-card:hover { transform: translateY(-6px); border-color: var(--accent); box-shadow: 0 15px 35px rgba(var(--accent-rgb),0.2); }
-        .integration-icon { font-size: 1.8rem; }
-        .integration-card h4 { font-size: 0.95rem; font-weight: 700; }
-        .integration-card p { font-size: 0.78rem; color: var(--text-muted); line-height: 1.5; }
 
         /* ===== Product Showcase (Control Panel Mockup) ===== */
         .showcase-section { padding: 40px 20px 90px 20px; max-width: 950px; margin: 0 auto; text-align: center; }
@@ -1721,6 +1792,35 @@ document.documentElement.setAttribute('data-theme', 'dark');
         <a href="#sports" class="mobile-nav-link" id="sports-nav-pill-mobile" style="display:none;">Sports Panel</a>
     </div>
 
+    <div class="live-ticker" aria-hidden="true">
+        <div class="live-ticker__track">
+            <div class="live-ticker__set">
+                <span class="live-ticker__item"><span class="live-ticker__dot"></span><span class="tk-sport">LIVE</span> IND 187/4 <em>(32.1 ov)</em> vs AUS · chasing 211</span>
+                <span class="live-ticker__sep">◆</span>
+                <span class="live-ticker__item"><span class="tk-sport">WICKET</span> Australia 3 down · need 45 off 30</span>
+                <span class="live-ticker__sep">◆</span>
+                <span class="live-ticker__item"><span class="tk-sport">MILESTONE</span> Fifty for R. Sharma <em>52* off 38</em></span>
+                <span class="live-ticker__sep">◆</span>
+                <span class="live-ticker__item"><span class="tk-sport">TOSS</span> Mumbai Warriors elect to bowl first</span>
+                <span class="live-ticker__sep">◆</span>
+                <span class="live-ticker__item"><span class="tk-sport">CLIPS</span> Every 4, 6 & wicket ready to download in HD</span>
+                <span class="live-ticker__sep">◆</span>
+            </div>
+            <div class="live-ticker__set">
+                <span class="live-ticker__item"><span class="live-ticker__dot"></span><span class="tk-sport">LIVE</span> IND 187/4 <em>(32.1 ov)</em> vs AUS · chasing 211</span>
+                <span class="live-ticker__sep">◆</span>
+                <span class="live-ticker__item"><span class="tk-sport">WICKET</span> Australia 3 down · need 45 off 30</span>
+                <span class="live-ticker__sep">◆</span>
+                <span class="live-ticker__item"><span class="tk-sport">MILESTONE</span> Fifty for R. Sharma <em>52* off 38</em></span>
+                <span class="live-ticker__sep">◆</span>
+                <span class="live-ticker__item"><span class="tk-sport">TOSS</span> Mumbai Warriors elect to bowl first</span>
+                <span class="live-ticker__sep">◆</span>
+                <span class="live-ticker__item"><span class="tk-sport">CLIPS</span> Every 4, 6 & wicket ready to download in HD</span>
+                <span class="live-ticker__sep">◆</span>
+            </div>
+        </div>
+    </div>
+
     <section class="hero animate-in" id="hero-section">
         <h1>Add <span>Sports Overlays</span> to your live stream</h1>
         <p>Works alongside OBS, vMix and Streamlabs. Professional TV-style graphics in seconds.</p>
@@ -1813,60 +1913,37 @@ document.documentElement.setAttribute('data-theme', 'dark');
 
     <!-- Bento-grid Feature Showcase -->
     <section class="bento-section" id="features">
-        <h2 class="reveal-on-scroll">Everything You Need to Go Live</h2>
+        <h2 class="reveal-on-scroll">Everything Your Tournament Needs</h2>
         <div class="bento-grid">
             <div class="bento-card large reveal-on-scroll delay-1" style="--card-color:#35b3c1; --card-color-dark:#1f8792; --card-shadow:rgba(53,179,193,0.35);">
-                <div class="bento-icon">🎥</div>
-                <h3>Works With Your Existing Setup</h3>
-                <p>Fully compatible with OBS Studio, vMix, and Streamlabs. Just paste the browser source link and you're live.</p>
+                <span class="bento-tag">01</span>
+                <div class="bento-icon">🏏</div>
+                <h3>Live Scorecards For Every Tournament</h3>
+                <p>Ball-by-ball scorecards for every match — teams, overs, and player stats, updated live as the match happens.</p>
             </div>
             <div class="bento-card reveal-on-scroll delay-1" style="--card-color:#ef5a5e; --card-color-dark:#dd4448; --card-shadow:rgba(239,90,94,0.3);">
-                <div class="bento-icon">🔒</div>
-                <h3>Secure & Private</h3>
-                <p>Every user gets a private overlay room, protected behind Google Sign-In.</p>
+                <span class="bento-tag">02</span>
+                <div class="bento-icon">🎬</div>
+                <h3>Download Your 4s, 6s & Wickets</h3>
+                <p>Tap the video icon next to a player's name in the scorecard and download their fours, sixes, and wickets as clips.</p>
             </div>
             <div class="bento-card reveal-on-scroll delay-2" style="--card-color:#67797d; --card-color-dark:#48565a; --card-shadow:rgba(103,121,125,0.3);">
-                <div class="bento-icon">📱</div>
-                <h3>Control From Anywhere</h3>
-                <p>The full control panel works perfectly on mobile — no app install needed.</p>
+                <span class="bento-tag">03</span>
+                <div class="bento-icon">⚡</div>
+                <h3>HD Clips In Seconds</h3>
+                <p>No editing software, no waiting — clips are ready to save in HD straight from your mobile or tablet.</p>
             </div>
             <div class="bento-card reveal-on-scroll delay-2" style="--card-color:#f2a648; --card-color-dark:#d9862a; --card-shadow:rgba(242,166,72,0.35);">
-                <div class="bento-icon">🎨</div>
-                <h3>Custom Branding</h3>
-                <p>Team colors, logos, and sponsor branding — all editable live, in seconds.</p>
+                <span class="bento-tag">04</span>
+                <div class="bento-icon">📡</div>
+                <h3>Best-In-Class Streaming Quality</h3>
+                <p>Matches are broadcast in the best possible streaming quality — sharp, smooth, and built to watch, not just record.</p>
             </div>
             <div class="bento-card reveal-on-scroll delay-3" style="--card-color:#1f8792; --card-color-dark:#166470; --card-shadow:rgba(31,135,146,0.3);">
-                <div class="bento-icon">🏓</div>
-                <h3>Multiple Sports, One Platform</h3>
-                <p>Table Tennis, Football, and Cricket today, with more sports on the way.</p>
-            </div>
-        </div>
-    </section>
-
-    <!-- Integrations -->
-    <section class="integrations-section" id="integrations">
-        <h2 class="reveal-on-scroll">Plugs Into What You Already Use</h2>
-        <p class="reveal-on-scroll delay-1">No new software to learn — just a link, dropped in as a browser source.</p>
-        <div class="integrations-grid">
-            <div class="integration-card reveal-on-scroll delay-1">
-                <div class="integration-icon">🎬</div>
-                <h4>OBS Studio</h4>
-                <p>Add as a Browser Source — transparent background, ready in one click.</p>
-            </div>
-            <div class="integration-card reveal-on-scroll delay-1">
-                <div class="integration-icon">🖥️</div>
-                <h4>vMix</h4>
-                <p>Drop the overlay link straight into a Web Browser input layer.</p>
-            </div>
-            <div class="integration-card reveal-on-scroll delay-2">
-                <div class="integration-icon">📡</div>
-                <h4>Streamlabs</h4>
-                <p>Same browser-source workflow — no plugin or download required.</p>
-            </div>
-            <div class="integration-card reveal-on-scroll delay-2">
-                <div class="integration-icon">📱</div>
-                <h4>Any Browser</h4>
-                <p>Control the match from your phone while the overlay runs anywhere.</p>
+                <span class="bento-tag">05</span>
+                <div class="bento-icon">📱</div>
+                <h3>Everything From Your Phone</h3>
+                <p>Scorecards, streaming, and clip downloads — all of it works straight from your mobile, no app install needed.</p>
             </div>
         </div>
     </section>
@@ -1878,18 +1955,18 @@ document.documentElement.setAttribute('data-theme', 'dark');
         <div class="steps-container">
             <div class="step-card reveal-on-scroll delay-1">
                 <div class="step-number">1</div>
-                <h3>Select your sport</h3>
-                <p>Choose from our TV-style templates built for live broadcasting.</p>
+                <h3>Open a tournament</h3>
+                <p>Click into any tournament to see its live scores and full scorecard.</p>
             </div>
             <div class="step-card reveal-on-scroll delay-2">
                 <div class="step-number">2</div>
-                <h3>Update settings</h3>
-                <p>Manage scores, team names, and colors live from your phone or laptop.</p>
+                <h3>Tap the video icon</h3>
+                <p>In the scorecard, tap the video icon next to your name to open your clips.</p>
             </div>
             <div class="step-card reveal-on-scroll delay-3">
                 <div class="step-number">3</div>
-                <h3>Paste stream link</h3>
-                <p>Copy your unique overlay URL and paste it into OBS or vMix as a Browser Source.</p>
+                <h3>Download in HD</h3>
+                <p>Save your 4s, 6s, and wickets in HD — in seconds, right from your phone or tablet.</p>
             </div>
         </div>
     </section>
