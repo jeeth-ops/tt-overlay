@@ -7,27 +7,11 @@
      browsers with native cross-document View Transitions. ===== -->
 <script>
 (function () {
+  if (typeof document.startViewTransition === 'function') return;
   try {
     var raw = sessionStorage.getItem('ptTransition');
     if (!raw) return;
     var d = JSON.parse(raw);
-
-    // Morph arrivals (ptNavigateMorph): the clone already grew to
-    // full-screen on the previous page, so just paint that same
-    // flat color here — instantly, on every browser — until
-    // page-transitions.js fades it away. Runs regardless of native
-    // View Transition support, since morph never defers to it.
-    if (d.morph) {
-      var ovm = document.createElement('div');
-      ovm.id = 'pt-overlay';
-      ovm.dataset.morph = '1';
-      ovm.setAttribute('aria-hidden', 'true');
-      ovm.style.cssText = 'position:fixed;inset:0;z-index:2147483647;pointer-events:none;background:' + (d.bg || '#0a0e17') + ';';
-      document.documentElement.appendChild(ovm);
-      return;
-    }
-
-    if (typeof document.startViewTransition === 'function') return;
     var x = d.x, y = d.y;
     var r = Math.ceil(Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y)));
     var ov = document.createElement('div');
