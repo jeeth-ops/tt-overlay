@@ -21,6 +21,19 @@
     ov.style.cssText = 'position:fixed;inset:0;z-index:2147483647;pointer-events:none;background:' +
       (d.bg || '#0a0e17') + ';clip-path:circle(' + r + 'px at ' + x + 'px ' + y + 'px);';
     document.documentElement.appendChild(ov);
+    // Watchdog: this overlay is only meant to live a few hundred ms,
+    // until /page-transitions.js loads and shrinks/removes it (see
+    // revealIncoming() there). If that script is ever slow, blocked, or
+    // fails to load, the overlay is left covering the entire screen
+    // forever — it's pointer-events:none so scrolling still technically
+    // works underneath it, but the page LOOKS completely frozen because
+    // this opaque, fixed, full-viewport div never goes away. Self-heal
+    // here, independent of that script, so this page can never get
+    // stuck behind its own transition cover.
+    setTimeout(function () {
+      var stuck = document.getElementById('pt-overlay');
+      if (stuck) stuck.remove();
+    }, 1200);
   } catch (e) { /* ignore */ }
 })();
 </script>
@@ -87,6 +100,14 @@
   a{ color:inherit; text-decoration:none; }
   .tabnum{ font-variant-numeric:tabular-nums; }
   html{ scroll-behavior:smooth; }
+  /* Safety net: /page-transitions.js (shared site-wide) locks html/body
+     scrolling for the duration of its reveal animation and un-locks it
+     when the transition finishes. If that script ever fails to finish —
+     slow load, blocked script, a stuck transition — the lock it applies
+     never gets released and this page is stuck for both mouse and touch,
+     regardless of how much content is on it. !important here guarantees
+     this page can always scroll even if that inline lock is left behind. */
+  html, body{ overflow-y:auto !important; }
   body{ -webkit-tap-highlight-color:transparent; overscroll-behavior-y:none; }
   button, a{ touch-action:manipulation; }
   /* Every tappable control gives a quick press-down cue so the UI reads
@@ -1052,6 +1073,20 @@ document.body.addEventListener('click', (e) => {
 });
 
 init();
+
+// Safety net: make sure this page is never left un-scrollable if the
+// shared /page-transitions.js reveal animation gets stuck and forgets to
+// release the scroll-lock it applies during a transition. Clears any
+// inline overflow/height/position lock it may have left on html or body.
+window.addEventListener('load', () => {
+  setTimeout(() => {
+    [document.documentElement, document.body].forEach(el => {
+      if(el.style.overflow === 'hidden') el.style.overflow = '';
+      if(el.style.position === 'fixed') el.style.position = '';
+      if(el.style.height === '100vh' || el.style.height === '100%') el.style.height = '';
+    });
+  }, 1200);
+});
 </script>
 </body>
 </html>
