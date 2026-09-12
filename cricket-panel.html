@@ -5439,9 +5439,26 @@ function recordBall(kind, meta){
   const logStrikerName = state.striker.name;
   const logNonStrikerName = state.nonStriker.name;
   const logBowlerName = state.bowler.name;
+  const logStrikerId = state.striker.id || null;
+  const logNonStrikerId = state.nonStriker.id || null;
+  const logBowlerId = state.bowler.id || null;
   const logBattingTeam = state.battingTeam;
   const logInnings = state.inningsNumber;
   let logDismissalText = null;
+  // 🔒 ROOT-CAUSE FIX (clip mis-attribution on the last ball of an over):
+  // addLegalBall() below can roll state.score.overs/balls straight over to
+  // the START of the NEXT over (over+1, ball 0) the instant THIS delivery
+  // completes one — and swapStrikeSilent()/the wicket branch can likewise
+  // swap state.striker/nonStriker to whoever takes strike NEXT over, all
+  // within this same call. Anything read from live state.* AFTER the
+  // switch below (as logBallToDb used to do) therefore describes the
+  // NEXT over/batsman, not the ball that was actually just bowled — which
+  // is exactly how a last-ball six/wicket clip used to get attached to
+  // the next over's incoming striker or bowler. Snapshotting the pre-ball
+  // over/ballInOver here, then resolving this ball's TRUE identity right
+  // after the switch (see logOverForBall/logBallInOverForBall below), and
+  // passing that whole immutable snapshot into logBallToDb() as a plain
+  // argument — never re-read from state.* — closes that gap for good.
 
   switch(kind){
     case '0': case '1': case '2': case '3': case '4': case '5': case '6': {
@@ -5681,6 +5698,21 @@ function recordBall(kind, meta){
     }
   }
 
+  // 🔒 Resolve the TRUE over/ballInOver identity of the delivery that was
+  // just bowled, immune to the over-rollover mutation above. Only an
+  // over-completing LEGAL delivery needs correcting — by this point
+  // addLegalBall() has already moved state.score.overs/balls on to the
+  // START of the next over, so this ball's real identity is
+  // (state.score.overs - 1, ball 6). Every other delivery (over still in
+  // progress, or a Wide/No Ball that never advances the ball count at
+  // all) already has the right value sitting live in state.score.
+  // state.score.overs/balls are already correct here for every case
+  // EXCEPT an over-completing legal delivery (that's the one case
+  // addLegalBall() rolls forward to the next over's 0.0 before we get
+  // here) — so only that case needs the -1/=6 correction.
+  const logOverForBall = overCompletedThisBall ? (state.score.overs - 1) : state.score.overs;
+  const logBallInOverForBall = overCompletedThisBall ? 6 : state.score.balls;
+
   // Full match log for the Excel export — one row per ball, never trimmed.
   state.ballLog.push({
     innings: logInnings,
@@ -5720,7 +5752,20 @@ function recordBall(kind, meta){
   // batsman modal) it's chained after has settled.
   pendingBowlerPrompt = overCompletedThisBall && !isInningsOver();
   pushState(true, true);
-  logBallToDb(kind, runsBefore, ballTimestamp);
+  // 🔒 Pass the immutable per-ball snapshot captured above — never let
+  // logBallToDb() read state.striker/nonStriker/bowler/score.overs/balls
+  // live itself, or a last-ball clip/DB row silently inherits whichever
+  // over/batsman/bowler the NEXT delivery already put into state.
+  logBallToDb(kind, runsBefore, ballTimestamp, {
+    over: logOverForBall,
+    ballInOver: logBallInOverForBall,
+    striker: logStrikerName,
+    nonStriker: logNonStrikerName,
+    bowler: logBowlerName,
+    strikerId: logStrikerId,
+    nonStrikerId: logNonStrikerId,
+    bowlerId: logBowlerId
+  });
 }
 let pendingBowlerPrompt = false;
 // Called right after every recordBall() call site has finished whatever
@@ -5735,16 +5780,34 @@ function maybePromptNewBowler(){
 // 🍃 Every ball → MongoDB (source of truth), independent of the
 // cricketState broadcast above. Also asks the server to cut a 20s
 // highlight clip (10s before / 10s after) on WICKET / FOUR / SIX.
-function logBallToDb(kind, runsBefore, ballTimestamp){
+function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity){
   if(!socket || !socket.connected) return;
   const matchId = currentMatchId();
   if(!matchId) return;
 
+  // 🔒 ballIdentity is the IMMUTABLE snapshot recordBall() captured for
+  // THIS exact delivery — over, ballInOver, striker/non-striker/bowler
+  // (names + roster IDs) — taken BEFORE any strike-rotation, over-
+  // rollover or bowler-change mutation that ball itself triggers. This
+  // is what both the permanent `logBall` DB row (the "canonical ball"
+  // clips get linked back to) and the clip-cut request below are built
+  // from. NEVER read state.striker/nonStriker/bowler/score.overs/balls
+  // live in here instead — by the time this runs, and especially by the
+  // time an async clip finishes cutting/uploading, the live state may
+  // already belong to the next over/batsman/bowler, which is exactly the
+  // "clip attaches to the wrong player" bug this guards against. The
+  // fallback below only protects a legacy caller that forgot to pass it.
+  const id = ballIdentity || {
+    over: state.score.overs, ballInOver: state.score.balls,
+    striker: state.striker.name, nonStriker: state.nonStriker.name, bowler: state.bowler.name,
+    strikerId: state.striker.id || null, nonStrikerId: state.nonStriker.id || null, bowlerId: state.bowler.id || null
+  };
+
   socket.emit('logBall', {
     matchId,
     innings: state.inningsNumber,
-    over: state.score.overs,
-    ballInOver: state.score.balls,
+    over: id.over,
+    ballInOver: id.ballInOver,
     kind,
     runs: state.score.runs - runsBefore,
     battingTeam: state.battingTeam,
@@ -5755,18 +5818,18 @@ function logBallToDb(kind, runsBefore, ballTimestamp){
     // forever, silently breaking all player-clip matching. Runs/balls/
     // overs for these players are already tracked separately in `score`
     // and elsewhere — nothing here ever needed the extra fields.
-    striker: state.striker.name,
-    nonStriker: state.nonStriker.name,
-    bowler: state.bowler.name,
+    striker: id.striker,
+    nonStriker: id.nonStriker,
+    bowler: id.bowler,
     // 🌟 Roster player IDs (see TEAM SQUADS section) — additive. When a
     // squad is set up, these are stable, name-independent identities the
     // server can key stats/clips off directly instead of guessing from a
     // name string. null for anyone entered via the legacy free-text
     // fields, in which case the server falls back to its existing
     // name-based resolution exactly as before.
-    strikerId: state.striker.id || null,
-    nonStrikerId: state.nonStriker.id || null,
-    bowlerId: state.bowler.id || null,
+    strikerId: id.strikerId,
+    nonStrikerId: id.nonStrikerId,
+    bowlerId: id.bowlerId,
     dismissal: kind === 'W' ? { type: lastDismissalType || 'Bowled', fielder: lastDismissalFielder || null } : null,
     score: { ...state.score },
     timestamp: ballTimestamp
@@ -5777,16 +5840,20 @@ function logBallToDb(kind, runsBefore, ballTimestamp){
     // ballMeta — same shape the socket 'logBall' event above already
     // sends — lets the main server link this clip to the real
     // striker/bowler (see finalizeClip/findCanonicalBall on the server)
-    // so it shows up under the right player in the scorecard.
+    // so it shows up under the right player in the scorecard. Built from
+    // the same immutable `id` snapshot, for the same reason.
     const ballMeta = {
       innings: state.inningsNumber,
-      over: state.score.overs,
-      ballInOver: state.score.balls,
+      over: id.over,
+      ballInOver: id.ballInOver,
       runs: state.score.runs - runsBefore,
       battingTeam: state.battingTeam,
-      striker: state.striker.name,
-      nonStriker: state.nonStriker.name,
-      bowler: state.bowler.name,
+      striker: id.striker,
+      nonStriker: id.nonStriker,
+      bowler: id.bowler,
+      strikerId: id.strikerId,
+      nonStrikerId: id.nonStrikerId,
+      bowlerId: id.bowlerId,
       dismissal: kind === 'W' ? { type: lastDismissalType || 'Bowled' } : null
     };
     fetch(`${CLIPPER_HELPER_URL}/clip`, {
@@ -6107,7 +6174,10 @@ document.getElementById('caught-modal-submit').addEventListener('click', () => {
   const select = document.getElementById('caught-modal-fielder-select');
   const input = document.getElementById('caught-modal-fielder-input');
   let fielderName = '', fielderId = null;
-  if(select.style.display !== 'none' && select.value !== ''){
+  // 🐛 Same makeProDropdown root cause as the Set Bowler fix above — this
+  // select's own style.display is permanently forced to 'none' once
+  // wrapped, so check its value directly instead.
+  if(select.value !== ''){
     fielderId = select.value;
     const p = findPlayerById(bowlingTeamKey(), fielderId);
     fielderName = p ? p.name : '';
@@ -6155,7 +6225,8 @@ document.getElementById('stumped-modal-submit').addEventListener('click', () => 
   const select = document.getElementById('stumped-modal-keeper-select');
   const input = document.getElementById('stumped-modal-keeper-input');
   let fielderName = '', fielderId = null;
-  if(select.style.display !== 'none' && select.value !== ''){
+  // 🐛 Same makeProDropdown root cause as the Set Bowler fix above.
+  if(select.value !== ''){
     fielderId = select.value;
     const p = findPlayerById(bowlingTeamKey(), fielderId);
     fielderName = p ? p.name : '';
@@ -6244,7 +6315,8 @@ document.getElementById('runout-modal-submit').addEventListener('click', () => {
   const select = document.getElementById('runout-fielder-select');
   const input = document.getElementById('runout-fielder-input');
   let fielderName = '', fielderId = null;
-  if(select.style.display !== 'none' && select.value !== ''){
+  // 🐛 Same makeProDropdown root cause as the Set Bowler fix above.
+  if(select.value !== ''){
     fielderId = select.value;
     const p = findPlayerById(bowlingTeamKey(), fielderId);
     fielderName = p ? p.name : '';
@@ -6353,7 +6425,18 @@ function closeNewOverModal(){
 }
 document.getElementById('newover-modal-submit').addEventListener('click', () => {
   const select = document.getElementById('newover-modal-select');
-  if(select.style.display !== 'none' && select.value){
+  // 🐛 ROOT-CAUSE FIX: makeProDropdown() (see newOverBowlerDD above)
+  // unconditionally sets the underlying <select>'s OWN style.display to
+  // 'none' the moment it's wrapped — it's replaced on screen by the
+  // custom newOverBowlerDD.wrap dropdown, so select.style.display is
+  // permanently 'none' from then on. The old check here
+  // (`select.style.display !== 'none' && select.value`) could therefore
+  // never be true, so picking a bowler from the dropdown and clicking
+  // "Set Bowler" silently fell through to the (empty) manual text input
+  // and did nothing. The select's VALUE is still kept correctly in sync
+  // on every pick (see makeProDropdown's item-click handler), so check
+  // that directly instead of the display style.
+  if(select.value){
     const p = findPlayerById(bowlingTeamKey(), select.value);
     if(p && applyBowlerChange(p.name, p.id)) closeNewOverModal();
     return;
