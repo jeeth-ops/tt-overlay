@@ -1,6 +1,30 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<!-- ===== Page-transition overlay: paints instantly (before anything
+     else) if we arrived mid-transition from another page, so the new
+     page can't flash before page-transitions.js reveals it. No-ops on
+     browsers with native cross-document View Transitions. ===== -->
+<script>
+(function () {
+  if ('startViewTransition' in document) return;
+  try {
+    var raw = sessionStorage.getItem('ptTransition');
+    if (!raw) return;
+    var d = JSON.parse(raw);
+    var x = d.x, y = d.y;
+    var r = Math.ceil(Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y)));
+    var ov = document.createElement('div');
+    ov.id = 'pt-overlay';
+    ov.dataset.x = x; ov.dataset.y = y; ov.dataset.r = r;
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483647;pointer-events:none;background:' +
+      (d.bg || '#0f172a') + ';clip-path:circle(' + r + 'px at ' + x + 'px ' + y + 'px);';
+    document.documentElement.appendChild(ov);
+  } catch (e) { /* ignore */ }
+})();
+</script>
+<link rel="stylesheet" href="page-transitions.css">
+<script src="page-transitions.js" defer></script>
 <!-- ===== Theme bootstrap: light theme removed, site is dark-only now ===== -->
 <script>
 document.documentElement.setAttribute('data-theme', 'dark');
@@ -227,10 +251,6 @@ document.documentElement.setAttribute('data-theme', 'dark');
         }
         body.page-loaded {
             opacity: 1;
-        }
-        body.page-leaving {
-            opacity: 0;
-            transition: opacity 0.35s var(--ease);
         }
 
         /* ===== Full-screen preloader (logo) =====
@@ -2478,7 +2498,7 @@ document.documentElement.setAttribute('data-theme', 'dark');
         function openTableTennisTemplates() {
             if (isUserLoggedIn) {
                 logActivity(auth.currentUser.email, "Overlay Opened", "Table Tennis");
-                window.location.href = "tt-templates.html";
+                ptNavigate("tt-templates.html");
             } else {
                 alert("Pehle Google Login karein!");
                 authGate.classList.remove('hidden');
@@ -2489,7 +2509,7 @@ document.documentElement.setAttribute('data-theme', 'dark');
         function openFootballTemplates() {
             if (isUserLoggedIn) {
                 logActivity(auth.currentUser.email, "Overlay Opened", "Football");
-                window.location.href = "football-templates.html";
+                ptNavigate("football-templates.html");
             } else {
                 alert("Pehle Google Login karein!");
                 authGate.classList.remove('hidden');
@@ -2500,7 +2520,7 @@ document.documentElement.setAttribute('data-theme', 'dark');
         function openCricketTemplates() {
             if (isUserLoggedIn) {
                 logActivity(auth.currentUser.email, "Overlay Opened", "Cricket");
-                window.location.href = "cricket-templates.html";
+                ptNavigate("cricket-templates.html");
             } else {
                 alert("Pehle Google Login karein!");
                 authGate.classList.remove('hidden');
@@ -2537,7 +2557,7 @@ document.documentElement.setAttribute('data-theme', 'dark');
                     card.onclick = () => {
                         if (isUserLoggedIn) {
                             logActivity(auth.currentUser.email, "Overlay Opened", sport.name);
-                            window.location.href = `/${sport.slug}-templates.html?uid=${currentUserUid}`;
+                            ptNavigate(`/${sport.slug}-templates.html?uid=${currentUserUid}`);
                         } else {
                             alert("Pehle Google Login karein!");
                             authGate.classList.remove('hidden');
@@ -2598,7 +2618,7 @@ document.documentElement.setAttribute('data-theme', 'dark');
                 finishGateSignIn(gateWasOpen, () => {
                     if (pendingRedirectUrl) {
                         try { sessionStorage.removeItem(PENDING_REDIRECT_KEY); } catch (e) { /* ignore */ }
-                        window.location.href = pendingRedirectUrl;
+                        ptNavigate(pendingRedirectUrl);
                     }
                 });
 
@@ -3129,26 +3149,11 @@ document.documentElement.setAttribute('data-theme', 'dark');
             });
         }
 
-        document.querySelectorAll('a').forEach(link => {
-            link.addEventListener('click', function(e) {
-                let href = this.getAttribute('href');
-                if (href && !href.startsWith('#') && !href.startsWith('javascript') && !this.hasAttribute('target')) {
-                    e.preventDefault();
-                    // Skip the decorative fade-out delay on touch devices —
-                    // it's what made buttons feel like they "lag" before
-                    // opening the next page on phones.
-                    if (window.matchMedia('(pointer: coarse), (max-width: 900px)').matches) {
-                        window.location.href = href;
-                        return;
-                    }
-                    document.body.classList.remove('page-loaded');
-                    document.body.classList.add('page-leaving');
-                    setTimeout(() => {
-                        window.location.href = href;
-                    }, 400);
-                }
-            });
-        });
+        // Outgoing <a> link clicks (this nav, footer, everywhere) are now
+        // handled globally — and on every device, not just desktop — by
+        // the shared iris-wipe/View-Transition system in
+        // page-transitions.js, so there's no need for a page-specific
+        // interceptor here any more.
 
         // Looping Match Intro demo — replays the exact entrance sequence used
         // by the real tt-matchintro.html overlay (bg reveal -> card -> team
