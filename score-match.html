@@ -21,6 +21,19 @@
     ov.style.cssText = 'position:fixed;inset:0;z-index:2147483647;pointer-events:none;background:' +
       (d.bg || '#0a0e17') + ';clip-path:circle(' + r + 'px at ' + x + 'px ' + y + 'px);';
     document.documentElement.appendChild(ov);
+    // Watchdog: this overlay is only meant to live a few hundred ms,
+    // until /page-transitions.js loads and shrinks/removes it (see
+    // revealIncoming() there). If that script is ever slow, blocked, or
+    // fails to load, the overlay is left covering the entire screen
+    // forever — it's pointer-events:none so scrolling still technically
+    // works underneath it, but the page LOOKS completely frozen because
+    // this opaque, fixed, full-viewport div never goes away. Self-heal
+    // here, independent of that script, so this page can never get
+    // stuck behind its own transition cover.
+    setTimeout(function () {
+      var stuck = document.getElementById('pt-overlay');
+      if (stuck) stuck.remove();
+    }, 1200);
   } catch (e) { /* ignore */ }
 })();
 </script>
