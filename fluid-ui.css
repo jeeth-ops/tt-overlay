@@ -33,23 +33,30 @@
 /* Dark surfaces (default site theme + explicit [data-theme="dark"]) */
 :root,
 [data-theme="dark"] {
-  --glass-bg: rgba(255, 255, 255, 0.06);
-  --glass-bg-strong: rgba(20, 26, 40, 0.55);
+  --glass-bg: rgba(255, 255, 255, 0.08);
+  --glass-bg-strong: rgba(18, 24, 38, 0.82);
   --glass-border: rgba(255, 255, 255, 0.14);
-  --glass-highlight: rgba(255, 255, 255, 0.08);
+  --glass-highlight: rgba(255, 255, 255, 0.06);
 }
 
 [data-theme="light"] {
-  --glass-bg: rgba(255, 255, 255, 0.35);
-  --glass-bg-strong: rgba(255, 255, 255, 0.42);
-  --glass-border: rgba(255, 255, 255, 0.6);
-  --glass-highlight: rgba(255, 255, 255, 0.85);
+  --glass-bg: rgba(255, 255, 255, 0.68);
+  --glass-bg-strong: rgba(255, 255, 255, 0.82);
+  --glass-border: rgba(255, 255, 255, 0.7);
+  --glass-highlight: rgba(255, 255, 255, 0.55);
   --glass-blur: 26px;
-  --glass-saturate: 180%;
+  --glass-saturate: 150%;
 }
 
 .glass {
   position: relative;
+  /* Any descendant using the site's own muted "faint" text token
+     automatically becomes readable inside glass — a translucent,
+     blurred surface has much lower effective contrast than the
+     solid panel that token was designed for, so this scopes a
+     stronger value everywhere it's needed without editing every
+     component (empty-states, group labels, sub-captions, etc). */
+  --text-faint: var(--text-dim);
   background:
     linear-gradient(160deg, var(--glass-highlight) 0%, transparent 35%),
     var(--glass-bg-strong);
@@ -73,7 +80,7 @@
   -webkit-mask-composite: xor;
   mask-composite: exclude;
   pointer-events: none;
-  opacity: 0.7;
+  opacity: 0.5;
 }
 
 /* Backdrop scrims (the full-screen dim behind a modal) get a light
@@ -116,6 +123,66 @@
   --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-spring: cubic-bezier(0.34, 1.2, 0.4, 1);
   --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ============================================================
+   MOBILE FIT — shared safety net across all pages
+   ------------------------------------------------------------
+   Fixes the two most common "doesn't fit on Android" causes:
+   1) A hidden element wider than the viewport forcing horizontal
+      scroll (content shifts, right edge gets cut off).
+   2) `100vh` including the Android/iOS browser's collapsible
+      address bar, so fixed-height overlays are taller than the
+      visible screen. `dvh` (dynamic viewport height) tracks the
+      *actual* visible area and is layered on top of `vh` so older
+      browsers still get the old, safe behavior.
+   ============================================================ */
+html, body {
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+/* Any element that still declares a fixed 100vh height gets a
+   dvh-aware correction automatically, without every page having to
+   duplicate the declaration. Safe: browsers without `dvh` support
+   simply ignore this rule and keep their existing 100vh. */
+.pt-fallback-enter, #pt-overlay {
+  height: 100dvh;
+}
+
+/* Safe-area padding for anything that sits flush against a screen
+   edge (notches, gesture bars, punch-holes) — opt in with this
+   class where a fixed header/footer/sheet needs it. */
+.safe-top    { padding-top: max(env(safe-area-inset-top), 0px); }
+.safe-bottom { padding-bottom: max(env(safe-area-inset-bottom), 0px); }
+.safe-x {
+  padding-left: max(env(safe-area-inset-left), 0px);
+  padding-right: max(env(safe-area-inset-right), 0px);
+}
+
+/* CSS Grid items default to `min-width: auto`, which means they
+   refuse to shrink below their content's natural width — so a wide
+   table or row sitting inside a grid card forces the whole grid,
+   and the page, wider than the phone screen instead of scrolling
+   inside its own wrapper. This resets every grid container's
+   children so their own `overflow-x: auto` (already set per-page)
+   can actually do its job. */
+[class*="-grid"] > *, [id*="-grid"] > * {
+  min-width: 0;
+}
+/* Glass surfaces double as scroll containers often enough (drawers,
+   modals) that momentum scroll + no scroll-chaining into the page
+   behind them should just be the default. */
+.glass {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+/* Kills the ~300ms tap delay and accidental double-tap-zoom on every
+   tappable control, site-wide — a safety net on top of whatever
+   subset of selectors each individual page already listed. */
+a, button, input, select, textarea, label, [role="button"], [onclick] {
+  touch-action: manipulation;
 }
 
 /* prefers-reduced-motion: strip the blur transition + any transform
