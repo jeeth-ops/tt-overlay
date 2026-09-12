@@ -835,6 +835,18 @@ async function apiFetch(url, opts){
    ============================================================ */
 const SUN_PATH = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>';
 const MOON_PATH = '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/>';
+// 🩹 CRASH FIX: this was declared much further down in the file (near
+// getChartColors()), but applyTheme() right below — called immediately by
+// the initTheme() IIFE at page load — calls invalidateChartColorCache(),
+// which touches this variable. A `let` can't be touched before its own
+// declaration line actually runs ("temporal dead zone"), so this threw
+// "Uncaught ReferenceError: Cannot access 'chartColorCache' before
+// initialization" on EVERY page load, before the script ever reached the
+// socket.io connection code further down — which is exactly why the
+// "Connecting" badge never moved: the page crashed first, so
+// connectLive()/io() never even ran. Moved the declaration up here, ahead
+// of first use.
+let chartColorCache = null;
 function applyTheme(t){
   document.documentElement.setAttribute('data-theme', t);
   document.getElementById('theme-icon').innerHTML = t === 'dark' ? SUN_PATH : MOON_PATH;
@@ -1573,8 +1585,8 @@ function css(varName){ return getComputedStyle(document.documentElement).getProp
 // a loop (up to a dozen+ calls per chart redraw) — cheap on a fast CPU,
 // but a real cost on Android. These two colors only change on a theme
 // toggle, so cache them once per render call and reuse the cached value
-// through the whole loop.
-let chartColorCache = null;
+// through the whole loop. (chartColorCache itself is declared up near
+// applyTheme() now — see the fix note there.)
 function getChartColors(){
   if(!chartColorCache) chartColorCache = { accent: css('--accent'), wicket: css('--wicket') };
   return chartColorCache;
