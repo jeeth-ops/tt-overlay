@@ -27,9 +27,22 @@
 <link rel="stylesheet" href="/page-transitions.css">
 <link rel="stylesheet" href="/fluid-ui.css">
 <script src="/page-transitions.js" defer></script>
-<!-- ===== Theme bootstrap: light theme removed, site is dark-only now ===== -->
+<!-- ===== Theme bootstrap: dark by default everywhere; on mobile only,
+     restore the visitor's last choice (dark/light) before first paint so
+     there's no flash of the wrong theme. Desktop/laptop always stays dark
+     — the toggle button itself is only shown ≤900px (see .theme-toggle
+     media rule), this just mirrors that same cutoff here. ===== -->
 <script>
-document.documentElement.setAttribute('data-theme', 'dark');
+(function () {
+  var theme = 'dark';
+  if (window.matchMedia('(max-width: 900px)').matches) {
+    try {
+      var saved = localStorage.getItem('asl-theme');
+      if (saved === 'light' || saved === 'dark') theme = saved;
+    } catch (e) { /* ignore */ }
+  }
+  document.documentElement.setAttribute('data-theme', theme);
+})();
 </script>
 <!-- ===== Content Protection (deterrent only, not foolproof) ===== -->
 <style>
@@ -598,21 +611,27 @@ document.documentElement.setAttribute('data-theme', 'dark');
         .btn-danger:hover { background: #ef4444 !important; filter: brightness(1.12); }
 
         /* ===== Theme toggle ===== */
-        .theme-toggle {
-            width: 42px;
-            height: 42px;
-            flex-shrink: 0;
-            border-radius: 50%;
-            border: 1px solid var(--border-color);
-            background: var(--surface-1);
-            color: var(--text-main);
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            font-size: 1.15rem;
-            line-height: 1;
-            transition: background 0.25s var(--ease), border-color 0.25s var(--ease), transform 0.25s var(--ease-spring);
+        /* Mobile/tablet only (matches the .hero-preview / #hiEditor and
+           .nav-hamburger cutoff already used across this page) — desktop
+           stays dark-only, so the button has nothing to do there. */
+        .theme-toggle { display: none; }
+        @media (max-width: 900px) {
+            .theme-toggle {
+                width: 42px;
+                height: 42px;
+                flex-shrink: 0;
+                border-radius: 50%;
+                border: 1px solid var(--border-color);
+                background: var(--surface-1);
+                color: var(--text-main);
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                font-size: 1.15rem;
+                line-height: 1;
+                transition: background 0.25s var(--ease), border-color 0.25s var(--ease), transform 0.25s var(--ease-spring);
+            }
         }
         .theme-toggle:hover { background: var(--surface-1-hover); border-color: var(--border-color-strong); transform: translateY(-2px) rotate(-8deg); }
         .theme-toggle:active { transform: scale(0.92); }
@@ -1880,6 +1899,9 @@ document.documentElement.setAttribute('data-theme', 'dark');
             <button onclick="logout()" class="auth-btn btn-danger" id="logout-btn">Logout</button>
             <button onclick="openAuthGate()" class="nav-btn" id="nav-signin-btn">Sign in</button>
             <a href="#tournaments" class="nav-btn">View Tournaments</a>
+            <button type="button" class="theme-toggle" id="themeToggle" aria-label="Toggle dark/light theme">
+                <span class="icon-sun">☀️</span><span class="icon-moon">🌙</span>
+            </button>
             <button type="button" class="nav-hamburger" id="navHamburger" aria-label="Open menu" aria-expanded="false">
                 <span></span><span></span><span></span>
             </button>
@@ -3424,6 +3446,41 @@ document.documentElement.setAttribute('data-theme', 'dark');
 
             hydrateInputs();
             applyState();
+        })();
+
+        // Theme toggle — mobile/tablet only (button is CSS-hidden above
+        // 900px). Persists the visitor's choice for next visit; if the
+        // viewport ever crosses into desktop width (rotating a tablet,
+        // resizing a browser window), snap back to dark without touching
+        // the saved mobile preference.
+        (function themeToggleSetup(){
+            const THEME_KEY = 'asl-theme';
+            const btn = document.getElementById('themeToggle');
+            const desktopQuery = window.matchMedia('(min-width: 901px)');
+
+            function applyForViewport(isDesktop){
+                if (isDesktop) {
+                    document.documentElement.setAttribute('data-theme', 'dark');
+                    return;
+                }
+                let saved = 'dark';
+                try {
+                    const s = localStorage.getItem(THEME_KEY);
+                    if (s === 'light' || s === 'dark') saved = s;
+                } catch (e) { /* ignore */ }
+                document.documentElement.setAttribute('data-theme', saved);
+            }
+
+            if (btn) {
+                btn.addEventListener('click', () => {
+                    const current = document.documentElement.getAttribute('data-theme') || 'dark';
+                    const next = current === 'dark' ? 'light' : 'dark';
+                    document.documentElement.setAttribute('data-theme', next);
+                    try { localStorage.setItem(THEME_KEY, next); } catch (e) { /* ignore */ }
+                });
+            }
+
+            desktopQuery.addEventListener('change', (e) => applyForViewport(e.matches));
         })();
 
         const observerOptions = {
