@@ -216,6 +216,11 @@
     padding:10px 18px; background:color-mix(in srgb, var(--panel) 88%, transparent);
     backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
     border-bottom:1px solid var(--border);
+    /* Own compositor layer so the browser doesn't have to repaint this
+       bar's blur inside the same layer as the page content it sits on
+       top of while scrolling — this is the difference iOS Safari makes
+       "for free" that Android Chrome doesn't. */
+    transform:translateZ(0); will-change:transform;
   }
   #brand-id{ display:flex; align-items:center; gap:10px; min-width:0; }
   #brand-id svg{ flex:none; }
@@ -312,7 +317,13 @@
   #target-wrap{ position:relative; margin-top:16px; }
   #target-label{ display:flex; justify-content:space-between; font-size:11.5px; color:var(--text-dim); font-weight:600; margin-bottom:6px; }
   .progress-track{ height:8px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); overflow:hidden; }
-  .progress-fill{ height:100%; border-radius:99px; background:linear-gradient(90deg, var(--accent), var(--six)); transition:width .5s ease; }
+  /* transform:scaleX instead of animating width — width changes force a
+     layout recalc on every frame (janky, especially on Android); scaleX
+     is compositor-only, same feel as an iOS-smooth progress bar. */
+  .progress-fill{
+    height:100%; width:100%; border-radius:99px; background:linear-gradient(90deg, var(--accent), var(--six));
+    transform:scaleX(0); transform-origin:left; transition:transform .5s ease; will-change:transform;
+  }
 
   #stat-strip{ position:relative; display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:16px; }
   .stat-box{ background:var(--panel-2); border:1px solid var(--border-soft); border-radius:var(--radius-md); padding:10px 12px; }
@@ -355,7 +366,8 @@
   .cmp-row{ display:grid; grid-template-columns:70px 1fr 42px; align-items:center; gap:8px; margin-bottom:9px; }
   .cmp-name{ font-size:11.5px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .cmp-track{ height:9px; border-radius:99px; background:var(--panel-2); overflow:hidden; }
-  .cmp-fill{ height:100%; border-radius:99px; transition:width .5s ease; }
+  /* Same GPU-friendly approach as .progress-fill — see comment there. */
+  .cmp-fill{ height:100%; width:100%; border-radius:99px; transform:scaleX(0); transform-origin:left; transition:transform .5s ease; will-change:transform; }
   .cmp-val{ font-size:11.5px; font-weight:700; text-align:right; color:var(--text-dim); }
 
   /* ---------- Tables ---------- */
@@ -419,14 +431,34 @@
     *{ animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important; }
   }
   @media (max-width:640px){
-    #teams-row{ grid-template-columns:1fr; text-align:center; }
-    .team-block, .team-block.right{ flex-direction:column; text-align:center; }
-    #score-center{ order:-1; margin-bottom:6px; }
+    /* Keep the same 3-column layout as desktop (team | score | team)
+       instead of stacking to a single column — that's what was pushing
+       the score to the top of the card via order:-1 rather than
+       leaving it dead-center between the two teams. Columns just get
+       tighter and the team name is allowed to wrap onto 2 lines
+       instead of truncating, so the full team name still fits without
+       needing the short code as a fallback. */
+    #teams-row{ grid-template-columns:1fr auto 1fr; gap:6px; text-align:center; }
+    .team-block, .team-block.right{ flex-direction:column; text-align:center; gap:6px; }
+    .team-logo{ width:36px; height:36px; font-size:13px; border-radius:10px; }
+    .team-name{
+      font-size:12px; line-height:1.25; white-space:normal; text-overflow:clip;
+      display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+    }
+    #score-center{ padding:0 2px; }
+    #main-score{ font-size:clamp(26px,9vw,36px); }
+    #main-overs{ font-size:11px; }
+    #batting-tag{ font-size:9.5px; }
     #brand-text .tag{ display:none; }
     /* Team short codes (DYP/NCC) are redundant once the logo + full
        name are already shown right above them — drop them on mobile
-       to reduce clutter under each team. */
-    .team-short{ display:none; }
+       to reduce clutter under each team. !important is required here:
+       setText() adds a "val-pop" class to every text node it updates
+       (for the brief highlight-on-change animation) including this
+       one, and .val-pop's display:inline-block sits later in the
+       stylesheet than this rule — without !important, the very next
+       score update silently un-hides the short code again. */
+    .team-short{ display:none !important; }
     /* The brand bar was cramped on narrow screens: the full
        "Scorecard by All Sports Live" wrapped across several lines
        right next to the Live pill / Visit button / theme toggle.
@@ -435,7 +467,17 @@
        Visit Website button since the logo+name are already a link
        to the site — that frees up room for the brand name to sit
        on a single line. */
-    #brandbar{ padding:8px 12px; gap:8px; }
+    /* backdrop-filter:blur on a sticky bar is cheap on iOS Safari but
+       forces a re-blur of everything behind it on every scroll frame on
+       Android Chrome — that's the main source of scroll jank vs iOS.
+       Drop the blur on small screens (where it's most likely to be a
+       weaker Android device) and lean on a near-opaque background
+       instead — visually almost identical, no per-frame blur cost. */
+    #brandbar{
+      padding:8px 12px; gap:8px;
+      backdrop-filter:none; -webkit-backdrop-filter:none;
+      background:color-mix(in srgb, var(--panel) 97%, transparent);
+    }
     #brand-id{ gap:8px; }
     #brand-text .name{
       font-size:14px; white-space:nowrap; overflow:hidden;
@@ -678,7 +720,7 @@
 
     <div id="target-wrap" style="display:none;">
       <div id="target-label"><span id="target-need">—</span><span id="target-num">Target —</span></div>
-      <div class="progress-track"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+      <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
     </div>
     <div id="lead-wrap" style="display:none; text-align:center; font-size:13px; font-weight:700; opacity:.85; margin-top:4px;">
       <span id="lead-text">—</span>
@@ -1039,12 +1081,12 @@ function matchStatusText(state){
     const bowlingTeam = teamObj(state, bowlingKeyOf(state));
     if(state.target && state.score.runs >= state.target){
       const left = 10 - state.score.wickets;
-      return { badge:'RESULT', text:`${battingTeam.short || battingTeam.name} won by ${left} wicket${left===1?'':'s'}` };
+      return { badge:'RESULT', text:`${battingTeam.name || battingTeam.short} won by ${left} wicket${left===1?'':'s'}` };
     }
     if(state.target){
       const margin = state.target - 1 - state.score.runs;
       if(margin <= 0) return { badge:'RESULT', text:'Match Tied' };
-      return { badge:'RESULT', text:`${bowlingTeam.short || bowlingTeam.name} won by ${margin} run${margin===1?'':'s'}` };
+      return { badge:'RESULT', text:`${bowlingTeam.name || bowlingTeam.short} won by ${margin} run${margin===1?'':'s'}` };
     }
   }
   if(isInningsOver(state) && !(state.milestonesHit && state.milestonesHit['match-result'])){
@@ -1315,8 +1357,8 @@ let finalActiveInnings = 'A';
 
 function finalResultText(m){
   if(m.winningTeam === 'TIE') return 'Match Tied';
-  if(m.winningTeam === 'A') return `${(m.teamA && (m.teamA.short || m.teamA.name)) || 'Team A'} won`;
-  if(m.winningTeam === 'B') return `${(m.teamB && (m.teamB.short || m.teamB.name)) || 'Team B'} won`;
+  if(m.winningTeam === 'A') return `${(m.teamA && (m.teamA.name || m.teamA.short)) || 'Team A'} won`;
+  if(m.winningTeam === 'B') return `${(m.teamB && (m.teamB.name || m.teamB.short)) || 'Team B'} won`;
   return 'Result pending';
 }
 
@@ -1599,7 +1641,7 @@ function renderHero(s){
   setText('main-score', `${s.score.runs}-${s.score.wickets}`);
   setText('main-overs', `(${fmtOvers(s.score.overs, s.score.balls)} ov)`);
   const battingObj = teamObj(s, s.battingTeam);
-  setText('batting-tag', (battingObj.short || battingObj.name || '') + ' batting');
+  setText('batting-tag', (battingObj.name || battingObj.short || '') + ' batting');
 
   // Test cricket: show each side's full match score line (e.g. "230 & 145/6")
   // under their name, not just the live figure for whoever's batting now —
@@ -1627,7 +1669,7 @@ function renderHero(s){
     setText('target-need', ballsLeft === null ? `Need ${need} runs` : `Need ${need} off ${ballsLeft}`);
     setText('target-num', `Target ${s.target}`);
     const pct = Math.min(100, Math.max(0, (s.score.runs / s.target) * 100));
-    document.getElementById('progress-fill').style.width = pct.toFixed(1) + '%';
+    document.getElementById('progress-fill').style.transform = `scaleX(${(pct/100).toFixed(4)})`;
   } else if(leadWrap && s.format === 'Test' && (s.inningsNumber || 1) > 1){
     targetWrap.style.display = 'none';
     leadWrap.style.display = '';
@@ -1637,7 +1679,7 @@ function renderHero(s){
     } else {
       const teamObj2 = teamObj(s, lt.team);
       const verb = lt.team === s.battingTeam ? 'lead by' : 'trail by';
-      setText('lead-text', `${teamObj2.short || teamObj2.name} ${verb} ${lt.amount} run${lt.amount === 1 ? '' : 's'}`);
+      setText('lead-text', `${teamObj2.name || teamObj2.short} ${verb} ${lt.amount} run${lt.amount === 1 ? '' : 's'}`);
     }
   } else {
     targetWrap.style.display = 'none';
@@ -1809,7 +1851,7 @@ function renderCompare(s){
     batEl.innerHTML = bat.map(b => `
       <div class="cmp-row">
         <div class="cmp-name" title="${escapeHtml(b.name)}">${escapeHtml(b.name)}</div>
-        <div class="cmp-track"><div class="cmp-fill" style="width:${(b.runs/maxRuns*100).toFixed(1)}%; background:var(--four);"></div></div>
+        <div class="cmp-track"><div class="cmp-fill" style="transform:scaleX(${(b.runs/maxRuns).toFixed(4)}); background:var(--four);"></div></div>
         <div class="cmp-val tabnum">${b.runs}</div>
       </div>`).join('');
   }
@@ -1821,7 +1863,7 @@ function renderCompare(s){
     bowlEl.innerHTML = bowl.map(b => `
       <div class="cmp-row">
         <div class="cmp-name" title="${escapeHtml(b.name)}">${escapeHtml(b.name)}</div>
-        <div class="cmp-track"><div class="cmp-fill" style="width:${(bowlerEcon(b)/maxEcon*100).toFixed(1)}%; background:var(--six);"></div></div>
+        <div class="cmp-track"><div class="cmp-fill" style="transform:scaleX(${(bowlerEcon(b)/maxEcon).toFixed(4)}); background:var(--six);"></div></div>
         <div class="cmp-val tabnum">${bowlerEcon(b).toFixed(1)}</div>
       </div>`).join('');
   }
