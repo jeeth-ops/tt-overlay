@@ -2774,10 +2774,21 @@
                 card.href = tournamentUrl;
                 card.addEventListener('click', (e) => {
                     if (!isUserLoggedIn) {
+                        // preventDefault() alone only cancels the browser's
+                        // native navigation on this <a> — it does NOT stop
+                        // page-transitions.js's own document-level click
+                        // listener from also seeing this click and firing
+                        // its own (pushState/fetch-based) navigation to
+                        // tournamentUrl, which ignores our preventDefault.
+                        // stopImmediatePropagation() keeps the click from
+                        // ever bubbling to that listener, so the only thing
+                        // that happens on a logged-out click is the auth
+                        // gate opening.
                         e.preventDefault();
+                        e.stopImmediatePropagation();
                         openTournamentAuthGate(tournamentUrl);
                     }
-                });
+                }, true);
 
                 let statusHtml;
                 if (t.status === 'live') {
