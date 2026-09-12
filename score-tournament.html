@@ -1,6 +1,30 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<!-- ===== Page-transition overlay: paints instantly (before anything
+     else) if we arrived mid-transition from another page, so the new
+     page can't flash before page-transitions.js reveals it. No-ops on
+     browsers with native cross-document View Transitions. ===== -->
+<script>
+(function () {
+  if ('startViewTransition' in document) return;
+  try {
+    var raw = sessionStorage.getItem('ptTransition');
+    if (!raw) return;
+    var d = JSON.parse(raw);
+    var x = d.x, y = d.y;
+    var r = Math.ceil(Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y)));
+    var ov = document.createElement('div');
+    ov.id = 'pt-overlay';
+    ov.dataset.x = x; ov.dataset.y = y; ov.dataset.r = r;
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483647;pointer-events:none;background:' +
+      (d.bg || '#0a0e17') + ';clip-path:circle(' + r + 'px at ' + x + 'px ' + y + 'px);';
+    document.documentElement.appendChild(ov);
+  } catch (e) { /* ignore */ }
+})();
+</script>
+<link rel="stylesheet" href="page-transitions.css">
+<script src="page-transitions.js" defer></script>
 <!-- ===== Content Protection (deterrent only, not foolproof) ===== -->
 <style>
   body {
@@ -588,7 +612,7 @@ async function init(){
       // clips only ever load through the one place that scopes them by
       // matchId (fetchMatchClips / fetchTeamClips / fetchPlayerClips) —
       // no chance of one match's clips showing up under another.
-      location.replace(`/cricket-scorecard?token=${encodeURIComponent(token)}&match=${encodeURIComponent(matchId)}&history=1`);
+      ptNavigate(`/cricket-scorecard?token=${encodeURIComponent(token)}&match=${encodeURIComponent(matchId)}&history=1`, { replace: true });
       return;
     } else {
       const res = await apiFetch(`/api/public/tournament/${encodeURIComponent(token)}`);
@@ -744,11 +768,11 @@ function renderPortal(data, token){
   }));
   requestAnimationFrame(() => moveTabIndicator(c.querySelector('.tab-btn.active')));
   c.classList.remove('in'); void c.offsetWidth; c.classList.add('in');
-  c.querySelectorAll('[data-goto-match]').forEach(row => row.addEventListener('click', () => {
+  c.querySelectorAll('[data-goto-match]').forEach(row => row.addEventListener('click', (e) => {
     // Same destination as the matchId branch in init() above — one single
     // place (cricket-scorecard.html, history mode) renders every past
     // match, clips included, correctly scoped to that one matchId.
-    location.href = `/cricket-scorecard?token=${encodeURIComponent(token)}&match=${encodeURIComponent(row.dataset.gotoMatch)}&history=1`;
+    ptNavigate(`/cricket-scorecard?token=${encodeURIComponent(token)}&match=${encodeURIComponent(row.dataset.gotoMatch)}&history=1`, { x: e.clientX, y: e.clientY });
   }));
 }
 
