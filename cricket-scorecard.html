@@ -181,7 +181,8 @@
   button, a, .icon-btn, .visit-btn, .clip-btn, .cd-tab, .twc-toggle button,
   #highlights-filter button, .clip-row .cr-actions a, .clip-row .cr-actions button,
   .clip-row, .hub-history-row, #clip-drawer-close, #video-modal-close,
-  #video-modal, .player-card, .clip-modal-row{
+  #video-modal, .player-card, .clip-modal-row, .em-close, .em-btn, .em-edit-btn,
+  .clip-watch-btn, .clip-dl-btn, .clip-reassign-btn{
     transition:background .15s ease, color .15s ease, border-color .15s ease,
       transform .16s cubic-bezier(.34,1.56,.64,1), box-shadow .15s ease, opacity .15s ease;
   }
@@ -189,8 +190,22 @@
   .twc-toggle button:active, #highlights-filter button:active,
   .clip-row .cr-actions a:active, .clip-row .cr-actions button:active,
   .clip-row:active, .hub-history-row:active, #clip-drawer-close:active, #video-modal-close:active,
-  .player-card:active, .clip-modal-row:active{
+  .player-card:active, .clip-modal-row:active, .em-close:active, .em-btn:active, .em-edit-btn:active,
+  .clip-watch-btn:active, .clip-dl-btn:active, .clip-reassign-btn:active{
     transform:scale(.94);
+  }
+  /* Fluid Morph Engine (see JS): panels are morphed open/closed via a
+     FLIP transform applied as an inline style, then released into
+     whichever transition each panel already declares below. This just
+     makes sure that hand-off never fights a mid-flight transition. */
+  #clip-drawer, #video-modal, #edit-modal, #confirm-modal{ will-change:transform, opacity; }
+  @media (prefers-reduced-motion: reduce){
+    *, *::before, *::after{
+      animation-duration:.001ms !important;
+      animation-iteration-count:1 !important;
+      transition-duration:.001ms !important;
+      scroll-behavior:auto !important;
+    }
   }
   /* Momentum/rubber-band scrolling everywhere content can overflow, and
      contained so a drawer/modal's own scroll never "leaks" into a
@@ -1065,6 +1080,105 @@
 
 <div id="em-toast"></div>
 
+<script>
+/* ============================================================
+   FLUID MORPH ENGINE
+   Genuinely morphs a panel/modal out of the geometry of whatever
+   control opened it (a real FLIP transform — First/Last/Invert/
+   Play), and morphs it back into that same control on close,
+   instead of a generic fade/scale-from-center. It hands off into
+   whichever transition/easing each panel already declares in CSS,
+   so the existing spring/ease curves per panel are untouched —
+   this only changes the *starting point* of the animation.
+
+   Only transform + opacity are ever touched here (GPU-friendly,
+   no layout thrash), and it no-ops into the previous plain
+   scale-in/out behavior whenever there's no known trigger element
+   or the user has prefers-reduced-motion on.
+   ============================================================ */
+const REDUCE_MOTION = matchMedia('(prefers-reduced-motion: reduce)');
+
+// Tracks whatever button/row/card the user last pressed, so that when a
+// panel opens moments later (after its data has loaded) we still know
+// where — visually — it should morph from, without threading a "trigger"
+// parameter through every open*() call site.
+let lastInteractionEl = null;
+document.addEventListener('pointerdown', (e) => {
+  const el = e.target.closest('button, a, [role="button"], .clip-row, .player-card, .clip-modal-row');
+  if (el) lastInteractionEl = el;
+}, true);
+
+const morphTriggers = new WeakMap(); // panel element -> trigger element it opened from
+
+function flipRect(el){
+  const r = el.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
+}
+
+// Call right before you'd normally add the 'open' class(es). `openNow`
+// performs the actual class toggles — kept as a callback so this engine
+// never has to know which element(s) a given panel toggles 'open' on.
+function morphOpen(panel, openNow){
+  const trigger = lastInteractionEl;
+  const canFlip = !REDUCE_MOTION.matches && trigger && trigger.isConnected && panel.isConnected;
+  if(!canFlip){
+    morphTriggers.set(panel, null);
+    openNow();
+    return;
+  }
+  morphTriggers.set(panel, trigger);
+  // Every panel's resting/open state is transform:none (identity) — see
+  // each panel's own CSS below — so briefly forcing identity gives us
+  // its true resting rect regardless of current (closed) transform.
+  panel.style.transition = 'none';
+  panel.style.transform = 'none';
+  const to = flipRect(panel);
+  if(!to.w || !to.h){ panel.style.transition = ''; panel.style.transform = ''; openNow(); return; }
+  const from = flipRect(trigger);
+  const dx = from.x - to.x, dy = from.y - to.y;
+  const s = Math.min(1, Math.max(.05, Math.min(from.w / to.w, from.h / to.h)));
+  panel.style.opacity = '.4';
+  panel.style.transform = `translate(${dx}px, ${dy}px) scale(${s})`;
+  panel.getBoundingClientRect(); // force reflow so the above paints before we release it
+  openNow();
+  requestAnimationFrame(() => {
+    panel.style.transition = '';
+    panel.style.transform = '';
+    panel.style.opacity = '';
+  });
+}
+
+// Call instead of removing the 'open' class(es) directly. `closeNow` does
+// the actual class toggles once the morph-back has finished (or instantly,
+// under reduced motion / no known trigger).
+function morphClose(panel, closeNow){
+  const trigger = morphTriggers.get(panel);
+  if(REDUCE_MOTION.matches || !trigger || !trigger.isConnected || !panel.isConnected){
+    closeNow();
+    return;
+  }
+  const from = flipRect(panel);
+  const to = flipRect(trigger);
+  if(!from.w || !from.h){ closeNow(); return; }
+  const dx = to.x - from.x, dy = to.y - from.y;
+  const s = Math.max(.05, Math.min(to.w / from.w, to.h / from.h));
+  panel.style.transition = 'transform .32s cubic-bezier(.32,.72,0,1), opacity .24s ease';
+  panel.style.transform = `translate(${dx}px, ${dy}px) scale(${s})`;
+  panel.style.opacity = '0';
+  let done = false;
+  const finish = () => {
+    if(done) return;
+    done = true;
+    panel.removeEventListener('transitionend', finish);
+    closeNow();
+    panel.style.transition = '';
+    panel.style.transform = '';
+    panel.style.opacity = '';
+  };
+  panel.addEventListener('transitionend', finish);
+  setTimeout(finish, 400); // safety net if transitionend never fires
+}
+</script>
 <script>
 /* ============================================================
    AUTH (for private-tournament API calls) — same Firebase project
@@ -2234,14 +2348,18 @@ function openClipDrawer(title, sub, bodyHtml){
   document.getElementById('clip-drawer-title').textContent = title;
   document.getElementById('clip-drawer-sub').textContent = sub || '';
   document.getElementById('clip-drawer-body').innerHTML = bodyHtml;
-  document.getElementById('clip-drawer').classList.add('open');
-  document.getElementById('clip-drawer-backdrop').classList.add('open');
+  morphOpen(document.getElementById('clip-drawer'), () => {
+    document.getElementById('clip-drawer').classList.add('open');
+    document.getElementById('clip-drawer-backdrop').classList.add('open');
+  });
 }
 function closeClipDrawer(){
-  document.getElementById('clip-drawer').classList.remove('open');
-  document.getElementById('clip-drawer-backdrop').classList.remove('open');
-  document.getElementById('clip-drawer-tabs').classList.remove('show');
-  document.getElementById('clip-drawer-statline').innerHTML = '';
+  morphClose(document.getElementById('clip-drawer'), () => {
+    document.getElementById('clip-drawer').classList.remove('open');
+    document.getElementById('clip-drawer-backdrop').classList.remove('open');
+    document.getElementById('clip-drawer-tabs').classList.remove('show');
+    document.getElementById('clip-drawer-statline').innerHTML = '';
+  });
 }
 document.getElementById('clip-drawer-close').addEventListener('click', closeClipDrawer);
 document.getElementById('clip-drawer-backdrop').addEventListener('click', closeClipDrawer);
@@ -2399,7 +2517,9 @@ async function openTeamClipDrawer(teamKey, teamLabel){
 async function openVideoModal(clipId, title){
   document.getElementById('video-modal-title').textContent = title || 'Clip';
   document.getElementById('video-modal-body').innerHTML = '<div id="video-modal-loading">Loading clip…</div>';
-  document.getElementById('video-modal-backdrop').classList.add('open');
+  morphOpen(document.getElementById('video-modal'), () => {
+    document.getElementById('video-modal-backdrop').classList.add('open');
+  });
   // Lazy: the <video> element (and therefore the byte stream behind
   // /api/clips/:id/watch) is only created now, on tap — never eagerly.
   const src = `${clipApiBase()}/api/clips/${encodeURIComponent(clipId)}/watch`;
@@ -2413,9 +2533,11 @@ async function openVideoModal(clipId, title){
   });
 }
 function closeVideoModal(){
-  document.getElementById('video-modal-backdrop').classList.remove('open');
-  // Stop playback/free the stream the moment it's closed.
-  document.getElementById('video-modal-body').innerHTML = '<div id="video-modal-loading">Loading clip…</div>';
+  morphClose(document.getElementById('video-modal'), () => {
+    document.getElementById('video-modal-backdrop').classList.remove('open');
+    // Stop playback/free the stream the moment it's closed.
+    document.getElementById('video-modal-body').innerHTML = '<div id="video-modal-loading">Loading clip…</div>';
+  });
 }
 document.getElementById('video-modal-close').addEventListener('click', closeVideoModal);
 document.getElementById('video-modal-backdrop').addEventListener('click', (e) => { if(e.target.id === 'video-modal-backdrop') closeVideoModal(); });
@@ -2594,10 +2716,14 @@ function ballLabel(b){
 }
 
 function openEditModal(){
-  document.getElementById('edit-modal-backdrop').classList.add('open');
+  morphOpen(document.getElementById('edit-modal'), () => {
+    document.getElementById('edit-modal-backdrop').classList.add('open');
+  });
 }
 function closeEditModal(){
-  document.getElementById('edit-modal-backdrop').classList.remove('open');
+  morphClose(document.getElementById('edit-modal'), () => {
+    document.getElementById('edit-modal-backdrop').classList.remove('open');
+  });
 }
 document.getElementById('edit-modal-close').addEventListener('click', closeEditModal);
 document.getElementById('edit-modal-backdrop').addEventListener('click', (e) => {
@@ -2611,8 +2737,12 @@ function openConfirmModal(html, onConfirm){
       <button class="em-btn cancel" id="confirm-cancel-btn">Cancel</button>
       <button class="em-btn save" id="confirm-save-btn">Save Changes</button>
     </div>`;
-  document.getElementById('confirm-modal-backdrop').classList.add('open');
-  const close = () => document.getElementById('confirm-modal-backdrop').classList.remove('open');
+  morphOpen(document.getElementById('confirm-modal'), () => {
+    document.getElementById('confirm-modal-backdrop').classList.add('open');
+  });
+  const close = () => morphClose(document.getElementById('confirm-modal'), () => {
+    document.getElementById('confirm-modal-backdrop').classList.remove('open');
+  });
   document.getElementById('confirm-cancel-btn').onclick = close;
   document.getElementById('confirm-save-btn').onclick = async () => {
     const btn = document.getElementById('confirm-save-btn');
