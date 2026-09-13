@@ -324,10 +324,32 @@
   .team-name{ font-weight:700; font-size:14.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .team-short{ font-size:11px; color:var(--text-dim); font-weight:600; }
   #score-center{ text-align:center; }
-  #score-overs-row{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; }
-  #main-score{ font-family:var(--font-display); font-weight:800; font-size:clamp(30px,6vw,44px); line-height:1; text-shadow:0 0 30px var(--accent-soft); }
-  #main-overs{ font-size:13px; color:var(--text-dim); font-weight:600; }
-  #batting-tag{ font-size:10.5px; color:var(--accent); font-weight:700; letter-spacing:.4px; text-transform:uppercase; margin-top:4px; }
+  #score-overs-row{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; }
+  /* The score is the visual hero of the page — biggest, boldest, most
+     confident element on screen. Everything else (RR, partnership,
+     ball-by-ball) is deliberately smaller and quieter so the eye lands
+     here first, every time, with zero competition. */
+  #main-score{
+    font-family:var(--font-display); font-weight:800; font-size:clamp(34px,7.4vw,52px);
+    line-height:1; letter-spacing:-.01em; text-shadow:0 0 36px var(--accent-soft);
+  }
+  #main-overs{ font-size:13px; color:var(--text-dim); font-weight:700; letter-spacing:.2px; }
+  #batting-tag{ font-size:10.5px; color:var(--accent); font-weight:700; letter-spacing:.4px; text-transform:uppercase; margin-top:5px; }
+  /* Sticky mini score bar — pins the teams/score row just under the
+     brand bar as the rest of the hero card (stats, target line) scrolls
+     past, so the live score is never more than a glance away. Uses the
+     same live-updating elements (#main-score etc.) rather than a
+     duplicate, so it's always in sync with zero extra wiring. */
+  #teams-row{
+    position:sticky; top:54px; z-index:30;
+    background:color-mix(in srgb, var(--panel) 90%, transparent);
+    backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+    border-radius:var(--radius-md);
+    padding:8px 6px; margin:-8px -6px 0;
+    box-shadow:0 10px 26px rgba(0,0,0,.10);
+  }
+  :root[data-theme="dark"] #teams-row{ box-shadow:0 10px 26px rgba(0,0,0,.30); }
+  @media (max-width:640px){ #teams-row{ top:47px; } }
 
   #target-wrap{ position:relative; margin-top:16px; }
   #target-label{ display:flex; justify-content:space-between; font-size:11.5px; color:var(--text-dim); font-weight:600; margin-bottom:6px; }
@@ -346,29 +368,52 @@
   .stat-box .v{ font-family:var(--font-display); font-size:19px; font-weight:700; margin-top:3px; }
 
   /* ---------- Players row ---------- */
-  #players-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
-  .player-card{ background:var(--panel-2); border:1px solid var(--border-soft); border-radius:var(--radius-md); padding:13px; }
-  .player-card .pc-label{ font-size:10px; text-transform:uppercase; letter-spacing:.4px; color:var(--text-dim); font-weight:700; margin-bottom:8px; }
-  .pc-row{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:5px 0; }
-  .pc-name{ font-weight:700; font-size:13px; display:flex; align-items:center; gap:6px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .strike-dot{ width:6px; height:6px; border-radius:50%; background:var(--accent); flex:none; }
-  .pc-figs{ font-size:12.5px; font-weight:700; color:var(--text-dim); flex:none; }
-  .pc-sub{ font-size:10.5px; color:var(--text-faint); margin-top:2px; }
-  .pship-line{ display:flex; justify-content:space-between; font-size:12px; color:var(--text-dim); margin-top:8px; padding-top:8px; border-top:1px dashed var(--border); }
-  .pship-line b{ color:var(--text); }
+  #players-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; }
+  .player-card{
+    background:var(--panel-2); border:1px solid var(--border-soft); border-radius:var(--radius-md);
+    padding:16px 15px; transition:border-color .18s ease, transform .18s ease, box-shadow .18s ease;
+  }
+  .player-card .pc-label{ font-size:10px; text-transform:uppercase; letter-spacing:.5px; color:var(--text-faint); font-weight:800; margin-bottom:10px; }
+  .pc-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:4px 0; }
+  /* Player name stays legible/secondary; the figures (runs/overs) are
+     the number that matters here, so they get the heavier weight and
+     the display font — same hierarchy principle as the hero score,
+     scaled down one notch. */
+  .pc-name{ font-weight:600; font-size:13px; color:var(--text-dim); display:flex; align-items:center; gap:6px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .strike-dot{ width:6px; height:6px; border-radius:50%; background:var(--accent); flex:none; box-shadow:0 0 0 3px var(--accent-soft); }
+  .pc-figs{ font-family:var(--font-display); font-size:15px; font-weight:800; color:var(--text); flex:none; }
+  .pc-sub{ font-size:10.5px; color:var(--text-faint); margin-top:3px; font-weight:600; }
+  .pship-line{ display:flex; justify-content:space-between; font-size:12px; color:var(--text-dim); margin-top:10px; padding-top:10px; border-top:1px dashed var(--border); }
+  .pship-line b{ color:var(--text); font-family:var(--font-display); }
 
   /* ---------- Recent balls ---------- */
-  #balls-scroll{ display:flex; gap:7px; overflow-x:auto; padding-bottom:4px; scrollbar-width:thin; -webkit-overflow-scrolling:touch; scroll-snap-type:x proximity; }
+  #balls-scroll{ display:flex; gap:8px; overflow-x:auto; padding:2px 2px 6px; scrollbar-width:thin; -webkit-overflow-scrolling:touch; scroll-snap-type:x proximity; }
   #balls-scroll .ball-chip{ scroll-snap-align:start; }
   .ball-chip{
     flex:none; min-width:32px; height:32px; padding:0 6px; border-radius:9px; display:flex; align-items:center; justify-content:center;
     font-weight:800; font-size:12.5px; background:var(--panel-2); border:1px solid var(--border); color:var(--text-dim);
+    transition:transform .15s cubic-bezier(.34,1.56,.64,1);
   }
-  .ball-chip.four{ background:var(--four-soft); color:var(--four); border-color:transparent; }
-  .ball-chip.six{ background:var(--six-soft); color:var(--six); border-color:transparent; }
-  .ball-chip.wicket{ background:var(--wicket-soft); color:var(--wicket); border-color:transparent; }
+  /* Dots and singles stay quiet and small; boundaries and wickets get a
+     size + weight bump so the outcome reads instantly while scanning —
+     no colour-only signalling, matching the "don't rely on colour
+     alone" spirit even though colour is still the fastest first cue. */
+  .ball-chip.dot{ color:var(--text-faint); background:transparent; border-style:dashed; }
+  .ball-chip.four, .ball-chip.six, .ball-chip.wicket{
+    min-width:36px; height:36px; font-size:14px; border-color:transparent;
+    box-shadow:0 3px 10px -2px rgba(0,0,0,.18);
+  }
+  .ball-chip.four{ background:var(--four-soft); color:var(--four); }
+  .ball-chip.six{ background:var(--six-soft); color:var(--six); }
+  .ball-chip.wicket{ background:var(--wicket-soft); color:var(--wicket); }
   .ball-chip.extra{ background:var(--extra-soft); color:var(--extra); border-color:transparent; font-size:10.5px; }
-  .ball-chip.dot{ color:var(--text-faint); }
+  @media (hover:hover) and (pointer:fine){ .ball-chip:hover{ transform:translateY(-2px); } }
+  /* The whole strip is re-rendered on every ball, so the newest delivery
+     is always the last chip in the DOM (see renderBalls()) — give just
+     that one a quick, elegant arrival instead of the whole row silently
+     reappearing. Short and understated, matching the "no fireworks" rule. */
+  #balls-scroll .ball-chip:last-child{ animation:ballArrive .32s cubic-bezier(.22,1,.36,1) both; }
+  @keyframes ballArrive{ from{ opacity:0; transform:scale(.5) translateY(4px); } to{ opacity:1; transform:scale(1) translateY(0); } }
 
   /* ---------- Charts row (stacked — one below another) ---------- */
   #charts-grid{ display:grid; grid-template-columns:1fr; gap:14px; }
@@ -430,7 +475,25 @@
   #points-table th:first-child, #points-table td:first-child{ text-align:left; }
   .pt-updated{ font-size:11px; color:var(--text-faint); margin-top:8px; text-align:right; }
 
-  .empty-state{ text-align:center; color:var(--text-faint); padding:24px 0; font-size:13px; }
+  /* One generic state element covers loading / empty / error text across
+     the app (see JS) — dress it up so all three read as an intentional,
+     designed moment instead of a blank gap, without needing to tell them
+     apart structurally. A soft pulsing dot reads naturally as "working
+     on it" for loading text and as a calm marker for empty/error text. */
+  .empty-state{
+    display:flex; flex-direction:column; align-items:center; gap:10px;
+    text-align:center; color:var(--text-faint); padding:30px 16px; font-size:13px;
+    font-weight:600; line-height:1.5; animation:rowIn .3s cubic-bezier(.22,1,.36,1) both;
+  }
+  .empty-state::before{
+    content:''; width:8px; height:8px; border-radius:50%;
+    background:var(--text-faint); opacity:.5;
+    animation:emptyPulse 1.8s ease-in-out infinite;
+  }
+  @keyframes emptyPulse{
+    0%, 100%{ transform:scale(1); opacity:.35; }
+    50%{ transform:scale(1.35); opacity:.75; }
+  }
 
   footer{ text-align:center; padding:22px 10px 4px; color:var(--text-faint); font-size:11.5px; }
   footer a{ color:var(--accent); font-weight:700; }
@@ -764,11 +827,20 @@
      setText()) — a gentle scale+color pulse, not a flash, so the score
      reads as continuously alive without ever looking glitchy. */
   @keyframes valPop{
-    0%{ transform:scale(1); color:inherit; }
-    35%{ transform:scale(1.06); color:var(--accent); }
-    100%{ transform:scale(1); color:inherit; }
+    0%{ transform:scale(1) translateY(0); color:inherit; text-shadow:none; }
+    30%{ transform:scale(1.09) translateY(-1px); color:var(--accent); text-shadow:0 0 14px var(--accent-soft); }
+    100%{ transform:scale(1) translateY(0); color:inherit; text-shadow:none; }
   }
-  .val-pop{ display:inline-block; animation:valPop .38s cubic-bezier(.22,1,.36,1); }
+  .val-pop{ display:inline-block; animation:valPop .42s cubic-bezier(.22,1,.36,1); }
+  /* The hero score itself gets an extra touch of weight on the pop —
+     still restrained (one gentle beat, no bounce/rubber-banding) so it
+     reads as "alive" without turning into a slot-machine. */
+  #main-score.val-pop{ animation-name:valPopHero; }
+  @keyframes valPopHero{
+    0%{ transform:scale(1); text-shadow:0 0 30px var(--accent-soft); }
+    30%{ transform:scale(1.07); text-shadow:0 0 44px var(--accent); }
+    100%{ transform:scale(1); text-shadow:0 0 30px var(--accent-soft); }
+  }
 </style>
 </head>
 <body>
