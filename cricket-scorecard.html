@@ -40,6 +40,27 @@
 <link rel="stylesheet" href="/page-transitions.css">
 <link rel="stylesheet" href="/fluid-ui.css">
 <script src="/page-transitions.js" defer></script>
+<!-- ===== Adaptive performance: cheap, synchronous device-capability
+     check so weaker/budget Android phones get a "reduce-fx" class
+     before first paint. This only ever strips decorative cost
+     (backdrop-filter blur, heavy shadows) — the core FLIP morph
+     transitions (transform/opacity) are untouched, so the spatial
+     "card becomes panel" feel survives even in the reduced mode.
+     Feature-detected and best-effort: any missing API just means we
+     assume a capable device and keep full effects. ===== -->
+<script>
+(function () {
+  try {
+    var mem = navigator.deviceMemory; // GiB, undefined on many browsers
+    var cores = navigator.hardwareConcurrency;
+    var conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    var weak = (typeof mem === 'number' && mem <= 4) ||
+      (typeof cores === 'number' && cores <= 4) ||
+      (conn && (conn.saveData || /(^2g|slow-2g)$/.test(conn.effectiveType || '')));
+    if (weak) document.documentElement.classList.add('reduce-fx');
+  } catch (e) { /* ignore — keep full effects */ }
+})();
+</script>
 <!-- ===== Content Protection (deterrent only, not foolproof) ===== -->
 <style>
   body {
@@ -207,6 +228,19 @@
       scroll-behavior:auto !important;
     }
   }
+  /* Weaker/budget devices (flagged by the head script above): keep every
+     transform/opacity transition — that's what makes the morph feel
+     alive — but drop the expensive parts (blur compositing, layered
+     shadows) that are most likely to cost frames on mid/low-end Android
+     GPUs. Backgrounds fall back to a plain near-opaque fill instead of
+     see-through blur, which reads almost the same but is far cheaper. */
+  html.reduce-fx #brandbar, html.reduce-fx #teams-row,
+  html.reduce-fx #clip-drawer-backdrop, html.reduce-fx #video-modal-backdrop{
+    backdrop-filter:none !important; -webkit-backdrop-filter:none !important;
+  }
+  html.reduce-fx #brandbar{ background:color-mix(in srgb, var(--panel) 97%, transparent); }
+  html.reduce-fx #teams-row{ background:color-mix(in srgb, var(--panel) 98%, transparent); box-shadow:0 4px 12px rgba(0,0,0,.08); }
+  html.reduce-fx .card:hover{ box-shadow:none; }
   /* Momentum/rubber-band scrolling everywhere content can overflow, and
      contained so a drawer/modal's own scroll never "leaks" into a
      rubber-band bounce on the page behind it — the iOS sheet feel. */
@@ -228,7 +262,8 @@
   #brandbar{
     position:sticky; top:0; z-index:40;
     display:flex; align-items:center; justify-content:space-between; gap:12px;
-    padding:10px 18px; background:color-mix(in srgb, var(--panel) 88%, transparent);
+    padding:10px 18px; padding-top:max(10px, env(safe-area-inset-top));
+    background:color-mix(in srgb, var(--panel) 88%, transparent);
     backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
     border-bottom:1px solid var(--border);
     /* Own compositor layer so the browser doesn't have to repaint this
@@ -341,7 +376,7 @@
      same live-updating elements (#main-score etc.) rather than a
      duplicate, so it's always in sync with zero extra wiring. */
   #teams-row{
-    position:sticky; top:54px; z-index:30;
+    position:sticky; top:calc(54px + env(safe-area-inset-top)); z-index:30;
     background:color-mix(in srgb, var(--panel) 90%, transparent);
     backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
     border-radius:var(--radius-md);
@@ -349,7 +384,7 @@
     box-shadow:0 10px 26px rgba(0,0,0,.10);
   }
   :root[data-theme="dark"] #teams-row{ box-shadow:0 10px 26px rgba(0,0,0,.30); }
-  @media (max-width:640px){ #teams-row{ top:47px; } }
+  @media (max-width:640px){ #teams-row{ top:calc(47px + env(safe-area-inset-top)); } }
 
   #target-wrap{ position:relative; margin-top:16px; }
   #target-label{ display:flex; justify-content:space-between; font-size:11.5px; color:var(--text-dim); font-weight:600; margin-bottom:6px; }
@@ -566,6 +601,16 @@
     .visit-btn{ display:none; }
   }
 
+  /* Touch targets should be comfortably thumb-sized on phones — desktop
+     keeps the tighter sizing since a mouse pointer doesn't need this. */
+  @media (max-width:640px){
+    .icon-btn{ width:40px; height:40px; }
+    .clip-btn{ width:32px; height:32px; }
+    .edit-pencil{ width:26px; height:26px; }
+    #video-modal-close, #clip-drawer-close{ width:36px; height:36px; }
+    .cd-tab{ padding:10px 6px; }
+  }
+
   ::-webkit-scrollbar{ height:6px; width:6px; }
   ::-webkit-scrollbar-thumb{ background:var(--border); border-radius:99px; }
 
@@ -576,6 +621,14 @@
     :root[data-theme="light"] .card:hover{ box-shadow:0 10px 28px rgba(20,25,40,.10); }
     .player-card{ transition:border-color .15s ease, transform .15s ease; }
     .player-card:hover{ border-color:var(--accent); transform:translateY(-1px); }
+  }
+  /* The "At the Crease" cards are tappable — reuses the existing clip/
+     stats drawer + FLIP morph engine, so tapping the striker/bowler
+     genuinely feels like that card opening into their detail panel.
+     cursor + focus ring make the affordance clear on both input types. */
+  #pc-striker, #pc-nonstriker, #pc-bowler{ cursor:pointer; }
+  #pc-striker:focus-visible, #pc-nonstriker:focus-visible, #pc-bowler:focus-visible{
+    outline:2px solid var(--accent); outline-offset:2px;
   }
 
   /* ============================================================
@@ -716,6 +769,25 @@
   #video-modal-close{ width:28px; height:28px; border-radius:99px; background:rgba(255,255,255,.1); color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; border:none; }
   #video-modal video{ width:100%; display:block; max-height:70vh; background:#000; }
   #video-modal-loading{ color:#fff; text-align:center; padding:60px 0; font-size:12.5px; }
+  /* On phones the clip viewer goes edge-to-edge instead of floating as a
+     small card — feels like the tapped clip genuinely expanded to fill
+     the screen (the FLIP morph in JS already animates from the clip's
+     exact position/size; this just changes what it grows *into*). Safe
+     areas keep the close button clear of notches/Dynamic Island and the
+     video controls clear of the home indicator. */
+  @media (max-width:640px){
+    #video-modal-backdrop{ padding:0; }
+    #video-modal{
+      width:100vw; height:100vh; height:100dvh; max-width:none; border-radius:0;
+      display:flex; flex-direction:column;
+    }
+    #video-modal-head{ padding-top:max(10px, env(safe-area-inset-top)); flex:none; }
+    #video-modal-body{ flex:1; display:flex; flex-direction:column; justify-content:center; min-height:0; }
+    #video-modal video{ max-height:none; flex:1; min-height:0; object-fit:contain; }
+    #video-modal-close{ width:36px; height:36px; }
+    #video-modal-head .vm-title{ font-size:13.5px; }
+    #video-modal{ padding-bottom:env(safe-area-inset-bottom); }
+  }
 
   /* ---------- Owner correction system (chhayajeeth@gmail.com only) ----------
      Same visual language as the video modal above (centered card, scale-in),
@@ -938,18 +1010,18 @@
   <div class="card">
     <div class="section-title"><span class="dash"></span>At the Crease</div>
     <div id="players-grid">
-      <div class="player-card">
+      <div class="player-card" id="pc-striker" role="button" tabindex="0" aria-label="View striker's stats and clips">
         <div class="pc-label">Striker</div>
         <div class="pc-row"><span class="pc-name"><span class="strike-dot"></span><span id="striker-name">—</span></span><span class="pc-figs tabnum" id="striker-figs">0 (0)</span></div>
         <div class="pc-sub" id="striker-sr">SR —</div>
       </div>
-      <div class="player-card">
+      <div class="player-card" id="pc-nonstriker" role="button" tabindex="0" aria-label="View non-striker's stats and clips">
         <div class="pc-label">Non-Striker</div>
         <div class="pc-row"><span class="pc-name"><span id="nonstriker-name">—</span></span><span class="pc-figs tabnum" id="nonstriker-figs">0 (0)</span></div>
         <div class="pc-sub" id="nonstriker-sr">SR —</div>
         <div class="pship-line"><span>Partnership</span><b id="pship-inline">0 (0)</b></div>
       </div>
-      <div class="player-card">
+      <div class="player-card" id="pc-bowler" role="button" tabindex="0" aria-label="View bowler's stats and clips">
         <div class="pc-label">Bowler</div>
         <div class="pc-row"><span class="pc-name"><span id="bowler-name">—</span></span><span class="pc-figs tabnum" id="bowler-figs">0-0-0</span></div>
         <div class="pc-sub" id="bowler-econ">Econ —</div>
@@ -3038,6 +3110,33 @@ function openClipReassignForm(clipId, currentName, role){
 }
 
 connect();
+
+/* ---------- "At the Crease" player cards → player detail drawer ----------
+   New wiring only — reuses openPlayerClipDrawer() and the existing FLIP
+   morph engine untouched, so this is purely additive: tapping a card
+   opens the same drawer the batting/bowling table's clip icon already
+   opens, morphing out of that exact card's position. Guards against the
+   placeholder "—" (no batter/bowler assigned yet) so an empty tap does
+   nothing instead of opening a drawer with no player. */
+(function wireAtCreaseCards(){
+  const cards = [
+    { el: document.getElementById('pc-striker'), nameId: 'striker-name', role: 'batter' },
+    { el: document.getElementById('pc-nonstriker'), nameId: 'nonstriker-name', role: 'batter' },
+    { el: document.getElementById('pc-bowler'), nameId: 'bowler-name', role: 'bowler' }
+  ];
+  cards.forEach(({ el, nameId, role }) => {
+    if(!el) return;
+    const open = () => {
+      const name = (document.getElementById(nameId).textContent || '').trim();
+      if(!name || name === '—') return;
+      openPlayerClipDrawer(name, role);
+    };
+    el.addEventListener('click', open);
+    el.addEventListener('keydown', (e) => {
+      if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); open(); }
+    });
+  });
+})();
 </script>
 </body>
 </html>
