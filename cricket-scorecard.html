@@ -198,7 +198,7 @@
      FLIP transform applied as an inline style, then released into
      whichever transition each panel already declares below. This just
      makes sure that hand-off never fights a mid-flight transition. */
-  #clip-drawer, #video-modal, #edit-modal, #confirm-modal{ will-change:transform, opacity; }
+  #clip-drawer, #video-modal, #edit-modal, #confirm-modal{ will-change:transform, opacity, border-radius; }
   @media (prefers-reduced-motion: reduce){
     *, *::before, *::after{
       animation-duration:.001ms !important;
@@ -588,14 +588,14 @@
   /* ---------- Drawer (bottom sheet on mobile, side sheet on desktop) ---------- */
   #clip-drawer-backdrop{
     position:fixed; inset:0; background:rgba(0,0,0,.5); backdrop-filter:blur(6px); z-index:80;
-    opacity:0; pointer-events:none; transition:opacity .28s ease;
+    opacity:0; pointer-events:none; transition:opacity .2s ease;
   }
   #clip-drawer-backdrop.open{ opacity:1; pointer-events:auto; }
   #clip-drawer{
     position:fixed; z-index:81; border-left:1px solid var(--glass-border, var(--border));
     box-shadow:var(--shadow); display:flex; flex-direction:column;
     right:0; top:0; bottom:0; width:min(400px, 100vw); transform:translateX(100%);
-    transition:transform .34s cubic-bezier(.32,.72,0,1);
+    transition:transform .25s cubic-bezier(.32,.72,0,1), border-radius .25s cubic-bezier(.32,.72,0,1);
   }
   #clip-drawer.open{ transform:translateX(0); }
   #clip-drawer-head{ display:flex; align-items:center; justify-content:space-between; padding:16px 18px; border-bottom:1px solid var(--border); flex:none; }
@@ -638,14 +638,14 @@
   #video-modal-backdrop{
     position:fixed; inset:0; background:rgba(0,0,0,.78); z-index:90; display:flex;
     align-items:center; justify-content:center; padding:16px;
-    opacity:0; pointer-events:none; transition:opacity .3s ease;
+    opacity:0; pointer-events:none; transition:opacity .22s ease;
   }
   #video-modal-backdrop.open{ opacity:1; pointer-events:auto; }
   #video-modal{
     width:min(720px, 100%); background:#000; border-radius:var(--radius-lg); overflow:hidden;
     box-shadow:0 20px 60px rgba(0,0,0,.6);
     transform:scale(.92) translateY(8px);
-    transition:transform .4s cubic-bezier(.34,1.4,.64,1);
+    transition:transform .28s cubic-bezier(.34,1.56,.64,1), border-radius .28s cubic-bezier(.34,1.56,.64,1);
   }
   #video-modal-backdrop.open #video-modal{ transform:scale(1) translateY(0); }
   #video-modal-head{ display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:#0b0e14; }
@@ -683,14 +683,14 @@
   #edit-modal-backdrop, #confirm-modal-backdrop{
     position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:120; display:flex;
     align-items:center; justify-content:center; padding:16px;
-    opacity:0; pointer-events:none; transition:opacity .3s ease;
+    opacity:0; pointer-events:none; transition:opacity .22s ease;
   }
   #edit-modal-backdrop.open, #confirm-modal-backdrop.open{ opacity:1; pointer-events:auto; }
   #edit-modal, #confirm-modal{
     width:min(480px, 100%); max-height:86vh; overflow-y:auto; -webkit-overflow-scrolling:touch;
     background:var(--panel); border:1px solid var(--border); border-radius:var(--radius-lg);
     box-shadow:0 24px 70px rgba(0,0,0,.5); padding:20px 20px 16px;
-    transform:scale(.92) translateY(10px); transition:transform .4s cubic-bezier(.34,1.4,.64,1);
+    transform:scale(.92) translateY(10px); transition:transform .3s cubic-bezier(.34,1.56,.64,1), border-radius .3s cubic-bezier(.34,1.56,.64,1);
   }
   #edit-modal-backdrop.open #edit-modal, #confirm-modal-backdrop.open #confirm-modal{ transform:scale(1) translateY(0); }
   .em-title{ font-family:var(--font-display); font-size:15.5px; font-weight:700; margin:0 0 4px; }
@@ -1132,64 +1132,70 @@ function morphOpen(panel, openNow){
   // its true resting rect regardless of current (closed) transform.
   panel.style.transition = 'none';
   panel.style.transform = 'none';
+  panel.style.borderRadius = '';
   const to = flipRect(panel);
-  if(!to.w || !to.h){ panel.style.transition = ''; panel.style.transform = ''; openNow(); return; }
+  if(!to.w || !to.h){ panel.style.transition = ''; panel.style.transform = ''; panel.style.borderRadius = ''; openNow(); return; }
   const from = flipRect(trigger);
   const dx = from.x - to.x, dy = from.y - to.y;
   const s = Math.min(1, Math.max(.05, Math.min(from.w / to.w, from.h / to.h)));
+  // Corner radius starts matched to whatever the trigger itself is
+  // rounded to (a button/row's own border-radius) so the very first
+  // frame reads as "the tapped control, now bigger" rather than a
+  // rectangle appearing under it. It's released back to the panel's own
+  // CSS-declared radius in the same rAF that releases the transform, and
+  // each panel's own transition (see its CSS) now includes border-radius
+  // alongside transform, so the corners visibly relax open in step with
+  // the size/position change instead of snapping.
+  const triggerRadius = getComputedStyle(trigger).borderRadius;
   panel.style.opacity = '.4';
   panel.style.transform = `translate(${dx}px, ${dy}px) scale(${s})`;
+  panel.style.borderRadius = triggerRadius;
   panel.getBoundingClientRect(); // force reflow so the above paints before we release it
   openNow();
   requestAnimationFrame(() => {
     panel.style.transition = '';
     panel.style.transform = '';
     panel.style.opacity = '';
+    panel.style.borderRadius = '';
   });
 }
 
 // Call instead of removing the 'open' class(es) directly. `closeNow` does
-// the actual class toggles — called right away (in step with the panel's
-// own shrink-back) so the backdrop fades out *together with* the panel
-// morphing into the trigger, instead of only after it, which used to read
-// as the modal "hanging" fully-dark for the whole morph before finally
-// disappearing.
-function morphClose(panel, closeNow, onSettled){
+// the actual class toggles once the morph-back has finished (or instantly,
+// under reduced motion / no known trigger).
+function morphClose(panel, closeNow){
   const trigger = morphTriggers.get(panel);
   if(REDUCE_MOTION.matches || !trigger || !trigger.isConnected || !panel.isConnected){
     closeNow();
-    onSettled && onSettled();
     return;
   }
   const from = flipRect(panel);
   const to = flipRect(trigger);
-  if(!from.w || !from.h){ closeNow(); onSettled && onSettled(); return; }
+  if(!from.w || !from.h){ closeNow(); return; }
   const dx = to.x - from.x, dy = to.y - from.y;
   const s = Math.max(.05, Math.min(to.w / from.w, to.h / from.h));
-  const DUR = .42;
-  panel.style.transition = `transform ${DUR}s cubic-bezier(.32,.72,0,1), opacity ${DUR * 0.75}s ease`;
+  // Mirror of morphOpen's radius handling: ease from the panel's own
+  // resting corner radius toward the trigger's, in step with the same
+  // shrink, so the reverse reads as the same object folding back into
+  // the control it came from rather than a separate close animation.
+  const triggerRadius = getComputedStyle(trigger).borderRadius;
+  panel.style.transition = 'transform .32s cubic-bezier(.32,.72,0,1), opacity .24s ease, border-radius .32s cubic-bezier(.32,.72,0,1)';
   panel.style.transform = `translate(${dx}px, ${dy}px) scale(${s})`;
   panel.style.opacity = '0';
-  closeNow();
+  panel.style.borderRadius = triggerRadius;
   let done = false;
   const finish = () => {
     if(done) return;
     done = true;
     panel.removeEventListener('transitionend', finish);
-    // Snap the inline overrides back off with transitions disabled first —
-    // clearing them straight into the (now-hidden) CSS resting state
-    // instantly avoids a visible "pop back to full size/opacity" flash
-    // right as the backdrop finishes fading, which is what made this look
-    // like it hadn't actually closed.
-    panel.style.transition = 'none';
+    closeNow();
+    panel.style.transition = '';
     panel.style.transform = '';
     panel.style.opacity = '';
-    panel.getBoundingClientRect(); // force the instant, transition-less reset to apply
-    requestAnimationFrame(() => { panel.style.transition = ''; });
-    onSettled && onSettled();
+    panel.style.borderRadius = '';
   };
   panel.addEventListener('transitionend', finish);
-  setTimeout(finish, DUR * 1000 + 150); // safety net if transitionend never fires
+  setTimeout(finish, 400); // safety net if transitionend never fires
 }
 </script>
 <script>
@@ -2546,16 +2552,11 @@ async function openVideoModal(clipId, title){
   });
 }
 function closeVideoModal(){
-  morphClose(
-    document.getElementById('video-modal'),
-    () => { document.getElementById('video-modal-backdrop').classList.remove('open'); },
-    () => {
-      // Stop playback/free the stream only once the panel has actually
-      // finished morphing away — swapping this in mid-shrink used to look
-      // like the clip vanished before the modal itself had closed.
-      document.getElementById('video-modal-body').innerHTML = '<div id="video-modal-loading">Loading clip…</div>';
-    }
-  );
+  morphClose(document.getElementById('video-modal'), () => {
+    document.getElementById('video-modal-backdrop').classList.remove('open');
+    // Stop playback/free the stream the moment it's closed.
+    document.getElementById('video-modal-body').innerHTML = '<div id="video-modal-loading">Loading clip…</div>';
+  });
 }
 document.getElementById('video-modal-close').addEventListener('click', closeVideoModal);
 document.getElementById('video-modal-backdrop').addEventListener('click', (e) => { if(e.target.id === 'video-modal-backdrop') closeVideoModal(); });
