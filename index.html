@@ -2590,9 +2590,45 @@
         // once it actually exists.
         window.__scorvixOpenTournamentGate = openTournamentAuthGate;
 
+        // Detects Instagram/WhatsApp/Facebook/TikTok/etc.'s built-in webview.
+        // Google deliberately blocks OAuth sign-in inside these ("disallowed_useragent"),
+        // so no amount of client-side code can fix it — the only fix is asking the
+        // visitor to open the link in Safari/Chrome instead.
+        function isInAppBrowser() {
+            const ua = navigator.userAgent || '';
+            return /FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|TikTok|musical_ly|WhatsApp/i.test(ua);
+        }
+
+        // Popup is used first because it sidesteps a well-known iOS Safari bug:
+        // signInWithRedirect relies on cross-domain sessionStorage between the
+        // page's own origin and the Firebase authDomain, which Safari's
+        // Intelligent Tracking Prevention frequently blocks, silently breaking
+        // sign-in after the redirect comes back. signInWithRedirect is kept only
+        // as an automatic fallback for the rare case a popup itself is blocked.
         function loginWithGoogle() {
+            if (isInAppBrowser()) {
+                resetGoogleBtnState();
+                showGateError('Yeh app ka in-app browser Google sign-in support nahi karta. Kripya isse Safari ya Chrome mein khol kar dobara try karein (top-right ⋮ ya share menu me "Open in Browser" option dekhein).');
+                return;
+            }
             const provider = new firebase.auth.GoogleAuthProvider();
-            auth.signInWithRedirect(provider).catch(error => {
+            auth.signInWithPopup(provider).then((result) => {
+                if (result.user) {
+                    logActivity(result.user.email, "Login", "System Login");
+                }
+            }).catch(error => {
+                if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') {
+                    // Visitor closed it themselves — no error message needed.
+                    resetGoogleBtnState();
+                    return;
+                }
+                if (error.code === 'auth/popup-blocked' || error.code === 'auth/operation-not-supported-in-this-environment') {
+                    auth.signInWithRedirect(provider).catch(redirectError => {
+                        resetGoogleBtnState();
+                        showGateError(redirectError.message || 'Something went wrong signing in. Please try again.');
+                    });
+                    return;
+                }
                 resetGoogleBtnState();
                 showGateError(error.message || 'Something went wrong signing in. Please try again.');
             });
