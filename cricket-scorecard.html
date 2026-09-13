@@ -639,6 +639,42 @@
   #video-modal video{ width:100%; display:block; max-height:70vh; background:#000; }
   #video-modal-loading{ color:#fff; text-align:center; padding:60px 0; font-size:12.5px; }
 
+  /* ---------- OWNER SCORECARD CORRECTIONS ---------- */
+  .owner-ball-row{ display:flex; align-items:center; gap:10px; padding:9px 4px; border-bottom:1px solid var(--border-soft); font-size:12.5px; }
+  .owner-ball-row:last-child{ border-bottom:none; }
+  .owner-ball-over{ width:44px; flex:none; color:var(--text-dim); font-variant-numeric:tabular-nums; }
+  .owner-ball-desc{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .owner-ball-desc b{ color:var(--text); }
+  .owner-edit-link{ flex:none; padding:5px 12px; border-radius:99px; background:var(--accent-soft); color:var(--accent); font-weight:700; font-size:11.5px; border:none; cursor:pointer; }
+  .owner-edit-link:active{ transform:scale(.95); }
+  .owner-edit-empty{ padding:14px 4px; color:var(--text-dim); font-size:12.5px; }
+  .owner-refresh-btn{ margin-left:auto; padding:5px 12px; border-radius:99px; background:var(--panel-2); color:var(--text-dim); font-weight:700; font-size:11px; border:1px solid var(--border); cursor:pointer; }
+
+  #edit-modal-backdrop{ position:fixed; inset:0; z-index:9999; background:rgba(6,9,16,.6); backdrop-filter:blur(4px); display:flex; align-items:flex-end; justify-content:center; opacity:0; pointer-events:none; transition:opacity .22s ease; }
+  #edit-modal-backdrop.open{ opacity:1; pointer-events:auto; }
+  @media (min-width:640px){ #edit-modal-backdrop{ align-items:center; } }
+  #edit-modal{ width:100%; max-width:440px; max-height:88vh; overflow-y:auto; background:var(--panel); border-radius:20px 20px 0 0; transform:translateY(24px); transition:transform .22s ease; box-shadow:var(--shadow); }
+  @media (min-width:640px){ #edit-modal{ border-radius:20px; transform:scale(.96); } }
+  #edit-modal-backdrop.open #edit-modal{ transform:none; }
+  #edit-modal-head{ display:flex; align-items:center; justify-content:space-between; padding:16px 18px; border-bottom:1px solid var(--border-soft); position:sticky; top:0; background:var(--panel); z-index:1; }
+  #edit-modal-head .em-title{ font-family:var(--font-display); font-weight:800; font-size:15px; color:var(--text); }
+  #edit-modal-close{ width:28px; height:28px; border-radius:99px; background:var(--panel-2); color:var(--text-dim); display:flex; align-items:center; justify-content:center; cursor:pointer; border:none; }
+  #edit-modal-body{ padding:16px 18px 4px; }
+  .em-row{ margin-bottom:14px; }
+  .em-row label{ display:block; font-size:11.5px; font-weight:700; color:var(--text-dim); margin-bottom:5px; text-transform:uppercase; letter-spacing:.02em; }
+  .em-row select, .em-row input[type="number"]{ width:100%; padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:var(--panel-2); color:var(--text); font-size:13.5px; font-family:var(--font-body); }
+  .em-two-col{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .em-check-row{ display:flex; align-items:center; gap:9px; padding:2px 0 6px; }
+  .em-check-row input[type="checkbox"]{ width:19px; height:19px; }
+  .em-check-row label{ margin:0; text-transform:none; font-size:13px; font-weight:600; color:var(--text); }
+  #em-error{ display:none; background:var(--wicket-soft); color:var(--wicket); border-radius:10px; padding:9px 12px; font-size:12px; font-weight:600; margin-bottom:12px; }
+  #em-diff{ display:none; background:var(--accent-soft); border-radius:10px; padding:10px 12px; font-size:12px; color:var(--text); margin-bottom:12px; line-height:1.55; }
+  #edit-modal-foot{ display:flex; gap:10px; padding:14px 18px 20px; position:sticky; bottom:0; background:var(--panel); }
+  .em-btn{ flex:1; padding:12px; border-radius:12px; font-weight:700; font-size:13.5px; border:none; cursor:pointer; }
+  .em-btn-cancel{ background:var(--panel-2); color:var(--text-dim); }
+  .em-btn-save{ background:var(--accent); color:var(--accent-contrast); }
+  .em-btn-save:disabled{ opacity:.55; }
+
   /* Freshly-injected list content (clip rows, history rows, stat boxes)
      eases in instead of popping into place the instant innerHTML is set —
      this fires automatically on every new element, no JS hooks needed. */
@@ -809,6 +845,16 @@
     </div>
   </div>
 
+  <!-- OWNER-ONLY SCORECARD CORRECTIONS — hidden entirely unless the
+       signed-in user is chhayajeeth@gmail.com (server also independently
+       verifies this on every write, see requireOwner in server.js). -->
+  <div class="card" id="owner-edit-card" style="display:none;">
+    <div class="section-title"><span class="dash"></span>Edit Deliveries
+      <button class="owner-refresh-btn" id="owner-balls-refresh">Refresh</button>
+    </div>
+    <div id="owner-balls-list"><div class="owner-edit-empty">Loading deliveries…</div></div>
+  </div>
+
   <!-- COMPARISON CHARTS -->
   <div id="compare-grid">
     <div class="card">
@@ -945,6 +991,79 @@
   </div>
 </div>
 
+<!-- OWNER DELIVERY CORRECTION MODAL -->
+<div id="edit-modal-backdrop">
+  <div id="edit-modal">
+    <div id="edit-modal-head">
+      <span class="em-title" id="edit-modal-title">Edit Delivery</span>
+      <button id="edit-modal-close" aria-label="Close">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="edit-modal-body">
+      <div id="em-error"></div>
+      <div id="em-diff"></div>
+      <div class="em-two-col">
+        <div class="em-row">
+          <label>Striker</label>
+          <select id="em-striker"></select>
+        </div>
+        <div class="em-row">
+          <label>Non-striker</label>
+          <select id="em-nonstriker"></select>
+        </div>
+      </div>
+      <div class="em-row">
+        <label>Bowler</label>
+        <select id="em-bowler"></select>
+      </div>
+      <div class="em-two-col">
+        <div class="em-row">
+          <label>Runs off bat</label>
+          <input type="number" id="em-runsoffbat" min="0" max="6" value="0">
+        </div>
+        <div class="em-row">
+          <label>Extra type</label>
+          <select id="em-extratype">
+            <option value="none">None</option>
+            <option value="wide">Wide</option>
+            <option value="noball">No Ball</option>
+            <option value="bye">Bye</option>
+            <option value="legbye">Leg Bye</option>
+          </select>
+        </div>
+      </div>
+      <div class="em-row">
+        <label>Extra runs</label>
+        <input type="number" id="em-extraruns" min="0" max="6" value="0">
+      </div>
+      <div class="em-check-row">
+        <input type="checkbox" id="em-wicket">
+        <label for="em-wicket">This delivery is a wicket</label>
+      </div>
+      <div class="em-row" id="em-dismissal-wrap" style="display:none;">
+        <label>Dismissal type</label>
+        <select id="em-dismissaltype">
+          <option>Bowled</option>
+          <option>Caught</option>
+          <option>LBW</option>
+          <option>Run Out</option>
+          <option>Stumped</option>
+          <option>Hit Wicket</option>
+        </select>
+      </div>
+      <div class="em-row" id="em-fielder-wrap" style="display:none;">
+        <label>Fielder</label>
+        <select id="em-fielder"></select>
+      </div>
+    </div>
+    <div id="edit-modal-foot">
+      <button class="em-btn em-btn-cancel" id="em-cancel-btn">Cancel</button>
+      <button class="em-btn em-btn-save" id="em-save-btn">Save Changes</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ============================================================
    AUTH (for private-tournament API calls) — same Firebase project
@@ -968,7 +1087,21 @@ firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 let authReadyResolve;
 const authReady = new Promise(res => { authReadyResolve = res; });
-auth.onAuthStateChanged(() => { authReadyResolve(); });
+// Display/UX hint only — every actual correction is independently
+// re-verified server-side against the real signed-in email via
+// requireOwner in server.js (see /api/admin/cricket/ball/:id routes).
+// Hiding this UI from everyone else does not grant any access.
+const OWNER_EMAIL = 'chhayajeeth@gmail.com';
+auth.onAuthStateChanged((user) => {
+  authReadyResolve();
+  const isOwner = !!(user && user.email === OWNER_EMAIL);
+  const card = document.getElementById('owner-edit-card');
+  if(card) card.style.display = isOwner ? '' : 'none';
+  if(isOwner){
+    const mid = getMatchId();
+    if(mid) loadOwnerBalls(mid);
+  }
+});
 async function authHeaders(){
   await authReady;
   try{
@@ -2405,6 +2538,193 @@ function renderPoints(){
     </tr>`).join('');
   setText('pt-updated', latestPoints.updatedLine || '');
 }
+
+/* ============================================================
+   OWNER-ONLY SCORECARD CORRECTIONS
+   Talks to the correction engine already built in server.js
+   (adminRouter: GET .../balls, POST .../preview, PUT .../:ballId —
+   all behind requireOwner, which re-verifies chhayajeeth@gmail.com
+   server-side on every call regardless of what this page shows).
+   Ball-by-ball is the single source of truth: saving here rewrites
+   the one delivery, then the server recalculates every downstream
+   number (batting/bowling/innings/match/tournament) from the full
+   ball log and re-syncs the saved scorecard — this code just needs
+   to show the list, collect the correction, and refresh the page
+   after a successful save.
+   ============================================================ */
+let ownerRoster = [];
+let ownerCurrentBall = null; // the ball object currently open in the modal
+
+function ownerAdminUrl(path){ return `${clipApiBase()}/api/admin${path}`; }
+
+async function loadOwnerBalls(matchId){
+  const list = document.getElementById('owner-balls-list');
+  if(!list) return;
+  list.innerHTML = '<div class="owner-edit-empty">Loading deliveries…</div>';
+  try{
+    const res = await apiFetch(ownerAdminUrl(`/cricket/match/${encodeURIComponent(matchId)}/balls`));
+    const data = await res.json();
+    if(!res.ok || !data.success){
+      list.innerHTML = `<div class="owner-edit-empty">${escapeHtml(data.error || 'Could not load deliveries.')}</div>`;
+      return;
+    }
+    ownerRoster = data.roster || [];
+    renderOwnerBalls(data.balls || []);
+  }catch(err){
+    console.warn('[owner] balls fetch failed', err);
+    list.innerHTML = '<div class="owner-edit-empty">Could not load deliveries — check your connection.</div>';
+  }
+}
+
+function ownerBallLabel(b){
+  const parts = [];
+  if(b.kind === 'Wd') parts.push('Wide');
+  else if(b.kind === 'Nb') parts.push('No Ball');
+  else if(b.kind === 'B') parts.push('Bye');
+  else if(b.kind === 'LB') parts.push('Leg Bye');
+  else if(b.kind === 'W') parts.push('WICKET');
+  else parts.push(`${b.runs||0} run${b.runs === 1 ? '' : 's'}`);
+  return parts.join(' ');
+}
+
+function renderOwnerBalls(balls){
+  const list = document.getElementById('owner-balls-list');
+  if(!balls.length){ list.innerHTML = '<div class="owner-edit-empty">No deliveries recorded for this match yet.</div>'; return; }
+  // Most recent deliveries first, capped so the list stays scannable —
+  // a correction to an earlier over is still reachable via Refresh after
+  // scrolling isn't needed since every ball is included, just ordered.
+  const ordered = balls.slice().reverse();
+  list.innerHTML = ordered.map(b => `
+    <div class="owner-ball-row">
+      <span class="owner-ball-over">${b.over ?? '—'}.${b.ballInOver ?? ''}</span>
+      <span class="owner-ball-desc"><b>${escapeHtml(b.striker || '—')}</b> vs ${escapeHtml(b.bowler || '—')} — ${ownerBallLabel(b)}${b.dismissal ? ` (${escapeHtml(b.dismissal.type||'Out')})` : ''}</span>
+      <button class="owner-edit-link" data-ball-id="${b.ballId}">Edit</button>
+    </div>`).join('');
+  list.querySelectorAll('.owner-edit-link').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const ball = balls.find(b => b.ballId === btn.dataset.ballId);
+      if(ball) openEditModal(ball);
+    });
+  });
+}
+
+function ownerRosterOptions(selected){
+  const names = ownerRoster.length ? ownerRoster : [selected].filter(Boolean);
+  return names.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
+}
+
+function openEditModal(ball){
+  ownerCurrentBall = ball;
+  document.getElementById('edit-modal-title').textContent = `Edit Delivery ${ball.over ?? '—'}.${ball.ballInOver ?? ''}`;
+  document.getElementById('em-error').style.display = 'none';
+  document.getElementById('em-diff').style.display = 'none';
+
+  document.getElementById('em-striker').innerHTML = ownerRosterOptions(ball.striker);
+  document.getElementById('em-nonstriker').innerHTML = ownerRosterOptions(ball.nonStriker);
+  document.getElementById('em-bowler').innerHTML = ownerRosterOptions(ball.bowler);
+  document.getElementById('em-fielder').innerHTML = '<option value="">—</option>' + ownerRosterOptions(ball.dismissal && ball.dismissal.fielder);
+
+  const isWide = ball.kind === 'Wd', isNoBall = ball.kind === 'Nb', isBye = ball.kind === 'B', isLegBye = ball.kind === 'LB', isWicket = ball.kind === 'W';
+  document.getElementById('em-runsoffbat').value = isWide || isBye || isLegBye ? 0 : (isNoBall ? Math.max(0, (ball.runs||0) - 1) : (ball.runs||0));
+  document.getElementById('em-extratype').value = isWide ? 'wide' : isNoBall ? 'noball' : isBye ? 'bye' : isLegBye ? 'legbye' : 'none';
+  document.getElementById('em-extraruns').value = (isWide || isBye || isLegBye) ? (ball.runs||0) : 0;
+  document.getElementById('em-wicket').checked = isWicket;
+  document.getElementById('em-dismissal-wrap').style.display = isWicket ? '' : 'none';
+  document.getElementById('em-fielder-wrap').style.display = isWicket ? '' : 'none';
+  if(ball.dismissal && ball.dismissal.type) document.getElementById('em-dismissaltype').value = ball.dismissal.type;
+
+  document.getElementById('em-save-btn').disabled = false;
+  document.getElementById('em-save-btn').textContent = 'Save Changes';
+  document.getElementById('edit-modal-backdrop').classList.add('open');
+}
+
+function closeEditModal(){
+  document.getElementById('edit-modal-backdrop').classList.remove('open');
+  ownerCurrentBall = null;
+}
+document.getElementById('edit-modal-close').addEventListener('click', closeEditModal);
+document.getElementById('em-cancel-btn').addEventListener('click', closeEditModal);
+document.getElementById('edit-modal-backdrop').addEventListener('click', (e) => { if(e.target.id === 'edit-modal-backdrop') closeEditModal(); });
+document.getElementById('em-wicket').addEventListener('change', (e) => {
+  document.getElementById('em-dismissal-wrap').style.display = e.target.checked ? '' : 'none';
+  document.getElementById('em-fielder-wrap').style.display = e.target.checked ? '' : 'none';
+});
+
+function readEditForm(){
+  return {
+    striker: document.getElementById('em-striker').value,
+    nonStriker: document.getElementById('em-nonstriker').value,
+    bowler: document.getElementById('em-bowler').value,
+    runsOffBat: Number(document.getElementById('em-runsoffbat').value) || 0,
+    extraType: document.getElementById('em-extratype').value,
+    extras: Number(document.getElementById('em-extraruns').value) || 0,
+    wicket: document.getElementById('em-wicket').checked,
+    dismissalType: document.getElementById('em-dismissaltype').value,
+    fielder: document.getElementById('em-fielder').value || null
+  };
+}
+
+function diffLine(label, before, after){
+  return (before === after) ? '' : `<div>${label}: <b>${escapeHtml(String(before))}</b> → <b>${escapeHtml(String(after))}</b></div>`;
+}
+
+document.getElementById('em-save-btn').addEventListener('click', async () => {
+  if(!ownerCurrentBall) return;
+  const errBox = document.getElementById('em-error');
+  const diffBox = document.getElementById('em-diff');
+  errBox.style.display = 'none';
+  const input = readEditForm();
+  const saveBtn = document.getElementById('em-save-btn');
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Saving…';
+  try{
+    const res = await apiFetch(ownerAdminUrl(`/cricket/ball/${ownerCurrentBall.ballId}`), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input)
+    });
+    const data = await res.json();
+    if(!res.ok || !data.success){
+      errBox.textContent = data.error || 'Could not save this correction.';
+      errBox.style.display = '';
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save Changes';
+      return;
+    }
+    diffBox.innerHTML = [
+      diffLine('Score A', data.before.cards.scoreA.runs + '/' + data.before.cards.scoreA.wickets, data.after.cards.scoreA.runs + '/' + data.after.cards.scoreA.wickets),
+      diffLine('Score B', data.before.cards.scoreB.runs + '/' + data.before.cards.scoreB.wickets, data.after.cards.scoreB.runs + '/' + data.after.cards.scoreB.wickets)
+    ].join('') || 'Saved.';
+    diffBox.style.display = '';
+    if(data.resultMayNeedReview){
+      diffBox.innerHTML += '<div style="margin-top:6px; color:var(--wicket);">This changes a completed match\'s score — double check the final result is still correct.</div>';
+    }
+    saveBtn.textContent = 'Saved ✓';
+    // Refresh everything this correction could have touched: the
+    // deliveries list (in case runs/kind display changed), and the
+    // scorecard itself (batting/bowling/totals) via the same snapshot
+    // fetch the page already uses.
+    const matchId = getMatchId();
+    setTimeout(() => {
+      closeEditModal();
+      if(matchId){
+        loadOwnerBalls(matchId);
+        if(isHistoryMode()) loadMatchSnapshot(matchId);
+      }
+    }, 900);
+  }catch(err){
+    console.warn('[owner] save failed', err);
+    errBox.textContent = 'Network error — the correction was not saved.';
+    errBox.style.display = '';
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Save Changes';
+  }
+});
+
+document.getElementById('owner-balls-refresh').addEventListener('click', () => {
+  const mid = getMatchId();
+  if(mid) loadOwnerBalls(mid);
+});
 
 connect();
 </script>
