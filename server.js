@@ -1054,7 +1054,11 @@ async function verifiedRequesterEmail(req) {
 
 // Append-only trail of what the owner did, when, to what, and the
 // before/after value — shown in the Audit Logs tab.
-async function logAuditAction(ownerEmail, action, target, previousValue, newValue) {
+// `extra` (optional) merges additional indexed fields onto the log doc —
+// used by the ball-correction/undo flow below to stamp `matchId` + `ballId`
+// so the inline scorecard's "recent corrections" panel and "Undo last
+// change" button can query by match without scanning every audit entry.
+async function logAuditAction(ownerEmail, action, target, previousValue, newValue, extra) {
     if (!auditLogsCollection) return;
     try {
         await auditLogsCollection.insertOne({
@@ -1062,7 +1066,8 @@ async function logAuditAction(ownerEmail, action, target, previousValue, newValu
             previousValue: previousValue === undefined ? null : previousValue,
             newValue: newValue === undefined ? null : newValue,
             performedBy: ownerEmail,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            ...(extra || {})
         });
     } catch (err) {
         console.log('Audit log write error:', err);
@@ -3088,16 +3093,93 @@ adminRouter.put('/cricket/ball/:ballId', async (req, res) => {
         const result = await correctDelivery(req.params.ballId, req.ownerEmail, req.body || {}, false);
         if (!result.before) return res.status(400).json({ success: false, error: (result.errors && result.errors[0]) || 'Could not correct delivery' });
         if (result.errors && result.errors.length) return res.status(409).json({ success: false, error: result.errors[0] });
+        // Full before/after BALL DOCS (not just the trimmed kind/runs/striker/
+        // bowler summary) go into previousValue/newValue here — this is what
+        // lets "Undo last change" below restore the delivery exactly as it
+        // was, byte for byte, rather than only being able to show a summary
+        // of what changed. matchId/ballId are stamped as top-level fields
+        // (see logAuditAction's `extra` param) so the scorecard's inline
+        // change-history panel and undo button can query this match's
+        // corrections directly instead of scanning the whole audit log.
         await logAuditAction(
             req.ownerEmail, 'Owner delivery correction',
             `Match ${result.before.ball.matchId} — Innings ${result.before.ball.innings} Over ${result.before.ball.over}.${result.before.ball.ballInOver}`,
-            { kind: result.before.ball.kind, runs: result.before.ball.runs, striker: result.before.ball.striker, bowler: result.before.ball.bowler },
-            { kind: result.after.ball.kind, runs: result.after.ball.runs, striker: result.after.ball.striker, bowler: result.after.ball.bowler }
+            result.before.ball,
+            result.after.ball,
+            { matchId: result.before.ball.matchId, ballId: req.params.ballId }
         );
         res.json({ success: true, ...result });
     } catch (err) {
         console.log('Ball correction save error:', err);
         res.status(500).json({ success: false, error: 'Could not save correction' });
+    }
+});
+
+// Recent owner corrections for ONE match — powers the inline "Recent
+// corrections" panel on the public scorecard (owner view only; the route
+// itself is still gated by requireOwner via adminRouter.use above). Newest
+// first, capped at 30 — this is a lightweight recent-activity view, not a
+// full audit export (see GET /audit-logs for that).
+adminRouter.get('/cricket/match/:matchId/history', async (req, res) => {
+    if (!auditLogsCollection) return res.json({ success: true, entries: [] });
+    try {
+        const matchId = safeMatchId(req.params.matchId);
+        const entries = await auditLogsCollection
+            .find({ matchId, action: { $in: ['Owner delivery correction', 'Undo delivery correction'] } })
+            .sort({ timestamp: -1 }).limit(30).toArray();
+        res.json({
+            success: true,
+            entries: entries.map(e => ({
+                action: e.action,
+                performedBy: e.performedBy,
+                timestamp: e.timestamp,
+                ballId: e.ballId || null,
+                before: e.previousValue ? { kind: e.previousValue.kind, runs: e.previousValue.runs, striker: e.previousValue.striker, bowler: e.previousValue.bowler, dismissal: e.previousValue.dismissal, over: e.previousValue.over, ballInOver: e.previousValue.ballInOver, innings: e.previousValue.innings } : null,
+                after: e.newValue ? { kind: e.newValue.kind, runs: e.newValue.runs, striker: e.newValue.striker, bowler: e.newValue.bowler, dismissal: e.newValue.dismissal, over: e.newValue.over, ballInOver: e.newValue.ballInOver, innings: e.newValue.innings } : null
+            }))
+        });
+    } catch (err) {
+        console.log('Match correction history error:', err);
+        res.status(500).json({ success: false, error: 'Could not load correction history' });
+    }
+});
+
+// "Undo last change" (spec §12) — restores this match's most recently
+// corrected delivery to its exact pre-correction state (the full ball doc
+// snapshotted in that correction's audit log entry, see logAuditAction call
+// above), then re-runs the SAME recalculation pipeline a normal correction
+// uses (resync matchRecordsCollection from ballsCollection + resync the
+// clip attached to that exact delivery) — so undo never leaves the
+// scorecard, player stats or tournament leaderboard out of sync with the
+// restored delivery. Safe to click more than once: each call just restores
+// the same most-recent correction's "before" state again, it never chains
+// backwards through older corrections.
+adminRouter.post('/cricket/match/:matchId/undo-last', async (req, res) => {
+    if (!auditLogsCollection || !ballsCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const matchId = safeMatchId(req.params.matchId);
+        const lastEntry = await auditLogsCollection.find({ matchId, action: 'Owner delivery correction' }).sort({ timestamp: -1 }).limit(1).next();
+        if (!lastEntry || !lastEntry.previousValue) return res.status(404).json({ success: false, error: 'No correction found to undo for this match' });
+        const restoredBall = lastEntry.previousValue;
+        await ballsCollection.replaceOne({ _id: restoredBall._id }, restoredBall);
+        if (restoredBall.ownerUid) await syncMatchRecordFromBalls(restoredBall.ownerUid, matchId);
+        if (clipsCollection) {
+            clipsCollection.updateMany(
+                { matchId, innings: restoredBall.innings, over: restoredBall.over, ballInOver: restoredBall.ballInOver },
+                { $set: { strikerName: restoredBall.striker, strikerKey: restoredBall.strikerKey, bowlerName: restoredBall.bowler, bowlerKey: restoredBall.bowlerKey, runs: restoredBall.runs } }
+            ).catch(err => console.log('Clip resync after undo error:', err));
+        }
+        await logAuditAction(
+            req.ownerEmail, 'Undo delivery correction',
+            `Match ${matchId} — Innings ${restoredBall.innings} Over ${restoredBall.over}.${restoredBall.ballInOver}`,
+            lastEntry.newValue || null, restoredBall,
+            { matchId, ballId: String(restoredBall._id) }
+        );
+        const cards = await buildLiveCardsFromBalls(matchId);
+        res.json({ success: true, restored: { ...restoredBall, ballId: String(restoredBall._id), _id: undefined }, cards });
+    } catch (err) {
+        console.log('Undo last correction error:', err);
+        res.status(500).json({ success: false, error: 'Could not undo the last correction' });
     }
 });
 
