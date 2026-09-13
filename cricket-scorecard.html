@@ -40,27 +40,6 @@
 <link rel="stylesheet" href="/page-transitions.css">
 <link rel="stylesheet" href="/fluid-ui.css">
 <script src="/page-transitions.js" defer></script>
-<!-- ===== Adaptive performance: cheap, synchronous device-capability
-     check so weaker/budget Android phones get a "reduce-fx" class
-     before first paint. This only ever strips decorative cost
-     (backdrop-filter blur, heavy shadows) — the core FLIP morph
-     transitions (transform/opacity) are untouched, so the spatial
-     "card becomes panel" feel survives even in the reduced mode.
-     Feature-detected and best-effort: any missing API just means we
-     assume a capable device and keep full effects. ===== -->
-<script>
-(function () {
-  try {
-    var mem = navigator.deviceMemory; // GiB, undefined on many browsers
-    var cores = navigator.hardwareConcurrency;
-    var conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-    var weak = (typeof mem === 'number' && mem <= 4) ||
-      (typeof cores === 'number' && cores <= 4) ||
-      (conn && (conn.saveData || /(^2g|slow-2g)$/.test(conn.effectiveType || '')));
-    if (weak) document.documentElement.classList.add('reduce-fx');
-  } catch (e) { /* ignore — keep full effects */ }
-})();
-</script>
 <!-- ===== Content Protection (deterrent only, not foolproof) ===== -->
 <style>
   body {
@@ -202,8 +181,7 @@
   button, a, .icon-btn, .visit-btn, .clip-btn, .cd-tab, .twc-toggle button,
   #highlights-filter button, .clip-row .cr-actions a, .clip-row .cr-actions button,
   .clip-row, .hub-history-row, #clip-drawer-close, #video-modal-close,
-  #video-modal, .player-card, .clip-modal-row, .em-close, .em-btn, .em-edit-btn,
-  .clip-watch-btn, .clip-dl-btn, .clip-reassign-btn{
+  #video-modal, .player-card, .clip-modal-row{
     transition:background .15s ease, color .15s ease, border-color .15s ease,
       transform .16s cubic-bezier(.34,1.56,.64,1), box-shadow .15s ease, opacity .15s ease;
   }
@@ -211,36 +189,9 @@
   .twc-toggle button:active, #highlights-filter button:active,
   .clip-row .cr-actions a:active, .clip-row .cr-actions button:active,
   .clip-row:active, .hub-history-row:active, #clip-drawer-close:active, #video-modal-close:active,
-  .player-card:active, .clip-modal-row:active, .em-close:active, .em-btn:active, .em-edit-btn:active,
-  .clip-watch-btn:active, .clip-dl-btn:active, .clip-reassign-btn:active{
+  .player-card:active, .clip-modal-row:active{
     transform:scale(.94);
   }
-  /* Fluid Morph Engine (see JS): panels are morphed open/closed via a
-     FLIP transform applied as an inline style, then released into
-     whichever transition each panel already declares below. This just
-     makes sure that hand-off never fights a mid-flight transition. */
-  #clip-drawer, #video-modal, #edit-modal, #confirm-modal{ will-change:transform, opacity; }
-  @media (prefers-reduced-motion: reduce){
-    *, *::before, *::after{
-      animation-duration:.001ms !important;
-      animation-iteration-count:1 !important;
-      transition-duration:.001ms !important;
-      scroll-behavior:auto !important;
-    }
-  }
-  /* Weaker/budget devices (flagged by the head script above): keep every
-     transform/opacity transition — that's what makes the morph feel
-     alive — but drop the expensive parts (blur compositing, layered
-     shadows) that are most likely to cost frames on mid/low-end Android
-     GPUs. Backgrounds fall back to a plain near-opaque fill instead of
-     see-through blur, which reads almost the same but is far cheaper. */
-  html.reduce-fx #brandbar, html.reduce-fx #teams-row,
-  html.reduce-fx #clip-drawer-backdrop, html.reduce-fx #video-modal-backdrop{
-    backdrop-filter:none !important; -webkit-backdrop-filter:none !important;
-  }
-  html.reduce-fx #brandbar{ background:color-mix(in srgb, var(--panel) 97%, transparent); }
-  html.reduce-fx #teams-row{ background:color-mix(in srgb, var(--panel) 98%, transparent); box-shadow:0 4px 12px rgba(0,0,0,.08); }
-  html.reduce-fx .card:hover{ box-shadow:none; }
   /* Momentum/rubber-band scrolling everywhere content can overflow, and
      contained so a drawer/modal's own scroll never "leaks" into a
      rubber-band bounce on the page behind it — the iOS sheet feel. */
@@ -262,8 +213,7 @@
   #brandbar{
     position:sticky; top:0; z-index:40;
     display:flex; align-items:center; justify-content:space-between; gap:12px;
-    padding:10px 18px; padding-top:max(10px, env(safe-area-inset-top));
-    background:color-mix(in srgb, var(--panel) 88%, transparent);
+    padding:10px 18px; background:color-mix(in srgb, var(--panel) 88%, transparent);
     backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
     border-bottom:1px solid var(--border);
     /* Own compositor layer so the browser doesn't have to repaint this
@@ -359,32 +309,10 @@
   .team-name{ font-weight:700; font-size:14.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .team-short{ font-size:11px; color:var(--text-dim); font-weight:600; }
   #score-center{ text-align:center; }
-  #score-overs-row{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; }
-  /* The score is the visual hero of the page — biggest, boldest, most
-     confident element on screen. Everything else (RR, partnership,
-     ball-by-ball) is deliberately smaller and quieter so the eye lands
-     here first, every time, with zero competition. */
-  #main-score{
-    font-family:var(--font-display); font-weight:800; font-size:clamp(34px,7.4vw,52px);
-    line-height:1; letter-spacing:-.01em; text-shadow:0 0 36px var(--accent-soft);
-  }
-  #main-overs{ font-size:13px; color:var(--text-dim); font-weight:700; letter-spacing:.2px; }
-  #batting-tag{ font-size:10.5px; color:var(--accent); font-weight:700; letter-spacing:.4px; text-transform:uppercase; margin-top:5px; }
-  /* Sticky mini score bar — pins the teams/score row just under the
-     brand bar as the rest of the hero card (stats, target line) scrolls
-     past, so the live score is never more than a glance away. Uses the
-     same live-updating elements (#main-score etc.) rather than a
-     duplicate, so it's always in sync with zero extra wiring. */
-  #teams-row{
-    position:sticky; top:calc(54px + env(safe-area-inset-top)); z-index:30;
-    background:color-mix(in srgb, var(--panel) 90%, transparent);
-    backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
-    border-radius:var(--radius-md);
-    padding:8px 6px; margin:-8px -6px 0;
-    box-shadow:0 10px 26px rgba(0,0,0,.10);
-  }
-  :root[data-theme="dark"] #teams-row{ box-shadow:0 10px 26px rgba(0,0,0,.30); }
-  @media (max-width:640px){ #teams-row{ top:calc(47px + env(safe-area-inset-top)); } }
+  #score-overs-row{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; }
+  #main-score{ font-family:var(--font-display); font-weight:800; font-size:clamp(30px,6vw,44px); line-height:1; text-shadow:0 0 30px var(--accent-soft); }
+  #main-overs{ font-size:13px; color:var(--text-dim); font-weight:600; }
+  #batting-tag{ font-size:10.5px; color:var(--accent); font-weight:700; letter-spacing:.4px; text-transform:uppercase; margin-top:4px; }
 
   #target-wrap{ position:relative; margin-top:16px; }
   #target-label{ display:flex; justify-content:space-between; font-size:11.5px; color:var(--text-dim); font-weight:600; margin-bottom:6px; }
@@ -403,52 +331,29 @@
   .stat-box .v{ font-family:var(--font-display); font-size:19px; font-weight:700; margin-top:3px; }
 
   /* ---------- Players row ---------- */
-  #players-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; }
-  .player-card{
-    background:var(--panel-2); border:1px solid var(--border-soft); border-radius:var(--radius-md);
-    padding:16px 15px; transition:border-color .18s ease, transform .18s ease, box-shadow .18s ease;
-  }
-  .player-card .pc-label{ font-size:10px; text-transform:uppercase; letter-spacing:.5px; color:var(--text-faint); font-weight:800; margin-bottom:10px; }
-  .pc-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:4px 0; }
-  /* Player name stays legible/secondary; the figures (runs/overs) are
-     the number that matters here, so they get the heavier weight and
-     the display font — same hierarchy principle as the hero score,
-     scaled down one notch. */
-  .pc-name{ font-weight:600; font-size:13px; color:var(--text-dim); display:flex; align-items:center; gap:6px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .strike-dot{ width:6px; height:6px; border-radius:50%; background:var(--accent); flex:none; box-shadow:0 0 0 3px var(--accent-soft); }
-  .pc-figs{ font-family:var(--font-display); font-size:15px; font-weight:800; color:var(--text); flex:none; }
-  .pc-sub{ font-size:10.5px; color:var(--text-faint); margin-top:3px; font-weight:600; }
-  .pship-line{ display:flex; justify-content:space-between; font-size:12px; color:var(--text-dim); margin-top:10px; padding-top:10px; border-top:1px dashed var(--border); }
-  .pship-line b{ color:var(--text); font-family:var(--font-display); }
+  #players-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+  .player-card{ background:var(--panel-2); border:1px solid var(--border-soft); border-radius:var(--radius-md); padding:13px; }
+  .player-card .pc-label{ font-size:10px; text-transform:uppercase; letter-spacing:.4px; color:var(--text-dim); font-weight:700; margin-bottom:8px; }
+  .pc-row{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:5px 0; }
+  .pc-name{ font-weight:700; font-size:13px; display:flex; align-items:center; gap:6px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .strike-dot{ width:6px; height:6px; border-radius:50%; background:var(--accent); flex:none; }
+  .pc-figs{ font-size:12.5px; font-weight:700; color:var(--text-dim); flex:none; }
+  .pc-sub{ font-size:10.5px; color:var(--text-faint); margin-top:2px; }
+  .pship-line{ display:flex; justify-content:space-between; font-size:12px; color:var(--text-dim); margin-top:8px; padding-top:8px; border-top:1px dashed var(--border); }
+  .pship-line b{ color:var(--text); }
 
   /* ---------- Recent balls ---------- */
-  #balls-scroll{ display:flex; gap:8px; overflow-x:auto; padding:2px 2px 6px; scrollbar-width:thin; -webkit-overflow-scrolling:touch; scroll-snap-type:x proximity; }
+  #balls-scroll{ display:flex; gap:7px; overflow-x:auto; padding-bottom:4px; scrollbar-width:thin; -webkit-overflow-scrolling:touch; scroll-snap-type:x proximity; }
   #balls-scroll .ball-chip{ scroll-snap-align:start; }
   .ball-chip{
     flex:none; min-width:32px; height:32px; padding:0 6px; border-radius:9px; display:flex; align-items:center; justify-content:center;
     font-weight:800; font-size:12.5px; background:var(--panel-2); border:1px solid var(--border); color:var(--text-dim);
-    transition:transform .15s cubic-bezier(.34,1.56,.64,1);
   }
-  /* Dots and singles stay quiet and small; boundaries and wickets get a
-     size + weight bump so the outcome reads instantly while scanning —
-     no colour-only signalling, matching the "don't rely on colour
-     alone" spirit even though colour is still the fastest first cue. */
-  .ball-chip.dot{ color:var(--text-faint); background:transparent; border-style:dashed; }
-  .ball-chip.four, .ball-chip.six, .ball-chip.wicket{
-    min-width:36px; height:36px; font-size:14px; border-color:transparent;
-    box-shadow:0 3px 10px -2px rgba(0,0,0,.18);
-  }
-  .ball-chip.four{ background:var(--four-soft); color:var(--four); }
-  .ball-chip.six{ background:var(--six-soft); color:var(--six); }
-  .ball-chip.wicket{ background:var(--wicket-soft); color:var(--wicket); }
+  .ball-chip.four{ background:var(--four-soft); color:var(--four); border-color:transparent; }
+  .ball-chip.six{ background:var(--six-soft); color:var(--six); border-color:transparent; }
+  .ball-chip.wicket{ background:var(--wicket-soft); color:var(--wicket); border-color:transparent; }
   .ball-chip.extra{ background:var(--extra-soft); color:var(--extra); border-color:transparent; font-size:10.5px; }
-  @media (hover:hover) and (pointer:fine){ .ball-chip:hover{ transform:translateY(-2px); } }
-  /* The whole strip is re-rendered on every ball, so the newest delivery
-     is always the last chip in the DOM (see renderBalls()) — give just
-     that one a quick, elegant arrival instead of the whole row silently
-     reappearing. Short and understated, matching the "no fireworks" rule. */
-  #balls-scroll .ball-chip:last-child{ animation:ballArrive .32s cubic-bezier(.22,1,.36,1) both; }
-  @keyframes ballArrive{ from{ opacity:0; transform:scale(.5) translateY(4px); } to{ opacity:1; transform:scale(1) translateY(0); } }
+  .ball-chip.dot{ color:var(--text-faint); }
 
   /* ---------- Charts row (stacked — one below another) ---------- */
   #charts-grid{ display:grid; grid-template-columns:1fr; gap:14px; }
@@ -510,25 +415,7 @@
   #points-table th:first-child, #points-table td:first-child{ text-align:left; }
   .pt-updated{ font-size:11px; color:var(--text-faint); margin-top:8px; text-align:right; }
 
-  /* One generic state element covers loading / empty / error text across
-     the app (see JS) — dress it up so all three read as an intentional,
-     designed moment instead of a blank gap, without needing to tell them
-     apart structurally. A soft pulsing dot reads naturally as "working
-     on it" for loading text and as a calm marker for empty/error text. */
-  .empty-state{
-    display:flex; flex-direction:column; align-items:center; gap:10px;
-    text-align:center; color:var(--text-faint); padding:30px 16px; font-size:13px;
-    font-weight:600; line-height:1.5; animation:rowIn .3s cubic-bezier(.22,1,.36,1) both;
-  }
-  .empty-state::before{
-    content:''; width:8px; height:8px; border-radius:50%;
-    background:var(--text-faint); opacity:.5;
-    animation:emptyPulse 1.8s ease-in-out infinite;
-  }
-  @keyframes emptyPulse{
-    0%, 100%{ transform:scale(1); opacity:.35; }
-    50%{ transform:scale(1.35); opacity:.75; }
-  }
+  .empty-state{ text-align:center; color:var(--text-faint); padding:24px 0; font-size:13px; }
 
   footer{ text-align:center; padding:22px 10px 4px; color:var(--text-faint); font-size:11.5px; }
   footer a{ color:var(--accent); font-weight:700; }
@@ -601,16 +488,6 @@
     .visit-btn{ display:none; }
   }
 
-  /* Touch targets should be comfortably thumb-sized on phones — desktop
-     keeps the tighter sizing since a mouse pointer doesn't need this. */
-  @media (max-width:640px){
-    .icon-btn{ width:40px; height:40px; }
-    .clip-btn{ width:32px; height:32px; }
-    .edit-pencil{ width:26px; height:26px; }
-    #video-modal-close, #clip-drawer-close{ width:36px; height:36px; }
-    .cd-tab{ padding:10px 6px; }
-  }
-
   ::-webkit-scrollbar{ height:6px; width:6px; }
   ::-webkit-scrollbar-thumb{ background:var(--border); border-radius:99px; }
 
@@ -621,14 +498,6 @@
     :root[data-theme="light"] .card:hover{ box-shadow:0 10px 28px rgba(20,25,40,.10); }
     .player-card{ transition:border-color .15s ease, transform .15s ease; }
     .player-card:hover{ border-color:var(--accent); transform:translateY(-1px); }
-  }
-  /* The "At the Crease" cards are tappable — reuses the existing clip/
-     stats drawer + FLIP morph engine, so tapping the striker/bowler
-     genuinely feels like that card opening into their detail panel.
-     cursor + focus ring make the affordance clear on both input types. */
-  #pc-striker, #pc-nonstriker, #pc-bowler{ cursor:pointer; }
-  #pc-striker:focus-visible, #pc-nonstriker:focus-visible, #pc-bowler:focus-visible{
-    outline:2px solid var(--accent); outline-offset:2px;
   }
 
   /* ============================================================
@@ -704,14 +573,14 @@
   /* ---------- Drawer (bottom sheet on mobile, side sheet on desktop) ---------- */
   #clip-drawer-backdrop{
     position:fixed; inset:0; background:rgba(0,0,0,.5); backdrop-filter:blur(6px); z-index:80;
-    opacity:0; pointer-events:none; transition:opacity .28s ease;
+    opacity:0; pointer-events:none; transition:opacity .2s ease;
   }
   #clip-drawer-backdrop.open{ opacity:1; pointer-events:auto; }
   #clip-drawer{
     position:fixed; z-index:81; border-left:1px solid var(--glass-border, var(--border));
     box-shadow:var(--shadow); display:flex; flex-direction:column;
     right:0; top:0; bottom:0; width:min(400px, 100vw); transform:translateX(100%);
-    transition:transform .34s cubic-bezier(.32,.72,0,1);
+    transition:transform .25s cubic-bezier(.32,.72,0,1);
   }
   #clip-drawer.open{ transform:translateX(0); }
   #clip-drawer-head{ display:flex; align-items:center; justify-content:space-between; padding:16px 18px; border-bottom:1px solid var(--border); flex:none; }
@@ -754,14 +623,14 @@
   #video-modal-backdrop{
     position:fixed; inset:0; background:rgba(0,0,0,.78); z-index:90; display:flex;
     align-items:center; justify-content:center; padding:16px;
-    opacity:0; pointer-events:none; transition:opacity .3s ease;
+    opacity:0; pointer-events:none; transition:opacity .22s ease;
   }
   #video-modal-backdrop.open{ opacity:1; pointer-events:auto; }
   #video-modal{
     width:min(720px, 100%); background:#000; border-radius:var(--radius-lg); overflow:hidden;
     box-shadow:0 20px 60px rgba(0,0,0,.6);
     transform:scale(.92) translateY(8px);
-    transition:transform .4s cubic-bezier(.34,1.4,.64,1);
+    transition:transform .28s cubic-bezier(.34,1.56,.64,1);
   }
   #video-modal-backdrop.open #video-modal{ transform:scale(1) translateY(0); }
   #video-modal-head{ display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:#0b0e14; }
@@ -769,25 +638,6 @@
   #video-modal-close{ width:28px; height:28px; border-radius:99px; background:rgba(255,255,255,.1); color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; border:none; }
   #video-modal video{ width:100%; display:block; max-height:70vh; background:#000; }
   #video-modal-loading{ color:#fff; text-align:center; padding:60px 0; font-size:12.5px; }
-  /* On phones the clip viewer goes edge-to-edge instead of floating as a
-     small card — feels like the tapped clip genuinely expanded to fill
-     the screen (the FLIP morph in JS already animates from the clip's
-     exact position/size; this just changes what it grows *into*). Safe
-     areas keep the close button clear of notches/Dynamic Island and the
-     video controls clear of the home indicator. */
-  @media (max-width:640px){
-    #video-modal-backdrop{ padding:0; }
-    #video-modal{
-      width:100vw; height:100vh; height:100dvh; max-width:none; border-radius:0;
-      display:flex; flex-direction:column;
-    }
-    #video-modal-head{ padding-top:max(10px, env(safe-area-inset-top)); flex:none; }
-    #video-modal-body{ flex:1; display:flex; flex-direction:column; justify-content:center; min-height:0; }
-    #video-modal video{ max-height:none; flex:1; min-height:0; object-fit:contain; }
-    #video-modal-close{ width:36px; height:36px; }
-    #video-modal-head .vm-title{ font-size:13.5px; }
-    #video-modal{ padding-bottom:env(safe-area-inset-bottom); }
-  }
 
   /* ---------- Owner correction system (chhayajeeth@gmail.com only) ----------
      Same visual language as the video modal above (centered card, scale-in),
@@ -818,14 +668,14 @@
   #edit-modal-backdrop, #confirm-modal-backdrop{
     position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:120; display:flex;
     align-items:center; justify-content:center; padding:16px;
-    opacity:0; pointer-events:none; transition:opacity .3s ease;
+    opacity:0; pointer-events:none; transition:opacity .22s ease;
   }
   #edit-modal-backdrop.open, #confirm-modal-backdrop.open{ opacity:1; pointer-events:auto; }
   #edit-modal, #confirm-modal{
     width:min(480px, 100%); max-height:86vh; overflow-y:auto; -webkit-overflow-scrolling:touch;
     background:var(--panel); border:1px solid var(--border); border-radius:var(--radius-lg);
     box-shadow:0 24px 70px rgba(0,0,0,.5); padding:20px 20px 16px;
-    transform:scale(.92) translateY(10px); transition:transform .4s cubic-bezier(.34,1.4,.64,1);
+    transform:scale(.92) translateY(10px); transition:transform .3s cubic-bezier(.34,1.56,.64,1);
   }
   #edit-modal-backdrop.open #edit-modal, #confirm-modal-backdrop.open #confirm-modal{ transform:scale(1) translateY(0); }
   .em-title{ font-family:var(--font-display); font-size:15.5px; font-weight:700; margin:0 0 4px; }
@@ -899,20 +749,11 @@
      setText()) — a gentle scale+color pulse, not a flash, so the score
      reads as continuously alive without ever looking glitchy. */
   @keyframes valPop{
-    0%{ transform:scale(1) translateY(0); color:inherit; text-shadow:none; }
-    30%{ transform:scale(1.09) translateY(-1px); color:var(--accent); text-shadow:0 0 14px var(--accent-soft); }
-    100%{ transform:scale(1) translateY(0); color:inherit; text-shadow:none; }
+    0%{ transform:scale(1); color:inherit; }
+    35%{ transform:scale(1.06); color:var(--accent); }
+    100%{ transform:scale(1); color:inherit; }
   }
-  .val-pop{ display:inline-block; animation:valPop .42s cubic-bezier(.22,1,.36,1); }
-  /* The hero score itself gets an extra touch of weight on the pop —
-     still restrained (one gentle beat, no bounce/rubber-banding) so it
-     reads as "alive" without turning into a slot-machine. */
-  #main-score.val-pop{ animation-name:valPopHero; }
-  @keyframes valPopHero{
-    0%{ transform:scale(1); text-shadow:0 0 30px var(--accent-soft); }
-    30%{ transform:scale(1.07); text-shadow:0 0 44px var(--accent); }
-    100%{ transform:scale(1); text-shadow:0 0 30px var(--accent-soft); }
-  }
+  .val-pop{ display:inline-block; animation:valPop .38s cubic-bezier(.22,1,.36,1); }
 </style>
 </head>
 <body>
@@ -1010,18 +851,18 @@
   <div class="card">
     <div class="section-title"><span class="dash"></span>At the Crease</div>
     <div id="players-grid">
-      <div class="player-card" id="pc-striker" role="button" tabindex="0" aria-label="View striker's stats and clips">
+      <div class="player-card">
         <div class="pc-label">Striker</div>
         <div class="pc-row"><span class="pc-name"><span class="strike-dot"></span><span id="striker-name">—</span></span><span class="pc-figs tabnum" id="striker-figs">0 (0)</span></div>
         <div class="pc-sub" id="striker-sr">SR —</div>
       </div>
-      <div class="player-card" id="pc-nonstriker" role="button" tabindex="0" aria-label="View non-striker's stats and clips">
+      <div class="player-card">
         <div class="pc-label">Non-Striker</div>
         <div class="pc-row"><span class="pc-name"><span id="nonstriker-name">—</span></span><span class="pc-figs tabnum" id="nonstriker-figs">0 (0)</span></div>
         <div class="pc-sub" id="nonstriker-sr">SR —</div>
         <div class="pship-line"><span>Partnership</span><b id="pship-inline">0 (0)</b></div>
       </div>
-      <div class="player-card" id="pc-bowler" role="button" tabindex="0" aria-label="View bowler's stats and clips">
+      <div class="player-card">
         <div class="pc-label">Bowler</div>
         <div class="pc-row"><span class="pc-name"><span id="bowler-name">—</span></span><span class="pc-figs tabnum" id="bowler-figs">0-0-0</span></div>
         <div class="pc-sub" id="bowler-econ">Econ —</div>
@@ -1224,118 +1065,6 @@
 
 <div id="em-toast"></div>
 
-<script>
-/* ============================================================
-   FLUID MORPH ENGINE
-   Genuinely morphs a panel/modal out of the geometry of whatever
-   control opened it (a real FLIP transform — First/Last/Invert/
-   Play), and morphs it back into that same control on close,
-   instead of a generic fade/scale-from-center. It hands off into
-   whichever transition/easing each panel already declares in CSS,
-   so the existing spring/ease curves per panel are untouched —
-   this only changes the *starting point* of the animation.
-
-   Only transform + opacity are ever touched here (GPU-friendly,
-   no layout thrash), and it no-ops into the previous plain
-   scale-in/out behavior whenever there's no known trigger element
-   or the user has prefers-reduced-motion on.
-   ============================================================ */
-const REDUCE_MOTION = matchMedia('(prefers-reduced-motion: reduce)');
-
-// Tracks whatever button/row/card the user last pressed, so that when a
-// panel opens moments later (after its data has loaded) we still know
-// where — visually — it should morph from, without threading a "trigger"
-// parameter through every open*() call site.
-let lastInteractionEl = null;
-document.addEventListener('pointerdown', (e) => {
-  const el = e.target.closest('button, a, [role="button"], .clip-row, .player-card, .clip-modal-row');
-  if (el) lastInteractionEl = el;
-}, true);
-
-const morphTriggers = new WeakMap(); // panel element -> trigger element it opened from
-
-function flipRect(el){
-  const r = el.getBoundingClientRect();
-  return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
-}
-
-// Call right before you'd normally add the 'open' class(es). `openNow`
-// performs the actual class toggles — kept as a callback so this engine
-// never has to know which element(s) a given panel toggles 'open' on.
-function morphOpen(panel, openNow){
-  const trigger = lastInteractionEl;
-  const canFlip = !REDUCE_MOTION.matches && trigger && trigger.isConnected && panel.isConnected;
-  if(!canFlip){
-    morphTriggers.set(panel, null);
-    openNow();
-    return;
-  }
-  morphTriggers.set(panel, trigger);
-  // Every panel's resting/open state is transform:none (identity) — see
-  // each panel's own CSS below — so briefly forcing identity gives us
-  // its true resting rect regardless of current (closed) transform.
-  panel.style.transition = 'none';
-  panel.style.transform = 'none';
-  const to = flipRect(panel);
-  if(!to.w || !to.h){ panel.style.transition = ''; panel.style.transform = ''; openNow(); return; }
-  const from = flipRect(trigger);
-  const dx = from.x - to.x, dy = from.y - to.y;
-  const s = Math.min(1, Math.max(.05, Math.min(from.w / to.w, from.h / to.h)));
-  panel.style.opacity = '.4';
-  panel.style.transform = `translate(${dx}px, ${dy}px) scale(${s})`;
-  panel.getBoundingClientRect(); // force reflow so the above paints before we release it
-  openNow();
-  requestAnimationFrame(() => {
-    panel.style.transition = '';
-    panel.style.transform = '';
-    panel.style.opacity = '';
-  });
-}
-
-// Call instead of removing the 'open' class(es) directly. `closeNow` does
-// the actual class toggles — called right away (in step with the panel's
-// own shrink-back) so the backdrop fades out *together with* the panel
-// morphing into the trigger, instead of only after it, which used to read
-// as the modal "hanging" fully-dark for the whole morph before finally
-// disappearing.
-function morphClose(panel, closeNow, onSettled){
-  const trigger = morphTriggers.get(panel);
-  if(REDUCE_MOTION.matches || !trigger || !trigger.isConnected || !panel.isConnected){
-    closeNow();
-    onSettled && onSettled();
-    return;
-  }
-  const from = flipRect(panel);
-  const to = flipRect(trigger);
-  if(!from.w || !from.h){ closeNow(); onSettled && onSettled(); return; }
-  const dx = to.x - from.x, dy = to.y - from.y;
-  const s = Math.max(.05, Math.min(to.w / from.w, to.h / from.h));
-  const DUR = .42;
-  panel.style.transition = `transform ${DUR}s cubic-bezier(.32,.72,0,1), opacity ${DUR * 0.75}s ease`;
-  panel.style.transform = `translate(${dx}px, ${dy}px) scale(${s})`;
-  panel.style.opacity = '0';
-  closeNow();
-  let done = false;
-  const finish = () => {
-    if(done) return;
-    done = true;
-    panel.removeEventListener('transitionend', finish);
-    // Snap the inline overrides back off with transitions disabled first —
-    // clearing them straight into the (now-hidden) CSS resting state
-    // instantly avoids a visible "pop back to full size/opacity" flash
-    // right as the backdrop finishes fading, which is what made this look
-    // like it hadn't actually closed.
-    panel.style.transition = 'none';
-    panel.style.transform = '';
-    panel.style.opacity = '';
-    panel.getBoundingClientRect(); // force the instant, transition-less reset to apply
-    requestAnimationFrame(() => { panel.style.transition = ''; });
-    onSettled && onSettled();
-  };
-  panel.addEventListener('transitionend', finish);
-  setTimeout(finish, DUR * 1000 + 150); // safety net if transitionend never fires
-}
-</script>
 <script>
 /* ============================================================
    AUTH (for private-tournament API calls) — same Firebase project
@@ -2505,18 +2234,14 @@ function openClipDrawer(title, sub, bodyHtml){
   document.getElementById('clip-drawer-title').textContent = title;
   document.getElementById('clip-drawer-sub').textContent = sub || '';
   document.getElementById('clip-drawer-body').innerHTML = bodyHtml;
-  morphOpen(document.getElementById('clip-drawer'), () => {
-    document.getElementById('clip-drawer').classList.add('open');
-    document.getElementById('clip-drawer-backdrop').classList.add('open');
-  });
+  document.getElementById('clip-drawer').classList.add('open');
+  document.getElementById('clip-drawer-backdrop').classList.add('open');
 }
 function closeClipDrawer(){
-  morphClose(document.getElementById('clip-drawer'), () => {
-    document.getElementById('clip-drawer').classList.remove('open');
-    document.getElementById('clip-drawer-backdrop').classList.remove('open');
-    document.getElementById('clip-drawer-tabs').classList.remove('show');
-    document.getElementById('clip-drawer-statline').innerHTML = '';
-  });
+  document.getElementById('clip-drawer').classList.remove('open');
+  document.getElementById('clip-drawer-backdrop').classList.remove('open');
+  document.getElementById('clip-drawer-tabs').classList.remove('show');
+  document.getElementById('clip-drawer-statline').innerHTML = '';
 }
 document.getElementById('clip-drawer-close').addEventListener('click', closeClipDrawer);
 document.getElementById('clip-drawer-backdrop').addEventListener('click', closeClipDrawer);
@@ -2674,9 +2399,7 @@ async function openTeamClipDrawer(teamKey, teamLabel){
 async function openVideoModal(clipId, title){
   document.getElementById('video-modal-title').textContent = title || 'Clip';
   document.getElementById('video-modal-body').innerHTML = '<div id="video-modal-loading">Loading clip…</div>';
-  morphOpen(document.getElementById('video-modal'), () => {
-    document.getElementById('video-modal-backdrop').classList.add('open');
-  });
+  document.getElementById('video-modal-backdrop').classList.add('open');
   // Lazy: the <video> element (and therefore the byte stream behind
   // /api/clips/:id/watch) is only created now, on tap — never eagerly.
   const src = `${clipApiBase()}/api/clips/${encodeURIComponent(clipId)}/watch`;
@@ -2690,16 +2413,9 @@ async function openVideoModal(clipId, title){
   });
 }
 function closeVideoModal(){
-  morphClose(
-    document.getElementById('video-modal'),
-    () => { document.getElementById('video-modal-backdrop').classList.remove('open'); },
-    () => {
-      // Stop playback/free the stream only once the panel has actually
-      // finished morphing away — swapping this in mid-shrink used to look
-      // like the clip vanished before the modal itself had closed.
-      document.getElementById('video-modal-body').innerHTML = '<div id="video-modal-loading">Loading clip…</div>';
-    }
-  );
+  document.getElementById('video-modal-backdrop').classList.remove('open');
+  // Stop playback/free the stream the moment it's closed.
+  document.getElementById('video-modal-body').innerHTML = '<div id="video-modal-loading">Loading clip…</div>';
 }
 document.getElementById('video-modal-close').addEventListener('click', closeVideoModal);
 document.getElementById('video-modal-backdrop').addEventListener('click', (e) => { if(e.target.id === 'video-modal-backdrop') closeVideoModal(); });
@@ -2878,14 +2594,10 @@ function ballLabel(b){
 }
 
 function openEditModal(){
-  morphOpen(document.getElementById('edit-modal'), () => {
-    document.getElementById('edit-modal-backdrop').classList.add('open');
-  });
+  document.getElementById('edit-modal-backdrop').classList.add('open');
 }
 function closeEditModal(){
-  morphClose(document.getElementById('edit-modal'), () => {
-    document.getElementById('edit-modal-backdrop').classList.remove('open');
-  });
+  document.getElementById('edit-modal-backdrop').classList.remove('open');
 }
 document.getElementById('edit-modal-close').addEventListener('click', closeEditModal);
 document.getElementById('edit-modal-backdrop').addEventListener('click', (e) => {
@@ -2899,12 +2611,8 @@ function openConfirmModal(html, onConfirm){
       <button class="em-btn cancel" id="confirm-cancel-btn">Cancel</button>
       <button class="em-btn save" id="confirm-save-btn">Save Changes</button>
     </div>`;
-  morphOpen(document.getElementById('confirm-modal'), () => {
-    document.getElementById('confirm-modal-backdrop').classList.add('open');
-  });
-  const close = () => morphClose(document.getElementById('confirm-modal'), () => {
-    document.getElementById('confirm-modal-backdrop').classList.remove('open');
-  });
+  document.getElementById('confirm-modal-backdrop').classList.add('open');
+  const close = () => document.getElementById('confirm-modal-backdrop').classList.remove('open');
   document.getElementById('confirm-cancel-btn').onclick = close;
   document.getElementById('confirm-save-btn').onclick = async () => {
     const btn = document.getElementById('confirm-save-btn');
@@ -3110,33 +2818,7 @@ function openClipReassignForm(clipId, currentName, role){
 }
 
 connect();
-
-/* ---------- "At the Crease" player cards → player detail drawer ----------
-   New wiring only — reuses openPlayerClipDrawer() and the existing FLIP
-   morph engine untouched, so this is purely additive: tapping a card
-   opens the same drawer the batting/bowling table's clip icon already
-   opens, morphing out of that exact card's position. Guards against the
-   placeholder "—" (no batter/bowler assigned yet) so an empty tap does
-   nothing instead of opening a drawer with no player. */
-(function wireAtCreaseCards(){
-  const cards = [
-    { el: document.getElementById('pc-striker'), nameId: 'striker-name', role: 'batter' },
-    { el: document.getElementById('pc-nonstriker'), nameId: 'nonstriker-name', role: 'batter' },
-    { el: document.getElementById('pc-bowler'), nameId: 'bowler-name', role: 'bowler' }
-  ];
-  cards.forEach(({ el, nameId, role }) => {
-    if(!el) return;
-    const open = () => {
-      const name = (document.getElementById(nameId).textContent || '').trim();
-      if(!name || name === '—') return;
-      openPlayerClipDrawer(name, role);
-    };
-    el.addEventListener('click', open);
-    el.addEventListener('keydown', (e) => {
-      if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); open(); }
-    });
-  });
-})();
 </script>
 </body>
 </html>
+
