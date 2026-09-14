@@ -812,6 +812,7 @@ async function finalizeClip({ matchId, eventType, eventTimestamp, ballMeta, uid,
             fielderName: personName(dismissal && dismissal.fielder),
             fielderKey: playerKey(dismissal && dismissal.fielder), fielderPlayerId
         });
+        invalidateClipsCache(matchId);
     }
     console.log(`🎬 Clip ready: ${outFile}`);
     // Upload to R2 + Drive in parallel, THEN delete the local Render-disk
@@ -2056,6 +2057,27 @@ function serializeClip(c) {
 }
 
 // GET /api/clips/match/:matchId?type=FOUR|SIX|WICKET&playerKey=...&team=A|B&limit=&skip=
+// 🚀 Tiny in-memory TTL cache for match/team clip listings — the scorecard's
+// Highlights panel polls these two routes every 20s, PER VIEWER, with no
+// caching before this. At a few thousand concurrent viewers on one match
+// that was hundreds of uncached MongoDB queries per second for a list that
+// almost never changes second-to-second (a new clip only ever appears after
+// its ~10s+ post-event recording/processing window anyway, so an 8s cache
+// adds no perceptible delay). Keyed per-matchId (not a single global key)
+// so a correction/new clip on one match can be invalidated instantly
+// without touching any other match's cached list — same TTL-cache shape as
+// publicTournamentCache above, just bucketed by matchId for cheap targeted
+// invalidation instead of one key per token.
+const CLIPS_CACHE_TTL_MS = 8000;
+const clipsListCache = new Map(); // `${matchId}::${variant}` -> { expiresAt, payload }
+function invalidateClipsCache(matchId) {
+    if (!matchId) return;
+    const prefix = `${matchId}::`;
+    for (const key of clipsListCache.keys()) {
+        if (key.startsWith(prefix)) clipsListCache.delete(key);
+    }
+}
+
 app.get('/api/clips/match/:matchId', async (req, res) => {
     if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     const matchId = safeMatchId(req.params.matchId);
@@ -2068,9 +2090,14 @@ app.get('/api/clips/match/:matchId', async (req, res) => {
     }
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
     const skip = Math.max(parseInt(req.query.skip, 10) || 0, 0);
+    const cacheKey = `${matchId}::match::${req.query.type || ''}::${req.query.team || ''}::${req.query.playerKey || ''}::${limit}::${skip}`;
+    const cached = getCached(clipsListCache, cacheKey);
+    if (cached) return res.json(cached);
     try {
         const clips = await clipsCollection.find(query).sort({ over: 1, ballInOver: 1 }).skip(skip).limit(limit).toArray();
-        res.json({ success: true, clips: clips.map(serializeClip) });
+        const payload = { success: true, clips: clips.map(serializeClip) };
+        setCached(clipsListCache, cacheKey, payload, CLIPS_CACHE_TTL_MS);
+        res.json(payload);
     } catch (err) {
         console.log('Clips-by-match fetch error:', err);
         res.status(500).json({ success: false, error: 'Could not load clips' });
@@ -2083,10 +2110,15 @@ app.get('/api/clips/team/:matchId/:teamKey', async (req, res) => {
     if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     const matchId = safeMatchId(req.params.matchId);
     const teamKey = String(req.params.teamKey || '').toUpperCase();
+    const cacheKey = `${matchId}::team::${teamKey}`;
+    const cached = getCached(clipsListCache, cacheKey);
+    if (cached) return res.json(cached);
     try {
         const clips = await clipsCollection.find({ matchId, battingTeam: teamKey, eventType: 'WICKET' })
             .sort({ over: 1, ballInOver: 1 }).toArray();
-        res.json({ success: true, clips: clips.map(serializeClip) });
+        const payload = { success: true, clips: clips.map(serializeClip) };
+        setCached(clipsListCache, cacheKey, payload, CLIPS_CACHE_TTL_MS);
+        res.json(payload);
     } catch (err) {
         console.log('Team-clips fetch error:', err);
         res.status(500).json({ success: false, error: 'Could not load team clips' });
@@ -2910,6 +2942,7 @@ adminRouter.put('/clips/:clipId', async (req, res) => {
     try {
         const result = await clipsCollection.findOneAndUpdate({ _id }, { $set: set }, { returnDocument: 'after' });
         if (!result || !result.value) return res.status(404).json({ success: false, error: 'Clip not found' });
+        invalidateClipsCache(result.value.matchId);
         await logAuditAction(req.ownerEmail, 'Owner clip correction', req.params.clipId, null, set);
         res.json({ success: true, clip: serializeClip(result.value) });
     } catch (err) {
@@ -2926,8 +2959,9 @@ adminRouter.delete('/clips/:clipId', async (req, res) => {
     let _id;
     try { _id = new ObjectId(req.params.clipId); } catch { return res.status(400).json({ success: false, error: 'Invalid clip id' }); }
     try {
-        const result = await clipsCollection.deleteOne({ _id });
-        if (!result.deletedCount) return res.status(404).json({ success: false, error: 'Clip not found' });
+        const result = await clipsCollection.findOneAndDelete({ _id });
+        if (!result || !result.value) return res.status(404).json({ success: false, error: 'Clip not found' });
+        invalidateClipsCache(result.value.matchId);
         await logAuditAction(req.ownerEmail, 'Delete clip', req.params.clipId, null, null);
         res.json({ success: true });
     } catch (err) {
