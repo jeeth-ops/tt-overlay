@@ -1787,52 +1787,97 @@
         .du-video-wrap video { width: 100%; height: 100%; object-fit: cover; display: block; background: #000; transform: translateZ(0); }
 
         /* -- Scorebug overlay, shared markup, live-composited on the video.
-           Design/colors/layout are unchanged from before — grid, gradient,
-           border-radius, shadow are identical. Only the SIZE now comes
-           from container-query units (cqh/cqw), clamped between a legible
-           floor and the original size as a ceiling, so it renders as a
-           thin broadcast lower-third — a small band pinned to the bottom
-           of the video, not a large centered card — and does so correctly
-           on laptop, tablet and mobile from these same rules, with no more
-           per-device overrides needed. -- */
+           Broadcast-style scorebug: diagonal-cut team blocks (blue/green),
+           a navy score chip, an orange overs chip and a white stats strip
+           (batters + CRR + bowler), matching the reference broadcast
+           graphic exactly in color and layout. SIZE still comes entirely
+           from container-query units (cqh/cqw) against each device's own
+           screen box, clamped between a legible floor and a ceiling, so
+           one set of rules renders correctly as a thin lower-third on
+           laptop, tablet and mobile alike — no per-device overrides. -- */
         .du-overlay {
-            position: absolute; left: 6%; right: 6%; bottom: 5%;
-            height: clamp(26px, 15cqh, 74px);
-            display: grid; grid-template-columns: 1fr auto 1fr; align-items: stretch;
-            border-radius: 8px; overflow: hidden;
+            position: absolute; left: 4%; right: 4%; bottom: 4%;
+            height: clamp(30px, 17cqh, 84px);
+            display: flex; align-items: stretch;
+            border-radius: 6px; overflow: hidden;
             box-shadow: 0 8px 24px rgba(0,0,0,.5);
             font-family: inherit;
         }
-        .du-side {
-            background: rgba(6, 10, 20, 0.82);
-            display: flex; flex-direction: column; justify-content: center; gap: 1px;
-            padding: clamp(2px, 1.2cqh, 7px) clamp(6px, 2.4cqw, 10px);
-            min-width: 0;
+        .du-ov-team {
+            position: relative; flex: 0 0 clamp(58px, 22cqw, 190px);
+            display: flex; flex-direction: column; justify-content: center;
+            padding: 0 clamp(6px, 2.6cqw, 22px);
+            color: #fff; overflow: hidden; min-width: 0;
         }
-        .du-side.left { align-items: flex-start; text-align: left; }
-        .du-side.right { align-items: flex-end; text-align: right; }
-        .du-role { font-size: clamp(6px, 1.6cqh, 10px); font-weight: 700; letter-spacing: 1px; color: var(--accent); text-transform: uppercase; }
-        .du-name { font-size: clamp(8px, 2.3cqh, 13.6px); font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-        .du-sub { font-size: clamp(7px, 1.7cqh, 10.4px); font-weight: 600; color: rgba(255,255,255,.65); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-
-        /* Center score chip — same brand-gradient anchor as before, just
-           scaled by the container instead of fixed rem sizes. */
-        .du-center {
-            background: linear-gradient(135deg, var(--accent), var(--brand-teal, #3fd6ea));
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            gap: 1px; padding: clamp(2px, 1cqh, 6px) clamp(10px, 3.4cqw, 22px);
-            position: relative; min-width: 0;
+        .du-ov-team.a {
+            background: linear-gradient(120deg, #5c7ebd 0%, #2c4272 65%, #1a2a52 100%);
+            clip-path: polygon(0 0, 100% 0, 82% 100%, 0 100%);
         }
-        .du-center-teams { font-size: clamp(6px, 1.4cqh, 9.6px); font-weight: 800; letter-spacing: 0.5px; color: rgba(6,10,20,.75); text-transform: uppercase; }
-        .du-center-score { font-size: clamp(13px, 5.5cqh, 28px); font-weight: 900; color: #06080f; letter-spacing: 0.5px; line-height: 1; }
-        .du-center-meta { font-size: clamp(6px, 1.4cqh, 9.2px); font-weight: 700; color: rgba(6,10,20,.7); text-transform: uppercase; letter-spacing: 0.5px; }
-        .du-center-target { font-size: clamp(6px, 1.3cqh, 8.4px); font-weight: 700; color: rgba(6,10,20,.65); text-transform: uppercase; letter-spacing: 0.4px; }
+        .du-ov-team.b {
+            background: linear-gradient(240deg, #3aa35c 0%, #1a5c34 65%, #0f3d21 100%);
+            clip-path: polygon(18% 0, 100% 0, 100% 100%, 0 100%);
+            text-align: right; align-items: flex-end;
+            padding-right: clamp(10px, 3.4cqw, 30px);
+        }
+        .du-ov-team::after {
+            content: ''; position: absolute; left: 0; right: 0; bottom: 0;
+            height: clamp(2px, 0.9cqh, 5px);
+            background: linear-gradient(90deg, #e07a0a, #f5901e);
+        }
+        .du-ov-code {
+            display: flex; align-items: center; gap: clamp(3px, 1cqw, 7px);
+            font-weight: 800; font-size: clamp(9px, 3.4cqh, 22px); line-height: 1; white-space: nowrap;
+        }
+        .du-ov-team.b .du-ov-code { flex-direction: row-reverse; }
+        .du-ov-dot { width: clamp(3px, 0.9cqh, 7px); height: clamp(3px, 0.9cqh, 7px); border-radius: 50%; background: #f5901e; flex: none; }
+        .du-ov-full {
+            font-size: clamp(5px, 1.3cqh, 9.6px); font-weight: 700; letter-spacing: .06em; opacity: .85;
+            margin-top: clamp(1px, 0.6cqh, 4px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+        }
 
-        /* No more .du-phone / .du-tablet overlay-size overrides — the
-           clamp(...cqh/cqw...) rules above already resolve to the right
-           thin size per device on their own, from that device's actual
-           screen box, so hardcoded per-device font-sizes would now only
-           fight them. */
+        .du-ov-score {
+            flex: 0 0 clamp(40px, 13cqw, 108px); background: #0c1740; color: #fff;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 800; font-size: clamp(11px, 4.2cqh, 26px);
+        }
+        .du-ov-overs {
+            flex: 0 0 clamp(30px, 9.5cqw, 78px);
+            background: linear-gradient(160deg, #f5901e, #e07a0a); color: #fff;
+            display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+        }
+        .du-ov-overs .n { font-weight: 800; font-size: clamp(9px, 3.4cqh, 21px); line-height: 1; }
+        .du-ov-overs .l { font-weight: 700; letter-spacing: .08em; font-size: clamp(4.5px, 1.1cqh, 8px); opacity: .9; }
+
+        .du-ov-mid {
+            flex: 1 1 auto; background: #fff; color: #0c1740;
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 clamp(6px, 2.4cqw, 20px); gap: clamp(6px, 2cqw, 16px); min-width: 0;
+        }
+        .du-ov-batters { display: flex; flex-direction: column; gap: clamp(1px, 0.8cqh, 6px); min-width: 0; }
+        .du-ov-row {
+            display: flex; align-items: baseline; gap: clamp(3px, 1cqw, 7px);
+            white-space: nowrap; font-size: clamp(7px, 2.2cqh, 14px); overflow: hidden;
+        }
+        .du-ov-row .nm { font-weight: 800; overflow: hidden; text-overflow: ellipsis; }
+        .du-ov-row .rn { color: #1d4ed8; font-weight: 800; }
+        .du-ov-row .bl { color: #94a3b8; font-size: .68em; font-weight: 700; }
+
+        .du-ov-crr { display: flex; flex-direction: column; align-items: center; gap: 1px; flex: none; }
+        .du-ov-crr .l { font-weight: 800; letter-spacing: .08em; font-size: clamp(4.5px, 1.1cqh, 8px); color: #1d4ed8; }
+        .du-ov-crr .n { font-weight: 800; font-size: clamp(9px, 3.2cqh, 20px); color: #1d4ed8; }
+
+        .du-ov-bowl { display: flex; flex-direction: column; gap: clamp(1px, 0.7cqh, 5px); align-items: flex-start; flex: none; min-width: 0; }
+        .du-ov-bowl .ln { font-size: clamp(6.5px, 2cqh, 12px); white-space: nowrap; }
+        .du-ov-bowl .ln .nm { font-weight: 800; }
+        .du-ov-bowl .ln .fig { font-weight: 700; margin-left: clamp(2px, 0.6cqw, 5px); }
+        .du-ov-bowl .ln .ov { font-size: .7em; color: #94a3b8; margin-left: clamp(1px, 0.4cqw, 3px); }
+        .du-ov-balls { display: flex; gap: clamp(1px, 0.5cqw, 4px); }
+        .du-ov-balls .b { width: clamp(2.5px, 0.8cqh, 7px); height: clamp(2.5px, 0.8cqh, 7px); border-radius: 50%; border: 1px solid #cbd5e1; }
+        .du-ov-balls .b.filled { background: #1d4ed8; border-color: #1d4ed8; }
+
+        /* clamp(...cqh/cqw...) above already resolves the right thin size
+           per device from that device's own screen box; the one remaining
+           narrow-screen override lives further down with .du-arrow. */
 
 
         /* Device-select dots under the stage */
@@ -1849,7 +1894,7 @@
            much room was actually available. Only the truly narrow-screen
            tweaks (smaller score text, smaller arrow buttons) remain. */
         @media (max-width: 480px) {
-            .du-center-score { font-size: 1.3rem; }
+            .du-ov-score { font-size: 1.3rem; }
             .du-arrow { width: 36px; height: 36px; }
         }
         /* On an actual mobile device, only the Mobile/iPhone preview is
@@ -1884,6 +1929,32 @@
         }
         .hi-reset-btn:hover { background: var(--border-color); border-color: var(--accent); }
         .hi-editor-note { margin-top: 12px; font-size: 0.72rem; color: var(--text-muted); }
+
+        /* ===== Locked "SCORE" summary — same card language as the editor
+           fields above, styled to match the reference control-panel
+           screenshot: a green heading, lock icons on every label, and
+           values that are computed (never typed) from the match-setup
+           fields. ===== */
+        .hi-score-panel { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border-color-soft); }
+        .hi-score-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+        .hi-score-head .ico { font-size: 1rem; line-height: 1; }
+        .hi-score-head h3 {
+            margin: 0; font-size: 0.9rem; font-weight: 800; letter-spacing: 0.04em;
+            text-transform: uppercase; color: var(--success);
+        }
+        .hi-score-head .note { font-size: 0.76rem; color: var(--text-muted); font-weight: 500; }
+        .hi-score-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+        .hi-score-stat {
+            background: var(--surface-1); border: 1px solid var(--border-color-soft);
+            border-radius: 10px; padding: 12px 14px;
+        }
+        .hi-score-stat .l {
+            display: flex; align-items: center; gap: 5px;
+            font-size: 0.66rem; font-weight: 700; letter-spacing: 0.06em;
+            color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px;
+        }
+        .hi-score-stat .l .lock { font-size: 0.7rem; opacity: 0.7; }
+        .hi-score-stat .v { font-size: 1.25rem; font-weight: 800; color: var(--text-main); }
 
         /* ===== Product Showcase (Control Panel Mockup) ===== */
         .showcase-section { padding: 40px 20px 90px 20px; max-width: 950px; margin: 0 auto; text-align: center; }
@@ -2298,21 +2369,26 @@
                                     <video class="du-video" muted autoplay loop playsinline preload="auto" src="match-preview.mp4"></video>
                                 </div>
                                 <div class="du-overlay" data-du-overlay>
-                                    <div class="du-side left">
-                                        <span class="du-role">Batsman</span>
-                                        <span class="du-name" data-du="batsman">V. Kohli</span>
-                                        <span class="du-sub" data-du="nonstriker">S. Yadav*</span>
+                                    <div class="du-ov-team a">
+                                        <div class="du-ov-code"><span class="du-ov-dot"></span><span data-du="aCode">IND</span></div>
+                                        <div class="du-ov-full" data-du="aFull">INDIA</div>
                                     </div>
-                                    <div class="du-center">
-                                        <span class="du-center-teams" data-du="teams">IND vs AUS</span>
-                                        <span class="du-center-score" data-du="score">187/4</span>
-                                        <span class="du-center-meta" data-du="overs">16.2 OV</span>
-                                        <span class="du-center-target" data-du="target">NEED 45 OFF 22</span>
+                                    <div class="du-ov-score" data-du="score">187-4</div>
+                                    <div class="du-ov-overs"><div class="n" data-du="overs">16.2</div><div class="l">OVERS</div></div>
+                                    <div class="du-ov-mid">
+                                        <div class="du-ov-batters">
+                                            <div class="du-ov-row"><span class="nm" data-du="striker">V. Kohli</span><span class="rn" data-du="strikerRuns">78*</span><span class="bl" data-du="strikerBalls">54</span></div>
+                                            <div class="du-ov-row"><span class="nm" data-du="nonstriker">S. Yadav</span><span class="rn" data-du="nonstrikerRuns">42</span><span class="bl" data-du="nonstrikerBalls">38</span></div>
+                                        </div>
+                                        <div class="du-ov-crr"><div class="l">CRR</div><div class="n" data-du="crr">11.48</div></div>
+                                        <div class="du-ov-bowl">
+                                            <div class="ln"><span class="nm" data-du="bowler">P. Cummins</span><span class="fig" data-du="bowlerFig">1-28</span><span class="ov" data-du="bowlerOvers">3.2</span></div>
+                                            <div class="du-ov-balls" data-du-balls></div>
+                                        </div>
                                     </div>
-                                    <div class="du-side right">
-                                        <span class="du-role">Bowler</span>
-                                        <span class="du-name" data-du="bowler">P. Cummins</span>
-                                        <span class="du-sub" data-du="runwkt">This over: <span data-du="runs">6</span>&nbsp;runs</span>
+                                    <div class="du-ov-team b">
+                                        <div class="du-ov-code"><span data-du="bCode">AUS</span><span class="du-ov-dot"></span></div>
+                                        <div class="du-ov-full" data-du="bFull">AUSTRALIA</div>
                                     </div>
                                 </div>
                             </div>
@@ -2334,21 +2410,26 @@
                                         <video class="du-video" muted autoplay loop playsinline preload="auto" src="match-preview.mp4"></video>
                                     </div>
                                     <div class="du-overlay" data-du-overlay>
-                                        <div class="du-side left">
-                                            <span class="du-role">Batsman</span>
-                                            <span class="du-name" data-du="batsman">V. Kohli</span>
-                                            <span class="du-sub" data-du="nonstriker">S. Yadav*</span>
+                                        <div class="du-ov-team a">
+                                            <div class="du-ov-code"><span class="du-ov-dot"></span><span data-du="aCode">IND</span></div>
+                                            <div class="du-ov-full" data-du="aFull">INDIA</div>
                                         </div>
-                                        <div class="du-center">
-                                            <span class="du-center-teams" data-du="teams">IND vs AUS</span>
-                                            <span class="du-center-score" data-du="score">187/4</span>
-                                            <span class="du-center-meta" data-du="overs">16.2 OV</span>
-                                            <span class="du-center-target" data-du="target">NEED 45 OFF 22</span>
+                                        <div class="du-ov-score" data-du="score">187-4</div>
+                                        <div class="du-ov-overs"><div class="n" data-du="overs">16.2</div><div class="l">OVERS</div></div>
+                                        <div class="du-ov-mid">
+                                            <div class="du-ov-batters">
+                                                <div class="du-ov-row"><span class="nm" data-du="striker">V. Kohli</span><span class="rn" data-du="strikerRuns">78*</span><span class="bl" data-du="strikerBalls">54</span></div>
+                                                <div class="du-ov-row"><span class="nm" data-du="nonstriker">S. Yadav</span><span class="rn" data-du="nonstrikerRuns">42</span><span class="bl" data-du="nonstrikerBalls">38</span></div>
+                                            </div>
+                                            <div class="du-ov-crr"><div class="l">CRR</div><div class="n" data-du="crr">11.48</div></div>
+                                            <div class="du-ov-bowl">
+                                                <div class="ln"><span class="nm" data-du="bowler">P. Cummins</span><span class="fig" data-du="bowlerFig">1-28</span><span class="ov" data-du="bowlerOvers">3.2</span></div>
+                                                <div class="du-ov-balls" data-du-balls></div>
+                                            </div>
                                         </div>
-                                        <div class="du-side right">
-                                            <span class="du-role">Bowler</span>
-                                            <span class="du-name" data-du="bowler">P. Cummins</span>
-                                            <span class="du-sub" data-du="runwkt">This over: <span data-du="runs">6</span>&nbsp;runs</span>
+                                        <div class="du-ov-team b">
+                                            <div class="du-ov-code"><span data-du="bCode">AUS</span><span class="du-ov-dot"></span></div>
+                                            <div class="du-ov-full" data-du="bFull">AUSTRALIA</div>
                                         </div>
                                     </div>
                                 </div>
@@ -2365,21 +2446,26 @@
                                     <video class="du-video" muted autoplay loop playsinline preload="auto" src="match-preview.mp4"></video>
                                 </div>
                                 <div class="du-overlay" data-du-overlay>
-                                    <div class="du-side left">
-                                        <span class="du-role">Batsman</span>
-                                        <span class="du-name" data-du="batsman">V. Kohli</span>
-                                        <span class="du-sub" data-du="nonstriker">S. Yadav*</span>
+                                    <div class="du-ov-team a">
+                                        <div class="du-ov-code"><span class="du-ov-dot"></span><span data-du="aCode">IND</span></div>
+                                        <div class="du-ov-full" data-du="aFull">INDIA</div>
                                     </div>
-                                    <div class="du-center">
-                                        <span class="du-center-teams" data-du="teams">IND vs AUS</span>
-                                        <span class="du-center-score" data-du="score">187/4</span>
-                                        <span class="du-center-meta" data-du="overs">16.2 OV</span>
-                                        <span class="du-center-target" data-du="target">NEED 45 OFF 22</span>
+                                    <div class="du-ov-score" data-du="score">187-4</div>
+                                    <div class="du-ov-overs"><div class="n" data-du="overs">16.2</div><div class="l">OVERS</div></div>
+                                    <div class="du-ov-mid">
+                                        <div class="du-ov-batters">
+                                            <div class="du-ov-row"><span class="nm" data-du="striker">V. Kohli</span><span class="rn" data-du="strikerRuns">78*</span><span class="bl" data-du="strikerBalls">54</span></div>
+                                            <div class="du-ov-row"><span class="nm" data-du="nonstriker">S. Yadav</span><span class="rn" data-du="nonstrikerRuns">42</span><span class="bl" data-du="nonstrikerBalls">38</span></div>
+                                        </div>
+                                        <div class="du-ov-crr"><div class="l">CRR</div><div class="n" data-du="crr">11.48</div></div>
+                                        <div class="du-ov-bowl">
+                                            <div class="ln"><span class="nm" data-du="bowler">P. Cummins</span><span class="fig" data-du="bowlerFig">1-28</span><span class="ov" data-du="bowlerOvers">3.2</span></div>
+                                            <div class="du-ov-balls" data-du-balls></div>
+                                        </div>
                                     </div>
-                                    <div class="du-side right">
-                                        <span class="du-role">Bowler</span>
-                                        <span class="du-name" data-du="bowler">P. Cummins</span>
-                                        <span class="du-sub" data-du="runwkt">This over: <span data-du="runs">6</span>&nbsp;runs</span>
+                                    <div class="du-ov-team b">
+                                        <div class="du-ov-code"><span data-du="bCode">AUS</span><span class="du-ov-dot"></span></div>
+                                        <div class="du-ov-full" data-du="bFull">AUSTRALIA</div>
                                     </div>
                                 </div>
                             </div>
@@ -2403,48 +2489,99 @@
             <p class="hi-editor-label">✏️ Try it yourself — edit live below, it updates the broadcast overlay above instantly</p>
             <div class="hi-editor-grid">
                 <div class="hi-editor-field">
-                    <label for="hiTeams">Teams</label>
-                    <input type="text" id="hiTeams" maxlength="20" value="IND vs AUS">
+                    <label for="hiACode">Team A code</label>
+                    <input type="text" id="hiACode" maxlength="4" value="IND">
                 </div>
                 <div class="hi-editor-field">
-                    <label for="hiScore">Score</label>
-                    <input type="text" id="hiScore" maxlength="12" value="187/4">
+                    <label for="hiAFull">Team A full name</label>
+                    <input type="text" id="hiAFull" maxlength="24" value="India">
                 </div>
                 <div class="hi-editor-field">
-                    <label for="hiOvers">Overs</label>
-                    <input type="text" id="hiOvers" maxlength="10" value="16.2 OV">
+                    <label for="hiBCode">Team B code</label>
+                    <input type="text" id="hiBCode" maxlength="4" value="AUS">
                 </div>
                 <div class="hi-editor-field">
-                    <label for="hiBatsman">Batsman name</label>
-                    <input type="text" id="hiBatsman" maxlength="20" value="V. Kohli">
+                    <label for="hiBFull">Team B full name</label>
+                    <input type="text" id="hiBFull" maxlength="24" value="Australia">
+                </div>
+                <div class="hi-editor-field">
+                    <label for="hiRuns">Runs</label>
+                    <input type="text" id="hiRuns" maxlength="4" value="187">
+                </div>
+                <div class="hi-editor-field">
+                    <label for="hiWickets">Wickets</label>
+                    <input type="text" id="hiWickets" maxlength="2" value="4">
+                </div>
+                <div class="hi-editor-field">
+                    <label for="hiOvers">Overs (e.g. 16.2)</label>
+                    <input type="text" id="hiOvers" maxlength="6" value="16.2">
+                </div>
+                <div class="hi-editor-field">
+                    <label for="hiOversLimit">Overs limit (innings)</label>
+                    <input type="text" id="hiOversLimit" maxlength="4" value="20">
+                </div>
+                <div class="hi-editor-field">
+                    <label for="hiStriker">Striker</label>
+                    <input type="text" id="hiStriker" maxlength="20" value="V. Kohli">
+                </div>
+                <div class="hi-editor-field">
+                    <label for="hiStrikerRuns">Striker runs (balls)</label>
+                    <input type="text" id="hiStrikerRuns" maxlength="4" value="78">
+                </div>
+                <div class="hi-editor-field">
+                    <label for="hiStrikerBalls">Striker balls faced</label>
+                    <input type="text" id="hiStrikerBalls" maxlength="4" value="54">
                 </div>
                 <div class="hi-editor-field">
                     <label for="hiNonstriker">Non-striker</label>
-                    <input type="text" id="hiNonstriker" maxlength="20" value="S. Yadav*">
+                    <input type="text" id="hiNonstriker" maxlength="20" value="S. Yadav">
+                </div>
+                <div class="hi-editor-field">
+                    <label for="hiNonstrikerRuns">Non-striker runs</label>
+                    <input type="text" id="hiNonstrikerRuns" maxlength="4" value="42">
+                </div>
+                <div class="hi-editor-field">
+                    <label for="hiNonstrikerBalls">Non-striker balls faced</label>
+                    <input type="text" id="hiNonstrikerBalls" maxlength="4" value="38">
                 </div>
                 <div class="hi-editor-field">
                     <label for="hiBowler">Bowler name</label>
                     <input type="text" id="hiBowler" maxlength="20" value="P. Cummins">
                 </div>
                 <div class="hi-editor-field">
-                    <label for="hiRuns">Runs (this over)</label>
-                    <input type="text" id="hiRuns" maxlength="4" value="6">
+                    <label for="hiBowlerWkts">Bowler wickets</label>
+                    <input type="text" id="hiBowlerWkts" maxlength="2" value="1">
                 </div>
                 <div class="hi-editor-field">
-                    <label for="hiWickets">Wickets</label>
-                    <input type="text" id="hiWickets" maxlength="4" value="4">
+                    <label for="hiBowlerRuns">Bowler runs conceded</label>
+                    <input type="text" id="hiBowlerRuns" maxlength="4" value="28">
                 </div>
                 <div class="hi-editor-field">
-                    <label for="hiTarget">Target</label>
-                    <input type="text" id="hiTarget" maxlength="10" value="232">
+                    <label for="hiBowlerOvers">Bowler overs</label>
+                    <input type="text" id="hiBowlerOvers" maxlength="6" value="3.2">
                 </div>
                 <div class="hi-editor-field">
-                    <label for="hiBalls">Balls remaining</label>
-                    <input type="text" id="hiBalls" maxlength="10" value="22">
+                    <label for="hiTarget">Target (optional)</label>
+                    <input type="text" id="hiTarget" maxlength="6" value="">
                 </div>
             </div>
             <button type="button" id="hiResetBtn" class="hi-reset-btn">Reset to default</button>
             <p class="hi-editor-note">Your edits are saved on this device only — nobody else sees them, and they won't affect any other visitor's view.</p>
+
+            <div class="hi-score-panel">
+                <div class="hi-score-head">
+                    <span class="ico">🏏</span><h3>Score</h3>
+                    <span class="note">— locked fields update automatically</span>
+                </div>
+                <div class="hi-score-grid">
+                    <div class="hi-score-stat"><div class="l">Score <span class="lock">🔒</span></div><div class="v" id="hiOutScore">187-4</div></div>
+                    <div class="hi-score-stat"><div class="l">Overs <span class="lock">🔒</span></div><div class="v" id="hiOutOvers">16.2</div></div>
+                    <div class="hi-score-stat"><div class="l">Current Run Rate <span class="lock">🔒</span></div><div class="v" id="hiOutCrr">11.48</div></div>
+                    <div class="hi-score-stat"><div class="l">Req. Run Rate <span class="lock">🔒</span></div><div class="v" id="hiOutRrr">—</div></div>
+                    <div class="hi-score-stat"><div class="l">Partnership <span class="lock">🔒</span></div><div class="v" id="hiOutPship">120 (92)</div></div>
+                    <div class="hi-score-stat"><div class="l">Balls Remaining <span class="lock">🔒</span></div><div class="v" id="hiOutBallsLeft">22</div></div>
+                </div>
+            </div>
         </div>
 
     </section>
@@ -3928,19 +4065,26 @@
         })();
 
         // Live "try it yourself" editor for the Device Uplink scorebug — lets
-        // a visitor change the batsman, bowler, score, target and more, and
-        // see the active broadcast overlay above update instantly. State is
-        // saved to THIS browser's localStorage only (never sent anywhere),
-        // so every visitor's edits stay private to their own device.
+        // a visitor change teams, batters, bowler, score and target, and see
+        // the active broadcast overlay above (and the locked SCORE summary
+        // below the fields) update instantly. Score, CRR, RRR, partnership
+        // and balls-remaining are always computed — never typed directly —
+        // matching the reference control panel's "locked fields update
+        // automatically" behaviour. State is saved to THIS browser's
+        // localStorage only (never sent anywhere), so every visitor's edits
+        // stay private to their own device.
         (function deviceUplinkEditor(){
-            const STORAGE_KEY = 'scorvix_hero_demo_custom_v3';
+            const STORAGE_KEY = 'scorvix_hero_demo_custom_v4';
             const overlays = document.querySelectorAll('[data-du-overlay]');
             if (!overlays.length) return;
 
             const defaults = {
-                teams: 'IND vs AUS', score: '187/4', overs: '16.2 OV',
-                batsman: 'V. Kohli', nonstriker: 'S. Yadav*', bowler: 'P. Cummins',
-                runs: '6', wickets: '4', target: '232', balls: '22'
+                aCode: 'IND', aFull: 'India', bCode: 'AUS', bFull: 'Australia',
+                runs: '187', wickets: '4', overs: '16.2', oversLimit: '20',
+                striker: 'V. Kohli', strikerRuns: '78', strikerBalls: '54',
+                nonstriker: 'S. Yadav', nonstrikerRuns: '42', nonstrikerBalls: '38',
+                bowler: 'P. Cummins', bowlerWkts: '1', bowlerRuns: '28', bowlerOvers: '3.2',
+                target: ''
             };
 
             function loadState(){
@@ -3959,19 +4103,94 @@
                 catch (e) { /* storage full/unavailable — edits still work for this visit */ }
             }
 
+            // Cricket-notation "overs.balls" (e.g. "16.2") -> total legal balls.
+            function parseOvers(v){
+                const n = parseFloat(v);
+                if (!isFinite(n) || n < 0) return 0;
+                const whole = Math.floor(n);
+                const ballsPart = Math.round((n - whole) * 10);
+                return whole * 6 + Math.min(5, Math.max(0, ballsPart));
+            }
+            function num(v){ const n = parseFloat(v); return isFinite(n) ? n : 0; }
+
+            function computed(){
+                const runs = num(state.runs), wkts = num(state.wickets);
+                const ballsBowled = parseOvers(state.overs);
+                const limitBalls = parseOvers(state.oversLimit);
+                const ballsLeft = Math.max(0, limitBalls - ballsBowled);
+                const crr = ballsBowled > 0 ? (runs / (ballsBowled / 6)).toFixed(2) : '0.00';
+                let rrr = '—';
+                if (state.target !== '' && state.target != null) {
+                    const need = num(state.target) - runs;
+                    rrr = ballsLeft > 0 ? Math.max(0, need / (ballsLeft / 6)).toFixed(2) : '—';
+                }
+                const pshipRuns = num(state.strikerRuns) + num(state.nonstrikerRuns);
+                const pshipBalls = num(state.strikerBalls) + num(state.nonstrikerBalls);
+                const overBallsFilled = ballsBowled % 6;
+                return { runs, wkts, crr, rrr, ballsLeft, pshipRuns, pshipBalls, overBallsFilled };
+            }
+
             // Applied to every overlay instance (laptop + mobile + tablet) in
-            // the same pass, so all three stay in sync. Batched on
-            // requestAnimationFrame so rapid typing never causes layout
-            // thrashing or visible flicker.
+            // the same pass, so all three stay in sync, plus the locked
+            // SCORE summary card. Batched on requestAnimationFrame so rapid
+            // typing never causes layout thrashing or visible flicker.
             function applyStateNow(){
+                const c = computed();
+                const scoreStr = c.runs + '-' + c.wkts;
+
                 overlays.forEach(overlay => {
-                    ['teams', 'score', 'overs', 'batsman', 'nonstriker', 'bowler', 'runs'].forEach(key => {
+                    ['aCode', 'bCode', 'striker', 'nonstriker', 'bowler'].forEach(key => {
                         const el = overlay.querySelector('[data-du="' + key + '"]');
-                        if (el) el.textContent = state[key] || defaults[key];
+                        if (el) el.textContent = (state[key] || defaults[key]);
                     });
-                    const targetEl = overlay.querySelector('[data-du="target"]');
-                    if (targetEl) targetEl.textContent = 'NEED ' + (state.target || defaults.target) + ' OFF ' + (state.balls || defaults.balls);
+                    ['aCode', 'bCode'].forEach(key => {
+                        const el = overlay.querySelector('[data-du="' + key + '"]');
+                        if (el) el.textContent = (state[key] || defaults[key]).toUpperCase();
+                    });
+                    const aFullEl = overlay.querySelector('[data-du="aFull"]');
+                    if (aFullEl) aFullEl.textContent = (state.aFull || defaults.aFull).toUpperCase();
+                    const bFullEl = overlay.querySelector('[data-du="bFull"]');
+                    if (bFullEl) bFullEl.textContent = (state.bFull || defaults.bFull).toUpperCase();
+
+                    const scoreEl = overlay.querySelector('[data-du="score"]');
+                    if (scoreEl) scoreEl.textContent = scoreStr;
+                    const oversEl = overlay.querySelector('[data-du="overs"]');
+                    if (oversEl) oversEl.textContent = state.overs || defaults.overs;
+                    const crrEl = overlay.querySelector('[data-du="crr"]');
+                    if (crrEl) crrEl.textContent = c.crr;
+
+                    const srEl = overlay.querySelector('[data-du="strikerRuns"]');
+                    if (srEl) srEl.textContent = (state.strikerRuns || '0') + '*';
+                    const sbEl = overlay.querySelector('[data-du="strikerBalls"]');
+                    if (sbEl) sbEl.textContent = state.strikerBalls || '0';
+                    const nrEl = overlay.querySelector('[data-du="nonstrikerRuns"]');
+                    if (nrEl) nrEl.textContent = state.nonstrikerRuns || '0';
+                    const nbEl = overlay.querySelector('[data-du="nonstrikerBalls"]');
+                    if (nbEl) nbEl.textContent = state.nonstrikerBalls || '0';
+
+                    const bfEl = overlay.querySelector('[data-du="bowlerFig"]');
+                    if (bfEl) bfEl.textContent = (state.bowlerWkts || '0') + '-' + (state.bowlerRuns || '0');
+                    const boEl = overlay.querySelector('[data-du="bowlerOvers"]');
+                    if (boEl) boEl.textContent = state.bowlerOvers || defaults.bowlerOvers;
+
+                    const ballsWrap = overlay.querySelector('[data-du-balls]');
+                    if (ballsWrap) {
+                        ballsWrap.innerHTML = '';
+                        for (let i = 0; i < 6; i++) {
+                            const d = document.createElement('div');
+                            d.className = 'b' + (i < c.overBallsFilled ? ' filled' : '');
+                            ballsWrap.appendChild(d);
+                        }
+                    }
                 });
+
+                const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+                set('hiOutScore', scoreStr);
+                set('hiOutOvers', state.overs || defaults.overs);
+                set('hiOutCrr', c.crr);
+                set('hiOutRrr', c.rrr);
+                set('hiOutPship', c.pshipRuns + ' (' + c.pshipBalls + ')');
+                set('hiOutBallsLeft', c.ballsLeft);
             }
             function applyState(){
                 if (rafPending) return;
@@ -3980,14 +4199,10 @@
             }
 
             function hydrateInputs(){
-                const map = {
-                    hiTeams: state.teams, hiScore: state.score, hiOvers: state.overs,
-                    hiBatsman: state.batsman, hiNonstriker: state.nonstriker, hiBowler: state.bowler,
-                    hiRuns: state.runs, hiWickets: state.wickets, hiTarget: state.target, hiBalls: state.balls
-                };
-                Object.keys(map).forEach(id => {
+                Object.keys(defaults).forEach(key => {
+                    const id = 'hi' + key.charAt(0).toUpperCase() + key.slice(1);
                     const el = document.getElementById(id);
-                    if (el && map[id] != null) el.value = map[id];
+                    if (el && state[key] != null) el.value = state[key];
                 });
             }
 
@@ -4000,7 +4215,7 @@
                     saveState();
                 });
             }
-            ['teams','score','overs','batsman','nonstriker','bowler','runs','wickets','target','balls'].forEach(key => {
+            Object.keys(defaults).forEach(key => {
                 bindText('hi' + key.charAt(0).toUpperCase() + key.slice(1), key);
             });
 
