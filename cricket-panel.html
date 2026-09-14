@@ -242,6 +242,19 @@
   .import-drop-zone .idz-icon{ font-size:28px; margin-bottom:6px; }
   .import-drop-zone .idz-main{ font-size:13px; font-weight:700; }
   .import-drop-zone .idz-sub{ font-size:11px; color:var(--text-dim); margin-top:4px; }
+  /* --- Method switch: Photo/PDF vs Type-or-paste, shown at the top of the
+     upload step. Only one of #import-photo-mode / #import-text-mode is
+     visible at a time; picking a method never resets the other's data. --- */
+  .import-method-row{ display:flex; gap:8px; margin-bottom:12px; }
+  .import-method-row button{ flex:1; }
+  .import-method-row button.active{ background:var(--accent); border-color:var(--accent); color:#12100c; }
+  .import-mode{ display:none; }
+  .import-mode.active{ display:block; }
+  #import-paste-text{
+    width:100%; min-height:150px; padding:10px 12px; border-radius:9px; border:1px solid var(--border);
+    background:var(--panel-2); color:var(--text); font-size:13px; font-family:inherit; resize:vertical;
+  }
+  .import-paste-hint{ font-size:11px; color:var(--text-dim); margin:6px 0 10px; }
   .import-progress{ text-align:center; padding:28px 10px; }
   .import-progress .ip-spinner{
     width:34px; height:34px; margin:0 auto 14px; border-radius:50%;
@@ -268,6 +281,18 @@
   .import-review-row.low-conf{ border-left-color:#facc15; }
   .import-review-row.low-conf input[type="text"]{ border-color:#facc15; }
   .import-review-row .irr-remove{ justify-self:center; background:none; border:none; color:#e05555; cursor:pointer; font-size:15px; padding:2px 6px; border-radius:6px; }
+  /* --- Possible-duplicate hint: shown under a row whose name is CLOSE to
+     (but not identical to) an existing squad player, so the scorer can
+     confirm it's the same person instead of silently forking a new
+     Player ID for a re-typed/misheard spelling. --- */
+  .irr-fuzzy-hint{
+    grid-column:1 / -1; display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+    font-size:11.5px; color:var(--text-dim); background:rgba(168,85,247,.08);
+    border:1px solid rgba(168,85,247,.3); border-radius:7px; padding:6px 9px; margin:-2px 0 4px;
+  }
+  .irr-fuzzy-hint b{ color:var(--purple); font-weight:700; }
+  .irr-fuzzy-hint button{ padding:3px 9px; font-size:11px; border-radius:6px; }
+  .import-review-row.low-conf .irr-fuzzy-hint{ border-color:#facc15; background:rgba(250,204,21,.08); }
   .import-review-row .irr-remove:hover{ background:rgba(239,68,68,.15); }
   .import-low-conf-hint{ font-size:10.5px; color:#facc15; margin:-4px 0 10px; display:none; }
   .import-low-conf-hint.show{ display:block; }
@@ -533,10 +558,23 @@
     <div class="wm-sub" id="import-modal-sub">Upload a photo or PDF of the team roster.</div>
 
     <div class="import-step active" id="import-step-upload">
-      <div class="import-drop-zone" id="import-drop-zone">
-        <div class="idz-icon">🖼️</div>
-        <div class="idz-main">Click to choose a photo or PDF</div>
-        <div class="idz-sub">JPG, PNG or PDF · printed or handwritten team list</div>
+      <div class="import-method-row">
+        <button type="button" class="small active" id="import-method-photo-btn">📷 Photo / PDF</button>
+        <button type="button" class="small" id="import-method-text-btn">✍️ Type / Paste Names</button>
+      </div>
+
+      <div class="import-mode active" id="import-photo-mode">
+        <div class="import-drop-zone" id="import-drop-zone">
+          <div class="idz-icon">🖼️</div>
+          <div class="idz-main">Click to choose a photo or PDF</div>
+          <div class="idz-sub">JPG, PNG or PDF · printed or handwritten team list</div>
+        </div>
+      </div>
+
+      <div class="import-mode" id="import-text-mode">
+        <textarea id="import-paste-text" placeholder="Karsh Kothari&#10;Jeeth Suvarna&#10;Rahul Sharma&#10;Rohan Patil"></textarea>
+        <div class="import-paste-hint">One name per line, comma-separated, or numbered/bulleted — any of those work.</div>
+        <button type="button" class="primary full" id="import-paste-process-btn">Process Names</button>
       </div>
     </div>
 
@@ -2722,13 +2760,26 @@ function openImportModal(key){
   document.getElementById('import-modal-sub').textContent =
     `Upload a photo or PDF of the ${teamObj(key).name || (key === 'A' ? 'Team A' : 'Team B')} roster — player names will be read automatically.`;
   document.getElementById('import-file-input').value = '';
+  document.getElementById('import-paste-text').value = '';
   document.getElementById('import-review-list').innerHTML = '';
   document.getElementById('import-dup-list').innerHTML = '';
   document.getElementById('import-dup-box').classList.remove('show');
   document.getElementById('import-low-conf-hint').classList.remove('show');
+  setImportMethod('photo');
   showImportStep('upload');
   document.getElementById('import-modal-overlay').classList.add('show');
 }
+// Photo/PDF and Type-or-paste are two independent ways to reach the same
+// review step — switching between them just swaps which panel is visible,
+// it never clears the other (so an accidental click doesn't lose a typed list).
+function setImportMethod(mode){
+  document.getElementById('import-photo-mode').classList.toggle('active', mode === 'photo');
+  document.getElementById('import-text-mode').classList.toggle('active', mode === 'text');
+  document.getElementById('import-method-photo-btn').classList.toggle('active', mode === 'photo');
+  document.getElementById('import-method-text-btn').classList.toggle('active', mode === 'text');
+}
+document.getElementById('import-method-photo-btn').addEventListener('click', () => setImportMethod('photo'));
+document.getElementById('import-method-text-btn').addEventListener('click', () => setImportMethod('text'));
 function closeImportModal(){
   document.getElementById('import-modal-overlay').classList.remove('show');
   importTargetTeam = null;
@@ -2783,13 +2834,67 @@ async function pdfFileToCanvases(file){
   return canvases;
 }
 
+// Load an uploaded photo into an <img>, then draw it onto a canvas rotated
+// upright and cleaned up for OCR:
+//  - upscale small photos (phone shots of a printed sheet are often small
+//    relative to how much detail Tesseract needs to separate letters)
+//  - grayscale + contrast stretch, so a dim/uneven phone photo doesn't
+//    leave faint handwriting under Tesseract's detection threshold
+//  - light adaptive-ish binarization (simple global threshold after the
+//    stretch) to pull the text away from paper texture/shadows
+// This is a best-effort cleanup pass, not a full deskew/crop pipeline —
+// Tesseract's own layout analysis still handles skew and finding the text
+// block. If anything here throws, the caller falls back to feeding
+// Tesseract the original file untouched rather than blocking the import.
+async function preprocessImageForOCR(file){
+  const bitmap = await new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Could not read that image'));
+    img.src = URL.createObjectURL(file);
+  });
+  const MIN_DIM = 1400; // upscale target for the longer side, if smaller
+  const scale = Math.max(1, MIN_DIM / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  URL.revokeObjectURL(bitmap.src);
+
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = imgData.data;
+  // Grayscale first, tracking min/max for a contrast stretch.
+  let min = 255, max = 0;
+  const gray = new Uint8ClampedArray(d.length / 4);
+  for(let i = 0, p = 0; i < d.length; i += 4, p++){
+    const g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    gray[p] = g;
+    if(g < min) min = g;
+    if(g > max) max = g;
+  }
+  const range = Math.max(1, max - min);
+  for(let i = 0, p = 0; i < d.length; i += 4, p++){
+    const stretched = ((gray[p] - min) / range) * 255;
+    d[i] = d[i + 1] = d[i + 2] = stretched;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  return canvas;
+}
+
 async function handleImportFile(file){
   showImportStep('processing');
   setImportProgress(0, 'Reading list…');
   try{
     if(typeof Tesseract === 'undefined') throw new Error('OCR library failed to load (no internet?)');
     const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
-    const sources = isPdf ? await pdfFileToCanvases(file) : [file];
+    let sources;
+    if(isPdf){
+      sources = await pdfFileToCanvases(file);
+    } else {
+      try{ sources = [await preprocessImageForOCR(file)]; }
+      catch(e){ sources = [file]; } // preprocessing failed — OCR the original photo instead of blocking
+    }
 
     let fullText = '';
     for(let i = 0; i < sources.length; i++){
@@ -2838,6 +2943,12 @@ function extractPlayerNames(rawText){
     line = line.replace(/^\s*\d{1,2}\s*[\.\)\-]\s*/, '');
     // Leading jersey-number style prefix: "#7 ", "No.7 "
     line = line.replace(/^\s*(#|no\.?\s*)\d{1,2}\s+/i, '');
+    // Leading bullet marker from a bulleted paste: "- Name", "• Name", "* Name"
+    line = line.replace(/^\s*[•\u2022\u25CF\u25A0►*·]\s*/, '');
+    line = line.replace(/^\s*[-–—]\s+(?=[A-Za-z])/, '');
+    // Collapse any run of internal whitespace ("Karsh   Kothari") down to a
+    // single space so display/matching doesn't inherit stray double-spacing.
+    line = line.replace(/\s{2,}/g, ' ');
     // Trailing role tag: "- Captain", "(WK)", "- Wicket Keeper"
     line = line.replace(/[\-–]\s*(captain|c|vice[\s-]?captain|vc|wk|wicket[\s-]?keeper)\s*$/i, '');
     line = line.replace(/\(\s*(captain|c|vice[\s-]?captain|vc|wk|wicket[\s-]?keeper)\s*\)\s*$/i, '');
@@ -2860,11 +2971,72 @@ function extractPlayerNames(rawText){
   return out;
 }
 
+// --- Manual typed/pasted entry -> player names ---------------------------
+// Reuses extractPlayerNames' line-by-line cleanup (serials, bullets, role
+// tags) for every format except the one it can't handle: a single line of
+// comma-separated names ("Karsh Kothari, Jeeth Suvarna, Rahul Sharma"). For
+// that shape specifically, split on commas into one name per line first,
+// then run the normal cleanup. A genuine multi-line list is left alone even
+// if one line happens to contain a comma, since that's more likely part of
+// a name/role than a separator.
+function parseManualNames(rawText){
+  const text = (rawText || '').trim();
+  if(!text) return [];
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  const commaParts = text.split(',').map(p => p.trim()).filter(Boolean);
+  const useCommaSplit = lines.length === 1 && commaParts.length > 1;
+  return extractPlayerNames(useCommaSplit ? commaParts.join('\n') : text);
+}
+document.getElementById('import-paste-process-btn').addEventListener('click', () => {
+  const text = document.getElementById('import-paste-text').value;
+  const names = parseManualNames(text);
+  if(!names.length){
+    toast('Could not find any names in that text — check the formatting and try again.', 5000);
+    return;
+  }
+  buildImportReview(names);
+  showImportStep('review');
+});
+
 // --- Review step ----------------------------------------------------------
+// Classic edit-distance, used only to flag POSSIBLE matches for a human to
+// confirm (see below) — never to auto-merge. Small inputs only (player
+// names), so the plain O(n*m) table is plenty fast.
+function levenshtein(a, b){
+  const m = a.length, n = b.length;
+  if(m === 0) return n;
+  if(n === 0) return m;
+  const prev = new Array(n + 1);
+  for(let j = 0; j <= n; j++) prev[j] = j;
+  for(let i = 1; i <= m; i++){
+    let cur = [i];
+    for(let j = 1; j <= n; j++){
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+    }
+    prev.splice(0, prev.length, ...cur);
+  }
+  return prev[n];
+}
+// Same-person heuristic for names that are close but not identical
+// ("JEETH SUVARN" vs "JEETH SUVARNA") — small absolute distance relative to
+// length, so short names need a near-exact match while longer ones tolerate
+// a couple of character slips (a missed vowel, a transposed letter).
+function findFuzzyMatch(name, existingNames){
+  let best = null, bestDist = Infinity;
+  existingNames.forEach(existing => {
+    if(existing === name) return;
+    const dist = levenshtein(name, existing);
+    const tolerance = Math.max(1, Math.floor(Math.max(name.length, existing.length) * 0.2));
+    if(dist <= tolerance && dist < bestDist){ best = existing; bestDist = dist; }
+  });
+  return best;
+}
 function buildImportReview(names){
   importRows = [];
   importDupRows = [];
-  const existing = new Set(rosterPlayers(importTargetTeam).map(p => (p.name || '').trim().toUpperCase()));
+  const existingList = rosterPlayers(importTargetTeam).map(p => (p.name || '').trim().toUpperCase());
+  const existing = new Set(existingList);
   const seen = new Set(); // de-dupe names detected twice within the same upload
   names.forEach(n => {
     if(seen.has(n.name)) return;
@@ -2874,6 +3046,11 @@ function buildImportReview(names){
       row.checked = false;
       importDupRows.push(row);
     } else {
+      // Not an exact match — but flag a close one so the scorer can choose
+      // "Use Existing" instead of accidentally forking a second Player ID
+      // for what's really the same teammate (see item 5/6 in the spec:
+      // reuse existing IDs, but never silently auto-merge).
+      row.possibleMatch = findFuzzyMatch(n.name, existingList);
       importRows.push(row);
     }
   });
@@ -2914,6 +3091,39 @@ function renderImportReview(){
     });
 
     el.appendChild(cb); el.appendChild(nameInput); el.appendChild(removeBtn);
+
+    if(row.possibleMatch){
+      const hint = document.createElement('div');
+      hint.className = 'irr-fuzzy-hint';
+      const label = document.createElement('span');
+      label.innerHTML = `Possible existing player — looks like <b>${row.possibleMatch}</b>`;
+      const useBtn = document.createElement('button');
+      useBtn.type = 'button';
+      useBtn.className = 'small';
+      useBtn.textContent = 'Use Existing';
+      useBtn.title = `Skip this and keep using ${row.possibleMatch}'s existing Player ID`;
+      useBtn.addEventListener('click', () => {
+        // Same treatment as an exact duplicate: don't create a new player,
+        // just leave the existing one in the squad (skipped by default,
+        // but the scorer can still tick it to add as a genuinely separate
+        // person if that's what they actually meant).
+        importRows = importRows.filter(r => r.rowId !== row.rowId);
+        importDupRows.push({ rowId: row.rowId, name: row.possibleMatch, checked: false });
+        renderImportReview();
+      });
+      const keepBtn = document.createElement('button');
+      keepBtn.type = 'button';
+      keepBtn.className = 'small ghost';
+      keepBtn.textContent = 'Keep as New';
+      keepBtn.title = 'This is actually a different person — import as a new player';
+      keepBtn.addEventListener('click', () => {
+        row.possibleMatch = null;
+        renderImportReview();
+      });
+      hint.appendChild(label); hint.appendChild(useBtn); hint.appendChild(keepBtn);
+      el.appendChild(hint);
+    }
+
     list.appendChild(el);
   });
   document.getElementById('import-low-conf-hint').classList.toggle('show', anyFlagged);
