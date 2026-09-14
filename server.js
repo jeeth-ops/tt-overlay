@@ -1116,7 +1116,14 @@ app.post('/api/create-control-token', async (req, res) => {
 // /api/create-control-token route uses, which can be layered on later.
 // ================================================================
 function leagueKeyFor(name) {
-    return String(name || '').trim().toLowerCase();
+    // 🩹 FIX: same class of bug as playerKey() above — collapse internal
+    // whitespace too, not just leading/trailing, so "DY Patil Trophy" and
+    // "DY Patil  Trophy" (double space) are recognized as the SAME
+    // tournament instead of silently forking into two. This only affects
+    // NEW tournament names going forward — it does not retroactively merge
+    // any tournament whose leagueKey was already saved with a double space
+    // before this fix.
+    return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
 // 🏷️ SPORT DETECTION — /api/league/:name/match is generic and is called by
@@ -1151,6 +1158,29 @@ function ownerUidFrom(req) {
 async function getLeagueMatches(ownerUid, leagueKey) {
     return matchRecordsCollection.find({ ownerUid, leagueKey }).sort({ savedAt: 1 }).toArray();
 }
+
+// GET /api/leagues?uid= — every tournament name this owner has ever saved
+// a match to, server-side (leaguesCollection), NOT just this one browser's
+// localStorage. Powers the panel's "Tournament" dropdown so a SECOND
+// device/laptop signed into the same account sees every existing
+// tournament immediately — no need to retype the exact name and hope it
+// matches the leagueKey the first device already created.
+app.get('/api/leagues', requireAuthorizedCreator, async (req, res) => {
+    const ownerUid = ownerUidFrom(req);
+    if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
+    if (!leaguesCollection) return res.json({ success: true, leagues: [] });
+    try {
+        const docs = await leaguesCollection.find({ ownerUid, leagueKey: { $ne: SINGLE_MATCHES_LEAGUE_KEY } })
+            .project({ leagueKey: 1, displayName: 1, updatedAt: 1 })
+            .sort({ updatedAt: -1 })
+            .toArray();
+        const leagues = docs.map(d => ({ leagueKey: d.leagueKey, displayName: d.displayName || d.leagueKey }));
+        res.json({ success: true, leagues });
+    } catch (err) {
+        console.log('Leagues list error:', err);
+        res.status(500).json({ success: false, error: 'Could not load tournament list' });
+    }
+});
 
 // All matches saved under a league/tournament name, for one owner.
 // 🔐 Gated: only an authorized creator account can read its own
@@ -1362,7 +1392,12 @@ function fmtOversLike(o, b) { return `${o || 0}.${b || 0}`; }
 function computePointsTable(matches) {
     const table = {}; // key: lowercased team name -> row
     const ensure = (name) => {
-        const key = (name || '').trim().toLowerCase();
+        // 🩹 FIX: collapse internal whitespace too (same class of bug as
+        // playerKey()/leagueKeyFor() above) — "Chennai XI" and
+        // "Chennai  XI" (double space) must be the SAME team row, not two.
+        // score-tournament.html's computeFormGuide() mirrors this exact
+        // key for its W/L/T form-guide dots — keep both in sync.
+        const key = (name || '').trim().toLowerCase().replace(/\s+/g, ' ');
         if (!key) return null;
         if (!table[key]) {
             table[key] = {
@@ -1406,7 +1441,19 @@ function computeLeaderboards(matches) {
         ['A', 'B'].forEach(k => {
             (m.battingCard && m.battingCard[k] || []).forEach(b => {
                 if (!b || !b.name) return;
-                const key = b.name.trim().toLowerCase();
+                // 🩹 FIX: was its own inline `b.name.trim().toLowerCase()` — a
+                // THIRD copy of the same name-key logic that playerKey()
+                // already centralizes, and one that never got the
+                // whitespace-collapse fix applied there. That divergence
+                // meant tournament leaderboards could show "Karsh Kothari"
+                // and "Karsh  Kothari" as two separate rows with split
+                // stats, even though every other part of the system (balls,
+                // clips) already treated them as one player. Calling the
+                // shared playerKey() here instead — rather than patching
+                // this copy too — means there's now exactly ONE place that
+                // defines what a player name-key is, so this can't drift
+                // out of sync again.
+                const key = playerKey(b.name);
                 if (!batters[key]) batters[key] = { name: b.name.trim(), innings: 0, runs: 0, balls: 0, fours: 0, sixes: 0, fifties: 0, hundreds: 0, highScore: 0 };
                 const row = batters[key];
                 row.innings++; row.runs += b.runs || 0; row.balls += b.balls || 0;
@@ -1417,7 +1464,7 @@ function computeLeaderboards(matches) {
             });
             (m.bowlingCard && m.bowlingCard[k] || []).forEach(b => {
                 if (!b || !b.name) return;
-                const key = b.name.trim().toLowerCase();
+                const key = playerKey(b.name); // 🩹 same fix as batters above — see comment there
                 if (!bowlers[key]) bowlers[key] = { name: b.name.trim(), innings: 0, overs: 0, runs: 0, wickets: 0, bestFigures: '0/0' };
                 const row = bowlers[key];
                 row.innings++; row.overs += oversToFloat(fmtOversLike(b.overs, b.balls)); row.runs += b.runs || 0; row.wickets += b.wickets || 0;
@@ -1444,7 +1491,14 @@ function computeLeaderboards(matches) {
 // migration of anything already saved.
 // ================================================================
 function playerKey(name) {
-    return String(personName(name) || '').trim().toLowerCase() || null;
+    // 🩹 FIX: collapse internal whitespace too, not just leading/trailing.
+    // Before this, "Karsh Kothari" and "Karsh  Kothari" (double space —
+    // e.g. from a phone keyboard's autocorrect, or copy-paste from a
+    // printed team sheet) normalized to two DIFFERENT nameKeys, which
+    // silently fragmented that player into two separate identities
+    // (separate stats, separate clips) despite being the exact scenario
+    // duplicate-protection is supposed to catch.
+    return String(personName(name) || '').trim().toLowerCase().replace(/\s+/g, ' ') || null;
 }
 
 // 🛡️ Defense-in-depth: some client somewhere (past or future) might send
@@ -2389,7 +2443,13 @@ app.get('/api/stats/player/:playerKey/tournaments', async (req, res) => {
 // inputs. Matching on a name that's ALREADY a known player (rather than
 // letting the scorer free-type a fresh variant every time) is what keeps
 // nameKeys from fragmenting in the first place.
-app.get('/api/players/search', async (req, res) => {
+// 🔐 GATED (added — was previously open to anyone who knew/guessed a uid,
+// unlike every other account-mutating route in this file): lets a caller
+// see the FULL private player roster for an account. Read-only, but it's
+// still an account's private customer/roster data, not public clip/stat
+// data — matches the same requireAuthorizedCreator gate as the
+// league-management routes.
+app.get('/api/players/search', requireAuthorizedCreator, async (req, res) => {
     if (!playersCollection) return res.json({ success: true, players: [] });
     const ownerUid = ownerUidFrom(req);
     const q = String(req.query.q || '').trim().toLowerCase();
@@ -2409,7 +2469,10 @@ app.get('/api/players/search', async (req, res) => {
 // a name. The panel can call this as soon as a scorer commits a player
 // name (instead of only implicitly via logBall), so the playerId is known
 // before the first ball is even bowled.
-app.post('/api/players/resolve', async (req, res) => {
+// 🔐 GATED (added) — this WRITES to an account's player database
+// (find-or-create). Before this, anyone who knew/guessed a uid could
+// spam-create fake player docs in a completely different account.
+app.post('/api/players/resolve', requireAuthorizedCreator, async (req, res) => {
     const ownerUid = ownerUidFrom(req) || req.body.uid;
     const name = req.body.name;
     if (!ownerUid || !String(name || '').trim()) return res.status(400).json({ success: false, error: 'uid and name required' });
@@ -2431,7 +2494,15 @@ app.post('/api/players/resolve', async (req, res) => {
 // history), but since stats are computed live from nameKeys — not from the
 // stamped playerId — merging here immediately unifies their stats. The
 // stamped playerId fields are for provenance/debugging, not the query key.
-app.post('/api/players/:playerId/merge', async (req, res) => {
+// 🔐 GATED (added) — THIS IS THE IMPORTANT ONE. Merging two players is
+// destructive and permanent (one identity's nameKeys get wiped and folded
+// into the other — stats/clips for both immediately become one player,
+// and there's no "undo merge"). Before this fix it had ZERO auth check —
+// anyone who knew or guessed an account's uid could corrupt that
+// account's player stats/clip attribution with a single POST. Now
+// requires the same verified-owner check as every other account-mutating
+// route in this file.
+app.post('/api/players/:playerId/merge', requireAuthorizedCreator, async (req, res) => {
     if (!playersCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     const ownerUid = ownerUidFrom(req) || req.body.uid;
     const { fromPlayerId } = req.body || {};
