@@ -1815,11 +1815,11 @@
             color: #fff; overflow: hidden; min-width: 0;
         }
         .du-ov-team.a {
-            background: linear-gradient(120deg, #5c7ebd 0%, #2c4272 65%, #1a2a52 100%);
+            background: linear-gradient(120deg, var(--du-a-light, #5c7ebd) 0%, var(--du-a-base, #2c4272) 65%, var(--du-a-dark, #1a2a52) 100%);
             clip-path: polygon(0 0, 100% 0, 82% 100%, 0 100%);
         }
         .du-ov-team.b {
-            background: linear-gradient(240deg, #3aa35c 0%, #1a5c34 65%, #0f3d21 100%);
+            background: linear-gradient(240deg, var(--du-b-light, #3aa35c) 0%, var(--du-b-base, #1a5c34) 65%, var(--du-b-dark, #0f3d21) 100%);
             clip-path: polygon(18% 0, 100% 0, 100% 100%, 0 100%);
             text-align: right; align-items: flex-end;
             padding-right: clamp(7px, 2.6cqw, 22px);
@@ -1969,6 +1969,16 @@
             transition: border-color 0.25s var(--ease), background 0.25s var(--ease);
         }
         .hi-editor-field input[type="text"]:focus { border-color: var(--accent); background: var(--border-color-soft); }
+        .hi-editor-field input[type="color"] {
+            -webkit-appearance: none; appearance: none;
+            width: 100%; height: 38px; padding: 3px;
+            background: var(--surface-1); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px;
+            cursor: pointer; transition: border-color 0.25s var(--ease), background 0.25s var(--ease);
+        }
+        .hi-editor-field input[type="color"]:focus { border-color: var(--accent); background: var(--border-color-soft); }
+        .hi-editor-field input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+        .hi-editor-field input[type="color"]::-webkit-color-swatch { border: none; border-radius: 5px; }
+        .hi-editor-field input[type="color"]::-moz-color-swatch { border: none; border-radius: 5px; }
         .hi-reset-btn {
             margin-top: 16px; background: var(--border-color-soft); border: 1px solid rgba(255,255,255,0.15);
             border-radius: 8px; padding: 9px 18px; font-size: 0.82rem; font-weight: 600; color: var(--text-main);
@@ -2604,7 +2614,7 @@
             <p class="hi-editor-label">🏏 Try it yourself — score the match ball-by-ball below, the broadcast overlay above updates instantly</p>
 
             <details class="hi-setup" id="hiSetup">
-                <summary class="hi-setup-summary">Match setup <span class="sub">— team &amp; player names, target</span></summary>
+                <summary class="hi-setup-summary">Match setup <span class="sub">— team &amp; player names, colours, target</span></summary>
                 <div class="hi-setup-body">
                     <div class="hi-editor-grid">
                         <div class="hi-editor-field">
@@ -2616,12 +2626,20 @@
                             <input type="text" id="hiAFull" maxlength="24" value="India">
                         </div>
                         <div class="hi-editor-field">
+                            <label for="hiAColor">Team A colour</label>
+                            <input type="color" id="hiAColor" value="#2c4272">
+                        </div>
+                        <div class="hi-editor-field">
                             <label for="hiBCode">Team B code</label>
                             <input type="text" id="hiBCode" maxlength="4" value="AUS">
                         </div>
                         <div class="hi-editor-field">
                             <label for="hiBFull">Team B full name</label>
                             <input type="text" id="hiBFull" maxlength="24" value="Australia">
+                        </div>
+                        <div class="hi-editor-field">
+                            <label for="hiBColor">Team B colour</label>
+                            <input type="color" id="hiBColor" value="#1a5c34">
                         </div>
                         <div class="hi-editor-field">
                             <label for="hiOversLimit">Overs limit (innings)</label>
@@ -4185,9 +4203,43 @@
             if (!overlays.length) return;
 
             const setupDefaults = {
-                aCode: 'IND', aFull: 'India', bCode: 'AUS', bFull: 'Australia', oversLimit: '20', target: '',
+                aCode: 'IND', aFull: 'India', aColor: '#2c4272', bCode: 'AUS', bFull: 'Australia', bColor: '#1a5c34',
+                oversLimit: '20', target: '',
                 striker: 'V. Kohli', nonstriker: 'S. Yadav', bowler: 'P. Cummins'
             };
+
+            // ---- Team colour theme --------------------------------------
+            // Each team is picked as a single base colour; the broadcast
+            // gradient (light -> base -> dark) used by the scorebug is
+            // derived from it with a plain RGB shift, so one colour picker
+            // per team is enough to re-theme the whole overlay.
+            function shadeColor(hex, amount){
+                hex = String(hex || '').replace('#', '');
+                if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+                if (!/^[0-9a-fA-F]{6}$/.test(hex)) return null;
+                const num = parseInt(hex, 16);
+                const clampCh = v => Math.max(0, Math.min(255, v));
+                const r = clampCh(((num >> 16) & 0xFF) + amount);
+                const g = clampCh(((num >> 8) & 0xFF) + amount);
+                const b = clampCh((num & 0xFF) + amount);
+                return '#' + (0x1000000 + r * 0x10000 + g * 0x100 + b).toString(16).slice(1);
+            }
+            function applyTeamColors(overlay){
+                const aBase = shadeColor(state.aColor, 0) || setupDefaults.aColor;
+                const bBase = shadeColor(state.bColor, 0) || setupDefaults.bColor;
+                const aEl = overlay.querySelector('.du-ov-team.a');
+                if (aEl) {
+                    aEl.style.setProperty('--du-a-light', shadeColor(aBase, 70) || aBase);
+                    aEl.style.setProperty('--du-a-base', aBase);
+                    aEl.style.setProperty('--du-a-dark', shadeColor(aBase, -50) || aBase);
+                }
+                const bEl = overlay.querySelector('.du-ov-team.b');
+                if (bEl) {
+                    bEl.style.setProperty('--du-b-light', shadeColor(bBase, 70) || bBase);
+                    bEl.style.setProperty('--du-b-base', bBase);
+                    bEl.style.setProperty('--du-b-dark', shadeColor(bBase, -50) || bBase);
+                }
+            }
             // The playing state is what the ball-outcome buttons mutate —
             // kept separate from setup so undo only ever touches this part.
             const playingDefaults = {
@@ -4323,6 +4375,7 @@
                 const bowlerOversStr = formatOvers(state.bowlerLegalBalls);
 
                 overlays.forEach(overlay => {
+                    applyTeamColors(overlay);
                     ['aCode', 'bCode', 'striker', 'nonstriker', 'bowler'].forEach(key => {
                         const el = overlay.querySelector('[data-du="' + key + '"]');
                         if (el) el.textContent = (state[key] || setupDefaults[key]);
