@@ -628,12 +628,22 @@ function awardCardHtml(a){
    as W/L/T dots, keyed the same way computePointsTable keys teams
    server-side (full team name, trimmed + lowercased) so the two line
    up regardless of whether the UI displays short names elsewhere. ---- */
+// Mirrors server.js's computePointsTable team-key convention exactly
+// (trim + lowercase + collapse internal whitespace) — used both by
+// computeFormGuide() below and the points-table row renderer that looks
+// values up in its output, so a double-space team name can't silently
+// miss its form-guide dots.
+function teamKeyOf(name){ return String(name || '').trim().toLowerCase().replace(/\s+/g, ' '); }
 function computeFormGuide(matches){
   const form = {};
   const finished = matches.filter(m => m.winningTeam).slice().sort((a,b) => new Date(a.savedAt||0) - new Date(b.savedAt||0));
   finished.forEach(m => {
-    const aKey = ((m.teamA && m.teamA.name) || '').trim().toLowerCase();
-    const bKey = ((m.teamB && m.teamB.name) || '').trim().toLowerCase();
+    // 🩹 FIX: collapse internal whitespace too, matching server's
+    // computePointsTable ensure() exactly (see server.js) — otherwise a
+    // team name with a double space groups differently here than it does
+    // in the actual points table, splitting one team's form guide in two.
+    const aKey = teamKeyOf(m.teamA && m.teamA.name);
+    const bKey = teamKeyOf(m.teamB && m.teamB.name);
     if(!aKey || !bKey) return;
     if(!form[aKey]) form[aKey] = [];
     if(!form[bKey]) form[bKey] = [];
@@ -768,7 +778,7 @@ function renderPortal(data, token){
   const pt = data.pointsTable || [];
   const formGuide = computeFormGuide(matches);
   const qualifyCount = pt.length > 4 ? 4 : Math.ceil(pt.length / 2);
-  const pointsRowHtml = (r, i) => `<tr class="${i < qualifyCount ? 'pt-qualify' : ''}"><td>${escapeHtml(r.team)}</td><td class="num tabnum">${r.played}</td><td class="num tabnum">${r.won}</td><td class="num tabnum">${r.lost}</td><td class="num tabnum">${r.tied}</td><td class="num tabnum">${r.points}</td><td class="num tabnum">${r.nrr>0?'+':''}${r.nrr}</td><td>${formDotsHtml(formGuide[r.team.trim().toLowerCase()])}</td></tr>`;
+  const pointsRowHtml = (r, i) => `<tr class="${i < qualifyCount ? 'pt-qualify' : ''}"><td>${escapeHtml(r.team)}</td><td class="num tabnum">${r.played}</td><td class="num tabnum">${r.won}</td><td class="num tabnum">${r.lost}</td><td class="num tabnum">${r.tied}</td><td class="num tabnum">${r.points}</td><td class="num tabnum">${r.nrr>0?'+':''}${r.nrr}</td><td>${formDotsHtml(formGuide[teamKeyOf(r.team)])}</td></tr>`;
   const pointsRows = pt.map(pointsRowHtml);
   if(qualifyCount > 0 && qualifyCount < pt.length) pointsRows.splice(qualifyCount, 0, `<tr class="pt-divider"><td colspan="8">Qualification line</td></tr>`);
   const pointsPanel = `<div class="tab-panel" data-panel="points">
@@ -855,8 +865,13 @@ const CLIP_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
 const PLAY_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
 const DOWNLOAD_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>';
 
-// Mirrors the server's playerKey() exactly (name.trim().toLowerCase()).
-function playerKeyOf(name){ return String(name||'').trim().toLowerCase() || null; }
+// Mirrors the server's playerKey() exactly — including collapsing internal
+// whitespace (server.js: name.trim().toLowerCase().replace(/\s+/g,' ')).
+// Keep this in sync with server.js's playerKey() — score-match.html and
+// cricket-scorecard.html each keep their own copy too; a name-key mismatch
+// between client and server here is exactly what makes a player's clips
+// silently fail to show up on this page.
+function playerKeyOf(name){ return String(name||'').trim().toLowerCase().replace(/\s+/g, ' ') || null; }
 function clipApiBase(){ return ''; }
 
 function clipBtnHtml(name, role){
