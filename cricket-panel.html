@@ -472,7 +472,7 @@
       <div class="squad-col-head">
         <label id="squadA-label" class="squad-team-title">Team A squad</label>
         <div class="link-row squad-add-row">
-          <input type="text" id="squadA-new-name" placeholder="Player name">
+          <input type="text" id="squadA-new-name" placeholder="Player name" list="global-player-suggestions" data-global-suggest="1" autocomplete="off">
           <button class="small primary" id="squadA-add-btn" type="button">+ Add</button>
           <button class="small ghost squad-import-btn" id="squadA-import-btn" type="button" title="Import players from a photo/PDF of a printed or handwritten team list">📋 Import from List</button>
         </div>
@@ -495,7 +495,7 @@
       <div class="squad-col-head">
         <label id="squadB-label" class="squad-team-title">Team B squad</label>
         <div class="link-row squad-add-row">
-          <input type="text" id="squadB-new-name" placeholder="Player name">
+          <input type="text" id="squadB-new-name" placeholder="Player name" list="global-player-suggestions" data-global-suggest="1" autocomplete="off">
           <button class="small primary" id="squadB-add-btn" type="button">+ Add</button>
           <button class="small ghost squad-import-btn" id="squadB-import-btn" type="button" title="Import players from a photo/PDF of a printed or handwritten team list">📋 Import from List</button>
         </div>
@@ -2639,15 +2639,45 @@ function renderSquadUI(){
   renderSquadList('A'); renderSquadList('B');
   renderSquadSelects('A'); renderSquadSelects('B');
 }
-function addSquadPlayer(key){
+// 🌟 DUPLICATE PLAYER PROTECTION — before this, every squad "+ Add" just
+// minted a brand-new local id (genPlayerId()), even if this exact person
+// already exists in the tournament/account's player database from an
+// earlier match. That's how "Karsh Kothari" ends up as three unrelated
+// IDs with split stats/clips across matches. This now asks the server's
+// existing find-or-create (/api/players/resolve — same one the free-text
+// striker/bowler fields already use, see resolveGlobalPlayer above) for
+// the REAL permanent playerId before adding the row, so re-typing an
+// existing player's name in ANY match under this account reuses the same
+// ID instead of forking a new one. Best-effort: offline, not signed in,
+// or a slow/failed request all fall back to the old local-id behavior
+// rather than blocking the scorer from adding a player.
+async function resolveOrCreatePlayerId(name){
+  if(!currentOwnerUid()) return genPlayerId();
+  try{
+    const res = await fetch(withUid('/api/players/resolve'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+    const data = await res.json();
+    if(data && data.success && data.playerId) return data.playerId;
+  }catch(e){ /* offline/Mongo-not-configured — fall back below */ }
+  return genPlayerId();
+}
+async function addSquadPlayer(key){
   const inputId = key === 'A' ? 'squadA-new-name' : 'squadB-new-name';
   const input = document.getElementById(inputId);
   const name = input.value.trim();
   if(!name) return;
+  input.value = ''; // clear immediately so a fast typist isn't blocked on the network round-trip
+  const playerId = await resolveOrCreatePlayerId(name);
   const t = teamObj(key);
   t.players = t.players || [];
-  t.players.push({ id: genPlayerId(), name, isXI: true });
-  input.value = '';
+  // Guard against the same person being added twice while the resolve
+  // call above was in flight (e.g. double-click, or Enter + click both
+  // firing) — same playerId means same person, don't duplicate the row.
+  if(t.players.some(p => p.id === playerId)) { renderSquadUI(); return; }
+  t.players.push({ id: playerId, name, isXI: true });
   renderSquadUI();
   renderRosterControls();
   pushState(true);
@@ -2918,7 +2948,7 @@ document.getElementById('import-add-name').addEventListener('keydown', e => {
   if(e.key === 'Enter') document.getElementById('import-add-name-btn').click();
 });
 
-document.getElementById('import-modal-confirm').addEventListener('click', () => {
+document.getElementById('import-modal-confirm').addEventListener('click', async () => {
   const key = importTargetTeam;
   if(!key) return;
   const toAdd = [...importRows, ...importDupRows]
@@ -2927,7 +2957,25 @@ document.getElementById('import-modal-confirm').addEventListener('click', () => 
   if(!toAdd.length){ toast('No players selected to import'); return; }
   const t = teamObj(key);
   t.players = t.players || [];
-  toAdd.forEach(name => t.players.push({ id: genPlayerId(), name, isXI: true }));
+  // Same duplicate-protection as the single "+ Add" flow (see
+  // resolveOrCreatePlayerId above) — a printed team sheet imported into a
+  // second match of the same tournament should reuse each player's
+  // existing permanent ID, not fork a fresh one per import.
+  const btn = document.getElementById('import-modal-confirm');
+  btn.disabled = true;
+  const prevLabel = btn.textContent;
+  btn.textContent = 'Importing…';
+  try{
+    const playerIds = await Promise.all(toAdd.map(name => resolveOrCreatePlayerId(name)));
+    toAdd.forEach((name, i) => {
+      const playerId = playerIds[i];
+      if(t.players.some(p => p.id === playerId)) return; // already on the squad
+      t.players.push({ id: playerId, name, isXI: true });
+    });
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prevLabel;
+  }
   renderSquadUI();
   renderRosterControls();
   pushState(true);
@@ -3318,6 +3366,12 @@ function setMatchMode(mode){
 document.getElementById('mode-single-btn').addEventListener('click', () => setMatchMode('single'));
 document.getElementById('mode-tournament-btn').addEventListener('click', () => setMatchMode('tournament'));
 
+document.getElementById('tournament-select').addEventListener('mousedown', () => {
+  // Cheap safety net: re-check the server the moment the operator opens
+  // this dropdown, in case the OTHER laptop just created a tournament
+  // seconds ago and this device hasn't picked it up yet.
+  syncKnownTournamentsFromServer();
+});
 document.getElementById('tournament-select').addEventListener('change', (e) => {
   const val = e.target.value;
   const newWrap = document.getElementById('new-tournament-wrap');
@@ -3721,11 +3775,26 @@ function buildMatchSummaryPayload(){
 function escapeHtmlPanel(s){
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+// 🌟 SINGLE SOURCE OF TRUTH for "what counts as the same team name" —
+// used everywhere this file groups/matches matches by teamA.name/
+// teamB.name (Team History, NRR, overlay-team lookup, etc). Before this,
+// half a dozen functions each had their own inline `.trim().toLowerCase()`
+// copy, which is exactly how "Mumbai XI" and "Mumbai  XI" (double space)
+// could quietly end up treated as two different teams in one feature but
+// not another. Also mirrors the server's computePointsTable/
+// computeFormGuide team-key convention (see server.js / score-tournament.html)
+// so a team's identity is consistent everywhere it's computed.
+function teamKeyOf(name){
+  return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
 function leagueStorageKey(name){
   // Namespaced by owner too, so switching Google accounts in the same
   // browser (or opening a link meant for someone else) doesn't show this
   // browser's cached copy of a DIFFERENT customer's league as a fallback.
-  return 'cricket-league::' + currentOwnerUid() + '::' + (name || '').trim().toLowerCase();
+  // 🩹 Uses teamKeyOf (generic trim+lowercase+whitespace-collapse
+  // normalizer, despite the name) so a double-space tournament name still
+  // hits the SAME local cache key as its single-space equivalent.
+  return 'cricket-league::' + currentOwnerUid() + '::' + teamKeyOf(name);
 }
 // The logged-in user's Firebase uid — set in localStorage by index.html
 // right after Google sign-in (`scorvix_uid`), and optionally forwarded via
@@ -3763,15 +3832,15 @@ function addKnownTournament(name){
   const trimmed = (name || '').trim();
   if(!trimmed) return;
   const list = getKnownTournaments();
-  if(!list.some(n => n.toLowerCase() === trimmed.toLowerCase())){
+  if(!list.some(n => teamKeyOf(n) === teamKeyOf(trimmed))){
     list.push(trimmed);
     try{ localStorage.setItem(knownTournamentsStorageKey(), JSON.stringify(list)); }catch(e){}
   }
   populateTournamentDropdown();
 }
 function removeKnownTournament(name){
-  const trimmed = (name || '').trim().toLowerCase();
-  const list = getKnownTournaments().filter(n => n.toLowerCase() !== trimmed);
+  const trimmed = teamKeyOf(name);
+  const list = getKnownTournaments().filter(n => teamKeyOf(n) !== trimmed);
   try{ localStorage.setItem(knownTournamentsStorageKey(), JSON.stringify(list)); }catch(e){}
   populateTournamentDropdown();
 }
@@ -3786,6 +3855,36 @@ function populateTournamentDropdown(){
   if(current === '__new__' || names.some(n => n.toLowerCase() === current.toLowerCase())){
     sel.value = current;
   }
+}
+// 🌟 Pull every tournament this ACCOUNT has ever saved a match to
+// (GET /api/leagues — server/MongoDB-backed) and merge it into the local
+// known-tournaments list. Before this, the dropdown only ever showed
+// names typed on THIS browser, so a second laptop signed into the same
+// Gmail account had an empty dropdown even though the tournament already
+// existed on the server — the operator had to retype the exact name from
+// memory and hope it matched. Best-effort: offline/not-signed-in just
+// leaves the existing local list untouched.
+async function syncKnownTournamentsFromServer(){
+  if(!currentOwnerUid()) return;
+  try{
+    const res = await fetch(withUid('/api/leagues'));
+    const data = await res.json();
+    if(!data || !data.success || !Array.isArray(data.leagues)) return;
+    const list = getKnownTournaments();
+    let changed = false;
+    data.leagues.forEach(l => {
+      const name = (l.displayName || l.leagueKey || '').trim();
+      if(!name) return;
+      if(!list.some(n => n.toLowerCase() === name.toLowerCase())){
+        list.push(name);
+        changed = true;
+      }
+    });
+    if(changed){
+      try{ localStorage.setItem(knownTournamentsStorageKey(), JSON.stringify(list)); }catch(e){}
+      populateTournamentDropdown();
+    }
+  }catch(e){ /* offline/Mongo-not-configured — dropdown just keeps showing the local list */ }
 }
 
 const leagueCache = {}; // leagueKey -> matches[], refreshed from the server
@@ -4242,7 +4341,10 @@ function deleteEntireTournament(name){
   try{ localStorage.removeItem(leagueStorageKey(trimmed)); }catch(e){}
   removeKnownTournament(trimmed);
 
-  if(state.leagueName && state.leagueName.trim().toLowerCase() === trimmed.toLowerCase()){
+  // 🩹 Same whitespace-collapse fix as leagueKeyFor() on the server —
+  // otherwise deleting "DY Patil  Trophy" (double space) wouldn't clear
+  // the currently-loaded tournament name if it was typed as "DY Patil Trophy".
+  if(state.leagueName && teamKeyOf(state.leagueName) === teamKeyOf(trimmed)){
     state.leagueName = '';
     document.getElementById('league-name').value = '';
     document.getElementById('tournament-select').value = '';
@@ -4503,17 +4605,17 @@ function renderPlayerHistoryView(matches){
 // overlay payload (buildPlayerHistoryPayload), so both always show
 // exactly the same numbers.
 function getPlayerHistoryRows(name, matches){
-  const lower = (name || '').trim().toLowerCase();
+  const lower = playerKeyLocal(name);
   const rows = [];
   let lastTeamName = '';
   matches.forEach((m, i) => {
     let bat = null, bowl = null, side = null;
     ['A','B'].forEach(k => {
       ((m.battingCard && m.battingCard[k]) || []).forEach(b => {
-        if((b.name || '').trim().toLowerCase() === lower){ bat = b; side = k; }
+        if(playerKeyLocal(b.name) === lower){ bat = b; side = k; }
       });
       ((m.bowlingCard && m.bowlingCard[k]) || []).forEach(b => {
-        if((b.name || '').trim().toLowerCase() === lower){ bowl = b; side = k; }
+        if(playerKeyLocal(b.name) === lower){ bowl = b; side = k; }
       });
     });
     if(!bat && !bowl) return;
@@ -4537,19 +4639,19 @@ function getPlayerHistoryRows(name, matches){
 // exactly like every other "This Match" scope stat card — not just
 // whatever has already been archived to state.battingCard/bowlingCard.
 function getThisMatchPlayerStats(name){
-  const lower = (name || '').trim().toLowerCase();
+  const lower = playerKeyLocal(name);
   if(!lower) return null;
   const m = buildMatchRecordForLeague();
   let runs = 0, balls = 0, fours = 0, sixes = 0, out = false, batInnings = 0;
   let bOvers = 0, bBalls = 0, bMaidens = 0, bRuns = 0, bWickets = 0, bowlInnings = 0;
   ['A','B'].forEach(k => {
     (m.battingCard[k] || []).forEach(b => {
-      if((b.name || '').trim().toLowerCase() !== lower) return;
+      if(playerKeyLocal(b.name) !== lower) return;
       batInnings++; runs += b.runs || 0; balls += b.balls || 0;
       fours += b.fours || 0; sixes += b.sixes || 0; if(b.out) out = true;
     });
     (m.bowlingCard[k] || []).forEach(b => {
-      if((b.name || '').trim().toLowerCase() !== lower) return;
+      if(playerKeyLocal(b.name) !== lower) return;
       bowlInnings++; bOvers += b.overs || 0; bBalls += b.balls || 0;
       bMaidens += b.maidens || 0; bRuns += b.runs || 0; bWickets += b.wickets || 0;
     });
@@ -4582,10 +4684,10 @@ const BOWLING_FIELD_DEFS = [['matches','M'],['overs','Ov'],['wickets','Wkts'],['
 // be branded consistently with the rest of the broadcast. Falls back to
 // the default gold accent when the team isn't one of the two loaded now.
 function findLoadedTeamByName(teamName){
-  const lower = (teamName || '').trim().toLowerCase();
+  const lower = teamKeyOf(teamName);
   if(!lower) return null;
-  if((state.teamA.name || '').trim().toLowerCase() === lower) return state.teamA;
-  if((state.teamB.name || '').trim().toLowerCase() === lower) return state.teamB;
+  if(teamKeyOf(state.teamA.name) === lower) return state.teamA;
+  if(teamKeyOf(state.teamB.name) === lower) return state.teamB;
   return null;
 }
 
@@ -4595,10 +4697,16 @@ function findLoadedTeamByName(teamName){
 // every tournament this owner has ever saved, which lives server-side
 // across many league docs, so it has to come from the backend's
 // /api/stats/player endpoint (scope=career) rather than being computed
-// locally. Same global playerKey convention as everywhere else
-// (name.trim().toLowerCase()) — one identity across every tournament.
+// locally. Same global playerKey convention as everywhere else — see
+// server.js's playerKey() — one identity across every tournament.
 const careerStatsCache = {}; // playerKey -> { battingLine, bowlingLine } | null (null = fetched, nothing found)
-function playerKeyLocal(name){ return (name || '').trim().toLowerCase() || null; }
+// 🩹 FIX: was `(name||'').trim().toLowerCase()` with no whitespace
+// collapse — the same class of bug as playerKey()/teamKeyOf() elsewhere
+// in this file, and a HALF-DOZEN other spots below had their own copy of
+// this exact same inline logic (Player History lookups). Consolidated to
+// this one function (mirroring server.js's playerKey()) and every caller
+// below now goes through it, so this can't drift out of sync again.
+function playerKeyLocal(name){ return (name || '').trim().toLowerCase().replace(/\s+/g, ' ') || null; }
 
 async function fetchPlayerCareerStats(name){
   const pk = playerKeyLocal(name);
@@ -4633,9 +4741,13 @@ const tournamentHistoryCache = {};
 // (which just lists every league it has data for) has no way to know
 // which one that is, so it's excluded here by name instead.
 function excludeCurrentTournament(rows){
-  const current = (state.leagueName || '').trim().toLowerCase();
+  // 🩹 Same whitespace-collapse convention as everywhere else (see
+  // teamKeyOf) — reused here for tournament names too, so a double-space
+  // tournament name doesn't accidentally show up twice (once under "This
+  // Tournament", again under "Every Other Tournament Played").
+  const current = teamKeyOf(state.leagueName);
   if(!current) return rows;
-  return rows.filter(t => (t.leagueName || '').trim().toLowerCase() !== current);
+  return rows.filter(t => teamKeyOf(t.leagueName) !== current);
 }
 async function fetchPlayerTournamentHistoryPanel(name){
   const pk = playerKeyLocal(name);
@@ -4840,7 +4952,7 @@ function renderTeamHistoryView(matches){
     <div id="team-history-results" class="shortcut-hint">${names.length ? 'Pick a team to see its tournament history.' : 'No team data saved in this tournament yet.'}</div>
   `;
   const sel = document.getElementById('team-history-select');
-  if(state.teamHistorySearch && names.some(n => n.toLowerCase() === state.teamHistorySearch.toLowerCase())){
+  if(state.teamHistorySearch && names.some(n => teamKeyOf(n) === teamKeyOf(state.teamHistorySearch))){
     sel.value = state.teamHistorySearch;
     renderTeamHistoryResults(sel.value, matches);
   }
@@ -4852,11 +4964,11 @@ function renderTeamHistoryView(matches){
 // Builds one team's match-by-match rows — shared by the panel's table and
 // the overlay payload.
 function getTeamHistoryRows(name, matches){
-  const lower = (name || '').trim().toLowerCase();
+  const lower = teamKeyOf(name);
   const rows = [];
   matches.forEach((m, i) => {
-    const aName = ((m.teamA && m.teamA.name) || '').trim().toLowerCase();
-    const bName = ((m.teamB && m.teamB.name) || '').trim().toLowerCase();
+    const aName = teamKeyOf(m.teamA && m.teamA.name);
+    const bName = teamKeyOf(m.teamB && m.teamB.name);
     let side = null;
     if(aName === lower) side = 'A'; else if(bName === lower) side = 'B';
     if(!side) return;
@@ -4897,7 +5009,7 @@ function renderTeamHistoryResults(teamName, matches){
       <td>${escapeHtmlPanel(r.own)}</td><td>${escapeHtmlPanel(r.opp)}</td><td>${escapeHtmlPanel(r.result)}</td>
     </tr>`).join('');
 
-  const isShownOnOverlay = state.showTeamHistoryCard && (state.teamHistoryOverlayName || '').toLowerCase() === name.toLowerCase();
+  const isShownOnOverlay = state.showTeamHistoryCard && teamKeyOf(state.teamHistoryOverlayName) === teamKeyOf(name);
 
   resultsEl.innerHTML = `
     <div style="font-weight:700;margin-bottom:6px;">${escapeHtmlPanel(name)} — tournament history</div>
@@ -5018,14 +5130,14 @@ function buildPointsTablePayload(){
    set, or the name matches no saved match), so callers can fall back to
    the manual fields. ---- */
 function computeTeamTournamentStats(teamName){
-  const name = (teamName || '').trim().toLowerCase();
+  const name = teamKeyOf(teamName);
   if(!name) return null;
   const matches = currentLeagueMatches();
   if(!matches.length) return null;
   let played = 0, won = 0, lost = 0, tied = 0, totalRuns = 0, highest = 0, scoredInnings = 0;
   matches.forEach(m => {
-    const aName = ((m.teamA && m.teamA.name) || '').trim().toLowerCase();
-    const bName = ((m.teamB && m.teamB.name) || '').trim().toLowerCase();
+    const aName = teamKeyOf(m.teamA && m.teamA.name);
+    const bName = teamKeyOf(m.teamB && m.teamB.name);
     let side = null;
     if(aName === name) side = 'A'; else if(bName === name) side = 'B';
     if(!side) return;
@@ -5048,7 +5160,7 @@ function computeTeamTournamentStats(teamName){
   };
 }
 function computeBatterTournamentStats(playerName){
-  const name = (playerName || '').trim().toLowerCase();
+  const name = playerKeyLocal(playerName);
   if(!name) return null;
   const matches = currentLeagueMatchesLive();
   if(!matches.length) return null;
@@ -5057,7 +5169,7 @@ function computeBatterTournamentStats(playerName){
   matches.forEach(m => {
     ['A','B'].forEach(k => {
       ((m.battingCard && m.battingCard[k]) || []).forEach(b => {
-        if((b.name || '').trim().toLowerCase() !== name) return;
+        if(playerKeyLocal(b.name) !== name) return;
         innings++;
         runs += (b.runs || 0); balls += (b.balls || 0);
         fours += (b.fours || 0); sixes += (b.sixes || 0);
@@ -5079,7 +5191,7 @@ function computeBatterTournamentStats(playerName){
   };
 }
 function computeBowlerTournamentStats(playerName){
-  const name = (playerName || '').trim().toLowerCase();
+  const name = playerKeyLocal(playerName);
   if(!name) return null;
   const matches = currentLeagueMatchesLive();
   if(!matches.length) return null;
@@ -5087,7 +5199,7 @@ function computeBowlerTournamentStats(playerName){
   matches.forEach(m => {
     ['A','B'].forEach(k => {
       ((m.bowlingCard && m.bowlingCard[k]) || []).forEach(b => {
-        if((b.name || '').trim().toLowerCase() !== name) return;
+        if(playerKeyLocal(b.name) !== name) return;
         apps++;
         totalBalls += (b.overs || 0) * 6 + (b.balls || 0);
         runs += (b.runs || 0); wickets += (b.wickets || 0); maidens += (b.maidens || 0);
@@ -7599,11 +7711,11 @@ function tournamentTeamNames(matches){
   return [...names];
 }
 function computeTeamNRR(teamName, matches){
-  const target = teamName.trim().toLowerCase();
+  const target = teamKeyOf(teamName);
   let runsFor = 0, ballsFor = 0, runsAgainst = 0, ballsAgainst = 0, played = 0;
   matches.forEach(m => {
-    const aName = ((m.teamA && m.teamA.name) || '').trim().toLowerCase();
-    const bName = ((m.teamB && m.teamB.name) || '').trim().toLowerCase();
+    const aName = teamKeyOf(m.teamA && m.teamA.name);
+    const bName = teamKeyOf(m.teamB && m.teamB.name);
     let side = null;
     if(aName === target) side = 'A'; else if(bName === target) side = 'B';
     if(!side) return;
@@ -7643,7 +7755,7 @@ function aggregateTournamentBatting(matches){
       const teamLabel = (teamObj && (teamObj.short || teamObj.name)) || '';
       ((m.battingCard && m.battingCard[k]) || []).forEach(b => {
         if(!b.name) return;
-        const key = b.name.trim().toLowerCase();
+        const key = playerKeyLocal(b.name);
         if(!map[key]) map[key] = { name: b.name, team: teamLabel, innings: 0, runs: 0, balls: 0, outs: 0, fours: 0, sixes: 0, fifties: 0, hundreds: 0, highScore: 0, highScoreNotOut: false };
         const e = map[key];
         e.team = teamLabel;
@@ -7671,7 +7783,7 @@ function aggregateTournamentBowling(matches){
       const teamLabel = (teamObj && (teamObj.short || teamObj.name)) || '';
       ((m.bowlingCard && m.bowlingCard[k]) || []).forEach(b => {
         if(!b.name) return;
-        const key = b.name.trim().toLowerCase();
+        const key = playerKeyLocal(b.name);
         if(!map[key]) map[key] = { name: b.name, team: teamLabel, matches: 0, balls: 0, runs: 0, wickets: 0, maidens: 0, bestW: -1, bestR: Infinity, fourW: 0, fiveW: 0 };
         const e = map[key];
         e.team = teamLabel; e.matches++;
@@ -8080,6 +8192,7 @@ document.addEventListener('keydown', (e) => {
   // first laptop already saved under the same league name.
   syncLeagueFromServer(state.leagueName);
   syncSingleMatchesFromServer();
+  syncKnownTournamentsFromServer(); // 🌟 populate the Tournament dropdown from the server, not just this browser
   refreshSingleHistoryUI();
 
   const urlMatchId = new URLSearchParams(location.search).get('room');
