@@ -614,6 +614,36 @@
             border-bottom-color: var(--border-color);
             box-shadow: 0 10px 30px rgba(var(--shadow-rgb), 0.18);
         }
+
+        /* ===== Top social strip — sits above the nav, the very first thing
+           on the page. Scrolls away with the page (nav is the sticky one)
+           so it never competes for space once someone starts reading. ===== */
+        .top-social-bar {
+            background: linear-gradient(90deg, rgba(var(--accent-rgb), 0.14), rgba(242, 166, 72, 0.1), rgba(53, 179, 193, 0.14));
+            border-bottom: 1px solid var(--border-color-soft);
+        }
+        .tsb-inner {
+            max-width: 1400px; margin: 0 auto; padding: 8px 24px;
+            display: flex; align-items: center; justify-content: space-between; gap: 14px;
+        }
+        @media (max-width: 560px) { .tsb-inner { padding: 7px 16px; } }
+        .tsb-tagline {
+            display: flex; align-items: center; gap: 8px;
+            font-size: 0.78rem; font-weight: 600; color: var(--text-main);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        @media (max-width: 400px) { .tsb-tagline { font-size: 0.7rem; } }
+        .tsb-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; animation: livePulse 1.4s ease-in-out infinite; }
+        .tsb-links { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+        .tsb-link {
+            width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+            display: inline-flex; align-items: center; justify-content: center;
+            color: var(--text-main); background: var(--surface-1); border: 1px solid var(--border-color-soft);
+            transition: background 0.25s var(--ease), color 0.25s var(--ease), transform 0.25s var(--ease-spring), border-color 0.25s var(--ease);
+        }
+        .tsb-link svg { width: 15px; height: 15px; }
+        .tsb-link.tsb-youtube:hover { background: rgba(255, 0, 0, 0.16); border-color: rgba(255, 0, 0, 0.4); color: #ff0000; transform: translateY(-2px) scale(1.08); }
+        .tsb-link.tsb-instagram:hover { background: rgba(225, 48, 108, 0.16); border-color: rgba(225, 48, 108, 0.4); color: #e1306c; transform: translateY(-2px) scale(1.08); }
         .logo { font-size: 1.8rem; font-weight: 800; color: var(--text-main); letter-spacing: -1px; flex-shrink: 0; }
         .logo span { color: var(--accent); }
         .logo img { transition: transform 0.3s var(--ease-spring); }
@@ -1049,11 +1079,26 @@
            Visible to every visitor, no sign-in required. Cards list live
            and completed tournaments; clicking one opens the matches list,
            and clicking a match opens its scorecard (player stats + clips). */
-        .tournaments-section { padding: 90px 20px 40px 20px; max-width: 1100px; margin: 0 auto; }
-        .tournaments-section h2 { font-size: clamp(1.9rem, 5vw, 3rem); font-weight: 800; letter-spacing: -1px; text-align: center; margin-bottom: 12px; }
-        .tournaments-section > p.section-sub { color: var(--text-muted); font-size: 1.05rem; text-align: center; margin-bottom: 45px; }
+        .tournaments-section { padding: 100px 20px 56px 20px; max-width: 1200px; margin: 0 auto; }
+        .tournaments-heading-row { display: flex; flex-direction: column; align-items: center; gap: 14px; margin-bottom: 12px; }
+        .tournaments-section h2 { font-size: clamp(1.9rem, 5vw, 3rem); font-weight: 800; letter-spacing: -1px; text-align: center; margin-bottom: 0; }
+        .tournaments-section > p.section-sub,
+        .tournaments-heading-row + p.section-sub { color: var(--text-muted); font-size: 1.05rem; text-align: center; margin-bottom: 40px; }
+        /* Real-time pill — only shown when at least one tournament is
+           actually live (see updateTournamentsLiveCount()), never a
+           hardcoded/decorative number. */
+        .tournaments-live-count {
+            display: inline-flex; align-items: center; gap: 8px;
+            padding: 7px 16px 7px 13px; border-radius: 50px;
+            background: rgba(var(--accent-rgb), 0.12);
+            border: 1px solid rgba(var(--accent-rgb), 0.32);
+            color: var(--accent); font-size: 0.82rem; font-weight: 700;
+            letter-spacing: 0.2px;
+        }
+        .tournaments-live-count[hidden] { display: none; }
+        .tournaments-live-count .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex-shrink: 0; animation: livePulse 1.4s ease-in-out infinite; }
 
-        .tournament-filters { position: relative; display: flex; gap: 10px; justify-content: center; margin-bottom: 35px; flex-wrap: wrap; }
+        .tournament-filters { position: relative; display: flex; gap: 10px; justify-content: center; margin-bottom: 40px; flex-wrap: wrap; }
         .tournament-filter-btn {
             position: relative;
             z-index: 1;
@@ -1077,13 +1122,17 @@
 
         .tournaments-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-            gap: 22px;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 26px;
+        }
+        @media (max-width: 560px) {
+            .tournaments-grid { grid-template-columns: 1fr; gap: 18px; }
         }
         .tournament-card {
+            position: relative;
             background: var(--bg-card);
             border: 1px solid var(--border-color);
-            border-radius: 16px;
+            border-radius: 18px;
             overflow: hidden;
             cursor: pointer;
             backdrop-filter: blur(12px);
@@ -1094,15 +1143,30 @@
         }
         .tournament-card:hover { transform: translateY(-6px); border-color: var(--accent); box-shadow: 0 15px 35px rgba(var(--shadow-rgb), 0.4); }
         .tournament-card:active { transform: translateY(-2px) scale(0.99); }
+        /* Thin status-coded strip along the top edge of every card — a
+           color-coded status is quicker to scan than reading the badge
+           text on a grid of a dozen cards. */
+        .tournament-card-accent { position: absolute; top: 0; left: 0; right: 0; height: 4px; background: var(--border-color-strong); }
+        .tournament-card.status-live .tournament-card-accent { background: linear-gradient(90deg, var(--accent), var(--brand-orange)); }
+        .tournament-card.status-ongoing .tournament-card-accent { background: linear-gradient(90deg, var(--brand-teal), var(--brand-slate)); }
+        .tournament-card.status-completed .tournament-card-accent { background: var(--border-color-strong); }
+        .tournament-card.status-upcoming .tournament-card-accent { background: linear-gradient(90deg, var(--brand-orange), var(--accent-hover)); }
+        .tournament-card.status-live { border-color: rgba(var(--accent-rgb), 0.35); }
         .tournament-card-top {
-            padding: 20px 20px 16px 20px;
+            padding: 22px 20px 16px 20px;
             display: flex;
             align-items: flex-start;
             justify-content: space-between;
             gap: 10px;
             border-bottom: 1px solid var(--border-color-soft);
         }
-        .tournament-sport-icon { font-size: 1.8rem; line-height: 1; }
+        .tournament-sport-icon {
+            font-size: 1.5rem; line-height: 1; flex-shrink: 0;
+            width: 44px; height: 44px; border-radius: 13px;
+            display: inline-flex; align-items: center; justify-content: center;
+            background: rgba(var(--accent-rgb), 0.12);
+            border: 1px solid rgba(var(--accent-rgb), 0.2);
+        }
         .tournament-status-badge {
             font-size: 0.68rem;
             font-weight: 800;
@@ -1118,15 +1182,36 @@
         .tournament-status-badge.live { background: rgba(var(--accent-rgb), 0.14); color: var(--accent); }
         .tournament-status-badge.live .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: livePulse 1.4s ease-in-out infinite; }
         .tournament-status-badge.completed { background: rgba(148, 163, 184, 0.15); color: #94a3b8; }
-        .tournament-card-body { padding: 16px 20px 20px 20px; }
-        .tournament-card-body h3 { font-size: 1.15rem; font-weight: 700; margin-bottom: 8px; }
-        .tournament-meta { font-size: 0.85rem; color: var(--text-muted); display: flex; flex-direction: column; gap: 4px; margin-bottom: 16px; }
-        .tournament-meta span { display: flex; align-items: center; gap: 7px; }
-        .tournament-card-cta {
-            display: inline-flex; align-items: center; gap: 6px;
-            color: var(--accent); font-weight: 700; font-size: 0.9rem; text-decoration: none;
+        .tournament-status-badge.ongoing { background: rgba(53, 179, 193, 0.16); color: var(--brand-teal); }
+        .tournament-status-badge.upcoming { background: rgba(242, 166, 72, 0.16); color: var(--brand-orange); }
+        .tournament-card-body { padding: 18px 20px 20px 20px; }
+        .tournament-card-body h3 {
+            font-size: 1.18rem; font-weight: 700; margin-bottom: 12px; line-height: 1.3;
+            display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
         }
-        .tournaments-empty { text-align: center; color: var(--text-muted); padding: 40px 0; }
+        .tournament-meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+        .tournament-meta-chip {
+            display: inline-flex; align-items: center; gap: 6px;
+            font-size: 0.78rem; font-weight: 600; color: var(--text-muted);
+            background: var(--surface-1); border: 1px solid var(--border-color-soft);
+            padding: 5px 11px; border-radius: 8px;
+        }
+        .tournament-meta-chip.host { color: var(--text-main); }
+        .tournament-meta-chip.private { color: var(--brand-orange); background: rgba(242, 166, 72, 0.1); border-color: rgba(242, 166, 72, 0.25); }
+        .tournament-meta-chip.public { color: var(--success); background: rgba(34, 197, 94, 0.1); border-color: rgba(34, 197, 94, 0.25); }
+        .tournament-card-cta {
+            display: flex; align-items: center; justify-content: space-between; gap: 6px;
+            color: var(--accent); font-weight: 700; font-size: 0.9rem; text-decoration: none;
+            padding-top: 14px; border-top: 1px solid var(--border-color-soft);
+        }
+        .tournament-card-cta .arrow { transition: transform 0.3s var(--ease-spring); }
+        .tournament-card:hover .tournament-card-cta .arrow { transform: translateX(4px); }
+        .tournaments-empty {
+            text-align: center; color: var(--text-muted); padding: 60px 20px;
+            border: 1px dashed var(--border-color); border-radius: 18px;
+        }
+        .tournaments-empty .te-icon { font-size: 2.2rem; margin-bottom: 12px; opacity: 0.8; }
+        .tournaments-empty p { max-width: 320px; margin: 0 auto; line-height: 1.6; }
 
         .grain-overlay {
             position: fixed;
@@ -1796,8 +1881,9 @@
 
         .site-footer {
             position: relative;
-            padding: 60px 20px 24px;
+            padding: 64px 20px 26px;
             border-top: 1px solid var(--border-color-soft);
+            background: linear-gradient(180deg, transparent, rgba(var(--shadow-rgb), 0.14));
             color: var(--text-muted);
             font-size: 0.9rem;
         }
@@ -1816,19 +1902,31 @@
         @media (max-width: 460px) {
             .footer-inner { grid-template-columns: 1fr; text-align: center; }
         }
-        .footer-brand h4 { color: var(--text-main); font-family: 'Space Grotesk', 'Inter', sans-serif; font-size: 1.15rem; font-weight: 700; margin-bottom: 8px; }
+        .footer-brand h4 { color: var(--text-main); font-family: 'Space Grotesk', 'Inter', sans-serif; font-size: 1.2rem; font-weight: 700; margin-bottom: 10px; }
         .footer-brand p { max-width: 260px; line-height: 1.6; }
         @media (max-width: 460px) { .footer-brand p { max-width: none; margin: 0 auto; } }
         .footer-col h5 { color: var(--text-main); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; margin-bottom: 14px; }
         .footer-col ul { list-style: none; display: flex; flex-direction: column; gap: 11px; }
         .footer-col a { color: var(--text-muted); text-decoration: none; transition: color 0.2s var(--ease); }
         .footer-col a:hover { color: var(--accent); }
-        .footer-contact-link, .footer-social-link {
+        .footer-contact-link {
             display: flex; align-items: center; gap: 9px;
         }
-        @media (max-width: 460px) { .footer-contact-link, .footer-social-link { justify-content: center; } }
-        .footer-social-link svg { width: 17px; height: 17px; flex-shrink: 0; }
-        .footer-contact-link span, .footer-social-link span { display: flex; flex-direction: column; line-height: 1.35; }
+        @media (max-width: 460px) { .footer-contact-link { justify-content: center; } }
+        .footer-contact-link span { display: flex; flex-direction: column; line-height: 1.35; }
+        /* Social links: circular brand-tinted buttons in a row rather than
+           a stacked text list — reads as "follow us" at a glance on both a
+           narrow phone and a wide laptop, instead of two plain link lines. */
+        .footer-social-row { list-style: none; display: flex; flex-wrap: wrap; gap: 10px; }
+        @media (max-width: 460px) { .footer-social-row { justify-content: center; } }
+        .footer-social-link {
+            display: inline-flex; align-items: center; gap: 8px;
+            padding: 9px 16px 9px 11px; border-radius: 50px;
+            background: var(--surface-1); border: 1px solid var(--border-color-soft);
+            color: var(--text-main); font-weight: 600; font-size: 0.85rem;
+            transition: background 0.25s var(--ease), color 0.25s var(--ease), border-color 0.25s var(--ease), transform 0.25s var(--ease-spring);
+        }
+        .footer-social-link svg { width: 18px; height: 18px; flex-shrink: 0; }
         .footer-contact-link small { font-size: 0.76rem; opacity: 0.75; }
         .footer-contact-link {
             cursor: pointer; user-select: none; -webkit-user-select: none;
@@ -1866,10 +1964,10 @@
         .footer-contact-link .copy-text {
             display: inline-flex; flex-direction: column; line-height: 1.35;
         }
-        .footer-social-link.youtube:hover { color: #ff0000; }
-        .footer-social-link.instagram:hover { color: #e1306c; }
+        .footer-social-link.youtube:hover { background: rgba(255, 0, 0, 0.12); border-color: rgba(255, 0, 0, 0.35); color: #ff0000; transform: translateY(-2px); }
+        .footer-social-link.instagram:hover { background: rgba(225, 48, 108, 0.12); border-color: rgba(225, 48, 108, 0.35); color: #e1306c; transform: translateY(-2px); }
         .footer-bottom {
-            max-width: 1100px; margin: 40px auto 0; padding-top: 20px;
+            max-width: 1100px; margin: 44px auto 0; padding-top: 22px;
             border-top: 1px solid var(--border-color-soft);
             text-align: center; font-size: 0.82rem;
         }
@@ -1968,6 +2066,20 @@
     <div class="grain-overlay"></div>
 
     <div class="cursor-glow"></div>
+
+    <div class="top-social-bar" aria-label="Follow All Sports Live">
+        <div class="tsb-inner">
+            <span class="tsb-tagline"><span class="tsb-dot"></span>Catch every 4, 6 &amp; wicket — live</span>
+            <div class="tsb-links">
+                <a class="tsb-link tsb-youtube" href="https://youtube.com/@allsportslive?si=o989d2q2QM0crt7w" target="_blank" rel="noopener noreferrer" aria-label="Subscribe on YouTube">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.4.6A3 3 0 0 0 .5 6.2 31.6 31.6 0 0 0 0 12a31.6 31.6 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.6 9.4.6 9.4.6s7.5 0 9.4-.6a3 3 0 0 0 2.1-2.1A31.6 31.6 0 0 0 24 12a31.6 31.6 0 0 0-.5-5.8zM9.6 15.5v-7L15.8 12z"/></svg>
+                </a>
+                <a class="tsb-link tsb-instagram" href="https://www.instagram.com/all.sports.live" target="_blank" rel="noopener noreferrer" aria-label="Follow on Instagram">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg>
+                </a>
+            </div>
+        </div>
+    </div>
 
     <nav class="animate-in">
         <div class="logo" style="display:flex;align-items:center;gap:10px;">
@@ -2183,7 +2295,12 @@
     </section>
 
     <section id="tournaments" class="tournaments-section">
-        <h2 class="reveal-on-scroll">Tournaments</h2>
+        <div class="tournaments-heading-row">
+            <h2 class="reveal-on-scroll">Tournaments</h2>
+            <span class="tournaments-live-count reveal-on-scroll" id="tournamentsLiveCount" hidden>
+                <span class="dot"></span><span id="tournamentsLiveCountText">0 live right now</span>
+            </span>
+        </div>
         <p class="section-sub reveal-on-scroll delay-1">Live scores, completed tournaments, scorecards, player stats and clips</p>
 
         <div class="tournament-filters reveal-on-scroll delay-1" id="tournamentFilters">
@@ -2194,7 +2311,10 @@
         </div>
 
         <div class="tournaments-grid reveal-on-scroll delay-2" id="tournaments-grid"></div>
-        <p class="tournaments-empty" id="tournaments-empty" style="display:none;">No tournaments to show yet.</p>
+        <div class="tournaments-empty" id="tournaments-empty" style="display:none;">
+            <div class="te-icon">🏏</div>
+            <p>No tournaments to show yet — check back once one goes live.</p>
+        </div>
     </section>
 
     <section id="sports" class="sports-section">
@@ -2283,11 +2403,11 @@
 
             <div class="footer-col">
                 <h5>Follow Us</h5>
-                <ul>
+                <ul class="footer-social-row">
                     <li>
                         <a class="footer-social-link youtube" href="https://youtube.com/@allsportslive?si=o989d2q2QM0crt7w" target="_blank" rel="noopener noreferrer">
                             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.4.6A3 3 0 0 0 .5 6.2 31.6 31.6 0 0 0 0 12a31.6 31.6 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.6 9.4.6 9.4.6s7.5 0 9.4-.6a3 3 0 0 0 2.1-2.1A31.6 31.6 0 0 0 24 12a31.6 31.6 0 0 0-.5-5.8zM9.6 15.5v-7L15.8 12z"/></svg>
-                            <span>All Sports Live</span>
+                            <span>YouTube</span>
                         </a>
                     </li>
                     <li>
@@ -2974,10 +3094,29 @@
                 <div class="live-ticker__set">${itemsHtml}</div>`;
         }
 
+        // Small "N live right now" pill next to the section heading — built
+        // from the same allTournaments list the cards render from, so it's
+        // always a real count, never a hardcoded/decorative number, and it
+        // stays in sync whether the filter chips are showing "All" or not.
+        function updateTournamentsLiveCount() {
+            const pill = document.getElementById('tournamentsLiveCount');
+            const text = document.getElementById('tournamentsLiveCountText');
+            if (!pill || !text) return;
+            const liveCount = allTournaments.filter(t => t.sport === 'cricket' && t.status === 'live').length;
+            if (liveCount > 0) {
+                text.textContent = `${liveCount} tournament${liveCount === 1 ? '' : 's'} live right now`;
+                pill.hidden = false;
+            } else {
+                pill.hidden = true;
+            }
+        }
+
         function renderTournaments() {
             const grid = document.getElementById('tournaments-grid');
             const empty = document.getElementById('tournaments-empty');
             if (!grid) return;
+
+            updateTournamentsLiveCount();
 
             // Only Cricket tournaments are ever shown here — the backend
             // (/api/public/tournaments) already filters to sport === 'cricket',
@@ -3001,8 +3140,9 @@
                 // visitors go straight through; signed-out visitors get the
                 // sign-in gate first and land here right after.
                 const tournamentUrl = `/score/tournament/${t.token}`;
+                const statusKey = ['live', 'ongoing', 'completed'].includes(t.status) ? t.status : 'upcoming';
                 const card = document.createElement('a');
-                card.className = 'tournament-card';
+                card.className = `tournament-card status-${statusKey}`;
                 card.href = tournamentUrl;
                 card.addEventListener('click', (e) => {
                     if (!isUserLoggedIn) {
@@ -3023,35 +3163,39 @@
                 }, true);
 
                 let statusHtml;
-                if (t.status === 'live') {
+                if (statusKey === 'live') {
                     statusHtml = '<span class="tournament-status-badge live"><span class="dot"></span>Live</span>';
-                } else if (t.status === 'completed') {
+                } else if (statusKey === 'completed') {
                     statusHtml = '<span class="tournament-status-badge completed">Completed</span>';
-                } else if (t.status === 'ongoing') {
+                } else if (statusKey === 'ongoing') {
                     // Matches have been played, but the operator hasn't
-                    // marked the tournament finished yet — this used to be
-                    // mislabelled "Completed" just because matchCount > 0.
-                    statusHtml = '<span class="tournament-status-badge completed">Ongoing</span>';
+                    // marked the tournament finished yet.
+                    statusHtml = '<span class="tournament-status-badge ongoing">Ongoing</span>';
                 } else {
-                    statusHtml = '<span class="tournament-status-badge completed">Upcoming</span>';
+                    statusHtml = '<span class="tournament-status-badge upcoming">Upcoming</span>';
                 }
 
+                const hostChip = t.createdBy ? `<span class="tournament-meta-chip host">👤 ${t.createdBy}</span>` : '';
+                const visibilityChip = t.createdBy
+                    ? (t.isPrivate
+                        ? `<span class="tournament-meta-chip private">🔒 Private</span>`
+                        : `<span class="tournament-meta-chip public">🌐 Public</span>`)
+                    : '';
+
                 card.innerHTML = `
+                    <div class="tournament-card-accent"></div>
                     <div class="tournament-card-top">
                         <div class="tournament-sport-icon">🏏</div>
                         ${statusHtml}
                     </div>
                     <div class="tournament-card-body">
                         <h3>${t.name}</h3>
-                        <div class="tournament-meta">
-                            <span>🏟️ ${t.matchCount} match${t.matchCount === 1 ? '' : 'es'}</span>
+                        <div class="tournament-meta-row">
+                            <span class="tournament-meta-chip">🏟️ ${t.matchCount} match${t.matchCount === 1 ? '' : 'es'}</span>
+                            ${hostChip}
+                            ${visibilityChip}
                         </div>
-                        ${t.createdBy ? `
-                        <div class="tournament-meta" style="margin-top:4px;font-size:.78rem;color:var(--text-muted);">
-                            <span>👤 ${t.createdBy}</span>
-                            <span style="margin-left:8px;padding:2px 8px;border-radius:20px;font-weight:600;${t.isPrivate ? 'background:rgba(245,158,11,0.15);color:#f59e0b;' : 'background:rgba(34,197,94,0.15);color:#22c55e;'}">${t.isPrivate ? 'Private' : 'Public'}</span>
-                        </div>` : ''}
-                        <span class="tournament-card-cta">View matches & scorecards →</span>
+                        <span class="tournament-card-cta">View matches &amp; scorecards <span class="arrow">→</span></span>
                     </div>
                 `;
                 grid.appendChild(card);
