@@ -1450,16 +1450,19 @@
                rule: nothing here changes layout or hides content, it just
                stops it moving. */
             .hero-live-badge .dot,
-            .device-uplink-kicker .dot,
             .tournament-status-badge.live .dot,
             .tournament-status-badge.live,
             .tournament-card.status-live .tournament-card-accent,
-            .tournament-card.status-live .tournament-sport-icon::after {
+            .tournament-card.status-live .tournament-sport-icon::after,
+            .hi-particle,
+            #hiBg, #hiCard, .hi-team, .hi-diamond, .hi-team-name,
+            .hi-round, .hi-logo-frame::after, .hi-venue-bar span {
                 animation: none !important;
                 opacity: 1 !important;
                 transform: none !important;
                 filter: none !important;
             }
+            .hi-divider { animation: none !important; height: 58px !important; }
         }
 
         /* ===== Segmented Pill Nav ===== */
@@ -1636,169 +1639,139 @@
             .bento-card.large { grid-column: span 1; }
         }
 
-        /* ===== Hero: Device Uplink — one real match-clip broadcast preview,
-           switchable between Laptop / Mobile / Tablet mockups via arrow
-           controls. Only the active device is shown; frames are swapped
-           with a GPU-only transform+opacity crossfade (no layout thrash,
-           no filter/blur animation) so switching stays smooth on every
-           device. Pure hardware mockups only — no site chrome baked in. ===== */
-        .device-uplink { margin: 56px auto 0; max-width: 980px; }
-        .device-uplink-kicker {
-            display: flex; align-items: center; gap: 8px; justify-content: center;
-            font-size: 0.7rem; font-weight: 800; letter-spacing: 2px; color: var(--accent);
-            text-transform: uppercase; margin-bottom: 10px;
+        /* ===== Hero: looping Match Intro demo (mirrors tt-matchintro.html) ===== */
+        .hero-preview { margin: 56px auto 0; max-width: 820px; text-align: left; }
+        .hero-live-badge {
+            display: flex; align-items: center; gap: 6px;
+            font-size: 0.7rem; font-weight: 800; letter-spacing: 1px; color: var(--accent);
+            margin-left: auto; white-space: nowrap;
         }
-        .device-uplink-kicker .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: livePulse 1.4s ease-in-out infinite; }
+        .hero-live-badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: livePulse 1.4s ease-in-out infinite; }
         @keyframes livePulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
-        .device-uplink-rig {
-            position: relative; display: flex; align-items: center; justify-content: center;
-            gap: 16px; padding: 30px 10px 10px;
+        .hero-demo { position: relative; display: flex; align-items: center; justify-content: center; padding: 0; overflow: hidden; min-height: 320px; }
+
+        .hi-stage {
+            --hi-pink: #ec4a9b; --hi-pink-soft: #f472b6; --hi-purple: #8b6cf0; --hi-cyan: #3fd6ea;
+            --hi-navy-deep: #060a16; --hi-navy-mid: #131c36; --hi-navy-end: #1b2a4d;
+            --hi-header-bg: #0a0a0f; --hi-card-bg: rgba(14,16,28,.7); --hi-divider: rgba(255,255,255,.18);
+            position: relative; width: 100%; height: 320px;
+            display: flex; align-items: center; justify-content: center;
+            overflow: hidden;
+        }
+        .hi-particle {
+            position: absolute; border-radius: 50%;
+            background: radial-gradient(circle, rgba(255,255,255,.5), transparent 70%);
+            opacity: .5;
+            animation: hiParticleFloat 6s ease-in-out infinite;
+        }
+        @keyframes hiParticleFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-16px); } }
+
+        .hi-bg {
+            position: absolute; inset: 0;
+            background: linear-gradient(135deg, var(--hi-navy-deep) 0%, var(--hi-navy-mid) 45%, var(--hi-navy-end) 100%);
+            opacity: 0; transform: scale(1.12); filter: blur(6px);
+            animation: hiBgReveal 0.9s cubic-bezier(.22,.7,.2,1) forwards;
+        }
+        .hi-tint { position: absolute; inset: 0; mix-blend-mode: screen; pointer-events: none; }
+        .hi-tint.cyan { background: radial-gradient(ellipse at 30% 20%, var(--hi-cyan), transparent 55%); opacity: .18; }
+        .hi-tint.purple { background: radial-gradient(ellipse at 75% 80%, var(--hi-purple), transparent 55%); opacity: .22; }
+        @keyframes hiBgReveal { to { opacity: .55; transform: scale(1); filter: blur(0px); } }
+
+        .hi-card {
+            position: relative; width: 460px; max-width: 88%;
+            background: var(--hi-card-bg); backdrop-filter: blur(14px) saturate(140%);
+            border: 1px solid rgba(255,255,255,.14); border-radius: 14px; overflow: hidden;
+            box-shadow: 0 20px 55px rgba(0,0,0,.5);
+            opacity: 0; transform: translateY(20px) scale(.93);
+            animation: hiCardIn 0.75s cubic-bezier(.2,.85,.25,1) forwards;
+            animation-delay: 0.4s;
+        }
+        @keyframes hiCardIn { to { opacity: 1; transform: translateY(0) scale(1); } }
+
+        .hi-header { background: var(--hi-header-bg); text-align: center; padding: 10px 14px 8px; }
+        .hi-league {
+            color: var(--hi-pink); font-size: 11px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase;
+            opacity: 0; transform: translateY(-6px);
+            animation: hiTextUp .45s ease forwards; animation-delay: 1.3s;
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+        }
+        .hi-diamond { width: 5px; height: 5px; background: var(--hi-cyan); transform: rotate(45deg); box-shadow: 0 0 6px var(--hi-cyan); opacity: 0; animation: hiPop .35s ease forwards; flex-shrink: 0; }
+        .hi-diamond.d1 { animation-delay: 1.25s; }
+        .hi-diamond.d2 { animation-delay: 1.5s; }
+        @keyframes hiPop { 0% { opacity: 0; transform: rotate(45deg) scale(0); } 60% { opacity: 1; transform: rotate(45deg) scale(1.3); } 100% { opacity: 1; transform: rotate(45deg) scale(1); } }
+        .hi-round {
+            margin-top: 4px; color: var(--hi-cyan); font-size: 8.5px; letter-spacing: 2px; text-transform: uppercase; font-weight: 600;
+            opacity: 0; transform: translateY(-4px);
+            animation: hiTextUp .45s ease forwards; animation-delay: 1.45s;
+        }
+        @keyframes hiTextUp { to { opacity: 1; transform: translateY(0); } }
+
+        .hi-body { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 24px 16px; }
+        .hi-team { display: flex; flex-direction: column; align-items: center; gap: 10px; opacity: 0; }
+        .hi-team.left { transform: translateX(-28px) scale(.85); animation: hiTeamInLeft .6s cubic-bezier(.2,.85,.25,1) forwards; animation-delay: 0.75s; }
+        .hi-team.right { transform: translateX(28px) scale(.85); animation: hiTeamInRight .6s cubic-bezier(.2,.85,.25,1) forwards; animation-delay: 0.88s; }
+        @keyframes hiTeamInLeft { to { opacity: 1; transform: translateX(0) scale(1); } }
+        @keyframes hiTeamInRight { to { opacity: 1; transform: translateX(0) scale(1); } }
+
+        .hi-logo-frame {
+            width: 62px; height: 62px; border-radius: 15px;
+            display: flex; align-items: center; justify-content: center;
+            background: linear-gradient(160deg, var(--hi-pink), var(--hi-purple));
+            box-shadow: 0 8px 22px rgba(0,0,0,.35);
+            position: relative; overflow: hidden;
+        }
+        .hi-logo-frame .hi-initials { color: #fff; font-size: 22px; font-weight: 800; letter-spacing: 1px; }
+        .hi-logo-frame::after {
+            content: ''; position: absolute; inset: 0;
+            background: linear-gradient(120deg, transparent 40%, rgba(255,255,255,.25) 50%, transparent 60%);
+            transform: translateX(-120%);
+            animation: hiShine 1.1s ease forwards; animation-delay: 1.05s;
+        }
+        .hi-team.right .hi-logo-frame::after { animation-delay: 1.18s; }
+        @keyframes hiShine { to { transform: translateX(120%); } }
+
+        .hi-team-name {
+            color: #fff; font-size: 10.5px; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase;
+            opacity: 0; transform: translateY(8px);
+            animation: hiTextUp .4s ease forwards;
+        }
+        .hi-team.left .hi-team-name { animation-delay: 1.55s; }
+        .hi-team.right .hi-team-name { animation-delay: 1.68s; }
+
+        .hi-vs-col { display: flex; align-items: center; justify-content: center; height: 100%; padding: 0 16px; }
+        .hi-divider {
+            width: 1px; height: 0%;
+            background: linear-gradient(to bottom, transparent, var(--hi-divider) 20%, var(--hi-divider) 80%, transparent);
+            animation: hiGrowLine .55s ease forwards; animation-delay: 0.95s;
+        }
+        @keyframes hiGrowLine { to { height: 58px; } }
+
+        .hi-venue-bar { background: linear-gradient(90deg, var(--hi-pink-soft), var(--hi-purple)); text-align: center; padding: 9px 16px; position: relative; overflow: hidden; }
+        .hi-venue-bar span {
+            color: #fff; font-size: 9.5px; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase;
+            opacity: 0; display: inline-block; transform: translateY(8px);
+            animation: hiTextUp .45s ease forwards; animation-delay: 1.8s;
+        }
+        .hi-venue-bar::before {
+            content: ''; position: absolute; inset: 0; background: rgba(255,255,255,.25);
+            transform: translateX(-100%); animation: hiSweep .7s ease forwards; animation-delay: 1.55s;
+        }
+        @keyframes hiSweep { to { transform: translateX(100%); } }
+
+        @media (max-width: 640px) {
+            .hi-card { width: 92%; }
+            .hi-logo-frame { width: 52px; height: 52px; }
         }
 
-        /* -- Arrow controls -- */
-        .du-arrow {
-            flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%;
-            background: var(--bg-card); border: 1px solid var(--border-color);
-            color: var(--text-main); display: flex; align-items: center; justify-content: center;
-            cursor: pointer; font-size: 1.1rem;
-            transform: translateZ(0);
-            transition: transform 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
-        }
-        .du-arrow:hover { border-color: var(--accent); color: var(--accent); }
-        .du-arrow:active { transform: scale(0.9); }
-        .du-arrow svg { width: 18px; height: 18px; pointer-events: none; }
-
-        /* -- Stage: fixed-size viewport that fits whichever device is
-           active; frames are absolutely stacked and cross-faded. -- */
-        .du-stage {
-            position: relative; width: 100%; max-width: 640px;
-            min-height: 380px; display: flex; align-items: center; justify-content: center;
-        }
-        .du-frame {
-            position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-            opacity: 0; pointer-events: none; visibility: hidden;
-            transform: scale(0.96) translateZ(0);
-            transition: opacity 0.32s cubic-bezier(.4,0,.2,1), transform 0.32s cubic-bezier(.4,0,.2,1);
-            will-change: opacity, transform;
-        }
-        .du-frame.is-active {
-            position: relative; opacity: 1; pointer-events: auto; visibility: visible;
-            transform: scale(1) translateZ(0);
-        }
-
-        /* -- Laptop frame -- */
-        .du-laptop { width: 100%; max-width: 640px; }
-        .du-laptop-screen {
-            background: #05070d; border-radius: 16px 16px 4px 4px;
-            border: 10px solid #14161e; border-bottom-width: 14px;
-            box-shadow: 0 30px 70px rgba(0,0,0,.55), 0 0 90px -30px rgba(var(--accent-rgb), 0.35);
-            overflow: hidden; position: relative;
-        }
-        .du-laptop-cam { position: absolute; top: 3px; left: 50%; transform: translateX(-50%); width: 5px; height: 5px; border-radius: 50%; background: #050505; box-shadow: 0 0 0 1px rgba(255,255,255,.06); z-index: 3; }
-        .du-laptop-base {
-            height: 12px; margin: 0 -6px; border-radius: 0 0 10px 10px;
-            background: linear-gradient(180deg, #23252f, #14151b);
-            box-shadow: 0 8px 18px rgba(0,0,0,.4);
-        }
-        .du-laptop-base::after {
-            content: ''; display: block; width: 90px; height: 5px; margin: 0 auto;
-            background: #0a0a0e; border-radius: 0 0 6px 6px;
-        }
-        .du-laptop-wrap { width: 100%; }
-
-        /* -- Phone frame (rotated to landscape, as requested) -- */
-        .du-phone { width: 320px; flex-shrink: 0; }
-        .du-phone-screen {
-            background: #05070d; border-radius: 20px;
-            border: 8px solid #14161e;
-            box-shadow: 0 24px 55px rgba(0,0,0,.55), 0 0 60px -25px rgba(var(--brand-teal-rgb), 0.35);
-            overflow: hidden; position: relative; aspect-ratio: 16 / 9;
-        }
-        .du-phone-notch {
-            position: absolute; top: 0; left: 50%; transform: translateX(-50%);
-            width: 34%; height: 9px; background: #14161e; border-radius: 0 0 10px 10px; z-index: 3;
-        }
-
-        /* -- Tablet frame (landscape) -- */
-        .du-tablet { width: 460px; flex-shrink: 0; }
-        .du-tablet-screen {
-            background: #05070d; border-radius: 14px;
-            border: 10px solid #14161e;
-            box-shadow: 0 26px 60px rgba(0,0,0,.55), 0 0 70px -28px rgba(var(--accent-rgb), 0.3);
-            overflow: hidden; position: relative; aspect-ratio: 4 / 3;
-        }
-        .du-tablet-cam { position: absolute; top: 50%; left: 3px; transform: translateY(-50%); width: 5px; height: 5px; border-radius: 50%; background: #050505; box-shadow: 0 0 0 1px rgba(255,255,255,.06); z-index: 3; }
-
-        .du-video-wrap { position: absolute; inset: 0; overflow: hidden; }
-        .du-video-wrap video { width: 100%; height: 100%; object-fit: cover; display: block; background: #000; transform: translateZ(0); }
-
-        /* -- Scorebug overlay, shared markup, live-composited on the video -- */
-        .du-overlay {
-            position: absolute; left: 5%; right: 5%; bottom: 6%;
-            display: grid; grid-template-columns: 1fr auto 1fr; align-items: stretch;
-            border-radius: 8px; overflow: hidden;
-            box-shadow: 0 8px 24px rgba(0,0,0,.5);
-            font-family: inherit;
-        }
-        .du-side {
-            background: rgba(6, 10, 20, 0.82);
-            display: flex; flex-direction: column; justify-content: center; gap: 2px;
-            padding: 7px 10px;
-        }
-        .du-side.left { align-items: flex-start; text-align: left; }
-        .du-side.right { align-items: flex-end; text-align: right; }
-        .du-role { font-size: 0.5rem; font-weight: 700; letter-spacing: 1px; color: var(--accent); text-transform: uppercase; }
-        .du-name { font-size: 0.68rem; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
-        .du-sub { font-size: 0.52rem; font-weight: 600; color: rgba(255,255,255,.65); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
-
-        /* Center score chip — enlarged: the primary visual anchor of the
-           whole broadcast bar, matching the reference's brand gradient. */
-        .du-center {
-            background: linear-gradient(135deg, var(--accent), var(--brand-teal, #3fd6ea));
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            gap: 2px; padding: 9px 22px; position: relative; min-width: 150px;
-        }
-        .du-center-teams { font-size: 0.62rem; font-weight: 800; letter-spacing: 0.5px; color: rgba(6,10,20,.75); text-transform: uppercase; }
-        .du-center-score { font-size: 2.1rem; font-weight: 900; color: #06080f; letter-spacing: 0.5px; line-height: 1; }
-        .du-center-meta { font-size: 0.6rem; font-weight: 700; color: rgba(6,10,20,.7); text-transform: uppercase; letter-spacing: 0.5px; }
-        .du-center-target { font-size: 0.55rem; font-weight: 700; color: rgba(6,10,20,.65); text-transform: uppercase; letter-spacing: 0.4px; }
-
-        .du-phone .du-overlay { left: 4%; right: 4%; bottom: 6%; border-radius: 6px; }
-        .du-phone .du-name, .du-phone .du-sub { font-size: 0.6rem; max-width: 90px; }
-        .du-phone .du-center { padding: 6px 14px; min-width: 120px; }
-        .du-phone .du-center-score { font-size: 1.55rem; }
-        .du-phone .du-role, .du-phone .du-center-teams, .du-phone .du-center-meta, .du-phone .du-center-target { font-size: 0.5rem; }
-        .du-phone .du-side { padding: 5px 7px; }
-
-        .du-tablet .du-center-score { font-size: 1.9rem; }
-
-        /* Device-select dots under the stage */
-        .du-dots { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 16px; }
-        .du-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border-color); border: none; padding: 0; cursor: pointer; transition: transform 0.15s ease, background-color 0.15s ease; }
-        .du-dot.is-active { background: var(--accent); transform: scale(1.3); }
-        .du-label { text-align: center; font-size: 0.72rem; font-weight: 700; color: var(--text-muted); letter-spacing: 0.5px; text-transform: uppercase; margin-top: 10px; }
-
+        /* Live demo card + "try it yourself" editor: desktop/laptop only.
+           On phones/tablets it's just dead weight above the fold (a looping
+           animation + a form nobody's going to fill in on a small screen) —
+           keep the real value prop (heading + CTA) and drop straight to
+           the ticker/features below instead. */
         @media (max-width: 900px) {
-            .du-stage { min-height: 300px; }
-            .du-laptop { max-width: 420px; }
-            .du-phone { width: 260px; }
-            .du-tablet { width: 360px; }
+            .hero-preview, #hiEditor { display: none; }
         }
-        @media (max-width: 480px) {
-            .du-stage { min-height: 230px; }
-            .du-laptop { max-width: 280px; }
-            .du-phone { width: 220px; }
-            .du-tablet { width: 260px; }
-            .du-center-score { font-size: 1.3rem; }
-            .du-arrow { width: 36px; height: 36px; }
-        }
-        /* On an actual mobile device, only the Mobile/iPhone preview is
-           relevant — arrows, dots and the laptop/tablet frames are hidden
-           entirely via JS (device-uplink-mobile-only class), not just CSS,
-           so their <video> never loads/decodes on that visit. */
-        .device-uplink.mobile-only .du-arrow,
-        .device-uplink.mobile-only .du-dots { display: none; }
 
         /* ===== Hero demo: "try it yourself" live editor ===== */
         .hi-editor {
@@ -1818,6 +1791,23 @@
             transition: border-color 0.25s var(--ease), background 0.25s var(--ease);
         }
         .hi-editor-field input[type="text"]:focus { border-color: var(--accent); background: var(--border-color-soft); }
+        .hi-logo-btn {
+            display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+            background: var(--border-color-soft); border: 1px dashed var(--border-color-strong); border-radius: 8px;
+            padding: 8px 12px; font-size: 0.8rem; font-weight: 600; color: var(--text-muted); cursor: pointer;
+            transition: border-color 0.25s var(--ease), color 0.25s var(--ease);
+        }
+        .hi-logo-btn:hover { border-color: var(--accent); color: var(--text-main); }
+        .hi-logo-clear {
+            background: none; border: none; color: var(--accent); font-size: 0.75rem; font-weight: 600;
+            cursor: pointer; text-decoration: underline; text-underline-offset: 2px; padding: 2px 0; text-align: left;
+        }
+        .hi-editor-colors .hi-color-row { display: flex; gap: 10px; }
+        .hi-editor-colors input[type="color"] {
+            width: 38px; height: 38px; border: none; border-radius: 8px; background: none; cursor: pointer; padding: 0;
+        }
+        .hi-editor-colors input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; border-radius: 8px; }
+        .hi-editor-colors input[type="color"]::-webkit-color-swatch { border: 1px solid var(--border-color-strong); border-radius: 8px; }
         .hi-reset-btn {
             margin-top: 18px; background: var(--border-color-soft); border: 1px solid rgba(255,255,255,0.15);
             border-radius: 8px; padding: 9px 18px; font-size: 0.82rem; font-weight: 600; color: var(--text-main);
@@ -2222,160 +2212,84 @@
         <p>Ball-by-ball live scoring, stats and a match center for every tournament. Built for players, teams and fans.</p>
         <a href="#tournaments" class="cta-btn">View Live Tournaments ➔</a>
 
-        <div class="device-uplink reveal-on-scroll delay-1" id="deviceUplink">
-            <div class="device-uplink-kicker"><span class="dot"></span> Same feed. Every screen.</div>
-            <div class="device-uplink-rig">
-                <button type="button" class="du-arrow" id="duPrev" aria-label="Previous device">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
-                </button>
-
-                <div class="du-stage">
-                    <!-- Laptop -->
-                    <div class="du-frame is-active" data-du-device="laptop">
-                        <div class="du-laptop">
-                            <div class="du-laptop-screen">
-                                <div class="du-laptop-cam"></div>
-                                <div class="du-video-wrap">
-                                    <video class="du-video" muted autoplay loop playsinline preload="auto" src="match-preview.mp4"></video>
-                                </div>
-                                <div class="du-overlay" data-du-overlay>
-                                    <div class="du-side left">
-                                        <span class="du-role">Batsman</span>
-                                        <span class="du-name" data-du="batsman">V. Kohli</span>
-                                        <span class="du-sub" data-du="nonstriker">S. Yadav*</span>
-                                    </div>
-                                    <div class="du-center">
-                                        <span class="du-center-teams" data-du="teams">IND vs AUS</span>
-                                        <span class="du-center-score" data-du="score">187/4</span>
-                                        <span class="du-center-meta" data-du="overs">16.2 OV</span>
-                                        <span class="du-center-target" data-du="target">NEED 45 OFF 22</span>
-                                    </div>
-                                    <div class="du-side right">
-                                        <span class="du-role">Bowler</span>
-                                        <span class="du-name" data-du="bowler">P. Cummins</span>
-                                        <span class="du-sub" data-du="runwkt">This over: <span data-du="runs">6</span>&nbsp;runs</span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="du-laptop-base"></div>
-                        </div>
+        <div class="showcase-browser hero-preview reveal-on-scroll delay-1">
+            <div class="browser-topbar">
+                <div class="browser-dots"><span></span><span></span><span></span></div>
+                <div class="browser-address">allsportslivestreams.com/tt-matchintro</div>
+                <div class="hero-live-badge"><span class="dot"></span> LIVE DEMO</div>
+            </div>
+            <div class="browser-body hero-demo" id="hero-demo">
+                <div class="hi-stage" id="hiStage">
+                    <div class="hi-bg" id="hiBg">
+                        <div class="hi-tint cyan"></div>
+                        <div class="hi-tint purple"></div>
                     </div>
-
-                    <!-- Mobile / iPhone -->
-                    <div class="du-frame" data-du-device="mobile">
-                        <div class="du-phone">
-                            <div class="du-phone-screen">
-                                <div class="du-phone-notch"></div>
-                                <div class="du-video-wrap">
-                                    <video class="du-video" muted autoplay loop playsinline preload="auto" src="match-preview.mp4"></video>
-                                </div>
-                                <div class="du-overlay" data-du-overlay>
-                                    <div class="du-side left">
-                                        <span class="du-role">Batsman</span>
-                                        <span class="du-name" data-du="batsman">V. Kohli</span>
-                                        <span class="du-sub" data-du="nonstriker">S. Yadav*</span>
-                                    </div>
-                                    <div class="du-center">
-                                        <span class="du-center-teams" data-du="teams">IND vs AUS</span>
-                                        <span class="du-center-score" data-du="score">187/4</span>
-                                        <span class="du-center-meta" data-du="overs">16.2 OV</span>
-                                        <span class="du-center-target" data-du="target">NEED 45 OFF 22</span>
-                                    </div>
-                                    <div class="du-side right">
-                                        <span class="du-role">Bowler</span>
-                                        <span class="du-name" data-du="bowler">P. Cummins</span>
-                                        <span class="du-sub" data-du="runwkt">This over: <span data-du="runs">6</span>&nbsp;runs</span>
-                                    </div>
-                                </div>
+                    <div class="hi-card" id="hiCard">
+                        <div class="hi-header">
+                            <div class="hi-league">
+                                <span class="hi-diamond d1"></span>
+                                <span>CRICKET</span>
+                                <span class="hi-diamond d2"></span>
+                            </div>
+                            <div class="hi-round">Final</div>
+                        </div>
+                        <div class="hi-body">
+                            <div class="hi-team left">
+                                <div class="hi-logo-frame"><span class="hi-initials">I</span></div>
+                                <div class="hi-team-name">India</div>
+                            </div>
+                            <div class="hi-vs-col"><div class="hi-divider"></div></div>
+                            <div class="hi-team right">
+                                <div class="hi-logo-frame"><span class="hi-initials">A</span></div>
+                                <div class="hi-team-name">Australia</div>
                             </div>
                         </div>
-                    </div>
-
-                    <!-- Tablet -->
-                    <div class="du-frame" data-du-device="tablet">
-                        <div class="du-tablet">
-                            <div class="du-tablet-screen">
-                                <div class="du-tablet-cam"></div>
-                                <div class="du-video-wrap">
-                                    <video class="du-video" muted autoplay loop playsinline preload="auto" src="match-preview.mp4"></video>
-                                </div>
-                                <div class="du-overlay" data-du-overlay>
-                                    <div class="du-side left">
-                                        <span class="du-role">Batsman</span>
-                                        <span class="du-name" data-du="batsman">V. Kohli</span>
-                                        <span class="du-sub" data-du="nonstriker">S. Yadav*</span>
-                                    </div>
-                                    <div class="du-center">
-                                        <span class="du-center-teams" data-du="teams">IND vs AUS</span>
-                                        <span class="du-center-score" data-du="score">187/4</span>
-                                        <span class="du-center-meta" data-du="overs">16.2 OV</span>
-                                        <span class="du-center-target" data-du="target">NEED 45 OFF 22</span>
-                                    </div>
-                                    <div class="du-side right">
-                                        <span class="du-role">Bowler</span>
-                                        <span class="du-name" data-du="bowler">P. Cummins</span>
-                                        <span class="du-sub" data-du="runwkt">This over: <span data-du="runs">6</span>&nbsp;runs</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+                        <div class="hi-venue-bar"><span>Wankhede Stadium</span></div>
                     </div>
                 </div>
-
-                <button type="button" class="du-arrow" id="duNext" aria-label="Next device">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
-                </button>
             </div>
-            <div class="du-dots" id="duDots">
-                <button type="button" class="du-dot is-active" data-du-goto="laptop" aria-label="Show laptop preview"></button>
-                <button type="button" class="du-dot" data-du-goto="mobile" aria-label="Show mobile preview"></button>
-                <button type="button" class="du-dot" data-du-goto="tablet" aria-label="Show tablet preview"></button>
-            </div>
-            <p class="du-label" id="duLabel">Laptop</p>
         </div>
 
         <div class="hi-editor reveal-on-scroll delay-2" id="hiEditor">
-            <p class="hi-editor-label">✏️ Try it yourself — edit live below, it updates the broadcast overlay above instantly</p>
+            <p class="hi-editor-label">✏️ Try it yourself — edit live below, it updates the card above instantly</p>
             <div class="hi-editor-grid">
                 <div class="hi-editor-field">
-                    <label for="hiTeams">Teams</label>
-                    <input type="text" id="hiTeams" maxlength="20" value="IND vs AUS">
+                    <label for="hiTeamAName">Team A name</label>
+                    <input type="text" id="hiTeamAName" maxlength="18" value="India">
+                    <label class="hi-logo-btn">
+                        <input type="file" accept="image/*" id="hiTeamALogo" hidden>
+                        Upload logo
+                    </label>
+                    <button type="button" class="hi-logo-clear hidden" id="hiTeamAClear">Remove logo</button>
                 </div>
                 <div class="hi-editor-field">
-                    <label for="hiScore">Score</label>
-                    <input type="text" id="hiScore" maxlength="12" value="187/4">
+                    <label for="hiTeamBName">Team B name</label>
+                    <input type="text" id="hiTeamBName" maxlength="18" value="Australia">
+                    <label class="hi-logo-btn">
+                        <input type="file" accept="image/*" id="hiTeamBLogo" hidden>
+                        Upload logo
+                    </label>
+                    <button type="button" class="hi-logo-clear hidden" id="hiTeamBClear">Remove logo</button>
                 </div>
                 <div class="hi-editor-field">
-                    <label for="hiOvers">Overs</label>
-                    <input type="text" id="hiOvers" maxlength="10" value="16.2 OV">
+                    <label for="hiLeagueName">League</label>
+                    <input type="text" id="hiLeagueName" maxlength="20" value="CRICKET">
                 </div>
                 <div class="hi-editor-field">
-                    <label for="hiBatsman">Batsman name</label>
-                    <input type="text" id="hiBatsman" maxlength="20" value="V. Kohli">
+                    <label for="hiRoundName">Round</label>
+                    <input type="text" id="hiRoundName" maxlength="24" value="Final">
                 </div>
                 <div class="hi-editor-field">
-                    <label for="hiNonstriker">Non-striker</label>
-                    <input type="text" id="hiNonstriker" maxlength="20" value="S. Yadav*">
+                    <label for="hiVenueName">Venue</label>
+                    <input type="text" id="hiVenueName" maxlength="28" value="Wankhede Stadium">
                 </div>
-                <div class="hi-editor-field">
-                    <label for="hiBowler">Bowler name</label>
-                    <input type="text" id="hiBowler" maxlength="20" value="P. Cummins">
-                </div>
-                <div class="hi-editor-field">
-                    <label for="hiRuns">Runs (this over)</label>
-                    <input type="text" id="hiRuns" maxlength="4" value="6">
-                </div>
-                <div class="hi-editor-field">
-                    <label for="hiWickets">Wickets</label>
-                    <input type="text" id="hiWickets" maxlength="4" value="4">
-                </div>
-                <div class="hi-editor-field">
-                    <label for="hiTarget">Target</label>
-                    <input type="text" id="hiTarget" maxlength="10" value="232">
-                </div>
-                <div class="hi-editor-field">
-                    <label for="hiBalls">Balls remaining</label>
-                    <input type="text" id="hiBalls" maxlength="10" value="22">
+                <div class="hi-editor-field hi-editor-colors">
+                    <label>Accent colours</label>
+                    <div class="hi-color-row">
+                        <input type="color" id="hiColorPink" value="#ec4a9b" title="Primary accent">
+                        <input type="color" id="hiColorPurple" value="#8b6cf0" title="Secondary accent">
+                        <input type="color" id="hiColorCyan" value="#3fd6ea" title="Highlight accent">
+                    </div>
                 </div>
             </div>
             <button type="button" id="hiResetBtn" class="hi-reset-btn">Reset to default</button>
@@ -3761,121 +3675,99 @@
         // page-transitions.js, so there's no need for a page-specific
         // interceptor here any more.
 
-        // Device Uplink — keeps all three preview videos (laptop / mobile /
-        // tablet) trimmed to the first 35s of the clip and looping on every
-        // browser, without ever reloading the <video> element (a reload
-        // would flash a black frame and cost decode time — instead we just
-        // rewind currentTime once it crosses 35s). Only the active device's
-        // video is actually playing; the other two stay paused so the
-        // browser never decodes more than one stream at once.
-        (function deviceUplinkVideos(){
-            const CLIP_SECONDS = 35;
-            const frames = Array.from(document.querySelectorAll('.du-frame'));
-            if (!frames.length) return;
-            const videos = Array.from(document.querySelectorAll('.du-video'));
+        // Looping Match Intro demo — replays the exact entrance sequence used
+        // by the real tt-matchintro.html overlay (bg reveal -> card -> team
+        // logos slide in -> league/round/venue text fades in), on an endless
+        // loop so the first thing visitors see is the actual product in motion.
+        (function heroMatchIntroDemo(){
+            const stage = document.getElementById('hiStage');
+            const card = document.getElementById('hiCard');
+            const bg = document.getElementById('hiBg');
+            if (!stage || !card || !bg) return;
 
-            videos.forEach(v => {
-                v.muted = true;
-                v.setAttribute('muted', '');
-                v.playsInline = true;
-                v.addEventListener('timeupdate', () => {
-                    if (v.currentTime >= CLIP_SECONDS) v.currentTime = 0;
-                }, { passive: true });
-            });
+            // Hidden on mobile/tablet via CSS (see .hero-preview media query
+            // above) — no point animating a card nobody can see.
+            if (window.matchMedia('(max-width: 900px)').matches) return;
 
-            function playActiveOnly(){
-                frames.forEach(frame => {
-                    const v = frame.querySelector('.du-video');
-                    if (!v) return;
-                    if (frame.classList.contains('is-active')) {
-                        if (v.currentTime >= CLIP_SECONDS) v.currentTime = 0;
-                        v.play().catch(() => {});
-                    } else {
-                        v.pause();
-                    }
-                });
+            // A few soft ambient particles, purely decorative — matches the
+            // floating-particle background of the real overlay.
+            for (let i = 0; i < 10; i++) {
+                const p = document.createElement('div');
+                p.className = 'hi-particle';
+                const size = Math.random() * 3 + 1;
+                p.style.width = size + 'px';
+                p.style.height = size + 'px';
+                p.style.left = Math.random() * 100 + '%';
+                p.style.top = Math.random() * 100 + '%';
+                p.style.animationDelay = (Math.random() * 3) + 's';
+                p.style.animationDuration = (4 + Math.random() * 4) + 's';
+                stage.appendChild(p);
             }
-            window.__duPlayActiveOnly = playActiveOnly;
 
-            const kickoff = () => playActiveOnly();
-            if (document.readyState === 'complete') kickoff();
-            else window.addEventListener('load', kickoff, { once: true });
+            function replay(){
+                const freshCard = document.getElementById('hiCard');
+                const clone = freshCard.cloneNode(true);
+                freshCard.parentNode.replaceChild(clone, freshCard);
+                clone.id = 'hiCard';
+                bg.style.animation = 'none';
+                void bg.offsetWidth;
+                bg.style.animation = '';
+            }
 
+            // Someone with reduced-motion set gets the fully-formed card
+            // (handled by the CSS rule that pins every hi-* animation to
+            // its end state) and never the replaying entrance loop.
+            if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+            // Total entrance sequence finishes ~2.25s in; hold the fully
+            // formed card for a beat, then loop. The interval only exists
+            // while the demo is actually on screen and the tab is visible —
+            // an off-screen or backgrounded tab has no reason to keep
+            // cloning/replaying this DOM node every 4.3s, so it's paused
+            // and resumed via IntersectionObserver + visibilitychange
+            // instead of running unconditionally forever.
+            let introInterval = null;
+            function startIntro() {
+                if (introInterval || document.hidden) return;
+                introInterval = setInterval(replay, 4300);
+            }
+            function stopIntro() {
+                clearInterval(introInterval);
+                introInterval = null;
+            }
+
+            let stageVisible = true;
+            if ('IntersectionObserver' in window) {
+                const io = new IntersectionObserver((entries) => {
+                    stageVisible = entries[0].isIntersecting;
+                    if (stageVisible) startIntro(); else stopIntro();
+                }, { threshold: 0.1 });
+                io.observe(stage);
+            } else {
+                startIntro();
+            }
             document.addEventListener('visibilitychange', () => {
-                if (document.hidden) videos.forEach(v => v.pause());
-                else playActiveOnly();
+                if (document.hidden) stopIntro();
+                else if (stageVisible) startIntro();
             });
         })();
 
-        // Device switcher — Laptop → Mobile → Tablet via arrows/dots. Only
-        // one frame is ever visible; switching is a pure opacity+transform
-        // crossfade (GPU-composited, no reflow) and never touches the
-        // overlay text or restarts the video decode. On an actual phone,
-        // lock to the Mobile frame only and hide the switcher entirely, so
-        // the laptop/tablet videos never even start decoding on that visit.
-        (function deviceUplinkSwitcher(){
-            const root = document.getElementById('deviceUplink');
-            if (!root) return;
-            const order = ['laptop', 'mobile', 'tablet'];
-            const labels = { laptop: 'Laptop', mobile: 'Mobile / iPhone', tablet: 'Tablet' };
-            const frames = Array.from(root.querySelectorAll('.du-frame'));
-            const dots = Array.from(root.querySelectorAll('.du-dot'));
-            const label = document.getElementById('duLabel');
-            const prevBtn = document.getElementById('duPrev');
-            const nextBtn = document.getElementById('duNext');
-
-            const isActualPhone = window.matchMedia('(max-width: 600px) and (pointer: coarse)').matches;
-            let index = 0;
-
-            function render(){
-                const active = order[index];
-                frames.forEach(f => f.classList.toggle('is-active', f.getAttribute('data-du-device') === active));
-                dots.forEach(d => d.classList.toggle('is-active', d.getAttribute('data-du-goto') === active));
-                if (label) label.textContent = labels[active];
-                if (typeof window.__duPlayActiveOnly === 'function') window.__duPlayActiveOnly();
-            }
-
-            function goTo(device){
-                const next = order.indexOf(device);
-                if (next === -1 || next === index) return;
-                index = next;
-                render();
-            }
-
-            if (isActualPhone) {
-                root.classList.add('mobile-only');
-                index = order.indexOf('mobile');
-                render();
-                return; // no arrow/dot listeners needed — switcher is hidden
-            }
-
-            if (prevBtn) prevBtn.addEventListener('click', () => {
-                index = (index - 1 + order.length) % order.length;
-                render();
-            });
-            if (nextBtn) nextBtn.addEventListener('click', () => {
-                index = (index + 1) % order.length;
-                render();
-            });
-            dots.forEach(d => d.addEventListener('click', () => goTo(d.getAttribute('data-du-goto'))));
-
-            render();
-        })();
-
-        // Live "try it yourself" editor for the Device Uplink scorebug — lets
-        // a visitor change the batsman, bowler, score, target and more, and
-        // see the active broadcast overlay above update instantly. State is
-        // saved to THIS browser's localStorage only (never sent anywhere),
-        // so every visitor's edits stay private to their own device.
-        (function deviceUplinkEditor(){
-            const STORAGE_KEY = 'scorvix_hero_demo_custom_v3';
-            const overlays = document.querySelectorAll('[data-du-overlay]');
-            if (!overlays.length) return;
+        // Live "try it yourself" editor for the hero Match Intro demo — lets a
+        // visitor change team names, logos and accent colours and see them
+        // reflected in the demo card immediately. State is saved to THIS
+        // browser's localStorage only (never sent anywhere), so every
+        // visitor's edits stay private to their own device and never mix
+        // with anyone else's.
+        (function heroDemoEditor(){
+            const STORAGE_KEY = 'scorvix_hero_demo_custom_v1';
+            const stage = document.getElementById('hiStage');
+            if (!stage) return;
 
             const defaults = {
-                teams: 'IND vs AUS', score: '187/4', overs: '16.2 OV',
-                batsman: 'V. Kohli', nonstriker: 'S. Yadav*', bowler: 'P. Cummins',
-                runs: '6', wickets: '4', target: '232', balls: '22'
+                teamAName: 'India', teamBName: 'Australia',
+                teamALogo: null, teamBLogo: null,
+                league: 'CRICKET', round: 'Final', venue: 'Wankhede Stadium',
+                colorPink: '#ec4a9b', colorPurple: '#8b6cf0', colorCyan: '#3fd6ea'
             };
 
             function loadState(){
@@ -3887,43 +3779,88 @@
             }
 
             let state = loadState();
-            let rafPending = false;
 
             function saveState(){
                 try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
                 catch (e) { /* storage full/unavailable — edits still work for this visit */ }
             }
 
-            // Applied to every overlay instance (laptop + mobile + tablet) in
-            // the same pass, so all three stay in sync. Batched on
-            // requestAnimationFrame so rapid typing never causes layout
-            // thrashing or visible flicker.
-            function applyStateNow(){
-                overlays.forEach(overlay => {
-                    ['teams', 'score', 'overs', 'batsman', 'nonstriker', 'bowler', 'runs'].forEach(key => {
-                        const el = overlay.querySelector('[data-du="' + key + '"]');
-                        if (el) el.textContent = state[key] || defaults[key];
-                    });
-                    const targetEl = overlay.querySelector('[data-du="target"]');
-                    if (targetEl) targetEl.textContent = 'NEED ' + (state.target || defaults.target) + ' OFF ' + (state.balls || defaults.balls);
-                });
+            function lighten(hex, amt){
+                hex = (hex || '').replace('#', '');
+                if (hex.length !== 6) return '#f472b6';
+                const num = parseInt(hex, 16);
+                const r = Math.min(255, (num >> 16) + Math.round(255 * amt));
+                const g = Math.min(255, ((num >> 8) & 0xff) + Math.round(255 * amt));
+                const b = Math.min(255, (num & 0xff) + Math.round(255 * amt));
+                return '#' + (0x1000000 + r * 0x10000 + g * 0x100 + b).toString(16).slice(1);
             }
+
+            // The auto-loop clones and replaces #hiCard every few seconds to
+            // replay the entrance animation, so we always re-query elements
+            // fresh from #hiStage (which itself is never replaced) rather
+            // than caching references — otherwise edits would silently stop
+            // reaching the visible card after the first replay.
+            function setLogo(side, dataUrl){
+                const frame = stage.querySelector('.hi-team.' + side + ' .hi-logo-frame');
+                if (!frame) return;
+                const nameEl = stage.querySelector('.hi-team.' + side + ' .hi-team-name');
+                const name = nameEl ? nameEl.textContent.trim() : '';
+                let img = frame.querySelector('img');
+                const initials = frame.querySelector('.hi-initials');
+                if (dataUrl) {
+                    if (!img) {
+                        img = document.createElement('img');
+                        img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+                        frame.insertBefore(img, frame.firstChild);
+                    }
+                    img.src = dataUrl;
+                    if (initials) initials.style.display = 'none';
+                } else {
+                    if (img) img.remove();
+                    if (initials) {
+                        initials.style.display = '';
+                        initials.textContent = (name.charAt(0) || (side === 'left' ? 'A' : 'B')).toUpperCase();
+                    }
+                }
+                const clearBtn = document.getElementById(side === 'left' ? 'hiTeamAClear' : 'hiTeamBClear');
+                if (clearBtn) clearBtn.classList.toggle('hidden', !dataUrl);
+            }
+
             function applyState(){
-                if (rafPending) return;
-                rafPending = true;
-                requestAnimationFrame(() => { rafPending = false; applyStateNow(); });
+                const nameA = stage.querySelector('.hi-team.left .hi-team-name');
+                const nameB = stage.querySelector('.hi-team.right .hi-team-name');
+                const league = stage.querySelector('.hi-league span:not(.hi-diamond)');
+                const round = stage.querySelector('.hi-round');
+                const venue = stage.querySelector('.hi-venue-bar span');
+                if (nameA) nameA.textContent = state.teamAName || defaults.teamAName;
+                if (nameB) nameB.textContent = state.teamBName || defaults.teamBName;
+                if (league) league.textContent = state.league || defaults.league;
+                if (round) round.textContent = state.round || defaults.round;
+                if (venue) venue.textContent = state.venue || defaults.venue;
+
+                setLogo('left', state.teamALogo);
+                setLogo('right', state.teamBLogo);
+
+                stage.style.setProperty('--hi-pink', state.colorPink);
+                stage.style.setProperty('--hi-pink-soft', lighten(state.colorPink, 0.28));
+                stage.style.setProperty('--hi-purple', state.colorPurple);
+                stage.style.setProperty('--hi-cyan', state.colorCyan);
             }
 
             function hydrateInputs(){
                 const map = {
-                    hiTeams: state.teams, hiScore: state.score, hiOvers: state.overs,
-                    hiBatsman: state.batsman, hiNonstriker: state.nonstriker, hiBowler: state.bowler,
-                    hiRuns: state.runs, hiWickets: state.wickets, hiTarget: state.target, hiBalls: state.balls
+                    hiTeamAName: state.teamAName, hiTeamBName: state.teamBName,
+                    hiLeagueName: state.league, hiRoundName: state.round, hiVenueName: state.venue,
+                    hiColorPink: state.colorPink, hiColorPurple: state.colorPurple, hiColorCyan: state.colorCyan
                 };
                 Object.keys(map).forEach(id => {
                     const el = document.getElementById(id);
                     if (el && map[id] != null) el.value = map[id];
                 });
+                const clearA = document.getElementById('hiTeamAClear');
+                const clearB = document.getElementById('hiTeamBClear');
+                if (clearA) clearA.classList.toggle('hidden', !state.teamALogo);
+                if (clearB) clearB.classList.toggle('hidden', !state.teamBLogo);
             }
 
             function bindText(id, key){
@@ -3935,9 +3872,51 @@
                     saveState();
                 });
             }
-            ['teams','score','overs','batsman','nonstriker','bowler','runs','wickets','target','balls'].forEach(key => {
-                bindText('hi' + key.charAt(0).toUpperCase() + key.slice(1), key);
+            bindText('hiTeamAName', 'teamAName');
+            bindText('hiTeamBName', 'teamBName');
+            bindText('hiLeagueName', 'league');
+            bindText('hiRoundName', 'round');
+            bindText('hiVenueName', 'venue');
+
+            [['hiColorPink', 'colorPink'], ['hiColorPurple', 'colorPurple'], ['hiColorCyan', 'colorCyan']].forEach(([id, key]) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.addEventListener('input', () => {
+                    state[key] = el.value;
+                    applyState();
+                    saveState();
+                });
             });
+
+            function bindLogo(inputId, clearId, stateKey){
+                const input = document.getElementById(inputId);
+                const clearBtn = document.getElementById(clearId);
+                if (input) {
+                    input.addEventListener('change', () => {
+                        const file = input.files && input.files[0];
+                        if (!file) return;
+                        if (!file.type.startsWith('image/')) { alert('Please choose an image file.'); return; }
+                        if (file.size > 700 * 1024) { alert('Please choose an image under 700KB.'); return; }
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                            state[stateKey] = reader.result;
+                            applyState();
+                            saveState();
+                        };
+                        reader.readAsDataURL(file);
+                    });
+                }
+                if (clearBtn) {
+                    clearBtn.addEventListener('click', () => {
+                        state[stateKey] = null;
+                        applyState();
+                        saveState();
+                        if (input) input.value = '';
+                    });
+                }
+            }
+            bindLogo('hiTeamALogo', 'hiTeamAClear', 'teamALogo');
+            bindLogo('hiTeamBLogo', 'hiTeamBClear', 'teamBLogo');
 
             const resetBtn = document.getElementById('hiResetBtn');
             if (resetBtn) {
@@ -3950,7 +3929,7 @@
             }
 
             hydrateInputs();
-            applyStateNow();
+            applyState();
         })();
 
         // Theme toggle — mobile/tablet only (button is CSS-hidden above
