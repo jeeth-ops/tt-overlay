@@ -2044,9 +2044,14 @@ const CLIP_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
 const PLAY_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
 const DOWNLOAD_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>';
 
-// Mirrors the server's playerKey() exactly (server.js: name.trim().toLowerCase())
+// Mirrors the server's playerKey() exactly — including collapsing internal
+// whitespace (server.js: name.trim().toLowerCase().replace(/\s+/g,' ')).
+// Keep this in sync with server.js's playerKey() — score-tournament.html
+// and score-match.html each keep their own copy too; a name-key mismatch
+// between client and server here is exactly what makes a player's clips
+// silently fail to show up on this page.
 // so the key computed here always matches what a clip was linked against.
-function playerKeyOf(name){ return String(name||'').trim().toLowerCase() || null; }
+function playerKeyOf(name){ return String(name||'').trim().toLowerCase().replace(/\s+/g, ' ') || null; }
 
 function clipApiBase(){ return ''; } // same-origin; override here if the scorecard is ever served from a different host than the API
 
@@ -2821,4 +2826,3 @@ connect();
 </script>
 </body>
 </html>
-
