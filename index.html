@@ -185,7 +185,9 @@
             --accent-hover: #dd4448;
             --accent-rgb: 239, 90, 94;
             --brand-teal: #35b3c1;
+            --brand-teal-rgb: 53, 179, 193;
             --brand-orange: #f2a648;
+            --brand-orange-rgb: 242, 166, 72;
             --brand-slate: #67797d;
             --success: #22c55e;
             --border-color: rgba(255, 255, 255, 0.1);
@@ -615,35 +617,6 @@
             box-shadow: 0 10px 30px rgba(var(--shadow-rgb), 0.18);
         }
 
-        /* ===== Top social strip — sits above the nav, the very first thing
-           on the page. Scrolls away with the page (nav is the sticky one)
-           so it never competes for space once someone starts reading. ===== */
-        .top-social-bar {
-            background: linear-gradient(90deg, rgba(var(--accent-rgb), 0.14), rgba(242, 166, 72, 0.1), rgba(53, 179, 193, 0.14));
-            border-bottom: 1px solid var(--border-color-soft);
-        }
-        .tsb-inner {
-            max-width: 1400px; margin: 0 auto; padding: 8px 24px;
-            display: flex; align-items: center; justify-content: space-between; gap: 14px;
-        }
-        @media (max-width: 560px) { .tsb-inner { padding: 7px 16px; } }
-        .tsb-tagline {
-            display: flex; align-items: center; gap: 8px;
-            font-size: 0.78rem; font-weight: 600; color: var(--text-main);
-            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-        }
-        @media (max-width: 400px) { .tsb-tagline { font-size: 0.7rem; } }
-        .tsb-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; animation: livePulse 1.4s ease-in-out infinite; }
-        .tsb-links { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-        .tsb-link {
-            width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
-            display: inline-flex; align-items: center; justify-content: center;
-            color: var(--text-main); background: var(--surface-1); border: 1px solid var(--border-color-soft);
-            transition: background 0.25s var(--ease), color 0.25s var(--ease), transform 0.25s var(--ease-spring), border-color 0.25s var(--ease);
-        }
-        .tsb-link svg { width: 15px; height: 15px; }
-        .tsb-link.tsb-youtube:hover { background: rgba(255, 0, 0, 0.16); border-color: rgba(255, 0, 0, 0.4); color: #ff0000; transform: translateY(-2px) scale(1.08); }
-        .tsb-link.tsb-instagram:hover { background: rgba(225, 48, 108, 0.16); border-color: rgba(225, 48, 108, 0.4); color: #e1306c; transform: translateY(-2px) scale(1.08); }
         .logo { font-size: 1.8rem; font-weight: 800; color: var(--text-main); letter-spacing: -1px; flex-shrink: 0; }
         .logo span { color: var(--accent); }
         .logo img { transition: transform 0.3s var(--ease-spring); }
@@ -874,12 +847,48 @@
         }
 
         .hero { text-align: center; padding: clamp(56px, 12vw, 100px) 20px; max-width: 900px; margin: 0 auto; }
+
+        /* Small glowing pill above the headline — gives a first-time
+           visitor an instant "what is this" tag before they even read
+           the big claim below it. */
+        .hero-eyebrow {
+            display: inline-flex; align-items: center; gap: 9px;
+            padding: 8px 18px; margin-bottom: 22px;
+            border-radius: 50px;
+            font-size: 0.8rem; font-weight: 700; letter-spacing: 0.3px;
+            color: var(--text-main);
+            background: linear-gradient(90deg, rgba(var(--accent-rgb), 0.16), rgba(var(--brand-orange-rgb), 0.16));
+            border: 1px solid rgba(var(--accent-rgb), 0.32);
+            box-shadow: 0 8px 24px rgba(var(--accent-rgb), 0.18);
+        }
+        .hero-eyebrow-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex-shrink: 0; animation: livePulse 1.4s ease-in-out infinite; }
+
         .hero h1 { font-size: clamp(2.2rem, 8vw, 5.2rem); font-weight: 900; line-height: 1.08; letter-spacing: -1.5px; margin-bottom: 20px; text-shadow: 0 10px 30px rgba(var(--shadow-rgb), 0.5); }
-        .hero h1 span { color: var(--accent); position: relative; }
+        /* Animated gradient text + a soft blurred glow sitting behind it —
+           turns the one word we most want to land ("Sports Overlays")
+           into the visual anchor of the whole page instead of flat color. */
+        .hero h1 span {
+            position: relative;
+            background: linear-gradient(90deg, var(--accent), var(--brand-orange), var(--brand-teal), var(--accent));
+            background-size: 300% auto;
+            -webkit-background-clip: text; background-clip: text; color: transparent;
+            animation: heroGradientMove 6s linear infinite;
+        }
+        .hero h1 span::after {
+            content: '';
+            position: absolute; inset: -20% -8%;
+            background: radial-gradient(ellipse at center, rgba(var(--accent-rgb), 0.35), transparent 70%);
+            filter: blur(26px);
+            z-index: -1;
+        }
+        @keyframes heroGradientMove { to { background-position: -300% center; } }
+        @media (prefers-reduced-motion: reduce) {
+            .hero h1 span, .hero-eyebrow-dot, .cta-btn::before { animation: none !important; }
+        }
         .hero p { font-size: clamp(1rem, 3vw, 1.3rem); font-weight: 500; color: var(--text-muted); margin-bottom: 40px; padding: 0 4px; }
         
         .cta-btn {
-            background: var(--accent); 
+            background: linear-gradient(135deg, var(--accent), var(--brand-orange));
             color: white; 
             padding: 16px 40px; 
             font-size: 1.2rem; 
@@ -889,12 +898,24 @@
             display: inline-flex; 
             align-items: center; 
             gap: 10px;
+            position: relative;
+            overflow: hidden;
             transition: background 0.3s var(--ease), transform 0.25s var(--ease), box-shadow 0.3s var(--ease); 
-            box-shadow: 0 4px 20px rgba(var(--accent-rgb), 0.4);
+            box-shadow: 0 10px 30px rgba(var(--accent-rgb), 0.45);
             border: none;
             cursor: pointer;
         }
-        .cta-btn:hover { background: var(--accent-hover); transform: translateY(-3px); box-shadow: 0 8px 25px rgba(var(--accent-rgb), 0.6); }
+        /* Continuous soft shine sweep — the CTA keeps drawing the eye even
+           before a visitor moves their cursor near it. */
+        .cta-btn::before {
+            content: '';
+            position: absolute; top: 0; left: -75%; width: 45%; height: 100%;
+            background: linear-gradient(120deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+            transform: skewX(-20deg);
+            animation: ctaShine 2.8s ease-in-out infinite;
+        }
+        @keyframes ctaShine { 0% { left: -75%; } 45%, 100% { left: 130%; } }
+        .cta-btn:hover { background: linear-gradient(135deg, var(--accent-hover), var(--brand-orange)); transform: translateY(-3px); box-shadow: 0 14px 36px rgba(var(--accent-rgb), 0.65); }
         .cta-btn:active { transform: scale(0.97); box-shadow: 0 3px 12px rgba(var(--accent-rgb), 0.4); }
 
         .admin-panel-container { max-width: 900px; margin: 0 auto 50px auto; padding: 0 20px; }
@@ -1081,7 +1102,11 @@
            and clicking a match opens its scorecard (player stats + clips). */
         .tournaments-section { padding: 100px 20px 56px 20px; max-width: 1200px; margin: 0 auto; }
         .tournaments-heading-row { display: flex; flex-direction: column; align-items: center; gap: 14px; margin-bottom: 12px; }
-        .tournaments-section h2 { font-size: clamp(1.9rem, 5vw, 3rem); font-weight: 800; letter-spacing: -1px; text-align: center; margin-bottom: 0; }
+        .tournaments-section h2 {
+            font-size: clamp(1.9rem, 5vw, 3rem); font-weight: 800; letter-spacing: -1px; text-align: center; margin-bottom: 0;
+            background: linear-gradient(135deg, var(--text-main) 30%, var(--accent) 75%, var(--brand-orange) 100%);
+            -webkit-background-clip: text; background-clip: text; color: transparent;
+        }
         .tournaments-section > p.section-sub,
         .tournaments-heading-row + p.section-sub { color: var(--text-muted); font-size: 1.05rem; text-align: center; margin-bottom: 40px; }
         /* Real-time pill — only shown when at least one tournament is
@@ -1094,6 +1119,7 @@
             border: 1px solid rgba(var(--accent-rgb), 0.32);
             color: var(--accent); font-size: 0.82rem; font-weight: 700;
             letter-spacing: 0.2px;
+            box-shadow: 0 8px 22px rgba(var(--accent-rgb), 0.22);
         }
         .tournaments-live-count[hidden] { display: none; }
         .tournaments-live-count .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex-shrink: 0; animation: livePulse 1.4s ease-in-out infinite; }
@@ -1105,20 +1131,24 @@
             background: var(--border-color-soft);
             border: 1px solid var(--border-color);
             color: var(--text-muted);
-            padding: 9px 20px;
+            padding: 10px 22px;
             border-radius: 50px;
-            font-weight: 600;
+            font-weight: 700;
             font-size: 0.88rem;
             cursor: pointer;
-            transition: background 0.25s var(--ease), color 0.25s var(--ease), border-color 0.25s var(--ease), transform 0.3s var(--ease-spring);
+            transition: background 0.25s var(--ease), color 0.25s var(--ease), border-color 0.25s var(--ease), transform 0.3s var(--ease-spring), box-shadow 0.3s var(--ease);
         }
-        .tournament-filter-btn:hover { color: var(--text-main); }
+        .tournament-filter-btn:hover { color: var(--text-main); transform: translateY(-2px); }
         .tournament-filter-btn:active { transform: scale(0.95); }
         /* Background now comes from .tournament-filter-indicator gliding
            underneath (z-index 0) so the fill morphs between chips instead
            of popping; the active chip itself stays transparent so the
            indicator shows through cleanly. */
-        .tournament-filter-btn.active { background: transparent; border-color: var(--accent); color: white; }
+        .tournament-filter-btn.active { background: transparent; border-color: transparent; color: white; }
+        .tournament-filters .tournament-filter-indicator {
+            background: linear-gradient(135deg, var(--accent), var(--brand-orange));
+            box-shadow: 0 8px 22px rgba(var(--accent-rgb), 0.45);
+        }
 
         .tournaments-grid {
             display: grid;
@@ -1129,29 +1159,58 @@
             .tournaments-grid { grid-template-columns: 1fr; gap: 18px; }
         }
         .tournament-card {
+            --status-color: var(--accent);
+            --status-rgb: var(--accent-rgb);
             position: relative;
             background: var(--bg-card);
             border: 1px solid var(--border-color);
-            border-radius: 18px;
+            border-radius: 20px;
             overflow: hidden;
             cursor: pointer;
             backdrop-filter: blur(12px);
             display: block;
             text-decoration: none;
             color: var(--text-main);
+            box-shadow: 0 10px 24px rgba(var(--shadow-rgb), 0.18);
             transition: transform 0.4s var(--ease-spring), border-color 0.3s var(--ease), box-shadow 0.4s var(--ease-spring);
         }
-        .tournament-card:hover { transform: translateY(-6px); border-color: var(--accent); box-shadow: 0 15px 35px rgba(var(--shadow-rgb), 0.4); }
-        .tournament-card:active { transform: translateY(-2px) scale(0.99); }
-        /* Thin status-coded strip along the top edge of every card — a
-           color-coded status is quicker to scan than reading the badge
-           text on a grid of a dozen cards. */
-        .tournament-card-accent { position: absolute; top: 0; left: 0; right: 0; height: 4px; background: var(--border-color-strong); }
-        .tournament-card.status-live .tournament-card-accent { background: linear-gradient(90deg, var(--accent), var(--brand-orange)); }
+        /* Diagonal shine that sweeps across the whole card on hover — a
+           cheap, pure-CSS way to make it feel "alive" with zero extra
+           DOM nodes or JS (mirrors the .hi-logo-frame shine above). */
+        .tournament-card::before {
+            content: '';
+            position: absolute; top: 0; left: -60%; width: 40%; height: 100%;
+            background: linear-gradient(120deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+            transform: skewX(-20deg);
+            transition: left 0.75s var(--ease);
+            pointer-events: none;
+            z-index: 2;
+        }
+        .tournament-card:hover::before { left: 140%; }
+        .tournament-card:hover {
+            transform: translateY(-9px) scale(1.015);
+            border-color: rgba(var(--status-rgb), 0.55);
+            box-shadow: 0 26px 50px -12px rgba(var(--status-rgb), 0.4), 0 10px 24px rgba(var(--shadow-rgb), 0.35);
+        }
+        .tournament-card:active { transform: translateY(-3px) scale(0.99); }
+        /* Each status gets its own theme color, driving the icon, ring,
+           badge and hover glow together instead of styling them one by one. */
+        .tournament-card.status-live { --status-color: var(--accent); --status-rgb: var(--accent-rgb); border-color: rgba(var(--accent-rgb), 0.35); box-shadow: 0 10px 30px rgba(var(--accent-rgb), 0.18); }
+        .tournament-card.status-ongoing { --status-color: var(--brand-teal); --status-rgb: var(--brand-teal-rgb); }
+        .tournament-card.status-completed { --status-color: #94a3b8; --status-rgb: 148, 163, 184; }
+        .tournament-card.status-upcoming { --status-color: var(--brand-orange); --status-rgb: var(--brand-orange-rgb); }
+        /* Thicker status-coded strip along the top edge — shimmering for
+           live tournaments so it reads as "in motion" at a glance. */
+        .tournament-card-accent { position: absolute; top: 0; left: 0; right: 0; height: 5px; background: var(--border-color-strong); z-index: 1; }
+        .tournament-card.status-live .tournament-card-accent {
+            background: linear-gradient(90deg, var(--accent), var(--brand-orange), var(--accent));
+            background-size: 200% 100%;
+            animation: accentShimmer 2.4s linear infinite;
+        }
+        @keyframes accentShimmer { to { background-position: -200% 0; } }
         .tournament-card.status-ongoing .tournament-card-accent { background: linear-gradient(90deg, var(--brand-teal), var(--brand-slate)); }
         .tournament-card.status-completed .tournament-card-accent { background: var(--border-color-strong); }
         .tournament-card.status-upcoming .tournament-card-accent { background: linear-gradient(90deg, var(--brand-orange), var(--accent-hover)); }
-        .tournament-card.status-live { border-color: rgba(var(--accent-rgb), 0.35); }
         .tournament-card-top {
             padding: 22px 20px 16px 20px;
             display: flex;
@@ -1161,11 +1220,26 @@
             border-bottom: 1px solid var(--border-color-soft);
         }
         .tournament-sport-icon {
-            font-size: 1.5rem; line-height: 1; flex-shrink: 0;
-            width: 44px; height: 44px; border-radius: 13px;
+            position: relative;
+            font-size: 1.6rem; line-height: 1; flex-shrink: 0;
+            width: 50px; height: 50px; border-radius: 15px;
             display: inline-flex; align-items: center; justify-content: center;
-            background: rgba(var(--accent-rgb), 0.12);
-            border: 1px solid rgba(var(--accent-rgb), 0.2);
+            background: linear-gradient(135deg, rgba(var(--status-rgb), 0.28), rgba(var(--status-rgb), 0.08));
+            border: 1px solid rgba(var(--status-rgb), 0.35);
+            box-shadow: 0 8px 20px rgba(var(--status-rgb), 0.2);
+            transition: transform 0.45s var(--ease-spring);
+        }
+        .tournament-card:hover .tournament-sport-icon { transform: scale(1.08) rotate(-6deg); }
+        /* Expanding "radar ping" ring around the icon on live cards only. */
+        .tournament-card.status-live .tournament-sport-icon::after {
+            content: '';
+            position: absolute; inset: -5px; border-radius: inherit;
+            border: 2px solid rgba(var(--accent-rgb), 0.5);
+            animation: sportIconPing 1.8s ease-out infinite;
+        }
+        @keyframes sportIconPing {
+            0% { transform: scale(0.9); opacity: 0.8; }
+            100% { transform: scale(1.25); opacity: 0; }
         }
         .tournament-status-badge {
             font-size: 0.68rem;
@@ -1179,14 +1253,22 @@
             align-items: center;
             gap: 5px;
         }
-        .tournament-status-badge.live { background: rgba(var(--accent-rgb), 0.14); color: var(--accent); }
+        .tournament-status-badge.live {
+            background: rgba(var(--accent-rgb), 0.16); color: var(--accent);
+            animation: badgePulseRing 1.8s ease-out infinite;
+        }
+        @keyframes badgePulseRing {
+            0% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.45); }
+            70% { box-shadow: 0 0 0 7px rgba(var(--accent-rgb), 0); }
+            100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0); }
+        }
         .tournament-status-badge.live .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: livePulse 1.4s ease-in-out infinite; }
         .tournament-status-badge.completed { background: rgba(148, 163, 184, 0.15); color: #94a3b8; }
-        .tournament-status-badge.ongoing { background: rgba(53, 179, 193, 0.16); color: var(--brand-teal); }
-        .tournament-status-badge.upcoming { background: rgba(242, 166, 72, 0.16); color: var(--brand-orange); }
+        .tournament-status-badge.ongoing { background: rgba(var(--brand-teal-rgb), 0.16); color: var(--brand-teal); }
+        .tournament-status-badge.upcoming { background: rgba(var(--brand-orange-rgb), 0.16); color: var(--brand-orange); }
         .tournament-card-body { padding: 18px 20px 20px 20px; }
         .tournament-card-body h3 {
-            font-size: 1.18rem; font-weight: 700; margin-bottom: 12px; line-height: 1.3;
+            font-size: 1.2rem; font-weight: 800; margin-bottom: 12px; line-height: 1.3;
             display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
         }
         .tournament-meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
@@ -1194,18 +1276,23 @@
             display: inline-flex; align-items: center; gap: 6px;
             font-size: 0.78rem; font-weight: 600; color: var(--text-muted);
             background: var(--surface-1); border: 1px solid var(--border-color-soft);
-            padding: 5px 11px; border-radius: 8px;
+            padding: 5px 12px; border-radius: 999px;
         }
         .tournament-meta-chip.host { color: var(--text-main); }
-        .tournament-meta-chip.private { color: var(--brand-orange); background: rgba(242, 166, 72, 0.1); border-color: rgba(242, 166, 72, 0.25); }
+        .tournament-meta-chip.private { color: var(--brand-orange); background: rgba(var(--brand-orange-rgb), 0.1); border-color: rgba(var(--brand-orange-rgb), 0.25); }
         .tournament-meta-chip.public { color: var(--success); background: rgba(34, 197, 94, 0.1); border-color: rgba(34, 197, 94, 0.25); }
         .tournament-card-cta {
             display: flex; align-items: center; justify-content: space-between; gap: 6px;
-            color: var(--accent); font-weight: 700; font-size: 0.9rem; text-decoration: none;
+            color: var(--status-color); font-weight: 800; font-size: 0.9rem; text-decoration: none;
             padding-top: 14px; border-top: 1px solid var(--border-color-soft);
         }
-        .tournament-card-cta .arrow { transition: transform 0.3s var(--ease-spring); }
-        .tournament-card:hover .tournament-card-cta .arrow { transform: translateX(4px); }
+        .tournament-card-cta .arrow {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0;
+            background: rgba(var(--status-rgb), 0.14);
+            transition: transform 0.3s var(--ease-spring), background 0.3s var(--ease), color 0.3s var(--ease);
+        }
+        .tournament-card:hover .tournament-card-cta .arrow { background: var(--status-color); color: #fff; transform: translateX(4px); }
         .tournaments-empty {
             text-align: center; color: var(--text-muted); padding: 60px 20px;
             border: 1px dashed var(--border-color); border-radius: 18px;
@@ -1357,6 +1444,9 @@
                stops it moving. */
             .hero-live-badge .dot,
             .tournament-status-badge.live .dot,
+            .tournament-status-badge.live,
+            .tournament-card.status-live .tournament-card-accent,
+            .tournament-card.status-live .tournament-sport-icon::after,
             .hi-particle,
             #hiBg, #hiCard, .hi-team, .hi-diamond, .hi-team-name,
             .hi-round, .hi-logo-frame::after, .hi-venue-bar span {
@@ -1728,8 +1818,10 @@
             border-radius: 18px;
             border: 1px solid rgba(255, 255, 255, 0.1);
             overflow: hidden;
-            box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
+            box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6), 0 0 70px -20px rgba(var(--accent-rgb), 0.4), 0 0 110px -35px rgba(var(--brand-teal-rgb), 0.35);
+            transition: transform 0.5s var(--ease-spring), box-shadow 0.5s var(--ease-spring);
         }
+        .showcase-browser:hover { transform: translateY(-4px); box-shadow: 0 34px 90px rgba(0, 0, 0, 0.65), 0 0 90px -18px rgba(var(--accent-rgb), 0.5), 0 0 130px -30px rgba(var(--brand-teal-rgb), 0.4); }
         .browser-topbar { background: #161b2c; padding: 12px 16px; display: flex; align-items: center; gap: 14px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
         .browser-dots { display: flex; gap: 7px; }
         .browser-dots span { width: 11px; height: 11px; border-radius: 50%; background: #374151; display: block; }
@@ -2067,20 +2159,6 @@
 
     <div class="cursor-glow"></div>
 
-    <div class="top-social-bar" aria-label="Follow All Sports Live">
-        <div class="tsb-inner">
-            <span class="tsb-tagline"><span class="tsb-dot"></span>Catch every 4, 6 &amp; wicket — live</span>
-            <div class="tsb-links">
-                <a class="tsb-link tsb-youtube" href="https://youtube.com/@allsportslive?si=o989d2q2QM0crt7w" target="_blank" rel="noopener noreferrer" aria-label="Subscribe on YouTube">
-                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.4.6A3 3 0 0 0 .5 6.2 31.6 31.6 0 0 0 0 12a31.6 31.6 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.6 9.4.6 9.4.6s7.5 0 9.4-.6a3 3 0 0 0 2.1-2.1A31.6 31.6 0 0 0 24 12a31.6 31.6 0 0 0-.5-5.8zM9.6 15.5v-7L15.8 12z"/></svg>
-                </a>
-                <a class="tsb-link tsb-instagram" href="https://www.instagram.com/all.sports.live" target="_blank" rel="noopener noreferrer" aria-label="Follow on Instagram">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg>
-                </a>
-            </div>
-        </div>
-    </div>
-
     <nav class="animate-in">
         <div class="logo" style="display:flex;align-items:center;gap:10px;">
             <img src="/logo.png" alt="All Sports Live" style="height:36px;width:36px;border-radius:9px;object-fit:cover;">
@@ -2123,6 +2201,7 @@
     </div>
 
     <section class="hero animate-in" id="hero-section">
+        <div class="hero-eyebrow"><span class="hero-eyebrow-dot"></span>Professional Live Overlays</div>
         <h1>Add <span>Sports Overlays</span> to your live stream</h1>
         <p>Works alongside OBS, vMix and Streamlabs. Professional TV-style graphics in seconds.</p>
         <a href="#tournaments" class="cta-btn">View Live Tournaments ➔</a>
@@ -2296,7 +2375,7 @@
 
     <section id="tournaments" class="tournaments-section">
         <div class="tournaments-heading-row">
-            <h2 class="reveal-on-scroll">Tournaments</h2>
+            <h2 class="reveal-on-scroll">🏆 Tournaments</h2>
             <span class="tournaments-live-count reveal-on-scroll" id="tournamentsLiveCount" hidden>
                 <span class="dot"></span><span id="tournamentsLiveCountText">0 live right now</span>
             </span>
