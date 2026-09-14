@@ -465,8 +465,13 @@ function renderFinal(m){
    ============================================================ */
 const CLIP_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>';
 
-// Mirrors the server's playerKey() exactly (name.trim().toLowerCase()).
-function playerKeyOf(name){ return String(name||'').trim().toLowerCase() || null; }
+// Mirrors the server's playerKey() exactly — including collapsing internal
+// whitespace (server.js: name.trim().toLowerCase().replace(/\s+/g,' ')).
+// Keep this in sync with server.js's playerKey() — score-tournament.html
+// and cricket-scorecard.html each keep their own copy too; a name-key
+// mismatch between client and server here is exactly what makes a
+// player's clips silently fail to show up on this page.
+function playerKeyOf(name){ return String(name||'').trim().toLowerCase().replace(/\s+/g, ' ') || null; }
 
 function clipBtnHtml(name, role){
   if(!name) return '';
