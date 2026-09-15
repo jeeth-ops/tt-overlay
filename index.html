@@ -69,14 +69,9 @@
      media rule), this just mirrors that same cutoff here. ===== -->
 <script>
 (function () {
-  var theme = 'dark';
-  if (window.matchMedia('(max-width: 900px)').matches) {
-    try {
-      var saved = localStorage.getItem('asl-theme');
-      if (saved === 'light' || saved === 'dark') theme = saved;
-    } catch (e) { /* ignore */ }
-  }
-  document.documentElement.setAttribute('data-theme', theme);
+  // Theme toggle button has been removed — the site is dark-only now,
+  // on every viewport (desktop and mobile, Android and iOS alike).
+  document.documentElement.setAttribute('data-theme', 'dark');
 })();
 </script>
 <!-- ===== Content Protection (deterrent only, not foolproof) ===== -->
@@ -675,25 +670,7 @@
         /* Mobile/tablet only (matches the .hero-preview / #hiEditor and
            .nav-hamburger cutoff already used across this page) — desktop
            stays dark-only, so the button has nothing to do there. */
-        .theme-toggle { display: none; }
-        @media (max-width: 900px) {
-            .theme-toggle {
-                width: 42px;
-                height: 42px;
-                flex-shrink: 0;
-                border-radius: 50%;
-                border: 1px solid var(--border-color);
-                background: var(--surface-1);
-                color: var(--text-main);
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                cursor: pointer;
-                font-size: 1.15rem;
-                line-height: 1;
-                transition: background 0.25s var(--ease), border-color 0.25s var(--ease), transform 0.25s var(--ease-spring);
-            }
-        }
+        .theme-toggle { display: none !important; }
         .theme-toggle:hover { background: var(--surface-1-hover); border-color: var(--border-color-strong); transform: translateY(-2px) rotate(-8deg); }
         .theme-toggle:active { transform: scale(0.92); }
         .theme-toggle .icon-moon { display: none; }
@@ -1516,16 +1493,21 @@
         }
 
         /* ===== Mobile / touch performance mode =====
-           backdrop-filter + large blurred, animated blobs are cheap on
-           WebKit/macOS (hardware-accelerated compositing) but very GPU-heavy
-           on most Android WebViews/Chrome — this is the "smooth on laptop,
-           laggy on phone" gap. It also makes the fixed-size red blob cover a
+           Large blurred, animated blobs are cheap on WebKit/macOS
+           (hardware-accelerated compositing) but heavier on some Android
+           WebViews/Chrome. It also makes the fixed-size red blob cover a
            much bigger share of a small phone screen than a laptop screen,
            which is why the accent red looks stronger on mobile. On touch /
-           narrow screens we shrink the blobs, drop their blur + animation,
-           and drop backdrop-filter blur (keeping the translucent background
-           color so cards still look layered, just without the expensive
-           blur pass). */
+           narrow screens we shrink the blobs and drop their blur + animation.
+
+           We also dial the glass blur itself down to real iOS strength.
+           The desktop blur values (12–26px) read as intended on a big
+           screen, but the same pixel radius covers a much bigger fraction
+           of a small phone screen, so it looked hazy/over-blurred there
+           instead of crisp. iOS's own materials (Control Center, sheets,
+           widgets) use blur in roughly this 8–18px range at phone scale —
+           this brings the site's glass panels in line with that, still
+           translucent, just not foggy. */
         @media (max-width: 900px), (pointer: coarse) {
             .bg-video { display: none !important; }
             .ambient-blob {
@@ -1536,9 +1518,25 @@
             .ambient-blob.b1 { width: 220px; height: 220px; }
             .ambient-blob.b2 { width: 260px; height: 260px; }
             .ambient-blob.b3 { width: 180px; height: 180px; }
-            * {
-                backdrop-filter: none !important;
-                -webkit-backdrop-filter: none !important;
+
+            nav {
+                -webkit-backdrop-filter: blur(8px);
+                backdrop-filter: blur(8px);
+            }
+            .mobile-nav-panel {
+                -webkit-backdrop-filter: blur(18px) saturate(180%);
+                backdrop-filter: blur(18px) saturate(180%);
+            }
+            .tournament-card,
+            .sport-card,
+            .step-card,
+            .admin-box,
+            .bento-card,
+            .stats-bar-inner,
+            .testimonial-card,
+            .hi-editor {
+                -webkit-backdrop-filter: blur(9px);
+                backdrop-filter: blur(9px);
             }
         }
 
@@ -2624,9 +2622,6 @@
             <button onclick="logout()" class="auth-btn btn-danger" id="logout-btn">Logout</button>
             <button onclick="openAuthGate()" class="nav-btn" id="nav-signin-btn">Sign in</button>
             <a href="#tournaments" class="nav-btn">View Tournaments</a>
-            <button type="button" class="theme-toggle" id="themeToggle" aria-label="Toggle dark/light theme">
-                <span class="icon-sun">☀️</span><span class="icon-moon">🌙</span>
-            </button>
             <button type="button" class="nav-hamburger" id="navHamburger" aria-label="Open menu" aria-expanded="false">
                 <span></span><span></span><span></span>
             </button>
@@ -2659,7 +2654,7 @@
         <a href="#tournaments" class="cta-btn">View Live Tournaments ➔</a>
 
         <div class="device-uplink reveal-on-scroll delay-1" id="deviceUplink">
-            <div class="device-uplink-kicker"><span class="dot"></span> <span class="du-kicker-desktop">One feed. All devices.</span><span class="du-kicker-mobile">Every tournament. Your mobile.</span></div>
+            <div class="device-uplink-kicker"><span class="dot"></span> <span class="du-kicker-desktop">One feed. All devices.</span><span class="du-kicker-mobile">Every Match, Right In Your Hand.</span></div>
             <div class="device-uplink-rig">
                 <button type="button" class="du-arrow" id="duPrev" aria-label="Previous device">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
@@ -4698,41 +4693,6 @@
             hydrateInputs();
             updateUndoBtn();
             applyStateNow();
-        })();
-
-        // Theme toggle — mobile/tablet only (button is CSS-hidden above
-        // 900px). Persists the visitor's choice for next visit; if the
-        // viewport ever crosses into desktop width (rotating a tablet,
-        // resizing a browser window), snap back to dark without touching
-        // the saved mobile preference.
-        (function themeToggleSetup(){
-            const THEME_KEY = 'asl-theme';
-            const btn = document.getElementById('themeToggle');
-            const desktopQuery = window.matchMedia('(min-width: 901px)');
-
-            function applyForViewport(isDesktop){
-                if (isDesktop) {
-                    document.documentElement.setAttribute('data-theme', 'dark');
-                    return;
-                }
-                let saved = 'dark';
-                try {
-                    const s = localStorage.getItem(THEME_KEY);
-                    if (s === 'light' || s === 'dark') saved = s;
-                } catch (e) { /* ignore */ }
-                document.documentElement.setAttribute('data-theme', saved);
-            }
-
-            if (btn) {
-                btn.addEventListener('click', () => {
-                    const current = document.documentElement.getAttribute('data-theme') || 'dark';
-                    const next = current === 'dark' ? 'light' : 'dark';
-                    document.documentElement.setAttribute('data-theme', next);
-                    try { localStorage.setItem(THEME_KEY, next); } catch (e) { /* ignore */ }
-                });
-            }
-
-            desktopQuery.addEventListener('change', (e) => applyForViewport(e.matches));
         })();
 
         // Network status banner — self-contained, no dependency on
