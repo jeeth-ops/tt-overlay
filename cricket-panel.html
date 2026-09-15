@@ -6138,7 +6138,7 @@ function recordBall(kind, meta){
     }
     case 'Wd': {
       // Extra runs actually run (beyond the automatic 1) come from the
-      // extras picker modal — capped at 4, defaults to 0 if not given.
+      // extras picker modal — 0 to 6, defaults to 0 if not given.
       const extraRun = (meta && typeof meta.extraRuns === 'number') ? meta.extraRuns : 0;
       const wdTotal = 1 + extraRun;
       state.score.runs += wdTotal;
@@ -6157,7 +6157,7 @@ function recordBall(kind, meta){
     case 'Nb': {
       // Runs off the bat OR leg-bye runs come from the extras picker
       // modal (only one or the other on any single ball — a batsman
-      // either hits the ball or misses it) — capped at 4, defaults to 0.
+      // either hits the ball or misses it) — 0 to 6, defaults to 0.
       // The 1-run no-ball penalty is always added on top regardless.
       const batRuns = (meta && typeof meta.runsOffBat === 'number') ? meta.runsOffBat : 0;
       // 🏏 Leg Bye off a No Ball — same rule as a leg bye off a normal
@@ -6171,6 +6171,12 @@ function recordBall(kind, meta){
       if(batRuns > 0){
         state.striker.runs += batRuns;
         if(batRuns === 4) state.striker.fours++;
+        // 🔒 FIX: a No Ball can legally be struck for six same as any other
+        // delivery — the run-count picker used to cap at 4, so this branch
+        // never existed and a six off a No Ball silently went untallied in
+        // the striker's boundary count. Now that the picker goes to 6, tally
+        // it exactly like a six off a normal ball.
+        if(batRuns === 6) state.striker.sixes++;
       }
       state.partnershipRuns += nbTotal;
       state.extras[state.battingTeam].nb += 1;
@@ -6500,10 +6506,15 @@ function openExtrasModal(kind){
   }
   document.getElementById('extras-modal-overlay').classList.add('show');
 }
-// (re)draws the 0-4 run-count buttons for the extras picker. Split out
-// from openExtrasModal so the No-Ball Leg-Bye toggle can re-render just
-// the title + buttons (with the metaKey flipped between 'runsOffBat' and
+// (re)draws the run-count buttons for the extras picker. Split out from
+// openExtrasModal so the No-Ball Leg-Bye toggle can re-render just the
+// title + buttons (with the metaKey flipped between 'runsOffBat' and
 // 'legByeRuns') without re-running the whole modal-open setup.
+// 🔒 Wide/No-Ball go up to 6, not 4 — a batsman can legally strike a No
+// Ball for six same as any normal delivery, and a Wide's extra runs can
+// likewise run past 4 on a mis-field/overthrow. Capping at 4 made both
+// unselectable. Bye/Leg Bye stay capped at 4 (untouched — not what was
+// reported).
 function renderExtrasModalButtons(kind){
   const cfg = EXTRAS_MODAL_CONFIG[kind];
   const isNbLegBye = kind === 'Nb' && nbLegByeMode;
@@ -6512,7 +6523,8 @@ function renderExtrasModalButtons(kind){
     : cfg.title;
   const wrap = document.getElementById('extras-modal-options');
   wrap.innerHTML = '';
-  for(let i = 0; i <= 4; i++){
+  const maxRuns = (kind === 'Wd' || kind === 'Nb') ? 6 : 4;
+  for(let i = 0; i <= maxRuns; i++){
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'wm-option';
