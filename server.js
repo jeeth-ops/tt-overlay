@@ -2985,15 +2985,19 @@ adminRouter.delete('/clips/:clipId', async (req, res) => {
 // they already recompute fresh from matchRecordsCollection on every read
 // (see computeLeaderboards/computePointsTable above).
 //
-// ⚠️ KNOWN SCHEMA LIMIT: `kind` on a ball is still a single bucket
-// ('0'-'6' | 'W' | 'Wd' | 'Nb' | 'B' | 'LB'), matching how logBall has
-// always written it. That means a wicket that happens ON a Wide or No
-// Ball (a stumping/run-out off a wide, a run-out off a no-ball) cannot be
-// fully represented yet — buildBallFromCorrection() below deliberately
-// REJECTS that combination rather than silently dropping the extra or the
-// wicket. Fully modelling it needs additive schema fields (separate
-// runsOffBat/extraRuns/extraType on every ball) and a backfill plan for
-// existing matches — a bigger, separate change than this correction UI.
+// `kind` on a ball is still a single bucket ('0'-'6' | 'W' | 'Wd' | 'Nb' |
+// 'B' | 'LB'), matching how logBall has always written it — but `dismissal`
+// is a SEPARATE field on the ball document, independent of `kind`, so a
+// wicket on a Wide or No Ball is representable without any schema change:
+// kind stays 'Wd'/'Nb' (correctly non-legal, no ball faced) and dismissal
+// is still attached. buildBallFromCorrection() below only allows the
+// dismissal types the Laws of Cricket actually permit off each: Run Out or
+// Stumped off a Wide, Run Out or Hit Wicket off a No Ball — a batsman can
+// never be Bowled/Caught/LBW off a delivery that was never legal, so those
+// combinations are still rejected with a clear error. NOTE: this fix is
+// scoped to the correction engine only — the live-scoring wicket modal in
+// cricket-panel.html still can't INPUT a wicket-on-extra live; it can only
+// be added afterwards here as a correction.
 // ================================================================
 
 const VALID_EXTRA_TYPES = new Set(['none', 'wide', 'noball', 'bye', 'legbye']);
@@ -3028,8 +3032,13 @@ function buildBallFromCorrection(input) {
     if (extraType === 'wide' && runsOffBat > 0) throw new Error('A Wide cannot carry runs off the bat — the striker never faced it.');
     if ((extraType === 'bye' || extraType === 'legbye') && runsOffBat > 0) throw new Error('Byes/Leg Byes are never credited as runs off the bat.');
     if (extraType !== 'none' && extraRuns <= 0 && extraType !== 'noball') throw new Error(`Extra type is "${extraType}" but Extras is 0 — enter the runs run/extra runs.`);
-    if (isWicket && (extraType === 'wide' || extraType === 'noball')) {
-        throw new Error(`A wicket together with a ${extraType === 'wide' ? 'Wide' : 'No Ball'} isn't representable in the current delivery model yet (see the schema-limit note above the correction engine) — record the wicket on a legal delivery, or leave this one as a extra-only ball for now.`);
+    const WIDE_LEGAL_DISMISSALS = new Set(['Run Out', 'Stumped']);
+    const NOBALL_LEGAL_DISMISSALS = new Set(['Run Out', 'Hit Wicket']);
+    if (isWicket && extraType === 'wide' && !WIDE_LEGAL_DISMISSALS.has(input.dismissalType)) {
+        throw new Error('Only a Run Out or Stumped dismissal can happen on a Wide — the batsman cannot be Bowled, Caught, LBW or Hit Wicket off a delivery that was never legal.');
+    }
+    if (isWicket && extraType === 'noball' && !NOBALL_LEGAL_DISMISSALS.has(input.dismissalType)) {
+        throw new Error('Only a Run Out or Hit Wicket dismissal can happen on a No Ball — Bowled, Caught, LBW and Stumped are not out off a No Ball under the Laws of Cricket.');
     }
     if (isWicket && extraType === 'none' && ['Bowled', 'LBW', 'Stumped', 'Hit Wicket', 'Caught'].includes(input.dismissalType) && runsOffBat > 0) {
         throw new Error(`${input.dismissalType} ends the delivery dead — it can't also carry runs off the bat. Use Run Out if runs were completed.`);
@@ -3044,6 +3053,54 @@ function buildBallFromCorrection(input) {
     else { kind = String(Math.min(6, runsOffBat)); totalRuns = runsOffBat; }               // '0'..'6' off-the-bat delivery
     return { kind, runs: totalRuns, isWicket };
 }
+
+// 🔁 STRIKE ROTATION REVIEW (spec: "historical edit replay")
+// Correcting an earlier delivery can change how many runs were actually run
+// between the wickets, which can change who SHOULD be on strike for every
+// later ball in that innings. We deliberately do NOT silently rewrite the
+// striker/nonStriker recorded on later balls — that data also carries "who
+// batted this ball" identity (especially the new batsman after a wicket,
+// which nothing in the ball data lets us derive). Instead this walks the
+// innings forward applying the mechanical Laws-of-Cricket rules (odd runs
+// run = strike swaps, 6th legal ball of an over = ends swap, a wicket means
+// we can't know which end the new batsman resumed at so we resync ground
+// truth from what was actually recorded and keep going) and returns every
+// point where the recorded striker diverges from what the corrected
+// sequence implies — self-healing after each flag so one real divergence
+// doesn't cascade into dozens of false positives for the rest of the
+// innings. This is advisory: correctDelivery() only surfaces the NEW
+// divergences a specific correction introduces, for the owner to review
+// (and fix via the same Edit Delivery form) — same conservative pattern as
+// resultMayNeedReview below.
+function findStrikeInconsistencies(inningsBalls) {
+    const issues = [];
+    let striker = null, nonStriker = null, legalInOver = 0, resetNeeded = true;
+    inningsBalls.forEach(b => {
+        if (resetNeeded) {
+            striker = b.striker; nonStriker = b.nonStriker; legalInOver = 0; resetNeeded = false;
+        } else if (b.striker && striker && b.striker !== striker) {
+            issues.push({
+                innings: b.innings || 1, over: b.over, ballInOver: b.ballInOver,
+                recordedStriker: b.striker, recordedNonStriker: b.nonStriker,
+                expectedStriker: striker, expectedNonStriker: nonStriker
+            });
+            striker = b.striker; nonStriker = b.nonStriker; // self-heal from the recorded value so this doesn't cascade
+        }
+        const facts = deriveBallFacts(b.kind, b.runs);
+        // Runs actually RUN between the wickets (as opposed to runs credited
+        // to the team): a Wide's first run is the automatic penalty, not run;
+        // a No Ball's bat runs (if any) are run, its 1-run penalty is not.
+        const runsRun = facts.extraType === 'wide' ? Math.max(0, (b.runs || 0) - 1)
+            : facts.extraType === 'noball' ? facts.runsOffBat
+            : (b.runs || 0);
+        let swap = (runsRun % 2) === 1;
+        if (facts.legalBall) { legalInOver++; if (legalInOver === 6) { swap = !swap; legalInOver = 0; } }
+        if (swap) { const t = striker; striker = nonStriker; nonStriker = t; }
+        if (b.dismissal) resetNeeded = true; // next ball's batsman-at-that-end can't be derived, resync from what's recorded
+    });
+    return issues;
+}
+function strikeIssueKey(i) { return `${i.innings}-${i.over}-${i.ballInOver}-${i.recordedStriker}`; }
 
 // Post-correction sanity checks (VALIDATION section of the spec) — run
 // against the SIMULATED full match, before anything is written. Kept
@@ -3114,6 +3171,16 @@ async function correctDelivery(ballId, actorEmail, input, dryRun) {
     const before = buildLiveCardsFromBallsArray(allBalls);
     const after = buildLiveCardsFromBallsArray(simulated);
     const result = { before: { ball: original, cards: before }, after: { ball: correctedBall, cards: after }, errors };
+
+    // Only the innings this delivery belongs to can have new strike-rotation
+    // divergences; compare before vs after so the owner only sees what THIS
+    // correction changed, not pre-existing anomalies unrelated to this edit.
+    const inningsOf = original.innings || 1;
+    const beforeInnings = allBalls.filter(b => (b.innings || 1) === inningsOf);
+    const afterInnings = simulated.filter(b => (b.innings || 1) === inningsOf);
+    const issuesBefore = new Set(findStrikeInconsistencies(beforeInnings).map(strikeIssueKey));
+    result.strikeReviewNeeded = findStrikeInconsistencies(afterInnings).filter(i => !issuesBefore.has(strikeIssueKey(i)));
+
     if (errors.length || dryRun) return result;
 
     await ballsCollection.replaceOne({ _id }, correctedBall);
@@ -3149,6 +3216,16 @@ async function correctDelivery(ballId, actorEmail, input, dryRun) {
     result.resultMayNeedReview = !!(existingMatch && existingMatch.winningTeam &&
         (before.scoreA.runs !== after.scoreA.runs || before.scoreB.runs !== after.scoreB.runs ||
          before.scoreA.wickets !== after.scoreA.wickets || before.scoreB.wickets !== after.scoreB.wickets));
+    // We deliberately never auto-write the new result (a target/DLS/forfeit
+    // situation can't be safely inferred from scoreA/scoreB alone) — but a
+    // completed match's innings-ending conditions (overs used up / all out /
+    // target reached) aren't affected by a runs-only correction, so simply
+    // comparing final totals is a safe SUGGESTION for the owner to confirm
+    // with one click via PUT /cricket/match/:matchId/apply-result, instead of
+    // them having to work out and re-enter the winner by hand.
+    if (result.resultMayNeedReview) {
+        result.suggestedResult = after.scoreA.runs === after.scoreB.runs ? 'TIE' : (after.scoreA.runs > after.scoreB.runs ? 'A' : 'B');
+    }
 
     return result;
 }
@@ -3285,6 +3362,33 @@ adminRouter.post('/cricket/match/:matchId/undo-last', async (req, res) => {
     } catch (err) {
         console.log('Undo last correction error:', err);
         res.status(500).json({ success: false, error: 'Could not undo the last correction' });
+    }
+});
+
+// Apply a (owner-reviewed, never silent) result update after a correction
+// flips the score on an already-completed match — see suggestedResult on
+// correctDelivery()'s return value. Recomputes the winner server-side from
+// the CURRENT ball-by-ball data itself rather than trusting whatever the
+// client sends, so this can't be used to set an arbitrary/incorrect result.
+adminRouter.put('/cricket/match/:matchId/apply-result', async (req, res) => {
+    if (!ballsCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const matchId = safeMatchId(req.params.matchId);
+        const existing = await matchRecordsCollection.findOne({ matchId }, { projection: { ownerUid: 1, leagueKey: 1, winningTeam: 1 } });
+        if (!existing) return res.status(404).json({ success: false, error: 'Match not found' });
+        const cards = await buildLiveCardsFromBalls(matchId);
+        const newResult = cards.scoreA.runs === cards.scoreB.runs ? 'TIE' : (cards.scoreA.runs > cards.scoreB.runs ? 'A' : 'B');
+        const previousResult = existing.winningTeam;
+        await matchRecordsCollection.updateOne({ matchId }, { $set: { winningTeam: newResult, resultUpdatedAt: Date.now() } });
+        if (leaguesCollection && existing.ownerUid && existing.leagueKey) {
+            const league = await leaguesCollection.findOne({ ownerUid: existing.ownerUid, leagueKey: existing.leagueKey }, { projection: { publicToken: 1 } });
+            if (league && league.publicToken) publicTournamentCache.delete(league.publicToken);
+        }
+        await logAuditAction(req.ownerEmail, 'Apply corrected match result', `Match ${matchId}`, { winningTeam: previousResult }, { winningTeam: newResult }, { matchId });
+        res.json({ success: true, winningTeam: newResult });
+    } catch (err) {
+        console.log('Apply corrected result error:', err);
+        res.status(500).json({ success: false, error: 'Could not update the match result' });
     }
 });
 
