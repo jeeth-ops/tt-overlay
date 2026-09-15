@@ -6351,8 +6351,16 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity){
     timestamp: ballTimestamp
   });
 
-  if(kindIsWicket || kind === '4' || kind === '6'){
-    const eventType = kindIsWicket ? 'WICKET' : (kind === '4' ? 'FOUR' : 'SIX');
+  // FOUR/SIX still cut here (recordBall runs immediately on click, no
+  // modal in the way, so this timestamp is already the click moment).
+  // WICKET does NOT fire here anymore — triggerWicketClip() already sent
+  // the /clip request the instant the WICKET button/shortcut was pressed
+  // (see openWicketModal above), so the cut starts right away instead of
+  // waiting on the dismissal-type/fielder/new-batsman modals. Firing
+  // again here would just cut a second, redundant clip for the same
+  // wicket.
+  if(kind === '4' || kind === '6'){
+    const eventType = kind === '4' ? 'FOUR' : 'SIX';
     // ballMeta — same shape the socket 'logBall' event above already
     // sends — lets the main server link this clip to the real
     // striker/bowler (see finalizeClip/findCanonicalBall on the server)
@@ -6370,7 +6378,7 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity){
       strikerId: id.strikerId,
       nonStrikerId: id.nonStrikerId,
       bowlerId: id.bowlerId,
-      dismissal: kindIsWicket ? { type: lastDismissalType || 'Bowled' } : null
+      dismissal: null
     };
     fetch(`${CLIPPER_HELPER_URL}/clip`, {
       method: 'POST',
@@ -6497,6 +6505,47 @@ function finalizeExtraWicket(dismissalType, extraMeta){
    On a Free Hit, every option except Run Out is disabled — that's the
    only dismissal the Laws of Cricket allow to stand off that ball.
    ============================================================ */
+// ⚡ Fires the /clip request to the local Clipper Helper the INSTANT the
+// WICKET button (or 'w' shortcut, or the "Also a wicket?" link off a
+// Wide/No Ball) is pressed — do NOT wait for the operator to pick the
+// dismissal type/fielder/keeper first. Those details can take anywhere
+// from a couple of seconds to way longer (searching a fielder's name,
+// deciding Caught vs Run Out, etc.), and the clipper helper's cut window
+// is measured from THIS timestamp — every second that ticks by before we
+// send it is a second the actual wicket moment drifts out of the clip.
+// The operator still fills in bowler/dismissal/new-batsman etc. in the
+// panel exactly as before; logBallToDb() (called once recordBall('W'/
+// 'WdW'/'NbW', ...) finally runs) deliberately does NOT fire a second
+// /clip request for wicket kinds, so this is the only cut per wicket.
+function triggerWicketClip(){
+  const matchId = currentMatchId();
+  if(!matchId) return;
+  const ballTimestamp = Date.now();
+  const ballMeta = {
+    innings: state.inningsNumber,
+    over: state.score.overs,
+    ballInOver: state.score.balls,
+    runs: 0,
+    battingTeam: state.battingTeam,
+    striker: state.striker.name,
+    nonStriker: state.nonStriker.name,
+    bowler: state.bowler.name,
+    strikerId: state.striker.id || null,
+    nonStrikerId: state.nonStriker.id || null,
+    bowlerId: state.bowler.id || null,
+    // Dismissal type isn't known yet at click time — the main server
+    // links the clip to the canonical ball (with the real dismissal
+    // type) by matchId/over/ballInOver once that logBall row lands,
+    // same as it already does when ballMeta is only a partial hint.
+    dismissal: null
+  };
+  fetch(`${CLIPPER_HELPER_URL}/clip`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ eventType: 'WICKET', timestamp: ballTimestamp, matchId, ballMeta })
+  }).catch(() => toast('⚠️ Clipper helper not running — clip skipped'));
+}
+
 function openWicketModal(){
   if(isInningsOver()){
     let msg = '🚫 Overs complete for this innings';
@@ -6510,6 +6559,11 @@ function openWicketModal(){
 
   const overlay = document.getElementById('wicket-modal-overlay');
   const modal = document.getElementById('wicket-modal');
+  // Only cut once per wicket attempt: if this modal is already open
+  // (e.g. the 'w' shortcut repeats while the operator is still choosing),
+  // don't fire another /clip request on top of the first.
+  const alreadyOpen = overlay.classList.contains('show');
+  if(!alreadyOpen) triggerWicketClip();
   document.getElementById('wm-batsman-name').textContent = state.striker.name ? `${state.striker.name} is out —` : 'Select how the batsman was out';
 
   // Mirrors WIDE_LEGAL_DISMISSALS/NOBALL_LEGAL_DISMISSALS on the server's
