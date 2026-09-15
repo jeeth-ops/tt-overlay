@@ -117,8 +117,8 @@
     --border: color-mix(in srgb, var(--text) 16%, transparent);
     --border-soft: color-mix(in srgb, var(--text) 9%, transparent);
     --text: #f5f7fb;
-    --text-dim: #aab3c7;
-    --text-faint: #7c869c;
+    --text-dim-base: #aab3c7;
+    --text-faint-base: #7c869c;
     --accent: #22c55e;
     --accent-soft: rgba(34,197,94,.14);
     --accent-contrast: #06170c;
@@ -142,8 +142,8 @@
     --border: color-mix(in srgb, var(--text) 13%, transparent);
     --border-soft: color-mix(in srgb, var(--text) 7%, transparent);
     --text: #111111;
-    --text-dim: #3c4250;
-    --text-faint: #6b7280;
+    --text-dim-base: #3c4250;
+    --text-faint-base: #6b7280;
     --accent: #128a4a;
     --accent-soft: rgba(18,138,74,.10);
     --accent-contrast: #ffffff;
@@ -173,9 +173,16 @@
      switches and team-color changes both "just work" everywhere
      these are used, with no extra JS recompute needed. Percentages
      are deliberately low (10–18%) — team color is meant to tint the
-     interface, not paint it; text always stays on --text/--text-dim
-     so contrast is never affected by which colors a match happens
-     to have. Falls back gracefully wherever color-mix isn't
+     interface, not paint it. --text itself (primary labels/values)
+     always stays fixed, so core readability never depends on which
+     colors a match happens to have — but --text-dim/--text-faint
+     (secondary labels like "CURRENT RR", card captions) are composed
+     below from a fixed grey base plus a small amount of
+     --match-blend, so secondary text reads as part of the match's
+     color theme instead of a flat, theme-less grey next to colorful
+     cards. The grey base still dominates the mix (80%+ light, 88%+
+     dark) so contrast never drops meaningfully versus plain grey.
+     Falls back gracefully wherever color-mix isn't
      supported, since every consumer also has a plain --panel/--bg
      value earlier in its own declaration (the browser keeps the
      first valid one instead of failing the whole rule). */
@@ -201,6 +208,8 @@
        chips, extras boxes etc. --panel-2 usages are swapped to this
        token throughout the stylesheet below. */
     --panel-2-tint: color-mix(in srgb, var(--panel-2) 76%, var(--match-blend-soft));
+    --text-dim: color-mix(in srgb, var(--text-dim-base) 88%, var(--match-blend));
+    --text-faint: color-mix(in srgb, var(--text-faint-base) 84%, var(--match-blend));
     --scroll-shift: 0px;
   }
   /* Mixing a colour into a near-white background reads as a much
@@ -215,6 +224,8 @@
     --match-blend-soft: color-mix(in srgb, var(--match-blend) 40%, var(--bg));
     --match-blend-glow: color-mix(in srgb, var(--match-blend) 72%, transparent);
     --panel-2-tint: color-mix(in srgb, var(--panel-2) 58%, var(--match-blend-soft));
+    --text-dim: color-mix(in srgb, var(--text-dim-base) 80%, var(--match-blend));
+    --text-faint: color-mix(in srgb, var(--text-faint-base) 76%, var(--match-blend));
   }
 
   *{ box-sizing:border-box; }
@@ -253,6 +264,30 @@
      soft, so this never reads as a sticker or a flat gradient. */
   #atmosphere{
     position:fixed; inset:-25% -20%; z-index:-1; pointer-events:none; overflow:hidden;
+  }
+  /* Entrance: team A's colors fly in from the left, team B's from the
+     right, once, on load — a wrapper transform (not the blobs' own
+     transform) so it never fights each blob's independent infinite
+     float animation. inset:0 makes each wrapper's box exactly match
+     #atmosphere's own content box, so the blobs' top/left/right
+     percentages inside it resolve identically to before this wrapper
+     existed. animation-fill-mode:both holds "off-screen" before the
+     animation starts (no flash of the settled position) and holds
+     "settled" forever after — the blobs' own floatA*/floatB*
+     animations then run on top of that settled position exactly as
+     they always did. prefers-reduced-motion already zeroes every
+     animation-duration globally further down, so this becomes an
+     instant snap-in for those users with no extra rule needed here. */
+  .atmo-side{ position:absolute; inset:0; }
+  .atmo-side-a{ animation:atmoFlyInLeft 1.3s cubic-bezier(.16,1,.3,1) both; }
+  .atmo-side-b{ animation:atmoFlyInRight 1.3s cubic-bezier(.16,1,.3,1) both; }
+  @keyframes atmoFlyInLeft{
+    0%{ transform:translate3d(-45vw, 0, 0); opacity:0; }
+    100%{ transform:translate3d(0, 0, 0); opacity:1; }
+  }
+  @keyframes atmoFlyInRight{
+    0%{ transform:translate3d(45vw, 0, 0); opacity:0; }
+    100%{ transform:translate3d(0, 0, 0); opacity:1; }
   }
   #atmosphere .blob{
     position:absolute; border-radius:50%; will-change:transform;
@@ -1086,13 +1121,17 @@
      page. Fixed, behind everything, never intercepts clicks/taps. -->
 <div id="atmosphere" aria-hidden="true">
   <span class="blob blob-ambient"></span>
-  <span class="blob blob-a1"></span>
-  <span class="blob blob-b1"></span>
-  <span class="blob blob-a2"></span>
-  <span class="blob blob-b2"></span>
+  <div class="atmo-side atmo-side-a">
+    <span class="blob blob-a1"></span>
+    <span class="blob blob-a2"></span>
+    <span class="blob blob-a3"></span>
+  </div>
+  <div class="atmo-side atmo-side-b">
+    <span class="blob blob-b1"></span>
+    <span class="blob blob-b2"></span>
+    <span class="blob blob-b3"></span>
+  </div>
   <span class="blob blob-mix"></span>
-  <span class="blob blob-a3"></span>
-  <span class="blob blob-b3"></span>
 </div>
 
 <div id="brandbar">
@@ -3187,11 +3226,61 @@ async function openOwnerPanel(){
     <div class="em-toolbar">
       <button id="em-undo-btn">↩️ Undo last change</button>
       <button id="em-history-btn">🕓 Recent corrections</button>
+      <button id="em-colors-btn">🎨 Team colors</button>
     </div>
     <div id="em-body" class="em-list"><div class="em-empty">Loading deliveries…</div></div>`;
   document.getElementById('em-undo-btn').onclick = () => undoLastCorrection(matchId);
   document.getElementById('em-history-btn').onclick = () => showHistory(matchId);
+  document.getElementById('em-colors-btn').onclick = () => openTeamColorPanel(matchId);
   await loadDeliveryList(matchId);
+}
+
+// Team-color editing — same owner-only gate as every other correction
+// in this panel (isOwner is only a UX convenience; server.js's
+// requireOwner is the real boundary, see the comment at the top of
+// this script). Reuses the live --team-a-solid/--team-b-solid CSS
+// vars already on :root as the pickers' starting values, since
+// applyMatchColors() keeps those current for whichever match is on
+// screen right now — no separate fetch needed just to know "what
+// color is this team currently showing".
+function openTeamColorPanel(matchId){
+  if(!isOwner) return;
+  const root = getComputedStyle(document.documentElement);
+  const nameA = document.getElementById('name-a').textContent || 'Team A';
+  const nameB = document.getElementById('name-b').textContent || 'Team B';
+  const curA = cssColorToHex(root.getPropertyValue('--team-a-solid').trim()) || '#22c55e';
+  const curB = cssColorToHex(root.getPropertyValue('--team-b-solid').trim()) || '#3b82f6';
+  openConfirmModal(`
+    <div class="em-title">Team Colors</div>
+    <div class="em-sub">Owner-only — changes apply to this match's scorecard for every visitor, immediately.</div>
+    <div class="em-field-row">
+      <div><label>${escapeHtml(nameA)}</label><input type="color" id="tc-color-a" value="${curA}" style="width:100%; height:38px; padding:2px; border-radius:8px; border:1px solid var(--border); background:var(--panel-2-tint); cursor:pointer;"></div>
+      <div><label>${escapeHtml(nameB)}</label><input type="color" id="tc-color-b" value="${curB}" style="width:100%; height:38px; padding:2px; border-radius:8px; border:1px solid var(--border); background:var(--panel-2-tint); cursor:pointer;"></div>
+    </div>`,
+    async () => {
+      const teamAColor = document.getElementById('tc-color-a').value;
+      const teamBColor = document.getElementById('tc-color-b').value;
+      await adminApi(`/cricket/match/${encodeURIComponent(matchId)}/team-colors`, {
+        method: 'PUT',
+        body: JSON.stringify({ teamAColor, teamBColor })
+      });
+      // Instant local feedback — the next live/final render (socket
+      // tick or poll) will re-derive these from the saved match data
+      // anyway, same as every other field on this scorecard.
+      applyMatchColors({ color: teamAColor }, { color: teamBColor });
+      emToast('Team colors updated');
+    });
+}
+// Converts whatever computed color format the browser hands back
+// (getComputedStyle always resolves color-mix()/named colors down to
+// an rgb()/rgba() string) into the #rrggbb an <input type="color">
+// requires — it only accepts hex, never rgb().
+function cssColorToHex(cssColor){
+  if(!cssColor) return null;
+  const m = /^rgba?\(\s*(\d+)[, ]+\s*(\d+)[, ]+\s*(\d+)/i.exec(cssColor);
+  if(m) return rgbToHex(+m[1], +m[2], +m[3]);
+  if(/^#[0-9a-f]{6}$/i.test(cssColor)) return cssColor;
+  return null;
 }
 
 async function loadDeliveryList(matchId){
