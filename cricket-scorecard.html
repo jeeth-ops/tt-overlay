@@ -2588,6 +2588,13 @@ function renderPoints(){
 /* ---------- Owner Edit modal: delivery list ---------- */
 const DISMISSAL_TYPES = ['Bowled','Caught','LBW','Stumped','Run Out','Hit Wicket','Retired Hurt','Retired Out'];
 const EXTRA_TYPE_LABELS = { none:'None', wide:'Wide', noball:'No Ball', bye:'Bye', legbye:'Leg Bye' };
+// Mirrors the server's WIDE_LEGAL_DISMISSALS/NOBALL_LEGAL_DISMISSALS check —
+// only offer dismissal types the Laws of Cricket actually allow off each
+// extra, so the owner never has to hit a server error to find out.
+function dismissalOptionsFor(extraType, selected){
+  const allowed = extraType==='wide' ? ['Run Out','Stumped'] : extraType==='noball' ? ['Run Out','Hit Wicket'] : DISMISSAL_TYPES;
+  return allowed.map(t => `<option value="${t}" ${t===selected?'selected':''}>${t}</option>`).join('');
+}
 
 function ballLabel(b){
   if(b.kind === 'W') return 'WICKET';
@@ -2708,7 +2715,7 @@ function openDeliveryEditForm(matchId, ball, roster){
       <div><label>Wicket</label><select id="dvWicket"><option value="no" ${!ball.dismissal?'selected':''}>No</option><option value="yes" ${ball.dismissal?'selected':''}>Yes</option></select></div>
     </div>
     <div class="em-field-row" id="dvWicketFields" style="${ball.dismissal ? '' : 'display:none;'}">
-      <div><label>Dismissal type</label><select id="dvDismissalType">${DISMISSAL_TYPES.map(t => `<option value="${t}" ${ball.dismissal && ball.dismissal.type===t?'selected':''}>${t}</option>`).join('')}</select></div>
+      <div><label>Dismissal type</label><select id="dvDismissalType">${dismissalOptionsFor(facts.extraType, ball.dismissal && ball.dismissal.type)}</select></div>
       <div><label>Fielder</label><select id="dvFielder"><option value="">—</option>${rosterOpts(ball.dismissal && ball.dismissal.fielder)}</select></div>
     </div>
     <div class="em-actions">
@@ -2717,6 +2724,11 @@ function openDeliveryEditForm(matchId, ball, roster){
     </div>`;
   document.getElementById('dvWicket').addEventListener('change', (e) => {
     document.getElementById('dvWicketFields').style.display = e.target.value === 'yes' ? '' : 'none';
+  });
+  document.getElementById('dvExtraType').addEventListener('change', (e) => {
+    const sel = document.getElementById('dvDismissalType');
+    const current = sel.value;
+    sel.innerHTML = dismissalOptionsFor(e.target.value, current);
   });
   document.getElementById('dv-back-btn').onclick = () => openOwnerPanel();
   document.getElementById('dv-save-btn').onclick = async () => {
@@ -2745,15 +2757,24 @@ function openDeliveryEditForm(matchId, ball, roster){
       if(bB.runs !== aB.runs || bB.wickets !== aB.wickets) diff.push({ label:'Team B total', from:`${bB.runs}/${bB.wickets}`, to:`${aB.runs}/${aB.wickets}` });
       if(!diff.length) diff.push({ label:'This delivery', from: ballLabel(before.ball), to: ballLabel(after.ball) });
       const diffHtml = diff.map(d => `<div class="em-diff-row"><span>${escapeHtml(d.label)}</span><span>${escapeHtml(String(d.from))}<span class="em-diff-arrow">→</span><b>${escapeHtml(String(d.to))}</b></span></div>`).join('');
-      const warn = preview.resultMayNeedReview ? '<div class="em-warn">⚠️ This match is marked completed — please double-check the result is still correct.</div>' : '';
+      const resultLabel = (r) => r==='A' ? ((latestState && latestState.teamA && (latestState.teamA.name||latestState.teamA.short)) || 'Team A') : r==='B' ? ((latestState && latestState.teamB && (latestState.teamB.name||latestState.teamB.short)) || 'Team B') : 'Tie';
+      const warn = preview.resultMayNeedReview
+        ? `<div class="em-warn">⚠️ This match is marked completed and the total changed — recorded result may now be wrong.${preview.suggestedResult ? ` Based on the corrected score it looks like <b>${escapeHtml(resultLabel(preview.suggestedResult))}</b> won.` : ''}</div>`
+        : '';
+      const strikeWarn = (preview.strikeReviewNeeded && preview.strikeReviewNeeded.length)
+        ? `<div class="em-warn">⚠️ ${preview.strikeReviewNeeded.length} later ${preview.strikeReviewNeeded.length===1?'delivery':'deliveries'} in this innings may now have the wrong striker recorded:<br>${preview.strikeReviewNeeded.map(i => `Over ${i.over}.${i.ballInOver} — recorded <b>${escapeHtml(i.recordedStriker||'—')}</b>, expected <b>${escapeHtml(i.expectedStriker||'—')}</b>`).join('<br>')}<br>Worth reviewing those deliveries too.</div>`
+        : '';
       openConfirmModal(`
         <div class="em-title">Save scorecard correction?</div>
         <div class="em-sub">Batting statistics, bowling statistics, the team score and this tournament's leaderboard will all be recalculated.</div>
-        ${diffHtml}${warn}`,
+        ${diffHtml}${warn}${strikeWarn}`,
         async () => {
           const saved = await adminApi(`/cricket/ball/${encodeURIComponent(ball.ballId)}`, { method:'PUT', body: JSON.stringify(input) });
           emToast('Delivery corrected — scorecard recalculated');
           closeEditModal();
+          if(saved.resultMayNeedReview && saved.suggestedResult){
+            offerResultUpdate(matchId, saved.suggestedResult, resultLabel(saved.suggestedResult));
+          }
           setTimeout(() => { if(isHistoryMode()) loadMatchSnapshot(getMatchId()); }, 300);
         }
       );
@@ -2763,6 +2784,18 @@ function openDeliveryEditForm(matchId, ball, roster){
       saveBtn.textContent = 'Preview & Save'; saveBtn.disabled = false;
     }
   };
+}
+
+function offerResultUpdate(matchId, suggestedResult, label){
+  openConfirmModal(`
+    <div class="em-title">Update match result?</div>
+    <div class="em-sub">This match was already marked completed. Based on the corrected score, it now looks like <b>${escapeHtml(label)}</b> ${suggestedResult==='TIE'?'— a tie':'won'}. This won't be changed automatically — confirm to update it, or Cancel to leave the recorded result as-is (e.g. if this was a DLS/target/forfeit result that a plain score comparison can't capture).</div>`,
+    async () => {
+      const res = await adminApi(`/cricket/match/${encodeURIComponent(matchId)}/apply-result`, { method:'PUT' });
+      emToast('Match result updated');
+      setTimeout(() => { if(isHistoryMode()) loadMatchSnapshot(getMatchId()); }, 300);
+    }
+  );
 }
 
 async function undoLastCorrection(matchId){
