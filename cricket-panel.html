@@ -833,6 +833,7 @@
         <button class="b-extra" data-ball="LB">Leg Bye</button>
       </div>
       <button class="full ghost" id="undo-btn" style="margin-top:10px;">Undo Last Ball (U)</button>
+      <button class="full ghost" id="edit-scorecard-btn" style="margin-top:8px;">✏️ Edit Scorecard (Delete a Ball)</button>
       <div class="shortcut-hint">
         Shortcuts: <kbd>0-6</kbd> runs · <kbd>W</kbd> wicket · <kbd>S</kbd> swap strike · <kbd>U</kbd> undo
       </div>
@@ -1013,6 +1014,22 @@
       <button type="button" class="full ghost wm-extra-wicket-link" id="extras-modal-wicket-link" style="display:none;">🏏 Also a wicket on this ball?</button>
       <button type="button" class="full ghost wm-extra-wicket-link" id="extras-modal-legbye-link" style="display:none;">🦵 Leg Bye (missed the bat)?</button>
       <button type="button" class="full ghost wm-cancel" id="extras-modal-cancel" style="margin-top:10px;">Cancel</button>
+    </div>
+  </div>
+
+  <!-- ✏️ EDIT SCORECARD — lists every ball bowled this innings, most recent
+       first, so a wrong ball can be found and deleted. Deletion always walks
+       backward one ball at a time from the CURRENT last ball — cricket state
+       (who's on strike, whose over it is, wickets fallen) is order-dependent,
+       so there's no safe way to pull a ball out of the middle of the log
+       without also undoing everything recorded after it. See deleteLastBall()
+       for how each delete is actually applied. -->
+  <div class="wicket-modal-overlay" id="ball-edit-modal-overlay">
+    <div class="wicket-modal scorecard-modal" id="ball-edit-modal">
+      <h3>✏️ Edit Scorecard</h3>
+      <div class="wm-sub">Delete the most recent ball to correct it. This can only remove balls starting from the end — deleting an older ball also removes every ball recorded after it, which you'll need to re-score.</div>
+      <div id="ball-edit-list" style="max-height:50vh;overflow-y:auto;margin:10px 0;"></div>
+      <button type="button" class="full ghost wm-cancel" id="ball-edit-modal-close">Close</button>
     </div>
   </div>
 
@@ -1454,7 +1471,7 @@ let state = mergeWithDefaults(loadState());
 // was real. `history` now persists the same way `state` does, via
 // loadHistory()/pushHistory() below, so it survives a reload.
 const HISTORY_STORAGE_KEY = 'cricket-panel-history';
-const MAX_HISTORY = 40; // caps localStorage size — only recent balls are ever undoable anyway
+const MAX_HISTORY = 300; // comfortably covers a full T20 (~150 deliveries incl. extras) with headroom; older balls beyond this fall back to the best-effort delete path (see deleteLastBall())
 function loadHistory(){
   try{
     const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
@@ -7251,12 +7268,207 @@ document.getElementById('clear-freehit-btn').addEventListener('click', () => {
   toast('Free Hit cleared manually');
 });
 
+/* ============================================================
+   DELETE LAST BALL — the one real engine behind both "Undo Last Ball"
+   and the "✏️ Edit Scorecard" list's delete button. Two modes:
+
+   1. EXACT — a real pre-ball snapshot exists in `history` for this ball
+      (the normal case for anything scored since the undo-persistence
+      fix). Just restore it — 100% reliable, same as it always was.
+
+   2. BEST-EFFORT — no snapshot exists (a ball scored before that fix,
+      or older than the retained history window) but the last ball
+      logged is a plain run/extra (0-6, Wd, Nb, B, LB) with no wicket.
+      Its full effect can be reconstructed from the ballLog entry alone
+      (runs added, legal-delivery or not), so it's reversed by
+      arithmetic instead of a snapshot. Two known limits, both disclosed
+      to the operator rather than hidden: a No Ball's extra runs are
+      credited back to the striker (can't tell "off the bat" from "leg
+      bye" after the fact from the log alone — matches the common case),
+      and if this ball happened to complete an over, the ticker's
+      per-over ball list can't be perfectly restored (cosmetic only —
+      score/overs/wickets are still exact).
+
+   Wicket balls (W/WdW/NbW) with no snapshot are deliberately NOT
+   offered a best-effort path — reversing a wicket means correctly
+   restoring who's on strike, the batting card, fall of wickets and
+   fielding stats all at once, which isn't safely reconstructable from
+   the ballLog alone. Those are reported as unsafe to auto-delete.
+   ============================================================ */
+function canDeltaReverseBall(entry){
+  return !!entry && !entry.isWicket && ['0','1','2','3','4','5','6','Wd','Nb','B','LB'].includes(entry.ballType);
+}
+function reverseLastBallDelta(){
+  const entry = state.ballLog[state.ballLog.length - 1];
+  const kind = entry.ballType;
+  const runs = entry.runs; // total runs this ball added to the team score
+  state.score.runs = Math.max(0, state.score.runs - runs);
+
+  const isLegalDelivery = ['0','1','2','3','4','5','6','B','LB'].includes(kind);
+  let strikeSwapsForward = 0;
+
+  if(isLegalDelivery){
+    // Reverse the ball/over count via total-legal-balls arithmetic — safe
+    // regardless of whether this particular ball completed an over.
+    let totalLegalBalls = Math.max(0, state.score.overs * 6 + state.score.balls - 1);
+    state.score.overs = Math.floor(totalLegalBalls / 6);
+    state.score.balls = totalLegalBalls % 6;
+    state.striker.balls = Math.max(0, state.striker.balls - 1);
+    state.partnershipBalls = Math.max(0, state.partnershipBalls - 1);
+    if(state.thisOver.length) state.thisOver.pop(); // best-effort, see note above
+    if(state.bowler.name){
+      state.bowler.balls = Math.max(0, state.bowler.balls - 1);
+    }
+  }
+
+  if(/^[0-6]$/.test(kind)){
+    const r = parseInt(kind, 10);
+    state.striker.runs = Math.max(0, state.striker.runs - r);
+    state.partnershipRuns = Math.max(0, state.partnershipRuns - r);
+    if(r === 4) state.striker.fours = Math.max(0, state.striker.fours - 1);
+    if(r === 6) state.striker.sixes = Math.max(0, state.striker.sixes - 1);
+    if(r % 2 === 1) strikeSwapsForward++;
+    if(state.bowler.name){
+      state.bowler.runs = Math.max(0, state.bowler.runs - r);
+      state.bowler.runsThisOver = Math.max(0, (state.bowler.runsThisOver || 0) - r);
+    }
+  } else if(kind === 'Wd'){
+    state.extras[state.battingTeam].wd = Math.max(0, state.extras[state.battingTeam].wd - runs);
+    state.partnershipRuns = Math.max(0, state.partnershipRuns - runs);
+    if(state.bowler.name){
+      state.bowler.runs = Math.max(0, state.bowler.runs - runs);
+      state.bowler.runsThisOver = Math.max(0, (state.bowler.runsThisOver || 0) - runs);
+    }
+    if((runs - 1) % 2 === 1) strikeSwapsForward++;
+  } else if(kind === 'Nb'){
+    state.extras[state.battingTeam].nb = Math.max(0, state.extras[state.battingTeam].nb - 1);
+    // Credited back to the striker as "off the bat" — see the disclosed
+    // limitation in the comment block above.
+    const nonPenalty = runs - 1;
+    state.striker.runs = Math.max(0, state.striker.runs - nonPenalty);
+    if(nonPenalty === 4) state.striker.fours = Math.max(0, state.striker.fours - 1);
+    if(nonPenalty === 6) state.striker.sixes = Math.max(0, state.striker.sixes - 1);
+    state.partnershipRuns = Math.max(0, state.partnershipRuns - runs);
+    if(state.bowler.name){
+      state.bowler.runs = Math.max(0, state.bowler.runs - (1 + nonPenalty));
+      state.bowler.runsThisOver = Math.max(0, (state.bowler.runsThisOver || 0) - (1 + nonPenalty));
+    }
+    if(nonPenalty % 2 === 1) strikeSwapsForward++;
+  } else if(kind === 'B' || kind === 'LB'){
+    const key = kind === 'B' ? 'b' : 'lb';
+    state.extras[state.battingTeam][key] = Math.max(0, state.extras[state.battingTeam][key] - runs);
+    state.partnershipRuns = Math.max(0, state.partnershipRuns - runs);
+    if(runs % 2 === 1) strikeSwapsForward++;
+  }
+
+  if(strikeSwapsForward % 2 === 1) swapStrikeSilent();
+
+  state.ballLog.pop();
+  if(state.ballHistory.length) state.ballHistory.pop();
+}
+// Returns { ok:true, mode:'exact'|'approx' } or { ok:false, reason:'empty'|'unsafe' }
+function deleteLastBall(){
+  if(!state.ballLog || state.ballLog.length === 0) return { ok: false, reason: 'empty' };
+  if(history.length > 0){
+    state = history.pop();
+    saveHistoryLocal();
+    return { ok: true, mode: 'exact' };
+  }
+  const entry = state.ballLog[state.ballLog.length - 1];
+  if(canDeltaReverseBall(entry)){
+    reverseLastBallDelta();
+    return { ok: true, mode: 'approx' };
+  }
+  return { ok: false, reason: 'unsafe' };
+}
+
 document.getElementById('undo-btn').addEventListener('click', () => {
-  if(history.length === 0){ toast('Nothing to undo'); return; }
-  state = history.pop();
-  saveHistoryLocal(); // keep the persisted stack in sync with the in-memory one
+  const result = deleteLastBall();
+  if(!result.ok){
+    if(result.reason === 'empty') toast('Nothing to undo');
+    else toast('⚠️ This ball can\'t be safely auto-undone (it predates undo history and involves a wicket) — see ✏️ Edit Scorecard', 5000);
+    return;
+  }
   pushState(true, true);
-  toast('Undone');
+  toast(result.mode === 'approx' ? '↩️ Undone (best-effort correction — double-check bowler/over figures)' : 'Undone');
+  if(document.getElementById('ball-edit-modal-overlay').classList.contains('show')) renderBallEditList();
+});
+
+/* ============================================================
+   ✏️ EDIT SCORECARD — a readable ball-by-ball list (most recent first)
+   so a wrong ball can actually be found before deleting it, instead of
+   blindly hitting Undo and hoping. Deleting always operates on the
+   CURRENT last ball via deleteLastBall() above — see the comment on the
+   modal's HTML for why arbitrary mid-log deletion isn't offered.
+   ============================================================ */
+function describeBallLogEntry(entry){
+  const kindLabel = {
+    'W':'WICKET', 'WdW':'WICKET (Wide)', 'NbW':'WICKET (No Ball)',
+    'Wd':'Wide', 'Nb':'No Ball', 'B':'Bye', 'LB':'Leg Bye'
+  }[entry.ballType] || `${entry.runs} run${entry.runs === 1 ? '' : 's'}`;
+  let line = `${kindLabel} · ${entry.runs} run${entry.runs === 1 ? '' : 's'} · ${entry.striker} off ${entry.bowler}`;
+  if(entry.isWicket && entry.dismissal) line += ` — ${entry.dismissal}`;
+  return line;
+}
+function renderBallEditList(){
+  const wrap = document.getElementById('ball-edit-list');
+  const log = state.ballLog || [];
+  if(!log.length){
+    wrap.innerHTML = '<div class="shortcut-hint">No balls recorded yet this match.</div>';
+    return;
+  }
+  const rows = [];
+  for(let i = log.length - 1; i >= 0; i--){
+    const entry = log[i];
+    const isTail = i === log.length - 1;
+    let deletable = false, note = '';
+    if(isTail){
+      if(history.length > 0){ deletable = true; }
+      else if(canDeltaReverseBall(entry)){ deletable = true; note = ' · best-effort correction'; }
+      else { note = ' · wicket ball, no snapshot — can\'t auto-delete safely'; }
+    } else {
+      note = ' · delete newer balls above first';
+    }
+    rows.push(`
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+        <div style="font-size:12.5px;">
+          <div><strong>Over ${escapeHtmlAttr(entry.over)}</strong> — ${escapeHtmlAttr(describeBallLogEntry(entry))}</div>
+          <div class="shortcut-hint" style="margin:0;">Score after: ${escapeHtmlAttr(entry.scoreAfter)}${note}</div>
+        </div>
+        ${deletable
+          ? `<button type="button" class="small" data-delete-ball-index="${i}" style="background:#4a1a1a;border-color:#7a2a2a;flex-shrink:0;">🗑 Delete</button>`
+          : `<button type="button" class="small" disabled style="opacity:0.35;flex-shrink:0;">🗑 Delete</button>`}
+      </div>
+    `);
+  }
+  wrap.innerHTML = rows.join('');
+  wrap.querySelectorAll('[data-delete-ball-index]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.getAttribute('data-delete-ball-index'), 10);
+      if(idx !== state.ballLog.length - 1) return; // only the current tail is ever actually deletable
+      const entry = state.ballLog[idx];
+      const approx = history.length === 0;
+      const msg = approx
+        ? `Delete this ball (${describeBallLogEntry(entry)})? This is a best-effort correction — double-check bowler/over figures afterward.`
+        : `Delete this ball (${describeBallLogEntry(entry)})? Everything recorded after it will be undone too.`;
+      if(!confirm(msg)) return;
+      const result = deleteLastBall();
+      if(!result.ok){ toast('⚠️ Could not delete that ball'); return; }
+      pushState(true, true);
+      toast(result.mode === 'approx' ? '↩️ Ball deleted (best-effort correction)' : '↩️ Ball deleted');
+      renderBallEditList();
+    });
+  });
+}
+document.getElementById('edit-scorecard-btn').addEventListener('click', () => {
+  renderBallEditList();
+  document.getElementById('ball-edit-modal-overlay').classList.add('show');
+});
+document.getElementById('ball-edit-modal-close').addEventListener('click', () => {
+  document.getElementById('ball-edit-modal-overlay').classList.remove('show');
+});
+document.getElementById('ball-edit-modal-overlay').addEventListener('click', (e) => {
+  if(e.target.id === 'ball-edit-modal-overlay') document.getElementById('ball-edit-modal-overlay').classList.remove('show');
 });
 
 /* ============================================================
