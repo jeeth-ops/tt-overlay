@@ -795,7 +795,44 @@
         #owner-admin-btn:active { transform: scale(0.97); }
         #owner-admin-btn.visible { display: inline-flex; }
 
-        /* ===== Live ticker strip =====
+        /* ===== Network status banner =====
+           Hidden/collapsed by default (max-height: 0) and expanded only
+           by JS when navigator.onLine goes false — relevant on a live
+           scoring/streaming product where a dropped connection means
+           scores silently stop updating with no other indication. */
+        .net-status-banner {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            max-height: 0;
+            overflow: hidden;
+            opacity: 0;
+            padding: 0 20px;
+            background: linear-gradient(90deg, rgba(239, 68, 68, 0.16), rgba(239, 68, 68, 0.08));
+            border-bottom: 1px solid rgba(239, 68, 68, 0.25);
+            color: var(--text-main);
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-align: center;
+            position: sticky;
+            top: 0;
+            z-index: 99;
+            transition: max-height 0.35s var(--ease), opacity 0.3s var(--ease), padding 0.35s var(--ease);
+        }
+        .net-status-banner.is-visible {
+            max-height: 60px;
+            opacity: 1;
+            padding: 10px 20px;
+        }
+        .net-status-dot {
+            width: 7px; height: 7px; border-radius: 50%; background: #ef4444; flex-shrink: 0;
+            animation: tkDotPulse 1.4s ease-in-out infinite;
+        }
+        @media (prefers-reduced-motion: reduce) { .net-status-dot { animation: none; } }
+        @media (max-width: 560px) { .net-status-banner { font-size: 0.78rem; } }
+
+
            A broadcast-style scoreline ticker — the one place on the page
            that's allowed to be loud/kinetic, since it's the most literal
            expression of what the product does (put live scores on
@@ -2015,6 +2052,13 @@
             padding: 9px 12px; color: var(--text-main); font-size: 0.88rem; outline: none;
             transition: border-color 0.25s var(--ease), background 0.25s var(--ease);
         }
+        /* iOS Safari auto-zooms the whole page on focus for any input
+           under 16px — a real annoyance in this editor since every score
+           update means tapping back into a field. 16px only on the
+           touch/mobile breakpoint so the compact desktop editor is untouched. */
+        @media (max-width: 900px) {
+            .hi-editor-field input[type="text"] { font-size: 16px; }
+        }
         .hi-editor-field input[type="text"]:focus { border-color: var(--accent); background: var(--border-color-soft); }
         .hi-editor-field input[type="color"] {
             -webkit-appearance: none; appearance: none;
@@ -2423,6 +2467,12 @@
                 padding-right: 16px;
             }
             .hero { padding-left: 16px; padding-right: 16px; }
+            /* These two are circular icon-only buttons the baseline above
+               doesn't reach (it sets min-height, but a round hit target
+               needs width bumped too) — 40px/30px are under the 44px
+               touch-target guideline, unlike everything else on the page. */
+            .back-to-top-btn { width: 44px; height: 44px; }
+            .auth-gate-close { width: 40px; height: 40px; }
         }
 
         /* Reduced motion: also calm the theme-toggle spin and drawer glide */
@@ -2503,6 +2553,11 @@
             </button>
         </div>
     </nav>
+
+    <div class="net-status-banner" id="netStatusBanner" role="status" aria-live="polite">
+        <span class="net-status-dot"></span>
+        <span class="net-status-text">You're offline — live scores will resume once you're back online.</span>
+    </div>
 
     <div class="mobile-nav-panel" id="mobileNavPanel">
         <a href="#tournaments" class="mobile-nav-link">Tournaments</a>
@@ -4599,6 +4654,21 @@
             }
 
             desktopQuery.addEventListener('change', (e) => applyForViewport(e.matches));
+        })();
+
+        // Network status banner — self-contained, no dependency on
+        // Firebase/auth/tournament state. Shows on 'offline', hides on
+        // 'online', and also checks navigator.onLine once at load in case
+        // the page was opened while already offline (from cache).
+        (function netStatusSetup(){
+            const banner = document.getElementById('netStatusBanner');
+            if (!banner) return;
+            function setOffline(isOffline) {
+                banner.classList.toggle('is-visible', isOffline);
+            }
+            window.addEventListener('offline', () => setOffline(true));
+            window.addEventListener('online', () => setOffline(false));
+            if (typeof navigator.onLine === 'boolean') setOffline(!navigator.onLine);
         })();
 
         const observerOptions = {
