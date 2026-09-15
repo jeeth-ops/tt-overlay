@@ -114,11 +114,11 @@
     --bg-soft: #0d1220;
     --panel: #121826;
     --panel-2: #171f30;
-    --border: #232c40;
-    --border-soft: #1a2233;
-    --text: #eef1f6;
-    --text-dim: #8791a3;
-    --text-faint: #576174;
+    --border: color-mix(in srgb, var(--text) 16%, transparent);
+    --border-soft: color-mix(in srgb, var(--text) 9%, transparent);
+    --text: #f5f7fb;
+    --text-dim: #aab3c7;
+    --text-faint: #7c869c;
     --accent: #22c55e;
     --accent-soft: rgba(34,197,94,.14);
     --accent-contrast: #06170c;
@@ -139,11 +139,11 @@
     --bg-soft: #eef1f4;
     --panel: #ffffff;
     --panel-2: #f6f8fa;
-    --border: #e3e7ec;
-    --border-soft: #ececf0;
-    --text: #12161f;
-    --text-dim: #5c6474;
-    --text-faint: #99a1b0;
+    --border: color-mix(in srgb, var(--text) 13%, transparent);
+    --border-soft: color-mix(in srgb, var(--text) 7%, transparent);
+    --text: #111111;
+    --text-dim: #3c4250;
+    --text-faint: #6b7280;
     --accent: #128a4a;
     --accent-soft: rgba(18,138,74,.10);
     --accent-contrast: #ffffff;
@@ -438,10 +438,13 @@
 
   /* ---------- Layout ---------- */
   #wrap{ max-width:1180px; margin:0 auto; padding:16px; display:flex; flex-direction:column; gap:14px; position:relative; }
-  /* Glass card: mostly-opaque panel colour so text keeps full contrast,
-     with enough translucency that the match atmosphere behind the
-     page reads through at the edges. backdrop-filter is layered on top
-     as an enhancement, not a requirement — @supports below covers browsers
+  /* Glass card: a readability surface that sits between the floating
+     atmosphere and the content. Panel weight bumped up (72–86%, vs the
+     old 64–80%) so text stays crisp even where two team-colored blobs
+     are overlapping behind it; the remaining slice of match-blend
+     keeps the card feeling like it belongs to the match rather than
+     going flat white/black. backdrop-filter is layered on top as an
+     enhancement, not a requirement — @supports below covers browsers
      that don't have it, so nothing ever looks broken or too see-through.
      Every card also gets its own quiet top wash in the match's blended
      colour (::before) so the color feels present everywhere, not just
@@ -450,10 +453,11 @@
      of or crowd anything inside. */
   .card{
     position:relative; overflow:hidden;
-    background:color-mix(in srgb, var(--panel) 80%, var(--match-blend-soft));
+    background:color-mix(in srgb, var(--panel) 86%, var(--match-blend-soft));
     border:1px solid var(--border); border-radius:var(--radius-lg);
     padding:18px; box-shadow:var(--shadow);
-    transition:border-color .2s ease, box-shadow .2s ease, transform .2s ease, background .25s ease;
+    transition:border-color .2s ease, box-shadow .2s ease, transform .16s cubic-bezier(.25,.8,.4,1),
+      background .25s ease, filter .2s ease;
   }
   /* Uniform full-height wash — same colour intensity from the top of
      the card to the bottom, not a fade. A top-to-bottom gradient here
@@ -462,14 +466,25 @@
   .card::before{
     content:''; position:absolute; inset:0; z-index:0; pointer-events:none;
     background:var(--match-blend-soft);
+    opacity:.7;
   }
   .card > *{ position:relative; z-index:1; }
   @supports (backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px)){
     .card{
-      background:color-mix(in srgb, var(--panel) 64%, var(--match-blend-soft));
+      background:color-mix(in srgb, var(--panel) 72%, var(--match-blend-soft));
       backdrop-filter:blur(18px) saturate(1.35);
       -webkit-backdrop-filter:blur(18px) saturate(1.35);
     }
+  }
+  /* Touch/click feedback — every card compresses a hair and its border
+     + top wash brighten very slightly, then eases back on release. This
+     fires on touch devices via :active with no JS needed; the (hover:hover)
+     block further down layers a mouse-only lift + glow on top of it. Kept
+     tiny (1.5% scale, not a bounce) so it reads as premium, not playful. */
+  .card:active{
+    transform:scale(.985);
+    filter:brightness(1.03);
+    border-color:color-mix(in srgb, var(--match-blend) 50%, var(--border));
   }
   /* The scorecard pair (Batting/Bowling) is the primary content now that
      it sits right under Highlights — give it a touch more visual weight
@@ -481,17 +496,27 @@
   .card-featured::before{
     background:color-mix(in srgb, var(--match-blend) 26%, var(--match-blend-soft));
   }
-  /* Batting card leans team A, bowling card leans team B — a small,
-     legible way for "some cards can have Team A influence, some Team B"
-     without touching the shared .card system every other section relies on. */
-  #tables-grid > .card:first-child, #compare-grid > .card:first-child{ border-top:3px solid var(--team-a-line); }
-  #tables-grid > .card:first-child::before, #compare-grid > .card:first-child::before{
-    background:var(--team-a-soft);
+  /* Batting & Bowling are the "pure scorecard" — the actual numbers
+     people came to read. They keep a team-colored top border for
+     identity (A on the left card, B on the right) but NOT the team
+     wash behind the rows: the runs/wickets/economy stay on a clean,
+     neutral surface so nothing about the data itself gets tinted or
+     harder to scan, while the floating atmosphere and the 4/6/wicket
+     clip colors (which are NOT derived from the match blend — see
+     .clip-row / .ball-chip below) keep their own separate identity
+     instead of getting muddied into the scorecard's colour. */
+  #tables-grid > .card:first-child{ border-top:3px solid var(--team-a-line); }
+  #tables-grid > .card:first-child::before{ background:none; }
+  #tables-grid > .card:last-child{ border-top:3px solid var(--team-b-line); }
+  #tables-grid > .card:last-child::before{ background:none; }
+  #tables-grid > .card{ background:color-mix(in srgb, var(--panel) 94%, var(--bg)); }
+  @supports (backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px)){
+    #tables-grid > .card{ background:color-mix(in srgb, var(--panel) 88%, var(--bg)); }
   }
-  #tables-grid > .card:last-child, #compare-grid > .card:last-child{ border-top:3px solid var(--team-b-line); }
-  #tables-grid > .card:last-child::before, #compare-grid > .card:last-child::before{
-    background:var(--team-b-soft);
-  }
+  #compare-grid > .card:first-child{ border-top:3px solid var(--team-a-line); }
+  #compare-grid > .card:first-child::before{ background:var(--team-a-soft); }
+  #compare-grid > .card:last-child{ border-top:3px solid var(--team-b-line); }
+  #compare-grid > .card:last-child::before{ background:var(--team-b-soft); }
   #players-grid .player-card:nth-child(1){ border-top:2px solid var(--team-a-line); }
   #players-grid .player-card:nth-child(3){ border-top:2px solid var(--team-b-line); }
   .section-title{
@@ -588,10 +613,14 @@
 
   /* ---------- Players row ---------- */
   #players-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
-  .player-card{ background:var(--panel-2-tint); border:1px solid var(--border-soft); border-radius:var(--radius-md); padding:13px; }
+  .player-card{
+    background:var(--panel-2-tint); border:1px solid var(--border-soft); border-radius:var(--radius-md); padding:13px;
+    transition:transform .16s cubic-bezier(.25,.8,.4,1), border-color .15s ease, filter .15s ease;
+  }
+  .player-card:active{ transform:scale(.98); filter:brightness(1.04); border-color:var(--accent); }
   .player-card .pc-label{ font-size:10px; text-transform:uppercase; letter-spacing:.4px; color:var(--text-dim); font-weight:700; margin-bottom:8px; }
   .pc-row{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:5px 0; }
-  .pc-name{ font-weight:700; font-size:13px; display:flex; align-items:center; gap:6px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pc-name{ font-weight:800; color:var(--text); font-size:13px; display:flex; align-items:center; gap:6px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .strike-dot{ width:6px; height:6px; border-radius:50%; background:var(--accent); flex:none; }
   .pc-figs{ font-size:12.5px; font-weight:700; color:var(--text-dim); flex:none; }
   .pc-sub{ font-size:10.5px; color:var(--text-faint); margin-top:2px; }
@@ -636,7 +665,12 @@
   thead th.num, td.num{ text-align:right; }
   tbody td{ padding:8px 8px; border-bottom:1px solid var(--border-soft); }
   tbody tr:last-child td{ border-bottom:none; }
-  tbody tr.on-strike td:first-child{ color:var(--accent); font-weight:700; }
+  /* Every name column (batter, bowler, team, top-run-scorer, etc.) is
+     always a table's first cell — a black, bold name is the single
+     biggest readability win in the whole scorecard, so this is one
+     rule covering all five tables rather than per-table overrides. */
+  tbody td:first-child:not(.empty-state){ font-weight:800; color:var(--text); }
+  tbody tr.on-strike td:first-child{ color:var(--accent); }
   .howout{ font-size:10.5px; color:var(--text-faint); display:block; margin-top:2px; }
   .not-out-tag{ display:inline-flex; align-items:center; gap:5px; color:var(--accent); font-size:10.5px; font-weight:700; margin-left:8px; }
   .not-out-tag::before{ content:''; width:4px; height:4px; border-radius:50%; background:var(--accent); flex:none; }
@@ -656,6 +690,10 @@
   .fow-item{ display:flex; justify-content:space-between; font-size:12.5px; padding:7px 0; border-bottom:1px dashed var(--border-soft); }
   .fow-item:last-child{ border-bottom:none; }
   .fow-wkt{ color:var(--wicket); font-weight:700; }
+  /* Partnership rows reuse .fow-item but their first cell is the pair of
+     batter names (not a wicket number) — bold them like every other
+     player name in the page. */
+  .fow-item > span:first-child:not(.fow-wkt){ font-weight:800; color:var(--text); }
   .extras-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
   .extra-box{ background:var(--panel-2-tint); border-radius:var(--radius-sm); padding:9px 10px; text-align:center; }
   .extra-box .k{ font-size:10px; color:var(--text-dim); text-transform:uppercase; font-weight:700; }
@@ -760,12 +798,22 @@
   ::-webkit-scrollbar-thumb{ background:var(--border); border-radius:99px; }
 
   /* Desktop-only lift on hover — mouse/trackpad affordance that doesn't
-     get stuck "on" after a tap on touch devices. */
+     get stuck "on" after a tap on touch devices. Subtle lift + a soft
+     match-color glow + a brighter border, never a big jump. */
   @media (hover:hover) and (pointer:fine){
-    .card:hover{ border-color:var(--border-soft); box-shadow:0 10px 34px rgba(0,0,0,.14); }
-    :root[data-theme="light"] .card:hover{ box-shadow:0 10px 28px rgba(20,25,40,.10); }
-    .player-card{ transition:border-color .15s ease, transform .15s ease; }
-    .player-card:hover{ border-color:var(--accent); transform:translateY(-1px); }
+    .card:hover{
+      transform:translateY(-2px);
+      border-color:color-mix(in srgb, var(--match-blend) 40%, var(--border-soft));
+      box-shadow:0 12px 34px -6px color-mix(in srgb, var(--match-blend) 22%, transparent), 0 10px 34px rgba(0,0,0,.14);
+    }
+    :root[data-theme="light"] .card:hover{
+      box-shadow:0 12px 30px -8px color-mix(in srgb, var(--match-blend) 20%, transparent), 0 10px 28px rgba(20,25,40,.10);
+    }
+    .player-card{ transition:border-color .15s ease, transform .15s ease, box-shadow .15s ease; }
+    .player-card:hover{
+      border-color:var(--accent); transform:translateY(-1px);
+      box-shadow:0 8px 20px -6px color-mix(in srgb, var(--match-blend) 30%, transparent);
+    }
   }
 
   /* ============================================================
@@ -799,12 +847,20 @@
   .clip-row{
     display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:var(--radius-sm);
     background:var(--panel-2-tint); border:1px solid var(--border-soft); cursor:pointer;
-    transition:background .15s ease, border-color .15s ease, transform .15s ease;
+    transition:background .15s ease, border-color .15s ease, transform .16s cubic-bezier(.25,.8,.4,1), filter .15s ease;
   }
   .clip-row:hover{ border-color:var(--accent); transform:translateX(2px); }
-  .clip-row.clip-row--four{ background:linear-gradient(90deg, color-mix(in srgb, var(--four) 10%, var(--panel-2-tint)), var(--panel-2-tint) 60%); }
-  .clip-row.clip-row--six{ background:linear-gradient(90deg, color-mix(in srgb, var(--six) 10%, var(--panel-2-tint)), var(--panel-2-tint) 60%); }
-  .clip-row.clip-row--wicket{ background:linear-gradient(90deg, color-mix(in srgb, var(--wicket) 10%, var(--panel-2-tint)), var(--panel-2-tint) 60%); }
+  .clip-row:active{ transform:scale(.98); filter:brightness(1.05); }
+  /* The 4/6/wicket badge colour is this clip's whole identity — it must
+     read clearly on its own, not get muddied by whatever the match's
+     blended team colour happens to be. So these three variants are
+     mixed off the theme's plain --panel-2 (no team tint) at a strong
+     enough percentage (18%) to be immediately recognisable as "this is
+     a four" / "this is a six" / "this is a wicket" at a glance, fully
+     independent of who's playing. */
+  .clip-row.clip-row--four{ background:linear-gradient(90deg, color-mix(in srgb, var(--four) 18%, var(--panel-2)), var(--panel-2) 65%); border-color:color-mix(in srgb, var(--four) 30%, var(--border-soft)); }
+  .clip-row.clip-row--six{ background:linear-gradient(90deg, color-mix(in srgb, var(--six) 18%, var(--panel-2)), var(--panel-2) 65%); border-color:color-mix(in srgb, var(--six) 30%, var(--border-soft)); }
+  .clip-row.clip-row--wicket{ background:linear-gradient(90deg, color-mix(in srgb, var(--wicket) 18%, var(--panel-2)), var(--panel-2) 65%); border-color:color-mix(in srgb, var(--wicket) 30%, var(--border-soft)); }
   .clip-row .cr-badge{
     flex:none; width:30px; height:30px; border-radius:9px; display:flex; align-items:center; justify-content:center;
     font-weight:800; font-size:11.5px; color:#fff; box-shadow:0 2px 6px rgba(0,0,0,.18);
