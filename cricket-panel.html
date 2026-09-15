@@ -833,7 +833,7 @@
         <button class="b-extra" data-ball="LB">Leg Bye</button>
       </div>
       <button class="full ghost" id="undo-btn" style="margin-top:10px;">Undo Last Ball (U)</button>
-      <button class="full ghost" id="edit-scorecard-btn" style="margin-top:8px;">✏️ Edit Scorecard (Delete a Ball)</button>
+      <button class="full ghost" id="edit-scorecard-btn" style="margin-top:8px;display:none;">✏️ Edit Scorecard (Delete a Ball)</button>
       <div class="shortcut-hint">
         Shortcuts: <kbd>0-6</kbd> runs · <kbd>W</kbd> wicket · <kbd>S</kbd> swap strike · <kbd>U</kbd> undo
       </div>
@@ -1690,6 +1690,7 @@ function connect(){
 
   socket.on('connect', () => {
     dot.classList.add('on'); toast('Connected');
+    checkOwnerAccess(); // re-check now uid/login may have settled since initial page load
     // 🩹 Ping the live-room mapping the MOMENT we connect — not just after
     // the first ball (recordBall). Without this, a link opened in the gap
     // between "Connect" and "first ball" resolved to the wrong room and
@@ -4095,6 +4096,33 @@ function leagueApiPath(name){
 function withUid(url){
   return `${url}${url.includes('?') ? '&' : '?'}uid=${encodeURIComponent(currentOwnerUid())}`;
 }
+
+// 🔒 EDIT SCORECARD ACCESS — the "✏️ Edit Scorecard (Delete a Ball)" tool
+// (and the best-effort "delete the last ball even with no undo snapshot"
+// fallback inside deleteLastBall()) is meant for chhayajeeth@gmail.com
+// only. currentOwnerUid() above is just whatever's sitting in this
+// browser's localStorage — trivially editable client-side, so it's not
+// something to gate a feature on by itself. This instead asks the server
+// (/api/whoami) which real Firebase account that uid actually belongs to
+// (resolved via the Admin SDK, not trusted from the client) and only
+// enables the tool once that comes back as the owner's email. Starts
+// false (hidden) until the check resolves.
+const EDIT_SCORECARD_OWNER_EMAIL = 'chhayajeeth@gmail.com';
+let isOwnerOperator = false;
+async function checkOwnerAccess(){
+  const uid = currentOwnerUid();
+  const btn = document.getElementById('edit-scorecard-btn');
+  if(!uid){ isOwnerOperator = false; if(btn) btn.style.display = 'none'; return; }
+  try{
+    const res = await fetch(`/api/whoami?uid=${encodeURIComponent(uid)}`);
+    const data = await res.json();
+    isOwnerOperator = !!(data && data.success && data.email && data.email.toLowerCase() === EDIT_SCORECARD_OWNER_EMAIL);
+  }catch(e){
+    isOwnerOperator = false; // fail closed
+  }
+  if(btn) btn.style.display = isOwnerOperator ? '' : 'none';
+}
+document.addEventListener('DOMContentLoaded', checkOwnerAccess);
 
 /* ---- Known-tournament names — purely local (localStorage), so the
    "Tournament" dropdown can offer every tournament this browser/account
@@ -7374,6 +7402,10 @@ function deleteLastBall(){
     saveHistoryLocal();
     return { ok: true, mode: 'exact' };
   }
+  // No real snapshot to restore from — the best-effort arithmetic fallback
+  // is restricted to the owner account only (see checkOwnerAccess() above).
+  // Everyone else just gets the normal "nothing to undo" behavior here.
+  if(!isOwnerOperator) return { ok: false, reason: 'empty' };
   const entry = state.ballLog[state.ballLog.length - 1];
   if(canDeltaReverseBall(entry)){
     reverseLastBallDelta();
@@ -7461,6 +7493,7 @@ function renderBallEditList(){
   });
 }
 document.getElementById('edit-scorecard-btn').addEventListener('click', () => {
+  if(!isOwnerOperator){ toast('⚠️ This tool is restricted to the owner account'); return; } // defense in depth — the button is hidden for everyone else anyway
   renderBallEditList();
   document.getElementById('ball-edit-modal-overlay').classList.add('show');
 });
