@@ -1160,6 +1160,25 @@ async function getLeagueMatches(ownerUid, leagueKey) {
     return matchRecordsCollection.find({ ownerUid, leagueKey }).sort({ savedAt: 1 }).toArray();
 }
 
+// GET /api/whoami?uid= — resolves the REAL account email for a
+// (client-supplied, unverified) Firebase uid via the Admin SDK, same trust
+// level as the rest of this uid-based league API (see the big comment
+// above ownerUidFrom). Used by cricket-panel.html to decide whether to show
+// the "✏️ Edit Scorecard (Delete a Ball)" tool — that ability is meant for
+// chhayajeeth@gmail.com only, so the panel checks here rather than trusting
+// a client-side flag it could just as easily lie to itself about.
+app.get('/api/whoami', async (req, res) => {
+    const uid = ownerUidFrom(req);
+    if (!uid) return res.json({ success: true, email: null });
+    try {
+        const email = await getVerifiedEmailForUid(uid);
+        res.json({ success: true, email: email || null });
+    } catch (err) {
+        console.log('whoami error:', err);
+        res.json({ success: true, email: null });
+    }
+});
+
 // GET /api/leagues?uid= — every tournament name this owner has ever saved
 // a match to, server-side (leaguesCollection), NOT just this one browser's
 // localStorage. Powers the panel's "Tournament" dropdown so a SECOND
