@@ -19,7 +19,19 @@
   'use strict';
 
   var SS_KEY = 'ptTransition';
-  var supportsVT = typeof document.startViewTransition === 'function';
+  // IMPORTANT: this must detect CROSS-document View Transition support,
+  // not same-document support. `document.startViewTransition` only tells
+  // us the browser can do same-document (SPA-style) transitions — Safari
+  // shipped that in Sept 2024 (iOS 18.0), months before it actually
+  // supported cross-document transitions between real page loads
+  // (Dec 2024, iOS 18.2). Checking that alone left iOS 18.0-18.1 in a gap:
+  // the check passed, so this file assumed the browser would animate the
+  // navigation natively and skipped the JS fallback below — but the
+  // browser didn't actually do anything, so the navigation was a silent,
+  // unanimated hard cut. `pageswap` is part of the cross-document
+  // transition spec itself and only exists where cross-document support
+  // does, so it's the correct signal here.
+  var supportsVT = ('onpageswap' in window);
   var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
   function pageBg() {
