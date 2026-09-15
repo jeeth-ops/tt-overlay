@@ -3357,7 +3357,7 @@ adminRouter.get('/cricket/match/:matchId/history', async (req, res) => {
     try {
         const matchId = safeMatchId(req.params.matchId);
         const entries = await auditLogsCollection
-            .find({ matchId, action: { $in: ['Owner delivery correction', 'Undo delivery correction'] } })
+            .find({ matchId, action: { $in: ['Owner delivery correction', 'Undo delivery correction', 'Delete last delivery'] } })
             .sort({ timestamp: -1 }).limit(30).toArray();
         res.json({
             success: true,
@@ -3412,6 +3412,99 @@ adminRouter.post('/cricket/match/:matchId/undo-last', async (req, res) => {
     } catch (err) {
         console.log('Undo last correction error:', err);
         res.status(500).json({ success: false, error: 'Could not undo the last correction' });
+    }
+});
+
+// 🗑️ DELETE LAST DELIVERY — the server-backed twin of cricket-panel.html's
+// "Undo Last Ball". The panel's own undo stack lives only in that browser's
+// localStorage (a per-device in-memory snapshot list), so it goes empty the
+// moment scoring continues from a different device/tab/browser session or
+// local storage gets cleared — at which point the panel can undo nothing
+// earlier than whatever it has personally scored, even though the actual
+// ball-by-ball record for every earlier delivery still sits safely in
+// ballsCollection. This function undoes straight from that DB record instead
+// of a client snapshot, so it works no matter which device is asking and no
+// matter how far back the match has gone — one call removes the single most
+// recently RECORDED delivery for this match (optionally scoped to one
+// innings) and re-derives everything downstream exactly like a correction
+// save does (buildLiveCardsFromBalls → matchRecordsCollection → public cache
+// bust), so scorecard/stats/leaderboard all stay consistent. Deliberately
+// does NOT touch clipsCollection — unlike a correction (which keeps editing
+// the SAME delivery so its clip's identity is unambiguous), a delete removes
+// the identity a clip would be matched back to via innings/over/ballInOver,
+// and that slot can be shared by more than one delivery (e.g. two Wides in
+// the same over/ball position), so guessing which clip(s) to remove risks
+// deleting an unrelated one. Any orphaned clip is left for the owner to
+// clear manually from the scorecard's clip list.
+//
+// Shared by two routes below with two different trust levels — the actual
+// deletion logic and recalculation is identical either way:
+//   1. adminRouter DELETE (Firebase ID-token verified) — used by the
+//      cricket-scorecard.html correction UI.
+//   2. /api/cricket/... (uid + Admin-SDK email lookup, same trust level as
+//      /api/whoami) — used by cricket-panel.html, which never loads the
+//      Firebase client SDK and only ever knows a bare uid.
+async function deleteLastBallFromDb(matchId, requestedInnings, actorEmail) {
+    if (!ballsCollection || !matchRecordsCollection) return { error: 'Database not configured', status: 503 };
+    const query = requestedInnings ? { matchId, innings: Number(requestedInnings) } : { matchId };
+    // Sort by _id (Mongo's own insertion order, which is monotonically
+    // chronological) rather than innings/over/ballInOver — extras (Wide/No
+    // Ball) don't advance the ball-in-over counter, so more than one
+    // delivery can legitimately share the same (over, ballInOver) slot, and
+    // only insertion order can tell which of those was actually bowled last.
+    const lastBall = await ballsCollection.find(query).sort({ _id: -1 }).limit(1).next();
+    if (!lastBall) return { error: 'No deliveries recorded for this match yet', status: 404 };
+
+    await ballsCollection.deleteOne({ _id: lastBall._id });
+    if (lastBall.ownerUid) await syncMatchRecordFromBalls(lastBall.ownerUid, matchId);
+
+    await logAuditAction(
+        actorEmail, 'Delete last delivery',
+        `Match ${matchId} — Innings ${lastBall.innings || 1} Over ${lastBall.over}.${lastBall.ballInOver}`,
+        lastBall, null,
+        { matchId, ballId: String(lastBall._id) }
+    );
+
+    const cards = await buildLiveCardsFromBalls(matchId);
+    return { deleted: { ...lastBall, ballId: String(lastBall._id), _id: undefined }, cards };
+}
+
+adminRouter.delete('/cricket/match/:matchId/last-ball', async (req, res) => {
+    try {
+        const matchId = safeMatchId(req.params.matchId);
+        const requestedInnings = req.body && req.body.innings;
+        const result = await deleteLastBallFromDb(matchId, requestedInnings, req.ownerEmail);
+        if (result.error) return res.status(result.status).json({ success: false, error: result.error });
+        res.json({ success: true, deleted: result.deleted, cards: result.cards });
+    } catch (err) {
+        console.log('Delete last ball error:', err);
+        res.status(500).json({ success: false, error: 'Could not delete the last delivery' });
+    }
+});
+
+// POST /api/cricket/match/:matchId/delete-last-ball — same operation as
+// above, reachable by cricket-panel.html's "Undo Last Ball" button once its
+// own local history/best-effort reversal is exhausted (see deleteLastBall()
+// in cricket-panel.html). Gated the same way the panel's other owner-only
+// features already are: resolve the client-supplied uid to a real email via
+// the Admin SDK (never trust the uid's owner-ness itself) and require it to
+// match OWNER_EMAIL — same check /api/whoami uses to decide whether to even
+// show the Edit Scorecard button.
+app.post('/api/cricket/match/:matchId/delete-last-ball', async (req, res) => {
+    try {
+        const uid = ownerUidFrom(req);
+        const email = await getVerifiedEmailForUid(uid);
+        if (!email || email !== String(OWNER_EMAIL).toLowerCase()) {
+            return res.status(403).json({ success: false, error: 'Access Denied' });
+        }
+        const matchId = safeMatchId(req.params.matchId);
+        const requestedInnings = req.body && req.body.innings;
+        const result = await deleteLastBallFromDb(matchId, requestedInnings, email);
+        if (result.error) return res.status(result.status).json({ success: false, error: result.error });
+        res.json({ success: true, deleted: result.deleted, cards: result.cards });
+    } catch (err) {
+        console.log('Panel delete last ball error:', err);
+        res.status(500).json({ success: false, error: 'Could not delete the last delivery' });
     }
 });
 
