@@ -10,7 +10,7 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegInstallerPath = require('@ffmpeg-installer/ffmpeg').path;
 ffmpeg.setFfmpegPath(ffmpegInstallerPath);
 const { google } = require('googleapis');
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 
 // ================================================================
 // ☁️ CLOUDFLARE R2 — where clips live for their first (public-facing)
@@ -2953,6 +2953,36 @@ adminRouter.put('/clips/:clipId', async (req, res) => {
 
 // Removes a clip wrongly attached to a player/event entirely (rather than
 // reassigning it) — e.g. it was never a real four/six/wicket.
+// Removes a clip's actual video files from wherever they were uploaded
+// (R2 and/or Drive) — best-effort: storage deletion failures are logged
+// but never block the Mongo record from being removed (the DB doc is
+// the source of truth for "does this clip exist"; a straggling R2/Drive
+// object with nothing pointing at it just gets cleaned up on the next
+// attempt or manually, rather than leaving the clip listed as
+// "deleted" everywhere but still playable via a direct link).
+async function deleteClipStorage(clip) {
+    const results = { r2: null, drive: null };
+    if (clip.r2Key && r2Client && R2_BUCKET_NAME) {
+        try {
+            await r2Client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: clip.r2Key }));
+            results.r2 = 'deleted';
+        } catch (err) {
+            console.log(`R2 delete error (${clip.r2Key}):`, err.message || err);
+            results.r2 = 'failed';
+        }
+    }
+    if (clip.driveFileId && driveClient) {
+        try {
+            await driveClient.files.delete({ fileId: clip.driveFileId });
+            results.drive = 'deleted';
+        } catch (err) {
+            console.log(`Drive delete error (${clip.driveFileId}):`, err.message || err);
+            results.drive = 'failed';
+        }
+    }
+    return results;
+}
+
 adminRouter.delete('/clips/:clipId', async (req, res) => {
     if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     const { ObjectId } = require('mongodb');
@@ -2962,8 +2992,9 @@ adminRouter.delete('/clips/:clipId', async (req, res) => {
         const result = await clipsCollection.findOneAndDelete({ _id });
         if (!result || !result.value) return res.status(404).json({ success: false, error: 'Clip not found' });
         invalidateClipsCache(result.value.matchId);
-        await logAuditAction(req.ownerEmail, 'Delete clip', req.params.clipId, null, null);
-        res.json({ success: true });
+        const storage = await deleteClipStorage(result.value);
+        await logAuditAction(req.ownerEmail, 'Delete clip', req.params.clipId, null, storage);
+        res.json({ success: true, storage });
     } catch (err) {
         console.log('Owner clip delete error:', err);
         res.status(500).json({ success: false, error: 'Could not delete clip' });
