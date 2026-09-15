@@ -1039,10 +1039,13 @@ async function deleteClip(clipId, title){
   if(!confirm(`Delete this clip (${title || 'clip'})? This can't be undone.`)) return;
   try{
     const res = await apiFetch(`/api/admin/clips/${encodeURIComponent(clipId)}`, { method:'DELETE' });
-    if(!res.ok){
+    if(!res.ok && res.status !== 404){
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Could not delete clip');
     }
+    // A 404 here means the clip is already gone from the database (e.g.
+    // deleted a moment ago, or this list was a little stale) — the end
+    // state we want is already true, so it isn't treated as an error.
     document.querySelectorAll(`.clip-row[data-clip-id="${clipId}"]`).forEach(row => row.remove());
     showToast('Clip deleted');
   }catch(err){
