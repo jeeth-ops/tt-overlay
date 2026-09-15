@@ -133,6 +133,14 @@
     --live: #ef4444;
     --shadow: 0 8px 30px rgba(0,0,0,.35);
     --gradient-hero: radial-gradient(120% 140% at 15% -10%, rgba(34,197,94,.16), transparent 55%), radial-gradient(100% 120% at 100% 0%, rgba(168,85,247,.10), transparent 50%);
+    --team-a: #22c55e;
+    --team-b: #a855f7;
+    --team-a-contrast: #06170c;
+    --team-b-contrast: #ffffff;
+    --glass-bg: rgba(23,31,48,.55);
+    --glass-border: rgba(255,255,255,.08);
+    --glass-blur: 18px;
+    --glow-ring: 0 0 0 1px var(--glass-border), 0 12px 40px rgba(0,0,0,.45), 0 0 42px -12px var(--accent);
   }
   :root[data-theme="light"]{
     --bg: #f4f6f8;
@@ -158,6 +166,14 @@
     --live: #d92b2b;
     --shadow: 0 8px 24px rgba(20,25,40,.08);
     --gradient-hero: radial-gradient(120% 140% at 15% -10%, rgba(18,138,74,.08), transparent 55%), radial-gradient(100% 120% at 100% 0%, rgba(138,31,212,.05), transparent 50%);
+    --team-a: #128a4a;
+    --team-b: #8a1fd4;
+    --team-a-contrast: #ffffff;
+    --team-b-contrast: #ffffff;
+    --glass-bg: rgba(255,255,255,.6);
+    --glass-border: rgba(20,25,40,.08);
+    --glass-blur: 18px;
+    --glow-ring: 0 0 0 1px var(--glass-border), 0 12px 32px rgba(20,25,40,.10), 0 0 32px -14px var(--accent);
   }
 
   *{ box-sizing:border-box; }
@@ -254,14 +270,23 @@
   /* ---------- Layout ---------- */
   #wrap{ max-width:1180px; margin:0 auto; padding:16px; display:flex; flex-direction:column; gap:14px; }
   .card{
-    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius-lg);
-    padding:18px; box-shadow:var(--shadow);
-    transition:border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+    background:var(--glass-bg); border:1px solid var(--glass-border); border-radius:var(--radius-lg);
+    padding:18px; box-shadow:var(--glow-ring);
+    backdrop-filter:blur(var(--glass-blur)); -webkit-backdrop-filter:blur(var(--glass-blur));
+    transition:border-color .2s ease, box-shadow .3s ease, transform .2s ease, opacity .4s ease;
   }
+  /* Reveal-on-scroll — purely additive polish; cards start slightly faded/
+     shifted and settle in as they enter the viewport (see revealObserver
+     in JS). Never blocks content: if JS doesn't run, .reveal is simply
+     never added/removed and cards render at full opacity via the
+     no-js fallback below. */
+  .card.reveal-init{ opacity:0; transform:translateY(14px); }
+  .card.reveal-in{ opacity:1; transform:translateY(0); }
+  .no-js .card.reveal-init{ opacity:1; transform:none; }
   /* The scorecard pair (Batting/Bowling) is the primary content now that
      it sits right under Highlights — give it a touch more visual weight
      than the surrounding cards instead of blending into the same grid. */
-  .card-featured{ border-top:3px solid var(--accent); position:relative; }
+  .card-featured{ border-top:3px solid transparent; border-image:linear-gradient(90deg, var(--team-a), var(--team-b)) 1; position:relative; }
   .card-featured::after{
     content:''; position:absolute; inset:0 0 auto 0; height:64px; border-radius:var(--radius-lg) var(--radius-lg) 0 0;
     background:linear-gradient(180deg, var(--accent-soft), transparent); pointer-events:none;
@@ -275,7 +300,22 @@
 
   /* ---------- Hero ---------- */
   #hero{ position:relative; overflow:hidden; padding:22px; }
-  #hero::before{ content:''; position:absolute; inset:0; background:var(--gradient-hero); pointer-events:none; }
+  #hero::before{
+    content:''; position:absolute; inset:0; pointer-events:none;
+    background:
+      radial-gradient(90% 120% at 0% 0%, color-mix(in srgb, var(--team-a) 22%, transparent), transparent 60%),
+      radial-gradient(90% 120% at 100% 0%, color-mix(in srgb, var(--team-b) 20%, transparent), transparent 60%);
+  }
+  #hero::after{
+    content:''; position:absolute; inset:-40% -10%; pointer-events:none; opacity:.5;
+    background:linear-gradient(120deg, transparent 30%, color-mix(in srgb, var(--accent) 14%, transparent) 48%, transparent 66%);
+    animation:heroSheen 7s ease-in-out infinite;
+  }
+  @keyframes heroSheen{
+    0%, 100%{ transform:translateX(-8%) translateY(-4%); }
+    50%{ transform:translateX(8%) translateY(4%); }
+  }
+  @media (prefers-reduced-motion: reduce){ #hero::after{ animation:none; } }
   /* ---------- Live stream box (beside the score on wide screens) ---------- */
   #hero-row{ display:flex; gap:14px; align-items:stretch; }
   #hero-row #hero{ flex:1; min-width:0; }
@@ -294,7 +334,11 @@
   #hero-top{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; position:relative; margin-bottom:16px;}
   .meta-line{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; color:var(--text-dim); font-size:12px; font-weight:600; }
   .chip{ padding:3px 9px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); font-size:11px; font-weight:700; letter-spacing:.3px; }
-  .chip.live{ background:rgba(239,68,68,.12); color:var(--live); border-color:transparent; display:flex; align-items:center; gap:5px; }
+  .chip.live{
+    background:rgba(239,68,68,.14); color:var(--live); border-color:transparent; display:flex; align-items:center; gap:5px;
+    box-shadow:0 0 0 1px rgba(239,68,68,.25), 0 0 16px -2px rgba(239,68,68,.55);
+    font-weight:800; letter-spacing:.5px;
+  }
   .chip.live .lv-dot{ width:6px; height:6px; border-radius:50%; background:var(--live); animation:pulseDot 1.4s infinite; }
   .chip.result{ background:var(--accent-soft); color:var(--accent); }
 
@@ -304,13 +348,19 @@
   .team-logo{
     width:46px; height:46px; border-radius:12px; flex:none; display:flex; align-items:center; justify-content:center;
     font-family:var(--font-display); font-weight:800; font-size:16px; color:#fff; background-size:cover; background-position:center;
+    box-shadow:0 0 0 2px var(--glass-bg), 0 0 0 3px var(--logo-glow, var(--accent)), 0 4px 18px -4px var(--logo-glow, var(--accent));
   }
   .team-name-block{ min-width:0; }
   .team-name{ font-weight:700; font-size:14.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .team-short{ font-size:11px; color:var(--text-dim); font-weight:600; }
   #score-center{ text-align:center; }
   #score-overs-row{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; }
-  #main-score{ font-family:var(--font-display); font-weight:800; font-size:clamp(30px,6vw,44px); line-height:1; text-shadow:0 0 30px var(--accent-soft); }
+  #main-score{
+    font-family:var(--font-display); font-weight:800; font-size:clamp(30px,6vw,44px); line-height:1;
+    background:linear-gradient(90deg, var(--team-a), var(--team-b));
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    filter:drop-shadow(0 0 22px color-mix(in srgb, var(--accent) 45%, transparent));
+  }
   #main-overs{ font-size:13px; color:var(--text-dim); font-weight:600; }
   #batting-tag{ font-size:10.5px; color:var(--accent); font-weight:700; letter-spacing:.4px; text-transform:uppercase; margin-top:4px; }
 
@@ -326,9 +376,15 @@
   }
 
   #stat-strip{ position:relative; display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:16px; }
-  .stat-box{ background:var(--panel-2); border:1px solid var(--border-soft); border-radius:var(--radius-md); padding:10px 12px; }
+  .stat-box{
+    background:color-mix(in srgb, var(--panel-2) 70%, transparent); border:1px solid var(--border-soft); border-radius:var(--radius-md); padding:10px 12px;
+    backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+  }
   .stat-box .k{ font-size:10px; color:var(--text-dim); text-transform:uppercase; font-weight:700; letter-spacing:.4px; }
-  .stat-box .v{ font-family:var(--font-display); font-size:19px; font-weight:700; margin-top:3px; }
+  .stat-box .v{
+    font-family:var(--font-display); font-size:19px; font-weight:700; margin-top:3px;
+    background:linear-gradient(90deg, var(--team-a), var(--team-b)); -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
 
   /* ---------- Players row ---------- */
   #players-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
@@ -1526,6 +1582,7 @@ function finalResultText(m){
 function renderFinalSnapshot(match, displayName){
   finalMatchData = match;
   finalActiveInnings = 'A';
+  applyTeamTheme(match);
   renderStreamBox(match.streamUrl);
   document.title = `${(match.teamA&&(match.teamA.short||match.teamA.name))||'Team A'} vs ${(match.teamB&&(match.teamB.short||match.teamB.name))||'Team B'} — All Sports Live`;
 
@@ -1777,6 +1834,7 @@ function renderStreamBox(streamUrl){
 }
 
 function renderHero(s){
+  applyTeamTheme(s);
   renderStreamBox(s.streamUrl);
   document.getElementById('chip-format').textContent = s.format || 'T20';
   const venueChip = document.getElementById('chip-venue');
@@ -1855,6 +1913,36 @@ function renderHero(s){
   setText('stat-ballsleft', ballsLeft === null ? '—' : ballsLeft);
 }
 
+// ---------- Per-match team-color theming ----------
+// Every scorecard gets its own color identity from the two teams playing —
+// team.color already existed in the data (used by paintLogo below), this
+// just also drives the page's shared --accent/--accent-soft/--accent-contrast
+// so the hero glow, score gradient, chips and buttons lean into whichever
+// team is currently batting, instead of one fixed green for every match.
+function relLuminance(hex){
+  const c = String(hex || '').replace('#', '');
+  if(c.length !== 6) return 0.5;
+  const r = parseInt(c.substr(0,2),16)/255, g = parseInt(c.substr(2,2),16)/255, b = parseInt(c.substr(4,2),16)/255;
+  const lin = v => v <= 0.03928 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4);
+  return 0.2126*lin(r) + 0.7152*lin(g) + 0.0722*lin(b);
+}
+let lastThemeKey = '';
+function applyTeamTheme(s){
+  const A = s.teamA || {}, B = s.teamB || {};
+  const battingColor = (s.battingTeam === 'B' ? B.color : A.color) || A.color || null;
+  const key = `${A.color||''}|${B.color||''}|${battingColor||''}`;
+  if(key === lastThemeKey) return; // avoid redundant style writes on every ball
+  lastThemeKey = key;
+  const root = document.documentElement.style;
+  if(A.color) root.setProperty('--team-a', A.color);
+  if(B.color) root.setProperty('--team-b', B.color);
+  if(battingColor){
+    root.setProperty('--accent', battingColor);
+    root.setProperty('--accent-soft', `color-mix(in srgb, ${battingColor} 16%, transparent)`);
+    root.setProperty('--accent-contrast', relLuminance(battingColor) > 0.5 ? '#0b0f16' : '#ffffff');
+  }
+}
+
 function paintLogo(id, team){
   const el = document.getElementById(id);
   if(!el) return;
@@ -1867,6 +1955,9 @@ function paintLogo(id, team){
     el.style.background = team.color || 'var(--accent)';
     el.textContent = (team.short || team.name || '?').slice(0,2).toUpperCase();
   }
+  // Own-team-colored glow ring (falls back to the shared accent if this
+  // team has no color set) — see .team-logo's box-shadow using --logo-glow.
+  el.style.setProperty('--logo-glow', team.color || 'var(--accent)');
 }
 
 function renderPlayers(s){
@@ -2853,6 +2944,27 @@ function openClipReassignForm(clipId, currentName, role){
       renderHighlights();
     }
   );
+}
+
+// ---------- Reveal-on-scroll ----------
+// Purely visual polish (see .card.reveal-init/.reveal-in in CSS) — cards
+// fade/slide in as they first enter the viewport. Runs once per card
+// (unobserve after revealing) so it never fights with live re-renders,
+// and reduced-motion users just see cards appear at full opacity since
+// the CSS transition itself is what's skipped, not this JS.
+if('IntersectionObserver' in window){
+  const revealObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if(entry.isIntersecting){
+        entry.target.classList.add('reveal-in');
+        revealObserver.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.08, rootMargin: '0px 0px -40px 0px' });
+  document.querySelectorAll('.card').forEach(card => {
+    card.classList.add('reveal-init');
+    revealObserver.observe(card);
+  });
 }
 
 connect();
