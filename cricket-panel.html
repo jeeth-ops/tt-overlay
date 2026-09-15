@@ -1011,6 +1011,7 @@
       <div class="wm-sub" id="extras-modal-sub">—</div>
       <div class="wm-options" id="extras-modal-options"></div>
       <button type="button" class="full ghost wm-extra-wicket-link" id="extras-modal-wicket-link" style="display:none;">🏏 Also a wicket on this ball?</button>
+      <button type="button" class="full ghost wm-extra-wicket-link" id="extras-modal-legbye-link" style="display:none;">🦵 Leg Bye (missed the bat)?</button>
       <button type="button" class="full ghost wm-cancel" id="extras-modal-cancel" style="margin-top:10px;">Cancel</button>
     </div>
   </div>
@@ -6147,23 +6148,35 @@ function recordBall(kind, meta){
       break;
     }
     case 'Nb': {
-      // Runs off the bat come from the extras picker modal — capped at 4,
-      // defaults to 0. The 1-run no-ball penalty is always added on top
-      // and is the only part counted as an "extra"; bat runs are credited
-      // to the striker, same as a normal scoring shot.
+      // Runs off the bat OR leg-bye runs come from the extras picker
+      // modal (only one or the other on any single ball — a batsman
+      // either hits the ball or misses it) — capped at 4, defaults to 0.
+      // The 1-run no-ball penalty is always added on top regardless.
       const batRuns = (meta && typeof meta.runsOffBat === 'number') ? meta.runsOffBat : 0;
-      const nbTotal = 1 + batRuns;
+      // 🏏 Leg Bye off a No Ball — same rule as a leg bye off a normal
+      // delivery: credited to team EXTRAS (state.extras[...].lb), never
+      // to the striker's individual score, and never charged against the
+      // bowler's figures. Only the automatic 1-run no-ball penalty itself
+      // is charged to the bowler — see addBowlerExtra() call below.
+      const legByeRuns = (meta && typeof meta.legByeRuns === 'number') ? meta.legByeRuns : 0;
+      const nbTotal = 1 + batRuns + legByeRuns;
       state.score.runs += nbTotal;
-      state.striker.runs += batRuns;
-      if(batRuns === 4) state.striker.fours++;
+      if(batRuns > 0){
+        state.striker.runs += batRuns;
+        if(batRuns === 4) state.striker.fours++;
+      }
       state.partnershipRuns += nbTotal;
       state.extras[state.battingTeam].nb += 1;
-      const nbLabel = batRuns > 0 ? `Nb+${batRuns}` : 'Nb';
+      if(legByeRuns > 0) state.extras[state.battingTeam].lb += legByeRuns;
+      const nbLabel = legByeRuns > 0 ? `Nb+${legByeRuns}lb` : (batRuns > 0 ? `Nb+${batRuns}` : 'Nb');
       state.thisOver.push(nbLabel);
       pushBallHistory(nbLabel);
-      addBowlerExtra(nbTotal);
-      fireEvent('NO_BALL', 'NO BALL', batRuns > 0 ? `+${batRuns} off the bat` : '');
-      if(batRuns % 2 === 1) swapStrikeSilent();
+      // Bowler is charged the no-ball penalty + any runs off the bat —
+      // NEVER the leg-bye runs (those are extras, exactly like a leg bye
+      // off a legal delivery never counts against the bowler either).
+      addBowlerExtra(1 + batRuns);
+      fireEvent('NO_BALL', 'NO BALL', legByeRuns > 0 ? `+${legByeRuns} leg bye${legByeRuns === 1 ? '' : 's'}` : (batRuns > 0 ? `+${batRuns} off the bat` : ''));
+      if((batRuns + legByeRuns) % 2 === 1) swapStrikeSilent();
       // Free Hit only exists in limited-overs cricket (ODI/T20/Custom) —
       // Test/first-class cricket has no Free Hit provision under the Laws
       // of Cricket or ICC playing conditions, so skip it for that format.
@@ -6422,6 +6435,12 @@ const EXTRAS_MODAL_CONFIG = {
 // below to route into recordBall('WdW'/'NbW', ...) instead of the plain
 // extras/wicket path.
 let pendingExtraWicketContext = null;
+// Set while the No Ball extras picker is in "Leg Bye" mode — i.e. the
+// batsman missed the ball with the bat entirely and the runs came off
+// pad/body, rather than being struck. Reset every time the modal opens
+// fresh. Read by renderExtrasModalButtons() below and by the button
+// click handler, which tags the recorded meta accordingly.
+let nbLegByeMode = false;
 function openExtrasModal(kind){
   if(isInningsOver()){
     let msg = '🚫 Overs complete for this innings';
@@ -6432,25 +6451,31 @@ function openExtrasModal(kind){
   }
   const cfg = EXTRAS_MODAL_CONFIG[kind];
   if(!cfg) return;
-  document.getElementById('extras-modal-title').textContent = cfg.title;
+  nbLegByeMode = false;
   document.getElementById('extras-modal-sub').textContent =
     `${state.bowler.name || 'Bowler'} to ${state.striker.name || 'Striker'}`;
-  const wrap = document.getElementById('extras-modal-options');
-  wrap.innerHTML = '';
-  for(let i = 0; i <= 4; i++){
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'wm-option';
-    b.textContent = String(i);
-    b.addEventListener('click', () => {
-      closeExtrasModal();
-      const meta = {};
-      meta[cfg.metaKey] = i;
-      recordBall(kind, meta);
-      maybePromptNewBowler();
-    });
-    wrap.appendChild(b);
+  renderExtrasModalButtons(kind);
+
+  // Leg Bye toggle — only makes sense on a No Ball: under the Laws of
+  // Cricket, a leg bye off a no ball is scored the same as a leg bye off
+  // a normal delivery (credited to team extras as "lb", NOT to the
+  // striker, and NOT charged against the bowler) — only the automatic
+  // 1-run no-ball penalty itself is charged to the bowler. See the 'Nb'
+  // case in recordBall() for how this actually gets split and credited.
+  const legByeLink = document.getElementById('extras-modal-legbye-link');
+  if(kind === 'Nb'){
+    legByeLink.style.display = 'block';
+    legByeLink.textContent = '🦵 Leg Bye (missed the bat)?';
+    legByeLink.onclick = () => {
+      nbLegByeMode = !nbLegByeMode;
+      renderExtrasModalButtons(kind);
+      legByeLink.textContent = nbLegByeMode ? '🏏 Actually runs off the bat?' : '🦵 Leg Bye (missed the bat)?';
+    };
+  } else {
+    legByeLink.style.display = 'none';
+    legByeLink.onclick = null;
   }
+
   // Only a Wide or No Ball can ever carry a wicket alongside it — Bye/Leg
   // Bye never do (any dismissal on those balls is recorded as a plain
   // legal-delivery wicket instead, exactly as before).
@@ -6467,6 +6492,33 @@ function openExtrasModal(kind){
     wicketLink.onclick = null;
   }
   document.getElementById('extras-modal-overlay').classList.add('show');
+}
+// (re)draws the 0-4 run-count buttons for the extras picker. Split out
+// from openExtrasModal so the No-Ball Leg-Bye toggle can re-render just
+// the title + buttons (with the metaKey flipped between 'runsOffBat' and
+// 'legByeRuns') without re-running the whole modal-open setup.
+function renderExtrasModalButtons(kind){
+  const cfg = EXTRAS_MODAL_CONFIG[kind];
+  const isNbLegBye = kind === 'Nb' && nbLegByeMode;
+  document.getElementById('extras-modal-title').textContent = isNbLegBye
+    ? 'No Ball — Leg Bye runs (missed the bat)?'
+    : cfg.title;
+  const wrap = document.getElementById('extras-modal-options');
+  wrap.innerHTML = '';
+  for(let i = 0; i <= 4; i++){
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'wm-option';
+    b.textContent = String(i);
+    b.addEventListener('click', () => {
+      closeExtrasModal();
+      const meta = {};
+      meta[isNbLegBye ? 'legByeRuns' : cfg.metaKey] = i;
+      recordBall(kind, meta);
+      maybePromptNewBowler();
+    });
+    wrap.appendChild(b);
+  }
 }
 function closeExtrasModal(){
   document.getElementById('extras-modal-overlay').classList.remove('show');
