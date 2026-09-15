@@ -2226,6 +2226,17 @@ function send(obj){
 function pushState(immediate, force){
   saveLocal();
   renderPanel();
+  // 🔒 FIX ("Undo" leaving the scoring buttons frozen): checkMatchResult()
+  // disables every [data-ball] button the instant a chase is won (or the
+  // innings otherwise ends), via updateBallButtonsState(). That's correct
+  // at the time — but pushState() itself never re-ran that check, so when
+  // Undo (or any other state replacement, e.g. a match-history correction)
+  // reverted state back to BEFORE the win, the buttons stayed disabled
+  // forever — the score visibly reverted but nothing was scorable again.
+  // Keeping this in sync here, on every state push, means the buttons
+  // always reflect the CURRENT state's isInningsOver(), not whatever the
+  // last one-off call happened to leave them at.
+  updateBallButtonsState();
   if(isAwaitingNextInnings() && !force){
     clearTimeout(pushTimer);
     return; // held back — overlay keeps showing the previous innings untouched
