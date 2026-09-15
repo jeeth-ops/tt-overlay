@@ -1425,11 +1425,13 @@
             top: 0;
             left: 0;
             height: 2.5px;
-            width: 0%;
+            width: 100%;
+            transform: scaleX(0);
+            transform-origin: left center;
             background: linear-gradient(90deg, var(--accent), #fb923c);
             z-index: 10000;
-            transition: width 0.12s linear, opacity 0.3s var(--ease);
-            will-change: width;
+            transition: transform 0.12s linear, opacity 0.3s var(--ease);
+            will-change: transform;
             pointer-events: none;
         }
 
@@ -4023,7 +4025,8 @@
 
             if (scrollProgressEl) {
                 const max = (doc.scrollHeight - doc.clientHeight) || 1;
-                scrollProgressEl.style.width = Math.min(100, Math.max(0, (scrollY / max) * 100)) + '%';
+                const pct = Math.min(1, Math.max(0, scrollY / max));
+                scrollProgressEl.style.transform = `scaleX(${pct})`;
             }
 
             // The hero parallax below writes a new transform+opacity to a
@@ -4719,8 +4722,17 @@
         const observer = new IntersectionObserver((entries, observer) => {
             entries.forEach(entry => {
                 if (entry.isIntersecting) {
-                    entry.target.classList.add('revealed');
-                    observer.unobserve(entry.target);
+                    const el = entry.target;
+                    // Promote just before animating, release once the
+                    // transition finishes — a real GPU layer only while it's
+                    // actually needed, not for the rest of the page's life.
+                    el.style.willChange = 'transform, opacity';
+                    el.classList.add('revealed');
+                    el.addEventListener('transitionend', function clearWillChange() {
+                        el.style.willChange = 'auto';
+                        el.removeEventListener('transitionend', clearWillChange);
+                    }, { once: true });
+                    observer.unobserve(el);
                 }
             });
         }, observerOptions);
