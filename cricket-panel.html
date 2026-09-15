@@ -5770,6 +5770,14 @@ function recordBall(kind, meta){
 
   history.push(snapshot());
   let overCompletedThisBall = false;
+  // 🔒 Set inside the 'Wd'/'Nb' cases below when the extra runs recorded
+  // for that delivery amount to a boundary (Wide extra === 4, or No Ball
+  // runs-off-bat === 4/6) — see logBallToDb() where this is read to fire
+  // the same /clip request a plain FOUR/SIX already gets, so a boundary
+  // conceded on a Wide/No Ball (incl. during a Free Hit, which is just a
+  // flag on an otherwise-normal delivery and already goes through here)
+  // gets clipped too, not just a plain-kind '4'/'6' ball.
+  let extraBoundaryEventType = null;
   const ballTimestamp = Date.now();
   const runsBefore = state.score.runs;
   // Captured BEFORE the switch below mutates state — the log entry should
@@ -6138,7 +6146,8 @@ function recordBall(kind, meta){
     }
     case 'Wd': {
       // Extra runs actually run (beyond the automatic 1) come from the
-      // extras picker modal — 0 to 6, defaults to 0 if not given.
+      // extras picker modal — 0 to 4 (a Wide is never touched by the bat,
+      // so Law 19.7.1's boundary-6 rule can't apply here), defaults to 0.
       const extraRun = (meta && typeof meta.extraRuns === 'number') ? meta.extraRuns : 0;
       const wdTotal = 1 + extraRun;
       state.score.runs += wdTotal;
@@ -6149,6 +6158,11 @@ function recordBall(kind, meta){
       pushBallHistory(wdLabel);
       addBowlerExtra(wdTotal);
       fireEvent('WIDE', 'WIDE', extraRun > 0 ? `+${wdTotal} run${wdTotal===1?'':'s'}` : '');
+      // 🔒 A Wide reaching the boundary (extraRun === 4, its max — see the
+      // comment above) is still a highlight-worthy boundary even though it
+      // never touches the bat — mark it so logBallToDb() cuts a clip for
+      // it just like a plain FOUR does.
+      if(extraRun === 4) extraBoundaryEventType = 'FOUR';
       // Runs actually run between the wickets rotate the strike, same as
       // any other delivery — the automatic penalty run itself doesn't.
       if(extraRun % 2 === 1) swapStrikeSilent();
@@ -6177,6 +6191,11 @@ function recordBall(kind, meta){
         // the striker's boundary count. Now that the picker goes to 6, tally
         // it exactly like a six off a normal ball.
         if(batRuns === 6) state.striker.sixes++;
+        // 🔒 Runs off the bat off a No Ball DO count as a real boundary
+        // (Law 19.7.1 — the bat touched it) — mark it so logBallToDb()
+        // cuts a FOUR/SIX clip for it, same as a plain-kind '4'/'6' ball.
+        if(batRuns === 4) extraBoundaryEventType = 'FOUR';
+        else if(batRuns === 6) extraBoundaryEventType = 'SIX';
       }
       state.partnershipRuns += nbTotal;
       state.extras[state.battingTeam].nb += 1;
@@ -6299,7 +6318,7 @@ function recordBall(kind, meta){
     strikerId: logStrikerId,
     nonStrikerId: logNonStrikerId,
     bowlerId: logBowlerId
-  });
+  }, extraBoundaryEventType);
 }
 let pendingBowlerPrompt = false;
 // Called right after every recordBall() call site has finished whatever
@@ -6314,7 +6333,7 @@ function maybePromptNewBowler(){
 // 🍃 Every ball → MongoDB (source of truth), independent of the
 // cricketState broadcast above. Also asks the server to cut a 20s
 // highlight clip (10s before / 10s after) on WICKET / FOUR / SIX.
-function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity){
+function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundaryEventType){
   if(!socket || !socket.connected) return;
   const matchId = currentMatchId();
   if(!matchId) return;
@@ -6385,8 +6404,15 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity){
   // waiting on the dismissal-type/fielder/new-batsman modals. Firing
   // again here would just cut a second, redundant clip for the same
   // wicket.
-  if(kind === '4' || kind === '6'){
-    const eventType = kind === '4' ? 'FOUR' : 'SIX';
+  // 🔒 Also fires for a boundary conceded on a Wide/No Ball — Free Hit
+  // deliveries are just a normal-kind ball with state.freeHit set, so
+  // they already fall under the plain kind==='4'/'6' check below and
+  // need no extra handling here. extraBoundaryEventType is set by
+  // recordBall()'s 'Wd'/'Nb' cases when that ball's extra runs amount to
+  // a real boundary (see the comments there for the Law 19.7.1 reasoning
+  // on why a Wide only ever maxes at FOUR, never SIX).
+  if(kind === '4' || kind === '6' || extraBoundaryEventType){
+    const eventType = extraBoundaryEventType || (kind === '4' ? 'FOUR' : 'SIX');
     // ballMeta — same shape the socket 'logBall' event above already
     // sends — lets the main server link this clip to the real
     // striker/bowler (see finalizeClip/findCanonicalBall on the server)
@@ -6510,11 +6536,15 @@ function openExtrasModal(kind){
 // openExtrasModal so the No-Ball Leg-Bye toggle can re-render just the
 // title + buttons (with the metaKey flipped between 'runsOffBat' and
 // 'legByeRuns') without re-running the whole modal-open setup.
-// 🔒 Wide/No-Ball go up to 6, not 4 — a batsman can legally strike a No
-// Ball for six same as any normal delivery, and a Wide's extra runs can
-// likewise run past 4 on a mis-field/overthrow. Capping at 4 made both
-// unselectable. Bye/Leg Bye stay capped at 4 (untouched — not what was
-// reported).
+// 🔒 As per the actual Laws of Cricket (Law 19.7.1): a boundary 6 can
+// ONLY be scored if the ball was struck by the bat. A No Ball's "runs
+// off the bat" is the one case here where that's true, so it alone goes
+// 0-6. A Wide, by definition, is never touched by the bat (if the
+// batter reaches and hits it, it isn't called wide) — same for Bye/Leg
+// Bye, where the bat never makes contact either. All three of those can
+// only ever total a 4-run boundary (a Wide crossing the rope on the
+// full still scores just 5 total — 1 penalty + 4 — never 7), so they
+// stay capped at 4.
 function renderExtrasModalButtons(kind){
   const cfg = EXTRAS_MODAL_CONFIG[kind];
   const isNbLegBye = kind === 'Nb' && nbLegByeMode;
@@ -6523,7 +6553,9 @@ function renderExtrasModalButtons(kind){
     : cfg.title;
   const wrap = document.getElementById('extras-modal-options');
   wrap.innerHTML = '';
-  const maxRuns = (kind === 'Wd' || kind === 'Nb') ? 6 : 4;
+  // Leg-bye runs off a No Ball never touch the bat either, so even in
+  // that mode (kind still === 'Nb') the cap drops back to 4.
+  const maxRuns = (kind === 'Nb' && !isNbLegBye) ? 6 : 4;
   for(let i = 0; i <= maxRuns; i++){
     const b = document.createElement('button');
     b.type = 'button';
