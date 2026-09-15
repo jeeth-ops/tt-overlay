@@ -1397,23 +1397,28 @@ function findPlayerById(key, id){
   if(!id) return null;
   return rosterPlayers(key).find(p => p.id === id) || null;
 }
-// Players from `key`'s squad who are (a) part of the Playing XI (not
-// benched/substitute) and (b) not already unavailable for this innings —
-// i.e. not out, and not one of the two batters already at the crease.
+// Players from `key`'s squad who are not already unavailable for this
+// innings — i.e. not out, and not one of the two batters already at the
+// crease. Per operator's request, EVERY squad member is eligible here
+// (bench/non-XI included, same as bowler selection) — the only players
+// ever excluded are ones already dismissed this innings (a hard Law of
+// Cricket, not a flexible convention) or explicitly passed in excludeIds.
 function eligibleBatters(key, opts){
   opts = opts || {};
   const dismissed = new Set((state.dismissedThisInnings && state.dismissedThisInnings[key]) || []);
   const excludeIds = new Set(opts.excludeIds || []);
-  return rosterPlayers(key).filter(p => p.isXI !== false && !dismissed.has(p.id) && !excludeIds.has(p.id));
+  return rosterPlayers(key).filter(p => !dismissed.has(p.id) && !excludeIds.has(p.id));
 }
-// Bowling-team players eligible to bowl the NEXT over — excludes whoever
-// bowled the over that just finished (cricket's laws forbid the same
-// bowler taking two overs back-to-back). Doesn't exclude mid-over
-// corrections (those go through applyBowlerChange with carryBalls>0,
-// which never touches lastOverBowlerId in the first place).
+// Bowling-team players selectable for the NEXT over. Per operator's
+// request: EVERY squad member (whether marked Playing XI or not, e.g.
+// bench players) is listed, and no bowler is excluded for having bowled
+// the over that just finished — the standard "no two overs back-to-back"
+// restriction has been deliberately turned off (see applyBowlerChange
+// below, where the matching hard-block was also removed).
 function eligibleBowlersForNext(key){
-  return rosterPlayers(key).filter(p => p.isXI !== false && p.id !== state.lastOverBowlerId);
+  return rosterPlayers(key);
 }
+
 function playerBadge(key, id){
   const t = teamObj(key);
   if(!id) return '';
@@ -3222,8 +3227,12 @@ function renderRosterControls(){
     const dismissed = new Set((state.dismissedThisInnings && state.dismissedThisInnings[battingKey]) || []);
     const strikerSel = document.getElementById('striker-roster-select');
     const nsSel = document.getElementById('nonstriker-roster-select');
-    const availableForStriker = rosterPlayers(battingKey).filter(p => p.isXI !== false && (!dismissed.has(p.id) || p.id === state.striker.id));
-    const availableForNs = rosterPlayers(battingKey).filter(p => p.isXI !== false && (!dismissed.has(p.id) || p.id === state.nonStriker.id));
+    // Every squad member is selectable here (bench/non-XI included, same
+    // as batsman/bowler selection elsewhere) — only a player already
+    // dismissed this innings is excluded (unless it's the one currently
+    // occupying that very end, so the dropdown still shows who's there).
+    const availableForStriker = rosterPlayers(battingKey).filter(p => !dismissed.has(p.id) || p.id === state.striker.id);
+    const availableForNs = rosterPlayers(battingKey).filter(p => !dismissed.has(p.id) || p.id === state.nonStriker.id);
     fillPlayerSelect(strikerSel, availableForStriker, { teamKey: battingKey });
     strikerSel.value = state.striker.id || '';
     fillPlayerSelect(nsSel, availableForNs, { teamKey: battingKey });
@@ -3351,13 +3360,11 @@ function applyBowlerChange(name, id){
 
   const key = bowlingTeamKey();
 
-  // 🏏 Enforce the "no bowler bowls two overs back-to-back" rule whenever
-  // we know the incoming bowler's identity by ID (roster-driven flow) AND
-  // this is a genuine over-boundary change (not a mid-over name fix).
-  if(id && state.bowler.balls === 0 && id === state.lastOverBowlerId){
-    toast("🚫 That bowler just finished the previous over — they can't bowl the next one");
-    return false;
-  }
+  // 🏏 "No bowler bowls two overs back-to-back" restriction — REMOVED per
+  // operator's request. Any bowler, including whoever just finished the
+  // previous over, can be selected for the next one too. state.lastOverBowlerId
+  // is still tracked below (harmless bookkeeping) but nothing reads it to
+  // block a selection anymore.
 
   history.push(snapshot());
 
