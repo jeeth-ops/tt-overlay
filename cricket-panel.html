@@ -6580,10 +6580,26 @@ function triggerWicketClip(){
   const matchId = currentMatchId();
   if(!matchId) return;
   const ballTimestamp = Date.now();
+  // 🔒 BUG FIX (wicket clip tagged with the PREVIOUS ball's over/ball
+  // number, e.g. a wicket that is actually 8.2 gets logged as 8.1):
+  // this fires the instant the WICKET button is pressed — before the
+  // dismissal type is chosen and long before recordBall('W'/...) ever
+  // runs — so state.score.overs/balls at this point is still last
+  // ball's FINISHED value, not this delivery's own. A plain legal-
+  // delivery wicket (no Wide/No-Ball extra in play) WILL advance the
+  // ball count by one the moment it's actually recorded, exactly like
+  // addLegalBall() does — so reading state.score.balls live here
+  // undercounts by one ball. Mirror that +1 ourselves. A wicket on a
+  // Wide/No Ball never counts as a legal delivery (addLegalBall never
+  // runs for those), so its over/ball stays exactly what's live now —
+  // no correction needed there.
+  const isExtraWicket = pendingExtraWicketContext === 'Wd' || pendingExtraWicketContext === 'Nb';
+  const clipOver = state.score.overs;
+  const clipBallInOver = isExtraWicket ? state.score.balls : state.score.balls + 1;
   const ballMeta = {
     innings: state.inningsNumber,
-    over: state.score.overs,
-    ballInOver: state.score.balls,
+    over: clipOver,
+    ballInOver: clipBallInOver,
     runs: 0,
     battingTeam: state.battingTeam,
     striker: state.striker.name,
