@@ -2885,7 +2885,16 @@ function openClipDeleteConfirm(clipId, title){
     <div class="em-title">Delete this clip?</div>
     <div class="em-sub">Removes "${escapeHtml(title||'this clip')}" everywhere it appears on the scorecard — highlights, player and team clip lists. The video and download link stop working immediately. This can't be undone.</div>`,
     async () => {
-      await adminApi(`/clips/${encodeURIComponent(clipId)}`, { method:'DELETE' });
+      try{
+        await adminApi(`/clips/${encodeURIComponent(clipId)}`, { method:'DELETE' });
+      }catch(err){
+        // A "not found" here means the clip is already gone from the
+        // database (e.g. deleted a moment ago, or the list on screen was
+        // a little stale) — the end state we want is already true, so
+        // treat it as success instead of surfacing an error for
+        // something that isn't actually wrong.
+        if(!/not found/i.test(err.message || '')) throw err;
+      }
       document.querySelectorAll(`.clip-row[data-clip-id="${clipId}"]`).forEach(row => row.remove());
       emToast('Clip deleted');
       if(typeof renderHighlights === 'function') renderHighlights();
