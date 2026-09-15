@@ -229,54 +229,109 @@
     position:relative;
   }
   /* ---------- Match atmosphere ----------
-     A single fixed layer behind the whole page: team A's glow at
-     top-left, team B's at top-right, their blend low in the middle —
-     the "match generates the room" idea from the brief, done as one
-     compositor-only layer so it costs nothing on scroll. Only
-     `transform` is animated (never background-position/size, which
-     force a repaint) and the drift is slow enough to read as
-     atmosphere rather than motion. --scroll-shift is a small,
-     clamped px value written by a passive/rAF-throttled scroll
-     listener (see bindScrollAtmosphere() in JS) so the glow answers
-     scroll position without a single layout read on the hot path.
-     Two extra roaming blobs (::after, further down) add a second,
-     slightly faster drift so the color genuinely reads as "moving
-     light" rather than a static wash sitting behind the page. */
-  body::before{
-    content:''; position:fixed; inset:-15% -10%; z-index:-1; pointer-events:none;
-    background:
-      radial-gradient(46% 42% at 16% 12%, var(--team-a-glow), transparent 70%),
-      radial-gradient(46% 42% at 84% 14%, var(--team-b-glow), transparent 70%),
-      radial-gradient(60% 52% at 50% 55%, var(--match-blend-glow), transparent 74%);
-    filter:blur(4px);
-    opacity:.85;
+     "Flying colors": several large, soft, independently-drifting blobs
+     of each team's colour — not a flat gradient wash. Team A's blobs
+     originate from the left, Team B's from the right, and a center
+     blob carries their blend; each blob has its own size, duration,
+     and travel path (see the floatA*/floatB*/floatMix keyframes)
+     so the motion never looks synchronized or like an obvious loop.
+     Heavy blur + an irregular (non-circular) border-radius keep every
+     blob reading as soft colored light/smoke rather than a sticker.
+     #atmosphere itself is `position:fixed`, so it always covers the
+     current viewport — the color atmosphere is present at every
+     scroll position by construction, all the way down the page.
+     --scroll-shift (a small, rAF-throttled, eased px value — see
+     bindScrollAtmosphere() in the JS) moves the whole wrapper as one
+     unit; each blob's own animation only ever touches its own
+     transform, so the two motions never fight over the same
+     property. Only `transform`/`opacity` are ever animated (GPU
+     compositor only, no layout/paint cost while scrolling). */
+  #atmosphere{
+    position:fixed; inset:0; z-index:-1; overflow:hidden; pointer-events:none;
     transform:translate3d(0, var(--scroll-shift, 0px), 0);
-    animation:atmosphereDrift 28s ease-in-out infinite alternate;
-    transition:opacity .4s ease, background .3s ease;
-    will-change:transform;
   }
-  :root[data-theme="light"] body::before{ opacity:.68; }
-  body::after{
-    content:''; position:fixed; inset:-15% -10%; z-index:-1; pointer-events:none;
-    background:
-      radial-gradient(30% 26% at 30% 78%, var(--team-a-glow), transparent 72%),
-      radial-gradient(30% 26% at 72% 82%, var(--team-b-glow), transparent 72%);
-    filter:blur(10px);
-    opacity:.4;
+  #atmosphere .blob{
+    position:absolute; will-change:transform;
+    border-radius:42% 58% 63% 37% / 41% 44% 56% 59%;
+    filter:blur(70px);
     mix-blend-mode:screen;
-    transform:translate3d(0, var(--scroll-shift, 0px), 0);
-    animation:atmosphereDrift2 19s ease-in-out infinite alternate;
-    will-change:transform;
   }
-  :root[data-theme="light"] body::after{ opacity:.28; mix-blend-mode:multiply; }
-  @keyframes atmosphereDrift{
-    0%{ transform:translate3d(calc(-1.5% + var(--scroll-shift, 0px)), calc(-1.5% + var(--scroll-shift, 0px)), 0) scale(1); }
-    50%{ transform:translate3d(calc(2% + var(--scroll-shift, 0px)), calc(2.4% + var(--scroll-shift, 0px)), 0) scale(1.06); }
-    100%{ transform:translate3d(calc(-1% + var(--scroll-shift, 0px)), calc(1.6% + var(--scroll-shift, 0px)), 0) scale(1.025); }
+  :root[data-theme="light"] #atmosphere .blob{ mix-blend-mode:multiply; filter:blur(58px); }
+  .blob-a1{
+    width:58vw; height:58vw; max-width:680px; max-height:680px; left:-16vw; top:-14vh;
+    background:radial-gradient(circle, var(--team-a-glow), transparent 70%);
+    opacity:.85; animation:floatA1 26s cubic-bezier(.45,0,.55,1) infinite alternate;
   }
-  @keyframes atmosphereDrift2{
-    0%{ transform:translate3d(calc(1.5% + var(--scroll-shift, 0px)), calc(1% + var(--scroll-shift, 0px)), 0) scale(1.02); }
-    100%{ transform:translate3d(calc(-1.8% + var(--scroll-shift, 0px)), calc(-1.4% + var(--scroll-shift, 0px)), 0) scale(1); }
+  .blob-a2{
+    width:34vw; height:34vw; max-width:420px; max-height:420px; left:2vw; top:34vh;
+    background:radial-gradient(circle, var(--team-a-glow), transparent 72%);
+    opacity:.55; animation:floatA2 19s cubic-bezier(.45,0,.55,1) infinite alternate;
+  }
+  .blob-a3{
+    width:22vw; height:22vw; max-width:280px; max-height:280px; left:16vw; top:78vh;
+    background:radial-gradient(circle, var(--team-a-glow), transparent 74%);
+    opacity:.45; animation:floatA3 22s cubic-bezier(.45,0,.55,1) infinite alternate;
+  }
+  .blob-b1{
+    width:58vw; height:58vw; max-width:680px; max-height:680px; right:-16vw; top:-10vh;
+    background:radial-gradient(circle, var(--team-b-glow), transparent 70%);
+    opacity:.85; animation:floatB1 28s cubic-bezier(.45,0,.55,1) infinite alternate;
+  }
+  .blob-b2{
+    width:34vw; height:34vw; max-width:420px; max-height:420px; right:3vw; top:40vh;
+    background:radial-gradient(circle, var(--team-b-glow), transparent 72%);
+    opacity:.55; animation:floatB2 21s cubic-bezier(.45,0,.55,1) infinite alternate;
+  }
+  .blob-b3{
+    width:22vw; height:22vw; max-width:280px; max-height:280px; right:14vw; top:82vh;
+    background:radial-gradient(circle, var(--team-b-glow), transparent 74%);
+    opacity:.45; animation:floatB3 24s cubic-bezier(.45,0,.55,1) infinite alternate;
+  }
+  .blob-mix{
+    width:46vw; height:46vw; max-width:560px; max-height:560px; left:50%; top:8vh;
+    transform:translateX(-50%);
+    background:radial-gradient(circle, var(--match-blend-glow), transparent 72%);
+    opacity:.7; animation:floatMix 20s ease-in-out infinite alternate;
+  }
+  @keyframes floatA1{
+    0%{ transform:translate3d(0,0,0) scale(1) rotate(0deg); }
+    50%{ transform:translate3d(7vw,5vh,0) scale(1.1) rotate(8deg); }
+    100%{ transform:translate3d(-3vw,7vh,0) scale(1.02) rotate(-4deg); }
+  }
+  @keyframes floatA2{
+    0%{ transform:translate3d(0,0,0) scale(1) rotate(0deg); }
+    50%{ transform:translate3d(5vw,-6vh,0) scale(1.15) rotate(-10deg); }
+    100%{ transform:translate3d(-4vw,3vh,0) scale(.95) rotate(6deg); }
+  }
+  @keyframes floatA3{
+    0%{ transform:translate3d(0,0,0) scale(1) rotate(0deg); }
+    100%{ transform:translate3d(4vw,-8vh,0) scale(1.1) rotate(12deg); }
+  }
+  @keyframes floatB1{
+    0%{ transform:translate3d(0,0,0) scale(1) rotate(0deg); }
+    50%{ transform:translate3d(-7vw,6vh,0) scale(1.1) rotate(-8deg); }
+    100%{ transform:translate3d(3vw,8vh,0) scale(1.02) rotate(4deg); }
+  }
+  @keyframes floatB2{
+    0%{ transform:translate3d(0,0,0) scale(1) rotate(0deg); }
+    50%{ transform:translate3d(-5vw,-5vh,0) scale(1.15) rotate(10deg); }
+    100%{ transform:translate3d(4vw,4vh,0) scale(.95) rotate(-6deg); }
+  }
+  @keyframes floatB3{
+    0%{ transform:translate3d(0,0,0) scale(1) rotate(0deg); }
+    100%{ transform:translate3d(-4vw,-7vh,0) scale(1.1) rotate(-12deg); }
+  }
+  @keyframes floatMix{
+    0%{ transform:translateX(-50%) translate3d(0,0,0) scale(1); }
+    50%{ transform:translateX(-50%) translate3d(0,6vh,0) scale(1.12); }
+    100%{ transform:translateX(-50%) translate3d(0,-3vh,0) scale(.97); }
+  }
+  /* Mobile: fewer/lighter blobs — smaller blur radius is meaningfully
+     cheaper for low-end GPUs, and the tertiary blobs add the least
+     visible value at phone viewport sizes. */
+  @media (max-width:640px){
+    #atmosphere .blob{ filter:blur(46px); }
+    .blob-a3, .blob-b3{ display:none; }
   }
   a{ color:inherit; text-decoration:none; }
   .tabnum{ font-variant-numeric:tabular-nums; }
@@ -610,7 +665,7 @@
   }
   @media (prefers-reduced-motion:reduce){
     *, *::before, *::after{ animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important; }
-    body::before, body::after{ transform:none !important; }
+    #atmosphere, #atmosphere .blob{ transform:none !important; }
   }
   @media (max-width:640px){
     /* Keep the same 3-column layout as desktop (team | score | team)
@@ -939,6 +994,16 @@
 </style>
 </head>
 <body>
+
+<div id="atmosphere" aria-hidden="true">
+  <div class="blob blob-a1"></div>
+  <div class="blob blob-a2"></div>
+  <div class="blob blob-a3"></div>
+  <div class="blob blob-mix"></div>
+  <div class="blob blob-b2"></div>
+  <div class="blob blob-b3"></div>
+  <div class="blob blob-b1"></div>
+</div>
 
 <div id="brandbar">
   <a id="brand-id" href="https://allsportslivestreams.com" target="_blank" rel="noopener">
@@ -1477,7 +1542,7 @@ async function applyMatchColors(teamA, teamB){
 // of the background atmosphere. Passive listener + rAF coalescing so
 // this never adds a synchronous scroll-handler cost, and it only ever
 // writes one CSS custom property (a `transform`, not layout) — see
-// body::before in the stylesheet.
+// #atmosphere in the stylesheet.
 function bindScrollAtmosphere(){
   let ticking = false;
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
