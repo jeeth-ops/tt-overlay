@@ -1652,7 +1652,37 @@ function loadState(){
 function saveLocal(){
   try{ localStorage.setItem('cricket-panel-state', JSON.stringify(state)); }catch(e){}
 }
-function snapshot(){ return JSON.parse(JSON.stringify(state)); }
+// 🩹 FIX (undo silently running out of road well before the actual match
+// start): history snapshots used to deep-clone the ENTIRE state, including
+// each team's uploaded logo — a compressed but still non-trivial data URL
+// (see compressImageToDataURL()) that never actually changes ball-to-ball.
+// Duplicating it into every one of up to MAX_HISTORY snapshots could push
+// the persisted history well past what localStorage's quota allows for one
+// origin; saveHistoryLocal()'s save then starts silently failing (caught,
+// never surfaced), so anything scored after that point has no snapshot to
+// undo back to even though `history` still looks non-empty in memory during
+// the same session — and the moment the tab reloads, the last SUCCESSFULLY
+// persisted (much older, smaller) history comes back instead, effectively
+// truncating undo partway through the match. Logos are excluded from the
+// snapshot itself and reattached from the live team objects (which are never
+// touched by a history restore, since only the score/ball state below
+// actually changes ball-to-ball) whenever a snapshot is restored — see
+// restoreHistorySnapshot().
+function snapshot(){
+  const clone = JSON.parse(JSON.stringify(state));
+  if(clone.teamA) clone.teamA.logoUrl = '';
+  if(clone.teamB) clone.teamB.logoUrl = '';
+  return clone;
+}
+// Restores a popped history snapshot as the live `state`, reattaching the
+// logo fields snapshot() deliberately left out (see comment above).
+function restoreHistorySnapshot(snap){
+  const logoA = state.teamA && state.teamA.logoUrl;
+  const logoB = state.teamB && state.teamB.logoUrl;
+  state = snap;
+  if(state.teamA) state.teamA.logoUrl = logoA || '';
+  if(state.teamB) state.teamB.logoUrl = logoB || '';
+}
 
 /* ============================================================
    SOCKET.IO CONNECTION
@@ -7394,35 +7424,94 @@ function reverseLastBallDelta(){
   state.ballLog.pop();
   if(state.ballHistory.length) state.ballHistory.pop();
 }
-// Returns { ok:true, mode:'exact'|'approx' } or { ok:false, reason:'empty'|'unsafe' }
-function deleteLastBall(){
+// 🌐 SERVER-BACKED FALLBACK — for the case local history/state genuinely
+// can't reverse the last ball itself (a wicket with no snapshot, or this
+// browser's local history/state simply doesn't go back that far because
+// scoring continued on a different device/tab/session). Unlike the local
+// paths above, this asks the database directly for whatever delivery it
+// actually has recorded LAST for this match — so it works regardless of
+// which device is asking or how far back the match has gone — and deletes
+// that with a full server-side recalculation (see deleteLastBallFromDb() in
+// server.js). It can only correct the TEAM SCORE (runs/wickets/overs) this
+// way, not this panel's live crease detail (who's on strike, current
+// bowler's figures, the this-over ticker) — those live only in the local
+// `state` this browser has been building and can't be safely reconstructed
+// from the database alone (see the comment above this function's call site
+// for why). The operator is told this plainly rather than the panel
+// silently guessing at a striker/bowler.
+async function deleteLastBallViaServer(){
+  const matchId = currentMatchId();
+  if(!matchId) return { ok: false, reason: 'no-match-id' };
+  try{
+    const res = await fetch(withUid(`/api/cricket/match/${encodeURIComponent(matchId)}/delete-last-ball`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ innings: state.inningsNumber })
+    });
+    const data = await res.json();
+    if(!res.ok || !data || !data.success) return { ok: false, reason: 'server-error', error: (data && data.error) };
+    return { ok: true, cards: data.cards, deleted: data.deleted };
+  }catch(e){
+    return { ok: false, reason: 'network' };
+  }
+}
+// Folds the server's recalculated team score back into local `state` after
+// a server-backed delete. Only score.runs/wickets/overs are trustworthy
+// from the DB's coarse cards — see deleteLastBallViaServer() above for why
+// everything else (striker/non-striker/bowler/this-over ticker) is left for
+// the operator to re-check by hand instead of guessed at here.
+function applyServerCardsToScore(cards){
+  if(!cards) return;
+  const myCard = state.battingTeam === 'B' ? cards.scoreB : cards.scoreA;
+  if(!myCard) return;
+  state.score.runs = myCard.runs;
+  state.score.wickets = myCard.wickets;
+  const [ov, bl] = String(myCard.overs || '0.0').split('.').map(n => parseInt(n, 10) || 0);
+  state.score.overs = ov;
+  state.score.balls = bl;
+  if(state.ballLog && state.ballLog.length) state.ballLog.pop();
+  if(history.length) history.pop();
+}
+// Returns { ok:true, mode:'exact'|'approx'|'server' } or { ok:false, reason:'empty'|'unsafe'|... }
+async function deleteLastBall(){
   if(!state.ballLog || state.ballLog.length === 0) return { ok: false, reason: 'empty' };
   if(history.length > 0){
-    state = history.pop();
+    restoreHistorySnapshot(history.pop());
     saveHistoryLocal();
     return { ok: true, mode: 'exact' };
   }
-  // No real snapshot to restore from — the best-effort arithmetic fallback
-  // is restricted to the owner account only (see checkOwnerAccess() above).
-  // Everyone else just gets the normal "nothing to undo" behavior here.
+  // No real snapshot to restore from — the local best-effort arithmetic
+  // fallback and the server-backed fallback are both restricted to the
+  // owner account only (see checkOwnerAccess() above). Everyone else just
+  // gets the normal "nothing to undo" behavior here.
   if(!isOwnerOperator) return { ok: false, reason: 'empty' };
   const entry = state.ballLog[state.ballLog.length - 1];
   if(canDeltaReverseBall(entry)){
     reverseLastBallDelta();
     return { ok: true, mode: 'approx' };
   }
-  return { ok: false, reason: 'unsafe' };
+  // Wicket ball, no local snapshot — can't safely reverse it from what
+  // THIS browser has in memory. Ask the database for its own last-recorded
+  // delivery instead, which works no matter which device scored it.
+  const serverResult = await deleteLastBallViaServer();
+  if(!serverResult.ok) return { ok: false, reason: 'unsafe' };
+  applyServerCardsToScore(serverResult.cards);
+  return { ok: true, mode: 'server' };
 }
 
-document.getElementById('undo-btn').addEventListener('click', () => {
-  const result = deleteLastBall();
+document.getElementById('undo-btn').addEventListener('click', async () => {
+  const result = await deleteLastBall();
   if(!result.ok){
     if(result.reason === 'empty') toast('Nothing to undo');
-    else toast('⚠️ This ball can\'t be safely auto-undone (it predates undo history and involves a wicket) — see ✏️ Edit Scorecard', 5000);
+    else toast('⚠️ This ball can\'t be safely auto-undone — see ✏️ Edit Scorecard', 5000);
     return;
   }
   pushState(true, true);
-  toast(result.mode === 'approx' ? '↩️ Undone (best-effort correction — double-check bowler/over figures)' : 'Undone');
+  if(result.mode === 'server'){
+    toast('↩️ Undone via server — score/wickets/overs corrected. Double-check current striker, non-striker and bowler figures by hand.', 7000);
+  } else {
+    toast(result.mode === 'approx' ? '↩️ Undone (best-effort correction — double-check bowler/over figures)' : 'Undone');
+  }
   if(document.getElementById('ball-edit-modal-overlay').classList.contains('show')) renderBallEditList();
 });
 
@@ -7457,7 +7546,7 @@ function renderBallEditList(){
     if(isTail){
       if(history.length > 0){ deletable = true; }
       else if(canDeltaReverseBall(entry)){ deletable = true; note = ' · best-effort correction'; }
-      else { note = ' · wicket ball, no snapshot — can\'t auto-delete safely'; }
+      else { deletable = true; note = ' · no local snapshot — will delete via server'; }
     } else {
       note = ' · delete newer balls above first';
     }
@@ -7475,19 +7564,22 @@ function renderBallEditList(){
   }
   wrap.innerHTML = rows.join('');
   wrap.querySelectorAll('[data-delete-ball-index]').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const idx = parseInt(btn.getAttribute('data-delete-ball-index'), 10);
       if(idx !== state.ballLog.length - 1) return; // only the current tail is ever actually deletable
       const entry = state.ballLog[idx];
-      const approx = history.length === 0;
-      const msg = approx
-        ? `Delete this ball (${describeBallLogEntry(entry)})? This is a best-effort correction — double-check bowler/over figures afterward.`
-        : `Delete this ball (${describeBallLogEntry(entry)})? Everything recorded after it will be undone too.`;
+      const willUseServer = history.length === 0 && !canDeltaReverseBall(entry);
+      const msg = willUseServer
+        ? `Delete this ball (${describeBallLogEntry(entry)})? No local snapshot exists, so this deletes straight from the database and corrects score/wickets/overs only — you'll need to re-check the current striker, non-striker and bowler by hand afterward.`
+        : history.length === 0
+          ? `Delete this ball (${describeBallLogEntry(entry)})? This is a best-effort correction — double-check bowler/over figures afterward.`
+          : `Delete this ball (${describeBallLogEntry(entry)})? Everything recorded after it will be undone too.`;
       if(!confirm(msg)) return;
-      const result = deleteLastBall();
-      if(!result.ok){ toast('⚠️ Could not delete that ball'); return; }
+      btn.disabled = true;
+      const result = await deleteLastBall();
+      if(!result.ok){ toast('⚠️ Could not delete that ball'); btn.disabled = false; return; }
       pushState(true, true);
-      toast(result.mode === 'approx' ? '↩️ Ball deleted (best-effort correction)' : '↩️ Ball deleted');
+      toast(result.mode === 'server' ? '↩️ Ball deleted via server' : result.mode === 'approx' ? '↩️ Ball deleted (best-effort correction)' : '↩️ Ball deleted');
       renderBallEditList();
     });
   });
