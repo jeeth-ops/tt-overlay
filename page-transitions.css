@@ -3,14 +3,19 @@
    ------------------------------------------------------------
    Two code paths, picked automatically per browser:
 
-   1) NATIVE — Chromium browsers with cross-document View
-      Transitions (`@view-transition` below). The browser snapshots
-      the outgoing page, swaps documents, then crossfades/scales
-      between the two snapshots using the keyframes below. Zero JS
-      needed for this path.
+   1) NATIVE — browsers with cross-document View Transitions
+      (`@view-transition` below): Chrome/Edge 126+ and Safari 18.2+
+      (iOS 18.2+). The browser snapshots the outgoing page, swaps
+      documents, then crossfades/scales between the two snapshots
+      using the keyframes below. Zero JS needed for this path.
+      page-transitions.js detects this via the `pageswap` event,
+      NOT `document.startViewTransition` — that only signals
+      same-document support, which Safari shipped months earlier
+      and would otherwise wrongly skip the fallback below on
+      iOS 18.0-18.1.
 
-   2) FALLBACK — every other browser (Safari, Firefox, older
-      Chrome). page-transitions.js drives a JS "iris" wipe: a
+   2) FALLBACK — every other browser (older Safari/iOS, Firefox,
+      older Chrome). page-transitions.js drives a JS "iris" wipe: a
       circle expands from the tapped point to cover the page in
       its own background colour, the navigation happens underneath
       it, then the circle shrinks away on the new page to reveal
