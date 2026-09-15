@@ -354,6 +354,13 @@
     margin-bottom:12px; line-height:1.4;
   }
   .wicket-modal.wm-freehit .wm-freehit-note{ display:flex; }
+  .wicket-modal .wm-extra-note{
+    display:none; align-items:center; gap:6px; background:rgba(248,113,113,.14); border:1px solid #f87171;
+    color:#f87171; border-radius:7px; padding:7px 9px; font-size:11.5px; font-weight:700;
+    margin-bottom:12px; line-height:1.4;
+  }
+  .wicket-modal.wm-extracontext .wm-extra-note{ display:flex; }
+  .wm-extra-wicket-link{ margin-top:10px; color:#f87171; border-color:#f87171; }
   .wm-options{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
   .wm-option{
     padding:11px 8px; font-size:12.5px; text-align:center; background:var(--panel-2);
@@ -871,6 +878,7 @@
       <h3>🏏 How was it out?</h3>
       <div class="wm-sub" id="wm-batsman-name">—</div>
       <div class="wm-freehit-note">⚡ Free Hit is in play — only Run Out can dismiss the batsman off this ball. Every other option is disabled.</div>
+      <div class="wm-extra-note" id="wm-extra-note">—</div>
       <div class="wm-options">
         <button type="button" class="wm-option b-wicket" data-dismissal="Bowled">Bowled<span class="wm-credit">→ bowler</span></button>
         <button type="button" class="wm-option b-wicket" data-dismissal="Caught">Caught<span class="wm-credit">→ bowler</span></button>
@@ -1002,6 +1010,7 @@
       <h3 id="extras-modal-title">—</h3>
       <div class="wm-sub" id="extras-modal-sub">—</div>
       <div class="wm-options" id="extras-modal-options"></div>
+      <button type="button" class="full ghost wm-extra-wicket-link" id="extras-modal-wicket-link" style="display:none;">🏏 Also a wicket on this ball?</button>
       <button type="button" class="full ghost wm-cancel" id="extras-modal-cancel" style="margin-top:10px;">Cancel</button>
     </div>
   </div>
@@ -5737,7 +5746,7 @@ function recordBall(kind, meta){
     updateBallButtonsState();
     return;
   }
-  if(kind === 'W' && state.score.wickets >= 10){
+  if((kind === 'W' || kind === 'WdW' || kind === 'NbW') && state.score.wickets >= 10){
     toast('🚫 All out — cannot take an 11th wicket');
     return;
   }
@@ -5746,7 +5755,7 @@ function recordBall(kind, meta){
   // already hides/disables the other options while a Free Hit is live,
   // but this is the hard backstop: nothing gets recorded as a wicket
   // unless that rule holds, no matter how the call arrived.
-  if(kind === 'W' && state.freeHit && (!meta || meta.dismissalType !== 'Run Out')){
+  if((kind === 'W' || kind === 'WdW' || kind === 'NbW') && state.freeHit && (!meta || meta.dismissalType !== 'Run Out')){
     toast('⚠️ Free Hit is in play — only Run Out can dismiss this ball');
     return;
   }
@@ -5943,6 +5952,182 @@ function recordBall(kind, meta){
       }
       break;
     }
+    case 'WdW': {
+      // Wicket on a Wide — only Run Out or Stumped are Laws-legal (see
+      // openWicketModal's extra-context filtering above, and
+      // WIDE_LEGAL_DISMISSALS on the server's correction engine, which
+      // this mirrors). meta.extraRuns here means runs actually run before
+      // the dismissal — 0 for Stumped (delivery ends dead the instant the
+      // keeper breaks the stumps), same "completed runs" idea as a normal
+      // Run Out, just reusing the metaKey name the plain Wide case uses.
+      const dismissalType = (meta && meta.dismissalType) || 'Run Out';
+      const extraRun = dismissalType === 'Run Out' ? ((meta && typeof meta.extraRuns === 'number') ? meta.extraRuns : 0) : 0;
+      const wdTotal = 1 + extraRun;
+      const isBowlerWicket = !['Run Out', 'Retired Hurt', 'Retired Out'].includes(dismissalType);
+      const fielderName = (meta && meta.fielderName) || '';
+      const shortMap = { Stumped: 'st', 'Run Out': 'run out' };
+      let dismissalText;
+      if(dismissalType === 'Stumped') dismissalText = (fielderName ? `st ${fielderName} b ${state.bowler.name || 'bowler'}` : `${shortMap.Stumped} b ${state.bowler.name || 'bowler'}`) + ' (Wd)';
+      else dismissalText = (fielderName ? `run out (${fielderName})` : 'run out') + ' (Wd)';
+      lastDismissalType = dismissalType;
+      lastDismissalFielder = fielderName || null;
+      logDismissalText = dismissalText;
+
+      const originalStriker = state.striker;
+      const originalNonStriker = state.nonStriker;
+      const dismissedIsNonStriker = dismissalType === 'Run Out' && meta && meta.runOutWho === 'nonStriker';
+      const dismissedBatter = dismissedIsNonStriker ? originalNonStriker : originalStriker;
+      const survivor = dismissedIsNonStriker ? originalStriker : originalNonStriker;
+      document.getElementById('disp-last-dismissal').textContent = `${dismissedBatter.name || 'Batsman'} — ${dismissalText}`;
+
+      state.score.runs += wdTotal;
+      state.partnershipRuns += wdTotal;
+      state.extras[state.battingTeam].wd += wdTotal;
+      state.score.wickets++;
+      const wdLabel = `Wd${extraRun > 0 ? `+${extraRun}` : ''}+W`;
+      state.thisOver.push(wdLabel);
+      pushBallHistory(wdLabel);
+      addBowlerExtra(wdTotal);
+      if(isBowlerWicket){ state.bowler.wickets++; state.bowler.wicketsThisOver = (state.bowler.wicketsThisOver || 0) + 1; }
+
+      // Completed runs (Run Out only) belong to the team total (already
+      // added above via wdTotal) AND to whoever faced the delivery
+      // individually — same rule as a normal Run Out.
+      if(dismissalType === 'Run Out' && extraRun > 0) originalStriker.runs += extraRun;
+
+      if(fielderName && ['Run Out', 'Stumped'].includes(dismissalType)){
+        const fKey = bowlingTeamKey();
+        state.fieldingStats = state.fieldingStats || { A: {}, B: {} };
+        state.fieldingStats[fKey] = state.fieldingStats[fKey] || {};
+        const fId = (meta && meta.fielderId) || `name:${fielderName}`;
+        const rec = state.fieldingStats[fKey][fId] || { name: fielderName, id: (meta && meta.fielderId) || null, catches: 0, runOuts: 0, stumpings: 0 };
+        if(dismissalType === 'Run Out') rec.runOuts++;
+        else rec.stumpings++;
+        rec.name = fielderName;
+        state.fieldingStats[fKey][fId] = rec;
+      }
+
+      state.battingCard[state.battingTeam].push({
+        name: dismissedBatter.name, id: dismissedBatter.id || null, runs: dismissedBatter.runs, balls: dismissedBatter.balls,
+        fours: dismissedBatter.fours, sixes: dismissedBatter.sixes, out: true, howOut: dismissalText,
+        dismissalType, fielderName: fielderName || null,
+        bowlerName: isBowlerWicket ? (state.bowler.name || null) : null,
+        inningsNo: state.inningsNumber
+      });
+      if(dismissedBatter.id){
+        state.dismissedThisInnings = state.dismissedThisInnings || { A: [], B: [] };
+        state.dismissedThisInnings[state.battingTeam] = state.dismissedThisInnings[state.battingTeam] || [];
+        if(!state.dismissedThisInnings[state.battingTeam].includes(dismissedBatter.id)) state.dismissedThisInnings[state.battingTeam].push(dismissedBatter.id);
+      }
+      state.fallOfWickets[state.battingTeam].push({
+        wkt: state.score.wickets, runs: state.score.runs, over: fmtOvers(state.score.overs, state.score.balls),
+        inningsNo: state.inningsNumber
+      });
+      state.partnershipRuns = 0; state.partnershipBalls = 0;
+
+      // A Wide never completes an over on its own (addLegalBall isn't
+      // called), so — unlike the plain 'W' case — there's no over-complete
+      // ends-swap to consider here, only whether the batters crossed
+      // before the dismissal.
+      const crossed = dismissalType === 'Run Out' && (extraRun % 2 === 1);
+      const dismissedWasOriginallyStriker = !dismissedIsNonStriker;
+      let vacantEnd = crossed
+        ? (dismissedWasOriginallyStriker ? 'nonStriker' : 'striker')
+        : (dismissedWasOriginallyStriker ? 'striker' : 'nonStriker');
+      if(vacantEnd === 'striker'){ state.nonStriker = survivor; state.striker = dismissedBatter; }
+      else { state.striker = survivor; state.nonStriker = dismissedBatter; }
+      state.newBatsmanEnd = vacantEnd;
+
+      fireEvent('WIDE', 'WIDE', extraRun > 0 ? `+${extraRun} run${extraRun === 1 ? '' : 's'}` : '');
+      if(!meta || !meta.deferAnimation) fireEvent('WICKET', 'WICKET!', dismissedBatter.name);
+      break;
+    }
+    case 'NbW': {
+      // Wicket on a No Ball — only Run Out or Hit Wicket are Laws-legal
+      // (mirrors NOBALL_LEGAL_DISMISSALS on the server's correction
+      // engine). Bat runs only apply for Run Out (runs completed before
+      // the dismissal); Hit Wicket ends the delivery dead, same as a
+      // normal legal-ball Hit Wicket.
+      const dismissalType = (meta && meta.dismissalType) || 'Run Out';
+      const batRuns = dismissalType === 'Run Out' ? ((meta && typeof meta.runsOffBat === 'number') ? meta.runsOffBat : 0) : 0;
+      const nbTotal = 1 + batRuns;
+      const isBowlerWicket = !['Run Out', 'Retired Hurt', 'Retired Out'].includes(dismissalType);
+      const fielderName = (meta && meta.fielderName) || '';
+      const shortMap = { 'Hit Wicket': 'hit wkt', 'Run Out': 'run out' };
+      let dismissalText;
+      if(dismissalType === 'Run Out') dismissalText = (fielderName ? `run out (${fielderName})` : 'run out') + ' (Nb)';
+      else dismissalText = `${(isBowlerWicket && state.bowler.name) ? `${shortMap['Hit Wicket']} b ${state.bowler.name}` : shortMap['Hit Wicket']} (Nb)`;
+      lastDismissalType = dismissalType;
+      lastDismissalFielder = fielderName || null;
+      logDismissalText = dismissalText;
+
+      const originalStriker = state.striker;
+      const originalNonStriker = state.nonStriker;
+      const dismissedIsNonStriker = dismissalType === 'Run Out' && meta && meta.runOutWho === 'nonStriker';
+      const dismissedBatter = dismissedIsNonStriker ? originalNonStriker : originalStriker;
+      const survivor = dismissedIsNonStriker ? originalStriker : originalNonStriker;
+      document.getElementById('disp-last-dismissal').textContent = `${dismissedBatter.name || 'Batsman'} — ${dismissalText}`;
+
+      state.score.runs += nbTotal;
+      state.striker.runs += batRuns;
+      if(batRuns === 4) state.striker.fours++;
+      state.partnershipRuns += nbTotal;
+      state.extras[state.battingTeam].nb += 1;
+      state.score.wickets++;
+      const nbLabel = `Nb${batRuns > 0 ? `+${batRuns}` : ''}+W`;
+      state.thisOver.push(nbLabel);
+      pushBallHistory(nbLabel);
+      addBowlerExtra(nbTotal);
+      if(isBowlerWicket){ state.bowler.wickets++; state.bowler.wicketsThisOver = (state.bowler.wicketsThisOver || 0) + 1; }
+
+      if(fielderName && dismissalType === 'Run Out'){
+        const fKey = bowlingTeamKey();
+        state.fieldingStats = state.fieldingStats || { A: {}, B: {} };
+        state.fieldingStats[fKey] = state.fieldingStats[fKey] || {};
+        const fId = (meta && meta.fielderId) || `name:${fielderName}`;
+        const rec = state.fieldingStats[fKey][fId] || { name: fielderName, id: (meta && meta.fielderId) || null, catches: 0, runOuts: 0, stumpings: 0 };
+        rec.runOuts++;
+        rec.name = fielderName;
+        state.fieldingStats[fKey][fId] = rec;
+      }
+
+      state.battingCard[state.battingTeam].push({
+        name: dismissedBatter.name, id: dismissedBatter.id || null, runs: dismissedBatter.runs, balls: dismissedBatter.balls,
+        fours: dismissedBatter.fours, sixes: dismissedBatter.sixes, out: true, howOut: dismissalText,
+        dismissalType, fielderName: fielderName || null,
+        bowlerName: isBowlerWicket ? (state.bowler.name || null) : null,
+        inningsNo: state.inningsNumber
+      });
+      if(dismissedBatter.id){
+        state.dismissedThisInnings = state.dismissedThisInnings || { A: [], B: [] };
+        state.dismissedThisInnings[state.battingTeam] = state.dismissedThisInnings[state.battingTeam] || [];
+        if(!state.dismissedThisInnings[state.battingTeam].includes(dismissedBatter.id)) state.dismissedThisInnings[state.battingTeam].push(dismissedBatter.id);
+      }
+      state.fallOfWickets[state.battingTeam].push({
+        wkt: state.score.wickets, runs: state.score.runs, over: fmtOvers(state.score.overs, state.score.balls),
+        inningsNo: state.inningsNumber
+      });
+      state.partnershipRuns = 0; state.partnershipBalls = 0;
+
+      const crossed = dismissalType === 'Run Out' && (batRuns % 2 === 1);
+      const dismissedWasOriginallyStriker = !dismissedIsNonStriker;
+      let vacantEnd = crossed
+        ? (dismissedWasOriginallyStriker ? 'nonStriker' : 'striker')
+        : (dismissedWasOriginallyStriker ? 'striker' : 'nonStriker');
+      if(vacantEnd === 'striker'){ state.nonStriker = survivor; state.striker = dismissedBatter; }
+      else { state.striker = survivor; state.nonStriker = dismissedBatter; }
+      state.newBatsmanEnd = vacantEnd;
+
+      fireEvent('NO_BALL', 'NO BALL', batRuns > 0 ? `+${batRuns} off the bat` : '');
+      if(!meta || !meta.deferAnimation) fireEvent('WICKET', 'WICKET!', dismissedBatter.name);
+      // A No Ball still sets up the next ball as a Free Hit regardless of
+      // the wicket that happened on it — same rule as the plain 'Nb' case.
+      if(state.format !== 'Test'){
+        state.freeHit = true;
+        setTimeout(() => fireEvent('FREE_HIT', 'FREE HIT', 'Next ball is a Free Hit'), 2500);
+      }
+      break;
+    }
     case 'Wd': {
       // Extra runs actually run (beyond the automatic 1) come from the
       // extras picker modal — capped at 4, defaults to 0 if not given.
@@ -6036,6 +6221,7 @@ function recordBall(kind, meta){
   const logBallInOverForBall = overCompletedThisBall ? 6 : state.score.balls;
 
   // Full match log for the Excel export — one row per ball, never trimmed.
+  const kindIsWicket = kind === 'W' || kind === 'WdW' || kind === 'NbW';
   state.ballLog.push({
     innings: logInnings,
     battingTeam: logBattingTeam,
@@ -6045,11 +6231,11 @@ function recordBall(kind, meta){
     nonStriker: logNonStrikerName,
     bowler: logBowlerName,
     runs: state.score.runs - runsBefore,
-    isWicket: kind === 'W',
+    isWicket: kindIsWicket,
     dismissal: logDismissalText,
-    dismissalType: kind === 'W' ? ((meta && meta.dismissalType) || 'Bowled') : null,
-    fielderName: kind === 'W' ? ((meta && meta.fielderName) || null) : null,
-    runOutRunsCompleted: (kind === 'W' && meta && meta.dismissalType === 'Run Out') ? (meta.runsCompleted || 0) : null,
+    dismissalType: kindIsWicket ? ((meta && meta.dismissalType) || 'Bowled') : null,
+    fielderName: kindIsWicket ? ((meta && meta.fielderName) || null) : null,
+    runOutRunsCompleted: (kindIsWicket && meta && meta.dismissalType === 'Run Out') ? (meta.runsCompleted || 0) : null,
     scoreAfter: `${state.score.runs}-${state.score.wickets}`,
     timestamp: ballTimestamp
   });
@@ -6106,6 +6292,14 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity){
   if(!socket || !socket.connected) return;
   const matchId = currentMatchId();
   if(!matchId) return;
+  // WdW/NbW are this panel's own internal "wicket on this extra" kinds —
+  // the server's ballsCollection schema (same one the correction engine in
+  // server.js reads/writes) only knows 'Wd'/'Nb' for kind, with dismissal
+  // as its own separate field. Translating here keeps ONE consistent
+  // on-disk representation whether a ball was scored live or added/fixed
+  // later via a correction.
+  const kindIsWicket = kind === 'W' || kind === 'WdW' || kind === 'NbW';
+  const dbKind = kind === 'WdW' ? 'Wd' : kind === 'NbW' ? 'Nb' : kind;
 
   // 🔒 ballIdentity is the IMMUTABLE snapshot recordBall() captured for
   // THIS exact delivery — over, ballInOver, striker/non-striker/bowler
@@ -6130,7 +6324,7 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity){
     innings: state.inningsNumber,
     over: id.over,
     ballInOver: id.ballInOver,
-    kind,
+    kind: dbKind,
     runs: state.score.runs - runsBefore,
     battingTeam: state.battingTeam,
     // 🐛 FIX: server's playerKey()/resolvePlayerId() (used for clip
@@ -6152,13 +6346,13 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity){
     strikerId: id.strikerId,
     nonStrikerId: id.nonStrikerId,
     bowlerId: id.bowlerId,
-    dismissal: kind === 'W' ? { type: lastDismissalType || 'Bowled', fielder: lastDismissalFielder || null } : null,
+    dismissal: kindIsWicket ? { type: lastDismissalType || 'Bowled', fielder: lastDismissalFielder || null } : null,
     score: { ...state.score },
     timestamp: ballTimestamp
   });
 
-  if(kind === 'W' || kind === '4' || kind === '6'){
-    const eventType = kind === 'W' ? 'WICKET' : (kind === '4' ? 'FOUR' : 'SIX');
+  if(kindIsWicket || kind === '4' || kind === '6'){
+    const eventType = kindIsWicket ? 'WICKET' : (kind === '4' ? 'FOUR' : 'SIX');
     // ballMeta — same shape the socket 'logBall' event above already
     // sends — lets the main server link this clip to the real
     // striker/bowler (see finalizeClip/findCanonicalBall on the server)
@@ -6176,7 +6370,7 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity){
       strikerId: id.strikerId,
       nonStrikerId: id.nonStrikerId,
       bowlerId: id.bowlerId,
-      dismissal: kind === 'W' ? { type: lastDismissalType || 'Bowled' } : null
+      dismissal: kindIsWicket ? { type: lastDismissalType || 'Bowled' } : null
     };
     fetch(`${CLIPPER_HELPER_URL}/clip`, {
       method: 'POST',
@@ -6212,6 +6406,14 @@ const EXTRAS_MODAL_CONFIG = {
   Wd: { title: 'Wide — extra runs run (beyond the automatic 1)?',   metaKey: 'extraRuns' },
   Nb: { title: 'No Ball — runs off the bat?',                       metaKey: 'runsOffBat' }
 };
+// Set while the operator is mid-flow recording a wicket that happened ON a
+// Wide or No Ball (Run Out off either, Stumped off a Wide, Hit Wicket off a
+// No Ball — the only combinations the Laws of Cricket actually allow).
+// 'Wd' | 'Nb' | null. Read by openWicketModal() to restrict which
+// dismissals are selectable, and by the dismissal-detail submit handlers
+// below to route into recordBall('WdW'/'NbW', ...) instead of the plain
+// extras/wicket path.
+let pendingExtraWicketContext = null;
 function openExtrasModal(kind){
   if(isInningsOver()){
     let msg = '🚫 Overs complete for this innings';
@@ -6241,6 +6443,21 @@ function openExtrasModal(kind){
     });
     wrap.appendChild(b);
   }
+  // Only a Wide or No Ball can ever carry a wicket alongside it — Bye/Leg
+  // Bye never do (any dismissal on those balls is recorded as a plain
+  // legal-delivery wicket instead, exactly as before).
+  const wicketLink = document.getElementById('extras-modal-wicket-link');
+  if((kind === 'Wd' || kind === 'Nb') && state.score.wickets < 10){
+    wicketLink.style.display = 'block';
+    wicketLink.onclick = () => {
+      closeExtrasModal();
+      pendingExtraWicketContext = kind;
+      openWicketModal();
+    };
+  } else {
+    wicketLink.style.display = 'none';
+    wicketLink.onclick = null;
+  }
   document.getElementById('extras-modal-overlay').classList.add('show');
 }
 function closeExtrasModal(){
@@ -6250,6 +6467,25 @@ document.getElementById('extras-modal-cancel').addEventListener('click', closeEx
 document.getElementById('extras-modal-overlay').addEventListener('click', (e) => {
   if(e.target.id === 'extras-modal-overlay') closeExtrasModal();
 });
+// Finalizes the "wicket on a Wide/No Ball" flow, called from the same
+// dismissal-detail submit handlers (Stumped/Run Out/direct Hit Wicket)
+// that normally call recordBall('W', ...) — routes into the compound
+// WdW/NbW kind instead, with completed-runs mapped onto whichever metaKey
+// that kind expects. Returns false (and leaves pendingExtraWicketContext
+// untouched) if called outside that flow, so callers can safely fall back
+// to their normal recordBall('W', ...) path.
+function finalizeExtraWicket(dismissalType, extraMeta){
+  const ctx = pendingExtraWicketContext;
+  if(!ctx) return false;
+  pendingExtraWicketContext = null;
+  const kind = ctx === 'Wd' ? 'WdW' : 'NbW';
+  const runsCompleted = (extraMeta && typeof extraMeta.runsCompleted === 'number') ? extraMeta.runsCompleted : 0;
+  const meta = Object.assign({}, extraMeta, { dismissalType, deferAnimation: true });
+  if(kind === 'WdW') meta.extraRuns = runsCompleted;
+  else meta.runsOffBat = runsCompleted;
+  recordBall(kind, meta);
+  return true;
+}
 
 /* ============================================================
    WICKET DISMISSAL PICKER
@@ -6267,17 +6503,31 @@ function openWicketModal(){
     if(state.score.wickets >= 10) msg = '🚫 All out — 10 wickets already, innings is over';
     else if(isChaseWon()) msg = '🏆 Target already reached — match is won, no more balls to record';
     toast(msg);
+    pendingExtraWicketContext = null;
     return;
   }
-  if(state.score.wickets >= 10){ toast('🚫 All out — cannot take an 11th wicket'); return; }
+  if(state.score.wickets >= 10){ toast('🚫 All out — cannot take an 11th wicket'); pendingExtraWicketContext = null; return; }
 
   const overlay = document.getElementById('wicket-modal-overlay');
   const modal = document.getElementById('wicket-modal');
   document.getElementById('wm-batsman-name').textContent = state.striker.name ? `${state.striker.name} is out —` : 'Select how the batsman was out';
 
+  // Mirrors WIDE_LEGAL_DISMISSALS/NOBALL_LEGAL_DISMISSALS on the server's
+  // correction engine — a batsman can only be Run Out or Stumped off a
+  // Wide, or Run Out or Hit Wicket off a No Ball; every other dismissal
+  // requires a legal delivery under the Laws of Cricket.
+  const extraCtx = pendingExtraWicketContext; // 'Wd' | 'Nb' | null
+  const extraAllowed = extraCtx === 'Wd' ? ['Run Out', 'Stumped'] : extraCtx === 'Nb' ? ['Run Out', 'Hit Wicket'] : null;
+  const note = document.getElementById('wm-extra-note');
+  if(extraAllowed) note.textContent = `🏏 Wicket on a ${extraCtx === 'Wd' ? 'Wide' : 'No Ball'} — the Laws only allow ${extraAllowed.join(' or ')} here.`;
+
   modal.classList.toggle('wm-freehit', !!state.freeHit);
+  modal.classList.toggle('wm-extracontext', !!extraAllowed);
   modal.querySelectorAll('.wm-option').forEach(btn => {
-    btn.disabled = !!state.freeHit && btn.dataset.dismissal !== 'Run Out';
+    const dismissal = btn.dataset.dismissal;
+    const freeHitOk = !state.freeHit || dismissal === 'Run Out';
+    const extraOk = !extraAllowed || extraAllowed.includes(dismissal);
+    btn.disabled = !(freeHitOk && extraOk);
   });
 
   overlay.classList.add('show');
@@ -6293,17 +6543,20 @@ document.querySelectorAll('.wm-option').forEach(btn => {
     // keeper, runs completed) before the ball can actually be recorded —
     // route those three to their own follow-up modals instead of
     // recording immediately like the plain dismissal types below.
+    // (pendingExtraWicketContext, if set, stays set across this close —
+    // it's only consumed once the detail modal actually submits.)
     if(dismissalType === 'Caught'){ openCaughtModal(); return; }
     if(dismissalType === 'Stumped'){ openStumpedModal(); return; }
     if(dismissalType === 'Run Out'){ openRunOutModal(); return; }
     const dismissedName = state.striker.name || 'Batsman';
+    if(finalizeExtraWicket(dismissalType, {})){ openNewBatsmanModal(dismissedName); return; }
     recordBall('W', { dismissalType, deferAnimation: true });
     openNewBatsmanModal(dismissedName);
   });
 });
-document.getElementById('wicket-modal-cancel').addEventListener('click', closeWicketModal);
+document.getElementById('wicket-modal-cancel').addEventListener('click', () => { pendingExtraWicketContext = null; closeWicketModal(); });
 document.getElementById('wicket-modal-overlay').addEventListener('click', (e) => {
-  if(e.target.id === 'wicket-modal-overlay') closeWicketModal();
+  if(e.target.id === 'wicket-modal-overlay'){ pendingExtraWicketContext = null; closeWicketModal(); }
 });
 
 /* ============================================================
@@ -6489,7 +6742,7 @@ function openCaughtModal(){
   document.getElementById('caught-modal-type').value = '';
   document.getElementById('caught-modal-overlay').classList.add('show');
 }
-function closeCaughtModal(){ document.getElementById('caught-modal-overlay').classList.remove('show'); }
+function closeCaughtModal(){ pendingExtraWicketContext = null; document.getElementById('caught-modal-overlay').classList.remove('show'); }
 document.getElementById('caught-modal-cancel').addEventListener('click', closeCaughtModal);
 document.getElementById('caught-modal-overlay').addEventListener('click', e => { if(e.target.id === 'caught-modal-overlay') closeCaughtModal(); });
 document.getElementById('caught-modal-submit').addEventListener('click', () => {
@@ -6541,8 +6794,8 @@ function openStumpedModal(){
   document.getElementById('stumped-modal-overlay').classList.add('show');
 }
 function closeStumpedModal(){ document.getElementById('stumped-modal-overlay').classList.remove('show'); }
-document.getElementById('stumped-modal-cancel').addEventListener('click', closeStumpedModal);
-document.getElementById('stumped-modal-overlay').addEventListener('click', e => { if(e.target.id === 'stumped-modal-overlay') closeStumpedModal(); });
+document.getElementById('stumped-modal-cancel').addEventListener('click', () => { pendingExtraWicketContext = null; closeStumpedModal(); });
+document.getElementById('stumped-modal-overlay').addEventListener('click', e => { if(e.target.id === 'stumped-modal-overlay'){ pendingExtraWicketContext = null; closeStumpedModal(); } });
 document.getElementById('stumped-modal-submit').addEventListener('click', () => {
   const select = document.getElementById('stumped-modal-keeper-select');
   const input = document.getElementById('stumped-modal-keeper-input');
@@ -6557,6 +6810,7 @@ document.getElementById('stumped-modal-submit').addEventListener('click', () => 
   }
   closeStumpedModal();
   const dismissedName = state.striker.name || 'Batsman';
+  if(finalizeExtraWicket('Stumped', { fielderName, fielderId })){ openNewBatsmanModal(dismissedName); return; }
   recordBall('W', { dismissalType: 'Stumped', deferAnimation: true, fielderName, fielderId });
   openNewBatsmanModal(dismissedName);
 });
@@ -6630,8 +6884,8 @@ document.querySelectorAll('#runout-runs-row .wm-pill').forEach(pill => {
     updateRunOutSummary();
   });
 });
-document.getElementById('runout-modal-cancel').addEventListener('click', closeRunOutModal);
-document.getElementById('runout-modal-overlay').addEventListener('click', e => { if(e.target.id === 'runout-modal-overlay') closeRunOutModal(); });
+document.getElementById('runout-modal-cancel').addEventListener('click', () => { pendingExtraWicketContext = null; closeRunOutModal(); });
+document.getElementById('runout-modal-overlay').addEventListener('click', e => { if(e.target.id === 'runout-modal-overlay'){ pendingExtraWicketContext = null; closeRunOutModal(); } });
 document.getElementById('runout-modal-submit').addEventListener('click', () => {
   if(runOutState.whoOut === null){ toast('Pick which batter was run out'); return; }
   const select = document.getElementById('runout-fielder-select');
@@ -6650,6 +6904,7 @@ document.getElementById('runout-modal-submit').addEventListener('click', () => {
   const whoOut = runOutState.whoOut; // 'striker' | 'nonStriker'
   const dismissedName = (whoOut === 'striker' ? state.striker.name : state.nonStriker.name) || 'Batsman';
   closeRunOutModal();
+  if(finalizeExtraWicket('Run Out', { fielderName, fielderId, runOutType, runsCompleted, runOutWho: whoOut })){ openNewBatsmanModal(dismissedName); return; }
   recordBall('W', { dismissalType: 'Run Out', deferAnimation: true, fielderName, fielderId, runOutType, runsCompleted, runOutWho: whoOut });
   openNewBatsmanModal(dismissedName);
 });
@@ -7413,7 +7668,7 @@ function computeLivePartnerships(){
         cur = { pairKey, batters: [b.striker, b.nonStriker], runs: 0, balls: 0, forWicket: wktSoFar + 1, startScore: prevScoreAfter, endScore: prevScoreAfter };
       }
       cur.runs += b.runs;
-      if(b.ballType !== 'Wd' && b.ballType !== 'Nb') cur.balls++;
+      if(b.ballType !== 'Wd' && b.ballType !== 'Nb' && b.ballType !== 'WdW' && b.ballType !== 'NbW') cur.balls++;
       if(b.isWicket) wktSoFar++;
       cur.endScore = b.scoreAfter;
       prevScoreAfter = b.scoreAfter;
@@ -7441,6 +7696,8 @@ function computeOverSummary(){
     let tag = String(b.runs);
     if(b.ballType === 'Wd') tag = `${b.runs}wd`;
     else if(b.ballType === 'Nb') tag = `${b.runs}nb`;
+    else if(b.ballType === 'WdW') tag = `${b.runs}wd+W`;
+    else if(b.ballType === 'NbW') tag = `${b.runs}nb+W`;
     else if(b.isWicket) tag = 'W';
     cur.sequence.push(tag);
   });
@@ -7766,7 +8023,7 @@ async function buildMatchExcelWorkbook(){
     const quotaBalls = ballsPerInnings();
     // Illegal-delivery labels straight from the same ballType codes the
     // live scoring buttons already use — no new event taxonomy invented.
-    const EXTRA_LABEL = { Wd: 'Wide', Nb: 'No Ball', B: 'Bye', LB: 'Leg Bye' };
+    const EXTRA_LABEL = { Wd: 'Wide', Nb: 'No Ball', B: 'Bye', LB: 'Leg Bye', WdW: 'Wide', NbW: 'No Ball' };
     state.ballLog.forEach((b, i) => {
       const ballsAtPoint = oversStrToBalls(b.over);
       const [rs] = String(b.scoreAfter).split('-').map(n => parseInt(n, 10) || 0);
