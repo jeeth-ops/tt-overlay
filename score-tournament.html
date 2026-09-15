@@ -338,6 +338,17 @@
   .clip-watch-btn{ width:28px; height:28px; border-radius:99px; background:var(--accent-soft); color:var(--accent); border:none; display:flex; align-items:center; justify-content:center; cursor:pointer; flex:none; }
   .clip-watch-btn svg{ width:12px; height:12px; }
   .clip-watch-btn:disabled{ opacity:.35; cursor:default; }
+  .cr-actions{ display:flex; align-items:center; gap:6px; flex:none; }
+  .clip-delete-btn{ width:26px; height:26px; border-radius:8px; background:var(--wicket-soft); color:var(--wicket); border:none; display:flex; align-items:center; justify-content:center; cursor:pointer; flex:none; }
+  .clip-delete-btn svg{ width:13px; height:13px; }
+  .clip-delete-btn:active{ transform:scale(.9); }
+  #tv-toast{
+    position:fixed; left:50%; bottom:28px; transform:translateX(-50%) translateY(10px);
+    background:var(--panel); border:1px solid var(--border); color:var(--text); padding:11px 18px; border-radius:99px;
+    font-size:12.5px; font-weight:600; box-shadow:0 10px 30px rgba(0,0,0,.3); opacity:0; pointer-events:none;
+    transition:opacity .25s ease, transform .25s ease; z-index:9999;
+  }
+  #tv-toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
   /* One block per match inside the "Tournament Report" modal — a small
      card so a player's clips read as an organised, professional
      match-by-match breakdown rather than one undifferentiated list. */
@@ -445,13 +456,22 @@ const firebaseConfig = {
 // auth at all, so we just fall back to no-auth requests in that case.
 let auth = null;
 let authReady = Promise.resolve();
+// Owner detection — mirrors the scorecard page. Only chhayajeeth@gmail.com
+// sees the delete-clip control here; the actual delete is still enforced
+// server-side by requireOwner on /api/admin/clips/:clipId regardless of
+// what the client shows.
+const OWNER_EMAIL = 'chhayajeeth@gmail.com';
+let isOwner = false;
 try{
   if(typeof firebase !== 'undefined'){
     firebase.initializeApp(firebaseConfig);
     auth = firebase.auth();
     let authReadyResolve;
     authReady = new Promise(res => { authReadyResolve = res; });
-    auth.onAuthStateChanged(() => { authReadyResolve(); });
+    auth.onAuthStateChanged((user) => {
+      isOwner = !!(user && user.email && user.email.toLowerCase() === OWNER_EMAIL);
+      authReadyResolve();
+    });
   } else {
     console.warn('[auth] Firebase SDK did not load — continuing without auth (public tournaments still work)');
   }
@@ -863,6 +883,7 @@ const matchSnapshotCache = {}; // matchId -> saved match record | null (cached a
 
 const CLIP_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>';
 const PLAY_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+const TRASH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/></svg>';
 const DOWNLOAD_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>';
 
 // Mirrors the server's playerKey() exactly — including collapsing internal
@@ -979,10 +1000,16 @@ function clipRowHtml(c){
     ? [c.dismissalType, c.bowler ? 'b. ' + c.bowler : null].filter(Boolean).join(' · ')
     : (c.bowler ? 'off ' + c.bowler : '');
   const disabled = c.ready ? '' : 'disabled';
+  const deleteBtn = isOwner
+    ? `<button class="clip-delete-btn" data-delete-clip="${c.clipId}" title="Delete this clip">${TRASH_ICON}</button>`
+    : '';
   return `<div class="clip-row clip-row--${badgeCls}" data-clip-id="${c.clipId}" data-title="${escapeHtml((c.striker||c.bowler||'') + ' — ' + c.eventType)}">
     <div class="cr-badge ${badgeCls}">${badgeLabel}</div>
     <div class="cr-info"><div class="cr-over tabnum">Over ${overLabel}</div><div class="cr-sub">${escapeHtml(sub || (c.ready ? 'Tap to watch' : 'Processing…'))}</div></div>
-    <button class="clip-watch-btn" ${disabled} aria-label="Watch">${PLAY_ICON}</button>
+    <div class="cr-actions">
+      <button class="clip-watch-btn" ${disabled} aria-label="Watch">${PLAY_ICON}</button>
+      ${deleteBtn}
+    </div>
   </div>`;
 }
 
@@ -991,8 +1018,49 @@ function wireClipRows(root){
     const id = row.dataset.clipId, title = row.dataset.title;
     const watchBtn = row.querySelector('.clip-watch-btn');
     if(watchBtn && !watchBtn.disabled) watchBtn.addEventListener('click', (e) => { e.stopPropagation(); openVideoModal(id, title); });
+    const deleteBtn = row.querySelector('[data-delete-clip]');
+    if(deleteBtn){
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteClip(deleteBtn.dataset.deleteClip, title);
+      });
+    }
     row.addEventListener('click', () => { if(watchBtn && !watchBtn.disabled) openVideoModal(id, title); });
   });
+}
+
+// Owner-only clip deletion (same DELETE /api/admin/clips/:clipId the
+// scorecard page's delete button calls — requireOwner enforces this
+// server-side regardless of what the client renders). On success the
+// clip row is removed from every place it's currently shown on this
+// page — the report modal's match-by-match list — since it's the same
+// clip everywhere a player's clips get rendered.
+async function deleteClip(clipId, title){
+  if(!confirm(`Delete this clip (${title || 'clip'})? This can't be undone.`)) return;
+  try{
+    const res = await apiFetch(`/api/admin/clips/${encodeURIComponent(clipId)}`, { method:'DELETE' });
+    if(!res.ok){
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Could not delete clip');
+    }
+    document.querySelectorAll(`.clip-row[data-clip-id="${clipId}"]`).forEach(row => row.remove());
+    showToast('Clip deleted');
+  }catch(err){
+    showToast(err.message || 'Could not delete clip');
+  }
+}
+
+function showToast(msg){
+  let el = document.getElementById('tv-toast');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'tv-toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => el.classList.remove('show'), 2200);
 }
 
 function matchEntryHtml(entry){
