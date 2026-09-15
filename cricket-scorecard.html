@@ -160,42 +160,6 @@
     --gradient-hero: radial-gradient(120% 140% at 15% -10%, rgba(18,138,74,.08), transparent 55%), radial-gradient(100% 120% at 100% 0%, rgba(138,31,212,.05), transparent 50%);
   }
 
-  /* ============================================================
-     MATCH COLOR SYSTEM
-     --team-a-solid / --team-b-solid are written onto :root at
-     runtime by applyMatchColors() (JS, below) once the two teams'
-     colors are known — from team.color if the match data supplies
-     one, otherwise sampled from the team's own logo, otherwise left
-     at these accent/four defaults so the page never looks broken
-     before data arrives or when a match has no team colors at all.
-     Every derived tone (soft/glow/blend) is computed with color-mix
-     against the *current* theme's --bg/--panel, so light/dark theme
-     switches and team-color changes both "just work" everywhere
-     these are used, with no extra JS recompute needed. Percentages
-     are deliberately low (10–18%) — team color is meant to tint the
-     interface, not paint it; text always stays on --text/--text-dim
-     so contrast is never affected by which colors a match happens
-     to have. Falls back gracefully wherever color-mix isn't
-     supported, since every consumer also has a plain --panel/--bg
-     value earlier in its own declaration (the browser keeps the
-     first valid one instead of failing the whole rule). */
-  :root{
-    --team-a-solid: var(--accent);
-    --team-b-solid: var(--four);
-    --team-a-soft: color-mix(in srgb, var(--team-a-solid) 13%, var(--bg));
-    --team-b-soft: color-mix(in srgb, var(--team-b-solid) 13%, var(--bg));
-    --team-a-glow: color-mix(in srgb, var(--team-a-solid) 50%, transparent);
-    --team-b-glow: color-mix(in srgb, var(--team-b-solid) 50%, transparent);
-    --team-a-line: color-mix(in srgb, var(--team-a-solid) 55%, var(--border));
-    --team-b-line: color-mix(in srgb, var(--team-b-solid) 55%, var(--border));
-    --team-a-card: color-mix(in srgb, var(--team-a-solid) 5%, var(--panel));
-    --team-b-card: color-mix(in srgb, var(--team-b-solid) 5%, var(--panel));
-    --match-blend: color-mix(in srgb, var(--team-a-solid) 50%, var(--team-b-solid));
-    --match-blend-soft: color-mix(in srgb, var(--match-blend) 11%, var(--bg));
-    --match-blend-glow: color-mix(in srgb, var(--match-blend) 38%, transparent);
-    --scroll-shift: 0px;
-  }
-
   *{ box-sizing:border-box; }
   html{ scroll-behavior:smooth; }
   body{
@@ -205,37 +169,6 @@
     transition:background .25s ease, color .25s ease;
     padding-bottom:40px;
     -webkit-tap-highlight-color:transparent;
-    position:relative;
-  }
-  /* ---------- Match atmosphere ----------
-     A single fixed layer behind the whole page: team A's glow at
-     top-left, team B's at top-right, their blend low in the middle —
-     the "match generates the room" idea from the brief, done as one
-     compositor-only layer so it costs nothing on scroll. Only
-     `transform` is animated (never background-position/size, which
-     force a repaint) and the drift is slow enough to read as
-     atmosphere rather than motion. --scroll-shift is a small,
-     clamped px value written by a passive/rAF-throttled scroll
-     listener (see bindScrollAtmosphere() in JS) so the glow answers
-     scroll position without a single layout read on the hot path. */
-  body::before{
-    content:''; position:fixed; inset:-12% -8%; z-index:-1; pointer-events:none;
-    background:
-      radial-gradient(38% 34% at 18% 14%, var(--team-a-glow), transparent 68%),
-      radial-gradient(38% 34% at 82% 16%, var(--team-b-glow), transparent 68%),
-      radial-gradient(55% 46% at 50% 58%, var(--match-blend-glow), transparent 72%);
-    filter:blur(6px);
-    opacity:.55;
-    transform:translate3d(0, var(--scroll-shift, 0px), 0);
-    animation:atmosphereDrift 28s ease-in-out infinite alternate;
-    transition:opacity .4s ease;
-    will-change:transform;
-  }
-  :root[data-theme="light"] body::before{ opacity:.4; }
-  @keyframes atmosphereDrift{
-    0%{ transform:translate3d(calc(-1% + var(--scroll-shift, 0px)), calc(-1% + var(--scroll-shift, 0px)), 0) scale(1); }
-    50%{ transform:translate3d(calc(1.2% + var(--scroll-shift, 0px)), calc(1.6% + var(--scroll-shift, 0px)), 0) scale(1.035); }
-    100%{ transform:translate3d(calc(-0.6% + var(--scroll-shift, 0px)), calc(1% + var(--scroll-shift, 0px)), 0) scale(1.015); }
   }
   a{ color:inherit; text-decoration:none; }
   .tabnum{ font-variant-numeric:tabular-nums; }
@@ -319,67 +252,30 @@
   @keyframes pulseDot{ 0%{box-shadow:0 0 0 0 rgba(239,68,68,.45);} 70%{box-shadow:0 0 0 7px rgba(239,68,68,0);} 100%{box-shadow:0 0 0 0 rgba(239,68,68,0);} }
 
   /* ---------- Layout ---------- */
-  #wrap{ max-width:1180px; margin:0 auto; padding:16px; display:flex; flex-direction:column; gap:14px; position:relative; }
-  /* Glass card: mostly-opaque panel colour so text keeps full contrast,
-     with just enough translucency that the match atmosphere behind the
-     page reads through at the edges. backdrop-filter is layered on top
-     as an enhancement, not a requirement — @supports below covers browsers
-     that don't have it, so nothing ever looks broken or too see-through. */
+  #wrap{ max-width:1180px; margin:0 auto; padding:16px; display:flex; flex-direction:column; gap:14px; }
   .card{
-    background:color-mix(in srgb, var(--panel) 94%, transparent);
-    border:1px solid var(--border); border-radius:var(--radius-lg);
+    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius-lg);
     padding:18px; box-shadow:var(--shadow);
-    transition:border-color .2s ease, box-shadow .2s ease, transform .2s ease, background .25s ease;
-  }
-  @supports (backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px)){
-    .card{
-      background:color-mix(in srgb, var(--panel) 82%, transparent);
-      backdrop-filter:blur(18px) saturate(1.15);
-      -webkit-backdrop-filter:blur(18px) saturate(1.15);
-    }
+    transition:border-color .2s ease, box-shadow .2s ease, transform .2s ease;
   }
   /* The scorecard pair (Batting/Bowling) is the primary content now that
      it sits right under Highlights — give it a touch more visual weight
-     than the surrounding cards instead of blending into the same grid.
-     Uses the match blend rather than a fixed accent so the featured
-     card's identity, like everything else, comes from the two teams
-     actually playing. */
-  .card-featured{ border-top:3px solid var(--match-blend); position:relative; }
+     than the surrounding cards instead of blending into the same grid. */
+  .card-featured{ border-top:3px solid var(--accent); position:relative; }
   .card-featured::after{
     content:''; position:absolute; inset:0 0 auto 0; height:64px; border-radius:var(--radius-lg) var(--radius-lg) 0 0;
-    background:linear-gradient(180deg, var(--match-blend-soft), transparent); pointer-events:none;
+    background:linear-gradient(180deg, var(--accent-soft), transparent); pointer-events:none;
   }
   .card-featured > *{ position:relative; }
-  /* Batting card leans team A, bowling card leans team B — a small,
-     legible way for "some cards can have Team A influence, some Team B"
-     without touching the shared .card system every other section relies on. */
-  #tables-grid > .card:first-child, #compare-grid > .card:first-child{ border-top:3px solid var(--team-a-line); }
-  #tables-grid > .card:last-child, #compare-grid > .card:last-child{ border-top:3px solid var(--team-b-line); }
   .section-title{
     display:flex; align-items:center; gap:9px; font-family:var(--font-display); font-weight:800;
     font-size:15px; letter-spacing:.1px; color:var(--text); margin-bottom:14px;
   }
   .section-title .dash{ width:5px; height:16px; background:var(--accent); border-radius:3px; flex:none; }
 
-  /* ---------- Hero ----------
-     The hero is where the two-sided system is most literal: team A's
-     wash anchored left, team B's anchored right, blending toward the
-     centre behind the score. Kept as one soft, generous radial each
-     side (not a hard split) per the brief — "the two colors are
-     actually mixing", not a left/right block. */
+  /* ---------- Hero ---------- */
   #hero{ position:relative; overflow:hidden; padding:22px; }
-  #hero::before{
-    content:''; position:absolute; inset:0; pointer-events:none;
-    background:
-      radial-gradient(85% 130% at -5% 0%, var(--team-a-soft), transparent 60%),
-      radial-gradient(85% 130% at 105% 0%, var(--team-b-soft), transparent 60%),
-      var(--gradient-hero);
-  }
-  #hero::after{
-    content:''; position:absolute; inset:0; pointer-events:none; opacity:.7;
-    background:radial-gradient(60% 90% at 50% 20%, var(--match-blend-soft), transparent 65%);
-  }
-  #hero-top, #teams-row, #target-wrap, #lead-wrap, #stat-strip{ position:relative; z-index:1; }
+  #hero::before{ content:''; position:absolute; inset:0; background:var(--gradient-hero); pointer-events:none; }
   /* ---------- Live stream box (beside the score on wide screens) ---------- */
   #hero-row{ display:flex; gap:14px; align-items:stretch; }
   #hero-row #hero{ flex:1; min-width:0; }
@@ -403,28 +299,18 @@
   .chip.result{ background:var(--accent-soft); color:var(--accent); }
 
   #teams-row{ position:relative; display:grid; grid-template-columns:1fr auto 1fr; gap:16px; align-items:center; }
-  .team-block{ display:flex; align-items:center; gap:12px; min-width:0; transition:opacity .3s ease; }
+  .team-block{ display:flex; align-items:center; gap:12px; min-width:0; }
   .team-block.right{ flex-direction:row-reverse; text-align:right; }
-  /* Logo keeps a soft halo in its own team's colour — a glow, not a
-     coloured disc behind it — and dims slightly with the block when a
-     team isn't currently batting (opacity is already set inline by
-     renderState()); the glow dims with it for free since it's the same
-     element's own box-shadow. */
   .team-logo{
     width:46px; height:46px; border-radius:12px; flex:none; display:flex; align-items:center; justify-content:center;
     font-family:var(--font-display); font-weight:800; font-size:16px; color:#fff; background-size:cover; background-position:center;
-    box-shadow:0 0 0 1px color-mix(in srgb, var(--team-a-solid) 25%, transparent), 0 6px 18px -6px var(--team-a-glow);
-    transition:box-shadow .3s ease;
-  }
-  #team-block-b .team-logo{
-    box-shadow:0 0 0 1px color-mix(in srgb, var(--team-b-solid) 25%, transparent), 0 6px 18px -6px var(--team-b-glow);
   }
   .team-name-block{ min-width:0; }
   .team-name{ font-weight:700; font-size:14.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .team-short{ font-size:11px; color:var(--text-dim); font-weight:600; }
   #score-center{ text-align:center; }
   #score-overs-row{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; }
-  #main-score{ font-family:var(--font-display); font-weight:800; font-size:clamp(30px,6vw,44px); line-height:1; text-shadow:0 0 34px var(--match-blend-glow); }
+  #main-score{ font-family:var(--font-display); font-weight:800; font-size:clamp(30px,6vw,44px); line-height:1; text-shadow:0 0 30px var(--accent-soft); }
   #main-overs{ font-size:13px; color:var(--text-dim); font-weight:600; }
   #batting-tag{ font-size:10.5px; color:var(--accent); font-weight:700; letter-spacing:.4px; text-transform:uppercase; margin-top:4px; }
 
@@ -435,15 +321,12 @@
      layout recalc on every frame (janky, especially on Android); scaleX
      is compositor-only, same feel as an iOS-smooth progress bar. */
   .progress-fill{
-    height:100%; width:100%; border-radius:99px; background:linear-gradient(90deg, var(--team-a-solid), var(--match-blend), var(--team-b-solid));
+    height:100%; width:100%; border-radius:99px; background:linear-gradient(90deg, var(--accent), var(--six));
     transform:scaleX(0); transform-origin:left; transition:transform .5s ease; will-change:transform;
   }
 
   #stat-strip{ position:relative; display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:16px; }
-  .stat-box{
-    background:color-mix(in srgb, var(--panel-2) 88%, var(--match-blend-soft)); border:1px solid var(--border-soft);
-    border-radius:var(--radius-md); padding:10px 12px; transition:background .3s ease;
-  }
+  .stat-box{ background:var(--panel-2); border:1px solid var(--border-soft); border-radius:var(--radius-md); padding:10px 12px; }
   .stat-box .k{ font-size:10px; color:var(--text-dim); text-transform:uppercase; font-weight:700; letter-spacing:.4px; }
   .stat-box .v{ font-family:var(--font-display); font-size:19px; font-weight:700; margin-top:3px; }
 
@@ -545,8 +428,7 @@
     #stat-strip{ grid-template-columns:1fr 1fr; }
   }
   @media (prefers-reduced-motion:reduce){
-    *, *::before, *::after{ animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important; }
-    body::before{ transform:none !important; }
+    *{ animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important; }
   }
   @media (max-width:640px){
     /* Keep the same 3-column layout as desktop (team | score | team)
@@ -1298,129 +1180,6 @@ document.getElementById('theme-toggle').addEventListener('click', () => {
 });
 
 /* ============================================================
-   MATCH COLOR SYSTEM
-   Resolves each team's colour — from team.color if the match data
-   supplies one, otherwise sampled from the team's own logo image,
-   otherwise left at the CSS defaults (var(--accent)/var(--four)) —
-   and writes them onto :root as --team-a-solid/--team-b-solid.
-   Every other team-tinted token in the stylesheet (soft/glow/blend
-   washes, card accents, the hero, the progress bar…) is derived
-   from those two with color-mix() in CSS, so this is the ONLY place
-   that needs to know how colours were obtained; nothing else is
-   ever hard-coded to a specific team or match.
-   Read-only, best-effort: a slow/blocked/CORS-restricted logo image
-   just falls back to the neutral defaults rather than breaking
-   anything, exactly as section 13 of the brief asks for.
-   ============================================================ */
-const teamColorCache = new Map(); // logoUrl -> resolved hex | null
-let lastColorSigA = null, lastColorSigB = null; // avoid re-sampling on every socket tick
-
-function isHex(v){ return typeof v === 'string' && /^#?[0-9a-f]{3,8}$/i.test(v.trim()); }
-function normalizeHex(v){
-  let h = v.trim();
-  if(h[0] !== '#') h = '#' + h;
-  if(h.length === 4){ h = '#' + [1,2,3].map(i => h[i]+h[i]).join(''); }
-  return h.slice(0,7);
-}
-function rgbToHex(r,g,b){
-  const c = n => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2,'0');
-  return `#${c(r)}${c(g)}${c(b)}`;
-}
-
-// Samples the dominant, non-neutral colour out of a team's logo so a
-// match with no explicit team.color still gets its own identity from
-// artwork that's already loading anyway. Biases toward saturated
-// pixels (skips near-white/near-black/near-grey) so a logo's brand
-// hue wins over its background/outline pixels.
-function sampleLogoColor(url){
-  if(teamColorCache.has(url)) return Promise.resolve(teamColorCache.get(url));
-  return new Promise((resolve) => {
-    try{
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      const done = (hex) => { teamColorCache.set(url, hex); resolve(hex); };
-      img.onload = () => {
-        try{
-          const size = 32;
-          const canvas = document.createElement('canvas');
-          canvas.width = size; canvas.height = size;
-          const ctx = canvas.getContext('2d', { willReadFrequently:true });
-          ctx.drawImage(img, 0, 0, size, size);
-          const { data } = ctx.getImageData(0, 0, size, size);
-          let r=0,g=0,b=0,n=0, r2=0,g2=0,b2=0,n2=0;
-          for(let i=0;i<data.length;i+=4){
-            if(data[i+3] < 128) continue; // transparent
-            const rr=data[i], gg=data[i+1], bb=data[i+2];
-            const max=Math.max(rr,gg,bb), min=Math.min(rr,gg,bb);
-            const sat = max === 0 ? 0 : (max-min)/max;
-            r2+=rr; g2+=gg; b2+=bb; n2++;
-            if(sat < 0.18 || max > 246 || max < 18) continue; // skip near-white/black/grey
-            r+=rr; g+=gg; b+=bb; n++;
-          }
-          if(n) done(rgbToHex(r/n, g/n, b/n));
-          else if(n2) done(rgbToHex(r2/n2, g2/n2, b2/n2)); // logo has no saturated pixels — use its average anyway
-          else done(null);
-        }catch(e){ done(null); } // canvas tainted (no CORS) or other read failure
-      };
-      img.onerror = () => done(null);
-      img.src = url;
-    }catch(e){ resolve(null); }
-  });
-}
-
-async function resolveTeamColor(team){
-  if(!team) return null;
-  if(isHex(team.color)) return normalizeHex(team.color);
-  if(team.logoUrl) return await sampleLogoColor(team.logoUrl);
-  return null;
-}
-
-// Applies both teams' colours to :root. Skips re-resolving a team
-// whose (color, logoUrl) pair hasn't changed since the last call —
-// renderState() runs on every live score tick, and re-sampling a
-// canvas that often would be wasted work for a value that never
-// changes mid-match.
-async function applyMatchColors(teamA, teamB){
-  const sigA = `${(teamA && teamA.color) || ''}|${(teamA && teamA.logoUrl) || ''}`;
-  const sigB = `${(teamB && teamB.color) || ''}|${(teamB && teamB.logoUrl) || ''}`;
-  const root = document.documentElement.style;
-  if(sigA !== lastColorSigA){
-    lastColorSigA = sigA;
-    const hex = await resolveTeamColor(teamA);
-    if(sigA === lastColorSigA){ // still current — a later match hasn't superseded us mid-await
-      if(hex) root.setProperty('--team-a-solid', hex); else root.removeProperty('--team-a-solid');
-    }
-  }
-  if(sigB !== lastColorSigB){
-    lastColorSigB = sigB;
-    const hex = await resolveTeamColor(teamB);
-    if(sigB === lastColorSigB){
-      if(hex) root.setProperty('--team-b-solid', hex); else root.removeProperty('--team-b-solid');
-    }
-  }
-}
-
-// Section 5 of the brief: a very subtle, scroll-position-linked shift
-// of the background atmosphere. Passive listener + rAF coalescing so
-// this never adds a synchronous scroll-handler cost, and it only ever
-// writes one CSS custom property (a `transform`, not layout) — see
-// body::before in the stylesheet.
-function bindScrollAtmosphere(){
-  let ticking = false;
-  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-  window.addEventListener('scroll', () => {
-    if(ticking) return;
-    ticking = true;
-    requestAnimationFrame(() => {
-      const shift = clamp((window.scrollY || 0) * 0.015, -18, 18);
-      document.documentElement.style.setProperty('--scroll-shift', shift.toFixed(2) + 'px');
-      ticking = false;
-    });
-  }, { passive:true });
-}
-bindScrollAtmosphere();
-
-/* ============================================================
    FORMAT / MATH HELPERS — mirrors the panel's own scoring rules,
    read-only (this page never mutates or broadcasts state).
    ============================================================ */
@@ -1794,7 +1553,6 @@ function renderFinalSnapshot(match, displayName){
   setText('name-a', A.name || 'Team A'); setText('short-a', A.short || '—');
   setText('name-b', B.name || 'Team B'); setText('short-b', B.short || '—');
   paintLogo('logo-a', A); paintLogo('logo-b', B);
-  applyMatchColors(A, B);
   document.getElementById('team-block-a').style.opacity = '1';
   document.getElementById('team-block-b').style.opacity = '1';
   const scoreA = match.scoreA || {}, scoreB = match.scoreB || {};
@@ -2038,7 +1796,6 @@ function renderHero(s){
   setText('name-b', B.name || 'Team B'); setText('short-b', B.short || '—');
   paintLogo('logo-a', A);
   paintLogo('logo-b', B);
-  applyMatchColors(A, B);
   document.getElementById('team-block-a').style.opacity = s.battingTeam === 'A' ? '1' : '.55';
   document.getElementById('team-block-b').style.opacity = s.battingTeam === 'B' ? '1' : '.55';
 
