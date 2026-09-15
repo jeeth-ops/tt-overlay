@@ -737,6 +737,12 @@
     border:none; display:flex; align-items:center; justify-content:center; cursor:pointer; margin-left:4px;
   }
   .clip-reassign-btn:active{ transform:scale(.9); }
+  .clip-delete-btn{
+    flex:none; width:26px; height:26px; border-radius:8px; background:var(--wicket-soft); color:var(--wicket);
+    border:none; display:flex; align-items:center; justify-content:center; cursor:pointer; margin-left:4px;
+  }
+  .clip-delete-btn svg{ width:13px; height:13px; }
+  .clip-delete-btn:active{ transform:scale(.9); }
 
   /* Freshly-injected list content (clip rows, history rows, stat boxes)
      eases in instead of popping into place the instant innerHTML is set —
@@ -2043,6 +2049,7 @@ function escapeHtml(str){
 const CLIP_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>';
 const PLAY_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
 const DOWNLOAD_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>';
+const TRASH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/></svg>';
 
 // Mirrors the server's playerKey() exactly — including collapsing internal
 // whitespace (server.js: name.trim().toLowerCase().replace(/\s+/g,' ')).
@@ -2194,6 +2201,9 @@ function clipRowHtml(c){
   const reassignBtn = isOwner
     ? `<button class="clip-reassign-btn" data-reassign-clip="${c.clipId}" data-reassign-name="${escapeHtml(ownerName)}" data-reassign-role="${ownerRole}" title="Reassign to correct player">✏️</button>`
     : '';
+  const deleteBtn = isOwner
+    ? `<button class="clip-delete-btn" data-delete-clip="${c.clipId}" data-delete-title="${escapeHtml((c.striker||c.bowler||'') + ' — ' + c.eventType)}" title="Delete this clip">${TRASH_ICON}</button>`
+    : '';
   return `<div class="clip-row clip-row--${badgeCls}" data-clip-id="${c.clipId}" data-title="${escapeHtml((c.striker||c.bowler||'') + ' — ' + c.eventType)}">
     <div class="cr-badge ${badgeCls}">${badgeLabel}</div>
     <div class="cr-info">
@@ -2204,6 +2214,7 @@ function clipRowHtml(c){
       <button class="clip-watch-btn" ${disabled} aria-label="Watch">${PLAY_ICON}</button>
       <a class="clip-dl-btn" href="${c.downloadUrl}" ${c.ready ? '' : 'style="pointer-events:none;opacity:.35;"'} aria-label="Download">${DOWNLOAD_ICON}</a>
       ${reassignBtn}
+      ${deleteBtn}
     </div>
   </div>`;
 }
@@ -2229,6 +2240,13 @@ function wireClipRows(root, clipsByIdMap){
       reassignBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         openClipReassignForm(reassignBtn.dataset.reassignClip, reassignBtn.dataset.reassignName, reassignBtn.dataset.reassignRole);
+      });
+    }
+    const deleteBtn = row.querySelector('[data-delete-clip]');
+    if(deleteBtn){
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openClipDeleteConfirm(deleteBtn.dataset.deleteClip, deleteBtn.dataset.deleteTitle);
       });
     }
     row.addEventListener('click', () => { if(watchBtn && !watchBtn.disabled) openVideoModal(id, title); });
@@ -2851,6 +2869,28 @@ function openClipReassignForm(clipId, currentName, role){
       await adminApi(`/clips/${encodeURIComponent(clipId)}`, { method:'PUT', body: JSON.stringify(body) });
       emToast('Clip reassigned');
       renderHighlights();
+    }
+  );
+}
+
+/* ---------- Owner clip deletion (inline, calls existing
+   DELETE /api/admin/clips/:clipId endpoint — removes the clip doc
+   entirely). Small trash icon appended to each clip row, owner-only.
+   On success the row is removed from every place it's currently shown
+   (main Highlights list, a player/team clip drawer if open, the Fall of
+   Wickets strip) since the server already invalidated its cache for
+   this match, and any of those views are also refreshed. ---------- */
+function openClipDeleteConfirm(clipId, title){
+  openConfirmModal(`
+    <div class="em-title">Delete this clip?</div>
+    <div class="em-sub">Removes "${escapeHtml(title||'this clip')}" everywhere it appears on the scorecard — highlights, player and team clip lists. The video and download link stop working immediately. This can't be undone.</div>`,
+    async () => {
+      await adminApi(`/clips/${encodeURIComponent(clipId)}`, { method:'DELETE' });
+      document.querySelectorAll(`.clip-row[data-clip-id="${clipId}"]`).forEach(row => row.remove());
+      emToast('Clip deleted');
+      if(typeof renderHighlights === 'function') renderHighlights();
+      if(latestState) renderTeamWicketClips(latestState);
+      if(cdCurrentPlayer) loadClipDrawerScope(document.querySelector('.cd-tab.active')?.dataset.scope || 'match');
     }
   );
 }
