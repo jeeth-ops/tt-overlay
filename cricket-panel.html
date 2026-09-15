@@ -1444,7 +1444,35 @@ function fillPlayerSelect(selectEl, players, opts){
   if(keep && players.some(p => p.id === keep)) selectEl.value = keep;
 }
 let state = mergeWithDefaults(loadState());
-let history = [];
+// 🩹 FIX ("Undo" saying "Nothing to undo" right after a ball was clearly
+// scored): `history` used to be a plain in-memory array, never written to
+// localStorage the way `state` is (see saveLocal()). So any time the page
+// reloaded/reconnected mid-match — a browser refresh, the panel being
+// reopened in a new tab, a crash recovery — `state` came back correctly
+// (it's persisted) but `history` silently reset to [], and the very next
+// Undo click had nothing to pop even though the last ball (e.g. that Nb+6)
+// was real. `history` now persists the same way `state` does, via
+// loadHistory()/pushHistory() below, so it survives a reload.
+const HISTORY_STORAGE_KEY = 'cricket-panel-history';
+const MAX_HISTORY = 40; // caps localStorage size — only recent balls are ever undoable anyway
+function loadHistory(){
+  try{
+    const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) ? parsed : [];
+  }catch(e){ return []; }
+}
+function saveHistoryLocal(){
+  try{ localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history)); }catch(e){}
+}
+// Use this instead of `history.push(snapshot())` directly, so every
+// pushed snapshot is also persisted immediately.
+function pushHistory(){
+  history.push(snapshot());
+  if(history.length > MAX_HISTORY) history.shift();
+  saveHistoryLocal();
+}
+let history = loadHistory();
 let lastDismissalType = null; // set by the wicket modal, read by logBallToDb
 let lastDismissalFielder = null; // set alongside lastDismissalType, read by logBallToDb
 
@@ -2532,7 +2560,7 @@ document.getElementById('target').addEventListener('input', (e) => {
   pushState(true, true);
 });
 document.getElementById('batting-team').addEventListener('change', (e) => {
-  history.push(snapshot());
+  pushHistory();
   state.battingTeam = e.target.value;
   pushState(true);
 });
@@ -2567,13 +2595,13 @@ function buildTossPayload(){
   };
 }
 document.getElementById('toss-winner').addEventListener('change', (e) => {
-  history.push(snapshot());
+  pushHistory();
   state.toss.winner = e.target.value;
   applyTossToBattingTeam();
   pushState(true);
 });
 document.getElementById('toss-decision').addEventListener('change', (e) => {
-  history.push(snapshot());
+  pushHistory();
   state.toss.decision = e.target.value;
   applyTossToBattingTeam();
   pushState(true);
@@ -3284,7 +3312,7 @@ document.getElementById('striker-roster-select').addEventListener('change', e =>
   if(!id) return;
   const p = findPlayerById(state.battingTeam, id);
   if(!p) return;
-  history.push(snapshot());
+  pushHistory();
   state.striker = { name: p.name, id: p.id, runs:0, balls:0, fours:0, sixes:0 };
   renderRosterControls();
   pushState(true);
@@ -3294,7 +3322,7 @@ document.getElementById('nonstriker-roster-select').addEventListener('change', e
   if(!id) return;
   const p = findPlayerById(state.battingTeam, id);
   if(!p) return;
-  history.push(snapshot());
+  pushHistory();
   state.nonStriker = { name: p.name, id: p.id, runs:0, balls:0, fours:0, sixes:0 };
   renderRosterControls();
   pushState(true);
@@ -3309,7 +3337,7 @@ document.getElementById('bowler-roster-select').addEventListener('change', e => 
 
 function sendInNewBatsman(name, id){
   if(!name) return;
-  history.push(snapshot());
+  pushHistory();
   const incoming = { name, id: id || null, runs:0, balls:0, fours:0, sixes:0 };
   // Seat them at whichever end the last wicket left vacant — the striker's
   // end normally, or the non-striker's end if that wicket fell on the last
@@ -3377,7 +3405,7 @@ function applyBowlerChange(name, id){
   // is still tracked below (harmless bookkeeping) but nothing reads it to
   // block a selection anymore.
 
-  history.push(snapshot());
+  pushHistory();
 
   // Whatever's happened THIS over so far carries forward to the new name —
   // but ONLY when an over is genuinely still in progress (carryBalls > 0),
@@ -5779,7 +5807,7 @@ function recordBall(kind, meta){
     return;
   }
 
-  history.push(snapshot());
+  pushHistory();
   let overCompletedThisBall = false;
   // 🔒 Set inside the 'Wd'/'Nb' cases below when the extra runs recorded
   // for that delivery amount to a boundary (Wide extra === 4, or No Ball
@@ -7226,6 +7254,7 @@ document.getElementById('clear-freehit-btn').addEventListener('click', () => {
 document.getElementById('undo-btn').addEventListener('click', () => {
   if(history.length === 0){ toast('Nothing to undo'); return; }
   state = history.pop();
+  saveHistoryLocal(); // keep the persisted stack in sync with the in-memory one
   pushState(true, true);
   toast('Undone');
 });
@@ -7273,7 +7302,7 @@ document.getElementById('next-innings-btn').addEventListener('click', () => {
   if(state.milestonesHit['match-result']){ toast('Match is already complete — Reset to start a new match'); return; }
 
   const isTest = state.format === 'Test';
-  history.push(snapshot());
+  pushHistory();
 
   const oldBattingTeam = state.battingTeam;
   const oldBowlingTeam = bowlingTeamKey();
@@ -7408,7 +7437,7 @@ document.getElementById('declare-btn').addEventListener('click', () => {
   if(state.format !== 'Test') return;
   if(isInningsOver()){ toast('This innings is already over'); return; }
   if(!confirm(`Declare ${teamLabel(state.battingTeam)}'s innings closed at ${state.score.runs}-${state.score.wickets}?`)) return;
-  history.push(snapshot());
+  pushHistory();
   state.declared = true;
   checkInningsComplete();
   checkMatchResult();
@@ -7428,7 +7457,7 @@ document.getElementById('draw-btn').addEventListener('click', () => {
   if(state.format !== 'Test') return;
   if(state.milestonesHit['match-result']){ toast('Match is already complete'); return; }
   if(!confirm('Call the match a draw right now? This ends the match.')) return;
-  history.push(snapshot());
+  pushHistory();
   state.milestonesHit['match-result'] = true;
   state.matchResultText = 'MATCH DRAWN';
   state.matchWinnerKey = 'DRAW';
@@ -8717,6 +8746,7 @@ document.getElementById('reset-btn').addEventListener('click', () => {
   state.leagueName = keepLeagueName;
   state.matchMode = keepMatchMode || (keepLeagueName ? 'tournament' : 'single');
   history = [];
+  saveHistoryLocal(); // clear the persisted stack too, so a stale pre-reset undo can't resurface
   document.getElementById('milestone-log').innerHTML = '<div>No events yet.</div>';
   document.getElementById('league-name').value = state.leagueName || '';
   if(state.leagueName) document.getElementById('tournament-select').value = state.leagueName;
