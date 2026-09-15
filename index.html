@@ -158,7 +158,7 @@
     <link rel="icon" type="image/png" sizes="192x192" href="/android-chrome-192x192.png">
     <link rel="icon" type="image/png" sizes="512x512" href="/android-chrome-512x512.png">
 
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
     
     <!-- Firebase Compat SDKs -->
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
@@ -210,6 +210,7 @@
             --input-text: #ffffff;
             --nav-bg: rgba(15, 23, 42, 0.5);
             --nav-bg-scrolled: rgba(15, 23, 42, 0.78);
+            --panel-glass-bg: rgba(15, 23, 42, 0.6);
             --overlay-scrim: rgba(15, 23, 42, 0.95);
             --shadow-rgb: 0, 0, 0;
             --scrollbar-thumb: rgba(255, 255, 255, 0.15);
@@ -242,6 +243,7 @@
             --input-text: #0f172a;
             --nav-bg: rgba(255, 255, 255, 0.7);
             --nav-bg-scrolled: rgba(255, 255, 255, 0.88);
+            --panel-glass-bg: rgba(255, 255, 255, 0.72);
             --overlay-scrim: rgba(15, 23, 42, 0.5);
             --shadow-rgb: 15, 23, 42;
             --scrollbar-thumb: rgba(15, 23, 42, 0.15);
@@ -437,6 +439,7 @@
             height: 100vh;
             height: 100dvh;
             background: var(--overlay-scrim);
+            -webkit-backdrop-filter: blur(16px);
             backdrop-filter: blur(16px);
             z-index: 9999;
             display: flex;
@@ -615,6 +618,7 @@
             padding: 18px 50px;
             gap: 16px;
             background: var(--nav-bg);
+            -webkit-backdrop-filter: blur(10px);
             backdrop-filter: blur(10px);
             border-bottom: 1px solid var(--border-color-soft);
             position: sticky; 
@@ -729,25 +733,42 @@
             left: 0;
             right: 0;
             z-index: 99;
-            background: var(--nav-bg-scrolled);
-            backdrop-filter: blur(16px);
+            background: var(--panel-glass-bg);
+            -webkit-backdrop-filter: blur(26px) saturate(160%);
+            backdrop-filter: blur(26px) saturate(160%);
             border-bottom: 1px solid var(--border-color);
-            box-shadow: 0 16px 40px rgba(var(--shadow-rgb), 0.25);
-            padding: 84px 24px 24px 24px;
+            border-radius: 0 0 28px 28px;
+            box-shadow: 0 20px 50px rgba(var(--shadow-rgb), 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+            padding: 84px 24px 28px 24px;
             display: flex;
             flex-direction: column;
             gap: 4px;
-            transform: translateY(-12px);
+            /* Anchored to the top-right, where the hamburger button sits,
+               so the sheet visibly grows out of the button that opened it
+               (the iOS Control Center "morph" trick) instead of just
+               sliding down flat. */
+            transform-origin: top right;
+            transform: scale(0.88) translateY(-14px);
             opacity: 0;
             visibility: hidden;
             pointer-events: none;
-            transition: transform 0.35s var(--ease-spring), opacity 0.3s var(--ease), visibility 0.35s;
+            transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s var(--ease), visibility 0.45s, border-radius 0.4s var(--ease);
         }
         .mobile-nav-panel.open {
-            transform: translateY(0);
+            transform: scale(1) translateY(0);
             opacity: 1;
             visibility: visible;
             pointer-events: auto;
+            border-radius: 0 0 22px 22px;
+        }
+        /* Fallback for browsers with no backdrop-filter support at all
+           (old Android WebViews mainly) — without the blur, the panel's
+           translucent background alone isn't opaque enough and page
+           content behind it shows through/overlaps the links, which is
+           exactly the broken look this fixes. Solid color kicks in only
+           when the blur genuinely can't run. */
+        @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+            .mobile-nav-panel { background: var(--bg-dark); }
         }
         .mobile-nav-link {
             padding: 14px 12px;
@@ -1004,6 +1025,7 @@
             border: 2px dashed var(--accent);
             padding: 30px;
             border-radius: 16px;
+            -webkit-backdrop-filter: blur(12px);
             backdrop-filter: blur(12px);
         }
         .admin-box h3 { margin-bottom: 20px; color: var(--text-main); display: flex; align-items: center; gap: 10px; }
@@ -1069,6 +1091,7 @@
             flex: 1; 
             min-width: 250px;
             border: 1px solid var(--border-color); 
+            -webkit-backdrop-filter: blur(12px);
             backdrop-filter: blur(12px); 
             position: relative;
             z-index: 1;
@@ -1110,6 +1133,7 @@
             color: white; 
             width: 250px; 
             transition: transform 0.4s var(--ease-spring), border-color 0.3s var(--ease), box-shadow 0.4s var(--ease-spring);
+            -webkit-backdrop-filter: blur(12px);
             backdrop-filter: blur(12px); 
             position: relative; 
             overflow: hidden;
@@ -1253,6 +1277,7 @@
             border-radius: 20px;
             overflow: hidden;
             cursor: pointer;
+            -webkit-backdrop-filter: blur(12px);
             backdrop-filter: blur(12px);
             display: block;
             text-decoration: none;
@@ -1614,6 +1639,7 @@
             border: 1px solid var(--border-color-soft);
             border-radius: 20px;
             padding: 28px 40px;
+            -webkit-backdrop-filter: blur(12px);
             backdrop-filter: blur(12px);
             box-shadow: 0 10px 30px rgba(var(--shadow-rgb), 0.15);
         }
@@ -1650,6 +1676,7 @@
             border-radius: 20px 20px 20px 4px;
             border-left: 2px solid var(--card-color);
             padding: 28px;
+            -webkit-backdrop-filter: blur(12px);
             backdrop-filter: blur(12px);
             display: flex;
             flex-direction: column;
@@ -1723,17 +1750,34 @@
            device. Pure hardware mockups only — no site chrome baked in. ===== */
         .device-uplink { margin: 56px auto 0; max-width: 980px; }
         .device-uplink-kicker {
-            display: flex; align-items: center; gap: 8px; justify-content: center;
-            font-size: 0.7rem; font-weight: 800; letter-spacing: 2px; color: var(--accent);
-            text-transform: uppercase; margin-bottom: 10px;
+            display: flex; align-items: center; gap: 9px; justify-content: center;
+            width: fit-content; margin: 0 auto 14px;
+            padding: 7px 18px 7px 14px;
+            border-radius: 50px;
+            font-size: 0.72rem; font-weight: 800; letter-spacing: 1.6px;
+            text-transform: uppercase;
+            background: linear-gradient(90deg, rgba(var(--accent-rgb), 0.14), rgba(var(--brand-teal-rgb), 0.14));
+            border: 1px solid rgba(var(--accent-rgb), 0.3);
+            box-shadow: 0 8px 22px rgba(var(--accent-rgb), 0.12);
         }
-        .device-uplink-kicker .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: livePulse 1.4s ease-in-out infinite; }
+        .device-uplink-kicker .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex-shrink: 0; animation: livePulse 1.4s ease-in-out infinite; }
+        /* Same moving-gradient-text trick as the hero headline, so the
+           kicker reads as a mini preview of it rather than flat, static copy. */
+        .du-kicker-desktop, .du-kicker-mobile {
+            background: linear-gradient(90deg, var(--accent), var(--brand-orange), var(--brand-teal), var(--accent));
+            background-size: 300% auto;
+            -webkit-background-clip: text; background-clip: text; color: transparent;
+            animation: heroGradientMove 6s linear infinite;
+        }
         .du-kicker-mobile { display: none; }
         @media (max-width: 600px) {
             .du-kicker-desktop { display: none; }
             .du-kicker-mobile { display: inline; }
         }
         @keyframes livePulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+        @media (prefers-reduced-motion: reduce) {
+            .du-kicker-desktop, .du-kicker-mobile { animation: none; }
+        }
 
         .device-uplink-rig {
             position: relative; display: flex; align-items: center; justify-content: center;
@@ -1992,7 +2036,41 @@
         .du-dots { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 16px; }
         .du-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border-color); border: none; padding: 0; cursor: pointer; transition: transform 0.15s ease, background-color 0.15s ease; }
         .du-dot.is-active { background: var(--accent); transform: scale(1.3); }
-        .du-label { text-align: center; font-size: 0.72rem; font-weight: 700; color: var(--text-muted); letter-spacing: 0.5px; text-transform: uppercase; margin-top: 10px; }
+        .du-label {
+            display: flex; align-items: center; gap: 9px;
+            width: fit-content; margin: 16px auto 0;
+            text-align: center; font-size: 0.92rem; font-weight: 900;
+            color: var(--accent); letter-spacing: 1.6px; text-transform: uppercase;
+            transform: perspective(400px) rotateX(0deg);
+            transform-origin: center;
+            backface-visibility: hidden;
+            will-change: transform, opacity;
+        }
+        .du-label::before {
+            content: '';
+            width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+            background: var(--accent);
+            box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.2);
+            animation: livePulse 1.4s ease-in-out infinite;
+        }
+        /* Scoreboard-style flip on every device switch — the label
+           rotates edge-on (invisible for an instant, JS swaps the text
+           right at that point) and flips back down with the new value,
+           the same motion a physical flip-clock/scoreboard uses. Pure
+           transform+opacity, so it stays smooth on Android/iOS/desktop
+           alike with nothing for the GPU to struggle with. */
+        .du-label.du-label-flip { animation: duLabelFlip 0.5s cubic-bezier(0.45, 0, 0.2, 1); }
+        @keyframes duLabelFlip {
+            0%   { transform: perspective(400px) rotateX(0deg);   opacity: 1; }
+            49%  { transform: perspective(400px) rotateX(-90deg); opacity: 0; }
+            50%  { transform: perspective(400px) rotateX(90deg);  opacity: 0; }
+            100% { transform: perspective(400px) rotateX(0deg);   opacity: 1; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .du-label::before { animation: none; }
+            .du-label.du-label-flip { animation: duLabelFade 0.3s var(--ease); }
+        }
+        @keyframes duLabelFade { 0% { opacity: 0.3; } 100% { opacity: 1; } }
 
         /* No more per-breakpoint width numbers for .du-laptop/.du-phone/
            .du-tablet: each already has width:100% + its own max-width, so
@@ -2019,7 +2097,7 @@
         .hi-editor {
             margin: 22px auto 0; max-width: 820px; text-align: left;
             background: var(--bg-card); border: 1px solid var(--border-color);
-            border-radius: 16px; padding: 22px 24px; backdrop-filter: blur(10px);
+            border-radius: 16px; padding: 22px 24px; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
         }
         .hi-editor-label { font-size: 0.85rem; font-weight: 700; color: var(--text-main); margin-bottom: 16px; }
 
@@ -2228,6 +2306,7 @@
             border-radius: 16px;
             padding: 26px;
             text-align: left;
+            -webkit-backdrop-filter: blur(12px);
             backdrop-filter: blur(12px);
             transition: transform 0.3s var(--ease-spring), border-color 0.3s var(--ease);
         }
@@ -2770,21 +2849,6 @@
 
             <div class="hi-panel-card">
                 <div class="hi-score-head">
-                    <span class="ico">🏏</span><h3>Score</h3>
-                    <span class="note">— locked fields update automatically</span>
-                </div>
-                <div class="hi-score-grid">
-                    <div class="hi-score-stat" id="hiStatScore"><div class="l">Score <span class="lock">🔒</span></div><div class="v" id="hiOutScore">187-4</div></div>
-                    <div class="hi-score-stat" id="hiStatOvers"><div class="l">Overs <span class="lock">🔒</span></div><div class="v" id="hiOutOvers">16.2</div></div>
-                    <div class="hi-score-stat" id="hiStatCrr"><div class="l">Current Run Rate <span class="lock">🔒</span></div><div class="v" id="hiOutCrr">11.48</div></div>
-                    <div class="hi-score-stat" id="hiStatRrr"><div class="l">Req. Run Rate <span class="lock">🔒</span></div><div class="v" id="hiOutRrr">—</div></div>
-                    <div class="hi-score-stat" id="hiStatPship"><div class="l">Partnership <span class="lock">🔒</span></div><div class="v" id="hiOutPship">120 (92)</div></div>
-                    <div class="hi-score-stat" id="hiStatBallsLeft"><div class="l">Balls Remaining <span class="lock">🔒</span></div><div class="v" id="hiOutBallsLeft">22</div></div>
-                </div>
-            </div>
-
-            <div class="hi-panel-card">
-                <div class="hi-score-head">
                     <span class="ico">🎯</span><h3>Ball Outcome</h3>
                 </div>
                 <div class="hi-outcome-grid" id="hiOutcomeGrid">
@@ -2806,7 +2870,6 @@
                 <p class="hi-innings-over hidden" id="hiInningsOver">Innings complete — tap Reset in Match setup to bowl another.</p>
             </div>
 
-            <p class="hi-editor-note">Your edits are saved on this device only — nobody else sees them, and they won't affect any other visitor's view.</p>
         </div>
 
     </section>
@@ -4254,11 +4317,27 @@
             const isActualPhone = window.matchMedia('(max-width: 600px) and (pointer: coarse)').matches;
             let index = 0;
 
+            const reduceMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+
             function render(){
                 const active = order[index];
                 frames.forEach(f => f.classList.toggle('is-active', f.getAttribute('data-du-device') === active));
                 dots.forEach(d => d.classList.toggle('is-active', d.getAttribute('data-du-goto') === active));
-                if (label) label.textContent = labels[active];
+                if (label) {
+                    // Restart the flip animation on every switch (re-adding
+                    // the same class no-ops in the browser, so remove then
+                    // re-add on the next frame), and change the text right
+                    // at its edge-on midpoint so the swap itself is never
+                    // visible — same trick a physical flip scoreboard uses.
+                    label.classList.remove('du-label-flip');
+                    void label.offsetWidth;
+                    label.classList.add('du-label-flip');
+                    const midpoint = reduceMotionQuery.matches ? 60 : 250;
+                    clearTimeout(label._duFlipTimer);
+                    label._duFlipTimer = setTimeout(() => {
+                        label.textContent = labels[active];
+                    }, midpoint);
+                }
                 if (typeof window.__duPlayActiveOnly === 'function') window.__duPlayActiveOnly();
             }
 
