@@ -3385,13 +3385,134 @@ async function openOwnerPanel(){
     <div class="em-title">Edit Scorecard</div>
     <div class="em-sub">Pick the exact ball to correct. Batting, bowling, extras, the team score and the tournament leaderboard are all recalculated from the corrected delivery — nothing here is patched directly.</div>
     <div class="em-toolbar">
+      <button id="em-correct-bowler-btn">🎯 Correct Bowler</button>
       <button id="em-undo-btn">↩️ Undo last change</button>
       <button id="em-history-btn">🕓 Recent corrections</button>
     </div>
     <div id="em-body" class="em-list"><div class="em-empty">Loading deliveries…</div></div>`;
+  document.getElementById('em-correct-bowler-btn').onclick = () => openCorrectBowlerPanel(matchId);
   document.getElementById('em-undo-btn').onclick = () => undoLastCorrection(matchId);
   document.getElementById('em-history-btn').onclick = () => showHistory(matchId);
   await loadDeliveryList(matchId);
+}
+
+/* ---------- Correct Bowler (whole over(s) at once) ----------
+   Fixes the "operator picked the wrong bowler for an over (or several)"
+   mistake without touching anything else about the match. Reuses the same
+   Preview → Confirm Bowler Correction → Save & Recalculate pattern as
+   Edit Delivery above, just scoped to bowler attribution across a whole
+   over range instead of one delivery's full set of fields. Server-side:
+   POST .../correct-bowler/preview (dry run) and PUT .../correct-bowler
+   (real write) — see correctBowlerForOvers() in server.js. ---------- */
+async function openCorrectBowlerPanel(matchId){
+  const content = document.getElementById('edit-modal-content');
+  content.innerHTML = `<div class="em-title">Correct Bowler</div><div class="em-sub">Loading deliveries…</div>`;
+  try{
+    const data = await adminApi(`/cricket/match/${encodeURIComponent(matchId)}/balls`);
+    if(!data.balls || !data.balls.length){
+      content.innerHTML = '<div class="em-empty">No ball-by-ball log found for this match yet.</div>';
+      return;
+    }
+    renderCorrectBowlerForm(matchId, data.balls, data.roster, {});
+  }catch(err){
+    content.innerHTML = `<div class="em-empty">${escapeHtml(err.message || 'Could not load deliveries')}</div>`;
+  }
+}
+
+function renderCorrectBowlerForm(matchId, balls, roster, prefill){
+  const innings = [...new Set(balls.map(b => Number(b.innings) || 1))].sort((a,b) => a-b);
+  const selInnings = prefill.innings != null ? Number(prefill.innings) : innings[0];
+  const inningsBalls = balls.filter(b => (Number(b.innings) || 1) === selInnings);
+  // Only bowlers who actually bowled at least one delivery in this innings —
+  // exactly the roster a "wrong bowler" picker for THIS over range needs.
+  const bowlerNames = [...new Set(inningsBalls.map(b => b.bowler).filter(Boolean))].sort();
+  const selWrong = (prefill.wrongBowler && bowlerNames.includes(prefill.wrongBowler)) ? prefill.wrongBowler : (bowlerNames[0] || null);
+  const oversByWrong = selWrong ? [...new Set(inningsBalls.filter(b => b.bowler === selWrong).map(b => Number(b.over)))].sort((a,b) => a-b) : [];
+  const selOvers = prefill.overs || [];
+  const correctOpts = roster.filter(n => n !== selWrong);
+
+  const content = document.getElementById('edit-modal-content');
+  content.innerHTML = `
+    <div class="em-title">Correct Bowler</div>
+    <div class="em-sub">Move whole over(s) from the wrong bowler to the right one. Runs, extras, wickets, the team score and every batsman's figures stay exactly as recorded — only bowler attribution (and the bowling figures that follow from it) changes.</div>
+    <div class="em-field-row">
+      <div><label>Innings</label><select id="cbInnings">${innings.map(i => `<option value="${i}" ${i===selInnings?'selected':''}>Innings ${i}</option>`).join('')}</select></div>
+      <div><label>Wrong bowler</label><select id="cbWrongBowler">${bowlerNames.length ? bowlerNames.map(n => `<option value="${escapeHtml(n)}" ${n===selWrong?'selected':''}>${escapeHtml(n)}</option>`).join('') : '<option value="">—</option>'}</select></div>
+    </div>
+    <div>
+      <label style="display:block; font-size:11px; font-weight:700; color:var(--text-dim); margin-bottom:4px;">Affected over(s) bowled by ${escapeHtml(selWrong || '—')}</label>
+      <div id="cbOversList" class="em-list" style="max-height:30vh;">
+        ${oversByWrong.length ? oversByWrong.map(o => `
+          <label class="em-ball-row" style="cursor:pointer;">
+            <span><input type="checkbox" class="cbOverCheck" value="${o}" ${selOvers.includes(o)?'checked':''}> Over ${o}</span>
+          </label>`).join('') : '<div class="em-empty">No overs recorded for this bowler in this innings.</div>'}
+      </div>
+    </div>
+    <div class="em-field-row">
+      <div style="grid-column:1/-1;"><label>Correct bowler</label><select id="cbCorrectBowler">${correctOpts.length ? correctOpts.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('') : '<option value="">—</option>'}</select></div>
+    </div>
+    <div class="em-actions">
+      <button class="em-btn cancel" id="cb-back-btn">Back</button>
+      <button class="em-btn save" id="cb-preview-btn">Preview & Save</button>
+    </div>`;
+
+  document.getElementById('cb-back-btn').onclick = () => openOwnerPanel();
+  // Changing innings or the wrong bowler re-renders the whole form so the
+  // over checkboxes and correct-bowler list always reflect the new
+  // selection — never a stale list from the previous bowler/innings.
+  document.getElementById('cbInnings').addEventListener('change', (e) => {
+    renderCorrectBowlerForm(matchId, balls, roster, { innings: e.target.value });
+  });
+  document.getElementById('cbWrongBowler').addEventListener('change', (e) => {
+    renderCorrectBowlerForm(matchId, balls, roster, { innings: selInnings, wrongBowler: e.target.value });
+  });
+
+  document.getElementById('cb-preview-btn').onclick = async () => {
+    const overs = [...document.querySelectorAll('.cbOverCheck:checked')].map(cb => Number(cb.value));
+    const wrongBowler = document.getElementById('cbWrongBowler').value;
+    const correctBowler = document.getElementById('cbCorrectBowler').value;
+    const inningsSel = Number(document.getElementById('cbInnings').value);
+    if(!wrongBowler){ emToast('Select the wrong bowler'); return; }
+    if(!overs.length){ emToast('Select at least one affected over'); return; }
+    if(!correctBowler){ emToast('Select the correct bowler'); return; }
+    if(correctBowler === wrongBowler){ emToast('Correct bowler must be different from the wrong bowler'); return; }
+    const input = { innings: inningsSel, overs, wrongBowler, correctBowler };
+    const btn = document.getElementById('cb-preview-btn');
+    btn.textContent = 'Checking…'; btn.disabled = true;
+    try{
+      const preview = await adminApi(`/cricket/match/${encodeURIComponent(matchId)}/correct-bowler/preview`, { method:'POST', body: JSON.stringify(input) });
+      const bA = preview.before.cards.scoreA, aA = preview.after.cards.scoreA, bB = preview.before.cards.scoreB, aB = preview.after.cards.scoreB;
+      const scoreUnchanged = bA.runs===aA.runs && bA.wickets===aA.wickets && bB.runs===aB.runs && bB.wickets===aB.wickets;
+      const oversLabel = overs.slice().sort((a,b) => a-b).join(', ');
+      const wktLine = preview.wicketsMoved
+        ? `<div class="em-diff-row"><span>Wicket(s) moving</span><span>${preview.wicketsMoved} → now credited to <b>${escapeHtml(correctBowler)}</b></span></div>`
+        : '';
+      const scoreWarn = scoreUnchanged ? '' : `<div class="em-warn">⚠️ Team score changed unexpectedly — please review before saving.</div>`;
+      openConfirmModal(`
+        <div class="em-title">Confirm Bowler Correction</div>
+        <div class="em-sub">
+          Match: <b>${escapeHtml(matchId)}</b> · Innings: <b>${inningsSel}</b><br>
+          Affected over(s): <b>${escapeHtml(oversLabel)}</b> (${preview.affectedCount} ${preview.affectedCount===1?'delivery':'deliveries'})<br>
+          Wrong bowler: <b>${escapeHtml(wrongBowler)}</b> &nbsp;→&nbsp; Correct bowler: <b>${escapeHtml(correctBowler)}</b>
+        </div>
+        <div class="em-diff-row"><span>Bowling figures</span><span>recalculated for both bowlers</span></div>
+        ${wktLine}
+        <div class="em-diff-row"><span>Team score &amp; batsman stats</span><span>unchanged</span></div>
+        ${scoreWarn}
+        <div class="em-sub" style="margin-top:8px;">Existing clips on these balls stay attached and will now show under ${escapeHtml(correctBowler)}. Tournament statistics and the leaderboard will update automatically.</div>`,
+        async () => {
+          const saved = await adminApi(`/cricket/match/${encodeURIComponent(matchId)}/correct-bowler`, { method:'PUT', body: JSON.stringify(input) });
+          emToast(`Bowler corrected — ${saved.affectedCount} ${saved.affectedCount===1?'delivery':'deliveries'} moved to ${correctBowler}`);
+          closeEditModal();
+          setTimeout(() => { if(isHistoryMode()) loadMatchSnapshot(getMatchId()); }, 300);
+        }
+      );
+      btn.textContent = 'Preview & Save'; btn.disabled = false;
+    }catch(err){
+      emToast(err.message || 'Could not preview bowler correction');
+      btn.textContent = 'Preview & Save'; btn.disabled = false;
+    }
+  };
 }
 
 async function loadDeliveryList(matchId){
@@ -3566,6 +3687,12 @@ async function showHistory(matchId){
     if(!data.entries || !data.entries.length){ body.innerHTML = '<div class="em-empty">No corrections yet.</div>'; return; }
     body.innerHTML = data.entries.map(e => {
       const when = e.timestamp ? new Date(e.timestamp).toLocaleString() : '';
+      if(e.bowlerCorrection){
+        const bc = e.bowlerCorrection;
+        const label = e.action === 'Undo bowler correction' ? '↩️ Undo bowler correction' : '🎯 Bowler correction';
+        const oversLabel = (bc.overs || []).slice().sort((a,b) => a-b).join(', ');
+        return `<div class="em-history-row"><b>${label}</b> — Innings ${bc.innings} · Over(s) ${escapeHtml(oversLabel)}: ${escapeHtml(bc.wrongBowler||'')} → ${escapeHtml(bc.correctBowler||'')} (${bc.affectedCount} ball${bc.affectedCount===1?'':'s'})<br>${escapeHtml(e.performedBy || '')} · ${escapeHtml(when)}</div>`;
+      }
       const label = e.action === 'Undo delivery correction' ? '↩️ Undo' : '✏️ Correction';
       const loc = e.before ? `Innings ${e.before.innings} · ${e.before.over}.${e.before.ballInOver}` : '';
       return `<div class="em-history-row"><b>${label}</b> — ${escapeHtml(loc)}<br>${escapeHtml(e.performedBy || '')} · ${escapeHtml(when)}</div>`;
