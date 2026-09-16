@@ -291,29 +291,74 @@
     #hero-row{ flex-direction:column; }
     #stream-box{ flex:none; width:100%; }
   }
-  #hero-top{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; position:relative; margin-bottom:16px;}
-  .meta-line{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; color:var(--text-dim); font-size:12px; font-weight:600; }
-  .chip{ padding:3px 9px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); font-size:11px; font-weight:700; letter-spacing:.3px; }
+  #hero-top{ display:flex; align-items:center; justify-content:space-between; gap:10px 14px; flex-wrap:wrap; position:relative; margin-bottom:18px; }
+  .meta-line{ display:flex; align-items:center; gap:7px; flex-wrap:wrap; color:var(--text-dim); font-size:12px; font-weight:600; row-gap:8px; }
+  .chip{
+    padding:4px 10px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border);
+    font-size:11px; font-weight:700; letter-spacing:.3px; white-space:nowrap; line-height:1.4;
+  }
   .chip.live{ background:rgba(239,68,68,.12); color:var(--live); border-color:transparent; display:flex; align-items:center; gap:5px; }
   .chip.live .lv-dot{ width:6px; height:6px; border-radius:50%; background:var(--live); animation:pulseDot 1.4s infinite; }
-  .chip.result{ background:var(--accent-soft); color:var(--accent); }
+  .chip.result{
+    background:var(--accent-soft); color:var(--accent); border-color:transparent;
+    padding:5px 13px; font-size:11.5px; display:flex; align-items:center; gap:5px;
+  }
+  .chip.result::before{ content:'✓'; font-size:10px; font-weight:800; }
+  /* Tournament chip (🏆 name) gets its own warm tone instead of blending
+     into the plain format/venue chips — it's the most important piece of
+     context here and used to disappear visually next to them. white-space
+     stays normal so a long tournament name can wrap onto its own line
+     instead of forcing the whole meta row wider than the card. */
+  .chip.tournament{
+    background:var(--extra-soft); color:var(--extra); border-color:transparent;
+    white-space:normal; max-width:100%;
+  }
+  /* Below ~480px the chip row + result pill used to fight for the same
+     line and either overlap or wrap mid-word. Stack them as two full-width
+     rows instead — always readable, never cramped. */
+  @media (max-width:480px){
+    #hero-top{ flex-direction:column; align-items:stretch; gap:8px; }
+    .meta-line:last-child{ justify-content:flex-start; }
+  }
 
-  #teams-row{ position:relative; display:grid; grid-template-columns:1fr auto 1fr; gap:16px; align-items:center; }
-  .team-block{ display:flex; align-items:center; gap:12px; min-width:0; }
+  #teams-row{ position:relative; display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); gap:16px; align-items:center; }
+  .team-block{ display:flex; align-items:center; gap:13px; min-width:0; }
   .team-block.right{ flex-direction:row-reverse; text-align:right; }
   .team-logo{
-    width:46px; height:46px; border-radius:12px; flex:none; display:flex; align-items:center; justify-content:center;
-    font-family:var(--font-display); font-weight:800; font-size:16px; color:#fff; background-size:cover; background-position:center;
+    width:50px; height:50px; border-radius:13px; flex:none; display:flex; align-items:center; justify-content:center;
+    font-family:var(--font-display); font-weight:800; font-size:17px; color:#fff; background-size:cover; background-position:center;
+    box-shadow:0 4px 12px rgba(0,0,0,.16); transition:box-shadow .2s ease, transform .2s ease;
   }
   .team-name-block{ min-width:0; }
-  .team-name{ font-weight:700; font-size:14.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .team-short{ font-size:11px; color:var(--text-dim); font-weight:600; }
-  #score-center{ text-align:center; min-width:0; }
+  .team-name{
+    font-weight:700; font-size:14.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    transition:color .2s ease;
+  }
+  .team-short{ font-size:11px; color:var(--text-dim); font-weight:600; margin-top:1px; }
+  /* Winning team gets a quiet accent ring + accent-colored name/score
+     instead of both sides looking identical once the match is over —
+     one glance now tells you who won without reading the banner text. */
+  .team-block.winner .team-logo{ box-shadow:0 0 0 3px var(--accent-soft), 0 4px 12px rgba(0,0,0,.18); transform:translateY(-1px); }
+  .team-block.winner .team-name{ color:var(--accent); }
+  #score-center{ text-align:center; min-width:0; padding:0 4px; }
   #score-overs-row{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; }
   #main-score{ font-family:var(--font-display); font-weight:800; font-size:clamp(30px,6vw,44px); line-height:1; text-shadow:0 0 30px var(--accent-soft); overflow-wrap:anywhere; word-break:break-word; }
-  #main-score.result-margin{ font-size:clamp(15px,3.6vw,20px); text-transform:uppercase; letter-spacing:.3px; line-height:1.3; }
+  /* Finished-match result: was plain uppercase text floating in empty
+     space, easy to miss and the first thing that read "unfinished" about
+     this card. Now a proper pill banner so the result is the visual
+     anchor of the whole header, on both mobile and desktop. */
+  #main-score.result-margin{
+    display:inline-block; font-family:var(--font-body); font-weight:800;
+    font-size:clamp(11.5px,2.6vw,13.5px); text-transform:uppercase; letter-spacing:.4px; line-height:1.3;
+    text-shadow:none; background:var(--accent-soft); color:var(--accent);
+    padding:8px 16px; border-radius:99px; max-width:100%;
+    white-space:normal; overflow-wrap:break-word;
+  }
   #main-overs{ font-size:13px; color:var(--text-dim); font-weight:600; }
   #batting-tag{ font-size:10.5px; color:var(--accent); font-weight:700; letter-spacing:.4px; text-transform:uppercase; margin-top:4px; }
+
+  .team-prev-score{ font-size:13.5px; font-weight:700; opacity:.75; margin-top:3px; color:var(--text-dim); transition:color .2s ease, opacity .2s ease; }
+  .team-block.winner .team-prev-score{ color:var(--accent); opacity:1; }
 
   #target-wrap{ position:relative; margin-top:16px; }
   #target-label{ display:flex; justify-content:space-between; font-size:11.5px; color:var(--text-dim); font-weight:600; margin-bottom:6px; }
@@ -439,9 +484,11 @@
        tighter and the team name is allowed to wrap onto 2 lines
        instead of truncating, so the full team name still fits without
        needing the short code as a fallback. */
-    #teams-row{ grid-template-columns:1fr auto 1fr; gap:6px; text-align:center; }
-    .team-block, .team-block.right{ flex-direction:column; text-align:center; gap:6px; }
-    .team-logo{ width:36px; height:36px; font-size:13px; border-radius:10px; }
+    #teams-row{ grid-template-columns:1fr auto 1fr; gap:8px; text-align:center; }
+    .team-block, .team-block.right{ flex-direction:column; text-align:center; gap:7px; }
+    .team-logo{ width:40px; height:40px; font-size:14px; border-radius:11px; box-shadow:0 3px 9px rgba(0,0,0,.16); }
+    .team-block.winner .team-logo{ box-shadow:0 0 0 2.5px var(--accent-soft), 0 3px 9px rgba(0,0,0,.18); }
+    #main-score.result-margin{ padding:7px 13px; font-size:11.5px; }
     .team-name{
       font-size:12px; line-height:1.25; white-space:normal; text-overflow:clip;
       display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
@@ -848,7 +895,7 @@
       <div class="meta-line">
         <span class="chip" id="chip-format">—</span>
         <span class="chip" id="chip-venue" style="display:none;"></span>
-        <span class="chip" id="chip-tournament" style="display:none;"></span>
+        <span class="chip tournament" id="chip-tournament" style="display:none;"></span>
       </div>
       <div class="meta-line">
         <span class="chip live" id="chip-status"><span class="lv-dot"></span><span id="chip-status-text">LIVE</span></span>
@@ -861,7 +908,7 @@
         <div class="team-name-block">
           <div class="team-name" id="name-a">Team A</div>
           <div class="team-short" id="short-a">—</div>
-          <div class="team-prev-score tabnum" id="prev-score-a" style="display:none; font-size:12px; font-weight:700; opacity:.8; margin-top:2px;"></div>
+          <div class="team-prev-score tabnum" id="prev-score-a" style="display:none;"></div>
         </div>
       </div>
       <div id="score-center">
@@ -876,7 +923,7 @@
         <div class="team-name-block">
           <div class="team-name" id="name-b">Team B</div>
           <div class="team-short" id="short-b">—</div>
-          <div class="team-prev-score tabnum" id="prev-score-b" style="display:none; font-size:12px; font-weight:700; opacity:.8; margin-top:2px;"></div>
+          <div class="team-prev-score tabnum" id="prev-score-b" style="display:none;"></div>
         </div>
       </div>
     </div>
@@ -1871,15 +1918,23 @@ function renderFinalSnapshot(match, displayName){
   const prevA = document.getElementById('prev-score-a');
   const prevB = document.getElementById('prev-score-b');
   if(prevA){
-    prevA.style.display = ''; prevA.style.fontSize = '15px'; prevA.style.opacity = '1'; prevA.style.marginTop = '4px';
+    prevA.style.display = '';
     prevA.textContent = `${scoreA.runs||0}-${scoreA.wickets||0} (${scoreA.overs||'0.0'} ov)`;
   }
   if(prevB){
-    prevB.style.display = ''; prevB.style.fontSize = '15px'; prevB.style.opacity = '1'; prevB.style.marginTop = '4px';
+    prevB.style.display = '';
     prevB.textContent = `${scoreB.runs||0}-${scoreB.wickets||0} (${scoreB.overs||'0.0'} ov)`;
   }
   setText('main-score', winMarginText(match) || 'Match Completed');
   document.getElementById('main-score').classList.add('result-margin');
+  // Quiet accent ring/color on whichever side actually won — makes the
+  // result readable at a glance instead of both team blocks looking
+  // identical and the banner text being the only clue. No highlight for
+  // a tie or a still-unresolved result.
+  const blockA = document.getElementById('team-block-a');
+  const blockB = document.getElementById('team-block-b');
+  if(blockA) blockA.classList.toggle('winner', match.winningTeam === 'A');
+  if(blockB) blockB.classList.toggle('winner', match.winningTeam === 'B');
   const mainOversEl = document.getElementById('main-overs'); if(mainOversEl) mainOversEl.style.display = 'none';
   setText('batting-tag', '');
 
@@ -2130,6 +2185,8 @@ function renderHero(s){
   paintLogo('logo-b', B);
   document.getElementById('team-block-a').style.opacity = s.battingTeam === 'A' ? '1' : '.55';
   document.getElementById('team-block-b').style.opacity = s.battingTeam === 'B' ? '1' : '.55';
+  document.getElementById('team-block-a').classList.remove('winner');
+  document.getElementById('team-block-b').classList.remove('winner');
 
   setText('main-score', `${s.score.runs}-${s.score.wickets}`);
   document.getElementById('main-score').classList.remove('result-margin');
