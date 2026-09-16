@@ -355,7 +355,8 @@
     width:30px; height:30px; border-radius:8px; flex:none; display:flex; align-items:center; justify-content:center;
     color:#fff; font-weight:800; font-size:11.5px; box-shadow:0 2px 6px rgba(0,0,0,.15);
   }
-  .ph-clip-thumb.four{ background:#3b82f6; } .ph-clip-thumb.six{ background:#a855f7; } .ph-clip-thumb.wicket{ background:var(--wicket); }
+  .ph-clip-thumb.four{ background:#3b82f6; } .ph-clip-thumb.six{ background:#a855f7; } .ph-clip-thumb.wicket{ background:var(--wicket); } .ph-clip-thumb.other{ background:var(--text-dim); }
+  .ph-clip-thumb.other svg{ width:14px; height:14px; }
   .ph-clip-meta{ flex:1; min-width:0; }
   .ph-clip-match{ font-size:11px; font-weight:700; font-family:var(--font-display); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .ph-clip-sub{ font-size:10px; color:var(--text-dim); margin-top:1px; }
@@ -1262,8 +1263,8 @@ async function fetchTournamentPlayerClips(name){
 }
 
 function phClipCardHtml(c){
-  const cls = c.eventType === 'FOUR' ? 'four' : c.eventType === 'SIX' ? 'six' : 'wicket';
-  const label = c.eventType === 'FOUR' ? '4' : c.eventType === 'SIX' ? '6' : 'W';
+  const cls = c.eventType === 'FOUR' ? 'four' : c.eventType === 'SIX' ? 'six' : c.eventType === 'WICKET' ? 'wicket' : 'other';
+  const label = c.eventType === 'FOUR' ? '4' : c.eventType === 'SIX' ? '6' : c.eventType === 'WICKET' ? 'W' : CLIP_ICON;
   const matchLabel = `Match ${c.matchIndex || '?'}${c.opponent ? ' vs ' + c.opponent : ''}`;
   const overLabel = `Over ${c.over ?? '—'}.${c.ballInOver ?? ''}`;
   const sub = c.eventType === 'WICKET'
@@ -1340,7 +1341,7 @@ function safeFilePart(s){ return String(s||'').trim().replace(/[^a-zA-Z0-9]+/g, 
 // 'all'|'sixes'|'fours'|'dismissals'|'wickets' — every "Download All ___"
 // button in the panel funnels through here (sections 2-7).
 async function startPlayerCompile(name, category, triggerEl, progressWrap){
-  const suffixes = { all:'Complete_Tournament_Highlights', sixes:'All_Sixes_Tournament', fours:'All_Fours_Tournament', dismissals:'All_Dismissals_Tournament', wickets:'All_Bowling_Wickets_Tournament' };
+  const suffixes = { all:'Complete_Tournament_Highlights', sixes:'All_Sixes_Tournament', fours:'All_Fours_Tournament', dismissals:'All_Dismissals_Tournament', wickets:'All_Bowling_Wickets_Tournament', other:'All_Other_Clips_Tournament' };
   const filename = `${safeFilePart(name)}_${suffixes[category] || 'Highlights'}`;
   triggerEl.disabled = true;
   try{
@@ -1370,7 +1371,7 @@ async function openTournamentPlayerModal(name){
     return;
   }
 
-  const cats = (phData && phData.categories) || { sixes:[], fours:[], dismissals:[], wickets:[] };
+  const cats = (phData && phData.categories) || { sixes:[], fours:[], dismissals:[], wickets:[], other:[] };
   const totalClips = (phData && phData.totalClips) || 0;
 
   const parts = [];
@@ -1386,6 +1387,10 @@ async function openTournamentPlayerModal(name){
   parts.push(phCategorySectionHtml('Fours', cats.fours, 'fours'));
   parts.push(phCategorySectionHtml('Dismissals', cats.dismissals, 'dismissals'));
   parts.push(phCategorySectionHtml('Bowling Wickets', cats.wickets, 'wickets'));
+  // 🩹 FIX: general clips manually attached to an ordinary ball (not a
+  // six/four/wicket) now get their own section instead of being invisible
+  // here — see runPlayerClipsQuery / player-clips endpoint in server.js.
+  parts.push(phCategorySectionHtml('Other Clips', cats.other, 'other'));
   if(entries.length){
     parts.push(`<button class="ph-matches-toggle" id="ph-matches-toggle">Tournament Matches (${entries.length}) <span>▾</span></button>`);
     parts.push(`<div class="ph-matches-body" id="ph-matches-body">${entries.map(matchEntryHtml).join('')}</div>`);
