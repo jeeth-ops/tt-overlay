@@ -4479,6 +4479,155 @@ adminRouter.put('/cricket/match/:matchId/correct-bowler', async (req, res) => {
     }
 });
 
+// ================================================================
+// 🎯 BATSMAN CORRECTION (specific deliveries) — Owner-only
+//
+// Fixes the operator picking the wrong "new batsman" after a wicket, even
+// many overs after the fact. Same philosophy as correctBowlerForOvers()
+// above — edit the underlying ballsCollection deliveries, then let the
+// existing recalculation pipeline (buildLiveCardsFromBallsArray /
+// syncMatchRecordFromBalls) re-derive every batting/team stat from that —
+// but selected by exact delivery (a batsman's misattributed spell isn't
+// over-aligned the way a bowler's is), and with a MODE choice:
+//
+//   'transfer' (Keep Same Score) — only strikerKey/striker/strikerPlayerId
+//   change. Runs/kind stay exactly as recorded, so the team total and
+//   wicket count are structurally unchanged (they never depended on WHO
+//   the striker was), and X simply inherits Y's runs/balls/4s/6s on these
+//   deliveries.
+//
+//   'reset' (Reset Score) — same striker swap, but the BAT-credited portion
+//   of runs field on these deliveries is zeroed out first (a same
+//   Wide/No-ball/Bye/Leg-bye penalty, if any, is never touched — it was
+//   never the batsman's runs to begin with), so X starts these deliveries
+//   at 0 runs/0 balls-scored instead of inheriting Y's total. The
+//   dismissal itself (if one of these deliveries is the wicket ball) is
+//   never touched in either mode — no wicket is created, moved or removed.
+// ================================================================
+
+// A ball's bat-credited runs, zeroed for 'reset' mode — leaves Wd/Nb/B/LB
+// completely untouched (those runs were never this batsman's to begin
+// with) and preserves an existing dismissal exactly as recorded.
+function zeroBatRunsForReset(kind, runs) {
+    if (/^[0-6]$/.test(kind)) return { kind: '0', runs: 0 };       // plain off-the-bat delivery
+    if (kind === 'W') return { kind: 'W', runs: 0 };                // keep the wicket, wipe any completed run-out runs
+    return { kind, runs };                                          // Wd / Nb / B / LB — nothing to reset
+}
+
+function findBallsForBatsmanCorrection(allBalls, innings, ballIds, wrongBatsmanKey) {
+    const idSet = new Set(ballIds.map(String));
+    return allBalls.filter(b => (Number(b.innings) || 1) === Number(innings) && idSet.has(String(b._id)) && b.strikerKey === wrongBatsmanKey);
+}
+
+async function correctBatsmanForDeliveries(matchId, actorEmail, input, dryRun) {
+    if (!ballsCollection || !matchRecordsCollection) return { errors: ['Database not configured'] };
+    const innings = Number(input.innings) || 1;
+    const ballIds = Array.isArray(input.ballIds) ? input.ballIds.map(String) : [];
+    const mode = input.mode === 'reset' ? 'reset' : 'transfer';
+    const wrongBatsmanName = personName(input.wrongBatsman);
+    const correctBatsmanName = personName(input.correctBatsman);
+    if (!ballIds.length) return { errors: ['Select at least one affected delivery'] };
+    if (!wrongBatsmanName) return { errors: ['Select the wrongly selected batsman'] };
+    if (!correctBatsmanName) return { errors: ['Select the correct batsman'] };
+    if (playerKey(wrongBatsmanName) === playerKey(correctBatsmanName)) return { errors: ['Correct batsman is the same as the wrongly selected batsman'] };
+
+    const allBalls = await ballsCollection.find({ matchId }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
+    if (!allBalls.length) return { errors: ['No ball-by-ball log found for this match'] };
+
+    const wrongKey = playerKey(wrongBatsmanName);
+    const targets = findBallsForBatsmanCorrection(allBalls, innings, ballIds, wrongKey);
+    if (!targets.length) return { errors: [`No deliveries found for ${wrongBatsmanName} in the selected deliveries of innings ${innings}`] };
+
+    const ownerUid = targets[0].ownerUid;
+    const correctKey = playerKey(correctBatsmanName);
+    const correctPlayerId = ownerUid ? await resolvePlayerId(ownerUid, correctBatsmanName) : null;
+    const targetIds = new Set(targets.map(b => String(b._id)));
+
+    const correctedById = new Map();
+    targets.forEach(b => {
+        const { kind, runs } = mode === 'reset' ? zeroBatRunsForReset(b.kind, b.runs) : { kind: b.kind, runs: b.runs };
+        correctedById.set(String(b._id), {
+            ...b, kind, runs,
+            striker: correctBatsmanName, strikerKey: correctKey, strikerPlayerId: correctPlayerId,
+            correctionOf: b.correctionOf || b._id,
+            correctedAt: Date.now(), correctedBy: actorEmail || null
+        });
+    });
+
+    const simulated = allBalls.map(b => targetIds.has(String(b._id)) ? correctedById.get(String(b._id)) : b);
+    const errors = validateCorrectedBalls(simulated);
+    const before = buildLiveCardsFromBallsArray(allBalls);
+    const after = buildLiveCardsFromBallsArray(simulated);
+
+    // Advisory strike-rotation check, same pattern correctDelivery() uses —
+    // a Reset Score correction changes runs actually run, which can shift
+    // who should be on strike for later balls in this innings.
+    const beforeInnings = allBalls.filter(b => (b.innings || 1) === innings);
+    const afterInnings = simulated.filter(b => (b.innings || 1) === innings);
+    const issuesBefore = new Set(findStrikeInconsistencies(beforeInnings).map(strikeIssueKey));
+    const strikeReviewNeeded = findStrikeInconsistencies(afterInnings).filter(i => !issuesBefore.has(strikeIssueKey(i)));
+
+    const result = {
+        before: { cards: before, balls: targets },
+        after: { cards: after, balls: targets.map(b => correctedById.get(String(b._id))) },
+        affectedCount: targets.length,
+        mode, wrongBatsman: wrongBatsmanName, correctBatsman: correctBatsmanName, innings,
+        strikeReviewNeeded, errors
+    };
+    if (errors.length || dryRun) return result;
+
+    const bulkOps = targets.map(b => ({ replaceOne: { filter: { _id: b._id }, replacement: correctedById.get(String(b._id)) } }));
+    await ballsCollection.bulkWrite(bulkOps);
+
+    if (ownerUid) await syncMatchRecordFromBalls(ownerUid, matchId);
+
+    // Clips keep their identity (same Cloudflare video/clip id) and follow
+    // onto the corrected batsman — never deleted, re-uploaded or duplicated.
+    if (clipsCollection && targets.length) {
+        clipsCollection.updateMany(
+            { matchId, innings, strikerKey: wrongKey, $or: targets.map(b => ({ over: b.over, ballInOver: b.ballInOver })) },
+            { $set: { strikerName: correctBatsmanName, strikerKey: correctKey } }
+        ).catch(err => console.log('Clip resync after batsman correction error:', err));
+    }
+
+    return result;
+}
+
+// Dry-run preview — mirrors the bowler-correction preview above.
+adminRouter.post('/cricket/match/:matchId/correct-batsman/preview', async (req, res) => {
+    try {
+        const matchId = safeMatchId(req.params.matchId);
+        const result = await correctBatsmanForDeliveries(matchId, req.ownerEmail, req.body || {}, true);
+        if (result.errors && result.errors.length && !result.affectedCount) return res.status(400).json({ success: false, error: result.errors[0] });
+        res.json({ success: true, ...result });
+    } catch (err) {
+        console.log('Batsman correction preview error:', err);
+        res.status(500).json({ success: false, error: 'Could not preview batsman correction' });
+    }
+});
+
+// Save & Recalculate — logged as ONE atomic audit entry covering every
+// affected delivery, same as the bowler correction, so "Undo last change"
+// can restore all of them together.
+adminRouter.put('/cricket/match/:matchId/correct-batsman', async (req, res) => {
+    try {
+        const matchId = safeMatchId(req.params.matchId);
+        const result = await correctBatsmanForDeliveries(matchId, req.ownerEmail, req.body || {}, false);
+        if (result.errors && result.errors.length) return res.status(400).json({ success: false, error: result.errors[0] });
+        await logAuditAction(
+            req.ownerEmail, 'Owner batsman correction',
+            `Match ${matchId} — Innings ${result.innings} (${result.mode === 'reset' ? 'Reset Score' : 'Keep Same Score'}): ${result.wrongBatsman} → ${result.correctBatsman}`,
+            { balls: result.before.balls, wrongBatsman: result.wrongBatsman, correctBatsman: result.correctBatsman, innings: result.innings, mode: result.mode },
+            { balls: result.after.balls },
+            { matchId, ballIds: result.before.balls.map(b => String(b._id)) }
+        );
+        res.json({ success: true, ...result });
+    } catch (err) {
+        console.log('Batsman correction save error:', err);
+        res.status(500).json({ success: false, error: 'Could not save batsman correction' });
+    }
+});
+
 // Recent owner corrections for ONE match — powers the inline "Recent
 // corrections" panel on the public scorecard (owner view only; the route
 // itself is still gated by requireOwner via adminRouter.use above). Newest
@@ -4489,17 +4638,18 @@ adminRouter.get('/cricket/match/:matchId/history', async (req, res) => {
     try {
         const matchId = safeMatchId(req.params.matchId);
         const BOWLER_ACTIONS = new Set(['Owner bowler correction', 'Undo bowler correction']);
+        const BATSMAN_ACTIONS = new Set(['Owner batsman correction', 'Undo batsman correction']);
         const entries = await auditLogsCollection
-            .find({ matchId, action: { $in: ['Owner delivery correction', 'Undo delivery correction', 'Delete last delivery', 'Owner bowler correction', 'Undo bowler correction'] } })
+            .find({ matchId, action: { $in: ['Owner delivery correction', 'Undo delivery correction', 'Delete last delivery', 'Owner bowler correction', 'Undo bowler correction', 'Owner batsman correction', 'Undo batsman correction'] } })
             .sort({ timestamp: -1 }).limit(30).toArray();
         res.json({
             success: true,
             entries: entries.map(e => {
-                // A bowler correction's previousValue/newValue is
-                // { balls: [...], wrongBowler, correctBowler, innings, overs }
-                // — a different shape from every other action's single-ball
-                // before/after, so it gets its own summary field instead of
-                // trying to force it through the ball-shaped before/after.
+                // A bowler/batsman correction's previousValue/newValue is
+                // { balls: [...], wrong*, correct*, innings, ... } — a
+                // different shape from every other action's single-ball
+                // before/after, so each gets its own summary field instead
+                // of trying to force it through the ball-shaped before/after.
                 if (BOWLER_ACTIONS.has(e.action)) {
                     const src = e.previousValue || e.newValue || {};
                     return {
@@ -4509,6 +4659,19 @@ adminRouter.get('/cricket/match/:matchId/history', async (req, res) => {
                         bowlerCorrection: {
                             innings: src.innings, overs: src.overs || [],
                             wrongBowler: src.wrongBowler, correctBowler: src.correctBowler,
+                            affectedCount: (src.balls && src.balls.length) || 0
+                        }
+                    };
+                }
+                if (BATSMAN_ACTIONS.has(e.action)) {
+                    const src = e.previousValue || e.newValue || {};
+                    return {
+                        action: e.action,
+                        performedBy: e.performedBy,
+                        timestamp: e.timestamp,
+                        batsmanCorrection: {
+                            innings: src.innings, mode: src.mode || 'transfer',
+                            wrongBatsman: src.wrongBatsman, correctBatsman: src.correctBatsman,
                             affectedCount: (src.balls && src.balls.length) || 0
                         }
                     };
@@ -4543,11 +4706,11 @@ adminRouter.post('/cricket/match/:matchId/undo-last', async (req, res) => {
     if (!auditLogsCollection || !ballsCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     try {
         const matchId = safeMatchId(req.params.matchId);
-        // Looks at the two correction types together and undoes whichever
-        // happened most recently — a bulk "Correct Bowler" over-range action
-        // is otherwise indistinguishable from a single delivery correction
-        // to the owner clicking "Undo last change".
-        const lastEntry = await auditLogsCollection.find({ matchId, action: { $in: ['Owner delivery correction', 'Owner bowler correction'] } }).sort({ timestamp: -1 }).limit(1).next();
+        // Looks at all three correction types together and undoes whichever
+        // happened most recently — a bulk "Correct Bowler"/"Correct Batsman"
+        // action is otherwise indistinguishable from a single delivery
+        // correction to the owner clicking "Undo last change".
+        const lastEntry = await auditLogsCollection.find({ matchId, action: { $in: ['Owner delivery correction', 'Owner bowler correction', 'Owner batsman correction'] } }).sort({ timestamp: -1 }).limit(1).next();
         if (!lastEntry || !lastEntry.previousValue) return res.status(404).json({ success: false, error: 'No correction found to undo for this match' });
 
         // Bulk bowler correction — restore every affected delivery's
@@ -4569,6 +4732,34 @@ adminRouter.post('/cricket/match/:matchId/undo-last', async (req, res) => {
             await logAuditAction(
                 req.ownerEmail, 'Undo bowler correction',
                 `Match ${matchId} — Innings ${prev.innings} Over(s) ${(prev.overs || []).join(', ')}: ${prev.correctBowler} → ${prev.wrongBowler}`,
+                lastEntry.newValue || null, prev,
+                { matchId }
+            );
+            const cards = await buildLiveCardsFromBalls(matchId);
+            return res.json({ success: true, restoredCount: restoredBalls.length, cards });
+        }
+
+        // Bulk batsman correction — restore every affected delivery's
+        // pre-correction striker/runs together, as one atomic undo. Works
+        // for both modes: 'reset' balls simply go back to whatever
+        // kind/runs they had before the runs were zeroed out.
+        if (lastEntry.action === 'Owner batsman correction') {
+            const prev = lastEntry.previousValue;
+            const restoredBalls = prev && prev.balls;
+            if (!restoredBalls || !restoredBalls.length) return res.status(404).json({ success: false, error: 'Nothing to restore for that correction' });
+            const bulkOps = restoredBalls.map(b => ({ replaceOne: { filter: { _id: b._id }, replacement: b } }));
+            await ballsCollection.bulkWrite(bulkOps);
+            const ownerUid = restoredBalls[0].ownerUid;
+            if (ownerUid) await syncMatchRecordFromBalls(ownerUid, matchId);
+            if (clipsCollection) {
+                clipsCollection.updateMany(
+                    { matchId, innings: prev.innings, strikerKey: playerKey(prev.correctBatsman), $or: restoredBalls.map(b => ({ over: b.over, ballInOver: b.ballInOver })) },
+                    { $set: { strikerName: prev.wrongBatsman, strikerKey: playerKey(prev.wrongBatsman) } }
+                ).catch(err => console.log('Clip resync after batsman-correction undo error:', err));
+            }
+            await logAuditAction(
+                req.ownerEmail, 'Undo batsman correction',
+                `Match ${matchId} — Innings ${prev.innings}: ${prev.correctBatsman} → ${prev.wrongBatsman}`,
                 lastEntry.newValue || null, prev,
                 { matchId }
             );
