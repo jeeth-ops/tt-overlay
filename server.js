@@ -270,6 +270,11 @@ connectMongo();
 // for simplicity (paste-a-link, no OAuth popups) over that reliability.
 // ================================================================
 let driveClient = null;
+// Captured from the service account JSON at init — surfaced in error
+// messages / system-health so the owner knows exactly which email a
+// Drive file/folder needs to be shared with (see uploadClipToDrive and
+// the manual "Attach Clip" routes below).
+let DRIVE_SERVICE_ACCOUNT_EMAIL = null;
 function initDriveClient() {
     const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
     if (!raw) {
@@ -285,6 +290,7 @@ function initDriveClient() {
             ['https://www.googleapis.com/auth/drive']
         );
         driveClient = google.drive({ version: 'v3', auth });
+        DRIVE_SERVICE_ACCOUNT_EMAIL = creds.client_email;
         console.log('📁 Google Drive service account ready:', creds.client_email);
     } catch (err) {
         console.log('Drive credentials parse error:', err);
@@ -299,6 +305,18 @@ function extractDriveFolderId(link) {
     const trimmed = link.trim();
     const folderMatch = trimmed.match(/folders\/([a-zA-Z0-9_-]+)/);
     if (folderMatch) return folderMatch[1];
+    if (/^[a-zA-Z0-9_-]{10,}$/.test(trimmed)) return trimmed;
+    return null;
+}
+
+// Same idea as extractDriveFolderId above, but for a single FILE link
+// (…/file/d/<id>/view, …?id=<id>, or a bare file id) — used by the
+// manual "Attach Clip from Drive" route below.
+function extractDriveFileId(link) {
+    if (!link) return null;
+    const trimmed = link.trim();
+    const fileMatch = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) || trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+    if (fileMatch) return fileMatch[1];
     if (/^[a-zA-Z0-9_-]{10,}$/.test(trimmed)) return trimmed;
     return null;
 }
@@ -2669,89 +2687,14 @@ async function resolvePublicTournamentForHighlights(req, token) {
     return { doc, ownerUid: doc.ownerUid, leagueKey: doc.leagueKey, displayName: doc.displayName || '', matches };
 }
 
-// 🔑 THE ID MISMATCH FIX — the single most important function here.
-// A clip is stamped at capture time with the LIVE BROADCAST ROOM ID
-// (cutClip()/finalizeClip() above use the socket room), NOT with the
-// tournament match's own permanent matchId (a separate client-minted
-// UUID from ensureTournamentMatchId()). Querying clips by matchId alone
-// therefore returns NOTHING for tournament matches — the exact reason
-// cricket-scorecard.html has getClipMatchId() and score-match.html has
-// clipScopeOverride. Rather than pick one id and hope, we collect EVERY
-// id a clip for this tournament could legitimately carry:
-//   1. the match record's own matchId  (single matches, or clips ingested
-//      after the fact by ClipperHelper with the permanent id)
-//   2. the match record's saved roomId (the normal tournament case)
-//   3. the league doc's liveMatches[] roomId for that matchId — covers
-//      OLD match records saved before the roomId-backfill fix landed in
-//      POST /api/league/:name/match, which have roomId: null forever
-//   4. the league's current liveRoomId/liveMatchId pair — covers a match
-//      that is live RIGHT NOW and not yet saved with its roomId
-// ...then map each id back to the match it belongs to, so a clip found
-// under a roomId still reports the correct "Match N vs Opponent" label
-// and the correct chronological position. First registration wins, so a
-// stray duplicate id can never silently reassign a clip to another match.
-function buildTournamentClipIds(ctx) {
-    const idToIndex = new Map(); // clip's matchId field -> 0-based tournament match order
-    const idToMatch = new Map(); // clip's matchId field -> the saved match record
-    const register = (id, match, index) => {
-        if (id === null || id === undefined) return;
-        const key = String(id).trim();
-        if (!key || idToIndex.has(key)) return;
-        idToIndex.set(key, index);
-        idToMatch.set(key, match);
-    };
-
-    // matchId -> roomId from the league doc's live tracking (sources 3 & 4)
-    const liveRoomByMatchId = new Map();
-    const doc = ctx.doc || {};
-    (doc.liveMatches || []).forEach(lm => {
-        if (lm && lm.matchId && lm.roomId) liveRoomByMatchId.set(String(lm.matchId), lm.roomId);
-    });
-    if (doc.liveMatchId && doc.liveRoomId) liveRoomByMatchId.set(String(doc.liveMatchId), doc.liveRoomId);
-
-    ctx.matches.forEach((m, i) => {
-        register(m.matchId, m, i);
-        register(m.roomId, m, i);
-        register(liveRoomByMatchId.get(String(m.matchId)), m, i);
-    });
-
-    return { ids: [...idToIndex.keys()], idToIndex, idToMatch };
-}
-
-// 🔑 IDENTITY FIX #2 (section 9) — never match a player on the raw
-// display name alone. playerKey() already normalizes case and collapses
-// whitespace ("Karsh Kothari" === "Karsh  Kothari"), but a player can
-// ALSO have several nameKeys folded together under one playerId by
-// POST /api/players/:playerId/merge (e.g. "K Kothari" merged into
-// "Karsh Kothari"). Balls and clips keep whichever nameKey was live at
-// the time, so we expand to the full alias set before querying — this is
-// the same expansion nameKeysForPlayerId() does for the /api/players/*
-// routes, just entered from a name instead of a playerId. Falls back to
-// the plain nameKey whenever no profile exists, so nothing regresses.
-async function expandPlayerNameKeys(ownerUid, name) {
-    const pk = playerKey(name);
-    if (!pk) return [];
-    if (!playersCollection || !ownerUid) return [pk];
-    try {
-        const doc = await playersCollection.findOne({ ownerUid, nameKeys: pk }, { projection: { nameKeys: 1 } });
-        const aliases = (doc && Array.isArray(doc.nameKeys)) ? doc.nameKeys : [];
-        return [...new Set([pk, ...aliases.filter(Boolean)])];
-    } catch (err) {
-        console.log('Name-key expansion failed, using plain key:', err.message || err);
-        return [pk];
-    }
-}
-
 // Which opponent this player faced in one saved match — same lookup
 // score-tournament.html's own buildMatchEntry() already does client-side
 // for the per-match report (section 10: every clip keeps its match
 // context), ported here so server-built category lists can carry a
 // "Match N vs Opponent" label without an extra round trip per clip.
-// pkSet is the player's FULL alias set (see expandPlayerNameKeys), not a
-// single name key, so a merged player is still found in the card.
-function opponentLabelForPlayer(match, pkSet) {
+function opponentLabelForPlayer(match, pk) {
     if (!match) return '';
-    const inCard = (card) => (card || []).some(r => r && pkSet.has(playerKey(r.name)));
+    const inCard = (card) => (card || []).some(r => r && playerKey(r.name) === pk);
     let teamKey = null;
     if (inCard(match.battingCard && match.battingCard.A) || inCard(match.bowlingCard && match.bowlingCard.A)) teamKey = 'A';
     else if (inCard(match.battingCard && match.battingCard.B) || inCard(match.bowlingCard && match.bowlingCard.B)) teamKey = 'B';
@@ -2771,44 +2714,30 @@ app.get('/api/public/tournament/:token/players', async (req, res) => {
         if (ctx.httpError) return res.status(ctx.httpError).json({ success: false, error: ctx.message });
 
         const { topRuns, topWickets } = computeLeaderboards(ctx.matches);
-        // canonical pk (as it appears on the leaderboard) -> display name
-        const names = new Map();
+        const names = new Map(); // pk -> display name
         topRuns.forEach(r => names.set(playerKey(r.name), r.name));
         topWickets.forEach(r => names.set(playerKey(r.name), r.name));
-        const canonicalList = [...names.keys()];
-        const { ids } = buildTournamentClipIds(ctx); // matchId + roomId + live mapping
-        const counts = new Map(canonicalList.map(pk => [pk, { sixes: 0, fours: 0, dismissals: 0, wickets: 0 }]));
+        const matchIds = ctx.matches.map(m => m.matchId);
+        const pkList = [...names.keys()];
+        const counts = new Map(pkList.map(pk => [pk, { sixes: 0, fours: 0, dismissals: 0, wickets: 0 }]));
 
-        if (ids.length && canonicalList.length) {
-            // Expand every leaderboard name to its merged alias set, then
-            // build alias -> canonical so a clip stamped with an old alias
-            // still counts toward the one player shown in the UI.
-            const aliasToCanonical = new Map();
-            await Promise.all(canonicalList.map(async pk => {
-                const keys = await expandPlayerNameKeys(ctx.ownerUid, names.get(pk));
-                keys.forEach(k => { if (!aliasToCanonical.has(k)) aliasToCanonical.set(k, pk); });
-            }));
-            const allKeys = [...aliasToCanonical.keys()];
-
+        if (matchIds.length && pkList.length) {
             const clips = await clipsCollection.find({
-                matchId: { $in: ids },
-                $or: [{ strikerKey: { $in: allKeys } }, { bowlerKey: { $in: allKeys } }]
+                matchId: { $in: matchIds },
+                $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }]
             }, { projection: { matchId: 1, strikerKey: 1, bowlerKey: 1, eventType: 1 } }).toArray();
-
             clips.forEach(c => {
-                const strikerPk = aliasToCanonical.get(c.strikerKey);
-                if (strikerPk && counts.has(strikerPk)) {
-                    const row = counts.get(strikerPk);
+                if (counts.has(c.strikerKey)) {
+                    const row = counts.get(c.strikerKey);
                     if (c.eventType === 'SIX') row.sixes++;
                     else if (c.eventType === 'FOUR') row.fours++;
                     else if (c.eventType === 'WICKET') row.dismissals++;
                 }
-                const bowlerPk = aliasToCanonical.get(c.bowlerKey);
-                if (bowlerPk && counts.has(bowlerPk) && c.eventType === 'WICKET') counts.get(bowlerPk).wickets++;
+                if (counts.has(c.bowlerKey) && c.eventType === 'WICKET') counts.get(c.bowlerKey).wickets++;
             });
         }
 
-        const players = canonicalList.map(pk => {
+        const players = pkList.map(pk => {
             const c = counts.get(pk);
             return { name: names.get(pk), playerKey: pk, clipCounts: c, totalClips: c.sixes + c.fours + c.dismissals + c.wickets };
         }).sort((a, b) => b.totalClips - a.totalClips);
@@ -2832,81 +2761,41 @@ app.get('/api/public/tournament/:token/player-clips', async (req, res) => {
         const ctx = await resolvePublicTournamentForHighlights(req, req.params.token);
         if (ctx.httpError) return res.status(ctx.httpError).json({ success: false, error: ctx.message });
         const name = String(req.query.name || '').trim();
-        const pkList = await expandPlayerNameKeys(ctx.ownerUid, name);
-        if (!pkList.length) return res.status(400).json({ success: false, error: 'name required' });
-        const pkSet = new Set(pkList);
+        const pk = playerKey(name);
+        if (!pk) return res.status(400).json({ success: false, error: 'name required' });
 
-        // Every id a clip for this tournament could carry (matchId, roomId,
-        // live-room mapping) — see buildTournamentClipIds for why.
-        const { ids, idToIndex, idToMatch } = buildTournamentClipIds(ctx);
+        const matchIds = ctx.matches.map(m => m.matchId);
+        const matchIndex = new Map(ctx.matches.map((m, i) => [m.matchId, i])); // tournament order — getLeagueMatches sorts by savedAt asc
+        const matchById = new Map(ctx.matches.map(m => [m.matchId, m]));
 
-        const clips = ids.length
-            ? await clipsCollection.find({
-                matchId: { $in: ids },
-                $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }]
-              }).toArray()
+        const clips = matchIds.length
+            ? await clipsCollection.find({ matchId: { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }] }).toArray()
             : [];
 
         function decorate(c) {
             const s = serializeClip(c);
-            const key = String(c.matchId);
-            s.matchIndex = idToIndex.has(key) ? idToIndex.get(key) + 1 : null; // 1-based "Match N"
-            s.opponent = opponentLabelForPlayer(idToMatch.get(key), pkSet);
+            s.matchIndex = matchIndex.has(c.matchId) ? matchIndex.get(c.matchId) + 1 : null; // 1-based "Match N"
+            s.opponent = opponentLabelForPlayer(matchById.get(c.matchId), pk);
             return s;
         }
         const order = (a, b) => (a.matchIndex || 0) - (b.matchIndex || 0) || (a.innings || 1) - (b.innings || 1) || (a.over || 0) - (b.over || 0) || (a.ballInOver || 0) - (b.ballInOver || 0);
 
-        // A clip can legitimately satisfy more than one bucket (a bowler who
-        // is also the striker is impossible, but a doc reached via two ids
-        // is not) — dedupe per bucket by clipId so nothing is listed twice
-        // (section 16: use the stable clip/event ID, never filenames).
-        const seen = { sixes: new Set(), fours: new Set(), dismissals: new Set(), wickets: new Set() };
         const sixes = [], fours = [], dismissals = [], wickets = [];
-        const pushOnce = (arr, bucket, c) => {
-            const id = c._id.toString();
-            if (seen[bucket].has(id)) return;
-            seen[bucket].add(id);
-            arr.push(decorate(c));
-        };
         clips.forEach(c => {
-            if (pkSet.has(c.strikerKey)) {
-                if (c.eventType === 'SIX') pushOnce(sixes, 'sixes', c);
-                else if (c.eventType === 'FOUR') pushOnce(fours, 'fours', c);
-                else if (c.eventType === 'WICKET') pushOnce(dismissals, 'dismissals', c);
-            }
-            if (pkSet.has(c.bowlerKey) && c.eventType === 'WICKET') pushOnce(wickets, 'wickets', c);
+            if (c.strikerKey === pk && c.eventType === 'SIX') sixes.push(decorate(c));
+            else if (c.strikerKey === pk && c.eventType === 'FOUR') fours.push(decorate(c));
+            else if (c.strikerKey === pk && c.eventType === 'WICKET') dismissals.push(decorate(c));
+            if (c.bowlerKey === pk && c.eventType === 'WICKET') wickets.push(decorate(c));
         });
         [sixes, fours, dismissals, wickets].forEach(arr => arr.sort(order));
 
-        const performance = computeSinglePlayerRollup(ctx.matches, pkList); // section 20 — same rollup the leaderboard itself is built from
-
-        // 🔍 ?debug=1 — why is a category empty? Tells you, without touching
-        // the database by hand, whether the tournament has ANY clips under
-        // these ids at all and which name keys the clips actually carry, so
-        // an empty panel can be diagnosed as "no clips recorded" vs "clips
-        // exist but are stamped with a different player key / match id".
-        let debug;
-        if (req.query.debug) {
-            const anyClips = ids.length
-                ? await clipsCollection.find({ matchId: { $in: ids } }, { projection: { matchId: 1, strikerKey: 1, bowlerKey: 1, eventType: 1 } }).limit(400).toArray()
-                : [];
-            debug = {
-                resolvedNameKeys: pkList,
-                tournamentIdsSearched: ids,
-                matchesInTournament: ctx.matches.length,
-                clipsFoundUnderTheseIds: anyClips.length,
-                distinctStrikerKeys: [...new Set(anyClips.map(c => c.strikerKey).filter(Boolean))].slice(0, 50),
-                distinctBowlerKeys: [...new Set(anyClips.map(c => c.bowlerKey).filter(Boolean))].slice(0, 50),
-                distinctClipMatchIds: [...new Set(anyClips.map(c => String(c.matchId)))].slice(0, 50)
-            };
-        }
+        const performance = computeSinglePlayerRollup(ctx.matches, pk); // section 20 — same rollup the leaderboard itself is built from
 
         res.json({
-            success: true, name, playerKey: pkList[0], nameKeys: pkList,
+            success: true, name, playerKey: pk,
             performance,
             categories: { sixes, fours, dismissals, wickets },
-            totalClips: sixes.length + fours.length + dismissals.length + wickets.length,
-            ...(debug ? { debug } : {})
+            totalClips: sixes.length + fours.length + dismissals.length + wickets.length
         });
     } catch (err) {
         console.log('Tournament player-clips fetch error:', err);
@@ -2925,32 +2814,24 @@ app.post('/api/public/tournament/:token/highlights/compile', async (req, res) =>
         const ctx = await resolvePublicTournamentForHighlights(req, req.params.token);
         if (ctx.httpError) return res.status(ctx.httpError).json({ success: false, error: ctx.message });
         const name = String((req.body && req.body.name) || '').trim();
-        const pkList = await expandPlayerNameKeys(ctx.ownerUid, name);
-        if (!pkList.length) return res.status(400).json({ success: false, error: 'name required' });
-        const pkSet = new Set(pkList);
+        const pk = playerKey(name);
+        if (!pk) return res.status(400).json({ success: false, error: 'name required' });
         const category = String((req.body && req.body.category) || 'all').toLowerCase();
 
-        const { ids, idToIndex } = buildTournamentClipIds(ctx);
-        if (!ids.length) return res.json({ success: true, empty: true, message: 'No highlights available for this player yet.' });
+        const matchIds = ctx.matches.map(m => m.matchId);
+        const matchIndex = new Map(ctx.matches.map((m, i) => [m.matchId, i]));
+        if (!matchIds.length) return res.json({ success: true, empty: true, message: 'No highlights available for this player yet.' });
 
-        const clips = await clipsCollection.find({
-            matchId: { $in: ids },
-            $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }]
-        }).toArray();
-
-        const isStriker = c => pkSet.has(c.strikerKey);
-        const isBowler = c => pkSet.has(c.bowlerKey);
+        const clips = await clipsCollection.find({ matchId: { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }] }).toArray();
         let selected;
-        if (category === 'sixes') selected = clips.filter(c => isStriker(c) && c.eventType === 'SIX');
-        else if (category === 'fours') selected = clips.filter(c => isStriker(c) && c.eventType === 'FOUR');
-        else if (category === 'dismissals') selected = clips.filter(c => isStriker(c) && c.eventType === 'WICKET');
-        else if (category === 'wickets') selected = clips.filter(c => isBowler(c) && c.eventType === 'WICKET');
-        else selected = clips.filter(c => (isStriker(c) && ['SIX', 'FOUR', 'WICKET'].includes(c.eventType)) || (isBowler(c) && c.eventType === 'WICKET'));
+        if (category === 'sixes') selected = clips.filter(c => c.strikerKey === pk && c.eventType === 'SIX');
+        else if (category === 'fours') selected = clips.filter(c => c.strikerKey === pk && c.eventType === 'FOUR');
+        else if (category === 'dismissals') selected = clips.filter(c => c.strikerKey === pk && c.eventType === 'WICKET');
+        else if (category === 'wickets') selected = clips.filter(c => c.bowlerKey === pk && c.eventType === 'WICKET');
+        else selected = clips.filter(c => (c.strikerKey === pk && ['SIX', 'FOUR', 'WICKET'].includes(c.eventType)) || (c.bowlerKey === pk && c.eventType === 'WICKET'));
 
         if (!selected.length) return res.json({ success: true, empty: true, message: 'No highlights available for this player yet.' });
-        // Tournament position comes from whichever id the clip is stamped
-        // with (matchId or roomId) — runCompileJob sorts on _tourneySeq first.
-        selected.forEach(c => { c._tourneySeq = idToIndex.get(String(c.matchId)) || 0; });
+        selected.forEach(c => { c._tourneySeq = matchIndex.get(c.matchId) || 0; });
 
         const jobId = newCompileJobId();
         compileJobs.set(jobId, {
@@ -3132,36 +3013,27 @@ app.post('/api/public/tournament/:token/highlights/compile-all-players', async (
     try {
         const ctx = await resolvePublicTournamentForHighlights(req, req.params.token);
         if (ctx.httpError) return res.status(ctx.httpError).json({ success: false, error: ctx.message });
-        const { ids, idToIndex } = buildTournamentClipIds(ctx);
-        if (!ids.length) return res.json({ success: true, empty: true, message: 'No highlights available for this tournament yet.' });
+        const matchIds = ctx.matches.map(m => m.matchId);
+        if (!matchIds.length) return res.json({ success: true, empty: true, message: 'No highlights available for this tournament yet.' });
+        const matchIndex = new Map(ctx.matches.map((m, i) => [m.matchId, i]));
 
         const { topRuns, topWickets } = computeLeaderboards(ctx.matches);
-        const names = new Map(); // canonical pk -> display name
+        const names = new Map();
         topRuns.forEach(r => names.set(playerKey(r.name), r.name));
         topWickets.forEach(r => names.set(playerKey(r.name), r.name));
-        const canonicalList = [...names.keys()];
-        if (!canonicalList.length) return res.json({ success: true, empty: true, message: 'No players found for this tournament yet.' });
-
-        // alias nameKey -> canonical pk, so merged identities land in one file
-        const aliasToCanonical = new Map();
-        await Promise.all(canonicalList.map(async pk => {
-            const keys = await expandPlayerNameKeys(ctx.ownerUid, names.get(pk));
-            keys.forEach(k => { if (!aliasToCanonical.has(k)) aliasToCanonical.set(k, pk); });
-        }));
-        const allKeys = [...aliasToCanonical.keys()];
+        const pkList = [...names.keys()];
+        if (!pkList.length) return res.json({ success: true, empty: true, message: 'No players found for this tournament yet.' });
 
         const clips = await clipsCollection.find({
-            matchId: { $in: ids },
-            $or: [{ strikerKey: { $in: allKeys }, eventType: { $in: ['SIX', 'FOUR', 'WICKET'] } }, { bowlerKey: { $in: allKeys }, eventType: 'WICKET' }]
+            matchId: { $in: matchIds },
+            $or: [{ strikerKey: { $in: pkList }, eventType: { $in: ['SIX', 'FOUR', 'WICKET'] } }, { bowlerKey: { $in: pkList }, eventType: 'WICKET' }]
         }).toArray();
-        clips.forEach(c => { c._tourneySeq = idToIndex.get(String(c.matchId)) || 0; });
+        clips.forEach(c => { c._tourneySeq = matchIndex.get(c.matchId) || 0; });
 
-        const byPlayer = new Map(canonicalList.map(pk => [pk, []]));
+        const byPlayer = new Map(pkList.map(pk => [pk, []]));
         clips.forEach(c => {
-            const strikerPk = aliasToCanonical.get(c.strikerKey);
-            if (strikerPk && byPlayer.has(strikerPk) && ['SIX', 'FOUR', 'WICKET'].includes(c.eventType)) byPlayer.get(strikerPk).push(c);
-            const bowlerPk = aliasToCanonical.get(c.bowlerKey);
-            if (bowlerPk && byPlayer.has(bowlerPk) && c.eventType === 'WICKET' && bowlerPk !== strikerPk) byPlayer.get(bowlerPk).push(c);
+            if (names.has(c.strikerKey) && ['SIX', 'FOUR', 'WICKET'].includes(c.eventType)) byPlayer.get(c.strikerKey).push(c);
+            if (names.has(c.bowlerKey) && c.eventType === 'WICKET' && c.bowlerKey !== c.strikerKey) byPlayer.get(c.bowlerKey).push(c);
         });
 
         const jobId = newCompileJobId();
@@ -3888,6 +3760,170 @@ adminRouter.delete('/clips/:clipId', async (req, res) => {
     } catch (err) {
         console.log('Owner clip delete error:', err);
         res.status(500).json({ success: false, error: 'Could not delete clip' });
+    }
+});
+
+// ================================================================
+// 📎 MANUAL CLIP ATTACH (Owner-only) — for a ball whose data is correct
+// but whose auto-cut clip never made it anywhere: missed by both R2 and
+// Drive (or wasn't cut at all), yet the .mp4 exists somewhere — either
+// sitting on the owner's own laptop, or already uploaded to their own
+// Google Drive.
+//
+// Both routes below feed the file into the EXACT SAME finalizeClip()
+// pipeline every other clip goes through (player/ball linking + R2 +
+// Drive upload) — so the attached clip shows up in "clips by player",
+// highlight reels, the Fall of Wickets strip, etc. exactly like a
+// normally auto-cut clip. No separate/parallel code path to keep in sync.
+//
+// Ball identification: pass over/ballInOver/innings (numbers). These are
+// matched against ballsCollection by finalizeClip's own findCanonicalBall()
+// call — the same lookup every other clip already uses — so
+// striker/bowler/dismissal/playerIds are resolved automatically from the
+// real scored ball. striker/bowler/nonStriker/battingTeam/runs/dismissal
+// below are only a fallback for the rare case no matching ball is found.
+// ================================================================
+function parseAttachBallMeta(src) {
+    const num = (v) => (v === undefined || v === null || v === '' ? undefined : Number(v));
+    const dismissalType = src.dismissalType;
+    const fielder = src.fielder;
+    return {
+        over: num(src.over), ballInOver: num(src.ballInOver), innings: num(src.innings),
+        striker: src.striker || undefined, bowler: src.bowler || undefined, nonStriker: src.nonStriker || undefined,
+        battingTeam: src.battingTeam || undefined, runs: num(src.runs),
+        dismissal: (dismissalType || fielder) ? { type: dismissalType || 'Out', fielder: fielder || undefined } : undefined
+    };
+}
+
+// 🔒 In-process lock, keyed by exactly the ball an attach is targeting
+// (matchId+innings+over+ballInOver+eventType) — guards against two
+// owner devices/tabs attaching to the SAME event at the same instant
+// and ending up with two clip docs for one ball. A server restart clears
+// it, which is fine: it only needs to hold for the few seconds one
+// attach request takes, not survive across restarts.
+const attachLocks = new Set();
+function attachLockKey({ matchId, innings, over, ballInOver, eventType }) {
+    return `${matchId}::${innings ?? '_'}::${over ?? '_'}::${ballInOver ?? '_'}::${eventType}`;
+}
+
+// Looks for a clip that already covers this exact ball/event — the same
+// (matchId, innings, over, ballInOver) triple every clip doc already
+// carries (see finalizeClip above). Used to block accidental duplicate
+// attachment (spec section 12) unless the owner explicitly asks to replace.
+async function findExistingClipForBall({ matchId, innings, over, ballInOver }) {
+    if (!clipsCollection || over === undefined || ballInOver === undefined) return null;
+    const query = { matchId };
+    if (innings !== undefined) query.innings = innings;
+    query.over = over;
+    query.ballInOver = ballInOver;
+    return clipsCollection.findOne(query);
+}
+
+// POST /api/admin/clips/attach/upload?matchId=...&eventType=FOUR|SIX|WICKET
+//      &over=&ballInOver=&innings=&striker=&bowler=&nonStriker=&battingTeam=
+//      &runs=&dismissalType=&fielder=&replace=true
+// Body: raw video bytes — the owner picks an .mp4 straight from their laptop.
+adminRouter.post('/clips/attach/upload', express.raw({ type: '*/*', limit: '80mb' }), async (req, res) => {
+    const matchId = safeMatchId(req.query.matchId);
+    const eventType = String(req.query.eventType || 'CLIP').toUpperCase();
+    if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
+    if (!req.body || !req.body.length) return res.status(400).json({ success: false, error: 'Empty clip file' });
+
+    const ballMeta = parseAttachBallMeta(req.query);
+    const replace = String(req.query.replace || '').toLowerCase() === 'true';
+    const lockKey = attachLockKey({ matchId, innings: ballMeta.innings, over: ballMeta.over, ballInOver: ballMeta.ballInOver, eventType });
+    if (attachLocks.has(lockKey)) return res.status(409).json({ success: false, error: 'Another attach is already in progress for this ball — try again in a moment' });
+    attachLocks.add(lockKey);
+
+    try {
+        const existing = await findExistingClipForBall({ matchId, innings: ballMeta.innings, over: ballMeta.over, ballInOver: ballMeta.ballInOver });
+        if (existing && !replace) {
+            return res.status(409).json({ success: false, error: 'This ball already has a clip attached', existingClipId: existing._id.toString() });
+        }
+        if (existing && replace) {
+            await deleteClipStorage(existing);
+            await clipsCollection.deleteOne({ _id: existing._id });
+        }
+
+        const clipDir = path.join(CLIPS_DIR, matchId);
+        if (!fs.existsSync(clipDir)) fs.mkdirSync(clipDir, { recursive: true });
+        const outFile = path.join(clipDir, `${eventType}_manual_${Date.now()}.mp4`);
+        await new Promise((resolve, reject) => fs.writeFile(outFile, req.body, (err) => err ? reject(err) : resolve()));
+        await finalizeClip({ matchId, eventType, eventTimestamp: Date.now(), ballMeta, uid: req.ownerUid, outFile });
+        await logAuditAction(req.ownerEmail, replace ? 'Manually replaced clip (upload)' : 'Manually attached clip (upload)', matchId, null, ballMeta);
+        res.json({ success: true });
+    } catch (err) {
+        console.log('Manual clip attach (upload) error:', err.message || err);
+        res.status(500).json({ success: false, error: 'Could not attach clip' });
+    } finally {
+        attachLocks.delete(lockKey);
+    }
+});
+
+// POST /api/admin/clips/attach/drive
+// Body (JSON): { matchId, eventType, driveLink (or driveFileId), over,
+//   ballInOver, innings, striker, bowler, nonStriker, battingTeam, runs,
+//   dismissalType, fielder, replace }
+// For a clip that already made it to Google Drive but was never linked to
+// its ball in the scorecard. The Drive file must be shared (Viewer is
+// enough) with the service account email logged at startup — see
+// DRIVE_SERVICE_ACCOUNT_EMAIL — or set to "Anyone with the link can view",
+// same requirement as the existing "Connect Google Drive" folder feature.
+adminRouter.post('/clips/attach/drive', async (req, res) => {
+    const body = req.body || {};
+    const matchId = safeMatchId(body.matchId);
+    const eventType = String(body.eventType || 'CLIP').toUpperCase();
+    const fileId = extractDriveFileId(body.driveFileId || body.driveLink);
+    if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
+    if (!fileId) return res.status(400).json({ success: false, error: 'A valid Drive file link or file ID is required' });
+    if (!driveClient) return res.status(503).json({ success: false, error: 'Drive is not configured on the server' });
+
+    const ballMeta = parseAttachBallMeta(body);
+    const replace = body.replace === true || String(body.replace || '').toLowerCase() === 'true';
+    const lockKey = attachLockKey({ matchId, innings: ballMeta.innings, over: ballMeta.over, ballInOver: ballMeta.ballInOver, eventType });
+    if (attachLocks.has(lockKey)) return res.status(409).json({ success: false, error: 'Another attach is already in progress for this ball — try again in a moment' });
+    attachLocks.add(lockKey);
+
+    let outFile = null;
+    try {
+        const existing = await findExistingClipForBall({ matchId, innings: ballMeta.innings, over: ballMeta.over, ballInOver: ballMeta.ballInOver });
+        if (existing && !replace) {
+            return res.status(409).json({ success: false, error: 'This ball already has a clip attached', existingClipId: existing._id.toString() });
+        }
+
+        const clipDir = path.join(CLIPS_DIR, matchId);
+        if (!fs.existsSync(clipDir)) fs.mkdirSync(clipDir, { recursive: true });
+        outFile = path.join(clipDir, `${eventType}_manual_${Date.now()}.mp4`);
+        const driveRes = await driveClient.files.get({ fileId, alt: 'media' }, { responseType: 'stream' });
+        await new Promise((resolve, reject) => {
+            const dest = fs.createWriteStream(outFile);
+            driveRes.data.on('error', reject);
+            dest.on('error', reject);
+            dest.on('finish', resolve);
+            driveRes.data.pipe(dest);
+        });
+
+        // Only remove the OLD clip record once the new file has downloaded
+        // successfully — if the Drive fetch above had failed, the existing
+        // clip stays exactly as it was (spec section 15: never leave the
+        // event with no clip because of a failed replace).
+        if (existing && replace) {
+            await deleteClipStorage(existing);
+            await clipsCollection.deleteOne({ _id: existing._id });
+        }
+
+        await finalizeClip({ matchId, eventType, eventTimestamp: Date.now(), ballMeta, uid: req.ownerUid, outFile });
+        await logAuditAction(req.ownerEmail, replace ? 'Manually replaced clip (Drive)' : 'Manually attached clip (Drive)', matchId, null, { fileId, ...ballMeta });
+        res.json({ success: true });
+    } catch (err) {
+        console.log('Manual clip attach (Drive) error:', err.message || err);
+        if (outFile) fs.unlink(outFile, () => {});
+        res.status(400).json({
+            success: false,
+            error: `Could not read that Drive file — share it (Viewer) with ${DRIVE_SERVICE_ACCOUNT_EMAIL || 'the Drive service account'}, or set it to "Anyone with the link can view", then try again.`
+        });
+    } finally {
+        attachLocks.delete(lockKey);
     }
 });
 
@@ -4761,6 +4797,7 @@ adminRouter.get('/system-health', async (req, res) => {
         websocketConnections: io.engine.clientsCount,
         activeRecordingSessions: Object.keys(recordingSessions).length,
         driveUploadConfigured: !!driveClient,
+        driveServiceAccountEmail: DRIVE_SERVICE_ACCOUNT_EMAIL || null,
         memoryUsageMb: Math.round(process.memoryUsage().rss / 1024 / 1024)
     });
 });
