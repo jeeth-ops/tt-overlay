@@ -761,6 +761,59 @@
     100%{ transform:scale(1); color:inherit; }
   }
   .val-pop{ display:inline-block; animation:valPop .38s cubic-bezier(.22,1,.36,1); }
+
+  /* ===== DOWNLOAD HIGHLIGHTS — Player/Team/Full-match MP4 compilation ==== */
+  .hl-team-block{ margin-bottom:16px; }
+  .hl-team-block:last-child{ margin-bottom:0; }
+  .hl-team-head{ display:flex; align-items:center; gap:8px; font-size:12.5px; font-weight:700; margin-bottom:8px; }
+  .hl-team-head .hl-dot{ width:8px; height:8px; border-radius:99px; flex:none; }
+  .hl-btn-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .hl-btn{
+    padding:11px 10px; border-radius:var(--radius-md); border:1px solid var(--border);
+    background:var(--panel-2); color:var(--text); font-size:12px; font-weight:700; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; gap:6px; text-align:center; line-height:1.25;
+    transition:transform .12s ease, background .12s ease;
+  }
+  .hl-btn:active{ transform:scale(.96); }
+  .hl-btn svg{ width:14px; height:14px; flex:none; }
+  .hl-btn.hl-primary{ background:var(--accent); color:var(--accent-contrast); border-color:transparent; grid-column:1 / -1; }
+  .hl-btn.hl-full{
+    grid-column:1 / -1; padding:14px 10px; font-size:13.5px; margin-top:14px;
+    background:var(--accent); color:var(--accent-contrast); border:none;
+  }
+  .hl-divider{ height:1px; background:var(--border-soft); margin:16px 0; }
+  #compile-modal-backdrop{
+    position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:125; display:flex;
+    align-items:center; justify-content:center; padding:16px;
+    opacity:0; pointer-events:none; transition:opacity .22s ease;
+  }
+  #compile-modal-backdrop.open{ opacity:1; pointer-events:auto; }
+  #compile-modal{
+    width:min(400px, 100%); background:var(--panel); border:1px solid var(--border); border-radius:var(--radius-lg);
+    box-shadow:0 24px 70px rgba(0,0,0,.5); padding:24px 22px; text-align:center;
+    transform:scale(.92) translateY(10px); transition:transform .3s cubic-bezier(.34,1.56,.64,1);
+  }
+  #compile-modal-backdrop.open #compile-modal{ transform:scale(1) translateY(0); }
+  .cm-title{ font-family:var(--font-display); font-size:15px; font-weight:700; margin-bottom:6px; }
+  .cm-msg{ font-size:12.5px; color:var(--text-dim); margin-bottom:16px; min-height:16px; }
+  .cm-bar-track{ height:8px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border-soft); overflow:hidden; margin-bottom:16px; }
+  .cm-bar-fill{ height:100%; border-radius:99px; background:var(--accent); width:0%; transition:width .35s ease; }
+  .cm-sub{ font-size:11px; color:var(--text-faint); margin-bottom:16px; }
+  .cm-actions{ display:flex; gap:8px; }
+  .cm-btn{ flex:1; padding:11px; border-radius:var(--radius-md); border:none; font-weight:700; font-size:13px; cursor:pointer; }
+  .cm-btn.cancel{ background:var(--panel-2); color:var(--text); border:1px solid var(--border); }
+  .cm-btn.download{ background:var(--accent); color:var(--accent-contrast); }
+  .cm-btn:active{ transform:scale(.97); }
+  .hl-player-download{
+    margin-top:14px; width:100%; padding:12px; border-radius:var(--radius-md); border:none;
+    background:var(--accent); color:var(--accent-contrast); font-weight:700; font-size:12.5px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; gap:7px;
+  }
+  .hl-player-download:active{ transform:scale(.97); }
+  @media (max-width:420px){
+    .hl-btn-grid{ grid-template-columns:1fr 1fr; }
+    .hl-btn{ font-size:11.5px; padding:10px 8px; }
+  }
 </style>
 </head>
 <body>
@@ -895,6 +948,34 @@
       </span>
     </div>
     <div id="highlights-list"><div class="empty-state">Loading highlights…</div></div>
+  </div>
+
+  <!-- DOWNLOAD HIGHLIGHTS — combines existing clips into one MP4 server-side
+       (see POST /api/highlights/compile in server.js). Purely a download
+       layer over the clips already shown above; nothing here recalculates
+       stats or changes what counts as a highlight. -->
+  <div class="card" id="highlights-download-card">
+    <div class="section-title"><span class="dash"></span>Download Highlights</div>
+    <div id="hl-team-a" class="hl-team-block">
+      <div class="hl-team-head"><span class="hl-dot" style="background:var(--accent);"></span><span id="hl-team-a-name">Team A</span> Highlights</div>
+      <div class="hl-btn-grid">
+        <button class="hl-btn hl-primary" data-hl-type="team" data-hl-team="A">Download All Team Highlights</button>
+        <button class="hl-btn" data-hl-type="sixes" data-hl-team="A">All Sixes</button>
+        <button class="hl-btn" data-hl-type="fours" data-hl-team="A">All Fours</button>
+        <button class="hl-btn" data-hl-type="wickets" data-hl-team="A">All Wickets</button>
+      </div>
+    </div>
+    <div class="hl-divider"></div>
+    <div id="hl-team-b" class="hl-team-block">
+      <div class="hl-team-head"><span class="hl-dot" style="background:var(--text-dim);"></span><span id="hl-team-b-name">Team B</span> Highlights</div>
+      <div class="hl-btn-grid">
+        <button class="hl-btn hl-primary" data-hl-type="team" data-hl-team="B">Download All Team Highlights</button>
+        <button class="hl-btn" data-hl-type="sixes" data-hl-team="B">All Sixes</button>
+        <button class="hl-btn" data-hl-type="fours" data-hl-team="B">All Fours</button>
+        <button class="hl-btn" data-hl-type="wickets" data-hl-team="B">All Wickets</button>
+      </div>
+    </div>
+    <button class="hl-btn hl-full" data-hl-type="full">Download Complete Match Highlights</button>
   </div>
 
   <!-- SCORECARD TABLES — batting/bowling, promoted right under Highlights
@@ -1070,6 +1151,22 @@
   </div>
 </div>
 
+<!-- COMPILE PROGRESS MODAL — shown while the server stitches several clips
+     into one MP4 (Preparing → Collecting → Combining → Download Ready).
+     The rest of the scorecard stays fully interactive while this polls. -->
+<div id="compile-modal-backdrop">
+  <div id="compile-modal">
+    <div class="cm-title" id="cm-title">Preparing highlights…</div>
+    <div class="cm-msg" id="cm-msg">Getting things ready…</div>
+    <div class="cm-bar-track"><div class="cm-bar-fill" id="cm-bar-fill"></div></div>
+    <div class="cm-sub" id="cm-sub"></div>
+    <div class="cm-actions">
+      <button class="cm-btn cancel" id="cm-cancel">Close</button>
+      <button class="cm-btn download" id="cm-download" style="display:none;">Download</button>
+    </div>
+  </div>
+</div>
+
 <div id="em-toast"></div>
 
 <script>
@@ -1151,6 +1248,122 @@ function emToast(msg){
   clearTimeout(emToast._timer);
   emToast._timer = setTimeout(() => t.classList.remove('show'), 3200);
 }
+
+/* ============================================================
+   DOWNLOAD HIGHLIGHTS — starts a server-side compile job (see
+   POST /api/highlights/compile in server.js), then polls its status
+   and drives the #compile-modal progress UI. The rest of the scorecard
+   (live score, other buttons) stays fully interactive while this polls —
+   it's just periodic fetch() calls, nothing blocking. ============ */
+let activeCompilePoll = null;
+
+function openCompileModal(){
+  document.getElementById('cm-title').textContent = 'Preparing highlights…';
+  document.getElementById('cm-msg').textContent = 'Getting things ready…';
+  document.getElementById('cm-bar-fill').style.width = '0%';
+  document.getElementById('cm-sub').textContent = '';
+  document.getElementById('cm-download').style.display = 'none';
+  document.getElementById('cm-cancel').textContent = 'Close';
+  document.getElementById('compile-modal-backdrop').classList.add('open');
+}
+function closeCompileModal(){
+  document.getElementById('compile-modal-backdrop').classList.remove('open');
+  if(activeCompilePoll){ clearTimeout(activeCompilePoll); activeCompilePoll = null; }
+}
+document.getElementById('cm-cancel').addEventListener('click', closeCompileModal);
+document.getElementById('compile-modal-backdrop').addEventListener('click', (e) => { if(e.target.id === 'compile-modal-backdrop') closeCompileModal(); });
+
+// body: { matchId, type, playerKey?, team? } — same shape clipsForCompileRequest()
+// on the server understands. filename becomes the downloaded file's name
+// (without .mp4 — the server appends it).
+async function startCompile(body, filename){
+  openCompileModal();
+  try{
+    const res = await apiFetch(`${clipApiBase()}/api/highlights/compile`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if(!data.success){
+      document.getElementById('cm-title').textContent = 'Could not start';
+      document.getElementById('cm-msg').textContent = data.error || 'Something went wrong.';
+      return;
+    }
+    if(data.empty){
+      document.getElementById('cm-title').textContent = 'No highlights yet';
+      document.getElementById('cm-msg').textContent = data.message || 'No highlights available for this selection yet.';
+      return;
+    }
+    pollCompileJob(data.jobId, filename);
+  } catch(err){
+    console.warn('Compile start failed', err);
+    document.getElementById('cm-title').textContent = 'Could not start';
+    document.getElementById('cm-msg').textContent = 'Network error — please try again.';
+  }
+}
+
+async function pollCompileJob(jobId, filename){
+  try{
+    const res = await apiFetch(`${clipApiBase()}/api/highlights/compile/${jobId}/status`);
+    const data = await res.json();
+    if(!data.success){
+      document.getElementById('cm-title').textContent = 'Expired';
+      document.getElementById('cm-msg').textContent = 'This highlight job is no longer available — please try again.';
+      return;
+    }
+    if(data.status === 'error'){
+      document.getElementById('cm-title').textContent = 'Could not finish';
+      document.getElementById('cm-msg').textContent = data.error || 'Something went wrong combining these clips.';
+      return;
+    }
+    document.getElementById('cm-bar-fill').style.width = `${data.progress || 0}%`;
+    document.getElementById('cm-msg').textContent = data.message || 'Working…';
+    document.getElementById('cm-title').textContent =
+      data.status === 'ready' ? 'Download Ready' :
+      data.status === 'combining' ? 'Finalizing MP4…' : 'Preparing highlights…';
+
+    if(data.status === 'ready'){
+      const sub = (data.skipped > 0)
+        ? `${data.included} clip${data.included===1?'':'s'} included • ${data.skipped} unavailable clip${data.skipped===1?'':'s'} skipped`
+        : `${data.included} clip${data.included===1?'':'s'} included`;
+      document.getElementById('cm-sub').textContent = sub;
+      const dlBtn = document.getElementById('cm-download');
+      dlBtn.style.display = '';
+      dlBtn.onclick = () => {
+        window.location.href = `${clipApiBase()}/api/highlights/compile/${jobId}/download?name=${encodeURIComponent(filename)}`;
+        closeCompileModal();
+      };
+      document.getElementById('cm-cancel').textContent = 'Close';
+      return; // stop polling
+    }
+    activeCompilePoll = setTimeout(() => pollCompileJob(jobId, filename), 1200);
+  } catch(err){
+    console.warn('Compile poll failed', err);
+    activeCompilePoll = setTimeout(() => pollCompileJob(jobId, filename), 2000);
+  }
+}
+
+// Team-name helper for filenames — falls back to "Team A"/"Team B" the
+// same way the header chips do.
+function hlTeamFileName(key){
+  const teamText = document.getElementById(key === 'A' ? 'hl-team-a-name' : 'hl-team-b-name').textContent || (key === 'A' ? 'Team A' : 'Team B');
+  return teamText.replace(/\s+/g, '_');
+}
+
+document.getElementById('highlights-download-card').addEventListener('click', (e) => {
+  const btn = e.target.closest('.hl-btn');
+  if(!btn) return;
+  const matchId = getClipMatchId();
+  if(!matchId){ emToast('No match to compile highlights for yet.'); return; }
+  const type = btn.dataset.hlType;
+  const team = btn.dataset.hlTeam;
+  if(type === 'full'){
+    startCompile({ matchId, type: 'full' }, 'AllSportsLive_Full_Match_Highlights');
+    return;
+  }
+  const teamName = hlTeamFileName(team);
+  const labelByType = { team: 'Match_Highlights', sixes: 'All_Sixes', fours: 'All_Fours', wickets: 'All_Wickets' };
+  startCompile({ matchId, type, team }, `${teamName}_${labelByType[type] || type}`);
+});
 
 /* ============================================================
    THEME
@@ -1640,6 +1853,7 @@ function renderFinalSnapshot(match, displayName){
   const A = match.teamA || {}, B = match.teamB || {};
   setText('name-a', A.name || 'Team A'); setText('short-a', A.short || '—');
   setText('name-b', B.name || 'Team B'); setText('short-b', B.short || '—');
+  setText('hl-team-a-name', A.name || A.short || 'Team A'); setText('hl-team-b-name', B.name || B.short || 'Team B');
   paintLogo('logo-a', A); paintLogo('logo-b', B);
   document.getElementById('team-block-a').style.opacity = '1';
   document.getElementById('team-block-b').style.opacity = '1';
@@ -1908,6 +2122,7 @@ function renderHero(s){
   const A = s.teamA || {}, B = s.teamB || {};
   setText('name-a', A.name || 'Team A'); setText('short-a', A.short || '—');
   setText('name-b', B.name || 'Team B'); setText('short-b', B.short || '—');
+  setText('hl-team-a-name', A.name || A.short || 'Team A'); setText('hl-team-b-name', B.name || B.short || 'Team B');
   paintLogo('logo-a', A);
   paintLogo('logo-b', B);
   document.getElementById('team-block-a').style.opacity = s.battingTeam === 'A' ? '1' : '.55';
@@ -2492,7 +2707,26 @@ async function loadClipDrawerScope(scope){
   html += clipGroupHtml('Fours', clipsData.batting.fours);
   html += clipGroupHtml('Wickets', clipsData.bowling.wickets);
   html += clipGroupHtml('Dismissal', clipsData.batting.dismissal);
+  const hasAnyClip = ['sixes','fours','dismissal'].some(k => (clipsData.batting[k]||[]).length) || (clipsData.bowling.wickets||[]).length;
+  // "Download All Player Highlights" — server-side MP4 compile (see
+  // startCompile above). Match-scoped only for now, same as the compile
+  // job itself, so this only appears on the This Match tab.
+  if(scope === 'match' && hasAnyClip){
+    const safeName = String(name || 'Player').replace(/\s+/g, '_');
+    html += `<button class="hl-player-download" id="cd-download-all">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>
+        Download All Player Highlights
+      </button>`;
+  }
   body.innerHTML = html || `<div class="empty-state">No clips yet ${scope === 'match' ? 'this match' : scope === 'tournament' ? 'this tournament' : 'in career'}.</div>`;
+  if(scope === 'match' && hasAnyClip){
+    const safeName = String(name || 'Player').replace(/\s+/g, '_');
+    const dlBtn = document.getElementById('cd-download-all');
+    if(dlBtn) dlBtn.addEventListener('click', () => {
+      const matchId = getClipMatchId();
+      startCompile({ matchId, type: 'player', playerKey: playerKeyOf(name) }, `${safeName}_Match_Highlights`);
+    });
+  }
 
   // CAREER tab: append the tournament-by-tournament breakdown below the
   // clips, so a viewer scrolls straight from "career totals" into
