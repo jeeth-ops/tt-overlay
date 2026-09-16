@@ -2466,7 +2466,18 @@ function wireLogoUpload(teamKey){
         meta.textContent = `Logo set — ~${kb} KB · colour auto-matched`;
       }
 
+      // 🐛 FIX: pushState(true) only broadcasts the new logo to whoever's
+      // watching this match live right now, over the socket. It never
+      // touches the saved DB match record — that's only kept in sync by
+      // recordBall()'s per-ball autoSyncMatchSnapshot(). So a logo
+      // uploaded/changed after the match's last ball (or even mid-match,
+      // right before the winning run) could show up for a live viewer but
+      // never make it into the permanently saved scorecard — the exact gap
+      // that made "Previous Matches" show a colour-only fallback badge
+      // while the still-open live link showed the real crest. Push it to
+      // the saved record too, same as every ball already does.
       pushState(true);
+      autoSyncMatchSnapshot();
     }catch(err){
       meta.textContent = 'Could not read that image';
     }
@@ -2477,6 +2488,7 @@ function wireLogoUpload(teamKey){
     preview.style.backgroundImage = '';
     meta.textContent = 'No logo — auto-compressed on upload';
     pushState(true);
+    autoSyncMatchSnapshot(); // same fix as upload above — keep the saved record in sync too
   });
 }
 wireLogoUpload('teamA');
@@ -2619,7 +2631,18 @@ function toast(msg, ms){
 function bindLive(id, apply){
   const el = document.getElementById(id);
   const evt = (el.type === 'color' || el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'number') ? 'input' : 'input';
-  el.addEventListener(evt, () => { apply(el); pushState(); });
+  // 🐛 FIX: pushState() only broadcasts over the LIVE socket — great for
+  // still-connected viewers, but it never touches the saved DB match
+  // record (that only happens via recordBall()'s autoSyncMatchSnapshot(),
+  // once per ball). So a team name/short/colour edit made after the last
+  // ball (e.g. tidying up right after the winning run, or fixing a typo
+  // once the match is already saved) reached anyone still watching live,
+  // but the "Previous Matches" / history snapshot page — which reads the
+  // saved record, not the live socket — silently kept the OLD value
+  // forever, with nothing after this point ever re-syncing it. Same call
+  // already used for every ball; safe to call here too (best-effort,
+  // 2s-debounced, no-ops until logged in with a tournament/match started).
+  el.addEventListener(evt, () => { apply(el); pushState(); autoSyncMatchSnapshot(); });
 }
 bindLive('venue', el => { state.venue = el.value; });
 bindLive('stream-url', el => { state.streamUrl = el.value.trim(); });
@@ -6113,7 +6136,17 @@ function recordBall(kind, meta){
   // Tell the public page (tournament portal's "Live Now" card, or a
   // standalone match's public link) which room to join — see
   // pingTournamentLiveStatus(). Now unconditional (was tournament-only).
-  pingTournamentLiveStatus(true);
+  // 🔒 GUARD: skip once the match result is already locked in. Normally
+  // checkMatchResult() (called later in this same function, on the
+  // winning ball) fires pingTournamentLiveStatus(false) right after this
+  // ping(true) — and since both share one debounced timer, the false call
+  // correctly wins within the same synchronous run. But recordBall() can
+  // still be called again afterwards (an extra/accidental delivery before
+  // the ball buttons finish disabling, a retry, etc.) — without this
+  // guard, that later ping(true) re-arms the "live" pointer for a match
+  // that's already been saved as finished, which is exactly what made the
+  // tournament portal keep showing a finished match under "Live Now".
+  if(!state.milestonesHit['match-result']) pingTournamentLiveStatus(true);
   autoSyncMatchSnapshot();
   if(isInningsOver()){
     let msg = '🚫 Overs complete for this innings';
