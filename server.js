@@ -2669,47 +2669,77 @@ async function resolvePublicTournamentForHighlights(req, token) {
     return { doc, ownerUid: doc.ownerUid, leagueKey: doc.leagueKey, displayName: doc.displayName || '', matches };
 }
 
-// 🩹 CLIPS SCOPE FIX (tournament-wide edition): clips are cut and tagged
-// (in finalizeClip()) with the live *roomId* a match was actually
-// broadcasting under, NOT the tournament's permanent saved matchId — same
-// root cause as the per-match "CLIPS FIX" near getLeagueMatches(). Every
-// tournament-wide clip lookup below (players roster clip-counts, a single
-// player's sixes/fours/dismissals/wickets panel, and both compile
-// endpoints) used to query clipsCollection with `matchId: { $in:
-// matches.map(m => m.matchId) }` — which silently returns nothing for any
-// match whose clips were tagged under its roomId instead, even though that
-// match's runs/wickets (read straight off the saved battingCard/
-// bowlingCard, never touching clipsCollection) display just fine. That
-// mismatch is exactly what made a player's Sixes/Fours/Dismissals/Bowling
-// Wickets sections show empty in the tournament "Player Highlights" panel,
-// and clip counts show 0 in the tournament leaderboard's players roster,
-// even for a player who clearly scored runs that match.
-// These helpers build the lookup the same way score-tournament.html's own
-// buildMatchEntry() already does client-side (roomId || matchId), so every
-// route below finds clips regardless of which id they were tagged under.
-function clipQueryIdsForMatches(matches) {
-    const ids = new Set();
-    (matches || []).forEach(m => {
-        if (m.roomId) ids.add(m.roomId);
-        if (m.matchId) ids.add(m.matchId);
+// 🔑 THE ID MISMATCH FIX — the single most important function here.
+// A clip is stamped at capture time with the LIVE BROADCAST ROOM ID
+// (cutClip()/finalizeClip() above use the socket room), NOT with the
+// tournament match's own permanent matchId (a separate client-minted
+// UUID from ensureTournamentMatchId()). Querying clips by matchId alone
+// therefore returns NOTHING for tournament matches — the exact reason
+// cricket-scorecard.html has getClipMatchId() and score-match.html has
+// clipScopeOverride. Rather than pick one id and hope, we collect EVERY
+// id a clip for this tournament could legitimately carry:
+//   1. the match record's own matchId  (single matches, or clips ingested
+//      after the fact by ClipperHelper with the permanent id)
+//   2. the match record's saved roomId (the normal tournament case)
+//   3. the league doc's liveMatches[] roomId for that matchId — covers
+//      OLD match records saved before the roomId-backfill fix landed in
+//      POST /api/league/:name/match, which have roomId: null forever
+//   4. the league's current liveRoomId/liveMatchId pair — covers a match
+//      that is live RIGHT NOW and not yet saved with its roomId
+// ...then map each id back to the match it belongs to, so a clip found
+// under a roomId still reports the correct "Match N vs Opponent" label
+// and the correct chronological position. First registration wins, so a
+// stray duplicate id can never silently reassign a clip to another match.
+function buildTournamentClipIds(ctx) {
+    const idToIndex = new Map(); // clip's matchId field -> 0-based tournament match order
+    const idToMatch = new Map(); // clip's matchId field -> the saved match record
+    const register = (id, match, index) => {
+        if (id === null || id === undefined) return;
+        const key = String(id).trim();
+        if (!key || idToIndex.has(key)) return;
+        idToIndex.set(key, index);
+        idToMatch.set(key, match);
+    };
+
+    // matchId -> roomId from the league doc's live tracking (sources 3 & 4)
+    const liveRoomByMatchId = new Map();
+    const doc = ctx.doc || {};
+    (doc.liveMatches || []).forEach(lm => {
+        if (lm && lm.matchId && lm.roomId) liveRoomByMatchId.set(String(lm.matchId), lm.roomId);
     });
-    return [...ids];
+    if (doc.liveMatchId && doc.liveRoomId) liveRoomByMatchId.set(String(doc.liveMatchId), doc.liveRoomId);
+
+    ctx.matches.forEach((m, i) => {
+        register(m.matchId, m, i);
+        register(m.roomId, m, i);
+        register(liveRoomByMatchId.get(String(m.matchId)), m, i);
+    });
+
+    return { ids: [...idToIndex.keys()], idToIndex, idToMatch };
 }
-function clipMatchIndexForMatches(matches) {
-    const idx = new Map();
-    (matches || []).forEach((m, i) => {
-        if (m.roomId) idx.set(m.roomId, i);
-        if (m.matchId) idx.set(m.matchId, i);
-    });
-    return idx;
-}
-function clipMatchByIdForMatches(matches) {
-    const byId = new Map();
-    (matches || []).forEach(m => {
-        if (m.roomId) byId.set(m.roomId, m);
-        if (m.matchId) byId.set(m.matchId, m);
-    });
-    return byId;
+
+// 🔑 IDENTITY FIX #2 (section 9) — never match a player on the raw
+// display name alone. playerKey() already normalizes case and collapses
+// whitespace ("Karsh Kothari" === "Karsh  Kothari"), but a player can
+// ALSO have several nameKeys folded together under one playerId by
+// POST /api/players/:playerId/merge (e.g. "K Kothari" merged into
+// "Karsh Kothari"). Balls and clips keep whichever nameKey was live at
+// the time, so we expand to the full alias set before querying — this is
+// the same expansion nameKeysForPlayerId() does for the /api/players/*
+// routes, just entered from a name instead of a playerId. Falls back to
+// the plain nameKey whenever no profile exists, so nothing regresses.
+async function expandPlayerNameKeys(ownerUid, name) {
+    const pk = playerKey(name);
+    if (!pk) return [];
+    if (!playersCollection || !ownerUid) return [pk];
+    try {
+        const doc = await playersCollection.findOne({ ownerUid, nameKeys: pk }, { projection: { nameKeys: 1 } });
+        const aliases = (doc && Array.isArray(doc.nameKeys)) ? doc.nameKeys : [];
+        return [...new Set([pk, ...aliases.filter(Boolean)])];
+    } catch (err) {
+        console.log('Name-key expansion failed, using plain key:', err.message || err);
+        return [pk];
+    }
 }
 
 // Which opponent this player faced in one saved match — same lookup
@@ -2717,9 +2747,11 @@ function clipMatchByIdForMatches(matches) {
 // for the per-match report (section 10: every clip keeps its match
 // context), ported here so server-built category lists can carry a
 // "Match N vs Opponent" label without an extra round trip per clip.
-function opponentLabelForPlayer(match, pk) {
+// pkSet is the player's FULL alias set (see expandPlayerNameKeys), not a
+// single name key, so a merged player is still found in the card.
+function opponentLabelForPlayer(match, pkSet) {
     if (!match) return '';
-    const inCard = (card) => (card || []).some(r => r && playerKey(r.name) === pk);
+    const inCard = (card) => (card || []).some(r => r && pkSet.has(playerKey(r.name)));
     let teamKey = null;
     if (inCard(match.battingCard && match.battingCard.A) || inCard(match.bowlingCard && match.bowlingCard.A)) teamKey = 'A';
     else if (inCard(match.battingCard && match.battingCard.B) || inCard(match.bowlingCard && match.bowlingCard.B)) teamKey = 'B';
@@ -2739,30 +2771,44 @@ app.get('/api/public/tournament/:token/players', async (req, res) => {
         if (ctx.httpError) return res.status(ctx.httpError).json({ success: false, error: ctx.message });
 
         const { topRuns, topWickets } = computeLeaderboards(ctx.matches);
-        const names = new Map(); // pk -> display name
+        // canonical pk (as it appears on the leaderboard) -> display name
+        const names = new Map();
         topRuns.forEach(r => names.set(playerKey(r.name), r.name));
         topWickets.forEach(r => names.set(playerKey(r.name), r.name));
-        const matchIds = clipQueryIdsForMatches(ctx.matches);
-        const pkList = [...names.keys()];
-        const counts = new Map(pkList.map(pk => [pk, { sixes: 0, fours: 0, dismissals: 0, wickets: 0 }]));
+        const canonicalList = [...names.keys()];
+        const { ids } = buildTournamentClipIds(ctx); // matchId + roomId + live mapping
+        const counts = new Map(canonicalList.map(pk => [pk, { sixes: 0, fours: 0, dismissals: 0, wickets: 0 }]));
 
-        if (matchIds.length && pkList.length) {
+        if (ids.length && canonicalList.length) {
+            // Expand every leaderboard name to its merged alias set, then
+            // build alias -> canonical so a clip stamped with an old alias
+            // still counts toward the one player shown in the UI.
+            const aliasToCanonical = new Map();
+            await Promise.all(canonicalList.map(async pk => {
+                const keys = await expandPlayerNameKeys(ctx.ownerUid, names.get(pk));
+                keys.forEach(k => { if (!aliasToCanonical.has(k)) aliasToCanonical.set(k, pk); });
+            }));
+            const allKeys = [...aliasToCanonical.keys()];
+
             const clips = await clipsCollection.find({
-                matchId: { $in: matchIds },
-                $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }]
+                matchId: { $in: ids },
+                $or: [{ strikerKey: { $in: allKeys } }, { bowlerKey: { $in: allKeys } }]
             }, { projection: { matchId: 1, strikerKey: 1, bowlerKey: 1, eventType: 1 } }).toArray();
+
             clips.forEach(c => {
-                if (counts.has(c.strikerKey)) {
-                    const row = counts.get(c.strikerKey);
+                const strikerPk = aliasToCanonical.get(c.strikerKey);
+                if (strikerPk && counts.has(strikerPk)) {
+                    const row = counts.get(strikerPk);
                     if (c.eventType === 'SIX') row.sixes++;
                     else if (c.eventType === 'FOUR') row.fours++;
                     else if (c.eventType === 'WICKET') row.dismissals++;
                 }
-                if (counts.has(c.bowlerKey) && c.eventType === 'WICKET') counts.get(c.bowlerKey).wickets++;
+                const bowlerPk = aliasToCanonical.get(c.bowlerKey);
+                if (bowlerPk && counts.has(bowlerPk) && c.eventType === 'WICKET') counts.get(bowlerPk).wickets++;
             });
         }
 
-        const players = pkList.map(pk => {
+        const players = canonicalList.map(pk => {
             const c = counts.get(pk);
             return { name: names.get(pk), playerKey: pk, clipCounts: c, totalClips: c.sixes + c.fours + c.dismissals + c.wickets };
         }).sort((a, b) => b.totalClips - a.totalClips);
@@ -2786,41 +2832,81 @@ app.get('/api/public/tournament/:token/player-clips', async (req, res) => {
         const ctx = await resolvePublicTournamentForHighlights(req, req.params.token);
         if (ctx.httpError) return res.status(ctx.httpError).json({ success: false, error: ctx.message });
         const name = String(req.query.name || '').trim();
-        const pk = playerKey(name);
-        if (!pk) return res.status(400).json({ success: false, error: 'name required' });
+        const pkList = await expandPlayerNameKeys(ctx.ownerUid, name);
+        if (!pkList.length) return res.status(400).json({ success: false, error: 'name required' });
+        const pkSet = new Set(pkList);
 
-        const matchIds = clipQueryIdsForMatches(ctx.matches);
-        const matchIndex = clipMatchIndexForMatches(ctx.matches); // tournament order — getLeagueMatches sorts by savedAt asc
-        const matchById = clipMatchByIdForMatches(ctx.matches);
+        // Every id a clip for this tournament could carry (matchId, roomId,
+        // live-room mapping) — see buildTournamentClipIds for why.
+        const { ids, idToIndex, idToMatch } = buildTournamentClipIds(ctx);
 
-        const clips = matchIds.length
-            ? await clipsCollection.find({ matchId: { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }] }).toArray()
+        const clips = ids.length
+            ? await clipsCollection.find({
+                matchId: { $in: ids },
+                $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }]
+              }).toArray()
             : [];
 
         function decorate(c) {
             const s = serializeClip(c);
-            s.matchIndex = matchIndex.has(c.matchId) ? matchIndex.get(c.matchId) + 1 : null; // 1-based "Match N"
-            s.opponent = opponentLabelForPlayer(matchById.get(c.matchId), pk);
+            const key = String(c.matchId);
+            s.matchIndex = idToIndex.has(key) ? idToIndex.get(key) + 1 : null; // 1-based "Match N"
+            s.opponent = opponentLabelForPlayer(idToMatch.get(key), pkSet);
             return s;
         }
         const order = (a, b) => (a.matchIndex || 0) - (b.matchIndex || 0) || (a.innings || 1) - (b.innings || 1) || (a.over || 0) - (b.over || 0) || (a.ballInOver || 0) - (b.ballInOver || 0);
 
+        // A clip can legitimately satisfy more than one bucket (a bowler who
+        // is also the striker is impossible, but a doc reached via two ids
+        // is not) — dedupe per bucket by clipId so nothing is listed twice
+        // (section 16: use the stable clip/event ID, never filenames).
+        const seen = { sixes: new Set(), fours: new Set(), dismissals: new Set(), wickets: new Set() };
         const sixes = [], fours = [], dismissals = [], wickets = [];
+        const pushOnce = (arr, bucket, c) => {
+            const id = c._id.toString();
+            if (seen[bucket].has(id)) return;
+            seen[bucket].add(id);
+            arr.push(decorate(c));
+        };
         clips.forEach(c => {
-            if (c.strikerKey === pk && c.eventType === 'SIX') sixes.push(decorate(c));
-            else if (c.strikerKey === pk && c.eventType === 'FOUR') fours.push(decorate(c));
-            else if (c.strikerKey === pk && c.eventType === 'WICKET') dismissals.push(decorate(c));
-            if (c.bowlerKey === pk && c.eventType === 'WICKET') wickets.push(decorate(c));
+            if (pkSet.has(c.strikerKey)) {
+                if (c.eventType === 'SIX') pushOnce(sixes, 'sixes', c);
+                else if (c.eventType === 'FOUR') pushOnce(fours, 'fours', c);
+                else if (c.eventType === 'WICKET') pushOnce(dismissals, 'dismissals', c);
+            }
+            if (pkSet.has(c.bowlerKey) && c.eventType === 'WICKET') pushOnce(wickets, 'wickets', c);
         });
         [sixes, fours, dismissals, wickets].forEach(arr => arr.sort(order));
 
-        const performance = computeSinglePlayerRollup(ctx.matches, pk); // section 20 — same rollup the leaderboard itself is built from
+        const performance = computeSinglePlayerRollup(ctx.matches, pkList); // section 20 — same rollup the leaderboard itself is built from
+
+        // 🔍 ?debug=1 — why is a category empty? Tells you, without touching
+        // the database by hand, whether the tournament has ANY clips under
+        // these ids at all and which name keys the clips actually carry, so
+        // an empty panel can be diagnosed as "no clips recorded" vs "clips
+        // exist but are stamped with a different player key / match id".
+        let debug;
+        if (req.query.debug) {
+            const anyClips = ids.length
+                ? await clipsCollection.find({ matchId: { $in: ids } }, { projection: { matchId: 1, strikerKey: 1, bowlerKey: 1, eventType: 1 } }).limit(400).toArray()
+                : [];
+            debug = {
+                resolvedNameKeys: pkList,
+                tournamentIdsSearched: ids,
+                matchesInTournament: ctx.matches.length,
+                clipsFoundUnderTheseIds: anyClips.length,
+                distinctStrikerKeys: [...new Set(anyClips.map(c => c.strikerKey).filter(Boolean))].slice(0, 50),
+                distinctBowlerKeys: [...new Set(anyClips.map(c => c.bowlerKey).filter(Boolean))].slice(0, 50),
+                distinctClipMatchIds: [...new Set(anyClips.map(c => String(c.matchId)))].slice(0, 50)
+            };
+        }
 
         res.json({
-            success: true, name, playerKey: pk,
+            success: true, name, playerKey: pkList[0], nameKeys: pkList,
             performance,
             categories: { sixes, fours, dismissals, wickets },
-            totalClips: sixes.length + fours.length + dismissals.length + wickets.length
+            totalClips: sixes.length + fours.length + dismissals.length + wickets.length,
+            ...(debug ? { debug } : {})
         });
     } catch (err) {
         console.log('Tournament player-clips fetch error:', err);
@@ -2839,24 +2925,32 @@ app.post('/api/public/tournament/:token/highlights/compile', async (req, res) =>
         const ctx = await resolvePublicTournamentForHighlights(req, req.params.token);
         if (ctx.httpError) return res.status(ctx.httpError).json({ success: false, error: ctx.message });
         const name = String((req.body && req.body.name) || '').trim();
-        const pk = playerKey(name);
-        if (!pk) return res.status(400).json({ success: false, error: 'name required' });
+        const pkList = await expandPlayerNameKeys(ctx.ownerUid, name);
+        if (!pkList.length) return res.status(400).json({ success: false, error: 'name required' });
+        const pkSet = new Set(pkList);
         const category = String((req.body && req.body.category) || 'all').toLowerCase();
 
-        const matchIds = clipQueryIdsForMatches(ctx.matches);
-        const matchIndex = clipMatchIndexForMatches(ctx.matches);
-        if (!matchIds.length) return res.json({ success: true, empty: true, message: 'No highlights available for this player yet.' });
+        const { ids, idToIndex } = buildTournamentClipIds(ctx);
+        if (!ids.length) return res.json({ success: true, empty: true, message: 'No highlights available for this player yet.' });
 
-        const clips = await clipsCollection.find({ matchId: { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }] }).toArray();
+        const clips = await clipsCollection.find({
+            matchId: { $in: ids },
+            $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }]
+        }).toArray();
+
+        const isStriker = c => pkSet.has(c.strikerKey);
+        const isBowler = c => pkSet.has(c.bowlerKey);
         let selected;
-        if (category === 'sixes') selected = clips.filter(c => c.strikerKey === pk && c.eventType === 'SIX');
-        else if (category === 'fours') selected = clips.filter(c => c.strikerKey === pk && c.eventType === 'FOUR');
-        else if (category === 'dismissals') selected = clips.filter(c => c.strikerKey === pk && c.eventType === 'WICKET');
-        else if (category === 'wickets') selected = clips.filter(c => c.bowlerKey === pk && c.eventType === 'WICKET');
-        else selected = clips.filter(c => (c.strikerKey === pk && ['SIX', 'FOUR', 'WICKET'].includes(c.eventType)) || (c.bowlerKey === pk && c.eventType === 'WICKET'));
+        if (category === 'sixes') selected = clips.filter(c => isStriker(c) && c.eventType === 'SIX');
+        else if (category === 'fours') selected = clips.filter(c => isStriker(c) && c.eventType === 'FOUR');
+        else if (category === 'dismissals') selected = clips.filter(c => isStriker(c) && c.eventType === 'WICKET');
+        else if (category === 'wickets') selected = clips.filter(c => isBowler(c) && c.eventType === 'WICKET');
+        else selected = clips.filter(c => (isStriker(c) && ['SIX', 'FOUR', 'WICKET'].includes(c.eventType)) || (isBowler(c) && c.eventType === 'WICKET'));
 
         if (!selected.length) return res.json({ success: true, empty: true, message: 'No highlights available for this player yet.' });
-        selected.forEach(c => { c._tourneySeq = matchIndex.get(c.matchId) || 0; });
+        // Tournament position comes from whichever id the clip is stamped
+        // with (matchId or roomId) — runCompileJob sorts on _tourneySeq first.
+        selected.forEach(c => { c._tourneySeq = idToIndex.get(String(c.matchId)) || 0; });
 
         const jobId = newCompileJobId();
         compileJobs.set(jobId, {
@@ -3038,27 +3132,36 @@ app.post('/api/public/tournament/:token/highlights/compile-all-players', async (
     try {
         const ctx = await resolvePublicTournamentForHighlights(req, req.params.token);
         if (ctx.httpError) return res.status(ctx.httpError).json({ success: false, error: ctx.message });
-        const matchIds = clipQueryIdsForMatches(ctx.matches);
-        if (!matchIds.length) return res.json({ success: true, empty: true, message: 'No highlights available for this tournament yet.' });
-        const matchIndex = clipMatchIndexForMatches(ctx.matches);
+        const { ids, idToIndex } = buildTournamentClipIds(ctx);
+        if (!ids.length) return res.json({ success: true, empty: true, message: 'No highlights available for this tournament yet.' });
 
         const { topRuns, topWickets } = computeLeaderboards(ctx.matches);
-        const names = new Map();
+        const names = new Map(); // canonical pk -> display name
         topRuns.forEach(r => names.set(playerKey(r.name), r.name));
         topWickets.forEach(r => names.set(playerKey(r.name), r.name));
-        const pkList = [...names.keys()];
-        if (!pkList.length) return res.json({ success: true, empty: true, message: 'No players found for this tournament yet.' });
+        const canonicalList = [...names.keys()];
+        if (!canonicalList.length) return res.json({ success: true, empty: true, message: 'No players found for this tournament yet.' });
+
+        // alias nameKey -> canonical pk, so merged identities land in one file
+        const aliasToCanonical = new Map();
+        await Promise.all(canonicalList.map(async pk => {
+            const keys = await expandPlayerNameKeys(ctx.ownerUid, names.get(pk));
+            keys.forEach(k => { if (!aliasToCanonical.has(k)) aliasToCanonical.set(k, pk); });
+        }));
+        const allKeys = [...aliasToCanonical.keys()];
 
         const clips = await clipsCollection.find({
-            matchId: { $in: matchIds },
-            $or: [{ strikerKey: { $in: pkList }, eventType: { $in: ['SIX', 'FOUR', 'WICKET'] } }, { bowlerKey: { $in: pkList }, eventType: 'WICKET' }]
+            matchId: { $in: ids },
+            $or: [{ strikerKey: { $in: allKeys }, eventType: { $in: ['SIX', 'FOUR', 'WICKET'] } }, { bowlerKey: { $in: allKeys }, eventType: 'WICKET' }]
         }).toArray();
-        clips.forEach(c => { c._tourneySeq = matchIndex.get(c.matchId) || 0; });
+        clips.forEach(c => { c._tourneySeq = idToIndex.get(String(c.matchId)) || 0; });
 
-        const byPlayer = new Map(pkList.map(pk => [pk, []]));
+        const byPlayer = new Map(canonicalList.map(pk => [pk, []]));
         clips.forEach(c => {
-            if (names.has(c.strikerKey) && ['SIX', 'FOUR', 'WICKET'].includes(c.eventType)) byPlayer.get(c.strikerKey).push(c);
-            if (names.has(c.bowlerKey) && c.eventType === 'WICKET' && c.bowlerKey !== c.strikerKey) byPlayer.get(c.bowlerKey).push(c);
+            const strikerPk = aliasToCanonical.get(c.strikerKey);
+            if (strikerPk && byPlayer.has(strikerPk) && ['SIX', 'FOUR', 'WICKET'].includes(c.eventType)) byPlayer.get(strikerPk).push(c);
+            const bowlerPk = aliasToCanonical.get(c.bowlerKey);
+            if (bowlerPk && byPlayer.has(bowlerPk) && c.eventType === 'WICKET' && bowlerPk !== strikerPk) byPlayer.get(bowlerPk).push(c);
         });
 
         const jobId = newCompileJobId();
@@ -3665,13 +3768,8 @@ adminRouter.delete('/tournament/:ownerUid/:leagueKey', async (req, res) => {
         const league = await leaguesCollection.findOne({ ownerUid, leagueKey });
         if (!league) return res.status(404).json({ success: false, error: 'Tournament not found' });
 
-        // Projection now also pulls roomId — clips are tagged with the live
-        // roomId at capture time (see the CLIPS SCOPE FIX comment near
-        // resolvePublicTournamentForHighlights), not the saved matchId, so
-        // deleting by matchId alone used to leave that tournament's clips
-        // orphaned in the database after the tournament itself was gone.
-        const matches = await matchRecordsCollection.find({ ownerUid, leagueKey }, { projection: { matchId: 1, roomId: 1 } }).toArray();
-        const matchIds = clipQueryIdsForMatches(matches);
+        const matches = await matchRecordsCollection.find({ ownerUid, leagueKey }, { projection: { matchId: 1 } }).toArray();
+        const matchIds = matches.map(m => m.matchId).filter(Boolean);
 
         if (clipsCollection && matchIds.length) {
             await clipsCollection.deleteMany({ matchId: { $in: matchIds } });
