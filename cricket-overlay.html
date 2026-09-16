@@ -150,8 +150,22 @@
     position:relative;
   }
   #score-block{
-    flex:none; display:flex; align-items:center; gap:0; padding:0 16px 0 20px; min-width:min(15vw,182px);
+    flex:none; display:flex; flex-direction:column; align-items:flex-start; justify-content:center;
+    gap:3px; padding:0 16px 0 20px; min-width:min(15vw,182px);
   }
+  /* Small permanent CRR readout under the score — toggles to RRR every
+     15s during a real run-chase (same timer as before, just relocated
+     here instead of taking its own column in the middle stats row, which
+     frees that width up for player names). Absolutely-stacked faces so
+     the swap never shifts anything around it. */
+  #score-rate-line{ height:18px; }
+  .srl-stage{ position:relative; width:100%; height:100%; }
+  .srl-face{
+    position:absolute; inset:0; display:flex; align-items:baseline; gap:6px; opacity:0; white-space:nowrap;
+  }
+  .srl-face.is-active{ opacity:1; }
+  .srl-lbl{ font-family:var(--font-ui); font-weight:800; font-size:10.5px; letter-spacing:.7px; color:rgba(255,255,255,.68); text-transform:uppercase; }
+  .srl-val{ font-family:var(--font-num); font-weight:800; font-size:14.5px; color:#fff; font-variant-numeric:tabular-nums; }
   #score-value{
     font-family:var(--font-num); font-weight:900; color:#fff;
     font-size:min(3.9vw,46px); letter-spacing:.5px; font-variant-numeric:tabular-nums;
@@ -188,80 +202,27 @@
   .brow .bstar{ color:#1c4fd8; }
   .brow .bballs{ font-family:var(--font-num); font-weight:700; font-size:min(1.3vw,15px); color:var(--ink-dim); margin-left:6px; min-width:20px; }
 
-  /* ---- Rate/target segment ----
-     Default (no chase applicable): a single centred item, exactly the
-     old "Current Run Rate" block. Once a limited-overs chase is on
-     (target set + a real overs limit), it becomes a 3-up row —
-     [CRR/RRR toggle] [Target] [Balls Remaining] — evenly spaced with
-     hairline dividers, matching the batters/bowler segment styling.
-     Width grows via the .chase-mode modifier so the two neighbouring
-     flex:1 segments simply give it a bit more room; nothing overlaps
-     because batters-seg/bowler-seg keep their own min-widths. */
+  /* ---- Target segment ----
+     CRR/RRR now live under the score (see #score-rate-line above), so
+     this segment only ever holds one thing: the merged Target box
+     ("234 off 120 balls"). It stays hidden entirely (display:none, set
+     in JS via setChaseMode) outside a real run-chase, so batters-seg
+     and bowler-seg simply expand to fill the space when it's not
+     needed — no empty box, no stray dividers. */
   #crr-seg{
-    flex:0 0 auto; display:flex; flex-direction:row; align-items:stretch;
-    justify-content:center; min-width:min(14.2vw,164px); transition:min-width .3s ease;
+    flex:0 0 auto; display:flex; align-items:stretch; justify-content:center;
+    min-width:min(15vw,168px); padding:0 4px;
   }
-  /* Only 2 items share the row now (CRR/RRR toggle + merged Target),
-     so the segment needs noticeably less width than the old 3-up layout. */
-  #crr-seg.chase-mode{ min-width:min(22vw,252px); }
-  /* Target now carries a longer value ("234 off 120 balls"), so give it
-     more of the shared row than the short CRR/RRR toggle beside it. */
-  #crr-seg.chase-mode #rate-item{ flex:1 1 0; }
-  #crr-seg.chase-mode #target-item{ flex:1.6 1 0; min-width:112px; }
   #crr-seg .crr-item{
     flex:1 1 0; display:flex; flex-direction:column; align-items:center;
-    justify-content:center; text-align:center; gap:6px; padding:0 16px; position:relative;
-    min-width:58px; overflow:hidden;
+    justify-content:center; text-align:center; gap:6px; padding:0 18px;
+    min-width:120px; overflow:hidden;
   }
-  /* Narrower per-item padding once there are 3 items sharing the row —
-     keeps the whole group compact so batters/bowler segments beside it
-     never get squeezed, while still giving every number breathing room. */
-  #crr-seg.chase-mode .crr-item{ padding:0 8px; min-width:52px; }
-  #crr-seg .crr-item + .crr-item::before{
-    content:''; position:absolute; left:0; top:14%; bottom:14%; width:1px; background:var(--hairline);
-  }
-  /* Labels are allowed to wrap onto a 2nd line (e.g. "Current Run Rate"
-     inside the narrower 3-up chase layout) rather than ever being forced
-     onto one line and clipped or overlapping a neighbour — a wrapped
-     label is still fully readable, a clipped one is not. Values (.val)
-     stay strictly nowrap since they're short by nature (2-3 digits, a
-     2-decimal rate) and must never break mid-number. */
-  /* Labels are allowed to wrap onto a 2nd line rather than ever being
-     forced onto one line and clipped or overlapping a neighbour — a
-     wrapped label is still fully readable, a clipped one is not.
-     Values (.val) stay strictly nowrap since they're short by nature
-     (2-3 digits, a 2-decimal rate) and must never break mid-number.
-     width:100% + text-align:center on BOTH (not just relying on the
-     flex box centering) guarantees the label and the value always sit
-     on the exact same centre line under each other, however wide their
-     own text happens to be. */
   #crr-seg .lbl{ display:block; width:100%; text-align:center; font-size:min(1.3vw,16px); font-weight:800; letter-spacing:.8px; color:var(--ink-dim); text-transform:uppercase; line-height:1.2; overflow-wrap:break-word; }
-  #crr-seg .val{ display:block; width:100%; text-align:center; font-family:var(--font-num); font-weight:900; font-size:min(3.3vw,39px); color:#1c4fd8; font-variant-numeric:tabular-nums; white-space:nowrap; }
-  /* Chase mode packs 3 items (CRR/RRR, Target, Balls Remaining) into the
-     same width, so each value gets noticeably less horizontal room —
-     dial the size back down a step here so longer values like "10.75"
-     never crowd the hairline dividers on either side. */
-  #crr-seg.chase-mode .val{ font-size:min(2.6vw,31px); }
-  /* "off X balls" rides alongside the target number, smaller and dimmer
-     so the target itself stays the visually dominant number — same idea
-     as the batter's (balls) suffix, applied to this stat instead. */
+  #crr-seg .val{ display:block; width:100%; text-align:center; font-family:var(--font-num); font-weight:900; font-size:min(3vw,35px); color:#1c4fd8; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  /* "off X balls" rides beneath the target number, smaller and dimmer
+     so the target itself stays the visually dominant number. */
   #crr-seg .val .unit{ display:block; font-family:var(--font-ui); font-weight:700; font-size:0.42em; color:var(--ink-dim); letter-spacing:.2px; margin-top:2px; white-space:nowrap; }
-
-  /* Toggle stage: both faces are absolutely stacked in the exact same
-     box, so swapping which one is visible never shifts layout, width,
-     or the position of Target/Balls Remaining beside it. Height is
-     fixed to the label+value stack so long values (e.g. "10.75") never
-     reflow the row. */
-  /* CRR/RRR are short, non-wrapping labels now, so the stage only needs
-     to hold one tight label+value line — a tall box here was leaving a
-     visible gap above the number, making the label look disconnected
-     and small. Kept just tall enough for the val's font-size headroom. */
-  .toggle-stage{ position:relative; width:100%; height:66px; }
-  .toggle-face{
-    position:absolute; inset:0; display:flex; flex-direction:column;
-    align-items:center; justify-content:center; text-align:center; gap:6px; opacity:0;
-  }
-  .toggle-face.is-active{ opacity:1; }
 
   /* ---- Bowler segment: name + W-R figures + overs, all on one line,
      then a real broadcast-style "this over" ball tracker below (always
@@ -933,6 +894,18 @@
       <div id="mid-row">
         <div id="score-block">
           <div id="score-value"><span id="score-row"></span></div>
+          <div id="score-rate-line">
+            <div class="srl-stage" id="rate-toggle-stage">
+              <div class="srl-face is-active" id="crr-face">
+                <span class="srl-lbl">CRR</span>
+                <span class="srl-val" id="crr-val">0.00</span>
+              </div>
+              <div class="srl-face" id="rrr-face">
+                <span class="srl-lbl">RRR</span>
+                <span class="srl-val" id="rrr-val">—</span>
+              </div>
+            </div>
+          </div>
         </div>
         <div id="overs-badge"><div class="ov-num" id="ov-num">0.0</div><div class="ov-lbl">OVERS</div></div>
         <div id="white-panel">
@@ -941,20 +914,8 @@
               <div class="brow" id="row-striker"><span class="bname" id="striker-name">Batsman 1</span><span class="bruns bstar" id="striker-runs">0<span id="striker-star">*</span></span><span class="bballs" id="striker-balls">0</span></div>
               <div class="brow" id="row-nonstriker"><span class="bname" id="nonstriker-name">Batsman 2</span><span class="bruns" id="nonstriker-runs">0</span><span class="bballs" id="nonstriker-balls">0</span></div>
             </div>
-            <div class="wseg" id="crr-seg">
-              <div class="crr-item" id="rate-item">
-                <div class="toggle-stage" id="rate-toggle-stage">
-                  <div class="toggle-face is-active" id="crr-face">
-                    <div class="lbl">CRR</div>
-                    <div class="val" id="crr-val">0.00</div>
-                  </div>
-                  <div class="toggle-face" id="rrr-face">
-                    <div class="lbl">RRR</div>
-                    <div class="val" id="rrr-val">—</div>
-                  </div>
-                </div>
-              </div>
-              <div class="crr-item" id="target-item" style="display:none">
+            <div class="wseg" id="crr-seg" style="display:none">
+              <div class="crr-item" id="target-item">
                 <div class="lbl">Target</div>
                 <div class="val" id="target-val">— <span class="unit">off — balls</span></div>
               </div>
@@ -1443,22 +1404,19 @@ function stopChaseToggle(){
   if(rrrFace){ rrrFace.classList.remove('is-active'); gsap.set(rrrFace, { clearProps: 'opacity,y' }); }
 }
 
-// Shows/hides Target + Balls Remaining and starts/stops the toggle timer
-// exactly on the transition edge (chase just started / just ended) —
-// never on every render — so the 15s cycle is never reset mid-count by
-// a routine ball-by-ball score update.
+// Shows/hides the Target segment and starts/stops the CRR/RRR toggle
+// timer (now living under the score) exactly on the transition edge
+// (chase just started / just ended) — never on every render — so the
+// 15s cycle is never reset mid-count by a routine ball-by-ball update.
 function setChaseMode(chaseMode){
   const seg = document.getElementById('crr-seg');
-  const targetItem = document.getElementById('target-item');
   if(chaseMode && !inChaseMode){
     inChaseMode = true;
-    seg.classList.add('chase-mode');
-    targetItem.style.display = 'flex';
+    seg.style.display = 'flex';
     startChaseToggle();
   } else if(!chaseMode && inChaseMode){
     inChaseMode = false;
-    seg.classList.remove('chase-mode');
-    targetItem.style.display = 'none';
+    seg.style.display = 'none';
     stopChaseToggle();
   }
 }
@@ -1696,10 +1654,25 @@ function fitCapName(el){
 // but fitting to available ROW WIDTH rather than height, since these
 // names sit on a single line next to runs/figures rather than wrapping.
 // Never truncates/ellipsizes: it only ever turns the dial down on size.
+// Shrinks `el`'s font just enough for it to fit on one line next to its
+// siblings (runs/balls, or figures/overs) — WITHOUT ever crowding into
+// whatever sits beside the segment (the team panel, on the bowler's
+// side). The key fix: measure available space against the true
+// fixed-width box (`container`, e.g. #bowler-seg or #batters-seg) that
+// the flex layout actually allocates — not against the row's (`el`'s
+// parent, e.g. #bowler-line) OWN width. A flex row like #bowler-line
+// sizes itself to fit its children's natural (unshrunk) width, so
+// measuring against ITS width is circular and never reliably detects
+// overflow for a long name. Measuring against the outer container's
+// clientWidth (which the surrounding layout genuinely constrains) means
+// this always finds the real available space, however long the name,
+// and the name shrinks smoothly to fit rather than ever spilling into
+// neighbouring furniture.
 function fitRowText(el, minPx){
   if(!el || !el.isConnected) return;
-  const row = el.parentElement;
-  if(!row) return;
+  const row = el.parentElement;            // e.g. .brow or #bowler-line
+  const container = row && row.parentElement; // the real fixed-width segment box
+  if(!row || !container) return;
   el.style.fontSize = ''; // fall back to CSS (min(vw,px)) to read the natural ceiling
   const naturalPx = parseFloat(getComputedStyle(el).fontSize);
   if(!naturalPx) return;
@@ -1710,7 +1683,9 @@ function fitRowText(el, minPx){
     if(child !== el) siblingsWidth += child.getBoundingClientRect().width;
   });
   const gaps = gap * Math.max(row.children.length - 1, 0);
-  const available = row.clientWidth - siblingsWidth - gaps - 4; // small safety buffer
+  const containerStyle = getComputedStyle(container);
+  const containerPad = parseFloat(containerStyle.paddingLeft || 0) + parseFloat(containerStyle.paddingRight || 0);
+  const available = container.clientWidth - containerPad - siblingsWidth - gaps - 4; // small safety buffer
   if(!(available > 0)) return;
   let size = naturalPx;
   el.style.fontSize = size + 'px';
