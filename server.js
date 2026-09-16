@@ -4073,15 +4073,27 @@ function buildLiveCardsFromBallsArray(balls) {
     balls.forEach(b => {
         const bt = b.battingTeam === 'B' ? 'B' : 'A';
         const bowlTeam = bt === 'A' ? 'B' : 'A';
+        const inn = b.innings || 1;
         const facts = deriveBallFacts(b.kind, b.runs);
         teamTotals[bt].runs += b.runs || 0;
         if (b.dismissal) teamTotals[bt].wickets++;
         if (facts.legalBall) teamTotals[bt].legalBalls++;
 
+        // 🩹 INNINGS-TAG FIX: rows used to be keyed by strikerKey/bowlerKey
+        // alone, with no inningsNo ever written onto the row. The public
+        // scorecard page (renderFinalSnapshot → firstBattingTeamOf, in
+        // cricket-scorecard.html) relies on every batting/bowling row
+        // carrying inningsNo to work out which team actually batted first —
+        // without it, it silently falls back to assuming Team A batted
+        // first, so whenever B actually batted first, A's card (their real
+        // 2nd-innings knock) got shown under the "1st Innings" tab. Tagging
+        // inningsNo here — and keying the per-player maps by player+innings,
+        // not just player — also stops a player's multiple innings (Test
+        // format) from being summed into one merged row.
         if (b.strikerKey && b.kind !== 'Wd') {
-            const key = b.strikerKey;
-            if (!batting[bt][key]) batting[bt][key] = { name: b.striker || key, runs: 0, balls: 0, fours: 0, sixes: 0 };
-            const row = batting[bt][key];
+            const rowKey = `${b.strikerKey}::${inn}`;
+            if (!batting[bt][rowKey]) batting[bt][rowKey] = { name: b.striker || b.strikerKey, runs: 0, balls: 0, fours: 0, sixes: 0, inningsNo: inn };
+            const row = batting[bt][rowKey];
             row.balls++;
             if (b.kind !== 'B' && b.kind !== 'LB') row.runs += b.runs || 0;
             if (b.kind === '4') row.fours++;
@@ -4089,29 +4101,30 @@ function buildLiveCardsFromBallsArray(balls) {
         }
 
         if (b.bowlerKey && b.kind !== 'B' && b.kind !== 'LB') {
-            const key = b.bowlerKey;
-            if (!bowling[bowlTeam][key]) bowling[bowlTeam][key] = { name: b.bowler || key, balls: 0, runs: 0, wickets: 0 };
-            const row = bowling[bowlTeam][key];
+            const rowKey = `${b.bowlerKey}::${inn}`;
+            if (!bowling[bowlTeam][rowKey]) bowling[bowlTeam][rowKey] = { name: b.bowler || b.bowlerKey, balls: 0, runs: 0, wickets: 0, inningsNo: inn, _bowlerKey: b.bowlerKey };
+            const row = bowling[bowlTeam][rowKey];
             const isLegal = b.kind !== 'Wd' && b.kind !== 'Nb';
             if (isLegal) row.balls++;
             row.runs += b.runs || 0;
             if (b.dismissal && b.dismissal.type && b.dismissal.type.toLowerCase() !== 'run out') row.wickets++;
 
-            const overKey = `${key}::${b.innings || 1}-${b.over}`;
-            if (!oversBowled[bowlTeam][overKey]) oversBowled[bowlTeam][overKey] = { bowlerKey: key, legalBalls: 0, runs: 0 };
+            const overKey = `${b.bowlerKey}::${inn}-${b.over}`;
+            if (!oversBowled[bowlTeam][overKey]) oversBowled[bowlTeam][overKey] = { bowlerKey: b.bowlerKey, inningsNo: inn, legalBalls: 0, runs: 0 };
             if (isLegal) oversBowled[bowlTeam][overKey].legalBalls++;
             oversBowled[bowlTeam][overKey].runs += b.runs || 0;
         }
     });
 
     const toBattingCard = (team) => Object.values(batting[team]);
-    const toBowlingCard = (team) => Object.entries(bowling[team]).map(([key, row]) => ({
+    const toBowlingCard = (team) => Object.values(bowling[team]).map(row => ({
         name: row.name,
         overs: Math.floor(row.balls / 6),
         balls: row.balls % 6, // same (overs, balls) pair shape fmtOversLike()/computeLeaderboards already expect
         runs: row.runs,
         wickets: row.wickets,
-        maidens: Object.values(oversBowled[team]).filter(o => o.bowlerKey === key && o.legalBalls === 6 && o.runs === 0).length
+        inningsNo: row.inningsNo,
+        maidens: Object.values(oversBowled[team]).filter(o => o.bowlerKey === row._bowlerKey && o.inningsNo === row.inningsNo && o.legalBalls === 6 && o.runs === 0).length
     }));
     const toScore = (team) => {
         const t = teamTotals[team];
