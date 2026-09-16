@@ -2198,15 +2198,36 @@ async function runPlayerClipsQuery(pk, req) {
     if (!matchFilter && ownerUid) base.ownerUid = ownerUid;
 
     const clips = await clipsCollection.find(base).sort({ createdAt: -1 }).limit(300).toArray();
-    const out = { fours: [], sixes: [], dismissal: [], wickets: [] };
+    // 🩹 FIX: a clip manually attached via the "attach clip to ANY ball"
+    // owner tool (see adminRouter '/clips/attach/upload' & '/clips/attach/
+    // drive') isn't always a FOUR/SIX/WICKET — the owner can tag an
+    // ordinary delivery as plain "CLIP" (OTHER / GENERAL CLIP in the
+    // attach form). Before this fix, only FOUR/SIX/WICKET were ever
+    // bucketed here, so a general-tagged clip silently vanished from
+    // every player-scoped view (this batting/bowling drawer AND the
+    // tournament leaderboard drawer, which both call this same function)
+    // even though it correctly showed up in /api/clips/match/:matchId
+    // (Match Highlights), which lists every clip unfiltered by type.
+    // batting.other / bowling.other now catch anything that isn't one of
+    // the three recognised event types, keyed to whichever side of the
+    // ball (striker or bowler) this player was on.
+    const out = { fours: [], sixes: [], dismissal: [], wickets: [], battingOther: [], bowlingOther: [] };
     clips.forEach(c => {
         const s = serializeClip(c);
-        if (pkSet.has(c.strikerKey) && c.eventType === 'FOUR') out.fours.push(s);
-        else if (pkSet.has(c.strikerKey) && c.eventType === 'SIX') out.sixes.push(s);
-        else if (pkSet.has(c.strikerKey) && c.eventType === 'WICKET') out.dismissal.push(s);
-        if (pkSet.has(c.bowlerKey) && c.eventType === 'WICKET') out.wickets.push(s);
+        const isStriker = pkSet.has(c.strikerKey);
+        const isBowler = pkSet.has(c.bowlerKey);
+        if (isStriker && c.eventType === 'FOUR') out.fours.push(s);
+        else if (isStriker && c.eventType === 'SIX') out.sixes.push(s);
+        else if (isStriker && c.eventType === 'WICKET') out.dismissal.push(s);
+        else if (isStriker) out.battingOther.push(s);
+        if (isBowler && c.eventType === 'WICKET') out.wickets.push(s);
+        else if (isBowler && c.eventType !== 'FOUR' && c.eventType !== 'SIX') out.bowlingOther.push(s);
     });
-    return { scope, batting: { fours: out.fours, sixes: out.sixes, dismissal: out.dismissal }, bowling: { wickets: out.wickets } };
+    return {
+        scope,
+        batting: { fours: out.fours, sixes: out.sixes, dismissal: out.dismissal, other: out.battingOther },
+        bowling: { wickets: out.wickets, other: out.bowlingOther }
+    };
 }
 
 app.get('/api/clips/player/:playerKey', async (req, res) => {
