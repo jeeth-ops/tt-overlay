@@ -201,7 +201,13 @@
     flex:0 0 auto; display:flex; flex-direction:row; align-items:stretch;
     justify-content:center; min-width:min(14.2vw,164px); transition:min-width .3s ease;
   }
-  #crr-seg.chase-mode{ min-width:min(29vw,335px); }
+  /* Only 2 items share the row now (CRR/RRR toggle + merged Target),
+     so the segment needs noticeably less width than the old 3-up layout. */
+  #crr-seg.chase-mode{ min-width:min(22vw,252px); }
+  /* Target now carries a longer value ("234 off 120 balls"), so give it
+     more of the shared row than the short CRR/RRR toggle beside it. */
+  #crr-seg.chase-mode #rate-item{ flex:1 1 0; }
+  #crr-seg.chase-mode #target-item{ flex:1.6 1 0; min-width:112px; }
   #crr-seg .crr-item{
     flex:1 1 0; display:flex; flex-direction:column; align-items:center;
     justify-content:center; text-align:center; gap:6px; padding:0 16px; position:relative;
@@ -236,6 +242,10 @@
      dial the size back down a step here so longer values like "10.75"
      never crowd the hairline dividers on either side. */
   #crr-seg.chase-mode .val{ font-size:min(2.6vw,31px); }
+  /* "off X balls" rides alongside the target number, smaller and dimmer
+     so the target itself stays the visually dominant number — same idea
+     as the batter's (balls) suffix, applied to this stat instead. */
+  #crr-seg .val .unit{ display:block; font-family:var(--font-ui); font-weight:700; font-size:0.42em; color:var(--ink-dim); letter-spacing:.2px; margin-top:2px; white-space:nowrap; }
 
   /* Toggle stage: both faces are absolutely stacked in the exact same
      box, so swapping which one is visible never shifts layout, width,
@@ -946,11 +956,7 @@
               </div>
               <div class="crr-item" id="target-item" style="display:none">
                 <div class="lbl">Target</div>
-                <div class="val" id="target-val">—</div>
-              </div>
-              <div class="crr-item" id="balls-item" style="display:none">
-                <div class="lbl">Balls Left</div>
-                <div class="val" id="balls-remaining-val">—</div>
+                <div class="val" id="target-val">— <span class="unit">off — balls</span></div>
               </div>
             </div>
             <div class="wseg" id="bowler-seg">
@@ -1444,18 +1450,15 @@ function stopChaseToggle(){
 function setChaseMode(chaseMode){
   const seg = document.getElementById('crr-seg');
   const targetItem = document.getElementById('target-item');
-  const ballsItem = document.getElementById('balls-item');
   if(chaseMode && !inChaseMode){
     inChaseMode = true;
     seg.classList.add('chase-mode');
     targetItem.style.display = 'flex';
-    ballsItem.style.display = 'flex';
     startChaseToggle();
   } else if(!chaseMode && inChaseMode){
     inChaseMode = false;
     seg.classList.remove('chase-mode');
     targetItem.style.display = 'none';
-    ballsItem.style.display = 'none';
     stopChaseToggle();
   }
 }
@@ -1562,8 +1565,7 @@ function renderState(s){
     const runsNeeded = Math.max(s.target - (s.score?.runs ?? 0), 0);
     const rrr = ballsLeft && ballsLeft > 0 ? (runsNeeded / (ballsLeft/6)) : 0;
     document.getElementById('rrr-val').textContent = ballsLeft ? rrr.toFixed(2) : '—';
-    document.getElementById('target-val').textContent = s.target;
-    document.getElementById('balls-remaining-val').textContent = ballsLeft ?? '—';
+    document.getElementById('target-val').innerHTML = `${s.target} <span class="unit">off ${ballsLeft ?? '—'} balls</span>`;
   }
   setChaseMode(chaseMode);
 
