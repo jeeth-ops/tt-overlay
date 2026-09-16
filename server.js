@@ -5872,11 +5872,30 @@ async function syncMatchRecordFromBalls(ownerUid, matchId) {
         // POST /api/league/:name/match save at match start) — never upsert
         // here, since we don't know leagueKey/teamA/teamB and must not
         // create/own a competing record for this matchId.
-        const existing = await matchRecordsCollection.findOne({ ownerUid, matchId }, { projection: { leagueKey: 1 } });
+        //
+        // 🩹 FIX: `matchId` here comes straight off ball docs (see callers —
+        // e.g. mergePlayersDeep groups targets by `b.matchId`), and ball
+        // docs are keyed by the LIVE ROOM id, which is not always the same
+        // value as the permanent archived matchId a finished match is saved
+        // under in matchRecordsCollection (see the roomId-vs-matchId
+        // comments elsewhere in this file, e.g. GET /api/public/match/:id
+        // and the clip-lookup `m.roomId || m.matchId` fallbacks). A plain
+        // { ownerUid, matchId } lookup silently misses whenever those two
+        // differ, so this function was a no-op for those matches — balls
+        // and clips got corrected, but the persisted battingCard/
+        // bowlingCard (and everything derived from it: tournament
+        // leaderboards, player-highlights stats) stayed stale. Matching on
+        // roomId too, and always writing back using the doc's OWN matchId
+        // (never the possibly-a-roomId value we were called with), fixes
+        // that the same way the public-match lookup already does.
+        const existing = await matchRecordsCollection.findOne(
+            { ownerUid, $or: [{ matchId }, { roomId: matchId }] },
+            { projection: { leagueKey: 1, matchId: 1 } }
+        );
         if (!existing) return;
         const cards = await buildLiveCardsFromBalls(matchId);
         await matchRecordsCollection.updateOne(
-            { ownerUid, leagueKey: existing.leagueKey, matchId },
+            { ownerUid, leagueKey: existing.leagueKey, matchId: existing.matchId },
             { $set: { ...cards, liveSyncedAt: Date.now() } }
         );
         // Public tournament portal caches its payload for up to 4s (see
