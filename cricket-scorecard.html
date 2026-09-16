@@ -3130,8 +3130,9 @@ async function loadDeliveryList(matchId){
       const overLabel = `${b.over}.${b.ballInOver}`;
       const header = b.innings !== currentInnings ? (currentInnings = b.innings, `<div class="em-innings-h">Innings ${b.innings}</div>`) : '';
       const wkt = b.dismissal ? ` <span class="em-wkt">(${escapeHtml(b.dismissal.type || 'Out')})</span>` : '';
-      const eventful = isBoundaryDelivery(b);
-      const clipBtn = eventful ? `<button class="em-edit-btn" data-clip="${escapeHtml(b.ballId)}">🎬 Clip</button>` : '';
+      // Owner can attach a clip to ANY ball — not just boundaries/wickets —
+      // since it's their call which deliveries are worth a highlight.
+      const clipBtn = `<button class="em-edit-btn" data-clip="${escapeHtml(b.ballId)}">🎬 Clip</button>`;
       return `${header}<div class="em-ball-row">
         <span><b>${overLabel}</b> &nbsp;${escapeHtml(b.bowler||'—')} to ${escapeHtml(b.striker||'—')} — ${escapeHtml(ballLabel(b))}${wkt}</span>
         <button class="em-edit-btn" data-ball="${escapeHtml(b.ballId)}">Edit</button>${clipBtn}
@@ -3362,7 +3363,7 @@ function openClipDeleteConfirm(clipId, title){
    lists, download, etc. Never touches ball/score data. ---------- */
 function openAttachClipForm(matchId, ball){
   const wkt = ball.dismissal ? ` (${escapeHtml(ball.dismissal.type||'Out')})` : '';
-  const defaultType = ball.kind==='W' ? 'WICKET' : boundaryRuns(ball)===6 ? 'SIX' : 'FOUR';
+  const defaultType = ball.kind==='W' ? 'WICKET' : boundaryRuns(ball)===6 ? 'SIX' : boundaryRuns(ball)===4 ? 'FOUR' : 'CLIP';
   openConfirmModal(`
     <div class="em-title">Attach Clip</div>
     <div class="em-sub">
@@ -3376,6 +3377,7 @@ function openAttachClipForm(matchId, ball){
           <option value="FOUR" ${defaultType==='FOUR'?'selected':''}>FOUR</option>
           <option value="SIX" ${defaultType==='SIX'?'selected':''}>SIX</option>
           <option value="WICKET" ${defaultType==='WICKET'?'selected':''}>WICKET</option>
+          <option value="CLIP" ${defaultType==='CLIP'?'selected':''}>OTHER / GENERAL CLIP</option>
         </select>
       </div>
       <div style="grid-column:1/-1;"><label>Upload video from this device</label><input id="attachFile" type="file" accept="video/mp4,video/*"></div>
