@@ -1413,6 +1413,16 @@ function connect(){
     loadMatchSnapshot(matchId);
     renderHighlights();
     loadTournamentHub();
+    // A finished match's scorecard used to be a one-shot fetch — if the
+    // backend record changed after this page loaded (an owner correction,
+    // or the match having just been marked completed and its card data
+    // finishing a moment later), the viewer was stuck seeing the stale
+    // snapshot until they manually reloaded. Poll the same lightweight
+    // JSON endpoint every 30s so it catches up on its own.
+    // renderFinalSnapshot() already keeps whichever innings tab is
+    // selected across re-renders (see isFirstLoadOfThisMatch), so this
+    // won't snap the viewer back to "1st Innings" every 30s.
+    setInterval(() => loadMatchSnapshot(matchId), 30000);
     return;
   }
 
