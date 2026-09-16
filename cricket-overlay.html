@@ -1528,7 +1528,13 @@ function renderState(s){
     const runsNeeded = Math.max(s.target - (s.score?.runs ?? 0), 0);
     const rrr = ballsLeft && ballsLeft > 0 ? (runsNeeded / (ballsLeft/6)) : 0;
     document.getElementById('rrr-val').textContent = ballsLeft ? rrr.toFixed(2) : '—';
-    document.getElementById('target-val').innerHTML = `${s.target} <span class="unit">off ${ballsLeft ?? '—'} balls</span>`;
+    // 🐛 FIX: this was showing s.target (the fixed innings target — e.g.
+    // 163 — which never changes once set) instead of runsNeeded (computed
+    // right above but never actually used) — so the "Target" number on
+    // the overlay stayed stuck at the same figure all through the chase
+    // instead of counting down with every run scored, exactly like a
+    // real broadcast's "NEED 45 off 30" does.
+    document.getElementById('target-val').innerHTML = `${runsNeeded} <span class="unit">off ${ballsLeft ?? '—'} balls</span>`;
   }
   setChaseMode(chaseMode);
 
