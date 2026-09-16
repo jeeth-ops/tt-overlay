@@ -2738,7 +2738,12 @@ app.get('/api/public/tournament/:token/players', async (req, res) => {
         const names = new Map(); // pk -> display name
         topRuns.forEach(r => names.set(playerKey(r.name), r.name));
         topWickets.forEach(r => names.set(playerKey(r.name), r.name));
-        const matchIds = ctx.matches.map(m => m.matchId);
+        // 🩹 CLIPS FIX: clips are tagged with the live capture room id, not
+        // this tournament's saved matchId — see the roomId backfill comment
+        // on POST /api/league/:name/match. Match against roomId when we
+        // have one, falling back to matchId for older records saved before
+        // that backfill existed.
+        const matchIds = ctx.matches.map(m => m.roomId || m.matchId);
         const pkList = [...names.keys()];
         const counts = new Map(pkList.map(pk => [pk, { sixes: 0, fours: 0, dismissals: 0, wickets: 0, other: 0 }]));
 
@@ -2793,9 +2798,16 @@ app.get('/api/public/tournament/:token/player-clips', async (req, res) => {
         const pk = playerKey(name);
         if (!pk) return res.status(400).json({ success: false, error: 'name required' });
 
-        const matchIds = ctx.matches.map(m => m.matchId);
-        const matchIndex = new Map(ctx.matches.map((m, i) => [m.matchId, i])); // tournament order — getLeagueMatches sorts by savedAt asc
-        const matchById = new Map(ctx.matches.map(m => [m.matchId, m]));
+        // 🩹 CLIPS FIX: clips are tagged with the live capture room id, not
+        // this tournament's saved matchId — see the roomId backfill comment
+        // on POST /api/league/:name/match. Every lookup below must key off
+        // that same roomId (falling back to matchId for older records saved
+        // before the backfill existed), since that's the value actually
+        // stored on clip docs' own matchId field.
+        const clipId = (m) => m.roomId || m.matchId;
+        const matchIds = ctx.matches.map(clipId);
+        const matchIndex = new Map(ctx.matches.map((m, i) => [clipId(m), i])); // tournament order — getLeagueMatches sorts by savedAt asc
+        const matchById = new Map(ctx.matches.map(m => [clipId(m), m]));
 
         const clips = matchIds.length
             ? await clipsCollection.find({ matchId: { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }] }).toArray()
@@ -2856,8 +2868,10 @@ app.post('/api/public/tournament/:token/highlights/compile', async (req, res) =>
         if (!pk) return res.status(400).json({ success: false, error: 'name required' });
         const category = String((req.body && req.body.category) || 'all').toLowerCase();
 
-        const matchIds = ctx.matches.map(m => m.matchId);
-        const matchIndex = new Map(ctx.matches.map((m, i) => [m.matchId, i]));
+        // 🩹 CLIPS FIX: see the matching comment in /player-clips above —
+        // clips are tagged with roomId, not the tournament's saved matchId.
+        const matchIds = ctx.matches.map(m => m.roomId || m.matchId);
+        const matchIndex = new Map(ctx.matches.map((m, i) => [m.roomId || m.matchId, i]));
         if (!matchIds.length) return res.json({ success: true, empty: true, message: 'No highlights available for this player yet.' });
 
         const clips = await clipsCollection.find({ matchId: { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }] }).toArray();
@@ -3057,9 +3071,11 @@ app.post('/api/public/tournament/:token/highlights/compile-all-players', async (
     try {
         const ctx = await resolvePublicTournamentForHighlights(req, req.params.token);
         if (ctx.httpError) return res.status(ctx.httpError).json({ success: false, error: ctx.message });
-        const matchIds = ctx.matches.map(m => m.matchId);
+        // 🩹 CLIPS FIX: see the matching comment in /player-clips above —
+        // clips are tagged with roomId, not the tournament's saved matchId.
+        const matchIds = ctx.matches.map(m => m.roomId || m.matchId);
         if (!matchIds.length) return res.json({ success: true, empty: true, message: 'No highlights available for this tournament yet.' });
-        const matchIndex = new Map(ctx.matches.map((m, i) => [m.matchId, i]));
+        const matchIndex = new Map(ctx.matches.map((m, i) => [m.roomId || m.matchId, i]));
 
         const { topRuns, topWickets } = computeLeaderboards(ctx.matches);
         const names = new Map();
