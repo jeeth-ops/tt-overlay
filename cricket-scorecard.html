@@ -311,6 +311,7 @@
   #score-center{ text-align:center; min-width:0; }
   #score-overs-row{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; }
   #main-score{ font-family:var(--font-display); font-weight:800; font-size:clamp(30px,6vw,44px); line-height:1; text-shadow:0 0 30px var(--accent-soft); overflow-wrap:anywhere; word-break:break-word; }
+  #main-score.result-margin{ font-size:clamp(15px,3.6vw,20px); text-transform:uppercase; letter-spacing:.3px; line-height:1.3; }
   #main-overs{ font-size:13px; color:var(--text-dim); font-weight:600; }
   #batting-tag{ font-size:10.5px; color:var(--accent); font-weight:700; letter-spacing:.4px; text-transform:uppercase; margin-top:4px; }
 
@@ -1574,6 +1575,25 @@ function finalResultText(m){
   return 'Result pending';
 }
 
+// "Won by 71 runs" / "Won by 6 wickets" / "Match Tied" — short by
+// construction (never more than a few words), so it can safely sit in
+// the big center slot without ever risking the overlap the old combined
+// "162-10 vs 233-4" string caused.
+function winMarginText(m){
+  if(m.winningTeam === 'TIE') return 'Match Tied';
+  if(m.winningTeam !== 'A' && m.winningTeam !== 'B') return '';
+  const winner = m.winningTeam, loser = winner === 'A' ? 'B' : 'A';
+  const wScore = (winner === 'A' ? m.scoreA : m.scoreB) || {};
+  const lScore = (loser === 'A' ? m.scoreA : m.scoreB) || {};
+  const winnerBattedFirst = firstBattingTeamOf(m) === winner;
+  if(winnerBattedFirst){
+    const runs = (wScore.runs || 0) - (lScore.runs || 0);
+    return runs > 0 ? `Won by ${runs} run${runs === 1 ? '' : 's'}` : '';
+  }
+  const left = Math.max(0, 10 - (wScore.wickets || 0));
+  return `Won by ${left} wicket${left === 1 ? '' : 's'}`;
+}
+
 function renderFinalSnapshot(match, displayName){
   finalMatchData = match;
   finalActiveInnings = firstBattingTeamOf(match);
@@ -1624,7 +1644,8 @@ function renderFinalSnapshot(match, displayName){
     prevB.style.display = ''; prevB.style.fontSize = '15px'; prevB.style.opacity = '1'; prevB.style.marginTop = '4px';
     prevB.textContent = `${scoreB.runs||0}-${scoreB.wickets||0} (${scoreB.overs||'0.0'} ov)`;
   }
-  setText('main-score', 'FINAL');
+  setText('main-score', winMarginText(match) || 'Match Completed');
+  document.getElementById('main-score').classList.add('result-margin');
   const mainOversEl = document.getElementById('main-overs'); if(mainOversEl) mainOversEl.style.display = 'none';
   setText('batting-tag', '');
 
@@ -1876,6 +1897,8 @@ function renderHero(s){
   document.getElementById('team-block-b').style.opacity = s.battingTeam === 'B' ? '1' : '.55';
 
   setText('main-score', `${s.score.runs}-${s.score.wickets}`);
+  document.getElementById('main-score').classList.remove('result-margin');
+  const mainOversEl = document.getElementById('main-overs'); if(mainOversEl) mainOversEl.style.display = '';
   setText('main-overs', `(${fmtOvers(s.score.overs, s.score.balls)} ov)`);
   const battingObj = teamObj(s, s.battingTeam);
   setText('batting-tag', (battingObj.short || battingObj.name || '') + ' batting');
