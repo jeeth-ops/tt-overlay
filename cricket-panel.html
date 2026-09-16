@@ -845,6 +845,13 @@
       <select id="new-batsman-select" style="display:none;"><option value="">— choose player —</option></select>
       <input type="text" id="new-batsman-name" placeholder="Incoming batsman name">
       <button class="full small" id="new-batsman-btn" style="margin-top:8px;">Send In New Batsman</button>
+      <!-- 🔁 CORRECT BATSMAN — deliberately separate from the flow above.
+           This is NOT a new-wicket / new-batsman action: it fixes a scorer
+           mistake where the WRONG player was sent in after a dismissal and
+           has already faced some balls under the wrong name. It never
+           touches the wicket count and never opens the normal New Batsman
+           modal. See applyBatsmanCorrection() for what actually changes. -->
+      <button type="button" class="full ghost" id="correct-batsman-btn" style="margin-top:8px;">🔁 Correct Batsman (wrong player selected)</button>
     </div>
 
     <div class="card" id="card-bowler">
@@ -1000,6 +1007,40 @@
         style="width:100%;padding:9px 10px;border-radius:7px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);font-size:13px;margin-bottom:10px;">
       <button type="button" class="full primary" id="newbat-modal-submit">Send In</button>
       <button type="button" class="full ghost wm-cancel" id="newbat-modal-cancel" style="margin-top:8px;">Skip for now</button>
+    </div>
+  </div>
+
+  <!-- 🔁 CORRECT BATSMAN — fixes "wrong player sent in after a wicket" AFTER
+       the fact. Completely separate from the newbat-modal above: opening
+       this never fires a wicket, never asks for a dismissal, and the normal
+       Wicket → New Batsman → Select Player → Continue flow is untouched by
+       its existence. See applyBatsmanCorrection() for the actual logic. -->
+  <div class="wicket-modal-overlay" id="correct-batsman-modal-overlay">
+    <div class="wicket-modal" id="correct-batsman-modal">
+      <h3>🔁 Correct Batsman</h3>
+      <div class="wm-sub">Use this only when the WRONG player was sent in and has already faced ball(s). This is not a new wicket — the wicket count will not change.</div>
+
+      <div class="wm-field">
+        <label>Which end has the wrong player?</label>
+        <div class="wm-pill-row" id="correct-batsman-end-row"></div>
+      </div>
+
+      <div class="wm-field" id="correct-batsman-wrong-summary" style="font-size:12px;color:var(--text-dim);margin:4px 0 10px;">—</div>
+
+      <div class="wm-field">
+        <label>Actual (correct) batsman</label>
+        <select id="correct-batsman-select" style="width:100%;padding:9px 10px;border-radius:7px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);font-size:13px;margin-bottom:10px; display:none;"><option value="">— choose player —</option></select>
+        <input type="text" id="correct-batsman-input" placeholder="Correct batsman name"
+          style="width:100%;padding:9px 10px;border-radius:7px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);font-size:13px;margin-bottom:10px;">
+      </div>
+
+      <div class="wm-summary-box" id="correct-batsman-summary">Pick the wrong end and the correct player.</div>
+
+      <div class="wm-actions" style="flex-direction:column;gap:8px;">
+        <button type="button" class="full primary" id="correct-batsman-keep-btn">Exchange — Keep Same Score</button>
+        <button type="button" class="full primary" id="correct-batsman-reset-btn" style="background:var(--red);">Exchange — Reset Score (0 runs/balls)</button>
+        <button type="button" class="full ghost wm-cancel" id="correct-batsman-cancel">Cancel</button>
+      </div>
     </div>
   </div>
 
@@ -3414,6 +3455,208 @@ document.getElementById('new-batsman-btn').addEventListener('click', () => {
   sendInNewBatsman(name, null);
   document.getElementById('new-batsman-name').value = '';
 });
+
+/* ============================================================
+   🔁 CORRECT BATSMAN — fixes a scorer mistake where the WRONG player was
+   sent in after a wicket and has already faced ball(s) under that name.
+
+   This is deliberately a SEPARATE code path from sendInNewBatsman() above:
+   - It is NOT a dismissal. state.score.wickets, dismissedThisInnings and
+     the fall-of-wickets list are never touched.
+   - It never opens newbat-modal / calls the normal wicket flow.
+   - Example: "A OUT → Y mistakenly sent in → correct Y to X" ends as
+     "A OUT → X batting", with the wicket count unchanged.
+
+   Two operator-chosen modes:
+   - 'keep'  — Y's runs/balls/4s/6s so far transfer to X unchanged
+               (Y = 5 off 3 → X = 5 off 3).
+   - 'reset' — Y's accidental runs/balls/4s/6s are wiped; X starts at 0.
+
+   Everything below only touches the CURRENT partnership's data: the live
+   striker/non-striker object at the corrected end, and this innings'
+   ballLog entries recorded since the last wicket (i.e. since Y actually
+   came to the crease) whose striker/non-striker name field says "Y".
+   Anything from BEFORE that wicket belongs to a previous, already-settled
+   partnership and is never rewritten.
+   ============================================================ */
+let correctBatsmanState = { end: 'striker' }; // 'striker' | 'nonStriker' — which crease end is wrong
+
+function correctBatsmanSelectedPlayer(){
+  const select = document.getElementById('correct-batsman-select');
+  if(select.style.display !== 'none' && select.value){
+    const p = findPlayerById(state.battingTeam, select.value);
+    if(p) return { name: p.name, id: p.id };
+    return null;
+  }
+  const name = document.getElementById('correct-batsman-input').value.trim();
+  return name ? { name, id: null } : null;
+}
+
+function updateCorrectBatsmanSummary(){
+  const box = document.getElementById('correct-batsman-summary');
+  const wrong = state[correctBatsmanState.end];
+  const target = correctBatsmanSelectedPlayer();
+  if(!target){
+    box.textContent = 'Pick the wrong end and the correct player.';
+    return;
+  }
+  if(wrong.id && target.id && wrong.id === target.id){
+    box.textContent = 'That is already the player currently at this end.';
+    return;
+  }
+  box.innerHTML = `<b>${escapeHtmlPanel(wrong.name || 'Wrong player')}</b> → <b>${escapeHtmlPanel(target.name)}</b> at the ${correctBatsmanState.end === 'striker' ? 'striker' : 'non-striker'}'s end. ` +
+    `"Keep Same Score" carries over <b>${wrong.runs || 0} run${(wrong.runs||0)===1?'':'s'} off ${wrong.balls || 0} ball${(wrong.balls||0)===1?'':'s'}</b>. "Reset Score" starts ${escapeHtmlPanel(target.name)} at 0 off 0. The wicket count will not change either way.`;
+}
+
+function renderCorrectBatsmanEndRow(){
+  const row = document.getElementById('correct-batsman-end-row');
+  row.innerHTML = '';
+  [
+    { key: 'striker', label: state.striker.name || 'Striker' },
+    { key: 'nonStriker', label: state.nonStriker.name || 'Non-striker' }
+  ].forEach((b, idx) => {
+    const pill = document.createElement('div');
+    pill.className = 'wm-pill' + (b.key === correctBatsmanState.end ? ' active' : '');
+    pill.dataset.end = b.key;
+    pill.textContent = b.label;
+    pill.addEventListener('click', () => {
+      correctBatsmanState.end = b.key;
+      row.querySelectorAll('.wm-pill').forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      renderCorrectBatsmanFields();
+      updateCorrectBatsmanSummary();
+    });
+    row.appendChild(pill);
+  });
+}
+
+function renderCorrectBatsmanFields(){
+  const wrong = state[correctBatsmanState.end];
+  document.getElementById('correct-batsman-wrong-summary').textContent =
+    `Currently recorded as: ${wrong.name || '(no name)'} — ${wrong.runs || 0} run${(wrong.runs||0)===1?'':'s'} off ${wrong.balls || 0} ball${(wrong.balls||0)===1?'':'s'} (${wrong.fours||0}x4, ${wrong.sixes||0}x6)`;
+
+  const battingKey = state.battingTeam;
+  const select = document.getElementById('correct-batsman-select');
+  const input = document.getElementById('correct-batsman-input');
+  const hasRoster = rosterPlayers(battingKey).length > 0;
+  const otherEnd = correctBatsmanState.end === 'striker' ? 'nonStriker' : 'striker';
+  const otherId = state[otherEnd].id;
+  const wrongId = wrong.id;
+  // Correct-player options: any eligible batter, minus whoever occupies
+  // the OTHER end right now (can't seat the same player at both ends) and
+  // minus the currently-wrong player themself (picking them again is a
+  // no-op, not a correction).
+  const options = eligibleBatters(battingKey, { excludeIds: [otherId, wrongId].filter(Boolean) });
+  if(hasRoster){
+    fillPlayerSelect(select, options, { teamKey: battingKey, keepValue: false });
+    select.style.display = 'block';
+    input.style.display = 'none';
+  } else {
+    select.style.display = 'none';
+    input.style.display = 'block';
+  }
+  input.value = '';
+}
+
+function openCorrectBatsmanModal(){
+  correctBatsmanState = { end: 'striker' };
+  renderCorrectBatsmanEndRow();
+  renderCorrectBatsmanFields();
+  updateCorrectBatsmanSummary();
+  document.getElementById('correct-batsman-modal-overlay').classList.add('show');
+}
+function closeCorrectBatsmanModal(){
+  document.getElementById('correct-batsman-modal-overlay').classList.remove('show');
+}
+
+/* The actual correction. `mode` is 'keep' or 'reset'.
+   Wrapped in a single pushHistory() call BEFORE any mutation, so the
+   entire correction — crease identity, stats and the affected ballLog
+   entries together — collapses into exactly one entry on the existing
+   undo stack. One click of "Undo Last Ball (U)" (or the Edit Scorecard
+   delete) reverses the whole correction at once, never a partial fix. */
+function applyBatsmanCorrection(mode){
+  const endKey = correctBatsmanState.end; // 'striker' | 'nonStriker'
+  const wrong = state[endKey];
+  const target = correctBatsmanSelectedPlayer();
+  if(!target){ toast('Pick the correct batsman first'); return; }
+  if(wrong.id && target.id && wrong.id === target.id){ toast('That is already the current player at this end'); return; }
+
+  pushHistory(); // ← single atomic snapshot; see comment block above
+
+  const preserved = mode === 'keep'
+    ? { runs: wrong.runs || 0, balls: wrong.balls || 0, fours: wrong.fours || 0, sixes: wrong.sixes || 0 }
+    : { runs: 0, balls: 0, fours: 0, sixes: 0 };
+
+  const corrected = { name: target.name, id: target.id || null, ...preserved };
+  const wrongName = wrong.name;
+  state[endKey] = corrected;
+
+  // Rewrite ballLog entries recorded SINCE the wrong player came to the
+  // crease — i.e. walk backward from the most recent ball and stop the
+  // instant we hit a wicket (that wicket ball belongs to the PREVIOUS,
+  // already-settled partnership and is never touched). Only the name
+  // fields change; runs/overs/scoreAfter for the team are already correct
+  // and untouched — this is a display/attribution fix, not a re-score.
+  const inn = state.inningsNumber;
+  const bt = state.battingTeam;
+  const log = state.ballLog || [];
+  for(let i = log.length - 1; i >= 0; i--){
+    const entry = log[i];
+    if(entry.innings !== inn || entry.battingTeam !== bt) continue;
+    if(entry.isWicket) break; // previous partnership's boundary — stop here
+    if(entry.striker === wrongName) entry.striker = corrected.name;
+    if(entry.nonStriker === wrongName) entry.nonStriker = corrected.name;
+  }
+
+  // Defensive: if a not-out placeholder row for the wrong name was already
+  // archived into this innings' battingCard (e.g. correction requested
+  // right as the innings was wrapping up), fix that too so the scorecard/
+  // tournament aggregation reads the corrected name instead of a stray
+  // "Y — not out" line.
+  (state.battingCard[bt] || []).forEach(row => {
+    if(row.inningsNo === inn && row.out === false && row.name === wrongName){
+      row.name = corrected.name;
+      row.id = corrected.id;
+      if(mode === 'reset'){ row.runs = 0; row.balls = 0; row.fours = 0; row.sixes = 0; }
+    }
+  });
+
+  // Best-effort notice to the server, so a matching server-side handler
+  // (if/when one exists — see the DELETE LAST BALL comment block earlier
+  // about server.js owning the DB's own correction engine) can also fix
+  // already-persisted per-ball rows, tournament player-stat aggregates and
+  // clip player-linking for the wrong name. Silently ignored if the server
+  // doesn't implement this event — nothing above depends on it, so the
+  // panel's own live score/scorecard is correct either way.
+  const matchId = currentMatchId();
+  if(socket && socket.connected && matchId){
+    socket.emit('correctBatsman', {
+      matchId, innings: inn, battingTeam: bt,
+      end: endKey, mode,
+      oldName: wrongName, oldId: wrong.id || null,
+      newName: corrected.name, newId: corrected.id || null,
+      runsTransferred: preserved.runs, ballsTransferred: preserved.balls
+    });
+  }
+
+  renderRosterControls();
+  pushState(true, true);
+  closeCorrectBatsmanModal();
+  toast(mode === 'keep'
+    ? `🔁 Corrected — ${corrected.name} now carries ${preserved.runs}/${preserved.balls}`
+    : `🔁 Corrected — ${corrected.name} starts at 0/0`);
+}
+
+document.getElementById('correct-batsman-btn').addEventListener('click', openCorrectBatsmanModal);
+document.getElementById('correct-batsman-cancel').addEventListener('click', closeCorrectBatsmanModal);
+document.getElementById('correct-batsman-modal-overlay').addEventListener('click', e => {
+  if(e.target.id === 'correct-batsman-modal-overlay') closeCorrectBatsmanModal();
+});
+document.getElementById('correct-batsman-select').addEventListener('change', updateCorrectBatsmanSummary);
+document.getElementById('correct-batsman-input').addEventListener('input', updateCorrectBatsmanSummary);
+document.getElementById('correct-batsman-keep-btn').addEventListener('click', () => applyBatsmanCorrection('keep'));
+document.getElementById('correct-batsman-reset-btn').addEventListener('click', () => applyBatsmanCorrection('reset'));
 
 /* ============================================================
    BOWLER — a deliberate "Set / Change Bowler" action (not live-typed)
