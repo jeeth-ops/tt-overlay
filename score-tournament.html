@@ -844,7 +844,24 @@ function renderPortal(data, token){
   const matches = data.matches || [];
   const finished = matches.filter(m => m.winningTeam);
   const inProgress = matches.filter(m => !m.winningTeam);
-  const isLive = !!(data.live && data.live.roomId);
+  // 🐛 FIX: this used to trust `data.live.roomId` alone to decide whether to
+  // show the "Live Now — Match in progress" card. But the backend keeps that
+  // room object around even after the match has been saved as finished (the
+  // room only actually closes when the operator does something else to clear
+  // it), so a completed match kept showing BOTH under "Live Now" (stale) AND
+  // under "Previous Matches" (correct) — the exact duplicate reported, and
+  // the "Live Now" copy pointed at the still-open room, which is why IT
+  // showed real logos (still-live socket data) while the "Previous Matches"
+  // copy went through the finished-match snapshot path instead. Now: a live
+  // room is only treated as genuinely live if it isn't already the room of a
+  // match that's been saved as finished (matched by roomId), or — if the
+  // saved record has no roomId at all (older records) — if there's at least
+  // one still-in-progress match, so a fully-finished tournament with no
+  // pending match never resurrects a stale "Live Now" card.
+  const liveRoomAlreadyFinished = !!(data.live && data.live.roomId &&
+    finished.some(m => m.roomId && m.roomId === data.live.roomId));
+  const isLive = !!(data.live && data.live.roomId) && !liveRoomAlreadyFinished &&
+    (inProgress.length > 0 || finished.every(m => !m.roomId));
   const glance = computeTourneyGlance(matches);
 
   const heroCard = `
