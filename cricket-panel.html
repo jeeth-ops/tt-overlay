@@ -4606,13 +4606,25 @@ function buildMatchRecordForLeague(){
     venue: state.venue,
     streamUrl: state.streamUrl || '',
     format: state.format,
-    teamA: { name: state.teamA.name, short: state.teamA.short },
-    teamB: { name: state.teamB.name, short: state.teamB.short },
+    teamA: { name: state.teamA.name, short: state.teamA.short, color: state.teamA.color || '', logoUrl: state.teamA.logoUrl || '' },
+    teamB: { name: state.teamB.name, short: state.teamB.short, color: state.teamB.color || '', logoUrl: state.teamB.logoUrl || '' },
     winningTeam,
     scoreA: scoreForTeam('A'),
     scoreB: scoreForTeam('B'),
     battingCard: { A: battingCardA, B: battingCardB },
     bowlingCard: { A: bowlingCardA, B: bowlingCardB },
+    // 🐛 FIX: this record never used to save inningsArchive, so once a
+    // match was saved, the scorecard's firstBattingTeamOf() had no
+    // reliable way to tell which team actually batted first — it fell
+    // back to scanning battingCard/bowlingCard rows for an inningsNo tag,
+    // and silently defaulted to "Team A batted first" whenever that
+    // scan came up empty/ambiguous. Whenever Team A was actually the
+    // team that bowled first and won, that wrong default flipped the
+    // saved match's win-margin type from "won by N runs" to a
+    // nonsensical "won by N wickets" computed off the wrong side's score.
+    // Saving the same inningsArchive the live scorecard already trusts
+    // (see battingTeamForInnings) fixes that at the source.
+    inningsArchive: (state.inningsArchive || []).map(i => ({ ...i })),
     // Extra detail (added for the Tournament Excel Report — Records/
     // Highlights, NRR). Optional at read time: older saved matches simply
     // won't have these keys, and every reader below treats that as "no
