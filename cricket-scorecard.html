@@ -1913,6 +1913,18 @@ let finalActiveInnings = 'A';
 // match-wide inningsNo (same field the live scorecard filters on), so
 // trust that per-row tag over team-key ordering.
 function firstBattingTeamOf(m){
+  // Prefer the authoritative inningsArchive (added to saved match records
+  // by this fix — see buildMatchRecordForLeague() in the panel) over
+  // scanning battingCard/bowlingCard rows for an inningsNo tag: archive
+  // entries are written the instant an innings completes and always carry
+  // a correct { no, team }, whereas per-row inningsNo tagging could be
+  // missing/ambiguous, and blindly defaulting to 'A' in that case (the old
+  // behaviour) silently mislabels the match's win margin as "by wickets"
+  // instead of "by runs" whenever Team B actually batted first and won.
+  if(m.inningsArchive && m.inningsArchive.length){
+    const first = m.inningsArchive.reduce((min, i) => (min == null || i.no < min.no) ? i : min, null);
+    if(first && (first.team === 'A' || first.team === 'B')) return first.team;
+  }
   const earliestInningsNo = (team) => {
     const rows = [
       ...((m.battingCard && m.battingCard[team]) || []),
@@ -1990,7 +2002,7 @@ function renderFinalSnapshot(match, displayName){
   setText('name-a', A.name || 'Team A'); setText('short-a', A.short || '—');
   setText('name-b', B.name || 'Team B'); setText('short-b', B.short || '—');
   setText('hl-team-a-name', A.name || A.short || 'Team A'); setText('hl-team-b-name', B.name || B.short || 'Team B');
-  paintLogo('logo-a', A); paintLogo('logo-b', B);
+  paintLogo('logo-a', A); paintLogo('logo-b', B, 'var(--six)');
   document.getElementById('team-block-a').style.opacity = '1';
   document.getElementById('team-block-b').style.opacity = '1';
   const scoreA = match.scoreA || {}, scoreB = match.scoreB || {};
@@ -2263,10 +2275,21 @@ function renderHero(s){
   if(s.leagueName){ leagueChip.style.display=''; leagueChip.textContent = '🏆 ' + s.leagueName; } else leagueChip.style.display='none';
 
   const status = matchStatusText(s);
+  // 🐛 FIX: matchStatusText() already correctly detects a decided result
+  // (RESULT badge + correct "X won by Y" text) the instant the panel
+  // confirms it — but nothing downstream ever ACTED on that. The status
+  // chip alone flipped to "MC won by 71 runs" while the rest of the hero
+  // (target bar, "Need N off M", CRR/RRR, "DYP batting") kept rendering
+  // as if the chase was still live, because render() never has a
+  // finished-match branch — only the separately-loaded static snapshot
+  // (renderFinalSnapshot, used for already-completed matches) did. This
+  // makes the LIVE page switch over to the same finished look the moment
+  // a result exists, instead of only a live page reload doing that.
+  const isFinished = status.badge === 'RESULT';
   const statusChip = document.getElementById('chip-status');
   const statusText = document.getElementById('chip-status-text');
   statusText.textContent = status.text;
-  statusChip.classList.toggle('result', status.badge === 'RESULT');
+  statusChip.classList.toggle('result', isFinished);
   statusChip.querySelector('.lv-dot').style.display = status.badge === 'LIVE' ? '' : 'none';
 
   const A = s.teamA || {}, B = s.teamB || {};
@@ -2275,18 +2298,32 @@ function renderHero(s){
   setText('name-b', B.name || 'Team B'); setText('short-b', B.short || '—');
   setText('hl-team-a-name', A.name || A.short || 'Team A'); setText('hl-team-b-name', B.name || B.short || 'Team B');
   paintLogo('logo-a', A);
-  paintLogo('logo-b', B);
-  document.getElementById('team-block-a').style.opacity = s.battingTeam === 'A' ? '1' : '.55';
-  document.getElementById('team-block-b').style.opacity = s.battingTeam === 'B' ? '1' : '.55';
-  document.getElementById('team-block-a').classList.remove('winner');
-  document.getElementById('team-block-b').classList.remove('winner');
+  paintLogo('logo-b', B, 'var(--six)');
+  document.getElementById('team-block-a').style.opacity = (isFinished || s.battingTeam === 'A') ? '1' : '.55';
+  document.getElementById('team-block-b').style.opacity = (isFinished || s.battingTeam === 'B') ? '1' : '.55';
+  // s.matchWinnerKey is set by the panel ('A' | 'B' | 'TIE') the instant a
+  // result is decided and travels in the same live state payload as
+  // matchResultText — same field buildMatchRecordForLeague() uses as the
+  // authoritative winner, so this stays correct for Test draws/ties too.
+  document.getElementById('team-block-a').classList.toggle('winner', isFinished && s.matchWinnerKey === 'A');
+  document.getElementById('team-block-b').classList.toggle('winner', isFinished && s.matchWinnerKey === 'B');
 
-  setText('main-score', `${s.score.runs}-${s.score.wickets}`);
-  document.getElementById('main-score').classList.remove('result-margin');
-  const mainOversEl = document.getElementById('main-overs'); if(mainOversEl) mainOversEl.style.display = '';
-  setText('main-overs', `(${fmtOvers(s.score.overs, s.score.balls)} ov)`);
+  const mainScoreEl = document.getElementById('main-score');
+  const mainOversEl = document.getElementById('main-overs');
+  if(isFinished){
+    setText('main-score', status.text);
+    mainScoreEl.classList.add('result-margin');
+    const winnerColor = s.matchWinnerKey === 'A' ? A.color : s.matchWinnerKey === 'B' ? B.color : '';
+    mainScoreEl.style.setProperty('--result-color', winnerColor || '');
+    if(mainOversEl) mainOversEl.style.display = 'none';
+  } else {
+    setText('main-score', `${s.score.runs}-${s.score.wickets}`);
+    mainScoreEl.classList.remove('result-margin');
+    mainScoreEl.style.removeProperty('--result-color');
+    if(mainOversEl){ mainOversEl.style.display = ''; setText('main-overs', `(${fmtOvers(s.score.overs, s.score.balls)} ov)`); }
+  }
   const battingObj = teamObj(s, s.battingTeam);
-  setText('batting-tag', (battingObj.short || battingObj.name || '') + ' batting');
+  setText('batting-tag', isFinished ? '' : (battingObj.short || battingObj.name || '') + ' batting');
   // 🎨 Tie the Batting/Bowling scorecard cards to the ACTUAL team currently
   // in each role (this flips every innings), instead of a fixed accent
   // colour on both — see --card-accent in the .card-featured CSS.
@@ -2312,39 +2349,61 @@ function renderHero(s){
     }
   }
 
+  // Sections that only make sense mid-match — once a result exists there's
+  // nothing "current" left to show, same treatment renderFinalSnapshot()
+  // already uses for an already-completed match loaded fresh.
   const targetWrap = document.getElementById('target-wrap');
   const leadWrap = document.getElementById('lead-wrap');
-  if(s.target){
-    targetWrap.style.display = '';
-    if(leadWrap) leadWrap.style.display = 'none';
-    const need = Math.max(s.target - s.score.runs, 0);
-    const ballsLeft = calcBallsLeft(s);
-    setText('target-need', ballsLeft === null ? `Need ${need} runs` : `Need ${need} off ${ballsLeft}`);
-    setText('target-num', `Target ${s.target}`);
-    const pct = Math.min(100, Math.max(0, (s.score.runs / s.target) * 100));
-    document.getElementById('progress-fill').style.transform = `scaleX(${(pct/100).toFixed(4)})`;
-  } else if(leadWrap && s.format === 'Test' && (s.inningsNumber || 1) > 1){
+  const statStrip = document.getElementById('stat-strip');
+  const playersCardWrap = document.getElementById('players-grid') && document.getElementById('players-grid').closest('.card');
+  const ballsCardWrap = document.getElementById('balls-scroll') && document.getElementById('balls-scroll').closest('.card');
+  const compareGrid = document.getElementById('compare-grid');
+  const chartsGrid = document.getElementById('charts-grid');
+  if(isFinished){
     targetWrap.style.display = 'none';
-    leadWrap.style.display = '';
-    const lt = currentLeadTrail(s);
-    if(!lt || lt.tied){
-      setText('lead-text', 'Scores level');
-    } else {
-      const teamObj2 = teamObj(s, lt.team);
-      const verb = lt.team === s.battingTeam ? 'lead by' : 'trail by';
-      setText('lead-text', `${teamObj2.name || teamObj2.short} ${verb} ${lt.amount} run${lt.amount === 1 ? '' : 's'}`);
-    }
+    if(leadWrap) leadWrap.style.display = 'none';
+    if(statStrip) statStrip.style.display = 'none';
+    if(playersCardWrap) playersCardWrap.style.display = 'none';
+    if(ballsCardWrap) ballsCardWrap.style.display = 'none';
+    if(compareGrid) compareGrid.style.display = 'none';
+    if(chartsGrid) chartsGrid.style.display = 'none';
   } else {
-    targetWrap.style.display = 'none';
-    if(leadWrap) leadWrap.style.display = 'none';
+    if(statStrip) statStrip.style.display = '';
+    if(playersCardWrap) playersCardWrap.style.display = '';
+    if(ballsCardWrap) ballsCardWrap.style.display = '';
+    if(compareGrid) compareGrid.style.display = '';
+    if(chartsGrid) chartsGrid.style.display = '';
+    if(s.target){
+      targetWrap.style.display = '';
+      if(leadWrap) leadWrap.style.display = 'none';
+      const need = Math.max(s.target - s.score.runs, 0);
+      const ballsLeft = calcBallsLeft(s);
+      setText('target-need', ballsLeft === null ? `Need ${need} runs` : `Need ${need} off ${ballsLeft}`);
+      setText('target-num', `Target ${s.target}`);
+      const pct = Math.min(100, Math.max(0, (s.score.runs / s.target) * 100));
+      document.getElementById('progress-fill').style.transform = `scaleX(${(pct/100).toFixed(4)})`;
+    } else if(leadWrap && s.format === 'Test' && (s.inningsNumber || 1) > 1){
+      targetWrap.style.display = 'none';
+      leadWrap.style.display = '';
+      const lt = currentLeadTrail(s);
+      if(!lt || lt.tied){
+        setText('lead-text', 'Scores level');
+      } else {
+        const teamObj2 = teamObj(s, lt.team);
+        const verb = lt.team === s.battingTeam ? 'lead by' : 'trail by';
+        setText('lead-text', `${teamObj2.name || teamObj2.short} ${verb} ${lt.amount} run${lt.amount === 1 ? '' : 's'}`);
+      }
+    } else {
+      targetWrap.style.display = 'none';
+      if(leadWrap) leadWrap.style.display = 'none';
+    }
+    setText('stat-crr', calcCRR(s).toFixed(2));
+    const rrr = calcRRR(s);
+    setText('stat-rrr', rrr === null ? '—' : rrr.toFixed(2));
+    setText('stat-pship', `${s.partnershipRuns||0} (${s.partnershipBalls||0})`);
+    const ballsLeft = calcBallsLeft(s);
+    setText('stat-ballsleft', ballsLeft === null ? '—' : ballsLeft);
   }
-
-  setText('stat-crr', calcCRR(s).toFixed(2));
-  const rrr = calcRRR(s);
-  setText('stat-rrr', rrr === null ? '—' : rrr.toFixed(2));
-  setText('stat-pship', `${s.partnershipRuns||0} (${s.partnershipBalls||0})`);
-  const ballsLeft = calcBallsLeft(s);
-  setText('stat-ballsleft', ballsLeft === null ? '—' : ballsLeft);
 }
 
 // 🎨 Blends both teams' own colors across the WHOLE scorecard (body wash,
@@ -2358,16 +2417,24 @@ function setPageTeamTheme(A, B){
   root.style.setProperty('--team-b-color', (B && B.color) || 'var(--six)');
 }
 
-function paintLogo(id, team){
+function paintLogo(id, team, fallbackVar){
   const el = document.getElementById(id);
   if(!el) return;
+  // 🐛 FIX: this used to fall back to var(--accent) (green) no matter
+  // which team it was painting, so a team with no custom colour saved
+  // always showed a green badge even for "Team B" — while the page-wide
+  // wash (--team-a-color/--team-b-color, see setPageTeamTheme) correctly
+  // fell back to green for A and purple for B. That mismatch is why a
+  // match with no custom colours showed two green badges but a
+  // green+purple background. Now both use the SAME per-side fallback.
+  const fallback = fallbackVar || 'var(--accent)';
   if(team.logoUrl){
     el.style.backgroundImage = `url(${team.logoUrl})`;
     el.textContent = '';
     el.style.background = `center/cover no-repeat url(${team.logoUrl})`;
   } else {
     el.style.backgroundImage = '';
-    el.style.background = team.color || 'var(--accent)';
+    el.style.background = team.color || fallback;
     el.textContent = (team.short || team.name || '?').slice(0,2).toUpperCase();
   }
   // 🎨 Stamp this team's own color (set in the scoring panel) onto its
@@ -2378,7 +2445,7 @@ function paintLogo(id, team){
   // default accent automatically wherever --team-color isn't set (see
   // var(--team-color, var(--accent)) in the CSS).
   const block = el.closest('.team-block');
-  if(block) block.style.setProperty('--team-color', team.color || '');
+  if(block) block.style.setProperty('--team-color', team.color || fallback);
 }
 
 function renderPlayers(s){
