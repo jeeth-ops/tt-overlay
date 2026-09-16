@@ -181,8 +181,8 @@
        height once and doesn't visibly repeat/tile as the page scrolls
        past a tall scorecard. */
     background:
-      radial-gradient(85% 60% at 6% 0%, color-mix(in srgb, var(--team-a-color) 13%, transparent), transparent 65%),
-      radial-gradient(85% 60% at 94% 0%, color-mix(in srgb, var(--team-b-color) 13%, transparent), transparent 65%),
+      radial-gradient(90% 75% at 4% 0%, color-mix(in srgb, var(--team-a-color) 30%, transparent), transparent 68%),
+      radial-gradient(90% 75% at 96% 0%, color-mix(in srgb, var(--team-b-color) 30%, transparent), transparent 68%),
       var(--bg);
     background-repeat:no-repeat;
     font-family:var(--font-body); font-size:14px; line-height:1.5;
@@ -278,7 +278,7 @@
     /* Same idea as the body wash above, just much lighter (2%) since this
        sits behind actual text/tables — enough to stop every card reading
        as flat white, not enough to touch readability or contrast. */
-    background:color-mix(in srgb, var(--panel) 98%, color-mix(in srgb, var(--team-a-color) 50%, var(--team-b-color) 50%) 2%);
+    background:color-mix(in srgb, var(--panel) 93%, color-mix(in srgb, var(--team-a-color) 50%, var(--team-b-color) 50%) 7%);
     border:1px solid var(--border); border-radius:var(--radius-lg);
     padding:18px; box-shadow:var(--shadow);
     transition:background .3s ease, border-color .2s ease, box-shadow .2s ease, transform .2s ease;
@@ -303,8 +303,8 @@
   #hero::before{
     content:''; position:absolute; inset:0; pointer-events:none;
     background:
-      radial-gradient(120% 140% at 15% -10%, color-mix(in srgb, var(--team-a-color) 20%, transparent), transparent 55%),
-      radial-gradient(100% 120% at 100% 0%, color-mix(in srgb, var(--team-b-color) 16%, transparent), transparent 50%);
+      radial-gradient(120% 140% at 15% -10%, color-mix(in srgb, var(--team-a-color) 28%, transparent), transparent 55%),
+      radial-gradient(100% 120% at 100% 0%, color-mix(in srgb, var(--team-b-color) 24%, transparent), transparent 50%);
   }
   /* ---------- Live stream box (beside the score on wide screens) ---------- */
   #hero-row{ display:flex; gap:14px; align-items:stretch; }
@@ -1939,7 +1939,7 @@ function renderFinalSnapshot(match, displayName){
   setText('name-a', A.name || 'Team A'); setText('short-a', A.short || '—');
   setText('name-b', B.name || 'Team B'); setText('short-b', B.short || '—');
   setText('hl-team-a-name', A.name || A.short || 'Team A'); setText('hl-team-b-name', B.name || B.short || 'Team B');
-  paintLogo('logo-a', A); paintLogo('logo-b', B);
+  paintLogo('logo-a', A, 'var(--accent)'); paintLogo('logo-b', B, 'var(--six)');
   document.getElementById('team-block-a').style.opacity = '1';
   document.getElementById('team-block-b').style.opacity = '1';
   const scoreA = match.scoreA || {}, scoreB = match.scoreB || {};
@@ -2223,8 +2223,8 @@ function renderHero(s){
   setText('name-a', A.name || 'Team A'); setText('short-a', A.short || '—');
   setText('name-b', B.name || 'Team B'); setText('short-b', B.short || '—');
   setText('hl-team-a-name', A.name || A.short || 'Team A'); setText('hl-team-b-name', B.name || B.short || 'Team B');
-  paintLogo('logo-a', A);
-  paintLogo('logo-b', B);
+  paintLogo('logo-a', A, 'var(--accent)');
+  paintLogo('logo-b', B, 'var(--six)');
   document.getElementById('team-block-a').style.opacity = s.battingTeam === 'A' ? '1' : '.55';
   document.getElementById('team-block-b').style.opacity = s.battingTeam === 'B' ? '1' : '.55';
   document.getElementById('team-block-a').classList.remove('winner');
@@ -2299,16 +2299,17 @@ function setPageTeamTheme(A, B){
   root.style.setProperty('--team-b-color', (B && B.color) || 'var(--six)');
 }
 
-function paintLogo(id, team){
+function paintLogo(id, team, fallbackColor){
   const el = document.getElementById(id);
   if(!el) return;
+  const fallback = fallbackColor || 'var(--accent)';
   if(team.logoUrl){
     el.style.backgroundImage = `url(${team.logoUrl})`;
     el.textContent = '';
     el.style.background = `center/cover no-repeat url(${team.logoUrl})`;
   } else {
     el.style.backgroundImage = '';
-    el.style.background = team.color || 'var(--accent)';
+    el.style.background = team.color || fallback;
     el.textContent = (team.short || team.name || '?').slice(0,2).toUpperCase();
   }
   // 🎨 Stamp this team's own color (set in the scoring panel) onto its
@@ -2319,7 +2320,7 @@ function paintLogo(id, team){
   // default accent automatically wherever --team-color isn't set (see
   // var(--team-color, var(--accent)) in the CSS).
   const block = el.closest('.team-block');
-  if(block) block.style.setProperty('--team-color', team.color || '');
+  if(block) block.style.setProperty('--team-color', team.color || fallback);
 }
 
 function renderPlayers(s){
