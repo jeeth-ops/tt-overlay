@@ -3040,6 +3040,30 @@ function ballLabel(b){
   return `${b.runs} run${b.runs===1?'':'s'}`;
 }
 
+// A delivery is "clip-worthy" not just when it's a plain 4/6/wicket, but
+// also when a boundary (4 or 6) was actually run on an extra — a wide,
+// no-ball, bye, or leg-bye that reached the boundary. For a no-ball the
+// total (b.runs) includes the compulsory 1-run penalty on top of whatever
+// the batter scored, so we subtract that before checking for 4/6; for
+// wide/bye/leg-bye the full run count IS the boundary value.
+function isBoundaryDelivery(b){
+  if (b.kind === '4' || b.kind === '6' || b.kind === 'W') return true;
+  if (b.kind === 'Nb') { const off = Math.max(0, (b.runs||0) - 1); return off === 4 || off === 6; }
+  if (b.kind === 'Wd' || b.kind === 'B' || b.kind === 'LB') { return b.runs === 4 || b.runs === 6; }
+  return false;
+}
+
+// Boundary run count for a delivery, used to pick FOUR vs SIX as the
+// default Event type in the Attach Clip form — same off-by-the-no-ball-
+// penalty logic as isBoundaryDelivery above.
+function boundaryRuns(b){
+  if (b.kind === '4') return 4;
+  if (b.kind === '6') return 6;
+  if (b.kind === 'Nb') return Math.max(0, (b.runs||0) - 1);
+  if (b.kind === 'Wd' || b.kind === 'B' || b.kind === 'LB') return b.runs;
+  return 0;
+}
+
 function openEditModal(){
   document.getElementById('edit-modal-backdrop').classList.add('open');
 }
@@ -3106,7 +3130,7 @@ async function loadDeliveryList(matchId){
       const overLabel = `${b.over}.${b.ballInOver}`;
       const header = b.innings !== currentInnings ? (currentInnings = b.innings, `<div class="em-innings-h">Innings ${b.innings}</div>`) : '';
       const wkt = b.dismissal ? ` <span class="em-wkt">(${escapeHtml(b.dismissal.type || 'Out')})</span>` : '';
-      const eventful = (b.kind === '4' || b.kind === '6' || b.kind === 'W');
+      const eventful = isBoundaryDelivery(b);
       const clipBtn = eventful ? `<button class="em-edit-btn" data-clip="${escapeHtml(b.ballId)}">🎬 Clip</button>` : '';
       return `${header}<div class="em-ball-row">
         <span><b>${overLabel}</b> &nbsp;${escapeHtml(b.bowler||'—')} to ${escapeHtml(b.striker||'—')} — ${escapeHtml(ballLabel(b))}${wkt}</span>
@@ -3338,7 +3362,7 @@ function openClipDeleteConfirm(clipId, title){
    lists, download, etc. Never touches ball/score data. ---------- */
 function openAttachClipForm(matchId, ball){
   const wkt = ball.dismissal ? ` (${escapeHtml(ball.dismissal.type||'Out')})` : '';
-  const defaultType = ball.kind==='6' ? 'SIX' : ball.kind==='W' ? 'WICKET' : 'FOUR';
+  const defaultType = ball.kind==='W' ? 'WICKET' : boundaryRuns(ball)===6 ? 'SIX' : 'FOUR';
   openConfirmModal(`
     <div class="em-title">Attach Clip</div>
     <div class="em-sub">
