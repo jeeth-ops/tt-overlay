@@ -4130,19 +4130,45 @@ function strikeIssueKey(i) { return `${i.innings}-${i.over}-${i.ballInOver}-${i.
 // wickets, more than 6 legal balls in one over), never a legitimate but
 // unusual passage of play, so it never blocks a real correction with a
 // false positive.
-function validateCorrectedBalls(balls) {
+//
+// 🩹 FIX: this used to validate ONLY the after-state (`balls`) in
+// isolation. That meant if a match already had a pre-existing data
+// problem — say a duplicate/mis-recorded delivery left over 0 sitting at
+// 7 "legal" balls from some earlier bug, nothing to do with the
+// correction being made right now — EVERY future correction on that
+// match (even ones that don't touch that over at all, like a pure bowler
+// reattribution or a no-op resave) would get permanently blocked here,
+// since the after-state always still contained that same pre-existing 7.
+// There would be no way to ever save anything on that match again short
+// of hand-editing the database.
+// Now takes the BEFORE-state too and only reports a violation that got
+// WORSE because of THIS correction (after > before, on top of being over
+// the structural limit) — the exact same "only surface what THIS edit
+// introduces" philosophy findStrikeInconsistencies() above already uses.
+// A correction can still never make a new violation, but it's no longer
+// held hostage by a violation that already existed before it ran.
+function validateCorrectedBalls(balls, beforeBalls) {
     const errors = [];
-    const wicketsByInnings = {}, legalByOver = {};
-    balls.forEach(b => {
-        const ik = b.innings || 1;
-        wicketsByInnings[ik] = (wicketsByInnings[ik] || 0) + (b.dismissal ? 1 : 0);
-        if (deriveBallFacts(b.kind, b.runs).legalBall) {
-            const ok = `${ik}-${b.over}`;
-            legalByOver[ok] = (legalByOver[ok] || 0) + 1;
-        }
+    const count = (list) => {
+        const wicketsByInnings = {}, legalByOver = {};
+        list.forEach(b => {
+            const ik = b.innings || 1;
+            wicketsByInnings[ik] = (wicketsByInnings[ik] || 0) + (b.dismissal ? 1 : 0);
+            if (deriveBallFacts(b.kind, b.runs).legalBall) {
+                const ok = `${ik}-${b.over}`;
+                legalByOver[ok] = (legalByOver[ok] || 0) + 1;
+            }
+        });
+        return { wicketsByInnings, legalByOver };
+    };
+    const after = count(balls);
+    const before = beforeBalls ? count(beforeBalls) : { wicketsByInnings: {}, legalByOver: {} };
+    Object.entries(after.wicketsByInnings).forEach(([ik, w]) => {
+        if (w > 10 && w > (before.wicketsByInnings[ik] || 0)) errors.push(`This correction creates a scoring inconsistency: innings ${ik} would have ${w} wickets — only 10 are possible.`);
     });
-    Object.entries(wicketsByInnings).forEach(([ik, w]) => { if (w > 10) errors.push(`This correction creates a scoring inconsistency: innings ${ik} would have ${w} wickets — only 10 are possible.`); });
-    Object.entries(legalByOver).forEach(([ok, n]) => { if (n > 6) { const [ik, ov] = ok.split('-'); errors.push(`This correction creates a scoring inconsistency: over ${ov} of innings ${ik} would have ${n} legal deliveries — an over can only have 6. Please review the delivery.`); } });
+    Object.entries(after.legalByOver).forEach(([ok, n]) => {
+        if (n > 6 && n > (before.legalByOver[ok] || 0)) { const [ik, ov] = ok.split('-'); errors.push(`This correction creates a scoring inconsistency: over ${ov} of innings ${ik} would have ${n} legal deliveries — an over can only have 6. Please review the delivery.`); }
+    });
     return errors;
 }
 
@@ -4189,7 +4215,7 @@ async function correctDelivery(ballId, actorEmail, input, dryRun) {
     const allBalls = await ballsCollection.find({ matchId: original.matchId }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
     const simulated = allBalls.map(b => (String(b._id) === String(_id) ? correctedBall : b));
 
-    const errors = validateCorrectedBalls(simulated);
+    const errors = validateCorrectedBalls(simulated, allBalls);
     const before = buildLiveCardsFromBallsArray(allBalls);
     const after = buildLiveCardsFromBallsArray(simulated);
     const result = { before: { ball: original, cards: before }, after: { ball: correctedBall, cards: after }, errors };
@@ -4400,7 +4426,7 @@ async function correctBowlerForOvers(matchId, actorEmail, input, dryRun) {
     const simulated = allBalls.map(b => targetIds.has(String(b._id)) ? correctedById.get(String(b._id)) : b);
     // Structural safety net (identical check correctDelivery() runs) — a
     // pure bowler swap should never actually trip this, but never skip it.
-    const errors = validateCorrectedBalls(simulated);
+    const errors = validateCorrectedBalls(simulated, allBalls);
     const before = buildLiveCardsFromBallsArray(allBalls);
     const after = buildLiveCardsFromBallsArray(simulated);
     const wicketsMoved = targets.filter(b => !!b.dismissal).length;
@@ -4555,7 +4581,7 @@ async function correctBatsmanForDeliveries(matchId, actorEmail, input, dryRun) {
     });
 
     const simulated = allBalls.map(b => targetIds.has(String(b._id)) ? correctedById.get(String(b._id)) : b);
-    const errors = validateCorrectedBalls(simulated);
+    const errors = validateCorrectedBalls(simulated, allBalls);
     const before = buildLiveCardsFromBallsArray(allBalls);
     const after = buildLiveCardsFromBallsArray(simulated);
 
