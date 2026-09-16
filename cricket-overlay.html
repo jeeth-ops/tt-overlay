@@ -261,12 +261,12 @@
      gap is roomier now (was 5px, felt cramped) — 6 dots is the common case
      and has plenty of width to breathe; it only tightens once extras add
      more dots than that. */
-  #thisover-row{ display:flex; gap:11px; align-items:center; justify-content:center; flex-wrap:nowrap; overflow:hidden; width:100%; margin-top:2px; }
-  /* Baseline (6-ball) pip size — bumped up now that the bowler segment
-     has more breathing room (CRR/RRR moved under the score), so this
-     tracker reads clearly at a glance instead of like a row of fine print. */
-  #thisover-row .pip{ width:30px; height:30px; font-size:13px; flex:none; }
-  #thisover-row .pip.zero{ font-size:16px; }
+  #thisover-row{ display:flex; gap:9px; align-items:center; justify-content:center; flex-wrap:nowrap; overflow:hidden; width:100%; }
+  /* Baseline (6-ball) pip size — a touch bigger now there's more breathing
+     room, with matching gap above. The JS overrides both inline per-render
+     once an over runs past 6 balls, shrinking together to stay on one line. */
+  #thisover-row .pip{ width:25px; height:25px; font-size:11px; flex:none; }
+  #thisover-row .pip.zero{ font-size:13px; }
   /* A ball that HASN'T happened yet this over — a faint hollow slot, so
      the tracker always shows a full row of 6 from the very first ball
      (exactly like a real broadcast over-tracker), filling in left to
@@ -289,23 +289,19 @@
   #break-seg .lbl{ font-size:10.5px; font-weight:800; letter-spacing:.8px; color:var(--ink-dim); text-transform:uppercase; }
   #break-seg .val{ font-family:var(--font-num); font-weight:900; font-size:min(2.2vw,26px); color:#1c4fd8; font-variant-numeric:tabular-nums; }
   .pip{
-    width:30px; height:30px; border-radius:50%; flex:none;
+    width:26px; height:26px; border-radius:50%; flex:none;
     display:flex; align-items:center; justify-content:center;
-    font-family:var(--font-num); font-size:13px; font-weight:800; color:var(--ink);
+    font-family:var(--font-num); font-size:11px; font-weight:800; color:var(--ink);
     background:#fff; border:1.6px solid var(--hairline);
-    box-shadow:0 1px 2px rgba(16,25,58,0.08);
     opacity:0; transform:scale(.5);
   }
-  .pip.four{ background:linear-gradient(150deg,#2fbd6c,#1f8f4c); border-color:transparent; color:#fff; box-shadow:0 3px 7px rgba(34,163,90,0.45); }
-  .pip.six{ background:linear-gradient(150deg,#f7c94a,var(--progress)); border-color:transparent; color:#3a2a00; box-shadow:0 3px 7px rgba(240,180,41,0.5); }
-  .pip.wicket{ background:linear-gradient(150deg,#e23c50,#b71c2f); border-color:transparent; color:#fff; box-shadow:0 3px 7px rgba(211,37,58,0.5); }
-  /* Extras (Wd/Nb/B/LB) now get a light filled tint instead of a plain
-     outline, so they read as "an event happened" at a glance like the
-     other coloured pips, just clearly a lower-drama one than 4/6/wicket. */
-  .pip.extra{ background:#eaf0ff; color:#1c4fd8; border-color:transparent; font-size:10.5px; font-weight:800; }
+  .pip.four{ background:#22a35a; border-color:transparent; color:#fff; }
+  .pip.six{ background:#f0b429; border-color:transparent; color:#fff; }
+  .pip.wicket{ background:#d3253a; border-color:transparent; color:#fff; }
+  .pip.extra{ color:#1c4fd8; border-color:#1c4fd8; font-size:9.5px; }
   /* Dot ball — real-broadcast convention: a solid dark pip with a small
      white dot mark, not a light/washed-out circle with the digit "0". */
-  .pip.zero{ background:linear-gradient(150deg, var(--team-a-2), var(--team-a-dark)); border-color:transparent; color:#fff; font-size:16px; box-shadow:0 2px 5px rgba(0,0,0,0.25); }
+  .pip.zero{ background:var(--team-a-dark); border-color:transparent; color:#fff; font-size:15px; }
 
   /* Bottom black stat bar removed per spec — Target / Balls Remaining
      now live inline in #crr-seg (see above), and CRR/RRR occupy the
@@ -1462,16 +1458,8 @@ function renderState(s){
   setNameText('nonstriker-name', s.nonStriker?.name);
   document.getElementById('nonstriker-runs').textContent = s.nonStriker?.runs ?? 0;
   document.getElementById('nonstriker-balls').textContent = s.nonStriker?.balls ?? 0;
-  fitRowAll(document.getElementById('row-striker'), [
-    { el: document.getElementById('striker-name'),  minPx: 13 },
-    { el: document.getElementById('striker-runs'),  minPx: 16 },
-    { el: document.getElementById('striker-balls'), minPx: 10 }
-  ]);
-  fitRowAll(document.getElementById('row-nonstriker'), [
-    { el: document.getElementById('nonstriker-name'),  minPx: 13 },
-    { el: document.getElementById('nonstriker-runs'),  minPx: 16 },
-    { el: document.getElementById('nonstriker-balls'), minPx: 10 }
-  ]);
+  fitRowText(document.getElementById('striker-name'), 13);
+  fitRowText(document.getElementById('nonstriker-name'), 13);
 
   const totalBalls = (s.score?.overs ?? 0) * 6 + (s.score?.balls ?? 0);
   const crr = totalBalls > 0 ? ((s.score?.runs ?? 0) / (totalBalls / 6)) : 0;
@@ -1556,14 +1544,8 @@ function renderState(s){
     ? `${bowler.overs ?? 0}.${bowler.balls ?? 0}`
     : '';
   // Fit after the figures/overs text is in place, since those siblings'
-  // widths are what determines how much room the name actually has. All
-  // three (name, figures, overs) shrink together if the row is still too
-  // wide once the name alone can't shrink any further — see fitRowAll.
-  fitRowAll(document.getElementById('bowler-line'), [
-    { el: document.getElementById('bowler-name-val'),    minPx: 13 },
-    { el: document.getElementById('bowler-figures-val'), minPx: 16 },
-    { el: document.getElementById('bowler-overs-val'),   minPx: 10 }
-  ]);
+  // widths are what determines how much room the name actually has.
+  fitRowText(document.getElementById('bowler-name-val'), 13);
 
   // "This Over" ball tracker — real broadcast style: always a full row of
   // (at least) 6 slots from the very first ball of the over, filling in
@@ -1589,10 +1571,10 @@ function renderState(s){
     // anything beyond scales pip size/font/gap down to fit, with a floor
     // so pips never shrink into unreadable dots.
     const shrink = Math.min(1, 6 / slotCount);
-    const pipSize = Math.max(19, Math.round(30 * shrink));
-    const gapSize = Math.max(5, Math.round(11 * shrink));
-    const dotFontSize = Math.max(11, Math.round(16 * shrink));
-    const numFontSize = Math.max(9, Math.round(13 * shrink));
+    const pipSize = Math.max(16, Math.round(23 * shrink));
+    const gapSize = Math.max(4, Math.round(9 * shrink));
+    const dotFontSize = Math.max(9.5, Math.round(13 * shrink));
+    const numFontSize = Math.max(8, Math.round(10.5 * shrink));
     container.style.gap = `${gapSize}px`;
     for(let i = 0; i < slotCount; i++){
       const b = thisOver[i];
@@ -1686,72 +1668,33 @@ function fitCapName(el){
 // this always finds the real available space, however long the name,
 // and the name shrinks smoothly to fit rather than ever spilling into
 // neighbouring furniture.
-// Never truncates/ellipsizes: it only ever turns the dial down on size —
-// and now on the WHOLE row together, not just one element in it.
-//
-// The earlier version only ever shrank the name and assumed its siblings
-// (runs/balls, or figures/overs) always fit at their natural size. That
-// mostly held — until the middle stats row is in chase mode (Target box
-// visible, competing for the same width) AND the bowler/batter has a
-// long name: the name could hit its size floor while the row as a whole
-// was still wider than the box, and the extra width would silently get
-// clipped by the segment's overflow:hidden — cutting off the tail
-// (typically the overs figure) instead of ever showing name+figures+
-// overs fully. See screenshot report: "ABHINANDAN SINGH 1-5" with the
-// overs number missing entirely.
-//
-// Fix: measure the available space against the true fixed-width
-// container (unchanged from before), but if the row still doesn't fit
-// once the name is at its floor, shrink EVERY element in the row
-// together (name, runs/balls, figures/overs) — each down to its own
-// floor — until the full line fits. Nothing is ever silently clipped;
-// worst case everything just reads a little smaller, together.
-function fitRowAll(row, items){
-  if(!row || !row.isConnected) return;
-  const container = row.parentElement; // the real fixed-width segment box
-  if(!container) return;
-  items.forEach(it => { it.el.style.fontSize = ''; }); // read natural sizes fresh
-  const containerStyle = getComputedStyle(container);
-  const containerPad = parseFloat(containerStyle.paddingLeft || 0) + parseFloat(containerStyle.paddingRight || 0);
-  const available = container.clientWidth - containerPad - 4; // small safety buffer
-  if(!(available > 0)) return;
-  if(row.scrollWidth <= available) return; // already fits at natural size — leave it alone
-
-  const info = items.map(it => ({
-    el: it.el,
-    minPx: it.minPx,
-    naturalPx: parseFloat(getComputedStyle(it.el).fontSize) || it.minPx
-  }));
-
-  // First pass: scale every element down by the same ratio in one shot
-  // (fast, and close enough — text width scales roughly linearly with
-  // font-size for a fixed string), each clamped to its own floor.
-  const scale = available / row.scrollWidth;
-  info.forEach(n => { n.el.style.fontSize = Math.max(n.minPx, n.naturalPx * scale) + 'px'; });
-
-  // Second pass: fine-tune by stepping every element down together in
-  // small increments — covers the rounding/kerning slack the linear
-  // estimate above can't capture exactly. Stops once it fits, or once
-  // every element is already at its floor (never clips either way; in
-  // that rare worst case, the row is simply as small as it's allowed
-  // to get while staying fully visible).
-  let guard = 0;
-  const canShrinkMore = () => info.some(n => parseFloat(n.el.style.fontSize) > n.minPx + 0.01);
-  while(row.scrollWidth > available && canShrinkMore() && guard < 60){
-    info.forEach(n => {
-      const cur = parseFloat(n.el.style.fontSize);
-      if(cur > n.minPx) n.el.style.fontSize = Math.max(n.minPx, cur - 0.5) + 'px';
-    });
-    guard++;
-  }
-}
-
-// Thin wrapper for the common single-flex-element case (just the name).
 function fitRowText(el, minPx){
   if(!el || !el.isConnected) return;
-  const row = el.parentElement;
-  if(!row) return;
-  fitRowAll(row, [{ el, minPx }]);
+  const row = el.parentElement;            // e.g. .brow or #bowler-line
+  const container = row && row.parentElement; // the real fixed-width segment box
+  if(!row || !container) return;
+  el.style.fontSize = ''; // fall back to CSS (min(vw,px)) to read the natural ceiling
+  const naturalPx = parseFloat(getComputedStyle(el).fontSize);
+  if(!naturalPx) return;
+  const rowStyle = getComputedStyle(row);
+  const gap = parseFloat(rowStyle.columnGap || rowStyle.gap || '0') || 0;
+  let siblingsWidth = 0;
+  Array.from(row.children).forEach(child => {
+    if(child !== el) siblingsWidth += child.getBoundingClientRect().width;
+  });
+  const gaps = gap * Math.max(row.children.length - 1, 0);
+  const containerStyle = getComputedStyle(container);
+  const containerPad = parseFloat(containerStyle.paddingLeft || 0) + parseFloat(containerStyle.paddingRight || 0);
+  const available = container.clientWidth - containerPad - siblingsWidth - gaps - 4; // small safety buffer
+  if(!(available > 0)) return;
+  let size = naturalPx;
+  el.style.fontSize = size + 'px';
+  let guard = 0;
+  while(el.scrollWidth > available && size > minPx && guard < 60){
+    size -= 0.5;
+    el.style.fontSize = size + 'px';
+    guard++;
+  }
 }
 
 function layoutTeams(s){
@@ -1786,21 +1729,9 @@ window.addEventListener('resize', () => {
   __fitResizeTimer = setTimeout(() => {
     fitCapName(document.getElementById('name-left'));
     fitCapName(document.getElementById('name-right'));
-    fitRowAll(document.getElementById('row-striker'), [
-      { el: document.getElementById('striker-name'),  minPx: 13 },
-      { el: document.getElementById('striker-runs'),  minPx: 16 },
-      { el: document.getElementById('striker-balls'), minPx: 10 }
-    ]);
-    fitRowAll(document.getElementById('row-nonstriker'), [
-      { el: document.getElementById('nonstriker-name'),  minPx: 13 },
-      { el: document.getElementById('nonstriker-runs'),  minPx: 16 },
-      { el: document.getElementById('nonstriker-balls'), minPx: 10 }
-    ]);
-    fitRowAll(document.getElementById('bowler-line'), [
-      { el: document.getElementById('bowler-name-val'),    minPx: 13 },
-      { el: document.getElementById('bowler-figures-val'), minPx: 16 },
-      { el: document.getElementById('bowler-overs-val'),   minPx: 10 }
-    ]);
+    fitRowText(document.getElementById('striker-name'), 13);
+    fitRowText(document.getElementById('nonstriker-name'), 13);
+    fitRowText(document.getElementById('bowler-name-val'), 13);
   }, 120);
 });
 
