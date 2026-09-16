@@ -4177,13 +4177,26 @@ function validateCorrectedBalls(balls, beforeBalls) {
 // way, so the SAME function powers both the Preview screen and the real
 // Save & Recalculate — the preview is never a guess at what the save will
 // do, it's the actual save logic run with the write skipped.
-async function correctDelivery(ballId, actorEmail, input, dryRun) {
+async function correctDelivery(ballId, actorEmail, input, dryRun, requestOwnerUid) {
     if (!ballsCollection || !matchRecordsCollection) return { errors: ['Database not configured'] };
     const { ObjectId } = require('mongodb');
     let _id;
     try { _id = new ObjectId(ballId); } catch { return { errors: ['Invalid delivery id'] }; }
     const original = await ballsCollection.findOne({ _id });
     if (!original) return { errors: ['Delivery not found'] };
+    // 🩹 FIX: older balls (logged before ownerUid was stamped on every
+    // delivery — see the same caveat in findBallsForPlayerMerge above)
+    // have `original.ownerUid` as null/missing. Every downstream use of
+    // "ownerUid" in this function used to read `original.ownerUid`
+    // directly, so on exactly those matches the resync call at the bottom
+    // (`if (original.ownerUid) await syncMatchRecordFromBalls(...)`) was
+    // silently SKIPPED — the delivery itself saved fine (no error shown),
+    // but the persisted battingCard/bowlingCard (and everything built from
+    // it: tournament leaderboards, player-highlights stats) never got
+    // refreshed, with nothing in the logs to show why. The route handler
+    // below now passes the authenticated owner's own uid (req.ownerUid) as
+    // a fallback, the same way the merge endpoints already do.
+    const ownerUid = original.ownerUid || requestOwnerUid || null;
 
     let kind, runs, isWicket;
     try { ({ kind, runs, isWicket } = buildBallFromCorrection(input)); }
@@ -4209,8 +4222,8 @@ async function correctDelivery(ballId, actorEmail, input, dryRun) {
     // Re-resolve global playerIds for anyone actually renamed, exactly the
     // way logBall() does for a brand-new ball — keeps career/roster stats
     // linked to the right profile after a Batter/Bowler Correction.
-    if (original.ownerUid && strikerName !== original.striker) correctedBall.strikerPlayerId = await resolvePlayerId(original.ownerUid, strikerName);
-    if (original.ownerUid && bowlerName !== original.bowler) correctedBall.bowlerPlayerId = await resolvePlayerId(original.ownerUid, bowlerName);
+    if (ownerUid && strikerName !== original.striker) correctedBall.strikerPlayerId = await resolvePlayerId(ownerUid, strikerName);
+    if (ownerUid && bowlerName !== original.bowler) correctedBall.bowlerPlayerId = await resolvePlayerId(ownerUid, bowlerName);
 
     const allBalls = await ballsCollection.find({ matchId: original.matchId }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
     const simulated = allBalls.map(b => (String(b._id) === String(_id) ? correctedBall : b));
@@ -4245,7 +4258,8 @@ async function correctDelivery(ballId, actorEmail, input, dryRun) {
     // final win/loss/tie verdict on an already-completed match, which
     // this deliberately does not auto-flip (see resultMayNeedReview
     // below) rather than risk guessing a DLS/target situation wrong.
-    if (original.ownerUid) await syncMatchRecordFromBalls(original.ownerUid, original.matchId);
+    if (ownerUid) await syncMatchRecordFromBalls(ownerUid, original.matchId);
+    else console.log('[syncDebug] correctDelivery: no ownerUid available (ball had none, and no requestOwnerUid was passed in) — sync skipped for match', original.matchId);
 
     // Keep a clip cut around this exact delivery (same innings/over/ball —
     // identity unchanged) pointing at the corrected player names, per
@@ -4305,7 +4319,7 @@ adminRouter.get('/cricket/match/:matchId/balls', async (req, res) => {
 // will update" preview screen from the spec.
 adminRouter.post('/cricket/ball/:ballId/preview', async (req, res) => {
     try {
-        const result = await correctDelivery(req.params.ballId, req.ownerEmail, req.body || {}, true);
+        const result = await correctDelivery(req.params.ballId, req.ownerEmail, req.body || {}, true, req.ownerUid);
         if (result.errors && result.errors.length && !result.before) return res.status(400).json({ success: false, error: result.errors[0] });
         res.json({ success: true, ...result });
     } catch (err) {
@@ -4320,7 +4334,7 @@ adminRouter.post('/cricket/ball/:ballId/preview', async (req, res) => {
 // corrupted data" requirement.
 adminRouter.put('/cricket/ball/:ballId', async (req, res) => {
     try {
-        const result = await correctDelivery(req.params.ballId, req.ownerEmail, req.body || {}, false);
+        const result = await correctDelivery(req.params.ballId, req.ownerEmail, req.body || {}, false, req.ownerUid);
         if (!result.before) return res.status(400).json({ success: false, error: (result.errors && result.errors[0]) || 'Could not correct delivery' });
         if (result.errors && result.errors.length) return res.status(409).json({ success: false, error: result.errors[0] });
         // Full before/after BALL DOCS (not just the trimmed kind/runs/striker/
@@ -4386,7 +4400,7 @@ function findBallsForBowlerCorrection(allBalls, innings, overs, wrongBowlerKey) 
 // { before, after, errors, affectedCount, wicketsMoved, ... } — the SAME
 // function powers both the Preview screen and the real Save, exactly like
 // correctDelivery() above.
-async function correctBowlerForOvers(matchId, actorEmail, input, dryRun) {
+async function correctBowlerForOvers(matchId, actorEmail, input, dryRun, requestOwnerUid) {
     if (!ballsCollection || !matchRecordsCollection) return { errors: ['Database not configured'] };
     const innings = Number(input.innings) || 1;
     const overs = Array.isArray(input.overs) ? [...new Set(input.overs.map(Number).filter(n => Number.isFinite(n)))] : [];
@@ -4404,7 +4418,11 @@ async function correctBowlerForOvers(matchId, actorEmail, input, dryRun) {
     const targets = findBallsForBowlerCorrection(allBalls, innings, overs, wrongBowlerKey);
     if (!targets.length) return { errors: [`No deliveries found for ${wrongBowlerName} in the selected over(s) of innings ${innings}`] };
 
-    const ownerUid = targets[0].ownerUid;
+    // 🩹 Same fix as correctDelivery() above — don't rely solely on the
+    // ball docs' own (possibly unstamped) ownerUid; fall back to the
+    // authenticated requester's uid so the resync below never silently
+    // no-ops on an older match.
+    const ownerUid = targets[0].ownerUid || requestOwnerUid || null;
     const correctBowlerKey = playerKey(correctBowlerName);
     const correctBowlerPlayerId = ownerUid ? await resolvePlayerId(ownerUid, correctBowlerName) : null;
     const targetIds = new Set(targets.map(b => String(b._id)));
@@ -4473,7 +4491,7 @@ async function correctBowlerForOvers(matchId, actorEmail, input, dryRun) {
 adminRouter.post('/cricket/match/:matchId/correct-bowler/preview', async (req, res) => {
     try {
         const matchId = safeMatchId(req.params.matchId);
-        const result = await correctBowlerForOvers(matchId, req.ownerEmail, req.body || {}, true);
+        const result = await correctBowlerForOvers(matchId, req.ownerEmail, req.body || {}, true, req.ownerUid);
         if (result.errors && result.errors.length && !result.affectedCount) return res.status(400).json({ success: false, error: result.errors[0] });
         res.json({ success: true, ...result });
     } catch (err) {
@@ -4489,7 +4507,7 @@ adminRouter.post('/cricket/match/:matchId/correct-bowler/preview', async (req, r
 adminRouter.put('/cricket/match/:matchId/correct-bowler', async (req, res) => {
     try {
         const matchId = safeMatchId(req.params.matchId);
-        const result = await correctBowlerForOvers(matchId, req.ownerEmail, req.body || {}, false);
+        const result = await correctBowlerForOvers(matchId, req.ownerEmail, req.body || {}, false, req.ownerUid);
         if (result.errors && result.errors.length) return res.status(400).json({ success: false, error: result.errors[0] });
         await logAuditAction(
             req.ownerEmail, 'Owner bowler correction',
@@ -4545,7 +4563,7 @@ function findBallsForBatsmanCorrection(allBalls, innings, ballIds, wrongBatsmanK
     return allBalls.filter(b => (Number(b.innings) || 1) === Number(innings) && idSet.has(String(b._id)) && b.strikerKey === wrongBatsmanKey);
 }
 
-async function correctBatsmanForDeliveries(matchId, actorEmail, input, dryRun) {
+async function correctBatsmanForDeliveries(matchId, actorEmail, input, dryRun, requestOwnerUid) {
     if (!ballsCollection || !matchRecordsCollection) return { errors: ['Database not configured'] };
     const innings = Number(input.innings) || 1;
     const ballIds = Array.isArray(input.ballIds) ? input.ballIds.map(String) : [];
@@ -4564,7 +4582,8 @@ async function correctBatsmanForDeliveries(matchId, actorEmail, input, dryRun) {
     const targets = findBallsForBatsmanCorrection(allBalls, innings, ballIds, wrongKey);
     if (!targets.length) return { errors: [`No deliveries found for ${wrongBatsmanName} in the selected deliveries of innings ${innings}`] };
 
-    const ownerUid = targets[0].ownerUid;
+    // 🩹 Same fix as correctDelivery()/correctBowlerForOvers() above.
+    const ownerUid = targets[0].ownerUid || requestOwnerUid || null;
     const correctKey = playerKey(correctBatsmanName);
     const correctPlayerId = ownerUid ? await resolvePlayerId(ownerUid, correctBatsmanName) : null;
     const targetIds = new Set(targets.map(b => String(b._id)));
@@ -4623,7 +4642,7 @@ async function correctBatsmanForDeliveries(matchId, actorEmail, input, dryRun) {
 adminRouter.post('/cricket/match/:matchId/correct-batsman/preview', async (req, res) => {
     try {
         const matchId = safeMatchId(req.params.matchId);
-        const result = await correctBatsmanForDeliveries(matchId, req.ownerEmail, req.body || {}, true);
+        const result = await correctBatsmanForDeliveries(matchId, req.ownerEmail, req.body || {}, true, req.ownerUid);
         if (result.errors && result.errors.length && !result.affectedCount) return res.status(400).json({ success: false, error: result.errors[0] });
         res.json({ success: true, ...result });
     } catch (err) {
@@ -4638,7 +4657,7 @@ adminRouter.post('/cricket/match/:matchId/correct-batsman/preview', async (req, 
 adminRouter.put('/cricket/match/:matchId/correct-batsman', async (req, res) => {
     try {
         const matchId = safeMatchId(req.params.matchId);
-        const result = await correctBatsmanForDeliveries(matchId, req.ownerEmail, req.body || {}, false);
+        const result = await correctBatsmanForDeliveries(matchId, req.ownerEmail, req.body || {}, false, req.ownerUid);
         if (result.errors && result.errors.length) return res.status(400).json({ success: false, error: result.errors[0] });
         await logAuditAction(
             req.ownerEmail, 'Owner batsman correction',
@@ -5916,14 +5935,23 @@ async function syncMatchRecordFromBalls(ownerUid, matchId) {
         // that the same way the public-match lookup already does.
         const existing = await matchRecordsCollection.findOne(
             { ownerUid, $or: [{ matchId }, { roomId: matchId }] },
-            { projection: { leagueKey: 1, matchId: 1 } }
+            { projection: { leagueKey: 1, matchId: 1, roomId: 1 } }
         );
-        if (!existing) return;
+        // 🔍 TEMP DEBUG — remove once the stale-leaderboard issue is
+        // confirmed fixed. Prints exactly what this sync attempt saw, so a
+        // silent miss/mismatch shows up in the Render logs instead of just
+        // failing invisibly.
+        console.log('[syncDebug] called with', { ownerUid, matchId });
+        console.log('[syncDebug] existing doc found:', existing ? { leagueKey: existing.leagueKey, matchId: existing.matchId, roomId: existing.roomId } : null);
+        if (!existing) { console.log('[syncDebug] NO MATCHING matchRecords DOC — aborting sync'); return; }
         const cards = await buildLiveCardsFromBalls(matchId);
-        await matchRecordsCollection.updateOne(
+        console.log('[syncDebug] recomputed bowlingCard A:', JSON.stringify((cards.bowlingCard && cards.bowlingCard.A) || []));
+        console.log('[syncDebug] recomputed bowlingCard B:', JSON.stringify((cards.bowlingCard && cards.bowlingCard.B) || []));
+        const writeResult = await matchRecordsCollection.updateOne(
             { ownerUid, leagueKey: existing.leagueKey, matchId: existing.matchId },
             { $set: { ...cards, liveSyncedAt: Date.now() } }
         );
+        console.log('[syncDebug] write result:', { matchedCount: writeResult.matchedCount, modifiedCount: writeResult.modifiedCount });
         // Public tournament portal caches its payload for up to 4s (see
         // PUBLIC_CACHE_TTL_MS below) — invalidate it now so viewers see
         // this ball within ~1s instead of waiting out the full TTL.
