@@ -1595,8 +1595,15 @@ function winMarginText(m){
 }
 
 function renderFinalSnapshot(match, displayName){
+  // Only decide which tab to default to the FIRST time this match loads.
+  // loadMatchSnapshot() re-runs this same function for the SAME match
+  // after an owner correction — if we recomputed finalActiveInnings every
+  // time, a viewer sitting on "2nd Innings" would get silently snapped
+  // back to "1st Innings" on every refresh, which is not what anyone
+  // wants for a match that's already finished.
+  const isFirstLoadOfThisMatch = finalMatchData === null;
   finalMatchData = match;
-  finalActiveInnings = firstBattingTeamOf(match);
+  if(isFirstLoadOfThisMatch) finalActiveInnings = firstBattingTeamOf(match);
   renderStreamBox(match.streamUrl);
   document.title = `${(match.teamA&&(match.teamA.short||match.teamA.name))||'Team A'} vs ${(match.teamB&&(match.teamB.short||match.teamB.name))||'Team B'} — All Sports Live`;
 
