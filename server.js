@@ -2740,7 +2740,7 @@ app.get('/api/public/tournament/:token/players', async (req, res) => {
         topWickets.forEach(r => names.set(playerKey(r.name), r.name));
         const matchIds = ctx.matches.map(m => m.matchId);
         const pkList = [...names.keys()];
-        const counts = new Map(pkList.map(pk => [pk, { sixes: 0, fours: 0, dismissals: 0, wickets: 0 }]));
+        const counts = new Map(pkList.map(pk => [pk, { sixes: 0, fours: 0, dismissals: 0, wickets: 0, other: 0 }]));
 
         if (matchIds.length && pkList.length) {
             const clips = await clipsCollection.find({
@@ -2748,19 +2748,27 @@ app.get('/api/public/tournament/:token/players', async (req, res) => {
                 $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }]
             }, { projection: { matchId: 1, strikerKey: 1, bowlerKey: 1, eventType: 1 } }).toArray();
             clips.forEach(c => {
+                // 🩹 FIX: a clip manually attached to an ordinary ball (tagged
+                // plain "CLIP", not a six/four/wicket) used to be counted
+                // nowhere here, so a player with only general clips showed
+                // totalClips:0 and their "Download" button stayed disabled.
                 if (counts.has(c.strikerKey)) {
                     const row = counts.get(c.strikerKey);
                     if (c.eventType === 'SIX') row.sixes++;
                     else if (c.eventType === 'FOUR') row.fours++;
                     else if (c.eventType === 'WICKET') row.dismissals++;
+                    else row.other++;
                 }
-                if (counts.has(c.bowlerKey) && c.eventType === 'WICKET') counts.get(c.bowlerKey).wickets++;
+                if (counts.has(c.bowlerKey)) {
+                    if (c.eventType === 'WICKET') counts.get(c.bowlerKey).wickets++;
+                    else if (c.eventType !== 'SIX' && c.eventType !== 'FOUR') counts.get(c.bowlerKey).other++;
+                }
             });
         }
 
         const players = pkList.map(pk => {
             const c = counts.get(pk);
-            return { name: names.get(pk), playerKey: pk, clipCounts: c, totalClips: c.sixes + c.fours + c.dismissals + c.wickets };
+            return { name: names.get(pk), playerKey: pk, clipCounts: c, totalClips: c.sixes + c.fours + c.dismissals + c.wickets + c.other };
         }).sort((a, b) => b.totalClips - a.totalClips);
 
         res.json({ success: true, displayName: ctx.displayName, players });
@@ -2801,22 +2809,31 @@ app.get('/api/public/tournament/:token/player-clips', async (req, res) => {
         }
         const order = (a, b) => (a.matchIndex || 0) - (b.matchIndex || 0) || (a.innings || 1) - (b.innings || 1) || (a.over || 0) - (b.over || 0) || (a.ballInOver || 0) - (b.ballInOver || 0);
 
-        const sixes = [], fours = [], dismissals = [], wickets = [];
+        const sixes = [], fours = [], dismissals = [], wickets = [], others = [];
         clips.forEach(c => {
             if (c.strikerKey === pk && c.eventType === 'SIX') sixes.push(decorate(c));
             else if (c.strikerKey === pk && c.eventType === 'FOUR') fours.push(decorate(c));
             else if (c.strikerKey === pk && c.eventType === 'WICKET') dismissals.push(decorate(c));
+            else if (c.strikerKey === pk) others.push(decorate(c));
             if (c.bowlerKey === pk && c.eventType === 'WICKET') wickets.push(decorate(c));
+            else if (c.bowlerKey === pk && c.eventType !== 'SIX' && c.eventType !== 'FOUR') others.push(decorate(c));
         });
-        [sixes, fours, dismissals, wickets].forEach(arr => arr.sort(order));
+        [sixes, fours, dismissals, wickets, others].forEach(arr => arr.sort(order));
 
         const performance = computeSinglePlayerRollup(ctx.matches, pk); // section 20 — same rollup the leaderboard itself is built from
 
         res.json({
             success: true, name, playerKey: pk,
             performance,
-            categories: { sixes, fours, dismissals, wickets },
-            totalClips: sixes.length + fours.length + dismissals.length + wickets.length
+            // 🩹 FIX: "others" (manually attached general clips — see
+            // adminRouter '/clips/attach/upload') used to be silently
+            // dropped here — this endpoint feeds the "Player Highlights"
+            // panel's category counts AND totalClips, so a player with
+            // ONLY general clips showed 0 everywhere and "No video clips
+            // were recorded" even though clips existed and appeared fine
+            // in that match's own Match Highlights.
+            categories: { sixes, fours, dismissals, wickets, other: others },
+            totalClips: sixes.length + fours.length + dismissals.length + wickets.length + others.length
         });
     } catch (err) {
         console.log('Tournament player-clips fetch error:', err);
@@ -2825,7 +2842,7 @@ app.get('/api/public/tournament/:token/player-clips', async (req, res) => {
 });
 
 // POST /api/public/tournament/:token/highlights/compile  { name, category }
-// category: 'all' | 'sixes' | 'fours' | 'dismissals' | 'wickets'.
+// category: 'all' | 'sixes' | 'fours' | 'dismissals' | 'wickets' | 'other'.
 // Same background-job pipeline as POST /api/highlights/compile above, just
 // resolving its clip list tournament-wide. Clips are ordered
 // Tournament -> Match -> Innings -> Over -> Ball (section 6) via
@@ -2849,7 +2866,13 @@ app.post('/api/public/tournament/:token/highlights/compile', async (req, res) =>
         else if (category === 'fours') selected = clips.filter(c => c.strikerKey === pk && c.eventType === 'FOUR');
         else if (category === 'dismissals') selected = clips.filter(c => c.strikerKey === pk && c.eventType === 'WICKET');
         else if (category === 'wickets') selected = clips.filter(c => c.bowlerKey === pk && c.eventType === 'WICKET');
-        else selected = clips.filter(c => (c.strikerKey === pk && ['SIX', 'FOUR', 'WICKET'].includes(c.eventType)) || (c.bowlerKey === pk && c.eventType === 'WICKET'));
+        // 🩹 FIX: "other" (a general clip manually attached to a non-
+        // boundary/non-wicket ball) is its own download category now, and
+        // "all" includes it too — before this it was invisible to every
+        // tournament-wide compile, including "Download All Player
+        // Highlights" itself.
+        else if (category === 'other') selected = clips.filter(c => (c.strikerKey === pk && !['SIX', 'FOUR', 'WICKET'].includes(c.eventType)) || (c.bowlerKey === pk && !['SIX', 'FOUR', 'WICKET'].includes(c.eventType)));
+        else selected = clips.filter(c => (c.strikerKey === pk) || (c.bowlerKey === pk && c.eventType !== 'SIX' && c.eventType !== 'FOUR'));
 
         if (!selected.length) return res.json({ success: true, empty: true, message: 'No highlights available for this player yet.' });
         selected.forEach(c => { c._tourneySeq = matchIndex.get(c.matchId) || 0; });
@@ -3047,14 +3070,19 @@ app.post('/api/public/tournament/:token/highlights/compile-all-players', async (
 
         const clips = await clipsCollection.find({
             matchId: { $in: matchIds },
-            $or: [{ strikerKey: { $in: pkList }, eventType: { $in: ['SIX', 'FOUR', 'WICKET'] } }, { bowlerKey: { $in: pkList }, eventType: 'WICKET' }]
+            // 🩹 FIX: general/"other" clips were excluded from this query
+            // entirely (only SIX/FOUR/WICKET for the striker, WICKET for
+            // the bowler) — matching the same gap fixed above, so a
+            // manually-attached general clip never made it into anyone's
+            // ZIP entry either.
+            $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }]
         }).toArray();
         clips.forEach(c => { c._tourneySeq = matchIndex.get(c.matchId) || 0; });
 
         const byPlayer = new Map(pkList.map(pk => [pk, []]));
         clips.forEach(c => {
-            if (names.has(c.strikerKey) && ['SIX', 'FOUR', 'WICKET'].includes(c.eventType)) byPlayer.get(c.strikerKey).push(c);
-            if (names.has(c.bowlerKey) && c.eventType === 'WICKET' && c.bowlerKey !== c.strikerKey) byPlayer.get(c.bowlerKey).push(c);
+            if (names.has(c.strikerKey)) byPlayer.get(c.strikerKey).push(c);
+            if (names.has(c.bowlerKey) && c.bowlerKey !== c.strikerKey && c.eventType !== 'SIX' && c.eventType !== 'FOUR') byPlayer.get(c.bowlerKey).push(c);
         });
 
         const jobId = newCompileJobId();
