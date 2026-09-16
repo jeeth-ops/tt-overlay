@@ -927,11 +927,12 @@
   .val-pop{ display:inline-block; animation:valPop .38s cubic-bezier(.22,1,.36,1); }
 
   /* ===== DOWNLOAD HIGHLIGHTS — Player/Team/Full-match MP4 compilation ====
-     Advanced pass: layered gradients, per-type icon colors, shimmer sweep
-     on the hero buttons, lift-on-hover + squash-on-press micro-interactions,
-     and a badge-style team head. All data-hl-* attributes and element IDs
-     are untouched, so the existing click handler / compile flow keeps
-     working exactly as before — this is presentation-only. */
+     Advanced pass 2: icon chips with per-type tint, fluid clamp()-based
+     sizing so the card scales smoothly from phone to laptop instead of
+     jumping at breakpoints, GPU-composited transforms (translateZ(0) +
+     will-change) for jank-free hover/press on touch and mouse alike, and
+     a hairline focus ring for keyboard users. All data-hl-* attributes,
+     element IDs and the click-delegation handler are untouched. */
   #highlights-download-card{ position:relative; overflow:hidden; }
   #highlights-download-card::before{
     content:''; position:absolute; inset:0; pointer-events:none; opacity:.6;
@@ -939,7 +940,12 @@
       radial-gradient(60% 80% at 0% 0%, var(--accent-soft), transparent 60%),
       radial-gradient(60% 80% at 100% 0%, var(--six-soft), transparent 60%);
   }
-  .hl-team-block{ margin-bottom:18px; position:relative; }
+  .hl-title-ico{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:20px; height:20px; margin-right:2px; color:var(--accent);
+  }
+  .hl-title-ico svg{ width:16px; height:16px; }
+  .hl-team-block{ margin-bottom:clamp(14px, 3vw, 18px); position:relative; }
   .hl-team-block:last-child{ margin-bottom:0; }
   .hl-team-head{
     display:flex; align-items:center; gap:9px; font-size:12.5px; font-weight:800;
@@ -948,30 +954,40 @@
   .hl-team-head .hl-dot{
     width:20px; height:20px; border-radius:8px; flex:none; position:relative;
     box-shadow:0 2px 8px rgba(0,0,0,.18), inset 0 0 0 1px rgba(255,255,255,.15);
-    background-image:linear-gradient(155deg, rgba(255,255,255,.35), transparent 60%);
-    background-blend-mode:overlay;
   }
   .hl-team-head .hl-dot::after{
     content:''; position:absolute; inset:0; border-radius:8px;
     background:linear-gradient(155deg, rgba(255,255,255,.35), transparent 55%);
   }
-  .hl-btn-grid{ display:grid; grid-template-columns:1fr 1fr; gap:9px; position:relative; }
+  .hl-btn-grid{ display:grid; grid-template-columns:1fr 1fr; gap:clamp(7px, 1.6vw, 10px); position:relative; }
   .hl-btn{
-    padding:12px 10px; border-radius:var(--radius-md); border:1px solid var(--border);
+    padding:clamp(10px, 2.4vw, 13px) clamp(8px, 2vw, 12px);
+    border-radius:var(--radius-md); border:1px solid var(--border);
     background:linear-gradient(180deg, var(--panel-2), var(--panel));
-    color:var(--text); font-size:12px; font-weight:700; cursor:pointer;
-    display:flex; align-items:center; justify-content:center; gap:7px; text-align:center; line-height:1.25;
-    position:relative; overflow:hidden; isolation:isolate;
+    color:var(--text); font-size:clamp(11.5px, 2.6vw, 12.5px); font-weight:700; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; gap:8px; text-align:center; line-height:1.25;
+    position:relative; overflow:hidden; isolation:isolate; -webkit-tap-highlight-color:transparent;
+    transform:translateZ(0); will-change:transform;
     box-shadow:0 1px 0 rgba(255,255,255,.03) inset, 0 6px 14px -10px rgba(0,0,0,.4);
-    transition:transform .16s cubic-bezier(.22,1,.36,1), box-shadow .16s ease, border-color .16s ease, background .16s ease;
+    transition:transform .18s cubic-bezier(.22,1,.36,1), box-shadow .18s ease, border-color .18s ease;
   }
-  .hl-btn svg{ width:15px; height:15px; flex:none; transition:transform .2s ease; }
-  .hl-btn[data-hl-type="sixes"] svg{ color:var(--six); }
-  .hl-btn[data-hl-type="fours"] svg{ color:var(--four); }
-  .hl-btn[data-hl-type="wickets"] svg{ color:var(--wicket); }
-  .hl-btn:hover{ transform:translateY(-2px); border-color:var(--accent); box-shadow:0 10px 22px -12px rgba(0,0,0,.45); }
-  .hl-btn:hover svg{ transform:scale(1.12); }
-  .hl-btn:active{ transform:translateY(0) scale(.96); }
+  .hl-btn > span:last-child{ overflow-wrap:break-word; }
+  .hl-btn:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .hl-ico{
+    flex:none; width:26px; height:26px; border-radius:8px;
+    display:flex; align-items:center; justify-content:center;
+    background:var(--accent-soft); color:var(--accent);
+    transition:transform .22s cubic-bezier(.34,1.56,.64,1);
+  }
+  .hl-ico svg{ width:14px; height:14px; }
+  .hl-ico--six{ background:var(--six-soft); color:var(--six); }
+  .hl-ico--four{ background:var(--four-soft); color:var(--four); }
+  .hl-ico--wkt{ background:var(--wicket-soft); color:var(--wicket); }
+  .hl-ico--full{ background:rgba(255,255,255,.18); color:inherit; width:28px; height:28px; }
+  .hl-btn.hl-primary .hl-ico{ background:rgba(255,255,255,.22); color:inherit; }
+  .hl-btn:hover{ transform:translateY(-2px) translateZ(0); border-color:var(--accent); box-shadow:0 10px 22px -12px rgba(0,0,0,.45); }
+  .hl-btn:hover .hl-ico{ transform:scale(1.14) rotate(-4deg); }
+  .hl-btn:active{ transform:translateY(0) scale(.96) translateZ(0); }
   .hl-btn.hl-primary{
     background:linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #000 15%));
     color:var(--accent-contrast); border-color:transparent; grid-column:1 / -1;
@@ -979,12 +995,12 @@
   }
   .hl-btn.hl-primary:hover{ box-shadow:0 14px 30px -12px var(--accent-soft), inset 0 1px 0 rgba(255,255,255,.3); }
   .hl-btn.hl-full{
-    grid-column:1 / -1; padding:15px 10px; font-size:13.5px; margin-top:16px;
+    grid-column:1 / -1; padding:clamp(13px, 2.8vw, 16px) 10px; font-size:clamp(12.5px, 2.8vw, 14px); margin-top:16px;
     background:linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 65%, var(--six) 25%));
     color:var(--accent-contrast); border:none; letter-spacing:.2px;
     box-shadow:0 14px 30px -14px var(--accent-soft), inset 0 1px 0 rgba(255,255,255,.25);
   }
-  .hl-btn.hl-full:hover{ transform:translateY(-2px) scale(1.005); box-shadow:0 18px 36px -14px var(--accent-soft), inset 0 1px 0 rgba(255,255,255,.3); }
+  .hl-btn.hl-full:hover{ transform:translateY(-2px) scale(1.005) translateZ(0); box-shadow:0 18px 36px -14px var(--accent-soft), inset 0 1px 0 rgba(255,255,255,.3); }
   /* Shimmer sweep across the two hero buttons — a slow diagonal light
      band, purely decorative, ::after so it never intercepts clicks. */
   .hl-btn.hl-primary::after, .hl-btn.hl-full::after{
@@ -1000,10 +1016,30 @@
   }
   @media (prefers-reduced-motion: reduce){
     .hl-btn.hl-primary::after, .hl-btn.hl-full::after{ animation:none; }
+    .hl-btn, .hl-ico{ transition:none; }
   }
   .hl-divider{
     height:1px; margin:18px 0; position:relative;
     background:linear-gradient(90deg, transparent, var(--border-soft) 20%, var(--border-soft) 80%, transparent);
+  }
+  /* Laptop / wide layouts: a touch more breathing room and a slightly
+     calmer hover lift since mouse pointers are more precise than touch. */
+  @media (min-width:900px){
+    .hl-btn-grid{ gap:11px; }
+    .hl-btn{ padding:13px 14px; }
+  }
+  /* Small phones: keep the 2-column grid (matches the reference design)
+     but tighten padding/type so four-word labels never wrap awkwardly,
+     and drop the hover lift since touch devices have no hover state. */
+  @media (max-width:420px){
+    .hl-btn{ gap:6px; }
+    .hl-ico{ width:22px; height:22px; }
+    .hl-ico svg{ width:12px; height:12px; }
+  }
+  @media (hover:none){
+    .hl-btn:hover{ transform:none; box-shadow:0 1px 0 rgba(255,255,255,.03) inset, 0 6px 14px -10px rgba(0,0,0,.4); }
+    .hl-btn.hl-full:hover{ transform:none; }
+    .hl-btn:hover .hl-ico{ transform:none; }
   }
   #compile-modal-backdrop{
     position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:125; display:flex;
@@ -1033,10 +1069,6 @@
     display:flex; align-items:center; justify-content:center; gap:7px;
   }
   .hl-player-download:active{ transform:scale(.97); }
-  @media (max-width:420px){
-    .hl-btn-grid{ grid-template-columns:1fr 1fr; }
-    .hl-btn{ font-size:11.5px; padding:10px 8px; }
-  }
 </style>
 </head>
 <body>
@@ -1180,27 +1212,30 @@
        layer over the clips already shown above; nothing here recalculates
        stats or changes what counts as a highlight. -->
   <div class="card" id="highlights-download-card">
-    <div class="section-title"><span class="dash"></span>Download Highlights</div>
+    <div class="section-title"><span class="dash"></span>
+      <span class="hl-title-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+      Download Highlights
+    </div>
     <div id="hl-team-a" class="hl-team-block">
       <div class="hl-team-head"><span class="hl-dot" style="background:var(--accent);"></span><span id="hl-team-a-name">Team A</span> Highlights</div>
       <div class="hl-btn-grid">
-        <button class="hl-btn hl-primary" data-hl-type="team" data-hl-team="A"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Download All Team Highlights</button>
-        <button class="hl-btn" data-hl-type="sixes" data-hl-team="A"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18"/></svg>All Sixes</button>
-        <button class="hl-btn" data-hl-type="fours" data-hl-team="A"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 3"/></svg>All Fours</button>
-        <button class="hl-btn" data-hl-type="wickets" data-hl-team="A"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="21"/><line x1="12" y1="3" x2="12" y2="21"/><line x1="18" y1="3" x2="18" y2="21"/><line x1="4" y1="21" x2="20" y2="21"/></svg>All Wickets</button>
+        <button class="hl-btn hl-primary" data-hl-type="team" data-hl-team="A"><span class="hl-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span><span>Download All Team Highlights</span></button>
+        <button class="hl-btn" data-hl-type="sixes" data-hl-team="A"><span class="hl-ico hl-ico--six"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18"/></svg></span><span>All Sixes</span></button>
+        <button class="hl-btn" data-hl-type="fours" data-hl-team="A"><span class="hl-ico hl-ico--four"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 3"/></svg></span><span>All Fours</span></button>
+        <button class="hl-btn" data-hl-type="wickets" data-hl-team="A"><span class="hl-ico hl-ico--wkt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="21"/><line x1="12" y1="3" x2="12" y2="21"/><line x1="18" y1="3" x2="18" y2="21"/><line x1="4" y1="21" x2="20" y2="21"/></svg></span><span>All Wickets</span></button>
       </div>
     </div>
     <div class="hl-divider"></div>
     <div id="hl-team-b" class="hl-team-block">
       <div class="hl-team-head"><span class="hl-dot" style="background:var(--text-dim);"></span><span id="hl-team-b-name">Team B</span> Highlights</div>
       <div class="hl-btn-grid">
-        <button class="hl-btn hl-primary" data-hl-type="team" data-hl-team="B"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Download All Team Highlights</button>
-        <button class="hl-btn" data-hl-type="sixes" data-hl-team="B"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18"/></svg>All Sixes</button>
-        <button class="hl-btn" data-hl-type="fours" data-hl-team="B"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 3"/></svg>All Fours</button>
-        <button class="hl-btn" data-hl-type="wickets" data-hl-team="B"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="21"/><line x1="12" y1="3" x2="12" y2="21"/><line x1="18" y1="3" x2="18" y2="21"/><line x1="4" y1="21" x2="20" y2="21"/></svg>All Wickets</button>
+        <button class="hl-btn hl-primary" data-hl-type="team" data-hl-team="B"><span class="hl-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span><span>Download All Team Highlights</span></button>
+        <button class="hl-btn" data-hl-type="sixes" data-hl-team="B"><span class="hl-ico hl-ico--six"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18"/></svg></span><span>All Sixes</span></button>
+        <button class="hl-btn" data-hl-type="fours" data-hl-team="B"><span class="hl-ico hl-ico--four"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 3"/></svg></span><span>All Fours</span></button>
+        <button class="hl-btn" data-hl-type="wickets" data-hl-team="B"><span class="hl-ico hl-ico--wkt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="21"/><line x1="12" y1="3" x2="12" y2="21"/><line x1="18" y1="3" x2="18" y2="21"/><line x1="4" y1="21" x2="20" y2="21"/></svg></span><span>All Wickets</span></button>
       </div>
     </div>
-    <button class="hl-btn hl-full" data-hl-type="full"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M7 6v12M17 6v12M2 10h5M2 14h5M17 10h5M17 14h5"/></svg>Download Complete Match Highlights</button>
+    <button class="hl-btn hl-full" data-hl-type="full"><span class="hl-ico hl-ico--full"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M7 6v12M17 6v12M2 10h5M2 14h5M17 10h5M17 14h5"/></svg></span><span>Download Complete Match Highlights</span></button>
   </div>
 
   <!-- SCORECARD TABLES — batting/bowling, promoted right under Highlights
