@@ -1103,8 +1103,12 @@ function clipGroupHtml(label, clips){
 }
 
 function clipRowHtml(c){
-  const badgeCls = c.eventType === 'FOUR' ? 'four' : c.eventType === 'SIX' ? 'six' : 'wicket';
-  const badgeLabel = c.eventType === 'FOUR' ? '4' : c.eventType === 'SIX' ? '6' : 'W';
+  // 🩹 FIX: a manually-attached "OTHER / GENERAL CLIP" isn't a four, six
+  // or wicket — it used to fall into the wicket badge by default here,
+  // making a plain highlight look like a dismissal. Give it its own
+  // neutral badge instead.
+  const badgeCls = c.eventType === 'FOUR' ? 'four' : c.eventType === 'SIX' ? 'six' : c.eventType === 'WICKET' ? 'wicket' : 'other';
+  const badgeLabel = c.eventType === 'FOUR' ? '4' : c.eventType === 'SIX' ? '6' : c.eventType === 'WICKET' ? 'W' : CLIP_ICON;
   const overLabel = `${c.over ?? '—'}.${c.ballInOver ?? ''}`;
   const sub = c.eventType === 'WICKET'
     ? [c.dismissalType, c.bowler ? 'b. ' + c.bowler : null].filter(Boolean).join(' · ')
@@ -1188,10 +1192,16 @@ function matchEntryHtml(entry){
   // the same match card.
   let clipsHtml = '';
   if(entry.clipsData && entry.clipsData.success){
+    // 🩹 FIX: a clip manually attached to an ordinary ball (tagged plain
+    // "CLIP", not a four/six/wicket) used to be silently dropped from
+    // this leaderboard drawer even though it showed up fine in that
+    // match's own Match Highlights — the server now returns it as
+    // batting.other/bowling.other (see runPlayerClipsQuery in server.js).
     clipsHtml = clipGroupHtml('Sixes', entry.clipsData.batting.sixes)
       + clipGroupHtml('Fours', entry.clipsData.batting.fours)
       + clipGroupHtml('Wickets', entry.clipsData.bowling.wickets)
-      + clipGroupHtml('Dismissal', entry.clipsData.batting.dismissal);
+      + clipGroupHtml('Dismissal', entry.clipsData.batting.dismissal)
+      + clipGroupHtml('Other Clips', [...(entry.clipsData.batting.other||[]), ...(entry.clipsData.bowling.other||[])]);
   }
   if(!clipsHtml) clipsHtml = '<div class="empty-state" style="padding:8px 0;">No clips recorded for this match.</div>';
   return `<div class="tpm-match">
