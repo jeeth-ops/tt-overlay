@@ -2369,8 +2369,13 @@ setInterval(() => {
 // fields every clip doc already carries (see serializeClip above). This is
 // match order, not clip-creation order (creation order can drift slightly
 // because R2/Drive uploads finish at different speeds for different clips).
+// _tourneySeq is only ever set by the tournament-wide highlight routes
+// below (a clip's index into that tournament's own match order); it's
+// undefined/0 for every ordinary match-scoped compile, so this sort is
+// 100% backward compatible with the single-match callers above.
 function chronologicalClipOrder(clips) {
     return clips.slice().sort((a, b) =>
+        (a._tourneySeq || 0) - (b._tourneySeq || 0) ||
         (a.innings || 1) - (b.innings || 1) ||
         (a.over || 0) - (b.over || 0) ||
         (a.ballInOver || 0) - (b.ballInOver || 0) ||
@@ -2607,13 +2612,426 @@ app.get('/api/highlights/compile/:jobId/download', (req, res) => {
     if (!job || job.status !== 'ready' || !job.outFile || !fs.existsSync(job.outFile)) {
         return res.status(404).json({ success: false, error: 'Highlight file not ready or has expired' });
     }
-    const filename = `${req.query.name || 'highlights'}.mp4`.replace(/[^a-zA-Z0-9_.-]/g, '_');
+    // job.kind === 'zip' only for the "download all players" tournament
+    // package below (runAllPlayersZipJob) — every other compile job in
+    // this file produces a plain .mp4, so the default stays mp4.
+    const isZip = job.kind === 'zip';
+    const ext = isZip ? 'zip' : 'mp4';
+    const defaultName = isZip ? 'AllSportsLive_Tournament_Player_Highlights' : 'highlights';
+    const filename = `${req.query.name || defaultName}.${ext}`.replace(/[^a-zA-Z0-9_.-]/g, '_');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Content-Type', isZip ? 'application/zip' : 'video/mp4');
     const stream = fs.createReadStream(job.outFile);
     stream.pipe(res);
     stream.on('close', () => cleanupCompileJob(req.params.jobId));
     stream.on('error', () => { try { res.end(); } catch (e) {} });
+});
+
+// ================================================================
+// 🏆 TOURNAMENT-WIDE PLAYER HIGHLIGHTS (public, token-scoped)
+// Upgrades the leaderboard's clip icon (score-tournament.html) from a
+// small match-by-match list into a full "player highlights" experience:
+// Sixes / Fours / Dismissals / Bowling Wickets pooled across the WHOLE
+// tournament, each with an individual download, a per-category "Download
+// All ___" MP4, a "Download All Player Highlights" complete-tournament MP4,
+// and a tournament-level "Download All Players" ZIP.
+//
+// Nothing here is a second, parallel notion of ownership or stats:
+// - Player identity reuses playerKey() exactly — the same nameKey every
+//   ball/clip/leaderboard row in this file is already keyed by (section 9:
+//   "Karsh Kothari" already rolls up across every match under one key,
+//   whitespace/case differences included — see playerKey()'s own comment).
+// - Which clips belong to a player reuses the exact same
+//   strikerKey/bowlerKey query shape as /api/clips/player/:playerKey above,
+//   just $in a tournament's matchIds instead of one matchId — so an admin's
+//   clip reassignment (section 11) is picked up automatically here too,
+//   with no cache of "who owns this clip" kept anywhere.
+// - Compilation reuses the exact same job/progress/ffmpeg pipeline as
+//   POST /api/highlights/compile above (section 12-14): background job,
+//   R2-then-Drive per-clip fetch, stream-copy concat with a filter-concat
+//   fallback, temp files cleaned up whether the job succeeds or fails.
+// ================================================================
+
+// Resolves a public tournament token into { doc, ownerUid, leagueKey,
+// matches } — same lookup + privacy gate as GET /api/public/tournament/:token
+// above, factored out so every route below shares exactly one place that
+// decides "is this token allowed to see this tournament's data" instead of
+// repeating (and risking drifting) that check per route.
+async function resolvePublicTournamentForHighlights(req, token) {
+    if (!leaguesCollection || !matchRecordsCollection || !clipsCollection) return { httpError: 503, message: 'Database not configured' };
+    const doc = await leaguesCollection.findOne({ publicToken: token });
+    if (!doc) return { httpError: 404, message: 'Tournament not found' };
+    if (await isPrivateLeagueDoc(doc)) {
+        const requesterEmail = await verifiedRequesterEmail(req);
+        if (!isPrivateCreatorEmail(requesterEmail)) return { httpError: 404, message: 'Tournament not found' };
+    }
+    const matches = await getLeagueMatches(doc.ownerUid, doc.leagueKey);
+    return { doc, ownerUid: doc.ownerUid, leagueKey: doc.leagueKey, displayName: doc.displayName || '', matches };
+}
+
+// Which opponent this player faced in one saved match — same lookup
+// score-tournament.html's own buildMatchEntry() already does client-side
+// for the per-match report (section 10: every clip keeps its match
+// context), ported here so server-built category lists can carry a
+// "Match N vs Opponent" label without an extra round trip per clip.
+function opponentLabelForPlayer(match, pk) {
+    if (!match) return '';
+    const inCard = (card) => (card || []).some(r => r && playerKey(r.name) === pk);
+    let teamKey = null;
+    if (inCard(match.battingCard && match.battingCard.A) || inCard(match.bowlingCard && match.bowlingCard.A)) teamKey = 'A';
+    else if (inCard(match.battingCard && match.battingCard.B) || inCard(match.bowlingCard && match.bowlingCard.B)) teamKey = 'B';
+    if (!teamKey) return '';
+    const oppTeam = teamKey === 'A' ? match.teamB : match.teamA;
+    return (oppTeam && (oppTeam.short || oppTeam.name)) || '';
+}
+
+// GET /api/public/tournament/:token/players — lightweight roster for the
+// leaderboard's "Download All Players Highlights" panel (section 8): just
+// names + a clip-count per category, never clip content/video URLs, so
+// opening this list never pulls video metadata for players nobody has
+// asked about yet (section 17: metadata first, video only on demand).
+app.get('/api/public/tournament/:token/players', async (req, res) => {
+    try {
+        const ctx = await resolvePublicTournamentForHighlights(req, req.params.token);
+        if (ctx.httpError) return res.status(ctx.httpError).json({ success: false, error: ctx.message });
+
+        const { topRuns, topWickets } = computeLeaderboards(ctx.matches);
+        const names = new Map(); // pk -> display name
+        topRuns.forEach(r => names.set(playerKey(r.name), r.name));
+        topWickets.forEach(r => names.set(playerKey(r.name), r.name));
+        const matchIds = ctx.matches.map(m => m.matchId);
+        const pkList = [...names.keys()];
+        const counts = new Map(pkList.map(pk => [pk, { sixes: 0, fours: 0, dismissals: 0, wickets: 0 }]));
+
+        if (matchIds.length && pkList.length) {
+            const clips = await clipsCollection.find({
+                matchId: { $in: matchIds },
+                $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }]
+            }, { projection: { matchId: 1, strikerKey: 1, bowlerKey: 1, eventType: 1 } }).toArray();
+            clips.forEach(c => {
+                if (counts.has(c.strikerKey)) {
+                    const row = counts.get(c.strikerKey);
+                    if (c.eventType === 'SIX') row.sixes++;
+                    else if (c.eventType === 'FOUR') row.fours++;
+                    else if (c.eventType === 'WICKET') row.dismissals++;
+                }
+                if (counts.has(c.bowlerKey) && c.eventType === 'WICKET') counts.get(c.bowlerKey).wickets++;
+            });
+        }
+
+        const players = pkList.map(pk => {
+            const c = counts.get(pk);
+            return { name: names.get(pk), playerKey: pk, clipCounts: c, totalClips: c.sixes + c.fours + c.dismissals + c.wickets };
+        }).sort((a, b) => b.totalClips - a.totalClips);
+
+        res.json({ success: true, displayName: ctx.displayName, players });
+    } catch (err) {
+        console.log('Tournament players fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load tournament players' });
+    }
+});
+
+// GET /api/public/tournament/:token/player-clips?name=... — every clip
+// this player is linked to (as striker or bowler) across the WHOLE
+// tournament, split into the 4 sections the highlights panel shows
+// (sections 2-5): sixes, fours, dismissals (this player given out) and
+// bowlingWickets (wickets they took as a bowler) — plus their tournament
+// batting/bowling line (section 20), so the panel never has to make a
+// second call for the summary numbers.
+app.get('/api/public/tournament/:token/player-clips', async (req, res) => {
+    try {
+        const ctx = await resolvePublicTournamentForHighlights(req, req.params.token);
+        if (ctx.httpError) return res.status(ctx.httpError).json({ success: false, error: ctx.message });
+        const name = String(req.query.name || '').trim();
+        const pk = playerKey(name);
+        if (!pk) return res.status(400).json({ success: false, error: 'name required' });
+
+        const matchIds = ctx.matches.map(m => m.matchId);
+        const matchIndex = new Map(ctx.matches.map((m, i) => [m.matchId, i])); // tournament order — getLeagueMatches sorts by savedAt asc
+        const matchById = new Map(ctx.matches.map(m => [m.matchId, m]));
+
+        const clips = matchIds.length
+            ? await clipsCollection.find({ matchId: { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }] }).toArray()
+            : [];
+
+        function decorate(c) {
+            const s = serializeClip(c);
+            s.matchIndex = matchIndex.has(c.matchId) ? matchIndex.get(c.matchId) + 1 : null; // 1-based "Match N"
+            s.opponent = opponentLabelForPlayer(matchById.get(c.matchId), pk);
+            return s;
+        }
+        const order = (a, b) => (a.matchIndex || 0) - (b.matchIndex || 0) || (a.innings || 1) - (b.innings || 1) || (a.over || 0) - (b.over || 0) || (a.ballInOver || 0) - (b.ballInOver || 0);
+
+        const sixes = [], fours = [], dismissals = [], wickets = [];
+        clips.forEach(c => {
+            if (c.strikerKey === pk && c.eventType === 'SIX') sixes.push(decorate(c));
+            else if (c.strikerKey === pk && c.eventType === 'FOUR') fours.push(decorate(c));
+            else if (c.strikerKey === pk && c.eventType === 'WICKET') dismissals.push(decorate(c));
+            if (c.bowlerKey === pk && c.eventType === 'WICKET') wickets.push(decorate(c));
+        });
+        [sixes, fours, dismissals, wickets].forEach(arr => arr.sort(order));
+
+        const performance = computeSinglePlayerRollup(ctx.matches, pk); // section 20 — same rollup the leaderboard itself is built from
+
+        res.json({
+            success: true, name, playerKey: pk,
+            performance,
+            categories: { sixes, fours, dismissals, wickets },
+            totalClips: sixes.length + fours.length + dismissals.length + wickets.length
+        });
+    } catch (err) {
+        console.log('Tournament player-clips fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load player highlights' });
+    }
+});
+
+// POST /api/public/tournament/:token/highlights/compile  { name, category }
+// category: 'all' | 'sixes' | 'fours' | 'dismissals' | 'wickets'.
+// Same background-job pipeline as POST /api/highlights/compile above, just
+// resolving its clip list tournament-wide. Clips are ordered
+// Tournament -> Match -> Innings -> Over -> Ball (section 6) via
+// _tourneySeq (see chronologicalClipOrder above), never by upload order.
+app.post('/api/public/tournament/:token/highlights/compile', async (req, res) => {
+    try {
+        const ctx = await resolvePublicTournamentForHighlights(req, req.params.token);
+        if (ctx.httpError) return res.status(ctx.httpError).json({ success: false, error: ctx.message });
+        const name = String((req.body && req.body.name) || '').trim();
+        const pk = playerKey(name);
+        if (!pk) return res.status(400).json({ success: false, error: 'name required' });
+        const category = String((req.body && req.body.category) || 'all').toLowerCase();
+
+        const matchIds = ctx.matches.map(m => m.matchId);
+        const matchIndex = new Map(ctx.matches.map((m, i) => [m.matchId, i]));
+        if (!matchIds.length) return res.json({ success: true, empty: true, message: 'No highlights available for this player yet.' });
+
+        const clips = await clipsCollection.find({ matchId: { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }] }).toArray();
+        let selected;
+        if (category === 'sixes') selected = clips.filter(c => c.strikerKey === pk && c.eventType === 'SIX');
+        else if (category === 'fours') selected = clips.filter(c => c.strikerKey === pk && c.eventType === 'FOUR');
+        else if (category === 'dismissals') selected = clips.filter(c => c.strikerKey === pk && c.eventType === 'WICKET');
+        else if (category === 'wickets') selected = clips.filter(c => c.bowlerKey === pk && c.eventType === 'WICKET');
+        else selected = clips.filter(c => (c.strikerKey === pk && ['SIX', 'FOUR', 'WICKET'].includes(c.eventType)) || (c.bowlerKey === pk && c.eventType === 'WICKET'));
+
+        if (!selected.length) return res.json({ success: true, empty: true, message: 'No highlights available for this player yet.' });
+        selected.forEach(c => { c._tourneySeq = matchIndex.get(c.matchId) || 0; });
+
+        const jobId = newCompileJobId();
+        compileJobs.set(jobId, {
+            status: 'queued', progress: 0, message: 'Preparing highlights...',
+            matchId: `tournament:${req.params.token}`, createdAt: Date.now(), included: 0, skipped: 0
+        });
+        runCompileJob(jobId, selected).catch(err => {
+            console.log(`Tournament compile job ${jobId} crashed:`, err.message || err);
+            setCompileJob(jobId, { status: 'error', error: 'Something went wrong combining these clips.' });
+        });
+        res.json({ success: true, jobId });
+    } catch (err) {
+        console.log('Tournament compile-start error:', err);
+        res.status(500).json({ success: false, error: 'Could not start highlight compilation' });
+    }
+});
+
+// Builds one complete-highlights MP4 per player (reusing the same
+// download/concat helpers a normal compile job uses), skipping any player
+// with zero downloadable clips rather than producing an empty file for
+// them (section 15), then packages every player's MP4 into one ZIP
+// (section 8) — never merges different players' clips into one video.
+async function runAllPlayersZipJob(jobId, names, byPlayer) {
+    const job = compileJobs.get(jobId);
+    if (!job) return;
+    const workDir = path.join(HIGHLIGHTS_TMP_DIR, jobId);
+    fs.mkdirSync(workDir, { recursive: true });
+    setCompileJob(jobId, { workDir, status: 'collecting', progress: 0, message: 'Preparing player highlights...' });
+
+    const players = [...byPlayer.entries()].filter(([, clips]) => clips.length > 0);
+    const entries = [];
+    let skippedPlayers = 0;
+    for (let i = 0; i < players.length; i++) {
+        const [pk, clips] = players[i];
+        const displayName = names.get(pk) || pk;
+        const ordered = dedupeClipsById(chronologicalClipOrder(clips));
+        const playerDir = path.join(workDir, `p${i}`);
+        fs.mkdirSync(playerDir, { recursive: true });
+        const localPaths = [];
+        for (let j = 0; j < ordered.length; j++) {
+            const local = await downloadClipToTemp(ordered[j], playerDir, j);
+            if (local) localPaths.push(local);
+        }
+        setCompileJob(jobId, {
+            progress: Math.round(((i + 1) / players.length) * 80),
+            message: `Compiling ${displayName}... (${i + 1}/${players.length})`
+        });
+        if (!localPaths.length) { skippedPlayers++; fs.rm(playerDir, { recursive: true, force: true }, () => {}); continue; }
+        const safeName = displayName.replace(/[^a-zA-Z0-9_.-]+/g, '_') || `player_${i}`;
+        const playerOut = path.join(workDir, `${safeName}_Highlights.mp4`);
+        try {
+            await concatClipsToFile(localPaths, playerOut, playerDir);
+            entries.push({ name: `${safeName}_Highlights.mp4`, filePath: playerOut });
+        } catch (err) {
+            console.log(`All-players zip: could not compile ${displayName}:`, err.message || err);
+            skippedPlayers++;
+        }
+        fs.rm(playerDir, { recursive: true, force: true }, () => {});
+    }
+
+    if (!entries.length) {
+        setCompileJob(jobId, { status: 'error', error: 'No player highlights could be compiled for this tournament.' });
+        fs.rm(workDir, { recursive: true, force: true }, () => {});
+        return;
+    }
+
+    setCompileJob(jobId, { status: 'combining', progress: 85, message: 'Packaging ZIP...' });
+    const outFile = path.join(HIGHLIGHTS_TMP_DIR, `${jobId}.zip`);
+    try {
+        await writeZipFile(entries, outFile);
+        setCompileJob(jobId, { status: 'ready', progress: 100, message: 'Download Ready', outFile, included: entries.length, skipped: skippedPlayers, kind: 'zip' });
+    } catch (err) {
+        console.log(`All-players zip job ${jobId} zip error:`, err.message || err);
+        setCompileJob(jobId, { status: 'error', error: 'Could not package the highlights ZIP.' });
+    } finally {
+        fs.rm(workDir, { recursive: true, force: true }, () => {});
+    }
+}
+
+// ---- Minimal ZIP writer (STORE method — no re-compression) -----------
+// Every entry here is already an H.264/AAC .mp4 (already compressed by
+// cutClip's ffmpeg step), so deflating it again inside the zip would cost
+// real CPU/time for essentially no size benefit — STORE just wraps the
+// files with a standard ZIP central directory so any unzip tool can open
+// and extract each player's file individually.
+function crc32(buf) {
+    let crc = 0xFFFFFFFF;
+    for (let i = 0; i < buf.length; i++) {
+        let c = (crc ^ buf[i]) & 0xFF;
+        for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        crc = (crc >>> 8) ^ c;
+    }
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+function dosDateTime(d) {
+    const time = ((d.getHours() & 0x1F) << 11) | ((d.getMinutes() & 0x3F) << 5) | ((Math.floor(d.getSeconds() / 2)) & 0x1F);
+    const date = (((d.getFullYear() - 1980) & 0x7F) << 9) | (((d.getMonth() + 1) & 0x0F) << 5) | (d.getDate() & 0x1F);
+    return { time, date };
+}
+function writeZipFile(entries, outFile) {
+    return new Promise((resolve, reject) => {
+        try {
+            const out = fs.createWriteStream(outFile);
+            const central = [];
+            let offset = 0;
+            const { time, date } = dosDateTime(new Date());
+
+            entries.forEach(entry => {
+                const data = fs.readFileSync(entry.filePath);
+                const crc = crc32(data);
+                const nameBuf = Buffer.from(entry.name, 'utf8');
+                const localHeader = Buffer.alloc(30);
+                localHeader.writeUInt32LE(0x04034b50, 0);
+                localHeader.writeUInt16LE(20, 4);
+                localHeader.writeUInt16LE(0, 6);
+                localHeader.writeUInt16LE(0, 8); // STORE, no compression
+                localHeader.writeUInt16LE(time, 10);
+                localHeader.writeUInt16LE(date, 12);
+                localHeader.writeUInt32LE(crc, 14);
+                localHeader.writeUInt32LE(data.length, 18);
+                localHeader.writeUInt32LE(data.length, 22);
+                localHeader.writeUInt16LE(nameBuf.length, 26);
+                localHeader.writeUInt16LE(0, 28);
+                out.write(localHeader);
+                out.write(nameBuf);
+                out.write(data);
+                central.push({ nameBuf, crc, size: data.length, offset, time, date });
+                offset += 30 + nameBuf.length + data.length;
+            });
+
+            const centralStart = offset;
+            central.forEach(e => {
+                const rec = Buffer.alloc(46);
+                rec.writeUInt32LE(0x02014b50, 0);
+                rec.writeUInt16LE(20, 4);
+                rec.writeUInt16LE(20, 6);
+                rec.writeUInt16LE(0, 8);
+                rec.writeUInt16LE(0, 10); // STORE
+                rec.writeUInt16LE(e.time, 12);
+                rec.writeUInt16LE(e.date, 14);
+                rec.writeUInt32LE(e.crc, 16);
+                rec.writeUInt32LE(e.size, 20);
+                rec.writeUInt32LE(e.size, 24);
+                rec.writeUInt16LE(e.nameBuf.length, 28);
+                rec.writeUInt16LE(0, 30);
+                rec.writeUInt16LE(0, 32);
+                rec.writeUInt16LE(0, 34);
+                rec.writeUInt16LE(0, 36);
+                rec.writeUInt32LE(0, 38);
+                rec.writeUInt32LE(e.offset, 42);
+                out.write(rec);
+                out.write(e.nameBuf);
+                offset += 46 + e.nameBuf.length;
+            });
+            const centralSize = offset - centralStart;
+            const end = Buffer.alloc(22);
+            end.writeUInt32LE(0x06054b50, 0);
+            end.writeUInt16LE(0, 4);
+            end.writeUInt16LE(0, 6);
+            end.writeUInt16LE(central.length, 8);
+            end.writeUInt16LE(central.length, 10);
+            end.writeUInt32LE(centralSize, 12);
+            end.writeUInt32LE(centralStart, 16);
+            end.writeUInt16LE(0, 20);
+            out.end(end);
+            out.on('finish', resolve);
+            out.on('error', reject);
+        } catch (err) { reject(err); }
+    });
+}
+
+// POST /api/public/tournament/:token/highlights/compile-all-players
+// (section 8) — builds each player's complete-highlights MP4 (same
+// selection as category:'all' above) then zips them together. Reuses the
+// exact same status/download routes as every other compile job; job.kind
+// === 'zip' is what tells the download route (above) to serve it as a
+// .zip with the right Content-Type instead of a .mp4.
+app.post('/api/public/tournament/:token/highlights/compile-all-players', async (req, res) => {
+    try {
+        const ctx = await resolvePublicTournamentForHighlights(req, req.params.token);
+        if (ctx.httpError) return res.status(ctx.httpError).json({ success: false, error: ctx.message });
+        const matchIds = ctx.matches.map(m => m.matchId);
+        if (!matchIds.length) return res.json({ success: true, empty: true, message: 'No highlights available for this tournament yet.' });
+        const matchIndex = new Map(ctx.matches.map((m, i) => [m.matchId, i]));
+
+        const { topRuns, topWickets } = computeLeaderboards(ctx.matches);
+        const names = new Map();
+        topRuns.forEach(r => names.set(playerKey(r.name), r.name));
+        topWickets.forEach(r => names.set(playerKey(r.name), r.name));
+        const pkList = [...names.keys()];
+        if (!pkList.length) return res.json({ success: true, empty: true, message: 'No players found for this tournament yet.' });
+
+        const clips = await clipsCollection.find({
+            matchId: { $in: matchIds },
+            $or: [{ strikerKey: { $in: pkList }, eventType: { $in: ['SIX', 'FOUR', 'WICKET'] } }, { bowlerKey: { $in: pkList }, eventType: 'WICKET' }]
+        }).toArray();
+        clips.forEach(c => { c._tourneySeq = matchIndex.get(c.matchId) || 0; });
+
+        const byPlayer = new Map(pkList.map(pk => [pk, []]));
+        clips.forEach(c => {
+            if (names.has(c.strikerKey) && ['SIX', 'FOUR', 'WICKET'].includes(c.eventType)) byPlayer.get(c.strikerKey).push(c);
+            if (names.has(c.bowlerKey) && c.eventType === 'WICKET' && c.bowlerKey !== c.strikerKey) byPlayer.get(c.bowlerKey).push(c);
+        });
+
+        const jobId = newCompileJobId();
+        compileJobs.set(jobId, {
+            status: 'queued', progress: 0, message: 'Preparing player highlights...',
+            matchId: `tournament-all:${req.params.token}`, createdAt: Date.now(), included: 0, skipped: 0, kind: 'zip'
+        });
+        runAllPlayersZipJob(jobId, names, byPlayer).catch(err => {
+            console.log(`All-players zip job ${jobId} crashed:`, err.message || err);
+            setCompileJob(jobId, { status: 'error', error: 'Something went wrong building the player highlights package.' });
+        });
+        res.json({ success: true, jobId });
+    } catch (err) {
+        console.log('Tournament all-players compile-start error:', err);
+        res.status(500).json({ success: false, error: 'Could not start highlight compilation' });
+    }
 });
 
 // ================================================================
