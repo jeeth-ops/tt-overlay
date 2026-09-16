@@ -538,6 +538,7 @@
   .clip-row.clip-row--four{ background:linear-gradient(90deg, color-mix(in srgb, var(--four) 10%, var(--panel-2)), var(--panel-2) 60%); }
   .clip-row.clip-row--six{ background:linear-gradient(90deg, color-mix(in srgb, var(--six) 10%, var(--panel-2)), var(--panel-2) 60%); }
   .clip-row.clip-row--wicket{ background:linear-gradient(90deg, color-mix(in srgb, var(--wicket) 10%, var(--panel-2)), var(--panel-2) 60%); }
+  .clip-row.clip-row--other{ background:linear-gradient(90deg, color-mix(in srgb, var(--text-dim) 10%, var(--panel-2)), var(--panel-2) 60%); }
   .clip-row .cr-badge{
     flex:none; width:30px; height:30px; border-radius:9px; display:flex; align-items:center; justify-content:center;
     font-weight:800; font-size:11.5px; color:#fff; box-shadow:0 2px 6px rgba(0,0,0,.18);
@@ -545,6 +546,8 @@
   .clip-row .cr-badge.four{ background:var(--four); }
   .clip-row .cr-badge.six{ background:var(--six); }
   .clip-row .cr-badge.wicket{ background:var(--wicket); }
+  .clip-row .cr-badge.other{ background:var(--text-dim); }
+  .clip-row .cr-badge.other svg{ width:14px; height:14px; }
   .clip-row .cr-info{ flex:1; min-width:0; }
   .clip-row .cr-over{ font-weight:700; font-size:12.5px; font-family:var(--font-display); }
   .clip-row .cr-sub{ font-size:11px; color:var(--text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:1px; }
@@ -2514,8 +2517,12 @@ document.getElementById('highlights-filter').addEventListener('click', (e) => {
 });
 
 function clipRowHtml(c){
-  const badgeCls = c.eventType === 'FOUR' ? 'four' : c.eventType === 'SIX' ? 'six' : 'wicket';
-  const badgeLabel = c.eventType === 'FOUR' ? '4' : c.eventType === 'SIX' ? '6' : 'W';
+  // 🩹 FIX: a manually-attached "OTHER / GENERAL CLIP" isn't a four, six
+  // or wicket — it used to fall into the wicket badge by default here,
+  // which made a plain highlight look like a dismissal. Give it its own
+  // neutral badge instead.
+  const badgeCls = c.eventType === 'FOUR' ? 'four' : c.eventType === 'SIX' ? 'six' : c.eventType === 'WICKET' ? 'wicket' : 'other';
+  const badgeLabel = c.eventType === 'FOUR' ? '4' : c.eventType === 'SIX' ? '6' : c.eventType === 'WICKET' ? 'W' : CLIP_ICON;
   const overLabel = `${c.over ?? '—'}.${c.ballInOver ?? ''}`;
   const sub = c.eventType === 'WICKET'
     ? [c.dismissalType, c.bowler ? 'b. ' + c.bowler : null].filter(Boolean).join(' · ')
@@ -2707,7 +2714,15 @@ async function loadClipDrawerScope(scope){
   html += clipGroupHtml('Fours', clipsData.batting.fours);
   html += clipGroupHtml('Wickets', clipsData.bowling.wickets);
   html += clipGroupHtml('Dismissal', clipsData.batting.dismissal);
-  const hasAnyClip = ['sixes','fours','dismissal'].some(k => (clipsData.batting[k]||[]).length) || (clipsData.bowling.wickets||[]).length;
+  // 🩹 FIX: clips manually attached to a ball as plain "CLIP" (not a
+  // four/six/wicket — e.g. via "attach clip to any ball") used to be
+  // dropped entirely here even though they showed up fine in Match
+  // Highlights. The server now returns them as batting.other/bowling.other
+  // (see runPlayerClipsQuery) — show them in their own group so they're
+  // no longer invisible on this player's card.
+  html += clipGroupHtml('Other Clips', [...(clipsData.batting.other||[]), ...(clipsData.bowling.other||[])]);
+  const hasAnyClip = ['sixes','fours','dismissal','other'].some(k => (clipsData.batting[k]||[]).length)
+    || (clipsData.bowling.wickets||[]).length || (clipsData.bowling.other||[]).length;
   // "Download All Player Highlights" — server-side MP4 compile (see
   // startCompile above). Match-scoped only for now, same as the compile
   // job itself, so this only appears on the This Match tab.
