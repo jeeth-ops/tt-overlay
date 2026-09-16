@@ -4319,6 +4319,166 @@ adminRouter.put('/cricket/ball/:ballId', async (req, res) => {
     }
 });
 
+// ================================================================
+// 🎯 BOWLER CORRECTION (whole over(s) at once) — Owner-only
+//
+// Fixes the common operator mistake of scoring an entire over (or several)
+// under the wrong bowler. Unlike correctDelivery() above — which edits
+// every field of ONE delivery — this only ever touches `bowler` /
+// `bowlerKey` / `bowlerPlayerId` on the affected deliveries. Every other
+// recorded fact (runs, extras, wicket, striker, non-striker, over, ball)
+// is copied across byte-for-byte, so the team score, batting figures and
+// match progression can never change from this action.
+//
+// Because bowling figures (overs/runs/wickets/maidens/economy) are ALWAYS
+// derived fresh from ballsCollection by buildLiveCardsFromBallsArray —
+// never stored/patched directly — simply flipping bowlerKey on the
+// affected balls and re-running the existing recalculation pipeline
+// (syncMatchRecordFromBalls) is enough to correctly move overs, runs
+// conceded, maidens AND any wicket taken in those overs from the wrong
+// bowler to the right one. No separate wicket-transfer or stats-patch
+// logic is needed. Tournament scorecards/leaderboards need no extra step
+// either — they already read fresh from matchRecordsCollection on every
+// request (see computeLeaderboards/points table above), so a correction
+// on one match is visible there the moment this function returns.
+// ================================================================
+
+// All deliveries in `matchId`/`innings` currently attributed to
+// `wrongBowlerKey`, restricted to the requested over numbers — the exact
+// set of balls a "Correct Bowler" action should touch. Filtering on the
+// WRONG bowler's key (not just over number) means that if an over the
+// owner picked was actually already correct, or an over was somehow split
+// between two bowler names, this never touches a delivery it wasn't asked
+// to move.
+function findBallsForBowlerCorrection(allBalls, innings, overs, wrongBowlerKey) {
+    const overSet = new Set(overs.map(Number));
+    return allBalls.filter(b => (Number(b.innings) || 1) === Number(innings) && overSet.has(Number(b.over)) && b.bowlerKey === wrongBowlerKey);
+}
+
+// Runs one full bowler correction across one or more overs: validate →
+// simulate → (if clean and not a dry run) write + resync. Returns
+// { before, after, errors, affectedCount, wicketsMoved, ... } — the SAME
+// function powers both the Preview screen and the real Save, exactly like
+// correctDelivery() above.
+async function correctBowlerForOvers(matchId, actorEmail, input, dryRun) {
+    if (!ballsCollection || !matchRecordsCollection) return { errors: ['Database not configured'] };
+    const innings = Number(input.innings) || 1;
+    const overs = Array.isArray(input.overs) ? [...new Set(input.overs.map(Number).filter(n => Number.isFinite(n)))] : [];
+    const wrongBowlerName = personName(input.wrongBowler);
+    const correctBowlerName = personName(input.correctBowler);
+    if (!overs.length) return { errors: ['Select at least one over to correct'] };
+    if (!wrongBowlerName) return { errors: ['Select the wrong bowler'] };
+    if (!correctBowlerName) return { errors: ['Select the correct bowler'] };
+    if (playerKey(wrongBowlerName) === playerKey(correctBowlerName)) return { errors: ['Correct bowler is the same as the wrong bowler'] };
+
+    const allBalls = await ballsCollection.find({ matchId }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
+    if (!allBalls.length) return { errors: ['No ball-by-ball log found for this match'] };
+
+    const wrongBowlerKey = playerKey(wrongBowlerName);
+    const targets = findBallsForBowlerCorrection(allBalls, innings, overs, wrongBowlerKey);
+    if (!targets.length) return { errors: [`No deliveries found for ${wrongBowlerName} in the selected over(s) of innings ${innings}`] };
+
+    const ownerUid = targets[0].ownerUid;
+    const correctBowlerKey = playerKey(correctBowlerName);
+    const correctBowlerPlayerId = ownerUid ? await resolvePlayerId(ownerUid, correctBowlerName) : null;
+    const targetIds = new Set(targets.map(b => String(b._id)));
+
+    const correctedById = new Map();
+    targets.forEach(b => {
+        correctedById.set(String(b._id), {
+            ...b,
+            bowler: correctBowlerName,
+            bowlerKey: correctBowlerKey,
+            bowlerPlayerId: correctBowlerPlayerId,
+            // keeps the ORIGINAL id traceable across repeat corrections, same
+            // convention correctDelivery() uses
+            correctionOf: b.correctionOf || b._id,
+            correctedAt: Date.now(), correctedBy: actorEmail || null
+        });
+    });
+
+    const simulated = allBalls.map(b => targetIds.has(String(b._id)) ? correctedById.get(String(b._id)) : b);
+    // Structural safety net (identical check correctDelivery() runs) — a
+    // pure bowler swap should never actually trip this, but never skip it.
+    const errors = validateCorrectedBalls(simulated);
+    const before = buildLiveCardsFromBallsArray(allBalls);
+    const after = buildLiveCardsFromBallsArray(simulated);
+    const wicketsMoved = targets.filter(b => !!b.dismissal).length;
+
+    const result = {
+        before: { cards: before, balls: targets },
+        after: { cards: after, balls: targets.map(b => correctedById.get(String(b._id))) },
+        affectedBalls: targets.map(b => ({ innings: b.innings || 1, over: b.over, ballInOver: b.ballInOver })),
+        affectedCount: targets.length,
+        wicketsMoved,
+        wrongBowler: wrongBowlerName, correctBowler: correctBowlerName, innings, overs,
+        errors
+    };
+    if (errors.length || dryRun) return result;
+
+    // One write per affected delivery, same replaceOne pattern the single-
+    // ball correction engine already uses — but batched into one bulk
+    // round-trip so the whole over-range correction lands as close to
+    // atomically as this driver allows (spec §13: "treat as one atomic
+    // action"). If Mongo fails partway, re-running the SAME correction is
+    // still safe: it just re-finds whichever of these balls are STILL
+    // under the wrong bowler and fixes only those.
+    const bulkOps = targets.map(b => ({ replaceOne: { filter: { _id: b._id }, replacement: correctedById.get(String(b._id)) } }));
+    await ballsCollection.bulkWrite(bulkOps);
+
+    if (ownerUid) await syncMatchRecordFromBalls(ownerUid, matchId);
+
+    // Clips keep their identity (same Cloudflare video/clip id, same
+    // match/over/ball) and simply follow onto the corrected bowler — never
+    // deleted, re-uploaded or duplicated (spec §10).
+    if (clipsCollection) {
+        clipsCollection.updateMany(
+            { matchId, innings, over: { $in: overs }, bowlerKey: wrongBowlerKey },
+            { $set: { bowlerName: correctBowlerName, bowlerKey: correctBowlerKey } }
+        ).catch(err => console.log('Clip resync after bowler correction error:', err));
+    }
+
+    return result;
+}
+
+// Dry-run preview — shows the owner exactly what Confirm Bowler Correction
+// will change (bowling figures before/after for both bowlers, how many
+// deliveries and wickets move) without writing anything.
+adminRouter.post('/cricket/match/:matchId/correct-bowler/preview', async (req, res) => {
+    try {
+        const matchId = safeMatchId(req.params.matchId);
+        const result = await correctBowlerForOvers(matchId, req.ownerEmail, req.body || {}, true);
+        if (result.errors && result.errors.length && !result.affectedCount) return res.status(400).json({ success: false, error: result.errors[0] });
+        res.json({ success: true, ...result });
+    } catch (err) {
+        console.log('Bowler correction preview error:', err);
+        res.status(500).json({ success: false, error: 'Could not preview bowler correction' });
+    }
+});
+
+// Save & Recalculate — the real write, logged as ONE atomic audit entry
+// covering every affected delivery so "Undo last change" can restore all
+// of them together (see the 'Owner bowler correction' branch of undo-last
+// below).
+adminRouter.put('/cricket/match/:matchId/correct-bowler', async (req, res) => {
+    try {
+        const matchId = safeMatchId(req.params.matchId);
+        const result = await correctBowlerForOvers(matchId, req.ownerEmail, req.body || {}, false);
+        if (result.errors && result.errors.length) return res.status(400).json({ success: false, error: result.errors[0] });
+        await logAuditAction(
+            req.ownerEmail, 'Owner bowler correction',
+            `Match ${matchId} — Innings ${result.innings} Over(s) ${result.overs.join(', ')}: ${result.wrongBowler} → ${result.correctBowler}`,
+            { balls: result.before.balls, wrongBowler: result.wrongBowler, correctBowler: result.correctBowler, innings: result.innings, overs: result.overs },
+            { balls: result.after.balls },
+            { matchId, ballIds: result.before.balls.map(b => String(b._id)) }
+        );
+        res.json({ success: true, ...result });
+    } catch (err) {
+        console.log('Bowler correction save error:', err);
+        res.status(500).json({ success: false, error: 'Could not save bowler correction' });
+    }
+});
+
 // Recent owner corrections for ONE match — powers the inline "Recent
 // corrections" panel on the public scorecard (owner view only; the route
 // itself is still gated by requireOwner via adminRouter.use above). Newest
@@ -4328,19 +4488,40 @@ adminRouter.get('/cricket/match/:matchId/history', async (req, res) => {
     if (!auditLogsCollection) return res.json({ success: true, entries: [] });
     try {
         const matchId = safeMatchId(req.params.matchId);
+        const BOWLER_ACTIONS = new Set(['Owner bowler correction', 'Undo bowler correction']);
         const entries = await auditLogsCollection
-            .find({ matchId, action: { $in: ['Owner delivery correction', 'Undo delivery correction', 'Delete last delivery'] } })
+            .find({ matchId, action: { $in: ['Owner delivery correction', 'Undo delivery correction', 'Delete last delivery', 'Owner bowler correction', 'Undo bowler correction'] } })
             .sort({ timestamp: -1 }).limit(30).toArray();
         res.json({
             success: true,
-            entries: entries.map(e => ({
-                action: e.action,
-                performedBy: e.performedBy,
-                timestamp: e.timestamp,
-                ballId: e.ballId || null,
-                before: e.previousValue ? { kind: e.previousValue.kind, runs: e.previousValue.runs, striker: e.previousValue.striker, bowler: e.previousValue.bowler, dismissal: e.previousValue.dismissal, over: e.previousValue.over, ballInOver: e.previousValue.ballInOver, innings: e.previousValue.innings } : null,
-                after: e.newValue ? { kind: e.newValue.kind, runs: e.newValue.runs, striker: e.newValue.striker, bowler: e.newValue.bowler, dismissal: e.newValue.dismissal, over: e.newValue.over, ballInOver: e.newValue.ballInOver, innings: e.newValue.innings } : null
-            }))
+            entries: entries.map(e => {
+                // A bowler correction's previousValue/newValue is
+                // { balls: [...], wrongBowler, correctBowler, innings, overs }
+                // — a different shape from every other action's single-ball
+                // before/after, so it gets its own summary field instead of
+                // trying to force it through the ball-shaped before/after.
+                if (BOWLER_ACTIONS.has(e.action)) {
+                    const src = e.previousValue || e.newValue || {};
+                    return {
+                        action: e.action,
+                        performedBy: e.performedBy,
+                        timestamp: e.timestamp,
+                        bowlerCorrection: {
+                            innings: src.innings, overs: src.overs || [],
+                            wrongBowler: src.wrongBowler, correctBowler: src.correctBowler,
+                            affectedCount: (src.balls && src.balls.length) || 0
+                        }
+                    };
+                }
+                return {
+                    action: e.action,
+                    performedBy: e.performedBy,
+                    timestamp: e.timestamp,
+                    ballId: e.ballId || null,
+                    before: e.previousValue ? { kind: e.previousValue.kind, runs: e.previousValue.runs, striker: e.previousValue.striker, bowler: e.previousValue.bowler, dismissal: e.previousValue.dismissal, over: e.previousValue.over, ballInOver: e.previousValue.ballInOver, innings: e.previousValue.innings } : null,
+                    after: e.newValue ? { kind: e.newValue.kind, runs: e.newValue.runs, striker: e.newValue.striker, bowler: e.newValue.bowler, dismissal: e.newValue.dismissal, over: e.newValue.over, ballInOver: e.newValue.ballInOver, innings: e.newValue.innings } : null
+                };
+            })
         });
     } catch (err) {
         console.log('Match correction history error:', err);
@@ -4362,8 +4543,39 @@ adminRouter.post('/cricket/match/:matchId/undo-last', async (req, res) => {
     if (!auditLogsCollection || !ballsCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     try {
         const matchId = safeMatchId(req.params.matchId);
-        const lastEntry = await auditLogsCollection.find({ matchId, action: 'Owner delivery correction' }).sort({ timestamp: -1 }).limit(1).next();
+        // Looks at the two correction types together and undoes whichever
+        // happened most recently — a bulk "Correct Bowler" over-range action
+        // is otherwise indistinguishable from a single delivery correction
+        // to the owner clicking "Undo last change".
+        const lastEntry = await auditLogsCollection.find({ matchId, action: { $in: ['Owner delivery correction', 'Owner bowler correction'] } }).sort({ timestamp: -1 }).limit(1).next();
         if (!lastEntry || !lastEntry.previousValue) return res.status(404).json({ success: false, error: 'No correction found to undo for this match' });
+
+        // Bulk bowler correction — restore every affected delivery's
+        // pre-correction bowler attribution together, as one atomic undo.
+        if (lastEntry.action === 'Owner bowler correction') {
+            const prev = lastEntry.previousValue;
+            const restoredBalls = prev && prev.balls;
+            if (!restoredBalls || !restoredBalls.length) return res.status(404).json({ success: false, error: 'Nothing to restore for that correction' });
+            const bulkOps = restoredBalls.map(b => ({ replaceOne: { filter: { _id: b._id }, replacement: b } }));
+            await ballsCollection.bulkWrite(bulkOps);
+            const ownerUid = restoredBalls[0].ownerUid;
+            if (ownerUid) await syncMatchRecordFromBalls(ownerUid, matchId);
+            if (clipsCollection) {
+                clipsCollection.updateMany(
+                    { matchId, innings: prev.innings, over: { $in: prev.overs || [] }, bowlerKey: playerKey(prev.correctBowler) },
+                    { $set: { bowlerName: prev.wrongBowler, bowlerKey: playerKey(prev.wrongBowler) } }
+                ).catch(err => console.log('Clip resync after bowler-correction undo error:', err));
+            }
+            await logAuditAction(
+                req.ownerEmail, 'Undo bowler correction',
+                `Match ${matchId} — Innings ${prev.innings} Over(s) ${(prev.overs || []).join(', ')}: ${prev.correctBowler} → ${prev.wrongBowler}`,
+                lastEntry.newValue || null, prev,
+                { matchId }
+            );
+            const cards = await buildLiveCardsFromBalls(matchId);
+            return res.json({ success: true, restoredCount: restoredBalls.length, cards });
+        }
+
         const restoredBall = lastEntry.previousValue;
         await ballsCollection.replaceOne({ _id: restoredBall._id }, restoredBall);
         if (restoredBall.ownerUid) await syncMatchRecordFromBalls(restoredBall.ownerUid, matchId);
