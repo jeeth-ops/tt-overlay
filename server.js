@@ -4628,6 +4628,284 @@ adminRouter.put('/cricket/match/:matchId/correct-batsman', async (req, res) => {
     }
 });
 
+// ================================================================
+// 🔀 MERGE PLAYERS (duplicate spelling) — Owner-only
+//
+// Fixes the common data-entry mistake of the same real player being
+// scored twice under slightly different spellings (e.g. "Rahul Sharma"
+// vs "Rahul Sharmma"), which silently fragments their identity across
+// EVERY system that keys off a player name:
+//   - the MATCH scorecard — buildLiveCardsFromBallsArray (see above)
+//     groups strictly by the RAW strikerKey/bowlerKey stored on each
+//     ball, so two spellings show as two separate rows in the SAME
+//     match's batting/bowling card;
+//   - TOURNAMENT leaderboards/points — computeLeaderboards reads the
+//     persisted battingCard/bowlingCard off matchRecordsCollection,
+//     which is itself just a cache of buildLiveCardsFromBallsArray's
+//     output, so it inherits the exact same fragmentation;
+//   - CLIPS (clipsCollection) — keyed the same way for "clips by
+//     player" (Player Highlights / Sixes / Fours / Wickets / Team &
+//     Tournament Highlights all filter on *Key fields);
+//   - the lightweight nameKeys registry (playersCollection) used only
+//     to auto-resolve a name to a playerId the NEXT time it's typed.
+//
+// The pre-existing POST /api/players/:playerId/merge below only ever
+// touched that last item (folded alias strings together for FUTURE
+// resolution) — it never rewrote anything already stored, so it could
+// never satisfy "combine existing figures without double-counting" or
+// "clips must move to the corrected player". This merge instead follows
+// the exact same philosophy as correctBowlerForOvers/
+// correctBatsmanForDeliveries above: edit the underlying ballsCollection
+// rows (every player-linked slot on them, everywhere they appear across
+// EVERY match this account has ever scored — not just one match), then
+// let the existing recalculation pipeline (buildLiveCardsFromBallsArray
+// via syncMatchRecordFromBalls) re-derive every batting/bowling/team
+// figure from that. Scoring/validation logic is never duplicated here,
+// so a merge can never change what actually happened in a match — only
+// WHO it's attributed to.
+// ================================================================
+
+// Every ball, across every match this owner has ever scored, where the
+// duplicate player appears in ANY player-linked slot — striker,
+// non-striker, bowler, or fielder-on-a-dismissal. A single ball can have
+// the duplicate in more than one slot at once (e.g. run out by a fielder
+// who is also today's non-striker), so each matching field on a ball is
+// corrected independently rather than the ball being "owned" by one role.
+async function findBallsForPlayerMerge(ownerUid, wrongKey) {
+    if (!ballsCollection || !ownerUid || !wrongKey) return [];
+    return ballsCollection.find({
+        ownerUid,
+        $or: [{ strikerKey: wrongKey }, { nonStrikerKey: wrongKey }, { bowlerKey: wrongKey }, { dismissalFielderKey: wrongKey }]
+    }).sort({ matchId: 1, innings: 1, over: 1, ballInOver: 1 }).toArray();
+}
+
+// Rewrites a single ball's player-linked fields wherever the duplicate
+// appears on it. Every OTHER fact recorded on the ball — runs, extras,
+// kind, dismissal type, over/ball numbers, score snapshot — is copied
+// across byte-for-byte, so no scoring outcome can ever change from a
+// merge (spec: "Preserve all existing scoring... functionality").
+function mergedBallDoc(b, wrongKey, correctName, correctKey, correctPlayerId) {
+    const out = { ...b };
+    if (b.strikerKey === wrongKey) { out.striker = correctName; out.strikerKey = correctKey; out.strikerPlayerId = correctPlayerId; }
+    if (b.nonStrikerKey === wrongKey) { out.nonStriker = correctName; out.nonStrikerKey = correctKey; out.nonStrikerPlayerId = correctPlayerId; }
+    if (b.bowlerKey === wrongKey) { out.bowler = correctName; out.bowlerKey = correctKey; out.bowlerPlayerId = correctPlayerId; }
+    if (b.dismissalFielderKey === wrongKey) {
+        out.dismissalFielderKey = correctKey;
+        out.dismissalFielderPlayerId = correctPlayerId;
+        out.dismissal = b.dismissal ? { ...b.dismissal, fielder: correctName } : b.dismissal;
+    }
+    // Provenance only (mirrors the correctionOf convention above) — never
+    // read by any scoring/validation path, purely for debugging.
+    out.mergedFromKey = wrongKey;
+    out.mergedAt = Date.now();
+    return out;
+}
+
+// Runs one full player merge: validate → simulate/find → (if clean and
+// not a dry run) write + resync. Returns { matches, affectedCount,
+// clipCount, before, after, errors } — the SAME function powers both the
+// confirmation preview and the real Confirm, exactly like the bowler and
+// batsman correction engines above.
+async function mergePlayersDeep(ownerUid, actorEmail, wrongPlayerName, correctPlayerName, dryRun) {
+    if (!ballsCollection || !matchRecordsCollection) return { errors: ['Database not configured'] };
+    if (!ownerUid) return { errors: ['Could not determine which account this match belongs to'] };
+    const wrongName = personName(wrongPlayerName);
+    const correctName = personName(correctPlayerName);
+    if (!wrongName) return { errors: ['Select the duplicate player'] };
+    if (!correctName) return { errors: ['Select the correct player'] };
+    const wrongKey = playerKey(wrongName);
+    const correctKey = playerKey(correctName);
+    // 🛡️ Prevent accidental merging of unrelated players / merging a
+    // player into itself — the two most likely ways a mis-click here
+    // could corrupt data that a merge can never undo just by re-merging.
+    if (wrongKey === correctKey) return { errors: ['Correct player is the same as the duplicate player'] };
+
+    const targets = await findBallsForPlayerMerge(ownerUid, wrongKey);
+    if (!targets.length) return { errors: [`No deliveries found for "${wrongName}" in this account`] };
+
+    const correctPlayerId = await resolvePlayerId(ownerUid, correctName);
+    const correctedById = new Map();
+    targets.forEach(b => correctedById.set(String(b._id), mergedBallDoc(b, wrongKey, correctName, correctKey, correctPlayerId)));
+
+    // Per-match breakdown for the confirmation screen — how many
+    // deliveries, and in which role(s), move per affected match. This is
+    // also exactly what a dry-run "preview" needs, so preview and confirm
+    // share this same simulate-first pass.
+    const byMatch = new Map();
+    targets.forEach(b => {
+        const m = byMatch.get(b.matchId) || { matchId: b.matchId, deliveries: 0, asBatsman: 0, asBowler: 0, asFielder: 0 };
+        m.deliveries++;
+        if (b.strikerKey === wrongKey || b.nonStrikerKey === wrongKey) m.asBatsman++;
+        if (b.bowlerKey === wrongKey) m.asBowler++;
+        if (b.dismissalFielderKey === wrongKey) m.asFielder++;
+        byMatch.set(b.matchId, m);
+    });
+    const matchIds = [...byMatch.keys()];
+
+    const clipFilter = { ownerUid, $or: [{ strikerKey: wrongKey }, { nonStrikerKey: wrongKey }, { bowlerKey: wrongKey }, { fielderKey: wrongKey }] };
+    const clipCount = clipsCollection ? await clipsCollection.countDocuments(clipFilter) : 0;
+
+    const result = {
+        wrongPlayer: wrongName, correctPlayer: correctName,
+        matches: [...byMatch.values()],
+        affectedCount: targets.length,
+        clipCount,
+        errors: []
+    };
+    if (dryRun) return result;
+
+    const bulkOps = targets.map(b => ({ replaceOne: { filter: { _id: b._id }, replacement: correctedById.get(String(b._id)) } }));
+    await ballsCollection.bulkWrite(bulkOps);
+
+    // Re-derive every affected match's cards. This is what actually fixes
+    // the Match Scorecard — and since the tournament scorecard/leaderboard
+    // read fresh off matchRecordsCollection on every request (see
+    // computeLeaderboards above), it is ALSO what fixes those, with no
+    // separate tournament-side merge logic needed.
+    await Promise.all(matchIds.map(mid => syncMatchRecordFromBalls(ownerUid, mid)));
+
+    // Clips keep their identity (same Cloudflare clip, event/ball id, video
+    // URL) and simply follow onto the corrected player — never deleted,
+    // re-uploaded or duplicated (spec §CLIPS). Snapshotted BEFORE the write
+    // so "Undo" (below) can put every one of them back exactly.
+    let clipsBefore = [];
+    if (clipsCollection) {
+        clipsBefore = await clipsCollection.find(clipFilter).toArray();
+        await Promise.all([
+            clipsCollection.updateMany({ ownerUid, strikerKey: wrongKey }, { $set: { strikerName: correctName, strikerKey: correctKey, strikerPlayerId: correctPlayerId } }),
+            clipsCollection.updateMany({ ownerUid, nonStrikerKey: wrongKey }, { $set: { nonStrikerName: correctName, nonStrikerKey: correctKey, nonStrikerPlayerId: correctPlayerId } }),
+            clipsCollection.updateMany({ ownerUid, bowlerKey: wrongKey }, { $set: { bowlerName: correctName, bowlerKey: correctKey, bowlerPlayerId: correctPlayerId } }),
+            clipsCollection.updateMany({ ownerUid, fielderKey: wrongKey }, { $set: { fielderName: correctName, fielderKey: correctKey, fielderPlayerId: correctPlayerId } })
+        ]).catch(err => console.log('Clip resync after player merge error:', err));
+        matchIds.forEach(mid => invalidateClipsCache(mid));
+    }
+
+    // Fold the duplicate's nameKeys into the correct player's profile (same
+    // logic the pre-existing lightweight merge used) so a scorer typing
+    // "Rahul Sharmma" again on some future match auto-resolves straight to
+    // the corrected identity instead of recreating the duplicate. The
+    // duplicate playersCollection doc is kept — never deleted, for audit /
+    // undo — but its nameKeys are cleared so it can never match anything
+    // new. Both docs are snapshotted BEFORE the change for Undo.
+    let playersBefore = null;
+    if (playersCollection) {
+        try {
+            const [into, from] = await Promise.all([
+                playersCollection.findOne({ ownerUid, nameKeys: correctKey }),
+                playersCollection.findOne({ ownerUid, nameKeys: wrongKey })
+            ]);
+            if (into && from && into.playerId !== from.playerId) {
+                playersBefore = { into, from };
+                const mergedKeys = [...new Set([...(into.nameKeys || []), ...(from.nameKeys || [])])];
+                await playersCollection.updateOne({ _id: from._id }, { $set: { nameKeys: [], mergedInto: into.playerId, updatedAt: Date.now() } });
+                await playersCollection.updateOne({ _id: into._id }, { $set: { nameKeys: mergedKeys, updatedAt: Date.now() } });
+            }
+        } catch (err) { console.log('Player-profile fold after merge error:', err); }
+    }
+
+    result.before = { balls: targets, clips: clipsBefore, players: playersBefore };
+    result.after = { balls: targets.map(b => correctedById.get(String(b._id))) };
+    return result;
+}
+
+// Dry-run preview — shows the owner exactly what Confirm Merge will
+// change (Duplicate Player / Correct Player, how many deliveries and
+// clips move, broken down per match) without writing anything. Mirrors
+// the bowler/batsman correction preview pattern above, and doubles as
+// the spec's required "before merging, show ... require confirmation"
+// safety screen.
+adminRouter.post('/cricket/players/merge/preview', async (req, res) => {
+    try {
+        const { matchId, wrongPlayer, correctPlayer } = req.body || {};
+        const ownerUid = matchId ? await resolveOwnerUidForMatch(safeMatchId(matchId)) : null;
+        const result = await mergePlayersDeep(ownerUid, req.ownerEmail, wrongPlayer, correctPlayer, true);
+        if (result.errors && result.errors.length) return res.status(400).json({ success: false, error: result.errors[0] });
+        res.json({ success: true, ...result });
+    } catch (err) {
+        console.log('Player merge preview error:', err);
+        res.status(500).json({ success: false, error: 'Could not preview player merge' });
+    }
+});
+
+// Confirm — the real write, logged as ONE atomic audit entry covering
+// every affected delivery/clip/profile across every match it touched, so
+// "Undo last merge" can restore all of them together.
+adminRouter.put('/cricket/players/merge', async (req, res) => {
+    try {
+        const { matchId, wrongPlayer, correctPlayer } = req.body || {};
+        const ownerUid = matchId ? await resolveOwnerUidForMatch(safeMatchId(matchId)) : null;
+        const result = await mergePlayersDeep(ownerUid, req.ownerEmail, wrongPlayer, correctPlayer, false);
+        if (result.errors && result.errors.length) return res.status(400).json({ success: false, error: result.errors[0] });
+        const matchIds = result.matches.map(m => m.matchId);
+        await logAuditAction(
+            req.ownerEmail, 'Owner player merge',
+            `${result.wrongPlayer} → ${result.correctPlayer} (${result.affectedCount} deliveries, ${result.clipCount} clips, across ${matchIds.length} match${matchIds.length === 1 ? '' : 'es'})`,
+            { ownerUid, balls: result.before.balls, clips: result.before.clips, players: result.before.players, wrongPlayer: result.wrongPlayer, correctPlayer: result.correctPlayer, matchIds },
+            { balls: result.after.balls },
+            { matchIds, ballIds: result.before.balls.map(b => String(b._id)) }
+        );
+        res.json({ success: true, ...result });
+    } catch (err) {
+        console.log('Player merge save error:', err);
+        res.status(500).json({ success: false, error: 'Could not merge players' });
+    }
+});
+
+// Undo the most recent player merge — restores every affected delivery,
+// clip and player-profile doc to its exact pre-merge state (snapshotted
+// in the audit entry above), then re-runs the same recalculation pipeline
+// a normal merge uses across every match the merge touched. Cross-match
+// by nature, so this is a dedicated endpoint rather than reusing the
+// (single-match) "Undo last change" — merging two players and correcting
+// one delivery are different enough actions that conflating their undo
+// history would be confusing for the owner to reason about.
+adminRouter.post('/cricket/players/merge/undo', async (req, res) => {
+    if (!auditLogsCollection || !ballsCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const lastEntry = await auditLogsCollection.find({ action: 'Owner player merge' }).sort({ timestamp: -1 }).limit(1).next();
+        if (!lastEntry || !lastEntry.previousValue) return res.status(404).json({ success: false, error: 'No player merge found to undo' });
+        const prev = lastEntry.previousValue;
+        const restoredBalls = prev.balls;
+        if (!restoredBalls || !restoredBalls.length) return res.status(404).json({ success: false, error: 'Nothing to restore for that merge' });
+
+        const bulkOps = restoredBalls.map(b => ({ replaceOne: { filter: { _id: b._id }, replacement: b } }));
+        await ballsCollection.bulkWrite(bulkOps);
+
+        const ownerUid = prev.ownerUid || restoredBalls[0].ownerUid;
+        const matchIds = prev.matchIds || [...new Set(restoredBalls.map(b => b.matchId))];
+        if (ownerUid) await Promise.all(matchIds.map(mid => syncMatchRecordFromBalls(ownerUid, mid)));
+
+        // Clips: put back the EXACT pre-merge docs we snapshotted, rather
+        // than trying to reverse-derive them from field values — the
+        // safest way to guarantee no clip is left half-restored.
+        if (clipsCollection && prev.clips && prev.clips.length) {
+            const clipOps = prev.clips.map(c => ({ replaceOne: { filter: { _id: c._id }, replacement: c } }));
+            await clipsCollection.bulkWrite(clipOps).catch(err => console.log('Clip restore after merge-undo error:', err));
+            matchIds.forEach(mid => invalidateClipsCache(mid));
+        }
+
+        // Player profiles: restore the duplicate's original nameKeys/
+        // mergedInto and the correct player's original nameKeys list.
+        if (playersCollection && prev.players && prev.players.into && prev.players.from) {
+            await Promise.all([
+                playersCollection.replaceOne({ _id: prev.players.into._id }, prev.players.into),
+                playersCollection.replaceOne({ _id: prev.players.from._id }, prev.players.from)
+            ]).catch(err => console.log('Player-profile restore after merge-undo error:', err));
+        }
+
+        await logAuditAction(
+            req.ownerEmail, 'Undo player merge',
+            `${prev.correctPlayer} → ${prev.wrongPlayer} (restored ${restoredBalls.length} deliveries across ${matchIds.length} match${matchIds.length === 1 ? '' : 'es'})`,
+            lastEntry.newValue || null, prev,
+            { matchIds }
+        );
+        res.json({ success: true, restoredCount: restoredBalls.length, restoredClips: (prev.clips && prev.clips.length) || 0, matchIds });
+    } catch (err) {
+        console.log('Player merge undo error:', err);
+        res.status(500).json({ success: false, error: 'Could not undo player merge' });
+    }
+});
+
 // Recent owner corrections for ONE match — powers the inline "Recent
 // corrections" panel on the public scorecard (owner view only; the route
 // itself is still gated by requireOwner via adminRouter.use above). Newest
@@ -4639,8 +4917,17 @@ adminRouter.get('/cricket/match/:matchId/history', async (req, res) => {
         const matchId = safeMatchId(req.params.matchId);
         const BOWLER_ACTIONS = new Set(['Owner bowler correction', 'Undo bowler correction']);
         const BATSMAN_ACTIONS = new Set(['Owner batsman correction', 'Undo batsman correction']);
+        const MERGE_ACTIONS = new Set(['Owner player merge', 'Undo player merge']);
         const entries = await auditLogsCollection
-            .find({ matchId, action: { $in: ['Owner delivery correction', 'Undo delivery correction', 'Delete last delivery', 'Owner bowler correction', 'Undo bowler correction', 'Owner batsman correction', 'Undo batsman correction'] } })
+            .find({
+                $or: [
+                    { matchId, action: { $in: ['Owner delivery correction', 'Undo delivery correction', 'Delete last delivery', 'Owner bowler correction', 'Undo bowler correction', 'Owner batsman correction', 'Undo batsman correction'] } },
+                    // A merge is cross-match, so it's logged with a matchIds
+                    // ARRAY (see the merge endpoints above) instead of a single
+                    // matchId — matched separately here.
+                    { matchIds: matchId, action: { $in: ['Owner player merge', 'Undo player merge'] } }
+                ]
+            })
             .sort({ timestamp: -1 }).limit(30).toArray();
         res.json({
             success: true,
@@ -4673,6 +4960,19 @@ adminRouter.get('/cricket/match/:matchId/history', async (req, res) => {
                             innings: src.innings, mode: src.mode || 'transfer',
                             wrongBatsman: src.wrongBatsman, correctBatsman: src.correctBatsman,
                             affectedCount: (src.balls && src.balls.length) || 0
+                        }
+                    };
+                }
+                if (MERGE_ACTIONS.has(e.action)) {
+                    const src = e.previousValue || e.newValue || {};
+                    return {
+                        action: e.action,
+                        performedBy: e.performedBy,
+                        timestamp: e.timestamp,
+                        playerMerge: {
+                            wrongPlayer: src.wrongPlayer, correctPlayer: src.correctPlayer,
+                            affectedCount: (src.balls && src.balls.length) || 0,
+                            matchCount: (src.matchIds && src.matchIds.length) || 0
                         }
                     };
                 }
