@@ -261,12 +261,15 @@
      gap is roomier now (was 5px, felt cramped) — 6 dots is the common case
      and has plenty of width to breathe; it only tightens once extras add
      more dots than that. */
-  #thisover-row{ display:flex; gap:9px; align-items:center; justify-content:center; flex-wrap:nowrap; overflow:hidden; width:100%; }
-  /* Baseline (6-ball) pip size — a touch bigger now there's more breathing
-     room, with matching gap above. The JS overrides both inline per-render
-     once an over runs past 6 balls, shrinking together to stay on one line. */
-  #thisover-row .pip{ width:25px; height:25px; font-size:11px; flex:none; }
-  #thisover-row .pip.zero{ font-size:13px; }
+  #thisover-row{ display:flex; gap:11px; align-items:center; justify-content:center; flex-wrap:nowrap; overflow:hidden; width:100%; margin-top:2px; }
+  /* Baseline (6-ball) pip size — bigger + more visually prominent now that
+     the row has more breathing room, with matching gap above. The JS
+     overrides both inline per-render once an over runs past 6 balls
+     (extras), shrinking pip size/gap/font together in lockstep so the
+     strip always stays on ONE line and never gets cut off, however many
+     balls (incl. wides/no-balls) land in the over. */
+  #thisover-row .pip{ width:32px; height:32px; font-size:13.5px; flex:none; }
+  #thisover-row .pip.zero{ font-size:16px; }
   /* A ball that HASN'T happened yet this over — a faint hollow slot, so
      the tracker always shows a full row of 6 from the very first ball
      (exactly like a real broadcast over-tracker), filling in left to
@@ -294,6 +297,9 @@
     font-family:var(--font-num); font-size:11px; font-weight:800; color:var(--ink);
     background:#fff; border:1.6px solid var(--hairline);
     opacity:0; transform:scale(.5);
+    /* Small drop shadow + a soft glossy top highlight so each ball reads
+       as a raised, broadcast-style chip rather than a flat outlined dot. */
+    box-shadow:0 2px 5px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.55);
   }
   .pip.four{ background:#22a35a; border-color:transparent; color:#fff; }
   .pip.six{ background:#f0b429; border-color:transparent; color:#fff; }
@@ -1571,10 +1577,10 @@ function renderState(s){
     // anything beyond scales pip size/font/gap down to fit, with a floor
     // so pips never shrink into unreadable dots.
     const shrink = Math.min(1, 6 / slotCount);
-    const pipSize = Math.max(16, Math.round(23 * shrink));
-    const gapSize = Math.max(4, Math.round(9 * shrink));
-    const dotFontSize = Math.max(9.5, Math.round(13 * shrink));
-    const numFontSize = Math.max(8, Math.round(10.5 * shrink));
+    const pipSize = Math.max(20, Math.round(32 * shrink));
+    const gapSize = Math.max(5, Math.round(11 * shrink));
+    const dotFontSize = Math.max(12, Math.round(17 * shrink));
+    const numFontSize = Math.max(10, Math.round(14 * shrink));
     container.style.gap = `${gapSize}px`;
     for(let i = 0; i < slotCount; i++){
       const b = thisOver[i];
@@ -1673,6 +1679,7 @@ function fitRowText(el, minPx){
   const row = el.parentElement;            // e.g. .brow or #bowler-line
   const container = row && row.parentElement; // the real fixed-width segment box
   if(!row || !container) return;
+  row.style.transform = ''; // reset any earlier row-level scale-down before re-measuring
   el.style.fontSize = ''; // fall back to CSS (min(vw,px)) to read the natural ceiling
   const naturalPx = parseFloat(getComputedStyle(el).fontSize);
   if(!naturalPx) return;
@@ -1686,14 +1693,29 @@ function fitRowText(el, minPx){
   const containerStyle = getComputedStyle(container);
   const containerPad = parseFloat(containerStyle.paddingLeft || 0) + parseFloat(containerStyle.paddingRight || 0);
   const available = container.clientWidth - containerPad - siblingsWidth - gaps - 4; // small safety buffer
-  if(!(available > 0)) return;
-  let size = naturalPx;
-  el.style.fontSize = size + 'px';
-  let guard = 0;
-  while(el.scrollWidth > available && size > minPx && guard < 60){
-    size -= 0.5;
+  if(available > 0){
+    let size = naturalPx;
     el.style.fontSize = size + 'px';
-    guard++;
+    let guard = 0;
+    while(el.scrollWidth > available && size > minPx && guard < 60){
+      size -= 0.5;
+      el.style.fontSize = size + 'px';
+      guard++;
+    }
+  }
+  // 🩹 SAFETY NET: an unusually long full name (e.g. "ABHINANDAN SINGH")
+  // combined with the figures/overs beside it can still be wider than the
+  // segment even after the name has shrunk all the way to its floor. The
+  // segment box has overflow:hidden, so without this the trailing piece
+  // (typically the overs figure) would just silently get clipped off the
+  // edge instead of ever being visible. As a last resort, scale the WHOLE
+  // row down as one unit — never truncating, everything stays readable
+  // and nothing ever disappears off-screen.
+  const totalAvailable = container.clientWidth - containerPad;
+  if(totalAvailable > 0 && row.scrollWidth > totalAvailable){
+    const scale = Math.max(0.62, totalAvailable / row.scrollWidth);
+    row.style.transform = `scale(${scale})`;
+    row.style.transformOrigin = 'center';
   }
 }
 
