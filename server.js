@@ -4701,6 +4701,32 @@ function mergedBallDoc(b, wrongKey, correctName, correctKey, correctPlayerId) {
     return out;
 }
 
+// Resolves the ownerUid for the Merge Players flow. resolveOwnerUidForMatch
+// only ever checks matchRecordsCollection's own `ownerUid` field for this
+// exact matchId — but the scorecard page (and every correction panel on
+// it) actually works off the LIVE ROOM id, which is what ballsCollection
+// is keyed by, and which can differ from the permanent matchId a finished
+// match is archived under in matchRecordsCollection (see score-match.html's
+// roomId-vs-matchId comment). correctBowlerForOvers/correctBatsmanForDeliveries
+// above sidestep this entirely by reading ownerUid straight off whichever
+// ball docs they already found; merge needs an ownerUid UP FRONT (before it
+// can search across every match for that owner), so it does the same
+// ballsCollection lookup explicitly, falling back to it whenever the faster
+// matchRecordsCollection check comes up empty.
+async function resolveOwnerUidForMerge(matchId) {
+    if (!matchId) return null;
+    const direct = await resolveOwnerUidForMatch(matchId);
+    if (direct) return direct;
+    if (!ballsCollection) return null;
+    try {
+        const ball = await ballsCollection.findOne({ matchId }, { projection: { ownerUid: 1 } });
+        return (ball && ball.ownerUid) || null;
+    } catch (err) {
+        console.log('resolveOwnerUidForMerge error:', err);
+        return null;
+    }
+}
+
 // Runs one full player merge: validate → simulate/find → (if clean and
 // not a dry run) write + resync. Returns { matches, affectedCount,
 // clipCount, before, after, errors } — the SAME function powers both the
@@ -4817,7 +4843,7 @@ async function mergePlayersDeep(ownerUid, actorEmail, wrongPlayerName, correctPl
 adminRouter.post('/cricket/players/merge/preview', async (req, res) => {
     try {
         const { matchId, wrongPlayer, correctPlayer } = req.body || {};
-        const ownerUid = matchId ? await resolveOwnerUidForMatch(safeMatchId(matchId)) : null;
+        const ownerUid = matchId ? await resolveOwnerUidForMerge(safeMatchId(matchId)) : null;
         const result = await mergePlayersDeep(ownerUid, req.ownerEmail, wrongPlayer, correctPlayer, true);
         if (result.errors && result.errors.length) return res.status(400).json({ success: false, error: result.errors[0] });
         res.json({ success: true, ...result });
@@ -4833,7 +4859,7 @@ adminRouter.post('/cricket/players/merge/preview', async (req, res) => {
 adminRouter.put('/cricket/players/merge', async (req, res) => {
     try {
         const { matchId, wrongPlayer, correctPlayer } = req.body || {};
-        const ownerUid = matchId ? await resolveOwnerUidForMatch(safeMatchId(matchId)) : null;
+        const ownerUid = matchId ? await resolveOwnerUidForMerge(safeMatchId(matchId)) : null;
         const result = await mergePlayersDeep(ownerUid, req.ownerEmail, wrongPlayer, correctPlayer, false);
         if (result.errors && result.errors.length) return res.status(400).json({ success: false, error: result.errors[0] });
         const matchIds = result.matches.map(m => m.matchId);
