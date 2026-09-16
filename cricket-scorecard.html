@@ -108,6 +108,14 @@
     --radius-sm: 8px;
     --font-display: 'Sora', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    /* 🎨 Whole-page team color wash — set for real once both teams are
+       known (see setPageTeamTheme() near paintLogo), so background/cards
+       throughout the scorecard blend both teams' own colors instead of
+       staying flat white/gray. These defaults (accent + six) are only
+       what shows before that JS runs, or for a match with no custom
+       team colors set in the panel. */
+    --team-a-color: var(--accent);
+    --team-b-color: var(--six);
   }
   :root[data-theme="dark"]{
     --bg: #0a0e17;
@@ -163,7 +171,20 @@
   *{ box-sizing:border-box; }
   html{ scroll-behavior:smooth; }
   body{
-    margin:0; background:var(--bg); color:var(--text);
+    margin:0; color:var(--text);
+    /* 🎨 Both teams' colors washed across the whole page (not just the
+       hero card) — team A's color top-left, team B's top-right, fading
+       into the base background toward the middle/bottom. Replaces the
+       previous flat --bg fill, which is what made the whole scorecard
+       read as plain white/gray no matter which teams were playing.
+       background-attachment:fixed so the wash covers the full viewport
+       height once and doesn't visibly repeat/tile as the page scrolls
+       past a tall scorecard. */
+    background:
+      radial-gradient(85% 60% at 6% 0%, color-mix(in srgb, var(--team-a-color) 13%, transparent), transparent 65%),
+      radial-gradient(85% 60% at 94% 0%, color-mix(in srgb, var(--team-b-color) 13%, transparent), transparent 65%),
+      var(--bg);
+    background-repeat:no-repeat;
     font-family:var(--font-body); font-size:14px; line-height:1.5;
     -webkit-font-smoothing:antialiased;
     transition:background .25s ease, color .25s ease;
@@ -254,9 +275,13 @@
   /* ---------- Layout ---------- */
   #wrap{ max-width:1180px; margin:0 auto; padding:16px; display:flex; flex-direction:column; gap:14px; }
   .card{
-    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius-lg);
+    /* Same idea as the body wash above, just much lighter (2%) since this
+       sits behind actual text/tables — enough to stop every card reading
+       as flat white, not enough to touch readability or contrast. */
+    background:color-mix(in srgb, var(--panel) 98%, color-mix(in srgb, var(--team-a-color) 50%, var(--team-b-color) 50%) 2%);
+    border:1px solid var(--border); border-radius:var(--radius-lg);
     padding:18px; box-shadow:var(--shadow);
-    transition:border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+    transition:background .3s ease, border-color .2s ease, box-shadow .2s ease, transform .2s ease;
   }
   /* The scorecard pair (Batting/Bowling) is the primary content now that
      it sits right under Highlights — give it a touch more visual weight
@@ -275,7 +300,12 @@
 
   /* ---------- Hero ---------- */
   #hero{ position:relative; overflow:hidden; padding:22px; }
-  #hero::before{ content:''; position:absolute; inset:0; background:var(--gradient-hero); pointer-events:none; }
+  #hero::before{
+    content:''; position:absolute; inset:0; pointer-events:none;
+    background:
+      radial-gradient(120% 140% at 15% -10%, color-mix(in srgb, var(--team-a-color) 20%, transparent), transparent 55%),
+      radial-gradient(100% 120% at 100% 0%, color-mix(in srgb, var(--team-b-color) 16%, transparent), transparent 50%);
+  }
   /* ---------- Live stream box (beside the score on wide screens) ---------- */
   #hero-row{ display:flex; gap:14px; align-items:stretch; }
   #hero-row #hero{ flex:1; min-width:0; }
@@ -337,9 +367,12 @@
   .team-short{ font-size:11px; color:var(--text-dim); font-weight:600; margin-top:1px; }
   /* Winning team gets a quiet accent ring + accent-colored name/score
      instead of both sides looking identical once the match is over —
-     one glance now tells you who won without reading the banner text. */
-  .team-block.winner .team-logo{ box-shadow:0 0 0 3px var(--accent-soft), 0 4px 12px rgba(0,0,0,.18); transform:translateY(-1px); }
-  .team-block.winner .team-name{ color:var(--accent); }
+     one glance now tells you who won without reading the banner text.
+     Uses THIS team's own color (from the scoring panel, via paintLogo's
+     --team-color) when it has one, so a red team's highlight is red, a
+     blue team's is blue — not every winner painted the same green. */
+  .team-block.winner .team-logo{ box-shadow:0 0 0 3px color-mix(in srgb, var(--team-color, var(--accent)) 22%, transparent), 0 4px 12px rgba(0,0,0,.18); transform:translateY(-1px); }
+  .team-block.winner .team-name{ color:var(--team-color, var(--accent)); }
   #score-center{ text-align:center; min-width:0; padding:0 4px; }
   #score-overs-row{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; }
   #main-score{ font-family:var(--font-display); font-weight:800; font-size:clamp(30px,6vw,44px); line-height:1; text-shadow:0 0 30px var(--accent-soft); overflow-wrap:anywhere; word-break:break-word; }
@@ -350,7 +383,8 @@
   #main-score.result-margin{
     display:inline-block; font-family:var(--font-body); font-weight:800;
     font-size:clamp(11.5px,2.6vw,13.5px); text-transform:uppercase; letter-spacing:.4px; line-height:1.3;
-    text-shadow:none; background:var(--accent-soft); color:var(--accent);
+    text-shadow:none; background:color-mix(in srgb, var(--result-color, var(--accent)) 14%, transparent);
+    color:var(--result-color, var(--accent));
     padding:8px 16px; border-radius:99px; max-width:100%;
     white-space:normal; overflow-wrap:break-word;
   }
@@ -358,7 +392,7 @@
   #batting-tag{ font-size:10.5px; color:var(--accent); font-weight:700; letter-spacing:.4px; text-transform:uppercase; margin-top:4px; }
 
   .team-prev-score{ font-size:13.5px; font-weight:700; opacity:.75; margin-top:3px; color:var(--text-dim); transition:color .2s ease, opacity .2s ease; }
-  .team-block.winner .team-prev-score{ color:var(--accent); opacity:1; }
+  .team-block.winner .team-prev-score{ color:var(--team-color, var(--accent)); opacity:1; }
 
   #target-wrap{ position:relative; margin-top:16px; }
   #target-label{ display:flex; justify-content:space-between; font-size:11.5px; color:var(--text-dim); font-weight:600; margin-bottom:6px; }
@@ -487,7 +521,7 @@
     #teams-row{ grid-template-columns:1fr auto 1fr; gap:8px; text-align:center; }
     .team-block, .team-block.right{ flex-direction:column; text-align:center; gap:7px; }
     .team-logo{ width:40px; height:40px; font-size:14px; border-radius:11px; box-shadow:0 3px 9px rgba(0,0,0,.16); }
-    .team-block.winner .team-logo{ box-shadow:0 0 0 2.5px var(--accent-soft), 0 3px 9px rgba(0,0,0,.18); }
+    .team-block.winner .team-logo{ box-shadow:0 0 0 2.5px color-mix(in srgb, var(--team-color, var(--accent)) 22%, transparent), 0 3px 9px rgba(0,0,0,.18); }
     #main-score.result-margin{ padding:7px 13px; font-size:11.5px; }
     .team-name{
       font-size:12px; line-height:1.25; white-space:normal; text-overflow:clip;
@@ -1901,6 +1935,7 @@ function renderFinalSnapshot(match, displayName){
   document.getElementById('chip-status-text').textContent = finalResultText(match);
 
   const A = match.teamA || {}, B = match.teamB || {};
+  setPageTeamTheme(A, B);
   setText('name-a', A.name || 'Team A'); setText('short-a', A.short || '—');
   setText('name-b', B.name || 'Team B'); setText('short-b', B.short || '—');
   setText('hl-team-a-name', A.name || A.short || 'Team A'); setText('hl-team-b-name', B.name || B.short || 'Team B');
@@ -1935,6 +1970,12 @@ function renderFinalSnapshot(match, displayName){
   const blockB = document.getElementById('team-block-b');
   if(blockA) blockA.classList.toggle('winner', match.winningTeam === 'A');
   if(blockB) blockB.classList.toggle('winner', match.winningTeam === 'B');
+  // Result banner picks up the SAME team color as the highlighted block
+  // above, so "Won by 6 wickets" reads in that team's own color instead
+  // of a fixed green regardless of who actually won.
+  const winnerColor = match.winningTeam === 'A' ? A.color : match.winningTeam === 'B' ? B.color : '';
+  const mainScoreEl = document.getElementById('main-score');
+  if(mainScoreEl) mainScoreEl.style.setProperty('--result-color', winnerColor || '');
   const mainOversEl = document.getElementById('main-overs'); if(mainOversEl) mainOversEl.style.display = 'none';
   setText('batting-tag', '');
 
@@ -2178,6 +2219,7 @@ function renderHero(s){
   statusChip.querySelector('.lv-dot').style.display = status.badge === 'LIVE' ? '' : 'none';
 
   const A = s.teamA || {}, B = s.teamB || {};
+  setPageTeamTheme(A, B);
   setText('name-a', A.name || 'Team A'); setText('short-a', A.short || '—');
   setText('name-b', B.name || 'Team B'); setText('short-b', B.short || '—');
   setText('hl-team-a-name', A.name || A.short || 'Team A'); setText('hl-team-b-name', B.name || B.short || 'Team B');
@@ -2246,6 +2288,17 @@ function renderHero(s){
   setText('stat-ballsleft', ballsLeft === null ? '—' : ballsLeft);
 }
 
+// 🎨 Blends both teams' own colors across the WHOLE scorecard (body wash,
+// card tints, hero gradient — see the --team-a-color/--team-b-color CSS
+// above), not just the team logo squares. Falls back to leaving the
+// default accent/six colors in place when a team has no custom color set
+// in the panel, so a match with no custom branding still looks fine.
+function setPageTeamTheme(A, B){
+  const root = document.documentElement;
+  root.style.setProperty('--team-a-color', (A && A.color) || 'var(--accent)');
+  root.style.setProperty('--team-b-color', (B && B.color) || 'var(--six)');
+}
+
 function paintLogo(id, team){
   const el = document.getElementById(id);
   if(!el) return;
@@ -2258,6 +2311,15 @@ function paintLogo(id, team){
     el.style.background = team.color || 'var(--accent)';
     el.textContent = (team.short || team.name || '?').slice(0,2).toUpperCase();
   }
+  // 🎨 Stamp this team's own color (set in the scoring panel) onto its
+  // team-block as a CSS variable, so the winner-highlight ring/name/score
+  // (and the result banner) can render in THAT team's actual color
+  // instead of a fixed accent green — every team looks like itself, not
+  // like every other team that ever won a match. Falls back to the
+  // default accent automatically wherever --team-color isn't set (see
+  // var(--team-color, var(--accent)) in the CSS).
+  const block = el.closest('.team-block');
+  if(block) block.style.setProperty('--team-color', team.color || '');
 }
 
 function renderPlayers(s){
