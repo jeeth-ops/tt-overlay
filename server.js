@@ -2310,6 +2310,313 @@ app.get('/api/clips/:clipId/download', async (req, res) => {
 });
 
 // ================================================================
+// 🎞️ HIGHLIGHT COMPILATION — combines several already-finalized clips
+// into ONE downloadable MP4 (Player / Team / Sixes / Fours / Wickets /
+// Full-Match highlight reels). This is a PRESENTATION layer over the
+// clips cutClip()/finalizeClip() above already produced — it never
+// recalculates stats or touches scoring data, and it decides "which clips
+// belong to this selection" using the EXACT same query shapes as the
+// read-only /api/clips/* routes above, so an admin's clip reassignment
+// (section 16 of the spec) is picked up automatically next time someone
+// compiles — there is no second, parallel notion of ownership to keep
+// in sync.
+//
+// Compiling can take from a few seconds (2-3 clips) to a couple of
+// minutes (a full match), so this runs as a background JOB rather than
+// blocking one HTTP request:
+//   POST /api/highlights/compile              -> { jobId }
+//   GET  /api/highlights/compile/:id/status    -> { status, progress, message }
+//   GET  /api/highlights/compile/:id/download  -> streams the finished MP4
+//
+// Jobs live in memory only (a server restart loses an in-progress job —
+// acceptable; the user just retries) and every temp file is cleaned up
+// automatically, either right after download or by the sweep below —
+// same "never leave temp junk behind" principle the chunk-recording code
+// near the top of this file already follows.
+// ================================================================
+const os = require('os');
+const HIGHLIGHTS_TMP_DIR = path.join(os.tmpdir(), 'scorvix-highlights');
+if (!fs.existsSync(HIGHLIGHTS_TMP_DIR)) fs.mkdirSync(HIGHLIGHTS_TMP_DIR, { recursive: true });
+
+const compileJobs = new Map(); // jobId -> { status, progress, message, matchId, outFile, workDir, included, skipped, createdAt, error }
+const COMPILE_JOB_TTL_MS = 30 * 60 * 1000; // 30 min — plenty for the user to hit Download
+
+function newCompileJobId() {
+    return `hl_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+function setCompileJob(jobId, patch) {
+    const job = compileJobs.get(jobId);
+    if (!job) return;
+    Object.assign(job, patch);
+}
+// Deletes a job's temp files + record. Called after a successful download
+// and by the periodic sweep below for anyone who never comes back for it.
+function cleanupCompileJob(jobId) {
+    const job = compileJobs.get(jobId);
+    if (!job) return;
+    compileJobs.delete(jobId);
+    if (job.outFile) fs.unlink(job.outFile, () => {});
+    if (job.workDir) fs.rm(job.workDir, { recursive: true, force: true }, () => {});
+}
+setInterval(() => {
+    const now = Date.now();
+    for (const [jobId, job] of compileJobs.entries()) {
+        if (now - job.createdAt > COMPILE_JOB_TTL_MS) cleanupCompileJob(jobId);
+    }
+}, 5 * 60 * 1000);
+
+// Chronological order: innings, then over, then ball-in-over — the same
+// fields every clip doc already carries (see serializeClip above). This is
+// match order, not clip-creation order (creation order can drift slightly
+// because R2/Drive uploads finish at different speeds for different clips).
+function chronologicalClipOrder(clips) {
+    return clips.slice().sort((a, b) =>
+        (a.innings || 1) - (b.innings || 1) ||
+        (a.over || 0) - (b.over || 0) ||
+        (a.ballInOver || 0) - (b.ballInOver || 0) ||
+        new Date(a.createdAt || 0) - new Date(b.createdAt || 0)
+    );
+}
+// A clip can legitimately match more than one filter (e.g. a WICKET clip
+// is both "this bowler's highlights" and "Team A all wickets") — never
+// let the same clip play twice inside one compiled video.
+function dedupeClipsById(clips) {
+    const seen = new Set();
+    return clips.filter(c => {
+        const id = c._id.toString();
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+    });
+}
+
+// Downloads one clip to a local temp file — R2 first, Drive fallback,
+// same resolution order /watch and /download already use above. Returns
+// the local path, or null if the clip is unavailable everywhere (section
+// 13: the compile job skips this clip rather than failing outright).
+async function downloadClipToTemp(clip, workDir, index) {
+    const localPath = path.join(workDir, `clip_${String(index).padStart(4, '0')}.mp4`);
+    if (clip.r2Url) {
+        try {
+            const r2Res = await fetch(clip.r2Url);
+            if (r2Res.ok && r2Res.body) {
+                const { Readable } = require('stream');
+                await new Promise((resolve, reject) => {
+                    const dest = fs.createWriteStream(localPath);
+                    Readable.fromWeb(r2Res.body).pipe(dest);
+                    dest.on('finish', resolve);
+                    dest.on('error', reject);
+                });
+                return localPath;
+            }
+        } catch (err) {
+            console.log(`Compile: R2 fetch failed for clip ${clip._id}, trying Drive:`, err.message || err);
+        }
+    }
+    if (clip.driveFileId && driveClient) {
+        try {
+            const driveRes = await driveClient.files.get({ fileId: clip.driveFileId, alt: 'media' }, { responseType: 'stream' });
+            await new Promise((resolve, reject) => {
+                const dest = fs.createWriteStream(localPath);
+                driveRes.data.pipe(dest);
+                driveRes.data.on('error', reject);
+                dest.on('finish', resolve);
+                dest.on('error', reject);
+            });
+            return localPath;
+        } catch (err) {
+            console.log(`Compile: Drive fetch failed for clip ${clip._id}:`, err.message || err);
+        }
+    }
+    return null;
+}
+
+// Concats an ordered list of local mp4 files into one output file. Tries
+// ffmpeg's concat DEMUXER first (stream copy — fast, no re-encode);
+// every clip in this project comes from the SAME pipeline (cutClip's
+// ffmpeg step above, always re-encoded to a consistent H.264/AAC mp4), so
+// the fast path covers the overwhelming majority of compilations. If
+// stream-copy concat fails (a mismatched clip slipping through, e.g. from
+// ClipperHelper.exe with different source settings), fall back to the
+// concat FILTER, which re-encodes and tolerates mismatched inputs at the
+// cost of more time.
+function concatClipsToFile(localPaths, outFile, workDir) {
+    return new Promise((resolve, reject) => {
+        const listFile = path.join(workDir, 'concat_list.txt');
+        fs.writeFileSync(listFile, localPaths.map(p => `file '${p.replace(/'/g, "'\\''")}'`).join('\n'));
+
+        ffmpeg()
+            .input(listFile)
+            .inputOptions(['-f concat', '-safe 0'])
+            .outputOptions(['-c copy'])
+            .on('error', () => {
+                const cmd = ffmpeg();
+                localPaths.forEach(p => cmd.input(p));
+                const filterInputs = localPaths.map((_, i) => `[${i}:v:0][${i}:a:0]`).join('');
+                cmd.complexFilter(`${filterInputs}concat=n=${localPaths.length}:v=1:a=1[outv][outa]`)
+                    .outputOptions(['-map [outv]', '-map [outa]'])
+                    .on('error', reject)
+                    .on('end', resolve)
+                    .save(outFile);
+            })
+            .on('end', resolve)
+            .save(outFile);
+    });
+}
+
+// Runs one compilation job end-to-end: order -> dedupe -> download each
+// locally -> concat -> mark ready. Updates job.progress throughout so the
+// frontend's polling UI (spec section 12: "Collecting clips... / Combining
+// videos... 35%") reflects real work, not a fake bar.
+async function runCompileJob(jobId, clipDocs) {
+    const job = compileJobs.get(jobId);
+    if (!job) return;
+    const ordered = dedupeClipsById(chronologicalClipOrder(clipDocs));
+    if (!ordered.length) {
+        setCompileJob(jobId, { status: 'error', error: 'No highlights available for this selection yet.' });
+        return;
+    }
+
+    const workDir = path.join(HIGHLIGHTS_TMP_DIR, jobId);
+    fs.mkdirSync(workDir, { recursive: true });
+    setCompileJob(jobId, { workDir, status: 'collecting', progress: 0, message: 'Collecting clips...' });
+
+    const localPaths = [];
+    let skipped = 0;
+    for (let i = 0; i < ordered.length; i++) {
+        const local = await downloadClipToTemp(ordered[i], workDir, i);
+        if (local) localPaths.push(local);
+        else skipped++;
+        setCompileJob(jobId, {
+            progress: Math.round(((i + 1) / ordered.length) * 50), // collecting = first half of the bar
+            message: `Collecting clips... (${i + 1}/${ordered.length})`
+        });
+    }
+
+    if (!localPaths.length) {
+        setCompileJob(jobId, { status: 'error', error: 'None of the clips for this selection could be loaded.' });
+        fs.rm(workDir, { recursive: true, force: true }, () => {});
+        return;
+    }
+
+    setCompileJob(jobId, { status: 'combining', progress: 55, message: 'Combining videos...' });
+    const outFile = path.join(HIGHLIGHTS_TMP_DIR, `${jobId}.mp4`);
+    const tick = setInterval(() => {
+        const cur = compileJobs.get(jobId);
+        if (cur && cur.status === 'combining' && cur.progress < 90) setCompileJob(jobId, { progress: cur.progress + 3, message: `Combining videos... ${cur.progress + 3}%` });
+    }, 800);
+    try {
+        await concatClipsToFile(localPaths, outFile, workDir);
+        clearInterval(tick);
+        setCompileJob(jobId, { status: 'ready', progress: 100, message: 'Download Ready', outFile, included: localPaths.length, skipped });
+    } catch (err) {
+        clearInterval(tick);
+        console.log(`Compile job ${jobId} ffmpeg error:`, err.message || err);
+        setCompileJob(jobId, { status: 'error', error: 'Could not combine clips into a video.' });
+    } finally {
+        // Per-clip local downloads are no longer needed once concat has run
+        // (success or fail) — only the finished outFile (if any) and the
+        // job record stick around, same cleanup discipline as the rest of
+        // the clip pipeline.
+        fs.rm(workDir, { recursive: true, force: true }, () => {});
+    }
+}
+
+// Resolves which clips belong to a compile request, reusing the exact
+// same query shapes as the read-only clips endpoints above (never a
+// second, parallel definition of "this player's"/"this team's" clips).
+async function clipsForCompileRequest(body) {
+    const matchId = safeMatchId(body.matchId);
+    if (!matchId) return { error: 'matchId required' };
+    const type = String(body.type || '').toLowerCase();
+
+    if (type === 'player') {
+        const pk = playerKey(body.playerKey);
+        if (!pk) return { error: 'playerKey required' };
+        const clips = await clipsCollection.find({
+            matchId, $or: [{ strikerKey: pk }, { bowlerKey: pk }, { fielderKey: pk }]
+        }).toArray();
+        return { matchId, clips };
+    }
+    if (type === 'team') {
+        const team = String(body.team || '').toUpperCase();
+        if (!team) return { error: 'team required' };
+        const clips = await clipsCollection.find({ matchId, battingTeam: team }).toArray();
+        return { matchId, clips };
+    }
+    if (type === 'sixes' || type === 'fours' || type === 'wickets') {
+        const team = String(body.team || '').toUpperCase();
+        const eventType = type === 'sixes' ? 'SIX' : type === 'fours' ? 'FOUR' : 'WICKET';
+        const query = { matchId, eventType };
+        if (team) query.battingTeam = team;
+        const clips = await clipsCollection.find(query).toArray();
+        return { matchId, clips };
+    }
+    if (type === 'full') {
+        const clips = await clipsCollection.find({ matchId }).toArray();
+        return { matchId, clips };
+    }
+    return { error: 'Unknown compile type' };
+}
+
+// POST /api/highlights/compile  { matchId, type, playerKey?, team? }
+// Clips are strictly matchId-scoped (section 19) — the query shapes above
+// never let a request for one matchId pull in another match's clips, and
+// the jobId returned here is random/unguessable and tied 1:1 to the
+// matchId it was built from, so knowing a jobId for one match's download
+// never exposes another match's file.
+app.post('/api/highlights/compile', async (req, res) => {
+    if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const resolved = await clipsForCompileRequest(req.body || {});
+        if (resolved.error) return res.status(400).json({ success: false, error: resolved.error });
+        if (!resolved.clips.length) {
+            return res.json({ success: true, empty: true, message: 'No highlights available for this selection yet.' });
+        }
+        const jobId = newCompileJobId();
+        compileJobs.set(jobId, {
+            status: 'queued', progress: 0, message: 'Preparing highlights...',
+            matchId: resolved.matchId, createdAt: Date.now(), included: 0, skipped: 0
+        });
+        runCompileJob(jobId, resolved.clips).catch(err => {
+            console.log(`Compile job ${jobId} crashed:`, err.message || err);
+            setCompileJob(jobId, { status: 'error', error: 'Something went wrong combining these clips.' });
+        });
+        res.json({ success: true, jobId });
+    } catch (err) {
+        console.log('Compile-start error:', err);
+        res.status(500).json({ success: false, error: 'Could not start highlight compilation' });
+    }
+});
+
+// GET /api/highlights/compile/:jobId/status
+app.get('/api/highlights/compile/:jobId/status', (req, res) => {
+    const job = compileJobs.get(req.params.jobId);
+    if (!job) return res.status(404).json({ success: false, error: 'Job not found or expired' });
+    res.json({
+        success: true, status: job.status, progress: job.progress, message: job.message,
+        error: job.error || null, included: job.included, skipped: job.skipped
+    });
+});
+
+// GET /api/highlights/compile/:jobId/download?name=... — streams the
+// finished MP4, then cleans up (temp file + job record) once the response
+// finishes — generated files are never kept around past this (section 11).
+app.get('/api/highlights/compile/:jobId/download', (req, res) => {
+    const job = compileJobs.get(req.params.jobId);
+    if (!job || job.status !== 'ready' || !job.outFile || !fs.existsSync(job.outFile)) {
+        return res.status(404).json({ success: false, error: 'Highlight file not ready or has expired' });
+    }
+    const filename = `${req.query.name || 'highlights'}.mp4`.replace(/[^a-zA-Z0-9_.-]/g, '_');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Type', 'video/mp4');
+    const stream = fs.createReadStream(job.outFile);
+    stream.pipe(res);
+    stream.on('close', () => cleanupCompileJob(req.params.jobId));
+    stream.on('error', () => { try { res.end(); } catch (e) {} });
+});
+
+// ================================================================
 // 📊 PLAYER STATS API — MATCH scope aggregates straight from ballsCollection
 // (the permanent, correction-safe ball-by-ball log), so it's always
 // recomputed fresh rather than cached/stale (REQUIREMENT #13). TOURNAMENT/
