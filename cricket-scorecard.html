@@ -876,6 +876,20 @@
   .em-toolbar button:active{ transform:scale(.97); }
   .em-history-row{ font-size:11.5px; padding:7px 0; border-bottom:1px solid var(--border-soft); color:var(--text-dim); }
   .em-history-row:last-child{ border-bottom:none; }
+  /* ---- Merge Players confirmation screen ---- */
+  .mp-confirm-box{ background:var(--bg-soft); border:1px solid var(--border); border-radius:var(--radius-md); padding:14px; margin:10px 0; }
+  .mp-confirm-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .mp-confirm-label{ font-size:11px; font-weight:700; color:var(--text-dim); }
+  .mp-confirm-value{ font-size:14px; font-weight:800; }
+  .mp-confirm-value.mp-wrong{ color:#ef4444; }
+  .mp-confirm-value.mp-correct{ color:var(--accent); }
+  .mp-confirm-arrow{ text-align:center; font-size:11px; color:var(--text-faint); margin:8px 0; }
+  .mp-match-list{ max-height:26vh; overflow-y:auto; border:1px solid var(--border-soft); border-radius:var(--radius-sm); margin-top:6px; }
+  .mp-match-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; font-size:11.5px; border-bottom:1px solid var(--border-soft); }
+  .mp-match-row:last-child{ border-bottom:none; }
+  .mp-match-id{ color:var(--text-dim); font-family:monospace; }
+  .mp-match-counts{ color:var(--text-faint); text-align:right; }
+  .mp-danger-btn{ background:#ef4444 !important; color:#fff !important; }
   #em-toast{
     position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(20px); z-index:130;
     background:var(--panel); border:1px solid var(--border); color:var(--text); padding:11px 18px; border-radius:99px;
@@ -3387,15 +3401,161 @@ async function openOwnerPanel(){
     <div class="em-toolbar">
       <button id="em-correct-bowler-btn">🎯 Correct Bowler</button>
       <button id="em-correct-batsman-btn">🏏 Correct Batsman</button>
+      <button id="em-merge-players-btn">🔀 Merge Players</button>
       <button id="em-undo-btn">↩️ Undo last change</button>
       <button id="em-history-btn">🕓 Recent corrections</button>
     </div>
     <div id="em-body" class="em-list"><div class="em-empty">Loading deliveries…</div></div>`;
   document.getElementById('em-correct-bowler-btn').onclick = () => openCorrectBowlerPanel(matchId);
   document.getElementById('em-correct-batsman-btn').onclick = () => openCorrectBatsmanPanel(matchId);
+  document.getElementById('em-merge-players-btn').onclick = () => openMergePlayersPanel(matchId);
   document.getElementById('em-undo-btn').onclick = () => undoLastCorrection(matchId);
   document.getElementById('em-history-btn').onclick = () => showHistory(matchId);
   await loadDeliveryList(matchId);
+}
+
+/* ---------- Merge Players (duplicate spelling) ----------
+   Fixes the same real player having been scored under two different
+   spellings (e.g. "Rahul Sharma" / "Rahul Sharmma") by folding the
+   duplicate's ENTIRE history — ball-by-ball references, batting/bowling
+   figures, dismissals, fielder credits and clips, across every match in
+   this account, not just the one currently open — into the correct
+   player's identity. Same Preview → Confirm pattern as Correct Bowler/
+   Correct Batsman above: nothing is written until the owner explicitly
+   confirms the exact "Duplicate Player → Correct Player" swap shown on
+   the confirmation screen. Server-side: POST .../players/merge/preview
+   (dry run), PUT .../players/merge (real write), POST
+   .../players/merge/undo — see mergePlayersDeep() in server.js. ---------- */
+async function openMergePlayersPanel(matchId){
+  const content = document.getElementById('edit-modal-content');
+  content.innerHTML = `<div class="em-title">Merge Players</div><div class="em-sub">Loading players…</div>`;
+  try{
+    const data = await adminApi(`/cricket/match/${encodeURIComponent(matchId)}/balls`);
+    if(!data.roster || data.roster.length < 2){
+      content.innerHTML = '<div class="em-empty">Need at least two different player names logged in this match to merge.</div>';
+      return;
+    }
+    renderMergePlayersForm(matchId, data.roster, {});
+  }catch(err){
+    content.innerHTML = `<div class="em-empty">${escapeHtml(err.message || 'Could not load players')}</div>`;
+  }
+}
+
+function renderMergePlayersForm(matchId, roster, prefill){
+  // Groups by normalized key exactly like the bowler/batsman pickers
+  // above — a duplicate caused by "Rahul Sharma" vs "RAHUL SHARMA" (case
+  // only) shouldn't need two separate merges just because the raw text
+  // strings look different at a glance.
+  const normKey = (n) => String(n||'').trim().toLowerCase().replace(/\s+/g,' ');
+  const byKey = new Map();
+  roster.forEach(n => { const k = normKey(n); if(!byKey.has(k)) byKey.set(k, n); });
+  const names = [...byKey.values()].sort();
+  const selWrong = (prefill.wrongPlayer && names.includes(prefill.wrongPlayer)) ? prefill.wrongPlayer : (names[0] || null);
+  const correctOpts = names.filter(n => normKey(n) !== normKey(selWrong));
+  const selCorrect = (prefill.correctPlayer && correctOpts.includes(prefill.correctPlayer)) ? prefill.correctPlayer : (correctOpts[0] || null);
+
+  const content = document.getElementById('edit-modal-content');
+  content.innerHTML = `
+    <div class="em-title">Merge Players</div>
+    <div class="em-sub">Fold a duplicate player's runs, balls, 4s/6s, wickets, dismissals, fielding credits and clips into the correct player — everywhere they've ever been scored, not just this match. This cannot be undone from here except with "Undo last merge".</div>
+    <div class="em-field-row">
+      <div><label>Duplicate / wrongly-spelled player</label>
+        <select id="mpWrong">${names.map(n => `<option value="${escapeHtml(n)}" ${n===selWrong?'selected':''}>${escapeHtml(n)}</option>`).join('')}</select>
+      </div>
+      <div><label>Correct player</label>
+        <select id="mpCorrect">${correctOpts.map(n => `<option value="${escapeHtml(n)}" ${n===selCorrect?'selected':''}>${escapeHtml(n)}</option>`).join('')}</select>
+      </div>
+    </div>
+    <div class="em-actions">
+      <button id="mpBack" class="em-btn cancel">← Back</button>
+      <button id="mpPreview" class="em-btn save">Preview Merge →</button>
+    </div>
+    <div class="em-toolbar" style="margin-top:10px;">
+      <button id="mpUndoBtn">↩️ Undo last merge</button>
+    </div>`;
+
+  document.getElementById('mpWrong').onchange = (e) => renderMergePlayersForm(matchId, roster, { wrongPlayer: e.target.value, correctPlayer: prefill.correctPlayer });
+  document.getElementById('mpBack').onclick = () => openOwnerPanel();
+  document.getElementById('mpUndoBtn').onclick = () => undoLastPlayerMerge(matchId);
+  document.getElementById('mpPreview').onclick = async () => {
+    const wrongPlayer = document.getElementById('mpWrong').value;
+    const correctPlayer = document.getElementById('mpCorrect').value;
+    if(!wrongPlayer || !correctPlayer || normKey(wrongPlayer) === normKey(correctPlayer)){
+      emToast('Pick two different players to merge');
+      return;
+    }
+    const btn = document.getElementById('mpPreview');
+    btn.disabled = true; btn.textContent = 'Loading…';
+    try{
+      const data = await adminApi(`/cricket/players/merge/preview`, {
+        method: 'POST',
+        body: JSON.stringify({ matchId, wrongPlayer, correctPlayer })
+      });
+      renderMergeConfirmScreen(matchId, data);
+    }catch(err){
+      emToast(err.message || 'Could not preview merge');
+      btn.disabled = false; btn.textContent = 'Preview Merge →';
+    }
+  };
+}
+
+// The safety screen required by spec: shows exactly which two players
+// will be merged and how much data moves, and requires an explicit
+// Confirm click before anything is written.
+function renderMergeConfirmScreen(matchId, data){
+  const matchRows = (data.matches || []).map(m => `
+    <div class="mp-match-row">
+      <span class="mp-match-id">${escapeHtml(m.matchId)}</span>
+      <span class="mp-match-counts">${m.deliveries} ${m.deliveries===1?'delivery':'deliveries'}${m.asBatsman?` · batting ${m.asBatsman}`:''}${m.asBowler?` · bowling ${m.asBowler}`:''}${m.asFielder?` · fielding ${m.asFielder}`:''}</span>
+    </div>`).join('') || '<div class="em-empty">No matches affected.</div>';
+
+  const content = document.getElementById('edit-modal-content');
+  content.innerHTML = `
+    <div class="em-title">Confirm Merge</div>
+    <div class="mp-confirm-box">
+      <div class="mp-confirm-row"><span class="mp-confirm-label">Duplicate Player</span><span class="mp-confirm-value mp-wrong">${escapeHtml(data.wrongPlayer)}</span></div>
+      <div class="mp-confirm-arrow">↓ merges into ↓</div>
+      <div class="mp-confirm-row"><span class="mp-confirm-label">Correct Player</span><span class="mp-confirm-value mp-correct">${escapeHtml(data.correctPlayer)}</span></div>
+    </div>
+    <div class="em-sub">This will move <b>${data.affectedCount}</b> ${data.affectedCount===1?'delivery':'deliveries'} and <b>${data.clipCount}</b> ${data.clipCount===1?'clip':'clips'} across <b>${(data.matches||[]).length}</b> ${(data.matches||[]).length===1?'match':'matches'}. Batting, bowling, dismissal, fielding and clip data all move together — nothing is deleted or re-uploaded.</div>
+    <div class="mp-match-list">${matchRows}</div>
+    <div class="em-actions">
+      <button id="mpCancel" class="em-btn cancel">Cancel</button>
+      <button id="mpConfirm" class="em-btn save mp-danger-btn">Confirm Merge</button>
+    </div>`;
+
+  document.getElementById('mpCancel').onclick = () => openMergePlayersPanel(matchId);
+  document.getElementById('mpConfirm').onclick = async () => {
+    const btn = document.getElementById('mpConfirm');
+    btn.disabled = true; btn.textContent = 'Merging…';
+    try{
+      await adminApi(`/cricket/players/merge`, {
+        method: 'PUT',
+        body: JSON.stringify({ matchId, wrongPlayer: data.wrongPlayer, correctPlayer: data.correctPlayer })
+      });
+      emToast(`Merged ${data.wrongPlayer} into ${data.correctPlayer}`);
+      await loadDeliveryList(matchId);
+      openOwnerPanel();
+    }catch(err){
+      emToast(err.message || 'Could not merge players');
+      btn.disabled = false; btn.textContent = 'Confirm Merge';
+    }
+  };
+}
+
+// "Undo last merge" — separate from "Undo last change" (which only ever
+// undoes single-delivery/bowler/batsman corrections for THIS match) since
+// a merge is cross-match by nature; see the dedicated undo endpoint in
+// server.js for why these two undo histories are kept apart.
+async function undoLastPlayerMerge(matchId){
+  if(!confirm('Undo the most recent player merge? This restores every affected delivery, clip and player profile to its pre-merge state.')) return;
+  try{
+    const data = await adminApi(`/cricket/players/merge/undo`, { method: 'POST' });
+    emToast(`Restored ${data.restoredCount} deliveries across ${(data.matchIds||[]).length} match(es)`);
+    await loadDeliveryList(matchId);
+  }catch(err){
+    emToast(err.message || 'Could not undo the last merge');
+  }
 }
 
 /* ---------- Correct Bowler (whole over(s) at once) ----------
@@ -3422,16 +3582,35 @@ async function openCorrectBowlerPanel(matchId){
 }
 
 function renderCorrectBowlerForm(matchId, balls, roster, prefill){
+  // Groups by a normalized key (trim + lowercase + collapse spaces) instead
+  // of the exact display string — mirrors playerKey() on the server. Without
+  // this, the same real bowler recorded as "Aman Khan" on some overs and
+  // "AMAN KHAN" on others would silently split into two separate dropdown
+  // entries, and picking one would only surface half his overs.
+  const normKey = (n) => String(n||'').trim().toLowerCase().replace(/\s+/g,' ');
   const innings = [...new Set(balls.map(b => Number(b.innings) || 1))].sort((a,b) => a-b);
   const selInnings = prefill.innings != null ? Number(prefill.innings) : innings[0];
   const inningsBalls = balls.filter(b => (Number(b.innings) || 1) === selInnings);
   // Only bowlers who actually bowled at least one delivery in this innings —
   // exactly the roster a "wrong bowler" picker for THIS over range needs.
-  const bowlerNames = [...new Set(inningsBalls.map(b => b.bowler).filter(Boolean))].sort();
+  // One dropdown entry per normalized key; the display string used is
+  // whichever spelling appears most often for that key.
+  const bowlerByKey = new Map(); // key -> { display, counts: Map<display,count> }
+  inningsBalls.forEach(b => {
+    if(!b.bowler) return;
+    const k = normKey(b.bowler);
+    if(!bowlerByKey.has(k)) bowlerByKey.set(k, new Map());
+    const counts = bowlerByKey.get(k);
+    counts.set(b.bowler, (counts.get(b.bowler)||0) + 1);
+  });
+  const bowlerNames = [...bowlerByKey.entries()]
+    .map(([k, counts]) => [...counts.entries()].sort((a,b) => b[1]-a[1])[0][0])
+    .sort();
   const selWrong = (prefill.wrongBowler && bowlerNames.includes(prefill.wrongBowler)) ? prefill.wrongBowler : (bowlerNames[0] || null);
-  const oversByWrong = selWrong ? [...new Set(inningsBalls.filter(b => b.bowler === selWrong).map(b => Number(b.over)))].sort((a,b) => a-b) : [];
+  const selWrongKey = selWrong ? normKey(selWrong) : null;
+  const oversByWrong = selWrongKey ? [...new Set(inningsBalls.filter(b => normKey(b.bowler) === selWrongKey).map(b => Number(b.over)))].sort((a,b) => a-b) : [];
   const selOvers = prefill.overs || [];
-  const correctOpts = roster.filter(n => n !== selWrong);
+  const correctOpts = roster.filter(n => normKey(n) !== selWrongKey);
 
   const content = document.getElementById('edit-modal-content');
   content.innerHTML = `
@@ -3547,15 +3726,29 @@ async function openCorrectBatsmanPanel(matchId){
 }
 
 function renderCorrectBatsmanForm(matchId, balls, roster, prefill){
+  const normKey = (n) => String(n||'').trim().toLowerCase().replace(/\s+/g,' ');
   const innings = [...new Set(balls.map(b => Number(b.innings) || 1))].sort((a,b) => a-b);
   const selInnings = prefill.innings != null ? Number(prefill.innings) : innings[0];
   const inningsBalls = balls.filter(b => (Number(b.innings) || 1) === selInnings);
-  // Only batsmen who actually faced a delivery (as striker) in this innings.
-  const batsmanNames = [...new Set(inningsBalls.filter(b => b.kind !== 'Wd').map(b => b.striker).filter(Boolean))].sort();
+  // Only batsmen who actually faced a delivery (as striker) in this innings —
+  // grouped by normalized key (see renderCorrectBowlerForm above) so a name
+  // typed slightly differently across overs doesn't split into two entries.
+  const batsmanByKey = new Map();
+  inningsBalls.filter(b => b.kind !== 'Wd').forEach(b => {
+    if(!b.striker) return;
+    const k = normKey(b.striker);
+    if(!batsmanByKey.has(k)) batsmanByKey.set(k, new Map());
+    const counts = batsmanByKey.get(k);
+    counts.set(b.striker, (counts.get(b.striker)||0) + 1);
+  });
+  const batsmanNames = [...batsmanByKey.entries()]
+    .map(([k, counts]) => [...counts.entries()].sort((a,b) => b[1]-a[1])[0][0])
+    .sort();
   const selWrong = (prefill.wrongBatsman && batsmanNames.includes(prefill.wrongBatsman)) ? prefill.wrongBatsman : (batsmanNames[0] || null);
-  const ballsByWrong = selWrong ? inningsBalls.filter(b => b.striker === selWrong && b.kind !== 'Wd') : [];
+  const selWrongKey = selWrong ? normKey(selWrong) : null;
+  const ballsByWrong = selWrongKey ? inningsBalls.filter(b => normKey(b.striker) === selWrongKey && b.kind !== 'Wd') : [];
   const selBallIds = prefill.ballIds || ballsByWrong.map(b => b.ballId); // default: select every delivery this batsman faced
-  const correctOpts = roster.filter(n => n !== selWrong);
+  const correctOpts = roster.filter(n => normKey(n) !== selWrongKey);
   const selMode = prefill.mode === 'reset' ? 'reset' : 'transfer';
 
   const content = document.getElementById('edit-modal-content');
