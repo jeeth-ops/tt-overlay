@@ -4674,8 +4674,17 @@ adminRouter.put('/cricket/match/:matchId/correct-batsman', async (req, res) => {
 async function findBallsForPlayerMerge(ownerUid, wrongKey) {
     if (!ballsCollection || !ownerUid || !wrongKey) return [];
     return ballsCollection.find({
-        ownerUid,
-        $or: [{ strikerKey: wrongKey }, { nonStrikerKey: wrongKey }, { bowlerKey: wrongKey }, { dismissalFielderKey: wrongKey }]
+        // 🩹 This platform has exactly one account (single hardcoded
+        // OWNER_EMAIL — see requireOwner), so a ball with NO ownerUid
+        // stamped (logged before that field existed) still belongs to
+        // this same owner, not to nobody. Matching only { ownerUid } would
+        // silently skip an older match's deliveries here even though the
+        // account-level guard above (mergePlayersDeep) already confirmed
+        // who's asking.
+        $and: [
+            { $or: [{ ownerUid }, { ownerUid: null }, { ownerUid: { $exists: false } }] },
+            { $or: [{ strikerKey: wrongKey }, { nonStrikerKey: wrongKey }, { bowlerKey: wrongKey }, { dismissalFielderKey: wrongKey }] }
+        ]
     }).sort({ matchId: 1, innings: 1, over: 1, ballInOver: 1 }).toArray();
 }
 
@@ -4768,7 +4777,11 @@ async function mergePlayersDeep(ownerUid, actorEmail, wrongPlayerName, correctPl
     });
     const matchIds = [...byMatch.keys()];
 
-    const clipFilter = { ownerUid, $or: [{ strikerKey: wrongKey }, { nonStrikerKey: wrongKey }, { bowlerKey: wrongKey }, { fielderKey: wrongKey }] };
+    // Same null-safe ownerUid matching as findBallsForPlayerMerge above —
+    // an older clip logged before ownerUid was stamped on clip docs still
+    // belongs to this one account.
+    const ownerUidClause = { $or: [{ ownerUid }, { ownerUid: null }, { ownerUid: { $exists: false } }] };
+    const clipFilter = { $and: [ownerUidClause, { $or: [{ strikerKey: wrongKey }, { nonStrikerKey: wrongKey }, { bowlerKey: wrongKey }, { fielderKey: wrongKey }] }] };
     const clipCount = clipsCollection ? await clipsCollection.countDocuments(clipFilter) : 0;
 
     const result = {
@@ -4798,10 +4811,10 @@ async function mergePlayersDeep(ownerUid, actorEmail, wrongPlayerName, correctPl
     if (clipsCollection) {
         clipsBefore = await clipsCollection.find(clipFilter).toArray();
         await Promise.all([
-            clipsCollection.updateMany({ ownerUid, strikerKey: wrongKey }, { $set: { strikerName: correctName, strikerKey: correctKey, strikerPlayerId: correctPlayerId } }),
-            clipsCollection.updateMany({ ownerUid, nonStrikerKey: wrongKey }, { $set: { nonStrikerName: correctName, nonStrikerKey: correctKey, nonStrikerPlayerId: correctPlayerId } }),
-            clipsCollection.updateMany({ ownerUid, bowlerKey: wrongKey }, { $set: { bowlerName: correctName, bowlerKey: correctKey, bowlerPlayerId: correctPlayerId } }),
-            clipsCollection.updateMany({ ownerUid, fielderKey: wrongKey }, { $set: { fielderName: correctName, fielderKey: correctKey, fielderPlayerId: correctPlayerId } })
+            clipsCollection.updateMany({ $and: [ownerUidClause, { strikerKey: wrongKey }] }, { $set: { strikerName: correctName, strikerKey: correctKey, strikerPlayerId: correctPlayerId } }),
+            clipsCollection.updateMany({ $and: [ownerUidClause, { nonStrikerKey: wrongKey }] }, { $set: { nonStrikerName: correctName, nonStrikerKey: correctKey, nonStrikerPlayerId: correctPlayerId } }),
+            clipsCollection.updateMany({ $and: [ownerUidClause, { bowlerKey: wrongKey }] }, { $set: { bowlerName: correctName, bowlerKey: correctKey, bowlerPlayerId: correctPlayerId } }),
+            clipsCollection.updateMany({ $and: [ownerUidClause, { fielderKey: wrongKey }] }, { $set: { fielderName: correctName, fielderKey: correctKey, fielderPlayerId: correctPlayerId } })
         ]).catch(err => console.log('Clip resync after player merge error:', err));
         matchIds.forEach(mid => invalidateClipsCache(mid));
     }
@@ -4843,7 +4856,16 @@ async function mergePlayersDeep(ownerUid, actorEmail, wrongPlayerName, correctPl
 adminRouter.post('/cricket/players/merge/preview', async (req, res) => {
     try {
         const { matchId, wrongPlayer, correctPlayer } = req.body || {};
-        const ownerUid = matchId ? await resolveOwnerUidForMerge(safeMatchId(matchId)) : null;
+        // 🩹 FIX: was deriving ownerUid from the match (matchRecordsCollection,
+        // then ballsCollection) — but requireOwner (adminRouter.use above)
+        // already verified who's making this request and put their uid right
+        // on req.ownerUid. Since this whole admin surface is single-owner
+        // (one hardcoded OWNER_EMAIL), that IS the account merge should
+        // operate on — no per-match lookup needed, and no chance of it
+        // coming back empty for an older match whose balls predate ownerUid
+        // being stamped on every delivery. Falls back to the old match-based
+        // resolution only in the unexpected case req.ownerUid is missing.
+        const ownerUid = req.ownerUid || (matchId ? await resolveOwnerUidForMerge(safeMatchId(matchId)) : null);
         const result = await mergePlayersDeep(ownerUid, req.ownerEmail, wrongPlayer, correctPlayer, true);
         if (result.errors && result.errors.length) return res.status(400).json({ success: false, error: result.errors[0] });
         res.json({ success: true, ...result });
@@ -4859,7 +4881,9 @@ adminRouter.post('/cricket/players/merge/preview', async (req, res) => {
 adminRouter.put('/cricket/players/merge', async (req, res) => {
     try {
         const { matchId, wrongPlayer, correctPlayer } = req.body || {};
-        const ownerUid = matchId ? await resolveOwnerUidForMerge(safeMatchId(matchId)) : null;
+        // 🩹 Same fix as the preview route above — prefer the authenticated
+        // owner's own uid over deriving one from the match.
+        const ownerUid = req.ownerUid || (matchId ? await resolveOwnerUidForMerge(safeMatchId(matchId)) : null);
         const result = await mergePlayersDeep(ownerUid, req.ownerEmail, wrongPlayer, correctPlayer, false);
         if (result.errors && result.errors.length) return res.status(400).json({ success: false, error: result.errors[0] });
         const matchIds = result.matches.map(m => m.matchId);
