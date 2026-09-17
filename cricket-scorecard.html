@@ -851,6 +851,74 @@
     #clip-drawer-body{ padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
   }
 
+  /* ---------- Full-screen Commentary page ----------
+     Opens as its own full-viewport screen (mobile AND desktop) rather
+     than just another card — a dedicated ball-by-ball view, grouped by
+     over, with a clip icon on every boundary/wicket delivery that has a
+     cut clip ready. Tapping the icon reuses the exact same video modal
+     as everywhere else in this file, so watch/download behaves
+     identically on phone and laptop. */
+  .commentary-open-btn{
+    margin-left:auto; display:inline-flex; align-items:center; gap:5px; flex:none;
+    padding:6px 12px; border-radius:99px; background:var(--accent-soft); color:var(--accent);
+    border:1px solid transparent; font-size:11.5px; font-weight:800; cursor:pointer;
+    font-family:var(--font-body);
+  }
+  .commentary-open-btn:hover{ border-color:var(--accent); }
+  .commentary-open-btn svg{ width:13px; height:13px; }
+  #commentary-page-backdrop{
+    position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:95;
+    opacity:0; pointer-events:none; transition:opacity .2s ease;
+  }
+  #commentary-page-backdrop.open{ opacity:1; pointer-events:auto; }
+  #commentary-page{
+    position:fixed; inset:0; z-index:96; background:var(--bg); display:flex; flex-direction:column;
+    transform:translateY(100%); transition:transform .28s cubic-bezier(.32,.72,0,1);
+  }
+  #commentary-page.open{ transform:translateY(0); }
+  #commentary-page-head{
+    flex:none; display:flex; align-items:center; gap:12px; padding:14px 16px;
+    padding-top:calc(14px + env(safe-area-inset-top)); border-bottom:1px solid var(--border); background:var(--panel);
+  }
+  #commentary-page-back{
+    width:32px; height:32px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border);
+    color:var(--text); display:flex; align-items:center; justify-content:center; cursor:pointer; flex:none;
+  }
+  #commentary-page-back svg{ width:16px; height:16px; }
+  #commentary-page-head h3{ margin:0; font-family:var(--font-display); font-size:16px; font-weight:800; flex:1; }
+  #commentary-page-head .cp-live{
+    font-size:10px; font-weight:800; letter-spacing:.4px; color:var(--live); display:flex; align-items:center; gap:5px; flex:none;
+  }
+  #commentary-page-head .cp-live::before{ content:''; width:6px; height:6px; border-radius:99px; background:var(--live); animation:pulseDot 1.4s infinite; }
+  #commentary-page-body{ flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:14px 16px calc(24px + env(safe-area-inset-bottom)); max-width:720px; margin:0 auto; width:100%; box-sizing:border-box; }
+  .cm2-over-head{
+    display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin:18px 0 8px;
+    padding-bottom:6px; border-bottom:1px solid var(--border-soft);
+  }
+  .cm2-over-head:first-child{ margin-top:0; }
+  .cm2-over-head .cp-ov-title{ font-family:var(--font-display); font-weight:800; font-size:13.5px; }
+  .cm2-over-head .cp-ov-sub{ font-size:11px; color:var(--text-dim); font-weight:600; text-align:right; }
+  .cm2-row{
+    display:flex; align-items:center; gap:10px; padding:7px 0;
+  }
+  .cm2-badge{
+    flex:none; width:26px; height:26px; border-radius:99px; display:flex; align-items:center; justify-content:center;
+    font-family:var(--font-display); font-weight:800; font-size:11px; background:var(--panel-2); color:var(--text-dim);
+    border:1px solid var(--border-soft);
+  }
+  .cm2-badge.bb-four{ background:var(--four); color:#fff; border-color:transparent; }
+  .cm2-badge.bb-six{ background:var(--six); color:#fff; border-color:transparent; }
+  .cm2-badge.bb-wicket{ background:var(--wicket); color:#fff; border-color:transparent; }
+  .cm2-badge.bb-extra{ background:var(--extra-soft); color:var(--extra); }
+  .cm2-text{ flex:1; min-width:0; font-size:12.5px; line-height:1.4; }
+  .cm2-row.bb-four .cm2-text, .cm2-row.bb-six .cm2-text, .cm2-row.bb-wicket .cm2-text{ font-weight:700; }
+  .cm2-clip-btn{
+    flex:none; width:30px; height:30px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border);
+    color:var(--accent); display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
+  .cm2-clip-btn:hover{ border-color:var(--accent); }
+  .cm2-clip-btn svg{ width:13px; height:13px; }
+
   /* ---------- Video modal ---------- */
   /* Always laid out (display:flex, never display:none) so opacity/transform
      can transition — a display:none/flex swap has no transition at all
@@ -1404,7 +1472,12 @@
 
   <!-- COMMENTARY FEED — auto-generated, ball by ball -->
   <div class="card" id="commentary-card" style="display:none;">
-    <div class="section-title"><span class="dash"></span>Commentary</div>
+    <div class="section-title"><span class="dash"></span>Commentary
+      <button class="commentary-open-btn" id="commentary-open-btn" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5v14l11-7z"/></svg>
+        Full commentary
+      </button>
+    </div>
     <div id="commentary-feed"></div>
   </div>
 
@@ -1517,6 +1590,21 @@
   </div>
   <div id="clip-drawer-statline"></div>
   <div id="clip-drawer-body"></div>
+</div>
+
+<!-- FULL-SCREEN COMMENTARY PAGE — ball-by-ball, grouped by over, with a
+     clip icon on every boundary/wicket delivery that has a clip ready.
+     Tapping a clip icon opens the same #video-modal used everywhere else. -->
+<div id="commentary-page-backdrop"></div>
+<div id="commentary-page" role="dialog" aria-label="Ball by ball commentary">
+  <div id="commentary-page-head">
+    <button id="commentary-page-back" aria-label="Back">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+    <h3>Commentary</h3>
+    <span class="cp-live" id="commentary-page-live">Live</span>
+  </div>
+  <div id="commentary-page-body"><div class="empty-state">Commentary will appear here once the innings begins.</div></div>
 </div>
 
 <!-- VIDEO MODAL — the actual clip byte stream only loads once this opens -->
@@ -2425,6 +2513,7 @@ function render(){
   renderBoundaryDot(s);
   renderHeatmap(s);
   renderCommentary(s);
+  if(commentaryPageOpen) renderCommentaryPage(s);
   renderCompare(s);
   renderTables(s);
   renderBottom(s);
@@ -2851,6 +2940,122 @@ function renderCommentary(s){
     const { cls, text } = commentaryLine(b);
     return `<div class="cm-line ${cls}"><div class="cm-over">${b.over}.${b.ballInOver}</div><div class="cm-text">${text}</div></div>`;
   }).join('');
+}
+
+/* ---------- Full-screen Commentary page ----------
+   A dedicated, own-screen ball-by-ball view (opened by the "Full
+   commentary" button above). Basic text commentary only — no fielding
+   position — grouped by over, newest over first. Every delivery that's
+   a boundary, a wicket, or a wide/no-ball that actually ran away for 4
+   or 6, gets a small play icon IF a clip has already been cut for it;
+   tapping it reuses the existing video modal (openVideoModal), so
+   watch + download work exactly the same on mobile and on desktop. */
+
+// Loosely mirrors isBoundaryDelivery() (used elsewhere for the admin
+// delivery editor) but tolerant of either field-naming convention this
+// file uses for extras, since the live ball log and the edit-modal
+// ball log don't share one schema.
+function isBoundaryBall(b){
+  if(b.isWicket) return true;
+  if(b.ballType === '4' || b.ballType === '6') return true;
+  const k = String(b.ballType || b.kind || '').toLowerCase();
+  if(k === 'nb' || k === 'noball'){ const off = Math.max(0, (b.runs || 0) - 1); return off === 4 || off === 6; }
+  if(k === 'wd' || k === 'wide' || k === 'b' || k === 'bye' || k === 'lb' || k === 'legbye'){ return (b.runs || 0) === 4 || (b.runs || 0) === 6; }
+  return false;
+}
+
+function ballBadgeInfo(b){
+  if(b.isWicket) return { label:'W', cls:'bb-wicket' };
+  if(b.ballType === '6') return { label:'6', cls:'bb-six' };
+  if(b.ballType === '4') return { label:'4', cls:'bb-four' };
+  const k = String(b.ballType || '').toUpperCase();
+  if(k === 'WD' || k === 'WIDE') return { label:'wd', cls:'bb-extra' };
+  if(k === 'NB' || k === 'NOBALL') return { label:'nb', cls:'bb-extra' };
+  if(k === 'B') return { label:'b', cls:'bb-extra' };
+  if(k === 'LB') return { label:'lb', cls:'bb-extra' };
+  return { label:String(b.runs || 0), cls:'' };
+}
+
+// Match-wide clip lookup keyed by "over.ballInOver", refreshed (throttled)
+// each time the commentary page renders, so a clip that finishes cutting
+// while the page is open just quietly grows a play icon on next update.
+let commentaryClipMap = {};
+let commentaryClipsFetchedAt = 0;
+async function refreshCommentaryClips(force){
+  const now = Date.now();
+  if(!force && now - commentaryClipsFetchedAt < 8000) return commentaryClipMap;
+  commentaryClipsFetchedAt = now;
+  const clips = await fetchMatchClips();
+  const map = {};
+  (clips || []).forEach(c => { if(c && c.ready) map[`${c.over}.${c.ballInOver}`] = c; });
+  commentaryClipMap = map;
+  return map;
+}
+
+let commentaryPageOpen = false;
+function openCommentaryPage(){
+  commentaryPageOpen = true;
+  document.getElementById('commentary-page').classList.add('open');
+  document.getElementById('commentary-page-backdrop').classList.add('open');
+  if(latestState) renderCommentaryPage(latestState);
+  refreshCommentaryClips(true).then(() => { if(latestState) renderCommentaryPage(latestState); });
+}
+function closeCommentaryPage(){
+  commentaryPageOpen = false;
+  document.getElementById('commentary-page').classList.remove('open');
+  document.getElementById('commentary-page-backdrop').classList.remove('open');
+}
+document.getElementById('commentary-open-btn').addEventListener('click', openCommentaryPage);
+document.getElementById('commentary-page-back').addEventListener('click', closeCommentaryPage);
+document.getElementById('commentary-page-backdrop').addEventListener('click', closeCommentaryPage);
+document.addEventListener('keydown', (e) => { if(e.key === 'Escape' && commentaryPageOpen) closeCommentaryPage(); });
+
+function renderCommentaryPage(s){
+  const body = document.getElementById('commentary-page-body');
+  if(!body) return;
+  const live = document.getElementById('commentary-page-live');
+  if(live) live.style.display = (s.isFinished || s.status === 'completed') ? 'none' : '';
+  const log = currentInningsLog(s);
+  if(!log.length){
+    body.innerHTML = '<div class="empty-state">Commentary will appear here once the innings begins.</div>';
+    return;
+  }
+  // Group by over (newest over first, newest ball first within an over) —
+  // mirrors the "END OF OVER n" style breakdown, kept intentionally basic.
+  const overs = [];
+  let cur = null;
+  log.forEach(b => {
+    if(!cur || cur.over !== b.over){ cur = { over:b.over, balls:[], runs:0, wickets:0 }; overs.push(cur); }
+    cur.balls.push(b);
+    cur.runs += (b.runs || 0);
+    if(b.isWicket) cur.wickets++;
+  });
+  let cum = 0;
+  overs.forEach(o => { cum += o.runs; o.cumScore = cum; });
+
+  body.innerHTML = overs.slice().reverse().map(o => {
+    const rows = o.balls.slice().reverse().map(b => {
+      const { cls, text } = commentaryLine(b);
+      const badge = ballBadgeInfo(b);
+      const clip = isBoundaryBall(b) ? commentaryClipMap[`${b.over}.${b.ballInOver}`] : null;
+      const clipBtn = clip
+        ? `<button class="cm2-clip-btn" data-clip-id="${escapeHtml(clip.clipId)}" data-title="${escapeHtml(text)}" aria-label="Watch clip">${PLAY_ICON}</button>`
+        : '';
+      return `<div class="cm2-row ${badge.cls}">
+        <div class="cm2-badge ${badge.cls}">${badge.label}</div>
+        <div class="cm2-text">${b.over}.${b.ballInOver} — ${text}</div>
+        ${clipBtn}
+      </div>`;
+    }).join('');
+    return `<div class="cm2-over-head">
+      <div class="cp-ov-title">End of over ${o.over + 1}</div>
+      <div class="cp-ov-sub">${o.runs} run${o.runs===1?'':'s'}${o.wickets ? `, ${o.wickets} wkt${o.wickets===1?'':'s'}` : ''} · ${o.cumScore}</div>
+    </div>${rows}`;
+  }).join('');
+
+  body.querySelectorAll('.cm2-clip-btn').forEach(btn => {
+    btn.addEventListener('click', () => openVideoModal(btn.dataset.clipId, btn.dataset.title));
+  });
 }
 
 let renderScheduled = false;
