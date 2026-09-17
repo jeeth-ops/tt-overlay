@@ -1886,6 +1886,41 @@ app.get('/api/public/tournament/:token/match/:matchId', async (req, res) => {
     }
 });
 
+// Ball-by-ball log for a finished tournament match's Commentary card/full
+// commentary page — same match resolution as the route above, then reads
+// straight off ballsCollection (the permanent source of truth every other
+// correction/clip feature already reads), mapped to the public shape via
+// mapBallForPublic(). Balls are recorded under the match's LIVE roomId, not
+// its permanent tournament matchId (see the roomId-vs-matchId comments
+// elsewhere in this file), so this matches on `match.roomId || match.matchId`
+// exactly like the existing clip-lookup fallbacks do. Returns an empty list
+// (not a 404) for a match with no recorded balls yet, so the client can
+// simply skip rendering commentary rather than treating it as an error.
+app.get('/api/public/tournament/:token/match/:matchId/balls', async (req, res) => {
+    if (!leaguesCollection || !matchRecordsCollection || !ballsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const doc = await leaguesCollection.findOne({ publicToken: req.params.token });
+        if (!doc) return res.status(404).json({ success: false, error: 'Tournament not found' });
+
+        if (await isPrivateLeagueDoc(doc)) {
+            const requesterEmail = await verifiedRequesterEmail(req);
+            if (!isPrivateCreatorEmail(requesterEmail)) {
+                return res.status(404).json({ success: false, error: 'Tournament not found' });
+            }
+        }
+
+        const match = await matchRecordsCollection.findOne({ ownerUid: doc.ownerUid, leagueKey: doc.leagueKey, matchId: req.params.matchId });
+        if (!match) return res.json({ success: true, balls: [] });
+
+        const ballsMatchId = match.roomId || match.matchId;
+        const balls = await ballsCollection.find({ matchId: ballsMatchId }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
+        res.json({ success: true, balls: balls.map(mapBallForPublic) });
+    } catch (err) {
+        console.log('Public tournament match balls fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load ball-by-ball data' });
+    }
+});
+
 // A standalone match's public page, addressed by its own permanent
 // matchId (or the live "connection id"/roomId it was broadcast under
 // before it was ever saved). Deliberately searches across ALL owners'
@@ -1936,6 +1971,29 @@ app.get('/api/public/match/:id', async (req, res) => {
     } catch (err) {
         console.log('Public match fetch error:', err);
         res.status(500).json({ success: false, error: 'Could not load match' });
+    }
+});
+
+// Ball-by-ball log for a finished standalone match — mirrors the tournament
+// version above (same roomId-vs-matchId resolution, same mapBallForPublic()
+// shape), just resolved via the standalone matchId/roomId lookup instead of
+// a tournament token.
+app.get('/api/public/match/:id/balls', async (req, res) => {
+    if (!matchRecordsCollection || !ballsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const id = req.params.id;
+    try {
+        const match = await matchRecordsCollection.findOne({
+            leagueKey: SINGLE_MATCHES_LEAGUE_KEY,
+            $or: [{ matchId: id }, { roomId: id }]
+        });
+        if (!match) return res.json({ success: true, balls: [] });
+
+        const ballsMatchId = match.roomId || match.matchId;
+        const balls = await ballsCollection.find({ matchId: ballsMatchId }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
+        res.json({ success: true, balls: balls.map(mapBallForPublic) });
+    } catch (err) {
+        console.log('Public match balls fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load ball-by-ball data' });
     }
 });
 
@@ -4037,6 +4095,34 @@ function deriveBallFacts(kind, runs) {
         case 'LB': return { legalBall: true, extraType: 'legbye', runsOffBat: 0, extraRuns: total };
         default: return { legalBall: true, extraType: 'none', runsOffBat: total, extraRuns: 0 }; // '0'-'6' and 'W'
     }
+}
+
+// 📖 PUBLIC BALL-LOG MAPPER — reshapes a raw ballsCollection doc (kind/
+// ballInOver/dismissal, the admin/correction-engine schema) into the same
+// per-ball field names the LIVE scorecard's socket-fed ballLog already uses
+// (ballType/isWicket) — see commentaryLine()/ballBadgeInfo() in
+// cricket-scorecard.html. Only 'Wd'/'Nb' need relabeling (WD/NB); every
+// other kind ('0'-'6','W','B','LB') already matches. Strips internal-only
+// fields (strikerKey/bowlerKey/_id) that a public viewer has no use for.
+function normalizeKindForPublic(kind) {
+    if (kind === 'Wd') return 'WD';
+    if (kind === 'Nb') return 'NB';
+    return kind;
+}
+function mapBallForPublic(b) {
+    return {
+        innings: b.innings || 1,
+        over: b.over,
+        ballInOver: b.ballInOver,
+        ballType: normalizeKindForPublic(b.kind),
+        runs: b.runs || 0,
+        striker: b.striker || '',
+        nonStriker: b.nonStriker || '',
+        bowler: b.bowler || '',
+        battingTeam: b.battingTeam === 'B' ? 'B' : 'A',
+        isWicket: !!b.dismissal,
+        dismissal: b.dismissal || null
+    };
 }
 
 // Re-derives the single kind/runs pair from the Edit Delivery screen's
