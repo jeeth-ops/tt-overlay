@@ -3857,27 +3857,46 @@ function renderBalls(s){
 // two genuinely different deliveries (e.g. back-to-back wides, which
 // legitimately share the same "12.3" over label) always differ in
 // scoreAfter/runs and are correctly kept as separate rows.
-// 🐛 FIX v2: the v1 dedup compared raw ball-log fields directly (over,
-// ballType, runs, striker, …) with strict equality, which assumed every
-// duplicate row is a byte-for-byte copy. Real duplicate rows coming out of
-// the panel can carry small representation differences (e.g. `over` as the
-// number 12.1 vs the string "12.1") that make strict field equality
-// silently fail to catch them — which is exactly why duplicates kept
-// showing after deploying v1. This compares the fully RENDERED commentary
-// line instead (over label + the same commentaryLine() text function
-// actually prints) — if two adjacent deliveries would display 100%
-// identical text on screen, they're the same duplicate a viewer is
-// complaining about, full stop, regardless of what the underlying object
-// looks like. Still consecutive-only, so two genuinely different
-// deliveries elsewhere in the innings that happen to read the same text
-// are never touched.
+// 🐛 FIX v3: v2 only collapsed a single ball into the one right before it
+// (A,A → A) — but the real duplication pattern turned out to be a whole
+// BLOCK repeating right after itself (A,B,A,B → A,B — e.g. a wide+single
+// pair logged twice in a row), which a single-item comparison can never
+// catch (each item's IMMEDIATE neighbour genuinely differs, even though
+// the 2-item block as a whole is a repeat). This walks the log left to
+// right, and after adding each ball, checks whether the tail of what's
+// been kept so far is a block of size k (tried largest-first, up to
+// MAX_BLOCK) immediately followed by an identical repeat of that same
+// block — if so, drops the repeat. Loops so a block repeated 3+ times in
+// a row (A,B,A,B,A,B) collapses all the way down to one copy, not just
+// one pair.
+function ballSig(b){
+  return overBallLabel(b.over) + '|' + b.innings + '|' + commentaryLine(b).text;
+}
+const BALLLOG_DEDUP_MAX_BLOCK = 20; // generous — a full over is ~6-10 deliveries incl. extras
 function dedupeBallLog(log){
+  const sigs = [];
   const out = [];
-  let prevKey = null;
   for(const b of log){
-    const key = overBallLabel(b.over) + '|' + b.innings + '|' + commentaryLine(b).text;
-    if(key !== prevKey) out.push(b);
-    prevKey = key;
+    out.push(b);
+    sigs.push(ballSig(b));
+    let collapsed = true;
+    while(collapsed){
+      collapsed = false;
+      const n = sigs.length;
+      const maxK = Math.min(BALLLOG_DEDUP_MAX_BLOCK, Math.floor(n / 2));
+      for(let k = maxK; k >= 1; k--){
+        let same = true;
+        for(let j = 0; j < k; j++){
+          if(sigs[n - 2*k + j] !== sigs[n - k + j]){ same = false; break; }
+        }
+        if(same){
+          sigs.splice(n - k, k);
+          out.splice(n - k, k);
+          collapsed = true;
+          break;
+        }
+      }
+    }
   }
   return out;
 }
