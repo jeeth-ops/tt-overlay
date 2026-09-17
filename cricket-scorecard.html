@@ -3822,16 +3822,37 @@ function matchStatsForPlayer(name){
 
 // Match-wide clip feed for the Match Highlights card — every FOUR/SIX/WICKET
 // cut so far, grouped. Metadata-only + lazy WATCH, same as everywhere else.
+// 🐛 FIX: the server's /api/clips/match/:matchId endpoint defaults to a
+// 50-clip page (max 100 per request) and this call never passed a limit
+// or paged through more — so on any match where the FOUR+SIX+WICKET
+// total across the innings passed 50 (very common by the back half of a
+// T20, and routine in a 2-innings match), everything past that point
+// (sorted ascending by over) was silently never fetched at all. That's
+// why clips looked fine early in an innings but vanished for "beech
+// beech ka" overs — those events were cut and ready on the server, the
+// scorecard just never asked for that page. Now pages through with
+// skip/limit until the server returns a short page (fewer than asked),
+// so the WHOLE match's clips end up in the map regardless of count.
 async function fetchMatchClips(type){
   const matchId = getClipMatchId();
   if(!matchId) return [];
+  const pageSize = 100;
+  const all = [];
+  let skip = 0;
   try{
-    const qs = type ? `?type=${encodeURIComponent(type)}` : '';
-    const res = await apiFetch(`${clipApiBase()}/api/clips/match/${encodeURIComponent(matchId)}${qs}`);
-    if(!res.ok) return [];
-    const data = await res.json();
-    return (data && data.clips) || [];
-  } catch(err){ console.warn('Match clip fetch failed', err); return []; }
+    for(let page = 0; page < 50; page++){ // hard safety cap: 5000 clips max
+      const qs = new URLSearchParams({ limit: String(pageSize), skip: String(skip) });
+      if(type) qs.set('type', type);
+      const res = await apiFetch(`${clipApiBase()}/api/clips/match/${encodeURIComponent(matchId)}?${qs.toString()}`);
+      if(!res.ok) break;
+      const data = await res.json();
+      const batch = (data && data.clips) || [];
+      all.push(...batch);
+      if(batch.length < pageSize) break; // last page
+      skip += pageSize;
+    }
+  } catch(err){ console.warn('Match clip fetch failed', err); }
+  return all;
 }
 
 async function fetchTeamClips(teamKey){
