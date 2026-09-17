@@ -560,9 +560,19 @@
 
   /* ---------- Commentary feed — auto-generated, ball by ball ---------- */
   #commentary-feed{ display:flex; flex-direction:column; max-height:340px; overflow-y:auto; }
-  .cm-line{ display:flex; gap:10px; padding:8px 0; border-bottom:1px solid var(--border-soft); font-size:12px; }
+  .cm-line{ display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--border-soft); font-size:12px; }
   .cm-line:last-child{ border-bottom:none; }
-  .cm-over{ flex:none; width:34px; font-family:var(--font-display); font-weight:800; font-size:11px; color:var(--text-faint); }
+  .cm-badge{
+    flex:none; width:24px; height:24px; border-radius:99px; display:flex; align-items:center; justify-content:center;
+    font-family:var(--font-display); font-weight:800; font-size:10.5px; background:var(--panel-2); color:var(--text-dim);
+    border:1px solid var(--border-soft);
+  }
+  .cm-badge.bb-four{ background:var(--four); color:#fff; border-color:transparent; }
+  .cm-badge.bb-six{ background:var(--six); color:#fff; border-color:transparent; }
+  .cm-badge.bb-wicket{ background:var(--wicket); color:#fff; border-color:transparent; }
+  .cm-badge.bb-extra{ background:var(--extra-soft); color:var(--extra); }
+  .cm-body{ flex:1; min-width:0; }
+  .cm-over{ font-family:var(--font-display); font-weight:700; font-size:10px; color:var(--text-faint); }
   .cm-text{ color:var(--text); font-weight:600; line-height:1.4; }
   .cm-line.cm-wicket .cm-text{ color:var(--wicket); font-weight:800; }
   .cm-line.cm-six .cm-text{ color:var(--six); font-weight:800; }
@@ -858,14 +868,30 @@
      cut clip ready. Tapping the icon reuses the exact same video modal
      as everywhere else in this file, so watch/download behaves
      identically on phone and laptop. */
-  .commentary-open-btn{
-    margin-left:auto; display:inline-flex; align-items:center; gap:5px; flex:none;
-    padding:6px 12px; border-radius:99px; background:var(--accent-soft); color:var(--accent);
-    border:1px solid transparent; font-size:11.5px; font-weight:800; cursor:pointer;
-    font-family:var(--font-body);
+  .commentary-cta{
+    width:100%; margin-top:12px; display:flex; align-items:center; gap:12px; text-align:left;
+    padding:13px 14px; border-radius:14px; border:none; cursor:pointer; font-family:var(--font-body);
+    background:linear-gradient(120deg, var(--accent), color-mix(in srgb, var(--accent) 55%, var(--six)));
+    box-shadow:0 6px 18px color-mix(in srgb, var(--accent) 30%, transparent);
+    transition:transform .15s ease, box-shadow .15s ease;
   }
-  .commentary-open-btn:hover{ border-color:var(--accent); }
-  .commentary-open-btn svg{ width:13px; height:13px; }
+  .commentary-cta:hover{ transform:translateY(-1px); box-shadow:0 8px 22px color-mix(in srgb, var(--accent) 40%, transparent); }
+  .commentary-cta:active{ transform:translateY(0); }
+  .commentary-cta .cta-icon{
+    flex:none; width:38px; height:38px; border-radius:99px; background:rgba(255,255,255,.22);
+    display:flex; align-items:center; justify-content:center; color:var(--accent-contrast);
+  }
+  .commentary-cta .cta-icon svg{ width:15px; height:15px; margin-left:1px; }
+  .commentary-cta .cta-text{ flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; }
+  .commentary-cta .cta-title{ font-family:var(--font-display); font-weight:800; font-size:14px; color:var(--accent-contrast); }
+  .commentary-cta .cta-sub{ font-size:11px; font-weight:600; color:var(--accent-contrast); opacity:.85; }
+  .commentary-cta .cta-arrow{ flex:none; font-size:22px; font-weight:700; color:var(--accent-contrast); opacity:.85; line-height:1; }
+  @media (max-width:480px){
+    .commentary-cta{ padding:12px; gap:10px; }
+    .commentary-cta .cta-icon{ width:34px; height:34px; }
+    .commentary-cta .cta-title{ font-size:13px; }
+    .commentary-cta .cta-sub{ font-size:10.5px; }
+  }
   #commentary-page-backdrop{
     position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:95;
     opacity:0; pointer-events:none; transition:opacity .2s ease;
@@ -1479,13 +1505,16 @@
 
   <!-- COMMENTARY FEED — auto-generated, ball by ball -->
   <div class="card" id="commentary-card" style="display:none;">
-    <div class="section-title"><span class="dash"></span>Commentary
-      <button class="commentary-open-btn" id="commentary-open-btn" type="button">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5v14l11-7z"/></svg>
-        Full commentary
-      </button>
-    </div>
+    <div class="section-title"><span class="dash"></span>Commentary</div>
     <div id="commentary-feed"></div>
+    <button class="commentary-cta" id="commentary-open-btn" type="button">
+      <span class="cta-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
+      <span class="cta-text">
+        <span class="cta-title">Watch Full Commentary</span>
+        <span class="cta-sub">Every over, ball by ball — with boundary &amp; wicket clips</span>
+      </span>
+      <span class="cta-arrow">›</span>
+    </button>
   </div>
 
   <!-- CHARTS: OVER-BY-OVER + PROGRESSION -->
@@ -2945,7 +2974,14 @@ function renderCommentary(s){
   const recent = log.slice(-25).slice().reverse();
   document.getElementById('commentary-feed').innerHTML = recent.map(b => {
     const { cls, text } = commentaryLine(b);
-    return `<div class="cm-line ${cls}"><div class="cm-over">${overBallLabel(b.over)}</div><div class="cm-text">${text}</div></div>`;
+    const badge = ballBadgeInfo(b);
+    return `<div class="cm-line ${cls}">
+      <div class="cm-badge ${badge.cls}">${badge.label}</div>
+      <div class="cm-body">
+        <div class="cm-over">${overBallLabel(b.over)}</div>
+        <div class="cm-text">${text}</div>
+      </div>
+    </div>`;
   }).join('');
 }
 
