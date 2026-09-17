@@ -1282,6 +1282,28 @@
     .hl-btn-grid{ gap:11px; }
     .hl-btn{ padding:13px 14px; }
   }
+  /* Finished-match hero on wide screens: mobile is untouched (these rules
+     only apply at ≥900px, and only once .hero-final is set — see
+     renderFinalSnapshot() / render()'s isFinished branch). Once a result
+     is in, target-wrap/lead-wrap/stat-strip are all hidden, so the card
+     often ends up much taller (matching a live-stream box beside it, or
+     just the wide layout) than its remaining content — leaving a big dead
+     patch of empty card below the team rows. Centering that content
+     vertically and scaling everything up (logo, names, previous scores,
+     the result pill) makes the card read as "full" and considered rather
+     than a small live-match layout stranded in extra space. */
+  @media (min-width:900px){
+    #hero.hero-final{ display:flex; flex-direction:column; justify-content:center; }
+    #hero.hero-final #hero-top{ margin-bottom:26px; }
+    #hero.hero-final #teams-row{ gap:32px; }
+    #hero.hero-final .team-block{ gap:18px; }
+    #hero.hero-final .team-logo{ width:92px; height:92px; border-radius:22px; font-size:28px; box-shadow:0 6px 18px rgba(0,0,0,.18); }
+    #hero.hero-final .team-block.winner .team-logo{ box-shadow:0 0 0 4px color-mix(in srgb, var(--team-color, var(--accent)) 24%, transparent), 0 6px 18px rgba(0,0,0,.2); }
+    #hero.hero-final .team-name{ font-size:19px; }
+    #hero.hero-final .team-short{ font-size:13px; margin-top:2px; }
+    #hero.hero-final .team-prev-score{ font-size:18px; margin-top:8px; }
+    #hero.hero-final #main-score.result-margin{ font-size:15.5px; padding:11px 22px; }
+  }
   /* Small phones: keep the 2-column grid (matches the reference design)
      but tighten padding/type so four-word labels never wrap awkwardly,
      and drop the hover lift since touch devices have no hover state. */
@@ -2496,6 +2518,7 @@ function renderFinalSnapshot(match, displayName){
   if(match.venue){ venueChip.style.display=''; venueChip.textContent = match.venue; } else venueChip.style.display='none';
   const leagueChip = document.getElementById('chip-tournament');
   if(displayName){ leagueChip.style.display=''; leagueChip.textContent = '🏆 ' + displayName; } else leagueChip.style.display='none';
+  document.getElementById('hero').classList.add('hero-final');
   const statusChip = document.getElementById('chip-status');
   statusChip.classList.add('result');
   statusChip.querySelector('.lv-dot').style.display = 'none';
@@ -3531,6 +3554,7 @@ function renderHero(s){
   // makes the LIVE page switch over to the same finished look the moment
   // a result exists, instead of only a live page reload doing that.
   const isFinished = status.badge === 'RESULT';
+  document.getElementById('hero').classList.toggle('hero-final', isFinished);
   const statusChip = document.getElementById('chip-status');
   const statusText = document.getElementById('chip-status-text');
   statusText.textContent = status.text;
