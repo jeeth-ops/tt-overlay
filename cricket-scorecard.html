@@ -893,6 +893,7 @@
   #commentary-page{
     position:fixed; inset:0; z-index:96; background:var(--bg); display:flex; flex-direction:column;
     transform:translateY(100%); transition:transform .28s cubic-bezier(.32,.72,0,1);
+    will-change:transform; backface-visibility:hidden;
   }
   #commentary-page.open{ transform:translateY(0); }
   #commentary-page-head{
@@ -2262,7 +2263,7 @@ function renderFinalCommentary(){
   const lastInnings = finalBallLog.reduce((max, b) => Math.max(max, b.innings || 1), 1);
   finalCommentaryState = { ballLog: finalBallLog, inningsNumber: lastInnings, isFinished: true };
   renderCommentary(finalCommentaryState);
-  if(commentaryPageOpen) renderCommentaryPage(finalCommentaryState);
+  if(commentaryPageOpen){ renderCommentaryPage(finalCommentaryState); markCommentaryPageRendered(finalCommentaryState); }
 }
 // Fetched separately from the match snapshot itself (renderFinalSnapshot)
 // since it's a different collection (ballsCollection vs matchRecords) — a
@@ -2588,6 +2589,16 @@ function changed(section, key){
   _lastKey[section] = key;
   return true;
 }
+// Shared by both the gated main-loop render() call below and the
+// deliberately-ungated calls (opening the page, clips finishing a
+// refresh) — those bypass the gate on purpose (they must always draw),
+// but still need to record what they drew, or the very next live tick
+// would see a "changed" key that was never actually recorded and
+// trigger one redundant extra rebuild right after opening.
+function commentaryPageKey(s){
+  return `${(s.ballLog||[]).length}-${s.isFinished||s.status==='completed'?1:0}`;
+}
+function markCommentaryPageRendered(s){ _lastKey['commentaryPage'] = commentaryPageKey(s); }
 
 function render(){
   const s = latestState;
@@ -2600,7 +2611,15 @@ function render(){
   renderPhaseBreakdown(s);
   renderMVP(s);
   renderCommentary(s);
-  if(commentaryPageOpen) renderCommentaryPage(s);
+  // Gate on total ball count (+ finished flag) instead of re-rendering on
+  // every single socket tick — this page used to rebuild its ENTIRE DOM
+  // (every over, every row) on every state update even when nothing about
+  // the commentary had changed (e.g. a strike-rotation-only or keepalive
+  // update), which is what made it feel laggy on lower-end phones/laptops
+  // and kept resetting the user's scroll position mid-read.
+  if(commentaryPageOpen && changed('commentaryPage', commentaryPageKey(s))){
+    renderCommentaryPage(s);
+  }
   renderCompare(s);
   renderTables(s);
   renderBottom(s);
@@ -3034,7 +3053,12 @@ async function refreshCommentaryClips(force){
   commentaryClipsFetchedAt = now;
   const clips = await fetchMatchClips();
   const map = {};
-  (clips || []).forEach(c => { if(c && c.ready) map[`${c.over}.${c.ballInOver}`] = c; });
+  // Key MUST include innings — over.ballInOver alone repeats every
+  // innings (e.g. "5.3" exists in both the 1st and 2nd innings), so a
+  // boundary/wicket clip from one innings was silently overwriting or
+  // stealing the map slot of the same over.ball in another innings,
+  // making some fours/sixes/wickets show no clip (or the wrong one).
+  (clips || []).forEach(c => { if(c && c.ready) map[`${c.innings || 1}.${c.over}.${c.ballInOver}`] = c; });
   commentaryClipMap = map;
   return map;
 }
@@ -3047,18 +3071,51 @@ let commentaryPageOpen = false;
 // — overwriting it here would quietly change their behaviour too.
 let finalCommentaryState = null;
 function commentaryState(){ return latestState || finalCommentaryState; }
+// Clips finish cutting/uploading a few seconds (sometimes longer) AFTER
+// the ball itself, so a boundary/wicket that happens WHILE the user
+// already has Full Commentary open would never get its clip highlight —
+// refreshCommentaryClips() was previously only ever called once, at the
+// moment the page opened. This timer keeps polling (piggy-backing on
+// refreshCommentaryClips' own internal 8s throttle) for as long as the
+// page stays open, and only triggers a re-render when the clip map
+// actually changed, so a live viewer who leaves the page open gets
+// clips appearing on their own instead of needing to close and reopen.
+let commentaryClipPollTimer = null;
+function clipMapFingerprint(){ return Object.keys(commentaryClipMap).sort().join(','); }
 function openCommentaryPage(){
   commentaryPageOpen = true;
   document.getElementById('commentary-page').classList.add('open');
   document.getElementById('commentary-page-backdrop').classList.add('open');
-  const cs = commentaryState();
-  if(cs) renderCommentaryPage(cs);
-  refreshCommentaryClips(true).then(() => { const cs2 = commentaryState(); if(cs2) renderCommentaryPage(cs2); });
+  // Build the (potentially large) commentary DOM AFTER the slide-up
+  // transition has started, not before — doing it synchronously in the
+  // same tick as adding .open blocked the main thread right as the CSS
+  // transition needed to start, so the open animation itself stuttered
+  // on slower phones/laptops. One rAF is enough to let the transition
+  // kick off first.
+  requestAnimationFrame(() => {
+    const cs = commentaryState();
+    if(cs){ renderCommentaryPage(cs); markCommentaryPageRendered(cs); }
+    refreshCommentaryClips(true).then(() => {
+      const cs2 = commentaryState();
+      if(cs2){ renderCommentaryPage(cs2); markCommentaryPageRendered(cs2); }
+    });
+  });
+  if(commentaryClipPollTimer) clearInterval(commentaryClipPollTimer);
+  commentaryClipPollTimer = setInterval(async () => {
+    const before = clipMapFingerprint();
+    await refreshCommentaryClips();
+    if(!commentaryPageOpen) return;
+    if(clipMapFingerprint() !== before){
+      const cs = commentaryState();
+      if(cs){ renderCommentaryPage(cs); markCommentaryPageRendered(cs); }
+    }
+  }, 8000);
 }
 function closeCommentaryPage(){
   commentaryPageOpen = false;
   document.getElementById('commentary-page').classList.remove('open');
   document.getElementById('commentary-page-backdrop').classList.remove('open');
+  if(commentaryClipPollTimer){ clearInterval(commentaryClipPollTimer); commentaryClipPollTimer = null; }
 }
 document.getElementById('commentary-open-btn').addEventListener('click', openCommentaryPage);
 document.getElementById('commentary-page-back').addEventListener('click', closeCommentaryPage);
@@ -3068,6 +3125,17 @@ document.addEventListener('keydown', (e) => { if(e.key === 'Escape' && commentar
 function renderCommentaryPage(s){
   const body = document.getElementById('commentary-page-body');
   if(!body) return;
+  // Preserve reading position across the rebuild below. New balls render
+  // at the TOP (newest innings/over/ball first), so replacing innerHTML
+  // used to yank anyone scrolled down back to a random spot (browsers
+  // clamp scrollTop to the new, temporarily-shorter content while it's
+  // mid-rebuild). If the user is already pinned to the top (following
+  // live), keep them pinned to the top so they see the newest ball;
+  // otherwise keep the same content under their eyes by compensating for
+  // however much taller/shorter the page just became.
+  const wasAtTop = body.scrollTop <= 4;
+  const prevScrollTop = body.scrollTop;
+  const prevScrollHeight = body.scrollHeight;
   const live = document.getElementById('commentary-page-live');
   if(live) live.style.display = (s.isFinished || s.status === 'completed') ? 'none' : '';
   // Whole match, not just the innings in progress — this is also what
@@ -3124,7 +3192,7 @@ function renderCommentaryPage(s){
         const { text } = commentaryLine(b);
         const badge = ballBadgeInfo(b);
         const { over: ovNum, ball: ballNum } = overBallParts(b.over);
-        const clip = isBoundaryBall(b) ? commentaryClipMap[`${ovNum}.${ballNum}`] : null;
+        const clip = isBoundaryBall(b) ? commentaryClipMap[`${inn}.${ovNum}.${ballNum}`] : null;
         const clipAttrs = clip ? `data-clip-id="${escapeHtml(clip.clipId)}" data-title="${escapeHtml(text)}"` : '';
         const clipBtn = clip ? `<span class="cm2-clip-hint">${PLAY_ICON}</span>` : '';
         const isNewBat = newBatsmanAt.has(b);
@@ -3155,6 +3223,12 @@ function renderCommentaryPage(s){
   body.querySelectorAll('.cm2-row-clip').forEach(row => {
     row.addEventListener('click', () => openVideoModal(row.dataset.clipId, row.dataset.title));
   });
+
+  if(wasAtTop){
+    body.scrollTop = 0;
+  } else {
+    body.scrollTop = prevScrollTop + (body.scrollHeight - prevScrollHeight);
+  }
 }
 
 let renderScheduled = false;
