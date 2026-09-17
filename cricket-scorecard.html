@@ -3857,18 +3857,27 @@ function renderBalls(s){
 // two genuinely different deliveries (e.g. back-to-back wides, which
 // legitimately share the same "12.3" over label) always differ in
 // scoreAfter/runs and are correctly kept as separate rows.
+// 🐛 FIX v2: the v1 dedup compared raw ball-log fields directly (over,
+// ballType, runs, striker, …) with strict equality, which assumed every
+// duplicate row is a byte-for-byte copy. Real duplicate rows coming out of
+// the panel can carry small representation differences (e.g. `over` as the
+// number 12.1 vs the string "12.1") that make strict field equality
+// silently fail to catch them — which is exactly why duplicates kept
+// showing after deploying v1. This compares the fully RENDERED commentary
+// line instead (over label + the same commentaryLine() text function
+// actually prints) — if two adjacent deliveries would display 100%
+// identical text on screen, they're the same duplicate a viewer is
+// complaining about, full stop, regardless of what the underlying object
+// looks like. Still consecutive-only, so two genuinely different
+// deliveries elsewhere in the innings that happen to read the same text
+// are never touched.
 function dedupeBallLog(log){
   const out = [];
+  let prevKey = null;
   for(const b of log){
-    const prev = out[out.length - 1];
-    const same = prev &&
-      prev.over === b.over && prev.innings === b.innings &&
-      prev.ballType === b.ballType && prev.runs === b.runs &&
-      prev.striker === b.striker && prev.nonStriker === b.nonStriker &&
-      prev.bowler === b.bowler && prev.isWicket === b.isWicket &&
-      (prev.scoreAfter || '') === (b.scoreAfter || '') &&
-      (prev.dismissal || '') === (b.dismissal || '');
-    if(!same) out.push(b);
+    const key = overBallLabel(b.over) + '|' + b.innings + '|' + commentaryLine(b).text;
+    if(key !== prevKey) out.push(b);
+    prevKey = key;
   }
   return out;
 }
