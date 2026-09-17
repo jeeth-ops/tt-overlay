@@ -1823,6 +1823,51 @@ app.get('/api/public/tournament/:token', async (req, res) => {
         const cached = getCached(publicTournamentCache, req.params.token);
         if (cached) return res.json(cached);
         const matches = await getLeagueMatches(doc.ownerUid, doc.leagueKey);
+
+        // 🩹 FIX: a "Live Now" pointer can go stale not just when a match
+        // finishes under ITS OWN tournament (already handled client-side
+        // via liveRoomAlreadyFinished) but also when the operator started
+        // scoring it under the WRONG tournament by mistake — the live
+        // ping landed on THIS tournament's doc, but the match was
+        // ultimately SAVED (and is genuinely finished) under a completely
+        // different leagueKey. The old check only ever looked at this
+        // tournament's own `matches` array, so it could never see a
+        // completion that happened elsewhere, and a finished match from
+        // another tournament kept showing as live here forever. matchId
+        // is globally unique (same source of truth used everywhere else —
+        // see findCanonicalBall etc.), so check completion across ALL
+        // leagues, not just this one, and self-heal the stored pointer
+        // once we find a stale entry.
+        const rawLiveMatches = doc.liveMatches || [];
+        let liveMatches = rawLiveMatches;
+        if (rawLiveMatches.length) {
+            const matchIds = rawLiveMatches.map(m => m.matchId).filter(Boolean);
+            const roomIds = rawLiveMatches.map(m => m.roomId).filter(Boolean);
+            const orClauses = [];
+            if (matchIds.length) orClauses.push({ matchId: { $in: matchIds } });
+            if (roomIds.length) orClauses.push({ roomId: { $in: roomIds } });
+            const finishedElsewhere = orClauses.length
+                ? await matchRecordsCollection.find(
+                    { $or: orClauses, winningTeam: { $exists: true, $ne: null } },
+                    { projection: { matchId: 1, roomId: 1 } }
+                ).toArray()
+                : [];
+            const finishedMatchIds = new Set(finishedElsewhere.map(m => m.matchId).filter(Boolean));
+            const finishedRoomIds = new Set(finishedElsewhere.map(m => m.roomId).filter(Boolean));
+            liveMatches = rawLiveMatches.filter(m =>
+                !(m.matchId && finishedMatchIds.has(m.matchId)) && !(m.roomId && finishedRoomIds.has(m.roomId))
+            );
+            if (liveMatches.length !== rawLiveMatches.length) {
+                const mostRecent = liveMatches[liveMatches.length - 1] || null;
+                await leaguesCollection.updateOne(
+                    { _id: doc._id },
+                    { $set: { liveMatches, liveRoomId: mostRecent ? mostRecent.roomId : null, liveMatchId: mostRecent ? mostRecent.matchId : null } }
+                );
+                doc.liveRoomId = mostRecent ? mostRecent.roomId : null;
+                doc.liveMatchId = mostRecent ? mostRecent.matchId : null;
+            }
+        }
+
         const payload = {
             success: true,
             displayName: doc.displayName || '',
@@ -1830,7 +1875,7 @@ app.get('/api/public/tournament/:token', async (req, res) => {
             // roomId/matchId: most-recently-active match, for older
             // frontends. matches: every match currently live under this
             // tournament at once (see the live-status route comment above).
-            live: { roomId: doc.liveRoomId || null, matchId: doc.liveMatchId || null, matches: doc.liveMatches || [] },
+            live: { roomId: doc.liveRoomId || null, matchId: doc.liveMatchId || null, matches: liveMatches },
             pointsTable: computePointsTable(matches),
             leaderboards: computeLeaderboards(matches)
         };
