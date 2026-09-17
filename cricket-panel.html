@@ -866,6 +866,9 @@
         jaayegi — alag se Stop Clip dabana zaroori nahi. Woh button sirf galti se shuru ki gayi clip cancel karne ke
         liye hai.
       </div>
+      <div style="font-size:11px; opacity:.7; margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,.08);">
+        ☁️ Yeh clips khud-ba-khud Google Drive <b>aur</b> Cloudflare (R2) dono me jaate hain — koi alag connect step StreamCutter ke liye nahi chahiye. Bas neeche <b>🎬 Match Recording</b> card me ek baar <b>🔗 Connect Google Drive</b> dabao (isi Match ID ke liye) — woh connection is match ke har clip pe apply hota hai, chahe woh StreamCutter se cuti ho. <button type="button" class="ghost small" data-target="card-recording" onclick="document.getElementById('card-recording').scrollIntoView({behavior:'smooth',block:'start'});">⬇️ Connect Drive kholo</button>
+      </div>
     </div>
 
     <div class="card" id="card-new-batsman">
@@ -1915,18 +1918,41 @@ function scRenderStreamStatus(health){
   else text.textContent = '🔴 LIVE';
 }
 
+// 🩹 FLICKER FIX: a single slow/dropped request to the local StreamCutter
+// app used to be enough to flip the dot/text/preview off, and the very
+// next poll (3s / 1.2s later) would flip it back on — which is exactly
+// what read as "blinking, appearing then disappearing" below Ball Outcome.
+// Two changes fix that:
+//   1. Require 2 consecutive failures/successes (a "streak") before
+//      actually changing what's shown, so one hiccup is absorbed silently.
+//   2. Never let a new poll start while the previous one is still in
+//      flight (with an explicit timeout), so slow/stale responses can't
+//      pile up and land out of order.
+let scStatusFailStreak = 0, scStatusOkStreak = 0, scStatusInFlight = false;
 async function scPollStatus(){
+  if(scStatusInFlight) return;
+  scStatusInFlight = true;
   try{
-    const s = await fetch(`${STREAMCUTTER_URL}/status`).then(r => r.json());
-    scStreaming = !!s.streaming;
-    scRenderStreamStatus(s.health);
-    // Mirrors the server's own clip-open state back onto this panel — in
-    // case the panel was reloaded mid-clip, or the server auto-cancelled
-    // an open clip for any reason.
-    if(scClipOpen !== !!s.clipInProgress){ scClipOpen = !!s.clipInProgress; scRenderClipStatus(); }
+    const s = await fetch(`${STREAMCUTTER_URL}/status`, { signal: AbortSignal.timeout(2500) }).then(r => r.json());
+    scStatusFailStreak = 0;
+    scStatusOkStreak++;
+    if(scStatusOkStreak >= 1){
+      scStreaming = !!s.streaming;
+      scRenderStreamStatus(s.health);
+      // Mirrors the server's own clip-open state back onto this panel — in
+      // case the panel was reloaded mid-clip, or the server auto-cancelled
+      // an open clip for any reason.
+      if(scClipOpen !== !!s.clipInProgress){ scClipOpen = !!s.clipInProgress; scRenderClipStatus(); }
+    }
   } catch(e){
-    scStreaming = false;
-    scRenderStreamStatus(null);
+    scStatusOkStreak = 0;
+    scStatusFailStreak++;
+    if(scStatusFailStreak >= 2){ // ignore a single dropped/slow poll
+      scStreaming = false;
+      scRenderStreamStatus(null);
+    }
+  } finally {
+    scStatusInFlight = false;
   }
 }
 setInterval(scPollStatus, 3000);
@@ -1934,13 +1960,29 @@ setInterval(scPollStatus, 3000);
 // Live camera preview — works before Start Stream (StreamCutter keeps a
 // lightweight preview-only capture running whenever it isn't actually
 // live) and keeps updating during the stream too (same frame the overlay
-// produces). ~1 request/sec, plain <img>, no CORS needed for image loads.
+// produces). Loads each frame into a throwaway Image() first and only
+// swaps it into the visible <img> once it actually loads — and only
+// hides the box after 2 consecutive misses — so one dropped frame never
+// makes the preview flash on/off.
+let scPreviewFailStreak = 0, scPreviewInFlight = false;
 function scRefreshPreview(){
   const img = document.getElementById('sc-preview-img');
-  if(!img) return;
-  img.onerror = () => { img.style.visibility = 'hidden'; };
-  img.onload = () => { img.style.visibility = 'visible'; };
-  img.src = `${STREAMCUTTER_URL}/preview.jpg?t=${Date.now()}`;
+  if(!img || scPreviewInFlight) return;
+  scPreviewInFlight = true;
+  const probe = new Image();
+  const src = `${STREAMCUTTER_URL}/preview.jpg?t=${Date.now()}`;
+  probe.onload = () => {
+    scPreviewInFlight = false;
+    scPreviewFailStreak = 0;
+    img.src = probe.src;
+    img.style.visibility = 'visible';
+  };
+  probe.onerror = () => {
+    scPreviewInFlight = false;
+    scPreviewFailStreak++;
+    if(scPreviewFailStreak >= 2) img.style.visibility = 'hidden';
+  };
+  probe.src = src;
 }
 setInterval(scRefreshPreview, 1200);
 document.addEventListener('DOMContentLoaded', () => {
@@ -1961,19 +2003,24 @@ document.addEventListener('DOMContentLoaded', () => {
 // answer to "how do I know it's running" now that no one ever has to
 // manually open it again. Just pings its /status endpoint every few
 // seconds; if it answers, it's running (even minimized in the background).
+let clipperFailStreak = 0;
 async function checkClipperHelperStatus(){
   const dot = document.getElementById('clipper-status-dot');
   const text = document.getElementById('clipper-status-text');
   if(!dot || !text) return; // card not on screen yet
   try {
     const s = await fetch(`${CLIPPER_HELPER_URL}/status`, { signal: AbortSignal.timeout(2000) }).then(r => r.json());
+    clipperFailStreak = 0;
     dot.classList.add('on');
     text.textContent = s.vmixRecordingFolder
       ? '🟢 Running — ready for match day'
       : '🟡 Running — but setup isn\'t finished yet (open the Setup page below)';
   } catch(e) {
-    dot.classList.remove('on');
-    text.textContent = '🔴 Not running — double-click ClipperHelper.exe on this PC once';
+    clipperFailStreak++;
+    if(clipperFailStreak >= 2){ // ignore a single dropped poll instead of flickering
+      dot.classList.remove('on');
+      text.textContent = '🔴 Not running — double-click ClipperHelper.exe on this PC once';
+    }
   }
 }
 checkClipperHelperStatus();
