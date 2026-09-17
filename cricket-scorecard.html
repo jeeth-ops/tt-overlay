@@ -331,7 +331,7 @@
   .section-title .dash{ width:5px; height:16px; background:var(--accent); border-radius:3px; flex:none; }
 
   /* ---------- Hero ---------- */
-  #hero{ position:relative; overflow:hidden; padding:22px; }
+  #hero{ position:relative; overflow:hidden; padding:22px; container-type:inline-size; container-name:hero; }
   #hero::before{
     content:''; position:absolute; inset:0; pointer-events:none;
     /* 🎨 Hero background = the "alive" team-colour moment, kept strong.
@@ -1292,17 +1292,50 @@
      vertically and scaling everything up (logo, names, previous scores,
      the result pill) makes the card read as "full" and considered rather
      than a small live-match layout stranded in extra space. */
+  /* Finished-match hero: scale logo/name/score sizes to how much space
+     the hero card ACTUALLY has, not the browser window's width. Using a
+     plain @media (min-width) here previously assumed a wide hero — but
+     on laptop widths the Live Stream box sits beside the hero (see
+     #hero-row) and eats ~400px, so the hero itself can be much narrower
+     than the window even on a "big screen", and the old fixed sizes
+     crowded/overlapped the logo and team name. A container query keyed
+     off #hero's own inline-size (set via container-type above) scales
+     correctly either way: narrower next to a stream box, wider with no
+     stream box. All of this still only applies at ≥900px viewport width —
+     wrapped in the same media query as before — so mobile stays exactly
+     as it already was. */
   @media (min-width:900px){
     #hero.hero-final{ display:flex; flex-direction:column; justify-content:center; }
-    #hero.hero-final #hero-top{ margin-bottom:26px; }
-    #hero.hero-final #teams-row{ gap:28px; }
-    #hero.hero-final .team-block{ gap:16px; }
-    #hero.hero-final .team-logo{ width:84px; height:84px; border-radius:20px; font-size:26px; box-shadow:0 6px 18px rgba(0,0,0,.18); }
-    #hero.hero-final .team-block.winner .team-logo{ box-shadow:0 0 0 4px color-mix(in srgb, var(--team-color, var(--accent)) 24%, transparent), 0 6px 18px rgba(0,0,0,.2); }
-    #hero.hero-final .team-name{ font-size:19px; }
-    #hero.hero-final .team-short{ font-size:13px; margin-top:2px; }
-    #hero.hero-final .team-prev-score{ font-size:16px; margin-top:8px; white-space:nowrap; }
-    #hero.hero-final #main-score.result-margin{ font-size:15.5px; padding:11px 22px; }
+    @container hero (min-width:460px){
+      #hero.hero-final #hero-top{ margin-bottom:22px; }
+      #hero.hero-final #teams-row{ gap:18px; }
+      #hero.hero-final .team-block{ gap:12px; }
+      #hero.hero-final .team-logo{ width:60px; height:60px; border-radius:15px; font-size:19px; box-shadow:0 5px 14px rgba(0,0,0,.16); }
+      #hero.hero-final .team-block.winner .team-logo{ box-shadow:0 0 0 3px color-mix(in srgb, var(--team-color, var(--accent)) 24%, transparent), 0 5px 14px rgba(0,0,0,.18); }
+      #hero.hero-final .team-name{ font-size:16px; }
+      #hero.hero-final .team-short{ font-size:12px; margin-top:2px; }
+      #hero.hero-final .team-prev-score{ font-size:14px; margin-top:6px; white-space:nowrap; }
+      #hero.hero-final #main-score.result-margin{ font-size:13px; padding:9px 18px; }
+    }
+    @container hero (min-width:640px){
+      #hero.hero-final #hero-top{ margin-bottom:26px; }
+      #hero.hero-final #teams-row{ gap:24px; }
+      #hero.hero-final .team-block{ gap:15px; }
+      #hero.hero-final .team-logo{ width:72px; height:72px; border-radius:17px; font-size:22px; }
+      #hero.hero-final .team-name{ font-size:18px; }
+      #hero.hero-final .team-short{ font-size:12.5px; }
+      #hero.hero-final .team-prev-score{ font-size:15.5px; }
+      #hero.hero-final #main-score.result-margin{ font-size:14.5px; padding:10px 20px; }
+    }
+    @container hero (min-width:820px){
+      #hero.hero-final #teams-row{ gap:30px; }
+      #hero.hero-final .team-block{ gap:17px; }
+      #hero.hero-final .team-logo{ width:84px; height:84px; border-radius:20px; font-size:26px; }
+      #hero.hero-final .team-name{ font-size:19px; }
+      #hero.hero-final .team-short{ font-size:13px; }
+      #hero.hero-final .team-prev-score{ font-size:16px; }
+      #hero.hero-final #main-score.result-margin{ font-size:15.5px; padding:11px 22px; }
+    }
   }
   /* Small phones: keep the 2-column grid (matches the reference design)
      but tighten padding/type so four-word labels never wrap awkwardly,
