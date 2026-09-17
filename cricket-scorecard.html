@@ -3092,7 +3092,7 @@ function computeOverEndSummaries(log){
   const list = [], byLastBall = new Map();
   let cumRuns = 0, cumWkts = 0;
 
-  groups.forEach(g => {
+  groups.forEach((g, idx) => {
     let overRuns = 0, overWkts = 0, legalCount = 0, bowlerRunsThisOver = 0, bowlerName = null;
     g.balls.forEach(b => {
       bowlerName = b.bowler || bowlerName;
@@ -3116,7 +3116,19 @@ function computeOverEndSummaries(log){
       if(b.isWicket) cumWkts++;
     });
 
-    if(legalCount !== 6) return; // over still in progress — no end-of-over card yet
+    // 🩹 FIX: this used to require EXACTLY 6 legal deliveries to treat an
+    // over as "done" — but any small data hiccup (a bye/leg-bye scored
+    // under a slightly different ballType string, a correction that
+    // shifted a ball's kind, an old ball missing ballType entirely)
+    // pushed legalCount off 6 forever for that one over, so it silently
+    // never got its END OF OVER card even though play had long since
+    // moved on to later overs — exactly the "shows up in some overs,
+    // not others" bug. The only over that can genuinely still be "in
+    // progress" is the LAST group in this log (nothing bowled after it
+    // yet); every earlier group is, by definition, already over — so
+    // give it the summary card regardless of the exact legal-ball tally.
+    const isCurrentOver = idx === groups.length - 1;
+    if(legalCount !== 6 && isCurrentOver) return; // genuinely still in progress — no card yet
 
     let bow = null;
     if(bowlerName){
