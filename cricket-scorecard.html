@@ -974,6 +974,38 @@
   .cm2-row-clip:hover{ background:var(--panel-2); }
   .cm2-row-clip .cm2-badge{ box-shadow:0 0 0 2px var(--accent-soft); }
 
+  /* Big "END OF OVER" card on the full-screen commentary page — same data
+     as the small .cm-eoo widget card elsewhere, just scaled up so it reads
+     clearly as a section break between one over and the next (newest over
+     first, so this sits ABOVE the next over's own rows). */
+  .cm2-eoo{
+    background:var(--panel-2); border:1px solid var(--border-soft); border-radius:var(--radius-md, 12px);
+    padding:14px 16px; margin:18px 0 10px;
+  }
+  .cm2-eoo:first-child{ margin-top:0; }
+  .cm2-eoo .cm-eoo-head{ margin-bottom:2px; }
+  .cm2-eoo .cm-eoo-title{ font-size:15.5px; letter-spacing:.3px; }
+  .cm2-eoo .cm-eoo-score{ font-size:19px; }
+  .cm2-eoo .cm-eoo-sub{ font-size:12.5px; margin-bottom:6px; }
+  .cm2-eoo .cm-eoo-bat-name, .cm2-eoo .cm-eoo-bowler-name{ font-size:13px; }
+  .cm2-eoo .cm-eoo-bat-figs, .cm2-eoo .cm-eoo-bowler-figs{ font-size:13px; }
+
+  /* New-batsman / new-bowler call-outs — visually distinct chips so a
+     player coming to the crease or a bowling change is obvious at a
+     glance while scrolling the feed. */
+  .cm2-new-bowl{
+    display:flex; align-items:center; gap:6px; margin:0 0 10px; padding:6px 10px;
+    background:var(--accent-soft); color:var(--accent); border-radius:99px;
+    font-size:11.5px; font-weight:800; letter-spacing:.2px; width:fit-content;
+  }
+  .cm2-new-bowl svg{ width:12px; height:12px; flex:none; }
+  .cm2-new-bat{
+    display:inline-flex; align-items:center; gap:5px; margin-left:8px; padding:2px 8px;
+    background:var(--extra-soft); color:var(--extra); border-radius:99px;
+    font-size:10px; font-weight:800; letter-spacing:.2px; white-space:nowrap; flex:none;
+  }
+  .cm2-row.cm2-row-newbat{ background:var(--extra-soft); border-radius:var(--radius-sm); margin:0 -8px; padding:7px 8px; }
+
   /* ---------- Video modal ---------- */
   /* Always laid out (display:flex, never display:none) so opacity/transform
      can transition — a display:none/flex swap has no transition at all
@@ -3107,14 +3139,14 @@ function computeOverEndSummaries(log){
   return { list, byLastBall };
 }
 
-function overEndSummaryHtml(sum){
+function overEndSummaryHtml(sum, extraClass){
   const battersHtml = sum.batters.map(b =>
     `<div class="cm-eoo-bat-row"><span class="cm-eoo-bat-name">${escapeHtml(b.name)}*</span><span class="cm-eoo-bat-figs">${b.runs} (${b.balls})</span></div>`
   ).join('');
   const bowlerHtml = sum.bowler
     ? `<div class="cm-eoo-bowler-row"><span class="cm-eoo-bowler-name">${escapeHtml(sum.bowler.name)}</span><span class="cm-eoo-bowler-figs">${sum.bowler.overs}-${sum.bowler.maidens}-${sum.bowler.runs}-${sum.bowler.wickets}</span></div>`
     : '';
-  return `<div class="cm-eoo">
+  return `<div class="cm-eoo${extraClass ? ' ' + extraClass : ''}">
     <div class="cm-eoo-head">
       <div class="cm-eoo-title">END OF OVER ${sum.overIdx + 1}</div>
       <div class="cm-eoo-score">${sum.cumRuns}/${sum.cumWkts}</div>
@@ -3268,6 +3300,20 @@ function renderCommentaryPage(s){
     const ordinal = inn === 1 ? '1st' : inn === 2 ? '2nd' : inn === 3 ? '3rd' : `${inn}th`;
     const inningsHead = `<div class="cm2-innings-head">${ordinal} Innings${team.name || team.short ? ` — ${escapeHtml(team.name || team.short)}` : ''}</div>`;
 
+    // Which ball each new batsman first walks out to face (their first
+    // legal delivery on strike, chronologically) and which over each new
+    // bowler's spell begins — computed once, forward through the innings,
+    // so the reversed newest-first render below can just look them up.
+    const { byLastBall } = computeOverEndSummaries(log);
+    const seenBatters = new Set();
+    const newBatsmanAt = new Set();
+    log.forEach(b => {
+      if(b.striker && LEGAL_KINDS.has(b.ballType) && !seenBatters.has(b.striker)){
+        seenBatters.add(b.striker);
+        newBatsmanAt.add(b);
+      }
+    });
+
     const overs = [];
     let cur = null;
     log.forEach(b => {
@@ -3277,8 +3323,14 @@ function renderCommentaryPage(s){
       cur.runs += (b.runs || 0);
       if(b.isWicket) cur.wickets++;
     });
-    let cum = 0;
-    overs.forEach(o => { cum += o.runs; o.cumScore = cum; });
+    let cum = 0, prevBowler = null;
+    overs.forEach(o => {
+      cum += o.runs; o.cumScore = cum;
+      const bowlerName = (o.balls.find(b => b.bowler) || {}).bowler || null;
+      o.bowlerName = bowlerName;
+      o.newBowler = !!bowlerName && bowlerName !== prevBowler;
+      if(bowlerName) prevBowler = bowlerName;
+    });
 
     const oversHtml = overs.slice().reverse().map(o => {
       const rows = o.balls.slice().reverse().map(b => {
@@ -3288,16 +3340,26 @@ function renderCommentaryPage(s){
         const clip = isBoundaryBall(b) ? commentaryClipMap[`${ovNum}.${ballNum}`] : null;
         const clipAttrs = clip ? `data-clip-id="${escapeHtml(clip.clipId)}" data-title="${escapeHtml(text)}"` : '';
         const clipBtn = clip ? `<span class="cm2-clip-hint">${PLAY_ICON}</span>` : '';
-        return `<div class="cm2-row ${badge.cls} ${clip ? 'cm2-row-clip' : ''}" ${clipAttrs}>
+        const isNewBat = newBatsmanAt.has(b);
+        const newBatTag = isNewBat ? `<span class="cm2-new-bat">🆕 ${escapeHtml(b.striker || 'New batsman')}</span>` : '';
+        return `<div class="cm2-row ${badge.cls} ${clip ? 'cm2-row-clip' : ''} ${isNewBat ? 'cm2-row-newbat' : ''}" ${clipAttrs}>
           <div class="cm2-badge ${badge.cls}">${badge.label}</div>
-          <div class="cm2-text">${ovNum}.${ballNum} — ${text}</div>
+          <div class="cm2-text">${ovNum}.${ballNum} — ${text}${newBatTag}</div>
           ${clipBtn}
         </div>`;
       }).join('');
-      return `<div class="cm2-over-head">
-        <div class="cp-ov-title">End of over ${o.overIdx + 1}</div>
-        <div class="cp-ov-sub">${o.runs} run${o.runs===1?'':'s'}${o.wickets ? `, ${o.wickets} wkt${o.wickets===1?'':'s'}` : ''} · ${o.cumScore}</div>
-      </div>${rows}`;
+      const lastBall = o.balls[o.balls.length - 1];
+      const sum = byLastBall.get(lastBall);
+      const head = sum
+        ? overEndSummaryHtml(sum, 'cm2-eoo')
+        : `<div class="cm2-over-head">
+            <div class="cp-ov-title">Over ${o.overIdx + 1} (in progress)</div>
+            <div class="cp-ov-sub">${o.runs} run${o.runs===1?'':'s'}${o.wickets ? `, ${o.wickets} wkt${o.wickets===1?'':'s'}` : ''} · ${o.cumScore}</div>
+          </div>`;
+      const newBowlerTag = o.newBowler
+        ? `<div class="cm2-new-bowl">🎯 ${escapeHtml(o.bowlerName)} comes into the attack</div>`
+        : '';
+      return newBowlerTag + head + rows;
     }).join('');
 
     return inningsHead + oversHtml;
