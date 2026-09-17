@@ -891,6 +891,11 @@
   }
   #commentary-page-head .cp-live::before{ content:''; width:6px; height:6px; border-radius:99px; background:var(--live); animation:pulseDot 1.4s infinite; }
   #commentary-page-body{ flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:14px 16px calc(24px + env(safe-area-inset-bottom)); max-width:720px; margin:0 auto; width:100%; box-sizing:border-box; }
+  .cm2-innings-head{
+    font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; color:var(--text-dim);
+    margin:20px 0 4px; padding:4px 0; border-bottom:2px solid var(--border);
+  }
+  .cm2-innings-head:first-child{ margin-top:0; }
   .cm2-over-head{
     display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin:18px 0 8px;
     padding-bottom:6px; border-bottom:1px solid var(--border-soft);
@@ -912,12 +917,14 @@
   .cm2-badge.bb-extra{ background:var(--extra-soft); color:var(--extra); }
   .cm2-text{ flex:1; min-width:0; font-size:12.5px; line-height:1.4; }
   .cm2-row.bb-four .cm2-text, .cm2-row.bb-six .cm2-text, .cm2-row.bb-wicket .cm2-text{ font-weight:700; }
-  .cm2-clip-btn{
-    flex:none; width:30px; height:30px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border);
-    color:var(--accent); display:flex; align-items:center; justify-content:center; cursor:pointer;
+  .cm2-clip-hint{
+    flex:none; width:26px; height:26px; border-radius:99px; background:var(--accent-soft); color:var(--accent);
+    display:flex; align-items:center; justify-content:center;
   }
-  .cm2-clip-btn:hover{ border-color:var(--accent); }
-  .cm2-clip-btn svg{ width:13px; height:13px; }
+  .cm2-clip-hint svg{ width:11px; height:11px; }
+  .cm2-row-clip{ cursor:pointer; border-radius:var(--radius-sm); margin:0 -8px; padding:7px 8px; transition:background .12s ease; }
+  .cm2-row-clip:hover{ background:var(--panel-2); }
+  .cm2-row-clip .cm2-badge{ box-shadow:0 0 0 2px var(--accent-soft); }
 
   /* ---------- Video modal ---------- */
   /* Always laid out (display:flex, never display:none) so opacity/transform
@@ -2938,7 +2945,7 @@ function renderCommentary(s){
   const recent = log.slice(-25).slice().reverse();
   document.getElementById('commentary-feed').innerHTML = recent.map(b => {
     const { cls, text } = commentaryLine(b);
-    return `<div class="cm-line ${cls}"><div class="cm-over">${b.over}.${b.ballInOver}</div><div class="cm-text">${text}</div></div>`;
+    return `<div class="cm-line ${cls}"><div class="cm-over">${overBallLabel(b.over)}</div><div class="cm-text">${text}</div></div>`;
   }).join('');
 }
 
@@ -2962,6 +2969,24 @@ function isBoundaryBall(b){
   if(k === 'nb' || k === 'noball'){ const off = Math.max(0, (b.runs || 0) - 1); return off === 4 || off === 6; }
   if(k === 'wd' || k === 'wide' || k === 'b' || k === 'bye' || k === 'lb' || k === 'legbye'){ return (b.runs || 0) === 4 || (b.runs || 0) === 6; }
   return false;
+}
+
+// b.over already encodes BOTH the over number and the ball-within-over as
+// one decimal (e.g. 0.4 = over 0, 4th ball) — there is no separate
+// b.ballInOver field on live ball-log entries. Treating it as if there
+// were (the old `${b.over}.${b.ballInOver}` string) printed "undefined"
+// and, worse, made every single ball its own "over" group since no two
+// deliveries ever share the exact same decimal. This parses it properly,
+// tolerant of float rounding (0.4 sometimes arriving as 0.39999999...).
+function overBallParts(overVal){
+  const n = Number(overVal) || 0;
+  const overPart = Math.floor(n + 1e-6);
+  const ballPart = Math.round((n - overPart) * 10);
+  return { over: overPart, ball: ballPart };
+}
+function overBallLabel(overVal){
+  const { over, ball } = overBallParts(overVal);
+  return `${over}.${ball}`;
 }
 
 function ballBadgeInfo(b){
@@ -3015,46 +3040,60 @@ function renderCommentaryPage(s){
   if(!body) return;
   const live = document.getElementById('commentary-page-live');
   if(live) live.style.display = (s.isFinished || s.status === 'completed') ? 'none' : '';
-  const log = currentInningsLog(s);
-  if(!log.length){
+  // Whole match, not just the innings in progress — this is also what
+  // keeps working once the match is over, so a viewer can still open
+  // Full commentary afterwards and scroll back through every innings.
+  const allBalls = s.ballLog || [];
+  if(!allBalls.length){
     body.innerHTML = '<div class="empty-state">Commentary will appear here once the innings begins.</div>';
     return;
   }
-  // Group by over (newest over first, newest ball first within an over) —
-  // mirrors the "END OF OVER n" style breakdown, kept intentionally basic.
-  const overs = [];
-  let cur = null;
-  log.forEach(b => {
-    if(!cur || cur.over !== b.over){ cur = { over:b.over, balls:[], runs:0, wickets:0 }; overs.push(cur); }
-    cur.balls.push(b);
-    cur.runs += (b.runs || 0);
-    if(b.isWicket) cur.wickets++;
-  });
-  let cum = 0;
-  overs.forEach(o => { cum += o.runs; o.cumScore = cum; });
+  const inningsNos = Array.from(new Set(allBalls.map(b => b.innings || 1))).sort((a,b) => a - b);
 
-  body.innerHTML = overs.slice().reverse().map(o => {
-    const rows = o.balls.slice().reverse().map(b => {
-      const { cls, text } = commentaryLine(b);
-      const badge = ballBadgeInfo(b);
-      const clip = isBoundaryBall(b) ? commentaryClipMap[`${b.over}.${b.ballInOver}`] : null;
-      const clipBtn = clip
-        ? `<button class="cm2-clip-btn" data-clip-id="${escapeHtml(clip.clipId)}" data-title="${escapeHtml(text)}" aria-label="Watch clip">${PLAY_ICON}</button>`
-        : '';
-      return `<div class="cm2-row ${badge.cls}">
-        <div class="cm2-badge ${badge.cls}">${badge.label}</div>
-        <div class="cm2-text">${b.over}.${b.ballInOver} — ${text}</div>
-        ${clipBtn}
-      </div>`;
+  body.innerHTML = inningsNos.slice().reverse().map(inn => {
+    const log = allBalls.filter(b => (b.innings || 1) === inn);
+    const teamKey = battingTeamForInnings(s, inn);
+    const team = teamObj(s, teamKey) || {};
+    const ordinal = inn === 1 ? '1st' : inn === 2 ? '2nd' : inn === 3 ? '3rd' : `${inn}th`;
+    const inningsHead = `<div class="cm2-innings-head">${ordinal} Innings${team.name || team.short ? ` — ${escapeHtml(team.name || team.short)}` : ''}</div>`;
+
+    const overs = [];
+    let cur = null;
+    log.forEach(b => {
+      const overIdx = overBallParts(b.over).over;
+      if(!cur || cur.overIdx !== overIdx){ cur = { overIdx, balls:[], runs:0, wickets:0 }; overs.push(cur); }
+      cur.balls.push(b);
+      cur.runs += (b.runs || 0);
+      if(b.isWicket) cur.wickets++;
+    });
+    let cum = 0;
+    overs.forEach(o => { cum += o.runs; o.cumScore = cum; });
+
+    const oversHtml = overs.slice().reverse().map(o => {
+      const rows = o.balls.slice().reverse().map(b => {
+        const { text } = commentaryLine(b);
+        const badge = ballBadgeInfo(b);
+        const { over: ovNum, ball: ballNum } = overBallParts(b.over);
+        const clip = isBoundaryBall(b) ? commentaryClipMap[`${ovNum}.${ballNum}`] : null;
+        const clipAttrs = clip ? `data-clip-id="${escapeHtml(clip.clipId)}" data-title="${escapeHtml(text)}"` : '';
+        const clipBtn = clip ? `<span class="cm2-clip-hint">${PLAY_ICON}</span>` : '';
+        return `<div class="cm2-row ${badge.cls} ${clip ? 'cm2-row-clip' : ''}" ${clipAttrs}>
+          <div class="cm2-badge ${badge.cls}">${badge.label}</div>
+          <div class="cm2-text">${ovNum}.${ballNum} — ${text}</div>
+          ${clipBtn}
+        </div>`;
+      }).join('');
+      return `<div class="cm2-over-head">
+        <div class="cp-ov-title">End of over ${o.overIdx + 1}</div>
+        <div class="cp-ov-sub">${o.runs} run${o.runs===1?'':'s'}${o.wickets ? `, ${o.wickets} wkt${o.wickets===1?'':'s'}` : ''} · ${o.cumScore}</div>
+      </div>${rows}`;
     }).join('');
-    return `<div class="cm2-over-head">
-      <div class="cp-ov-title">End of over ${o.over + 1}</div>
-      <div class="cp-ov-sub">${o.runs} run${o.runs===1?'':'s'}${o.wickets ? `, ${o.wickets} wkt${o.wickets===1?'':'s'}` : ''} · ${o.cumScore}</div>
-    </div>${rows}`;
+
+    return inningsHead + oversHtml;
   }).join('');
 
-  body.querySelectorAll('.cm2-clip-btn').forEach(btn => {
-    btn.addEventListener('click', () => openVideoModal(btn.dataset.clipId, btn.dataset.title));
+  body.querySelectorAll('.cm2-row-clip').forEach(row => {
+    row.addEventListener('click', () => openVideoModal(row.dataset.clipId, row.dataset.title));
   });
 }
 
@@ -3277,7 +3316,9 @@ function renderHero(s){
     if(phaseCard) phaseCard.style.display = 'none';
     if(boundaryCard) boundaryCard.style.display = 'none';
     if(heatmapCard) heatmapCard.style.display = 'none';
-    if(commentaryCard) commentaryCard.style.display = 'none';
+    // Commentary intentionally stays visible after the result — a viewer
+    // should still be able to open Full commentary and re-watch clips
+    // once the match is over, not just while it's live.
   } else {
     if(statStrip) statStrip.style.display = '';
     if(playersCardWrap) playersCardWrap.style.display = '';
