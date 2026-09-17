@@ -2253,6 +2253,58 @@ function isHistoryMode(){
 // bookmark reused before the broadcaster finished) — in that case we
 // transparently fall back to a live socket join instead of showing an
 // error, same as a normal live link would.
+// Converts a /balls endpoint entry (over + ballInOver as two separate
+// integers, ballType already WD/NB-normalized server-side — see
+// mapBallForPublic() in server.js) into the one-decimal-field shape the
+// LIVE socket's ballLog already uses (see overBallParts()'s comment above),
+// so a finished match's commentary can run through the exact same
+// commentaryLine()/computeOverEndSummaries()/renderCommentaryPage() code
+// the live view uses — no parallel rendering path to keep in sync.
+function publicBallToLogEntry(b){
+  const overIdx = Number(b.over) || 0;
+  const ballInOver = Number(b.ballInOver) || 0;
+  return {
+    innings: b.innings || 1,
+    over: overIdx + (ballInOver / 10),
+    ballType: b.ballType,
+    runs: b.runs || 0,
+    striker: b.striker || '',
+    nonStriker: b.nonStriker || '',
+    bowler: b.bowler || '',
+    battingTeam: b.battingTeam || 'A',
+    isWicket: !!b.isWicket,
+    dismissal: b.dismissal || null
+  };
+}
+
+let finalBallLog = [];
+function renderFinalCommentary(){
+  if(!finalBallLog.length) return;
+  const lastInnings = finalBallLog.reduce((max, b) => Math.max(max, b.innings || 1), 1);
+  finalCommentaryState = { ballLog: finalBallLog, inningsNumber: lastInnings, isFinished: true };
+  renderCommentary(finalCommentaryState);
+  if(commentaryPageOpen) renderCommentaryPage(finalCommentaryState);
+}
+// Fetched separately from the match snapshot itself (renderFinalSnapshot)
+// since it's a different collection (ballsCollection vs matchRecords) — a
+// slower/failed fetch here just means Commentary stays hidden, it never
+// blocks the rest of the scorecard from showing.
+async function loadFinalBallLog(token, matchId){
+  try{
+    const url = token
+      ? `${clipApiBase()}/api/public/tournament/${encodeURIComponent(token)}/match/${encodeURIComponent(matchId)}/balls`
+      : `${clipApiBase()}/api/public/match/${encodeURIComponent(matchId)}/balls`;
+    const res = await apiFetch(url);
+    if(!res.ok) return;
+    const data = await res.json();
+    finalBallLog = ((data && data.balls) || []).map(publicBallToLogEntry);
+  }catch(err){
+    console.warn('Final ball log fetch failed', err);
+    finalBallLog = [];
+  }
+  renderFinalCommentary();
+}
+
 async function loadMatchSnapshot(matchId){
   const token = getTournamentToken();
   const wrap = document.getElementById('wrap');
@@ -2295,6 +2347,7 @@ async function loadMatchSnapshot(matchId){
     // "Could not load this match's scorecard right now." renderFinalSnapshot()
     // renders this shape directly instead, with the same clip icons.
     renderFinalSnapshot(match, data.displayName || '');
+    loadFinalBallLog(token, matchId);
   } catch(err){
     console.warn('Match snapshot fetch failed', err);
     wrap.innerHTML = '<div class="card"><div class="empty-state">Could not load this match\'s scorecard right now.</div></div>';
@@ -3168,12 +3221,20 @@ async function refreshCommentaryClips(force){
 }
 
 let commentaryPageOpen = false;
+// Finished-match commentary lives in its own pseudo-state (built from the
+// /balls endpoint below) rather than `latestState`, since `latestState`
+// staying null is how several other owner/live-only code paths already
+// detect "this is a finished-match view" (see renderTeamWicketClips callers)
+// — overwriting it here would quietly change their behaviour too.
+let finalCommentaryState = null;
+function commentaryState(){ return latestState || finalCommentaryState; }
 function openCommentaryPage(){
   commentaryPageOpen = true;
   document.getElementById('commentary-page').classList.add('open');
   document.getElementById('commentary-page-backdrop').classList.add('open');
-  if(latestState) renderCommentaryPage(latestState);
-  refreshCommentaryClips(true).then(() => { if(latestState) renderCommentaryPage(latestState); });
+  const cs = commentaryState();
+  if(cs) renderCommentaryPage(cs);
+  refreshCommentaryClips(true).then(() => { const cs2 = commentaryState(); if(cs2) renderCommentaryPage(cs2); });
 }
 function closeCommentaryPage(){
   commentaryPageOpen = false;
