@@ -911,6 +911,44 @@
   }
   #commentary-page-head .cp-live::before{ content:''; width:6px; height:6px; border-radius:99px; background:var(--live); animation:pulseDot 1.4s infinite; }
   #commentary-page-body{ flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:14px 16px calc(24px + env(safe-area-inset-bottom)); max-width:720px; margin:0 auto; width:100%; box-sizing:border-box; }
+  /* ---- Commentary filter bar: two custom dropdowns (innings/team +
+     event type). Sticky under the page head so they stay reachable while
+     scrolling a long ball-by-ball feed. ---- */
+  #cm-filterbar{
+    flex:none; display:flex; gap:10px; padding:10px 16px; background:var(--panel);
+    border-bottom:1px solid var(--border); max-width:720px; margin:0 auto; width:100%; box-sizing:border-box;
+  }
+  .cm-dd{ position:relative; flex:1; min-width:0; }
+  .cm-dd-trigger{
+    width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px;
+    padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:var(--panel-2);
+    color:var(--text); font-family:var(--font-body); font-weight:700; font-size:12.5px; cursor:pointer;
+  }
+  .cm-dd-label{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cm-dd-chev{ width:14px; height:14px; flex:none; color:var(--text-dim); transition:transform .18s ease; }
+  .cm-dd.open .cm-dd-chev{ transform:rotate(180deg); }
+  .cm-dd.open .cm-dd-trigger{ border-color:var(--accent); }
+  .cm-dd-menu{
+    position:absolute; top:calc(100% + 6px); left:0; right:0; z-index:20;
+    background:var(--panel); border:1px solid var(--border); border-radius:12px;
+    box-shadow:var(--shadow); padding:6px; opacity:0; pointer-events:none; transform:translateY(-4px);
+    transition:opacity .15s ease, transform .15s ease; max-height:260px; overflow-y:auto;
+  }
+  .cm-dd.open .cm-dd-menu{ opacity:1; pointer-events:auto; transform:translateY(0); }
+  .cm-dd-item{
+    padding:9px 10px; border-radius:8px; font-size:12.5px; font-weight:700; color:var(--text);
+    cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .cm-dd-item:hover{ background:var(--panel-2); }
+  .cm-dd-item.active{ background:var(--accent-soft); color:var(--accent); }
+  .cm-dd-item[data-filter="wickets"].active{ background:var(--wicket-soft); color:var(--wicket); }
+  .cm-dd-item[data-filter="sixes"].active{ background:var(--six-soft); color:var(--six); }
+  .cm-dd-item[data-filter="fours"].active{ background:var(--four-soft); color:var(--four); }
+  .cm2-empty-filter{ padding:22px 4px; text-align:center; color:var(--text-dim); font-size:12.5px; font-weight:600; }
+  @media (max-width:480px){
+    #cm-filterbar{ padding:8px 12px; gap:8px; }
+    .cm-dd-trigger{ font-size:11.5px; padding:8px 10px; }
+  }
   .cm2-innings-head{
     font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; color:var(--text-dim);
     margin:20px 0 4px; padding:4px 0; border-bottom:2px solid var(--border);
@@ -1648,6 +1686,22 @@
     </button>
     <h3>Commentary</h3>
     <span class="cp-live" id="commentary-page-live">Live</span>
+  </div>
+  <div id="cm-filterbar">
+    <div class="cm-dd" id="cm-dd-innings">
+      <button class="cm-dd-trigger" id="cm-dd-innings-trigger" type="button">
+        <span class="cm-dd-label" id="cm-dd-innings-label">All Innings</span>
+        <svg class="cm-dd-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div class="cm-dd-menu" id="cm-dd-innings-menu"></div>
+    </div>
+    <div class="cm-dd" id="cm-dd-filter">
+      <button class="cm-dd-trigger" id="cm-dd-filter-trigger" type="button">
+        <span class="cm-dd-label" id="cm-dd-filter-label">Full Commentary</span>
+        <svg class="cm-dd-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div class="cm-dd-menu" id="cm-dd-filter-menu"></div>
+    </div>
   </div>
   <div id="commentary-page-body"><div class="empty-state">Commentary will appear here once the innings begins.</div></div>
 </div>
@@ -3130,6 +3184,109 @@ document.getElementById('commentary-page-back').addEventListener('click', closeC
 document.getElementById('commentary-page-backdrop').addEventListener('click', closeCommentaryPage);
 document.addEventListener('keydown', (e) => { if(e.key === 'Escape' && commentaryPageOpen) closeCommentaryPage(); });
 
+// ---- Commentary filter bar state ----
+// commentaryInningsFilter: 'all' or the innings number (as a string, since
+// it's read back off a data-attribute) to restrict the feed to one innings.
+// commentaryTypeFilter: 'all' | 'wickets' | 'sixes' | 'fours'.
+let commentaryInningsFilter = 'all';
+let commentaryTypeFilter = 'all';
+
+function closeAllCommentaryDropdowns(except){
+  document.querySelectorAll('.cm-dd.open').forEach(dd => { if(dd.id !== except) dd.classList.remove('open'); });
+}
+function toggleCommentaryDropdown(id){
+  const dd = document.getElementById(id);
+  if(!dd) return;
+  const willOpen = !dd.classList.contains('open');
+  closeAllCommentaryDropdowns(id);
+  dd.classList.toggle('open', willOpen);
+}
+document.getElementById('cm-dd-innings-trigger').addEventListener('click', (e) => { e.stopPropagation(); toggleCommentaryDropdown('cm-dd-innings'); });
+document.getElementById('cm-dd-filter-trigger').addEventListener('click', (e) => { e.stopPropagation(); toggleCommentaryDropdown('cm-dd-filter'); });
+document.addEventListener('click', () => closeAllCommentaryDropdowns());
+
+const COMMENTARY_TYPE_FILTERS = [
+  { key:'all', label:'Full Commentary' },
+  { key:'wickets', label:'Wickets' },
+  { key:'sixes', label:'Sixes' },
+  { key:'fours', label:'Fours' }
+];
+
+function renderCommentaryTypeMenu(){
+  const menu = document.getElementById('cm-dd-filter-menu');
+  if(!menu) return;
+  menu.innerHTML = COMMENTARY_TYPE_FILTERS.map(f =>
+    `<div class="cm-dd-item ${f.key === commentaryTypeFilter ? 'active' : ''}" data-filter="${f.key}">${f.label}</div>`
+  ).join('');
+  menu.querySelectorAll('.cm-dd-item').forEach(item => {
+    item.addEventListener('click', () => {
+      commentaryTypeFilter = item.dataset.filter;
+      const active = COMMENTARY_TYPE_FILTERS.find(f => f.key === commentaryTypeFilter);
+      document.getElementById('cm-dd-filter-label').textContent = active ? active.label : 'Full Commentary';
+      document.getElementById('cm-dd-filter').classList.remove('open');
+      const cs = commentaryState();
+      if(cs) renderCommentaryPage(cs);
+    });
+  });
+}
+
+// Innings dropdown options are built fresh from the current ball log every
+// render (cheap — at most a handful of innings) so team names picked up
+// mid-match (or a new innings starting) show up without any extra wiring.
+function renderCommentaryInningsMenu(s, inningsNos){
+  const menu = document.getElementById('cm-dd-innings-menu');
+  if(!menu) return;
+  const options = [{ key:'all', label:'All Innings' }].concat(inningsNos.map(n => {
+    const teamKey = battingTeamForInnings(s, n);
+    const team = teamObj(s, teamKey) || {};
+    const ordinal = n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : `${n}th`;
+    const teamLabel = team.name || team.short || '';
+    return { key:String(n), label: `${ordinal} Innings${teamLabel ? ' — ' + teamLabel : ''}` };
+  }));
+  // If the innings the user had selected no longer exists (e.g. state reset), fall back to "All".
+  if(!options.some(o => o.key === commentaryInningsFilter)) commentaryInningsFilter = 'all';
+  menu.innerHTML = options.map(o =>
+    `<div class="cm-dd-item ${o.key === commentaryInningsFilter ? 'active' : ''}" data-innings="${o.key}">${escapeHtml(o.label)}</div>`
+  ).join('');
+  const activeOpt = options.find(o => o.key === commentaryInningsFilter);
+  document.getElementById('cm-dd-innings-label').textContent = activeOpt ? activeOpt.label : 'All Innings';
+  menu.querySelectorAll('.cm-dd-item').forEach(item => {
+    item.addEventListener('click', () => {
+      commentaryInningsFilter = item.dataset.innings;
+      document.getElementById('cm-dd-innings').classList.remove('open');
+      const cs = commentaryState();
+      if(cs) renderCommentaryPage(cs);
+    });
+  });
+}
+
+function commentaryBallMatchesTypeFilter(b){
+  if(commentaryTypeFilter === 'all') return true;
+  if(commentaryTypeFilter === 'wickets') return !!b.isWicket;
+  if(commentaryTypeFilter === 'sixes') return b.ballType === '6';
+  if(commentaryTypeFilter === 'fours') return b.ballType === '4';
+  return true;
+}
+
+// Shared single-ball row markup — used both by the normal over-grouped feed
+// (type filter = "all") and by the flat matched-deliveries list (any other
+// type filter), so a wicket/six/four looks identical either way.
+function renderCommentaryRow(b, inn, newBatsmanAt){
+  const { text } = commentaryLine(b);
+  const badge = ballBadgeInfo(b);
+  const { over: ovNum, ball: ballNum } = overBallParts(b.over);
+  const clip = isBoundaryBall(b) ? commentaryClipMap[`${inn}.${ovNum}.${ballNum}`] : null;
+  const clipAttrs = clip ? `data-clip-id="${escapeHtml(clip.clipId)}" data-title="${escapeHtml(text)}"` : '';
+  const clipBtn = clip ? `<span class="cm2-clip-hint">${PLAY_ICON}</span>` : '';
+  const isNewBat = newBatsmanAt.has(b);
+  const newBatTag = isNewBat ? `<span class="cm2-new-bat">🆕 ${escapeHtml(b.striker || 'New batsman')}</span>` : '';
+  return `<div class="cm2-row ${badge.cls} ${clip ? 'cm2-row-clip' : ''} ${isNewBat ? 'cm2-row-newbat' : ''}" ${clipAttrs}>
+    <div class="cm2-badge ${badge.cls}">${badge.label}</div>
+    <div class="cm2-text">${ovNum}.${ballNum} — ${text}${newBatTag}</div>
+    ${clipBtn}
+  </div>`;
+}
+
 function renderCommentaryPage(s){
   const body = document.getElementById('commentary-page-body');
   if(!body) return;
@@ -3151,12 +3308,20 @@ function renderCommentaryPage(s){
   // Full commentary afterwards and scroll back through every innings.
   const allBalls = s.ballLog || [];
   if(!allBalls.length){
+    renderCommentaryInningsMenu(s, []);
+    renderCommentaryTypeMenu();
     body.innerHTML = '<div class="empty-state">Commentary will appear here once the innings begins.</div>';
     return;
   }
   const inningsNos = Array.from(new Set(allBalls.map(b => b.innings || 1))).sort((a,b) => a - b);
+  renderCommentaryInningsMenu(s, inningsNos);
+  renderCommentaryTypeMenu();
 
-  body.innerHTML = inningsNos.slice().reverse().map(inn => {
+  const activeInningsNos = commentaryInningsFilter === 'all'
+    ? inningsNos
+    : inningsNos.filter(n => String(n) === commentaryInningsFilter);
+
+  body.innerHTML = activeInningsNos.slice().reverse().map(inn => {
     const log = allBalls.filter(b => (b.innings || 1) === inn);
     const teamKey = battingTeamForInnings(s, inn);
     const team = teamObj(s, teamKey) || {};
@@ -3164,10 +3329,9 @@ function renderCommentaryPage(s){
     const inningsHead = `<div class="cm2-innings-head">${ordinal} Innings${team.name || team.short ? ` — ${escapeHtml(team.name || team.short)}` : ''}</div>`;
 
     // Which ball each new batsman first walks out to face (their first
-    // legal delivery on strike, chronologically) and which over each new
-    // bowler's spell begins — computed once, forward through the innings,
-    // so the reversed newest-first render below can just look them up.
-    const { byLastBall } = computeOverEndSummaries(log);
+    // legal delivery on strike, chronologically) — computed once, forward
+    // through the innings, so the reversed newest-first render below can
+    // just look them up.
     const seenBatters = new Set();
     const newBatsmanAt = new Set();
     log.forEach(b => {
@@ -3176,6 +3340,21 @@ function renderCommentaryPage(s){
         newBatsmanAt.add(b);
       }
     });
+
+    // Wickets/Sixes/Fours filters: skip the over-by-over grouping entirely
+    // and just list the matching deliveries for this innings, newest first.
+    if(commentaryTypeFilter !== 'all'){
+      const matched = log.filter(commentaryBallMatchesTypeFilter);
+      if(!matched.length){
+        const filterLabel = (COMMENTARY_TYPE_FILTERS.find(f => f.key === commentaryTypeFilter) || {}).label || 'matching deliveries';
+        return inningsHead + `<div class="cm2-empty-filter">No ${filterLabel.toLowerCase()} in this innings.</div>`;
+      }
+      const rowsHtml = matched.slice().reverse().map(b => renderCommentaryRow(b, inn, newBatsmanAt)).join('');
+      return inningsHead + rowsHtml;
+    }
+
+    // Which over each new bowler's spell begins — also computed forward.
+    const { byLastBall } = computeOverEndSummaries(log);
 
     const overs = [];
     let cur = null;
@@ -3196,21 +3375,7 @@ function renderCommentaryPage(s){
     });
 
     const oversHtml = overs.slice().reverse().map(o => {
-      const rows = o.balls.slice().reverse().map(b => {
-        const { text } = commentaryLine(b);
-        const badge = ballBadgeInfo(b);
-        const { over: ovNum, ball: ballNum } = overBallParts(b.over);
-        const clip = isBoundaryBall(b) ? commentaryClipMap[`${inn}.${ovNum}.${ballNum}`] : null;
-        const clipAttrs = clip ? `data-clip-id="${escapeHtml(clip.clipId)}" data-title="${escapeHtml(text)}"` : '';
-        const clipBtn = clip ? `<span class="cm2-clip-hint">${PLAY_ICON}</span>` : '';
-        const isNewBat = newBatsmanAt.has(b);
-        const newBatTag = isNewBat ? `<span class="cm2-new-bat">🆕 ${escapeHtml(b.striker || 'New batsman')}</span>` : '';
-        return `<div class="cm2-row ${badge.cls} ${clip ? 'cm2-row-clip' : ''} ${isNewBat ? 'cm2-row-newbat' : ''}" ${clipAttrs}>
-          <div class="cm2-badge ${badge.cls}">${badge.label}</div>
-          <div class="cm2-text">${ovNum}.${ballNum} — ${text}${newBatTag}</div>
-          ${clipBtn}
-        </div>`;
-      }).join('');
+      const rows = o.balls.slice().reverse().map(b => renderCommentaryRow(b, inn, newBatsmanAt)).join('');
       const lastBall = o.balls[o.balls.length - 1];
       const sum = byLastBall.get(lastBall);
       const head = sum
