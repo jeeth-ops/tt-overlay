@@ -504,14 +504,6 @@
   #momentum-verdict{ text-align:center; font-size:12.5px; font-weight:700; color:var(--text); margin-top:12px; padding-top:11px; border-top:1px dashed var(--border); }
   #momentum-empty{ color:var(--text-faint); font-size:12.5px; text-align:center; padding:8px 0 2px; }
 
-  /* ---------- Pressure Index — CRR vs RRR gauge (chases only) ---------- */
-  #pressure-card svg{ width:100%; height:auto; display:block; overflow:visible; }
-  #pressure-figs{ display:flex; justify-content:center; gap:26px; margin-top:2px; }
-  #pressure-figs .pf{ text-align:center; }
-  #pressure-figs .pf .k{ font-size:10px; color:var(--text-dim); text-transform:uppercase; font-weight:700; letter-spacing:.4px; }
-  #pressure-figs .pf .v{ font-family:var(--font-display); font-size:19px; font-weight:800; margin-top:2px; }
-  #pressure-verdict{ text-align:center; font-size:12.5px; font-weight:700; margin-top:10px; padding-top:11px; border-top:1px dashed var(--border); }
-
   /* ---------- Phase-wise breakdown (Powerplay / Middle / Death) ---------- */
   #phase-rows{ display:flex; flex-direction:column; gap:12px; }
   .phase-row{ display:grid; grid-template-columns:88px 1fr; gap:4px 12px; align-items:center; }
@@ -536,27 +528,6 @@
   .mvp-fill{ height:100%; border-radius:99px; background:var(--accent); width:0%; transition:width .5s ease; }
   .mvp-score{ font-family:var(--font-display); font-weight:800; font-size:14px; text-align:right; color:var(--text); }
   #mvp-empty{ color:var(--text-faint); font-size:12.5px; text-align:center; padding:8px 0 2px; }
-
-  /* ---------- Boundary % vs Dot Ball % — mini donut per batsman ---------- */
-  #boundary-rows{ display:flex; flex-direction:column; gap:14px; }
-  .bd-row{ display:grid; grid-template-columns:52px 1fr; gap:12px; align-items:center; }
-  .bd-row svg{ display:block; width:52px; height:52px; overflow:visible; }
-  .bd-name{ font-size:12.5px; font-weight:800; margin-bottom:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .bd-legend{ display:flex; gap:10px; flex-wrap:wrap; font-size:10.5px; font-weight:600; color:var(--text-dim); }
-  .bd-legend span{ display:inline-flex; align-items:center; gap:4px; }
-  .bd-legend .sw{ width:8px; height:8px; border-radius:2px; display:inline-block; flex:none; }
-
-  /* ---------- Bowler Spell Heatmap — runs/over strip per bowler ---------- */
-  #heatmap-sub{ font-size:11.5px; color:var(--text-dim); font-weight:600; margin-top:-6px; margin-bottom:14px; }
-  #heatmap-rows{ display:flex; flex-direction:column; gap:12px; }
-  .hm-row{ display:flex; align-items:center; gap:10px; }
-  .hm-name{ font-size:12px; font-weight:800; width:76px; flex:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .hm-cells{ display:flex; gap:4px; overflow-x:auto; padding-bottom:2px; }
-  .hm-cell{
-    flex:none; width:30px; height:30px; border-radius:7px; display:flex; flex-direction:column;
-    align-items:center; justify-content:center; font-size:10px; font-weight:800; color:#06170c;
-  }
-  .hm-cell .hm-ov{ font-size:8px; font-weight:700; opacity:.75; }
 
   /* ---------- Commentary feed — auto-generated, ball by ball ---------- */
   #commentary-feed{ display:flex; flex-direction:column; max-height:340px; overflow-y:auto; }
@@ -1520,17 +1491,6 @@
     <div id="momentum-verdict">—</div>
   </div>
 
-  <!-- PRESSURE INDEX — CRR vs RRR gauge, only meaningful during a chase -->
-  <div class="card" id="pressure-card" style="display:none;">
-    <div class="section-title"><span class="dash"></span>Pressure Index</div>
-    <div id="pressure-gauge"></div>
-    <div id="pressure-figs">
-      <div class="pf"><div class="k">Current RR</div><div class="v tabnum" id="pf-crr">—</div></div>
-      <div class="pf"><div class="k">Required RR</div><div class="v tabnum" id="pf-rrr">—</div></div>
-    </div>
-    <div id="pressure-verdict">—</div>
-  </div>
-
   <!-- PHASE-WISE BREAKDOWN — Powerplay / Middle / Death run-rate split -->
   <div class="card" id="phase-card" style="display:none;">
     <div class="section-title"><span class="dash"></span>Phase-wise Breakdown</div>
@@ -1542,19 +1502,6 @@
     <div class="section-title"><span class="dash"></span>Match MVP Tracker</div>
     <div id="mvp-sub">Impact score = runs + 20/wicket + 10/catch · leader shown as live Player of the Match</div>
     <div id="mvp-rows"></div>
-  </div>
-
-  <!-- BOUNDARY % vs DOT BALL % — per current-innings batsman -->
-  <div class="card" id="boundary-card" style="display:none;">
-    <div class="section-title"><span class="dash"></span>Boundary % vs Dot Ball %</div>
-    <div id="boundary-rows"></div>
-  </div>
-
-  <!-- BOWLER SPELL HEATMAP — runs conceded per over, colour-coded -->
-  <div class="card" id="heatmap-card" style="display:none;">
-    <div class="section-title"><span class="dash"></span>Bowler Spell Heatmap</div>
-    <div id="heatmap-sub">Runs conceded per over — green is cheap, red is expensive</div>
-    <div id="heatmap-rows"></div>
   </div>
 
   <!-- COMMENTARY FEED — auto-generated, ball by ball -->
@@ -2650,11 +2597,8 @@ function render(){
   renderBalls(s);
   renderCharts(s);
   renderMomentum(s);
-  renderPressureIndex(s);
   renderPhaseBreakdown(s);
   renderMVP(s);
-  renderBoundaryDot(s);
-  renderHeatmap(s);
   renderCommentary(s);
   if(commentaryPageOpen) renderCommentaryPage(s);
   renderCompare(s);
@@ -2739,83 +2683,6 @@ function renderMomentum(s){
   else if(momentum > 32) text = `${bowlingName} clawing back`;
   else text = `🎯 ${bowlingName} on top`;
   verdict.textContent = text;
-}
-
-/* ---------- Pressure Index ----------
-   A CRR-vs-RRR gauge shown only while chasing (calcRRR() already returns
-   null outside a valid run-chase — Test cricket, 1st innings, no target
-   set — so this simply hides itself in every other situation). Gap =
-   RRR - CRR: zero or negative means the batting side is already ahead of
-   the rate needed, a growing positive gap means the required rate is
-   pulling further out of reach. */
-function polarPoint(cx, cy, r, angleDeg){
-  const rad = angleDeg * Math.PI / 180;
-  return { x: cx + r * Math.cos(rad), y: cy - r * Math.sin(rad) };
-}
-function arcPath(cx, cy, r, startAngle, endAngle){
-  const p1 = polarPoint(cx, cy, r, startAngle);
-  const p2 = polarPoint(cx, cy, r, endAngle);
-  const largeArc = Math.abs(startAngle - endAngle) > 180 ? 1 : 0;
-  // sweep=0 draws the arc going clockwise from p1 to p2 in this
-  // (y-flipped-for-SVG) coordinate convention, which is what we want
-  // sweeping from the left (180°) down to the right (0°).
-  return `M ${p1.x.toFixed(1)} ${p1.y.toFixed(1)} A ${r} ${r} 0 ${largeArc} 0 ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
-}
-const PRESSURE_ZONES = [
-  { from:180, to:144, color:'#22c55e' }, // comfortable
-  { from:144, to:108, color:'#84cc16' }, // manageable
-  { from:108, to:72,  color:'#eab308' }, // moderate
-  { from:72,  to:36,  color:'#f97316' }, // building
-  { from:36,  to:0,   color:'#ef4444' }  // intense
-];
-const PRESSURE_MIN = -4, PRESSURE_MAX = 8; // gap (RRR-CRR) domain mapped across the gauge
-function renderPressureIndex(s){
-  const card = document.getElementById('pressure-card');
-  if(!card) return;
-  const rrr = calcRRR(s);
-  const isChasing = !!s.target && rrr !== null;
-  if(!isChasing){
-    if(card.style.display !== 'none') card.style.display = 'none';
-    return;
-  }
-  card.style.display = '';
-  const crr = calcCRR(s);
-  const key = crr.toFixed(2) + ':' + rrr.toFixed(2);
-  if(!changed('pressure', key)) return;
-
-  setText('pf-crr', crr.toFixed(2));
-  setText('pf-rrr', rrr.toFixed(2));
-
-  const gap = rrr - crr;
-  const clamped = Math.max(PRESSURE_MIN, Math.min(PRESSURE_MAX, gap));
-  const angle = 180 - ((clamped - PRESSURE_MIN) / (PRESSURE_MAX - PRESSURE_MIN)) * 180;
-
-  const cx = 150, cy = 140, r = 118, thickness = 20;
-  const zoneArcs = PRESSURE_ZONES.map(z =>
-    `<path d="${arcPath(cx, cy, r, z.from, z.to)}" stroke="${z.color}" stroke-width="${thickness}" fill="none" stroke-linecap="butt" opacity="0.92"/>`
-  ).join('');
-  const needleLen = r - thickness/2 - 6;
-  const tip = polarPoint(cx, cy, needleLen, angle);
-  const needle = `
-    <line x1="${cx}" y1="${cy}" x2="${tip.x.toFixed(1)}" y2="${tip.y.toFixed(1)}" stroke="var(--text)" stroke-width="4" stroke-linecap="round"/>
-    <circle cx="${cx}" cy="${cy}" r="9" fill="var(--text)"/>
-    <circle cx="${cx}" cy="${cy}" r="4" fill="var(--panel)"/>
-  `;
-  const labels = `
-    <text x="${cx-r-2}" y="${cy+22}" text-anchor="start" class="axis-label">Easy</text>
-    <text x="${cx+r+2}" y="${cy+22}" text-anchor="end" class="axis-label">Intense</text>
-  `;
-  document.getElementById('pressure-gauge').innerHTML = svgWrap(zoneArcs + needle + labels, 300, 170);
-
-  const verdict = document.getElementById('pressure-verdict');
-  let text, color;
-  if(gap <= 0){ text = '🟢 Comfortable — ahead of the rate needed'; color = '#22c55e'; }
-  else if(gap <= 1.5){ text = '🟡 Manageable — well within reach'; color = '#84cc16'; }
-  else if(gap <= 3){ text = '🟠 Moderate pressure building'; color = '#eab308'; }
-  else if(gap <= 5){ text = '🟠 Pressure building fast'; color = '#f97316'; }
-  else { text = '🔴 Intense pressure — rate pulling away'; color = '#ef4444'; }
-  verdict.textContent = text;
-  verdict.style.color = color;
 }
 
 /* ---------- Phase-wise Breakdown ----------
@@ -2959,98 +2826,6 @@ function renderMVP(s){
       <div class="mvp-score">${p.score}</div>
     </div>`;
   }).join('');
-}
-
-/* ---------- Boundary % vs Dot Ball % ----------
-   A mini donut per current-innings batsman, built from the same
-   ball-by-ball log the over/phase/momentum cards already read — no new
-   data source, purely a different slice of it. */
-function batsmanBallStats(log, name){
-  let dots = 0, boundaries = 0, other = 0, faced = 0;
-  log.forEach(b => {
-    if(b.striker !== name || !LEGAL_KINDS.has(b.ballType)) return;
-    faced++;
-    if(b.ballType === '4' || b.ballType === '6') boundaries++;
-    else if((b.runs || 0) === 0 && !b.isWicket) dots++;
-    else other++;
-  });
-  return { faced, dots, boundaries, other };
-}
-function donutSvg(dots, boundaries, other, total){
-  if(!total) return svgWrap('', 52, 52);
-  const segs = [ { v:dots, color:'var(--text-faint)' }, { v:other, color:'var(--four)' }, { v:boundaries, color:'var(--six)' } ];
-  const r = 20, cx = 26, cy = 26, thickness = 8;
-  let acc = 0;
-  const paths = segs.filter(seg => seg.v > 0).map(seg => {
-    const startAngle = 90 - (acc/total)*360;
-    acc += seg.v;
-    const endAngle = 90 - (acc/total)*360;
-    return `<path d="${arcPath(cx, cy, r, startAngle, endAngle)}" stroke="${seg.color}" stroke-width="${thickness}" fill="none" stroke-linecap="butt"/>`;
-  }).join('');
-  return svgWrap(paths, 52, 52);
-}
-function renderBoundaryDot(s){
-  const card = document.getElementById('boundary-card');
-  if(!card) return;
-  const log = currentInningsLog(s);
-  const rows = currentBattingRows(s).filter(r => (r.balls || 0) > 0);
-  if(!rows.length){ card.style.display = 'none'; return; }
-  card.style.display = '';
-  const key = log.length + ':' + rows.map(r => r.name).join(',');
-  if(!changed('boundary', key)) return;
-  document.getElementById('boundary-rows').innerHTML = rows.map(r => {
-    const { faced, dots, boundaries, other } = batsmanBallStats(log, r.name);
-    const pct = (n) => faced ? Math.round((n/faced)*100) : 0;
-    return `<div class="bd-row">
-      ${donutSvg(dots, boundaries, other, faced)}
-      <div>
-        <div class="bd-name">${escapeHtml(r.name)}</div>
-        <div class="bd-legend">
-          <span><span class="sw" style="background:var(--text-faint);"></span>Dot ${pct(dots)}%</span>
-          <span><span class="sw" style="background:var(--four);"></span>Running ${pct(other)}%</span>
-          <span><span class="sw" style="background:var(--six);"></span>Boundary ${pct(boundaries)}%</span>
-        </div>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-/* ---------- Bowler Spell Heatmap ----------
-   Runs conceded per over this innings, grouped by bowler, colour-coded
-   from the same ball log the phase breakdown already reads. */
-function heatColor(runs){
-  if(runs <= 3) return '#22c55e';
-  if(runs <= 6) return '#84cc16';
-  if(runs <= 9) return '#eab308';
-  if(runs <= 12) return '#f97316';
-  return '#ef4444';
-}
-function bowlerOverSpells(log){
-  const byBowler = {};
-  log.forEach(b => {
-    if(!b.bowler) return;
-    const overIdx = Number(b.over) || 0;
-    const bucket = byBowler[b.bowler] || (byBowler[b.bowler] = {});
-    bucket[overIdx] = (bucket[overIdx] || 0) + (b.runs || 0);
-  });
-  return Object.entries(byBowler).map(([name, overs]) => ({
-    name,
-    overs: Object.keys(overs).map(Number).sort((a, b) => a - b).map(o => ({ over:o, runs:overs[o] }))
-  }));
-}
-function renderHeatmap(s){
-  const card = document.getElementById('heatmap-card');
-  if(!card) return;
-  const log = currentInningsLog(s);
-  const spells = bowlerOverSpells(log).filter(sp => sp.overs.length);
-  if(!spells.length){ card.style.display = 'none'; return; }
-  card.style.display = '';
-  if(!changed('heatmap', log.length)) return;
-  document.getElementById('heatmap-rows').innerHTML = spells.map(sp => `
-    <div class="hm-row">
-      <div class="hm-name">${escapeHtml(sp.name)}</div>
-      <div class="hm-cells">${sp.overs.map(o => `<div class="hm-cell" style="background:${heatColor(o.runs)};"><span>${o.runs}</span><span class="hm-ov">Ov ${o.over+1}</span></div>`).join('')}</div>
-    </div>`).join('');
 }
 
 /* ---------- Commentary Feed ----------
@@ -3583,10 +3358,7 @@ function renderHero(s){
   const compareGrid = document.getElementById('compare-grid');
   const chartsGrid = document.getElementById('charts-grid');
   const momentumCard = document.getElementById('momentum-card');
-  const pressureCard = document.getElementById('pressure-card');
   const phaseCard = document.getElementById('phase-card');
-  const boundaryCard = document.getElementById('boundary-card');
-  const heatmapCard = document.getElementById('heatmap-card');
   const commentaryCard = document.getElementById('commentary-card');
   if(isFinished){
     targetWrap.style.display = 'none';
@@ -3597,10 +3369,7 @@ function renderHero(s){
     if(compareGrid) compareGrid.style.display = 'none';
     if(chartsGrid) chartsGrid.style.display = 'none';
     if(momentumCard) momentumCard.style.display = 'none';
-    if(pressureCard) pressureCard.style.display = 'none';
     if(phaseCard) phaseCard.style.display = 'none';
-    if(boundaryCard) boundaryCard.style.display = 'none';
-    if(heatmapCard) heatmapCard.style.display = 'none';
     // Commentary intentionally stays visible after the result — a viewer
     // should still be able to open Full commentary and re-watch clips
     // once the match is over, not just while it's live.
