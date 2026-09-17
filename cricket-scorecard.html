@@ -3842,9 +3842,39 @@ function renderBalls(s){
 }
 
 /* ---------- Over-by-over + progression, computed from ballLog ---------- */
+// 🐛 FIX: ball-by-ball commentary was showing every delivery twice (and,
+// in the reported case, a ball that had been Undone kept reappearing
+// alongside its corrected re-entry). Root cause is upstream (cricket-panel
+// can end up with two near-identical entries for the same delivery in
+// state.ballLog — e.g. an Undo that rolls the score back but leaves the
+// old ballLog row in place, then the ball is re-scored and a second row
+// is appended for it), but every reader of the ball log funnels through
+// this one function, so collapsing duplicates HERE fixes the commentary
+// feed, the full-commentary page, AND the over-by-over totals in one
+// place, with no risk to the real score (state.score.* is never touched).
+// Only collapses a row into the PREVIOUS one when every field that
+// describes the actual delivery matches exactly, including scoreAfter —
+// two genuinely different deliveries (e.g. back-to-back wides, which
+// legitimately share the same "12.3" over label) always differ in
+// scoreAfter/runs and are correctly kept as separate rows.
+function dedupeBallLog(log){
+  const out = [];
+  for(const b of log){
+    const prev = out[out.length - 1];
+    const same = prev &&
+      prev.over === b.over && prev.innings === b.innings &&
+      prev.ballType === b.ballType && prev.runs === b.runs &&
+      prev.striker === b.striker && prev.nonStriker === b.nonStriker &&
+      prev.bowler === b.bowler && prev.isWicket === b.isWicket &&
+      (prev.scoreAfter || '') === (b.scoreAfter || '') &&
+      (prev.dismissal || '') === (b.dismissal || '');
+    if(!same) out.push(b);
+  }
+  return out;
+}
 function currentInningsLog(s){
   const innings = s.inningsNumber || (s.target ? 2 : 1);
-  return (s.ballLog || []).filter(b => b.innings === innings);
+  return dedupeBallLog((s.ballLog || []).filter(b => b.innings === innings));
 }
 const LEGAL_KINDS = new Set(['0','1','2','3','4','5','6','W','B','LB']);
 function overBuckets(log){
