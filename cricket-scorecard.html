@@ -579,6 +579,28 @@
   .cm-line.cm-four .cm-text{ color:var(--four); font-weight:800; }
   #commentary-empty{ color:var(--text-faint); font-size:12.5px; text-align:center; padding:8px 0 2px; }
 
+  /* ---------- End-of-over summary card (inline inside the commentary feed) ----------
+     Inserted right above the last ball of every fully-bowled over: both
+     not-out batters' figures on the left, the over's bowler on the right,
+     separated by a vertical divider — mirrors a standard end-of-over strip. */
+  .cm-eoo{
+    display:flex; flex-direction:column; gap:6px; padding:10px 0 12px; border-bottom:1px solid var(--border-soft);
+  }
+  .cm-eoo-head{ display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+  .cm-eoo-title{ font-family:var(--font-display); font-weight:800; font-size:12.5px; letter-spacing:.2px; }
+  .cm-eoo-score{ font-family:var(--font-display); font-weight:800; font-size:15px; }
+  .cm-eoo-sub{ font-size:11.5px; color:var(--text-dim); font-weight:600; }
+  .cm-eoo-body{ display:grid; grid-template-columns:1fr auto 1fr; gap:12px; margin-top:2px; }
+  .cm-eoo-batters{ display:flex; flex-direction:column; gap:4px; min-width:0; }
+  .cm-eoo-bat-row{ display:flex; align-items:baseline; justify-content:space-between; gap:8px; font-size:12px; }
+  .cm-eoo-bat-name{ font-weight:700; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cm-eoo-bat-figs{ flex:none; color:var(--text-dim); font-weight:600; }
+  .cm-eoo-divider{ width:1px; align-self:stretch; background:var(--border); }
+  .cm-eoo-bowler{ display:flex; flex-direction:column; justify-content:center; min-width:0; }
+  .cm-eoo-bowler-row{ display:flex; align-items:baseline; justify-content:space-between; gap:8px; font-size:12px; }
+  .cm-eoo-bowler-name{ font-weight:700; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cm-eoo-bowler-figs{ flex:none; color:var(--text-dim); font-weight:600; }
+
   #compare-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
   .cmp-row{ display:grid; grid-template-columns:70px 1fr 42px; align-items:center; gap:8px; margin-bottom:9px; }
   .cmp-name{ font-size:11.5px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -957,7 +979,7 @@
      can transition — a display:none/flex swap has no transition at all
      and used to make this modal just snap open/shut with zero animation. */
   #video-modal-backdrop{
-    position:fixed; inset:0; background:rgba(0,0,0,.78); z-index:90; display:flex;
+    position:fixed; inset:0; background:rgba(0,0,0,.78); z-index:97; display:flex;
     align-items:center; justify-content:center; padding:16px;
     opacity:0; pointer-events:none; transition:opacity .22s ease;
   }
@@ -2964,6 +2986,95 @@ function commentaryLine(b){
   if((b.runs || 0) === 0) return { cls:'', text:`Dot ball. ${escapeHtml(bowler)} to ${escapeHtml(striker)}` };
   return { cls:'', text:`${b.runs} run${b.runs===1?'':'s'}. ${escapeHtml(striker)} off ${escapeHtml(bowler)}` };
 }
+// Replays a chronological ball log to snapshot, at the instant each over is
+// FULLY bowled (6 legal deliveries), the cumulative score, both not-out
+// batters' figures and that over's bowler's spell-to-date. Returns the list
+// of snapshots plus a lookup from a ball object (the over's last delivery)
+// straight to its snapshot, so a renderer walking the same log newest-first
+// can drop the card in next to the ball that completed the over — no
+// separate data source, purely a different slice of the ball log every
+// other card here already reads.
+function computeOverEndSummaries(log){
+  const groups = [];
+  let cur = null;
+  log.forEach(b => {
+    const overIdx = overBallParts(b.over).over;
+    if(!cur || cur.overIdx !== overIdx){ cur = { overIdx, balls: [] }; groups.push(cur); }
+    cur.balls.push(b);
+  });
+
+  const battersTally = {}, bowlersTally = {};
+  const list = [], byLastBall = new Map();
+  let cumRuns = 0, cumWkts = 0;
+
+  groups.forEach(g => {
+    let overRuns = 0, overWkts = 0, legalCount = 0, bowlerRunsThisOver = 0, bowlerName = null;
+    g.balls.forEach(b => {
+      bowlerName = b.bowler || bowlerName;
+      const isByeType = (b.ballType === 'B' || b.ballType === 'LB');
+      const bat = b.striker ? (battersTally[b.striker] || (battersTally[b.striker] = { runs:0, balls:0 })) : null;
+      if(bat && LEGAL_KINDS.has(b.ballType)){
+        bat.balls++;
+        if(!isByeType) bat.runs += (b.runs || 0);
+      }
+      const runsAgainstBowler = isByeType ? 0 : (b.runs || 0);
+      const bow = b.bowler ? (bowlersTally[b.bowler] || (bowlersTally[b.bowler] = { runs:0, wickets:0, overs:0, maidens:0 })) : null;
+      if(bow){
+        bow.runs += runsAgainstBowler;
+        if(b.isWicket && !(b.dismissal && /run ?out/i.test(b.dismissal.type || ''))) bow.wickets++;
+      }
+      if(LEGAL_KINDS.has(b.ballType)) legalCount++;
+      overRuns += (b.runs || 0);
+      if(b.isWicket) overWkts++;
+      bowlerRunsThisOver += runsAgainstBowler;
+      cumRuns += (b.runs || 0);
+      if(b.isWicket) cumWkts++;
+    });
+
+    if(legalCount !== 6) return; // over still in progress — no end-of-over card yet
+
+    let bow = null;
+    if(bowlerName){
+      bow = bowlersTally[bowlerName] || (bowlersTally[bowlerName] = { runs:0, wickets:0, overs:0, maidens:0 });
+      bow.overs++;
+      if(bowlerRunsThisOver === 0) bow.maidens++;
+    }
+
+    const last = g.balls[g.balls.length - 1];
+    const batterNames = [last.striker, last.nonStriker].filter(Boolean);
+    const summary = {
+      overIdx: g.overIdx, overRuns, overWkts, cumRuns, cumWkts,
+      batters: batterNames.map(n => ({ name:n, runs:(battersTally[n]&&battersTally[n].runs)||0, balls:(battersTally[n]&&battersTally[n].balls)||0 })),
+      bowler: (bowlerName && bow) ? { name:bowlerName, overs:bow.overs, maidens:bow.maidens, runs:bow.runs, wickets:bow.wickets } : null
+    };
+    list.push(summary);
+    byLastBall.set(last, summary);
+  });
+
+  return { list, byLastBall };
+}
+
+function overEndSummaryHtml(sum){
+  const battersHtml = sum.batters.map(b =>
+    `<div class="cm-eoo-bat-row"><span class="cm-eoo-bat-name">${escapeHtml(b.name)}*</span><span class="cm-eoo-bat-figs">${b.runs} (${b.balls})</span></div>`
+  ).join('');
+  const bowlerHtml = sum.bowler
+    ? `<div class="cm-eoo-bowler-row"><span class="cm-eoo-bowler-name">${escapeHtml(sum.bowler.name)}</span><span class="cm-eoo-bowler-figs">${sum.bowler.overs}-${sum.bowler.maidens}-${sum.bowler.runs}-${sum.bowler.wickets}</span></div>`
+    : '';
+  return `<div class="cm-eoo">
+    <div class="cm-eoo-head">
+      <div class="cm-eoo-title">END OF OVER ${sum.overIdx + 1}</div>
+      <div class="cm-eoo-score">${sum.cumRuns}/${sum.cumWkts}</div>
+    </div>
+    <div class="cm-eoo-sub">${sum.overRuns} Run${sum.overRuns===1?'':'s'} ${sum.overWkts} Wkt${sum.overWkts===1?'':'s'}</div>
+    <div class="cm-eoo-body">
+      <div class="cm-eoo-batters">${battersHtml}</div>
+      <div class="cm-eoo-divider"></div>
+      <div class="cm-eoo-bowler">${bowlerHtml}</div>
+    </div>
+  </div>`;
+}
+
 function renderCommentary(s){
   const card = document.getElementById('commentary-card');
   if(!card) return;
@@ -2971,11 +3082,14 @@ function renderCommentary(s){
   if(!log.length){ card.style.display = 'none'; return; }
   card.style.display = '';
   if(!changed('commentary', log.length)) return;
+  const { byLastBall } = computeOverEndSummaries(log);
   const recent = log.slice(-25).slice().reverse();
   document.getElementById('commentary-feed').innerHTML = recent.map(b => {
     const { cls, text } = commentaryLine(b);
     const badge = ballBadgeInfo(b);
-    return `<div class="cm-line ${cls}">
+    const summary = byLastBall.get(b);
+    const eooHtml = summary ? overEndSummaryHtml(summary) : '';
+    return `${eooHtml}<div class="cm-line ${cls}">
       <div class="cm-badge ${badge.cls}">${badge.label}</div>
       <div class="cm-body">
         <div class="cm-over">${overBallLabel(b.over)}</div>
