@@ -2508,6 +2508,21 @@ function firstBattingTeamOf(m){
   return 'A'; // no per-row innings tag on this record — fall back to the old assumption
 }
 
+// Saved match records key m.partnerships by INNINGS NUMBER (1/2/3/4 — see
+// computeLivePartnerships() in cricket-panel.html), not by team letter, so
+// this resolves which innings number(s) belong to a given team ('A'/'B')
+// before looking the list up. Uses inningsArchive (authoritative, and the
+// only way to get this right for a Test match where a team bats twice);
+// falls back to the plain 1st/2nd innings assumption for older records
+// saved before inningsArchive existed.
+function partnershipsForTeam(m, team){
+  const src = m.partnerships;
+  if(!src) return [];
+  let nos = (m.inningsArchive || []).filter(i => i.team === team).map(i => i.no).sort((a,b) => a-b);
+  if(!nos.length) nos = [team === firstBattingTeamOf(m) ? 1 : 2];
+  return nos.reduce((all, no) => all.concat(src[no] || []), []);
+}
+
 function finalResultText(m){
   if(m.winningTeam === 'TIE') return 'Match Tied';
   if(m.winningTeam === 'A') return `${(m.teamA && (m.teamA.name || m.teamA.short)) || 'Team A'} won`;
@@ -2690,7 +2705,17 @@ function renderFinalInnings(){
 
   // Partnerships: finished match has the full list (unlike the live view's
   // single current-partnership figure) — show them all for this innings.
-  const pships = (m.partnerships && (m.partnerships[team] || (Array.isArray(m.partnerships) ? m.partnerships : []))) || [];
+  // 🐛 FIX: the saved record keys m.partnerships by INNINGS NUMBER (1/2/3/4
+  // — computeLivePartnerships() in cricket-panel.html groups by innings,
+  // same as inningsArchive), not by team letter. Looking it up as
+  // m.partnerships[team] ('A'/'B') always missed, so this always showed
+  // "No partnership data" even though the correct list was sitting right
+  // there under a different key. Map team -> its innings number(s) via
+  // inningsArchive first (handles Tests, where a team can have two
+  // innings), falling back to the standard 1st/2nd innings order
+  // firstBattingTeamOf() already trusts for older records with no
+  // inningsArchive.
+  const pships = partnershipsForTeam(m, team);
   const pshipEl = document.getElementById('pship-big-runs');
   if(pshipEl){
     const pshipCard = pshipEl.closest('.card');
