@@ -9,6 +9,21 @@
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=Manrope:wght@600;700;800;900&family=Inter:wght@500;600;700;800;900&family=Noto+Sans:wght@500;600;700;800;900&family=Noto+Sans+Devanagari:wght@500;600;700;800;900&display=swap" rel="stylesheet">
 <script src="/socket.io/socket.io.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script>
+  // This overlay is meant to also run inside an Electron OFFSCREEN
+  // BrowserWindow (BroadcastHelper), which is never actually composited
+  // to a real screen. GSAP's ticker normally drives every animation off
+  // requestAnimationFrame, which browsers only fire for content that's
+  // really being painted to a display — in an offscreen window that
+  // signal may never come, so every gsap.to()/from() tween (which is
+  // how every panel goes from its initial opacity:0 to visible) just
+  // sits at frame 0 forever. Forcing the ticker onto a plain interval
+  // instead makes animations run and complete regardless of whether the
+  // page is "visible" in that sense. Harmless in a normal browser tab.
+  if (window.gsap && gsap.ticker && typeof gsap.ticker.useRAF === 'function') {
+    gsap.ticker.useRAF(false);
+  }
+</script>
 <style>
   /* ============================================================
      CRICKET BROADCAST OVERLAY — TV-scorecard edition
