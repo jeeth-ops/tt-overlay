@@ -1912,8 +1912,14 @@ app.get('/api/public/tournament/:token/match/:matchId/balls', async (req, res) =
         const match = await matchRecordsCollection.findOne({ ownerUid: doc.ownerUid, leagueKey: doc.leagueKey, matchId: req.params.matchId });
         if (!match) return res.json({ success: true, balls: [] });
 
-        const ballsMatchId = match.roomId || match.matchId;
-        const balls = await ballsCollection.find({ matchId: ballsMatchId }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
+        // Try both possible ids balls could be filed under (roomId is the
+        // live-recording id, matchId is the permanent tournament id — see
+        // the roomId-vs-matchId comments elsewhere in this file) rather than
+        // picking one with `||` and giving up if that guess is wrong.
+        const candidateIds = [...new Set([match.roomId, match.matchId].filter(Boolean))];
+        const balls = candidateIds.length
+            ? await ballsCollection.find({ matchId: { $in: candidateIds } }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray()
+            : [];
         res.json({ success: true, balls: balls.map(mapBallForPublic) });
     } catch (err) {
         console.log('Public tournament match balls fetch error:', err);
@@ -1988,8 +1994,10 @@ app.get('/api/public/match/:id/balls', async (req, res) => {
         });
         if (!match) return res.json({ success: true, balls: [] });
 
-        const ballsMatchId = match.roomId || match.matchId;
-        const balls = await ballsCollection.find({ matchId: ballsMatchId }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
+        const candidateIds = [...new Set([match.roomId, match.matchId].filter(Boolean))];
+        const balls = candidateIds.length
+            ? await ballsCollection.find({ matchId: { $in: candidateIds } }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray()
+            : [];
         res.json({ success: true, balls: balls.map(mapBallForPublic) });
     } catch (err) {
         console.log('Public match balls fetch error:', err);
