@@ -6786,19 +6786,23 @@ function emitOverSummary(overIndexZeroBased, overRuns, overWickets, overBalls){
   saveLocal();
   if(!socket || !socket.connected) return;
   const battingTeamObj = state.battingTeam === 'A' ? state.teamA : state.teamB;
+  const bowlingTeamObj = state.battingTeam === 'A' ? state.teamB : state.teamA;
   const totalBalls = state.score.overs * 6 + state.score.balls;
   const crr = totalBalls > 0 ? (state.score.runs / (totalBalls / 6)) : 0;
   const recentOvers = state.overHistory.filter(o => o.inningsNo === state.inningsNumber).slice(-5);
+  const srOf = (p) => (p.balls > 0 ? ((p.runs / p.balls) * 100).toFixed(1) : '0.0');
   socket.emit('cricketOverSummary', { data: {
     overNumber: overIndexZeroBased + 1,
     overRuns, overWickets, balls: overBalls,
+    format: state.format,
     teamName: battingTeamObj.name, teamShort: battingTeamObj.short,
     teamColor: battingTeamObj.color, teamLogo: battingTeamObj.logoUrl,
+    oppTeamColor: bowlingTeamObj.color,
     score: state.score.runs, wickets: state.score.wickets,
     overs: state.score.overs, ballsIntoOver: state.score.balls,
     crr: crr.toFixed(2),
-    striker: { name: state.striker.name, runs: state.striker.runs, balls: state.striker.balls },
-    nonStriker: { name: state.nonStriker.name, runs: state.nonStriker.runs, balls: state.nonStriker.balls },
+    striker: { name: state.striker.name, runs: state.striker.runs, balls: state.striker.balls, fours: state.striker.fours, sixes: state.striker.sixes, sr: srOf(state.striker) },
+    nonStriker: { name: state.nonStriker.name, runs: state.nonStriker.runs, balls: state.nonStriker.balls, fours: state.nonStriker.fours, sixes: state.nonStriker.sixes, sr: srOf(state.nonStriker) },
     bowler: { name: state.bowler.name, overs: state.bowler.overs, balls: state.bowler.balls, maidens: state.bowler.maidens, runs: state.bowler.runs, wickets: state.bowler.wickets },
     recentOvers
   }});
