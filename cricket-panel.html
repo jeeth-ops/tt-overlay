@@ -1166,40 +1166,78 @@
       </div>
     </div>
 
-    <div class="card" id="card-live-youtube">
-      <h2>📺 Go Live to YouTube (Browser Only)</h2>
+    <div class="card" id="card-live-studio">
+      <h2>🎬 LIVE STUDIO</h2>
       <div style="font-size:12px; opacity:.75; margin-bottom:10px; line-height:1.5;">
-        Streams straight from this browser to YouTube using your HDMI capture card — no OBS, no vMix, nothing installed on this PC.
+        Camera + Audio → Local AllSportsLive Stream Engine (this PC, GPU-encoded) → YouTube. Nothing here goes through Render — see the Stream Engine's own README.
+      </div>
+
+      <div style="border-radius:8px; overflow:hidden; background:#000; aspect-ratio:16/9; margin-bottom:10px; position:relative;">
+        <iframe id="ls-preview-frame" style="width:100%; height:100%; border:0; display:none;"></iframe>
+        <div id="ls-preview-placeholder" style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:rgba(255,255,255,.4); font-size:12px; text-align:center; padding:10px;">
+          Final Output Preview<br>(open it below — Camera + Cricket Overlay composited live)
+        </div>
+      </div>
+
+      <div id="ls-health-grid" style="display:grid; grid-template-columns:auto 1fr; gap:4px 10px; font-size:12.5px; margin-bottom:12px; padding:10px; background:rgba(255,255,255,.04); border-radius:8px;">
+        <span style="opacity:.7;">Camera</span><span id="ls-h-camera" class="ls-health-val">● Not connected</span>
+        <span style="opacity:.7;">Microphone</span><span id="ls-h-mic" class="ls-health-val">● Not connected</span>
+        <span style="opacity:.7;">Overlay</span><span id="ls-h-overlay" class="ls-health-val">● Not connected</span>
+        <span style="opacity:.7;">Encoder</span><span id="ls-h-encoder" class="ls-health-val">● Checking…</span>
+        <span style="opacity:.7;">YouTube</span><span id="ls-h-youtube" class="ls-health-val">● Checking…</span>
+        <span style="opacity:.7;">Clip Engine</span><span id="ls-h-clip" class="ls-health-val">● Separate (Part 1)</span>
+      </div>
+      <div style="font-size:10.5px; opacity:.55; margin:-4px 0 12px;">
+        FOUR/SIX/WICKET clips still come from the separate "Match Recording" card above (Part 1) — the Live Studio video path never touches Render, so it isn't wired into that clip buffer yet.
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px 10px; font-size:12px; opacity:.8; margin-bottom:12px;">
+        <span>Resolution: <b>1920×1080</b></span>
+        <span>FPS: <b>30</b></span>
+        <span style="grid-column:1/-1;">Encoder: <b id="ls-encoder-name">NVIDIA NVENC</b></span>
       </div>
 
       <label style="font-size:12px; opacity:.8; display:block; margin-bottom:4px;">YouTube Stream Key</label>
-      <div class="link-row" style="margin-bottom:10px;">
+      <div class="link-row" style="margin-bottom:6px;">
         <input type="password" id="yt-stream-key" placeholder="YouTube Studio → Go Live → Stream key">
         <button class="small" id="toggle-yt-key-visibility">👁</button>
       </div>
+      <button class="full small ghost" id="save-stream-key-btn" style="margin-bottom:10px;">Save Key to Stream Engine</button>
+      <div style="font-size:10.5px; opacity:.55; margin:-4px 0 10px;">
+        Sent directly to the local Stream Engine on this PC (127.0.0.1) — never to Render, never stored in the browser.
+      </div>
 
-      <label style="font-size:12px; opacity:.8; display:block; margin-bottom:4px;">Camera (capture card video)</label>
+      <label style="font-size:12px; opacity:.8; display:block; margin-bottom:4px;">Camera</label>
       <select id="live-video-device" class="full" style="margin-bottom:8px;"></select>
 
-      <label style="font-size:12px; opacity:.8; display:block; margin-bottom:4px;">Audio (capture card audio)</label>
+      <label style="font-size:12px; opacity:.8; display:block; margin-bottom:4px;">Microphone</label>
       <select id="live-audio-device" class="full" style="margin-bottom:10px;"></select>
 
-      <button class="full small ghost" id="refresh-live-devices-btn" style="margin-bottom:10px;">🔄 Refresh Camera List</button>
+      <button class="full small ghost" id="refresh-live-devices-btn" style="margin-bottom:10px;">🔄 Refresh Device List</button>
 
-      <button class="full small primary" id="open-live-output-btn">🖥️ Open Live Output Window</button>
+      <button class="full small primary" id="open-live-output-btn">🖥️ Open Final Output Preview</button>
       <div style="font-size:11px; opacity:.6; margin:6px 0 10px;">
-        Opens a small window showing your camera + overlay combined. Leave it open anywhere on screen — it doesn't need to face the crowd, it's just what gets sent to YouTube.
+        Opens the composited Camera + Cricket Overlay window and mirrors it into the preview above. Leave it open — GO LIVE captures exactly what's shown there.
       </div>
 
-      <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-        <div class="dot" id="live-dot"></div>
-        <span id="live-status" style="font-size:13px; opacity:.8;">Offline</span>
-      </div>
-      <button class="full small primary" id="start-live-btn">🔴 Go Live</button>
-      <button class="full small ghost" id="stop-live-btn" style="margin-top:6px; display:none;">⏹ End Live</button>
+      <div id="ls-golive-log" style="font-size:11px; opacity:.7; margin-bottom:8px; min-height:14px; font-family:monospace;"></div>
+
+      <button class="full small primary" id="start-live-btn">🔴 GO LIVE</button>
+      <button class="full small ghost" id="stop-live-btn" style="margin-top:6px; display:none;">⏹ STOP STREAM</button>
 
       <div style="font-size:11px; opacity:.6; margin-top:8px;">
-        First time you click "Go Live", Chrome will ask which window/tab to share — pick the <b>Live Output</b> window that just opened. You don't need to share tab audio; audio comes straight from the capture card.
+        Requires the local Stream Engine running on this PC (<code>stream-engine/</code> — <code>npm start</code>) with an NVENC-capable ffmpeg. First "Go Live" click, Chrome asks which window to share — pick <b>Live Output</b>.
+      </div>
+
+      <div id="ls-stream-health" style="display:none; margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,.08);">
+        <label style="font-size:12px; opacity:.8; display:block; margin-bottom:6px;">Stream Health</label>
+        <div style="display:grid; grid-template-columns:auto 1fr; gap:4px 10px; font-size:12.5px;">
+          <span style="opacity:.7;">Bitrate</span><span id="ls-sh-bitrate">—</span>
+          <span style="opacity:.7;">Dropped</span><span id="ls-sh-dropped">—</span>
+          <span style="opacity:.7;">GPU</span><span id="ls-sh-gpu">—</span>
+          <span style="opacity:.7;">Duration</span><span id="ls-sh-duration">—</span>
+        </div>
+        <div id="ls-sh-error" style="font-size:11px; color:#ff6b6b; margin-top:6px; display:none;"></div>
       </div>
     </div>
 
@@ -1890,18 +1928,53 @@ document.getElementById('start-recording-btn').addEventListener('click', startRe
 document.getElementById('stop-recording-btn').addEventListener('click', stopRecording);
 
 /* ============================================================
-   📺 DIRECT-TO-YOUTUBE LIVE STREAMING — no OBS/vMix, nothing
-   installed on this PC. This tab captures the "Live Output" popup
-   window (camera + overlay already composited there) via
-   getDisplayMedia, mixes in real audio straight from the capture
-   card, and ships webm chunks to this server, which pipes them into
-   ffmpeg → YouTube RTMP. Everything happens inside the browser.
+   🎬 LIVE STUDIO (PART 2) — Camera + Audio → this browser tab
+   composites Camera + the EXISTING Cricket Overlay in live-output.html
+   (no second overlay system), captures that window via getDisplayMedia,
+   mixes in real mic/capture-card audio, and streams webm chunks
+   straight to the LOCAL Stream Engine (127.0.0.1:5006 — see
+   stream-engine/server.js), which does the actual NVENC encode and
+   RTMPS push to YouTube.
+   🔒 server.js/Render is NEVER in this path — no video bytes are ever
+   sent there from here. Only the existing score/control traffic
+   (socket.io) still goes to Render, unchanged.
    ============================================================ */
+const STREAM_ENGINE_URL = 'http://127.0.0.1:5006'; // local-only, never Render
 let liveOutputWindow = null;
 let liveDisplayStream = null;   // pixels of the Live Output window
-let liveAudioStream = null;     // real capture-card audio
+let liveAudioStream = null;     // real mic/capture-card audio
 let liveRecorder = null;
 let liveActive = false;
+let liveHealthPollTimer = null;
+
+function lsLog(line){
+  const el = document.getElementById('ls-golive-log');
+  if(el) el.textContent = line;
+}
+function lsSetHealth(id, ok, label){
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.textContent = `● ${label}`;
+  el.style.color = ok === true ? '#3ddc84' : ok === false ? '#ff6b6b' : 'inherit';
+}
+
+async function fetchEngineStatus(){
+  try {
+    return await fetch(`${STREAM_ENGINE_URL}/status`, { signal: AbortSignal.timeout(2500) }).then(r => r.json());
+  } catch(e) { return null; }
+}
+async function refreshEngineHealthDisplay(){
+  const status = await fetchEngineStatus();
+  if(!status){
+    lsSetHealth('ls-h-encoder', false, 'Stream Engine unreachable');
+    lsSetHealth('ls-h-youtube', null, 'Unknown');
+    return;
+  }
+  lsSetHealth('ls-h-encoder', status.nvencAvailable, status.nvencAvailable ? 'Ready (NVENC)' : `Not ready — ${status.nvencDetail || 'NVENC unavailable'}`);
+  lsSetHealth('ls-h-youtube', status.streamKeySet, status.streamKeySet ? 'Ready' : 'No stream key set');
+}
+refreshEngineHealthDisplay();
+setInterval(refreshEngineHealthDisplay, 10000);
 
 async function populateLiveDevices(){
   try {
@@ -1942,37 +2015,91 @@ function openLiveOutputWindow(){
   const matchId = currentMatchId();
   if(!matchId){ toast('Enter a Match ID and Connect first'); return; }
   const videoDeviceId = document.getElementById('live-video-device').value;
-  if(!videoDeviceId){ toast('No camera found — plug in the capture card and click "Refresh Camera List"'); return; }
+  if(!videoDeviceId){ toast('No camera found — plug one in and click "Refresh Device List"'); return; }
 
   const url = `${location.origin}/live-output.html?room=${encodeURIComponent(matchId)}&video=${encodeURIComponent(videoDeviceId)}`;
   liveOutputWindow = window.open(url, 'liveOutputWindow', 'width=1280,height=740');
-  toast('Live Output window opened — keep it open, then click "Go Live"');
+  lsSetHealth('ls-h-camera', true, 'Connected');
+  lsSetHealth('ls-h-overlay', true, 'Connected');
+  document.getElementById('ls-preview-placeholder').style.display = 'none';
+  const frame = document.getElementById('ls-preview-frame');
+  frame.src = `${location.origin}/live-output.html?room=${encodeURIComponent(matchId)}&video=${encodeURIComponent(videoDeviceId)}`;
+  frame.style.display = 'block';
+  toast('Final Output Preview opened — keep it open, then click GO LIVE');
 }
 document.getElementById('open-live-output-btn').addEventListener('click', openLiveOutputWindow);
 
+document.getElementById('save-stream-key-btn').addEventListener('click', async () => {
+  const streamKey = document.getElementById('yt-stream-key').value.trim();
+  if(!streamKey){ toast('Paste your YouTube stream key first'); return; }
+  try {
+    const res = await fetch(`${STREAM_ENGINE_URL}/set-stream-key`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ streamKey })
+    }).then(r => r.json());
+    if(res.success){
+      toast(`✅ Stream key saved to Stream Engine (${res.streamKeyMasked})`);
+      document.getElementById('yt-stream-key').value = ''; // never lingers in the DOM/page memory longer than needed
+      refreshEngineHealthDisplay();
+    } else {
+      toast('⚠️ Stream Engine rejected the key: ' + (res.error || 'unknown error'));
+    }
+  } catch(e) {
+    toast('⚠️ Could not reach the local Stream Engine — is it running? (see stream-engine/README.md)');
+  }
+});
+
+// GO LIVE checklist — matches the required sequence exactly. Each step
+// either passes (and moves on) or fails loud with a clear reason; it
+// never silently skips a check.
 async function startLive(){
   const matchId = currentMatchId();
   if(!matchId){ toast('Enter a Match ID and Connect first'); return; }
-  const streamKey = document.getElementById('yt-stream-key').value.trim();
-  if(!streamKey){ toast('Paste your YouTube stream key first'); return; }
-  if(!liveOutputWindow || liveOutputWindow.closed){ toast('Open the Live Output window first'); return; }
+  if(!liveOutputWindow || liveOutputWindow.closed){ toast('Open the Final Output Preview first'); return; }
 
+  lsLog('Checking Camera…');
+  const videoDeviceId = document.getElementById('live-video-device').value;
+  if(!videoDeviceId){ lsLog(''); toast('No camera selected'); return; }
+  lsSetHealth('ls-h-camera', true, 'Connected');
+
+  lsLog('Checking Audio…');
   const audioDeviceId = document.getElementById('live-audio-device').value;
-
   try {
-    // Real audio straight from the capture card — cleaner than
-    // capturing whatever the Live Output tab happens to play back.
     liveAudioStream = await navigator.mediaDevices.getUserMedia({
       audio: audioDeviceId ? { deviceId: { exact: audioDeviceId } } : true
     });
+    lsSetHealth('ls-h-mic', true, 'Connected');
   } catch(e) {
-    toast('⚠️ Could not get audio from the capture card: ' + e.message);
+    lsSetHealth('ls-h-mic', false, 'Failed — ' + e.message);
+    lsLog(''); toast('⚠️ Could not get audio: ' + e.message);
     return;
   }
 
+  lsLog('Checking Overlay…');
+  lsSetHealth('ls-h-overlay', true, 'Connected'); // the preview iframe is already loaded (openLiveOutputWindow)
+
+  lsLog('Checking Encoder…');
+  const engineStatus = await fetchEngineStatus();
+  if(!engineStatus){
+    lsLog(''); toast('⚠️ Local Stream Engine not reachable — start it first (stream-engine/README.md)');
+    liveAudioStream.getTracks().forEach(t => t.stop());
+    return;
+  }
+  if(!engineStatus.nvencAvailable){
+    lsLog(''); toast('⚠️ NVENC not available on this PC: ' + (engineStatus.nvencDetail || 'unknown reason') + ' — refusing to go live on CPU encoding');
+    liveAudioStream.getTracks().forEach(t => t.stop());
+    return;
+  }
+  if(!engineStatus.streamKeySet){
+    lsLog(''); toast('⚠️ No YouTube stream key saved — paste it above and click "Save Key to Stream Engine"');
+    liveAudioStream.getTracks().forEach(t => t.stop());
+    return;
+  }
+  lsSetHealth('ls-h-encoder', true, 'Ready (NVENC)');
+
   try {
-    // Captures exactly what's rendered in the Live Output window —
-    // camera + overlay, already composited there.
+    // Captures exactly what's rendered in the Final Output Preview window
+    // — camera + the existing Cricket Overlay, already composited there.
     liveDisplayStream = await navigator.mediaDevices.getDisplayMedia({
       video: { frameRate: 30 },
       audio: false,
@@ -1980,76 +2107,117 @@ async function startLive(){
       selfBrowserSurface: 'exclude'
     });
   } catch(e) {
-    toast('⚠️ Screen-share was cancelled — pick the "Live Output" window when Chrome asks.');
+    lsLog(''); toast('⚠️ Screen-share was cancelled — pick the "Live Output" window when Chrome asks.');
     liveAudioStream.getTracks().forEach(t => t.stop());
     return;
   }
 
+  lsLog('Connecting to YouTube…');
+  const goLiveRes = await fetch(`${STREAM_ENGINE_URL}/go-live`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ resolution: '1920x1080', fps: 30, bitrateKbps: 10000 })
+  }).then(r => r.json()).catch(() => ({ success:false, error:'Stream Engine unreachable' }));
+
+  if(!goLiveRes.success){
+    lsLog(''); toast('⚠️ Could not start the encoder: ' + (goLiveRes.error || 'unknown error'));
+    lsSetHealth('ls-h-youtube', false, 'Failed to start');
+    liveDisplayStream.getTracks().forEach(t => t.stop());
+    liveAudioStream.getTracks().forEach(t => t.stop());
+    return;
+  }
+
+  lsLog('Starting Stream…');
   const combined = new MediaStream([
     ...liveDisplayStream.getVideoTracks(),
     ...liveAudioStream.getAudioTracks()
   ]);
 
-  const startRes = await fetch('/api/live/start', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ matchId, streamKey })
-  }).then(r => r.json()).catch(() => ({ success:false }));
-
-  if(!startRes.success){
-    toast('⚠️ Could not start the YouTube stream: ' + (startRes.error || 'unknown error'));
-    combined.getTracks().forEach(t => t.stop());
-    return;
-  }
-
-  let liveChunkIndex = 0;
+  // 🔒 These chunks go ONLY to the local Stream Engine (127.0.0.1) —
+  // never to server.js/Render. Render stays a pure data server; only
+  // score/control traffic (socket.io, elsewhere in this file) reaches it.
   const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=h264,opus')
     ? 'video/webm;codecs=h264,opus'
     : 'video/webm;codecs=vp8,opus';
 
-  liveRecorder = new MediaRecorder(combined, { mimeType, videoBitsPerSecond: 4_500_000 });
+  liveRecorder = new MediaRecorder(combined, { mimeType, videoBitsPerSecond: 10_000_000 });
   liveRecorder.ondataavailable = async (e) => {
     if(!e.data || e.data.size === 0) return;
-    const idx = liveChunkIndex++;
     try {
-      await fetch(`/api/live/chunk?matchId=${encodeURIComponent(matchId)}&index=${idx}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/octet-stream' },
-        body: e.data
+      await fetch(`${STREAM_ENGINE_URL}/ingest`, {
+        method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: e.data
       });
     } catch(err) { /* one dropped chunk = a brief stutter on YouTube, not a crash */ }
   };
   liveRecorder.onstop = () => { combined.getTracks().forEach(t => t.stop()); };
 
-  // If the operator closes the Live Output window, or ends sharing
-  // from Chrome's own "Stop sharing" bar, treat it like "End Live".
-  liveDisplayStream.getVideoTracks()[0].addEventListener('ended', () => { if(liveActive) stopLive(); });
+  // If the operator closes the preview window, or ends sharing from
+  // Chrome's own "Stop sharing" bar, treat it like STOP STREAM.
+  liveDisplayStream.getVideoTracks()[0].addEventListener('ended', () => {
+    lsSetHealth('ls-h-camera', false, 'Disconnected');
+    if(liveActive) stopLive();
+  });
 
   liveRecorder.start(1000); // 1s chunks — good balance of latency vs overhead
   liveActive = true;
+  lsSetHealth('ls-h-youtube', true, 'LIVE');
   updateLiveUI(true);
+  lsLog('LIVE');
   toast('🔴 Going live on YouTube…');
+
+  document.getElementById('ls-stream-health').style.display = 'block';
+  liveHealthPollTimer = setInterval(pollStreamHealth, 2000);
+  pollStreamHealth();
+}
+
+async function pollStreamHealth(){
+  const health = await fetch(`${STREAM_ENGINE_URL}/health`, { signal: AbortSignal.timeout(2500) }).then(r => r.json()).catch(() => null);
+  const errEl = document.getElementById('ls-sh-error');
+  if(!health){
+    errEl.textContent = '⚠️ Lost contact with the Stream Engine';
+    errEl.style.display = 'block';
+    lsSetHealth('ls-h-youtube', false, 'Unreachable');
+    return;
+  }
+  document.getElementById('ls-sh-bitrate').textContent = health.metrics.bitrateKbps ? `${health.metrics.bitrateKbps} kbps` : '—';
+  document.getElementById('ls-sh-dropped').textContent = health.metrics.droppedFrames ?? '—';
+  document.getElementById('ls-sh-gpu').textContent = health.gpu ? `${health.gpu.gpuPercent}%` : '—';
+  document.getElementById('ls-sh-duration').textContent = health.durationSec != null ? `${Math.floor(health.durationSec/60)}:${String(health.durationSec%60).padStart(2,'0')}` : '—';
+
+  if(health.state === 'crashed'){
+    errEl.textContent = '❌ Encoder crashed: ' + (health.lastError || 'unknown error') + (health.restartCount ? ` (auto-restarted ${health.restartCount}x)` : '');
+    errEl.style.display = 'block';
+    lsSetHealth('ls-h-encoder', false, 'Crashed');
+    lsSetHealth('ls-h-youtube', false, 'Disconnected');
+    if(!health.desiredLive && liveActive){
+      // Engine gave up retrying — reflect that honestly in the UI
+      // instead of pretending we're still live.
+      liveActive = false;
+      updateLiveUI(false);
+      toast('❌ Stream Engine gave up after repeated crashes — check stream-engine logs, then Go Live again');
+    }
+  } else {
+    errEl.style.display = 'none';
+    lsSetHealth('ls-h-encoder', true, 'Running');
+    lsSetHealth('ls-h-youtube', true, 'LIVE');
+  }
 }
 
 async function stopLive(){
   liveActive = false;
   updateLiveUI(false);
+  lsLog('');
+  if(liveHealthPollTimer){ clearInterval(liveHealthPollTimer); liveHealthPollTimer = null; }
   if(liveRecorder && liveRecorder.state !== 'inactive') liveRecorder.stop();
   if(liveDisplayStream) liveDisplayStream.getTracks().forEach(t => t.stop());
   if(liveAudioStream) liveAudioStream.getTracks().forEach(t => t.stop());
 
-  const matchId = currentMatchId();
-  await fetch('/api/live/stop', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ matchId })
-  }).catch(() => {});
+  await fetch(`${STREAM_ENGINE_URL}/stop`, { method: 'POST' }).catch(() => {});
+  lsSetHealth('ls-h-youtube', null, 'Ready');
+  lsSetHealth('ls-h-encoder', null, 'Ready');
   toast('Live stream ended');
 }
 
 function updateLiveUI(active){
-  document.getElementById('live-dot').classList.toggle('on', active);
-  document.getElementById('live-status').textContent = active ? 'LIVE on YouTube' : 'Offline';
   document.getElementById('start-live-btn').style.display = active ? 'none' : 'block';
   document.getElementById('stop-live-btn').style.display = active ? 'block' : 'none';
 }

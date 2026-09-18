@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Live Output</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  /* ============================================================
+     LIVE OUTPUT — "Camera + Cricket Overlay = Final Output"
+     This window is what GO LIVE captures (via getDisplayMedia) and
+     feeds to the local Stream Engine's NVENC encoder. It does NOT
+     reimplement the overlay — it loads the real cricket-overlay.html
+     in an iframe on top of the camera <video>, exactly the same page
+     OBS/vMix already use as a browser source. One overlay system,
+     reused here, not duplicated.
+     ============================================================ */
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ width:100%; height:100%; background:#000; overflow:hidden; }
+  #stage{ position:relative; width:100vw; height:100vh; }
+  #camera-video{
+    position:absolute; inset:0; width:100%; height:100%;
+    object-fit:cover; background:#000;
+  }
+  #overlay-frame{
+    position:absolute; inset:0; width:100%; height:100%;
+    border:0; background:transparent;
+  }
+  #lo-status{
+    position:absolute; top:10px; left:10px; z-index:50;
+    font:600 12px/1.4 system-ui, sans-serif; color:#fff;
+    background:rgba(0,0,0,.55); padding:6px 10px; border-radius:6px;
+  }
+  #lo-status.hidden{ display:none; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <video id="camera-video" autoplay playsinline muted></video>
+  <iframe id="overlay-frame"></iframe>
+  <div id="lo-status">Starting camera…</div>
+</div>
+<script>
+  // ?room=<matchId>&video=<deviceId> — same query convention the rest
+  // of the panel/overlay already use (see cricket-overlay.html's own
+  // ?room= handling).
+  const params = new URLSearchParams(location.search);
+  const room = params.get('room') || 'default';
+  const videoDeviceId = params.get('video') || '';
+  const statusEl = document.getElementById('lo-status');
+
+  document.getElementById('overlay-frame').src = `${location.origin}/cricket-overlay?room=${encodeURIComponent(room)}`;
+
+  async function startCamera(){
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: videoDeviceId ? { deviceId: { exact: videoDeviceId }, width: 1920, height: 1080 } : { width: 1920, height: 1080 },
+        audio: false // real audio is captured separately, straight from the mic/capture-card device (see cricket-panel.html) — never re-captured from this tab
+      });
+      const video = document.getElementById('camera-video');
+      video.srcObject = stream;
+      statusEl.classList.add('hidden');
+
+      // If the camera is unplugged/disconnected mid-match, surface it
+      // here immediately (visible on the Live Output window itself, and
+      // caught by the panel via getDisplayMedia's own track 'ended'
+      // handling for the capture as a whole).
+      stream.getVideoTracks()[0].addEventListener('ended', () => {
+        statusEl.textContent = '⚠️ Camera disconnected';
+        statusEl.classList.remove('hidden');
+      });
+    } catch (e) {
+      statusEl.textContent = '⚠️ Could not open camera: ' + e.message;
+      statusEl.classList.remove('hidden');
+    }
+  }
+  startCamera();
+</script>
+</body>
+</html>
