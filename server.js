@@ -11,6 +11,7 @@ const ffmpegInstallerPath = require('@ffmpeg-installer/ffmpeg').path;
 ffmpeg.setFfmpegPath(ffmpegInstallerPath);
 const { google } = require('googleapis');
 const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const videoSource = require('./videoSource'); // local (vMix-free) recording + video-source adapter — see videoSource.js
 
 // ================================================================
 // ☁️ CLOUDFLARE R2 — where clips live for their first (public-facing)
@@ -275,6 +276,12 @@ let driveClient = null;
 // Drive file/folder needs to be shared with (see uploadClipToDrive and
 // the manual "Attach Clip" routes below).
 let DRIVE_SERVICE_ACCOUNT_EMAIL = null;
+// Per-match Drive connection state (OAuth token+folder, or a legacy
+// service-account folder id) — kept separate from the local recording
+// session (see videoSource.js) since a match can be connected to Drive
+// independently of whether/how its video is being recorded.
+// { matchId: { driveOAuth: {accessToken, folderId, connectedAt}, driveFolderId } }
+const driveConnections = {};
 function initDriveClient() {
     const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
     if (!raw) {
@@ -333,7 +340,7 @@ function buildClipFileName(eventType, ballMeta) {
 // stays on the server's disk either way).
 //
 // Two ways a match can be connected to Drive, tried in this order:
-//  1. Per-user OAuth (recordingSessions[matchId].driveOAuth) — operator
+//  1. Per-user OAuth (driveConnections[matchId].driveOAuth) — operator
 //     clicked "Connect Google Drive" and picked their own folder via the
 //     Picker. No manual sharing needed, but the access token only lives
 //     ~1hr — if it's expired/revoked the upload just fails and logs it;
@@ -341,8 +348,8 @@ function buildClipFileName(eventType, ballMeta) {
 //  2. Legacy service-account folder (driveFolderId) — operator manually
 //     shared a folder with the service account's email and pasted the link.
 async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
-    const session = recordingSessions[matchId];
-    const oauth = session && session.driveOAuth;
+    const conn = driveConnections[matchId];
+    const oauth = conn && conn.driveOAuth;
 
     let uploadClient = null;
     let folderId = null;
@@ -354,7 +361,7 @@ async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
         folderId = oauth.folderId;
     } else if (driveClient) {
         uploadClient = driveClient;
-        folderId = session && session.driveFolderId;
+        folderId = conn && conn.driveFolderId;
         if (!folderId && matchesCollection) {
             try {
                 const doc = await matchesCollection.findOne({ matchId });
@@ -465,34 +472,14 @@ app.use(express.json());
 // in the operator's panel tab, a completely separate browser context
 // from whatever OBS is reading as its browser source/scene.
 // ================================================================
-const RECORDINGS_DIR = path.join(__dirname, 'recordings');
-const CLIPS_DIR = path.join(__dirname, 'clips');
-if (!fs.existsSync(RECORDINGS_DIR)) fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
-if (!fs.existsSync(CLIPS_DIR)) fs.mkdirSync(CLIPS_DIR, { recursive: true });
-
-// In-memory manifest per match, keyed by matchId (NOT room-prefixed —
-// this is the raw match id the panel/overlay share, e.g. "abc123").
-// { startedAt: ms epoch when recording began, chunkDir, chunks: [{index, file, receivedAt}], stopped }
-const recordingSessions = {};
-
-function safeMatchId(id) {
-    // Matches are used to build folder/file names on disk — never trust
-    // user input directly in a path.
-    return String(id || '').replace(/[^a-zA-Z0-9_-]/g, '');
-}
-
-// ================================================================
-// 🧹 DISK CLEANUP — this is the piece that stops the server's disk
-// from filling up over hundreds of matches.
-//
-// IMPORTANT: we never delete chunks mid-match. cutClip() always needs
-// chunk 0 onward to rebuild a valid webm, so removing any chunk before
-// a match ends could silently break the NEXT clip request. Instead we
-// wait until recording has stopped AND every clip that could still be
-// in flight has had time to finish, then delete the whole match's
-// chunk folder in one go. This keeps clip-cutting 100% unaffected
-// while still guaranteeing nothing lives on disk forever.
-// ================================================================
+// Local (vMix-free) recording session state, chunk storage, directory
+// layout and disk cleanup all now live in videoSource.js — see that
+// file for the full "video source adapter" design. safeMatchId is
+// re-exported from there so the rest of this file (findCanonicalBall,
+// /api/clips/ingest, etc.) keeps using the exact same sanitizer it
+// always has.
+const { safeMatchId } = videoSource;
+const CLIPS_DIR = path.join(__dirname, 'clips'); // still used by the legacy ClipperHelper ingest path below
 
 // Longest a clip request can still be pending after "stop" is pressed:
 // requestClip() waits up to (eventTimestamp + 10s) before cutting, so a
@@ -501,27 +488,6 @@ function safeMatchId(id) {
 // margin on top of that.
 const RECORDING_CLEANUP_DELAY_MS = 90 * 1000;
 
-function deleteRecordingFolder(matchId, chunkDir) {
-    fs.rm(chunkDir, { recursive: true, force: true }, (err) => {
-        if (err) {
-            console.log(`🧹 Cleanup error for match ${matchId}:`, err.message);
-        } else {
-            console.log(`🧹 Cleaned up recording chunks for match ${matchId}`);
-        }
-    });
-    delete recordingSessions[matchId];
-}
-
-function scheduleRecordingCleanup(matchId) {
-    const session = recordingSessions[matchId];
-    if (!session) return;
-    // Avoid double-scheduling if stop is somehow called twice.
-    if (session.cleanupTimer) clearTimeout(session.cleanupTimer);
-    session.cleanupTimer = setTimeout(() => {
-        deleteRecordingFolder(matchId, session.chunkDir);
-    }, RECORDING_CLEANUP_DELAY_MS);
-}
-
 // 🛟 Safety net for crashes / missed "stop" calls: even if a match's
 // stop event never fires (server restart mid-match, operator's tab
 // closing without hitting stop, network drop, etc.), this sweep makes
@@ -529,50 +495,38 @@ function scheduleRecordingCleanup(matchId) {
 // than 12 hours with no in-memory session is almost certainly a dead
 // leftover, since real matches don't run that long.
 const ORPHAN_RECORDING_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-
-function sweepOrphanedRecordings() {
-    fs.readdir(RECORDINGS_DIR, (err, entries) => {
-        if (err) return;
-        entries.forEach((matchId) => {
-            if (recordingSessions[matchId]) return; // still active / pending cleanup
-            const dir = path.join(RECORDINGS_DIR, matchId);
-            fs.stat(dir, (statErr, stats) => {
-                if (statErr || !stats.isDirectory()) return;
-                if (Date.now() - stats.mtimeMs > ORPHAN_RECORDING_MAX_AGE_MS) {
-                    fs.rm(dir, { recursive: true, force: true }, (rmErr) => {
-                        if (!rmErr) console.log(`🧹 Swept orphaned recording folder: ${matchId}`);
-                    });
-                }
-            });
-        });
-    });
-}
 // Run once shortly after boot (catches anything left from before a
 // deploy/restart) and then every hour going forward.
-setTimeout(sweepOrphanedRecordings, 60 * 1000);
-setInterval(sweepOrphanedRecordings, 60 * 60 * 1000);
+setTimeout(() => videoSource.sweepOrphaned(ORPHAN_RECORDING_MAX_AGE_MS), 60 * 1000);
+setInterval(() => videoSource.sweepOrphaned(ORPHAN_RECORDING_MAX_AGE_MS), 60 * 60 * 1000);
 
+// ================================================================
+// 🎬 LOCAL RECORDING API — the vMix-free video source. A browser tab
+// (the operator's panel, or any future capture agent) POSTs small
+// rolling chunks here as they're produced; cutClip() below reads them
+// back through videoSource.getClipWindow() instead of assuming any one
+// capture tool produced them. This is entirely independent of the
+// legacy ClipperHelper.exe/vMix path (/api/clips/ingest, further down)
+// — both can be used interchangeably, or side by side.
+// ================================================================
 app.post('/api/recording/start', async (req, res) => {
     const matchId = safeMatchId(req.body.matchId);
     if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
+    const tournamentId = req.body.tournamentId ? String(req.body.tournamentId).slice(0, 200) : null;
 
-    const chunkDir = path.join(RECORDINGS_DIR, matchId);
-    if (!fs.existsSync(chunkDir)) fs.mkdirSync(chunkDir, { recursive: true });
-
-    const startedAt = Date.now();
-    recordingSessions[matchId] = { startedAt, chunkDir, chunks: [], stopped: false };
+    const session = videoSource.startSession(matchId, tournamentId);
 
     if (matchesCollection) {
         try {
             await matchesCollection.updateOne(
                 { matchId },
-                { $set: { matchId, recordingStartedAt: startedAt, recordingStatus: 'recording' } },
+                { $set: { matchId, tournamentId, recordingStartedAt: session.startedAt, recordingStatus: 'recording' } },
                 { upsert: true }
             );
         } catch (err) { console.log('Mongo recording/start error:', err); }
     }
-    console.log(`🔴 Recording started for match ${matchId}`);
-    res.json({ success: true, startedAt });
+    console.log(`🔴 Local recording started for match ${matchId}${tournamentId ? ` (tournament ${tournamentId})` : ''}`);
+    res.json({ success: true, startedAt: session.startedAt });
 });
 
 // Chunks arrive as raw binary (webm blob straight from MediaRecorder).
@@ -581,37 +535,25 @@ app.post('/api/recording/start', async (req, res) => {
 app.post('/api/recording/chunk', express.raw({ type: '*/*', limit: '25mb' }), (req, res) => {
     const matchId = safeMatchId(req.query.matchId);
     const index = parseInt(req.query.index, 10);
-    const session = recordingSessions[matchId];
-    if (!session) return res.status(400).json({ success: false, error: 'No active recording session for this matchId — call /api/recording/start first' });
-    if (Number.isNaN(index)) return res.status(400).json({ success: false, error: 'index required' });
-
-    const file = path.join(session.chunkDir, `chunk_${String(index).padStart(6, '0')}.webm`);
-    fs.writeFile(file, req.body, (err) => {
-        if (err) {
-            console.log('Chunk write error:', err);
-            return res.status(500).json({ success: false });
-        }
-        session.chunks.push({ index, file, receivedAt: Date.now() });
-        session.chunks.sort((a, b) => a.index - b.index);
-        res.json({ success: true });
-    });
+    const result = videoSource.addChunk(matchId, index, req.body);
+    if (!result.ok) return res.status(400).json({ success: false, error: result.error });
+    res.json({ success: true });
 });
 
 app.post('/api/recording/stop', async (req, res) => {
     const matchId = safeMatchId(req.body.matchId);
-    const session = recordingSessions[matchId];
+    const session = videoSource.stopSession(matchId);
     if (!session) return res.status(400).json({ success: false, error: 'No active recording session' });
-    session.stopped = true;
 
     if (matchesCollection) {
         try {
             await matchesCollection.updateOne({ matchId }, { $set: { recordingStatus: 'stopped', recordingStoppedAt: Date.now() } });
         } catch (err) { console.log('Mongo recording/stop error:', err); }
     }
-    console.log(`⏹ Recording stopped for match ${matchId} (${session.chunks.length} chunks)`);
+    console.log(`⏹ Local recording stopped for match ${matchId} (${session.chunks.length} chunks)`);
     // Clips can still be in flight for a few more seconds — schedule
     // the actual disk cleanup instead of deleting immediately.
-    scheduleRecordingCleanup(matchId);
+    videoSource.scheduleCleanup(matchId, RECORDING_CLEANUP_DELAY_MS);
     res.json({ success: true, chunkCount: session.chunks.length });
 });
 
@@ -626,7 +568,8 @@ app.post('/api/set-drive-folder', async (req, res) => {
         return res.status(400).json({ success: false, error: 'Valid matchId and Drive folder link are required' });
     }
 
-    if (recordingSessions[matchId]) recordingSessions[matchId].driveFolderId = folderId;
+    driveConnections[matchId] = driveConnections[matchId] || {};
+    driveConnections[matchId].driveFolderId = folderId;
     if (matchesCollection) {
         try {
             await matchesCollection.updateOne({ matchId }, { $set: { matchId, driveFolderId: folderId } }, { upsert: true });
@@ -667,10 +610,8 @@ app.post('/api/set-drive-folder-oauth', async (req, res) => {
         return res.status(400).json({ success: false, error: 'Could not verify Drive access — please reconnect' });
     }
 
-    if (!recordingSessions[matchId]) {
-        recordingSessions[matchId] = { startedAt: Date.now(), chunkDir: path.join(RECORDINGS_DIR, matchId), chunks: [], stopped: false };
-    }
-    recordingSessions[matchId].driveOAuth = { accessToken, folderId, connectedAt: Date.now() };
+    driveConnections[matchId] = driveConnections[matchId] || {};
+    driveConnections[matchId].driveOAuth = { accessToken, folderId, connectedAt: Date.now() };
 
     if (matchesCollection) {
         try {
@@ -682,42 +623,32 @@ app.post('/api/set-drive-folder-oauth', async (req, res) => {
     res.json({ success: true, folderId });
 });
 
-// Finds which chunk files together cover [fromSec, toSec] of the
-// recording, based on each chunk's arrival time relative to startedAt.
-// This is an approximation (chunk arrival ≈ chunk content time, since
-// MediaRecorder emits chunks on a steady timeslice) — good enough for a
-// ±10s highlight clip, not frame-accurate editing.
-function chunksCoveringRange(session, fromSec, toSec) {
-    const fromMs = session.startedAt + Math.max(0, fromSec) * 1000;
-    const toMs = session.startedAt + toSec * 1000;
-    // Include one chunk before the window starts too, so ffmpeg has
-    // enough lead-in to seek precisely with -ss.
-    const sorted = [...session.chunks].sort((a, b) => a.index - b.index);
-    const covering = [];
-    for (let i = 0; i < sorted.length; i++) {
-        const c = sorted[i];
-        const next = sorted[i + 1];
-        const chunkEndMs = next ? next.receivedAt : Date.now();
-        if (chunkEndMs >= fromMs && c.receivedAt <= toMs) covering.push(c);
-    }
-    return covering;
-}
+// Default pre-roll/post-roll for an auto-cut event clip — unchanged from
+// the original implementation (10s before, 10s after = 20s total).
+const CLIP_PRE_ROLL_SEC = 10;
+const CLIP_POST_ROLL_SEC = 10;
 
 // Stitches the covering chunks + trims to an exact clip using ffmpeg,
 // and records the clip in MongoDB so the (future) Google Drive step
 // knows what's waiting to be uploaded.
+//
+// The ONLY thing that changed here vs. the original implementation is
+// WHERE the source chunks/paths come from: instead of reaching directly
+// into a module-level `recordingSessions` map, this goes through
+// videoSource.getClipWindow() — the video source adapter. The actual
+// clip-cutting business logic (pre/post-roll window, byte-concat +
+// ffmpeg trim, codecs, preset, handing off to finalizeClip) is
+// byte-for-byte the same as before.
 async function cutClip({ matchId, eventType, eventTimestamp, ballMeta, uid }) {
-    const session = recordingSessions[matchId];
-    if (!session) { console.log(`No recording session for ${matchId} — skipping clip for ${eventType}`); return; }
+    const win = videoSource.getClipWindow({
+        matchId,
+        eventTimestamp,
+        preRollSec: CLIP_PRE_ROLL_SEC,
+        postRollSec: CLIP_POST_ROLL_SEC,
+    });
+    if (!win) { console.log(`No local recording source for ${matchId} — skipping clip for ${eventType}`); return; }
 
-    const offsetSec = (eventTimestamp - session.startedAt) / 1000;
-    const fromSec = Math.max(0, offsetSec - 10);
-    const toSec = offsetSec + 10;
-    const clipDir = path.join(CLIPS_DIR, matchId);
-    if (!fs.existsSync(clipDir)) fs.mkdirSync(clipDir, { recursive: true });
-
-    const covering = chunksCoveringRange(session, fromSec, toSec);
-    if (!covering.length) { console.log(`No chunks found covering clip window for ${matchId}/${eventType}`); return; }
+    const { fromSec, toSec, trimStartSec, toStitch, dirs } = win;
 
     // MediaRecorder's timeslice chunks are NOT independently-valid WebM
     // files except the very first one (it carries the EBML/Segment
@@ -728,15 +659,8 @@ async function cutClip({ matchId, eventType, eventTimestamp, ballMeta, uid }) {
     // raw byte-concatenate every chunk from index 0 through the last
     // chunk covering our window, in strict order — that reconstructs an
     // actually-playable file, which we then trim/transcode as before.
-    const lastIndex = covering[covering.length - 1].index;
-    const toStitch = [...session.chunks].sort((a, b) => a.index - b.index).filter(c => c.index <= lastIndex);
-
-    const stitchedFile = path.join(clipDir, `_stitched_${Date.now()}.webm`);
-    const outFile = path.join(clipDir, `${eventType}_${Date.now()}.mp4`);
-
-    // The stitched file always starts at t=0 of the whole recording now
-    // (since we always include chunk 0), so no extra offset math needed.
-    const trimStartSec = fromSec;
+    const stitchedFile = path.join(dirs.tempDir, `_stitched_${Date.now()}.webm`);
+    const outFile = path.join(dirs.clipsDir, `${eventType}_${Date.now()}.mp4`);
 
     try {
         await new Promise((resolve, reject) => {
@@ -759,7 +683,7 @@ async function cutClip({ matchId, eventType, eventTimestamp, ballMeta, uid }) {
         await new Promise((resolve, reject) => {
             ffmpeg(stitchedFile)
                 .setStartTime(trimStartSec)
-                .duration(20)
+                .duration(CLIP_PRE_ROLL_SEC + CLIP_POST_ROLL_SEC)
                 .outputOptions(['-c:v libx264', '-c:a aac', '-preset veryfast'])
                 .save(outFile)
                 .on('end', resolve)
@@ -767,8 +691,10 @@ async function cutClip({ matchId, eventType, eventTimestamp, ballMeta, uid }) {
         });
 
         await finalizeClip({ matchId, eventType, eventTimestamp, ballMeta, uid, outFile, offsetStartSec: fromSec, offsetEndSec: toSec });
+        videoSource.appendLog(matchId, `Clip cut: ${eventType} @ ${eventTimestamp} -> ${outFile}`);
     } catch (err) {
         console.log(`Clip generation error (${matchId}/${eventType}):`, err.message || err);
+        videoSource.appendLog(matchId, `Clip generation error (${eventType}): ${err.message || err}`);
     } finally {
         fs.existsSync(stitchedFile) && fs.unlink(stitchedFile, () => {});
     }
@@ -5797,7 +5723,7 @@ adminRouter.get('/system-health', async (req, res) => {
         mongoConnected: mongoOk,
         firestoreConnected: firestoreOk,
         websocketConnections: io.engine.clientsCount,
-        activeRecordingSessions: Object.keys(recordingSessions).length,
+        activeRecordingSessions: videoSource.activeSessionCount(),
         driveUploadConfigured: !!driveClient,
         driveServiceAccountEmail: DRIVE_SERVICE_ACCOUNT_EMAIL || null,
         memoryUsageMb: Math.round(process.memoryUsage().rss / 1024 / 1024)
