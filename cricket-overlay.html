@@ -338,51 +338,79 @@
      make the dot unreadable (see team-colour contrast fixes above). */
   .pip.zero{ background:#1c2437; border-color:transparent; color:#fff; font-size:15px; }
 
-  /* ---- 🏏 AUTOMATIC RECENT OVER SUMMARY + LAST-5-OVERS MOMENTUM ----
-     Broadcast-style card, dark diagonal wash under the batting team's
-     accent colour — same legibility trick already used by .stat-card
-     (accent stays readable up top, dark backing keeps the numbers
-     legible underneath, whatever the team colour is). Transform/opacity
-     only for motion (see playOverSummaryCard). */
+  /* ---- 🏏 AUTOMATIC RECENT OVER SUMMARY ----
+     Big centered broadcast card — team badge/name/format header, a
+     current-batters table (R/B/4s/6s/SR), an overs/total footer, and a
+     compact ball-by-ball + last-5-overs strip. Reuses the EXISTING
+     .summary-card/.sc-* light "paper" card shell (same classes the
+     innings/match-summary and team-stat cards already use) instead of a
+     bespoke card, so it matches the rest of the broadcast package
+     exactly. Sits behind a soft blended glow of BOTH team colours (see
+     --osc-glow-a/--osc-glow-b, ambientTeamColor()) — the "alive but
+     never on top of the data" trick from the contrast-aware design
+     system above. Transform/opacity only for motion (playOverSummaryCard). */
   #over-summary-card{
-    --osc-accent: var(--bc-gold,#f5c518);
-    --osc-glow: rgba(245,197,24,0.35);
-    position:absolute; left:50%; top:5vh;
-    width:min(27vw,380px); max-width:82vw;
-    background:
-      linear-gradient(170deg, rgba(0,0,0,0.12) 0%, rgba(0,0,0,0.76) 55%, rgba(0,0,0,0.92) 100%),
-      linear-gradient(170deg, var(--osc-accent), var(--osc-accent));
-    border-radius:16px; overflow:hidden;
-    /* Soft team-colour ambient glow around the edge — an "alive" accent
-       that never sits on top of the data itself (see ambientTeamColor()). */
-    box-shadow:0 22px 54px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.14), 0 0 34px 2px var(--osc-glow);
-    border-top:4px solid var(--osc-accent);
+    --osc-accent: var(--bc-blue,#0b3d91);
+    --osc-accent-b: var(--bc-red,#7a1620);
+    --osc-glow-a: rgba(11,61,145,0.30);
+    --osc-glow-b: rgba(122,22,32,0.30);
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    /* Big rectangular broadcast card — wide, not the near-square shape of
+       the other summary cards. */
+    width:min(84vw,1400px); max-width:96vw;
+    background:var(--bc-paper, #f3f6fc);
+    border-radius:20px; overflow:hidden;
+    box-shadow:
+      0 34px 80px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.08),
+      -160px 0 180px -70px var(--osc-glow-a), 160px 0 180px -70px var(--osc-glow-b);
     display:none; flex-direction:column;
-    font-family:var(--font-ui); color:#fff;
+    font-family:var(--font-ui); color:var(--bc-ink,#12213f);
     z-index:32; will-change:transform, opacity;
   }
-  .osc-head{ display:flex; align-items:baseline; justify-content:space-between; padding:16px 20px 6px; }
-  .osc-over-label{ font-family:var(--font-num); font-weight:900; font-size:15px; letter-spacing:2px; color:rgba(255,255,255,0.78); }
-  .osc-over-label span{ color:#fff; font-size:17px; }
-  .osc-runs{ font-family:var(--font-num); font-weight:900; font-size:min(2.6vw,30px); letter-spacing:.5px; color:#fff; text-shadow:0 2px 6px rgba(0,0,0,0.4); }
-  .osc-balls{ display:flex; gap:8px; align-items:center; justify-content:center; flex-wrap:wrap; padding:6px 18px 14px; }
-  .osc-balls .pip{ width:28px; height:28px; font-size:12px; opacity:1; transform:scale(1); }
-  .osc-balls .pip.zero{ font-size:14px; }
-  .osc-score-row{ display:flex; justify-content:space-between; align-items:center; padding:10px 20px; border-top:1px solid rgba(255,255,255,0.14); font-family:var(--font-num); font-weight:800; }
-  .osc-score{ font-size:15px; letter-spacing:.4px; color:#fff; }
-  .osc-rr{ font-size:13px; letter-spacing:.4px; color:var(--osc-accent); }
-  .osc-players{ padding:0 20px 12px; font-size:12px; color:rgba(255,255,255,0.72); font-weight:600; letter-spacing:.2px; }
-  .osc-momentum{ padding:12px 20px 16px; border-top:1px solid rgba(255,255,255,0.14); }
-  .osc-momentum-label{ font-size:10.5px; font-weight:800; letter-spacing:1.4px; color:rgba(255,255,255,0.6); text-transform:uppercase; margin-bottom:8px; }
-  .osc-momentum-row{ display:flex; gap:7px; align-items:flex-end; }
+  /* Header blends BOTH teams' colours (never a single team's identity
+     alone) — this card is never "India's" or "Australia's" card, it's
+     the match's. */
+  #over-summary-card .sc-header{ background:linear-gradient(100deg, var(--osc-accent) 0%, var(--osc-accent) 42%, var(--osc-accent-b) 58%, var(--osc-accent-b) 100%); padding:22px 34px; }
+  .osc-vs-header{ display:flex; align-items:center; justify-content:center; gap:28px; }
+  .osc-vs-side{ display:flex; flex-direction:column; align-items:center; gap:8px; flex:none; }
+  .osc-vs-side .sc-badge{ width:84px; height:84px; }
+  .osc-vs-short{ font-family:var(--font-num); font-weight:900; font-size:26px; letter-spacing:1.5px; color:#fff; text-shadow:0 2px 6px rgba(0,0,0,0.4); }
+  .osc-vs-mid{ display:flex; flex-direction:column; align-items:center; gap:4px; flex:none; padding:0 8px; }
+  .osc-vs-word{ font-family:var(--font-num); font-weight:900; font-size:19px; letter-spacing:3.5px; color:rgba(255,255,255,0.75); }
+  #over-summary-card .osc-vs-mid .sc-sub{ margin-top:0; }
+  .osc-overband{
+    display:flex; align-items:center; justify-content:center; gap:14px;
+    padding:14px 30px; background:rgba(11,61,145,0.05); border-bottom:1px solid var(--hairline,rgba(16,25,58,.1));
+  }
+  .osc-overband .lbl{ font-family:var(--font-num); font-weight:900; font-size:17px; letter-spacing:1.4px; color:var(--bc-ink-dim,#5c6c8a); }
+  .osc-overband .runs{ font-family:var(--font-num); font-weight:900; font-size:19px; letter-spacing:.4px; color:var(--osc-accent); }
+  .osc-balls{ display:flex; gap:7px; align-items:center; justify-content:center; flex-wrap:wrap; }
+  .osc-balls .pip{ width:32px; height:32px; font-size:13px; opacity:1; transform:scale(1); }
+  .osc-balls .pip.zero{ font-size:15px; }
+  /* This card is much wider than the other .summary-card members — scale
+     the shared table/footer text up to fill it instead of leaving the
+     extra width as bare space. */
+  #over-summary-card .sc-rows{ padding:22px 34px 8px; }
+  #over-summary-card .sc-row{ font-size:22px; padding:15px 10px; }
+  #over-summary-card .sc-row-head{ font-size:16px; }
+  #over-summary-card .sc-footer{ padding:22px 34px; font-size:26px; }
+  .osc-footer{ display:flex; }
+  .osc-footer > div{ flex:1; }
+  #osc-bowler-line{
+    padding:12px 34px; text-align:center; font-size:16px; font-weight:600;
+    color:var(--bc-ink-dim,#5c6c8a); border-top:1px solid var(--hairline,rgba(16,25,58,.1));
+  }
+  .osc-momentum{ padding:16px 34px 22px; border-top:1px solid var(--hairline,rgba(16,25,58,.1)); }
+  .osc-momentum-label{ font-size:13px; font-weight:800; letter-spacing:1.4px; color:var(--bc-ink-dim,#5c6c8a); text-transform:uppercase; margin-bottom:11px; }
+  .osc-momentum-row{ display:flex; gap:10px; align-items:stretch; }
   .osc-mom-pill{
     flex:1 1 0; min-width:0; display:flex; flex-direction:column; align-items:center; gap:4px;
-    background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.14); border-radius:8px;
-    padding:6px 4px; font-family:var(--font-num); font-weight:800; font-size:13px; color:rgba(255,255,255,0.82);
+    background:rgba(11,61,145,0.06); border:1px solid var(--hairline,rgba(16,25,58,.1)); border-radius:9px;
+    padding:10px 4px; font-family:var(--font-num); font-weight:800; font-size:18px; color:var(--bc-ink,#12213f);
   }
-  .osc-mom-pill .ov{ font-size:9px; font-weight:700; color:rgba(255,255,255,0.5); letter-spacing:.4px; }
-  .osc-mom-pill.current{ background:var(--osc-accent); border-color:var(--osc-accent); color:#14110a; }
-  .osc-mom-pill.current .ov{ color:rgba(20,17,10,0.65); }
+  .osc-mom-pill .ov{ font-size:11px; font-weight:700; color:var(--bc-ink-dim,#5c6c8a); letter-spacing:.4px; }
+  .osc-mom-pill.current{ background:var(--osc-accent); border-color:var(--osc-accent); color:#fff; }
+  .osc-mom-pill.current .ov{ color:rgba(255,255,255,0.75); }
 
   /* Bottom black stat bar removed per spec — Target / Balls Remaining
      now live inline in #crr-seg (see above), and CRR/RRR occupy the
@@ -1224,21 +1252,53 @@
 
   <!-- 🏏 AUTOMATIC RECENT OVER SUMMARY — fires once per genuinely-completed
        over (see cricketOverSummary in cricket-panel.html's recordBall()).
-       Anchored top-centre, deliberately clear of the centre summary-card
-       stack (top:40%/32%), the left-side stat cards (top:15vh + 15vh+245px)
-       and the bottom scorecard bar, so it can never collide with any of
-       them on screen. -->
-  <div id="over-summary-card">
-    <div class="osc-head">
-      <div class="osc-over-label">OVER <span id="osc-over-num">1</span></div>
-      <div class="osc-runs" id="osc-runs">0 RUNS</div>
+       Centred, same .summary-card/.sc-* shell as the innings/match summary
+       and team-stat cards — team badge + name + format header, current
+       batters table, overs/total footer, a thin ball-by-ball strip and a
+       last-5-overs momentum row. -->
+  <div id="over-summary-card" class="summary-card">
+    <div class="sc-header osc-vs-header">
+      <div class="osc-vs-side">
+        <div class="sc-badge" id="osc-badge-a">TM</div>
+        <div class="osc-vs-short" id="osc-short-a">TM</div>
+      </div>
+      <div class="osc-vs-mid">
+        <div class="osc-vs-word">VS</div>
+        <div class="sc-sub" id="osc-format">T20</div>
+      </div>
+      <div class="osc-vs-side">
+        <div class="sc-badge" id="osc-badge-b">TM</div>
+        <div class="osc-vs-short" id="osc-short-b">TM</div>
+      </div>
     </div>
-    <div class="osc-balls" id="osc-balls"></div>
-    <div class="osc-score-row">
-      <div class="osc-score" id="osc-score">SCORE 0/0</div>
-      <div class="osc-rr" id="osc-rr">RR 0.00</div>
+    <div class="osc-overband">
+      <span class="lbl">OVER <span id="osc-over-num">1</span></span>
+      <div class="osc-balls" id="osc-balls"></div>
+      <span class="runs" id="osc-runs">0 RUNS</span>
     </div>
-    <div class="osc-players" id="osc-players">— · —</div>
+    <div class="sc-rows">
+      <div class="sc-row sc-row-head">
+        <span>BATTER</span><span class="sc-c-num">R</span><span class="sc-c-num">B</span>
+        <span class="sc-c-num">4S</span><span class="sc-c-num">6S</span><span class="sc-c-num">SR</span>
+      </div>
+      <div class="sc-row" id="osc-row-striker">
+        <span class="sc-c-name" id="osc-striker-name">—</span>
+        <span class="sc-c-num" id="osc-striker-r">0</span><span class="sc-c-num" id="osc-striker-b">0</span>
+        <span class="sc-c-num" id="osc-striker-4s">0</span><span class="sc-c-num" id="osc-striker-6s">0</span>
+        <span class="sc-c-num" id="osc-striker-sr">0.0</span>
+      </div>
+      <div class="sc-row sc-row-alt" id="osc-row-nonstriker">
+        <span class="sc-c-name" id="osc-nonstriker-name">—</span>
+        <span class="sc-c-num" id="osc-nonstriker-r">0</span><span class="sc-c-num" id="osc-nonstriker-b">0</span>
+        <span class="sc-c-num" id="osc-nonstriker-4s">0</span><span class="sc-c-num" id="osc-nonstriker-6s">0</span>
+        <span class="sc-c-num" id="osc-nonstriker-sr">0.0</span>
+      </div>
+    </div>
+    <div id="osc-bowler-line">—</div>
+    <div class="sc-footer">
+      <div id="osc-overs-total">OVERS 0.0</div>
+      <div id="osc-score" style="text-align:right;">TOTAL 0-0</div>
+    </div>
     <div class="osc-momentum">
       <div class="osc-momentum-label">LAST 5 OVERS</div>
       <div class="osc-momentum-row" id="osc-momentum-row"></div>
@@ -2942,8 +3002,32 @@ function buildOverBallPip(token){
 function renderOverSummaryCard(d){
   if(!d) return;
   const card = document.getElementById('over-summary-card');
-  card.style.setProperty('--osc-accent', d.teamColor || 'var(--bc-gold,#f5c518)');
-  card.style.setProperty('--osc-glow', d.teamColor ? ambientTeamColor(d.teamColor, 0.28) : 'rgba(245,197,24,0.35)');
+  card.style.setProperty('--osc-accent', d.teamColor || 'var(--bc-blue,#0b3d91)');
+  // 🎨 Soft blend of BOTH teams' colours behind the card (see the
+  // "TEAM A ambient — neutral surface — TEAM B ambient" design language
+  // used for team-colour contrast elsewhere) — batting team's glow on the
+  // left, bowling team's on the right, low-opacity so it never competes
+  // with the table underneath.
+  card.style.setProperty('--osc-glow-a', d.teamColor ? ambientTeamColor(d.teamColor, 0.30) : 'rgba(11,61,145,0.30)');
+  card.style.setProperty('--osc-glow-b', d.oppTeamColor ? ambientTeamColor(d.oppTeamColor, 0.30) : 'rgba(122,22,32,0.30)');
+  card.style.setProperty('--osc-accent-b', d.oppTeamColor || 'var(--bc-red,#7a1620)');
+
+  // Header never names a single team — just both sides' short codes with
+  // VS between them, so the card reads as "this match" not "this team".
+  // The short-code label under a badge only shows when that badge has a
+  // real logo photo — with no logo, the badge circle itself already
+  // falls back to showing the short code, so a second copy underneath
+  // would just repeat the same text.
+  setBadge(document.getElementById('osc-badge-a'), d.teamLogo, badgeText(d.teamShort, d.teamName));
+  const shortA = document.getElementById('osc-short-a');
+  shortA.textContent = (d.teamShort || badgeText(d.teamShort, d.teamName) || '—').toUpperCase();
+  shortA.style.display = d.teamLogo ? 'block' : 'none';
+  setBadge(document.getElementById('osc-badge-b'), d.oppTeamLogo, badgeText(d.oppTeamShort, d.oppTeamName));
+  const shortB = document.getElementById('osc-short-b');
+  shortB.textContent = (d.oppTeamShort || badgeText(d.oppTeamShort, d.oppTeamName) || '—').toUpperCase();
+  shortB.style.display = d.oppTeamLogo ? 'block' : 'none';
+  document.getElementById('osc-format').textContent = (d.format || '').toUpperCase();
+
   document.getElementById('osc-over-num').textContent = d.overNumber != null ? d.overNumber : '—';
   const runs = d.overRuns || 0;
   document.getElementById('osc-runs').textContent = `${runs} RUN${runs === 1 ? '' : 'S'}${d.overWickets ? ` · ${d.overWickets} WKT${d.overWickets === 1 ? '' : 's'}` : ''}`;
@@ -2952,15 +3036,24 @@ function renderOverSummaryCard(d){
   ballsWrap.innerHTML = '';
   (d.balls || []).forEach(token => ballsWrap.appendChild(buildOverBallPip(String(token))));
 
-  document.getElementById('osc-score').textContent = `SCORE ${d.score ?? 0}/${d.wickets ?? 0}`;
-  document.getElementById('osc-rr').textContent = `RR ${d.crr ?? '0.00'}`;
-
   const striker = d.striker || {}, nonStriker = d.nonStriker || {}, bowler = d.bowler || {};
-  const parts = [];
-  if(striker.name) parts.push(`${striker.name} ${striker.runs ?? 0}(${striker.balls ?? 0})`);
-  if(nonStriker.name) parts.push(`${nonStriker.name} ${nonStriker.runs ?? 0}(${nonStriker.balls ?? 0})`);
-  if(bowler.name) parts.push(`${bowler.name} ${bowler.overs ?? 0}.${bowler.balls ?? 0}-${bowler.runs ?? 0}-${bowler.wickets ?? 0}`);
-  document.getElementById('osc-players').textContent = parts.join('  •  ') || '—';
+  const fillBatterRow = (prefix, p) => {
+    document.getElementById(`${prefix}-name`).textContent = (p.name || '—') + (prefix === 'osc-striker' ? ' *' : '');
+    document.getElementById(`${prefix}-r`).textContent = p.runs ?? 0;
+    document.getElementById(`${prefix}-b`).textContent = p.balls ?? 0;
+    document.getElementById(`${prefix}-4s`).textContent = p.fours ?? 0;
+    document.getElementById(`${prefix}-6s`).textContent = p.sixes ?? 0;
+    document.getElementById(`${prefix}-sr`).textContent = p.sr ?? '0.0';
+  };
+  fillBatterRow('osc-striker', striker);
+  fillBatterRow('osc-nonstriker', nonStriker);
+
+  document.getElementById('osc-bowler-line').textContent = bowler.name
+    ? `BOWLER  ${bowler.name}  ${bowler.overs ?? 0}.${bowler.balls ?? 0}-${bowler.maidens ?? 0}-${bowler.runs ?? 0}-${bowler.wickets ?? 0}`
+    : '—';
+
+  document.getElementById('osc-overs-total').textContent = `OVERS ${d.overs ?? 0}.${d.ballsIntoOver ?? 0}`;
+  document.getElementById('osc-score').textContent = `TOTAL ${d.score ?? 0}-${d.wickets ?? 0}`;
 
   const momentumRow = document.getElementById('osc-momentum-row');
   momentumRow.innerHTML = '';
@@ -2972,23 +3065,23 @@ function renderOverSummaryCard(d){
     momentumRow.appendChild(pill);
   });
 
-  playOverSummaryCard(6500);
+  playOverSummaryCard(7000);
 }
 function playOverSummaryCard(holdMs){
   const card = document.getElementById('over-summary-card');
-  const rows = card.querySelectorAll('.osc-head, .osc-balls, .osc-score-row, .osc-players, .osc-momentum');
+  const rows = card.querySelectorAll('.sc-header, .osc-overband, .sc-row, #osc-bowler-line, .sc-footer, .osc-momentum');
   gsap.killTweensOf(card);
   gsap.killTweensOf(rows);
   card.style.display = 'flex';
-  gsap.set(card, { xPercent: -50, opacity: 0, y: -22, scale: 0.96 });
-  gsap.set(rows, { opacity: 0, y: 8 });
+  gsap.set(card, { opacity: 0, scale: 0.94, clipPath: 'inset(50% 50% 50% 50% round 18px)' });
+  gsap.set(rows, { opacity: 0, y: 14 });
   gsap.timeline()
-    .to(card, { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: 'expo.out' })
-    .to(rows, { opacity: 1, y: 0, duration: 0.38, stagger: 0.06, ease: 'power3.out' }, 0.18)
+    .to(card, { opacity: 1, scale: 1, clipPath: 'inset(0% 0% 0% 0% round 18px)', duration: 0.6, ease: 'expo.out' })
+    .to(rows, { opacity: 1, y: 0, duration: 0.4, stagger: 0.08, ease: 'power3.out' }, 0.28)
     .to(card, { duration: Math.max(holdMs, 0) / 1000 })
-    .to(rows, { opacity: 0, y: -6, duration: 0.26, stagger: 0.03, ease: 'power2.in' })
+    .to(rows, { opacity: 0, y: -8, duration: 0.28, stagger: 0.04, ease: 'power2.in' })
     .to(card, {
-      opacity: 0, y: -16, scale: 0.97, duration: 0.38, ease: 'power2.in',
+      opacity: 0, scale: 0.95, clipPath: 'inset(50% 50% 50% 50% round 18px)', duration: 0.42, ease: 'power2.in',
       onComplete: () => { card.style.display = 'none'; }
     }, '-=0.1');
 }
