@@ -19,17 +19,34 @@
 <script src="https://apis.google.com/js/api.js"></script>
 <style>
   :root{
-    --bg: #0b0f1a;
+    --bg: #090c14;
+    --bg-2: #0d111c;
     --panel: #121826;
     --panel-2: #182034;
+    --panel-3: #1c2439;
     --border: #232c42;
+    --border-soft: #1a2236;
     --accent: #ff7a00;
+    --accent-2: #ffa63d;
     --text: #f2f4f8;
     --text-dim: #8892a6;
     --green: #22c55e;
     --red: #ef4444;
     --purple: #a855f7;
     --radius: 10px;
+    --radius-lg: 14px;
+    /* Motion timing — one shared "feel" for every interactive element, so
+       buttons/cards/modals all snap with the same responsiveness instead
+       of each hand-picked transition feeling slightly different. Short
+       durations + an easing curve that starts fast (no perceived delay
+       when you tap) and settles smoothly (no harsh stop) — this is what
+       actually reads as "no lag" during fast ball-by-ball scoring. */
+    --ease: cubic-bezier(.2,.8,.2,1);
+    --fast: .12s;
+    --med: .2s;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.3);
+    --shadow-md: 0 6px 20px rgba(0,0,0,.35);
+    --shadow-lg: 0 20px 50px rgba(0,0,0,.55);
     /* One accent per functional group of cards, so the eye can tell which
        part of the panel it's looking at without reading every heading. */
     --col-setup: #3b82f6;   /* Match Setup / Match Type / Theme */
@@ -37,23 +54,62 @@
     --col-output: #a855f7;  /* Overlay link, recording, milestones, graphics, session */
   }
   *{ box-sizing:border-box; }
+  html{
+    /* Smooth scroll for the quick-nav jump links — a snap-to-position
+       feels jarring mid-match; this makes it read as one continuous
+       motion instead. Scoring itself never scrolls, so this costs
+       nothing during actual ball-by-ball use. */
+    scroll-behavior:smooth;
+  }
   body{
-    margin:0; background:var(--bg); color:var(--text);
+    margin:0; color:var(--text);
+    /* A very subtle depth gradient instead of a flat fill — reads as
+       "premium panel", costs nothing to repaint since it's fixed to the
+       viewport, not redrawn per element. */
+    background:
+      radial-gradient(1200px 800px at 15% -10%, rgba(255,122,0,.05), transparent 60%),
+      radial-gradient(1000px 700px at 100% 0%, rgba(34,197,94,.04), transparent 55%),
+      var(--bg);
+    background-attachment:fixed;
     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
     font-size:14px;
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+    /* Removes the 300ms "ghost tap" delay mobile/tablet browsers add
+       before a click fires, and the grey flash on tap — both read as
+       "laggy" on a touchscreen scoring device even though nothing was
+       actually slow. */
+    -webkit-tap-highlight-color:transparent;
   }
+  ::selection{ background:rgba(255,122,0,.35); color:#fff; }
+
+  /* ---- Custom scrollbars — every scrollable panel (squad list,
+     milestone log, searchable dropdowns, scorecard modal) used to fall
+     back to the browser's default light scrollbar, which stood out like
+     a seam against this dark UI. Thin + tinted to match instead. ---- */
+  ::-webkit-scrollbar{ width:9px; height:9px; }
+  ::-webkit-scrollbar-track{ background:transparent; }
+  ::-webkit-scrollbar-thumb{ background:var(--panel-3); border-radius:20px; border:2px solid transparent; background-clip:padding-box; }
+  ::-webkit-scrollbar-thumb:hover{ background:#28324c; background-clip:padding-box; }
+  *{ scrollbar-width:thin; scrollbar-color:var(--panel-3) transparent; }
+
   header{
     display:flex; align-items:center; justify-content:space-between;
     padding:12px 20px; border-bottom:1px solid var(--border);
-    background:var(--panel);
+    background:linear-gradient(180deg, var(--panel), var(--bg-2));
+    box-shadow:var(--shadow-sm);
     position:sticky; top:0; z-index:10;
   }
   header h1{ font-size:16px; font-weight:800; letter-spacing:.3px; }
   header h1 span{ color:var(--accent); }
   #conn-row{ display:flex; align-items:center; gap:8px; }
   #conn-row input{ width:190px; }
-  .dot{ width:9px; height:9px; border-radius:50%; background:var(--red); flex:none; }
-  .dot.on{ background:var(--green); }
+  .dot{
+    width:9px; height:9px; border-radius:50%; background:var(--red); flex:none;
+    box-shadow:0 0 0 3px rgba(239,68,68,.15);
+    transition:background var(--med) var(--ease), box-shadow var(--med) var(--ease);
+  }
+  .dot.on{ background:var(--green); box-shadow:0 0 0 3px rgba(34,197,94,.18); }
 
   /* --- Quick-jump nav: sticky row of pills, grouped + color-coded to match
      the three columns below, so any card can be reached in one click
@@ -73,16 +129,18 @@
     flex:none; padding:5px 10px; font-size:11px; font-weight:600; border-radius:20px;
     background:var(--panel-2); border:1px solid var(--border); color:var(--text-dim);
     white-space:nowrap;
+    transition:color var(--fast) var(--ease), background var(--fast) var(--ease), border-color var(--fast) var(--ease), transform var(--fast) var(--ease);
   }
-  #quick-nav button:hover{ color:var(--text); }
+  #quick-nav button:hover{ color:var(--text); background:var(--panel-3); border-color:#2c3856; }
+  #quick-nav button:active{ transform:scale(.94); }
   #quick-nav .qn-group.qn-setup .qn-label{ color:var(--col-setup); }
   #quick-nav .qn-group.qn-live .qn-label{ color:var(--col-live); }
   #quick-nav .qn-group.qn-output .qn-label{ color:var(--col-output); }
   #quick-nav .qn-sep{ width:1px; align-self:stretch; background:var(--border); flex:none; }
-  .card.flash{ animation: cardFlash 1s ease; }
+  .card.flash{ animation: cardFlash 1s var(--ease); }
   @keyframes cardFlash{
-    0%{ box-shadow:0 0 0 2px var(--flash-color, var(--accent)); }
-    100%{ box-shadow:0 0 0 0 transparent; }
+    0%{ box-shadow:0 0 0 2px var(--flash-color, var(--accent)), var(--shadow-md); }
+    100%{ box-shadow:0 0 0 0 transparent, var(--shadow-sm); }
   }
 
   /* --- Column headbands: a coloured strip at the top of each column that
@@ -110,8 +168,11 @@
   @media (max-width: 1100px){ .layout{ grid-template-columns:1fr; } }
 
   .card{
-    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+    background:linear-gradient(180deg, var(--panel), var(--bg-2) 140%);
+    border:1px solid var(--border); border-radius:var(--radius);
     padding:14px; margin-bottom:14px; scroll-margin-top:112px;
+    box-shadow:var(--shadow-sm);
+    transition:box-shadow var(--med) var(--ease), border-color var(--med) var(--ease);
   }
   .card h2{ font-size:12px; text-transform:uppercase; letter-spacing:.6px; color:var(--text-dim); margin-bottom:10px; font-weight:700; }
   .card h2 .note{ text-transform:none; font-weight:500; color:#5a6580; letter-spacing:0; font-size:11px; }
@@ -120,38 +181,74 @@
   input[type=text], input[type=number], input[type=url], select{
     width:100%; padding:8px 10px; border-radius:7px; border:1px solid var(--border);
     background:var(--panel-2); color:var(--text); font-size:13px;
+    transition:border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease), background var(--fast) var(--ease);
   }
-  input[type=color]{ width:100%; height:34px; border:1px solid var(--border); border-radius:7px; background:var(--panel-2); padding:2px; }
+  input[type=text]:hover, input[type=number]:hover, input[type=url]:hover, select:hover{ border-color:#2c3856; }
+  input[type=text]:focus, input[type=number]:focus, input[type=url]:focus, select:focus{
+    outline:none; border-color:var(--accent); background:var(--panel-3);
+    box-shadow:0 0 0 3px rgba(255,122,0,.15);
+  }
+  input[type=color]{ width:100%; height:34px; border:1px solid var(--border); border-radius:7px; background:var(--panel-2); padding:2px; cursor:pointer; }
   .row2{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
   .row3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
 
   button{
     cursor:pointer; border:none; border-radius:8px; font-weight:700; font-size:13px;
     padding:9px 12px; background:var(--panel-2); color:var(--text); border:1px solid var(--border);
-    transition: transform .1s, background .15s;
+    /* transform+background+box-shadow only — all cheap-to-animate,
+       GPU-composited properties, never width/height/top/left. This is
+       what keeps rapid ball-after-ball tapping feeling instant instead
+       of janky, especially on the tablet/laptop an operator scores on. */
+    transition: transform var(--fast) var(--ease), background var(--fast) var(--ease), border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+    -webkit-tap-highlight-color:transparent; user-select:none; touch-action:manipulation;
   }
-  button:hover{ background:#20293f; }
-  button:active{ transform:scale(.96); }
-  button.primary{ background:var(--accent); border-color:var(--accent); color:#12100c; }
-  button.primary:hover{ background:#ff8a1f; }
+  button:hover{ background:#20293f; border-color:#2c3856; }
+  button:active{ transform:scale(.96); transition-duration:.05s; }
+  button.primary{ background:linear-gradient(160deg, var(--accent-2), var(--accent)); border-color:var(--accent); color:#12100c; box-shadow:0 2px 10px rgba(255,122,0,.25); }
+  button.primary:hover{ background:linear-gradient(160deg, #ffb35c, #ff8a1f); box-shadow:0 4px 16px rgba(255,122,0,.35); }
   button.ghost{ background:transparent; }
+  button.ghost:hover{ background:var(--panel-2); }
   button.full{ width:100%; }
   button.small{ padding:6px 8px; font-size:12px; }
-  button:disabled{ opacity:.32; cursor:not-allowed; transform:none !important; }
+  button:disabled{ opacity:.32; cursor:not-allowed; transform:none !important; box-shadow:none !important; }
 
   .balls-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:6px; }
-  .balls-grid button{ height:46px; font-size:15px; }
+  /* ---- The core scoring interface — every ball of the match is a tap
+     here. Bigger tap target, snappier press feedback (scale down +
+     inset shadow reads as "physically pressed" instead of just a
+     colour swap), and a fast-in/fast-out timing tuned specifically for
+     back-to-back taps during a fast over. ---- */
+  .balls-grid button{
+    height:50px; font-size:16px; font-weight:800; border-radius:9px;
+    transition: transform .08s var(--ease), background var(--fast) var(--ease), box-shadow .08s var(--ease);
+  }
+  .balls-grid button:hover{ transform:translateY(-1px); }
+  .balls-grid button:active{ transform:scale(.94) translateY(0); box-shadow:inset 0 2px 6px rgba(0,0,0,.35); }
   .b-run{ background:#152036; }
+  .b-run:hover{ background:#1a2744; }
   .b-four{ background:rgba(34,197,94,.18); border-color:var(--green); color:var(--green); }
+  .b-four:hover{ background:rgba(34,197,94,.28); box-shadow:0 2px 12px rgba(34,197,94,.18); }
   .b-six{ background:rgba(168,85,247,.18); border-color:var(--purple); color:var(--purple); }
+  .b-six:hover{ background:rgba(168,85,247,.28); box-shadow:0 2px 12px rgba(168,85,247,.18); }
   .b-wicket{ background:rgba(239,68,68,.18); border-color:var(--red); color:var(--red); }
+  .b-wicket:hover{ background:rgba(239,68,68,.28); box-shadow:0 2px 12px rgba(239,68,68,.18); }
   .b-extra{ background:rgba(255,122,0,.14); border-color:var(--accent); color:var(--accent); }
+  .b-extra:hover{ background:rgba(255,122,0,.24); box-shadow:0 2px 12px rgba(255,122,0,.16); }
 
   .stat-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px; }
-  .stat{ background:var(--panel-2); border:1px solid var(--border); border-radius:8px; padding:8px 10px; }
+  .stat{
+    background:var(--panel-2); border:1px solid var(--border); border-radius:8px; padding:8px 10px;
+    transition:background var(--med) var(--ease);
+  }
   .stat .k{ font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.4px; }
-  .stat .v{ font-size:18px; font-weight:800; margin-top:2px; font-variant-numeric:tabular-nums; }
+  .stat .v{ font-size:18px; font-weight:800; margin-top:2px; font-variant-numeric:tabular-nums; transition:color var(--fast) var(--ease); }
   .stat.auto .k::after{ content:' 🔒'; font-size:9px; opacity:.6; }
+
+  /* Live Studio / Clip Engine health rows (● Connected / ● Failed …) —
+     JS only ever sets these via inline color; this just gives that text
+     a bit more presence and a smooth colour swap instead of a hard cut
+     when a status flips (e.g. camera connects, encoder crashes). */
+  .ls-health-val{ font-weight:700; transition:color var(--med) var(--ease); }
 
   .ticker-preview{ display:flex; gap:4px; flex-wrap:wrap; margin-top:8px; }
   .pip{ width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:800; background:var(--panel-2); border:1px solid var(--border); }
@@ -165,17 +262,18 @@
   .toggle-row{ display:flex; align-items:center; justify-content:space-between; margin-top:8px; }
   .switch{ position:relative; width:38px; height:22px; }
   .switch input{ opacity:0; width:0; height:0; }
-  .slider{ position:absolute; inset:0; background:var(--panel-2); border:1px solid var(--border); border-radius:22px; cursor:pointer; transition:.2s; }
-  .slider:before{ content:''; position:absolute; width:16px; height:16px; left:2px; top:2px; background:var(--text-dim); border-radius:50%; transition:.2s; }
+  .slider{ position:absolute; inset:0; background:var(--panel-2); border:1px solid var(--border); border-radius:22px; cursor:pointer; transition:background var(--med) var(--ease), border-color var(--med) var(--ease); }
+  .slider:before{ content:''; position:absolute; width:16px; height:16px; left:2px; top:2px; background:var(--text-dim); border-radius:50%; transition:transform var(--med) var(--ease), background var(--med) var(--ease); box-shadow:var(--shadow-sm); }
   .switch input:checked + .slider{ background:var(--accent); border-color:var(--accent); }
   .switch input:checked + .slider:before{ transform:translateX(16px); background:#12100c; }
 
   #toast{
-    position:fixed; bottom:16px; right:16px; background:var(--panel-2); border:1px solid var(--border);
-    padding:10px 14px; border-radius:8px; font-size:12px; opacity:0; transform:translateY(8px);
-    transition:.25s; pointer-events:none; z-index:50;
+    position:fixed; bottom:16px; right:16px; background:var(--panel-3); border:1px solid var(--border);
+    padding:10px 14px; border-radius:9px; font-size:12px; opacity:0; transform:translateY(8px) scale(.98);
+    transition:opacity var(--med) var(--ease), transform var(--med) var(--ease);
+    pointer-events:none; z-index:50; box-shadow:var(--shadow-lg);
   }
-  #toast.show{ opacity:1; transform:translateY(0); }
+  #toast.show{ opacity:1; transform:translateY(0) scale(1); }
 
   .link-row{ display:flex; gap:6px; margin-top:6px; }
   /* ---- Team Squads & Roles: full-width hub. Pulled out of the old
@@ -212,7 +310,7 @@
   .squad-list:empty{ display:flex; align-items:center; justify-content:center; min-height:64px; }
   .squad-list:empty::after{ content:'No players added yet — use "Add" above.'; color:var(--text-dim); font-size:13px; }
 
-  .squad-player-row{ display:grid; grid-template-columns:34px 1fr 128px 30px; gap:10px; align-items:center; padding:10px 12px; border-radius:8px; font-size:13.5px; }
+  .squad-player-row{ display:grid; grid-template-columns:34px 1fr 128px 30px; gap:10px; align-items:center; padding:10px 12px; border-radius:8px; font-size:13.5px; transition:background var(--fast) var(--ease); }
   .squad-player-row:nth-child(odd){ background:rgba(255,255,255,.035); }
   .squad-player-row:hover{ background:rgba(255,255,255,.065); }
   .squad-player-row input[type="text"]{ min-width:0; padding:7px 10px; font-size:13.5px; margin:0; }
@@ -323,7 +421,15 @@
     border-radius:8px; padding:8px; margin-bottom:10px; font-weight:800; font-size:13px;
     letter-spacing:.4px;
   }
-  .freehit-banner.show{ display:flex; }
+  /* A live game-state warning (Free Hit changes which dismissals are
+     legal) deserves to keep catching the eye, not just appear once and
+     blend in — a slow pulse on the border/glow does that without being
+     distracting during scoring. */
+  .freehit-banner.show{ display:flex; animation:freehitPulse 1.8s ease-in-out infinite; }
+  @keyframes freehitPulse{
+    0%, 100%{ box-shadow:0 0 0 0 rgba(250,204,21,.35); }
+    50%{ box-shadow:0 0 0 5px rgba(250,204,21,0); }
+  }
   #clear-freehit-btn{
     background:#facc15; color:#1a1408; border:none; border-radius:6px;
     padding:3px 10px; font-weight:800; font-size:11px; letter-spacing:.3px; cursor:pointer;
@@ -337,13 +443,19 @@
      makes the restriction visible instead of silently hiding buttons). --- */
   .wicket-modal-overlay{
     display:none; position:fixed; inset:0; background:rgba(5,7,14,.72);
+    backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px);
     z-index:100; align-items:center; justify-content:center; padding:16px;
+    opacity:0; transition:opacity var(--med) var(--ease);
   }
-  .wicket-modal-overlay.show{ display:flex; }
+  .wicket-modal-overlay.show{ display:flex; opacity:1; }
   .wicket-modal{
-    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
-    width:100%; max-width:360px; padding:18px; box-shadow:0 20px 50px rgba(0,0,0,.5);
+    background:linear-gradient(180deg, var(--panel-3), var(--panel));
+    border:1px solid var(--border); border-radius:var(--radius-lg);
+    width:100%; max-width:360px; padding:18px; box-shadow:var(--shadow-lg);
+    transform:translateY(10px) scale(.97); opacity:0;
+    transition:transform var(--med) var(--ease), opacity var(--med) var(--ease);
   }
+  .wicket-modal-overlay.show .wicket-modal{ transform:translateY(0) scale(1); opacity:1; }
   .wicket-modal h3{
     font-size:14px; letter-spacing:.4px; margin-bottom:2px; display:flex; align-items:center; gap:8px;
   }
@@ -400,14 +512,21 @@
     width:100%; text-align:left; display:flex; align-items:center; justify-content:space-between;
     padding:8px 10px; border-radius:7px; border:1px solid var(--border);
     background:var(--panel-2); color:var(--text); font-size:13px; font-weight:500;
+    transition:border-color var(--fast) var(--ease), background var(--fast) var(--ease);
   }
-  .pro-dd-trigger::after{ content:'▾'; color:var(--text-dim); font-size:11px; margin-left:8px; flex:none; }
+  .pro-dd-trigger:hover{ border-color:#2c3856; background:var(--panel-3); }
+  .pro-dd-trigger::after{ content:'▾'; color:var(--text-dim); font-size:11px; margin-left:8px; flex:none; transition:transform var(--fast) var(--ease); }
   .pro-dd-trigger span{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .pro-dd-panel{
-    position:fixed; z-index:99999; background:var(--panel); border:1px solid var(--border);
-    border-radius:9px; box-shadow:0 20px 50px rgba(0,0,0,.55); overflow:hidden;
+    position:fixed; z-index:99999; background:var(--panel-3); border:1px solid var(--border);
+    border-radius:10px; box-shadow:var(--shadow-lg); overflow:hidden;
     display:flex; flex-direction:column; max-height:min(320px, 60vh);
+    /* Freshly created by JS each time it opens (not display-toggled), so
+       an animation (not a transition) is what actually plays on mount. */
+    animation:proDdIn .16s var(--ease);
+    transform-origin:top center;
   }
+  @keyframes proDdIn{ from{ opacity:0; transform:translateY(-4px) scale(.98); } to{ opacity:1; transform:translateY(0) scale(1); } }
   .pro-dd-search{
     width:100%; padding:9px 10px; border:none; border-bottom:1px solid var(--border);
     background:var(--panel-2); color:var(--text); font-size:13px; flex:none;
@@ -417,6 +536,7 @@
   .pro-dd-item{
     padding:8px 10px; cursor:pointer; display:flex; flex-direction:column; gap:1px;
     border-bottom:1px solid rgba(255,255,255,.04);
+    transition:background var(--fast) var(--ease);
   }
   .pro-dd-item:hover{ background:var(--panel-2); }
   .pro-dd-name{ font-size:13px; font-weight:600; color:var(--text); }
