@@ -91,9 +91,20 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<script src="/socket.io/socket.io.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+<!-- 🚀 PERF (page-transition lag fix): socket.io.js + the 2 Firebase SDK
+     scripts used to load HERE, in <head>, as plain blocking
+     <script src> tags — three back-to-back render-blocking network
+     fetches (two of them third-party, to gstatic.com) that the browser
+     had to finish before it could even finish parsing the page's own
+     <style> block, let alone paint any of the actual scorecard markup.
+     That's what made navigating here (especially via the page-transition
+     wipe/crossfade, which expects the new page to be paintable almost
+     immediately) feel like it stalled — on a slow/mobile connection,
+     identically on desktop since this was network-bound, not CPU-bound.
+     Moved to just before the <script> that actually uses them, right
+     before </body> — the whole page shell (HTML+CSS, no network needed)
+     now paints immediately; only the live-score/auth connection itself
+     waits on these. -->
 <style>
   /* ============================================================
      THEME TOKENS
@@ -1828,6 +1839,9 @@
 
 <div id="em-toast"></div>
 
+<script src="/socket.io/socket.io.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
 <script>
 /* ============================================================
    AUTH (for private-tournament API calls) — same Firebase project
