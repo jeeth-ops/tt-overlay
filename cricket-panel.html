@@ -1202,16 +1202,30 @@
         <span style="opacity:.7;">Overlay</span><span id="ls-h-overlay" class="ls-health-val">● Not connected</span>
         <span style="opacity:.7;">Encoder</span><span id="ls-h-encoder" class="ls-health-val">● Checking…</span>
         <span style="opacity:.7;">YouTube</span><span id="ls-h-youtube" class="ls-health-val">● Checking…</span>
-        <span style="opacity:.7;">Clip Engine</span><span id="ls-h-clip" class="ls-health-val">● Separate (Part 1)</span>
+        <span style="opacity:.7;">Clip Engine</span><span id="ls-h-clip" class="ls-health-val">● Shares this capture</span>
       </div>
       <div style="font-size:10.5px; opacity:.55; margin:-4px 0 12px;">
-        FOUR/SIX/WICKET clips still come from the separate "Match Recording" card above (Part 1) — the Live Studio video path never touches Render, so it isn't wired into that clip buffer yet.
+        FOUR/SIX/WICKET clips (Part 1's clipper, unchanged) and this YouTube stream now come from the SAME camera/overlay capture — click "🔴 Start Recording" above too if you want clips cut during this stream.
       </div>
 
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px 10px; font-size:12px; opacity:.8; margin-bottom:12px;">
-        <span>Resolution: <b>1920×1080</b></span>
-        <span>FPS: <b>30</b></span>
-        <span style="grid-column:1/-1;">Encoder: <b id="ls-encoder-name">NVIDIA NVENC</b></span>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px 10px; font-size:12px; opacity:.85; margin-bottom:12px;">
+        <label style="display:flex; flex-direction:column; gap:3px;">Resolution
+          <select id="ls-resolution-select" class="full">
+            <option value="1080p">1080p (1920×1080)</option>
+            <option value="720p">720p (1280×720)</option>
+            <option value="480p">480p (854×480)</option>
+          </select>
+        </label>
+        <label style="display:flex; flex-direction:column; gap:3px;">FPS
+          <select id="ls-fps-select" class="full">
+            <option value="30">30</option>
+            <option value="60">60</option>
+          </select>
+        </label>
+        <span style="grid-column:1/-1; margin-top:2px;">Encoder: <b id="ls-encoder-name">NVIDIA NVENC</b> · Bitrate: <b id="ls-bitrate-preview">—</b></span>
+      </div>
+      <div style="font-size:10.5px; opacity:.5; margin:-8px 0 12px;">
+        Higher resolution/FPS = more CPU load in this browser tab (capturing + encoding the preview before NVENC) AND more GPU load — if you see stutter, drop to 720p30 first. Can't be changed once LIVE; stop and restart to change.
       </div>
 
       <label style="font-size:12px; opacity:.8; display:block; margin-bottom:4px;">YouTube Stream Key</label>
@@ -2062,6 +2076,36 @@ document.getElementById('stop-recording-btn').addEventListener('click', stopReco
    (socket.io) still goes to Render, unchanged.
    ============================================================ */
 const STREAM_ENGINE_URL = 'http://127.0.0.1:5006'; // local-only, never Render
+
+// Mirrors stream-engine/server.js's RESOLUTIONS/DEFAULT_BITRATE_KBPS —
+// kept here too just so the panel can preview the bitrate a resolution/
+// fps choice will use before going live. The Stream Engine is still the
+// one source of truth that actually picks the bitrate (its own copy of
+// this table applies if bitrateKbps isn't sent at all).
+const RESOLUTION_PRESETS = {
+  '480p':  { width: 854,  height: 480 },
+  '720p':  { width: 1280, height: 720 },
+  '1080p': { width: 1920, height: 1080 },
+};
+const DEFAULT_BITRATE_KBPS = {
+  '480p':  { 30: 2000,  60: 2500 },
+  '720p':  { 30: 3500,  60: 5500 },
+  '1080p': { 30: 6000,  60: 12000 },
+};
+function getSelectedStreamSettings(){
+  const resolution = document.getElementById('ls-resolution-select')?.value || '1080p';
+  const fps = parseInt(document.getElementById('ls-fps-select')?.value, 10) || 30;
+  const bitrateKbps = DEFAULT_BITRATE_KBPS[resolution][fps];
+  return { resolution, fps, bitrateKbps, ...RESOLUTION_PRESETS[resolution] };
+}
+function refreshBitratePreview(){
+  const { bitrateKbps } = getSelectedStreamSettings();
+  const el = document.getElementById('ls-bitrate-preview');
+  if(el) el.textContent = `${(bitrateKbps/1000).toFixed(1)} Mbps`;
+}
+document.getElementById('ls-resolution-select')?.addEventListener('change', refreshBitratePreview);
+document.getElementById('ls-fps-select')?.addEventListener('change', refreshBitratePreview);
+refreshBitratePreview();
 let liveOutputWindow = null;
 let liveDisplayStream = null;   // pixels of the Live Output window
 let liveAudioStream = null;     // real mic/capture-card audio
@@ -2109,9 +2153,10 @@ async function ensureLocalCapture(matchId){
     });
   } catch(e) { return { ok:false, error:'Could not get audio: ' + e.message }; }
 
+  const { fps: selectedFps, bitrateKbps: selectedBitrateKbps } = getSelectedStreamSettings();
   try {
     liveDisplayStream = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: 30 }, audio: false, preferCurrentTab: false, selfBrowserSurface: 'exclude'
+      video: { frameRate: selectedFps }, audio: false, preferCurrentTab: false, selfBrowserSurface: 'exclude'
     });
   } catch(e) {
     liveAudioStream.getTracks().forEach(t => t.stop());
@@ -2120,7 +2165,13 @@ async function ensureLocalCapture(matchId){
 
   const combined = new MediaStream([...liveDisplayStream.getVideoTracks(), ...liveAudioStream.getAudioTracks()]);
   const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=h264,opus') ? 'video/webm;codecs=h264,opus' : 'video/webm;codecs=vp8,opus';
-  liveRecorder = new MediaRecorder(combined, { mimeType, videoBitsPerSecond: 10_000_000 });
+  // Browser's own (software) encode of the capture, BEFORE it reaches
+  // NVENC — this is an intermediate step, so it's given generous
+  // headroom over the final target bitrate (1.5x) rather than matching
+  // it exactly, so IT never becomes the quality bottleneck. This step
+  // runs on the laptop's CPU (not the GPU) — at 1080p60 on a weaker CPU
+  // this is the most likely place to see stutter, independent of NVENC.
+  liveRecorder = new MediaRecorder(combined, { mimeType, videoBitsPerSecond: Math.round(selectedBitrateKbps * 1000 * 1.5) });
   localCaptureChunkIndex = 0;
   // 🔒 These chunks go ONLY to the local Stream Engine (127.0.0.1) —
   // never to server.js/Render. The Stream Engine itself fans them out
@@ -2289,9 +2340,10 @@ async function startLive(){
   }
 
   lsLog('Connecting to YouTube…');
+  const { resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps } = getSelectedStreamSettings();
   const goLiveRes = await fetch(`${STREAM_ENGINE_URL}/go-live`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ resolution: '1920x1080', fps: 30, bitrateKbps: 10000 })
+    body: JSON.stringify({ resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps })
   }).then(r => r.json()).catch(() => ({ success:false, error:'Stream Engine unreachable' }));
 
   if(!goLiveRes.success){
@@ -2364,6 +2416,8 @@ async function stopLive(){
 function updateLiveUI(active){
   document.getElementById('start-live-btn').style.display = active ? 'none' : 'block';
   document.getElementById('stop-live-btn').style.display = active ? 'block' : 'none';
+  document.getElementById('ls-resolution-select').disabled = active;
+  document.getElementById('ls-fps-select').disabled = active;
 }
 
 document.getElementById('start-live-btn').addEventListener('click', startLive);

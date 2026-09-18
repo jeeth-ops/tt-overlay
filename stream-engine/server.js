@@ -152,22 +152,56 @@ function parseProgressLine(line) {
     }
 }
 
-function buildFfmpegArgs({ resolution, fps, bitrateKbps, streamKey }) {
-    const [w, h] = (resolution || '1920x1080').split('x').map(Number);
-    const gop = Math.round((fps || 30) * 2); // 2-second keyframe interval
+// ----------------------------------------------------------------
+// 📐 RESOLUTION / FPS PRESETS — operator picks a resolution (480p/720p/
+// 1080p) and fps (30/60) in the panel; these map to actual pixel
+// dimensions and a sane default CBR bitrate for that combo (standard
+// YouTube Live recommendations). bitrateKbps can still be overridden
+// explicitly if the panel sends one, but the table means a sensible
+// value is always used even if it doesn't.
+// ----------------------------------------------------------------
+const RESOLUTIONS = {
+    '480p':  { width: 854,  height: 480 },
+    '720p':  { width: 1280, height: 720 },
+    '1080p': { width: 1920, height: 1080 },
+};
+const DEFAULT_BITRATE_KBPS = {
+    '480p':  { 30: 2000,  60: 2500 },
+    '720p':  { 30: 3500,  60: 5500 },
+    '1080p': { 30: 6000,  60: 12000 }, // 1080p30 default kept close to the original ~10Mbps spec; adjustable
+};
+
+function resolveEncodeSettings({ resolution, fps, bitrateKbps }) {
+    const resKey = RESOLUTIONS[resolution] ? resolution : '1080p';
+    const fpsNum = [30, 60].includes(Number(fps)) ? Number(fps) : 30;
+    const { width, height } = RESOLUTIONS[resKey];
+    const kbps = Number(bitrateKbps) > 0 ? Number(bitrateKbps) : DEFAULT_BITRATE_KBPS[resKey][fpsNum];
+    // 'resolution' (not 'resolutionLabel') on purpose — engine.settings is
+    // fed straight back into startEncoder() on an auto-restart (see the
+    // ffmpeg exit handler), so this needs to round-trip through
+    // resolveEncodeSettings a second time using the SAME key it reads.
+    return { width, height, fps: fpsNum, bitrateKbps: kbps, resolution: resKey };
+}
+
+function buildFfmpegArgs({ width, height, fps, bitrateKbps, streamKey }) {
+    const gop = fps * 2; // 2-second keyframe interval, matches the selected fps exactly (30->60, 60->120)
     return [
         '-hide_banner', '-loglevel', 'warning',
         '-i', 'pipe:0',
         '-c:v', 'h264_nvenc',
-        '-preset', 'p4',
+        // p4 = balanced speed/quality; tune ll = NVENC's low-latency mode
+        // (skips B-frames and extra lookahead that add encode latency —
+        // matters for a LIVE stream, where every extra ms of encoder
+        // buffering is a second the broadcast falls further behind).
+        '-preset', 'p4', '-tune', 'll',
         '-rc', 'cbr',
-        '-b:v', `${bitrateKbps || 10000}k`,
-        '-maxrate', `${bitrateKbps || 10000}k`,
-        '-bufsize', `${(bitrateKbps || 10000) * 2}k`,
+        '-b:v', `${bitrateKbps}k`,
+        '-maxrate', `${bitrateKbps}k`,
+        '-bufsize', `${bitrateKbps * 2}k`,
         '-g', String(gop),
         '-keyint_min', String(gop),
-        '-vf', `scale=${w}:${h}`,
-        '-r', String(fps || 30),
+        '-vf', `scale=${width}:${height}`,
+        '-r', String(fps),
         '-c:a', 'aac', '-b:a', '160k', '-ar', '44100',
         '-f', 'flv',
         '-progress', 'pipe:2', '-nostats',
@@ -186,12 +220,14 @@ function startEncoder({ resolution, fps, bitrateKbps }) {
     }
 
     resetMetrics();
-    engine.settings = { resolution: resolution || '1920x1080', fps: fps || 30, bitrateKbps: bitrateKbps || 10000 };
+    encoderBackpressured = false;
+    const resolved = resolveEncodeSettings({ resolution, fps, bitrateKbps });
+    engine.settings = resolved;
     engine.state = 'starting';
     engine.desiredLive = true;
     engine.lastError = null;
 
-    const args = buildFfmpegArgs({ ...engine.settings, streamKey });
+    const args = buildFfmpegArgs({ ...resolved, streamKey });
     const proc = spawn(FFMPEG_PATH, args, { stdio: ['pipe', 'ignore', 'pipe'] });
     engine.proc = proc;
     engine.startedAt = Date.now();
@@ -270,10 +306,24 @@ function stopEncoder() {
     return { ok: true };
 }
 
+// 🔒 BACKPRESSURE — if the encoder can't keep up (underpowered machine,
+// a slow moment, NVENC briefly stalling) Node's stdin.write() buffers
+// internally and its return value goes false. Piling MORE chunks on
+// top of an already-backed-up pipe only grows that buffer without
+// bound and makes the LIVE stream fall further and further behind
+// real time — for a live broadcast, a skipped frame is far better than
+// ever-growing latency. So: once backpressured, incoming chunks are
+// dropped (not queued) until the encoder catches up and drains.
+let encoderBackpressured = false;
 function ingestChunk(buf) {
     if (engine.state !== 'live' || !engine.proc || !engine.proc.stdin.writable) return { ok: false, error: 'Encoder not live' };
+    if (encoderBackpressured) return { ok: false, error: 'Encoder backpressured — dropping frame to protect live latency', dropped: true };
     try {
-        engine.proc.stdin.write(buf);
+        const stillOk = engine.proc.stdin.write(buf);
+        if (!stillOk) {
+            encoderBackpressured = true;
+            engine.proc.stdin.once('drain', () => { encoderBackpressured = false; });
+        }
         return { ok: true };
     } catch (e) {
         return { ok: false, error: e.message };
