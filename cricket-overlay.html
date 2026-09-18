@@ -213,7 +213,13 @@
      name to still fit, matched to the SAME size as the other batsman
      and the bowler's name, so all three never look inconsistent next to
      each other; long names never wrap or clip. */
-  .brow .bname{ font-family:var(--font-ui); font-weight:900; font-size:min(2.4vw,30px); color:var(--ink); letter-spacing:.1px; min-width:132px; display:inline-block; white-space:nowrap; }
+  /* Same natural ceiling as #bowler-name-val below (min(2.6vw,32px)) —
+     both batsman names and the bowler name must start from an IDENTICAL
+     base size, otherwise "same size" is only ever true by coincidence
+     (e.g. only once both happen to be shrunk to the same floor). See
+     syncPlayerNameSizes() in the script for the shared-shrink logic that
+     keeps all three locked together as state changes ball by ball. */
+  .brow .bname{ font-family:var(--font-ui); font-weight:900; font-size:min(2.6vw,32px); color:var(--ink); letter-spacing:.1px; min-width:132px; display:inline-block; white-space:nowrap; }
   .brow .bruns{ font-family:var(--font-num); font-weight:900; font-size:min(2.05vw,25px); color:#1c4fd8; font-variant-numeric:tabular-nums; margin-left:auto; }
   .brow .bstar{ color:#1c4fd8; }
   .brow .bballs{ font-family:var(--font-num); font-weight:700; font-size:min(1.3vw,15px); color:var(--ink-dim); margin-left:6px; min-width:20px; }
@@ -256,7 +262,7 @@
      shrinks the font just enough for the FULL name to fit next to the
      figures/overs, using the SAME shared size as the two batsman names. */
   #bowler-name-val{
-    font-family:var(--font-ui); font-weight:900; font-size:min(2.9vw,35px); color:var(--ink);
+    font-family:var(--font-ui); font-weight:900; font-size:min(2.6vw,32px); color:var(--ink);
     letter-spacing:0; white-space:nowrap; display:inline-block;
   }
   /* Wickets-runs, e.g. "0-41" — same bold navy as the name, just the
@@ -1678,39 +1684,18 @@ function fitCapName(el){
   }
 }
 
-// Auto-shrinks a name span's font size just enough for the FULL text to
-// fit on one line within its flex row — same idea as fitCapName above,
-// but fitting to available ROW WIDTH rather than height, since these
-// names sit on a single line next to runs/figures rather than wrapping.
-// Never truncates/ellipsizes: it only ever turns the dial down on size.
-// Shrinks `el`'s font just enough for it to fit on one line next to its
-// siblings (runs/balls, or figures/overs) — WITHOUT ever crowding into
-// whatever sits beside the segment (the team panel, on the bowler's
-// side). The key fix: measure available space against the true
-// fixed-width box (`container`, e.g. #bowler-seg or #batters-seg) that
-// the flex layout actually allocates — not against the row's (`el`'s
-// parent, e.g. #bowler-line) OWN width. A flex row like #bowler-line
-// sizes itself to fit its children's natural (unshrunk) width, so
-// measuring against ITS width is circular and never reliably detects
-// overflow for a long name. Measuring against the outer container's
-// clientWidth (which the surrounding layout genuinely constrains) means
-// this always finds the real available space, however long the name,
-// and the name shrinks smoothly to fit rather than ever spilling into
-// neighbouring furniture.
-// Measures the largest font-size (down to minPx) that would let `el`'s
-// FULL text fit on one line within its own row — WITHOUT permanently
-// applying it. Used by syncPlayerNameSizes() below to find out what each
-// of the three names (striker/non-striker/bowler) COULD be sized at
-// individually, before picking one shared size for all of them.
-function measureFitSize(el, minPx){
-  if(!el || !el.isConnected) return null;
+// Returns the width (px) still free inside `el`'s row for `el` itself to
+// grow into — i.e. the row's container box width, minus every OTHER
+// child in the row, minus the row's own gaps/padding. Measured against
+// the true fixed-width box the flex layout allocates (`container`, e.g.
+// #bowler-seg or #batters-seg) — not against the row's (`el`'s parent,
+// e.g. #bowler-line) OWN width, because a flex row sizes itself to fit
+// its children's natural width, so measuring against ITS width is
+// circular and never reliably detects overflow for a long name.
+function availableWidthFor(el){
   const row = el.parentElement;
   const container = row && row.parentElement;
   if(!row || !container) return null;
-  const prevInline = el.style.fontSize;
-  el.style.fontSize = ''; // fall back to CSS (min(vw,px)) to read the natural ceiling
-  const naturalPx = parseFloat(getComputedStyle(el).fontSize);
-  if(!naturalPx){ el.style.fontSize = prevInline; return null; }
   const rowStyle = getComputedStyle(row);
   const gap = parseFloat(rowStyle.columnGap || rowStyle.gap || '0') || 0;
   let siblingsWidth = 0;
@@ -1720,53 +1705,20 @@ function measureFitSize(el, minPx){
   const gaps = gap * Math.max(row.children.length - 1, 0);
   const containerStyle = getComputedStyle(container);
   const containerPad = parseFloat(containerStyle.paddingLeft || 0) + parseFloat(containerStyle.paddingRight || 0);
-  const available = container.clientWidth - containerPad - siblingsWidth - gaps - 4; // small safety buffer
-  if(!(available > 0)){ el.style.fontSize = prevInline; return minPx; }
-  let size = naturalPx;
-  el.style.fontSize = size + 'px';
-  let guard = 0;
-  while(el.scrollWidth > available && size > minPx && guard < 60){
-    size -= 0.5;
-    el.style.fontSize = size + 'px';
-    guard++;
-  }
-  el.style.fontSize = prevInline; // this was only a measurement — restore
-  return size;
+  return container.clientWidth - containerPad - siblingsWidth - gaps - 4; // small safety buffer
 }
 
-// 🩹 SAFETY NET: even at the shared (possibly floor) size, an unusually
-// long name combined with its figures/overs can still be wider than the
-// segment box (which has overflow:hidden). Rather than letting the
-// trailing piece (typically the overs figure) silently get clipped off,
-// scale that WHOLE row down as one unit as a last resort — nothing is
-// ever truncated or disappears off-screen.
-function applyRowScaleSafetyNet(el){
-  if(!el || !el.isConnected) return;
-  const row = el.parentElement;
-  const container = row && row.parentElement;
-  if(!row || !container) return;
-  row.style.transform = '';
-  const containerStyle = getComputedStyle(container);
-  const containerPad = parseFloat(containerStyle.paddingLeft || 0) + parseFloat(containerStyle.paddingRight || 0);
-  const totalAvailable = container.clientWidth - containerPad;
-  if(totalAvailable > 0 && row.scrollWidth > totalAvailable){
-    const scale = Math.max(0.62, totalAvailable / row.scrollWidth);
-    row.style.transform = `scale(${scale})`;
-    row.style.transformOrigin = 'center';
-  }
-}
-
-// Sizes the striker name, non-striker name AND bowler name to ONE shared
-// font size, instead of each fitting independently. Independent fitting
-// meant a short batsman name next to a long bowler name (or vice versa)
-// rendered at two visibly different sizes — inconsistent and distracting
-// on a broadcast bar where all three sit in the same visual "row" of
-// information. Now: measure what EACH name could individually be sized
-// at (the largest size that still fits its own row), then apply the
-// SMALLEST of those three to all three — i.e. whichever name is most
-// cramped (longest, relative to its row) sets the size for everyone,
-// and the other two simply render a little smaller than they strictly
-// needed to, so all three always match.
+// Sizes the striker name, non-striker name AND bowler name to ONE truly
+// shared font size — never three independently-guessed sizes that only
+// coincidentally match. Whichever name is most cramped (longest, or
+// sitting next to the widest runs/figures) sets the size for ALL THREE;
+// the other two simply render a little smaller than they strictly
+// needed to. This is re-run on every ball/update, so it keeps re-fitting
+// live throughout the whole match — a name change, a score going from
+// single to double/triple digits, a new bowler with a longer name, all
+// trigger a fresh fit. Names are never truncated or ellipsized — only
+// the shared font-size (and, as a last-resort safety net below, a
+// uniform scale) ever changes.
 function syncPlayerNameSizes(){
   const els = [
     document.getElementById('striker-name'),
@@ -1774,15 +1726,70 @@ function syncPlayerNameSizes(){
     document.getElementById('bowler-name-val')
   ].filter(el => el && el.isConnected);
   if(!els.length) return;
+
   const minPx = 13;
-  const sizes = els.map(el => measureFitSize(el, minPx)).filter(sz => sz !== null);
-  if(!sizes.length) return;
-  const shared = Math.min(...sizes);
-  els.forEach(el => { el.style.fontSize = shared + 'px'; });
-  // Re-check each row for the clip-safety fallback now that the shared
-  // size is actually applied (only ever kicks in for the name that was
-  // already at the floor and whose row still doesn't fit).
-  els.forEach(el => applyRowScaleSafetyNet(el));
+
+  // Reset to the CSS natural ceiling every time (never compound a shrink
+  // from a previous, possibly-longer name still lingering as an inline
+  // style), and clear any previous safety-net scale on each row too.
+  els.forEach(el => {
+    el.style.fontSize = '';
+    const row = el.parentElement;
+    if(row) row.style.transform = '';
+  });
+
+  // Batsman names and the bowler name now share the exact same CSS
+  // formula (see .brow .bname / #bowler-name-val), so their natural
+  // ceilings are already identical in the normal case — but read the
+  // largest of the three anyway as the search's starting point, so the
+  // loop below always starts from a safe upper bound.
+  let size = Math.max(...els.map(el => parseFloat(getComputedStyle(el).fontSize) || 0));
+  if(!size) return;
+
+  const allFit = (candidateSize) => els.every(el => {
+    const available = availableWidthFor(el);
+    if(available === null) return true;
+    // el.scrollWidth already reflects candidateSize since we just set it
+    return el.scrollWidth <= available;
+  });
+
+  els.forEach(el => { el.style.fontSize = size + 'px'; });
+  let guard = 0;
+  while(size > minPx && guard < 80 && !allFit(size)){
+    size -= 0.5;
+    els.forEach(el => { el.style.fontSize = size + 'px'; });
+    guard++;
+  }
+
+  // 🩹 SAFETY NET: even at the floor size, an unusually long name
+  // combined with its figures/overs can still be wider than its segment
+  // box. Rather than letting it silently clip (overflow:hidden) or
+  // scaling just that ONE row (which would make it visually smaller
+  // than the other two despite the same font-size — the exact
+  // inconsistency this whole function exists to avoid), find the worst
+  // overflow ratio across all three rows and scale ALL THREE rows down
+  // together by that SAME factor. They stay locked to each other, and
+  // nothing is ever truncated or spills into neighbouring furniture.
+  let worstScale = 1;
+  els.forEach(el => {
+    const row = el.parentElement;
+    const container = row && row.parentElement;
+    if(!row || !container) return;
+    const containerStyle = getComputedStyle(container);
+    const containerPad = parseFloat(containerStyle.paddingLeft || 0) + parseFloat(containerStyle.paddingRight || 0);
+    const totalAvailable = container.clientWidth - containerPad;
+    if(totalAvailable > 0 && row.scrollWidth > totalAvailable){
+      worstScale = Math.min(worstScale, totalAvailable / row.scrollWidth);
+    }
+  });
+  if(worstScale < 1){
+    worstScale = Math.max(0.62, worstScale);
+    els.forEach(el => {
+      const row = el.parentElement;
+      row.style.transform = `scale(${worstScale})`;
+      row.style.transformOrigin = 'center';
+    });
+  }
 }
 
 function layoutTeams(s){
