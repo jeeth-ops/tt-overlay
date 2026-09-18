@@ -6538,6 +6538,18 @@ io.on('connection', async (socket) => {
         io.to(room).emit('cricketTeamStat', data.data || data);
     });
 
+    // 🏏📊 Automatic Recent Over Summary + Last-5-overs momentum — fired once
+    // per genuinely-completed over from cricket-panel.html's recordBall().
+    // Same pure-broadcast relay as cricketPlayerStat/cricketTeamStat above:
+    // never persisted, never touches cricketState/Mongo, just forwarded to
+    // whoever's watching this room's overlay.
+    socket.on('cricketOverSummary', (data) => {
+        let room = socket.activeRoom;
+        const targetId = data.room ? data.room.replace('room-', '') : (data.id || data.uid || matchIdForClient);
+        if (targetId && targetId !== 'default') room = `room-${targetId}`;
+        io.to(room).emit('cricketOverSummary', data.data || data);
+    });
+
     socket.on('cricketHideTeamStat', (data) => {
         let room = socket.activeRoom;
         const targetId = data && data.room ? data.room.replace('room-', '') : (data && (data.id || data.uid)) || matchIdForClient;
