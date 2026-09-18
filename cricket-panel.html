@@ -1079,9 +1079,9 @@
     </div>
   </div>
 
-  <!-- 🏏 Automatic batsman/bowler card confirmation — SHOW/SKIP with a 7s
-       auto-continue, opened by startAutoCardFlow() right after a new
-       batsman/bowler is confirmed. Reuses the same wicket-modal-overlay/
+  <!-- 🏏 Automatic batsman card confirmation — SHOW/SKIP with a 7s
+       auto-continue, opened by queueAutoCardFlow() for a dismissed batter
+       or the incoming replacement. Reuses the same wicket-modal-overlay/
        wicket-modal shell as every other panel popup for visual consistency. -->
   <div class="wicket-modal-overlay" id="auto-card-modal-overlay">
     <div class="wicket-modal" id="auto-card-modal">
@@ -4046,9 +4046,11 @@ function sendInNewBatsman(name, id){
   pushState(true);
   // 🏏 AUTOMATIC BATSMAN CARD — only once real balls have been bowled this
   // match (skips the very first two openers at match start, when there's
-  // nothing meaningful to show yet). See startAutoCardFlow().
+  // nothing meaningful to show yet). Queued (not started outright) so it
+  // plays AFTER the dismissed batter's own auto-card if a wicket just
+  // queued one — see the 'W'/'WdW'/'NbW' cases in recordBall().
   if(state.score.overs > 0 || state.score.balls > 0){
-    startAutoCardFlow('batsman', { which: enteringEnd, name, id: id || null });
+    queueAutoCardFlow('batsman', { which: enteringEnd, name, id: id || null });
   }
 }
 document.getElementById('new-batsman-btn').addEventListener('click', () => {
@@ -4358,12 +4360,13 @@ function applyBowlerChange(name, id){
 
   pushState(true);
   toast(`${name} is now bowling`);
-  // 🏏 AUTOMATIC BOWLER CARD — only for a genuine over-boundary change
-  // (carryBalls === 0, never a mid-over name correction), and only once
-  // the match is actually under way. See startAutoCardFlow().
-  if(carryBalls === 0 && (state.score.overs > 0 || state.score.balls > 0)){
-    startAutoCardFlow('bowler', { name, id: id || null });
-  }
+  // 🏏 Automatic bowler card popup was removed per operator request — a new
+  // bowler no longer triggers the SHOW/SKIP confirm flow. The bowler's
+  // Match/Tournament Card buttons in the Live Players panel still work
+  // exactly as before, this only drops the automatic one. The automatic
+  // BATSMAN card flow (queueAutoCardFlow('batsman', ...) in
+  // sendInNewBatsman() and in recordBall() for a dismissed batter) is
+  // untouched.
   return true;
 }
 
@@ -6685,27 +6688,48 @@ function hideActiveCardNow(){
 }
 
 /* ------------------------------------------------------------
-   AUTOMATIC BATSMAN / BOWLER CARD FLOW
+   AUTOMATIC BATSMAN CARD FLOW (+ QUEUE)
    SHOW/SKIP popup (7s auto-continue) → 5s delay → existing card shows for
-   ~7s → smooth exit. Every stage is cancellable — a manual card action, a
-   fresh automatic flow starting, or Reset, all cancel it outright — so a
-   stale timer can never fire a card for the wrong player later.
+   ~7s → smooth exit. A wicket queues the DISMISSED batter's card (frozen
+   at the moment they were given out, since by the time it's shown they
+   may no longer be state.striker/nonStriker at all) and sendInNewBatsman()
+   queues the INCOMING batter's card right after — both play back to back,
+   in order, instead of the second one cancelling the first. Only a
+   deliberate MANUAL card action (or Reset) wipes the whole queue outright;
+   a SKIP or a natural auto-hide just advances to whatever's queued next.
+   The automatic BOWLER card popup was removed per operator request — new
+   bowlers no longer trigger this flow (manual Match/Tournament Card
+   buttons for the bowler still work exactly as before).
    ------------------------------------------------------------ */
-let autoCardFlow = null;   // { seq, kind:'batsman'|'bowler', which, name, id, timers:[] }
+let autoCardFlow = null;   // the flow currently on screen/counting down: { seq, kind, which, name, id, frozenPayload, timers:[] }
+let autoCardQueue = [];    // flows waiting their turn, same shape minus seq/timers
 let autoCardFlowSeq = 0;
 
+// Full wipe — used by manual card actions and Reset, where EVERYTHING
+// automatic (current + queued) must stand down, not just the current card.
 function clearAutoCardFlow(){
-  if(!autoCardFlow) return;
-  (autoCardFlow.timers || []).forEach(id => clearTimeout(id));
-  autoCardFlow = null;
+  if(autoCardFlow){
+    (autoCardFlow.timers || []).forEach(id => clearTimeout(id));
+    autoCardFlow = null;
+  }
+  autoCardQueue = [];
   const overlay = document.getElementById('auto-card-modal-overlay');
   if(overlay) overlay.classList.remove('show');
 }
-function startAutoCardFlow(kind, info){
-  clearAutoCardFlow(); // never let an older flow's timers coexist with a new one
+// Adds a flow to the back of the queue; starts it immediately if nothing
+// is currently running. Use this (never a direct "start") so a wicket's
+// out-batter card and the next incoming batter's card always play in
+// order instead of the second discarding the first.
+function queueAutoCardFlow(kind, info){
+  autoCardQueue.push({ kind, which: info.which, name: info.name, id: info.id, frozenPayload: info.frozenPayload || null });
+  if(!autoCardFlow) advanceAutoCardQueue();
+}
+function advanceAutoCardQueue(){
+  if(autoCardQueue.length === 0) return;
+  const next = autoCardQueue.shift();
   const seq = ++autoCardFlowSeq;
-  autoCardFlow = { seq, kind, which: info.which, name: info.name, id: info.id, timers: [] };
-  openAutoCardConfirm(kind, info.name);
+  autoCardFlow = { seq, kind: next.kind, which: next.which, name: next.name, id: next.id, frozenPayload: next.frozenPayload, timers: [] };
+  openAutoCardConfirm(next.kind, next.name);
   const t = setTimeout(() => resolveAutoCardConfirm(seq, true), 7000); // no response in 7s → continue
   autoCardFlow.timers.push(t);
 }
@@ -6720,22 +6744,30 @@ function resolveAutoCardConfirm(seq, proceed){
   if(!autoCardFlow || autoCardFlow.seq !== seq) return; // stale — a newer/cleared flow already won
   const overlay = document.getElementById('auto-card-modal-overlay');
   if(overlay) overlay.classList.remove('show');
-  if(!proceed){ clearAutoCardFlow(); return; }
+  if(!proceed){ autoCardFlow = null; advanceAutoCardQueue(); return; }
   const t = setTimeout(() => showAutoCard(seq), 5000);
   autoCardFlow.timers.push(t);
 }
 function showAutoCard(seq){
   if(!autoCardFlow || autoCardFlow.seq !== seq) return;
-  if(!socket || !socket.connected){ clearAutoCardFlow(); return; }
+  if(!socket || !socket.connected){ autoCardFlow = null; advanceAutoCardQueue(); return; }
   const flow = autoCardFlow;
   if(flow.kind === 'batsman'){
-    state.playerStatWhich = flow.which;
-    state.playerStatScope = 'match';
     state.showPlayerStatCard = true;
     saveLocal();
     const toggleEl = document.getElementById('player-stat-toggle'); if(toggleEl) toggleEl.checked = true;
-    const whichEl = document.getElementById('player-stat-which'); if(whichEl) whichEl.value = flow.which;
-    socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
+    if(flow.frozenPayload){
+      // Dismissed batter — no longer state.striker/nonStriker by the time
+      // this fires, so send the stats frozen at the moment of dismissal
+      // instead of the live buildPlayerStatPayload() lookup.
+      socket.emit('cricketPlayerStat', { data: flow.frozenPayload });
+    } else {
+      state.playerStatWhich = flow.which;
+      state.playerStatScope = 'match';
+      saveLocal();
+      const whichEl = document.getElementById('player-stat-which'); if(whichEl) whichEl.value = flow.which;
+      socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
+    }
     setActiveCard('player', `${flow.name || 'Batter'} — Match (auto)`);
   } else {
     state.bowlerStatScope = 'match';
@@ -6749,6 +6781,7 @@ function showAutoCard(seq){
     if(!autoCardFlow || autoCardFlow.seq !== seq) return; // a manual action already took over
     deactivateCard(flow.kind === 'batsman' ? 'player' : 'bowler');
     autoCardFlow = null;
+    advanceAutoCardQueue();
   }, 7000);
   flow.timers.push(t);
 }
@@ -7046,6 +7079,13 @@ function recordBall(kind, meta){
 
   pushHistory();
   let overCompletedThisBall = false;
+  // 🏏 Set inside the 'W'/'WdW'/'NbW' wicket cases below — the dismissed
+  // batter's stats FROZEN at the moment they were given out, for the
+  // automatic "out batsman" card queued after the switch. Reading
+  // state.striker/nonStriker live at card-show time won't work here: by
+  // then sendInNewBatsman() may already have overwritten that slot with
+  // the incoming batter.
+  let wicketDismissedSnapshot = null;
   // 🔒 Set inside the 'Wd'/'Nb' cases below when the extra runs recorded
   // for that delivery amount to a boundary (Wide extra === 4, or No Ball
   // runs-off-bat === 4/6) — see logBallToDb() where this is read to fire
@@ -7189,6 +7229,15 @@ function recordBall(kind, meta){
         bowlerName: isBowlerWicket ? (state.bowler.name || null) : null,
         inningsNo: state.inningsNumber
       });
+      // 🏏 Freeze the dismissed batter's final stats right here — this is
+      // the last point in the whole call where dismissedBatter's numbers
+      // are guaranteed final and state.battingTeam still means "the team
+      // they were batting for" (queued/read after the switch below).
+      wicketDismissedSnapshot = {
+        name: dismissedBatter.name, id: dismissedBatter.id || null,
+        runs: dismissedBatter.runs, balls: dismissedBatter.balls,
+        fours: dismissedBatter.fours, sixes: dismissedBatter.sixes
+      };
       if(dismissedBatter.id){
         state.dismissedThisInnings = state.dismissedThisInnings || { A: [], B: [] };
         state.dismissedThisInnings[state.battingTeam] = state.dismissedThisInnings[state.battingTeam] || [];
@@ -7306,6 +7355,15 @@ function recordBall(kind, meta){
         bowlerName: isBowlerWicket ? (state.bowler.name || null) : null,
         inningsNo: state.inningsNumber
       });
+      // 🏏 Freeze the dismissed batter's final stats right here — this is
+      // the last point in the whole call where dismissedBatter's numbers
+      // are guaranteed final and state.battingTeam still means "the team
+      // they were batting for" (queued/read after the switch below).
+      wicketDismissedSnapshot = {
+        name: dismissedBatter.name, id: dismissedBatter.id || null,
+        runs: dismissedBatter.runs, balls: dismissedBatter.balls,
+        fours: dismissedBatter.fours, sixes: dismissedBatter.sixes
+      };
       if(dismissedBatter.id){
         state.dismissedThisInnings = state.dismissedThisInnings || { A: [], B: [] };
         state.dismissedThisInnings[state.battingTeam] = state.dismissedThisInnings[state.battingTeam] || [];
@@ -7390,6 +7448,15 @@ function recordBall(kind, meta){
         bowlerName: isBowlerWicket ? (state.bowler.name || null) : null,
         inningsNo: state.inningsNumber
       });
+      // 🏏 Freeze the dismissed batter's final stats right here — this is
+      // the last point in the whole call where dismissedBatter's numbers
+      // are guaranteed final and state.battingTeam still means "the team
+      // they were batting for" (queued/read after the switch below).
+      wicketDismissedSnapshot = {
+        name: dismissedBatter.name, id: dismissedBatter.id || null,
+        runs: dismissedBatter.runs, balls: dismissedBatter.balls,
+        fours: dismissedBatter.fours, sixes: dismissedBatter.sixes
+      };
       if(dismissedBatter.id){
         state.dismissedThisInnings = state.dismissedThisInnings || { A: [], B: [] };
         state.dismissedThisInnings[state.battingTeam] = state.dismissedThisInnings[state.battingTeam] || [];
@@ -7586,6 +7653,30 @@ function recordBall(kind, meta){
   if(overCompletedThisBall){
     emitOverSummary(logOverForBall, overRunsAcc, overWicketsAcc, state.lastCompletedOverBalls || []);
     overRunsAcc = 0; overWicketsAcc = 0;
+  }
+
+  // 🏏 AUTOMATIC "OUT BATSMAN" CARD — queued (not started outright) so it
+  // plays before whatever the operator's next New Batsman selection
+  // queues right after it, instead of the two racing/cancelling each
+  // other. Uses the frozen wicketDismissedSnapshot from the 'W'/'WdW'/
+  // 'NbW' case above — never a live state.striker/nonStriker lookup,
+  // which could already be the incoming batter by the time this shows.
+  if(wicketDismissedSnapshot){
+    const battingTeamObj = logBattingTeam === 'A' ? state.teamA : state.teamB;
+    const snap = wicketDismissedSnapshot;
+    queueAutoCardFlow('batsman', {
+      name: snap.name,
+      id: snap.id,
+      frozenPayload: {
+        scope: 'match',
+        teamName: battingTeamObj.name, teamShort: battingTeamObj.short,
+        teamColor: battingTeamObj.color, teamLogo: battingTeamObj.logoUrl,
+        playerName: snap.name,
+        runs: snap.runs, balls: snap.balls,
+        sr: snap.balls > 0 ? ((snap.runs / snap.balls) * 100).toFixed(1) : '0.0',
+        fours: snap.fours, sixes: snap.sixes
+      }
+    });
   }
 
   checkMilestones();
