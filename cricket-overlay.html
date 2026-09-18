@@ -351,23 +351,36 @@
      system above. Transform/opacity only for motion (playOverSummaryCard). */
   #over-summary-card{
     --osc-accent: var(--bc-blue,#0b3d91);
+    --osc-accent-b: var(--bc-red,#7a1620);
     --osc-glow-a: rgba(11,61,145,0.30);
     --osc-glow-b: rgba(122,22,32,0.30);
     position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
-    width:min(46vw,660px); max-width:92vw;
+    /* Big rectangular broadcast card — wide, not the near-square shape of
+       the other summary cards. */
+    width:min(64vw,980px); max-width:94vw;
     background:var(--bc-paper, #f3f6fc);
-    border-radius:18px; overflow:hidden;
+    border-radius:20px; overflow:hidden;
     box-shadow:
-      0 30px 70px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.08),
-      -120px 0 140px -60px var(--osc-glow-a), 120px 0 140px -60px var(--osc-glow-b);
+      0 34px 80px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.08),
+      -160px 0 180px -70px var(--osc-glow-a), 160px 0 180px -70px var(--osc-glow-b);
     display:none; flex-direction:column;
     font-family:var(--font-ui); color:var(--bc-ink,#12213f);
     z-index:32; will-change:transform, opacity;
   }
-  #over-summary-card .sc-header{ background:linear-gradient(135deg, var(--osc-accent), var(--osc-accent)); }
+  /* Header blends BOTH teams' colours (never a single team's identity
+     alone) — this card is never "India's" or "Australia's" card, it's
+     the match's. */
+  #over-summary-card .sc-header{ background:linear-gradient(100deg, var(--osc-accent) 0%, var(--osc-accent) 42%, var(--osc-accent-b) 58%, var(--osc-accent-b) 100%); padding:22px 34px; }
+  .osc-vs-header{ display:flex; align-items:center; justify-content:center; gap:28px; }
+  .osc-vs-side{ display:flex; flex-direction:column; align-items:center; gap:8px; flex:none; }
+  .osc-vs-side .sc-badge{ width:64px; height:64px; }
+  .osc-vs-short{ font-family:var(--font-num); font-weight:900; font-size:20px; letter-spacing:1.5px; color:#fff; text-shadow:0 2px 6px rgba(0,0,0,0.4); }
+  .osc-vs-mid{ display:flex; flex-direction:column; align-items:center; gap:4px; flex:none; padding:0 8px; }
+  .osc-vs-word{ font-family:var(--font-num); font-weight:900; font-size:15px; letter-spacing:3px; color:rgba(255,255,255,0.75); }
+  #over-summary-card .osc-vs-mid .sc-sub{ margin-top:0; }
   .osc-overband{
-    display:flex; align-items:center; justify-content:center; gap:10px;
-    padding:10px 20px; background:rgba(11,61,145,0.05); border-bottom:1px solid var(--hairline,rgba(16,25,58,.1));
+    display:flex; align-items:center; justify-content:center; gap:14px;
+    padding:14px 30px; background:rgba(11,61,145,0.05); border-bottom:1px solid var(--hairline,rgba(16,25,58,.1));
   }
   .osc-overband .lbl{ font-family:var(--font-num); font-weight:900; font-size:13px; letter-spacing:1.4px; color:var(--bc-ink-dim,#5c6c8a); }
   .osc-overband .runs{ font-family:var(--font-num); font-weight:900; font-size:15px; letter-spacing:.4px; color:var(--osc-accent); }
@@ -1237,11 +1250,18 @@
        batters table, overs/total footer, a thin ball-by-ball strip and a
        last-5-overs momentum row. -->
   <div id="over-summary-card" class="summary-card">
-    <div class="sc-header">
-      <div class="sc-badge" id="osc-badge">TM</div>
-      <div class="sc-header-text">
-        <div class="sc-title" id="osc-team-name">TEAM</div>
+    <div class="sc-header osc-vs-header">
+      <div class="osc-vs-side">
+        <div class="sc-badge" id="osc-badge-a">TM</div>
+        <div class="osc-vs-short" id="osc-short-a">TM</div>
+      </div>
+      <div class="osc-vs-mid">
+        <div class="osc-vs-word">VS</div>
         <div class="sc-sub" id="osc-format">T20</div>
+      </div>
+      <div class="osc-vs-side">
+        <div class="sc-badge" id="osc-badge-b">TM</div>
+        <div class="osc-vs-short" id="osc-short-b">TM</div>
       </div>
     </div>
     <div class="osc-overband">
@@ -2983,9 +3003,22 @@ function renderOverSummaryCard(d){
   // with the table underneath.
   card.style.setProperty('--osc-glow-a', d.teamColor ? ambientTeamColor(d.teamColor, 0.30) : 'rgba(11,61,145,0.30)');
   card.style.setProperty('--osc-glow-b', d.oppTeamColor ? ambientTeamColor(d.oppTeamColor, 0.30) : 'rgba(122,22,32,0.30)');
+  card.style.setProperty('--osc-accent-b', d.oppTeamColor || 'var(--bc-red,#7a1620)');
 
-  setBadge(document.getElementById('osc-badge'), d.teamLogo, badgeText(d.teamShort, d.teamName));
-  document.getElementById('osc-team-name').textContent = (d.teamName || d.teamShort || 'TEAM').toUpperCase();
+  // Header never names a single team — just both sides' short codes with
+  // VS between them, so the card reads as "this match" not "this team".
+  // The short-code label under a badge only shows when that badge has a
+  // real logo photo — with no logo, the badge circle itself already
+  // falls back to showing the short code, so a second copy underneath
+  // would just repeat the same text.
+  setBadge(document.getElementById('osc-badge-a'), d.teamLogo, badgeText(d.teamShort, d.teamName));
+  const shortA = document.getElementById('osc-short-a');
+  shortA.textContent = (d.teamShort || badgeText(d.teamShort, d.teamName) || '—').toUpperCase();
+  shortA.style.display = d.teamLogo ? 'block' : 'none';
+  setBadge(document.getElementById('osc-badge-b'), d.oppTeamLogo, badgeText(d.oppTeamShort, d.oppTeamName));
+  const shortB = document.getElementById('osc-short-b');
+  shortB.textContent = (d.oppTeamShort || badgeText(d.oppTeamShort, d.oppTeamName) || '—').toUpperCase();
+  shortB.style.display = d.oppTeamLogo ? 'block' : 'none';
   document.getElementById('osc-format').textContent = (d.format || '').toUpperCase();
 
   document.getElementById('osc-over-num').textContent = d.overNumber != null ? d.overNumber : '—';
