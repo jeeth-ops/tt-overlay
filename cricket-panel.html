@@ -1147,8 +1147,25 @@
       <button class="full small primary" id="start-recording-btn">🔴 Start Recording</button>
       <button class="full small ghost" id="stop-recording-btn" style="margin-top:6px; display:none;">⏹ Stop Recording</button>
       <div style="font-size:11px; opacity:.6; margin-top:6px;">
-        One click does everything now: this also starts Record inside vMix itself (needs the Clipper Helper below, with vMix's Web Controller enabled). FOUR / SIX / WICKET will auto-cut a 20s clip and upload it to your Drive folder.
+        Uses the local Stream Engine on this PC (no vMix, no separate helper app) to record — FOUR / SIX / WICKET will auto-cut a 20s clip and upload it to your Drive folder. Requires <code>stream-engine/</code> running (see the Live Studio section below) and a camera selected there.
       </div>
+
+      <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,.08);">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+          <span style="font-size:12px; opacity:.8; font-weight:600;">CLIP ENGINE</span>
+          <div class="dot" id="ce-engine-dot"></div>
+          <span id="ce-engine-status" style="font-size:12px; opacity:.8;">Checking…</span>
+        </div>
+        <div style="display:grid; grid-template-columns:auto 1fr; gap:4px 10px; font-size:12px;">
+          <span style="opacity:.7;">Recording</span><span id="ce-recording" class="ls-health-val">● Inactive</span>
+          <span style="opacity:.7;">Buffer</span><span id="ce-buffer" class="ls-health-val">● —</span>
+          <span style="opacity:.7;">Clip Worker</span><span id="ce-worker" class="ls-health-val">● Idle</span>
+          <span style="opacity:.7;">Cloudflare</span><span id="ce-cloudflare" class="ls-health-val">● —</span>
+        </div>
+        <div id="ce-live-status" style="font-size:12px; font-family:monospace; margin-top:8px; min-height:16px; opacity:.9;"></div>
+      </div>
+
+      <button class="full small ghost" id="save-highlight-btn" style="margin-top:12px;">⭐ Save Highlight</button>
 
       <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,.08);">
         <label style="font-size:12px; opacity:.8; display:block; margin-bottom:6px;">Google Drive</label>
@@ -1242,7 +1259,7 @@
     </div>
 
     <div class="card" id="card-clipper-helper">
-      <h2>⬇️ Clipper Helper (install once on this PC)</h2>
+      <h2>⬇️ Local Stream Engine (install once on this PC)</h2>
 
       <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px; padding:8px 10px; background:rgba(255,255,255,.04); border-radius:8px;">
         <div class="dot" id="clipper-status-dot"></div>
@@ -1250,39 +1267,28 @@
       </div>
 
       <div style="font-size:12px; opacity:.75; margin-bottom:10px; line-height:1.5;">
-        A tiny program that runs alongside vMix on this same PC. Set up once with a couple of clicks (no file editing) — after that, one click on "Start Recording" above starts vMix's own recording too, cuts FOUR/SIX/WICKET clips, and uploads them to Drive automatically.
-      </div>
-      <a href="https://github.com/jeeth-ops/tt-overlay/releases/download/v8/Clipper.helper.to.cut.clips.zip">
-        <button class="full small primary">⬇️ Download Clipper Helper (.zip)</button>
-      </a>
-      <div style="font-size:11px; opacity:.6; margin-top:6px;">
-        Unzip it anywhere on this PC — includes ClipperHelper.exe, ffmpeg.exe and config.json.
+        <b>No vMix required.</b> A small local service (<code>stream-engine/</code> in this repo) that records straight from your camera/mic via this browser, cuts FOUR/SIX/WICKET clips, and pushes YouTube live with your GPU (NVENC) — see Live Studio below.
       </div>
 
-      <details style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,.08);">
+      <details style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,.08);" open>
         <summary style="cursor:pointer; font-size:12px; opacity:.85; font-weight:600;">📋 Setup instructions (click to expand) — one-time only</summary>
 
-        <div style="font-size:12px; opacity:.85; font-weight:600; margin-top:10px;">🔧 First time only (~2 minutes, no file editing):</div>
+        <div style="font-size:12px; opacity:.85; font-weight:600; margin-top:10px;">🔧 First time only (~2 minutes):</div>
         <ol style="font-size:12px; opacity:.8; line-height:1.8; margin:8px 0 0 18px; padding:0;">
-          <li>Right-click the downloaded zip → <b>Extract All</b> → choose any folder (e.g. Desktop). Keep <code>ClipperHelper.exe</code>, <code>ffmpeg.exe</code> and <code>config.json</code> together in that same folder.</li>
-          <li>In vMix: click <b>Settings → Web Controller</b> and tick <b>Enable Web Controller</b> (keep the default port, 8088).</li>
-          <li>Double-click <code>ClipperHelper.exe</code>. A black window opens (<code>Clipper Helper running at http://localhost:5005</code>) and, the first time, a <b>Setup page</b> automatically opens in your browser.</li>
-          <li>On that Setup page, fill in the vMix recording file path and your website URL, then click <b>💾 Save</b>.</li>
-          <li>Keep that black window open for the whole match (minimize it, don't close it). You'll need to double-click <code>ClipperHelper.exe</code> again next match day.</li>
+          <li>On this PC, open a terminal in the <code>stream-engine/</code> folder of this project and run <code>npm install</code> once.</li>
+          <li>Install an NVENC-capable ffmpeg build (the minimal one bundled elsewhere in this repo does NOT include NVENC) — see <code>stream-engine/README.md</code> for a direct link, and either put it on PATH or set the <code>FFMPEG_PATH</code> environment variable to it.</li>
+          <li>Run <code>npm start</code> inside <code>stream-engine/</code>. Keep that terminal window open for the whole match — you'll run this again next match day.</li>
         </ol>
 
-        <div style="font-size:12px; opacity:.85; font-weight:600; margin-top:14px;">🏏 Every match day (just 2 clicks):</div>
+        <div style="font-size:12px; opacity:.85; font-weight:600; margin-top:14px;">🏏 Every match day:</div>
         <ol style="font-size:12px; opacity:.8; line-height:1.8; margin:8px 0 0 18px; padding:0;">
-          <li>In this panel, click <b>🔗 Connect Google Drive</b>, sign in with your Google account, and choose the folder where clips should be saved (only needed again if the session expired).</li>
-          <li>Click <b>🔴 Start Recording</b> above — this alone now starts vMix's recording too. That's it.</li>
-          <li>Clips are cut and uploaded automatically whenever you press FOUR / SIX / WICKET. Click <b>⏹ Stop Recording</b> when the match ends — this stops vMix's recording too.</li>
+          <li>In this panel, click <b>🔗 Connect Google Drive</b>, sign in, and pick the folder clips should upload to (only needed again if the session expired).</li>
+          <li>Pick your Camera/Microphone under Live Studio below, then click <b>🔴 Start Recording</b> above — Chrome will ask which window to share; pick <b>Live Output</b>.</li>
+          <li>Clips are cut and uploaded automatically whenever you press FOUR / SIX / WICKET. Click <b>⏹ Stop Recording</b> when the match ends.</li>
         </ol>
 
         <div style="font-size:11px; opacity:.55; margin-top:10px;">
-          Setup page is always reachable again at <code>http://localhost:5005/setup</code> if you ever need to change the folder or re-test the vMix connection.
-        </div>
-        <div style="font-size:11px; opacity:.55; margin-top:6px;">
-          If clips stop uploading mid-match, just click "Connect Google Drive" again — takes 2 seconds.
+          If clips stop uploading mid-match, just click "Connect Google Drive" again — takes 2 seconds. Full setup/troubleshooting: <code>stream-engine/README.md</code>.
         </div>
       </details>
     </div>
@@ -1841,36 +1847,143 @@ function connect(){
 document.getElementById('connect-btn').addEventListener('click', connect);
 
 /* ============================================================
-   🎬 RECORDING — vMix does the actual recording on the operator's own
-   PC. This panel does NOT capture any screen/tab anymore. It only pings
-   a tiny local helper program (running on that same PC, see
-   clipper-helper/README.md) so it knows WHEN the recording started —
-   everything else (cutting clips, uploading to Drive) happens locally.
+   🎬 RECORDING (PART 3 — no vMix) — this browser tab IS the capture
+   source now: it composites Camera + the existing Cricket Overlay in
+   live-output.html and streams it to the local Stream Engine (see
+   stream-engine/README.md), which buffers it locally and cuts clips
+   from that buffer — zero runtime dependency on vMix or ClipperHelper.exe.
    ============================================================ */
-const CLIPPER_HELPER_URL = 'http://localhost:5005'; // the local helper from clipper-helper/
+// STREAM_ENGINE_URL is declared below (Live Studio section) — safe to
+// reference here since these functions only ever RUN on a later click,
+// well after the whole script (including that const) has evaluated.
 let recActive = false;
+let recordingDesired = false; // Match Recording card's own intent — see ensureLocalCapture/releaseLocalCaptureIfUnused
 
-// Live green/red dot in the Clipper Helper card — this is the whole
-// answer to "how do I know it's running" now that no one ever has to
-// manually open it again. Just pings its /status endpoint every few
-// seconds; if it answers, it's running (even minimized in the background).
+// 🔒 PART 3 — this now points at the Stream Engine (127.0.0.1, this PC),
+// which implements the SAME /status,/recording-start,/recording-stop,
+// /clip contract ClipperHelper.exe used to. vMix/ClipperHelper.exe are
+// no longer required at all — the local Stream Engine's own browser
+// capture (see ensureLocalCapture, Live Studio section below) is the
+// clip source now. Status text below reflects that; no vMix wording.
 async function checkClipperHelperStatus(){
   const dot = document.getElementById('clipper-status-dot');
   const text = document.getElementById('clipper-status-text');
   if(!dot || !text) return; // card not on screen yet
   try {
-    const s = await fetch(`${CLIPPER_HELPER_URL}/status`, { signal: AbortSignal.timeout(2000) }).then(r => r.json());
+    const s = await fetch(`${STREAM_ENGINE_URL}/status`, { signal: AbortSignal.timeout(2000) }).then(r => r.json());
     dot.classList.add('on');
-    text.textContent = s.vmixRecordingFolder
-      ? '🟢 Running — ready for match day'
-      : '🟡 Running — but setup isn\'t finished yet (open the Setup page below)';
+    text.textContent = s.ffmpegAvailable
+      ? '🟢 Stream Engine running — ready for match day'
+      : '🟡 Stream Engine running — but ffmpeg isn\'t set up yet (see stream-engine/README.md)';
   } catch(e) {
     dot.classList.remove('on');
-    text.textContent = '🔴 Not running — double-click ClipperHelper.exe on this PC once';
+    text.textContent = '🔴 Not running — start it on this PC (stream-engine/ — npm start)';
   }
 }
 checkClipperHelperStatus();
 setInterval(checkClipperHelperStatus, 8000);
+
+/* ============================================================
+   🎬 CLIP ENGINE STATUS (PART 3) — the "CLIP ENGINE / Recording /
+   Buffer / Clip Worker / Cloudflare" grid, and the transient
+   "FOUR DETECTED → Creating Clip... → Uploading... → ✓ Saved" line.
+   Polls the Stream Engine's /status (has clip-engine fields alongside
+   the encoder ones from Part 2) — no separate polling loop needed.
+   ============================================================ */
+function ceSetDot(id, ok, label){
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.textContent = `● ${label}`;
+  el.style.color = ok === true ? '#3ddc84' : ok === false ? '#ff6b6b' : 'inherit';
+}
+async function refreshClipEngineStatus(){
+  const status = await fetch(`${STREAM_ENGINE_URL}/status`, { signal: AbortSignal.timeout(2500) }).then(r => r.json()).catch(() => null);
+  const dot = document.getElementById('ce-engine-dot');
+  const label = document.getElementById('ce-engine-status');
+  if(!status){
+    dot.classList.remove('on');
+    label.textContent = 'Unreachable';
+    ceSetDot('ce-recording', false, 'Unknown');
+    ceSetDot('ce-buffer', false, 'Unknown');
+    ceSetDot('ce-worker', false, 'Unknown');
+    ceSetDot('ce-cloudflare', false, 'Unknown');
+    return;
+  }
+  dot.classList.add('on');
+  label.textContent = 'Running';
+  ceSetDot('ce-recording', status.recordingActive, status.recordingActive ? 'Active' : 'Inactive');
+  ceSetDot('ce-buffer', status.recordingActive, status.recordingActive ? 'Healthy' : 'No active session');
+  ceSetDot('ce-worker', status.clipWorkerState !== 'idle' ? true : null, status.clipWorkerState === 'idle' ? 'Idle' : status.clipWorkerState === 'cutting' ? 'Cutting…' : 'Uploading…');
+  ceSetDot('ce-cloudflare', status.cloudflareConnected, status.cloudflareConnected ? 'Connected' : `Retrying (${status.retryQueueLength} queued)`);
+}
+refreshClipEngineStatus();
+setInterval(refreshClipEngineStatus, 5000);
+
+function setClipEngineStatus(active){
+  ceSetDot('ce-recording', active, active ? 'Active' : 'Inactive');
+}
+
+function ceLiveLine(text){
+  const el = document.getElementById('ce-live-status');
+  if(el) el.textContent = text;
+}
+
+// Shared by every clip trigger (FOUR/SIX/WICKET auto-detect AND the
+// manual "Save Highlight" button) — same engine, same endpoint, exactly
+// as required. Fires the request, shows the real lifecycle on screen,
+// and NEVER blocks/awaits from the caller — scoring keeps moving the
+// instant this is called (fire-and-forget from recordBall()'s point of
+// view; this function's own internal awaiting only updates the status
+// line, nothing else in the UI waits on it).
+async function triggerClip(eventType, timestamp, matchId, ballMeta){
+  ceLiveLine(`${eventType} DETECTED`);
+  await new Promise(r => setTimeout(r, 150)); // let the DETECTED line actually be seen before it flips
+  ceLiveLine('Creating Clip...');
+  try {
+    const res = await fetch(`${STREAM_ENGINE_URL}/clip`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ eventType, timestamp, matchId, ballMeta })
+    }).then(r => r.json());
+
+    if(!res.success){
+      ceLiveLine(`❌ ${eventType}: ${res.error || 'failed'}`);
+      setTimeout(() => ceLiveLine(''), 5000);
+      return;
+    }
+    ceLiveLine('Uploading...');
+    if(res.saved){
+      ceLiveLine('✓ Saved');
+    } else if(res.queuedForRetry){
+      ceLiveLine('⚠️ Saved locally — retrying upload…');
+    }
+    setTimeout(() => ceLiveLine(''), 3000);
+  } catch(e) {
+    ceLiveLine('⚠️ Local Stream Engine not reachable — clip skipped');
+    setTimeout(() => ceLiveLine(''), 5000);
+  }
+}
+
+// ⭐ SAVE HIGHLIGHT (Part 3, optional manual trigger) — same clip engine,
+// same pre-roll/post-roll, just a manual timestamp instead of an
+// auto-detected event. Captures the CURRENT striker/bowler as ballMeta
+// so it links to the right players like any other clip.
+document.getElementById('save-highlight-btn').addEventListener('click', () => {
+  const matchId = currentMatchId();
+  if(!matchId){ toast('Enter a Match ID and Connect first'); return; }
+  const ballMeta = {
+    innings: state.inningsNumber,
+    over: state.score.overs, ballInOver: state.score.balls,
+    runs: 0, battingTeam: state.battingTeam,
+    striker: state.striker && state.striker.name, nonStriker: state.nonStriker && state.nonStriker.name,
+    bowler: state.bowler && state.bowler.name,
+    strikerId: state.striker && state.striker.id || null,
+    nonStrikerId: state.nonStriker && state.nonStriker.id || null,
+    bowlerId: state.bowler && state.bowler.id || null,
+    dismissal: null
+  };
+  triggerClip('HIGHLIGHT', Date.now(), matchId, ballMeta);
+  toast('⭐ Saving highlight…');
+});
 
 function currentMatchId(){
   return document.getElementById('match-id').value.trim();
@@ -1880,41 +1993,50 @@ async function startRecording(){
   const matchId = currentMatchId();
   if(!matchId){ toast('Enter a Match ID and Connect first'); return; }
 
-  const result = await fetch(`${CLIPPER_HELPER_URL}/recording-start`, {
+  const tournamentId = (typeof state !== 'undefined' && state.leagueName && state.leagueName.trim()) || null;
+  const result = await fetch(`${STREAM_ENGINE_URL}/recording-start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    // matchId + mainServerUrl (this site's own address) so the helper
-    // knows WHERE to send finished clips for R2/Drive upload + player
-    // linking (see /api/clips/ingest on the main server).
-    body: JSON.stringify({ startedAt: Date.now(), matchId, mainServerUrl: location.origin })
+    // matchId + mainServerUrl (this site's own address) so the engine
+    // knows WHERE to forward finished clips for R2/Drive upload +
+    // player linking (see /api/clips/ingest on the main server —
+    // exactly the same endpoint ClipperHelper.exe always posted to).
+    body: JSON.stringify({ matchId, tournamentId, mainServerUrl: location.origin })
   }).then(r => r.json()).catch(() => ({ success:false }));
 
   if(!result.success){
-    toast('⚠️ Could not reach the local clipper helper — is it running? (see clipper-helper/README.md)');
+    toast('⚠️ Could not reach the local Stream Engine — is it running? (see stream-engine/README.md)');
+    return;
+  }
+
+  recordingDesired = true;
+  const cap = await ensureLocalCapture(matchId);
+  if(!cap.ok){
+    recordingDesired = false;
+    toast('⚠️ ' + cap.error);
+    fetch(`${STREAM_ENGINE_URL}/recording-stop`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ matchId }) }).catch(() => {});
     return;
   }
 
   recActive = true;
   updateRecordingUI(true);
-  // vmixControlled tells us whether the helper actually managed to press
-  // Record inside vMix itself (needs Web Controller enabled there) — if
-  // not, this is the one manual step still left for the operator.
-  toast(result.vmixControlled
-    ? '🔴 Recording started — vMix is recording too, automatically.'
-    : '🔴 Recording marked as started — vMix\'s Web Controller isn\'t reachable, so start Record in vMix by hand too.');
+  setClipEngineStatus(true);
+  toast('🔴 Recording started — clips now cut from the local buffer, no vMix involved.');
 }
 
 function stopRecording(){
   recActive = false;
   updateRecordingUI(false);
-  fetch(`${CLIPPER_HELPER_URL}/recording-stop`, { method: 'POST' })
-    .then(r => r.json())
-    .then(result => {
-      toast(result.vmixControlled
-        ? 'Recording stopped — vMix stopped too, automatically.'
-        : 'Recording stopped (vMix\'s Web Controller isn\'t reachable — stop vMix recording by hand too).');
-    })
-    .catch(() => toast('Recording stopped here, but could not reach the local clipper helper — stop vMix recording by hand.'));
+  recordingDesired = false;
+  releaseLocalCaptureIfUnused();
+
+  const matchId = currentMatchId();
+  fetch(`${STREAM_ENGINE_URL}/recording-stop`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ matchId })
+  }).then(r => r.json())
+    .then(() => toast('Recording stopped.'))
+    .catch(() => toast('Recording stopped here, but could not reach the local Stream Engine.'));
+  setClipEngineStatus(false);
 }
 
 function updateRecordingUI(active){
@@ -1946,6 +2068,96 @@ let liveAudioStream = null;     // real mic/capture-card audio
 let liveRecorder = null;
 let liveActive = false;
 let liveHealthPollTimer = null;
+let streamingDesired = false;   // Live Studio's own intent — see ensureLocalCapture/releaseLocalCaptureIfUnused
+
+/* ============================================================
+   🔗 SHARED CAPTURE (PART 3) — Match Recording (clips) and Live
+   Studio (YouTube) used to be two unrelated features; now they share
+   ONE browser capture (one getDisplayMedia prompt, one MediaRecorder)
+   feeding the Stream Engine's /ingest, which fans it out to whichever
+   of the local clip buffer / NVENC encoder are actually active — never
+   two captures, never two encoders, exactly the "prefer reusing the
+   same locally generated source" requirement. Either feature can be
+   started/stopped independently; the underlying capture only actually
+   stops once BOTH have released it (recordingDesired/streamingDesired).
+   ============================================================ */
+let localCaptureActive = false;
+let localCaptureMatchId = null;
+let localCaptureChunkIndex = 0;
+
+async function ensureLocalCapture(matchId){
+  if(localCaptureActive && localCaptureMatchId === matchId) return { ok:true };
+  if(localCaptureActive && localCaptureMatchId !== matchId){
+    return { ok:false, error:`Local capture is already running for match ${localCaptureMatchId} — stop that first` };
+  }
+
+  if(!liveOutputWindow || liveOutputWindow.closed){
+    const videoDeviceId = document.getElementById('live-video-device').value;
+    if(!videoDeviceId) return { ok:false, error:'No camera selected — pick one under Live Studio first' };
+    const url = `${location.origin}/live-output.html?room=${encodeURIComponent(matchId)}&video=${encodeURIComponent(videoDeviceId)}`;
+    liveOutputWindow = window.open(url, 'liveOutputWindow', 'width=1280,height=740');
+    if(!liveOutputWindow) return { ok:false, error:'Popup blocked — allow popups for this site and try again' };
+    const frame = document.getElementById('ls-preview-frame');
+    if(frame){ frame.src = url; frame.style.display = 'block'; document.getElementById('ls-preview-placeholder').style.display = 'none'; }
+    await new Promise(r => setTimeout(r, 400)); // give the popup a moment to exist before Chrome's share-picker lists it
+  }
+
+  const audioDeviceId = document.getElementById('live-audio-device').value;
+  try {
+    liveAudioStream = await navigator.mediaDevices.getUserMedia({
+      audio: audioDeviceId ? { deviceId: { exact: audioDeviceId } } : true
+    });
+  } catch(e) { return { ok:false, error:'Could not get audio: ' + e.message }; }
+
+  try {
+    liveDisplayStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: 30 }, audio: false, preferCurrentTab: false, selfBrowserSurface: 'exclude'
+    });
+  } catch(e) {
+    liveAudioStream.getTracks().forEach(t => t.stop());
+    return { ok:false, error:'Screen-share was cancelled — pick the "Live Output" window when Chrome asks' };
+  }
+
+  const combined = new MediaStream([...liveDisplayStream.getVideoTracks(), ...liveAudioStream.getAudioTracks()]);
+  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=h264,opus') ? 'video/webm;codecs=h264,opus' : 'video/webm;codecs=vp8,opus';
+  liveRecorder = new MediaRecorder(combined, { mimeType, videoBitsPerSecond: 10_000_000 });
+  localCaptureChunkIndex = 0;
+  // 🔒 These chunks go ONLY to the local Stream Engine (127.0.0.1) —
+  // never to server.js/Render. The Stream Engine itself fans them out
+  // to the local clip buffer and/or the NVENC encoder as needed.
+  liveRecorder.ondataavailable = async (e) => {
+    if(!e.data || e.data.size === 0) return;
+    const idx = localCaptureChunkIndex++;
+    try {
+      await fetch(`${STREAM_ENGINE_URL}/ingest?matchId=${encodeURIComponent(matchId)}&index=${idx}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: e.data
+      });
+    } catch(err) { /* one dropped chunk = a brief stutter, not fatal */ }
+  };
+  liveRecorder.onstop = () => { combined.getTracks().forEach(t => t.stop()); };
+  liveDisplayStream.getVideoTracks()[0].addEventListener('ended', () => {
+    lsSetHealth('ls-h-camera', false, 'Disconnected');
+    if(streamingDesired) stopLive();
+    if(recordingDesired) stopRecording();
+  });
+
+  liveRecorder.start(1000); // 1s chunks
+  localCaptureActive = true;
+  localCaptureMatchId = matchId;
+  lsSetHealth('ls-h-camera', true, 'Connected');
+  lsSetHealth('ls-h-mic', true, 'Connected');
+  lsSetHealth('ls-h-overlay', true, 'Connected');
+  return { ok:true };
+}
+
+function releaseLocalCaptureIfUnused(){
+  if(recordingDesired || streamingDesired) return; // still needed by the other feature
+  if(liveRecorder && liveRecorder.state !== 'inactive') liveRecorder.stop();
+  if(liveDisplayStream) liveDisplayStream.getTracks().forEach(t => t.stop());
+  if(liveAudioStream) liveAudioStream.getTracks().forEach(t => t.stop());
+  localCaptureActive = false;
+  localCaptureMatchId = null;
+}
 
 function lsLog(line){
   const el = document.getElementById('ls-golive-log');
@@ -2055,60 +2267,24 @@ document.getElementById('save-stream-key-btn').addEventListener('click', async (
 async function startLive(){
   const matchId = currentMatchId();
   if(!matchId){ toast('Enter a Match ID and Connect first'); return; }
-  if(!liveOutputWindow || liveOutputWindow.closed){ toast('Open the Final Output Preview first'); return; }
 
   lsLog('Checking Camera…');
   const videoDeviceId = document.getElementById('live-video-device').value;
   if(!videoDeviceId){ lsLog(''); toast('No camera selected'); return; }
-  lsSetHealth('ls-h-camera', true, 'Connected');
-
-  lsLog('Checking Audio…');
-  const audioDeviceId = document.getElementById('live-audio-device').value;
-  try {
-    liveAudioStream = await navigator.mediaDevices.getUserMedia({
-      audio: audioDeviceId ? { deviceId: { exact: audioDeviceId } } : true
-    });
-    lsSetHealth('ls-h-mic', true, 'Connected');
-  } catch(e) {
-    lsSetHealth('ls-h-mic', false, 'Failed — ' + e.message);
-    lsLog(''); toast('⚠️ Could not get audio: ' + e.message);
-    return;
-  }
-
-  lsLog('Checking Overlay…');
-  lsSetHealth('ls-h-overlay', true, 'Connected'); // the preview iframe is already loaded (openLiveOutputWindow)
 
   lsLog('Checking Encoder…');
   const engineStatus = await fetchEngineStatus();
-  if(!engineStatus){
-    lsLog(''); toast('⚠️ Local Stream Engine not reachable — start it first (stream-engine/README.md)');
-    liveAudioStream.getTracks().forEach(t => t.stop());
-    return;
-  }
-  if(!engineStatus.nvencAvailable){
-    lsLog(''); toast('⚠️ NVENC not available on this PC: ' + (engineStatus.nvencDetail || 'unknown reason') + ' — refusing to go live on CPU encoding');
-    liveAudioStream.getTracks().forEach(t => t.stop());
-    return;
-  }
-  if(!engineStatus.streamKeySet){
-    lsLog(''); toast('⚠️ No YouTube stream key saved — paste it above and click "Save Key to Stream Engine"');
-    liveAudioStream.getTracks().forEach(t => t.stop());
-    return;
-  }
+  if(!engineStatus){ lsLog(''); toast('⚠️ Local Stream Engine not reachable — start it first (stream-engine/README.md)'); return; }
+  if(!engineStatus.nvencAvailable){ lsLog(''); toast('⚠️ NVENC not available on this PC: ' + (engineStatus.nvencDetail || 'unknown reason') + ' — refusing to go live on CPU encoding'); return; }
+  if(!engineStatus.streamKeySet){ lsLog(''); toast('⚠️ No YouTube stream key saved — paste it above and click "Save Key to Stream Engine"'); return; }
   lsSetHealth('ls-h-encoder', true, 'Ready (NVENC)');
 
-  try {
-    // Captures exactly what's rendered in the Final Output Preview window
-    // — camera + the existing Cricket Overlay, already composited there.
-    liveDisplayStream = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: 30 },
-      audio: false,
-      preferCurrentTab: false,
-      selfBrowserSurface: 'exclude'
-    });
-  } catch(e) {
-    lsLog(''); toast('⚠️ Screen-share was cancelled — pick the "Live Output" window when Chrome asks.');
-    liveAudioStream.getTracks().forEach(t => t.stop());
+  lsLog('Checking Camera + Audio + Overlay…');
+  streamingDesired = true;
+  const cap = await ensureLocalCapture(matchId); // opens Live Output + starts the ONE shared capture (or reuses it if Match Recording already started it)
+  if(!cap.ok){
+    streamingDesired = false;
+    lsLog(''); toast('⚠️ ' + cap.error);
     return;
   }
 
@@ -2119,45 +2295,14 @@ async function startLive(){
   }).then(r => r.json()).catch(() => ({ success:false, error:'Stream Engine unreachable' }));
 
   if(!goLiveRes.success){
+    streamingDesired = false;
+    releaseLocalCaptureIfUnused();
     lsLog(''); toast('⚠️ Could not start the encoder: ' + (goLiveRes.error || 'unknown error'));
     lsSetHealth('ls-h-youtube', false, 'Failed to start');
-    liveDisplayStream.getTracks().forEach(t => t.stop());
-    liveAudioStream.getTracks().forEach(t => t.stop());
     return;
   }
 
   lsLog('Starting Stream…');
-  const combined = new MediaStream([
-    ...liveDisplayStream.getVideoTracks(),
-    ...liveAudioStream.getAudioTracks()
-  ]);
-
-  // 🔒 These chunks go ONLY to the local Stream Engine (127.0.0.1) —
-  // never to server.js/Render. Render stays a pure data server; only
-  // score/control traffic (socket.io, elsewhere in this file) reaches it.
-  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=h264,opus')
-    ? 'video/webm;codecs=h264,opus'
-    : 'video/webm;codecs=vp8,opus';
-
-  liveRecorder = new MediaRecorder(combined, { mimeType, videoBitsPerSecond: 10_000_000 });
-  liveRecorder.ondataavailable = async (e) => {
-    if(!e.data || e.data.size === 0) return;
-    try {
-      await fetch(`${STREAM_ENGINE_URL}/ingest`, {
-        method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: e.data
-      });
-    } catch(err) { /* one dropped chunk = a brief stutter on YouTube, not a crash */ }
-  };
-  liveRecorder.onstop = () => { combined.getTracks().forEach(t => t.stop()); };
-
-  // If the operator closes the preview window, or ends sharing from
-  // Chrome's own "Stop sharing" bar, treat it like STOP STREAM.
-  liveDisplayStream.getVideoTracks()[0].addEventListener('ended', () => {
-    lsSetHealth('ls-h-camera', false, 'Disconnected');
-    if(liveActive) stopLive();
-  });
-
-  liveRecorder.start(1000); // 1s chunks — good balance of latency vs overhead
   liveActive = true;
   lsSetHealth('ls-h-youtube', true, 'LIVE');
   updateLiveUI(true);
@@ -2204,12 +2349,11 @@ async function pollStreamHealth(){
 
 async function stopLive(){
   liveActive = false;
+  streamingDesired = false;
   updateLiveUI(false);
   lsLog('');
   if(liveHealthPollTimer){ clearInterval(liveHealthPollTimer); liveHealthPollTimer = null; }
-  if(liveRecorder && liveRecorder.state !== 'inactive') liveRecorder.stop();
-  if(liveDisplayStream) liveDisplayStream.getTracks().forEach(t => t.stop());
-  if(liveAudioStream) liveAudioStream.getTracks().forEach(t => t.stop());
+  releaseLocalCaptureIfUnused(); // stops the shared capture UNLESS Match Recording still needs it
 
   await fetch(`${STREAM_ENGINE_URL}/stop`, { method: 'POST' }).catch(() => {});
   lsSetHealth('ls-h-youtube', null, 'Ready');
@@ -2243,16 +2387,9 @@ document.getElementById('save-drive-folder-btn').addEventListener('click', () =>
     if(res.success){
       statusEl.textContent = '✅ Clips will upload to this folder';
       toast('Drive folder saved');
-      // Extract the folder ID the same way the server does, and hand it
-      // to the local clipper helper too — that's the one actually doing
-      // the uploading now.
-      const folderIdMatch = folderLink.match(/folders\/([a-zA-Z0-9_-]+)/);
-      const folderId = folderIdMatch ? folderIdMatch[1] : folderLink;
-      fetch(`${CLIPPER_HELPER_URL}/set-folder`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderId })
-      }).catch(() => toast('⚠️ Clipper helper not running — start it before the match'));
+      // 🔒 PART 3: server.js already resolved and stored the folder ID
+      // above — that's the only place that ever uploads to Drive now,
+      // so there's nothing further to hand to the Stream Engine.
     } else {
       statusEl.textContent = '❌ ' + (res.error || 'Could not save folder');
     }
@@ -2393,17 +2530,10 @@ function saveDriveOAuthFolder(accessToken, folderId, folderName, isSilentRefresh
   }).catch(() => {
     if(!isSilentRefresh) statusEl.textContent = '❌ Network error connecting Drive';
   });
-
-  // Also hand the SAME token + folder to the local Clipper Helper
-  // (the .exe on this PC, next to vMix) — it's the one that actually
-  // cuts and uploads clips, so it needs this token too. If the helper
-  // isn't running yet, this just fails quietly; the operator can
-  // click "Connect Google Drive" again once it's started.
-  fetch(`${CLIPPER_HELPER_URL}/set-folder`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ folderId, folderName, accessToken })
-  }).catch(() => { if(!isSilentRefresh) toast('⚠️ Clipper helper not running — start it, then click Connect Google Drive again'); });
+  // 🔒 PART 3: no longer forwarded to a local helper — the Stream Engine
+  // never uploads to Drive itself (it forwards finished clips to
+  // server.js's /api/clips/ingest, which already knows this match's
+  // Drive folder via the call above). One less place holding this token.
 }
 
 // Drops the current match's Drive link server-side, revokes the token
@@ -7002,11 +7132,7 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundar
       bowlerId: id.bowlerId,
       dismissal: null
     };
-    fetch(`${CLIPPER_HELPER_URL}/clip`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ eventType, timestamp: ballTimestamp, matchId, ballMeta })
-    }).catch(() => toast('⚠️ Clipper helper not running — clip skipped'));
+    triggerClip(eventType, ballTimestamp, matchId, ballMeta); // fire-and-forget — never blocks scoring
   }
 }
 
@@ -7178,12 +7304,12 @@ function finalizeExtraWicket(dismissalType, extraMeta){
    On a Free Hit, every option except Run Out is disabled — that's the
    only dismissal the Laws of Cricket allow to stand off that ball.
    ============================================================ */
-// ⚡ Fires the /clip request to the local Clipper Helper the INSTANT the
+// ⚡ Fires the /clip request to the local Stream Engine (Part 3 — no vMix) the INSTANT the
 // WICKET button (or 'w' shortcut, or the "Also a wicket?" link off a
 // Wide/No Ball) is pressed — do NOT wait for the operator to pick the
 // dismissal type/fielder/keeper first. Those details can take anywhere
 // from a couple of seconds to way longer (searching a fielder's name,
-// deciding Caught vs Run Out, etc.), and the clipper helper's cut window
+// deciding Caught vs Run Out, etc.), and the local buffer's cut window
 // is measured from THIS timestamp — every second that ticks by before we
 // send it is a second the actual wicket moment drifts out of the clip.
 // The operator still fills in bowler/dismissal/new-batsman etc. in the
@@ -7228,11 +7354,7 @@ function triggerWicketClip(){
     // same as it already does when ballMeta is only a partial hint.
     dismissal: null
   };
-  fetch(`${CLIPPER_HELPER_URL}/clip`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ eventType: 'WICKET', timestamp: ballTimestamp, matchId, ballMeta })
-  }).catch(() => toast('⚠️ Clipper helper not running — clip skipped'));
+  triggerClip('WICKET', ballTimestamp, matchId, ballMeta); // fire-and-forget — never blocks scoring
 }
 
 function openWicketModal(){
