@@ -1221,7 +1221,11 @@
     color:var(--text); font-size:clamp(11.5px, 2.6vw, 12.5px); font-weight:700; cursor:pointer;
     display:flex; align-items:center; justify-content:center; gap:8px; text-align:center; line-height:1.25;
     position:relative; overflow:hidden; isolation:isolate; -webkit-tap-highlight-color:transparent;
-    transform:translateZ(0); will-change:transform;
+    /* translateZ(0) alone already promotes this to its own compositor
+       layer cheaply — will-change:transform on top of that was a second,
+       permanent GPU-layer reservation for every highlights button on the
+       page (there can be several) for zero extra benefit. */
+    transform:translateZ(0);
     box-shadow:0 1px 0 rgba(255,255,255,.03) inset, 0 6px 14px -10px rgba(0,0,0,.4);
     transition:transform .18s cubic-bezier(.22,1,.36,1), box-shadow .18s ease, border-color .18s ease;
   }
@@ -1378,7 +1382,10 @@
   .cm-title{ font-family:var(--font-display); font-size:15px; font-weight:700; margin-bottom:6px; }
   .cm-msg{ font-size:12.5px; color:var(--text-dim); margin-bottom:16px; min-height:16px; }
   .cm-bar-track{ height:8px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border-soft); overflow:hidden; margin-bottom:16px; }
-  .cm-bar-fill{ height:100%; border-radius:99px; background:var(--accent); width:0%; transition:width .35s ease; }
+  /* transform:scaleX instead of animating width — same reasoning as
+     .progress-fill/.cmp-fill elsewhere in this file: width forces a
+     layout recalc every frame, scaleX is compositor-only. */
+  .cm-bar-fill{ height:100%; width:100%; border-radius:99px; background:var(--accent); transform:scaleX(0); transform-origin:left; transition:transform .35s ease; }
   .cm-sub{ font-size:11px; color:var(--text-faint); margin-bottom:16px; }
   .cm-actions{ display:flex; gap:8px; }
   .cm-btn{ flex:1; padding:11px; border-radius:var(--radius-md); border:none; font-weight:700; font-size:13px; cursor:pointer; }
@@ -1912,7 +1919,7 @@ let activeCompilePoll = null;
 function openCompileModal(){
   document.getElementById('cm-title').textContent = 'Preparing highlights…';
   document.getElementById('cm-msg').textContent = 'Getting things ready…';
-  document.getElementById('cm-bar-fill').style.width = '0%';
+  document.getElementById('cm-bar-fill').style.transform = 'scaleX(0)';
   document.getElementById('cm-sub').textContent = '';
   document.getElementById('cm-download').style.display = 'none';
   document.getElementById('cm-cancel').textContent = 'Close';
@@ -1967,7 +1974,7 @@ async function pollCompileJob(jobId, filename){
       document.getElementById('cm-msg').textContent = data.error || 'Something went wrong combining these clips.';
       return;
     }
-    document.getElementById('cm-bar-fill').style.width = `${data.progress || 0}%`;
+    document.getElementById('cm-bar-fill').style.transform = `scaleX(${(data.progress || 0) / 100})`;
     document.getElementById('cm-msg').textContent = data.message || 'Working…';
     document.getElementById('cm-title').textContent =
       data.status === 'ready' ? 'Download Ready' :
@@ -2206,6 +2213,8 @@ function currentLeadTrail(state){
    ============================================================ */
 let socket = null;
 let latestState = null;
+let historyPollTimer = null; // see connect()'s isHistoryMode() branch + loadMatchSnapshot()
+let liveConnecting = false;  // guards connectLive() against being entered twice (see loadMatchSnapshot())
 let latestPoints = null;
 
 // Which innings number the LIVE (in-progress match) batting/bowling
@@ -2287,7 +2296,7 @@ function connect(){
     // renderFinalSnapshot() already keeps whichever innings tab is
     // selected across re-renders (see isFirstLoadOfThisMatch), so this
     // won't snap the viewer back to "1st Innings" every 30s.
-    setInterval(() => loadMatchSnapshot(matchId), 30000);
+    historyPollTimer = setInterval(() => loadMatchSnapshot(matchId), 30000);
     return;
   }
 
@@ -2295,6 +2304,20 @@ function connect(){
 }
 
 function connectLive(matchId){
+  // 🔒 Guard against a duplicate connection. loadMatchSnapshot() can call
+  // this mid-poll (a "history" link opened while the match is still live —
+  // see its match===null branch below) — without this guard, the 30s
+  // historyPollTimer above kept firing every 30s for as long as the match
+  // stayed in progress, and each firing opened ANOTHER socket.io
+  // connection + stacked ANOTHER setInterval(renderHighlights, 20000) on
+  // top of the previous ones (the old socket/timer were never torn down),
+  // so a single long-running "history mode" viewer could end up with many
+  // live sockets and many highlights-polling loops all running at once.
+  if(liveConnecting) return;
+  liveConnecting = true;
+  if(historyPollTimer){ clearInterval(historyPollTimer); historyPollTimer = null; }
+  if(socket){ socket.removeAllListeners(); socket.disconnect(); }
+
   socket = io({ query: { uid: matchId } });
 
   // DIAGNOSTIC: if the badge is stuck on "Connecting" forever (not even
@@ -2640,11 +2663,21 @@ function renderFinalSnapshot(match, displayName){
 // that mapping depends on who batted first, which can differ match to
 // match (it must NOT stay pinned to whatever the first match loaded on
 // this page happened to have).
+// `_lastFinalToggleKey` mirrors the live toggle's own `_lastToggleState`
+// caching (see ensureLiveInningsToggle) — a "history mode" finished-match
+// page re-runs this on every 30s snapshot poll (loadMatchSnapshot), and
+// without this guard it rebuilt these two buttons' innerHTML + rebound
+// their click listeners every single time even though which innings
+// batted first essentially never changes after the match is over.
+let _lastFinalToggleKey = null;
 function ensureInningsToggle(){
   const first = finalActiveInnings;
   const second = first === 'A' ? 'B' : 'A';
   const grid = document.getElementById('tables-grid');
   let bar = document.getElementById('final-innings-toggle');
+  const toggleKey = first + '|' + second;
+  if(bar && _lastFinalToggleKey === toggleKey) return;
+  _lastFinalToggleKey = toggleKey;
   if(!bar){
     bar = document.createElement('div');
     bar.id = 'final-innings-toggle';
@@ -4187,6 +4220,15 @@ let highlightsType = '';
 async function renderHighlights(){
   const list = document.getElementById('highlights-list');
   const clips = await fetchMatchClips(highlightsType || undefined);
+  // 🚀 PERF: this runs on a 20s poll for as long as the page is open —
+  // without a change gate it rebuilt the whole list (innerHTML + rewiring
+  // every clip row's click handlers) every single tick even when nothing
+  // new had actually been cut, same `changed()` pattern the live-score
+  // render() functions already use elsewhere in this file. clipId+ready
+  // covers both "a new clip appeared" and "a pending clip finished
+  // processing" (ready flips false→true) without needing a full deep diff.
+  const key = highlightsType + '|' + clips.map(c => c.clipId + ':' + (c.ready ? 1 : 0)).join(',');
+  if(!changed('highlights', key)) return;
   if(!clips.length){
     list.innerHTML = '<div class="empty-state">No highlights yet — clips appear here as 4s, 6s and wickets happen.</div>';
     return;
@@ -4494,6 +4536,22 @@ async function renderTeamWicketClips(s){
   if(!twcActiveTeam) twcActiveTeam = s.battingTeam || 'A';
   document.getElementById('twc-btn-a').classList.toggle('active', twcActiveTeam === 'A');
   document.getElementById('twc-btn-b').classList.toggle('active', twcActiveTeam === 'B');
+  // 🚀 PERF: renderBottom() calls this on every ball its own key changes —
+  // which includes partnershipRuns/Balls, so almost every legal delivery.
+  // Most of those calls have no reason to touch this card at all (a new
+  // wicket, not a run scored, is what actually changes it) — but a clip
+  // for an already-recorded wicket can still be mid-upload and flip from
+  // "processing" to "ready" a few seconds later with no new ball to
+  // naturally trigger a redraw. So: skip the refetch when neither the
+  // team toggle nor fall-of-wickets changed, UNLESS it's been a while
+  // (8s — matches the cadence a real clip-cut/upload takes) since the
+  // last refresh, so a pending clip's ready-state still catches up on
+  // its own instead of only ever updating on the next wicket.
+  const twcKey = twcActiveTeam + '|' + JSON.stringify((s.fallOfWickets && s.fallOfWickets[twcActiveTeam]) || null);
+  const twcKeyChanged = changed('twc', twcKey);
+  const staleEnough = (Date.now() - (renderTeamWicketClips._lastFetchAt || 0)) > 8000;
+  if(!twcKeyChanged && !staleEnough) return;
+  renderTeamWicketClips._lastFetchAt = Date.now();
   const list = document.getElementById('twc-list');
   const clips = await fetchTeamClips(twcActiveTeam);
   list.innerHTML = clips.length ? clips.map(clipRowHtml).join('') : '<div class="empty-state" style="padding:10px 0;">No wickets yet</div>';
