@@ -839,38 +839,6 @@
       </div>
     </div>
 
-    <div class="card" id="card-streamcutter">
-      <h2>🎥 Stream &amp; Clips <span class="note">— StreamCutter (local PC)</span></h2>
-
-      <img id="sc-preview-img" alt="Camera preview" style="width:100%; border-radius:8px; background:#000; aspect-ratio:16/9; object-fit:cover; visibility:hidden;">
-      <div style="font-size:11px; opacity:.6; margin:6px 0 10px;">
-        Live camera preview — Start Stream dabane se pehle bhi dikhega, taaki framing/focus check kar sako.
-      </div>
-
-      <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-        <div class="dot" id="sc-stream-dot"></div>
-        <span id="sc-stream-status" style="font-size:13px; opacity:.8;">Offline</span>
-      </div>
-      <button class="full small primary" id="sc-start-stream-btn">🔴 Start Stream</button>
-      <button class="full small ghost" id="sc-stop-stream-btn" style="margin-top:6px; display:none;">⏹ Stop Stream</button>
-
-      <div style="display:flex; align-items:center; gap:8px; margin:14px 0 8px; padding-top:12px; border-top:1px solid rgba(255,255,255,.08);">
-        <div class="dot" id="sc-clip-dot"></div>
-        <span id="sc-clip-status" style="font-size:13px; opacity:.8;">Clip band hai</span>
-      </div>
-      <button class="full small primary" id="sc-start-clip-btn">▶️ Start Clip</button>
-      <button class="full small ghost" id="sc-stop-clip-btn" style="margin-top:6px;" disabled>⏹ Stop Clip</button>
-      <div style="font-size:11px; opacity:.6; margin-top:8px;">
-        Bowler run-up shuru hote hi <b>Start Clip</b> dabao. Ball khatam hote hi jo bhi outcome (0-6, Wide, No Ball,
-        Bye, Leg Bye, Wicket) panel se select karoge, clip khud sahi label ke saath cut hoke scorecard feed me chali
-        jaayegi — alag se Stop Clip dabana zaroori nahi. Woh button sirf galti se shuru ki gayi clip cancel karne ke
-        liye hai.
-      </div>
-      <div style="font-size:11px; opacity:.7; margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,.08);">
-        ☁️ Yeh clips khud-ba-khud Google Drive <b>aur</b> Cloudflare (R2) dono me jaate hain — koi alag connect step StreamCutter ke liye nahi chahiye. Bas neeche <b>🎬 Match Recording</b> card me ek baar <b>🔗 Connect Google Drive</b> dabao (isi Match ID ke liye) — woh connection is match ke har clip pe apply hota hai, chahe woh StreamCutter se cuti ho. <button type="button" class="ghost small" data-target="card-recording" onclick="document.getElementById('card-recording').scrollIntoView({behavior:'smooth',block:'start'});">⬇️ Connect Drive kholo</button>
-      </div>
-    </div>
-
     <div class="card" id="card-new-batsman">
       <h2>🆕 New Batsman (after wicket)</h2>
       <div class="shortcut-hint" id="new-batsman-end-hint"></div>
@@ -1195,6 +1163,43 @@
           <button class="small" id="save-drive-folder-btn">Save</button>
         </div>
         <div id="drive-folder-status" style="font-size:11px; opacity:.6; margin-top:4px;"></div>
+      </div>
+    </div>
+
+    <div class="card" id="card-live-youtube">
+      <h2>📺 Go Live to YouTube (Browser Only)</h2>
+      <div style="font-size:12px; opacity:.75; margin-bottom:10px; line-height:1.5;">
+        Streams straight from this browser to YouTube using your HDMI capture card — no OBS, no vMix, nothing installed on this PC.
+      </div>
+
+      <label style="font-size:12px; opacity:.8; display:block; margin-bottom:4px;">YouTube Stream Key</label>
+      <div class="link-row" style="margin-bottom:10px;">
+        <input type="password" id="yt-stream-key" placeholder="YouTube Studio → Go Live → Stream key">
+        <button class="small" id="toggle-yt-key-visibility">👁</button>
+      </div>
+
+      <label style="font-size:12px; opacity:.8; display:block; margin-bottom:4px;">Camera (capture card video)</label>
+      <select id="live-video-device" class="full" style="margin-bottom:8px;"></select>
+
+      <label style="font-size:12px; opacity:.8; display:block; margin-bottom:4px;">Audio (capture card audio)</label>
+      <select id="live-audio-device" class="full" style="margin-bottom:10px;"></select>
+
+      <button class="full small ghost" id="refresh-live-devices-btn" style="margin-bottom:10px;">🔄 Refresh Camera List</button>
+
+      <button class="full small primary" id="open-live-output-btn">🖥️ Open Live Output Window</button>
+      <div style="font-size:11px; opacity:.6; margin:6px 0 10px;">
+        Opens a small window showing your camera + overlay combined. Leave it open anywhere on screen — it doesn't need to face the crowd, it's just what gets sent to YouTube.
+      </div>
+
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+        <div class="dot" id="live-dot"></div>
+        <span id="live-status" style="font-size:13px; opacity:.8;">Offline</span>
+      </div>
+      <button class="full small primary" id="start-live-btn">🔴 Go Live</button>
+      <button class="full small ghost" id="stop-live-btn" style="margin-top:6px; display:none;">⏹ End Live</button>
+
+      <div style="font-size:11px; opacity:.6; margin-top:8px;">
+        First time you click "Go Live", Chrome will ask which window/tab to share — pick the <b>Live Output</b> window that just opened. You don't need to share tab audio; audio comes straight from the capture card.
       </div>
     </div>
 
@@ -1807,220 +1812,23 @@ document.getElementById('connect-btn').addEventListener('click', connect);
 const CLIPPER_HELPER_URL = 'http://localhost:5005'; // the local helper from clipper-helper/
 let recActive = false;
 
-/* ============================================================
-   🎥 STREAMCUTTER — replaces vMix + Clipper Helper. Runs locally on the
-   operator's PC (see StreamCutter/README.md), controlled from right here
-   under Ball Outcome: Start/Stop Stream, live camera preview, and
-   Start/Stop Clip. Stop Clip is normally never pressed by hand — the
-   moment the operator records the ball's outcome (0-6/Wide/No Ball/Bye/
-   Leg Bye/Wicket), that SAME click auto-stops whatever clip is open with
-   the correct label. The manual "⏹ Stop Clip" button is only a fallback
-   (e.g. cancel a clip started by mistake).
-   ============================================================ */
-const STREAMCUTTER_URL = 'http://localhost:5006';
-let scStreaming = false;
-let scClipOpen = false;
-
-async function scStartStream(){
-  try{
-    const r = await fetch(`${STREAMCUTTER_URL}/start-stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ matchId: currentMatchId() })
-    }).then(r => r.json());
-    if(!r.success) toast(`⚠️ Stream start nahi hui: ${r.error || 'unknown error'}`);
-  } catch(e){ toast('⚠️ StreamCutter nahi mil raha — PC pe chal raha hai check karo'); }
-}
-async function scStopStream(){
-  try{
-    await fetch(`${STREAMCUTTER_URL}/stop-stream`, { method: 'POST' });
-  } catch(e){ toast('⚠️ StreamCutter nahi mil raha — PC pe chal raha hai check karo'); }
-}
-async function scStartClip(){
-  try{
-    const r = await fetch(`${STREAMCUTTER_URL}/clip/start`, { method: 'POST' }).then(r => r.json());
-    if(r.success){ scClipOpen = true; scRenderClipStatus(); }
-    else toast(`⚠️ Clip start nahi hui: ${r.error || 'unknown error'}`);
-  } catch(e){ toast('⚠️ StreamCutter nahi mil raha — PC pe chal raha hai check karo'); }
-}
-// Called automatically the instant a ball's outcome is finalized on this
-// panel (see the [data-ball]/extras/wicket hooks below) — eventType +
-// ballMeta describe EXACTLY what just happened, so the clip that gets cut
-// and sent into the scorecard's feed is labeled correctly without the
-// operator ever picking a label by hand. No-ops quietly if no clip is
-// currently open (operator didn't press ▶️ Start Clip for this ball).
-async function scStopClip(eventType, ballMeta){
-  if(!scClipOpen) return;
-  scClipOpen = false;
-  scRenderClipStatus();
-  try{
-    await fetch(`${STREAMCUTTER_URL}/clip/stop`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ eventType, ballMeta })
-    });
-  } catch(e){ toast('⚠️ Clip cut nahi payi — StreamCutter check karo'); }
-}
-
-// Maps a recorded ball's kind+meta to the clip label. FOUR/SIX/WICKET are
-// kept identical to the values this panel already used with Clipper
-// Helper (site's player fours/sixes/wickets pages filter on these exact
-// strings) — including a boundary struck off a Wide/No Ball, which still
-// reports as FOUR/SIX so it keeps counting there. Every other ball kind
-// (plain 1/2/3/5, non-boundary Wide/No Ball, Bye, Leg Bye) is a new label
-// that was never clipped before.
-function scDeriveClipEventType(kind, meta){
-  switch(kind){
-    case '0': case '1': case '2': case '3': case '5': return `RUN_${kind}`;
-    case '4': return 'FOUR';
-    case '6': return 'SIX';
-    case 'Wd': {
-      const extraRun = (meta && typeof meta.extraRuns === 'number') ? meta.extraRuns : 0;
-      return extraRun === 4 ? 'FOUR' : 'WIDE';
-    }
-    case 'Nb': {
-      const batRuns = (meta && typeof meta.runsOffBat === 'number') ? meta.runsOffBat : 0;
-      if(batRuns === 4) return 'FOUR';
-      if(batRuns === 6) return 'SIX';
-      return 'NO_BALL';
-    }
-    case 'B': return 'BYE';
-    case 'LB': return 'LEG_BYE';
-    case 'W': case 'WdW': case 'NbW': return 'WICKET';
-    default: return 'CLIP';
-  }
-}
-
-function scRenderClipStatus(){
-  const dot = document.getElementById('sc-clip-dot');
-  const text = document.getElementById('sc-clip-status');
-  const startBtn = document.getElementById('sc-start-clip-btn');
-  const stopBtn = document.getElementById('sc-stop-clip-btn');
-  if(!dot) return;
-  dot.classList.toggle('on', scClipOpen);
-  text.textContent = scClipOpen ? '🔴 Clip recording…' : 'Clip band hai';
-  startBtn.disabled = scClipOpen;
-  stopBtn.disabled = !scClipOpen;
-}
-
-function scRenderStreamStatus(health){
-  const dot = document.getElementById('sc-stream-dot');
-  const text = document.getElementById('sc-stream-status');
-  const startBtn = document.getElementById('sc-start-stream-btn');
-  const stopBtn = document.getElementById('sc-stop-stream-btn');
-  if(!dot) return;
-  dot.classList.toggle('on', scStreaming);
-  startBtn.style.display = scStreaming ? 'none' : '';
-  stopBtn.style.display = scStreaming ? '' : 'none';
-  if(!scStreaming){ text.textContent = 'Offline'; return; }
-  if(health && health.streamHealthy) text.textContent = '🔴 LIVE';
-  else if(health) text.textContent = `⚠️ ${health.streamHealthyReason || 'Checking...'}`;
-  else text.textContent = '🔴 LIVE';
-}
-
-// 🩹 FLICKER FIX: a single slow/dropped request to the local StreamCutter
-// app used to be enough to flip the dot/text/preview off, and the very
-// next poll (3s / 1.2s later) would flip it back on — which is exactly
-// what read as "blinking, appearing then disappearing" below Ball Outcome.
-// Two changes fix that:
-//   1. Require 2 consecutive failures/successes (a "streak") before
-//      actually changing what's shown, so one hiccup is absorbed silently.
-//   2. Never let a new poll start while the previous one is still in
-//      flight (with an explicit timeout), so slow/stale responses can't
-//      pile up and land out of order.
-let scStatusFailStreak = 0, scStatusOkStreak = 0, scStatusInFlight = false;
-async function scPollStatus(){
-  if(scStatusInFlight) return;
-  scStatusInFlight = true;
-  try{
-    const s = await fetch(`${STREAMCUTTER_URL}/status`, { signal: AbortSignal.timeout(2500) }).then(r => r.json());
-    scStatusFailStreak = 0;
-    scStatusOkStreak++;
-    if(scStatusOkStreak >= 1){
-      scStreaming = !!s.streaming;
-      scRenderStreamStatus(s.health);
-      // Mirrors the server's own clip-open state back onto this panel — in
-      // case the panel was reloaded mid-clip, or the server auto-cancelled
-      // an open clip for any reason.
-      if(scClipOpen !== !!s.clipInProgress){ scClipOpen = !!s.clipInProgress; scRenderClipStatus(); }
-    }
-  } catch(e){
-    scStatusOkStreak = 0;
-    scStatusFailStreak++;
-    if(scStatusFailStreak >= 2){ // ignore a single dropped/slow poll
-      scStreaming = false;
-      scRenderStreamStatus(null);
-    }
-  } finally {
-    scStatusInFlight = false;
-  }
-}
-setInterval(scPollStatus, 3000);
-
-// Live camera preview — works before Start Stream (StreamCutter keeps a
-// lightweight preview-only capture running whenever it isn't actually
-// live) and keeps updating during the stream too (same frame the overlay
-// produces). Loads each frame into a throwaway Image() first and only
-// swaps it into the visible <img> once it actually loads — and only
-// hides the box after 2 consecutive misses — so one dropped frame never
-// makes the preview flash on/off.
-let scPreviewFailStreak = 0, scPreviewInFlight = false;
-function scRefreshPreview(){
-  const img = document.getElementById('sc-preview-img');
-  if(!img || scPreviewInFlight) return;
-  scPreviewInFlight = true;
-  const probe = new Image();
-  const src = `${STREAMCUTTER_URL}/preview.jpg?t=${Date.now()}`;
-  probe.onload = () => {
-    scPreviewInFlight = false;
-    scPreviewFailStreak = 0;
-    img.src = probe.src;
-    img.style.visibility = 'visible';
-  };
-  probe.onerror = () => {
-    scPreviewInFlight = false;
-    scPreviewFailStreak++;
-    if(scPreviewFailStreak >= 2) img.style.visibility = 'hidden';
-  };
-  probe.src = src;
-}
-setInterval(scRefreshPreview, 1200);
-document.addEventListener('DOMContentLoaded', () => {
-  scRefreshPreview(); scPollStatus(); scRenderClipStatus();
-  document.getElementById('sc-start-stream-btn').addEventListener('click', scStartStream);
-  document.getElementById('sc-stop-stream-btn').addEventListener('click', scStopStream);
-  document.getElementById('sc-start-clip-btn').addEventListener('click', scStartClip);
-  // Manual override only — normal flow stops the clip automatically from
-  // the ball-outcome buttons above (see the [data-ball]/extras/wicket hooks).
-  document.getElementById('sc-stop-clip-btn').addEventListener('click', () => scStopClip('MANUAL', {
-    innings: state.inningsNumber, over: state.score.overs, ballInOver: state.score.balls,
-    battingTeam: state.battingTeam, striker: state.striker.name, nonStriker: state.nonStriker.name,
-    bowler: state.bowler.name
-  }));
-});
-
 // Live green/red dot in the Clipper Helper card — this is the whole
 // answer to "how do I know it's running" now that no one ever has to
 // manually open it again. Just pings its /status endpoint every few
 // seconds; if it answers, it's running (even minimized in the background).
-let clipperFailStreak = 0;
 async function checkClipperHelperStatus(){
   const dot = document.getElementById('clipper-status-dot');
   const text = document.getElementById('clipper-status-text');
   if(!dot || !text) return; // card not on screen yet
   try {
     const s = await fetch(`${CLIPPER_HELPER_URL}/status`, { signal: AbortSignal.timeout(2000) }).then(r => r.json());
-    clipperFailStreak = 0;
     dot.classList.add('on');
     text.textContent = s.vmixRecordingFolder
       ? '🟢 Running — ready for match day'
       : '🟡 Running — but setup isn\'t finished yet (open the Setup page below)';
   } catch(e) {
-    clipperFailStreak++;
-    if(clipperFailStreak >= 2){ // ignore a single dropped poll instead of flickering
-      dot.classList.remove('on');
-      text.textContent = '🔴 Not running — double-click ClipperHelper.exe on this PC once';
-    }
+    dot.classList.remove('on');
+    text.textContent = '🔴 Not running — double-click ClipperHelper.exe on this PC once';
   }
 }
 checkClipperHelperStatus();
@@ -2080,6 +1888,174 @@ function updateRecordingUI(active){
 
 document.getElementById('start-recording-btn').addEventListener('click', startRecording);
 document.getElementById('stop-recording-btn').addEventListener('click', stopRecording);
+
+/* ============================================================
+   📺 DIRECT-TO-YOUTUBE LIVE STREAMING — no OBS/vMix, nothing
+   installed on this PC. This tab captures the "Live Output" popup
+   window (camera + overlay already composited there) via
+   getDisplayMedia, mixes in real audio straight from the capture
+   card, and ships webm chunks to this server, which pipes them into
+   ffmpeg → YouTube RTMP. Everything happens inside the browser.
+   ============================================================ */
+let liveOutputWindow = null;
+let liveDisplayStream = null;   // pixels of the Live Output window
+let liveAudioStream = null;     // real capture-card audio
+let liveRecorder = null;
+let liveActive = false;
+
+async function populateLiveDevices(){
+  try {
+    // One throwaway getUserMedia call so device labels aren't blank —
+    // browsers hide labels until permission has been granted once.
+    const tmp = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    tmp.getTracks().forEach(t => t.stop());
+  } catch(e) { /* denied is fine — dropdown just shows unlabeled devices */ }
+
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const videoSel = document.getElementById('live-video-device');
+  const audioSel = document.getElementById('live-audio-device');
+  const prevVideo = videoSel.value, prevAudio = audioSel.value;
+  videoSel.innerHTML = ''; audioSel.innerHTML = '';
+
+  devices.filter(d => d.kind === 'videoinput').forEach((d,i) => {
+    const opt = document.createElement('option');
+    opt.value = d.deviceId; opt.textContent = d.label || `Camera ${i+1}`;
+    videoSel.appendChild(opt);
+  });
+  devices.filter(d => d.kind === 'audioinput').forEach((d,i) => {
+    const opt = document.createElement('option');
+    opt.value = d.deviceId; opt.textContent = d.label || `Mic ${i+1}`;
+    audioSel.appendChild(opt);
+  });
+  if(prevVideo) videoSel.value = prevVideo;
+  if(prevAudio) audioSel.value = prevAudio;
+}
+document.getElementById('refresh-live-devices-btn').addEventListener('click', populateLiveDevices);
+populateLiveDevices();
+
+document.getElementById('toggle-yt-key-visibility').addEventListener('click', () => {
+  const el = document.getElementById('yt-stream-key');
+  el.type = el.type === 'password' ? 'text' : 'password';
+});
+
+function openLiveOutputWindow(){
+  const matchId = currentMatchId();
+  if(!matchId){ toast('Enter a Match ID and Connect first'); return; }
+  const videoDeviceId = document.getElementById('live-video-device').value;
+  if(!videoDeviceId){ toast('No camera found — plug in the capture card and click "Refresh Camera List"'); return; }
+
+  const url = `${location.origin}/live-output.html?room=${encodeURIComponent(matchId)}&video=${encodeURIComponent(videoDeviceId)}`;
+  liveOutputWindow = window.open(url, 'liveOutputWindow', 'width=1280,height=740');
+  toast('Live Output window opened — keep it open, then click "Go Live"');
+}
+document.getElementById('open-live-output-btn').addEventListener('click', openLiveOutputWindow);
+
+async function startLive(){
+  const matchId = currentMatchId();
+  if(!matchId){ toast('Enter a Match ID and Connect first'); return; }
+  const streamKey = document.getElementById('yt-stream-key').value.trim();
+  if(!streamKey){ toast('Paste your YouTube stream key first'); return; }
+  if(!liveOutputWindow || liveOutputWindow.closed){ toast('Open the Live Output window first'); return; }
+
+  const audioDeviceId = document.getElementById('live-audio-device').value;
+
+  try {
+    // Real audio straight from the capture card — cleaner than
+    // capturing whatever the Live Output tab happens to play back.
+    liveAudioStream = await navigator.mediaDevices.getUserMedia({
+      audio: audioDeviceId ? { deviceId: { exact: audioDeviceId } } : true
+    });
+  } catch(e) {
+    toast('⚠️ Could not get audio from the capture card: ' + e.message);
+    return;
+  }
+
+  try {
+    // Captures exactly what's rendered in the Live Output window —
+    // camera + overlay, already composited there.
+    liveDisplayStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: 30 },
+      audio: false,
+      preferCurrentTab: false,
+      selfBrowserSurface: 'exclude'
+    });
+  } catch(e) {
+    toast('⚠️ Screen-share was cancelled — pick the "Live Output" window when Chrome asks.');
+    liveAudioStream.getTracks().forEach(t => t.stop());
+    return;
+  }
+
+  const combined = new MediaStream([
+    ...liveDisplayStream.getVideoTracks(),
+    ...liveAudioStream.getAudioTracks()
+  ]);
+
+  const startRes = await fetch('/api/live/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ matchId, streamKey })
+  }).then(r => r.json()).catch(() => ({ success:false }));
+
+  if(!startRes.success){
+    toast('⚠️ Could not start the YouTube stream: ' + (startRes.error || 'unknown error'));
+    combined.getTracks().forEach(t => t.stop());
+    return;
+  }
+
+  let liveChunkIndex = 0;
+  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=h264,opus')
+    ? 'video/webm;codecs=h264,opus'
+    : 'video/webm;codecs=vp8,opus';
+
+  liveRecorder = new MediaRecorder(combined, { mimeType, videoBitsPerSecond: 4_500_000 });
+  liveRecorder.ondataavailable = async (e) => {
+    if(!e.data || e.data.size === 0) return;
+    const idx = liveChunkIndex++;
+    try {
+      await fetch(`/api/live/chunk?matchId=${encodeURIComponent(matchId)}&index=${idx}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: e.data
+      });
+    } catch(err) { /* one dropped chunk = a brief stutter on YouTube, not a crash */ }
+  };
+  liveRecorder.onstop = () => { combined.getTracks().forEach(t => t.stop()); };
+
+  // If the operator closes the Live Output window, or ends sharing
+  // from Chrome's own "Stop sharing" bar, treat it like "End Live".
+  liveDisplayStream.getVideoTracks()[0].addEventListener('ended', () => { if(liveActive) stopLive(); });
+
+  liveRecorder.start(1000); // 1s chunks — good balance of latency vs overhead
+  liveActive = true;
+  updateLiveUI(true);
+  toast('🔴 Going live on YouTube…');
+}
+
+async function stopLive(){
+  liveActive = false;
+  updateLiveUI(false);
+  if(liveRecorder && liveRecorder.state !== 'inactive') liveRecorder.stop();
+  if(liveDisplayStream) liveDisplayStream.getTracks().forEach(t => t.stop());
+  if(liveAudioStream) liveAudioStream.getTracks().forEach(t => t.stop());
+
+  const matchId = currentMatchId();
+  await fetch('/api/live/stop', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ matchId })
+  }).catch(() => {});
+  toast('Live stream ended');
+}
+
+function updateLiveUI(active){
+  document.getElementById('live-dot').classList.toggle('on', active);
+  document.getElementById('live-status').textContent = active ? 'LIVE on YouTube' : 'Offline';
+  document.getElementById('start-live-btn').style.display = active ? 'none' : 'block';
+  document.getElementById('stop-live-btn').style.display = active ? 'block' : 'none';
+}
+
+document.getElementById('start-live-btn').addEventListener('click', startLive);
+document.getElementById('stop-live-btn').addEventListener('click', stopLive);
 
 /* Drive folder link — saved once per match, server resolves the folder
    ID and remembers it so every clip cut afterwards uploads there
@@ -6876,25 +6852,7 @@ document.querySelectorAll('[data-ball]').forEach(btn => {
     const kind = btn.dataset.ball;
     if(kind === 'W') openWicketModal();
     else if(EXTRAS_RUN_PICKER_KINDS.includes(kind)) openExtrasModal(kind);
-    else {
-      // 🔒 Snapshot BEFORE recordBall() — same reasoning as logBallToDb()'s
-      // own ballIdentity: recordBall() can roll state.score.overs/balls
-      // straight to the START of the NEXT over the instant this delivery
-      // completes one, and can swap striker/non-striker. Reading state.*
-      // AFTER recordBall() would tag the clip with the next over/batsman
-      // instead of the ball that was actually just bowled.
-      const clipMeta = {
-        innings: state.inningsNumber, over: state.score.overs, ballInOver: state.score.balls,
-        battingTeam: state.battingTeam, striker: state.striker.name, nonStriker: state.nonStriker.name,
-        bowler: state.bowler.name
-      };
-      recordBall(kind);
-      maybePromptNewBowler();
-      // 🎥 Plain runs (0-6, dot ball included) are fully known the instant
-      // this is clicked — no modal in the way — so stop any open clip
-      // right here, same moment logBallToDb() logs this ball.
-      scStopClip(scDeriveClipEventType(kind), clipMeta);
-    }
+    else { recordBall(kind); maybePromptNewBowler(); }
   });
 });
 
@@ -7009,20 +6967,8 @@ function renderExtrasModalButtons(kind){
       closeExtrasModal();
       const meta = {};
       meta[isNbLegBye ? 'legByeRuns' : cfg.metaKey] = i;
-      // 🔒 Same snapshot-before-mutation reasoning as the plain-runs
-      // handler above — capture over/ballInOver/players BEFORE recordBall()
-      // runs, not after.
-      const clipMeta = {
-        innings: state.inningsNumber, over: state.score.overs, ballInOver: state.score.balls,
-        battingTeam: state.battingTeam, striker: state.striker.name, nonStriker: state.nonStriker.name,
-        bowler: state.bowler.name
-      };
       recordBall(kind, meta);
       maybePromptNewBowler();
-      // 🎥 Wide/No Ball/Bye/Leg Bye are only fully known once the run
-      // count is picked here (e.g. "No Ball" + "6" = a six) — stop
-      // the clip now, with the real label.
-      scStopClip(scDeriveClipEventType(kind, meta), clipMeta);
     });
     wrap.appendChild(b);
   }
@@ -7119,10 +7065,6 @@ function triggerWicketClip(){
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ eventType: 'WICKET', timestamp: ballTimestamp, matchId, ballMeta })
   }).catch(() => toast('⚠️ Clipper helper not running — clip skipped'));
-  // 🎥 Same reasoning as the Clipper Helper call above — stop the
-  // StreamCutter clip THIS instant, before the dismissal-type/fielder
-  // modal (which can take a while) eats into the recording.
-  scStopClip('WICKET', ballMeta);
 }
 
 function openWicketModal(){
