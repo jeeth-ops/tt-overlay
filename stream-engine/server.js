@@ -37,6 +37,7 @@ const os = require('os');
 const path = require('path');
 const http = require('http');
 const https = require('https');
+const net = require('net');
 const tls = require('tls');
 const { URL } = require('url');
 const localBuffer = require('./localBuffer');
@@ -137,36 +138,54 @@ function ffmpegAvailable() {
 
 // ----------------------------------------------------------------
 // 🌐 NETWORK REACHABILITY — a pre-flight check that this PC can
-// actually open a TLS connection to the stream destination's host
-// before GO LIVE commits to it (catches "no internet", DNS failures,
-// and a firewalled outbound 443 before ffmpeg wastes time retrying).
-// Cached briefly like the NVENC check, keyed by host so switching
-// Stream URL re-checks the new host.
+// actually open a connection to the stream destination's host before
+// GO LIVE commits to it (catches "no internet", DNS failures, and a
+// firewalled outbound port before ffmpeg wastes time retrying).
+// Scheme-aware: rtmps:// gets a real TLS handshake (port 443 by
+// default, WITH certificate hostname verification — the same check
+// ffmpeg's own TLS stack effectively performs, so a mismatched
+// hostname/cert here means the real stream would fail too); plain
+// rtmp:// only gets a TCP connect (port 1935 by default) since there's
+// no TLS/cert involved for that scheme. An explicit port in the URL
+// always wins over these defaults.
+// Cached briefly like the NVENC check, keyed by host+port so switching
+// Stream URL re-checks the new destination.
 // ----------------------------------------------------------------
 let networkCheckCache = null; // { host, available, checkedAt, detail }
 function checkNetwork(url) {
     return new Promise((resolve) => {
-        let host;
-        try { host = new URL(url).hostname; } catch (e) {
+        let parsed;
+        try { parsed = new URL(url); } catch (e) {
             return resolve({ available: false, detail: 'Invalid Stream URL' });
         }
-        if (networkCheckCache && networkCheckCache.host === host && Date.now() - networkCheckCache.checkedAt < 15000) {
+        const host = parsed.hostname;
+        const isTls = parsed.protocol === 'rtmps:';
+        const port = parsed.port ? Number(parsed.port) : (isTls ? 443 : 1935);
+        const cacheKey = `${host}:${port}`;
+        if (networkCheckCache && networkCheckCache.key === cacheKey && Date.now() - networkCheckCache.checkedAt < 15000) {
             return resolve(networkCheckCache);
         }
-        const socket = tls.connect({ host, port: 443, servername: host, timeout: 4000 }, () => {
+        const onOk = () => {
             socket.destroy();
-            const result = { host, available: true, checkedAt: Date.now(), detail: `Reached ${host}:443` };
-            networkCheckCache = result;
-            resolve(result);
-        });
-        const fail = (detail) => {
-            socket.destroy();
-            const result = { host, available: false, checkedAt: Date.now(), detail };
+            const result = { key: cacheKey, host, available: true, checkedAt: Date.now(), detail: `Reached ${host}:${port}` };
             networkCheckCache = result;
             resolve(result);
         };
-        socket.on('timeout', () => fail(`Timed out reaching ${host}:443`));
-        socket.on('error', (err) => fail(`Could not reach ${host}:443 — ${err.message}`));
+        const fail = (detail) => {
+            socket.destroy();
+            const result = { key: cacheKey, host, available: false, checkedAt: Date.now(), detail };
+            networkCheckCache = result;
+            resolve(result);
+        };
+        // rtmps:// verifies the certificate hostname (default
+        // rejectUnauthorized), same as a real RTMPS push would — so a
+        // hostname/cert mismatch is surfaced here, not discovered only
+        // after GO LIVE. rtmp:// is plain TCP, no TLS involved.
+        const socket = isTls
+            ? tls.connect({ host, port, servername: host, timeout: 4000 }, onOk)
+            : net.connect({ host, port, timeout: 4000 }, onOk);
+        socket.on('timeout', () => fail(`Timed out reaching ${host}:${port}`));
+        socket.on('error', (err) => fail(`Could not reach ${host}:${port} — ${err.message}`));
     });
 }
 
