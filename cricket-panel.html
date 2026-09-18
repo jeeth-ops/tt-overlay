@@ -267,6 +267,26 @@
   .switch input:checked + .slider{ background:var(--accent); border-color:var(--accent); }
   .switch input:checked + .slider:before{ transform:translateX(16px); background:#12100c; }
 
+  /* --- Live Striker/Non-Striker/Bowler panel (card-live-players) --- */
+  .live-player-row{ background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius); padding:10px 12px; margin-top:10px; }
+  .live-player-row:first-child{ margin-top:0; }
+  .live-player-head{ display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
+  .live-player-badge{ font-size:10px; font-weight:800; letter-spacing:.6px; color:var(--text-dim); text-transform:uppercase; }
+  .live-player-badge.striker{ color:var(--accent); }
+  .live-player-badge.bowler{ color:var(--purple); }
+  .live-player-name{ font-size:14px; font-weight:700; color:var(--text); }
+  .live-player-stats{ font-size:12px; color:var(--text-dim); margin-top:3px; font-variant-numeric:tabular-nums; }
+  .live-player-actions{ display:flex; gap:6px; margin-top:8px; }
+  .live-player-actions button{ flex:1; }
+  .live-last-ball-row{ display:flex; align-items:center; justify-content:space-between; margin:10px 0; padding:8px 12px; background:var(--panel-3); border:1px solid var(--border); border-radius:var(--radius); }
+  .live-last-ball-row .lbl{ font-size:10px; font-weight:800; letter-spacing:.8px; color:var(--text-dim); text-transform:uppercase; }
+  .live-last-ball-val{ font-size:18px; font-weight:900; color:var(--accent); font-variant-numeric:tabular-nums; }
+  .active-card-row{ display:flex; align-items:center; gap:10px; margin-top:14px; }
+  .active-card-status{ flex:1; font-size:11.5px; color:var(--text-dim); }
+  #hide-current-card-btn{ width:auto; flex:none; padding:8px 12px; border-color:var(--red); color:var(--red); }
+  #hide-current-card-btn:not(:disabled):hover{ background:var(--red); color:#fff; }
+  #hide-current-card-btn:disabled{ opacity:.4; cursor:default; }
+
   #toast{
     position:fixed; bottom:16px; right:16px; background:var(--panel-3); border:1px solid var(--border);
     padding:10px 14px; border-radius:9px; font-size:12px; opacity:0; transform:translateY(8px) scale(.98);
@@ -601,6 +621,7 @@
     <button type="button" data-target="card-ball-outcome">Ball Outcome</button>
     <button type="button" data-target="card-new-batsman">New Batsman</button>
     <button type="button" data-target="card-bowler">Bowler</button>
+    <button type="button" data-target="card-live-players">Live Players</button>
   </div>
   <div class="qn-sep"></div>
   <div class="qn-group qn-output">
@@ -997,6 +1018,79 @@
       <button class="full small" id="set-bowler-btn" style="margin-top:8px;">Set / Change Bowler</button>
       <label>Last dismissal <span class="note">— you'll be asked how, right when WICKET is pressed</span></label>
       <div class="stat auto" style="margin-top:2px;"><div class="v" id="disp-last-dismissal" style="font-size:13px;">—</div></div>
+    </div>
+
+    <!-- 🏏 LIVE STRIKER / NON-STRIKER / BOWLER — read-only, driven entirely by
+         renderLiveCardControls() off the same state.striker/nonStriker/bowler
+         the rest of the panel already uses. The Match/Tournament buttons here
+         are just a second entry point into the EXISTING Stat Card engine
+         above (buildPlayerStatPayload/buildBowlerStatPayload + the
+         cricketPlayerStat/cricketBowlerStat socket events) — no new card
+         rendering exists anywhere in this file. -->
+    <div class="card" id="card-live-players">
+      <h2>🏏 Current Batsmen &amp; Bowler <span class="note">— live, updates every ball</span></h2>
+
+      <div class="live-player-row" id="live-striker-row">
+        <div class="live-player-head">
+          <span class="live-player-badge striker">★ STRIKER</span>
+          <span class="live-player-name" id="live-striker-name">—</span>
+        </div>
+        <div class="live-player-stats" id="live-striker-stats">0 (0) • SR 0.0</div>
+        <div class="live-player-actions">
+          <button type="button" class="small ghost" data-card-action="player" data-which="striker" data-scope="match">Match Card</button>
+          <button type="button" class="small ghost" data-card-action="player" data-which="striker" data-scope="tournament">Tournament Card</button>
+        </div>
+      </div>
+
+      <div class="live-player-row" id="live-nonstriker-row">
+        <div class="live-player-head">
+          <span class="live-player-badge">NON-STRIKER</span>
+          <span class="live-player-name" id="live-nonstriker-name">—</span>
+        </div>
+        <div class="live-player-stats" id="live-nonstriker-stats">0 (0) • SR 0.0</div>
+        <div class="live-player-actions">
+          <button type="button" class="small ghost" data-card-action="player" data-which="nonStriker" data-scope="match">Match Card</button>
+          <button type="button" class="small ghost" data-card-action="player" data-which="nonStriker" data-scope="tournament">Tournament Card</button>
+        </div>
+      </div>
+
+      <div class="live-last-ball-row">
+        <span class="lbl">LAST BALL</span>
+        <span class="live-last-ball-val" id="live-last-ball-val">—</span>
+      </div>
+
+      <div class="live-player-row" id="live-bowler-row">
+        <div class="live-player-head">
+          <span class="live-player-badge bowler">CURRENT BOWLER</span>
+          <span class="live-player-name" id="live-bowler-name">—</span>
+        </div>
+        <div class="live-player-stats" id="live-bowler-stats">0.0-0-0-0 • ECON 0.00</div>
+        <div class="live-player-actions">
+          <button type="button" class="small ghost" data-card-action="bowler" data-scope="match">Match Card</button>
+          <button type="button" class="small ghost" data-card-action="bowler" data-scope="tournament">Tournament Card</button>
+        </div>
+      </div>
+
+      <div class="active-card-row">
+        <span class="active-card-status" id="active-card-status">No card active</span>
+        <button type="button" class="full small" id="hide-current-card-btn" disabled>⤫ HIDE CURRENT CARD</button>
+      </div>
+      <div class="shortcut-hint">Match/Tournament buttons trigger the same Player Card overlay as the Stat Cards panel — only the most-recently-shown card counts as "active". Hide Current Card removes it from the overlay only — no player, match or tournament data is changed.</div>
+    </div>
+  </div>
+
+  <!-- 🏏 Automatic batsman/bowler card confirmation — SHOW/SKIP with a 7s
+       auto-continue, opened by startAutoCardFlow() right after a new
+       batsman/bowler is confirmed. Reuses the same wicket-modal-overlay/
+       wicket-modal shell as every other panel popup for visual consistency. -->
+  <div class="wicket-modal-overlay" id="auto-card-modal-overlay">
+    <div class="wicket-modal" id="auto-card-modal">
+      <h3 id="auto-card-modal-title">SHOW CARD?</h3>
+      <div class="wm-sub" id="auto-card-modal-sub">—</div>
+      <div class="wm-actions">
+        <button type="button" class="ghost wm-cancel" id="auto-card-modal-skip">Skip</button>
+        <button type="button" class="primary" id="auto-card-modal-show">Show</button>
+      </div>
     </div>
   </div>
 
@@ -1824,6 +1918,18 @@ function defaultState(){
     thisOver: [],
     ballHistory: [],
     ballLog: [],
+    // 🏏 Snapshot of the just-completed over's ball tokens (captured by
+    // addLegalBall() the instant thisOver is cleared for the next over) and
+    // a running per-over log — feed the overlay's automatic Recent Over
+    // Summary / Last-5-overs momentum strip. Purely additive.
+    lastCompletedOverBalls: [],
+    overHistory: [],
+    // Which Player Card is the most-recently-activated one on the overlay —
+    // 'player' | 'bowler' | 'team' | null — set by the Stat Cards toggles
+    // above AND the new manual/automatic card controls below, so a single
+    // "Hide Current Card" button always knows what to dismiss.
+    activeCardKind: null,
+    activeCardLabel: '',
     // Permanent identity of THIS match inside its tournament — completely
     // separate from the "Match ID" field above (which is only the OBS/vMix
     // socket room, and gets reused/left-as-is by operators across many
@@ -3072,6 +3178,7 @@ function renderPanel(){
   maybeSet('innings-summary-toggle', state.showInningsSummary);
   maybeSet('match-summary-toggle', state.showMatchSummary);
 
+  renderLiveCardControls();
   updateBallButtonsState();
 }
 
@@ -3922,6 +4029,7 @@ document.getElementById('bowler-roster-select').addEventListener('change', e => 
 function sendInNewBatsman(name, id){
   if(!name) return;
   pushHistory();
+  const enteringEnd = state.newBatsmanEnd === 'nonStriker' ? 'nonStriker' : 'striker';
   const incoming = { name, id: id || null, runs:0, balls:0, fours:0, sixes:0 };
   // Seat them at whichever end the last wicket left vacant — the striker's
   // end normally, or the non-striker's end if that wicket fell on the last
@@ -3936,6 +4044,12 @@ function sendInNewBatsman(name, id){
   state.partnershipRuns = 0; state.partnershipBalls = 0;
   renderRosterControls();
   pushState(true);
+  // 🏏 AUTOMATIC BATSMAN CARD — only once real balls have been bowled this
+  // match (skips the very first two openers at match start, when there's
+  // nothing meaningful to show yet). See startAutoCardFlow().
+  if(state.score.overs > 0 || state.score.balls > 0){
+    startAutoCardFlow('batsman', { which: enteringEnd, name, id: id || null });
+  }
 }
 document.getElementById('new-batsman-btn').addEventListener('click', () => {
   const select = document.getElementById('new-batsman-select');
@@ -4244,6 +4358,12 @@ function applyBowlerChange(name, id){
 
   pushState(true);
   toast(`${name} is now bowling`);
+  // 🏏 AUTOMATIC BOWLER CARD — only for a genuine over-boundary change
+  // (carryBalls === 0, never a mid-over name correction), and only once
+  // the match is actually under way. See startAutoCardFlow().
+  if(carryBalls === 0 && (state.score.overs > 0 || state.score.balls > 0)){
+    startAutoCardFlow('bowler', { name, id: id || null });
+  }
   return true;
 }
 
@@ -4274,18 +4394,31 @@ document.getElementById('match-summary-toggle').addEventListener('change', (e) =
    immediately, on top of the normal state save.
    ============================================================ */
 document.getElementById('player-stat-toggle').addEventListener('change', (e) => {
+  clearAutoCardFlow(); // any manual toggle wins over a pending automatic popup/timer
   state.showPlayerStatCard = e.target.checked;
   saveLocal();
   if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
-  if(state.showPlayerStatCard) socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
-  else socket.emit('cricketHidePlayerStat', {});
+  if(state.showPlayerStatCard){
+    socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
+    const p = state.playerStatWhich === 'nonStriker' ? state.nonStriker : state.striker;
+    setActiveCard('player', `${p.name || 'Batter'} — ${state.playerStatScope === 'tournament' ? 'Tournament' : 'Match'}`);
+  } else {
+    socket.emit('cricketHidePlayerStat', {});
+    clearActiveCardIfMatches('player');
+  }
 });
 document.getElementById('bowler-stat-toggle').addEventListener('change', (e) => {
+  clearAutoCardFlow();
   state.showBowlerStatCard = e.target.checked;
   saveLocal();
   if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
-  if(state.showBowlerStatCard) socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
-  else socket.emit('cricketHideBowlerStat', {});
+  if(state.showBowlerStatCard){
+    socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
+    setActiveCard('bowler', `${state.bowler.name || 'Bowler'} — ${state.bowlerStatScope === 'tournament' ? 'Tournament' : 'Match'}`);
+  } else {
+    socket.emit('cricketHideBowlerStat', {});
+    clearActiveCardIfMatches('bowler');
+  }
 });
 document.getElementById('player-stat-which').addEventListener('change', (e) => {
   state.playerStatWhich = e.target.value;
@@ -4341,8 +4474,14 @@ document.getElementById('team-stat-toggle').addEventListener('change', (e) => {
   state.showTeamStatCard = e.target.checked;
   saveLocal();
   if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
-  if(state.showTeamStatCard) socket.emit('cricketTeamStat', { data: buildTeamStatPayload() });
-  else socket.emit('cricketHideTeamStat', {});
+  if(state.showTeamStatCard){
+    socket.emit('cricketTeamStat', { data: buildTeamStatPayload() });
+    const teamObj = state.teamStatWhich === 'A' ? state.teamA : state.teamB;
+    setActiveCard('team', `${teamObj.name || 'Team'} — Tournament`);
+  } else {
+    socket.emit('cricketHideTeamStat', {});
+    clearActiveCardIfMatches('team');
+  }
 });
 document.getElementById('team-stat-which').addEventListener('change', (e) => {
   state.teamStatWhich = e.target.value;
@@ -6419,11 +6558,263 @@ function refreshLiveStatCards(){
   }
 }
 
+/* ============================================================
+   🏏 LIVE STRIKER / NON-STRIKER / BOWLER PANEL + MANUAL & AUTOMATIC
+   PLAYER-CARD CONTROLS
+   Everything below is a thin control layer on top of the EXISTING Stat
+   Card engine above (buildPlayerStatPayload/buildBowlerStatPayload/
+   buildTeamStatPayload, the showXStatCard flags, and the
+   cricketXStat/cricketHideXStat socket events) — it never renders a card
+   itself and never talks to the overlay except through those same
+   functions/events, so there is exactly one card-rendering engine, same
+   as before this feature existed.
+   ============================================================ */
+
+// Updates the read-only "Current Batsmen & Bowler" block — called from
+// renderPanel() on every state change, so it never goes stale.
+function renderLiveCardControls(){
+  const nameEl = document.getElementById('live-striker-name');
+  if(!nameEl) return; // defensive — panel markup not present for some reason
+  const sr = (p) => (p.balls > 0 ? ((p.runs / p.balls) * 100).toFixed(1) : '0.0');
+  const s = state.striker, ns = state.nonStriker, b = state.bowler;
+  document.getElementById('live-striker-name').textContent = s.name || '—';
+  document.getElementById('live-striker-stats').textContent = `${s.runs} (${s.balls}) • 4s ${s.fours} 6s ${s.sixes} • SR ${sr(s)}`;
+  document.getElementById('live-nonstriker-name').textContent = ns.name || '—';
+  document.getElementById('live-nonstriker-stats').textContent = `${ns.runs} (${ns.balls}) • 4s ${ns.fours} 6s ${ns.sixes} • SR ${sr(ns)}`;
+  document.getElementById('live-bowler-name').textContent = b.name || '—';
+  document.getElementById('live-bowler-stats').textContent = `${fmtBowlerOvers(b.overs, b.balls)}-${b.maidens}-${b.runs}-${b.wickets} • ECON ${bowlerEcon(b)}`;
+  const hist = state.ballHistory || [];
+  const lastBall = hist.length ? hist[hist.length - 1] : null;
+  document.getElementById('live-last-ball-val').textContent = lastBall == null ? '—' : (lastBall === '0' ? '•' : lastBall);
+  const statusEl = document.getElementById('active-card-status');
+  if(statusEl) statusEl.textContent = state.activeCardKind ? `Active card: ${state.activeCardLabel || state.activeCardKind}` : 'No card active';
+  const hideBtn = document.getElementById('hide-current-card-btn');
+  if(hideBtn) hideBtn.disabled = !state.activeCardKind;
+}
+
+// Tracks which card (player/bowler/team) is the most-recently-activated
+// one, regardless of whether it was turned on from the old Stat Cards
+// panel, the new manual buttons, or an automatic flow — so a single
+// "Hide Current Card" button always knows what's on screen right now.
+function setActiveCard(kind, label){
+  state.activeCardKind = kind;
+  state.activeCardLabel = label || '';
+  saveLocal();
+  renderLiveCardControls();
+}
+function clearActiveCardIfMatches(kind){
+  if(state.activeCardKind === kind){
+    state.activeCardKind = null;
+    state.activeCardLabel = '';
+    saveLocal();
+    renderLiveCardControls();
+  }
+}
+// Turns a card OFF via the exact same socket events the old Stat Cards
+// toggles use — a pure visual dismiss, never touches player/match/
+// tournament data.
+function deactivateCard(kind){
+  if(!socket || !socket.connected) return;
+  if(kind === 'player'){
+    state.showPlayerStatCard = false;
+    const el = document.getElementById('player-stat-toggle'); if(el) el.checked = false;
+    socket.emit('cricketHidePlayerStat', {});
+  } else if(kind === 'bowler'){
+    state.showBowlerStatCard = false;
+    const el = document.getElementById('bowler-stat-toggle'); if(el) el.checked = false;
+    socket.emit('cricketHideBowlerStat', {});
+  } else if(kind === 'team'){
+    state.showTeamStatCard = false;
+    const el = document.getElementById('team-stat-toggle'); if(el) el.checked = false;
+    socket.emit('cricketHideTeamStat', {});
+  }
+  saveLocal();
+  clearActiveCardIfMatches(kind);
+}
+
+// Manual "Match Card" / "Tournament Card" buttons for striker/non-striker —
+// reuses the exact same state fields + payload builder + socket event the
+// existing Stat Cards toggle already uses.
+function manualShowPlayerCard(which, scope){
+  if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
+  clearAutoCardFlow(); // a deliberate manual click always wins over a pending automatic popup/timer
+  state.playerStatWhich = which;
+  state.playerStatScope = scope;
+  state.showPlayerStatCard = true;
+  saveLocal();
+  const toggleEl = document.getElementById('player-stat-toggle'); if(toggleEl) toggleEl.checked = true;
+  const whichEl = document.getElementById('player-stat-which'); if(whichEl) whichEl.value = which;
+  const scopeEl = document.getElementById('player-stat-scope');
+  if(scopeEl){
+    scopeEl.value = scope;
+    document.getElementById('player-tournament-fields').style.display = scope === 'tournament' ? 'grid' : 'none';
+  }
+  socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
+  const player = which === 'nonStriker' ? state.nonStriker : state.striker;
+  setActiveCard('player', `${player.name || 'Batter'} — ${scope === 'tournament' ? 'Tournament' : 'Match'}`);
+}
+function manualShowBowlerCard(scope){
+  if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
+  clearAutoCardFlow();
+  state.bowlerStatScope = scope;
+  state.showBowlerStatCard = true;
+  saveLocal();
+  const toggleEl = document.getElementById('bowler-stat-toggle'); if(toggleEl) toggleEl.checked = true;
+  const scopeEl = document.getElementById('bowler-stat-scope');
+  if(scopeEl){
+    scopeEl.value = scope;
+    document.getElementById('bowler-tournament-fields').style.display = scope === 'tournament' ? 'grid' : 'none';
+  }
+  socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
+  setActiveCard('bowler', `${state.bowler.name || 'Bowler'} — ${scope === 'tournament' ? 'Tournament' : 'Match'}`);
+}
+
+// Single "Hide Current Card" — removes ONLY whichever card was activated
+// most recently, whether manually, automatically, or via the old Stat
+// Cards toggles. Never touches player/match/tournament data.
+function hideActiveCardNow(){
+  const hadPendingAutoFlow = !!autoCardFlow;
+  clearAutoCardFlow();
+  const kind = state.activeCardKind;
+  if(!kind){
+    toast(hadPendingAutoFlow ? 'Cancelled — that card will no longer appear' : 'No card is currently active');
+    return;
+  }
+  if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
+  deactivateCard(kind);
+}
+
+/* ------------------------------------------------------------
+   AUTOMATIC BATSMAN / BOWLER CARD FLOW
+   SHOW/SKIP popup (7s auto-continue) → 5s delay → existing card shows for
+   ~7s → smooth exit. Every stage is cancellable — a manual card action, a
+   fresh automatic flow starting, or Reset, all cancel it outright — so a
+   stale timer can never fire a card for the wrong player later.
+   ------------------------------------------------------------ */
+let autoCardFlow = null;   // { seq, kind:'batsman'|'bowler', which, name, id, timers:[] }
+let autoCardFlowSeq = 0;
+
+function clearAutoCardFlow(){
+  if(!autoCardFlow) return;
+  (autoCardFlow.timers || []).forEach(id => clearTimeout(id));
+  autoCardFlow = null;
+  const overlay = document.getElementById('auto-card-modal-overlay');
+  if(overlay) overlay.classList.remove('show');
+}
+function startAutoCardFlow(kind, info){
+  clearAutoCardFlow(); // never let an older flow's timers coexist with a new one
+  const seq = ++autoCardFlowSeq;
+  autoCardFlow = { seq, kind, which: info.which, name: info.name, id: info.id, timers: [] };
+  openAutoCardConfirm(kind, info.name);
+  const t = setTimeout(() => resolveAutoCardConfirm(seq, true), 7000); // no response in 7s → continue
+  autoCardFlow.timers.push(t);
+}
+function openAutoCardConfirm(kind, name){
+  const overlay = document.getElementById('auto-card-modal-overlay');
+  if(!overlay) return;
+  document.getElementById('auto-card-modal-title').textContent = kind === 'bowler' ? 'SHOW BOWLER CARD?' : 'SHOW BATSMAN CARD?';
+  document.getElementById('auto-card-modal-sub').textContent = name || '—';
+  overlay.classList.add('show');
+}
+function resolveAutoCardConfirm(seq, proceed){
+  if(!autoCardFlow || autoCardFlow.seq !== seq) return; // stale — a newer/cleared flow already won
+  const overlay = document.getElementById('auto-card-modal-overlay');
+  if(overlay) overlay.classList.remove('show');
+  if(!proceed){ clearAutoCardFlow(); return; }
+  const t = setTimeout(() => showAutoCard(seq), 5000);
+  autoCardFlow.timers.push(t);
+}
+function showAutoCard(seq){
+  if(!autoCardFlow || autoCardFlow.seq !== seq) return;
+  if(!socket || !socket.connected){ clearAutoCardFlow(); return; }
+  const flow = autoCardFlow;
+  if(flow.kind === 'batsman'){
+    state.playerStatWhich = flow.which;
+    state.playerStatScope = 'match';
+    state.showPlayerStatCard = true;
+    saveLocal();
+    const toggleEl = document.getElementById('player-stat-toggle'); if(toggleEl) toggleEl.checked = true;
+    const whichEl = document.getElementById('player-stat-which'); if(whichEl) whichEl.value = flow.which;
+    socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
+    setActiveCard('player', `${flow.name || 'Batter'} — Match (auto)`);
+  } else {
+    state.bowlerStatScope = 'match';
+    state.showBowlerStatCard = true;
+    saveLocal();
+    const toggleEl = document.getElementById('bowler-stat-toggle'); if(toggleEl) toggleEl.checked = true;
+    socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
+    setActiveCard('bowler', `${flow.name || 'Bowler'} — Match (auto)`);
+  }
+  const t = setTimeout(() => {
+    if(!autoCardFlow || autoCardFlow.seq !== seq) return; // a manual action already took over
+    deactivateCard(flow.kind === 'batsman' ? 'player' : 'bowler');
+    autoCardFlow = null;
+  }, 7000);
+  flow.timers.push(t);
+}
+
+document.getElementById('auto-card-modal-show').addEventListener('click', () => {
+  if(autoCardFlow) resolveAutoCardConfirm(autoCardFlow.seq, true);
+});
+document.getElementById('auto-card-modal-skip').addEventListener('click', () => {
+  if(autoCardFlow) resolveAutoCardConfirm(autoCardFlow.seq, false);
+});
+document.querySelectorAll('[data-card-action="player"]').forEach(btn => {
+  btn.addEventListener('click', () => manualShowPlayerCard(btn.dataset.which, btn.dataset.scope));
+});
+document.querySelectorAll('[data-card-action="bowler"]').forEach(btn => {
+  btn.addEventListener('click', () => manualShowBowlerCard(btn.dataset.scope));
+});
+document.getElementById('hide-current-card-btn').addEventListener('click', hideActiveCardNow);
+
+/* ------------------------------------------------------------
+   🏏 AUTOMATIC RECENT OVER SUMMARY + LAST-5-OVERS MOMENTUM
+   Called once per genuinely-completed over from inside recordBall() (see
+   overCompletedThisBall there). Builds a broadcast-style payload from data
+   the overlay already trusts (state.score/striker/nonStriker/bowler — same
+   field names renderState() on the overlay already consumes) and appends
+   to state.overHistory, which Last-5-overs reads back from.
+   ------------------------------------------------------------ */
+function emitOverSummary(overIndexZeroBased, overRuns, overWickets, overBalls){
+  state.overHistory = state.overHistory || [];
+  state.overHistory.push({
+    overNumber: overIndexZeroBased + 1,
+    runs: overRuns,
+    wickets: overWickets,
+    inningsNo: state.inningsNumber
+  });
+  saveLocal();
+  if(!socket || !socket.connected) return;
+  const battingTeamObj = state.battingTeam === 'A' ? state.teamA : state.teamB;
+  const totalBalls = state.score.overs * 6 + state.score.balls;
+  const crr = totalBalls > 0 ? (state.score.runs / (totalBalls / 6)) : 0;
+  const recentOvers = state.overHistory.filter(o => o.inningsNo === state.inningsNumber).slice(-5);
+  socket.emit('cricketOverSummary', { data: {
+    overNumber: overIndexZeroBased + 1,
+    overRuns, overWickets, balls: overBalls,
+    teamName: battingTeamObj.name, teamShort: battingTeamObj.short,
+    teamColor: battingTeamObj.color, teamLogo: battingTeamObj.logoUrl,
+    score: state.score.runs, wickets: state.score.wickets,
+    overs: state.score.overs, ballsIntoOver: state.score.balls,
+    crr: crr.toFixed(2),
+    striker: { name: state.striker.name, runs: state.striker.runs, balls: state.striker.balls },
+    nonStriker: { name: state.nonStriker.name, runs: state.nonStriker.runs, balls: state.nonStriker.balls },
+    bowler: { name: state.bowler.name, overs: state.bowler.overs, balls: state.bowler.balls, maidens: state.bowler.maidens, runs: state.bowler.runs, wickets: state.bowler.wickets },
+    recentOvers
+  }});
+}
+
 function addLegalBall(runsThisBall){
   state.freeHit = false;
   state.score.balls++;
   let overCompleted = false;
-  if(state.score.balls >= 6){ state.score.balls = 0; state.score.overs++; state.thisOver = []; overCompleted = true; }
+  if(state.score.balls >= 6){
+    // 🏏 Snapshot this over's ball-by-ball tokens BEFORE they're wiped — the
+    // Recent Over Summary graphic needs the exact sequence just bowled, and
+    // thisOver is reset to [] for the next over on the very next line.
+    state.lastCompletedOverBalls = [...state.thisOver];
+    state.score.balls = 0; state.score.overs++; state.thisOver = []; overCompleted = true;
+  }
   state.striker.balls++;
   state.partnershipBalls++;
   return overCompleted;
@@ -6603,6 +6994,12 @@ function autoSyncMatchSnapshot(){
   }, 2000);
 }
 
+// 🏏 Accumulate this over's total runs/wickets across every recordBall()
+// call for that over — reset to 0 the instant a completed over is emitted
+// below. Mirrors the exact per-ball delta already computed for ballLog
+// (state.score.runs - runsBefore), so run-out completed runs, wide/no-ball
+// penalties etc. are all correctly included.
+let overRunsAcc = 0, overWicketsAcc = 0;
 function recordBall(kind, meta){
   inningsSummaryJustFired = false;
   // Tell the public page (tournament portal's "Live Now" card, or a
@@ -7158,6 +7555,10 @@ function recordBall(kind, meta){
     scoreAfter: `${state.score.runs}-${state.score.wickets}`,
     timestamp: ballTimestamp
   });
+  // 🏏 Over-summary accumulators — see the `overRunsAcc`/`overWicketsAcc`
+  // declaration above. Uses the exact same delta just computed for ballLog.
+  overRunsAcc += (state.score.runs - runsBefore);
+  if(kindIsWicket) overWicketsAcc++;
 
   // Cricket's "swap ends" rule: whoever wasn't on strike for the last ball
   // of the over faces the next one (a different bowler comes on from the
@@ -7168,6 +7569,18 @@ function recordBall(kind, meta){
   // would swap them right back.
   if(overCompletedThisBall && kind !== 'W'){
     swapStrikeSilent();
+  }
+
+  // 🏏 AUTOMATIC RECENT OVER SUMMARY — fires exactly once, the instant the
+  // over is GENUINELY complete (overCompletedThisBall, computed above from
+  // addLegalBall()'s return value — never on a Wide/No Ball alone). Placed
+  // after every mutation this ball can trigger (score, strike swap, bowler
+  // figures) so the payload reflects the fully-settled state, using the
+  // ball-token snapshot addLegalBall() just captured before clearing
+  // state.thisOver for the next over.
+  if(overCompletedThisBall){
+    emitOverSummary(logOverForBall, overRunsAcc, overWicketsAcc, state.lastCompletedOverBalls || []);
+    overRunsAcc = 0; overWicketsAcc = 0;
   }
 
   checkMilestones();
@@ -8471,6 +8884,12 @@ document.getElementById('next-innings-btn').addEventListener('click', () => {
   state.extras[nextTeam] = { wd:0, nb:0, b:0, lb:0 };
   state.thisOver = [];
   state.ballHistory = [];
+  // 🏏 An innings can end mid-over (e.g. the 10th wicket falls on ball 3),
+  // in which case that partial over never completed and never flushed the
+  // module-level over-summary accumulators below — reset them here so a
+  // stray leftover run/wicket count from the innings that just ended can
+  // never bleed into the new innings' first over summary.
+  overRunsAcc = 0; overWicketsAcc = 0;
   state.partnershipRuns = 0; state.partnershipBalls = 0;
   // Reset per-innings player-selection bookkeeping — a batter out in the
   // innings that just finished is available again now, and the "just
@@ -9831,6 +10250,18 @@ document.getElementById('reset-btn').addEventListener('click', () => {
   // same tournament, never overwriting the one just finished.
   const keepLeagueName = state.leagueName;
   const keepMatchMode = state.matchMode;
+  // 🏏 Cancel any in-flight automatic card popup/timer and dismiss whatever
+  // card is currently on the overlay — a Reset must never leave a stale
+  // timer around to fire a card for a player who no longer exists in the
+  // new match, and the overlay's stat cards are otherwise sticky (only an
+  // explicit hide event removes them).
+  clearAutoCardFlow();
+  if(socket && socket.connected){
+    socket.emit('cricketHidePlayerStat', {});
+    socket.emit('cricketHideBowlerStat', {});
+    socket.emit('cricketHideTeamStat', {});
+  }
+  overRunsAcc = 0; overWicketsAcc = 0; // see the matching reset in Start Next Innings above
   state = defaultState();
   state.leagueName = keepLeagueName;
   state.matchMode = keepMatchMode || (keepLeagueName ? 'tournament' : 'single');
