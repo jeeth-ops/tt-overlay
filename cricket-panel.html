@@ -2190,8 +2190,32 @@ async function refreshClipEngineStatus(){
   }
   dot.classList.add('on');
   label.textContent = 'Running';
-  ceSetDot('ce-recording', status.recordingActive, status.recordingActive ? 'Active' : 'Inactive');
-  ceSetDot('ce-buffer', status.recordingActive, status.recordingActive ? 'Healthy' : 'No active session');
+
+  // 🔎 Match THIS panel's current Match ID against the engine's actual
+  // buffer sessions — status.recordingActive only means "some session
+  // exists somewhere" (e.g. a stale one from a different match), which
+  // used to make "Recording: Active ✓" show green even when the CURRENT
+  // match has no session at all (so every clip would fail). Checking
+  // the specific matchId here catches that mismatch directly in the
+  // health grid instead of only surfacing it as a failed clip.
+  const matchId = typeof currentMatchId === 'function' ? currentMatchId() : '';
+  const mySession = matchId && Array.isArray(status.bufferSessionsDetail)
+    ? status.bufferSessionsDetail.find((s) => s.matchId === matchId)
+    : null;
+
+  if(!matchId){
+    ceSetDot('ce-recording', null, 'Enter a Match ID');
+    ceSetDot('ce-buffer', null, '—');
+  } else if(!mySession || !mySession.recordingActive){
+    ceSetDot('ce-recording', false, mySession ? 'Not started for this Match ID (footage buffering only)' : 'Not started for this Match ID');
+    ceSetDot('ce-buffer', mySession ? (mySession.chunkCount > 0) : false, mySession ? `Buffering ${mySession.chunkCount} chunks (Recording not clicked yet)` : 'No active session');
+  } else if(mySession.chunkCount === 0){
+    ceSetDot('ce-recording', true, `Active (${mySession.ageSec}s) — 0 chunks yet`);
+    ceSetDot('ce-buffer', false, 'No footage received — check Live Output window is open');
+  } else {
+    ceSetDot('ce-recording', true, `Active (${mySession.ageSec}s)`);
+    ceSetDot('ce-buffer', mySession.lastChunkAgeSec <= 5, `${mySession.chunkCount} chunks — last ${mySession.lastChunkAgeSec}s ago`);
+  }
   ceSetDot('ce-worker', status.clipWorkerState !== 'idle' ? true : null, status.clipWorkerState === 'idle' ? 'Idle' : status.clipWorkerState === 'cutting' ? 'Cutting…' : 'Uploading…');
   ceSetDot('ce-cloudflare', status.cloudflareConnected, status.cloudflareConnected ? 'Connected' : `Retrying (${status.retryQueueLength} queued)`);
 }
