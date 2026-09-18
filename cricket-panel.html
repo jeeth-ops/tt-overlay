@@ -1414,12 +1414,37 @@
         <span style="opacity:.7;">Camera</span><span id="ls-h-camera" class="ls-health-val">● Not connected</span>
         <span style="opacity:.7;">Microphone</span><span id="ls-h-mic" class="ls-health-val">● Not connected</span>
         <span style="opacity:.7;">Overlay</span><span id="ls-h-overlay" class="ls-health-val">● Not connected</span>
-        <span style="opacity:.7;">Encoder</span><span id="ls-h-encoder" class="ls-health-val">● Checking…</span>
+        <span style="opacity:.7;">Stream Engine</span><span id="ls-h-engine" class="ls-health-val">● Checking…</span>
+        <span style="opacity:.7;">NVENC</span><span id="ls-h-encoder" class="ls-health-val">● Checking…</span>
+        <span style="opacity:.7;">Stream URL</span><span id="ls-h-streamurl" class="ls-health-val">● Checking…</span>
+        <span style="opacity:.7;">Stream Key</span><span id="ls-h-streamkey" class="ls-health-val">● Checking…</span>
+        <span style="opacity:.7;">Network</span><span id="ls-h-network" class="ls-health-val">● Checking…</span>
         <span style="opacity:.7;">YouTube</span><span id="ls-h-youtube" class="ls-health-val">● Checking…</span>
         <span style="opacity:.7;">Clip Engine</span><span id="ls-h-clip" class="ls-health-val">● Shares this capture</span>
       </div>
+      <div id="ls-cannot-start" style="display:none; font-size:12px; color:#ff6b6b; background:rgba(255,107,107,.08); border:1px solid rgba(255,107,107,.3); border-radius:8px; padding:8px 10px; margin-bottom:12px;">
+        <b>Cannot Start Stream</b><br>Reason: <span id="ls-cannot-start-reason">—</span>
+      </div>
       <div style="font-size:10.5px; opacity:.55; margin:-4px 0 12px;">
         FOUR/SIX/WICKET clips (Part 1's clipper, unchanged) and this YouTube stream now come from the SAME camera/overlay capture — click "🔴 Start Recording" above too if you want clips cut during this stream.
+      </div>
+
+      <div style="font-size:11px; letter-spacing:.5px; opacity:.6; font-weight:700; margin-bottom:8px;">YOUTUBE LIVE</div>
+
+      <label style="font-size:12px; opacity:.8; display:block; margin-bottom:4px;">Stream URL</label>
+      <input type="url" id="yt-stream-url" class="full" placeholder="rtmps://a.rtmps.youtube.com/live2" style="margin-bottom:8px;">
+      <div style="font-size:10.5px; opacity:.55; margin:-4px 0 10px;">
+        Paste exactly what YouTube Studio → Go Live shows under "Stream URL". Used as entered — not assumed or hardcoded, so any RTMP(S) destination works here.
+      </div>
+
+      <label style="font-size:12px; opacity:.8; display:block; margin-bottom:4px;">Stream Key</label>
+      <div class="link-row" style="margin-bottom:6px;">
+        <input type="password" id="yt-stream-key" placeholder="YouTube Studio → Go Live → Stream key">
+        <button class="small" id="toggle-yt-key-visibility">👁</button>
+      </div>
+      <button class="full small ghost" id="save-stream-key-btn" style="margin-bottom:10px;">Save to Stream Engine</button>
+      <div style="font-size:10.5px; opacity:.55; margin:-4px 0 12px;">
+        Sent directly to the local Stream Engine on this PC (127.0.0.1) — never to Render, never logged, never stored in the browser. The key shows here only as <code>••••••••••••••••</code> once saved.
       </div>
 
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px 10px; font-size:12px; opacity:.85; margin-bottom:12px;">
@@ -1436,20 +1461,22 @@
             <option value="60">60</option>
           </select>
         </label>
-        <span style="grid-column:1/-1; margin-top:2px;">Encoder: <b id="ls-encoder-name">NVIDIA NVENC</b> · Bitrate: <b id="ls-bitrate-preview">—</b></span>
+        <label style="display:flex; flex-direction:column; gap:3px;">Bitrate (Mbps)
+          <input type="number" id="ls-bitrate-input" class="full" min="1" max="51" step="0.5" placeholder="auto">
+        </label>
+        <label style="display:flex; flex-direction:column; gap:3px;">Keyframe Interval (sec)
+          <input type="number" id="ls-keyframe-input" class="full" min="1" max="10" step="1" value="2">
+        </label>
+        <label style="display:flex; flex-direction:column; gap:3px;">Encoder
+          <input type="text" class="full" value="NVIDIA NVENC (H.264)" disabled>
+        </label>
+        <label style="display:flex; flex-direction:column; gap:3px;">Audio
+          <input type="text" class="full" value="AAC" disabled>
+        </label>
+        <span style="grid-column:1/-1; margin-top:2px;">Rate Control: <b>CBR</b> · Effective Bitrate: <b id="ls-bitrate-preview">—</b></span>
       </div>
       <div style="font-size:10.5px; opacity:.5; margin:-8px 0 12px;">
-        Higher resolution/FPS = more CPU load in this browser tab (capturing + encoding the preview before NVENC) AND more GPU load — if you see stutter, drop to 720p30 first. Can't be changed once LIVE; stop and restart to change.
-      </div>
-
-      <label style="font-size:12px; opacity:.8; display:block; margin-bottom:4px;">YouTube Stream Key</label>
-      <div class="link-row" style="margin-bottom:6px;">
-        <input type="password" id="yt-stream-key" placeholder="YouTube Studio → Go Live → Stream key">
-        <button class="small" id="toggle-yt-key-visibility">👁</button>
-      </div>
-      <button class="full small ghost" id="save-stream-key-btn" style="margin-bottom:10px;">Save Key to Stream Engine</button>
-      <div style="font-size:10.5px; opacity:.55; margin:-4px 0 10px;">
-        Sent directly to the local Stream Engine on this PC (127.0.0.1) — never to Render, never stored in the browser.
+        Bitrate/keyframe interval are optional — leave blank/default for YouTube's recommended 1080p30 CBR values. These control quality/stability; the Stream URL and Key are connection parameters only. Higher resolution/FPS = more CPU load in this browser tab (capturing + encoding the preview before NVENC) AND more GPU load — if you see stutter, drop to 720p30 first. Can't be changed once LIVE; stop and restart to change.
       </div>
 
       <label style="font-size:12px; opacity:.8; display:block; margin-bottom:4px;">Camera</label>
@@ -1475,13 +1502,25 @@
       </div>
 
       <div id="ls-stream-health" style="display:none; margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,.08);">
-        <label style="font-size:12px; opacity:.8; display:block; margin-bottom:6px;">Stream Health</label>
+        <label style="font-size:12px; opacity:.8; display:block; margin-bottom:6px;">STREAM HEALTH</label>
+        <div style="display:grid; grid-template-columns:auto 1fr; gap:4px 10px; font-size:12.5px; margin-bottom:8px;">
+          <span style="opacity:.7;">YouTube</span><span id="ls-sh-youtube">—</span>
+          <span style="opacity:.7;">RTMPS</span><span id="ls-sh-rtmps">—</span>
+          <span style="opacity:.7;">Encoder</span><span id="ls-sh-encoder-status">—</span>
+          <span style="opacity:.7;">Camera</span><span id="ls-sh-camera">—</span>
+          <span style="opacity:.7;">Audio</span><span id="ls-sh-audio">—</span>
+          <span style="opacity:.7;">Overlay</span><span id="ls-sh-overlay">—</span>
+        </div>
         <div style="display:grid; grid-template-columns:auto 1fr; gap:4px 10px; font-size:12.5px;">
+          <span style="opacity:.7;">Resolution</span><span id="ls-sh-resolution">—</span>
+          <span style="opacity:.7;">FPS</span><span id="ls-sh-fps">—</span>
           <span style="opacity:.7;">Bitrate</span><span id="ls-sh-bitrate">—</span>
           <span style="opacity:.7;">Dropped</span><span id="ls-sh-dropped">—</span>
+          <span style="opacity:.7;">CPU</span><span id="ls-sh-cpu">—</span>
           <span style="opacity:.7;">GPU</span><span id="ls-sh-gpu">—</span>
           <span style="opacity:.7;">Duration</span><span id="ls-sh-duration">—</span>
         </div>
+        <div id="ls-sh-unstable" style="font-size:11.5px; color:#ffb020; margin-top:8px; display:none; font-weight:600;">⚠ Stream Connection Unstable</div>
         <div id="ls-sh-error" style="font-size:11px; color:#ff6b6b; margin-top:6px; display:none;"></div>
       </div>
     </div>
@@ -2318,11 +2357,18 @@ const DEFAULT_BITRATE_KBPS = {
   '720p':  { 30: 3500,  60: 5500 },
   '1080p': { 30: 6000,  60: 12000 },
 };
+// Bitrate + keyframe interval are quality/stability controls, not
+// connection parameters — kept independently configurable here (with
+// sensible defaults) per-request, separate from Stream URL/Key so the
+// architecture supports future presets (1080p60, different bitrates)
+// without new code paths.
 function getSelectedStreamSettings(){
   const resolution = document.getElementById('ls-resolution-select')?.value || '1080p';
   const fps = parseInt(document.getElementById('ls-fps-select')?.value, 10) || 30;
-  const bitrateKbps = DEFAULT_BITRATE_KBPS[resolution][fps];
-  return { resolution, fps, bitrateKbps, ...RESOLUTION_PRESETS[resolution] };
+  const customMbps = parseFloat(document.getElementById('ls-bitrate-input')?.value);
+  const bitrateKbps = Number.isFinite(customMbps) && customMbps > 0 ? Math.round(customMbps * 1000) : DEFAULT_BITRATE_KBPS[resolution][fps];
+  const keyframeIntervalSec = parseInt(document.getElementById('ls-keyframe-input')?.value, 10) || 2;
+  return { resolution, fps, bitrateKbps, keyframeIntervalSec, ...RESOLUTION_PRESETS[resolution] };
 }
 function refreshBitratePreview(){
   const { bitrateKbps } = getSelectedStreamSettings();
@@ -2331,6 +2377,7 @@ function refreshBitratePreview(){
 }
 document.getElementById('ls-resolution-select')?.addEventListener('change', refreshBitratePreview);
 document.getElementById('ls-fps-select')?.addEventListener('change', refreshBitratePreview);
+document.getElementById('ls-bitrate-input')?.addEventListener('input', refreshBitratePreview);
 refreshBitratePreview();
 let liveOutputWindow = null;
 let liveDisplayStream = null;   // pixels of the Live Output window
@@ -2452,18 +2499,76 @@ async function fetchEngineStatus(){
     return await fetch(`${STREAM_ENGINE_URL}/status`, { signal: AbortSignal.timeout(2500) }).then(r => r.json());
   } catch(e) { return null; }
 }
+let lastEngineStatus = null; // cached for the preflight check + Save button prefill
+
 async function refreshEngineHealthDisplay(){
   const status = await fetchEngineStatus();
+  lastEngineStatus = status;
   if(!status){
+    lsSetHealth('ls-h-engine', false, 'Unreachable');
     lsSetHealth('ls-h-encoder', false, 'Stream Engine unreachable');
+    lsSetHealth('ls-h-streamurl', null, 'Unknown');
+    lsSetHealth('ls-h-streamkey', null, 'Unknown');
+    lsSetHealth('ls-h-network', null, 'Unknown');
     lsSetHealth('ls-h-youtube', null, 'Unknown');
     return;
   }
+  lsSetHealth('ls-h-engine', true, 'Running');
   lsSetHealth('ls-h-encoder', status.nvencAvailable, status.nvencAvailable ? 'Ready (NVENC)' : `Not ready — ${status.nvencDetail || 'NVENC unavailable'}`);
-  lsSetHealth('ls-h-youtube', status.streamKeySet, status.streamKeySet ? 'Ready' : 'No stream key set');
+  lsSetHealth('ls-h-streamurl', status.streamUrlSet, status.streamUrlSet ? 'Configured' : 'Not set');
+  lsSetHealth('ls-h-streamkey', status.streamKeySet, status.streamKeySet ? 'Configured' : 'Not set');
+  lsSetHealth('ls-h-network', status.networkOk, status.networkOk ? 'Reachable' : (status.networkDetail || 'Unreachable'));
+  lsSetHealth('ls-h-youtube', status.streamUrlSet && status.streamKeySet, status.streamUrlSet && status.streamKeySet ? 'Ready' : 'Not configured');
+
+  // Prefill the Stream URL field from what's already saved (never done
+  // for the Key — that field is always left blank so the real value
+  // never sits visibly in the DOM longer than a save click needs).
+  const urlInput = document.getElementById('yt-stream-url');
+  if(urlInput && !urlInput.value && status.streamUrl) urlInput.value = status.streamUrl;
 }
 refreshEngineHealthDisplay();
 setInterval(refreshEngineHealthDisplay, 10000);
+
+// 🚦 PRE-FLIGHT CHECK — everything GO LIVE requires, checked up front so
+// a failure is reported as "Cannot Start Stream / Reason: …" instead of
+// discovered halfway through the connect sequence. GO LIVE refuses to
+// proceed while any required item is missing.
+function runPreflightChecks(){
+  const reasons = [];
+  const videoDeviceId = document.getElementById('live-video-device').value;
+  const hasAudioOption = document.getElementById('live-audio-device').options.length > 0;
+  const overlayOk = !!(socket && socket.connected);
+  const status = lastEngineStatus;
+
+  if(!videoDeviceId) reasons.push('No camera selected');
+  if(!hasAudioOption) reasons.push('No microphone detected');
+  if(!overlayOk) reasons.push('Overlay/score connection not established — enter Match ID and Connect first');
+  if(!status) reasons.push('Local Stream Engine not reachable — start it first (stream-engine/README.md)');
+  else {
+    if(!status.nvencAvailable) reasons.push(`NVENC not available — ${status.nvencDetail || 'unknown reason'}`);
+    if(!status.streamUrlSet) reasons.push('YouTube Stream URL not set — paste it above and click "Save to Stream Engine"');
+    if(!status.streamKeySet) reasons.push('YouTube Stream Key not set — paste it above and click "Save to Stream Engine"');
+    if(status.streamUrlSet && !status.networkOk) reasons.push(`Network cannot reach the Stream URL host — ${status.networkDetail || 'unreachable'}`);
+  }
+
+  return {
+    ok: reasons.length === 0,
+    reason: reasons[0] || null,
+    checks: {
+      camera: !!videoDeviceId, microphone: hasAudioOption, overlay: overlayOk,
+      streamEngine: !!status, nvenc: !!(status && status.nvencAvailable),
+      streamUrl: !!(status && status.streamUrlSet), streamKey: !!(status && status.streamKeySet),
+      network: !!(status && status.networkOk),
+    },
+  };
+}
+function showCannotStart(reason){
+  const box = document.getElementById('ls-cannot-start');
+  const reasonEl = document.getElementById('ls-cannot-start-reason');
+  if(!box || !reasonEl) return;
+  if(reason){ reasonEl.textContent = reason; box.style.display = 'block'; }
+  else box.style.display = 'none';
+}
 
 async function populateLiveDevices(){
   try {
@@ -2519,57 +2624,84 @@ function openLiveOutputWindow(){
 document.getElementById('open-live-output-btn').addEventListener('click', openLiveOutputWindow);
 
 document.getElementById('save-stream-key-btn').addEventListener('click', async () => {
+  const streamUrl = document.getElementById('yt-stream-url').value.trim();
   const streamKey = document.getElementById('yt-stream-key').value.trim();
-  if(!streamKey){ toast('Paste your YouTube stream key first'); return; }
+  if(!streamUrl && !streamKey){ toast('Paste your YouTube Stream URL and/or Stream Key first'); return; }
+  if(streamUrl && !/^rtmps?:\/\//i.test(streamUrl)){ toast('Stream URL must start with rtmp:// or rtmps://'); return; }
+
+  const body = {};
+  if(streamUrl) body.streamUrl = streamUrl;
+  if(streamKey) body.streamKey = streamKey;
+
   try {
-    const res = await fetch(`${STREAM_ENGINE_URL}/set-stream-key`, {
+    const res = await fetch(`${STREAM_ENGINE_URL}/set-youtube-config`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ streamKey })
+      body: JSON.stringify(body)
     }).then(r => r.json());
     if(res.success){
-      toast(`✅ Stream key saved to Stream Engine (${res.streamKeyMasked})`);
+      toast(`✅ Saved to Stream Engine${res.streamKeyMasked ? ' (' + res.streamKeyMasked + ')' : ''}`);
       document.getElementById('yt-stream-key').value = ''; // never lingers in the DOM/page memory longer than needed
       refreshEngineHealthDisplay();
     } else {
-      toast('⚠️ Stream Engine rejected the key: ' + (res.error || 'unknown error'));
+      toast('⚠️ Stream Engine rejected it: ' + (res.error || 'unknown error'));
     }
   } catch(e) {
     toast('⚠️ Could not reach the local Stream Engine — is it running? (see stream-engine/README.md)');
   }
 });
 
-// GO LIVE checklist — matches the required sequence exactly. Each step
-// either passes (and moves on) or fails loud with a clear reason; it
-// never silently skips a check.
+// GO LIVE — pre-flight check first (Camera/Mic/Overlay/Stream Engine/
+// NVENC/Stream URL/Stream Key/Network all pass or it refuses to start),
+// then the exact required connect sequence. Each step either passes
+// (and moves on) or fails loud with a clear reason; it never silently
+// skips a check, and the button never starts a stream in an invalid
+// state.
 async function startLive(){
   const matchId = currentMatchId();
   if(!matchId){ toast('Enter a Match ID and Connect first'); return; }
 
-  lsLog('Checking Camera…');
-  const videoDeviceId = document.getElementById('live-video-device').value;
-  if(!videoDeviceId){ lsLog(''); toast('No camera selected'); return; }
+  lsLog('Preparing Stream…');
+  showCannotStart(null);
+  await refreshEngineHealthDisplay(); // make sure the preflight check uses fresh engine state, not a stale 10s-old poll
+  const preflight = runPreflightChecks();
+  if(!preflight.ok){
+    lsLog('');
+    showCannotStart(preflight.reason);
+    toast('⚠️ Cannot Start Stream: ' + preflight.reason);
+    return;
+  }
 
-  lsLog('Checking Encoder…');
-  const engineStatus = await fetchEngineStatus();
-  if(!engineStatus){ lsLog(''); toast('⚠️ Local Stream Engine not reachable — start it first (stream-engine/README.md)'); return; }
-  if(!engineStatus.nvencAvailable){ lsLog(''); toast('⚠️ NVENC not available on this PC: ' + (engineStatus.nvencDetail || 'unknown reason') + ' — refusing to go live on CPU encoding'); return; }
-  if(!engineStatus.streamKeySet){ lsLog(''); toast('⚠️ No YouTube stream key saved — paste it above and click "Save Key to Stream Engine"'); return; }
+  lsLog('Checking Camera…');
+  await new Promise(r => setTimeout(r, 150)); // let the checklist read as a real sequence, not an instant jump to LIVE
+  lsSetHealth('ls-h-camera', true, 'Connected');
+
+  lsLog('Checking Audio…');
+  await new Promise(r => setTimeout(r, 150));
+  lsSetHealth('ls-h-mic', true, 'Connected');
+
+  lsLog('Checking Overlay…');
+  await new Promise(r => setTimeout(r, 150));
+  lsSetHealth('ls-h-overlay', true, 'Connected');
+
+  lsLog('Checking NVENC…');
   lsSetHealth('ls-h-encoder', true, 'Ready (NVENC)');
 
-  lsLog('Checking Camera + Audio + Overlay…');
   streamingDesired = true;
   const cap = await ensureLocalCapture(matchId); // opens Live Output + starts the ONE shared capture (or reuses it if Match Recording already started it)
   if(!cap.ok){
     streamingDesired = false;
     lsLog(''); toast('⚠️ ' + cap.error);
+    showCannotStart(cap.error);
     return;
   }
 
   lsLog('Connecting to YouTube…');
-  const { resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps } = getSelectedStreamSettings();
+  const { resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec } = getSelectedStreamSettings();
+
+  lsLog('Starting RTMPS…');
   const goLiveRes = await fetch(`${STREAM_ENGINE_URL}/go-live`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps })
+    body: JSON.stringify({ resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec })
   }).then(r => r.json()).catch(() => ({ success:false, error:'Stream Engine unreachable' }));
 
   if(!goLiveRes.success){
@@ -2577,19 +2709,38 @@ async function startLive(){
     releaseLocalCaptureIfUnused();
     lsLog(''); toast('⚠️ Could not start the encoder: ' + (goLiveRes.error || 'unknown error'));
     lsSetHealth('ls-h-youtube', false, 'Failed to start');
+    showCannotStart(goLiveRes.error || 'Could not start the encoder');
     return;
   }
 
-  lsLog('Starting Stream…');
   liveActive = true;
   lsSetHealth('ls-h-youtube', true, 'LIVE');
   updateLiveUI(true);
-  lsLog('LIVE');
+  lsLog('● LIVE');
   toast('🔴 Going live on YouTube…');
 
   document.getElementById('ls-stream-health').style.display = 'block';
   liveHealthPollTimer = setInterval(pollStreamHealth, 2000);
   pollStreamHealth();
+}
+
+// ⚠ Unstable-connection detection — sustained bitrate well below target,
+// or dropped frames climbing between polls, surfaces a clear warning
+// without tearing the stream down (ffmpeg/YouTube handle the actual
+// resilience; this is purely an operator-facing signal).
+let lastDroppedFrames = null;
+let lowBitrateStreak = 0;
+function checkStreamStability(health, targetBitrateKbps){
+  const unstableEl = document.getElementById('ls-sh-unstable');
+  if(!unstableEl) return;
+  const bitrate = health.metrics.bitrateKbps;
+  const dropped = health.metrics.droppedFrames;
+  const bitrateLow = bitrate != null && targetBitrateKbps && bitrate < targetBitrateKbps * 0.6;
+  lowBitrateStreak = bitrateLow ? lowBitrateStreak + 1 : 0;
+  const droppedClimbing = dropped != null && lastDroppedFrames != null && dropped > lastDroppedFrames + 5;
+  lastDroppedFrames = dropped;
+  const unstable = lowBitrateStreak >= 3 || droppedClimbing || health.state === 'crashed';
+  unstableEl.style.display = unstable ? 'block' : 'none';
 }
 
 async function pollStreamHealth(){
@@ -2599,18 +2750,29 @@ async function pollStreamHealth(){
     errEl.textContent = '⚠️ Lost contact with the Stream Engine';
     errEl.style.display = 'block';
     lsSetHealth('ls-h-youtube', false, 'Unreachable');
+    document.getElementById('ls-sh-youtube').textContent = '● Unknown';
+    document.getElementById('ls-sh-rtmps').textContent = '● Unknown';
     return;
   }
+  const { resolution, fps, bitrateKbps: targetBitrateKbps } = getSelectedStreamSettings();
+  document.getElementById('ls-sh-resolution').textContent = health.settings ? `${health.settings.width}×${health.settings.height}` : `${RESOLUTION_PRESETS[resolution].width}×${RESOLUTION_PRESETS[resolution].height}`;
+  document.getElementById('ls-sh-fps').textContent = health.settings ? health.settings.fps : fps;
   document.getElementById('ls-sh-bitrate').textContent = health.metrics.bitrateKbps ? `${health.metrics.bitrateKbps} kbps` : '—';
   document.getElementById('ls-sh-dropped').textContent = health.metrics.droppedFrames ?? '—';
+  document.getElementById('ls-sh-cpu').textContent = health.cpuPercent != null ? `${health.cpuPercent}%` : '—';
   document.getElementById('ls-sh-gpu').textContent = health.gpu ? `${health.gpu.gpuPercent}%` : '—';
   document.getElementById('ls-sh-duration').textContent = health.durationSec != null ? `${Math.floor(health.durationSec/60)}:${String(health.durationSec%60).padStart(2,'0')}` : '—';
+
+  checkStreamStability(health, health.settings ? health.settings.bitrateKbps : targetBitrateKbps);
 
   if(health.state === 'crashed'){
     errEl.textContent = '❌ Encoder crashed: ' + (health.lastError || 'unknown error') + (health.restartCount ? ` (auto-restarted ${health.restartCount}x)` : '');
     errEl.style.display = 'block';
     lsSetHealth('ls-h-encoder', false, 'Crashed');
     lsSetHealth('ls-h-youtube', false, 'Disconnected');
+    document.getElementById('ls-sh-youtube').textContent = '● Disconnected';
+    document.getElementById('ls-sh-rtmps').textContent = '● Disconnected';
+    document.getElementById('ls-sh-encoder-status').textContent = '● Crashed';
     if(!health.desiredLive && liveActive){
       // Engine gave up retrying — reflect that honestly in the UI
       // instead of pretending we're still live.
@@ -2622,20 +2784,39 @@ async function pollStreamHealth(){
     errEl.style.display = 'none';
     lsSetHealth('ls-h-encoder', true, 'Running');
     lsSetHealth('ls-h-youtube', true, 'LIVE');
+    document.getElementById('ls-sh-youtube').textContent = '● LIVE';
+    document.getElementById('ls-sh-rtmps').textContent = '● Connected';
+    document.getElementById('ls-sh-encoder-status').textContent = '● Running';
   }
+  document.getElementById('ls-sh-camera').textContent = localCaptureActive ? '● Connected' : '● Disconnected';
+  document.getElementById('ls-sh-audio').textContent = localCaptureActive ? '● Connected' : '● Disconnected';
+  document.getElementById('ls-sh-overlay').textContent = (socket && socket.connected) ? '● Connected' : '● Disconnected';
 }
 
 async function stopLive(){
+  if(liveActive && !confirm('Stop the live stream?')) return;
+
+  lsLog('Stopping Stream…');
+  await new Promise(r => setTimeout(r, 150));
+  lsLog('Closing RTMPS…');
+
   liveActive = false;
   streamingDesired = false;
   updateLiveUI(false);
-  lsLog('');
   if(liveHealthPollTimer){ clearInterval(liveHealthPollTimer); liveHealthPollTimer = null; }
-  releaseLocalCaptureIfUnused(); // stops the shared capture UNLESS Match Recording still needs it
 
+  lsLog('Stopping Encoder…');
   await fetch(`${STREAM_ENGINE_URL}/stop`, { method: 'POST' }).catch(() => {});
+
+  lsLog('Cleaning Processes…');
+  releaseLocalCaptureIfUnused(); // stops the shared capture UNLESS Match Recording still needs it — never leaves an orphan capture/process behind
+
   lsSetHealth('ls-h-youtube', null, 'Ready');
   lsSetHealth('ls-h-encoder', null, 'Ready');
+  document.getElementById('ls-stream-health').style.display = 'none';
+  document.getElementById('ls-sh-unstable').style.display = 'none';
+  lastDroppedFrames = null; lowBitrateStreak = 0;
+  lsLog('Stream Stopped');
   toast('Live stream ended');
 }
 
@@ -2643,6 +2824,8 @@ function updateLiveUI(active){
   document.getElementById('start-live-btn').style.display = active ? 'none' : 'block';
   document.getElementById('stop-live-btn').style.display = active ? 'block' : 'none';
   document.getElementById('ls-resolution-select').disabled = active;
+  document.getElementById('ls-bitrate-input').disabled = active;
+  document.getElementById('ls-keyframe-input').disabled = active;
   document.getElementById('ls-fps-select').disabled = active;
 }
 

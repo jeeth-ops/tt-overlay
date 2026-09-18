@@ -60,9 +60,9 @@ back to CPU (`libx264`) encoding.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/status` | ffmpeg/NVENC/stream-key/encoder/clip-engine readiness |
-| POST | `/set-stream-key` | `{streamKey}` — stored locally only, never echoed back |
-| POST | `/go-live` | `{resolution, fps, bitrateKbps}` — starts the NVENC→RTMPS push |
+| GET | `/status` | ffmpeg/NVENC/network/stream-url/stream-key/encoder/clip-engine readiness |
+| POST | `/set-youtube-config` | `{streamUrl, streamKey}` — either field optional (updates just that one); stored locally only. `streamUrl` must be `rtmp(s)://…` — not hardcoded to any one platform, and never echoed back is the key; the URL itself is echoed back to confirm what was saved |
+| POST | `/go-live` | `{resolution, fps, bitrateKbps, keyframeIntervalSec}` — starts the NVENC→RTMPS push to the configured Stream URL + Stream Key |
 | POST | `/ingest?matchId=&index=` | raw webm bytes from the panel's MediaRecorder — fed to the local clip buffer AND (if live) the encoder |
 | POST | `/stop` | gracefully ends the YouTube stream (encoder only) |
 | GET | `/health` | live bitrate/fps/dropped-frames/duration/state + clip engine state |

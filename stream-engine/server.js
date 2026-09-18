@@ -33,9 +33,12 @@
 const express = require('express');
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const http = require('http');
 const https = require('https');
+const tls = require('tls');
+const { URL } = require('url');
 const localBuffer = require('./localBuffer');
 
 const PORT = process.env.STREAM_ENGINE_PORT || 5006;
@@ -66,16 +69,40 @@ function saveConfig(cfg) {
     try { fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2)); } catch (e) { console.log('config save error:', e.message); }
 }
 
-// Stream key lives ONLY here: in-memory + this local gitignored file.
-// It is never returned in full by any endpoint (see /status below) and
-// never passes through server.js/Render/Mongo/Socket.IO/localStorage —
-// the panel POSTs it straight to this localhost process.
+// Stream key + stream URL live ONLY here: in-memory + this local
+// gitignored file. The key is never returned in full by any endpoint
+// (see /status below) and never passes through
+// server.js/Render/Mongo/Socket.IO/localStorage — the panel POSTs it
+// straight to this localhost process.
+//
+// The stream URL is NOT hardcoded to YouTube's endpoint — the operator
+// enters it (and the key) in the panel, exactly as YouTube Studio (or
+// any other RTMP(S)-based platform) shows them, and it's used verbatim.
+// It's just a server address (no credentials embedded in the normal
+// case), so unlike the key it's safe to echo back in full via /status.
 let streamKey = loadConfig().streamKey || null;
+let streamUrl = loadConfig().streamUrl || null;
 
 function maskKey(key) {
     if (!key) return null;
     if (key.length <= 4) return '••••';
     return '••••••••' + key.slice(-4);
+}
+
+// Accepts only rtmp(s):// URLs — this is a live-video push destination,
+// not a generic URL field. Doesn't assume any specific host: the
+// operator can point this at YouTube, or any other RTMP(S) ingest.
+function isValidRtmpUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    return /^rtmps?:\/\/[^\s]+$/i.test(url.trim());
+}
+
+// Joins the operator-provided "Stream URL" + "Stream Key" exactly the
+// way YouTube/Twitch/Facebook's own two-field RTMP(S) forms do: server
+// URL (no trailing slash) + '/' + key. The stream URL is used exactly
+// as entered — no fixed YouTube endpoint is assumed here.
+function buildDestinationUrl(url, key) {
+    return `${url.replace(/\/+$/, '')}/${key}`;
 }
 
 // ----------------------------------------------------------------
@@ -106,6 +133,67 @@ function checkNvenc() {
 function ffmpegAvailable() {
     const res = spawnSync(FFMPEG_PATH, ['-version'], { encoding: 'utf8', timeout: 5000 });
     return !res.error;
+}
+
+// ----------------------------------------------------------------
+// 🌐 NETWORK REACHABILITY — a pre-flight check that this PC can
+// actually open a TLS connection to the stream destination's host
+// before GO LIVE commits to it (catches "no internet", DNS failures,
+// and a firewalled outbound 443 before ffmpeg wastes time retrying).
+// Cached briefly like the NVENC check, keyed by host so switching
+// Stream URL re-checks the new host.
+// ----------------------------------------------------------------
+let networkCheckCache = null; // { host, available, checkedAt, detail }
+function checkNetwork(url) {
+    return new Promise((resolve) => {
+        let host;
+        try { host = new URL(url).hostname; } catch (e) {
+            return resolve({ available: false, detail: 'Invalid Stream URL' });
+        }
+        if (networkCheckCache && networkCheckCache.host === host && Date.now() - networkCheckCache.checkedAt < 15000) {
+            return resolve(networkCheckCache);
+        }
+        const socket = tls.connect({ host, port: 443, servername: host, timeout: 4000 }, () => {
+            socket.destroy();
+            const result = { host, available: true, checkedAt: Date.now(), detail: `Reached ${host}:443` };
+            networkCheckCache = result;
+            resolve(result);
+        });
+        const fail = (detail) => {
+            socket.destroy();
+            const result = { host, available: false, checkedAt: Date.now(), detail };
+            networkCheckCache = result;
+            resolve(result);
+        };
+        socket.on('timeout', () => fail(`Timed out reaching ${host}:443`));
+        socket.on('error', (err) => fail(`Could not reach ${host}:443 — ${err.message}`));
+    });
+}
+
+// ----------------------------------------------------------------
+// 🖥️ CPU UTILIZATION — cross-platform (works on Windows, unlike
+// os.loadavg() which is always [0,0,0] there) system CPU load, sampled
+// as a delta between successive /health polls. Purely informational,
+// same spirit as readGpuUtilization() below: confirms NVENC is doing
+// the work, not the CPU.
+// ----------------------------------------------------------------
+let lastCpuSample = null; // { idle, total }
+function readCpuUtilization() {
+    const cpus = os.cpus();
+    let idle = 0, total = 0;
+    for (const cpu of cpus) {
+        for (const t of Object.values(cpu.times)) total += t;
+        idle += cpu.times.idle;
+    }
+    if (!lastCpuSample) {
+        lastCpuSample = { idle, total };
+        return null; // no delta yet on the very first sample
+    }
+    const idleDelta = idle - lastCpuSample.idle;
+    const totalDelta = total - lastCpuSample.total;
+    lastCpuSample = { idle, total };
+    if (totalDelta <= 0) return null;
+    return Math.round((1 - idleDelta / totalDelta) * 100);
 }
 
 // ----------------------------------------------------------------
@@ -171,20 +259,23 @@ const DEFAULT_BITRATE_KBPS = {
     '1080p': { 30: 6000,  60: 12000 }, // 1080p30 default kept close to the original ~10Mbps spec; adjustable
 };
 
-function resolveEncodeSettings({ resolution, fps, bitrateKbps }) {
+function resolveEncodeSettings({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     const resKey = RESOLUTIONS[resolution] ? resolution : '1080p';
     const fpsNum = [30, 60].includes(Number(fps)) ? Number(fps) : 30;
     const { width, height } = RESOLUTIONS[resKey];
     const kbps = Number(bitrateKbps) > 0 ? Number(bitrateKbps) : DEFAULT_BITRATE_KBPS[resKey][fpsNum];
+    // Configurable so future presets (1080p60, different bitrate/GOP)
+    // don't need new code paths — just different values sent here.
+    const gopSec = Number(keyframeIntervalSec) > 0 ? Number(keyframeIntervalSec) : 2;
     // 'resolution' (not 'resolutionLabel') on purpose — engine.settings is
     // fed straight back into startEncoder() on an auto-restart (see the
     // ffmpeg exit handler), so this needs to round-trip through
     // resolveEncodeSettings a second time using the SAME key it reads.
-    return { width, height, fps: fpsNum, bitrateKbps: kbps, resolution: resKey };
+    return { width, height, fps: fpsNum, bitrateKbps: kbps, keyframeIntervalSec: gopSec, resolution: resKey };
 }
 
-function buildFfmpegArgs({ width, height, fps, bitrateKbps, streamKey }) {
-    const gop = fps * 2; // 2-second keyframe interval, matches the selected fps exactly (30->60, 60->120)
+function buildFfmpegArgs({ width, height, fps, bitrateKbps, keyframeIntervalSec, destinationUrl }) {
+    const gop = Math.round(fps * keyframeIntervalSec);
     return [
         '-hide_banner', '-loglevel', 'warning',
         '-i', 'pipe:0',
@@ -205,15 +296,17 @@ function buildFfmpegArgs({ width, height, fps, bitrateKbps, streamKey }) {
         '-c:a', 'aac', '-b:a', '160k', '-ar', '44100',
         '-f', 'flv',
         '-progress', 'pipe:2', '-nostats',
-        `rtmps://a.rtmps.youtube.com/live2/${streamKey}`,
+        destinationUrl,
     ];
 }
 
-function startEncoder({ resolution, fps, bitrateKbps }) {
+function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     if (engine.state === 'live' || engine.state === 'starting') {
         return { ok: false, error: 'Already live — stop the current stream first' };
     }
-    if (!streamKey) return { ok: false, error: 'No YouTube stream key set' };
+    if (!streamUrl) return { ok: false, error: 'No Stream URL set' };
+    if (!isValidRtmpUrl(streamUrl)) return { ok: false, error: 'Stream URL must start with rtmp:// or rtmps://' };
+    if (!streamKey) return { ok: false, error: 'No Stream Key set' };
     const nvenc = checkNvenc();
     if (!nvenc.available) {
         return { ok: false, error: `NVENC not available (${nvenc.detail}) — refusing to fall back to CPU encoding` };
@@ -221,13 +314,17 @@ function startEncoder({ resolution, fps, bitrateKbps }) {
 
     resetMetrics();
     encoderBackpressured = false;
-    const resolved = resolveEncodeSettings({ resolution, fps, bitrateKbps });
+    const resolved = resolveEncodeSettings({ resolution, fps, bitrateKbps, keyframeIntervalSec });
     engine.settings = resolved;
     engine.state = 'starting';
     engine.desiredLive = true;
     engine.lastError = null;
 
-    const args = buildFfmpegArgs({ ...resolved, streamKey });
+    // The destination (Stream URL + Stream Key) is built fresh from
+    // current config, never logged, never included in engine.settings
+    // (which /health exposes) — only passed straight to ffmpeg's argv.
+    const destinationUrl = buildDestinationUrl(streamUrl, streamKey);
+    const args = buildFfmpegArgs({ ...resolved, destinationUrl });
     const proc = spawn(FFMPEG_PATH, args, { stdio: ['pipe', 'ignore', 'pipe'] });
     engine.proc = proc;
     engine.startedAt = Date.now();
@@ -541,16 +638,26 @@ app.use((req, res, next) => {
 });
 app.use(express.json());
 
-app.get('/status', (req, res) => {
+app.get('/status', async (req, res) => {
     const nvenc = checkNvenc();
+    // Only check network reachability once a Stream URL is actually
+    // configured — there's nothing to reach otherwise, and this keeps
+    // /status cheap (and side-effect-free network-wise) before setup.
+    const network = streamUrl && isValidRtmpUrl(streamUrl) ? await checkNetwork(streamUrl) : { available: false, detail: 'No Stream URL set' };
     res.json({
         success: true,
         ffmpegAvailable: ffmpegAvailable(),
         ffmpegPath: FFMPEG_PATH,
         nvencAvailable: nvenc.available,
         nvencDetail: nvenc.detail,
+        // Stream URL is not a secret (no credentials embedded in the
+        // normal case) — safe to echo back in full, unlike the key.
+        streamUrl: streamUrl || null,
+        streamUrlSet: !!streamUrl && isValidRtmpUrl(streamUrl),
         streamKeySet: !!streamKey,
         streamKeyMasked: maskKey(streamKey),
+        networkOk: network.available,
+        networkDetail: network.detail,
         encoderState: engine.state,
         // Part 3 — clip engine / local buffer readiness, for the panel's
         // CLIP ENGINE status card.
@@ -623,18 +730,38 @@ app.post('/clip', async (req, res) => {
     res.json(result);
 });
 
-app.post('/set-stream-key', (req, res) => {
-    const key = (req.body && req.body.streamKey || '').trim();
-    if (!key) return res.status(400).json({ success: false, error: 'streamKey required' });
-    streamKey = key;
-    saveConfig({ ...loadConfig(), streamKey: key });
-    // Never echo the real key back — only a masked confirmation.
-    res.json({ success: true, streamKeyMasked: maskKey(streamKey) });
+// Accepts BOTH the Stream URL and Stream Key together — the operator
+// configures whichever platform's RTMP(S) endpoint they were given
+// (YouTube Studio → Go Live, or any other), never a fixed hardcoded
+// YouTube URL. Either field can be updated independently (omit the
+// other to leave it unchanged).
+app.post('/set-youtube-config', (req, res) => {
+    const body = req.body || {};
+    const newUrl = typeof body.streamUrl === 'string' ? body.streamUrl.trim() : undefined;
+    const newKey = typeof body.streamKey === 'string' ? body.streamKey.trim() : undefined;
+
+    if (newUrl !== undefined) {
+        if (!isValidRtmpUrl(newUrl)) return res.status(400).json({ success: false, error: 'Stream URL must start with rtmp:// or rtmps://' });
+        streamUrl = newUrl;
+    }
+    if (newKey !== undefined) {
+        if (!newKey) return res.status(400).json({ success: false, error: 'Stream Key cannot be empty' });
+        streamKey = newKey;
+    }
+    if (newUrl === undefined && newKey === undefined) {
+        return res.status(400).json({ success: false, error: 'streamUrl and/or streamKey required' });
+    }
+
+    saveConfig({ ...loadConfig(), streamUrl, streamKey });
+    // Never echo the real key back — only a masked confirmation. The
+    // URL isn't a secret, so it's echoed back in full for the panel to
+    // confirm what was saved.
+    res.json({ success: true, streamUrl, streamKeyMasked: maskKey(streamKey) });
 });
 
 app.post('/go-live', (req, res) => {
-    const { resolution, fps, bitrateKbps } = req.body || {};
-    const result = startEncoder({ resolution, fps, bitrateKbps });
+    const { resolution, fps, bitrateKbps, keyframeIntervalSec } = req.body || {};
+    const result = startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec });
     if (!result.ok) return res.status(400).json({ success: false, error: result.error });
     res.json({ success: true, state: engine.state });
 });
@@ -692,6 +819,7 @@ app.get('/health', (req, res) => {
         settings: engine.settings,
         metrics: engine.metrics,
         gpu: readGpuUtilization(),
+        cpuPercent: readCpuUtilization(),
         durationSec: engine.startedAt && (engine.state === 'live' || engine.state === 'stopping')
             ? Math.round((Date.now() - engine.startedAt) / 1000)
             : (engine.metrics.outTimeSec || 0),
