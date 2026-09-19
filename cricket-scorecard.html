@@ -1154,6 +1154,17 @@
     color:var(--text); font-size:11.5px; font-weight:700; cursor:pointer;
   }
   .em-toolbar button:active{ transform:scale(.97); }
+  .em-search-row{ margin-bottom:8px; }
+  .em-search-row input{
+    width:100%; padding:8px 10px; border-radius:var(--radius-sm); border:1px solid var(--border);
+    background:var(--panel-2); color:var(--text); font-size:12.5px; box-sizing:border-box;
+  }
+  .em-filter-row{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+  .em-filter-chip{
+    padding:5px 11px; border-radius:99px; border:1px solid var(--border); background:transparent;
+    color:var(--text-dim); font-size:11px; font-weight:700; cursor:pointer;
+  }
+  .em-filter-chip.active{ background:var(--accent); border-color:var(--accent); color:var(--accent-contrast,#fff); }
   .em-history-row{ font-size:11.5px; padding:7px 0; border-bottom:1px solid var(--border-soft); color:var(--text-dim); }
   .em-history-row:last-child{ border-bottom:none; }
   /* ---- Merge Players confirmation screen ---- */
@@ -5001,12 +5012,36 @@ async function openOwnerPanel(){
       <button id="em-undo-btn">↩️ Undo last change</button>
       <button id="em-history-btn">🕓 Recent corrections</button>
     </div>
+    <div class="em-search-row">
+      <input type="text" id="em-search" placeholder="Find ball (17.4), player or bowler name…" autocomplete="off">
+    </div>
+    <div class="em-filter-row" id="em-filters">
+      <button type="button" class="em-filter-chip active" data-filter="all">All</button>
+      <button type="button" class="em-filter-chip" data-filter="wicket">Wickets</button>
+      <button type="button" class="em-filter-chip" data-filter="boundary">Boundaries</button>
+      <button type="button" class="em-filter-chip" data-filter="extra">Extras</button>
+      <button type="button" class="em-filter-chip" data-filter="clip">Has Clip</button>
+    </div>
     <div id="em-body" class="em-list"><div class="em-empty">Loading deliveries…</div></div>`;
   document.getElementById('em-correct-bowler-btn').onclick = () => openCorrectBowlerPanel(matchId);
   document.getElementById('em-correct-batsman-btn').onclick = () => openCorrectBatsmanPanel(matchId);
   document.getElementById('em-merge-players-btn').onclick = () => openMergePlayersPanel(matchId);
   document.getElementById('em-undo-btn').onclick = () => undoLastCorrection(matchId);
   document.getElementById('em-history-btn').onclick = () => showHistory(matchId);
+  // Search/filter toolbar — wired once here (this whole block's HTML is
+  // freshly (re)injected every time openOwnerPanel() runs), never inside
+  // loadDeliveryList()/renderDeliveryList(), which can run many times per
+  // panel-open (every keystroke, every filter click, every return from a
+  // sub-panel) and would otherwise stack up duplicate listeners on these
+  // same two elements.
+  document.getElementById('em-search').addEventListener('input', () => renderDeliveryList());
+  document.querySelectorAll('#em-filters .em-filter-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      deliveryListFilter = chip.dataset.filter;
+      document.querySelectorAll('#em-filters .em-filter-chip').forEach(c => c.classList.toggle('active', c === chip));
+      renderDeliveryList();
+    });
+  });
   await loadDeliveryList(matchId);
 }
 
@@ -5279,8 +5314,8 @@ function renderCorrectBowlerForm(matchId, balls, roster, prefill){
         <div class="em-sub" style="margin-top:8px;">Existing clips on these balls stay attached and will now show under ${escapeHtml(correctBowler)}. Tournament statistics and the leaderboard will update automatically.</div>`,
         async () => {
           const saved = await adminApi(`/cricket/match/${encodeURIComponent(matchId)}/correct-bowler`, { method:'PUT', body: JSON.stringify(input) });
-          emToast(`Bowler corrected — ${saved.affectedCount} ${saved.affectedCount===1?'delivery':'deliveries'} moved to ${correctBowler}`);
           closeEditModal();
+          setTimeout(() => openBulkCorrectionReport('bowler', saved), 50);
           setTimeout(() => { if(isHistoryMode()) loadMatchSnapshot(getMatchId()); }, 300);
         }
       );
@@ -5423,8 +5458,8 @@ function renderCorrectBatsmanForm(matchId, balls, roster, prefill){
         <div class="em-sub" style="margin-top:8px;">Existing clips on these balls stay attached and will now show under ${escapeHtml(correctBatsman)}. Tournament statistics and the leaderboard will update automatically.</div>`,
         async () => {
           const saved = await adminApi(`/cricket/match/${encodeURIComponent(matchId)}/correct-batsman`, { method:'PUT', body: JSON.stringify(input) });
-          emToast(`Batsman corrected — ${saved.affectedCount} ${saved.affectedCount===1?'delivery':'deliveries'} moved to ${correctBatsman}`);
           closeEditModal();
+          setTimeout(() => openBulkCorrectionReport('batsman', saved), 50);
           setTimeout(() => { if(isHistoryMode()) loadMatchSnapshot(getMatchId()); }, 300);
         }
       );
@@ -5436,42 +5471,104 @@ function renderCorrectBatsmanForm(matchId, balls, roster, prefill){
   };
 }
 
+// Cached state for the currently-open delivery list — lets Find/filter
+// re-render instantly from what's already loaded instead of re-fetching on
+// every keystroke. Reset each time loadDeliveryList() runs for a (possibly
+// different) match.
+let deliveryListCache = null; // { matchId, balls, roster, clipKeys: Set<"innings.over.ballInOver"> }
+let deliveryListFilter = 'all';
+
 async function loadDeliveryList(matchId){
   const body = document.getElementById('em-body');
+  deliveryListCache = null;
   try{
-    const data = await adminApi(`/cricket/match/${encodeURIComponent(matchId)}/balls`);
+    // Balls + clips fetched together, once — clips only for the "Has Clip"
+    // filter and the row's own ✓/attach indicator; a slow/missing clips
+    // fetch never blocks the ball list itself from loading.
+    const [data, clipsData] = await Promise.all([
+      adminApi(`/cricket/match/${encodeURIComponent(matchId)}/balls`),
+      adminApi(`/clips/match/${encodeURIComponent(matchId)}`).catch(() => ({ clips: [] }))
+    ]);
     if(!data.balls || !data.balls.length){
       body.innerHTML = '<div class="em-empty">No ball-by-ball log found for this match yet.</div>';
       return;
     }
-    let currentInnings = null;
-    body.innerHTML = data.balls.map(b => {
-      const overLabel = `${b.over}.${b.ballInOver}`;
-      const header = b.innings !== currentInnings ? (currentInnings = b.innings, `<div class="em-innings-h">Innings ${b.innings}</div>`) : '';
-      const wkt = b.dismissal ? ` <span class="em-wkt">(${escapeHtml(b.dismissal.type || 'Out')})</span>` : '';
-      // Owner can attach a clip to ANY ball — not just boundaries/wickets —
-      // since it's their call which deliveries are worth a highlight.
-      const clipBtn = `<button class="em-edit-btn" data-clip="${escapeHtml(b.ballId)}">🎬 Clip</button>`;
-      return `${header}<div class="em-ball-row">
-        <span><b>${overLabel}</b> &nbsp;${escapeHtml(b.bowler||'—')} to ${escapeHtml(b.striker||'—')} — ${escapeHtml(ballLabel(b))}${wkt}</span>
-        <button class="em-edit-btn" data-ball="${escapeHtml(b.ballId)}">Edit</button>${clipBtn}
-      </div>`;
-    }).join('');
-    body.querySelectorAll('[data-ball]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const ball = data.balls.find(b => b.ballId === btn.dataset.ball);
-        openDeliveryEditForm(matchId, ball, data.roster);
-      });
-    });
-    body.querySelectorAll('[data-clip]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const ball = data.balls.find(b => b.ballId === btn.dataset.clip);
-        openAttachClipForm(matchId, ball);
-      });
-    });
+    const clipKeys = new Set((clipsData.clips || []).map(c => `${c.innings || 1}.${c.over}.${c.ballInOver}`));
+    deliveryListCache = { matchId, balls: data.balls, roster: data.roster, clipKeys };
+    deliveryListFilter = 'all';
+    document.getElementById('em-search').value = '';
+    document.querySelectorAll('#em-filters .em-filter-chip').forEach(c => c.classList.toggle('active', c.dataset.filter === 'all'));
+    renderDeliveryList();
   }catch(err){
     body.innerHTML = `<div class="em-empty">${escapeHtml(err.message || 'Could not load deliveries')}</div>`;
   }
+}
+
+// A delivery matches the "Wickets"/"Boundaries"/"Extras" quick filters —
+// same event categories the commentary/highlights already use elsewhere in
+// this file, just applied here to the owner's correction list.
+function deliveryMatchesQuickFilter(b, filter){
+  if(filter === 'all') return true;
+  if(filter === 'wicket') return !!b.dismissal;
+  if(filter === 'boundary') return isBoundaryDelivery(b) && !b.dismissal;
+  if(filter === 'extra') return b.kind === 'Wd' || b.kind === 'Nb' || b.kind === 'B' || b.kind === 'LB';
+  return true;
+}
+// Re-renders #em-body from the already-loaded deliveryListCache, applying
+// the current search text + quick filter — never re-fetches. Called on
+// every keystroke/filter click, and once right after loadDeliveryList().
+function renderDeliveryList(){
+  const body = document.getElementById('em-body');
+  if(!deliveryListCache) return;
+  const { matchId, balls, roster, clipKeys } = deliveryListCache;
+  const q = (document.getElementById('em-search').value || '').trim().toLowerCase();
+  const matchesSearch = (b) => {
+    if(!q) return true;
+    const overText = `${b.over}.${b.ballInOver}`;
+    return overText.includes(q)
+      || (b.striker || '').toLowerCase().includes(q)
+      || (b.nonStriker || '').toLowerCase().includes(q)
+      || (b.bowler || '').toLowerCase().includes(q)
+      || (b.dismissal && b.dismissal.fielder && b.dismissal.fielder.toLowerCase().includes(q));
+  };
+  const filtered = balls.filter(b => {
+    const key = `${b.innings || 1}.${b.over}.${b.ballInOver}`;
+    if(deliveryListFilter === 'clip' && !clipKeys.has(key)) return false;
+    if(deliveryListFilter !== 'clip' && deliveryListFilter !== 'all' && !deliveryMatchesQuickFilter(b, deliveryListFilter)) return false;
+    return matchesSearch(b);
+  });
+  if(!filtered.length){
+    body.innerHTML = `<div class="em-empty">No deliveries match "${escapeHtml(q)}"${deliveryListFilter !== 'all' ? ` in ${escapeHtml(deliveryListFilter)}` : ''}.</div>`;
+    return;
+  }
+  let currentInnings = null;
+  body.innerHTML = filtered.map(b => {
+    const overLabel = `${b.over}.${b.ballInOver}`;
+    const header = b.innings !== currentInnings ? (currentInnings = b.innings, `<div class="em-innings-h">Innings ${b.innings}</div>`) : '';
+    const wkt = b.dismissal ? ` <span class="em-wkt">(${escapeHtml(b.dismissal.type || 'Out')})</span>` : '';
+    const hasClip = clipKeys.has(`${b.innings || 1}.${b.over}.${b.ballInOver}`);
+    // Owner can attach a clip to ANY ball — not just boundaries/wickets —
+    // since it's their call which deliveries are worth a highlight. A
+    // ball that already has one shows a checkmark instead of the plain
+    // camera icon, so "Has Clip" results are recognizable at a glance.
+    const clipBtn = `<button class="em-edit-btn" data-clip="${escapeHtml(b.ballId)}">${hasClip ? '🎬✓ Clip' : '🎬 Clip'}</button>`;
+    return `${header}<div class="em-ball-row">
+      <span><b>${overLabel}</b> &nbsp;${escapeHtml(b.bowler||'—')} to ${escapeHtml(b.striker||'—')} — ${escapeHtml(ballLabel(b))}${wkt}</span>
+      <button class="em-edit-btn" data-ball="${escapeHtml(b.ballId)}">Edit</button>${clipBtn}
+    </div>`;
+  }).join('');
+  body.querySelectorAll('[data-ball]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const ball = balls.find(b => b.ballId === btn.dataset.ball);
+      openDeliveryEditForm(matchId, ball, roster);
+    });
+  });
+  body.querySelectorAll('[data-clip]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const ball = balls.find(b => b.ballId === btn.dataset.clip);
+      openAttachClipForm(matchId, ball);
+    });
+  });
 }
 
 function openDeliveryEditForm(matchId, ball, roster){
@@ -5689,6 +5786,55 @@ function openCorrectionReport(saved, onDone){
     <div class="em-sub" style="margin-top:10px;">RECALCULATION</div>
     ${systemHtml}
   `, onDone);
+}
+
+// Same "✓ ... Applied" structured-report treatment as openCorrectionReport()
+// above, for the two BULK corrections (whole-over bowler reassignment,
+// multi-delivery batsman reassignment) — these used to end in a plain
+// (if specific) toast; this shows the real before/after figures for both
+// players involved, built from the same before/after cards the server
+// already returned, exactly like the single-ball report.
+function openBulkCorrectionReport(kind, saved){
+  const isBowler = kind === 'bowler';
+  const wrongName = isBowler ? saved.wrongBowler : saved.wrongBatsman;
+  const correctName = isBowler ? saved.correctBowler : saved.correctBatsman;
+  const innings = saved.innings;
+  const findRow = (cards, name) => {
+    const lists = isBowler ? cards.bowlingCard : cards.battingCard;
+    for(const team of ['A','B']){
+      const row = ((lists && lists[team]) || []).find(r => r.name === name && r.inningsNo === innings);
+      if(row) return row;
+    }
+    return null;
+  };
+  const figureText = (row) => {
+    if(!row) return isBowler ? '0.0-0-0-0' : '0 (0)';
+    return isBowler ? `${row.overs}.${row.balls}-${row.runs}-${row.wickets}` : `${row.runs} (${row.balls})`;
+  };
+  const rows = [
+    { label: isBowler ? 'Bowler credited' : 'Batsman credited', from: wrongName, to: correctName },
+    { label: `${wrongName} — figures`, from: figureText(findRow(saved.before.cards, wrongName)), to: figureText(findRow(saved.after.cards, wrongName)) },
+    { label: `${correctName} — figures`, from: figureText(findRow(saved.before.cards, correctName)), to: figureText(findRow(saved.after.cards, correctName)) }
+  ];
+  const bA = saved.before.cards.scoreA, aA = saved.after.cards.scoreA, bB = saved.before.cards.scoreB, aB = saved.after.cards.scoreB;
+  const scoreChanged = bA.runs !== aA.runs || bA.wickets !== aA.wickets || bB.runs !== aB.runs || bB.wickets !== aB.wickets;
+  const rowsHtml = rows.map(d => `<div class="em-diff-row"><span>${escapeHtml(d.label)}</span><span>${escapeHtml(String(d.from))}<span class="em-diff-arrow">→</span><b>${escapeHtml(String(d.to))}</b></span></div>`).join('');
+  const systemRows = [
+    { label: 'Deliveries moved', value: `${saved.affectedCount} ${saved.affectedCount===1?'delivery':'deliveries'}` },
+    ...(isBowler && saved.wicketsMoved ? [{ label: 'Wickets moved', value: `${saved.wicketsMoved} — now credited to ${correctName}` }] : []),
+    { label: 'Team score', value: scoreChanged ? '⚠️ Changed — please review' : 'No change' },
+    { label: 'Clip metadata', value: `Synced — now shows under ${correctName}` },
+    { label: 'R2 / Google Drive files', value: 'Preserved — not re-cut or re-uploaded' },
+    { label: 'Tournament leaderboard', value: 'Recalculated' }
+  ];
+  const systemHtml = systemRows.map(r => `<div class="em-diff-row"><span>${escapeHtml(r.label)}</span><span>${escapeHtml(r.value)}</span></div>`).join('');
+  openReportModal(`
+    <div class="em-title">✓ ${isBowler ? 'Bowler' : 'Batsman'} Correction Applied</div>
+    <div class="em-sub">Innings ${escapeHtml(String(innings))} — canonical ball-by-ball data saved, complete match recalculated.</div>
+    ${rowsHtml}
+    <div class="em-sub" style="margin-top:10px;">RECALCULATION</div>
+    ${systemHtml}
+  `);
 }
 
 function offerResultUpdate(matchId, suggestedResult, label){
