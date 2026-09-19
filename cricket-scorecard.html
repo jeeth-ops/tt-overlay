@@ -989,7 +989,8 @@
   .cm2-badge.bb-six{ background:var(--six); color:#fff; border-color:transparent; }
   .cm2-badge.bb-wicket{ background:var(--wicket); color:#fff; border-color:transparent; }
   .cm2-badge.bb-extra{ background:var(--extra-soft); color:var(--extra); }
-  .cm2-text{ flex:1; min-width:0; font-size:12.5px; line-height:1.4; }
+  .cm2-body{ flex:1; min-width:0; display:flex; flex-direction:column; gap:5px; }
+  .cm2-text{ font-size:12.5px; line-height:1.4; }
   .cm2-row.bb-four .cm2-text, .cm2-row.bb-six .cm2-text, .cm2-row.bb-wicket .cm2-text{ font-weight:700; }
   .cm2-clip-hint{
     flex:none; width:26px; height:26px; border-radius:99px; background:var(--accent-soft); color:var(--accent);
@@ -999,6 +1000,20 @@
   .cm2-row-clip{ cursor:pointer; border-radius:var(--radius-sm); margin:0 -8px; padding:7px 8px; transition:background .12s ease; }
   .cm2-row-clip:hover{ background:var(--panel-2); }
   .cm2-row-clip .cm2-badge{ box-shadow:0 0 0 2px var(--accent-soft); }
+  /* ---- WATCH REPLAY control on a commentary row — replaces the old
+     icon-only .cm2-clip-hint with an explicit labelled button/status, so
+     it's obvious from the text alone whether a clip is ready, still
+     being cut, or permanently failed (never a silently broken icon). */
+  .cm-replay-btn{
+    align-self:flex-start; display:inline-flex; align-items:center; gap:6px;
+    border:none; border-radius:99px; padding:5px 12px 5px 9px; cursor:pointer;
+    background:var(--accent); color:var(--accent-contrast, #fff);
+    font-family:var(--font-display); font-weight:800; font-size:11px; letter-spacing:.3px;
+  }
+  .cm-replay-btn svg{ width:11px; height:11px; }
+  .cm-replay-btn:hover{ filter:brightness(1.06); }
+  .cm-replay-status{ font-size:11px; font-weight:600; color:var(--text-dim); }
+  .cm-replay-status.cm-replay-failed{ color:var(--wicket, #d9534f); }
 
   /* Big "END OF OVER" card on the full-screen commentary page — same data
      as the small .cm-eoo widget card elsewhere, just scaled up so it reads
@@ -3176,19 +3191,29 @@ function renderCommentary(s){
   if(!changed('commentary', log.length)) return;
   const { byLastBall } = computeOverEndSummaries(log);
   const recent = log.slice(-25).slice().reverse();
+  const isLive = !(s.isFinished || s.status === 'completed');
   document.getElementById('commentary-feed').innerHTML = recent.map(b => {
     const { cls, text } = commentaryLine(b);
     const badge = ballBadgeInfo(b);
     const summary = byLastBall.get(b);
     const eooHtml = summary ? overEndSummaryHtml(summary) : '';
+    const { over: ovNum, ball: ballNum } = overBallParts(b.over);
+    const replayInfo = commentaryClipState(b, b.innings || 1, ovNum, ballNum, isLive);
     return `${eooHtml}<div class="cm-line ${cls}">
       <div class="cm-badge ${badge.cls}">${badge.label}</div>
       <div class="cm-body">
         <div class="cm-over">${overBallLabel(b.over)}</div>
         <div class="cm-text">${text}</div>
+        ${clipReplayHtml(replayInfo, text)}
       </div>
     </div>`;
   }).join('');
+  document.getElementById('commentary-feed').querySelectorAll('.cm-replay-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openVideoModal(btn.dataset.clipId, btn.dataset.title);
+    });
+  });
 }
 
 /* ---------- Full-screen Commentary page ----------
@@ -3259,9 +3284,69 @@ async function refreshCommentaryClips(force){
   // boundary/wicket clip from one innings was silently overwriting or
   // stealing the map slot of the same over.ball in another innings,
   // making some fours/sixes/wickets show no clip (or the wrong one).
-  (clips || []).forEach(c => { if(c && c.ready) map[`${c.innings || 1}.${c.over}.${c.ballInOver}`] = c; });
+  // 🩹 Keep EVERY clip here, not just ready ones — the commentary UI
+  // needs to tell "still cutting/uploading" (⏳ preparing/processing)
+  // apart from "no clip job at all" for a ball, and can only do that if
+  // a not-yet-ready job is still visible in this map.
+  (clips || []).forEach(c => { if(c) map[`${c.innings || 1}.${c.over}.${c.ballInOver}`] = c; });
   commentaryClipMap = map;
   return map;
+}
+
+// Resolves the WATCH REPLAY state for one commentary ball: null if this
+// delivery never gets a clip button at all, otherwise one of
+// 'ready' | 'preparing' | 'processing' | 'failed' plus the clip (if any).
+// - 'ready': upload finished — clickable, opens the R2 playback URL.
+// - 'preparing': no clip job has landed yet. Only shown for a LIVE,
+//   still-recent ball (the T0-15s→T0+5s capture + upload pipeline takes
+//   up to ~30s after the event), so an old ball that genuinely never got
+//   a clip (feature added later, R2 unconfigured, etc.) shows no button
+//   instead of spinning forever.
+// - 'processing': a clip job exists and is still uploading/retrying.
+// - 'failed': the retry sweep gave up (FAILED_PERMANENT) — shown
+//   plainly rather than hidden, per "never hide clip failures silently".
+const CLIP_PREPARING_WINDOW_MS = 120000; // how long a boundary/wicket stays "preparing" with no clip doc yet
+function commentaryClipState(b, inn, ovNum, ballNum, isLive){
+  if(!isBoundaryBall(b)) return null;
+  const clip = commentaryClipMap[`${inn}.${ovNum}.${ballNum}`] || null;
+  if(clip){
+    if(clip.ready || clip.status === 'COMPLETE') return { state:'ready', clip };
+    if(clip.status === 'FAILED_PERMANENT') return { state:'failed', clip };
+    return { state: clip.status === 'RETRY_PENDING' ? 'processing' : 'preparing', clip };
+  }
+  if(isLive && b.timestamp && (Date.now() - Number(b.timestamp)) < CLIP_PREPARING_WINDOW_MS){
+    return { state:'preparing', clip:null };
+  }
+  return null;
+}
+function clipReplayHtml(info, title){
+  if(!info) return '';
+  if(info.state === 'ready') return `<button type="button" class="cm-replay-btn cm-replay-ready" data-clip-id="${escapeHtml(info.clip.clipId)}" data-title="${escapeHtml(title || '')}">${PLAY_ICON}<span>WATCH REPLAY</span></button>`;
+  if(info.state === 'processing') return `<div class="cm-replay-status cm-replay-pending">⏳ Replay processing...</div>`;
+  if(info.state === 'failed') return `<div class="cm-replay-status cm-replay-failed">⚠️ Replay unavailable</div>`;
+  return `<div class="cm-replay-status cm-replay-pending">⏳ Replay preparing...</div>`;
+}
+
+// Keeps the small "Commentary" card's WATCH REPLAY buttons up to date even
+// when the full-screen commentary page is closed — renderCommentary() only
+// redraws on a genuine new ball (see its own `changed()` gate, deliberately
+// so a clip finishing doesn't force a full-feed rebuild on its own), so a
+// clip that flips from "preparing" to "ready" between balls needs this
+// separate, lightweight nudge. One interval for the page's lifetime — not
+// per-render — so it never stacks up duplicate timers.
+let miniCommentaryClipPollTimer = null;
+if(!miniCommentaryClipPollTimer){
+  miniCommentaryClipPollTimer = setInterval(async () => {
+    const card = document.getElementById('commentary-card');
+    if(!card || card.style.display === 'none') return;
+    const cs = commentaryState();
+    if(!cs) return;
+    const before = clipMapFingerprint();
+    await refreshCommentaryClips();
+    if(clipMapFingerprint() === before) return;
+    _lastKey['commentary'] = null; // force the next renderCommentary() past its own-ball gate
+    renderCommentary(cs);
+  }, 10000);
 }
 
 let commentaryPageOpen = false;
@@ -3410,19 +3495,20 @@ function commentaryBallMatchesTypeFilter(b){
 // Shared single-ball row markup — used both by the normal over-grouped feed
 // (type filter = "all") and by the flat matched-deliveries list (any other
 // type filter), so a wicket/six/four looks identical either way.
-function renderCommentaryRow(b, inn, newBatsmanAt){
+function renderCommentaryRow(b, inn, newBatsmanAt, isLive){
   const { text } = commentaryLine(b);
   const badge = ballBadgeInfo(b);
   const { over: ovNum, ball: ballNum } = overBallParts(b.over);
-  const clip = isBoundaryBall(b) ? commentaryClipMap[`${inn}.${ovNum}.${ballNum}`] : null;
-  const clipAttrs = clip ? `data-clip-id="${escapeHtml(clip.clipId)}" data-title="${escapeHtml(text)}"` : '';
-  const clipBtn = clip ? `<span class="cm2-clip-hint">${PLAY_ICON}</span>` : '';
+  const replayInfo = commentaryClipState(b, inn, ovNum, ballNum, isLive);
   const isNewBat = newBatsmanAt.has(b);
   const newBatTag = isNewBat ? `<span class="cm2-new-bat">🆕 ${escapeHtml(b.striker || 'New batsman')}</span>` : '';
-  return `<div class="cm2-row ${badge.cls} ${clip ? 'cm2-row-clip' : ''} ${isNewBat ? 'cm2-row-newbat' : ''}" ${clipAttrs}>
+  const isReady = replayInfo && replayInfo.state === 'ready';
+  return `<div class="cm2-row ${badge.cls} ${isReady ? 'cm2-row-clip' : ''} ${isNewBat ? 'cm2-row-newbat' : ''}">
     <div class="cm2-badge ${badge.cls}">${badge.label}</div>
-    <div class="cm2-text">${ovNum}.${ballNum} — ${text}${newBatTag}</div>
-    ${clipBtn}
+    <div class="cm2-body">
+      <div class="cm2-text">${ovNum}.${ballNum} — ${text}${newBatTag}</div>
+      ${clipReplayHtml(replayInfo, text)}
+    </div>
   </div>`;
 }
 
@@ -3441,7 +3527,8 @@ function renderCommentaryPage(s){
   const prevScrollTop = body.scrollTop;
   const prevScrollHeight = body.scrollHeight;
   const live = document.getElementById('commentary-page-live');
-  if(live) live.style.display = (s.isFinished || s.status === 'completed') ? 'none' : '';
+  const isLive = !(s.isFinished || s.status === 'completed');
+  if(live) live.style.display = isLive ? '' : 'none';
   // Whole match, not just the innings in progress — this is also what
   // keeps working once the match is over, so a viewer can still open
   // Full commentary afterwards and scroll back through every innings.
@@ -3488,7 +3575,7 @@ function renderCommentaryPage(s){
         const filterLabel = (COMMENTARY_TYPE_FILTERS.find(f => f.key === commentaryTypeFilter) || {}).label || 'matching deliveries';
         return inningsHead + `<div class="cm2-empty-filter">No ${filterLabel.toLowerCase()} in this innings.</div>`;
       }
-      const rowsHtml = matched.slice().reverse().map(b => renderCommentaryRow(b, inn, newBatsmanAt)).join('');
+      const rowsHtml = matched.slice().reverse().map(b => renderCommentaryRow(b, inn, newBatsmanAt, isLive)).join('');
       return inningsHead + rowsHtml;
     }
 
@@ -3514,7 +3601,7 @@ function renderCommentaryPage(s){
     });
 
     const oversHtml = overs.slice().reverse().map(o => {
-      const rows = o.balls.slice().reverse().map(b => renderCommentaryRow(b, inn, newBatsmanAt)).join('');
+      const rows = o.balls.slice().reverse().map(b => renderCommentaryRow(b, inn, newBatsmanAt, isLive)).join('');
       const lastBall = o.balls[o.balls.length - 1];
       const sum = byLastBall.get(lastBall);
       const head = sum
@@ -3532,8 +3619,11 @@ function renderCommentaryPage(s){
     return inningsHead + oversHtml;
   }).join('');
 
-  body.querySelectorAll('.cm2-row-clip').forEach(row => {
-    row.addEventListener('click', () => openVideoModal(row.dataset.clipId, row.dataset.title));
+  body.querySelectorAll('.cm-replay-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openVideoModal(btn.dataset.clipId, btn.dataset.title);
+    });
   });
 
   if(wasAtTop){
