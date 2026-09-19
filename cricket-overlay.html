@@ -202,6 +202,16 @@
   #overs-badge .ov-num{ font-family:var(--font-num); font-weight:900; font-size:min(2.2vw,24px); font-variant-numeric:tabular-nums; }
   #overs-badge .ov-lbl{ font-size:9.5px; font-weight:800; letter-spacing:1px; opacity:.92; }
 
+  /* Test-match Day N / Stumps badge — purely additive, sits just after
+     the overs badge; hidden entirely outside Test format. */
+  #test-day-badge{
+    flex:none; align-self:center; margin-left:6px; padding:3px 10px;
+    border-radius:99px; font-family:var(--font-num); font-weight:800;
+    font-size:11px; letter-spacing:.5px; color:#fff;
+    background:rgba(0,0,0,.35); border:1px solid rgba(255,255,255,.25);
+  }
+  #test-day-badge.stumps{ background:#7a1620; }
+
   #white-panel{
     flex:1 1 auto; background:var(--white); display:flex; align-items:stretch;
     clip-path:polygon(0 0,100% 0,100% 100%,0 100%);
@@ -1031,6 +1041,7 @@
           </div>
         </div>
         <div id="overs-badge"><div class="ov-num" id="ov-num">0.0</div><div class="ov-lbl">OVERS</div></div>
+        <div id="test-day-badge" style="display:none;"></div>
         <div id="white-panel">
           <div id="live-segs">
             <div class="wseg" id="batters-seg">
@@ -1675,6 +1686,19 @@ function renderState(s){
   const scoreStr = `${s.score?.runs ?? 0}-${s.score?.wickets ?? 0}`;
   renderScoreString(scoreStr);
   document.getElementById('ov-num').textContent = `${s.score?.overs ?? 0}.${s.score?.balls ?? 0}`;
+  // Test-match Day N / Stumps badge — plain status straight off live
+  // state, never hardcoded (see stumps-btn/resume-day-btn in the panel).
+  {
+    const dayBadge = document.getElementById('test-day-badge');
+    if(s.format === 'Test'){
+      const onStumps = s.dayStatus === 'STUMPS';
+      dayBadge.textContent = onStumps ? `STUMPS — DAY ${s.dayNumber || 1}` : `DAY ${s.dayNumber || 1}`;
+      dayBadge.classList.toggle('stumps', onStumps);
+      dayBadge.style.display = 'flex';
+    } else {
+      dayBadge.style.display = 'none';
+    }
+  }
 
   setNameText('striker-name', s.striker?.name);
   document.getElementById('striker-runs').firstChild.textContent = s.striker?.runs ?? 0;
