@@ -4907,7 +4907,7 @@ function renderPoints(){
 
 /* ---------- Owner Edit modal: delivery list ---------- */
 const DISMISSAL_TYPES = ['Bowled','Caught','LBW','Stumped','Run Out','Hit Wicket','Retired Hurt','Retired Out'];
-const EXTRA_TYPE_LABELS = { none:'None', wide:'Wide', noball:'No Ball', bye:'Bye', legbye:'Leg Bye' };
+const EXTRA_TYPE_LABELS = { none:'None', wide:'Wide', noball:'No Ball', bye:'Bye', legbye:'Leg Bye', overthrow:'Overthrow (off the bat)' };
 // Mirrors the server's WIDE_LEGAL_DISMISSALS/NOBALL_LEGAL_DISMISSALS check —
 // only offer dismissal types the Laws of Cricket actually allow off each
 // extra, so the owner never has to hit a server error to find out.
@@ -4922,6 +4922,7 @@ function ballLabel(b){
   if(b.kind === 'Nb') return `${b.runs} run${b.runs===1?'':'s'} (No Ball)`;
   if(b.kind === 'B') return `${b.runs} Bye${b.runs===1?'':'s'}`;
   if(b.kind === 'LB') return `${b.runs} Leg Bye${b.runs===1?'':'s'}`;
+  if(b.kind === 'OT') return `${b.runs} run${b.runs===1?'':'s'} (Overthrow)`;
   return `${b.runs} run${b.runs===1?'':'s'}`;
 }
 
@@ -4935,6 +4936,7 @@ function isBoundaryDelivery(b){
   if (b.kind === '4' || b.kind === '6' || b.kind === 'W') return true;
   if (b.kind === 'Nb') { const off = Math.max(0, (b.runs||0) - 1); return off === 4 || off === 6; }
   if (b.kind === 'Wd' || b.kind === 'B' || b.kind === 'LB') { return b.runs === 4 || b.runs === 6; }
+  if (b.kind === 'OT') { return b.runs === 4 || b.runs === 6; }
   return false;
 }
 
@@ -4945,7 +4947,7 @@ function boundaryRuns(b){
   if (b.kind === '4') return 4;
   if (b.kind === '6') return 6;
   if (b.kind === 'Nb') return Math.max(0, (b.runs||0) - 1);
-  if (b.kind === 'Wd' || b.kind === 'B' || b.kind === 'LB') return b.runs;
+  if (b.kind === 'Wd' || b.kind === 'B' || b.kind === 'LB' || b.kind === 'OT') return b.runs;
   return 0;
 }
 
@@ -5474,9 +5476,9 @@ async function loadDeliveryList(matchId){
 
 function openDeliveryEditForm(matchId, ball, roster){
   const facts = { // mirrors deriveBallFacts() on the server, just for pre-filling the form
-    runsOffBat: ball.kind==='Nb' ? Math.max(0,(ball.runs||0)-1) : (ball.kind==='W'||/^[0-6]$/.test(ball.kind)) ? (ball.runs||0) : 0,
+    runsOffBat: ball.kind==='Nb' ? Math.max(0,(ball.runs||0)-1) : (ball.kind==='W'||ball.kind==='OT'||/^[0-6]$/.test(ball.kind)) ? (ball.runs||0) : 0,
     extras: ball.kind==='Wd' ? (ball.runs||0) : ball.kind==='Nb' ? 1 : (ball.kind==='B'||ball.kind==='LB') ? (ball.runs||0) : 0,
-    extraType: ball.kind==='Wd'?'wide':ball.kind==='Nb'?'noball':ball.kind==='B'?'bye':ball.kind==='LB'?'legbye':'none'
+    extraType: ball.kind==='Wd'?'wide':ball.kind==='Nb'?'noball':ball.kind==='B'?'bye':ball.kind==='LB'?'legbye':ball.kind==='OT'?'overthrow':'none'
   };
   const rosterOpts = (selected) => roster.map(n => `<option value="${escapeHtml(n)}" ${n===selected?'selected':''}>${escapeHtml(n)}</option>`).join('');
   const content = document.getElementById('edit-modal-content');
@@ -5492,8 +5494,8 @@ function openDeliveryEditForm(matchId, ball, roster){
       <div></div>
     </div>
     <div class="em-field-row">
-      <div><label>Runs off bat</label><input id="dvRunsOffBat" type="number" min="0" max="6" value="${facts.runsOffBat}"></div>
-      <div><label>Extras</label><input id="dvExtras" type="number" min="0" max="8" value="${facts.extras}"></div>
+      <div><label>Runs off bat</label><input id="dvRunsOffBat" type="number" min="0" max="11" value="${facts.runsOffBat}"></div>
+      <div><label>Extras</label><input id="dvExtras" type="number" min="0" max="11" value="${facts.extras}"></div>
     </div>
     <div class="em-field-row">
       <div><label>Extra type</label><select id="dvExtraType">${Object.entries(EXTRA_TYPE_LABELS).map(([v,l]) => `<option value="${v}" ${v===facts.extraType?'selected':''}>${l}</option>`).join('')}</select></div>
@@ -5533,14 +5535,7 @@ function openDeliveryEditForm(matchId, ball, roster){
     try{
       const preview = await adminApi(`/cricket/ball/${encodeURIComponent(ball.ballId)}/preview`, { method:'POST', body: JSON.stringify(input) });
       const { before, after } = preview;
-      const diff = [];
-      if(before.ball.kind !== after.ball.kind || before.ball.runs !== after.ball.runs) diff.push({ label:'This delivery', from: ballLabel(before.ball), to: ballLabel(after.ball) });
-      if(before.ball.striker !== after.ball.striker) diff.push({ label:'Striker credited', from: before.ball.striker, to: after.ball.striker });
-      if(before.ball.bowler !== after.ball.bowler) diff.push({ label:'Bowler credited', from: before.ball.bowler, to: after.ball.bowler });
-      const bA = before.cards.scoreA, aA = after.cards.scoreA, bB = before.cards.scoreB, aB = after.cards.scoreB;
-      if(bA.runs !== aA.runs || bA.wickets !== aA.wickets) diff.push({ label:'Team A total', from:`${bA.runs}/${bA.wickets}`, to:`${aA.runs}/${aA.wickets}` });
-      if(bB.runs !== aB.runs || bB.wickets !== aB.wickets) diff.push({ label:'Team B total', from:`${bB.runs}/${bB.wickets}`, to:`${aB.runs}/${aB.wickets}` });
-      if(!diff.length) diff.push({ label:'This delivery', from: ballLabel(before.ball), to: ballLabel(after.ball) });
+      const diff = buildCorrectionDiff(before, after);
       const diffHtml = diff.map(d => `<div class="em-diff-row"><span>${escapeHtml(d.label)}</span><span>${escapeHtml(String(d.from))}<span class="em-diff-arrow">→</span><b>${escapeHtml(String(d.to))}</b></span></div>`).join('');
       const resultLabel = (r) => r==='A' ? ((latestState && latestState.teamA && (latestState.teamA.name||latestState.teamA.short)) || 'Team A') : r==='B' ? ((latestState && latestState.teamB && (latestState.teamB.name||latestState.teamB.short)) || 'Team B') : 'Tie';
       const warn = preview.resultMayNeedReview
@@ -5555,11 +5550,24 @@ function openDeliveryEditForm(matchId, ball, roster){
         ${diffHtml}${warn}${strikeWarn}`,
         async () => {
           const saved = await adminApi(`/cricket/ball/${encodeURIComponent(ball.ballId)}`, { method:'PUT', body: JSON.stringify(input) });
-          emToast('Delivery corrected — scorecard recalculated');
           closeEditModal();
-          if(saved.resultMayNeedReview && saved.suggestedResult){
-            offerResultUpdate(matchId, saved.suggestedResult, resultLabel(saved.suggestedResult));
-          }
+          // 🔒 Deferred: the confirm modal we're inside right now (this
+          // whole callback is openConfirmModal's onConfirm) calls close()
+          // on the SAME #confirm-modal-backdrop the instant this async
+          // function returns — opening another modal on that backdrop
+          // synchronously here would get immediately hidden again by that
+          // close(). One tick is enough to run after it.
+          setTimeout(() => {
+            // Report first; the result-update prompt (if this correction
+            // changed a completed match's total) only opens once the
+            // operator has actually seen the report and dismissed it —
+            // never stacked on the same modal at the same time.
+            openCorrectionReport(saved, () => {
+              if(saved.resultMayNeedReview && saved.suggestedResult){
+                offerResultUpdate(matchId, saved.suggestedResult, resultLabel(saved.suggestedResult));
+              }
+            });
+          }, 50);
           setTimeout(() => { if(isHistoryMode()) loadMatchSnapshot(getMatchId()); }, 300);
         }
       );
@@ -5569,6 +5577,118 @@ function openDeliveryEditForm(matchId, ball, roster){
       saveBtn.textContent = 'Preview & Save'; saveBtn.disabled = false;
     }
   };
+}
+
+// Shared before/after diff — used for BOTH the pre-save preview above and
+// the post-save "CORRECTION APPLIED" report below, so the report is never
+// a guess at what changed: it's the exact same comparison, run again on
+// whatever the server actually returned. Only real changes are included —
+// no row is invented, and nothing here is shown unless before/after
+// genuinely differ (spec: "Show only real impacts").
+function buildCorrectionDiff(before, after){
+  const diff = [];
+  if(before.ball.kind !== after.ball.kind || before.ball.runs !== after.ball.runs) diff.push({ label:'This delivery', from: ballLabel(before.ball), to: ballLabel(after.ball) });
+  if(before.ball.striker !== after.ball.striker) diff.push({ label:'Striker credited', from: before.ball.striker || '—', to: after.ball.striker || '—' });
+  if(before.ball.bowler !== after.ball.bowler) diff.push({ label:'Bowler credited', from: before.ball.bowler || '—', to: after.ball.bowler || '—' });
+  const dismissalText = (d) => d ? `${d.type}${d.fielder ? ' ('+d.fielder+')' : ''}` : 'No';
+  const beforeDismissal = dismissalText(before.ball.dismissal), afterDismissal = dismissalText(after.ball.dismissal);
+  if(beforeDismissal !== afterDismissal) diff.push({ label:'Wicket', from: beforeDismissal, to: afterDismissal });
+  const bA = before.cards.scoreA, aA = after.cards.scoreA, bB = before.cards.scoreB, aB = after.cards.scoreB;
+  if(bA.runs !== aA.runs || bA.wickets !== aA.wickets) diff.push({ label:'Team A total', from:`${bA.runs}/${bA.wickets}`, to:`${aA.runs}/${aA.wickets}` });
+  if(bB.runs !== aB.runs || bB.wickets !== aB.wickets) diff.push({ label:'Team B total', from:`${bB.runs}/${bB.wickets}`, to:`${aB.runs}/${aB.wickets}` });
+  // Extras (wd/nb/b/lb) — only meaningful once buildLiveCardsFromBallsArray
+  // on the server actually recomputes these (it does — see server.js);
+  // included here so a Wide/Bye/Leg-Bye/No-Ball correction shows its real
+  // extras-total impact instead of just the team score moving with no
+  // explanation of where the runs went.
+  ['A','B'].forEach(team => {
+    const be = (before.cards.extras && before.cards.extras[team]) || null;
+    const ae = (after.cards.extras && after.cards.extras[team]) || null;
+    if(!be || !ae) return;
+    if(be.wd !== ae.wd || be.nb !== ae.nb || be.b !== ae.b || be.lb !== ae.lb){
+      diff.push({ label:`Team ${team} extras`, from:`Wd ${be.wd} · Nb ${be.nb} · B ${be.b} · LB ${be.lb}`, to:`Wd ${ae.wd} · Nb ${ae.nb} · B ${ae.b} · LB ${ae.lb}` });
+    }
+  });
+  // Individual batting/bowling rows for anyone this specific delivery
+  // touches (the striker/bowler on either side of the edit) — the exact
+  // row buildLiveCardsFromBallsArray recomputed, not a guess.
+  const findRow = (cards, kind, team, name, innings) => {
+    if(!name) return null;
+    const list = (kind === 'bat' ? cards.battingCard : cards.bowlingCard) || {};
+    return ((list[team] || []).find(r => r.name === name && r.inningsNo === innings)) || null;
+  };
+  const inn = after.ball.innings || before.ball.innings || 1;
+  const teamOf = (ball) => ball.battingTeam === 'B' ? 'B' : 'A';
+  [before.ball.striker, after.ball.striker].filter((v,i,a) => v && a.indexOf(v) === i).forEach(name => {
+    const bRow = findRow(before.cards, 'bat', teamOf(before.ball), name, inn);
+    const aRow = findRow(after.cards, 'bat', teamOf(after.ball), name, inn);
+    const bR = bRow ? bRow.runs : 0, aR = aRow ? aRow.runs : 0;
+    const bB2 = bRow ? bRow.balls : 0, aB2 = aRow ? aRow.balls : 0;
+    if(bR !== aR || bB2 !== aB2) diff.push({ label:`Batting — ${name}`, from:`${bR} (${bB2})`, to:`${aR} (${aB2})` });
+  });
+  [before.ball.bowler, after.ball.bowler].filter((v,i,a) => v && a.indexOf(v) === i).forEach(name => {
+    const bowlTeamOf = (ball) => teamOf(ball) === 'A' ? 'B' : 'A';
+    const bRow = findRow(before.cards, 'bowl', bowlTeamOf(before.ball), name, inn);
+    const aRow = findRow(after.cards, 'bowl', bowlTeamOf(after.ball), name, inn);
+    const bR = bRow ? bRow.runs : 0, aR = aRow ? aRow.runs : 0;
+    const bW = bRow ? bRow.wickets : 0, aW = aRow ? aRow.wickets : 0;
+    if(bR !== aR || bW !== aW) diff.push({ label:`Bowling — ${name}`, from:`${bR}/${bW}`, to:`${aR}/${aW}` });
+  });
+  if(!diff.length) diff.push({ label:'This delivery', from: ballLabel(before.ball), to: ballLabel(after.ball) });
+  return diff;
+}
+
+// Info-only report modal (single "Done" button, no confirm/cancel) —
+// reuses the same confirm-modal backdrop/content the rest of the owner
+// correction system already uses, just with different actions.
+function openReportModal(html, onDone){
+  const wrap = document.getElementById('confirm-modal-content');
+  wrap.innerHTML = html + `<div class="em-actions"><button class="em-btn save" id="report-done-btn" style="width:100%;">Done</button></div>`;
+  document.getElementById('confirm-modal-backdrop').classList.add('open');
+  document.getElementById('report-done-btn').onclick = () => {
+    document.getElementById('confirm-modal-backdrop').classList.remove('open');
+    if(onDone) onDone();
+  };
+}
+
+// The "✓ CORRECTION APPLIED" structured report (spec: "never just say
+// Score Updated Successfully") — shown immediately after a successful
+// Save & Recalculate, built from the SAME before/after the server just
+// returned. Every row here is either a real changed value or an explicit
+// "No change" / "Preserved" — nothing is invented.
+function openCorrectionReport(saved, onDone){
+  const { before, after } = saved;
+  const diff = buildCorrectionDiff(before, after);
+  const rowsHtml = diff.map(d => `<div class="em-diff-row"><span>${escapeHtml(d.label)}</span><span>${escapeHtml(String(d.from))}<span class="em-diff-arrow">→</span><b>${escapeHtml(String(d.to))}</b></span></div>`).join('');
+  // These three are always true the moment this function runs — the PUT
+  // handler only ever returns success after correctDelivery() has already
+  // (a) resynced matchRecordsCollection (battingCard/bowlingCard/scoreA/
+  // scoreB/extras/fallOfWickets/partnerships — this tournament's
+  // leaderboard reads that same doc live, no separate step) and
+  // (b) updated any clip attached to this exact delivery's metadata in
+  // place — the physical R2/Drive file is never touched by a ball
+  // correction, only re-pointed at the corrected player names.
+  const systemRows = [
+    { label: 'Commentary', value: 'Synced — reflects the corrected delivery' },
+    { label: 'Clip metadata', value: 'Synced (if a clip exists for this ball)' },
+    { label: 'R2 file', value: 'Preserved — not re-cut' },
+    { label: 'Google Drive file', value: 'Preserved — not re-uploaded' },
+    { label: 'Tournament leaderboard', value: 'Recalculated' },
+    {
+      label: 'Result',
+      value: saved.resultMayNeedReview
+        ? '⚠️ May need review — see prompt'
+        : 'No change required'
+    }
+  ];
+  const systemHtml = systemRows.map(r => `<div class="em-diff-row"><span>${escapeHtml(r.label)}</span><span>${escapeHtml(r.value)}</span></div>`).join('');
+  openReportModal(`
+    <div class="em-title">✓ Correction Applied</div>
+    <div class="em-sub">Over ${escapeHtml(String(after.ball.over))}.${escapeHtml(String(after.ball.ballInOver))} — canonical ball-by-ball data saved, complete match recalculated.</div>
+    ${rowsHtml}
+    <div class="em-sub" style="margin-top:10px;">RECALCULATION</div>
+    ${systemHtml}
+  `, onDone);
 }
 
 function offerResultUpdate(matchId, suggestedResult, label){
