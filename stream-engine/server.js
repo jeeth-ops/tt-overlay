@@ -452,8 +452,17 @@ function ingestChunk(buf) {
 // /api/clips/ingest on server.js — same endpoint ClipperHelper.exe
 // always posted to, same Cloudflare/Drive/Mongo pipeline, untouched).
 // ================================================================
-const CLIP_PRE_ROLL_SEC = 10;  // unchanged from Part 1's cutClip()
-const CLIP_POST_ROLL_SEC = 10; // unchanged from Part 1's cutClip()
+// 🎯 EXACT CLIP TIMING — non-negotiable. T0 is the click/event moment
+// (the panel captures it and sends it as `timestamp`, already frozen
+// against the finalized ball's own metadata — see triggerClip() in
+// cricket-panel.html). The clip is T0-15s through T0+5s (~20s total).
+// The post-roll 5 seconds are an ACTUAL WAIT before cutting — the
+// buffer simply doesn't have footage from the future yet, so cutting
+// immediately (the previous behavior) silently produced a clip missing
+// its whole post-roll. T0 itself is captured once and never
+// recalculated after the wait.
+const CLIP_PRE_ROLL_SEC = 15;
+const CLIP_POST_ROLL_SEC = 5;
 
 const recordingMatches = {}; // matchId -> { mainServerUrl, tournamentId } — set by /recording-start
 const clipWorker = {
@@ -461,8 +470,59 @@ const clipWorker = {
     lastError: null,
     cloudflareConnected: true, // optimistic until a forward attempt actually fails
 };
-const recentClipKeys = new Map(); // dedupe: `${matchId}:${eventType}:${timestamp}` -> result, short TTL
-const DEDUPE_TTL_MS = 5000;
+// ================================================================
+// 🎬 PERSISTENT CLIP JOBS — one per accepted FOUR/SIX/WICKET event,
+// never silently canceled once created (see requestClip below). Kept
+// in memory for live status (the panel polls GET /clip-jobs/:clipId)
+// AND persisted to disk so a restart doesn't erase the operator's view
+// of what was in flight — though see the CUTTING-recovery note below
+// for the one thing a restart genuinely cannot get back.
+//
+// Lifecycle: WAITING_FOR_POSTROLL -> CUTTING -> LOCAL_SAVED ->
+//            FORWARDING -> COMPLETE
+//                        -> RETRY_PENDING (Render reachable, R2/Drive
+//                           still finishing — polled from server.js)
+//                        -> FAILED_PERMANENT (loud, never silent —
+//                           local .mp4 is kept either way until
+//                           server.js confirms both R2 AND Drive)
+// ================================================================
+const CLIP_JOBS_FILE = path.join(__dirname, 'clip-jobs.local.json');
+const clipJobs = new Map(); // clipId -> job
+function loadClipJobs() {
+    try {
+        const raw = JSON.parse(fs.readFileSync(CLIP_JOBS_FILE, 'utf8'));
+        for (const job of raw) clipJobs.set(job.clipId, job);
+    } catch (e) { /* first run, or file doesn't exist yet — nothing to load */ }
+}
+function persistClipJobs() {
+    try { fs.writeFileSync(CLIP_JOBS_FILE, JSON.stringify([...clipJobs.values()].slice(-200))); } catch (e) { /* best effort */ }
+}
+function updateJob(clipId, patch) {
+    const job = clipJobs.get(clipId);
+    if (!job) return;
+    Object.assign(job, patch, { updatedAt: Date.now() });
+    persistClipJobs();
+}
+function buildClipId(matchId, eventType, timestamp) {
+    return `${localBuffer.safeMatchId(matchId)}_${String(eventType || 'CLIP').toUpperCase()}_${timestamp}`;
+}
+loadClipJobs();
+// 🩹 RESTART RECOVERY: a job still sitting in WAITING_FOR_POSTROLL or
+// CUTTING when this process last exited had its source footage only in
+// RAM (localBuffer's chunks are never persisted to survive a restart —
+// only the finished, already-cut .mp4 is durable). That specific 20s
+// window is genuinely unrecoverable after a crash/restart — but the
+// job is marked LOUDLY as failed instead of vanishing silently, and
+// every OTHER job (already LOCAL_SAVED/FORWARDING/RETRY_PENDING, whose
+// .mp4 already exists on disk) is untouched and keeps being retried
+// normally by the logic further down.
+for (const job of clipJobs.values()) {
+    if (job.status === 'WAITING_FOR_POSTROLL' || job.status === 'CUTTING') {
+        job.status = 'FAILED_PERMANENT';
+        job.error = 'Stream Engine restarted before this clip could be cut — its source footage only ever existed in memory and could not survive the restart.';
+    }
+}
+persistClipJobs();
 
 // 🔁 RETRY QUEUE — a clip that cuts fine locally but can't reach
 // server.js right now (network blip, Render redeploying, etc.) is
@@ -478,10 +538,10 @@ function persistRetryQueue() {
     try { fs.writeFileSync(RETRY_QUEUE_FILE, JSON.stringify(retryQueue)); } catch (e) { /* best effort */ }
 }
 
-function postFileToServer(mainServerUrl, matchId, eventType, timestamp, ballMeta, filePath) {
+function postFileToServer(mainServerUrl, matchId, eventType, timestamp, ballMeta, filePath, clipId) {
     return new Promise((resolve) => {
         let url;
-        try { url = new URL(`/api/clips/ingest?matchId=${encodeURIComponent(matchId)}&eventType=${encodeURIComponent(eventType)}&timestamp=${timestamp}`, mainServerUrl); }
+        try { url = new URL(`/api/clips/ingest?matchId=${encodeURIComponent(matchId)}&eventType=${encodeURIComponent(eventType)}&timestamp=${timestamp}&clipId=${encodeURIComponent(clipId)}`, mainServerUrl); }
         catch (e) { return resolve({ ok: false, error: 'Invalid mainServerUrl' }); }
 
         let stat;
@@ -510,6 +570,47 @@ function postFileToServer(mainServerUrl, matchId, eventType, timestamp, ballMeta
     });
 }
 
+// 🔎 POST-FORWARD POLLING — once server.js has ACK'd receipt of the
+// file (LOCAL_RECEIVED), R2 + Drive uploads continue there in the
+// background and can take a while (or fail and retry there too — see
+// the retry sweep in server.js). This is what lets the panel's live
+// status actually reach COMPLETE / show a real failure reason, instead
+// of the operator only ever seeing "forwarded" and nothing else.
+const RENDER_POLL_INTERVAL_MS = 3000;
+const RENDER_POLL_MAX_MS = 5 * 60 * 1000; // give up polling after 5 min — server.js's OWN retry sweep keeps going regardless; this just stops this process polling forever
+async function pollRenderStatus(job) {
+    const deadline = Date.now() + RENDER_POLL_MAX_MS;
+    while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, RENDER_POLL_INTERVAL_MS));
+        let url;
+        try { url = new URL(`/api/clips/status/${encodeURIComponent(job.clipId)}`, job.mainServerUrl); }
+        catch (e) { return; }
+        const lib = url.protocol === 'https:' ? https : http;
+        const body = await new Promise((resolve) => {
+            const req = lib.request(url, { method: 'GET', timeout: 5000 }, (res) => {
+                let b = ''; res.on('data', (d) => b += d); res.on('end', () => resolve({ code: res.statusCode, body: b }));
+            });
+            req.on('error', () => resolve(null));
+            req.on('timeout', () => { req.destroy(); resolve(null); });
+            req.end();
+        });
+        if (!body || body.code !== 200) continue; // Render/Mongo briefly unreachable — just try again next tick
+        let data;
+        try { data = JSON.parse(body.body); } catch (e) { continue; }
+        if (!data.success) continue;
+        updateJob(job.clipId, { status: data.status, r2Status: data.r2Status, driveStatus: data.driveStatus, r2Url: data.r2Url || null, driveUrl: data.driveUrl || null, renderRetryCount: data.retryCount });
+        if (data.status === 'COMPLETE') {
+            // Render has confirmed BOTH R2 and Drive now have this clip —
+            // only NOW is the operator's own local copy redundant. Never
+            // deleted any earlier than this (see the "never delete
+            // prematurely" note where this file was created).
+            if (job.localPath) fs.unlink(job.localPath, (err) => { if (!err) console.log(`🧹 [CLIP] clipId=${job.clipId} — local copy removed (R2 + Drive both confirmed)`); });
+            return;
+        }
+        if (data.status === 'FAILED_PERMANENT') return; // done — stop polling; local file is deliberately left in place
+    }
+}
+
 const MAX_RETRY_ATTEMPTS = 20; // ~ backoff up to a few minutes total, then give up but KEEP the local file for manual recovery
 function scheduleRetry(entry) {
     const attempt = (entry.attempts || 0);
@@ -520,21 +621,32 @@ async function processRetryEntry(entry) {
     if (!fs.existsSync(entry.filePath)) {
         retryQueue = retryQueue.filter((e) => e !== entry);
         persistRetryQueue();
+        if (entry.clipId) updateJob(entry.clipId, { status: 'FAILED_PERMANENT', error: 'Local clip file was removed before it could be forwarded' });
         return; // was cleaned up (e.g. manually) — nothing left to retry
     }
     entry.attempts = (entry.attempts || 0) + 1;
-    const result = await postFileToServer(entry.mainServerUrl, entry.matchId, entry.eventType, entry.timestamp, entry.ballMeta, entry.filePath);
+    if (entry.clipId) updateJob(entry.clipId, { status: 'RETRY_PENDING', forwardAttempts: entry.attempts });
+    const result = await postFileToServer(entry.mainServerUrl, entry.matchId, entry.eventType, entry.timestamp, entry.ballMeta, entry.filePath, entry.clipId);
     if (result.ok) {
         clipWorker.cloudflareConnected = true;
         retryQueue = retryQueue.filter((e) => e !== entry);
         persistRetryQueue();
-        fs.unlink(entry.filePath, () => {});
+        // NOT deleted here — Render has only just acknowledged RECEIPT
+        // of the bytes, not that R2+Drive both confirmed storing them.
+        // pollRenderStatus() below is what deletes this file, and only
+        // once Render reports COMPLETE.
         console.log(`[stream-engine] Retry succeeded for queued clip: ${entry.matchId}/${entry.eventType}`);
+        if (entry.clipId) {
+            updateJob(entry.clipId, { status: 'FORWARDING' });
+            const job = clipJobs.get(entry.clipId);
+            if (job) pollRenderStatus(job);
+        }
     } else {
         clipWorker.cloudflareConnected = false;
         clipWorker.lastError = result.error;
         if (entry.attempts >= MAX_RETRY_ATTEMPTS) {
             console.log(`[stream-engine] Giving up on queued clip after ${entry.attempts} attempts (kept locally at ${entry.filePath}): ${result.error}`);
+            if (entry.clipId) updateJob(entry.clipId, { status: 'FAILED_PERMANENT', error: `Could not reach Render after ${entry.attempts} attempts: ${result.error} (local file kept at ${entry.filePath})` });
             return; // stays in the queue file/disk for manual recovery, just stops auto-retrying
         }
         persistRetryQueue();
@@ -544,13 +656,20 @@ async function processRetryEntry(entry) {
 // Resume any clips that were still queued from a previous run of this process.
 retryQueue.forEach((entry) => scheduleRetry(entry));
 
-async function cutLocalClip({ matchId, eventType, eventTimestamp, ballMeta }) {
+async function cutLocalClip({ clipId, matchId, eventType, eventTimestamp, ballMeta }) {
     const win = localBuffer.getClipWindow({ matchId, eventTimestamp, preRollSec: CLIP_PRE_ROLL_SEC, postRollSec: CLIP_POST_ROLL_SEC });
     if (win.error) return { ok: false, error: win.error };
 
     const { trimStartSec, toStitch, dirs } = win;
     const stitchedFile = path.join(dirs.tempDir, `_stitched_${Date.now()}.webm`);
-    const outFile = path.join(dirs.clipsDir, `${eventType}_${Date.now()}.mp4`);
+    // Deterministic, clipId-based filename (not Date.now()-based) — a
+    // job re-run for the exact same event never leaves multiple .mp4s
+    // behind, and this is the SAME name server.js's R2 key/Drive
+    // filename are derived from (see buildClipId there), so the whole
+    // pipeline refers to one clip by one identity end to end.
+    const outFile = path.join(dirs.clipsDir, `${clipId}.mp4`);
+
+    console.log(`[CLIP RANGE] clipId=${clipId} start=T0-${CLIP_PRE_ROLL_SEC}s end=T0+${CLIP_POST_ROLL_SEC}s`);
 
     await new Promise((resolve, reject) => {
         const out = fs.createWriteStream(stitchedFile);
@@ -585,60 +704,114 @@ async function cutLocalClip({ matchId, eventType, eventTimestamp, ballMeta }) {
     });
 
     fs.unlink(stitchedFile, () => {});
+    console.log(`[CLIP CREATED] clipId=${clipId} localPath=${outFile}`);
     return { ok: true, outFile };
 }
 
-async function doHandleClipRequest({ matchId, eventType, timestamp, ballMeta }) {
-    const rec = recordingMatches[matchId];
-    const mainServerUrl = rec && rec.mainServerUrl;
-    if (!mainServerUrl) {
-        return { success: false, error: 'No recording session for this match — start recording first' };
-    }
+// ================================================================
+// 🎬 THE JOB, END TO END — runs once, ~CLIP_POST_ROLL_SEC after the
+// event, and is NEVER canceled/re-triggered by anything that happens
+// on the panel afterward (over ending, batsman/bowler change, popup
+// closing, a reconnect, another clip event — none of it touches this
+// job; it owns its own frozen matchId/eventType/timestamp/ballMeta).
+// A failure at ANY stage moves the job to RETRY_PENDING/
+// FAILED_PERMANENT — it never just disappears (see updateJob calls).
+// ================================================================
+async function runClipJob(clipId) {
+    const job = clipJobs.get(clipId);
+    if (!job) return; // shouldn't happen — created synchronously in acceptClipEvent below
+    const { matchId, eventType, timestamp, ballMeta, mainServerUrl } = job;
 
+    updateJob(clipId, { status: 'CUTTING' });
     clipWorker.state = 'cutting';
-    const cutResult = await cutLocalClip({ matchId, eventType, eventTimestamp: timestamp, ballMeta }).catch((e) => ({ ok: false, error: e.message }));
+    console.log(`[CLIP WAIT] clipId=${clipId} post-roll wait complete — cutting now`);
+    const cutResult = await cutLocalClip({ clipId, matchId, eventType, eventTimestamp: timestamp, ballMeta }).catch((e) => ({ ok: false, error: e.message }));
     if (!cutResult.ok) {
         clipWorker.state = 'idle';
         clipWorker.lastError = cutResult.error;
-        return { success: false, error: cutResult.error };
+        // FFmpeg/buffer failure — the job is RETAINED (not discarded),
+        // exactly like an upload failure: it just has no local file to
+        // retry from since cutting itself never produced one. Reported
+        // loudly so the operator sees WHY, not just "clip failed".
+        updateJob(clipId, { status: 'FAILED_PERMANENT', error: cutResult.error });
+        console.log(`[CLIP ERROR] clipId=${clipId} cutting failed: ${cutResult.error}`);
+        return;
     }
+    updateJob(clipId, { status: 'LOCAL_SAVED', localPath: cutResult.outFile });
 
     clipWorker.state = 'uploading';
-    const forwardResult = await postFileToServer(mainServerUrl, matchId, eventType, timestamp, ballMeta, cutResult.outFile);
+    updateJob(clipId, { status: 'FORWARDING' });
+    const forwardResult = await postFileToServer(mainServerUrl, matchId, eventType, timestamp, ballMeta, cutResult.outFile, clipId);
     clipWorker.state = 'idle';
 
     if (forwardResult.ok) {
         clipWorker.cloudflareConnected = true;
-        fs.unlink(cutResult.outFile, () => {});
-        return { success: true, saved: true };
+        // The file is NOT deleted here — server.js only deletes its OWN
+        // Render-disk copy once R2 AND Drive both confirm; deleting our
+        // local one immediately on a bare "forwarded" ack would violate
+        // "never delete the local clip prematurely" the moment server.js
+        // still needed a retry. It's cleaned up by the local retention
+        // sweep once server.js reports COMPLETE (see pollRenderStatus /
+        // the sweep further down).
+        updateJob(clipId, { status: 'RETRY_PENDING' }); // becomes COMPLETE once polling confirms both uploads
+        pollRenderStatus(job);
+        return;
     }
-    // Cloudflare/server.js unreachable right now — the clip is NOT
-    // deleted. Queue it for retry with backoff instead.
+    // Render unreachable right now — the clip is NOT deleted. Queue it
+    // for retry with backoff instead (restart-safe: retryQueue is
+    // persisted to retry-queue.local.json and resumed on boot).
     clipWorker.cloudflareConnected = false;
     clipWorker.lastError = forwardResult.error;
-    const entry = { matchId, eventType, timestamp, ballMeta, filePath: cutResult.outFile, mainServerUrl, attempts: 0 };
+    updateJob(clipId, { status: 'RETRY_PENDING', error: forwardResult.error });
+    const entry = { clipId, matchId, eventType, timestamp, ballMeta, filePath: cutResult.outFile, mainServerUrl, attempts: 0 };
     retryQueue.push(entry);
     persistRetryQueue();
     scheduleRetry(entry);
-    return { success: true, saved: false, queuedForRetry: true, error: forwardResult.error };
 }
 
-// 🔒 DUPLICATE EVENT/CLIP PREVENTION — the dedupe map stores the
-// in-flight PROMISE itself (not just the eventual result), set
-// synchronously before any `await` runs. Two requests for the exact
-// same matchId+eventType+timestamp arriving back-to-back (a double
-// click, a client-side retry racing the original) — even genuinely
-// concurrently — both get the SAME promise and therefore the SAME
-// single cut+upload, never two.
-async function handleClipRequest({ matchId, eventType, timestamp, ballMeta }) {
-    const dedupeKey = `${matchId}:${eventType}:${timestamp}`;
-    const existing = recentClipKeys.get(dedupeKey);
-    if (existing) return existing;
+// 🔒 DUPLICATE EVENT/CLIP PREVENTION — clipId IS the dedupe key (it's
+// deterministic from matchId+eventType+timestamp — see buildClipId).
+// Two requests for the exact same event arriving back-to-back (a
+// double click, a client-side retry racing the original) — even
+// genuinely concurrently — resolve to the SAME job, never a second
+// job/cut/upload.
+//
+// This is also THE acceptance point for "once accepted, never
+// canceled": the instant a job is created here it lives in `clipJobs`
+// independent of any socket/HTTP connection, page reload, or anything
+// else happening in the panel — runClipJob() above is scheduled via a
+// plain setTimeout keyed to T0, not to this request's lifetime.
+function acceptClipEvent({ matchId, eventType, timestamp, ballMeta, mainServerUrl, clipId }) {
+    clipId = clipId || buildClipId(matchId, eventType, timestamp);
+    console.log(`[CLIP EVENT] clipId=${clipId} eventType=${eventType} matchId=${matchId} T0=${timestamp}`);
 
-    const promise = doHandleClipRequest({ matchId, eventType, timestamp, ballMeta });
-    recentClipKeys.set(dedupeKey, promise);
-    setTimeout(() => recentClipKeys.delete(dedupeKey), DEDUPE_TTL_MS);
-    return promise;
+    const existing = clipJobs.get(clipId);
+    if (existing) return { success: true, clipId, status: existing.status, duplicate: true };
+
+    const rec = recordingMatches[matchId];
+    const resolvedMainServerUrl = mainServerUrl || (rec && rec.mainServerUrl);
+    if (!resolvedMainServerUrl) {
+        return { success: false, error: 'No recording session for this match — start recording first' };
+    }
+
+    const job = {
+        clipId, matchId, eventType, timestamp, ballMeta: ballMeta || null,
+        mainServerUrl: resolvedMainServerUrl,
+        status: 'WAITING_FOR_POSTROLL',
+        createdAt: Date.now(), updatedAt: Date.now(),
+        r2Status: 'pending', driveStatus: 'pending',
+    };
+    clipJobs.set(clipId, job);
+    persistClipJobs();
+
+    // T0 is captured ABOVE (timestamp, already frozen by the panel at
+    // click time) — this wait is post-roll only; T0 itself is never
+    // recalculated after it elapses.
+    const waitMs = Math.max(0, (timestamp + CLIP_POST_ROLL_SEC * 1000) - Date.now());
+    console.log(`[CLIP WAIT] clipId=${clipId} waiting ${waitMs}ms for post-roll`);
+    setTimeout(() => runClipJob(clipId), waitMs);
+
+    return { success: true, clipId, status: 'WAITING_FOR_POSTROLL' };
 }
 
 // ================================================================
@@ -744,14 +917,38 @@ app.post('/set-folder', (req, res) => {
 });
 
 // The actual clip trigger — same payload shape recordBall()/
-// triggerWicketClip() already send: {eventType, timestamp, matchId, ballMeta}.
-app.post('/clip', async (req, res) => {
-    const { eventType, timestamp, matchId, ballMeta } = req.body || {};
+// triggerWicketClip() already send: {eventType, timestamp, matchId,
+// ballMeta}, plus an optional clipId (the panel generates one at T0 so
+// its own UI can start polling /clip-jobs/:clipId immediately, without
+// waiting for this response).
+//
+// Responds the instant the event is ACCEPTED (job created, T0 frozen)
+// — never waits for the post-roll or the cut/upload, which is what
+// makes the exact 5-second wait possible without hanging this request.
+app.post('/clip', (req, res) => {
+    const { eventType, timestamp, matchId, ballMeta, clipId } = req.body || {};
     if (!matchId || !eventType || !timestamp) {
         return res.status(400).json({ success: false, error: 'matchId, eventType and timestamp are required' });
     }
-    const result = await handleClipRequest({ matchId: localBuffer.safeMatchId(matchId), eventType, timestamp, ballMeta });
+    const result = acceptClipEvent({ matchId: localBuffer.safeMatchId(matchId), eventType, timestamp, ballMeta, clipId });
+    if (!result.success) return res.status(409).json(result);
     res.json(result);
+});
+
+// 🎬 LIVE CLIP STATUS — polled by the panel to render the full per-clip
+// progress UI (T0 captured -> waiting -> cutting -> local saved ->
+// uploading -> R2 -> Drive -> complete), and by nothing else — this
+// engine is the operator's single source of truth for "what's
+// happening with my clips" (it also polls server.js in the background
+// for the eventual R2/Drive outcome — see pollRenderStatus).
+app.get('/clip-jobs', (req, res) => {
+    const jobs = [...clipJobs.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, 50);
+    res.json({ success: true, jobs });
+});
+app.get('/clip-jobs/:clipId', (req, res) => {
+    const job = clipJobs.get(req.params.clipId);
+    if (!job) return res.status(404).json({ success: false, error: 'No clip job with that clipId' });
+    res.json({ success: true, job });
 });
 
 // Accepts BOTH the Stream URL and Stream Key together — the operator
@@ -874,6 +1071,14 @@ app.get('/health', (req, res) => {
 const ORPHAN_BUFFER_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 setTimeout(() => localBuffer.sweepOrphaned(ORPHAN_BUFFER_MAX_AGE_MS), 60 * 1000);
 setInterval(() => localBuffer.sweepOrphaned(ORPHAN_BUFFER_MAX_AGE_MS), 60 * 60 * 1000);
+
+// 🛟 Safety-net clip-file sweep — see sweepOldClipFiles' own comment.
+// A generous 24h default: this only ever catches a clip whose normal
+// "delete once Render confirms COMPLETE" path (pollRenderStatus above)
+// never got the chance to run — never the everyday cleanup mechanism.
+const ORPHAN_CLIP_FILE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+setTimeout(() => localBuffer.sweepOldClipFiles(ORPHAN_CLIP_FILE_MAX_AGE_MS), 90 * 1000);
+setInterval(() => localBuffer.sweepOldClipFiles(ORPHAN_CLIP_FILE_MAX_AGE_MS), 60 * 60 * 1000);
 
 const server = app.listen(PORT, '127.0.0.1', () => {
     console.log(`🎥 AllSportsLive Stream Engine running at http://127.0.0.1:${PORT} (localhost only)`);
