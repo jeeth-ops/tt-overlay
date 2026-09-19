@@ -3742,56 +3742,20 @@ adminRouter.get('/tournament/:ownerUid/:leagueKey', async (req, res) => {
     }
 });
 
-// Correct one match's saved record. Body: { record: {...full corrected
-// match object...} }. Any field can be corrected this way — runs, balls,
-// overs, wickets, battingCard/bowlingCard entries, winningTeam, etc. — the
-// same shape the scoring panel itself saves via POST /api/league/:name/match.
-// Identity fields (ownerUid/leagueKey/matchId/roomId/savedAt) are preserved
-// from the existing doc regardless of what the body sends, so a correction
-// can never accidentally move a match to a different tournament or drop its
-// clip linkage (roomId).
-adminRouter.put('/tournament/:ownerUid/:leagueKey/match/:matchId', async (req, res) => {
-    if (!leaguesCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
-    const { ownerUid, matchId } = req.params;
-    const leagueKey = leagueKeyFor(req.params.leagueKey);
-    const correction = req.body && req.body.record;
-    if (!correction || typeof correction !== 'object') return res.status(400).json({ success: false, error: 'record object required' });
-    try {
-        const existing = await matchRecordsCollection.findOne({ ownerUid, leagueKey, matchId });
-        if (!existing) return res.status(404).json({ success: false, error: 'Match not found' });
-        const league = await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { publicToken: 1, displayName: 1 } });
-
-        // The admin panel round-trips the existing record through the JSON
-        // textarea, which turns Mongo's ObjectId into a plain string _id.
-        // replaceOne() treats _id as immutable, so sending that string back
-        // causes "the (immutable) field '_id' was found to have been
-        // altered" and the whole save fails with a 500 ("Could not save
-        // correction"). Strip whatever _id came in the body and let Mongo
-        // keep the existing document's real _id untouched.
-        const { _id, ...correctionWithoutId } = correction;
-
-        const corrected = {
-            ...correctionWithoutId,
-            ownerUid, leagueKey, matchId,
-            roomId: existing.roomId || null,
-            savedAt: existing.savedAt
-        };
-        await matchRecordsCollection.replaceOne({ ownerUid, leagueKey, matchId }, corrected);
-
-        // Nothing to recompute by hand — points table, leaderboards and
-        // player stats are derived fresh from matchRecords on every read.
-        // Just clear the short-lived response caches so the correction is
-        // visible immediately instead of waiting out their TTL.
-        if (league && league.publicToken) publicTournamentCache.delete(league.publicToken);
-        publicTournamentsListCache = null;
-
-        await logAuditAction(req.ownerEmail, 'Owner match correction', `${league && league.displayName || leagueKey} — match ${matchId}`, null, null);
-        res.json({ success: true, match: corrected });
-    } catch (err) {
-        console.log('Owner match correction error:', err);
-        res.status(500).json({ success: false, error: 'Could not save correction' });
-    }
-});
+// 🚫 REMOVED — this used to let the admin panel replaceOne() an ENTIRE
+// matchRecordsCollection doc from a hand-edited JSON blob (runs, wickets,
+// battingCard/bowlingCard entries, winningTeam — anything), completely
+// bypassing ballsCollection and the ball-by-ball recalculation engine
+// (buildLiveCardsFromBallsArray/correctDelivery below). That's exactly the
+// "duplicate/contradictory source of truth" and "unsafe aggregate-only
+// correction" pattern the match-correction system now explicitly avoids —
+// any score/delivery correction goes through PUT /cricket/ball/:ballId (or
+// the bowler/batsman bulk-correction endpoints) instead, which always
+// derives every downstream total fresh from the canonical balls and can
+// never leave this doc holding numbers that don't add up to any real
+// sequence of deliveries. The admin.html UI that called this was removed
+// in the same pass — score/delivery corrections now live only on the
+// match's own scorecard page (cricket-scorecard.html's 🔒 Edit Scorecard).
 
 // Deletes an ENTIRE tournament: the league doc, every match saved under it,
 // and every clip belonging to those matches. Frontend shows a confirmation
