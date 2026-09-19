@@ -1376,7 +1376,7 @@
           <span style="opacity:.7;">Clip Worker</span><span id="ce-worker" class="ls-health-val">● Idle</span>
           <span style="opacity:.7;">Cloudflare</span><span id="ce-cloudflare" class="ls-health-val">● —</span>
         </div>
-        <div id="ce-live-status" style="font-size:12px; font-family:monospace; margin-top:8px; min-height:16px; opacity:.9;"></div>
+        <div id="ce-clip-jobs-list" style="margin-top:10px; display:flex; flex-direction:column; gap:6px; max-height:260px; overflow-y:auto;"></div>
       </div>
 
       <button class="full small ghost" id="save-highlight-btn" style="margin-top:12px;">⭐ Save Highlight</button>
@@ -2226,43 +2226,124 @@ function setClipEngineStatus(active){
   ceSetDot('ce-recording', active, active ? 'Active' : 'Inactive');
 }
 
-function ceLiveLine(text){
-  const el = document.getElementById('ce-live-status');
-  if(el) el.textContent = text;
+/* ============================================================
+   🎬 PER-CLIP LIVE STATUS — one row per FOUR/SIX/WICKET/HIGHLIGHT job,
+   polling the Stream Engine's persistent job (GET /clip-jobs/:clipId)
+   until it reaches COMPLETE or FAILED_PERMANENT. Multiple clips in
+   quick succession each get their OWN row/poll loop — never one status
+   line overwriting another (see requirement: "one event = one clip
+   job", queue of concurrent clips).
+   ============================================================ */
+const clipUiJobs = new Map(); // clipId -> { trail:[], lastStatusKey, el }
+
+// Builds the client's own clipId the SAME deterministic way the Stream
+// Engine and Render both do (matchId_EVENTTYPE_timestamp) — sent along
+// with the request so this row can start polling immediately, without
+// waiting on the /clip response to learn what id was assigned.
+function buildClientClipId(matchId, eventType, timestamp){
+  return `${String(matchId||'').replace(/[^a-zA-Z0-9_-]/g,'')}_${String(eventType||'CLIP').toUpperCase()}_${timestamp}`;
+}
+
+function clipJobStageLine(job){
+  switch(job.status){
+    case 'WAITING_FOR_POSTROLL': return '⏳ Waiting 5 seconds (post-roll)...';
+    case 'CUTTING': return `✂ Cutting clip... Range: T0-15s → T0+5s (~20 sec)`;
+    case 'LOCAL_SAVED': return '✓ Local File Saved';
+    case 'FORWARDING': return '⬆ Uploading to Cloudflare R2 + Google Drive...';
+    case 'RETRY_PENDING': {
+      const r2 = job.r2Status === 'uploaded' ? '✓ R2' : (job.r2Status === 'failed' ? '✕ R2 (retrying)' : '⏳ R2');
+      const dr = job.driveStatus === 'uploaded' ? '✓ Drive' : (job.driveStatus === 'failed' ? '✕ Drive (retrying)' : '⏳ Drive');
+      return `${r2}   ${dr}`;
+    }
+    case 'COMPLETE': return '✓ CLIP COMPLETE — Local ✓  R2 ✓  Drive ✓  Metadata ✓';
+    case 'FAILED_PERMANENT': return `⚠ ${job.error || 'Failed'} — local file retained where possible`;
+    default: return job.status || '';
+  }
+}
+
+// Appends a new trail line only when the status actually CHANGES —
+// this is what turns polling (which fires every second regardless)
+// into the exact progressive reveal the operator should see, instead
+// of the same line repeating every tick.
+function clipJobStatusKey(job){ return `${job.status}:${job.r2Status}:${job.driveStatus}`; }
+
+function renderClipJobRow(clipId){
+  const ui = clipUiJobs.get(clipId);
+  if(!ui || !ui.el) return;
+  const failed = ui.job && ui.job.status === 'FAILED_PERMANENT';
+  const complete = ui.job && ui.job.status === 'COMPLETE';
+  ui.el.style.borderLeft = `3px solid ${failed ? '#ff6b6b' : complete ? '#3ddc84' : '#ffb020'}`;
+  ui.el.innerHTML = `
+    <div style="font-weight:600;">${ui.eventType} <span style="opacity:.5; font-weight:400;">@ ${new Date(ui.timestamp).toLocaleTimeString()}</span></div>
+    <div style="opacity:.85; white-space:pre-line; margin-top:2px;">${ui.trail.join('\n')}</div>
+  `;
+}
+
+function addClipJobRow(clipId, eventType, timestamp){
+  const list = document.getElementById('ce-clip-jobs-list');
+  if(!list) return null;
+  const el = document.createElement('div');
+  el.style.cssText = 'font-size:11.5px; font-family:monospace; padding:6px 8px; background:rgba(255,255,255,.04); border-radius:6px;';
+  list.prepend(el); // newest clip on top
+  // Cap the visible list so a burst of boundaries doesn't grow forever.
+  while(list.children.length > 12) list.removeChild(list.lastChild);
+  const ui = { eventType, timestamp, el, trail: ['✓ Event Captured', '✓ T0 Saved'], lastStatusKey: null, job: null };
+  clipUiJobs.set(clipId, ui);
+  renderClipJobRow(clipId);
+  return ui;
+}
+
+async function pollClipJob(clipId){
+  const deadline = Date.now() + 6 * 60 * 1000; // safety cap — matches the Stream Engine's own poll-to-server window
+  while(Date.now() < deadline){
+    const ui = clipUiJobs.get(clipId);
+    if(!ui) return; // row was pruned off the visible list — stop polling it
+    let data;
+    try {
+      data = await fetch(`${STREAM_ENGINE_URL}/clip-jobs/${encodeURIComponent(clipId)}`, { signal: AbortSignal.timeout(2500) }).then(r => r.json());
+    } catch(e) { await new Promise(r => setTimeout(r, 1500)); continue; }
+
+    if(data && data.success && data.job){
+      ui.job = data.job;
+      const key = clipJobStatusKey(data.job);
+      if(key !== ui.lastStatusKey){
+        ui.lastStatusKey = key;
+        ui.trail.push(clipJobStageLine(data.job));
+        if(ui.trail.length > 9) ui.trail.splice(2, 1); // keep the first two (Event/T0) + a bounded recent history
+        renderClipJobRow(clipId);
+      }
+      if(data.job.status === 'COMPLETE' || data.job.status === 'FAILED_PERMANENT') return;
+    }
+    await new Promise(r => setTimeout(r, 1000));
+  }
 }
 
 // Shared by every clip trigger (FOUR/SIX/WICKET auto-detect AND the
 // manual "Save Highlight" button) — same engine, same endpoint, exactly
-// as required. Fires the request, shows the real lifecycle on screen,
-// and NEVER blocks/awaits from the caller — scoring keeps moving the
-// instant this is called (fire-and-forget from recordBall()'s point of
-// view; this function's own internal awaiting only updates the status
-// line, nothing else in the UI waits on it).
+// as required. T0 (timestamp) is captured by the CALLER before this
+// runs (recordBall()/triggerWicketClip() already freeze it) — this
+// function only submits the already-frozen event; it never recomputes
+// or re-reads current player/ball state. Fires the request and NEVER
+// blocks/awaits from the caller — scoring keeps moving the instant
+// this is called; everything below only updates the on-screen job row.
 async function triggerClip(eventType, timestamp, matchId, ballMeta){
-  ceLiveLine(`${eventType} DETECTED`);
-  await new Promise(r => setTimeout(r, 150)); // let the DETECTED line actually be seen before it flips
-  ceLiveLine('Creating Clip...');
+  const clipId = buildClientClipId(matchId, eventType, timestamp);
+  addClipJobRow(clipId, eventType, timestamp);
   try {
     const res = await fetch(`${STREAM_ENGINE_URL}/clip`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ eventType, timestamp, matchId, ballMeta })
+      body: JSON.stringify({ eventType, timestamp, matchId, ballMeta, clipId })
     }).then(r => r.json());
 
     if(!res.success){
-      ceLiveLine(`❌ ${eventType}: ${res.error || 'failed'}`);
-      setTimeout(() => ceLiveLine(''), 5000);
+      const ui = clipUiJobs.get(clipId);
+      if(ui){ ui.trail.push(`⚠ Cannot Start Clip — ${res.error || 'failed'}`); renderClipJobRow(clipId); }
       return;
     }
-    ceLiveLine('Uploading...');
-    if(res.saved){
-      ceLiveLine('✓ Saved');
-    } else if(res.queuedForRetry){
-      ceLiveLine('⚠️ Saved locally — retrying upload…');
-    }
-    setTimeout(() => ceLiveLine(''), 3000);
+    pollClipJob(clipId); // job now lives independently in the Stream Engine — this just watches it
   } catch(e) {
-    ceLiveLine('⚠️ Local Stream Engine not reachable — clip skipped');
-    setTimeout(() => ceLiveLine(''), 5000);
+    const ui = clipUiJobs.get(clipId);
+    if(ui){ ui.trail.push('⚠ Local Stream Engine not reachable — clip could not be started'); renderClipJobRow(clipId); }
   }
 }
 
@@ -7783,6 +7864,10 @@ function recordBall(kind, meta){
       overCompletedThisBall = addLegalBall(byeRuns);
       addBowlerBall(0);
       if(byeRuns % 2 === 1) swapStrikeSilent();
+      // 🔒 A Bye reaching the boundary (4 runs — the picker's max) never
+      // touches the bat, but it's still a highlight-worthy boundary; mark
+      // it so logBallToDb() cuts a clip for it just like a plain FOUR.
+      if(byeRuns === 4) extraBoundaryEventType = 'FOUR';
       break;
     }
     case 'LB': {
@@ -7796,6 +7881,9 @@ function recordBall(kind, meta){
       overCompletedThisBall = addLegalBall(lbRuns);
       addBowlerBall(0);
       if(lbRuns % 2 === 1) swapStrikeSilent();
+      // Same boundary rule as a Bye above — a Leg Bye to the fence is
+      // still a highlight, even though it's credited to extras.
+      if(lbRuns === 4) extraBoundaryEventType = 'FOUR';
       break;
     }
   }
