@@ -691,6 +691,12 @@ async function cutLocalClip({ clipId, matchId, eventType, eventTimestamp, ballMe
     await new Promise((resolve, reject) => {
         const args = [
             '-hide_banner', '-loglevel', 'warning', '-y',
+            // Tolerate minor bitstream inconsistencies at concatenation
+            // boundaries instead of hard-failing on them — the stitched
+            // file is raw-concatenated independent MediaRecorder chunks
+            // (see localBuffer.js), not a properly muxed single stream,
+            // so small irregularities there are expected, not corruption.
+            '-err_detect', 'ignore_err', '-fflags', '+genpts+igndts',
             '-i', stitchedFile,
             '-ss', String(trimStartSec), '-t', String(CLIP_PRE_ROLL_SEC + CLIP_POST_ROLL_SEC),
             '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'veryfast',
@@ -699,7 +705,20 @@ async function cutLocalClip({ clipId, matchId, eventType, eventTimestamp, ballMe
         const proc = spawn(FFMPEG_PATH, args);
         let stderr = '';
         proc.stderr.on('data', (d) => { stderr += d; });
-        proc.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg trim exited ${code}: ${stderr.slice(-300)}`)));
+        proc.on('exit', (code) => {
+            if (code === 0) return resolve();
+            // "Invalid data found when processing input" specifically
+            // means ffmpeg couldn't even parse the stitched container —
+            // seen in practice when the capture source (e.g. a capture
+            // card triggering Chrome's hardware H264 encode path) emits
+            // chunks that don't survive raw concatenation the way VP8's
+            // does. Surfaced with a concrete next step, not just the raw
+            // ffmpeg error.
+            const hint = /invalid data found/i.test(stderr)
+                ? ' — likely a capture-device/codec compatibility issue with the chunk-concatenation approach; check the browser console for the MediaRecorder mimeType actually in use (Live Studio should log "video/webm;codecs=vp8,opus")'
+                : '';
+            reject(new Error(`ffmpeg trim exited ${code}: ${stderr.slice(-300)}${hint}`));
+        });
         proc.on('error', reject);
     });
 
