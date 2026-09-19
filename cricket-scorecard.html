@@ -2162,7 +2162,14 @@ function matchStatusText(state){
     const innNo = state.inningsNumber || 1;
     return { badge:'BREAK', text: state.format === 'Test' ? `Innings ${innNo} Break` : 'Innings Break' };
   }
-  return { badge:'LIVE', text:'Live' };
+  // Test-only day/session pause — a pure status, never a result. Checked
+  // AFTER match-result/innings-break above (both take priority — Stumps
+  // never overrides an already-decided result or an innings break) and
+  // never treated as COMPLETED anywhere in this file.
+  if(state.format === 'Test' && state.dayStatus === 'STUMPS'){
+    return { badge:'STUMPS', text:`Stumps — Day ${state.dayNumber || 1}` };
+  }
+  return { badge:'LIVE', text: state.format === 'Test' ? `Live — Day ${state.dayNumber || 1}` : 'Live' };
 }
 
 /* Which team was batting in a given (possibly already-finished) innings
@@ -3077,6 +3084,15 @@ function commentaryLine(b){
   if(b.ballType === '4') return { cls:'cm-four', text:`FOUR! ${escapeHtml(striker)} finds the gap off ${escapeHtml(bowler)}` };
   if(b.ballType === 'B') return { cls:'', text:`${b.runs||0} run${b.runs===1?'':'s'} (Bye)` };
   if(b.ballType === 'LB') return { cls:'', text:`${b.runs||0} run${b.runs===1?'':'s'} (Leg Bye)` };
+  // OVERTHROW — a legal, off-the-bat delivery (see the 'OT' case in
+  // cricket-panel.html's recordBall()); runs belong to the striker same
+  // as any other shot, so this stays out of the generic "extra" branch
+  // below despite the name.
+  if(b.ballType === 'OT'){
+    if((b.runs || 0) === 6) return { cls:'cm-six', text:`OVERTHROW SIX! ${escapeHtml(striker)} — the fielder's return runs away for six off ${escapeHtml(bowler)}` };
+    if((b.runs || 0) === 4) return { cls:'cm-four', text:`OVERTHROW FOUR! ${escapeHtml(striker)} benefits from a misfield off ${escapeHtml(bowler)}` };
+    return { cls:'', text:`${b.runs||0} run${b.runs===1?'':'s'} (Overthrow). ${escapeHtml(striker)} off ${escapeHtml(bowler)}` };
+  }
   if(!LEGAL_KINDS.has(b.ballType)) return { cls:'', text:`${b.runs||0} run${b.runs===1?'':'s'} — extra, ${escapeHtml(bowler)} to ${escapeHtml(striker)}` };
   if((b.runs || 0) === 0) return { cls:'', text:`Dot ball. ${escapeHtml(bowler)} to ${escapeHtml(striker)}` };
   return { cls:'', text:`${b.runs} run${b.runs===1?'':'s'}. ${escapeHtml(striker)} off ${escapeHtml(bowler)}` };
@@ -3232,6 +3248,7 @@ function renderCommentary(s){
 function isBoundaryBall(b){
   if(b.isWicket) return true;
   if(b.ballType === '4' || b.ballType === '6') return true;
+  if(b.ballType === 'OT') return (b.runs || 0) === 4 || (b.runs || 0) === 6;
   const k = String(b.ballType || b.kind || '').toLowerCase();
   if(k === 'nb' || k === 'noball'){ const off = Math.max(0, (b.runs || 0) - 1); return off === 4 || off === 6; }
   if(k === 'wd' || k === 'wide' || k === 'b' || k === 'bye' || k === 'lb' || k === 'legbye'){ return (b.runs || 0) === 4 || (b.runs || 0) === 6; }
@@ -3260,6 +3277,11 @@ function ballBadgeInfo(b){
   if(b.isWicket) return { label:'W', cls:'bb-wicket' };
   if(b.ballType === '6') return { label:'6', cls:'bb-six' };
   if(b.ballType === '4') return { label:'4', cls:'bb-four' };
+  if(b.ballType === 'OT'){
+    if((b.runs || 0) === 6) return { label:'6', cls:'bb-six' };
+    if((b.runs || 0) === 4) return { label:'4', cls:'bb-four' };
+    return { label:String(b.runs || 0), cls:'bb-extra' };
+  }
   const k = String(b.ballType || '').toUpperCase();
   if(k === 'WD' || k === 'WIDE') return { label:'wd', cls:'bb-extra' };
   if(k === 'NB' || k === 'NOBALL') return { label:'nb', cls:'bb-extra' };
@@ -4041,7 +4063,7 @@ function currentInningsLog(s){
   const innings = s.inningsNumber || (s.target ? 2 : 1);
   return dedupeBallLog((s.ballLog || []).filter(b => b.innings === innings));
 }
-const LEGAL_KINDS = new Set(['0','1','2','3','4','5','6','W','B','LB']);
+const LEGAL_KINDS = new Set(['0','1','2','3','4','5','6','W','B','LB','OT']);
 function overBuckets(log){
   const overs = [];
   let legalCount = 0, cur = { idx:0, runs:0, wicket:false };
