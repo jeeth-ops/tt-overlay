@@ -546,7 +546,7 @@ retryQueue.forEach((entry) => scheduleRetry(entry));
 
 async function cutLocalClip({ matchId, eventType, eventTimestamp, ballMeta }) {
     const win = localBuffer.getClipWindow({ matchId, eventTimestamp, preRollSec: CLIP_PRE_ROLL_SEC, postRollSec: CLIP_POST_ROLL_SEC });
-    if (!win) return { ok: false, error: 'No local buffer source for this match yet (recording not started, or event too recent/old for the retained window)' };
+    if (win.error) return { ok: false, error: win.error };
 
     const { trimStartSec, toStitch, dirs } = win;
     const stitchedFile = path.join(dirs.tempDir, `_stitched_${Date.now()}.webm`);
@@ -682,6 +682,7 @@ app.get('/status', async (req, res) => {
         // CLIP ENGINE status card.
         recordingActive: localBuffer.activeSessionCount() > 0,
         bufferSessions: localBuffer.activeSessionCount(),
+        bufferSessionsDetail: localBuffer.sessionsSummary(),
         clipWorkerState: clipWorker.state,
         cloudflareConnected: clipWorker.cloudflareConnected,
         clipWorkerLastError: clipWorker.lastError,
@@ -705,7 +706,11 @@ app.post('/recording-start', (req, res) => {
     const mainServerUrl = (req.body && req.body.mainServerUrl) || null;
     const tournamentId = (req.body && req.body.tournamentId) || null;
 
-    localBuffer.startSession(matchId, { tournamentId, mainServerUrl });
+    // attachRecording (not startSession) — reuses any buffer already
+    // capturing this match's footage (e.g. streaming was already live
+    // before Recording was clicked), preserving its real header/chunks
+    // instead of replacing it with an empty one. See localBuffer.js.
+    localBuffer.attachRecording(matchId, { tournamentId, mainServerUrl });
     recordingMatches[matchId] = { mainServerUrl, tournamentId };
     console.log(`🔴 [clip engine] Local buffer recording started for match ${matchId}`);
     // No vMix here — "vmixControlled" from the old ClipperHelper contract
@@ -787,16 +792,24 @@ app.post('/go-live', (req, res) => {
 
 // The SAME incoming bytes feed BOTH consumers below — one MediaRecorder
 // capture in the browser, never two, never a second encoder process
-// spun up to duplicate the work. matchId/index let this also land in
-// the local buffer (Part 3's clip source) when a recording session is
-// active for that match; whether or not that's true, if the NVENC
-// encoder is live it still gets the same bytes for YouTube (Part 2) —
-// the two are independent and either can run without the other.
+// spun up to duplicate the work. matchId/index also lazily buffer this
+// into the local buffer (Part 3's clip source) via ensureSession — done
+// unconditionally (not gated behind /recording-start having been called
+// yet) so the buffer's very first chunk (the WebM header every later
+// chunk needs) is never missed, even if Live Studio streaming starts
+// the shared capture before "Start Recording" is clicked. It stays
+// bounded to RETENTION_SEC either way, and actually cutting/forwarding
+// a clip still requires /recording-start's mainServerUrl (see /clip) —
+// this only ensures the footage is THERE if that's requested later.
+// Whether or not any of this is true, if the NVENC encoder is live it
+// still gets the same bytes for YouTube (Part 2) — the two are
+// independent and either can run without the other.
 app.post('/ingest', express.raw({ type: '*/*', limit: '10mb' }), (req, res) => {
     const matchId = localBuffer.safeMatchId(req.query.matchId);
     const index = parseInt(req.query.index, 10);
 
-    if (matchId && Number.isFinite(index) && localBuffer.getSession(matchId)) {
+    if (matchId && Number.isFinite(index)) {
+        localBuffer.ensureSession(matchId);
         localBuffer.addChunk(matchId, index, req.body);
     }
 
