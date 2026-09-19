@@ -2542,7 +2542,21 @@ async function ensureLocalCapture(matchId){
   }
 
   const combined = new MediaStream([...liveDisplayStream.getVideoTracks(), ...liveAudioStream.getAudioTracks()]);
-  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=h264,opus') ? 'video/webm;codecs=h264,opus' : 'video/webm;codecs=vp8,opus';
+  // 🔒 VP8 preferred over H264-in-WebM — the clip pipeline reconstructs
+  // a playable file by raw byte-concatenating independent MediaRecorder
+  // timeslice chunks (see localBuffer.js's header comment), which only
+  // reliably survives concatenation for VP8's simpler bitstream. H264's
+  // SPS/PPS (codec parameter set) placement can differ across encode
+  // paths — confirmed in practice: clips cut fine from a laptop's
+  // built-in webcam (likely a software H264 path) but ffmpeg failed
+  // with "Invalid data found when processing input" on the SAME
+  // pipeline once a capture card was used instead (which triggers
+  // Chrome's hardware H264 encode path — a different bitstream layout
+  // that doesn't concatenate the same way). Live streaming itself was
+  // unaffected either way, since NVENC reads chunks as a continuous
+  // pipe (sequential decode) rather than needing a seekable file.
+  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus') ? 'video/webm;codecs=vp8,opus' : 'video/webm;codecs=h264,opus';
+  console.log('[Live Studio] MediaRecorder mimeType:', mimeType);
   // Browser's own (software) encode of the capture, BEFORE it reaches
   // NVENC — this is an intermediate step, so it's given generous
   // headroom over the final target bitrate (1.5x) rather than matching
