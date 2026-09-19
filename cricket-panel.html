@@ -972,6 +972,7 @@
         <button class="b-extra" data-ball="Nb">No Ball</button>
         <button class="b-extra" data-ball="B">Bye</button>
         <button class="b-extra" data-ball="LB">Leg Bye</button>
+        <button class="b-extra" data-ball="OT">Overthrow</button>
       </div>
       <button class="full ghost" id="undo-btn" style="margin-top:10px;">Undo Last Ball (U)</button>
       <button class="full ghost" id="edit-scorecard-btn" style="margin-top:8px;display:none;">✏️ Edit Scorecard (Delete a Ball)</button>
@@ -1667,6 +1668,8 @@
       <button class="full small" id="download-tournament-excel-btn" style="margin-bottom:6px;">🏆 Export Tournament Excel Report</button>
       <div class="shortcut-hint" style="margin-bottom:6px;">Match Report exports the current/selected match. Tournament Report exports every match saved under the tournament picked in the Match Type panel above.</div>
       <button class="full small" id="declare-btn" style="display:none; margin-bottom:6px;">🏳️ Declare Innings (Test)</button>
+      <button class="full small" id="stumps-btn" style="display:none; margin-bottom:6px;">🌙 Stumps / End of Day (Test)</button>
+      <button class="full small primary" id="resume-day-btn" style="display:none; margin-bottom:6px;">☀️ Resume Play — Start Next Day</button>
       <button class="full small" id="next-innings-btn" disabled>Start Next Innings</button>
       <button class="full small" id="draw-btn" style="display:none; margin-top:6px;">🤝 Match Drawn (Test)</button>
       <button class="full small" id="reset-btn" style="margin-top:6px;">Reset Match (clears everything)</button>
@@ -1891,6 +1894,16 @@ function defaultState(){
     // (captain's declaration) rather than being bowled out or running out
     // of overs.
     declared: false,
+    // Test-only day/session tracking (see the STUMPS / End of Day button
+    // and resumeFromStumps() below). dayNumber is 1 until the operator
+    // explicitly resumes play after a STUMPS — it is NOT tied to overs
+    // bowled or wall-clock time, since a session can run long or short.
+    // dayStatus 'STUMPS' is a pure display/status flag: it must NEVER be
+    // treated as match-complete anywhere (isInningsOver/checkMatchResult
+    // never read it) — the innings it interrupts stays exactly as it was,
+    // ready for the next legal delivery the instant play resumes.
+    dayNumber: 1,
+    dayStatus: 'LIVE', // 'LIVE' | 'STUMPS'
     // Final human-readable result line ("INDIA WIN BY AN INNINGS AND 42
     // RUNS", "MATCH DRAWN", etc.) — set once, the moment the result is
     // decided, so every graphic/report reads it back instead of each one
@@ -2073,6 +2086,39 @@ function updateShareLinks(matchId){
   }
 }
 
+// 🔒 RESUME SAFETY — see connect() below. A panel opening on a device/
+// browser that has never scored this match locally (Test-match Day 2 on
+// a different laptop, a "Resume this match" click from the Tournament →
+// Matches list, etc.) starts with a blank/default local `state`. The old
+// code pushed that blank state to the server the INSTANT the socket
+// connected, racing the server's own reply (liveCricketScore, sent right
+// after a room join — see io.on('connection') in server.js) — whichever
+// arrived first client-side won, so a resuming panel could easily clobber
+// the real live match (score/striker/bowler/ballLog/declared/target/...)
+// in Firestore with fresh defaults. These two flags make the panel WAIT
+// to hear the server's last known state for this room before it ever
+// pushes anything of its own, so hydration always wins the race instead
+// of winning by luck.
+let awaitingInitialHydration = false;
+let initialHydrationTimer = null;
+function completeInitialHydration(){
+  if(!awaitingInitialHydration) return;
+  awaitingInitialHydration = false;
+  clearTimeout(initialHydrationTimer);
+  // Whatever's in `state` now — the server's real match state if this
+  // room was already live (just merged in by the liveCricketScore
+  // handler below), or our own fresh defaults if it genuinely wasn't —
+  // is safe to (re)assert now, same as the panel always has on connect.
+  // A freshly-joining/reconnecting overlay must see the last real
+  // broadcast — never an in-progress "next innings" edit the operator
+  // hasn't committed yet by clicking Start.
+  if(isAwaitingNextInnings() && lastBroadcastState){
+    send(lastBroadcastState);
+  } else {
+    pushState(true, true);
+  }
+}
+
 function connect(){
   const matchId = document.getElementById('match-id').value.trim();
   if(!matchId){ toast('Enter a Match ID first'); return; }
@@ -2090,14 +2136,13 @@ function connect(){
     // between "Connect" and "first ball" resolved to the wrong room and
     // sat stuck on "Connecting".
     pingTournamentLiveStatus(true);
-    // A freshly-joining/reconnecting overlay must see the last real
-    // broadcast — never an in-progress "next innings" edit the operator
-    // hasn't committed yet by clicking Start.
-    if(isAwaitingNextInnings() && lastBroadcastState){
-      send(lastBroadcastState);
-    } else {
-      pushState(true, true);
-    }
+    // Wait for the server's reply before pushing anything — see the
+    // RESUME SAFETY comment above. Normally resolved within one round
+    // trip by the liveCricketScore handler below; this timeout is only a
+    // safety net for the rare case that reply is somehow lost.
+    awaitingInitialHydration = true;
+    clearTimeout(initialHydrationTimer);
+    initialHydrationTimer = setTimeout(completeInitialHydration, 1200);
   });
   socket.on('disconnect', () => { dot.classList.remove('on'); });
   socket.on('connect_error', () => { dot.classList.remove('on'); });
@@ -2108,6 +2153,7 @@ function connect(){
       lastBroadcastState = snapshot();
       renderPanel();
     }
+    completeInitialHydration();
   });
 
   // 🎬 Real clip/Drive status from the server — this is the ONLY place
@@ -2124,6 +2170,63 @@ function connect(){
   });
 }
 document.getElementById('connect-btn').addEventListener('click', connect);
+
+/* ============================================================
+   🔀 MATCH SWITCHING — jump this same Cricket Panel to a DIFFERENT
+   match's live room (Tournament/League → Matches list "Resume", or
+   just typing a different Match ID and hitting Connect). The room's
+   full live state already survives independently of any one browser
+   tab (durable in Firestore, replayed to whichever socket joins the
+   room — see io.on('connection') in server.js and the RESUME SAFETY
+   comment above), so switching is just: stop showing the OLD match,
+   join the NEW room, and let the existing liveCricketScore hydration
+   path load its exact current state (score/striker/bowler/ballLog/
+   declared/target/commentary/...) — no separate "match state" storage
+   or API needed, and nothing about the match being left behind is
+   touched (its clip jobs, MongoDB balls and Firestore doc all keep
+   going/existing completely independently of which room this panel
+   happens to be looking at right now).
+   ============================================================ */
+function switchToMatch(roomId){
+  if(!roomId) return;
+  // 🔒 Blank the local state FIRST, before connecting to the new room —
+  // otherwise the OLD match's score/players/commentary would stay on
+  // screen (and, worse, be eligible to be pushed back to the server by
+  // the old socket's in-flight pushState calls) for the brief window
+  // before the new room's liveCricketScore reply arrives. Clean "Loading
+  // Match…" state in between, exactly like a genuinely fresh room.
+  // Same two fields the Reset button already carries across a fresh
+  // state — leagueName in particular is what keeps the Tournament →
+  // Matches list itself showing while the new match's own leagueName
+  // hasn't loaded yet, so "Resume" doesn't strand the operator back at
+  // an empty tournament picker.
+  const keepLeagueName = state.leagueName;
+  const keepMatchMode = state.matchMode;
+  document.getElementById('disp-score').textContent = '—';
+  toast('⏳ Loading match…');
+  state = mergeWithDefaults(null);
+  state.leagueName = keepLeagueName;
+  state.matchMode = keepMatchMode;
+  renderPanel();
+  document.getElementById('match-id').value = roomId;
+  try{ localStorage.setItem('cricket-match-id', roomId); }catch(e){}
+  connect();
+}
+// Called from the League/Tournament "Matches" list (renderLeagueMatchesList
+// below) when the operator picks an in-progress match to continue scoring.
+// Never creates a new match record or resets anything — rec.roomId is the
+// exact Socket.IO room (== Match ID) that match has always broadcast
+// under, so reconnecting to it is indistinguishable from that match's
+// original operator never having left.
+function resumeMatch(rec){
+  if(!rec) return;
+  const roomId = rec.roomId || rec.matchId;
+  if(!roomId){ toast('⚠️ This match was saved before live rooms existed — nothing to resume, only the saved scorecard is available.'); return; }
+  if(roomId === currentMatchId()){ toast('Already on this match'); return; }
+  const label = `${rec.teamA.short || rec.teamA.name} vs ${rec.teamB.short || rec.teamB.name}`;
+  if(!confirm(`Switch this panel to "${label}" and resume scoring it?\n\nThe match you're on now is unaffected — its score, clips and live broadcast keep going exactly as saved, and you can come back to it the same way.`)) return;
+  switchToMatch(roomId);
+}
 
 /* ============================================================
    🎬 RECORDING (PART 3 — no vMix) — this browser tab IS the capture
@@ -3408,6 +3511,7 @@ function calcBallsLeft(){
 }
 
 function renderPanel(){
+  applyTestButtonsVisibility();
   document.getElementById('disp-score').textContent = `${state.score.runs}-${state.score.wickets}`;
   document.getElementById('disp-overs').textContent = fmtOvers(state.score.overs, state.score.balls);
   document.getElementById('disp-crr').textContent = calcCRR().toFixed(2);
@@ -3622,13 +3726,28 @@ document.getElementById('format').addEventListener('change', (e) => {
   applyTestButtonsVisibility();
   pushState(true);
 });
-// Declare / Draw only make sense in Test cricket — hide them everywhere else.
+// Declare / Draw / Stumps only make sense in Test cricket — hide them
+// everywhere else. Called on format change, on page-load init, AND from
+// renderPanel() (see below) — that last one matters as much as the other
+// two: without it, resuming a Test match on a fresh panel (Match Switch /
+// Day-2 resume — see switchToMatch()) would hydrate state.format to
+// 'Test' correctly but leave these buttons hidden at their stale
+// non-Test default, since nothing else in the hydration path ever
+// touches them.
 function applyTestButtonsVisibility(){
   const isTest = state.format === 'Test';
   const declareBtn = document.getElementById('declare-btn');
   const drawBtn = document.getElementById('draw-btn');
   if(declareBtn) declareBtn.style.display = isTest ? 'block' : 'none';
   if(drawBtn) drawBtn.style.display = isTest ? 'block' : 'none';
+  const stumpsBtn = document.getElementById('stumps-btn');
+  const resumeDayBtn = document.getElementById('resume-day-btn');
+  const onStumps = state.dayStatus === 'STUMPS';
+  // Match already over → neither makes sense any more (Declare/Draw
+  // already hide themselves the same way elsewhere in this file).
+  const matchOver = !!state.milestonesHit['match-result'];
+  if(stumpsBtn) stumpsBtn.style.display = (isTest && !onStumps && !matchOver) ? 'block' : 'none';
+  if(resumeDayBtn) resumeDayBtn.style.display = (isTest && onStumps && !matchOver) ? 'block' : 'none';
 }
 document.getElementById('custom-overs').addEventListener('input', (e) => {
   state.customOvers = parseInt(e.target.value) || 20;
@@ -5043,9 +5162,13 @@ function isAwaitingNextInnings(){
 }
 function updateBallButtonsState(){
   const over = isInningsOver();
-  document.querySelectorAll('[data-ball]').forEach(btn => { btn.disabled = over; });
+  // Play is paused for the day (Stumps called, next day not yet resumed —
+  // see stumps-btn/resume-day-btn above) — no delivery can be entered
+  // until Resume Play is clicked, same as the innings-over case.
+  const onStumps = state.format === 'Test' && state.dayStatus === 'STUMPS';
+  document.querySelectorAll('[data-ball]').forEach(btn => { btn.disabled = over || onStumps; });
   const nextBtn = document.getElementById('next-innings-btn');
-  if(nextBtn) nextBtn.disabled = !over || !!state.milestonesHit['match-result'];
+  if(nextBtn) nextBtn.disabled = onStumps || !over || !!state.milestonesHit['match-result'];
 }
 // Set true for the rest of the current recordBall() call if
 // checkInningsComplete() actually fired — lets checkMatchResult() delay its
@@ -5570,7 +5693,13 @@ function buildMatchRecordForLeague(){
     // data for this match" rather than failing.
     extras: { A: { ...state.extras.A }, B: { ...state.extras.B } },
     fallOfWickets: { A: [...state.fallOfWickets.A], B: [...state.fallOfWickets.B] },
-    partnerships: computeLivePartnerships()
+    partnerships: computeLivePartnerships(),
+    // Test-only day/session status (see the STUMPS / End of Day buttons) —
+    // read by renderLeagueMatchesList()'s Tournament/League Matches list
+    // so an ongoing Test correctly shows "Stumps — Day N" instead of a
+    // plain "In progress" that gives no hint play is currently paused.
+    dayNumber: state.dayNumber || 1,
+    dayStatus: state.dayStatus || 'LIVE'
   };
 }
 
@@ -5972,21 +6101,34 @@ function renderLeagueMatchesList(matches){
   const listEl = document.getElementById('league-matches-list');
   if(!matches.length){ listEl.innerHTML = '<div class="shortcut-hint">No matches saved yet.</div>'; return; }
   listEl.innerHTML = [...matches].reverse().map(m => {
+    // "In progress" per this saved record is the same test resumeMatch()
+    // itself relies on (winningTeam only ever gets set once a result is
+    // actually decided — see buildMatchRecordForLeague()) — an ongoing
+    // Test's DAY_COMPLETE/STUMPS status is still "no result yet" here,
+    // exactly as it should be (see the STUMPS section: that state must
+    // never read as match-completed).
+    const inProgress = m.winningTeam === null || m.winningTeam === undefined;
     const resultText = m.winningTeam === 'TIE' ? 'Tied'
       : m.winningTeam === 'A' ? `${m.teamA.short || m.teamA.name} won`
       : m.winningTeam === 'B' ? `${m.teamB.short || m.teamB.name} won`
-      : 'In progress';
+      : (m.dayStatus === 'STUMPS' ? `Stumps — Day ${m.dayNumber || '?'}` : 'In progress');
+    const resumeBtn = (inProgress && (m.roomId || m.matchId))
+      ? `<button type="button" class="small" data-resume-match="${escapeHtmlPanel(m.matchId)}" style="flex:none;" title="Resume scoring this match in this panel">▶ Resume</button>`
+      : '';
     return `<div class="league-match-row" data-view-match="${escapeHtmlPanel(m.matchId)}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:11.5px;cursor:pointer;">
       <div style="min-width:0;">
-        <div style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtmlPanel(m.teamA.short || m.teamA.name)} vs ${escapeHtmlPanel(m.teamB.short || m.teamB.name)}</div>
+        <div style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtmlPanel(m.teamA.short || m.teamA.name)} vs ${escapeHtmlPanel(m.teamB.short || m.teamB.name)}${inProgress ? ' <span style="color:var(--live,#e5484d);font-weight:800;">● LIVE</span>' : ''}</div>
         <div style="color:var(--text-dim);">${escapeHtmlPanel(resultText)} · ${m.scoreA.runs}-${m.scoreA.wickets} / ${m.scoreB.runs}-${m.scoreB.wickets}</div>
       </div>
-      <button type="button" class="small ghost" data-delete-match="${escapeHtmlPanel(m.matchId)}" style="flex:none;">🗑</button>
+      <div style="display:flex;align-items:center;gap:6px;flex:none;">
+        ${resumeBtn}
+        <button type="button" class="small ghost" data-delete-match="${escapeHtmlPanel(m.matchId)}">🗑</button>
+      </div>
     </div>`;
   }).join('');
   listEl.querySelectorAll('.league-match-row').forEach(row => {
     row.addEventListener('click', (e) => {
-      if(e.target.closest('[data-delete-match]')) return;
+      if(e.target.closest('[data-delete-match]') || e.target.closest('[data-resume-match]')) return;
       const rec = matches.find(x => x.matchId === row.getAttribute('data-view-match'));
       if(rec) openScorecardModal(rec);
     });
@@ -5995,6 +6137,13 @@ function renderLeagueMatchesList(matches){
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       if(confirm('Remove this match from the league?')) deleteMatchFromLeague(btn.getAttribute('data-delete-match'));
+    });
+  });
+  listEl.querySelectorAll('[data-resume-match]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const rec = matches.find(x => x.matchId === btn.getAttribute('data-resume-match'));
+      if(rec) resumeMatch(rec);
     });
   });
 }
@@ -7365,6 +7514,14 @@ function recordBall(kind, meta){
     updateBallButtonsState();
     return;
   }
+  // 🔒 Play paused for the day (see stumps-btn/resume-day-btn) — this
+  // guard is the real enforcement (updateBallButtonsState() only disables
+  // the on-screen buttons, which the '0'-'6'/'w' keyboard shortcuts
+  // bypass entirely), so it has to live here too, not just in the UI.
+  if(state.format === 'Test' && state.dayStatus === 'STUMPS'){
+    toast('🌙 Play is paused for Stumps — click "Resume Play" to start the next day first');
+    return;
+  }
   if((kind === 'W' || kind === 'WdW' || kind === 'NbW') && state.score.wickets >= 10){
     toast('🚫 All out — cannot take an 11th wicket');
     return;
@@ -7791,8 +7948,12 @@ function recordBall(kind, meta){
     }
     case 'Wd': {
       // Extra runs actually run (beyond the automatic 1) come from the
-      // extras picker modal — 0 to 4 (a Wide is never touched by the bat,
-      // so Law 19.7.1's boundary-6 rule can't apply here), defaults to 0.
+      // extras picker modal, defaulting to 0. A Wide is never touched by
+      // the bat, so Law 19.7.1's boundary-6 rule can't apply to the
+      // ORIGINAL delivery — but Law 19.8 (Overthrow) is a separate rule
+      // that can still credit a wide with more than the usual 4-run
+      // boundary if a misfield lets it run away further (see the note on
+      // renderExtrasModalButtons()), so this is deliberately uncapped.
       const extraRun = (meta && typeof meta.extraRuns === 'number') ? meta.extraRuns : 0;
       const wdTotal = 1 + extraRun;
       state.score.runs += wdTotal;
@@ -7803,11 +7964,11 @@ function recordBall(kind, meta){
       pushBallHistory(wdLabel);
       addBowlerExtra(wdTotal);
       fireEvent('WIDE', 'WIDE', extraRun > 0 ? `+${wdTotal} run${wdTotal===1?'':'s'}` : '');
-      // 🔒 A Wide reaching the boundary (extraRun === 4, its max — see the
-      // comment above) is still a highlight-worthy boundary even though it
-      // never touches the bat — mark it so logBallToDb() cuts a clip for
-      // it just like a plain FOUR does.
-      if(extraRun === 4) extraBoundaryEventType = 'FOUR';
+      // 🔒 A Wide reaching the boundary is still a highlight-worthy
+      // boundary even though it never touches the bat — mark it so
+      // logBallToDb() cuts a clip for it just like a plain FOUR/SIX does.
+      if(extraRun === 6) extraBoundaryEventType = 'SIX';
+      else if(extraRun === 4) extraBoundaryEventType = 'FOUR';
       // Runs actually run between the wickets rotate the strike, same as
       // any other delivery — the automatic penalty run itself doesn't.
       if(extraRun % 2 === 1) swapStrikeSilent();
@@ -7842,6 +8003,14 @@ function recordBall(kind, meta){
         if(batRuns === 4) extraBoundaryEventType = 'FOUR';
         else if(batRuns === 6) extraBoundaryEventType = 'SIX';
       }
+      // 🔒 A Leg Bye off a No Ball reaching the boundary never touches the
+      // bat, but (same as a plain Leg Bye or Bye above) it's still a
+      // highlight-worthy boundary — this branch used to have no clip
+      // trigger at all, so a "No Ball + Leg Bye to the fence" silently
+      // never got an automatic clip even though its plain-delivery
+      // equivalent (LB case above) always did.
+      if(legByeRuns === 6) extraBoundaryEventType = 'SIX';
+      else if(legByeRuns === 4) extraBoundaryEventType = 'FOUR';
       state.partnershipRuns += nbTotal;
       state.extras[state.battingTeam].nb += 1;
       if(legByeRuns > 0) state.extras[state.battingTeam].lb += legByeRuns;
@@ -7878,10 +8047,13 @@ function recordBall(kind, meta){
       overCompletedThisBall = addLegalBall(byeRuns);
       addBowlerBall(0);
       if(byeRuns % 2 === 1) swapStrikeSilent();
-      // 🔒 A Bye reaching the boundary (4 runs — the picker's max) never
-      // touches the bat, but it's still a highlight-worthy boundary; mark
-      // it so logBallToDb() cuts a clip for it just like a plain FOUR.
-      if(byeRuns === 4) extraBoundaryEventType = 'FOUR';
+      // 🔒 A Bye reaching the boundary never touches the bat, but it's
+      // still a highlight-worthy boundary (plain 4, or a rarer overthrow
+      // that runs to 6 — see Law 19.8 note on renderExtrasModalButtons());
+      // mark it so logBallToDb() cuts a clip for it just like a plain
+      // FOUR/SIX.
+      if(byeRuns === 6) extraBoundaryEventType = 'SIX';
+      else if(byeRuns === 4) extraBoundaryEventType = 'FOUR';
       break;
     }
     case 'LB': {
@@ -7897,7 +8069,37 @@ function recordBall(kind, meta){
       if(lbRuns % 2 === 1) swapStrikeSilent();
       // Same boundary rule as a Bye above — a Leg Bye to the fence is
       // still a highlight, even though it's credited to extras.
-      if(lbRuns === 4) extraBoundaryEventType = 'FOUR';
+      if(lbRuns === 6) extraBoundaryEventType = 'SIX';
+      else if(lbRuns === 4) extraBoundaryEventType = 'FOUR';
+      break;
+    }
+    case 'OT': {
+      // Overthrow off a normal batted shot (MCC Law 19.8) — the TOTAL
+      // runs (whatever the operator entered: runs already run + boundary
+      // allowance) are credited entirely to the striker, same as any
+      // other shot off the bat, since the delivery itself was a
+      // legitimate hit. Modelled exactly like the plain '0'-'6' case
+      // above, just with a runs value that isn't limited to a single
+      // digit — a legal ball, batsman-credited, strike rotates on odd.
+      const otRuns = (meta && typeof meta.runs === 'number') ? meta.runs : 0;
+      state.score.runs += otRuns;
+      state.striker.runs += otRuns;
+      state.partnershipRuns += otRuns;
+      if(otRuns === 4) state.striker.fours++;
+      if(otRuns === 6) state.striker.sixes++;
+      const otLabel = `OT${otRuns}`;
+      state.thisOver.push(otLabel);
+      pushBallHistory(otLabel);
+      overCompletedThisBall = addLegalBall(otRuns);
+      addBowlerBall(otRuns);
+      fireEvent('OVERTHROW', 'OVERTHROW', `${otRuns} run${otRuns === 1 ? '' : 's'} — ${state.striker.name || 'Striker'}`);
+      // Only tag a clip-worthy boundary when the total actually lands on
+      // 4 or 6 — a 1/2/3/5-run overthrow is scored correctly but, like
+      // any other non-boundary delivery in this system, doesn't trigger
+      // the automatic highlight clip.
+      if(otRuns === 4) extraBoundaryEventType = 'FOUR';
+      else if(otRuns === 6) extraBoundaryEventType = 'SIX';
+      if(otRuns % 2 === 1) swapStrikeSilent();
       break;
     }
   }
@@ -8142,7 +8344,7 @@ function swapStrikeSilent(){
   const tmp = state.striker; state.striker = state.nonStriker; state.nonStriker = tmp;
 }
 
-const EXTRAS_RUN_PICKER_KINDS = ['B', 'LB', 'Wd', 'Nb'];
+const EXTRAS_RUN_PICKER_KINDS = ['B', 'LB', 'Wd', 'Nb', 'OT'];
 document.querySelectorAll('[data-ball]').forEach(btn => {
   btn.addEventListener('click', () => {
     const kind = btn.dataset.ball;
@@ -8162,6 +8364,15 @@ const EXTRAS_MODAL_CONFIG = {
   B:  { title: 'Bye — how many runs?',                              metaKey: 'runs' },
   LB: { title: 'Leg Bye — how many runs?',                          metaKey: 'runs' },
   Wd: { title: 'Wide — extra runs run (beyond the automatic 1)?',   metaKey: 'extraRuns' },
+  // Overthrow off a normal batted shot — see the 'OT' case in recordBall()
+  // below. MCC Law 19.8: the total (runs already run + boundary allowance)
+  // is credited entirely to the striker, exactly like any other shot off
+  // the bat, since the delivery that preceded the throw was a legitimate
+  // hit. Overthrows following an extra (Bye/Leg Bye/Wide/No Ball) are NOT
+  // this kind — they're just a bigger number on that extra's own existing
+  // picker (see the raised maxRuns in renderExtrasModalButtons() below),
+  // credited to that same extras category, per the same Law.
+  OT: { title: 'Overthrow — total runs (completed + boundary), off the bat', metaKey: 'runs' },
   Nb: { title: 'No Ball — runs off the bat?',                       metaKey: 'runsOffBat' }
 };
 // Set while the operator is mid-flow recording a wicket that happened ON a
@@ -8235,14 +8446,19 @@ function openExtrasModal(kind){
 // title + buttons (with the metaKey flipped between 'runsOffBat' and
 // 'legByeRuns') without re-running the whole modal-open setup.
 // 🔒 As per the actual Laws of Cricket (Law 19.7.1): a boundary 6 can
-// ONLY be scored if the ball was struck by the bat. A No Ball's "runs
-// off the bat" is the one case here where that's true, so it alone goes
-// 0-6. A Wide, by definition, is never touched by the bat (if the
-// batter reaches and hits it, it isn't called wide) — same for Bye/Leg
-// Bye, where the bat never makes contact either. All three of those can
-// only ever total a 4-run boundary (a Wide crossing the rope on the
-// full still scores just 5 total — 1 penalty + 4 — never 7), so they
-// stay capped at 4.
+// ONLY be scored if the ball was struck by the bat — a Wide/Bye/Leg Bye
+// never touches the bat, so on an ORDINARY delivery those cap at 4.
+// 🔒 Law 19.8 (Overthrow or wilful act of a fielder) is a SEPARATE rule
+// layered on top: if a boundary results from an overthrow following the
+// original delivery, the runs already run PLUS the boundary allowance
+// are credited to whichever category the original delivery belongs to —
+// so a Bye/Leg Bye/Wide/No-Ball extra CAN legitimately total more than 4
+// once an overthrow is involved (Law 19.7.1's "never touched the bat"
+// cap only bounds the ORIGINAL stroke, not a subsequent misfield). The
+// picker below is raised to 6 to cover the realistic range (including
+// the rare full-toss overthrow that clears the rope for a 6), with a
+// "Custom…" option for anything beyond that this project's scoring
+// architecture doesn't hardcode a ceiling on.
 function renderExtrasModalButtons(kind){
   const cfg = EXTRAS_MODAL_CONFIG[kind];
   const isNbLegBye = kind === 'Nb' && nbLegByeMode;
@@ -8251,23 +8467,34 @@ function renderExtrasModalButtons(kind){
     : cfg.title;
   const wrap = document.getElementById('extras-modal-options');
   wrap.innerHTML = '';
-  // Leg-bye runs off a No Ball never touch the bat either, so even in
-  // that mode (kind still === 'Nb') the cap drops back to 4.
-  const maxRuns = (kind === 'Nb' && !isNbLegBye) ? 6 : 4;
+  const maxRuns = 6;
+  const commit = (runs) => {
+    closeExtrasModal();
+    const meta = {};
+    meta[isNbLegBye ? 'legByeRuns' : cfg.metaKey] = runs;
+    recordBall(kind, meta);
+    maybePromptNewBowler();
+  };
   for(let i = 0; i <= maxRuns; i++){
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'wm-option';
     b.textContent = String(i);
-    b.addEventListener('click', () => {
-      closeExtrasModal();
-      const meta = {};
-      meta[isNbLegBye ? 'legByeRuns' : cfg.metaKey] = i;
-      recordBall(kind, meta);
-      maybePromptNewBowler();
-    });
+    b.addEventListener('click', () => commit(i));
     wrap.appendChild(b);
   }
+  const customBtn = document.createElement('button');
+  customBtn.type = 'button';
+  customBtn.className = 'wm-option';
+  customBtn.textContent = 'Custom…';
+  customBtn.addEventListener('click', () => {
+    const raw = prompt('Total runs for this delivery (an overthrow that ran further than the options above)?');
+    if(raw === null) return; // cancelled — leave the modal open
+    const n = parseInt(raw, 10);
+    if(!Number.isFinite(n) || n < 0){ toast('⚠️ Enter a whole number of runs, 0 or more'); return; }
+    commit(n);
+  });
+  wrap.appendChild(customBtn);
 }
 function closeExtrasModal(){
   document.getElementById('extras-modal-overlay').classList.remove('show');
@@ -9105,7 +9332,7 @@ document.getElementById('undo-btn').addEventListener('click', async () => {
 function describeBallLogEntry(entry){
   const kindLabel = {
     'W':'WICKET', 'WdW':'WICKET (Wide)', 'NbW':'WICKET (No Ball)',
-    'Wd':'Wide', 'Nb':'No Ball', 'B':'Bye', 'LB':'Leg Bye'
+    'Wd':'Wide', 'Nb':'No Ball', 'B':'Bye', 'LB':'Leg Bye', 'OT':'Overthrow'
   }[entry.ballType] || `${entry.runs} run${entry.runs === 1 ? '' : 's'}`;
   let line = `${kindLabel} · ${entry.runs} run${entry.runs === 1 ? '' : 's'} · ${entry.striker} off ${entry.bowler}`;
   if(entry.isWicket && entry.dismissal) line += ` — ${entry.dismissal}`;
@@ -9395,6 +9622,48 @@ document.getElementById('draw-btn').addEventListener('click', () => {
   updateBallButtonsState();
   pushState(true, true);
   toast('Match drawn');
+});
+
+/* ============================================================
+   STUMPS / END OF DAY (Test only) — Part 3 of the Test-match day-
+   to-day workflow. This is a pure STATUS flag, never a result:
+   isInningsOver()/checkMatchResult() never read state.dayStatus, so
+   marking Stumps can never be mistaken for the innings (or match)
+   actually ending. Everything about the current innings — score,
+   striker/non-striker/bowler, over/ball position, ballLog,
+   commentary, fall of wickets, partnership — is already exactly
+   where it needs to be, because it's the same live `state` object
+   this whole panel already keeps: nothing extra needs "saving" for
+   the day break, since pushState()/autoSyncMatchSnapshot() already
+   persist it (MongoDB balls + Firestore room snapshot) on every
+   ball as normal. Resuming — even from a different device entirely,
+   see switchToMatch()/resumeMatch() — is just reconnecting to this
+   same room and letting the existing liveCricketScore hydration
+   path load that exact state back in.
+   ============================================================ */
+document.getElementById('stumps-btn').addEventListener('click', () => {
+  if(state.format !== 'Test') return;
+  if(state.milestonesHit['match-result']){ toast('Match is already complete'); return; }
+  if(state.dayStatus === 'STUMPS') return;
+  if(!confirm(`Call Stumps for Day ${state.dayNumber}?\n\n${teamLabel(state.battingTeam)} ${state.score.runs}-${state.score.wickets} (${fmtOvers(state.score.overs, state.score.balls)} ov) is frozen exactly as-is — nothing about the match ends, this just marks play as paused until Day ${state.dayNumber + 1}.`)) return;
+  pushHistory();
+  state.dayStatus = 'STUMPS';
+  fireEvent('STUMPS', `STUMPS — DAY ${state.dayNumber}`, `${teamLabel(state.battingTeam)} ${state.score.runs}-${state.score.wickets}`, 5000);
+  logMilestone(`Stumps — Day ${state.dayNumber} — ${teamLabel(state.battingTeam)} ${state.score.runs}-${state.score.wickets} (${fmtOvers(state.score.overs, state.score.balls)} ov)`);
+  updateBallButtonsState();
+  pushState(true, true);
+  toast(`🌙 Day ${state.dayNumber} stumps — ${teamLabel(state.battingTeam)} ${state.score.runs}-${state.score.wickets}`);
+});
+document.getElementById('resume-day-btn').addEventListener('click', () => {
+  if(state.format !== 'Test' || state.dayStatus !== 'STUMPS') return;
+  pushHistory();
+  state.dayNumber += 1;
+  state.dayStatus = 'LIVE';
+  fireEvent('PLAY_RESUMED', `DAY ${state.dayNumber}`, 'Play resumes', 4000);
+  logMilestone(`Day ${state.dayNumber} begins — play resumes at ${teamLabel(state.battingTeam)} ${state.score.runs}-${state.score.wickets}`);
+  updateBallButtonsState();
+  pushState(true, true);
+  toast(`☀️ Day ${state.dayNumber} — resume scoring from the next legal delivery`);
 });
 
 /* ============================================================
