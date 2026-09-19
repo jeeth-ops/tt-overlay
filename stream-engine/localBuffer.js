@@ -198,6 +198,33 @@ function sweepOrphaned(maxAgeMs) {
     });
 }
 
+// Safety-net cleanup for finished clip .mp4 files — the primary
+// deletion path is pollRenderStatus() in server.js (deletes a clip's
+// local copy the moment Render confirms BOTH R2 and Drive have it).
+// This sweep exists only for what that path can't cover: a clip whose
+// Render polling window timed out, or that finished while the engine
+// was down, and is now just sitting there indefinitely. Deliberately a
+// GENEROUS default age (see server.js's call) — this must never be the
+// thing that deletes a clip that's actually still needed.
+function sweepOldClipFiles(maxAgeMs) {
+    fs.readdir(BUFFER_ROOT, (err, matchIds) => {
+        if (err) return;
+        matchIds.forEach((matchId) => {
+            const clipsDir = matchDirs(safeMatchId(matchId)).clipsDir;
+            fs.readdir(clipsDir, (dirErr, files) => {
+                if (dirErr) return;
+                files.forEach((file) => {
+                    const full = path.join(clipsDir, file);
+                    fs.stat(full, (statErr, stats) => {
+                        if (statErr || !stats.isFile()) return;
+                        if (Date.now() - stats.mtimeMs > maxAgeMs) fs.unlink(full, () => {});
+                    });
+                });
+            });
+        });
+    });
+}
+
 function chunksCoveringRange(session, fromSec, toSec) {
     const fromMs = session.startedAt + Math.max(0, fromSec) * 1000;
     const toMs = session.startedAt + toSec * 1000;
@@ -296,6 +323,7 @@ module.exports = {
     stopSession,
     deleteMatchMedia,
     sweepOrphaned,
+    sweepOldClipFiles,
     getClipWindow,
     activeSessionCount,
 };
