@@ -2179,6 +2179,13 @@ function serializeClip(c) {
         striker: c.strikerName || null, bowler: c.bowlerName || null,
         nonStriker: c.nonStrikerName || null, fielder: c.fielderName || null,
         ready: !!(c.r2Url || c.driveUrl),
+        // Coarse job status for the commentary "WATCH REPLAY" UI, which
+        // needs to tell "still cutting/uploading" apart from "gave up" —
+        // `ready` alone can't distinguish those. Mirrors computeClipStatus's
+        // vocabulary (COMPLETE/RETRY_PENDING/FAILED_PERMANENT/UPLOADING);
+        // falls back to deriving it from `ready` for any older doc that
+        // predates the `status` field.
+        status: c.status || (c.r2Url || c.driveUrl ? 'COMPLETE' : 'UPLOADING'),
         watchUrl: `/api/clips/${c._id}/watch`,
         downloadUrl: `/api/clips/${c._id}/download`,
         createdAt: c.createdAt
