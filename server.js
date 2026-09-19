@@ -11,7 +11,6 @@ const ffmpegInstallerPath = require('@ffmpeg-installer/ffmpeg').path;
 ffmpeg.setFfmpegPath(ffmpegInstallerPath);
 const { google } = require('googleapis');
 const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
-const videoSource = require('./videoSource'); // local (vMix-free) recording + video-source adapter — see videoSource.js
 
 // ================================================================
 // ☁️ CLOUDFLARE R2 — where clips live for their first (public-facing)
@@ -160,6 +159,13 @@ async function connectMongo() {
         await ballsCollection.createIndex({ matchId: 1, innings: 1, over: 1, ballInOver: 1 });
         await matchesCollection.createIndex({ matchId: 1 }, { unique: true });
         await clipsCollection.createIndex({ matchId: 1, createdAt: 1 });
+        // Canonical job identity (see buildClipId/finalizeClip) — sparse
+        // because clips ingested before this field existed have none;
+        // unique so two ingests of the exact same event can never create
+        // two docs (finalizeClip upserts on this instead of inserting).
+        await clipsCollection.createIndex({ clipId: 1 }, { unique: true, sparse: true });
+        // Restart-safe retry sweep scans exactly this shape of query.
+        await clipsCollection.createIndex({ status: 1, retryCount: 1 });
         // 🔗 Clip ↔ player linking (see "PLAYER IDENTITY FOR CLIPS & STATS"
         // below): fast "this player's clips" lookups scoped to one match,
         // one owner's whole account (career), or filtered by clip type.
@@ -277,8 +283,7 @@ let driveClient = null;
 // the manual "Attach Clip" routes below).
 let DRIVE_SERVICE_ACCOUNT_EMAIL = null;
 // Per-match Drive connection state (OAuth token+folder, or a legacy
-// service-account folder id) — kept separate from the local recording
-// session (see videoSource.js) since a match can be connected to Drive
+// service-account folder id) — a match can be connected to Drive
 // independently of whether/how its video is being recorded.
 // { matchId: { driveOAuth: {accessToken, folderId, connectedAt}, driveFolderId } }
 const driveConnections = {};
@@ -328,11 +333,23 @@ function extractDriveFileId(link) {
     return null;
 }
 
-function buildClipFileName(eventType, ballMeta) {
-    const over = (ballMeta && ballMeta.over !== undefined) ? ballMeta.over : '_';
-    const ballInOver = (ballMeta && ballMeta.ballInOver !== undefined) ? ballMeta.ballInOver : '_';
-    const striker = (ballMeta && ballMeta.striker) ? '_' + ballMeta.striker.replace(/[^a-zA-Z0-9]+/g, '_') : '';
-    return `${eventType}_Over-${over}.${ballInOver}${striker}_${Date.now()}.mp4`;
+// Builds this clip's canonical identity — the SAME string every leg of
+// the pipeline (local Stream Engine, Render, R2 key, Drive filename,
+// Mongo doc) keys off of. Deterministic from matchId+eventType+
+// eventTimestamp so a retried/duplicate request for the exact same
+// event always resolves to the exact same clipId — never a second,
+// duplicate upload or a second Mongo doc for one real event.
+function buildClipId(matchId, eventType, eventTimestamp) {
+    return `${safeMatchId(matchId)}_${String(eventType || 'CLIP').toUpperCase()}_${eventTimestamp}`;
+}
+
+// Deterministic filename — NOT time-of-upload-based (the old version
+// baked Date.now() into the name, so every retry minted a brand new
+// filename/key — the opposite of idempotent: a clip retried 3 times
+// before succeeding could leave 3 different half-uploaded objects
+// behind instead of ever cleanly reusing/overwriting the one true one).
+function buildClipFileName(clipId) {
+    return `${clipId}.mp4`;
 }
 
 // Fire-and-forget — never blocks the clip pipeline. If no folder has
@@ -347,7 +364,18 @@ function buildClipFileName(eventType, ballMeta) {
 //     recording itself is completely unaffected either way.
 //  2. Legacy service-account folder (driveFolderId) — operator manually
 //     shared a folder with the service account's email and pasted the link.
-async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
+//
+// Idempotent: if this clipId is already marked 'uploaded' in Mongo
+// (e.g. the retry sweep and an in-flight finalizeClip() raced), this
+// returns true immediately without uploading a second copy.
+async function uploadClipToDrive(clipId, matchId, filePath) {
+    if (clipsCollection) {
+        try {
+            const existing = await clipsCollection.findOne({ clipId }, { projection: { driveStatus: 1 } });
+            if (existing && existing.driveStatus === 'uploaded') return true;
+        } catch (err) { /* fall through and attempt the upload anyway */ }
+    }
+
     const conn = driveConnections[matchId];
     const oauth = conn && conn.driveOAuth;
 
@@ -372,10 +400,11 @@ async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
 
     if (!uploadClient || !folderId) {
         console.log(`No Drive connection for match ${matchId} — clip stays local only: ${filePath}`);
+        if (clipsCollection) await clipsCollection.updateOne({ clipId }, { $set: { driveStatus: 'failed', driveError: 'No Drive connection configured for this match' } }).catch(() => {});
         return false;
     }
 
-    const fileName = buildClipFileName(eventType, ballMeta);
+    const fileName = buildClipFileName(clipId);
     try {
         const uploadRes = await uploadClient.files.create({
             requestBody: { name: fileName, parents: [folderId] },
@@ -384,8 +413,8 @@ async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
         });
         if (clipsCollection) {
             await clipsCollection.updateOne(
-                { matchId, filePath },
-                { $set: { driveStatus: 'uploaded', driveFileId: uploadRes.data.id, driveUrl: uploadRes.data.webViewLink } }
+                { clipId },
+                { $set: { driveStatus: 'uploaded', driveFileId: uploadRes.data.id, driveUrl: uploadRes.data.webViewLink, driveUploadedAt: Date.now() }, $unset: { driveError: '' } }
             );
         }
         console.log(`☁️  Uploaded to Drive: ${fileName}`);
@@ -393,7 +422,7 @@ async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
     } catch (err) {
         console.log(`Drive upload error (${fileName}):`, err.message || err);
         if (clipsCollection) {
-            await clipsCollection.updateOne({ matchId, filePath }, { $set: { driveStatus: 'failed' } }).catch(() => {});
+            await clipsCollection.updateOne({ clipId }, { $set: { driveStatus: 'failed', driveError: String(err.message || err).slice(0, 500) } }).catch(() => {});
         }
         return false;
     }
@@ -403,19 +432,32 @@ async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
 // and saves the public playback URL on the clip's Mongo record — this is
 // the URL the scorecard's video player actually points at for anything
 // less than a year old. Mongo NEVER stores the video bytes — only this
-// small metadata doc (matchId, playerKeys, eventType, r2Url/driveUrl). The
-// actual .mp4 lives only in R2 (and optionally Drive); see cutClip below,
-// which deletes the local Render-disk copy once at least one of these
-// uploads confirms success, so Render's disk is never the permanent home
-// for video either.
-async function uploadClipToR2(matchId, filePath, eventType, ballMeta) {
+// small metadata doc (matchId, playerKeys, eventType, r2Url/driveUrl).
+// The actual .mp4 lives only in R2 (and optionally Drive); see
+// finalizeClip below, which only deletes the local Render-disk copy
+// once BOTH of these uploads confirm success, so Render's disk is
+// never the permanent home for video either, and a clip is never lost
+// to a premature delete while one leg is still failing/retrying.
+//
+// Idempotent (same reasoning as uploadClipToDrive above) — and the R2
+// key itself is deterministic (matches/<matchId>/clips/<clipId>.mp4),
+// so even if the idempotency check below ever raced, a retried PutObject
+// for the same clipId simply overwrites the same object rather than
+// creating a duplicate.
+async function uploadClipToR2(clipId, matchId, filePath) {
     if (!r2Client || !R2_BUCKET_NAME) {
         console.log(`No R2 connection configured — clip stays Drive-only: ${filePath}`);
+        if (clipsCollection) await clipsCollection.updateOne({ clipId }, { $set: { r2Status: 'failed', r2Error: 'R2 not configured on this server' } }).catch(() => {});
         return false;
     }
+    if (clipsCollection) {
+        try {
+            const existing = await clipsCollection.findOne({ clipId }, { projection: { r2Status: 1 } });
+            if (existing && existing.r2Status === 'uploaded') return true;
+        } catch (err) { /* fall through and attempt the upload anyway */ }
+    }
 
-    const fileName = buildClipFileName(eventType, ballMeta);
-    const key = `${matchId}/${fileName}`;
+    const key = `matches/${matchId}/clips/${clipId}.mp4`;
 
     try {
         // Reading the whole clip into a Buffer (clips are only a few MB —
@@ -436,8 +478,8 @@ async function uploadClipToR2(matchId, filePath, eventType, ballMeta) {
         const publicUrl = R2_PUBLIC_URL ? `${R2_PUBLIC_URL}/${key}` : null;
         if (clipsCollection) {
             await clipsCollection.updateOne(
-                { matchId, filePath },
-                { $set: { r2Status: 'uploaded', r2Key: key, r2Url: publicUrl } }
+                { clipId },
+                { $set: { r2Status: 'uploaded', r2Key: key, r2Url: publicUrl, r2UploadedAt: Date.now() }, $unset: { r2Error: '' } }
             );
         }
         console.log(`☁️  Uploaded to R2: ${key}`);
@@ -445,7 +487,7 @@ async function uploadClipToR2(matchId, filePath, eventType, ballMeta) {
     } catch (err) {
         console.log(`R2 upload error (${key}):`, err.message || err);
         if (clipsCollection) {
-            await clipsCollection.updateOne({ matchId, filePath }, { $set: { r2Status: 'failed' } }).catch(() => {});
+            await clipsCollection.updateOne({ clipId }, { $set: { r2Status: 'failed', r2Error: String(err.message || err).slice(0, 500) } }).catch(() => {});
         }
         return false;
     }
@@ -460,102 +502,30 @@ app.use(express.static(__dirname));
 app.use(express.json());
 
 // ================================================================
-// 🎬 RECORDING + CLIPS (FFmpeg)
-// Flow: operator clicks "Start Recording" in cricket-panel.html →
-// browser shares its own tab/screen (getDisplayMedia) → MediaRecorder
-// slices it into small webm chunks → each chunk is POSTed here as it's
-// produced → we save chunks to disk in bowling order.
-// On WICKET/FOUR/SIX the panel asks for a clip; we wait until enough
-// "after" footage has actually arrived, then use ffmpeg to stitch the
-// relevant chunks + trim to an exact 20s window (10s before, 10s after).
-// Nothing here touches OBS/vMix or the live stream — this capture runs
-// in the operator's panel tab, a completely separate browser context
-// from whatever OBS is reading as its browser source/scene.
+// 🎬 RECORDING + CLIPS
+// Video capture and clip cutting happen ENTIRELY on the operator's own
+// PC (see stream-engine/ — the local Stream Engine) and are NEVER sent
+// here as continuous footage. Render only ever receives a short,
+// already-finished clip (~20s .mp4) via /api/clips/ingest below, plus
+// ordinary score/control traffic over Socket.IO.
+//
+// 🩹 REMOVED (audit finding): this file used to also expose
+// /api/recording/start, /api/recording/chunk (up to 25MB of raw video
+// per request!) and /api/recording/stop, backed by videoSource.js —
+// an earlier ("Part 1") design where the BROWSER streamed continuous
+// footage straight to Render's own disk. Nothing in the current panel
+// calls these anymore (superseded by the local Stream Engine), but the
+// endpoints were still live and reachable — a direct violation of
+// "Render must never process/proxy 1080p video". Removed entirely,
+// along with the cutClip()/videoSource-backed path and the Socket.IO
+// 'requestClip' handler that invoked it. finalizeClip() below (used by
+// /api/clips/ingest) is unaffected — it already only ever receives a
+// finished clip file, never continuous video.
 // ================================================================
-// Local (vMix-free) recording session state, chunk storage, directory
-// layout and disk cleanup all now live in videoSource.js — see that
-// file for the full "video source adapter" design. safeMatchId is
-// re-exported from there so the rest of this file (findCanonicalBall,
-// /api/clips/ingest, etc.) keeps using the exact same sanitizer it
-// always has.
-const { safeMatchId } = videoSource;
-const CLIPS_DIR = path.join(__dirname, 'clips'); // still used by the legacy ClipperHelper ingest path below
-
-// Longest a clip request can still be pending after "stop" is pressed:
-// requestClip() waits up to (eventTimestamp + 10s) before cutting, so a
-// wicket/four/six recorded in the last few seconds before stop could
-// still need its chunks up to ~11s later. 90s is a generous safety
-// margin on top of that.
-const RECORDING_CLEANUP_DELAY_MS = 90 * 1000;
-
-// 🛟 Safety net for crashes / missed "stop" calls: even if a match's
-// stop event never fires (server restart mid-match, operator's tab
-// closing without hitting stop, network drop, etc.), this sweep makes
-// sure a stray folder can never sit on disk forever. Anything older
-// than 12 hours with no in-memory session is almost certainly a dead
-// leftover, since real matches don't run that long.
-const ORPHAN_RECORDING_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-// Run once shortly after boot (catches anything left from before a
-// deploy/restart) and then every hour going forward.
-setTimeout(() => videoSource.sweepOrphaned(ORPHAN_RECORDING_MAX_AGE_MS), 60 * 1000);
-setInterval(() => videoSource.sweepOrphaned(ORPHAN_RECORDING_MAX_AGE_MS), 60 * 60 * 1000);
-
-// ================================================================
-// 🎬 LOCAL RECORDING API — the vMix-free video source. A browser tab
-// (the operator's panel, or any future capture agent) POSTs small
-// rolling chunks here as they're produced; cutClip() below reads them
-// back through videoSource.getClipWindow() instead of assuming any one
-// capture tool produced them. This is entirely independent of the
-// legacy ClipperHelper.exe/vMix path (/api/clips/ingest, further down)
-// — both can be used interchangeably, or side by side.
-// ================================================================
-app.post('/api/recording/start', async (req, res) => {
-    const matchId = safeMatchId(req.body.matchId);
-    if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
-    const tournamentId = req.body.tournamentId ? String(req.body.tournamentId).slice(0, 200) : null;
-
-    const session = videoSource.startSession(matchId, tournamentId);
-
-    if (matchesCollection) {
-        try {
-            await matchesCollection.updateOne(
-                { matchId },
-                { $set: { matchId, tournamentId, recordingStartedAt: session.startedAt, recordingStatus: 'recording' } },
-                { upsert: true }
-            );
-        } catch (err) { console.log('Mongo recording/start error:', err); }
-    }
-    console.log(`🔴 Local recording started for match ${matchId}${tournamentId ? ` (tournament ${tournamentId})` : ''}`);
-    res.json({ success: true, startedAt: session.startedAt });
-});
-
-// Chunks arrive as raw binary (webm blob straight from MediaRecorder).
-// ?matchId=xxx&index=0,1,2...  — index keeps them in the right order
-// even if two chunks happen to arrive out of sequence over the network.
-app.post('/api/recording/chunk', express.raw({ type: '*/*', limit: '25mb' }), (req, res) => {
-    const matchId = safeMatchId(req.query.matchId);
-    const index = parseInt(req.query.index, 10);
-    const result = videoSource.addChunk(matchId, index, req.body);
-    if (!result.ok) return res.status(400).json({ success: false, error: result.error });
-    res.json({ success: true });
-});
-
-app.post('/api/recording/stop', async (req, res) => {
-    const matchId = safeMatchId(req.body.matchId);
-    const session = videoSource.stopSession(matchId);
-    if (!session) return res.status(400).json({ success: false, error: 'No active recording session' });
-
-    if (matchesCollection) {
-        try {
-            await matchesCollection.updateOne({ matchId }, { $set: { recordingStatus: 'stopped', recordingStoppedAt: Date.now() } });
-        } catch (err) { console.log('Mongo recording/stop error:', err); }
-    }
-    console.log(`⏹ Local recording stopped for match ${matchId} (${session.chunks.length} chunks)`);
-    // Clips can still be in flight for a few more seconds — schedule
-    // the actual disk cleanup instead of deleting immediately.
-    videoSource.scheduleCleanup(matchId, RECORDING_CLEANUP_DELAY_MS);
-    res.json({ success: true, chunkCount: session.chunks.length });
-});
+function safeMatchId(id) {
+    return String(id || '').replace(/[^a-zA-Z0-9_-]/g, '');
+}
+const CLIPS_DIR = path.join(__dirname, 'clips'); // holds a finished clip only briefly, until R2 + Drive both confirm (see finalizeClip)
 
 // Operator pastes their Drive folder's share link once (per match) —
 // we resolve it to a folder ID and remember it both in-memory (fast
@@ -623,97 +593,38 @@ app.post('/api/set-drive-folder-oauth', async (req, res) => {
     res.json({ success: true, folderId });
 });
 
-// Default pre-roll/post-roll for an auto-cut event clip — unchanged from
-// the original implementation (10s before, 10s after = 20s total).
-const CLIP_PRE_ROLL_SEC = 10;
-const CLIP_POST_ROLL_SEC = 10;
-
-// Stitches the covering chunks + trims to an exact clip using ffmpeg,
-// and records the clip in MongoDB so the (future) Google Drive step
-// knows what's waiting to be uploaded.
-//
-// The ONLY thing that changed here vs. the original implementation is
-// WHERE the source chunks/paths come from: instead of reaching directly
-// into a module-level `recordingSessions` map, this goes through
-// videoSource.getClipWindow() — the video source adapter. The actual
-// clip-cutting business logic (pre/post-roll window, byte-concat +
-// ffmpeg trim, codecs, preset, handing off to finalizeClip) is
-// byte-for-byte the same as before.
-async function cutClip({ matchId, eventType, eventTimestamp, ballMeta, uid }) {
-    const win = videoSource.getClipWindow({
-        matchId,
-        eventTimestamp,
-        preRollSec: CLIP_PRE_ROLL_SEC,
-        postRollSec: CLIP_POST_ROLL_SEC,
-    });
-    if (!win) { console.log(`No local recording source for ${matchId} — skipping clip for ${eventType}`); return; }
-
-    const { fromSec, toSec, trimStartSec, toStitch, dirs } = win;
-
-    // MediaRecorder's timeslice chunks are NOT independently-valid WebM
-    // files except the very first one (it carries the EBML/Segment
-    // header; every later chunk is a bare Matroska Cluster meant to be
-    // appended directly after it). ffmpeg's concat *demuxer* expects each
-    // listed input to be independently valid on its own, so handing it
-    // non-first chunks used to fail with "Invalid argument". The fix:
-    // raw byte-concatenate every chunk from index 0 through the last
-    // chunk covering our window, in strict order — that reconstructs an
-    // actually-playable file, which we then trim/transcode as before.
-    const stitchedFile = path.join(dirs.tempDir, `_stitched_${Date.now()}.webm`);
-    const outFile = path.join(dirs.clipsDir, `${eventType}_${Date.now()}.mp4`);
-
-    try {
-        await new Promise((resolve, reject) => {
-            const out = fs.createWriteStream(stitchedFile);
-            out.on('error', reject);
-            (async () => {
-                for (const c of toStitch) {
-                    await new Promise((res2, rej2) => {
-                        const rs = fs.createReadStream(c.file);
-                        rs.on('error', rej2);
-                        rs.on('end', res2);
-                        rs.pipe(out, { end: false });
-                    });
-                }
-                out.end();
-                resolve();
-            })().catch(reject);
-        });
-
-        await new Promise((resolve, reject) => {
-            ffmpeg(stitchedFile)
-                .setStartTime(trimStartSec)
-                .duration(CLIP_PRE_ROLL_SEC + CLIP_POST_ROLL_SEC)
-                .outputOptions(['-c:v libx264', '-c:a aac', '-preset veryfast'])
-                .save(outFile)
-                .on('end', resolve)
-                .on('error', reject);
-        });
-
-        await finalizeClip({ matchId, eventType, eventTimestamp, ballMeta, uid, outFile, offsetStartSec: fromSec, offsetEndSec: toSec });
-        videoSource.appendLog(matchId, `Clip cut: ${eventType} @ ${eventTimestamp} -> ${outFile}`);
-    } catch (err) {
-        console.log(`Clip generation error (${matchId}/${eventType}):`, err.message || err);
-        videoSource.appendLog(matchId, `Clip generation error (${eventType}): ${err.message || err}`);
-    } finally {
-        fs.existsSync(stitchedFile) && fs.unlink(stitchedFile, () => {});
-    }
+// Computes the one overall `status` field from the two independent
+// upload legs — this is what the retry sweep, the admin dashboard and
+// GET /api/clips/status/:clipId all key off of, instead of every reader
+// re-deriving it from r2Status/driveStatus individually.
+function computeClipStatus(r2Status, driveStatus) {
+    if (r2Status === 'uploaded' && driveStatus === 'uploaded') return 'COMPLETE';
+    if (r2Status === 'failed' || driveStatus === 'failed') return 'RETRY_PENDING';
+    return 'UPLOADING';
 }
 
 // ================================================================
-// 🔗 finalizeClip — shared by BOTH clip pipelines:
-//  1. cutClip() above (browser tab-capture chunks stitched server-side)
-//  2. /api/clips/ingest below (an already-cut .mp4 handed to us whole —
-//     e.g. by ClipperHelper.exe, which cuts locally from the vMix
-//     recording using its own ffmpeg).
-// Both need EXACTLY the same thing done to a finished clip file: link
-// it to real player identities via the canonical ball, insert the
-// Mongo doc the clips/stats APIs read, upload to R2 + Drive, then
-// clean up the local copy. Keeping this in one place means the
-// scorecard's "clips by player" view works identically no matter which
-// pipeline actually produced the clip.
+// 🔗 finalizeClip — called by /api/clips/ingest below once a FINISHED
+// clip file (cut locally, on the operator's own PC, by the local
+// Stream Engine — see stream-engine/server.js — or by the legacy
+// ClipperHelper.exe path) has been handed to us whole as raw bytes.
+// This does EXACTLY the same thing for either source: link it to real
+// player identities via the canonical ball, upsert the Mongo job doc
+// the clips/stats APIs (and the retry sweep) read, upload to R2 +
+// Drive, then clean up the local copy — but ONLY once BOTH uploads
+// have confirmed success (see the retry sweep further down for what
+// happens when they haven't yet).
+//
+// Idempotent by clipId: a duplicate /api/clips/ingest for the exact
+// same event (e.g. the Stream Engine's own retry queue re-sending a
+// clip whose first attempt actually landed but whose ack was lost to a
+// network blip) upserts the SAME doc instead of creating a second one,
+// and re-attempts only whichever upload leg(s) haven't already
+// succeeded — never a duplicate R2 object or Drive file (see the
+// idempotency guards inside uploadClipToR2/uploadClipToDrive above).
 // ================================================================
-async function finalizeClip({ matchId, eventType, eventTimestamp, ballMeta, uid, outFile, offsetStartSec, offsetEndSec }) {
+async function finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMeta, uid, outFile, offsetStartSec, offsetEndSec }) {
+    clipId = clipId || buildClipId(matchId, eventType, eventTimestamp);
     if (clipsCollection) {
         // 🔗 Link this clip to real player identities/dismissal info by
         // cross-referencing the canonical ball (logged via `logBall`,
@@ -739,75 +650,206 @@ async function finalizeClip({ matchId, eventType, eventTimestamp, ballMeta, uid,
         const bowlerPlayerId = (canonicalBall && canonicalBall.bowlerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, bowler) : null);
         const fielderPlayerId = (canonicalBall && canonicalBall.dismissalFielderPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, dismissal && dismissal.fielder) : null);
 
-        await clipsCollection.insertOne({
-            matchId, ownerUid: ownerUid || null, eventType, ballMeta: ballMeta || null,
-            eventTimestamp, offsetStartSec: offsetStartSec ?? null, offsetEndSec: offsetEndSec ?? null,
-            filePath: outFile, driveStatus: 'pending', createdAt: Date.now(),
-            // --- player/dismissal linking, for the clips & stats APIs ---
-            over: canonicalBall ? canonicalBall.over : (ballMeta && ballMeta.over),
-            ballInOver: canonicalBall ? canonicalBall.ballInOver : (ballMeta && ballMeta.ballInOver),
-            innings: canonicalBall ? canonicalBall.innings : (ballMeta && ballMeta.innings),
-            runs: canonicalBall ? canonicalBall.runs : (ballMeta && ballMeta.runs),
-            battingTeam,
-            strikerName: striker, strikerKey: playerKey(striker), strikerPlayerId,
-            nonStrikerName: nonStriker, nonStrikerKey: playerKey(nonStriker), nonStrikerPlayerId,
-            bowlerName: bowler, bowlerKey: playerKey(bowler), bowlerPlayerId,
-            dismissalType: dismissal && dismissal.type ? dismissal.type : null,
-            fielderName: personName(dismissal && dismissal.fielder),
-            fielderKey: playerKey(dismissal && dismissal.fielder), fielderPlayerId
-        });
+        await clipsCollection.updateOne(
+            { clipId },
+            {
+                $setOnInsert: {
+                    clipId, matchId, ownerUid: ownerUid || null, eventType, ballMeta: ballMeta || null,
+                    eventTimestamp, offsetStartSec: offsetStartSec ?? null, offsetEndSec: offsetEndSec ?? null,
+                    createdAt: Date.now(),
+                    // --- player/dismissal linking, for the clips & stats APIs ---
+                    over: canonicalBall ? canonicalBall.over : (ballMeta && ballMeta.over),
+                    ballInOver: canonicalBall ? canonicalBall.ballInOver : (ballMeta && ballMeta.ballInOver),
+                    innings: canonicalBall ? canonicalBall.innings : (ballMeta && ballMeta.innings),
+                    runs: canonicalBall ? canonicalBall.runs : (ballMeta && ballMeta.runs),
+                    battingTeam,
+                    strikerName: striker, strikerKey: playerKey(striker), strikerPlayerId,
+                    nonStrikerName: nonStriker, nonStrikerKey: playerKey(nonStriker), nonStrikerPlayerId,
+                    bowlerName: bowler, bowlerKey: playerKey(bowler), bowlerPlayerId,
+                    dismissalType: dismissal && dismissal.type ? dismissal.type : null,
+                    fielderName: personName(dismissal && dismissal.fielder),
+                    fielderKey: playerKey(dismissal && dismissal.fielder), fielderPlayerId,
+                    retryCount: 0,
+                },
+                $set: {
+                    // Runtime fields refreshed on every ingest (including a
+                    // retry-forward of the same clip) — filePath always
+                    // points at THIS Render process's current temp copy
+                    // (the previous one, if any, is long gone after a
+                    // restart) so the retry sweep below reads from disk
+                    // correctly rather than a stale path.
+                    filePath: outFile,
+                    status: 'LOCAL_RECEIVED',
+                    r2Status: 'pending', driveStatus: 'pending',
+                    lastReceivedAt: Date.now(),
+                }
+            },
+            { upsert: true }
+        );
         invalidateClipsCache(matchId);
     }
-    console.log(`🎬 Clip ready: ${outFile}`);
-    // Upload to R2 + Drive in parallel, THEN delete the local Render-disk
-    // copy — this is the only place video bytes ever touch Render's disk,
-    // and only for the few seconds it takes to push them to cloud storage.
-    // MongoDB never sees the video itself, only this clip doc's metadata
-    // (matchId, player keys, eventType, r2Url/driveUrl) via the
-    // clipsCollection.insertOne above.
+    console.log(`🎬 [CLIP RECEIVED] clipId=${clipId} matchId=${matchId} eventType=${eventType} localPath=${outFile}`);
+
+    // Upload to R2 + Drive in parallel — independent of each other (one
+    // failing never blocks or undoes the other), THEN delete the local
+    // Render-disk copy ONLY once BOTH have confirmed success. This is
+    // the only place video bytes ever touch Render's disk, and only for
+    // as long as it takes both uploads to confirm (or, if one is
+    // failing, until the retry sweep below finishes the job later) —
+    // MongoDB never sees the video itself, only this clip doc's
+    // metadata (matchId, player keys, eventType, r2Url/driveUrl).
+    console.log(`[R2] upload started — clipId=${clipId}`);
+    console.log(`[DRIVE] upload started — clipId=${clipId}`);
     const [r2Ok, driveOk] = await Promise.all([
-        uploadClipToR2(matchId, outFile, eventType, ballMeta),
-        uploadClipToDrive(matchId, outFile, eventType, ballMeta)
+        uploadClipToR2(clipId, matchId, outFile),
+        uploadClipToDrive(clipId, matchId, outFile)
     ]);
-    if (r2Ok || driveOk) {
+    console.log(`[R2] ${r2Ok ? 'success' : 'failure'} — clipId=${clipId}`);
+    console.log(`[DRIVE] ${driveOk ? 'success' : 'failure'} — clipId=${clipId}`);
+
+    if (clipsCollection) {
+        await clipsCollection.updateOne({ clipId }, { $set: { status: computeClipStatus(r2Ok ? 'uploaded' : 'failed', driveOk ? 'uploaded' : 'failed') } }).catch(() => {});
+    }
+
+    if (r2Ok && driveOk) {
         fs.unlink(outFile, (err) => {
             if (err) console.log(`Local clip cleanup error (${outFile}):`, err.message || err);
-            else console.log(`🧹 Removed local clip copy (now only in ${r2Ok ? 'R2' : ''}${r2Ok && driveOk ? '/' : ''}${driveOk ? 'Drive' : ''}): ${outFile}`);
+            else console.log(`🧹 Removed local clip copy (now safely in both R2 and Drive): ${outFile}`);
         });
     } else {
-        // Both uploads failed — keep the local file as a last-resort
-        // fallback instead of losing the clip entirely. It'll be retried
-        // never automatically today; worth adding a retry sweep later.
-        console.log(`⚠️  Both R2 and Drive uploads failed — keeping local copy for now: ${outFile}`);
+        // At least one upload failed — the local file is the ONLY safe
+        // copy right now, so it is NEVER deleted here. The retry sweep
+        // (setInterval below) picks this doc up on its next tick (it
+        // scans Mongo for status:'RETRY_PENDING', not memory, so this
+        // survives a Render restart too) and retries only the leg(s)
+        // that failed — the clip is never re-cut, never lost.
+        console.log(`⚠️  Clip retained locally pending retry (R2 ${r2Ok ? 'ok' : 'FAILED'}, Drive ${driveOk ? 'ok' : 'FAILED'}): ${outFile}`);
     }
-    return { r2Ok, driveOk };
+    return { clipId, r2Ok, driveOk };
 }
 
 // ================================================================
-// 🖥️ EXTERNAL CLIP INGEST — for ClipperHelper.exe (runs on the
-// operator's own PC next to vMix, cuts the clip itself with its own
-// local ffmpeg from the vMix recording file, then POSTs the finished
-// .mp4 here as raw bytes). We do NOT trust the operator's PC with R2 or
-// Drive credentials — this endpoint receives the plain video file and
-// does the exact same player-linking + R2/Drive upload that the
-// browser tab-capture pipeline (cutClip, above) does, via the shared
-// finalizeClip() function. That's what makes ClipperHelper clips show
-// up in the scorecard's "clips by player" view exactly like any other
-// clip.
+// 🔁 CLIP UPLOAD RETRY SWEEP — restart-safe: reads Mongo, not memory,
+// so a Render restart mid-retry loses nothing; the very next tick after
+// boot picks up exactly where things stood. Runs periodically, finds
+// every clip doc still needing an upload, and retries ONLY the leg(s)
+// that failed — never re-cuts the video, never re-uploads a leg that
+// already succeeded. A doc that exhausts MAX_CLIP_RETRY_ATTEMPTS is
+// marked FAILED_PERMANENT (loud, not silent) but its local file is
+// NEVER deleted — it stays recoverable for manual intervention.
+// ================================================================
+const CLIP_RETRY_INTERVAL_MS = 30 * 1000;
+const MAX_CLIP_RETRY_ATTEMPTS = 15; // ~ up to a few hours of backoff-spaced attempts across a match
+function clipRetryBackoffMs(retryCount) {
+    return Math.min(30 * 1000 * Math.pow(1.6, retryCount), 20 * 60 * 1000); // caps at 20 minutes between attempts
+}
+async function runClipRetrySweep() {
+    if (!clipsCollection) return;
+    let candidates;
+    try {
+        candidates = await clipsCollection.find({
+            status: { $in: ['RETRY_PENDING', 'LOCAL_RECEIVED'] }, // LOCAL_RECEIVED here means a crash happened mid-upload last time
+            retryCount: { $lt: MAX_CLIP_RETRY_ATTEMPTS },
+        }).limit(25).toArray(); // bounded per tick — a burst of failures drains over several ticks, never floods R2/Drive at once
+    } catch (err) {
+        console.log('Clip retry sweep — Mongo query error:', err.message || err);
+        return;
+    }
+
+    for (const doc of candidates) {
+        const dueAt = (doc.lastRetryAt || doc.createdAt || 0) + clipRetryBackoffMs(doc.retryCount || 0);
+        if (Date.now() < dueAt) continue; // not due yet — backoff still in effect
+
+        if (!doc.filePath || !fs.existsSync(doc.filePath)) {
+            // The local copy is gone (e.g. it WAS fully uploaded once,
+            // then manually deleted, or this doc predates this retry
+            // system) — nothing left to retry from. Mark it loudly
+            // instead of retrying forever against a file that can't exist.
+            await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { status: 'FAILED_PERMANENT', permanentFailureReason: 'Local Render-disk copy is missing — cannot retry' } }).catch(() => {});
+            console.log(`[CLIP RETRY] clipId=${doc.clipId} — local file missing, marking FAILED_PERMANENT`);
+            continue;
+        }
+
+        console.log(`[CLIP RETRY] clipId=${doc.clipId} attempt=${(doc.retryCount || 0) + 1}/${MAX_CLIP_RETRY_ATTEMPTS} — r2=${doc.r2Status} drive=${doc.driveStatus}`);
+        await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { lastRetryAt: Date.now() }, $inc: { retryCount: 1 } }).catch(() => {});
+
+        const needsR2 = doc.r2Status !== 'uploaded';
+        const needsDrive = doc.driveStatus !== 'uploaded';
+        const [r2Ok, driveOk] = await Promise.all([
+            needsR2 ? uploadClipToR2(doc.clipId, doc.matchId, doc.filePath) : Promise.resolve(true),
+            needsDrive ? uploadClipToDrive(doc.clipId, doc.matchId, doc.filePath) : Promise.resolve(true),
+        ]);
+
+        const newRetryCount = (doc.retryCount || 0) + 1;
+        if (r2Ok && driveOk) {
+            await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { status: 'COMPLETE' } }).catch(() => {});
+            fs.unlink(doc.filePath, () => {
+                console.log(`🧹 [CLIP RETRY] clipId=${doc.clipId} — retry succeeded, local copy removed`);
+            });
+        } else if (newRetryCount >= MAX_CLIP_RETRY_ATTEMPTS) {
+            await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { status: 'FAILED_PERMANENT', permanentFailureReason: `Gave up after ${newRetryCount} attempts (R2 ${r2Ok ? 'ok' : 'failed'}, Drive ${driveOk ? 'ok' : 'failed'})` } }).catch(() => {});
+            console.log(`[CLIP RETRY] clipId=${doc.clipId} — exhausted retries, marking FAILED_PERMANENT (local file kept for manual recovery)`);
+        } else {
+            await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { status: computeClipStatus(r2Ok ? 'uploaded' : 'failed', driveOk ? 'uploaded' : 'failed') } }).catch(() => {});
+        }
+    }
+}
+// Give Mongo a moment to finish connecting on boot, then run regularly.
+setTimeout(runClipRetrySweep, 15 * 1000);
+setInterval(runClipRetrySweep, CLIP_RETRY_INTERVAL_MS);
+
+// Polled by the local Stream Engine (which forwards the clip here) and,
+// through it, the panel's live per-clip status UI — this is how a
+// retry that completes minutes after the original request still
+// reaches the operator's screen instead of the panel only ever knowing
+// what the original synchronous response said.
+app.get('/api/clips/status/:clipId', async (req, res) => {
+    if (!clipsCollection) return res.status(503).json({ success: false, error: 'Mongo not connected' });
+    try {
+        const doc = await clipsCollection.findOne(
+            { clipId: req.params.clipId },
+            { projection: { clipId: 1, status: 1, r2Status: 1, driveStatus: 1, r2Url: 1, driveUrl: 1, retryCount: 1, createdAt: 1, r2Error: 1, driveError: 1, permanentFailureReason: 1 } }
+        );
+        if (!doc) return res.status(404).json({ success: false, error: 'No clip job with that clipId' });
+        res.json({ success: true, ...doc });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message || String(err) });
+    }
+});
+
+// ================================================================
+// 🖥️ EXTERNAL CLIP INGEST — for the local Stream Engine (the current,
+// active pipeline — see stream-engine/server.js, which cuts the clip
+// from its own local buffer using NVENC-adjacent ffmpeg and forwards
+// the finished .mp4 here) and the legacy ClipperHelper.exe path. We do
+// NOT trust the operator's PC with R2 or Drive credentials — this
+// endpoint receives the plain video file and does the exact same
+// player-linking + R2/Drive upload via the shared finalizeClip()
+// function. That's what makes every clip source show up in the
+// scorecard's "clips by player" view identically.
 //
-// POST /api/clips/ingest?matchId=...&eventType=FOUR|SIX|WICKET&timestamp=<ms>
+// POST /api/clips/ingest?matchId=...&eventType=FOUR|SIX|WICKET&timestamp=<ms>&clipId=...
 // Body: raw video/mp4 bytes.
 // Header 'X-Ball-Meta': optional JSON string with whatever the panel
 // already knows about the ball (striker/nonStriker/bowler/dismissal/
-// battingTeam/over/ballInOver/innings/runs) — same shape as the
-// ballMeta cutClip() already accepts. Even without it, finalizeClip()
-// still tries to resolve the real player names via findCanonicalBall()
-// using matchId + timestamp-derived over/ballInOver if present.
+// battingTeam/over/ballInOver/innings/runs). Even without it,
+// finalizeClip() still tries to resolve the real player names via
+// findCanonicalBall() using matchId + timestamp-derived over/ballInOver.
+//
+// 🔒 Responds ONLY once the file is durably written to Render's disk —
+// never before, unlike the previous version which acknowledged success
+// before even writing the bytes (a real "false success" — a write or
+// finalizeClip failure right after would have been invisible to the
+// caller). It still does NOT wait for R2/Drive (that can take a while
+// and is independently retried — see the retry sweep above), so the
+// response reports 'LOCAL_RECEIVED' + the clipId, and the caller polls
+// GET /api/clips/status/:clipId for the eventual R2/Drive outcome.
 // ================================================================
 app.post('/api/clips/ingest', express.raw({ type: '*/*', limit: '60mb' }), async (req, res) => {
     const matchId = safeMatchId(req.query.matchId);
     const eventType = String(req.query.eventType || 'CLIP').toUpperCase();
     const eventTimestamp = parseInt(req.query.timestamp, 10) || Date.now();
+    const clipId = req.query.clipId ? String(req.query.clipId).replace(/[^a-zA-Z0-9_-]/g, '') : buildClipId(matchId, eventType, eventTimestamp);
     if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
     if (!req.body || !req.body.length) return res.status(400).json({ success: false, error: 'Empty clip body' });
 
@@ -818,15 +860,28 @@ app.post('/api/clips/ingest', express.raw({ type: '*/*', limit: '60mb' }), async
 
     const clipDir = path.join(CLIPS_DIR, matchId);
     if (!fs.existsSync(clipDir)) fs.mkdirSync(clipDir, { recursive: true });
-    const outFile = path.join(clipDir, `${eventType}_ext_${Date.now()}.mp4`);
-
-    res.json({ success: true }); // acknowledge immediately; upload continues in the background
+    // Deterministic, clipId-based filename — a retried forward of the
+    // exact same clip (e.g. after a network blip) overwrites the same
+    // temp file on Render's disk instead of littering a new one per
+    // attempt.
+    const outFile = path.join(clipDir, `${clipId}.mp4`);
 
     try {
         await new Promise((resolve, reject) => {
             fs.writeFile(outFile, req.body, (err) => err ? reject(err) : resolve());
         });
-        await finalizeClip({ matchId, eventType, eventTimestamp, ballMeta, uid: null, outFile });
+    } catch (err) {
+        console.log(`External clip ingest write error (${matchId}/${eventType}):`, err.message || err);
+        return res.status(500).json({ success: false, clipId, error: 'Could not write clip to disk: ' + (err.message || err) });
+    }
+
+    // Acknowledge receipt now that the file is actually, durably on
+    // disk — R2/Drive upload continues in the background; poll
+    // /api/clips/status/:clipId for that outcome.
+    res.json({ success: true, clipId, status: 'LOCAL_RECEIVED' });
+
+    try {
+        await finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMeta, uid: null, outFile });
     } catch (err) {
         console.log(`External clip ingest error (${matchId}/${eventType}):`, err.message || err);
     }
@@ -5717,13 +5772,15 @@ adminRouter.get('/system-health', async (req, res) => {
     try { if (mongoDb) { await mongoDb.command({ ping: 1 }); mongoOk = true; } } catch (e) { mongoOk = false; }
     let firestoreOk = false;
     try { await db.collection('analytics_logs').limit(1).get(); firestoreOk = true; } catch (e) { firestoreOk = false; }
+    let pendingClipRetries = 0;
+    try { if (clipsCollection) pendingClipRetries = await clipsCollection.countDocuments({ status: 'RETRY_PENDING' }); } catch (e) { /* best effort */ }
     res.json({
         success: true,
         uptimeSeconds: Math.floor((Date.now() - SERVER_STARTED_AT) / 1000),
         mongoConnected: mongoOk,
         firestoreConnected: firestoreOk,
         websocketConnections: io.engine.clientsCount,
-        activeRecordingSessions: videoSource.activeSessionCount(),
+        pendingClipRetries,
         driveUploadConfigured: !!driveClient,
         driveServiceAccountEmail: DRIVE_SERVICE_ACCOUNT_EMAIL || null,
         memoryUsageMb: Math.round(process.memoryUsage().rss / 1024 / 1024)
@@ -6671,19 +6728,11 @@ io.on('connection', async (socket) => {
         }
     });
 
-    // 🎬 WICKET/FOUR/SIX → cut a 20s clip (10s before, 10s after) from the
-    // match recording. We deliberately wait until the "after" half of the
-    // window has actually been recorded before touching ffmpeg, otherwise
-    // we'd be trying to cut footage that doesn't exist on disk yet.
-    socket.on('requestClip', (data) => {
-        const matchId = safeMatchId(data.matchId || (data.room ? data.room.replace('room-', '') : null) || matchIdForClient);
-        if (!matchId || matchId === 'default') return;
-        const eventTimestamp = data.timestamp || Date.now();
-        const waitMs = Math.max(0, (eventTimestamp + 10000) - Date.now()) + 1000; // +1s safety buffer
-        setTimeout(() => {
-            cutClip({ matchId, eventType: data.eventType, eventTimestamp, ballMeta: data.ballMeta || null, uid: data.uid || null });
-        }, waitMs);
-    });
+    // 🩹 REMOVED (audit finding): a socket.on('requestClip', ...) handler
+    // used to live here, waiting then calling the now-removed cutClip()
+    // (see the audit note above /api/set-drive-folder). Nothing in the
+    // current panel ever emits 'requestClip' — clips are cut locally by
+    // the Stream Engine and handed to /api/clips/ingest already finished.
 
     // 🏈 FOOTBALL MATCH INTRO PANEL & OVERLAY SOCKET HANDLING
     // Broadcast is ALWAYS immediate (no delay ever added to what viewers see)
