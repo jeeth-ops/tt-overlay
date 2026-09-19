@@ -1263,7 +1263,7 @@ function renderDetailMatches(){
 // downstream total from the corrected delivery itself. See server.js'
 // "BALL-BY-BALL CORRECTION ENGINE" section for the full recalculation.
 const DISMISSAL_TYPES = ['Bowled','Caught','LBW','Stumped','Run Out','Hit Wicket','Retired Hurt','Retired Out'];
-const EXTRA_TYPE_LABELS = { none: 'None', wide: 'Wide', noball: 'No Ball', bye: 'Bye', legbye: 'Leg Bye' };
+const EXTRA_TYPE_LABELS = { none: 'None', wide: 'Wide', noball: 'No Ball', bye: 'Bye', legbye: 'Leg Bye', overthrow: 'Overthrow (off the bat)' };
 
 function ballLabel(b){
   if (b.kind === 'W') return 'WICKET';
@@ -1271,6 +1271,7 @@ function ballLabel(b){
   if (b.kind === 'Nb') return `${b.runs} run${b.runs===1?'':'s'} (No Ball)`;
   if (b.kind === 'B') return `${b.runs} Bye${b.runs===1?'':'s'}`;
   if (b.kind === 'LB') return `${b.runs} Leg Bye${b.runs===1?'':'s'}`;
+  if (b.kind === 'OT') return `${b.runs} run${b.runs===1?'':'s'} (Overthrow)`;
   return `${b.runs} run${b.runs===1?'':'s'}`;
 }
 
@@ -1311,9 +1312,9 @@ async function openDeliveryListModal(match){
 
 function openDeliveryEditModal(match, ball, roster, listWrap){
   const facts = { // mirrors deriveBallFacts() on the server, just for pre-filling the form
-    runsOffBat: ball.kind==='Nb' ? Math.max(0,(ball.runs||0)-1) : (ball.kind==='W'||/^[0-6]$/.test(ball.kind)) ? (ball.runs||0) : 0,
+    runsOffBat: ball.kind==='Nb' ? Math.max(0,(ball.runs||0)-1) : (ball.kind==='W'||ball.kind==='OT'||/^[0-6]$/.test(ball.kind)) ? (ball.runs||0) : 0,
     extras: ball.kind==='Wd' ? (ball.runs||0) : ball.kind==='Nb' ? 1 : (ball.kind==='B'||ball.kind==='LB') ? (ball.runs||0) : 0,
-    extraType: ball.kind==='Wd'?'wide':ball.kind==='Nb'?'noball':ball.kind==='B'?'bye':ball.kind==='LB'?'legbye':'none'
+    extraType: ball.kind==='Wd'?'wide':ball.kind==='Nb'?'noball':ball.kind==='B'?'bye':ball.kind==='LB'?'legbye':ball.kind==='OT'?'overthrow':'none'
   };
   const rosterOpts = (selected)=> roster.map(n=>`<option value="${escAttr(n)}" ${n===selected?'selected':''}>${escHtml(n)}</option>`).join('');
 
@@ -1328,8 +1329,8 @@ function openDeliveryEditModal(match, ball, roster, listWrap){
       <div></div>
     </div>
     <div class="field-row">
-      <div><label>Runs off bat</label><input id="dvRunsOffBat" type="number" min="0" max="6" value="${facts.runsOffBat}"></div>
-      <div><label>Extras</label><input id="dvExtras" type="number" min="0" max="8" value="${facts.extras}"></div>
+      <div><label>Runs off bat</label><input id="dvRunsOffBat" type="number" min="0" max="11" value="${facts.runsOffBat}"></div>
+      <div><label>Extras</label><input id="dvExtras" type="number" min="0" max="11" value="${facts.extras}"></div>
     </div>
     <div class="field-row">
       <div><label>Extra type</label>
