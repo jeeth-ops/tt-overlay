@@ -7922,7 +7922,17 @@ function recordBall(kind, meta){
   state.ballLog.push({
     innings: logInnings,
     battingTeam: logBattingTeam,
-    over: fmtOvers(state.score.overs, state.score.balls),
+    // 🐛 FIX: this used to read state.score.overs/balls LIVE, which by
+    // this point has already rolled over to the START of the next over
+    // for an over-completing legal delivery (addLegalBall() above moves
+    // it straight to e.g. 1.0 the instant the 6th ball of over 0 lands).
+    // That made the last ball of every over log/display as "1.0"
+    // instead of "0.6" everywhere this ballLog entry is read (live
+    // commentary, Edit Scorecard, Excel export, over-summary and
+    // partnership reconstruction). logOverForBall/logBallInOverForBall
+    // above already resolve this exact delivery's TRUE identity — reuse
+    // it here instead of re-deriving (and re-breaking) it.
+    over: fmtOvers(logOverForBall, logBallInOverForBall),
     ballType: kind,
     striker: logStrikerName,
     nonStriker: logNonStrikerName,
@@ -9726,7 +9736,17 @@ function xlSafeFilename(s){
 function oversStrToBalls(overStr){
   const parts = String(overStr || '0.0').split('.');
   const ov = parseInt(parts[0], 10) || 0;
-  const ba = Math.min(parseInt(parts[1], 10) || 0, 5);
+  // 🐛 FIX: this used to cap the ball part at 5, which was harmless while
+  // the only strings it ever saw were "overs bowled so far" quota values
+  // (b always 0-5 there — addLegalBall() rolls straight to the next over
+  // the instant a 6th legal ball lands, so that particular string form
+  // never reaches ".6"). It's now also called on individual ballLog
+  // per-delivery entries (Excel export CRR/RRR, over-summary grouping),
+  // where the LAST ball of an over is legitimately over.6 (e.g. "0.6") —
+  // capping that at 5 silently undercounted the legal-ball tally by one
+  // for exactly that delivery. Clamp to a sane 0-6 range instead of
+  // forcing every 6 down to 5.
+  const ba = Math.min(Math.max(parseInt(parts[1], 10) || 0, 0), 6);
   return ov * 6 + ba;
 }
 function ballsToOversStr(balls){
