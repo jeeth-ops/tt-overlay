@@ -4121,7 +4121,16 @@ adminRouter.post('/clips/attach/drive', async (req, res) => {
 // be added afterwards here as a correction.
 // ================================================================
 
-const VALID_EXTRA_TYPES = new Set(['none', 'wide', 'noball', 'bye', 'legbye']);
+// 🌟 'overthrow' (MCC Law 19.8) added alongside the original four extra
+// types — a batted-shot delivery where a misfield lets the total run
+// (completed runs + boundary allowance) exceed what a normal stroke could
+// account for. Credited entirely to the striker (kind 'OT'), same as any
+// other shot off the bat — see buildBallFromCorrection() below and the
+// matching live-scoring implementation in cricket-panel.html's recordBall()
+// 'OT' case. An overthrow AFTER a Wide/No-Ball/Bye/Leg-Bye is NOT this type
+// — it's just a bigger number on that extra's own existing 'extras' field,
+// exactly like the live panel already handles it.
+const VALID_EXTRA_TYPES = new Set(['none', 'wide', 'noball', 'bye', 'legbye', 'overthrow']);
 
 // Derives law-consistent per-delivery facts (Laws 21/22/23/26 of the MCC
 // Laws of Cricket — No ball, Wide, Bye, Leg bye) from the existing single
@@ -4180,7 +4189,11 @@ function buildBallFromCorrection(input) {
 
     if (extraType === 'wide' && runsOffBat > 0) throw new Error('A Wide cannot carry runs off the bat — the striker never faced it.');
     if ((extraType === 'bye' || extraType === 'legbye') && runsOffBat > 0) throw new Error('Byes/Leg Byes are never credited as runs off the bat.');
-    if (extraType !== 'none' && extraRuns <= 0 && extraType !== 'noball') throw new Error(`Extra type is "${extraType}" but Extras is 0 — enter the runs run/extra runs.`);
+    // Overthrow's actual run value lives in "runs off bat" (it's credited
+    // to the striker, same field a plain shot uses), not in the "extras"
+    // field the other extra types use — so it's excluded from this check.
+    if (extraType !== 'none' && extraType !== 'overthrow' && extraRuns <= 0 && extraType !== 'noball') throw new Error(`Extra type is "${extraType}" but Extras is 0 — enter the runs run/extra runs.`);
+    if (extraType === 'overthrow' && isWicket) throw new Error('An Overthrow delivery can\'t also be marked as a wicket here — record the dismissal as a Run Out instead, with the completed runs (including any overthrow) in "Runs off bat".');
     const WIDE_LEGAL_DISMISSALS = new Set(['Run Out', 'Stumped']);
     const NOBALL_LEGAL_DISMISSALS = new Set(['Run Out', 'Hit Wicket']);
     if (isWicket && extraType === 'wide' && !WIDE_LEGAL_DISMISSALS.has(input.dismissalType)) {
@@ -4199,6 +4212,11 @@ function buildBallFromCorrection(input) {
     else if (extraType === 'noball') { kind = 'Nb'; totalRuns = 1 + runsOffBat; }          // 1 penalty always + bat runs
     else if (extraType === 'bye') { kind = 'B'; totalRuns = extraRuns; }
     else if (extraType === 'legbye') { kind = 'LB'; totalRuns = extraRuns; }
+    // Overthrow (Law 19.8) — legal delivery, credited entirely to the
+    // striker like any other shot off the bat, deliberately uncapped at 6
+    // (a genuine overthrow can total more than a normal boundary — see the
+    // VALID_EXTRA_TYPES comment above).
+    else if (extraType === 'overthrow') { kind = 'OT'; totalRuns = runsOffBat; }
     else { kind = String(Math.min(6, runsOffBat)); totalRuns = runsOffBat; }               // '0'..'6' off-the-bat delivery
     return { kind, runs: totalRuns, isWicket };
 }
@@ -5969,6 +5987,15 @@ function buildLiveCardsFromBallsArray(balls) {
     // for wickets and legal-ball (over) count. See deriveBallFacts() for
     // the legal-ball rule this reuses.
     const teamTotals = { A: { runs: 0, wickets: 0, legalBalls: 0 }, B: { runs: 0, wickets: 0, legalBalls: 0 } };
+    // 🩹 CORRECTION-COMPLETENESS FIX: extras and fall-of-wickets used to be
+    // left OUT of this rebuild entirely — a correction recalculated the
+    // team total/batting/bowling correctly, but extras (wd/nb/b/lb) and
+    // fallOfWickets stayed exactly as they were the moment the match was
+    // last saved live, silently going stale the instant an edit touched a
+    // wide/bye/leg-bye or moved a wicket to a different ball. Same genuine-
+    // sum-over-canonical-balls treatment as teamTotals above, every time.
+    const extras = { A: { wd: 0, nb: 0, b: 0, lb: 0 }, B: { wd: 0, nb: 0, b: 0, lb: 0 } };
+    const fallOfWickets = { A: [], B: [] };
 
     balls.forEach(b => {
         const bt = b.battingTeam === 'B' ? 'B' : 'A';
@@ -5978,6 +6005,27 @@ function buildLiveCardsFromBallsArray(balls) {
         teamTotals[bt].runs += b.runs || 0;
         if (b.dismissal) teamTotals[bt].wickets++;
         if (facts.legalBall) teamTotals[bt].legalBalls++;
+
+        // Extras — mirrors cricket-panel.html's live crediting exactly: a
+        // Wide's FULL runs are extras (never a batsman's), a No Ball's
+        // extras is always exactly the 1-run penalty (any runs off the bat
+        // are the striker's, not extras — see 'runsOffBat' in
+        // deriveBallFacts()), Bye/Leg Bye are always fully extras. An
+        // Overthrow ('OT') is a legal delivery credited entirely to the
+        // striker, so it never touches extras here, same as a plain '0'-'6'.
+        if (b.kind === 'Wd') extras[bt].wd += b.runs || 0;
+        else if (b.kind === 'Nb') extras[bt].nb += 1;
+        else if (b.kind === 'B') extras[bt].b += b.runs || 0;
+        else if (b.kind === 'LB') extras[bt].lb += b.runs || 0;
+
+        // Fall of wickets — the cumulative team score/wicket count AT this
+        // exact ball (teamTotals[bt] already reflects THIS ball, since it
+        // was incremented just above), in the same "over.ballInOver" shape
+        // cricket-panel.html/cricket-scorecard.html already read
+        // (m.fallOfWickets[team] = [{wkt, runs, over, inningsNo}]).
+        if (b.dismissal) {
+            fallOfWickets[bt].push({ wkt: teamTotals[bt].wickets, runs: teamTotals[bt].runs, over: `${b.over}.${b.ballInOver}`, inningsNo: inn });
+        }
 
         // 🩹 INNINGS-TAG FIX: rows used to be keyed by strikerKey/bowlerKey
         // alone, with no inningsNo ever written onto the row. The public
@@ -6031,11 +6079,40 @@ function buildLiveCardsFromBallsArray(balls) {
         return { runs: t.runs, wickets: t.wickets, overs: `${Math.floor(t.legalBalls / 6)}.${t.legalBalls % 6}` };
     };
 
+    // Partnerships — one pass per innings (mirrors computeLivePartnerships()
+    // in cricket-panel.html exactly: same pairKey/forWicket/runs/balls
+    // algorithm), reading from these same canonical balls instead of the
+    // live panel's ballLog — so a correction rebuilds this from the SAME
+    // source of truth as everything else above, instead of leaving it as
+    // whatever the panel last happened to save before the correction.
+    // Keyed by innings NUMBER (1-4), matching m.partnerships[inningsNo] the
+    // way cricket-scorecard.html already reads a saved match record.
+    const partnerships = { 1: [], 2: [], 3: [], 4: [] };
+    [1, 2, 3, 4].forEach(inn => {
+        const inningsBalls = balls.filter(b => (b.innings || 1) === inn);
+        if (!inningsBalls.length) return;
+        let cur = null, wktSoFar = 0;
+        inningsBalls.forEach(b => {
+            const pairKey = [b.striker || '', b.nonStriker || ''].sort().join('|');
+            if (!cur || cur.pairKey !== pairKey) {
+                if (cur) partnerships[inn].push(cur);
+                cur = { pairKey, batters: [b.striker, b.nonStriker], runs: 0, balls: 0, forWicket: wktSoFar + 1 };
+            }
+            cur.runs += b.runs || 0;
+            if (b.kind !== 'Wd' && b.kind !== 'Nb') cur.balls++;
+            if (b.dismissal) wktSoFar++;
+        });
+        if (cur) partnerships[inn].push(cur);
+    });
+
     return {
         battingCard: { A: toBattingCard('A'), B: toBattingCard('B') },
         bowlingCard: { A: toBowlingCard('A'), B: toBowlingCard('B') },
         scoreA: toScore('A'),
-        scoreB: toScore('B')
+        scoreB: toScore('B'),
+        extras: { A: extras.A, B: extras.B },
+        fallOfWickets: { A: fallOfWickets.A, B: fallOfWickets.B },
+        partnerships
     };
 }
 
