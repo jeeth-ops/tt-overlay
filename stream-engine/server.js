@@ -306,6 +306,232 @@ const DEFAULT_BITRATE_KBPS = {
     '1080p': { 30: 6000,  60: 12000 }, // 1080p30 default kept close to the original ~10Mbps spec; adjustable
 };
 
+// ================================================================
+// 🎞️ LOCAL FULL-MATCH MASTER RECORDING — separate from both the live
+// YouTube push (Part 2) and the short rolling clip buffer (Part 3,
+// localBuffer.js). This is the actual "the whole match, saved on this
+// laptop as a real MP4" deliverable: continuously fed the SAME final
+// camera+overlay program bytes every other consumer gets (see /ingest),
+// muxed the entire time the operator has Recording running, completely
+// independent of the live stream's network/bitrate — a bad connection
+// degrades the LIVE STREAM only; this keeps recording at its own fixed
+// quality regardless. Lives under its own directory, well outside
+// localBuffer's per-match buffer/ folder (which IS deleted ~90s after
+// Recording stops) — this must never be touched by that cleanup.
+// ================================================================
+const RECORDING_ROOT = path.join(__dirname, 'StreamEngineData', 'Recordings');
+try { fs.mkdirSync(RECORDING_ROOT, { recursive: true }); } catch (e) { /* created lazily per-match anyway */ }
+// Deliberately independent of the live-stream ABR ladder (stream-engine's
+// adaptive bitrate section, further below) — this is a fixed local
+// recording quality, never adapted to network conditions.
+const RECORDING_BITRATE_KBPS = { '480p': 2500, '720p': 5000, '1080p': 8000 };
+
+function recorderDir(matchId) {
+    return path.join(RECORDING_ROOT, localBuffer.safeMatchId(matchId));
+}
+
+const recorder = {
+    state: 'idle',            // idle | starting | recording | stopping | crashed
+    proc: null,
+    matchId: null,
+    desiredRecording: false,
+    startedAt: null,          // when the CURRENT segment started (not the whole match, if it had to restart)
+    segmentIndex: 0,
+    segmentPath: null,
+    segments: [],             // [{path, startedAt}] — normally just one; more than one only if a crash forced a new file (see below)
+    settings: null,           // {resolution, width, height, fps, bitrateKbps}
+    restarts: [],
+    lastError: null,
+    priming: false,           // true while this segment's header chunk is being piped in — see startRecorder
+    pendingChunks: [],        // live chunks queued during priming so they land AFTER the header, never interleaved before it
+};
+
+function buildRecorderArgs({ width, height, fps, bitrateKbps, outFile }) {
+    return [
+        '-hide_banner', '-loglevel', 'warning',
+        '-i', 'pipe:0',
+        // Deliberately libx264 (CPU), not NVENC: this runs ALONGSIDE the
+        // live push's own NVENC session, and consumer GPUs commonly cap
+        // concurrent NVENC sessions at 1-3 — recording isn't
+        // latency-sensitive, so a CPU encode here never competes with
+        // the live stream's hardware encoder for that limited resource.
+        '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', `${bitrateKbps}k`,
+        '-vf', `scale=${width}:${height}`, '-r', String(fps),
+        // A short (2s) GOP — same convention as the live encoder above —
+        // is what actually makes the crash-safety below real: fragments
+        // close (and flush to disk) on every keyframe, so at most ~2s of
+        // footage is ever at risk if the process is killed. libx264's own
+        // default keyint (250 frames, ~8s at 30fps) would leave a much
+        // bigger unflushed/unplayable window mid-recording.
+        '-g', String(fps * 2), '-keyint_min', String(fps * 2),
+        '-c:a', 'aac', '-b:a', '192k', '-ar', '44100',
+        // Fragmented MP4: writes a valid, playable file incrementally as
+        // it records (a moof+mdat per GOP) instead of one index (moov)
+        // written only at a clean close — so a laptop crash, a killed
+        // process, or an abrupt Stream Engine stop leaves a real,
+        // playable MP4 up to the last flushed fragment, never a
+        // zero-byte or "moov atom not found" unplayable file.
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+        '-flush_packets', '1',
+        '-f', 'mp4',
+        outFile,
+    ];
+}
+
+function startRecorder(matchId, { resolution, fps } = {}) {
+    if (recorder.state === 'recording' || recorder.state === 'starting') {
+        if (recorder.matchId === matchId) return { ok: true, alreadyRecording: true };
+        return { ok: false, error: `Already recording match "${recorder.matchId}" — stop that first` };
+    }
+    const resKey = RESOLUTIONS[resolution] ? resolution : '1080p';
+    const fpsNum = [30, 60].includes(Number(fps)) ? Number(fps) : 30;
+    const { width, height } = RESOLUTIONS[resKey];
+    const bitrateKbps = RECORDING_BITRATE_KBPS[resKey];
+
+    const dir = recorderDir(matchId);
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { return { ok: false, error: `Could not create recording folder: ${e.message}` }; }
+
+    recorder.matchId = matchId;
+    recorder.desiredRecording = true;
+    recorder.settings = { resolution: resKey, width, height, fps: fpsNum, bitrateKbps };
+    recorder.segmentIndex += recorder.segments.length ? 1 : 0;
+    const fileName = recorder.segments.length === 0 ? 'master.mp4' : `master_part${recorder.segments.length + 1}.mp4`;
+    const outFile = path.join(dir, fileName);
+    recorder.segmentPath = outFile;
+    recorder.state = 'starting';
+    recorder.startedAt = Date.now();
+    recorder.lastError = null;
+
+    const args = buildRecorderArgs({ width, height, fps: fpsNum, bitrateKbps, outFile });
+    const proc = spawn(FFMPEG_PATH, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+    recorder.proc = proc;
+    recorder.state = 'recording';
+    recorder.segments.push({ path: outFile, startedAt: recorder.startedAt });
+
+    // Prime this BRAND NEW ffmpeg process with the session's header
+    // chunk before any live /ingest bytes reach it — a fresh process
+    // reading from pipe:0 needs the EBML/Segment/Tracks header to
+    // decode anything at all; without this, a recording started after
+    // the capture already began (or restarted after a crash) would
+    // receive only bare Clusters and produce an empty/broken file. Live
+    // chunks arriving during this async write are queued, never
+    // interleaved before the header.
+    recorder.priming = true;
+    recorder.pendingChunks = [];
+    const headerFile = localBuffer.getHeaderChunkFile(matchId);
+    const flushPending = () => {
+        recorder.priming = false;
+        const pending = recorder.pendingChunks;
+        recorder.pendingChunks = [];
+        for (const buf of pending) {
+            try { if (proc.stdin.writable) proc.stdin.write(buf); } catch (e) { /* proc likely already gone */ }
+        }
+    };
+    if (headerFile) {
+        const hs = fs.createReadStream(headerFile);
+        hs.on('error', flushPending); // missing header is unusual but not fatal — just start from live chunks
+        hs.pipe(proc.stdin, { end: false });
+        hs.on('close', flushPending);
+    } else {
+        flushPending();
+    }
+
+    let stderrBuf = '';
+    proc.stderr.on('data', (chunk) => {
+        stderrBuf += chunk.toString();
+        let idx;
+        while ((idx = stderrBuf.indexOf('\n')) >= 0) {
+            const line = stderrBuf.slice(0, idx);
+            stderrBuf = stderrBuf.slice(idx + 1);
+            if (/error|failed|invalid/i.test(line)) recorder.lastError = line.trim();
+        }
+    });
+
+    proc.on('exit', (code, signal) => {
+        const wasDesired = recorder.desiredRecording;
+        console.log(`[stream-engine] recorder ffmpeg exited (code=${code}, signal=${signal}); desiredRecording=${wasDesired}`);
+        recorder.proc = null;
+        if (!wasDesired) { recorder.state = 'idle'; return; }
+
+        // Unexpected exit while the operator still wants to be
+        // recording — never silently stop capturing the match. Start a
+        // NEW segment file (fragmented MP4 can't simply be appended to
+        // after the process that owns it exits) rather than giving up;
+        // every segment individually stays under RECORDING_ROOT and
+        // stays playable on its own.
+        recorder.state = 'crashed';
+        recorder.lastError = recorder.lastError || `recorder ffmpeg exited unexpectedly (code=${code}, signal=${signal})`;
+        const now = Date.now();
+        recorder.restarts = recorder.restarts.filter((t) => now - t < RESTART_WINDOW_MS);
+        if (recorder.restarts.length >= MAX_AUTO_RESTARTS) {
+            console.log('[stream-engine] recorder: max auto-restarts hit — local recording stopped, operator must press Start Recording again');
+            recorder.desiredRecording = false;
+            return;
+        }
+        recorder.restarts.push(now);
+        console.log(`[stream-engine] recorder: auto-restarting into a new segment (attempt ${recorder.restarts.length}/${MAX_AUTO_RESTARTS})…`);
+        setTimeout(() => {
+            if (recorder.desiredRecording) startRecorder(recorder.matchId, { resolution: recorder.settings.resolution, fps: recorder.settings.fps });
+        }, 1000);
+    });
+
+    proc.on('error', (err) => {
+        console.log('[stream-engine] recorder ffmpeg spawn error:', err.message);
+        recorder.lastError = err.message;
+        recorder.state = 'crashed';
+    });
+
+    return { ok: true };
+}
+
+function stopRecorder() {
+    recorder.desiredRecording = false;
+    if (!recorder.proc) { recorder.state = 'idle'; return { ok: true, alreadyIdle: true }; }
+    recorder.state = 'stopping';
+    // End stdin (not SIGKILL) so ffmpeg flushes its last fragment and
+    // closes the MP4 cleanly — never chop off the last few seconds.
+    try { recorder.proc.stdin.end(); } catch (e) { /* already closed */ }
+    const proc = recorder.proc;
+    setTimeout(() => { if (recorder.proc === proc) { try { proc.kill('SIGKILL'); } catch (e) {} } }, 5000);
+    return { ok: true };
+}
+
+function resetRecorderForNewMatch() {
+    recorder.segments = [];
+    recorder.segmentIndex = 0;
+    recorder.restarts = [];
+}
+
+// Never drop frames from the master recording the way the live push
+// (deliberately) drops under backpressure — losing a moment from the
+// permanent match record is worse than a brief memory bump while a CPU
+// encode catches up. Node's stream internally buffers when write()
+// returns false; this just tracks how long that's been true so an
+// operator can see a real, sustained problem instead of one silently
+// growing forever.
+let recorderBackpressureSince = null;
+function recorderIngestChunk(buf) {
+    if (recorder.state !== 'recording' || !recorder.proc || !recorder.proc.stdin.writable) return;
+    if (recorder.priming) { recorder.pendingChunks.push(buf); return; } // hold until the header chunk (see startRecorder) has been written first
+    try {
+        const stillOk = recorder.proc.stdin.write(buf);
+        if (!stillOk && !recorderBackpressureSince) {
+            recorderBackpressureSince = Date.now();
+            recorder.proc.stdin.once('drain', () => { recorderBackpressureSince = null; });
+        }
+    } catch (e) { recorder.lastError = e.message; }
+}
+
+// Best-effort free disk space for the recordings volume — Node 18.15+
+// has fs.statfs; older Node just reports null rather than failing here.
+function diskFreeBytes(dir) {
+    try {
+        if (typeof fs.statfsSync !== 'function') return null;
+        const s = fs.statfsSync(dir);
+        return s.bavail * s.bsize;
+    } catch (e) { return null; }
+}
+
 function resolveEncodeSettings({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     const resKey = RESOLUTIONS[resolution] ? resolution : '1080p';
     const fpsNum = [30, 60].includes(Number(fps)) ? Number(fps) : 30;
@@ -975,7 +1201,6 @@ async function cutLocalClip({ clipId, matchId, eventType, eventTimestamp, ballMe
     if (win.error) return { ok: false, error: win.error };
 
     const { trimStartSec, toStitch, dirs } = win;
-    const stitchedFile = path.join(dirs.tempDir, `_stitched_${Date.now()}.webm`);
     // Deterministic, clipId-based filename (not Date.now()-based) — a
     // job re-run for the exact same event never leaves multiple .mp4s
     // behind, and this is the SAME name server.js's R2 key/Drive
@@ -985,39 +1210,48 @@ async function cutLocalClip({ clipId, matchId, eventType, eventTimestamp, ballMe
 
     console.log(`[CLIP RANGE] clipId=${clipId} start=T0-${CLIP_PRE_ROLL_SEC}s end=T0+${CLIP_POST_ROLL_SEC}s`);
 
+    // Feed the covering chunks straight into ffmpeg's stdin as one
+    // continuous byte stream, and seek AFTER -i (decode-order, not an
+    // index/Cues seek) rather than writing an intermediate "stitched"
+    // file to disk and reopening it with -ss BEFORE -i. The previous
+    // approach relied on ffmpeg's Matroska seek index on a file that was
+    // never a real single recording (just independent MediaRecorder
+    // blobs concatenated after the fact) — on some encode paths
+    // (confirmed with an H.264-in-WebM capture-card feed) that index is
+    // unreliable and pre-seeking into it corrupts the output ("Invalid
+    // data found when processing input" / garbled video). Piping bytes
+    // and seeking by decoding forward from the start avoids trusting
+    // that index at all — this is the exact same "continuous pipe
+    // decode" mechanism already proven reliable for the live NVENC push
+    // (see ingestChunk/buildFfmpegArgs above), just applied to clip
+    // cutting instead of a live RTMP push.
     await new Promise((resolve, reject) => {
-        const out = fs.createWriteStream(stitchedFile);
-        out.on('error', reject);
+        const args = [
+            '-hide_banner', '-loglevel', 'warning', '-y',
+            '-i', 'pipe:0',
+            '-ss', String(trimStartSec), '-t', String(CLIP_PRE_ROLL_SEC + CLIP_POST_ROLL_SEC),
+            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'veryfast',
+            outFile,
+        ];
+        const proc = spawn(FFMPEG_PATH, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+        let stderr = '';
+        proc.stderr.on('data', (d) => { stderr += d; });
+        proc.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg trim exited ${code}: ${stderr.slice(-500)}`)));
+        proc.on('error', reject);
+
         (async () => {
             for (const c of toStitch) {
                 await new Promise((res2, rej2) => {
                     const rs = fs.createReadStream(c.file);
                     rs.on('error', rej2);
                     rs.on('end', res2);
-                    rs.pipe(out, { end: false });
+                    rs.pipe(proc.stdin, { end: false });
                 });
             }
-            out.end();
-            resolve();
+            proc.stdin.end();
         })().catch(reject);
     });
 
-    await new Promise((resolve, reject) => {
-        const args = [
-            '-hide_banner', '-loglevel', 'warning', '-y',
-            '-i', stitchedFile,
-            '-ss', String(trimStartSec), '-t', String(CLIP_PRE_ROLL_SEC + CLIP_POST_ROLL_SEC),
-            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'veryfast',
-            outFile,
-        ];
-        const proc = spawn(FFMPEG_PATH, args);
-        let stderr = '';
-        proc.stderr.on('data', (d) => { stderr += d; });
-        proc.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg trim exited ${code}: ${stderr.slice(-300)}`)));
-        proc.on('error', reject);
-    });
-
-    fs.unlink(stitchedFile, () => {});
     console.log(`[CLIP CREATED] clipId=${clipId} localPath=${outFile}`);
     return { ok: true, outFile };
 }
@@ -1174,6 +1408,22 @@ app.get('/status', async (req, res) => {
         cloudflareConnected: clipWorker.cloudflareConnected,
         clipWorkerLastError: clipWorker.lastError,
         retryQueueLength: retryQueue.length,
+        // Local full-match master recording — see the LOCAL FULL-MATCH
+        // MASTER RECORDING section above. Independent of streaming.
+        recorder: {
+            state: recorder.state,
+            matchId: recorder.matchId,
+            settings: recorder.settings,
+            segmentPath: recorder.segmentPath,
+            segmentCount: recorder.segments.length,
+            durationSec: recorder.startedAt && (recorder.state === 'recording' || recorder.state === 'stopping')
+                ? Math.round((Date.now() - recorder.startedAt) / 1000)
+                : null,
+            sizeBytes: (() => { try { return recorder.segmentPath ? fs.statSync(recorder.segmentPath).size : null; } catch (e) { return null; } })(),
+            diskFreeBytes: diskFreeBytes(RECORDING_ROOT),
+            lastError: recorder.lastError,
+            restartCount: recorder.restarts.length,
+        },
     });
 });
 
@@ -1192,6 +1442,8 @@ app.post('/recording-start', (req, res) => {
     if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
     const mainServerUrl = (req.body && req.body.mainServerUrl) || null;
     const tournamentId = (req.body && req.body.tournamentId) || null;
+    const resolution = (req.body && req.body.recordingResolution) || '1080p';
+    const fps = (req.body && req.body.recordingFps) || 30;
 
     // attachRecording (not startSession) — reuses any buffer already
     // capturing this match's footage (e.g. streaming was already live
@@ -1200,9 +1452,16 @@ app.post('/recording-start', (req, res) => {
     localBuffer.attachRecording(matchId, { tournamentId, mainServerUrl });
     recordingMatches[matchId] = { mainServerUrl, tournamentId };
     console.log(`🔴 [clip engine] Local buffer recording started for match ${matchId}`);
+
+    if (recorder.matchId !== matchId) resetRecorderForNewMatch();
+    const recResult = startRecorder(matchId, { resolution, fps });
+    if (!recResult.ok) {
+        console.log(`⚠️  [master recording] could not start local master recording for ${matchId}: ${recResult.error}`);
+    }
+
     // No vMix here — "vmixControlled" from the old ClipperHelper contract
     // doesn't apply; kept as false for any old UI text checking it.
-    res.json({ success: true, vmixControlled: false });
+    res.json({ success: true, vmixControlled: false, masterRecording: recResult.ok ? { ok: true, path: recorder.segmentPath } : { ok: false, error: recResult.error } });
 });
 
 app.post('/recording-stop', (req, res) => {
@@ -1212,12 +1471,38 @@ app.post('/recording-stop', (req, res) => {
     // request for the last few seconds of the match is still in flight
     // (mirrors Part 1's RECORDING_CLEANUP_DELAY_MS reasoning), then
     // delete it — this runs on the operator's own laptop disk, so it
-    // must not accumulate match after match.
+    // must not accumulate match after match. This ONLY deletes the
+    // short-lived clip buffer (buffer/matches/<id>/) — the persistent
+    // master.mp4 recording lives entirely outside that folder (see
+    // RECORDING_ROOT) and is never touched by this cleanup.
     if (matchId) {
         setTimeout(() => localBuffer.deleteMatchMedia(matchId), 90 * 1000);
         delete recordingMatches[matchId];
     }
+    if (matchId && recorder.matchId === matchId) stopRecorder();
     res.json({ success: true, vmixControlled: false, hadSession: !!session });
+});
+
+// Serves the operator the folder path (not the file contents — these
+// can be multi-GB) so a panel button can show/copy it for "Open
+// Recording Folder" without this engine needing a native file-manager
+// integration.
+app.get('/recording-info', (req, res) => {
+    const matchId = localBuffer.safeMatchId(req.query.matchId);
+    const dir = matchId ? recorderDir(matchId) : RECORDING_ROOT;
+    let sizeBytes = null;
+    try {
+        sizeBytes = recorder.segments.reduce((sum, s) => {
+            try { return sum + fs.statSync(s.path).size; } catch (e) { return sum; }
+        }, 0);
+    } catch (e) { /* best effort */ }
+    res.json({
+        success: true,
+        folder: dir,
+        segments: recorder.segments,
+        totalSizeBytes: sizeBytes,
+        diskFreeBytes: diskFreeBytes(RECORDING_ROOT),
+    });
 });
 
 // Legacy ClipperHelper contract also had /set-folder (it did its OWN
@@ -1343,6 +1628,13 @@ app.post('/ingest', express.raw({ type: '*/*', limit: '10mb' }), (req, res) => {
         localBuffer.ensureSession(matchId);
         localBuffer.addChunk(matchId, index, req.body);
     }
+
+    // Third independent fan-out of the SAME bytes (one capture, three
+    // consumers — see the LOCAL FULL-MATCH MASTER RECORDING section
+    // above): the continuous local master.mp4. Never gated on the live
+    // push's state — a dead/reconnecting YouTube stream must not affect
+    // this at all.
+    recorderIngestChunk(req.body);
 
     const encResult = ingestChunk(req.body);
     // Only treat this as an error if the encoder was SUPPOSED to be live

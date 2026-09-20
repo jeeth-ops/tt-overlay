@@ -1382,6 +1382,30 @@
         <div id="ce-clip-jobs-list" style="margin-top:10px; display:flex; flex-direction:column; gap:6px; max-height:260px; overflow-y:auto;"></div>
       </div>
 
+      <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,.08);">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+          <span style="font-size:12px; opacity:.8; font-weight:600;">LOCAL MASTER RECORDING (full match, on this laptop)</span>
+        </div>
+        <label style="font-size:11px; opacity:.7; display:block; margin-bottom:8px;">Recording Resolution (independent of the live stream's resolution/bitrate)
+          <select id="rec-resolution-select" class="full" style="margin-top:3px;">
+            <option value="1080p">1080p (1920×1080)</option>
+            <option value="720p">720p (1280×720)</option>
+            <option value="480p">480p (854×480)</option>
+          </select>
+        </label>
+        <div style="display:grid; grid-template-columns:auto 1fr; gap:4px 10px; font-size:12px;">
+          <span style="opacity:.7;">Status</span><span id="rec-status" class="ls-health-val">● Not recording</span>
+          <span style="opacity:.7;">Output</span><span id="rec-output">—</span>
+          <span style="opacity:.7;">Duration</span><span id="rec-duration">—</span>
+          <span style="opacity:.7;">File Size</span><span id="rec-size">—</span>
+          <span style="opacity:.7;">Disk Free</span><span id="rec-disk-free">—</span>
+        </div>
+        <div id="rec-error" style="font-size:11px; color:#ff6b6b; margin-top:6px; display:none;"></div>
+        <div style="font-size:10.5px; opacity:.5; margin-top:6px;">
+          Saved as a real, independently-playable MP4 under <code>stream-engine/StreamEngineData/Recordings/&lt;matchId&gt;/master.mp4</code> — never depends on internet, never affected by live-stream reconnects/bitrate changes, never touched by clip creation.
+        </div>
+      </div>
+
       <button class="full small ghost" id="save-highlight-btn" style="margin-top:12px;">⭐ Save Highlight</button>
 
       <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,.08);">
@@ -2356,6 +2380,53 @@ async function refreshClipEngineStatus(){
   }
   ceSetDot('ce-worker', status.clipWorkerState !== 'idle' ? true : null, status.clipWorkerState === 'idle' ? 'Idle' : status.clipWorkerState === 'cutting' ? 'Cutting…' : 'Uploading…');
   ceSetDot('ce-cloudflare', status.cloudflareConnected, status.cloudflareConnected ? 'Connected' : `Retrying (${status.retryQueueLength} queued)`);
+
+  updateRecorderStatusUI(status.recorder);
+}
+
+function formatBytes(n){
+  if(n == null) return '—';
+  if(n < 1024*1024) return `${(n/1024).toFixed(0)} KB`;
+  if(n < 1024*1024*1024) return `${(n/1024/1024).toFixed(1)} MB`;
+  return `${(n/1024/1024/1024).toFixed(2)} GB`;
+}
+function updateRecorderStatusUI(recorder){
+  const statusEl = document.getElementById('rec-status');
+  const outputEl = document.getElementById('rec-output');
+  const durationEl = document.getElementById('rec-duration');
+  const sizeEl = document.getElementById('rec-size');
+  const diskEl = document.getElementById('rec-disk-free');
+  const errEl = document.getElementById('rec-error');
+  const resSelect = document.getElementById('rec-resolution-select');
+  if(!statusEl) return;
+  if(!recorder || recorder.state === 'idle'){
+    statusEl.innerHTML = '● Not recording';
+    outputEl.textContent = '—'; durationEl.textContent = '—'; sizeEl.textContent = '—';
+    errEl.style.display = 'none';
+    if(resSelect) resSelect.disabled = false;
+    return;
+  }
+  if(resSelect) resSelect.disabled = true; // independent of the live-stream controls — this is its OWN "can't change once running" lock
+  if(recorder.state === 'recording'){
+    statusEl.innerHTML = '<span style="color:#3fce6e;">● RECORDING</span>';
+    errEl.style.display = 'none';
+  } else if(recorder.state === 'crashed'){
+    statusEl.innerHTML = '<span style="color:#ffb020;">● Recovering (auto-restarting into a new file)…</span>';
+    errEl.textContent = '⚠️ ' + (recorder.lastError || 'unknown error') + (recorder.restartCount ? ` (auto-restarted ${recorder.restartCount}x — a new master_partN.mp4 segment was started; nothing already recorded is lost)` : '');
+    errEl.style.display = 'block';
+  } else {
+    statusEl.innerHTML = `● ${recorder.state}`;
+  }
+  if(recorder.settings) outputEl.textContent = `${recorder.settings.width}×${recorder.settings.height} • ${recorder.settings.fps} FPS • ${(recorder.settings.bitrateKbps/1000).toFixed(1)} Mbps`;
+  durationEl.textContent = recorder.durationSec != null ? `${Math.floor(recorder.durationSec/60)}:${String(recorder.durationSec%60).padStart(2,'0')}${recorder.segmentCount > 1 ? ` (segment ${recorder.segmentCount})` : ''}` : '—';
+  sizeEl.textContent = formatBytes(recorder.sizeBytes);
+  diskEl.textContent = formatBytes(recorder.diskFreeBytes);
+  if(recorder.diskFreeBytes != null && recorder.diskFreeBytes < 2 * 1024 * 1024 * 1024){
+    diskEl.style.color = '#ff6b6b';
+    diskEl.textContent += ' ⚠️ LOW';
+  } else {
+    diskEl.style.color = '';
+  }
 }
 refreshClipEngineStatus();
 setInterval(refreshClipEngineStatus, 5000);
@@ -2523,12 +2594,15 @@ async function startRecording(){
     // knows WHERE to forward finished clips for R2/Drive upload +
     // player linking (see /api/clips/ingest on the main server —
     // exactly the same endpoint ClipperHelper.exe always posted to).
-    body: JSON.stringify({ matchId, tournamentId, mainServerUrl: location.origin })
+    body: JSON.stringify({ matchId, tournamentId, mainServerUrl: location.origin, recordingResolution: document.getElementById('rec-resolution-select')?.value || '1080p', recordingFps: 30 })
   }).then(r => r.json()).catch(() => ({ success:false }));
 
   if(!result.success){
     toast('⚠️ Could not reach the local Stream Engine — is it running? (see stream-engine/README.md)');
     return;
+  }
+  if(result.masterRecording && !result.masterRecording.ok){
+    toast('⚠️ Local master recording could not start: ' + result.masterRecording.error);
   }
 
   recordingDesired = true;

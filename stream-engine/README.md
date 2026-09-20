@@ -14,6 +14,59 @@ the exact same incoming bytes:
    vMix's recording file. This engine implements the same local HTTP
    contract (`/status`, `/recording-start`, `/recording-stop`, `/clip`)
    ClipperHelper.exe used to — **zero runtime dependency on vMix**.
+3. **Full-match local recording:** continuously mux the SAME bytes into a
+   real, independently-playable `master.mp4` per match under
+   `StreamEngineData/Recordings/<matchId>/` — see below.
+
+All three are fed by the ONE browser capture — never a second capture,
+never a second encoder, and none of them ever uses YouTube, R2, Drive, or
+a raw `.webm` chunk file as anyone else's *source*: R2/Drive are upload
+*destinations* only (handled entirely by the existing `server.js` at the
+repo root — async, independent per-destination retry, survives a
+restart), and clips are always cut from this engine's own local footage.
+
+## Full-match local recording (independent of streaming/network)
+
+`POST /recording-start` (same call the panel already makes for clip
+recording) now also starts a **local libx264 encode of the full match to
+MP4**, entirely separate from the live YouTube push:
+
+- Lives at `StreamEngineData/Recordings/<matchId>/master.mp4` — a real,
+  standalone, playable file (VLC/Windows/macOS/Android/iOS/any editor),
+  never a `.webm`/`.ts`/`.m3u8`.
+- Its own resolution/bitrate (`RECORDING_BITRATE_KBPS`, independent of the
+  live stream's adaptive ladder) — a weak connection degrades the LIVE
+  STREAM only; this keeps recording at fixed quality regardless.
+- **libx264 (CPU), not NVENC** — deliberately, so it never competes with
+  the live push for the GPU's limited concurrent NVENC sessions.
+- Fragmented MP4 (`-movflags frag_keyframe+empty_moov+default_base_moof`)
+  with a 2s keyframe interval: the file is valid and playable at any
+  point while still recording, not just after a clean stop — a crash or
+  kill loses at most ~2s, never the whole match. Verified by killing the
+  encoder process mid-recording and confirming the file up to that point
+  still plays and a NEW segment (`master_part2.mp4`, ...) picks up
+  automatically without operator action.
+- `GET /recording-info?matchId=...` reports the segment list, total size,
+  and free disk space (`/status`'s `recorder` field has the same, plus
+  live state/duration, for the panel's status card).
+- This is a completely separate file/process from `localBuffer.js`'s
+  short rolling buffer (deleted ~90s after Recording stops) — the master
+  recording is never touched by that cleanup.
+
+## Fixed: corrupted/garbled clips ("looks like chunks, not real video")
+
+Clip cutting previously wrote the covering `.webm` chunks to one
+intermediate file and reopened it with `-ss` *before* `-i` (an index/Cues
+seek). On some encode paths — confirmed with an H.264-in-WebM
+capture-card feed — concatenating independent MediaRecorder blobs like
+that produces a file whose seek index isn't trustworthy, and pre-seeking
+into it corrupted the output. It's now piped straight into ffmpeg's
+stdin with `-ss` *after* `-i` (decode-order, no index dependency) — the
+same "continuous pipe decode" mechanism already used for the live NVENC
+push. `localBuffer.js` also now detects an actual missing chunk (e.g. a
+dropped `/ingest` POST) in the requested window and fails the clip
+loudly instead of silently stitching around the hole — see
+`getClipWindow`'s gap check.
 
 It never runs on Render. No 1080p video ever touches `server.js`, Mongo,
 or Socket.IO — only short finished clip files (via the existing
