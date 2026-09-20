@@ -7491,24 +7491,23 @@ function hideActiveCardNow(){
    simply completing. See recordBall()'s 'W'/'WdW'/'NbW' cases, which
    deliberately no longer queue anything for the OUTGOING player.
 
-   SHOW/SKIP popup (7s auto-continue on no response) → SHOW pressed →
-   3s delay → Match Performance card → 3s later, same card crossfades
-   to Tournament Performance → 6s total display window → smooth exit.
-   If this player has no tournament data yet, the Match card just fills
-   the whole 6s instead of crossfading to an empty Tournament phase.
+   SHOW/SKIP popup appears the INSTANT a new batsman/bowler is selected
+   (7s auto-continue if the operator doesn't answer) → SHOW pressed (or
+   the auto-continue) → card appears immediately, no delay → exactly 4s
+   later it disappears on its own. No crossfade to a Tournament phase —
+   just the Match figures for the flat 4s window.
    The always-visible "⤫ HIDE CURRENT CARD" button (hideActiveCardNow)
-   dismisses whatever's on screen — popup, Match, or Tournament phase —
-   at any time, independent of these timers.
+   dismisses whatever's on screen — popup or card — at any time,
+   independent of these timers.
 
    Both the player's identity AND every figure shown are frozen the
-   INSTANT they're selected (matchPayload/tournamentPayload are built
-   once, up front, by the caller — see sendInNewBatsman()/
-   applyBowlerChange()) — never re-read from live state at display
-   time, so a second wicket/bowler-change during the confirm popup or
-   the 3s delay can never make the wrong player (or stale figures)
-   appear later. Only a deliberate MANUAL card action (or Reset, or a
-   match switch) wipes the whole queue outright; a SKIP or a natural
-   auto-hide just advances to whatever's queued next.
+   INSTANT they're selected (matchPayload is built once, up front, by
+   the caller — see sendInNewBatsman()/applyBowlerChange()) — never
+   re-read from live state at display time, so a second wicket/bowler-
+   change during the confirm popup can never make the wrong player (or
+   stale figures) appear later. Only a deliberate MANUAL card action (or
+   Reset, or a match switch) wipes the whole queue outright; a SKIP or a
+   natural auto-hide just advances to whatever's queued next.
 
    clearAutoCardFlow() ALSO dismisses whatever card is currently on the
    overlay (not just the JS-side timers, and not just the confirm
@@ -7567,9 +7566,7 @@ function resolveAutoCardConfirm(seq, proceed){
   const overlay = document.getElementById('auto-card-modal-overlay');
   if(overlay) overlay.classList.remove('show');
   if(!proceed){ autoCardFlow = null; advanceAutoCardQueue(); return; }
-  // 3-second delay from SHOW, then the Match/Tournament presentation begins.
-  const t = setTimeout(() => showAutoCard(seq), 3000);
-  autoCardFlow.timers.push(t);
+  showAutoCard(seq); // SHOW pressed (or the popup auto-continued) — no delay, straight to the card
 }
 function showAutoCard(seq){
   if(!autoCardFlow || autoCardFlow.seq !== seq) return;
@@ -7587,29 +7584,15 @@ function showAutoCard(seq){
   socket.emit(emitEvent, { data: flow.matchPayload });
   setActiveCard(cardKind, `${personLabel} — Match (auto)`);
 
-  // 3s later, crossfade the SAME card over to the Tournament figures (if
-  // this player has any) — same socket event, scope:'tournament', so the
-  // overlay's existing renderPlayerStatCard()/renderBowlerStatCard() just
-  // pulses the numbers in place (pulseStatGrid) instead of re-sliding the
-  // whole card, exactly like any other live stat update to an already-
-  // visible card.
-  if(flow.tournamentPayload){
-    const tTimer = setTimeout(() => {
-      if(!autoCardFlow || autoCardFlow.seq !== seq) return;
-      socket.emit(emitEvent, { data: flow.tournamentPayload });
-      setActiveCard(cardKind, `${personLabel} — Tournament (auto)`);
-    }, 3000);
-    flow.timers.push(tTimer);
-  }
-
-  // 6 seconds of total display (from the Match card's own first frame),
+  // Flat 4s window (from this Match card's own first frame) — no
+  // crossfade to a Tournament phase, just Show → 4s → gone.
   // whether or not a Tournament phase played, then smooth exit.
   const hideTimer = setTimeout(() => {
     if(!autoCardFlow || autoCardFlow.seq !== seq) return; // a manual action already took over
     deactivateCard(cardKind);
     autoCardFlow = null;
     advanceAutoCardQueue();
-  }, 6000);
+  }, 4000);
   flow.timers.push(hideTimer);
 }
 
