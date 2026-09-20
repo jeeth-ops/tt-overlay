@@ -1080,6 +1080,23 @@
     </div>
   </div>
 
+  <!-- 🏏 Automatic player card confirmation — SHOW/SKIP with a 7s
+       auto-continue, opened by queueAutoCardFlow() for a newly-selected
+       batsman or bowler (never for the outgoing/dismissed player — see
+       the AUTOMATIC PLAYER CARD FLOW block). Reuses the same
+       wicket-modal-overlay/wicket-modal shell as every other panel popup
+       for visual consistency. -->
+  <div class="wicket-modal-overlay" id="auto-card-modal-overlay">
+    <div class="wicket-modal" id="auto-card-modal">
+      <h3 id="auto-card-modal-title">SHOW CARD?</h3>
+      <div class="wm-sub" id="auto-card-modal-sub">—</div>
+      <div class="wm-actions">
+        <button type="button" class="ghost wm-cancel" id="auto-card-modal-skip">Skip</button>
+        <button type="button" class="primary" id="auto-card-modal-show">Show</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Wicket dismissal picker — appears the instant WICKET is pressed. -->
   <div class="wicket-modal-overlay" id="wicket-modal-overlay">
     <div class="wicket-modal" id="wicket-modal">
@@ -7474,29 +7491,33 @@ function hideActiveCardNow(){
    simply completing. See recordBall()'s 'W'/'WdW'/'NbW' cases, which
    deliberately no longer queue anything for the OUTGOING player.
 
-   Flat, simple timing: the card appears the instant a new player is
-   queued and stays up for exactly AUTO_CARD_DISPLAY_MS, then hides
-   itself automatically — no confirm popup, no delay, no crossfade.
-   Multiple new players in quick succession (e.g. two wickets close
-   together) queue and play one after another rather than the second
-   clobbering the first.
+   SHOW/SKIP popup (7s auto-continue on no response) → SHOW pressed →
+   3s delay → Match Performance card → 3s later, same card crossfades
+   to Tournament Performance → 6s total display window → smooth exit.
+   If this player has no tournament data yet, the Match card just fills
+   the whole 6s instead of crossfading to an empty Tournament phase.
+   The always-visible "⤫ HIDE CURRENT CARD" button (hideActiveCardNow)
+   dismisses whatever's on screen — popup, Match, or Tournament phase —
+   at any time, independent of these timers.
 
-   The player's identity AND every figure shown are frozen the INSTANT
-   they're selected (matchPayload is built once, up front, by the
-   caller — see sendInNewBatsman()/applyBowlerChange()) — never re-read
-   from live state at display time, so a second wicket/bowler-change
-   while a card is showing can never make the wrong player (or stale
-   figures) appear later.
+   Both the player's identity AND every figure shown are frozen the
+   INSTANT they're selected (matchPayload/tournamentPayload are built
+   once, up front, by the caller — see sendInNewBatsman()/
+   applyBowlerChange()) — never re-read from live state at display
+   time, so a second wicket/bowler-change during the confirm popup or
+   the 3s delay can never make the wrong player (or stale figures)
+   appear later. Only a deliberate MANUAL card action (or Reset, or a
+   match switch) wipes the whole queue outright; a SKIP or a natural
+   auto-hide just advances to whatever's queued next.
 
    clearAutoCardFlow() ALSO dismisses whatever card is currently on the
-   overlay (not just the JS-side timers) — the overlay's stat cards are
-   "sticky" (only an explicit hide event removes them), so forgetting
-   this step is exactly what used to leave a card stuck on screen
-   forever whenever a manual toggle or a match switch interrupted an
-   in-progress auto flow.
+   overlay (not just the JS-side timers, and not just the confirm
+   popup) — the overlay's stat cards are "sticky" (only an explicit
+   hide event removes them), so forgetting this step is exactly what
+   used to leave a card stuck on screen forever whenever a manual
+   toggle or a match switch interrupted an in-progress auto flow.
    ------------------------------------------------------------ */
-const AUTO_CARD_DISPLAY_MS = 4000;
-let autoCardFlow = null;   // the flow currently on screen/counting down: { seq, kind, name, id, matchPayload, timers:[] }
+let autoCardFlow = null;   // the flow currently on screen/counting down: { seq, kind, name, id, matchPayload, tournamentPayload, timers:[] }
 let autoCardQueue = [];    // flows waiting their turn, same shape minus seq/timers
 let autoCardFlowSeq = 0;
 
@@ -7511,23 +7532,44 @@ function clearAutoCardFlow(){
     deactivateCard(cardKind); // see note above — the overlay card is sticky and won't hide on its own
   }
   autoCardQueue = [];
+  const overlay = document.getElementById('auto-card-modal-overlay');
+  if(overlay) overlay.classList.remove('show');
 }
 // Adds a flow to the back of the queue; starts it immediately if nothing
 // is currently running. Use this (never a direct "start") so a wicket's
 // out-batter card and the next incoming batter's card always play in
 // order instead of the second discarding the first.
-// info: { name, id, matchPayload } — matchPayload already fully built
-// (frozen) by the caller.
+// info: { name, id, matchPayload, tournamentPayload } — both payloads
+// already fully built (frozen) by the caller; tournamentPayload may be
+// null/undefined when there's no tournament data for this player yet.
 function queueAutoCardFlow(kind, info){
-  autoCardQueue.push({ kind, name: info.name, id: info.id, matchPayload: info.matchPayload });
+  autoCardQueue.push({ kind, name: info.name, id: info.id, matchPayload: info.matchPayload, tournamentPayload: info.tournamentPayload || null });
   if(!autoCardFlow) advanceAutoCardQueue();
 }
 function advanceAutoCardQueue(){
   if(autoCardQueue.length === 0) return;
   const next = autoCardQueue.shift();
   const seq = ++autoCardFlowSeq;
-  autoCardFlow = { seq, kind: next.kind, name: next.name, id: next.id, matchPayload: next.matchPayload, timers: [] };
-  showAutoCard(seq);
+  autoCardFlow = { seq, kind: next.kind, name: next.name, id: next.id, matchPayload: next.matchPayload, tournamentPayload: next.tournamentPayload, timers: [] };
+  openAutoCardConfirm(next.kind, next.name);
+  const t = setTimeout(() => resolveAutoCardConfirm(seq, true), 7000); // no response in 7s → continue
+  autoCardFlow.timers.push(t);
+}
+function openAutoCardConfirm(kind, name){
+  const overlay = document.getElementById('auto-card-modal-overlay');
+  if(!overlay) return;
+  document.getElementById('auto-card-modal-title').textContent = kind === 'bowler' ? 'SHOW BOWLER CARD?' : 'SHOW BATSMAN CARD?';
+  document.getElementById('auto-card-modal-sub').textContent = name || '—';
+  overlay.classList.add('show');
+}
+function resolveAutoCardConfirm(seq, proceed){
+  if(!autoCardFlow || autoCardFlow.seq !== seq) return; // stale — a newer/cleared flow already won
+  const overlay = document.getElementById('auto-card-modal-overlay');
+  if(overlay) overlay.classList.remove('show');
+  if(!proceed){ autoCardFlow = null; advanceAutoCardQueue(); return; }
+  // 3-second delay from SHOW, then the Match/Tournament presentation begins.
+  const t = setTimeout(() => showAutoCard(seq), 3000);
+  autoCardFlow.timers.push(t);
 }
 function showAutoCard(seq){
   if(!autoCardFlow || autoCardFlow.seq !== seq) return;
@@ -7545,14 +7587,38 @@ function showAutoCard(seq){
   socket.emit(emitEvent, { data: flow.matchPayload });
   setActiveCard(cardKind, `${personLabel} — Match (auto)`);
 
+  // 3s later, crossfade the SAME card over to the Tournament figures (if
+  // this player has any) — same socket event, scope:'tournament', so the
+  // overlay's existing renderPlayerStatCard()/renderBowlerStatCard() just
+  // pulses the numbers in place (pulseStatGrid) instead of re-sliding the
+  // whole card, exactly like any other live stat update to an already-
+  // visible card.
+  if(flow.tournamentPayload){
+    const tTimer = setTimeout(() => {
+      if(!autoCardFlow || autoCardFlow.seq !== seq) return;
+      socket.emit(emitEvent, { data: flow.tournamentPayload });
+      setActiveCard(cardKind, `${personLabel} — Tournament (auto)`);
+    }, 3000);
+    flow.timers.push(tTimer);
+  }
+
+  // 6 seconds of total display (from the Match card's own first frame),
+  // whether or not a Tournament phase played, then smooth exit.
   const hideTimer = setTimeout(() => {
     if(!autoCardFlow || autoCardFlow.seq !== seq) return; // a manual action already took over
     deactivateCard(cardKind);
     autoCardFlow = null;
     advanceAutoCardQueue();
-  }, AUTO_CARD_DISPLAY_MS);
+  }, 6000);
   flow.timers.push(hideTimer);
 }
+
+document.getElementById('auto-card-modal-show').addEventListener('click', () => {
+  if(autoCardFlow) resolveAutoCardConfirm(autoCardFlow.seq, true);
+});
+document.getElementById('auto-card-modal-skip').addEventListener('click', () => {
+  if(autoCardFlow) resolveAutoCardConfirm(autoCardFlow.seq, false);
+});
 document.querySelectorAll('[data-card-action="player"]').forEach(btn => {
   btn.addEventListener('click', () => manualShowPlayerCard(btn.dataset.which, btn.dataset.scope));
 });
