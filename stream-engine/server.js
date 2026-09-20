@@ -2,19 +2,25 @@
 // 🎥 AllSportsLive Stream Engine — LOCAL companion service (Parts 2 & 3)
 //
 // Runs on the OPERATOR'S OWN PC, next to the Cricket Panel browser tab.
-// NEVER deployed to Render. Two jobs, fed by the SAME incoming browser
-// capture (one MediaRecorder, no duplicate encoders):
+// NEVER deployed to Render. Three jobs, fed by the SAME incoming browser
+// capture (one MediaRecorder, no duplicate encoders) — see /ingest:
 //
 //   1. (Part 2) Encode it with the GPU (NVENC) and push it to YouTube:
 //        Camera + Audio (browser) → THIS PROCESS → NVIDIA NVENC → YouTube RTMPS
 //
-//   2. (Part 3) ALSO write it into a local rolling buffer (localBuffer.js)
-//      that the EXISTING clipper logic in cricket-panel.html now reads
-//      from instead of vMix's recording file:
-//        Camera + Audio (browser) → THIS PROCESS → local buffer
-//        → /clip cuts a highlight (same pre/post-roll as Part 1)
+//   2. ALSO continuously mux it into the local full-match master
+//      recording (StreamEngineData/Recordings/<matchId>/master.mp4) —
+//      completely independent of the live push's network/bitrate state.
+//
+//   3. (Part 3) Clips are cut STRICTLY from that master.mp4 — never from
+//      YouTube, never from a browser blob/WebM buffer:
+//        master.mp4 → /clip seeks in + re-encodes just the requested window
+//        → StreamEngineData/Clips/<matchId>/<clipId>.mp4
 //        → forwarded to server.js's EXISTING /api/clips/ingest
 //        → EXISTING Cloudflare/Drive/Mongo pipeline (untouched)
+//      (localBuffer.js still receives every chunk too, but only to hold
+//      each match's WebM header for priming a freshly (re)started ffmpeg
+//      process on a reconnect/ABR restart — it is not the clip source.)
 //
 // This process implements the SAME local HTTP contract
 // (/status, /recording-start, /recording-stop, /clip) the panel
@@ -400,6 +406,13 @@ const DEFAULT_BITRATE_KBPS = {
 // ================================================================
 const RECORDING_ROOT = path.join(__dirname, 'StreamEngineData', 'Recordings');
 try { fs.mkdirSync(RECORDING_ROOT, { recursive: true }); } catch (e) { /* created lazily per-match anyway */ }
+// Real, final MP4 clip files — cut STRICTLY from RECORDING_ROOT's
+// master.mp4 (see cutLocalClip/findRecordingSegmentFor below), never
+// from localBuffer.js's rolling WebM chunk buffer, YouTube, HLS, or any
+// other remote/browser-blob source. Sits alongside Recordings/ under the
+// same StreamEngineData root, matching the required on-disk layout.
+const CLIPS_ROOT = path.join(__dirname, 'StreamEngineData', 'Clips');
+try { fs.mkdirSync(CLIPS_ROOT, { recursive: true }); } catch (e) { /* created lazily per-match anyway */ }
 // Deliberately independent of the live-stream ABR ladder (stream-engine's
 // adaptive bitrate section, further below) — this is a fixed local
 // recording quality, never adapted to network conditions.
@@ -440,9 +453,35 @@ function buildRecorderArgs({ width, height, fps, bitrateKbps, outFile }) {
         : ['-c:v', 'libx264', '-preset', 'veryfast', '-b:v', `${bitrateKbps}k`];
     return [
         '-hide_banner', '-loglevel', 'warning',
+        // 🕒 INPUT TIMING HARDENING — the browser capture (MediaRecorder
+        // over getDisplayMedia) is not a hardware-clocked source: DOM
+        // rendering, OS compositor timing and JS event-loop jitter mean
+        // its embedded WebM timestamps can be irregular even though this
+        // pipe delivers every byte in order (see ingestChunk's container-
+        // integrity fix above). -use_wallclock_as_timestamps rebuilds a
+        // clean, monotonic timestamp base from real arrival time instead
+        // of trusting those, and +genpts fills in anything still missing.
+        // -thread_queue_size gives ffmpeg's input thread real headroom so
+        // a brief burst of buffered chunks (e.g. right after a backlog
+        // drains) is queued smoothly instead of stalling the demuxer.
+        '-thread_queue_size', '4096',
+        '-fflags', '+genpts+igndts',
+        '-use_wallclock_as_timestamps', '1',
         '-i', 'pipe:0',
         ...videoArgs,
         '-vf', `scale=${width}:${height}`, '-r', String(fps),
+        // Force true constant frame rate on the OUTPUT regardless of any
+        // remaining irregularity in the input timing — duplicates/drops
+        // frames as needed so the encoder and the resulting MP4 always
+        // see exactly `fps` frames/sec (never variable frame rate).
+        // '-vsync cfr' (rather than the newer '-fps_mode cfr' alias) is
+        // used for broad compatibility across ffmpeg builds an operator
+        // might have installed — same effect, older/wider support.
+        '-vsync', 'cfr',
+        // -async resamples/pads audio to stay locked to the video clock
+        // instead of drifting if audio packets arrive in slightly
+        // irregular bursts from the same capture.
+        '-af', 'aresample=async=1:first_pts=0',
         // A short (2s) GOP — same convention as the live encoder above —
         // is what actually makes the crash-safety below real: fragments
         // close (and flush to disk) on every keyframe, so at most ~2s of
@@ -459,6 +498,7 @@ function buildRecorderArgs({ width, height, fps, bitrateKbps, outFile }) {
         // zero-byte or "moov atom not found" unplayable file.
         '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
         '-flush_packets', '1',
+        '-max_muxing_queue_size', '4096',
         '-f', 'mp4',
         outFile,
     ];
@@ -646,6 +686,18 @@ function buildFfmpegArgs({ width, height, fps, bitrateKbps, keyframeIntervalSec,
     const gop = Math.round(fps * keyframeIntervalSec);
     return [
         '-hide_banner', '-loglevel', 'warning',
+        // 🕒 INPUT TIMING HARDENING — identical reasoning to
+        // buildRecorderArgs above: this pipe's bytes are a live,
+        // byte-accurate (see ingestChunk) but NOT hardware-clocked WebM
+        // stream. Rebuild clean, monotonic timestamps from real arrival
+        // time rather than trusting the browser's own embedded ones —
+        // this is what actually eliminates the PTS/DTS discontinuities
+        // that were reaching YouTube as glitches, independent of network
+        // speed. thread_queue_size gives the input demuxer headroom to
+        // absorb a burst of chunks without stalling.
+        '-thread_queue_size', '4096',
+        '-fflags', '+genpts+igndts',
+        '-use_wallclock_as_timestamps', '1',
         '-i', 'pipe:0',
         '-c:v', 'h264_nvenc',
         // p4 = balanced speed/quality; tune ll = NVENC's low-latency mode
@@ -659,9 +711,23 @@ function buildFfmpegArgs({ width, height, fps, bitrateKbps, keyframeIntervalSec,
         '-bufsize', `${bitrateKbps * 2}k`,
         '-g', String(gop),
         '-keyint_min', String(gop),
+        // -bf 0: no B-frames — YouTube's RTMP(S) ingest doesn't need them
+        // and they add reordering latency; also keeps every GOP a simple
+        // IPPP... structure, matching what buildRecorderArgs's GOP/crash-
+        // safety reasoning assumes.
+        '-bf', '0',
         '-vf', `scale=${width}:${height}`,
         '-r', String(fps),
+        // Force true CFR on the encoder's input regardless of any
+        // remaining source jitter — this is the actual fix for "the
+        // stream should behave like a professional live encoder, not
+        // like a browser sending occasional video blobs" (never VFR).
+        // '-vsync cfr' used over the newer '-fps_mode cfr' alias for
+        // broad compatibility across whatever ffmpeg build is installed.
+        '-vsync', 'cfr',
+        '-af', 'aresample=async=1:first_pts=0',
         '-c:a', 'aac', '-b:a', '160k', '-ar', '44100',
+        '-max_muxing_queue_size', '4096',
         '-f', 'flv',
         '-progress', 'pipe:2', '-nostats',
         destinationUrl,
@@ -1104,29 +1170,64 @@ function stopEncoder() {
     return { ok: true };
 }
 
-// 🔒 BACKPRESSURE — if the encoder can't keep up (underpowered machine,
-// a slow moment, NVENC briefly stalling) Node's stdin.write() buffers
-// internally and its return value goes false. Piling MORE chunks on
-// top of an already-backed-up pipe only grows that buffer without
-// bound and makes the LIVE stream fall further and further behind
-// real time — for a live broadcast, a skipped frame is far better than
-// ever-growing latency. So: once backpressured, incoming chunks are
-// dropped (not queued) until the encoder catches up and drains.
+// 🔒 CONTAINER INTEGRITY / BACKPRESSURE — root-cause fix.
+//
+// These `buf`s are not independent video frames — they are raw byte
+// slices of ONE continuous WebM/Matroska stream (MediaRecorder Clusters)
+// that ffmpeg on the other end of this pipe is demuxing as a single
+// input. A previous version of this function DROPPED a chunk outright
+// whenever Node's stdin.write() reported backpressure ("a skipped frame
+// is far better than ever-growing latency"). That reasoning is correct
+// for raw frames but wrong here: dropping a slice out of the MIDDLE of a
+// live container byte-stream splices a gap into it, and ffmpeg has to
+// resync mid-Cluster — which is exactly what shows up on YouTube as
+// garbled/glitched frames, a freeze, or (worse) a hard demux error that
+// tears the whole RTMPS connection down and restarts it. This was a
+// direct, reproducible cause of the reported glitching, independent of
+// actual network speed (see stream-engine/README.md "Root cause" notes).
+//
+// Fix: ALWAYS write every byte, in order, never skip one. Node's own
+// internal stdin buffer already absorbs a brief stall losslessly — that
+// IS the correct way to ride out a short hiccup. `writableLength` (real
+// buffered bytes, not a boolean latch) drives two things instead:
+//   1. `encoderBackpressured` / `backpressureSince`, which the ABR loop
+//      already watches (sampleNetworkHealth/abrTick) to lower the
+//      encoder's target bitrate/resolution — the correct lever for a
+//      SUSTAINED slow link.
+//   2. A hard ceiling (MAX_STDIN_BUFFERED_BYTES): if buffered output
+//      keeps growing past several seconds' worth, the pipe isn't slow,
+//      it's stuck (NVENC wedged, or the RTMPS socket stopped accepting
+//      writes entirely) and continuing to hold bytes in memory would
+//      both leak RAM and hand YouTube an ever-more-stale stream. At that
+//      point a controlled reconnect (same clean stop + backoff-retry
+//      path as a real network drop — see proc.on('exit') below) is the
+//      right move, not silently corrupting the container.
+const MAX_STDIN_BUFFERED_BYTES = 24 * 1024 * 1024; // ~24MB — several seconds even at the highest bitrate profile
 let encoderBackpressured = false;
 function ingestChunk(buf) {
     if (engine.state !== 'live' || !engine.proc || !engine.proc.stdin.writable) return { ok: false, error: 'Encoder not live' };
     if (engine.priming) { engine.pendingChunks.push(buf); return { ok: true }; } // hold until the header chunk (see startEncoder) has been written first
-    if (encoderBackpressured) return { ok: false, error: 'Encoder backpressured — dropping frame to protect live latency', dropped: true };
+
     try {
-        const stillOk = engine.proc.stdin.write(buf);
-        if (!stillOk) {
-            encoderBackpressured = true;
-            engine.proc.stdin.once('drain', () => { encoderBackpressured = false; });
-        }
-        return { ok: true };
+        engine.proc.stdin.write(buf); // never skipped — see comment above
     } catch (e) {
         return { ok: false, error: e.message };
     }
+
+    const buffered = engine.proc.stdin.writableLength || 0;
+    if (buffered > MAX_STDIN_BUFFERED_BYTES) {
+        console.log(`[stream-engine] Live encoder stdin buffer exceeded ${MAX_STDIN_BUFFERED_BYTES} bytes (pipe appears stuck) — forcing a controlled reconnect`);
+        encoderBackpressured = false;
+        engine.lastError = 'Encoder pipe stalled (buffered output exceeded safety limit) — reconnecting';
+        try { engine.proc.kill('SIGKILL'); } catch (e2) { /* already gone */ }
+        return { ok: true, stalled: true };
+    }
+
+    if (!encoderBackpressured && buffered > 0) {
+        encoderBackpressured = true;
+        engine.proc.stdin.once('drain', () => { encoderBackpressured = false; });
+    }
+    return { ok: true };
 }
 
 // ================================================================
@@ -1345,76 +1446,89 @@ async function processRetryEntry(entry) {
 // Resume any clips that were still queued from a previous run of this process.
 retryQueue.forEach((entry) => scheduleRetry(entry));
 
-async function cutLocalClip({ clipId, matchId, eventType, eventTimestamp, ballMeta }) {
-    const win = localBuffer.getClipWindow({ matchId, eventTimestamp, preRollSec: CLIP_PRE_ROLL_SEC, postRollSec: CLIP_POST_ROLL_SEC });
-    if (win.error) return { ok: false, error: win.error };
+// 🔒 CLIP SOURCE = LOCAL MASTER RECORDING, STRICTLY — non-negotiable.
+// A previous version of this function cut clips from localBuffer.js's
+// rolling WebM chunk buffer (independent MediaRecorder timeslice blobs,
+// byte-concatenated back together). That is exactly the "browser blob"
+// clip source this architecture must never use: it is fragile (a single
+// dropped/reordered chunk — see the old ingestChunk bug fixed above —
+// corrupts the whole reconstructed stream) and it does not match the
+// hard requirement that clips come STRICTLY from the local full-match
+// master.mp4 (see recorder/RECORDING_ROOT above). This now seeks
+// directly into the actual recorder segment file on disk — the exact
+// same bytes YouTube's audience and the local master both came from —
+// never localBuffer, never a re-stitched buffer, never any network
+// source.
+//
+// Finds which recorder segment (normally just one; more than one only
+// if the recorder itself crash-restarted mid-match — see startRecorder)
+// covers a given event time, by each segment's own startedAt window.
+function findRecordingSegmentFor(eventTimestamp) {
+    const segs = recorder.segments;
+    for (let i = 0; i < segs.length; i++) {
+        const seg = segs[i];
+        const next = segs[i + 1];
+        const segEndMs = next ? next.startedAt : Date.now();
+        if (eventTimestamp >= seg.startedAt && eventTimestamp <= segEndMs) return seg;
+    }
+    return segs.length ? segs[segs.length - 1] : null; // still-active last segment as a fallback
+}
 
-    const { trimStartSec, toStitch, dirs } = win;
+function clipsDirFor(matchId) {
+    const dir = path.join(CLIPS_ROOT, localBuffer.safeMatchId(matchId));
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+}
+
+async function cutLocalClip({ clipId, matchId, eventTimestamp }) {
+    const seg = findRecordingSegmentFor(eventTimestamp);
+    if (!seg) {
+        return { ok: false, error: `No local master recording available for match "${matchId}" yet — press "Start Recording" first and confirm the recorder is actually running (see /status).` };
+    }
+    if (!fs.existsSync(seg.path)) {
+        return { ok: false, error: `Local master recording file is missing on disk: ${seg.path}` };
+    }
+
+    const offsetSec = (eventTimestamp - seg.startedAt) / 1000;
+    const fromSec = Math.max(0, offsetSec - CLIP_PRE_ROLL_SEC);
+    const durationSec = CLIP_PRE_ROLL_SEC + CLIP_POST_ROLL_SEC;
+
     // Deterministic, clipId-based filename (not Date.now()-based) — a
     // job re-run for the exact same event never leaves multiple .mp4s
     // behind, and this is the SAME name server.js's R2 key/Drive
     // filename are derived from (see buildClipId there), so the whole
     // pipeline refers to one clip by one identity end to end.
-    const outFile = path.join(dirs.clipsDir, `${clipId}.mp4`);
+    const outFile = path.join(clipsDirFor(matchId), `${clipId}.mp4`);
 
-    console.log(`[CLIP RANGE] clipId=${clipId} start=T0-${CLIP_PRE_ROLL_SEC}s end=T0+${CLIP_POST_ROLL_SEC}s`);
+    console.log(`[CLIP RANGE] clipId=${clipId} source=${path.basename(seg.path)} start=T0-${CLIP_PRE_ROLL_SEC}s end=T0+${CLIP_POST_ROLL_SEC}s`);
 
-    // Pin every chunk this cut needs BEFORE starting to read any of
-    // them, and hold the pin for the whole cut (finally, below) — a cut
-    // isn't instant (ffmpeg spawn + piping several chunks can take a
-    // few seconds), and without this, one of these exact chunks could
-    // age past RETENTION_SEC and get deleted by pruneOldChunks (still
-    // running on every /ingest of a NEW chunk in parallel) partway
-    // through — an ENOENT reading a chunk file that existed when the
-    // clip started. See pinChunksByIndex/pruneOldChunks in localBuffer.js.
-    const stitchIndices = toStitch.map((c) => c.index);
-    localBuffer.pinChunksByIndex(matchId, stitchIndices);
-    try {
-        await cutFromStitchedChunks({ toStitch, trimStartSec, outFile });
-    } finally {
-        localBuffer.unpinChunksByIndex(matchId, stitchIndices);
-    }
+    await cutFromMasterFile({ masterFile: seg.path, fromSec, durationSec, outFile });
 
     console.log(`[CLIP CREATED] clipId=${clipId} localPath=${outFile}`);
     return { ok: true, outFile };
 }
 
-async function cutFromStitchedChunks({ toStitch, trimStartSec, outFile }) {
-
-    // Feed the covering chunks straight into ffmpeg's stdin as one
-    // continuous byte stream, and seek AFTER -i (decode-order, not an
-    // index/Cues seek) rather than writing an intermediate "stitched"
-    // file to disk and reopening it with -ss BEFORE -i. The previous
-    // approach relied on ffmpeg's Matroska seek index on a file that was
-    // never a real single recording (just independent MediaRecorder
-    // blobs concatenated after the fact) — on some encode paths
-    // (confirmed with an H.264-in-WebM capture-card feed) that index is
-    // unreliable and pre-seeking into it corrupts the output ("Invalid
-    // data found when processing input" / garbled video). Piping bytes
-    // and seeking by decoding forward from the start avoids trusting
-    // that index at all — this is the exact same "continuous pipe
-    // decode" mechanism already proven reliable for the live NVENC push
-    // (see ingestChunk/buildFfmpegArgs above), just applied to clip
-    // cutting instead of a live RTMP push.
+// Seeks directly into the local master.mp4 with -ss BEFORE -i (fast
+// input-side seek — reads/decodes only from the nearest preceding
+// keyframe onward, never the whole multi-hour recording, matching the
+// "do not re-encode the entire master for every clip" performance
+// requirement) and re-encodes only the ~20s window that's actually
+// needed. Because the master is recorded with a fixed 2s GOP (see
+// buildRecorderArgs), a clip's true start is at most ~2s later than
+// requested in the worst case — a normal, expected trade-off for fast
+// seeking into a live-recorded file, not a bug.
+async function cutFromMasterFile({ masterFile, fromSec, durationSec, outFile }) {
     await new Promise((resolve, reject) => {
         const args = [
             '-hide_banner', '-loglevel', 'warning', '-y',
-            '-i', 'pipe:0',
-            '-ss', String(trimStartSec), '-t', String(CLIP_PRE_ROLL_SEC + CLIP_POST_ROLL_SEC),
+            '-ss', String(fromSec), '-i', masterFile, '-t', String(durationSec),
             // What actually dominates "clip takes forever to upload" on a
             // home connection is FILE SIZE, not local encode time —
             // postFileToServer streams this file to server.js afterward,
-            // bottlenecked purely by upload bandwidth. Measured against
-            // the previous settings (native resolution, no CRF, veryfast)
-            // on a 1080p source: capping width to CLIP_MAX_WIDTH (only
-            // scales DOWN — 'min(iw,W)', never up) + an explicit CRF
-            // shrinks the file by ~35-40% while ALSO encoding faster
-            // (less data to compress) — both better, not a trade-off.
-            // Tried 'ultrafast'/'superfast' too: they encode a little
-            // faster still but produce noticeably BIGGER files (x264
-            // trades compression efficiency for speed there), which is
-            // the wrong trade here since upload time >> encode time on a
-            // typical connection — 'veryfast' remains the sweet spot.
+            // bottlenecked purely by upload bandwidth. Capping width to
+            // CLIP_MAX_WIDTH (only scales DOWN — 'min(iw,W)', never up) +
+            // an explicit CRF/CQ shrinks the file substantially while
+            // ALSO encoding faster (less data to compress).
             '-vf', `scale='min(iw,${CLIP_MAX_WIDTH})':-2`,
             // GPU preferred here too (see buildRecorderArgs) — falls back
             // to libx264 (CPU) only if NVENC genuinely isn't usable.
@@ -1427,24 +1541,11 @@ async function cutFromStitchedChunks({ toStitch, trimStartSec, outFile }) {
             '-c:a', 'aac', '-b:a', '128k',
             outFile,
         ];
-        const proc = spawn(FFMPEG_PATH, args, { stdio: ['pipe', 'ignore', 'pipe'] });
-        proc.stdin.on('error', () => {}); // see the same listener on the live encoder's proc.stdin (startEncoder) for why this is needed — a chunk read finishing just as ffmpeg exits (e.g. rejects on bad input) would otherwise raise an unhandled async error here too
+        const proc = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'ignore', 'pipe'] });
         let stderr = '';
         proc.stderr.on('data', (d) => { stderr += d; });
-        proc.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg trim exited ${code}: ${stderr.slice(-500)}`)));
+        proc.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg clip cut exited ${code}: ${stderr.slice(-500)}`)));
         proc.on('error', reject);
-
-        (async () => {
-            for (const c of toStitch) {
-                await new Promise((res2, rej2) => {
-                    const rs = fs.createReadStream(c.file);
-                    rs.on('error', rej2);
-                    rs.on('end', res2);
-                    rs.pipe(proc.stdin, { end: false });
-                });
-            }
-            proc.stdin.end();
-        })().catch(reject);
     });
 }
 
@@ -1926,6 +2027,13 @@ app.get('/health', (req, res) => {
             droppedFramesPct: (engine.metrics.droppedFrames != null && engine.metrics.totalFrames)
                 ? Math.round((engine.metrics.droppedFrames / engine.metrics.totalFrames) * 1000) / 10
                 : null,
+            // Real bytes currently buffered in the pipe to ffmpeg's stdin
+            // (see ingestChunk) — the actual, measured backpressure signal
+            // driving ABR, not a derived guess. Rising steadily = NVENC/
+            // the RTMPS write can't keep up; near-zero most of the time is
+            // healthy even if it occasionally blips up.
+            encoderStdinBufferedBytes: engine.proc && engine.proc.stdin ? (engine.proc.stdin.writableLength || 0) : null,
+            encoderBackpressured,
         },
         gpu: readGpuUtilization(),
         cpuPercent: readCpuUtilization(),

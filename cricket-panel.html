@@ -2814,17 +2814,57 @@ async function ensureLocalCapture(matchId){
   // this is the most likely place to see stutter, independent of NVENC.
   liveRecorder = new MediaRecorder(combined, { mimeType, videoBitsPerSecond: Math.round(selectedBitrateKbps * 1000 * 1.5) });
   localCaptureChunkIndex = 0;
-  // 🔒 These chunks go ONLY to the local Stream Engine (127.0.0.1) —
-  // never to server.js/Render. The Stream Engine itself fans them out
-  // to the local clip buffer and/or the NVENC encoder as needed.
-  liveRecorder.ondataavailable = async (e) => {
+  // 🔒 CONTAINER-INTEGRITY SEND QUEUE — root-cause fix for the reported
+  // YouTube glitching (see stream-engine/server.js's ingestChunk comment
+  // for the other half of this same fix). Each e.data blob is a raw
+  // byte-slice of ONE continuous WebM/Matroska stream — the Stream
+  // Engine pipes these straight into ffmpeg as a single live container.
+  // A previous version fired every chunk with a bare, unawaited fetch()
+  // and silently swallowed any failure ("one dropped chunk = a brief
+  // stutter, not fatal"). That reasoning is wrong for container bytes: a
+  // lost OR reordered chunk is a byte-level gap/splice in the stream
+  // ffmpeg is demuxing, which is exactly what reaches YouTube as
+  // glitches, freezes, or a torn RTMPS connection. Fixed by:
+  //   1. a strict FIFO send queue — chunk N+1's POST is never even
+  //      started until chunk N's has completed, so the Stream Engine
+  //      always receives bytes in the exact order MediaRecorder made
+  //      them (the previous fire-and-forget approach could let two
+  //      overlapping requests race and arrive out of order);
+  //   2. retrying a failed send (a genuine network hiccup) with backoff
+  //      instead of ever silently dropping it — a 409 is NOT a delivery
+  //      failure (see /ingest: it's returned only when the live push
+  //      isn't currently live; the recorder/buffer already got the
+  //      bytes) so it is treated as success and never retried, which
+  //      would otherwise double-inject the same chunk;
+  //   3. surfacing a clear, visible health state if a chunk still can't
+  //      be delivered after retrying, instead of failing silently.
+  let ingestQueue = Promise.resolve();
+  let ingestFailureStreak = 0;
+  async function sendChunkWithRetry(idx, blob, attempt) {
+    attempt = attempt || 0;
+    try {
+      const res = await fetch(`${STREAM_ENGINE_URL}/ingest?matchId=${encodeURIComponent(matchId)}&index=${idx}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: blob
+      });
+      if (!res.ok && res.status !== 409) throw new Error(`HTTP ${res.status}`);
+      ingestFailureStreak = 0;
+    } catch(err) {
+      if (attempt < 4) {
+        await new Promise(r => setTimeout(r, 150 * Math.pow(2, attempt)));
+        return sendChunkWithRetry(idx, blob, attempt + 1);
+      }
+      ingestFailureStreak++;
+      lsSetHealth('ls-h-overlay', false, `Chunk delivery failing (${ingestFailureStreak}) — check Stream Engine`);
+      console.error('[Live Studio] Chunk delivery failed permanently for index', idx, err);
+    }
+  }
+  liveRecorder.ondataavailable = (e) => {
     if(!e.data || e.data.size === 0) return;
     const idx = localCaptureChunkIndex++;
-    try {
-      await fetch(`${STREAM_ENGINE_URL}/ingest?matchId=${encodeURIComponent(matchId)}&index=${idx}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: e.data
-      });
-    } catch(err) { /* one dropped chunk = a brief stutter, not fatal */ }
+    // Chained onto the queue's tail (not started immediately) — this is
+    // what guarantees strict in-order delivery even while a retry above
+    // is still in flight for an earlier chunk.
+    ingestQueue = ingestQueue.then(() => sendChunkWithRetry(idx, e.data));
   };
   liveRecorder.onstop = () => { combined.getTracks().forEach(t => t.stop()); };
   liveDisplayStream.getVideoTracks()[0].addEventListener('ended', () => {
