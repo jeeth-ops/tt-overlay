@@ -131,6 +131,70 @@ function checkNvenc() {
     return nvencCheckCache;
 }
 
+// ----------------------------------------------------------------
+// 🔎 libx264 RUNTIME CHECK — for the local master recorder and clip
+// cutter (see below), which both need a CPU encode path so they never
+// compete with the live push's own NVENC session. checkNvenc() above
+// only confirms h264_nvenc is LISTED in this ffmpeg build; the failure
+// mode this guards against is different and worse: h264_nvenc listed
+// AND working (live push is fine) while libx264 crashes ffmpeg outright
+// the instant it's actually used (confirmed on a real operator machine:
+// every single recorder/clip-cut attempt died with the exact same OS
+// crash exit code, on a build where -encoders lists libx264 just fine —
+// a build/runtime issue, most likely a CPU without an instruction set
+// this libx264 build assumes, or AV interference, not anything this
+// process can fix). A LISTED encoder can still crash the moment real
+// work is asked of it, so this actually runs a throwaway 0.1s encode
+// rather than just grepping -encoders like checkNvenc does.
+// ----------------------------------------------------------------
+let libx264CheckCache = null; // cached for the process lifetime — this doesn't change while running
+function checkLibx264() {
+    if (libx264CheckCache !== null) return libx264CheckCache;
+    try {
+        const res = spawnSync(FFMPEG_PATH, [
+            '-hide_banner', '-loglevel', 'error', '-y',
+            '-f', 'lavfi', '-i', 'color=c=black:s=64x64:d=0.2',
+            '-c:v', 'libx264', '-preset', 'ultrafast',
+            '-f', 'null', '-',
+        ], { timeout: 8000 });
+        libx264CheckCache = !res.error && res.status === 0;
+    } catch (e) {
+        libx264CheckCache = false;
+    }
+    console.log(libx264CheckCache
+        ? '[stream-engine] libx264 runtime check: ✅ working (only used as a last resort if NVENC is unavailable — see checkNvencRuntime)'
+        : '[stream-engine] libx264 runtime check: ❌ crashes on this machine — fine, NVENC is preferred anyway (see checkNvencRuntime)');
+    return libx264CheckCache;
+}
+
+// checkNvenc() above only greps -encoders (fast, used for the /go-live
+// preflight so a missing NVENC build is rejected instantly) — that can
+// still be a false positive if the build lists h264_nvenc but it
+// crashes/fails to init on this machine (same class of bug checkLibx264
+// above exists to catch). This actually runs a throwaway encode, same
+// pattern, so the recorder/clip cutter can trust "NVENC available" here
+// means it truly works, not just that it's compiled in.
+let nvencRuntimeCheckCache = null;
+function checkNvencRuntime() {
+    if (nvencRuntimeCheckCache !== null) return nvencRuntimeCheckCache;
+    if (!checkNvenc().available) { nvencRuntimeCheckCache = false; return false; }
+    try {
+        const res = spawnSync(FFMPEG_PATH, [
+            '-hide_banner', '-loglevel', 'error', '-y',
+            '-f', 'lavfi', '-i', 'color=c=black:s=64x64:d=0.2',
+            '-c:v', 'h264_nvenc', '-preset', 'p4',
+            '-f', 'null', '-',
+        ], { timeout: 8000 });
+        nvencRuntimeCheckCache = !res.error && res.status === 0;
+    } catch (e) {
+        nvencRuntimeCheckCache = false;
+    }
+    console.log(nvencRuntimeCheckCache
+        ? '[stream-engine] NVENC runtime check: ✅ working — local recording/clip cutting will use the GPU (same as the live push), never the CPU'
+        : '[stream-engine] NVENC runtime check: ❌ not usable right now — falling back to libx264 (CPU) for local recording/clip cutting so they still work');
+    return nvencRuntimeCheckCache;
+}
+
 function ffmpegAvailable() {
     const res = spawnSync(FFMPEG_PATH, ['-version'], { encoding: 'utf8', timeout: 5000 });
     return !res.error;
@@ -230,6 +294,10 @@ const RESTART_WINDOW_MS = 5 * 60 * 1000;
 // long as the operator wants to be live (only an explicit Stop ends it).
 const RECONNECT_BACKOFF_MS = [2000, 4000, 8000, 15000];
 
+// Fallback for header-priming when /go-live's caller didn't send
+// matchId — see /ingest and startEncoder.
+let lastIngestMatchId = null;
+
 const engine = {
     state: 'idle',           // idle | starting | live | reconnecting | stopping | crashed
     proc: null,              // the ffmpeg child process
@@ -264,6 +332,14 @@ const engine = {
 
 function resetMetrics() {
     engine.metrics = { bitrateKbps: null, fps: null, droppedFrames: null, totalFrames: null, outTimeSec: null };
+    // A fresh ffmpeg process's frame/drop counters in -progress start
+    // over from 0 — without resetting these too, sampleNetworkHealth's
+    // very first post-restart tick would diff the OLD process's last
+    // known totals against the NEW process's near-zero ones (Math.max
+    // clamps stop it going negative, but it still falsely reads as a
+    // perfect zero-drop tick instead of "no data yet").
+    lastDroppedFramesSample = null;
+    lastTotalFramesSample = null;
 }
 
 // Parses ffmpeg's `-progress pipe:2`-style key=value lines (we route
@@ -350,15 +426,22 @@ const recorder = {
 };
 
 function buildRecorderArgs({ width, height, fps, bitrateKbps, outFile }) {
+    // GPU (NVENC) preferred over CPU (libx264) by operator request — the
+    // recorder shares the GPU encoder with the live push rather than
+    // load the CPU at all. Only falls back to libx264 if this machine
+    // genuinely has no working NVENC, checked with a real throwaway
+    // encode (checkNvencRuntime), not just that the build lists it —
+    // CPU-only laptops (or a machine where NVENC turns out to be
+    // unusable) still need a working recorder either way.
+    const useNvenc = checkNvencRuntime();
+    if (!useNvenc) checkLibx264(); // NVENC unusable — log whether the CPU fallback itself is expected to work
+    const videoArgs = useNvenc
+        ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-b:v', `${bitrateKbps}k`, '-maxrate', `${Math.round(bitrateKbps * 1.3)}k`]
+        : ['-c:v', 'libx264', '-preset', 'veryfast', '-b:v', `${bitrateKbps}k`];
     return [
         '-hide_banner', '-loglevel', 'warning',
         '-i', 'pipe:0',
-        // Deliberately libx264 (CPU), not NVENC: this runs ALONGSIDE the
-        // live push's own NVENC session, and consumer GPUs commonly cap
-        // concurrent NVENC sessions at 1-3 — recording isn't
-        // latency-sensitive, so a CPU encode here never competes with
-        // the live stream's hardware encoder for that limited resource.
-        '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', `${bitrateKbps}k`,
+        ...videoArgs,
         '-vf', `scale=${width}:${height}`, '-r', String(fps),
         // A short (2s) GOP — same convention as the live encoder above —
         // is what actually makes the crash-safety below real: fragments
@@ -454,6 +537,12 @@ function startRecorder(matchId, { resolution, fps } = {}) {
     });
 
     proc.on('exit', (code, signal) => {
+        // A stale/superseded process's own exit must never clobber a
+        // NEWER recording that's since taken over recorder.proc (e.g.
+        // this exact process was stopped by /recording-start switching
+        // to a different match while it was still shutting down) — only
+        // the process CURRENTLY tracked gets to mutate shared state.
+        if (recorder.proc !== proc) return;
         const wasDesired = recorder.desiredRecording;
         console.log(`[stream-engine] recorder ffmpeg exited (code=${code}, signal=${signal}); desiredRecording=${wasDesired}`);
         recorder.proc = null;
@@ -900,7 +989,8 @@ function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     // "stream keeps reconnecting, never goes live on YouTube."
     engine.priming = true;
     engine.pendingChunks = [];
-    const headerFile = engine.matchId ? localBuffer.getHeaderChunkFile(engine.matchId) : null;
+    const primingMatchId = engine.matchId || lastIngestMatchId; // fallback if /go-live's caller never sent matchId — see /ingest
+    const headerFile = primingMatchId ? localBuffer.getHeaderChunkFile(primingMatchId) : null;
     const flushPendingEngine = () => {
         engine.priming = false;
         const pending = engine.pendingChunks;
@@ -939,6 +1029,10 @@ function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     });
 
     proc.on('exit', (code, signal) => {
+        // Same defensive guard as the recorder above — a stale process's
+        // own exit must never clobber a newer one already tracked in
+        // engine.proc.
+        if (engine.proc !== proc) return;
         clearTimeout(stabilizeTimer);
         const wasDesired = engine.desiredLive;
         console.log(`[stream-engine] ffmpeg exited (code=${code}, signal=${signal}); desiredLive=${wasDesired}`);
@@ -1052,6 +1146,12 @@ function ingestChunk(buf) {
 // recalculated after the wait.
 const CLIP_PRE_ROLL_SEC = 15;
 const CLIP_POST_ROLL_SEC = 5;
+// Caps the CLIP's width only (never upscales) — the live/master
+// recording keep their full selected resolution; this only shrinks the
+// short highlight clip that gets uploaded over the operator's own
+// upload bandwidth, which is the actual bottleneck for "clip takes a
+// long time to upload" on a typical home connection.
+const CLIP_MAX_WIDTH = 1280;
 
 const recordingMatches = {}; // matchId -> { mainServerUrl, tournamentId } — set by /recording-start
 const clipWorker = {
@@ -1301,7 +1401,30 @@ async function cutFromStitchedChunks({ toStitch, trimStartSec, outFile }) {
             '-hide_banner', '-loglevel', 'warning', '-y',
             '-i', 'pipe:0',
             '-ss', String(trimStartSec), '-t', String(CLIP_PRE_ROLL_SEC + CLIP_POST_ROLL_SEC),
-            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'veryfast',
+            // What actually dominates "clip takes forever to upload" on a
+            // home connection is FILE SIZE, not local encode time —
+            // postFileToServer streams this file to server.js afterward,
+            // bottlenecked purely by upload bandwidth. Measured against
+            // the previous settings (native resolution, no CRF, veryfast)
+            // on a 1080p source: capping width to CLIP_MAX_WIDTH (only
+            // scales DOWN — 'min(iw,W)', never up) + an explicit CRF
+            // shrinks the file by ~35-40% while ALSO encoding faster
+            // (less data to compress) — both better, not a trade-off.
+            // Tried 'ultrafast'/'superfast' too: they encode a little
+            // faster still but produce noticeably BIGGER files (x264
+            // trades compression efficiency for speed there), which is
+            // the wrong trade here since upload time >> encode time on a
+            // typical connection — 'veryfast' remains the sweet spot.
+            '-vf', `scale='min(iw,${CLIP_MAX_WIDTH})':-2`,
+            // GPU preferred here too (see buildRecorderArgs) — falls back
+            // to libx264 (CPU) only if NVENC genuinely isn't usable.
+            // NVENC doesn't take -crf; '-rc vbr -cq N' is its equivalent
+            // "quality, not fixed bitrate" mode (b:v 0 tells it not to
+            // also cap by bitrate).
+            ...(checkNvencRuntime()
+                ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-cq', '26', '-b:v', '0']
+                : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26']),
+            '-c:a', 'aac', '-b:a', '128k',
             outFile,
         ];
         const proc = spawn(FFMPEG_PATH, args, { stdio: ['pipe', 'ignore', 'pipe'] });
@@ -1522,6 +1645,18 @@ app.post('/recording-start', (req, res) => {
     recordingMatches[matchId] = { mainServerUrl, tournamentId };
     console.log(`🔴 [clip engine] Local buffer recording started for match ${matchId}`);
 
+    // A previous match's recorder left running (operator forgot to press
+    // Stop, or a previous Stream Engine session never got a clean
+    // shutdown) must never permanently block starting today's match —
+    // that just turned into a real "nothing records / nothing goes
+    // live" outage. Stop it first; the exit-guard on the recorder's own
+    // proc.on('exit') (see startRecorder) makes this race-safe even
+    // though the old process may still be shutting down when the new
+    // one starts.
+    if (recorder.matchId && recorder.matchId !== matchId && recorder.state !== 'idle') {
+        console.log(`[stream-engine] Switching local recording from match "${recorder.matchId}" to "${matchId}" — stopping the old one first`);
+        stopRecorder();
+    }
     if (recorder.matchId !== matchId) resetRecorderForNewMatch();
     const recResult = startRecorder(matchId, { resolution, fps });
     if (!recResult.ok) {
@@ -1702,6 +1837,15 @@ app.post('/ingest', express.raw({ type: '*/*', limit: '10mb' }), (req, res) => {
     if (matchId && Number.isFinite(index)) {
         localBuffer.ensureSession(matchId);
         localBuffer.addChunk(matchId, index, req.body);
+        // Defense-in-depth for the live encoder's header-priming (see
+        // startEncoder): /go-live is supposed to send matchId itself,
+        // but a stale/uncached panel that doesn't would otherwise leave
+        // engine.matchId null forever and silently reproduce the exact
+        // "Invalid data found when processing input" reconnect loop this
+        // was built to fix. Tracking whatever matchId is actually
+        // flowing through /ingest right now as a fallback means priming
+        // still works even then.
+        lastIngestMatchId = matchId;
     }
 
     // Third independent fan-out of the SAME bytes (one capture, three
