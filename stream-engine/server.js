@@ -1,40 +1,65 @@
 // ================================================================
-// 🎥 AllSportsLive Stream Engine — LOCAL companion service (Parts 2 & 3)
+// 🎥 AllSportsLive Stream Engine — LOCAL companion service, NATIVE
+// CAPTURE ARCHITECTURE.
 //
 // Runs on the OPERATOR'S OWN PC, next to the Cricket Panel browser tab.
-// NEVER deployed to Render. Three jobs, fed by the SAME incoming browser
-// capture (one MediaRecorder, no duplicate encoders) — see /ingest:
+// NEVER deployed to Render.
 //
-//   1. (Part 2) Encode it with the GPU (NVENC) and push it to YouTube:
-//        Camera + Audio (browser) → THIS PROCESS → NVIDIA NVENC → YouTube RTMPS
+// ⛔ THE OLD ARCHITECTURE (removed):
+//   Camera+overlay window → browser getDisplayMedia() → MediaRecorder
+//   (software VP8/WebM encode) → HTTP POST chunks → this process pipes
+//   the raw bytes into ffmpeg's stdin.
+//   That made the BROWSER the video encoder and the video transport —
+//   exactly what a professional broadcast engine (vMix included) never
+//   does, and it was the root cause of two real corruption bugs (see
+//   git history / README "Root cause" section from the previous fix
+//   pass) as well as the deeper architectural ceiling: browser DOM
+//   rendering, tab throttling and JS-timer jitter are not a hardware
+//   media clock.
 //
-//   2. ALSO continuously mux it into the local full-match master
-//      recording (StreamEngineData/Recordings/<matchId>/master.mp4) —
-//      completely independent of the live push's network/bitrate state.
+// ✅ THE NEW ARCHITECTURE (this file):
+//   live-output.html (camera <video> + cricket-overlay.html iframe,
+//   UNCHANGED — it already composites camera+overlay into one rendered
+//   window using the browser's own DOM/GPU compositor, exactly like an
+//   OBS/vMix "Browser Source") is captured NATIVELY, at the OS level,
+//   by ffmpeg itself:
+//     - VIDEO: Windows GDI screen/window capture (`-f gdigrab
+//       -i title=<window>`) reads that window's rendered pixels
+//       directly — no browser video encode, no Blob, no WebM, no HTTP
+//       chunk relay. ffmpeg owns capture timing end-to-end.
+//     - AUDIO: the mic/capture-card device is opened directly by
+//       ffmpeg (`-f dshow -i audio=<device>`) — the browser no longer
+//       captures or relays production audio at all.
+//   Two fully independent native ffmpeg processes each do their own
+//   capture of the SAME window + SAME audio device (screen/window
+//   capture is a shared OS resource, not an exclusive hardware device —
+//   see stream-engine/README.md for why this is the safer design than
+//   one process fanning out over a tee muxer/named pipe):
+//     1. RECORDER  — gdigrab+dshow → NVENC (fixed high quality) →
+//        StreamEngineData/Recordings/<matchId>/master.mp4. Completely
+//        independent of YouTube/network — nothing about the live push
+//        (ABR restarts, reconnects, crashes) ever touches this process.
+//     2. LIVE ENCODER — gdigrab+dshow → NVENC (ABR-adaptive
+//        bitrate/resolution) → YouTube RTMPS.
+//   Clips are cut STRICTLY from master.mp4 (unchanged from the previous
+//   fix pass — see cutLocalClip below) and forwarded to server.js's
+//   EXISTING /api/clips/ingest → EXISTING Cloudflare/Drive/Mongo
+//   pipeline (untouched).
 //
-//   3. (Part 3) Clips are cut STRICTLY from that master.mp4 — never from
-//      YouTube, never from a browser blob/WebM buffer:
-//        master.mp4 → /clip seeks in + re-encodes just the requested window
-//        → StreamEngineData/Clips/<matchId>/<clipId>.mp4
-//        → forwarded to server.js's EXISTING /api/clips/ingest
-//        → EXISTING Cloudflare/Drive/Mongo pipeline (untouched)
-//      (localBuffer.js still receives every chunk too, but only to hold
-//      each match's WebM header for priming a freshly (re)started ffmpeg
-//      process on a reconnect/ABR restart — it is not the clip source.)
-//
-// This process implements the SAME local HTTP contract
-// (/status, /recording-start, /recording-stop, /clip) the panel
-// already calls for ClipperHelper.exe — so recordBall()/
-// triggerWicketClip() in cricket-panel.html needed ZERO changes to
-// their clip-triggering logic; only the URL they point at changed
-// (see LOCAL_ENGINE_URL in cricket-panel.html). vMix is never in this
-// loop at all.
+// The browser's ONLY remaining jobs anywhere in this pipeline are:
+//   (a) rendering camera+overlay pixels on screen for native capture to
+//       read (live-output.html — an unavoidable "browser as a graphics
+//       renderer" role, the same one OBS/vMix's own embedded-Chromium
+//       Browser Source plays; NOT a video-transport role), and
+//   (b) the Cricket Panel's controls/settings/status/clip-list UI,
+//       talking to this engine over plain JSON HTTP.
+// The browser never encodes video, never creates a video chunk, never
+// POSTs video bytes anywhere, and is never the clip source.
 //
 // Render/server.js only ever receives: (a) short finished clip files
-// via the existing /api/clips/ingest (same as the old ClipperHelper.exe
-// path — small, ~20s files, not the continuous stream), and (b) score/
-// control data via socket.io, exactly as before. The continuous 1080p
-// YouTube feed never touches Render.
+// via the existing /api/clips/ingest (small, ~20s files, not the
+// continuous stream), and (b) score/control data via socket.io, exactly
+// as before. The continuous 1080p YouTube feed never touches Render.
 // ================================================================
 const express = require('express');
 const { spawn, spawnSync } = require('child_process');
@@ -46,10 +71,20 @@ const https = require('https');
 const net = require('net');
 const tls = require('tls');
 const { URL } = require('url');
-const localBuffer = require('./localBuffer');
 
 const PORT = process.env.STREAM_ENGINE_PORT || 5006;
 const CONFIG_FILE = path.join(__dirname, 'config.local.json'); // gitignored — never committed
+
+// ----------------------------------------------------------------
+// 🖥️ PLATFORM — native capture (gdigrab + dshow) is a Windows-specific
+// ffmpeg capability, matching this engine's actual deployment target
+// (the operator's Windows PC — see README/NVENC requirements below).
+// macOS would need avfoundation, Linux would need x11grab/pulse/alsa —
+// not implemented here. This is reported honestly via /status rather
+// than silently attempting gdigrab/dshow and failing with a confusing
+// ffmpeg error.
+// ----------------------------------------------------------------
+const NATIVE_CAPTURE_SUPPORTED = process.platform === 'win32';
 
 // ----------------------------------------------------------------
 // ffmpeg resolution — prefer an explicitly configured NVENC-capable
@@ -74,6 +109,12 @@ function loadConfig() {
 }
 function saveConfig(cfg) {
     try { fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2)); } catch (e) { console.log('config save error:', e.message); }
+}
+
+// Matches are used to build folder/file names and gdigrab/dshow argv
+// strings — never trust user input directly there.
+function safeMatchId(id) {
+    return String(id || '').replace(/[^a-zA-Z0-9_-]/g, '');
 }
 
 // Stream key + stream URL live ONLY here: in-memory + this local
@@ -138,20 +179,11 @@ function checkNvenc() {
 }
 
 // ----------------------------------------------------------------
-// 🔎 libx264 RUNTIME CHECK — for the local master recorder and clip
-// cutter (see below), which both need a CPU encode path so they never
-// compete with the live push's own NVENC session. checkNvenc() above
-// only confirms h264_nvenc is LISTED in this ffmpeg build; the failure
-// mode this guards against is different and worse: h264_nvenc listed
-// AND working (live push is fine) while libx264 crashes ffmpeg outright
-// the instant it's actually used (confirmed on a real operator machine:
-// every single recorder/clip-cut attempt died with the exact same OS
-// crash exit code, on a build where -encoders lists libx264 just fine —
-// a build/runtime issue, most likely a CPU without an instruction set
-// this libx264 build assumes, or AV interference, not anything this
-// process can fix). A LISTED encoder can still crash the moment real
-// work is asked of it, so this actually runs a throwaway 0.1s encode
-// rather than just grepping -encoders like checkNvenc does.
+// 🔎 libx264 RUNTIME CHECK — CPU fallback path for the recorder/clip
+// cutter if NVENC genuinely isn't usable on this machine. checkNvenc()
+// above only confirms h264_nvenc is LISTED in this ffmpeg build; this
+// actually runs a throwaway 0.1s encode, since a listed encoder can
+// still crash the moment real work is asked of it.
 // ----------------------------------------------------------------
 let libx264CheckCache = null; // cached for the process lifetime — this doesn't change while running
 function checkLibx264() {
@@ -168,18 +200,17 @@ function checkLibx264() {
         libx264CheckCache = false;
     }
     console.log(libx264CheckCache
-        ? '[stream-engine] libx264 runtime check: ✅ working (only used as a last resort if NVENC is unavailable — see checkNvencRuntime)'
-        : '[stream-engine] libx264 runtime check: ❌ crashes on this machine — fine, NVENC is preferred anyway (see checkNvencRuntime)');
+        ? '[stream-engine] libx264 runtime check: ✅ working (only used as a last resort if NVENC is unavailable)'
+        : '[stream-engine] libx264 runtime check: ❌ crashes on this machine — fine, NVENC is preferred anyway');
     return libx264CheckCache;
 }
 
 // checkNvenc() above only greps -encoders (fast, used for the /go-live
 // preflight so a missing NVENC build is rejected instantly) — that can
 // still be a false positive if the build lists h264_nvenc but it
-// crashes/fails to init on this machine (same class of bug checkLibx264
-// above exists to catch). This actually runs a throwaway encode, same
-// pattern, so the recorder/clip cutter can trust "NVENC available" here
-// means it truly works, not just that it's compiled in.
+// crashes/fails to init on this machine. This actually runs a throwaway
+// encode, so the recorder/live-encoder/clip cutter can trust "NVENC
+// available" here means it truly works, not just that it's compiled in.
 let nvencRuntimeCheckCache = null;
 function checkNvencRuntime() {
     if (nvencRuntimeCheckCache !== null) return nvencRuntimeCheckCache;
@@ -196,14 +227,84 @@ function checkNvencRuntime() {
         nvencRuntimeCheckCache = false;
     }
     console.log(nvencRuntimeCheckCache
-        ? '[stream-engine] NVENC runtime check: ✅ working — local recording/clip cutting will use the GPU (same as the live push), never the CPU'
-        : '[stream-engine] NVENC runtime check: ❌ not usable right now — falling back to libx264 (CPU) for local recording/clip cutting so they still work');
+        ? '[stream-engine] NVENC runtime check: ✅ working — the recorder and live encoder both use the GPU'
+        : '[stream-engine] NVENC runtime check: ❌ not usable right now — falling back to libx264 (CPU)');
     return nvencRuntimeCheckCache;
+}
+
+// ----------------------------------------------------------------
+// 🔎 GPU SCALE RUNTIME CHECK — item 5/42's GPU-first requirement for
+// the crop/scale step between capture and encode. Prefers CUDA/NPP
+// (hwupload_cuda + scale_npp, feeding NVENC hardware frames directly —
+// no GPU->CPU->GPU round trip) over CPU swscale, but ONLY if a real
+// throwaway encode through that exact filter chain actually works on
+// this machine's ffmpeg build/driver — never assumed just because NVENC
+// itself is available (scale_npp/hwupload_cuda need libnpp support
+// specifically, which not every "NVENC-capable" ffmpeg build includes).
+// Falls back to CPU swscale (still cheap — cropping/scaling a screen
+// capture is not the expensive stage; ENCODING is, and that stays on
+// the GPU either way) with a clearly logged reason, never silently.
+// ----------------------------------------------------------------
+let gpuScaleCheckCache = null;
+function checkGpuScaleRuntime() {
+    if (gpuScaleCheckCache !== null) return gpuScaleCheckCache;
+    if (!checkNvencRuntime()) { gpuScaleCheckCache = false; return false; }
+    try {
+        const res = spawnSync(FFMPEG_PATH, [
+            '-hide_banner', '-loglevel', 'error', '-y',
+            '-f', 'lavfi', '-i', 'color=c=black:s=1280x720:d=0.2',
+            '-vf', 'hwupload_cuda,scale_npp=640:360',
+            '-c:v', 'h264_nvenc', '-preset', 'p4',
+            '-f', 'null', '-',
+        ], { timeout: 8000 });
+        gpuScaleCheckCache = !res.error && res.status === 0;
+    } catch (e) {
+        gpuScaleCheckCache = false;
+    }
+    console.log(gpuScaleCheckCache
+        ? '[stream-engine] GPU scale runtime check: ✅ hwupload_cuda/scale_npp available — capture scaling runs on GPU'
+        : '[stream-engine] GPU scale runtime check: ❌ not available on this ffmpeg/GPU build — using CPU swscale for the crop/scale step (encoding itself still runs on the GPU via NVENC)');
+    return gpuScaleCheckCache;
 }
 
 function ffmpegAvailable() {
     const res = spawnSync(FFMPEG_PATH, ['-version'], { encoding: 'utf8', timeout: 5000 });
     return !res.error;
+}
+
+// ----------------------------------------------------------------
+// 🎙️ NATIVE AUDIO DEVICE ENUMERATION — replaces the browser's own
+// navigator.mediaDevices.enumerateDevices()/getUserMedia() for
+// PRODUCTION audio: ffmpeg's dshow demuxer lists Windows audio capture
+// devices the exact same way `ffmpeg -list_devices true -f dshow -i
+// dummy` does from the command line (device names appear in quotes in
+// stderr, sectioned under "DirectShow audio devices"). The panel calls
+// GET /audio-devices to populate its microphone dropdown from this list
+// instead of a browser permission prompt — the browser no longer needs
+// microphone access for the production audio pipeline at all.
+// ----------------------------------------------------------------
+let audioDeviceCache = null; // { devices, checkedAt }
+function listAudioDevices() {
+    if (!NATIVE_CAPTURE_SUPPORTED) return { devices: [], detail: `Native audio device listing needs Windows (dshow) — this process is running on ${process.platform}` };
+    if (audioDeviceCache && Date.now() - audioDeviceCache.checkedAt < 15000) return { devices: audioDeviceCache.devices, detail: null };
+    try {
+        const res = spawnSync(FFMPEG_PATH, ['-hide_banner', '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'], { encoding: 'utf8', timeout: 8000 });
+        const out = (res.stdout || '') + (res.stderr || '');
+        const devices = [];
+        let inAudioSection = false;
+        for (const line of out.split('\n')) {
+            if (/DirectShow audio devices/i.test(line)) { inAudioSection = true; continue; }
+            if (/DirectShow video devices/i.test(line)) { inAudioSection = false; continue; }
+            if (inAudioSection) {
+                const m = /"([^"]+)"/.exec(line);
+                if (m) devices.push(m[1]);
+            }
+        }
+        audioDeviceCache = { devices, checkedAt: Date.now() };
+        return { devices, detail: devices.length ? null : 'ffmpeg ran but reported no DirectShow audio devices — check Windows sound settings' };
+    } catch (e) {
+        return { devices: [], detail: e.message };
+    }
 }
 
 // ----------------------------------------------------------------
@@ -260,11 +361,12 @@ function checkNetwork(url) {
 }
 
 // ----------------------------------------------------------------
-// 🖥️ CPU UTILIZATION — cross-platform (works on Windows, unlike
-// os.loadavg() which is always [0,0,0] there) system CPU load, sampled
-// as a delta between successive /health polls. Purely informational,
-// same spirit as readGpuUtilization() below: confirms NVENC is doing
-// the work, not the CPU.
+// 🖥️ CPU / GPU UTILIZATION — cross-platform system CPU load (works on
+// Windows, unlike os.loadavg() which is always [0,0,0] there), sampled
+// as a delta between successive /health polls, plus best-effort GPU
+// utilization via nvidia-smi. Purely informational — confirms the GPU
+// is actually doing the heavy work (item 36/42's "don't just claim
+// GPU-first, verify it"), not the CPU.
 // ----------------------------------------------------------------
 let lastCpuSample = null; // { idle, total }
 function readCpuUtilization() {
@@ -284,32 +386,148 @@ function readCpuUtilization() {
     if (totalDelta <= 0) return null;
     return Math.round((1 - idleDelta / totalDelta) * 100);
 }
+function readGpuUtilization() {
+    try {
+        const res = spawnSync('nvidia-smi', ['--query-gpu=utilization.gpu,utilization.memory,utilization.encoder,utilization.decoder,memory.used,memory.total', '--format=csv,noheader,nounits'], { encoding: 'utf8', timeout: 2000 });
+        if (res.error || !res.stdout) return null;
+        const [gpuPct, memPct, encPct, decPct, vramUsedMb, vramTotalMb] = res.stdout.trim().split(',').map((s) => parseFloat(s.trim()));
+        if (Number.isNaN(gpuPct)) return null;
+        return { gpuPercent: gpuPct, gpuMemPercent: memPct, encoderPercent: encPct, decoderPercent: decPct, vramUsedMb, vramTotalMb };
+    } catch (e) { return null; }
+}
+
+// ================================================================
+// 📐 RESOLUTION / FPS PRESETS — operator picks a resolution (480p/720p/
+// 1080p) and fps (30/60) in the panel; these map to actual pixel
+// dimensions and a sane default CBR bitrate for that combo (standard
+// YouTube Live recommendations). bitrateKbps can still be overridden
+// explicitly if the panel sends one, but the table means a sensible
+// value is always used even if it doesn't.
+// ================================================================
+const RESOLUTIONS = {
+    '480p':  { width: 854,  height: 480 },
+    '720p':  { width: 1280, height: 720 },
+    '1080p': { width: 1920, height: 1080 },
+};
+const DEFAULT_BITRATE_KBPS = {
+    '480p':  { 30: 2000,  60: 2500 },
+    '720p':  { 30: 3500,  60: 5500 },
+    '1080p': { 30: 6000,  60: 12000 },
+};
+
+// ================================================================
+// 🪟 CAPTURE TARGET — the window ffmpeg's gdigrab reads from is
+// live-output.html (UNCHANGED — see its own header comment), opened by
+// the panel with document.title set to exactly this string so gdigrab's
+// `-i title=...` can find it unambiguously. gdigrab captures the WHOLE
+// window (including the OS title bar/borders, since there is no browser
+// API to open a fully chromeless popup) — CAPTURE_CROP below strips a
+// configurable margin before scaling to the target output resolution.
+// Screen/window capture is a shared OS read (not an exclusive hardware
+// device like a capture card), so two independent ffmpeg processes
+// (recorder + live encoder) each capturing this same window is safe —
+// see README "Why two processes, not one" for the reasoning.
+// ================================================================
+function windowTitleFor(matchId) {
+    return `AllSportsLive-LiveOutput-${safeMatchId(matchId)}`;
+}
+
+// Configurable because exact OS title-bar/border pixel height varies by
+// Windows version, display scaling (DPI) and theme — values here are a
+// reasonable Windows 10/11 @100% DPI default; GET/POST /capture-config
+// lets the operator tune them, and GET /capture-preview (below) lets
+// them SEE the effect before going live, since this is exactly the kind
+// of platform detail that can't be verified without the real machine.
+let captureConfig = Object.assign(
+    { cropTop: 32, cropBottom: 0, cropLeft: 0, cropRight: 0 },
+    loadConfig().captureConfig || {}
+);
+function saveCaptureConfig() { saveConfig({ ...loadConfig(), captureConfig }); }
+
+function cropScaleFilter(width, height, useGpuScale) {
+    const { cropTop, cropBottom, cropLeft, cropRight } = captureConfig;
+    const needsCrop = cropTop || cropBottom || cropLeft || cropRight;
+    const cropExpr = needsCrop
+        ? `crop=iw-${cropLeft + cropRight}:ih-${cropTop + cropBottom}:${cropLeft}:${cropTop},`
+        : '';
+    // GPU path: crop stays on CPU (cheap — just a pointer/stride
+    // adjustment, not real pixel work) then uploads once to the GPU for
+    // scaling + encode, avoiding a GPU->CPU->GPU round trip for the
+    // actual resize. CPU fallback: plain swscale, still cheap relative
+    // to the encode stage that follows (which is GPU either way via
+    // NVENC) — see checkGpuScaleRuntime.
+    return useGpuScale
+        ? `${cropExpr}hwupload_cuda,scale_npp=${width}:${height}`
+        : `${cropExpr}scale=${width}:${height}:flags=lanczos`;
+}
+
+// Native capture inputs shared by BOTH the recorder and the live
+// encoder — video from gdigrab (the Live Output window, real OS-level
+// screen capture, hardware/OS-clocked, never a browser video encode)
+// and audio from dshow (the mic/capture-card device, opened directly by
+// ffmpeg — the browser is never in the audio path either).
+// -use_wallclock_as_timestamps on BOTH inputs locks them to the same
+// real-world clock so ffmpeg's own A/V sync is correct even though
+// they're two independent native capture streams; -thread_queue_size
+// gives each input's demuxer thread headroom against momentary stalls.
+function buildCaptureInputArgs({ windowTitle, fps, audioDeviceName }) {
+    return [
+        '-f', 'gdigrab', '-framerate', String(fps),
+        '-thread_queue_size', '1024',
+        '-use_wallclock_as_timestamps', '1',
+        '-i', `title=${windowTitle}`,
+        '-f', 'dshow',
+        '-thread_queue_size', '1024',
+        '-use_wallclock_as_timestamps', '1',
+        '-i', `audio=${audioDeviceName}`,
+    ];
+}
+
+// gdigrab's own stderr text when the target window doesn't exist (Live
+// Output was never opened, was closed, or its title doesn't match) —
+// this is a FATAL, operator-actionable problem ("open Live Output"),
+// never a network blip, so it must never enter the unlimited-backoff
+// reconnect loop meant for real internet drops.
+const WINDOW_NOT_FOUND_PATTERN = /Failed to find window|Unable to find window|window not found/i;
 
 // ----------------------------------------------------------------
-// 🎬 ENCODER STATE MACHINE — single stream at a time, never duplicated.
+// 🛑 GRACEFUL FFMPEG STOP — sends the interactive 'q' keypress ffmpeg
+// reads from its own stdin to close cleanly (flush the last GOP, write
+// a valid moov/trailer, end the RTMP stream properly) rather than a
+// hard kill. This is the standard, correct way to stop ffmpeg on
+// Windows: Node's child_process.kill() sends real POSIX signals only on
+// POSIX platforms — on Windows, any signal name Node is asked for is
+// translated to an unconditional TerminateProcess, which is exactly the
+// abrupt kill this avoids for the normal Stop path (a SIGKILL fallback
+// timer still exists below for a process that doesn't exit in time).
+// ----------------------------------------------------------------
+function gracefulStop(proc, killTimeoutMs = 5000) {
+    if (!proc) return;
+    try { proc.stdin.write('q'); } catch (e) { /* already gone */ }
+    setTimeout(() => { try { proc.kill('SIGKILL'); } catch (e) { /* already gone */ } }, killTimeoutMs);
+}
+
+// ================================================================
+// 🎬 ENCODER STATE MACHINE (YouTube live push) — single stream at a
+// time, never duplicated.
 // idle -> starting -> live -> stopping -> idle
 //                   -> reconnecting -> (backoff retry) -> starting   [network blip — see ABR section below]
 //                   -> crashed -> (bounded auto-restart) -> starting  [fatal/config error, not network]
-// ----------------------------------------------------------------
+// ================================================================
 const MAX_AUTO_RESTARTS = 3;
 const RESTART_WINDOW_MS = 5 * 60 * 1000;
 // Capped exponential backoff for NETWORK-flavored disconnects specifically
 // (see isFatalError below) — unlike MAX_AUTO_RESTARTS above, this never
 // gives up on its own: an operator's internet flapping for a while is
-// exactly the case Part 2 exists to survive, so retries continue for as
+// exactly the case this exists to survive, so retries continue for as
 // long as the operator wants to be live (only an explicit Stop ends it).
 const RECONNECT_BACKOFF_MS = [2000, 4000, 8000, 15000];
 
-// Fallback for header-priming when /go-live's caller didn't send
-// matchId — see /ingest and startEncoder.
-let lastIngestMatchId = null;
-
 const engine = {
     state: 'idle',           // idle | starting | live | reconnecting | stopping | crashed
-    proc: null,              // the ffmpeg child process
-    matchId: null,           // set once at /go-live, used to find this match's header chunk for priming every (re)start — see startEncoder
-    priming: false,          // true while the header chunk is being piped into a freshly (re)started process — mirrors the recorder's own priming, see startRecorder
-    pendingChunks: [],
+    proc: null,              // the ffmpeg child process (native gdigrab+dshow capture -> NVENC -> RTMPS)
+    matchId: null,           // set at /go-live — used to build the gdigrab window title on every (re)start
+    audioDeviceName: null,   // native dshow audio device name for this session
     desiredLive: false,      // operator's intent — drives whether a crash should auto-restart
     startedAt: null,
     restarts: [],            // timestamps of recent fatal-error auto-restarts, for the bounded-retry window
@@ -333,11 +551,11 @@ const engine = {
         criticalSince: null,
         stableSince: null,
     },
-    metrics: { bitrateKbps: null, fps: null, droppedFrames: null, totalFrames: null, outTimeSec: null },
+    metrics: { bitrateKbps: null, fps: null, droppedFrames: null, totalFrames: null, outTimeSec: null, speed: null },
 };
 
 function resetMetrics() {
-    engine.metrics = { bitrateKbps: null, fps: null, droppedFrames: null, totalFrames: null, outTimeSec: null };
+    engine.metrics = { bitrateKbps: null, fps: null, droppedFrames: null, totalFrames: null, outTimeSec: null, speed: null };
     // A fresh ffmpeg process's frame/drop counters in -progress start
     // over from 0 — without resetting these too, sampleNetworkHealth's
     // very first post-restart tick would diff the OLD process's last
@@ -349,7 +567,7 @@ function resetMetrics() {
 }
 
 // Parses ffmpeg's `-progress pipe:2`-style key=value lines (we route
-// -progress to a pipe and read it) — see buildFfmpegArgs.
+// -progress to a pipe and read it) — see buildLiveEncoderArgs.
 function parseProgressLine(line) {
     const m = /^(\w+)=(.*)$/.exec(line.trim());
     if (!m) return;
@@ -369,336 +587,30 @@ function parseProgressLine(line) {
     } else if (key === 'out_time_ms') {
         const num = parseInt(value, 10);
         if (!Number.isNaN(num)) engine.metrics.outTimeSec = Math.round(num / 1000000);
+    } else if (key === 'speed') {
+        // e.g. "0.98x" — ffmpeg's own real-time factor. Sustained <1.0x
+        // means capture+encode+network together can't keep up with real
+        // time; this is now the PRIMARY congestion signal (see
+        // sampleNetworkHealth) since native capture has no Node-side
+        // stdin pipe to measure backpressure on anymore.
+        const num = parseFloat(value.replace('x', ''));
+        if (!Number.isNaN(num)) engine.metrics.speed = num;
     }
 }
 
-// ----------------------------------------------------------------
-// 📐 RESOLUTION / FPS PRESETS — operator picks a resolution (480p/720p/
-// 1080p) and fps (30/60) in the panel; these map to actual pixel
-// dimensions and a sane default CBR bitrate for that combo (standard
-// YouTube Live recommendations). bitrateKbps can still be overridden
-// explicitly if the panel sends one, but the table means a sensible
-// value is always used even if it doesn't.
-// ----------------------------------------------------------------
-const RESOLUTIONS = {
-    '480p':  { width: 854,  height: 480 },
-    '720p':  { width: 1280, height: 720 },
-    '1080p': { width: 1920, height: 1080 },
-};
-const DEFAULT_BITRATE_KBPS = {
-    '480p':  { 30: 2000,  60: 2500 },
-    '720p':  { 30: 3500,  60: 5500 },
-    '1080p': { 30: 6000,  60: 12000 }, // 1080p30 default kept close to the original ~10Mbps spec; adjustable
-};
-
-// ================================================================
-// 🎞️ LOCAL FULL-MATCH MASTER RECORDING — separate from both the live
-// YouTube push (Part 2) and the short rolling clip buffer (Part 3,
-// localBuffer.js). This is the actual "the whole match, saved on this
-// laptop as a real MP4" deliverable: continuously fed the SAME final
-// camera+overlay program bytes every other consumer gets (see /ingest),
-// muxed the entire time the operator has Recording running, completely
-// independent of the live stream's network/bitrate — a bad connection
-// degrades the LIVE STREAM only; this keeps recording at its own fixed
-// quality regardless. Lives under its own directory, well outside
-// localBuffer's per-match buffer/ folder (which IS deleted ~90s after
-// Recording stops) — this must never be touched by that cleanup.
-// ================================================================
-const RECORDING_ROOT = path.join(__dirname, 'StreamEngineData', 'Recordings');
-try { fs.mkdirSync(RECORDING_ROOT, { recursive: true }); } catch (e) { /* created lazily per-match anyway */ }
-// Real, final MP4 clip files — cut STRICTLY from RECORDING_ROOT's
-// master.mp4 (see cutLocalClip/findRecordingSegmentFor below), never
-// from localBuffer.js's rolling WebM chunk buffer, YouTube, HLS, or any
-// other remote/browser-blob source. Sits alongside Recordings/ under the
-// same StreamEngineData root, matching the required on-disk layout.
-const CLIPS_ROOT = path.join(__dirname, 'StreamEngineData', 'Clips');
-try { fs.mkdirSync(CLIPS_ROOT, { recursive: true }); } catch (e) { /* created lazily per-match anyway */ }
-// Deliberately independent of the live-stream ABR ladder (stream-engine's
-// adaptive bitrate section, further below) — this is a fixed local
-// recording quality, never adapted to network conditions.
-const RECORDING_BITRATE_KBPS = { '480p': 2500, '720p': 5000, '1080p': 8000 };
-
-function recorderDir(matchId) {
-    return path.join(RECORDING_ROOT, localBuffer.safeMatchId(matchId));
-}
-
-const recorder = {
-    state: 'idle',            // idle | starting | recording | stopping | crashed
-    proc: null,
-    matchId: null,
-    desiredRecording: false,
-    startedAt: null,          // when the CURRENT segment started (not the whole match, if it had to restart)
-    segmentIndex: 0,
-    segmentPath: null,
-    segments: [],             // [{path, startedAt}] — normally just one; more than one only if a crash forced a new file (see below)
-    settings: null,           // {resolution, width, height, fps, bitrateKbps}
-    restarts: [],
-    lastError: null,
-    priming: false,           // true while this segment's header chunk is being piped in — see startRecorder
-    pendingChunks: [],        // live chunks queued during priming so they land AFTER the header, never interleaved before it
-};
-
-function buildRecorderArgs({ width, height, fps, bitrateKbps, outFile }) {
-    // GPU (NVENC) preferred over CPU (libx264) by operator request — the
-    // recorder shares the GPU encoder with the live push rather than
-    // load the CPU at all. Only falls back to libx264 if this machine
-    // genuinely has no working NVENC, checked with a real throwaway
-    // encode (checkNvencRuntime), not just that the build lists it —
-    // CPU-only laptops (or a machine where NVENC turns out to be
-    // unusable) still need a working recorder either way.
-    const useNvenc = checkNvencRuntime();
-    if (!useNvenc) checkLibx264(); // NVENC unusable — log whether the CPU fallback itself is expected to work
-    const videoArgs = useNvenc
-        ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-b:v', `${bitrateKbps}k`, '-maxrate', `${Math.round(bitrateKbps * 1.3)}k`]
-        : ['-c:v', 'libx264', '-preset', 'veryfast', '-b:v', `${bitrateKbps}k`];
-    return [
-        '-hide_banner', '-loglevel', 'warning',
-        // 🕒 INPUT TIMING HARDENING — the browser capture (MediaRecorder
-        // over getDisplayMedia) is not a hardware-clocked source: DOM
-        // rendering, OS compositor timing and JS event-loop jitter mean
-        // its embedded WebM timestamps can be irregular even though this
-        // pipe delivers every byte in order (see ingestChunk's container-
-        // integrity fix above). -use_wallclock_as_timestamps rebuilds a
-        // clean, monotonic timestamp base from real arrival time instead
-        // of trusting those, and +genpts fills in anything still missing.
-        // -thread_queue_size gives ffmpeg's input thread real headroom so
-        // a brief burst of buffered chunks (e.g. right after a backlog
-        // drains) is queued smoothly instead of stalling the demuxer.
-        '-thread_queue_size', '4096',
-        '-fflags', '+genpts+igndts',
-        '-use_wallclock_as_timestamps', '1',
-        '-i', 'pipe:0',
-        ...videoArgs,
-        '-vf', `scale=${width}:${height}`, '-r', String(fps),
-        // Force true constant frame rate on the OUTPUT regardless of any
-        // remaining irregularity in the input timing — duplicates/drops
-        // frames as needed so the encoder and the resulting MP4 always
-        // see exactly `fps` frames/sec (never variable frame rate).
-        // '-vsync cfr' (rather than the newer '-fps_mode cfr' alias) is
-        // used for broad compatibility across ffmpeg builds an operator
-        // might have installed — same effect, older/wider support.
-        '-vsync', 'cfr',
-        // -async resamples/pads audio to stay locked to the video clock
-        // instead of drifting if audio packets arrive in slightly
-        // irregular bursts from the same capture.
-        '-af', 'aresample=async=1:first_pts=0',
-        // A short (2s) GOP — same convention as the live encoder above —
-        // is what actually makes the crash-safety below real: fragments
-        // close (and flush to disk) on every keyframe, so at most ~2s of
-        // footage is ever at risk if the process is killed. libx264's own
-        // default keyint (250 frames, ~8s at 30fps) would leave a much
-        // bigger unflushed/unplayable window mid-recording.
-        '-g', String(fps * 2), '-keyint_min', String(fps * 2),
-        '-c:a', 'aac', '-b:a', '192k', '-ar', '44100',
-        // Fragmented MP4: writes a valid, playable file incrementally as
-        // it records (a moof+mdat per GOP) instead of one index (moov)
-        // written only at a clean close — so a laptop crash, a killed
-        // process, or an abrupt Stream Engine stop leaves a real,
-        // playable MP4 up to the last flushed fragment, never a
-        // zero-byte or "moov atom not found" unplayable file.
-        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-        '-flush_packets', '1',
-        '-max_muxing_queue_size', '4096',
-        '-f', 'mp4',
-        outFile,
-    ];
-}
-
-function startRecorder(matchId, { resolution, fps } = {}) {
-    if (recorder.state === 'recording' || recorder.state === 'starting') {
-        if (recorder.matchId === matchId) return { ok: true, alreadyRecording: true };
-        return { ok: false, error: `Already recording match "${recorder.matchId}" — stop that first` };
-    }
-    const resKey = RESOLUTIONS[resolution] ? resolution : '1080p';
-    const fpsNum = [30, 60].includes(Number(fps)) ? Number(fps) : 30;
-    const { width, height } = RESOLUTIONS[resKey];
-    const bitrateKbps = RECORDING_BITRATE_KBPS[resKey];
-
-    const dir = recorderDir(matchId);
-    try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { return { ok: false, error: `Could not create recording folder: ${e.message}` }; }
-
-    recorder.matchId = matchId;
-    recorder.desiredRecording = true;
-    recorder.settings = { resolution: resKey, width, height, fps: fpsNum, bitrateKbps };
-    recorder.segmentIndex += recorder.segments.length ? 1 : 0;
-    const fileName = recorder.segments.length === 0 ? 'master.mp4' : `master_part${recorder.segments.length + 1}.mp4`;
-    const outFile = path.join(dir, fileName);
-    recorder.segmentPath = outFile;
-    recorder.state = 'starting';
-    recorder.startedAt = Date.now();
-    recorder.lastError = null;
-
-    const args = buildRecorderArgs({ width, height, fps: fpsNum, bitrateKbps, outFile });
-    const proc = spawn(FFMPEG_PATH, args, { stdio: ['pipe', 'ignore', 'pipe'] });
-    recorder.proc = proc;
-    recorder.state = 'recording';
-    recorder.segments.push({ path: outFile, startedAt: recorder.startedAt });
-    proc.stdin.on('error', () => {}); // see the same listener on the live encoder's proc.stdin (startEncoder, below) for why this is needed
-
-
-
-    // Prime this BRAND NEW ffmpeg process with the session's header
-    // chunk before any live /ingest bytes reach it — a fresh process
-    // reading from pipe:0 needs the EBML/Segment/Tracks header to
-    // decode anything at all; without this, a recording started after
-    // the capture already began (or restarted after a crash) would
-    // receive only bare Clusters and produce an empty/broken file. Live
-    // chunks arriving during this async write are queued, never
-    // interleaved before the header.
-    recorder.priming = true;
-    recorder.pendingChunks = [];
-    const headerFile = localBuffer.getHeaderChunkFile(matchId);
-    const flushPending = () => {
-        recorder.priming = false;
-        const pending = recorder.pendingChunks;
-        recorder.pendingChunks = [];
-        for (const buf of pending) {
-            try { if (proc.stdin.writable) proc.stdin.write(buf); } catch (e) { /* proc likely already gone */ }
-        }
-    };
-    if (headerFile) {
-        const hs = fs.createReadStream(headerFile);
-        hs.on('error', flushPending); // missing header is unusual but not fatal — just start from live chunks
-        hs.pipe(proc.stdin, { end: false });
-        hs.on('close', flushPending);
-    } else {
-        flushPending();
-    }
-
-    let stderrBuf = '';
-    proc.stderr.on('data', (chunk) => {
-        stderrBuf += chunk.toString();
-        let idx;
-        while ((idx = stderrBuf.indexOf('\n')) >= 0) {
-            const line = stderrBuf.slice(0, idx);
-            stderrBuf = stderrBuf.slice(idx + 1);
-            if (/error|failed|invalid/i.test(line)) recorder.lastError = line.trim();
-        }
-    });
-
-    proc.on('exit', (code, signal) => {
-        // A stale/superseded process's own exit must never clobber a
-        // NEWER recording that's since taken over recorder.proc (e.g.
-        // this exact process was stopped by /recording-start switching
-        // to a different match while it was still shutting down) — only
-        // the process CURRENTLY tracked gets to mutate shared state.
-        if (recorder.proc !== proc) return;
-        const wasDesired = recorder.desiredRecording;
-        console.log(`[stream-engine] recorder ffmpeg exited (code=${code}, signal=${signal}); desiredRecording=${wasDesired}`);
-        recorder.proc = null;
-        if (!wasDesired) { recorder.state = 'idle'; return; }
-
-        // Unexpected exit while the operator still wants to be
-        // recording — never silently stop capturing the match. Start a
-        // NEW segment file (fragmented MP4 can't simply be appended to
-        // after the process that owns it exits) rather than giving up;
-        // every segment individually stays under RECORDING_ROOT and
-        // stays playable on its own.
-        recorder.state = 'crashed';
-        recorder.lastError = recorder.lastError || `recorder ffmpeg exited unexpectedly (code=${code}, signal=${signal})`;
-        const now = Date.now();
-        recorder.restarts = recorder.restarts.filter((t) => now - t < RESTART_WINDOW_MS);
-        if (recorder.restarts.length >= MAX_AUTO_RESTARTS) {
-            console.log('[stream-engine] recorder: max auto-restarts hit — local recording stopped, operator must press Start Recording again');
-            recorder.desiredRecording = false;
-            return;
-        }
-        recorder.restarts.push(now);
-        console.log(`[stream-engine] recorder: auto-restarting into a new segment (attempt ${recorder.restarts.length}/${MAX_AUTO_RESTARTS})…`);
-        setTimeout(() => {
-            if (recorder.desiredRecording) startRecorder(recorder.matchId, { resolution: recorder.settings.resolution, fps: recorder.settings.fps });
-        }, 1000);
-    });
-
-    proc.on('error', (err) => {
-        console.log('[stream-engine] recorder ffmpeg spawn error:', err.message);
-        recorder.lastError = err.message;
-        recorder.state = 'crashed';
-    });
-
-    return { ok: true };
-}
-
-function stopRecorder() {
-    recorder.desiredRecording = false;
-    if (!recorder.proc) { recorder.state = 'idle'; return { ok: true, alreadyIdle: true }; }
-    recorder.state = 'stopping';
-    // End stdin (not SIGKILL) so ffmpeg flushes its last fragment and
-    // closes the MP4 cleanly — never chop off the last few seconds.
-    try { recorder.proc.stdin.end(); } catch (e) { /* already closed */ }
-    const proc = recorder.proc;
-    setTimeout(() => { if (recorder.proc === proc) { try { proc.kill('SIGKILL'); } catch (e) {} } }, 5000);
-    return { ok: true };
-}
-
-function resetRecorderForNewMatch() {
-    recorder.segments = [];
-    recorder.segmentIndex = 0;
-    recorder.restarts = [];
-}
-
-// Never drop frames from the master recording the way the live push
-// (deliberately) drops under backpressure — losing a moment from the
-// permanent match record is worse than a brief memory bump while a CPU
-// encode catches up. Node's stream internally buffers when write()
-// returns false; this just tracks how long that's been true so an
-// operator can see a real, sustained problem instead of one silently
-// growing forever.
-let recorderBackpressureSince = null;
-function recorderIngestChunk(buf) {
-    if (recorder.state !== 'recording' || !recorder.proc || !recorder.proc.stdin.writable) return;
-    if (recorder.priming) { recorder.pendingChunks.push(buf); return; } // hold until the header chunk (see startRecorder) has been written first
-    try {
-        const stillOk = recorder.proc.stdin.write(buf);
-        if (!stillOk && !recorderBackpressureSince) {
-            recorderBackpressureSince = Date.now();
-            recorder.proc.stdin.once('drain', () => { recorderBackpressureSince = null; });
-        }
-    } catch (e) { recorder.lastError = e.message; }
-}
-
-// Best-effort free disk space for the recordings volume — Node 18.15+
-// has fs.statfs; older Node just reports null rather than failing here.
-function diskFreeBytes(dir) {
-    try {
-        if (typeof fs.statfsSync !== 'function') return null;
-        const s = fs.statfsSync(dir);
-        return s.bavail * s.bsize;
-    } catch (e) { return null; }
-}
-
-function resolveEncodeSettings({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
-    const resKey = RESOLUTIONS[resolution] ? resolution : '1080p';
-    const fpsNum = [30, 60].includes(Number(fps)) ? Number(fps) : 30;
-    const { width, height } = RESOLUTIONS[resKey];
-    const kbps = Number(bitrateKbps) > 0 ? Number(bitrateKbps) : DEFAULT_BITRATE_KBPS[resKey][fpsNum];
-    // Configurable so future presets (1080p60, different bitrate/GOP)
-    // don't need new code paths — just different values sent here.
-    const gopSec = Number(keyframeIntervalSec) > 0 ? Number(keyframeIntervalSec) : 2;
-    // 'resolution' (not 'resolutionLabel') on purpose — engine.settings is
-    // fed straight back into startEncoder() on an auto-restart (see the
-    // ffmpeg exit handler), so this needs to round-trip through
-    // resolveEncodeSettings a second time using the SAME key it reads.
-    return { width, height, fps: fpsNum, bitrateKbps: kbps, keyframeIntervalSec: gopSec, resolution: resKey };
-}
-
-function buildFfmpegArgs({ width, height, fps, bitrateKbps, keyframeIntervalSec, destinationUrl }) {
+function buildLiveEncoderArgs({ windowTitle, audioDeviceName, width, height, fps, bitrateKbps, keyframeIntervalSec, destinationUrl }) {
     const gop = Math.round(fps * keyframeIntervalSec);
+    const useGpuScale = checkGpuScaleRuntime();
     return [
         '-hide_banner', '-loglevel', 'warning',
-        // 🕒 INPUT TIMING HARDENING — identical reasoning to
-        // buildRecorderArgs above: this pipe's bytes are a live,
-        // byte-accurate (see ingestChunk) but NOT hardware-clocked WebM
-        // stream. Rebuild clean, monotonic timestamps from real arrival
-        // time rather than trusting the browser's own embedded ones —
-        // this is what actually eliminates the PTS/DTS discontinuities
-        // that were reaching YouTube as glitches, independent of network
-        // speed. thread_queue_size gives the input demuxer headroom to
-        // absorb a burst of chunks without stalling.
-        '-thread_queue_size', '4096',
-        '-fflags', '+genpts+igndts',
-        '-use_wallclock_as_timestamps', '1',
-        '-i', 'pipe:0',
+        ...buildCaptureInputArgs({ windowTitle, fps, audioDeviceName }),
+        '-map', '0:v', '-map', '1:a',
+        '-vf', cropScaleFilter(width, height, useGpuScale),
+        '-r', String(fps),
+        // Force true CFR regardless of any capture jitter — never VFR.
+        // '-vsync cfr' (over the newer '-fps_mode cfr' alias) for broad
+        // compatibility across whatever ffmpeg build is installed.
+        '-vsync', 'cfr',
         '-c:v', 'h264_nvenc',
         // p4 = balanced speed/quality; tune ll = NVENC's low-latency mode
         // (skips B-frames and extra lookahead that add encode latency —
@@ -713,18 +625,8 @@ function buildFfmpegArgs({ width, height, fps, bitrateKbps, keyframeIntervalSec,
         '-keyint_min', String(gop),
         // -bf 0: no B-frames — YouTube's RTMP(S) ingest doesn't need them
         // and they add reordering latency; also keeps every GOP a simple
-        // IPPP... structure, matching what buildRecorderArgs's GOP/crash-
-        // safety reasoning assumes.
+        // IPPP... structure.
         '-bf', '0',
-        '-vf', `scale=${width}:${height}`,
-        '-r', String(fps),
-        // Force true CFR on the encoder's input regardless of any
-        // remaining source jitter — this is the actual fix for "the
-        // stream should behave like a professional live encoder, not
-        // like a browser sending occasional video blobs" (never VFR).
-        // '-vsync cfr' used over the newer '-fps_mode cfr' alias for
-        // broad compatibility across whatever ffmpeg build is installed.
-        '-vsync', 'cfr',
         '-af', 'aresample=async=1:first_pts=0',
         '-c:a', 'aac', '-b:a', '160k', '-ar', '44100',
         '-max_muxing_queue_size', '4096',
@@ -739,17 +641,17 @@ function buildFfmpegArgs({ width, height, fps, bitrateKbps, keyframeIntervalSec,
 // live through a fluctuating/unstable connection instead of disconnecting.
 // All numbers below are runtime-configurable (POST /adaptive-config)
 // specifically so a different streaming provider's own limits don't
-// require editing this file. See stream-engine/README.md for the
-// intended behavior this implements.
+// require editing this file.
 //
 // Mechanism: ffmpeg's CLI doesn't expose changing NVENC's target bitrate
-// on a running process, so "adaptive bitrate" here means a fast, rate
-// limited hot-restart (stop this ffmpeg, immediately start a new one with
-// the new -b:v/resolution/fps) — the SAME technique the panel's manual
-// "Lower Quality Now" button uses. The browser capture (MediaRecorder →
-// /ingest) never stops or reopens the camera for this — see /ingest and
-// localBuffer.js — so it's a ~1-2s hiccup in the OUTPUT push, not a
-// dropped stream, and local recording/clips are entirely unaffected.
+// on a running process, so "adaptive bitrate" here means a fast, rate-
+// limited hot-restart (stop this ffmpeg, immediately start a new one
+// with the new -b:v/resolution/fps) — the SAME technique the panel's
+// manual "Lower Quality Now" button uses. Because the live encoder now
+// does its OWN native capture (no shared byte-stream with the
+// recorder), a restart is just "kill this process, spawn a fresh one" —
+// the recorder is a fully separate process and is never touched by
+// this. Local recording/clips are entirely unaffected.
 // ================================================================
 const RESOLUTION_ORDER = ['1080p', '720p', '480p'];
 
@@ -764,7 +666,7 @@ const ABR_LADDER_DEFAULTS = {
 
 let abr = {
     ladder: JSON.parse(JSON.stringify(ABR_LADDER_DEFAULTS)),
-    safetyFactor: 0.75,      // never target the full detected/sustained throughput — keep headroom for jitter (spec section 9)
+    safetyFactor: 0.75,      // never target the full detected/sustained throughput — keep headroom for jitter
     emergencyFps: 15,        // last lever BEFORE resolution fallback — reduce fps at the floor bitrate for the current resolution
     holdWeakSec: 10,         // mild congestion sustained this long -> step bitrate down one rung
     holdCriticalSec: 45,     // severe congestion, already at the bitrate floor, sustained this long -> fps cut, then (if enabled) resolution fallback
@@ -812,28 +714,23 @@ function setProtection(active) {
         : `${engine.targetResolution} selected, streaming at ${engine.settings.resolution} due to sustained low bandwidth — stream protection active`;
 }
 
-// Classifies current network health from signals we can actually observe
-// from a local ffmpeg subprocess: whether Node's write() into ffmpeg's
-// stdin is backpressured (ffmpeg isn't reading fast enough — it can't,
-// because its RTMP write to the network is itself blocked/slow, which is
-// the actual "network can't keep up" signal here), how far the achieved
-// output bitrate is below target, and how many frames ffmpeg itself had
-// to drop. No dedicated bandwidth probe exists — uploadEstimateKbps is a
-// DERIVED figure (see below), not a measured one.
+// Classifies current network health from signals ffmpeg's own
+// -progress output actually gives us: how far the achieved output
+// bitrate is below target, how many frames ffmpeg itself had to drop,
+// and ffmpeg's own real-time factor (`speed=`) — sustained <1.0x means
+// capture+encode+network together can't keep up with real time, the
+// same signal OBS's own "dropped frames due to network" detection
+// relies on. (Node-side stdin backpressure no longer exists as a signal
+// here — native capture means ffmpeg pulls frames itself; there is no
+// pipe from this process into it anymore.) No dedicated bandwidth probe
+// exists — uploadEstimateKbps is a DERIVED figure, not a measured one.
 let lastDroppedFramesSample = null;
 let lastTotalFramesSample = null;
-let backpressureSince = null;
 function sampleNetworkHealth() {
     const target = engine.settings ? engine.settings.bitrateKbps : null;
     const actual = engine.metrics.bitrateKbps;
     const ratio = (target && actual != null) ? actual / target : 1;
-
-    if (encoderBackpressured) {
-        if (!backpressureSince) backpressureSince = Date.now();
-    } else {
-        backpressureSince = null;
-    }
-    const backpressuredMs = backpressureSince ? Date.now() - backpressureSince : 0;
+    const speed = engine.metrics.speed;
 
     const dropped = engine.metrics.droppedFrames;
     const totalFrames = engine.metrics.totalFrames;
@@ -847,15 +744,15 @@ function sampleNetworkHealth() {
     lastTotalFramesSample = totalFrames;
 
     let severity = 'stable';
-    if (backpressuredMs > 3000 || ratio < 0.4 || droppedDeltaPct > 5) severity = 'severe';
-    else if (backpressuredMs > 0 || ratio < 0.8 || droppedDeltaPct > 1) severity = 'mild';
+    if ((speed != null && speed < 0.6) || ratio < 0.4 || droppedDeltaPct > 5) severity = 'severe';
+    else if ((speed != null && speed < 0.92) || ratio < 0.8 || droppedDeltaPct > 1) severity = 'mild';
 
     // If we're cleanly sustaining `actual` kbps while only using
     // `safetyFactor` of the real pipe (by design), the implied ceiling is
     // actual/safetyFactor. Only meaningful once the signal is clean.
     const uploadEstimateKbps = actual != null ? Math.round(actual / abr.safetyFactor) : null;
 
-    return { severity, ratio, droppedDeltaPct, backpressuredMs, uploadEstimateKbps };
+    return { severity, ratio, droppedDeltaPct, speed, uploadEstimateKbps };
 }
 
 // Hot-restarts the encoder at `next` = {rung, resolution, fps, bitrateKbps}.
@@ -889,12 +786,12 @@ async function applyRestart(next) {
 }
 
 // The ABR control loop — ticks every ABR_TICK_MS while live. Priority
-// order (spec section 10): keep the connection alive > keep the selected
-// resolution > reduce bitrate > reduce fps (emergency) > resolution
-// fallback (only if enabled and genuinely necessary). Decreases react
-// fast (no hold needed once truly "severe"); increases require a
-// sustained clean signal (holdStableUpSec) so the stream doesn't
-// oscillate on every brief improvement.
+// order: keep the connection alive > keep the selected resolution >
+// reduce bitrate > reduce fps (emergency) > resolution fallback (only
+// if enabled and genuinely necessary). Decreases react fast (no hold
+// needed once truly "severe"); increases require a sustained clean
+// signal (holdStableUpSec) so the stream doesn't oscillate on every
+// brief improvement.
 function abrTick() {
     if (engine.state !== 'live' || engine.adapting || !engine.settings) return;
 
@@ -968,22 +865,23 @@ function abrTick() {
     }
 }
 
-// Fatal/config errors (bad args, no NVENC, missing filter) should NOT
-// retry forever — those need the operator to fix something. Everything
-// else observed on an unexpected ffmpeg exit is treated as a network
-// blip and gets the unlimited-backoff reconnect loop below, because a
-// live sports stream should never just give up over a few dropped
-// packets or a brief internet outage.
+// Fatal/config errors (bad args, no NVENC, missing filter, or the Live
+// Output window not being open) should NOT retry forever — those need
+// the operator to fix something. Everything else observed on an
+// unexpected ffmpeg exit is treated as a network blip and gets the
+// unlimited-backoff reconnect loop below, because a live sports stream
+// should never just give up over a few dropped packets or a brief
+// internet outage.
 const FATAL_ERROR_PATTERN = /unrecognized option|no such filter|cannot find a matching stream|invalid argument|no nvenc capable devices|unable to open|permission denied|no such file|unknown encoder/i;
 function isFatalError(message) {
-    return !!message && FATAL_ERROR_PATTERN.test(message);
+    return !!message && (FATAL_ERROR_PATTERN.test(message) || WINDOW_NOT_FOUND_PATTERN.test(message));
 }
 
 // Network-flavored disconnect: keep retrying at capped exponential
 // backoff for as long as the operator wants to be live (engine.desiredLive)
 // — never gives up on its own. Local recording/clips are untouched by any
-// of this (see /ingest — localBuffer gets every chunk regardless of
-// engine.state).
+// of this — the recorder is a fully separate process with its own
+// independent native capture.
 function scheduleReconnect() {
     engine.state = 'reconnecting';
     engine.network.state = 'reconnecting';
@@ -1005,16 +903,18 @@ function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     if (engine.state === 'live' || engine.state === 'starting') {
         return { ok: false, error: 'Already live — stop the current stream first' };
     }
+    if (!NATIVE_CAPTURE_SUPPORTED) return { ok: false, error: `Native capture (gdigrab/dshow) requires Windows — this process is running on ${process.platform}` };
     if (!streamUrl) return { ok: false, error: 'No Stream URL set' };
     if (!isValidRtmpUrl(streamUrl)) return { ok: false, error: 'Stream URL must start with rtmp:// or rtmps://' };
     if (!streamKey) return { ok: false, error: 'No Stream Key set' };
+    if (!engine.matchId) return { ok: false, error: 'No matchId — Go Live must be started from the Cricket Panel with a match selected' };
+    if (!engine.audioDeviceName) return { ok: false, error: 'No audio device selected — pick one under Live Studio first' };
     const nvenc = checkNvenc();
     if (!nvenc.available) {
         return { ok: false, error: `NVENC not available (${nvenc.detail}) — refusing to fall back to CPU encoding` };
     }
 
     resetMetrics();
-    encoderBackpressured = false;
     const resolved = resolveEncodeSettings({ resolution, fps, bitrateKbps, keyframeIntervalSec });
     engine.settings = resolved;
     engine.state = 'starting';
@@ -1025,62 +925,13 @@ function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     // current config, never logged, never included in engine.settings
     // (which /health exposes) — only passed straight to ffmpeg's argv.
     const destinationUrl = buildDestinationUrl(streamUrl, streamKey);
-    const args = buildFfmpegArgs({ ...resolved, destinationUrl });
+    const windowTitle = windowTitleFor(engine.matchId);
+    const args = buildLiveEncoderArgs({ windowTitle, audioDeviceName: engine.audioDeviceName, ...resolved, destinationUrl });
     const proc = spawn(FFMPEG_PATH, args, { stdio: ['pipe', 'ignore', 'pipe'] });
     engine.proc = proc;
     engine.startedAt = Date.now();
     engine.state = 'live';
-
-    // Writing to a process whose stdin has already closed (it just
-    // crashed, or is mid-exit) raises an ASYNC 'error' event on the
-    // stream — a try/catch around .write() in ingestChunk does NOT catch
-    // this, so without a listener here it becomes an uncaught exception
-    // ("Error: write EOF") on every single ingest call until the exit
-    // handler below has actually run and cleared engine.proc. Utterly
-    // harmless (ingestChunk already checks .writable before writing) but
-    // needs a listener to not spam/crash on it.
-    proc.stdin.on('error', () => {});
-
-    // A BRAND NEW ffmpeg process reading from pipe:0 has no idea what
-    // came before it — it needs the session's EBML/Segment/Tracks header
-    // chunk piped in FIRST, exactly like the local master recorder (see
-    // startRecorder above). Without this, any restart that doesn't
-    // happen to land exactly on the capture's very first byte — a
-    // reconnect after a network blip, an ABR hot-restart, or simply
-    // clicking Go Live after Recording/streaming already had chunks
-    // flowing — hands ffmpeg a bare Cluster with no header and it fails
-    // immediately with "Invalid data found when processing input",
-    // which then loops forever through the reconnect logic below (every
-    // retry hits the exact same problem). This was the actual cause of
-    // "stream keeps reconnecting, never goes live on YouTube."
-    engine.priming = true;
-    engine.pendingChunks = [];
-    const primingMatchId = engine.matchId || lastIngestMatchId; // fallback if /go-live's caller never sent matchId — see /ingest
-    const headerFile = primingMatchId ? localBuffer.getHeaderChunkFile(primingMatchId) : null;
-    const flushPendingEngine = () => {
-        engine.priming = false;
-        const pending = engine.pendingChunks;
-        engine.pendingChunks = [];
-        for (const buf of pending) {
-            try { if (proc.stdin.writable) proc.stdin.write(buf); } catch (e) { /* proc likely already gone */ }
-        }
-    };
-    if (headerFile) {
-        const hs = fs.createReadStream(headerFile);
-        hs.on('error', flushPendingEngine);
-        hs.pipe(proc.stdin, { end: false });
-        hs.on('close', flushPendingEngine);
-    } else {
-        flushPendingEngine();
-    }
-
-    // Once this process has survived a few seconds without exiting, treat
-    // the connection as genuinely re-established and reset the reconnect
-    // attempt counter — otherwise a stream that's been flapping for an
-    // hour would keep reporting attempt #40 forever even after it's fine.
-    const stabilizeTimer = setTimeout(() => {
-        if (engine.proc === proc) engine.reconnect.attempts = 0;
-    }, 5000);
+    proc.stdin.on('error', () => {}); // stdin is only ever used for the graceful 'q' stop (see gracefulStop) — a write after it's already gone is harmless
 
     let stderrBuf = '';
     proc.stderr.on('data', (chunk) => {
@@ -1090,18 +941,26 @@ function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
             const line = stderrBuf.slice(0, idx);
             stderrBuf = stderrBuf.slice(idx + 1);
             parseProgressLine(line);
-            if (/error|failed|refused|denied/i.test(line)) engine.lastError = line.trim();
+            if (/error|failed|refused|denied/i.test(line) || WINDOW_NOT_FOUND_PATTERN.test(line)) engine.lastError = line.trim();
         }
     });
 
+    // Once this process has survived a few seconds without exiting, treat
+    // the connection as genuinely re-established and reset the reconnect
+    // attempt counter — otherwise a stream that's been flapping for an
+    // hour would keep reporting attempt #40 forever even after it's fine.
+    const stabilizeTimer = setTimeout(() => {
+        if (engine.proc === proc) engine.reconnect.attempts = 0;
+    }, 5000);
+
     proc.on('exit', (code, signal) => {
-        // Same defensive guard as the recorder above — a stale process's
+        // Same defensive guard as the recorder below — a stale process's
         // own exit must never clobber a newer one already tracked in
         // engine.proc.
         if (engine.proc !== proc) return;
         clearTimeout(stabilizeTimer);
         const wasDesired = engine.desiredLive;
-        console.log(`[stream-engine] ffmpeg exited (code=${code}, signal=${signal}); desiredLive=${wasDesired}`);
+        console.log(`[stream-engine] live encoder ffmpeg exited (code=${code}, signal=${signal}); desiredLive=${wasDesired}`);
         engine.proc = null;
 
         if (!wasDesired) {
@@ -1115,10 +974,11 @@ function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
         engine.lastError = errMsg;
 
         if (isFatalError(errMsg)) {
-            // A config/hardware problem, not the network — retrying
-            // forever won't fix it, so this keeps the original bounded
-            // auto-restart safety net and eventually surfaces 'crashed'
-            // for the operator to act on.
+            // A config/hardware/"window not found" problem, not the
+            // network — retrying forever won't fix it, so this keeps a
+            // bounded auto-restart safety net (in case it was transient,
+            // e.g. the window reappearing a moment later) and eventually
+            // surfaces 'crashed' for the operator to act on.
             engine.state = 'crashed';
             const now = Date.now();
             engine.restarts = engine.restarts.filter((t) => now - t < RESTART_WINDOW_MS);
@@ -1138,13 +998,12 @@ function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
 
         // Everything else (connection reset, broken pipe, timeout, i/o
         // error, etc.) is treated as the internet going up and down —
-        // never let a live sports stream just give up over this. Local
-        // recording keeps running throughout (see /ingest).
+        // never let a live sports stream just give up over this.
         scheduleReconnect();
     });
 
     proc.on('error', (err) => {
-        console.log('[stream-engine] ffmpeg spawn error:', err.message);
+        console.log('[stream-engine] live encoder ffmpeg spawn error:', err.message);
         engine.lastError = err.message;
         engine.state = 'crashed';
     });
@@ -1156,95 +1015,229 @@ function stopEncoder() {
     engine.desiredLive = false;
     if (!engine.proc) { engine.state = 'idle'; return { ok: true, alreadyIdle: true }; }
     engine.state = 'stopping';
-    // Ask ffmpeg to end the stream cleanly (closing stdin = end of input,
-    // ffmpeg flushes and exits on its own) rather than SIGKILL, so YouTube
-    // sees a proper stream end instead of a hard cut.
-    try { engine.proc.stdin.end(); } catch (e) { /* already closed */ }
-    // Safety timeout: force-kill if it hasn't exited on its own shortly.
-    const proc = engine.proc;
-    setTimeout(() => {
-        if (engine.proc === proc) {
-            try { proc.kill('SIGKILL'); } catch (e) { /* already gone */ }
-        }
-    }, 5000);
+    gracefulStop(engine.proc);
     return { ok: true };
 }
 
-// 🔒 CONTAINER INTEGRITY / BACKPRESSURE — root-cause fix.
-//
-// These `buf`s are not independent video frames — they are raw byte
-// slices of ONE continuous WebM/Matroska stream (MediaRecorder Clusters)
-// that ffmpeg on the other end of this pipe is demuxing as a single
-// input. A previous version of this function DROPPED a chunk outright
-// whenever Node's stdin.write() reported backpressure ("a skipped frame
-// is far better than ever-growing latency"). That reasoning is correct
-// for raw frames but wrong here: dropping a slice out of the MIDDLE of a
-// live container byte-stream splices a gap into it, and ffmpeg has to
-// resync mid-Cluster — which is exactly what shows up on YouTube as
-// garbled/glitched frames, a freeze, or (worse) a hard demux error that
-// tears the whole RTMPS connection down and restarts it. This was a
-// direct, reproducible cause of the reported glitching, independent of
-// actual network speed (see stream-engine/README.md "Root cause" notes).
-//
-// Fix: ALWAYS write every byte, in order, never skip one. Node's own
-// internal stdin buffer already absorbs a brief stall losslessly — that
-// IS the correct way to ride out a short hiccup. `writableLength` (real
-// buffered bytes, not a boolean latch) drives two things instead:
-//   1. `encoderBackpressured` / `backpressureSince`, which the ABR loop
-//      already watches (sampleNetworkHealth/abrTick) to lower the
-//      encoder's target bitrate/resolution — the correct lever for a
-//      SUSTAINED slow link.
-//   2. A hard ceiling (MAX_STDIN_BUFFERED_BYTES): if buffered output
-//      keeps growing past several seconds' worth, the pipe isn't slow,
-//      it's stuck (NVENC wedged, or the RTMPS socket stopped accepting
-//      writes entirely) and continuing to hold bytes in memory would
-//      both leak RAM and hand YouTube an ever-more-stale stream. At that
-//      point a controlled reconnect (same clean stop + backoff-retry
-//      path as a real network drop — see proc.on('exit') below) is the
-//      right move, not silently corrupting the container.
-const MAX_STDIN_BUFFERED_BYTES = 24 * 1024 * 1024; // ~24MB — several seconds even at the highest bitrate profile
-let encoderBackpressured = false;
-function ingestChunk(buf) {
-    if (engine.state !== 'live' || !engine.proc || !engine.proc.stdin.writable) return { ok: false, error: 'Encoder not live' };
-    if (engine.priming) { engine.pendingChunks.push(buf); return { ok: true }; } // hold until the header chunk (see startEncoder) has been written first
-
-    try {
-        engine.proc.stdin.write(buf); // never skipped — see comment above
-    } catch (e) {
-        return { ok: false, error: e.message };
-    }
-
-    const buffered = engine.proc.stdin.writableLength || 0;
-    if (buffered > MAX_STDIN_BUFFERED_BYTES) {
-        console.log(`[stream-engine] Live encoder stdin buffer exceeded ${MAX_STDIN_BUFFERED_BYTES} bytes (pipe appears stuck) — forcing a controlled reconnect`);
-        encoderBackpressured = false;
-        engine.lastError = 'Encoder pipe stalled (buffered output exceeded safety limit) — reconnecting';
-        try { engine.proc.kill('SIGKILL'); } catch (e2) { /* already gone */ }
-        return { ok: true, stalled: true };
-    }
-
-    if (!encoderBackpressured && buffered > 0) {
-        encoderBackpressured = true;
-        engine.proc.stdin.once('drain', () => { encoderBackpressured = false; });
-    }
-    return { ok: true };
+function resolveEncodeSettings({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
+    const resKey = RESOLUTIONS[resolution] ? resolution : '1080p';
+    const fpsNum = [30, 60].includes(Number(fps)) ? Number(fps) : 30;
+    const { width, height } = RESOLUTIONS[resKey];
+    const kbps = Number(bitrateKbps) > 0 ? Number(bitrateKbps) : DEFAULT_BITRATE_KBPS[resKey][fpsNum];
+    const gopSec = Number(keyframeIntervalSec) > 0 ? Number(keyframeIntervalSec) : 2;
+    return { width, height, fps: fpsNum, bitrateKbps: kbps, keyframeIntervalSec: gopSec, resolution: resKey };
 }
 
 // ================================================================
-// 🎬 PART 3 — CLIP ENGINE (reads from localBuffer.js, the vMix-free
-// local recording/buffer; forwards finished clips to the EXISTING
+// 🎞️ LOCAL FULL-MATCH MASTER RECORDING — a fully independent native
+// ffmpeg process (its own gdigrab+dshow capture, its own NVENC session)
+// from the live YouTube push above. Nothing about the live push
+// (reconnects, ABR restarts, crashes) can EVER affect this process —
+// they don't share a byte-stream, a pipe, or any other coupling; they
+// are simply two separate ffmpeg invocations both reading the same
+// on-screen window and the same audio device, which is a safe thing to
+// do twice (see the header comment's "Why two processes" note) unlike
+// opening an exclusive hardware capture-card device twice.
+// Fixed quality regardless of network — a bad connection degrades the
+// LIVE STREAM only; this keeps recording at its own resolution/bitrate
+// the whole time Recording is running.
+// ================================================================
+const RECORDING_ROOT = path.join(__dirname, 'StreamEngineData', 'Recordings');
+try { fs.mkdirSync(RECORDING_ROOT, { recursive: true }); } catch (e) { /* created lazily per-match anyway */ }
+// Real, final MP4 clip files — cut STRICTLY from RECORDING_ROOT's
+// master.mp4 (see cutLocalClip/findRecordingSegmentFor below), never
+// from YouTube, HLS, or any browser-side source. Sits alongside
+// Recordings/ under the same StreamEngineData root.
+const CLIPS_ROOT = path.join(__dirname, 'StreamEngineData', 'Clips');
+try { fs.mkdirSync(CLIPS_ROOT, { recursive: true }); } catch (e) { /* created lazily per-match anyway */ }
+// Deliberately independent of the live-stream ABR ladder — this is a
+// fixed local recording quality, never adapted to network conditions.
+const RECORDING_BITRATE_KBPS = { '480p': 2500, '720p': 5000, '1080p': 8000 };
+
+function recorderDir(matchId) {
+    return path.join(RECORDING_ROOT, safeMatchId(matchId));
+}
+
+const recorder = {
+    state: 'idle',            // idle | starting | recording | stopping | crashed
+    proc: null,
+    matchId: null,
+    audioDeviceName: null,
+    desiredRecording: false,
+    startedAt: null,          // when the CURRENT segment started (not the whole match, if it had to restart)
+    segmentPath: null,
+    segments: [],             // [{path, startedAt}] — normally just one; more than one only if a crash forced a new file (see below)
+    settings: null,           // {resolution, width, height, fps, bitrateKbps}
+    restarts: [],
+    lastError: null,
+};
+
+function buildRecorderArgs({ windowTitle, audioDeviceName, width, height, fps, bitrateKbps, outFile }) {
+    // GPU (NVENC) preferred over CPU (libx264) by operator request — the
+    // recorder shares the same GPU-encode approach as the live push
+    // rather than load the CPU at all. Only falls back to libx264 if
+    // this machine genuinely has no working NVENC, checked with a real
+    // throwaway encode (checkNvencRuntime), not just that the build
+    // lists it — CPU-only laptops still need a working recorder either way.
+    const useNvenc = checkNvencRuntime();
+    if (!useNvenc) checkLibx264(); // NVENC unusable — log whether the CPU fallback itself is expected to work
+    const useGpuScale = checkGpuScaleRuntime();
+    const videoArgs = useNvenc
+        ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-b:v', `${bitrateKbps}k`, '-maxrate', `${Math.round(bitrateKbps * 1.3)}k`]
+        : ['-c:v', 'libx264', '-preset', 'veryfast', '-b:v', `${bitrateKbps}k`];
+    return [
+        '-hide_banner', '-loglevel', 'warning',
+        ...buildCaptureInputArgs({ windowTitle, fps, audioDeviceName }),
+        '-map', '0:v', '-map', '1:a',
+        '-vf', cropScaleFilter(width, height, useNvenc && useGpuScale),
+        '-r', String(fps),
+        '-vsync', 'cfr',
+        ...videoArgs,
+        // A short (2s) GOP is what actually makes the crash-safety below
+        // real: fragments close (and flush to disk) on every keyframe,
+        // so at most ~2s of footage is ever at risk if the process is
+        // killed. libx264's own default keyint (250 frames, ~8s at
+        // 30fps) would leave a much bigger unflushed/unplayable window.
+        '-g', String(fps * 2), '-keyint_min', String(fps * 2),
+        '-af', 'aresample=async=1:first_pts=0',
+        '-c:a', 'aac', '-b:a', '192k', '-ar', '44100',
+        // Fragmented MP4: writes a valid, playable file incrementally as
+        // it records (a moof+mdat per GOP) instead of one index (moov)
+        // written only at a clean close — so a laptop crash, a killed
+        // process, or an abrupt Stream Engine stop leaves a real,
+        // playable MP4 up to the last flushed fragment, never a
+        // zero-byte or "moov atom not found" unplayable file.
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+        '-flush_packets', '1',
+        '-max_muxing_queue_size', '4096',
+        '-f', 'mp4',
+        outFile,
+    ];
+}
+
+function startRecorder(matchId, { resolution, fps, audioDeviceName } = {}) {
+    if (recorder.state === 'recording' || recorder.state === 'starting') {
+        if (recorder.matchId === matchId) return { ok: true, alreadyRecording: true };
+        return { ok: false, error: `Already recording match "${recorder.matchId}" — stop that first` };
+    }
+    if (!NATIVE_CAPTURE_SUPPORTED) return { ok: false, error: `Native capture (gdigrab/dshow) requires Windows — this process is running on ${process.platform}` };
+    if (!audioDeviceName) return { ok: false, error: 'No audio device selected — pick one under Live Studio first' };
+    const resKey = RESOLUTIONS[resolution] ? resolution : '1080p';
+    const fpsNum = [30, 60].includes(Number(fps)) ? Number(fps) : 30;
+    const { width, height } = RESOLUTIONS[resKey];
+    const bitrateKbps = RECORDING_BITRATE_KBPS[resKey];
+
+    const dir = recorderDir(matchId);
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { return { ok: false, error: `Could not create recording folder: ${e.message}` }; }
+
+    recorder.matchId = matchId;
+    recorder.audioDeviceName = audioDeviceName;
+    recorder.desiredRecording = true;
+    recorder.settings = { resolution: resKey, width, height, fps: fpsNum, bitrateKbps };
+    const fileName = recorder.segments.length === 0 ? 'master.mp4' : `master_part${recorder.segments.length + 1}.mp4`;
+    const outFile = path.join(dir, fileName);
+    recorder.segmentPath = outFile;
+    recorder.state = 'starting';
+    recorder.startedAt = Date.now();
+    recorder.lastError = null;
+
+    const windowTitle = windowTitleFor(matchId);
+    const args = buildRecorderArgs({ windowTitle, audioDeviceName, width, height, fps: fpsNum, bitrateKbps, outFile });
+    const proc = spawn(FFMPEG_PATH, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+    recorder.proc = proc;
+    recorder.state = 'recording';
+    recorder.segments.push({ path: outFile, startedAt: recorder.startedAt });
+    proc.stdin.on('error', () => {}); // stdin is only ever used for the graceful 'q' stop (see gracefulStop)
+
+    let stderrBuf = '';
+    proc.stderr.on('data', (chunk) => {
+        stderrBuf += chunk.toString();
+        let idx;
+        while ((idx = stderrBuf.indexOf('\n')) >= 0) {
+            const line = stderrBuf.slice(0, idx);
+            stderrBuf = stderrBuf.slice(idx + 1);
+            if (/error|failed|invalid/i.test(line) || WINDOW_NOT_FOUND_PATTERN.test(line)) recorder.lastError = line.trim();
+        }
+    });
+
+    proc.on('exit', (code, signal) => {
+        // A stale/superseded process's own exit must never clobber a
+        // NEWER recording that's since taken over recorder.proc (e.g.
+        // this exact process was stopped by /recording-start switching
+        // to a different match while it was still shutting down) — only
+        // the process CURRENTLY tracked gets to mutate shared state.
+        if (recorder.proc !== proc) return;
+        const wasDesired = recorder.desiredRecording;
+        console.log(`[stream-engine] recorder ffmpeg exited (code=${code}, signal=${signal}); desiredRecording=${wasDesired}`);
+        recorder.proc = null;
+        if (!wasDesired) { recorder.state = 'idle'; return; }
+
+        // Unexpected exit while the operator still wants to be
+        // recording — never silently stop capturing the match. Start a
+        // NEW segment file (fragmented MP4 can't simply be appended to
+        // after the process that owns it exits) rather than giving up;
+        // every segment individually stays under RECORDING_ROOT and
+        // stays playable on its own.
+        recorder.state = 'crashed';
+        recorder.lastError = recorder.lastError || `recorder ffmpeg exited unexpectedly (code=${code}, signal=${signal})`;
+        const now = Date.now();
+        recorder.restarts = recorder.restarts.filter((t) => now - t < RESTART_WINDOW_MS);
+        if (recorder.restarts.length >= MAX_AUTO_RESTARTS) {
+            console.log('[stream-engine] recorder: max auto-restarts hit — local recording stopped, operator must press Start Recording again');
+            recorder.desiredRecording = false;
+            return;
+        }
+        recorder.restarts.push(now);
+        console.log(`[stream-engine] recorder: auto-restarting into a new segment (attempt ${recorder.restarts.length}/${MAX_AUTO_RESTARTS})…`);
+        setTimeout(() => {
+            if (recorder.desiredRecording) startRecorder(recorder.matchId, { resolution: recorder.settings.resolution, fps: recorder.settings.fps, audioDeviceName: recorder.audioDeviceName });
+        }, 1000);
+    });
+
+    proc.on('error', (err) => {
+        console.log('[stream-engine] recorder ffmpeg spawn error:', err.message);
+        recorder.lastError = err.message;
+        recorder.state = 'crashed';
+    });
+
+    return { ok: true };
+}
+
+function stopRecorder() {
+    recorder.desiredRecording = false;
+    if (!recorder.proc) { recorder.state = 'idle'; return { ok: true, alreadyIdle: true }; }
+    recorder.state = 'stopping';
+    gracefulStop(recorder.proc);
+    return { ok: true };
+}
+
+function resetRecorderForNewMatch() {
+    recorder.segments = [];
+    recorder.restarts = [];
+}
+
+// Best-effort free disk space for the recordings volume — Node 18.15+
+// has fs.statfs; older Node just reports null rather than failing here.
+function diskFreeBytes(dir) {
+    try {
+        if (typeof fs.statfsSync !== 'function') return null;
+        const s = fs.statfsSync(dir);
+        return s.bavail * s.bsize;
+    } catch (e) { return null; }
+}
+
+// ================================================================
+// 🎬 CLIP ENGINE — forwards finished clips to the EXISTING
 // /api/clips/ingest on server.js — same endpoint ClipperHelper.exe
-// always posted to, same Cloudflare/Drive/Mongo pipeline, untouched).
+// always posted to, same Cloudflare/Drive/Mongo pipeline, untouched.
 // ================================================================
 // 🎯 EXACT CLIP TIMING — non-negotiable. T0 is the click/event moment
 // (the panel captures it and sends it as `timestamp`, already frozen
 // against the finalized ball's own metadata — see triggerClip() in
 // cricket-panel.html). The clip is T0-15s through T0+5s (~20s total).
 // The post-roll 5 seconds are an ACTUAL WAIT before cutting — the
-// buffer simply doesn't have footage from the future yet, so cutting
-// immediately (the previous behavior) silently produced a clip missing
-// its whole post-roll. T0 itself is captured once and never
-// recalculated after the wait.
+// master recording simply doesn't have footage from the future yet.
+// T0 itself is captured once and never recalculated after the wait.
 const CLIP_PRE_ROLL_SEC = 15;
 const CLIP_POST_ROLL_SEC = 5;
 // Caps the CLIP's width only (never upscales) — the live/master
@@ -1254,7 +1247,7 @@ const CLIP_POST_ROLL_SEC = 5;
 // long time to upload" on a typical home connection.
 const CLIP_MAX_WIDTH = 1280;
 
-const recordingMatches = {}; // matchId -> { mainServerUrl, tournamentId } — set by /recording-start
+const recordingMatches = {}; // matchId -> { mainServerUrl, tournamentId } — set by /recording-start, used to resolve where a clip forwards to
 const clipWorker = {
     state: 'idle', // idle | cutting | uploading
     lastError: null,
@@ -1262,11 +1255,10 @@ const clipWorker = {
 };
 // ================================================================
 // 🎬 PERSISTENT CLIP JOBS — one per accepted FOUR/SIX/WICKET event,
-// never silently canceled once created (see requestClip below). Kept
-// in memory for live status (the panel polls GET /clip-jobs/:clipId)
+// never silently canceled once created (see acceptClipEvent below).
+// Kept in memory for live status (the panel polls GET /clip-jobs/:clipId)
 // AND persisted to disk so a restart doesn't erase the operator's view
-// of what was in flight — though see the CUTTING-recovery note below
-// for the one thing a restart genuinely cannot get back.
+// of what was in flight.
 //
 // Lifecycle: WAITING_FOR_POSTROLL -> CUTTING -> LOCAL_SAVED ->
 //            FORWARDING -> COMPLETE
@@ -1294,22 +1286,18 @@ function updateJob(clipId, patch) {
     persistClipJobs();
 }
 function buildClipId(matchId, eventType, timestamp) {
-    return `${localBuffer.safeMatchId(matchId)}_${String(eventType || 'CLIP').toUpperCase()}_${timestamp}`;
+    return `${safeMatchId(matchId)}_${String(eventType || 'CLIP').toUpperCase()}_${timestamp}`;
 }
 loadClipJobs();
 // 🩹 RESTART RECOVERY: a job still sitting in WAITING_FOR_POSTROLL or
-// CUTTING when this process last exited had its source footage only in
-// RAM (localBuffer's chunks are never persisted to survive a restart —
-// only the finished, already-cut .mp4 is durable). That specific 20s
-// window is genuinely unrecoverable after a crash/restart — but the
-// job is marked LOUDLY as failed instead of vanishing silently, and
-// every OTHER job (already LOCAL_SAVED/FORWARDING/RETRY_PENDING, whose
-// .mp4 already exists on disk) is untouched and keeps being retried
-// normally by the logic further down.
+// CUTTING when this process last exited is marked LOUDLY as failed
+// instead of silently vanishing — every OTHER job (already
+// LOCAL_SAVED/FORWARDING/RETRY_PENDING, whose .mp4 already exists on
+// disk) is untouched and keeps being retried normally.
 for (const job of clipJobs.values()) {
     if (job.status === 'WAITING_FOR_POSTROLL' || job.status === 'CUTTING') {
         job.status = 'FAILED_PERMANENT';
-        job.error = 'Stream Engine restarted before this clip could be cut — its source footage only ever existed in memory and could not survive the restart.';
+        job.error = 'Stream Engine restarted before this clip could be cut.';
     }
 }
 persistClipJobs();
@@ -1318,9 +1306,7 @@ persistClipJobs();
 // server.js right now (network blip, Render redeploying, etc.) is
 // NEVER discarded. It stays queued and is retried with backoff; the
 // local .mp4 is only deleted once server.js has confirmed it received
-// the bytes (mirrors finalizeClip()'s own "don't delete on upload
-// failure" rule on the server side — same philosophy, this end of the
-// pipe).
+// the bytes.
 const RETRY_QUEUE_FILE = path.join(__dirname, 'retry-queue.local.json');
 let retryQueue = [];
 try { retryQueue = JSON.parse(fs.readFileSync(RETRY_QUEUE_FILE, 'utf8')); } catch (e) { retryQueue = []; }
@@ -1362,10 +1348,10 @@ function postFileToServer(mainServerUrl, matchId, eventType, timestamp, ballMeta
 
 // 🔎 POST-FORWARD POLLING — once server.js has ACK'd receipt of the
 // file (LOCAL_RECEIVED), R2 + Drive uploads continue there in the
-// background and can take a while (or fail and retry there too — see
-// the retry sweep in server.js). This is what lets the panel's live
-// status actually reach COMPLETE / show a real failure reason, instead
-// of the operator only ever seeing "forwarded" and nothing else.
+// background and can take a while (or fail and retry there too). This
+// is what lets the panel's live status actually reach COMPLETE / show a
+// real failure reason, instead of the operator only ever seeing
+// "forwarded" and nothing else.
 const RENDER_POLL_INTERVAL_MS = 3000;
 const RENDER_POLL_MAX_MS = 5 * 60 * 1000; // give up polling after 5 min — server.js's OWN retry sweep keeps going regardless; this just stops this process polling forever
 async function pollRenderStatus(job) {
@@ -1392,8 +1378,7 @@ async function pollRenderStatus(job) {
         if (data.status === 'COMPLETE') {
             // Render has confirmed BOTH R2 and Drive now have this clip —
             // only NOW is the operator's own local copy redundant. Never
-            // deleted any earlier than this (see the "never delete
-            // prematurely" note where this file was created).
+            // deleted any earlier than this.
             if (job.localPath) fs.unlink(job.localPath, (err) => { if (!err) console.log(`🧹 [CLIP] clipId=${job.clipId} — local copy removed (R2 + Drive both confirmed)`); });
             return;
         }
@@ -1421,10 +1406,6 @@ async function processRetryEntry(entry) {
         clipWorker.cloudflareConnected = true;
         retryQueue = retryQueue.filter((e) => e !== entry);
         persistRetryQueue();
-        // NOT deleted here — Render has only just acknowledged RECEIPT
-        // of the bytes, not that R2+Drive both confirmed storing them.
-        // pollRenderStatus() below is what deletes this file, and only
-        // once Render reports COMPLETE.
         console.log(`[stream-engine] Retry succeeded for queued clip: ${entry.matchId}/${entry.eventType}`);
         if (entry.clipId) {
             updateJob(entry.clipId, { status: 'FORWARDING' });
@@ -1447,22 +1428,14 @@ async function processRetryEntry(entry) {
 retryQueue.forEach((entry) => scheduleRetry(entry));
 
 // 🔒 CLIP SOURCE = LOCAL MASTER RECORDING, STRICTLY — non-negotiable.
-// A previous version of this function cut clips from localBuffer.js's
-// rolling WebM chunk buffer (independent MediaRecorder timeslice blobs,
-// byte-concatenated back together). That is exactly the "browser blob"
-// clip source this architecture must never use: it is fragile (a single
-// dropped/reordered chunk — see the old ingestChunk bug fixed above —
-// corrupts the whole reconstructed stream) and it does not match the
-// hard requirement that clips come STRICTLY from the local full-match
-// master.mp4 (see recorder/RECORDING_ROOT above). This now seeks
-// directly into the actual recorder segment file on disk — the exact
-// same bytes YouTube's audience and the local master both came from —
-// never localBuffer, never a re-stitched buffer, never any network
-// source.
+// Clips are cut by seeking directly into the actual recorder segment
+// file on disk — the exact same bytes YouTube's audience and the local
+// master both came from — never YouTube, never HLS, never a browser
+// blob/chunk, never R2/Drive.
 //
 // Finds which recorder segment (normally just one; more than one only
-// if the recorder itself crash-restarted mid-match — see startRecorder)
-// covers a given event time, by each segment's own startedAt window.
+// if the recorder itself crash-restarted mid-match) covers a given
+// event time, by each segment's own startedAt window.
 function findRecordingSegmentFor(eventTimestamp) {
     const segs = recorder.segments;
     for (let i = 0; i < segs.length; i++) {
@@ -1475,7 +1448,7 @@ function findRecordingSegmentFor(eventTimestamp) {
 }
 
 function clipsDirFor(matchId) {
-    const dir = path.join(CLIPS_ROOT, localBuffer.safeMatchId(matchId));
+    const dir = path.join(CLIPS_ROOT, safeMatchId(matchId));
     fs.mkdirSync(dir, { recursive: true });
     return dir;
 }
@@ -1496,8 +1469,8 @@ async function cutLocalClip({ clipId, matchId, eventTimestamp }) {
     // Deterministic, clipId-based filename (not Date.now()-based) — a
     // job re-run for the exact same event never leaves multiple .mp4s
     // behind, and this is the SAME name server.js's R2 key/Drive
-    // filename are derived from (see buildClipId there), so the whole
-    // pipeline refers to one clip by one identity end to end.
+    // filename are derived from, so the whole pipeline refers to one
+    // clip by one identity end to end.
     const outFile = path.join(clipsDirFor(matchId), `${clipId}.mp4`);
 
     console.log(`[CLIP RANGE] clipId=${clipId} source=${path.basename(seg.path)} start=T0-${CLIP_PRE_ROLL_SEC}s end=T0+${CLIP_POST_ROLL_SEC}s`);
@@ -1510,31 +1483,21 @@ async function cutLocalClip({ clipId, matchId, eventTimestamp }) {
 
 // Seeks directly into the local master.mp4 with -ss BEFORE -i (fast
 // input-side seek — reads/decodes only from the nearest preceding
-// keyframe onward, never the whole multi-hour recording, matching the
-// "do not re-encode the entire master for every clip" performance
-// requirement) and re-encodes only the ~20s window that's actually
-// needed. Because the master is recorded with a fixed 2s GOP (see
-// buildRecorderArgs), a clip's true start is at most ~2s later than
-// requested in the worst case — a normal, expected trade-off for fast
-// seeking into a live-recorded file, not a bug.
+// keyframe onward, never the whole multi-hour recording) and re-encodes
+// only the ~20s window that's actually needed. Because the master is
+// recorded with a fixed 2s GOP, a clip's true start is at most ~2s
+// later than requested in the worst case — a normal, expected trade-off
+// for fast seeking into a live-recorded file, not a bug.
 async function cutFromMasterFile({ masterFile, fromSec, durationSec, outFile }) {
     await new Promise((resolve, reject) => {
         const args = [
             '-hide_banner', '-loglevel', 'warning', '-y',
             '-ss', String(fromSec), '-i', masterFile, '-t', String(durationSec),
-            // What actually dominates "clip takes forever to upload" on a
-            // home connection is FILE SIZE, not local encode time —
-            // postFileToServer streams this file to server.js afterward,
-            // bottlenecked purely by upload bandwidth. Capping width to
-            // CLIP_MAX_WIDTH (only scales DOWN — 'min(iw,W)', never up) +
-            // an explicit CRF/CQ shrinks the file substantially while
-            // ALSO encoding faster (less data to compress).
             '-vf', `scale='min(iw,${CLIP_MAX_WIDTH})':-2`,
-            // GPU preferred here too (see buildRecorderArgs) — falls back
-            // to libx264 (CPU) only if NVENC genuinely isn't usable.
-            // NVENC doesn't take -crf; '-rc vbr -cq N' is its equivalent
-            // "quality, not fixed bitrate" mode (b:v 0 tells it not to
-            // also cap by bitrate).
+            // GPU preferred here too — falls back to libx264 (CPU) only
+            // if NVENC genuinely isn't usable. NVENC doesn't take -crf;
+            // '-rc vbr -cq N' is its equivalent "quality, not fixed
+            // bitrate" mode (b:v 0 tells it not to also cap by bitrate).
             ...(checkNvencRuntime()
                 ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-cq', '26', '-b:v', '0']
                 : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26']),
@@ -1552,11 +1515,8 @@ async function cutFromMasterFile({ masterFile, fromSec, durationSec, outFile }) 
 // ================================================================
 // 🎬 THE JOB, END TO END — runs once, ~CLIP_POST_ROLL_SEC after the
 // event, and is NEVER canceled/re-triggered by anything that happens
-// on the panel afterward (over ending, batsman/bowler change, popup
-// closing, a reconnect, another clip event — none of it touches this
-// job; it owns its own frozen matchId/eventType/timestamp/ballMeta).
-// A failure at ANY stage moves the job to RETRY_PENDING/
-// FAILED_PERMANENT — it never just disappears (see updateJob calls).
+// on the panel afterward. A failure at ANY stage moves the job to
+// RETRY_PENDING/FAILED_PERMANENT — it never just disappears.
 // ================================================================
 async function runClipJob(clipId) {
     const job = clipJobs.get(clipId);
@@ -1566,14 +1526,10 @@ async function runClipJob(clipId) {
     updateJob(clipId, { status: 'CUTTING' });
     clipWorker.state = 'cutting';
     console.log(`[CLIP WAIT] clipId=${clipId} post-roll wait complete — cutting now`);
-    const cutResult = await cutLocalClip({ clipId, matchId, eventType, eventTimestamp: timestamp, ballMeta }).catch((e) => ({ ok: false, error: e.message }));
+    const cutResult = await cutLocalClip({ clipId, matchId, eventTimestamp: timestamp }).catch((e) => ({ ok: false, error: e.message }));
     if (!cutResult.ok) {
         clipWorker.state = 'idle';
         clipWorker.lastError = cutResult.error;
-        // FFmpeg/buffer failure — the job is RETAINED (not discarded),
-        // exactly like an upload failure: it just has no local file to
-        // retry from since cutting itself never produced one. Reported
-        // loudly so the operator sees WHY, not just "clip failed".
         updateJob(clipId, { status: 'FAILED_PERMANENT', error: cutResult.error });
         console.log(`[CLIP ERROR] clipId=${clipId} cutting failed: ${cutResult.error}`);
         return;
@@ -1587,20 +1543,10 @@ async function runClipJob(clipId) {
 
     if (forwardResult.ok) {
         clipWorker.cloudflareConnected = true;
-        // The file is NOT deleted here — server.js only deletes its OWN
-        // Render-disk copy once R2 AND Drive both confirm; deleting our
-        // local one immediately on a bare "forwarded" ack would violate
-        // "never delete the local clip prematurely" the moment server.js
-        // still needed a retry. It's cleaned up by the local retention
-        // sweep once server.js reports COMPLETE (see pollRenderStatus /
-        // the sweep further down).
         updateJob(clipId, { status: 'RETRY_PENDING' }); // becomes COMPLETE once polling confirms both uploads
         pollRenderStatus(job);
         return;
     }
-    // Render unreachable right now — the clip is NOT deleted. Queue it
-    // for retry with backoff instead (restart-safe: retryQueue is
-    // persisted to retry-queue.local.json and resumed on boot).
     clipWorker.cloudflareConnected = false;
     clipWorker.lastError = forwardResult.error;
     updateJob(clipId, { status: 'RETRY_PENDING', error: forwardResult.error });
@@ -1612,16 +1558,6 @@ async function runClipJob(clipId) {
 
 // 🔒 DUPLICATE EVENT/CLIP PREVENTION — clipId IS the dedupe key (it's
 // deterministic from matchId+eventType+timestamp — see buildClipId).
-// Two requests for the exact same event arriving back-to-back (a
-// double click, a client-side retry racing the original) — even
-// genuinely concurrently — resolve to the SAME job, never a second
-// job/cut/upload.
-//
-// This is also THE acceptance point for "once accepted, never
-// canceled": the instant a job is created here it lives in `clipJobs`
-// independent of any socket/HTTP connection, page reload, or anything
-// else happening in the panel — runClipJob() above is scheduled via a
-// plain setTimeout keyed to T0, not to this request's lifetime.
 function acceptClipEvent({ matchId, eventType, timestamp, ballMeta, mainServerUrl, clipId }) {
     clipId = clipId || buildClipId(matchId, eventType, timestamp);
     console.log(`[CLIP EVENT] clipId=${clipId} eventType=${eventType} matchId=${matchId} T0=${timestamp}`);
@@ -1645,9 +1581,6 @@ function acceptClipEvent({ matchId, eventType, timestamp, ballMeta, mainServerUr
     clipJobs.set(clipId, job);
     persistClipJobs();
 
-    // T0 is captured ABOVE (timestamp, already frozen by the panel at
-    // click time) — this wait is post-roll only; T0 itself is never
-    // recalculated after it elapses.
     const waitMs = Math.max(0, (timestamp + CLIP_POST_ROLL_SEC * 1000) - Date.now());
     console.log(`[CLIP WAIT] clipId=${clipId} waiting ${waitMs}ms for post-roll`);
     setTimeout(() => runClipJob(clipId), waitMs);
@@ -1656,10 +1589,13 @@ function acceptClipEvent({ matchId, eventType, timestamp, ballMeta, mainServerUr
 }
 
 // ================================================================
-// HTTP API — localhost only. The panel's origin is whatever page it's
-// served from (Render), so CORS is opened for any origin but this
-// server only ever binds to 127.0.0.1 (see app.listen below) — it is
-// not reachable from outside the operator's own PC.
+// HTTP API — localhost only, control/monitoring plane. The panel's
+// origin is whatever page it's served from (Render), so CORS is opened
+// for any origin but this server only ever binds to 127.0.0.1 (see
+// app.listen below) — it is not reachable from outside the operator's
+// own PC. No video bytes ever cross this API in either direction
+// anymore — see /go-live, /recording-start, /clip below; there is no
+// /ingest route.
 // ================================================================
 const app = express();
 app.use((req, res, next) => {
@@ -1679,10 +1615,13 @@ app.get('/status', async (req, res) => {
     const network = streamUrl && isValidRtmpUrl(streamUrl) ? await checkNetwork(streamUrl) : { available: false, detail: 'No Stream URL set' };
     res.json({
         success: true,
+        platform: process.platform,
+        nativeCaptureSupported: NATIVE_CAPTURE_SUPPORTED,
         ffmpegAvailable: ffmpegAvailable(),
         ffmpegPath: FFMPEG_PATH,
         nvencAvailable: nvenc.available,
         nvencDetail: nvenc.detail,
+        gpuScaleAvailable: NATIVE_CAPTURE_SUPPORTED ? checkGpuScaleRuntime() : false,
         // Stream URL is not a secret (no credentials embedded in the
         // normal case) — safe to echo back in full, unlike the key.
         streamUrl: streamUrl || null,
@@ -1692,17 +1631,12 @@ app.get('/status', async (req, res) => {
         networkOk: network.available,
         networkDetail: network.detail,
         encoderState: engine.state,
-        // Part 3 — clip engine / local buffer readiness, for the panel's
-        // CLIP ENGINE status card.
-        recordingActive: localBuffer.activeSessionCount() > 0,
-        bufferSessions: localBuffer.activeSessionCount(),
-        bufferSessionsDetail: localBuffer.sessionsSummary(),
         clipWorkerState: clipWorker.state,
         cloudflareConnected: clipWorker.cloudflareConnected,
         clipWorkerLastError: clipWorker.lastError,
         retryQueueLength: retryQueue.length,
-        // Local full-match master recording — see the LOCAL FULL-MATCH
-        // MASTER RECORDING section above. Independent of streaming.
+        captureConfig,
+        // Local full-match master recording — independent of streaming.
         recorder: {
             state: recorder.state,
             matchId: recorder.matchId,
@@ -1720,31 +1654,83 @@ app.get('/status', async (req, res) => {
     });
 });
 
+// Native audio device list (dshow) — populates the panel's microphone
+// dropdown. Video device enumeration is intentionally NOT offered here:
+// the "camera" ffmpeg captures is the Live Output window (see
+// windowTitleFor), not a raw camera device — live-output.html still
+// picks the actual camera via the browser's own getUserMedia for its
+// on-screen preview/composite, unchanged.
+app.get('/audio-devices', (req, res) => {
+    const { devices, detail } = listAudioDevices();
+    res.json({ success: true, platform: process.platform, devices, detail });
+});
+
+app.get('/capture-config', (req, res) => res.json({ success: true, captureConfig }));
+app.post('/capture-config', (req, res) => {
+    const body = req.body || {};
+    for (const k of ['cropTop', 'cropBottom', 'cropLeft', 'cropRight']) {
+        if (Number.isFinite(Number(body[k])) && Number(body[k]) >= 0) captureConfig[k] = Number(body[k]);
+    }
+    saveCaptureConfig();
+    res.json({ success: true, captureConfig });
+});
+
+// 🖼️ CAPTURE PREVIEW — grabs exactly one frame from the target window
+// and returns it as a JPEG, so the operator can SEE the crop margin
+// (captureConfig) and confirm gdigrab is actually finding the Live
+// Output window BEFORE going live. This exists specifically because
+// exact OS title-bar/DPI pixel dimensions can't be verified without the
+// real machine — this endpoint lets the operator verify it themselves.
+app.get('/capture-preview', (req, res) => {
+    const matchId = safeMatchId(req.query.matchId);
+    if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
+    if (!NATIVE_CAPTURE_SUPPORTED) return res.status(400).json({ success: false, error: `Native capture requires Windows — this process is running on ${process.platform}` });
+    const windowTitle = windowTitleFor(matchId);
+    const useGpuScale = false; // the preview is a single throwaway frame — always CPU-simple, no need to exercise the GPU path here
+    const { width, height } = RESOLUTIONS['720p'];
+    const args = [
+        '-hide_banner', '-loglevel', 'error',
+        '-f', 'gdigrab', '-framerate', '5', '-i', `title=${windowTitle}`,
+        '-frames:v', '1',
+        '-vf', cropScaleFilter(width, height, useGpuScale),
+        '-f', 'image2', '-vcodec', 'mjpeg',
+        'pipe:1',
+    ];
+    const proc = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const chunks = [];
+    proc.stdout.on('data', (c) => chunks.push(c));
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += d; });
+    proc.on('exit', (code) => {
+        if (code === 0 && chunks.length) {
+            res.set('Content-Type', 'image/jpeg');
+            res.send(Buffer.concat(chunks));
+        } else {
+            res.status(500).json({ success: false, error: `Could not capture window "${windowTitle}" — is the Live Output window open? ffmpeg: ${stderr.slice(-400) || 'no output'}` });
+        }
+    });
+    proc.on('error', (err) => res.status(500).json({ success: false, error: err.message }));
+});
+
 // ----------------------------------------------------------------
-// 🎬 ClipperHelper.exe-COMPATIBLE ENDPOINTS (Part 3)
+// 🎬 ClipperHelper.exe-COMPATIBLE ENDPOINTS
 //
 // cricket-panel.html's recordBall()/triggerWicketClip() code was built
 // against ClipperHelper.exe's contract: /recording-start, /recording-
-// stop, /clip. That JS is UNCHANGED (see Part 3 report) — only the URL
-// it's pointed at changed, from ClipperHelper.exe (vMix-dependent) to
-// here. Implementing the same contract is what let the existing
-// clipping rules survive untouched.
+// stop, /clip. That JS is unchanged in shape — only the URL it's
+// pointed at, and the recording-start payload's audioDeviceName, changed.
 // ----------------------------------------------------------------
 app.post('/recording-start', (req, res) => {
-    const matchId = localBuffer.safeMatchId(req.body && req.body.matchId);
+    const matchId = safeMatchId(req.body && req.body.matchId);
     if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
     const mainServerUrl = (req.body && req.body.mainServerUrl) || null;
     const tournamentId = (req.body && req.body.tournamentId) || null;
     const resolution = (req.body && req.body.recordingResolution) || '1080p';
     const fps = (req.body && req.body.recordingFps) || 30;
+    const audioDeviceName = (req.body && req.body.audioDeviceName) || null;
 
-    // attachRecording (not startSession) — reuses any buffer already
-    // capturing this match's footage (e.g. streaming was already live
-    // before Recording was clicked), preserving its real header/chunks
-    // instead of replacing it with an empty one. See localBuffer.js.
-    localBuffer.attachRecording(matchId, { tournamentId, mainServerUrl });
     recordingMatches[matchId] = { mainServerUrl, tournamentId };
-    console.log(`🔴 [clip engine] Local buffer recording started for match ${matchId}`);
+    console.log(`🔴 [clip engine] Recording session registered for match ${matchId}`);
 
     // A previous match's recorder left running (operator forgot to press
     // Stop, or a previous Stream Engine session never got a clean
@@ -1759,33 +1745,19 @@ app.post('/recording-start', (req, res) => {
         stopRecorder();
     }
     if (recorder.matchId !== matchId) resetRecorderForNewMatch();
-    const recResult = startRecorder(matchId, { resolution, fps });
+    const recResult = startRecorder(matchId, { resolution, fps, audioDeviceName });
     if (!recResult.ok) {
         console.log(`⚠️  [master recording] could not start local master recording for ${matchId}: ${recResult.error}`);
     }
 
-    // No vMix here — "vmixControlled" from the old ClipperHelper contract
-    // doesn't apply; kept as false for any old UI text checking it.
     res.json({ success: true, vmixControlled: false, masterRecording: recResult.ok ? { ok: true, path: recorder.segmentPath } : { ok: false, error: recResult.error } });
 });
 
 app.post('/recording-stop', (req, res) => {
-    const matchId = localBuffer.safeMatchId(req.body && req.body.matchId);
-    const session = matchId ? localBuffer.stopSession(matchId) : null;
-    // Keep the buffer on disk for a short grace period in case a clip
-    // request for the last few seconds of the match is still in flight
-    // (mirrors Part 1's RECORDING_CLEANUP_DELAY_MS reasoning), then
-    // delete it — this runs on the operator's own laptop disk, so it
-    // must not accumulate match after match. This ONLY deletes the
-    // short-lived clip buffer (buffer/matches/<id>/) — the persistent
-    // master.mp4 recording lives entirely outside that folder (see
-    // RECORDING_ROOT) and is never touched by this cleanup.
-    if (matchId) {
-        setTimeout(() => localBuffer.deleteMatchMedia(matchId), 90 * 1000);
-        delete recordingMatches[matchId];
-    }
+    const matchId = safeMatchId(req.body && req.body.matchId);
+    if (matchId) delete recordingMatches[matchId];
     if (matchId && recorder.matchId === matchId) stopRecorder();
-    res.json({ success: true, vmixControlled: false, hadSession: !!session });
+    res.json({ success: true, vmixControlled: false });
 });
 
 // Serves the operator the folder path (not the file contents — these
@@ -1793,7 +1765,7 @@ app.post('/recording-stop', (req, res) => {
 // Recording Folder" without this engine needing a native file-manager
 // integration.
 app.get('/recording-info', (req, res) => {
-    const matchId = localBuffer.safeMatchId(req.query.matchId);
+    const matchId = safeMatchId(req.query.matchId);
     const dir = matchId ? recorderDir(matchId) : RECORDING_ROOT;
     let sizeBytes = null;
     try {
@@ -1810,41 +1782,33 @@ app.get('/recording-info', (req, res) => {
     });
 });
 
-// Legacy ClipperHelper contract also had /set-folder (it did its OWN
-// Drive upload locally, so it needed the folder+token). This engine
-// does NOT upload to Drive/R2 itself — it forwards the finished clip to
+// Legacy ClipperHelper contract also had /set-folder. This engine does
+// NOT upload to Drive/R2 itself — it forwards the finished clip to
 // server.js's existing /api/clips/ingest, which already knows the
-// match's Drive folder (via /api/set-drive-folder[-oauth], unchanged).
-// Kept as a harmless no-op so nothing breaks if older UI still calls it.
+// match's Drive folder. Kept as a harmless no-op so nothing breaks if
+// older UI still calls it.
 app.post('/set-folder', (req, res) => {
     res.json({ success: true, note: 'no-op — this engine forwards clips to server.js, which handles Drive/R2 folder routing itself' });
 });
 
 // The actual clip trigger — same payload shape recordBall()/
 // triggerWicketClip() already send: {eventType, timestamp, matchId,
-// ballMeta}, plus an optional clipId (the panel generates one at T0 so
-// its own UI can start polling /clip-jobs/:clipId immediately, without
-// waiting for this response).
-//
-// Responds the instant the event is ACCEPTED (job created, T0 frozen)
-// — never waits for the post-roll or the cut/upload, which is what
-// makes the exact 5-second wait possible without hanging this request.
+// ballMeta}, plus an optional clipId. Responds the instant the event is
+// ACCEPTED (job created, T0 frozen) — never waits for the post-roll or
+// the cut/upload.
 app.post('/clip', (req, res) => {
     const { eventType, timestamp, matchId, ballMeta, clipId } = req.body || {};
     if (!matchId || !eventType || !timestamp) {
         return res.status(400).json({ success: false, error: 'matchId, eventType and timestamp are required' });
     }
-    const result = acceptClipEvent({ matchId: localBuffer.safeMatchId(matchId), eventType, timestamp, ballMeta, clipId });
+    const result = acceptClipEvent({ matchId: safeMatchId(matchId), eventType, timestamp, ballMeta, clipId });
     if (!result.success) return res.status(409).json(result);
     res.json(result);
 });
 
 // 🎬 LIVE CLIP STATUS — polled by the panel to render the full per-clip
 // progress UI (T0 captured -> waiting -> cutting -> local saved ->
-// uploading -> R2 -> Drive -> complete), and by nothing else — this
-// engine is the operator's single source of truth for "what's
-// happening with my clips" (it also polls server.js in the background
-// for the eventual R2/Drive outcome — see pollRenderStatus).
+// uploading -> R2 -> Drive -> complete).
 app.get('/clip-jobs', (req, res) => {
     const jobs = [...clipJobs.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, 50);
     res.json({ success: true, jobs });
@@ -1878,21 +1842,17 @@ app.post('/set-youtube-config', (req, res) => {
     }
 
     saveConfig({ ...loadConfig(), streamUrl, streamKey });
-    // Never echo the real key back — only a masked confirmation. The
-    // URL isn't a secret, so it's echoed back in full for the panel to
-    // confirm what was saved.
     res.json({ success: true, streamUrl, streamKeyMasked: maskKey(streamKey) });
 });
 
 app.post('/go-live', (req, res) => {
-    const { resolution, fps, bitrateKbps, keyframeIntervalSec, qualityMode, autoResolutionFallback, matchId } = req.body || {};
+    const { resolution, fps, bitrateKbps, keyframeIntervalSec, qualityMode, autoResolutionFallback, matchId, audioDeviceName } = req.body || {};
     engine.opToken++; // a fresh operator-initiated Go Live always wins over any stale in-flight ABR restart
 
-    // Needed to find this match's header chunk for priming every
-    // (re)start of the encoder — see startEncoder. Kept for the whole
-    // session (reconnects/ABR restarts reuse it), only reset here on a
-    // fresh operator-initiated Go Live.
-    if (matchId) engine.matchId = localBuffer.safeMatchId(matchId);
+    if (!matchId) return res.status(400).json({ success: false, error: 'matchId required — select a match in the panel first' });
+    if (!audioDeviceName) return res.status(400).json({ success: false, error: 'audioDeviceName required — pick a microphone/capture-card audio device under Live Studio first' });
+    engine.matchId = safeMatchId(matchId);
+    engine.audioDeviceName = audioDeviceName;
 
     const resKey = RESOLUTIONS[resolution] ? resolution : '1080p';
     const fpsNum = [30, 60].includes(Number(fps)) ? Number(fps) : 30;
@@ -1915,56 +1875,6 @@ app.post('/go-live', (req, res) => {
     const result = startEncoder({ resolution: resKey, fps: fpsNum, bitrateKbps: startBitrateKbps, keyframeIntervalSec });
     if (!result.ok) return res.status(400).json({ success: false, error: result.error });
     res.json({ success: true, state: engine.state });
-});
-
-// The SAME incoming bytes feed BOTH consumers below — one MediaRecorder
-// capture in the browser, never two, never a second encoder process
-// spun up to duplicate the work. matchId/index also lazily buffer this
-// into the local buffer (Part 3's clip source) via ensureSession — done
-// unconditionally (not gated behind /recording-start having been called
-// yet) so the buffer's very first chunk (the WebM header every later
-// chunk needs) is never missed, even if Live Studio streaming starts
-// the shared capture before "Start Recording" is clicked. It stays
-// bounded to RETENTION_SEC either way, and actually cutting/forwarding
-// a clip still requires /recording-start's mainServerUrl (see /clip) —
-// this only ensures the footage is THERE if that's requested later.
-// Whether or not any of this is true, if the NVENC encoder is live it
-// still gets the same bytes for YouTube (Part 2) — the two are
-// independent and either can run without the other.
-app.post('/ingest', express.raw({ type: '*/*', limit: '10mb' }), (req, res) => {
-    const matchId = localBuffer.safeMatchId(req.query.matchId);
-    const index = parseInt(req.query.index, 10);
-
-    if (matchId && Number.isFinite(index)) {
-        localBuffer.ensureSession(matchId);
-        localBuffer.addChunk(matchId, index, req.body);
-        // Defense-in-depth for the live encoder's header-priming (see
-        // startEncoder): /go-live is supposed to send matchId itself,
-        // but a stale/uncached panel that doesn't would otherwise leave
-        // engine.matchId null forever and silently reproduce the exact
-        // "Invalid data found when processing input" reconnect loop this
-        // was built to fix. Tracking whatever matchId is actually
-        // flowing through /ingest right now as a fallback means priming
-        // still works even then.
-        lastIngestMatchId = matchId;
-    }
-
-    // Third independent fan-out of the SAME bytes (one capture, three
-    // consumers — see the LOCAL FULL-MATCH MASTER RECORDING section
-    // above): the continuous local master.mp4. Never gated on the live
-    // push's state — a dead/reconnecting YouTube stream must not affect
-    // this at all.
-    recorderIngestChunk(req.body);
-
-    const encResult = ingestChunk(req.body);
-    // Only treat this as an error if the encoder was SUPPOSED to be live
-    // and genuinely isn't — if the operator is just recording for clips
-    // (no YouTube stream running), 'Encoder not live' is expected, not
-    // a failure worth surfacing to the panel as a dropped chunk.
-    if (!encResult.ok && engine.desiredLive) {
-        return res.status(409).json({ success: false, error: encResult.error });
-    }
-    res.json({ success: true });
 });
 
 app.post('/stop', (req, res) => {
@@ -1995,20 +1905,6 @@ app.post('/adaptive-config', (req, res) => {
     res.json({ success: true, abr });
 });
 
-// Best-effort GPU utilization via nvidia-smi — purely informational for
-// the Stream Health panel. Not required for streaming to work; if
-// nvidia-smi isn't found (or this isn't an NVIDIA machine) this just
-// comes back null and the panel shows "—" instead of a number.
-function readGpuUtilization() {
-    try {
-        const res = spawnSync('nvidia-smi', ['--query-gpu=utilization.gpu,utilization.memory', '--format=csv,noheader,nounits'], { encoding: 'utf8', timeout: 2000 });
-        if (res.error || !res.stdout) return null;
-        const [gpuPct, memPct] = res.stdout.trim().split(',').map((s) => parseInt(s.trim(), 10));
-        if (Number.isNaN(gpuPct)) return null;
-        return { gpuPercent: gpuPct, gpuMemPercent: memPct };
-    } catch (e) { return null; }
-}
-
 app.get('/health', (req, res) => {
     res.json({
         success: true,
@@ -2027,13 +1923,11 @@ app.get('/health', (req, res) => {
             droppedFramesPct: (engine.metrics.droppedFrames != null && engine.metrics.totalFrames)
                 ? Math.round((engine.metrics.droppedFrames / engine.metrics.totalFrames) * 1000) / 10
                 : null,
-            // Real bytes currently buffered in the pipe to ffmpeg's stdin
-            // (see ingestChunk) — the actual, measured backpressure signal
-            // driving ABR, not a derived guess. Rising steadily = NVENC/
-            // the RTMPS write can't keep up; near-zero most of the time is
-            // healthy even if it occasionally blips up.
-            encoderStdinBufferedBytes: engine.proc && engine.proc.stdin ? (engine.proc.stdin.writableLength || 0) : null,
-            encoderBackpressured,
+        },
+        encoder: {
+            hardware: 'NVENC',
+            hardwareAccelerated: checkNvencRuntime(),
+            gpuScaleAccelerated: checkGpuScaleRuntime(),
         },
         gpu: readGpuUtilization(),
         cpuPercent: readCpuUtilization(),
@@ -2043,7 +1937,6 @@ app.get('/health', (req, res) => {
         lastError: engine.lastError,
         restartCount: engine.restarts.length,
         clipEngine: {
-            recordingActive: localBuffer.activeSessionCount() > 0,
             clipWorkerState: clipWorker.state,
             cloudflareConnected: clipWorker.cloudflareConnected,
             lastError: clipWorker.lastError,
@@ -2052,29 +1945,44 @@ app.get('/health', (req, res) => {
     });
 });
 
-// 📶 ABR control loop — see the ABR section above buildFfmpegArgs/startEncoder
+// 📶 ABR control loop — see the ABR section above buildLiveEncoderArgs
 // for the full mechanism. No-ops instantly whenever the encoder isn't live.
 const ABR_TICK_MS = 2000;
 setInterval(abrTick, ABR_TICK_MS);
 
-// 🛟 Orphaned match-buffer sweep — same reasoning as Part 1's
-// sweepOrphanedRecordings on server.js, scoped to this engine's local
-// buffer/ directory so a crashed process or a missed /recording-stop
-// can't leave footage sitting on the operator's laptop disk forever.
-const ORPHAN_BUFFER_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-setTimeout(() => localBuffer.sweepOrphaned(ORPHAN_BUFFER_MAX_AGE_MS), 60 * 1000);
-setInterval(() => localBuffer.sweepOrphaned(ORPHAN_BUFFER_MAX_AGE_MS), 60 * 60 * 1000);
-
-// 🛟 Safety-net clip-file sweep — see sweepOldClipFiles' own comment.
-// A generous 24h default: this only ever catches a clip whose normal
-// "delete once Render confirms COMPLETE" path (pollRenderStatus above)
-// never got the chance to run — never the everyday cleanup mechanism.
+// 🛟 Safety-net clip-file sweep — catches a clip whose normal "delete
+// once Render confirms COMPLETE" path (pollRenderStatus above) never
+// got the chance to run. A generous 24h default: never the everyday
+// cleanup mechanism, just a backstop against a truly abandoned file.
+function sweepOldClipFiles(maxAgeMs) {
+    fs.readdir(CLIPS_ROOT, (err, matchDirs) => {
+        if (err) return;
+        matchDirs.forEach((matchId) => {
+            const dir = path.join(CLIPS_ROOT, matchId);
+            fs.readdir(dir, (err2, files) => {
+                if (err2) return;
+                files.forEach((f) => {
+                    const filePath = path.join(dir, f);
+                    fs.stat(filePath, (statErr, stats) => {
+                        if (statErr || !stats.isFile()) return;
+                        if (Date.now() - stats.mtimeMs > maxAgeMs) {
+                            // Never sweep a file a live job still references.
+                            const stillTracked = [...clipJobs.values()].some((j) => j.localPath === filePath && j.status !== 'FAILED_PERMANENT');
+                            if (!stillTracked) fs.unlink(filePath, () => {});
+                        }
+                    });
+                });
+            });
+        });
+    });
+}
 const ORPHAN_CLIP_FILE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-setTimeout(() => localBuffer.sweepOldClipFiles(ORPHAN_CLIP_FILE_MAX_AGE_MS), 90 * 1000);
-setInterval(() => localBuffer.sweepOldClipFiles(ORPHAN_CLIP_FILE_MAX_AGE_MS), 60 * 60 * 1000);
+setTimeout(() => sweepOldClipFiles(ORPHAN_CLIP_FILE_MAX_AGE_MS), 90 * 1000);
+setInterval(() => sweepOldClipFiles(ORPHAN_CLIP_FILE_MAX_AGE_MS), 60 * 60 * 1000);
 
 const server = app.listen(PORT, '127.0.0.1', () => {
-    console.log(`🎥 AllSportsLive Stream Engine running at http://127.0.0.1:${PORT} (localhost only)`);
+    console.log(`🎥 AllSportsLive Stream Engine (native capture) running at http://127.0.0.1:${PORT} (localhost only)`);
+    console.log(`   Platform: ${process.platform}${NATIVE_CAPTURE_SUPPORTED ? '' : ' — ⚠️ native capture (gdigrab/dshow) needs Windows; this engine cannot capture on this OS'}`);
     console.log(`   ffmpeg: ${FFMPEG_PATH}${process.env.FFMPEG_PATH ? ' (from FFMPEG_PATH)' : ' (from PATH — set FFMPEG_PATH to point at an NVENC-capable build if this is not one)'}`);
     const nvenc = checkNvenc();
     console.log(`   NVENC: ${nvenc.available ? '✅ available' : '❌ NOT available — ' + nvenc.detail}`);
@@ -2089,19 +1997,19 @@ process.on('uncaughtException', (err) => {
 
 // ----------------------------------------------------------------
 // 🛑 GRACEFUL SHUTDOWN — never leave an orphaned ffmpeg process behind
-// (encoder OR a clip-cut in flight) when this engine is stopped/
-// restarted, e.g. by the operator, a crash-recovery script, or the OS.
+// (recorder OR live encoder OR a clip-cut in flight) when this engine is
+// stopped/restarted, e.g. by the operator, a crash-recovery script, or
+// the OS.
 // ----------------------------------------------------------------
 let shuttingDown = false;
 function gracefulShutdown(signal) {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`[stream-engine] ${signal} received — shutting down gracefully`);
-    engine.desiredLive = false; // don't let the exit handler try to auto-restart
-    if (engine.proc) {
-        try { engine.proc.stdin.end(); } catch (e) { /* already closed */ }
-        setTimeout(() => { try { engine.proc && engine.proc.kill('SIGKILL'); } catch (e) {} }, 3000);
-    }
+    engine.desiredLive = false;   // don't let the exit handler try to auto-restart
+    recorder.desiredRecording = false;
+    if (engine.proc) gracefulStop(engine.proc, 3000);
+    if (recorder.proc) gracefulStop(recorder.proc, 3000);
     server.close(() => {
         console.log('[stream-engine] HTTP server closed, exiting');
         process.exit(0);
