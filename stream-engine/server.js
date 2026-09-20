@@ -300,12 +300,20 @@ function ffmpegAvailable() {
 // instead of a browser permission prompt — the browser no longer needs
 // microphone access for the production audio pipeline at all.
 // ----------------------------------------------------------------
-let audioDeviceCache = null; // { devices, checkedAt }
+let audioDeviceCache = null; // { devices, checkedAt } — only ever set on a SUCCESSFUL (non-empty) listing, see below
 function listAudioDevices() {
     if (!NATIVE_CAPTURE_SUPPORTED) return { devices: [], detail: `Native audio device listing needs Windows (dshow) — this process is running on ${process.platform}` };
     if (audioDeviceCache && Date.now() - audioDeviceCache.checkedAt < 15000) return { devices: audioDeviceCache.devices, detail: null };
     try {
-        const res = spawnSync(FFMPEG_PATH, ['-hide_banner', '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'], { encoding: 'utf8', timeout: 8000 });
+        // 🩹 Confirmed on real hardware: a machine with several virtual
+        // audio devices installed (e.g. vMix's own virtual audio driver
+        // — "vMix Audio - Bus C/D/E/F/G", "16Ch", etc. alongside a real
+        // mic) can take noticeably longer than a bare machine to enumerate
+        // every DirectShow device. The previous 8s timeout could cut
+        // ffmpeg off mid-enumeration, silently returning zero devices
+        // even though real ones exist — 20s gives real-world device
+        // counts like this real headroom.
+        const res = spawnSync(FFMPEG_PATH, ['-hide_banner', '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'], { encoding: 'utf8', timeout: 20000 });
         const out = (res.stdout || '') + (res.stderr || '');
         const devices = [];
         let inAudioSection = false;
@@ -317,7 +325,14 @@ function listAudioDevices() {
                 if (m) devices.push(m[1]);
             }
         }
-        audioDeviceCache = { devices, checkedAt: Date.now() };
+        // Never cache an empty result — a timeout, a transient driver
+        // hiccup, or ffmpeg being killed mid-enumeration would otherwise
+        // "lock in" a false negative for 15s, so a real device is missed
+        // even if the operator immediately clicks Refresh again.
+        if (devices.length) audioDeviceCache = { devices, checkedAt: Date.now() };
+        if (!devices.length && res.error) {
+            return { devices: [], detail: `Device enumeration didn't finish in time (${res.error.code === 'ETIMEDOUT' ? 'timed out' : res.error.message}) — click Refresh Device List to try again` };
+        }
         return { devices, detail: devices.length ? null : 'ffmpeg ran but reported no DirectShow audio devices — check Windows sound settings' };
     } catch (e) {
         return { devices: [], detail: e.message };
