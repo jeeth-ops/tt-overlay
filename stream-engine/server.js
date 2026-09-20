@@ -1488,17 +1488,30 @@ async function cutLocalClip({ clipId, matchId, eventTimestamp }) {
 // recorded with a fixed 2s GOP, a clip's true start is at most ~2s
 // later than requested in the worst case — a normal, expected trade-off
 // for fast seeking into a live-recorded file, not a bug.
+//
+// 🔒 CONCURRENT-CLIP GPU SAFETY NET — clips are cut independently and in
+// PARALLEL (a clip never waits in a queue behind another clip — one
+// slow/stuck cut must never delay or block a different one). The
+// recorder and the live encoder also each hold their own NVENC session
+// the whole time they're running. Some GPUs (older GeForce cards
+// especially) cap how many concurrent NVENC sessions are allowed at
+// once — if two clips land at almost the same moment while
+// Recording+Live are both also running, that cap can be hit and the
+// GPU encode for one of the clips fails outright. Rather than let that
+// clip come back as a hard failure, this retries the SAME cut once on
+// the CPU (libx264) before giving up — slower for that one clip, but it
+// still gets made instead of being lost. Recording and the live stream
+// are never affected either way (they don't share this retry path).
 async function cutFromMasterFile({ masterFile, fromSec, durationSec, outFile }) {
-    await new Promise((resolve, reject) => {
+    const attempt = (useNvenc) => new Promise((resolve, reject) => {
         const args = [
             '-hide_banner', '-loglevel', 'warning', '-y',
             '-ss', String(fromSec), '-i', masterFile, '-t', String(durationSec),
             '-vf', `scale='min(iw,${CLIP_MAX_WIDTH})':-2`,
-            // GPU preferred here too — falls back to libx264 (CPU) only
-            // if NVENC genuinely isn't usable. NVENC doesn't take -crf;
-            // '-rc vbr -cq N' is its equivalent "quality, not fixed
-            // bitrate" mode (b:v 0 tells it not to also cap by bitrate).
-            ...(checkNvencRuntime()
+            // NVENC doesn't take -crf; '-rc vbr -cq N' is its equivalent
+            // "quality, not fixed bitrate" mode (b:v 0 tells it not to
+            // also cap by bitrate).
+            ...(useNvenc
                 ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-cq', '26', '-b:v', '0']
                 : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26']),
             '-c:a', 'aac', '-b:a', '128k',
@@ -1507,9 +1520,18 @@ async function cutFromMasterFile({ masterFile, fromSec, durationSec, outFile }) 
         const proc = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'ignore', 'pipe'] });
         let stderr = '';
         proc.stderr.on('data', (d) => { stderr += d; });
-        proc.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg clip cut exited ${code}: ${stderr.slice(-500)}`)));
+        proc.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg clip cut (${useNvenc ? 'NVENC' : 'CPU'}) exited ${code}: ${stderr.slice(-500)}`)));
         proc.on('error', reject);
     });
+
+    const preferNvenc = checkNvencRuntime();
+    try {
+        await attempt(preferNvenc);
+    } catch (e) {
+        if (!preferNvenc) throw e; // was already the CPU attempt — nothing left to fall back to
+        console.log(`[stream-engine] Clip cut failed on NVENC (likely a concurrent-session limit — another clip/the recorder/the live encoder is using the GPU right now), retrying on CPU: ${e.message}`);
+        await attempt(false);
+    }
 }
 
 // ================================================================
