@@ -218,24 +218,52 @@ function readCpuUtilization() {
 // ----------------------------------------------------------------
 // 🎬 ENCODER STATE MACHINE — single stream at a time, never duplicated.
 // idle -> starting -> live -> stopping -> idle
-//                   -> crashed -> (auto-restart) -> starting
+//                   -> reconnecting -> (backoff retry) -> starting   [network blip — see ABR section below]
+//                   -> crashed -> (bounded auto-restart) -> starting  [fatal/config error, not network]
 // ----------------------------------------------------------------
 const MAX_AUTO_RESTARTS = 3;
 const RESTART_WINDOW_MS = 5 * 60 * 1000;
+// Capped exponential backoff for NETWORK-flavored disconnects specifically
+// (see isFatalError below) — unlike MAX_AUTO_RESTARTS above, this never
+// gives up on its own: an operator's internet flapping for a while is
+// exactly the case Part 2 exists to survive, so retries continue for as
+// long as the operator wants to be live (only an explicit Stop ends it).
+const RECONNECT_BACKOFF_MS = [2000, 4000, 8000, 15000];
 
 const engine = {
-    state: 'idle',           // idle | starting | live | stopping | crashed
+    state: 'idle',           // idle | starting | live | reconnecting | stopping | crashed
     proc: null,              // the ffmpeg child process
+    matchId: null,           // set once at /go-live, used to find this match's header chunk for priming every (re)start — see startEncoder
+    priming: false,          // true while the header chunk is being piped into a freshly (re)started process — mirrors the recorder's own priming, see startRecorder
+    pendingChunks: [],
     desiredLive: false,      // operator's intent — drives whether a crash should auto-restart
     startedAt: null,
-    restarts: [],            // timestamps of recent auto-restarts, for the bounded-retry window
+    restarts: [],            // timestamps of recent fatal-error auto-restarts, for the bounded-retry window
     lastError: null,
-    settings: null,          // {resolution, fps, bitrateKbps}
-    metrics: { bitrateKbps: null, fps: null, droppedFrames: null, outTimeSec: null },
+    settings: null,          // {resolution, fps, bitrateKbps, keyframeIntervalSec} — CURRENT actual encode settings (may be stepped down from targetResolution by ABR)
+    targetResolution: null,  // the resolution the OPERATOR selected — never silently changed except by an enabled Automatic Resolution Fallback
+    qualityMode: 'adaptive', // 'manual' (exactly the selected resolution/bitrate, no automatic changes) | 'adaptive'
+    autoResolutionFallback: false,
+    rung: 'high',            // 'high' | 'medium' | 'low' | 'low-fps' — current position on the bitrate ladder for engine.settings.resolution
+    sessionLadder: null,     // per-resolution {high,medium,low} kbps for THIS session — scaled from abr.ladder if the operator supplied a custom bitrate at Go Live
+    adapting: false,         // true while an ABR-triggered hot-restart (stop+go-live) is in flight
+    opToken: 0,              // bumped by the operator-facing /go-live and /stop routes; an in-flight ABR restart checks this so an operator action always wins the race
+    lastRestartAt: 0,        // Date.now() of the last ABR hot-restart — rate-limits how often we thrash the encoder
+    reconnect: { attempts: 0, nextAttemptAt: null },
+    network: {
+        state: 'stable',       // stable | weak | critical | reconnecting
+        protectionActive: false,
+        protectionMessage: null,
+        uploadEstimateKbps: null, // DERIVED estimate from sustained clean throughput — see sampleNetworkHealth. Not a dedicated bandwidth probe.
+        weakSince: null,
+        criticalSince: null,
+        stableSince: null,
+    },
+    metrics: { bitrateKbps: null, fps: null, droppedFrames: null, totalFrames: null, outTimeSec: null },
 };
 
 function resetMetrics() {
-    engine.metrics = { bitrateKbps: null, fps: null, droppedFrames: null, outTimeSec: null };
+    engine.metrics = { bitrateKbps: null, fps: null, droppedFrames: null, totalFrames: null, outTimeSec: null };
 }
 
 // Parses ffmpeg's `-progress pipe:2`-style key=value lines (we route
@@ -250,6 +278,9 @@ function parseProgressLine(line) {
     } else if (key === 'fps') {
         const num = parseFloat(value);
         if (!Number.isNaN(num)) engine.metrics.fps = num;
+    } else if (key === 'frame') {
+        const num = parseInt(value, 10);
+        if (!Number.isNaN(num)) engine.metrics.totalFrames = num;
     } else if (key === 'drop_frames') {
         const num = parseInt(value, 10);
         if (!Number.isNaN(num)) engine.metrics.droppedFrames = num;
@@ -277,6 +308,235 @@ const DEFAULT_BITRATE_KBPS = {
     '720p':  { 30: 3500,  60: 5500 },
     '1080p': { 30: 6000,  60: 12000 }, // 1080p30 default kept close to the original ~10Mbps spec; adjustable
 };
+
+// ================================================================
+// 🎞️ LOCAL FULL-MATCH MASTER RECORDING — separate from both the live
+// YouTube push (Part 2) and the short rolling clip buffer (Part 3,
+// localBuffer.js). This is the actual "the whole match, saved on this
+// laptop as a real MP4" deliverable: continuously fed the SAME final
+// camera+overlay program bytes every other consumer gets (see /ingest),
+// muxed the entire time the operator has Recording running, completely
+// independent of the live stream's network/bitrate — a bad connection
+// degrades the LIVE STREAM only; this keeps recording at its own fixed
+// quality regardless. Lives under its own directory, well outside
+// localBuffer's per-match buffer/ folder (which IS deleted ~90s after
+// Recording stops) — this must never be touched by that cleanup.
+// ================================================================
+const RECORDING_ROOT = path.join(__dirname, 'StreamEngineData', 'Recordings');
+try { fs.mkdirSync(RECORDING_ROOT, { recursive: true }); } catch (e) { /* created lazily per-match anyway */ }
+// Deliberately independent of the live-stream ABR ladder (stream-engine's
+// adaptive bitrate section, further below) — this is a fixed local
+// recording quality, never adapted to network conditions.
+const RECORDING_BITRATE_KBPS = { '480p': 2500, '720p': 5000, '1080p': 8000 };
+
+function recorderDir(matchId) {
+    return path.join(RECORDING_ROOT, localBuffer.safeMatchId(matchId));
+}
+
+const recorder = {
+    state: 'idle',            // idle | starting | recording | stopping | crashed
+    proc: null,
+    matchId: null,
+    desiredRecording: false,
+    startedAt: null,          // when the CURRENT segment started (not the whole match, if it had to restart)
+    segmentIndex: 0,
+    segmentPath: null,
+    segments: [],             // [{path, startedAt}] — normally just one; more than one only if a crash forced a new file (see below)
+    settings: null,           // {resolution, width, height, fps, bitrateKbps}
+    restarts: [],
+    lastError: null,
+    priming: false,           // true while this segment's header chunk is being piped in — see startRecorder
+    pendingChunks: [],        // live chunks queued during priming so they land AFTER the header, never interleaved before it
+};
+
+function buildRecorderArgs({ width, height, fps, bitrateKbps, outFile }) {
+    return [
+        '-hide_banner', '-loglevel', 'warning',
+        '-i', 'pipe:0',
+        // Deliberately libx264 (CPU), not NVENC: this runs ALONGSIDE the
+        // live push's own NVENC session, and consumer GPUs commonly cap
+        // concurrent NVENC sessions at 1-3 — recording isn't
+        // latency-sensitive, so a CPU encode here never competes with
+        // the live stream's hardware encoder for that limited resource.
+        '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', `${bitrateKbps}k`,
+        '-vf', `scale=${width}:${height}`, '-r', String(fps),
+        // A short (2s) GOP — same convention as the live encoder above —
+        // is what actually makes the crash-safety below real: fragments
+        // close (and flush to disk) on every keyframe, so at most ~2s of
+        // footage is ever at risk if the process is killed. libx264's own
+        // default keyint (250 frames, ~8s at 30fps) would leave a much
+        // bigger unflushed/unplayable window mid-recording.
+        '-g', String(fps * 2), '-keyint_min', String(fps * 2),
+        '-c:a', 'aac', '-b:a', '192k', '-ar', '44100',
+        // Fragmented MP4: writes a valid, playable file incrementally as
+        // it records (a moof+mdat per GOP) instead of one index (moov)
+        // written only at a clean close — so a laptop crash, a killed
+        // process, or an abrupt Stream Engine stop leaves a real,
+        // playable MP4 up to the last flushed fragment, never a
+        // zero-byte or "moov atom not found" unplayable file.
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+        '-flush_packets', '1',
+        '-f', 'mp4',
+        outFile,
+    ];
+}
+
+function startRecorder(matchId, { resolution, fps } = {}) {
+    if (recorder.state === 'recording' || recorder.state === 'starting') {
+        if (recorder.matchId === matchId) return { ok: true, alreadyRecording: true };
+        return { ok: false, error: `Already recording match "${recorder.matchId}" — stop that first` };
+    }
+    const resKey = RESOLUTIONS[resolution] ? resolution : '1080p';
+    const fpsNum = [30, 60].includes(Number(fps)) ? Number(fps) : 30;
+    const { width, height } = RESOLUTIONS[resKey];
+    const bitrateKbps = RECORDING_BITRATE_KBPS[resKey];
+
+    const dir = recorderDir(matchId);
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { return { ok: false, error: `Could not create recording folder: ${e.message}` }; }
+
+    recorder.matchId = matchId;
+    recorder.desiredRecording = true;
+    recorder.settings = { resolution: resKey, width, height, fps: fpsNum, bitrateKbps };
+    recorder.segmentIndex += recorder.segments.length ? 1 : 0;
+    const fileName = recorder.segments.length === 0 ? 'master.mp4' : `master_part${recorder.segments.length + 1}.mp4`;
+    const outFile = path.join(dir, fileName);
+    recorder.segmentPath = outFile;
+    recorder.state = 'starting';
+    recorder.startedAt = Date.now();
+    recorder.lastError = null;
+
+    const args = buildRecorderArgs({ width, height, fps: fpsNum, bitrateKbps, outFile });
+    const proc = spawn(FFMPEG_PATH, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+    recorder.proc = proc;
+    recorder.state = 'recording';
+    recorder.segments.push({ path: outFile, startedAt: recorder.startedAt });
+    proc.stdin.on('error', () => {}); // see the same listener on the live encoder's proc.stdin (startEncoder, below) for why this is needed
+
+
+
+    // Prime this BRAND NEW ffmpeg process with the session's header
+    // chunk before any live /ingest bytes reach it — a fresh process
+    // reading from pipe:0 needs the EBML/Segment/Tracks header to
+    // decode anything at all; without this, a recording started after
+    // the capture already began (or restarted after a crash) would
+    // receive only bare Clusters and produce an empty/broken file. Live
+    // chunks arriving during this async write are queued, never
+    // interleaved before the header.
+    recorder.priming = true;
+    recorder.pendingChunks = [];
+    const headerFile = localBuffer.getHeaderChunkFile(matchId);
+    const flushPending = () => {
+        recorder.priming = false;
+        const pending = recorder.pendingChunks;
+        recorder.pendingChunks = [];
+        for (const buf of pending) {
+            try { if (proc.stdin.writable) proc.stdin.write(buf); } catch (e) { /* proc likely already gone */ }
+        }
+    };
+    if (headerFile) {
+        const hs = fs.createReadStream(headerFile);
+        hs.on('error', flushPending); // missing header is unusual but not fatal — just start from live chunks
+        hs.pipe(proc.stdin, { end: false });
+        hs.on('close', flushPending);
+    } else {
+        flushPending();
+    }
+
+    let stderrBuf = '';
+    proc.stderr.on('data', (chunk) => {
+        stderrBuf += chunk.toString();
+        let idx;
+        while ((idx = stderrBuf.indexOf('\n')) >= 0) {
+            const line = stderrBuf.slice(0, idx);
+            stderrBuf = stderrBuf.slice(idx + 1);
+            if (/error|failed|invalid/i.test(line)) recorder.lastError = line.trim();
+        }
+    });
+
+    proc.on('exit', (code, signal) => {
+        const wasDesired = recorder.desiredRecording;
+        console.log(`[stream-engine] recorder ffmpeg exited (code=${code}, signal=${signal}); desiredRecording=${wasDesired}`);
+        recorder.proc = null;
+        if (!wasDesired) { recorder.state = 'idle'; return; }
+
+        // Unexpected exit while the operator still wants to be
+        // recording — never silently stop capturing the match. Start a
+        // NEW segment file (fragmented MP4 can't simply be appended to
+        // after the process that owns it exits) rather than giving up;
+        // every segment individually stays under RECORDING_ROOT and
+        // stays playable on its own.
+        recorder.state = 'crashed';
+        recorder.lastError = recorder.lastError || `recorder ffmpeg exited unexpectedly (code=${code}, signal=${signal})`;
+        const now = Date.now();
+        recorder.restarts = recorder.restarts.filter((t) => now - t < RESTART_WINDOW_MS);
+        if (recorder.restarts.length >= MAX_AUTO_RESTARTS) {
+            console.log('[stream-engine] recorder: max auto-restarts hit — local recording stopped, operator must press Start Recording again');
+            recorder.desiredRecording = false;
+            return;
+        }
+        recorder.restarts.push(now);
+        console.log(`[stream-engine] recorder: auto-restarting into a new segment (attempt ${recorder.restarts.length}/${MAX_AUTO_RESTARTS})…`);
+        setTimeout(() => {
+            if (recorder.desiredRecording) startRecorder(recorder.matchId, { resolution: recorder.settings.resolution, fps: recorder.settings.fps });
+        }, 1000);
+    });
+
+    proc.on('error', (err) => {
+        console.log('[stream-engine] recorder ffmpeg spawn error:', err.message);
+        recorder.lastError = err.message;
+        recorder.state = 'crashed';
+    });
+
+    return { ok: true };
+}
+
+function stopRecorder() {
+    recorder.desiredRecording = false;
+    if (!recorder.proc) { recorder.state = 'idle'; return { ok: true, alreadyIdle: true }; }
+    recorder.state = 'stopping';
+    // End stdin (not SIGKILL) so ffmpeg flushes its last fragment and
+    // closes the MP4 cleanly — never chop off the last few seconds.
+    try { recorder.proc.stdin.end(); } catch (e) { /* already closed */ }
+    const proc = recorder.proc;
+    setTimeout(() => { if (recorder.proc === proc) { try { proc.kill('SIGKILL'); } catch (e) {} } }, 5000);
+    return { ok: true };
+}
+
+function resetRecorderForNewMatch() {
+    recorder.segments = [];
+    recorder.segmentIndex = 0;
+    recorder.restarts = [];
+}
+
+// Never drop frames from the master recording the way the live push
+// (deliberately) drops under backpressure — losing a moment from the
+// permanent match record is worse than a brief memory bump while a CPU
+// encode catches up. Node's stream internally buffers when write()
+// returns false; this just tracks how long that's been true so an
+// operator can see a real, sustained problem instead of one silently
+// growing forever.
+let recorderBackpressureSince = null;
+function recorderIngestChunk(buf) {
+    if (recorder.state !== 'recording' || !recorder.proc || !recorder.proc.stdin.writable) return;
+    if (recorder.priming) { recorder.pendingChunks.push(buf); return; } // hold until the header chunk (see startRecorder) has been written first
+    try {
+        const stillOk = recorder.proc.stdin.write(buf);
+        if (!stillOk && !recorderBackpressureSince) {
+            recorderBackpressureSince = Date.now();
+            recorder.proc.stdin.once('drain', () => { recorderBackpressureSince = null; });
+        }
+    } catch (e) { recorder.lastError = e.message; }
+}
+
+// Best-effort free disk space for the recordings volume — Node 18.15+
+// has fs.statfs; older Node just reports null rather than failing here.
+function diskFreeBytes(dir) {
+    try {
+        if (typeof fs.statfsSync !== 'function') return null;
+        const s = fs.statfsSync(dir);
+        return s.bavail * s.bsize;
+    } catch (e) { return null; }
+}
 
 function resolveEncodeSettings({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     const resKey = RESOLUTIONS[resolution] ? resolution : '1080p';
@@ -319,6 +579,273 @@ function buildFfmpegArgs({ width, height, fps, bitrateKbps, keyframeIntervalSec,
     ];
 }
 
+// ================================================================
+// 📶 ADAPTIVE BITRATE (ABR) — keeps the operator's SELECTED resolution
+// live through a fluctuating/unstable connection instead of disconnecting.
+// All numbers below are runtime-configurable (POST /adaptive-config)
+// specifically so a different streaming provider's own limits don't
+// require editing this file. See stream-engine/README.md for the
+// intended behavior this implements.
+//
+// Mechanism: ffmpeg's CLI doesn't expose changing NVENC's target bitrate
+// on a running process, so "adaptive bitrate" here means a fast, rate
+// limited hot-restart (stop this ffmpeg, immediately start a new one with
+// the new -b:v/resolution/fps) — the SAME technique the panel's manual
+// "Lower Quality Now" button uses. The browser capture (MediaRecorder →
+// /ingest) never stops or reopens the camera for this — see /ingest and
+// localBuffer.js — so it's a ~1-2s hiccup in the OUTPUT push, not a
+// dropped stream, and local recording/clips are entirely unaffected.
+// ================================================================
+const RESOLUTION_ORDER = ['1080p', '720p', '480p'];
+
+// kbps rungs per resolution. "High" doubles as DEFAULT_BITRATE_KBPS's
+// 30fps ceiling for that resolution; "Medium"/"Low" are the step-down
+// targets when the network can't sustain High.
+const ABR_LADDER_DEFAULTS = {
+    '1080p': { high: 5000, medium: 3500, low: 2200 },
+    '720p':  { high: 3000, medium: 2000, low: 1200 },
+    '480p':  { high: 1500, medium: 1000, low: 700 },
+};
+
+let abr = {
+    ladder: JSON.parse(JSON.stringify(ABR_LADDER_DEFAULTS)),
+    safetyFactor: 0.75,      // never target the full detected/sustained throughput — keep headroom for jitter (spec section 9)
+    emergencyFps: 15,        // last lever BEFORE resolution fallback — reduce fps at the floor bitrate for the current resolution
+    holdWeakSec: 10,         // mild congestion sustained this long -> step bitrate down one rung
+    holdCriticalSec: 45,     // severe congestion, already at the bitrate floor, sustained this long -> fps cut, then (if enabled) resolution fallback
+    holdStableUpSec: 45,     // clean signal sustained this long -> step bitrate/resolution back up, one rung at a time
+    minRestartIntervalMs: 8000, // rate-limits hot-restarts so a noisy connection can't thrash the encoder every tick
+};
+
+// A custom bitrate typed into the panel becomes this resolution's "High"
+// for the session — Medium/Low scale with it proportionally, so an
+// operator working against a provider with different limits than the
+// defaults above still gets sane step-down targets instead of the
+// hardcoded numbers.
+function buildSessionLadder(resKey, customBitrateKbps) {
+    const scale = Number(customBitrateKbps) > 0 ? Number(customBitrateKbps) / abr.ladder[resKey].high : 1;
+    const out = {};
+    for (const r of RESOLUTION_ORDER) {
+        out[r] = {
+            high: Math.max(300, Math.round(abr.ladder[r].high * scale)),
+            medium: Math.max(250, Math.round(abr.ladder[r].medium * scale)),
+            low: Math.max(200, Math.round(abr.ladder[r].low * scale)),
+        };
+    }
+    return out;
+}
+
+function stepResolutionDown(current) {
+    const idx = RESOLUTION_ORDER.indexOf(current);
+    if (idx === -1 || idx === RESOLUTION_ORDER.length - 1) return null;
+    return RESOLUTION_ORDER[idx + 1];
+}
+function stepResolutionUp(current, target) {
+    const idxCur = RESOLUTION_ORDER.indexOf(current);
+    const idxTarget = RESOLUTION_ORDER.indexOf(target);
+    if (idxCur <= idxTarget) return null; // already at or above the operator's selected tier
+    return RESOLUTION_ORDER[idxCur - 1];
+}
+
+function setProtection(active) {
+    const net = engine.network;
+    net.protectionActive = active;
+    if (!active) { net.protectionMessage = null; return; }
+    if (!engine.settings) return;
+    net.protectionMessage = engine.settings.resolution === engine.targetResolution
+        ? `${engine.targetResolution} selected — internet bandwidth too low — stream protection active (bitrate held at the floor for this resolution${!engine.autoResolutionFallback ? '; enable Automatic Resolution Fallback to drop resolution instead' : ''})`
+        : `${engine.targetResolution} selected, streaming at ${engine.settings.resolution} due to sustained low bandwidth — stream protection active`;
+}
+
+// Classifies current network health from signals we can actually observe
+// from a local ffmpeg subprocess: whether Node's write() into ffmpeg's
+// stdin is backpressured (ffmpeg isn't reading fast enough — it can't,
+// because its RTMP write to the network is itself blocked/slow, which is
+// the actual "network can't keep up" signal here), how far the achieved
+// output bitrate is below target, and how many frames ffmpeg itself had
+// to drop. No dedicated bandwidth probe exists — uploadEstimateKbps is a
+// DERIVED figure (see below), not a measured one.
+let lastDroppedFramesSample = null;
+let lastTotalFramesSample = null;
+let backpressureSince = null;
+function sampleNetworkHealth() {
+    const target = engine.settings ? engine.settings.bitrateKbps : null;
+    const actual = engine.metrics.bitrateKbps;
+    const ratio = (target && actual != null) ? actual / target : 1;
+
+    if (encoderBackpressured) {
+        if (!backpressureSince) backpressureSince = Date.now();
+    } else {
+        backpressureSince = null;
+    }
+    const backpressuredMs = backpressureSince ? Date.now() - backpressureSince : 0;
+
+    const dropped = engine.metrics.droppedFrames;
+    const totalFrames = engine.metrics.totalFrames;
+    let droppedDeltaPct = 0;
+    if (dropped != null && totalFrames != null && lastDroppedFramesSample != null && lastTotalFramesSample != null) {
+        const dDropped = Math.max(0, dropped - lastDroppedFramesSample);
+        const dTotal = Math.max(1, totalFrames - lastTotalFramesSample);
+        droppedDeltaPct = (dDropped / dTotal) * 100;
+    }
+    lastDroppedFramesSample = dropped;
+    lastTotalFramesSample = totalFrames;
+
+    let severity = 'stable';
+    if (backpressuredMs > 3000 || ratio < 0.4 || droppedDeltaPct > 5) severity = 'severe';
+    else if (backpressuredMs > 0 || ratio < 0.8 || droppedDeltaPct > 1) severity = 'mild';
+
+    // If we're cleanly sustaining `actual` kbps while only using
+    // `safetyFactor` of the real pipe (by design), the implied ceiling is
+    // actual/safetyFactor. Only meaningful once the signal is clean.
+    const uploadEstimateKbps = actual != null ? Math.round(actual / abr.safetyFactor) : null;
+
+    return { severity, ratio, droppedDeltaPct, backpressuredMs, uploadEstimateKbps };
+}
+
+// Hot-restarts the encoder at `next` = {rung, resolution, fps, bitrateKbps}.
+// Guarded by opToken so an operator Stop/Go-Live that happens while this
+// is in flight always wins — we never revive a stream the operator just
+// asked to stop.
+async function applyRestart(next) {
+    if (engine.adapting || engine.state !== 'live') return;
+    engine.adapting = true;
+    engine.lastRestartAt = Date.now();
+    const myToken = engine.opToken;
+    const keyframeIntervalSec = (engine.settings && engine.settings.keyframeIntervalSec) || 2;
+    console.log(`[stream-engine] ABR: adapting -> ${next.resolution} @ ${next.fps}fps, ${next.bitrateKbps}kbps (rung=${next.rung})`);
+
+    stopEncoder();
+    const waitStart = Date.now();
+    while (engine.state !== 'idle' && Date.now() - waitStart < 6500) {
+        await new Promise((r) => setTimeout(r, 150));
+    }
+
+    if (engine.opToken !== myToken) { engine.adapting = false; return; } // operator acted while we were restarting — defer to them
+
+    engine.desiredLive = true; // stopEncoder() cleared this — this restart is US, not the operator stopping
+    const result = startEncoder({ resolution: next.resolution, fps: next.fps, bitrateKbps: next.bitrateKbps, keyframeIntervalSec });
+    if (result.ok) {
+        engine.rung = next.rung;
+    } else {
+        console.log('[stream-engine] ABR restart failed:', result.error);
+    }
+    engine.adapting = false;
+}
+
+// The ABR control loop — ticks every ABR_TICK_MS while live. Priority
+// order (spec section 10): keep the connection alive > keep the selected
+// resolution > reduce bitrate > reduce fps (emergency) > resolution
+// fallback (only if enabled and genuinely necessary). Decreases react
+// fast (no hold needed once truly "severe"); increases require a
+// sustained clean signal (holdStableUpSec) so the stream doesn't
+// oscillate on every brief improvement.
+function abrTick() {
+    if (engine.state !== 'live' || engine.adapting || !engine.settings) return;
+
+    const now = Date.now();
+    const sample = sampleNetworkHealth();
+    const net = engine.network;
+
+    if (sample.severity === 'severe') {
+        net.criticalSince = net.criticalSince || now;
+        net.weakSince = null;
+        net.stableSince = null;
+    } else if (sample.severity === 'mild') {
+        net.weakSince = net.weakSince || now;
+        net.criticalSince = null;
+        net.stableSince = null;
+    } else {
+        net.stableSince = net.stableSince || now;
+        net.weakSince = null;
+        net.criticalSince = null;
+    }
+    net.state = sample.severity === 'severe' ? 'critical' : sample.severity;
+    net.uploadEstimateKbps = sample.uploadEstimateKbps;
+
+    if (engine.qualityMode === 'manual') return; // manual = exactly the operator's picked settings, never auto-adjusted
+
+    if (now - engine.lastRestartAt < abr.minRestartIntervalMs) return; // rate-limit hot-restarts
+
+    const ladder = (engine.sessionLadder || abr.ladder)[engine.settings.resolution];
+    const criticalHeldSec = net.criticalSince ? (now - net.criticalSince) / 1000 : 0;
+    const weakHeldSec = net.weakSince ? (now - net.weakSince) / 1000 : 0;
+    const stableHeldSec = net.stableSince ? (now - net.stableSince) / 1000 : 0;
+
+    // --- DECREASE (fast) ---
+    if (sample.severity === 'severe' || weakHeldSec >= abr.holdWeakSec) {
+        const isSevere = sample.severity === 'severe';
+        if (!isSevere) net.weakSince = now; // only mildly weak — restart its own hold so we step at most once per hold window, not every tick
+
+        if (engine.rung === 'high') { applyRestart({ rung: 'medium', resolution: engine.settings.resolution, fps: engine.settings.fps, bitrateKbps: ladder.medium }); return; }
+        if (engine.rung === 'medium') { applyRestart({ rung: 'low', resolution: engine.settings.resolution, fps: engine.settings.fps, bitrateKbps: ladder.low }); return; }
+
+        if (!isSevere) return; // already at the bitrate floor and only mildly weak — hold here, nothing more to do
+
+        // From here: severity is genuinely severe AND we're already at the floor bitrate for this resolution.
+        if (engine.rung === 'low') {
+            if (criticalHeldSec >= abr.holdCriticalSec) { applyRestart({ rung: 'low-fps', resolution: engine.settings.resolution, fps: abr.emergencyFps, bitrateKbps: ladder.low }); return; }
+            setProtection(true);
+            return;
+        }
+        if (engine.rung === 'low-fps') {
+            if (criticalHeldSec >= abr.holdCriticalSec && engine.autoResolutionFallback) {
+                const next = stepResolutionDown(engine.settings.resolution);
+                if (next) { applyRestart({ rung: 'medium', resolution: next, fps: 30, bitrateKbps: (engine.sessionLadder || abr.ladder)[next].medium }); return; }
+            }
+            setProtection(true);
+            return;
+        }
+        return;
+    }
+
+    // --- INCREASE (gradual, only after a sustained clean signal) ---
+    if (sample.severity === 'stable' && stableHeldSec >= abr.holdStableUpSec) {
+        setProtection(false);
+        net.stableSince = now; // restart the hold so climbing back up is also gradual, one rung per hold window
+        if (engine.rung === 'low-fps') { applyRestart({ rung: 'low', resolution: engine.settings.resolution, fps: 30, bitrateKbps: ladder.low }); return; }
+        if (engine.rung === 'low') { applyRestart({ rung: 'medium', resolution: engine.settings.resolution, fps: engine.settings.fps, bitrateKbps: ladder.medium }); return; }
+        if (engine.rung === 'medium') { applyRestart({ rung: 'high', resolution: engine.settings.resolution, fps: engine.settings.fps, bitrateKbps: ladder.high }); return; }
+        if (engine.rung === 'high' && engine.autoResolutionFallback && engine.settings.resolution !== engine.targetResolution) {
+            const next = stepResolutionUp(engine.settings.resolution, engine.targetResolution);
+            if (next) { applyRestart({ rung: 'medium', resolution: next, fps: 30, bitrateKbps: (engine.sessionLadder || abr.ladder)[next].medium }); }
+        }
+    }
+}
+
+// Fatal/config errors (bad args, no NVENC, missing filter) should NOT
+// retry forever — those need the operator to fix something. Everything
+// else observed on an unexpected ffmpeg exit is treated as a network
+// blip and gets the unlimited-backoff reconnect loop below, because a
+// live sports stream should never just give up over a few dropped
+// packets or a brief internet outage.
+const FATAL_ERROR_PATTERN = /unrecognized option|no such filter|cannot find a matching stream|invalid argument|no nvenc capable devices|unable to open|permission denied|no such file|unknown encoder/i;
+function isFatalError(message) {
+    return !!message && FATAL_ERROR_PATTERN.test(message);
+}
+
+// Network-flavored disconnect: keep retrying at capped exponential
+// backoff for as long as the operator wants to be live (engine.desiredLive)
+// — never gives up on its own. Local recording/clips are untouched by any
+// of this (see /ingest — localBuffer gets every chunk regardless of
+// engine.state).
+function scheduleReconnect() {
+    engine.state = 'reconnecting';
+    engine.network.state = 'reconnecting';
+    const backoff = RECONNECT_BACKOFF_MS[Math.min(engine.reconnect.attempts, RECONNECT_BACKOFF_MS.length - 1)];
+    engine.reconnect.attempts += 1;
+    engine.reconnect.nextAttemptAt = Date.now() + backoff;
+    console.log(`[stream-engine] Network disconnect (${engine.lastError}) — reconnecting in ${backoff}ms (attempt ${engine.reconnect.attempts})…`);
+    setTimeout(() => {
+        if (!engine.desiredLive) return; // operator pressed Stop while we were waiting to retry
+        const result = startEncoder(engine.settings);
+        if (!result.ok) {
+            engine.lastError = result.error;
+            scheduleReconnect();
+        }
+    }, backoff);
+}
+
 function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     if (engine.state === 'live' || engine.state === 'starting') {
         return { ok: false, error: 'Already live — stop the current stream first' };
@@ -349,6 +876,56 @@ function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     engine.startedAt = Date.now();
     engine.state = 'live';
 
+    // Writing to a process whose stdin has already closed (it just
+    // crashed, or is mid-exit) raises an ASYNC 'error' event on the
+    // stream — a try/catch around .write() in ingestChunk does NOT catch
+    // this, so without a listener here it becomes an uncaught exception
+    // ("Error: write EOF") on every single ingest call until the exit
+    // handler below has actually run and cleared engine.proc. Utterly
+    // harmless (ingestChunk already checks .writable before writing) but
+    // needs a listener to not spam/crash on it.
+    proc.stdin.on('error', () => {});
+
+    // A BRAND NEW ffmpeg process reading from pipe:0 has no idea what
+    // came before it — it needs the session's EBML/Segment/Tracks header
+    // chunk piped in FIRST, exactly like the local master recorder (see
+    // startRecorder above). Without this, any restart that doesn't
+    // happen to land exactly on the capture's very first byte — a
+    // reconnect after a network blip, an ABR hot-restart, or simply
+    // clicking Go Live after Recording/streaming already had chunks
+    // flowing — hands ffmpeg a bare Cluster with no header and it fails
+    // immediately with "Invalid data found when processing input",
+    // which then loops forever through the reconnect logic below (every
+    // retry hits the exact same problem). This was the actual cause of
+    // "stream keeps reconnecting, never goes live on YouTube."
+    engine.priming = true;
+    engine.pendingChunks = [];
+    const headerFile = engine.matchId ? localBuffer.getHeaderChunkFile(engine.matchId) : null;
+    const flushPendingEngine = () => {
+        engine.priming = false;
+        const pending = engine.pendingChunks;
+        engine.pendingChunks = [];
+        for (const buf of pending) {
+            try { if (proc.stdin.writable) proc.stdin.write(buf); } catch (e) { /* proc likely already gone */ }
+        }
+    };
+    if (headerFile) {
+        const hs = fs.createReadStream(headerFile);
+        hs.on('error', flushPendingEngine);
+        hs.pipe(proc.stdin, { end: false });
+        hs.on('close', flushPendingEngine);
+    } else {
+        flushPendingEngine();
+    }
+
+    // Once this process has survived a few seconds without exiting, treat
+    // the connection as genuinely re-established and reset the reconnect
+    // attempt counter — otherwise a stream that's been flapping for an
+    // hour would keep reporting attempt #40 forever even after it's fine.
+    const stabilizeTimer = setTimeout(() => {
+        if (engine.proc === proc) engine.reconnect.attempts = 0;
+    }, 5000);
+
     let stderrBuf = '';
     proc.stderr.on('data', (chunk) => {
         stderrBuf += chunk.toString();
@@ -362,37 +939,48 @@ function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     });
 
     proc.on('exit', (code, signal) => {
+        clearTimeout(stabilizeTimer);
         const wasDesired = engine.desiredLive;
         console.log(`[stream-engine] ffmpeg exited (code=${code}, signal=${signal}); desiredLive=${wasDesired}`);
         engine.proc = null;
 
         if (!wasDesired) {
-            // Operator pressed STOP — this is the expected, graceful path.
+            // Operator pressed STOP (or this is our own ABR hot-restart
+            // stopping the old process on purpose) — the expected, graceful path.
             engine.state = 'idle';
             return;
         }
 
-        // Unexpected exit while we still wanted to be live — this is a
-        // crash. Never let it take down the Stream Engine process itself
-        // (we're inside an event handler, nothing here throws upward),
-        // and never let the Cricket Panel crash either — it just sees
-        // state:'crashed' via /health and shows an error.
-        engine.state = 'crashed';
-        engine.lastError = engine.lastError || `ffmpeg exited unexpectedly (code=${code}, signal=${signal})`;
+        const errMsg = engine.lastError || `ffmpeg exited unexpectedly (code=${code}, signal=${signal})`;
+        engine.lastError = errMsg;
 
-        const now = Date.now();
-        engine.restarts = engine.restarts.filter((t) => now - t < RESTART_WINDOW_MS);
-        if (engine.restarts.length >= MAX_AUTO_RESTARTS) {
-            console.log('[stream-engine] Max auto-restarts hit — giving up until operator presses Go Live again');
-            engine.desiredLive = false;
+        if (isFatalError(errMsg)) {
+            // A config/hardware problem, not the network — retrying
+            // forever won't fix it, so this keeps the original bounded
+            // auto-restart safety net and eventually surfaces 'crashed'
+            // for the operator to act on.
+            engine.state = 'crashed';
+            const now = Date.now();
+            engine.restarts = engine.restarts.filter((t) => now - t < RESTART_WINDOW_MS);
+            if (engine.restarts.length >= MAX_AUTO_RESTARTS) {
+                console.log('[stream-engine] Fatal-looking error, max auto-restarts hit — giving up until operator presses Go Live again');
+                engine.desiredLive = false;
+                return;
+            }
+            engine.restarts.push(now);
+            const attempt = engine.restarts.length;
+            console.log(`[stream-engine] Auto-restarting encoder after fatal-looking error (attempt ${attempt}/${MAX_AUTO_RESTARTS})…`);
+            setTimeout(() => {
+                if (engine.desiredLive) startEncoder(engine.settings);
+            }, Math.min(2000 * attempt, 8000));
             return;
         }
-        engine.restarts.push(now);
-        const attempt = engine.restarts.length;
-        console.log(`[stream-engine] Auto-restarting encoder (attempt ${attempt}/${MAX_AUTO_RESTARTS})…`);
-        setTimeout(() => {
-            if (engine.desiredLive) startEncoder(engine.settings);
-        }, Math.min(2000 * attempt, 8000)); // simple backoff
+
+        // Everything else (connection reset, broken pipe, timeout, i/o
+        // error, etc.) is treated as the internet going up and down —
+        // never let a live sports stream just give up over this. Local
+        // recording keeps running throughout (see /ingest).
+        scheduleReconnect();
     });
 
     proc.on('error', (err) => {
@@ -433,6 +1021,7 @@ function stopEncoder() {
 let encoderBackpressured = false;
 function ingestChunk(buf) {
     if (engine.state !== 'live' || !engine.proc || !engine.proc.stdin.writable) return { ok: false, error: 'Encoder not live' };
+    if (engine.priming) { engine.pendingChunks.push(buf); return { ok: true }; } // hold until the header chunk (see startEncoder) has been written first
     if (encoderBackpressured) return { ok: false, error: 'Encoder backpressured — dropping frame to protect live latency', dropped: true };
     try {
         const stillOk = engine.proc.stdin.write(buf);
@@ -661,7 +1250,6 @@ async function cutLocalClip({ clipId, matchId, eventType, eventTimestamp, ballMe
     if (win.error) return { ok: false, error: win.error };
 
     const { trimStartSec, toStitch, dirs } = win;
-    const stitchedFile = path.join(dirs.tempDir, `_stitched_${Date.now()}.webm`);
     // Deterministic, clipId-based filename (not Date.now()-based) — a
     // job re-run for the exact same event never leaves multiple .mp4s
     // behind, and this is the SAME name server.js's R2 key/Drive
@@ -671,41 +1259,70 @@ async function cutLocalClip({ clipId, matchId, eventType, eventTimestamp, ballMe
 
     console.log(`[CLIP RANGE] clipId=${clipId} start=T0-${CLIP_PRE_ROLL_SEC}s end=T0+${CLIP_POST_ROLL_SEC}s`);
 
+    // Pin every chunk this cut needs BEFORE starting to read any of
+    // them, and hold the pin for the whole cut (finally, below) — a cut
+    // isn't instant (ffmpeg spawn + piping several chunks can take a
+    // few seconds), and without this, one of these exact chunks could
+    // age past RETENTION_SEC and get deleted by pruneOldChunks (still
+    // running on every /ingest of a NEW chunk in parallel) partway
+    // through — an ENOENT reading a chunk file that existed when the
+    // clip started. See pinChunksByIndex/pruneOldChunks in localBuffer.js.
+    const stitchIndices = toStitch.map((c) => c.index);
+    localBuffer.pinChunksByIndex(matchId, stitchIndices);
+    try {
+        await cutFromStitchedChunks({ toStitch, trimStartSec, outFile });
+    } finally {
+        localBuffer.unpinChunksByIndex(matchId, stitchIndices);
+    }
+
+    console.log(`[CLIP CREATED] clipId=${clipId} localPath=${outFile}`);
+    return { ok: true, outFile };
+}
+
+async function cutFromStitchedChunks({ toStitch, trimStartSec, outFile }) {
+
+    // Feed the covering chunks straight into ffmpeg's stdin as one
+    // continuous byte stream, and seek AFTER -i (decode-order, not an
+    // index/Cues seek) rather than writing an intermediate "stitched"
+    // file to disk and reopening it with -ss BEFORE -i. The previous
+    // approach relied on ffmpeg's Matroska seek index on a file that was
+    // never a real single recording (just independent MediaRecorder
+    // blobs concatenated after the fact) — on some encode paths
+    // (confirmed with an H.264-in-WebM capture-card feed) that index is
+    // unreliable and pre-seeking into it corrupts the output ("Invalid
+    // data found when processing input" / garbled video). Piping bytes
+    // and seeking by decoding forward from the start avoids trusting
+    // that index at all — this is the exact same "continuous pipe
+    // decode" mechanism already proven reliable for the live NVENC push
+    // (see ingestChunk/buildFfmpegArgs above), just applied to clip
+    // cutting instead of a live RTMP push.
     await new Promise((resolve, reject) => {
-        const out = fs.createWriteStream(stitchedFile);
-        out.on('error', reject);
+        const args = [
+            '-hide_banner', '-loglevel', 'warning', '-y',
+            '-i', 'pipe:0',
+            '-ss', String(trimStartSec), '-t', String(CLIP_PRE_ROLL_SEC + CLIP_POST_ROLL_SEC),
+            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'veryfast',
+            outFile,
+        ];
+        const proc = spawn(FFMPEG_PATH, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+        proc.stdin.on('error', () => {}); // see the same listener on the live encoder's proc.stdin (startEncoder) for why this is needed — a chunk read finishing just as ffmpeg exits (e.g. rejects on bad input) would otherwise raise an unhandled async error here too
+        let stderr = '';
+        proc.stderr.on('data', (d) => { stderr += d; });
+        proc.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg trim exited ${code}: ${stderr.slice(-500)}`)));
+        proc.on('error', reject);
+
         (async () => {
             for (const c of toStitch) {
                 await new Promise((res2, rej2) => {
                     const rs = fs.createReadStream(c.file);
                     rs.on('error', rej2);
                     rs.on('end', res2);
-                    rs.pipe(out, { end: false });
+                    rs.pipe(proc.stdin, { end: false });
                 });
             }
-            out.end();
-            resolve();
+            proc.stdin.end();
         })().catch(reject);
     });
-
-    await new Promise((resolve, reject) => {
-        const args = [
-            '-hide_banner', '-loglevel', 'warning', '-y',
-            '-i', stitchedFile,
-            '-ss', String(trimStartSec), '-t', String(CLIP_PRE_ROLL_SEC + CLIP_POST_ROLL_SEC),
-            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'veryfast',
-            outFile,
-        ];
-        const proc = spawn(FFMPEG_PATH, args);
-        let stderr = '';
-        proc.stderr.on('data', (d) => { stderr += d; });
-        proc.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg trim exited ${code}: ${stderr.slice(-300)}`)));
-        proc.on('error', reject);
-    });
-
-    fs.unlink(stitchedFile, () => {});
-    console.log(`[CLIP CREATED] clipId=${clipId} localPath=${outFile}`);
-    return { ok: true, outFile };
 }
 
 // ================================================================
@@ -860,6 +1477,22 @@ app.get('/status', async (req, res) => {
         cloudflareConnected: clipWorker.cloudflareConnected,
         clipWorkerLastError: clipWorker.lastError,
         retryQueueLength: retryQueue.length,
+        // Local full-match master recording — see the LOCAL FULL-MATCH
+        // MASTER RECORDING section above. Independent of streaming.
+        recorder: {
+            state: recorder.state,
+            matchId: recorder.matchId,
+            settings: recorder.settings,
+            segmentPath: recorder.segmentPath,
+            segmentCount: recorder.segments.length,
+            durationSec: recorder.startedAt && (recorder.state === 'recording' || recorder.state === 'stopping')
+                ? Math.round((Date.now() - recorder.startedAt) / 1000)
+                : null,
+            sizeBytes: (() => { try { return recorder.segmentPath ? fs.statSync(recorder.segmentPath).size : null; } catch (e) { return null; } })(),
+            diskFreeBytes: diskFreeBytes(RECORDING_ROOT),
+            lastError: recorder.lastError,
+            restartCount: recorder.restarts.length,
+        },
     });
 });
 
@@ -878,6 +1511,8 @@ app.post('/recording-start', (req, res) => {
     if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
     const mainServerUrl = (req.body && req.body.mainServerUrl) || null;
     const tournamentId = (req.body && req.body.tournamentId) || null;
+    const resolution = (req.body && req.body.recordingResolution) || '1080p';
+    const fps = (req.body && req.body.recordingFps) || 30;
 
     // attachRecording (not startSession) — reuses any buffer already
     // capturing this match's footage (e.g. streaming was already live
@@ -886,9 +1521,16 @@ app.post('/recording-start', (req, res) => {
     localBuffer.attachRecording(matchId, { tournamentId, mainServerUrl });
     recordingMatches[matchId] = { mainServerUrl, tournamentId };
     console.log(`🔴 [clip engine] Local buffer recording started for match ${matchId}`);
+
+    if (recorder.matchId !== matchId) resetRecorderForNewMatch();
+    const recResult = startRecorder(matchId, { resolution, fps });
+    if (!recResult.ok) {
+        console.log(`⚠️  [master recording] could not start local master recording for ${matchId}: ${recResult.error}`);
+    }
+
     // No vMix here — "vmixControlled" from the old ClipperHelper contract
     // doesn't apply; kept as false for any old UI text checking it.
-    res.json({ success: true, vmixControlled: false });
+    res.json({ success: true, vmixControlled: false, masterRecording: recResult.ok ? { ok: true, path: recorder.segmentPath } : { ok: false, error: recResult.error } });
 });
 
 app.post('/recording-stop', (req, res) => {
@@ -898,12 +1540,38 @@ app.post('/recording-stop', (req, res) => {
     // request for the last few seconds of the match is still in flight
     // (mirrors Part 1's RECORDING_CLEANUP_DELAY_MS reasoning), then
     // delete it — this runs on the operator's own laptop disk, so it
-    // must not accumulate match after match.
+    // must not accumulate match after match. This ONLY deletes the
+    // short-lived clip buffer (buffer/matches/<id>/) — the persistent
+    // master.mp4 recording lives entirely outside that folder (see
+    // RECORDING_ROOT) and is never touched by this cleanup.
     if (matchId) {
         setTimeout(() => localBuffer.deleteMatchMedia(matchId), 90 * 1000);
         delete recordingMatches[matchId];
     }
+    if (matchId && recorder.matchId === matchId) stopRecorder();
     res.json({ success: true, vmixControlled: false, hadSession: !!session });
+});
+
+// Serves the operator the folder path (not the file contents — these
+// can be multi-GB) so a panel button can show/copy it for "Open
+// Recording Folder" without this engine needing a native file-manager
+// integration.
+app.get('/recording-info', (req, res) => {
+    const matchId = localBuffer.safeMatchId(req.query.matchId);
+    const dir = matchId ? recorderDir(matchId) : RECORDING_ROOT;
+    let sizeBytes = null;
+    try {
+        sizeBytes = recorder.segments.reduce((sum, s) => {
+            try { return sum + fs.statSync(s.path).size; } catch (e) { return sum; }
+        }, 0);
+    } catch (e) { /* best effort */ }
+    res.json({
+        success: true,
+        folder: dir,
+        segments: recorder.segments,
+        totalSizeBytes: sizeBytes,
+        diskFreeBytes: diskFreeBytes(RECORDING_ROOT),
+    });
 });
 
 // Legacy ClipperHelper contract also had /set-folder (it did its OWN
@@ -981,8 +1649,34 @@ app.post('/set-youtube-config', (req, res) => {
 });
 
 app.post('/go-live', (req, res) => {
-    const { resolution, fps, bitrateKbps, keyframeIntervalSec } = req.body || {};
-    const result = startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec });
+    const { resolution, fps, bitrateKbps, keyframeIntervalSec, qualityMode, autoResolutionFallback, matchId } = req.body || {};
+    engine.opToken++; // a fresh operator-initiated Go Live always wins over any stale in-flight ABR restart
+
+    // Needed to find this match's header chunk for priming every
+    // (re)start of the encoder — see startEncoder. Kept for the whole
+    // session (reconnects/ABR restarts reuse it), only reset here on a
+    // fresh operator-initiated Go Live.
+    if (matchId) engine.matchId = localBuffer.safeMatchId(matchId);
+
+    const resKey = RESOLUTIONS[resolution] ? resolution : '1080p';
+    const fpsNum = [30, 60].includes(Number(fps)) ? Number(fps) : 30;
+    engine.targetResolution = resKey;
+    engine.qualityMode = qualityMode === 'manual' ? 'manual' : 'adaptive';
+    engine.autoResolutionFallback = !!autoResolutionFallback;
+    engine.rung = 'high';
+    engine.reconnect = { attempts: 0, nextAttemptAt: null };
+    engine.network = { state: 'stable', protectionActive: false, protectionMessage: null, uploadEstimateKbps: null, weakSince: null, criticalSince: null, stableSince: null };
+    engine.sessionLadder = buildSessionLadder(resKey, bitrateKbps);
+
+    // Manual mode streams at exactly what was picked (or the provider's
+    // recommended default for that resolution/fps if left blank).
+    // Adaptive mode starts at this resolution's ladder ceiling and lets
+    // the ABR loop react to real conditions from there.
+    const startBitrateKbps = engine.qualityMode === 'manual'
+        ? (Number(bitrateKbps) > 0 ? Number(bitrateKbps) : DEFAULT_BITRATE_KBPS[resKey][fpsNum])
+        : engine.sessionLadder[resKey].high;
+
+    const result = startEncoder({ resolution: resKey, fps: fpsNum, bitrateKbps: startBitrateKbps, keyframeIntervalSec });
     if (!result.ok) return res.status(400).json({ success: false, error: result.error });
     res.json({ success: true, state: engine.state });
 });
@@ -1010,6 +1704,13 @@ app.post('/ingest', express.raw({ type: '*/*', limit: '10mb' }), (req, res) => {
         localBuffer.addChunk(matchId, index, req.body);
     }
 
+    // Third independent fan-out of the SAME bytes (one capture, three
+    // consumers — see the LOCAL FULL-MATCH MASTER RECORDING section
+    // above): the continuous local master.mp4. Never gated on the live
+    // push's state — a dead/reconnecting YouTube stream must not affect
+    // this at all.
+    recorderIngestChunk(req.body);
+
     const encResult = ingestChunk(req.body);
     // Only treat this as an error if the encoder was SUPPOSED to be live
     // and genuinely isn't — if the operator is just recording for clips
@@ -1022,8 +1723,31 @@ app.post('/ingest', express.raw({ type: '*/*', limit: '10mb' }), (req, res) => {
 });
 
 app.post('/stop', (req, res) => {
+    engine.opToken++; // wins any race against an in-flight ABR restart — Stop always means stop
     const result = stopEncoder();
     res.json({ success: true, ...result });
+});
+
+// Runtime tuning for the ABR ladder/thresholds — lets an operator match
+// a different streaming provider's own bitrate limits, or retune the
+// hysteresis timings, without restarting this process. Values outside
+// sane bounds are ignored rather than rejected outright, so a bad field
+// in the request body doesn't take down the others.
+app.get('/adaptive-config', (req, res) => res.json({ success: true, abr }));
+app.post('/adaptive-config', (req, res) => {
+    const body = req.body || {};
+    if (body.ladder && typeof body.ladder === 'object') {
+        for (const r of RESOLUTION_ORDER) {
+            if (body.ladder[r]) abr.ladder[r] = { ...abr.ladder[r], ...body.ladder[r] };
+        }
+    }
+    if (Number(body.safetyFactor) > 0 && Number(body.safetyFactor) <= 1) abr.safetyFactor = Number(body.safetyFactor);
+    if (Number(body.emergencyFps) > 0) abr.emergencyFps = Number(body.emergencyFps);
+    if (Number(body.holdWeakSec) > 0) abr.holdWeakSec = Number(body.holdWeakSec);
+    if (Number(body.holdCriticalSec) > 0) abr.holdCriticalSec = Number(body.holdCriticalSec);
+    if (Number(body.holdStableUpSec) > 0) abr.holdStableUpSec = Number(body.holdStableUpSec);
+    if (Number(body.minRestartIntervalMs) >= 2000) abr.minRestartIntervalMs = Number(body.minRestartIntervalMs);
+    res.json({ success: true, abr });
 });
 
 // Best-effort GPU utilization via nvidia-smi — purely informational for
@@ -1045,8 +1769,20 @@ app.get('/health', (req, res) => {
         success: true,
         state: engine.state,
         desiredLive: engine.desiredLive,
+        adapting: engine.adapting,
         settings: engine.settings,
-        metrics: engine.metrics,
+        targetResolution: engine.targetResolution,
+        qualityMode: engine.qualityMode,
+        autoResolutionFallback: engine.autoResolutionFallback,
+        rung: engine.rung,
+        network: engine.network,
+        reconnect: engine.reconnect,
+        metrics: {
+            ...engine.metrics,
+            droppedFramesPct: (engine.metrics.droppedFrames != null && engine.metrics.totalFrames)
+                ? Math.round((engine.metrics.droppedFrames / engine.metrics.totalFrames) * 1000) / 10
+                : null,
+        },
         gpu: readGpuUtilization(),
         cpuPercent: readCpuUtilization(),
         durationSec: engine.startedAt && (engine.state === 'live' || engine.state === 'stopping')
@@ -1063,6 +1799,11 @@ app.get('/health', (req, res) => {
         },
     });
 });
+
+// 📶 ABR control loop — see the ABR section above buildFfmpegArgs/startEncoder
+// for the full mechanism. No-ops instantly whenever the encoder isn't live.
+const ABR_TICK_MS = 2000;
+setInterval(abrTick, ABR_TICK_MS);
 
 // 🛟 Orphaned match-buffer sweep — same reasoning as Part 1's
 // sweepOrphanedRecordings on server.js, scoped to this engine's local
