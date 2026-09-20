@@ -1954,22 +1954,23 @@ app.get('/capture-preview', (req, res) => {
     const windowTitle = resolveWindowTitle(matchId);
     const useGpuScale = false; // the preview is a single throwaway frame — always CPU-simple, no need to exercise the GPU path here
     const { width, height } = RESOLUTIONS['720p'];
+    // 🩹 Confirmed in the field: this ffmpeg build's mjpeg encoder fails
+    // to even open ("Could not open encoder before EOF" / error -22
+    // Invalid argument) no matter what pixel format is forced ahead of
+    // it (yuvj420p included) — something about this specific build's
+    // mjpeg/JPEG code path (full-range YUV, chroma subsampling) is
+    // broken, not just the format negotiation. PNG sidesteps that whole
+    // category: it's a straightforward RGB codec with no YUV range
+    // conversion involved at all. 'format=rgba' is a plain channel
+    // reorder from gdigrab's native bgra (core, universally-supported
+    // swscale functionality, unlike the JPEG range math) so it should
+    // work even on a stripped-down build like this one.
     const args = [
         '-hide_banner', '-loglevel', 'error',
         '-f', 'gdigrab', '-framerate', '5', '-i', `title=${windowTitle}`,
         '-frames:v', '1',
-        // 🩹 Confirmed in the field: without an explicit output format,
-        // this ffmpeg build fails mjpeg encoder init with "Could not
-        // open encoder before EOF" / error -22 (Invalid argument) — the
-        // mjpeg encoder needs full-range yuvj420p, gdigrab's native bgra
-        // is limited-range once converted, and this particular build
-        // doesn't auto-insert that range conversion the way a standard
-        // build does. Naming yuvj420p explicitly here (the scale filter
-        // already runs swscale for the resize, so this adds no new
-        // dependency) does the conversion up front instead of leaving it
-        // to the encoder to negotiate.
-        '-vf', `${cropScaleFilter(width, height, useGpuScale)},format=yuvj420p`,
-        '-f', 'image2', '-vcodec', 'mjpeg',
+        '-vf', `${cropScaleFilter(width, height, useGpuScale)},format=rgba`,
+        '-f', 'image2', '-vcodec', 'png',
         'pipe:1',
     ];
     const proc = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -1979,7 +1980,7 @@ app.get('/capture-preview', (req, res) => {
     proc.stderr.on('data', (d) => { stderr += d; });
     proc.on('exit', (code) => {
         if (code === 0 && chunks.length) {
-            res.set('Content-Type', 'image/jpeg');
+            res.set('Content-Type', 'image/png');
             res.send(Buffer.concat(chunks));
         } else {
             res.status(500).json({ success: false, error: `Could not capture window "${windowTitle}" — is the Live Output window open? ffmpeg: ${stderr.slice(-400) || 'no output'}` });
