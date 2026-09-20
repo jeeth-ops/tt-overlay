@@ -284,6 +284,43 @@ function checkGpuScaleRuntime() {
     return gpuScaleCheckCache;
 }
 
+// ----------------------------------------------------------------
+// 🔎 NVENC "-tune ll" RUNTIME CHECK — buildLiveEncoderArgs (the Go Live
+// path only; the recorder/clip cutter never pass -tune) adds '-tune ll'
+// for low-latency mode, but checkNvencRuntime() above only ever tested
+// '-preset p4' on its own. A build compiled against an older NVENC SDK
+// (exactly the kind of "GPU scale not available on this ffmpeg/GPU
+// build" ffmpeg seen in the field here) can happily pass that check yet
+// have no '-tune' AVOption on h264_nvenc at all — so this was passing
+// the preflight, then dying the instant Go Live actually spawned ffmpeg
+// with "Unrecognized option 'tune'." / "Error splitting the argument
+// list: Option not found", which isFatalError() then (see the
+// FATAL_ERROR_PATTERN this failure now matches) correctly surfaces as
+// crashed instead of spinning in the reconnect loop forever. Tested
+// here, once, up front, so a build that can't take -tune simply never
+// gets asked to.
+// ----------------------------------------------------------------
+let nvencTuneCheckCache = null;
+function checkNvencTuneRuntime() {
+    if (nvencTuneCheckCache !== null) return nvencTuneCheckCache;
+    if (!checkNvencRuntime()) { nvencTuneCheckCache = false; return false; }
+    try {
+        const res = spawnSync(FFMPEG_PATH, [
+            '-hide_banner', '-loglevel', 'error', '-y',
+            '-f', 'lavfi', '-i', 'color=c=black:s=256x256:d=0.2',
+            '-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'll',
+            '-f', 'null', '-',
+        ], { timeout: 8000 });
+        nvencTuneCheckCache = !res.error && res.status === 0;
+    } catch (e) {
+        nvencTuneCheckCache = false;
+    }
+    console.log(nvencTuneCheckCache
+        ? '[stream-engine] NVENC "-tune ll" runtime check: ✅ supported — live encoder uses low-latency tuning'
+        : '[stream-engine] NVENC "-tune ll" runtime check: ❌ not supported on this ffmpeg/NVENC build — live encoder will omit -tune');
+    return nvencTuneCheckCache;
+}
+
 function ffmpegAvailable() {
     const res = spawnSync(FFMPEG_PATH, ['-version'], { encoding: 'utf8', timeout: 5000 });
     return !res.error;
@@ -497,21 +534,75 @@ function windowTitleFor(matchId) {
 //
 // Rather than guess every browser's suffix format, this asks Windows
 // itself for the real, current title of whatever window matches our
-// prefix (PowerShell's Get-Process/MainWindowTitle — no extra
-// dependency, ships with every Windows install) and hands ffmpeg that
-// EXACT string. If resolution fails (PowerShell unavailable, or no
-// matching window), falls back to the bare prefix — gdigrab then still
-// gets a sensible attempt and its own real error surfaces normally.
+// prefix and hands ffmpeg that EXACT string. If resolution fails
+// (PowerShell unavailable, or no matching window), falls back to the
+// bare prefix — gdigrab then still gets a sensible attempt and its own
+// real error surfaces normally.
+//
+// 🩹 CONFIRMED ON REAL HARDWARE — this used to walk Get-Process and read
+// each process's .MainWindowTitle, which looked reasonable but is the
+// wrong tool for a browser: Chrome runs every top-level window it owns
+// (the operator's normal multi-tab browser window AND this Live Output
+// popup) under the SAME browser process, and .NET's MainWindowTitle
+// only ever reports ONE window's title per process — effectively
+// whichever window last had the OS's attention, not necessarily this
+// popup. That made the lookup pass only when Live Output happened to be
+// the frontmost/most-recently-focused Chrome window at the exact moment
+// Preview/Go Live was clicked, and silently fall back to the bare
+// prefix (which gdigrab then can't find either — "Can't find window")
+// the rest of the time, even with Live Output genuinely open on screen.
+// EnumWindows walks every visible top-level window system-wide
+// regardless of which process "owns" it for MainWindowTitle purposes,
+// so it finds the popup whether or not it currently has focus.
+// -EncodedCommand (base64 UTF-16LE) avoids all cmd/PowerShell quoting
+// pitfalls for the prefix string.
+const ENUM_WINDOWS_PS_TEMPLATE = `
+$ErrorActionPreference = 'Stop'
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class TTOverlayWin32 {
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+    [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+}
+"@
+$found = $null
+$callback = {
+    param($hWnd, $lParam)
+    if ([TTOverlayWin32]::IsWindowVisible($hWnd)) {
+        $len = [TTOverlayWin32]::GetWindowTextLength($hWnd)
+        if ($len -gt 0) {
+            $sb = New-Object System.Text.StringBuilder ($len + 1)
+            [TTOverlayWin32]::GetWindowText($hWnd, $sb, $sb.Capacity) | Out-Null
+            $title = $sb.ToString()
+            if ($title -like '*__PREFIX__*') { $script:found = $title }
+        }
+    }
+    return $true
+}
+[TTOverlayWin32]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
+if ($found) { Write-Output $found }
+`;
 function resolveWindowTitle(matchId) {
     const prefix = windowTitleFor(matchId);
     try {
+        const script = ENUM_WINDOWS_PS_TEMPLATE.replace('__PREFIX__', prefix);
+        const encoded = Buffer.from(script, 'utf16le').toString('base64');
         const res = spawnSync('powershell.exe', [
-            '-NoProfile', '-NonInteractive', '-Command',
-            `(Get-Process | Where-Object { $_.MainWindowTitle -like '*${prefix}*' } | Select-Object -First 1 -ExpandProperty MainWindowTitle)`,
+            '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded,
         ], { encoding: 'utf8', timeout: 5000 });
         const title = (res.stdout || '').trim();
+        if (!title) {
+            const reason = res.error ? res.error.message : (res.stderr || '').trim().slice(0, 300) || 'no visible window title matched';
+            console.log(`[stream-engine] resolveWindowTitle: could not resolve exact title for "${prefix}" (${reason}) — falling back to bare prefix; gdigrab will likely report "Can't find window" if the Live Output window isn't actually open`);
+        }
         return title || prefix;
     } catch (e) {
+        console.log(`[stream-engine] resolveWindowTitle: powershell lookup threw (${e.message}) — falling back to bare prefix for "${prefix}"`);
         return prefix;
     }
 }
@@ -571,8 +662,13 @@ function buildCaptureInputArgs({ windowTitle, fps, audioDeviceName }) {
 // Output was never opened, was closed, or its title doesn't match) —
 // this is a FATAL, operator-actionable problem ("open Live Output"),
 // never a network blip, so it must never enter the unlimited-backoff
-// reconnect loop meant for real internet drops.
-const WINDOW_NOT_FOUND_PATTERN = /Failed to find window|Unable to find window|window not found/i;
+// reconnect loop meant for real internet drops. 🩹 Confirmed on real
+// hardware: gdigrab's ACTUAL message is "Can't find window '<title>',
+// aborting." — the older patterns below never matched that wording, so
+// a genuinely missing/closed Live Output window was silently going
+// through scheduleReconnect() (endless "Reconnecting…") instead of
+// ever surfacing as crashed with an actionable reason.
+const WINDOW_NOT_FOUND_PATTERN = /Can.t find window|Failed to find window|Unable to find window|window not found/i;
 
 // ----------------------------------------------------------------
 // 🛑 GRACEFUL FFMPEG STOP — sends the interactive 'q' keypress ffmpeg
@@ -700,7 +796,12 @@ function buildLiveEncoderArgs({ windowTitle, audioDeviceName, width, height, fps
         // (skips B-frames and extra lookahead that add encode latency —
         // matters for a LIVE stream, where every extra ms of encoder
         // buffering is a second the broadcast falls further behind).
-        '-preset', 'p4', '-tune', 'll',
+        // Only added when checkNvencTuneRuntime() has actually confirmed
+        // this ffmpeg/NVENC build accepts '-tune' on h264_nvenc — some
+        // builds don't, and asking for it anyway makes ffmpeg exit
+        // instantly with "Unrecognized option 'tune'." on every single
+        // Go Live attempt (see checkNvencTuneRuntime's comment).
+        '-preset', 'p4', ...(checkNvencTuneRuntime() ? ['-tune', 'll'] : []),
         '-rc', 'cbr',
         '-b:v', `${bitrateKbps}k`,
         '-maxrate', `${bitrateKbps}k`,
@@ -1022,10 +1123,28 @@ function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
         stderrBuf += chunk.toString();
         let idx;
         while ((idx = stderrBuf.indexOf('\n')) >= 0) {
-            const line = stderrBuf.slice(0, idx);
+            const line = stderrBuf.slice(0, idx).trim();
             stderrBuf = stderrBuf.slice(idx + 1);
             parseProgressLine(line);
-            if (/error|failed|refused|denied/i.test(line) || WINDOW_NOT_FOUND_PATTERN.test(line)) engine.lastError = line.trim();
+            if (!line) continue;
+            // 🩹 A line matching a known FATAL pattern (e.g. "Unrecognized
+            // option 'tune'.") is the one line worth keeping — ffmpeg
+            // reliably follows it with a generic wrap-up line ("Error
+            // splitting the argument list: Option not found") that also
+            // matches the plain /error/ test below but explains nothing
+            // on its own. The old code kept whichever matching line came
+            // LAST, so that generic follow-up always won and silently
+            // buried the actionable reason — which then also meant
+            // isFatalError(engine.lastError) came back false and a real,
+            // permanent config error (wrong option) was misclassified as
+            // a network blip and retried forever instead of surfacing as
+            // crashed. Once a fatal line is captured, don't let a later
+            // non-fatal "error/failed" line overwrite it.
+            if (isFatalError(line)) {
+                engine.lastError = line;
+            } else if (!isFatalError(engine.lastError) && /error|failed|refused|denied/i.test(line)) {
+                engine.lastError = line;
+            }
         }
     });
 
@@ -1238,9 +1357,19 @@ function startRecorder(matchId, { resolution, fps, audioDeviceName } = {}) {
         stderrBuf += chunk.toString();
         let idx;
         while ((idx = stderrBuf.indexOf('\n')) >= 0) {
-            const line = stderrBuf.slice(0, idx);
+            const line = stderrBuf.slice(0, idx).trim();
             stderrBuf = stderrBuf.slice(idx + 1);
-            if (/error|failed|invalid/i.test(line) || WINDOW_NOT_FOUND_PATTERN.test(line)) recorder.lastError = line.trim();
+            if (!line) continue;
+            // Same reasoning as the live encoder's stderr handler above —
+            // keep a specific FATAL-pattern line (e.g. "Can't find
+            // window") over a later generic "error/failed/invalid" line
+            // that would otherwise silently overwrite it with something
+            // less actionable.
+            if (isFatalError(line)) {
+                recorder.lastError = line;
+            } else if (!isFatalError(recorder.lastError) && /error|failed|invalid/i.test(line)) {
+                recorder.lastError = line;
+            }
         }
     });
 
