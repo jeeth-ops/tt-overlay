@@ -230,6 +230,10 @@ const RESTART_WINDOW_MS = 5 * 60 * 1000;
 // long as the operator wants to be live (only an explicit Stop ends it).
 const RECONNECT_BACKOFF_MS = [2000, 4000, 8000, 15000];
 
+// Fallback for header-priming when /go-live's caller didn't send
+// matchId — see /ingest and startEncoder.
+let lastIngestMatchId = null;
+
 const engine = {
     state: 'idle',           // idle | starting | live | reconnecting | stopping | crashed
     proc: null,              // the ffmpeg child process
@@ -454,6 +458,12 @@ function startRecorder(matchId, { resolution, fps } = {}) {
     });
 
     proc.on('exit', (code, signal) => {
+        // A stale/superseded process's own exit must never clobber a
+        // NEWER recording that's since taken over recorder.proc (e.g.
+        // this exact process was stopped by /recording-start switching
+        // to a different match while it was still shutting down) — only
+        // the process CURRENTLY tracked gets to mutate shared state.
+        if (recorder.proc !== proc) return;
         const wasDesired = recorder.desiredRecording;
         console.log(`[stream-engine] recorder ffmpeg exited (code=${code}, signal=${signal}); desiredRecording=${wasDesired}`);
         recorder.proc = null;
@@ -900,7 +910,8 @@ function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     // "stream keeps reconnecting, never goes live on YouTube."
     engine.priming = true;
     engine.pendingChunks = [];
-    const headerFile = engine.matchId ? localBuffer.getHeaderChunkFile(engine.matchId) : null;
+    const primingMatchId = engine.matchId || lastIngestMatchId; // fallback if /go-live's caller never sent matchId — see /ingest
+    const headerFile = primingMatchId ? localBuffer.getHeaderChunkFile(primingMatchId) : null;
     const flushPendingEngine = () => {
         engine.priming = false;
         const pending = engine.pendingChunks;
@@ -939,6 +950,10 @@ function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     });
 
     proc.on('exit', (code, signal) => {
+        // Same defensive guard as the recorder above — a stale process's
+        // own exit must never clobber a newer one already tracked in
+        // engine.proc.
+        if (engine.proc !== proc) return;
         clearTimeout(stabilizeTimer);
         const wasDesired = engine.desiredLive;
         console.log(`[stream-engine] ffmpeg exited (code=${code}, signal=${signal}); desiredLive=${wasDesired}`);
@@ -1522,6 +1537,18 @@ app.post('/recording-start', (req, res) => {
     recordingMatches[matchId] = { mainServerUrl, tournamentId };
     console.log(`🔴 [clip engine] Local buffer recording started for match ${matchId}`);
 
+    // A previous match's recorder left running (operator forgot to press
+    // Stop, or a previous Stream Engine session never got a clean
+    // shutdown) must never permanently block starting today's match —
+    // that just turned into a real "nothing records / nothing goes
+    // live" outage. Stop it first; the exit-guard on the recorder's own
+    // proc.on('exit') (see startRecorder) makes this race-safe even
+    // though the old process may still be shutting down when the new
+    // one starts.
+    if (recorder.matchId && recorder.matchId !== matchId && recorder.state !== 'idle') {
+        console.log(`[stream-engine] Switching local recording from match "${recorder.matchId}" to "${matchId}" — stopping the old one first`);
+        stopRecorder();
+    }
     if (recorder.matchId !== matchId) resetRecorderForNewMatch();
     const recResult = startRecorder(matchId, { resolution, fps });
     if (!recResult.ok) {
@@ -1702,6 +1729,15 @@ app.post('/ingest', express.raw({ type: '*/*', limit: '10mb' }), (req, res) => {
     if (matchId && Number.isFinite(index)) {
         localBuffer.ensureSession(matchId);
         localBuffer.addChunk(matchId, index, req.body);
+        // Defense-in-depth for the live encoder's header-priming (see
+        // startEncoder): /go-live is supposed to send matchId itself,
+        // but a stale/uncached panel that doesn't would otherwise leave
+        // engine.matchId null forever and silently reproduce the exact
+        // "Invalid data found when processing input" reconnect loop this
+        // was built to fix. Tracking whatever matchId is actually
+        // flowing through /ingest right now as a fallback means priming
+        // still works even then.
+        lastIngestMatchId = matchId;
     }
 
     // Third independent fan-out of the SAME bytes (one capture, three
