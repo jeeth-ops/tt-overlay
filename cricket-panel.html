@@ -3047,7 +3047,13 @@ async function startLive(){
   lsLog('Starting RTMPS…');
   const goLiveRes = await fetch(`${STREAM_ENGINE_URL}/go-live`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec, qualityMode: selQualityMode, autoResolutionFallback: selAutoFallback })
+    // matchId lets the Stream Engine find this match's stored WebM
+    // header chunk to prime the encoder with on every (re)start — see
+    // startEncoder in server.js. Without it, a Go Live clicked after
+    // Recording/streaming already had chunks flowing (or any later
+    // reconnect/ABR restart) fails immediately with ffmpeg's "Invalid
+    // data found when processing input".
+    body: JSON.stringify({ resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec, qualityMode: selQualityMode, autoResolutionFallback: selAutoFallback, matchId })
   }).then(r => r.json()).catch(() => ({ success:false, error:'Stream Engine unreachable' }));
 
   if(!goLiveRes.success){

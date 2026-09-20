@@ -233,6 +233,9 @@ const RECONNECT_BACKOFF_MS = [2000, 4000, 8000, 15000];
 const engine = {
     state: 'idle',           // idle | starting | live | reconnecting | stopping | crashed
     proc: null,              // the ffmpeg child process
+    matchId: null,           // set once at /go-live, used to find this match's header chunk for priming every (re)start — see startEncoder
+    priming: false,          // true while the header chunk is being piped into a freshly (re)started process — mirrors the recorder's own priming, see startRecorder
+    pendingChunks: [],
     desiredLive: false,      // operator's intent — drives whether a crash should auto-restart
     startedAt: null,
     restarts: [],            // timestamps of recent fatal-error auto-restarts, for the bounded-retry window
@@ -407,6 +410,9 @@ function startRecorder(matchId, { resolution, fps } = {}) {
     recorder.proc = proc;
     recorder.state = 'recording';
     recorder.segments.push({ path: outFile, startedAt: recorder.startedAt });
+    proc.stdin.on('error', () => {}); // see the same listener on the live encoder's proc.stdin (startEncoder, below) for why this is needed
+
+
 
     // Prime this BRAND NEW ffmpeg process with the session's header
     // chunk before any live /ingest bytes reach it — a fresh process
@@ -870,6 +876,48 @@ function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     engine.startedAt = Date.now();
     engine.state = 'live';
 
+    // Writing to a process whose stdin has already closed (it just
+    // crashed, or is mid-exit) raises an ASYNC 'error' event on the
+    // stream — a try/catch around .write() in ingestChunk does NOT catch
+    // this, so without a listener here it becomes an uncaught exception
+    // ("Error: write EOF") on every single ingest call until the exit
+    // handler below has actually run and cleared engine.proc. Utterly
+    // harmless (ingestChunk already checks .writable before writing) but
+    // needs a listener to not spam/crash on it.
+    proc.stdin.on('error', () => {});
+
+    // A BRAND NEW ffmpeg process reading from pipe:0 has no idea what
+    // came before it — it needs the session's EBML/Segment/Tracks header
+    // chunk piped in FIRST, exactly like the local master recorder (see
+    // startRecorder above). Without this, any restart that doesn't
+    // happen to land exactly on the capture's very first byte — a
+    // reconnect after a network blip, an ABR hot-restart, or simply
+    // clicking Go Live after Recording/streaming already had chunks
+    // flowing — hands ffmpeg a bare Cluster with no header and it fails
+    // immediately with "Invalid data found when processing input",
+    // which then loops forever through the reconnect logic below (every
+    // retry hits the exact same problem). This was the actual cause of
+    // "stream keeps reconnecting, never goes live on YouTube."
+    engine.priming = true;
+    engine.pendingChunks = [];
+    const headerFile = engine.matchId ? localBuffer.getHeaderChunkFile(engine.matchId) : null;
+    const flushPendingEngine = () => {
+        engine.priming = false;
+        const pending = engine.pendingChunks;
+        engine.pendingChunks = [];
+        for (const buf of pending) {
+            try { if (proc.stdin.writable) proc.stdin.write(buf); } catch (e) { /* proc likely already gone */ }
+        }
+    };
+    if (headerFile) {
+        const hs = fs.createReadStream(headerFile);
+        hs.on('error', flushPendingEngine);
+        hs.pipe(proc.stdin, { end: false });
+        hs.on('close', flushPendingEngine);
+    } else {
+        flushPendingEngine();
+    }
+
     // Once this process has survived a few seconds without exiting, treat
     // the connection as genuinely re-established and reset the reconnect
     // attempt counter — otherwise a stream that's been flapping for an
@@ -973,6 +1021,7 @@ function stopEncoder() {
 let encoderBackpressured = false;
 function ingestChunk(buf) {
     if (engine.state !== 'live' || !engine.proc || !engine.proc.stdin.writable) return { ok: false, error: 'Encoder not live' };
+    if (engine.priming) { engine.pendingChunks.push(buf); return { ok: true }; } // hold until the header chunk (see startEncoder) has been written first
     if (encoderBackpressured) return { ok: false, error: 'Encoder backpressured — dropping frame to protect live latency', dropped: true };
     try {
         const stillOk = engine.proc.stdin.write(buf);
@@ -1256,6 +1305,7 @@ async function cutFromStitchedChunks({ toStitch, trimStartSec, outFile }) {
             outFile,
         ];
         const proc = spawn(FFMPEG_PATH, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+        proc.stdin.on('error', () => {}); // see the same listener on the live encoder's proc.stdin (startEncoder) for why this is needed — a chunk read finishing just as ffmpeg exits (e.g. rejects on bad input) would otherwise raise an unhandled async error here too
         let stderr = '';
         proc.stderr.on('data', (d) => { stderr += d; });
         proc.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg trim exited ${code}: ${stderr.slice(-500)}`)));
@@ -1599,8 +1649,14 @@ app.post('/set-youtube-config', (req, res) => {
 });
 
 app.post('/go-live', (req, res) => {
-    const { resolution, fps, bitrateKbps, keyframeIntervalSec, qualityMode, autoResolutionFallback } = req.body || {};
+    const { resolution, fps, bitrateKbps, keyframeIntervalSec, qualityMode, autoResolutionFallback, matchId } = req.body || {};
     engine.opToken++; // a fresh operator-initiated Go Live always wins over any stale in-flight ABR restart
+
+    // Needed to find this match's header chunk for priming every
+    // (re)start of the encoder — see startEncoder. Kept for the whole
+    // session (reconnects/ABR restarts reuse it), only reset here on a
+    // fresh operator-initiated Go Live.
+    if (matchId) engine.matchId = localBuffer.safeMatchId(matchId);
 
     const resKey = RESOLUTIONS[resolution] ? resolution : '1080p';
     const fpsNum = [30, 60].includes(Number(fps)) ? Number(fps) : 30;
