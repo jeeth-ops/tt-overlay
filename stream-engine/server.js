@@ -131,6 +131,42 @@ function checkNvenc() {
     return nvencCheckCache;
 }
 
+// ----------------------------------------------------------------
+// 🔎 libx264 RUNTIME CHECK — for the local master recorder and clip
+// cutter (see below), which both need a CPU encode path so they never
+// compete with the live push's own NVENC session. checkNvenc() above
+// only confirms h264_nvenc is LISTED in this ffmpeg build; the failure
+// mode this guards against is different and worse: h264_nvenc listed
+// AND working (live push is fine) while libx264 crashes ffmpeg outright
+// the instant it's actually used (confirmed on a real operator machine:
+// every single recorder/clip-cut attempt died with the exact same OS
+// crash exit code, on a build where -encoders lists libx264 just fine —
+// a build/runtime issue, most likely a CPU without an instruction set
+// this libx264 build assumes, or AV interference, not anything this
+// process can fix). A LISTED encoder can still crash the moment real
+// work is asked of it, so this actually runs a throwaway 0.1s encode
+// rather than just grepping -encoders like checkNvenc does.
+// ----------------------------------------------------------------
+let libx264CheckCache = null; // cached for the process lifetime — this doesn't change while running
+function checkLibx264() {
+    if (libx264CheckCache !== null) return libx264CheckCache;
+    try {
+        const res = spawnSync(FFMPEG_PATH, [
+            '-hide_banner', '-loglevel', 'error', '-y',
+            '-f', 'lavfi', '-i', 'color=c=black:s=64x64:d=0.2',
+            '-c:v', 'libx264', '-preset', 'ultrafast',
+            '-f', 'null', '-',
+        ], { timeout: 8000 });
+        libx264CheckCache = !res.error && res.status === 0;
+    } catch (e) {
+        libx264CheckCache = false;
+    }
+    console.log(libx264CheckCache
+        ? '[stream-engine] libx264 runtime check: ✅ working — local recording/clip cutting will use it (CPU, doesn\'t compete with the live push\'s NVENC session)'
+        : '[stream-engine] libx264 runtime check: ❌ crashes on this machine — falling back to NVENC for local recording/clip cutting too (shares the GPU encoder with the live push, but a working shared session beats a guaranteed crash)');
+    return libx264CheckCache;
+}
+
 function ffmpegAvailable() {
     const res = spawnSync(FFMPEG_PATH, ['-version'], { encoding: 'utf8', timeout: 5000 });
     return !res.error;
@@ -362,15 +398,24 @@ const recorder = {
 };
 
 function buildRecorderArgs({ width, height, fps, bitrateKbps, outFile }) {
+    // Prefer libx264 (CPU): this runs ALONGSIDE the live push's own
+    // NVENC session, and consumer GPUs commonly cap concurrent NVENC
+    // sessions at 1-3 — recording isn't latency-sensitive, so a CPU
+    // encode here normally never competes with the live stream's
+    // hardware encoder for that limited resource. But an ffmpeg build
+    // that lists libx264 can still crash the instant it's actually used
+    // on some machines (confirmed on a real operator's PC) — checkLibx264()
+    // actually runs a throwaway encode to catch that, not just check the
+    // build lists it, and this falls back to NVENC (sharing the GPU
+    // encoder with the live push) rather than a guaranteed crash loop.
+    const useNvenc = !checkLibx264() && checkNvenc().available;
+    const videoArgs = useNvenc
+        ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-b:v', `${bitrateKbps}k`, '-maxrate', `${Math.round(bitrateKbps * 1.3)}k`]
+        : ['-c:v', 'libx264', '-preset', 'veryfast', '-b:v', `${bitrateKbps}k`];
     return [
         '-hide_banner', '-loglevel', 'warning',
         '-i', 'pipe:0',
-        // Deliberately libx264 (CPU), not NVENC: this runs ALONGSIDE the
-        // live push's own NVENC session, and consumer GPUs commonly cap
-        // concurrent NVENC sessions at 1-3 — recording isn't
-        // latency-sensitive, so a CPU encode here never competes with
-        // the live stream's hardware encoder for that limited resource.
-        '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', `${bitrateKbps}k`,
+        ...videoArgs,
         '-vf', `scale=${width}:${height}`, '-r', String(fps),
         // A short (2s) GOP — same convention as the live encoder above —
         // is what actually makes the crash-safety below real: fragments
@@ -1345,7 +1390,13 @@ async function cutFromStitchedChunks({ toStitch, trimStartSec, outFile }) {
             // the wrong trade here since upload time >> encode time on a
             // typical connection — 'veryfast' remains the sweet spot.
             '-vf', `scale='min(iw,${CLIP_MAX_WIDTH})':-2`,
-            '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
+            // Same libx264-crash fallback as the local master recorder
+            // (see checkLibx264) — NVENC doesn't take -crf, so
+            // '-rc vbr -cq N' is its equivalent "quality, not fixed
+            // bitrate" mode (b:v 0 tells it not to also cap by bitrate).
+            ...(!checkLibx264() && checkNvenc().available
+                ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-cq', '26', '-b:v', '0']
+                : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26']),
             '-c:a', 'aac', '-b:a', '128k',
             outFile,
         ];
