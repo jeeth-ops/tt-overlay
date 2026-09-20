@@ -481,6 +481,41 @@ function windowTitleFor(matchId) {
     return `AllSportsLive-LiveOutput-${safeMatchId(matchId)}`;
 }
 
+// 🩹 EXACT WINDOW TITLE RESOLUTION — confirmed on real hardware: Chrome
+// (like every major browser) appends " - Google Chrome" to a window's
+// actual OS-level title bar text, on top of whatever document.title the
+// page set — a window whose document.title is exactly
+// "AllSportsLive-LiveOutput-<matchId>" really shows up to Windows as
+// "AllSportsLive-LiveOutput-<matchId> - Google Chrome" (or " - Microsoft
+// Edge", etc., depending on the browser). There is no web-page API to
+// suppress this. gdigrab's own `-i title=...` needs the FULL, exact
+// current title to find the window reliably — passing just the prefix
+// worked once by pure timing luck (caught mid-launch, before the
+// browser's own chrome finished attaching) and then consistently failed
+// afterward, which is exactly the "works once, then can't find window"
+// behavior seen in testing.
+//
+// Rather than guess every browser's suffix format, this asks Windows
+// itself for the real, current title of whatever window matches our
+// prefix (PowerShell's Get-Process/MainWindowTitle — no extra
+// dependency, ships with every Windows install) and hands ffmpeg that
+// EXACT string. If resolution fails (PowerShell unavailable, or no
+// matching window), falls back to the bare prefix — gdigrab then still
+// gets a sensible attempt and its own real error surfaces normally.
+function resolveWindowTitle(matchId) {
+    const prefix = windowTitleFor(matchId);
+    try {
+        const res = spawnSync('powershell.exe', [
+            '-NoProfile', '-NonInteractive', '-Command',
+            `(Get-Process | Where-Object { $_.MainWindowTitle -like '*${prefix}*' } | Select-Object -First 1 -ExpandProperty MainWindowTitle)`,
+        ], { encoding: 'utf8', timeout: 5000 });
+        const title = (res.stdout || '').trim();
+        return title || prefix;
+    } catch (e) {
+        return prefix;
+    }
+}
+
 // Configurable because exact OS title-bar/border pixel height varies by
 // Windows version, display scaling (DPI) and theme — values here are a
 // reasonable Windows 10/11 @100% DPI default; GET/POST /capture-config
@@ -974,7 +1009,7 @@ function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     // current config, never logged, never included in engine.settings
     // (which /health exposes) — only passed straight to ffmpeg's argv.
     const destinationUrl = buildDestinationUrl(streamUrl, streamKey);
-    const windowTitle = windowTitleFor(engine.matchId);
+    const windowTitle = resolveWindowTitle(engine.matchId);
     const args = buildLiveEncoderArgs({ windowTitle, audioDeviceName: engine.audioDeviceName, ...resolved, destinationUrl });
     const proc = spawn(FFMPEG_PATH, args, { stdio: ['pipe', 'ignore', 'pipe'] });
     engine.proc = proc;
@@ -1190,7 +1225,7 @@ function startRecorder(matchId, { resolution, fps, audioDeviceName } = {}) {
     recorder.startedAt = Date.now();
     recorder.lastError = null;
 
-    const windowTitle = windowTitleFor(matchId);
+    const windowTitle = resolveWindowTitle(matchId);
     const args = buildRecorderArgs({ windowTitle, audioDeviceName, width, height, fps: fpsNum, bitrateKbps, outFile });
     const proc = spawn(FFMPEG_PATH, args, { stdio: ['pipe', 'ignore', 'pipe'] });
     recorder.proc = proc;
@@ -1756,7 +1791,7 @@ app.get('/capture-preview', (req, res) => {
     const matchId = safeMatchId(req.query.matchId);
     if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
     if (!NATIVE_CAPTURE_SUPPORTED) return res.status(400).json({ success: false, error: `Native capture requires Windows — this process is running on ${process.platform}` });
-    const windowTitle = windowTitleFor(matchId);
+    const windowTitle = resolveWindowTitle(matchId);
     const useGpuScale = false; // the preview is a single throwaway frame — always CPU-simple, no need to exercise the GPU path here
     const { width, height } = RESOLUTIONS['720p'];
     const args = [
