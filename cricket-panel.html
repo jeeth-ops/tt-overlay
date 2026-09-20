@@ -292,6 +292,11 @@
     padding:10px 14px; border-radius:9px; font-size:12px; opacity:0; transform:translateY(8px) scale(.98);
     transition:opacity var(--med) var(--ease), transform var(--med) var(--ease);
     pointer-events:none; z-index:50; box-shadow:var(--shadow-lg);
+    /* Multi-line reports (e.g. Import From List's IMPORT COMPLETE
+       summary) keep their line breaks instead of collapsing into one
+       squished line — a plain single-line toast still wraps exactly as
+       before, this only changes how an explicit \n renders. */
+    white-space:pre-line; max-width:280px; line-height:1.5;
   }
   #toast.show{ opacity:1; transform:translateY(0) scale(1); }
 
@@ -390,8 +395,13 @@
   .import-review-list:empty{ display:flex; align-items:center; justify-content:center; min-height:50px; }
   .import-review-list:empty::after{ content:'No players detected — add names manually below.'; color:var(--text-dim); font-size:12.5px; }
   .import-review-row{
-    display:grid; grid-template-columns:26px 1fr 26px; gap:8px; align-items:center;
+    display:grid; grid-template-columns:26px 1fr auto 26px; gap:8px; align-items:center;
     padding:7px 8px; border-radius:7px; border-left:3px solid transparent;
+  }
+  .irr-role-badge{
+    justify-self:center; font-size:10px; font-weight:800; letter-spacing:.4px;
+    padding:2px 7px; border-radius:99px; background:var(--purple-soft, rgba(168,85,247,.15)); color:var(--purple);
+    border:1px solid rgba(168,85,247,.35);
   }
   .import-review-row:nth-child(odd){ background:rgba(255,255,255,.035); }
   .import-review-row input[type="checkbox"]{ width:15px; height:15px; margin:0; }
@@ -411,9 +421,14 @@
   .irr-fuzzy-hint b{ color:var(--purple); font-weight:700; }
   .irr-fuzzy-hint button{ padding:3px 9px; font-size:11px; border-radius:6px; }
   .import-review-row.low-conf .irr-fuzzy-hint{ border-color:#facc15; background:rgba(250,204,21,.08); }
+  /* Exact GLOBAL player match, pre-approved — "✓ Existing Player Found" */
+  .irr-fuzzy-hint.irr-global-exact{ border-color:rgba(34,197,94,.4); background:rgba(34,197,94,.08); color:var(--text); }
+  .irr-fuzzy-hint.irr-global-exact code{ color:#22c55e; font-weight:700; }
   .import-review-row .irr-remove:hover{ background:rgba(239,68,68,.15); }
   .import-low-conf-hint{ font-size:10.5px; color:#facc15; margin:-4px 0 10px; display:none; }
   .import-low-conf-hint.show{ display:block; }
+  .import-bulk-row{ display:flex; gap:6px; flex-wrap:wrap; margin:6px 0 10px; }
+  .import-bulk-row button{ padding:4px 10px; font-size:10.5px; }
 
   .import-dup-box{
     background:rgba(255,255,255,.03); border:1px solid var(--border); border-radius:9px;
@@ -736,7 +751,14 @@
 
     <div class="import-step" id="import-step-review">
       <label>Detected players <span class="note">— untick or edit anything that's wrong</span></label>
+      <div class="import-bulk-row" id="import-bulk-row">
+        <button type="button" class="small ghost" id="import-select-all-btn">Select All</button>
+        <button type="button" class="small ghost" id="import-deselect-all-btn">Deselect All</button>
+        <button type="button" class="small ghost" id="import-approve-high-conf-btn">Approve High-Confidence</button>
+        <button type="button" class="small ghost" id="import-delete-selected-btn">Delete Selected</button>
+      </div>
       <div class="import-low-conf-hint" id="import-low-conf-hint">⚠️ Names outlined in yellow look uncertain (poor scan/handwriting) — please double-check them before importing.</div>
+      <div class="import-low-conf-hint" id="import-matching-hint" style="color:var(--text-dim);">🔎 Matching existing players…</div>
       <div class="import-review-list" id="import-review-list"></div>
       <div class="import-add-row">
         <input type="text" id="import-add-name" placeholder="Add a missing player name">
@@ -3864,8 +3886,15 @@ function renderSquadUI(){
 // ID instead of forking a new one. Best-effort: offline, not signed in,
 // or a slow/failed request all fall back to the old local-id behavior
 // rather than blocking the scorer from adding a player.
-async function resolveOrCreatePlayerId(name){
-  if(!currentOwnerUid()) return genPlayerId();
+// wasCreated: true when the server actually minted a brand-new playerId
+// for this name, false when it found and reused an existing one — used by
+// Import From List's post-import report (see the import-modal-confirm
+// handler below) to show accurate "N existing reused / N new created"
+// counts instead of guessing. Offline/signed-out fallback (a purely local
+// id, never reaching the server) counts as "created" too, since nothing
+// existing could possibly have been found for it.
+async function resolveOrCreatePlayerIdDetailed(name){
+  if(!currentOwnerUid()) return { playerId: genPlayerId(), wasCreated: true };
   try{
     const res = await fetch(withUid('/api/players/resolve'), {
       method: 'POST',
@@ -3873,9 +3902,54 @@ async function resolveOrCreatePlayerId(name){
       body: JSON.stringify({ name })
     });
     const data = await res.json();
-    if(data && data.success && data.playerId) return data.playerId;
+    if(data && data.success && data.playerId) return { playerId: data.playerId, wasCreated: !!data.wasCreated };
   }catch(e){ /* offline/Mongo-not-configured — fall back below */ }
-  return genPlayerId();
+  return { playerId: genPlayerId(), wasCreated: true };
+}
+async function resolveOrCreatePlayerId(name){
+  return (await resolveOrCreatePlayerIdDetailed(name)).playerId;
+}
+// 🌟 GLOBAL player search — the SAME account-wide player database
+// resolveOrCreatePlayerId()/resolvePlayerId() (server.js) already resolve
+// against, just as a read-only lookup (GET /api/players/search) instead
+// of a find-or-create write. Used by Import From List's review step (see
+// buildImportReview() below) so an imported name can be checked against
+// every player this account has ever scored — not just whoever's already
+// on the CURRENT team's roster — before anything is imported. Never
+// creates anything; safe to call speculatively for every OCR'd name.
+async function searchExistingPlayersGlobal(query){
+  const q = (query || '').trim();
+  if(!currentOwnerUid() || q.length < 2) return [];
+  try{
+    const res = await fetch(withUid(`/api/players/search?q=${encodeURIComponent(q)}`));
+    const data = await res.json();
+    return (data && data.success && Array.isArray(data.players)) ? data.players : [];
+  }catch(e){ return []; }
+}
+// Best global candidate for one imported name, or null. The search itself
+// is a substring match on displayName (see /api/players/search), so it's
+// queried with the LONGEST word in the name (usually a surname — the most
+// OCR-reliable, most distinguishing token) rather than the full string, so
+// a mangled first name elsewhere doesn't hide a real match entirely; every
+// candidate that comes back is then ranked against the FULL name with the
+// exact same levenshtein tolerance findFuzzyMatch() already uses for
+// local-roster matching, so "exact" vs "fuzzy" means the same thing in
+// both places.
+async function findGlobalPlayerMatch(name){
+  const words = (name || '').split(/\s+/).filter(w => w.length >= 3);
+  const searchWord = words.slice().sort((a, b) => b.length - a.length)[0] || name;
+  const candidates = await searchExistingPlayersGlobal(searchWord);
+  if(!candidates.length) return null;
+  let best = null, bestDist = Infinity;
+  candidates.forEach(c => {
+    const candName = (c.displayName || '').trim().toUpperCase();
+    if(!candName || !c.playerId) return;
+    const dist = levenshtein(name, candName);
+    if(dist < bestDist){ best = { playerId: c.playerId, name: candName, exact: dist === 0 }; bestDist = dist; }
+  });
+  if(!best) return null;
+  const tolerance = Math.max(1, Math.floor(name.length * 0.2));
+  return bestDist === 0 || bestDist <= tolerance ? best : null;
 }
 async function addSquadPlayer(key){
   const inputId = key === 'A' ? 'squadA-new-name' : 'squadB-new-name';
@@ -4124,9 +4198,20 @@ function extractPlayerNames(rawText){
     // Collapse any run of internal whitespace ("Karsh   Kothari") down to a
     // single space so display/matching doesn't inherit stray double-spacing.
     line = line.replace(/\s{2,}/g, ' ');
-    // Trailing role tag: "- Captain", "(WK)", "- Wicket Keeper"
-    line = line.replace(/[\-–]\s*(captain|c|vice[\s-]?captain|vc|wk|wicket[\s-]?keeper)\s*$/i, '');
-    line = line.replace(/\(\s*(captain|c|vice[\s-]?captain|vc|wk|wicket[\s-]?keeper)\s*\)\s*$/i, '');
+    // Trailing role tag: "- Captain", "(WK)", "- Wicket Keeper" — captured
+    // (not just discarded) so the existing captainId/wkId roster fields
+    // (see squadA-captain/squadA-wk in TEAM SQUADS) can be set automatically
+    // once this player is actually imported. "C" alone is treated as
+    // Captain only when it's the WHOLE tag (never partial-matches inside a
+    // longer word), same care the regex already takes for the others.
+    let role = null;
+    const roleTagPattern = /[\-–]\s*(captain|c|vice[\s-]?captain|vc|wk|wicket[\s-]?keeper)\s*$|\(\s*(captain|c|vice[\s-]?captain|vc|wk|wicket[\s-]?keeper)\s*\)\s*$/i;
+    const roleTagMatch = line.match(roleTagPattern);
+    if(roleTagMatch){
+      const tag = (roleTagMatch[1] || roleTagMatch[2] || '').toLowerCase();
+      role = /^(wk|wicket[\s-]?keeper)$/.test(tag) ? 'wk' : 'captain'; // vice-captain still counts as captain-tagged for this purpose
+      line = line.replace(roleTagPattern, '');
+    }
     line = line.trim().replace(/[|_]+$/, '').trim();
 
     if(!line) return;
@@ -4141,7 +4226,7 @@ function extractPlayerNames(rawText){
     const nonLetterRatio = 1 - (letters.length / line.replace(/\s/g, '').length || 1);
     const flagged = hasDigitInWord || nonLetterRatio > 0.35;
 
-    out.push({ name: line.toUpperCase(), flagged });
+    out.push({ name: line.toUpperCase(), flagged, role });
   });
   return out;
 }
@@ -4207,28 +4292,68 @@ function findFuzzyMatch(name, existingNames){
   });
   return best;
 }
-function buildImportReview(names){
+async function buildImportReview(names){
   importRows = [];
   importDupRows = [];
-  const existingList = rosterPlayers(importTargetTeam).map(p => (p.name || '').trim().toUpperCase());
+  const rosterNow = rosterPlayers(importTargetTeam);
+  const existingList = rosterNow.map(p => (p.name || '').trim().toUpperCase());
   const existing = new Set(existingList);
   const seen = new Set(); // de-dupe names detected twice within the same upload
+  const candidates = []; // names that need a GLOBAL account-wide lookup below
   names.forEach(n => {
     if(seen.has(n.name)) return;
     seen.add(n.name);
-    const row = { rowId: importRowId(), name: n.name, flagged: n.flagged, checked: true };
+    const row = { rowId: importRowId(), name: n.name, flagged: n.flagged, checked: true, role: n.role || null };
     if(existing.has(n.name)){
+      // Already on THIS team's roster — same treatment as before, untouched,
+      // but now also carries the ROSTER's own real playerId directly (no
+      // server round-trip needed) so the confirm step and the post-import
+      // report can count it as "existing reused" with certainty rather
+      // than assuming the later name-based resolve will find it.
       row.checked = false;
+      const rosterMatch = rosterNow.find(p => (p.name || '').trim().toUpperCase() === n.name);
+      if(rosterMatch) row.approvedPlayerId = rosterMatch.id || null;
       importDupRows.push(row);
     } else {
-      // Not an exact match — but flag a close one so the scorer can choose
-      // "Use Existing" instead of accidentally forking a second Player ID
-      // for what's really the same teammate (see item 5/6 in the spec:
-      // reuse existing IDs, but never silently auto-merge).
+      // Not already on this roster — but flag a close LOCAL match so the
+      // scorer can still choose "Use Existing" instead of accidentally
+      // forking a second Player ID for a teammate already added.
       row.possibleMatch = findFuzzyMatch(n.name, existingList);
       importRows.push(row);
+      candidates.push(row);
     }
   });
+  renderImportReview();
+
+  // 🌟 GLOBAL existing-player check — everything above only ever compared
+  // against the CURRENT team's already-added roster. This is the real
+  // duplicate-prevention step: search this account's WHOLE player
+  // database (every match/tournament ever scored under it — see
+  // findGlobalPlayerMatch()) for each remaining candidate, so a player who
+  // exists from an earlier match/tournament but has simply never been
+  // added to THIS particular roster still gets their existing playerId
+  // reused instead of a brand-new one minted for them. Runs in the
+  // background after the list is already visible (so the review screen
+  // never blocks on it) and re-renders once results land; each row can
+  // still be edited/approved before the lookups finish.
+  if(!currentOwnerUid() || !candidates.length) return;
+  document.getElementById('import-matching-hint').classList.add('show');
+  await Promise.all(candidates.map(async row => {
+    try{
+      const match = await findGlobalPlayerMatch(row.name);
+      if(!match) return;
+      row.globalMatch = match;
+      // An exact global match is high-confidence enough to pre-approve —
+      // reusing the existing playerId here is exactly as safe as a scorer
+      // re-typing that same exact name into the manual "+ Add" field
+      // already is (same resolvePlayerId() exact-nameKey lookup either
+      // way). A FUZZY global match is NOT auto-approved — the scorer must
+      // explicitly hit "Use Existing" (see renderImportReview()) before
+      // its playerId is ever used, same as the local fuzzy-match flow.
+      if(match.exact) row.approvedPlayerId = match.playerId;
+    }catch(e){ /* best-effort — a failed lookup just leaves this row as a plain new-player candidate */ }
+  }));
+  document.getElementById('import-matching-hint').classList.remove('show');
   renderImportReview();
 }
 function renderImportReview(){
@@ -4252,6 +4377,7 @@ function renderImportReview(){
     nameInput.addEventListener('input', () => {
       row.name = nameInput.value.toUpperCase();
       row.flagged = false; // an edited name has been human-verified — stop flagging it
+      row.manuallyEdited = true; // for the post-import report's real "manually corrected" count
       el.classList.remove('low-conf');
     });
 
@@ -4265,7 +4391,18 @@ function renderImportReview(){
       renderImportReview();
     });
 
-    el.appendChild(cb); el.appendChild(nameInput); el.appendChild(removeBtn);
+    el.appendChild(cb); el.appendChild(nameInput);
+    if(row.role){
+      // Detected "(C)"/"(WK)" tag — see extractPlayerNames() — shown so the
+      // scorer can see it was actually recognized, not silently discarded.
+      // Applied onto the real captainId/wkId roster fields at import time.
+      const roleBadge = document.createElement('span');
+      roleBadge.className = 'irr-role-badge';
+      roleBadge.textContent = row.role === 'wk' ? 'WK' : 'C';
+      roleBadge.title = row.role === 'wk' ? 'Detected as Wicketkeeper — will set the squad\'s WK on import' : 'Detected as Captain — will set the squad\'s Captain on import';
+      el.appendChild(roleBadge);
+    }
+    el.appendChild(removeBtn);
 
     if(row.possibleMatch){
       const hint = document.createElement('div');
@@ -4293,6 +4430,54 @@ function renderImportReview(){
       keepBtn.title = 'This is actually a different person — import as a new player';
       keepBtn.addEventListener('click', () => {
         row.possibleMatch = null;
+        renderImportReview();
+      });
+      hint.appendChild(label); hint.appendChild(useBtn); hint.appendChild(keepBtn);
+      el.appendChild(hint);
+    }
+
+    // 🌟 GLOBAL match (this account's whole player database, not just this
+    // team's roster — see findGlobalPlayerMatch() / buildImportReview()).
+    if(row.approvedPlayerId){
+      // Exact match, pre-approved — "✓ Existing Player Found" per spec.
+      const badge = document.createElement('div');
+      badge.className = 'irr-fuzzy-hint irr-global-exact';
+      const label = document.createElement('span');
+      label.innerHTML = `✓ Existing Player Found — reusing Player ID <code>${escapeHtmlAttr(row.approvedPlayerId)}</code>`;
+      const undoBtn = document.createElement('button');
+      undoBtn.type = 'button';
+      undoBtn.className = 'small ghost';
+      undoBtn.textContent = 'Not this player';
+      undoBtn.title = 'This is actually a different person — import as a new player instead';
+      undoBtn.addEventListener('click', () => {
+        row.approvedPlayerId = null;
+        row.globalMatch = null;
+        renderImportReview();
+      });
+      badge.appendChild(label); badge.appendChild(undoBtn);
+      el.appendChild(badge);
+    } else if(row.globalMatch){
+      anyFlagged = true; // surfaced in the same "please double-check" banner as OCR-uncertain names
+      const hint = document.createElement('div');
+      hint.className = 'irr-fuzzy-hint';
+      const label = document.createElement('span');
+      label.innerHTML = `Possible existing player (different match/tournament) — <b>${escapeHtmlAttr(row.globalMatch.name)}</b>, ID <code>${escapeHtmlAttr(row.globalMatch.playerId)}</code>`;
+      const useBtn = document.createElement('button');
+      useBtn.type = 'button';
+      useBtn.className = 'small';
+      useBtn.textContent = 'Use Existing';
+      useBtn.title = `Reuse ${row.globalMatch.name}'s existing Player ID instead of creating a new one`;
+      useBtn.addEventListener('click', () => {
+        row.approvedPlayerId = row.globalMatch.playerId;
+        renderImportReview();
+      });
+      const keepBtn = document.createElement('button');
+      keepBtn.type = 'button';
+      keepBtn.className = 'small ghost';
+      keepBtn.textContent = 'Create New';
+      keepBtn.title = 'This is actually a different person — import as a new player';
+      keepBtn.addEventListener('click', () => {
+        row.globalMatch = null;
         renderImportReview();
       });
       hint.appendChild(label); hint.appendChild(useBtn); hint.appendChild(keepBtn);
@@ -4333,30 +4518,110 @@ document.getElementById('import-add-name').addEventListener('keydown', e => {
   if(e.key === 'Enter') document.getElementById('import-add-name-btn').click();
 });
 
+// --- Bulk actions — for a long Test-match-sized roster, approving/
+// deselecting one row at a time isn't practical. Every one of these only
+// ever touches importRows/importDupRows' own checked/approvedPlayerId
+// flags — never writes to the squad itself, so Cancel Import still fully
+// discards all of it exactly as before. ---
+document.getElementById('import-select-all-btn').addEventListener('click', () => {
+  importRows.forEach(r => { r.checked = true; });
+  importDupRows.forEach(r => { r.checked = true; });
+  renderImportReview();
+});
+document.getElementById('import-deselect-all-btn').addEventListener('click', () => {
+  importRows.forEach(r => { r.checked = false; });
+  importDupRows.forEach(r => { r.checked = false; });
+  renderImportReview();
+});
+document.getElementById('import-delete-selected-btn').addEventListener('click', () => {
+  const before = importRows.length + importDupRows.length;
+  importRows = importRows.filter(r => !r.checked);
+  importDupRows = importDupRows.filter(r => !r.checked);
+  const removed = before - (importRows.length + importDupRows.length);
+  renderImportReview();
+  if(removed) toast(`Removed ${removed} selected name${removed === 1 ? '' : 's'} from the import list`);
+});
+// "High-confidence" here means a global existing-player match was found
+// (see findGlobalPlayerMatch()), the OCR text itself wasn't flagged as
+// uncertain, and the scorer hasn't already decided either way — the
+// operator still gets to see exactly which rows this affects (they stay
+// visible with their normal "Use Existing"/"Create New" buttons), this
+// just applies the same "Use Existing" choice to all of them in one click
+// instead of clicking through each individually.
+document.getElementById('import-approve-high-conf-btn').addEventListener('click', () => {
+  let approved = 0;
+  importRows.forEach(r => {
+    if(!r.flagged && r.globalMatch && !r.approvedPlayerId){
+      r.approvedPlayerId = r.globalMatch.playerId;
+      approved++;
+    }
+  });
+  renderImportReview();
+  toast(approved ? `Approved ${approved} high-confidence existing-player match${approved === 1 ? '' : 'es'}` : 'No unresolved high-confidence matches to approve');
+});
+
 document.getElementById('import-modal-confirm').addEventListener('click', async () => {
   const key = importTargetTeam;
   if(!key) return;
-  const toAdd = [...importRows, ...importDupRows]
-    .filter(r => r.checked && r.name.trim())
-    .map(r => r.name.trim());
-  if(!toAdd.length){ toast('No players selected to import'); return; }
+  const rows = [...importRows, ...importDupRows].filter(r => r.checked && r.name.trim());
+  if(!rows.length){ toast('No players selected to import'); return; }
   const t = teamObj(key);
+  const teamLabel = t.name || (key === 'A' ? 'Team A' : 'Team B');
+
+  // IMPORT SUMMARY — real counts computed from what's actually on screen
+  // right now, shown before anything is written (spec: "use actual
+  // counts", never invented ones). A row already carries approvedPlayerId
+  // when it's a confirmed existing player (local roster match, or an
+  // exact/approved global match) — everything else still needs the
+  // server round-trip below to find out whether it's existing or new.
+  const knownExisting = rows.filter(r => r.approvedPlayerId).length;
+  const toResolve = rows.length - knownExisting;
+  const reviewCount = rows.filter(r => r.flagged).length;
+  const summaryLines = [
+    `${rows.length} name${rows.length === 1 ? '' : 's'} selected for import`,
+    `${knownExisting} existing Player ID${knownExisting === 1 ? '' : 's'} already confirmed`,
+    toResolve ? `${toResolve} more to check against the player database` : null,
+    reviewCount ? `${reviewCount} still flagged for review` : null,
+    '', `Team: ${teamLabel}`
+  ].filter(l => l !== null).join('\n');
+  if(!confirm(`IMPORT SUMMARY\n\n${summaryLines}\n\nImport now?`)) return;
+
   t.players = t.players || [];
-  // Same duplicate-protection as the single "+ Add" flow (see
-  // resolveOrCreatePlayerId above) — a printed team sheet imported into a
-  // second match of the same tournament should reuse each player's
-  // existing permanent ID, not fork a fresh one per import.
   const btn = document.getElementById('import-modal-confirm');
   btn.disabled = true;
   const prevLabel = btn.textContent;
   btn.textContent = 'Importing…';
+  // Real, actually-observed outcome counts for the "IMPORT COMPLETE"
+  // report below — never guessed. existingReused/newCreated are only
+  // known for certain once each row's playerId is actually resolved
+  // (either already known from approvedPlayerId, or just returned by
+  // resolveOrCreatePlayerIdDetailed()'s wasCreated flag).
+  let existingReused = 0, newCreated = 0, manuallyCorrected = 0;
   try{
-    const playerIds = await Promise.all(toAdd.map(name => resolveOrCreatePlayerId(name)));
-    toAdd.forEach((name, i) => {
-      const playerId = playerIds[i];
-      if(t.players.some(p => p.id === playerId)) return; // already on the squad
-      t.players.push({ id: playerId, name, isXI: true });
-    });
+    await Promise.all(rows.map(async row => {
+      const name = row.name.trim();
+      if(row.manuallyEdited) manuallyCorrected++;
+      let playerId;
+      if(row.approvedPlayerId){
+        // Already a confirmed existing player (local roster or an
+        // exact/operator-approved global match) — reuse it directly,
+        // no need to re-resolve by name.
+        playerId = row.approvedPlayerId;
+        existingReused++;
+      } else {
+        const resolved = await resolveOrCreatePlayerIdDetailed(name);
+        playerId = resolved.playerId;
+        if(resolved.wasCreated) newCreated++; else existingReused++;
+      }
+      if(!t.players.some(p => p.id === playerId)) t.players.push({ id: playerId, name, isXI: true });
+      // Role tag detected on this line (see extractPlayerNames()'s "(C)"/
+      // "(WK)" capture) — applied onto the SAME captainId/wkId fields the
+      // Team Squads UI's own dropdowns already use, never a separate
+      // "OCR role" concept. Last tagged player wins, same single-captain/
+      // single-wk model the manual dropdowns already enforce.
+      if(row.role === 'captain') t.captainId = playerId;
+      else if(row.role === 'wk') t.wkId = playerId;
+    }));
   } finally {
     btn.disabled = false;
     btn.textContent = prevLabel;
@@ -4365,7 +4630,16 @@ document.getElementById('import-modal-confirm').addEventListener('click', async 
   renderRosterControls();
   pushState(true);
   closeImportModal();
-  toast(`✅ Imported ${toAdd.length} player${toAdd.length === 1 ? '' : 's'} into ${t.name || (key === 'A' ? 'Team A' : 'Team B')}`);
+  // IMPORT COMPLETE — actual result, not the generic "imported N players"
+  // this used to show. Every count here is something that actually
+  // happened during the loop above, not an estimate.
+  const resultLines = [
+    `✓ ${rows.length} player${rows.length === 1 ? '' : 's'} processed`,
+    `✓ ${existingReused} existing Player ID${existingReused === 1 ? '' : 's'} reused`,
+    `✓ ${newCreated} new player${newCreated === 1 ? '' : 's'} created`,
+  ];
+  if(manuallyCorrected) resultLines.push(`✓ ${manuallyCorrected} manually corrected`);
+  toast(`IMPORT COMPLETE\n${resultLines.join('\n')}\nTeam: ${teamLabel}`, 6000);
 });
 
 /* ============================================================

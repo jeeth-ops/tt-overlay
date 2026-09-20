@@ -3435,9 +3435,19 @@ app.post('/api/players/resolve', requireAuthorizedCreator, async (req, res) => {
     const name = req.body.name;
     if (!ownerUid || !String(name || '').trim()) return res.status(400).json({ success: false, error: 'uid and name required' });
     try {
+        // 🌟 wasCreated — an extra read-before-write JUST for this HTTP
+        // endpoint (never inside resolvePlayerId() itself, which stays a
+        // plain string-returning function since it's called on every ball
+        // logged and dozens of other places already depend on that exact
+        // return shape). Import From List's review screen (cricket-panel
+        // .html) needs to report ACCURATE "N existing reused / N new
+        // created" counts after a bulk import rather than inventing them —
+        // this is the one extra query that makes that possible.
+        const nameKey = playerKey(name);
+        const existedBefore = !!(nameKey && playersCollection && await playersCollection.findOne({ ownerUid, nameKeys: nameKey }, { projection: { _id: 1 } }));
         const playerId = await resolvePlayerId(ownerUid, name);
         if (!playerId) return res.status(503).json({ success: false, error: 'Database not configured' });
-        res.json({ success: true, playerId });
+        res.json({ success: true, playerId, wasCreated: !existedBefore });
     } catch (err) {
         console.log('Player resolve error:', err);
         res.status(500).json({ success: false, error: 'Could not resolve player' });
