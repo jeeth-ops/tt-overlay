@@ -1523,7 +1523,10 @@
           <span style="opacity:.7;">GPU</span><span id="ls-sh-gpu">—</span>
           <span style="opacity:.7;">Duration</span><span id="ls-sh-duration">—</span>
         </div>
-        <div id="ls-sh-unstable" style="font-size:11.5px; color:#ffb020; margin-top:8px; display:none; font-weight:600;">⚠ Stream Connection Unstable</div>
+        <div id="ls-sh-unstable" style="font-size:11.5px; color:#ffb020; margin-top:8px; display:none; font-weight:600;">
+          ⚠ Stream Connection Unstable
+          <button type="button" id="ls-lower-quality-btn" class="small ghost" style="margin-top:6px; display:block; width:100%;">⬇ Lower Quality Now</button>
+        </div>
         <div id="ls-sh-error" style="font-size:11px; color:#ff6b6b; margin-top:6px; display:none;"></div>
       </div>
     </div>
@@ -2973,6 +2976,87 @@ function checkStreamStability(health, targetBitrateKbps){
   const unstable = lowBitrateStreak >= 3 || droppedClimbing || health.state === 'crashed';
   unstableEl.style.display = unstable ? 'block' : 'none';
 }
+
+// ⬇ ONE-CLICK QUALITY STEP-DOWN — when the network can't sustain the
+// current bitrate (see checkStreamStability above), the operator used to
+// have to STOP the whole stream, re-pick a lower resolution/bitrate in the
+// (disabled-while-live) dropdowns, then GO LIVE again — losing the show
+// for however long that took. This instead hot-restarts just the local
+// encoder (stop the ffmpeg process, immediately go-live again with a
+// lower target) while the SAME browser capture keeps running throughout,
+// so it's a ~1-2s hiccup, not a dropped stream. Clip cutting is
+// completely unaffected either way — localBuffer.js gets every chunk
+// regardless of the encoder's live/idle state (see stream-engine/server.js
+// /ingest), so match clips keep recording through this.
+const QUALITY_STEP_ORDER = ['1080p', '720p', '480p'];
+const QUALITY_BITRATE_FLOOR_KBPS = { '1080p': 2500, '720p': 1200, '480p': 600 };
+let loweringQuality = false;
+
+async function waitForEncoderIdle(timeoutMs = 6500){ // stream-engine force-kills a stuck ffmpeg after 5s; wait past that so /go-live never races a still-exiting process
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const health = await fetch(`${STREAM_ENGINE_URL}/health`, { signal: AbortSignal.timeout(1500) }).then(r => r.json()).catch(() => null);
+    if (!health || health.state === 'idle') return true;
+    await new Promise(r => setTimeout(r, 250));
+  }
+  return false;
+}
+
+async function lowerStreamQuality(){
+  if (loweringQuality || !liveActive) return;
+  const health = await fetch(`${STREAM_ENGINE_URL}/health`, { signal: AbortSignal.timeout(2500) }).then(r => r.json()).catch(() => null);
+  const current = health && health.settings ? health.settings : getSelectedStreamSettings();
+
+  let nextResolution = current.resolution;
+  let nextFps = current.fps;
+  let nextBitrateKbps;
+  const floor = QUALITY_BITRATE_FLOOR_KBPS[current.resolution] || 600;
+  const steppedBitrate = Math.round(current.bitrateKbps * 0.6);
+
+  if (steppedBitrate > floor) {
+    // Room to just cut bitrate at the same resolution/fps — cheapest fix.
+    nextBitrateKbps = steppedBitrate;
+  } else {
+    // Already near the floor for this resolution — step down a tier instead.
+    const idx = QUALITY_STEP_ORDER.indexOf(current.resolution);
+    if (idx === -1 || idx === QUALITY_STEP_ORDER.length - 1) {
+      toast('Already at the lowest quality preset (480p, floor bitrate)');
+      return;
+    }
+    nextResolution = QUALITY_STEP_ORDER[idx + 1];
+    nextBitrateKbps = DEFAULT_BITRATE_KBPS[nextResolution][nextFps];
+  }
+
+  loweringQuality = true;
+  const btn = document.getElementById('ls-lower-quality-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Lowering quality…'; }
+
+  await fetch(`${STREAM_ENGINE_URL}/stop`, { method: 'POST' }).catch(() => {});
+  await waitForEncoderIdle();
+
+  const goLiveRes = await fetch(`${STREAM_ENGINE_URL}/go-live`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ resolution: nextResolution, fps: nextFps, bitrateKbps: nextBitrateKbps, keyframeIntervalSec: current.keyframeIntervalSec })
+  }).then(r => r.json()).catch(() => ({ success: false, error: 'Stream Engine unreachable' }));
+
+  loweringQuality = false;
+  if (btn) { btn.disabled = false; btn.textContent = '⬇ Lower Quality Now'; }
+
+  if (!goLiveRes.success) {
+    toast('⚠️ Could not lower quality: ' + (goLiveRes.error || 'unknown error') + ' — stream may be down, check Stream Health');
+    return;
+  }
+
+  // Reflect the new setting in the (still-disabled-while-live) controls so
+  // they read correctly, and so a later manual Stop/Go Live keeps it.
+  document.getElementById('ls-resolution-select').value = nextResolution;
+  document.getElementById('ls-fps-select').value = String(nextFps);
+  document.getElementById('ls-bitrate-input').value = (nextBitrateKbps / 1000).toFixed(1);
+  refreshBitratePreview();
+  lastDroppedFrames = null; lowBitrateStreak = 0; // give the new setting a clean read
+  toast(`⬇ Quality lowered to ${nextResolution} @ ${(nextBitrateKbps/1000).toFixed(1)} Mbps for the network`);
+}
+document.getElementById('ls-lower-quality-btn')?.addEventListener('click', lowerStreamQuality);
 
 async function pollStreamHealth(){
   const health = await fetch(`${STREAM_ENGINE_URL}/health`, { signal: AbortSignal.timeout(2500) }).then(r => r.json()).catch(() => null);
