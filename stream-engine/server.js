@@ -191,7 +191,14 @@ function checkLibx264() {
     try {
         const res = spawnSync(FFMPEG_PATH, [
             '-hide_banner', '-loglevel', 'error', '-y',
-            '-f', 'lavfi', '-i', 'color=c=black:s=64x64:d=0.2',
+            // 256x256, not something tiny like 64x64 — hardware encoders
+            // (see checkNvencRuntime below) reject frames smaller than
+            // their minimum supported dimension with a real encode
+            // error, which would show up here as a false "this machine
+            // can't encode" even though it can. 256x256 is safely above
+            // every known encoder's minimum while still being a
+            // near-instant throwaway test.
+            '-f', 'lavfi', '-i', 'color=c=black:s=256x256:d=0.2',
             '-c:v', 'libx264', '-preset', 'ultrafast',
             '-f', 'null', '-',
         ], { timeout: 8000 });
@@ -218,7 +225,17 @@ function checkNvencRuntime() {
     try {
         const res = spawnSync(FFMPEG_PATH, [
             '-hide_banner', '-loglevel', 'error', '-y',
-            '-f', 'lavfi', '-i', 'color=c=black:s=64x64:d=0.2',
+            // 🩹 256x256, NOT 64x64 — confirmed on real hardware
+            // (NVIDIA RTX 3050 Laptop GPU) that NVENC rejects anything
+            // below its minimum encode dimension with
+            // "InitializeEncoder failed: invalid param (8): Frame
+            // Dimension less than the minimum supported value", which
+            // made this check report "NVENC not usable" on a GPU that
+            // works completely fine — a false negative from the test
+            // itself, not a real driver/GPU problem. 256x256 is safely
+            // above every known NVENC generation's minimum while still
+            // being a near-instant throwaway test.
+            '-f', 'lavfi', '-i', 'color=c=black:s=256x256:d=0.2',
             '-c:v', 'h264_nvenc', '-preset', 'p4',
             '-f', 'null', '-',
         ], { timeout: 8000 });
