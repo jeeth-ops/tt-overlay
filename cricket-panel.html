@@ -2298,14 +2298,15 @@ function resumeMatch(rec){
 // reference here since these functions only ever RUN on a later click,
 // well after the whole script (including that const) has evaluated.
 let recActive = false;
-let recordingDesired = false; // Match Recording card's own intent — see ensureLocalCapture/releaseLocalCaptureIfUnused
+let recordingDesired = false; // Match Recording card's own intent — see ensureLiveOutputWindow/releaseLiveOutputWindowIfUnused
 
 // 🔒 PART 3 — this now points at the Stream Engine (127.0.0.1, this PC),
 // which implements the SAME /status,/recording-start,/recording-stop,
 // /clip contract ClipperHelper.exe used to. vMix/ClipperHelper.exe are
-// no longer required at all — the local Stream Engine's own browser
-// capture (see ensureLocalCapture, Live Studio section below) is the
-// clip source now. Status text below reflects that; no vMix wording.
+// no longer required at all — the Stream Engine's own NATIVE capture
+// (gdigrab+dshow — see ensureLiveOutputWindow, Live Studio section
+// below) of the local master.mp4 is the clip source now. Status text
+// below reflects that; no vMix wording.
 // 🔁 AUTO-RESUME — null until the first check; then tracks whether the
 // LAST check reached the Stream Engine, so we can tell "still down" from
 // "just came back". If the local Node process itself dies and restarts
@@ -2313,12 +2314,12 @@ let recordingDesired = false; // Match Recording card's own intent — see ensur
 // distinct from an ffmpeg-level hiccup, which the engine already
 // recovers from on its own), it forgets everything: no live push, no
 // local recording, until Go Live / Start Recording are clicked again.
-// The BROWSER's own capture (getDisplayMedia/MediaRecorder) is entirely
-// separate and keeps running the whole time regardless, so the moment
-// the engine is reachable again, silently re-issuing startLive()/
-// startRecording() (if the operator's intent — liveActive/
-// recordingDesired — was still "yes") picks up right where it left off
-// without the operator needing to notice and act mid-match.
+// The Live Output window (this tab's only remaining capture-adjacent
+// role — it just needs to stay open/rendering) keeps running the whole
+// time regardless, so the moment the engine is reachable again, silently
+// re-issuing startLive()/startRecording() (if the operator's intent —
+// liveActive/recordingDesired — was still "yes") picks up right where it
+// left off without the operator needing to notice and act mid-match.
 let engineWasReachable = null;
 async function checkClipperHelperStatus(){
   const dot = document.getElementById('clipper-status-dot');
@@ -2376,29 +2377,32 @@ async function refreshClipEngineStatus(){
   label.textContent = 'Running';
 
   // 🔎 Match THIS panel's current Match ID against the engine's actual
-  // buffer sessions — status.recordingActive only means "some session
-  // exists somewhere" (e.g. a stale one from a different match), which
-  // used to make "Recording: Active ✓" show green even when the CURRENT
-  // match has no session at all (so every clip would fail). Checking
-  // the specific matchId here catches that mismatch directly in the
-  // health grid instead of only surfacing it as a failed clip.
+  // native recorder — status.recorder.matchId only means "some match is
+  // being recorded" (could be a stale one from a different match), which
+  // would otherwise make "Recording: Active ✓" show green even when the
+  // CURRENT match isn't the one actually being captured (so every clip
+  // would fail). Checking the specific matchId here catches that
+  // mismatch directly in the health grid instead of only surfacing it
+  // as a failed clip.
   const matchId = typeof currentMatchId === 'function' ? currentMatchId() : '';
-  const mySession = matchId && Array.isArray(status.bufferSessionsDetail)
-    ? status.bufferSessionsDetail.find((s) => s.matchId === matchId)
-    : null;
+  const rec = status.recorder;
+  const isMine = matchId && rec && rec.matchId === matchId;
 
   if(!matchId){
     ceSetDot('ce-recording', null, 'Enter a Match ID');
     ceSetDot('ce-buffer', null, '—');
-  } else if(!mySession || !mySession.recordingActive){
-    ceSetDot('ce-recording', false, mySession ? 'Not started for this Match ID (footage buffering only)' : 'Not started for this Match ID');
-    ceSetDot('ce-buffer', mySession ? (mySession.chunkCount > 0) : false, mySession ? `Buffering ${mySession.chunkCount} chunks (Recording not clicked yet)` : 'No active session');
-  } else if(mySession.chunkCount === 0){
-    ceSetDot('ce-recording', true, `Active (${mySession.ageSec}s) — 0 chunks yet`);
-    ceSetDot('ce-buffer', false, 'No footage received — check Live Output window is open');
+  } else if(!isMine || rec.state === 'idle'){
+    ceSetDot('ce-recording', false, isMine ? `Not recording (${rec.state})` : 'Not started for this Match ID');
+    ceSetDot('ce-buffer', null, 'Native capture — no chunk buffer to report');
+  } else if(rec.state === 'recording' && (!rec.durationSec || rec.durationSec < 3)){
+    ceSetDot('ce-recording', true, 'Active — just started');
+    ceSetDot('ce-buffer', null, 'master.mp4 opening…');
+  } else if(rec.state === 'crashed'){
+    ceSetDot('ce-recording', false, 'Recorder crashed — see Match Recording card');
+    ceSetDot('ce-buffer', false, rec.lastError || 'unknown error');
   } else {
-    ceSetDot('ce-recording', true, `Active (${mySession.ageSec}s)`);
-    ceSetDot('ce-buffer', mySession.lastChunkAgeSec <= 5, `${mySession.chunkCount} chunks — last ${mySession.lastChunkAgeSec}s ago`);
+    ceSetDot('ce-recording', true, `Active (${rec.durationSec}s)`);
+    ceSetDot('ce-buffer', true, `master.mp4 — ${formatBytes(rec.sizeBytes)}`);
   }
   ceSetDot('ce-worker', status.clipWorkerState !== 'idle' ? true : null, status.clipWorkerState === 'idle' ? 'Idle' : status.clipWorkerState === 'cutting' ? 'Cutting…' : 'Uploading…');
   ceSetDot('ce-cloudflare', status.cloudflareConnected, status.cloudflareConnected ? 'Connected' : `Retrying (${status.retryQueueLength} queued)`);
@@ -2607,6 +2611,20 @@ function currentMatchId(){
 async function startRecording(){
   const matchId = currentMatchId();
   if(!matchId){ toast('Enter a Match ID and Connect first'); return; }
+  const audioDeviceName = document.getElementById('live-audio-device').value;
+  if(!audioDeviceName){ toast('No audio device selected — pick one under Live Studio first'); return; }
+
+  recordingDesired = true;
+  // The Live Output window (camera+overlay, natively captured by the
+  // Stream Engine's gdigrab) must exist and be rendering BEFORE the
+  // recorder ffmpeg process starts — it targets this window by title
+  // immediately on spawn (see windowTitleFor in stream-engine/server.js).
+  const win = await ensureLiveOutputWindow(matchId);
+  if(!win.ok){
+    recordingDesired = false;
+    toast('⚠️ ' + win.error);
+    return;
+  }
 
   const tournamentId = (typeof state !== 'undefined' && state.leagueName && state.leagueName.trim()) || null;
   const result = await fetch(`${STREAM_ENGINE_URL}/recording-start`, {
@@ -2616,37 +2634,35 @@ async function startRecording(){
     // knows WHERE to forward finished clips for R2/Drive upload +
     // player linking (see /api/clips/ingest on the main server —
     // exactly the same endpoint ClipperHelper.exe always posted to).
-    body: JSON.stringify({ matchId, tournamentId, mainServerUrl: location.origin, recordingResolution: document.getElementById('rec-resolution-select')?.value || '1080p', recordingFps: 30 })
+    // audioDeviceName is the NATIVE dshow device the recorder's own
+    // ffmpeg process opens directly — this tab no longer captures audio.
+    body: JSON.stringify({ matchId, tournamentId, mainServerUrl: location.origin, recordingResolution: document.getElementById('rec-resolution-select')?.value || '1080p', recordingFps: 30, audioDeviceName })
   }).then(r => r.json()).catch(() => ({ success:false }));
 
   if(!result.success){
+    recordingDesired = false;
+    releaseLiveOutputWindowIfUnused();
     toast('⚠️ Could not reach the local Stream Engine — is it running? (see stream-engine/README.md)');
     return;
   }
   if(result.masterRecording && !result.masterRecording.ok){
-    toast('⚠️ Local master recording could not start: ' + result.masterRecording.error);
-  }
-
-  recordingDesired = true;
-  const cap = await ensureLocalCapture(matchId);
-  if(!cap.ok){
     recordingDesired = false;
-    toast('⚠️ ' + cap.error);
-    fetch(`${STREAM_ENGINE_URL}/recording-stop`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ matchId }) }).catch(() => {});
+    releaseLiveOutputWindowIfUnused();
+    toast('⚠️ Local master recording could not start: ' + result.masterRecording.error);
     return;
   }
 
   recActive = true;
   updateRecordingUI(true);
   setClipEngineStatus(true);
-  toast('🔴 Recording started — clips now cut from the local buffer, no vMix involved.');
+  toast('🔴 Recording started — native capture, clips cut from the local master.mp4.');
 }
 
 function stopRecording(){
   recActive = false;
   updateRecordingUI(false);
   recordingDesired = false;
-  releaseLocalCaptureIfUnused();
+  releaseLiveOutputWindowIfUnused();
 
   const matchId = currentMatchId();
   fetch(`${STREAM_ENGINE_URL}/recording-stop`, {
@@ -2668,13 +2684,19 @@ document.getElementById('start-recording-btn').addEventListener('click', startRe
 document.getElementById('stop-recording-btn').addEventListener('click', stopRecording);
 
 /* ============================================================
-   🎬 LIVE STUDIO (PART 2) — Camera + Audio → this browser tab
-   composites Camera + the EXISTING Cricket Overlay in live-output.html
-   (no second overlay system), captures that window via getDisplayMedia,
-   mixes in real mic/capture-card audio, and streams webm chunks
-   straight to the LOCAL Stream Engine (127.0.0.1:5006 — see
-   stream-engine/server.js), which does the actual NVENC encode and
-   RTMPS push to YouTube.
+   🎬 LIVE STUDIO — NATIVE CAPTURE CONTROL PANEL.
+   This tab never captures, encodes, chunks or uploads video. It:
+     (a) opens/keeps open live-output.html, which composites Camera +
+         the EXISTING Cricket Overlay (no second overlay system) —
+         purely a render surface now, and
+     (b) tells the LOCAL Stream Engine (127.0.0.1:5006 — see
+         stream-engine/server.js) which match/window + native audio
+         device to use, via plain JSON control calls (/go-live,
+         /recording-start, /stop, /health, /status).
+   The Stream Engine's own ffmpeg processes capture that window
+   directly (gdigrab) plus the audio device directly (dshow), encode
+   with NVENC, and push to YouTube RTMPS / write master.mp4 — entirely
+   outside this tab, on this tab's own real-time clock or lack thereof.
    🔒 server.js/Render is NEVER in this path — no video bytes are ever
    sent there from here. Only the existing score/control traffic
    (socket.io) still goes to Render, unchanged.
@@ -2734,122 +2756,60 @@ document.getElementById('ls-fps-select')?.addEventListener('change', refreshBitr
 document.getElementById('ls-bitrate-input')?.addEventListener('input', refreshBitratePreview);
 refreshBitratePreview();
 let liveOutputWindow = null;
-let liveDisplayStream = null;   // pixels of the Live Output window
-let liveAudioStream = null;     // real mic/capture-card audio
-let liveRecorder = null;
 let liveActive = false;
 let liveHealthPollTimer = null;
-let streamingDesired = false;   // Live Studio's own intent — see ensureLocalCapture/releaseLocalCaptureIfUnused
+let streamingDesired = false;   // Live Studio's own intent — see ensureLiveOutputWindow/releaseLiveOutputWindowIfUnused
 
 /* ============================================================
-   🔗 SHARED CAPTURE (PART 3) — Match Recording (clips) and Live
-   Studio (YouTube) used to be two unrelated features; now they share
-   ONE browser capture (one getDisplayMedia prompt, one MediaRecorder)
-   feeding the Stream Engine's /ingest, which fans it out to whichever
-   of the local clip buffer / NVENC encoder are actually active — never
-   two captures, never two encoders, exactly the "prefer reusing the
-   same locally generated source" requirement. Either feature can be
-   started/stopped independently; the underlying capture only actually
-   stops once BOTH have released it (recordingDesired/streamingDesired).
+   🔗 NATIVE CAPTURE — the browser NEVER captures, encodes, chunks or
+   uploads video anymore. live-output.html (camera <video> + the
+   EXISTING cricket-overlay.html iframe, unchanged) just needs to be
+   OPEN and visible on screen; the Stream Engine's ffmpeg processes
+   (RECORDER + LIVE ENCODER, each independent — see
+   stream-engine/server.js) capture that window directly at the OS
+   level (gdigrab) plus the mic/capture-card audio device directly
+   (dshow). This function's only remaining job is making sure that
+   window exists — there is no MediaRecorder, no getDisplayMedia, no
+   getUserMedia-for-production-audio, and no /ingest call left here at
+   all. Either feature (Recording / Live Studio) can start/stop
+   independently; the window only actually closes once BOTH have
+   released it.
    ============================================================ */
-let localCaptureActive = false;
-let localCaptureMatchId = null;
-let localCaptureChunkIndex = 0;
-
-async function ensureLocalCapture(matchId){
-  if(localCaptureActive && localCaptureMatchId === matchId) return { ok:true };
-  if(localCaptureActive && localCaptureMatchId !== matchId){
-    return { ok:false, error:`Local capture is already running for match ${localCaptureMatchId} — stop that first` };
-  }
-
-  if(!liveOutputWindow || liveOutputWindow.closed){
-    const videoDeviceId = document.getElementById('live-video-device').value;
-    if(!videoDeviceId) return { ok:false, error:'No camera selected — pick one under Live Studio first' };
-    const url = `${location.origin}/live-output.html?room=${encodeURIComponent(matchId)}&video=${encodeURIComponent(videoDeviceId)}`;
-    liveOutputWindow = window.open(url, 'liveOutputWindow', 'width=1280,height=740');
-    if(!liveOutputWindow) return { ok:false, error:'Popup blocked — allow popups for this site and try again' };
-    const frame = document.getElementById('ls-preview-frame');
-    if(frame){ frame.src = url; frame.style.display = 'block'; document.getElementById('ls-preview-placeholder').style.display = 'none'; }
-    await new Promise(r => setTimeout(r, 400)); // give the popup a moment to exist before Chrome's share-picker lists it
-  }
-
-  const audioDeviceId = document.getElementById('live-audio-device').value;
-  try {
-    liveAudioStream = await navigator.mediaDevices.getUserMedia({
-      audio: audioDeviceId ? { deviceId: { exact: audioDeviceId } } : true
-    });
-  } catch(e) { return { ok:false, error:'Could not get audio: ' + e.message }; }
-
-  const { fps: selectedFps, bitrateKbps: selectedBitrateKbps } = getSelectedStreamSettings();
-  try {
-    liveDisplayStream = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: selectedFps }, audio: false, preferCurrentTab: false, selfBrowserSurface: 'exclude'
-    });
-  } catch(e) {
-    liveAudioStream.getTracks().forEach(t => t.stop());
-    return { ok:false, error:'Screen-share was cancelled — pick the "Live Output" window when Chrome asks' };
-  }
-
-  const combined = new MediaStream([...liveDisplayStream.getVideoTracks(), ...liveAudioStream.getAudioTracks()]);
-  // 🔒 VP8 preferred over H264-in-WebM — the clip pipeline reconstructs
-  // a playable file by raw byte-concatenating independent MediaRecorder
-  // timeslice chunks (see localBuffer.js's header comment), which only
-  // reliably survives concatenation for VP8's simpler bitstream. H264's
-  // SPS/PPS (codec parameter set) placement can differ across encode
-  // paths — confirmed in practice: clips cut fine from a laptop's
-  // built-in webcam (likely a software H264 path) but ffmpeg failed
-  // with "Invalid data found when processing input" on the SAME
-  // pipeline once a capture card was used instead (which triggers
-  // Chrome's hardware H264 encode path — a different bitstream layout
-  // that doesn't concatenate the same way). Live streaming itself was
-  // unaffected either way, since NVENC reads chunks as a continuous
-  // pipe (sequential decode) rather than needing a seekable file.
-  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus') ? 'video/webm;codecs=vp8,opus' : 'video/webm;codecs=h264,opus';
-  console.log('[Live Studio] MediaRecorder mimeType:', mimeType);
-  // Browser's own (software) encode of the capture, BEFORE it reaches
-  // NVENC — this is an intermediate step, so it's given generous
-  // headroom over the final target bitrate (1.5x) rather than matching
-  // it exactly, so IT never becomes the quality bottleneck. This step
-  // runs on the laptop's CPU (not the GPU) — at 1080p60 on a weaker CPU
-  // this is the most likely place to see stutter, independent of NVENC.
-  liveRecorder = new MediaRecorder(combined, { mimeType, videoBitsPerSecond: Math.round(selectedBitrateKbps * 1000 * 1.5) });
-  localCaptureChunkIndex = 0;
-  // 🔒 These chunks go ONLY to the local Stream Engine (127.0.0.1) —
-  // never to server.js/Render. The Stream Engine itself fans them out
-  // to the local clip buffer and/or the NVENC encoder as needed.
-  liveRecorder.ondataavailable = async (e) => {
-    if(!e.data || e.data.size === 0) return;
-    const idx = localCaptureChunkIndex++;
-    try {
-      await fetch(`${STREAM_ENGINE_URL}/ingest?matchId=${encodeURIComponent(matchId)}&index=${idx}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: e.data
-      });
-    } catch(err) { /* one dropped chunk = a brief stutter, not fatal */ }
-  };
-  liveRecorder.onstop = () => { combined.getTracks().forEach(t => t.stop()); };
-  liveDisplayStream.getVideoTracks()[0].addEventListener('ended', () => {
-    lsSetHealth('ls-h-camera', false, 'Disconnected');
-    if(streamingDesired) stopLive();
-    if(recordingDesired) stopRecording();
-  });
-
-  liveRecorder.start(1000); // 1s chunks
-  localCaptureActive = true;
-  localCaptureMatchId = matchId;
+async function ensureLiveOutputWindow(matchId){
+  if(liveOutputWindow && !liveOutputWindow.closed) return { ok:true };
+  const videoDeviceId = document.getElementById('live-video-device').value;
+  if(!videoDeviceId) return { ok:false, error:'No camera selected — pick one under Live Studio first' };
+  const url = `${location.origin}/live-output.html?room=${encodeURIComponent(matchId)}&video=${encodeURIComponent(videoDeviceId)}`;
+  liveOutputWindow = window.open(url, 'liveOutputWindow', 'width=1280,height=740');
+  if(!liveOutputWindow) return { ok:false, error:'Popup blocked — allow popups for this site and try again' };
+  const frame = document.getElementById('ls-preview-frame');
+  if(frame){ frame.src = url; frame.style.display = 'block'; document.getElementById('ls-preview-placeholder').style.display = 'none'; }
+  // Give the window a moment to actually render (set its title, paint
+  // the camera+overlay) before the Stream Engine's gdigrab tries to
+  // find/read it.
+  await new Promise(r => setTimeout(r, 800));
   lsSetHealth('ls-h-camera', true, 'Connected');
-  lsSetHealth('ls-h-mic', true, 'Connected');
+  lsSetHealth('ls-h-mic', true, 'Connected'); // native audio device — confirmed by the Stream Engine, not this tab
   lsSetHealth('ls-h-overlay', true, 'Connected');
   return { ok:true };
 }
 
-function releaseLocalCaptureIfUnused(){
+function releaseLiveOutputWindowIfUnused(){
   if(recordingDesired || streamingDesired) return; // still needed by the other feature
-  if(liveRecorder && liveRecorder.state !== 'inactive') liveRecorder.stop();
-  if(liveDisplayStream) liveDisplayStream.getTracks().forEach(t => t.stop());
-  if(liveAudioStream) liveAudioStream.getTracks().forEach(t => t.stop());
-  localCaptureActive = false;
-  localCaptureMatchId = null;
+  if(liveOutputWindow && !liveOutputWindow.closed) liveOutputWindow.close();
+  liveOutputWindow = null;
 }
+
+// live-output.html has no way to reach the Stream Engine's control
+// plane itself — it tells THIS tab (its opener) when the camera track
+// it's rendering ends, via postMessage, so streaming/recording actually
+// stop instead of silently continuing to capture a frozen/black frame.
+window.addEventListener('message', (e) => {
+  if(e.origin !== location.origin || !e.data || e.data.type !== 'allsportslive-camera-ended') return;
+  toast('⚠️ Camera disconnected in Live Output — stopping stream/recording');
+  if(streamingDesired) stopLive();
+  if(recordingDesired) stopRecording();
+});
 
 function lsLog(line){
   const el = document.getElementById('ls-golive-log');
@@ -2904,15 +2864,16 @@ setInterval(refreshEngineHealthDisplay, 10000);
 function runPreflightChecks(){
   const reasons = [];
   const videoDeviceId = document.getElementById('live-video-device').value;
-  const hasAudioOption = document.getElementById('live-audio-device').options.length > 0;
+  const audioDeviceName = document.getElementById('live-audio-device').value;
   const overlayOk = !!(socket && socket.connected);
   const status = lastEngineStatus;
 
   if(!videoDeviceId) reasons.push('No camera selected');
-  if(!hasAudioOption) reasons.push('No microphone detected');
+  if(!audioDeviceName) reasons.push('No audio device selected — click "Refresh Device List"');
   if(!overlayOk) reasons.push('Overlay/score connection not established — enter Match ID and Connect first');
   if(!status) reasons.push('Local Stream Engine not reachable — start it first (stream-engine/README.md)');
   else {
+    if(!status.nativeCaptureSupported) reasons.push(`Native capture unavailable — Stream Engine is running on ${status.platform}, not Windows`);
     if(!status.nvencAvailable) reasons.push(`NVENC not available — ${status.nvencDetail || 'unknown reason'}`);
     if(!status.streamUrlSet) reasons.push('YouTube Stream URL not set — paste it above and click "Save to Stream Engine"');
     if(!status.streamKeySet) reasons.push('YouTube Stream Key not set — paste it above and click "Save to Stream Engine"');
@@ -2923,8 +2884,8 @@ function runPreflightChecks(){
     ok: reasons.length === 0,
     reason: reasons[0] || null,
     checks: {
-      camera: !!videoDeviceId, microphone: hasAudioOption, overlay: overlayOk,
-      streamEngine: !!status, nvenc: !!(status && status.nvencAvailable),
+      camera: !!videoDeviceId, microphone: !!audioDeviceName, overlay: overlayOk,
+      streamEngine: !!status, nativeCapture: !!(status && status.nativeCaptureSupported), nvenc: !!(status && status.nvencAvailable),
       streamUrl: !!(status && status.streamUrlSet), streamKey: !!(status && status.streamKeySet),
       network: !!(status && status.networkOk),
     },
@@ -2938,32 +2899,61 @@ function showCannotStart(reason){
   else box.style.display = 'none';
 }
 
-async function populateLiveDevices(){
+// Camera device list stays browser-side (navigator.mediaDevices) — this
+// only picks which camera live-output.html's <video> preview shows
+// (getUserMedia there, unchanged); it is NOT the production video path
+// (see live-output.html's own header comment — the Stream Engine
+// captures that window's rendered pixels natively, not this stream).
+async function populateCameraDevices(){
   try {
     // One throwaway getUserMedia call so device labels aren't blank —
     // browsers hide labels until permission has been granted once.
-    const tmp = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    const tmp = await navigator.mediaDevices.getUserMedia({ video: true });
     tmp.getTracks().forEach(t => t.stop());
   } catch(e) { /* denied is fine — dropdown just shows unlabeled devices */ }
 
   const devices = await navigator.mediaDevices.enumerateDevices();
   const videoSel = document.getElementById('live-video-device');
-  const audioSel = document.getElementById('live-audio-device');
-  const prevVideo = videoSel.value, prevAudio = audioSel.value;
-  videoSel.innerHTML = ''; audioSel.innerHTML = '';
-
+  const prevVideo = videoSel.value;
+  videoSel.innerHTML = '';
   devices.filter(d => d.kind === 'videoinput').forEach((d,i) => {
     const opt = document.createElement('option');
     opt.value = d.deviceId; opt.textContent = d.label || `Camera ${i+1}`;
     videoSel.appendChild(opt);
   });
-  devices.filter(d => d.kind === 'audioinput').forEach((d,i) => {
-    const opt = document.createElement('option');
-    opt.value = d.deviceId; opt.textContent = d.label || `Mic ${i+1}`;
-    audioSel.appendChild(opt);
-  });
   if(prevVideo) videoSel.value = prevVideo;
-  if(prevAudio) audioSel.value = prevAudio;
+}
+
+// 🎙️ NATIVE audio device list — from the Stream Engine's own dshow
+// enumeration (GET /audio-devices), NOT navigator.mediaDevices. This is
+// the actual production audio device: the Stream Engine's ffmpeg
+// processes open it directly (dshow), so the option VALUE here is the
+// real device name string ffmpeg needs, not a browser deviceId.
+async function populateAudioDevices(){
+  const audioSel = document.getElementById('live-audio-device');
+  const prevAudio = audioSel.value;
+  try {
+    const res = await fetch(`${STREAM_ENGINE_URL}/audio-devices`, { signal: AbortSignal.timeout(4000) }).then(r => r.json());
+    audioSel.innerHTML = '';
+    if(!res.success || !res.devices || !res.devices.length){
+      const opt = document.createElement('option');
+      opt.value = ''; opt.textContent = res.detail || 'No audio devices found';
+      audioSel.appendChild(opt);
+      return;
+    }
+    res.devices.forEach((name) => {
+      const opt = document.createElement('option');
+      opt.value = name; opt.textContent = name;
+      audioSel.appendChild(opt);
+    });
+    if(prevAudio) audioSel.value = prevAudio;
+  } catch(e) {
+    audioSel.innerHTML = '<option value="">Stream Engine unreachable</option>';
+  }
+}
+
+async function populateLiveDevices(){
+  await Promise.all([populateCameraDevices(), populateAudioDevices()]);
 }
 document.getElementById('refresh-live-devices-btn').addEventListener('click', populateLiveDevices);
 populateLiveDevices();
@@ -2990,6 +2980,25 @@ function openLiveOutputWindow(){
   toast('Final Output Preview opened — keep it open, then click GO LIVE');
 }
 document.getElementById('open-live-output-btn').addEventListener('click', openLiveOutputWindow);
+
+// 🖼️ PREVIEW NATIVE CAPTURE — hits the Stream Engine's GET
+// /capture-preview, which grabs exactly one real frame via the same
+// gdigrab path Go Live uses, so the operator can SEE (before going
+// live) that: (a) it actually finds the Live Output window by title,
+// and (b) the crop margin (captureConfig — see stream-engine/README.md)
+// is trimming the OS title bar correctly rather than eating into the
+// picture. This is the one piece of the native-capture pipeline that
+// genuinely can't be verified without the real Windows machine/GPU, so
+// it's exposed here as a concrete, operator-runnable check rather than
+// just asserted to work.
+function previewNativeCapture(){
+  const matchId = currentMatchId();
+  if(!matchId){ toast('Enter a Match ID and Connect first'); return; }
+  window.open(`${STREAM_ENGINE_URL}/capture-preview?matchId=${encodeURIComponent(matchId)}&t=${Date.now()}`, '_blank');
+}
+document.getElementById('open-live-output-btn')?.insertAdjacentHTML('afterend',
+  '<button class="full small ghost" id="preview-native-capture-btn" style="margin-top:6px;">🖼️ Preview Native Capture (gdigrab)</button>');
+document.getElementById('preview-native-capture-btn')?.addEventListener('click', previewNativeCapture);
 
 document.getElementById('save-stream-key-btn').addEventListener('click', async () => {
   const streamUrl = document.getElementById('yt-stream-url').value.trim();
@@ -3054,12 +3063,20 @@ async function startLive(){
   lsLog('Checking NVENC…');
   lsSetHealth('ls-h-encoder', true, 'Ready (NVENC)');
 
+  const audioDeviceName = document.getElementById('live-audio-device').value;
+  if(!audioDeviceName){ lsLog(''); toast('⚠️ No audio device selected'); showCannotStart('No audio device selected'); return; }
+
   streamingDesired = true;
-  const cap = await ensureLocalCapture(matchId); // opens Live Output + starts the ONE shared capture (or reuses it if Match Recording already started it)
-  if(!cap.ok){
+  // The Live Output window (camera+overlay) must exist and be
+  // rendering BEFORE the live encoder's ffmpeg process starts — it
+  // targets this window by title immediately on spawn (native gdigrab
+  // capture — see windowTitleFor in stream-engine/server.js). Reused
+  // as-is if Match Recording already opened it.
+  const win = await ensureLiveOutputWindow(matchId);
+  if(!win.ok){
     streamingDesired = false;
-    lsLog(''); toast('⚠️ ' + cap.error);
-    showCannotStart(cap.error);
+    lsLog(''); toast('⚠️ ' + win.error);
+    showCannotStart(win.error);
     return;
   }
 
@@ -3069,18 +3086,16 @@ async function startLive(){
   lsLog('Starting RTMPS…');
   const goLiveRes = await fetch(`${STREAM_ENGINE_URL}/go-live`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    // matchId lets the Stream Engine find this match's stored WebM
-    // header chunk to prime the encoder with on every (re)start — see
-    // startEncoder in server.js. Without it, a Go Live clicked after
-    // Recording/streaming already had chunks flowing (or any later
-    // reconnect/ABR restart) fails immediately with ffmpeg's "Invalid
-    // data found when processing input".
-    body: JSON.stringify({ resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec, qualityMode: selQualityMode, autoResolutionFallback: selAutoFallback, matchId })
+    // matchId lets the Stream Engine build the exact gdigrab window
+    // title to capture (see windowTitleFor in server.js); audioDeviceName
+    // is the native dshow device its own ffmpeg process opens directly —
+    // this tab never captures or relays audio itself.
+    body: JSON.stringify({ resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec, qualityMode: selQualityMode, autoResolutionFallback: selAutoFallback, matchId, audioDeviceName })
   }).then(r => r.json()).catch(() => ({ success:false, error:'Stream Engine unreachable' }));
 
   if(!goLiveRes.success){
     streamingDesired = false;
-    releaseLocalCaptureIfUnused();
+    releaseLiveOutputWindowIfUnused();
     lsLog(''); toast('⚠️ Could not start the encoder: ' + (goLiveRes.error || 'unknown error'));
     lsSetHealth('ls-h-youtube', false, 'Failed to start');
     showCannotStart(goLiveRes.error || 'Could not start the encoder');
@@ -3126,14 +3141,14 @@ function checkStreamStability(health, targetBitrateKbps){
 // can't sustain the current bitrate, the operator used to have to STOP
 // the whole stream, re-pick a lower resolution/bitrate in the
 // (disabled-while-live) dropdowns, then GO LIVE again — losing the show
-// for however long that took. This instead hot-restarts just the local
-// encoder (stop the ffmpeg process, immediately go-live again with a
-// lower target) while the SAME browser capture keeps running throughout,
-// so it's a ~1-2s hiccup, not a dropped stream. Clip cutting is
-// completely unaffected either way — localBuffer.js gets every chunk
-// regardless of the encoder's live/idle state (see stream-engine/server.js
-// /ingest), so match clips keep recording through this. In Adaptive mode
-// the Stream Engine already does exactly this automatically — see abrTick.
+// for however long that took. This instead hot-restarts just the live
+// encoder's ffmpeg process (its own independent native capture — see
+// stream-engine/server.js) while the Live Output window/recorder keep
+// running throughout, so it's a ~1-2s hiccup, not a dropped stream. The
+// local master recording and clip cutting are completely unaffected —
+// the recorder is a fully separate native-capture process that never
+// touches the live encoder's state. In Adaptive mode the Stream Engine
+// already does exactly this automatically — see abrTick.
 const QUALITY_STEP_ORDER = ['1080p', '720p', '480p'];
 const QUALITY_BITRATE_FLOOR_KBPS = { '1080p': 2500, '720p': 1200, '480p': 600 };
 let loweringQuality = false;
@@ -3186,7 +3201,7 @@ async function lowerStreamQuality(){
 
   const goLiveRes = await fetch(`${STREAM_ENGINE_URL}/go-live`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ resolution: nextResolution, fps: nextFps, bitrateKbps: nextBitrateKbps, keyframeIntervalSec: current.keyframeIntervalSec, qualityMode: 'manual', autoResolutionFallback: false })
+    body: JSON.stringify({ resolution: nextResolution, fps: nextFps, bitrateKbps: nextBitrateKbps, keyframeIntervalSec: current.keyframeIntervalSec, qualityMode: 'manual', autoResolutionFallback: false, matchId: currentMatchId(), audioDeviceName: document.getElementById('live-audio-device').value })
   }).then(r => r.json()).catch(() => ({ success: false, error: 'Stream Engine unreachable' }));
 
   loweringQuality = false;
@@ -3248,11 +3263,11 @@ async function pollStreamHealth(){
   if(health.state === 'reconnecting'){
     // Internet dropped — this is expected, recoverable, and must NEVER
     // look like a dead app: keep the capture/UI exactly as-is, just show
-    // the reconnecting banner. Local recording (localBuffer) is fed
-    // straight from /ingest regardless of encoder state, so it never
-    // stops — see stream-engine/server.js. The Stream Engine itself is
-    // already retrying with backoff (engine.reconnect); this poll loop
-    // doesn't need to do anything but keep watching.
+    // the reconnecting banner. The local recorder is a fully separate
+    // native-capture ffmpeg process (see stream-engine/server.js) — it
+    // never touches the live encoder's state, so it never stops. The
+    // Stream Engine itself is already retrying with backoff
+    // (engine.reconnect); this poll loop just keeps watching.
     statusEl.innerHTML = '<span style="color:#ffb020;">● RECONNECTING</span>';
     reconnectingEl.style.display = 'block';
     errEl.style.display = 'none';
@@ -3289,8 +3304,9 @@ async function pollStreamHealth(){
     document.getElementById('ls-sh-rtmps').textContent = '● Connected';
     document.getElementById('ls-sh-encoder-status').textContent = '● Running';
   }
-  document.getElementById('ls-sh-camera').textContent = localCaptureActive ? '● Connected' : '● Disconnected';
-  document.getElementById('ls-sh-audio').textContent = localCaptureActive ? '● Connected' : '● Disconnected';
+  const captureWindowOpen = !!(liveOutputWindow && !liveOutputWindow.closed);
+  document.getElementById('ls-sh-camera').textContent = captureWindowOpen ? '● Connected' : '● Disconnected';
+  document.getElementById('ls-sh-audio').textContent = captureWindowOpen ? '● Connected' : '● Disconnected';
   document.getElementById('ls-sh-overlay').textContent = (socket && socket.connected) ? '● Connected' : '● Disconnected';
 }
 
@@ -3310,7 +3326,7 @@ async function stopLive(){
   await fetch(`${STREAM_ENGINE_URL}/stop`, { method: 'POST' }).catch(() => {});
 
   lsLog('Cleaning Processes…');
-  releaseLocalCaptureIfUnused(); // stops the shared capture UNLESS Match Recording still needs it — never leaves an orphan capture/process behind
+  releaseLiveOutputWindowIfUnused(); // closes the Live Output window UNLESS Match Recording still needs it — never leaves an orphan window/process behind
 
   lsSetHealth('ls-h-youtube', null, 'Ready');
   lsSetHealth('ls-h-encoder', null, 'Ready');
