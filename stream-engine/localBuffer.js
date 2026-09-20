@@ -97,6 +97,21 @@ function getSession(rawMatchId) {
     return sessions[safeMatchId(rawMatchId)] || null;
 }
 
+// The on-disk path of this session's header chunk (index ===
+// firstChunkIndex) — never pruned (see pruneOldChunks), so it stays
+// available for the whole match. Used by server.js's master recorder:
+// any FRESH ffmpeg process reading this session's bytes (a brand new
+// recording, or a crash-restart into a new segment) needs this header
+// piped in first, exactly like clip cutting already does — a bare
+// Cluster with no preceding EBML/Segment/Tracks header isn't decodable
+// on its own.
+function getHeaderChunkFile(rawMatchId) {
+    const session = getSession(rawMatchId);
+    if (!session || session.firstChunkIndex === null) return null;
+    const header = session.chunks.find((c) => c.index === session.firstChunkIndex);
+    return header ? header.file : null;
+}
+
 // Lazily creates a (non-recording) buffer session on the very first
 // chunk of a capture — called from /ingest for EVERY chunk, whether or
 // not the operator has clicked "Start Recording" yet. This is what
@@ -129,15 +144,42 @@ function attachRecording(rawMatchId, { tournamentId, mainServerUrl } = {}) {
 
 // Deletes on-disk chunk files that have fallen out of the retention
 // window — but NEVER this session's first-ever chunk (it carries the
-// WebM header every later chunk depends on to decode at all).
+// WebM header every later chunk depends on to decode at all), and NEVER
+// a chunk currently PINNED by an in-flight clip cut (see pinChunksByIndex
+// below). Without that pin, a clip whose cut takes even a few seconds
+// (normal — post-roll wait + ffmpeg spawn + piping several chunks) could
+// have one of its own covering chunks age past RETENTION_SEC and get
+// deleted out from under it mid-cut — an ENOENT reading a chunk file
+// that existed when the clip started but was pruned while it was still
+// being read.
 function pruneOldChunks(session) {
     const cutoffMs = Date.now() - RETENTION_SEC * 1000;
     const keep = [];
     for (const c of session.chunks) {
-        if (c.index === session.firstChunkIndex || c.receivedAt >= cutoffMs) { keep.push(c); continue; }
+        if (c.index === session.firstChunkIndex || c.receivedAt >= cutoffMs || c.pinned > 0) { keep.push(c); continue; }
         fs.unlink(c.file, () => {});
     }
     session.chunks = keep;
+}
+
+// Protects specific chunks (by index) from pruneOldChunks for as long as
+// a clip cut is actively reading them — see cutLocalClip in server.js,
+// which pins right after getClipWindow() decides which chunks it needs
+// and unpins in a `finally` once the cut is done (success or failure).
+// Reference-counted (pinned is a count, not a bool) so overlapping clip
+// jobs that share a chunk (e.g. two events close together) don't let one
+// job's unpin evict a chunk the other still needs.
+function pinChunksByIndex(rawMatchId, indices) {
+    const session = getSession(rawMatchId);
+    if (!session) return;
+    const set = new Set(indices);
+    for (const c of session.chunks) if (set.has(c.index)) c.pinned = (c.pinned || 0) + 1;
+}
+function unpinChunksByIndex(rawMatchId, indices) {
+    const session = getSession(rawMatchId);
+    if (!session) return;
+    const set = new Set(indices);
+    for (const c of session.chunks) if (set.has(c.index)) c.pinned = Math.max(0, (c.pinned || 0) - 1);
 }
 
 function addChunk(rawMatchId, index, buffer) {
@@ -272,8 +314,27 @@ function getClipWindow({ matchId, eventTimestamp, preRollSec = 10, postRollSec =
     // (shouldn't happen given RETENTION_SEC >> preRollSec, but this is
     // exactly the failure mode described in the header comment above —
     // fail loudly instead of silently handing ffmpeg a broken stitch).
-    if (toStitch.length && toStitch[0].index !== 0) {
-        return { error: `Buffer gap for match "${matchId}": chunk 0 (the WebM header every later chunk needs) is missing or was pruned — cannot stitch a clip. This should not normally happen; a Stream Engine restart mid-recording is the most likely cause.` };
+    if (toStitch.length && toStitch[0].index !== session.firstChunkIndex) {
+        return { error: `Buffer gap for match "${matchId}": the header chunk (the WebM header every later chunk needs) is missing or was pruned — cannot stitch a clip. This should not normally happen; a Stream Engine restart mid-recording is the most likely cause.` };
+    }
+    // Gap check #2 — a genuinely broken/corrupted clip, not the routine
+    // "long match" gap above. toStitch[0] is always the header chunk;
+    // ONE jump from it to toStitch[1] (the first chunk actually inside
+    // the retention window) is expected once RETENTION_SEC has passed
+    // since recording started — that's fine, ffmpeg treats it as a
+    // timeline gap, not corruption. But EVERY chunk from toStitch[1]
+    // onward covers this clip's actual pre/post-roll window and MUST be
+    // perfectly contiguous (index N, N+1, N+2, ...): a chunk missing in
+    // THAT range means a video chunk genuinely failed to reach this
+    // engine (a dropped /ingest POST, a brief Stream Engine outage) and
+    // naively stitching around the hole produces a corrupted/glitchy
+    // output — exactly the "clip shows broken chunks instead of real
+    // video" failure mode. Fail loudly instead of ever generating that.
+    for (let i = 2; i < toStitch.length; i++) {
+        if (toStitch[i].index !== toStitch[i - 1].index + 1) {
+            const missing = toStitch[i - 1].index + 1;
+            return { error: `Broken buffer for match "${matchId}": chunk ${missing} is missing between chunk ${toStitch[i - 1].index} and chunk ${toStitch[i].index} — a video chunk failed to reach the Stream Engine (likely a brief connection drop between the browser and this engine). Refusing to cut a clip with a gap in it rather than produce corrupted footage.` };
+        }
     }
 
     return {
@@ -318,6 +379,7 @@ module.exports = {
     ensureSession,
     attachRecording,
     getSession,
+    getHeaderChunkFile,
     addChunk,
     sessionsSummary,
     stopSession,
@@ -325,5 +387,7 @@ module.exports = {
     sweepOrphaned,
     sweepOldClipFiles,
     getClipWindow,
+    pinChunksByIndex,
+    unpinChunksByIndex,
     activeSessionCount,
 };
