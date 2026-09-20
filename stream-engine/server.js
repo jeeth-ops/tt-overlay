@@ -316,13 +316,30 @@ function listAudioDevices() {
         const res = spawnSync(FFMPEG_PATH, ['-hide_banner', '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'], { encoding: 'utf8', timeout: 20000 });
         const out = (res.stdout || '') + (res.stderr || '');
         const devices = [];
-        let inAudioSection = false;
+        // 🩹 ffmpeg changed this output format across versions — confirmed
+        // on real hardware running ffmpeg 9.0.1: there is no longer a
+        // "DirectShow audio devices" section header line at all; instead
+        // every device line ends with an inline "(audio)" or "(video)"
+        // tag, e.g. [in#0 @ ...] "Microphone (AVMATRIX USB Capture Audio)"
+        // (audio). The OLD section-header format (ffmpeg <9: a
+        // "DirectShow audio devices" heading, then bare quoted names
+        // underneath, no inline tag) still exists on older builds. Try
+        // the new inline-tag format FIRST since it's unambiguous
+        // per-line; only fall back to the old section-based parsing if
+        // that finds nothing, so both ffmpeg generations work.
         for (const line of out.split('\n')) {
-            if (/DirectShow audio devices/i.test(line)) { inAudioSection = true; continue; }
-            if (/DirectShow video devices/i.test(line)) { inAudioSection = false; continue; }
-            if (inAudioSection) {
-                const m = /"([^"]+)"/.exec(line);
-                if (m) devices.push(m[1]);
+            const inlineMatch = /"([^"]+)"\s*\(audio\)/i.exec(line);
+            if (inlineMatch) devices.push(inlineMatch[1]);
+        }
+        if (!devices.length) {
+            let inAudioSection = false;
+            for (const line of out.split('\n')) {
+                if (/DirectShow audio devices/i.test(line)) { inAudioSection = true; continue; }
+                if (/DirectShow video devices/i.test(line)) { inAudioSection = false; continue; }
+                if (inAudioSection) {
+                    const m = /"([^"]+)"/.exec(line);
+                    if (m) devices.push(m[1]);
+                }
             }
         }
         // Never cache an empty result — a timeout, a transient driver
