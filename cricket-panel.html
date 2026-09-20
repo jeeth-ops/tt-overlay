@@ -2289,6 +2289,20 @@ let recordingDesired = false; // Match Recording card's own intent — see ensur
 // no longer required at all — the local Stream Engine's own browser
 // capture (see ensureLocalCapture, Live Studio section below) is the
 // clip source now. Status text below reflects that; no vMix wording.
+// 🔁 AUTO-RESUME — null until the first check; then tracks whether the
+// LAST check reached the Stream Engine, so we can tell "still down" from
+// "just came back". If the local Node process itself dies and restarts
+// (a real crash, or the operator's terminal window closing by accident —
+// distinct from an ffmpeg-level hiccup, which the engine already
+// recovers from on its own), it forgets everything: no live push, no
+// local recording, until Go Live / Start Recording are clicked again.
+// The BROWSER's own capture (getDisplayMedia/MediaRecorder) is entirely
+// separate and keeps running the whole time regardless, so the moment
+// the engine is reachable again, silently re-issuing startLive()/
+// startRecording() (if the operator's intent — liveActive/
+// recordingDesired — was still "yes") picks up right where it left off
+// without the operator needing to notice and act mid-match.
+let engineWasReachable = null;
 async function checkClipperHelperStatus(){
   const dot = document.getElementById('clipper-status-dot');
   const text = document.getElementById('clipper-status-text');
@@ -2299,9 +2313,17 @@ async function checkClipperHelperStatus(){
     text.textContent = s.ffmpegAvailable
       ? '🟢 Stream Engine running — ready for match day'
       : '🟡 Stream Engine running — but ffmpeg isn\'t set up yet (see stream-engine/README.md)';
+
+    if(engineWasReachable === false && (liveActive || recordingDesired)){
+      toast('🔁 Stream Engine reconnected — resuming automatically…');
+      if(liveActive) startLive();
+      if(recordingDesired) startRecording();
+    }
+    engineWasReachable = true;
   } catch(e) {
     dot.classList.remove('on');
     text.textContent = '🔴 Not running — start it on this PC (stream-engine/ — npm start)';
+    engineWasReachable = false;
   }
 }
 checkClipperHelperStatus();

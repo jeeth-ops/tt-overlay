@@ -268,6 +268,14 @@ const engine = {
 
 function resetMetrics() {
     engine.metrics = { bitrateKbps: null, fps: null, droppedFrames: null, totalFrames: null, outTimeSec: null };
+    // A fresh ffmpeg process's frame/drop counters in -progress start
+    // over from 0 — without resetting these too, sampleNetworkHealth's
+    // very first post-restart tick would diff the OLD process's last
+    // known totals against the NEW process's near-zero ones (Math.max
+    // clamps stop it going negative, but it still falsely reads as a
+    // perfect zero-drop tick instead of "no data yet").
+    lastDroppedFramesSample = null;
+    lastTotalFramesSample = null;
 }
 
 // Parses ffmpeg's `-progress pipe:2`-style key=value lines (we route
@@ -1067,6 +1075,12 @@ function ingestChunk(buf) {
 // recalculated after the wait.
 const CLIP_PRE_ROLL_SEC = 15;
 const CLIP_POST_ROLL_SEC = 5;
+// Caps the CLIP's width only (never upscales) — the live/master
+// recording keep their full selected resolution; this only shrinks the
+// short highlight clip that gets uploaded over the operator's own
+// upload bandwidth, which is the actual bottleneck for "clip takes a
+// long time to upload" on a typical home connection.
+const CLIP_MAX_WIDTH = 1280;
 
 const recordingMatches = {}; // matchId -> { mainServerUrl, tournamentId } — set by /recording-start
 const clipWorker = {
@@ -1316,7 +1330,23 @@ async function cutFromStitchedChunks({ toStitch, trimStartSec, outFile }) {
             '-hide_banner', '-loglevel', 'warning', '-y',
             '-i', 'pipe:0',
             '-ss', String(trimStartSec), '-t', String(CLIP_PRE_ROLL_SEC + CLIP_POST_ROLL_SEC),
-            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'veryfast',
+            // What actually dominates "clip takes forever to upload" on a
+            // home connection is FILE SIZE, not local encode time —
+            // postFileToServer streams this file to server.js afterward,
+            // bottlenecked purely by upload bandwidth. Measured against
+            // the previous settings (native resolution, no CRF, veryfast)
+            // on a 1080p source: capping width to CLIP_MAX_WIDTH (only
+            // scales DOWN — 'min(iw,W)', never up) + an explicit CRF
+            // shrinks the file by ~35-40% while ALSO encoding faster
+            // (less data to compress) — both better, not a trade-off.
+            // Tried 'ultrafast'/'superfast' too: they encode a little
+            // faster still but produce noticeably BIGGER files (x264
+            // trades compression efficiency for speed there), which is
+            // the wrong trade here since upload time >> encode time on a
+            // typical connection — 'veryfast' remains the sweet spot.
+            '-vf', `scale='min(iw,${CLIP_MAX_WIDTH})':-2`,
+            '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
+            '-c:a', 'aac', '-b:a', '128k',
             outFile,
         ];
         const proc = spawn(FFMPEG_PATH, args, { stdio: ['pipe', 'ignore', 'pipe'] });
