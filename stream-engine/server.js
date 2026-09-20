@@ -321,6 +321,37 @@ function checkNvencTuneRuntime() {
     return nvencTuneCheckCache;
 }
 
+// ----------------------------------------------------------------
+// 🔎 CFR FLAG RUNTIME CHECK — confirmed in the field: this ffmpeg build
+// rejects the older global '-vsync cfr' outright with "Unrecognized
+// option 'vsync'." (a genuinely different build than whatever the
+// original '-vsync over -fps_mode for broad compatibility' comment was
+// written against — evidently this one dropped the legacy alias and
+// only understands the newer per-stream '-fps_mode cfr'). Same
+// "don't guess, test once at startup" approach as checkNvencTuneRuntime
+// above: try the modern flag first (it's been in ffmpeg since 5.1, long
+// enough that a build new enough to have DROPPED '-vsync' certainly
+// has it), fall back to the legacy one only if that itself somehow
+// isn't recognized either.
+// ----------------------------------------------------------------
+let cfrFlagCache = null;
+function cfrFlagArgs() {
+    if (cfrFlagCache !== null) return cfrFlagCache;
+    try {
+        const res = spawnSync(FFMPEG_PATH, [
+            '-hide_banner', '-loglevel', 'error', '-y',
+            '-f', 'lavfi', '-i', 'color=c=black:s=64x64:d=0.1',
+            '-fps_mode', 'cfr',
+            '-f', 'null', '-',
+        ], { timeout: 8000 });
+        cfrFlagCache = (!res.error && res.status === 0) ? ['-fps_mode', 'cfr'] : ['-vsync', 'cfr'];
+    } catch (e) {
+        cfrFlagCache = ['-vsync', 'cfr'];
+    }
+    console.log(`[stream-engine] CFR flag runtime check: using "${cfrFlagCache.join(' ')}" (whichever this ffmpeg build actually recognizes)`);
+    return cfrFlagCache;
+}
+
 function ffmpegAvailable() {
     const res = spawnSync(FFMPEG_PATH, ['-version'], { encoding: 'utf8', timeout: 5000 });
     return !res.error;
@@ -788,9 +819,9 @@ function buildLiveEncoderArgs({ windowTitle, audioDeviceName, width, height, fps
         '-vf', cropScaleFilter(width, height, useGpuScale),
         '-r', String(fps),
         // Force true CFR regardless of any capture jitter — never VFR.
-        // '-vsync cfr' (over the newer '-fps_mode cfr' alias) for broad
-        // compatibility across whatever ffmpeg build is installed.
-        '-vsync', 'cfr',
+        // Whichever of '-fps_mode cfr' / '-vsync cfr' this ffmpeg build
+        // actually recognizes — see cfrFlagArgs(); builds differ on this.
+        ...cfrFlagArgs(),
         '-c:v', 'h264_nvenc',
         // p4 = balanced speed/quality; tune ll = NVENC's low-latency mode
         // (skips B-frames and extra lookahead that add encode latency —
@@ -1294,7 +1325,7 @@ function buildRecorderArgs({ windowTitle, audioDeviceName, width, height, fps, b
         '-map', '0:v', '-map', '1:a',
         '-vf', cropScaleFilter(width, height, useNvenc && useGpuScale),
         '-r', String(fps),
-        '-vsync', 'cfr',
+        ...cfrFlagArgs(),
         ...videoArgs,
         // A short (2s) GOP is what actually makes the crash-safety below
         // real: fragments close (and flush to disk) on every keyframe,
@@ -1927,7 +1958,17 @@ app.get('/capture-preview', (req, res) => {
         '-hide_banner', '-loglevel', 'error',
         '-f', 'gdigrab', '-framerate', '5', '-i', `title=${windowTitle}`,
         '-frames:v', '1',
-        '-vf', cropScaleFilter(width, height, useGpuScale),
+        // 🩹 Confirmed in the field: without an explicit output format,
+        // this ffmpeg build fails mjpeg encoder init with "Could not
+        // open encoder before EOF" / error -22 (Invalid argument) — the
+        // mjpeg encoder needs full-range yuvj420p, gdigrab's native bgra
+        // is limited-range once converted, and this particular build
+        // doesn't auto-insert that range conversion the way a standard
+        // build does. Naming yuvj420p explicitly here (the scale filter
+        // already runs swscale for the resize, so this adds no new
+        // dependency) does the conversion up front instead of leaving it
+        // to the encoder to negotiate.
+        '-vf', `${cropScaleFilter(width, height, useGpuScale)},format=yuvj420p`,
         '-f', 'image2', '-vcodec', 'mjpeg',
         'pipe:1',
     ];
