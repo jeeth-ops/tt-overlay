@@ -144,15 +144,42 @@ function attachRecording(rawMatchId, { tournamentId, mainServerUrl } = {}) {
 
 // Deletes on-disk chunk files that have fallen out of the retention
 // window — but NEVER this session's first-ever chunk (it carries the
-// WebM header every later chunk depends on to decode at all).
+// WebM header every later chunk depends on to decode at all), and NEVER
+// a chunk currently PINNED by an in-flight clip cut (see pinChunksByIndex
+// below). Without that pin, a clip whose cut takes even a few seconds
+// (normal — post-roll wait + ffmpeg spawn + piping several chunks) could
+// have one of its own covering chunks age past RETENTION_SEC and get
+// deleted out from under it mid-cut — an ENOENT reading a chunk file
+// that existed when the clip started but was pruned while it was still
+// being read.
 function pruneOldChunks(session) {
     const cutoffMs = Date.now() - RETENTION_SEC * 1000;
     const keep = [];
     for (const c of session.chunks) {
-        if (c.index === session.firstChunkIndex || c.receivedAt >= cutoffMs) { keep.push(c); continue; }
+        if (c.index === session.firstChunkIndex || c.receivedAt >= cutoffMs || c.pinned > 0) { keep.push(c); continue; }
         fs.unlink(c.file, () => {});
     }
     session.chunks = keep;
+}
+
+// Protects specific chunks (by index) from pruneOldChunks for as long as
+// a clip cut is actively reading them — see cutLocalClip in server.js,
+// which pins right after getClipWindow() decides which chunks it needs
+// and unpins in a `finally` once the cut is done (success or failure).
+// Reference-counted (pinned is a count, not a bool) so overlapping clip
+// jobs that share a chunk (e.g. two events close together) don't let one
+// job's unpin evict a chunk the other still needs.
+function pinChunksByIndex(rawMatchId, indices) {
+    const session = getSession(rawMatchId);
+    if (!session) return;
+    const set = new Set(indices);
+    for (const c of session.chunks) if (set.has(c.index)) c.pinned = (c.pinned || 0) + 1;
+}
+function unpinChunksByIndex(rawMatchId, indices) {
+    const session = getSession(rawMatchId);
+    if (!session) return;
+    const set = new Set(indices);
+    for (const c of session.chunks) if (set.has(c.index)) c.pinned = Math.max(0, (c.pinned || 0) - 1);
 }
 
 function addChunk(rawMatchId, index, buffer) {
@@ -360,5 +387,7 @@ module.exports = {
     sweepOrphaned,
     sweepOldClipFiles,
     getClipWindow,
+    pinChunksByIndex,
+    unpinChunksByIndex,
     activeSessionCount,
 };

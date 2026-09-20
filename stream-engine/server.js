@@ -1210,6 +1210,28 @@ async function cutLocalClip({ clipId, matchId, eventType, eventTimestamp, ballMe
 
     console.log(`[CLIP RANGE] clipId=${clipId} start=T0-${CLIP_PRE_ROLL_SEC}s end=T0+${CLIP_POST_ROLL_SEC}s`);
 
+    // Pin every chunk this cut needs BEFORE starting to read any of
+    // them, and hold the pin for the whole cut (finally, below) — a cut
+    // isn't instant (ffmpeg spawn + piping several chunks can take a
+    // few seconds), and without this, one of these exact chunks could
+    // age past RETENTION_SEC and get deleted by pruneOldChunks (still
+    // running on every /ingest of a NEW chunk in parallel) partway
+    // through — an ENOENT reading a chunk file that existed when the
+    // clip started. See pinChunksByIndex/pruneOldChunks in localBuffer.js.
+    const stitchIndices = toStitch.map((c) => c.index);
+    localBuffer.pinChunksByIndex(matchId, stitchIndices);
+    try {
+        await cutFromStitchedChunks({ toStitch, trimStartSec, outFile });
+    } finally {
+        localBuffer.unpinChunksByIndex(matchId, stitchIndices);
+    }
+
+    console.log(`[CLIP CREATED] clipId=${clipId} localPath=${outFile}`);
+    return { ok: true, outFile };
+}
+
+async function cutFromStitchedChunks({ toStitch, trimStartSec, outFile }) {
+
     // Feed the covering chunks straight into ffmpeg's stdin as one
     // continuous byte stream, and seek AFTER -i (decode-order, not an
     // index/Cues seek) rather than writing an intermediate "stitched"
@@ -1251,9 +1273,6 @@ async function cutLocalClip({ clipId, matchId, eventType, eventTimestamp, ballMe
             proc.stdin.end();
         })().catch(reject);
     });
-
-    console.log(`[CLIP CREATED] clipId=${clipId} localPath=${outFile}`);
-    return { ok: true, outFile };
 }
 
 // ================================================================
