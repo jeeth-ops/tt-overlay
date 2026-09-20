@@ -45,6 +45,46 @@ npm start
 Runs at `http://127.0.0.1:5006` — bound to localhost only, not reachable
 from Render or the network.
 
+## Adaptive bitrate (unstable/fluctuating internet)
+
+The panel's Live Studio card has a **Streaming Quality Mode** (Manual /
+Adaptive) plus an **Automatic Resolution Fallback** checkbox. In Adaptive
+mode (the default), the selected resolution is the *target*, never
+silently changed — the engine reacts to the real connection in real time
+by hot-restarting the encoder (stop + go-live, ~1-2s, no camera
+reopen) at a new bitrate/fps/resolution:
+
+1. Reduce bitrate one rung at a time (High → Medium → Low), fast on a
+   genuinely bad signal, only after a sustained dip on a mild one.
+2. If still critical at the bitrate floor, cut fps to `emergencyFps`
+   (default 15) — the last lever before touching resolution.
+3. Only if Automatic Resolution Fallback is checked, and only after that's
+   sustained for `holdCriticalSec` (default 45s), drop one resolution tier
+   (1080p → 720p → 480p). A `protectionActive` flag + message surfaces on
+   `/health` once the connection genuinely can't sustain the selected
+   resolution, so the panel can say so plainly instead of pretending a
+   very low bitrate is still good 1080p.
+4. Recovery is the mirror image, but slower and only after
+   `holdStableUpSec` (default 45s) of a clean signal — bitrate/fps/
+   resolution climb back up one rung at a time toward the original
+   selection, never in one jump.
+
+A short/total internet drop does **not** end the stream: an unexpected
+ffmpeg exit is classified as either a network blip (connection reset,
+broken pipe, timeout, …) — `state: 'reconnecting'`, unlimited retries at
+capped backoff, exactly the "internet goes up and down" case this exists
+for — or a fatal/config error (bad args, no NVENC, missing filter), which
+keeps the original bounded auto-restart and eventually surfaces
+`state: 'crashed'` for the operator to fix. Local recording/clips
+(`localBuffer.js`, fed straight from `/ingest`) are completely unaffected
+either way — they don't care whether the YouTube push is live, reconnecting,
+or crashed.
+
+All of the numbers above (bitrate ladder per resolution, safety factor,
+hold durations, emergency fps) are runtime-configurable via
+`GET`/`POST /adaptive-config` — no restart needed, and no assumption that
+YouTube's own limits apply to every provider.
+
 ## Verifying NVENC before match day
 
 ```

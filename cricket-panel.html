@@ -1482,6 +1482,20 @@
         Bitrate/keyframe interval are optional — leave blank/default for YouTube's recommended 1080p30 CBR values. These control quality/stability; the Stream URL and Key are connection parameters only. Higher resolution/FPS = more CPU load in this browser tab (capturing + encoding the preview before NVENC) AND more GPU load — if you see stutter, drop to 720p30 first. Can't be changed once LIVE; stop and restart to change.
       </div>
 
+      <div style="margin-bottom:12px; padding:10px; background:rgba(255,255,255,.03); border-radius:8px;">
+        <label style="font-size:12px; opacity:.8; display:block; margin-bottom:6px;">Streaming Quality Mode</label>
+        <div style="display:flex; gap:16px; font-size:12.5px; margin-bottom:8px;">
+          <label style="display:flex; align-items:center; gap:5px; cursor:pointer;"><input type="radio" name="ls-quality-mode" id="ls-mode-manual" value="manual"> Manual</label>
+          <label style="display:flex; align-items:center; gap:5px; cursor:pointer;"><input type="radio" name="ls-quality-mode" id="ls-mode-adaptive" value="adaptive" checked> Adaptive</label>
+        </div>
+        <label style="display:flex; align-items:center; gap:6px; font-size:12px; opacity:.9; cursor:pointer;">
+          <input type="checkbox" id="ls-auto-resolution-fallback"> Automatic Resolution Fallback
+        </label>
+        <div style="font-size:10.5px; opacity:.55; margin-top:6px; line-height:1.5;">
+          <b>Manual</b> streams at exactly the resolution/bitrate above, always — never auto-adjusted. <b>Adaptive</b> (recommended) keeps the selected resolution as the target and reacts to the real network in real time: reduces bitrate first, only cuts fps as a last resort, and — <i>only if Automatic Resolution Fallback is checked</i> — drops resolution (e.g. 1080p → 720p) when bandwidth stays critically low for a sustained stretch, then climbs back up once the connection is genuinely stable again. A short internet drop shows <b>Reconnecting</b>, not a dead stream — local recording/clips keep running the whole time either way.
+        </div>
+      </div>
+
       <label style="font-size:12px; opacity:.8; display:block; margin-bottom:4px;">Camera</label>
       <select id="live-video-device" class="full" style="margin-bottom:8px;"></select>
 
@@ -1505,24 +1519,33 @@
       </div>
 
       <div id="ls-stream-health" style="display:none; margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,.08);">
-        <label style="font-size:12px; opacity:.8; display:block; margin-bottom:6px;">STREAM HEALTH</label>
-        <div style="display:grid; grid-template-columns:auto 1fr; gap:4px 10px; font-size:12.5px; margin-bottom:8px;">
-          <span style="opacity:.7;">YouTube</span><span id="ls-sh-youtube">—</span>
-          <span style="opacity:.7;">RTMPS</span><span id="ls-sh-rtmps">—</span>
-          <span style="opacity:.7;">Encoder</span><span id="ls-sh-encoder-status">—</span>
-          <span style="opacity:.7;">Camera</span><span id="ls-sh-camera">—</span>
-          <span style="opacity:.7;">Audio</span><span id="ls-sh-audio">—</span>
-          <span style="opacity:.7;">Overlay</span><span id="ls-sh-overlay">—</span>
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+          <span style="font-size:12px; opacity:.8;">STREAM</span>
+          <span id="ls-sh-stream-status" style="font-size:13px; font-weight:700;">● —</span>
         </div>
-        <div style="display:grid; grid-template-columns:auto 1fr; gap:4px 10px; font-size:12.5px;">
-          <span style="opacity:.7;">Resolution</span><span id="ls-sh-resolution">—</span>
-          <span style="opacity:.7;">FPS</span><span id="ls-sh-fps">—</span>
+        <div style="display:grid; grid-template-columns:auto 1fr; gap:4px 10px; font-size:12.5px; margin-bottom:8px;">
+          <span style="opacity:.7;">Output</span><span id="ls-sh-output">—</span>
           <span style="opacity:.7;">Bitrate</span><span id="ls-sh-bitrate">—</span>
-          <span style="opacity:.7;">Dropped</span><span id="ls-sh-dropped">—</span>
+          <span style="opacity:.7;">Upload (est.)</span><span id="ls-sh-upload">—</span>
+          <span style="opacity:.7;">Dropped Frames</span><span id="ls-sh-dropped">—</span>
+          <span style="opacity:.7;">Network</span><span id="ls-sh-network">—</span>
+          <span style="opacity:.7;">Encoder</span><span id="ls-sh-encoder-status">—</span>
           <span style="opacity:.7;">CPU</span><span id="ls-sh-cpu">—</span>
           <span style="opacity:.7;">GPU</span><span id="ls-sh-gpu">—</span>
           <span style="opacity:.7;">Duration</span><span id="ls-sh-duration">—</span>
         </div>
+        <div style="display:grid; grid-template-columns:auto 1fr; gap:4px 10px; font-size:12.5px;">
+          <span style="opacity:.7;">YouTube</span><span id="ls-sh-youtube">—</span>
+          <span style="opacity:.7;">RTMPS</span><span id="ls-sh-rtmps">—</span>
+          <span style="opacity:.7;">Camera</span><span id="ls-sh-camera">—</span>
+          <span style="opacity:.7;">Audio</span><span id="ls-sh-audio">—</span>
+          <span style="opacity:.7;">Overlay</span><span id="ls-sh-overlay">—</span>
+        </div>
+        <div id="ls-sh-reconnecting" style="font-size:12px; color:#ffb020; margin-top:8px; display:none; font-weight:600; line-height:1.5;">
+          ● RECONNECTING — internet dropped, retrying automatically…<br>
+          <span style="font-weight:400; opacity:.85;">LOCAL RECORDING ● still running — nothing is lost, clip cutting keeps working.</span>
+        </div>
+        <div id="ls-sh-protection" style="font-size:11.5px; color:#ffb020; margin-top:8px; display:none; font-weight:600; line-height:1.5;"></div>
         <div id="ls-sh-unstable" style="font-size:11.5px; color:#ffb020; margin-top:8px; display:none; font-weight:600;">
           ⚠ Stream Connection Unstable
           <button type="button" id="ls-lower-quality-btn" class="small ghost" style="margin-top:6px; display:block; width:100%;">⬇ Lower Quality Now</button>
@@ -2588,8 +2611,23 @@ function getSelectedStreamSettings(){
   const customMbps = parseFloat(document.getElementById('ls-bitrate-input')?.value);
   const bitrateKbps = Number.isFinite(customMbps) && customMbps > 0 ? Math.round(customMbps * 1000) : DEFAULT_BITRATE_KBPS[resolution][fps];
   const keyframeIntervalSec = parseInt(document.getElementById('ls-keyframe-input')?.value, 10) || 2;
-  return { resolution, fps, bitrateKbps, keyframeIntervalSec, ...RESOLUTION_PRESETS[resolution] };
+  const qualityMode = document.getElementById('ls-mode-manual')?.checked ? 'manual' : 'adaptive';
+  const autoResolutionFallback = !!document.getElementById('ls-auto-resolution-fallback')?.checked;
+  return { resolution, fps, bitrateKbps, keyframeIntervalSec, qualityMode, autoResolutionFallback, ...RESOLUTION_PRESETS[resolution] };
 }
+document.getElementById('ls-mode-manual')?.addEventListener('change', updateQualityModeUI);
+document.getElementById('ls-mode-adaptive')?.addEventListener('change', updateQualityModeUI);
+function updateQualityModeUI(){
+  const isManual = document.getElementById('ls-mode-manual')?.checked;
+  const fallbackRow = document.getElementById('ls-auto-resolution-fallback');
+  if(fallbackRow) fallbackRow.disabled = isManual; // fallback is meaningless without the adaptive engine driving it
+  // The manual "Lower Quality Now" button is a hand lever for Manual mode
+  // only — in Adaptive mode the ABR loop on the Stream Engine already
+  // does this automatically, so showing both would just be confusing/racy.
+  const lowerBtn = document.getElementById('ls-lower-quality-btn');
+  if(lowerBtn) lowerBtn.dataset.manualOnly = isManual ? '0' : '1';
+}
+updateQualityModeUI();
 function refreshBitratePreview(){
   const { bitrateKbps } = getSelectedStreamSettings();
   const el = document.getElementById('ls-bitrate-preview');
@@ -2930,12 +2968,12 @@ async function startLive(){
   }
 
   lsLog('Connecting to YouTube…');
-  const { resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec } = getSelectedStreamSettings();
+  const { resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec, qualityMode: selQualityMode, autoResolutionFallback: selAutoFallback } = getSelectedStreamSettings();
 
   lsLog('Starting RTMPS…');
   const goLiveRes = await fetch(`${STREAM_ENGINE_URL}/go-live`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec })
+    body: JSON.stringify({ resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec, qualityMode: selQualityMode, autoResolutionFallback: selAutoFallback })
   }).then(r => r.json()).catch(() => ({ success:false, error:'Stream Engine unreachable' }));
 
   if(!goLiveRes.success){
@@ -2958,15 +2996,20 @@ async function startLive(){
   pollStreamHealth();
 }
 
-// ⚠ Unstable-connection detection — sustained bitrate well below target,
-// or dropped frames climbing between polls, surfaces a clear warning
-// without tearing the stream down (ffmpeg/YouTube handle the actual
-// resilience; this is purely an operator-facing signal).
+// ⚠ MANUAL-MODE unstable-connection detection — sustained bitrate well
+// below target surfaces a warning + the manual "Lower Quality Now" lever.
+// Only relevant in Manual mode: in Adaptive mode the Stream Engine's own
+// ABR loop already reacts to this (see stream-engine/server.js abrTick),
+// and the Network/Bitrate/Upload rows below report exactly what it's
+// doing — showing this heuristic banner too would just be confusing/racy
+// against the server's own automatic adjustments.
 let lastDroppedFrames = null;
 let lowBitrateStreak = 0;
 function checkStreamStability(health, targetBitrateKbps){
   const unstableEl = document.getElementById('ls-sh-unstable');
   if(!unstableEl) return;
+  const isManual = getSelectedStreamSettings().qualityMode === 'manual';
+  if(!isManual){ unstableEl.style.display = 'none'; return; }
   const bitrate = health.metrics.bitrateKbps;
   const dropped = health.metrics.droppedFrames;
   const bitrateLow = bitrate != null && targetBitrateKbps && bitrate < targetBitrateKbps * 0.6;
@@ -2977,9 +3020,9 @@ function checkStreamStability(health, targetBitrateKbps){
   unstableEl.style.display = unstable ? 'block' : 'none';
 }
 
-// ⬇ ONE-CLICK QUALITY STEP-DOWN — when the network can't sustain the
-// current bitrate (see checkStreamStability above), the operator used to
-// have to STOP the whole stream, re-pick a lower resolution/bitrate in the
+// ⬇ ONE-CLICK QUALITY STEP-DOWN (Manual mode only) — when the network
+// can't sustain the current bitrate, the operator used to have to STOP
+// the whole stream, re-pick a lower resolution/bitrate in the
 // (disabled-while-live) dropdowns, then GO LIVE again — losing the show
 // for however long that took. This instead hot-restarts just the local
 // encoder (stop the ffmpeg process, immediately go-live again with a
@@ -2987,7 +3030,8 @@ function checkStreamStability(health, targetBitrateKbps){
 // so it's a ~1-2s hiccup, not a dropped stream. Clip cutting is
 // completely unaffected either way — localBuffer.js gets every chunk
 // regardless of the encoder's live/idle state (see stream-engine/server.js
-// /ingest), so match clips keep recording through this.
+// /ingest), so match clips keep recording through this. In Adaptive mode
+// the Stream Engine already does exactly this automatically — see abrTick.
 const QUALITY_STEP_ORDER = ['1080p', '720p', '480p'];
 const QUALITY_BITRATE_FLOOR_KBPS = { '1080p': 2500, '720p': 1200, '480p': 600 };
 let loweringQuality = false;
@@ -3004,6 +3048,10 @@ async function waitForEncoderIdle(timeoutMs = 6500){ // stream-engine force-kill
 
 async function lowerStreamQuality(){
   if (loweringQuality || !liveActive) return;
+  if (getSelectedStreamSettings().qualityMode !== 'manual') {
+    toast('Adaptive mode already handles this automatically — switch to Manual to use this button');
+    return;
+  }
   const health = await fetch(`${STREAM_ENGINE_URL}/health`, { signal: AbortSignal.timeout(2500) }).then(r => r.json()).catch(() => null);
   const current = health && health.settings ? health.settings : getSelectedStreamSettings();
 
@@ -3036,7 +3084,7 @@ async function lowerStreamQuality(){
 
   const goLiveRes = await fetch(`${STREAM_ENGINE_URL}/go-live`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ resolution: nextResolution, fps: nextFps, bitrateKbps: nextBitrateKbps, keyframeIntervalSec: current.keyframeIntervalSec })
+    body: JSON.stringify({ resolution: nextResolution, fps: nextFps, bitrateKbps: nextBitrateKbps, keyframeIntervalSec: current.keyframeIntervalSec, qualityMode: 'manual', autoResolutionFallback: false })
   }).then(r => r.json()).catch(() => ({ success: false, error: 'Stream Engine unreachable' }));
 
   loweringQuality = false;
@@ -3058,9 +3106,13 @@ async function lowerStreamQuality(){
 }
 document.getElementById('ls-lower-quality-btn')?.addEventListener('click', lowerStreamQuality);
 
+const NETWORK_LABELS = { stable: 'Stable', weak: 'Weak', critical: 'Critical', reconnecting: 'Reconnecting' };
 async function pollStreamHealth(){
   const health = await fetch(`${STREAM_ENGINE_URL}/health`, { signal: AbortSignal.timeout(2500) }).then(r => r.json()).catch(() => null);
   const errEl = document.getElementById('ls-sh-error');
+  const reconnectingEl = document.getElementById('ls-sh-reconnecting');
+  const protectionEl = document.getElementById('ls-sh-protection');
+  const statusEl = document.getElementById('ls-sh-stream-status');
   if(!health){
     errEl.textContent = '⚠️ Lost contact with the Stream Engine';
     errEl.style.display = 'block';
@@ -3069,18 +3121,47 @@ async function pollStreamHealth(){
     document.getElementById('ls-sh-rtmps').textContent = '● Unknown';
     return;
   }
-  const { resolution, fps, bitrateKbps: targetBitrateKbps } = getSelectedStreamSettings();
-  document.getElementById('ls-sh-resolution').textContent = health.settings ? `${health.settings.width}×${health.settings.height}` : `${RESOLUTION_PRESETS[resolution].width}×${RESOLUTION_PRESETS[resolution].height}`;
-  document.getElementById('ls-sh-fps').textContent = health.settings ? health.settings.fps : fps;
-  document.getElementById('ls-sh-bitrate').textContent = health.metrics.bitrateKbps ? `${health.metrics.bitrateKbps} kbps` : '—';
-  document.getElementById('ls-sh-dropped').textContent = health.metrics.droppedFrames ?? '—';
+  const { resolution, fps } = getSelectedStreamSettings();
+  const width = health.settings ? health.settings.width : RESOLUTION_PRESETS[resolution].width;
+  const height = health.settings ? health.settings.height : RESOLUTION_PRESETS[resolution].height;
+  const outFps = health.settings ? health.settings.fps : fps;
+  document.getElementById('ls-sh-output').textContent = `${width}×${height} • ${outFps} FPS`;
+  document.getElementById('ls-sh-bitrate').textContent = health.metrics.bitrateKbps ? `${(health.metrics.bitrateKbps/1000).toFixed(1)} Mbps` : '—';
+  document.getElementById('ls-sh-upload').textContent = health.network && health.network.uploadEstimateKbps ? `${(health.network.uploadEstimateKbps/1000).toFixed(1)} Mbps` : '—';
+  document.getElementById('ls-sh-dropped').textContent = health.metrics.droppedFramesPct != null ? `${health.metrics.droppedFramesPct}%` : (health.metrics.droppedFrames ?? '—');
+  document.getElementById('ls-sh-network').textContent = health.network ? (NETWORK_LABELS[health.network.state] || health.network.state) : '—';
   document.getElementById('ls-sh-cpu').textContent = health.cpuPercent != null ? `${health.cpuPercent}%` : '—';
   document.getElementById('ls-sh-gpu').textContent = health.gpu ? `${health.gpu.gpuPercent}%` : '—';
   document.getElementById('ls-sh-duration').textContent = health.durationSec != null ? `${Math.floor(health.durationSec/60)}:${String(health.durationSec%60).padStart(2,'0')}` : '—';
 
-  checkStreamStability(health, health.settings ? health.settings.bitrateKbps : targetBitrateKbps);
+  checkStreamStability(health, health.settings ? health.settings.bitrateKbps : getSelectedStreamSettings().bitrateKbps);
 
-  if(health.state === 'crashed'){
+  if(health.network && health.network.protectionActive){
+    protectionEl.textContent = '🛡 ' + health.network.protectionMessage;
+    protectionEl.style.display = 'block';
+  } else {
+    protectionEl.style.display = 'none';
+  }
+
+  if(health.state === 'reconnecting'){
+    // Internet dropped — this is expected, recoverable, and must NEVER
+    // look like a dead app: keep the capture/UI exactly as-is, just show
+    // the reconnecting banner. Local recording (localBuffer) is fed
+    // straight from /ingest regardless of encoder state, so it never
+    // stops — see stream-engine/server.js. The Stream Engine itself is
+    // already retrying with backoff (engine.reconnect); this poll loop
+    // doesn't need to do anything but keep watching.
+    statusEl.innerHTML = '<span style="color:#ffb020;">● RECONNECTING</span>';
+    reconnectingEl.style.display = 'block';
+    errEl.style.display = 'none';
+    lsSetHealth('ls-h-encoder', null, 'Reconnecting');
+    lsSetHealth('ls-h-youtube', null, 'Reconnecting');
+    document.getElementById('ls-sh-youtube').textContent = '● Reconnecting';
+    document.getElementById('ls-sh-rtmps').textContent = '● Reconnecting';
+    document.getElementById('ls-sh-encoder-status').textContent = `● Reconnecting (attempt ${health.reconnect ? health.reconnect.attempts : '?'})`;
+  } else if(health.state === 'crashed'){
+    reconnectingEl.style.display = 'none';
+    statusEl.innerHTML = '<span style="color:#ff6b6b;">● OFFLINE</span>';
     errEl.textContent = '❌ Encoder crashed: ' + (health.lastError || 'unknown error') + (health.restartCount ? ` (auto-restarted ${health.restartCount}x)` : '');
     errEl.style.display = 'block';
     lsSetHealth('ls-h-encoder', false, 'Crashed');
@@ -3096,7 +3177,10 @@ async function pollStreamHealth(){
       toast('❌ Stream Engine gave up after repeated crashes — check stream-engine logs, then Go Live again');
     }
   } else {
+    reconnectingEl.style.display = 'none';
     errEl.style.display = 'none';
+    const adapting = health.network && health.network.state !== 'stable';
+    statusEl.innerHTML = adapting ? '<span style="color:#ffb020;">● LIVE — ADAPTING</span>' : '<span style="color:#3fce6e;">● LIVE</span>';
     lsSetHealth('ls-h-encoder', true, 'Running');
     lsSetHealth('ls-h-youtube', true, 'LIVE');
     document.getElementById('ls-sh-youtube').textContent = '● LIVE';
@@ -3142,6 +3226,9 @@ function updateLiveUI(active){
   document.getElementById('ls-bitrate-input').disabled = active;
   document.getElementById('ls-keyframe-input').disabled = active;
   document.getElementById('ls-fps-select').disabled = active;
+  document.getElementById('ls-mode-manual').disabled = active;
+  document.getElementById('ls-mode-adaptive').disabled = active;
+  document.getElementById('ls-auto-resolution-fallback').disabled = active || document.getElementById('ls-mode-manual').checked;
 }
 
 document.getElementById('start-live-btn').addEventListener('click', startLive);

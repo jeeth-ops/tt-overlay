@@ -218,24 +218,49 @@ function readCpuUtilization() {
 // ----------------------------------------------------------------
 // 🎬 ENCODER STATE MACHINE — single stream at a time, never duplicated.
 // idle -> starting -> live -> stopping -> idle
-//                   -> crashed -> (auto-restart) -> starting
+//                   -> reconnecting -> (backoff retry) -> starting   [network blip — see ABR section below]
+//                   -> crashed -> (bounded auto-restart) -> starting  [fatal/config error, not network]
 // ----------------------------------------------------------------
 const MAX_AUTO_RESTARTS = 3;
 const RESTART_WINDOW_MS = 5 * 60 * 1000;
+// Capped exponential backoff for NETWORK-flavored disconnects specifically
+// (see isFatalError below) — unlike MAX_AUTO_RESTARTS above, this never
+// gives up on its own: an operator's internet flapping for a while is
+// exactly the case Part 2 exists to survive, so retries continue for as
+// long as the operator wants to be live (only an explicit Stop ends it).
+const RECONNECT_BACKOFF_MS = [2000, 4000, 8000, 15000];
 
 const engine = {
-    state: 'idle',           // idle | starting | live | stopping | crashed
+    state: 'idle',           // idle | starting | live | reconnecting | stopping | crashed
     proc: null,              // the ffmpeg child process
     desiredLive: false,      // operator's intent — drives whether a crash should auto-restart
     startedAt: null,
-    restarts: [],            // timestamps of recent auto-restarts, for the bounded-retry window
+    restarts: [],            // timestamps of recent fatal-error auto-restarts, for the bounded-retry window
     lastError: null,
-    settings: null,          // {resolution, fps, bitrateKbps}
-    metrics: { bitrateKbps: null, fps: null, droppedFrames: null, outTimeSec: null },
+    settings: null,          // {resolution, fps, bitrateKbps, keyframeIntervalSec} — CURRENT actual encode settings (may be stepped down from targetResolution by ABR)
+    targetResolution: null,  // the resolution the OPERATOR selected — never silently changed except by an enabled Automatic Resolution Fallback
+    qualityMode: 'adaptive', // 'manual' (exactly the selected resolution/bitrate, no automatic changes) | 'adaptive'
+    autoResolutionFallback: false,
+    rung: 'high',            // 'high' | 'medium' | 'low' | 'low-fps' — current position on the bitrate ladder for engine.settings.resolution
+    sessionLadder: null,     // per-resolution {high,medium,low} kbps for THIS session — scaled from abr.ladder if the operator supplied a custom bitrate at Go Live
+    adapting: false,         // true while an ABR-triggered hot-restart (stop+go-live) is in flight
+    opToken: 0,              // bumped by the operator-facing /go-live and /stop routes; an in-flight ABR restart checks this so an operator action always wins the race
+    lastRestartAt: 0,        // Date.now() of the last ABR hot-restart — rate-limits how often we thrash the encoder
+    reconnect: { attempts: 0, nextAttemptAt: null },
+    network: {
+        state: 'stable',       // stable | weak | critical | reconnecting
+        protectionActive: false,
+        protectionMessage: null,
+        uploadEstimateKbps: null, // DERIVED estimate from sustained clean throughput — see sampleNetworkHealth. Not a dedicated bandwidth probe.
+        weakSince: null,
+        criticalSince: null,
+        stableSince: null,
+    },
+    metrics: { bitrateKbps: null, fps: null, droppedFrames: null, totalFrames: null, outTimeSec: null },
 };
 
 function resetMetrics() {
-    engine.metrics = { bitrateKbps: null, fps: null, droppedFrames: null, outTimeSec: null };
+    engine.metrics = { bitrateKbps: null, fps: null, droppedFrames: null, totalFrames: null, outTimeSec: null };
 }
 
 // Parses ffmpeg's `-progress pipe:2`-style key=value lines (we route
@@ -250,6 +275,9 @@ function parseProgressLine(line) {
     } else if (key === 'fps') {
         const num = parseFloat(value);
         if (!Number.isNaN(num)) engine.metrics.fps = num;
+    } else if (key === 'frame') {
+        const num = parseInt(value, 10);
+        if (!Number.isNaN(num)) engine.metrics.totalFrames = num;
     } else if (key === 'drop_frames') {
         const num = parseInt(value, 10);
         if (!Number.isNaN(num)) engine.metrics.droppedFrames = num;
@@ -319,6 +347,273 @@ function buildFfmpegArgs({ width, height, fps, bitrateKbps, keyframeIntervalSec,
     ];
 }
 
+// ================================================================
+// 📶 ADAPTIVE BITRATE (ABR) — keeps the operator's SELECTED resolution
+// live through a fluctuating/unstable connection instead of disconnecting.
+// All numbers below are runtime-configurable (POST /adaptive-config)
+// specifically so a different streaming provider's own limits don't
+// require editing this file. See stream-engine/README.md for the
+// intended behavior this implements.
+//
+// Mechanism: ffmpeg's CLI doesn't expose changing NVENC's target bitrate
+// on a running process, so "adaptive bitrate" here means a fast, rate
+// limited hot-restart (stop this ffmpeg, immediately start a new one with
+// the new -b:v/resolution/fps) — the SAME technique the panel's manual
+// "Lower Quality Now" button uses. The browser capture (MediaRecorder →
+// /ingest) never stops or reopens the camera for this — see /ingest and
+// localBuffer.js — so it's a ~1-2s hiccup in the OUTPUT push, not a
+// dropped stream, and local recording/clips are entirely unaffected.
+// ================================================================
+const RESOLUTION_ORDER = ['1080p', '720p', '480p'];
+
+// kbps rungs per resolution. "High" doubles as DEFAULT_BITRATE_KBPS's
+// 30fps ceiling for that resolution; "Medium"/"Low" are the step-down
+// targets when the network can't sustain High.
+const ABR_LADDER_DEFAULTS = {
+    '1080p': { high: 5000, medium: 3500, low: 2200 },
+    '720p':  { high: 3000, medium: 2000, low: 1200 },
+    '480p':  { high: 1500, medium: 1000, low: 700 },
+};
+
+let abr = {
+    ladder: JSON.parse(JSON.stringify(ABR_LADDER_DEFAULTS)),
+    safetyFactor: 0.75,      // never target the full detected/sustained throughput — keep headroom for jitter (spec section 9)
+    emergencyFps: 15,        // last lever BEFORE resolution fallback — reduce fps at the floor bitrate for the current resolution
+    holdWeakSec: 10,         // mild congestion sustained this long -> step bitrate down one rung
+    holdCriticalSec: 45,     // severe congestion, already at the bitrate floor, sustained this long -> fps cut, then (if enabled) resolution fallback
+    holdStableUpSec: 45,     // clean signal sustained this long -> step bitrate/resolution back up, one rung at a time
+    minRestartIntervalMs: 8000, // rate-limits hot-restarts so a noisy connection can't thrash the encoder every tick
+};
+
+// A custom bitrate typed into the panel becomes this resolution's "High"
+// for the session — Medium/Low scale with it proportionally, so an
+// operator working against a provider with different limits than the
+// defaults above still gets sane step-down targets instead of the
+// hardcoded numbers.
+function buildSessionLadder(resKey, customBitrateKbps) {
+    const scale = Number(customBitrateKbps) > 0 ? Number(customBitrateKbps) / abr.ladder[resKey].high : 1;
+    const out = {};
+    for (const r of RESOLUTION_ORDER) {
+        out[r] = {
+            high: Math.max(300, Math.round(abr.ladder[r].high * scale)),
+            medium: Math.max(250, Math.round(abr.ladder[r].medium * scale)),
+            low: Math.max(200, Math.round(abr.ladder[r].low * scale)),
+        };
+    }
+    return out;
+}
+
+function stepResolutionDown(current) {
+    const idx = RESOLUTION_ORDER.indexOf(current);
+    if (idx === -1 || idx === RESOLUTION_ORDER.length - 1) return null;
+    return RESOLUTION_ORDER[idx + 1];
+}
+function stepResolutionUp(current, target) {
+    const idxCur = RESOLUTION_ORDER.indexOf(current);
+    const idxTarget = RESOLUTION_ORDER.indexOf(target);
+    if (idxCur <= idxTarget) return null; // already at or above the operator's selected tier
+    return RESOLUTION_ORDER[idxCur - 1];
+}
+
+function setProtection(active) {
+    const net = engine.network;
+    net.protectionActive = active;
+    if (!active) { net.protectionMessage = null; return; }
+    if (!engine.settings) return;
+    net.protectionMessage = engine.settings.resolution === engine.targetResolution
+        ? `${engine.targetResolution} selected — internet bandwidth too low — stream protection active (bitrate held at the floor for this resolution${!engine.autoResolutionFallback ? '; enable Automatic Resolution Fallback to drop resolution instead' : ''})`
+        : `${engine.targetResolution} selected, streaming at ${engine.settings.resolution} due to sustained low bandwidth — stream protection active`;
+}
+
+// Classifies current network health from signals we can actually observe
+// from a local ffmpeg subprocess: whether Node's write() into ffmpeg's
+// stdin is backpressured (ffmpeg isn't reading fast enough — it can't,
+// because its RTMP write to the network is itself blocked/slow, which is
+// the actual "network can't keep up" signal here), how far the achieved
+// output bitrate is below target, and how many frames ffmpeg itself had
+// to drop. No dedicated bandwidth probe exists — uploadEstimateKbps is a
+// DERIVED figure (see below), not a measured one.
+let lastDroppedFramesSample = null;
+let lastTotalFramesSample = null;
+let backpressureSince = null;
+function sampleNetworkHealth() {
+    const target = engine.settings ? engine.settings.bitrateKbps : null;
+    const actual = engine.metrics.bitrateKbps;
+    const ratio = (target && actual != null) ? actual / target : 1;
+
+    if (encoderBackpressured) {
+        if (!backpressureSince) backpressureSince = Date.now();
+    } else {
+        backpressureSince = null;
+    }
+    const backpressuredMs = backpressureSince ? Date.now() - backpressureSince : 0;
+
+    const dropped = engine.metrics.droppedFrames;
+    const totalFrames = engine.metrics.totalFrames;
+    let droppedDeltaPct = 0;
+    if (dropped != null && totalFrames != null && lastDroppedFramesSample != null && lastTotalFramesSample != null) {
+        const dDropped = Math.max(0, dropped - lastDroppedFramesSample);
+        const dTotal = Math.max(1, totalFrames - lastTotalFramesSample);
+        droppedDeltaPct = (dDropped / dTotal) * 100;
+    }
+    lastDroppedFramesSample = dropped;
+    lastTotalFramesSample = totalFrames;
+
+    let severity = 'stable';
+    if (backpressuredMs > 3000 || ratio < 0.4 || droppedDeltaPct > 5) severity = 'severe';
+    else if (backpressuredMs > 0 || ratio < 0.8 || droppedDeltaPct > 1) severity = 'mild';
+
+    // If we're cleanly sustaining `actual` kbps while only using
+    // `safetyFactor` of the real pipe (by design), the implied ceiling is
+    // actual/safetyFactor. Only meaningful once the signal is clean.
+    const uploadEstimateKbps = actual != null ? Math.round(actual / abr.safetyFactor) : null;
+
+    return { severity, ratio, droppedDeltaPct, backpressuredMs, uploadEstimateKbps };
+}
+
+// Hot-restarts the encoder at `next` = {rung, resolution, fps, bitrateKbps}.
+// Guarded by opToken so an operator Stop/Go-Live that happens while this
+// is in flight always wins — we never revive a stream the operator just
+// asked to stop.
+async function applyRestart(next) {
+    if (engine.adapting || engine.state !== 'live') return;
+    engine.adapting = true;
+    engine.lastRestartAt = Date.now();
+    const myToken = engine.opToken;
+    const keyframeIntervalSec = (engine.settings && engine.settings.keyframeIntervalSec) || 2;
+    console.log(`[stream-engine] ABR: adapting -> ${next.resolution} @ ${next.fps}fps, ${next.bitrateKbps}kbps (rung=${next.rung})`);
+
+    stopEncoder();
+    const waitStart = Date.now();
+    while (engine.state !== 'idle' && Date.now() - waitStart < 6500) {
+        await new Promise((r) => setTimeout(r, 150));
+    }
+
+    if (engine.opToken !== myToken) { engine.adapting = false; return; } // operator acted while we were restarting — defer to them
+
+    engine.desiredLive = true; // stopEncoder() cleared this — this restart is US, not the operator stopping
+    const result = startEncoder({ resolution: next.resolution, fps: next.fps, bitrateKbps: next.bitrateKbps, keyframeIntervalSec });
+    if (result.ok) {
+        engine.rung = next.rung;
+    } else {
+        console.log('[stream-engine] ABR restart failed:', result.error);
+    }
+    engine.adapting = false;
+}
+
+// The ABR control loop — ticks every ABR_TICK_MS while live. Priority
+// order (spec section 10): keep the connection alive > keep the selected
+// resolution > reduce bitrate > reduce fps (emergency) > resolution
+// fallback (only if enabled and genuinely necessary). Decreases react
+// fast (no hold needed once truly "severe"); increases require a
+// sustained clean signal (holdStableUpSec) so the stream doesn't
+// oscillate on every brief improvement.
+function abrTick() {
+    if (engine.state !== 'live' || engine.adapting || !engine.settings) return;
+
+    const now = Date.now();
+    const sample = sampleNetworkHealth();
+    const net = engine.network;
+
+    if (sample.severity === 'severe') {
+        net.criticalSince = net.criticalSince || now;
+        net.weakSince = null;
+        net.stableSince = null;
+    } else if (sample.severity === 'mild') {
+        net.weakSince = net.weakSince || now;
+        net.criticalSince = null;
+        net.stableSince = null;
+    } else {
+        net.stableSince = net.stableSince || now;
+        net.weakSince = null;
+        net.criticalSince = null;
+    }
+    net.state = sample.severity === 'severe' ? 'critical' : sample.severity;
+    net.uploadEstimateKbps = sample.uploadEstimateKbps;
+
+    if (engine.qualityMode === 'manual') return; // manual = exactly the operator's picked settings, never auto-adjusted
+
+    if (now - engine.lastRestartAt < abr.minRestartIntervalMs) return; // rate-limit hot-restarts
+
+    const ladder = (engine.sessionLadder || abr.ladder)[engine.settings.resolution];
+    const criticalHeldSec = net.criticalSince ? (now - net.criticalSince) / 1000 : 0;
+    const weakHeldSec = net.weakSince ? (now - net.weakSince) / 1000 : 0;
+    const stableHeldSec = net.stableSince ? (now - net.stableSince) / 1000 : 0;
+
+    // --- DECREASE (fast) ---
+    if (sample.severity === 'severe' || weakHeldSec >= abr.holdWeakSec) {
+        const isSevere = sample.severity === 'severe';
+        if (!isSevere) net.weakSince = now; // only mildly weak — restart its own hold so we step at most once per hold window, not every tick
+
+        if (engine.rung === 'high') { applyRestart({ rung: 'medium', resolution: engine.settings.resolution, fps: engine.settings.fps, bitrateKbps: ladder.medium }); return; }
+        if (engine.rung === 'medium') { applyRestart({ rung: 'low', resolution: engine.settings.resolution, fps: engine.settings.fps, bitrateKbps: ladder.low }); return; }
+
+        if (!isSevere) return; // already at the bitrate floor and only mildly weak — hold here, nothing more to do
+
+        // From here: severity is genuinely severe AND we're already at the floor bitrate for this resolution.
+        if (engine.rung === 'low') {
+            if (criticalHeldSec >= abr.holdCriticalSec) { applyRestart({ rung: 'low-fps', resolution: engine.settings.resolution, fps: abr.emergencyFps, bitrateKbps: ladder.low }); return; }
+            setProtection(true);
+            return;
+        }
+        if (engine.rung === 'low-fps') {
+            if (criticalHeldSec >= abr.holdCriticalSec && engine.autoResolutionFallback) {
+                const next = stepResolutionDown(engine.settings.resolution);
+                if (next) { applyRestart({ rung: 'medium', resolution: next, fps: 30, bitrateKbps: (engine.sessionLadder || abr.ladder)[next].medium }); return; }
+            }
+            setProtection(true);
+            return;
+        }
+        return;
+    }
+
+    // --- INCREASE (gradual, only after a sustained clean signal) ---
+    if (sample.severity === 'stable' && stableHeldSec >= abr.holdStableUpSec) {
+        setProtection(false);
+        net.stableSince = now; // restart the hold so climbing back up is also gradual, one rung per hold window
+        if (engine.rung === 'low-fps') { applyRestart({ rung: 'low', resolution: engine.settings.resolution, fps: 30, bitrateKbps: ladder.low }); return; }
+        if (engine.rung === 'low') { applyRestart({ rung: 'medium', resolution: engine.settings.resolution, fps: engine.settings.fps, bitrateKbps: ladder.medium }); return; }
+        if (engine.rung === 'medium') { applyRestart({ rung: 'high', resolution: engine.settings.resolution, fps: engine.settings.fps, bitrateKbps: ladder.high }); return; }
+        if (engine.rung === 'high' && engine.autoResolutionFallback && engine.settings.resolution !== engine.targetResolution) {
+            const next = stepResolutionUp(engine.settings.resolution, engine.targetResolution);
+            if (next) { applyRestart({ rung: 'medium', resolution: next, fps: 30, bitrateKbps: (engine.sessionLadder || abr.ladder)[next].medium }); }
+        }
+    }
+}
+
+// Fatal/config errors (bad args, no NVENC, missing filter) should NOT
+// retry forever — those need the operator to fix something. Everything
+// else observed on an unexpected ffmpeg exit is treated as a network
+// blip and gets the unlimited-backoff reconnect loop below, because a
+// live sports stream should never just give up over a few dropped
+// packets or a brief internet outage.
+const FATAL_ERROR_PATTERN = /unrecognized option|no such filter|cannot find a matching stream|invalid argument|no nvenc capable devices|unable to open|permission denied|no such file|unknown encoder/i;
+function isFatalError(message) {
+    return !!message && FATAL_ERROR_PATTERN.test(message);
+}
+
+// Network-flavored disconnect: keep retrying at capped exponential
+// backoff for as long as the operator wants to be live (engine.desiredLive)
+// — never gives up on its own. Local recording/clips are untouched by any
+// of this (see /ingest — localBuffer gets every chunk regardless of
+// engine.state).
+function scheduleReconnect() {
+    engine.state = 'reconnecting';
+    engine.network.state = 'reconnecting';
+    const backoff = RECONNECT_BACKOFF_MS[Math.min(engine.reconnect.attempts, RECONNECT_BACKOFF_MS.length - 1)];
+    engine.reconnect.attempts += 1;
+    engine.reconnect.nextAttemptAt = Date.now() + backoff;
+    console.log(`[stream-engine] Network disconnect (${engine.lastError}) — reconnecting in ${backoff}ms (attempt ${engine.reconnect.attempts})…`);
+    setTimeout(() => {
+        if (!engine.desiredLive) return; // operator pressed Stop while we were waiting to retry
+        const result = startEncoder(engine.settings);
+        if (!result.ok) {
+            engine.lastError = result.error;
+            scheduleReconnect();
+        }
+    }, backoff);
+}
+
 function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     if (engine.state === 'live' || engine.state === 'starting') {
         return { ok: false, error: 'Already live — stop the current stream first' };
@@ -349,6 +644,14 @@ function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     engine.startedAt = Date.now();
     engine.state = 'live';
 
+    // Once this process has survived a few seconds without exiting, treat
+    // the connection as genuinely re-established and reset the reconnect
+    // attempt counter — otherwise a stream that's been flapping for an
+    // hour would keep reporting attempt #40 forever even after it's fine.
+    const stabilizeTimer = setTimeout(() => {
+        if (engine.proc === proc) engine.reconnect.attempts = 0;
+    }, 5000);
+
     let stderrBuf = '';
     proc.stderr.on('data', (chunk) => {
         stderrBuf += chunk.toString();
@@ -362,37 +665,48 @@ function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     });
 
     proc.on('exit', (code, signal) => {
+        clearTimeout(stabilizeTimer);
         const wasDesired = engine.desiredLive;
         console.log(`[stream-engine] ffmpeg exited (code=${code}, signal=${signal}); desiredLive=${wasDesired}`);
         engine.proc = null;
 
         if (!wasDesired) {
-            // Operator pressed STOP — this is the expected, graceful path.
+            // Operator pressed STOP (or this is our own ABR hot-restart
+            // stopping the old process on purpose) — the expected, graceful path.
             engine.state = 'idle';
             return;
         }
 
-        // Unexpected exit while we still wanted to be live — this is a
-        // crash. Never let it take down the Stream Engine process itself
-        // (we're inside an event handler, nothing here throws upward),
-        // and never let the Cricket Panel crash either — it just sees
-        // state:'crashed' via /health and shows an error.
-        engine.state = 'crashed';
-        engine.lastError = engine.lastError || `ffmpeg exited unexpectedly (code=${code}, signal=${signal})`;
+        const errMsg = engine.lastError || `ffmpeg exited unexpectedly (code=${code}, signal=${signal})`;
+        engine.lastError = errMsg;
 
-        const now = Date.now();
-        engine.restarts = engine.restarts.filter((t) => now - t < RESTART_WINDOW_MS);
-        if (engine.restarts.length >= MAX_AUTO_RESTARTS) {
-            console.log('[stream-engine] Max auto-restarts hit — giving up until operator presses Go Live again');
-            engine.desiredLive = false;
+        if (isFatalError(errMsg)) {
+            // A config/hardware problem, not the network — retrying
+            // forever won't fix it, so this keeps the original bounded
+            // auto-restart safety net and eventually surfaces 'crashed'
+            // for the operator to act on.
+            engine.state = 'crashed';
+            const now = Date.now();
+            engine.restarts = engine.restarts.filter((t) => now - t < RESTART_WINDOW_MS);
+            if (engine.restarts.length >= MAX_AUTO_RESTARTS) {
+                console.log('[stream-engine] Fatal-looking error, max auto-restarts hit — giving up until operator presses Go Live again');
+                engine.desiredLive = false;
+                return;
+            }
+            engine.restarts.push(now);
+            const attempt = engine.restarts.length;
+            console.log(`[stream-engine] Auto-restarting encoder after fatal-looking error (attempt ${attempt}/${MAX_AUTO_RESTARTS})…`);
+            setTimeout(() => {
+                if (engine.desiredLive) startEncoder(engine.settings);
+            }, Math.min(2000 * attempt, 8000));
             return;
         }
-        engine.restarts.push(now);
-        const attempt = engine.restarts.length;
-        console.log(`[stream-engine] Auto-restarting encoder (attempt ${attempt}/${MAX_AUTO_RESTARTS})…`);
-        setTimeout(() => {
-            if (engine.desiredLive) startEncoder(engine.settings);
-        }, Math.min(2000 * attempt, 8000)); // simple backoff
+
+        // Everything else (connection reset, broken pipe, timeout, i/o
+        // error, etc.) is treated as the internet going up and down —
+        // never let a live sports stream just give up over this. Local
+        // recording keeps running throughout (see /ingest).
+        scheduleReconnect();
     });
 
     proc.on('error', (err) => {
@@ -981,8 +1295,28 @@ app.post('/set-youtube-config', (req, res) => {
 });
 
 app.post('/go-live', (req, res) => {
-    const { resolution, fps, bitrateKbps, keyframeIntervalSec } = req.body || {};
-    const result = startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec });
+    const { resolution, fps, bitrateKbps, keyframeIntervalSec, qualityMode, autoResolutionFallback } = req.body || {};
+    engine.opToken++; // a fresh operator-initiated Go Live always wins over any stale in-flight ABR restart
+
+    const resKey = RESOLUTIONS[resolution] ? resolution : '1080p';
+    const fpsNum = [30, 60].includes(Number(fps)) ? Number(fps) : 30;
+    engine.targetResolution = resKey;
+    engine.qualityMode = qualityMode === 'manual' ? 'manual' : 'adaptive';
+    engine.autoResolutionFallback = !!autoResolutionFallback;
+    engine.rung = 'high';
+    engine.reconnect = { attempts: 0, nextAttemptAt: null };
+    engine.network = { state: 'stable', protectionActive: false, protectionMessage: null, uploadEstimateKbps: null, weakSince: null, criticalSince: null, stableSince: null };
+    engine.sessionLadder = buildSessionLadder(resKey, bitrateKbps);
+
+    // Manual mode streams at exactly what was picked (or the provider's
+    // recommended default for that resolution/fps if left blank).
+    // Adaptive mode starts at this resolution's ladder ceiling and lets
+    // the ABR loop react to real conditions from there.
+    const startBitrateKbps = engine.qualityMode === 'manual'
+        ? (Number(bitrateKbps) > 0 ? Number(bitrateKbps) : DEFAULT_BITRATE_KBPS[resKey][fpsNum])
+        : engine.sessionLadder[resKey].high;
+
+    const result = startEncoder({ resolution: resKey, fps: fpsNum, bitrateKbps: startBitrateKbps, keyframeIntervalSec });
     if (!result.ok) return res.status(400).json({ success: false, error: result.error });
     res.json({ success: true, state: engine.state });
 });
@@ -1022,8 +1356,31 @@ app.post('/ingest', express.raw({ type: '*/*', limit: '10mb' }), (req, res) => {
 });
 
 app.post('/stop', (req, res) => {
+    engine.opToken++; // wins any race against an in-flight ABR restart — Stop always means stop
     const result = stopEncoder();
     res.json({ success: true, ...result });
+});
+
+// Runtime tuning for the ABR ladder/thresholds — lets an operator match
+// a different streaming provider's own bitrate limits, or retune the
+// hysteresis timings, without restarting this process. Values outside
+// sane bounds are ignored rather than rejected outright, so a bad field
+// in the request body doesn't take down the others.
+app.get('/adaptive-config', (req, res) => res.json({ success: true, abr }));
+app.post('/adaptive-config', (req, res) => {
+    const body = req.body || {};
+    if (body.ladder && typeof body.ladder === 'object') {
+        for (const r of RESOLUTION_ORDER) {
+            if (body.ladder[r]) abr.ladder[r] = { ...abr.ladder[r], ...body.ladder[r] };
+        }
+    }
+    if (Number(body.safetyFactor) > 0 && Number(body.safetyFactor) <= 1) abr.safetyFactor = Number(body.safetyFactor);
+    if (Number(body.emergencyFps) > 0) abr.emergencyFps = Number(body.emergencyFps);
+    if (Number(body.holdWeakSec) > 0) abr.holdWeakSec = Number(body.holdWeakSec);
+    if (Number(body.holdCriticalSec) > 0) abr.holdCriticalSec = Number(body.holdCriticalSec);
+    if (Number(body.holdStableUpSec) > 0) abr.holdStableUpSec = Number(body.holdStableUpSec);
+    if (Number(body.minRestartIntervalMs) >= 2000) abr.minRestartIntervalMs = Number(body.minRestartIntervalMs);
+    res.json({ success: true, abr });
 });
 
 // Best-effort GPU utilization via nvidia-smi — purely informational for
@@ -1045,8 +1402,20 @@ app.get('/health', (req, res) => {
         success: true,
         state: engine.state,
         desiredLive: engine.desiredLive,
+        adapting: engine.adapting,
         settings: engine.settings,
-        metrics: engine.metrics,
+        targetResolution: engine.targetResolution,
+        qualityMode: engine.qualityMode,
+        autoResolutionFallback: engine.autoResolutionFallback,
+        rung: engine.rung,
+        network: engine.network,
+        reconnect: engine.reconnect,
+        metrics: {
+            ...engine.metrics,
+            droppedFramesPct: (engine.metrics.droppedFrames != null && engine.metrics.totalFrames)
+                ? Math.round((engine.metrics.droppedFrames / engine.metrics.totalFrames) * 1000) / 10
+                : null,
+        },
         gpu: readGpuUtilization(),
         cpuPercent: readCpuUtilization(),
         durationSec: engine.startedAt && (engine.state === 'live' || engine.state === 'stopping')
@@ -1063,6 +1432,11 @@ app.get('/health', (req, res) => {
         },
     });
 });
+
+// 📶 ABR control loop — see the ABR section above buildFfmpegArgs/startEncoder
+// for the full mechanism. No-ops instantly whenever the encoder isn't live.
+const ABR_TICK_MS = 2000;
+setInterval(abrTick, ABR_TICK_MS);
 
 // 🛟 Orphaned match-buffer sweep — same reasoning as Part 1's
 // sweepOrphanedRecordings on server.js, scoped to this engine's local
