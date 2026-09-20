@@ -6,13 +6,22 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
   /* ============================================================
-     LIVE OUTPUT — "Camera + Cricket Overlay = Final Output"
-     This window is what GO LIVE captures (via getDisplayMedia) and
-     feeds to the local Stream Engine's NVENC encoder. It does NOT
-     reimplement the overlay — it loads the real cricket-overlay.html
-     in an iframe on top of the camera <video>, exactly the same page
-     OBS/vMix already use as a browser source. One overlay system,
-     reused here, not duplicated.
+     LIVE OUTPUT — "Camera + Cricket Overlay = Final Program Feed"
+     This window renders the composited program picture: the camera
+     <video> underneath, cricket-overlay.html on top in an iframe,
+     exactly the same page OBS/vMix already use as a browser source.
+     One overlay system, reused here, not duplicated.
+
+     🔒 NATIVE CAPTURE, NOT A BROWSER VIDEO PIPELINE: the Stream Engine
+     (stream-engine/server.js) captures THIS WINDOW's rendered pixels
+     directly at the OS level (ffmpeg's gdigrab, matched by this
+     window's document.title — see the script below) — there is no
+     getDisplayMedia(), no MediaRecorder, no Blob/WebM chunking, no
+     HTTP upload of video from this page. This page's only job is to
+     render the picture; capturing it is the Stream Engine's job,
+     natively, exactly like vMix capturing a Browser Input. Do not
+     close or minimize this window while live — gdigrab needs it open
+     and visible on screen to read its pixels.
      ============================================================ */
   *{ box-sizing:border-box; margin:0; padding:0; }
   html,body{ width:100%; height:100%; background:#000; overflow:hidden; }
@@ -48,25 +57,39 @@
   const videoDeviceId = params.get('video') || '';
   const statusEl = document.getElementById('lo-status');
 
+  // 🪟 Must match windowTitleFor(matchId) in stream-engine/server.js
+  // EXACTLY — this is how ffmpeg's `-f gdigrab -i title=...` finds this
+  // window to capture. Changing this format on either side breaks
+  // native capture with a clear "window not found" error (see /status
+  // and /capture-preview in the Stream Engine).
+  document.title = `AllSportsLive-LiveOutput-${room.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+
   document.getElementById('overlay-frame').src = `${location.origin}/cricket-overlay?room=${encodeURIComponent(room)}`;
 
   async function startCamera(){
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: videoDeviceId ? { deviceId: { exact: videoDeviceId }, width: 1920, height: 1080 } : { width: 1920, height: 1080 },
-        audio: false // real audio is captured separately, straight from the mic/capture-card device (see cricket-panel.html) — never re-captured from this tab
+        audio: false // real production audio is captured natively by the Stream Engine's own ffmpeg process (dshow) — never by this page or any other browser tab
       });
       const video = document.getElementById('camera-video');
       video.srcObject = stream;
       statusEl.classList.add('hidden');
 
       // If the camera is unplugged/disconnected mid-match, surface it
-      // here immediately (visible on the Live Output window itself, and
-      // caught by the panel via getDisplayMedia's own track 'ended'
-      // handling for the capture as a whole).
+      // here immediately (visible on this window itself). The Stream
+      // Engine's native gdigrab capture keeps reading whatever this
+      // window renders regardless (it has no separate "camera ended"
+      // signal of its own) — the operator sees the on-screen warning
+      // here as the source of truth.
       stream.getVideoTracks()[0].addEventListener('ended', () => {
         statusEl.textContent = '⚠️ Camera disconnected';
         statusEl.classList.remove('hidden');
+        // Tell the panel tab (if it opened this window) so it can stop
+        // the live push/recording instead of silently continuing to
+        // capture a frozen/black frame — this window has no other way
+        // to reach the Stream Engine's control plane itself.
+        try { window.opener && window.opener.postMessage({ type: 'allsportslive-camera-ended', room }, location.origin); } catch (e) {}
       });
     } catch (e) {
       statusEl.textContent = '⚠️ Could not open camera: ' + e.message;
