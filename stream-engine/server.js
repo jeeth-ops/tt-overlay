@@ -1806,6 +1806,13 @@ async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec 
             } else if (!isFatalError(engine.lastError) && /error|failed|refused|denied/i.test(line)) {
                 engine.lastError = line;
             }
+            // 🩹 Same gap the compositor's stderr handler already closed:
+            // this never printed to the terminal at all, only silently
+            // stored one summarized line — a real failure (e.g. "Error
+            // opening output file") had NO way to be diagnosed beyond
+            // that one line, even though ffmpeg usually prints the actual
+            // underlying OS reason on nearby lines too.
+            console.log(`[live-encoder] ${line}`);
         }
     });
 
@@ -2152,6 +2159,14 @@ async function startRecorder(matchId, { resolution, fps, audioDeviceName, camera
             } else if (!isFatalError(recorder.lastError) && /error|failed|invalid/i.test(line)) {
                 recorder.lastError = line;
             }
+            // 🩹 Same gap the compositor's stderr handler already closed:
+            // this never printed to the terminal at all, only silently
+            // stored one summarized line — "Error opening output file
+            // ...master_partN.mp4." with no visible reason at all (real
+            // field failure) had no way to be diagnosed beyond guessing,
+            // even though ffmpeg usually prints the actual underlying OS
+            // reason (permission denied, file in use, etc.) right nearby.
+            console.log(`[recorder] ${line}`);
         }
     });
 
@@ -2194,12 +2209,20 @@ async function startRecorder(matchId, { resolution, fps, audioDeviceName, camera
         // needed for the retry about to happen (ensureCompositor inside
         // startRecorder will itself relaunch it if it also died in the
         // same crash, e.g. the camera was unplugged).
+        // 🩹 CONFIRMED IN THE FIELD: a flat 1s retry sometimes hit "Error
+        // opening output file" on the NEW segment too, repeatedly, until
+        // MAX_AUTO_RESTARTS gave up and recording stopped entirely. 1s
+        // isn't always enough for Windows (antivirus real-time scanning
+        // especially) to fully release the file it was just watching get
+        // created/closed moments earlier. Back off a little more on each
+        // attempt instead of hammering the same short delay.
+        const retryDelayMs = 1500 * recorder.restarts.length;
         setTimeout(() => {
             if (recorder.desiredRecording) {
                 startRecorder(recorder.matchId, { resolution: recorder.settings.resolution, fps: recorder.settings.fps, audioDeviceName: recorder.audioDeviceName, cameraDeviceName: recorder.cameraDeviceName, mainServerUrl: recorder.mainServerUrl })
                     .catch((e) => console.log('[stream-engine] recorder auto-restart threw:', e.message));
             }
-        }, 1000);
+        }, retryDelayMs);
     });
 
     proc.on('error', (err) => {
