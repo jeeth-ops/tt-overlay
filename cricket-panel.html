@@ -1393,6 +1393,13 @@
             <option value="480p">480p (854×480)</option>
           </select>
         </label>
+        <label style="font-size:11px; opacity:.7; display:block; margin-bottom:8px;">Recordings/Clips Folder (this PC — type the full path, e.g. D:\CricketRecordings)
+          <div class="link-row" style="margin-top:3px;">
+            <input type="text" id="rec-data-root-input" placeholder="Leave blank to use the default folder next to Stream Engine">
+            <button class="small" id="rec-data-root-save-btn">Save</button>
+          </div>
+        </label>
+        <div id="rec-data-root-status" style="font-size:10.5px; opacity:.6; margin-bottom:8px;"></div>
         <div style="display:grid; grid-template-columns:auto 1fr; gap:4px 10px; font-size:12px;">
           <span style="opacity:.7;">Status</span><span id="rec-status" class="ls-health-val">● Not recording</span>
           <span style="opacity:.7;">Output</span><span id="rec-output">—</span>
@@ -3074,6 +3081,14 @@ async function refreshEngineHealthDisplay(){
   lsSetHealth('ls-h-streamkey', status.streamKeySet, status.streamKeySet ? 'Configured' : 'Not set');
   lsSetHealth('ls-h-network', status.networkOk, status.networkOk ? 'Reachable' : (status.networkDetail || 'Unreachable'));
   lsSetHealth('ls-h-youtube', status.streamUrlSet && status.streamKeySet, status.streamUrlSet && status.streamKeySet ? 'Ready' : 'Not configured');
+  const dataRootInput = document.getElementById('rec-data-root-input');
+  if(dataRootInput && status.dataRoot) dataRootInput.placeholder = `Current: ${status.dataRoot}`;
+  const dataRootStatusEl = document.getElementById('rec-data-root-status');
+  if(dataRootStatusEl){
+    dataRootStatusEl.textContent = status.dataRootPending
+      ? `⚠ Saved folder "${status.dataRootPending}" isn't active yet — restart Stream Engine to apply it`
+      : '';
+  }
 
   // Prefill the Stream URL field from what's already saved (never done
   // for the Key — that field is always left blank so the real value
@@ -3704,6 +3719,35 @@ function updateLiveUI(active){
 
 document.getElementById('start-live-btn').addEventListener('click', startLive);
 document.getElementById('stop-live-btn').addEventListener('click', stopLive);
+
+// 📁 Recordings/Clips folder — moves master.mp4/clips out from under
+// wherever the Stream Engine is installed (e.g. out of Downloads, where
+// OneDrive syncing a large file under active write was the confirmed
+// cause of "Error opening output file" mid-match). Saved server-side;
+// takes effect on the Stream Engine's next restart, same as any other
+// env-var-level setting — see /set-data-root in server.js.
+document.getElementById('rec-data-root-save-btn').addEventListener('click', () => {
+  const input = document.getElementById('rec-data-root-input');
+  const statusEl = document.getElementById('rec-data-root-status');
+  const newPath = input.value.trim();
+  if(!newPath){ toast('Type a folder path first (e.g. D:\\CricketRecordings)'); return; }
+  fetch(`${STREAM_ENGINE_URL}/set-data-root`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: newPath })
+  }).then(r => r.json()).then(res => {
+    if(res.success){
+      statusEl.textContent = `✅ Saved — restart Stream Engine (start-native.bat) to start using "${res.path}"`;
+      input.value = '';
+      toast('Recordings folder saved — restart Stream Engine to apply');
+    } else {
+      statusEl.textContent = '❌ ' + (res.error || 'Could not save folder');
+      toast('⚠️ ' + (res.error || 'Could not save folder'));
+    }
+  }).catch(() => {
+    statusEl.textContent = '❌ Could not reach the local Stream Engine';
+    toast('⚠️ Could not reach the local Stream Engine');
+  });
+});
 
 /* Drive folder link — saved once per match, server resolves the folder
    ID and remembers it so every clip cut afterwards uploads there
