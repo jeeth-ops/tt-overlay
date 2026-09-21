@@ -53,21 +53,31 @@ const RELAY_CONTAINER_ARGS = ['-f', 'nut', '-c:v', 'rawvideo', '-pix_fmt', 'yuv4
 function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height, fps, previewPath }) {
     const filterComplex =
         `[0:v]scale=${width}:${height}:flags=lanczos,setsar=1,fps=${fps},format=yuv420p[cam];` +
-        `[1:v]scale=${width}:${height},format=rgba[ovl];` +
+        `[2:v]scale=${width}:${height},format=rgba[ovl];` +
         `[cam][ovl]overlay=0:0:format=auto,format=yuv420p,split=2[vout1][vout2]`;
     const args = [
         '-hide_banner', '-loglevel', 'warning',
-        // Input 0: camera + mic, opened ONCE, natively — no browser, no
-        // screen/window capture anywhere in this path. Some dshow
-        // devices reject an exact -video_size/-framerate combo they
-        // don't natively support; if that happens here, the operator-
-        // facing error will name the device and the requested format
-        // (see startCompositor's stderr handling) rather than failing
-        // silently.
+        // Input 0: camera (video only). Input 1: mic/capture-card audio
+        // (separate dshow input, NOT combined as one "video=X:audio=Y"
+        // graph) — 🩹 CONFIRMED IN THE FIELD: the combined syntax failed
+        // with a generic "Error opening input files: I/O error" the
+        // moment video and audio came from two independent physical
+        // devices (a very common real setup — separate camera + mic/
+        // capture-card), which ffmpeg's dshow demuxer doesn't reliably
+        // bind together as one graph. Two independent dshow inputs is
+        // the more robust, standard approach and works the same whether
+        // the devices are physically the same hardware or not. Opened
+        // ONCE (both), natively — no browser, no screen/window capture
+        // anywhere in this path. Some dshow devices reject an exact
+        // -video_size/-framerate combo they don't natively support; if
+        // that happens here, the operator-facing error will name the
+        // device and the requested format (see Compositor's stderr
+        // handling in this file) rather than failing silently.
         '-f', 'dshow', '-rtbufsize', '512M',
         '-video_size', `${width}x${height}`, '-framerate', String(fps),
-        '-i', `video=${cameraDeviceName}:audio=${audioDeviceName}`,
-        // Input 1: the overlay — a continuous stream of complete PNG
+        '-i', `video=${cameraDeviceName}`,
+        '-f', 'dshow', '-i', `audio=${audioDeviceName}`,
+        // Input 2: the overlay — a continuous stream of complete PNG
         // files written back-to-back to this process's own stdin by
         // overlayBridge.js's pipeTo() (image2pipe's png demuxer can tell
         // consecutive PNGs apart on its own; no extra framing needed).
@@ -79,7 +89,7 @@ function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height,
     // cost a second NVENC session AND a lossy compress pass for
     // something no one watches) — plain rawvideo/NUT, decoded once more
     // downstream by whichever consumer(s) actually need it.
-    args.push('-map', '[vout1]', '-map', '0:a', ...RELAY_CONTAINER_ARGS, 'pipe:1');
+    args.push('-map', '[vout1]', '-map', '1:a', ...RELAY_CONTAINER_ARGS, 'pipe:1');
     // Output 2: a cheap, low-frame-rate JPEG snapshot written to a local
     // file, overwritten in place — this is what GET /capture-preview
     // (see server.js) serves as the "Program Preview". It's a REAL
@@ -238,7 +248,16 @@ class Compositor extends EventEmitter {
             while ((idx = stderrBuf.indexOf('\n')) >= 0) {
                 const line = stderrBuf.slice(0, idx).trim();
                 stderrBuf = stderrBuf.slice(idx + 1);
-                if (line && /error|failed|cannot|invalid|no space/i.test(line)) this.lastError = line;
+                if (!line) continue;
+                // 🩹 Log every line, not just the ones this regex thinks
+                // are "the" error — a generic summary line (e.g. "Error
+                // opening input files: I/O error") is what ffmpeg prints
+                // LAST, after the actually-specific diagnostic lines
+                // (which device/input failed and why) that only storing
+                // the regex-matched line would silently discard. Full
+                // context up front beats a second debugging round-trip.
+                console.log(`[compositor] ${line}`);
+                if (/error|failed|cannot|invalid|no space/i.test(line)) this.lastError = line;
             }
         });
 
