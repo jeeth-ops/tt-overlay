@@ -104,6 +104,26 @@ function resolveFfmpegPath() {
 }
 const FFMPEG_PATH = resolveFfmpegPath();
 
+// 🩹 CONFIRMED IN THE FIELD: on Windows, spawning a console-subsystem
+// child process (ffmpeg.exe, powershell.exe) without windowsHide flashes
+// a REAL, VISIBLE console window on screen for every single call — easy
+// to mistake for a crash/spam bug. This was always true here, but used
+// to be rare enough (ffmpeg only spawned at Go Live/Recording Start) to
+// go unnoticed; it stopped being rare once /capture-preview and
+// /program-feed-health started getting polled every ~2s by the panel's
+// native preview (see startNativePreviewPolling in cricket-panel.html),
+// which turned an occasional flash into a constant flood of popping
+// ffmpeg console windows. Centralizing every ffmpeg spawn through these
+// two wrappers means windowsHide is never something a new call site can
+// forget to set (see resolveWindowTitle's own powershell spawn above
+// for the same fix applied to that one manually).
+function spawnFfmpeg(args, opts = {}) {
+    return spawn(FFMPEG_PATH, args, { ...opts, windowsHide: true });
+}
+function spawnFfmpegSync(args, opts = {}) {
+    return spawnSync(FFMPEG_PATH, args, { ...opts, windowsHide: true });
+}
+
 function loadConfig() {
     try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch (e) { return {}; }
 }
@@ -163,7 +183,7 @@ function checkNvenc() {
     if (nvencCheckCache && Date.now() - nvencCheckCache.checkedAt < 30000) return nvencCheckCache;
     let available = false, detail = '';
     try {
-        const res = spawnSync(FFMPEG_PATH, ['-hide_banner', '-encoders'], { encoding: 'utf8', timeout: 5000 });
+        const res = spawnFfmpegSync(['-hide_banner', '-encoders'], { encoding: 'utf8', timeout: 5000 });
         if (res.error) {
             detail = `ffmpeg not found (${res.error.message}) — set FFMPEG_PATH to a full/NVIDIA ffmpeg build`;
         } else {
@@ -189,7 +209,7 @@ let libx264CheckCache = null; // cached for the process lifetime — this doesn'
 function checkLibx264() {
     if (libx264CheckCache !== null) return libx264CheckCache;
     try {
-        const res = spawnSync(FFMPEG_PATH, [
+        const res = spawnFfmpegSync([
             '-hide_banner', '-loglevel', 'error', '-y',
             // 256x256, not something tiny like 64x64 — hardware encoders
             // (see checkNvencRuntime below) reject frames smaller than
@@ -223,7 +243,7 @@ function checkNvencRuntime() {
     if (nvencRuntimeCheckCache !== null) return nvencRuntimeCheckCache;
     if (!checkNvenc().available) { nvencRuntimeCheckCache = false; return false; }
     try {
-        const res = spawnSync(FFMPEG_PATH, [
+        const res = spawnFfmpegSync([
             '-hide_banner', '-loglevel', 'error', '-y',
             // 🩹 256x256, NOT 64x64 — confirmed on real hardware
             // (NVIDIA RTX 3050 Laptop GPU) that NVENC rejects anything
@@ -267,7 +287,7 @@ function checkGpuScaleRuntime() {
     if (gpuScaleCheckCache !== null) return gpuScaleCheckCache;
     if (!checkNvencRuntime()) { gpuScaleCheckCache = false; return false; }
     try {
-        const res = spawnSync(FFMPEG_PATH, [
+        const res = spawnFfmpegSync([
             '-hide_banner', '-loglevel', 'error', '-y',
             '-f', 'lavfi', '-i', 'color=c=black:s=1280x720:d=0.2',
             '-vf', 'hwupload_cuda,scale_npp=640:360',
@@ -305,7 +325,7 @@ function checkNvencTuneRuntime() {
     if (nvencTuneCheckCache !== null) return nvencTuneCheckCache;
     if (!checkNvencRuntime()) { nvencTuneCheckCache = false; return false; }
     try {
-        const res = spawnSync(FFMPEG_PATH, [
+        const res = spawnFfmpegSync([
             '-hide_banner', '-loglevel', 'error', '-y',
             '-f', 'lavfi', '-i', 'color=c=black:s=256x256:d=0.2',
             '-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'll',
@@ -338,7 +358,7 @@ let cfrFlagCache = null;
 function cfrFlagArgs() {
     if (cfrFlagCache !== null) return cfrFlagCache;
     try {
-        const res = spawnSync(FFMPEG_PATH, [
+        const res = spawnFfmpegSync([
             '-hide_banner', '-loglevel', 'error', '-y',
             '-f', 'lavfi', '-i', 'color=c=black:s=64x64:d=0.1',
             '-fps_mode', 'cfr',
@@ -353,7 +373,7 @@ function cfrFlagArgs() {
 }
 
 function ffmpegAvailable() {
-    const res = spawnSync(FFMPEG_PATH, ['-version'], { encoding: 'utf8', timeout: 5000 });
+    const res = spawnFfmpegSync(['-version'], { encoding: 'utf8', timeout: 5000 });
     return !res.error;
 }
 
@@ -381,7 +401,7 @@ function listAudioDevices() {
         // ffmpeg off mid-enumeration, silently returning zero devices
         // even though real ones exist — 20s gives real-world device
         // counts like this real headroom.
-        const res = spawnSync(FFMPEG_PATH, ['-hide_banner', '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'], { encoding: 'utf8', timeout: 20000 });
+        const res = spawnFfmpegSync(['-hide_banner', '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'], { encoding: 'utf8', timeout: 20000 });
         const out = (res.stdout || '') + (res.stderr || '');
         const devices = [];
         // 🩹 ffmpeg changed this output format across versions — confirmed
@@ -618,24 +638,55 @@ $callback = {
 [TTOverlayWin32]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
 if ($found) { Write-Output $found }
 `;
+// 🩹 Short-TTL cache, keyed by matchId — resolveWindowTitle() is now
+// called far more often than it used to be (the native preview image +
+// program-feed health badge in the panel poll /capture-preview and
+// /program-feed-health every ~2s, and BOTH call this), and each call
+// spawns a real powershell.exe process (up to 5s). Without this cache
+// that's two fresh PowerShell spawns every 2 seconds, indefinitely,
+// for as long as Live Studio is open — needless CPU/process overhead,
+// and (worse, confirmed in the field) a VISIBLE flashing console window
+// stealing focus repeatedly right when the operator might be trying to
+// click "Allow" on the camera permission prompt. The window's exact
+// title barely ever changes within a few seconds of real time, so a
+// short cache costs nothing operationally.
+const windowTitleCache = new Map(); // matchId -> { title, resolvedAt }
+const WINDOW_TITLE_CACHE_TTL_MS = 4000;
+
 function resolveWindowTitle(matchId) {
+    const cached = windowTitleCache.get(matchId);
+    if (cached && Date.now() - cached.resolvedAt < WINDOW_TITLE_CACHE_TTL_MS) return cached.title;
+
     const prefix = windowTitleFor(matchId);
+    let title;
     try {
         const script = ENUM_WINDOWS_PS_TEMPLATE.replace('__PREFIX__', prefix);
         const encoded = Buffer.from(script, 'utf16le').toString('base64');
         const res = spawnSync('powershell.exe', [
             '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded,
-        ], { encoding: 'utf8', timeout: 5000 });
-        const title = (res.stdout || '').trim();
+        ], {
+            encoding: 'utf8', timeout: 5000,
+            // 🩹 CONFIRMED IN THE FIELD: without this, every single call
+            // here flashes a real, visible "Windows PowerShell" console
+            // window on screen (Node's child_process shows a console for
+            // a console-subsystem child unless told not to) — easy to
+            // mistake for a crash/spam bug when it's actually just this
+            // lookup running normally, especially now that it runs every
+            // few seconds while Live Studio is open (see the cache above).
+            windowsHide: true,
+        });
+        title = (res.stdout || '').trim();
         if (!title) {
             const reason = res.error ? res.error.message : (res.stderr || '').trim().slice(0, 300) || 'no visible window title matched';
             console.log(`[stream-engine] resolveWindowTitle: could not resolve exact title for "${prefix}" (${reason}) — falling back to bare prefix; gdigrab will likely report "Can't find window" if the Live Output window isn't actually open`);
         }
-        return title || prefix;
+        title = title || prefix;
     } catch (e) {
         console.log(`[stream-engine] resolveWindowTitle: powershell lookup threw (${e.message}) — falling back to bare prefix for "${prefix}"`);
-        return prefix;
+        title = prefix;
     }
+    windowTitleCache.set(matchId, { title, resolvedAt: Date.now() });
+    return title;
 }
 
 // Configurable because exact OS title-bar/border pixel height varies by
@@ -745,7 +796,7 @@ function runProgramFeedHealthCheck({ windowTitle, width, height, fps }) {
             '-vf', filter,
             '-an', '-f', 'null', '-',
         ];
-        const proc = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+        const proc = spawnFfmpeg(args, { stdio: ['ignore', 'ignore', 'pipe'] });
         let stderr = '';
         proc.stderr.on('data', (d) => { stderr += d; });
         const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch (e) { /* already gone */ } }, (HEALTH_CHECK_DURATION_SEC + 5) * 1000);
@@ -1386,7 +1437,7 @@ function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     const destinationUrl = buildDestinationUrl(streamUrl, streamKey);
     const windowTitle = resolveWindowTitle(engine.matchId);
     const args = buildLiveEncoderArgs({ windowTitle, audioDeviceName: engine.audioDeviceName, ...resolved, destinationUrl });
-    const proc = spawn(FFMPEG_PATH, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+    const proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] });
     engine.proc = proc;
     engine.startedAt = Date.now();
     engine.state = 'live';
@@ -1621,7 +1672,7 @@ function startRecorder(matchId, { resolution, fps, audioDeviceName } = {}) {
 
     const windowTitle = resolveWindowTitle(matchId);
     const args = buildRecorderArgs({ windowTitle, audioDeviceName, width, height, fps: fpsNum, bitrateKbps, outFile });
-    const proc = spawn(FFMPEG_PATH, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+    const proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] });
     recorder.proc = proc;
     recorder.state = 'recording';
     recorder.segments.push({ path: outFile, startedAt: recorder.startedAt });
@@ -2005,7 +2056,7 @@ async function cutFromMasterFile({ masterFile, fromSec, durationSec, outFile }) 
             '-c:a', 'aac', '-b:a', '128k',
             outFile,
         ];
-        const proc = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+        const proc = spawnFfmpeg(args, { stdio: ['ignore', 'ignore', 'pipe'] });
         let stderr = '';
         proc.stderr.on('data', (d) => { stderr += d; });
         proc.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg clip cut (${useNvenc ? 'NVENC' : 'CPU'}) exited ${code}: ${stderr.slice(-500)}`)));
@@ -2278,7 +2329,7 @@ app.get('/capture-preview', (req, res) => {
         '-f', 'image2', '-vcodec', 'png',
         'pipe:1',
     ];
-    const proc = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const proc = spawnFfmpeg(args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const chunks = [];
     proc.stdout.on('data', (c) => chunks.push(c));
     let stderr = '';
