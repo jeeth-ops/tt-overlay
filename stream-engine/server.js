@@ -887,7 +887,7 @@ const captureWindow = {
     lastCameraEndedReason: null,
 };
 
-function launchCaptureWindow({ matchId, videoDeviceId, origin, width, height }) {
+function launchCaptureWindow({ matchId, videoDeviceId, videoLabel, origin, width, height }) {
     if (captureWindow.proc && captureWindow.matchId === matchId) return { ok: true, alreadyRunning: true };
     if (captureWindow.proc) closeCaptureWindow(); // switching matches — release the old one first
     if (!NATIVE_CAPTURE_SUPPORTED) return { ok: false, error: `Dedicated capture window launch needs Windows — this process is running on ${process.platform}` };
@@ -896,7 +896,18 @@ function launchCaptureWindow({ matchId, videoDeviceId, origin, width, height }) 
     if (!origin) return { ok: false, error: "origin required (the Cricket Panel's own page URL) — cannot build the Live Output URL" };
     try { fs.mkdirSync(CAPTURE_PROFILE_DIR, { recursive: true }); } catch (e) { /* best effort — Chromium will still create it */ }
 
-    const url = `${String(origin).replace(/\/+$/, '')}/live-output.html?room=${encodeURIComponent(matchId)}&video=${encodeURIComponent(videoDeviceId || '')}`;
+    // 🩹 videoDeviceId is passed through for the popup-fallback path
+    // (same browser profile as the panel, so it's valid there) but is
+    // USELESS to this dedicated window: Chrome/Edge salts getUserMedia
+    // deviceIds per browser profile (a privacy measure), and this window
+    // launches into its OWN isolated CAPTURE_PROFILE_DIR profile — the
+    // panel's deviceId does not exist there, so passing it alone throws
+    // OverconstrainedError ("Could not open camera:" with a blank
+    // message — confirmed in the field). videoLabel (the human-readable
+    // device name, NOT profile-scoped) is what live-output.html actually
+    // uses to pick the right camera in this profile — see its own
+    // startCamera().
+    const url = `${String(origin).replace(/\/+$/, '')}/live-output.html?room=${encodeURIComponent(matchId)}&video=${encodeURIComponent(videoDeviceId || '')}&videoLabel=${encodeURIComponent(videoLabel || '')}`;
     const w = Math.max(1280, Number(width) || 1920);
     const h = Math.max(720, Number(height) || 1080);
     const args = [
@@ -2267,7 +2278,7 @@ app.post('/capture-window/launch', (req, res) => {
     const body = req.body || {};
     const matchId = safeMatchId(body.matchId);
     if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
-    const result = launchCaptureWindow({ matchId, videoDeviceId: body.videoDeviceId, origin: body.origin, width: body.width, height: body.height });
+    const result = launchCaptureWindow({ matchId, videoDeviceId: body.videoDeviceId, videoLabel: body.videoLabel, origin: body.origin, width: body.width, height: body.height });
     res.json({ success: result.ok, ...result });
 });
 app.post('/capture-window/close', (req, res) => {
