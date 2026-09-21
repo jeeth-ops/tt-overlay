@@ -89,11 +89,19 @@ function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height,
         //     bound (no GPU swscale on this ffmpeg build) pipeline could
         //     drain it, corrupting the relay feed everything downstream —
         //     recording, live, preview — depends on.
-        // 960x540@30 is an explicitly listed, device-confirmed mode (not a
-        // guess) at a much lighter ~31 MB/s raw rate; the filter_complex
-        // below still scales/fps-converts it to the actual target output.
+        // 🩹 CORRECTED after a second field failure: every single mode
+        // this device lists (960x540 included) shows min fps === max fps
+        // === ~60 — i.e. EVERY resolution is fixed at ~60fps on this
+        // device, there is no 30fps option anywhere in its mode list.
+        // "960x540 @ 30fps" was never actually a valid combination; it
+        // happened to succeed once (dshow drivers can be inconsistent
+        // about silently clamping vs. hard-failing an unsupported rate)
+        // and then reliably failed on every later attempt. Request 60fps
+        // — the rate this device actually reports for every mode — and
+        // let the filter_complex below (fps=${fps}, target ~30) do the
+        // downsample, the same way it already converts the overlay input.
         '-f', 'dshow', '-rtbufsize', '512M',
-        '-video_size', '960x540', '-framerate', '30',
+        '-video_size', '960x540', '-framerate', '60',
         '-i', `video=${cameraDeviceName}`,
         // Its own -rtbufsize too — confirmed in the field alongside the
         // video buffer overrun above: ffmpeg's dshow default (~2.9 MB) is
