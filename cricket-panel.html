@@ -2780,7 +2780,16 @@ async function ensureLiveOutputWindow(matchId){
   const videoDeviceId = document.getElementById('live-video-device').value;
   if(!videoDeviceId) return { ok:false, error:'No camera selected — pick one under Live Studio first' };
   const url = `${location.origin}/live-output.html?room=${encodeURIComponent(matchId)}&video=${encodeURIComponent(videoDeviceId)}`;
-  liveOutputWindow = window.open(url, 'liveOutputWindow', 'width=1280,height=740');
+  // 🩹 Sized to fill the screen (NOT OS-maximized) — confirmed on real
+  // hardware: gdigrab's window capture breaks (comes back white/garbled)
+  // on a window the operator maximized via the title bar/Win+Up, because
+  // Windows extends a maximized window's rect with extra invisible
+  // resize-border pixels that gdigrab captures too. Opening already at
+  // screen size fills the screen the same way without entering that OS
+  // "maximized" state, so there's no invisible-border bug to hit and no
+  // reason for the operator to click maximize themselves.
+  liveOutputWindow = window.open(url, 'liveOutputWindow',
+    `width=${Math.max(1280, screen.availWidth || 1280)},height=${Math.max(740, screen.availHeight || 740)},left=0,top=0`);
   if(!liveOutputWindow) return { ok:false, error:'Popup blocked — allow popups for this site and try again' };
   const frame = document.getElementById('ls-preview-frame');
   if(frame){ frame.src = url; frame.style.display = 'block'; document.getElementById('ls-preview-placeholder').style.display = 'none'; }
@@ -2970,7 +2979,16 @@ function openLiveOutputWindow(){
   if(!videoDeviceId){ toast('No camera found — plug one in and click "Refresh Device List"'); return; }
 
   const url = `${location.origin}/live-output.html?room=${encodeURIComponent(matchId)}&video=${encodeURIComponent(videoDeviceId)}`;
-  liveOutputWindow = window.open(url, 'liveOutputWindow', 'width=1280,height=740');
+  // 🩹 Sized to fill the screen (NOT OS-maximized) — confirmed on real
+  // hardware: gdigrab's window capture breaks (comes back white/garbled)
+  // on a window the operator maximized via the title bar/Win+Up, because
+  // Windows extends a maximized window's rect with extra invisible
+  // resize-border pixels that gdigrab captures too. Opening already at
+  // screen size fills the screen the same way without entering that OS
+  // "maximized" state, so there's no invisible-border bug to hit and no
+  // reason for the operator to click maximize themselves.
+  liveOutputWindow = window.open(url, 'liveOutputWindow',
+    `width=${Math.max(1280, screen.availWidth || 1280)},height=${Math.max(740, screen.availHeight || 740)},left=0,top=0`);
   lsSetHealth('ls-h-camera', true, 'Connected');
   lsSetHealth('ls-h-overlay', true, 'Connected');
   document.getElementById('ls-preview-placeholder').style.display = 'none';
