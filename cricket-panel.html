@@ -2928,33 +2928,13 @@ window.addEventListener('message', (e) => {
 // program feed" — the DOM iframe above shows this BROWSER TAB's own
 // render of live-output.html, which is NOT necessarily what gdigrab
 // actually captures; this image is.
-// 🩹 CONFIRMED IN THE FIELD: polling BOTH /capture-preview and
-// /program-feed-health every 2s meant two fresh ffmpeg processes
-// spinning up back-to-back, non-stop, for as long as Live Studio was
-// open — on top of the dedicated capture window already rendering via
-// CPU (--disable-gpu, see launchCaptureWindow), this made the whole PC
-// noticeably sluggish. Neither of these needs to be that fresh — a
-// still-image preview and an occasional health sample are both
-// diagnostics, not the real program feed (the actual recorder/live
-// encoder run their own independent, continuous native capture, totally
-// unaffected by how often the PANEL happens to poll these). Split into
-// two much slower, independent timers instead of one 2s tick doing both:
-// the image (near-instant single-frame capture) every 5s, the health
-// check (the heavier ~1.4s+ real-time sample) only every 15s.
-const NATIVE_PREVIEW_IMAGE_INTERVAL_MS = 5000;
-const NATIVE_PREVIEW_HEALTH_INTERVAL_MS = 15000;
-let nativePreviewHealthTimer = null;
-
 function startNativePreviewPolling(matchId){
   stopNativePreviewPolling();
   const img = document.getElementById('ls-native-preview-img');
   const badge = document.getElementById('ls-programfeed-badge');
   if(img) img.style.display = 'block';
-
-  function tickImage(){
+  async function tick(){
     if(img) img.src = `${STREAM_ENGINE_URL}/capture-preview?matchId=${encodeURIComponent(matchId)}&t=${Date.now()}`;
-  }
-  async function tickHealth(){
     try {
       const health = await fetch(`${STREAM_ENGINE_URL}/program-feed-health?matchId=${encodeURIComponent(matchId)}`).then(r => r.json());
       if(badge){
@@ -2966,17 +2946,12 @@ function startNativePreviewPolling(matchId){
       }
     } catch(e) { /* Stream Engine unreachable — leave the last-known badge state up */ }
   }
-
-  tickImage();
-  tickHealth();
-  nativePreviewTimer = setInterval(tickImage, NATIVE_PREVIEW_IMAGE_INTERVAL_MS);
-  nativePreviewHealthTimer = setInterval(tickHealth, NATIVE_PREVIEW_HEALTH_INTERVAL_MS);
+  tick();
+  nativePreviewTimer = setInterval(tick, 2000);
 }
 function stopNativePreviewPolling(){
   if(nativePreviewTimer) clearInterval(nativePreviewTimer);
-  if(nativePreviewHealthTimer) clearInterval(nativePreviewHealthTimer);
   nativePreviewTimer = null;
-  nativePreviewHealthTimer = null;
   const badge = document.getElementById('ls-programfeed-badge');
   if(badge){ badge.textContent = ''; }
   const img = document.getElementById('ls-native-preview-img');
