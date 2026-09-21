@@ -103,7 +103,13 @@ function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height,
     // must show the real program frame" without needing a live pull
     // from the relay pipe on every request.
     if (previewPath) {
-        args.push('-map', '[vout2]', '-an', '-vf', 'fps=2', '-update', '1', '-y', previewPath);
+        // 🩹 CONFIRMED IN THE FIELD: '-vf fps=2' here fails outright —
+        // "Simple and complex filtering cannot be used together for the
+        // same stream" — because [vout2] is already fed from
+        // -filter_complex above; ffmpeg won't also bolt a plain -vf onto
+        // it. '-r' is an output frame-rate option (not a filter), so it
+        // works on a complex-filtergraph-sourced stream the same way.
+        args.push('-map', '[vout2]', '-an', '-r', '2', '-update', '1', '-y', previewPath);
     }
     return args;
 }
