@@ -1984,10 +1984,12 @@ const RECORDING_ROOT = path.join(DATA_ROOT, 'Recordings');
 try { fs.mkdirSync(RECORDING_ROOT, { recursive: true }); } catch (e) { /* created lazily per-match anyway */ }
 // Real, final MP4 clip files — cut STRICTLY from RECORDING_ROOT's
 // master.mp4 (see cutLocalClip/findRecordingSegmentFor below), never
-// from YouTube, HLS, or any browser-side source. Sits alongside
-// Recordings/ under the same StreamEngineData root.
-const CLIPS_ROOT = path.join(DATA_ROOT, 'Clips');
-try { fs.mkdirSync(CLIPS_ROOT, { recursive: true }); } catch (e) { /* created lazily per-match anyway */ }
+// from YouTube, HLS, or any browser-side source.
+// 🩹 Operator ask, confirmed reasonable: clips should land in the SAME
+// per-match folder as master.mp4, not a separate Clips/ tree — one place
+// to look for everything from a given match. RECORDING_ROOT itself, not
+// a sibling.
+const CLIPS_ROOT = RECORDING_ROOT;
 // Deliberately independent of the live-stream ABR ladder — this is a
 // fixed local recording quality, never adapted to network conditions.
 const RECORDING_BITRATE_KBPS = { '480p': 2500, '720p': 5000, '1080p': 8000 };
