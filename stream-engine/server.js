@@ -1761,7 +1761,7 @@ async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec 
         }
         const args = nativePipeline.buildLiveEncoderArgs({ ...resolved, destinationUrl, useTune: checkNvencTuneRuntime() });
         proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] });
-        const attachResult = await compositor.attachRelayConsumer(proc);
+        const attachResult = await compositor.attachRelayConsumer(proc, 'live');
         if (!attachResult.ok) {
             try { proc.kill('SIGKILL'); } catch (e) {}
             engine.state = 'idle';
@@ -2116,7 +2116,7 @@ async function startRecorder(matchId, { resolution, fps, audioDeviceName, camera
         if (!useNvenc) checkLibx264();
         const args = nativePipeline.buildRecorderEncoderArgs({ width, height, fps: fpsNum, bitrateKbps, outFile, useNvenc });
         proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] });
-        const attachResult = await compositor.attachRelayConsumer(proc);
+        const attachResult = await compositor.attachRelayConsumer(proc, 'recorder');
         if (!attachResult.ok) {
             try { proc.kill('SIGKILL'); } catch (e) {}
             recorder.state = 'idle';

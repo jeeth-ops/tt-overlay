@@ -269,7 +269,7 @@ class Compositor extends EventEmitter {
         this.stopOverlayPipe = null;
         this.state = 'idle'; // idle | starting | running | stopping | crashed
         this.refs = new Set(); // 'recorder' | 'live' — who currently needs this compositor running
-        this.consumers = new Set(); // attached relay consumers (see attachRelayConsumer)
+        this.consumers = new Map(); // attached relay consumer proc -> its 'who' ('recorder' | 'live') — see attachRelayConsumer
         this.lastError = null;
         this.startedAt = null;
         this.cameraMode = null; // resolved once by probeCameraMode(), cached for this instance's lifetime
@@ -410,7 +410,7 @@ class Compositor extends EventEmitter {
                 this.relayHeaderBuffer.push(chunk);
                 this.relayHeaderBufferBytes += chunk.length;
             }
-            for (const consumer of this.consumers) {
+            for (const consumer of this.consumers.keys()) {
                 if (consumer.stdin && consumer.stdin.writable) {
                     try { consumer.stdin.write(chunk); } catch (e) { /* consumer gone — attachRelayConsumer's caller is responsible for detaching */ }
                 }
@@ -490,7 +490,7 @@ class Compositor extends EventEmitter {
         // exit handler fires and their own reconnect/auto-restart logic
         // brings them back — safely, since by the time they re-attach
         // this will be a fresh leg well within the buffer window.
-        for (const consumer of this.consumers) {
+        for (const consumer of this.consumers.keys()) {
             try { if (consumer.stdin && consumer.stdin.writable) consumer.stdin.end(); } catch (e) {}
         }
         this.consumers.clear();
@@ -508,31 +508,57 @@ class Compositor extends EventEmitter {
         return this._spawnFfmpegLeg();
     }
 
-    // Registers a downstream process's stdin as a relay consumer. The
+    // Registers a downstream process's stdin as a relay consumer. `who`
+    // is 'recorder' or 'live' — see below for why it matters here
+    // specifically (not just bookkeeping for releaseCompositor). The
     // caller is responsible for detaching (removeRelayConsumer) once
     // that process exits — an un-detached dead stdin is just silently
     // skipped by the write() try/catch above, but detaching promptly
     // avoids that overhead piling up across many restarts.
     //
     // Async: if this leg has been running longer than the relay-buffer
-    // window, gets a fresh leg first (restartFfmpegLeg) rather than ever
-    // replaying a stale buffer — see the long comment on the stdout
-    // handler in _spawnFfmpegLeg for why that's unsafe. Otherwise this
-    // is synchronous start to finish (no await), which is what
-    // guarantees replay-then-live-forward has no gap or race: nothing
-    // else can run between "finish replaying what's buffered so far" and
-    // "start forwarding new chunks live" in the meantime.
-    async attachRelayConsumer(proc) {
-        if (Date.now() - this.legStartedAt >= RELAY_BUFFER_WINDOW_MS) {
-            const result = await this.restartFfmpegLeg();
-            if (!result.ok) return result;
+    // window, normally gets a fresh leg first (restartFfmpegLeg) rather
+    // than ever replaying a stale buffer — see the long comment on the
+    // stdout handler in _spawnFfmpegLeg for why that's unsafe.
+    //
+    // 🩹 CONFIRMED IN THE FIELD, a third time: restarting the leg to fix
+    // a stale 'live' reattach (the very common case — ABR bitrate
+    // restarts happen repeatedly during poor network, at most 8s apart)
+    // forces every OTHER attached consumer through restartFfmpegLeg's
+    // end()-and-reconnect path too. For an ALREADY-RUNNING recorder that
+    // means an unwanted new segment file (master_part2.mp4, ...) on
+    // every single one of live's ABR restarts — the operator watched
+    // recording visibly stutter/fragment because of network conditions
+    // that have nothing to do with local recording at all, plus a real
+    // chance of a corrupted moment right at each cut. Recording must
+    // never depend on live's stability. So: a stale 'live' reattach
+    // while a 'recorder' consumer is currently attached does NOT
+    // restart the leg — it falls back to replaying the stale buffer
+    // (the pre-restartFfmpegLeg behavior, with the known splice risk
+    // that fix exists to avoid) rather than disturbing the recorder.
+    // This is a deliberate, bounded trade-off: an occasional corrupted
+    // moment on the LIVE stream during an ABR restart while recording
+    // is also active, in exchange for recording NEVER being interrupted
+    // by anything happening on the streaming side. Every other case
+    // (recorder itself attaching/reattaching stale, or live reattaching
+    // stale with no recorder active) still gets the full, safe restart.
+    async attachRelayConsumer(proc, who) {
+        const stale = Date.now() - this.legStartedAt >= RELAY_BUFFER_WINDOW_MS;
+        if (stale) {
+            const recorderActive = [...this.consumers.values()].includes('recorder');
+            if (who === 'recorder' || !recorderActive) {
+                const result = await this.restartFfmpegLeg();
+                if (!result.ok) return result;
+            }
+            // else: falls through and replays the stale buffer below —
+            // see the comment above for why, in this one specific case.
         }
         for (const chunk of this.relayHeaderBuffer) {
             if (proc.stdin && proc.stdin.writable) {
                 try { proc.stdin.write(chunk); } catch (e) { return { ok: false, error: 'consumer already gone before it could attach' }; }
             }
         }
-        this.consumers.add(proc);
+        this.consumers.set(proc, who);
         return { ok: true };
     }
     removeRelayConsumer(proc) {
