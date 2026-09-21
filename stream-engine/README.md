@@ -32,6 +32,14 @@ directly. `cricket-panel.html`'s `ensureLiveOutputWindow()` calls
 `CAPTURE_BROWSER_PATH` to its full `.exe` path if it's in a non-standard
 location) or the OS isn't Windows.
 
+**Confirmed in the field:** `--disable-gpu` alone was not enough — a
+live `<video>` element (the camera feed) can render through a SEPARATE
+DirectComposition "video overlay" swapchain, independent of the general
+page compositor that flag controls. That made the window look correct
+on screen (camera + overlay both visible) while gdigrab/`/capture-preview`
+still came back blank right where the `<video>` element was. Fixed by
+also passing `--disable-features=DirectCompositionVideoOverlays`.
+
 On top of that fix, two more layers exist specifically so a bad feed is
 never silently sent live:
 
