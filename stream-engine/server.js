@@ -87,22 +87,63 @@ const CONFIG_FILE = path.join(__dirname, 'config.local.json'); // gitignored —
 const NATIVE_CAPTURE_SUPPORTED = process.platform === 'win32';
 
 // ----------------------------------------------------------------
-// ffmpeg resolution — prefer an explicitly configured NVENC-capable
-// build over the minimal one @ffmpeg-installer/ffmpeg ships (that
-// package's binaries are built WITHOUT hardware encoders, so relying
-// on it here would silently mean "no NVENC ever". Order of preference:
-//   1. FFMPEG_PATH env var (operator points this at a full/NVIDIA build,
-//      e.g. the gyan.dev "full" Windows build)
-//   2. a system `ffmpeg` already on PATH
-// There is deliberately no fallback to a bundled minimal ffmpeg here —
-// if neither of the above has NVENC, /status reports it honestly as
-// unavailable instead of quietly encoding on the CPU.
+// 🧪 NATIVE PROGRAM FEED (opt-in) — the new camera+overlay compositor
+// pipeline (see nativePipeline.js/overlayBridge.js): native dshow camera
+// capture + the overlay pulled via Chrome DevTools Protocol screencast
+// (not screen/window capture at all), replacing gdigrab entirely for
+// the actual program feed. This has NOT been field-verified the way the
+// gdigrab path has (many rounds of real-hardware fixes — see this
+// file's own history/README) — it was built and syntax-checked in an
+// environment with no Windows machine, GPU, or camera to test against.
+// Defaults OFF so the existing, working gdigrab path remains what
+// actually runs unless explicitly opted into — set
+// NATIVE_PROGRAM_FEED=true to try the new pipeline. GET /status reports
+// which one is active. See stream-engine/README.md.
 // ----------------------------------------------------------------
+const NATIVE_PROGRAM_FEED = process.env.NATIVE_PROGRAM_FEED === 'true';
+const nativePipeline = NATIVE_PROGRAM_FEED ? require('./nativePipeline') : null;
+
+// ----------------------------------------------------------------
+// ffmpeg/ffprobe resolution — the operator should never need to install
+// ffmpeg system-wide or configure PATH by hand. Order of preference:
+//   1. BUNDLED — stream-engine/bin/ffmpeg.exe (+ ffprobe.exe) shipped
+//      alongside this app (see bin/README.md for exactly what to put
+//      there; not committed to git — multi-hundred-MB binaries don't
+//      belong in a repo). This is the intended path for a real install.
+//   2. FFMPEG_PATH / FFPROBE_PATH env var — an explicit override for
+//      development/testing against a different build.
+//   3. a system `ffmpeg`/`ffprobe` already on PATH — last resort.
+// Whichever wins, this must be a FULL build with hardware encoders —
+// the minimal @ffmpeg-installer/ffmpeg npm package used elsewhere in
+// this repo for clip cutting is built WITHOUT them and will NOT work
+// here; relying on it here would silently mean "no NVENC ever". If
+// nothing above has NVENC, /status reports that honestly rather than
+// quietly falling back to CPU encoding.
+// ----------------------------------------------------------------
+function bundledBinPath(name) {
+    return path.join(__dirname, 'bin', process.platform === 'win32' ? `${name}.exe` : name);
+}
 function resolveFfmpegPath() {
+    const bundled = bundledBinPath('ffmpeg');
+    if (fs.existsSync(bundled)) return bundled;
     if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) return process.env.FFMPEG_PATH;
     return 'ffmpeg'; // resolved via PATH by child_process
 }
+function resolveFfprobePath() {
+    const bundled = bundledBinPath('ffprobe');
+    if (fs.existsSync(bundled)) return bundled;
+    if (process.env.FFPROBE_PATH && fs.existsSync(process.env.FFPROBE_PATH)) return process.env.FFPROBE_PATH;
+    return 'ffprobe';
+}
+function resolvedBinSource(name, resolvedPath) {
+    if (resolvedPath === bundledBinPath(name)) return 'bundled';
+    if (resolvedPath === process.env[`${name.toUpperCase()}_PATH`]) return `${name.toUpperCase()}_PATH env var`;
+    return 'system PATH';
+}
 const FFMPEG_PATH = resolveFfmpegPath();
+const FFPROBE_PATH = resolveFfprobePath();
+const FFMPEG_SOURCE = resolvedBinSource('ffmpeg', FFMPEG_PATH);
+const FFPROBE_SOURCE = resolvedBinSource('ffprobe', FFPROBE_PATH);
 
 // 🩹 CONFIRMED IN THE FIELD: on Windows, spawning a console-subsystem
 // child process (ffmpeg.exe, powershell.exe) without windowsHide flashes
@@ -123,6 +164,74 @@ function spawnFfmpeg(args, opts = {}) {
 function spawnFfmpegSync(args, opts = {}) {
     return spawnSync(FFMPEG_PATH, args, { ...opts, windowsHide: true });
 }
+function spawnFfprobeSync(args, opts = {}) {
+    return spawnSync(FFPROBE_PATH, args, { ...opts, windowsHide: true });
+}
+
+// ----------------------------------------------------------------
+// 🔎 FFPROBE AVAILABILITY + FILE-INTEGRITY CHECK — ffprobe ships in the
+// same "full" build as ffmpeg (see bin/README.md), so a missing ffprobe
+// almost always means the bundled/pointed-at build is incomplete or the
+// wrong one. Also used after a recording segment or clip finishes
+// writing to catch a corrupted/incomplete MP4 (e.g. the process was
+// killed mid-write, or the disk filled up partway through) BEFORE it's
+// reported to the operator/uploaded as if it were a good file — a
+// truncated/broken MP4 often still exists as a non-empty file on disk,
+// so file size alone can't catch this.
+// ----------------------------------------------------------------
+let ffprobeAvailableCache = null;
+function ffprobeAvailable() {
+    if (ffprobeAvailableCache !== null) return ffprobeAvailableCache;
+    try {
+        const res = spawnFfprobeSync(['-version'], { encoding: 'utf8', timeout: 5000 });
+        ffprobeAvailableCache = !res.error;
+    } catch (e) {
+        ffprobeAvailableCache = false;
+    }
+    return ffprobeAvailableCache;
+}
+
+// Verifies a finished MP4 actually has a valid, playable video stream
+// with a real duration — not just "the file exists and is non-empty".
+// Best-effort: if ffprobe itself isn't available, this can't verify
+// anything and says so explicitly rather than silently assuming the
+// file is fine.
+function verifyMediaFile(filePath) {
+    if (!ffprobeAvailable()) return { ok: null, reason: 'ffprobe not available — cannot verify file integrity (see bin/README.md)' };
+    try {
+        if (!fs.existsSync(filePath) || fs.statSync(filePath).size === 0) {
+            return { ok: false, reason: 'file missing or empty' };
+        }
+        const res = spawnFfprobeSync([
+            '-v', 'error',
+            '-select_streams', 'v:0',
+            '-show_entries', 'stream=codec_type,width,height:format=duration',
+            '-of', 'json',
+            filePath,
+        ], { encoding: 'utf8', timeout: 10000 });
+        if (res.error || res.status !== 0) {
+            return { ok: false, reason: `ffprobe could not read the file — likely corrupted/incomplete (${(res.stderr || '').trim().slice(0, 200) || res.error?.message || `exit ${res.status}`})` };
+        }
+        const parsed = JSON.parse(res.stdout || '{}');
+        const stream = (parsed.streams || [])[0];
+        const durationSec = parseFloat(parsed.format && parsed.format.duration);
+        if (!stream || !stream.width || !stream.height) {
+            return { ok: false, reason: 'no valid video stream found — likely corrupted/incomplete' };
+        }
+        if (!Number.isFinite(durationSec) || durationSec <= 0) {
+            return { ok: false, reason: 'zero/invalid duration — likely truncated mid-write (crash or disk-full)' };
+        }
+        return { ok: true, width: stream.width, height: stream.height, durationSec };
+    } catch (e) {
+        return { ok: false, reason: `verification threw: ${e.message}` };
+    }
+}
+
+// Conservative low-disk threshold — below this, a recording/clip write
+// in progress is at real risk of failing mid-write (a truncated/
+// corrupted MP4 — see verifyMediaFile above) rather than failing
+// cleanly, so it's worth warning well before the disk is actually full.
+const LOW_DISK_WARNING_BYTES = 2 * 1024 * 1024 * 1024; // 2GB
 
 function loadConfig() {
     try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch (e) { return {}; }
@@ -378,20 +487,23 @@ function ffmpegAvailable() {
 }
 
 // ----------------------------------------------------------------
-// 🎙️ NATIVE AUDIO DEVICE ENUMERATION — replaces the browser's own
+// 🎙️📷 NATIVE DEVICE ENUMERATION — replaces the browser's own
 // navigator.mediaDevices.enumerateDevices()/getUserMedia() for
-// PRODUCTION audio: ffmpeg's dshow demuxer lists Windows audio capture
-// devices the exact same way `ffmpeg -list_devices true -f dshow -i
-// dummy` does from the command line (device names appear in quotes in
-// stderr, sectioned under "DirectShow audio devices"). The panel calls
-// GET /audio-devices to populate its microphone dropdown from this list
-// instead of a browser permission prompt — the browser no longer needs
-// microphone access for the production audio pipeline at all.
+// PRODUCTION audio AND (see listVideoDevices below, added for the
+// native camera+overlay compositor) video: ffmpeg's dshow demuxer lists
+// Windows capture devices the exact same way `ffmpeg -list_devices true
+// -f dshow -i dummy` does from the command line (device names appear in
+// quotes in stderr). One shared enumeration/cache for both — audio and
+// video device lists come out of the SAME ffmpeg call, so listing both
+// separately would just mean spawning it twice for identical output.
+// GET /audio-devices populates the panel's microphone dropdown from
+// this instead of a browser permission prompt — the browser no longer
+// needs microphone access for the production audio pipeline at all.
 // ----------------------------------------------------------------
-let audioDeviceCache = null; // { devices, checkedAt } — only ever set on a SUCCESSFUL (non-empty) listing, see below
-function listAudioDevices() {
-    if (!NATIVE_CAPTURE_SUPPORTED) return { devices: [], detail: `Native audio device listing needs Windows (dshow) — this process is running on ${process.platform}` };
-    if (audioDeviceCache && Date.now() - audioDeviceCache.checkedAt < 15000) return { devices: audioDeviceCache.devices, detail: null };
+let dshowDeviceCache = null; // { audio, video, checkedAt } — only ever set on a SUCCESSFUL (non-empty) listing, see below
+function listDshowDevices() {
+    if (!NATIVE_CAPTURE_SUPPORTED) return { audio: [], video: [], detail: `Native device listing needs Windows (dshow) — this process is running on ${process.platform}` };
+    if (dshowDeviceCache && Date.now() - dshowDeviceCache.checkedAt < 15000) return { audio: dshowDeviceCache.audio, video: dshowDeviceCache.video, detail: null };
     try {
         // 🩹 Confirmed on real hardware: a machine with several virtual
         // audio devices installed (e.g. vMix's own virtual audio driver
@@ -403,30 +515,33 @@ function listAudioDevices() {
         // counts like this real headroom.
         const res = spawnFfmpegSync(['-hide_banner', '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'], { encoding: 'utf8', timeout: 20000 });
         const out = (res.stdout || '') + (res.stderr || '');
-        const devices = [];
+        const audio = [];
+        const video = [];
         // 🩹 ffmpeg changed this output format across versions — confirmed
         // on real hardware running ffmpeg 9.0.1: there is no longer a
-        // "DirectShow audio devices" section header line at all; instead
-        // every device line ends with an inline "(audio)" or "(video)"
-        // tag, e.g. [in#0 @ ...] "Microphone (AVMATRIX USB Capture Audio)"
-        // (audio). The OLD section-header format (ffmpeg <9: a
-        // "DirectShow audio devices" heading, then bare quoted names
-        // underneath, no inline tag) still exists on older builds. Try
-        // the new inline-tag format FIRST since it's unambiguous
-        // per-line; only fall back to the old section-based parsing if
-        // that finds nothing, so both ffmpeg generations work.
+        // "DirectShow audio/video devices" section header line at all;
+        // instead every device line ends with an inline "(audio)" or
+        // "(video)" tag, e.g. [in#0 @ ...] "Microphone (AVMATRIX USB
+        // Capture Audio)" (audio). The OLD section-header format (ffmpeg
+        // <9: a "DirectShow audio/video devices" heading, then bare
+        // quoted names underneath, no inline tag) still exists on older
+        // builds. Try the new inline-tag format FIRST since it's
+        // unambiguous per-line; only fall back to the old section-based
+        // parsing if that finds nothing, so both ffmpeg generations work.
         for (const line of out.split('\n')) {
-            const inlineMatch = /"([^"]+)"\s*\(audio\)/i.exec(line);
-            if (inlineMatch) devices.push(inlineMatch[1]);
+            const audioMatch = /"([^"]+)"\s*\(audio\)/i.exec(line);
+            if (audioMatch) audio.push(audioMatch[1]);
+            const videoMatch = /"([^"]+)"\s*\(video\)/i.exec(line);
+            if (videoMatch) video.push(videoMatch[1]);
         }
-        if (!devices.length) {
-            let inAudioSection = false;
+        if (!audio.length && !video.length) {
+            let section = null; // 'audio' | 'video' | null
             for (const line of out.split('\n')) {
-                if (/DirectShow audio devices/i.test(line)) { inAudioSection = true; continue; }
-                if (/DirectShow video devices/i.test(line)) { inAudioSection = false; continue; }
-                if (inAudioSection) {
+                if (/DirectShow audio devices/i.test(line)) { section = 'audio'; continue; }
+                if (/DirectShow video devices/i.test(line)) { section = 'video'; continue; }
+                if (section) {
                     const m = /"([^"]+)"/.exec(line);
-                    if (m) devices.push(m[1]);
+                    if (m) (section === 'audio' ? audio : video).push(m[1]);
                 }
             }
         }
@@ -434,14 +549,28 @@ function listAudioDevices() {
         // hiccup, or ffmpeg being killed mid-enumeration would otherwise
         // "lock in" a false negative for 15s, so a real device is missed
         // even if the operator immediately clicks Refresh again.
-        if (devices.length) audioDeviceCache = { devices, checkedAt: Date.now() };
-        if (!devices.length && res.error) {
-            return { devices: [], detail: `Device enumeration didn't finish in time (${res.error.code === 'ETIMEDOUT' ? 'timed out' : res.error.message}) — click Refresh Device List to try again` };
+        if (audio.length || video.length) dshowDeviceCache = { audio, video, checkedAt: Date.now() };
+        if (!audio.length && !video.length && res.error) {
+            return { audio: [], video: [], detail: `Device enumeration didn't finish in time (${res.error.code === 'ETIMEDOUT' ? 'timed out' : res.error.message}) — click Refresh Device List to try again` };
         }
-        return { devices, detail: devices.length ? null : 'ffmpeg ran but reported no DirectShow audio devices — check Windows sound settings' };
+        return { audio, video, detail: (audio.length || video.length) ? null : 'ffmpeg ran but reported no DirectShow devices — check Windows sound/camera settings' };
     } catch (e) {
-        return { devices: [], detail: e.message };
+        return { audio: [], video: [], detail: e.message };
     }
+}
+function listAudioDevices() {
+    const { audio, detail } = listDshowDevices();
+    return { devices: audio, detail: audio.length ? null : detail };
+}
+// 🎥 Native camera enumeration for the camera+overlay compositor (see
+// buildCompositorArgs) — this is the dshow device NAME ffmpeg opens
+// directly (`-f dshow -i video="<name>"`), NOT a browser getUserMedia
+// deviceId (those are profile-scoped and meaningless here — see the
+// same lesson learned the hard way for the old gdigrab-window capture
+// window's camera, documented in live-output.html's own comments).
+function listVideoDevices() {
+    const { video, detail } = listDshowDevices();
+    return { devices: video, detail: video.length ? null : detail };
 }
 
 // ----------------------------------------------------------------
@@ -638,6 +767,108 @@ $callback = {
 [TTOverlayWin32]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
 if ($found) { Write-Output $found }
 `;
+
+// 🩹 CONFIRMED IN THE FIELD: restarting stream-engine.js (e.g. to pick
+// up a code/flag change) does NOT close a dedicated capture window it
+// previously launched — that's a completely separate OS process, and
+// the new Node process has no memory of it (captureWindow.proc resets
+// to null on every restart). If the operator then triggers another
+// launch, Chrome/Edge's single-instance-per-user-data-dir lock means
+// the "new" launch can just get absorbed into the ALREADY-RUNNING old
+// window/process instead of actually starting a fresh one — so a flag
+// change (like the DirectCompositionVideoOverlays fix) silently never
+// takes effect until that stale process is gone, which looked exactly
+// like "I redeployed and restarted but it's still broken." This finds
+// any visible window whose title matches this match's expected prefix
+// and force-closes its OWNING PROCESS — scoped to the exact
+// "AllSportsLive-LiveOutput-<matchId>" title, so it can never touch the
+// operator's regular browser windows/tabs, which have their own,
+// different titles.
+const CLOSE_WINDOW_BY_TITLE_PS_TEMPLATE = `
+$ErrorActionPreference = 'Stop'
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class TTOverlayWin32Close {
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+    [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+}
+"@
+$procIds = New-Object 'System.Collections.Generic.List[uint32]'
+$callback = {
+    param($hWnd, $lParam)
+    if ([TTOverlayWin32Close]::IsWindowVisible($hWnd)) {
+        $len = [TTOverlayWin32Close]::GetWindowTextLength($hWnd)
+        if ($len -gt 0) {
+            $sb = New-Object System.Text.StringBuilder ($len + 1)
+            [TTOverlayWin32Close]::GetWindowText($hWnd, $sb, $sb.Capacity) | Out-Null
+            $title = $sb.ToString()
+            if ($title -like '*__PREFIX__*') {
+                [uint32]$procId = 0
+                [TTOverlayWin32Close]::GetWindowThreadProcessId($hWnd, [ref]$procId) | Out-Null
+                if ($procId -ne 0) { $procIds.Add($procId) }
+            }
+        }
+    }
+    return $true
+}
+[TTOverlayWin32Close]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
+foreach ($procId in $procIds) {
+    try { Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue } catch {}
+}
+`;
+function closeStaleCaptureWindowByTitle(matchId) {
+    if (!NATIVE_CAPTURE_SUPPORTED) return;
+    const prefix = windowTitleFor(matchId);
+    try {
+        const script = CLOSE_WINDOW_BY_TITLE_PS_TEMPLATE.replace('__PREFIX__', prefix);
+        const encoded = Buffer.from(script, 'utf16le').toString('base64');
+        spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { timeout: 5000, windowsHide: true });
+    } catch (e) {
+        console.log(`[stream-engine] closeStaleCaptureWindowByTitle: powershell lookup threw (${e.message}) — a stale window/process for "${prefix}" may still be running`);
+    }
+}
+
+// 🩹 CONFIRMED IN THE FIELD: closeStaleCaptureWindowByTitle above only
+// finds a stale process if its window has ALREADY set a matching title
+// — a process that crashed/got stuck BEFORE live-output.html's script
+// ran far enough to set document.title (a bad launch, an early JS
+// error, a page that never finished loading) is invisible to that
+// title search entirely, yet still holds Chrome/Edge's single-instance
+// lock on CAPTURE_PROFILE_DIR — so every subsequent launch attempt gets
+// silently forwarded to that stuck process and exits almost instantly
+// (code=0, no error) instead of actually starting fresh, no matter how
+// many times the operator retries. This is a much stronger guarantee:
+// it kills ANY process (titled or not, visible or not, however stuck)
+// whose command line references our exact isolated profile directory —
+// nothing else on the operator's PC would ever have that exact argument,
+// so this can never touch their regular browser. A short sleep after
+// the kill loop (inside the SAME script, not a separate JS-level delay)
+// gives Windows a moment to fully release the process's handles/lock
+// before this function returns and launchCaptureWindow spawns the next
+// one.
+function closeStaleCaptureWindowByProfile() {
+    if (!NATIVE_CAPTURE_SUPPORTED) return;
+    try {
+        const escapedProfileDir = CAPTURE_PROFILE_DIR.replace(/'/g, "''");
+        const script = `
+$ErrorActionPreference = 'Stop'
+Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -like '*--user-data-dir=${escapedProfileDir}*' } | ForEach-Object {
+    try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+}
+Start-Sleep -Milliseconds 400
+`;
+        const encoded = Buffer.from(script, 'utf16le').toString('base64');
+        spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { timeout: 8000, windowsHide: true });
+    } catch (e) {
+        console.log(`[stream-engine] closeStaleCaptureWindowByProfile: powershell threw (${e.message}) — a stuck process on the capture profile may still be holding its single-instance lock`);
+    }
+}
 // 🩹 Short-TTL cache, keyed by matchId — resolveWindowTitle() is now
 // called far more often than it used to be (the native preview image +
 // program-feed health badge in the panel poll /capture-preview and
@@ -896,6 +1127,21 @@ function launchCaptureWindow({ matchId, videoDeviceId, videoLabel, origin, width
     if (!origin) return { ok: false, error: "origin required (the Cricket Panel's own page URL) — cannot build the Live Output URL" };
     try { fs.mkdirSync(CAPTURE_PROFILE_DIR, { recursive: true }); } catch (e) { /* best effort — Chromium will still create it */ }
 
+    // 🩹 See both functions' own header comments: this process has no
+    // memory of a capture window a PREVIOUS stream-engine run may have
+    // launched (captureWindow.proc resets to null on every restart) —
+    // without this, a stale/stuck process can silently absorb this
+    // "launch" via Chrome/Edge's single-instance-per-profile lock instead
+    // of a real new process actually starting, so a flag/code change
+    // never takes effect no matter how many times the operator retries.
+    // Profile-based first (catches a process too stuck/crashed to have
+    // ever set a matching window title at all — the case that made the
+    // title-only version insufficient); title-based second as a backstop
+    // for anything the profile-dir match somehow missed. Always run
+    // both, not just when captureWindow.proc looks set.
+    closeStaleCaptureWindowByProfile();
+    closeStaleCaptureWindowByTitle(matchId);
+
     // 🩹 videoDeviceId is passed through for the popup-fallback path
     // (same browser profile as the panel, so it's valid there) but is
     // USELESS to this dedicated window: Chrome/Edge salts getUserMedia
@@ -958,7 +1204,11 @@ function launchCaptureWindow({ matchId, videoDeviceId, videoLabel, origin, width
     ];
     let proc;
     try {
-        proc = spawn(execPath, args, { stdio: 'ignore', detached: false });
+        // stderr piped (not 'ignore') so an immediate/unexpected exit
+        // (e.g. still getting single-instance-forwarded despite the
+        // cleanup above, or a genuine Chromium startup error) actually
+        // says why instead of just "exited (code=0)" with no explanation.
+        proc = spawn(execPath, args, { stdio: ['ignore', 'ignore', 'pipe'], detached: false });
     } catch (e) {
         return { ok: false, error: `Could not launch capture browser: ${e.message}` };
     }
@@ -968,9 +1218,20 @@ function launchCaptureWindow({ matchId, videoDeviceId, videoLabel, origin, width
     captureWindow.execPath = execPath;
     captureWindow.lastCameraEndedAt = null;
     captureWindow.lastCameraEndedReason = null;
+    let captureWindowStderr = '';
+    if (proc.stderr) proc.stderr.on('data', (d) => { captureWindowStderr += d; if (captureWindowStderr.length > 4000) captureWindowStderr = captureWindowStderr.slice(-4000); });
     proc.on('exit', (code, signal) => {
         if (captureWindow.proc !== proc) return; // already superseded/closed
-        console.log(`[stream-engine] dedicated capture window exited (code=${code}, signal=${signal})`);
+        const elapsedMs = Date.now() - captureWindow.launchedAt;
+        // 🩹 An exit within ~2s of launch, with code 0, is the exact
+        // signature of Chrome/Edge's single-instance forwarding (it
+        // handed the URL to an already-running process on this profile
+        // and quit immediately) rather than a real crash — flagged
+        // explicitly here since "code=0" alone reads as a clean, boring
+        // exit and hides that this is actually a launch that never
+        // really happened.
+        const suspectedSingleInstanceForward = code === 0 && elapsedMs < 2000;
+        console.log(`[stream-engine] dedicated capture window exited (code=${code}, signal=${signal}, ${elapsedMs}ms after launch)${suspectedSingleInstanceForward ? ' — likely single-instance-forwarded to an already-running process rather than a real crash; report this if it keeps happening after closeStaleCaptureWindowByProfile' : ''}${captureWindowStderr ? `\n[stream-engine] capture window stderr:\n${captureWindowStderr}` : ''}`);
         captureWindow.proc = null;
     });
     proc.on('error', (err) => {
@@ -1039,6 +1300,19 @@ function gracefulStop(proc, killTimeoutMs = 5000) {
     setTimeout(() => { try { proc.kill('SIGKILL'); } catch (e) { /* already gone */ } }, killTimeoutMs);
 }
 
+// 🧪 NATIVE PIPELINE variant — the recorder-encoder/live-encoder's own
+// stdin is the compositor's RELAY INPUT (real video/audio bytes, not an
+// interactive control channel), so writing the 'q' keypress gracefulStop
+// uses would corrupt that stream instead of stopping it cleanly. Closing
+// stdin (EOF) is the correct way to end a `-f nut -i pipe:0` input —
+// ffmpeg finishes whatever's already buffered and exits normally,
+// writing proper trailers, the same as reaching the end of a real file.
+function gracefulStopByClosingStdin(proc, killTimeoutMs = 5000) {
+    if (!proc) return;
+    try { proc.stdin.end(); } catch (e) { /* already gone */ }
+    setTimeout(() => { try { proc.kill('SIGKILL'); } catch (e) { /* already gone */ } }, killTimeoutMs);
+}
+
 // ================================================================
 // 🎬 ENCODER STATE MACHINE (YouTube live push) — single stream at a
 // time, never duplicated.
@@ -1060,6 +1334,8 @@ const engine = {
     proc: null,              // the ffmpeg child process (native gdigrab+dshow capture -> NVENC -> RTMPS)
     matchId: null,           // set at /go-live — used to build the gdigrab window title on every (re)start
     audioDeviceName: null,   // native dshow audio device name for this session
+    cameraDeviceName: null,  // native dshow camera device name — only used when NATIVE_PROGRAM_FEED is on
+    mainServerUrl: null,     // origin used to build the overlay URL for the native compositor — only used when NATIVE_PROGRAM_FEED is on
     desiredLive: false,      // operator's intent — drives whether a crash should auto-restart
     startedAt: null,
     restarts: [],            // timestamps of recent fatal-error auto-restarts, for the bounded-retry window
@@ -1314,7 +1590,7 @@ async function applyRestart(next) {
     if (engine.opToken !== myToken) { engine.adapting = false; return; } // operator acted while we were restarting — defer to them
 
     engine.desiredLive = true; // stopEncoder() cleared this — this restart is US, not the operator stopping
-    const result = startEncoder({ resolution: next.resolution, fps: next.fps, bitrateKbps: next.bitrateKbps, keyframeIntervalSec });
+    const result = await startEncoder({ resolution: next.resolution, fps: next.fps, bitrateKbps: next.bitrateKbps, keyframeIntervalSec });
     if (result.ok) {
         engine.rung = next.rung;
     } else {
@@ -1410,7 +1686,12 @@ function abrTick() {
 // unlimited-backoff reconnect loop below, because a live sports stream
 // should never just give up over a few dropped packets or a brief
 // internet outage.
-const FATAL_ERROR_PATTERN = /unrecognized option|no such filter|cannot find a matching stream|invalid argument|no nvenc capable devices|unable to open|permission denied|no such file|unknown encoder/i;
+// "no space left"/"disk full" added so a disk-full crash (recorder/clip
+// cutting — the only things that write local files) is classified as
+// fatal/operator-actionable instead of silently falling into the
+// network-blip reconnect loop, which would just keep retrying against a
+// still-full disk.
+const FATAL_ERROR_PATTERN = /unrecognized option|no such filter|cannot find a matching stream|invalid argument|no nvenc capable devices|unable to open|permission denied|no such file|unknown encoder|no space left|disk full|i\/o error/i;
 function isFatalError(message) {
     return !!message && (FATAL_ERROR_PATTERN.test(message) || WINDOW_NOT_FOUND_PATTERN.test(message));
 }
@@ -1427,9 +1708,9 @@ function scheduleReconnect() {
     engine.reconnect.attempts += 1;
     engine.reconnect.nextAttemptAt = Date.now() + backoff;
     console.log(`[stream-engine] Network disconnect (${engine.lastError}) — reconnecting in ${backoff}ms (attempt ${engine.reconnect.attempts})…`);
-    setTimeout(() => {
+    setTimeout(async () => {
         if (!engine.desiredLive) return; // operator pressed Stop while we were waiting to retry
-        const result = startEncoder(engine.settings);
+        const result = await startEncoder(engine.settings);
         if (!result.ok) {
             engine.lastError = result.error;
             scheduleReconnect();
@@ -1437,7 +1718,7 @@ function scheduleReconnect() {
     }, backoff);
 }
 
-function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
+async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     if (engine.state === 'live' || engine.state === 'starting') {
         return { ok: false, error: 'Already live — stop the current stream first' };
     }
@@ -1447,6 +1728,7 @@ function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     if (!streamKey) return { ok: false, error: 'No Stream Key set' };
     if (!engine.matchId) return { ok: false, error: 'No matchId — Go Live must be started from the Cricket Panel with a match selected' };
     if (!engine.audioDeviceName) return { ok: false, error: 'No audio device selected — pick one under Live Studio first' };
+    if (NATIVE_PROGRAM_FEED && !engine.cameraDeviceName) return { ok: false, error: 'No camera device selected — pick one under Live Studio first' };
     const nvenc = checkNvenc();
     if (!nvenc.available) {
         return { ok: false, error: `NVENC not available (${nvenc.detail}) — refusing to fall back to CPU encoding` };
@@ -1463,13 +1745,32 @@ function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     // current config, never logged, never included in engine.settings
     // (which /health exposes) — only passed straight to ffmpeg's argv.
     const destinationUrl = buildDestinationUrl(streamUrl, streamKey);
-    const windowTitle = resolveWindowTitle(engine.matchId);
-    const args = buildLiveEncoderArgs({ windowTitle, audioDeviceName: engine.audioDeviceName, ...resolved, destinationUrl });
-    const proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] });
+
+    let proc;
+    if (NATIVE_PROGRAM_FEED) {
+        // See nativePipeline.js's header comment: camera+overlay
+        // compositor (opened once, shared with the recorder if that's
+        // also running) relays to THIS process, which holds its own
+        // independent NVENC session and pushes RTMPS — a network
+        // problem here can never touch the recorder, and vice versa.
+        const compResult = await ensureCompositor({ matchId: engine.matchId, mainServerUrl: engine.mainServerUrl, cameraDeviceName: engine.cameraDeviceName, audioDeviceName: engine.audioDeviceName, who: 'live' });
+        if (!compResult.ok) {
+            engine.state = 'idle';
+            engine.desiredLive = false;
+            return { ok: false, error: compResult.error };
+        }
+        const args = nativePipeline.buildLiveEncoderArgs({ ...resolved, destinationUrl, useTune: checkNvencTuneRuntime() });
+        proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] });
+        compositor.attachRelayConsumer(proc);
+    } else {
+        const windowTitle = resolveWindowTitle(engine.matchId);
+        const args = buildLiveEncoderArgs({ windowTitle, audioDeviceName: engine.audioDeviceName, ...resolved, destinationUrl });
+        proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] });
+    }
     engine.proc = proc;
     engine.startedAt = Date.now();
     engine.state = 'live';
-    proc.stdin.on('error', () => {}); // stdin is only ever used for the graceful 'q' stop (see gracefulStop) — a write after it's already gone is harmless
+    proc.stdin.on('error', () => {}); // legacy path: stdin is only ever used for the graceful 'q' stop (see gracefulStop); native path: this IS the compositor's relay input, already piped via attachRelayConsumer above — a write after it's already gone is harmless either way
 
     let stderrBuf = '';
     proc.stderr.on('data', (chunk) => {
@@ -1518,6 +1819,7 @@ function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
         const wasDesired = engine.desiredLive;
         console.log(`[stream-engine] live encoder ffmpeg exited (code=${code}, signal=${signal}); desiredLive=${wasDesired}`);
         engine.proc = null;
+        if (compositor) compositor.removeRelayConsumer(proc); // defensive cleanup even on a path that didn't go through stopEncoder (e.g. a genuine crash) — no-op/harmless in legacy mode
 
         if (!wasDesired) {
             // Operator pressed STOP (or this is our own ABR hot-restart
@@ -1546,8 +1848,8 @@ function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
             engine.restarts.push(now);
             const attempt = engine.restarts.length;
             console.log(`[stream-engine] Auto-restarting encoder after fatal-looking error (attempt ${attempt}/${MAX_AUTO_RESTARTS})…`);
-            setTimeout(() => {
-                if (engine.desiredLive) startEncoder(engine.settings);
+            setTimeout(async () => {
+                if (engine.desiredLive) await startEncoder(engine.settings).catch((e) => console.log('[stream-engine] fatal-error auto-restart threw:', e.message));
             }, Math.min(2000 * attempt, 8000));
             return;
         }
@@ -1571,7 +1873,26 @@ function stopEncoder() {
     engine.desiredLive = false;
     if (!engine.proc) { engine.state = 'idle'; return { ok: true, alreadyIdle: true }; }
     engine.state = 'stopping';
-    gracefulStop(engine.proc);
+    if (NATIVE_PROGRAM_FEED) {
+        // 🩹 Known trade-off: this releases the compositor's 'live' ref
+        // unconditionally, including when this stop is actually part of
+        // an ABR hot-restart (applyRestart calls stopEncoder() then
+        // immediately starts a new encoder) — if recording ISN'T also
+        // running at that moment, the compositor's ref count can
+        // briefly hit zero and it gets torn down and relaunched (camera
+        // reopened, overlay bridge restarted) rather than staying warm
+        // across the restart. Accepted for now: keeping the ref-counting
+        // simple and easy to reason about correctness-wise outweighs
+        // optimizing an already rate-limited (min 8s apart) restart
+        // path, and recording running at the same time (the common
+        // case) avoids this entirely since the compositor's ref count
+        // never reaches zero.
+        if (compositor) compositor.removeRelayConsumer(engine.proc);
+        gracefulStopByClosingStdin(engine.proc);
+        releaseCompositor('live');
+    } else {
+        gracefulStop(engine.proc);
+    }
     return { ok: true };
 }
 
@@ -1614,11 +1935,65 @@ function recorderDir(matchId) {
     return path.join(RECORDING_ROOT, safeMatchId(matchId));
 }
 
+// ================================================================
+// 🧪 NATIVE PIPELINE WIRING (opt-in — see NATIVE_PROGRAM_FEED above).
+// ONE Compositor instance shared by the recorder and live encoder
+// below — created on first use for whichever match asks for it first,
+// torn down once neither recording nor streaming needs it any more
+// (see Compositor.addRef/removeRef in nativePipeline.js). Matches the
+// same reference-counting pattern cricket-panel.html already uses for
+// the old Live Output window (ensureLiveOutputWindow/
+// releaseLiveOutputWindowIfUnused) — the same idea, one level down.
+// ================================================================
+const NATIVE_PREVIEW_PATH = NATIVE_PROGRAM_FEED ? path.join(__dirname, 'StreamEngineData', 'program-preview.jpg') : null;
+let compositor = null; // the single Compositor instance for whichever match is currently active
+
+// Only ONE match's compositor can sensibly run at a time (mirrors the
+// recorder's own existing "already recording a different match" guard
+// below) — a genuine multi-match-simultaneously native pipeline isn't
+// implemented; the operator stops the previous match first, same as today.
+async function ensureCompositor({ matchId, mainServerUrl, cameraDeviceName, audioDeviceName, who }) {
+    if (compositor && compositor.matchId !== matchId) {
+        return { ok: false, error: `Native compositor already running for a different match ("${compositor.matchId}") — stop that first` };
+    }
+    if (!compositor) {
+        if (!mainServerUrl) return { ok: false, error: 'mainServerUrl required to build the overlay URL for the native compositor' };
+        const execPath = resolveCaptureBrowserExecutable();
+        if (!execPath) return { ok: false, error: 'Could not find Chrome or Edge on this PC for the overlay renderer (see resolveCaptureBrowserExecutable) — set CAPTURE_BROWSER_PATH to its full .exe path' };
+        const { width, height } = RESOLUTIONS[recorder.settings ? recorder.settings.resolution : '1080p'] || RESOLUTIONS['1080p'];
+        compositor = new nativePipeline.Compositor({
+            spawnFfmpeg,
+            execPath,
+            overlayUrl: `${String(mainServerUrl).replace(/\/+$/, '')}/cricket-overlay?room=${encodeURIComponent(matchId)}`,
+            width, height, fps: 30,
+            previewPath: NATIVE_PREVIEW_PATH,
+        });
+        compositor.matchId = matchId;
+        compositor.on('unexpected-exit', ({ code, signal, lastError }) => {
+            console.log(`[stream-engine] native compositor died unexpectedly (code=${code}, signal=${signal}) while ${[...compositor.refs].join('+') || 'something'} still needed it: ${lastError || 'no ffmpeg error captured'}`);
+        });
+    }
+    const result = await compositor.ensureRunning({ cameraDeviceName, audioDeviceName });
+    if (!result.ok) {
+        if (compositor.refs.size === 0) compositor = null; // nothing else holds it — don't leave a dead instance around
+        return result;
+    }
+    compositor.addRef(who);
+    return { ok: true };
+}
+function releaseCompositor(who) {
+    if (!compositor) return;
+    compositor.removeRef(who);
+    if (compositor.refs.size === 0) compositor = null;
+}
+
 const recorder = {
     state: 'idle',            // idle | starting | recording | stopping | crashed
     proc: null,
     matchId: null,
     audioDeviceName: null,
+    cameraDeviceName: null,    // native dshow device name — only used when NATIVE_PROGRAM_FEED is on
+    mainServerUrl: null,       // origin used to build the overlay URL for the native compositor — only used when NATIVE_PROGRAM_FEED is on
     desiredRecording: false,
     startedAt: null,          // when the CURRENT segment started (not the whole match, if it had to restart)
     segmentPath: null,
@@ -1672,13 +2047,14 @@ function buildRecorderArgs({ windowTitle, audioDeviceName, width, height, fps, b
     ];
 }
 
-function startRecorder(matchId, { resolution, fps, audioDeviceName } = {}) {
+async function startRecorder(matchId, { resolution, fps, audioDeviceName, cameraDeviceName, mainServerUrl } = {}) {
     if (recorder.state === 'recording' || recorder.state === 'starting') {
         if (recorder.matchId === matchId) return { ok: true, alreadyRecording: true };
         return { ok: false, error: `Already recording match "${recorder.matchId}" — stop that first` };
     }
     if (!NATIVE_CAPTURE_SUPPORTED) return { ok: false, error: `Native capture (gdigrab/dshow) requires Windows — this process is running on ${process.platform}` };
     if (!audioDeviceName) return { ok: false, error: 'No audio device selected — pick one under Live Studio first' };
+    if (NATIVE_PROGRAM_FEED && !cameraDeviceName) return { ok: false, error: 'No camera device selected — pick one under Live Studio first' };
     const resKey = RESOLUTIONS[resolution] ? resolution : '1080p';
     const fpsNum = [30, 60].includes(Number(fps)) ? Number(fps) : 30;
     const { width, height } = RESOLUTIONS[resKey];
@@ -1687,8 +2063,26 @@ function startRecorder(matchId, { resolution, fps, audioDeviceName } = {}) {
     const dir = recorderDir(matchId);
     try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { return { ok: false, error: `Could not create recording folder: ${e.message}` }; }
 
+    // 🩹 A recording that runs out of disk mid-write doesn't fail
+    // cleanly — it leaves a truncated/corrupted MP4 (see verifyMediaFile)
+    // that looks like a real file until someone tries to play it, often
+    // hours into a match. Refuse to even START recording below a hard
+    // floor, and log a clear warning below LOW_DISK_WARNING_BYTES so the
+    // operator can free space before it becomes a real problem instead
+    // of discovering it after the match.
+    const freeBytes = diskFreeBytes(RECORDING_ROOT);
+    const HARD_DISK_FLOOR_BYTES = 300 * 1024 * 1024; // 300MB — not even enough for a few seconds of buffering headroom
+    if (freeBytes != null && freeBytes < HARD_DISK_FLOOR_BYTES) {
+        return { ok: false, error: `Only ${(freeBytes / 1024 / 1024).toFixed(0)}MB free on the recording drive — free up disk space before starting recording` };
+    }
+    if (freeBytes != null && freeBytes < LOW_DISK_WARNING_BYTES) {
+        console.log(`[stream-engine] ⚠ LOW DISK SPACE: only ${(freeBytes / 1024 / 1024 / 1024).toFixed(1)}GB free on the recording drive — recording is starting anyway, but free up space soon`);
+    }
+
     recorder.matchId = matchId;
     recorder.audioDeviceName = audioDeviceName;
+    recorder.cameraDeviceName = cameraDeviceName || recorder.cameraDeviceName;
+    recorder.mainServerUrl = mainServerUrl || recorder.mainServerUrl;
     recorder.desiredRecording = true;
     recorder.settings = { resolution: resKey, width, height, fps: fpsNum, bitrateKbps };
     const fileName = recorder.segments.length === 0 ? 'master.mp4' : `master_part${recorder.segments.length + 1}.mp4`;
@@ -1698,13 +2092,32 @@ function startRecorder(matchId, { resolution, fps, audioDeviceName } = {}) {
     recorder.startedAt = Date.now();
     recorder.lastError = null;
 
-    const windowTitle = resolveWindowTitle(matchId);
-    const args = buildRecorderArgs({ windowTitle, audioDeviceName, width, height, fps: fpsNum, bitrateKbps, outFile });
-    const proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] });
+    let proc;
+    if (NATIVE_PROGRAM_FEED) {
+        // See nativePipeline.js's header comment for the full shape:
+        // camera+overlay compositor (opened once, shared with the live
+        // encoder if that's also running) relays to THIS process, which
+        // holds its own independent NVENC session and writes master.mp4.
+        const compResult = await ensureCompositor({ matchId, mainServerUrl: recorder.mainServerUrl, cameraDeviceName: recorder.cameraDeviceName, audioDeviceName, who: 'recorder' });
+        if (!compResult.ok) {
+            recorder.state = 'idle';
+            recorder.desiredRecording = false;
+            return { ok: false, error: compResult.error };
+        }
+        const useNvenc = checkNvencRuntime();
+        if (!useNvenc) checkLibx264();
+        const args = nativePipeline.buildRecorderEncoderArgs({ width, height, fps: fpsNum, bitrateKbps, outFile, useNvenc });
+        proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] });
+        compositor.attachRelayConsumer(proc);
+    } else {
+        const windowTitle = resolveWindowTitle(matchId);
+        const args = buildRecorderArgs({ windowTitle, audioDeviceName, width, height, fps: fpsNum, bitrateKbps, outFile });
+        proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] });
+    }
     recorder.proc = proc;
     recorder.state = 'recording';
     recorder.segments.push({ path: outFile, startedAt: recorder.startedAt });
-    proc.stdin.on('error', () => {}); // stdin is only ever used for the graceful 'q' stop (see gracefulStop)
+    proc.stdin.on('error', () => {}); // legacy path: stdin is only ever used for the graceful 'q' stop (see gracefulStop); native path: this IS the compositor's relay input, already piped via attachRelayConsumer above
 
     let stderrBuf = '';
     proc.stderr.on('data', (chunk) => {
@@ -1737,7 +2150,12 @@ function startRecorder(matchId, { resolution, fps, audioDeviceName } = {}) {
         const wasDesired = recorder.desiredRecording;
         console.log(`[stream-engine] recorder ffmpeg exited (code=${code}, signal=${signal}); desiredRecording=${wasDesired}`);
         recorder.proc = null;
-        if (!wasDesired) { recorder.state = 'idle'; return; }
+        if (compositor) compositor.removeRelayConsumer(proc); // no-op/harmless in legacy mode (compositor is always null there)
+        if (!wasDesired) {
+            recorder.state = 'idle';
+            if (NATIVE_PROGRAM_FEED) releaseCompositor('recorder');
+            return;
+        }
 
         // Unexpected exit while the operator still wants to be
         // recording — never silently stop capturing the match. Start a
@@ -1752,12 +2170,20 @@ function startRecorder(matchId, { resolution, fps, audioDeviceName } = {}) {
         if (recorder.restarts.length >= MAX_AUTO_RESTARTS) {
             console.log('[stream-engine] recorder: max auto-restarts hit — local recording stopped, operator must press Start Recording again');
             recorder.desiredRecording = false;
+            if (NATIVE_PROGRAM_FEED) releaseCompositor('recorder');
             return;
         }
         recorder.restarts.push(now);
         console.log(`[stream-engine] recorder: auto-restarting into a new segment (attempt ${recorder.restarts.length}/${MAX_AUTO_RESTARTS})…`);
+        // Note: this does NOT release the compositor first — it's still
+        // needed for the retry about to happen (ensureCompositor inside
+        // startRecorder will itself relaunch it if it also died in the
+        // same crash, e.g. the camera was unplugged).
         setTimeout(() => {
-            if (recorder.desiredRecording) startRecorder(recorder.matchId, { resolution: recorder.settings.resolution, fps: recorder.settings.fps, audioDeviceName: recorder.audioDeviceName });
+            if (recorder.desiredRecording) {
+                startRecorder(recorder.matchId, { resolution: recorder.settings.resolution, fps: recorder.settings.fps, audioDeviceName: recorder.audioDeviceName, cameraDeviceName: recorder.cameraDeviceName, mainServerUrl: recorder.mainServerUrl })
+                    .catch((e) => console.log('[stream-engine] recorder auto-restart threw:', e.message));
+            }
         }, 1000);
     });
 
@@ -1774,7 +2200,13 @@ function stopRecorder() {
     recorder.desiredRecording = false;
     if (!recorder.proc) { recorder.state = 'idle'; return { ok: true, alreadyIdle: true }; }
     recorder.state = 'stopping';
-    gracefulStop(recorder.proc);
+    if (NATIVE_PROGRAM_FEED) {
+        if (compositor) compositor.removeRelayConsumer(recorder.proc); // stop before closing stdin — avoids a write-after-end race
+        gracefulStopByClosingStdin(recorder.proc);
+        releaseCompositor('recorder');
+    } else {
+        gracefulStop(recorder.proc);
+    }
     return { ok: true };
 }
 
@@ -2044,7 +2476,19 @@ async function cutLocalClip({ clipId, matchId, eventTimestamp }) {
 
     await cutFromMasterFile({ masterFile: seg.path, fromSec, durationSec, outFile });
 
-    console.log(`[CLIP CREATED] clipId=${clipId} localPath=${outFile}`);
+    // 🩹 A clip whose ffmpeg process exited 0 can still be a corrupted/
+    // truncated file (e.g. the disk filled up mid-write on the last few
+    // hundred KB, or the process was killed a moment too early) — verify
+    // it actually has a valid, playable video stream before calling this
+    // a success, so a broken file never gets uploaded/shown to the
+    // operator as if it were a real clip.
+    const verify = verifyMediaFile(outFile);
+    if (verify.ok === false) {
+        try { fs.unlinkSync(outFile); } catch (e) { /* best effort — don't leave a known-broken file lying around */ }
+        return { ok: false, error: `Clip file failed integrity check: ${verify.reason}` };
+    }
+
+    console.log(`[CLIP CREATED] clipId=${clipId} localPath=${outFile}${verify.ok === null ? ' (integrity NOT verified — ffprobe unavailable, see bin/README.md)' : ` (verified: ${verify.durationSec.toFixed(1)}s, ${verify.width}x${verify.height})`}`);
     return { ok: true, outFile };
 }
 
@@ -2208,6 +2652,18 @@ app.get('/status', async (req, res) => {
         nativeCaptureSupported: NATIVE_CAPTURE_SUPPORTED,
         ffmpegAvailable: ffmpegAvailable(),
         ffmpegPath: FFMPEG_PATH,
+        ffmpegSource: FFMPEG_SOURCE, // 'bundled' | 'FFMPEG_PATH env var' | 'system PATH' — see bin/README.md
+        ffprobeAvailable: ffprobeAvailable(),
+        ffprobePath: FFPROBE_PATH,
+        ffprobeSource: FFPROBE_SOURCE,
+        nativeProgramFeed: NATIVE_PROGRAM_FEED,
+        overlayBridgeAvailable: NATIVE_PROGRAM_FEED ? nativePipeline.overlayBridgeAvailable() : null,
+        compositor: NATIVE_PROGRAM_FEED ? {
+            state: compositor ? compositor.state : 'idle',
+            matchId: compositor ? compositor.matchId : null,
+            refs: compositor ? [...compositor.refs] : [],
+            lastError: compositor ? compositor.lastError : null,
+        } : null,
         nvencAvailable: nvenc.available,
         nvencDetail: nvenc.detail,
         gpuScaleAvailable: NATIVE_CAPTURE_SUPPORTED ? checkGpuScaleRuntime() : false,
@@ -2252,13 +2708,16 @@ app.get('/status', async (req, res) => {
 });
 
 // Native audio device list (dshow) — populates the panel's microphone
-// dropdown. Video device enumeration is intentionally NOT offered here:
-// the "camera" ffmpeg captures is the Live Output window (see
-// windowTitleFor), not a raw camera device — live-output.html still
-// picks the actual camera via the browser's own getUserMedia for its
-// on-screen preview/composite, unchanged.
+// dropdown.
 app.get('/audio-devices', (req, res) => {
     const { devices, detail } = listAudioDevices();
+    res.json({ success: true, platform: process.platform, devices, detail });
+});
+// Native camera device list (dshow) — populates the panel's camera
+// dropdown for the native camera+overlay compositor. Names, not
+// getUserMedia deviceIds (see listVideoDevices' own comment).
+app.get('/video-devices', (req, res) => {
+    const { devices, detail } = listVideoDevices();
     res.json({ success: true, platform: process.platform, devices, detail });
 });
 
@@ -2281,6 +2740,22 @@ app.get('/program-feed-health', async (req, res) => {
     const matchId = safeMatchId(req.query.matchId);
     if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
     if (!NATIVE_CAPTURE_SUPPORTED) return res.json({ success: true, ok: true, skipped: true, reason: `Native capture requires Windows — this process is running on ${process.platform}` });
+
+    if (NATIVE_PROGRAM_FEED) {
+        // See /go-live's own comment for the same simplified check — a
+        // real blackdetect/freezedetect pass against the compositor's
+        // output is a known gap, not yet built for the native pipeline.
+        if (!compositor || compositor.state !== 'running') return res.json({ success: true, ok: true, skipped: true, reason: 'Compositor not running yet' });
+        try {
+            const stat = fs.statSync(NATIVE_PREVIEW_PATH);
+            const ageMs = Date.now() - stat.mtimeMs;
+            const ok = stat.size >= 500 && ageMs <= 5000;
+            return res.json({ success: true, ok, black: false, white: false, frozen: !ok && ageMs > 5000, checkedAt: Date.now() });
+        } catch (e) {
+            return res.json({ success: true, ok: false, error: 'No preview frame yet' });
+        }
+    }
+
     const windowTitle = resolveWindowTitle(matchId);
     const { width, height } = RESOLUTIONS['720p']; // cheap sample resolution — same reasoning as /capture-preview; this is a diagnostic, not the real encode
     const health = await runProgramFeedHealthCheck({ windowTitle, width, height, fps: 15 });
@@ -2325,16 +2800,32 @@ app.post('/capture-window/camera-ended', (req, res) => {
     res.json({ success: true });
 });
 
-// 🖼️ CAPTURE PREVIEW — grabs exactly one frame from the target window
-// and returns it as a JPEG, so the operator can SEE the crop margin
-// (captureConfig) and confirm gdigrab is actually finding the Live
-// Output window BEFORE going live. This exists specifically because
-// exact OS title-bar/DPI pixel dimensions can't be verified without the
-// real machine — this endpoint lets the operator verify it themselves.
+// 🖼️ CAPTURE PREVIEW — grabs exactly one frame of the real program feed
+// so the operator can SEE it before going live.
+//
+// Native pipeline: serves the compositor's own periodically-overwritten
+// JPEG snapshot directly (see buildCompositorArgs' previewPath in
+// nativePipeline.js) — a REAL consumer of the same composited
+// camera+overlay stream, not a re-capture of anything.
+//
+// Legacy (gdigrab): grabs exactly one frame from the target window, so
+// the operator can SEE the crop margin (captureConfig) and confirm
+// gdigrab is actually finding the Live Output window BEFORE going live
+// — exact OS title-bar/DPI pixel dimensions can't be verified without
+// the real machine, hence this endpoint.
 app.get('/capture-preview', (req, res) => {
     const matchId = safeMatchId(req.query.matchId);
     if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
     if (!NATIVE_CAPTURE_SUPPORTED) return res.status(400).json({ success: false, error: `Native capture requires Windows — this process is running on ${process.platform}` });
+
+    if (NATIVE_PROGRAM_FEED) {
+        if (!NATIVE_PREVIEW_PATH || !fs.existsSync(NATIVE_PREVIEW_PATH)) {
+            return res.status(404).json({ success: false, error: 'No native program preview yet — start recording or go live first so the compositor is running' });
+        }
+        res.set('Content-Type', 'image/jpeg');
+        return res.sendFile(NATIVE_PREVIEW_PATH);
+    }
+
     const windowTitle = resolveWindowTitle(matchId);
     const useGpuScale = false; // the preview is a single throwaway frame — always CPU-simple, no need to exercise the GPU path here
     const { width, height } = RESOLUTIONS['720p'];
@@ -2381,7 +2872,7 @@ app.get('/capture-preview', (req, res) => {
 // stop, /clip. That JS is unchanged in shape — only the URL it's
 // pointed at, and the recording-start payload's audioDeviceName, changed.
 // ----------------------------------------------------------------
-app.post('/recording-start', (req, res) => {
+app.post('/recording-start', async (req, res) => {
     const matchId = safeMatchId(req.body && req.body.matchId);
     if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
     const mainServerUrl = (req.body && req.body.mainServerUrl) || null;
@@ -2389,6 +2880,7 @@ app.post('/recording-start', (req, res) => {
     const resolution = (req.body && req.body.recordingResolution) || '1080p';
     const fps = (req.body && req.body.recordingFps) || 30;
     const audioDeviceName = (req.body && req.body.audioDeviceName) || null;
+    const cameraDeviceName = (req.body && req.body.cameraDeviceName) || null; // only used when NATIVE_PROGRAM_FEED is on
 
     recordingMatches[matchId] = { mainServerUrl, tournamentId };
     console.log(`🔴 [clip engine] Recording session registered for match ${matchId}`);
@@ -2406,7 +2898,7 @@ app.post('/recording-start', (req, res) => {
         stopRecorder();
     }
     if (recorder.matchId !== matchId) resetRecorderForNewMatch();
-    const recResult = startRecorder(matchId, { resolution, fps, audioDeviceName });
+    const recResult = await startRecorder(matchId, { resolution, fps, audioDeviceName, cameraDeviceName, mainServerUrl });
     if (!recResult.ok) {
         console.log(`⚠️  [master recording] could not start local master recording for ${matchId}: ${recResult.error}`);
     }
@@ -2507,13 +2999,16 @@ app.post('/set-youtube-config', (req, res) => {
 });
 
 app.post('/go-live', async (req, res) => {
-    const { resolution, fps, bitrateKbps, keyframeIntervalSec, qualityMode, autoResolutionFallback, matchId, audioDeviceName, skipProgramFeedHealthCheck } = req.body || {};
+    const { resolution, fps, bitrateKbps, keyframeIntervalSec, qualityMode, autoResolutionFallback, matchId, audioDeviceName, cameraDeviceName, mainServerUrl, skipProgramFeedHealthCheck } = req.body || {};
     engine.opToken++; // a fresh operator-initiated Go Live always wins over any stale in-flight ABR restart
 
     if (!matchId) return res.status(400).json({ success: false, error: 'matchId required — select a match in the panel first' });
     if (!audioDeviceName) return res.status(400).json({ success: false, error: 'audioDeviceName required — pick a microphone/capture-card audio device under Live Studio first' });
+    if (NATIVE_PROGRAM_FEED && !cameraDeviceName) return res.status(400).json({ success: false, error: 'cameraDeviceName required — pick a camera under Live Studio first' });
     engine.matchId = safeMatchId(matchId);
     engine.audioDeviceName = audioDeviceName;
+    if (cameraDeviceName) engine.cameraDeviceName = cameraDeviceName;
+    if (mainServerUrl) engine.mainServerUrl = mainServerUrl;
 
     const resKey = RESOLUTIONS[resolution] ? resolution : '1080p';
     const fpsNum = [30, 60].includes(Number(fps)) ? Number(fps) : 30;
@@ -2527,7 +3022,7 @@ app.post('/go-live', async (req, res) => {
     // operator-acknowledged override (the panel only ever sends it after
     // showing the failure and the operator choosing "Go Live Anyway") —
     // never set by default.
-    if (NATIVE_CAPTURE_SUPPORTED && !skipProgramFeedHealthCheck) {
+    if (NATIVE_CAPTURE_SUPPORTED && !NATIVE_PROGRAM_FEED && !skipProgramFeedHealthCheck) {
         const { width, height } = RESOLUTIONS[resKey];
         const windowTitle = resolveWindowTitle(engine.matchId);
         const health = await runProgramFeedHealthCheck({ windowTitle, width, height, fps: fpsNum });
@@ -2543,6 +3038,26 @@ app.post('/go-live', async (req, res) => {
             console.log(`[stream-engine] Go Live refused — program feed health check failed: ${reason}`);
             return res.status(409).json({ success: false, error: reason, programFeedHealth: health });
         }
+    }
+    // 🧪 Native pipeline equivalent — the gdigrab-based blackdetect/
+    // freezedetect check above doesn't apply here (there's no window to
+    // sample). This is a deliberately simplified proxy for now: if the
+    // compositor is already running (e.g. because recording started
+    // first) and its preview snapshot exists and is fresh, frames are
+    // genuinely flowing through camera+overlay+compositor right now. It
+    // does NOT detect an all-black/all-white frame the way the legacy
+    // check does — a real blackdetect/freezedetect pass against the
+    // compositor's own output is a known gap, not yet built.
+    if (NATIVE_PROGRAM_FEED && compositor && compositor.state === 'running' && NATIVE_PREVIEW_PATH && !skipProgramFeedHealthCheck) {
+        try {
+            const stat = fs.statSync(NATIVE_PREVIEW_PATH);
+            const ageMs = Date.now() - stat.mtimeMs;
+            if (stat.size < 500 || ageMs > 5000) {
+                const reason = `PROGRAM OUTPUT ERROR — the compositor's preview frame is ${stat.size < 500 ? 'suspiciously small' : `${Math.round(ageMs / 1000)}s old`} — camera/overlay may not be producing valid frames.`;
+                console.log(`[stream-engine] Go Live refused — native program feed check failed: ${reason}`);
+                return res.status(409).json({ success: false, error: reason });
+            }
+        } catch (e) { /* preview file doesn't exist yet — compositor may have just started; don't block on this alone */ }
     }
 
     engine.targetResolution = resKey;
@@ -2561,7 +3076,7 @@ app.post('/go-live', async (req, res) => {
         ? (Number(bitrateKbps) > 0 ? Number(bitrateKbps) : DEFAULT_BITRATE_KBPS[resKey][fpsNum])
         : engine.sessionLadder[resKey].high;
 
-    const result = startEncoder({ resolution: resKey, fps: fpsNum, bitrateKbps: startBitrateKbps, keyframeIntervalSec });
+    const result = await startEncoder({ resolution: resKey, fps: fpsNum, bitrateKbps: startBitrateKbps, keyframeIntervalSec });
     if (!result.ok) return res.status(400).json({ success: false, error: result.error });
     res.json({ success: true, state: engine.state });
 });
@@ -2661,6 +3176,11 @@ setInterval(abrTick, ABR_TICK_MS);
 const PROGRAM_FEED_MONITOR_INTERVAL_MS = 30000;
 async function monitorProgramFeedHealth() {
     if (!NATIVE_CAPTURE_SUPPORTED) return;
+    // The native pipeline doesn't have a gdigrab window to sample this
+    // way — GET /program-feed-health covers the (simplified) equivalent
+    // check for it on demand; a periodic background version of that is
+    // a known gap, not yet built.
+    if (NATIVE_PROGRAM_FEED) return;
     if (engine.state === 'live' && engine.matchId && engine.settings) {
         const windowTitle = resolveWindowTitle(engine.matchId);
         const health = await runProgramFeedHealthCheck({ windowTitle, width: engine.settings.width, height: engine.settings.height, fps: engine.settings.fps });
@@ -2675,6 +3195,16 @@ async function monitorProgramFeedHealth() {
         recorder.lastProgramFeedHealth = health;
         if (health.black || health.white || health.frozen) {
             console.log(`[stream-engine] ⚠ PROGRAM FEED WARNING (recording): ${health.black ? 'BLACK' : health.white ? 'WHITE' : 'FROZEN'} — master.mp4 may be recording a bad picture right now`);
+        }
+    }
+    // Disk can fill up mid-match, not just at recording start (see the
+    // hard-floor check in startRecorder) — check on the same cadence so
+    // the operator gets a warning well before a write actually fails and
+    // leaves a truncated/corrupted master.mp4.
+    if (recorder.state === 'recording') {
+        const freeBytes = diskFreeBytes(RECORDING_ROOT);
+        if (freeBytes != null && freeBytes < LOW_DISK_WARNING_BYTES) {
+            console.log(`[stream-engine] ⚠ LOW DISK SPACE: only ${(freeBytes / 1024 / 1024 / 1024).toFixed(1)}GB free on the recording drive while recording is active`);
         }
     }
 }
@@ -2713,7 +3243,11 @@ setInterval(() => sweepOldClipFiles(ORPHAN_CLIP_FILE_MAX_AGE_MS), 60 * 60 * 1000
 const server = app.listen(PORT, '127.0.0.1', () => {
     console.log(`🎥 AllSportsLive Stream Engine (native capture) running at http://127.0.0.1:${PORT} (localhost only)`);
     console.log(`   Platform: ${process.platform}${NATIVE_CAPTURE_SUPPORTED ? '' : ' — ⚠️ native capture (gdigrab/dshow) needs Windows; this engine cannot capture on this OS'}`);
-    console.log(`   ffmpeg: ${FFMPEG_PATH}${process.env.FFMPEG_PATH ? ' (from FFMPEG_PATH)' : ' (from PATH — set FFMPEG_PATH to point at an NVENC-capable build if this is not one)'}`);
+    console.log(`   ffmpeg: ${FFMPEG_PATH} (${FFMPEG_SOURCE})${FFMPEG_SOURCE !== 'bundled' ? ' — see stream-engine/bin/README.md to bundle ffmpeg instead of relying on this' : ''}`);
+    console.log(`   ffprobe: ${ffprobeAvailable() ? `${FFPROBE_PATH} (${FFPROBE_SOURCE})` : '❌ NOT available — clip/recording integrity checks are disabled (see stream-engine/bin/README.md)'}`);
+    if (!ffmpegAvailable()) {
+        console.log(`   ⚠️ ffmpeg itself could not be run at all (${FFMPEG_PATH}) — nothing here will work until this is fixed. See stream-engine/bin/README.md.`);
+    }
     const nvenc = checkNvenc();
     console.log(`   NVENC: ${nvenc.available ? '✅ available' : '❌ NOT available — ' + nvenc.detail}`);
 });
@@ -2738,8 +3272,17 @@ function gracefulShutdown(signal) {
     console.log(`[stream-engine] ${signal} received — shutting down gracefully`);
     engine.desiredLive = false;   // don't let the exit handler try to auto-restart
     recorder.desiredRecording = false;
-    if (engine.proc) gracefulStop(engine.proc, 3000);
-    if (recorder.proc) gracefulStop(recorder.proc, 3000);
+    if (NATIVE_PROGRAM_FEED) {
+        // See gracefulStopByClosingStdin's own comment — these
+        // processes' stdin is real relay data, not a 'q'-keypress
+        // control channel.
+        if (engine.proc) gracefulStopByClosingStdin(engine.proc, 3000);
+        if (recorder.proc) gracefulStopByClosingStdin(recorder.proc, 3000);
+        if (compositor) compositor.stop(); // never leave the camera/overlay compositor process orphaned
+    } else {
+        if (engine.proc) gracefulStop(engine.proc, 3000);
+        if (recorder.proc) gracefulStop(recorder.proc, 3000);
+    }
     if (captureWindow.proc) closeCaptureWindow(); // never leave the dedicated capture browser process orphaned
     server.close(() => {
         console.log('[stream-engine] HTTP server closed, exiting');
