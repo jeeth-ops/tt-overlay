@@ -2635,6 +2635,18 @@ app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Content-Type');
+    // 🔒 Chrome's Private Network Access policy: the panel's own page is
+    // served over HTTPS from a public host (Render), and this server only
+    // ever binds to 127.0.0.1 — a "private" address in PNA terms. Chrome
+    // now sends a CORS preflight (even for a plain <img src> GET, not just
+    // fetch/XHR) before ANY subresource request that crosses from a public
+    // page to a private/loopback address, and silently fails the whole
+    // request ("(failed)", 0 bytes, no error visible to this server at
+    // all) unless that preflight response carries this header. Confirmed
+    // in the field: /status and /program-feed-health (plain fetch calls)
+    // still worked without it, but <img src> loads of /capture-preview
+    // (the native preview image) did not — this is why.
+    res.header('Access-Control-Allow-Private-Network', 'true');
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();
 });
