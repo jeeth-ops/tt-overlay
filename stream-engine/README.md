@@ -1,5 +1,78 @@
 # AllSportsLive Stream Engine (local, Parts 2 & 3)
 
+## 🧪 Native program feed (opt-in — camera+overlay compositor, no gdigrab)
+
+A second, newer capture architecture exists alongside the gdigrab-based
+one described below, built to eliminate the GPU-compositing/gdigrab
+incompatibility entirely rather than keep working around it:
+
+```
+CAMERA (dshow, opened ONCE) + OVERLAY (Chrome DevTools Protocol
+screencast — reads Chromium's renderer directly, never the OS screen)
+        ↓
+COMPOSITOR (one ffmpeg process)
+        ↓ relays the composited frames (uncompressed) out its own stdout
+        ├──→ RECORDER-ENCODER (own NVENC session) → master.mp4
+        └──→ LIVE-ENCODER (own NVENC session) → RTMPS → YouTube
+```
+
+See `nativePipeline.js` and `overlayBridge.js` for the implementation,
+and their header comments for the full reasoning (in particular: why a
+physical camera can only be opened once, and how recording/streaming
+stay fully independent anyway).
+
+**This has NOT been field-verified** the way the gdigrab path below has
+(many rounds of real-hardware fixes). It was built and syntax-checked in
+an environment with no Windows machine, GPU, or camera to test against.
+It is **off by default** — the gdigrab path remains what actually runs
+unless you opt in.
+
+### Trying it
+
+```
+cd stream-engine
+npm install                 # pulls in puppeteer-core, needed for the overlay bridge
+set NATIVE_PROGRAM_FEED=true
+npm start
+```
+
+`GET /status` reports `nativeProgramFeed: true` and a `compositor`
+object (`state`/`matchId`/`refs`/`lastError`) when it's on. The Cricket
+Panel adapts automatically: the camera dropdown switches from browser
+`getUserMedia` devices to the Stream Engine's own `GET /video-devices`
+(native dshow device names), and there is no Live Output browser window
+to open at all — `ensureLiveOutputWindow()` just confirms a camera is
+selected and starts the native preview.
+
+### Known gaps (be aware before relying on this for a real match)
+
+- **Program-feed health check is simplified.** The gdigrab path's
+  blackdetect/negate+blackdetect/freezedetect check doesn't apply here
+  (there's no window to sample) — the native path currently only checks
+  that the compositor's preview snapshot exists and is recent/non-tiny,
+  which does NOT actually detect an all-black or all-white frame.
+- **ABR hot-restarts can briefly relaunch the compositor** (camera
+  reopened, overlay bridge restarted) if streaming is running WITHOUT
+  recording also running at the same time — see `stopEncoder`'s own
+  comment. Running Recording + Live together (the common case) avoids
+  this, since the compositor's reference count never reaches zero.
+- **One match at a time.** A second match's compositor can't run
+  alongside a first — same limitation the existing recorder already has.
+- **dshow format negotiation isn't probed.** If a camera doesn't support
+  the exact requested resolution/framerate combo, the compositor will
+  fail to start with ffmpeg's own error rather than falling back to a
+  supported format automatically.
+- **Overlay transparency** depends on Chrome DevTools Protocol's
+  `Emulation.setDefaultBackgroundColorOverride` actually producing an
+  alpha channel through `Page.startScreencast`'s PNG frames in practice
+  — implemented per the documented CDP behavior, not yet confirmed
+  against a real Chromium build.
+
+If you hit any of these, the gdigrab path (`NATIVE_PROGRAM_FEED` unset
+or `false`) is the fallback — nothing about it changed.
+
+---
+
 > **Note:** this file predates the current native-capture architecture in
 > `server.js` (gdigrab + dshow → NVENC, no MediaRecorder/`/ingest` in the
 > video path — see `server.js`'s own header comment for the authoritative,
