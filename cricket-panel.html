@@ -1430,12 +1430,26 @@
         Camera + Audio → Local AllSportsLive Stream Engine (this PC, GPU-encoded) → YouTube. Nothing here goes through Render — see the Stream Engine's own README.
       </div>
 
-      <div style="border-radius:8px; overflow:hidden; background:#000; aspect-ratio:16/9; margin-bottom:10px; position:relative;">
+      <!--
+        🖼️ NATIVE PREVIEW — this <img> is polled from the Stream Engine's
+        /capture-preview (startNativePreviewPolling in the script below),
+        i.e. an actual frame pulled through the SAME gdigrab path the
+        recorder/live encoder/YouTube push use. This is deliberately NOT
+        the same thing as the #ls-preview-frame iframe underneath it: that
+        iframe is this browser TAB's own DOM render of live-output.html,
+        which can look perfectly fine even when gdigrab itself is reading
+        a blank/white surface from the separate, dedicated capture window
+        — exactly the mismatch that made the original bug so confusing.
+        "What you see here is what YouTube/master.mp4 actually get."
+      -->
+      <div style="border-radius:8px; overflow:hidden; background:#000; aspect-ratio:16/9; margin-bottom:4px; position:relative;">
         <iframe id="ls-preview-frame" style="width:100%; height:100%; border:0; display:none;"></iframe>
+        <img id="ls-native-preview-img" style="position:absolute; inset:0; width:100%; height:100%; object-fit:contain; display:none; background:#000;" alt="Native capture preview">
         <div id="ls-preview-placeholder" style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:rgba(255,255,255,.4); font-size:12px; text-align:center; padding:10px;">
           Final Output Preview<br>(open it below — Camera + Cricket Overlay composited live)
         </div>
       </div>
+      <div id="ls-programfeed-badge" style="font-size:11.5px; font-weight:600; margin-bottom:10px; min-height:14px;"></div>
 
       <div id="ls-health-grid" style="display:grid; grid-template-columns:auto 1fr; gap:4px 10px; font-size:12.5px; margin-bottom:12px; padding:10px; background:rgba(255,255,255,.04); border-radius:8px;">
         <span style="opacity:.7;">Camera</span><span id="ls-h-camera" class="ls-health-val">● Not connected</span>
@@ -2759,6 +2773,10 @@ let liveOutputWindow = null;
 let liveActive = false;
 let liveHealthPollTimer = null;
 let streamingDesired = false;   // Live Studio's own intent — see ensureLiveOutputWindow/releaseLiveOutputWindowIfUnused
+let captureWindowActive = false;    // true when the Stream Engine is running Live Output as ITS OWN dedicated, GPU-compositing-disabled process (see ensureLiveOutputWindow) rather than a window.open() popup out of this tab
+let captureWindowMatchId = null;
+let lastSeenCameraEndedAt = null;   // dedupes /status's captureWindow.lastCameraEndedAt so one disconnect doesn't fire stopLive/stopRecording repeatedly
+let nativePreviewTimer = null;
 
 /* ============================================================
    🔗 NATIVE CAPTURE — the browser NEVER captures, encodes, chunks or
@@ -2776,11 +2794,61 @@ let streamingDesired = false;   // Live Studio's own intent — see ensureLiveOu
    released it.
    ============================================================ */
 async function ensureLiveOutputWindow(matchId){
+  if(captureWindowActive && captureWindowMatchId === matchId) return { ok:true };
   if(liveOutputWindow && !liveOutputWindow.closed) return { ok:true };
   const videoDeviceId = document.getElementById('live-video-device').value;
   if(!videoDeviceId) return { ok:false, error:'No camera selected — pick one under Live Studio first' };
-  const url = `${location.origin}/live-output.html?room=${encodeURIComponent(matchId)}&video=${encodeURIComponent(videoDeviceId)}`;
-  // 🩹 Sized to fill the screen (NOT OS-maximized) — confirmed on real
+
+  // 🎯 PREFERRED PATH — ask the Stream Engine to launch Live Output as
+  // its OWN dedicated Chromium process with GPU compositing disabled.
+  // THIS is what makes gdigrab's GDI capture reliably read real pixels
+  // instead of occasionally coming back solid white/black — see
+  // launchCaptureWindow's header comment in stream-engine/server.js for
+  // the full root-cause explanation. A window.open() popup out of THIS
+  // tab can never do this: Chromium flags only take effect when a NEW
+  // process launches, and this tab's own browser process already
+  // launched with GPU compositing on — no amount of window.open()
+  // feature strings changes that.
+  try {
+    const launchRes = await fetch(`${STREAM_ENGINE_URL}/capture-window/launch`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ matchId, videoDeviceId, origin: location.origin, width: screen.availWidth, height: screen.availHeight })
+    }).then(r => r.json()).catch(() => ({ success:false }));
+    if(launchRes.success){
+      captureWindowActive = true;
+      captureWindowMatchId = matchId;
+      const frame = document.getElementById('ls-preview-frame');
+      // The DOM iframe below shows this tab's OWN render of the page —
+      // not what gdigrab actually reads from the dedicated process. Hide
+      // it in favor of the native preview image (startNativePreviewPolling)
+      // so the operator isn't looking at a source that can silently
+      // diverge from the real program feed (see item 8/12/31 — preview
+      // must mirror the actual encoded feed, not a second independent render).
+      if(frame) frame.style.display = 'none';
+      document.getElementById('ls-preview-placeholder').style.display = 'none';
+      // Give the fresh Chromium process time to launch, open the camera
+      // and paint a frame before the Stream Engine's gdigrab/health-check
+      // looks for it.
+      await new Promise(r => setTimeout(r, 1500));
+      lsSetHealth('ls-h-camera', true, 'Connected');
+      lsSetHealth('ls-h-mic', true, 'Connected'); // native audio device — confirmed by the Stream Engine, not this tab
+      lsSetHealth('ls-h-overlay', true, 'Connected');
+      startNativePreviewPolling(matchId);
+      return { ok:true };
+    }
+    console.log('[live-studio] dedicated capture window unavailable, falling back to popup:', launchRes.error);
+  } catch(e) { /* fall through to the popup fallback below */ }
+
+  // 🩹 FALLBACK — window.open() popup out of this tab. Kept for non-
+  // Windows/dev use and for a PC where Chrome/Edge couldn't be found at
+  // their usual install paths (see resolveCaptureBrowserExecutable in
+  // server.js — set CAPTURE_BROWSER_PATH to fix that). GPU compositing
+  // stays ON in this path, so it can still hit the white/black gdigrab
+  // bug the dedicated window exists to avoid — the native preview +
+  // program feed health check (below) exist specifically to catch that
+  // here rather than silently going live with a bad picture.
+  //
+  // Sized to fill the screen (NOT OS-maximized) — confirmed on real
   // hardware: gdigrab's window capture breaks (comes back white/garbled)
   // on a window the operator maximized via the title bar/Win+Up, because
   // Windows extends a maximized window's rect with extra invisible
@@ -2789,7 +2857,7 @@ async function ensureLiveOutputWindow(matchId){
   // "maximized" state, so there's no invisible-border bug to hit and no
   // reason for the operator to click maximize themselves.
   //
-  // 🩹 'popup=yes,toolbar=no,location=no,menubar=no,status=no' — CONFIRMED
+  // 'popup=yes,toolbar=no,location=no,menubar=no,status=no' — CONFIRMED
   // ON REAL HARDWARE this was the actual cause of the "capture-preview
   // comes back solid white" bug, nothing to do with maximizing: without a
   // popup feature string, Chrome opens window.open() as an ordinary
@@ -2802,6 +2870,7 @@ async function ensureLiveOutputWindow(matchId){
   // blank/white image seen in testing. A real popup window (what these
   // features produce) has just a title bar, matching the crop this was
   // already built for.
+  const url = `${location.origin}/live-output.html?room=${encodeURIComponent(matchId)}&video=${encodeURIComponent(videoDeviceId)}`;
   liveOutputWindow = window.open(url, 'liveOutputWindow',
     `width=${Math.max(1280, screen.availWidth || 1280)},height=${Math.max(740, screen.availHeight || 740)},left=0,top=0,popup=yes,toolbar=no,location=no,menubar=no,status=no,scrollbars=no`);
   if(!liveOutputWindow) return { ok:false, error:'Popup blocked — allow popups for this site and try again' };
@@ -2814,25 +2883,75 @@ async function ensureLiveOutputWindow(matchId){
   lsSetHealth('ls-h-camera', true, 'Connected');
   lsSetHealth('ls-h-mic', true, 'Connected'); // native audio device — confirmed by the Stream Engine, not this tab
   lsSetHealth('ls-h-overlay', true, 'Connected');
+  toast('⚠️ Using fallback popup window — Stream Engine could not launch a dedicated capture window. Check 🖼️ Native Preview below before going live.');
+  startNativePreviewPolling(matchId);
   return { ok:true };
 }
 
 function releaseLiveOutputWindowIfUnused(){
   if(recordingDesired || streamingDesired) return; // still needed by the other feature
+  stopNativePreviewPolling();
+  if(captureWindowActive){
+    fetch(`${STREAM_ENGINE_URL}/capture-window/close`, { method:'POST' }).catch(() => {});
+    captureWindowActive = false;
+    captureWindowMatchId = null;
+  }
   if(liveOutputWindow && !liveOutputWindow.closed) liveOutputWindow.close();
   liveOutputWindow = null;
 }
 
-// live-output.html has no way to reach the Stream Engine's control
-// plane itself — it tells THIS tab (its opener) when the camera track
-// it's rendering ends, via postMessage, so streaming/recording actually
-// stop instead of silently continuing to capture a frozen/black frame.
+// live-output.html now reports camera-ended/no-signal DIRECTLY to the
+// Stream Engine over HTTP (see its own header comment) — this still
+// listens for the OLDER window.opener.postMessage path too, which only
+// fires in the window.open() popup fallback above (a dedicated capture
+// window is a separate OS process with no window.opener at all, so it
+// physically cannot postMessage here). The authoritative path for BOTH
+// cases is refreshEngineHealthDisplay polling /status's captureWindow
+// field, below.
 window.addEventListener('message', (e) => {
   if(e.origin !== location.origin || !e.data || e.data.type !== 'allsportslive-camera-ended') return;
   toast('⚠️ Camera disconnected in Live Output — stopping stream/recording');
   if(streamingDesired) stopLive();
   if(recordingDesired) stopRecording();
 });
+
+// 🖼️ NATIVE PREVIEW — polls the Stream Engine's /capture-preview, which
+// grabs a real frame through the EXACT SAME gdigrab path the recorder/
+// live encoder use (see stream-engine/server.js), plus /program-feed-
+// health (the same black/white/frozen check that gates Go Live). This
+// is what item 8/12/31 mean by "the preview must mirror the final
+// program feed" — the DOM iframe above shows this BROWSER TAB's own
+// render of live-output.html, which is NOT necessarily what gdigrab
+// actually captures; this image is.
+function startNativePreviewPolling(matchId){
+  stopNativePreviewPolling();
+  const img = document.getElementById('ls-native-preview-img');
+  const badge = document.getElementById('ls-programfeed-badge');
+  if(img) img.style.display = 'block';
+  async function tick(){
+    if(img) img.src = `${STREAM_ENGINE_URL}/capture-preview?matchId=${encodeURIComponent(matchId)}&t=${Date.now()}`;
+    try {
+      const health = await fetch(`${STREAM_ENGINE_URL}/program-feed-health?matchId=${encodeURIComponent(matchId)}`).then(r => r.json());
+      if(badge){
+        if(health.black){ badge.textContent = '⚠ PROGRAM FEED: BLACK FRAME'; badge.style.color = '#ff6b6b'; }
+        else if(health.white){ badge.textContent = '⚠ PROGRAM FEED: WHITE FRAME'; badge.style.color = '#ff6b6b'; }
+        else if(health.frozen){ badge.textContent = '⚠ PROGRAM FEED: FROZEN'; badge.style.color = '#ffb020'; }
+        else if(health.ok){ badge.textContent = '● PROGRAM FEED OK'; badge.style.color = '#3ddc84'; }
+        else { badge.textContent = health.error ? ('⚠ ' + health.error) : ''; badge.style.color = '#ff6b6b'; }
+      }
+    } catch(e) { /* Stream Engine unreachable — leave the last-known badge state up */ }
+  }
+  tick();
+  nativePreviewTimer = setInterval(tick, 2000);
+}
+function stopNativePreviewPolling(){
+  if(nativePreviewTimer) clearInterval(nativePreviewTimer);
+  nativePreviewTimer = null;
+  const badge = document.getElementById('ls-programfeed-badge');
+  if(badge){ badge.textContent = ''; }
+  const img = document.getElementById('ls-native-preview-img');
+  if(img){ img.style.display = 'none'; img.src = ''; }
+}
 
 function lsLog(line){
   const el = document.getElementById('ls-golive-log');
@@ -2876,6 +2995,23 @@ async function refreshEngineHealthDisplay(){
   // never sits visibly in the DOM longer than a save click needs).
   const urlInput = document.getElementById('yt-stream-url');
   if(urlInput && !urlInput.value && status.streamUrl) urlInput.value = status.streamUrl;
+
+  // 🔗 Authoritative camera-ended/no-signal detection for BOTH the
+  // dedicated capture window and the popup fallback (see live-output.html's
+  // reportToEngine — it posts here regardless of how it was opened,
+  // unlike the older window.opener.postMessage path above which only
+  // ever reaches this tab in the popup fallback). Deduped by timestamp so
+  // one disconnect doesn't repeatedly fire stopLive/stopRecording on every
+  // 10s poll.
+  const cw = status.captureWindow;
+  if(cw && cw.lastCameraEndedAt && cw.lastCameraEndedAt !== lastSeenCameraEndedAt){
+    lastSeenCameraEndedAt = cw.lastCameraEndedAt;
+    if(streamingDesired || recordingDesired){
+      toast('⚠️ ' + (cw.lastCameraEndedReason || 'Camera disconnected in Live Output') + ' — stopping stream/recording');
+      if(streamingDesired) stopLive();
+      if(recordingDesired) stopRecording();
+    }
+  }
 }
 refreshEngineHealthDisplay();
 setInterval(refreshEngineHealthDisplay, 10000);
@@ -2986,48 +3122,32 @@ document.getElementById('toggle-yt-key-visibility').addEventListener('click', ()
   el.type = el.type === 'password' ? 'text' : 'password';
 });
 
-function openLiveOutputWindow(){
+// Thin wrapper around ensureLiveOutputWindow — kept as its own function
+// only because the button exists independently of Start Recording/GO
+// LIVE (an operator can open the render surface + verify the native
+// preview first). No separate window.open()/launch logic duplicated
+// here anymore — one function owns how Live Output actually gets opened
+// (dedicated capture window first, popup fallback second), so this
+// button and the Start Recording/GO LIVE flows can never diverge.
+async function openLiveOutputWindow(){
   const matchId = currentMatchId();
   if(!matchId){ toast('Enter a Match ID and Connect first'); return; }
   const videoDeviceId = document.getElementById('live-video-device').value;
   if(!videoDeviceId){ toast('No camera found — plug one in and click "Refresh Device List"'); return; }
-
-  const url = `${location.origin}/live-output.html?room=${encodeURIComponent(matchId)}&video=${encodeURIComponent(videoDeviceId)}`;
-  // 🩹 Sized to fill the screen (NOT OS-maximized) — confirmed on real
-  // hardware: gdigrab's window capture breaks (comes back white/garbled)
-  // on a window the operator maximized via the title bar/Win+Up, because
-  // Windows extends a maximized window's rect with extra invisible
-  // resize-border pixels that gdigrab captures too. Opening already at
-  // screen size fills the screen the same way without entering that OS
-  // "maximized" state, so there's no invisible-border bug to hit and no
-  // reason for the operator to click maximize themselves.
-  // popup=yes,toolbar=no,... — see the matching comment in
-  // ensureLiveOutputWindow above: without this, Chrome opens window.open()
-  // as an ordinary tabbed window with its own address bar/tab strip on
-  // top of the page, and THAT (not maximizing) is what was making
-  // capture-preview come back solid white.
-  liveOutputWindow = window.open(url, 'liveOutputWindow',
-    `width=${Math.max(1280, screen.availWidth || 1280)},height=${Math.max(740, screen.availHeight || 740)},left=0,top=0,popup=yes,toolbar=no,location=no,menubar=no,status=no,scrollbars=no`);
-  lsSetHealth('ls-h-camera', true, 'Connected');
-  lsSetHealth('ls-h-overlay', true, 'Connected');
-  document.getElementById('ls-preview-placeholder').style.display = 'none';
-  const frame = document.getElementById('ls-preview-frame');
-  frame.src = `${location.origin}/live-output.html?room=${encodeURIComponent(matchId)}&video=${encodeURIComponent(videoDeviceId)}`;
-  frame.style.display = 'block';
-  toast('Final Output Preview opened — keep it open, then click GO LIVE');
+  const result = await ensureLiveOutputWindow(matchId);
+  if(!result.ok){ toast('⚠️ ' + result.error); return; }
+  toast('Live Output opened — check the 🖼️ Native Preview below, then click GO LIVE');
 }
 document.getElementById('open-live-output-btn').addEventListener('click', openLiveOutputWindow);
 
-// 🖼️ PREVIEW NATIVE CAPTURE — hits the Stream Engine's GET
-// /capture-preview, which grabs exactly one real frame via the same
-// gdigrab path Go Live uses, so the operator can SEE (before going
-// live) that: (a) it actually finds the Live Output window by title,
-// and (b) the crop margin (captureConfig — see stream-engine/README.md)
-// is trimming the OS title bar correctly rather than eating into the
-// picture. This is the one piece of the native-capture pipeline that
-// genuinely can't be verified without the real Windows machine/GPU, so
-// it's exposed here as a concrete, operator-runnable check rather than
-// just asserted to work.
+// 🖼️ PREVIEW NATIVE CAPTURE — one-off manual check, kept alongside the
+// always-on native preview image (startNativePreviewPolling) above for
+// an operator who wants a full-size look at a single frame. Hits the
+// same /capture-preview endpoint via the SAME gdigrab path Go Live uses,
+// so the operator can SEE (before going live) that: (a) it actually
+// finds the Live Output window by title, and (b) the crop margin
+// (captureConfig — see stream-engine/README.md) is trimming the OS
+// title bar correctly rather than eating into the picture.
 function previewNativeCapture(){
   const matchId = currentMatchId();
   if(!matchId){ toast('Enter a Match ID and Connect first'); return; }
@@ -3120,15 +3240,44 @@ async function startLive(){
   lsLog('Connecting to YouTube…');
   const { resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec, qualityMode: selQualityMode, autoResolutionFallback: selAutoFallback } = getSelectedStreamSettings();
 
-  lsLog('Starting RTMPS…');
-  const goLiveRes = await fetch(`${STREAM_ENGINE_URL}/go-live`, {
+  lsLog('Validating program feed…');
+  let goLiveRes = await fetch(`${STREAM_ENGINE_URL}/go-live`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     // matchId lets the Stream Engine build the exact gdigrab window
     // title to capture (see windowTitleFor in server.js); audioDeviceName
     // is the native dshow device its own ffmpeg process opens directly —
-    // this tab never captures or relays audio itself.
+    // this tab never captures or relays audio itself. The Stream Engine
+    // itself samples the actual program feed here (black/white/frozen —
+    // see runProgramFeedHealthCheck in server.js) BEFORE it ever opens
+    // RTMPS, and refuses to start if that comes back bad.
     body: JSON.stringify({ resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec, qualityMode: selQualityMode, autoResolutionFallback: selAutoFallback, matchId, audioDeviceName })
   }).then(r => r.json()).catch(() => ({ success:false, error:'Stream Engine unreachable' }));
+
+  if(!goLiveRes.success && goLiveRes.programFeedHealth){
+    // 🩺 PROGRAM OUTPUT ERROR — the feed itself is the problem, not
+    // config/network. Keep the capture window + native preview open
+    // (do NOT releaseLiveOutputWindowIfUnused here) so the operator can
+    // actually SEE what's wrong using the 🖼️ Native Preview right above
+    // this button, instead of the one piece of evidence that would
+    // explain it disappearing along with the error message.
+    lsLog('');
+    const wantsOverride = confirm(
+      (goLiveRes.error || 'PROGRAM OUTPUT ERROR') +
+      '\n\nCheck the 🖼️ Native Preview above — it shows exactly what would be sent to YouTube.' +
+      '\n\nClick OK to fix it and try again, or Cancel to go live anyway with this feed (not recommended).'
+    );
+    if(wantsOverride){
+      streamingDesired = false;
+      showCannotStart(goLiveRes.error);
+      toast('⚠️ ' + goLiveRes.error);
+      return;
+    }
+    toast('⚠️ Going live anyway — operator override of the program feed check');
+    goLiveRes = await fetch(`${STREAM_ENGINE_URL}/go-live`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec, qualityMode: selQualityMode, autoResolutionFallback: selAutoFallback, matchId, audioDeviceName, skipProgramFeedHealthCheck: true })
+    }).then(r => r.json()).catch(() => ({ success:false, error:'Stream Engine unreachable' }));
+  }
 
   if(!goLiveRes.success){
     streamingDesired = false;
@@ -3236,9 +3385,15 @@ async function lowerStreamQuality(){
   await fetch(`${STREAM_ENGINE_URL}/stop`, { method: 'POST' }).catch(() => {});
   await waitForEncoderIdle();
 
+  // skipProgramFeedHealthCheck: true — this is a same-session quality
+  // hot-restart of a feed that was ALREADY validated at the original Go
+  // Live, not a fresh start; re-running the ~1.4s black/white/freeze
+  // sample here would only add latency to an operator trying to save a
+  // degrading stream, and could even refuse the restart on a transient
+  // hiccup that has nothing to do with the picture itself.
   const goLiveRes = await fetch(`${STREAM_ENGINE_URL}/go-live`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ resolution: nextResolution, fps: nextFps, bitrateKbps: nextBitrateKbps, keyframeIntervalSec: current.keyframeIntervalSec, qualityMode: 'manual', autoResolutionFallback: false, matchId: currentMatchId(), audioDeviceName: document.getElementById('live-audio-device').value })
+    body: JSON.stringify({ resolution: nextResolution, fps: nextFps, bitrateKbps: nextBitrateKbps, keyframeIntervalSec: current.keyframeIntervalSec, qualityMode: 'manual', autoResolutionFallback: false, matchId: currentMatchId(), audioDeviceName: document.getElementById('live-audio-device').value, skipProgramFeedHealthCheck: true })
   }).then(r => r.json()).catch(() => ({ success: false, error: 'Stream Engine unreachable' }));
 
   loweringQuality = false;
