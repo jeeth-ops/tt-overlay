@@ -2864,6 +2864,31 @@ app.get('/capture-preview', (req, res) => {
     proc.on('error', (err) => res.status(500).json({ success: false, error: err.message }));
 });
 
+// 🖼️ NATIVE PREVIEW-ONLY START/STOP — lets the operator see the real
+// composited camera+overlay feed BEFORE committing to Recording or Go
+// Live, the same way the legacy dedicated capture window already worked
+// independently of recording/streaming. Ref-counted through the SAME
+// ensureCompositor/releaseCompositor ('preview' as its own `who`) as the
+// recorder and live encoder — opening a preview while already recording/
+// live just adds another ref onto the one running compositor, no
+// restart; closing the preview while a recording or the live encoder
+// still needs it (see releaseCompositor) leaves the compositor running.
+app.post('/native-preview/start', async (req, res) => {
+    if (!NATIVE_PROGRAM_FEED) return res.status(400).json({ success: false, error: 'Native program feed is not enabled on this Stream Engine' });
+    const body = req.body || {};
+    const matchId = safeMatchId(body.matchId);
+    if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
+    if (!body.cameraDeviceName) return res.status(400).json({ success: false, error: 'cameraDeviceName required' });
+    if (!body.audioDeviceName) return res.status(400).json({ success: false, error: 'audioDeviceName required' });
+    if (!body.mainServerUrl) return res.status(400).json({ success: false, error: 'mainServerUrl required' });
+    const result = await ensureCompositor({ matchId, mainServerUrl: body.mainServerUrl, cameraDeviceName: body.cameraDeviceName, audioDeviceName: body.audioDeviceName, who: 'preview' });
+    res.json(result);
+});
+app.post('/native-preview/stop', (req, res) => {
+    if (NATIVE_PROGRAM_FEED) releaseCompositor('preview');
+    res.json({ success: true });
+});
+
 // ----------------------------------------------------------------
 // 🎬 ClipperHelper.exe-COMPATIBLE ENDPOINTS
 //

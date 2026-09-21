@@ -2807,7 +2807,20 @@ async function ensureLiveOutputWindow(matchId){
   // tab to open or capture. /recording-start and startLive() pass
   // cameraDeviceName straight through instead.
   if(nativeProgramFeedActive){
-    if(!document.getElementById('live-video-device').value) return { ok:false, error:'No camera selected — pick one under Live Studio first' };
+    const cameraDeviceName = document.getElementById('live-video-device').value;
+    if(!cameraDeviceName) return { ok:false, error:'No camera selected — pick one under Live Studio first' };
+    const audioDeviceName = document.getElementById('live-audio-device').value;
+    if(!audioDeviceName) return { ok:false, error:'No audio device selected — pick one under Live Studio first' };
+    // Actually starts the Stream Engine's compositor (ref-counted as
+    // 'preview' — see /native-preview/start in server.js) so there is a
+    // real composited frame to show BEFORE Recording/Go Live starts it
+    // for their own reasons. Without this the preview box/new-tab preview
+    // just 404s ("no preview frame yet") until you commit to one of those.
+    const startRes = await fetch(`${STREAM_ENGINE_URL}/native-preview/start`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ matchId, cameraDeviceName, audioDeviceName, mainServerUrl: location.origin })
+    }).then(r => r.json()).catch(() => ({ ok:false, error:'Could not reach the local Stream Engine' }));
+    if(!startRes.ok) return { ok:false, error: startRes.error || 'Could not start native preview' };
     lsSetHealth('ls-h-camera', true, 'Connected (native)');
     lsSetHealth('ls-h-mic', true, 'Connected');
     lsSetHealth('ls-h-overlay', true, 'Connected (native)');
@@ -2918,6 +2931,14 @@ async function ensureLiveOutputWindow(matchId){
 function releaseLiveOutputWindowIfUnused(){
   if(recordingDesired || streamingDesired) return; // still needed by the other feature
   stopNativePreviewPolling();
+  if(nativeProgramFeedActive){
+    // Releases the 'preview' ref added by ensureLiveOutputWindow's native
+    // branch (see /native-preview/start) — a no-op if it was never added
+    // (e.g. Recording/Go Live is what's actually holding the compositor
+    // open, via their own 'recorder'/'live' refs, which this leaves alone).
+    fetch(`${STREAM_ENGINE_URL}/native-preview/stop`, { method:'POST' }).catch(() => {});
+    return;
+  }
   if(captureWindowActive){
     fetch(`${STREAM_ENGINE_URL}/capture-window/close`, { method:'POST' }).catch(() => {});
     captureWindowActive = false;
