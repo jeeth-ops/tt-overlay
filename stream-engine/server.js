@@ -117,8 +117,24 @@ const nativePipeline = NATIVE_PROGRAM_FEED ? require('./nativePipeline') : null;
 // separate drive) avoids that class of failure entirely, and as a bonus
 // lets the operator choose a drive with more free space for a full
 // match's recording independent of wherever stream-engine itself sits.
-const DATA_ROOT = process.env.STREAM_ENGINE_DATA_ROOT
-    ? path.join(process.env.STREAM_ENGINE_DATA_ROOT, 'StreamEngineData')
+// Operator-set via the panel's "Recordings Folder" field (POST
+// /set-data-root below) persists into the same gitignored CONFIG_FILE
+// the Stream URL/Key already use, so it survives a Stream Engine restart
+// without needing the STREAM_ENGINE_DATA_ROOT env var edited by hand.
+// The env var still wins if BOTH are set — it's the more explicit,
+// deliberate override. Read directly here (loadConfig() isn't defined
+// until further down) — same file, same shape, just an early raw read.
+function readPersistedDataRoot() {
+    try {
+        const cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+        return (cfg && typeof cfg.dataRoot === 'string' && cfg.dataRoot.trim()) ? cfg.dataRoot.trim() : null;
+    } catch (e) {
+        return null; // no config file yet, or unreadable — fall through to the default
+    }
+}
+const DATA_ROOT_OVERRIDE = process.env.STREAM_ENGINE_DATA_ROOT || readPersistedDataRoot();
+const DATA_ROOT = DATA_ROOT_OVERRIDE
+    ? path.join(DATA_ROOT_OVERRIDE, 'StreamEngineData')
     : path.join(__dirname, 'StreamEngineData');
 
 // ----------------------------------------------------------------
@@ -2725,6 +2741,12 @@ app.get('/status', async (req, res) => {
         ffprobePath: FFPROBE_PATH,
         ffprobeSource: FFPROBE_SOURCE,
         nativeProgramFeed: NATIVE_PROGRAM_FEED,
+        dataRoot: DATA_ROOT, // the folder actually in use THIS run — see /set-data-root
+        dataRootPending: (() => {
+            const saved = loadConfig().dataRoot;
+            const active = DATA_ROOT_OVERRIDE || null;
+            return (saved && saved !== active) ? saved : null; // set only when a saved choice hasn't taken effect yet (needs a restart)
+        })(),
         overlayBridgeAvailable: NATIVE_PROGRAM_FEED ? nativePipeline.overlayBridgeAvailable() : null,
         compositor: NATIVE_PROGRAM_FEED ? {
             state: compositor ? compositor.state : 'idle',
@@ -3089,6 +3111,29 @@ app.post('/set-youtube-config', (req, res) => {
 
     saveConfig({ ...loadConfig(), streamUrl, streamKey });
     res.json({ success: true, streamUrl, streamKeyMasked: maskKey(streamKey) });
+});
+
+// 📁 Lets the operator move recordings/clips out from under wherever
+// stream-engine itself is installed (see DATA_ROOT's own comment near
+// the top of this file — Downloads + OneDrive sync is the confirmed
+// real-world trigger). Only validates and persists the choice; it does
+// NOT hot-swap DATA_ROOT for the current process — an active recording
+// mid-write is not something to redirect out from under itself. Takes
+// effect on the next Stream Engine restart, same as NATIVE_PROGRAM_FEED
+// and every other env-var-level setting.
+app.post('/set-data-root', (req, res) => {
+    const newPath = (req.body && typeof req.body.path === 'string') ? req.body.path.trim() : '';
+    if (!newPath) return res.status(400).json({ success: false, error: 'path required' });
+    try {
+        fs.mkdirSync(newPath, { recursive: true });
+        const probe = path.join(newPath, '.stream-engine-write-test');
+        fs.writeFileSync(probe, 'ok');
+        fs.unlinkSync(probe);
+    } catch (e) {
+        return res.status(400).json({ success: false, error: `Could not use this folder: ${e.message}` });
+    }
+    saveConfig({ ...loadConfig(), dataRoot: newPath });
+    res.json({ success: true, path: newPath, restartRequired: true, current: DATA_ROOT });
 });
 
 app.post('/go-live', async (req, res) => {
