@@ -50,6 +50,16 @@ const OVERLAY_FPS = 15;
 
 const RELAY_CONTAINER_ARGS = ['-f', 'nut', '-c:v', 'rawvideo', '-pix_fmt', 'yuv420p', '-c:a', 'pcm_s16le', '-ar', '44100'];
 
+// How long after a compositor ffmpeg leg starts its relay-header buffer
+// (see Compositor._spawnFfmpegLeg) keeps growing — a newly-attaching
+// relay consumer within this window gets a gapless replay-then-live
+// handoff; past it, attachRelayConsumer gets a fresh leg instead of ever
+// splicing in a stale, byte-cutoff (not packet-boundary) buffer. A few
+// seconds is comfortably more than any observed consumer-process spawn
+// latency, while keeping the one-time buffer memory (a few tens of MB at
+// most, at typical relay resolutions) trivial.
+const RELAY_BUFFER_WINDOW_MS = 5000;
+
 // 🎯 AUTO-DETECT CAMERA MODE — the vMix-style piece: instead of a
 // hardcoded -video_size/-framerate that only happened to be right for
 // one specific capture card (twice confirmed wrong in the field for the
@@ -307,6 +317,8 @@ class Compositor extends EventEmitter {
         }
         this.state = 'starting';
         this.lastError = null;
+        this._cameraDeviceName = cameraDeviceName;
+        this._audioDeviceName = audioDeviceName;
         if (this.cameraMode === null) this.cameraMode = this.probeCameraMode(cameraDeviceName) || false; // false = "probed, nothing usable" so we don't re-probe every retry
         try {
             this.overlay = new OverlayBridge({ execPath: this.execPath, url: this.overlayUrl, width: this.width, height: this.height });
@@ -316,9 +328,19 @@ class Compositor extends EventEmitter {
             this.lastError = `Overlay bridge failed to start: ${e.message}`;
             return { ok: false, error: this.lastError };
         }
+        return this._spawnFfmpegLeg();
+    }
 
+    // Spawns just the ffmpeg leg (camera + overlay compositing + relay +
+    // preview) — separated from ensureRunning() so restartFfmpegLeg()
+    // below can respawn it WITHOUT relaunching the overlay bridge
+    // (Chromium), which is the expensive part (1-3+ seconds). Assumes
+    // this.overlay is already running; ensureRunning() guarantees that
+    // on first start, restartFfmpegLeg() guarantees it across restarts.
+    _spawnFfmpegLeg() {
         const args = buildCompositorArgs({
-            cameraDeviceName, audioDeviceName, width: this.width, height: this.height, fps: this.fps, previewPath: this.previewPath,
+            cameraDeviceName: this._cameraDeviceName, audioDeviceName: this._audioDeviceName,
+            width: this.width, height: this.height, fps: this.fps, previewPath: this.previewPath,
             cameraVideoSize: this.cameraMode ? `${this.cameraMode.width}x${this.cameraMode.height}` : null,
             cameraFramerate: this.cameraMode ? this.cameraMode.fps : null,
         });
@@ -328,41 +350,48 @@ class Compositor extends EventEmitter {
         } catch (e) {
             this.state = 'crashed';
             this.lastError = `Could not launch compositor: ${e.message}`;
-            try { await this.overlay.stop(); } catch (e2) { /* best effort */ }
+            // Nothing is going to use this overlay bridge (Chromium)
+            // now — leaving it running would leak it indefinitely rather
+            // than just paying the relaunch cost on the next real retry.
+            try { if (this.overlay) this.overlay.stop().catch(() => {}); } catch (e2) {}
             return { ok: false, error: this.lastError };
         }
         this.proc = proc;
         this.state = 'running';
-        this.startedAt = Date.now();
+        this.startedAt = this.startedAt || Date.now(); // first spawn only — restarts keep the original "recording/stream started at" time
+        this.legStartedAt = Date.now(); // THIS leg's own start — see the relay-buffer window below
         proc.stdin.on('error', () => {}); // the overlay bridge writes here — a write after the process is gone is harmless
 
         this.stopOverlayPipe = this.overlay.pipeTo(proc.stdin, OVERLAY_FPS);
 
-        // 🩹 CONFIRMED IN THE FIELD — a serious one: the relay is a NUT
-        // container, which (like most streaming containers) writes its
-        // main header — stream count, codec/dimensions, everything a
-        // demuxer needs just to START interpreting the bytes — ONCE, at
-        // the very beginning. ANY consumer whose stdin gets attached
-        // after that header has already gone out (recorder starting
-        // after live, live starting after recording, or even the FIRST
-        // consumer — its own ffmpeg process takes a moment to spawn
-        // after ensureCompositor returns, and the compositor's stdout
-        // can easily start flowing before that) never sees it, and its
-        // own `-f nut -i pipe:0` has nothing valid to lock onto — no
-        // error, it just never produces output. This is what silently
-        // broke both the live encoder (RTMPS "connected", YouTube "no
-        // data") and the recorder (master.mp4 never created at all)
-        // even though everything upstream reported healthy.
-        // Fix: cache the relay's own early bytes (comfortably more than
-        // the header needs) and replay them to EVERY newly-attached
-        // consumer before switching them to the live feed — see
-        // attachRelayConsumer below. Missing whatever real frames fell
-        // between "end of the cached header" and "now" is fine and
-        // intended: a consumer just joining doesn't want the past, it
-        // wants a valid stream to decode from this point forward.
+        // 🩹 CONFIRMED IN THE FIELD, twice: the relay is a NUT container,
+        // which (like most streaming containers) writes its main header
+        // — everything a demuxer needs just to START interpreting the
+        // bytes — ONCE, at the very beginning. A consumer attaching after
+        // that header already went out gets nothing valid to lock onto —
+        // no error, it just never produces output (root cause of both
+        // "YouTube: no data" and "master.mp4 never created", first fix).
+        // Second field failure, AFTER that first fix: replaying a STALE,
+        // arbitrarily-byte-capped buffer to a LATE joiner (e.g. an ABR
+        // restart reattaching to a compositor that's been running for
+        // minutes) corrupted the whole stream from that point on — NUT
+        // packets are length-framed, and an arbitrary byte cutoff has no
+        // reason to land on a packet boundary; splicing old buffered
+        // bytes into a live byte stream at a non-boundary point permanently
+        // desyncs that consumer's demuxer, which reads every following
+        // packet at the wrong offset (exactly the blue/glitched-block
+        // look confirmed live on the actual YouTube stream).
+        // Real fix: the buffer is only ever safe to replay while it's
+        // still the ACTIVE growing edge of the live stream — i.e. while
+        // this consumer is attaching "soon" after this leg started, so
+        // replay-then-live-forward is one continuous, gapless byte
+        // sequence with no splice at all (see attachRelayConsumer). Once
+        // this leg has been running longer than that window, a newly
+        // attaching consumer gets a fresh leg (restartFfmpegLeg(),
+        // reusing the already-running overlay bridge — cheap, no Chromium
+        // relaunch) instead of a stale replay.
         this.relayHeaderBuffer = [];
         this.relayHeaderBufferBytes = 0;
-        const RELAY_HEADER_CAP_BYTES = 256 * 1024; // NUT's main header is a tiny fraction of this — generous headroom, still trivial memory
 
         // 🔗 Fan the relay out to every attached consumer. Node drains
         // proc.stdout as fast as its event loop runs regardless of
@@ -377,7 +406,7 @@ class Compositor extends EventEmitter {
         // consumer's own problem to recover from, never the
         // compositor's or the OTHER consumer's.
         proc.stdout.on('data', (chunk) => {
-            if (this.relayHeaderBufferBytes < RELAY_HEADER_CAP_BYTES) {
+            if (Date.now() - this.legStartedAt < RELAY_BUFFER_WINDOW_MS) {
                 this.relayHeaderBuffer.push(chunk);
                 this.relayHeaderBufferBytes += chunk.length;
             }
@@ -410,9 +439,15 @@ class Compositor extends EventEmitter {
 
         proc.on('exit', (code, signal) => {
             if (this.proc !== proc) return;
-            console.log(`[nativePipeline] compositor exited (code=${code}, signal=${signal})`);
             this.proc = null;
             const wasRunning = this.state === 'running';
+            // A deliberate soft-restart (restartFfmpegLeg) kills this
+            // exact proc itself — its exit is expected, not a crash, and
+            // the overlay bridge (Chromium) must stay alive for the new
+            // leg about to spawn to reuse. Only a genuinely unexpected
+            // exit tears down the overlay and notifies consumers.
+            if (this._softRestarting) return;
+            console.log(`[nativePipeline] compositor exited (code=${code}, signal=${signal})`);
             this.state = 'idle';
             try { if (this.stopOverlayPipe) this.stopOverlayPipe(); } catch (e) {}
             try { if (this.overlay) this.overlay.stop().catch(() => {}); } catch (e) {}
@@ -433,26 +468,72 @@ class Compositor extends EventEmitter {
         return { ok: true };
     }
 
+    // Kills and respawns ONLY the ffmpeg leg — camera, overlay
+    // compositing, relay, preview — reusing the already-running overlay
+    // bridge (Chromium) rather than relaunching it. Used by
+    // attachRelayConsumer when a consumer attaches too late for the
+    // relay-header buffer to safely cover (see that method) — this gets
+    // them a fresh, byte-0 stream instead of a stale/misaligned splice.
+    // Any OTHER consumer already attached (e.g. recording, if an ABR
+    // restart is what triggered this) sees its input pipe end and goes
+    // through its own existing reconnect/auto-restart path — a real but
+    // accepted cost of correctness over a corrupted broadcast.
+    async restartFfmpegLeg() {
+        // 🩹 Any consumer already attached (e.g. a recorder that's been
+        // running fine for a while) is mid-way through demuxing the OLD
+        // leg's byte stream. If we left them in `this.consumers`, the
+        // NEW leg's fan-out (same Set) would inject a fresh byte-0
+        // stream straight into their already-in-progress decode state —
+        // the exact same splice corruption this restart exists to avoid,
+        // just landing on the wrong consumer. Cleanly end() each one's
+        // stdin (a real EOF, not just "stop writing to it") so their own
+        // exit handler fires and their own reconnect/auto-restart logic
+        // brings them back — safely, since by the time they re-attach
+        // this will be a fresh leg well within the buffer window.
+        for (const consumer of this.consumers) {
+            try { if (consumer.stdin && consumer.stdin.writable) consumer.stdin.end(); } catch (e) {}
+        }
+        this.consumers.clear();
+        if (this.proc) {
+            this._softRestarting = true;
+            const oldProc = this.proc;
+            this.proc = null;
+            try { oldProc.kill('SIGKILL'); } catch (e) {}
+            const waitStart = Date.now();
+            while (!oldProc.killed && Date.now() - waitStart < 3000) {
+                await new Promise((r) => setTimeout(r, 50));
+            }
+            this._softRestarting = false;
+        }
+        return this._spawnFfmpegLeg();
+    }
+
     // Registers a downstream process's stdin as a relay consumer. The
     // caller is responsible for detaching (removeRelayConsumer) once
     // that process exits — an un-detached dead stdin is just silently
     // skipped by the write() try/catch above, but detaching promptly
     // avoids that overhead piling up across many restarts.
     //
-    // Replays the cached relay-header bytes (see the stdout 'data'
-    // handler above) BEFORE adding this consumer to the live fan-out —
-    // this is what makes it safe to attach at any time, not just at the
-    // exact moment the compositor starts. Without this, this consumer's
-    // own `-f nut -i pipe:0` would never see NUT's main header and would
-    // silently never produce output — the actual root cause behind both
-    // the "YouTube: no data" and "master.mp4 missing" symptoms.
-    attachRelayConsumer(proc) {
+    // Async: if this leg has been running longer than the relay-buffer
+    // window, gets a fresh leg first (restartFfmpegLeg) rather than ever
+    // replaying a stale buffer — see the long comment on the stdout
+    // handler in _spawnFfmpegLeg for why that's unsafe. Otherwise this
+    // is synchronous start to finish (no await), which is what
+    // guarantees replay-then-live-forward has no gap or race: nothing
+    // else can run between "finish replaying what's buffered so far" and
+    // "start forwarding new chunks live" in the meantime.
+    async attachRelayConsumer(proc) {
+        if (Date.now() - this.legStartedAt >= RELAY_BUFFER_WINDOW_MS) {
+            const result = await this.restartFfmpegLeg();
+            if (!result.ok) return result;
+        }
         for (const chunk of this.relayHeaderBuffer) {
             if (proc.stdin && proc.stdin.writable) {
-                try { proc.stdin.write(chunk); } catch (e) { return; } // gone already — nothing to attach
+                try { proc.stdin.write(chunk); } catch (e) { return { ok: false, error: 'consumer already gone before it could attach' }; }
             }
         }
         this.consumers.add(proc);
+        return { ok: true };
     }
     removeRelayConsumer(proc) {
         this.consumers.delete(proc);

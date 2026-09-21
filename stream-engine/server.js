@@ -1761,7 +1761,14 @@ async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec 
         }
         const args = nativePipeline.buildLiveEncoderArgs({ ...resolved, destinationUrl, useTune: checkNvencTuneRuntime() });
         proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] });
-        compositor.attachRelayConsumer(proc);
+        const attachResult = await compositor.attachRelayConsumer(proc);
+        if (!attachResult.ok) {
+            try { proc.kill('SIGKILL'); } catch (e) {}
+            engine.state = 'idle';
+            engine.desiredLive = false;
+            releaseCompositor('live');
+            return { ok: false, error: attachResult.error || 'Could not attach to the native compositor relay' };
+        }
     } else {
         const windowTitle = resolveWindowTitle(engine.matchId);
         const args = buildLiveEncoderArgs({ windowTitle, audioDeviceName: engine.audioDeviceName, ...resolved, destinationUrl });
@@ -2109,7 +2116,14 @@ async function startRecorder(matchId, { resolution, fps, audioDeviceName, camera
         if (!useNvenc) checkLibx264();
         const args = nativePipeline.buildRecorderEncoderArgs({ width, height, fps: fpsNum, bitrateKbps, outFile, useNvenc });
         proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] });
-        compositor.attachRelayConsumer(proc);
+        const attachResult = await compositor.attachRelayConsumer(proc);
+        if (!attachResult.ok) {
+            try { proc.kill('SIGKILL'); } catch (e) {}
+            recorder.state = 'idle';
+            recorder.desiredRecording = false;
+            releaseCompositor('recorder');
+            return { ok: false, error: attachResult.error || 'Could not attach to the native compositor relay' };
+        }
     } else {
         const windowTitle = resolveWindowTitle(matchId);
         const args = buildRecorderArgs({ windowTitle, audioDeviceName, width, height, fps: fpsNum, bitrateKbps, outFile });
