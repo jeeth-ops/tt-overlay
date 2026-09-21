@@ -3645,7 +3645,13 @@ async function pollStreamHealth(){
     document.getElementById('ls-sh-rtmps').textContent = '● Connected';
     document.getElementById('ls-sh-encoder-status').textContent = '● Running';
   }
-  const captureWindowOpen = !!(liveOutputWindow && !liveOutputWindow.closed);
+  // Native mode never opens a window at all (see ensureLiveOutputWindow's
+  // native branch) — liveOutputWindow stays null by design, so checking
+  // it here always showed "Disconnected" even while genuinely live. This
+  // function only ever runs while the live encoder is up, which itself
+  // required the compositor (and therefore the camera+audio devices) to
+  // already be open — so "connected" is simply true in that mode.
+  const captureWindowOpen = nativeProgramFeedActive || !!(liveOutputWindow && !liveOutputWindow.closed);
   document.getElementById('ls-sh-camera').textContent = captureWindowOpen ? '● Connected' : '● Disconnected';
   document.getElementById('ls-sh-audio').textContent = captureWindowOpen ? '● Connected' : '● Disconnected';
   document.getElementById('ls-sh-overlay').textContent = (socket && socket.connected) ? '● Connected' : '● Disconnected';
