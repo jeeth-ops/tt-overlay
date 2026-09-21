@@ -3155,6 +3155,40 @@ app.post('/set-data-root', (req, res) => {
     res.json({ success: true, path: newPath, restartRequired: true, current: DATA_ROOT });
 });
 
+// 📁 IN-PANEL FOLDER BROWSER — a browser can't hand this page a real OS
+// path from a native picker dialog (no web API exposes one, deliberately,
+// for security), but the Stream Engine itself is a local process with
+// full filesystem access — so it lists folders FOR the panel to render
+// as a clickable browser instead. No `path` query = list this PC's
+// drives (Windows) as the starting points; with `path`, lists that
+// folder's immediate subfolders only (never files — nothing here is
+// ever read, only enumerated, and only directories are returned).
+app.get('/browse-folders', (req, res) => {
+    const reqPath = typeof req.query.path === 'string' ? req.query.path.trim() : '';
+    if (!reqPath) {
+        if (process.platform !== 'win32') return res.json({ success: true, path: '', entries: [{ name: '/', path: '/' }] });
+        const drives = [];
+        for (let code = 65; code <= 90; code++) { // A-Z
+            const letter = String.fromCharCode(code);
+            const drivePath = `${letter}:\\`;
+            try { if (fs.existsSync(drivePath)) drives.push({ name: drivePath, path: drivePath }); } catch (e) { /* inaccessible drive — skip */ }
+        }
+        return res.json({ success: true, path: '', entries: drives });
+    }
+    let items;
+    try {
+        items = fs.readdirSync(reqPath, { withFileTypes: true });
+    } catch (e) {
+        return res.status(400).json({ success: false, error: `Could not open this folder: ${e.message}` });
+    }
+    const entries = items
+        .filter((it) => it.isDirectory())
+        .map((it) => ({ name: it.name, path: path.join(reqPath, it.name) }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    const parent = path.dirname(reqPath);
+    res.json({ success: true, path: reqPath, parent: parent !== reqPath ? parent : null, entries });
+});
+
 app.post('/go-live', async (req, res) => {
     const { resolution, fps, bitrateKbps, keyframeIntervalSec, qualityMode, autoResolutionFallback, matchId, audioDeviceName, cameraDeviceName, mainServerUrl, skipProgramFeedHealthCheck } = req.body || {};
     engine.opToken++; // a fresh operator-initiated Go Live always wins over any stale in-flight ABR restart
