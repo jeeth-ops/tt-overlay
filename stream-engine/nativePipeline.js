@@ -521,37 +521,40 @@ class Compositor extends EventEmitter {
     // than ever replaying a stale buffer — see the long comment on the
     // stdout handler in _spawnFfmpegLeg for why that's unsafe.
     //
-    // 🩹 CONFIRMED IN THE FIELD, a third time: restarting the leg to fix
-    // a stale 'live' reattach (the very common case — ABR bitrate
-    // restarts happen repeatedly during poor network, at most 8s apart)
-    // forces every OTHER attached consumer through restartFfmpegLeg's
-    // end()-and-reconnect path too. For an ALREADY-RUNNING recorder that
-    // means an unwanted new segment file (master_part2.mp4, ...) on
-    // every single one of live's ABR restarts — the operator watched
-    // recording visibly stutter/fragment because of network conditions
-    // that have nothing to do with local recording at all, plus a real
-    // chance of a corrupted moment right at each cut. Recording must
-    // never depend on live's stability. So: a stale 'live' reattach
-    // while a 'recorder' consumer is currently attached does NOT
-    // restart the leg — it falls back to replaying the stale buffer
-    // (the pre-restartFfmpegLeg behavior, with the known splice risk
-    // that fix exists to avoid) rather than disturbing the recorder.
-    // This is a deliberate, bounded trade-off: an occasional corrupted
-    // moment on the LIVE stream during an ABR restart while recording
-    // is also active, in exchange for recording NEVER being interrupted
-    // by anything happening on the streaming side. Every other case
-    // (recorder itself attaching/reattaching stale, or live reattaching
-    // stale with no recorder active) still gets the full, safe restart.
+    // 🩹 CONFIRMED IN THE FIELD, a fourth time — this one was MUTUAL:
+    // restarting the leg to fix a stale reattach forces every OTHER
+    // attached consumer through restartFfmpegLeg's end()-and-reconnect
+    // path too. An initial fix protected the recorder from live's own
+    // (very common — ABR bitrate restarts happen repeatedly during poor
+    // network, at most 8s apart) restarts, but not the other direction:
+    // the recorder's OWN reattach (e.g. its own crash-triggered auto-
+    // restart) still unconditionally restarted the leg, which then
+    // disrupted an already-running LIVE encoder, whose consequent
+    // disconnect/reconnect disrupted the recorder AGAIN — confirmed live
+    // as a real back-and-forth cascade: recorder hit its max-auto-
+    // restart limit and local recording stopped entirely, precisely
+    // because of a live-side hiccup, the opposite of what recording
+    // reliability is supposed to mean. The protection has to be
+    // SYMMETRIC: whichever side (recorder or live) is already attached
+    // and happy must never be disrupted by the OTHER side reattaching —
+    // only restart the leg when the side NOT currently attached is the
+    // one that would otherwise go without a valid stream. Whichever side
+    // IS already running always falls back to a stale-buffer replay
+    // for itself instead (deliberate, bounded: an occasional corrupted
+    // moment for the SIDE THAT'S RECONNECTING, never for the side
+    // already stable).
     async attachRelayConsumer(proc, who) {
         const stale = Date.now() - this.legStartedAt >= RELAY_BUFFER_WINDOW_MS;
         if (stale) {
-            const recorderActive = [...this.consumers.values()].includes('recorder');
-            if (who === 'recorder' || !recorderActive) {
+            const otherType = who === 'recorder' ? 'live' : 'recorder';
+            const otherActive = [...this.consumers.values()].includes(otherType);
+            if (!otherActive) {
                 const result = await this.restartFfmpegLeg();
                 if (!result.ok) return result;
             }
             // else: falls through and replays the stale buffer below —
-            // see the comment above for why, in this one specific case.
+            // protects the OTHER, already-attached side from disruption
+            // at the cost of this one possibly getting a rougher rejoin.
         }
         for (const chunk of this.relayHeaderBuffer) {
             if (proc.stdin && proc.stdin.writable) {
