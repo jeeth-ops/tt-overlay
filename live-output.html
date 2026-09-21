@@ -49,12 +49,13 @@
   <div id="lo-status">Starting camera…</div>
 </div>
 <script>
-  // ?room=<matchId>&video=<deviceId> — same query convention the rest
-  // of the panel/overlay already use (see cricket-overlay.html's own
-  // ?room= handling).
+  // ?room=<matchId>&video=<deviceId>&videoLabel=<name> — same query
+  // convention the rest of the panel/overlay already use (see
+  // cricket-overlay.html's own ?room= handling).
   const params = new URLSearchParams(location.search);
   const room = params.get('room') || 'default';
   const videoDeviceId = params.get('video') || '';
+  const videoLabel = params.get('videoLabel') || '';
   const statusEl = document.getElementById('lo-status');
 
   // 🔗 Talks DIRECTLY to the local Stream Engine (127.0.0.1:5006, CORS
@@ -88,12 +89,62 @@
 
   document.getElementById('overlay-frame').src = `${location.origin}/cricket-overlay?room=${encodeURIComponent(room)}`;
 
+  // 🩹 CONFIRMED IN THE FIELD: Chrome/Edge salts getUserMedia deviceIds
+  // PER BROWSER PROFILE (a deliberate privacy measure). videoDeviceId
+  // was chosen in the Cricket Panel's own regular browser profile; this
+  // window normally runs in the Stream Engine's DEDICATED, isolated
+  // capture profile (its own --user-data-dir — see launchCaptureWindow
+  // in server.js), where that exact deviceId does not exist at all —
+  // requesting it with {exact: ...} throws OverconstrainedError every
+  // time ("Could not open camera:" with a blank error message). Device
+  // LABELS are NOT profile-scoped (they come straight from the OS/
+  // driver), so once this profile has SOME camera permission granted
+  // (labels are hidden until then, same as anywhere else), we look up
+  // the real device by label in THIS profile's own enumerateDevices()
+  // and switch to it. videoDeviceId is still tried first because it
+  // DOES work in the window.open() popup fallback, which shares the
+  // panel's own profile — this only falls back to label-matching when
+  // that fails, so nothing changes for that path.
+  async function getCameraStream(){
+    if(videoDeviceId){
+      try {
+        return await navigator.mediaDevices.getUserMedia({
+          video: { deviceId: { exact: videoDeviceId }, width: 1920, height: 1080 },
+          audio: false
+        });
+      } catch(e){ /* likely a cross-profile deviceId — fall through to label matching below */ }
+    }
+
+    // No usable deviceId (or none given) — grab ANY camera first. In a
+    // fresh profile this is also what actually triggers the permission
+    // prompt and unlocks real device labels for the enumerateDevices()
+    // call below.
+    let stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 1920, height: 1080 },
+      audio: false
+    });
+
+    if(videoLabel){
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const match = devices.find(d => d.kind === 'videoinput' && d.label === videoLabel);
+      const current = stream.getVideoTracks()[0];
+      if(match && current.label !== videoLabel){
+        // Default camera wasn't the one the operator actually picked —
+        // now that labels are visible in this profile, re-request the
+        // specific one by its LOCAL (profile-scoped) deviceId.
+        stream.getTracks().forEach(t => t.stop());
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { deviceId: { exact: match.deviceId }, width: 1920, height: 1080 },
+          audio: false
+        });
+      }
+    }
+    return stream;
+  }
+
   async function startCamera(){
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: videoDeviceId ? { deviceId: { exact: videoDeviceId }, width: 1920, height: 1080 } : { width: 1920, height: 1080 },
-        audio: false // real production audio is captured natively by the Stream Engine's own ffmpeg process (dshow) — never by this page or any other browser tab
-      });
+      const stream = await getCameraStream();
       const video = document.getElementById('camera-video');
       video.srcObject = stream;
       statusEl.classList.add('hidden');
@@ -131,7 +182,13 @@
       });
       videoTrack.addEventListener('unmute', () => { statusEl.classList.add('hidden'); });
     } catch (e) {
-      statusEl.textContent = '⚠️ Could not open camera: ' + e.message;
+      // 🩹 e.message is often EMPTY on OverconstrainedError (exactly the
+      // error a stale/cross-profile deviceId throws) — e.name and
+      // e.constraint carry the actually useful info in that case, and
+      // this was showing as a blank, undiagnosable "Could not open
+      // camera:" with nothing after it.
+      const detail = [e.name, e.message, e.constraint ? `(constraint: ${e.constraint})` : ''].filter(Boolean).join(' — ') || 'unknown error';
+      statusEl.textContent = '⚠️ Could not open camera: ' + detail;
       statusEl.classList.remove('hidden');
     }
   }
