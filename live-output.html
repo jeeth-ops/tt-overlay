@@ -91,6 +91,23 @@
         // to reach the Stream Engine's control plane itself.
         try { window.opener && window.opener.postMessage({ type: 'allsportslive-camera-ended', room }, location.origin); } catch (e) {}
       });
+
+      // 🩹 'mute'/'unmute' on a live track fire when the browser stops/
+      // resumes actually RECEIVING frames from the device while it stays
+      // otherwise open — exactly what a capture card reports when its
+      // HDMI/video input has no signal (wrong input selected, cable
+      // unplugged, source camera powered off) as opposed to a genuine
+      // getUserMedia failure or an 'ended' disconnect. Without this, that
+      // case looks identical to a normal black frame from the CSS
+      // background and is easy to mistake for a stream-engine bug rather
+      // than "no signal reaching the capture device".
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack.muted) { statusEl.textContent = '⚠️ No video signal from camera/capture card'; statusEl.classList.remove('hidden'); }
+      videoTrack.addEventListener('mute', () => {
+        statusEl.textContent = '⚠️ No video signal from camera/capture card (input connected but not sending frames)';
+        statusEl.classList.remove('hidden');
+      });
+      videoTrack.addEventListener('unmute', () => { statusEl.classList.add('hidden'); });
     } catch (e) {
       statusEl.textContent = '⚠️ Could not open camera: ' + e.message;
       statusEl.classList.remove('hidden');
