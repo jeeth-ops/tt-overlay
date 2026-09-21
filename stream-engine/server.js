@@ -638,6 +638,72 @@ $callback = {
 [TTOverlayWin32]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
 if ($found) { Write-Output $found }
 `;
+
+// 🩹 CONFIRMED IN THE FIELD: restarting stream-engine.js (e.g. to pick
+// up a code/flag change) does NOT close a dedicated capture window it
+// previously launched — that's a completely separate OS process, and
+// the new Node process has no memory of it (captureWindow.proc resets
+// to null on every restart). If the operator then triggers another
+// launch, Chrome/Edge's single-instance-per-user-data-dir lock means
+// the "new" launch can just get absorbed into the ALREADY-RUNNING old
+// window/process instead of actually starting a fresh one — so a flag
+// change (like the DirectCompositionVideoOverlays fix) silently never
+// takes effect until that stale process is gone, which looked exactly
+// like "I redeployed and restarted but it's still broken." This finds
+// any visible window whose title matches this match's expected prefix
+// and force-closes its OWNING PROCESS — scoped to the exact
+// "AllSportsLive-LiveOutput-<matchId>" title, so it can never touch the
+// operator's regular browser windows/tabs, which have their own,
+// different titles.
+const CLOSE_WINDOW_BY_TITLE_PS_TEMPLATE = `
+$ErrorActionPreference = 'Stop'
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class TTOverlayWin32Close {
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+    [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+}
+"@
+$procIds = New-Object 'System.Collections.Generic.List[uint32]'
+$callback = {
+    param($hWnd, $lParam)
+    if ([TTOverlayWin32Close]::IsWindowVisible($hWnd)) {
+        $len = [TTOverlayWin32Close]::GetWindowTextLength($hWnd)
+        if ($len -gt 0) {
+            $sb = New-Object System.Text.StringBuilder ($len + 1)
+            [TTOverlayWin32Close]::GetWindowText($hWnd, $sb, $sb.Capacity) | Out-Null
+            $title = $sb.ToString()
+            if ($title -like '*__PREFIX__*') {
+                [uint32]$procId = 0
+                [TTOverlayWin32Close]::GetWindowThreadProcessId($hWnd, [ref]$procId) | Out-Null
+                if ($procId -ne 0) { $procIds.Add($procId) }
+            }
+        }
+    }
+    return $true
+}
+[TTOverlayWin32Close]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
+foreach ($procId in $procIds) {
+    try { Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue } catch {}
+}
+`;
+function closeStaleCaptureWindowByTitle(matchId) {
+    if (!NATIVE_CAPTURE_SUPPORTED) return;
+    const prefix = windowTitleFor(matchId);
+    try {
+        const script = CLOSE_WINDOW_BY_TITLE_PS_TEMPLATE.replace('__PREFIX__', prefix);
+        const encoded = Buffer.from(script, 'utf16le').toString('base64');
+        spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { timeout: 5000, windowsHide: true });
+    } catch (e) {
+        console.log(`[stream-engine] closeStaleCaptureWindowByTitle: powershell lookup threw (${e.message}) — a stale window/process for "${prefix}" may still be running`);
+    }
+}
 // 🩹 Short-TTL cache, keyed by matchId — resolveWindowTitle() is now
 // called far more often than it used to be (the native preview image +
 // program-feed health badge in the panel poll /capture-preview and
@@ -895,6 +961,16 @@ function launchCaptureWindow({ matchId, videoDeviceId, videoLabel, origin, width
     if (!execPath) return { ok: false, error: 'Could not find Chrome or Edge on this PC (checked the usual install paths) — set the CAPTURE_BROWSER_PATH environment variable to its full .exe path, or use the fallback popup window' };
     if (!origin) return { ok: false, error: "origin required (the Cricket Panel's own page URL) — cannot build the Live Output URL" };
     try { fs.mkdirSync(CAPTURE_PROFILE_DIR, { recursive: true }); } catch (e) { /* best effort — Chromium will still create it */ }
+
+    // 🩹 See closeStaleCaptureWindowByTitle's own header comment: this
+    // process has no memory of a capture window a PREVIOUS stream-engine
+    // run may have launched (captureWindow.proc resets to null on every
+    // restart) — without this, a stale window can silently absorb this
+    // "launch" via Chrome/Edge's single-instance-per-profile lock instead
+    // of a real new process actually starting, so a flag/code change
+    // never takes effect until the operator happens to close it by hand.
+    // Always run this, not just when captureWindow.proc looks set.
+    closeStaleCaptureWindowByTitle(matchId);
 
     // 🩹 videoDeviceId is passed through for the popup-fallback path
     // (same browser profile as the panel, so it's valid there) but is
