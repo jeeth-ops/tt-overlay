@@ -638,6 +638,108 @@ $callback = {
 [TTOverlayWin32]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
 if ($found) { Write-Output $found }
 `;
+
+// 🩹 CONFIRMED IN THE FIELD: restarting stream-engine.js (e.g. to pick
+// up a code/flag change) does NOT close a dedicated capture window it
+// previously launched — that's a completely separate OS process, and
+// the new Node process has no memory of it (captureWindow.proc resets
+// to null on every restart). If the operator then triggers another
+// launch, Chrome/Edge's single-instance-per-user-data-dir lock means
+// the "new" launch can just get absorbed into the ALREADY-RUNNING old
+// window/process instead of actually starting a fresh one — so a flag
+// change (like the DirectCompositionVideoOverlays fix) silently never
+// takes effect until that stale process is gone, which looked exactly
+// like "I redeployed and restarted but it's still broken." This finds
+// any visible window whose title matches this match's expected prefix
+// and force-closes its OWNING PROCESS — scoped to the exact
+// "AllSportsLive-LiveOutput-<matchId>" title, so it can never touch the
+// operator's regular browser windows/tabs, which have their own,
+// different titles.
+const CLOSE_WINDOW_BY_TITLE_PS_TEMPLATE = `
+$ErrorActionPreference = 'Stop'
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class TTOverlayWin32Close {
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+    [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+}
+"@
+$procIds = New-Object 'System.Collections.Generic.List[uint32]'
+$callback = {
+    param($hWnd, $lParam)
+    if ([TTOverlayWin32Close]::IsWindowVisible($hWnd)) {
+        $len = [TTOverlayWin32Close]::GetWindowTextLength($hWnd)
+        if ($len -gt 0) {
+            $sb = New-Object System.Text.StringBuilder ($len + 1)
+            [TTOverlayWin32Close]::GetWindowText($hWnd, $sb, $sb.Capacity) | Out-Null
+            $title = $sb.ToString()
+            if ($title -like '*__PREFIX__*') {
+                [uint32]$procId = 0
+                [TTOverlayWin32Close]::GetWindowThreadProcessId($hWnd, [ref]$procId) | Out-Null
+                if ($procId -ne 0) { $procIds.Add($procId) }
+            }
+        }
+    }
+    return $true
+}
+[TTOverlayWin32Close]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
+foreach ($procId in $procIds) {
+    try { Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue } catch {}
+}
+`;
+function closeStaleCaptureWindowByTitle(matchId) {
+    if (!NATIVE_CAPTURE_SUPPORTED) return;
+    const prefix = windowTitleFor(matchId);
+    try {
+        const script = CLOSE_WINDOW_BY_TITLE_PS_TEMPLATE.replace('__PREFIX__', prefix);
+        const encoded = Buffer.from(script, 'utf16le').toString('base64');
+        spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { timeout: 5000, windowsHide: true });
+    } catch (e) {
+        console.log(`[stream-engine] closeStaleCaptureWindowByTitle: powershell lookup threw (${e.message}) — a stale window/process for "${prefix}" may still be running`);
+    }
+}
+
+// 🩹 CONFIRMED IN THE FIELD: closeStaleCaptureWindowByTitle above only
+// finds a stale process if its window has ALREADY set a matching title
+// — a process that crashed/got stuck BEFORE live-output.html's script
+// ran far enough to set document.title (a bad launch, an early JS
+// error, a page that never finished loading) is invisible to that
+// title search entirely, yet still holds Chrome/Edge's single-instance
+// lock on CAPTURE_PROFILE_DIR — so every subsequent launch attempt gets
+// silently forwarded to that stuck process and exits almost instantly
+// (code=0, no error) instead of actually starting fresh, no matter how
+// many times the operator retries. This is a much stronger guarantee:
+// it kills ANY process (titled or not, visible or not, however stuck)
+// whose command line references our exact isolated profile directory —
+// nothing else on the operator's PC would ever have that exact argument,
+// so this can never touch their regular browser. A short sleep after
+// the kill loop (inside the SAME script, not a separate JS-level delay)
+// gives Windows a moment to fully release the process's handles/lock
+// before this function returns and launchCaptureWindow spawns the next
+// one.
+function closeStaleCaptureWindowByProfile() {
+    if (!NATIVE_CAPTURE_SUPPORTED) return;
+    try {
+        const escapedProfileDir = CAPTURE_PROFILE_DIR.replace(/'/g, "''");
+        const script = `
+$ErrorActionPreference = 'Stop'
+Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -like '*--user-data-dir=${escapedProfileDir}*' } | ForEach-Object {
+    try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+}
+Start-Sleep -Milliseconds 400
+`;
+        const encoded = Buffer.from(script, 'utf16le').toString('base64');
+        spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { timeout: 8000, windowsHide: true });
+    } catch (e) {
+        console.log(`[stream-engine] closeStaleCaptureWindowByProfile: powershell threw (${e.message}) — a stuck process on the capture profile may still be holding its single-instance lock`);
+    }
+}
 // 🩹 Short-TTL cache, keyed by matchId — resolveWindowTitle() is now
 // called far more often than it used to be (the native preview image +
 // program-feed health badge in the panel poll /capture-preview and
@@ -896,6 +998,21 @@ function launchCaptureWindow({ matchId, videoDeviceId, videoLabel, origin, width
     if (!origin) return { ok: false, error: "origin required (the Cricket Panel's own page URL) — cannot build the Live Output URL" };
     try { fs.mkdirSync(CAPTURE_PROFILE_DIR, { recursive: true }); } catch (e) { /* best effort — Chromium will still create it */ }
 
+    // 🩹 See both functions' own header comments: this process has no
+    // memory of a capture window a PREVIOUS stream-engine run may have
+    // launched (captureWindow.proc resets to null on every restart) —
+    // without this, a stale/stuck process can silently absorb this
+    // "launch" via Chrome/Edge's single-instance-per-profile lock instead
+    // of a real new process actually starting, so a flag/code change
+    // never takes effect no matter how many times the operator retries.
+    // Profile-based first (catches a process too stuck/crashed to have
+    // ever set a matching window title at all — the case that made the
+    // title-only version insufficient); title-based second as a backstop
+    // for anything the profile-dir match somehow missed. Always run
+    // both, not just when captureWindow.proc looks set.
+    closeStaleCaptureWindowByProfile();
+    closeStaleCaptureWindowByTitle(matchId);
+
     // 🩹 videoDeviceId is passed through for the popup-fallback path
     // (same browser profile as the panel, so it's valid there) but is
     // USELESS to this dedicated window: Chrome/Edge salts getUserMedia
@@ -958,7 +1075,11 @@ function launchCaptureWindow({ matchId, videoDeviceId, videoLabel, origin, width
     ];
     let proc;
     try {
-        proc = spawn(execPath, args, { stdio: 'ignore', detached: false });
+        // stderr piped (not 'ignore') so an immediate/unexpected exit
+        // (e.g. still getting single-instance-forwarded despite the
+        // cleanup above, or a genuine Chromium startup error) actually
+        // says why instead of just "exited (code=0)" with no explanation.
+        proc = spawn(execPath, args, { stdio: ['ignore', 'ignore', 'pipe'], detached: false });
     } catch (e) {
         return { ok: false, error: `Could not launch capture browser: ${e.message}` };
     }
@@ -968,9 +1089,20 @@ function launchCaptureWindow({ matchId, videoDeviceId, videoLabel, origin, width
     captureWindow.execPath = execPath;
     captureWindow.lastCameraEndedAt = null;
     captureWindow.lastCameraEndedReason = null;
+    let captureWindowStderr = '';
+    if (proc.stderr) proc.stderr.on('data', (d) => { captureWindowStderr += d; if (captureWindowStderr.length > 4000) captureWindowStderr = captureWindowStderr.slice(-4000); });
     proc.on('exit', (code, signal) => {
         if (captureWindow.proc !== proc) return; // already superseded/closed
-        console.log(`[stream-engine] dedicated capture window exited (code=${code}, signal=${signal})`);
+        const elapsedMs = Date.now() - captureWindow.launchedAt;
+        // 🩹 An exit within ~2s of launch, with code 0, is the exact
+        // signature of Chrome/Edge's single-instance forwarding (it
+        // handed the URL to an already-running process on this profile
+        // and quit immediately) rather than a real crash — flagged
+        // explicitly here since "code=0" alone reads as a clean, boring
+        // exit and hides that this is actually a launch that never
+        // really happened.
+        const suspectedSingleInstanceForward = code === 0 && elapsedMs < 2000;
+        console.log(`[stream-engine] dedicated capture window exited (code=${code}, signal=${signal}, ${elapsedMs}ms after launch)${suspectedSingleInstanceForward ? ' — likely single-instance-forwarded to an already-running process rather than a real crash; report this if it keeps happening after closeStaleCaptureWindowByProfile' : ''}${captureWindowStderr ? `\n[stream-engine] capture window stderr:\n${captureWindowStderr}` : ''}`);
         captureWindow.proc = null;
     });
     proc.on('error', (err) => {
