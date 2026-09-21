@@ -1965,11 +1965,22 @@ app.get('/capture-preview', (req, res) => {
     // reorder from gdigrab's native bgra (core, universally-supported
     // swscale functionality, unlike the JPEG range math) so it should
     // work even on a stripped-down build like this one.
+    // 🩹 Confirmed in the field: the actual YouTube push shows the camera
+    // feed fine, but this single-frame preview came back solid black —
+    // a real gdigrab quirk, not a camera/signal problem. Grabbing exactly
+    // frame #0 can catch gdigrab's very first internal frame before the
+    // window has actually painted anything (camera video, overlay iframe)
+    // — the live encoder never shows this because it's a continuous
+    // stream, so a black frame at t=0 is invisible in it. select=gte(n,5)
+    // makes ffmpeg wait for 5 real captured frames (1s at this 5fps)
+    // before the single -frames:v 1 output frame is taken, so it always
+    // grabs an already-painted frame instead of the first, possibly-blank
+    // one.
     const args = [
         '-hide_banner', '-loglevel', 'error',
         '-f', 'gdigrab', '-framerate', '5', '-i', `title=${windowTitle}`,
+        '-vf', `${cropScaleFilter(width, height, useGpuScale)},format=rgba,select='gte(n\\,5)'`,
         '-frames:v', '1',
-        '-vf', `${cropScaleFilter(width, height, useGpuScale)},format=rgba`,
         '-f', 'image2', '-vcodec', 'png',
         'pipe:1',
     ];
