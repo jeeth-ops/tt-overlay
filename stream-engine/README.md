@@ -1,5 +1,53 @@
 # AllSportsLive Stream Engine (local, Parts 2 & 3)
 
+> **Note:** this file predates the current native-capture architecture in
+> `server.js` (gdigrab + dshow → NVENC, no MediaRecorder/`/ingest` in the
+> video path — see `server.js`'s own header comment for the authoritative,
+> up-to-date description). The sections below about `/ingest` and
+> `localBuffer.js` describe an earlier design and are kept for history;
+> don't rely on them for how video actually flows today.
+
+## Native preview showing black/white — root cause + fix
+
+If the "Preview Native Capture (gdigrab)" image, or the live YouTube
+output itself, came back solid black or solid white even though Live
+Output looked correct on screen, this was almost always the actual
+`window.open()` popup path: Chromium composites a GPU-accelerated window
+through DirectComposition, and gdigrab's capture is classic GDI `BitBlt`,
+which cannot read a DirectComposition swapchain — it gets back whatever's
+behind/around it, typically solid white or black, even though a human
+looking at the same window sees it rendering perfectly. `window.open()`
+out of the Cricket Panel's own already-running (already GPU-accelerated)
+browser process can never turn GPU compositing off for just that one
+popup — Chromium flags only take effect when a **new process** launches.
+
+The fix: the Stream Engine now launches Live Output itself, as its own
+dedicated Chromium process, with `--disable-gpu` (see
+`launchCaptureWindow`/`resolveCaptureBrowserExecutable` in `server.js`)
+— the same "disable GPU" setting vMix documents for its own embedded-
+Chromium Browser Input when a capture path needs to read pixels
+directly. `cricket-panel.html`'s `ensureLiveOutputWindow()` calls
+`POST /capture-window/launch` for this and only falls back to the old
+`window.open()` popup if a Chrome/Edge install can't be found (set
+`CAPTURE_BROWSER_PATH` to its full `.exe` path if it's in a non-standard
+location) or the OS isn't Windows.
+
+On top of that fix, two more layers exist specifically so a bad feed is
+never silently sent live:
+
+- **A native preview that mirrors the real capture** — the panel's
+  "Native Preview" image polls `GET /capture-preview` (an actual gdigrab
+  frame, the same path the encoder uses), not the browser tab's own DOM
+  render of `live-output.html`, which can look fine even when gdigrab
+  itself sees a blank surface.
+- **An automatic program-feed health check** — `POST /go-live` samples
+  ~1.4s of the real capture through ffmpeg's own `blackdetect`/
+  `freezedetect` filters (`GET /program-feed-health` exposes the same
+  check on demand) and refuses to start the stream if it comes back
+  solid black or solid white, returning a `PROGRAM OUTPUT ERROR` instead.
+  A background sampler (`monitorProgramFeedHealth`, every ~30s) keeps
+  watching while live/recording and surfaces the result via `/health`.
+
 A small local service that runs **on the operator's own PC**, next to the
 Cricket Panel browser tab. One browser capture (camera + the existing
 Cricket Overlay, composited in `../live-output.html`), two jobs, fed by
@@ -32,6 +80,12 @@ the exact data/video flow.
   - put it on your system `PATH`, or
   - set the `FFMPEG_PATH` environment variable to its full path.
 - An NVIDIA GPU + driver that supports NVENC (RTX 3050 does).
+- Google Chrome or Microsoft Edge installed at one of the usual Windows
+  install paths (or set `CAPTURE_BROWSER_PATH` to its full `.exe` path).
+  Used to launch Live Output as a dedicated, GPU-compositing-disabled
+  process — see "Native preview showing black/white" above. If neither
+  is found, the panel falls back to a `window.open()` popup, which does
+  NOT get this fix.
 
 ## Setup
 
@@ -70,6 +124,18 @@ back to CPU (`libx264`) encoding.
 | POST | `/recording-stop` | `{matchId}` — stops it (buffer is kept ~90s for in-flight clips, then deleted) |
 | POST | `/clip` | `{eventType, timestamp, matchId, ballMeta}` — cuts a clip from the local buffer, forwards it to `mainServerUrl`'s `/api/clips/ingest` |
 | POST | `/set-folder` | legacy no-op — kept so older UI calls don't break; Drive/R2 folder routing is handled entirely by server.js now |
+
+### Native capture / program-feed endpoints (current, accurate)
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/capture-preview?matchId=` | one real gdigrab frame as a PNG — same path the recorder/encoder use |
+| GET | `/program-feed-health?matchId=` | on-demand black/white/frozen sample of the real capture (see "Native preview showing black/white" above) |
+| GET/POST | `/capture-config` | get/set the gdigrab crop margins (`cropTop`/`cropBottom`/`cropLeft`/`cropRight`) |
+| POST | `/capture-window/launch` | `{matchId, videoDeviceId, origin, width, height}` — launches Live Output as a dedicated, GPU-compositing-disabled Chromium process |
+| POST | `/capture-window/close` | closes that dedicated process |
+| GET | `/capture-window/status` | whether it's running + last reported camera-ended reason |
+| POST | `/capture-window/camera-ended` | `live-output.html` reports here directly when its camera track ends/has no signal |
 
 ## Clip engine (Part 3)
 

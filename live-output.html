@@ -57,6 +57,28 @@
   const videoDeviceId = params.get('video') || '';
   const statusEl = document.getElementById('lo-status');
 
+  // 🔗 Talks DIRECTLY to the local Stream Engine (127.0.0.1:5006, CORS
+  // open — see server.js) instead of relying on window.opener.postMessage.
+  // This window is now normally launched by the Stream Engine itself as
+  // its OWN dedicated Chromium process (see launchCaptureWindow in
+  // server.js) — a separate OS process has no window.opener at all, so
+  // postMessage to it would silently do nothing. Reporting straight to
+  // the engine works the same way whether this page ended up here via
+  // that dedicated launch or the window.open() popup fallback.
+  const STREAM_ENGINE_URL = 'http://127.0.0.1:5006';
+  function reportToEngine(reason){
+    try {
+      fetch(`${STREAM_ENGINE_URL}/capture-window/camera-ended`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason, room })
+      }).catch(() => {});
+    } catch (e) { /* best effort — the engine's own health checks will still catch a dead feed */ }
+    // Kept for the popup fallback path, where a window.opener DOES exist
+    // (the Cricket Panel tab that called window.open) — harmless no-op
+    // when there is no opener (dedicated capture window).
+    try { window.opener && window.opener.postMessage({ type: 'allsportslive-camera-ended', room, reason }, location.origin); } catch (e) {}
+  }
+
   // 🪟 Must match windowTitleFor(matchId) in stream-engine/server.js
   // EXACTLY — this is how ffmpeg's `-f gdigrab -i title=...` finds this
   // window to capture. Changing this format on either side breaks
@@ -85,11 +107,11 @@
       stream.getVideoTracks()[0].addEventListener('ended', () => {
         statusEl.textContent = '⚠️ Camera disconnected';
         statusEl.classList.remove('hidden');
-        // Tell the panel tab (if it opened this window) so it can stop
-        // the live push/recording instead of silently continuing to
-        // capture a frozen/black frame — this window has no other way
-        // to reach the Stream Engine's control plane itself.
-        try { window.opener && window.opener.postMessage({ type: 'allsportslive-camera-ended', room }, location.origin); } catch (e) {}
+        // Tell the Stream Engine so it can stop the live push/recording
+        // instead of silently continuing to capture a frozen/black frame
+        // — this window has no other way to reach the Stream Engine's
+        // control plane itself.
+        reportToEngine('Camera disconnected (track ended)');
       });
 
       // 🩹 'mute'/'unmute' on a live track fire when the browser stops/
