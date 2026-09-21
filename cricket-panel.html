@@ -1080,6 +1080,24 @@
     </div>
   </div>
 
+  <!-- 📁 Recordings/clips folder browser — a browser can't open a native
+       OS folder-picker dialog and hand back a real path (no web API
+       exposes one, deliberately, for security), so this lists folders
+       FROM the local Stream Engine itself (GET /browse-folders — it's a
+       local process with real filesystem access) as a clickable list
+       instead. Reuses the same wicket-modal shell as every other popup. -->
+  <div class="wicket-modal-overlay" id="folder-browse-modal-overlay">
+    <div class="wicket-modal wide" id="folder-browse-modal">
+      <h3>📁 Choose Recordings Folder</h3>
+      <div class="wm-sub" id="folder-browse-path">This PC</div>
+      <div id="folder-browse-list" style="max-height:280px; overflow-y:auto; display:flex; flex-direction:column; gap:4px; margin:10px 0;"></div>
+      <div style="display:flex; gap:8px;">
+        <button type="button" class="small ghost full" id="folder-browse-cancel-btn">Cancel</button>
+        <button type="button" class="small full" id="folder-browse-select-btn" disabled>Select This Folder</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 🏏 Automatic player card confirmation — SHOW/SKIP with a 7s
        auto-continue, opened by queueAutoCardFlow() for a newly-selected
        batsman or bowler (never for the outgoing/dismissed player — see
@@ -1393,9 +1411,10 @@
             <option value="480p">480p (854×480)</option>
           </select>
         </label>
-        <label style="font-size:11px; opacity:.7; display:block; margin-bottom:8px;">Recordings/Clips Folder (this PC — type the full path, e.g. D:\CricketRecordings)
-          <div class="link-row" style="margin-top:3px;">
+        <label style="font-size:11px; opacity:.7; display:block; margin-bottom:8px;">Recordings/Clips Folder (this PC)
+          <div class="link-row" style="margin-top:3px; gap:6px;">
             <input type="text" id="rec-data-root-input" placeholder="Leave blank to use the default folder next to Stream Engine">
+            <button class="small ghost" id="rec-data-root-browse-btn" type="button">📁 Choose Folder</button>
             <button class="small" id="rec-data-root-save-btn">Save</button>
           </div>
         </label>
@@ -3747,6 +3766,65 @@ document.getElementById('rec-data-root-save-btn').addEventListener('click', () =
     statusEl.textContent = '❌ Could not reach the local Stream Engine';
     toast('⚠️ Could not reach the local Stream Engine');
   });
+});
+
+// 📁 Folder browser modal — lists real folders on the operator's PC via
+// the local Stream Engine's GET /browse-folders (see server.js's own
+// comment on that route for why this exists instead of a native picker
+// dialog: no web API can hand this page a real OS path). Starts at the
+// drive list (path=''); clicking a row navigates into it, ".. (up one
+// level)" navigates to its parent, "Select This Folder" fills the text
+// input with wherever the browser currently is.
+let folderBrowseCurrentPath = '';
+async function folderBrowseNavigate(toPath){
+  const listEl = document.getElementById('folder-browse-list');
+  const pathEl = document.getElementById('folder-browse-path');
+  const selectBtn = document.getElementById('folder-browse-select-btn');
+  listEl.innerHTML = '<div style="opacity:.6; font-size:12px; padding:8px;">Loading…</div>';
+  try {
+    const res = await fetch(`${STREAM_ENGINE_URL}/browse-folders?path=${encodeURIComponent(toPath)}`).then(r => r.json());
+    if(!res.success){ listEl.innerHTML = `<div style="color:#ff6b6b; font-size:12px; padding:8px;">${res.error || 'Could not open this folder'}</div>`; return; }
+    folderBrowseCurrentPath = res.path || '';
+    pathEl.textContent = folderBrowseCurrentPath || 'This PC — choose a drive';
+    selectBtn.disabled = !folderBrowseCurrentPath;
+    listEl.innerHTML = '';
+    if(res.parent){
+      const upRow = document.createElement('button');
+      upRow.type = 'button'; upRow.className = 'full small ghost';
+      upRow.style.textAlign = 'left'; upRow.style.justifyContent = 'flex-start';
+      upRow.textContent = '⬆ .. (up one level)';
+      upRow.addEventListener('click', () => folderBrowseNavigate(res.parent));
+      listEl.appendChild(upRow);
+    }
+    if(!res.entries.length){
+      const empty = document.createElement('div');
+      empty.style.cssText = 'opacity:.5; font-size:12px; padding:8px;';
+      empty.textContent = '(no subfolders here)';
+      listEl.appendChild(empty);
+    }
+    for(const entry of res.entries){
+      const row = document.createElement('button');
+      row.type = 'button'; row.className = 'full small ghost';
+      row.style.textAlign = 'left'; row.style.justifyContent = 'flex-start';
+      row.textContent = '📁 ' + entry.name;
+      row.addEventListener('click', () => folderBrowseNavigate(entry.path));
+      listEl.appendChild(row);
+    }
+  } catch(e) {
+    listEl.innerHTML = '<div style="color:#ff6b6b; font-size:12px; padding:8px;">Could not reach the local Stream Engine</div>';
+  }
+}
+document.getElementById('rec-data-root-browse-btn').addEventListener('click', () => {
+  document.getElementById('folder-browse-modal-overlay').classList.add('show');
+  folderBrowseNavigate('');
+});
+document.getElementById('folder-browse-cancel-btn').addEventListener('click', () => {
+  document.getElementById('folder-browse-modal-overlay').classList.remove('show');
+});
+document.getElementById('folder-browse-select-btn').addEventListener('click', () => {
+  if(!folderBrowseCurrentPath) return;
+  document.getElementById('rec-data-root-input').value = folderBrowseCurrentPath;
+  document.getElementById('folder-browse-modal-overlay').classList.remove('show');
 });
 
 /* Drive folder link — saved once per match, server resolves the folder
