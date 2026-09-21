@@ -2650,7 +2650,7 @@ async function startRecording(){
     // exactly the same endpoint ClipperHelper.exe always posted to).
     // audioDeviceName is the NATIVE dshow device the recorder's own
     // ffmpeg process opens directly — this tab no longer captures audio.
-    body: JSON.stringify({ matchId, tournamentId, mainServerUrl: location.origin, recordingResolution: document.getElementById('rec-resolution-select')?.value || '1080p', recordingFps: 30, audioDeviceName })
+    body: JSON.stringify({ matchId, tournamentId, mainServerUrl: location.origin, recordingResolution: document.getElementById('rec-resolution-select')?.value || '1080p', recordingFps: 30, audioDeviceName, cameraDeviceName: document.getElementById('live-video-device').value })
   }).then(r => r.json()).catch(() => ({ success:false }));
 
   if(!result.success){
@@ -2774,6 +2774,12 @@ let liveActive = false;
 let liveHealthPollTimer = null;
 let streamingDesired = false;   // Live Studio's own intent — see ensureLiveOutputWindow/releaseLiveOutputWindowIfUnused
 let captureWindowActive = false;    // true when the Stream Engine is running Live Output as ITS OWN dedicated, GPU-compositing-disabled process (see ensureLiveOutputWindow) rather than a window.open() popup out of this tab
+// 🧪 NATIVE PROGRAM FEED (opt-in, server-side flag — see NATIVE_PROGRAM_FEED
+// in stream-engine/server.js) — when on, there is no Live Output browser
+// window at all: the Stream Engine's own camera+overlay compositor IS the
+// program feed (see nativePipeline.js). ensureLiveOutputWindow()/
+// populateCameraDevices() below branch on this, set from GET /status.
+let nativeProgramFeedActive = false;
 let captureWindowMatchId = null;
 let lastSeenCameraEndedAt = null;   // dedupes /status's captureWindow.lastCameraEndedAt so one disconnect doesn't fire stopLive/stopRecording repeatedly
 let nativePreviewTimer = null;
@@ -2794,6 +2800,22 @@ let nativePreviewTimer = null;
    released it.
    ============================================================ */
 async function ensureLiveOutputWindow(matchId){
+  // 🧪 NATIVE PROGRAM FEED — there is no Live Output browser window at
+  // all in this mode: the Stream Engine's own camera+overlay compositor
+  // (see nativePipeline.js) opens the camera and renders the overlay
+  // itself, headlessly, via Chrome DevTools Protocol — nothing for this
+  // tab to open or capture. /recording-start and startLive() pass
+  // cameraDeviceName straight through instead.
+  if(nativeProgramFeedActive){
+    if(!document.getElementById('live-video-device').value) return { ok:false, error:'No camera selected — pick one under Live Studio first' };
+    lsSetHealth('ls-h-camera', true, 'Connected (native)');
+    lsSetHealth('ls-h-mic', true, 'Connected');
+    lsSetHealth('ls-h-overlay', true, 'Connected (native)');
+    document.getElementById('ls-preview-placeholder').style.display = 'none';
+    startNativePreviewPolling(matchId);
+    return { ok:true };
+  }
+
   if(captureWindowActive && captureWindowMatchId === matchId) return { ok:true };
   if(liveOutputWindow && !liveOutputWindow.closed) return { ok:true };
   const videoSel = document.getElementById('live-video-device');
@@ -2928,13 +2950,33 @@ window.addEventListener('message', (e) => {
 // program feed" — the DOM iframe above shows this BROWSER TAB's own
 // render of live-output.html, which is NOT necessarily what gdigrab
 // actually captures; this image is.
+// 🩹 CONFIRMED IN THE FIELD: polling BOTH /capture-preview and
+// /program-feed-health every 2s meant two fresh ffmpeg processes
+// spinning up back-to-back, non-stop, for as long as Live Studio was
+// open — on top of the dedicated capture window already rendering via
+// CPU (--disable-gpu, see launchCaptureWindow), this made the whole PC
+// noticeably sluggish. Neither of these needs to be that fresh — a
+// still-image preview and an occasional health sample are both
+// diagnostics, not the real program feed (the actual recorder/live
+// encoder run their own independent, continuous native capture, totally
+// unaffected by how often the PANEL happens to poll these). Split into
+// two much slower, independent timers instead of one 2s tick doing both:
+// the image (near-instant single-frame capture) every 5s, the health
+// check (the heavier ~1.4s+ real-time sample) only every 15s.
+const NATIVE_PREVIEW_IMAGE_INTERVAL_MS = 5000;
+const NATIVE_PREVIEW_HEALTH_INTERVAL_MS = 15000;
+let nativePreviewHealthTimer = null;
+
 function startNativePreviewPolling(matchId){
   stopNativePreviewPolling();
   const img = document.getElementById('ls-native-preview-img');
   const badge = document.getElementById('ls-programfeed-badge');
   if(img) img.style.display = 'block';
-  async function tick(){
+
+  function tickImage(){
     if(img) img.src = `${STREAM_ENGINE_URL}/capture-preview?matchId=${encodeURIComponent(matchId)}&t=${Date.now()}`;
+  }
+  async function tickHealth(){
     try {
       const health = await fetch(`${STREAM_ENGINE_URL}/program-feed-health?matchId=${encodeURIComponent(matchId)}`).then(r => r.json());
       if(badge){
@@ -2946,12 +2988,17 @@ function startNativePreviewPolling(matchId){
       }
     } catch(e) { /* Stream Engine unreachable — leave the last-known badge state up */ }
   }
-  tick();
-  nativePreviewTimer = setInterval(tick, 2000);
+
+  tickImage();
+  tickHealth();
+  nativePreviewTimer = setInterval(tickImage, NATIVE_PREVIEW_IMAGE_INTERVAL_MS);
+  nativePreviewHealthTimer = setInterval(tickHealth, NATIVE_PREVIEW_HEALTH_INTERVAL_MS);
 }
 function stopNativePreviewPolling(){
   if(nativePreviewTimer) clearInterval(nativePreviewTimer);
+  if(nativePreviewHealthTimer) clearInterval(nativePreviewHealthTimer);
   nativePreviewTimer = null;
+  nativePreviewHealthTimer = null;
   const badge = document.getElementById('ls-programfeed-badge');
   if(badge){ badge.textContent = ''; }
   const img = document.getElementById('ls-native-preview-img');
@@ -2989,6 +3036,10 @@ async function refreshEngineHealthDisplay(){
     return;
   }
   lsSetHealth('ls-h-engine', true, 'Running');
+  if(!!status.nativeProgramFeed !== nativeProgramFeedActive){
+    nativeProgramFeedActive = !!status.nativeProgramFeed;
+    populateCameraDevices(); // device list source changes between modes — see its own comment
+  }
   lsSetHealth('ls-h-encoder', status.nvencAvailable, status.nvencAvailable ? 'Ready (NVENC)' : `Not ready — ${status.nvencDetail || 'NVENC unavailable'}`);
   lsSetHealth('ls-h-streamurl', status.streamUrlSet, status.streamUrlSet ? 'Configured' : 'Not set');
   lsSetHealth('ls-h-streamkey', status.streamKeySet, status.streamKeySet ? 'Configured' : 'Not set');
@@ -3063,12 +3114,43 @@ function showCannotStart(reason){
   else box.style.display = 'none';
 }
 
-// Camera device list stays browser-side (navigator.mediaDevices) — this
-// only picks which camera live-output.html's <video> preview shows
-// (getUserMedia there, unchanged); it is NOT the production video path
-// (see live-output.html's own header comment — the Stream Engine
-// captures that window's rendered pixels natively, not this stream).
+// Camera device list. Two completely different sources depending on
+// nativeProgramFeedActive (see GET /status's nativeProgramFeed flag):
+//
+// - NATIVE mode: the Stream Engine's own dshow enumeration (GET
+//   /video-devices) — the ACTUAL production camera source (opened
+//   directly by the native compositor's ffmpeg process, no browser
+//   involved at all). The dropdown value is the real dshow device name.
+// - LEGACY mode: browser-side (navigator.mediaDevices) — only picks
+//   which camera live-output.html's <video> preview shows; NOT the
+//   production video path (the Stream Engine's gdigrab captures that
+//   window's rendered pixels, not this stream directly).
 async function populateCameraDevices(){
+  const videoSel = document.getElementById('live-video-device');
+  const prevVideo = videoSel.value;
+
+  if(nativeProgramFeedActive){
+    try {
+      const res = await fetch(`${STREAM_ENGINE_URL}/video-devices`).then(r => r.json());
+      videoSel.innerHTML = '';
+      if(!res.success || !res.devices || !res.devices.length){
+        const opt = document.createElement('option');
+        opt.value = ''; opt.textContent = res.detail || 'No cameras found';
+        videoSel.appendChild(opt);
+        return;
+      }
+      res.devices.forEach((name) => {
+        const opt = document.createElement('option');
+        opt.value = name; opt.textContent = name;
+        videoSel.appendChild(opt);
+      });
+      if(prevVideo) videoSel.value = prevVideo;
+    } catch(e) {
+      videoSel.innerHTML = '<option value="">Stream Engine unreachable</option>';
+    }
+    return;
+  }
+
   try {
     // One throwaway getUserMedia call so device labels aren't blank —
     // browsers hide labels until permission has been granted once.
@@ -3077,8 +3159,6 @@ async function populateCameraDevices(){
   } catch(e) { /* denied is fine — dropdown just shows unlabeled devices */ }
 
   const devices = await navigator.mediaDevices.enumerateDevices();
-  const videoSel = document.getElementById('live-video-device');
-  const prevVideo = videoSel.value;
   videoSel.innerHTML = '';
   devices.filter(d => d.kind === 'videoinput').forEach((d,i) => {
     const opt = document.createElement('option');
@@ -3267,7 +3347,7 @@ async function startLive(){
     // itself samples the actual program feed here (black/white/frozen —
     // see runProgramFeedHealthCheck in server.js) BEFORE it ever opens
     // RTMPS, and refuses to start if that comes back bad.
-    body: JSON.stringify({ resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec, qualityMode: selQualityMode, autoResolutionFallback: selAutoFallback, matchId, audioDeviceName })
+    body: JSON.stringify({ resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec, qualityMode: selQualityMode, autoResolutionFallback: selAutoFallback, matchId, audioDeviceName, cameraDeviceName: document.getElementById('live-video-device').value, mainServerUrl: location.origin })
   }).then(r => r.json()).catch(() => ({ success:false, error:'Stream Engine unreachable' }));
 
   if(!goLiveRes.success && goLiveRes.programFeedHealth){
@@ -3292,7 +3372,7 @@ async function startLive(){
     toast('⚠️ Going live anyway — operator override of the program feed check');
     goLiveRes = await fetch(`${STREAM_ENGINE_URL}/go-live`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec, qualityMode: selQualityMode, autoResolutionFallback: selAutoFallback, matchId, audioDeviceName, skipProgramFeedHealthCheck: true })
+      body: JSON.stringify({ resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec, qualityMode: selQualityMode, autoResolutionFallback: selAutoFallback, matchId, audioDeviceName, cameraDeviceName: document.getElementById('live-video-device').value, mainServerUrl: location.origin, skipProgramFeedHealthCheck: true })
     }).then(r => r.json()).catch(() => ({ success:false, error:'Stream Engine unreachable' }));
   }
 
@@ -3410,7 +3490,7 @@ async function lowerStreamQuality(){
   // hiccup that has nothing to do with the picture itself.
   const goLiveRes = await fetch(`${STREAM_ENGINE_URL}/go-live`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ resolution: nextResolution, fps: nextFps, bitrateKbps: nextBitrateKbps, keyframeIntervalSec: current.keyframeIntervalSec, qualityMode: 'manual', autoResolutionFallback: false, matchId: currentMatchId(), audioDeviceName: document.getElementById('live-audio-device').value, skipProgramFeedHealthCheck: true })
+    body: JSON.stringify({ resolution: nextResolution, fps: nextFps, bitrateKbps: nextBitrateKbps, keyframeIntervalSec: current.keyframeIntervalSec, qualityMode: 'manual', autoResolutionFallback: false, matchId: currentMatchId(), audioDeviceName: document.getElementById('live-audio-device').value, cameraDeviceName: document.getElementById('live-video-device').value, mainServerUrl: location.origin, skipProgramFeedHealthCheck: true })
   }).then(r => r.json()).catch(() => ({ success: false, error: 'Stream Engine unreachable' }));
 
   loweringQuality = false;
