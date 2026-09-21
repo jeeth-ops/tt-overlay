@@ -2788,8 +2788,22 @@ async function ensureLiveOutputWindow(matchId){
   // screen size fills the screen the same way without entering that OS
   // "maximized" state, so there's no invisible-border bug to hit and no
   // reason for the operator to click maximize themselves.
+  //
+  // 🩹 'popup=yes,toolbar=no,location=no,menubar=no,status=no' — CONFIRMED
+  // ON REAL HARDWARE this was the actual cause of the "capture-preview
+  // comes back solid white" bug, nothing to do with maximizing: without a
+  // popup feature string, Chrome opens window.open() as an ordinary
+  // TABBED window with its own full tab strip + address bar + bookmarks
+  // bar on top of the page — all of that is light-gray/white Chrome UI,
+  // not this page's own black canvas. stream-engine's default crop
+  // (captureConfig.cropTop = 32px) only accounts for a plain title bar,
+  // nowhere near enough to remove that much extra UI, so the captured
+  // frame was mostly that gray toolbar area scaled down — exactly the
+  // blank/white image seen in testing. A real popup window (what these
+  // features produce) has just a title bar, matching the crop this was
+  // already built for.
   liveOutputWindow = window.open(url, 'liveOutputWindow',
-    `width=${Math.max(1280, screen.availWidth || 1280)},height=${Math.max(740, screen.availHeight || 740)},left=0,top=0`);
+    `width=${Math.max(1280, screen.availWidth || 1280)},height=${Math.max(740, screen.availHeight || 740)},left=0,top=0,popup=yes,toolbar=no,location=no,menubar=no,status=no,scrollbars=no`);
   if(!liveOutputWindow) return { ok:false, error:'Popup blocked — allow popups for this site and try again' };
   const frame = document.getElementById('ls-preview-frame');
   if(frame){ frame.src = url; frame.style.display = 'block'; document.getElementById('ls-preview-placeholder').style.display = 'none'; }
@@ -2987,8 +3001,13 @@ function openLiveOutputWindow(){
   // screen size fills the screen the same way without entering that OS
   // "maximized" state, so there's no invisible-border bug to hit and no
   // reason for the operator to click maximize themselves.
+  // popup=yes,toolbar=no,... — see the matching comment in
+  // ensureLiveOutputWindow above: without this, Chrome opens window.open()
+  // as an ordinary tabbed window with its own address bar/tab strip on
+  // top of the page, and THAT (not maximizing) is what was making
+  // capture-preview come back solid white.
   liveOutputWindow = window.open(url, 'liveOutputWindow',
-    `width=${Math.max(1280, screen.availWidth || 1280)},height=${Math.max(740, screen.availHeight || 740)},left=0,top=0`);
+    `width=${Math.max(1280, screen.availWidth || 1280)},height=${Math.max(740, screen.availHeight || 740)},left=0,top=0,popup=yes,toolbar=no,location=no,menubar=no,status=no,scrollbars=no`);
   lsSetHealth('ls-h-camera', true, 'Connected');
   lsSetHealth('ls-h-overlay', true, 'Connected');
   document.getElementById('ls-preview-placeholder').style.display = 'none';
