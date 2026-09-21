@@ -1725,7 +1725,20 @@ function abrTick() {
 // fatal/operator-actionable instead of silently falling into the
 // network-blip reconnect loop, which would just keep retrying against a
 // still-full disk.
-const FATAL_ERROR_PATTERN = /unrecognized option|no such filter|cannot find a matching stream|invalid argument|no nvenc capable devices|unable to open|permission denied|no such file|unknown encoder|no space left|disk full|i\/o error/i;
+// 🩹 CONFIRMED IN THE FIELD: "unable to open"/"no such file"/"i/o error"
+// are exactly the signatures a temporarily-disconnected camera or
+// capture-card driver hiccup produces (see nativePipeline.js's own
+// history of real dshow failures) — classifying those as FATAL meant a
+// camera unplug permanently killed the stream after 3 retries within 5
+// minutes, requiring the operator to press Go Live again by hand, even
+// though physically reconnecting the camera would have fixed it on its
+// own. A lost input should behave exactly like a lost network
+// connection: keep retrying with backoff, resume automatically the
+// moment it's available again, never give up on its own. Removed from
+// this pattern — genuinely permanent config errors (wrong ffmpeg flags,
+// no NVENC-capable device at all, wrong permissions, out of disk) stay
+// fatal; a device that's merely unavailable RIGHT NOW does not.
+const FATAL_ERROR_PATTERN = /unrecognized option|no such filter|cannot find a matching stream|invalid argument|no nvenc capable devices|permission denied|unknown encoder|no space left|disk full/i;
 function isFatalError(message) {
     return !!message && (FATAL_ERROR_PATTERN.test(message) || WINDOW_NOT_FOUND_PATTERN.test(message));
 }
@@ -2229,28 +2242,32 @@ async function startRecorder(matchId, { resolution, fps, audioDeviceName, camera
         // stays playable on its own.
         recorder.state = 'crashed';
         recorder.lastError = recorder.lastError || `recorder ffmpeg exited unexpectedly (code=${code}, signal=${signal})`;
-        const now = Date.now();
-        recorder.restarts = recorder.restarts.filter((t) => now - t < RESTART_WINDOW_MS);
-        if (recorder.restarts.length >= MAX_AUTO_RESTARTS) {
-            console.log('[stream-engine] recorder: max auto-restarts hit — local recording stopped, operator must press Start Recording again');
-            recorder.desiredRecording = false;
-            if (NATIVE_PROGRAM_FEED) releaseCompositor('recorder');
-            return;
-        }
-        recorder.restarts.push(now);
-        console.log(`[stream-engine] recorder: auto-restarting into a new segment (attempt ${recorder.restarts.length}/${MAX_AUTO_RESTARTS})…`);
+        // 🩹 CONFIRMED IN THE FIELD: the old MAX_AUTO_RESTARTS-within-
+        // RESTART_WINDOW_MS cap gave up and stopped local recording
+        // entirely after 3 attempts in 5 minutes — exactly the failure
+        // mode local recording is supposed to be immune to (e.g. the
+        // camera briefly unplugged, or Windows/antivirus holding a file
+        // handle a little longer than expected — see the data-root
+        // folder fix). Recording must never stop on its own; only the
+        // operator pressing "Stop Recording" should end it. Keep an
+        // ever-growing (capped) backoff instead of a hard give-up, same
+        // spirit as the live encoder's own unlimited-backoff reconnect.
+        recorder.restarts.push(Date.now());
+        const attempt = recorder.restarts.length;
+        console.log(`[stream-engine] recorder: auto-restarting into a new segment (attempt ${attempt}, never gives up on its own)…`);
         // Note: this does NOT release the compositor first — it's still
         // needed for the retry about to happen (ensureCompositor inside
         // startRecorder will itself relaunch it if it also died in the
         // same crash, e.g. the camera was unplugged).
         // 🩹 CONFIRMED IN THE FIELD: a flat 1s retry sometimes hit "Error
-        // opening output file" on the NEW segment too, repeatedly, until
-        // MAX_AUTO_RESTARTS gave up and recording stopped entirely. 1s
+        // opening output file" on the NEW segment too, repeatedly. 1s
         // isn't always enough for Windows (antivirus real-time scanning
         // especially) to fully release the file it was just watching get
-        // created/closed moments earlier. Back off a little more on each
-        // attempt instead of hammering the same short delay.
-        const retryDelayMs = 1500 * recorder.restarts.length;
+        // created/closed moments earlier. Back off more on each attempt,
+        // capped at 15s — long enough to ride out a real hiccup (camera
+        // unplugged, file briefly locked) without hammering, short
+        // enough that recording resumes quickly once it clears.
+        const retryDelayMs = Math.min(1500 * attempt, 15000);
         setTimeout(() => {
             if (recorder.desiredRecording) {
                 startRecorder(recorder.matchId, { resolution: recorder.settings.resolution, fps: recorder.settings.fps, audioDeviceName: recorder.audioDeviceName, cameraDeviceName: recorder.cameraDeviceName, mainServerUrl: recorder.mainServerUrl })
