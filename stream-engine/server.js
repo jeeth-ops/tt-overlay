@@ -1963,6 +1963,7 @@ async function ensureCompositor({ matchId, mainServerUrl, cameraDeviceName, audi
         const { width, height } = RESOLUTIONS[recorder.settings ? recorder.settings.resolution : '1080p'] || RESOLUTIONS['1080p'];
         compositor = new nativePipeline.Compositor({
             spawnFfmpeg,
+            spawnFfmpegSync,
             execPath,
             overlayUrl: `${String(mainServerUrl).replace(/\/+$/, '')}/cricket-overlay?room=${encodeURIComponent(matchId)}`,
             width, height, fps: 30,
