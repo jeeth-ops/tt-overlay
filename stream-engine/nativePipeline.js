@@ -68,13 +68,18 @@ function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height,
         // the more robust, standard approach and works the same whether
         // the devices are physically the same hardware or not. Opened
         // ONCE (both), natively — no browser, no screen/window capture
-        // anywhere in this path. Some dshow devices reject an exact
-        // -video_size/-framerate combo they don't natively support; if
-        // that happens here, the operator-facing error will name the
-        // device and the requested format (see Compositor's stderr
-        // handling in this file) rather than failing silently.
+        // anywhere in this path.
+        // 🩹 CONFIRMED IN THE FIELD: forcing an exact -video_size/
+        // -framerate on the dshow input itself ("Could not set video
+        // options" / "Error opening input: I/O error" naming this exact
+        // device) — capture cards like the AVMATRIX USB one only expose a
+        // specific fixed set of native modes and reject anything that
+        // isn't an exact match, unlike a webcam which usually free-runs at
+        // whatever's asked. Don't force a mode at all: open the device at
+        // whatever it opens at natively, and let the filter_complex below
+        // (scale=...,fps=...) do the conversion to the target output size/
+        // rate instead, same as it already does for the overlay input.
         '-f', 'dshow', '-rtbufsize', '512M',
-        '-video_size', `${width}x${height}`, '-framerate', String(fps),
         '-i', `video=${cameraDeviceName}`,
         '-f', 'dshow', '-i', `audio=${audioDeviceName}`,
         // Input 2: the overlay — a continuous stream of complete PNG
