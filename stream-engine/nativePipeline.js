@@ -338,6 +338,32 @@ class Compositor extends EventEmitter {
 
         this.stopOverlayPipe = this.overlay.pipeTo(proc.stdin, OVERLAY_FPS);
 
+        // 🩹 CONFIRMED IN THE FIELD — a serious one: the relay is a NUT
+        // container, which (like most streaming containers) writes its
+        // main header — stream count, codec/dimensions, everything a
+        // demuxer needs just to START interpreting the bytes — ONCE, at
+        // the very beginning. ANY consumer whose stdin gets attached
+        // after that header has already gone out (recorder starting
+        // after live, live starting after recording, or even the FIRST
+        // consumer — its own ffmpeg process takes a moment to spawn
+        // after ensureCompositor returns, and the compositor's stdout
+        // can easily start flowing before that) never sees it, and its
+        // own `-f nut -i pipe:0` has nothing valid to lock onto — no
+        // error, it just never produces output. This is what silently
+        // broke both the live encoder (RTMPS "connected", YouTube "no
+        // data") and the recorder (master.mp4 never created at all)
+        // even though everything upstream reported healthy.
+        // Fix: cache the relay's own early bytes (comfortably more than
+        // the header needs) and replay them to EVERY newly-attached
+        // consumer before switching them to the live feed — see
+        // attachRelayConsumer below. Missing whatever real frames fell
+        // between "end of the cached header" and "now" is fine and
+        // intended: a consumer just joining doesn't want the past, it
+        // wants a valid stream to decode from this point forward.
+        this.relayHeaderBuffer = [];
+        this.relayHeaderBufferBytes = 0;
+        const RELAY_HEADER_CAP_BYTES = 256 * 1024; // NUT's main header is a tiny fraction of this — generous headroom, still trivial memory
+
         // 🔗 Fan the relay out to every attached consumer. Node drains
         // proc.stdout as fast as its event loop runs regardless of
         // whether any consumer is currently ready for more — this is
@@ -351,6 +377,10 @@ class Compositor extends EventEmitter {
         // consumer's own problem to recover from, never the
         // compositor's or the OTHER consumer's.
         proc.stdout.on('data', (chunk) => {
+            if (this.relayHeaderBufferBytes < RELAY_HEADER_CAP_BYTES) {
+                this.relayHeaderBuffer.push(chunk);
+                this.relayHeaderBufferBytes += chunk.length;
+            }
             for (const consumer of this.consumers) {
                 if (consumer.stdin && consumer.stdin.writable) {
                     try { consumer.stdin.write(chunk); } catch (e) { /* consumer gone — attachRelayConsumer's caller is responsible for detaching */ }
@@ -408,7 +438,20 @@ class Compositor extends EventEmitter {
     // that process exits — an un-detached dead stdin is just silently
     // skipped by the write() try/catch above, but detaching promptly
     // avoids that overhead piling up across many restarts.
+    //
+    // Replays the cached relay-header bytes (see the stdout 'data'
+    // handler above) BEFORE adding this consumer to the live fan-out —
+    // this is what makes it safe to attach at any time, not just at the
+    // exact moment the compositor starts. Without this, this consumer's
+    // own `-f nut -i pipe:0` would never see NUT's main header and would
+    // silently never produce output — the actual root cause behind both
+    // the "YouTube: no data" and "master.mp4 missing" symptoms.
     attachRelayConsumer(proc) {
+        for (const chunk of this.relayHeaderBuffer) {
+            if (proc.stdin && proc.stdin.writable) {
+                try { proc.stdin.write(chunk); } catch (e) { return; } // gone already — nothing to attach
+            }
+        }
         this.consumers.add(proc);
     }
     removeRelayConsumer(proc) {
