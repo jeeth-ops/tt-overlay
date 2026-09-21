@@ -69,19 +69,37 @@ function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height,
         // the devices are physically the same hardware or not. Opened
         // ONCE (both), natively — no browser, no screen/window capture
         // anywhere in this path.
-        // 🩹 CONFIRMED IN THE FIELD: forcing an exact -video_size/
-        // -framerate on the dshow input itself ("Could not set video
-        // options" / "Error opening input: I/O error" naming this exact
-        // device) — capture cards like the AVMATRIX USB one only expose a
-        // specific fixed set of native modes and reject anything that
-        // isn't an exact match, unlike a webcam which usually free-runs at
-        // whatever's asked. Don't force a mode at all: open the device at
-        // whatever it opens at natively, and let the filter_complex below
-        // (scale=...,fps=...) do the conversion to the target output size/
-        // rate instead, same as it already does for the overlay input.
+        // 🩹 CONFIRMED IN THE FIELD, twice now, on the same AVMATRIX USB
+        // capture card (`ffmpeg -f dshow -list_options true -i
+        // video="..."` — run this against any new device that hits either
+        // failure below, the exact fixed modes it supports differ per
+        // device):
+        //  1. Forcing an unsupported -video_size/-framerate combo fails
+        //     outright ("Could not set video options" / "Error opening
+        //     input: I/O error") — this device's 1920x1080 mode is FIXED
+        //     at ~60fps with no lower option, so an earlier "1920x1080 @
+        //     30fps" guess never had a chance.
+        //  2. Forcing NO mode at all isn't safe either — ffmpeg's dshow
+        //     demuxer then opens whatever its first enumerated mode is
+        //     (1920x1080 @ ~60fps here), and this device streams
+        //     RAW/uncompressed yuyv422 (no onboard compression) — at
+        //     1920x1080@60 that's ~250 MB/s over USB, which reliably
+        //     overran the dshow real-time buffer ("buffer ... too full ...
+        //     frame dropped!", climbing over time) faster than this CPU-
+        //     bound (no GPU swscale on this ffmpeg build) pipeline could
+        //     drain it, corrupting the relay feed everything downstream —
+        //     recording, live, preview — depends on.
+        // 960x540@30 is an explicitly listed, device-confirmed mode (not a
+        // guess) at a much lighter ~31 MB/s raw rate; the filter_complex
+        // below still scales/fps-converts it to the actual target output.
         '-f', 'dshow', '-rtbufsize', '512M',
+        '-video_size', '960x540', '-framerate', '30',
         '-i', `video=${cameraDeviceName}`,
-        '-f', 'dshow', '-i', `audio=${audioDeviceName}`,
+        // Its own -rtbufsize too — confirmed in the field alongside the
+        // video buffer overrun above: ffmpeg's dshow default (~2.9 MB) is
+        // small enough that the audio input dropped frames right along
+        // with the video one once the pipeline fell behind.
+        '-f', 'dshow', '-rtbufsize', '64M', '-i', `audio=${audioDeviceName}`,
         // Input 2: the overlay — a continuous stream of complete PNG
         // files written back-to-back to this process's own stdin by
         // overlayBridge.js's pipeTo() (image2pipe's png demuxer can tell
