@@ -104,6 +104,24 @@ const NATIVE_PROGRAM_FEED = process.env.NATIVE_PROGRAM_FEED === 'true';
 const nativePipeline = NATIVE_PROGRAM_FEED ? require('./nativePipeline') : null;
 
 // ----------------------------------------------------------------
+// 📁 WHERE RECORDINGS/CLIPS ACTUALLY LIVE — defaults to stream-engine's
+// own folder (StreamEngineData/ right next to server.js), but set
+// STREAM_ENGINE_DATA_ROOT to move it anywhere: a different drive, or
+// just out from under wherever stream-engine itself happens to be
+// installed. 🩹 CONFIRMED IN THE FIELD: installed under Downloads (a
+// folder Windows/OneDrive commonly backs up/syncs by default), the
+// master.mp4 recording — a large file under constant, rapid, active
+// writes — got intermittently locked by that sync, surfacing as
+// "Error opening output file" on the NEXT segment. Pointing this
+// somewhere OneDrive doesn't touch (e.g. a folder directly on C:\, or a
+// separate drive) avoids that class of failure entirely, and as a bonus
+// lets the operator choose a drive with more free space for a full
+// match's recording independent of wherever stream-engine itself sits.
+const DATA_ROOT = process.env.STREAM_ENGINE_DATA_ROOT
+    ? path.join(process.env.STREAM_ENGINE_DATA_ROOT, 'StreamEngineData')
+    : path.join(__dirname, 'StreamEngineData');
+
+// ----------------------------------------------------------------
 // ffmpeg/ffprobe resolution — the operator should never need to install
 // ffmpeg system-wide or configure PATH by hand. Order of preference:
 //   1. BUNDLED — stream-engine/bin/ffmpeg.exe (+ ffprobe.exe) shipped
@@ -1107,7 +1125,7 @@ function resolveCaptureBrowserExecutable() {
 // on every single launch, and that permission bar covering the frame is
 // itself exactly the kind of "looks blank/wrong to gdigrab" situation
 // this whole feature exists to catch.
-const CAPTURE_PROFILE_DIR = path.join(__dirname, 'StreamEngineData', 'CaptureBrowserProfile');
+const CAPTURE_PROFILE_DIR = path.join(DATA_ROOT, 'CaptureBrowserProfile');
 
 const captureWindow = {
     proc: null,
@@ -1933,13 +1951,13 @@ function resolveEncodeSettings({ resolution, fps, bitrateKbps, keyframeIntervalS
 // LIVE STREAM only; this keeps recording at its own resolution/bitrate
 // the whole time Recording is running.
 // ================================================================
-const RECORDING_ROOT = path.join(__dirname, 'StreamEngineData', 'Recordings');
+const RECORDING_ROOT = path.join(DATA_ROOT, 'Recordings');
 try { fs.mkdirSync(RECORDING_ROOT, { recursive: true }); } catch (e) { /* created lazily per-match anyway */ }
 // Real, final MP4 clip files — cut STRICTLY from RECORDING_ROOT's
 // master.mp4 (see cutLocalClip/findRecordingSegmentFor below), never
 // from YouTube, HLS, or any browser-side source. Sits alongside
 // Recordings/ under the same StreamEngineData root.
-const CLIPS_ROOT = path.join(__dirname, 'StreamEngineData', 'Clips');
+const CLIPS_ROOT = path.join(DATA_ROOT, 'Clips');
 try { fs.mkdirSync(CLIPS_ROOT, { recursive: true }); } catch (e) { /* created lazily per-match anyway */ }
 // Deliberately independent of the live-stream ABR ladder — this is a
 // fixed local recording quality, never adapted to network conditions.
@@ -1959,7 +1977,7 @@ function recorderDir(matchId) {
 // the old Live Output window (ensureLiveOutputWindow/
 // releaseLiveOutputWindowIfUnused) — the same idea, one level down.
 // ================================================================
-const NATIVE_PREVIEW_PATH = NATIVE_PROGRAM_FEED ? path.join(__dirname, 'StreamEngineData', 'program-preview.jpg') : null;
+const NATIVE_PREVIEW_PATH = NATIVE_PROGRAM_FEED ? path.join(DATA_ROOT, 'program-preview.jpg') : null;
 let compositor = null; // the single Compositor instance for whichever match is currently active
 
 // Only ONE match's compositor can sensibly run at a time (mirrors the

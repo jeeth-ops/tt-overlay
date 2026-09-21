@@ -29,9 +29,22 @@ if not exist "%~dp0ffmpeg.exe" (
 set FFMPEG_PATH=%~dp0ffmpeg.exe
 set NATIVE_PROGRAM_FEED=true
 
+REM 📁 WHERE RECORDINGS/CLIPS ARE SAVED — by default, right next to this
+REM folder (stream-engine\StreamEngineData\Recordings\...). If
+REM stream-engine sits inside a folder Windows/OneDrive backs up or syncs
+REM (Downloads is a common one), that sync can intermittently lock the
+REM recording file while it's being actively written, causing "Error
+REM opening output file" mid-match. To save recordings/clips somewhere
+REM else instead (a plain folder on C:\, or a separate drive — anywhere
+REM OneDrive/backup software doesn't touch), uncomment the next line and
+REM set it to that folder (it will create a StreamEngineData subfolder
+REM there):
+REM set STREAM_ENGINE_DATA_ROOT=C:\StreamEngineRecordings
+
 echo Starting AllSportsLive Stream Engine — NATIVE PROGRAM FEED mode...
 echo ffmpeg: %FFMPEG_PATH%
 echo NATIVE_PROGRAM_FEED: %NATIVE_PROGRAM_FEED%
+if defined STREAM_ENGINE_DATA_ROOT echo Recordings/Clips folder: %STREAM_ENGINE_DATA_ROOT%\StreamEngineData
 echo.
 
 call npm start
