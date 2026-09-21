@@ -667,6 +667,248 @@ function cropScaleFilter(width, height, useGpuScale) {
         : `${cropExpr}scale=${width}:${height}:flags=lanczos`;
 }
 
+// ================================================================
+// 🩺 PROGRAM FEED HEALTH CHECK — samples the SAME gdigrab capture that
+// feeds the recorder/live encoder/preview and asks: are these actually
+// valid pixels? A window gdigrab can technically "find" (so it never
+// hits WINDOW_NOT_FOUND_PATTERN below) can still hand back a completely
+// black or completely white surface — e.g. a GPU-composited Chromium
+// window BitBlt can't read correctly (see launchCaptureWindow further
+// down), or a camera permission prompt covering the frame — and neither
+// of those look like an ffmpeg *error* at all: ffmpeg happily encodes
+// and streams the wrong picture. This runs a short, real capture
+// through ffmpeg's own battle-tested blackdetect/freezedetect analysis
+// filters (no hand-rolled pixel math) so a blank feed is caught and
+// refused BEFORE it reaches YouTube or master.mp4 — see /go-live and
+// monitorProgramFeedHealth below for where this actually gates/watches.
+//
+// "White" detection reuses blackdetect on a negated copy of the same
+// frames (negate flips near-white pixels to near-black) rather than a
+// second hand-rolled threshold check — one well-tested filter, run
+// twice in the same filter graph, at fixed positions 0 (original —
+// real black) and 2 (post-negate — real white).
+// ================================================================
+const HEALTH_CHECK_DURATION_SEC = 1.4;
+const HEALTH_CHECK_BLACK_PIX_TH = 0.10;
+const HEALTH_CHECK_MIN_BAD_DURATION = 0.9; // must be black/white for nearly the WHOLE sample, not just a transient flash/cut, to fail the gate
+
+function sumNamedFilterDurations(stderr, filterInstanceName, metricName) {
+    const re = new RegExp(`\\[${filterInstanceName} @[^\\]]*\\][^\\n]*${metricName}:\\s*([\\d.]+)`, 'g');
+    let total = 0;
+    let m;
+    while ((m = re.exec(stderr))) total += parseFloat(m[1]);
+    return total;
+}
+
+function parseHealthCheckStderr(stderr) {
+    // Matched by the EXPLICIT filter@name given in runProgramFeedHealthCheck
+    // (feedblack/feedwhite/feedfreeze) — not by ffmpeg's default
+    // "Parsed_<filter>_<N>" positional auto-numbering, which shifts
+    // depending on how many filter stages (crop, scale) come before these
+    // in the graph and is therefore not a safe thing to infer from.
+    const blackDuration = sumNamedFilterDurations(stderr, 'feedblack', 'black_duration');
+    const whiteDuration = sumNamedFilterDurations(stderr, 'feedwhite', 'black_duration');
+    const frozen = /\[feedfreeze @[^\]]*\][^\n]*freeze_start|lavfi\.freezedetect\.freeze_start/.test(stderr);
+    return {
+        black: blackDuration >= Math.min(HEALTH_CHECK_MIN_BAD_DURATION, HEALTH_CHECK_DURATION_SEC * 0.7),
+        white: whiteDuration >= Math.min(HEALTH_CHECK_MIN_BAD_DURATION, HEALTH_CHECK_DURATION_SEC * 0.7),
+        frozen,
+    };
+}
+
+function runProgramFeedHealthCheck({ windowTitle, width, height, fps }) {
+    return new Promise((resolve) => {
+        if (!NATIVE_CAPTURE_SUPPORTED) return resolve({ ok: true, skipped: true, reason: 'not Windows' });
+        // CPU-simple crop/scale (useGpuScale=false) — this is a 1.4s
+        // throwaway diagnostic sample, not the real encode path; no need
+        // to exercise the GPU scale path here (same reasoning as
+        // /capture-preview's useGpuScale=false).
+        //
+        // 🩹 Each analysis filter is given an explicit name via ffmpeg's
+        // `filter@name` syntax (feedblack/feedwhite/feedfreeze) instead of
+        // being left to ffmpeg's default "Parsed_<filter>_<N>" auto-
+        // numbering. That default numbers filters by their position in
+        // the WHOLE graph — including cropScaleFilter's own crop/scale
+        // steps ahead of these, which shifts depending on captureConfig
+        // (crop is skipped entirely when its margins are all 0) — so
+        // inferring "the two blackdetect instances, in ascending order"
+        // from whichever ones happen to log is NOT reliable: if only the
+        // WHITE check (the one after negate) trips, it can be the only
+        // one present, and would get misread as the black check. Explicit
+        // names remove the ambiguity entirely — see parseHealthCheckStderr.
+        const filter = `${cropScaleFilter(width, height, false)},blackdetect@feedblack=d=0.2:pix_th=${HEALTH_CHECK_BLACK_PIX_TH},negate,blackdetect@feedwhite=d=0.2:pix_th=${HEALTH_CHECK_BLACK_PIX_TH},freezedetect@feedfreeze=n=0.004:d=0.5`;
+        const args = [
+            '-hide_banner', '-loglevel', 'info', '-nostats',
+            '-f', 'gdigrab', '-framerate', String(Math.min(Number(fps) || 30, 15)),
+            '-t', String(HEALTH_CHECK_DURATION_SEC),
+            '-i', `title=${windowTitle}`,
+            '-vf', filter,
+            '-an', '-f', 'null', '-',
+        ];
+        const proc = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+        let stderr = '';
+        proc.stderr.on('data', (d) => { stderr += d; });
+        const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch (e) { /* already gone */ } }, (HEALTH_CHECK_DURATION_SEC + 5) * 1000);
+        proc.on('exit', (code) => {
+            clearTimeout(timer);
+            if (WINDOW_NOT_FOUND_PATTERN.test(stderr)) {
+                return resolve({ ok: false, error: 'Live Output window not found — open it before checking the program feed', black: false, white: false, frozen: false });
+            }
+            if (code !== 0) {
+                return resolve({ ok: false, error: `Could not sample the program feed (ffmpeg exit ${code}): ${stderr.slice(-300) || 'no output'}`, black: false, white: false, frozen: false });
+            }
+            const { black, white, frozen } = parseHealthCheckStderr(stderr);
+            resolve({ ok: !black && !white, black, white, frozen, checkedAt: Date.now() });
+        });
+        proc.on('error', (err) => { clearTimeout(timer); resolve({ ok: false, error: err.message, black: false, white: false, frozen: false }); });
+    });
+}
+
+// ================================================================
+// 🪟 DEDICATED CAPTURE WINDOW — launches live-output.html in its OWN,
+// isolated Chromium process instead of a window.open() popup out of the
+// operator's regular Cricket Panel browser tab.
+//
+// ROOT CAUSE THIS FIXES: gdigrab captures via classic Windows GDI
+// BitBlt, which reads a window's on-screen bitmap. A normal GPU-
+// accelerated Chromium window composites through DirectComposition —
+// the real pixels live in a swapchain BitBlt cannot read — so BitBlt
+// gets back whatever's behind/around that swapchain, typically a solid
+// white or black rectangle, even though a human looking at the SAME
+// window on screen sees it rendering perfectly correctly (a human sees
+// the real GPU compositor's output; gdigrab does not — this is a known
+// Chromium/GDI incompatibility, not a bug in this file's crop/scale
+// math). window.open() out of an already-running browser process can
+// never fix this: Chromium flags only take effect when a NEW process
+// launches, and the operator's regular browser tab already launched
+// with GPU compositing on. That's why the popup-chrome fix and the
+// maximized-window-border fix already in this file (see
+// resolveWindowTitle/captureConfig's history above) each fixed a real,
+// separate bug but did not fully eliminate white/black capture reports.
+//
+// THE FIX: spawn a SEPARATE Chromium process — its own --user-data-dir
+// so it never shares/inherits the operator's normal browsing session —
+// with --disable-gpu, forcing Chromium onto a plain, GDI-readable
+// surface for this window specifically. Same idea vMix's own embedded-
+// Chromium Browser Input documents ("disable GPU") when a capture path
+// needs to read a browser surface's pixels directly. The page itself
+// (camera <video> + cricket-overlay.html <iframe>) is unchanged.
+//
+// window.open() popup mode is kept as a FALLBACK only (see
+// ensureLiveOutputWindow in cricket-panel.html) for non-Windows/dev use
+// and machines where Chrome/Edge can't be found at their usual install
+// paths — GPU compositing stays on in that path, so the health check
+// above and the native preview exist specifically to catch it if it
+// happens there, rather than silently going live with a bad picture.
+// ================================================================
+function resolveCaptureBrowserExecutable() {
+    if (process.env.CAPTURE_BROWSER_PATH && fs.existsSync(process.env.CAPTURE_BROWSER_PATH)) return process.env.CAPTURE_BROWSER_PATH;
+    const programFiles = process.env['PROGRAMFILES'] || 'C:\\Program Files';
+    const programFilesX86 = process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)';
+    const localAppData = process.env['LOCALAPPDATA'] || '';
+    const candidates = [
+        path.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        path.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        localAppData && path.join(localAppData, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        path.join(programFilesX86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+        path.join(programFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    ].filter(Boolean);
+    for (const c of candidates) {
+        try { if (fs.existsSync(c)) return c; } catch (e) { /* keep looking */ }
+    }
+    return null;
+}
+
+// Isolated, PERSISTENT profile dir (not a fresh temp dir per launch) so
+// the one-time camera getUserMedia() permission grant survives across
+// restarts — a fresh/temp profile would re-prompt for camera permission
+// on every single launch, and that permission bar covering the frame is
+// itself exactly the kind of "looks blank/wrong to gdigrab" situation
+// this whole feature exists to catch.
+const CAPTURE_PROFILE_DIR = path.join(__dirname, 'StreamEngineData', 'CaptureBrowserProfile');
+
+const captureWindow = {
+    proc: null,
+    matchId: null,
+    launchedAt: null,
+    execPath: null,
+    lastCameraEndedAt: null,
+    lastCameraEndedReason: null,
+};
+
+function launchCaptureWindow({ matchId, videoDeviceId, origin, width, height }) {
+    if (captureWindow.proc && captureWindow.matchId === matchId) return { ok: true, alreadyRunning: true };
+    if (captureWindow.proc) closeCaptureWindow(); // switching matches — release the old one first
+    if (!NATIVE_CAPTURE_SUPPORTED) return { ok: false, error: `Dedicated capture window launch needs Windows — this process is running on ${process.platform}` };
+    const execPath = resolveCaptureBrowserExecutable();
+    if (!execPath) return { ok: false, error: 'Could not find Chrome or Edge on this PC (checked the usual install paths) — set the CAPTURE_BROWSER_PATH environment variable to its full .exe path, or use the fallback popup window' };
+    if (!origin) return { ok: false, error: "origin required (the Cricket Panel's own page URL) — cannot build the Live Output URL" };
+    try { fs.mkdirSync(CAPTURE_PROFILE_DIR, { recursive: true }); } catch (e) { /* best effort — Chromium will still create it */ }
+
+    const url = `${String(origin).replace(/\/+$/, '')}/live-output.html?room=${encodeURIComponent(matchId)}&video=${encodeURIComponent(videoDeviceId || '')}`;
+    const w = Math.max(1280, Number(width) || 1920);
+    const h = Math.max(720, Number(height) || 1080);
+    const args = [
+        `--app=${url}`,
+        `--user-data-dir=${CAPTURE_PROFILE_DIR}`,
+        '--window-position=0,0',
+        `--window-size=${w},${h}`,
+        // 🩹 Forces Chromium off DirectComposition/GPU compositing for
+        // this window so gdigrab's GDI BitBlt can actually read its
+        // pixels — see this section's header comment for the full
+        // reasoning. These three flags are deliberately redundant with
+        // each other (different Chromium versions honor different ones)
+        // rather than betting on exactly one.
+        '--disable-gpu',
+        '--disable-gpu-compositing',
+        '--disable-software-rasterizer',
+        // Chromium pauses/throttles a window's rendering when it THINKS
+        // another window occludes it — gdigrab still reads whatever's
+        // on screen regardless, so that mismatch alone can look like a
+        // frozen/stale program feed even though nothing actually failed.
+        '--disable-features=CalculateNativeWinOcclusion',
+        // No user ever clicks this window (it's launched headless-ish,
+        // programmatically) — without this, Chromium's autoplay policy
+        // can block the camera <video> from playing at all.
+        '--autoplay-policy=no-user-gesture-required',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-session-crashed-bubble',
+        '--disable-infobars',
+        '--noerrdialogs',
+    ];
+    let proc;
+    try {
+        proc = spawn(execPath, args, { stdio: 'ignore', detached: false });
+    } catch (e) {
+        return { ok: false, error: `Could not launch capture browser: ${e.message}` };
+    }
+    captureWindow.proc = proc;
+    captureWindow.matchId = matchId;
+    captureWindow.launchedAt = Date.now();
+    captureWindow.execPath = execPath;
+    captureWindow.lastCameraEndedAt = null;
+    captureWindow.lastCameraEndedReason = null;
+    proc.on('exit', (code, signal) => {
+        if (captureWindow.proc !== proc) return; // already superseded/closed
+        console.log(`[stream-engine] dedicated capture window exited (code=${code}, signal=${signal})`);
+        captureWindow.proc = null;
+    });
+    proc.on('error', (err) => {
+        console.log('[stream-engine] dedicated capture window spawn error:', err.message);
+        if (captureWindow.proc === proc) captureWindow.proc = null;
+    });
+    return { ok: true, execPath };
+}
+
+function closeCaptureWindow() {
+    if (!captureWindow.proc) return { ok: true, alreadyIdle: true };
+    try { captureWindow.proc.kill(); } catch (e) { /* already gone */ }
+    captureWindow.proc = null;
+    captureWindow.matchId = null;
+    return { ok: true };
+}
+
 // Native capture inputs shared by BOTH the recorder and the live
 // encoder — video from gdigrab (the Live Output window, real OS-level
 // screen capture, hardware/OS-clocked, never a browser video encode)
@@ -763,6 +1005,7 @@ const engine = {
         stableSince: null,
     },
     metrics: { bitrateKbps: null, fps: null, droppedFrames: null, totalFrames: null, outTimeSec: null, speed: null },
+    lastProgramFeedHealth: null, // {ok, black, white, frozen, checkedAt} — see runProgramFeedHealthCheck/monitorProgramFeedHealth
 };
 
 function resetMetrics() {
@@ -1304,6 +1547,7 @@ const recorder = {
     settings: null,           // {resolution, width, height, fps, bitrateKbps}
     restarts: [],
     lastError: null,
+    lastProgramFeedHealth: null, // {ok, black, white, frozen, checkedAt} — see runProgramFeedHealthCheck/monitorProgramFeedHealth
 };
 
 function buildRecorderArgs({ windowTitle, audioDeviceName, width, height, fps, bitrateKbps, outFile }) {
@@ -1916,6 +2160,14 @@ app.get('/status', async (req, res) => {
             diskFreeBytes: diskFreeBytes(RECORDING_ROOT),
             lastError: recorder.lastError,
             restartCount: recorder.restarts.length,
+            programFeedHealth: recorder.lastProgramFeedHealth || null,
+        },
+        captureWindow: {
+            running: !!captureWindow.proc,
+            matchId: captureWindow.matchId,
+            launchedAt: captureWindow.launchedAt,
+            lastCameraEndedAt: captureWindow.lastCameraEndedAt,
+            lastCameraEndedReason: captureWindow.lastCameraEndedReason,
         },
     });
 });
@@ -1939,6 +2191,59 @@ app.post('/capture-config', (req, res) => {
     }
     saveCaptureConfig();
     res.json({ success: true, captureConfig });
+});
+
+// 🩺 PROGRAM FEED HEALTH — on-demand version of the same check /go-live
+// runs automatically. The panel polls this while Live Studio is open
+// (BEFORE Go Live is even pressed) so a black/white/frozen feed shows
+// up as a clear warning badge next to the native preview, not just as a
+// refusal at the moment of going live.
+app.get('/program-feed-health', async (req, res) => {
+    const matchId = safeMatchId(req.query.matchId);
+    if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
+    if (!NATIVE_CAPTURE_SUPPORTED) return res.json({ success: true, ok: true, skipped: true, reason: `Native capture requires Windows — this process is running on ${process.platform}` });
+    const windowTitle = resolveWindowTitle(matchId);
+    const { width, height } = RESOLUTIONS['720p']; // cheap sample resolution — same reasoning as /capture-preview; this is a diagnostic, not the real encode
+    const health = await runProgramFeedHealthCheck({ windowTitle, width, height, fps: 15 });
+    res.json({ success: true, ...health });
+});
+
+// 🪟 DEDICATED CAPTURE WINDOW — see launchCaptureWindow's header comment
+// above for the full root-cause reasoning. The panel calls /launch
+// instead of window.open() to get Live Output rendering in a GPU-
+// compositing-disabled Chromium process gdigrab can actually read.
+app.post('/capture-window/launch', (req, res) => {
+    const body = req.body || {};
+    const matchId = safeMatchId(body.matchId);
+    if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
+    const result = launchCaptureWindow({ matchId, videoDeviceId: body.videoDeviceId, origin: body.origin, width: body.width, height: body.height });
+    res.json({ success: result.ok, ...result });
+});
+app.post('/capture-window/close', (req, res) => {
+    res.json({ success: true, ...closeCaptureWindow() });
+});
+app.get('/capture-window/status', (req, res) => {
+    res.json({
+        success: true,
+        running: !!captureWindow.proc,
+        matchId: captureWindow.matchId,
+        launchedAt: captureWindow.launchedAt,
+        execPath: captureWindow.execPath,
+        lastCameraEndedAt: captureWindow.lastCameraEndedAt,
+        lastCameraEndedReason: captureWindow.lastCameraEndedReason,
+    });
+});
+// live-output.html POSTs here directly (see its own header comment) so
+// camera-ended/no-signal detection works the same way whether it's
+// running as this dedicated capture window (no window.opener at all —
+// it's a separate process) or the window.open() popup fallback. Purely
+// informational: this engine has no independent way to know the camera
+// died other than the page itself reporting it.
+app.post('/capture-window/camera-ended', (req, res) => {
+    captureWindow.lastCameraEndedAt = Date.now();
+    captureWindow.lastCameraEndedReason = (req.body && req.body.reason) || 'camera ended';
+    console.log(`[stream-engine] Live Output reported: ${captureWindow.lastCameraEndedReason}`);
+    res.json({ success: true });
 });
 
 // 🖼️ CAPTURE PREVIEW — grabs exactly one frame from the target window
@@ -2122,8 +2427,8 @@ app.post('/set-youtube-config', (req, res) => {
     res.json({ success: true, streamUrl, streamKeyMasked: maskKey(streamKey) });
 });
 
-app.post('/go-live', (req, res) => {
-    const { resolution, fps, bitrateKbps, keyframeIntervalSec, qualityMode, autoResolutionFallback, matchId, audioDeviceName } = req.body || {};
+app.post('/go-live', async (req, res) => {
+    const { resolution, fps, bitrateKbps, keyframeIntervalSec, qualityMode, autoResolutionFallback, matchId, audioDeviceName, skipProgramFeedHealthCheck } = req.body || {};
     engine.opToken++; // a fresh operator-initiated Go Live always wins over any stale in-flight ABR restart
 
     if (!matchId) return res.status(400).json({ success: false, error: 'matchId required — select a match in the panel first' });
@@ -2133,6 +2438,34 @@ app.post('/go-live', (req, res) => {
 
     const resKey = RESOLUTIONS[resolution] ? resolution : '1080p';
     const fpsNum = [30, 60].includes(Number(fps)) ? Number(fps) : 30;
+
+    // 🩺 GO LIVE SEQUENCE, steps "validate frames / validate FPS" — BEFORE
+    // ever touching the encoder or RTMPS: sample the exact gdigrab window
+    // the live encoder is about to open. If THIS comes back solid black,
+    // solid white, or frozen, so would YouTube — refuse to start rather
+    // than silently pushing a bad picture live (see runProgramFeedHealthCheck
+    // above). skipProgramFeedHealthCheck exists only as an explicit,
+    // operator-acknowledged override (the panel only ever sends it after
+    // showing the failure and the operator choosing "Go Live Anyway") —
+    // never set by default.
+    if (NATIVE_CAPTURE_SUPPORTED && !skipProgramFeedHealthCheck) {
+        const { width, height } = RESOLUTIONS[resKey];
+        const windowTitle = resolveWindowTitle(engine.matchId);
+        const health = await runProgramFeedHealthCheck({ windowTitle, width, height, fps: fpsNum });
+        engine.lastProgramFeedHealth = health;
+        if (!health.ok) {
+            const reason = health.error
+                ? health.error
+                : health.black
+                    ? 'PROGRAM OUTPUT ERROR — the final video feed is solid BLACK (camera/overlay not rendering, or the capture window is not readable right now).'
+                    : health.white
+                        ? 'PROGRAM OUTPUT ERROR — the final video feed is solid WHITE (this is the classic GPU-composited/blank-window gdigrab bug — open Live Output as the dedicated capture window, not a regular browser tab).'
+                        : 'PROGRAM OUTPUT ERROR — the final video feed is not producing valid frames.';
+            console.log(`[stream-engine] Go Live refused — program feed health check failed: ${reason}`);
+            return res.status(409).json({ success: false, error: reason, programFeedHealth: health });
+        }
+    }
+
     engine.targetResolution = resKey;
     engine.qualityMode = qualityMode === 'manual' ? 'manual' : 'adaptive';
     engine.autoResolutionFallback = !!autoResolutionFallback;
@@ -2213,6 +2546,14 @@ app.get('/health', (req, res) => {
             : (engine.metrics.outTimeSec || 0),
         lastError: engine.lastError,
         restartCount: engine.restarts.length,
+        // ⚠ Sampled roughly every 30s while live (see monitorProgramFeedHealth
+        // below) — not per-frame. null until the first sample lands.
+        programFeedHealth: engine.lastProgramFeedHealth || null,
+        captureWindow: {
+            running: !!captureWindow.proc,
+            lastCameraEndedAt: captureWindow.lastCameraEndedAt,
+            lastCameraEndedReason: captureWindow.lastCameraEndedReason,
+        },
         clipEngine: {
             clipWorkerState: clipWorker.state,
             cloudflareConnected: clipWorker.cloudflareConnected,
@@ -2226,6 +2567,39 @@ app.get('/health', (req, res) => {
 // for the full mechanism. No-ops instantly whenever the encoder isn't live.
 const ABR_TICK_MS = 2000;
 setInterval(abrTick, ABR_TICK_MS);
+
+// 🩺 ONGOING PROGRAM FEED MONITORING (item 14 — "diagnostics/protection,
+// not an expensive analysis of every pixel forever"). Runs the same
+// black/white/freeze sample runProgramFeedHealthCheck used as the Go
+// Live gate, but on a slow 30s cadence and only while there's something
+// to watch (live and/or recording) — cheap enough to run indefinitely,
+// frequent enough to catch a feed that goes bad mid-match (camera
+// unplugged and replugged into a dead port, a Windows update popup
+// stealing the capture window's focus/paint, etc.) well before the
+// operator notices from the stream itself. Never auto-stops anything —
+// see item 14/33: this surfaces a warning via /health for the panel to
+// show, it does not make the decision to pull the stream.
+const PROGRAM_FEED_MONITOR_INTERVAL_MS = 30000;
+async function monitorProgramFeedHealth() {
+    if (!NATIVE_CAPTURE_SUPPORTED) return;
+    if (engine.state === 'live' && engine.matchId && engine.settings) {
+        const windowTitle = resolveWindowTitle(engine.matchId);
+        const health = await runProgramFeedHealthCheck({ windowTitle, width: engine.settings.width, height: engine.settings.height, fps: engine.settings.fps });
+        engine.lastProgramFeedHealth = health;
+        if (health.black || health.white || health.frozen) {
+            console.log(`[stream-engine] ⚠ PROGRAM FEED WARNING (live): ${health.black ? 'BLACK' : health.white ? 'WHITE' : 'FROZEN'} — YouTube may be receiving a bad picture right now`);
+        }
+    }
+    if (recorder.state === 'recording' && recorder.matchId && recorder.settings) {
+        const windowTitle = resolveWindowTitle(recorder.matchId);
+        const health = await runProgramFeedHealthCheck({ windowTitle, width: recorder.settings.width, height: recorder.settings.height, fps: recorder.settings.fps });
+        recorder.lastProgramFeedHealth = health;
+        if (health.black || health.white || health.frozen) {
+            console.log(`[stream-engine] ⚠ PROGRAM FEED WARNING (recording): ${health.black ? 'BLACK' : health.white ? 'WHITE' : 'FROZEN'} — master.mp4 may be recording a bad picture right now`);
+        }
+    }
+}
+setInterval(() => { monitorProgramFeedHealth().catch((e) => console.log('[stream-engine] monitorProgramFeedHealth error (kept running):', e.message)); }, PROGRAM_FEED_MONITOR_INTERVAL_MS);
 
 // 🛟 Safety-net clip-file sweep — catches a clip whose normal "delete
 // once Render confirms COMPLETE" path (pollRenderStatus above) never
@@ -2287,6 +2661,7 @@ function gracefulShutdown(signal) {
     recorder.desiredRecording = false;
     if (engine.proc) gracefulStop(engine.proc, 3000);
     if (recorder.proc) gracefulStop(recorder.proc, 3000);
+    if (captureWindow.proc) closeCaptureWindow(); // never leave the dedicated capture browser process orphaned
     server.close(() => {
         console.log('[stream-engine] HTTP server closed, exiting');
         process.exit(0);
