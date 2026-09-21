@@ -2796,8 +2796,13 @@ let nativePreviewTimer = null;
 async function ensureLiveOutputWindow(matchId){
   if(captureWindowActive && captureWindowMatchId === matchId) return { ok:true };
   if(liveOutputWindow && !liveOutputWindow.closed) return { ok:true };
-  const videoDeviceId = document.getElementById('live-video-device').value;
+  const videoSel = document.getElementById('live-video-device');
+  const videoDeviceId = videoSel.value;
   if(!videoDeviceId) return { ok:false, error:'No camera selected — pick one under Live Studio first' };
+  // Label, not just deviceId — see populateCameraDevices' comment on why
+  // deviceId alone can't cross into the dedicated capture window's own
+  // isolated browser profile.
+  const videoLabel = videoSel.selectedOptions[0]?.dataset.label || '';
 
   // 🎯 PREFERRED PATH — ask the Stream Engine to launch Live Output as
   // its OWN dedicated Chromium process with GPU compositing disabled.
@@ -2812,7 +2817,7 @@ async function ensureLiveOutputWindow(matchId){
   try {
     const launchRes = await fetch(`${STREAM_ENGINE_URL}/capture-window/launch`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ matchId, videoDeviceId, origin: location.origin, width: screen.availWidth, height: screen.availHeight })
+      body: JSON.stringify({ matchId, videoDeviceId, videoLabel, origin: location.origin, width: screen.availWidth, height: screen.availHeight })
     }).then(r => r.json()).catch(() => ({ success:false }));
     if(launchRes.success){
       captureWindowActive = true;
@@ -2870,7 +2875,7 @@ async function ensureLiveOutputWindow(matchId){
   // blank/white image seen in testing. A real popup window (what these
   // features produce) has just a title bar, matching the crop this was
   // already built for.
-  const url = `${location.origin}/live-output.html?room=${encodeURIComponent(matchId)}&video=${encodeURIComponent(videoDeviceId)}`;
+  const url = `${location.origin}/live-output.html?room=${encodeURIComponent(matchId)}&video=${encodeURIComponent(videoDeviceId)}&videoLabel=${encodeURIComponent(videoLabel)}`;
   liveOutputWindow = window.open(url, 'liveOutputWindow',
     `width=${Math.max(1280, screen.availWidth || 1280)},height=${Math.max(740, screen.availHeight || 740)},left=0,top=0,popup=yes,toolbar=no,location=no,menubar=no,status=no,scrollbars=no`);
   if(!liveOutputWindow) return { ok:false, error:'Popup blocked — allow popups for this site and try again' };
@@ -3078,6 +3083,18 @@ async function populateCameraDevices(){
   devices.filter(d => d.kind === 'videoinput').forEach((d,i) => {
     const opt = document.createElement('option');
     opt.value = d.deviceId; opt.textContent = d.label || `Camera ${i+1}`;
+    // 🩹 Chrome/Edge salts getUserMedia deviceIds PER BROWSER PROFILE
+    // (a deliberate privacy measure) — this deviceId is only valid in
+    // THIS tab's own profile. The dedicated capture window launched by
+    // the Stream Engine runs in an ISOLATED profile (its own
+    // --user-data-dir — see launchCaptureWindow in server.js), where
+    // this exact deviceId does not exist, so passing it there makes
+    // getUserMedia throw OverconstrainedError ("Could not open camera:"
+    // with a blank message — confirmed in the field). The device LABEL
+    // is NOT profile-scoped (it comes straight from the OS/driver), so
+    // that window matches by label instead — see ensureLiveOutputWindow
+    // below and live-output.html's own startCamera().
+    opt.dataset.label = d.label || '';
     videoSel.appendChild(opt);
   });
   if(prevVideo) videoSel.value = prevVideo;
