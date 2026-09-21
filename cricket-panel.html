@@ -1569,7 +1569,7 @@
           <span style="opacity:.7;">Network</span><span id="ls-sh-network">—</span>
           <span style="opacity:.7;">Encoder</span><span id="ls-sh-encoder-status">—</span>
           <span style="opacity:.7;">CPU</span><span id="ls-sh-cpu">—</span>
-          <span style="opacity:.7;">GPU</span><span id="ls-sh-gpu">—</span>
+          <span style="opacity:.7;">GPU Encode</span><span id="ls-sh-gpu">—</span>
           <span style="opacity:.7;">Duration</span><span id="ls-sh-duration">—</span>
         </div>
         <div style="display:grid; grid-template-columns:auto 1fr; gap:4px 10px; font-size:12.5px;">
@@ -3589,7 +3589,13 @@ async function pollStreamHealth(){
   document.getElementById('ls-sh-dropped').textContent = health.metrics.droppedFramesPct != null ? `${health.metrics.droppedFramesPct}%` : (health.metrics.droppedFrames ?? '—');
   document.getElementById('ls-sh-network').textContent = health.network ? (NETWORK_LABELS[health.network.state] || health.network.state) : '—';
   document.getElementById('ls-sh-cpu').textContent = health.cpuPercent != null ? `${health.cpuPercent}%` : '—';
-  document.getElementById('ls-sh-gpu').textContent = health.gpu ? `${health.gpu.gpuPercent}%` : '—';
+  // NVENC is a dedicated ASIC separate from the GPU's general compute
+  // engine — general gpuPercent legitimately reads ~0% during pure
+  // hardware encoding (confirmed in the field: "GPU: 0%" while NVENC was
+  // genuinely active the whole time), which looks exactly like "not
+  // using the GPU" even though it is. encoderPercent is the metric that
+  // actually proves NVENC hardware encoding is running.
+  document.getElementById('ls-sh-gpu').textContent = health.gpu ? `${health.gpu.encoderPercent}% (NVENC)` : '—';
   document.getElementById('ls-sh-duration').textContent = health.durationSec != null ? `${Math.floor(health.durationSec/60)}:${String(health.durationSec%60).padStart(2,'0')}` : '—';
 
   checkStreamStability(health, health.settings ? health.settings.bitrateKbps : getSelectedStreamSettings().bitrateKbps);
