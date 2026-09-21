@@ -1543,7 +1543,7 @@
       <button class="full small ghost" id="refresh-live-devices-btn" style="margin-bottom:10px;">🔄 Refresh Device List</button>
 
       <button class="full small primary" id="open-live-output-btn">🖥️ Open Final Output Preview</button>
-      <div style="font-size:11px; opacity:.6; margin:6px 0 10px;">
+      <div id="ls-open-live-output-desc" style="font-size:11px; opacity:.6; margin:6px 0 10px;">
         Opens the composited Camera + Cricket Overlay window and mirrors it into the preview above. Leave it open — GO LIVE captures exactly what's shown there.
       </div>
 
@@ -1552,7 +1552,7 @@
       <button class="full small primary" id="start-live-btn">🔴 GO LIVE</button>
       <button class="full small ghost" id="stop-live-btn" style="margin-top:6px; display:none;">⏹ STOP STREAM</button>
 
-      <div style="font-size:11px; opacity:.6; margin-top:8px;">
+      <div id="ls-golive-requirements" style="font-size:11px; opacity:.6; margin-top:8px;">
         Requires the local Stream Engine running on this PC (<code>stream-engine/</code> — <code>npm start</code>) with an NVENC-capable ffmpeg. First "Go Live" click, Chrome asks which window to share — pick <b>Live Output</b>.
       </div>
 
@@ -3039,6 +3039,7 @@ async function refreshEngineHealthDisplay(){
   if(!!status.nativeProgramFeed !== nativeProgramFeedActive){
     nativeProgramFeedActive = !!status.nativeProgramFeed;
     populateCameraDevices(); // device list source changes between modes — see its own comment
+    updateLiveStudioModeText();
   }
   lsSetHealth('ls-h-encoder', status.nvencAvailable, status.nvencAvailable ? 'Ready (NVENC)' : `Not ready — ${status.nvencDetail || 'NVENC unavailable'}`);
   lsSetHealth('ls-h-streamurl', status.streamUrlSet, status.streamUrlSet ? 'Configured' : 'Not set');
@@ -3069,6 +3070,29 @@ async function refreshEngineHealthDisplay(){
     }
   }
 }
+
+// 🧪 NATIVE PROGRAM FEED mode-aware UI text — a few static strings
+// written for the OLD gdigrab/window-capture flow are actively
+// misleading once the native compositor pipeline is active (no browser
+// window ever gets opened, so "Chrome asks which window to share"
+// simply doesn't happen; the native preview isn't gdigrab at all).
+// Called once whenever nativeProgramFeedActive actually changes — see
+// refreshEngineHealthDisplay above.
+function updateLiveStudioModeText(){
+  const openDesc = document.getElementById('ls-open-live-output-desc');
+  if(openDesc) openDesc.textContent = nativeProgramFeedActive
+    ? 'Starts the Stream Engine\'s own camera+overlay compositor (no browser window — see stream-engine/README.md\'s native program feed section). GO LIVE and Start Recording both use this same feed.'
+    : 'Opens the composited Camera + Cricket Overlay window and mirrors it into the preview above. Leave it open — GO LIVE captures exactly what\'s shown there.';
+
+  const reqs = document.getElementById('ls-golive-requirements');
+  if(reqs) reqs.innerHTML = nativeProgramFeedActive
+    ? 'Requires the local Stream Engine running on this PC (<code>stream-engine/</code> — <code>start-native.bat</code>) with an NVENC-capable ffmpeg. No browser window/tab picker involved — the compositor runs inside the Stream Engine itself.'
+    : 'Requires the local Stream Engine running on this PC (<code>stream-engine/</code> — <code>npm start</code>) with an NVENC-capable ffmpeg. First "Go Live" click, Chrome asks which window to share — pick <b>Live Output</b>.';
+
+  const previewBtn = document.getElementById('preview-native-capture-btn');
+  if(previewBtn) previewBtn.textContent = nativeProgramFeedActive ? '🖼️ Preview Native Capture' : '🖼️ Preview Native Capture (gdigrab)';
+}
+
 refreshEngineHealthDisplay();
 setInterval(refreshEngineHealthDisplay, 10000);
 
