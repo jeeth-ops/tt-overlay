@@ -2308,9 +2308,15 @@ function resumeMatch(rec){
    stream-engine/README.md), which buffers it locally and cuts clips
    from that buffer — zero runtime dependency on vMix or ClipperHelper.exe.
    ============================================================ */
-// STREAM_ENGINE_URL is declared below (Live Studio section) — safe to
-// reference here since these functions only ever RUN on a later click,
-// well after the whole script (including that const) has evaluated.
+// STREAM_ENGINE_URL used to be declared further down (Live Studio
+// section) on the assumption that everything referencing it only runs on
+// a later click, after the whole script has evaluated — true for
+// click-triggered functions, but NOT for checkClipperHelperStatus() and
+// refreshClipEngineStatus() below, both called immediately at the top
+// level (page load) before script execution ever reaches that later
+// const — a real "Cannot access before initialization" ReferenceError on
+// every page load. Declared here instead, before its first use.
+const STREAM_ENGINE_URL = 'http://127.0.0.1:5006'; // local-only, never Render
 let recActive = false;
 let recordingDesired = false; // Match Recording card's own intent — see ensureLiveOutputWindow/releaseLiveOutputWindowIfUnused
 
@@ -2714,8 +2720,9 @@ document.getElementById('stop-recording-btn').addEventListener('click', stopReco
    🔒 server.js/Render is NEVER in this path — no video bytes are ever
    sent there from here. Only the existing score/control traffic
    (socket.io) still goes to Render, unchanged.
+   🔧 STREAM_ENGINE_URL itself is declared earlier now (RECORDING section
+   above) — see that comment for why.
    ============================================================ */
-const STREAM_ENGINE_URL = 'http://127.0.0.1:5006'; // local-only, never Render
 
 // Mirrors stream-engine/server.js's RESOLUTIONS/DEFAULT_BITRATE_KBPS —
 // kept here too just so the panel can preview the bitrate a resolution/
