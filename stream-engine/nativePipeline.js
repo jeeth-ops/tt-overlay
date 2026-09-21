@@ -50,7 +50,74 @@ const OVERLAY_FPS = 15;
 
 const RELAY_CONTAINER_ARGS = ['-f', 'nut', '-c:v', 'rawvideo', '-pix_fmt', 'yuv420p', '-c:a', 'pcm_s16le', '-ar', '44100'];
 
-function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height, fps, previewPath }) {
+// 🎯 AUTO-DETECT CAMERA MODE — the vMix-style piece: instead of a
+// hardcoded -video_size/-framerate that only happened to be right for
+// one specific capture card (twice confirmed wrong in the field for the
+// AVMATRIX USB card — see git history), ask the device itself what it
+// actually supports (`ffmpeg -f dshow -list_options true -i video=...`,
+// the same command used to hand-diagnose this earlier) and pick a real,
+// device-confirmed mode automatically. Runs once per Compositor
+// lifetime (cached on the instance), not on every retry.
+//
+// Parses lines like:
+//   pixel_format=yuyv422  min s=960x540 fps=60.0002 max s=960x540 fps=60.0002
+//   vcodec=mjpeg  min s=1920x1080 fps=29.9700 max s=1920x1080 fps=29.9700
+// NOTE: min===max on most fixed-mode capture cards (confirmed on the
+// AVMATRIX — its EVERY mode is fixed, not a range); when they differ,
+// this clamps the desired target fps into the device's actual [min,max].
+const DSHOW_MODE_LINE = /(?:vcodec|pixel_format)=(\S+)\s+min\s+s=(\d+)x(\d+)\s+fps=([\d.]+)\s+max\s+s=(\d+)x(\d+)\s+fps=([\d.]+)/g;
+
+function parseDshowVideoModes(listOptionsOutput) {
+    const modes = [];
+    let m;
+    DSHOW_MODE_LINE.lastIndex = 0;
+    while ((m = DSHOW_MODE_LINE.exec(listOptionsOutput))) {
+        const [, , minW, minH, minFps, , , maxFps] = m;
+        // vcodec=<name> means a compressed format (mjpeg etc) — far
+        // lighter over USB than a raw pixel_format at the same
+        // resolution, so this is worth knowing when choosing.
+        const compressed = listOptionsOutput.slice(m.index, m.index + 6) === 'vcodec';
+        modes.push({
+            compressed,
+            width: Number(minW), height: Number(minH),
+            minFps: Number(minFps), maxFps: Number(maxFps),
+        });
+    }
+    return modes;
+}
+
+// Safety ceiling for RAW (uncompressed) modes only — this is what
+// overran the real-time buffer at 1920x1080@60 on the AVMATRIX card
+// (~250 MB/s, confirmed in the field). Compressed (vcodec=) modes are
+// assumed safe regardless of resolution since onboard compression does
+// the heavy lifting before it ever reaches USB.
+const RAW_BANDWIDTH_CAP_BYTES_PER_SEC = 40 * 1024 * 1024;
+
+function pickCameraMode(listOptionsOutput, targetWidth, targetHeight, targetFps) {
+    const modes = parseDshowVideoModes(listOptionsOutput);
+    if (!modes.length) return null;
+    const targetArea = targetWidth * targetHeight;
+    const scored = modes.map((mode) => {
+        const fps = Math.min(mode.maxFps, Math.max(mode.minFps, targetFps));
+        const rawBytesPerSec = mode.width * mode.height * 2 * fps; // ~2 bytes/px is the common packed-4:2:2/YUYV case
+        const safe = mode.compressed || rawBytesPerSec <= RAW_BANDWIDTH_CAP_BYTES_PER_SEC;
+        return { ...mode, fps, area: mode.width * mode.height, safe };
+    });
+    const safeModes = scored.filter((m) => m.safe);
+    const pool = safeModes.length ? safeModes : scored; // nothing "safe"? better a working overshoot than no camera at all
+    // Prefer compressed modes outright, then the mode whose resolution is
+    // closest to the target without exceeding it, then the closest
+    // overall if none fit under the target.
+    pool.sort((a, b) => {
+        if (a.compressed !== b.compressed) return a.compressed ? -1 : 1;
+        const aFits = a.area <= targetArea, bFits = b.area <= targetArea;
+        if (aFits !== bFits) return aFits ? -1 : 1;
+        return Math.abs(a.area - targetArea) - Math.abs(b.area - targetArea);
+    });
+    return pool[0];
+}
+
+function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height, fps, previewPath, cameraVideoSize, cameraFramerate }) {
     const filterComplex =
         `[0:v]scale=${width}:${height}:flags=lanczos,setsar=1,fps=${fps},format=yuv420p[cam];` +
         `[2:v]scale=${width}:${height},format=rgba[ovl];` +
@@ -69,39 +136,18 @@ function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height,
         // the devices are physically the same hardware or not. Opened
         // ONCE (both), natively — no browser, no screen/window capture
         // anywhere in this path.
-        // 🩹 CONFIRMED IN THE FIELD, twice now, on the same AVMATRIX USB
-        // capture card (`ffmpeg -f dshow -list_options true -i
-        // video="..."` — run this against any new device that hits either
-        // failure below, the exact fixed modes it supports differ per
-        // device):
-        //  1. Forcing an unsupported -video_size/-framerate combo fails
-        //     outright ("Could not set video options" / "Error opening
-        //     input: I/O error") — this device's 1920x1080 mode is FIXED
-        //     at ~60fps with no lower option, so an earlier "1920x1080 @
-        //     30fps" guess never had a chance.
-        //  2. Forcing NO mode at all isn't safe either — ffmpeg's dshow
-        //     demuxer then opens whatever its first enumerated mode is
-        //     (1920x1080 @ ~60fps here), and this device streams
-        //     RAW/uncompressed yuyv422 (no onboard compression) — at
-        //     1920x1080@60 that's ~250 MB/s over USB, which reliably
-        //     overran the dshow real-time buffer ("buffer ... too full ...
-        //     frame dropped!", climbing over time) faster than this CPU-
-        //     bound (no GPU swscale on this ffmpeg build) pipeline could
-        //     drain it, corrupting the relay feed everything downstream —
-        //     recording, live, preview — depends on.
-        // 🩹 CORRECTED after a second field failure: every single mode
-        // this device lists (960x540 included) shows min fps === max fps
-        // === ~60 — i.e. EVERY resolution is fixed at ~60fps on this
-        // device, there is no 30fps option anywhere in its mode list.
-        // "960x540 @ 30fps" was never actually a valid combination; it
-        // happened to succeed once (dshow drivers can be inconsistent
-        // about silently clamping vs. hard-failing an unsupported rate)
-        // and then reliably failed on every later attempt. Request 60fps
-        // — the rate this device actually reports for every mode — and
-        // let the filter_complex below (fps=${fps}, target ~30) do the
-        // downsample, the same way it already converts the overlay input.
+        // 🩹 A hardcoded -video_size/-framerate here was wrong twice in
+        // the field (AVMATRIX USB card: forcing an unsupported combo
+        // failed outright with "Could not set video options" / I/O
+        // error; forcing NOTHING let ffmpeg's dshow demuxer default to
+        // its heaviest mode, 1920x1080@~60 raw/uncompressed, ~250 MB/s
+        // over USB — reliably overran the real-time buffer). cameraMode
+        // is resolved by probeCameraMode() below FROM THE DEVICE ITSELF
+        // (ffmpeg -f dshow -list_options true), the same command used to
+        // hand-diagnose this — no more guessing per device.
         '-f', 'dshow', '-rtbufsize', '512M',
-        '-video_size', '960x540', '-framerate', '60',
+        ...(cameraVideoSize ? ['-video_size', cameraVideoSize] : []),
+        ...(cameraFramerate ? ['-framerate', String(cameraFramerate)] : []),
         '-i', `video=${cameraDeviceName}`,
         // Its own -rtbufsize too — confirmed in the field alongside the
         // video buffer overrun above: ffmpeg's dshow default (~2.9 MB) is
@@ -198,9 +244,10 @@ function buildLiveEncoderArgs({ width, height, fps, bitrateKbps, keyframeInterva
 // it first, released once neither still wants it.
 // ----------------------------------------------------------------
 class Compositor extends EventEmitter {
-    constructor({ spawnFfmpeg, execPath, overlayUrl, width, height, fps, previewPath }) {
+    constructor({ spawnFfmpeg, spawnFfmpegSync, execPath, overlayUrl, width, height, fps, previewPath }) {
         super();
         this.spawnFfmpeg = spawnFfmpeg;
+        this.spawnFfmpegSync = spawnFfmpegSync;
         this.execPath = execPath;
         this.overlayUrl = overlayUrl;
         this.width = width;
@@ -215,6 +262,7 @@ class Compositor extends EventEmitter {
         this.consumers = new Set(); // attached relay consumers (see attachRelayConsumer)
         this.lastError = null;
         this.startedAt = null;
+        this.cameraMode = null; // resolved once by probeCameraMode(), cached for this instance's lifetime
     }
 
     addRef(who) {
@@ -225,6 +273,33 @@ class Compositor extends EventEmitter {
         if (this.refs.size === 0) this.stop();
     }
 
+    // 🎯 vMix-style auto-detect: ask this exact camera what it actually
+    // supports and pick a real mode, instead of a hardcoded guess that's
+    // only ever right for one specific capture card. Best-effort — a
+    // device this can't probe/parse (webcams often don't even print a
+    // options list the same way, or list none at all) just falls back to
+    // no constraint, same as before probing existed.
+    probeCameraMode(cameraDeviceName) {
+        if (!this.spawnFfmpegSync) return null;
+        try {
+            const res = this.spawnFfmpegSync(
+                ['-hide_banner', '-f', 'dshow', '-list_options', 'true', '-i', `video=${cameraDeviceName}`],
+                { encoding: 'utf8', timeout: 8000 }
+            );
+            const output = `${res.stdout || ''}${res.stderr || ''}`;
+            const mode = pickCameraMode(output, this.width, this.height, this.fps);
+            if (mode) {
+                console.log(`[compositor] camera mode auto-detected: ${mode.width}x${mode.height}@${mode.fps}${mode.compressed ? ' (compressed)' : ' (raw)'}`);
+            } else {
+                console.log('[compositor] could not auto-detect a camera mode from -list_options output — opening unconstrained');
+            }
+            return mode;
+        } catch (e) {
+            console.log(`[compositor] camera mode probe failed (${e.message}) — opening unconstrained`);
+            return null;
+        }
+    }
+
     async ensureRunning({ cameraDeviceName, audioDeviceName }) {
         if (this.state === 'running' || this.state === 'starting') return { ok: true };
         if (!overlayBridgeAvailable()) {
@@ -232,6 +307,7 @@ class Compositor extends EventEmitter {
         }
         this.state = 'starting';
         this.lastError = null;
+        if (this.cameraMode === null) this.cameraMode = this.probeCameraMode(cameraDeviceName) || false; // false = "probed, nothing usable" so we don't re-probe every retry
         try {
             this.overlay = new OverlayBridge({ execPath: this.execPath, url: this.overlayUrl, width: this.width, height: this.height });
             await this.overlay.start();
@@ -241,7 +317,11 @@ class Compositor extends EventEmitter {
             return { ok: false, error: this.lastError };
         }
 
-        const args = buildCompositorArgs({ cameraDeviceName, audioDeviceName, width: this.width, height: this.height, fps: this.fps, previewPath: this.previewPath });
+        const args = buildCompositorArgs({
+            cameraDeviceName, audioDeviceName, width: this.width, height: this.height, fps: this.fps, previewPath: this.previewPath,
+            cameraVideoSize: this.cameraMode ? `${this.cameraMode.width}x${this.cameraMode.height}` : null,
+            cameraFramerate: this.cameraMode ? this.cameraMode.fps : null,
+        });
         let proc;
         try {
             proc = this.spawnFfmpeg(args, { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -351,4 +431,6 @@ module.exports = {
     buildLiveEncoderArgs,
     overlayBridgeAvailable,
     OVERLAY_FPS,
+    parseDshowVideoModes,
+    pickCameraMode,
 };
