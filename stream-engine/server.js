@@ -924,11 +924,28 @@ function launchCaptureWindow({ matchId, videoDeviceId, videoLabel, origin, width
         '--disable-gpu',
         '--disable-gpu-compositing',
         '--disable-software-rasterizer',
-        // Chromium pauses/throttles a window's rendering when it THINKS
-        // another window occludes it — gdigrab still reads whatever's
-        // on screen regardless, so that mismatch alone can look like a
-        // frozen/stale program feed even though nothing actually failed.
-        '--disable-features=CalculateNativeWinOcclusion',
+        // 🩹 CONFIRMED IN THE FIELD: even with GPU compositing fully
+        // disabled above, a live <video> element (the camera feed) can
+        // STILL render through a SEPARATE DirectComposition "video
+        // overlay" swapchain — a distinct fast-path Chromium uses
+        // specifically to present live video efficiently, independent
+        // of the general page compositor --disable-gpu controls. gdigrab
+        // (GDI BitBlt) cannot read that swapchain either, so the operator
+        // sees the real camera feed in the window itself (it renders
+        // correctly on screen) while /capture-preview and the actual
+        // recorded/streamed picture come back blank/gray exactly where
+        // the <video> element is — the overlay graphics around it can
+        // still be readable since those aren't going through this same
+        // path. DirectCompositionVideoOverlays forces <video> back onto
+        // the normal compositor surface, which BitBlt CAN read.
+        // CalculateNativeWinOcclusion: Chromium pauses/throttles a
+        // window's rendering when it THINKS another window occludes it
+        // — gdigrab still reads whatever's on screen regardless, so that
+        // mismatch alone can look like a frozen/stale program feed even
+        // though nothing actually failed. (Chromium only honors the
+        // LAST --disable-features flag if passed more than once, so both
+        // names are combined into this single flag, not two separate ones.)
+        '--disable-features=CalculateNativeWinOcclusion,DirectCompositionVideoOverlays',
         // No user ever clicks this window (it's launched headless-ish,
         // programmatically) — without this, Chromium's autoplay policy
         // can block the camera <video> from playing at all.
