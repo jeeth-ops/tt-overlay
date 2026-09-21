@@ -87,22 +87,46 @@ const CONFIG_FILE = path.join(__dirname, 'config.local.json'); // gitignored —
 const NATIVE_CAPTURE_SUPPORTED = process.platform === 'win32';
 
 // ----------------------------------------------------------------
-// ffmpeg resolution — prefer an explicitly configured NVENC-capable
-// build over the minimal one @ffmpeg-installer/ffmpeg ships (that
-// package's binaries are built WITHOUT hardware encoders, so relying
-// on it here would silently mean "no NVENC ever". Order of preference:
-//   1. FFMPEG_PATH env var (operator points this at a full/NVIDIA build,
-//      e.g. the gyan.dev "full" Windows build)
-//   2. a system `ffmpeg` already on PATH
-// There is deliberately no fallback to a bundled minimal ffmpeg here —
-// if neither of the above has NVENC, /status reports it honestly as
-// unavailable instead of quietly encoding on the CPU.
+// ffmpeg/ffprobe resolution — the operator should never need to install
+// ffmpeg system-wide or configure PATH by hand. Order of preference:
+//   1. BUNDLED — stream-engine/bin/ffmpeg.exe (+ ffprobe.exe) shipped
+//      alongside this app (see bin/README.md for exactly what to put
+//      there; not committed to git — multi-hundred-MB binaries don't
+//      belong in a repo). This is the intended path for a real install.
+//   2. FFMPEG_PATH / FFPROBE_PATH env var — an explicit override for
+//      development/testing against a different build.
+//   3. a system `ffmpeg`/`ffprobe` already on PATH — last resort.
+// Whichever wins, this must be a FULL build with hardware encoders —
+// the minimal @ffmpeg-installer/ffmpeg npm package used elsewhere in
+// this repo for clip cutting is built WITHOUT them and will NOT work
+// here; relying on it here would silently mean "no NVENC ever". If
+// nothing above has NVENC, /status reports that honestly rather than
+// quietly falling back to CPU encoding.
 // ----------------------------------------------------------------
+function bundledBinPath(name) {
+    return path.join(__dirname, 'bin', process.platform === 'win32' ? `${name}.exe` : name);
+}
 function resolveFfmpegPath() {
+    const bundled = bundledBinPath('ffmpeg');
+    if (fs.existsSync(bundled)) return bundled;
     if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) return process.env.FFMPEG_PATH;
     return 'ffmpeg'; // resolved via PATH by child_process
 }
+function resolveFfprobePath() {
+    const bundled = bundledBinPath('ffprobe');
+    if (fs.existsSync(bundled)) return bundled;
+    if (process.env.FFPROBE_PATH && fs.existsSync(process.env.FFPROBE_PATH)) return process.env.FFPROBE_PATH;
+    return 'ffprobe';
+}
+function resolvedBinSource(name, resolvedPath) {
+    if (resolvedPath === bundledBinPath(name)) return 'bundled';
+    if (resolvedPath === process.env[`${name.toUpperCase()}_PATH`]) return `${name.toUpperCase()}_PATH env var`;
+    return 'system PATH';
+}
 const FFMPEG_PATH = resolveFfmpegPath();
+const FFPROBE_PATH = resolveFfprobePath();
+const FFMPEG_SOURCE = resolvedBinSource('ffmpeg', FFMPEG_PATH);
+const FFPROBE_SOURCE = resolvedBinSource('ffprobe', FFPROBE_PATH);
 
 // 🩹 CONFIRMED IN THE FIELD: on Windows, spawning a console-subsystem
 // child process (ffmpeg.exe, powershell.exe) without windowsHide flashes
@@ -123,6 +147,74 @@ function spawnFfmpeg(args, opts = {}) {
 function spawnFfmpegSync(args, opts = {}) {
     return spawnSync(FFMPEG_PATH, args, { ...opts, windowsHide: true });
 }
+function spawnFfprobeSync(args, opts = {}) {
+    return spawnSync(FFPROBE_PATH, args, { ...opts, windowsHide: true });
+}
+
+// ----------------------------------------------------------------
+// 🔎 FFPROBE AVAILABILITY + FILE-INTEGRITY CHECK — ffprobe ships in the
+// same "full" build as ffmpeg (see bin/README.md), so a missing ffprobe
+// almost always means the bundled/pointed-at build is incomplete or the
+// wrong one. Also used after a recording segment or clip finishes
+// writing to catch a corrupted/incomplete MP4 (e.g. the process was
+// killed mid-write, or the disk filled up partway through) BEFORE it's
+// reported to the operator/uploaded as if it were a good file — a
+// truncated/broken MP4 often still exists as a non-empty file on disk,
+// so file size alone can't catch this.
+// ----------------------------------------------------------------
+let ffprobeAvailableCache = null;
+function ffprobeAvailable() {
+    if (ffprobeAvailableCache !== null) return ffprobeAvailableCache;
+    try {
+        const res = spawnFfprobeSync(['-version'], { encoding: 'utf8', timeout: 5000 });
+        ffprobeAvailableCache = !res.error;
+    } catch (e) {
+        ffprobeAvailableCache = false;
+    }
+    return ffprobeAvailableCache;
+}
+
+// Verifies a finished MP4 actually has a valid, playable video stream
+// with a real duration — not just "the file exists and is non-empty".
+// Best-effort: if ffprobe itself isn't available, this can't verify
+// anything and says so explicitly rather than silently assuming the
+// file is fine.
+function verifyMediaFile(filePath) {
+    if (!ffprobeAvailable()) return { ok: null, reason: 'ffprobe not available — cannot verify file integrity (see bin/README.md)' };
+    try {
+        if (!fs.existsSync(filePath) || fs.statSync(filePath).size === 0) {
+            return { ok: false, reason: 'file missing or empty' };
+        }
+        const res = spawnFfprobeSync([
+            '-v', 'error',
+            '-select_streams', 'v:0',
+            '-show_entries', 'stream=codec_type,width,height:format=duration',
+            '-of', 'json',
+            filePath,
+        ], { encoding: 'utf8', timeout: 10000 });
+        if (res.error || res.status !== 0) {
+            return { ok: false, reason: `ffprobe could not read the file — likely corrupted/incomplete (${(res.stderr || '').trim().slice(0, 200) || res.error?.message || `exit ${res.status}`})` };
+        }
+        const parsed = JSON.parse(res.stdout || '{}');
+        const stream = (parsed.streams || [])[0];
+        const durationSec = parseFloat(parsed.format && parsed.format.duration);
+        if (!stream || !stream.width || !stream.height) {
+            return { ok: false, reason: 'no valid video stream found — likely corrupted/incomplete' };
+        }
+        if (!Number.isFinite(durationSec) || durationSec <= 0) {
+            return { ok: false, reason: 'zero/invalid duration — likely truncated mid-write (crash or disk-full)' };
+        }
+        return { ok: true, width: stream.width, height: stream.height, durationSec };
+    } catch (e) {
+        return { ok: false, reason: `verification threw: ${e.message}` };
+    }
+}
+
+// Conservative low-disk threshold — below this, a recording/clip write
+// in progress is at real risk of failing mid-write (a truncated/
+// corrupted MP4 — see verifyMediaFile above) rather than failing
+// cleanly, so it's worth warning well before the disk is actually full.
+const LOW_DISK_WARNING_BYTES = 2 * 1024 * 1024 * 1024; // 2GB
 
 function loadConfig() {
     try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch (e) { return {}; }
@@ -1542,7 +1634,12 @@ function abrTick() {
 // unlimited-backoff reconnect loop below, because a live sports stream
 // should never just give up over a few dropped packets or a brief
 // internet outage.
-const FATAL_ERROR_PATTERN = /unrecognized option|no such filter|cannot find a matching stream|invalid argument|no nvenc capable devices|unable to open|permission denied|no such file|unknown encoder/i;
+// "no space left"/"disk full" added so a disk-full crash (recorder/clip
+// cutting — the only things that write local files) is classified as
+// fatal/operator-actionable instead of silently falling into the
+// network-blip reconnect loop, which would just keep retrying against a
+// still-full disk.
+const FATAL_ERROR_PATTERN = /unrecognized option|no such filter|cannot find a matching stream|invalid argument|no nvenc capable devices|unable to open|permission denied|no such file|unknown encoder|no space left|disk full|i\/o error/i;
 function isFatalError(message) {
     return !!message && (FATAL_ERROR_PATTERN.test(message) || WINDOW_NOT_FOUND_PATTERN.test(message));
 }
@@ -1818,6 +1915,22 @@ function startRecorder(matchId, { resolution, fps, audioDeviceName } = {}) {
 
     const dir = recorderDir(matchId);
     try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { return { ok: false, error: `Could not create recording folder: ${e.message}` }; }
+
+    // 🩹 A recording that runs out of disk mid-write doesn't fail
+    // cleanly — it leaves a truncated/corrupted MP4 (see verifyMediaFile)
+    // that looks like a real file until someone tries to play it, often
+    // hours into a match. Refuse to even START recording below a hard
+    // floor, and log a clear warning below LOW_DISK_WARNING_BYTES so the
+    // operator can free space before it becomes a real problem instead
+    // of discovering it after the match.
+    const freeBytes = diskFreeBytes(RECORDING_ROOT);
+    const HARD_DISK_FLOOR_BYTES = 300 * 1024 * 1024; // 300MB — not even enough for a few seconds of buffering headroom
+    if (freeBytes != null && freeBytes < HARD_DISK_FLOOR_BYTES) {
+        return { ok: false, error: `Only ${(freeBytes / 1024 / 1024).toFixed(0)}MB free on the recording drive — free up disk space before starting recording` };
+    }
+    if (freeBytes != null && freeBytes < LOW_DISK_WARNING_BYTES) {
+        console.log(`[stream-engine] ⚠ LOW DISK SPACE: only ${(freeBytes / 1024 / 1024 / 1024).toFixed(1)}GB free on the recording drive — recording is starting anyway, but free up space soon`);
+    }
 
     recorder.matchId = matchId;
     recorder.audioDeviceName = audioDeviceName;
@@ -2176,7 +2289,19 @@ async function cutLocalClip({ clipId, matchId, eventTimestamp }) {
 
     await cutFromMasterFile({ masterFile: seg.path, fromSec, durationSec, outFile });
 
-    console.log(`[CLIP CREATED] clipId=${clipId} localPath=${outFile}`);
+    // 🩹 A clip whose ffmpeg process exited 0 can still be a corrupted/
+    // truncated file (e.g. the disk filled up mid-write on the last few
+    // hundred KB, or the process was killed a moment too early) — verify
+    // it actually has a valid, playable video stream before calling this
+    // a success, so a broken file never gets uploaded/shown to the
+    // operator as if it were a real clip.
+    const verify = verifyMediaFile(outFile);
+    if (verify.ok === false) {
+        try { fs.unlinkSync(outFile); } catch (e) { /* best effort — don't leave a known-broken file lying around */ }
+        return { ok: false, error: `Clip file failed integrity check: ${verify.reason}` };
+    }
+
+    console.log(`[CLIP CREATED] clipId=${clipId} localPath=${outFile}${verify.ok === null ? ' (integrity NOT verified — ffprobe unavailable, see bin/README.md)' : ` (verified: ${verify.durationSec.toFixed(1)}s, ${verify.width}x${verify.height})`}`);
     return { ok: true, outFile };
 }
 
@@ -2340,6 +2465,10 @@ app.get('/status', async (req, res) => {
         nativeCaptureSupported: NATIVE_CAPTURE_SUPPORTED,
         ffmpegAvailable: ffmpegAvailable(),
         ffmpegPath: FFMPEG_PATH,
+        ffmpegSource: FFMPEG_SOURCE, // 'bundled' | 'FFMPEG_PATH env var' | 'system PATH' — see bin/README.md
+        ffprobeAvailable: ffprobeAvailable(),
+        ffprobePath: FFPROBE_PATH,
+        ffprobeSource: FFPROBE_SOURCE,
         nvencAvailable: nvenc.available,
         nvencDetail: nvenc.detail,
         gpuScaleAvailable: NATIVE_CAPTURE_SUPPORTED ? checkGpuScaleRuntime() : false,
@@ -2809,6 +2938,16 @@ async function monitorProgramFeedHealth() {
             console.log(`[stream-engine] ⚠ PROGRAM FEED WARNING (recording): ${health.black ? 'BLACK' : health.white ? 'WHITE' : 'FROZEN'} — master.mp4 may be recording a bad picture right now`);
         }
     }
+    // Disk can fill up mid-match, not just at recording start (see the
+    // hard-floor check in startRecorder) — check on the same cadence so
+    // the operator gets a warning well before a write actually fails and
+    // leaves a truncated/corrupted master.mp4.
+    if (recorder.state === 'recording') {
+        const freeBytes = diskFreeBytes(RECORDING_ROOT);
+        if (freeBytes != null && freeBytes < LOW_DISK_WARNING_BYTES) {
+            console.log(`[stream-engine] ⚠ LOW DISK SPACE: only ${(freeBytes / 1024 / 1024 / 1024).toFixed(1)}GB free on the recording drive while recording is active`);
+        }
+    }
 }
 setInterval(() => { monitorProgramFeedHealth().catch((e) => console.log('[stream-engine] monitorProgramFeedHealth error (kept running):', e.message)); }, PROGRAM_FEED_MONITOR_INTERVAL_MS);
 
@@ -2845,7 +2984,11 @@ setInterval(() => sweepOldClipFiles(ORPHAN_CLIP_FILE_MAX_AGE_MS), 60 * 60 * 1000
 const server = app.listen(PORT, '127.0.0.1', () => {
     console.log(`🎥 AllSportsLive Stream Engine (native capture) running at http://127.0.0.1:${PORT} (localhost only)`);
     console.log(`   Platform: ${process.platform}${NATIVE_CAPTURE_SUPPORTED ? '' : ' — ⚠️ native capture (gdigrab/dshow) needs Windows; this engine cannot capture on this OS'}`);
-    console.log(`   ffmpeg: ${FFMPEG_PATH}${process.env.FFMPEG_PATH ? ' (from FFMPEG_PATH)' : ' (from PATH — set FFMPEG_PATH to point at an NVENC-capable build if this is not one)'}`);
+    console.log(`   ffmpeg: ${FFMPEG_PATH} (${FFMPEG_SOURCE})${FFMPEG_SOURCE !== 'bundled' ? ' — see stream-engine/bin/README.md to bundle ffmpeg instead of relying on this' : ''}`);
+    console.log(`   ffprobe: ${ffprobeAvailable() ? `${FFPROBE_PATH} (${FFPROBE_SOURCE})` : '❌ NOT available — clip/recording integrity checks are disabled (see stream-engine/bin/README.md)'}`);
+    if (!ffmpegAvailable()) {
+        console.log(`   ⚠️ ffmpeg itself could not be run at all (${FFMPEG_PATH}) — nothing here will work until this is fixed. See stream-engine/bin/README.md.`);
+    }
     const nvenc = checkNvenc();
     console.log(`   NVENC: ${nvenc.available ? '✅ available' : '❌ NOT available — ' + nvenc.detail}`);
 });

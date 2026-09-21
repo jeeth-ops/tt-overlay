@@ -80,13 +80,15 @@ the exact data/video flow.
 ## Requirements
 
 - Node.js 18+
-- An **NVENC-capable ffmpeg build**. The `@ffmpeg-installer/ffmpeg` package
-  used elsewhere in this repo (for clip cutting) is a **minimal build
-  without hardware encoders** — it will NOT work here. Install a full
-  build instead, e.g. the "full" Windows build from
-  https://www.gyan.dev/ffmpeg/builds/ (ships `h264_nvenc`), and either:
-  - put it on your system `PATH`, or
-  - set the `FFMPEG_PATH` environment variable to its full path.
+- An **NVENC-capable ffmpeg build** (+ its matching ffprobe). The
+  `@ffmpeg-installer/ffmpeg` package used elsewhere in this repo (for
+  clip cutting) is a **minimal build without hardware encoders** — it
+  will NOT work here. **Preferred: bundle it** — put `ffmpeg.exe` and
+  `ffprobe.exe` in `stream-engine/bin/` (see `bin/README.md` for exactly
+  what to download) and the engine finds them automatically; the
+  operator never installs ffmpeg system-wide or touches PATH at all.
+  `FFMPEG_PATH`/`FFPROBE_PATH` env vars, then system PATH, are only
+  fallbacks if `bin/` is empty.
 - An NVIDIA GPU + driver that supports NVENC (RTX 3050 does).
 - Google Chrome or Microsoft Edge installed at one of the usual Windows
   install paths (or set `CAPTURE_BROWSER_PATH` to its full `.exe` path).
@@ -100,9 +102,12 @@ the exact data/video flow.
 ```
 cd stream-engine
 npm install
-set FFMPEG_PATH=C:\ffmpeg\bin\ffmpeg.exe   (Windows, if not on PATH)
+:: copy ffmpeg.exe + ffprobe.exe into stream-engine\bin\ — see bin\README.md
 npm start
 ```
+
+`FFMPEG_PATH`/`FFPROBE_PATH` env vars (e.g. `set FFMPEG_PATH=C:\ffmpeg\bin\ffmpeg.exe`)
+are only needed if you're deliberately NOT bundling — see `bin/README.md`.
 
 Runs at `http://127.0.0.1:5006` — bound to localhost only, not reachable
 from Render or the network.
@@ -117,6 +122,14 @@ curl http://127.0.0.1:5006/status
 why (ffmpeg not found, or found but built without `h264_nvenc`). `/go-live`
 refuses to start at all when this is false — it will never silently fall
 back to CPU (`libx264`) encoding.
+
+Also check `ffmpegSource`/`ffprobeSource` — should read `"bundled"` if
+you followed `bin/README.md`. `"system PATH"` or an env-var source means
+this machine is depending on something outside this app's own folder,
+which won't travel with it if you move/reinstall Stream Engine
+elsewhere. `ffprobeAvailable: false` means clip/recording integrity
+checks (see `verifyMediaFile` in `server.js`) are silently disabled —
+worth fixing before match day, not just NVENC.
 
 ## API
 
