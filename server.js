@@ -498,7 +498,16 @@ const io = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-app.use(express.static(__dirname));
+app.use(express.static(__dirname, {
+    setHeaders(res, filePath) {
+        // Same reasoning as sendHtmlNoCache() below: never let a browser or
+        // CDN cache an .html page across deploys. Other static assets
+        // (images/video/css/js) keep normal caching.
+        if (filePath.endsWith('.html')) {
+            res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+        }
+    }
+}));
 app.use(express.json());
 
 // ================================================================
@@ -5813,36 +5822,46 @@ adminRouter.post('/settings', async (req, res) => {
 
 app.use('/api/admin', adminRouter);
 
+// These pages get redeployed often (every panel/overlay update), but browsers
+// and any CDN in front of Render will otherwise cache an HTML response and
+// keep serving it after a fresh deploy — looking exactly like "the update
+// didn't go live" even though the server has the new file. Force revalidation
+// on every load so a normal reload always sees the current deployed file.
+function sendHtmlNoCache(res, filePath) {
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.sendFile(filePath);
+}
+
 // Routes
-app.get('/', (req, res) => res.sendFile(__dirname + '/index.html'));
+app.get('/', (req, res) => sendHtmlNoCache(res, __dirname + '/index.html'));
 // 🛡️ Owner Admin Portal shell. This always serves the static page — it
 // contains no data. Every real fact it shows comes from an authenticated
 // call to /api/admin/*, which requireOwner enforces server-side above.
 // A non-owner opening this URL sees the page's own "Access Denied" state,
 // not any admin data.
-app.get('/admin', (req, res) => res.sendFile(__dirname + '/admin.html'));
-app.get('/overlay', (req, res) => res.sendFile(__dirname + '/overlay.html'));
-app.get('/tt-templates', (req, res) => res.sendFile(__dirname + '/tt-templates.html'));
-app.get('/tt-panel', (req, res) => res.sendFile(__dirname + '/tt-panel.html'));
-app.get('/tt-matchintro', (req, res) => res.sendFile(__dirname + '/tt-matchintro.html'));
-app.get('/tt-matchintro-panel', (req, res) => res.sendFile(__dirname + '/tt-matchintro-panel.html'));
-app.get('/tt-lowerthird', (req, res) => res.sendFile(__dirname + '/tt-lowerthird.html'));
-app.get('/tt-lowerthird-panel', (req, res) => res.sendFile(__dirname + '/tt-lowerthird-panel.html'));
-app.get('/cricket-templates', (req, res) => res.sendFile(__dirname + '/cricket-templates.html'));
-app.get('/cricket-overlay', (req, res) => res.sendFile(__dirname + '/cricket-overlay.html'));
-app.get('/cricket-panel', (req, res) => res.sendFile(__dirname + '/cricket-panel.html'));
-app.get('/cricket-overlay2', (req, res) => res.sendFile(__dirname + '/cricket-overlay2.html'));
-app.get('/cricket-panel2', (req, res) => res.sendFile(__dirname + '/cricket-panel2.html'));
-app.get('/cricket-scorecard', (req, res) => res.sendFile(__dirname + '/cricket-scorecard.html'));
-app.get('/cricket-overlay3', (req, res) => res.sendFile(__dirname + '/cricket-overlay3.html'));
-app.get('/cricket-panel3', (req, res) => res.sendFile(__dirname + '/cricket-panel3.html'));
+app.get('/admin', (req, res) => sendHtmlNoCache(res, __dirname + '/admin.html'));
+app.get('/overlay', (req, res) => sendHtmlNoCache(res, __dirname + '/overlay.html'));
+app.get('/tt-templates', (req, res) => sendHtmlNoCache(res, __dirname + '/tt-templates.html'));
+app.get('/tt-panel', (req, res) => sendHtmlNoCache(res, __dirname + '/tt-panel.html'));
+app.get('/tt-matchintro', (req, res) => sendHtmlNoCache(res, __dirname + '/tt-matchintro.html'));
+app.get('/tt-matchintro-panel', (req, res) => sendHtmlNoCache(res, __dirname + '/tt-matchintro-panel.html'));
+app.get('/tt-lowerthird', (req, res) => sendHtmlNoCache(res, __dirname + '/tt-lowerthird.html'));
+app.get('/tt-lowerthird-panel', (req, res) => sendHtmlNoCache(res, __dirname + '/tt-lowerthird-panel.html'));
+app.get('/cricket-templates', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-templates.html'));
+app.get('/cricket-overlay', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-overlay.html'));
+app.get('/cricket-panel', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-panel.html'));
+app.get('/cricket-overlay2', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-overlay2.html'));
+app.get('/cricket-panel2', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-panel2.html'));
+app.get('/cricket-scorecard', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-scorecard.html'));
+app.get('/cricket-overlay3', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-overlay3.html'));
+app.get('/cricket-panel3', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-panel3.html'));
 // 🖥️ LED Screen Output — ground display page. Static shell only; it joins
 // the SAME Socket.IO room as the existing scoring panel/overlay (via the
 // `uid` query param already handled in io.on('connection') below) and
 // listens to the existing 'liveCricketScore' broadcast. No new scoring
 // state, no new socket events, no separate match-data source — see
 // led-output.html for details. :matchId is read client-side from the URL.
-app.get('/led-output/:matchId', (req, res) => res.sendFile(__dirname + '/led-output.html'));
+app.get('/led-output/:matchId', (req, res) => sendHtmlNoCache(res, __dirname + '/led-output.html'));
 
 // 🧩 Generic serving routes for sports added via Admin → Broadcasting →
 // Add Template (the panelCode/overlayCode the owner pastes in). Cricket /
@@ -5869,7 +5888,7 @@ app.get('/t/:slug/overlay/:overlayId', async (req, res) => {
 // 🌐 Public scorecard system — see the "PUBLIC SCORECARD SYSTEM" section
 // above for the /api/public/* + /api/league/:name/public-link routes
 // these pages call. Both are static shells; all data loads client-side.
-app.get('/score/tournament/:token', (req, res) => res.sendFile(__dirname + '/score-tournament.html'));
+app.get('/score/tournament/:token', (req, res) => sendHtmlNoCache(res, __dirname + '/score-tournament.html'));
 // A specific completed match inside a tournament now reuses the full
 // cricket-scorecard.html viewer (same batting/bowling clip icons, Match
 // Highlights, comparison charts as a live match) instead of the plainer
@@ -5888,8 +5907,8 @@ app.get('/score/match/:id', (req, res) => {
     const qs = new URLSearchParams({ match: req.params.id, history: '1' });
     res.redirect(302, `/cricket-scorecard?${qs.toString()}`);
 });
-app.get('/football-matchintro', (req, res) => res.sendFile(__dirname + '/football-matchintro.html'));
-app.get('/football-matchintro-panel', (req, res) => res.sendFile(__dirname + '/football-matchintro-panel.html'));
+app.get('/football-matchintro', (req, res) => sendHtmlNoCache(res, __dirname + '/football-matchintro.html'));
+app.get('/football-matchintro-panel', (req, res) => sendHtmlNoCache(res, __dirname + '/football-matchintro-panel.html'));
 
 let roomStates = {};
 const firestoreWriteTimers = {}; // debounce map: targetId -> timeout handle
