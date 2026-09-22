@@ -22,7 +22,14 @@ const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/cl
 // ================================================================
 let r2Client = null;
 const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME;
-const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL; // e.g. https://pub-xxxx.r2.dev  (no trailing slash)
+const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL; // e.g. https://clips.yourdomain.com (custom domain on the bucket, no trailing slash)
+const clipMedia = require('./clip-media'); // faststart/poster/cache-header/Range helpers — see clip-media.js
+if (R2_PUBLIC_URL && /\.r2\.dev(\/|$)/i.test(R2_PUBLIC_URL)) {
+    // r2.dev is Cloudflare's rate-limited development URL: it is NOT served through the CDN cache, so
+    // every first view of every clip is a cold read from the bucket. Attach a custom domain to the bucket
+    // (Cloudflare dashboard -> R2 -> bucket -> Settings -> Custom Domains) and set R2_PUBLIC_URL to it.
+    console.log('⚠️  R2_PUBLIC_URL points at *.r2.dev — clips will NOT be edge-cached. Use a custom domain on the bucket for fast first playback.');
+}
 
 if (process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY) {
     r2Client = new S3Client({
@@ -472,7 +479,10 @@ async function uploadClipToR2(clipId, matchId, filePath) {
             Key: key,
             Body: fileBuffer,
             ContentLength: fileBuffer.length,
-            ContentType: 'video/mp4'
+            ContentType: 'video/mp4',
+            // Clips are immutable (deterministic key per clipId) — let browsers and the Cloudflare
+            // edge keep them for a year instead of revalidating / re-fetching from R2 every view.
+            CacheControl: clipMedia.CLIP_CACHE_CONTROL
         }));
 
         const publicUrl = R2_PUBLIC_URL ? `${R2_PUBLIC_URL}/${key}` : null;
@@ -493,6 +503,25 @@ async function uploadClipToR2(clipId, matchId, filePath) {
     }
 }
 
+// Poster JPEG for the <video poster> (best-effort: a failure here never affects the clip itself).
+async function uploadClipPosterToR2(clipId, matchId, posterPath) {
+    if (!r2Client || !R2_BUCKET_NAME || !posterPath) return false;
+    const key = `matches/${matchId}/clips/${clipId}.jpg`;
+    try {
+        const body = fs.readFileSync(posterPath);
+        await r2Client.send(new PutObjectCommand({
+            Bucket: R2_BUCKET_NAME, Key: key, Body: body, ContentLength: body.length,
+            ContentType: 'image/jpeg', CacheControl: clipMedia.CLIP_CACHE_CONTROL
+        }));
+        if (clipsCollection && R2_PUBLIC_URL) {
+            await clipsCollection.updateOne({ clipId }, { $set: { r2PosterKey: key, r2PosterUrl: `${R2_PUBLIC_URL}/${key}` } });
+        }
+        return true;
+    } catch (err) {
+        console.log(`R2 poster upload error (${key}):`, err.message || err);
+        return false;
+    }
+}
 
 const io = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] }
@@ -707,12 +736,24 @@ async function finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMe
     // failing, until the retry sweep below finishes the job later) —
     // MongoDB never sees the video itself, only this clip doc's
     // metadata (matchId, player keys, eventType, r2Url/driveUrl).
+    // 🚀 Make the clip fast on its FIRST play, for every viewer: move the MP4 index (moov) to the
+    // front of the file (stream copy, no re-encode) and cut a poster frame. Done ONCE here, before
+    // either upload, so R2 and Drive both receive the optimised bytes and every retry re-uses them.
+    // Best-effort — on any failure the original file is uploaded exactly as before.
+    const posterPath = `${outFile}.poster.jpg`;
+    const optimized = await clipMedia.optimizeClipFile(outFile, { ffmpegPath: ffmpegInstallerPath, posterPath });
+    if (clipsCollection) {
+        clipsCollection.updateOne({ clipId }, { $set: { optimizedAt: Date.now(), faststartFixed: optimized.faststartFixed } }).catch(() => {});
+    }
+
     console.log(`[R2] upload started — clipId=${clipId}`);
     console.log(`[DRIVE] upload started — clipId=${clipId}`);
     const [r2Ok, driveOk] = await Promise.all([
         uploadClipToR2(clipId, matchId, outFile),
-        uploadClipToDrive(clipId, matchId, outFile)
+        uploadClipToDrive(clipId, matchId, outFile),
+        optimized.posterPath ? uploadClipPosterToR2(clipId, matchId, optimized.posterPath) : null
     ]);
+    if (optimized.posterPath) fs.unlink(optimized.posterPath, () => {});
     console.log(`[R2] ${r2Ok ? 'success' : 'failure'} — clipId=${clipId}`);
     console.log(`[DRIVE] ${driveOk ? 'success' : 'failure'} — clipId=${clipId}`);
 
@@ -2196,6 +2237,10 @@ function serializeClip(c) {
         // predates the `status` field.
         status: c.status || (c.r2Url || c.driveUrl ? 'COMPLETE' : 'UPLOADING'),
         watchUrl: `/api/clips/${c._id}/watch`,
+        // Direct CDN URL (no redirect hop, no per-view server work). The player falls back to
+        // watchUrl if this ever fails (e.g. object aged out of R2 -> Drive fallback).
+        playbackUrl: (c.r2Url && c.r2Status !== 'failed') ? c.r2Url : null,
+        posterUrl: c.r2PosterUrl || null,
         downloadUrl: `/api/clips/${c._id}/download`,
         createdAt: c.createdAt
     };
@@ -2372,14 +2417,16 @@ app.get('/api/players/:playerId/clips', async (req, res) => {
 // there before we redirect/stream a viewer to it; on any failure (404,
 // network error, whatever) we treat it as "not on R2 anymore" and let the
 // caller fall back to Drive instead of handing back a dead link.
-async function r2ObjectExists(url) {
+// Cached (10 min positive / 30 s negative) and coalesced: this used to be an uncached HEAD to R2 on
+// EVERY open of EVERY clip, sitting in front of the redirect — pure added latency on first play.
+const r2ObjectExists = clipMedia.createExistenceCache(async (url) => {
     try {
         const headRes = await fetch(url, { method: 'HEAD' });
         return headRes.ok;
     } catch (err) {
         return false;
     }
-}
+});
 
 // Resolves a clip's actual playable URL server-side — the frontend never
 // talks to R2/Drive directly and no credentials/keys ever reach the client.
@@ -2401,13 +2448,13 @@ app.get('/api/clips/:clipId/watch', async (req, res) => {
         const clip = await resolvePlayableClip(req.params.clipId);
         if (!clip) return res.status(404).json({ success: false, error: 'Clip not found' });
         if (clip.r2Url && await r2ObjectExists(clip.r2Url)) {
+            res.set('Cache-Control', 'public, max-age=600'); // the redirect itself is cacheable now
             return res.redirect(302, clip.r2Url);
         }
         if (clip.driveFileId && driveClient) {
-            const driveRes = await driveClient.files.get({ fileId: clip.driveFileId, alt: 'media' }, { responseType: 'stream' });
-            res.setHeader('Content-Type', 'video/mp4');
-            driveRes.data.on('error', () => res.end());
-            return driveRes.data.pipe(res);
+            // Range-aware proxy (206/Content-Range/Accept-Ranges/Content-Length) so seeking works
+            // and abandoned ranges release their Drive stream — see clip-media.js pipeDriveClip.
+            return await clipMedia.pipeDriveClip(driveClient, clip.driveFileId, req, res);
         }
         res.status(202).json({ success: false, error: 'Clip is still processing — try again shortly' });
     } catch (err) {
