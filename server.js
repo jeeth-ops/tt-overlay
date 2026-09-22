@@ -22,7 +22,14 @@ const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/cl
 // ================================================================
 let r2Client = null;
 const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME;
-const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL; // e.g. https://pub-xxxx.r2.dev  (no trailing slash)
+const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL; // e.g. https://clips.yourdomain.com (custom domain on the bucket, no trailing slash)
+const clipMedia = require('./clip-media'); // faststart/poster/cache-header/Range helpers — see clip-media.js
+if (R2_PUBLIC_URL && /\.r2\.dev(\/|$)/i.test(R2_PUBLIC_URL)) {
+    // r2.dev is Cloudflare's rate-limited development URL: it is NOT served through the CDN cache, so
+    // every first view of every clip is a cold read from the bucket. Attach a custom domain to the bucket
+    // (Cloudflare dashboard -> R2 -> bucket -> Settings -> Custom Domains) and set R2_PUBLIC_URL to it.
+    console.log('⚠️  R2_PUBLIC_URL points at *.r2.dev — clips will NOT be edge-cached. Use a custom domain on the bucket for fast first playback.');
+}
 
 if (process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY) {
     r2Client = new S3Client({
@@ -159,6 +166,13 @@ async function connectMongo() {
         await ballsCollection.createIndex({ matchId: 1, innings: 1, over: 1, ballInOver: 1 });
         await matchesCollection.createIndex({ matchId: 1 }, { unique: true });
         await clipsCollection.createIndex({ matchId: 1, createdAt: 1 });
+        // Canonical job identity (see buildClipId/finalizeClip) — sparse
+        // because clips ingested before this field existed have none;
+        // unique so two ingests of the exact same event can never create
+        // two docs (finalizeClip upserts on this instead of inserting).
+        await clipsCollection.createIndex({ clipId: 1 }, { unique: true, sparse: true });
+        // Restart-safe retry sweep scans exactly this shape of query.
+        await clipsCollection.createIndex({ status: 1, retryCount: 1 });
         // 🔗 Clip ↔ player linking (see "PLAYER IDENTITY FOR CLIPS & STATS"
         // below): fast "this player's clips" lookups scoped to one match,
         // one owner's whole account (career), or filtered by clip type.
@@ -275,6 +289,11 @@ let driveClient = null;
 // Drive file/folder needs to be shared with (see uploadClipToDrive and
 // the manual "Attach Clip" routes below).
 let DRIVE_SERVICE_ACCOUNT_EMAIL = null;
+// Per-match Drive connection state (OAuth token+folder, or a legacy
+// service-account folder id) — a match can be connected to Drive
+// independently of whether/how its video is being recorded.
+// { matchId: { driveOAuth: {accessToken, folderId, connectedAt}, driveFolderId } }
+const driveConnections = {};
 function initDriveClient() {
     const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
     if (!raw) {
@@ -321,11 +340,23 @@ function extractDriveFileId(link) {
     return null;
 }
 
-function buildClipFileName(eventType, ballMeta) {
-    const over = (ballMeta && ballMeta.over !== undefined) ? ballMeta.over : '_';
-    const ballInOver = (ballMeta && ballMeta.ballInOver !== undefined) ? ballMeta.ballInOver : '_';
-    const striker = (ballMeta && ballMeta.striker) ? '_' + ballMeta.striker.replace(/[^a-zA-Z0-9]+/g, '_') : '';
-    return `${eventType}_Over-${over}.${ballInOver}${striker}_${Date.now()}.mp4`;
+// Builds this clip's canonical identity — the SAME string every leg of
+// the pipeline (local Stream Engine, Render, R2 key, Drive filename,
+// Mongo doc) keys off of. Deterministic from matchId+eventType+
+// eventTimestamp so a retried/duplicate request for the exact same
+// event always resolves to the exact same clipId — never a second,
+// duplicate upload or a second Mongo doc for one real event.
+function buildClipId(matchId, eventType, eventTimestamp) {
+    return `${safeMatchId(matchId)}_${String(eventType || 'CLIP').toUpperCase()}_${eventTimestamp}`;
+}
+
+// Deterministic filename — NOT time-of-upload-based (the old version
+// baked Date.now() into the name, so every retry minted a brand new
+// filename/key — the opposite of idempotent: a clip retried 3 times
+// before succeeding could leave 3 different half-uploaded objects
+// behind instead of ever cleanly reusing/overwriting the one true one).
+function buildClipFileName(clipId) {
+    return `${clipId}.mp4`;
 }
 
 // Fire-and-forget — never blocks the clip pipeline. If no folder has
@@ -333,16 +364,27 @@ function buildClipFileName(eventType, ballMeta) {
 // stays on the server's disk either way).
 //
 // Two ways a match can be connected to Drive, tried in this order:
-//  1. Per-user OAuth (recordingSessions[matchId].driveOAuth) — operator
+//  1. Per-user OAuth (driveConnections[matchId].driveOAuth) — operator
 //     clicked "Connect Google Drive" and picked their own folder via the
 //     Picker. No manual sharing needed, but the access token only lives
 //     ~1hr — if it's expired/revoked the upload just fails and logs it;
 //     recording itself is completely unaffected either way.
 //  2. Legacy service-account folder (driveFolderId) — operator manually
 //     shared a folder with the service account's email and pasted the link.
-async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
-    const session = recordingSessions[matchId];
-    const oauth = session && session.driveOAuth;
+//
+// Idempotent: if this clipId is already marked 'uploaded' in Mongo
+// (e.g. the retry sweep and an in-flight finalizeClip() raced), this
+// returns true immediately without uploading a second copy.
+async function uploadClipToDrive(clipId, matchId, filePath) {
+    if (clipsCollection) {
+        try {
+            const existing = await clipsCollection.findOne({ clipId }, { projection: { driveStatus: 1 } });
+            if (existing && existing.driveStatus === 'uploaded') return true;
+        } catch (err) { /* fall through and attempt the upload anyway */ }
+    }
+
+    const conn = driveConnections[matchId];
+    const oauth = conn && conn.driveOAuth;
 
     let uploadClient = null;
     let folderId = null;
@@ -354,7 +396,7 @@ async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
         folderId = oauth.folderId;
     } else if (driveClient) {
         uploadClient = driveClient;
-        folderId = session && session.driveFolderId;
+        folderId = conn && conn.driveFolderId;
         if (!folderId && matchesCollection) {
             try {
                 const doc = await matchesCollection.findOne({ matchId });
@@ -365,10 +407,11 @@ async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
 
     if (!uploadClient || !folderId) {
         console.log(`No Drive connection for match ${matchId} — clip stays local only: ${filePath}`);
+        if (clipsCollection) await clipsCollection.updateOne({ clipId }, { $set: { driveStatus: 'failed', driveError: 'No Drive connection configured for this match' } }).catch(() => {});
         return false;
     }
 
-    const fileName = buildClipFileName(eventType, ballMeta);
+    const fileName = buildClipFileName(clipId);
     try {
         const uploadRes = await uploadClient.files.create({
             requestBody: { name: fileName, parents: [folderId] },
@@ -377,8 +420,8 @@ async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
         });
         if (clipsCollection) {
             await clipsCollection.updateOne(
-                { matchId, filePath },
-                { $set: { driveStatus: 'uploaded', driveFileId: uploadRes.data.id, driveUrl: uploadRes.data.webViewLink } }
+                { clipId },
+                { $set: { driveStatus: 'uploaded', driveFileId: uploadRes.data.id, driveUrl: uploadRes.data.webViewLink, driveUploadedAt: Date.now() }, $unset: { driveError: '' } }
             );
         }
         console.log(`☁️  Uploaded to Drive: ${fileName}`);
@@ -386,7 +429,7 @@ async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
     } catch (err) {
         console.log(`Drive upload error (${fileName}):`, err.message || err);
         if (clipsCollection) {
-            await clipsCollection.updateOne({ matchId, filePath }, { $set: { driveStatus: 'failed' } }).catch(() => {});
+            await clipsCollection.updateOne({ clipId }, { $set: { driveStatus: 'failed', driveError: String(err.message || err).slice(0, 500) } }).catch(() => {});
         }
         return false;
     }
@@ -396,19 +439,32 @@ async function uploadClipToDrive(matchId, filePath, eventType, ballMeta) {
 // and saves the public playback URL on the clip's Mongo record — this is
 // the URL the scorecard's video player actually points at for anything
 // less than a year old. Mongo NEVER stores the video bytes — only this
-// small metadata doc (matchId, playerKeys, eventType, r2Url/driveUrl). The
-// actual .mp4 lives only in R2 (and optionally Drive); see cutClip below,
-// which deletes the local Render-disk copy once at least one of these
-// uploads confirms success, so Render's disk is never the permanent home
-// for video either.
-async function uploadClipToR2(matchId, filePath, eventType, ballMeta) {
+// small metadata doc (matchId, playerKeys, eventType, r2Url/driveUrl).
+// The actual .mp4 lives only in R2 (and optionally Drive); see
+// finalizeClip below, which only deletes the local Render-disk copy
+// once BOTH of these uploads confirm success, so Render's disk is
+// never the permanent home for video either, and a clip is never lost
+// to a premature delete while one leg is still failing/retrying.
+//
+// Idempotent (same reasoning as uploadClipToDrive above) — and the R2
+// key itself is deterministic (matches/<matchId>/clips/<clipId>.mp4),
+// so even if the idempotency check below ever raced, a retried PutObject
+// for the same clipId simply overwrites the same object rather than
+// creating a duplicate.
+async function uploadClipToR2(clipId, matchId, filePath) {
     if (!r2Client || !R2_BUCKET_NAME) {
         console.log(`No R2 connection configured — clip stays Drive-only: ${filePath}`);
+        if (clipsCollection) await clipsCollection.updateOne({ clipId }, { $set: { r2Status: 'failed', r2Error: 'R2 not configured on this server' } }).catch(() => {});
         return false;
     }
+    if (clipsCollection) {
+        try {
+            const existing = await clipsCollection.findOne({ clipId }, { projection: { r2Status: 1 } });
+            if (existing && existing.r2Status === 'uploaded') return true;
+        } catch (err) { /* fall through and attempt the upload anyway */ }
+    }
 
-    const fileName = buildClipFileName(eventType, ballMeta);
-    const key = `${matchId}/${fileName}`;
+    const key = `matches/${matchId}/clips/${clipId}.mp4`;
 
     try {
         // Reading the whole clip into a Buffer (clips are only a few MB —
@@ -423,14 +479,17 @@ async function uploadClipToR2(matchId, filePath, eventType, ballMeta) {
             Key: key,
             Body: fileBuffer,
             ContentLength: fileBuffer.length,
-            ContentType: 'video/mp4'
+            ContentType: 'video/mp4',
+            // Clips are immutable (deterministic key per clipId) — let browsers and the Cloudflare
+            // edge keep them for a year instead of revalidating / re-fetching from R2 every view.
+            CacheControl: clipMedia.CLIP_CACHE_CONTROL
         }));
 
         const publicUrl = R2_PUBLIC_URL ? `${R2_PUBLIC_URL}/${key}` : null;
         if (clipsCollection) {
             await clipsCollection.updateOne(
-                { matchId, filePath },
-                { $set: { r2Status: 'uploaded', r2Key: key, r2Url: publicUrl } }
+                { clipId },
+                { $set: { r2Status: 'uploaded', r2Key: key, r2Url: publicUrl, r2UploadedAt: Date.now() }, $unset: { r2Error: '' } }
             );
         }
         console.log(`☁️  Uploaded to R2: ${key}`);
@@ -438,182 +497,73 @@ async function uploadClipToR2(matchId, filePath, eventType, ballMeta) {
     } catch (err) {
         console.log(`R2 upload error (${key}):`, err.message || err);
         if (clipsCollection) {
-            await clipsCollection.updateOne({ matchId, filePath }, { $set: { r2Status: 'failed' } }).catch(() => {});
+            await clipsCollection.updateOne({ clipId }, { $set: { r2Status: 'failed', r2Error: String(err.message || err).slice(0, 500) } }).catch(() => {});
         }
         return false;
     }
 }
 
+// Poster JPEG for the <video poster> (best-effort: a failure here never affects the clip itself).
+async function uploadClipPosterToR2(clipId, matchId, posterPath) {
+    if (!r2Client || !R2_BUCKET_NAME || !posterPath) return false;
+    const key = `matches/${matchId}/clips/${clipId}.jpg`;
+    try {
+        const body = fs.readFileSync(posterPath);
+        await r2Client.send(new PutObjectCommand({
+            Bucket: R2_BUCKET_NAME, Key: key, Body: body, ContentLength: body.length,
+            ContentType: 'image/jpeg', CacheControl: clipMedia.CLIP_CACHE_CONTROL
+        }));
+        if (clipsCollection && R2_PUBLIC_URL) {
+            await clipsCollection.updateOne({ clipId }, { $set: { r2PosterKey: key, r2PosterUrl: `${R2_PUBLIC_URL}/${key}` } });
+        }
+        return true;
+    } catch (err) {
+        console.log(`R2 poster upload error (${key}):`, err.message || err);
+        return false;
+    }
+}
 
 const io = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-app.use(express.static(__dirname));
+app.use(express.static(__dirname, {
+    setHeaders(res, filePath) {
+        // Same reasoning as sendHtmlNoCache() below: never let a browser or
+        // CDN cache an .html page across deploys. Other static assets
+        // (images/video/css/js) keep normal caching.
+        if (filePath.endsWith('.html')) {
+            res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+        }
+    }
+}));
 app.use(express.json());
 
 // ================================================================
-// 🎬 RECORDING + CLIPS (FFmpeg)
-// Flow: operator clicks "Start Recording" in cricket-panel.html →
-// browser shares its own tab/screen (getDisplayMedia) → MediaRecorder
-// slices it into small webm chunks → each chunk is POSTed here as it's
-// produced → we save chunks to disk in bowling order.
-// On WICKET/FOUR/SIX the panel asks for a clip; we wait until enough
-// "after" footage has actually arrived, then use ffmpeg to stitch the
-// relevant chunks + trim to an exact 20s window (10s before, 10s after).
-// Nothing here touches OBS/vMix or the live stream — this capture runs
-// in the operator's panel tab, a completely separate browser context
-// from whatever OBS is reading as its browser source/scene.
+// 🎬 RECORDING + CLIPS
+// Video capture and clip cutting happen ENTIRELY on the operator's own
+// PC (see stream-engine/ — the local Stream Engine) and are NEVER sent
+// here as continuous footage. Render only ever receives a short,
+// already-finished clip (~20s .mp4) via /api/clips/ingest below, plus
+// ordinary score/control traffic over Socket.IO.
+//
+// 🩹 REMOVED (audit finding): this file used to also expose
+// /api/recording/start, /api/recording/chunk (up to 25MB of raw video
+// per request!) and /api/recording/stop, backed by videoSource.js —
+// an earlier ("Part 1") design where the BROWSER streamed continuous
+// footage straight to Render's own disk. Nothing in the current panel
+// calls these anymore (superseded by the local Stream Engine), but the
+// endpoints were still live and reachable — a direct violation of
+// "Render must never process/proxy 1080p video". Removed entirely,
+// along with the cutClip()/videoSource-backed path and the Socket.IO
+// 'requestClip' handler that invoked it. finalizeClip() below (used by
+// /api/clips/ingest) is unaffected — it already only ever receives a
+// finished clip file, never continuous video.
 // ================================================================
-const RECORDINGS_DIR = path.join(__dirname, 'recordings');
-const CLIPS_DIR = path.join(__dirname, 'clips');
-if (!fs.existsSync(RECORDINGS_DIR)) fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
-if (!fs.existsSync(CLIPS_DIR)) fs.mkdirSync(CLIPS_DIR, { recursive: true });
-
-// In-memory manifest per match, keyed by matchId (NOT room-prefixed —
-// this is the raw match id the panel/overlay share, e.g. "abc123").
-// { startedAt: ms epoch when recording began, chunkDir, chunks: [{index, file, receivedAt}], stopped }
-const recordingSessions = {};
-
 function safeMatchId(id) {
-    // Matches are used to build folder/file names on disk — never trust
-    // user input directly in a path.
     return String(id || '').replace(/[^a-zA-Z0-9_-]/g, '');
 }
-
-// ================================================================
-// 🧹 DISK CLEANUP — this is the piece that stops the server's disk
-// from filling up over hundreds of matches.
-//
-// IMPORTANT: we never delete chunks mid-match. cutClip() always needs
-// chunk 0 onward to rebuild a valid webm, so removing any chunk before
-// a match ends could silently break the NEXT clip request. Instead we
-// wait until recording has stopped AND every clip that could still be
-// in flight has had time to finish, then delete the whole match's
-// chunk folder in one go. This keeps clip-cutting 100% unaffected
-// while still guaranteeing nothing lives on disk forever.
-// ================================================================
-
-// Longest a clip request can still be pending after "stop" is pressed:
-// requestClip() waits up to (eventTimestamp + 10s) before cutting, so a
-// wicket/four/six recorded in the last few seconds before stop could
-// still need its chunks up to ~11s later. 90s is a generous safety
-// margin on top of that.
-const RECORDING_CLEANUP_DELAY_MS = 90 * 1000;
-
-function deleteRecordingFolder(matchId, chunkDir) {
-    fs.rm(chunkDir, { recursive: true, force: true }, (err) => {
-        if (err) {
-            console.log(`🧹 Cleanup error for match ${matchId}:`, err.message);
-        } else {
-            console.log(`🧹 Cleaned up recording chunks for match ${matchId}`);
-        }
-    });
-    delete recordingSessions[matchId];
-}
-
-function scheduleRecordingCleanup(matchId) {
-    const session = recordingSessions[matchId];
-    if (!session) return;
-    // Avoid double-scheduling if stop is somehow called twice.
-    if (session.cleanupTimer) clearTimeout(session.cleanupTimer);
-    session.cleanupTimer = setTimeout(() => {
-        deleteRecordingFolder(matchId, session.chunkDir);
-    }, RECORDING_CLEANUP_DELAY_MS);
-}
-
-// 🛟 Safety net for crashes / missed "stop" calls: even if a match's
-// stop event never fires (server restart mid-match, operator's tab
-// closing without hitting stop, network drop, etc.), this sweep makes
-// sure a stray folder can never sit on disk forever. Anything older
-// than 12 hours with no in-memory session is almost certainly a dead
-// leftover, since real matches don't run that long.
-const ORPHAN_RECORDING_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-
-function sweepOrphanedRecordings() {
-    fs.readdir(RECORDINGS_DIR, (err, entries) => {
-        if (err) return;
-        entries.forEach((matchId) => {
-            if (recordingSessions[matchId]) return; // still active / pending cleanup
-            const dir = path.join(RECORDINGS_DIR, matchId);
-            fs.stat(dir, (statErr, stats) => {
-                if (statErr || !stats.isDirectory()) return;
-                if (Date.now() - stats.mtimeMs > ORPHAN_RECORDING_MAX_AGE_MS) {
-                    fs.rm(dir, { recursive: true, force: true }, (rmErr) => {
-                        if (!rmErr) console.log(`🧹 Swept orphaned recording folder: ${matchId}`);
-                    });
-                }
-            });
-        });
-    });
-}
-// Run once shortly after boot (catches anything left from before a
-// deploy/restart) and then every hour going forward.
-setTimeout(sweepOrphanedRecordings, 60 * 1000);
-setInterval(sweepOrphanedRecordings, 60 * 60 * 1000);
-
-app.post('/api/recording/start', async (req, res) => {
-    const matchId = safeMatchId(req.body.matchId);
-    if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
-
-    const chunkDir = path.join(RECORDINGS_DIR, matchId);
-    if (!fs.existsSync(chunkDir)) fs.mkdirSync(chunkDir, { recursive: true });
-
-    const startedAt = Date.now();
-    recordingSessions[matchId] = { startedAt, chunkDir, chunks: [], stopped: false };
-
-    if (matchesCollection) {
-        try {
-            await matchesCollection.updateOne(
-                { matchId },
-                { $set: { matchId, recordingStartedAt: startedAt, recordingStatus: 'recording' } },
-                { upsert: true }
-            );
-        } catch (err) { console.log('Mongo recording/start error:', err); }
-    }
-    console.log(`🔴 Recording started for match ${matchId}`);
-    res.json({ success: true, startedAt });
-});
-
-// Chunks arrive as raw binary (webm blob straight from MediaRecorder).
-// ?matchId=xxx&index=0,1,2...  — index keeps them in the right order
-// even if two chunks happen to arrive out of sequence over the network.
-app.post('/api/recording/chunk', express.raw({ type: '*/*', limit: '25mb' }), (req, res) => {
-    const matchId = safeMatchId(req.query.matchId);
-    const index = parseInt(req.query.index, 10);
-    const session = recordingSessions[matchId];
-    if (!session) return res.status(400).json({ success: false, error: 'No active recording session for this matchId — call /api/recording/start first' });
-    if (Number.isNaN(index)) return res.status(400).json({ success: false, error: 'index required' });
-
-    const file = path.join(session.chunkDir, `chunk_${String(index).padStart(6, '0')}.webm`);
-    fs.writeFile(file, req.body, (err) => {
-        if (err) {
-            console.log('Chunk write error:', err);
-            return res.status(500).json({ success: false });
-        }
-        session.chunks.push({ index, file, receivedAt: Date.now() });
-        session.chunks.sort((a, b) => a.index - b.index);
-        res.json({ success: true });
-    });
-});
-
-app.post('/api/recording/stop', async (req, res) => {
-    const matchId = safeMatchId(req.body.matchId);
-    const session = recordingSessions[matchId];
-    if (!session) return res.status(400).json({ success: false, error: 'No active recording session' });
-    session.stopped = true;
-
-    if (matchesCollection) {
-        try {
-            await matchesCollection.updateOne({ matchId }, { $set: { recordingStatus: 'stopped', recordingStoppedAt: Date.now() } });
-        } catch (err) { console.log('Mongo recording/stop error:', err); }
-    }
-    console.log(`⏹ Recording stopped for match ${matchId} (${session.chunks.length} chunks)`);
-    // Clips can still be in flight for a few more seconds — schedule
-    // the actual disk cleanup instead of deleting immediately.
-    scheduleRecordingCleanup(matchId);
-    res.json({ success: true, chunkCount: session.chunks.length });
-});
+const CLIPS_DIR = path.join(__dirname, 'clips'); // holds a finished clip only briefly, until R2 + Drive both confirm (see finalizeClip)
 
 // Operator pastes their Drive folder's share link once (per match) —
 // we resolve it to a folder ID and remember it both in-memory (fast
@@ -626,7 +576,8 @@ app.post('/api/set-drive-folder', async (req, res) => {
         return res.status(400).json({ success: false, error: 'Valid matchId and Drive folder link are required' });
     }
 
-    if (recordingSessions[matchId]) recordingSessions[matchId].driveFolderId = folderId;
+    driveConnections[matchId] = driveConnections[matchId] || {};
+    driveConnections[matchId].driveFolderId = folderId;
     if (matchesCollection) {
         try {
             await matchesCollection.updateOne({ matchId }, { $set: { matchId, driveFolderId: folderId } }, { upsert: true });
@@ -667,10 +618,8 @@ app.post('/api/set-drive-folder-oauth', async (req, res) => {
         return res.status(400).json({ success: false, error: 'Could not verify Drive access — please reconnect' });
     }
 
-    if (!recordingSessions[matchId]) {
-        recordingSessions[matchId] = { startedAt: Date.now(), chunkDir: path.join(RECORDINGS_DIR, matchId), chunks: [], stopped: false };
-    }
-    recordingSessions[matchId].driveOAuth = { accessToken, folderId, connectedAt: Date.now() };
+    driveConnections[matchId] = driveConnections[matchId] || {};
+    driveConnections[matchId].driveOAuth = { accessToken, folderId, connectedAt: Date.now() };
 
     if (matchesCollection) {
         try {
@@ -682,112 +631,38 @@ app.post('/api/set-drive-folder-oauth', async (req, res) => {
     res.json({ success: true, folderId });
 });
 
-// Finds which chunk files together cover [fromSec, toSec] of the
-// recording, based on each chunk's arrival time relative to startedAt.
-// This is an approximation (chunk arrival ≈ chunk content time, since
-// MediaRecorder emits chunks on a steady timeslice) — good enough for a
-// ±10s highlight clip, not frame-accurate editing.
-function chunksCoveringRange(session, fromSec, toSec) {
-    const fromMs = session.startedAt + Math.max(0, fromSec) * 1000;
-    const toMs = session.startedAt + toSec * 1000;
-    // Include one chunk before the window starts too, so ffmpeg has
-    // enough lead-in to seek precisely with -ss.
-    const sorted = [...session.chunks].sort((a, b) => a.index - b.index);
-    const covering = [];
-    for (let i = 0; i < sorted.length; i++) {
-        const c = sorted[i];
-        const next = sorted[i + 1];
-        const chunkEndMs = next ? next.receivedAt : Date.now();
-        if (chunkEndMs >= fromMs && c.receivedAt <= toMs) covering.push(c);
-    }
-    return covering;
-}
-
-// Stitches the covering chunks + trims to an exact clip using ffmpeg,
-// and records the clip in MongoDB so the (future) Google Drive step
-// knows what's waiting to be uploaded.
-async function cutClip({ matchId, eventType, eventTimestamp, ballMeta, uid }) {
-    const session = recordingSessions[matchId];
-    if (!session) { console.log(`No recording session for ${matchId} — skipping clip for ${eventType}`); return; }
-
-    const offsetSec = (eventTimestamp - session.startedAt) / 1000;
-    const fromSec = Math.max(0, offsetSec - 10);
-    const toSec = offsetSec + 10;
-    const clipDir = path.join(CLIPS_DIR, matchId);
-    if (!fs.existsSync(clipDir)) fs.mkdirSync(clipDir, { recursive: true });
-
-    const covering = chunksCoveringRange(session, fromSec, toSec);
-    if (!covering.length) { console.log(`No chunks found covering clip window for ${matchId}/${eventType}`); return; }
-
-    // MediaRecorder's timeslice chunks are NOT independently-valid WebM
-    // files except the very first one (it carries the EBML/Segment
-    // header; every later chunk is a bare Matroska Cluster meant to be
-    // appended directly after it). ffmpeg's concat *demuxer* expects each
-    // listed input to be independently valid on its own, so handing it
-    // non-first chunks used to fail with "Invalid argument". The fix:
-    // raw byte-concatenate every chunk from index 0 through the last
-    // chunk covering our window, in strict order — that reconstructs an
-    // actually-playable file, which we then trim/transcode as before.
-    const lastIndex = covering[covering.length - 1].index;
-    const toStitch = [...session.chunks].sort((a, b) => a.index - b.index).filter(c => c.index <= lastIndex);
-
-    const stitchedFile = path.join(clipDir, `_stitched_${Date.now()}.webm`);
-    const outFile = path.join(clipDir, `${eventType}_${Date.now()}.mp4`);
-
-    // The stitched file always starts at t=0 of the whole recording now
-    // (since we always include chunk 0), so no extra offset math needed.
-    const trimStartSec = fromSec;
-
-    try {
-        await new Promise((resolve, reject) => {
-            const out = fs.createWriteStream(stitchedFile);
-            out.on('error', reject);
-            (async () => {
-                for (const c of toStitch) {
-                    await new Promise((res2, rej2) => {
-                        const rs = fs.createReadStream(c.file);
-                        rs.on('error', rej2);
-                        rs.on('end', res2);
-                        rs.pipe(out, { end: false });
-                    });
-                }
-                out.end();
-                resolve();
-            })().catch(reject);
-        });
-
-        await new Promise((resolve, reject) => {
-            ffmpeg(stitchedFile)
-                .setStartTime(trimStartSec)
-                .duration(20)
-                .outputOptions(['-c:v libx264', '-c:a aac', '-preset veryfast'])
-                .save(outFile)
-                .on('end', resolve)
-                .on('error', reject);
-        });
-
-        await finalizeClip({ matchId, eventType, eventTimestamp, ballMeta, uid, outFile, offsetStartSec: fromSec, offsetEndSec: toSec });
-    } catch (err) {
-        console.log(`Clip generation error (${matchId}/${eventType}):`, err.message || err);
-    } finally {
-        fs.existsSync(stitchedFile) && fs.unlink(stitchedFile, () => {});
-    }
+// Computes the one overall `status` field from the two independent
+// upload legs — this is what the retry sweep, the admin dashboard and
+// GET /api/clips/status/:clipId all key off of, instead of every reader
+// re-deriving it from r2Status/driveStatus individually.
+function computeClipStatus(r2Status, driveStatus) {
+    if (r2Status === 'uploaded' && driveStatus === 'uploaded') return 'COMPLETE';
+    if (r2Status === 'failed' || driveStatus === 'failed') return 'RETRY_PENDING';
+    return 'UPLOADING';
 }
 
 // ================================================================
-// 🔗 finalizeClip — shared by BOTH clip pipelines:
-//  1. cutClip() above (browser tab-capture chunks stitched server-side)
-//  2. /api/clips/ingest below (an already-cut .mp4 handed to us whole —
-//     e.g. by ClipperHelper.exe, which cuts locally from the vMix
-//     recording using its own ffmpeg).
-// Both need EXACTLY the same thing done to a finished clip file: link
-// it to real player identities via the canonical ball, insert the
-// Mongo doc the clips/stats APIs read, upload to R2 + Drive, then
-// clean up the local copy. Keeping this in one place means the
-// scorecard's "clips by player" view works identically no matter which
-// pipeline actually produced the clip.
+// 🔗 finalizeClip — called by /api/clips/ingest below once a FINISHED
+// clip file (cut locally, on the operator's own PC, by the local
+// Stream Engine — see stream-engine/server.js — or by the legacy
+// ClipperHelper.exe path) has been handed to us whole as raw bytes.
+// This does EXACTLY the same thing for either source: link it to real
+// player identities via the canonical ball, upsert the Mongo job doc
+// the clips/stats APIs (and the retry sweep) read, upload to R2 +
+// Drive, then clean up the local copy — but ONLY once BOTH uploads
+// have confirmed success (see the retry sweep further down for what
+// happens when they haven't yet).
+//
+// Idempotent by clipId: a duplicate /api/clips/ingest for the exact
+// same event (e.g. the Stream Engine's own retry queue re-sending a
+// clip whose first attempt actually landed but whose ack was lost to a
+// network blip) upserts the SAME doc instead of creating a second one,
+// and re-attempts only whichever upload leg(s) haven't already
+// succeeded — never a duplicate R2 object or Drive file (see the
+// idempotency guards inside uploadClipToR2/uploadClipToDrive above).
 // ================================================================
-async function finalizeClip({ matchId, eventType, eventTimestamp, ballMeta, uid, outFile, offsetStartSec, offsetEndSec }) {
+async function finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMeta, uid, outFile, offsetStartSec, offsetEndSec }) {
+    clipId = clipId || buildClipId(matchId, eventType, eventTimestamp);
     if (clipsCollection) {
         // 🔗 Link this clip to real player identities/dismissal info by
         // cross-referencing the canonical ball (logged via `logBall`,
@@ -813,75 +688,218 @@ async function finalizeClip({ matchId, eventType, eventTimestamp, ballMeta, uid,
         const bowlerPlayerId = (canonicalBall && canonicalBall.bowlerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, bowler) : null);
         const fielderPlayerId = (canonicalBall && canonicalBall.dismissalFielderPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, dismissal && dismissal.fielder) : null);
 
-        await clipsCollection.insertOne({
-            matchId, ownerUid: ownerUid || null, eventType, ballMeta: ballMeta || null,
-            eventTimestamp, offsetStartSec: offsetStartSec ?? null, offsetEndSec: offsetEndSec ?? null,
-            filePath: outFile, driveStatus: 'pending', createdAt: Date.now(),
-            // --- player/dismissal linking, for the clips & stats APIs ---
-            over: canonicalBall ? canonicalBall.over : (ballMeta && ballMeta.over),
-            ballInOver: canonicalBall ? canonicalBall.ballInOver : (ballMeta && ballMeta.ballInOver),
-            innings: canonicalBall ? canonicalBall.innings : (ballMeta && ballMeta.innings),
-            runs: canonicalBall ? canonicalBall.runs : (ballMeta && ballMeta.runs),
-            battingTeam,
-            strikerName: striker, strikerKey: playerKey(striker), strikerPlayerId,
-            nonStrikerName: nonStriker, nonStrikerKey: playerKey(nonStriker), nonStrikerPlayerId,
-            bowlerName: bowler, bowlerKey: playerKey(bowler), bowlerPlayerId,
-            dismissalType: dismissal && dismissal.type ? dismissal.type : null,
-            fielderName: personName(dismissal && dismissal.fielder),
-            fielderKey: playerKey(dismissal && dismissal.fielder), fielderPlayerId
-        });
+        await clipsCollection.updateOne(
+            { clipId },
+            {
+                $setOnInsert: {
+                    clipId, matchId, ownerUid: ownerUid || null, eventType, ballMeta: ballMeta || null,
+                    eventTimestamp, offsetStartSec: offsetStartSec ?? null, offsetEndSec: offsetEndSec ?? null,
+                    createdAt: Date.now(),
+                    // --- player/dismissal linking, for the clips & stats APIs ---
+                    over: canonicalBall ? canonicalBall.over : (ballMeta && ballMeta.over),
+                    ballInOver: canonicalBall ? canonicalBall.ballInOver : (ballMeta && ballMeta.ballInOver),
+                    innings: canonicalBall ? canonicalBall.innings : (ballMeta && ballMeta.innings),
+                    runs: canonicalBall ? canonicalBall.runs : (ballMeta && ballMeta.runs),
+                    battingTeam,
+                    strikerName: striker, strikerKey: playerKey(striker), strikerPlayerId,
+                    nonStrikerName: nonStriker, nonStrikerKey: playerKey(nonStriker), nonStrikerPlayerId,
+                    bowlerName: bowler, bowlerKey: playerKey(bowler), bowlerPlayerId,
+                    dismissalType: dismissal && dismissal.type ? dismissal.type : null,
+                    fielderName: personName(dismissal && dismissal.fielder),
+                    fielderKey: playerKey(dismissal && dismissal.fielder), fielderPlayerId,
+                    retryCount: 0,
+                },
+                $set: {
+                    // Runtime fields refreshed on every ingest (including a
+                    // retry-forward of the same clip) — filePath always
+                    // points at THIS Render process's current temp copy
+                    // (the previous one, if any, is long gone after a
+                    // restart) so the retry sweep below reads from disk
+                    // correctly rather than a stale path.
+                    filePath: outFile,
+                    status: 'LOCAL_RECEIVED',
+                    r2Status: 'pending', driveStatus: 'pending',
+                    lastReceivedAt: Date.now(),
+                }
+            },
+            { upsert: true }
+        );
         invalidateClipsCache(matchId);
     }
-    console.log(`🎬 Clip ready: ${outFile}`);
-    // Upload to R2 + Drive in parallel, THEN delete the local Render-disk
-    // copy — this is the only place video bytes ever touch Render's disk,
-    // and only for the few seconds it takes to push them to cloud storage.
-    // MongoDB never sees the video itself, only this clip doc's metadata
-    // (matchId, player keys, eventType, r2Url/driveUrl) via the
-    // clipsCollection.insertOne above.
+    console.log(`🎬 [CLIP RECEIVED] clipId=${clipId} matchId=${matchId} eventType=${eventType} localPath=${outFile}`);
+
+    // Upload to R2 + Drive in parallel — independent of each other (one
+    // failing never blocks or undoes the other), THEN delete the local
+    // Render-disk copy ONLY once BOTH have confirmed success. This is
+    // the only place video bytes ever touch Render's disk, and only for
+    // as long as it takes both uploads to confirm (or, if one is
+    // failing, until the retry sweep below finishes the job later) —
+    // MongoDB never sees the video itself, only this clip doc's
+    // metadata (matchId, player keys, eventType, r2Url/driveUrl).
+    // 🚀 Make the clip fast on its FIRST play, for every viewer: move the MP4 index (moov) to the
+    // front of the file (stream copy, no re-encode) and cut a poster frame. Done ONCE here, before
+    // either upload, so R2 and Drive both receive the optimised bytes and every retry re-uses them.
+    // Best-effort — on any failure the original file is uploaded exactly as before.
+    const posterPath = `${outFile}.poster.jpg`;
+    const optimized = await clipMedia.optimizeClipFile(outFile, { ffmpegPath: ffmpegInstallerPath, posterPath });
+    if (clipsCollection) {
+        clipsCollection.updateOne({ clipId }, { $set: { optimizedAt: Date.now(), faststartFixed: optimized.faststartFixed } }).catch(() => {});
+    }
+
+    console.log(`[R2] upload started — clipId=${clipId}`);
+    console.log(`[DRIVE] upload started — clipId=${clipId}`);
     const [r2Ok, driveOk] = await Promise.all([
-        uploadClipToR2(matchId, outFile, eventType, ballMeta),
-        uploadClipToDrive(matchId, outFile, eventType, ballMeta)
+        uploadClipToR2(clipId, matchId, outFile),
+        uploadClipToDrive(clipId, matchId, outFile),
+        optimized.posterPath ? uploadClipPosterToR2(clipId, matchId, optimized.posterPath) : null
     ]);
-    if (r2Ok || driveOk) {
+    if (optimized.posterPath) fs.unlink(optimized.posterPath, () => {});
+    console.log(`[R2] ${r2Ok ? 'success' : 'failure'} — clipId=${clipId}`);
+    console.log(`[DRIVE] ${driveOk ? 'success' : 'failure'} — clipId=${clipId}`);
+
+    if (clipsCollection) {
+        await clipsCollection.updateOne({ clipId }, { $set: { status: computeClipStatus(r2Ok ? 'uploaded' : 'failed', driveOk ? 'uploaded' : 'failed') } }).catch(() => {});
+    }
+
+    if (r2Ok && driveOk) {
         fs.unlink(outFile, (err) => {
             if (err) console.log(`Local clip cleanup error (${outFile}):`, err.message || err);
-            else console.log(`🧹 Removed local clip copy (now only in ${r2Ok ? 'R2' : ''}${r2Ok && driveOk ? '/' : ''}${driveOk ? 'Drive' : ''}): ${outFile}`);
+            else console.log(`🧹 Removed local clip copy (now safely in both R2 and Drive): ${outFile}`);
         });
     } else {
-        // Both uploads failed — keep the local file as a last-resort
-        // fallback instead of losing the clip entirely. It'll be retried
-        // never automatically today; worth adding a retry sweep later.
-        console.log(`⚠️  Both R2 and Drive uploads failed — keeping local copy for now: ${outFile}`);
+        // At least one upload failed — the local file is the ONLY safe
+        // copy right now, so it is NEVER deleted here. The retry sweep
+        // (setInterval below) picks this doc up on its next tick (it
+        // scans Mongo for status:'RETRY_PENDING', not memory, so this
+        // survives a Render restart too) and retries only the leg(s)
+        // that failed — the clip is never re-cut, never lost.
+        console.log(`⚠️  Clip retained locally pending retry (R2 ${r2Ok ? 'ok' : 'FAILED'}, Drive ${driveOk ? 'ok' : 'FAILED'}): ${outFile}`);
     }
-    return { r2Ok, driveOk };
+    return { clipId, r2Ok, driveOk };
 }
 
 // ================================================================
-// 🖥️ EXTERNAL CLIP INGEST — for ClipperHelper.exe (runs on the
-// operator's own PC next to vMix, cuts the clip itself with its own
-// local ffmpeg from the vMix recording file, then POSTs the finished
-// .mp4 here as raw bytes). We do NOT trust the operator's PC with R2 or
-// Drive credentials — this endpoint receives the plain video file and
-// does the exact same player-linking + R2/Drive upload that the
-// browser tab-capture pipeline (cutClip, above) does, via the shared
-// finalizeClip() function. That's what makes ClipperHelper clips show
-// up in the scorecard's "clips by player" view exactly like any other
-// clip.
+// 🔁 CLIP UPLOAD RETRY SWEEP — restart-safe: reads Mongo, not memory,
+// so a Render restart mid-retry loses nothing; the very next tick after
+// boot picks up exactly where things stood. Runs periodically, finds
+// every clip doc still needing an upload, and retries ONLY the leg(s)
+// that failed — never re-cuts the video, never re-uploads a leg that
+// already succeeded. A doc that exhausts MAX_CLIP_RETRY_ATTEMPTS is
+// marked FAILED_PERMANENT (loud, not silent) but its local file is
+// NEVER deleted — it stays recoverable for manual intervention.
+// ================================================================
+const CLIP_RETRY_INTERVAL_MS = 30 * 1000;
+const MAX_CLIP_RETRY_ATTEMPTS = 15; // ~ up to a few hours of backoff-spaced attempts across a match
+function clipRetryBackoffMs(retryCount) {
+    return Math.min(30 * 1000 * Math.pow(1.6, retryCount), 20 * 60 * 1000); // caps at 20 minutes between attempts
+}
+async function runClipRetrySweep() {
+    if (!clipsCollection) return;
+    let candidates;
+    try {
+        candidates = await clipsCollection.find({
+            status: { $in: ['RETRY_PENDING', 'LOCAL_RECEIVED'] }, // LOCAL_RECEIVED here means a crash happened mid-upload last time
+            retryCount: { $lt: MAX_CLIP_RETRY_ATTEMPTS },
+        }).limit(25).toArray(); // bounded per tick — a burst of failures drains over several ticks, never floods R2/Drive at once
+    } catch (err) {
+        console.log('Clip retry sweep — Mongo query error:', err.message || err);
+        return;
+    }
+
+    for (const doc of candidates) {
+        const dueAt = (doc.lastRetryAt || doc.createdAt || 0) + clipRetryBackoffMs(doc.retryCount || 0);
+        if (Date.now() < dueAt) continue; // not due yet — backoff still in effect
+
+        if (!doc.filePath || !fs.existsSync(doc.filePath)) {
+            // The local copy is gone (e.g. it WAS fully uploaded once,
+            // then manually deleted, or this doc predates this retry
+            // system) — nothing left to retry from. Mark it loudly
+            // instead of retrying forever against a file that can't exist.
+            await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { status: 'FAILED_PERMANENT', permanentFailureReason: 'Local Render-disk copy is missing — cannot retry' } }).catch(() => {});
+            console.log(`[CLIP RETRY] clipId=${doc.clipId} — local file missing, marking FAILED_PERMANENT`);
+            continue;
+        }
+
+        console.log(`[CLIP RETRY] clipId=${doc.clipId} attempt=${(doc.retryCount || 0) + 1}/${MAX_CLIP_RETRY_ATTEMPTS} — r2=${doc.r2Status} drive=${doc.driveStatus}`);
+        await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { lastRetryAt: Date.now() }, $inc: { retryCount: 1 } }).catch(() => {});
+
+        const needsR2 = doc.r2Status !== 'uploaded';
+        const needsDrive = doc.driveStatus !== 'uploaded';
+        const [r2Ok, driveOk] = await Promise.all([
+            needsR2 ? uploadClipToR2(doc.clipId, doc.matchId, doc.filePath) : Promise.resolve(true),
+            needsDrive ? uploadClipToDrive(doc.clipId, doc.matchId, doc.filePath) : Promise.resolve(true),
+        ]);
+
+        const newRetryCount = (doc.retryCount || 0) + 1;
+        if (r2Ok && driveOk) {
+            await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { status: 'COMPLETE' } }).catch(() => {});
+            fs.unlink(doc.filePath, () => {
+                console.log(`🧹 [CLIP RETRY] clipId=${doc.clipId} — retry succeeded, local copy removed`);
+            });
+        } else if (newRetryCount >= MAX_CLIP_RETRY_ATTEMPTS) {
+            await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { status: 'FAILED_PERMANENT', permanentFailureReason: `Gave up after ${newRetryCount} attempts (R2 ${r2Ok ? 'ok' : 'failed'}, Drive ${driveOk ? 'ok' : 'failed'})` } }).catch(() => {});
+            console.log(`[CLIP RETRY] clipId=${doc.clipId} — exhausted retries, marking FAILED_PERMANENT (local file kept for manual recovery)`);
+        } else {
+            await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { status: computeClipStatus(r2Ok ? 'uploaded' : 'failed', driveOk ? 'uploaded' : 'failed') } }).catch(() => {});
+        }
+    }
+}
+// Give Mongo a moment to finish connecting on boot, then run regularly.
+setTimeout(runClipRetrySweep, 15 * 1000);
+setInterval(runClipRetrySweep, CLIP_RETRY_INTERVAL_MS);
+
+// Polled by the local Stream Engine (which forwards the clip here) and,
+// through it, the panel's live per-clip status UI — this is how a
+// retry that completes minutes after the original request still
+// reaches the operator's screen instead of the panel only ever knowing
+// what the original synchronous response said.
+app.get('/api/clips/status/:clipId', async (req, res) => {
+    if (!clipsCollection) return res.status(503).json({ success: false, error: 'Mongo not connected' });
+    try {
+        const doc = await clipsCollection.findOne(
+            { clipId: req.params.clipId },
+            { projection: { clipId: 1, status: 1, r2Status: 1, driveStatus: 1, r2Url: 1, driveUrl: 1, retryCount: 1, createdAt: 1, r2Error: 1, driveError: 1, permanentFailureReason: 1 } }
+        );
+        if (!doc) return res.status(404).json({ success: false, error: 'No clip job with that clipId' });
+        res.json({ success: true, ...doc });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message || String(err) });
+    }
+});
+
+// ================================================================
+// 🖥️ EXTERNAL CLIP INGEST — for the local Stream Engine (the current,
+// active pipeline — see stream-engine/server.js, which cuts the clip
+// from its own local buffer using NVENC-adjacent ffmpeg and forwards
+// the finished .mp4 here) and the legacy ClipperHelper.exe path. We do
+// NOT trust the operator's PC with R2 or Drive credentials — this
+// endpoint receives the plain video file and does the exact same
+// player-linking + R2/Drive upload via the shared finalizeClip()
+// function. That's what makes every clip source show up in the
+// scorecard's "clips by player" view identically.
 //
-// POST /api/clips/ingest?matchId=...&eventType=FOUR|SIX|WICKET&timestamp=<ms>
+// POST /api/clips/ingest?matchId=...&eventType=FOUR|SIX|WICKET&timestamp=<ms>&clipId=...
 // Body: raw video/mp4 bytes.
 // Header 'X-Ball-Meta': optional JSON string with whatever the panel
 // already knows about the ball (striker/nonStriker/bowler/dismissal/
-// battingTeam/over/ballInOver/innings/runs) — same shape as the
-// ballMeta cutClip() already accepts. Even without it, finalizeClip()
-// still tries to resolve the real player names via findCanonicalBall()
-// using matchId + timestamp-derived over/ballInOver if present.
+// battingTeam/over/ballInOver/innings/runs). Even without it,
+// finalizeClip() still tries to resolve the real player names via
+// findCanonicalBall() using matchId + timestamp-derived over/ballInOver.
+//
+// 🔒 Responds ONLY once the file is durably written to Render's disk —
+// never before, unlike the previous version which acknowledged success
+// before even writing the bytes (a real "false success" — a write or
+// finalizeClip failure right after would have been invisible to the
+// caller). It still does NOT wait for R2/Drive (that can take a while
+// and is independently retried — see the retry sweep above), so the
+// response reports 'LOCAL_RECEIVED' + the clipId, and the caller polls
+// GET /api/clips/status/:clipId for the eventual R2/Drive outcome.
 // ================================================================
 app.post('/api/clips/ingest', express.raw({ type: '*/*', limit: '60mb' }), async (req, res) => {
     const matchId = safeMatchId(req.query.matchId);
     const eventType = String(req.query.eventType || 'CLIP').toUpperCase();
     const eventTimestamp = parseInt(req.query.timestamp, 10) || Date.now();
+    const clipId = req.query.clipId ? String(req.query.clipId).replace(/[^a-zA-Z0-9_-]/g, '') : buildClipId(matchId, eventType, eventTimestamp);
     if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
     if (!req.body || !req.body.length) return res.status(400).json({ success: false, error: 'Empty clip body' });
 
@@ -892,15 +910,28 @@ app.post('/api/clips/ingest', express.raw({ type: '*/*', limit: '60mb' }), async
 
     const clipDir = path.join(CLIPS_DIR, matchId);
     if (!fs.existsSync(clipDir)) fs.mkdirSync(clipDir, { recursive: true });
-    const outFile = path.join(clipDir, `${eventType}_ext_${Date.now()}.mp4`);
-
-    res.json({ success: true }); // acknowledge immediately; upload continues in the background
+    // Deterministic, clipId-based filename — a retried forward of the
+    // exact same clip (e.g. after a network blip) overwrites the same
+    // temp file on Render's disk instead of littering a new one per
+    // attempt.
+    const outFile = path.join(clipDir, `${clipId}.mp4`);
 
     try {
         await new Promise((resolve, reject) => {
             fs.writeFile(outFile, req.body, (err) => err ? reject(err) : resolve());
         });
-        await finalizeClip({ matchId, eventType, eventTimestamp, ballMeta, uid: null, outFile });
+    } catch (err) {
+        console.log(`External clip ingest write error (${matchId}/${eventType}):`, err.message || err);
+        return res.status(500).json({ success: false, clipId, error: 'Could not write clip to disk: ' + (err.message || err) });
+    }
+
+    // Acknowledge receipt now that the file is actually, durably on
+    // disk — R2/Drive upload continues in the background; poll
+    // /api/clips/status/:clipId for that outcome.
+    res.json({ success: true, clipId, status: 'LOCAL_RECEIVED' });
+
+    try {
+        await finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMeta, uid: null, outFile });
     } catch (err) {
         console.log(`External clip ingest error (${matchId}/${eventType}):`, err.message || err);
     }
@@ -2198,7 +2229,18 @@ function serializeClip(c) {
         striker: c.strikerName || null, bowler: c.bowlerName || null,
         nonStriker: c.nonStrikerName || null, fielder: c.fielderName || null,
         ready: !!(c.r2Url || c.driveUrl),
+        // Coarse job status for the commentary "WATCH REPLAY" UI, which
+        // needs to tell "still cutting/uploading" apart from "gave up" —
+        // `ready` alone can't distinguish those. Mirrors computeClipStatus's
+        // vocabulary (COMPLETE/RETRY_PENDING/FAILED_PERMANENT/UPLOADING);
+        // falls back to deriving it from `ready` for any older doc that
+        // predates the `status` field.
+        status: c.status || (c.r2Url || c.driveUrl ? 'COMPLETE' : 'UPLOADING'),
         watchUrl: `/api/clips/${c._id}/watch`,
+        // Direct CDN URL (no redirect hop, no per-view server work). The player falls back to
+        // watchUrl if this ever fails (e.g. object aged out of R2 -> Drive fallback).
+        playbackUrl: (c.r2Url && c.r2Status !== 'failed') ? c.r2Url : null,
+        posterUrl: c.r2PosterUrl || null,
         downloadUrl: `/api/clips/${c._id}/download`,
         createdAt: c.createdAt
     };
@@ -2375,14 +2417,16 @@ app.get('/api/players/:playerId/clips', async (req, res) => {
 // there before we redirect/stream a viewer to it; on any failure (404,
 // network error, whatever) we treat it as "not on R2 anymore" and let the
 // caller fall back to Drive instead of handing back a dead link.
-async function r2ObjectExists(url) {
+// Cached (10 min positive / 30 s negative) and coalesced: this used to be an uncached HEAD to R2 on
+// EVERY open of EVERY clip, sitting in front of the redirect — pure added latency on first play.
+const r2ObjectExists = clipMedia.createExistenceCache(async (url) => {
     try {
         const headRes = await fetch(url, { method: 'HEAD' });
         return headRes.ok;
     } catch (err) {
         return false;
     }
-}
+});
 
 // Resolves a clip's actual playable URL server-side — the frontend never
 // talks to R2/Drive directly and no credentials/keys ever reach the client.
@@ -2404,13 +2448,13 @@ app.get('/api/clips/:clipId/watch', async (req, res) => {
         const clip = await resolvePlayableClip(req.params.clipId);
         if (!clip) return res.status(404).json({ success: false, error: 'Clip not found' });
         if (clip.r2Url && await r2ObjectExists(clip.r2Url)) {
+            res.set('Cache-Control', 'public, max-age=600'); // the redirect itself is cacheable now
             return res.redirect(302, clip.r2Url);
         }
         if (clip.driveFileId && driveClient) {
-            const driveRes = await driveClient.files.get({ fileId: clip.driveFileId, alt: 'media' }, { responseType: 'stream' });
-            res.setHeader('Content-Type', 'video/mp4');
-            driveRes.data.on('error', () => res.end());
-            return driveRes.data.pipe(res);
+            // Range-aware proxy (206/Content-Range/Accept-Ranges/Content-Length) so seeking works
+            // and abandoned ranges release their Drive stream — see clip-media.js pipeDriveClip.
+            return await clipMedia.pipeDriveClip(driveClient, clip.driveFileId, req, res);
         }
         res.status(202).json({ success: false, error: 'Clip is still processing — try again shortly' });
     } catch (err) {
@@ -3754,56 +3798,20 @@ adminRouter.get('/tournament/:ownerUid/:leagueKey', async (req, res) => {
     }
 });
 
-// Correct one match's saved record. Body: { record: {...full corrected
-// match object...} }. Any field can be corrected this way — runs, balls,
-// overs, wickets, battingCard/bowlingCard entries, winningTeam, etc. — the
-// same shape the scoring panel itself saves via POST /api/league/:name/match.
-// Identity fields (ownerUid/leagueKey/matchId/roomId/savedAt) are preserved
-// from the existing doc regardless of what the body sends, so a correction
-// can never accidentally move a match to a different tournament or drop its
-// clip linkage (roomId).
-adminRouter.put('/tournament/:ownerUid/:leagueKey/match/:matchId', async (req, res) => {
-    if (!leaguesCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
-    const { ownerUid, matchId } = req.params;
-    const leagueKey = leagueKeyFor(req.params.leagueKey);
-    const correction = req.body && req.body.record;
-    if (!correction || typeof correction !== 'object') return res.status(400).json({ success: false, error: 'record object required' });
-    try {
-        const existing = await matchRecordsCollection.findOne({ ownerUid, leagueKey, matchId });
-        if (!existing) return res.status(404).json({ success: false, error: 'Match not found' });
-        const league = await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { publicToken: 1, displayName: 1 } });
-
-        // The admin panel round-trips the existing record through the JSON
-        // textarea, which turns Mongo's ObjectId into a plain string _id.
-        // replaceOne() treats _id as immutable, so sending that string back
-        // causes "the (immutable) field '_id' was found to have been
-        // altered" and the whole save fails with a 500 ("Could not save
-        // correction"). Strip whatever _id came in the body and let Mongo
-        // keep the existing document's real _id untouched.
-        const { _id, ...correctionWithoutId } = correction;
-
-        const corrected = {
-            ...correctionWithoutId,
-            ownerUid, leagueKey, matchId,
-            roomId: existing.roomId || null,
-            savedAt: existing.savedAt
-        };
-        await matchRecordsCollection.replaceOne({ ownerUid, leagueKey, matchId }, corrected);
-
-        // Nothing to recompute by hand — points table, leaderboards and
-        // player stats are derived fresh from matchRecords on every read.
-        // Just clear the short-lived response caches so the correction is
-        // visible immediately instead of waiting out their TTL.
-        if (league && league.publicToken) publicTournamentCache.delete(league.publicToken);
-        publicTournamentsListCache = null;
-
-        await logAuditAction(req.ownerEmail, 'Owner match correction', `${league && league.displayName || leagueKey} — match ${matchId}`, null, null);
-        res.json({ success: true, match: corrected });
-    } catch (err) {
-        console.log('Owner match correction error:', err);
-        res.status(500).json({ success: false, error: 'Could not save correction' });
-    }
-});
+// 🚫 REMOVED — this used to let the admin panel replaceOne() an ENTIRE
+// matchRecordsCollection doc from a hand-edited JSON blob (runs, wickets,
+// battingCard/bowlingCard entries, winningTeam — anything), completely
+// bypassing ballsCollection and the ball-by-ball recalculation engine
+// (buildLiveCardsFromBallsArray/correctDelivery below). That's exactly the
+// "duplicate/contradictory source of truth" and "unsafe aggregate-only
+// correction" pattern the match-correction system now explicitly avoids —
+// any score/delivery correction goes through PUT /cricket/ball/:ballId (or
+// the bowler/batsman bulk-correction endpoints) instead, which always
+// derives every downstream total fresh from the canonical balls and can
+// never leave this doc holding numbers that don't add up to any real
+// sequence of deliveries. The admin.html UI that called this was removed
+// in the same pass — score/delivery corrections now live only on the
+// match's own scorecard page (cricket-scorecard.html's 🔒 Edit Scorecard).
 
 // Deletes an ENTIRE tournament: the league doc, every match saved under it,
 // and every clip belonging to those matches. Frontend shows a confirmation
@@ -4133,7 +4141,16 @@ adminRouter.post('/clips/attach/drive', async (req, res) => {
 // be added afterwards here as a correction.
 // ================================================================
 
-const VALID_EXTRA_TYPES = new Set(['none', 'wide', 'noball', 'bye', 'legbye']);
+// 🌟 'overthrow' (MCC Law 19.8) added alongside the original four extra
+// types — a batted-shot delivery where a misfield lets the total run
+// (completed runs + boundary allowance) exceed what a normal stroke could
+// account for. Credited entirely to the striker (kind 'OT'), same as any
+// other shot off the bat — see buildBallFromCorrection() below and the
+// matching live-scoring implementation in cricket-panel.html's recordBall()
+// 'OT' case. An overthrow AFTER a Wide/No-Ball/Bye/Leg-Bye is NOT this type
+// — it's just a bigger number on that extra's own existing 'extras' field,
+// exactly like the live panel already handles it.
+const VALID_EXTRA_TYPES = new Set(['none', 'wide', 'noball', 'bye', 'legbye', 'overthrow']);
 
 // Derives law-consistent per-delivery facts (Laws 21/22/23/26 of the MCC
 // Laws of Cricket — No ball, Wide, Bye, Leg bye) from the existing single
@@ -4192,7 +4209,11 @@ function buildBallFromCorrection(input) {
 
     if (extraType === 'wide' && runsOffBat > 0) throw new Error('A Wide cannot carry runs off the bat — the striker never faced it.');
     if ((extraType === 'bye' || extraType === 'legbye') && runsOffBat > 0) throw new Error('Byes/Leg Byes are never credited as runs off the bat.');
-    if (extraType !== 'none' && extraRuns <= 0 && extraType !== 'noball') throw new Error(`Extra type is "${extraType}" but Extras is 0 — enter the runs run/extra runs.`);
+    // Overthrow's actual run value lives in "runs off bat" (it's credited
+    // to the striker, same field a plain shot uses), not in the "extras"
+    // field the other extra types use — so it's excluded from this check.
+    if (extraType !== 'none' && extraType !== 'overthrow' && extraRuns <= 0 && extraType !== 'noball') throw new Error(`Extra type is "${extraType}" but Extras is 0 — enter the runs run/extra runs.`);
+    if (extraType === 'overthrow' && isWicket) throw new Error('An Overthrow delivery can\'t also be marked as a wicket here — record the dismissal as a Run Out instead, with the completed runs (including any overthrow) in "Runs off bat".');
     const WIDE_LEGAL_DISMISSALS = new Set(['Run Out', 'Stumped']);
     const NOBALL_LEGAL_DISMISSALS = new Set(['Run Out', 'Hit Wicket']);
     if (isWicket && extraType === 'wide' && !WIDE_LEGAL_DISMISSALS.has(input.dismissalType)) {
@@ -4211,6 +4232,11 @@ function buildBallFromCorrection(input) {
     else if (extraType === 'noball') { kind = 'Nb'; totalRuns = 1 + runsOffBat; }          // 1 penalty always + bat runs
     else if (extraType === 'bye') { kind = 'B'; totalRuns = extraRuns; }
     else if (extraType === 'legbye') { kind = 'LB'; totalRuns = extraRuns; }
+    // Overthrow (Law 19.8) — legal delivery, credited entirely to the
+    // striker like any other shot off the bat, deliberately uncapped at 6
+    // (a genuine overthrow can total more than a normal boundary — see the
+    // VALID_EXTRA_TYPES comment above).
+    else if (extraType === 'overthrow') { kind = 'OT'; totalRuns = runsOffBat; }
     else { kind = String(Math.min(6, runsOffBat)); totalRuns = runsOffBat; }               // '0'..'6' off-the-bat delivery
     return { kind, runs: totalRuns, isWicket };
 }
@@ -5791,13 +5817,15 @@ adminRouter.get('/system-health', async (req, res) => {
     try { if (mongoDb) { await mongoDb.command({ ping: 1 }); mongoOk = true; } } catch (e) { mongoOk = false; }
     let firestoreOk = false;
     try { await db.collection('analytics_logs').limit(1).get(); firestoreOk = true; } catch (e) { firestoreOk = false; }
+    let pendingClipRetries = 0;
+    try { if (clipsCollection) pendingClipRetries = await clipsCollection.countDocuments({ status: 'RETRY_PENDING' }); } catch (e) { /* best effort */ }
     res.json({
         success: true,
         uptimeSeconds: Math.floor((Date.now() - SERVER_STARTED_AT) / 1000),
         mongoConnected: mongoOk,
         firestoreConnected: firestoreOk,
         websocketConnections: io.engine.clientsCount,
-        activeRecordingSessions: Object.keys(recordingSessions).length,
+        pendingClipRetries,
         driveUploadConfigured: !!driveClient,
         driveServiceAccountEmail: DRIVE_SERVICE_ACCOUNT_EMAIL || null,
         memoryUsageMb: Math.round(process.memoryUsage().rss / 1024 / 1024)
@@ -5841,36 +5869,46 @@ adminRouter.post('/settings', async (req, res) => {
 
 app.use('/api/admin', adminRouter);
 
+// These pages get redeployed often (every panel/overlay update), but browsers
+// and any CDN in front of Render will otherwise cache an HTML response and
+// keep serving it after a fresh deploy — looking exactly like "the update
+// didn't go live" even though the server has the new file. Force revalidation
+// on every load so a normal reload always sees the current deployed file.
+function sendHtmlNoCache(res, filePath) {
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.sendFile(filePath);
+}
+
 // Routes
-app.get('/', (req, res) => res.sendFile(__dirname + '/index.html'));
+app.get('/', (req, res) => sendHtmlNoCache(res, __dirname + '/index.html'));
 // 🛡️ Owner Admin Portal shell. This always serves the static page — it
 // contains no data. Every real fact it shows comes from an authenticated
 // call to /api/admin/*, which requireOwner enforces server-side above.
 // A non-owner opening this URL sees the page's own "Access Denied" state,
 // not any admin data.
-app.get('/admin', (req, res) => res.sendFile(__dirname + '/admin.html'));
-app.get('/overlay', (req, res) => res.sendFile(__dirname + '/overlay.html'));
-app.get('/tt-templates', (req, res) => res.sendFile(__dirname + '/tt-templates.html'));
-app.get('/tt-panel', (req, res) => res.sendFile(__dirname + '/tt-panel.html'));
-app.get('/tt-matchintro', (req, res) => res.sendFile(__dirname + '/tt-matchintro.html'));
-app.get('/tt-matchintro-panel', (req, res) => res.sendFile(__dirname + '/tt-matchintro-panel.html'));
-app.get('/tt-lowerthird', (req, res) => res.sendFile(__dirname + '/tt-lowerthird.html'));
-app.get('/tt-lowerthird-panel', (req, res) => res.sendFile(__dirname + '/tt-lowerthird-panel.html'));
-app.get('/cricket-templates', (req, res) => res.sendFile(__dirname + '/cricket-templates.html'));
-app.get('/cricket-overlay', (req, res) => res.sendFile(__dirname + '/cricket-overlay.html'));
-app.get('/cricket-panel', (req, res) => res.sendFile(__dirname + '/cricket-panel.html'));
-app.get('/cricket-overlay2', (req, res) => res.sendFile(__dirname + '/cricket-overlay2.html'));
-app.get('/cricket-panel2', (req, res) => res.sendFile(__dirname + '/cricket-panel2.html'));
-app.get('/cricket-scorecard', (req, res) => res.sendFile(__dirname + '/cricket-scorecard.html'));
-app.get('/cricket-overlay3', (req, res) => res.sendFile(__dirname + '/cricket-overlay3.html'));
-app.get('/cricket-panel3', (req, res) => res.sendFile(__dirname + '/cricket-panel3.html'));
+app.get('/admin', (req, res) => sendHtmlNoCache(res, __dirname + '/admin.html'));
+app.get('/overlay', (req, res) => sendHtmlNoCache(res, __dirname + '/overlay.html'));
+app.get('/tt-templates', (req, res) => sendHtmlNoCache(res, __dirname + '/tt-templates.html'));
+app.get('/tt-panel', (req, res) => sendHtmlNoCache(res, __dirname + '/tt-panel.html'));
+app.get('/tt-matchintro', (req, res) => sendHtmlNoCache(res, __dirname + '/tt-matchintro.html'));
+app.get('/tt-matchintro-panel', (req, res) => sendHtmlNoCache(res, __dirname + '/tt-matchintro-panel.html'));
+app.get('/tt-lowerthird', (req, res) => sendHtmlNoCache(res, __dirname + '/tt-lowerthird.html'));
+app.get('/tt-lowerthird-panel', (req, res) => sendHtmlNoCache(res, __dirname + '/tt-lowerthird-panel.html'));
+app.get('/cricket-templates', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-templates.html'));
+app.get('/cricket-overlay', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-overlay.html'));
+app.get('/cricket-panel', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-panel.html'));
+app.get('/cricket-overlay2', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-overlay2.html'));
+app.get('/cricket-panel2', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-panel2.html'));
+app.get('/cricket-scorecard', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-scorecard.html'));
+app.get('/cricket-overlay3', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-overlay3.html'));
+app.get('/cricket-panel3', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-panel3.html'));
 // 🖥️ LED Screen Output — ground display page. Static shell only; it joins
 // the SAME Socket.IO room as the existing scoring panel/overlay (via the
 // `uid` query param already handled in io.on('connection') below) and
 // listens to the existing 'liveCricketScore' broadcast. No new scoring
 // state, no new socket events, no separate match-data source — see
 // led-output.html for details. :matchId is read client-side from the URL.
-app.get('/led-output/:matchId', (req, res) => res.sendFile(__dirname + '/led-output.html'));
+app.get('/led-output/:matchId', (req, res) => sendHtmlNoCache(res, __dirname + '/led-output.html'));
 
 // 🧩 Generic serving routes for sports added via Admin → Broadcasting →
 // Add Template (the panelCode/overlayCode the owner pastes in). Cricket /
@@ -5897,7 +5935,7 @@ app.get('/t/:slug/overlay/:overlayId', async (req, res) => {
 // 🌐 Public scorecard system — see the "PUBLIC SCORECARD SYSTEM" section
 // above for the /api/public/* + /api/league/:name/public-link routes
 // these pages call. Both are static shells; all data loads client-side.
-app.get('/score/tournament/:token', (req, res) => res.sendFile(__dirname + '/score-tournament.html'));
+app.get('/score/tournament/:token', (req, res) => sendHtmlNoCache(res, __dirname + '/score-tournament.html'));
 // A specific completed match inside a tournament now reuses the full
 // cricket-scorecard.html viewer (same batting/bowling clip icons, Match
 // Highlights, comparison charts as a live match) instead of the plainer
@@ -5916,8 +5954,8 @@ app.get('/score/match/:id', (req, res) => {
     const qs = new URLSearchParams({ match: req.params.id, history: '1' });
     res.redirect(302, `/cricket-scorecard?${qs.toString()}`);
 });
-app.get('/football-matchintro', (req, res) => res.sendFile(__dirname + '/football-matchintro.html'));
-app.get('/football-matchintro-panel', (req, res) => res.sendFile(__dirname + '/football-matchintro-panel.html'));
+app.get('/football-matchintro', (req, res) => sendHtmlNoCache(res, __dirname + '/football-matchintro.html'));
+app.get('/football-matchintro-panel', (req, res) => sendHtmlNoCache(res, __dirname + '/football-matchintro-panel.html'));
 
 let roomStates = {};
 const firestoreWriteTimers = {}; // debounce map: targetId -> timeout handle
@@ -5979,6 +6017,15 @@ function buildLiveCardsFromBallsArray(balls) {
     // for wickets and legal-ball (over) count. See deriveBallFacts() for
     // the legal-ball rule this reuses.
     const teamTotals = { A: { runs: 0, wickets: 0, legalBalls: 0 }, B: { runs: 0, wickets: 0, legalBalls: 0 } };
+    // 🩹 CORRECTION-COMPLETENESS FIX: extras and fall-of-wickets used to be
+    // left OUT of this rebuild entirely — a correction recalculated the
+    // team total/batting/bowling correctly, but extras (wd/nb/b/lb) and
+    // fallOfWickets stayed exactly as they were the moment the match was
+    // last saved live, silently going stale the instant an edit touched a
+    // wide/bye/leg-bye or moved a wicket to a different ball. Same genuine-
+    // sum-over-canonical-balls treatment as teamTotals above, every time.
+    const extras = { A: { wd: 0, nb: 0, b: 0, lb: 0 }, B: { wd: 0, nb: 0, b: 0, lb: 0 } };
+    const fallOfWickets = { A: [], B: [] };
 
     balls.forEach(b => {
         const bt = b.battingTeam === 'B' ? 'B' : 'A';
@@ -5988,6 +6035,27 @@ function buildLiveCardsFromBallsArray(balls) {
         teamTotals[bt].runs += b.runs || 0;
         if (b.dismissal) teamTotals[bt].wickets++;
         if (facts.legalBall) teamTotals[bt].legalBalls++;
+
+        // Extras — mirrors cricket-panel.html's live crediting exactly: a
+        // Wide's FULL runs are extras (never a batsman's), a No Ball's
+        // extras is always exactly the 1-run penalty (any runs off the bat
+        // are the striker's, not extras — see 'runsOffBat' in
+        // deriveBallFacts()), Bye/Leg Bye are always fully extras. An
+        // Overthrow ('OT') is a legal delivery credited entirely to the
+        // striker, so it never touches extras here, same as a plain '0'-'6'.
+        if (b.kind === 'Wd') extras[bt].wd += b.runs || 0;
+        else if (b.kind === 'Nb') extras[bt].nb += 1;
+        else if (b.kind === 'B') extras[bt].b += b.runs || 0;
+        else if (b.kind === 'LB') extras[bt].lb += b.runs || 0;
+
+        // Fall of wickets — the cumulative team score/wicket count AT this
+        // exact ball (teamTotals[bt] already reflects THIS ball, since it
+        // was incremented just above), in the same "over.ballInOver" shape
+        // cricket-panel.html/cricket-scorecard.html already read
+        // (m.fallOfWickets[team] = [{wkt, runs, over, inningsNo}]).
+        if (b.dismissal) {
+            fallOfWickets[bt].push({ wkt: teamTotals[bt].wickets, runs: teamTotals[bt].runs, over: `${b.over}.${b.ballInOver}`, inningsNo: inn });
+        }
 
         // 🩹 INNINGS-TAG FIX: rows used to be keyed by strikerKey/bowlerKey
         // alone, with no inningsNo ever written onto the row. The public
@@ -6041,11 +6109,40 @@ function buildLiveCardsFromBallsArray(balls) {
         return { runs: t.runs, wickets: t.wickets, overs: `${Math.floor(t.legalBalls / 6)}.${t.legalBalls % 6}` };
     };
 
+    // Partnerships — one pass per innings (mirrors computeLivePartnerships()
+    // in cricket-panel.html exactly: same pairKey/forWicket/runs/balls
+    // algorithm), reading from these same canonical balls instead of the
+    // live panel's ballLog — so a correction rebuilds this from the SAME
+    // source of truth as everything else above, instead of leaving it as
+    // whatever the panel last happened to save before the correction.
+    // Keyed by innings NUMBER (1-4), matching m.partnerships[inningsNo] the
+    // way cricket-scorecard.html already reads a saved match record.
+    const partnerships = { 1: [], 2: [], 3: [], 4: [] };
+    [1, 2, 3, 4].forEach(inn => {
+        const inningsBalls = balls.filter(b => (b.innings || 1) === inn);
+        if (!inningsBalls.length) return;
+        let cur = null, wktSoFar = 0;
+        inningsBalls.forEach(b => {
+            const pairKey = [b.striker || '', b.nonStriker || ''].sort().join('|');
+            if (!cur || cur.pairKey !== pairKey) {
+                if (cur) partnerships[inn].push(cur);
+                cur = { pairKey, batters: [b.striker, b.nonStriker], runs: 0, balls: 0, forWicket: wktSoFar + 1 };
+            }
+            cur.runs += b.runs || 0;
+            if (b.kind !== 'Wd' && b.kind !== 'Nb') cur.balls++;
+            if (b.dismissal) wktSoFar++;
+        });
+        if (cur) partnerships[inn].push(cur);
+    });
+
     return {
         battingCard: { A: toBattingCard('A'), B: toBattingCard('B') },
         bowlingCard: { A: toBowlingCard('A'), B: toBowlingCard('B') },
         scoreA: toScore('A'),
-        scoreB: toScore('B')
+        scoreB: toScore('B'),
+        extras: { A: extras.A, B: extras.B },
+        fallOfWickets: { A: fallOfWickets.A, B: fallOfWickets.B },
+        partnerships
     };
 }
 
@@ -6612,6 +6709,18 @@ io.on('connection', async (socket) => {
         io.to(room).emit('cricketTeamStat', data.data || data);
     });
 
+    // 🏏📊 Automatic Recent Over Summary + Last-5-overs momentum — fired once
+    // per genuinely-completed over from cricket-panel.html's recordBall().
+    // Same pure-broadcast relay as cricketPlayerStat/cricketTeamStat above:
+    // never persisted, never touches cricketState/Mongo, just forwarded to
+    // whoever's watching this room's overlay.
+    socket.on('cricketOverSummary', (data) => {
+        let room = socket.activeRoom;
+        const targetId = data.room ? data.room.replace('room-', '') : (data.id || data.uid || matchIdForClient);
+        if (targetId && targetId !== 'default') room = `room-${targetId}`;
+        io.to(room).emit('cricketOverSummary', data.data || data);
+    });
+
     socket.on('cricketHideTeamStat', (data) => {
         let room = socket.activeRoom;
         const targetId = data && data.room ? data.room.replace('room-', '') : (data && (data.id || data.uid)) || matchIdForClient;
@@ -6733,19 +6842,11 @@ io.on('connection', async (socket) => {
         }
     });
 
-    // 🎬 WICKET/FOUR/SIX → cut a 20s clip (10s before, 10s after) from the
-    // match recording. We deliberately wait until the "after" half of the
-    // window has actually been recorded before touching ffmpeg, otherwise
-    // we'd be trying to cut footage that doesn't exist on disk yet.
-    socket.on('requestClip', (data) => {
-        const matchId = safeMatchId(data.matchId || (data.room ? data.room.replace('room-', '') : null) || matchIdForClient);
-        if (!matchId || matchId === 'default') return;
-        const eventTimestamp = data.timestamp || Date.now();
-        const waitMs = Math.max(0, (eventTimestamp + 10000) - Date.now()) + 1000; // +1s safety buffer
-        setTimeout(() => {
-            cutClip({ matchId, eventType: data.eventType, eventTimestamp, ballMeta: data.ballMeta || null, uid: data.uid || null });
-        }, waitMs);
-    });
+    // 🩹 REMOVED (audit finding): a socket.on('requestClip', ...) handler
+    // used to live here, waiting then calling the now-removed cutClip()
+    // (see the audit note above /api/set-drive-folder). Nothing in the
+    // current panel ever emits 'requestClip' — clips are cut locally by
+    // the Stream Engine and handed to /api/clips/ingest already finished.
 
     // 🏈 FOOTBALL MATCH INTRO PANEL & OVERLAY SOCKET HANDLING
     // Broadcast is ALWAYS immediate (no delay ever added to what viewers see)
