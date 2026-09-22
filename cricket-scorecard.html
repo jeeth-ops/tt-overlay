@@ -2482,6 +2482,7 @@ async function loadFinalBallLog(token, matchId){
   renderFinalCommentary();
 }
 
+let lastSnapshotSignature = null; // set by loadMatchSnapshot; lets a 30s poll skip re-rendering an unchanged finished match
 async function loadMatchSnapshot(matchId){
   const token = getTournamentToken();
   const wrap = document.getElementById('wrap');
@@ -2523,6 +2524,15 @@ async function loadMatchSnapshot(matchId){
     // silently failed the `state.score` check below and always landed on
     // "Could not load this match's scorecard right now." renderFinalSnapshot()
     // renders this shape directly instead, with the same clip icons.
+    // 🚀 PERF: this used to fully re-render the scorecard (renderFinalSnapshot + a fresh ball-log
+    // fetch) every 30s unconditionally, even for a match that finished hours ago and never changes —
+    // "opening one old clip must not make the whole scorecard lag" also means a background poll
+    // shouldn't be quietly rebuilding the whole DOM under the viewer while they're doing that. A
+    // cheap signature (updatedAt if the backend sends one, else the score line + wicket count) skips
+    // the render when nothing has actually moved; a genuine post-finish correction still applies.
+    const signature = JSON.stringify(match.updatedAt || [match.scoreA, match.scoreB, match.oversA, match.oversB, (match.fallOfWickets && match.fallOfWickets.length)]);
+    if(signature === lastSnapshotSignature) return;
+    lastSnapshotSignature = signature;
     renderFinalSnapshot(match, data.displayName || '');
     loadFinalBallLog(token, matchId);
   } catch(err){
@@ -4401,7 +4411,9 @@ function clipRowHtml(c){
   const deleteBtn = isOwner
     ? `<button class="clip-delete-btn" data-delete-clip="${c.clipId}" data-delete-title="${escapeHtml((c.striker||c.bowler||'') + ' — ' + c.eventType)}" title="Delete this clip">${TRASH_ICON}</button>`
     : '';
-  return `<div class="clip-row clip-row--${badgeCls}" data-clip-id="${c.clipId}" data-title="${escapeHtml((c.striker||c.bowler||'') + ' — ' + c.eventType)}">
+  // playbackUrl/posterUrl (direct CDN link + poster frame, when the backend has them) travel on the
+  // row itself so opening the clip needs no extra round trip before the <video> can start loading.
+  return `<div class="clip-row clip-row--${badgeCls}" data-clip-id="${c.clipId}" data-title="${escapeHtml((c.striker||c.bowler||'') + ' — ' + c.eventType)}" data-playback-url="${escapeHtml(c.playbackUrl || '')}" data-poster-url="${escapeHtml(c.posterUrl || '')}">
     <div class="cr-badge ${badgeCls}">${badgeLabel}</div>
     <div class="cr-info">
       <div class="cr-over tabnum">Over ${overLabel}</div>
@@ -4430,7 +4442,7 @@ function wireClipRows(root, clipsByIdMap){
     const title = row.dataset.title;
     const watchBtn = row.querySelector('.clip-watch-btn');
     if(watchBtn && !watchBtn.disabled){
-      watchBtn.addEventListener('click', (e) => { e.stopPropagation(); openVideoModal(id, title); });
+      watchBtn.addEventListener('click', (e) => { e.stopPropagation(); openVideoModal(id, title, row.dataset.playbackUrl, row.dataset.posterUrl); });
     }
     const reassignBtn = row.querySelector('[data-reassign-clip]');
     if(reassignBtn){
@@ -4446,7 +4458,7 @@ function wireClipRows(root, clipsByIdMap){
         openClipDeleteConfirm(deleteBtn.dataset.deleteClip, deleteBtn.dataset.deleteTitle);
       });
     }
-    row.addEventListener('click', () => { if(watchBtn && !watchBtn.disabled) openVideoModal(id, title); });
+    row.addEventListener('click', () => { if(watchBtn && !watchBtn.disabled) openVideoModal(id, title, row.dataset.playbackUrl, row.dataset.posterUrl); });
   });
 }
 
@@ -4643,27 +4655,67 @@ async function openTeamClipDrawer(teamKey, teamLabel){
   wireClipRows(body);
 }
 
-async function openVideoModal(clipId, title){
+// One <video> element, reused across every open — recreating it via innerHTML on each tap (the old
+// code) meant the browser had to spin up a brand-new media pipeline (and, on Android especially, redo
+// its own decoder/network setup) every single time, which is a large share of what read as "first
+// open is slow": every open behaved like a first open, even the second and third.
+let vmVideoEl = null;
+let vmLoadToken = 0; // bumped per open; a slow-to-load previous clip can never clobber a newer one
+function vmVideo(){
+  if(vmVideoEl) return vmVideoEl;
+  vmVideoEl = document.createElement('video');
+  vmVideoEl.controls = true; vmVideoEl.playsInline = true;
+  vmVideoEl.preload = 'metadata';                    // enough to start fast without downloading the whole clip up front
+  vmVideoEl.setAttribute('webkit-playsinline', '');
+  document.getElementById('video-modal-body').appendChild(vmVideoEl);
+  return vmVideoEl;
+}
+async function openVideoModal(clipId, title, playbackUrl, posterUrl){
+  const myToken = ++vmLoadToken;
   document.getElementById('video-modal-title').textContent = title || 'Clip';
-  document.getElementById('video-modal-body').innerHTML = '<div id="video-modal-loading">Loading clip…</div>';
   document.getElementById('video-modal-backdrop').classList.add('open');
-  // Lazy: the <video> element (and therefore the byte stream behind
-  // /api/clips/:id/watch) is only created now, on tap — never eagerly.
-  const src = `${clipApiBase()}/api/clips/${encodeURIComponent(clipId)}/watch`;
+  document.body.classList.add('video-modal-active'); // pauses #ambient-wash's compositing cost while a clip plays (desktop/laptop)
+  const body = document.getElementById('video-modal-body');
+  if(!body.querySelector('#video-modal-loading')) body.insertAdjacentHTML('afterbegin', '<div id="video-modal-loading">Loading clip…</div>');
+  // Prefer the direct CDN URL already carried on the clip row (no redirect hop = faster first frame);
+  // /watch (redirect, or the Range-aware Drive proxy) is the fallback for older data / commentary buttons.
+  const src = playbackUrl || `${clipApiBase()}/api/clips/${encodeURIComponent(clipId)}/watch`;
   const dl = `${clipApiBase()}/api/clips/${encodeURIComponent(clipId)}/download`;
-  requestAnimationFrame(() => {
-    document.getElementById('video-modal-body').innerHTML =
-      `<video src="${src}" controls autoplay playsinline></video>
-       <div style="padding:10px 14px; background:#0b0e14; display:flex; justify-content:flex-end;">
-         <a href="${dl}" style="color:#fff; font-size:11.5px; font-weight:700; display:flex; align-items:center; gap:6px;">${DOWNLOAD_ICON} Download</a>
-       </div>`;
-  });
+  let dlRow = body.querySelector('.vm-dl-row');
+  if(!dlRow){
+    dlRow = document.createElement('div');
+    dlRow.className = 'vm-dl-row';
+    dlRow.style.cssText = 'padding:10px 14px; background:#0b0e14; display:flex; justify-content:flex-end;';
+    dlRow.innerHTML = `<a class="vm-dl-link" style="color:#fff; font-size:11.5px; font-weight:700; display:flex; align-items:center; gap:6px;">${DOWNLOAD_ICON} Download</a>`;
+    body.appendChild(dlRow);
+  }
+  dlRow.querySelector('.vm-dl-link').href = dl;
+
+  const v = vmVideo();
+  const loadingEl = () => document.getElementById('video-modal-loading');
+  const onReady = () => { if(myToken === vmLoadToken && loadingEl()) loadingEl().remove(); };
+  v.oncanplay = onReady;
+  v.onloadeddata = onReady;                            // fires even when autoplay is blocked, so the spinner doesn't hang forever
+  if(posterUrl) v.poster = posterUrl; else v.removeAttribute('poster');
+  if(v.src !== src){ v.src = src; v.load(); }           // same clip re-opened -> skip the reload entirely
+  v.play().catch(() => {});                             // autoplay can be blocked by the browser; controls stay usable either way
 }
 function closeVideoModal(){
   document.getElementById('video-modal-backdrop').classList.remove('open');
-  // Stop playback/free the stream the moment it's closed.
-  document.getElementById('video-modal-body').innerHTML = '<div id="video-modal-loading">Loading clip…</div>';
+  document.body.classList.remove('video-modal-active');
+  vmLoadToken++;                                        // any in-flight onReady/load callback for this clip becomes a no-op
+  if(vmVideoEl){
+    // pause + drop the source (not just hide the element) so Chrome/Safari actually abort the
+    // in-flight byte-range request instead of continuing to download in the background.
+    vmVideoEl.pause();
+    vmVideoEl.removeAttribute('src');
+    vmVideoEl.load();
+  }
+  const loadingEl = document.getElementById('video-modal-loading');
+  if(!loadingEl) document.getElementById('video-modal-body').insertAdjacentHTML('afterbegin', '<div id="video-modal-loading">Loading clip…</div>');
 }
+// #ambient-wash pause hook — plain CSS, no JS cost while idle.
+document.head.insertAdjacentHTML('beforeend', '<style>body.video-modal-active #ambient-wash{ animation-play-state:paused; }</style>');
 document.getElementById('video-modal-close').addEventListener('click', closeVideoModal);
 document.getElementById('video-modal-backdrop').addEventListener('click', (e) => { if(e.target.id === 'video-modal-backdrop') closeVideoModal(); });
 
