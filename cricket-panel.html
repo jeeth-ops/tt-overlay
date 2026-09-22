@@ -274,6 +274,13 @@
   .live-player-badge{ font-size:10px; font-weight:800; letter-spacing:.6px; color:var(--text-dim); text-transform:uppercase; }
   .live-player-badge.striker{ color:var(--accent); }
   .live-player-badge.bowler{ color:var(--purple); }
+  /* Team identity accent — --bat-team / --bowl-team are written by
+     applyPanelTeamTheme() from the ACTIVE batting/bowling team's own stored
+     colour on every renderPanel(), so they follow innings changes,
+     reconnects and refreshes. Fallbacks keep the old look if unset. */
+  #live-striker-row, #live-nonstriker-row{ border-left:4px solid var(--bat-team, var(--border)); }
+  #live-bowler-row{ border-left:4px solid var(--bowl-team, var(--border)); }
+  #card-score .stat:first-child{ border-top:3px solid var(--bat-team, var(--border)); }
   .live-player-name{ font-size:14px; font-weight:700; color:var(--text); }
   .live-player-stats{ font-size:12px; color:var(--text-dim); margin-top:3px; font-variant-numeric:tabular-nums; }
   .live-player-actions{ display:flex; gap:6px; margin-top:8px; }
@@ -1783,6 +1790,28 @@ const FORMAT_RULES = {
   Custom:{ oversPerInnings: 20, powerplayEnd: 6,  lastOverFrom: 20 }
 };
 
+/* ============================================================
+   TEAM THEME — the ONE place team identity becomes colour.
+   state.battingTeam ('A'|'B') -> that team's OWN stored colour. Nothing
+   here (or anywhere in this file) assumes "Team A = red"; a team with no
+   colour saved falls back to a per-team default only.
+   ============================================================ */
+const PANEL_TEAM_FALLBACK = { A: '#17337a', B: '#7a1620' };
+function resolveTeamTheme(st){
+  const tok = (team, key) => ({ key, name: team && team.name, short: team && team.short, logoUrl: team && team.logoUrl,
+                                color: (team && team.color) || PANEL_TEAM_FALLBACK[key] });
+  const A = tok(st.teamA, 'A'), B = tok(st.teamB, 'B');
+  const battingKey = st.battingTeam === 'B' ? 'B' : 'A';
+  return { A, B, battingKey, batting: battingKey === 'A' ? A : B, bowling: battingKey === 'A' ? B : A };
+}
+function applyPanelTeamTheme(){
+  if(typeof state === 'undefined' || !state) return;
+  const t = resolveTeamTheme(state);
+  const r = document.documentElement.style;
+  r.setProperty('--bat-team', t.batting.color);
+  r.setProperty('--bowl-team', t.bowling.color);
+}
+
 function mergeWithDefaults(saved){
   const def = defaultState();
   if(!saved) return def;
@@ -2204,6 +2233,7 @@ function completeInitialHydration(){
   // A freshly-joining/reconnecting overlay must see the last real
   // broadcast — never an in-progress "next innings" edit the operator
   // hasn't committed yet by clicking Start.
+  dropStaleTimedCards(); // a card flag restored from saved/server state describes a card that's long gone
   if(isAwaitingNextInnings() && lastBroadcastState){
     send(lastBroadcastState);
   } else {
@@ -4284,6 +4314,7 @@ function calcBallsLeft(){
 }
 
 function renderPanel(){
+  applyPanelTeamTheme();
   applyTestButtonsVisibility();
   document.getElementById('disp-score').textContent = `${state.score.runs}-${state.score.wickets}`;
   document.getElementById('disp-overs').textContent = fmtOvers(state.score.overs, state.score.balls);
@@ -5646,10 +5677,12 @@ document.getElementById('player-stat-toggle').addEventListener('change', (e) => 
   saveLocal();
   if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
   if(state.showPlayerStatCard){
-    socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
+    emitStatCard('player', buildPlayerStatPayload(), false);
+    armCardTimer('player');
     const p = state.playerStatWhich === 'nonStriker' ? state.nonStriker : state.striker;
     setActiveCard('player', `${p.name || 'Batter'} — ${state.playerStatScope === 'tournament' ? 'Tournament' : 'Match'}`);
   } else {
+    clearCardTimer('player');
     socket.emit('cricketHidePlayerStat', {});
     clearActiveCardIfMatches('player');
   }
@@ -5660,9 +5693,11 @@ document.getElementById('bowler-stat-toggle').addEventListener('change', (e) => 
   saveLocal();
   if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
   if(state.showBowlerStatCard){
-    socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
+    emitStatCard('bowler', buildBowlerStatPayload(), false);
+    armCardTimer('bowler');
     setActiveCard('bowler', `${state.bowler.name || 'Bowler'} — ${state.bowlerStatScope === 'tournament' ? 'Tournament' : 'Match'}`);
   } else {
+    clearCardTimer('bowler');
     socket.emit('cricketHideBowlerStat', {});
     clearActiveCardIfMatches('bowler');
   }
@@ -5670,19 +5705,19 @@ document.getElementById('bowler-stat-toggle').addEventListener('change', (e) => 
 document.getElementById('player-stat-which').addEventListener('change', (e) => {
   state.playerStatWhich = e.target.value;
   saveLocal();
-  if(state.showPlayerStatCard && socket && socket.connected) socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
+  if(state.showPlayerStatCard && socket && socket.connected){ emitStatCard('player', buildPlayerStatPayload(), false); armCardTimer('player'); }
 });
 document.getElementById('player-stat-scope').addEventListener('change', (e) => {
   state.playerStatScope = e.target.value;
   document.getElementById('player-tournament-fields').style.display = state.playerStatScope === 'tournament' ? 'grid' : 'none';
   saveLocal();
-  if(state.showPlayerStatCard && socket && socket.connected) socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
+  if(state.showPlayerStatCard && socket && socket.connected){ emitStatCard('player', buildPlayerStatPayload(), false); armCardTimer('player'); }
 });
 document.getElementById('bowler-stat-scope').addEventListener('change', (e) => {
   state.bowlerStatScope = e.target.value;
   document.getElementById('bowler-tournament-fields').style.display = state.bowlerStatScope === 'tournament' ? 'grid' : 'none';
   saveLocal();
-  if(state.showBowlerStatCard && socket && socket.connected) socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
+  if(state.showBowlerStatCard && socket && socket.connected){ emitStatCard('bowler', buildBowlerStatPayload(), false); armCardTimer('bowler'); }
 });
 // Tournament number fields — typed in by hand (no ball-by-ball tournament
 // database yet). Any edit re-sends the card live if it's currently ON.
@@ -5695,7 +5730,7 @@ Object.keys(PLAYER_TOURNEY_FIELD_MAP).forEach(id => {
     state[PLAYER_TOURNEY_FIELD_MAP[id]] = e.target.value;
     saveLocal();
     if(state.showPlayerStatCard && state.playerStatScope === 'tournament' && socket && socket.connected){
-      socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
+      emitStatCard('player', buildPlayerStatPayload(), true);
     }
   });
 });
@@ -5708,7 +5743,7 @@ Object.keys(BOWLER_TOURNEY_FIELD_MAP).forEach(id => {
     state[BOWLER_TOURNEY_FIELD_MAP[id]] = e.target.value;
     saveLocal();
     if(state.showBowlerStatCard && state.bowlerStatScope === 'tournament' && socket && socket.connected){
-      socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
+      emitStatCard('bowler', buildBowlerStatPayload(), true);
     }
   });
 });
@@ -7747,8 +7782,8 @@ function buildTeamStatPayload(){
 }
 function refreshTournamentCardsIfShown(){
   if(!socket || !socket.connected) return;
-  if(state.showPlayerStatCard && state.playerStatScope === 'tournament') socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
-  if(state.showBowlerStatCard && state.bowlerStatScope === 'tournament') socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
+  if(state.showPlayerStatCard && state.playerStatScope === 'tournament') emitStatCard('player', buildPlayerStatPayload(), true);
+  if(state.showBowlerStatCard && state.bowlerStatScope === 'tournament') emitStatCard('bowler', buildBowlerStatPayload(), true);
   if(state.showTeamStatCard) socket.emit('cricketTeamStat', { data: buildTeamStatPayload() });
   if(state.showPlayerHistoryCard && state.playerHistoryOverlayName){
     // buildPlayerHistoryPayload is async (career/tournament-history come
@@ -7831,8 +7866,8 @@ function refreshLiveStatCards(){
   // Tournament-scope cards are included too (not just "match" scope) —
   // their auto-computed numbers depend on the current player/team name,
   // which can change mid-match (e.g. a bowler swap, a name correction).
-  if(state.showPlayerStatCard) socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
-  if(state.showBowlerStatCard) socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
+  if(state.showPlayerStatCard) emitStatCard('player', buildPlayerStatPayload(), true);
+  if(state.showBowlerStatCard) emitStatCard('bowler', buildBowlerStatPayload(), true);
   if(state.showTeamStatCard) socket.emit('cricketTeamStat', { data: buildTeamStatPayload() });
   // Player History card, if it's up, gets the same ball-by-ball refresh —
   // "This Match" and "This Tournament" (which now folds in this match's
@@ -7903,22 +7938,75 @@ function clearActiveCardIfMatches(kind){
 // toggles use — a pure visual dismiss, never touches player/match/
 // tournament data.
 function deactivateCard(kind){
-  if(!socket || !socket.connected) return;
+  // Local state is cleared FIRST and unconditionally — a dropped socket used
+  // to leave the "card is showing" flag stuck true (and re-emitted on
+  // reconnect). Only the hide EVENT depends on the connection.
+  if(kind === 'player' || kind === 'bowler') clearCardTimer(kind);
+  const connected = !!(socket && socket.connected);
   if(kind === 'player'){
     state.showPlayerStatCard = false;
     const el = document.getElementById('player-stat-toggle'); if(el) el.checked = false;
-    socket.emit('cricketHidePlayerStat', {});
+    if(connected) socket.emit('cricketHidePlayerStat', {});
   } else if(kind === 'bowler'){
     state.showBowlerStatCard = false;
     const el = document.getElementById('bowler-stat-toggle'); if(el) el.checked = false;
-    socket.emit('cricketHideBowlerStat', {});
+    if(connected) socket.emit('cricketHideBowlerStat', {});
   } else if(kind === 'team'){
     state.showTeamStatCard = false;
     const el = document.getElementById('team-stat-toggle'); if(el) el.checked = false;
-    socket.emit('cricketHideTeamStat', {});
+    if(connected) socket.emit('cricketHideTeamStat', {});
   }
   saveLocal();
   clearActiveCardIfMatches(kind);
+}
+
+/* ------------------------------------------------------------
+   BATTER / BOWLER CARD LIFETIME — one timer per card kind, 4 s hard cap.
+   Every path that turns a batter/bowler card ON (auto SHOW, manual buttons,
+   the old toggles, scope/which changes) goes through armCardTimer(); a new
+   selection replaces the old timer, so two can never fight. Score-driven
+   re-sends do NOT re-arm (they are flagged refresh:true — see
+   emitStatCard). The overlay enforces the same 4 s cap on its side, so a
+   lost hide event / dropped socket can't leave a card up.
+   ------------------------------------------------------------ */
+const CARD_MAX_MS = 4000;
+const cardTimers = { player: { t: null, onExpire: null }, bowler: { t: null, onExpire: null } };
+function clearCardTimer(kind){
+  const c = cardTimers[kind]; if(!c) return;
+  clearTimeout(c.t); c.t = null; c.onExpire = null;
+}
+function armCardTimer(kind, onExpire){
+  const c = cardTimers[kind]; if(!c) return;
+  clearTimeout(c.t);
+  c.onExpire = onExpire || null;
+  c.t = setTimeout(() => {
+    const cb = c.onExpire;
+    c.t = null; c.onExpire = null;
+    deactivateCard(kind);
+    if(cb) cb();
+  }, CARD_MAX_MS);
+}
+// Player/bowler stat card emit. isRefresh=true marks a data-only re-send for a
+// card that is already showing (a run scored, a typed number changed) — the
+// overlay applies it only to a card that is currently up and never lets it
+// start/restart one.
+function emitStatCard(kind, payload, isRefresh){
+  if(!socket || !socket.connected) return;
+  socket.emit(kind === 'player' ? 'cricketPlayerStat' : 'cricketBowlerStat',
+              { data: isRefresh ? { ...payload, refresh: true } : payload });
+}
+// Player/bowler cards are ephemeral now (max 4 s). A "showing" flag that
+// survived in localStorage / the server's saved state (page reload, reconnect)
+// refers to a card that is long gone — clear it instead of re-broadcasting it.
+function dropStaleTimedCards(){
+  let touched = false;
+  if(state.showPlayerStatCard && !cardTimers.player.t){ state.showPlayerStatCard = false; touched = true;
+    const el = document.getElementById('player-stat-toggle'); if(el) el.checked = false;
+    if(state.activeCardKind === 'player'){ state.activeCardKind = null; state.activeCardLabel = ''; } }
+  if(state.showBowlerStatCard && !cardTimers.bowler.t){ state.showBowlerStatCard = false; touched = true;
+    const el = document.getElementById('bowler-stat-toggle'); if(el) el.checked = false;
+    if(state.activeCardKind === 'bowler'){ state.activeCardKind = null; state.activeCardLabel = ''; } }
+  if(touched) saveLocal();
 }
 
 // Manual "Match Card" / "Tournament Card" buttons for striker/non-striker —
@@ -7938,7 +8026,8 @@ function manualShowPlayerCard(which, scope){
     scopeEl.value = scope;
     document.getElementById('player-tournament-fields').style.display = scope === 'tournament' ? 'grid' : 'none';
   }
-  socket.emit('cricketPlayerStat', { data: buildPlayerStatPayload() });
+  emitStatCard('player', buildPlayerStatPayload(), false);
+  armCardTimer('player');
   const player = which === 'nonStriker' ? state.nonStriker : state.striker;
   setActiveCard('player', `${player.name || 'Batter'} — ${scope === 'tournament' ? 'Tournament' : 'Match'}`);
 }
@@ -7954,7 +8043,8 @@ function manualShowBowlerCard(scope){
     scopeEl.value = scope;
     document.getElementById('bowler-tournament-fields').style.display = scope === 'tournament' ? 'grid' : 'none';
   }
-  socket.emit('cricketBowlerStat', { data: buildBowlerStatPayload() });
+  emitStatCard('bowler', buildBowlerStatPayload(), false);
+  armCardTimer('bowler');
   setActiveCard('bowler', `${state.bowler.name || 'Bowler'} — ${scope === 'tournament' ? 'Tournament' : 'Match'}`);
 }
 
@@ -8072,19 +8162,18 @@ function showAutoCard(seq){
   state[showFlag] = true;
   saveLocal();
   const toggleEl = document.getElementById(toggleId); if(toggleEl) toggleEl.checked = true;
-  socket.emit(emitEvent, { data: flow.matchPayload });
+  emitStatCard(cardKind, flow.matchPayload, false);
   setActiveCard(cardKind, `${personLabel} — Match (auto)`);
 
-  // Flat 4s window (from this Match card's own first frame) — no
-  // crossfade to a Tournament phase, just Show → 4s → gone.
-  // whether or not a Tournament phase played, then smooth exit.
-  const hideTimer = setTimeout(() => {
+  // Flat 4s window from this card's first frame — Show → 4s → gone. The
+  // timer is the shared per-kind controller (armCardTimer), so a manual
+  // action or a newer selection replaces it instead of racing it; the
+  // callback only advances the queue if THIS flow is still the current one.
+  armCardTimer(cardKind, () => {
     if(!autoCardFlow || autoCardFlow.seq !== seq) return; // a manual action already took over
-    deactivateCard(cardKind);
     autoCardFlow = null;
     advanceAutoCardQueue();
-  }, 4000);
-  flow.timers.push(hideTimer);
+  });
 }
 
 document.getElementById('auto-card-modal-show').addEventListener('click', () => {
@@ -8126,6 +8215,12 @@ function emitOverSummary(overIndexZeroBased, overRuns, overWickets, overBalls){
   const recentOvers = state.overHistory.filter(o => o.inningsNo === state.inningsNumber).slice(-5);
   const srOf = (p) => (p.balls > 0 ? ((p.runs / p.balls) * 100).toFixed(1) : '0.0');
   socket.emit('cricketOverSummary', { data: {
+    // Identity of THIS emission + which over/innings/side it belongs to — the
+    // overlay uses these to drop duplicate deliveries and never restart the
+    // 4 s hold for an over that is already on screen.
+    eventId: `${currentMatchId() || 'm'}-${state.inningsNumber}-${overIndexZeroBased + 1}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    inningsNo: state.inningsNumber,
+    battingKey: state.battingTeam === 'B' ? 'B' : 'A',
     overNumber: overIndexZeroBased + 1,
     overRuns, overWickets, balls: overBalls,
     format: state.format,
@@ -11858,6 +11953,7 @@ document.addEventListener('keydown', (e) => {
    INIT
    ============================================================ */
 (function init(){
+  dropStaleTimedCards();
   document.getElementById('format').value = state.format;
   document.getElementById('custom-overs').value = state.customOvers;
   document.getElementById('custom-overs-wrap').style.display = state.format === 'Custom' ? 'block' : 'none';
