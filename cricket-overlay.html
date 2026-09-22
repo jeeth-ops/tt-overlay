@@ -39,6 +39,19 @@
     --team-a-dark:   #0e2159;
     --team-b:        #7a1620;
     --team-b-2:      #a8202e;
+    /* ROLE tokens (batting side = left cap, bowling side = right cap).
+       These — not --team-a/--team-b — paint the caps and the mid bar, so a
+       side swap on an innings change moves the COLOUR together with the
+       name/logo. Written by layoutTeams() from the ACTIVE team's own stored
+       colour; the values here are only first-paint fallbacks. */
+    --bat:           #17337a;
+    --bat-2:         #2049a8;
+    --bat-dark:      #0e2159;
+    --bat-ink:       #ffffff;
+    --bowl:          #7a1620;
+    --bowl-2:        #a8202e;
+    --bowl-dark:     #5a0f18;
+    --bowl-ink:      #ffffff;
     --badge:         #ff7a1a;
     --badge-2:       #ff9a3d;
     --bottombar:     #0a1330;
@@ -83,14 +96,14 @@
     overflow:visible;
   }
   #cap-left{
-    background:linear-gradient(115deg, var(--team-a), var(--team-a-2) 60%, var(--team-a));
+    background:linear-gradient(115deg, var(--bat), var(--bat-2) 60%, var(--bat));
     clip-path:polygon(0 0, 100% 0, 82% 100%, 0 100%);
     border-radius:14px 0 0 14px;
     transform-origin:left center;
     box-shadow:inset 0 -4px 0 var(--badge);
   }
   #cap-right{
-    background:linear-gradient(115deg, var(--team-b-2), var(--team-b) 60%, var(--team-b-2));
+    background:linear-gradient(115deg, var(--bowl-2), var(--bowl) 60%, var(--bowl-2));
     clip-path:polygon(18% 0, 100% 0, 100% 100%, 0 100%);
     border-radius:0 14px 14px 0;
     justify-content:flex-end; padding:0 22px 0 18px;
@@ -137,24 +150,24 @@
   }
   .cap-short{
     font-family:var(--font-num); font-weight:900; font-size:min(2.7vw,33px);
-    line-height:1; color:var(--team-a-ink,#fff); letter-spacing:.3px;
+    line-height:1; color:var(--bat-ink,#fff); letter-spacing:.3px;
     text-shadow:0 2px 8px rgba(0,0,0,0.35);
     display:flex; align-items:center; gap:7px;
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   }
   /* Contrast-aware — a light/pastel team colour flips this to dark ink
      instead of staying hardcoded white (see idealTextColor()/applyTheme()). */
-  #cap-right .cap-short{ color:var(--team-b-ink,#fff); }
+  #cap-right .cap-short{ color:var(--bowl-ink,#fff); }
   .cap-short::before{
     content:''; flex:none; width:8px; height:8px; transform:rotate(45deg);
     background:var(--badge); box-shadow:0 0 10px var(--badge);
   }
   .cap-name{
     font-family:var(--font-ui); font-weight:800; font-size:min(0.92vw,11.5px);
-    line-height:1.28; color:var(--team-a-ink,#fff); opacity:.72; letter-spacing:1.2px;
+    line-height:1.28; color:var(--bat-ink,#fff); opacity:.72; letter-spacing:1.2px;
     text-transform:uppercase; max-width:100%;
   }
-  #cap-right .cap-name{ color:var(--team-b-ink,#fff); }
+  #cap-right .cap-name{ color:var(--bowl-ink,#fff); }
   /* Right-hand cap is clipped on its top-LEFT corner, so pull its text to
      the right, away from that corner, for extra safety margin — and flip
      the accent tick to the other side of the short-code so it still reads
@@ -165,7 +178,7 @@
 
   #mid-row{
     flex:1 1 auto; display:flex; align-items:stretch;
-    background:linear-gradient(180deg, var(--team-a), var(--team-a-dark));
+    background:linear-gradient(180deg, var(--bat), var(--bat-dark));
     position:relative;
   }
   #score-block{
@@ -1341,6 +1354,7 @@
    ============================================================ */
 const params = new URLSearchParams(location.search);
 const matchId = params.get('room') || params.get('uid') || params.get('id') || 'default';
+const DEBUG_OVERLAY = params.get('debug') === '1'; // ?debug=1 -> phase-change logging + window.__overlayDebug
 const connStatus = document.getElementById('conn-status');
 connStatus.textContent = 'Connecting…';
 connStatus.classList.add('visible');
@@ -1352,7 +1366,11 @@ socket.on('connect_error', () => { connStatus.classList.add('visible'); connStat
 
 socket.on('liveCricketScore', (data) => {
   if(data && data.visible === false){ pendingStateUpdate = null; renderState(data); return; }
-  if(eventState !== 'idle'){ pendingStateUpdate = data; }
+  // While an event graphic is on the bar, OR the over-summary sequencer is
+  // holding the bar off-air, the newest state is parked (latest wins) and
+  // applied the moment the bar is handed back — never rendered into a
+  // hidden/animating bar, never lost.
+  if(eventState !== 'idle' || overFlow.holdsBar()){ pendingStateUpdate = data; }
   else { renderState(data); }
 });
 socket.on('cricketEvent', (event) => playEvent(event));
@@ -1390,8 +1408,8 @@ socket.on('cricketBowlerStat', (data) => renderBowlerStatCard(data));
 socket.on('cricketTeamStat', (data) => renderTeamStatCard(data));
 socket.on('cricketPlayerHistory', (data) => renderPlayerHistoryCard(data));
 socket.on('cricketTeamHistory', (data) => renderTeamHistoryCard(data));
-socket.on('cricketHidePlayerStat', () => playStatCardOut('player-stat-card'));
-socket.on('cricketHideBowlerStat', () => playStatCardOut('bowler-stat-card'));
+socket.on('cricketHidePlayerStat', () => statCards.player.hide());
+socket.on('cricketHideBowlerStat', () => statCards.bowler.hide());
 // 🏏 Automatic Recent Over Summary + Last-5-overs momentum — timed graphic,
 // same enter/hold/exit idiom as playSummaryCard (see renderOverSummaryCard).
 socket.on('cricketOverSummary', (data) => renderOverSummaryCard(data));
@@ -1469,11 +1487,38 @@ function renderScoreString(str){
    THEME — team colours & the badge/bottom-bar accents are all
    editable from the panel and applied instantly via CSS vars.
    ============================================================ */
+// ONE place that turns a team object into every colour token the overlay
+// needs. Identity (A/B) -> stored colour -> derived tokens. Nothing else in
+// this file computes a team colour, and nothing is keyed on "A = red".
+const TEAM_FALLBACK_COLOR = { A: '#17337a', B: '#7a1620' }; // only when a team has NO colour saved
+function teamTokens(team, key){
+  team = team || {};
+  const color = team.color || TEAM_FALLBACK_COLOR[key] || '#17337a';
+  return {
+    key, name: team.name, short: team.short, logoUrl: team.logoUrl,
+    color, color2: shade(color, 24), dark: shade(color, -18), ink: idealTextColor(color)
+  };
+}
+// { A, B, batting, bowling, battingKey } — recomputed from the state every
+// time, never cached, so it can't go stale across innings/reconnects.
+function resolveTeamTheme(s){
+  const A = teamTokens(s.teamA, 'A'), B = teamTokens(s.teamB, 'B');
+  const battingKey = s.battingTeam === 'B' ? 'B' : 'A';
+  return { A, B, battingKey, batting: battingKey === 'A' ? A : B, bowling: battingKey === 'A' ? B : A };
+}
+function paintRoleTheme(prefix, tok){
+  const r = document.documentElement.style;
+  r.setProperty('--' + prefix, tok.color);
+  r.setProperty('--' + prefix + '-2', tok.color2);
+  r.setProperty('--' + prefix + '-dark', tok.dark);
+  r.setProperty('--' + prefix + '-ink', tok.ink);
+}
+
 function applyTheme(s){
   const t = s.theme || {};
   const r = document.documentElement.style;
-  const teamAColor = s.teamA?.color || '#17337a';
-  const teamBColor = s.teamB?.color || '#7a1620';
+  const teamAColor = s.teamA?.color || TEAM_FALLBACK_COLOR.A;
+  const teamBColor = s.teamB?.color || TEAM_FALLBACK_COLOR.B;
   r.setProperty('--team-a', teamAColor);
   r.setProperty('--team-a-2', shade(teamAColor, 24));
   r.setProperty('--team-a-dark', shade(teamAColor, -18));
@@ -2020,6 +2065,13 @@ function layoutTeams(s){
   const A = s.teamA || {}, B = s.teamB || {};
   const leftTeam = currentLeftIsA ? A : B;
   const rightTeam = currentLeftIsA ? B : A;
+  // 🎨 Colour follows the SAME side assignment as the name/logo below — this
+  // is the fix for "name switches, colour doesn't": the caps used to be
+  // painted from the fixed --team-a / --team-b vars regardless of which
+  // team was standing on that side.
+  const theme = resolveTeamTheme(s);
+  paintRoleTheme('bat',  currentLeftIsA ? theme.A : theme.B);
+  paintRoleTheme('bowl', currentLeftIsA ? theme.B : theme.A);
   document.getElementById('cap-left').classList.toggle('no-logo', !leftTeam.logoUrl);
   document.getElementById('cap-right').classList.toggle('no-logo', !rightTeam.logoUrl);
   // Bold short-code wordmark up top (the glanceable identity mark) plus
@@ -2069,8 +2121,25 @@ function swapSides(s){
    reveal, each segment on its own unique path);
    beat 2 — the text/numbers settle in with a staggered rise.
    ============================================================ */
+// Handles so a new entry/exit can cleanly retire the opposite one instead of
+// two timelines fighting over the same elements.
+let barEntryTl = null, barExitTl = null;
+function reduceMotion(){
+  return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+}
 function animateEntry(){
-  const tl = gsap.timeline({ defaults: { ease: 'expo.out' } });
+  if(barExitTl){ barExitTl.kill(); barExitTl = null; }
+  if(reduceMotion()){
+    // Accessibility: plain fade, final shapes set directly. Timing logic
+    // elsewhere is unaffected — only the motion is simplified.
+    gsap.killTweensOf('#scorecard');
+    gsap.set('#cap-left', { clipPath: 'polygon(0 0,100% 0,82% 100%,0 100%)' });
+    gsap.set('#cap-right', { clipPath: 'polygon(18% 0,100% 0,100% 100%,0 100%)' });
+    gsap.set('#mid-row', { scaleX: 1 });
+    barEntryTl = gsap.fromTo('#scorecard', { opacity: 0 }, { opacity: 1, duration: 0.25, ease: 'power1.out' });
+    return;
+  }
+  const tl = barEntryTl = gsap.timeline({ defaults: { ease: 'expo.out' } });
   gsap.set('#scorecard', { opacity: 1 });
   gsap.set('#cap-left', { clipPath: 'polygon(0 0,0 0,0 100%,0 100%)' });
   gsap.set('#cap-right', { clipPath: 'polygon(100% 0,100% 0,100% 100%,100% 100%)' });
@@ -2091,7 +2160,15 @@ function animateEntry(){
     .from('#thisover-row', { opacity: 0, y: 8, duration: 0.3 }, 0.86);
 }
 function animateExit(){
-  const tl = gsap.timeline({ defaults: { ease: 'power2.in' }, onComplete: () => { hasEntered = false; } });
+  // A half-played entry is fast-forwarded (not just killed) so its .from()
+  // children land on their real end values instead of freezing mid-tween.
+  if(barEntryTl){ barEntryTl.progress(1).kill(); barEntryTl = null; }
+  hasEntered = false; // set up front: any state that lands mid-exit re-enters cleanly
+  if(reduceMotion()){
+    barExitTl = gsap.to('#scorecard', { opacity: 0, duration: 0.2, ease: 'power1.in' });
+    return;
+  }
+  const tl = barExitTl = gsap.timeline({ defaults: { ease: 'power2.in' } });
   tl.to('#mid-row', { scaleX: 0, duration: 0.36 }, 0.04)
     .to('#cap-left', { clipPath: 'polygon(0 0,0 0,0 100%,0 100%)', duration: 0.32 }, 0.1)
     .to('#cap-right', { clipPath: 'polygon(100% 0,100% 0,100% 100%,100% 100%)', duration: 0.32 }, 0.1)
@@ -2183,11 +2260,30 @@ function triggerEvent(kind, opts){
   eventQueue.push({ kind: k, opts: opts || {} });
   if(eventState === 'idle') advanceEventQueue();
 }
+let activeEventTl = null;
 function advanceEventQueue(){
+  activeEventTl = null;
   if(eventQueue.length === 0){ eventState = 'idle'; return; }
+  // The over-summary sequencer owns the bar until it has handed it back —
+  // queued events simply wait (the sequencer calls this again when done).
+  if(overFlow.blocksEvents()){ eventState = 'idle'; return; }
   eventState = 'running';
   const next = eventQueue.shift();
-  playEventTimeline(next.kind, next.opts, advanceEventQueue);
+  activeEventTl = playEventTimeline(next.kind, next.opts, advanceEventQueue);
+}
+// The over-ending ball's own graphic (FOUR / SIX / WICKET …) yields the
+// instant the over summary starts: kill its timeline, hide the stage and put
+// the bar's content back to rest so it is clean when the bar returns.
+function cancelRunningEvent(){
+  eventQueue.length = 0;
+  if(activeEventTl){
+    activeEventTl.kill(); activeEventTl = null;
+    stopEventMicroMotion();
+    const stage = document.getElementById('event-stage');
+    if(stage) stage.classList.remove('ev-active');
+    gsap.set(SB_CONTENT_SELECTOR, { opacity: 1, scale: 1, y: 0, filter: 'blur(0px)' });
+  }
+  eventState = 'idle';
 }
 
 // Adapter for the existing socket protocol — 'cricketEvent' payloads
@@ -2644,14 +2740,14 @@ function hideSummaryCard(cardId, rowsSelector){
    ============================================================ */
 // Entrance: slides + fades + un-blurs in from off-screen left, on the
 // same expo.out deceleration curve as the rest of the overlay's builds.
-function playStatCardIn(cardId){
+function playStatCardIn(cardId, durationOverride){
   const card = document.getElementById(cardId);
   if(!card) return;
   gsap.killTweensOf(card);
   card.style.display = 'flex';
   gsap.fromTo(card,
     { xPercent: -135, opacity: 0, scale: 0.95, filter: 'blur(8px)' },
-    { xPercent: 0, opacity: 1, scale: 1, filter: 'blur(0px)', duration: 0.85, ease: 'expo.out' }
+    { xPercent: 0, opacity: 1, scale: 1, filter: 'blur(0px)', duration: reduceMotion() ? 0.2 : (durationOverride || 0.85), ease: 'expo.out' }
   );
 }
 // Exit: mirrors the entrance back out to the left — same distance, a
@@ -2684,8 +2780,8 @@ function fillStatGrid(gridId, pairs){
     wrap.appendChild(cell);
   });
 }
-function renderPlayerStatCard(d){
-  if(!d) return;
+// Paints a player-stat card from a payload (no animation, no timers).
+function fillPlayerStatCard(d){
   const card = document.getElementById('player-stat-card');
   card.style.setProperty('--stat-accent', d.teamColor || '#f5c518');
   setBadge(document.getElementById('ps-badge'), d.teamLogo, badgeText(d.teamShort, d.teamName));
@@ -2698,12 +2794,8 @@ function renderPlayerStatCard(d){
        ['High', d.highScore], ['4s', d.fours], ['6s', d.sixes], ['50s', d.fifties], ['100s', d.hundreds]]
     : [['Runs', d.runs], ['Balls', d.balls], ['S/R', d.sr], ['4s', d.fours], ['6s', d.sixes]];
   fillStatGrid('ps-grid', cells);
-
-  if(card.style.display === 'flex') pulseStatGrid('ps-grid');
-  else playStatCardIn('player-stat-card');
 }
-function renderBowlerStatCard(d){
-  if(!d) return;
+function fillBowlerStatCard(d){
   const card = document.getElementById('bowler-stat-card');
   card.style.setProperty('--stat-accent', d.teamColor || '#f5c518');
   setBadge(document.getElementById('bs-badge'), d.teamLogo, badgeText(d.teamShort, d.teamName));
@@ -2716,10 +2808,107 @@ function renderBowlerStatCard(d){
        ['Economy', d.economy], ['Average', d.average], ['Best', d.best], ['Maidens', d.maidens], ['Dots', d.dots]]
     : [['Overs', d.overs], ['Maidens', d.maidens], ['Runs', d.runs], ['Wickets', d.wickets], ['Economy', d.economy]];
   fillStatGrid('bs-grid', cells);
-
-  if(card.style.display === 'flex') pulseStatGrid('bs-grid');
-  else playStatCardIn('bowler-stat-card');
 }
+
+/* ============================================================
+   BATTER / BOWLER CARD LIFETIME — one controller per card
+   HARD RULE: a card is never on air for more than STAT_CARD_MAX_MS (4 s),
+   measured from the first frame of its entrance to the last frame of its
+   exit, no matter how it was triggered (SHOW, SKIP-then-manual, auto,
+   toggle) or how many times the same/other data is re-sent.
+
+   - The deadline is armed ONCE when the card enters. Data refreshes for the
+     card that is already up (a run scored, a re-sent payload, an accidental
+     second SHOW) update the numbers in place and NEVER touch the clock.
+   - A payload flagged refresh:true can only update a card that is showing
+     the same player/scope — it can never (re)start a card. (The panel sends
+     score-driven re-sends this way, which is what used to be able to
+     resurrect a card that had already timed out.)
+   - A genuinely NEW selection while a card is up: the current card leaves
+     quickly, then the new one enters with its own fresh window — never two
+     stacked, never two timers. Rapid selections keep only the latest.
+   - A second, absolute failsafe timer force-hides the card if the exit
+     tween somehow never completes. Both timers live in this closure and
+     are always cleared together — nothing can leak or double-arm.
+   ============================================================ */
+const STAT_CARD_MAX_MS = 4000;
+const STAT_CARD_EXIT_S = 0.5;
+const STAT_CARD_SWAP_EXIT_S = 0.28;
+function createStatCardController(cardId, gridId, fill){
+  let state = 'hidden';            // hidden | showing | leaving
+  let identity = null;
+  let run = 0;
+  let exitTimer = null, killTimer = null;
+  let pending = null;              // newest not-yet-shown selection
+  const cardEl = () => document.getElementById(cardId);
+  const idOf = (d) => [d.playerName || '', d.scope === 'tournament' ? 't' : 'm', d.teamName || ''].join('|');
+  const clearTimers = () => { clearTimeout(exitTimer); clearTimeout(killTimer); exitTimer = killTimer = null; };
+
+  function enter(d){
+    clearTimers();
+    const myRun = ++run;
+    fill(d);
+    identity = idOf(d);
+    state = 'showing';
+    playStatCardIn(cardId);
+    // Exit begins early enough that the LAST frame of the exit lands at 4000 ms.
+    exitTimer = setTimeout(() => leave(STAT_CARD_EXIT_S, myRun), STAT_CARD_MAX_MS - STAT_CARD_EXIT_S * 1000);
+    killTimer = setTimeout(() => hardHide(myRun), STAT_CARD_MAX_MS);
+  }
+  function leave(seconds, expectedRun){
+    if(state !== 'showing') return;
+    if(expectedRun !== undefined && expectedRun !== run) return;
+    clearTimers();
+    state = 'leaving';
+    const myRun = ++run;
+    const el = cardEl();
+    gsap.killTweensOf(el);
+    const dur = reduceMotion() ? 0.15 : seconds;
+    gsap.to(el, { xPercent: -135, opacity: 0, scale: 0.95, filter: 'blur(8px)', duration: dur, ease: 'expo.in', onComplete: () => done(myRun) });
+    killTimer = setTimeout(() => done(myRun), dur * 1000 + 60); // failsafe
+  }
+  function done(myRun){
+    if(myRun !== run || state !== 'leaving') return;
+    clearTimers();
+    gsap.killTweensOf(cardEl());
+    cardEl().style.display = 'none';
+    state = 'hidden'; identity = null;
+    if(pending){ const d = pending; pending = null; enter(d); }
+  }
+  function hardHide(myRun){
+    if(myRun !== run || state !== 'showing') return;
+    clearTimers();
+    gsap.killTweensOf(cardEl());
+    cardEl().style.display = 'none';
+    state = 'hidden'; identity = null; pending = null;
+  }
+
+  return {
+    show(d){
+      if(!d) return;
+      const same = state === 'showing' && identity === idOf(d);
+      if(d.refresh === true){
+        if(same){ fill(d); pulseStatGrid(gridId); }   // numbers only, clock untouched
+        return;                                        // a refresh can never start/resurrect a card
+      }
+      if(same){ fill(d); pulseStatGrid(gridId); return; } // repeat SHOW of the card already up
+      if(state === 'hidden'){ enter(d); return; }
+      pending = d;                                     // new selection: latest wins
+      if(state === 'showing') leave(STAT_CARD_SWAP_EXIT_S);
+    },
+    hide(){                                            // explicit hide from the panel
+      pending = null;
+      if(state === 'showing') leave(STAT_CARD_EXIT_S);
+    },
+    get state(){ return state; }
+  };
+}
+const statCards = {
+  player: createStatCardController('player-stat-card', 'ps-grid', fillPlayerStatCard),
+  bowler: createStatCardController('bowler-stat-card', 'bs-grid', fillBowlerStatCard)
+};
+function renderPlayerStatCard(d){ statCards.player.show(d); }
+function renderBowlerStatCard(d){ statCards.bowler.show(d); }
 // Always tournament-scoped — team identity + record built from every
 // match saved under the league name in the panel, matched by team name.
 function renderTeamStatCard(d){
@@ -3037,8 +3226,20 @@ function buildOverBallPip(token){
   pip.textContent = label;
   return pip;
 }
+// Entry point for the socket event. Everything (dedupe, timing, hiding /
+// returning the bar) lives in overFlow — this file has exactly one path that
+// shows the card.
 function renderOverSummaryCard(d){
   if(!d) return;
+  overFlow.start(d);
+}
+
+// Paints the card ONLY from the payload it is handed (a snapshot the panel
+// froze at the instant the over ended) — never from lastState / the live bar
+// — so the just-finished over's bowler, batters and figures stay correct even
+// while newer liveCricketScore updates (new bowler, new over) arrive during
+// the 4 seconds it is on air.
+function fillOverSummaryCard(d){
   const card = document.getElementById('over-summary-card');
   card.style.setProperty('--osc-accent', d.teamColor || 'var(--bc-blue,#0b3d91)');
   // 🎨 Soft blend of BOTH teams' colours behind the card (see the
@@ -3103,26 +3304,167 @@ function renderOverSummaryCard(d){
     momentumRow.appendChild(pill);
   });
 
-  playOverSummaryCard(7000);
 }
-function playOverSummaryCard(holdMs){
-  const card = document.getElementById('over-summary-card');
-  const rows = card.querySelectorAll('.sc-header, .osc-overband, .sc-row, #osc-bowler-line, .sc-footer, .osc-momentum');
-  gsap.killTweensOf(card);
-  gsap.killTweensOf(rows);
-  card.style.display = 'flex';
-  gsap.set(card, { opacity: 0, scale: 0.94, clipPath: 'inset(50% 50% 50% 50% round 18px)' });
-  gsap.set(rows, { opacity: 0, y: 14 });
-  gsap.timeline()
-    .to(card, { opacity: 1, scale: 1, clipPath: 'inset(0% 0% 0% 0% round 18px)', duration: 0.6, ease: 'expo.out' })
-    .to(rows, { opacity: 1, y: 0, duration: 0.4, stagger: 0.08, ease: 'power3.out' }, 0.28)
-    .to(card, { duration: Math.max(holdMs, 0) / 1000 })
-    .to(rows, { opacity: 0, y: -8, duration: 0.28, stagger: 0.04, ease: 'power2.in' })
-    .to(card, {
-      opacity: 0, scale: 0.95, clipPath: 'inset(50% 50% 50% 50% round 18px)', duration: 0.42, ease: 'power2.in',
-      onComplete: () => { card.style.display = 'none'; }
-    }, '-=0.1');
-}
+
+/* ============================================================
+   🏏 OVER-SUMMARY SEQUENCER  (state machine, event-driven, no polling)
+
+     LAST BALL -> cricketOverSummary arrives
+       idle -> entering : bar animates OUT, summary animates IN (same instant)
+       entering -> holding : summary fully in
+       holding : EXACTLY OVER_SUMMARY_HOLD_MS (4000 ms) of full visibility
+       holding -> exiting : summary animates OUT, bar animates back IN
+       exiting -> settling -> idle
+
+   Timing is wall-clock (setTimeout armed ONCE per sequence, all handles in
+   one list), deliberately NOT a GSAP timeline position: GSAP's ticker can
+   stretch under load / a throttled tab, a setTimeout cannot be extended by
+   re-renders, socket traffic, or duplicate events. GSAP only does the
+   pictures. Re-triggering while a sequence is live is IGNORED (same over) or
+   cleanly SUPERSEDES (different over) — it never restarts the 4 s clock of
+   the over that is already on screen.
+
+   Dedupe: payload.eventId (unique per panel emission) drops exact duplicate
+   deliveries; payload key (innings:battingTeam:over) drops a repeat of the
+   over already on screen. An Undo + re-bowl of the last ball carries a NEW
+   eventId, so it is honoured once the previous sequence has finished.
+
+   Debug: open the overlay with ?debug=1 to log every phase change with
+   timestamps (also kept in window.__overlayDebug.overFlow.trace).
+   ============================================================ */
+const OVER_SUMMARY_HOLD_MS = 4000;
+const overFlow = (() => {
+  const ENTER_MS = () => reduceMotion() ? 260 : 700;          // card fully in
+  const EXIT_MS = () => reduceMotion() ? 260 : 450;           // card fully out
+  const BAR_RETURN_LEAD_MS = () => reduceMotion() ? 0 : 150;   // bar starts back this long after the card starts leaving
+  const BAR_SETTLE_MS = () => reduceMotion() ? 300 : 950;     // bar's own entrance animation
+  const LEGACY_DUP_WINDOW_MS = 8000;                           // only used when a payload has no eventId
+
+  let phase = 'idle';   // idle | entering | holding | exiting | settling
+  let run = 0;          // bumped per sequence; every callback checks it, so a stale one can never act
+  let barOut = false;   // true from "bar animates out" until "bar animates back in"
+  let activeKey = null, lastKey = null, lastStartAt = 0;
+  let timers = [];
+  let tl = null;
+  const seenIds = new Map();
+  const trace = [];
+
+  const mark = (name) => {
+    const t = performance.now();
+    trace.push([name, Math.round(t)]);
+    if(trace.length > 80) trace.shift();
+    if(DEBUG_OVERLAY) console.log('[over-summary] ' + name + ' @' + Math.round(t));
+  };
+  const later = (fn, ms) => { timers.push(setTimeout(fn, Math.max(0, ms))); };
+  const clearAll = () => { timers.forEach(clearTimeout); timers = []; if(tl){ tl.kill(); tl = null; } };
+  const keyOf = (d) => [d.inningsNo == null ? '' : d.inningsNo, d.battingKey || '', d.overNumber == null ? '' : d.overNumber].join(':');
+
+  function cardEls(){
+    const card = document.getElementById('over-summary-card');
+    const rows = card.querySelectorAll('.sc-header, .osc-overband, .sc-row, #osc-bowler-line, .sc-footer, .osc-momentum');
+    return { card, rows };
+  }
+  function playIn(){
+    const { card, rows } = cardEls();
+    gsap.killTweensOf(card); gsap.killTweensOf(rows);
+    card.style.display = 'flex';
+    if(reduceMotion()){
+      gsap.set(card, { scale: 1, clipPath: 'inset(0% 0% 0% 0% round 18px)' });
+      gsap.set(rows, { opacity: 1, y: 0 });
+      tl = gsap.fromTo(card, { opacity: 0 }, { opacity: 1, duration: 0.25, ease: 'power1.out' });
+      return;
+    }
+    gsap.set(card, { opacity: 0, scale: 0.94, clipPath: 'inset(50% 50% 50% 50% round 18px)' });
+    gsap.set(rows, { opacity: 0, y: 14 });
+    const stagger = Math.min(0.045, 0.32 / Math.max(rows.length, 1));
+    tl = gsap.timeline()
+      .to(card, { opacity: 1, scale: 1, clipPath: 'inset(0% 0% 0% 0% round 18px)', duration: 0.5, ease: 'expo.out' }, 0)
+      .to(rows, { opacity: 1, y: 0, duration: 0.28, stagger, ease: 'power3.out' }, 0.1);
+  }
+  function playOut(){
+    const { card, rows } = cardEls();
+    if(tl){ tl.kill(); tl = null; }
+    gsap.killTweensOf(card); gsap.killTweensOf(rows);
+    if(reduceMotion()){
+      tl = gsap.to(card, { opacity: 0, duration: 0.25, ease: 'power1.in' });
+      return;
+    }
+    tl = gsap.timeline()
+      .to(rows, { opacity: 0, y: -8, duration: 0.2, stagger: 0.02, ease: 'power2.in' }, 0)
+      .to(card, { opacity: 0, scale: 0.95, clipPath: 'inset(50% 50% 50% 50% round 18px)', duration: 0.35, ease: 'power2.in' }, 0.1);
+  }
+
+  function start(d){
+    const now = performance.now();
+    seenIds.forEach((t, k) => { if(now - t > 60000) seenIds.delete(k); });
+    if(d.eventId){
+      if(seenIds.has(d.eventId)){ mark('ignored:duplicate-event'); return; }
+      seenIds.set(d.eventId, now);
+    }
+    const key = keyOf(d);
+    const live = phase === 'entering' || phase === 'holding' || phase === 'exiting';
+    if(live && key === activeKey){ mark('ignored:already-showing'); return; }
+    if(!d.eventId && key === lastKey && now - lastStartAt < LEGACY_DUP_WINDOW_MS){ mark('ignored:legacy-duplicate'); return; }
+
+    const wasBusy = phase !== 'idle';
+    clearAll();                       // every timer/tween of any earlier sequence dies here
+    const myRun = ++run;
+    activeKey = lastKey = key; lastStartAt = now;
+    phase = 'entering';
+    mark(wasBusy ? 'supersede' : 'start');
+
+    cancelRunningEvent();             // the last ball's own FOUR/SIX/WICKET graphic yields immediately
+    fillOverSummaryCard(d);           // frozen payload -> DOM, before it becomes visible
+    if(!barOut){ barOut = true; if(hasEntered) animateExit(); }
+    playIn();
+
+    later(() => { if(run === myRun && phase === 'entering'){ phase = 'holding'; mark('hold-begin'); } }, ENTER_MS());
+    // The ONE hold timer of this sequence: card fully in + exactly 4000 ms.
+    later(() => beginExit(myRun), ENTER_MS() + OVER_SUMMARY_HOLD_MS);
+  }
+
+  function beginExit(myRun){
+    if(run !== myRun || phase === 'exiting' || phase === 'settling' || phase === 'idle') return;
+    phase = 'exiting'; mark('exit-begin');
+    playOut();
+    later(() => restoreBar(myRun), BAR_RETURN_LEAD_MS());
+    later(() => endCard(myRun), EXIT_MS());
+  }
+
+  function restoreBar(myRun){
+    if(run !== myRun) return;
+    barOut = false;
+    // Newest state wins: whatever arrived while the bar was off-air, else the
+    // last thing it showed. An operator-hidden overlay (visible:false) stays hidden.
+    const s = pendingStateUpdate || lastState;
+    pendingStateUpdate = null;
+    if(s && s.visible !== false){ renderState(s); mark('bar-return'); }
+    else mark('bar-return-skipped');
+  }
+
+  function endCard(myRun){
+    if(run !== myRun) return;
+    const { card } = cardEls();
+    card.style.display = 'none';
+    phase = 'settling'; mark('card-gone');
+    later(() => settle(myRun), Math.max(0, BAR_RETURN_LEAD_MS() + BAR_SETTLE_MS() - EXIT_MS()));
+  }
+
+  function settle(myRun){
+    if(run !== myRun) return;
+    phase = 'idle'; activeKey = null; mark('idle');
+    if(eventState === 'idle' && eventQueue.length) advanceEventQueue(); // events that arrived while the bar was off-air
+  }
+
+  return {
+    start,
+    holdsBar: () => barOut,                 // the bar is (being) hidden -> park liveCricketScore
+    blocksEvents: () => phase !== 'idle',   // don't start bar event graphics mid-sequence
+    get phase(){ return phase; },
+    trace
+  };
+})();
+if(DEBUG_OVERLAY){ window.__overlayDebug = { overFlow, statCards, get eventState(){ return eventState; }, get hasEntered(){ return hasEntered; } }; }
 </script>
 </body>
 </html>
