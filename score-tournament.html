@@ -1142,7 +1142,7 @@ function clipRowHtml(c){
   const deleteBtn = isOwner
     ? `<button class="clip-delete-btn" data-delete-clip="${c.clipId}" title="Delete this clip">${TRASH_ICON}</button>`
     : '';
-  return `<div class="clip-row clip-row--${badgeCls}" data-clip-id="${c.clipId}" data-title="${escapeHtml((c.striker||c.bowler||'') + ' — ' + c.eventType)}">
+  return `<div class="clip-row clip-row--${badgeCls}" data-clip-id="${c.clipId}" data-title="${escapeHtml((c.striker||c.bowler||'') + ' — ' + c.eventType)}" data-playback-url="${escapeHtml(c.playbackUrl || '')}" data-poster-url="${escapeHtml(c.posterUrl || '')}">
     <div class="cr-badge ${badgeCls}">${badgeLabel}</div>
     <div class="cr-info"><div class="cr-over tabnum">Over ${overLabel}</div><div class="cr-sub">${escapeHtml(sub || (c.ready ? 'Tap to watch' : 'Processing…'))}</div></div>
     <div class="cr-actions">
@@ -1156,7 +1156,7 @@ function wireClipRows(root){
   root.querySelectorAll('.clip-row').forEach(row => {
     const id = row.dataset.clipId, title = row.dataset.title;
     const watchBtn = row.querySelector('.clip-watch-btn');
-    if(watchBtn && !watchBtn.disabled) watchBtn.addEventListener('click', (e) => { e.stopPropagation(); openVideoModal(id, title); });
+    if(watchBtn && !watchBtn.disabled) watchBtn.addEventListener('click', (e) => { e.stopPropagation(); openVideoModal(id, title, row.dataset.playbackUrl, row.dataset.posterUrl); });
     const deleteBtn = row.querySelector('[data-delete-clip]');
     if(deleteBtn){
       deleteBtn.addEventListener('click', (e) => {
@@ -1164,7 +1164,7 @@ function wireClipRows(root){
         deleteClip(deleteBtn.dataset.deleteClip, title);
       });
     }
-    row.addEventListener('click', () => { if(watchBtn && !watchBtn.disabled) openVideoModal(id, title); });
+    row.addEventListener('click', () => { if(watchBtn && !watchBtn.disabled) openVideoModal(id, title, row.dataset.playbackUrl, row.dataset.posterUrl); });
   });
 }
 
@@ -1489,23 +1489,51 @@ document.body.addEventListener('click', (e) => { if(e.target.closest('#all-playe
 document.getElementById('players-modal-close').addEventListener('click', () => document.getElementById('players-modal-backdrop').classList.remove('open'));
 document.getElementById('players-modal-backdrop').addEventListener('click', (e) => { if(e.target.id === 'players-modal-backdrop') document.getElementById('players-modal-backdrop').classList.remove('open'); });
 
-function openVideoModal(clipId, title){
+// Same single-reused-<video> fix as the scorecard page (see cricket-scorecard.html): recreating the
+// element via innerHTML on every tap made every open behave like a cold first-open, on every device.
+let vmVideoEl = null;
+let vmLoadToken = 0;
+function vmVideo(){
+  if(vmVideoEl) return vmVideoEl;
+  vmVideoEl = document.createElement('video');
+  vmVideoEl.controls = true; vmVideoEl.playsInline = true;
+  vmVideoEl.preload = 'metadata';
+  vmVideoEl.setAttribute('webkit-playsinline', '');
+  document.getElementById('video-modal-body').appendChild(vmVideoEl);
+  return vmVideoEl;
+}
+function openVideoModal(clipId, title, playbackUrl, posterUrl){
+  const myToken = ++vmLoadToken;
   document.getElementById('video-modal-title').textContent = title || 'Clip';
-  document.getElementById('video-modal-body').innerHTML = '<div id="video-modal-loading">Loading clip…</div>';
   document.getElementById('video-modal-backdrop').classList.add('open');
-  const src = `${clipApiBase()}/api/clips/${encodeURIComponent(clipId)}/watch`;
+  const body = document.getElementById('video-modal-body');
+  if(!body.querySelector('#video-modal-loading')) body.insertAdjacentHTML('afterbegin', '<div id="video-modal-loading">Loading clip…</div>');
+  const src = playbackUrl || `${clipApiBase()}/api/clips/${encodeURIComponent(clipId)}/watch`;
   const dl = `${clipApiBase()}/api/clips/${encodeURIComponent(clipId)}/download`;
-  requestAnimationFrame(() => {
-    document.getElementById('video-modal-body').innerHTML =
-      `<video src="${src}" controls autoplay playsinline></video>
-       <div style="padding:10px 14px; background:#0b0e14; display:flex; justify-content:flex-end;">
-         <a href="${dl}" style="color:#fff; font-size:11.5px; font-weight:700; display:flex; align-items:center; gap:6px;">${DOWNLOAD_ICON} Download</a>
-       </div>`;
-  });
+  let dlRow = body.querySelector('.vm-dl-row');
+  if(!dlRow){
+    dlRow = document.createElement('div');
+    dlRow.className = 'vm-dl-row';
+    dlRow.style.cssText = 'padding:10px 14px; background:#0b0e14; display:flex; justify-content:flex-end;';
+    dlRow.innerHTML = `<a class="vm-dl-link" style="color:#fff; font-size:11.5px; font-weight:700; display:flex; align-items:center; gap:6px;">${DOWNLOAD_ICON} Download</a>`;
+    body.appendChild(dlRow);
+  }
+  dlRow.querySelector('.vm-dl-link').href = dl;
+
+  const v = vmVideo();
+  const loadingEl = () => document.getElementById('video-modal-loading');
+  const onReady = () => { if(myToken === vmLoadToken && loadingEl()) loadingEl().remove(); };
+  v.oncanplay = onReady;
+  v.onloadeddata = onReady;
+  if(posterUrl) v.poster = posterUrl; else v.removeAttribute('poster');
+  if(v.src !== src){ v.src = src; v.load(); }
+  v.play().catch(() => {});
 }
 document.getElementById('video-modal-close').addEventListener('click', () => {
   document.getElementById('video-modal-backdrop').classList.remove('open');
-  document.getElementById('video-modal-body').innerHTML = '<div id="video-modal-loading">Loading clip…</div>';
+  vmLoadToken++;
+  if(vmVideoEl){ vmVideoEl.pause(); vmVideoEl.removeAttribute('src'); vmVideoEl.load(); }
+  if(!document.getElementById('video-modal-loading')) document.getElementById('video-modal-body').insertAdjacentHTML('afterbegin', '<div id="video-modal-loading">Loading clip…</div>');
 });
 document.getElementById('video-modal-backdrop').addEventListener('click', (e) => { if(e.target.id === 'video-modal-backdrop') document.getElementById('video-modal-close').click(); });
 
