@@ -17,6 +17,9 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://apis.google.com/js/api.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&display=swap">
 <style>
   :root{
     --bg: #0b0f1a;
@@ -138,6 +141,180 @@
   button.full{ width:100%; }
   button.small{ padding:6px 8px; font-size:12px; }
   button:disabled{ opacity:.32; cursor:not-allowed; transform:none !important; }
+
+  /* ================= LIVE CONTROL CONSOLE =================
+     The command centre: who bats, who's on strike, who bowls, what just
+     happened, and every scoring action — in one place. Team colours come
+     from each team's own setup (--team set per card from state), never
+     hardcoded A/B colours. */
+  #live-console{
+    --lc-num: 'Barlow Condensed', 'Arial Narrow', 'Roboto Condensed', system-ui, sans-serif;
+    margin:14px 14px 0; padding:14px; border-radius:16px;
+    background:linear-gradient(180deg, #111829, #0d1322);
+    border:1px solid var(--border); box-shadow:0 10px 30px rgba(0,0,0,.35);
+    scroll-margin-top:112px;
+  }
+  #live-console [hidden]{ display:none !important; }
+  .lc-status{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; align-items:center; }
+  .lc-chip{
+    display:inline-flex; align-items:center; gap:6px; padding:5px 10px; border-radius:99px;
+    background:var(--panel-2); border:1px solid var(--border); font-size:12px; font-weight:700;
+    color:var(--text); white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis;
+  }
+  .lc-chip .lc-dot{ width:8px; height:8px; border-radius:50%; background:var(--red); flex:none; }
+  .lc-chip .lc-dot.on{ background:var(--green); box-shadow:0 0 0 3px rgba(34,197,94,.18); }
+  .lc-chip.warn{ border-color:#facc15; color:#facc15; background:rgba(250,204,21,.1); }
+  .lc-chip.hot{ border-color:var(--accent); color:#ffb066; background:rgba(255,122,0,.1); }
+  .lc-chip.dim{ color:#b6bfd0; }
+  .lc-chip.clip{ max-width:420px; }
+
+  .lc-top{ display:grid; grid-template-columns: minmax(0,1.15fr) minmax(0,.9fr) minmax(0,1.15fr); gap:12px; }
+  .lc-team{
+    --team:#3b82f6;
+    position:relative; border-radius:14px; padding:12px; min-width:0;
+    background:linear-gradient(140deg, color-mix(in srgb, var(--team) 26%, #121826) 0%, #121826 62%);
+    border:1px solid color-mix(in srgb, var(--team) 55%, var(--border));
+    transition:background .35s ease, border-color .35s ease;
+  }
+  .lc-team-head{ display:flex; align-items:center; gap:10px; margin-bottom:10px; min-width:0; }
+  .lc-logo{
+    width:44px; height:44px; border-radius:12px; flex:none; display:flex; align-items:center; justify-content:center;
+    background:var(--team) center/cover no-repeat; color:var(--team-ink, #fff);
+    font:800 15px/1 var(--lc-num); letter-spacing:.5px; box-shadow:0 0 0 2px rgba(255,255,255,.08);
+    transition:background-color .35s ease;
+  }
+  .lc-logo.has-img{ background-color:#fff; color:transparent; }
+  .lc-team-name{ min-width:0; flex:1; }
+  .lc-role{ font-size:10.5px; font-weight:800; letter-spacing:1.2px; text-transform:uppercase; color:color-mix(in srgb, var(--team) 55%, #fff); }
+  .lc-team-title{ font:700 22px/1.05 var(--lc-num); letter-spacing:.3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lc-edit{
+    flex:none; padding:6px 10px; font-size:11.5px; border-radius:99px; background:rgba(255,255,255,.06);
+    border:1px solid rgba(255,255,255,.14); color:var(--text);
+  }
+  .lc-player{
+    display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:8px;
+    padding:9px 10px; border-radius:10px; background:rgba(8,11,20,.45); border:1px solid rgba(255,255,255,.06);
+  }
+  .lc-player + .lc-player{ margin-top:6px; }
+  .lc-player.on-strike{ background:rgba(8,11,20,.7); border-color:color-mix(in srgb, var(--team) 70%, transparent); box-shadow:inset 3px 0 0 var(--team); }
+  .lc-bat-ico{ width:22px; text-align:center; font-size:14px; opacity:.35; }
+  .lc-player.on-strike .lc-bat-ico{ opacity:1; }
+  .lc-pname{ font-weight:800; font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lc-psub{ font-size:11.5px; color:#aab3c5; margin-top:1px; font-variant-numeric:tabular-nums; }
+  .lc-pfig{ text-align:right; font:700 26px/1 var(--lc-num); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .lc-pfig small{ font-size:16px; color:#aab3c5; font-weight:600; margin-left:2px; }
+  .lc-bowler .lc-pfig{ font-size:24px; }
+  .lc-team-actions{ display:flex; gap:6px; margin-top:8px; }
+  .lc-team-actions button{ flex:1; }
+
+  .lc-board{
+    border-radius:14px; padding:12px; background:#0a0f1c; border:1px solid var(--border);
+    display:flex; flex-direction:column; align-items:center; text-align:center; min-width:0;
+  }
+  .lc-board .lc-inn{ font-size:11px; font-weight:800; letter-spacing:1.1px; text-transform:uppercase; color:#aab3c5; }
+  .lc-board #disp-score{ font:800 64px/1 var(--lc-num); letter-spacing:.5px; font-variant-numeric:tabular-nums; margin-top:4px; }
+  .lc-board .lc-ov{ font:700 20px/1.1 var(--lc-num); color:#cfd6e4; font-variant-numeric:tabular-nums; }
+  .lc-board .lc-ov #disp-overs{ font:inherit; }
+  .lc-need{ margin-top:6px; font-size:12.5px; font-weight:700; color:#ffb066; min-height:17px; }
+  .lc-board .ticker-preview{ justify-content:center; margin-top:10px; }
+  .lc-board .pip{ width:28px; height:28px; font-size:11px; }
+  .lc-board .pip.p4{ background:rgba(34,197,94,.2); border-color:var(--green); color:#7ff0a8; }
+  .lc-board .pip.p6{ background:rgba(168,85,247,.22); border-color:var(--purple); color:#d8b4fe; }
+  .lc-board .pip.pw{ background:rgba(239,68,68,.25); border-color:var(--red); color:#fca5a5; }
+  .lc-board .pip.px{ background:rgba(255,122,0,.16); border-color:var(--accent); color:#ffb066; }
+  .lc-last{ margin-top:10px; font-size:12.5px; color:#dfe4ee; line-height:1.35; max-width:100%; }
+  .lc-last b{ color:#fff; }
+  .lc-mini{ display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:6px; width:100%; margin-top:10px; }
+  .lc-mini .stat{ padding:6px 4px; text-align:center; }
+  .lc-mini .stat .k{ font-size:9.5px; }
+  .lc-mini .stat .v{ font:700 18px/1.1 var(--lc-num); }
+  .lc-mini .stat.auto .k::after{ content:''; }
+
+  .lc-pad{ margin-top:12px; display:grid; grid-template-columns:minmax(0,1fr) 250px; gap:12px; align-items:start; }
+  .lc-pad .freehit-banner{ grid-column:1/-1; margin-bottom:0; }
+  .lc-keys{ display:flex; flex-direction:column; gap:8px; min-width:0; }
+  .lc-row{ display:grid; gap:8px; }
+  .lc-runs{ grid-template-columns:repeat(7, minmax(0,1fr)); }
+  .lc-extras{ grid-template-columns:repeat(5, minmax(0,1fr)); }
+  .lc-events{ grid-template-columns:2fr 1fr 1fr; }
+  .lc-key{
+    position:relative; height:64px; border-radius:12px; font:800 30px/1 var(--lc-num); letter-spacing:.3px;
+    background:#16203a; border:1px solid #26314d; color:#fff;
+    transition:transform .08s ease, background .15s ease, box-shadow .15s ease;
+    -webkit-tap-highlight-color:transparent; touch-action:manipulation; user-select:none;
+  }
+  .lc-key:hover{ background:#1c2846; }
+  .lc-key:active{ transform:scale(.94); }
+  .lc-key.hit{ box-shadow:0 0 0 3px rgba(255,255,255,.35); }
+  .lc-key .kb{ position:absolute; top:5px; left:7px; font:600 10px/1 system-ui, sans-serif; opacity:.45; }
+  .lc-key .star{ position:absolute; top:5px; right:7px; font-size:11px; color:#facc15; }
+  .lc-key.k4{ background:rgba(34,197,94,.18); border-color:var(--green); color:#86efac; }
+  .lc-key.k6{ background:rgba(168,85,247,.2); border-color:var(--purple); color:#d8b4fe; }
+  .lc-key.kx{ height:54px; font:800 17px/1 system-ui, sans-serif; letter-spacing:.4px; text-transform:uppercase; background:rgba(255,122,0,.12); border-color:rgba(255,122,0,.6); color:#ffb066; }
+  .lc-key.kw{ height:58px; font:800 22px/1 var(--lc-num); letter-spacing:1px; background:rgba(239,68,68,.2); border-color:var(--red); color:#fca5a5; }
+  .lc-key.krh{ height:58px; font:800 14px/1.1 system-ui, sans-serif; text-transform:uppercase; background:rgba(56,189,248,.12); border-color:rgba(56,189,248,.6); color:#7dd3fc; }
+  .lc-key.ksw{ height:58px; font:800 14px/1.1 system-ui, sans-serif; text-transform:uppercase; }
+  .lc-side{ display:flex; flex-direction:column; gap:8px; min-width:0; }
+  .lc-side .b-highlight{ height:92px; margin:0; font-size:20px; border-radius:14px; letter-spacing:1px; }
+  .lc-side .hl-pending{ margin:0; min-height:0; font-size:12px; font-weight:700; }
+  .lc-side .hl-pending:empty{ display:none; }
+  .lc-side #undo-btn{ height:48px; margin:0 !important; font-size:14px; border-radius:12px; }
+  .lc-side #edit-scorecard-btn{ margin:0 !important; }
+  .lc-legend{ font-size:11.5px; color:#aab3c5; line-height:1.45; }
+  .lc-legend .star{ color:#facc15; }
+
+  /* motion — never blocks input; off for reduced-motion users */
+  @keyframes lcBump{ 0%{ transform:scale(1); } 35%{ transform:scale(1.07); } 100%{ transform:scale(1); } }
+  @keyframes lcIn{ from{ opacity:.25; transform:translateY(4px); } to{ opacity:1; transform:none; } }
+  .lc-bump{ animation:lcBump .32s ease-out; }
+  .lc-in{ animation:lcIn .26s ease-out; }
+  @media (prefers-reduced-motion: reduce){
+    .lc-bump, .lc-in{ animation:none; }
+    .lc-team, .lc-logo, .lc-key{ transition:none; }
+  }
+
+  @media (max-width: 1100px){
+    .lc-top{ grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+    .lc-board{ grid-column:1/-1; order:-1; }
+    .lc-pad{ grid-template-columns:minmax(0,1fr); }
+    .lc-side{ display:grid; grid-template-columns:minmax(0,1.4fr) minmax(0,1fr); align-items:stretch; }
+    .lc-side .b-highlight{ height:64px; grid-row:span 2; }
+    .lc-side .hl-pending, .lc-legend{ grid-column:1/-1; }
+  }
+  @media (max-width: 640px){
+    #live-console{ margin:10px 10px 0; padding:10px; border-radius:14px; }
+    .lc-top{ grid-template-columns:minmax(0,1fr); }
+    .lc-board{ padding:10px; }
+    .lc-board #disp-score{ font-size:48px; }
+    .lc-board .lc-ov{ font-size:18px; }
+    .lc-mini{ display:none; }
+    .lc-last{ margin-top:6px; font-size:12px; }
+    .lc-board .ticker-preview{ margin-top:6px; }
+    .lc-team{ padding:10px; }
+    .lc-team-head{ margin-bottom:8px; }
+    .lc-logo{ width:36px; height:36px; font-size:13px; border-radius:10px; }
+    .lc-team-title{ font-size:19px; }
+    .lc-player{ padding:7px 9px; }
+    .lc-pfig{ font-size:22px; }
+    .lc-overrow{ display:none; }
+    .lc-top{ gap:8px; }
+    .lc-runs{ grid-template-columns:repeat(4, minmax(0,1fr)); }
+    .lc-extras{ grid-template-columns:repeat(3, minmax(0,1fr)); }
+    .lc-events{ grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+    .lc-events .kw{ grid-column:1/-1; }
+    .lc-key{ height:58px; }
+    .lc-side{ grid-template-columns:minmax(0,1fr); }
+    .lc-side .b-highlight{ grid-row:auto; height:64px; }
+    .lc-chip.clip{ max-width:100%; }
+    /* no sideways page scroll on phones */
+    header{ flex-wrap:wrap; gap:8px; padding:10px 12px; position:static; }
+    #conn-row{ width:100%; flex-wrap:wrap; }
+    #conn-row input, #match-id{ width:auto !important; flex:1 1 150px; min-width:0; }
+    #quick-nav{ top:0; }
+    .squad-hub-grid{ grid-template-columns:minmax(0,1fr) !important; }
+    .squad-hub-grid > *, .squad-col, .squad-col *{ min-width:0; max-width:100%; }
+    .layout{ padding:10px; }
+  }
 
   .balls-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:6px; }
   .balls-grid button{ height:46px; font-size:15px; }
@@ -501,8 +678,7 @@
   <div class="qn-sep"></div>
   <div class="qn-group qn-live">
     <span class="qn-label">🎮 Live</span>
-    <button type="button" data-target="card-score">Score</button>
-    <button type="button" data-target="card-ball-outcome">Ball Outcome</button>
+    <button type="button" data-target="live-console">Live Console</button>
     <button type="button" data-target="card-new-batsman">New Batsman</button>
     <button type="button" data-target="card-bowler">Bowler</button>
   </div>
@@ -519,6 +695,115 @@
     <button type="button" data-target="card-session">Session</button>
   </div>
 </nav>
+
+<!-- ================= LIVE CONTROL CONSOLE =================
+     Every element with an existing id (disp-*, over-preview, highlight-btn,
+     hl-pending, freehit-banner, undo-btn, edit-scorecard-btn) was moved
+     here unchanged, so all existing logic keeps driving it. Scoring keys
+     use the same data-ball values as before and go through the same
+     handlers (recordBall / extras picker / wicket modal). -->
+<section id="live-console" aria-label="Live Control">
+  <div class="lc-status" id="lc-status">
+    <span class="lc-chip" id="lc-chip-conn"><span class="lc-dot" id="lc-conn-dot"></span><span id="lc-conn-text">Offline</span></span>
+    <span class="lc-chip hot" id="lc-chip-innings">1st Innings</span>
+    <span class="lc-chip warn" id="lc-chip-freehit" hidden>⚡ FREE HIT</span>
+    <span class="lc-chip dim" id="lc-chip-rec"><span class="lc-dot" id="lc-rec-dot"></span><span id="lc-rec-text">Recording —</span></span>
+    <span class="lc-chip dim clip" id="lc-chip-clip">🎬 <span id="lc-clip-text">Clipper —</span></span>
+  </div>
+
+  <div class="lc-top">
+    <article class="lc-team" id="lc-bat">
+      <div class="lc-team-head">
+        <div class="lc-logo" id="lc-bat-logo">A</div>
+        <div class="lc-team-name">
+          <div class="lc-role">🏏 Batting</div>
+          <div class="lc-team-title" id="lc-bat-name">Team A</div>
+        </div>
+        <button type="button" class="lc-edit" id="lc-edit-batters" title="Change batters">Change</button>
+      </div>
+      <div class="lc-player" id="lc-striker">
+        <div class="lc-bat-ico" aria-hidden="true">🏏</div>
+        <div style="min-width:0;"><div class="lc-pname" id="lc-striker-name">—</div><div class="lc-psub" id="lc-striker-sub">On strike</div></div>
+        <div class="lc-pfig" id="lc-striker-fig">0<small>(0)</small></div>
+      </div>
+      <div class="lc-player" id="lc-nonstriker">
+        <div class="lc-bat-ico" aria-hidden="true">🏏</div>
+        <div style="min-width:0;"><div class="lc-pname" id="lc-nonstriker-name">—</div><div class="lc-psub" id="lc-nonstriker-sub">Non-striker</div></div>
+        <div class="lc-pfig" id="lc-nonstriker-fig">0<small>(0)</small></div>
+      </div>
+    </article>
+
+    <div class="lc-board">
+      <div class="lc-inn" id="lc-board-inn">Innings 1</div>
+      <div class="v" id="disp-score">0-0</div>
+      <div class="lc-ov"><span id="disp-overs">0.0</span> <span id="lc-ov-of"></span></div>
+      <div class="lc-need" id="lc-need"></div>
+      <div class="ticker-preview" id="over-preview"></div>
+      <div class="lc-last" id="lc-last">No balls yet</div>
+      <div class="lc-mini">
+        <div class="stat auto"><div class="k">CRR</div><div class="v" id="disp-crr">0.00</div></div>
+        <div class="stat auto"><div class="k">RRR</div><div class="v" id="disp-rrr">—</div></div>
+        <div class="stat auto"><div class="k">P'ship</div><div class="v" id="disp-partnership">0 (0)</div></div>
+        <div class="stat auto"><div class="k">Balls left</div><div class="v" id="disp-balls-left">—</div></div>
+      </div>
+    </div>
+
+    <article class="lc-team" id="lc-bowl">
+      <div class="lc-team-head">
+        <div class="lc-logo" id="lc-bowl-logo">B</div>
+        <div class="lc-team-name">
+          <div class="lc-role">🎯 Bowling</div>
+          <div class="lc-team-title" id="lc-bowl-name">Team B</div>
+        </div>
+        <button type="button" class="lc-edit" id="lc-edit-bowler" title="Change bowler">Change</button>
+      </div>
+      <div class="lc-player lc-bowler on-strike">
+        <div class="lc-bat-ico" aria-hidden="true">⚾</div>
+        <div style="min-width:0;"><div class="lc-pname" id="lc-bowler-name">—</div><div class="lc-psub" id="lc-bowler-sub">Econ —</div></div>
+        <div class="lc-pfig" id="lc-bowler-fig">0-0<small>(0.0)</small></div>
+      </div>
+      <div class="lc-player lc-overrow">
+        <div class="lc-bat-ico" aria-hidden="true">🔁</div>
+        <div style="min-width:0;"><div class="lc-pname" id="lc-thisover-label">This over</div><div class="lc-psub" id="lc-thisover-sub">—</div></div>
+        <div class="lc-pfig" id="lc-thisover-runs">0</div>
+      </div>
+    </article>
+  </div>
+
+  <div class="lc-pad">
+    <div class="freehit-banner" id="freehit-banner">⚡ FREE HIT IN PLAY <button type="button" id="clear-freehit-btn" style="margin-left:auto;">Clear</button></div>
+    <div class="lc-keys">
+      <div class="lc-row lc-runs">
+        <button type="button" class="lc-key" data-ball="0"><span class="kb">0</span>0</button>
+        <button type="button" class="lc-key" data-ball="1"><span class="kb">1</span>1</button>
+        <button type="button" class="lc-key" data-ball="2"><span class="kb">2</span>2</button>
+        <button type="button" class="lc-key" data-ball="3"><span class="kb">3</span>3</button>
+        <button type="button" class="lc-key k4" data-ball="4"><span class="kb">4</span><span class="star" title="Auto Highlight">★</span>4</button>
+        <button type="button" class="lc-key" data-ball="5"><span class="kb">5</span>5</button>
+        <button type="button" class="lc-key k6" data-ball="6"><span class="kb">6</span><span class="star" title="Auto Highlight">★</span>6</button>
+      </div>
+      <div class="lc-row lc-extras">
+        <button type="button" class="lc-key kx" data-ball="Wd">Wide</button>
+        <button type="button" class="lc-key kx" data-ball="Nb">No Ball</button>
+        <button type="button" class="lc-key kx" data-ball="B">Bye</button>
+        <button type="button" class="lc-key kx" data-ball="LB">Leg Bye</button>
+        <button type="button" class="lc-key kx" data-ball="OT">Overthrow</button>
+      </div>
+      <div class="lc-row lc-events">
+        <button type="button" class="lc-key kw" data-ball="W"><span class="kb">W</span><span class="star" title="Auto Highlight">★</span>WICKET</button>
+        <button type="button" class="lc-key krh" id="lc-retired-btn">Retired<br>Hurt</button>
+        <button type="button" class="lc-key ksw" id="lc-swap-btn"><span class="kb">S</span>⇄ Swap<br>Strike</button>
+      </div>
+    </div>
+    <div class="lc-side">
+      <button type="button" class="full b-highlight" id="highlight-btn" title="Press when the batsman plays the ball — cuts 15s before to 3s after this press from the vMix recording">🎬 HIGHLIGHTS <span style="opacity:.6;font-size:13px;">(H)</span></button>
+      <div class="hl-pending" id="hl-pending"></div>
+      <button type="button" class="full ghost" id="undo-btn">↶ Undo Last Ball (U)</button>
+      <button type="button" class="full ghost small" id="edit-scorecard-btn" style="display:none;">✏️ Edit Scorecard (Delete a Ball)</button>
+      <div class="lc-legend"><span class="star">★</span> auto-added to Highlights: 4, 6, Wicket, Wide/No-ball 4 or 6, Bye/Leg-bye 4, Overthrow 4 or 6. Any other ball → Commentary, unless you answer YES.</div>
+    </div>
+  </div>
+</section>
 
 <div style="padding:14px 14px 0;">
 <div class="card squad-hub" id="card-team-squads">
@@ -827,46 +1112,8 @@
   <!-- COLUMN 2: Live ball-by-ball control -->
   <div class="col-live">
     <div class="col-label">🎮 Live Control</div>
-    <div class="card" id="card-score">
-      <h2>🔢 Score <span class="note">— locked fields update automatically</span></h2>
-      <div class="stat-grid">
-        <div class="stat auto"><div class="k">Score</div><div class="v" id="disp-score">0-0</div></div>
-        <div class="stat auto"><div class="k">Overs</div><div class="v" id="disp-overs">0.0</div></div>
-        <div class="stat auto"><div class="k">Current Run Rate</div><div class="v" id="disp-crr">0.00</div></div>
-        <div class="stat auto"><div class="k">Req. Run Rate</div><div class="v" id="disp-rrr">—</div></div>
-        <div class="stat auto"><div class="k">Partnership</div><div class="v" id="disp-partnership">0 (0)</div></div>
-        <div class="stat auto"><div class="k">Balls Remaining</div><div class="v" id="disp-balls-left">—</div></div>
-      </div>
-      <div class="ticker-preview" id="over-preview"></div>
-    </div>
-
-    <div class="card" id="card-ball-outcome">
-      <h2>🏏 Ball Outcome</h2>
-      <div class="freehit-banner" id="freehit-banner">⚡ FREE HIT IN PLAY <button type="button" id="clear-freehit-btn" style="margin-left:auto;">Clear</button></div>
-      <button type="button" class="full b-highlight" id="highlight-btn" title="Press when the batsman plays the ball — cuts 15s before to 3s after this press from the vMix recording">🎬 HIGHLIGHTS (H)</button>
-      <div class="hl-pending" id="hl-pending"></div>
-      <div class="balls-grid">
-        <button class="b-run" data-ball="0">0</button>
-        <button class="b-run" data-ball="1">1</button>
-        <button class="b-run" data-ball="2">2</button>
-        <button class="b-run" data-ball="3">3</button>
-        <button class="b-four" data-ball="4">4</button>
-        <button class="b-run" data-ball="5">5</button>
-        <button class="b-six" data-ball="6">6</button>
-        <button class="b-wicket" data-ball="W">WICKET</button>
-        <button class="b-extra" data-ball="Wd">Wide</button>
-        <button class="b-extra" data-ball="Nb">No Ball</button>
-        <button class="b-extra" data-ball="B">Bye</button>
-        <button class="b-extra" data-ball="LB">Leg Bye</button>
-      </div>
-      <button class="full ghost" id="undo-btn" style="margin-top:10px;">Undo Last Ball (U)</button>
-      <button class="full ghost" id="edit-scorecard-btn" style="margin-top:8px;display:none;">✏️ Edit Scorecard (Delete a Ball)</button>
-      <div class="shortcut-hint">
-        Shortcuts: <kbd>H</kbd> highlights · <kbd>0-6</kbd> runs · <kbd>W</kbd> wicket · <kbd>S</kbd> swap strike · <kbd>U</kbd> undo · <kbd>Y</kbd>/<kbd>N</kbd> answer "Add to Highlights?"
-      </div>
-    </div>
-
     <div class="card" id="card-new-batsman">
+
       <h2>🆕 New Batsman (after wicket)</h2>
       <div class="shortcut-hint" id="new-batsman-end-hint"></div>
       <select id="new-batsman-select" style="display:none;"><option value="">— choose player —</option></select>
@@ -1968,6 +2215,12 @@ function describeBallOutcome(kind, meta, runs){
     case 'B': {
       const r = typeof meta.runs === 'number' ? meta.runs : 1;
       return { label: `Bye ${r}`, eventType: 'CLIP', isDefault: r === 4 };
+    }
+    case 'OT': {
+      const r = typeof meta.runs === 'number' ? meta.runs : 0;
+      if(r === 6) return { label: 'Overthrow 6', eventType: 'SIX', isDefault: true };
+      if(r === 4) return { label: 'Overthrow 4', eventType: 'FOUR', isDefault: true };
+      return { label: `Overthrow ${r}`, eventType: 'CLIP', isDefault: false };
     }
     case 'LB': {
       const r = typeof meta.runs === 'number' ? meta.runs : 1;
@@ -6697,6 +6950,29 @@ function recordBall(kind, meta){
   // argument — never re-read from state.* — closes that gap for good.
 
   switch(kind){
+    case 'OT': {
+      // Overthrow off a normal batted shot (MCC Law 19.8) — the TOTAL runs
+      // (runs run + overthrow/boundary allowance) are credited to the
+      // striker like any shot off the bat: a legal ball, bowler charged,
+      // strike rotates on an odd total. (Restored — the scorecard, server
+      // and overlay already understand ballType 'OT'.)
+      const otRuns = (meta && typeof meta.runs === 'number') ? meta.runs : 0;
+      state.score.runs += otRuns;
+      state.striker.runs += otRuns;
+      state.partnershipRuns += otRuns;
+      if(otRuns === 4) state.striker.fours++;
+      if(otRuns === 6) state.striker.sixes++;
+      const otLabel = `OT${otRuns}`;
+      state.thisOver.push(otLabel);
+      pushBallHistory(otLabel);
+      overCompletedThisBall = addLegalBall(otRuns);
+      addBowlerBall(otRuns);
+      fireEvent('OVERTHROW', 'OVERTHROW', `${otRuns} run${otRuns === 1 ? '' : 's'} — ${state.striker.name || 'Striker'}`);
+      if(otRuns === 4) extraBoundaryEventType = 'FOUR';
+      else if(otRuns === 6) extraBoundaryEventType = 'SIX';
+      if(otRuns % 2 === 1) swapStrikeSilent();
+      break;
+    }
     case '0': case '1': case '2': case '3': case '4': case '5': case '6': {
       const runs = parseInt(kind);
       state.score.runs += runs;
@@ -7351,7 +7627,7 @@ function swapStrikeSilent(){
   const tmp = state.striker; state.striker = state.nonStriker; state.nonStriker = tmp;
 }
 
-const EXTRAS_RUN_PICKER_KINDS = ['B', 'LB', 'Wd', 'Nb'];
+const EXTRAS_RUN_PICKER_KINDS = ['B', 'LB', 'Wd', 'Nb', 'OT'];
 document.querySelectorAll('[data-ball]').forEach(btn => {
   btn.addEventListener('click', () => {
     const kind = btn.dataset.ball;
@@ -7371,6 +7647,10 @@ const EXTRAS_MODAL_CONFIG = {
   B:  { title: 'Bye — how many runs?',                              metaKey: 'runs' },
   LB: { title: 'Leg Bye — how many runs?',                          metaKey: 'runs' },
   Wd: { title: 'Wide — extra runs run (beyond the automatic 1)?',   metaKey: 'extraRuns' },
+  // Overthrow off a batted shot: TOTAL runs (run + overthrow/boundary),
+  // all to the striker. An overthrow after a Bye/Leg Bye/Wide/No Ball is
+  // just a bigger number on that extra's own picker instead.
+  OT: { title: 'Overthrow — total runs (runs run + overthrow)', metaKey: 'runs' },
   Nb: { title: 'No Ball — runs off the bat?',                       metaKey: 'runsOffBat' }
 };
 // Set while the operator is mid-flow recording a wicket that happened ON a
@@ -7462,8 +7742,8 @@ function renderExtrasModalButtons(kind){
   wrap.innerHTML = '';
   // Leg-bye runs off a No Ball never touch the bat either, so even in
   // that mode (kind still === 'Nb') the cap drops back to 4.
-  const maxRuns = (kind === 'Nb' && !isNbLegBye) ? 6 : 4;
-  for(let i = 0; i <= maxRuns; i++){
+  const maxRuns = kind === 'OT' ? 8 : (kind === 'Nb' && !isNbLegBye) ? 6 : 4;
+  for(let i = kind === 'OT' ? 1 : 0; i <= maxRuns; i++){
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'wm-option';
@@ -8334,7 +8614,7 @@ document.getElementById('undo-btn').addEventListener('click', async () => {
 function describeBallLogEntry(entry){
   const kindLabel = {
     'W':'WICKET', 'WdW':'WICKET (Wide)', 'NbW':'WICKET (No Ball)',
-    'Wd':'Wide', 'Nb':'No Ball', 'B':'Bye', 'LB':'Leg Bye'
+    'Wd':'Wide', 'Nb':'No Ball', 'B':'Bye', 'LB':'Leg Bye', 'OT':'Overthrow'
   }[entry.ballType] || `${entry.runs} run${entry.runs === 1 ? '' : 's'}`;
   let line = `${kindLabel} · ${entry.runs} run${entry.runs === 1 ? '' : 's'} · ${entry.striker} off ${entry.bowler}`;
   if(entry.isWicket && entry.dismissal) line += ` — ${entry.dismissal}`;
@@ -9942,6 +10222,210 @@ document.querySelectorAll('#quick-nav button[data-target]').forEach(btn => {
 /* ============================================================
    KEYBOARD SHORTCUTS
    ============================================================ */
+/* ============================================================
+   🎮 LIVE CONTROL CONSOLE — renders straight from `state` after every
+   renderPanel() (so it is always the same truth the overlay gets, also
+   after refresh/reconnect/undo/resume). Buttons only call the existing
+   actions; no scoring logic lives here.
+   ============================================================ */
+const LC_FALLBACK_COLOR = { A: '#3b82f6', B: '#ef4444' };
+function lcHex(c, key){
+  const v = String(c || '').trim();
+  return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v) ? v : LC_FALLBACK_COLOR[key];
+}
+function lcInk(hex){ // readable text on the team colour
+  let h = hex.replace('#', '');
+  if(h.length === 3) h = h.split('').map(x => x + x).join('');
+  const [r, g, b] = [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16) / 255)
+    .map(v => v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) > 0.45 ? '#0b0f1a' : '#ffffff';
+}
+const lcLast = {}; // last rendered values, to animate only real changes
+function lcSet(id, text, animate){
+  const el = document.getElementById(id);
+  if(!el) return;
+  const t = String(text);
+  if(el.textContent === t) return;
+  el.textContent = t;
+  if(animate && lcLast.ready){ el.classList.remove(animate); void el.offsetWidth; el.classList.add(animate); }
+}
+function lcSetHtml(id, html){
+  const el = document.getElementById(id);
+  if(el && el.innerHTML !== html) el.innerHTML = html;
+}
+function lcPaintTeam(cardId, logoId, nameId, key){
+  const team = teamObj(key) || {};
+  const color = lcHex(team.color, key);
+  const card = document.getElementById(cardId);
+  card.style.setProperty('--team', color);
+  card.style.setProperty('--team-ink', lcInk(color));
+  const logo = document.getElementById(logoId);
+  const short = (team.short || team.name || key).slice(0, 4).toUpperCase();
+  if(team.logoUrl){
+    logo.classList.add('has-img');
+    const bg = `url("${team.logoUrl}")`;
+    if(logo.style.backgroundImage !== bg) logo.style.backgroundImage = bg;
+    logo.textContent = short;
+  } else {
+    logo.classList.remove('has-img');
+    logo.style.backgroundImage = '';
+    logo.textContent = short;
+  }
+  logo.setAttribute('aria-label', team.name || short);
+  const nameChanged = lcLast[cardId] !== (team.name || '') + '|' + color;
+  lcLast[cardId] = (team.name || '') + '|' + color;
+  lcSet(nameId, team.name || `Team ${key}`);
+  if(nameChanged && lcLast.ready){ card.classList.remove('lc-in'); void card.offsetWidth; card.classList.add('lc-in'); }
+}
+function lcBatterFig(p){ return `${p.runs || 0}<small>(${p.balls || 0})</small>`; }
+function lcBatterSub(p, onStrike){
+  const sr = p.balls ? ((p.runs || 0) * 100 / p.balls).toFixed(1) : '0.0';
+  return `${onStrike ? 'On strike · ' : ''}4s ${p.fours || 0} · 6s ${p.sixes || 0} · SR ${sr}`;
+}
+function lcPlayer(rowId, nameId, subId, figId, p, onStrike){
+  const name = (p && p.name) || '—';
+  const row = document.getElementById(rowId);
+  row.classList.toggle('on-strike', !!onStrike);
+  if(lcLast[rowId] !== name && lcLast.ready){ row.classList.remove('lc-in'); void row.offsetWidth; row.classList.add('lc-in'); }
+  lcLast[rowId] = name;
+  lcSet(nameId, name);
+  lcSet(subId, lcBatterSub(p || {}, onStrike));
+  lcSetHtml(figId, lcBatterFig(p || {}));
+}
+function lcPipClass(t){
+  const v = String(t).trim().toUpperCase();
+  if(v === 'W' || /\+W$/.test(v) || /^W\b/.test(v)) return 'pw';
+  if(v === '6' || v === 'OT6') return 'p6';
+  if(v === '4' || v === 'OT4') return 'p4';
+  if(/[A-Z]/.test(v)) return 'px'; // wides, no-balls, byes, leg-byes, overthrows
+  return '';
+}
+function renderLiveConsole(){
+  try {
+    const batKey = state.battingTeam === 'B' ? 'B' : 'A';
+    const bowlKey = batKey === 'A' ? 'B' : 'A';
+    lcPaintTeam('lc-bat', 'lc-bat-logo', 'lc-bat-name', batKey);
+    lcPaintTeam('lc-bowl', 'lc-bowl-logo', 'lc-bowl-name', bowlKey);
+
+    lcPlayer('lc-striker', 'lc-striker-name', 'lc-striker-sub', 'lc-striker-fig', state.striker, true);
+    lcPlayer('lc-nonstriker', 'lc-nonstriker-name', 'lc-nonstriker-sub', 'lc-nonstriker-fig', state.nonStriker, false);
+
+    const bw = state.bowler || {};
+    const bBalls = (bw.overs || 0) * 6 + (bw.balls || 0);
+    const econ = bBalls ? ((bw.runs || 0) * 6 / bBalls).toFixed(2) : '—';
+    lcSet('lc-bowler-name', bw.name || '— set bowler —');
+    lcSet('lc-bowler-sub', `Maidens ${bw.maidens || 0} · Econ ${econ}`);
+    lcSetHtml('lc-bowler-fig', `${bw.wickets || 0}-${bw.runs || 0}<small>(${bw.overs || 0}.${bw.balls || 0})</small>`);
+    const overBalls = (state.thisOver || []);
+    lcSet('lc-thisover-label', `Over ${(state.score.overs || 0) + 1}`);
+    lcSet('lc-thisover-sub', overBalls.length ? overBalls.join('  ') : 'New over — no balls yet');
+    lcSet('lc-thisover-runs', String(lcRunsThisOver()));
+
+    // board
+    const inn = state.inningsNumber || 1;
+    const innText = `${inn === 1 ? '1st' : inn === 2 ? '2nd' : inn === 3 ? '3rd' : inn + 'th'} Innings`;
+    lcSet('lc-board-inn', `${innText} · ${(teamObj(batKey) || {}).short || batKey} batting`);
+    lcSet('lc-chip-innings', `${innText} · ${state.format || ''}`.trim());
+    const totalBalls = typeof ballsPerInnings === 'function' ? ballsPerInnings() : 0;
+    lcSet('lc-ov-of', totalBalls ? `/ ${Math.floor(totalBalls / 6)} ov` : 'ov');
+    let need = '';
+    if(isAwaitingNextInnings && isAwaitingNextInnings()) need = '⏸ Innings over — set up and start the next innings';
+    else if(state.milestonesHit && state.milestonesHit['match-result']) need = `🏆 ${state.matchResultText || 'Match result decided'}`;
+    else if(state.target){
+      const req = state.target - state.score.runs;
+      const left = calcBallsLeft();
+      need = req > 0 ? `Need ${req} run${req === 1 ? '' : 's'}${left != null ? ` from ${left} ball${left === 1 ? '' : 's'}` : ''} · Target ${state.target}` : `Target ${state.target} reached`;
+    }
+    lcSet('lc-need', need);
+    const log = state.ballLog || [];
+    const last = log[log.length - 1];
+    lcSetHtml('lc-last', last
+      ? `<b>Last ball ${escapeHtmlPanel(overBallLabelPanel(last))}:</b> ${escapeHtmlPanel(lcDescribeBall(last))}`
+      : 'No balls yet this match');
+    document.querySelectorAll('#over-preview .pip').forEach(p => { const c = lcPipClass(p.textContent); p.className = 'pip' + (c ? ' ' + c : ''); });
+
+    // score bump only when runs/wickets actually move
+    const scoreKey = `${state.score.runs}-${state.score.wickets}`;
+    if(lcLast.score !== scoreKey && lcLast.ready){ const el = document.getElementById('disp-score'); el.classList.remove('lc-bump'); void el.offsetWidth; el.classList.add('lc-bump'); }
+    lcLast.score = scoreKey;
+
+    document.getElementById('lc-chip-freehit').hidden = !state.freeHit;
+    lcRenderStatus();
+    lcLast.ready = true;
+  } catch(e){ console.warn('Live console render skipped', e); }
+}
+function lcDescribeBall(e){
+  const r = e.runs || 0, rs = `${r} run${r === 1 ? '' : 's'}`;
+  const who = `${e.striker || 'Batter'} off ${e.bowler || 'bowler'}`;
+  const what = {
+    W: `WICKET — ${e.dismissal || e.dismissalType || 'out'}`,
+    WdW: `WICKET on a Wide — ${e.dismissal || ''}`, NbW: `WICKET on a No Ball — ${e.dismissal || ''}`,
+    Wd: `Wide · ${rs}`, Nb: `No Ball · ${rs}`, B: `Bye · ${rs}`, LB: `Leg Bye · ${rs}`, OT: `Overthrow · ${rs}`,
+    '4': 'FOUR', '6': 'SIX', '0': 'Dot ball'
+  }[e.ballType] || rs;
+  return `${what} · ${who}`;
+}
+function overBallLabelPanel(entry){
+  return entry && entry.over != null ? `(${entry.over} ov)` : '';
+}
+// Runs conceded in the over in progress: ball-log entries of this innings
+// after the last completed over (an entry whose "after" over reads N.0).
+function lcRunsThisOver(){
+  if(!(state.thisOver || []).length) return 0;
+  const log = state.ballLog || [];
+  let runs = 0;
+  for(let i = log.length - 1; i >= 0; i--){
+    const e = log[i];
+    if((e.innings || 1) !== (state.inningsNumber || 1)) break;
+    if(i !== log.length - 1 && /\.0$/.test(String(e.over)) && !['Wd', 'Nb', 'WdW', 'NbW'].includes(e.ballType)) break;
+    runs += e.runs || 0;
+  }
+  return runs;
+}
+function lcRenderStatus(){
+  const conn = !!(socket && socket.connected);
+  document.getElementById('lc-conn-dot').classList.toggle('on', conn);
+  lcSet('lc-conn-text', conn ? `Live · ${currentMatchId()}` : (currentMatchId() ? 'Reconnecting…' : 'Not connected'));
+  const recDot = document.getElementById('rec-dot');
+  const recOn = !!(recDot && recDot.classList.contains('on'));
+  document.getElementById('lc-rec-dot').classList.toggle('on', recOn);
+  const recText = (document.getElementById('rec-status') || {}).textContent || '';
+  lcSet('lc-rec-text', recOn ? 'Recording' : (recText || 'Not recording'));
+  const clipTxt = (document.getElementById('clipper-status-text') || {}).textContent || '';
+  const pending = (typeof pendingHighlights !== 'undefined' && pendingHighlights.length) ? ` · ${pendingHighlights.length} waiting for outcome` : '';
+  lcSet('lc-clip-text', (lcLastClipLine || clipTxt.replace(/^[🟢🟡🔴]\s*/u, '') || 'Clipper —') + pending);
+}
+let lcLastClipLine = '';
+// Wrap the existing renderers (not modify them): the console refreshes on
+// every normal panel render and whenever the clip list updates.
+const _lcRenderPanel = renderPanel;
+renderPanel = function(){ _lcRenderPanel.apply(this, arguments); renderLiveConsole(); };
+const _lcRenderClipJobs = renderClipJobs;
+renderClipJobs = function(list){
+  _lcRenderClipJobs.apply(this, arguments);
+  const j = (list || [])[0];
+  lcLastClipLine = j ? `Last clip ${new Date(j.t0).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}: ${clipJobLine(j)}` : '';
+  lcRenderStatus();
+};
+setInterval(lcRenderStatus, 2000);
+
+function lcFocusCard(cardId, focusIds){
+  const card = document.getElementById(cardId);
+  if(!card) return;
+  card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  card.classList.remove('flash'); void card.offsetWidth; card.classList.add('flash');
+  const target = focusIds.map(id => document.getElementById(id)).find(el => el && el.offsetParent !== null);
+  if(target) setTimeout(() => target.focus({ preventScroll: true }), 350);
+}
+document.getElementById('lc-edit-batters').addEventListener('click', () => lcFocusCard('card-players', ['striker-roster-select', 'striker-name']));
+document.getElementById('lc-edit-bowler').addEventListener('click', () => lcFocusCard('card-bowler', ['bowler-roster-select', 'bowler-name-input']));
+document.getElementById('lc-swap-btn').addEventListener('click', () => swapStrike());
+document.getElementById('lc-retired-btn').addEventListener('click', () => openRetiredHurtModal());
+// Instant press feedback (the action itself runs on click, unchanged).
+document.querySelectorAll('#live-console .lc-key').forEach(k => {
+  k.addEventListener('pointerdown', () => { k.classList.add('hit'); setTimeout(() => k.classList.remove('hit'), 180); });
+});
+
 document.addEventListener('keydown', (e) => {
   const tag = (e.target.tagName || '').toLowerCase();
   if(tag === 'input' || tag === 'select' || tag === 'textarea') return;
