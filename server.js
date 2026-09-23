@@ -917,9 +917,11 @@ app.post('/api/clips/classify', async (req, res) => {
     const body = req.body || {};
     const matchId = safeMatchId(body.matchId);
     const clipId = String(body.clipId || '').replace(/[^a-zA-Z0-9_-]/g, '');
-    const m = /_HIGHLIGHT_(\d{10,})$/.exec(clipId);
+    // HIGHLIGHTS clips, and the automatic WICKET clip (re-labelled when
+    // the "wicket" turns out to be Retired Hurt, which is not a dismissal).
+    const m = /_(?:HIGHLIGHT|WICKET)_(\d{10,})$/.exec(clipId);
     if (!matchId || !m || !clipId.startsWith(`${matchId}_`)) {
-        return res.status(400).json({ success: false, error: 'clipId must be a HIGHLIGHTS clip of this match' });
+        return res.status(400).json({ success: false, error: 'clipId must be a HIGHLIGHTS or WICKET clip of this match' });
     }
     const eventType = CLASSIFY_EVENT_TYPES.has(String(body.eventType || '').toUpperCase()) ? String(body.eventType).toUpperCase() : 'CLIP';
     const isHighlight = body.isHighlight === true;

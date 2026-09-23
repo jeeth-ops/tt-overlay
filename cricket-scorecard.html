@@ -2199,6 +2199,17 @@ function battingTeamForInnings(state, inn){
    Scoped to inn: in a Test, battingCard[team] can already hold rows from
    an EARLIER innings of the same team. Defaults to the current innings
    so existing callers (currentBattingRows) are unaffected. */
+// "not out" / how out — plus "retired hurt" for a batter currently off
+// the field hurt, and a note when a batter retired hurt earlier and came
+// back (their figures on this one line include both stints).
+function battingStatusHtml(b){
+  const main = b.retiredHurt
+    ? `<span class="howout">${escapeHtml(b.howOut || 'retired hurt')}</span>`
+    : (b.out ? `<span class="howout">${escapeHtml(b.howOut || 'out')}</span>` : '<span class="not-out-tag">not out</span>');
+  const n = b.retiredHurtCount || 0;
+  const note = !b.retiredHurt && n > 0 ? `<span class="howout">(retired hurt${n > 1 ? ` ${n} times` : ''}, returned)</span>` : '';
+  return main + note;
+}
 function battingRowsForInnings(state, inn){
   const target = inn == null ? (state.inningsNumber || 1) : inn;
   const key = battingTeamForInnings(state, target);
@@ -2206,7 +2217,7 @@ function battingRowsForInnings(state, inn){
   if(target === (state.inningsNumber || 1)){
     [state.striker, state.nonStriker].forEach(p => {
       if(p && p.name && !rows.some(r => r.name === p.name)){
-        rows.push({ name:p.name, runs:p.runs||0, balls:p.balls||0, fours:p.fours||0, sixes:p.sixes||0, out:false, howOut:'not out' });
+        rows.push({ name:p.name, runs:p.runs||0, balls:p.balls||0, fours:p.fours||0, sixes:p.sixes||0, out:false, howOut:'not out', retiredHurtCount:p.retiredHurtCount||0 });
       }
     });
   }
@@ -2761,7 +2772,7 @@ function renderFinalInnings(){
 
   const battingBody = document.getElementById('batting-table-body');
   battingBody.innerHTML = bat.length ? bat.map(b => `<tr>
-      <td>${escapeHtml(b.name)}${roleBadgesHtml(b)}${b.out===false ? '<span class="not-out-tag">not out</span>' : `<span class="howout">${escapeHtml(b.howOut||'out')}</span>`}</td>
+      <td>${escapeHtml(b.name)}${roleBadgesHtml(b)}${battingStatusHtml(b)}</td>
       <td class="num tabnum">${b.runs||0}</td>
       <td class="num tabnum">${b.balls||0}</td>
       <td class="num tabnum">${b.fours||0}</td>
@@ -4816,7 +4827,7 @@ function renderTables(s){
     battingBody.innerHTML = bat.map(b => {
       const isStriking = isLive && !b.out && s.striker && s.striker.name === b.name;
       return `<tr class="${isStriking ? 'on-strike' : ''}">
-        <td>${escapeHtml(b.name)}${roleBadgesHtml(b)}${b.out ? `<span class="howout">${escapeHtml(b.howOut||'out')}</span>` : `<span class="not-out-tag">not out</span>`}</td>
+        <td>${escapeHtml(b.name)}${roleBadgesHtml(b)}${battingStatusHtml(b)}</td>
         <td class="num tabnum">${b.runs}</td>
         <td class="num tabnum">${b.balls}</td>
         <td class="num tabnum">${b.fours}</td>

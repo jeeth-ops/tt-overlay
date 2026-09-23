@@ -916,7 +916,7 @@
         <button type="button" class="wm-option b-wicket" data-dismissal="Stumped">Stumped<span class="wm-credit">→ bowler</span></button>
         <button type="button" class="wm-option b-wicket" data-dismissal="Hit Wicket">Hit Wicket<span class="wm-credit">→ bowler</span></button>
         <button type="button" class="wm-option b-extra" data-dismissal="Run Out">Run Out<span class="wm-credit">not credited</span></button>
-        <button type="button" class="wm-option b-extra" data-dismissal="Retired Hurt">Retired Hurt<span class="wm-credit">not credited</span></button>
+        <button type="button" class="wm-option b-extra" data-dismissal="Retired Hurt">Retired Hurt<span class="wm-credit">not out · no ball · can return</span></button>
         <button type="button" class="wm-option b-extra" data-dismissal="Retired Out">Retired Out<span class="wm-credit">not credited</span></button>
       </div>
       <button type="button" class="full ghost wm-cancel" id="wicket-modal-cancel">Cancel</button>
@@ -1020,6 +1020,21 @@
   <!-- New batsman name picker — opens right after a dismissal is picked;
        the WICKET graphic only fires once this is submitted (or skipped),
        so the incoming batsman's name is locked in before the animation. -->
+  <!-- 🩹 RETIRED HURT — who is leaving the field. See retireBatsmanHurt(). -->
+  <div class="wicket-modal-overlay" id="retired-modal-overlay">
+    <div class="wicket-modal">
+      <h3>🩹 Retired Hurt — who is going off?</h3>
+      <div class="wm-sub">Not out: no wicket and no ball are counted. The batter keeps their runs, balls, 4s and 6s and can come back later (any number of times) to continue the same innings.</div>
+      <div class="wm-options">
+        <button type="button" class="wm-option b-extra" id="retired-striker-btn">Striker</button>
+        <button type="button" class="wm-option b-extra" id="retired-nonstriker-btn">Non-striker</button>
+      </div>
+      <div class="wm-actions">
+        <button type="button" class="ghost wm-cancel" id="retired-modal-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <div class="wicket-modal-overlay" id="newbat-modal-overlay">
     <div class="wicket-modal" id="newbat-modal">
       <h3>🏏 New Batsman</h3>
@@ -1445,6 +1460,12 @@ function mergeWithDefaults(saved){
       A: (saved.dismissedThisInnings && saved.dismissedThisInnings.A) || [],
       B: (saved.dismissedThisInnings && saved.dismissedThisInnings.B) || []
     },
+    // Batters currently off the field RETIRED HURT this innings, with the
+    // figures they'll resume from — see retireBatsmanHurt()/incomingBatter().
+    retiredHurt: {
+      A: (saved.retiredHurt && saved.retiredHurt.A) || [],
+      B: (saved.retiredHurt && saved.retiredHurt.B) || []
+    },
     // Fielding tallies (catches/run-outs/stumpings) keyed by fielder id
     // (or "name:X" for free-text fielders without a roster id) — additive,
     // never touched by any existing scoring path.
@@ -1576,6 +1597,7 @@ function defaultState(){
     // available again in innings 3, and the "last over's bowler" rule
     // only ever applies to the very next over.
     dismissedThisInnings: { A: [], B: [] },
+    retiredHurt: { A: [], B: [] },
     fieldingStats: { A: {}, B: {} },
     lastOverBowlerId: null,
     theme: { badgeColor:'#ff7a1a', bottomBarColor:'#0a1330', progressColor:'#f0b429' },
@@ -1938,6 +1960,7 @@ function hasFreshPendingHighlight(){
 // it's a highlight by default (4, 6, wicket, boundary extras).
 function describeBallOutcome(kind, meta, runs){
   meta = meta || {};
+  if(kind === 'RH') return { label: 'Retired Hurt', eventType: 'CLIP', isDefault: false };
   const isWicket = kind === 'W' || kind === 'WdW' || kind === 'NbW';
   if(isWicket){
     const how = meta.dismissalType || 'Bowled';
@@ -3717,7 +3740,7 @@ document.getElementById('striker-roster-select').addEventListener('change', e =>
   const p = findPlayerById(state.battingTeam, id);
   if(!p) return;
   pushHistory();
-  state.striker = { name: p.name, id: p.id, runs:0, balls:0, fours:0, sixes:0 };
+  state.striker = incomingBatter(p.name, p.id);
   renderRosterControls();
   pushState(true);
 });
@@ -3727,7 +3750,7 @@ document.getElementById('nonstriker-roster-select').addEventListener('change', e
   const p = findPlayerById(state.battingTeam, id);
   if(!p) return;
   pushHistory();
-  state.nonStriker = { name: p.name, id: p.id, runs:0, balls:0, fours:0, sixes:0 };
+  state.nonStriker = incomingBatter(p.name, p.id);
   renderRosterControls();
   pushState(true);
 });
@@ -3739,10 +3762,103 @@ document.getElementById('bowler-roster-select').addEventListener('change', e => 
   if(applyBowlerChange(p.name, p.id)) e.target.value = '';
 });
 
+/* ============================================================
+   🩹 RETIRED HURT — NOT a dismissal (Laws of Cricket 25.4.2): no
+   wicket, no delivery, nothing for the bowler. The batter leaves with
+   their runs/balls/4s/6s saved here and may come back later in the same
+   innings — any number of times — resuming from exactly those figures
+   (never from zero). The scorecard keeps ONE line per batter; clips stay
+   linked to the same player throughout, so everything adds up.
+   ============================================================ */
+function sameBatter(a, name, id){
+  if(id && a.id) return a.id === id;
+  return String(a.name || '').trim().toLowerCase() === String(name || '').trim().toLowerCase();
+}
+function retiredHurtList(teamKey){
+  const k = teamKey || state.battingTeam;
+  state.retiredHurt = state.retiredHurt || { A: [], B: [] };
+  state.retiredHurt[k] = state.retiredHurt[k] || [];
+  return state.retiredHurt[k];
+}
+// The batter object for someone walking in: a retired-hurt batter of this
+// innings resumes their saved figures; anyone else starts at 0.
+function incomingBatter(name, id){
+  const list = retiredHurtList();
+  const idx = list.findIndex(r => r.inningsNo === state.inningsNumber && sameBatter(r, name, id));
+  if(idx === -1) return { name, id: id || null, runs:0, balls:0, fours:0, sixes:0 };
+  const r = list.splice(idx, 1)[0];
+  // Drop the "retired hurt" scorecard line — the batter is live again,
+  // shown from the crease with the same running totals.
+  const card = state.battingCard[state.battingTeam] || [];
+  const cIdx = card.findIndex(b => b.retiredHurt && b.inningsNo === state.inningsNumber && sameBatter(b, name, id));
+  if(cIdx > -1) card.splice(cIdx, 1);
+  toast(`🩹 ${r.name} returns — continuing from ${r.runs} (${r.balls})`, 3000);
+  return { name: r.name, id: r.id || id || null, runs: r.runs, balls: r.balls, fours: r.fours, sixes: r.sixes, retiredHurtCount: r.retiredHurtCount || 1 };
+}
+
+function openRetiredHurtModal(){
+  const s = document.getElementById('retired-striker-btn');
+  const n = document.getElementById('retired-nonstriker-btn');
+  s.textContent = state.striker.name ? `${state.striker.name} (striker)` : 'Striker';
+  n.textContent = state.nonStriker.name ? `${state.nonStriker.name} (non-striker)` : 'Non-striker';
+  s.disabled = !state.striker.name;
+  n.disabled = !state.nonStriker.name;
+  document.getElementById('retired-modal-overlay').classList.add('show');
+}
+function closeRetiredHurtModal(){ document.getElementById('retired-modal-overlay').classList.remove('show'); }
+
+function retireBatsmanHurt(end){
+  const batter = end === 'nonStriker' ? state.nonStriker : state.striker;
+  if(!batter || !batter.name) return;
+  pushHistory();
+  const count = (batter.retiredHurtCount || 0) + 1;
+  const saved = {
+    name: batter.name, id: batter.id || null,
+    runs: batter.runs || 0, balls: batter.balls || 0, fours: batter.fours || 0, sixes: batter.sixes || 0,
+    retiredHurtCount: count, inningsNo: state.inningsNumber
+  };
+  retiredHurtList().push(saved);
+  // One scorecard line while they're off the field: "retired hurt", not out.
+  state.battingCard[state.battingTeam].push({
+    name: saved.name, id: saved.id, runs: saved.runs, balls: saved.balls, fours: saved.fours, sixes: saved.sixes,
+    out: false, retiredHurt: true, retiredHurtCount: count,
+    howOut: count > 1 ? `retired hurt (${count} times)` : 'retired hurt',
+    inningsNo: state.inningsNumber
+  });
+  // The batter's end is now empty; the partnership ends. No ball, no
+  // wicket, no fall of wicket, nothing on the bowler's figures.
+  state.newBatsmanEnd = end === 'nonStriker' ? 'nonStriker' : 'striker';
+  state.partnershipRuns = 0; state.partnershipBalls = 0;
+  const milestone = document.getElementById('milestone-log');
+  if(milestone){ const d = document.createElement('div'); d.textContent = `🩹 ${saved.name} retired hurt — ${saved.runs} (${saved.balls})`; milestone.prepend(d); }
+  pushState(true, true);
+
+  // Clips: a HIGHLIGHTS press (or the automatic clip cut when WICKET was
+  // pressed) for this moment is linked as "Retired Hurt" and the operator
+  // decides YES/NO — never counted as a wicket clip.
+  if(lastAutoWicketClip && Date.now() - lastAutoWicketClip.t0 < HL_MAX_PRESS_AGE_MS){
+    pendingHighlights.push(lastAutoWicketClip);
+    lastAutoWicketClip = null;
+  }
+  const lastBallOver = state.score.balls > 0 ? state.score.overs : Math.max(0, state.score.overs - 1);
+  const lastBallInOver = state.score.balls > 0 ? state.score.balls : (state.score.overs > 0 ? 6 : 0);
+  linkPendingHighlightsToBall('RH', {}, {
+    innings: state.inningsNumber, over: lastBallOver, ballInOver: lastBallInOver, runs: 0,
+    battingTeam: state.battingTeam,
+    striker: saved.name, nonStriker: end === 'nonStriker' ? state.striker.name : state.nonStriker.name,
+    bowler: state.bowler.name, strikerId: saved.id, nonStrikerId: null, bowlerId: state.bowler.id || null
+  });
+
+  openNewBatsmanModal(saved.name, { retired: true, excludeId: saved.id });
+}
+document.getElementById('retired-striker-btn').addEventListener('click', () => { closeRetiredHurtModal(); retireBatsmanHurt('striker'); });
+document.getElementById('retired-nonstriker-btn').addEventListener('click', () => { closeRetiredHurtModal(); retireBatsmanHurt('nonStriker'); });
+document.getElementById('retired-modal-cancel').addEventListener('click', closeRetiredHurtModal);
+
 function sendInNewBatsman(name, id){
   if(!name) return;
   pushHistory();
-  const incoming = { name, id: id || null, runs:0, balls:0, fours:0, sixes:0 };
+  const incoming = incomingBatter(name, id);
   // Seat them at whichever end the last wicket left vacant — the striker's
   // end normally, or the non-striker's end if that wicket fell on the last
   // ball of the over (strike already rotated automatically — see the 'W'
@@ -4554,7 +4670,7 @@ function buildInningsSummaryPayload(){
     batsmen: battingRows.map(b => ({
       name: b.name, runs: b.runs, balls: b.balls, fours: b.fours, sixes: b.sixes,
       sr: b.balls > 0 ? ((b.runs / b.balls) * 100).toFixed(1) : '0.0',
-      howOut: b.out ? (b.howOut || 'out') : 'not out'
+      howOut: b.out ? (b.howOut || 'out') : (b.retiredHurt ? (b.howOut || 'retired hurt') : 'not out')
     })),
     fallOfWickets: rowsForInnings(state.fallOfWickets[battingKey], inn),
     extrasTotal: (extras.wd||0) + (extras.nb||0) + (extras.b||0) + (extras.lb||0),
@@ -6537,6 +6653,8 @@ function recordBall(kind, meta){
         dismissalText = `st ${fielderName} b ${state.bowler.name || 'bowler'}`;
       } else if(dismissalType === 'Run Out'){
         dismissalText = fielderName ? `run out (${fielderName})` : 'run out';
+      } else if(dismissalType === 'Bowled'){
+        dismissalText = state.bowler.name ? `b ${state.bowler.name}` : 'b'; // was "b b <bowler>"
       } else {
         dismissalText = (isBowlerWicket && state.bowler.name) ? `${shortMap[dismissalType]} b ${state.bowler.name}` : shortMap[dismissalType];
       }
@@ -6602,7 +6720,7 @@ function recordBall(kind, meta){
       // Innings/Match Summary graphics and the scorecard later.
       state.battingCard[state.battingTeam].push({
         name: dismissedBatter.name, id: dismissedBatter.id || null, runs: dismissedBatter.runs, balls: dismissedBatter.balls,
-        fours: dismissedBatter.fours, sixes: dismissedBatter.sixes, out: true, howOut: dismissalText,
+        fours: dismissedBatter.fours, sixes: dismissedBatter.sixes, out: true, howOut: dismissalText, retiredHurtCount: dismissedBatter.retiredHurtCount || 0,
         dismissalType, fielderName: fielderName || null,
         bowlerName: isBowlerWicket ? (state.bowler.name || null) : null,
         inningsNo: state.inningsNumber
@@ -6719,7 +6837,7 @@ function recordBall(kind, meta){
 
       state.battingCard[state.battingTeam].push({
         name: dismissedBatter.name, id: dismissedBatter.id || null, runs: dismissedBatter.runs, balls: dismissedBatter.balls,
-        fours: dismissedBatter.fours, sixes: dismissedBatter.sixes, out: true, howOut: dismissalText,
+        fours: dismissedBatter.fours, sixes: dismissedBatter.sixes, out: true, howOut: dismissalText, retiredHurtCount: dismissedBatter.retiredHurtCount || 0,
         dismissalType, fielderName: fielderName || null,
         bowlerName: isBowlerWicket ? (state.bowler.name || null) : null,
         inningsNo: state.inningsNumber
@@ -6803,7 +6921,7 @@ function recordBall(kind, meta){
 
       state.battingCard[state.battingTeam].push({
         name: dismissedBatter.name, id: dismissedBatter.id || null, runs: dismissedBatter.runs, balls: dismissedBatter.balls,
-        fours: dismissedBatter.fours, sixes: dismissedBatter.sixes, out: true, howOut: dismissalText,
+        fours: dismissedBatter.fours, sixes: dismissedBatter.sixes, out: true, howOut: dismissalText, retiredHurtCount: dismissedBatter.retiredHurtCount || 0,
         dismissalType, fielderName: fielderName || null,
         bowlerName: isBowlerWicket ? (state.bowler.name || null) : null,
         inningsNo: state.inningsNumber
@@ -7371,12 +7489,18 @@ function triggerWicketClip(){
     // same as it already does when ballMeta is only a partial hint.
     dismissal: null
   };
+  // Remembered so that if this turns out to be Retired Hurt (not a
+  // wicket), the clip is re-labelled instead of counting as a wicket clip.
+  const clipMatchId = safeClipMatchId(matchId);
+  const clipId = `${clipMatchId}_WICKET_${ballTimestamp}`;
+  lastAutoWicketClip = { clipId, t0: ballTimestamp, matchId: clipMatchId };
   fetch(`${CLIPPER_HELPER_URL}/clip`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ eventType: 'WICKET', timestamp: ballTimestamp, matchId, ballMeta })
+    body: JSON.stringify({ eventType: 'WICKET', timestamp: ballTimestamp, matchId: clipMatchId, clipId, ballMeta })
   }).catch(() => toast('⚠️ Clipper helper not running — clip skipped'));
 }
+let lastAutoWicketClip = null;
 
 function openWicketModal(){
   if(isInningsOver()){
@@ -7411,7 +7535,8 @@ function openWicketModal(){
   modal.classList.toggle('wm-extracontext', !!extraAllowed);
   modal.querySelectorAll('.wm-option').forEach(btn => {
     const dismissal = btn.dataset.dismissal;
-    const freeHitOk = !state.freeHit || dismissal === 'Run Out';
+    // Retired Hurt isn't a dismissal, so a Free Hit doesn't restrict it.
+    const freeHitOk = !state.freeHit || dismissal === 'Run Out' || dismissal === 'Retired Hurt';
     const extraOk = !extraAllowed || extraAllowed.includes(dismissal);
     btn.disabled = !(freeHitOk && extraOk);
   });
@@ -7434,6 +7559,7 @@ document.querySelectorAll('.wm-option').forEach(btn => {
     if(dismissalType === 'Caught'){ openCaughtModal(); return; }
     if(dismissalType === 'Stumped'){ openStumpedModal(); return; }
     if(dismissalType === 'Run Out'){ openRunOutModal(); return; }
+    if(dismissalType === 'Retired Hurt'){ openRetiredHurtModal(); return; }
     const dismissedName = state.striker.name || 'Batsman';
     if(finalizeExtraWicket(dismissalType, {})){ openNewBatsmanModal(dismissedName); return; }
     recordBall('W', { dismissalType, deferAnimation: true });
@@ -7801,16 +7927,20 @@ document.getElementById('runout-modal-submit').addEventListener('click', () => {
    locked in here (or explicitly skipped) BEFORE the WICKET graphic
    fires, so the animation always follows the name entry, not before.
    ============================================================ */
-function openNewBatsmanModal(dismissedName){
+function openNewBatsmanModal(dismissedName, opts){
+  opts = opts || {};
   const overlay = document.getElementById('newbat-modal-overlay');
-  document.getElementById('newbat-modal-sub').textContent = `${dismissedName} is out — who's coming in?`;
+  document.getElementById('newbat-modal-sub').textContent = opts.retired
+    ? `${dismissedName} retired hurt — who's coming in?`
+    : `${dismissedName} is out — who's coming in?`;
+  overlay.dataset.retired = opts.retired ? '1' : '';
   const battingKey = state.battingTeam;
   const hasRoster = rosterPlayers(battingKey).length > 0;
   const select = document.getElementById('newbat-modal-select');
   const input = document.getElementById('newbat-modal-input');
   if(hasRoster){
     const otherId = state.newBatsmanEnd === 'nonStriker' ? state.striker.id : state.nonStriker.id;
-    fillPlayerSelect(select, eligibleBatters(battingKey, { excludeIds: [otherId].filter(Boolean) }), { teamKey: battingKey, keepValue: false });
+    fillPlayerSelect(select, eligibleBatters(battingKey, { excludeIds: [otherId, opts.excludeId].filter(Boolean) }), { teamKey: battingKey, keepValue: false });
     select.style.display = 'block';
     input.style.display = 'none';
   } else {
@@ -7826,6 +7956,7 @@ function closeNewBatsmanModal(){
   document.getElementById('newbat-modal-overlay').classList.remove('show');
 }
 function fireDeferredWicketAnimation(){
+  if(document.getElementById('newbat-modal-overlay').dataset.retired === '1') return; // retired hurt is not a wicket
   const dismissedName = document.getElementById('newbat-modal-overlay').dataset.pendingDismissed || '';
   fireEvent('WICKET', 'WICKET!', dismissedName);
 }
@@ -8247,7 +8378,7 @@ document.getElementById('next-innings-btn').addEventListener('click', () => {
   // moment of their WICKET ball, so this only picks up the two left in.
   [state.striker, state.nonStriker].forEach(p => {
     if(p && p.name && !state.battingCard[oldBattingTeam].some(b => b.name === p.name && b.inningsNo === state.inningsNumber)){
-      state.battingCard[oldBattingTeam].push({ name:p.name, runs:p.runs, balls:p.balls, fours:p.fours, sixes:p.sixes, out:false, howOut:'not out', inningsNo: state.inningsNumber });
+      state.battingCard[oldBattingTeam].push({ name:p.name, runs:p.runs, balls:p.balls, fours:p.fours, sixes:p.sixes, out:false, howOut:'not out', retiredHurtCount: p.retiredHurtCount || 0, inningsNo: state.inningsNumber });
     }
   });
   // Archive this innings' final bowler figures.
@@ -8324,6 +8455,7 @@ document.getElementById('next-innings-btn').addEventListener('click', () => {
   // bowled the last over" restriction doesn't carry across an innings
   // break (or a bowling-team change) either.
   state.dismissedThisInnings = { A: [], B: [] };
+  state.retiredHurt = { A: [], B: [] };
   state.lastOverBowlerId = null;
   // If the new batting team has a roster set up, don't carry forward
   // whatever name happened to be sitting in the striker/non-striker
