@@ -28,7 +28,9 @@ echo Starting AllSportsLive Stream Engine...
 echo ffmpeg: %FFMPEG_PATH%
 echo.
 
-call npm start
+REM Run node directly (not through npm): Ctrl+C then reaches the Stream Engine's
+REM own clean shutdown without npm's extra process and its error spam.
+node server.js
 
 REM Keeps the window open after Stream Engine stops/crashes, so any
 REM error message is actually readable instead of the window vanishing.

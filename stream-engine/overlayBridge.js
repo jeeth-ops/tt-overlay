@@ -8,17 +8,15 @@
 // made gdigrab-based capture unreliable (see stream-engine/README.md).
 //
 // Chromium's screencast only sends a new frame when the PAGE ACTUALLY
-// REPAINTS (a score change, a clock tick, etc.) — a cricket scoreboard
-// repaints rarely (maybe a few times a minute), nowhere near a steady
-// video frame rate. If we just forwarded those events as-is, ffmpeg's
-// image2pipe input would sit with no new bytes between repaints and
-// BLOCK reading its stdin — which stalls the whole compositor filter
-// graph (camera included, since the overlay filter needs a frame from
-// every input to produce an output frame). pipeTo() below solves this
-// by re-emitting the LAST KNOWN frame on a steady timer, decoupling
-// "how often the overlay visually changes" from "how often the video
-// pipeline needs a frame" — the overlay is otherwise a completely
-// static image between real repaints, which is exactly correct.
+// REPAINTS (a score change, a clock tick, etc.) — nowhere near a steady
+// video frame rate. This bridge just keeps the latest frame ('frame'
+// events); nativePipeline.js's OverlayPacer re-sends it to ffmpeg at a
+// wall-clock-exact rate, which is what keeps the compositor's overlay
+// input (and therefore the whole program feed) advancing in real time.
+//
+// If Chromium itself dies mid-match, 'disconnected' fires so the
+// compositor can bring up a fresh bridge while the pacer keeps sending
+// the last good frame — the program feed never notices.
 // ================================================================
 const { EventEmitter } = require('events');
 let puppeteer;
@@ -43,7 +41,7 @@ class OverlayBridge extends EventEmitter {
         this.page = null;
         this.client = null;
         this.stopped = false;
-        this.lastFrame = null; // most recent PNG buffer — see pipeTo()
+        this.lastFrame = null; // most recent PNG buffer (also emitted as 'frame')
         this.frameCount = 0;
         this.startedAt = null;
         this.lastError = null;
@@ -69,7 +67,22 @@ class OverlayBridge extends EventEmitter {
             ],
             defaultViewport: { width: this.width, height: this.height, deviceScaleFactor: 1 },
         });
+        if (this._stopped) { await this._closeBrowser(); throw new Error('overlay bridge stopped while starting'); }
+        this.browser.on('disconnected', () => {
+            if (!this.stopped) {
+                this.stopped = true;
+                this.emit('disconnected');
+            }
+        });
         this.page = await this.browser.newPage();
+        // A crashed renderer (tab "Aw, Snap") leaves the browser running
+        // but frames stop — reload the page instead of freezing the overlay.
+        this.page.on('error', (err) => {
+            if (this.stopped) return;
+            this.lastError = `overlay page crashed: ${err.message}`;
+            console.log(`[overlay] ${this.lastError} — reloading`);
+            this.page.reload({ waitUntil: 'load', timeout: 30000 }).catch(() => {});
+        });
         this.client = await this.page.target().createCDPSession();
 
         // 🩹 Forces this page to render against a TRANSPARENT backdrop
@@ -107,26 +120,27 @@ class OverlayBridge extends EventEmitter {
         this.startedAt = Date.now();
     }
 
-    // Re-emits the last known frame to `writable` at a steady `fps` —
-    // this is what actually keeps a downstream ffmpeg image2pipe input
-    // fed continuously; see this file's header comment for why a raw
-    // forward of screencast events (repaint-driven, irregular) isn't
-    // enough on its own.
-    pipeTo(writable, fps = 15) {
-        const intervalMs = Math.round(1000 / fps);
-        const timer = setInterval(() => {
-            if (this.stopped || !this.lastFrame) return;
-            if (!writable.writable) return;
-            try { writable.write(this.lastFrame); } catch (e) { /* consumer gone — stop() will clear this timer */ }
-        }, intervalMs);
-        return () => clearInterval(timer); // caller keeps this to unsubscribe this particular consumer
+    // Never hangs: browser.close() is given a few seconds, then the
+    // Chromium process is killed outright so a wedged renderer can't
+    // block a Stop/shutdown or be left behind as an orphan.
+    async stop() {
+        if (this._stopped) return;
+        this._stopped = true;
+        this.stopped = true;
+        await this._closeBrowser(); // no-op if start() hasn't launched it yet — start() closes it itself then
     }
 
-    async stop() {
-        if (this.stopped) return;
-        this.stopped = true;
-        try { if (this.client) await this.client.send('Page.stopScreencast'); } catch (e) { /* already gone */ }
-        try { if (this.browser) await this.browser.close(); } catch (e) { /* already gone */ }
+    async _closeBrowser() {
+        const browser = this.browser;
+        if (!browser || this._closing) return;
+        this._closing = true;
+        const proc = typeof browser.process === 'function' ? browser.process() : null;
+        try { if (this.client) await Promise.race([this.client.send('Page.stopScreencast'), new Promise((r) => setTimeout(r, 1000))]); } catch (e) { /* already gone */ }
+        const closed = await Promise.race([
+            browser.close().then(() => true, () => false),
+            new Promise((r) => setTimeout(() => r(false), 4000)),
+        ]);
+        if (!closed && proc && proc.exitCode === null) { try { proc.kill('SIGKILL'); } catch (e) { /* already gone */ } }
     }
 }
 
