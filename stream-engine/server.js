@@ -1904,7 +1904,7 @@ function scheduleReconnect() {
     const backoff = RECONNECT_BACKOFF_MS[Math.min(engine.reconnect.attempts, RECONNECT_BACKOFF_MS.length - 1)];
     engine.reconnect.attempts += 1;
     engine.reconnect.nextAttemptAt = Date.now() + backoff;
-    console.log(`[stream-engine] Network disconnect (${engine.lastError}) — reconnecting in ${backoff}ms (attempt ${engine.reconnect.attempts})…`);
+    console.log(`[stream-engine] Live stream interrupted (${engine.lastError}) — reconnecting in ${backoff / 1000}s (attempt ${engine.reconnect.attempts}); recording is unaffected`);
     setTimeout(async () => {
         if (!engine.desiredLive || shuttingDown) return; // operator pressed Stop while we were waiting to retry
         const result = await startEncoder(engine.settings);
