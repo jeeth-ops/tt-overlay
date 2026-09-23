@@ -51,11 +51,6 @@ selected and starts the native preview.
   (there's no window to sample) — the native path currently only checks
   that the compositor's preview snapshot exists and is recent/non-tiny,
   which does NOT actually detect an all-black or all-white frame.
-- **ABR hot-restarts can briefly relaunch the compositor** (camera
-  reopened, overlay bridge restarted) if streaming is running WITHOUT
-  recording also running at the same time — see `stopEncoder`'s own
-  comment. Running Recording + Live together (the common case) avoids
-  this, since the compositor's reference count never reaches zero.
 - **One match at a time.** A second match's compositor can't run
   alongside a first — same limitation the existing recorder already has.
 - **dshow format negotiation isn't probed.** If a camera doesn't support
@@ -67,6 +62,48 @@ selected and starts the native preview.
   alpha channel through `Page.startScreencast`'s PNG frames in practice
   — implemented per the documented CDP behavior, not yet confirmed
   against a real Chromium build.
+
+### Long-run reliability (6–7 hour matches)
+
+What keeps recording, streaming and clipping independent and stable
+for a full match (details in the header comments of `nativePipeline.js`
+and `server.js`):
+
+- **Relay isolation.** The compositor's NUT relay is cut into whole
+  packets at NUT syncpoints. The recorder and live encoder each join
+  at the next packet (header + packets, no stale replay, no compositor
+  restart), fall behind by skipping whole packets (memory stays
+  bounded, timeline stays in sync), and are stopped on a packet
+  boundary (no `Invalid buffer size … Error submitting packet` on Stop).
+  An ABR restart or YouTube reconnect never touches the recording.
+- **Overlay pacing is wall-clock exact** and the overlay comes in over
+  loopback TCP, so the overlay can never slow the camera feed down, and
+  the compositor can be stopped gracefully (`q`) so the camera driver
+  is released properly.
+- **Program Preview is kept in memory** (`GET /capture-preview`), not
+  rewritten to a JPEG on disk twice a second — a file-lock on that
+  JPEG used to kill the whole compositor.
+- **Watchdogs check real progress, not just "process alive":** the
+  compositor restarts itself if it produces no video for 10s; the
+  recorder is restarted into a new segment if its output time or file
+  size stops advancing for 30–45s while the feed is live; the live
+  encoder reconnects if its output stops for 30s. Only the affected
+  part restarts.
+- **Clip jobs** have frozen per-job windows (T0−15s → T0+5s), wait until
+  the recording has actually written the window's end, run in a queue
+  (max 2 cuts at once, below-normal priority, 120s timeout), retry up to
+  3 times, and never block the next clip, the recorder or the stream.
+- **Nothing blocks the event loop** during a match (no sync ffprobe /
+  nvidia-smi / `ffmpeg -version` per poll, no sync job-file writes), and
+  progress lines are parsed rather than printed.
+- **Clean shutdown:** Ctrl+C / closing the window stops live → recorder
+  → compositor → Chromium in order, waits for each, and leaves no
+  ffmpeg behind; any orphan from a crashed previous run is reaped at
+  the next start. QuickEdit is disabled for the engine's console window
+  (a click in it would otherwise freeze the engine).
+- A `[health]` line is logged every 10 minutes while anything runs, and
+  `GET /status` → `resources` / `compositor.relay` / `clipQueue` show
+  memory, child processes, relay consumers and the clip queue live.
 
 If you hit any of these, the gdigrab path (`NATIVE_PROGRAM_FEED` unset
 or `false`) is the fallback — nothing about it changed.

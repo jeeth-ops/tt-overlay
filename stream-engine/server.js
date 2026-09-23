@@ -102,6 +102,11 @@ const NATIVE_CAPTURE_SUPPORTED = process.platform === 'win32';
 // ----------------------------------------------------------------
 const NATIVE_PROGRAM_FEED = process.env.NATIVE_PROGRAM_FEED === 'true';
 const nativePipeline = NATIVE_PROGRAM_FEED ? require('./nativePipeline') : null;
+const { makeRepeatSuppressingLogger, setProcessPriority } = require('./nativePipeline');
+
+// Set once a shutdown starts: every auto-restart/retry path checks it so
+// a stop never turns into a restart loop.
+let shuttingDown = false;
 
 // ----------------------------------------------------------------
 // 📁 WHERE RECORDINGS/CLIPS ACTUALLY LIVE — defaults to stream-engine's
@@ -192,8 +197,75 @@ const FFPROBE_SOURCE = resolvedBinSource('ffprobe', FFPROBE_PATH);
 // two wrappers means windowsHide is never something a new call site can
 // forget to set (see resolveWindowTitle's own powershell spawn above
 // for the same fix applied to that one manually).
-function spawnFfmpeg(args, opts = {}) {
-    return spawn(FFMPEG_PATH, args, { ...opts, windowsHide: true });
+//
+// Every long-lived child is also registered in `childProcesses` (and its
+// PID in CHILD_PIDS_FILE) so /status can report exactly what is running,
+// shutdown can wait for / kill all of them, and a crashed previous run's
+// orphans are reaped at the next startup (see reapOrphanedChildren).
+const childProcesses = new Map(); // pid -> { proc, role, startedAt }
+function spawnFfmpeg(args, opts = {}, role = 'ffmpeg') {
+    const proc = spawn(FFMPEG_PATH, args, { ...opts, windowsHide: true });
+    trackChild(proc, role);
+    return proc;
+}
+function trackChild(proc, role) {
+    if (!proc || !proc.pid) return;
+    const pid = proc.pid;
+    childProcesses.set(pid, { proc, role, startedAt: Date.now() });
+    persistChildPidsSoon();
+    proc.once('exit', () => {
+        childProcesses.delete(pid);
+        persistChildPidsSoon();
+    });
+}
+// PIDs of every live child, written (debounced) so the NEXT run can reap
+// them if this process dies without a clean shutdown — an ffmpeg left
+// holding the camera/NVENC would otherwise make the next match's
+// Recording/Go Live fail with "device busy".
+const CHILD_PIDS_FILE = path.join(DATA_ROOT, 'child-pids.local.json');
+let childPidsTimer = null;
+function persistChildPidsSoon() {
+    if (childPidsTimer) return;
+    childPidsTimer = setTimeout(() => {
+        childPidsTimer = null;
+        const body = JSON.stringify({ ffmpegPath: FFMPEG_PATH, pids: [...childProcesses.keys()] });
+        fs.mkdir(DATA_ROOT, { recursive: true }, () => fs.writeFile(CHILD_PIDS_FILE, body, () => {}));
+    }, 1000);
+}
+function processIsAlive(pid) {
+    try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+// Runs once at startup. Only kills a PID that is (still) an ffmpeg
+// executable — never something that merely reused the PID.
+function reapOrphanedChildren() {
+    let saved;
+    try { saved = JSON.parse(fs.readFileSync(CHILD_PIDS_FILE, 'utf8')); } catch (e) { return; }
+    const pids = (saved.pids || []).filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid && processIsAlive(pid));
+    if (!pids.length) return;
+    const isOurFfmpeg = (exePath) => {
+        if (!exePath) return false;
+        const want = path.basename(saved.ffmpegPath || FFMPEG_PATH).toLowerCase().replace(/\.exe$/, '');
+        return path.basename(exePath).toLowerCase().replace(/\.exe$/, '') === want;
+    };
+    const kill = (victims) => {
+        for (const pid of victims) { try { process.kill(pid, 'SIGKILL'); } catch (e) { /* already gone */ } }
+        if (victims.length) console.log(`[startup] Cleaned up ${victims.length} ffmpeg process(es) left running by a previous Stream Engine session`);
+    };
+    if (process.platform === 'win32') {
+        const filter = pids.map((pid) => `ProcessId=${pid}`).join(' OR ');
+        const ps = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+            `Get-CimInstance Win32_Process -Filter "${filter}" | ForEach-Object { "$($_.ProcessId)|$($_.ExecutablePath)" }`],
+        { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+        let out = '';
+        ps.stdout.on('data', (d) => { out += d; });
+        ps.on('error', () => {});
+        ps.on('close', () => {
+            const victims = out.split(/\r?\n/).map((l) => l.trim().split('|')).filter(([pid, exe]) => pid && isOurFfmpeg(exe)).map(([pid]) => Number(pid));
+            kill(victims);
+        });
+    } else {
+        kill(pids.filter((pid) => { try { return isOurFfmpeg(fs.readlinkSync(`/proc/${pid}/exe`)); } catch (e) { return false; } }));
+    }
 }
 function spawnFfmpegSync(args, opts = {}) {
     return spawnSync(FFMPEG_PATH, args, { ...opts, windowsHide: true });
@@ -229,36 +301,36 @@ function ffprobeAvailable() {
 // with a real duration — not just "the file exists and is non-empty".
 // Best-effort: if ffprobe itself isn't available, this can't verify
 // anything and says so explicitly rather than silently assuming the
-// file is fine.
-function verifyMediaFile(filePath) {
-    if (!ffprobeAvailable()) return { ok: null, reason: 'ffprobe not available — cannot verify file integrity (see bin/README.md)' };
-    try {
-        if (!fs.existsSync(filePath) || fs.statSync(filePath).size === 0) {
-            return { ok: false, reason: 'file missing or empty' };
-        }
-        const res = spawnFfprobeSync([
-            '-v', 'error',
-            '-select_streams', 'v:0',
-            '-show_entries', 'stream=codec_type,width,height:format=duration',
-            '-of', 'json',
-            filePath,
-        ], { encoding: 'utf8', timeout: 10000 });
-        if (res.error || res.status !== 0) {
-            return { ok: false, reason: `ffprobe could not read the file — likely corrupted/incomplete (${(res.stderr || '').trim().slice(0, 200) || res.error?.message || `exit ${res.status}`})` };
-        }
-        const parsed = JSON.parse(res.stdout || '{}');
-        const stream = (parsed.streams || [])[0];
-        const durationSec = parseFloat(parsed.format && parsed.format.duration);
-        if (!stream || !stream.width || !stream.height) {
-            return { ok: false, reason: 'no valid video stream found — likely corrupted/incomplete' };
-        }
-        if (!Number.isFinite(durationSec) || durationSec <= 0) {
-            return { ok: false, reason: 'zero/invalid duration — likely truncated mid-write (crash or disk-full)' };
-        }
-        return { ok: true, width: stream.width, height: stream.height, durationSec };
-    } catch (e) {
-        return { ok: false, reason: `verification threw: ${e.message}` };
-    }
+// file is fine. Asynchronous — used by the clip engine, which runs while
+// the relay (~90 MB/s at 1080p) is flowing through this process; the old
+// spawnSync version stalled the whole program feed once per clip.
+function verifyMediaFileAsync(filePath, timeoutMs = 20000) {
+    if (!ffprobeAvailable()) return Promise.resolve({ ok: null, reason: 'ffprobe not available — cannot verify file integrity (see bin/README.md)' });
+    return new Promise((resolve) => {
+        let st;
+        try { st = fs.statSync(filePath); } catch (e) { return resolve({ ok: false, reason: 'file missing or empty' }); }
+        if (!st.size) return resolve({ ok: false, reason: 'file missing or empty' });
+        let out = '', err = '';
+        const proc = spawn(FFPROBE_PATH, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=codec_type,width,height:format=duration', '-of', 'json', filePath], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+        const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch (e) {} }, timeoutMs);
+        proc.stdout.on('data', (d) => { out += d; });
+        proc.stderr.on('data', (d) => { if (err.length < 2000) err += d; });
+        proc.on('error', (e) => { clearTimeout(timer); resolve({ ok: false, reason: `ffprobe could not run: ${e.message}` }); });
+        proc.on('close', (code) => {
+            clearTimeout(timer);
+            if (code !== 0) return resolve({ ok: false, reason: `ffprobe could not read the file — likely corrupted/incomplete (${err.trim().slice(0, 200) || `exit ${code}`})` });
+            try {
+                const parsed = JSON.parse(out || '{}');
+                const stream = (parsed.streams || [])[0];
+                const durationSec = parseFloat(parsed.format && parsed.format.duration);
+                if (!stream || !stream.width || !stream.height) return resolve({ ok: false, reason: 'no valid video stream found — likely corrupted/incomplete' });
+                if (!Number.isFinite(durationSec) || durationSec <= 0) return resolve({ ok: false, reason: 'zero/invalid duration — likely truncated mid-write (crash or disk-full)' });
+                resolve({ ok: true, width: stream.width, height: stream.height, durationSec });
+            } catch (e) {
+                resolve({ ok: false, reason: `verification threw: ${e.message}` });
+            }
+        });
+    });
 }
 
 // Conservative low-disk threshold — below this, a recording/clip write
@@ -323,7 +395,10 @@ function buildDestinationUrl(url, key) {
 // ----------------------------------------------------------------
 let nvencCheckCache = null; // { available, checkedAt, detail }
 function checkNvenc() {
-    if (nvencCheckCache && Date.now() - nvencCheckCache.checkedAt < 30000) return nvencCheckCache;
+    // A positive result can't change while this process runs, so it's
+    // kept for good — re-probing every 30s (a blocking ffmpeg spawn on
+    // every /status poll) stalled the event loop, and with it the relay.
+    if (nvencCheckCache && (nvencCheckCache.available || Date.now() - nvencCheckCache.checkedAt < 30000)) return nvencCheckCache;
     let available = false, detail = '';
     try {
         const res = spawnFfmpegSync(['-hide_banner', '-encoders'], { encoding: 'utf8', timeout: 5000 });
@@ -515,9 +590,14 @@ function cfrFlagArgs() {
     return cfrFlagCache;
 }
 
+// Cached like checkNvenc: this used to spawn `ffmpeg -version`
+// synchronously on EVERY /status poll for the whole match.
+let ffmpegAvailableCache = null; // { ok, checkedAt }
 function ffmpegAvailable() {
+    if (ffmpegAvailableCache && (ffmpegAvailableCache.ok || Date.now() - ffmpegAvailableCache.checkedAt < 30000)) return ffmpegAvailableCache.ok;
     const res = spawnFfmpegSync(['-version'], { encoding: 'utf8', timeout: 5000 });
-    return !res.error;
+    ffmpegAvailableCache = { ok: !res.error, checkedAt: Date.now() };
+    return ffmpegAvailableCache.ok;
 }
 
 // ----------------------------------------------------------------
@@ -686,14 +766,33 @@ function readCpuUtilization() {
     if (totalDelta <= 0) return null;
     return Math.round((1 - idleDelta / totalDelta) * 100);
 }
+// Returns the most recent sample immediately and refreshes it in the
+// background (at most every 5s). The old version ran nvidia-smi with
+// spawnSync (up to 2s) on every /health poll, freezing the event loop —
+// and therefore the relay feeding the recorder and live encoder.
+let gpuSample = null;
+let gpuSampleInFlight = false;
+let gpuSampleAt = 0;
 function readGpuUtilization() {
-    try {
-        const res = spawnSync('nvidia-smi', ['--query-gpu=utilization.gpu,utilization.memory,utilization.encoder,utilization.decoder,memory.used,memory.total', '--format=csv,noheader,nounits'], { encoding: 'utf8', timeout: 2000 });
-        if (res.error || !res.stdout) return null;
-        const [gpuPct, memPct, encPct, decPct, vramUsedMb, vramTotalMb] = res.stdout.trim().split(',').map((s) => parseFloat(s.trim()));
-        if (Number.isNaN(gpuPct)) return null;
-        return { gpuPercent: gpuPct, gpuMemPercent: memPct, encoderPercent: encPct, decoderPercent: decPct, vramUsedMb, vramTotalMb };
-    } catch (e) { return null; }
+    if (!gpuSampleInFlight && Date.now() - gpuSampleAt > 5000 && gpuSample !== false) {
+        gpuSampleInFlight = true;
+        gpuSampleAt = Date.now();
+        let out = '';
+        let proc;
+        try {
+            proc = spawn('nvidia-smi', ['--query-gpu=utilization.gpu,utilization.memory,utilization.encoder,utilization.decoder,memory.used,memory.total', '--format=csv,noheader,nounits'], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+        } catch (e) { gpuSampleInFlight = false; gpuSample = false; return null; }
+        const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch (e) {} }, 3000);
+        proc.stdout.on('data', (d) => { out += d; });
+        proc.on('error', () => { clearTimeout(timer); gpuSampleInFlight = false; gpuSample = false; }); // no nvidia-smi on this machine — stop trying
+        proc.on('close', () => {
+            clearTimeout(timer);
+            gpuSampleInFlight = false;
+            const [gpuPct, memPct, encPct, decPct, vramUsedMb, vramTotalMb] = out.trim().split(',').map((v) => parseFloat(v.trim()));
+            if (!Number.isNaN(gpuPct)) gpuSample = { gpuPercent: gpuPct, gpuMemPercent: memPct, encoderPercent: encPct, decoderPercent: decPct, vramUsedMb, vramTotalMb, sampledAt: Date.now() };
+        });
+    }
+    return gpuSample || null;
 }
 
 // ================================================================
@@ -1328,23 +1427,67 @@ const WINDOW_NOT_FOUND_PATTERN = /Can.t find window|Failed to find window|Unable
 // abrupt kill this avoids for the normal Stop path (a SIGKILL fallback
 // timer still exists below for a process that doesn't exit in time).
 // ----------------------------------------------------------------
+// Stops a child and resolves once it has really exited: 'q' is the
+// keypress ffmpeg reads on stdin (legacy gdigrab processes); 'eof' ends
+// stdin, which is how a native relay consumer (whose stdin IS its video
+// input) finishes cleanly. SIGKILL only if it hasn't exited in time —
+// and that kill timer is cleared on exit so nothing lingers afterwards.
+function stopChildProcess(proc, { mode = 'q', timeoutMs = 5000 } = {}) {
+    return new Promise((resolve) => {
+        if (!proc || proc.exitCode !== null || proc.signalCode !== null) return resolve();
+        const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch (e) { /* already gone */ } }, timeoutMs);
+        proc.once('exit', () => { clearTimeout(timer); resolve(); });
+        try {
+            if (mode === 'q') proc.stdin.write('q');
+            else proc.stdin.end();
+        } catch (e) {
+            try { proc.kill('SIGKILL'); } catch (e2) { /* already gone */ }
+        }
+    });
+}
 function gracefulStop(proc, killTimeoutMs = 5000) {
-    if (!proc) return;
-    try { proc.stdin.write('q'); } catch (e) { /* already gone */ }
-    setTimeout(() => { try { proc.kill('SIGKILL'); } catch (e) { /* already gone */ } }, killTimeoutMs);
+    return stopChildProcess(proc, { mode: 'q', timeoutMs: killTimeoutMs });
+}
+// 🧪 NATIVE PIPELINE variant — the recorder-encoder/live-encoder's own
+// stdin is the compositor's RELAY INPUT, so writing 'q' would corrupt
+// that stream instead of stopping it. The relay only ever writes whole
+// packets (see nativePipeline.js), so closing stdin here ends the input
+// exactly on a packet boundary: ffmpeg finishes normally and writes
+// proper trailers — no "Invalid buffer size … Error submitting packet"
+// on every stop.
+function gracefulStopByClosingStdin(proc, killTimeoutMs = 5000) {
+    return stopChildProcess(proc, { mode: 'eof', timeoutMs: killTimeoutMs });
 }
 
-// 🧪 NATIVE PIPELINE variant — the recorder-encoder/live-encoder's own
-// stdin is the compositor's RELAY INPUT (real video/audio bytes, not an
-// interactive control channel), so writing the 'q' keypress gracefulStop
-// uses would corrupt that stream instead of stopping it cleanly. Closing
-// stdin (EOF) is the correct way to end a `-f nut -i pipe:0` input —
-// ffmpeg finishes whatever's already buffered and exits normally,
-// writing proper trailers, the same as reaching the end of a real file.
-function gracefulStopByClosingStdin(proc, killTimeoutMs = 5000) {
-    if (!proc) return;
-    try { proc.stdin.end(); } catch (e) { /* already gone */ }
-    setTimeout(() => { try { proc.kill('SIGKILL'); } catch (e) { /* already gone */ } }, killTimeoutMs);
+// ----------------------------------------------------------------
+// 📜 ffmpeg stderr handling shared by the recorder and live encoder.
+// Both run with `-progress pipe:2`: those key=value lines are PARSED
+// (real "is it still writing?" signal + clip timing) and never printed —
+// printing them flooded the console with ~25 lines/second for the whole
+// match, and on Windows a console that can't keep up (or is paused by a
+// click in QuickEdit mode) blocks the process writing to it.
+// ----------------------------------------------------------------
+const PROGRESS_LINE_RE = /^(frame|fps|stream_\d+_\d+_q|bitrate|total_size|out_time_us|out_time_ms|out_time|dup_frames|drop_frames|speed|progress)=/;
+// ffmpeg notices that are expected in this pipeline and tell the
+// operator nothing actionable.
+const BENIGN_FFMPEG_LINE_RE = /Guessed Channel Layout|deprecated pixel format used|VBV maxrate specified, but no bufsize/i;
+function createLineReader(onLine) {
+    let buf = '';
+    return (chunk) => {
+        buf += chunk.toString();
+        let idx;
+        while ((idx = buf.search(/[\r\n]/)) >= 0) {
+            const line = buf.slice(0, idx).trim();
+            buf = buf.slice(idx + 1);
+            if (line) onLine(line);
+        }
+        if (buf.length > 8192) buf = buf.slice(-8192); // never let a newline-less stream grow without bound
+    };
+}
+// out_time_us from a progress line, in seconds (null for anything else / "N/A").
+function progressOutTimeSec(line) {
+    const m = /^out_time_us=(\d+)/.exec(line);
+    return m ? Number(m[1]) / 1e6 : null;
 }
 
 // ================================================================
@@ -1478,6 +1621,7 @@ function buildLiveEncoderArgs({ windowTitle, audioDeviceName, width, height, fps
         '-af', 'aresample=async=1:first_pts=0',
         '-c:a', 'aac', '-b:a', '160k', '-ar', '44100',
         '-max_muxing_queue_size', '4096',
+        '-flvflags', 'no_duration_filesize', // RTMP isn't seekable — avoids "Failed to update header with correct duration/filesize" on every stop
         '-f', 'flv',
         '-progress', 'pipe:2', '-nostats',
         destinationUrl,
@@ -1615,22 +1759,28 @@ async function applyRestart(next) {
     const keyframeIntervalSec = (engine.settings && engine.settings.keyframeIntervalSec) || 2;
     console.log(`[stream-engine] ABR: adapting -> ${next.resolution} @ ${next.fps}fps, ${next.bitrateKbps}kbps (rung=${next.rung})`);
 
-    stopEncoder();
+    stopEncoder({ forRestart: true });
     const waitStart = Date.now();
     while (engine.state !== 'idle' && Date.now() - waitStart < 6500) {
         await new Promise((r) => setTimeout(r, 150));
     }
 
-    if (engine.opToken !== myToken) { engine.adapting = false; return; } // operator acted while we were restarting — defer to them
+    if (engine.opToken !== myToken || shuttingDown) { engine.adapting = false; return; } // operator acted while we were restarting — defer to them (their Stop already released the compositor ref)
 
     engine.desiredLive = true; // stopEncoder() cleared this — this restart is US, not the operator stopping
     const result = await startEncoder({ resolution: next.resolution, fps: next.fps, bitrateKbps: next.bitrateKbps, keyframeIntervalSec });
+    engine.adapting = false;
     if (result.ok) {
         engine.rung = next.rung;
     } else {
-        console.log('[stream-engine] ABR restart failed:', result.error);
+        // Never leave the stream down after a failed adapt: fall into the
+        // normal reconnect loop at the new settings.
+        console.log('[stream-engine] ABR restart failed:', result.error, '— reconnecting');
+        engine.settings = resolveEncodeSettings({ ...next, keyframeIntervalSec });
+        engine.desiredLive = true;
+        engine.lastError = result.error;
+        scheduleReconnect();
     }
-    engine.adapting = false;
 }
 
 // The ABR control loop — ticks every ABR_TICK_MS while live. Priority
@@ -1756,7 +1906,7 @@ function scheduleReconnect() {
     engine.reconnect.nextAttemptAt = Date.now() + backoff;
     console.log(`[stream-engine] Network disconnect (${engine.lastError}) — reconnecting in ${backoff}ms (attempt ${engine.reconnect.attempts})…`);
     setTimeout(async () => {
-        if (!engine.desiredLive) return; // operator pressed Stop while we were waiting to retry
+        if (!engine.desiredLive || shuttingDown) return; // operator pressed Stop while we were waiting to retry
         const result = await startEncoder(engine.settings);
         if (!result.ok) {
             engine.lastError = result.error;
@@ -1806,62 +1956,66 @@ async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec 
             engine.desiredLive = false;
             return { ok: false, error: compResult.error };
         }
+        engine.holdsCompositorRef = true;
         const args = nativePipeline.buildLiveEncoderArgs({ ...resolved, destinationUrl, useTune: checkNvencTuneRuntime() });
-        proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] });
-        const attachResult = await compositor.attachRelayConsumer(proc, 'live');
+        proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] }, 'live-encoder');
+        // Joins the running relay at its next packet — never restarts the
+        // compositor and never disturbs the recorder (see nativePipeline.js).
+        const attachResult = compositor ? compositor.attachRelayConsumer(proc, 'live') : { ok: false, error: 'Native compositor stopped while the live encoder was starting' };
         if (!attachResult.ok) {
             try { proc.kill('SIGKILL'); } catch (e) {}
             engine.state = 'idle';
             engine.desiredLive = false;
-            releaseCompositor('live');
+            releaseLiveCompositorRef();
             return { ok: false, error: attachResult.error || 'Could not attach to the native compositor relay' };
         }
     } else {
         const windowTitle = resolveWindowTitle(engine.matchId);
         const args = buildLiveEncoderArgs({ windowTitle, audioDeviceName: engine.audioDeviceName, ...resolved, destinationUrl });
-        proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] });
+        proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] }, 'live-encoder');
     }
+    setProcessPriority(proc, os.constants.priority.PRIORITY_ABOVE_NORMAL);
     engine.proc = proc;
     engine.startedAt = Date.now();
+    if (!engine.adapting && engine.reconnect.attempts === 0) console.log(`[stream-engine] Live stream started — ${resolved.resolution} ${resolved.fps}fps @ ${resolved.bitrateKbps}kbps`);
+    engine.lastProgressAdvanceAt = null;
+    engine.lastOutTimeSec = 0;
     engine.state = 'live';
-    proc.stdin.on('error', () => {}); // legacy path: stdin is only ever used for the graceful 'q' stop (see gracefulStop); native path: this IS the compositor's relay input, already piped via attachRelayConsumer above — a write after it's already gone is harmless either way
+    proc.stdin.on('error', () => {}); // legacy path: stdin is only ever used for the graceful 'q' stop (see gracefulStop); native path: this IS the compositor's relay input — a write after it's already gone is harmless either way
 
-    let stderrBuf = '';
-    proc.stderr.on('data', (chunk) => {
-        stderrBuf += chunk.toString();
-        let idx;
-        while ((idx = stderrBuf.indexOf('\n')) >= 0) {
-            const line = stderrBuf.slice(0, idx).trim();
-            stderrBuf = stderrBuf.slice(idx + 1);
+    const logLiveLine = makeRepeatSuppressingLogger('[live-encoder]');
+    proc.stderr.on('data', createLineReader((line) => {
+        if (PROGRESS_LINE_RE.test(line)) {
             parseProgressLine(line);
-            if (!line) continue;
-            // 🩹 A line matching a known FATAL pattern (e.g. "Unrecognized
-            // option 'tune'.") is the one line worth keeping — ffmpeg
-            // reliably follows it with a generic wrap-up line ("Error
-            // splitting the argument list: Option not found") that also
-            // matches the plain /error/ test below but explains nothing
-            // on its own. The old code kept whichever matching line came
-            // LAST, so that generic follow-up always won and silently
-            // buried the actionable reason — which then also meant
-            // isFatalError(engine.lastError) came back false and a real,
-            // permanent config error (wrong option) was misclassified as
-            // a network blip and retried forever instead of surfacing as
-            // crashed. Once a fatal line is captured, don't let a later
-            // non-fatal "error/failed" line overwrite it.
-            if (isFatalError(line)) {
-                engine.lastError = line;
-            } else if (!isFatalError(engine.lastError) && /error|failed|refused|denied/i.test(line)) {
-                engine.lastError = line;
+            const outSec = progressOutTimeSec(line);
+            if (outSec !== null && outSec > engine.lastOutTimeSec) {
+                engine.lastOutTimeSec = outSec;
+                engine.lastProgressAdvanceAt = Date.now();
             }
-            // 🩹 Same gap the compositor's stderr handler already closed:
-            // this never printed to the terminal at all, only silently
-            // stored one summarized line — a real failure (e.g. "Error
-            // opening output file") had NO way to be diagnosed beyond
-            // that one line, even though ffmpeg usually prints the actual
-            // underlying OS reason on nearby lines too.
-            console.log(`[live-encoder] ${line}`);
+            return;
         }
-    });
+        // 🩹 A line matching a known FATAL pattern (e.g. "Unrecognized
+        // option 'tune'.") is the one line worth keeping — ffmpeg
+        // reliably follows it with a generic wrap-up line ("Error
+        // splitting the argument list: Option not found") that also
+        // matches the plain /error/ test below but explains nothing
+        // on its own. The old code kept whichever matching line came
+        // LAST, so that generic follow-up always won and silently
+        // buried the actionable reason — which then also meant
+        // isFatalError(engine.lastError) came back false and a real,
+        // permanent config error (wrong option) was misclassified as
+        // a network blip and retried forever instead of surfacing as
+        // crashed. Once a fatal line is captured, don't let a later
+        // non-fatal "error/failed" line overwrite it.
+        if (isFatalError(line)) {
+            engine.lastError = line;
+        } else if (!isFatalError(engine.lastError) && /error|failed|refused|denied/i.test(line)) {
+            engine.lastError = line;
+        }
+        // Every non-progress line is shown (repeats collapsed) — ffmpeg
+        // usually prints the underlying OS reason next to a failure.
+        if (!BENIGN_FFMPEG_LINE_RE.test(line)) logLiveLine(line);
+    }));
 
     // Once this process has survived a few seconds without exiting, treat
     // the connection as genuinely re-established and reset the reconnect
@@ -1877,17 +2031,18 @@ async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec 
         // engine.proc.
         if (engine.proc !== proc) return;
         clearTimeout(stabilizeTimer);
-        const wasDesired = engine.desiredLive;
-        console.log(`[stream-engine] live encoder ffmpeg exited (code=${code}, signal=${signal}); desiredLive=${wasDesired}`);
+        const wasDesired = engine.desiredLive && !shuttingDown;
         engine.proc = null;
-        if (compositor) compositor.removeRelayConsumer(proc); // defensive cleanup even on a path that didn't go through stopEncoder (e.g. a genuine crash) — no-op/harmless in legacy mode
+        if (compositor) compositor.detachRelayConsumer(proc); // defensive cleanup even on a path that didn't go through stopEncoder (e.g. a genuine crash) — no-op/harmless in legacy mode
 
         if (!wasDesired) {
             // Operator pressed STOP (or this is our own ABR hot-restart
             // stopping the old process on purpose) — the expected, graceful path.
             engine.state = 'idle';
+            if (!engine.adapting && !shuttingDown) console.log('[stream-engine] Live stream stopped.');
             return;
         }
+        console.log(`[stream-engine] Live encoder exited unexpectedly (code=${code}, signal=${signal})${engine.lastError ? ` — ${engine.lastError}` : ''}`);
 
         const errMsg = engine.lastError || `ffmpeg exited unexpectedly (code=${code}, signal=${signal})`;
         engine.lastError = errMsg;
@@ -1910,7 +2065,7 @@ async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec 
             const attempt = engine.restarts.length;
             console.log(`[stream-engine] Auto-restarting encoder after fatal-looking error (attempt ${attempt}/${MAX_AUTO_RESTARTS})…`);
             setTimeout(async () => {
-                if (engine.desiredLive) await startEncoder(engine.settings).catch((e) => console.log('[stream-engine] fatal-error auto-restart threw:', e.message));
+                if (engine.desiredLive && !shuttingDown) await startEncoder(engine.settings).catch((e) => console.log('[stream-engine] fatal-error auto-restart threw:', e.message));
             }, Math.min(2000 * attempt, 8000));
             return;
         }
@@ -1922,35 +2077,44 @@ async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec 
     });
 
     proc.on('error', (err) => {
+        // A spawn failure never emits 'exit' — without this the stream
+        // would silently stay down while the operator still wants it live.
         console.log('[stream-engine] live encoder ffmpeg spawn error:', err.message);
         engine.lastError = err.message;
-        engine.state = 'crashed';
+        if (engine.proc !== proc || proc.pid) return; // only a failed spawn (no pid) — any other error is followed by a normal 'exit'
+        engine.proc = null;
+        if (compositor) compositor.detachRelayConsumer(proc);
+        if (engine.desiredLive && !shuttingDown) scheduleReconnect();
+        else engine.state = 'crashed';
     });
 
     return { ok: true };
 }
 
-function stopEncoder() {
+function releaseLiveCompositorRef() {
+    if (!engine.holdsCompositorRef) return;
+    engine.holdsCompositorRef = false;
+    releaseCompositor('live');
+}
+
+// forRestart: an ABR hot-restart stops and immediately restarts the
+// encoder — it keeps its compositor ref so the camera/compositor aren't
+// torn down and relaunched in between when nothing else holds one.
+function stopEncoder({ forRestart = false } = {}) {
     engine.desiredLive = false;
-    if (!engine.proc) { engine.state = 'idle'; return { ok: true, alreadyIdle: true }; }
+    if (!engine.proc) {
+        engine.state = 'idle';
+        // Stop pressed while a reconnect was pending: nothing is running,
+        // but the compositor ref from the last attempt must still be
+        // released, or the camera would stay open after Stop.
+        if (NATIVE_PROGRAM_FEED && !forRestart) releaseLiveCompositorRef();
+        return { ok: true, alreadyIdle: true };
+    }
     engine.state = 'stopping';
     if (NATIVE_PROGRAM_FEED) {
-        // 🩹 Known trade-off: this releases the compositor's 'live' ref
-        // unconditionally, including when this stop is actually part of
-        // an ABR hot-restart (applyRestart calls stopEncoder() then
-        // immediately starts a new encoder) — if recording ISN'T also
-        // running at that moment, the compositor's ref count can
-        // briefly hit zero and it gets torn down and relaunched (camera
-        // reopened, overlay bridge restarted) rather than staying warm
-        // across the restart. Accepted for now: keeping the ref-counting
-        // simple and easy to reason about correctness-wise outweighs
-        // optimizing an already rate-limited (min 8s apart) restart
-        // path, and recording running at the same time (the common
-        // case) avoids this entirely since the compositor's ref count
-        // never reaches zero.
-        if (compositor) compositor.removeRelayConsumer(engine.proc);
+        if (compositor) compositor.detachRelayConsumer(engine.proc);
         gracefulStopByClosingStdin(engine.proc);
-        releaseCompositor('live');
+        if (!forRestart) releaseLiveCompositorRef();
     } else {
         gracefulStop(engine.proc);
     }
@@ -2008,14 +2172,19 @@ function recorderDir(matchId) {
 // the old Live Output window (ensureLiveOutputWindow/
 // releaseLiveOutputWindowIfUnused) — the same idea, one level down.
 // ================================================================
-const NATIVE_PREVIEW_PATH = NATIVE_PROGRAM_FEED ? path.join(DATA_ROOT, 'program-preview.jpg') : null;
 let compositor = null; // the single Compositor instance for whichever match is currently active
+let compositorStopping = null; // promise while a released compositor is still shutting down (camera not yet free)
 
 // Only ONE match's compositor can sensibly run at a time (mirrors the
 // recorder's own existing "already recording a different match" guard
 // below) — a genuine multi-match-simultaneously native pipeline isn't
 // implemented; the operator stops the previous match first, same as today.
 async function ensureCompositor({ matchId, mainServerUrl, cameraDeviceName, audioDeviceName, who }) {
+    // A compositor that was just released may still hold the camera for
+    // a moment — starting a new one before it has exited fails with
+    // "device busy" (an exclusive dshow device can only be opened once).
+    if (compositorStopping) await compositorStopping;
+    if (shuttingDown) return { ok: false, error: 'Stream Engine is shutting down' };
     if (compositor && compositor.matchId !== matchId) {
         return { ok: false, error: `Native compositor already running for a different match ("${compositor.matchId}") — stop that first` };
     }
@@ -2026,29 +2195,30 @@ async function ensureCompositor({ matchId, mainServerUrl, cameraDeviceName, audi
         const { width, height } = RESOLUTIONS[recorder.settings ? recorder.settings.resolution : '1080p'] || RESOLUTIONS['1080p'];
         compositor = new nativePipeline.Compositor({
             spawnFfmpeg,
-            spawnFfmpegSync,
             execPath,
             overlayUrl: `${String(mainServerUrl).replace(/\/+$/, '')}/cricket-overlay?room=${encodeURIComponent(matchId)}`,
             width, height, fps: 30,
-            previewPath: NATIVE_PREVIEW_PATH,
         });
         compositor.matchId = matchId;
-        compositor.on('unexpected-exit', ({ code, signal, lastError }) => {
-            console.log(`[stream-engine] native compositor died unexpectedly (code=${code}, signal=${signal}) while ${[...compositor.refs].join('+') || 'something'} still needed it: ${lastError || 'no ffmpeg error captured'}`);
-        });
     }
-    const result = await compositor.ensureRunning({ cameraDeviceName, audioDeviceName });
+    const comp = compositor;
+    const hadRef = comp.refs.has(who); // a retry by a holder that still wants the feed keeps its ref on failure (the compositor keeps self-healing)
+    comp.addRef(who); // before awaiting, so a concurrent release can't stop it out from under this start
+    const result = await comp.ensureRunning({ cameraDeviceName, audioDeviceName });
     if (!result.ok) {
-        if (compositor.refs.size === 0) compositor = null; // nothing else holds it — don't leave a dead instance around
+        if (!hadRef && comp === compositor) releaseCompositor(who);
         return result;
     }
-    compositor.addRef(who);
+    if (comp !== compositor) return { ok: false, error: 'Native compositor was stopped while starting' };
     return { ok: true };
 }
 function releaseCompositor(who) {
     if (!compositor) return;
-    compositor.removeRef(who);
-    if (compositor.refs.size === 0) compositor = null;
+    if (compositor.removeRef(who) > 0) return;
+    const comp = compositor;
+    compositor = null;
+    const stopping = comp.stop().finally(() => { if (compositorStopping === stopping) compositorStopping = null; });
+    compositorStopping = stopping;
 }
 
 const recorder = {
@@ -2063,10 +2233,47 @@ const recorder = {
     segmentPath: null,
     segments: [],             // [{path, startedAt}] — normally just one; more than one only if a crash forced a new file (see below)
     settings: null,           // {resolution, width, height, fps, bitrateKbps}
-    restarts: [],
+    restarts: [],             // recent unexpected-exit restarts (drives backoff; cleared once a segment runs stably)
+    totalRestarts: 0,
     lastError: null,
     lastProgramFeedHealth: null, // {ok, black, white, frozen, checkedAt} — see runProgramFeedHealthCheck/monitorProgramFeedHealth
+    holdsCompositorRef: false,
+    currentSegment: null,     // the segment the running process is writing
+    lastProgressAdvanceAt: null, // last time ffmpeg's reported output time moved forward
+    lastSizeBytes: null,
+    lastSizeChangeAt: null,
 };
+
+// 🎯 WALL CLOCK → RECORDING TIMELINE. Each segment keeps an anchor: the
+// wall-clock moment its file time 0 corresponds to, derived from the
+// recorder's own -progress reports (anchor = now − out_time). The minimum
+// over the last minute is used — out_time can only lag real time, never
+// lead it, so the minimum is the tightest estimate, and the sliding
+// window follows any slow clock drift over a 7-hour match. The old
+// mapping used the moment the ffmpeg process was SPAWNED, which is
+// seconds earlier than its first frame: every clip window landed late,
+// and its end ran past what had been written — short clips.
+const ANCHOR_WINDOW_MS = 60000;
+function noteRecorderProgress(seg, outTimeSec) {
+    const now = Date.now();
+    if (outTimeSec > (seg.outTimeSec || 0)) {
+        seg.outTimeSec = outTimeSec;
+        seg.lastProgressWall = now;
+        recorder.lastProgressAdvanceAt = now;
+    }
+    if (outTimeSec <= 0) return;
+    const samples = seg.anchorSamples;
+    samples.push([now, now - outTimeSec * 1000]);
+    while (samples.length && now - samples[0][0] > ANCHOR_WINDOW_MS) samples.shift();
+    let min = Infinity;
+    for (const [, a] of samples) if (a < min) min = a;
+    seg.anchorMs = Math.round(min);
+}
+// Seconds into `seg`'s own file for a wall-clock instant.
+function segmentTimeFor(seg, wallMs) {
+    const base = seg.anchorMs != null ? seg.anchorMs : seg.startedAt;
+    return (wallMs - base) / 1000;
+}
 
 function buildRecorderArgs({ windowTitle, audioDeviceName, width, height, fps, bitrateKbps, outFile }) {
     // GPU (NVENC) preferred over CPU (libx264) by operator request — the
@@ -2106,16 +2313,22 @@ function buildRecorderArgs({ windowTitle, audioDeviceName, width, height, fps, b
         '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
         '-flush_packets', '1',
         '-max_muxing_queue_size', '4096',
+        // Parsed, never printed — see noteRecorderProgress/superviseRecorder.
+        '-progress', 'pipe:2', '-nostats',
         '-f', 'mp4',
         outFile,
     ];
 }
 
-async function startRecorder(matchId, { resolution, fps, audioDeviceName, cameraDeviceName, mainServerUrl } = {}) {
+// isRetry: an automatic restart after the recorder exited unexpectedly.
+// A failed retry keeps the operator's intent (desiredRecording) and just
+// schedules the next attempt — it never silently turns recording off.
+async function startRecorder(matchId, { resolution, fps, audioDeviceName, cameraDeviceName, mainServerUrl } = {}, { isRetry = false } = {}) {
     if (recorder.state === 'recording' || recorder.state === 'starting') {
         if (recorder.matchId === matchId) return { ok: true, alreadyRecording: true };
         return { ok: false, error: `Already recording match "${recorder.matchId}" — stop that first` };
     }
+    if (shuttingDown) return { ok: false, error: 'Stream Engine is shutting down' };
     if (!NATIVE_CAPTURE_SUPPORTED) return { ok: false, error: `Native capture (gdigrab/dshow) requires Windows — this process is running on ${process.platform}` };
     if (!audioDeviceName) return { ok: false, error: 'No audio device selected — pick one under Live Studio first' };
     if (NATIVE_PROGRAM_FEED && !cameraDeviceName) return { ok: false, error: 'No camera device selected — pick one under Live Studio first' };
@@ -2124,8 +2337,20 @@ async function startRecorder(matchId, { resolution, fps, audioDeviceName, camera
     const { width, height } = RESOLUTIONS[resKey];
     const bitrateKbps = RECORDING_BITRATE_KBPS[resKey];
 
+    const fail = (error) => {
+        recorder.state = isRetry ? 'crashed' : 'idle';
+        recorder.lastError = error;
+        if (isRetry && recorder.desiredRecording && !shuttingDown) {
+            scheduleRecorderRestart(`restart attempt failed: ${error}`);
+        } else {
+            recorder.desiredRecording = false;
+            if (NATIVE_PROGRAM_FEED) releaseRecorderCompositorRef();
+        }
+        return { ok: false, error };
+    };
+
     const dir = recorderDir(matchId);
-    try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { return { ok: false, error: `Could not create recording folder: ${e.message}` }; }
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { return fail(`Could not create recording folder: ${e.message}`); }
 
     // 🩹 A recording that runs out of disk mid-write doesn't fail
     // cleanly — it leaves a truncated/corrupted MP4 (see verifyMediaFile)
@@ -2137,7 +2362,7 @@ async function startRecorder(matchId, { resolution, fps, audioDeviceName, camera
     const freeBytes = diskFreeBytes(RECORDING_ROOT);
     const HARD_DISK_FLOOR_BYTES = 300 * 1024 * 1024; // 300MB — not even enough for a few seconds of buffering headroom
     if (freeBytes != null && freeBytes < HARD_DISK_FLOOR_BYTES) {
-        return { ok: false, error: `Only ${(freeBytes / 1024 / 1024).toFixed(0)}MB free on the recording drive — free up disk space before starting recording` };
+        return fail(`Only ${(freeBytes / 1024 / 1024).toFixed(0)}MB free on the recording drive — free up disk space before starting recording`);
     }
     if (freeBytes != null && freeBytes < LOW_DISK_WARNING_BYTES) {
         console.log(`[stream-engine] ⚠ LOW DISK SPACE: only ${(freeBytes / 1024 / 1024 / 1024).toFixed(1)}GB free on the recording drive — recording is starting anyway, but free up space soon`);
@@ -2149,8 +2374,14 @@ async function startRecorder(matchId, { resolution, fps, audioDeviceName, camera
     recorder.mainServerUrl = mainServerUrl || recorder.mainServerUrl;
     recorder.desiredRecording = true;
     recorder.settings = { resolution: resKey, width, height, fps: fpsNum, bitrateKbps };
-    const fileName = recorder.segments.length === 0 ? 'master.mp4' : `master_part${recorder.segments.length + 1}.mp4`;
-    const outFile = path.join(dir, fileName);
+    // Never reuse a name: after a Stream Engine restart the in-memory
+    // segment list is empty while master.mp4 from earlier in the same
+    // match is still on disk — ffmpeg would then stop to ask "Overwrite?
+    // [y/N]" on stdin (hanging, or reading relay bytes as the answer).
+    const segmentName = (n) => (n === 1 ? 'master.mp4' : `master_part${n}.mp4`);
+    let partNo = recorder.segments.length + 1;
+    while (fs.existsSync(path.join(dir, segmentName(partNo)))) partNo++;
+    const outFile = path.join(dir, segmentName(partNo));
     recorder.segmentPath = outFile;
     recorder.state = 'starting';
     recorder.startedAt = Date.now();
@@ -2163,140 +2394,137 @@ async function startRecorder(matchId, { resolution, fps, audioDeviceName, camera
         // encoder if that's also running) relays to THIS process, which
         // holds its own independent NVENC session and writes master.mp4.
         const compResult = await ensureCompositor({ matchId, mainServerUrl: recorder.mainServerUrl, cameraDeviceName: recorder.cameraDeviceName, audioDeviceName, who: 'recorder' });
-        if (!compResult.ok) {
-            recorder.state = 'idle';
-            recorder.desiredRecording = false;
-            return { ok: false, error: compResult.error };
-        }
+        if (!compResult.ok) return fail(compResult.error);
+        recorder.holdsCompositorRef = true;
+        if (!recorder.desiredRecording || shuttingDown) return fail('Recording was stopped while starting');
         const useNvenc = checkNvencRuntime();
         if (!useNvenc) checkLibx264();
         const args = nativePipeline.buildRecorderEncoderArgs({ width, height, fps: fpsNum, bitrateKbps, outFile, useNvenc });
-        proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] });
-        const attachResult = await compositor.attachRelayConsumer(proc, 'recorder');
+        proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] }, 'recorder');
+        // Joins the running relay at its next packet — the live encoder
+        // (if running) is never disturbed (see nativePipeline.js).
+        const attachResult = compositor ? compositor.attachRelayConsumer(proc, 'recorder') : { ok: false, error: 'Native compositor stopped while the recorder was starting' };
         if (!attachResult.ok) {
             try { proc.kill('SIGKILL'); } catch (e) {}
-            recorder.state = 'idle';
-            recorder.desiredRecording = false;
-            releaseCompositor('recorder');
-            return { ok: false, error: attachResult.error || 'Could not attach to the native compositor relay' };
+            return fail(attachResult.error || 'Could not attach to the native compositor relay');
         }
     } else {
         const windowTitle = resolveWindowTitle(matchId);
         const args = buildRecorderArgs({ windowTitle, audioDeviceName, width, height, fps: fpsNum, bitrateKbps, outFile });
-        proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] });
+        proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] }, 'recorder');
     }
+    setProcessPriority(proc, os.constants.priority.PRIORITY_ABOVE_NORMAL);
     recorder.proc = proc;
     recorder.state = 'recording';
-    recorder.segments.push({ path: outFile, startedAt: recorder.startedAt });
-    proc.stdin.on('error', () => {}); // legacy path: stdin is only ever used for the graceful 'q' stop (see gracefulStop); native path: this IS the compositor's relay input, already piped via attachRelayConsumer above
+    const seg = { path: outFile, startedAt: recorder.startedAt, anchorMs: null, outTimeSec: 0 };
+    Object.defineProperty(seg, 'anchorSamples', { value: [], enumerable: false }); // internal — kept out of /recording-info's JSON
+    recorder.segments.push(seg);
+    recorder.currentSegment = seg;
+    recorder.lastProgressAdvanceAt = null;
+    recorder.lastSizeBytes = null;
+    recorder.lastSizeChangeAt = null;
+    if (!isRetry) console.log(`[stream-engine] Recording started → ${outFile}`);
+    proc.stdin.on('error', () => {}); // legacy path: stdin is only ever used for the graceful 'q' stop (see gracefulStop); native path: this IS the compositor's relay input
 
-    let stderrBuf = '';
-    proc.stderr.on('data', (chunk) => {
-        stderrBuf += chunk.toString();
-        let idx;
-        while ((idx = stderrBuf.indexOf('\n')) >= 0) {
-            const line = stderrBuf.slice(0, idx).trim();
-            stderrBuf = stderrBuf.slice(idx + 1);
-            if (!line) continue;
-            // Same reasoning as the live encoder's stderr handler above —
-            // keep a specific FATAL-pattern line (e.g. "Can't find
-            // window") over a later generic "error/failed/invalid" line
-            // that would otherwise silently overwrite it with something
-            // less actionable.
-            if (isFatalError(line)) {
-                recorder.lastError = line;
-            } else if (!isFatalError(recorder.lastError) && /error|failed|invalid/i.test(line)) {
-                recorder.lastError = line;
-            }
-            // 🩹 Same gap the compositor's stderr handler already closed:
-            // this never printed to the terminal at all, only silently
-            // stored one summarized line — "Error opening output file
-            // ...master_partN.mp4." with no visible reason at all (real
-            // field failure) had no way to be diagnosed beyond guessing,
-            // even though ffmpeg usually prints the actual underlying OS
-            // reason (permission denied, file in use, etc.) right nearby.
-            console.log(`[recorder] ${line}`);
-        }
-    });
-
-    proc.on('exit', (code, signal) => {
-        // A stale/superseded process's own exit must never clobber a
-        // NEWER recording that's since taken over recorder.proc (e.g.
-        // this exact process was stopped by /recording-start switching
-        // to a different match while it was still shutting down) — only
-        // the process CURRENTLY tracked gets to mutate shared state.
-        if (recorder.proc !== proc) return;
-        const wasDesired = recorder.desiredRecording;
-        console.log(`[stream-engine] recorder ffmpeg exited (code=${code}, signal=${signal}); desiredRecording=${wasDesired}`);
-        recorder.proc = null;
-        if (compositor) compositor.removeRelayConsumer(proc); // no-op/harmless in legacy mode (compositor is always null there)
-        if (!wasDesired) {
-            recorder.state = 'idle';
-            if (NATIVE_PROGRAM_FEED) releaseCompositor('recorder');
+    const logRecorderLine = makeRepeatSuppressingLogger('[recorder]');
+    proc.stderr.on('data', createLineReader((line) => {
+        if (PROGRESS_LINE_RE.test(line)) {
+            const outSec = progressOutTimeSec(line);
+            if (outSec !== null) noteRecorderProgress(seg, outSec);
             return;
         }
+        // Same reasoning as the live encoder's stderr handler above —
+        // keep a specific FATAL-pattern line (e.g. "Can't find
+        // window") over a later generic "error/failed/invalid" line
+        // that would otherwise silently overwrite it with something
+        // less actionable.
+        if (isFatalError(line)) {
+            recorder.lastError = line;
+        } else if (!isFatalError(recorder.lastError) && /error|failed|invalid/i.test(line)) {
+            recorder.lastError = line;
+        }
+        if (!BENIGN_FFMPEG_LINE_RE.test(line)) logRecorderLine(line);
+    }));
 
+    let exitHandled = false;
+    const onGone = (code, signal, spawnError) => {
+        // A stale/superseded process's own exit must never clobber a
+        // NEWER recording that's since taken over recorder.proc — only
+        // the process CURRENTLY tracked gets to mutate shared state.
+        if (exitHandled || recorder.proc !== proc) return;
+        exitHandled = true;
+        const wasDesired = recorder.desiredRecording && !shuttingDown;
+        recorder.proc = null;
+        recorder.currentSegment = null;
+        if (compositor) compositor.detachRelayConsumer(proc); // no-op/harmless in legacy mode (compositor is always null there)
+        if (!wasDesired) {
+            recorder.state = 'idle';
+            if (!shuttingDown) console.log(`[stream-engine] Recording stopped — saved ${outFile}`);
+            if (NATIVE_PROGRAM_FEED && !recorder.desiredRecording) releaseRecorderCompositorRef();
+            return;
+        }
         // Unexpected exit while the operator still wants to be
         // recording — never silently stop capturing the match. Start a
         // NEW segment file (fragmented MP4 can't simply be appended to
-        // after the process that owns it exits) rather than giving up;
-        // every segment individually stays under RECORDING_ROOT and
-        // stays playable on its own.
+        // after the process that owns it exits); every segment stays
+        // playable on its own, up to its last flushed fragment.
         recorder.state = 'crashed';
-        recorder.lastError = recorder.lastError || `recorder ffmpeg exited unexpectedly (code=${code}, signal=${signal})`;
-        // 🩹 CONFIRMED IN THE FIELD: the old MAX_AUTO_RESTARTS-within-
-        // RESTART_WINDOW_MS cap gave up and stopped local recording
-        // entirely after 3 attempts in 5 minutes — exactly the failure
-        // mode local recording is supposed to be immune to (e.g. the
-        // camera briefly unplugged, or Windows/antivirus holding a file
-        // handle a little longer than expected — see the data-root
-        // folder fix). Recording must never stop on its own; only the
-        // operator pressing "Stop Recording" should end it. Keep an
-        // ever-growing (capped) backoff instead of a hard give-up, same
-        // spirit as the live encoder's own unlimited-backoff reconnect.
-        recorder.restarts.push(Date.now());
-        const attempt = recorder.restarts.length;
-        console.log(`[stream-engine] recorder: auto-restarting into a new segment (attempt ${attempt}, never gives up on its own)…`);
-        // Note: this does NOT release the compositor first — it's still
-        // needed for the retry about to happen (ensureCompositor inside
-        // startRecorder will itself relaunch it if it also died in the
-        // same crash, e.g. the camera was unplugged).
-        // 🩹 CONFIRMED IN THE FIELD: a flat 1s retry sometimes hit "Error
-        // opening output file" on the NEW segment too, repeatedly. 1s
-        // isn't always enough for Windows (antivirus real-time scanning
-        // especially) to fully release the file it was just watching get
-        // created/closed moments earlier. Back off more on each attempt,
-        // capped at 15s — long enough to ride out a real hiccup (camera
-        // unplugged, file briefly locked) without hammering, short
-        // enough that recording resumes quickly once it clears.
-        const retryDelayMs = Math.min(1500 * attempt, 15000);
-        setTimeout(() => {
-            if (recorder.desiredRecording) {
-                startRecorder(recorder.matchId, { resolution: recorder.settings.resolution, fps: recorder.settings.fps, audioDeviceName: recorder.audioDeviceName, cameraDeviceName: recorder.cameraDeviceName, mainServerUrl: recorder.mainServerUrl })
-                    .catch((e) => console.log('[stream-engine] recorder auto-restart threw:', e.message));
-            }
-        }, retryDelayMs);
-    });
-
-    proc.on('error', (err) => {
-        console.log('[stream-engine] recorder ffmpeg spawn error:', err.message);
-        recorder.lastError = err.message;
-        recorder.state = 'crashed';
-    });
+        recorder.lastError = recorder.lastError || (spawnError ? `recorder ffmpeg could not start: ${spawnError.message}` : `recorder ffmpeg exited unexpectedly (code=${code}, signal=${signal})`);
+        // Note: this does NOT release the compositor — it's still needed
+        // for the retry (and the compositor self-heals if it died too).
+        scheduleRecorderRestart(recorder.lastError);
+    };
+    proc.on('exit', (code, signal) => onGone(code, signal, null));
+    // A spawn failure never emits 'exit' — without this, recording would
+    // silently stay stopped.
+    proc.on('error', (err) => { recorder.lastError = err.message; if (!proc.pid) onGone(null, null, err); });
 
     return { ok: true };
 }
 
+// 🩹 Recording must never stop on its own; only "Stop Recording" ends it.
+// Backoff grows per consecutive failure (capped at 15s — Windows/
+// antivirus can hold a just-closed file for a moment) and resets once a
+// segment has run stably (see superviseRecorder), so a recovery hours
+// into a match isn't penalized for one much earlier.
+function scheduleRecorderRestart(reason) {
+    if (recorder.restartTimer || shuttingDown || !recorder.desiredRecording) return;
+    recorder.restarts.push(Date.now());
+    recorder.totalRestarts++;
+    const attempt = recorder.restarts.length;
+    const retryDelayMs = Math.min(1500 * attempt, 15000);
+    console.log(`[stream-engine] Recorder stopped unexpectedly (${reason}) — continuing in a new segment in ${(retryDelayMs / 1000).toFixed(1)}s (attempt ${attempt}); streaming is unaffected`);
+    recorder.restartTimer = setTimeout(() => {
+        recorder.restartTimer = null;
+        if (!recorder.desiredRecording || shuttingDown) return;
+        startRecorder(recorder.matchId, { resolution: recorder.settings.resolution, fps: recorder.settings.fps, audioDeviceName: recorder.audioDeviceName, cameraDeviceName: recorder.cameraDeviceName, mainServerUrl: recorder.mainServerUrl }, { isRetry: true })
+            .then((r) => { if (r.ok) console.log(`[stream-engine] Recorder resumed → ${recorder.segmentPath}`); })
+            .catch((e) => { console.log('[stream-engine] recorder auto-restart threw:', e.message); scheduleRecorderRestart(e.message); });
+    }, retryDelayMs);
+}
+
+function releaseRecorderCompositorRef() {
+    if (!recorder.holdsCompositorRef) return;
+    recorder.holdsCompositorRef = false;
+    releaseCompositor('recorder');
+}
+
 function stopRecorder() {
     recorder.desiredRecording = false;
-    if (!recorder.proc) { recorder.state = 'idle'; return { ok: true, alreadyIdle: true }; }
+    if (recorder.restartTimer) { clearTimeout(recorder.restartTimer); recorder.restartTimer = null; }
+    if (!recorder.proc) {
+        recorder.state = 'idle';
+        if (NATIVE_PROGRAM_FEED) releaseRecorderCompositorRef(); // Stop pressed during a restart backoff — still free the camera
+        return { ok: true, alreadyIdle: true };
+    }
     recorder.state = 'stopping';
+    const proc = recorder.proc;
     if (NATIVE_PROGRAM_FEED) {
-        if (compositor) compositor.removeRelayConsumer(recorder.proc); // stop before closing stdin — avoids a write-after-end race
-        gracefulStopByClosingStdin(recorder.proc);
-        releaseCompositor('recorder');
+        if (compositor) compositor.detachRelayConsumer(proc); // stop feeding before closing stdin — ends exactly on a packet boundary
+        gracefulStopByClosingStdin(proc);
+        releaseRecorderCompositorRef();
     } else {
-        gracefulStop(recorder.proc);
+        gracefulStop(proc);
     }
     return { ok: true };
 }
@@ -2304,6 +2532,7 @@ function stopRecorder() {
 function resetRecorderForNewMatch() {
     recorder.segments = [];
     recorder.restarts = [];
+    recorder.totalRestarts = 0;
 }
 
 // Best-effort free disk space for the recordings volume — Node 18.15+
@@ -2339,9 +2568,11 @@ const CLIP_MAX_WIDTH = 1280;
 
 const recordingMatches = {}; // matchId -> { mainServerUrl, tournamentId } — set by /recording-start, used to resolve where a clip forwards to
 const clipWorker = {
-    state: 'idle', // idle | cutting | uploading
+    state: 'idle', // idle | cutting | uploading — derived from the clip queue (see refreshClipWorkerState)
     lastError: null,
     cloudflareConnected: true, // optimistic until a forward attempt actually fails
+    queued: 0,
+    activeCuts: 0,
 };
 // ================================================================
 // 🎬 PERSISTENT CLIP JOBS — one per accepted FOUR/SIX/WICKET event,
@@ -2366,8 +2597,43 @@ function loadClipJobs() {
         for (const job of raw) clipJobs.set(job.clipId, job);
     } catch (e) { /* first run, or file doesn't exist yet — nothing to load */ }
 }
+// Debounced, asynchronous, one write in flight at a time. This used to
+// be a synchronous writeFileSync of up to 200 jobs on EVERY status
+// change — several per clip, plus one every 3s per clip being polled —
+// i.e. repeated blocking disk I/O on the thread that also pumps the
+// ~90 MB/s relay to the recorder and live encoder.
+const CLIP_JOBS_KEEP_IN_MEMORY = 300;
+let clipJobsPersistTimer = null;
+let clipJobsWriting = false;
+let clipJobsDirty = false;
+function serializeClipJobs() {
+    return JSON.stringify([...clipJobs.values()].slice(-200));
+}
 function persistClipJobs() {
-    try { fs.writeFileSync(CLIP_JOBS_FILE, JSON.stringify([...clipJobs.values()].slice(-200))); } catch (e) { /* best effort */ }
+    clipJobsDirty = true;
+    if (clipJobsPersistTimer || clipJobsWriting) return;
+    clipJobsPersistTimer = setTimeout(() => {
+        clipJobsPersistTimer = null;
+        clipJobsDirty = false;
+        clipJobsWriting = true;
+        fs.writeFile(CLIP_JOBS_FILE, serializeClipJobs(), () => {
+            clipJobsWriting = false;
+            if (clipJobsDirty) persistClipJobs();
+        });
+    }, 1000);
+}
+function flushClipJobsSync() {
+    if (clipJobsPersistTimer) { clearTimeout(clipJobsPersistTimer); clipJobsPersistTimer = null; }
+    try { fs.writeFileSync(CLIP_JOBS_FILE, serializeClipJobs()); } catch (e) { /* best effort */ }
+}
+// Finished jobs beyond the most recent CLIP_JOBS_KEEP_IN_MEMORY are
+// dropped from memory so a long match can't grow this map forever.
+function pruneClipJobs() {
+    if (clipJobs.size <= CLIP_JOBS_KEEP_IN_MEMORY) return;
+    for (const [id, job] of clipJobs) {
+        if (clipJobs.size <= CLIP_JOBS_KEEP_IN_MEMORY) break;
+        if (job.status === 'COMPLETE' || job.status === 'FAILED_PERMANENT') clipJobs.delete(id);
+    }
 }
 function updateJob(clipId, patch) {
     const job = clipJobs.get(clipId);
@@ -2519,22 +2785,19 @@ retryQueue.forEach((entry) => scheduleRetry(entry));
 
 // 🔒 CLIP SOURCE = LOCAL MASTER RECORDING, STRICTLY — non-negotiable.
 // Clips are cut by seeking directly into the actual recorder segment
-// file on disk — the exact same bytes YouTube's audience and the local
-// master both came from — never YouTube, never HLS, never a browser
-// blob/chunk, never R2/Drive.
+// file on disk — never YouTube, never HLS, never a browser blob/chunk,
+// never R2/Drive.
 //
 // Finds which recorder segment (normally just one; more than one only
-// if the recorder itself crash-restarted mid-match) covers a given
-// event time, by each segment's own startedAt window.
+// if the recorder itself had to restart mid-match) covers an event: the
+// latest segment whose timeline had already started at T0.
 function findRecordingSegmentFor(eventTimestamp) {
     const segs = recorder.segments;
-    for (let i = 0; i < segs.length; i++) {
-        const seg = segs[i];
-        const next = segs[i + 1];
-        const segEndMs = next ? next.startedAt : Date.now();
-        if (eventTimestamp >= seg.startedAt && eventTimestamp <= segEndMs) return seg;
+    for (let i = segs.length - 1; i >= 0; i--) {
+        const base = segs[i].anchorMs != null ? segs[i].anchorMs : segs[i].startedAt;
+        if (eventTimestamp >= base) return segs[i];
     }
-    return segs.length ? segs[segs.length - 1] : null; // still-active last segment as a fallback
+    return segs[0] || null;
 }
 
 function clipsDirFor(matchId) {
@@ -2543,72 +2806,125 @@ function clipsDirFor(matchId) {
     return dir;
 }
 
-async function cutLocalClip({ clipId, matchId, eventTimestamp }) {
-    const seg = findRecordingSegmentFor(eventTimestamp);
+// fMP4 fragments are closed (and written) on each keyframe — 2s GOP — so
+// footage up to out_time can still be ~2s from being on disk.
+const CLIP_FLUSH_MARGIN_SEC = 2.5;
+const CLIP_COVERAGE_WAIT_MS = 20000;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Waits until the segment being recorded has actually written the clip's
+// last second. The fixed 5s post-roll alone wasn't enough: encoder +
+// fragment latency meant the tail of the window often wasn't on disk yet
+// when the cut ran, and ffmpeg simply stopped at end-of-file — ~10-15s
+// clips instead of 20s, most visibly for back-to-back requests.
+async function waitForSegmentCoverage(seg, endSec) {
+    const deadline = Date.now() + CLIP_COVERAGE_WAIT_MS;
+    while (Date.now() < deadline && !shuttingDown) {
+        if (recorder.currentSegment !== seg) return; // segment already finished — what's in it is final
+        if ((seg.outTimeSec || 0) >= endSec + CLIP_FLUSH_MARGIN_SEC) return;
+        await sleep(250);
+    }
+}
+
+// Cuts ONE job's window from the recording. Everything it needs comes
+// from the job's own frozen `window` — nothing shared, nothing another
+// request can overwrite. Returns { ok, outFile } or { ok:false, error, retryable }.
+async function cutLocalClip(job) {
+    const { clipId, matchId } = job;
+    const win = job.window;
+    const seg = findRecordingSegmentFor(win.t0);
     if (!seg) {
-        return { ok: false, error: `No local master recording available for match "${matchId}" yet — press "Start Recording" first and confirm the recorder is actually running (see /status).` };
+        return { ok: false, retryable: false, error: `No local master recording available for match "${matchId}" yet — press "Start Recording" first and confirm the recorder is actually running (see /status).` };
     }
     if (!fs.existsSync(seg.path)) {
-        return { ok: false, error: `Local master recording file is missing on disk: ${seg.path}` };
+        return { ok: false, retryable: false, error: `Local master recording file is missing on disk: ${seg.path}` };
     }
 
-    const offsetSec = (eventTimestamp - seg.startedAt) / 1000;
-    const fromSec = Math.max(0, offsetSec - CLIP_PRE_ROLL_SEC);
-    const durationSec = CLIP_PRE_ROLL_SEC + CLIP_POST_ROLL_SEC;
+    const startSec = segmentTimeFor(seg, win.startWall);
+    const endSec = segmentTimeFor(seg, win.endWall);
+    if (endSec <= 0) return { ok: false, retryable: false, error: 'This moment is before the start of the recording segment — nothing to cut.' };
+    await waitForSegmentCoverage(seg, endSec);
+    if (shuttingDown) return { ok: false, retryable: false, error: 'Stream Engine shut down before this clip could be cut.' };
 
-    // Deterministic, clipId-based filename (not Date.now()-based) — a
-    // job re-run for the exact same event never leaves multiple .mp4s
-    // behind, and this is the SAME name server.js's R2 key/Drive
-    // filename are derived from, so the whole pipeline refers to one
-    // clip by one identity end to end.
+    const fromSec = Math.max(0, startSec);
+    // A finished segment can't supply more than it holds (e.g. recording
+    // stopped a second after the event) — cut what exists instead of failing.
+    const availableEndSec = recorder.currentSegment === seg ? endSec : Math.min(endSec, Math.max(seg.outTimeSec || endSec, fromSec + 1));
+    const durationSec = Math.max(1, availableEndSec - fromSec);
+
+    // Deterministic, clipId-based filename — the SAME name server.js's
+    // R2 key/Drive filename are derived from. Written to a .part file
+    // first and renamed only once verified, so a half-written or failed
+    // cut can never be mistaken for (or uploaded as) a finished clip.
     const outFile = path.join(clipsDirFor(matchId), `${clipId}.mp4`);
+    const partFile = path.join(clipsDirFor(matchId), `${clipId}.part.mp4`);
 
-    console.log(`[CLIP RANGE] clipId=${clipId} source=${path.basename(seg.path)} start=T0-${CLIP_PRE_ROLL_SEC}s end=T0+${CLIP_POST_ROLL_SEC}s`);
+    console.log(`[CLIP RANGE] clipId=${clipId} source=${path.basename(seg.path)} file=${fromSec.toFixed(1)}s→${(fromSec + durationSec).toFixed(1)}s (T0-${win.preRollSec}s → T0+${win.postRollSec}s, ${durationSec.toFixed(1)}s)`);
 
-    await cutFromMasterFile({ masterFile: seg.path, fromSec, durationSec, outFile });
+    try {
+        await cutFromMasterFile({ clipId, masterFile: seg.path, fromSec, durationSec, outFile: partFile });
+    } catch (e) {
+        fs.unlink(partFile, () => {});
+        return { ok: false, retryable: true, error: e.message };
+    }
 
     // 🩹 A clip whose ffmpeg process exited 0 can still be a corrupted/
-    // truncated file (e.g. the disk filled up mid-write on the last few
-    // hundred KB, or the process was killed a moment too early) — verify
-    // it actually has a valid, playable video stream before calling this
-    // a success, so a broken file never gets uploaded/shown to the
-    // operator as if it were a real clip.
-    const verify = verifyMediaFile(outFile);
+    // truncated file — verify it has a valid, playable video stream
+    // (asynchronously — see verifyMediaFileAsync) before calling it done.
+    const verify = await verifyMediaFileAsync(partFile);
     if (verify.ok === false) {
-        try { fs.unlinkSync(outFile); } catch (e) { /* best effort — don't leave a known-broken file lying around */ }
-        return { ok: false, error: `Clip file failed integrity check: ${verify.reason}` };
+        fs.unlink(partFile, () => {});
+        return { ok: false, retryable: true, error: `Clip file failed integrity check: ${verify.reason}` };
+    }
+    // Still short although the recording has more by now? The tail wasn't
+    // flushed yet — cut again rather than deliver a clipped clip.
+    if (verify.ok && verify.durationSec < durationSec - 2 && recorder.currentSegment === seg && (job.cutAttempts || 1) < CLIP_MAX_CUT_ATTEMPTS) {
+        fs.unlink(partFile, () => {});
+        return { ok: false, retryable: true, error: `Clip came out ${verify.durationSec.toFixed(1)}s instead of ${durationSec.toFixed(1)}s (recording tail not flushed yet)` };
+    }
+    try {
+        await renameWithRetry(partFile, outFile);
+    } catch (e) {
+        fs.unlink(partFile, () => {});
+        return { ok: false, retryable: true, error: `Could not finalize clip file: ${e.message}` };
     }
 
     console.log(`[CLIP CREATED] clipId=${clipId} localPath=${outFile}${verify.ok === null ? ' (integrity NOT verified — ffprobe unavailable, see bin/README.md)' : ` (verified: ${verify.durationSec.toFixed(1)}s, ${verify.width}x${verify.height})`}`);
-    return { ok: true, outFile };
+    return { ok: true, outFile, durationSec: verify.durationSec || null };
+}
+
+// Windows (antivirus, indexer) can hold a just-written file for a moment.
+async function renameWithRetry(from, to, attempts = 5) {
+    for (let i = 0; ; i++) {
+        try {
+            await fs.promises.rename(from, to);
+            return;
+        } catch (e) {
+            if (i >= attempts - 1) throw e;
+            await sleep(300 * (i + 1));
+        }
+    }
 }
 
 // Seeks directly into the local master.mp4 with -ss BEFORE -i (fast
-// input-side seek — reads/decodes only from the nearest preceding
-// keyframe onward, never the whole multi-hour recording) and re-encodes
-// only the ~20s window that's actually needed. Because the master is
-// recorded with a fixed 2s GOP, a clip's true start is at most ~2s
-// later than requested in the worst case — a normal, expected trade-off
-// for fast seeking into a live-recorded file, not a bug.
+// input-side seek) and re-encodes only the ~20s window that's needed.
 //
-// 🔒 CONCURRENT-CLIP GPU SAFETY NET — clips are cut independently and in
-// PARALLEL (a clip never waits in a queue behind another clip — one
-// slow/stuck cut must never delay or block a different one). The
-// recorder and the live encoder also each hold their own NVENC session
-// the whole time they're running. Some GPUs (older GeForce cards
-// especially) cap how many concurrent NVENC sessions are allowed at
-// once — if two clips land at almost the same moment while
-// Recording+Live are both also running, that cap can be hit and the
-// GPU encode for one of the clips fails outright. Rather than let that
-// clip come back as a hard failure, this retries the SAME cut once on
-// the CPU (libx264) before giving up — slower for that one clip, but it
-// still gets made instead of being lost. Recording and the live stream
-// are never affected either way (they don't share this retry path).
-async function cutFromMasterFile({ masterFile, fromSec, durationSec, outFile }) {
+// 🔒 GPU SAFETY NET — the recorder and the live encoder each hold their
+// own NVENC session the whole time they're running; some GPUs cap
+// concurrent sessions. If NVENC refuses, the SAME cut is retried once on
+// the CPU (libx264). Recording and the live stream never share this path.
+//
+// Every cut is a separate, bounded process: BELOW_NORMAL priority (so it
+// can never starve real-time capture/encode), killed if it runs longer
+// than CLIP_CUT_TIMEOUT_MS, and tracked in activeClipCuts so shutdown
+// can stop it.
+const CLIP_CUT_TIMEOUT_MS = 120000;
+const activeClipCuts = new Map(); // clipId -> ffmpeg proc
+async function cutFromMasterFile({ clipId, masterFile, fromSec, durationSec, outFile }) {
     const attempt = (useNvenc) => new Promise((resolve, reject) => {
         const args = [
-            '-hide_banner', '-loglevel', 'warning', '-y',
-            '-ss', String(fromSec), '-i', masterFile, '-t', String(durationSec),
+            '-hide_banner', '-loglevel', 'warning', '-nostats', '-y',
+            '-ss', fromSec.toFixed(3), '-i', masterFile, '-t', durationSec.toFixed(3),
             '-vf', `scale='min(iw,${CLIP_MAX_WIDTH})':-2`,
             // NVENC doesn't take -crf; '-rc vbr -cq N' is its equivalent
             // "quality, not fixed bitrate" mode (b:v 0 tells it not to
@@ -2619,52 +2935,120 @@ async function cutFromMasterFile({ masterFile, fromSec, durationSec, outFile }) 
             '-c:a', 'aac', '-b:a', '128k',
             outFile,
         ];
-        const proc = spawnFfmpeg(args, { stdio: ['ignore', 'ignore', 'pipe'] });
+        const proc = spawnFfmpeg(args, { stdio: ['ignore', 'ignore', 'pipe'] }, 'clip-cut');
+        setProcessPriority(proc, os.constants.priority.PRIORITY_BELOW_NORMAL);
+        activeClipCuts.set(clipId, proc);
         let stderr = '';
-        proc.stderr.on('data', (d) => { stderr += d; });
-        proc.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg clip cut (${useNvenc ? 'NVENC' : 'CPU'}) exited ${code}: ${stderr.slice(-500)}`)));
-        proc.on('error', reject);
+        let timedOut = false;
+        const timer = setTimeout(() => { timedOut = true; try { proc.kill('SIGKILL'); } catch (e) {} }, CLIP_CUT_TIMEOUT_MS);
+        proc.stderr.on('data', (d) => { stderr = (stderr + d).slice(-2000); });
+        proc.on('error', (err) => { clearTimeout(timer); activeClipCuts.delete(clipId); reject(err); });
+        proc.on('exit', (code, signal) => {
+            clearTimeout(timer);
+            activeClipCuts.delete(clipId);
+            if (code === 0) return resolve();
+            if (timedOut) return reject(new Error(`clip cut timed out after ${CLIP_CUT_TIMEOUT_MS / 1000}s and was stopped`));
+            reject(new Error(`ffmpeg clip cut (${useNvenc ? 'NVENC' : 'CPU'}) exited ${code ?? signal}: ${stderr.trim().slice(-400)}`));
+        });
     });
 
     const preferNvenc = checkNvencRuntime();
     try {
         await attempt(preferNvenc);
     } catch (e) {
-        if (!preferNvenc) throw e; // was already the CPU attempt — nothing left to fall back to
-        console.log(`[stream-engine] Clip cut failed on NVENC (likely a concurrent-session limit — another clip/the recorder/the live encoder is using the GPU right now), retrying on CPU: ${e.message}`);
+        if (!preferNvenc || shuttingDown || /timed out/.test(e.message)) throw e; // CPU attempt already, or a stuck read — the job-level retry handles it
+        console.log(`[stream-engine] Clip cut failed on NVENC (likely the GPU's concurrent-session limit while recording+live are running), retrying on CPU: ${e.message.split('\n')[0]}`);
         await attempt(false);
     }
 }
 
 // ================================================================
-// 🎬 THE JOB, END TO END — runs once, ~CLIP_POST_ROLL_SEC after the
-// event, and is NEVER canceled/re-triggered by anything that happens
-// on the panel afterward. A failure at ANY stage moves the job to
-// RETRY_PENDING/FAILED_PERMANENT — it never just disappears.
+// 🎬 CLIP JOB QUEUE — every accepted event becomes its own job with an
+// immutable window (T0, start, end) frozen at acceptance. Jobs wait for
+// their own post-roll independently, then enter a FIFO cut queue served
+// by at most CLIP_MAX_CONCURRENT_CUTS workers. A failed cut is cleaned
+// up and retried with backoff (up to CLIP_MAX_CUT_ATTEMPTS) WITHOUT
+// holding a worker, so the next clip always proceeds; a job that still
+// fails is marked FAILED_PERMANENT loudly and the queue moves on.
+// Uploads run after the worker is released — a slow upload never delays
+// the next cut. Nothing here touches the recorder, the live encoder or
+// the compositor.
 // ================================================================
-async function runClipJob(clipId) {
-    const job = clipJobs.get(clipId);
-    if (!job) return; // shouldn't happen — created synchronously in acceptClipEvent below
-    const { matchId, eventType, timestamp, ballMeta, mainServerUrl } = job;
+const CLIP_MAX_CONCURRENT_CUTS = 2;
+const CLIP_MAX_CUT_ATTEMPTS = 3;
+const CLIP_CUT_RETRY_DELAYS_MS = [3000, 8000];
+const clipCutQueue = [];            // clipIds whose post-roll is over, waiting for a worker
+const clipTimers = new Set();       // post-roll/retry timers (cleared on shutdown)
+let clipCutsRunning = 0;
+let clipUploadsInFlight = 0;
+const clipStats = { cut: 0, failed: 0, retried: 0 };
 
-    updateJob(clipId, { status: 'CUTTING' });
-    clipWorker.state = 'cutting';
-    console.log(`[CLIP WAIT] clipId=${clipId} post-roll wait complete — cutting now`);
-    const cutResult = await cutLocalClip({ clipId, matchId, eventTimestamp: timestamp }).catch((e) => ({ ok: false, error: e.message }));
+function refreshClipWorkerState() {
+    clipWorker.state = clipCutsRunning > 0 ? 'cutting' : clipUploadsInFlight > 0 ? 'uploading' : 'idle';
+    clipWorker.queued = clipCutQueue.length;
+    clipWorker.activeCuts = clipCutsRunning;
+}
+function clipTimer(fn, ms) {
+    const t = setTimeout(() => { clipTimers.delete(t); fn(); }, ms);
+    clipTimers.add(t);
+}
+function enqueueClipCut(clipId) {
+    if (shuttingDown || clipCutQueue.includes(clipId)) return;
+    clipCutQueue.push(clipId);
+    pumpClipQueue();
+}
+function pumpClipQueue() {
+    while (!shuttingDown && clipCutsRunning < CLIP_MAX_CONCURRENT_CUTS && clipCutQueue.length) {
+        const clipId = clipCutQueue.shift();
+        clipCutsRunning++;
+        refreshClipWorkerState();
+        runClipCut(clipId)
+            .catch((e) => console.log(`[CLIP ERROR] clipId=${clipId} unexpected: ${e.message}`))
+            .finally(() => {
+                clipCutsRunning--;
+                refreshClipWorkerState();
+                pumpClipQueue();
+            });
+    }
+    refreshClipWorkerState();
+}
+
+async function runClipCut(clipId) {
+    const job = clipJobs.get(clipId);
+    if (!job) return;
+    job.cutAttempts = (job.cutAttempts || 0) + 1;
+    updateJob(clipId, { status: 'CUTTING', cutAttempts: job.cutAttempts });
+    console.log(`[CLIP CUT] clipId=${clipId} cutting now${job.cutAttempts > 1 ? ` (attempt ${job.cutAttempts}/${CLIP_MAX_CUT_ATTEMPTS})` : ''}`);
+    const cutResult = await cutLocalClip(job).catch((e) => ({ ok: false, retryable: true, error: e.message }));
     if (!cutResult.ok) {
-        clipWorker.state = 'idle';
+        if (cutResult.retryable && job.cutAttempts < CLIP_MAX_CUT_ATTEMPTS && !shuttingDown) {
+            const delay = CLIP_CUT_RETRY_DELAYS_MS[Math.min(job.cutAttempts - 1, CLIP_CUT_RETRY_DELAYS_MS.length - 1)];
+            clipStats.retried++;
+            updateJob(clipId, { status: 'CUTTING', error: cutResult.error });
+            console.log(`[CLIP RETRY] clipId=${clipId} ${cutResult.error.split('\n')[0]} — retrying in ${delay / 1000}s; other clips continue`);
+            clipTimer(() => enqueueClipCut(clipId), delay);
+            return;
+        }
+        clipStats.failed++;
         clipWorker.lastError = cutResult.error;
         updateJob(clipId, { status: 'FAILED_PERMANENT', error: cutResult.error });
-        console.log(`[CLIP ERROR] clipId=${clipId} cutting failed: ${cutResult.error}`);
+        console.log(`[CLIP ERROR] clipId=${clipId} cutting failed: ${cutResult.error.split('\n')[0]}`);
         return;
     }
-    updateJob(clipId, { status: 'LOCAL_SAVED', localPath: cutResult.outFile });
+    clipStats.cut++;
+    updateJob(clipId, { status: 'LOCAL_SAVED', localPath: cutResult.outFile, error: null, clipDurationSec: cutResult.durationSec });
+    // Upload runs detached from the cut worker.
+    clipUploadsInFlight++;
+    refreshClipWorkerState();
+    forwardClip(job, cutResult.outFile)
+        .catch((e) => console.log(`[CLIP ERROR] clipId=${clipId} forward threw: ${e.message}`))
+        .finally(() => { clipUploadsInFlight--; refreshClipWorkerState(); });
+}
 
-    clipWorker.state = 'uploading';
+async function forwardClip(job, outFile) {
+    const { clipId, matchId, eventType, timestamp, ballMeta, mainServerUrl } = job;
     updateJob(clipId, { status: 'FORWARDING' });
-    const forwardResult = await postFileToServer(mainServerUrl, matchId, eventType, timestamp, ballMeta, cutResult.outFile, clipId);
-    clipWorker.state = 'idle';
-
+    const forwardResult = await postFileToServer(mainServerUrl, matchId, eventType, timestamp, ballMeta, outFile, clipId);
     if (forwardResult.ok) {
         clipWorker.cloudflareConnected = true;
         updateJob(clipId, { status: 'RETRY_PENDING' }); // becomes COMPLETE once polling confirms both uploads
@@ -2674,17 +3058,21 @@ async function runClipJob(clipId) {
     clipWorker.cloudflareConnected = false;
     clipWorker.lastError = forwardResult.error;
     updateJob(clipId, { status: 'RETRY_PENDING', error: forwardResult.error });
-    const entry = { clipId, matchId, eventType, timestamp, ballMeta, filePath: cutResult.outFile, mainServerUrl, attempts: 0 };
+    const entry = { clipId, matchId, eventType, timestamp, ballMeta, filePath: outFile, mainServerUrl, attempts: 0 };
     retryQueue.push(entry);
     persistRetryQueue();
     scheduleRetry(entry);
 }
 
 // 🔒 DUPLICATE EVENT/CLIP PREVENTION — clipId IS the dedupe key (it's
-// deterministic from matchId+eventType+timestamp — see buildClipId).
+// deterministic from matchId+eventType+timestamp — see buildClipId), so
+// the same request twice is one job, while two different presses (even
+// milliseconds apart) are two independent jobs with their own windows.
 function acceptClipEvent({ matchId, eventType, timestamp, ballMeta, mainServerUrl, clipId }) {
-    clipId = clipId || buildClipId(matchId, eventType, timestamp);
-    console.log(`[CLIP EVENT] clipId=${clipId} eventType=${eventType} matchId=${matchId} T0=${timestamp}`);
+    const t0 = Number(timestamp);
+    if (!Number.isFinite(t0) || t0 <= 0) return { success: false, error: 'timestamp must be a millisecond epoch number' };
+    clipId = clipId || buildClipId(matchId, eventType, t0);
+    console.log(`[CLIP EVENT] clipId=${clipId} eventType=${eventType} matchId=${matchId} T0=${t0}`);
 
     const existing = clipJobs.get(clipId);
     if (existing) return { success: true, clipId, status: existing.status, duplicate: true };
@@ -2696,18 +3084,27 @@ function acceptClipEvent({ matchId, eventType, timestamp, ballMeta, mainServerUr
     }
 
     const job = {
-        clipId, matchId, eventType, timestamp, ballMeta: ballMeta || null,
+        clipId, matchId, eventType, timestamp: t0, ballMeta: ballMeta || null,
         mainServerUrl: resolvedMainServerUrl,
+        // Frozen at acceptance — the ONLY timing the cut ever uses.
+        window: Object.freeze({
+            t0,
+            startWall: t0 - CLIP_PRE_ROLL_SEC * 1000,
+            endWall: t0 + CLIP_POST_ROLL_SEC * 1000,
+            preRollSec: CLIP_PRE_ROLL_SEC,
+            postRollSec: CLIP_POST_ROLL_SEC,
+        }),
         status: 'WAITING_FOR_POSTROLL',
         createdAt: Date.now(), updatedAt: Date.now(),
         r2Status: 'pending', driveStatus: 'pending',
     };
     clipJobs.set(clipId, job);
+    pruneClipJobs();
     persistClipJobs();
 
-    const waitMs = Math.max(0, (timestamp + CLIP_POST_ROLL_SEC * 1000) - Date.now());
+    const waitMs = Math.max(0, job.window.endWall - Date.now());
     console.log(`[CLIP WAIT] clipId=${clipId} waiting ${waitMs}ms for post-roll`);
-    setTimeout(() => runClipJob(clipId), waitMs);
+    clipTimer(() => enqueueClipCut(clipId), waitMs);
 
     return { success: true, clipId, status: 'WAITING_FOR_POSTROLL' };
 }
@@ -2772,7 +3169,9 @@ app.get('/status', async (req, res) => {
             matchId: compositor ? compositor.matchId : null,
             refs: compositor ? [...compositor.refs] : [],
             lastError: compositor ? compositor.lastError : null,
+            relay: compositor ? compositor.stats() : null,
         } : null,
+        resources: resourceSnapshot(),
         nvencAvailable: nvenc.available,
         nvencDetail: nvenc.detail,
         gpuScaleAvailable: NATIVE_CAPTURE_SUPPORTED ? checkGpuScaleRuntime() : false,
@@ -2788,6 +3187,7 @@ app.get('/status', async (req, res) => {
         clipWorkerState: clipWorker.state,
         cloudflareConnected: clipWorker.cloudflareConnected,
         clipWorkerLastError: clipWorker.lastError,
+        clipQueue: { queued: clipCutQueue.length, cutting: clipCutsRunning, uploading: clipUploadsInFlight, ...clipStats },
         retryQueueLength: retryQueue.length,
         captureConfig,
         // Local full-match master recording — independent of streaming.
@@ -2803,7 +3203,9 @@ app.get('/status', async (req, res) => {
             sizeBytes: (() => { try { return recorder.segmentPath ? fs.statSync(recorder.segmentPath).size : null; } catch (e) { return null; } })(),
             diskFreeBytes: diskFreeBytes(RECORDING_ROOT),
             lastError: recorder.lastError,
-            restartCount: recorder.restarts.length,
+            restartCount: recorder.totalRestarts,
+            writtenSec: recorder.currentSegment ? Math.round(recorder.currentSegment.outTimeSec || 0) : null,
+            lastWriteAgoMs: recorder.lastProgressAdvanceAt ? Date.now() - recorder.lastProgressAdvanceAt : null,
             programFeedHealth: recorder.lastProgramFeedHealth || null,
         },
         captureWindow: {
@@ -2855,14 +3257,10 @@ app.get('/program-feed-health', async (req, res) => {
         // real blackdetect/freezedetect pass against the compositor's
         // output is a known gap, not yet built for the native pipeline.
         if (!compositor || compositor.state !== 'running') return res.json({ success: true, ok: true, skipped: true, reason: 'Compositor not running yet' });
-        try {
-            const stat = fs.statSync(NATIVE_PREVIEW_PATH);
-            const ageMs = Date.now() - stat.mtimeMs;
-            const ok = stat.size >= 500 && ageMs <= 5000;
-            return res.json({ success: true, ok, black: false, white: false, frozen: !ok && ageMs > 5000, checkedAt: Date.now() });
-        } catch (e) {
-            return res.json({ success: true, ok: false, error: 'No preview frame yet' });
-        }
+        if (!compositor.previewJpeg) return res.json({ success: true, ok: false, error: 'No preview frame yet' });
+        const ageMs = Date.now() - compositor.previewAt;
+        const ok = compositor.previewJpeg.length >= 500 && ageMs <= 5000;
+        return res.json({ success: true, ok, black: false, white: false, frozen: !ok && ageMs > 5000, checkedAt: Date.now() });
     }
 
     const windowTitle = resolveWindowTitle(matchId);
@@ -2912,10 +3310,9 @@ app.post('/capture-window/camera-ended', (req, res) => {
 // 🖼️ CAPTURE PREVIEW — grabs exactly one frame of the real program feed
 // so the operator can SEE it before going live.
 //
-// Native pipeline: serves the compositor's own periodically-overwritten
-// JPEG snapshot directly (see buildCompositorArgs' previewPath in
-// nativePipeline.js) — a REAL consumer of the same composited
-// camera+overlay stream, not a re-capture of anything.
+// Native pipeline: serves the compositor's latest JPEG snapshot from
+// memory (see the preview output in nativePipeline.js) — a REAL consumer
+// of the same composited camera+overlay stream, not a re-capture.
 //
 // Legacy (gdigrab): grabs exactly one frame from the target window, so
 // the operator can SEE the crop margin (captureConfig) and confirm
@@ -2928,11 +3325,14 @@ app.get('/capture-preview', (req, res) => {
     if (!NATIVE_CAPTURE_SUPPORTED) return res.status(400).json({ success: false, error: `Native capture requires Windows — this process is running on ${process.platform}` });
 
     if (NATIVE_PROGRAM_FEED) {
-        if (!NATIVE_PREVIEW_PATH || !fs.existsSync(NATIVE_PREVIEW_PATH)) {
+        // Served from memory (see nativePipeline.js MpjpegParser) — no
+        // preview file on disk for anything to lock.
+        if (!compositor || !compositor.previewJpeg) {
             return res.status(404).json({ success: false, error: 'No native program preview yet — start recording or go live first so the compositor is running' });
         }
         res.set('Content-Type', 'image/jpeg');
-        return res.sendFile(NATIVE_PREVIEW_PATH);
+        res.set('Cache-Control', 'no-store');
+        return res.send(compositor.previewJpeg);
     }
 
     const windowTitle = resolveWindowTitle(matchId);
@@ -3239,17 +3639,15 @@ app.post('/go-live', async (req, res) => {
     // does NOT detect an all-black/all-white frame the way the legacy
     // check does — a real blackdetect/freezedetect pass against the
     // compositor's own output is a known gap, not yet built.
-    if (NATIVE_PROGRAM_FEED && compositor && compositor.state === 'running' && NATIVE_PREVIEW_PATH && !skipProgramFeedHealthCheck) {
-        try {
-            const stat = fs.statSync(NATIVE_PREVIEW_PATH);
-            const ageMs = Date.now() - stat.mtimeMs;
-            if (stat.size < 500 || ageMs > 5000) {
-                const reason = `PROGRAM OUTPUT ERROR — the compositor's preview frame is ${stat.size < 500 ? 'suspiciously small' : `${Math.round(ageMs / 1000)}s old`} — camera/overlay may not be producing valid frames.`;
-                console.log(`[stream-engine] Go Live refused — native program feed check failed: ${reason}`);
-                return res.status(409).json({ success: false, error: reason });
-            }
-        } catch (e) { /* preview file doesn't exist yet — compositor may have just started; don't block on this alone */ }
-    }
+    if (NATIVE_PROGRAM_FEED && compositor && compositor.state === 'running' && compositor.previewJpeg && !skipProgramFeedHealthCheck) {
+        const size = compositor.previewJpeg.length;
+        const ageMs = Date.now() - compositor.previewAt;
+        if (size < 500 || ageMs > 5000) {
+            const reason = `PROGRAM OUTPUT ERROR — the compositor's preview frame is ${size < 500 ? 'suspiciously small' : `${Math.round(ageMs / 1000)}s old`} — camera/overlay may not be producing valid frames.`;
+            console.log(`[stream-engine] Go Live refused — native program feed check failed: ${reason}`);
+            return res.status(409).json({ success: false, error: reason });
+        }
+    } // no preview frame yet — the compositor may have just started; don't block on this alone
 
     engine.targetResolution = resKey;
     engine.qualityMode = qualityMode === 'manual' ? 'manual' : 'adaptive';
@@ -3343,8 +3741,13 @@ app.get('/health', (req, res) => {
             clipWorkerState: clipWorker.state,
             cloudflareConnected: clipWorker.cloudflareConnected,
             lastError: clipWorker.lastError,
+            queued: clipCutQueue.length,
+            cutting: clipCutsRunning,
+            uploading: clipUploadsInFlight,
+            ...clipStats,
             retryQueueLength: retryQueue.length,
         },
+        resources: resourceSnapshot(),
     });
 });
 
@@ -3431,6 +3834,146 @@ const ORPHAN_CLIP_FILE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 setTimeout(() => sweepOldClipFiles(ORPHAN_CLIP_FILE_MAX_AGE_MS), 90 * 1000);
 setInterval(() => sweepOldClipFiles(ORPHAN_CLIP_FILE_MAX_AGE_MS), 60 * 60 * 1000);
 
+// ================================================================
+// 🩺 SUPERVISOR — "the process is alive" is not proof that anything is
+// being written. Every 5s this checks each subsystem against its OWN
+// progress signal and restarts only the one that stopped moving:
+//   - recorder: ffmpeg's reported output time and the segment file's
+//     size must keep advancing while the program feed is flowing;
+//   - live encoder: its reported output time must keep advancing;
+//   - compositor: its own watchdog (nativePipeline.js) — no relay data.
+// A stalled recorder continues in a new segment; the stream, the
+// compositor and the clip queue are never touched by that.
+// ================================================================
+const SUPERVISOR_TICK_MS = 5000;
+const RECORDER_STALL_MS = 30000;      // no new output time for this long = stuck
+const RECORDER_FILE_STALL_MS = 45000; // file size unchanged for this long = stuck (fMP4 grows every ~2s)
+const LIVE_STALL_MS = 30000;
+const RECORDER_STABLE_RESET_MS = 60000;
+const HEALTH_LOG_INTERVAL_MS = 10 * 60 * 1000;
+
+function programFeedFlowing() {
+    if (!NATIVE_PROGRAM_FEED) return true; // legacy: each process captures on its own
+    return !!(compositor && compositor.state === 'running' && compositor.relay.lastDataAt && Date.now() - compositor.relay.lastDataAt < 5000);
+}
+
+function superviseRecorder(now) {
+    if (recorder.state !== 'recording' || !recorder.proc || !recorder.currentSegment) return;
+    const seg = recorder.currentSegment;
+    fs.stat(seg.path, (err, st) => {
+        if (err || recorder.currentSegment !== seg) return;
+        if (st.size !== recorder.lastSizeBytes) { recorder.lastSizeBytes = st.size; recorder.lastSizeChangeAt = Date.now(); }
+    });
+    if (recorder.restarts.length && now - recorder.startedAt > RECORDER_STABLE_RESET_MS && recorder.lastProgressAdvanceAt && now - recorder.lastProgressAdvanceAt < 5000) {
+        recorder.restarts = []; // this segment is healthy — the next failure starts from the shortest backoff again
+    }
+    if (!programFeedFlowing()) return; // nothing to write — the compositor's own watchdog handles the source
+    const progressAgo = now - (recorder.lastProgressAdvanceAt || recorder.startedAt);
+    const sizeAgo = now - (recorder.lastSizeChangeAt || recorder.startedAt);
+    let reason = null;
+    if (progressAgo > RECORDER_STALL_MS) reason = `no new video encoded for ${Math.round(progressAgo / 1000)}s`;
+    else if (sizeAgo > RECORDER_FILE_STALL_MS) reason = `${path.basename(seg.path)} has not grown for ${Math.round(sizeAgo / 1000)}s`;
+    if (!reason) return;
+    console.log(`[stream-engine] ⚠ Recorder stalled (${reason}) while the program feed is live — restarting only the recorder`);
+    recorder.lastError = `stalled — ${reason}`;
+    try { recorder.proc.kill('SIGKILL'); } catch (e) { /* already gone */ } // exit handler continues in a new segment
+}
+
+function superviseLive(now) {
+    if (engine.state !== 'live' || !engine.proc || !engine.startedAt) return;
+    if (!programFeedFlowing()) return;
+    const ago = now - (engine.lastProgressAdvanceAt || engine.startedAt);
+    if (ago <= LIVE_STALL_MS) return;
+    console.log(`[stream-engine] ⚠ Live encoder stalled (no output for ${Math.round(ago / 1000)}s) — reconnecting the stream; recording is unaffected`);
+    engine.lastError = `live encoder stalled — no output for ${Math.round(ago / 1000)}s`;
+    try { engine.proc.kill('SIGKILL'); } catch (e) { /* already gone */ } // exit handler → reconnect with backoff
+}
+
+function formatDuration(ms) {
+    const s = Math.floor(ms / 1000);
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return h ? `${h}h${String(m).padStart(2, '0')}m` : `${m}m${String(s % 60).padStart(2, '0')}s`;
+}
+function resourceSnapshot() {
+    const mem = process.memoryUsage();
+    const roles = {};
+    for (const { role } of childProcesses.values()) roles[role] = (roles[role] || 0) + 1;
+    return {
+        uptimeSec: Math.round(process.uptime()),
+        rssMB: Math.round(mem.rss / 1048576),
+        heapUsedMB: Math.round(mem.heapUsed / 1048576),
+        externalMB: Math.round((mem.external + (mem.arrayBuffers || 0)) / 1048576),
+        childProcesses: childProcesses.size,
+        childRoles: roles,
+        clipJobsInMemory: clipJobs.size,
+        clipTimersPending: clipTimers.size,
+        retryQueueLength: retryQueue.length,
+    };
+}
+// One compact line every 10 minutes while anything is running, so a
+// 6–7 hour run leaves a readable record that memory, process count and
+// queues stayed flat.
+let lastHealthLogAt = Date.now();
+function logHealthLine(now) {
+    if (now - lastHealthLogAt < HEALTH_LOG_INTERVAL_MS) return;
+    const active = recorder.state === 'recording' || engine.state === 'live' || engine.state === 'reconnecting' || compositor;
+    if (!active) return;
+    lastHealthLogAt = now;
+    const r = resourceSnapshot();
+    const parts = [`up ${formatDuration(r.uptimeSec * 1000)}`, `rss ${r.rssMB}MB`, `ffmpeg/child procs ${r.childProcesses} (${Object.entries(r.childRoles).map(([k, v]) => `${k}${v > 1 ? '×' + v : ''}`).join(', ') || 'none'})`];
+    if (recorder.state === 'recording' && recorder.currentSegment) parts.push(`recording ${formatDuration((recorder.currentSegment.outTimeSec || 0) * 1000)} in ${path.basename(recorder.currentSegment.path)} (restarts ${recorder.totalRestarts})`);
+    if (engine.state !== 'idle') parts.push(`live ${engine.state}${engine.metrics.speed != null ? ` ${engine.metrics.speed}x` : ''}`);
+    if (compositor) {
+        const st = compositor.stats();
+        parts.push(`relay ${st.relayMBps}MB/s → ${st.consumers.map((c) => `${c.who}:${c.state}${c.unitsSkipped ? ` (skipped ${c.unitsSkipped})` : ''}`).join(', ') || 'no consumers'}`);
+    }
+    parts.push(`clips ${clipStats.cut} ok / ${clipStats.failed} failed, queue ${clipCutQueue.length}`);
+    console.log(`[health] ${parts.join(' | ')}`);
+}
+
+setInterval(() => {
+    if (shuttingDown) return;
+    const now = Date.now();
+    try { superviseRecorder(now); } catch (e) { console.log('[stream-engine] recorder supervisor error:', e.message); }
+    try { superviseLive(now); } catch (e) { console.log('[stream-engine] live supervisor error:', e.message); }
+    try { logHealthLine(now); } catch (e) { /* diagnostics only */ }
+}, SUPERVISOR_TICK_MS);
+
+// 🖱️ Windows console QuickEdit: a single click inside this console
+// window puts it in "Select" mode, and from then on every console write
+// BLOCKS until a key is pressed — freezing this whole process (and with
+// it the relay feeding the recorder and live encoder) mid-match. Turn
+// QuickEdit off for this console window only; text can still be copied
+// via the window menu (Edit → Mark).
+function disableConsoleQuickEdit() {
+    if (process.platform !== 'win32' || !process.stdin.isTTY) return;
+    const script = [
+        "$sig = '[DllImport(\"kernel32.dll\")] public static extern IntPtr GetStdHandle(int h); [DllImport(\"kernel32.dll\")] public static extern bool GetConsoleMode(IntPtr h, out uint m); [DllImport(\"kernel32.dll\")] public static extern bool SetConsoleMode(IntPtr h, uint m);'",
+        '$k = Add-Type -MemberDefinition $sig -Name QuickEdit -Namespace AllSportsLive -PassThru',
+        '$h = $k::GetStdHandle(-10); $m = 0',
+        'if ($k::GetConsoleMode($h, [ref]$m)) { [void]$k::SetConsoleMode($h, (($m -band (-bnot 0x40)) -bor 0x80)) }',
+    ].join('; ');
+    try {
+        // stdin inherited = same console (see libuv: no CREATE_NO_WINDOW when a stdio handle is inherited)
+        const ps = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], { stdio: ['inherit', 'ignore', 'ignore'], windowsHide: true });
+        ps.on('error', () => {});
+    } catch (e) { /* best effort */ }
+}
+
+// Leftover *.part.mp4 files can only come from a cut interrupted by a
+// previous run ending — nothing is cutting yet at startup.
+function sweepPartialClipFiles() {
+    fs.readdir(CLIPS_ROOT, (err, dirs) => {
+        if (err) return;
+        for (const d of dirs) {
+            fs.readdir(path.join(CLIPS_ROOT, d), (err2, files) => {
+                if (err2) return;
+                for (const f of files) if (f.endsWith('.part.mp4')) fs.unlink(path.join(CLIPS_ROOT, d, f), () => {});
+            });
+        }
+    });
+}
+
 const server = app.listen(PORT, '127.0.0.1', () => {
     console.log(`🎥 AllSportsLive Stream Engine (native capture) running at http://127.0.0.1:${PORT} (localhost only)`);
     console.log(`   Platform: ${process.platform}${NATIVE_CAPTURE_SUPPORTED ? '' : ' — ⚠️ native capture (gdigrab/dshow) needs Windows; this engine cannot capture on this OS'}`);
@@ -3441,47 +3984,100 @@ const server = app.listen(PORT, '127.0.0.1', () => {
     }
     const nvenc = checkNvenc();
     console.log(`   NVENC: ${nvenc.available ? '✅ available' : '❌ NOT available — ' + nvenc.detail}`);
+    reapOrphanedChildren();
+    disableConsoleQuickEdit();
+    sweepPartialClipFiles();
+    // Run the one-time capability probes NOW, while nothing is streaming:
+    // each is a short blocking test encode, and running them lazily at
+    // the first Go Live/Recording froze the event loop while the relay
+    // for the other one was already flowing.
+    setImmediate(() => {
+        if (!nvenc.available) return;
+        checkNvencRuntime();
+        checkNvencTuneRuntime();
+        checkGpuScaleRuntime(); // also read by /status and /health
+        if (!NATIVE_PROGRAM_FEED) cfrFlagArgs();
+    });
 });
 
 process.on('uncaughtException', (err) => {
     // The engine's whole job is to keep streaming even when ffmpeg has
     // problems — an uncaught exception here must not kill this process
     // out from under a live broadcast. Log and keep running.
-    console.log('[stream-engine] uncaughtException (kept running):', err);
+    console.log('[stream-engine] uncaughtException (kept running):', err && err.stack ? err.stack : err);
+});
+process.on('unhandledRejection', (reason) => {
+    console.log('[stream-engine] unhandledRejection (kept running):', reason && reason.stack ? reason.stack : reason);
 });
 
 // ----------------------------------------------------------------
-// 🛑 GRACEFUL SHUTDOWN — never leave an orphaned ffmpeg process behind
-// (recorder OR live encoder OR a clip-cut in flight) when this engine is
-// stopped/restarted, e.g. by the operator, a crash-recovery script, or
-// the OS.
+// 🛑 GRACEFUL SHUTDOWN — ordered, awaited, and bounded:
+//   1. mark shuttingDown (every auto-restart/retry path checks it),
+//   2. end the live encoder and recorder on a packet boundary and WAIT
+//      for them to exit (MP4/FLV properly finalized),
+//   3. stop clip cuts and pending clip timers,
+//   4. stop the compositor ('q' → camera released by ffmpeg itself) and
+//      the overlay's Chromium,
+//   5. kill anything still alive, clear the PID file, exit.
+// A hard deadline guarantees the process never hangs. Closing the
+// console window (SIGHUP on Windows) gets a faster path because Windows
+// terminates the process a few seconds later regardless.
 // ----------------------------------------------------------------
-let shuttingDown = false;
-function gracefulShutdown(signal) {
+function killAllChildren() {
+    for (const { proc } of childProcesses.values()) { try { proc.kill('SIGKILL'); } catch (e) { /* already gone */ } }
+}
+async function gracefulShutdown(signal) {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`[stream-engine] ${signal} received — shutting down gracefully`);
-    engine.desiredLive = false;   // don't let the exit handler try to auto-restart
-    recorder.desiredRecording = false;
-    if (NATIVE_PROGRAM_FEED) {
-        // See gracefulStopByClosingStdin's own comment — these
-        // processes' stdin is real relay data, not a 'q'-keypress
-        // control channel.
-        if (engine.proc) gracefulStopByClosingStdin(engine.proc, 3000);
-        if (recorder.proc) gracefulStopByClosingStdin(recorder.proc, 3000);
-        if (compositor) compositor.stop(); // never leave the camera/overlay compositor process orphaned
-    } else {
-        if (engine.proc) gracefulStop(engine.proc, 3000);
-        if (recorder.proc) gracefulStop(recorder.proc, 3000);
-    }
-    if (captureWindow.proc) closeCaptureWindow(); // never leave the dedicated capture browser process orphaned
-    server.close(() => {
-        console.log('[stream-engine] HTTP server closed, exiting');
+    const fast = signal === 'SIGHUP';
+    const deadline = setTimeout(() => {
+        console.log('[stream-engine] Shutdown took too long — forcing remaining processes to stop');
+        killAllChildren();
         process.exit(0);
-    });
-    // Don't hang forever waiting for connections to drain.
-    setTimeout(() => process.exit(0), 5000);
-}
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    }, fast ? 4000 : 12000);
+    console.log(`[stream-engine] ${signal} received — stopping stream, recording and background jobs…`);
+    engine.opToken++;
+    engine.desiredLive = false;
+    recorder.desiredRecording = false;
+    if (recorder.restartTimer) { clearTimeout(recorder.restartTimer); recorder.restartTimer = null; }
+    for (const t of clipTimers) clearTimeout(t);
+    clipTimers.clear();
+    clipCutQueue.length = 0;
 
+    const waits = [];
+    const stopTimeout = fast ? 1500 : 5000;
+    for (const proc of [engine.proc, recorder.proc]) {
+        if (!proc) continue;
+        if (NATIVE_PROGRAM_FEED) {
+            if (compositor) compositor.detachRelayConsumer(proc);
+            waits.push(gracefulStopByClosingStdin(proc, stopTimeout));
+        } else {
+            waits.push(gracefulStop(proc, stopTimeout));
+        }
+    }
+    for (const proc of activeClipCuts.values()) { try { proc.kill('SIGKILL'); } catch (e) { /* already gone */ } }
+    await Promise.all(waits);
+    if (recorder.segmentPath && waits.length) console.log(`[stream-engine] Recording finalized — ${recorder.segmentPath}`);
+
+    if (compositor) {
+        const comp = compositor;
+        compositor = null;
+        await comp.stop({ timeoutMs: fast ? 1000 : 3000 });
+    }
+    if (compositorStopping) await compositorStopping;
+    if (captureWindow.proc) closeCaptureWindow(); // never leave the dedicated capture browser process orphaned
+    flushClipJobsSync();
+    killAllChildren();
+    try { fs.writeFileSync(CHILD_PIDS_FILE, JSON.stringify({ ffmpegPath: FFMPEG_PATH, pids: [] })); } catch (e) { /* best effort */ }
+    clearTimeout(deadline);
+    server.close();
+    if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+    console.log('[stream-engine] Stopped cleanly — no ffmpeg processes left running.');
+    process.exit(0);
+}
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
+    try { process.on(sig, () => { gracefulShutdown(sig).catch((e) => { console.log('[stream-engine] shutdown error:', e.message); killAllChildren(); process.exit(1); }); }); } catch (e) { /* signal not supported on this platform */ }
+}
+// Last line of defence for ANY exit path (including a fatal crash):
+// never leave an ffmpeg holding the camera/NVENC behind.
+process.on('exit', killAllChildren);
