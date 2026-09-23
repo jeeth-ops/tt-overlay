@@ -732,7 +732,6 @@ async function finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMe
                     // exists; they stay out of the public Highlights until
                     // /api/clips/classify links and approves them.
                     ...(isHighlightButtonClip ? { isHighlight: false, highlightPending: true } : {}),
-                    retryCount: 0,
                 },
                 $set: {
                     // Runtime fields refreshed on every ingest (including a
@@ -745,7 +744,12 @@ async function finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMe
                     status: 'LOCAL_RECEIVED',
                     r2Status: 'pending', driveStatus: 'pending',
                     lastReceivedAt: Date.now(),
-                }
+                    // A fresh copy (first ingest, or the helper re-sending
+                    // after a Render restart wiped the temp disk) gets a
+                    // full set of retries again.
+                    retryCount: 0,
+                },
+                $unset: { permanentFailureReason: '', needsReuploadAt: '' }
             },
             { upsert: true }
         );
@@ -814,6 +818,27 @@ async function finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMe
 // NEVER deleted — it stays recoverable for manual intervention.
 // ================================================================
 const CLIP_RETRY_INTERVAL_MS = 30 * 1000;
+const CLIP_COPY_MISSING_REASON = 'Local Render-disk copy is missing — cannot retry';
+// Downloads a clip back from R2 into Render's temp folder so a pending
+// Drive upload can finish after a restart. Returns the path, or null.
+async function restoreClipCopyFromR2(doc) {
+    if (doc.r2Status !== 'uploaded' || !doc.r2Url) return null;
+    try {
+        const r = await fetch(doc.r2Url);
+        if (!r.ok) return null;
+        const buf = Buffer.from(await r.arrayBuffer());
+        if (!buf.length) return null;
+        const dir = path.join(CLIPS_DIR, safeMatchId(doc.matchId) || 'unknown');
+        await fs.promises.mkdir(dir, { recursive: true });
+        const file = path.join(dir, `${doc.clipId}.mp4`);
+        await fs.promises.writeFile(file, buf);
+        await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { filePath: file } }).catch(() => {});
+        return file;
+    } catch (err) {
+        console.log(`[CLIP RETRY] clipId=${doc.clipId} — R2 restore failed:`, err.message || err);
+        return null;
+    }
+}
 const MAX_CLIP_RETRY_ATTEMPTS = 15; // ~ up to a few hours of backoff-spaced attempts across a match
 function clipRetryBackoffMs(retryCount) {
     return Math.min(30 * 1000 * Math.pow(1.6, retryCount), 20 * 60 * 1000); // caps at 20 minutes between attempts
@@ -822,27 +847,46 @@ async function runClipRetrySweep() {
     if (!clipsCollection) return;
     let candidates;
     try {
-        candidates = await clipsCollection.find({
-            status: { $in: ['RETRY_PENDING', 'LOCAL_RECEIVED'] }, // LOCAL_RECEIVED here means a crash happened mid-upload last time
-            retryCount: { $lt: MAX_CLIP_RETRY_ATTEMPTS },
-        }).limit(25).toArray(); // bounded per tick — a burst of failures drains over several ticks, never floods R2/Drive at once
+        candidates = await clipsCollection.find({ $or: [
+            {
+                status: { $in: ['RETRY_PENDING', 'LOCAL_RECEIVED'] }, // LOCAL_RECEIVED here means a crash happened mid-upload last time
+                retryCount: { $lt: MAX_CLIP_RETRY_ATTEMPTS },
+            },
+            // Older builds gave up as soon as a Render restart wiped the
+            // temp copy — pick those up once more so they can recover.
+            { status: 'FAILED_PERMANENT', permanentFailureReason: CLIP_COPY_MISSING_REASON },
+        ] }).limit(25).toArray(); // bounded per tick — a burst of failures drains over several ticks, never floods R2/Drive at once
     } catch (err) {
         console.log('Clip retry sweep — Mongo query error:', err.message || err);
         return;
     }
 
     for (const doc of candidates) {
-        const dueAt = (doc.lastRetryAt || doc.createdAt || 0) + clipRetryBackoffMs(doc.retryCount || 0);
+        const lastTouch = Math.max(doc.lastRetryAt || 0, doc.lastReceivedAt || 0, doc.createdAt || 0);
+        const dueAt = lastTouch + clipRetryBackoffMs(doc.retryCount || 0);
         if (Date.now() < dueAt) continue; // not due yet — backoff still in effect
 
         if (!doc.filePath || !fs.existsSync(doc.filePath)) {
-            // The local copy is gone (e.g. it WAS fully uploaded once,
-            // then manually deleted, or this doc predates this retry
-            // system) — nothing left to retry from. Mark it loudly
-            // instead of retrying forever against a file that can't exist.
-            await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { status: 'FAILED_PERMANENT', permanentFailureReason: 'Local Render-disk copy is missing — cannot retry' } }).catch(() => {});
-            console.log(`[CLIP RETRY] clipId=${doc.clipId} — local file missing, marking FAILED_PERMANENT`);
-            continue;
+            // Render's disk is temporary: a restart/deploy wipes the copy
+            // while a leg is still pending. Rebuild it from R2 when R2 has
+            // it; otherwise ask the Clipper Helper (which keeps the clip on
+            // the operator's PC) to send it again.
+            const restored = await restoreClipCopyFromR2(doc);
+            if (!restored) {
+                if (doc.status !== 'NEEDS_REUPLOAD') {
+                    await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { status: 'NEEDS_REUPLOAD', needsReuploadAt: Date.now() }, $unset: { permanentFailureReason: '' } }).catch(() => {});
+                    console.log(`[CLIP RETRY] clipId=${doc.clipId} — Render copy gone and not in R2 yet; asking the helper to re-send`);
+                }
+                continue;
+            }
+            doc.filePath = restored;
+            if (doc.status === 'FAILED_PERMANENT') {
+                // Given up by an older build only because the copy was gone —
+                // it has a real copy again, so give it a full set of retries.
+                doc.retryCount = 0;
+                await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { retryCount: 0 } }).catch(() => {});
+            }
+            console.log(`[CLIP RETRY] clipId=${doc.clipId} — Render copy was gone; restored it from R2`);
         }
 
         console.log(`[CLIP RETRY] clipId=${doc.clipId} attempt=${(doc.retryCount || 0) + 1}/${MAX_CLIP_RETRY_ATTEMPTS} — r2=${doc.r2Status} drive=${doc.driveStatus}`);
@@ -857,7 +901,7 @@ async function runClipRetrySweep() {
 
         const newRetryCount = (doc.retryCount || 0) + 1;
         if (r2Ok && driveOk) {
-            await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { status: 'COMPLETE' } }).catch(() => {});
+            await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { status: 'COMPLETE' }, $unset: { permanentFailureReason: '' } }).catch(() => {});
             fs.unlink(doc.filePath, () => {
                 console.log(`🧹 [CLIP RETRY] clipId=${doc.clipId} — retry succeeded, local copy removed`);
             });

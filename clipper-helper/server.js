@@ -133,7 +133,7 @@ const CUT_RETRY_DELAYS_MS = [3000, 8000];
 const UPLOAD_IDLE_TIMEOUT_MS = 60000; // no bytes moving for this long = dead connection
 const UPLOAD_BACKOFF_MS = [5000, 15000, 30000, 60000, 120000, 300000]; // then every 5 min
 const UPLOAD_MAX_ATTEMPTS = 60;       // ≈ 4–5 hours of retrying
-const STATUS_POLL_WINDOW_MS = 60 * 60 * 1000; // follow R2/Drive progress for up to 1 hour per clip
+const STATUS_POLL_WINDOW_MS = 12 * 60 * 60 * 1000; // follow R2/Drive progress for up to 12 hours per clip
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -608,18 +608,39 @@ function getJson(url, timeoutMs = 10000) {
 async function statusPollTick() {
   const server = session.mainServerUrl || toOrigin(config.mainServerUrl);
   if (!server) return;
-  const due = [...jobs.values()].filter((j) => j.status === 'UPLOADED' && Date.now() - (j.uploadedAt || 0) < STATUS_POLL_WINDOW_MS);
+  // UPLOADED = website still finishing R2/Drive. A website-side failure
+  // (serverFailed) is still followed, since the website can recover it.
+  const due = [...jobs.values()]
+    .filter((j) => (j.status === 'UPLOADED' || (j.status === 'FAILED' && j.serverFailed)) && Date.now() - (j.uploadedAt || 0) < STATUS_POLL_WINDOW_MS)
+    .sort((a, b) => (a.lastPolledAt || 0) - (b.lastPolledAt || 0));
   for (const job of due.slice(0, 6)) {
+    job.lastPolledAt = Date.now();
     const r = await getJson(`${server}/api/clips/status/${encodeURIComponent(job.clipId)}`);
     if (!r || r.status !== 200 || !r.json || !r.json.success) continue;
     const d = r.json;
     const patch = { r2Status: d.r2Status || job.r2Status, driveStatus: d.driveStatus || job.driveStatus, serverStatus: d.status };
     if (d.status === 'COMPLETE') {
-      patch.status = 'COMPLETE';
+      Object.assign(patch, { status: 'COMPLETE', serverFailed: false, driveBackupFailed: false, error: null });
       console.log(`✅ [${job.eventType}] ${job.clipId}: in R2 + Drive`);
+    } else if (d.status === 'NEEDS_REUPLOAD') {
+      // The website restarted and lost its temporary copy before R2/Drive
+      // finished. Our local copy is the source of truth — send it again.
+      if (job.localPath && fs.existsSync(job.localPath)) {
+        console.log(`🔁 [${job.eventType}] ${job.clipId}: website lost its copy — re-sending the local clip`);
+        Object.assign(patch, { status: 'UPLOAD_RETRY', serverFailed: false, uploadAttempts: 0, error: 'website restarted — re-sending clip', nextUploadAt: Date.now() });
+        update(job, patch);
+        job.uploadAttempts = 0;
+        queueUpload(job);
+        continue;
+      }
+      Object.assign(patch, { status: 'FAILED', serverFailed: false, error: 'website lost its copy and the local clip file is missing' });
     } else if (d.status === 'FAILED_PERMANENT') {
-      patch.status = 'FAILED';
-      patch.error = d.permanentFailureReason || 'website could not upload to R2/Drive';
+      if (d.r2Status === 'uploaded') {
+        // Clip plays from R2 — only the Drive backup copy is missing.
+        Object.assign(patch, { status: 'COMPLETE', serverFailed: true, driveBackupFailed: true, error: null });
+      } else {
+        Object.assign(patch, { status: 'FAILED', serverFailed: true, error: d.permanentFailureReason || 'website could not upload to R2/Drive' });
+      }
     }
     update(job, patch);
   }
@@ -707,6 +728,7 @@ function jobView(j) {
     nextUploadAt: j.nextUploadAt || null,
     clipSeconds: j.clipSeconds || null, localPath: j.localPath || null,
     r2Status: j.r2Status || null, driveStatus: j.driveStatus || null,
+    driveBackupFailed: !!j.driveBackupFailed,
     createdAt: j.createdAt, updatedAt: j.updatedAt,
   };
 }
@@ -875,7 +897,7 @@ setInterval(() => {
 
 const server = app.listen(config.port, () => {
   console.log('================================================');
-  console.log(`🎥 Clipper Helper v4 running at http://localhost:${config.port}`);
+  console.log(`🎥 Clipper Helper v4.1 running at http://localhost:${config.port}`);
   console.log(`👉 Setup page: http://localhost:${config.port}/setup`);
   console.log(`Using ffmpeg: ${ffmpegPath}`);
   console.log(`Clip window: ${PRE_ROLL_SECONDS}s before + ${POST_ROLL_SECONDS}s after the press = ${CLIP_SECONDS}s`);

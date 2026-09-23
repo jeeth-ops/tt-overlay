@@ -2114,6 +2114,33 @@ flushClassifyQueue();
 // Live per-clip status from the local Clipper Helper.
 const CJ_ACTIVE = ['WAITING', 'CUTTING', 'CUT_RETRY', 'LOCAL_SAVED', 'UPLOADING', 'UPLOAD_RETRY', 'UPLOADED'];
 let clipJobsTimer = null;
+// The website is the source of truth for R2/Drive once it has the clip —
+// the helper can show a stale ❌ (e.g. an older helper that stopped
+// following a clip after a website restart). Ask the website directly.
+const serverClipStatus = {}; // clipId -> { at, d }
+async function refreshServerClipStatus(list){
+  const need = list.filter(j => ['UPLOADED', 'FAILED'].includes(j.status) || j.driveBackupFailed);
+  await Promise.all(need.map(async j => {
+    const c = serverClipStatus[j.clipId];
+    if(c && Date.now() - c.at < 15000) return;
+    try {
+      const res = await fetch(`/api/clips/status/${encodeURIComponent(j.clipId)}`, { signal: AbortSignal.timeout(4000) });
+      const d = res.ok ? await res.json() : null;
+      if(res.ok || res.status === 404) serverClipStatus[j.clipId] = { at: Date.now(), d: d && d.success ? d : null };
+    } catch(e){ /* offline — keep the helper's view */ }
+  }));
+}
+function withServerClipStatus(j){
+  const c = serverClipStatus[j.clipId];
+  const d = c && c.d;
+  if(!d) return j; // website never got it (e.g. cut failed) — helper's view is right
+  const legs = { r2Status: d.r2Status || j.r2Status, driveStatus: d.driveStatus || j.driveStatus };
+  const r2Ok = d.r2Status === 'uploaded';
+  if(d.status === 'COMPLETE') return { ...j, ...legs, status: 'COMPLETE', driveBackupFailed: false, error: null };
+  if(d.status === 'NEEDS_REUPLOAD') return { ...j, ...legs, status: 'SERVER_REUPLOAD', error: null };
+  if(d.status === 'FAILED_PERMANENT') return r2Ok ? { ...j, ...legs, status: 'COMPLETE', driveBackupFailed: true, error: null } : { ...j, ...legs, error: d.permanentFailureReason || j.error };
+  return { ...j, ...legs, status: 'UPLOADED', error: null }; // still uploading / retrying on the website
+}
 function legIcon(s){ return s === 'uploaded' ? '✓' : s === 'failed' ? '✕ (retrying)' : '⏳'; }
 function clipJobLine(j){
   const secs = j.nextUploadAt ? Math.max(0, Math.round((j.nextUploadAt - Date.now()) / 1000)) : null;
@@ -2125,7 +2152,8 @@ function clipJobLine(j){
     case 'UPLOADING': return '💾 Local ✓ · ⬆️ uploading…';
     case 'UPLOAD_RETRY': return `💾 Local ✓ · 🔁 upload retry${secs != null ? ` in ${secs}s` : ''}`;
     case 'UPLOADED': return `💾 Local ✓ · R2 ${legIcon(j.r2Status)} · Drive ${legIcon(j.driveStatus)}`;
-    case 'COMPLETE': return '✅ Local ✓ · R2 ✓ · Drive ✓';
+    case 'COMPLETE': return j.driveBackupFailed ? '✅ Local ✓ · R2 ✓ (plays fine) · Drive ✕ backup skipped' : '✅ Local ✓ · R2 ✓ · Drive ✓';
+    case 'SERVER_REUPLOAD': return '💾 Local ✓ · 🔁 website restarted — helper re-sending clip';
     case 'FAILED': return '❌ Failed';
     default: return j.status;
   }
@@ -2156,8 +2184,9 @@ async function refreshClipJobs(){
   try {
     const matchId = safeClipMatchId(currentMatchId());
     const r = await fetch(`${CLIPPER_HELPER_URL}/clip-jobs?limit=10${matchId ? `&matchId=${encodeURIComponent(matchId)}` : ''}`, { signal: AbortSignal.timeout(3000) }).then(x => x.json());
-    const list = (r && r.jobs) || [];
-    renderClipJobs(list);
+    const list = ((r && r.jobs) || []).slice(0, 10);
+    await refreshServerClipStatus(list);
+    renderClipJobs(list.map(withServerClipStatus));
     active = list.some(j => CJ_ACTIVE.includes(j.status));
   } catch(e){ /* helper not running — the status dot already says so */ }
   clipJobsTimer = setTimeout(refreshClipJobs, active ? 2000 : 8000);
