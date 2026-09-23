@@ -1,23 +1,38 @@
-# Clipper Helper v3 — Setup (one-time, operator ka apna PC)
+# Clipper Helper v4 — Setup (one-time, operator ka apna PC)
 
 Ye chhota program (`ClipperHelper.exe`) vMix ke saath usi PC par chalta hai
 jahan match record ho raha hai. Isi ke wajah se panel me FOUR/SIX/WICKET
 (aur Wide 4/6, No-ball 4/6, Leg-bye 4, manual trigger) dabane par clip
 apne aap **local recording se hi** cut hoke website/Drive ko bhej di jaati hai.
 
-**v3 me kya badla:**
-- Har clip ab poora **18 second** ka hai: trigger se **15 sec pehle** +
-  **3 sec baad** ka footage — pehle 20s (10/10) tha.
-- Cutting ab **poori tarah local** hai — kisi bhi network/website call se
-  kabhi block nahi hoti. Pehle agar website slow/down ho jaati thi to
-  poora Clipper beech match me "fetching…" me atak jaata tha aur uske
-  baad clips cutna band ho jaati thi. Ab cutting aur uploading do alag,
-  independent queues hain — upload kitna bhi atka rahe, agla clip cutna
-  kabhi nahi rukta.
-- Har clip cut hone ke baad **validate** hoti hai (file size, ~18s
-  duration) — kuch galat mile to khud retry karta hai.
-- Clips Folder set nahi kiya to ab clips **recording wale folder ke andar
-  `Clips\` mein** save hoti hain (pehle .exe ke apne folder me jaati thi).
+**v4 me kya badla (10–12 clips ke baad clips miss hona / "fetching" error / restart ki zaroorat — root cause fix):**
+- **HIGHLIGHTS button:** ball khelte hi panel me **🎬 HIGHLIGHTS** (ya keyboard `H`) dabao.
+  Press ka exact time save hota hai, **3 second** wait hota hai, phir vMix recording se
+  **15 sec pehle → 3 sec baad = 18 sec** ki clip cut hoti hai.
+- **Har clip ka apna time:** pehle "file ke aakhri 19 second" cut hote the — queue me
+  ruki clip galat moment ki ban jaati thi. Ab har press ka apna fixed time hai, isliye
+  back-to-back presses bhi sahi aur poore 18 sec ke aate hain.
+- **Koi press miss nahi:** pehle 2 second ke andar same type ki doosri press "duplicate"
+  maan kar chhod di jaati thi. Ab har press alag clip hai.
+- **Ek kharab clip queue nahi rokti:** atka ffmpeg kill hota hai, fail clip baad me
+  dobara try hoti hai (queue ke peeche se), agli clips chalti rehti hain.
+- **Upload poora hota hai:** pehle upload ko sirf 20 sec milte the — badi clip kabhi
+  upload hi nahi hoti thi. Ab upload tab tak chalta hai jab tak data ja raha hai, fail
+  hone par ghanton tak khud retry karta hai, aur helper restart ke baad bhi resume
+  hota hai. Clip hamesha pehle local folder me save hoti hai.
+- **Restart ke baad bhi kaam:** "Start Recording" dobara dabane ki zaroorat nahi.
+  Jo recording file vMix abhi likh raha hai, wahi use hoti hai (naya timestamped
+  file bhi apne aap pakda jaata hai).
+- Panel me har clip ka live status: ⏳ 3 sec wait → ✂️ cutting → 💾 local → R2 → Drive.
+- Ball ka outcome daalte hi clip us ball se link hoti hai. 4 / 6 / Wicket / Wide 4 /
+  No-ball 4-6 / Bye 4 / Leg-bye 4 apne aap Highlights me jaate hain; baaki par panel
+  poochta hai **"Add this clip to Highlights? YES / NO"** (keyboard `Y` / `N`).
+
+⚠️ **vMix recording format:** clips recording chalte-chalte cut hoti hain, isliye vMix ko
+aisa format likhna chahiye jo recording ke dauraan padha ja sake (vMix ka **MP4** jo
+ab tak kaam kar raha tha, wahi rakho). Agar Setup page par
+"recording is not readable while vMix is recording" dikhe, to vMix Settings →
+Recording me format badlo.
 
 **Koi Google service account / JSON key / Cloud Console NAHI chahiye.**
 Bas panel ke "Connect Google Drive" button se sign-in karna hai — 2 click.
@@ -46,7 +61,7 @@ Us folder ke andar ye files rakho (jo tumhe di gayi hain):
 khul jayega jisme sirf 2 box hain:
 
 - **vMix Recording File** — vMix jis file me record kar raha hai, uska
-  poora path (jaise `C:\Users\YOUR_NAME\Videos\match-recording.mp4`).
+  poora path (ya sirf us folder ka path — jo file abhi record ho rahi hai wo apne aap mil jaati hai) (jaise `C:\Users\YOUR_NAME\Videos\match-recording.mp4`).
   ⚠️ vMix Settings → Recording me jaake **"Add Timestamp to Filename" OFF**
   kar do aur ek fixed file name set karo — warna har match par naya naam
   banega aur helper ko file nahi milegi.
@@ -87,9 +102,9 @@ sakta hai — **"More info" → "Run anyway"** dabake chala sakte ho, ye safe ha
    tumhari website ko bhej di jayegi, jo use Cloudflare R2 + Drive dono me
    upload karke us over/ball ke asli batter-bowler se link kar degi — isi
    wajah se scorecard me player ke naam ke saamne clip dikhti hai.
-   (Agar website tak pahunch na ho paye — jaise net down — to purana
-   fallback chalta hai: clip seedha Drive me jaati hai, bas player-linking
-   aur R2 us waqt skip ho jaati hai.)
+   (Agar website tak pahunch na ho paye — jaise net down — clip local folder
+   me safe rehti hai aur helper khud baar-baar upload try karta rehta hai;
+   net aate hi upload ho jaati hai. Ek clip kabhi do baar upload nahi hoti.)
 
 ---
 

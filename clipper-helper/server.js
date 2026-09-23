@@ -1,956 +1,914 @@
 // ================================================================
 // 🎥 Clipper Helper — runs locally on the operator's PC, next to vMix.
 //
-// v3.0 — PRODUCTION-RELIABILITY REWRITE
-// ------------------------------------------------------------------
-// This version changes two things on purpose, and nothing else about
-// how the panel talks to this helper (same port, same endpoints:
-// /recording-start, /clip, /set-folder, /set-token, /status):
+//   vMix local recording → Clipper → local clip → website → R2 + Drive
 //
-// 1) EXACT CLIP WINDOW: every clip is now 15s BEFORE the trigger + 3s
-//    AFTER it = 18 seconds total, instead of the old 10s/10s/20s.
+// The ONLY video source is vMix's own local recording file. Never
+// YouTube, browser chunks, R2 or Drive.
 //
-// 2) CUTTING IS NOW 100% LOCAL AND FULLY DECOUPLED FROM UPLOADING.
-//    The old version cut the clip AND THEN awaited the network upload
-//    to the main server before moving on to the next queued job — so
-//    if the website was slow, asleep, or unreachable for a stretch
-//    mid-match, that single stuck `fetch()` call blocked the ENTIRE
-//    queue and every clip after it silently stopped getting cut, even
-//    though cutting itself has nothing to do with the network. That
-//    was the root cause of the "fetching… / failed to fetch" mid-match
-//    stall. Now there are two independent queues:
-//       CUT QUEUE    — local disk + ffmpeg only, never touches the
-//                      network, never blocks on it.
-//       UPLOAD QUEUE — network only, runs in the background; however
-//                      slow or broken it is, it can never delay the
-//                      next clip's cut.
-//    On top of that: every fetch() now has a hard timeout (so it can
-//    never hang forever), every response body is always fully drained
-//    (an undrained body can leak the underlying connection — over a
-//    6-7 hour match with hundreds of requests this is exactly the kind
-//    of slow leak that eventually makes fetch itself start failing),
-//    and every cut goes through a hard-kill watchdog + on-disk
-//    validation (file exists, non-zero size, ~18s duration) with
-//    automatic retry before anything is ever logged as failed.
+// v4.0 — what changed and why (the "10–12 clips work, then clips go
+// missing / fetch errors / nothing until restart" failure):
 //
-// Still exactly the same idea as before: vMix records locally, this
-// watches that recording, cuts an 18s clip on FOUR/SIX/WICKET/etc.,
-// and hands it off to the main server (which uploads to R2 + Drive
-// and links it to the batter/bowler) — falling back to direct Drive
-// upload only if the main server can't be reached.
+//  1. EXACT, PER-CLIP TIMING. v3 cut "the last 19s of the file at the
+//     moment the job ran". With a serial queue, a clip that had to wait
+//     behind another one was cut from the wrong moment. Now every job
+//     freezes its own window at the press (T0−15s → T0+3s) and that
+//     window is mapped onto the recording's own timeline via an anchor
+//     (see RecordingSource), then cut with an exact -ss/-t. Queue delay
+//     can no longer change which footage a clip contains.
+//  2. WAIT FOR THE FOOTAGE. Cutting starts 3s after the press, and only
+//     once the recording has actually been written up to T0+3s (vMix
+//     writes the file in fragments, so the newest second or two appears
+//     on disk slightly later). No more short/empty clips from cutting
+//     ahead of the file.
+//  3. NO FALSE "DUPLICATES". v3 dropped any second press of the same
+//     type inside the same 2-second bucket — back-to-back presses were
+//     silently lost. Each press is now its own job, keyed by its exact
+//     millisecond timestamp; only a genuine re-send of the SAME press
+//     (same clipId) is de-duplicated.
+//  4. ONE BAD CLIP CAN'T STALL THE QUEUE. v3's watchdog "abandoned" a
+//     slow job but left its ffmpeg running and its retries going, so
+//     abandoned cuts piled up and competed with every later cut. Every
+//     ffmpeg is now killed on timeout; a failed cut is retried later
+//     from the BACK of the queue (never blocking the next clip), and a
+//     job that still fails is marked FAILED loudly — the queue moves on.
+//  5. UPLOADS THAT CAN ACTUALLY FINISH. v3 gave each upload 20 seconds
+//     in total — a 15–30 MB clip on a normal upload link needs longer,
+//     so uploads timed out, fell back, and eventually "failed". Uploads
+//     now stream the file and only time out on inactivity, retry with
+//     backoff for hours, survive a restart, and never run twice for the
+//     same clip (no direct-to-Drive fallback creating duplicates — the
+//     website uploads to R2 and Drive independently and retries each).
+//  6. NOTHING DEPENDS ON "START RECORDING" HAVING BEEN PRESSED IN THIS
+//     SESSION. v3 rejected every clip after a helper restart until the
+//     operator pressed Start Recording again. The recording file is the
+//     source of truth; state (match, website URL) is persisted.
+//  7. ALWAYS THE RIGHT RECORDING FILE. v3 used the configured file path
+//     whenever it existed — even if vMix had started writing a NEWER
+//     file (timestamped names), so it could keep cutting from a stale
+//     recording. The file that is actually growing now always wins, and
+//     every clip remembers the file that was recording at its press.
 // ================================================================
 
 const express = require('express');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { exec, execFile } = require('child_process');
-const ffmpeg = require('fluent-ffmpeg');
+const http = require('http');
+const https = require('https');
+const { spawn, exec } = require('child_process');
 
 // When bundled by pkg into ClipperHelper.exe, __dirname points inside a
-// virtual snapshot, not the real folder the .exe sits in — so config.json,
-// clips, and ffmpeg.exe next to the .exe wouldn't be found. process.pkg
-// only exists when running as the packaged .exe, so we detect that and use
-// the real exe folder instead.
+// virtual snapshot, not the real folder the .exe sits in.
 const BASE_DIR = process.pkg ? path.dirname(process.execPath) : __dirname;
 
-// ffmpeg.exe ships as a plain file next to ClipperHelper.exe (NOT bundled
-// inside it — pkg can't reliably pack native ffmpeg binaries). Falls back
-// to the npm-installed copy when just running "node server.js" locally.
-const localFfmpeg = path.join(BASE_DIR, 'ffmpeg.exe');
-const ffmpegPath = fs.existsSync(localFfmpeg)
-  ? localFfmpeg
-  : require('@ffmpeg-installer/ffmpeg').path;
-ffmpeg.setFfmpegPath(ffmpegPath);
-// NOTE: we deliberately do NOT depend on a separate ffprobe.exe (only
-// ffmpeg.exe ships in this package). Clip validation below reads the
-// "Duration:" line out of `ffmpeg -i <file>` instead of using ffprobe —
-// same binary we already have, one less thing to install/ship/break.
+// ffmpeg.exe ships next to ClipperHelper.exe; falls back to the npm copy.
+const localFfmpeg = path.join(BASE_DIR, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+let ffmpegPath = process.env.FFMPEG_PATH || localFfmpeg;
+if (!fs.existsSync(ffmpegPath)) {
+  try { ffmpegPath = require('@ffmpeg-installer/ffmpeg').path; } catch (_) { /* reported at startup */ }
+}
 
-// 🛡️ CRASH-PROOFING: if any one clip/upload throws something unexpected
-// (a bad ffmpeg edge case, a weird network error, a malformed response
-// from the main server, etc.), Node's default behaviour is to crash the
-// ENTIRE process. For this helper that means every event AFTER the bad
-// one silently fails too — the exe window looks fine and open, but
-// nothing is listening on port 5005 anymore, until someone notices and
-// restarts it. Catching these here means one bad clip only ever costs
-// that one clip, never the rest of the match.
 process.on('uncaughtException', (err) => {
-  console.log('❌ Unexpected error (helper kept running):', err && err.message || err);
+  console.log('❌ Unexpected error (helper kept running):', (err && err.stack) || err);
 });
 process.on('unhandledRejection', (err) => {
-  console.log('❌ Unexpected async error (helper kept running):', err && err.message || err);
+  console.log('❌ Unexpected async error (helper kept running):', (err && err.stack) || err);
 });
 
+// ----------------------------------------------------------------
+// ⚙️ CONFIG (config.json next to the exe) + persisted session state.
+// ----------------------------------------------------------------
 const CONFIG_PATH = path.join(BASE_DIR, 'config.json');
 let config = {
   port: 5005,
+  // The file vMix records to — or just its folder. Whichever media file
+  // in that folder is currently being written is used (see resolveActiveRecording).
   vmixRecordingFile: 'C:\\Users\\YOUR_NAME\\Videos\\match-recording.mp4',
-  // Leave blank to auto-use "<recording folder>\Clips" — see getClipsDir()
-  // below. Set this only if you want clips saved somewhere else entirely.
+  // Blank = "<recording folder>\Clips".
   clipsFolder: '',
-  // Where the finished clip gets sent so it can be uploaded to Cloudflare
-  // R2 + Google Drive and linked to the batter/bowler for the scorecard.
-  // This should be your website's own address (the same one the panel
-  // itself opens in the browser) — NOT localhost, since it's the panel's
-  // server this helper is talking to, not itself.
-  mainServerUrl: 'https://YOUR-SITE.example.com'
+  // Your website's address. Only its origin is used (https://site.com),
+  // so a pasted panel URL like https://site.com/cricket-panel still works.
+  mainServerUrl: 'https://YOUR-SITE.example.com',
 };
 try {
-  if (fs.existsSync(CONFIG_PATH)) {
-    config = { ...config, ...JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) };
-  } else {
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
-  }
+  if (fs.existsSync(CONFIG_PATH)) config = { ...config, ...JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) };
+  else fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
 } catch (err) {
   console.log('⚠️  Could not read config.json, using defaults:', err.message);
 }
+function saveConfig() {
+  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2)); } catch (err) { console.log('⚠️  Could not write config.json:', err.message); }
+}
+
+// "https://site.com/cricket-panel/" -> "https://site.com"
+function toOrigin(url) {
+  try { return new URL(String(url).trim()).origin; } catch (_) { return ''; }
+}
+
+const STATE_PATH = path.join(BASE_DIR, 'helper-state.json');
+const session = {
+  matchId: null,
+  mainServerUrl: toOrigin(config.mainServerUrl),
+  recordingStartedAt: null,
+  driveFolderId: null,
+  driveFolderName: null,
+};
+try { Object.assign(session, JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'))); } catch (_) { /* first run */ }
+function saveSession() {
+  fs.writeFile(STATE_PATH, JSON.stringify(session, null, 2), () => {});
+}
 
 // ----------------------------------------------------------------
-// 🎯 EXACT CLIP TIMING — the one place these numbers live.
+// 🎯 CLIP WINDOW — the one place these numbers live.
 // ----------------------------------------------------------------
-const EVENT_BEFORE_SECONDS = 15;   // footage kept BEFORE the trigger
-const EVENT_AFTER_SECONDS = 3;     // wait this long AFTER the trigger before cutting, so that footage actually exists on disk
-const CLIP_DURATION_SECONDS = EVENT_BEFORE_SECONDS + EVENT_AFTER_SECONDS; // 18
-const CUT_EOF_MARGIN_SECONDS = 1;  // stay this far behind the live edge of a still-growing file so ffmpeg never grabs a frame vMix hasn't finished flushing yet
-const SEEK_FROM_EOF_SECONDS = CLIP_DURATION_SECONDS + CUT_EOF_MARGIN_SECONDS; // 19
+const PRE_ROLL_SECONDS = 15;   // footage kept BEFORE the press
+const POST_ROLL_SECONDS = 3;   // footage kept AFTER the press (and the wait before cutting)
+const CLIP_SECONDS = PRE_ROLL_SECONDS + POST_ROLL_SECONDS; // 18
 
-// ----------------------------------------------------------------
-// 🔁 Retry / timeout / validation tuning.
-// ----------------------------------------------------------------
-const RETRY_FFMPEG_ATTEMPTS = 4;
-const RETRY_FFMPEG_DELAY_MS = [1000, 2000, 4000];
-const FFMPEG_TIMEOUT_MS = 30000;          // a real 18s cut takes a couple seconds — 30s means it's actually stuck, so we kill it and retry instead of hanging forever
-const QUEUE_JOB_WATCHDOG_MS = 60000;      // absolute ceiling on ONE cut job (all attempts + validation combined) — guarantees the cut queue can never freeze on a single bad job
+const COVERAGE_WAIT_MAX_MS = 30000;   // max extra wait for the recording to reach T0+3s on disk
+const CUT_TIMEOUT_MS = 90000;         // one ffmpeg cut; killed after this
+const CUT_MAX_ATTEMPTS = 3;
+const CUT_RETRY_DELAYS_MS = [3000, 8000];
+const UPLOAD_IDLE_TIMEOUT_MS = 60000; // no bytes moving for this long = dead connection
+const UPLOAD_BACKOFF_MS = [5000, 15000, 30000, 60000, 120000, 300000]; // then every 5 min
+const UPLOAD_MAX_ATTEMPTS = 60;       // ≈ 4–5 hours of retrying
+const STATUS_POLL_WINDOW_MS = 60 * 60 * 1000; // follow R2/Drive progress for up to 1 hour per clip
 
-const MIN_CLIP_BYTES = 20 * 1024;                    // floor beneath which a file can't realistically be a real ~18s clip
-const VALIDATION_DURATION_TOLERANCE_SECONDS = 3;     // accept 15s–21s as "close enough" to 18s
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const DEDUPE_WINDOW_SECONDS = 2; // two /clip calls for the same event type within this window are treated as one event, not two clips
-
-const FETCH_TIMEOUT_MS = 20000;
-const RETRY_UPLOAD_ATTEMPTS = 3;
-const RETRY_UPLOAD_DELAY_MS = [1000, 3000, 6000]; // backs off a bit more each time
-
-// ----------------------------------------------------------------
-// 📁 Where clips get saved. If the operator hasn't set clipsFolder,
-// fall back to "<recording folder>\Clips" (not a folder next to the
-// .exe) — recomputed fresh each time in case the recording path is
-// changed via /setup mid-session.
-// ----------------------------------------------------------------
 function getClipsDir() {
   const folder = (config.clipsFolder || '').trim();
-  if (folder) {
-    return path.isAbsolute(folder) ? folder : path.join(BASE_DIR, folder);
-  }
-  const recordingDir = path.dirname(config.vmixRecordingFile || '.');
-  return path.join(recordingDir, 'Clips');
+  if (folder) return path.isAbsolute(folder) ? folder : path.join(BASE_DIR, folder);
+  return path.join(recordingDir(), 'Clips');
+}
+function recordingDir() {
+  const p = config.vmixRecordingFile || '.';
+  try { if (fs.statSync(p).isDirectory()) return p; } catch (_) { /* not there (yet) */ }
+  return path.dirname(p);
 }
 
 // ----------------------------------------------------------------
-// State — all in memory, reset every time the operator restarts the
-// app (that's fine, they set the folder + start recording fresh each
-// match anyway).
+// 🛠️ ffmpeg helpers — every process is tracked, bounded and killed.
 // ----------------------------------------------------------------
-let recordingStartedAt = null;   // Date.now() ms, when panel said recording began
-let driveAccessToken = null;     // token forwarded from the panel's Connect Google Drive
-let driveFolderId = null;        // folder the operator picked
-let driveFolderName = null;
-let currentMatchId = null;       // which match this session's clips belong to
-// Where finished clips are sent so the main server can upload them to
-// Cloudflare R2 + Drive and link them to the batter/bowler. The panel
-// sends its own origin here on every /recording-start call, so this
-// always stays correct even if config.json's default is out of date.
-let mainServerUrl = (config.mainServerUrl || '').replace(/\/+$/, '');
+const children = new Set();
+function runFfmpeg(args, { timeoutMs, lowPriority = false, collectStderr = true } = {}) {
+  return new Promise((resolve) => {
+    let proc;
+    try {
+      proc = spawn(ffmpegPath, args, { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+    } catch (err) {
+      return resolve({ code: -1, stderr: err.message, timedOut: false });
+    }
+    children.add(proc);
+    if (lowPriority) { try { os.setPriority(proc.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch (_) {} }
+    let stderr = '';
+    let timedOut = false;
+    const timer = timeoutMs ? setTimeout(() => { timedOut = true; try { proc.kill('SIGKILL'); } catch (_) {} }, timeoutMs) : null;
+    proc.stderr.on('data', (d) => { if (collectStderr) stderr = (stderr + d).slice(-16000); });
+    const done = (code) => { clearTimeout(timer); children.delete(proc); resolve({ code, stderr, timedOut }); };
+    proc.on('error', (err) => { stderr += err.message; done(-1); });
+    proc.on('close', (code) => done(code));
+  });
+}
 
-// Small helper: wait ms, then resolve — used between retry attempts.
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Duration of a media file (works on a file vMix is still writing, as
+// long as vMix writes a streamable format — fragmented MP4, MOV/MKV
+// written in fragments, etc.). Reads the "Duration:" line of ffmpeg -i.
+async function probeDuration(filePath) {
+  const r = await runFfmpeg(['-hide_banner', '-nostdin', '-i', filePath], { timeoutMs: 15000 });
+  const m = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(r.stderr);
+  if (!m) {
+    const reason = /moov atom not found/i.test(r.stderr)
+      ? 'recording is not readable while vMix is recording (MP4 index is only written at the end) — see README: use a fragmented/streamable recording format'
+      : (r.timedOut ? 'probe timed out' : (r.stderr.trim().split('\n').pop() || 'no Duration line'));
+    return { ok: false, reason };
+  }
+  return { ok: true, seconds: Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) };
+}
+
+let videoEncoderArgs = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-pix_fmt', 'yuv420p'];
+async function detectEncoder() {
+  const r = await new Promise((resolve) => {
+    let out = '';
+    let p;
+    try { p = spawn(ffmpegPath, ['-hide_banner', '-encoders'], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }); } catch (e) { return resolve(''); }
+    p.stdout.on('data', (d) => { out += d; });
+    p.on('error', () => resolve(''));
+    p.on('close', () => resolve(out));
+  });
+  if (!/\blibx264\b/.test(r)) {
+    videoEncoderArgs = ['-c:v', 'mpeg4', '-q:v', '3'];
+    console.log('⚠️  This ffmpeg has no libx264 — clips will be encoded with mpeg4 (larger files). A full ffmpeg build is recommended.');
+  }
+}
 
 // ----------------------------------------------------------------
-// 🧵🎬 CUT QUEUE — local disk + ffmpeg only. Every /clip event goes in
-// here and is cut ONE AT A TIME, in order. This queue NEVER makes a
-// network call, so it can never be stalled by the website being slow
-// or unreachable — see the v3.0 note at the top of the file.
+// 📼 RECORDING SOURCE — finds the file vMix is writing and keeps a
+// wall-clock ↔ file-time anchor for it.
+//
+// anchor = wall-clock time of the file's 0:00. Each probe gives
+// (probe time − file duration); the file's written end can only LAG real
+// time (encoder + fragment buffering), never lead it, so the minimum of
+// recent samples is the tightest estimate. A sliding 3-minute window
+// follows any slow clock drift across a 6–7 hour match. For a file that
+// is no longer growing, its last-modified time stands in for "now".
 // ----------------------------------------------------------------
-const clipQueue = [];
-let queueRunning = false;
+const MEDIA_EXT = new Set(['.mp4', '.mov', '.mkv', '.ts', '.m4v', '.mts', '.m2ts']);
+const ANCHOR_WINDOW_MS = 3 * 60 * 1000;
+const sources = new Map(); // filePath -> { samples: [[wall, anchor]], anchor, durationSec, probedAt, size, sizeChangedAt, lastError, probing }
+let activeRecording = null; // { file, size, mtimeMs, growing }
+let recordingError = null;
+
+function isClipFileName(name) {
+  return /\.part\.mp4$/i.test(name) || /_\d{12,}\.mp4$/i.test(name);
+}
+
+async function resolveActiveRecording() {
+  const candidates = [];
+  const configured = config.vmixRecordingFile;
+  const dir = recordingDir();
+  const clipsDir = path.resolve(getClipsDir());
+  try {
+    for (const name of await fs.promises.readdir(dir)) {
+      if (!MEDIA_EXT.has(path.extname(name).toLowerCase()) || isClipFileName(name)) continue;
+      const full = path.join(dir, name);
+      if (path.resolve(path.dirname(full)) === clipsDir) continue;
+      candidates.push(full);
+    }
+  } catch (_) { /* folder missing — handled below */ }
+  if (configured && !candidates.includes(configured) && fs.existsSync(configured) && !fs.statSync(configured).isDirectory()) candidates.push(configured);
+  let best = null;
+  for (const full of candidates) {
+    try {
+      const st = await fs.promises.stat(full);
+      if (!best || st.mtimeMs > best.mtimeMs) best = { file: full, size: st.size, mtimeMs: st.mtimeMs };
+    } catch (_) { /* vanished */ }
+  }
+  if (!best) {
+    activeRecording = null;
+    recordingError = `No recording file found in ${dir} — is vMix recording, and is the recording path in Setup correct?`;
+    return null;
+  }
+  const src = sourceFor(best.file);
+  if (src.size !== best.size) { src.size = best.size; src.sizeChangedAt = Date.now(); }
+  best.growing = Date.now() - (src.sizeChangedAt || 0) < 15000;
+  activeRecording = best;
+  recordingError = null;
+  return best;
+}
+
+function sourceFor(file) {
+  let s = sources.get(file);
+  if (!s) {
+    s = { samples: [], anchor: null, durationSec: 0, probedAt: 0, size: null, sizeChangedAt: 0, lastError: null, probing: null };
+    sources.set(file, s);
+  }
+  return s;
+}
+
+// Probes one recording file (never two probes of the same file at once).
+function probeSource(file) {
+  const src = sourceFor(file);
+  if (src.probing) return src.probing;
+  src.probing = (async () => {
+    let st;
+    try { st = await fs.promises.stat(file); } catch (e) { src.lastError = 'recording file not found'; return src; }
+    if (src.size !== st.size) { src.size = st.size; src.sizeChangedAt = Date.now(); }
+    const growing = Date.now() - src.sizeChangedAt < 15000;
+    const wall = Date.now();
+    const r = await probeDuration(file);
+    if (!r.ok) { src.lastError = r.reason; return src; }
+    src.lastError = null;
+    src.durationSec = r.seconds;
+    src.probedAt = wall;
+    // A finished file's end is its last write, not "now".
+    const endWall = growing ? wall : st.mtimeMs;
+    src.samples.push([wall, endWall - r.seconds * 1000]);
+    while (src.samples.length > 1 && wall - src.samples[0][0] > ANCHOR_WINDOW_MS) src.samples.shift();
+    let min = Infinity;
+    for (const [, a] of src.samples) if (a < min) min = a;
+    src.anchor = min;
+    return src;
+  })().finally(() => { src.probing = null; });
+  return src.probing;
+}
+
+// Background: keep the active recording's anchor fresh (every 5s).
+async function sourceTick() {
+  try {
+    const rec = await resolveActiveRecording();
+    if (rec && (rec.growing || !sourceFor(rec.file).anchor)) await probeSource(rec.file);
+  } catch (err) {
+    console.log('⚠️  Recording check error (will retry):', err.message);
+  }
+}
+setInterval(sourceTick, 5000);
 
 // ----------------------------------------------------------------
-// ☁️ UPLOAD QUEUE — network only, runs completely independently of the
-// cut queue above. A clip lands here only after it's already safely
-// cut + validated on disk, so however slow/broken the network is,
-// cutting the NEXT clip is never affected.
+// 🗂️ CLIP JOBS — one per HIGHLIGHTS/FOUR/SIX/WICKET press. Persisted
+// (clip-jobs.json) so a restart resumes cuts and uploads.
+//
+// status: WAITING → CUTTING → LOCAL_SAVED → UPLOADING → UPLOADED
+//         (→ R2/Drive progress from the website) → COMPLETE
+//         CUT_RETRY / UPLOAD_RETRY on failure, FAILED when out of attempts.
+// ----------------------------------------------------------------
+const JOBS_PATH = path.join(BASE_DIR, 'clip-jobs.json');
+const jobs = new Map();
+try {
+  for (const j of JSON.parse(fs.readFileSync(JOBS_PATH, 'utf8'))) jobs.set(j.clipId, j);
+} catch (_) { /* first run */ }
+
+let jobsSaveTimer = null;
+let jobsWriting = false;
+let jobsDirty = false;
+function persistJobs() {
+  jobsDirty = true;
+  if (jobsSaveTimer || jobsWriting) return;
+  jobsSaveTimer = setTimeout(() => {
+    jobsSaveTimer = null;
+    jobsDirty = false;
+    jobsWriting = true;
+    // Keep every unfinished job + the most recent 300 overall.
+    const keep = jobsToKeep();
+    const tmp = JOBS_PATH + '.tmp';
+    fs.writeFile(tmp, JSON.stringify(keep), (err) => {
+      const finish = () => { jobsWriting = false; if (jobsDirty) persistJobs(); };
+      if (err) return finish();
+      fs.rename(tmp, JOBS_PATH, (err2) => { if (err2) fs.writeFile(JOBS_PATH, JSON.stringify(keep), finish); else finish(); });
+    });
+  }, 500);
+}
+function jobsToKeep() {
+  const all = [...jobs.values()];
+  return all.filter((j, i) => i >= all.length - 300 || !['COMPLETE', 'FAILED'].includes(j.status));
+}
+function flushJobsNow() {
+  try { fs.writeFileSync(JOBS_PATH, JSON.stringify(jobsToKeep())); } catch (_) { persistJobs(); }
+}
+function update(job, patch) {
+  Object.assign(job, patch, { updatedAt: Date.now() });
+  persistJobs();
+}
+function pruneJobs() {
+  if (jobs.size <= 500) return;
+  for (const [id, j] of jobs) {
+    if (jobs.size <= 400) break;
+    if (['COMPLETE', 'FAILED'].includes(j.status)) jobs.delete(id);
+  }
+}
+
+function buildClipId(matchId, eventType, t0) {
+  return `${String(matchId || 'match').replace(/[^a-zA-Z0-9_-]/g, '')}_${String(eventType || 'CLIP').toUpperCase().replace(/[^A-Z0-9-]/g, '')}_${t0}`;
+}
+
+// ----------------------------------------------------------------
+// ✂️ CUT QUEUE — local disk + ffmpeg only, one cut at a time (vMix is on
+// this PC too), strictly independent of the network.
+// ----------------------------------------------------------------
+const cutQueue = [];
+let cutRunning = false;
+const timers = new Set();
+function later(fn, ms) {
+  const t = setTimeout(() => { timers.delete(t); fn(); }, ms);
+  timers.add(t);
+}
+
+function scheduleCut(job) {
+  const dueAt = job.t0 + POST_ROLL_SECONDS * 1000;
+  later(() => enqueueCut(job.clipId), Math.max(0, dueAt - Date.now()));
+}
+function enqueueCut(clipId) {
+  if (!cutQueue.includes(clipId)) cutQueue.push(clipId);
+  pumpCuts();
+}
+async function pumpCuts() {
+  if (cutRunning) return;
+  cutRunning = true;
+  try {
+    while (cutQueue.length) {
+      const job = jobs.get(cutQueue.shift());
+      if (!job || !['WAITING', 'CUT_RETRY', 'CUTTING'].includes(job.status)) continue;
+      try {
+        await cutJob(job);
+      } catch (err) {
+        onCutFailure(job, `unexpected: ${err.message}`);
+      }
+    }
+  } finally {
+    cutRunning = false;
+  }
+}
+
+async function cutJob(job) {
+  job.cutAttempts = (job.cutAttempts || 0) + 1;
+  update(job, { status: 'CUTTING', cutAttempts: job.cutAttempts, error: null });
+
+  // The file that was recording when the button was pressed.
+  if (!job.sourceFile || !fs.existsSync(job.sourceFile)) {
+    const rec = await resolveActiveRecording();
+    if (!rec) return onCutFailure(job, recordingError || 'no recording file');
+    job.sourceFile = rec.file;
+  }
+  let src = await probeSource(job.sourceFile);
+  if (src.anchor == null) return onCutFailure(job, `cannot read recording: ${src.lastError || 'unknown'}`);
+
+  // Wait (max COVERAGE_WAIT_MAX_MS) until the recording has actually
+  // been written up to T0+3s.
+  let startSec = (job.window.startWall - src.anchor) / 1000;
+  let endSec = (job.window.endWall - src.anchor) / 1000;
+  const waitUntil = Date.now() + COVERAGE_WAIT_MAX_MS;
+  while (src.durationSec < endSec && Date.now() < waitUntil) {
+    const stillGrowing = Date.now() - src.sizeChangedAt < 15000;
+    if (!stillGrowing) break; // recording stopped — cut what exists
+    await sleep(500);
+    src = await probeSource(job.sourceFile);
+    startSec = (job.window.startWall - src.anchor) / 1000;
+    endSec = (job.window.endWall - src.anchor) / 1000;
+  }
+  if (endSec <= 0) return onCutFailure(job, 'this moment is before the start of the recording', { final: true });
+  const recordingStopped = Date.now() - src.sizeChangedAt >= 15000;
+  if (recordingStopped && startSec >= src.durationSec - 1) {
+    return onCutFailure(job, `vMix was not recording at the time of this press (${path.basename(job.sourceFile)} ends ${Math.round(startSec - src.durationSec + PRE_ROLL_SECONDS)}s before it)`, { final: true });
+  }
+  const fromSec = Math.max(0, startSec);
+  const toSec = Math.min(endSec, src.durationSec);
+  const duration = toSec - fromSec;
+  if (duration < 1) return onCutFailure(job, `recording has no footage for this moment yet (recorded up to ${src.durationSec.toFixed(1)}s, needed ${endSec.toFixed(1)}s)`);
+
+  const clipsDir = getClipsDir();
+  await fs.promises.mkdir(clipsDir, { recursive: true });
+  const outFile = path.join(clipsDir, `${job.clipId}.mp4`);
+  const partFile = path.join(clipsDir, `${job.clipId}.part.mp4`);
+  console.log(`✂️  [${job.eventType}] ${job.clipId}: cutting ${path.basename(job.sourceFile)} ${fromSec.toFixed(1)}s → ${toSec.toFixed(1)}s (${duration.toFixed(1)}s)`);
+
+  const r = await runFfmpeg([
+    '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+    '-ss', fromSec.toFixed(3), '-i', job.sourceFile, '-t', duration.toFixed(3),
+    '-map', '0:v:0', '-map', '0:a:0?',
+    ...videoEncoderArgs,
+    '-c:a', 'aac', '-b:a', '160k',
+    '-movflags', '+faststart',
+    partFile,
+  ], { timeoutMs: CUT_TIMEOUT_MS, lowPriority: true });
+  if (r.code !== 0) {
+    fs.unlink(partFile, () => {});
+    return onCutFailure(job, r.timedOut ? `ffmpeg cut timed out after ${CUT_TIMEOUT_MS / 1000}s (killed)` : `ffmpeg: ${r.stderr.trim().split('\n').slice(-2).join(' ').slice(0, 300)}`);
+  }
+
+  // ✅ Validate: real, readable video of the expected length.
+  let size = 0;
+  try { size = (await fs.promises.stat(partFile)).size; } catch (_) { /* missing */ }
+  const check = size > 20 * 1024 ? await probeDuration(partFile) : { ok: false, reason: `file too small (${size} bytes)` };
+  if (!check.ok || check.seconds < duration - 1.5) {
+    fs.unlink(partFile, () => {});
+    return onCutFailure(job, check.ok ? `clip came out ${check.seconds.toFixed(1)}s instead of ${duration.toFixed(1)}s` : `invalid clip: ${check.reason}`);
+  }
+  try {
+    await renameWithRetry(partFile, outFile);
+  } catch (err) {
+    fs.unlink(partFile, () => {});
+    return onCutFailure(job, `could not save clip: ${err.message}`);
+  }
+  console.log(`💾 [${job.eventType}] ${job.clipId}: saved locally (${check.seconds.toFixed(1)}s) → ${outFile}`);
+  update(job, { status: 'LOCAL_SAVED', localPath: outFile, clipSeconds: Number(check.seconds.toFixed(1)), savedAt: Date.now(), error: null });
+  queueUpload(job);
+}
+
+function onCutFailure(job, reason, { final = false } = {}) {
+  if (!final && (job.cutAttempts || 0) < CUT_MAX_ATTEMPTS) {
+    const delay = CUT_RETRY_DELAYS_MS[Math.min((job.cutAttempts || 1) - 1, CUT_RETRY_DELAYS_MS.length - 1)];
+    console.log(`⚠️  [${job.eventType}] ${job.clipId}: ${reason} — retrying in ${delay / 1000}s (other clips continue)`);
+    update(job, { status: 'CUT_RETRY', error: reason });
+    later(() => enqueueCut(job.clipId), delay);
+    return;
+  }
+  console.log(`❌ [${job.eventType}] ${job.clipId}: clip could not be cut — ${reason}`);
+  update(job, { status: 'FAILED', error: reason, failedAt: Date.now() });
+}
+
+async function renameWithRetry(from, to, attempts = 6) {
+  for (let i = 0; ; i++) {
+    try { await fs.promises.rename(from, to); return; } catch (err) {
+      if (i >= attempts - 1) throw err;
+      await sleep(300 * (i + 1)); // antivirus/indexer can hold a just-written file briefly
+    }
+  }
+}
+
+// ----------------------------------------------------------------
+// ☁️ UPLOAD QUEUE — network only, independent of cutting. Sends each
+// clip ONCE (per successful acknowledgement) to the website, which
+// uploads it to Cloudflare R2 and Google Drive as two independent,
+// separately-retried legs and links it to the ball/players.
 // ----------------------------------------------------------------
 const uploadQueue = [];
-let uploadQueueRunning = false;
+let uploadsRunning = 0;
+const UPLOAD_CONCURRENCY = 2;
 
-// ----------------------------------------------------------------
-// 🙅 Duplicate-event guard — two /clip calls for the same event type
-// within a couple seconds of each other (a double-press, a panel
-// retry, a flaky double network send) are the SAME real-world event,
-// not two different highlights. Without this they'd produce two
-// near-identical clips and waste a cut-slot during a busy over.
-// ----------------------------------------------------------------
-const recentEventKeys = new Map(); // "TYPE_secondsBucket" -> queued-at ms
-function isDuplicateEvent(safeLabel, eventTime) {
-  const now = Date.now();
-  for (const [k, t] of recentEventKeys) {
-    if (now - t > 30000) recentEventKeys.delete(k); // prune old entries so this map never grows unbounded over a 6-7hr match
+function queueUpload(job) {
+  if (!uploadQueue.includes(job.clipId)) uploadQueue.push(job.clipId);
+  pumpUploads();
+}
+function pumpUploads() {
+  while (uploadsRunning < UPLOAD_CONCURRENCY && uploadQueue.length) {
+    const job = jobs.get(uploadQueue.shift());
+    if (!job || !['LOCAL_SAVED', 'UPLOAD_RETRY'].includes(job.status)) continue;
+    uploadsRunning++;
+    uploadJob(job)
+      .catch((err) => onUploadFailure(job, `unexpected: ${err.message}`))
+      .finally(() => { uploadsRunning--; pumpUploads(); });
   }
-  const key = `${safeLabel}_${Math.round(eventTime / (DEDUPE_WINDOW_SECONDS * 1000))}`;
-  if (recentEventKeys.has(key)) return true;
-  recentEventKeys.set(key, now);
-  return false;
 }
+
+async function uploadJob(job) {
+  const server = session.mainServerUrl || toOrigin(config.mainServerUrl);
+  const matchId = job.matchId || session.matchId;
+  if (!server) return onUploadFailure(job, 'website URL not set — open the Setup page');
+  if (!matchId) return onUploadFailure(job, 'no match id for this clip');
+  if (!job.localPath || !fs.existsSync(job.localPath)) {
+    update(job, { status: 'FAILED', error: 'local clip file is missing — cannot upload' });
+    return;
+  }
+  job.uploadAttempts = (job.uploadAttempts || 0) + 1;
+  update(job, { status: 'UPLOADING', uploadAttempts: job.uploadAttempts, error: null });
+  const qs = new URLSearchParams({ matchId, eventType: job.eventType, timestamp: String(job.t0), clipId: job.clipId });
+  const r = await postFile(`${server}/api/clips/ingest?${qs}`, job.localPath, { 'X-Ball-Meta': JSON.stringify(job.ballMeta || {}) });
+  if (!r.ok) return onUploadFailure(job, r.error);
+  console.log(`📤 [${job.eventType}] ${job.clipId}: received by website — R2 + Drive uploads running there`);
+  update(job, { status: 'UPLOADED', uploadedAt: Date.now(), r2Status: 'pending', driveStatus: 'pending', error: null });
+}
+
+function onUploadFailure(job, reason) {
+  const attempts = job.uploadAttempts || 0;
+  if (attempts >= UPLOAD_MAX_ATTEMPTS) {
+    console.log(`❌ [${job.eventType}] ${job.clipId}: upload gave up after ${attempts} attempts — clip is safe at ${job.localPath}`);
+    update(job, { status: 'FAILED', error: `upload failed: ${reason}` });
+    return;
+  }
+  const delay = UPLOAD_BACKOFF_MS[Math.min(attempts, UPLOAD_BACKOFF_MS.length) - 1] || UPLOAD_BACKOFF_MS[0];
+  console.log(`⚠️  [${job.eventType}] ${job.clipId}: upload failed (${reason}) — retry ${attempts + 1} in ${Math.round(delay / 1000)}s; clip is safe locally`);
+  update(job, { status: 'UPLOAD_RETRY', error: reason, nextUploadAt: Date.now() + delay });
+  later(() => queueUpload(job), delay);
+}
+
+// Streams a file as the request body. Times out only when nothing moves
+// for UPLOAD_IDLE_TIMEOUT_MS — a big clip on a slow link is fine.
+function postFile(url, filePath, extraHeaders) {
+  return new Promise((resolve) => {
+    let u;
+    try { u = new URL(url); } catch (e) { return resolve({ ok: false, error: 'bad website URL' }); }
+    let size;
+    try { size = fs.statSync(filePath).size; } catch (e) { return resolve({ ok: false, error: 'clip file missing' }); }
+    const lib = u.protocol === 'https:' ? https : http;
+    let settled = false;
+    const finish = (res) => { if (!settled) { settled = true; resolve(res); } };
+    const req = lib.request(u, {
+      method: 'POST',
+      agent: false, // one fresh connection per upload — nothing pooled can go stale over a 7-hour match
+      headers: { 'Content-Type': 'video/mp4', 'Content-Length': size, ...extraHeaders },
+    }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (d) => { if (body.length < 4000) body += d; });
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) finish({ ok: true, body });
+        else finish({ ok: false, error: `website answered HTTP ${res.statusCode}${body ? `: ${body.slice(0, 150)}` : ''}` });
+      });
+      res.on('error', (e) => finish({ ok: false, error: e.message }));
+    });
+    req.setTimeout(UPLOAD_IDLE_TIMEOUT_MS, () => { req.destroy(new Error(`no progress for ${UPLOAD_IDLE_TIMEOUT_MS / 1000}s`)); });
+    req.on('error', (e) => finish({ ok: false, error: e.message }));
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', (e) => { req.destroy(e); finish({ ok: false, error: `read error: ${e.message}` }); });
+    stream.pipe(req);
+  });
+}
+
+function getJson(url, timeoutMs = 10000) {
+  return new Promise((resolve) => {
+    let u;
+    try { u = new URL(url); } catch (e) { return resolve(null); }
+    const lib = u.protocol === 'https:' ? https : http;
+    const req = lib.get(u, { agent: false }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (d) => { if (body.length < 20000) body += d; });
+      res.on('end', () => { try { resolve({ status: res.statusCode, json: JSON.parse(body) }); } catch (_) { resolve({ status: res.statusCode, json: null }); } });
+      res.on('error', () => resolve(null));
+    });
+    req.setTimeout(timeoutMs, () => req.destroy(new Error('timeout')));
+    req.on('error', () => resolve(null));
+  });
+}
+
+// 🔎 Follows each uploaded clip's R2 and Drive legs on the website (for
+// the panel's status list) until both are done, it failed permanently,
+// or an hour has passed. One loop for all clips; a few at a time.
+async function statusPollTick() {
+  const server = session.mainServerUrl || toOrigin(config.mainServerUrl);
+  if (!server) return;
+  const due = [...jobs.values()].filter((j) => j.status === 'UPLOADED' && Date.now() - (j.uploadedAt || 0) < STATUS_POLL_WINDOW_MS);
+  for (const job of due.slice(0, 6)) {
+    const r = await getJson(`${server}/api/clips/status/${encodeURIComponent(job.clipId)}`);
+    if (!r || r.status !== 200 || !r.json || !r.json.success) continue;
+    const d = r.json;
+    const patch = { r2Status: d.r2Status || job.r2Status, driveStatus: d.driveStatus || job.driveStatus, serverStatus: d.status };
+    if (d.status === 'COMPLETE') {
+      patch.status = 'COMPLETE';
+      console.log(`✅ [${job.eventType}] ${job.clipId}: in R2 + Drive`);
+    } else if (d.status === 'FAILED_PERMANENT') {
+      patch.status = 'FAILED';
+      patch.error = d.permanentFailureReason || 'website could not upload to R2/Drive';
+    }
+    update(job, patch);
+  }
+}
+setInterval(() => { statusPollTick().catch(() => {}); }, 5000);
 
 // ----------------------------------------------------------------
-// 📋 Failed-clips log — a clip only ever ends up here after EVERY
-// retry has been exhausted. This is the "nothing is ever silently
-// cancelled" guarantee: even in the worst case, the operator (or the
-// panel) has a permanent, on-disk record of exactly which clip failed
-// and why, instead of it just quietly vanishing.
+// 🌐 HTTP API (panel ↔ helper). Same endpoints as v3, plus /clip-jobs.
 // ----------------------------------------------------------------
-const FAILED_LOG_PATH = path.join(BASE_DIR, 'failed-clips.json');
-function recordFailedClip(entry) {
-  let list = [];
-  try {
-    if (fs.existsSync(FAILED_LOG_PATH)) list = JSON.parse(fs.readFileSync(FAILED_LOG_PATH, 'utf8'));
-  } catch (_) { list = []; }
-  list.push({ ...entry, failedAt: new Date().toISOString() });
-  try { fs.writeFileSync(FAILED_LOG_PATH, JSON.stringify(list, null, 2)); } catch (_) {}
-  console.log(`🆘 Logged to failed-clips.json so it's never silently lost: ${entry.fileName || entry.eventType}`);
-}
-
-async function safeDelete(p) {
-  try { await fs.promises.unlink(p); } catch (_) {}
-}
-
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// Basic CORS so the panel (running on a different origin, the website)
-// can call this local helper from the browser.
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  // Chrome (Private/Local Network Access): an https:// panel calling
+  // http://localhost needs this on the preflight, or the request fails
+  // as a generic "Failed to fetch".
+  res.header('Access-Control-Allow-Private-Network', 'true');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
 
-// ----------------------------------------------------------------
-// GET/POST /setup — a simple point-and-click page so the operator
-// never has to open config.json in Notepad. Two fields only (the
-// ones that actually change per-operator): the vMix recording file,
-// and the website URL. Saves straight back to config.json on disk
-// so it's remembered next time the exe is started.
-// ----------------------------------------------------------------
 function setupPageHtml(message) {
-  const recordingFile = (config.vmixRecordingFile || '').replace(/"/g, '&quot;');
-  const websiteUrl = (config.mainServerUrl || '').replace(/"/g, '&quot;');
+  const esc = (v) => String(v || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  const src = activeRecording ? sourceFor(activeRecording.file) : null;
   return `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><title>Clipper Helper — Setup</title>
 <style>
-  body{ font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:#0b0f1a; color:#f2f4f8; padding:0; margin:0; }
-  .wrap{ max-width:480px; margin:40px auto; padding:0 20px; }
-  h1{ font-size:18px; margin-bottom:4px; }
-  p.sub{ color:#8892a6; font-size:13px; margin-top:0; }
+  body{ font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:#0b0f1a; color:#f2f4f8; margin:0; }
+  .wrap{ max-width:520px; margin:40px auto; padding:0 20px; }
+  h1{ font-size:18px; margin-bottom:4px; } p.sub{ color:#8892a6; font-size:13px; margin-top:0; }
   label{ display:block; font-size:12px; color:#8892a6; margin:16px 0 6px; }
   input[type=text]{ width:100%; box-sizing:border-box; padding:10px; border-radius:7px; border:1px solid #232c42; background:#182034; color:#f2f4f8; font-size:14px; }
   button{ margin-top:20px; width:100%; padding:12px; border-radius:8px; border:none; background:#ff7a00; color:#12100c; font-weight:700; font-size:14px; cursor:pointer; }
-  button:hover{ background:#ff8a1f; }
-  .msg{ margin-top:14px; padding:10px 12px; border-radius:7px; font-size:13px; }
-  .msg.ok{ background:rgba(34,197,94,.15); color:#22c55e; border:1px solid #22c55e; }
-  .status{ margin-top:24px; font-size:12px; color:#8892a6; }
+  .msg{ margin-top:14px; padding:10px 12px; border-radius:7px; font-size:13px; background:rgba(34,197,94,.15); color:#22c55e; border:1px solid #22c55e; }
+  .status{ margin-top:24px; font-size:12px; color:#8892a6; line-height:1.7; }
+  .bad{ color:#f87171; } .good{ color:#22c55e; }
 </style></head>
 <body><div class="wrap">
   <h1>🎥 Clipper Helper — Setup</h1>
   <p class="sub">Yeh 2 cheez bharo aur Save dabao — config.json khud ban jayega.</p>
-  ${message ? `<div class="msg ok">${message}</div>` : ''}
+  ${message ? `<div class="msg">${message}</div>` : ''}
   <form method="POST" action="/setup">
-    <label>vMix Recording File — vMix jis folder/file me record karta hai, uska poora path</label>
-    <input type="text" name="recordingFile" value="${recordingFile}" placeholder="C:\\Users\\YOUR_NAME\\Videos\\match-recording.mp4">
+    <label>vMix Recording — vMix jis file (ya folder) me record karta hai, uska poora path</label>
+    <input type="text" name="recordingFile" value="${esc(config.vmixRecordingFile)}" placeholder="D:\\ClipperRecording\\recording.mp4">
     <label>Website URL — panel jis website par khulta hai</label>
-    <input type="text" name="websiteUrl" value="${websiteUrl}" placeholder="https://yourscoreapp.onrender.com">
+    <input type="text" name="websiteUrl" value="${esc(config.mainServerUrl)}" placeholder="https://allsportslivestreams.com">
     <button type="submit">💾 Save</button>
   </form>
-  <div class="status">Port: ${config.port} · Clips folder: ${getClipsDir()} · Iss window ko match khatam hone tak khula rakho.</div>
+  <div class="status">
+    Recording: ${activeRecording ? `<span class="good">${esc(activeRecording.file)}</span> ${activeRecording.growing ? '(recording ✅)' : '(not growing — vMix not recording right now)'}` : `<span class="bad">${esc(recordingError || 'not found yet')}</span>`}<br>
+    ${src && src.lastError ? `<span class="bad">Recording read error: ${esc(src.lastError)}</span><br>` : ''}
+    Clips folder: ${esc(getClipsDir())}<br>
+    Website: ${esc(session.mainServerUrl || toOrigin(config.mainServerUrl) || 'not set')} · Port ${config.port}<br>
+    Iss window ko match khatam hone tak khula rakho.
+  </div>
 </div></body></html>`;
 }
 
-app.get('/setup', (req, res) => {
+app.get('/setup', async (req, res) => {
+  await resolveActiveRecording().catch(() => {});
   res.send(setupPageHtml(null));
 });
-
-app.post('/setup', (req, res) => {
+app.post('/setup', async (req, res) => {
   const { recordingFile, websiteUrl } = req.body || {};
-  if (recordingFile !== undefined) config.vmixRecordingFile = String(recordingFile).trim();
+  if (recordingFile !== undefined) config.vmixRecordingFile = String(recordingFile).trim().replace(/^"|"$/g, '');
   if (websiteUrl !== undefined) {
     config.mainServerUrl = String(websiteUrl).trim();
-    mainServerUrl = config.mainServerUrl.replace(/\/+$/, '');
+    const origin = toOrigin(config.mainServerUrl);
+    if (origin) { session.mainServerUrl = origin; saveSession(); }
   }
-  try {
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
-    console.log('💾 Setup saved via /setup page:', { vmixRecordingFile: config.vmixRecordingFile, mainServerUrl: config.mainServerUrl });
-  } catch (err) {
-    console.log('⚠️  Could not write config.json:', err.message);
-  }
+  saveConfig();
+  console.log('💾 Setup saved:', { vmixRecordingFile: config.vmixRecordingFile, website: toOrigin(config.mainServerUrl) });
+  await resolveActiveRecording().catch(() => {});
   res.send(setupPageHtml('✅ Saved! Ab is tab ko band karke match shuru kar sakte ho.'));
 });
 
-// ----------------------------------------------------------------
-// GET /status — panel/operator can check this in a browser to see
-// current state.
-// ----------------------------------------------------------------
-app.get('/status', async (req, res) => {
-  let failedClipsCount = 0;
-  try {
-    if (fs.existsSync(FAILED_LOG_PATH)) failedClipsCount = JSON.parse(await fs.promises.readFile(FAILED_LOG_PATH, 'utf8')).length;
-  } catch (_) { /* leave at 0 */ }
+function jobView(j) {
+  return {
+    clipId: j.clipId, matchId: j.matchId, eventType: j.eventType, t0: j.t0,
+    status: j.status, error: j.error || null,
+    cutAttempts: j.cutAttempts || 0, uploadAttempts: j.uploadAttempts || 0,
+    nextUploadAt: j.nextUploadAt || null,
+    clipSeconds: j.clipSeconds || null, localPath: j.localPath || null,
+    r2Status: j.r2Status || null, driveStatus: j.driveStatus || null,
+    createdAt: j.createdAt, updatedAt: j.updatedAt,
+  };
+}
 
+app.get('/status', async (req, res) => {
+  const rec = activeRecording;
+  const src = rec ? sourceFor(rec.file) : null;
+  const all = [...jobs.values()];
   res.json({
     running: true,
-    recordingStartedAt,
-    matchId: currentMatchId,
-    mainServerUrl: mainServerUrl || null,
-    driveConnected: !!(driveAccessToken && driveFolderId),
-    driveFolderName,
+    version: 4,
+    matchId: session.matchId,
+    mainServerUrl: session.mainServerUrl || toOrigin(config.mainServerUrl) || null,
+    recordingStartedAt: session.recordingStartedAt,
     vmixRecordingFile: config.vmixRecordingFile,
-    currentRecordingFile: await resolveRecordingFileOnce(),
+    vmixRecordingFolder: recordingDir(),
+    currentRecordingFile: rec ? rec.file : null,
+    recordingGrowing: !!(rec && rec.growing),
+    recordingSeconds: src ? Math.round(src.durationSec) : null,
+    recordingError: recordingError || (src && src.lastError) || null,
     clipsDir: getClipsDir(),
-    clipTiming: { beforeSeconds: EVENT_BEFORE_SECONDS, afterSeconds: EVENT_AFTER_SECONDS, durationSeconds: CLIP_DURATION_SECONDS },
-    cutQueueLength: clipQueue.length,
-    uploadQueueLength: uploadQueue.length,
-    failedClipsCount
+    clipTiming: { beforeSeconds: PRE_ROLL_SECONDS, afterSeconds: POST_ROLL_SECONDS, durationSeconds: CLIP_SECONDS },
+    driveConnected: !!session.driveFolderId,
+    driveFolderName: session.driveFolderName,
+    cutQueueLength: cutQueue.length + (cutRunning ? 1 : 0),
+    uploadQueueLength: uploadQueue.length + uploadsRunning,
+    clipsOk: all.filter((j) => ['LOCAL_SAVED', 'UPLOADING', 'UPLOADED', 'UPLOAD_RETRY', 'COMPLETE'].includes(j.status)).length,
+    failedClipsCount: all.filter((j) => j.status === 'FAILED').length,
+    ffmpegChildren: children.size,
+    memoryMB: Math.round(process.memoryUsage().rss / 1048576),
   });
 });
 
-// ----------------------------------------------------------------
-// GET /failed-clips — anything that exhausted every retry ends up
-// here, permanently, until manually cleared. This is the visible half
-// of the "nothing is ever silently cancelled" guarantee.
-// ----------------------------------------------------------------
-app.get('/failed-clips', async (req, res) => {
-  try {
-    if (!fs.existsSync(FAILED_LOG_PATH)) return res.json({ failedClips: [] });
-    const list = JSON.parse(await fs.promises.readFile(FAILED_LOG_PATH, 'utf8'));
-    res.json({ failedClips: list });
-  } catch (err) {
-    res.json({ failedClips: [], error: err.message });
-  }
+// Newest first — the panel's live status list.
+app.get('/clip-jobs', (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 20, 100);
+  const list = [...jobs.values()]
+    .filter((j) => !req.query.matchId || j.matchId === req.query.matchId)
+    .sort((a, b) => b.t0 - a.t0).slice(0, limit).map(jobView);
+  res.json({ success: true, jobs: list });
+});
+app.get('/clip-jobs/:clipId', (req, res) => {
+  const j = jobs.get(req.params.clipId);
+  if (!j) return res.status(404).json({ success: false, error: 'No clip job with that clipId' });
+  res.json({ success: true, job: jobView(j) });
+});
+app.get('/failed-clips', (req, res) => {
+  res.json({ failedClips: [...jobs.values()].filter((j) => j.status === 'FAILED').map(jobView) });
 });
 
-// ----------------------------------------------------------------
-// POST /recording-start — panel calls this when the operator clicks
-// "🔴 Start Recording". We just remember the timestamp for /status.
-// ----------------------------------------------------------------
 app.post('/recording-start', (req, res) => {
-  recordingStartedAt = (req.body && req.body.startedAt) || Date.now();
-  if (req.body && req.body.matchId) currentMatchId = String(req.body.matchId);
-  // The panel passes its own address (location.origin) here every time —
-  // always trust the freshest one over whatever config.json had.
-  if (req.body && req.body.mainServerUrl) mainServerUrl = String(req.body.mainServerUrl).replace(/\/+$/, '');
-  console.log('🔴 Recording marked as started at', new Date(recordingStartedAt).toLocaleTimeString(), currentMatchId ? `(match ${currentMatchId})` : '');
-  res.json({ success: true });
+  const b = req.body || {};
+  session.recordingStartedAt = Number(b.startedAt) || Date.now();
+  if (b.matchId) session.matchId = String(b.matchId);
+  const origin = toOrigin(b.mainServerUrl);
+  if (origin) session.mainServerUrl = origin;
+  saveSession();
+  console.log(`🔴 Recording session started${session.matchId ? ` (match ${session.matchId})` : ''} — website ${session.mainServerUrl || 'not set'}`);
+  res.json({ success: true, vmixControlled: false });
+});
+app.post('/recording-stop', (req, res) => {
+  console.log('⏹  Recording session stopped (clips already requested are still cut and uploaded)');
+  res.json({ success: true, vmixControlled: false });
 });
 
-// ----------------------------------------------------------------
-// POST /set-folder — panel calls this right after the operator does
-// "Connect Google Drive". Body carries BOTH the folder id AND the
-// access token, so this helper can upload directly with no service
-// account.
-// ----------------------------------------------------------------
+// Kept for the panel's "Connect Google Drive" flow. Drive uploads are
+// done by the website (independently of R2); this only shows in /status.
 app.post('/set-folder', (req, res) => {
-  const { folderId, folderName, accessToken } = req.body || {};
-  if (!folderId) return res.json({ success: false, error: 'No folderId provided' });
-
-  driveFolderId = folderId;
-  driveFolderName = folderName || driveFolderName || 'Selected folder';
-  if (accessToken) driveAccessToken = accessToken;
-
-  console.log(`📁 Drive folder set: ${driveFolderName} (${driveFolderId}) — token ${accessToken ? 'received' : 'NOT received, uploads will fail until it is'}`);
+  const { folderId, folderName } = req.body || {};
+  if (folderId) {
+    session.driveFolderId = folderId;
+    session.driveFolderName = folderName || session.driveFolderName || 'Selected folder';
+    saveSession();
+  }
   res.json({ success: true });
 });
+app.post('/set-token', (req, res) => res.json({ success: true }));
 
-// Optional: panel can silently refresh just the token (access tokens
-// expire ~1hr) without re-picking the folder.
-app.post('/set-token', (req, res) => {
-  const { accessToken } = req.body || {};
-  if (!accessToken) return res.json({ success: false, error: 'No accessToken provided' });
-  driveAccessToken = accessToken;
-  res.json({ success: true });
+// POST /clip { eventType, timestamp, matchId, ballMeta, clipId? }
+// Acknowledged immediately; T0 (the press) is frozen into the job.
+app.post('/clip', async (req, res) => {
+  const b = req.body || {};
+  const t0 = Number(b.timestamp) || Date.now();
+  const eventType = String(b.eventType || 'CLIP').toUpperCase().replace(/[^A-Z0-9-]/g, '') || 'CLIP';
+  const matchId = String(b.matchId || session.matchId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
+  if (matchId !== session.matchId) { session.matchId = matchId; saveSession(); }
+  const clipId = b.clipId ? String(b.clipId).replace(/[^a-zA-Z0-9_-]/g, '') : buildClipId(matchId, eventType, t0);
+
+  const existing = jobs.get(clipId);
+  if (existing) return res.json({ success: true, clipId, duplicate: true, status: existing.status });
+
+  const job = {
+    clipId, matchId, eventType, t0,
+    // Frozen at the press — the ONLY timing this clip ever uses.
+    window: { startWall: t0 - PRE_ROLL_SECONDS * 1000, endWall: t0 + POST_ROLL_SECONDS * 1000 },
+    ballMeta: b.ballMeta || null,
+    sourceFile: activeRecording && activeRecording.growing ? activeRecording.file : null,
+    status: 'WAITING', createdAt: Date.now(), updatedAt: Date.now(),
+  };
+  jobs.set(clipId, job);
+  pruneJobs();
+  flushJobsNow(); // a press is written to disk before it's acknowledged — a crash right after can't lose it
+  scheduleCut(job);
+  console.log(`📥 [${eventType}] ${clipId} at ${new Date(t0).toLocaleTimeString()} — cutting ${PRE_ROLL_SECONDS}s before → ${POST_ROLL_SECONDS}s after`);
+  // recordingActive:false lets the panel warn the operator right away
+  // that vMix isn't recording (the clip would have no footage).
+  res.json({ success: true, clipId, status: job.status, recordingActive: !!job.sourceFile });
+  if (!job.sourceFile) resolveActiveRecording().then((rec) => { if (rec && !job.sourceFile) job.sourceFile = rec.file; }).catch(() => {});
 });
 
 // ----------------------------------------------------------------
-// Finds the actual recording file to cut from. vMix requires a
-// timestamp in its filename format, so the exact file name changes
-// every time recording starts — instead of expecting one fixed name,
-// we look in the configured folder and always use the most recently
-// modified .mp4 file. If vmixRecordingFile itself exists exactly as
-// given, that's used directly (still supported for setups where it
-// really is fixed).
+// 🔄 STARTUP RECOVERY — resume whatever the last run left unfinished,
+// and import v3's "cut but never uploaded" clips so none are lost.
 // ----------------------------------------------------------------
-async function resolveRecordingFileOnce() {
-  if (fs.existsSync(config.vmixRecordingFile)) {
-    return config.vmixRecordingFile;
-  }
-  const dir = path.dirname(config.vmixRecordingFile);
-  try {
-    const names = await fs.promises.readdir(dir);
-    const mp4Names = names.filter(f => f.toLowerCase().endsWith('.mp4'));
-    if (!mp4Names.length) return null;
-    const withStats = await Promise.all(mp4Names.map(async (f) => {
-      const full = path.join(dir, f);
-      const st = await fs.promises.stat(full);
-      return { full, mtime: st.mtimeMs, birthtime: st.birthtimeMs || st.ctimeMs || 0 };
-    }));
-    // Sort by mtime first (most-recently-written file wins); birthtime as
-    // a tiebreaker for the rare case two files share an mtime tick.
-    withStats.sort((a, b) => (b.mtime - a.mtime) || (b.birthtime - a.birthtime));
-    return withStats[0].full;
-  } catch (err) {
-    return null; // dir missing, permissions issue, etc. — treated as "not found yet"
-  }
-}
-
-// 🔁 RETRY: the recording file can genuinely not exist yet for a brief
-// moment right after vMix is told to record, or a folder scan can lose
-// a race with vMix mid-write. Recheck a few times over a few seconds
-// before actually giving up.
-const RETRY_FIND_FILE_ATTEMPTS = 6;
-const RETRY_FIND_FILE_DELAY_MS = 1500;
-async function resolveRecordingFile() {
-  for (let attempt = 1; attempt <= RETRY_FIND_FILE_ATTEMPTS; attempt++) {
-    const found = await resolveRecordingFileOnce();
-    if (found) return found;
-    if (attempt < RETRY_FIND_FILE_ATTEMPTS) {
-      console.log(`⏳ Recording file not found yet (attempt ${attempt}/${RETRY_FIND_FILE_ATTEMPTS}) — retrying in ${RETRY_FIND_FILE_DELAY_MS / 1000}s...`);
-      await sleep(RETRY_FIND_FILE_DELAY_MS);
+function resumeJobs() {
+  let cuts = 0, ups = 0;
+  for (const job of jobs.values()) {
+    if (['WAITING', 'CUTTING', 'CUT_RETRY'].includes(job.status)) {
+      job.cutAttempts = Math.min(job.cutAttempts || 0, CUT_MAX_ATTEMPTS - 1);
+      job.status = 'WAITING';
+      scheduleCut(job);
+      cuts++;
+    } else if (['LOCAL_SAVED', 'UPLOADING', 'UPLOAD_RETRY'].includes(job.status)) {
+      job.status = 'UPLOAD_RETRY';
+      queueUpload(job);
+      ups++;
     }
   }
-  return null;
-}
-
-// ----------------------------------------------------------------
-// POST /clip — panel calls this on FOUR / SIX / WICKET / WIDE-4 /
-// WIDE-6 / NO-BALL-4 / NO-BALL-6 / LEG-BYE-4 / manual trigger — any
-// eventType at all is accepted generically here, the helper doesn't
-// special-case which ones exist. Acknowledged instantly; the actual
-// cut happens in the background queue below.
-// ----------------------------------------------------------------
-app.post('/clip', (req, res) => {
-  const { eventType, timestamp, matchId, ballMeta } = req.body || {};
-  if (matchId) currentMatchId = String(matchId);
-
-  if (!recordingStartedAt) {
-    console.log('⚠️  Clip requested but recording was never marked as started — skipping.');
-    return res.json({ success: false, error: 'recording not started' });
-  }
-
-  const eventTime = timestamp || Date.now();
-  const safeLabel = (eventType || 'CLIP').toUpperCase();
-
-  if (isDuplicateEvent(safeLabel, eventTime)) {
-    console.log(`⏭️  Duplicate ${safeLabel} event ignored (same event already queued within ${DEDUPE_WINDOW_SECONDS}s)`);
-    return res.json({ success: true, duplicate: true });
-  }
-
-  res.json({ success: true }); // acknowledge immediately — the actual work happens in the queue below
-  console.log(`📥 Queued ${safeLabel} (cut queue length now ${clipQueue.length + 1})`);
-  clipQueue.push({ eventType: safeLabel, eventTime, matchId, ballMeta });
-  runQueue();
-});
-
-// ----------------------------------------------------------------
-// 🧵🎬 CUT QUEUE runner — drains clipQueue ONE JOB AT A TIME, purely
-// local (ffmpeg + disk, zero network). Every job also runs inside a
-// hard watchdog (see withWatchdog) so the queue can never freeze on
-// one stuck job, no matter what goes wrong inside it.
-// ----------------------------------------------------------------
-async function runQueue() {
-  if (queueRunning) return; // already draining — this job will be picked up in its turn
-  queueRunning = true;
+  const v3Log = path.join(BASE_DIR, 'failed-clips.json');
   try {
-    while (clipQueue.length) {
-      const job = clipQueue[0];
-      // Wait until EVENT_AFTER_SECONDS have actually elapsed since the
-      // event, so that footage exists on disk to cut. Waiting here
-      // (inside the queue loop) rather than via a bare setTimeout means
-      // a burst of quick events still each get their own proper wait,
-      // in order, without blocking the server from accepting more
-      // incoming /clip calls in the meantime (they just join the queue).
-      const waitMs = Math.max(0, (job.eventTime + EVENT_AFTER_SECONDS * 1000) - Date.now());
-      if (waitMs > 0) await sleep(waitMs);
-      await withWatchdog(() => cutClipNow(job), QUEUE_JOB_WATCHDOG_MS, job);
-      clipQueue.shift();
+    const list = JSON.parse(fs.readFileSync(v3Log, 'utf8'));
+    const left = [];
+    for (const e of list) {
+      if (e.outputPath && fs.existsSync(e.outputPath) && e.matchId && e.eventTime) {
+        const clipId = buildClipId(e.matchId, e.eventType, e.eventTime);
+        if (!jobs.has(clipId)) {
+          jobs.set(clipId, { clipId, matchId: e.matchId, eventType: String(e.eventType || 'CLIP').toUpperCase(), t0: e.eventTime, ballMeta: e.ballMeta || null, localPath: e.outputPath, status: 'UPLOAD_RETRY', createdAt: Date.now(), updatedAt: Date.now() });
+          queueUpload(jobs.get(clipId));
+          ups++;
+        }
+      } else left.push(e);
     }
-  } finally {
-    queueRunning = false;
-  }
+    fs.writeFileSync(v3Log, JSON.stringify(left, null, 2));
+  } catch (_) { /* no v3 log */ }
+  persistJobs();
+  if (cuts || ups) console.log(`🔄 Resumed from last run: ${cuts} clip(s) to cut, ${ups} to upload`);
 }
 
-// Hard ceiling on one job. If cutClipNow (including all its internal
-// ffmpeg retries) somehow doesn't resolve within timeoutMs — an
-// unforeseen hang this file's other protections didn't catch — this
-// logs it as failed and lets the queue move on anyway, instead of the
-// rest of the match's clips silently never getting cut.
-function withWatchdog(fn, timeoutMs, job) {
-  return new Promise((resolve) => {
-    let done = false;
-    const timer = setTimeout(() => {
-      if (done) return;
-      done = true;
-      console.log(`🆘 Job watchdog fired — a clip job ran past ${timeoutMs / 1000}s and was abandoned so the queue keeps moving: ${job.eventType} @ ${new Date(job.eventTime).toISOString()}`);
-      recordFailedClip({ eventType: job.eventType, eventTime: job.eventTime, matchId: job.matchId, ballMeta: job.ballMeta, reason: 'job watchdog timeout — took too long and was abandoned' });
-      resolve();
-    }, timeoutMs);
-    fn().then(() => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      resolve();
-    }).catch((err) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      console.log('❌ Unexpected error processing queued clip (continuing with the rest):', err && err.message || err);
-      resolve();
-    });
+// Leftover .part files can only come from a cut interrupted by a restart.
+function sweepPartFiles() {
+  fs.readdir(getClipsDir(), (err, names) => {
+    if (err) return;
+    for (const n of names) if (n.endsWith('.part.mp4')) fs.unlink(path.join(getClipsDir(), n), () => {});
   });
 }
 
-// Runs one ffmpeg cut, wrapped in a Promise so it can be awaited/retried,
-// with its own hard timeout+kill — a hung/zombie ffmpeg process (Windows
-// file-lock edge case, a corrupt frame it can't get past, etc.) is killed
-// outright rather than left running and blocking this job forever.
-function runFfmpegCut(recordingFile, outputPath, seekFromEofSeconds, durationSeconds) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const command = ffmpeg(recordingFile)
-      .inputOptions(['-sseof', `-${seekFromEofSeconds}`])
-      .outputOptions(['-y']) // never let ffmpeg sit waiting on an interactive overwrite prompt that nothing will ever answer
-      .setDuration(durationSeconds)
-      .output(outputPath);
+// 🩺 One line every 10 minutes: proof over a 6–7 hour match that queues,
+// processes and memory stay flat.
+setInterval(() => {
+  const all = [...jobs.values()];
+  const count = (s) => all.filter((j) => j.status === s).length;
+  const src = activeRecording ? sourceFor(activeRecording.file) : null;
+  console.log(`[health] recording ${activeRecording ? `${path.basename(activeRecording.file)} ${src ? Math.round(src.durationSec / 60) : '?'}min${activeRecording.growing ? '' : ' (not growing)'}` : 'none'} | cut queue ${cutQueue.length} | uploads ${uploadQueue.length + uploadsRunning} | done ${count('COMPLETE') + count('UPLOADED')} | failed ${count('FAILED')} | ffmpeg ${children.size} | mem ${Math.round(process.memoryUsage().rss / 1048576)}MB`);
+}, 10 * 60 * 1000);
 
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      try { command.kill('SIGKILL'); } catch (_) {}
-      reject(new Error(`ffmpeg timed out after ${FFMPEG_TIMEOUT_MS / 1000}s and was killed`));
-    }, FFMPEG_TIMEOUT_MS);
-
-    command.on('end', () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve();
-    });
-    command.on('error', (err) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(err);
-    });
-    command.run();
-  });
-}
-
-// Reads the "Duration: HH:MM:SS.xx" line out of `ffmpeg -i <file>`
-// (ffmpeg always prints this to stderr, even without an output — no
-// separate ffprobe.exe needed, since this package only ships ffmpeg.exe).
-function probeDurationSeconds(filePath) {
-  return new Promise((resolve, reject) => {
-    execFile(ffmpegPath, ['-i', filePath, '-hide_banner'], (err, stdout, stderr) => {
-      const out = (stderr || '') + (stdout || '');
-      const match = out.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
-      if (!match) return reject(new Error(err ? (err.message || 'ffmpeg -i failed') : 'no Duration line — file may be corrupt/unreadable'));
-      const hours = parseInt(match[1], 10), mins = parseInt(match[2], 10), secs = parseFloat(match[3]);
-      resolve(hours * 3600 + mins * 60 + secs);
-    });
-  });
-}
-
-// ----------------------------------------------------------------
-// ✅ CLIP VALIDATION — checked after every cut attempt, before it's
-// ever treated as a success: file exists, non-zero (meaningfully
-// sized) file, video actually readable, duration close to the
-// expected 18s. Anything that fails gets deleted and retried.
-// ----------------------------------------------------------------
-async function validateClip(outputPath) {
-  let stat;
-  try { stat = await fs.promises.stat(outputPath); } catch (err) { return { ok: false, reason: 'file missing after cut' }; }
-  if (!stat.size || stat.size < MIN_CLIP_BYTES) return { ok: false, reason: `file too small (${stat.size || 0} bytes) — likely a failed/empty cut` };
-
-  let duration;
-  try { duration = await probeDurationSeconds(outputPath); } catch (err) { return { ok: false, reason: `unreadable/corrupt video: ${err.message}` }; }
-
-  const min = CLIP_DURATION_SECONDS - VALIDATION_DURATION_TOLERANCE_SECONDS;
-  const max = CLIP_DURATION_SECONDS + VALIDATION_DURATION_TOLERANCE_SECONDS;
-  if (duration < min || duration > max) {
-    return { ok: false, reason: `unexpected duration ${duration.toFixed(1)}s (expected ~${CLIP_DURATION_SECONDS}s, accepted ${min}-${max}s)` };
-  }
-  return { ok: true, duration };
-}
-
-// ----------------------------------------------------------------
-// 🎬 Cuts ONE clip, purely locally: resolve the recording file, cut
-// with ffmpeg, validate, retry on failure. On success, hands the clip
-// off to the (separate, non-blocking) upload queue and returns
-// immediately — this function NEVER makes a network call itself.
-// ----------------------------------------------------------------
-async function cutClipNow(job) {
-  const { eventType, eventTime, matchId, ballMeta } = job;
-  const safeLabel = eventType || 'CLIP';
-  const fileName = `${safeLabel}_${new Date(eventTime).toISOString().replace(/[:.]/g, '-')}.mp4`;
-
-  const clipsDir = getClipsDir();
-  try { await fs.promises.mkdir(clipsDir, { recursive: true }); } catch (_) {}
-  const outputPath = path.join(clipsDir, fileName);
-
-  // A file already sitting here for this exact event means it was
-  // already cut (e.g. a watchdog fired late after the real job actually
-  // finished) — don't burn a cut-slot re-doing it.
-  if (fs.existsSync(outputPath)) {
-    console.log(`⏭️  Skipping — a clip already exists for this exact event: ${fileName}`);
-    return;
-  }
-
-  // resolveRecordingFile() itself retries for several seconds if the
-  // file genuinely isn't there yet.
-  const recordingFile = await resolveRecordingFile();
-  if (!recordingFile) {
-    console.log(`⚠️  No recording file found in: ${path.dirname(config.vmixRecordingFile)} — this clip could not be cut.`);
-    recordFailedClip({ eventType: safeLabel, eventTime, matchId, ballMeta, reason: 'recording file not found' });
-    return;
-  }
-
-  // Non-blocking staleness warning only — if recording was paused for a
-  // few seconds this is normal and shouldn't stop the clip attempt.
-  try {
-    const st = await fs.promises.stat(recordingFile);
-    const ageMs = Date.now() - st.mtimeMs;
-    if (ageMs > 5 * 60 * 1000) {
-      console.log(`⚠️  Recording file hasn't changed in ${(ageMs / 1000).toFixed(0)}s — it may have stopped growing. Cutting from it anyway: ${recordingFile}`);
-    }
-  } catch (_) {}
-
-  // 🎯 Grab the last ~19s of whatever's ON DISK right now, via ffmpeg's
-  // own "-sseof" (seek relative to end-of-file), then keep 18s of that —
-  // NOT by calculating a start time from `recordingStartedAt`. Any gap
-  // between clicking "Start Recording" in the panel and vMix actually
-  // starting would shift every clip by that same amount; since we
-  // already wait EVENT_AFTER_SECONDS for the "after" half of the event
-  // to land on disk, "the last ~19s on disk right now" reliably centers
-  // the event correctly regardless of any recording-start sync error.
-  console.log(`✂️  Cutting ${safeLabel} clip: last ~${CLIP_DURATION_SECONDS}s of the recording (${EVENT_BEFORE_SECONDS}s before / ${EVENT_AFTER_SECONDS}s after)`);
-
-  let lastError = null;
-  for (let attempt = 1; attempt <= RETRY_FFMPEG_ATTEMPTS; attempt++) {
-    try {
-      await runFfmpegCut(recordingFile, outputPath, SEEK_FROM_EOF_SECONDS, CLIP_DURATION_SECONDS);
-      const validation = await validateClip(outputPath);
-      if (validation.ok) {
-        console.log(`✅ Clip cut + validated (${validation.duration.toFixed(1)}s): ${fileName}`);
-        lastError = null;
-        break;
-      }
-      lastError = new Error(validation.reason);
-      console.log(`⚠️  Cut attempt ${attempt}/${RETRY_FFMPEG_ATTEMPTS} produced an invalid clip (${fileName}): ${validation.reason} — deleting and retrying`);
-      await safeDelete(outputPath);
-    } catch (err) {
-      lastError = err;
-      console.log(`⚠️  ffmpeg cut attempt ${attempt}/${RETRY_FFMPEG_ATTEMPTS} failed for ${fileName}:`, err.message || String(err));
-      await safeDelete(outputPath);
-    }
-    if (lastError && attempt < RETRY_FFMPEG_ATTEMPTS) await sleep(RETRY_FFMPEG_DELAY_MS[attempt - 1] || 4000);
-  }
-
-  if (lastError) {
-    console.log(`❌ Clip cut failed after ${RETRY_FFMPEG_ATTEMPTS} attempts (${fileName}):`, lastError.message);
-    recordFailedClip({ eventType: safeLabel, eventTime, matchId, ballMeta, fileName, reason: `cut/validation: ${lastError.message}` });
-    return;
-  }
-
-  // Hand off to the upload queue and return immediately. Uploading is a
-  // network concern and — per the whole point of this rewrite — must
-  // NEVER be able to stall the cutting of the next clip.
-  uploadQueue.push({ outputPath, fileName, eventType: safeLabel, eventTime, matchId, ballMeta });
-  runUploadQueue();
-}
-
-// ----------------------------------------------------------------
-// fetch() with a hard timeout — Node's built-in fetch has NO default
-// timeout, so a main server that's asleep/hanging (not erroring, just
-// never responding) would otherwise hang this call forever. That, in
-// the old single-queue design, is exactly what "stuck on fetching"
-// looked like. AbortController below guarantees every attempt gives up
-// after FETCH_TIMEOUT_MS no matter what the other end does.
-// ----------------------------------------------------------------
-async function fetchWithTimeout(url, options, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// ----------------------------------------------------------------
-// ☁️🧵 UPLOAD QUEUE runner — drains uploadQueue one job at a time,
-// completely independent of the cut queue above. Even if every job in
-// here is slow or timing out, the cut queue keeps cutting clips on
-// schedule the whole time.
-// ----------------------------------------------------------------
-async function runUploadQueue() {
-  if (uploadQueueRunning) return;
-  uploadQueueRunning = true;
-  try {
-    while (uploadQueue.length) {
-      const job = uploadQueue[0];
-      try {
-        await processUploadJob(job);
-      } catch (err) {
-        console.log('❌ Unexpected error in upload queue (continuing):', err && err.message || err);
-      }
-      uploadQueue.shift();
-    }
-  } finally {
-    uploadQueueRunning = false;
-  }
-}
-
-async function processUploadJob(job) {
-  const { outputPath, fileName, eventType, eventTime, matchId, ballMeta } = job;
-  const sentToServer = await sendClipToMainServer(outputPath, fileName, eventType, eventTime, ballMeta);
-  if (sentToServer) return;
-  console.log(`⚠️  Could not reach main server — falling back to direct Drive upload for ${fileName}`);
-  const sentToDrive = await uploadClipToDrive(outputPath, fileName);
-  if (!sentToDrive) {
-    // Both paths exhausted every retry — the .mp4 itself is still safe
-    // on disk in the Clips folder either way, so this is "not yet
-    // uploaded anywhere", not "lost". Logged so it's easy to find and
-    // re-upload by hand, and it's auto-retried on the helper's next
-    // startup (see retryPreviouslyFailedClips below).
-    recordFailedClip({ eventType, eventTime, matchId, ballMeta, fileName, outputPath, reason: 'cut succeeded but both main-server and Drive uploads failed' });
-  }
-}
-
-// ----------------------------------------------------------------
-// Sends the finished clip to the main website server as raw bytes, so
-// IT can upload to Cloudflare R2 + Drive and link the clip to the real
-// batter/bowler for the scorecard. Returns true only on a confirmed
-// success.
-// ----------------------------------------------------------------
-async function sendClipToMainServer(filePath, fileName, eventType, eventTime, ballMeta) {
-  if (!mainServerUrl) {
-    console.log('⚠️  No mainServerUrl configured (set it in config.json or have the panel send it) — skipping.');
-    return false;
-  }
-  if (!currentMatchId) {
-    console.log('⚠️  No matchId known yet for this session — skipping main-server upload.');
-    return false;
-  }
-
-  // fs.promises.readFile (NOT readFileSync) — reads off the libuv thread
-  // pool instead of blocking Node's single main thread, so the HTTP
-  // server stays free to accept the NEXT /clip request the whole time a
-  // multi-MB clip file is being read into memory here.
-  let fileBuffer;
-  try {
-    fileBuffer = await fs.promises.readFile(filePath);
-  } catch (err) {
-    console.log(`❌ Could not read clip file to send (${fileName}):`, err.message || String(err));
-    return false;
-  }
-
-  const qs = new URLSearchParams({
-    matchId: currentMatchId,
-    eventType,
-    timestamp: String(eventTime)
-  });
-  const headers = { 'Content-Type': 'video/mp4' };
-  if (ballMeta) headers['X-Ball-Meta'] = JSON.stringify(ballMeta);
-
-  for (let attempt = 1; attempt <= RETRY_UPLOAD_ATTEMPTS; attempt++) {
-    let response;
-    try {
-      response = await fetchWithTimeout(`${mainServerUrl}/api/clips/ingest?${qs.toString()}`, {
-        method: 'POST',
-        headers,
-        body: fileBuffer
-      }, FETCH_TIMEOUT_MS);
-    } catch (err) {
-      const timedOut = err && err.name === 'AbortError';
-      console.log(`❌ Could not reach main server (${fileName}), attempt ${attempt}/${RETRY_UPLOAD_ATTEMPTS}:`, timedOut ? `timed out after ${FETCH_TIMEOUT_MS / 1000}s` : (err.message || String(err)));
-      if (attempt < RETRY_UPLOAD_ATTEMPTS) await sleep(RETRY_UPLOAD_DELAY_MS[attempt - 1]);
-      continue;
-    }
-
-    // Always fully drain the response body, on EVERY branch, even when
-    // we don't care about its content. An unconsumed body can keep the
-    // underlying connection from being released back to Node's
-    // connection pool — over a 6-7 hour match with hundreds of requests
-    // that's exactly the kind of slow leak that eventually makes fetch
-    // itself start throwing generic "fetch failed" errors that look
-    // like the network is down when it isn't.
-    try { await response.arrayBuffer(); } catch (_) {}
-
-    if (!response.ok) {
-      console.log(`❌ Main server rejected clip (${fileName}), attempt ${attempt}/${RETRY_UPLOAD_ATTEMPTS}: HTTP ${response.status}`);
-      if (attempt < RETRY_UPLOAD_ATTEMPTS) await sleep(RETRY_UPLOAD_DELAY_MS[attempt - 1]);
-      continue;
-    }
-
-    console.log(`📤 Sent to main server: ${fileName}`);
-    return true;
-  }
-  return false;
-}
-
-// ----------------------------------------------------------------
-// Uploads a finished clip straight to the Google Drive REST API using
-// the operator's OAuth token — plain HTTP (Node's built-in fetch), no
-// googleapis SDK. FALLBACK ONLY — used when the main server can't be
-// reached, since the main server normally handles Drive (and R2)
-// uploads itself.
-// ----------------------------------------------------------------
-async function uploadClipToDrive(filePath, fileName) {
-  if (!driveAccessToken || !driveFolderId) {
-    console.log(`⚠️  Clip saved locally but not uploaded — Drive not connected yet: ${filePath}`);
-    console.log('   (Click "Connect Google Drive" in the panel, then it will auto-sync here.)');
-    return false;
-  }
-
-  let fileBuffer;
-  try {
-    fileBuffer = await fs.promises.readFile(filePath);
-  } catch (err) {
-    console.log(`❌ Could not read clip file to upload (${fileName}):`, err.message || String(err));
-    return false;
-  }
-
-  const metadata = { name: fileName, parents: [driveFolderId] };
-
-  for (let attempt = 1; attempt <= RETRY_UPLOAD_ATTEMPTS; attempt++) {
-    const boundary = 'clipperhelper' + Date.now();
-    const bodyStart = Buffer.from(
-      `--${boundary}\r\n` +
-      `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
-      `${JSON.stringify(metadata)}\r\n` +
-      `--${boundary}\r\n` +
-      `Content-Type: video/mp4\r\n\r\n`
-    );
-    const bodyEnd = Buffer.from(`\r\n--${boundary}--`);
-    const multipartBody = Buffer.concat([bodyStart, fileBuffer, bodyEnd]);
-
-    let response;
-    try {
-      response = await fetchWithTimeout(
-        'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink',
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${driveAccessToken}`,
-            'Content-Type': `multipart/related; boundary=${boundary}`
-          },
-          body: multipartBody
-        },
-        FETCH_TIMEOUT_MS
-      );
-    } catch (err) {
-      const timedOut = err && err.name === 'AbortError';
-      console.log(`❌ Drive upload error (${fileName}), attempt ${attempt}/${RETRY_UPLOAD_ATTEMPTS}:`, timedOut ? `timed out after ${FETCH_TIMEOUT_MS / 1000}s` : (err.message || String(err)));
-      if (attempt < RETRY_UPLOAD_ATTEMPTS) await sleep(RETRY_UPLOAD_DELAY_MS[attempt - 1]);
-      continue;
-    }
-
-    let result = {};
-    try { result = await response.json(); } catch (_) {}
-
-    if (!response.ok) {
-      const msg = (result.error && result.error.message) || JSON.stringify(result);
-      if (response.status === 401) {
-        // Token expired — retrying won't help until the panel refreshes
-        // it via /set-token, so stop immediately instead of burning
-        // through retries.
-        console.log(`❌ Upload failed — Drive login expired. Click "Connect Google Drive" in the panel again. (${fileName})`);
-        return false;
-      }
-      console.log(`❌ Drive upload error (${fileName}), attempt ${attempt}/${RETRY_UPLOAD_ATTEMPTS}:`, msg);
-      if (attempt < RETRY_UPLOAD_ATTEMPTS) await sleep(RETRY_UPLOAD_DELAY_MS[attempt - 1]);
-      continue;
-    }
-
-    console.log(`☁️  Uploaded to Drive: ${fileName} → ${result.webViewLink}`);
-    return true;
-  }
-  return false;
-}
-
-// ----------------------------------------------------------------
-// 🔄 Startup recovery — any clip that was cut successfully last
-// session but never made it to the main server or Drive (e.g. the
-// website was down, or the PC's internet dropped) gets requeued onto
-// the upload queue on startup, using the exact same upload path as a
-// normal clip. The .mp4 is safe on disk either way, so the operator
-// never has to remember to manually re-send anything.
-// ----------------------------------------------------------------
-async function retryPreviouslyFailedClips() {
-  if (!fs.existsSync(FAILED_LOG_PATH)) return;
-  let list;
-  try {
-    list = JSON.parse(await fs.promises.readFile(FAILED_LOG_PATH, 'utf8'));
-  } catch (_) {
-    return;
-  }
-  const stillPending = [];
-  let requeued = 0;
-  for (const entry of list) {
-    const hasFile = entry.outputPath && fs.existsSync(entry.outputPath);
-    // Only worth auto-retrying the "cut succeeded, upload failed" case —
-    // a missing recording file or a genuine cut/validation failure needs
-    // the operator's attention, not a silent retry loop.
-    if (!hasFile || entry.reason !== 'cut succeeded but both main-server and Drive uploads failed') {
-      stillPending.push(entry);
-      continue;
-    }
-    uploadQueue.push({ outputPath: entry.outputPath, fileName: entry.fileName, eventType: entry.eventType, eventTime: entry.eventTime, matchId: entry.matchId, ballMeta: entry.ballMeta });
-    requeued++;
-  }
-  // Rewrite the log now with just the genuinely-stuck ones; anything
-  // requeued above will re-log itself if it fails again.
-  try { await fs.promises.writeFile(FAILED_LOG_PATH, JSON.stringify(stillPending, null, 2)); } catch (_) {}
-  if (requeued) {
-    console.log(`🔄 Requeued ${requeued} clip(s) left over from last session for upload`);
-    runUploadQueue();
-  }
-}
-
-app.listen(config.port, () => {
+const server = app.listen(config.port, () => {
   console.log('================================================');
-  console.log(`🎥 Clipper Helper running at http://localhost:${config.port}`);
-  console.log(`👉 Setup page (no more editing config.json by hand): http://localhost:${config.port}/setup`);
+  console.log(`🎥 Clipper Helper v4 running at http://localhost:${config.port}`);
+  console.log(`👉 Setup page: http://localhost:${config.port}/setup`);
   console.log(`Using ffmpeg: ${ffmpegPath}`);
-  console.log(`Clip window: ${EVENT_BEFORE_SECONDS}s before + ${EVENT_AFTER_SECONDS}s after = ${CLIP_DURATION_SECONDS}s total`);
+  console.log(`Clip window: ${PRE_ROLL_SECONDS}s before + ${POST_ROLL_SECONDS}s after the press = ${CLIP_SECONDS}s`);
   console.log(`Clips folder: ${getClipsDir()}`);
+  console.log(`Website: ${session.mainServerUrl || toOrigin(config.mainServerUrl) || 'not set — open the Setup page'}`);
   if (!fs.existsSync(ffmpegPath)) {
-    console.log('⚠️  WARNING: ffmpeg.exe not found at that path — clips will fail to cut.');
-    console.log('   Make sure ffmpeg.exe sits in the SAME folder as ClipperHelper.exe.');
+    console.log('⚠️  WARNING: ffmpeg.exe not found — clips cannot be cut. Put ffmpeg.exe in the SAME folder as ClipperHelper.exe.');
   }
   console.log('Keep this window open during the match.');
   console.log('================================================');
-
-  // Pop the Setup page open automatically EVERY time the exe starts —
-  // gives the operator visible confirmation the helper is up before
-  // they start the match, instead of only ever seeing it once.
-  const setupUrl = `http://localhost:${config.port}/setup`;
-  const opener = process.platform === 'win32' ? 'start ""'
-    : process.platform === 'darwin' ? 'open'
-    : 'xdg-open';
-  exec(`${opener} ${setupUrl}`, () => {});
-
-  retryPreviouslyFailedClips().catch((err) => {
-    console.log('⚠️  Startup recovery pass hit an error (not fatal):', err && err.message || err);
-  });
+  detectEncoder().catch(() => {});
+  sourceTick();
+  sweepPartFiles();
+  resumeJobs();
+  if (!process.env.CLIPPER_NO_BROWSER) {
+    const setupUrl = `http://localhost:${config.port}/setup`;
+    const opener = process.platform === 'win32' ? 'start ""' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+    exec(`${opener} ${setupUrl}`, () => {});
+  }
 });
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') console.log(`❌ Port ${config.port} is already in use — is another Clipper Helper window already open? Close it and start this one again.`);
+  else console.log('❌ Server error:', err.message);
+});
+
+// Clean exit: stop every ffmpeg this helper started, save state.
+function shutdown() {
+  for (const t of timers) clearTimeout(t);
+  for (const p of children) { try { p.kill('SIGKILL'); } catch (_) {} }
+  flushJobsNow();
+  console.log('Clipper Helper stopped — unfinished clips resume next time it starts.');
+  process.exit(0);
+}
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
+  try { process.on(sig, shutdown); } catch (_) { /* not on this platform */ }
+}

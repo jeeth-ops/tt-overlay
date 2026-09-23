@@ -661,52 +661,77 @@ function computeClipStatus(r2Status, driveStatus) {
 // succeeded — never a duplicate R2 object or Drive file (see the
 // idempotency guards inside uploadClipToR2/uploadClipToDrive above).
 // ================================================================
+// 🔗 Everything that links a clip to Match → Innings → Over → Ball →
+// Batsman → Bowler (→ fielder/dismissal), resolved from the canonical
+// ball (logged via `logBall`, the permanent source of truth) with the
+// panel-supplied ballMeta as fallback. Shared by finalizeClip (at ingest)
+// and /api/clips/classify (HIGHLIGHTS clips, linked once the operator has
+// entered the ball's outcome).
+async function computeClipLinkage(matchId, ballMeta, uid) {
+    const canonicalBall = await findCanonicalBall(matchId, ballMeta);
+    const ownerUid = await resolveOwnerUidForMatch(matchId, uid || (canonicalBall && canonicalBall.ownerUid));
+    // personName() unwraps any stray {name,...} object (old data, or
+    // any future client that sends one) into a clean string — see the
+    // comment on personName() near playerKey() for why this matters.
+    const striker = personName(canonicalBall && canonicalBall.striker) || personName(ballMeta && ballMeta.striker);
+    const bowler = personName(canonicalBall && canonicalBall.bowler) || personName(ballMeta && ballMeta.bowler);
+    const nonStriker = personName(canonicalBall && canonicalBall.nonStriker) || personName(ballMeta && ballMeta.nonStriker);
+    const dismissal = (canonicalBall && canonicalBall.dismissal) || (ballMeta && ballMeta.dismissal) || null;
+    const battingTeam = (canonicalBall && canonicalBall.battingTeam) || (ballMeta && ballMeta.battingTeam) || null;
+    // 🌟 Prefer the canonical ball's already-resolved playerIds (same
+    // identity the ball itself was logged under) and only fall back
+    // to a fresh resolve if this clip has no matching ball yet.
+    const strikerPlayerId = (canonicalBall && canonicalBall.strikerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, striker) : null);
+    const nonStrikerPlayerId = (canonicalBall && canonicalBall.nonStrikerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, nonStriker) : null);
+    const bowlerPlayerId = (canonicalBall && canonicalBall.bowlerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, bowler) : null);
+    const fielderPlayerId = (canonicalBall && canonicalBall.dismissalFielderPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, dismissal && dismissal.fielder) : null);
+    return {
+        ownerUid: ownerUid || null,
+        linkedToCanonicalBall: !!canonicalBall,
+        over: canonicalBall ? canonicalBall.over : (ballMeta && ballMeta.over),
+        ballInOver: canonicalBall ? canonicalBall.ballInOver : (ballMeta && ballMeta.ballInOver),
+        innings: canonicalBall ? canonicalBall.innings : (ballMeta && ballMeta.innings),
+        runs: canonicalBall ? canonicalBall.runs : (ballMeta && ballMeta.runs),
+        battingTeam,
+        strikerName: striker, strikerKey: playerKey(striker), strikerPlayerId,
+        nonStrikerName: nonStriker, nonStrikerKey: playerKey(nonStriker), nonStrikerPlayerId,
+        bowlerName: bowler, bowlerKey: playerKey(bowler), bowlerPlayerId,
+        dismissalType: dismissal && dismissal.type ? dismissal.type : null,
+        fielderName: personName(dismissal && dismissal.fielder),
+        fielderKey: playerKey(dismissal && dismissal.fielder), fielderPlayerId,
+    };
+}
+
+// A clip is shown in the public Highlights sections (match, player,
+// team, scorecard, compiled reels) unless it was explicitly kept out:
+// HIGHLIGHTS-button clips start hidden (isHighlight:false) until the
+// operator's "Add this clip to Highlights?" answer — or a default-YES
+// outcome (4, 6, wicket, boundary extras) — sets isHighlight:true.
+// Clips from before this field existed have no isHighlight and stay visible.
+// A classified clip whose video never arrived (cut failed) isn't listed either.
+const HIGHLIGHT_VISIBLE = { isHighlight: { $ne: false }, status: { $ne: 'AWAITING_CLIP' } };
+
 async function finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMeta, uid, outFile, offsetStartSec, offsetEndSec }) {
     clipId = clipId || buildClipId(matchId, eventType, eventTimestamp);
     if (clipsCollection) {
-        // 🔗 Link this clip to real player identities/dismissal info by
-        // cross-referencing the canonical ball (logged via `logBall`,
-        // the permanent source of truth) instead of trusting only the
-        // ballMeta the panel happened to attach to the clip request.
-        // Falls back gracefully to whatever ballMeta was sent if no
-        // matching ball is found (e.g. Mongo briefly unavailable).
-        const canonicalBall = await findCanonicalBall(matchId, ballMeta);
-        const ownerUid = await resolveOwnerUidForMatch(matchId, uid || (canonicalBall && canonicalBall.ownerUid));
-        // personName() unwraps any stray {name,...} object (old data, or
-        // any future client that sends one) into a clean string — see the
-        // comment on personName() near playerKey() for why this matters.
-        const striker = personName(canonicalBall && canonicalBall.striker) || personName(ballMeta && ballMeta.striker);
-        const bowler = personName(canonicalBall && canonicalBall.bowler) || personName(ballMeta && ballMeta.bowler);
-        const nonStriker = personName(canonicalBall && canonicalBall.nonStriker) || personName(ballMeta && ballMeta.nonStriker);
-        const dismissal = (canonicalBall && canonicalBall.dismissal) || (ballMeta && ballMeta.dismissal) || null;
-        const battingTeam = (canonicalBall && canonicalBall.battingTeam) || (ballMeta && ballMeta.battingTeam) || null;
-        // 🌟 Prefer the canonical ball's already-resolved playerIds (same
-        // identity the ball itself was logged under) and only fall back
-        // to a fresh resolve if this clip has no matching ball yet.
-        const strikerPlayerId = (canonicalBall && canonicalBall.strikerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, striker) : null);
-        const nonStrikerPlayerId = (canonicalBall && canonicalBall.nonStrikerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, nonStriker) : null);
-        const bowlerPlayerId = (canonicalBall && canonicalBall.bowlerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, bowler) : null);
-        const fielderPlayerId = (canonicalBall && canonicalBall.dismissalFielderPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, dismissal && dismissal.fielder) : null);
-
+        const link = await computeClipLinkage(matchId, ballMeta, uid);
+        const { linkedToCanonicalBall, ...linkFields } = link;
+        const isHighlightButtonClip = eventType === 'HIGHLIGHT';
         await clipsCollection.updateOne(
             { clipId },
             {
                 $setOnInsert: {
-                    clipId, matchId, ownerUid: ownerUid || null, eventType, ballMeta: ballMeta || null,
+                    clipId, matchId, eventType, ballMeta: ballMeta || null,
                     eventTimestamp, offsetStartSec: offsetStartSec ?? null, offsetEndSec: offsetEndSec ?? null,
                     createdAt: Date.now(),
                     // --- player/dismissal linking, for the clips & stats APIs ---
-                    over: canonicalBall ? canonicalBall.over : (ballMeta && ballMeta.over),
-                    ballInOver: canonicalBall ? canonicalBall.ballInOver : (ballMeta && ballMeta.ballInOver),
-                    innings: canonicalBall ? canonicalBall.innings : (ballMeta && ballMeta.innings),
-                    runs: canonicalBall ? canonicalBall.runs : (ballMeta && ballMeta.runs),
-                    battingTeam,
-                    strikerName: striker, strikerKey: playerKey(striker), strikerPlayerId,
-                    nonStrikerName: nonStriker, nonStrikerKey: playerKey(nonStriker), nonStrikerPlayerId,
-                    bowlerName: bowler, bowlerKey: playerKey(bowler), bowlerPlayerId,
-                    dismissalType: dismissal && dismissal.type ? dismissal.type : null,
-                    fielderName: personName(dismissal && dismissal.fielder),
-                    fielderKey: playerKey(dismissal && dismissal.fielder), fielderPlayerId,
+                    // (a HIGHLIGHTS clip the operator already classified has
+                    // these from /api/clips/classify — $setOnInsert keeps them)
+                    ...linkFields,
+                    // HIGHLIGHTS-button clips are cut before the ball's outcome
+                    // exists; they stay out of the public Highlights until
+                    // /api/clips/classify links and approves them.
+                    ...(isHighlightButtonClip ? { isHighlight: false, highlightPending: true } : {}),
                     retryCount: 0,
                 },
                 $set: {
@@ -864,6 +889,74 @@ app.get('/api/clips/status/:clipId', async (req, res) => {
         res.json({ success: true, ...doc });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message || String(err) });
+    }
+});
+
+// ================================================================
+// 🏷️ HIGHLIGHTS CLASSIFICATION — the panel's HIGHLIGHTS button cuts a
+// clip at the moment of the ball, before its outcome is known. Once the
+// operator records the outcome (and answers "Add this clip to
+// Highlights? YES/NO", or it's a default-YES outcome), the panel posts
+// here to link the clip to Match → Innings → Over → Ball → Batsman →
+// Bowler → Outcome and set whether it appears in the Highlights.
+//
+// Order-independent: this may arrive BEFORE the clip itself has been
+// uploaded (the clip is cut ~3s after the press and uploaded after that;
+// the outcome can be entered sooner). It then creates the clip doc with
+// the linkage + decision, and the later ingest (finalizeClip) keeps them
+// ($setOnInsert). Idempotent — re-sending the same answer is harmless.
+//
+// POST /api/clips/classify
+// { clipId, matchId, eventTimestamp, isHighlight, eventType, outcomeLabel, ballMeta }
+// Only HIGHLIGHTS-button clips (clipId "<matchId>_HIGHLIGHT_<ms>") can be
+// classified here, so this route can't re-label any other clip.
+// ================================================================
+const CLASSIFY_EVENT_TYPES = new Set(['FOUR', 'SIX', 'WICKET', 'CLIP']);
+app.post('/api/clips/classify', async (req, res) => {
+    if (!clipsCollection) return res.status(503).json({ success: false, error: 'Mongo not connected' });
+    const body = req.body || {};
+    const matchId = safeMatchId(body.matchId);
+    const clipId = String(body.clipId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    const m = /_HIGHLIGHT_(\d{10,})$/.exec(clipId);
+    if (!matchId || !m || !clipId.startsWith(`${matchId}_`)) {
+        return res.status(400).json({ success: false, error: 'clipId must be a HIGHLIGHTS clip of this match' });
+    }
+    const eventType = CLASSIFY_EVENT_TYPES.has(String(body.eventType || '').toUpperCase()) ? String(body.eventType).toUpperCase() : 'CLIP';
+    const isHighlight = body.isHighlight === true;
+    const ballMeta = body.ballMeta && typeof body.ballMeta === 'object' ? body.ballMeta : null;
+    try {
+        const link = await computeClipLinkage(matchId, ballMeta, null);
+        const { linkedToCanonicalBall, ...linkFields } = link;
+        await clipsCollection.updateOne(
+            { clipId },
+            {
+                $set: {
+                    ...linkFields,
+                    eventType,
+                    isHighlight,
+                    highlightPending: false,
+                    outcomeLabel: body.outcomeLabel ? String(body.outcomeLabel).slice(0, 60) : null,
+                    classifiedBallMeta: ballMeta,
+                    classifiedAt: Date.now(),
+                },
+                $setOnInsert: {
+                    clipId, matchId,
+                    eventTimestamp: Number(body.eventTimestamp) || Number(m[1]),
+                    ballMeta,
+                    createdAt: Date.now(),
+                    retryCount: 0,
+                    status: 'AWAITING_CLIP', // the clip file itself hasn't arrived yet — ingest fills the rest in
+                    r2Status: 'pending', driveStatus: 'pending',
+                },
+            },
+            { upsert: true }
+        );
+        invalidateClipsCache(matchId);
+        console.log(`🏷️ [CLIP CLASSIFIED] clipId=${clipId} ${isHighlight ? 'HIGHLIGHT' : 'normal clip'} ${eventType} ${body.outcomeLabel || ''} over=${linkFields.over}.${linkFields.ballInOver} linked=${linkedToCanonicalBall}`);
+        res.json({ success: true, clipId, isHighlight, eventType, linkedToCanonicalBall });
+    } catch (err) {
+        console.log(`Clip classify error (${clipId}):`, err.message || err);
+        res.status(500).json({ success: false, error: 'Could not classify clip' });
     }
 });
 
@@ -2222,7 +2315,8 @@ function serializeClip(c) {
     return {
         clipId: c._id.toString(),
         matchId: c.matchId,
-        eventType: c.eventType,                 // 'FOUR' | 'SIX' | 'WICKET'
+        eventType: c.eventType,                 // 'FOUR' | 'SIX' | 'WICKET' | 'CLIP'
+        outcome: c.outcomeLabel || null,        // e.g. 'Wide +4', '2 runs' — set for HIGHLIGHTS-button clips
         dismissalType: c.dismissalType || null,  // 'Bowled' | 'Caught' | 'LBW' | 'Run Out' | 'Stumped' | 'Hit Wicket' | ...
         over: c.over, ballInOver: c.ballInOver, innings: c.innings,
         runs: c.runs, battingTeam: c.battingTeam,
@@ -2271,7 +2365,7 @@ function invalidateClipsCache(matchId) {
 app.get('/api/clips/match/:matchId', async (req, res) => {
     if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     const matchId = safeMatchId(req.params.matchId);
-    const query = { matchId };
+    const query = { matchId, ...HIGHLIGHT_VISIBLE };
     if (req.query.type) query.eventType = String(req.query.type).toUpperCase();
     if (req.query.team) query.battingTeam = String(req.query.team).toUpperCase();
     if (req.query.playerKey) {
@@ -2304,7 +2398,7 @@ app.get('/api/clips/team/:matchId/:teamKey', async (req, res) => {
     const cached = getCached(clipsListCache, cacheKey);
     if (cached) return res.json(cached);
     try {
-        const clips = await clipsCollection.find({ matchId, battingTeam: teamKey, eventType: 'WICKET' })
+        const clips = await clipsCollection.find({ matchId, battingTeam: teamKey, eventType: 'WICKET', ...HIGHLIGHT_VISIBLE })
             .sort({ over: 1, ballInOver: 1 }).toArray();
         const payload = { success: true, clips: clips.map(serializeClip) };
         setCached(clipsListCache, cacheKey, payload, CLIPS_CACHE_TTL_MS);
@@ -2345,7 +2439,7 @@ async function runPlayerClipsQuery(pk, req) {
     // until a real season field is added) — no matchId restriction, just
     // ownerUid if we have one, so results stay scoped to one account.
 
-    const base = { $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }, { fielderKey: { $in: pkList } }] };
+    const base = { $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }, { fielderKey: { $in: pkList } }], ...HIGHLIGHT_VISIBLE };
     if (matchFilter) base.matchId = matchFilter;
     const ownerUid = ownerUidFrom(req);
     if (!matchFilter && ownerUid) base.ownerUid = ownerUid;
@@ -2733,26 +2827,26 @@ async function clipsForCompileRequest(body) {
         const pk = playerKey(body.playerKey);
         if (!pk) return { error: 'playerKey required' };
         const clips = await clipsCollection.find({
-            matchId, $or: [{ strikerKey: pk }, { bowlerKey: pk }, { fielderKey: pk }]
+            matchId, $or: [{ strikerKey: pk }, { bowlerKey: pk }, { fielderKey: pk }], ...HIGHLIGHT_VISIBLE
         }).toArray();
         return { matchId, clips };
     }
     if (type === 'team') {
         const team = String(body.team || '').toUpperCase();
         if (!team) return { error: 'team required' };
-        const clips = await clipsCollection.find({ matchId, battingTeam: team }).toArray();
+        const clips = await clipsCollection.find({ matchId, battingTeam: team, ...HIGHLIGHT_VISIBLE }).toArray();
         return { matchId, clips };
     }
     if (type === 'sixes' || type === 'fours' || type === 'wickets') {
         const team = String(body.team || '').toUpperCase();
         const eventType = type === 'sixes' ? 'SIX' : type === 'fours' ? 'FOUR' : 'WICKET';
-        const query = { matchId, eventType };
+        const query = { matchId, eventType, ...HIGHLIGHT_VISIBLE };
         if (team) query.battingTeam = team;
         const clips = await clipsCollection.find(query).toArray();
         return { matchId, clips };
     }
     if (type === 'full') {
-        const clips = await clipsCollection.find({ matchId }).toArray();
+        const clips = await clipsCollection.find({ matchId, ...HIGHLIGHT_VISIBLE }).toArray();
         return { matchId, clips };
     }
     return { error: 'Unknown compile type' };
@@ -2905,7 +2999,8 @@ app.get('/api/public/tournament/:token/players', async (req, res) => {
         if (matchIds.length && pkList.length) {
             const clips = await clipsCollection.find({
                 matchId: { $in: matchIds },
-                $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }]
+                $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }],
+                ...HIGHLIGHT_VISIBLE,
             }, { projection: { matchId: 1, strikerKey: 1, bowlerKey: 1, eventType: 1 } }).toArray();
             clips.forEach(c => {
                 // 🩹 FIX: a clip manually attached to an ordinary ball (tagged
@@ -2965,7 +3060,7 @@ app.get('/api/public/tournament/:token/player-clips', async (req, res) => {
         const matchById = new Map(ctx.matches.map(m => [clipId(m), m]));
 
         const clips = matchIds.length
-            ? await clipsCollection.find({ matchId: { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }] }).toArray()
+            ? await clipsCollection.find({ matchId: { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }], ...HIGHLIGHT_VISIBLE }).toArray()
             : [];
 
         function decorate(c) {
@@ -3029,7 +3124,7 @@ app.post('/api/public/tournament/:token/highlights/compile', async (req, res) =>
         const matchIndex = new Map(ctx.matches.map((m, i) => [m.roomId || m.matchId, i]));
         if (!matchIds.length) return res.json({ success: true, empty: true, message: 'No highlights available for this player yet.' });
 
-        const clips = await clipsCollection.find({ matchId: { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }] }).toArray();
+        const clips = await clipsCollection.find({ matchId: { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }], ...HIGHLIGHT_VISIBLE }).toArray();
         let selected;
         if (category === 'sixes') selected = clips.filter(c => c.strikerKey === pk && c.eventType === 'SIX');
         else if (category === 'fours') selected = clips.filter(c => c.strikerKey === pk && c.eventType === 'FOUR');
@@ -3246,7 +3341,8 @@ app.post('/api/public/tournament/:token/highlights/compile-all-players', async (
             // the bowler) — matching the same gap fixed above, so a
             // manually-attached general clip never made it into anyone's
             // ZIP entry either.
-            $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }]
+            $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }],
+            ...HIGHLIGHT_VISIBLE,
         }).toArray();
         clips.forEach(c => { c._tourneySeq = matchIndex.get(c.matchId) || 0; });
 
