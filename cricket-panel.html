@@ -146,6 +146,26 @@
   .b-six{ background:rgba(168,85,247,.18); border-color:var(--purple); color:var(--purple); }
   .b-wicket{ background:rgba(239,68,68,.18); border-color:var(--red); color:var(--red); }
   .b-extra{ background:rgba(255,122,0,.14); border-color:var(--accent); color:var(--accent); }
+  .b-highlight{ height:50px; font-size:16px; font-weight:800; letter-spacing:.5px; background:rgba(234,179,8,.16); border-color:#eab308; color:#facc15; margin-bottom:8px; }
+  .b-highlight.fired{ background:#eab308; color:#12100c; }
+  .hl-pending{ font-size:11px; color:#facc15; margin:-2px 0 8px; min-height:14px; }
+
+  /* 🎬 "Add this clip to Highlights?" prompts — bottom-left, never blocks scoring */
+  #hl-prompts{ position:fixed; left:16px; bottom:16px; z-index:60; display:flex; flex-direction:column; gap:8px; max-width:360px; }
+  .hl-prompt{ background:var(--panel-2); border:1px solid #eab308; border-radius:10px; padding:10px 12px; box-shadow:0 8px 24px rgba(0,0,0,.45); font-size:13px; }
+  .hl-prompt .q{ font-weight:800; color:#facc15; margin-bottom:4px; }
+  .hl-prompt .d{ font-size:12px; color:var(--text-dim); margin-bottom:8px; line-height:1.4; }
+  .hl-prompt .btns{ display:flex; gap:8px; }
+  .hl-prompt .btns button{ flex:1; height:36px; font-weight:800; }
+  .hl-prompt .yes{ background:rgba(34,197,94,.2); border-color:var(--green); color:var(--green); }
+  .hl-prompt .no{ background:rgba(239,68,68,.14); border-color:var(--red); color:var(--red); }
+
+  /* 🎬 live per-clip status (Clipper Helper card) */
+  #clip-jobs-list{ margin-top:10px; display:flex; flex-direction:column; gap:6px; max-height:320px; overflow-y:auto; }
+  .cj-row{ background:rgba(255,255,255,.04); border-left:3px solid var(--border); border-radius:6px; padding:6px 8px; font-size:12px; line-height:1.45; }
+  .cj-row.ok{ border-left-color:var(--green); } .cj-row.bad{ border-left-color:var(--red); } .cj-row.busy{ border-left-color:#eab308; }
+  .cj-row .t{ font-weight:700; } .cj-row .tag{ font-size:10px; padding:1px 6px; border-radius:8px; margin-left:6px; background:var(--panel-2); }
+  .cj-row .err{ color:var(--red); font-size:11px; }
 
   .stat-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px; }
   .stat{ background:var(--panel-2); border:1px solid var(--border); border-radius:8px; padding:8px 10px; }
@@ -818,6 +838,8 @@
     <div class="card" id="card-ball-outcome">
       <h2>🏏 Ball Outcome</h2>
       <div class="freehit-banner" id="freehit-banner">⚡ FREE HIT IN PLAY <button type="button" id="clear-freehit-btn" style="margin-left:auto;">Clear</button></div>
+      <button type="button" class="full b-highlight" id="highlight-btn" title="Press when the batsman plays the ball — cuts 15s before to 3s after this press from the vMix recording">🎬 HIGHLIGHTS (H)</button>
+      <div class="hl-pending" id="hl-pending"></div>
       <div class="balls-grid">
         <button class="b-run" data-ball="0">0</button>
         <button class="b-run" data-ball="1">1</button>
@@ -835,7 +857,7 @@
       <button class="full ghost" id="undo-btn" style="margin-top:10px;">Undo Last Ball (U)</button>
       <button class="full ghost" id="edit-scorecard-btn" style="margin-top:8px;display:none;">✏️ Edit Scorecard (Delete a Ball)</button>
       <div class="shortcut-hint">
-        Shortcuts: <kbd>0-6</kbd> runs · <kbd>W</kbd> wicket · <kbd>S</kbd> swap strike · <kbd>U</kbd> undo
+        Shortcuts: <kbd>H</kbd> highlights · <kbd>0-6</kbd> runs · <kbd>W</kbd> wicket · <kbd>S</kbd> swap strike · <kbd>U</kbd> undo · <kbd>Y</kbd>/<kbd>N</kbd> answer "Add to Highlights?"
       </div>
     </div>
 
@@ -1210,6 +1232,8 @@
         <div class="dot" id="clipper-status-dot"></div>
         <span id="clipper-status-text" style="font-size:13px; opacity:.85;">Checking…</span>
       </div>
+      <div style="font-size:11px; opacity:.6;">Clips (newest first) — ⏳ 3 sec wait → ✂️ cutting → 💾 local → R2 → Drive</div>
+      <div id="clip-jobs-list"></div>
 
       <div style="font-size:12px; opacity:.75; margin-bottom:10px; line-height:1.5;">
         A tiny program that runs alongside vMix on this same PC. Set up once with a couple of clicks (no file editing) — after that, one click on "Start Recording" above starts vMix's own recording too, cuts FOUR/SIX/WICKET clips, and uploads them to Drive automatically.
@@ -1365,6 +1389,7 @@
 </div>
 
 <div id="toast"></div>
+<div id="hl-prompts"></div>
 
 <script>
 /* ============================================================
@@ -1821,11 +1846,19 @@ async function checkClipperHelperStatus(){
   const text = document.getElementById('clipper-status-text');
   if(!dot || !text) return; // card not on screen yet
   try {
-    const s = await fetch(`${CLIPPER_HELPER_URL}/status`, { signal: AbortSignal.timeout(2000) }).then(r => r.json());
+    const s = await fetch(`${CLIPPER_HELPER_URL}/status`, { signal: AbortSignal.timeout(3000) }).then(r => r.json());
     dot.classList.add('on');
-    text.textContent = s.vmixRecordingFolder
-      ? '🟢 Running — ready for match day'
-      : '🟡 Running — but setup isn\'t finished yet (open the Setup page below)';
+    if(s.version >= 4){
+      text.textContent = s.recordingError
+        ? `🟡 Running — ${s.recordingError}`
+        : s.recordingGrowing
+          ? `🟢 Running — vMix recording (${Math.round((s.recordingSeconds || 0) / 60)} min) · ${s.clipsOk || 0} clips${s.failedClipsCount ? ` · ${s.failedClipsCount} failed` : ''}`
+          : '🟡 Running — vMix is NOT recording right now (start Record in vMix)';
+    } else {
+      text.textContent = s.vmixRecordingFile
+        ? '🟢 Running — ready for match day'
+        : '🟡 Running — but setup isn\'t finished yet (open the Setup page below)';
+    }
   } catch(e) {
     dot.classList.remove('on');
     text.textContent = '🔴 Not running — double-click ClipperHelper.exe on this PC once';
@@ -1837,6 +1870,265 @@ setInterval(checkClipperHelperStatus, 8000);
 function currentMatchId(){
   return document.getElementById('match-id').value.trim();
 }
+
+/* ============================================================
+   🎬 HIGHLIGHTS — operator presses HIGHLIGHTS as the batsman plays the
+   ball. The local Clipper Helper freezes that exact moment, waits 3s,
+   and cuts 15s before → 3s after it (18s) from the vMix recording.
+   Once the ball's outcome is recorded, the clip is linked to that ball
+   (innings/over/ball/batsman/bowler/outcome) and — for 4, 6, wicket and
+   boundary extras automatically, otherwise on the operator's YES/NO —
+   added to the Highlights. See clipper-helper/server.js and
+   POST /api/clips/classify on the main server.
+   ============================================================ */
+const HL_MAX_PRESS_AGE_MS = 3 * 60 * 1000;     // a press older than this when a ball is recorded isn't linked to it
+const HL_PROMPT_TIMEOUT_MS = 3 * 60 * 1000;    // unanswered "Add to Highlights?" → kept as a normal clip
+const HL_CLASSIFY_DELAY_MS = 2000;             // lets the ball's own logBall row land first, so the server links to it
+let pendingHighlights = [];                    // presses since the last recorded ball: [{ clipId, t0, matchId }]
+const clipDecisions = {};                      // clipId -> 'YES' | 'NO' | 'ASK' (shown in the clip status list)
+
+function safeClipMatchId(matchId){ return String(matchId || '').replace(/[^a-zA-Z0-9_-]/g, ''); }
+
+function renderPendingHighlights(){
+  const el = document.getElementById('hl-pending');
+  if(!el) return;
+  el.textContent = pendingHighlights.length
+    ? `🎬 ${pendingHighlights.length} highlight clip${pendingHighlights.length === 1 ? '' : 's'} waiting for this ball's outcome`
+    : '';
+}
+
+function pressHighlight(){
+  const matchId = safeClipMatchId(currentMatchId());
+  if(!matchId){ toast('Enter a Match ID and Connect first'); return; }
+  const t0 = Date.now();
+  const clipId = `${matchId}_HIGHLIGHT_${t0}`;
+  pendingHighlights.push({ clipId, t0, matchId });
+  clipDecisions[clipId] = 'ASK';
+  renderPendingHighlights();
+  const btn = document.getElementById('highlight-btn');
+  if(btn){ btn.classList.add('fired'); setTimeout(() => btn.classList.remove('fired'), 400); }
+  // Press-time snapshot only as a fallback — the real linking happens
+  // when the outcome is recorded (classifyHighlightClips below).
+  const ballMeta = {
+    innings: state.inningsNumber, battingTeam: state.battingTeam,
+    striker: state.striker.name, nonStriker: state.nonStriker.name, bowler: state.bowler.name,
+    strikerId: state.striker.id || null, nonStrikerId: state.nonStriker.id || null, bowlerId: state.bowler.id || null
+  };
+  fetch(`${CLIPPER_HELPER_URL}/clip`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ eventType: 'HIGHLIGHT', timestamp: t0, matchId, clipId, ballMeta }),
+    signal: AbortSignal.timeout(5000)
+  }).then(r => r.json()).then(r => {
+    if(!r.success) toast(`⚠️ Clipper: ${r.error || 'clip not accepted'}`, 4000);
+    else if(r.recordingActive === false) toast('⚠️ vMix is NOT recording — this clip will have no footage. Start Record in vMix!', 5000);
+    else toast('🎬 Highlight captured — cutting 15s before → 3s after');
+    refreshClipJobs();
+  }).catch(() => toast('⚠️ Clipper Helper not reachable — highlight clip NOT created (is ClipperHelper.exe running?)', 5000));
+}
+document.getElementById('highlight-btn').addEventListener('click', pressHighlight);
+
+// A HIGHLIGHTS press waiting for this ball also covers FOUR/SIX/WICKET —
+// the automatic clip for those is skipped so the ball never gets two.
+function hasFreshPendingHighlight(){
+  return pendingHighlights.some(h => Date.now() - h.t0 < HL_MAX_PRESS_AGE_MS);
+}
+
+// What the operator saw, what it means for the scorecard, and whether
+// it's a highlight by default (4, 6, wicket, boundary extras).
+function describeBallOutcome(kind, meta, runs){
+  meta = meta || {};
+  const isWicket = kind === 'W' || kind === 'WdW' || kind === 'NbW';
+  if(isWicket){
+    const how = meta.dismissalType || 'Bowled';
+    const on = kind === 'WdW' ? ' (Wide)' : kind === 'NbW' ? ' (No Ball)' : '';
+    if(how === 'Retired Hurt') return { label: 'Retired Hurt', eventType: 'CLIP', isDefault: false };
+    return { label: `WICKET — ${how}${on}`, eventType: 'WICKET', isDefault: true };
+  }
+  switch(kind){
+    case '4': return { label: 'FOUR', eventType: 'FOUR', isDefault: true };
+    case '6': return { label: 'SIX', eventType: 'SIX', isDefault: true };
+    case '0': return { label: 'Dot ball', eventType: 'CLIP', isDefault: false };
+    case 'Wd': {
+      const x = meta.extraRuns || 0;
+      if(x >= 6) return { label: 'Wide 6', eventType: 'SIX', isDefault: true };
+      if(x === 4) return { label: 'Wide 4', eventType: 'FOUR', isDefault: true };
+      return { label: x ? `Wide +${x}` : 'Wide', eventType: 'CLIP', isDefault: false };
+    }
+    case 'Nb': {
+      const bat = meta.runsOffBat || 0, lb = meta.legByeRuns || 0;
+      if(bat === 6) return { label: 'No Ball 6', eventType: 'SIX', isDefault: true };
+      if(bat === 4) return { label: 'No Ball 4', eventType: 'FOUR', isDefault: true };
+      if(lb === 4) return { label: 'No Ball + Leg Bye 4', eventType: 'CLIP', isDefault: true };
+      return { label: bat ? `No Ball +${bat}` : lb ? `No Ball + ${lb} leg bye${lb === 1 ? '' : 's'}` : 'No Ball', eventType: 'CLIP', isDefault: false };
+    }
+    case 'B': {
+      const r = typeof meta.runs === 'number' ? meta.runs : 1;
+      return { label: `Bye ${r}`, eventType: 'CLIP', isDefault: r === 4 };
+    }
+    case 'LB': {
+      const r = typeof meta.runs === 'number' ? meta.runs : 1;
+      return { label: `Leg Bye ${r}`, eventType: 'CLIP', isDefault: r === 4 };
+    }
+    default: {
+      const r = Number(kind);
+      return { label: Number.isFinite(r) ? `${r} run${r === 1 ? '' : 's'}` : String(kind), eventType: 'CLIP', isDefault: false };
+    }
+  }
+}
+
+// Called by recordBall() for every recorded ball: links every HIGHLIGHTS
+// press since the previous ball to THIS ball. Returns how many were linked.
+function linkPendingHighlightsToBall(kind, meta, ball){
+  if(!pendingHighlights.length) return 0;
+  const presses = pendingHighlights;
+  pendingHighlights = [];
+  renderPendingHighlights();
+  const fresh = presses.filter(h => Date.now() - h.t0 < HL_MAX_PRESS_AGE_MS);
+  // A press with no ball recorded within 3 minutes can't be matched to a
+  // ball reliably — keep it as a normal clip rather than guess.
+  presses.filter(h => !fresh.includes(h)).forEach(h => {
+    clipDecisions[h.clipId] = 'NO';
+    sendClipClassification({ clipId: h.clipId, matchId: h.matchId, eventTimestamp: h.t0, isHighlight: false, eventType: 'CLIP', outcomeLabel: 'Not linked to a ball', ballMeta: null });
+  });
+  if(!fresh.length) return 0;
+  const outcome = describeBallOutcome(kind, meta, ball.runs);
+  const isWicket = kind === 'W' || kind === 'WdW' || kind === 'NbW';
+  const ballMeta = {
+    ...ball,
+    dismissal: isWicket ? { type: (meta && meta.dismissalType) || 'Bowled', fielder: (meta && meta.fielderName) || null } : null
+  };
+  const send = (isHighlight) => fresh.forEach(h => {
+    clipDecisions[h.clipId] = isHighlight ? 'YES' : 'NO';
+    setTimeout(() => sendClipClassification({
+      clipId: h.clipId, matchId: h.matchId, eventTimestamp: h.t0,
+      isHighlight, eventType: outcome.eventType, outcomeLabel: outcome.label, ballMeta
+    }), HL_CLASSIFY_DELAY_MS);
+    refreshClipJobs();
+  });
+  if(outcome.isDefault){
+    send(true);
+    toast(`🎬 ${outcome.label} — clip added to Highlights automatically`, 2500);
+  } else {
+    showHighlightPrompt(outcome, ballMeta, fresh.length, send);
+  }
+  return fresh.length;
+}
+
+function showHighlightPrompt(outcome, ball, count, send){
+  const box = document.getElementById('hl-prompts');
+  const card = document.createElement('div');
+  card.className = 'hl-prompt';
+  const who = [ball.striker, ball.bowler ? `b ${ball.bowler}` : ''].filter(Boolean).join(' ');
+  card.innerHTML = `<div class="q">🎬 Add this clip to Highlights?</div>
+    <div class="d"></div>
+    <div class="btns"><button type="button" class="yes">YES (Y)</button><button type="button" class="no">NO (N)</button></div>`;
+  card.querySelector('.d').textContent = `Over ${ball.over}.${ball.ballInOver} · ${outcome.label}${who ? ` · ${who}` : ''}${count > 1 ? ` · ${count} clips` : ''}`;
+  let done = false;
+  const answer = (yes) => {
+    if(done) return;
+    done = true;
+    clearTimeout(timer);
+    card.remove();
+    send(yes);
+    toast(yes ? `🎬 Added to Highlights — ${outcome.label}` : `Clip kept as a normal clip (not in Highlights) — ${outcome.label}`, 2200);
+  };
+  card.querySelector('.yes').addEventListener('click', () => answer(true));
+  card.querySelector('.no').addEventListener('click', () => answer(false));
+  card._answer = answer;
+  const timer = setTimeout(() => answer(false), HL_PROMPT_TIMEOUT_MS);
+  box.appendChild(card);
+}
+// Y / N answer the oldest open prompt.
+function answerOldestHighlightPrompt(yes){
+  const card = document.querySelector('#hl-prompts .hl-prompt');
+  if(card && card._answer){ card._answer(yes); return true; }
+  return false;
+}
+
+// Classification → main server, with a persistent retry queue so a
+// network blip (or a page reload) never loses the operator's answer.
+const HL_CLASSIFY_QUEUE_KEY = 'hlClassifyQueue';
+function loadClassifyQueue(){ try { return JSON.parse(localStorage.getItem(HL_CLASSIFY_QUEUE_KEY) || '[]'); } catch(e){ return []; } }
+function saveClassifyQueue(q){ try { localStorage.setItem(HL_CLASSIFY_QUEUE_KEY, JSON.stringify(q.slice(-200))); } catch(e){ /* storage full/blocked */ } }
+async function postClassification(payload){
+  try {
+    const r = await fetch('/api/clips/classify', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload), signal: AbortSignal.timeout(15000)
+    });
+    if(r.status === 400) return true; // not retryable (not a HIGHLIGHTS clip) — drop it
+    return r.ok;
+  } catch(e){ return false; }
+}
+async function sendClipClassification(payload){
+  if(await postClassification(payload)) return;
+  const q = loadClassifyQueue().filter(p => p.clipId !== payload.clipId);
+  q.push(payload);
+  saveClassifyQueue(q);
+}
+async function flushClassifyQueue(){
+  const q = loadClassifyQueue();
+  if(!q.length) return;
+  const left = [];
+  for(const p of q){ if(!(await postClassification(p))) left.push(p); }
+  saveClassifyQueue(left);
+}
+setInterval(flushClassifyQueue, 20000);
+flushClassifyQueue();
+
+// Live per-clip status from the local Clipper Helper.
+const CJ_ACTIVE = ['WAITING', 'CUTTING', 'CUT_RETRY', 'LOCAL_SAVED', 'UPLOADING', 'UPLOAD_RETRY', 'UPLOADED'];
+let clipJobsTimer = null;
+function legIcon(s){ return s === 'uploaded' ? '✓' : s === 'failed' ? '✕ (retrying)' : '⏳'; }
+function clipJobLine(j){
+  const secs = j.nextUploadAt ? Math.max(0, Math.round((j.nextUploadAt - Date.now()) / 1000)) : null;
+  switch(j.status){
+    case 'WAITING': return '⏳ 3 sec waiting…';
+    case 'CUTTING': return j.cutAttempts > 1 ? `✂️ Cutting (attempt ${j.cutAttempts})…` : '✂️ Cutting…';
+    case 'CUT_RETRY': return `🔁 Cut retry — ${j.error || ''}`;
+    case 'LOCAL_SAVED': return '💾 Local saved · ⬆️ upload queued';
+    case 'UPLOADING': return '💾 Local ✓ · ⬆️ uploading…';
+    case 'UPLOAD_RETRY': return `💾 Local ✓ · 🔁 upload retry${secs != null ? ` in ${secs}s` : ''}`;
+    case 'UPLOADED': return `💾 Local ✓ · R2 ${legIcon(j.r2Status)} · Drive ${legIcon(j.driveStatus)}`;
+    case 'COMPLETE': return '✅ Local ✓ · R2 ✓ · Drive ✓';
+    case 'FAILED': return '❌ Failed';
+    default: return j.status;
+  }
+}
+function renderClipJobs(list){
+  const el = document.getElementById('clip-jobs-list');
+  if(!el) return;
+  el.innerHTML = '';
+  list.slice(0, 10).forEach(j => {
+    const row = document.createElement('div');
+    row.className = `cj-row ${j.status === 'COMPLETE' ? 'ok' : j.status === 'FAILED' ? 'bad' : 'busy'}`;
+    const time = new Date(j.t0).toLocaleTimeString();
+    const dec = clipDecisions[j.clipId];
+    const tag = j.eventType !== 'HIGHLIGHT' ? '' : dec === 'YES' ? '⭐ Highlight' : dec === 'NO' ? 'Not in Highlights' : 'Awaiting outcome';
+    row.innerHTML = `<div><span class="t"></span><span class="tag"></span></div><div class="s"></div>${j.error && (j.status === 'FAILED' || j.status === 'UPLOAD_RETRY') ? '<div class="err"></div>' : ''}`;
+    row.querySelector('.t').textContent = `${j.eventType} @ ${time}${j.clipSeconds ? ` · ${j.clipSeconds}s` : ''}`;
+    const tagEl = row.querySelector('.tag');
+    if(tag) tagEl.textContent = tag; else tagEl.remove();
+    row.querySelector('.s').textContent = clipJobLine(j);
+    const err = row.querySelector('.err');
+    if(err) err.textContent = j.error;
+    el.appendChild(row);
+  });
+}
+async function refreshClipJobs(){
+  clearTimeout(clipJobsTimer);
+  let active = false;
+  try {
+    const matchId = safeClipMatchId(currentMatchId());
+    const r = await fetch(`${CLIPPER_HELPER_URL}/clip-jobs?limit=10${matchId ? `&matchId=${encodeURIComponent(matchId)}` : ''}`, { signal: AbortSignal.timeout(3000) }).then(x => x.json());
+    const list = (r && r.jobs) || [];
+    renderClipJobs(list);
+    active = list.some(j => CJ_ACTIVE.includes(j.status));
+  } catch(e){ /* helper not running — the status dot already says so */ }
+  clipJobsTimer = setTimeout(refreshClipJobs, active ? 2000 : 8000);
+}
+refreshClipJobs();
 
 async function startRecording(){
   const matchId = currentMatchId();
@@ -6707,6 +6999,21 @@ function recordBall(kind, meta){
   // batsman modal) it's chained after has settled.
   pendingBowlerPrompt = overCompletedThisBall && !isInningsOver();
   pushState(true, true);
+  // 🎬 Link any HIGHLIGHTS press(es) since the previous ball to THIS
+  // ball, from the same immutable snapshot (see linkPendingHighlightsToBall).
+  const linkedHighlightClips = linkPendingHighlightsToBall(kind, meta, {
+    innings: logInnings,
+    over: logOverForBall,
+    ballInOver: logBallInOverForBall,
+    runs: state.score.runs - runsBefore,
+    battingTeam: logBattingTeam,
+    striker: logStrikerName,
+    nonStriker: logNonStrikerName,
+    bowler: logBowlerName,
+    strikerId: logStrikerId,
+    nonStrikerId: logNonStrikerId,
+    bowlerId: logBowlerId
+  });
   // 🔒 Pass the immutable per-ball snapshot captured above — never let
   // logBallToDb() read state.striker/nonStriker/bowler/score.overs/balls
   // live itself, or a last-ball clip/DB row silently inherits whichever
@@ -6720,7 +7027,7 @@ function recordBall(kind, meta){
     strikerId: logStrikerId,
     nonStrikerId: logNonStrikerId,
     bowlerId: logBowlerId
-  }, extraBoundaryEventType);
+  }, extraBoundaryEventType, linkedHighlightClips > 0);
 }
 let pendingBowlerPrompt = false;
 // Called right after every recordBall() call site has finished whatever
@@ -6735,7 +7042,8 @@ function maybePromptNewBowler(){
 // 🍃 Every ball → MongoDB (source of truth), independent of the
 // cricketState broadcast above. Also asks the server to cut a 20s
 // highlight clip (10s before / 10s after) on WICKET / FOUR / SIX.
-function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundaryEventType){
+// skipAutoClip: a HIGHLIGHTS press already captured this ball — no second clip.
+function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundaryEventType, skipAutoClip){
   if(!socket || !socket.connected) return;
   const matchId = currentMatchId();
   if(!matchId) return;
@@ -6813,7 +7121,7 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundar
   // recordBall()'s 'Wd'/'Nb' cases when that ball's extra runs amount to
   // a real boundary (see the comments there for the Law 19.7.1 reasoning
   // on why a Wide only ever maxes at FOUR, never SIX).
-  if(kind === '4' || kind === '6' || extraBoundaryEventType){
+  if(!skipAutoClip && (kind === '4' || kind === '6' || extraBoundaryEventType)){
     const eventType = extraBoundaryEventType || (kind === '4' ? 'FOUR' : 'SIX');
     // ballMeta — same shape the socket 'logBall' event above already
     // sends — lets the main server link this clip to the real
@@ -7025,6 +7333,9 @@ function finalizeExtraWicket(dismissalType, extraMeta){
 function triggerWicketClip(){
   const matchId = currentMatchId();
   if(!matchId) return;
+  // A HIGHLIGHTS press already captured this delivery — it becomes the
+  // wicket clip once the dismissal is recorded; don't cut a second one.
+  if(hasFreshPendingHighlight()) return;
   const ballTimestamp = Date.now();
   // 🔒 BUG FIX (wicket clip tagged with the PREVIOUS ball's over/ball
   // number, e.g. a wicket that is actually 8.2 gets logged as 8.1):
@@ -9425,6 +9736,9 @@ document.addEventListener('keydown', (e) => {
   if(tag === 'input' || tag === 'select' || tag === 'textarea') return;
 
   if(/^[0-6]$/.test(e.key)){ recordBall(e.key); maybePromptNewBowler(); }
+  else if(e.key.toLowerCase() === 'h' && !e.repeat) pressHighlight();
+  else if(e.key.toLowerCase() === 'y' && answerOldestHighlightPrompt(true)) e.preventDefault();
+  else if(e.key.toLowerCase() === 'n' && answerOldestHighlightPrompt(false)) e.preventDefault();
   else if(e.key.toLowerCase() === 'w') openWicketModal();
   else if(e.key === 'Escape'){ closeWicketModal(); closeNewOverModal(); }
   else if(e.key.toLowerCase() === 's') swapStrike();
