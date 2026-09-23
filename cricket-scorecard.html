@@ -3331,7 +3331,9 @@ async function refreshCommentaryClips(force){
   const now = Date.now();
   if(!force && now - commentaryClipsFetchedAt < 8000) return commentaryClipMap;
   commentaryClipsFetchedAt = now;
-  const clips = await fetchMatchClips();
+  // includeHidden: a HIGHLIGHTS clip answered NO stays out of the
+  // Highlights section but must still play from its ball in commentary.
+  const clips = await fetchMatchClips(undefined, true);
   const map = {};
   // Key MUST include innings — over.ballInOver alone repeats every
   // innings (e.g. "5.3" exists in both the 1st and 2nd innings), so a
@@ -3342,7 +3344,14 @@ async function refreshCommentaryClips(force){
   // needs to tell "still cutting/uploading" (⏳ preparing/processing)
   // apart from "no clip job at all" for a ball, and can only do that if
   // a not-yet-ready job is still visible in this map.
-  (clips || []).forEach(c => { if(c) map[`${c.innings || 1}.${c.over}.${c.ballInOver}`] = c; });
+  // One ball can carry two clips (auto wicket clip + a HIGHLIGHTS press):
+  // keep the one that's playable, preferring a Highlights-visible clip.
+  const rank = c => (c.ready || c.status === 'COMPLETE' ? 2 : 0) + (c.isHighlight !== false ? 1 : 0);
+  (clips || []).forEach(c => {
+    if(!c || c.over == null || c.ballInOver == null) return;
+    const key = `${c.innings || 1}.${c.over}.${c.ballInOver}`;
+    if(!map[key] || rank(c) > rank(map[key])) map[key] = c;
+  });
   commentaryClipMap = map;
   return map;
 }
@@ -3361,8 +3370,11 @@ async function refreshCommentaryClips(force){
 //   plainly rather than hidden, per "never hide clip failures silently".
 const CLIP_PREPARING_WINDOW_MS = 120000; // how long a boundary/wicket stays "preparing" with no clip doc yet
 function commentaryClipState(b, inn, ovNum, ballNum, isLive){
-  if(!isBoundaryBall(b)) return null;
+  // Any ball with a clip gets a replay (HIGHLIGHTS clips can be on a dot,
+  // single, wide... and NO-answered ones too). Only 4/6/W auto-clips get
+  // the "preparing" placeholder before their clip doc exists.
   const clip = commentaryClipMap[`${inn}.${ovNum}.${ballNum}`] || null;
+  if(!clip && !isBoundaryBall(b)) return null;
   if(clip){
     if(clip.ready || clip.status === 'COMPLETE') return { state:'ready', clip };
     if(clip.status === 'FAILED_PERMANENT') return { state:'failed', clip };
@@ -4340,7 +4352,7 @@ function matchStatsForPlayer(name){
 // scorecard just never asked for that page. Now pages through with
 // skip/limit until the server returns a short page (fewer than asked),
 // so the WHOLE match's clips end up in the map regardless of count.
-async function fetchMatchClips(type){
+async function fetchMatchClips(type, includeHidden){
   const matchId = getClipMatchId();
   if(!matchId) return [];
   const pageSize = 100;
@@ -4350,6 +4362,7 @@ async function fetchMatchClips(type){
     for(let page = 0; page < 50; page++){ // hard safety cap: 5000 clips max
       const qs = new URLSearchParams({ limit: String(pageSize), skip: String(skip) });
       if(type) qs.set('type', type);
+      if(includeHidden) qs.set('all', '1');
       const res = await apiFetch(`${clipApiBase()}/api/clips/match/${encodeURIComponent(matchId)}?${qs.toString()}`);
       if(!res.ok) break;
       const data = await res.json();

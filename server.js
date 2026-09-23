@@ -2319,6 +2319,7 @@ function serializeClip(c) {
         matchId: c.matchId,
         eventType: c.eventType,                 // 'FOUR' | 'SIX' | 'WICKET' | 'CLIP'
         outcome: c.outcomeLabel || null,        // e.g. 'Wide +4', '2 runs' — set for HIGHLIGHTS-button clips
+        isHighlight: c.isHighlight !== false,   // false = HIGHLIGHTS clip answered NO (commentary only)
         dismissalType: c.dismissalType || null,  // 'Bowled' | 'Caught' | 'LBW' | 'Run Out' | 'Stumped' | 'Hit Wicket' | ...
         over: c.over, ballInOver: c.ballInOver, innings: c.innings,
         runs: c.runs, battingTeam: c.battingTeam,
@@ -2367,7 +2368,10 @@ function invalidateClipsCache(matchId) {
 app.get('/api/clips/match/:matchId', async (req, res) => {
     if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     const matchId = safeMatchId(req.params.matchId);
-    const query = { matchId, ...HIGHLIGHT_VISIBLE };
+    // ?all=1 — commentary wants EVERY cut clip, including HIGHLIGHTS-button
+    // clips answered NO (hidden from Highlights, still a replay on the ball).
+    const includeHidden = req.query.all === '1';
+    const query = includeHidden ? { matchId, status: { $ne: 'AWAITING_CLIP' } } : { matchId, ...HIGHLIGHT_VISIBLE };
     if (req.query.type) query.eventType = String(req.query.type).toUpperCase();
     if (req.query.team) query.battingTeam = String(req.query.team).toUpperCase();
     if (req.query.playerKey) {
@@ -2376,7 +2380,7 @@ app.get('/api/clips/match/:matchId', async (req, res) => {
     }
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
     const skip = Math.max(parseInt(req.query.skip, 10) || 0, 0);
-    const cacheKey = `${matchId}::match::${req.query.type || ''}::${req.query.team || ''}::${req.query.playerKey || ''}::${limit}::${skip}`;
+    const cacheKey = `${matchId}::match::${includeHidden ? 'all' : 'vis'}::${req.query.type || ''}::${req.query.team || ''}::${req.query.playerKey || ''}::${limit}::${skip}`;
     const cached = getCached(clipsListCache, cacheKey);
     if (cached) return res.json(cached);
     try {
