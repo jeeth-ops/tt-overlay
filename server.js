@@ -204,6 +204,7 @@ async function connectMongo() {
         await playersCollection.createIndex({ playerId: 1 }, { unique: true });
         await playersCollection.createIndex({ ownerUid: 1, nameKeys: 1 }, { unique: true });
         console.log('🍃 MongoDB connected —', mongoDb.databaseName);
+        dedupeCrossTournamentMatches(); // background, never blocks startup
 
         // 🩹 One-time migration: move any matches still embedded in a league
         // doc's `matches[]` array (the old, size-limited design) into their
@@ -1348,13 +1349,46 @@ async function getLeagueMatches(ownerUid, leagueKey) {
     return matchRecordsCollection.find({ ownerUid, leagueKey }).sort({ savedAt: 1 }).toArray();
 }
 
-// GET /api/whoami?uid= — resolves the REAL account email for a
-// (client-supplied, unverified) Firebase uid via the Admin SDK, same trust
-// level as the rest of this uid-based league API (see the big comment
-// above ownerUidFrom). Used by cricket-panel.html to decide whether to show
-// the "✏️ Edit Scorecard (Delete a Ball)" tool — that ability is meant for
-// chhayajeeth@gmail.com only, so the panel checks here rather than trusting
-// a client-side flag it could just as easily lie to itself about.
+// 🧹 One match = one tournament. Before the panel bound each match to its
+// own tournament, browsing another tournament while a match was on the
+// panel could save a COPY of it (same matchId) into the tournament being
+// viewed. This finds those copies and keeps only the match's original
+// home — the tournament it was first saved in (oldest _id) — carrying
+// over the newest score into it, then removes the stray copies (and any
+// stale "live" pointer they left). Single-match history copies are left
+// alone. Idempotent; runs at startup.
+async function dedupeCrossTournamentMatches() {
+    if (!matchRecordsCollection || !leaguesCollection) return;
+    const SINGLE_KEY = leagueKeyFor('__single_matches__');
+    try {
+        const groups = await matchRecordsCollection.aggregate([
+            { $match: { leagueKey: { $ne: SINGLE_KEY }, matchId: { $type: 'string' } } },
+            { $group: { _id: { ownerUid: '$ownerUid', matchId: '$matchId' }, n: { $sum: 1 } } },
+            { $match: { n: { $gt: 1 } } }
+        ]).toArray();
+        for (const g of groups) {
+            const { ownerUid, matchId } = g._id;
+            const copies = await matchRecordsCollection.find({ ownerUid, matchId, leagueKey: { $ne: SINGLE_KEY } }).sort({ _id: 1 }).toArray();
+            if (copies.length < 2) continue;
+            const home = copies[0];
+            const newest = copies.reduce((a, b) => String(b.savedAt || '') > String(a.savedAt || '') ? b : a, home);
+            if (newest !== home) {
+                const { _id, leagueKey, ...content } = newest;
+                await matchRecordsCollection.updateOne({ _id: home._id }, { $set: { ...content, leagueKey: home.leagueKey } });
+            }
+            const strays = copies.slice(1);
+            await matchRecordsCollection.deleteMany({ _id: { $in: strays.map(c => c._id) } });
+            for (const c of strays) {
+                await leaguesCollection.updateOne({ ownerUid, leagueKey: c.leagueKey, liveMatchId: matchId }, { $set: { liveMatchId: null, liveRoomId: null } });
+                await leaguesCollection.updateOne({ ownerUid, leagueKey: c.leagueKey }, { $pull: { liveMatches: { matchId } } });
+            }
+            console.log(`🧹 Match ${matchId}: kept in "${home.leagueKey}", removed stray cop${strays.length === 1 ? 'y' : 'ies'} from ${strays.map(c => `"${c.leagueKey}"`).join(', ')}`);
+        }
+    } catch (err) {
+        console.log('Cross-tournament duplicate cleanup error:', err.message || err);
+    }
+}
+
 // GET /api/cricket/room-state/:roomId — the full saved panel state of one
 // live match room (the same thing the overlay receives on join). The panel's
 // "Resume" uses it to switch back to an earlier match without mixing it
@@ -1375,6 +1409,13 @@ app.get('/api/cricket/room-state/:roomId', async (req, res) => {
     }
 });
 
+// GET /api/whoami?uid= — resolves the REAL account email for a
+// (client-supplied, unverified) Firebase uid via the Admin SDK, same trust
+// level as the rest of this uid-based league API (see the big comment
+// above ownerUidFrom). Used by cricket-panel.html to decide whether to show
+// the "✏️ Edit Scorecard (Delete a Ball)" tool — that ability is meant for
+// chhayajeeth@gmail.com only, so the panel checks here rather than trusting
+// a client-side flag it could just as easily lie to itself about.
 app.get('/api/whoami', async (req, res) => {
     const uid = ownerUidFrom(req);
     if (!uid) return res.json({ success: true, email: null });
