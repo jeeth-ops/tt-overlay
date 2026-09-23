@@ -463,22 +463,6 @@
   .tpm-stat-chip.bowl .tpm-chip-icon{ background:color-mix(in srgb, var(--wicket) 18%, transparent); color:var(--wicket); }
   .tpm-stat-chip .tpm-chip-text{ font-size:11.5px; font-weight:700; font-family:var(--font-display); white-space:nowrap; }
   .tpm-stat-chip .tpm-chip-text .dim{ color:var(--text-dim); font-weight:600; font-family:var(--font-body); }
-  #video-modal-backdrop{
-    display:flex; position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:110;
-    align-items:center; justify-content:center; padding:16px;
-    opacity:0; pointer-events:none; transition:opacity .22s ease;
-  }
-  #video-modal-backdrop.open{ opacity:1; pointer-events:auto; }
-  #video-modal{
-    width:min(720px,100%); background:#000; border-radius:var(--radius-lg); overflow:hidden;
-    transform:scale(.92) translateY(8px); transition:transform .28s cubic-bezier(.34,1.56,.64,1);
-  }
-  #video-modal-backdrop.open #video-modal{ transform:scale(1) translateY(0); }
-  #video-modal-head{ display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:#0b0e14; }
-  #video-modal-head .vm-title{ color:#fff; font-size:12.5px; font-weight:700; }
-  #video-modal-close{ width:28px; height:28px; border-radius:99px; background:rgba(255,255,255,.1); color:#fff; border:none; cursor:pointer; }
-  #video-modal video{ width:100%; display:block; max-height:70vh; background:#000; }
-  #video-modal-loading{ color:#fff; text-align:center; padding:60px 0; font-size:12.5px; }
 </style>
 </head>
 <body>
@@ -526,15 +510,6 @@
 </div>
 
 <!-- Video player -->
-<div id="video-modal-backdrop" class="glass-scrim">
-  <div id="video-modal">
-    <div id="video-modal-head">
-      <span class="vm-title" id="video-modal-title">Clip</span>
-      <button id="video-modal-close" aria-label="Close">✕</button>
-    </div>
-    <div id="video-modal-body"><div id="video-modal-loading">Loading clip…</div></div>
-  </div>
-</div>
 
 <!-- 🚀 PERF (page-transition lag fix): moved here from <head> — see the
      matching comment in cricket-scorecard.html for the full reasoning.
@@ -1294,7 +1269,7 @@ function phClipCardHtml(c){
   const sub = c.eventType === 'WICKET'
     ? ([c.dismissalType, c.bowler ? 'b. ' + c.bowler : null].filter(Boolean).join(' · ') || overLabel)
     : overLabel;
-  return `<div class="ph-clip-card" data-clip-id="${c.clipId}" data-title="${escapeHtml((c.striker||c.bowler||'') + ' — ' + c.eventType)}">
+  return `<div class="ph-clip-card" data-clip-id="${c.clipId}" data-title="${escapeHtml((c.striker||c.bowler||'') + ' — ' + c.eventType)}" data-playback-url="${escapeHtml(c.playbackUrl || '')}" data-poster-url="${escapeHtml(c.posterUrl || '')}">
     <div class="ph-clip-thumb ${cls}">${label}</div>
     <div class="ph-clip-meta"><div class="ph-clip-match">${escapeHtml(matchLabel)}</div><div class="ph-clip-sub">${escapeHtml(sub)}</div></div>
     <div class="ph-clip-actions"><a class="ph-clip-dl" href="${c.downloadUrl}" title="Download clip" aria-label="Download clip" onclick="event.stopPropagation()">${DOWNLOAD_ICON}</a></div>
@@ -1425,7 +1400,7 @@ async function openTournamentPlayerModal(name){
   body.querySelectorAll('.ph-clip-card').forEach(card => {
     card.addEventListener('click', (e) => {
       if(e.target.closest('.ph-clip-dl')) return;
-      openVideoModal(card.dataset.clipId, card.dataset.title);
+      openVideoModal(card.dataset.clipId, card.dataset.title, card.dataset.playbackUrl, card.dataset.posterUrl);
     });
   });
   const progressWrap = document.getElementById('ph-progress');
@@ -1489,53 +1464,8 @@ document.body.addEventListener('click', (e) => { if(e.target.closest('#all-playe
 document.getElementById('players-modal-close').addEventListener('click', () => document.getElementById('players-modal-backdrop').classList.remove('open'));
 document.getElementById('players-modal-backdrop').addEventListener('click', (e) => { if(e.target.id === 'players-modal-backdrop') document.getElementById('players-modal-backdrop').classList.remove('open'); });
 
-// Same single-reused-<video> fix as the scorecard page (see cricket-scorecard.html): recreating the
-// element via innerHTML on every tap made every open behave like a cold first-open, on every device.
-let vmVideoEl = null;
-let vmLoadToken = 0;
-function vmVideo(){
-  if(vmVideoEl) return vmVideoEl;
-  vmVideoEl = document.createElement('video');
-  vmVideoEl.controls = true; vmVideoEl.playsInline = true;
-  vmVideoEl.preload = 'metadata';
-  vmVideoEl.setAttribute('webkit-playsinline', '');
-  document.getElementById('video-modal-body').appendChild(vmVideoEl);
-  return vmVideoEl;
-}
-function openVideoModal(clipId, title, playbackUrl, posterUrl){
-  const myToken = ++vmLoadToken;
-  document.getElementById('video-modal-title').textContent = title || 'Clip';
-  document.getElementById('video-modal-backdrop').classList.add('open');
-  const body = document.getElementById('video-modal-body');
-  if(!body.querySelector('#video-modal-loading')) body.insertAdjacentHTML('afterbegin', '<div id="video-modal-loading">Loading clip…</div>');
-  const src = playbackUrl || `${clipApiBase()}/api/clips/${encodeURIComponent(clipId)}/watch`;
-  const dl = `${clipApiBase()}/api/clips/${encodeURIComponent(clipId)}/download`;
-  let dlRow = body.querySelector('.vm-dl-row');
-  if(!dlRow){
-    dlRow = document.createElement('div');
-    dlRow.className = 'vm-dl-row';
-    dlRow.style.cssText = 'padding:10px 14px; background:#0b0e14; display:flex; justify-content:flex-end;';
-    dlRow.innerHTML = `<a class="vm-dl-link" style="color:#fff; font-size:11.5px; font-weight:700; display:flex; align-items:center; gap:6px;">${DOWNLOAD_ICON} Download</a>`;
-    body.appendChild(dlRow);
-  }
-  dlRow.querySelector('.vm-dl-link').href = dl;
-
-  const v = vmVideo();
-  const loadingEl = () => document.getElementById('video-modal-loading');
-  const onReady = () => { if(myToken === vmLoadToken && loadingEl()) loadingEl().remove(); };
-  v.oncanplay = onReady;
-  v.onloadeddata = onReady;
-  if(posterUrl) v.poster = posterUrl; else v.removeAttribute('poster');
-  if(v.src !== src){ v.src = src; v.load(); }
-  v.play().catch(() => {});
-}
-document.getElementById('video-modal-close').addEventListener('click', () => {
-  document.getElementById('video-modal-backdrop').classList.remove('open');
-  vmLoadToken++;
-  if(vmVideoEl){ vmVideoEl.pause(); vmVideoEl.removeAttribute('src'); vmVideoEl.load(); }
-  if(!document.getElementById('video-modal-loading')) document.getElementById('video-modal-body').insertAdjacentHTML('afterbegin', '<div id="video-modal-loading">Loading clip…</div>');
-});
-document.getElementById('video-modal-backdrop').addEventListener('click', (e) => { if(e.target.id === 'video-modal-backdrop') document.getElementById('video-modal-close').click(); });
+// Clip player: shared /clip-player.js (branded loading, smooth open/close,
+// retry, fast first open) — defines openVideoModal()/closeVideoModal().
 
 // Delegated — the leaderboard tables are re-rendered wholesale on load,
 // so one listener on <body> covers every clip-btn without re-wiring.
@@ -1561,5 +1491,6 @@ window.addEventListener('load', () => {
   }, 1200);
 });
 </script>
+<script src="/clip-player.js?v=20260924"></script>
 </body>
 </html>

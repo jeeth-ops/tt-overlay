@@ -216,15 +216,6 @@
   .clip-row .cr-badge.four{ background:#3b82f6; } .clip-row .cr-badge.six{ background:#a855f7; } .clip-row .cr-badge.wicket{ background:var(--wicket); }
   .clip-row .cr-over{ font-weight:700; font-size:12.5px; font-family:var(--font-display); }
   .clip-row .cr-sub{ font-size:11px; color:var(--text-dim); margin-top:1px; }
-  #video-modal-backdrop{ display:flex; position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:110; align-items:center; justify-content:center; padding:16px; opacity:0; pointer-events:none; transition:opacity .28s cubic-bezier(.22,1,.36,1); }
-  #video-modal-backdrop.open{ opacity:1; pointer-events:auto; }
-  #video-modal{ width:min(720px,100%); background:#000; border-radius:var(--radius-lg); overflow:hidden; transform:scale(.93) translateY(8px); transition:transform .38s cubic-bezier(.34,1.2,.4,1); }
-  #video-modal-backdrop.open #video-modal{ transform:scale(1) translateY(0); }
-  #video-modal-head{ display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:#0b0e14; }
-  #video-modal-head .vm-title{ color:#fff; font-size:12.5px; font-weight:700; }
-  #video-modal-close{ width:28px; height:28px; border-radius:99px; background:rgba(255,255,255,.1); color:#fff; border:none; cursor:pointer; }
-  #video-modal video{ width:100%; display:block; max-height:70vh; background:#000; }
-  #video-modal-loading{ color:#fff; text-align:center; padding:60px 0; font-size:12.5px; }
 </style>
 </head>
 <body>
@@ -263,15 +254,6 @@
 </div>
 
 <!-- Video player -->
-<div id="video-modal-backdrop" class="glass-scrim">
-  <div id="video-modal">
-    <div id="video-modal-head">
-      <span class="vm-title" id="video-modal-title">Clip</span>
-      <button id="video-modal-close" aria-label="Close">✕</button>
-    </div>
-    <div id="video-modal-body"><div id="video-modal-loading">Loading clip…</div></div>
-  </div>
-</div>
 
 <script>
 /* ============================================================
@@ -496,7 +478,7 @@ function clipRowHtml(c){
   const sub = c.eventType === 'WICKET'
     ? [c.dismissalType, c.bowler ? 'b. ' + c.bowler : null].filter(Boolean).join(' · ')
     : (c.bowler ? 'off ' + c.bowler : '');
-  return `<div class="clip-row" data-clip-id="${c.clipId}" data-title="${escapeHtml((c.striker||c.bowler||'') + ' — ' + c.eventType)}">
+  return `<div class="clip-row" data-clip-id="${c.clipId}" data-title="${escapeHtml((c.striker||c.bowler||'') + ' — ' + c.eventType)}" data-playback-url="${escapeHtml(c.playbackUrl || '')}" data-poster-url="${escapeHtml(c.posterUrl || '')}">
     <div class="cr-badge ${badgeCls}">${badgeLabel}</div>
     <div><div class="cr-over tabnum">Over ${overLabel}</div><div class="cr-sub">${escapeHtml(sub || (c.ready ? 'Tap to watch' : 'Processing…'))}</div></div>
   </div>`;
@@ -526,27 +508,14 @@ async function openPlayerClips(name){
   }
   body.innerHTML = clips.map(clipRowHtml).join('');
   body.querySelectorAll('.clip-row').forEach(row => {
-    row.addEventListener('click', () => openVideoModal(row.dataset.clipId, row.dataset.title));
+    row.addEventListener('click', () => openVideoModal(row.dataset.clipId, row.dataset.title, row.dataset.playbackUrl, row.dataset.posterUrl));
   });
 }
 
 document.getElementById('clip-modal-close').addEventListener('click', () => document.getElementById('clip-modal-backdrop').classList.remove('open'));
 document.getElementById('clip-modal-backdrop').addEventListener('click', (e) => { if(e.target.id === 'clip-modal-backdrop') document.getElementById('clip-modal-backdrop').classList.remove('open'); });
 
-function openVideoModal(clipId, title){
-  document.getElementById('video-modal-title').textContent = title || 'Clip';
-  document.getElementById('video-modal-body').innerHTML = '<div id="video-modal-loading">Loading clip…</div>';
-  document.getElementById('video-modal-backdrop').classList.add('open');
-  requestAnimationFrame(() => {
-    document.getElementById('video-modal-body').innerHTML =
-      `<video src="/api/clips/${encodeURIComponent(clipId)}/watch" controls autoplay playsinline></video>`;
-  });
-}
-document.getElementById('video-modal-close').addEventListener('click', () => {
-  document.getElementById('video-modal-backdrop').classList.remove('open');
-  document.getElementById('video-modal-body').innerHTML = '<div id="video-modal-loading">Loading clip…</div>';
-});
-document.getElementById('video-modal-backdrop').addEventListener('click', (e) => { if(e.target.id === 'video-modal-backdrop') document.getElementById('video-modal-close').click(); });
+// Clip player: shared /clip-player.js — defines openVideoModal()/closeVideoModal().
 
 // Delegated click — batting/bowling tables are re-rendered on every
 // load, so a single listener on <body> covers every clip-btn without
@@ -559,5 +528,6 @@ document.body.addEventListener('click', (e) => {
 
 init();
 </script>
+<script src="/clip-player.js?v=20260924"></script>
 </body>
 </html>
