@@ -1051,24 +1051,90 @@
   /* Always laid out (display:flex, never display:none) so opacity/transform
      can transition — a display:none/flex swap has no transition at all
      and used to make this modal just snap open/shut with zero animation. */
+  /* Clip player: head → 16:9 stage (video + branded loading / error
+     layers stacked in the same box, so nothing jumps when the video
+     arrives) → footer. Open: backdrop fades, card rises + scales in.
+     Close: the reverse; the video is only torn down after the card has
+     left, so there is no black/white flash. */
   #video-modal-backdrop{
-    position:fixed; inset:0; background:rgba(0,0,0,.78); z-index:97; display:flex;
-    align-items:center; justify-content:center; padding:16px;
-    opacity:0; pointer-events:none; transition:opacity .22s ease;
+    position:fixed; inset:0; z-index:97; display:flex;
+    align-items:center; justify-content:center;
+    padding:max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+    background:rgba(5,8,14,.72);
+    -webkit-backdrop-filter:blur(8px) saturate(120%); backdrop-filter:blur(8px) saturate(120%);
+    opacity:0; pointer-events:none; visibility:hidden; overscroll-behavior:contain;
+    transition:opacity .24s ease, visibility 0s linear .26s;
   }
-  #video-modal-backdrop.open{ opacity:1; pointer-events:auto; }
+  #video-modal-backdrop.open{ opacity:1; pointer-events:auto; visibility:visible; transition:opacity .24s ease, visibility 0s; }
   #video-modal{
-    width:min(720px, 100%); background:#000; border-radius:var(--radius-lg); overflow:hidden;
-    box-shadow:0 20px 60px rgba(0,0,0,.6);
-    transform:scale(.92) translateY(8px);
-    transition:transform .28s cubic-bezier(.34,1.56,.64,1);
+    width:min(880px, 100%); max-height:100%; display:flex; flex-direction:column;
+    background:#0b0e14; border-radius:18px; overflow:hidden;
+    box-shadow:0 30px 80px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.06);
+    transform:translateY(18px) scale(.94); opacity:.4;
+    transition:transform .32s cubic-bezier(.2,.9,.25,1), opacity .24s ease;
+    will-change:transform, opacity;
   }
-  #video-modal-backdrop.open #video-modal{ transform:scale(1) translateY(0); }
-  #video-modal-head{ display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:#0b0e14; }
-  #video-modal-head .vm-title{ color:#fff; font-size:12.5px; font-weight:700; }
-  #video-modal-close{ width:28px; height:28px; border-radius:99px; background:rgba(255,255,255,.1); color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; border:none; }
-  #video-modal video{ width:100%; display:block; max-height:70vh; background:#000; }
-  #video-modal-loading{ color:#fff; text-align:center; padding:60px 0; font-size:12.5px; }
+  #video-modal-backdrop.open #video-modal{ transform:none; opacity:1; }
+  #video-modal-head{ display:flex; align-items:center; gap:10px; padding:12px 14px 12px 16px; background:#0b0e14; }
+  #video-modal-head .vm-title{ flex:1; min-width:0; color:#fff; font-size:13.5px; font-weight:800; letter-spacing:.2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #video-modal-close{ width:36px; height:36px; flex:none; border-radius:99px; background:rgba(255,255,255,.1); color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; border:none; transition:background .15s ease, transform .12s ease; }
+  #video-modal-close:hover{ background:rgba(255,255,255,.18); }
+  #video-modal-close:active{ transform:scale(.92); }
+  #video-modal-close:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  #video-modal-body{ display:flex; flex-direction:column; min-height:0; }
+  .vm-stage{ position:relative; width:100%; aspect-ratio:16/9; max-height:calc(100dvh - 150px); background:#000; overflow:hidden; }
+  .vm-stage video{ position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:#000; display:block;
+    opacity:0; transform:scale(1.015); transition:opacity .32s ease, transform .4s cubic-bezier(.2,.9,.25,1); }
+  .vm-stage.is-ready video{ opacity:1; transform:none; }
+
+  .vm-loader, .vm-error{
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px;
+    text-align:center; color:#fff; padding:20px;
+    background:radial-gradient(120% 90% at 50% 40%, #16202f 0%, #070a10 70%);
+    transition:opacity .3s ease, visibility 0s linear .3s;
+  }
+  .vm-loader::before{ /* the clip's own poster, softly behind the logo, when there is one */
+    content:''; position:absolute; inset:-20px; background:var(--vm-poster, none) center/cover no-repeat;
+    filter:blur(18px) brightness(.35) saturate(1.1); opacity:.9;
+  }
+  .vm-loader > *, .vm-error > *{ position:relative; }
+  .vm-stage.is-ready .vm-loader, .vm-stage:not(.is-error) .vm-error{ opacity:0; visibility:hidden; pointer-events:none; }
+  .vm-stage.is-ready.is-buffering .vm-loader{ opacity:1; visibility:visible; transition:opacity .2s ease; background:rgba(0,0,0,.35); }
+  .vm-stage.is-ready.is-buffering .vm-loader::before, .vm-stage.is-ready.is-buffering .vm-brand{ display:none; }
+  .vm-brand{ width:84px; height:84px; border-radius:22px; background:#fff url('/logo.png') center/cover no-repeat;
+    box-shadow:0 12px 30px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.12); animation:vmBreathe 1.8s ease-in-out infinite; }
+  .vm-load-text{ font-size:14px; font-weight:700; letter-spacing:.2px; }
+  .vm-load-sub{ font-size:12px; color:rgba(255,255,255,.62); min-height:15px; }
+  .vm-bar{ width:140px; height:3px; border-radius:99px; background:rgba(255,255,255,.14); overflow:hidden; }
+  .vm-bar::after{ content:''; display:block; width:40%; height:100%; border-radius:inherit;
+    background:linear-gradient(90deg, transparent, var(--accent), transparent); animation:vmSlide 1.1s ease-in-out infinite; }
+  .vm-stage.is-buffering .vm-load-text{ font-size:12.5px; }
+  @keyframes vmSlide{ from{ transform:translateX(-110%); } to{ transform:translateX(260%); } }
+  @keyframes vmBreathe{ 0%,100%{ transform:scale(1); } 50%{ transform:scale(1.04); } }
+  .vm-error .vm-err-title{ font-size:15px; font-weight:800; }
+  .vm-error .vm-err-sub{ font-size:12.5px; color:rgba(255,255,255,.66); max-width:340px; line-height:1.45; }
+  .vm-error .vm-err-actions{ display:flex; gap:8px; flex-wrap:wrap; justify-content:center; }
+  .vm-btn{ display:inline-flex; align-items:center; gap:6px; padding:10px 16px; border-radius:99px; font-size:13px; font-weight:800;
+    border:none; cursor:pointer; color:#07130c; background:var(--accent); text-decoration:none; }
+  .vm-btn.ghost{ background:rgba(255,255,255,.1); color:#fff; }
+  .vm-foot{ display:flex; align-items:center; justify-content:flex-end; gap:10px; padding:10px 14px; background:#0b0e14; }
+  .vm-foot .vm-dl-link{ color:#fff; font-size:12px; font-weight:700; display:inline-flex; align-items:center; gap:6px;
+    padding:8px 12px; border-radius:99px; background:rgba(255,255,255,.08); text-decoration:none; }
+  .vm-foot .vm-dl-link:hover{ background:rgba(255,255,255,.14); }
+  .vm-foot .vm-dl-link svg, .vm-btn svg{ width:14px; height:14px; }
+  @media (max-width:640px){
+    #video-modal-backdrop{ padding:0; align-items:stretch; background:#000; -webkit-backdrop-filter:none; backdrop-filter:none; }
+    #video-modal{ width:100%; height:100%; border-radius:0; background:#000; transform:translateY(28px); }
+    #video-modal-head{ padding-top:max(12px, env(safe-area-inset-top)); }
+    #video-modal-body{ flex:1; }
+    .vm-stage{ flex:1; aspect-ratio:auto; max-height:none; }
+    .vm-foot{ padding-bottom:max(12px, env(safe-area-inset-bottom)); }
+    #video-modal-close{ width:40px; height:40px; }
+  }
+  @media (prefers-reduced-motion: reduce){
+    #video-modal, .vm-stage video, .vm-loader, .vm-error{ transition:none; }
+    .vm-brand, .vm-bar::after{ animation:none; }
+  }
 
   /* ---------- Owner correction system (chhayajeeth@gmail.com only) ----------
      Same visual language as the video modal above (centered card, scale-in),
@@ -1825,7 +1891,26 @@
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
-    <div id="video-modal-body"><div id="video-modal-loading">Loading clip…</div></div>
+    <div id="video-modal-body">
+      <div class="vm-stage" id="vm-stage">
+        <video id="vm-video" controls playsinline webkit-playsinline preload="metadata"></video>
+        <div class="vm-loader" id="vm-loader" role="status" aria-live="polite">
+          <div class="vm-brand" role="img" aria-label="AllSportsLive"></div>
+          <div class="vm-load-text" id="vm-load-text">Loading your clip…</div>
+          <div class="vm-bar" aria-hidden="true"></div>
+          <div class="vm-load-sub" id="vm-load-sub"></div>
+        </div>
+        <div class="vm-error" id="vm-error" role="alert">
+          <div class="vm-err-title">This clip didn't load</div>
+          <div class="vm-err-sub" id="vm-err-sub">Check your connection and try again.</div>
+          <div class="vm-err-actions">
+            <button type="button" class="vm-btn" id="vm-retry">↻ Try again</button>
+            <a class="vm-btn ghost" id="vm-err-dl">Download instead</a>
+          </div>
+        </div>
+      </div>
+      <div class="vm-foot"><a class="vm-dl-link" id="vm-dl-link">Download</a></div>
+    </div>
   </div>
 </div>
 
@@ -4679,69 +4764,127 @@ async function openTeamClipDrawer(teamKey, teamLabel){
   wireClipRows(body);
 }
 
-// One <video> element, reused across every open — recreating it via innerHTML on each tap (the old
-// code) meant the browser had to spin up a brand-new media pipeline (and, on Android especially, redo
-// its own decoder/network setup) every single time, which is a large share of what read as "first
-// open is slow": every open behaved like a first open, even the second and third.
-let vmVideoEl = null;
-let vmLoadToken = 0; // bumped per open; a slow-to-load previous clip can never clobber a newer one
-function vmVideo(){
-  if(vmVideoEl) return vmVideoEl;
-  vmVideoEl = document.createElement('video');
-  vmVideoEl.controls = true; vmVideoEl.playsInline = true;
-  vmVideoEl.preload = 'metadata';                    // enough to start fast without downloading the whole clip up front
-  vmVideoEl.setAttribute('webkit-playsinline', '');
-  document.getElementById('video-modal-body').appendChild(vmVideoEl);
-  return vmVideoEl;
+// 🎬 CLIP PLAYER — one <video> in the page's markup, reused for every open
+// (a fresh media pipeline per tap made every open behave like a first open).
+// States on .vm-stage: loading (branded loader) → is-ready (video fades in)
+// → is-buffering (small overlay only if playback stalls) / is-error (retry).
+// The loader is shown exactly while the browser is preparing the video —
+// no artificial delay.
+let vmLoadToken = 0;            // bumped per open/close; stale callbacks become no-ops
+let vmCurrent = null;           // { clipId, title, sources:[...], idx }
+let vmReturnFocus = null;
+let vmCleanupTimer = null, vmSlowTimer = null, vmBufferTimer = null;
+const vmEl = (id) => document.getElementById(id);
+function vmVideo(){ return vmEl('vm-video'); }
+function vmSetState(state){ // 'loading' | 'ready' | 'error'
+  const st = vmEl('vm-stage');
+  st.classList.toggle('is-ready', state === 'ready');
+  st.classList.toggle('is-error', state === 'error');
+  if(state !== 'ready') st.classList.remove('is-buffering');
 }
-async function openVideoModal(clipId, title, playbackUrl, posterUrl){
-  const myToken = ++vmLoadToken;
-  document.getElementById('video-modal-title').textContent = title || 'Clip';
-  document.getElementById('video-modal-backdrop').classList.add('open');
-  document.body.classList.add('video-modal-active'); // pauses #ambient-wash's compositing cost while a clip plays (desktop/laptop)
-  const body = document.getElementById('video-modal-body');
-  if(!body.querySelector('#video-modal-loading')) body.insertAdjacentHTML('afterbegin', '<div id="video-modal-loading">Loading clip…</div>');
-  // Prefer the direct CDN URL already carried on the clip row (no redirect hop = faster first frame);
-  // /watch (redirect, or the Range-aware Drive proxy) is the fallback for older data / commentary buttons.
-  const src = playbackUrl || `${clipApiBase()}/api/clips/${encodeURIComponent(clipId)}/watch`;
-  const dl = `${clipApiBase()}/api/clips/${encodeURIComponent(clipId)}/download`;
-  let dlRow = body.querySelector('.vm-dl-row');
-  if(!dlRow){
-    dlRow = document.createElement('div');
-    dlRow.className = 'vm-dl-row';
-    dlRow.style.cssText = 'padding:10px 14px; background:#0b0e14; display:flex; justify-content:flex-end;';
-    dlRow.innerHTML = `<a class="vm-dl-link" style="color:#fff; font-size:11.5px; font-weight:700; display:flex; align-items:center; gap:6px;">${DOWNLOAD_ICON} Download</a>`;
-    body.appendChild(dlRow);
-  }
-  dlRow.querySelector('.vm-dl-link').href = dl;
-
+function vmLoadSource(myToken){
   const v = vmVideo();
-  const loadingEl = () => document.getElementById('video-modal-loading');
-  const onReady = () => { if(myToken === vmLoadToken && loadingEl()) loadingEl().remove(); };
-  v.oncanplay = onReady;
-  v.onloadeddata = onReady;                            // fires even when autoplay is blocked, so the spinner doesn't hang forever
-  if(posterUrl) v.poster = posterUrl; else v.removeAttribute('poster');
-  if(v.src !== src){ v.src = src; v.load(); }           // same clip re-opened -> skip the reload entirely
-  v.play().catch(() => {});                             // autoplay can be blocked by the browser; controls stay usable either way
+  const src = vmCurrent.sources[vmCurrent.idx];
+  vmSetState('loading');
+  vmEl('vm-load-text').textContent = 'Loading your clip…';
+  vmEl('vm-load-sub').textContent = '';
+  clearTimeout(vmSlowTimer);
+  vmSlowTimer = setTimeout(() => { if(myToken === vmLoadToken) vmEl('vm-load-sub').textContent = 'Slow connection — still loading…'; }, 6000);
+  if(v.getAttribute('src') !== src){ v.src = src; v.load(); }
+  else if(v.readyState >= 2){ vmOnReady(myToken); }
+  const p = v.play();
+  if(p && p.catch) p.catch(() => {}); // autoplay may be blocked; the controls still work
+}
+function vmOnReady(myToken){
+  if(myToken !== vmLoadToken) return;
+  clearTimeout(vmSlowTimer);
+  vmSetState('ready');
+}
+function vmOnError(myToken){
+  if(myToken !== vmLoadToken || !vmCurrent) return;
+  // Try the next source first (direct CDN URL → /watch proxy), then show the retry state.
+  if(vmCurrent.idx < vmCurrent.sources.length - 1){ vmCurrent.idx++; vmLoadSource(myToken); return; }
+  clearTimeout(vmSlowTimer);
+  vmEl('vm-err-sub').textContent = navigator.onLine === false
+    ? 'You seem to be offline. Reconnect and try again.'
+    : 'The clip could not be loaded right now. Try again, or download it.';
+  vmSetState('error');
+}
+(function wireClipPlayer(){
+  const v = vmVideo();
+  const ready = () => vmOnReady(vmLoadToken);
+  v.addEventListener('loadeddata', ready);   // fires even when autoplay is blocked
+  v.addEventListener('canplay', ready);
+  v.addEventListener('error', () => { if(v.getAttribute('src')) vmOnError(vmLoadToken); });
+  v.addEventListener('waiting', () => {
+    clearTimeout(vmBufferTimer);
+    vmBufferTimer = setTimeout(() => {
+      const st = vmEl('vm-stage');
+      if(st.classList.contains('is-ready') && !v.paused){ vmEl('vm-load-text').textContent = 'Buffering…'; st.classList.add('is-buffering'); }
+    }, 700); // brief hiccups never flash an overlay
+  });
+  const unbuffer = () => { clearTimeout(vmBufferTimer); vmEl('vm-stage').classList.remove('is-buffering'); };
+  v.addEventListener('playing', unbuffer);
+  v.addEventListener('pause', unbuffer);
+  v.addEventListener('seeked', unbuffer);
+  vmEl('vm-dl-link').innerHTML = `${DOWNLOAD_ICON} Download`;
+  vmEl('vm-retry').addEventListener('click', () => {
+    if(!vmCurrent) return;
+    vmCurrent.idx = 0;
+    const vv = vmVideo(); vv.removeAttribute('src'); vv.load();
+    vmLoadSource(vmLoadToken);
+  });
+})();
+async function openVideoModal(clipId, title, playbackUrl, posterUrl){
+  clearTimeout(vmCleanupTimer);
+  const myToken = ++vmLoadToken;
+  const backdrop = vmEl('video-modal-backdrop');
+  if(!backdrop.classList.contains('open')) vmReturnFocus = document.activeElement;
+  vmEl('video-modal-title').textContent = title || 'Clip';
+  // Direct CDN URL first (no redirect hop = faster first frame); /watch (redirect or the
+  // Range-aware Drive proxy) covers older clips and is the automatic fallback on error.
+  const watch = `${clipApiBase()}/api/clips/${encodeURIComponent(clipId)}/watch`;
+  const sources = playbackUrl && playbackUrl !== watch ? [playbackUrl, watch] : [watch];
+  const dl = `${clipApiBase()}/api/clips/${encodeURIComponent(clipId)}/download`;
+  vmEl('vm-dl-link').href = dl;
+  vmEl('vm-err-dl').href = dl;
+  const v = vmVideo();
+  if(posterUrl){ v.poster = posterUrl; vmEl('vm-loader').style.setProperty('--vm-poster', `url("${String(posterUrl).replace(/"/g, '%22')}")`); }
+  else { v.removeAttribute('poster'); vmEl('vm-loader').style.removeProperty('--vm-poster'); }
+  const sameClip = vmCurrent && vmCurrent.clipId === clipId && v.getAttribute('src');
+  vmCurrent = { clipId, title, sources, idx: sameClip ? vmCurrent.idx : 0 };
+  backdrop.classList.add('open');
+  document.body.classList.add('video-modal-active'); // pauses #ambient-wash's compositing cost while a clip plays
+  vmLoadSource(myToken);
 }
 function closeVideoModal(){
-  document.getElementById('video-modal-backdrop').classList.remove('open');
+  const backdrop = vmEl('video-modal-backdrop');
+  if(!backdrop.classList.contains('open')) return;
+  vmLoadToken++;                                        // in-flight callbacks for this clip become no-ops
+  clearTimeout(vmSlowTimer); clearTimeout(vmBufferTimer);
+  const v = vmVideo();
+  v.pause();                                            // sound stops at once; the frame stays while the card animates out
+  backdrop.classList.remove('open');
   document.body.classList.remove('video-modal-active');
-  vmLoadToken++;                                        // any in-flight onReady/load callback for this clip becomes a no-op
-  if(vmVideoEl){
-    // pause + drop the source (not just hide the element) so Chrome/Safari actually abort the
-    // in-flight byte-range request instead of continuing to download in the background.
-    vmVideoEl.pause();
-    vmVideoEl.removeAttribute('src');
-    vmVideoEl.load();
-  }
-  const loadingEl = document.getElementById('video-modal-loading');
-  if(!loadingEl) document.getElementById('video-modal-body').insertAdjacentHTML('afterbegin', '<div id="video-modal-loading">Loading clip…</div>');
+  if(vmReturnFocus && document.contains(vmReturnFocus)){ try { vmReturnFocus.focus({ preventScroll: true }); } catch(e){} }
+  vmReturnFocus = null;
+  // After the exit animation: drop the source so the browser aborts the in-flight
+  // byte-range download, and reset to the loading state for the next open.
+  clearTimeout(vmCleanupTimer);
+  vmCleanupTimer = setTimeout(() => {
+    if(backdrop.classList.contains('open')) return;
+    v.removeAttribute('src'); v.removeAttribute('poster'); v.load();
+    vmCurrent = null;
+    vmSetState('loading');
+  }, 320);
 }
 // #ambient-wash pause hook — plain CSS, no JS cost while idle.
 document.head.insertAdjacentHTML('beforeend', '<style>body.video-modal-active #ambient-wash{ animation-play-state:paused; }</style>');
-document.getElementById('video-modal-close').addEventListener('click', closeVideoModal);
-document.getElementById('video-modal-backdrop').addEventListener('click', (e) => { if(e.target.id === 'video-modal-backdrop') closeVideoModal(); });
+vmEl('video-modal-close').addEventListener('click', closeVideoModal);
+vmEl('video-modal-backdrop').addEventListener('click', (e) => { if(e.target.id === 'video-modal-backdrop') closeVideoModal(); });
+document.addEventListener('keydown', (e) => {
+  if(e.key === 'Escape' && vmEl('video-modal-backdrop').classList.contains('open')){ e.preventDefault(); closeVideoModal(); }
+});
 
 // ---- Team Wicket Clips strip (Fall of Wickets card) ----
 let twcActiveTeam = null; // set on first render to whichever team is currently batting
