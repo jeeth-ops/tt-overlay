@@ -1380,6 +1380,26 @@
     0%, 55%{ background-position:120% 0; }
     100%{ background-position:-40% 0; }
   }
+  /* 📱 Phones/tablets — scroll smoothness (desktop untouched). These loops
+     animate background-position / box-shadow, which repaints on the main
+     thread every frame for as long as the page is open; on a low-end
+     Android that competes with scrolling. At rest they look the same
+     (button without the sweep, solid live dot). */
+  @media (max-width: 900px), (pointer: coarse){
+    /* Full commentary (hundreds of balls): rows off-screen skip layout and
+       paint until scrolled near; 'auto' keeps their measured size. */
+    .cm2-row, .cm2-over-head{ content-visibility:auto; contain-intrinsic-size:auto 46px; }
+    .hl-btn.hl-primary::after, .hl-btn.hl-full::after{ animation:none; }
+    .conn-dot.on, .chip.live .lv-dot, #commentary-page-head .cp-live::before{ animation:none; }
+  }
+  /* Never animate what can't be seen: the commentary page's live dot while
+     that page is closed, and the clip loader while the player is closed or
+     the video is already playing. */
+  #commentary-page:not(.open) .cp-live::before{ animation:none; }
+  #video-modal-backdrop:not(.open) .vm-brand,
+  #video-modal-backdrop:not(.open) .vm-bar::after,
+  .vm-stage.is-ready:not(.is-buffering) .vm-brand,
+  .vm-stage.is-ready:not(.is-buffering) .vm-bar::after{ animation:none; }
   @media (prefers-reduced-motion: reduce){
     .hl-btn.hl-primary::after, .hl-btn.hl-full::after{ animation:none; }
     .hl-btn, .hl-ico{ transition:none; }
@@ -2439,7 +2459,10 @@ function connect(){
     // renderFinalSnapshot() already keeps whichever innings tab is
     // selected across re-renders (see isFirstLoadOfThisMatch), so this
     // won't snap the viewer back to "1st Innings" every 30s.
-    historyPollTimer = setInterval(() => loadMatchSnapshot(matchId), 30000);
+    // Skipped while the tab is in the background (phone locked / other
+    // app) — it catches up the moment the page is visible again.
+    historyPollTimer = setInterval(() => { if(!document.hidden) loadMatchSnapshot(matchId); }, 30000);
+    document.addEventListener('visibilitychange', () => { if(!document.hidden) loadMatchSnapshot(matchId); });
     return;
   }
 
@@ -2504,7 +2527,9 @@ function connectLive(matchId){
   // not a video load). New clips are cut roughly once per boundary/wicket,
   // so a 20s cadence keeps this feeling live without hammering the API.
   renderHighlights();
-  setInterval(renderHighlights, 20000);
+  // No polling while the tab is hidden; one refresh as soon as it's back.
+  setInterval(() => { if(!document.hidden) renderHighlights(); }, 20000);
+  document.addEventListener('visibilitychange', () => { if(!document.hidden) renderHighlights(); });
 
   loadTournamentHub();
 }
@@ -3488,6 +3513,7 @@ function clipReplayHtml(info, title){
 let miniCommentaryClipPollTimer = null;
 if(!miniCommentaryClipPollTimer){
   miniCommentaryClipPollTimer = setInterval(async () => {
+    if(document.hidden) return;
     const card = document.getElementById('commentary-card');
     if(!card || card.style.display === 'none') return;
     const cs = commentaryState();
@@ -3527,18 +3553,26 @@ function openCommentaryPage(){
   // transition has started, not before — doing it synchronously in the
   // same tick as adding .open blocked the main thread right as the CSS
   // transition needed to start, so the open animation itself stuttered
-  // on slower phones/laptops. One rAF is enough to let the transition
-  // kick off first.
-  requestAnimationFrame(() => {
+  // on slower phones/laptops. A single rAF callback still runs BEFORE the
+  // next paint (so the build blocked the transition's first frame), hence
+  // two: the page paints its first slide-up frame, then the list is built.
+  // The rebuild after the clip refresh only happens if a clip changed.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if(!commentaryPageOpen) return;
     const cs = commentaryState();
     if(cs){ renderCommentaryPage(cs); markCommentaryPageRendered(cs); }
+    const before = clipMapFingerprint();
     refreshCommentaryClips(true).then(() => {
+      if(!commentaryPageOpen || clipMapFingerprint() === before) return;
       const cs2 = commentaryState();
       if(cs2){ renderCommentaryPage(cs2); markCommentaryPageRendered(cs2); }
     });
-  });
+  }));
   if(commentaryClipPollTimer) clearInterval(commentaryClipPollTimer);
   commentaryClipPollTimer = setInterval(async () => {
+    // Only while the full commentary page is actually open and visible —
+    // its result is only used there (the small card has its own poll).
+    if(!commentaryPageOpen || document.hidden) return;
     const before = clipMapFingerprint();
     await refreshCommentaryClips();
     if(!commentaryPageOpen) return;

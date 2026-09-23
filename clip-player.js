@@ -83,6 +83,8 @@
     .vm-foot{ padding-bottom:max(12px, env(safe-area-inset-bottom)); }
     #video-modal-close{ width:40px; height:40px; }
   }
+  #video-modal-backdrop:not(.open) .vm-brand, #video-modal-backdrop:not(.open) .vm-bar::after,
+  .vm-stage.is-ready:not(.is-buffering) .vm-brand, .vm-stage.is-ready:not(.is-buffering) .vm-bar::after{ animation:none; }
   @media (prefers-reduced-motion: reduce){
     #video-modal, .vm-stage video, .vm-loader, .vm-error{ transition:none; }
     .vm-brand, .vm-bar::after{ animation:none; }

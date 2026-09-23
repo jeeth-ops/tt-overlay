@@ -1542,6 +1542,78 @@
             }
         }
 
+        /* 📱 Phones/tablets — scroll smoothness (desktop untouched).
+           Measured on a 4×-throttled 390px viewport: these were the main
+           per-frame costs while scrolling.
+           • Every glass card had its own backdrop blur, so each scroll frame
+             re-blurred the background behind 40+ cards. The cards are 70%
+             opaque over an already-blurred, static backdrop — the blur is
+             invisible there, so it's dropped (nav + menu keep theirs).
+           • Loops that animate background-position / left / box-shadow
+             repaint (or re-layout) on the main thread every frame, forever:
+             hero gradient text, CTA shine, live-card accent shimmer, live
+             badge ring. They rest in their normal look on phones; the live
+             badge keeps a pulse, done with transform+opacity (GPU only). */
+        @media (max-width: 900px), (pointer: coarse) {
+            .tournament-card,
+            .sport-card,
+            .step-card,
+            .admin-box,
+            .bento-card,
+            .stats-bar-inner,
+            .testimonial-card,
+            .hi-editor {
+                -webkit-backdrop-filter: none;
+                backdrop-filter: none;
+            }
+            .hero h1 span,
+            .du-kicker-desktop, .du-kicker-mobile,
+            .cta-btn::before,
+            .tournament-card.status-live .tournament-card-accent {
+                animation: none !important;
+            }
+            .tournament-status-badge.live {
+                animation: none !important;
+                position: relative;
+            }
+            .tournament-status-badge.live::after {
+                content: '';
+                position: absolute;
+                inset: 0;
+                border-radius: inherit;
+                box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.35);
+                opacity: 0;
+                pointer-events: none;
+                animation: badgePulseRingGpu 1.8s ease-out infinite;
+            }
+            /* The small blinking "live" dots (20+ in the ticker alone) were
+               the rest of the per-frame style work while scrolling: on
+               phones they sit solid instead of blinking. The ticker keeps
+               moving and live badges keep their (GPU) pulse ring. */
+            .hero-eyebrow-dot,
+            .tournaments-live-count .dot,
+            .tournament-status-badge.live .dot,
+            .device-uplink-kicker .dot,
+            .du-label::before,
+            .live-ticker__dot.tk-dot-live,
+            .net-status-dot {
+                animation: none !important;
+                opacity: 1;
+            }
+            /* Off-screen tournament cards skip style/layout/paint until
+               they're near the viewport; 'auto' remembers their real size,
+               so nothing jumps. */
+            .tournament-card {
+                content-visibility: auto;
+                contain-intrinsic-size: auto 190px;
+            }
+        }
+        @keyframes badgePulseRingGpu {
+            0% { transform: scale(1); opacity: 0.9; }
+            70% { transform: scale(1.35); opacity: 0; }
+            100% { transform: scale(1.35); opacity: 0; }
+        }
+
         @media (prefers-reduced-motion: reduce) {
             .ambient-blob { animation: none !important; }
             .magnetic-target { transition: none !important; }
@@ -1558,7 +1630,8 @@
             .tournament-status-badge.live .dot,
             .tournament-status-badge.live,
             .tournament-card.status-live .tournament-card-accent,
-            .tournament-card.status-live .tournament-sport-icon::after {
+            .tournament-card.status-live .tournament-sport-icon::after,
+            .tournament-status-badge.live::after {
                 animation: none !important;
                 opacity: 1 !important;
                 transform: none !important;
@@ -2602,6 +2675,9 @@
             <source src="Sequence 04.mp4" type="video/mp4">
             Aapka browser video tag support nahi karta.
         </video>
+        <!-- Phones never show this video (see bgVideoEl below) — stop its
+             5.5 MB download right here, before the browser gets far into it. -->
+        <script>(function(){var v=document.currentScript.previousElementSibling;if(v&&window.matchMedia('(pointer: coarse), (max-width: 900px)').matches){v.removeAttribute('autoplay');v.preload='none';var s=v.querySelector('source');if(s)s.removeAttribute('src');v.load();}})();</script>
         <div class="ambient-blob b1"></div>
         <div class="ambient-blob b2"></div>
         <div class="ambient-blob b3"></div>
@@ -2674,6 +2750,7 @@
                                 <div class="du-laptop-cam"></div>
                                 <div class="du-video-wrap">
                                     <video class="du-video" muted autoplay loop playsinline preload="auto" src="match-preview.mp4"></video>
+                                    <script>(function(){var v=document.currentScript.previousElementSibling;if(v&&window.matchMedia('(max-width: 600px) and (pointer: coarse)').matches){v.removeAttribute('autoplay');v.preload='none';v.removeAttribute('src');v.load();}})();</script>
                                 </div>
                                 <div class="du-overlay" data-du-overlay>
                                     <div class="du-ov-team a">
