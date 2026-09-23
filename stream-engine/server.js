@@ -2586,8 +2586,8 @@ const clipWorker = {
 //                        -> RETRY_PENDING (Render reachable, R2/Drive
 //                           still finishing — polled from server.js)
 //                        -> FAILED_PERMANENT (loud, never silent —
-//                           local .mp4 is kept either way until
-//                           server.js confirms both R2 AND Drive)
+//                           local .mp4 is always kept in the
+//                           match's recording folder)
 // ================================================================
 const CLIP_JOBS_FILE = path.join(__dirname, 'clip-jobs.local.json');
 const clipJobs = new Map(); // clipId -> job
@@ -2661,7 +2661,8 @@ persistClipJobs();
 // 🔁 RETRY QUEUE — a clip that cuts fine locally but can't reach
 // server.js right now (network blip, Render redeploying, etc.) is
 // NEVER discarded. It stays queued and is retried with backoff; the
-// local .mp4 is only deleted once server.js has confirmed it received
+// local .mp4 is never deleted (clips are kept locally next to master.mp4);
+// the retry only stops once server.js has confirmed it received
 // the bytes.
 const RETRY_QUEUE_FILE = path.join(__dirname, 'retry-queue.local.json');
 let retryQueue = [];
@@ -2732,10 +2733,10 @@ async function pollRenderStatus(job) {
         if (!data.success) continue;
         updateJob(job.clipId, { status: data.status, r2Status: data.r2Status, driveStatus: data.driveStatus, r2Url: data.r2Url || null, driveUrl: data.driveUrl || null, renderRetryCount: data.retryCount });
         if (data.status === 'COMPLETE') {
-            // Render has confirmed BOTH R2 and Drive now have this clip —
-            // only NOW is the operator's own local copy redundant. Never
-            // deleted any earlier than this.
-            if (job.localPath) fs.unlink(job.localPath, (err) => { if (!err) console.log(`🧹 [CLIP] clipId=${job.clipId} — local copy removed (R2 + Drive both confirmed)`); });
+            // Render has confirmed BOTH R2 and Drive have this clip. The
+            // local copy is KEPT on purpose (operator request): every clip
+            // stays in the match's recording folder next to master.mp4.
+            console.log(`✅ [CLIP] clipId=${job.clipId} — uploaded to R2 + Drive; local copy kept at ${job.localPath}`);
             return;
         }
         if (data.status === 'FAILED_PERMANENT') return; // done — stop polling; local file is deliberately left in place
@@ -3804,35 +3805,10 @@ async function monitorProgramFeedHealth() {
 }
 setInterval(() => { monitorProgramFeedHealth().catch((e) => console.log('[stream-engine] monitorProgramFeedHealth error (kept running):', e.message)); }, PROGRAM_FEED_MONITOR_INTERVAL_MS);
 
-// 🛟 Safety-net clip-file sweep — catches a clip whose normal "delete
-// once Render confirms COMPLETE" path (pollRenderStatus above) never
-// got the chance to run. A generous 24h default: never the everyday
-// cleanup mechanism, just a backstop against a truly abandoned file.
-function sweepOldClipFiles(maxAgeMs) {
-    fs.readdir(CLIPS_ROOT, (err, matchDirs) => {
-        if (err) return;
-        matchDirs.forEach((matchId) => {
-            const dir = path.join(CLIPS_ROOT, matchId);
-            fs.readdir(dir, (err2, files) => {
-                if (err2) return;
-                files.forEach((f) => {
-                    const filePath = path.join(dir, f);
-                    fs.stat(filePath, (statErr, stats) => {
-                        if (statErr || !stats.isFile()) return;
-                        if (Date.now() - stats.mtimeMs > maxAgeMs) {
-                            // Never sweep a file a live job still references.
-                            const stillTracked = [...clipJobs.values()].some((j) => j.localPath === filePath && j.status !== 'FAILED_PERMANENT');
-                            if (!stillTracked) fs.unlink(filePath, () => {});
-                        }
-                    });
-                });
-            });
-        });
-    });
-}
-const ORPHAN_CLIP_FILE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-setTimeout(() => sweepOldClipFiles(ORPHAN_CLIP_FILE_MAX_AGE_MS), 90 * 1000);
-setInterval(() => sweepOldClipFiles(ORPHAN_CLIP_FILE_MAX_AGE_MS), 60 * 60 * 1000);
+// 🗂️ No automatic deletion of anything in the recordings folder. Clips
+// are kept locally next to master.mp4 (operator request). The old 24h
+// "orphan clip" sweep is gone: clips share their folder with the match
+// recording, so it also deleted any master.mp4 older than a day.
 
 // ================================================================
 // 🩺 SUPERVISOR — "the process is alive" is not proof that anything is
