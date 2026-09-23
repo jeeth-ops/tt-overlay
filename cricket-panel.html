@@ -1020,6 +1020,17 @@
   <!-- New batsman name picker — opens right after a dismissal is picked;
        the WICKET graphic only fires once this is submitted (or skipped),
        so the incoming batsman's name is locked in before the animation. -->
+  <!-- 🔄 MID-OVER BOWLER CHANGE — see applyBowlerChange()/openMidOverBowlerModal(). -->
+  <div class="wicket-modal-overlay" id="midover-bowler-overlay">
+    <div class="wicket-modal">
+      <h3>🔄 Change bowler mid-over</h3>
+      <div class="wm-sub" id="midover-bowler-sub">—</div>
+      <button type="button" class="full primary" id="midover-replace-btn" style="white-space:normal;height:auto;padding:10px;">Bowler change</button>
+      <button type="button" class="full ghost" id="midover-correct-btn" style="margin-top:8px;white-space:normal;height:auto;padding:10px;">Wrong name</button>
+      <button type="button" class="full ghost wm-cancel" id="midover-bowler-cancel" style="margin-top:8px;">Cancel</button>
+    </div>
+  </div>
+
   <!-- 🩹 RETIRED HURT — who is leaving the field. See retireBatsmanHurt(). -->
   <div class="wicket-modal-overlay" id="retired-modal-overlay">
     <div class="wicket-modal">
@@ -4119,12 +4130,25 @@ document.getElementById('correct-batsman-reset-btn').addEventListener('click', (
 // Shared by the sidebar "Set / Change Bowler" button AND the automatic
 // "Over Complete" modal below, so both entry points archive/resume figures
 // identically. Returns true if the bowler was actually changed.
-function applyBowlerChange(name, id){
+// opts.mode — only asked for when an over is still in progress:
+//   'replace': a real bowler change mid-over (injury, trials…). The
+//              outgoing bowler keeps every ball/run/wicket they bowled;
+//              the incoming bowler is credited only from now on.
+//   'correct': the wrong name was entered — the balls bowled so far in
+//              this over move to the new name (the original behaviour).
+function applyBowlerChange(name, id, opts){
+  opts = opts || {};
   if(!name){ toast('Enter a bowler name first'); return false; }
   const sameBowler = id ? (id === state.bowler.id) : (name === state.bowler.name && !state.bowler.id);
   if(sameBowler){ toast('That bowler is already set'); return false; }
 
   const key = bowlingTeamKey();
+  const teamMidOver = state.score.balls > 0 && !!state.bowler.name;
+  if(teamMidOver && !opts.mode){
+    openMidOverBowlerModal(name, id);
+    return false;
+  }
+  const replaceMidOver = teamMidOver && opts.mode === 'replace';
 
   // 🏏 "No bowler bowls two overs back-to-back" restriction — REMOVED per
   // operator's request. Any bowler, including whoever just finished the
@@ -4143,16 +4167,25 @@ function applyBowlerChange(name, id){
   // state.bowler. Without this guard that last-ball wicket would get
   // subtracted from the outgoing bowler's archived figures and wrongly
   // credited to the incoming bowler instead.
-  const carryBalls = state.bowler.balls;
-  const carryRuns = carryBalls > 0 ? (state.bowler.runsThisOver || 0) : 0;
+  // Only a name CORRECTION carries this over's balls to the new name. At
+  // an over boundary (team over complete) or on a mid-over REPLACEMENT,
+  // nothing moves: the outgoing bowler keeps all of their figures,
+  // including a part-over (e.g. 2.4).
+  // Only THIS over's share moves (overBalls/overRuns), never a returning
+  // bowler's part-over from an earlier spell. (Fallback for a state saved
+  // before these counters existed.)
+  const thisOverBalls = state.bowler.overBalls != null ? state.bowler.overBalls : state.bowler.balls;
+  const thisOverRuns = state.bowler.overRuns != null ? state.bowler.overRuns : (state.bowler.runsThisOver || 0);
+  const carryBalls = (teamMidOver && !replaceMidOver) ? thisOverBalls : 0;
+  const carryRuns = carryBalls > 0 ? thisOverRuns : 0;
   const carryWkts = carryBalls > 0 ? (state.bowler.wicketsThisOver || 0) : 0;
 
-  if(state.bowler.name && (state.bowler.overs > 0 || carryBalls > 0)){
-    // Archive the outgoing bowler's figures MINUS the still-in-progress
-    // over — that over belongs to the incoming bowler, not them.
+  if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0 || state.bowler.runs > 0)){
+    // Archive the outgoing bowler's figures MINUS anything carried to the
+    // incoming name (a correction) — everything else stays theirs.
     state.bowlingCard[key].push({
       ...state.bowler,
-      balls: 0, runsThisOver: 0, wicketsThisOver: 0,
+      balls: state.bowler.balls - carryBalls, runsThisOver: 0, wicketsThisOver: 0,
       runs: state.bowler.runs - carryRuns,
       wickets: state.bowler.wickets - carryWkts,
       inningsNo: state.inningsNumber
@@ -4172,21 +4205,58 @@ function applyBowlerChange(name, id){
     (id ? b.id === id : b.name === name) && b.inningsNo === state.inningsNumber);
   const existing = existingIdx > -1 ? state.bowlingCard[key].splice(existingIdx, 1)[0] : null;
 
+  // A resumed bowler continues from ALL their earlier figures, including a
+  // part-over from an earlier mid-over change (2.4 + 2 balls = 3.0).
+  let resumedBalls = (existing ? (existing.balls || 0) : 0) + carryBalls;
+  let resumedOvers = existing ? existing.overs : 0;
+  if(resumedBalls >= 6){ resumedOvers += Math.floor(resumedBalls / 6); resumedBalls %= 6; }
   state.bowler = existing
     ? {
         ...existing,
-        balls: carryBalls, runsThisOver: carryRuns, wicketsThisOver: carryWkts,
+        overs: resumedOvers, balls: resumedBalls, runsThisOver: carryRuns, wicketsThisOver: carryWkts,
         runs: existing.runs + carryRuns, wickets: existing.wickets + carryWkts
       }
     : {
         name, id: id || null, overs:0, balls:carryBalls, maidens:0,
         runs:carryRuns, wickets:carryWkts, runsThisOver:carryRuns, wicketsThisOver:carryWkts
       };
+  // Share of the current team over (for maidens): a correction inherits
+  // the balls already bowled; a replacement starts from 0 (so it can't be
+  // their maiden, nor the outgoing bowler's).
+  state.bowler.overBalls = carryBalls;
+  state.bowler.overRuns = carryRuns;
 
   pushState(true);
-  toast(`${name} is now bowling`);
+  toast(replaceMidOver ? `${name} takes over mid-over — earlier balls stay with the previous bowler` : `${name} is now bowling`);
   return true;
 }
+
+// 🔄 Mid-over bowler change: replacement or name correction?
+let pendingMidOverBowler = null;
+function openMidOverBowlerModal(name, id){
+  pendingMidOverBowler = { name, id };
+  const prev = state.bowler.name || 'The current bowler';
+  const balls = state.score.balls;
+  document.getElementById('midover-bowler-sub').textContent =
+    `${prev} has bowled ${balls} ball${balls === 1 ? '' : 's'} of this over. What is happening?`;
+  document.getElementById('midover-replace-btn').textContent = `🔄 Bowler change — ${prev} keeps those ${balls} ball${balls === 1 ? '' : 's'}, ${name} bowls the rest`;
+  document.getElementById('midover-correct-btn').textContent = `✏️ Wrong name — those ${balls} ball${balls === 1 ? ' was' : 's were'} really bowled by ${name}`;
+  document.getElementById('midover-bowler-overlay').classList.add('show');
+}
+function finishMidOverBowler(mode){
+  document.getElementById('midover-bowler-overlay').classList.remove('show');
+  const p = pendingMidOverBowler;
+  pendingMidOverBowler = null;
+  if(!p || !mode) return;
+  if(applyBowlerChange(p.name, p.id, { mode })){
+    ['bowler-roster-select', 'newover-modal-select'].forEach(i => { const el = document.getElementById(i); if(el) el.value = ''; });
+    ['bowler-name-input', 'newover-modal-input'].forEach(i => { const el = document.getElementById(i); if(el) el.value = ''; });
+    if(document.getElementById('newover-modal-overlay').classList.contains('show')) closeNewOverModal();
+  }
+}
+document.getElementById('midover-replace-btn').addEventListener('click', () => finishMidOverBowler('replace'));
+document.getElementById('midover-correct-btn').addEventListener('click', () => finishMidOverBowler('correct'));
+document.getElementById('midover-bowler-cancel').addEventListener('click', () => finishMidOverBowler(null));
 
 document.getElementById('set-bowler-btn').addEventListener('click', () => {
   const select = document.getElementById('bowler-roster-select');
@@ -6448,21 +6518,29 @@ document.addEventListener('DOMContentLoaded', () => {
    yet, so this feature stays fully optional. */
 function addBowlerBall(runsChargedToBowler){
   if(!state.bowler.name) return;
-  state.bowler.balls++;
-  state.bowler.runs += runsChargedToBowler;
-  state.bowler.runsThisOver = (state.bowler.runsThisOver || 0) + runsChargedToBowler;
-  if(state.bowler.balls >= 6){
-    state.bowler.balls = 0;
-    state.bowler.overs++;
-    if(state.bowler.runsThisOver === 0) state.bowler.maidens++;
-    state.bowler.runsThisOver = 0;
-    state.bowler.wicketsThisOver = 0;
+  const b = state.bowler;
+  b.balls++;
+  b.runs += runsChargedToBowler;
+  b.runsThisOver = (b.runsThisOver || 0) + runsChargedToBowler;
+  // overBalls/overRuns: this bowler's share of the CURRENT team over.
+  b.overBalls = (b.overBalls || 0) + 1;
+  b.overRuns = (b.overRuns || 0) + runsChargedToBowler;
+  if(b.balls >= 6){ b.balls = 0; b.overs++; }
+  // The team's over just ended (addLegalBall runs first). A maiden needs
+  // ONE bowler to have bowled all 6 balls of it without conceding — so a
+  // bowler who took over part-way, or handed over part-way, never gets it,
+  // while a bowler returning after an earlier part-over still does.
+  if(state.score.balls === 0){
+    if(b.overBalls >= 6 && b.overRuns === 0) b.maidens++;
+    b.overBalls = 0; b.overRuns = 0;
+    b.runsThisOver = 0; b.wicketsThisOver = 0;
   }
 }
 /* Wide / No Ball — charged to the bowler but NOT a legal delivery, so no
    ball-count increment (mirrors addLegalBall not being called for these). */
 function addBowlerExtra(runsChargedToBowler){
   if(!state.bowler.name) return;
+  state.bowler.overRuns = (state.bowler.overRuns || 0) + runsChargedToBowler;
   state.bowler.runs += runsChargedToBowler;
   state.bowler.runsThisOver = (state.bowler.runsThisOver || 0) + runsChargedToBowler;
 }
