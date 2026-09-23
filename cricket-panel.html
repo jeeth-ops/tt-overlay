@@ -3840,13 +3840,18 @@ function retireBatsmanHurt(end){
     pendingHighlights.push(lastAutoWicketClip);
     lastAutoWicketClip = null;
   }
+  // Linked to the last ball actually bowled — including its bowler, even
+  // if the next over's bowler has already been picked.
   const lastBallOver = state.score.balls > 0 ? state.score.overs : Math.max(0, state.score.overs - 1);
   const lastBallInOver = state.score.balls > 0 ? state.score.balls : (state.score.overs > 0 ? 6 : 0);
+  const lastBall = state.ballLog.filter(b => b.innings === state.inningsNumber).slice(-1)[0];
+  const lastBowler = lastBall ? lastBall.bowler : state.bowler.name;
   linkPendingHighlightsToBall('RH', {}, {
     innings: state.inningsNumber, over: lastBallOver, ballInOver: lastBallInOver, runs: 0,
     battingTeam: state.battingTeam,
     striker: saved.name, nonStriker: end === 'nonStriker' ? state.striker.name : state.nonStriker.name,
-    bowler: state.bowler.name, strikerId: saved.id, nonStrikerId: null, bowlerId: state.bowler.id || null
+    bowler: lastBowler, strikerId: saved.id, nonStrikerId: null,
+    bowlerId: lastBowler === state.bowler.name ? (state.bowler.id || null) : null
   });
 
   openNewBatsmanModal(saved.name, { retired: true, excludeId: saved.id });
