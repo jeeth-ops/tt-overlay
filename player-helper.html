@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Player Helper — All Sports Live</title>
+<link rel="icon" href="/favicon-32x32.png">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  :root{
+    --bg:#0b0f1a; --panel:#121826; --panel-2:#182034; --border:#232c42; --text:#f2f4f8; --dim:#9aa4b8;
+    --accent:#ff7a00; --ok:#22c55e; --warn:#f59e0b; --radius:14px;
+    color-scheme:dark;
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:var(--bg); color:var(--text); font:14px/1.45 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; }
+  .wrap{ max-width:1100px; margin:0 auto; padding:16px; display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:14px; align-items:start; }
+  header{ display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--border); background:var(--panel); position:sticky; top:0; z-index:5; }
+  header img{ width:30px; height:30px; border-radius:8px; }
+  header h1{ margin:0; font-size:16px; font-weight:800; flex:1; }
+  header h1 span{ color:var(--accent); }
+  .pill{ display:inline-flex; align-items:center; gap:6px; padding:5px 10px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); font-size:12px; font-weight:700; }
+  .pill i{ width:8px; height:8px; border-radius:50%; background:#ef4444; }
+  .pill.on i{ background:var(--ok); }
+  .card{ background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:14px; }
+  .card + .card{ margin-top:14px; }
+  .card h2{ margin:0 0 10px; font-size:12px; letter-spacing:.7px; text-transform:uppercase; color:var(--dim); }
+  .match-title{ font-size:18px; font-weight:800; }
+  .inn{ color:var(--dim); font-weight:700; font-size:12px; text-transform:uppercase; letter-spacing:.6px; margin-top:2px; }
+  .teams{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; }
+  .team{ display:flex; gap:10px; align-items:center; padding:10px; border-radius:12px; background:var(--panel-2); border-left:4px solid var(--tc, var(--border)); min-width:0; }
+  .logo{ width:40px; height:40px; border-radius:10px; flex:none; background:var(--tc, #334) center/cover no-repeat; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:12px; }
+  .logo.img{ background-color:#fff; color:transparent; }
+  .team small{ display:block; font-size:10.5px; font-weight:800; letter-spacing:.8px; color:var(--dim); text-transform:uppercase; }
+  .team b{ display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .team .who{ font-size:12px; color:var(--dim); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  .result{ border-radius:18px; padding:18px; background:linear-gradient(135deg, rgba(34,197,94,.22), rgba(34,197,94,.06)); border:2px solid var(--ok); min-height:150px; display:flex; flex-direction:column; justify-content:center; }
+  .result.empty{ background:var(--panel); border:2px dashed var(--border); color:var(--dim); align-items:center; text-align:center; }
+  .result .rt{ font-size:13px; font-weight:800; letter-spacing:1.2px; text-transform:uppercase; color:#86efac; }
+  .result .rn{ font-size:clamp(28px, 5vw, 44px); font-weight:900; line-height:1.1; margin-top:6px; overflow-wrap:anywhere; }
+  .result .rm{ color:var(--dim); margin-top:8px; font-size:13px; display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .result .rm button{ background:var(--panel-2); color:var(--text); border:1px solid var(--border); border-radius:99px; padding:6px 12px; font-weight:700; cursor:pointer; }
+  @keyframes arrive{ 0%{ transform:scale(.97); box-shadow:0 0 0 0 rgba(34,197,94,.7); } 60%{ transform:scale(1); box-shadow:0 0 0 14px rgba(34,197,94,0); } 100%{ box-shadow:0 0 0 0 rgba(34,197,94,0); } }
+  .result.new{ animation:arrive .9s ease-out 2; }
+
+  .reqs{ display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:8px; }
+  .req{ min-height:52px; border-radius:12px; border:1px solid var(--border); background:var(--panel-2); color:var(--text); font-weight:800; font-size:13.5px; cursor:pointer; padding:8px; }
+  .req small{ display:block; color:var(--dim); font-weight:600; font-size:11px; margin-top:2px; }
+  .req.on{ background:rgba(245,158,11,.16); border-color:var(--warn); color:#fcd34d; }
+  .reqbar{ display:flex; justify-content:space-between; align-items:center; margin-top:10px; font-size:12.5px; color:var(--dim); gap:8px; }
+  .reqbar button{ background:transparent; border:1px solid var(--border); color:var(--dim); border-radius:99px; padding:6px 12px; font-weight:700; cursor:pointer; }
+
+  .link{ display:flex; gap:8px; }
+  .link input{ flex:1; min-width:0; padding:10px; border-radius:10px; border:1px solid var(--border); background:var(--panel-2); color:var(--text); font-size:13px; }
+  .btn{ border:none; border-radius:10px; padding:10px 14px; font-weight:800; cursor:pointer; background:var(--accent); color:#1a0e02; white-space:nowrap; }
+  .btn.ghost{ background:var(--panel-2); color:var(--text); border:1px solid var(--border); }
+  .btn-row{ display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
+  .btn-row a{ text-decoration:none; }
+  .qr{ display:flex; justify-content:center; margin-top:12px; }
+  .qr > div{ background:#fff; padding:8px; border-radius:10px; line-height:0; }
+  .hint{ font-size:12px; color:var(--dim); margin-top:8px; }
+
+  .hist{ display:flex; flex-direction:column; gap:6px; max-height:360px; overflow:auto; }
+  .h{ display:flex; justify-content:space-between; gap:10px; padding:9px 10px; border-radius:10px; background:var(--panel-2); }
+  .h b{ font-weight:800; overflow-wrap:anywhere; }
+  .h small{ color:var(--dim); white-space:nowrap; }
+  .h .t{ font-size:11px; font-weight:800; color:#86efac; text-transform:uppercase; letter-spacing:.6px; }
+  .none{ color:var(--dim); font-size:13px; }
+  button:focus-visible, .btn:focus-visible{ outline:2px solid #93c5fd; outline-offset:2px; }
+  @media (max-width: 860px){ .wrap{ grid-template-columns:minmax(0,1fr); } .reqs{ grid-template-columns:repeat(2, minmax(0,1fr)); } }
+  @media (prefers-reduced-motion: reduce){ .result.new{ animation:none; } }
+</style>
+</head>
+<body>
+<header>
+  <img src="/logo.png" alt="">
+  <h1>Player <span>Helper</span></h1>
+  <span class="pill" id="phones"><i></i><span>0 phones</span></span>
+  <span class="pill" id="conn"><i></i><span>Connecting…</span></span>
+</header>
+
+<div class="wrap">
+  <main>
+    <div class="card">
+      <div class="match-title" id="matchTitle">—</div>
+      <div class="inn" id="innings">—</div>
+      <div class="teams" id="teams"></div>
+    </div>
+
+    <div class="card">
+      <h2>Latest answer from the phone</h2>
+      <div class="result empty" id="result">Answers from the phone appear here instantly.</div>
+    </div>
+
+    <div class="card">
+      <h2>Ask the phone for</h2>
+      <div class="reqs" id="reqs"></div>
+      <div class="reqbar"><span id="asking">Nothing asked — the phone can still pick anything.</span><button type="button" id="clearReq">Clear request</button></div>
+    </div>
+
+    <div class="card">
+      <h2 style="display:flex;justify-content:space-between;align-items:center;">All answers <button type="button" class="btn ghost" id="clearHist" style="padding:5px 10px;font-size:11px;">Clear</button></h2>
+      <div class="hist" id="hist"><div class="none">No answers yet.</div></div>
+    </div>
+  </main>
+
+  <aside>
+    <div class="card">
+      <h2>Phone link for this match</h2>
+      <div class="link"><input id="link" readonly value="Creating link…"><button type="button" class="btn" id="copy">Copy</button></div>
+      <div class="btn-row">
+        <a class="btn ghost" id="wa" target="_blank" rel="noopener">Send on WhatsApp</a>
+        <a class="btn ghost" id="open" target="_blank" rel="noopener">Open</a>
+      </div>
+      <div class="qr"><div id="qr"></div></div>
+      <div class="hint">Works only for this match. The phone sees player names only and cannot change the score — you apply every answer yourself in the scoring panel.</div>
+    </div>
+  </aside>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+(function(){
+  const room = (new URLSearchParams(location.search).get('room') || '').replace(/^room-/, '').replace(/[^a-zA-Z0-9_-]/g, '');
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if(cls) e.className = cls; if(text != null) e.textContent = text; return e; };
+  if(!room){ document.querySelector('.wrap').innerHTML = '<div class="card">Open Player Helper from the scoring panel (it needs the match ID).</div>'; return; }
+
+  const REQ = [
+    ['NEW_BATSMAN', 'New Batsman', 'batting'], ['NEW_BOWLER', 'New Bowler', 'bowling'],
+    ['CAUGHT_BY', 'Caught By', 'bowling'], ['WICKETKEEPER', 'Wicketkeeper', 'bowling'],
+    ['FIELDER', 'Fielder (Run Out)', 'bowling'], ['DISMISSED_BATSMAN', 'Dismissed Batsman', 'batting'],
+    ['STRIKER', 'Striker', 'batting'], ['NON_STRIKER', 'Non-Striker', 'batting'], ['BOWLER', 'Bowler', 'bowling'],
+  ];
+  let state = null, current = null, results = [];
+
+  // ---- live match (same room the panel/overlay use) ----
+  const live = io({ query: { room } });
+  const setConn = (on) => { $('conn').classList.toggle('on', on); $('conn').lastElementChild.textContent = on ? 'Live' : 'Reconnecting…'; };
+  live.on('connect', () => setConn(true));
+  live.on('disconnect', () => setConn(false));
+  live.on('liveCricketScore', (s) => { if(s && Object.keys(s).length){ state = Object.assign({}, state || {}, s); renderMatch(); } });
+  function teamOf(k){ return (state && (k === 'A' ? state.teamA : state.teamB)) || {}; }
+  function teamBox(k, role){
+    const t = teamOf(k);
+    const d = el('div', 'team'); if(t.color) d.style.setProperty('--tc', t.color);
+    const logo = el('div', 'logo' + (t.logoUrl ? ' img' : ''), (t.short || t.name || '?').slice(0, 3).toUpperCase());
+    if(t.logoUrl) logo.style.backgroundImage = `url("${String(t.logoUrl).replace(/"/g, '%22')}")`;
+    const txt = el('div'); txt.style.minWidth = '0';
+    const who = role === 'Batting'
+      ? [state.striker && state.striker.name, state.nonStriker && state.nonStriker.name].filter(Boolean).join(' & ')
+      : (state.bowler && state.bowler.name) || '';
+    txt.append(el('small', null, role), el('b', null, t.name || t.short || '—'), el('div', 'who', who ? (role === 'Batting' ? 'At the crease: ' : 'Bowling: ') + who : ''));
+    d.append(logo, txt); return d;
+  }
+  function renderMatch(){
+    if(!state || !state.teamA) return;
+    const bat = state.battingTeam === 'B' ? 'B' : 'A', bowl = bat === 'A' ? 'B' : 'A';
+    $('matchTitle').textContent = `${teamOf('A').name || 'Team A'} vs ${teamOf('B').name || 'Team B'}`;
+    $('innings').textContent = `Innings ${state.inningsNumber || 1} · ${teamOf(bat).short || teamOf(bat).name || ''} batting`;
+    $('teams').replaceChildren(teamBox(bat, 'Batting'), teamBox(bowl, 'Bowling'));
+    renderReqs();
+  }
+  function renderReqs(){
+    const bat = state && state.battingTeam === 'B' ? 'B' : 'A';
+    const side = (s) => { const k = s === 'batting' ? bat : (bat === 'A' ? 'B' : 'A'); const t = teamOf(k); return `${t.short || t.name || ''} · ${s}`; };
+    $('reqs').replaceChildren(...REQ.map(([type, label, s]) => {
+      const b = el('button', 'req' + (current && current.type === type ? ' on' : ''), label);
+      b.type = 'button'; b.append(el('small', null, side(s)));
+      b.addEventListener('click', () => ph.emit('setRequest', { type }));
+      return b;
+    }));
+    $('asking').textContent = current ? `Asking the phone for: ${current.label}` : 'Nothing asked — the phone can still pick anything.';
+  }
+
+  // ---- player helper channel ----
+  const ph = io('/player-helper', { auth: { role: 'operator', room } });
+  ph.on('operatorInit', (d) => {
+    const url = location.origin + d.path;
+    $('link').value = url;
+    $('open').href = url;
+    $('wa').href = 'https://wa.me/?text=' + encodeURIComponent('Player selection link for the match: ' + url);
+    $('qr').innerHTML = '';
+    if(window.QRCode) new QRCode($('qr'), { text: url, width: 150, height: 150 });
+    current = d.request; results = d.results || [];
+    setPhones(d.phones || 0); renderReqs(); renderResults(false);
+  });
+  ph.on('request', (r) => { current = r; renderReqs(); });
+  ph.on('phones', setPhones);
+  ph.on('results', (r) => { results = r || []; renderResults(false); });
+  ph.on('result', (r) => { results.push(r); renderResults(true); });
+  function setPhones(n){ $('phones').classList.toggle('on', n > 0); $('phones').lastElementChild.textContent = `${n} phone${n === 1 ? '' : 's'}`; }
+
+  const fmt = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  function renderResults(isNew){
+    const last = results[results.length - 1];
+    const box = $('result');
+    if(!last){ box.className = 'result empty'; box.textContent = 'Answers from the phone appear here instantly.'; }
+    else {
+      box.className = 'result';
+      box.replaceChildren(
+        el('div', 'rt', `${last.label} selected`),
+        el('div', 'rn', last.name),
+        (() => { const m = el('div', 'rm', `${last.teamName || ''} · Innings ${last.innings} · ${fmt(last.at)}`);
+          const c = el('button', null, 'Copy name'); c.type = 'button';
+          c.addEventListener('click', () => { navigator.clipboard && navigator.clipboard.writeText(last.name).then(() => { c.textContent = 'Copied'; setTimeout(() => c.textContent = 'Copy name', 1200); }, () => {}); });
+          m.append(c); return m; })()
+      );
+      if(isNew){ box.classList.remove('new'); void box.offsetWidth; box.classList.add('new'); alertOperator(last); }
+    }
+    const hist = $('hist');
+    if(!results.length){ hist.replaceChildren(el('div', 'none', 'No answers yet.')); return; }
+    hist.replaceChildren(...results.slice().reverse().map((r) => {
+      const row = el('div', 'h');
+      const left = el('div'); left.append(el('div', 't', r.label), el('b', null, r.name));
+      row.append(left, el('small', null, `${r.teamShort || r.teamName || ''} · ${fmt(r.at)}`));
+      return row;
+    }));
+  }
+  // Make a new answer impossible to miss, even if this tab is in the background.
+  let audioCtx = null, titleTimer = null;
+  document.addEventListener('pointerdown', () => { try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); } catch(e){} }, { once: true });
+  function alertOperator(r){
+    try { if(audioCtx){ const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.frequency.value = 880; g.gain.value = .08; o.connect(g); g.connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime + .18); } } catch(e){}
+    clearInterval(titleTimer);
+    const base = 'Player Helper — All Sports Live', msg = `🔔 ${r.label}: ${r.name}`;
+    let on = true; document.title = msg;
+    titleTimer = setInterval(() => { document.title = (on = !on) ? msg : base; }, 900);
+    const stop = () => { if(!document.hidden){ clearInterval(titleTimer); document.title = base; document.removeEventListener('visibilitychange', stop); } };
+    if(!document.hidden) setTimeout(stop, 4000); else document.addEventListener('visibilitychange', stop);
+  }
+
+  $('clearReq').addEventListener('click', () => ph.emit('setRequest', { type: null }));
+  $('clearHist').addEventListener('click', () => ph.emit('clearResults'));
+  $('copy').addEventListener('click', () => {
+    const v = $('link').value;
+    const done = () => { $('copy').textContent = 'Copied ✓'; setTimeout(() => $('copy').textContent = 'Copy', 1500); };
+    if(navigator.clipboard) navigator.clipboard.writeText(v).then(done, () => { $('link').select(); document.execCommand('copy'); done(); });
+    else { $('link').select(); document.execCommand('copy'); done(); }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1120">
+<title>Player Select — All Sports Live</title>
+<link rel="icon" href="/favicon-32x32.png">
+<style>
+  :root{
+    --bg:#0b1120; --card:#131b2e; --card-2:#1a2440; --line:#26314d; --text:#f3f5fa; --dim:#9aa6bf;
+    --accent:#22c55e; --accent-ink:#06170c; --warn:#f59e0b; --bat:#3b82f6; --bowl:#ef4444;
+    color-scheme:dark;
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; background:var(--bg); color:var(--text); font:16px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; }
+  body{ padding:max(12px, env(safe-area-inset-top)) 14px calc(96px + env(safe-area-inset-bottom)); max-width:560px; margin:0 auto; }
+  .top{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
+  .brand{ display:flex; align-items:center; gap:8px; font-weight:800; font-size:14px; color:var(--dim); }
+  .brand img{ width:26px; height:26px; border-radius:7px; }
+  .conn{ font-size:12px; font-weight:700; color:var(--dim); display:flex; align-items:center; gap:6px; }
+  .conn i{ width:8px; height:8px; border-radius:50%; background:#ef4444; display:inline-block; }
+  .conn.on i{ background:var(--accent); }
+  .match{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px; }
+  .match h1{ margin:0; font-size:19px; line-height:1.25; }
+  .inn{ margin-top:3px; font-size:13px; color:var(--dim); font-weight:700; text-transform:uppercase; letter-spacing:.5px; }
+  .teams{ display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
+  .team{ display:flex; align-items:center; gap:9px; background:var(--card-2); border-radius:12px; padding:9px; min-width:0; border-left:4px solid var(--tc, var(--line)); }
+  .logo{ width:36px; height:36px; border-radius:10px; flex:none; background:var(--tc, #334) center/cover no-repeat; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:12px; color:#fff; }
+  .logo.img{ background-color:#fff; color:transparent; }
+  .team small{ display:block; font-size:10.5px; font-weight:800; letter-spacing:.8px; color:var(--dim); text-transform:uppercase; }
+  .team b{ display:block; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  h2{ font-size:13px; text-transform:uppercase; letter-spacing:.8px; color:var(--dim); margin:18px 2px 8px; }
+  .asked{ background:rgba(245,158,11,.12); border:1px solid var(--warn); color:#fcd34d; border-radius:14px; padding:12px 14px; font-weight:800; margin-top:12px; display:flex; align-items:center; gap:8px; }
+  .reqs{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .req{ min-height:56px; border-radius:14px; border:1px solid var(--line); background:var(--card); color:var(--text); font:700 15px/1.2 inherit; padding:10px; text-align:left; cursor:pointer; position:relative; }
+  .req small{ display:block; font-size:11px; color:var(--dim); font-weight:600; margin-top:3px; }
+  .req.on{ border-color:var(--accent); background:rgba(34,197,94,.14); box-shadow:inset 0 0 0 1px var(--accent); }
+  .req.asked-req::after{ content:'Asked'; position:absolute; top:6px; right:8px; font-size:10px; font-weight:800; color:#1a1405; background:var(--warn); padding:2px 6px; border-radius:99px; }
+  .players{ display:flex; flex-direction:column; gap:8px; }
+  .p{ width:100%; min-height:58px; border-radius:14px; border:1px solid var(--line); background:var(--card); color:var(--text); font:700 18px/1.25 inherit; padding:12px 16px; text-align:left; cursor:pointer; overflow-wrap:anywhere; }
+  .p.on{ border-color:var(--accent); background:var(--accent); color:var(--accent-ink); }
+  .note{ font-size:13px; color:#fcd34d; margin:0 2px 8px; }
+  .empty{ color:var(--dim); text-align:center; padding:22px 10px; background:var(--card); border-radius:14px; }
+  .bar{ position:fixed; left:0; right:0; bottom:0; padding:10px 14px calc(10px + env(safe-area-inset-bottom)); background:linear-gradient(180deg, rgba(11,17,32,0), var(--bg) 30%); }
+  .bar button{ display:block; width:100%; max-width:532px; margin:0 auto; min-height:58px; border:none; border-radius:16px; font:800 18px/1 inherit; background:var(--accent); color:var(--accent-ink); cursor:pointer; }
+  .bar button:disabled{ background:var(--card-2); color:var(--dim); }
+  .toast{ position:fixed; left:14px; right:14px; top:max(14px, env(safe-area-inset-top)); z-index:5; background:var(--accent); color:var(--accent-ink); border-radius:14px; padding:14px 16px; font-weight:800; font-size:16px; box-shadow:0 12px 30px rgba(0,0,0,.4); transform:translateY(-140%); transition:transform .25s ease; max-width:532px; margin:0 auto; }
+  .toast.err{ background:#ef4444; color:#fff; }
+  .toast.show{ transform:none; }
+  .msg{ text-align:center; color:var(--dim); padding:40px 10px; }
+  button:focus-visible{ outline:3px solid #93c5fd; outline-offset:2px; }
+  @media (prefers-reduced-motion: reduce){ .toast{ transition:none; } }
+</style>
+</head>
+<body>
+  <div class="top">
+    <div class="brand"><img src="/logo.png" alt="">Player Select</div>
+    <div class="conn" id="conn"><i></i><span id="connText">Connecting…</span></div>
+  </div>
+  <div id="app"><div class="msg">Loading match…</div></div>
+  <div class="bar"><button type="button" id="send" disabled>Select a player</button></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+(function(){
+  const token = decodeURIComponent(location.pathname.split('/').pop() || '');
+  const app = document.getElementById('app');
+  const sendBtn = document.getElementById('send');
+  let view = null, type = null, ref = null, sending = false, userPickedType = false, lastAskAt = 0;
+
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if(cls) e.className = cls; if(text != null) e.textContent = text; return e; };
+  function toast(text, err){
+    const t = document.getElementById('toast');
+    t.textContent = text; t.className = 'toast show' + (err ? ' err' : '');
+    clearTimeout(t._h); t._h = setTimeout(() => { t.className = 'toast' + (err ? ' err' : ''); }, 2600);
+  }
+  function teamCard(team, role){
+    const d = el('div', 'team'); if(team.color) d.style.setProperty('--tc', team.color);
+    const logo = el('div', 'logo' + (team.logo ? ' img' : ''), (team.short || team.name || '?').slice(0, 3).toUpperCase());
+    if(team.logo) logo.style.backgroundImage = `url("${team.logo.replace(/"/g, '%22')}")`;
+    const txt = el('div'); txt.style.minWidth = '0';
+    txt.append(el('small', null, role), el('b', null, team.name || team.short || '—'));
+    d.append(logo, txt); return d;
+  }
+  function render(){
+    if(!view) return;
+    if(!view.ready){ app.innerHTML = ''; app.append(el('div', 'msg', 'Waiting for the operator to set up the match…')); updateSend(); return; }
+    const frag = document.createDocumentFragment();
+    const m = el('div', 'match');
+    m.append(el('h1', null, view.match), el('div', 'inn', `Innings ${view.innings}`));
+    const teams = el('div', 'teams'); teams.append(teamCard(view.batting, 'Batting'), teamCard(view.bowling, 'Bowling')); m.append(teams);
+    frag.append(m);
+    if(view.request){ const a = el('div', 'asked', `👉 Operator needs: ${view.request.label}`); frag.append(a); }
+
+    frag.append(el('h2', null, '1 · What are you selecting?'));
+    const reqs = el('div', 'reqs');
+    view.order.forEach(t => {
+      const L = view.lists[t];
+      const b = el('button', 'req' + (t === type ? ' on' : '') + (view.request && view.request.type === t ? ' asked-req' : ''), L.label);
+      b.type = 'button';
+      b.append(el('small', null, L.team === 'batting' ? (view.batting.short || view.batting.name) + ' · batting' : (view.bowling.short || view.bowling.name) + ' · bowling'));
+      b.addEventListener('click', () => { type = t; ref = null; userPickedType = true; render(); });
+      reqs.append(b);
+    });
+    frag.append(reqs);
+
+    if(type && view.lists[type]){
+      const L = view.lists[type];
+      frag.append(el('h2', null, `2 · Choose ${L.label}`));
+      if(L.note) frag.append(el('div', 'note', L.note));
+      const box = el('div', 'players');
+      if(!L.players.length) box.append(el('div', 'empty', 'No players available for this selection.'));
+      L.players.forEach(p => {
+        const b = el('button', 'p' + (p.ref === ref ? ' on' : ''), p.name); // the panel's own name, as stored
+        b.type = 'button';
+        b.addEventListener('click', () => { ref = p.ref; render(); });
+        box.append(b);
+      });
+      frag.append(box);
+      if(ref && !L.players.some(p => p.ref === ref)) ref = null;
+    }
+    const y = window.scrollY;
+    app.replaceChildren(frag);
+    window.scrollTo(0, y);
+    updateSend();
+  }
+  function updateSend(){
+    const L = view && view.lists && type && view.lists[type];
+    const p = L && L.players.find(x => x.ref === ref);
+    sendBtn.disabled = !p || sending || !socket.connected;
+    sendBtn.textContent = sending ? 'Sending…' : p ? `Send: ${p.name}` : type ? 'Select a player' : 'Choose what you are selecting';
+  }
+
+  const socket = io('/player-helper', { auth: { t: token }, transports: ['websocket', 'polling'] });
+  const conn = document.getElementById('conn'), connText = document.getElementById('connText');
+  socket.on('connect', () => { conn.classList.add('on'); connText.textContent = 'Live'; updateSend(); });
+  socket.on('disconnect', () => { conn.classList.remove('on'); connText.textContent = 'Reconnecting…'; updateSend(); });
+  socket.on('invalid', (d) => { app.innerHTML = ''; app.append(el('div', 'msg', (d && d.error) || 'Invalid link')); socket.close(); });
+  socket.on('view', (v) => {
+    view = v;
+    // Follow the operator's request unless the user already chose something else.
+    if(v.request && v.request.at !== lastAskAt){ lastAskAt = v.request.at; type = v.request.type; ref = null; userPickedType = false; }
+    else if(!type && v.request) type = v.request.type;
+    render();
+  });
+  sendBtn.addEventListener('click', () => {
+    const L = view && view.lists[type]; const p = L && L.players.find(x => x.ref === ref);
+    if(!p || sending) return;
+    sending = true; updateSend();
+    // Same selection re-sent after a timeout keeps its nonce, so the server
+    // counts it once even if the first attempt did arrive.
+    const key = type + '|' + ref;
+    if(!window.__pending || window.__pending.key !== key) window.__pending = { key, nonce: Date.now().toString(36) + Math.random().toString(36).slice(2, 8) };
+    const nonce = window.__pending.nonce;
+    socket.timeout(8000).emit('submit', { type, ref, nonce }, (err, res) => {
+      sending = false;
+      if(err){ toast('Not sent — check your connection and tap again', true); updateSend(); return; }
+      if(res && res.ok){ window.__pending = null; toast(`✓ Sent: ${res.label || L.label} — ${res.name || p.name}`); ref = null; render(); }
+      else { toast((res && res.error) || 'Not sent', true); updateSend(); }
+    });
+  });
+})();
+</script>
+</body>
+</html>

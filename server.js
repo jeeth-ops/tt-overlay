@@ -540,6 +540,15 @@ app.use(express.static(__dirname, {
 }));
 app.use(express.json());
 
+// 👥 Player Helper — phone picks player names for the operator (see player-helper.js).
+const playerHelper = require('./player-helper').setup({
+    app, io,
+    getRoomState: (room) => getRoomState(room),
+    getCollection: () => (mongoDb ? mongoDb.collection('playerHelperLinks') : null),
+});
+app.get('/player-helper', (req, res) => sendHtmlNoCache(res, __dirname + '/player-helper.html'));
+app.get('/ph/:token', (req, res) => sendHtmlNoCache(res, __dirname + '/player-helper-mobile.html'));
+
 // ================================================================
 // 🎬 RECORDING + CLIPS
 // Video capture and clip cutting happen ENTIRELY on the operator's own
@@ -6818,6 +6827,7 @@ io.on('connection', async (socket) => {
         state.cricketState = { ...state.cricketState, ...data };
 
         io.to(room).emit('liveCricketScore', state.cricketState);
+        playerHelper.onCricketUpdate(room);
 
         if (targetId && targetId !== 'default') {
             clearTimeout(firestoreWriteTimers[`cricket-${targetId}`]);

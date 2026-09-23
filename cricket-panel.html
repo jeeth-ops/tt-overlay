@@ -167,6 +167,8 @@
   .lc-chip.hot{ border-color:var(--accent); color:#ffb066; background:rgba(255,122,0,.1); }
   .lc-chip.dim{ color:#b6bfd0; }
   .lc-chip.clip{ max-width:420px; }
+  .lc-chip.lc-helper{ cursor:pointer; margin-left:auto; border-color:rgba(59,130,246,.6); color:#93c5fd; background:rgba(59,130,246,.12); }
+  .lc-chip.lc-helper:hover{ background:rgba(59,130,246,.22); }
 
   .lc-top{ display:grid; grid-template-columns: minmax(0,1.15fr) minmax(0,.9fr) minmax(0,1.15fr); gap:12px; }
   .lc-team{
@@ -709,6 +711,7 @@
     <span class="lc-chip warn" id="lc-chip-freehit" hidden>⚡ FREE HIT</span>
     <span class="lc-chip dim" id="lc-chip-rec"><span class="lc-dot" id="lc-rec-dot"></span><span id="lc-rec-text">Recording —</span></span>
     <span class="lc-chip dim clip" id="lc-chip-clip">🎬 <span id="lc-clip-text">Clipper —</span></span>
+    <button type="button" class="lc-chip lc-helper" id="lc-helper-btn" title="Open Player Helper in a new tab — a phone picks player names for you">👥 Player Helper</button>
   </div>
 
   <div class="lc-top">
@@ -10458,6 +10461,14 @@ function lcFocusCard(cardId, focusIds){
 document.getElementById('lc-edit-batters').addEventListener('click', () => lcFocusCard('card-players', ['striker-roster-select', 'striker-name']));
 document.getElementById('lc-edit-bowler').addEventListener('click', () => lcFocusCard('card-bowler', ['bowler-roster-select', 'bowler-name-input']));
 document.getElementById('lc-swap-btn').addEventListener('click', () => swapStrike());
+// 👥 Player Helper: a separate tab for this match (a phone picks player names;
+// the answers show up there and the operator applies them here).
+document.getElementById('lc-helper-btn').addEventListener('click', () => {
+  const room = currentMatchId();
+  if(!room){ toast('Enter a Match ID and Connect first'); return; }
+  const w = window.open(`/player-helper?room=${encodeURIComponent(room)}`, 'asl-player-helper-' + room.replace(/[^a-zA-Z0-9_-]/g, ''));
+  if(!w) toast('Allow pop-ups for this site to open Player Helper');
+});
 document.getElementById('lc-retired-btn').addEventListener('click', () => openRetiredHurtModal());
 // Instant press feedback (the action itself runs on click, unchanged).
 document.querySelectorAll('#live-console .lc-key').forEach(k => {
