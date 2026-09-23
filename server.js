@@ -1468,6 +1468,27 @@ app.post('/api/league/:name/match', requireAuthorizedCreator, async (req, res) =
         // a roomId, backfill it from that same league doc here, before
         // it's potentially lost when a later active:false ping prunes the
         // liveMatches entry.
+        // 🔒 One match lives in ONE tournament. A save that would create a
+        // copy of this matchId in a second tournament is refused (the panel
+        // saves to the match's own tournament; this also stops an older
+        // panel on another laptop). A copy in the single-match history is
+        // moved, since a single match can be promoted into a tournament.
+        const SINGLE_KEY = leagueKeyFor('__single_matches__');
+        const alreadyHere = await matchRecordsCollection.findOne({ ownerUid, leagueKey, matchId: record.matchId }, { projection: { _id: 1 } });
+        if (!alreadyHere) {
+            const elsewhere = await matchRecordsCollection.find({ ownerUid, matchId: record.matchId, leagueKey: { $ne: leagueKey } }, { projection: { leagueKey: 1 } }).toArray();
+            const otherTournament = elsewhere.find(m => m.leagueKey !== SINGLE_KEY);
+            if (otherTournament && leagueKey !== SINGLE_KEY) {
+                const owner = await leaguesCollection.findOne({ ownerUid, leagueKey: otherTournament.leagueKey }, { projection: { displayName: 1 } });
+                return res.status(409).json({ success: false, code: 'MATCH_IN_OTHER_TOURNAMENT', tournament: (owner && owner.displayName) || otherTournament.leagueKey, error: 'This match belongs to another tournament' });
+            }
+            if (otherTournament && leagueKey === SINGLE_KEY) {
+                return res.status(409).json({ success: false, code: 'MATCH_IN_OTHER_TOURNAMENT', error: 'This match belongs to a tournament' });
+            }
+            if (elsewhere.length && leagueKey !== SINGLE_KEY) {
+                await matchRecordsCollection.deleteMany({ ownerUid, matchId: record.matchId, leagueKey: SINGLE_KEY });
+            }
+        }
         let roomId = record.roomId || null;
         if (!roomId) {
             const liveDoc = await leaguesCollection.findOne(
