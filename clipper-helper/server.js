@@ -57,6 +57,7 @@ const path = require('path');
 const http = require('http');
 const https = require('https');
 const { spawn, exec } = require('child_process');
+const { Fmp4Index } = require('./fmp4');
 
 // When bundled by pkg into ClipperHelper.exe, __dirname points inside a
 // virtual snapshot, not the real folder the .exe sits in.
@@ -127,9 +128,12 @@ const POST_ROLL_SECONDS = 3;   // footage kept AFTER the press (and the wait bef
 const CLIP_SECONDS = PRE_ROLL_SECONDS + POST_ROLL_SECONDS; // 18
 
 const COVERAGE_WAIT_MAX_MS = 30000;   // max extra wait for the recording to reach T0+3s on disk
-const CUT_TIMEOUT_MS = 90000;         // one ffmpeg cut; killed after this
-const CUT_MAX_ATTEMPTS = 3;
-const CUT_RETRY_DELAYS_MS = [3000, 8000];
+const CUT_TIMEOUT_MS = 120000;        // one ffmpeg cut; killed after this
+// A temporary problem (recording briefly locked, disk busy, ffmpeg hiccup)
+// gets ~2 minutes of retries before a clip is given up — the footage stays
+// in the recording, so there is no reason to fail fast.
+const CUT_MAX_ATTEMPTS = 6;
+const CUT_RETRY_DELAYS_MS = [3000, 8000, 15000, 30000, 60000];
 const UPLOAD_IDLE_TIMEOUT_MS = 60000; // no bytes moving for this long = dead connection
 const UPLOAD_BACKOFF_MS = [5000, 15000, 30000, 60000, 120000, 300000]; // then every 5 min
 const UPLOAD_MAX_ATTEMPTS = 60;       // ≈ 4–5 hours of retrying
@@ -176,7 +180,7 @@ function runFfmpeg(args, { timeoutMs, lowPriority = false, collectStderr = true 
 // long as vMix writes a streamable format — fragmented MP4, MOV/MKV
 // written in fragments, etc.). Reads the "Duration:" line of ffmpeg -i.
 async function probeDuration(filePath) {
-  const r = await runFfmpeg(['-hide_banner', '-nostdin', '-i', filePath], { timeoutMs: 15000 });
+  const r = await runFfmpeg(['-hide_banner', '-nostdin', '-i', filePath], { timeoutMs: 60000 });
   const m = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(r.stderr);
   if (!m) {
     const reason = /moov atom not found/i.test(r.stderr)
@@ -187,7 +191,10 @@ async function probeDuration(filePath) {
   return { ok: true, seconds: Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) };
 }
 
-let videoEncoderArgs = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-pix_fmt', 'yuv420p'];
+// ≤1080p, quality-based with a bitrate ceiling: an 18 s clip stays ~10–15 MB
+// (fast to upload, under the website's 60 MB limit, quick first play).
+const SCALE_ARGS = ['-vf', "scale=-2:'min(1080,ih)'"];
+let videoEncoderArgs = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-maxrate', '6M', '-bufsize', '12M', '-pix_fmt', 'yuv420p'];
 async function detectEncoder() {
   const r = await new Promise((resolve) => {
     let out = '';
@@ -221,7 +228,7 @@ let activeRecording = null; // { file, size, mtimeMs, growing }
 let recordingError = null;
 
 function isClipFileName(name) {
-  return /\.part\.mp4$/i.test(name) || /_\d{12,}\.mp4$/i.test(name);
+  return /\.(part|src)\.mp4$/i.test(name) || /_\d{12,}\.mp4$/i.test(name);
 }
 
 async function resolveActiveRecording() {
@@ -261,7 +268,7 @@ async function resolveActiveRecording() {
 function sourceFor(file) {
   let s = sources.get(file);
   if (!s) {
-    s = { samples: [], anchor: null, durationSec: 0, probedAt: 0, size: null, sizeChangedAt: 0, lastError: null, probing: null };
+    s = { samples: [], anchor: null, durationSec: 0, probedAt: 0, size: null, sizeChangedAt: 0, lastError: null, probing: null, idx: new Fmp4Index(file) };
     sources.set(file, s);
   }
   return s;
@@ -277,7 +284,16 @@ function probeSource(file) {
     if (src.size !== st.size) { src.size = st.size; src.sizeChangedAt = Date.now(); }
     const growing = Date.now() - src.sizeChangedAt < 15000;
     const wall = Date.now();
-    const r = await probeDuration(file);
+    let r = null;
+    // Fast path: fragmented MP4 index (reads only what was written since
+    // the last probe). Falls back to ffmpeg for any other format.
+    if (src.idx.supported !== false) {
+      try {
+        await src.idx.refresh();
+        if (src.idx.supported) r = { ok: true, seconds: src.idx.durationSec };
+      } catch (e) { /* e.g. file briefly locked — ffmpeg fallback below, retried next tick */ }
+    }
+    if (!r) r = await probeDuration(file);
     if (!r.ok) { src.lastError = r.reason; return src; }
     src.lastError = null;
     src.durationSec = r.seconds;
@@ -429,6 +445,17 @@ async function cutJob(job) {
   if (endSec <= 0) return onCutFailure(job, 'this moment is before the start of the recording', { final: true });
   const recordingStopped = Date.now() - src.sizeChangedAt >= 15000;
   if (recordingStopped && startSec >= src.durationSec - 1) {
+    // Pressed within seconds of vMix starting a NEW file (the helper still
+    // pointed at the old one): switch to the file that is recording now.
+    const rec = await resolveActiveRecording();
+    if (rec && rec.file !== job.sourceFile && rec.growing) {
+      console.log(`↪️  [${job.eventType}] ${job.clipId}: moment is after ${path.basename(job.sourceFile)} ended — using ${path.basename(rec.file)}`);
+      job.sourceFile = rec.file;
+      job.cutAttempts = Math.max(0, (job.cutAttempts || 1) - 1);
+      return cutJob(job);
+    }
+  }
+  if (recordingStopped && startSec >= src.durationSec - 1) {
     return onCutFailure(job, `vMix was not recording at the time of this press (${path.basename(job.sourceFile)} ends ${Math.round(startSec - src.durationSec + PRE_ROLL_SECONDS)}s before it)`, { final: true });
   }
   const fromSec = Math.max(0, startSec);
@@ -436,33 +463,63 @@ async function cutJob(job) {
   const duration = toSec - fromSec;
   if (duration < 1) return onCutFailure(job, `recording has no footage for this moment yet (recorded up to ${src.durationSec.toFixed(1)}s, needed ${endSec.toFixed(1)}s)`);
 
+  // The pieces this clip is made of. Normally one. If vMix finished this
+  // file mid-clip and moved on to a new one (Stop/Start, or split
+  // recording), the rest of the moment is taken from the new file.
+  const segments = [{ src, file: job.sourceFile, from: fromSec, to: toSec }];
+  if (recordingStopped && endSec > src.durationSec + 0.5) {
+    const rec = await resolveActiveRecording();
+    if (rec && rec.file !== job.sourceFile) {
+      const nxt = await probeSource(rec.file);
+      if (nxt.anchor != null) {
+        const aEndWall = src.anchor + src.durationSec * 1000;             // where this file's footage stops
+        const bFrom = Math.max(0, (Math.max(job.window.startWall, aEndWall) - nxt.anchor) / 1000);
+        const bTo = Math.min((job.window.endWall - nxt.anchor) / 1000, nxt.durationSec);
+        if (bTo - bFrom >= 0.5) segments.push({ src: nxt, file: rec.file, from: bFrom, to: bTo });
+      }
+    }
+  }
+  if (segments.length > 1 && segments[0].to - segments[0].from < 0.3) segments.shift(); // nothing worth joining
+  const expected = segments.reduce((a, g) => a + (g.to - g.from), 0);
+
   const clipsDir = getClipsDir();
   await fs.promises.mkdir(clipsDir, { recursive: true });
   const outFile = path.join(clipsDir, `${job.clipId}.mp4`);
   const partFile = path.join(clipsDir, `${job.clipId}.part.mp4`);
-  console.log(`✂️  [${job.eventType}] ${job.clipId}: cutting ${path.basename(job.sourceFile)} ${fromSec.toFixed(1)}s → ${toSec.toFixed(1)}s (${duration.toFixed(1)}s)`);
+  console.log(`✂️  [${job.eventType}] ${job.clipId}: cutting ${segments.map((g) => `${path.basename(g.file)} ${g.from.toFixed(1)}s → ${g.to.toFixed(1)}s`).join(' + ')} (${expected.toFixed(1)}s)`);
 
-  const r = await runFfmpeg([
-    '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
-    '-ss', fromSec.toFixed(3), '-i', job.sourceFile, '-t', duration.toFixed(3),
-    '-map', '0:v:0', '-map', '0:a:0?',
-    ...videoEncoderArgs,
-    '-c:a', 'aac', '-b:a', '160k',
-    '-movflags', '+faststart',
-    partFile,
-  ], { timeoutMs: CUT_TIMEOUT_MS, lowPriority: true });
-  if (r.code !== 0) {
-    fs.unlink(partFile, () => {});
-    return onCutFailure(job, r.timedOut ? `ffmpeg cut timed out after ${CUT_TIMEOUT_MS / 1000}s (killed)` : `ffmpeg: ${r.stderr.trim().split('\n').slice(-2).join(' ').slice(0, 300)}`);
+  const temps = [];
+  const cleanup = () => { for (const t of temps) fs.unlink(t, () => {}); };
+  const pieces = [];
+  for (let i = 0; i < segments.length; i++) {
+    const g = segments[i];
+    const out = segments.length === 1 ? partFile : path.join(clipsDir, `${job.clipId}.p${i}.part.mp4`);
+    if (out !== partFile) temps.push(out);
+    const r = await cutSegment(job, g, out, clipsDir, i);
+    if (r.code !== 0) {
+      cleanup(); fs.unlink(partFile, () => {});
+      return onCutFailure(job, r.timedOut ? `ffmpeg cut timed out after ${CUT_TIMEOUT_MS / 1000}s (killed)` : `ffmpeg: ${r.stderr.trim().split('\n').slice(-2).join(' ').slice(0, 300)}`);
+    }
+    pieces.push(out);
   }
+  if (pieces.length > 1) {
+    // Same encoder settings for every piece, so they join without re-encoding.
+    const list = path.join(clipsDir, `${job.clipId}.list.txt`);
+    temps.push(list);
+    await fs.promises.writeFile(list, pieces.map((f) => `file '${f.replace(/'/g, "'\\''")}'`).join('\n'));
+    const r = await runFfmpeg(['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-movflags', '+faststart', partFile], { timeoutMs: CUT_TIMEOUT_MS, lowPriority: true });
+    cleanup();
+    if (r.code !== 0) { fs.unlink(partFile, () => {}); return onCutFailure(job, `could not join the two recording files: ${r.stderr.trim().split('\n').pop()}`); }
+  }
+  const duration2 = expected;
 
   // ✅ Validate: real, readable video of the expected length.
   let size = 0;
   try { size = (await fs.promises.stat(partFile)).size; } catch (_) { /* missing */ }
   const check = size > 20 * 1024 ? await probeDuration(partFile) : { ok: false, reason: `file too small (${size} bytes)` };
-  if (!check.ok || check.seconds < duration - 1.5) {
+  if (!check.ok || check.seconds < duration2 - 1.5) {
     fs.unlink(partFile, () => {});
-    return onCutFailure(job, check.ok ? `clip came out ${check.seconds.toFixed(1)}s instead of ${duration.toFixed(1)}s` : `invalid clip: ${check.reason}`);
+    return onCutFailure(job, check.ok ? `clip came out ${check.seconds.toFixed(1)}s instead of ${duration2.toFixed(1)}s` : `invalid clip: ${check.reason}`);
   }
   try {
     await renameWithRetry(partFile, outFile);
@@ -473,6 +530,37 @@ async function cutJob(job) {
   console.log(`💾 [${job.eventType}] ${job.clipId}: saved locally (${check.seconds.toFixed(1)}s) → ${outFile}`);
   update(job, { status: 'LOCAL_SAVED', localPath: outFile, clipSeconds: Number(check.seconds.toFixed(1)), savedAt: Date.now(), error: null });
   queueUpload(job);
+}
+
+// Cuts one piece [g.from, g.to] (seconds of g.file) to `out`. fMP4
+// recordings: only the fragments around the moment are copied to a small
+// <clipId>.src.mp4 first, so the cost does not grow with the match length.
+async function cutSegment(job, g, out, clipsDir, i) {
+  let input = g.file;
+  let seek = g.from;
+  const segFile = path.join(clipsDir, `${job.clipId}.${i}.src.mp4`);
+  if (g.src.idx && g.src.idx.supported) {
+    try {
+      const seg = await g.src.idx.extract(g.from, g.to, segFile);
+      input = segFile;
+      seek = Math.max(0, g.from - seg.startSec);
+    } catch (e) {
+      fs.unlink(segFile, () => {});
+      console.log(`⚠️  [${job.eventType}] ${job.clipId}: fast extract failed (${e.message}) — cutting from the full recording`);
+    }
+  }
+  const r = await runFfmpeg([
+    '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+    '-ss', seek.toFixed(3), '-i', input, '-t', (g.to - g.from).toFixed(3),
+    '-map', '0:v:0', '-map', '0:a:0?',
+    ...SCALE_ARGS,
+    ...videoEncoderArgs,
+    '-c:a', 'aac', '-b:a', '160k',
+    '-movflags', '+faststart',
+    out,
+  ], { timeoutMs: CUT_TIMEOUT_MS, lowPriority: true });
+  if (input === segFile) fs.unlink(segFile, () => {});
+  return r;
 }
 
 function onCutFailure(job, reason, { final = false } = {}) {
@@ -524,8 +612,13 @@ function pumpUploads() {
 async function uploadJob(job) {
   const server = session.mainServerUrl || toOrigin(config.mainServerUrl);
   const matchId = job.matchId || session.matchId;
-  if (!server) return onUploadFailure(job, 'website URL not set — open the Setup page');
-  if (!matchId) return onUploadFailure(job, 'no match id for this clip');
+  if (!server || !matchId) {
+    // Not an upload failure (nothing was sent): wait for Setup / a match id
+    // without using up attempts, checking every 30 s.
+    update(job, { status: 'UPLOAD_RETRY', error: !server ? 'website URL not set — open the Setup page' : 'no match id for this clip', nextUploadAt: Date.now() + 30000 });
+    later(() => queueUpload(job), 30000);
+    return;
+  }
   if (!job.localPath || !fs.existsSync(job.localPath)) {
     update(job, { status: 'FAILED', error: 'local clip file is missing — cannot upload' });
     return;
@@ -878,11 +971,11 @@ function resumeJobs() {
   if (cuts || ups) console.log(`🔄 Resumed from last run: ${cuts} clip(s) to cut, ${ups} to upload`);
 }
 
-// Leftover .part files can only come from a cut interrupted by a restart.
+// Leftover .part/.src files can only come from a cut interrupted by a restart.
 function sweepPartFiles() {
   fs.readdir(getClipsDir(), (err, names) => {
     if (err) return;
-    for (const n of names) if (n.endsWith('.part.mp4')) fs.unlink(path.join(getClipsDir(), n), () => {});
+    for (const n of names) if (/\.(part|src)\.mp4$|\.list\.txt$/.test(n)) fs.unlink(path.join(getClipsDir(), n), () => {});
   });
 }
 
@@ -897,7 +990,7 @@ setInterval(() => {
 
 const server = app.listen(config.port, () => {
   console.log('================================================');
-  console.log(`🎥 Clipper Helper v4.1 running at http://localhost:${config.port}`);
+  console.log(`🎥 Clipper Helper v4.2 running at http://localhost:${config.port}`);
   console.log(`👉 Setup page: http://localhost:${config.port}/setup`);
   console.log(`Using ffmpeg: ${ffmpegPath}`);
   console.log(`Clip window: ${PRE_ROLL_SECONDS}s before + ${POST_ROLL_SECONDS}s after the press = ${CLIP_SECONDS}s`);

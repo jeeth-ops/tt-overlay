@@ -1,9 +1,22 @@
-# Clipper Helper v4 — Setup (one-time, operator ka apna PC)
+# Clipper Helper v4.2 — Setup (one-time, operator ka apna PC)
 
 Ye chhota program (`ClipperHelper.exe`) vMix ke saath usi PC par chalta hai
 jahan match record ho raha hai. Isi ke wajah se panel me FOUR/SIX/WICKET
 (aur Wide 4/6, No-ball 4/6, Leg-bye 4, manual trigger) dabane par clip
 apne aap **local recording se hi** cut hoke website/Drive ko bhej di jaati hai.
+
+**v4.2 me kya badla (lambe match ka asli root cause):**
+- **Recording kitni bhi lambi ho, clip ki speed same:** pehle har 5 sec me aur har clip
+  par ffmpeg poori recording ke saare fragments padhta tha (3 ghante par ek clip ke liye
+  ~190 MB disk read, 7 ghante par ~450 MB+). Match lamba hote hi probe timeout hota,
+  recording ki length purani ho jaati aur clips fail hone lagte. Ab helper recording ka
+  apna chhota index rakhta hai (sirf naya likha hissa padhta hai, ~1 ms) aur clip ke
+  liye sirf uske aas-paas ka ~5–10 MB copy karke cut karta hai. **Nayi file:** `fmp4.js`
+  (`server.js` ke saath hi rakhni hai; `npm run build` use exe me daal deta hai).
+- **Temporary gadbad par jaldi haar nahi:** clip cut ~2 minute tak 6 baar retry hota hai.
+- **vMix ne beech me nayi file shuru ki:** clip dono files se jod kar banta hai.
+- **Chhote, tez clips:** ≤1080p aur bitrate limit — 18 sec ≈ 10–15 MB (upload + play fast).
+- Website URL / match id na ho to upload attempts barbaad nahi hote (30 sec me dobara check).
 
 **v4 me kya badla (10–12 clips ke baad clips miss hona / "fetching" error / restart ki zaroorat — root cause fix):**
 - **HIGHLIGHTS button:** ball khelte hi panel me **🎬 HIGHLIGHTS** (ya keyboard `H`) dabao.

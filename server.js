@@ -718,6 +718,12 @@ async function finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMe
         const link = await computeClipLinkage(matchId, ballMeta, uid);
         const { linkedToCanonicalBall, ...linkFields } = link;
         const isHighlightButtonClip = eventType === 'HIGHLIGHT';
+        // A re-send of a clip the website already has (the helper retries when
+        // an acknowledgement got lost) must not re-upload a leg that already
+        // succeeded — Drive would get a second copy of the file.
+        const prior = await clipsCollection.findOne({ clipId }, { projection: { r2Status: 1, driveStatus: 1 } }).catch(() => null);
+        const legR2 = prior && prior.r2Status === 'uploaded' ? 'uploaded' : 'pending';
+        const legDrive = prior && prior.driveStatus === 'uploaded' ? 'uploaded' : 'pending';
         await clipsCollection.updateOne(
             { clipId },
             {
@@ -743,7 +749,7 @@ async function finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMe
                     // correctly rather than a stale path.
                     filePath: outFile,
                     status: 'LOCAL_RECEIVED',
-                    r2Status: 'pending', driveStatus: 'pending',
+                    r2Status: legR2, driveStatus: legDrive,
                     lastReceivedAt: Date.now(),
                     // A fresh copy (first ingest, or the helper re-sending
                     // after a Render restart wiped the temp disk) gets a
