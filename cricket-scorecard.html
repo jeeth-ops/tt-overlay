@@ -3344,7 +3344,7 @@ function renderCommentary(s){
   document.getElementById('commentary-feed').querySelectorAll('.cm-replay-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      openVideoModal(btn.dataset.clipId, btn.dataset.title);
+      openVideoModal(btn.dataset.clipId, btn.dataset.title, btn.dataset.playbackUrl, btn.dataset.posterUrl);
     });
   });
 }
@@ -3472,7 +3472,7 @@ function commentaryClipState(b, inn, ovNum, ballNum, isLive){
 }
 function clipReplayHtml(info, title){
   if(!info) return '';
-  if(info.state === 'ready') return `<button type="button" class="cm-replay-btn cm-replay-ready" data-clip-id="${escapeHtml(info.clip.clipId)}" data-title="${escapeHtml(title || '')}">${PLAY_ICON}<span>WATCH REPLAY</span></button>`;
+  if(info.state === 'ready') return `<button type="button" class="cm-replay-btn cm-replay-ready" data-clip-id="${escapeHtml(info.clip.clipId)}" data-title="${escapeHtml(title || '')}" data-playback-url="${escapeHtml(info.clip.playbackUrl || '')}" data-poster-url="${escapeHtml(info.clip.posterUrl || '')}">${PLAY_ICON}<span>WATCH REPLAY</span></button>`;
   if(info.state === 'processing') return `<div class="cm-replay-status cm-replay-pending">⏳ Replay processing...</div>`;
   if(info.state === 'failed') return `<div class="cm-replay-status cm-replay-failed">⚠️ Replay unavailable</div>`;
   return `<div class="cm-replay-status cm-replay-pending">⏳ Replay preparing...</div>`;
@@ -3773,7 +3773,7 @@ function renderCommentaryPage(s){
   body.querySelectorAll('.cm-replay-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      openVideoModal(btn.dataset.clipId, btn.dataset.title);
+      openVideoModal(btn.dataset.clipId, btn.dataset.title, btn.dataset.playbackUrl, btn.dataset.posterUrl);
     });
   });
 
@@ -4790,7 +4790,8 @@ function vmLoadSource(myToken){
   vmEl('vm-load-sub').textContent = '';
   clearTimeout(vmSlowTimer);
   vmSlowTimer = setTimeout(() => { if(myToken === vmLoadToken) vmEl('vm-load-sub').textContent = 'Slow connection — still loading…'; }, 6000);
-  if(v.getAttribute('src') !== src){ v.src = src; v.load(); }
+  v.preload = 'auto';
+  if(v.getAttribute('src') !== src || v.error){ v.src = src; v.load(); } // v.error: a primed load that failed — start clean
   else if(v.readyState >= 2){ vmOnReady(myToken); }
   const p = v.play();
   if(p && p.catch) p.catch(() => {}); // autoplay may be blocked; the controls still work
@@ -4835,6 +4836,52 @@ function vmOnError(myToken){
     vmLoadSource(vmLoadToken);
   });
 })();
+// ⚡ First-open speed. (a) Open the connection to the clip CDN as soon as the
+// page knows any clip URL, so the first tap doesn't pay DNS + TLS setup.
+// (b) Start loading a clip the moment a finger/mouse presses (or hovers) its
+// button — ~100–300 ms before the click fires — into the same <video> the
+// modal then shows, so the open reuses that request instead of starting one.
+const vmPreconnected = new Set();
+function vmPreconnect(url){
+  try {
+    const origin = new URL(url, location.href).origin;
+    if(origin === location.origin || vmPreconnected.has(origin)) return;
+    vmPreconnected.add(origin);
+    ['preconnect', 'dns-prefetch'].forEach(rel => {
+      const l = document.createElement('link'); l.rel = rel; l.href = origin; if(rel === 'preconnect') l.crossOrigin = '';
+      document.head.appendChild(l);
+    });
+  } catch(e){}
+}
+function vmPrime(clipId, playbackUrl){
+  if(!clipId || vmEl('video-modal-backdrop').classList.contains('open')) return;
+  const src = playbackUrl || `${clipApiBase()}/api/clips/${encodeURIComponent(clipId)}/watch`;
+  const v = vmVideo();
+  if(v.getAttribute('src') === src) return;
+  clearTimeout(vmCleanupTimer);
+  v.preload = 'metadata'; // connection + header + index only — never the whole clip for a tap that becomes a scroll
+  v.src = src; v.load();
+}
+function vmPrimeFromEvent(e){
+  const el = e.target.closest && e.target.closest('[data-clip-id]');
+  if(!el || el.disabled) return;
+  const row = el.closest('.clip-row') || el;
+  vmPrime(el.dataset.clipId || row.dataset.clipId, el.dataset.playbackUrl || row.dataset.playbackUrl);
+}
+document.addEventListener('pointerdown', vmPrimeFromEvent, { passive: true });
+let vmHoverTimer = null;
+document.addEventListener('mouseover', (e) => {
+  clearTimeout(vmHoverTimer);
+  if(!(e.target.closest && e.target.closest('[data-clip-id]'))) return;
+  vmHoverTimer = setTimeout(() => vmPrimeFromEvent(e), 180); // a deliberate hover, not a pass-over
+}, { passive: true });
+// Preconnect once clips render (rows and replay buttons carry data-playback-url).
+const vmPreconnectObserver = new MutationObserver(() => {
+  const el = document.querySelector('[data-playback-url]:not([data-playback-url=""])');
+  if(el){ vmPreconnect(el.dataset.playbackUrl); vmPreconnectObserver.disconnect(); }
+});
+vmPreconnectObserver.observe(document.body, { childList: true, subtree: true });
+
 async function openVideoModal(clipId, title, playbackUrl, posterUrl){
   clearTimeout(vmCleanupTimer);
   const myToken = ++vmLoadToken;
