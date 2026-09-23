@@ -463,6 +463,8 @@
 
   /* --- logo uploader --- */
   .logo-row{ display:flex; align-items:center; gap:10px; margin-top:6px; }
+  .lm-resume{ flex:none; padding:5px 10px; white-space:nowrap; }
+  .lm-onpanel{ flex:none; font-size:10.5px; font-weight:700; color:var(--green, #22c55e); white-space:nowrap; }
   .logo-preview{
     width:44px; height:44px; border-radius:50%; flex:none;
     background:var(--panel-2) center/70% no-repeat; border:1px solid var(--border);
@@ -1211,43 +1213,6 @@
           <button class="small" id="save-drive-folder-btn">Save</button>
         </div>
         <div id="drive-folder-status" style="font-size:11px; opacity:.6; margin-top:4px;"></div>
-      </div>
-    </div>
-
-    <div class="card" id="card-live-youtube">
-      <h2>📺 Go Live to YouTube (Browser Only)</h2>
-      <div style="font-size:12px; opacity:.75; margin-bottom:10px; line-height:1.5;">
-        Streams straight from this browser to YouTube using your HDMI capture card — no OBS, no vMix, nothing installed on this PC.
-      </div>
-
-      <label style="font-size:12px; opacity:.8; display:block; margin-bottom:4px;">YouTube Stream Key</label>
-      <div class="link-row" style="margin-bottom:10px;">
-        <input type="password" id="yt-stream-key" placeholder="YouTube Studio → Go Live → Stream key">
-        <button class="small" id="toggle-yt-key-visibility">👁</button>
-      </div>
-
-      <label style="font-size:12px; opacity:.8; display:block; margin-bottom:4px;">Camera (capture card video)</label>
-      <select id="live-video-device" class="full" style="margin-bottom:8px;"></select>
-
-      <label style="font-size:12px; opacity:.8; display:block; margin-bottom:4px;">Audio (capture card audio)</label>
-      <select id="live-audio-device" class="full" style="margin-bottom:10px;"></select>
-
-      <button class="full small ghost" id="refresh-live-devices-btn" style="margin-bottom:10px;">🔄 Refresh Camera List</button>
-
-      <button class="full small primary" id="open-live-output-btn">🖥️ Open Live Output Window</button>
-      <div style="font-size:11px; opacity:.6; margin:6px 0 10px;">
-        Opens a small window showing your camera + overlay combined. Leave it open anywhere on screen — it doesn't need to face the crowd, it's just what gets sent to YouTube.
-      </div>
-
-      <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-        <div class="dot" id="live-dot"></div>
-        <span id="live-status" style="font-size:13px; opacity:.8;">Offline</span>
-      </div>
-      <button class="full small primary" id="start-live-btn">🔴 Go Live</button>
-      <button class="full small ghost" id="stop-live-btn" style="margin-top:6px; display:none;">⏹ End Live</button>
-
-      <div style="font-size:11px; opacity:.6; margin-top:8px;">
-        First time you click "Go Live", Chrome will ask which window/tab to share — pick the <b>Live Output</b> window that just opened. You don't need to share tab audio; audio comes straight from the capture card.
       </div>
     </div>
 
@@ -2243,174 +2208,6 @@ function updateRecordingUI(active){
 
 document.getElementById('start-recording-btn').addEventListener('click', startRecording);
 document.getElementById('stop-recording-btn').addEventListener('click', stopRecording);
-
-/* ============================================================
-   📺 DIRECT-TO-YOUTUBE LIVE STREAMING — no OBS/vMix, nothing
-   installed on this PC. This tab captures the "Live Output" popup
-   window (camera + overlay already composited there) via
-   getDisplayMedia, mixes in real audio straight from the capture
-   card, and ships webm chunks to this server, which pipes them into
-   ffmpeg → YouTube RTMP. Everything happens inside the browser.
-   ============================================================ */
-let liveOutputWindow = null;
-let liveDisplayStream = null;   // pixels of the Live Output window
-let liveAudioStream = null;     // real capture-card audio
-let liveRecorder = null;
-let liveActive = false;
-
-async function populateLiveDevices(){
-  try {
-    // One throwaway getUserMedia call so device labels aren't blank —
-    // browsers hide labels until permission has been granted once.
-    const tmp = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    tmp.getTracks().forEach(t => t.stop());
-  } catch(e) { /* denied is fine — dropdown just shows unlabeled devices */ }
-
-  const devices = await navigator.mediaDevices.enumerateDevices();
-  const videoSel = document.getElementById('live-video-device');
-  const audioSel = document.getElementById('live-audio-device');
-  const prevVideo = videoSel.value, prevAudio = audioSel.value;
-  videoSel.innerHTML = ''; audioSel.innerHTML = '';
-
-  devices.filter(d => d.kind === 'videoinput').forEach((d,i) => {
-    const opt = document.createElement('option');
-    opt.value = d.deviceId; opt.textContent = d.label || `Camera ${i+1}`;
-    videoSel.appendChild(opt);
-  });
-  devices.filter(d => d.kind === 'audioinput').forEach((d,i) => {
-    const opt = document.createElement('option');
-    opt.value = d.deviceId; opt.textContent = d.label || `Mic ${i+1}`;
-    audioSel.appendChild(opt);
-  });
-  if(prevVideo) videoSel.value = prevVideo;
-  if(prevAudio) audioSel.value = prevAudio;
-}
-document.getElementById('refresh-live-devices-btn').addEventListener('click', populateLiveDevices);
-populateLiveDevices();
-
-document.getElementById('toggle-yt-key-visibility').addEventListener('click', () => {
-  const el = document.getElementById('yt-stream-key');
-  el.type = el.type === 'password' ? 'text' : 'password';
-});
-
-function openLiveOutputWindow(){
-  const matchId = currentMatchId();
-  if(!matchId){ toast('Enter a Match ID and Connect first'); return; }
-  const videoDeviceId = document.getElementById('live-video-device').value;
-  if(!videoDeviceId){ toast('No camera found — plug in the capture card and click "Refresh Camera List"'); return; }
-
-  const url = `${location.origin}/live-output.html?room=${encodeURIComponent(matchId)}&video=${encodeURIComponent(videoDeviceId)}`;
-  liveOutputWindow = window.open(url, 'liveOutputWindow', 'width=1280,height=740');
-  toast('Live Output window opened — keep it open, then click "Go Live"');
-}
-document.getElementById('open-live-output-btn').addEventListener('click', openLiveOutputWindow);
-
-async function startLive(){
-  const matchId = currentMatchId();
-  if(!matchId){ toast('Enter a Match ID and Connect first'); return; }
-  const streamKey = document.getElementById('yt-stream-key').value.trim();
-  if(!streamKey){ toast('Paste your YouTube stream key first'); return; }
-  if(!liveOutputWindow || liveOutputWindow.closed){ toast('Open the Live Output window first'); return; }
-
-  const audioDeviceId = document.getElementById('live-audio-device').value;
-
-  try {
-    // Real audio straight from the capture card — cleaner than
-    // capturing whatever the Live Output tab happens to play back.
-    liveAudioStream = await navigator.mediaDevices.getUserMedia({
-      audio: audioDeviceId ? { deviceId: { exact: audioDeviceId } } : true
-    });
-  } catch(e) {
-    toast('⚠️ Could not get audio from the capture card: ' + e.message);
-    return;
-  }
-
-  try {
-    // Captures exactly what's rendered in the Live Output window —
-    // camera + overlay, already composited there.
-    liveDisplayStream = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: 30 },
-      audio: false,
-      preferCurrentTab: false,
-      selfBrowserSurface: 'exclude'
-    });
-  } catch(e) {
-    toast('⚠️ Screen-share was cancelled — pick the "Live Output" window when Chrome asks.');
-    liveAudioStream.getTracks().forEach(t => t.stop());
-    return;
-  }
-
-  const combined = new MediaStream([
-    ...liveDisplayStream.getVideoTracks(),
-    ...liveAudioStream.getAudioTracks()
-  ]);
-
-  const startRes = await fetch('/api/live/start', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ matchId, streamKey })
-  }).then(r => r.json()).catch(() => ({ success:false }));
-
-  if(!startRes.success){
-    toast('⚠️ Could not start the YouTube stream: ' + (startRes.error || 'unknown error'));
-    combined.getTracks().forEach(t => t.stop());
-    return;
-  }
-
-  let liveChunkIndex = 0;
-  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=h264,opus')
-    ? 'video/webm;codecs=h264,opus'
-    : 'video/webm;codecs=vp8,opus';
-
-  liveRecorder = new MediaRecorder(combined, { mimeType, videoBitsPerSecond: 4_500_000 });
-  liveRecorder.ondataavailable = async (e) => {
-    if(!e.data || e.data.size === 0) return;
-    const idx = liveChunkIndex++;
-    try {
-      await fetch(`/api/live/chunk?matchId=${encodeURIComponent(matchId)}&index=${idx}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/octet-stream' },
-        body: e.data
-      });
-    } catch(err) { /* one dropped chunk = a brief stutter on YouTube, not a crash */ }
-  };
-  liveRecorder.onstop = () => { combined.getTracks().forEach(t => t.stop()); };
-
-  // If the operator closes the Live Output window, or ends sharing
-  // from Chrome's own "Stop sharing" bar, treat it like "End Live".
-  liveDisplayStream.getVideoTracks()[0].addEventListener('ended', () => { if(liveActive) stopLive(); });
-
-  liveRecorder.start(1000); // 1s chunks — good balance of latency vs overhead
-  liveActive = true;
-  updateLiveUI(true);
-  toast('🔴 Going live on YouTube…');
-}
-
-async function stopLive(){
-  liveActive = false;
-  updateLiveUI(false);
-  if(liveRecorder && liveRecorder.state !== 'inactive') liveRecorder.stop();
-  if(liveDisplayStream) liveDisplayStream.getTracks().forEach(t => t.stop());
-  if(liveAudioStream) liveAudioStream.getTracks().forEach(t => t.stop());
-
-  const matchId = currentMatchId();
-  await fetch('/api/live/stop', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ matchId })
-  }).catch(() => {});
-  toast('Live stream ended');
-}
-
-function updateLiveUI(active){
-  document.getElementById('live-dot').classList.toggle('on', active);
-  document.getElementById('live-status').textContent = active ? 'LIVE on YouTube' : 'Offline';
-  document.getElementById('start-live-btn').style.display = active ? 'none' : 'block';
-  document.getElementById('stop-live-btn').style.display = active ? 'block' : 'none';
-}
-
-document.getElementById('start-live-btn').addEventListener('click', startLive);
-document.getElementById('stop-live-btn').addEventListener('click', stopLive);
 
 /* Drive folder link — saved once per match, server resolves the folder
    ID and remembers it so every clip cut afterwards uploads there
@@ -5408,26 +5205,135 @@ function renderSingleMatchesList(matches){
       : m.winningTeam === 'B' ? `${m.teamB.short || m.teamB.name} won`
       : 'In progress';
     return `<div class="league-match-row" data-view-match="${escapeHtmlPanel(m.matchId)}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:11.5px;cursor:pointer;">
-      <div style="min-width:0;">
+      <div style="min-width:0;flex:1;">
         <div style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtmlPanel(m.teamA.short || m.teamA.name)} vs ${escapeHtmlPanel(m.teamB.short || m.teamB.name)}</div>
         <div style="color:var(--text-dim);">${escapeHtmlPanel(resultText)} · ${m.scoreA.runs}-${m.scoreA.wickets} / ${m.scoreB.runs}-${m.scoreB.wickets}</div>
       </div>
+      ${matchResumeHtml(m)}
       <button type="button" class="small ghost" data-delete-single-match="${escapeHtmlPanel(m.matchId)}" style="flex:none;">🗑</button>
     </div>`;
   }).join('');
   listEl.querySelectorAll('.league-match-row').forEach(row => {
     row.addEventListener('click', (e) => {
-      if(e.target.closest('[data-delete-single-match]')) return;
+      if(e.target.closest('[data-delete-single-match], [data-resume-match]')) return;
       const rec = matches.find(x => x.matchId === row.getAttribute('data-view-match'));
       if(rec) openScorecardModal(rec);
     });
   });
+  wireResumeButtons(listEl, matches);
   listEl.querySelectorAll('[data-delete-single-match]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       if(confirm('Remove this match from your single-match history?')) deleteMatchFromSingleHistory(btn.getAttribute('data-delete-single-match'));
     });
   });
+}
+
+/* ============================================================
+   ▶ RESUME A SAVED MATCH — loads that match's full panel state (teams,
+   squads, logos, score, batters, bowler, ball log, clips room) back onto
+   the panel. Every match lives in its own live room (the Match ID), whose
+   full state the server keeps, so the switch is: save the current match,
+   leave its room, load the other room's state, join that room. The two
+   matches never share a room, so nothing from one leaks into the other.
+   ============================================================ */
+function isMatchOnPanel(m){
+  return !!(m && m.matchId && m.matchId === state.tournamentMatchId && (!m.roomId || m.roomId === currentMatchId()));
+}
+function matchResumeHtml(m){
+  if(isMatchOnPanel(m)) return `<span class="lm-onpanel">● On panel</span>`;
+  if(!m.roomId) return '';
+  const label = m.winningTeam ? '📂 Open' : '▶ Resume';
+  return `<button type="button" class="small primary lm-resume" data-resume-match="${escapeHtmlPanel(m.matchId)}">${label}</button>`;
+}
+function wireResumeButtons(listEl, matches){
+  listEl.querySelectorAll('[data-resume-match]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const rec = matches.find(x => x.matchId === btn.getAttribute('data-resume-match'));
+      if(rec) resumeSavedMatch(rec, btn);
+    });
+  });
+}
+function matchLabelForToast(st){
+  const a = (st.teamA && (st.teamA.short || st.teamA.name)) || 'Team A';
+  const b = (st.teamB && (st.teamB.short || st.teamB.name)) || 'Team B';
+  return `${a} vs ${b}`;
+}
+let resumeInFlight = false;
+async function resumeSavedMatch(rec, btn){
+  if(resumeInFlight) return;
+  if(isMatchOnPanel(rec)){ toast('This match is already on the panel'); return; }
+  if(!rec.roomId){ toast('⚠️ This match was saved before Resume existed — its live data is not available'); return; }
+  const target = matchLabelForToast(rec);
+  const hasCurrent = (state.ballLog || []).length > 0;
+  if(!confirm(`Switch the panel to ${target}?${hasCurrent ? `\n\nThe current match (${matchLabelForToast(state)}) is saved first and can be resumed later.` : ''}\n\nThe Match ID changes to this match's own ID — Overlay/Scorecard links change with it.`)) return;
+
+  resumeInFlight = true;
+  const oldText = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = 'Loading…'; }
+  let loaded = null;
+  try {
+    const res = await fetch(`/api/cricket/room-state/${encodeURIComponent(rec.roomId)}`, { signal: AbortSignal.timeout(10000) });
+    const data = await res.json().catch(() => null);
+    if(res.ok && data && data.success) loaded = data.state;
+    else if(res.status === 404) toast('⚠️ No saved live data found for this match');
+    else toast('⚠️ Could not load this match — try again');
+  } catch(e){ toast('⚠️ Could not load this match — check the connection'); }
+  resumeInFlight = false;
+  if(btn){ btn.disabled = false; btn.textContent = oldText; }
+  if(!loaded) return; // nothing on the panel has changed
+
+  // The room must really hold THIS match — refuse anything else rather
+  // than load the wrong match's score.
+  if(loaded.tournamentMatchId && loaded.tournamentMatchId !== rec.matchId){
+    toast('⚠️ This match\'s room now holds a different match — cannot resume it safely', 6000);
+    return;
+  }
+
+  // 1) Park the current match: save its record and send its latest state to
+  //    its own room, then leave that room.
+  if(hasCurrent){
+    if(state.matchMode === 'tournament' && (state.leagueName || '').trim()) saveMatchToLeague(true);
+    else saveMatchToSingleHistory(true);
+  }
+  clearTimeout(pushTimer);
+  if(socket && socket.connected && !isAwaitingNextInnings()) socket.emit('updateCricketScore', state);
+  if(socket){ try{ socket.disconnect(); }catch(e){} socket = null; }
+
+  // 2) Load the saved match. Per-match working data (undo stack, pending
+  //    HIGHLIGHTS presses, milestone log) belongs to the old match — clear it.
+  const keepLeague = (state.leagueName || '').trim();
+  state = mergeWithDefaults(loaded);
+  state.tournamentMatchId = rec.matchId;
+  if(!state.matchMode) state.matchMode = keepLeague ? 'tournament' : 'single';
+  if(state.matchMode === 'tournament' && !(state.leagueName || '').trim()) state.leagueName = keepLeague;
+  history = [];
+  saveHistoryLocal();
+  lastBroadcastState = null;
+  pendingHighlights.forEach(h => sendClipClassification({ clipId: h.clipId, matchId: h.matchId, eventTimestamp: h.t0, isHighlight: false, eventType: 'CLIP', outcomeLabel: 'Not linked to a ball', ballMeta: null }));
+  pendingHighlights = [];
+  renderPendingHighlights();
+  lastAutoWicketClip = null;
+  document.getElementById('milestone-log').innerHTML = '<div>No events yet.</div>';
+
+  // 3) Point the panel at the match's own room and redraw everything.
+  const matchIdField = document.getElementById('match-id');
+  matchIdField.value = rec.roomId;
+  try{ localStorage.setItem('cricket-match-id', rec.roomId); }catch(e){}
+  updateShareLinks(rec.roomId);
+  document.getElementById('league-name').value = state.leagueName || '';
+  if(state.leagueName) document.getElementById('tournament-select').value = state.leagueName;
+  applyMatchModeUI(state.matchMode);
+  saveLocal();
+  renderPanel();
+  renderSquadUI();
+  updateBallButtonsState();
+  refreshLeagueUI();
+  connect();
+
+  const sc = state.score || {};
+  toast(`▶️ Resumed ${matchLabelForToast(state)} — ${sc.runs || 0}-${sc.wickets || 0} (${fmtOvers(sc.overs || 0, sc.balls || 0)}). Match ID is now ${rec.roomId} — update the overlay link in vMix/OBS.`, 8000);
 }
 
 function deleteMatchFromLeague(matchId){
@@ -5573,20 +5479,22 @@ function renderLeagueMatchesList(matches){
       : m.winningTeam === 'B' ? `${m.teamB.short || m.teamB.name} won`
       : 'In progress';
     return `<div class="league-match-row" data-view-match="${escapeHtmlPanel(m.matchId)}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:11.5px;cursor:pointer;">
-      <div style="min-width:0;">
+      <div style="min-width:0;flex:1;">
         <div style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtmlPanel(m.teamA.short || m.teamA.name)} vs ${escapeHtmlPanel(m.teamB.short || m.teamB.name)}</div>
         <div style="color:var(--text-dim);">${escapeHtmlPanel(resultText)} · ${m.scoreA.runs}-${m.scoreA.wickets} / ${m.scoreB.runs}-${m.scoreB.wickets}</div>
       </div>
+      ${matchResumeHtml(m)}
       <button type="button" class="small ghost" data-delete-match="${escapeHtmlPanel(m.matchId)}" style="flex:none;">🗑</button>
     </div>`;
   }).join('');
   listEl.querySelectorAll('.league-match-row').forEach(row => {
     row.addEventListener('click', (e) => {
-      if(e.target.closest('[data-delete-match]')) return;
+      if(e.target.closest('[data-delete-match], [data-resume-match]')) return;
       const rec = matches.find(x => x.matchId === row.getAttribute('data-view-match'));
       if(rec) openScorecardModal(rec);
     });
   });
+  wireResumeButtons(listEl, matches);
   listEl.querySelectorAll('[data-delete-match]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();

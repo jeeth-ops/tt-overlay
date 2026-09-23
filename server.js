@@ -1355,6 +1355,26 @@ async function getLeagueMatches(ownerUid, leagueKey) {
 // the "✏️ Edit Scorecard (Delete a Ball)" tool — that ability is meant for
 // chhayajeeth@gmail.com only, so the panel checks here rather than trusting
 // a client-side flag it could just as easily lie to itself about.
+// GET /api/cricket/room-state/:roomId — the full saved panel state of one
+// live match room (the same thing the overlay receives on join). The panel's
+// "Resume" uses it to switch back to an earlier match without mixing it
+// with the one currently loaded.
+app.get('/api/cricket/room-state/:roomId', async (req, res) => {
+    const roomId = String(req.params.roomId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!roomId || roomId === 'default') return res.status(400).json({ success: false, error: 'roomId required' });
+    try {
+        const roomState = await getRoomState(`room-${roomId}`);
+        const cs = roomState && roomState.cricketState;
+        // A room that never had a panel in it only holds the server's
+        // overlay defaults — no ball log / batting card.
+        if (!cs || !cs.battingCard || !Array.isArray(cs.ballLog)) return res.status(404).json({ success: false, error: 'No saved match in this room' });
+        res.json({ success: true, roomId, state: cs });
+    } catch (err) {
+        console.log('Room state fetch error:', err.message || err);
+        res.status(500).json({ success: false, error: 'Could not load match' });
+    }
+});
+
 app.get('/api/whoami', async (req, res) => {
     const uid = ownerUidFrom(req);
     if (!uid) return res.json({ success: true, email: null });
