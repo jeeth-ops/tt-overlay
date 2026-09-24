@@ -413,20 +413,43 @@ async function uploadClipToDrive(clipId, matchId, filePath) {
     }
 
     const fileName = buildClipFileName(clipId);
+
+    // 🩹 Self-heal: if a PREVIOUS attempt actually created this file in Drive
+    // but this function still returned false (e.g. the exact write-after-
+    // upload race fixed below, before this fix existed), don't upload a
+    // second copy — find the one that's already there and adopt it. Safe
+    // and cheap: drive.file scope can list files this app itself created.
     try {
-        const uploadRes = await uploadClient.files.create({
+        const existingFile = await uploadClient.files.list({
+            q: `name = '${fileName.replace(/'/g, "\\'")}' and '${folderId}' in parents and trashed = false`,
+            fields: 'files(id, webViewLink)',
+            pageSize: 1
+        });
+        const found = existingFile.data && existingFile.data.files && existingFile.data.files[0];
+        if (found) {
+            if (clipsCollection) {
+                await clipsCollection.updateOne(
+                    { clipId },
+                    { $set: { driveStatus: 'uploaded', driveFileId: found.id, driveUrl: found.webViewLink, driveUploadedAt: Date.now() }, $unset: { driveError: '' } }
+                ).catch(() => {});
+            }
+            console.log(`☁️  Drive already has ${fileName} (from an earlier attempt) — reusing it instead of uploading again`);
+            return true;
+        }
+    } catch (err) {
+        // Lookup failing is not fatal — just fall through to a normal upload.
+    }
+
+    // Step 1: the upload itself. Only a failure HERE means Drive doesn't
+    // have the file — anything after this point must never be allowed to
+    // turn a real success back into a reported failure.
+    let uploadRes;
+    try {
+        uploadRes = await uploadClient.files.create({
             requestBody: { name: fileName, parents: [folderId] },
             media: { mimeType: 'video/mp4', body: fs.createReadStream(filePath) },
             fields: 'id, webViewLink'
         });
-        if (clipsCollection) {
-            await clipsCollection.updateOne(
-                { clipId },
-                { $set: { driveStatus: 'uploaded', driveFileId: uploadRes.data.id, driveUrl: uploadRes.data.webViewLink, driveUploadedAt: Date.now() }, $unset: { driveError: '' } }
-            );
-        }
-        console.log(`☁️  Uploaded to Drive: ${fileName}`);
-        return true;
     } catch (err) {
         console.log(`Drive upload error (${fileName}):`, err.message || err);
         if (clipsCollection) {
@@ -434,6 +457,30 @@ async function uploadClipToDrive(clipId, matchId, filePath) {
         }
         return false;
     }
+    console.log(`☁️  Uploaded to Drive: ${fileName}`);
+
+    // Step 2: record it. The file is genuinely in Drive now — a transient
+    // Mongo hiccup here must NEVER be reported as an upload failure (that
+    // used to make the retry sweep upload a DUPLICATE copy of the exact
+    // same clip on its next pass, and kept the "tick" from ever showing
+    // even though the clip was already safely on Drive). Retry the write
+    // a few times instead; if it still doesn't stick, the self-heal lookup
+    // above will find this file next time round rather than re-uploading.
+    if (clipsCollection) {
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+                await clipsCollection.updateOne(
+                    { clipId },
+                    { $set: { driveStatus: 'uploaded', driveFileId: uploadRes.data.id, driveUrl: uploadRes.data.webViewLink, driveUploadedAt: Date.now() }, $unset: { driveError: '' } }
+                );
+                break;
+            } catch (err) {
+                console.log(`Drive status write for ${clipId} failed (attempt ${attempt}/3):`, err.message || err);
+                if (attempt < 3) await new Promise((r) => setTimeout(r, 400 * attempt));
+            }
+        }
+    }
+    return true;
 }
 
 // Uploads a clip to Cloudflare R2 (same shape as uploadClipToDrive above)
@@ -467,6 +514,13 @@ async function uploadClipToR2(clipId, matchId, filePath) {
 
     const key = `matches/${matchId}/clips/${clipId}.mp4`;
 
+    // Step 1: the upload itself. Only a failure HERE means R2 doesn't have
+    // the bytes — anything after this point must never turn a real success
+    // back into a reported failure (see the matching fix in
+    // uploadClipToDrive above for the exact bug this avoids: a transient
+    // Mongo hiccup right after a real upload was making the clip retry
+    // forever and never show as done, even though the object already
+    // existed in R2 the whole time).
     try {
         // Reading the whole clip into a Buffer (clips are only a few MB —
         // well within memory limits) instead of streaming it lets the SDK
@@ -485,16 +539,6 @@ async function uploadClipToR2(clipId, matchId, filePath) {
             // edge keep them for a year instead of revalidating / re-fetching from R2 every view.
             CacheControl: clipMedia.CLIP_CACHE_CONTROL
         }));
-
-        const publicUrl = R2_PUBLIC_URL ? `${R2_PUBLIC_URL}/${key}` : null;
-        if (clipsCollection) {
-            await clipsCollection.updateOne(
-                { clipId },
-                { $set: { r2Status: 'uploaded', r2Key: key, r2Url: publicUrl, r2UploadedAt: Date.now() }, $unset: { r2Error: '' } }
-            );
-        }
-        console.log(`☁️  Uploaded to R2: ${key}`);
-        return true;
     } catch (err) {
         console.log(`R2 upload error (${key}):`, err.message || err);
         if (clipsCollection) {
@@ -502,6 +546,29 @@ async function uploadClipToR2(clipId, matchId, filePath) {
         }
         return false;
     }
+    console.log(`☁️  Uploaded to R2: ${key}`);
+
+    // Step 2: record it. Retry the write a few times rather than ever
+    // reporting this leg as failed once the bytes are genuinely in R2 —
+    // the deterministic key means a later retry (from a stale status)
+    // simply overwrites the same object, so this can never create a
+    // duplicate the way a Drive miss used to.
+    const publicUrl = R2_PUBLIC_URL ? `${R2_PUBLIC_URL}/${key}` : null;
+    if (clipsCollection) {
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+                await clipsCollection.updateOne(
+                    { clipId },
+                    { $set: { r2Status: 'uploaded', r2Key: key, r2Url: publicUrl, r2UploadedAt: Date.now() }, $unset: { r2Error: '' } }
+                );
+                break;
+            } catch (err) {
+                console.log(`R2 status write for ${clipId} failed (attempt ${attempt}/3):`, err.message || err);
+                if (attempt < 3) await new Promise((r) => setTimeout(r, 400 * attempt));
+            }
+        }
+    }
+    return true;
 }
 
 // Poster JPEG for the <video poster> (best-effort: a failure here never affects the clip itself).
