@@ -945,15 +945,21 @@ app.post('/recording-stop', (req, res) => {
 app.post('/set-folder', (req, res) => {
   const { folderId, folderName } = req.body || {};
   if (folderId) {
-    const changed = session.driveFolderId !== folderId;
+    const sameFolderAsBefore = session.driveFolderId === folderId;
     session.driveFolderId = folderId;
     session.driveFolderName = folderName || session.driveFolderName || 'Selected folder';
     saveSession();
-    // Announced in this window the same way the recording session is, so
-    // the operator can SEE Drive is connected here and not only in the
-    // browser panel. A silent refresh of the same folder (the panel
-    // re-sends a fresh Google token every 45 min) isn't re-announced.
-    if (changed) console.log(`📁 Google Drive connected — clips upload to "${session.driveFolderName}"`);
+    // Always announced in this window, the same way the recording session
+    // is, so the operator can SEE Drive is live here and not only in the
+    // browser panel. Reconnecting the SAME folder must still say something:
+    // helper-state.json remembers the last folder across restarts, so the
+    // usual case (operator reconnects the folder they always use) would
+    // otherwise print nothing at all — exactly when they're looking for
+    // confirmation. The panel also re-sends a fresh Google token every
+    // 45 min, which lands here too and is worth seeing as a liveness tick.
+    console.log(sameFolderAsBefore
+      ? `📁 Google Drive re-connected (fresh token) — clips upload to "${session.driveFolderName}"`
+      : `📁 Google Drive connected — clips upload to "${session.driveFolderName}"`);
   }
   res.json({ success: true });
 });
@@ -1049,7 +1055,7 @@ setInterval(() => {
 
 const server = app.listen(config.port, () => {
   console.log('================================================');
-  console.log(`🎥 Clipper Helper v4.2 running at http://localhost:${config.port}`);
+  console.log(`🎥 Clipper Helper v4.3 running at http://localhost:${config.port}`);
   console.log(`👉 Setup page: http://localhost:${config.port}/setup`);
   console.log(`Using ffmpeg: ${ffmpegPath}`);
   console.log(`Clip window: ${PRE_ROLL_SECONDS}s before + ${POST_ROLL_SECONDS}s after the press = ${CLIP_SECONDS}s`);
