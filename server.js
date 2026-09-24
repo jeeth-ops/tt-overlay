@@ -377,10 +377,15 @@ function buildClipFileName(clipId) {
 // (e.g. the retry sweep and an in-flight finalizeClip() raced), this
 // returns true immediately without uploading a second copy.
 async function uploadClipToDrive(clipId, matchId, filePath) {
+    // 'failed' here means a previous attempt already ran for this clip —
+    // the only case where Drive might already be holding a copy we don't
+    // know about, and so the only case worth paying for the lookup below.
+    let priorDriveStatus = null;
     if (clipsCollection) {
         try {
             const existing = await clipsCollection.findOne({ clipId }, { projection: { driveStatus: 1 } });
             if (existing && existing.driveStatus === 'uploaded') return true;
+            priorDriveStatus = existing ? existing.driveStatus || null : null;
         } catch (err) { /* fall through and attempt the upload anyway */ }
     }
 
@@ -414,12 +419,13 @@ async function uploadClipToDrive(clipId, matchId, filePath) {
 
     const fileName = buildClipFileName(clipId);
 
-    // 🩹 Self-heal: if a PREVIOUS attempt actually created this file in Drive
-    // but this function still returned false (e.g. the exact write-after-
+    // 🩹 Self-heal, on RETRIES ONLY: if a previous attempt actually created
+    // this file in Drive but still reported failure (e.g. the write-after-
     // upload race fixed below, before this fix existed), don't upload a
-    // second copy — find the one that's already there and adopt it. Safe
-    // and cheap: drive.file scope can list files this app itself created.
-    try {
+    // second copy — find the one that's already there and adopt it. Skipped
+    // on a clip's first attempt, where nothing can be there yet and the
+    // extra round-trip would only delay every single upload.
+    if (priorDriveStatus === 'failed') try {
         const existingFile = await uploadClient.files.list({
             q: `name = '${fileName.replace(/'/g, "\\'")}' and '${folderId}' in parents and trashed = false`,
             fields: 'files(id, webViewLink)',
@@ -900,7 +906,7 @@ async function finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMe
 // marked FAILED_PERMANENT (loud, not silent) but its local file is
 // NEVER deleted — it stays recoverable for manual intervention.
 // ================================================================
-const CLIP_RETRY_INTERVAL_MS = 30 * 1000;
+const CLIP_RETRY_INTERVAL_MS = 10 * 1000;
 const CLIP_COPY_MISSING_REASON = 'Local Render-disk copy is missing — cannot retry';
 // Downloads a clip back from R2 into Render's temp folder so a pending
 // Drive upload can finish after a restart. Returns the path, or null.
@@ -923,8 +929,15 @@ async function restoreClipCopyFromR2(doc) {
     }
 }
 const MAX_CLIP_RETRY_ATTEMPTS = 15; // ~ up to a few hours of backoff-spaced attempts across a match
+// Most failures that actually recover (a blipped connection, a moment of
+// Drive/R2 rate-limiting) recover within seconds, so the first few
+// attempts come fast — a clip mid-match shouldn't sit on "retrying" for
+// half a minute before anything is even tried again. It still backs off
+// steeply for the genuinely-broken cases (expired Google token, deleted
+// folder) rather than hammering: ~8s, 14s, 23s, 39s, 1m, 2m, 3m … 15m,
+// which across MAX_CLIP_RETRY_ATTEMPTS still spans a couple of hours.
 function clipRetryBackoffMs(retryCount) {
-    return Math.min(30 * 1000 * Math.pow(1.6, retryCount), 20 * 60 * 1000); // caps at 20 minutes between attempts
+    return Math.min(8 * 1000 * Math.pow(1.7, retryCount), 15 * 60 * 1000);
 }
 async function runClipRetrySweep() {
     if (!clipsCollection) return;
