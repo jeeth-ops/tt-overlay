@@ -1388,6 +1388,85 @@
         .tournaments-empty .te-icon { font-size: 2.2rem; margin-bottom: 12px; opacity: 0.8; }
         .tournaments-empty p { max-width: 320px; margin: 0 auto; line-height: 1.6; }
 
+        /* ===== Owner-only "Manage" control on tournament cards =====
+           Only ever rendered when the signed-in visitor is verified as the
+           owner client-side (a UX convenience) — the real gate is server-side
+           on POST /api/admin/tournaments/:ownerUid/:leagueKey/manage
+           (requireOwner), so even a forged/edited DOM can't call it as
+           anyone else. */
+        .tournament-manage-btn {
+            position: relative; z-index: 3;
+            display: inline-flex; align-items: center; gap: 6px;
+            font-size: 0.72rem; font-weight: 800; letter-spacing: 0.3px;
+            color: var(--text-main); background: var(--surface-1);
+            border: 1px solid var(--border-color); border-radius: 999px;
+            padding: 6px 13px; cursor: pointer;
+            transition: background 0.25s var(--ease), border-color 0.25s var(--ease), transform 0.2s var(--ease-spring);
+        }
+        .tournament-manage-btn:hover { background: rgba(var(--accent-rgb), 0.12); border-color: rgba(var(--accent-rgb), 0.4); color: var(--accent); transform: translateY(-1px); }
+        .tournament-manage-btn:active { transform: scale(0.96); }
+
+        #manage-modal {
+            position: fixed; inset: 0; z-index: 10000;
+            display: flex; align-items: center; justify-content: center;
+            background: var(--overlay-scrim);
+            -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+            padding: 20px; box-sizing: border-box;
+            opacity: 0; pointer-events: none;
+            transition: opacity 0.3s var(--ease);
+        }
+        #manage-modal.open { opacity: 1; pointer-events: auto; }
+        .manage-modal-card {
+            width: 100%; max-width: 380px;
+            background: var(--bg-card); border: 1px solid var(--border-color);
+            border-radius: 20px; padding: 26px 26px 22px;
+            box-shadow: 0 24px 60px rgba(var(--shadow-rgb), 0.55);
+            transform: scale(0.94) translateY(10px);
+            transition: transform 0.35s var(--ease-spring);
+        }
+        #manage-modal.open .manage-modal-card { transform: scale(1) translateY(0); }
+        .manage-modal-header { margin-bottom: 4px; }
+        .manage-modal-header h3 { font-size: 1.15rem; font-weight: 800; margin: 0 0 4px; }
+        .manage-modal-header p { font-size: 0.82rem; color: var(--text-muted); margin: 0; line-height: 1.5; }
+        .manage-modal-section { margin-top: 20px; }
+        .manage-modal-section-label {
+            font-size: 0.72rem; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase;
+            color: var(--text-muted); margin-bottom: 10px; display: block;
+        }
+        .manage-option-group { display: flex; flex-direction: column; gap: 8px; }
+        .manage-option {
+            display: flex; align-items: center; gap: 10px;
+            border: 1px solid var(--border-color-soft); border-radius: 12px;
+            padding: 10px 12px; cursor: pointer;
+            transition: border-color 0.2s var(--ease), background 0.2s var(--ease);
+        }
+        .manage-option:hover { border-color: rgba(var(--accent-rgb), 0.4); }
+        .manage-option input { accent-color: var(--accent); width: 16px; height: 16px; flex-shrink: 0; cursor: pointer; }
+        .manage-option span { font-size: 0.9rem; font-weight: 600; }
+        .manage-option.checked { border-color: var(--accent); background: rgba(var(--accent-rgb), 0.08); }
+        .manage-modal-actions { display: flex; gap: 10px; margin-top: 24px; }
+        .manage-btn {
+            flex: 1; border: none; border-radius: 12px; padding: 12px 14px;
+            font-weight: 800; font-size: 0.88rem; cursor: pointer;
+            transition: transform 0.2s var(--ease-spring), opacity 0.2s var(--ease), background 0.2s var(--ease);
+        }
+        .manage-btn:active { transform: scale(0.97); }
+        .manage-btn.primary { background: linear-gradient(135deg, var(--accent), var(--brand-orange)); color: #fff; }
+        .manage-btn.primary:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        .manage-btn.secondary { background: var(--surface-1); color: var(--text-main); border: 1px solid var(--border-color); }
+        .manage-modal-status { min-height: 20px; margin-top: 14px; font-size: 0.82rem; font-weight: 600; text-align: center; }
+        .manage-modal-status.err { color: #f87171; }
+        .manage-modal-status.ok { color: var(--success); }
+        .manage-btn-spinner {
+            display: inline-block; width: 14px; height: 14px; margin-right: 6px;
+            border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff; border-radius: 50%;
+            animation: manageSpin 0.7s linear infinite; vertical-align: -2px;
+        }
+        @keyframes manageSpin { to { transform: rotate(360deg); } }
+        @media (prefers-reduced-motion: reduce) {
+            .manage-btn-spinner { animation: none; }
+        }
+
         .grain-overlay {
             position: fixed;
             top: 0;
@@ -2645,6 +2724,44 @@
         <div class="page-loader-bar"><span></span></div>
     </div>
 
+    <!-- Owner-only Manage Status/Visibility modal — populated per-tournament
+         by openManageModal() below. Only ever opened from a "Manage" button
+         that itself only renders when the signed-in visitor is the verified
+         owner (see renderTournaments()); the real authorization is 100%
+         server-side on the API this calls. -->
+    <div id="manage-modal" role="dialog" aria-modal="true" aria-labelledby="manage-modal-heading">
+        <div class="manage-modal-card">
+            <div class="manage-modal-header">
+                <h3 id="manage-modal-heading">Tournament Controls</h3>
+                <p id="manage-modal-name"></p>
+            </div>
+
+            <div class="manage-modal-section">
+                <span class="manage-modal-section-label">Tournament Status</span>
+                <div class="manage-option-group" id="manage-status-options">
+                    <label class="manage-option"><input type="radio" name="manage-status" value="live"><span>Live</span></label>
+                    <label class="manage-option"><input type="radio" name="manage-status" value="ongoing"><span>Ongoing</span></label>
+                    <label class="manage-option"><input type="radio" name="manage-status" value="completed"><span>Completed</span></label>
+                </div>
+            </div>
+
+            <div class="manage-modal-section">
+                <span class="manage-modal-section-label">Visibility</span>
+                <div class="manage-option-group" id="manage-visibility-options">
+                    <label class="manage-option"><input type="radio" name="manage-visibility" value="public"><span>Public</span></label>
+                    <label class="manage-option"><input type="radio" name="manage-visibility" value="private"><span>Private</span></label>
+                </div>
+            </div>
+
+            <p class="manage-modal-status" id="manage-modal-status"></p>
+
+            <div class="manage-modal-actions">
+                <button class="manage-btn secondary" type="button" onclick="closeManageModal()">Cancel</button>
+                <button class="manage-btn primary" type="button" id="manage-save-btn" onclick="saveManageChanges()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
     <div id="auth-gate" class="hidden" role="dialog" aria-modal="true" aria-labelledby="auth-gate-heading">
         <div class="gate-card glass" style="position:relative;">
             <button onclick="closeAuthGate()" class="auth-gate-close" aria-label="Close" style="position:absolute;top:14px;right:14px;">✕</button>
@@ -3657,6 +3774,13 @@
                 if (logoutBtn) logoutBtn.classList.add('visible');
 
                 const isOwner = user.email === OWNER_EMAIL;
+                // UX hint only, same as ownerAdminBtn below — drives whether
+                // the "Manage" control renders on tournament cards. The real
+                // gate is server-side: POST /api/admin/tournaments/:ownerUid/
+                // :leagueKey/manage is verified against a signed Firebase ID
+                // token (requireOwner in server.js), so this flag can't be
+                // used to bypass anything, only to hide/show the button.
+                window.__isOwnerViewer = isOwner;
                 // UX hint only — the button simply links to /admin. The real
                 // gate is server-side: every /api/admin/* call is verified
                 // against a signed Firebase ID token (see requireOwner in
@@ -3680,6 +3804,7 @@
             } else {
                 isUserLoggedIn = false;
                 window.__scorvixLoggedIn = false;
+                window.__isOwnerViewer = false;
 
                 localStorage.removeItem('scorvix_uid');
                 localStorage.removeItem('scorvix_email');
@@ -3921,6 +4046,17 @@
                         : `<span class="tournament-meta-chip public">🌐 Public</span>`)
                     : '';
 
+                // Owner-only "Manage" control — only ever present when this
+                // response is the owner-view payload (t.ownerUid/t.leagueKey
+                // are owner-only fields, same gating as hostChip/visibilityChip
+                // above) AND the signed-in visitor is verified client-side as
+                // the owner. The real authorization check happens server-side
+                // when Save Changes actually calls the API.
+                const showManage = window.__isOwnerViewer && t.ownerUid && t.leagueKey;
+                const manageBtnHtml = showManage
+                    ? `<button type="button" class="tournament-manage-btn" data-manage-btn>⚙️ Manage</button>`
+                    : '';
+
                 card.innerHTML = `
                     <div class="tournament-card-accent"></div>
                     <div class="tournament-card-top">
@@ -3935,8 +4071,24 @@
                             ${visibilityChip}
                         </div>
                         <span class="tournament-card-cta">View matches &amp; scorecards <span class="arrow">→</span></span>
+                        ${manageBtnHtml}
                     </div>
                 `;
+
+                if (showManage) {
+                    const manageBtn = card.querySelector('[data-manage-btn]');
+                    manageBtn.style.marginTop = '12px';
+                    manageBtn.style.width = '100%';
+                    manageBtn.style.justifyContent = 'center';
+                    manageBtn.addEventListener('click', (e) => {
+                        // Card itself is a navigation link — stop this click
+                        // from also triggering that navigation.
+                        e.preventDefault();
+                        e.stopImmediatePropagation();
+                        openManageModal(t);
+                    }, true);
+                }
+
                 grid.appendChild(card);
             });
         }
@@ -3947,6 +4099,121 @@
             if (btnEl) btnEl.classList.add('active');
             if (typeof moveSlideIndicator === 'function') moveSlideIndicator('tournamentFilterIndicator', 'tournamentFilters', btnEl);
             renderTournaments();
+        }
+
+        // =====================================================================
+        // OWNER-ONLY MANAGE MODAL — status + visibility.
+        // Calls POST /api/admin/tournaments/:ownerUid/:leagueKey/manage, which
+        // (server-side, via requireOwner) only ever accepts the request when
+        // the caller's verified Firebase ID token belongs to
+        // chhayajeeth@gmail.com — regardless of what this client sends or
+        // which account created the tournament. This modal is a UX
+        // convenience only; it can't be used to bypass that check.
+        // =====================================================================
+        let manageTarget = null; // the tournament object currently open in the modal
+
+        function updateManageOptionChecked(groupId) {
+            document.querySelectorAll(`#${groupId} .manage-option`).forEach(opt => {
+                const input = opt.querySelector('input');
+                opt.classList.toggle('checked', input.checked);
+            });
+        }
+
+        function openManageModal(t) {
+            if (!window.__isOwnerViewer) return; // defensive — button shouldn't exist otherwise
+            manageTarget = t;
+            const modal = document.getElementById('manage-modal');
+            const nameEl = document.getElementById('manage-modal-name');
+            const statusEl = document.getElementById('manage-modal-status');
+            nameEl.textContent = t.name;
+            statusEl.textContent = '';
+            statusEl.className = 'manage-modal-status';
+
+            const currentStatus = ['live', 'ongoing', 'completed'].includes(t.status) ? t.status : 'ongoing';
+            const currentVisibility = t.isPrivate ? 'private' : 'public';
+            document.querySelectorAll('#manage-status-options input').forEach(inp => { inp.checked = (inp.value === currentStatus); });
+            document.querySelectorAll('#manage-visibility-options input').forEach(inp => { inp.checked = (inp.value === currentVisibility); });
+            updateManageOptionChecked('manage-status-options');
+            updateManageOptionChecked('manage-visibility-options');
+
+            const saveBtn = document.getElementById('manage-save-btn');
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = 'Save Changes';
+
+            modal.classList.add('open');
+        }
+
+        function closeManageModal() {
+            document.getElementById('manage-modal').classList.remove('open');
+            manageTarget = null;
+        }
+
+        // Live-highlight the selected radio option in each group.
+        document.getElementById('manage-status-options').addEventListener('change', () => updateManageOptionChecked('manage-status-options'));
+        document.getElementById('manage-visibility-options').addEventListener('change', () => updateManageOptionChecked('manage-visibility-options'));
+
+        // Click-outside-to-close, same convenience as the auth gate.
+        document.getElementById('manage-modal').addEventListener('click', (e) => {
+            if (e.target && e.target.id === 'manage-modal') closeManageModal();
+        });
+
+        async function saveManageChanges() {
+            if (!manageTarget || !auth.currentUser) return;
+            const statusInput = document.querySelector('#manage-status-options input:checked');
+            const visibilityInput = document.querySelector('#manage-visibility-options input:checked');
+            const newStatus = statusInput ? statusInput.value : null;
+            const newVisibility = visibilityInput ? visibilityInput.value : null;
+
+            const saveBtn = document.getElementById('manage-save-btn');
+            const statusEl = document.getElementById('manage-modal-status');
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '<span class="manage-btn-spinner"></span>Saving…';
+            statusEl.textContent = '';
+            statusEl.className = 'manage-modal-status';
+
+            // Snapshot so we can roll the card back to exactly this on failure
+            // — the UI never pretends a change succeeded before the server
+            // has confirmed it.
+            const target = manageTarget;
+            const previousStatus = target.status;
+            const previousIsPrivate = target.isPrivate;
+
+            try {
+                const idToken = await auth.currentUser.getIdToken();
+                const url = `/api/admin/tournaments/${encodeURIComponent(target.ownerUid)}/${encodeURIComponent(target.leagueKey)}/manage`;
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
+                    body: JSON.stringify({ status: newStatus, visibility: newVisibility })
+                });
+                const data = await res.json().catch(() => ({}));
+
+                if (!res.ok || !data.success) {
+                    throw new Error((data && data.error) || `Request failed (${res.status})`);
+                }
+
+                // Confirmed by the database — now reflect it in the UI.
+                target.status = data.status || newStatus;
+                target.statusOverride = data.status || null;
+                target.isPrivate = data.visibility === 'private';
+                target.visibility = data.visibility || newVisibility;
+                target.visibilityOverride = data.visibility || null;
+
+                statusEl.textContent = '✓ Saved — tournament updated';
+                statusEl.className = 'manage-modal-status ok';
+                renderTournaments();
+
+                setTimeout(() => { if (manageTarget === target) closeManageModal(); }, 900);
+            } catch (err) {
+                console.error('Manage tournament error:', err);
+                // Roll back — never leave the UI showing an unconfirmed change.
+                target.status = previousStatus;
+                target.isPrivate = previousIsPrivate;
+                statusEl.textContent = `✕ ${err.message || 'Could not save changes. Please try again.'}`;
+                statusEl.className = 'manage-modal-status err';
+                saveBtn.disabled = false;
+                saveBtn.innerHTML = 'Save Changes';
+            }
         }
 
         loadTournaments();
