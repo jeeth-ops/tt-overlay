@@ -2393,11 +2393,11 @@ async function refreshServerClipStatus(list){
   const need = list.filter(j => ['UPLOADED', 'FAILED'].includes(j.status) || j.driveBackupFailed);
   await Promise.all(need.map(async j => {
     const c = serverClipStatus[j.clipId];
-    // 3s, not 15s: this cached answer OVERRIDES the helper's own (fresher)
-    // view in withServerClipStatus below, so a long TTL here was the main
-    // reason a clip already sitting in R2/Drive kept showing ⏳ for up to
-    // a quarter-minute after it was genuinely done.
-    if(c && Date.now() - c.at < 3000) return;
+    // 1.5s, down from 15s: this only ever runs for clips still in flight
+    // (a handful at a time), and it's the path that turns a finished
+    // upload into a ✓ on screen, so a long TTL here was simply dead time
+    // spent showing ⏳ for something already done.
+    if(c && Date.now() - c.at < 1500) return;
     try {
       const res = await fetch(`/api/clips/status/${encodeURIComponent(j.clipId)}`, { signal: AbortSignal.timeout(4000) });
       const d = res.ok ? await res.json() : null;
@@ -2405,19 +2405,38 @@ async function refreshServerClipStatus(list){
     } catch(e){ /* offline — keep the helper's view */ }
   }));
 }
+// A leg only ever moves forward (an upload that landed can't un-land), so
+// when the helper and the website disagree the one that's further along is
+// simply the fresher of the two — never a conflict to resolve.
+const LEG_RANK = { pending: 1, failed: 2, uploaded: 3 };
+function furthestLeg(a, b){ return (LEG_RANK[b] || 0) > (LEG_RANK[a] || 0) ? b : a; }
+
 function withServerClipStatus(j){
   const c = serverClipStatus[j.clipId];
   const d = c && c.d;
   if(!d) return j; // website never got it (e.g. cut failed) — helper's view is right
-  const legs = { r2Status: d.r2Status || j.r2Status, driveStatus: d.driveStatus || j.driveStatus };
+  // Take whichever source has seen each leg get further, rather than always
+  // preferring the website snapshot: that snapshot can be seconds old, and
+  // a stale 'pending' used to hide a ✓ the helper already knew about.
+  const legs = {
+    r2Status: furthestLeg(j.r2Status, d.r2Status),
+    driveStatus: furthestLeg(j.driveStatus, d.driveStatus)
+  };
   // Carry WHY a leg is failing, so a clip stuck on "Drive ✕ (retrying)"
   // says what to fix (expired Google token, folder gone, quota) instead
-  // of retrying silently behind an icon.
-  legs.legError = d.driveStatus === 'failed' && d.driveError ? `Drive: ${d.driveError}`
-    : d.r2Status === 'failed' && d.r2Error ? `R2: ${d.r2Error}`
+  // of retrying silently behind an icon. Read off the MERGED legs so a
+  // since-succeeded leg stops showing its old error.
+  legs.legError = legs.driveStatus === 'failed' && d.driveError ? `Drive: ${d.driveError}`
+    : legs.r2Status === 'failed' && d.r2Error ? `R2: ${d.r2Error}`
     : null;
-  const r2Ok = d.r2Status === 'uploaded';
+  const r2Ok = legs.r2Status === 'uploaded';
   if(d.status === 'COMPLETE') return { ...j, ...legs, status: 'COMPLETE', driveBackupFailed: false, error: null };
+  // 🩹 The helper reaches COMPLETE on its own 2s poll — and the moment it
+  // does, refreshServerClipStatus above stops refreshing this clip (it only
+  // follows UPLOADED/FAILED ones). Without this line the snapshot cached
+  // while it was still uploading stays in the map forever and pins a
+  // genuinely-finished clip on ⏳ for the rest of the match.
+  if(j.status === 'COMPLETE') return { ...j, ...legs, error: null };
   if(d.status === 'NEEDS_REUPLOAD') return { ...j, ...legs, status: 'SERVER_REUPLOAD', error: null };
   if(d.status === 'FAILED_PERMANENT') return r2Ok ? { ...j, ...legs, status: 'COMPLETE', driveBackupFailed: true, error: null } : { ...j, ...legs, error: d.permanentFailureReason || j.error };
   return { ...j, ...legs, status: 'UPLOADED', error: null }; // still uploading / retrying on the website
