@@ -135,7 +135,11 @@ const CUT_TIMEOUT_MS = 120000;        // one ffmpeg cut; killed after this
 const CUT_MAX_ATTEMPTS = 6;
 const CUT_RETRY_DELAYS_MS = [3000, 8000, 15000, 30000, 60000];
 const UPLOAD_IDLE_TIMEOUT_MS = 60000; // no bytes moving for this long = dead connection
-const UPLOAD_BACKOFF_MS = [5000, 15000, 30000, 60000, 120000, 300000]; // then every 5 min
+// A reset connection is usually retryable immediately — the old first step
+// of 5s (then 15s, 30s, 60s) meant a clip that only needed one more try sat
+// idle for minutes across a few failures. Fast at first, then backs off the
+// same way for the genuinely-down case.
+const UPLOAD_BACKOFF_MS = [2000, 5000, 10000, 20000, 45000, 90000, 180000, 300000]; // then every 5 min
 const UPLOAD_MAX_ATTEMPTS = 60;       // ≈ 4–5 hours of retrying
 const STATUS_POLL_WINDOW_MS = 12 * 60 * 60 * 1000; // follow R2/Drive progress for up to 12 hours per clip
 // How fast a finished R2/Drive upload turns into a ✓ on the panel. The
@@ -597,10 +601,12 @@ async function renameWithRetry(from, to, attempts = 6) {
 // ----------------------------------------------------------------
 const uploadQueue = [];
 let uploadsRunning = 0;
-// 3 clips in flight at once: a burst of presses (a big over) clears to the
-// website noticeably sooner than at 2, without swamping a typical venue
-// uplink the way a much higher number would.
-const UPLOAD_CONCURRENCY = 3;
+// Back to 2 (from a brief 3): on a venue uplink that is the bottleneck,
+// more parallel uploads just split the same bandwidth, so each clip's
+// connection stays open ~50% longer and is that much likelier to be reset
+// or timed out mid-body — the ECONNRESET / "socket hang up" failures seen
+// in the field. Overridable for venues with bandwidth to spare.
+const UPLOAD_CONCURRENCY = Math.max(1, parseInt(process.env.UPLOAD_CONCURRENCY, 10) || 2);
 
 function queueUpload(job) {
   if (!uploadQueue.includes(job.clipId)) uploadQueue.push(job.clipId);
@@ -634,19 +640,37 @@ async function uploadJob(job) {
   job.uploadAttempts = (job.uploadAttempts || 0) + 1;
   update(job, { status: 'UPLOADING', uploadAttempts: job.uploadAttempts, error: null });
   const qs = new URLSearchParams({ matchId, eventType: job.eventType, timestamp: String(job.t0), clipId: job.clipId });
+  // Size + elapsed on EVERY outcome. An ECONNRESET one second in (something
+  // actively refusing the connection) and one forty seconds in (a saturated
+  // uplink being cut off mid-body) look identical in the error text alone,
+  // and they need opposite fixes — so measure instead of guessing.
+  let sizeBytes = 0;
+  try { sizeBytes = fs.statSync(job.localPath).size; } catch (_) { /* reported by postFile */ }
+  const startedAt = Date.now();
   const r = await postFile(`${server}/api/clips/ingest?${qs}`, job.localPath, { 'X-Ball-Meta': JSON.stringify(job.ballMeta || {}) });
-  if (!r.ok) return onUploadFailure(job, r.error);
-  console.log(`📤 [${job.eventType}] ${job.clipId}: received by website — R2 + Drive uploads running there`);
+  const stats = uploadStats(sizeBytes, startedAt);
+  if (!r.ok) return onUploadFailure(job, r.error, stats);
+  console.log(`📤 [${job.eventType}] ${job.clipId}: received by website (${stats}) — R2 + Drive uploads running there`);
   update(job, { status: 'UPLOADED', uploadedAt: Date.now(), r2Status: 'pending', driveStatus: 'pending', error: null });
 }
 
-function onUploadFailure(job, reason) {
+// "6.5MB in 12.3s = 4.2 Mbps" — the one line that tells a dropped connection
+// apart from a starved one.
+function uploadStats(sizeBytes, startedAt) {
+  const secs = Math.max(0.1, (Date.now() - startedAt) / 1000);
+  const mb = sizeBytes / (1024 * 1024);
+  const mbps = (sizeBytes * 8) / secs / 1e6;
+  return `${mb.toFixed(1)}MB in ${secs.toFixed(1)}s = ${mbps.toFixed(1)} Mbps`;
+}
+
+function onUploadFailure(job, reason, stats) {
   const attempts = job.uploadAttempts || 0;
   if (attempts >= UPLOAD_MAX_ATTEMPTS) {
     console.log(`❌ [${job.eventType}] ${job.clipId}: upload gave up after ${attempts} attempts — clip is safe at ${job.localPath}`);
     update(job, { status: 'FAILED', error: `upload failed: ${reason}` });
     return;
   }
+  if (stats) console.log(`   ↳ died after ${stats}`);
   const delay = UPLOAD_BACKOFF_MS[Math.min(attempts, UPLOAD_BACKOFF_MS.length) - 1] || UPLOAD_BACKOFF_MS[0];
   console.log(`⚠️  [${job.eventType}] ${job.clipId}: upload failed (${reason}) — retry ${attempts + 1} in ${Math.round(delay / 1000)}s; clip is safe locally`);
   update(job, { status: 'UPLOAD_RETRY', error: reason, nextUploadAt: Date.now() + delay });
@@ -1055,7 +1079,7 @@ setInterval(() => {
 
 const server = app.listen(config.port, () => {
   console.log('================================================');
-  console.log(`🎥 Clipper Helper v4.3 running at http://localhost:${config.port}`);
+  console.log(`🎥 Clipper Helper v4.4 running at http://localhost:${config.port}`);
   console.log(`👉 Setup page: http://localhost:${config.port}/setup`);
   console.log(`Using ffmpeg: ${ffmpegPath}`);
   console.log(`Clip window: ${PRE_ROLL_SECONDS}s before + ${POST_ROLL_SECONDS}s after the press = ${CLIP_SECONDS}s`);
