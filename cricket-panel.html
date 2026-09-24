@@ -7516,7 +7516,15 @@ function recordBall(kind, meta){
   state.ballLog.push({
     innings: logInnings,
     battingTeam: logBattingTeam,
-    over: fmtOvers(state.score.overs, state.score.balls),
+    // 🔒 This is a DELIVERY label ("which ball was this"), not the overs-
+    // bowled score — so it uses the same corrected pair the DB row and the
+    // clip metadata use, two lines above. Reading state.score directly here
+    // meant the ball that ENDS an over (addLegalBall has already rolled it
+    // forward) was logged as the next over's ".0": the 6th ball of over 9
+    // came out "9.0" instead of "8.6", which is not a delivery number that
+    // exists in cricket, and it grouped that ball under the following over
+    // in the live commentary.
+    over: fmtOvers(logOverForBall, logBallInOverForBall),
     ballType: kind,
     striker: logStrikerName,
     nonStriker: logNonStrikerName,
