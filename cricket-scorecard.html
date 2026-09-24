@@ -229,6 +229,70 @@
     0%,100%{ transform:translate3d(0,0,0) scale(1); }
     50%{ transform:translate3d(-7vmax,-6vmax,0) scale(1.1); }
   }
+  /* ============================================================
+     TEAM LOGO WATERMARK SYSTEM — sits between #ambient-wash's colour
+     blobs (z-index:0) and the actual page content (z-index:1), so the
+     real team crest reads as an embedded broadcast-style watermark
+     rather than a flat background-image. Two layers per team:
+       .tlw-parallax  — JS sets transform here on scroll only (depth).
+       .tlw-emphasis  — opacity only, driven by which team is batting.
+       .team-logo-watermark — the crest itself; CSS keyframes own its
+         transform (slow float+rotate), never touched by JS, so the
+         scroll-driven transform above and this one never fight over
+         the same property on the same element.
+     Deliberately built with background-image on plain <div>s (not
+     <img>) — a missing/broken team.logoUrl just paints nothing,
+     never a broken-image icon, and the soft radial fallback in
+     applyLogoWatermarks() covers the rest. ============================================================ */
+  #logo-wash{ position:fixed; inset:0; z-index:0; overflow:hidden; pointer-events:none; }
+  .tlw-parallax{ position:absolute; inset:0; transform:translate3d(0,0,0); }
+  .tlw-emphasis{ position:absolute; inset:0; opacity:.68; transition:opacity 1s ease; }
+  .team-logo-watermark{
+    position:absolute; width:44vmax; height:44vmax;
+    background-size:contain; background-repeat:no-repeat; background-position:center;
+    /* Visible enough that the crest actually reads as part of the page,
+       still far below anything that competes with text. The .tlw-emphasis
+       wrapper multiplies this (1 for the batting side, .62 for the other),
+       so the real range on screen is ~8-13%. Blur stays small — enough to
+       sit behind the glass, not so much that the crest stops being
+       recognisable, which was the whole point of putting it there. */
+    opacity:.13; filter:blur(.8px) saturate(.9);
+    transform:translate3d(0,0,0) rotate(-4deg);
+  }
+  .team-logo-watermark--team-a{
+    left:-9vmax; top:-8vmax;
+    animation:logoFloatA 30s ease-in-out infinite;
+  }
+  .team-logo-watermark--team-b{
+    right:-11vmax; bottom:-10vmax;
+    animation:logoFloatB 36s ease-in-out infinite;
+  }
+  .tlw-ghost{
+    position:absolute; inset:0; background-size:contain; background-repeat:no-repeat; background-position:center;
+    opacity:.4; filter:blur(7px);
+    transform:scale(.5) translate3d(10vmax,9vmax,0) rotate(9deg);
+    animation:logoBreathe 21s ease-in-out infinite;
+  }
+  .team-logo-watermark--team-b .tlw-ghost{ transform:scale(.46) translate3d(-10vmax,-8vmax,0) rotate(-8deg); animation-duration:24s; }
+  /* A dark crest on a light page reads stronger per unit of opacity than
+     the same crest on a dark one, so light mode sits a little under the
+     dark-mode value to land at the same perceived weight. */
+  :root[data-theme="light"] .team-logo-watermark{ opacity:.10; }
+  @keyframes logoFloatA{
+    0%,100%{ transform:translate3d(0,0,0) rotate(-4deg); }
+    50%{ transform:translate3d(1.4vmax,1.8vmax,0) rotate(-2deg); }
+  }
+  @keyframes logoFloatB{
+    0%,100%{ transform:translate3d(0,0,0) rotate(4deg); }
+    50%{ transform:translate3d(-1.3vmax,-1.6vmax,0) rotate(2deg); }
+  }
+  @keyframes logoBreathe{
+    0%,100%{ opacity:.4; }
+    50%{ opacity:.55; }
+  }
+  @media (prefers-reduced-motion:reduce){
+    .team-logo-watermark, .tlw-ghost{ animation:none; }
+  }
   #brandbar, #wrap{ position:relative; z-index:1; }
   a{ color:inherit; text-decoration:none; }
   .tabnum{ font-variant-numeric:tabular-nums; }
@@ -737,6 +801,11 @@
        the brandbar treatment above. */
     #ambient-wash{ display:none; }
     #clip-drawer-backdrop{ backdrop-filter:none; -webkit-backdrop-filter:none; background:rgba(0,0,0,.62); }
+    /* Logo watermarks stay on mobile (team identity matters here too)
+       but drop everything that costs a re-composite: no blur, no
+       animation, no ghost duplicate, no JS parallax (gated below). */
+    .team-logo-watermark{ width:62vmax; height:62vmax; opacity:.08; filter:none; animation:none; }
+    .tlw-ghost{ display:none; }
   }
 
   ::-webkit-scrollbar{ height:6px; width:6px; }
@@ -1526,6 +1595,18 @@
 <body>
 
 <div id="ambient-wash" aria-hidden="true"><span class="blob-a"></span><span class="blob-b"></span></div>
+<div id="logo-wash" aria-hidden="true">
+  <div class="tlw-parallax" id="tlw-parallax-a">
+    <div class="tlw-emphasis" id="tlw-emphasis-a">
+      <div class="team-logo-watermark team-logo-watermark--team-a" id="logo-wash-a"><div class="tlw-ghost"></div></div>
+    </div>
+  </div>
+  <div class="tlw-parallax" id="tlw-parallax-b">
+    <div class="tlw-emphasis" id="tlw-emphasis-b">
+      <div class="team-logo-watermark team-logo-watermark--team-b" id="logo-wash-b"><div class="tlw-ghost"></div></div>
+    </div>
+  </div>
+</div>
 
 <div id="brandbar">
   <a id="brand-id" href="https://allsportslivestreams.com" target="_blank" rel="noopener">
@@ -2786,6 +2867,7 @@ function renderFinalSnapshot(match, displayName){
 
   const A = match.teamA || {}, B = match.teamB || {};
   setPageTeamTheme(A, B);
+  applyLogoWatermarks(A, B);
   setText('name-a', A.name || 'Team A'); setText('short-a', A.short || '—');
   setText('name-b', B.name || 'Team B'); setText('short-b', B.short || '—');
   setText('hl-team-a-name', A.name || A.short || 'Team A'); setText('hl-team-b-name', B.name || B.short || 'Team B');
@@ -2793,6 +2875,9 @@ function renderFinalSnapshot(match, displayName){
   paintHighlightsTeam(A, B);
   document.getElementById('team-block-a').style.opacity = '1';
   document.getElementById('team-block-b').style.opacity = '1';
+  const emphAf = document.getElementById('tlw-emphasis-a'), emphBf = document.getElementById('tlw-emphasis-b');
+  if(emphAf) emphAf.style.opacity = '1';
+  if(emphBf) emphBf.style.opacity = '1';
   const scoreA = match.scoreA || {}, scoreB = match.scoreB || {};
   // Each side's score now sits under its OWN name/logo (reusing the same
   // element the live Test view uses for a team's earlier-innings total),
@@ -3251,7 +3336,7 @@ function computeOverEndSummaries(log){
   const groups = [];
   let cur = null;
   log.forEach(b => {
-    const overIdx = overBallParts(b.over).over;
+    const overIdx = overBallParts(b.over, b.ballType).over;
     if(!cur || cur.overIdx !== overIdx){ cur = { overIdx, balls: [] }; groups.push(cur); }
     cur.balls.push(b);
   });
@@ -3355,12 +3440,12 @@ function renderCommentary(s){
     const badge = ballBadgeInfo(b);
     const summary = byLastBall.get(b);
     const eooHtml = summary ? overEndSummaryHtml(summary) : '';
-    const { over: ovNum, ball: ballNum } = overBallParts(b.over);
+    const { over: ovNum, ball: ballNum } = overBallParts(b.over, b.ballType);
     const replayInfo = commentaryClipState(b, b.innings || 1, ovNum, ballNum, isLive);
     return `${eooHtml}<div class="cm-line ${cls}">
       <div class="cm-badge ${badge.cls}">${badge.label}</div>
       <div class="cm-body">
-        <div class="cm-over">${overBallLabel(b.over)}</div>
+        <div class="cm-over">${overBallLabel(b.over, b.ballType)}</div>
         <div class="cm-text">${text}</div>
         ${clipReplayHtml(replayInfo, text)}
       </div>
@@ -3404,14 +3489,28 @@ function isBoundaryBall(b){
 // and, worse, made every single ball its own "over" group since no two
 // deliveries ever share the exact same decimal. This parses it properly,
 // tolerant of float rounding (0.4 sometimes arriving as 0.39999999...).
-function overBallParts(overVal){
+function overBallParts(overVal, ballType){
   const n = Number(overVal) || 0;
-  const overPart = Math.floor(n + 1e-6);
-  const ballPart = Math.round((n - overPart) * 10);
-  return { over: overPart, ball: ballPart };
+  let over = Math.floor(n + 1e-6);
+  let ball = Math.round((n - over) * 10);
+  // X.0 is not a delivery number that exists in cricket, but older matches
+  // are full of them: the ball log used to take its label from the
+  // overs-BOWLED score, which has already rolled into the next over by the
+  // time a delivery is written (fixed at the source in cricket-panel.html).
+  // Those rows can't be rewritten, so they're corrected here on the way to
+  // the screen. Which delivery a legacy X.0 really was depends on whether
+  // it was legal:
+  //   legal      -> it COMPLETED the previous over  -> (X-1).6
+  //   wide/no-ball -> it was that over's first attempt -> X.1
+  if(ball === 0){
+    const isLegal = !ballType || LEGAL_KINDS.has(ballType);
+    if(!isLegal) ball = 1;
+    else if(over > 0){ over -= 1; ball = 6; }
+  }
+  return { over, ball };
 }
-function overBallLabel(overVal){
-  const { over, ball } = overBallParts(overVal);
+function overBallLabel(overVal, ballType){
+  const { over, ball } = overBallParts(overVal, ballType);
   return `${over}.${ball}`;
 }
 
@@ -3683,7 +3782,7 @@ function commentaryBallMatchesTypeFilter(b){
 function renderCommentaryRow(b, inn, newBatsmanAt, isLive){
   const { text } = commentaryLine(b);
   const badge = ballBadgeInfo(b);
-  const { over: ovNum, ball: ballNum } = overBallParts(b.over);
+  const { over: ovNum, ball: ballNum } = overBallParts(b.over, b.ballType);
   const replayInfo = commentaryClipState(b, inn, ovNum, ballNum, isLive);
   const isNewBat = newBatsmanAt.has(b);
   const newBatTag = isNewBat ? `<span class="cm2-new-bat">🆕 ${escapeHtml(b.striker || 'New batsman')}</span>` : '';
@@ -3770,7 +3869,7 @@ function renderCommentaryPage(s){
     const overs = [];
     let cur = null;
     log.forEach(b => {
-      const overIdx = overBallParts(b.over).over;
+      const overIdx = overBallParts(b.over, b.ballType).over;
       if(!cur || cur.overIdx !== overIdx){ cur = { overIdx, balls:[], runs:0, wickets:0 }; overs.push(cur); }
       cur.balls.push(b);
       cur.runs += (b.runs || 0);
@@ -3954,6 +4053,7 @@ function renderHero(s){
 
   const A = s.teamA || {}, B = s.teamB || {};
   setPageTeamTheme(A, B);
+  applyLogoWatermarks(A, B);
   setText('name-a', A.name || 'Team A'); setText('short-a', A.short || '—');
   setText('name-b', B.name || 'Team B'); setText('short-b', B.short || '—');
   setText('hl-team-a-name', A.name || A.short || 'Team A'); setText('hl-team-b-name', B.name || B.short || 'Team B');
@@ -3962,6 +4062,13 @@ function renderHero(s){
   paintHighlightsTeam(A, B);
   document.getElementById('team-block-a').style.opacity = (isFinished || s.battingTeam === 'A') ? '1' : '.55';
   document.getElementById('team-block-b').style.opacity = (isFinished || s.battingTeam === 'B') ? '1' : '.55';
+  // Batting team's crest gets a gentle emphasis bump (opacity only, on
+  // the dedicated .tlw-emphasis wrapper) — never the float/parallax
+  // transforms — and eases smoothly over the CSS transition above
+  // whenever s.battingTeam flips between innings.
+  const emphA = document.getElementById('tlw-emphasis-a'), emphB = document.getElementById('tlw-emphasis-b');
+  if(emphA) emphA.style.opacity = (isFinished || s.battingTeam === 'A') ? '1' : '.62';
+  if(emphB) emphB.style.opacity = (isFinished || s.battingTeam === 'B') ? '1' : '.62';
   // s.matchWinnerKey is set by the panel ('A' | 'B' | 'TIE') the instant a
   // result is decided and travels in the same live state payload as
   // matchResultText — same field buildMatchRecordForLeague() uses as the
@@ -4132,6 +4239,70 @@ function paintLogo(id, team, fallbackVar){
   if(block) block.style.setProperty('--team-color', team.color || fallback);
 }
 
+// ---- Background team-logo watermark system (#logo-wash) ----
+// Purely visual, isolated from score/business state: called from the
+// same two render sites as setPageTeamTheme()/paintLogo() so it always
+// has the current match's real teamA/teamB, but it only ever touches
+// background-image + opacity on its own dedicated elements — never the
+// CSS animation/transform properties those elements use for float and
+// scroll parallax — so repeated calls on every live score update can
+// never reset or restart the ambient motion (see #49 safety rule).
+function applyLogoWatermarks(A, B){
+  paintWatermark('logo-wash-a', A || {}, 'var(--accent)');
+  paintWatermark('logo-wash-b', B || {}, 'var(--six)');
+}
+function paintWatermark(id, team, fallbackVar){
+  const el = document.getElementById(id);
+  if(!el) return;
+  const ghost = el.querySelector('.tlw-ghost');
+  if(team && team.logoUrl){
+    const url = `url(${team.logoUrl})`;
+    el.style.backgroundImage = url;
+    if(ghost) ghost.style.backgroundImage = url;
+  } else {
+    // No crest on file (or a broken URL, which simply paints nothing
+    // since this is a div background-image, never a broken <img>
+    // icon) — fall back to a soft team-colour glow instead of leaving
+    // an empty gap in the composition.
+    const fallbackBg = `radial-gradient(circle at 50% 50%, ${(team && team.color) || fallbackVar}, transparent 70%)`;
+    el.style.backgroundImage = 'none';
+    el.style.background = fallbackBg;
+    if(ghost){ ghost.style.backgroundImage = 'none'; ghost.style.background = fallbackBg; }
+  }
+}
+
+// Scroll parallax for the logo watermarks — two depth layers eased
+// toward the scroll position with simple spring interpolation rather
+// than being tied 1:1 to raw scroll, so motion settles smoothly
+// instead of jumping. Skipped entirely on prefers-reduced-motion and
+// on narrow/mobile viewports (matches the #ambient-wash mobile perf
+// rule above — no scroll listener cost where it isn't wanted).
+(function initLogoParallax(){
+  const pa = document.getElementById('tlw-parallax-a');
+  const pb = document.getElementById('tlw-parallax-b');
+  if(!pa || !pb) return;
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const isNarrow = window.matchMedia('(max-width: 640px)').matches;
+  if(reduceMotion || isNarrow) return;
+  let ticking = false, curA = 0, curB = 0;
+  function step(){
+    const targetY = window.scrollY || window.pageYOffset || 0;
+    const goalA = targetY * 0.05, goalB = targetY * 0.035;
+    curA += (goalA - curA) * 0.09;
+    curB += (goalB - curB) * 0.09;
+    pa.style.transform = `translate3d(0, ${curA.toFixed(2)}px, 0)`;
+    pb.style.transform = `translate3d(0, ${curB.toFixed(2)}px, 0)`;
+    if(Math.abs(goalA - curA) > 0.05 || Math.abs(goalB - curB) > 0.05){
+      requestAnimationFrame(step);
+    } else {
+      ticking = false;
+    }
+  }
+  window.addEventListener('scroll', function(){
+    if(!ticking){ ticking = true; requestAnimationFrame(step); }
+  }, { passive:true });
+})();
+
 function renderPlayers(s){
   setNameWithBadges('striker-name', s.striker);
   setText('striker-figs', `${(s.striker&&s.striker.runs)||0} (${(s.striker&&s.striker.balls)||0})`);
@@ -4192,7 +4363,7 @@ function renderBalls(s){
 // a row (A,B,A,B,A,B) collapses all the way down to one copy, not just
 // one pair.
 function ballSig(b){
-  return overBallLabel(b.over) + '|' + b.innings + '|' + commentaryLine(b).text;
+  return overBallLabel(b.over, b.ballType) + '|' + b.innings + '|' + commentaryLine(b).text;
 }
 const BALLLOG_DEDUP_MAX_BLOCK = 20; // generous — a full over is ~6-10 deliveries incl. extras
 function dedupeBallLog(log){
