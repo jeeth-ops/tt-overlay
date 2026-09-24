@@ -250,7 +250,13 @@
   .team-logo-watermark{
     position:absolute; width:44vmax; height:44vmax;
     background-size:contain; background-repeat:no-repeat; background-position:center;
-    opacity:.06; filter:blur(1.5px) saturate(.8);
+    /* Visible enough that the crest actually reads as part of the page,
+       still far below anything that competes with text. The .tlw-emphasis
+       wrapper multiplies this (1 for the batting side, .62 for the other),
+       so the real range on screen is ~8-13%. Blur stays small — enough to
+       sit behind the glass, not so much that the crest stops being
+       recognisable, which was the whole point of putting it there. */
+    opacity:.13; filter:blur(.8px) saturate(.9);
     transform:translate3d(0,0,0) rotate(-4deg);
   }
   .team-logo-watermark--team-a{
@@ -268,7 +274,10 @@
     animation:logoBreathe 21s ease-in-out infinite;
   }
   .team-logo-watermark--team-b .tlw-ghost{ transform:scale(.46) translate3d(-10vmax,-8vmax,0) rotate(-8deg); animation-duration:24s; }
-  :root[data-theme="light"] .team-logo-watermark{ opacity:.045; }
+  /* A dark crest on a light page reads stronger per unit of opacity than
+     the same crest on a dark one, so light mode sits a little under the
+     dark-mode value to land at the same perceived weight. */
+  :root[data-theme="light"] .team-logo-watermark{ opacity:.10; }
   @keyframes logoFloatA{
     0%,100%{ transform:translate3d(0,0,0) rotate(-4deg); }
     50%{ transform:translate3d(1.4vmax,1.8vmax,0) rotate(-2deg); }
@@ -795,7 +804,7 @@
     /* Logo watermarks stay on mobile (team identity matters here too)
        but drop everything that costs a re-composite: no blur, no
        animation, no ghost duplicate, no JS parallax (gated below). */
-    .team-logo-watermark{ width:62vmax; height:62vmax; opacity:.035; filter:none; animation:none; }
+    .team-logo-watermark{ width:62vmax; height:62vmax; opacity:.08; filter:none; animation:none; }
     .tlw-ghost{ display:none; }
   }
 
@@ -3327,7 +3336,7 @@ function computeOverEndSummaries(log){
   const groups = [];
   let cur = null;
   log.forEach(b => {
-    const overIdx = overBallParts(b.over).over;
+    const overIdx = overBallParts(b.over, b.ballType).over;
     if(!cur || cur.overIdx !== overIdx){ cur = { overIdx, balls: [] }; groups.push(cur); }
     cur.balls.push(b);
   });
@@ -3431,12 +3440,12 @@ function renderCommentary(s){
     const badge = ballBadgeInfo(b);
     const summary = byLastBall.get(b);
     const eooHtml = summary ? overEndSummaryHtml(summary) : '';
-    const { over: ovNum, ball: ballNum } = overBallParts(b.over);
+    const { over: ovNum, ball: ballNum } = overBallParts(b.over, b.ballType);
     const replayInfo = commentaryClipState(b, b.innings || 1, ovNum, ballNum, isLive);
     return `${eooHtml}<div class="cm-line ${cls}">
       <div class="cm-badge ${badge.cls}">${badge.label}</div>
       <div class="cm-body">
-        <div class="cm-over">${overBallLabel(b.over)}</div>
+        <div class="cm-over">${overBallLabel(b.over, b.ballType)}</div>
         <div class="cm-text">${text}</div>
         ${clipReplayHtml(replayInfo, text)}
       </div>
@@ -3480,14 +3489,28 @@ function isBoundaryBall(b){
 // and, worse, made every single ball its own "over" group since no two
 // deliveries ever share the exact same decimal. This parses it properly,
 // tolerant of float rounding (0.4 sometimes arriving as 0.39999999...).
-function overBallParts(overVal){
+function overBallParts(overVal, ballType){
   const n = Number(overVal) || 0;
-  const overPart = Math.floor(n + 1e-6);
-  const ballPart = Math.round((n - overPart) * 10);
-  return { over: overPart, ball: ballPart };
+  let over = Math.floor(n + 1e-6);
+  let ball = Math.round((n - over) * 10);
+  // X.0 is not a delivery number that exists in cricket, but older matches
+  // are full of them: the ball log used to take its label from the
+  // overs-BOWLED score, which has already rolled into the next over by the
+  // time a delivery is written (fixed at the source in cricket-panel.html).
+  // Those rows can't be rewritten, so they're corrected here on the way to
+  // the screen. Which delivery a legacy X.0 really was depends on whether
+  // it was legal:
+  //   legal      -> it COMPLETED the previous over  -> (X-1).6
+  //   wide/no-ball -> it was that over's first attempt -> X.1
+  if(ball === 0){
+    const isLegal = !ballType || LEGAL_KINDS.has(ballType);
+    if(!isLegal) ball = 1;
+    else if(over > 0){ over -= 1; ball = 6; }
+  }
+  return { over, ball };
 }
-function overBallLabel(overVal){
-  const { over, ball } = overBallParts(overVal);
+function overBallLabel(overVal, ballType){
+  const { over, ball } = overBallParts(overVal, ballType);
   return `${over}.${ball}`;
 }
 
@@ -3759,7 +3782,7 @@ function commentaryBallMatchesTypeFilter(b){
 function renderCommentaryRow(b, inn, newBatsmanAt, isLive){
   const { text } = commentaryLine(b);
   const badge = ballBadgeInfo(b);
-  const { over: ovNum, ball: ballNum } = overBallParts(b.over);
+  const { over: ovNum, ball: ballNum } = overBallParts(b.over, b.ballType);
   const replayInfo = commentaryClipState(b, inn, ovNum, ballNum, isLive);
   const isNewBat = newBatsmanAt.has(b);
   const newBatTag = isNewBat ? `<span class="cm2-new-bat">🆕 ${escapeHtml(b.striker || 'New batsman')}</span>` : '';
@@ -3846,7 +3869,7 @@ function renderCommentaryPage(s){
     const overs = [];
     let cur = null;
     log.forEach(b => {
-      const overIdx = overBallParts(b.over).over;
+      const overIdx = overBallParts(b.over, b.ballType).over;
       if(!cur || cur.overIdx !== overIdx){ cur = { overIdx, balls:[], runs:0, wickets:0 }; overs.push(cur); }
       cur.balls.push(b);
       cur.runs += (b.runs || 0);
@@ -4340,7 +4363,7 @@ function renderBalls(s){
 // a row (A,B,A,B,A,B) collapses all the way down to one copy, not just
 // one pair.
 function ballSig(b){
-  return overBallLabel(b.over) + '|' + b.innings + '|' + commentaryLine(b).text;
+  return overBallLabel(b.over, b.ballType) + '|' + b.innings + '|' + commentaryLine(b).text;
 }
 const BALLLOG_DEDUP_MAX_BLOCK = 20; // generous — a full over is ~6-10 deliveries incl. extras
 function dedupeBallLog(log){
