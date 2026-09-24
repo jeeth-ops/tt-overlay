@@ -138,6 +138,11 @@ const UPLOAD_IDLE_TIMEOUT_MS = 60000; // no bytes moving for this long = dead co
 const UPLOAD_BACKOFF_MS = [5000, 15000, 30000, 60000, 120000, 300000]; // then every 5 min
 const UPLOAD_MAX_ATTEMPTS = 60;       // ≈ 4–5 hours of retrying
 const STATUS_POLL_WINDOW_MS = 12 * 60 * 60 * 1000; // follow R2/Drive progress for up to 12 hours per clip
+// How fast a finished R2/Drive upload turns into a ✓ on the panel. The
+// whole batch is polled in parallel (see statusPollTick), so a shorter
+// interval costs one small request per in-flight clip, not per clip × wait.
+const STATUS_POLL_INTERVAL_MS = 2000;
+const STATUS_POLL_BATCH = 12; // in-flight clips followed per tick
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -592,7 +597,10 @@ async function renameWithRetry(from, to, attempts = 6) {
 // ----------------------------------------------------------------
 const uploadQueue = [];
 let uploadsRunning = 0;
-const UPLOAD_CONCURRENCY = 2;
+// 3 clips in flight at once: a burst of presses (a big over) clears to the
+// website noticeably sooner than at 2, without swamping a typical venue
+// uplink the way a much higher number would.
+const UPLOAD_CONCURRENCY = 3;
 
 function queueUpload(job) {
   if (!uploadQueue.includes(job.clipId)) uploadQueue.push(job.clipId);
@@ -698,47 +706,92 @@ function getJson(url, timeoutMs = 10000) {
 // 🔎 Follows each uploaded clip's R2 and Drive legs on the website (for
 // the panel's status list) until both are done, it failed permanently,
 // or an hour has passed. One loop for all clips; a few at a time.
+// Polls one clip and applies whatever the website now reports. Split out
+// of the tick below so a whole batch can be polled in PARALLEL — the old
+// sequential `await` inside the loop meant 6 clips × a slow round-trip
+// could take longer than the tick interval itself, which is what let two
+// ticks overlap and log the same "in R2 + Drive" line twice.
+async function pollOneClipStatus(server, job) {
+  job.lastPolledAt = Date.now();
+  const r = await getJson(`${server}/api/clips/status/${encodeURIComponent(job.clipId)}`);
+  if (!r || r.status !== 200 || !r.json || !r.json.success) return;
+  const d = r.json;
+
+  // Remembered before the patch so each leg is announced EXACTLY once,
+  // on the tick it actually changes — never re-logged on later polls.
+  const prevR2 = job.r2Status;
+  const prevDrive = job.driveStatus;
+  const wasComplete = job.status === 'COMPLETE';
+
+  const patch = { r2Status: d.r2Status || job.r2Status, driveStatus: d.driveStatus || job.driveStatus, serverStatus: d.status };
+
+  // 📣 Per-leg progress in this window, so R2 and Drive each announce
+  // themselves the moment they land instead of only a combined line at
+  // the very end (and a failing leg says WHY, so it can be fixed rather
+  // than just silently retried).
+  if (patch.r2Status === 'uploaded' && prevR2 !== 'uploaded') {
+    console.log(`☁️  [${job.eventType}] ${job.clipId}: R2 ✓`);
+  }
+  if (patch.driveStatus === 'uploaded' && prevDrive !== 'uploaded') {
+    console.log(`📁 [${job.eventType}] ${job.clipId}: Google Drive ✓`);
+  }
+  if (patch.r2Status === 'failed' && prevR2 !== 'failed') {
+    console.log(`⚠️  [${job.eventType}] ${job.clipId}: R2 upload failed — ${d.r2Error || 'no reason reported'} (retrying)`);
+  }
+  if (patch.driveStatus === 'failed' && prevDrive !== 'failed') {
+    console.log(`⚠️  [${job.eventType}] ${job.clipId}: Google Drive upload failed — ${d.driveError || 'no reason reported'} (retrying)`);
+  }
+
+  if (d.status === 'COMPLETE') {
+    Object.assign(patch, { status: 'COMPLETE', serverFailed: false, driveBackupFailed: false, error: null });
+    if (!wasComplete) console.log(`✅ [${job.eventType}] ${job.clipId}: in R2 + Drive`);
+  } else if (d.status === 'NEEDS_REUPLOAD') {
+    // The website restarted and lost its temporary copy before R2/Drive
+    // finished. Our local copy is the source of truth — send it again.
+    if (job.localPath && fs.existsSync(job.localPath)) {
+      console.log(`🔁 [${job.eventType}] ${job.clipId}: website lost its copy — re-sending the local clip`);
+      Object.assign(patch, { status: 'UPLOAD_RETRY', serverFailed: false, uploadAttempts: 0, error: 'website restarted — re-sending clip', nextUploadAt: Date.now() });
+      update(job, patch);
+      job.uploadAttempts = 0;
+      queueUpload(job);
+      return;
+    }
+    Object.assign(patch, { status: 'FAILED', serverFailed: false, error: 'website lost its copy and the local clip file is missing' });
+  } else if (d.status === 'FAILED_PERMANENT') {
+    if (d.r2Status === 'uploaded') {
+      // Clip plays from R2 — only the Drive backup copy is missing.
+      Object.assign(patch, { status: 'COMPLETE', serverFailed: true, driveBackupFailed: true, error: null });
+    } else {
+      Object.assign(patch, { status: 'FAILED', serverFailed: true, error: d.permanentFailureReason || 'website could not upload to R2/Drive' });
+    }
+  }
+  update(job, patch);
+}
+
+// 🔎 Follows each uploaded clip's R2 and Drive legs on the website (for
+// the panel's status list) until both are done, it failed permanently,
+// or the poll window closes. One loop for all clips, polled in parallel.
+let statusPollRunning = false;
 async function statusPollTick() {
+  // 🔒 Re-entrancy guard: a slow round-trip used to let the next interval
+  // fire while this tick was still awaiting, so the SAME clip got polled
+  // (and its completion logged) twice. One tick at a time, always.
+  if (statusPollRunning) return;
   const server = session.mainServerUrl || toOrigin(config.mainServerUrl);
   if (!server) return;
-  // UPLOADED = website still finishing R2/Drive. A website-side failure
-  // (serverFailed) is still followed, since the website can recover it.
-  const due = [...jobs.values()]
-    .filter((j) => (j.status === 'UPLOADED' || (j.status === 'FAILED' && j.serverFailed)) && Date.now() - (j.uploadedAt || 0) < STATUS_POLL_WINDOW_MS)
-    .sort((a, b) => (a.lastPolledAt || 0) - (b.lastPolledAt || 0));
-  for (const job of due.slice(0, 6)) {
-    job.lastPolledAt = Date.now();
-    const r = await getJson(`${server}/api/clips/status/${encodeURIComponent(job.clipId)}`);
-    if (!r || r.status !== 200 || !r.json || !r.json.success) continue;
-    const d = r.json;
-    const patch = { r2Status: d.r2Status || job.r2Status, driveStatus: d.driveStatus || job.driveStatus, serverStatus: d.status };
-    if (d.status === 'COMPLETE') {
-      Object.assign(patch, { status: 'COMPLETE', serverFailed: false, driveBackupFailed: false, error: null });
-      console.log(`✅ [${job.eventType}] ${job.clipId}: in R2 + Drive`);
-    } else if (d.status === 'NEEDS_REUPLOAD') {
-      // The website restarted and lost its temporary copy before R2/Drive
-      // finished. Our local copy is the source of truth — send it again.
-      if (job.localPath && fs.existsSync(job.localPath)) {
-        console.log(`🔁 [${job.eventType}] ${job.clipId}: website lost its copy — re-sending the local clip`);
-        Object.assign(patch, { status: 'UPLOAD_RETRY', serverFailed: false, uploadAttempts: 0, error: 'website restarted — re-sending clip', nextUploadAt: Date.now() });
-        update(job, patch);
-        job.uploadAttempts = 0;
-        queueUpload(job);
-        continue;
-      }
-      Object.assign(patch, { status: 'FAILED', serverFailed: false, error: 'website lost its copy and the local clip file is missing' });
-    } else if (d.status === 'FAILED_PERMANENT') {
-      if (d.r2Status === 'uploaded') {
-        // Clip plays from R2 — only the Drive backup copy is missing.
-        Object.assign(patch, { status: 'COMPLETE', serverFailed: true, driveBackupFailed: true, error: null });
-      } else {
-        Object.assign(patch, { status: 'FAILED', serverFailed: true, error: d.permanentFailureReason || 'website could not upload to R2/Drive' });
-      }
-    }
-    update(job, patch);
+  statusPollRunning = true;
+  try {
+    // UPLOADED = website still finishing R2/Drive. A website-side failure
+    // (serverFailed) is still followed, since the website can recover it.
+    const due = [...jobs.values()]
+      .filter((j) => (j.status === 'UPLOADED' || (j.status === 'FAILED' && j.serverFailed)) && Date.now() - (j.uploadedAt || 0) < STATUS_POLL_WINDOW_MS)
+      .sort((a, b) => (a.lastPolledAt || 0) - (b.lastPolledAt || 0));
+    await Promise.all(due.slice(0, STATUS_POLL_BATCH).map((job) => pollOneClipStatus(server, job).catch(() => {})));
+  } finally {
+    statusPollRunning = false;
   }
 }
-setInterval(() => { statusPollTick().catch(() => {}); }, 5000);
+setInterval(() => { statusPollTick().catch(() => {}); }, STATUS_POLL_INTERVAL_MS);
 
 // ----------------------------------------------------------------
 // 🌐 HTTP API (panel ↔ helper). Same endpoints as v3, plus /clip-jobs.
@@ -892,9 +945,15 @@ app.post('/recording-stop', (req, res) => {
 app.post('/set-folder', (req, res) => {
   const { folderId, folderName } = req.body || {};
   if (folderId) {
+    const changed = session.driveFolderId !== folderId;
     session.driveFolderId = folderId;
     session.driveFolderName = folderName || session.driveFolderName || 'Selected folder';
     saveSession();
+    // Announced in this window the same way the recording session is, so
+    // the operator can SEE Drive is connected here and not only in the
+    // browser panel. A silent refresh of the same folder (the panel
+    // re-sends a fresh Google token every 45 min) isn't re-announced.
+    if (changed) console.log(`📁 Google Drive connected — clips upload to "${session.driveFolderName}"`);
   }
   res.json({ success: true });
 });

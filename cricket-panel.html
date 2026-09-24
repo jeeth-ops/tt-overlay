@@ -2393,7 +2393,11 @@ async function refreshServerClipStatus(list){
   const need = list.filter(j => ['UPLOADED', 'FAILED'].includes(j.status) || j.driveBackupFailed);
   await Promise.all(need.map(async j => {
     const c = serverClipStatus[j.clipId];
-    if(c && Date.now() - c.at < 15000) return;
+    // 3s, not 15s: this cached answer OVERRIDES the helper's own (fresher)
+    // view in withServerClipStatus below, so a long TTL here was the main
+    // reason a clip already sitting in R2/Drive kept showing ⏳ for up to
+    // a quarter-minute after it was genuinely done.
+    if(c && Date.now() - c.at < 3000) return;
     try {
       const res = await fetch(`/api/clips/status/${encodeURIComponent(j.clipId)}`, { signal: AbortSignal.timeout(4000) });
       const d = res.ok ? await res.json() : null;
@@ -2406,6 +2410,12 @@ function withServerClipStatus(j){
   const d = c && c.d;
   if(!d) return j; // website never got it (e.g. cut failed) — helper's view is right
   const legs = { r2Status: d.r2Status || j.r2Status, driveStatus: d.driveStatus || j.driveStatus };
+  // Carry WHY a leg is failing, so a clip stuck on "Drive ✕ (retrying)"
+  // says what to fix (expired Google token, folder gone, quota) instead
+  // of retrying silently behind an icon.
+  legs.legError = d.driveStatus === 'failed' && d.driveError ? `Drive: ${d.driveError}`
+    : d.r2Status === 'failed' && d.r2Error ? `R2: ${d.r2Error}`
+    : null;
   const r2Ok = d.r2Status === 'uploaded';
   if(d.status === 'COMPLETE') return { ...j, ...legs, status: 'COMPLETE', driveBackupFailed: false, error: null };
   if(d.status === 'NEEDS_REUPLOAD') return { ...j, ...legs, status: 'SERVER_REUPLOAD', error: null };
@@ -2439,13 +2449,14 @@ function renderClipJobs(list){
     const time = new Date(j.t0).toLocaleTimeString();
     const dec = clipDecisions[j.clipId];
     const tag = j.eventType !== 'HIGHLIGHT' ? '' : dec === 'YES' ? '⭐ Highlight' : dec === 'NO' ? 'Not in Highlights' : 'Awaiting outcome';
-    row.innerHTML = `<div><span class="t"></span><span class="tag"></span></div><div class="s"></div>${j.error && (j.status === 'FAILED' || j.status === 'UPLOAD_RETRY') ? '<div class="err"></div>' : ''}`;
+    const shownError = (j.error && (j.status === 'FAILED' || j.status === 'UPLOAD_RETRY')) ? j.error : (j.legError || '');
+    row.innerHTML = `<div><span class="t"></span><span class="tag"></span></div><div class="s"></div>${shownError ? '<div class="err"></div>' : ''}`;
     row.querySelector('.t').textContent = `${j.eventType} @ ${time}${j.clipSeconds ? ` · ${j.clipSeconds}s` : ''}`;
     const tagEl = row.querySelector('.tag');
     if(tag) tagEl.textContent = tag; else tagEl.remove();
     row.querySelector('.s').textContent = clipJobLine(j);
     const err = row.querySelector('.err');
-    if(err) err.textContent = j.error;
+    if(err) err.textContent = shownError;
     el.appendChild(row);
   });
 }
