@@ -1,4 +1,4 @@
-# Clipper Helper v5.0 — Setup (one-time, operator ka apna PC)
+# Clipper Helper v5.2 — Setup (one-time, operator ka apna PC)
 
 Ye chhota program (`ClipperHelper.exe`) vMix ke saath usi PC par chalta hai
 jahan match record ho raha hai. Isi ke wajah se panel me FOUR/SIX/WICKET
@@ -58,7 +58,7 @@ MATCH RECORDING FOLDER/
   folder me usi file ke *hard link* hote hain (ek 20-sec MP4, teen jagah
   se khulta hai). Player folder me `player.json` bhi hota hai jisme asli
   `playerId` hai — clip kabhi folder ke naam se match nahi ki jaati.
-- **Clip window ab 15 sec pehle + 5 sec baad = 20 sec** (`config.json` me
+- **Clip window 15 sec pehle + 3 sec baad = 18 sec** (`config.json` me
   `preRollSeconds` / `postRollSeconds` se badal sakte ho).
 - **Nayi file:** `clipOrganizer.js` — ise `server.js` aur `fmp4.js` ke saath
   hi rakhna hai (`npm run build` khud exe me daal deta hai).
@@ -78,8 +78,8 @@ MATCH RECORDING FOLDER/
 
 **v4 me kya badla (10–12 clips ke baad clips miss hona / "fetching" error / restart ki zaroorat — root cause fix):**
 - **HIGHLIGHTS button:** ball khelte hi panel me **🎬 HIGHLIGHTS** (ya keyboard `H`) dabao.
-  Press ka exact time save hota hai, **5 second** wait hota hai, phir vMix recording se
-  **15 sec pehle → 5 sec baad = 20 sec** ki clip cut hoti hai.
+  Press ka exact time save hota hai, **3 second** wait hota hai, phir vMix recording se
+  **15 sec pehle → 3 sec baad = 18 sec** ki clip cut hoti hai.
 - **Har clip ka apna time:** pehle "file ke aakhri 19 second" cut hote the — queue me
   ruki clip galat moment ki ban jaati thi. Ab har press ka apna fixed time hai, isliye
   back-to-back presses bhi sahi aur poore 18 sec ke aate hain.

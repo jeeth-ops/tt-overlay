@@ -92,9 +92,9 @@ let config = {
   // Your website's address. Only its origin is used (https://site.com),
   // so a pasted panel URL like https://site.com/cricket-panel still works.
   mainServerUrl: 'https://YOUR-SITE.example.com',
-  // The clip window, in seconds. 15 before + 5 after the press = 20 s.
+  // The clip window, in seconds. 15 before + 3 after the press = 18 s.
   preRollSeconds: 15,
-  postRollSeconds: 5,
+  postRollSeconds: 3,
 };
 try {
   if (fs.existsSync(CONFIG_PATH)) config = { ...config, ...JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) };
@@ -131,14 +131,14 @@ function saveSession() {
 
 // ----------------------------------------------------------------
 // 🎯 CLIP WINDOW — the one place these numbers live.
-// 15 s before the press + 5 s after it = a 20 s clip. Both are
+// 15 s before the press + 3 s after it = an 18 s clip. Both are
 // overridable in config.json for a venue that wants a different window;
 // the cut, the wait for the footage and everything downstream read these
 // two numbers only, so they always agree.
 // ----------------------------------------------------------------
 const PRE_ROLL_SECONDS = clampSeconds(config.preRollSeconds, 15, 1, 120);   // footage kept BEFORE the press
-const POST_ROLL_SECONDS = clampSeconds(config.postRollSeconds, 5, 1, 60);   // footage kept AFTER the press (and the wait before cutting)
-const CLIP_SECONDS = PRE_ROLL_SECONDS + POST_ROLL_SECONDS; // 20
+const POST_ROLL_SECONDS = clampSeconds(config.postRollSeconds, 3, 1, 60);   // footage kept AFTER the press (and the wait before cutting)
+const CLIP_SECONDS = PRE_ROLL_SECONDS + POST_ROLL_SECONDS; // 18
 function clampSeconds(value, fallback, min, max) {
   const n = Number(value);
   return Number.isFinite(n) && n >= min && n <= max ? n : fallback;
@@ -178,6 +178,7 @@ const STATUS_POLL_WINDOW_MS = 12 * 60 * 60 * 1000; // follow R2/Drive progress f
 const STATUS_POLL_INTERVAL_MS = 2000;
 const STATUS_POLL_BATCH = 12; // in-flight clips followed per tick
 
+const HELPER_VERSION = '5.2';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function getClipsDir() {
@@ -1035,14 +1036,22 @@ function queueSync(job) {
 // Kept as an alias so nothing that used the old name breaks.
 const queueUpload = queueSync;
 
+// 🔒 Clips whose sync is running RIGHT NOW. The queue alone was not
+// enough: once a clipId is taken off it, a second queueSync() for the same
+// clip (a retry timer, the status poller and "internet is back" can all
+// fire at once) would start a SECOND upload of the same file while the
+// first was still in flight — two uploads, two sets of log lines, twice
+// the bandwidth, for one clip.
+const syncInFlight = new Set();
 function pumpSync() {
   while (syncRunning < UPLOAD_CONCURRENCY && syncQueue.length) {
     const job = jobs.get(syncQueue.shift());
-    if (!job || !SYNCABLE.includes(job.status)) continue;
+    if (!job || !SYNCABLE.includes(job.status) || syncInFlight.has(job.clipId)) continue;
     syncRunning++;
+    syncInFlight.add(job.clipId);
     syncJob(job)
       .catch((err) => onSyncFailure(job, `unexpected: ${err.message}`))
-      .finally(() => { syncRunning--; pumpSync(); });
+      .finally(() => { syncInFlight.delete(job.clipId); syncRunning--; pumpSync(); });
   }
 }
 
@@ -1143,7 +1152,11 @@ async function syncJob(job) {
   let sizeBytes = 0;
   try { sizeBytes = fs.statSync(job.localPath).size; } catch (_) { /* reported by postFile */ }
   const startedAt = Date.now();
-  console.log(`⬆️  [${job.eventType}] ${job.clipId}: UPLOADING TO R2 (via the website) — attempt ${job.syncAttempts}`);
+  // Alternate the request framing on every other attempt (see postFile):
+  // if something in front of the website refuses one shape, the other one
+  // gets through, and the log says which.
+  const chunked = (job.syncAttempts || 1) % 2 === 0;
+  console.log(`⬆️  [${job.eventType}] ${job.clipId}: UPLOADING TO R2 (via the website) — attempt ${job.syncAttempts}${chunked ? ' (chunked)' : ''}`);
   // ⚠️ ONE header only — exactly the request shape that has always worked.
   // An extra X-Clip-Meta header here (the offline queue's full record) got
   // the whole upload killed in production: it carried the clip's Windows
@@ -1155,15 +1168,15 @@ async function syncJob(job) {
   // it belongs; nothing is lost.
   const r = await postFile(`${server}/api/clips/ingest?${qs}`, job.localPath, {
     'X-Ball-Meta': headerJson(ballMetaFor(job)),
-  });
+  }, { chunked });
   const stats = uploadStats(sizeBytes, startedAt);
   if (!r.ok) {
     noteNetworkOutcome(false, r.error);
     if (net.online === false) return markOfflinePending(job);
-    return onSyncFailure(job, r.error, stats);
+    return onSyncFailure(job, r.error, stats, r.phases);
   }
   noteNetworkOutcome(true);
-  console.log(`📤 [${job.eventType}] ${job.clipId}: received by website (${stats}) — R2 + Drive uploads running there`);
+  console.log(`📤 [${job.eventType}] ${job.clipId}: received by website (${stats} · ${r.phases}) — R2 + Drive uploads running there`);
   update(job, { status: 'SENT', uploadedAt: Date.now(), r2Status: job.r2Status === 'uploaded' ? 'uploaded' : 'pending', driveStatus: job.driveStatus === 'uploaded' ? 'uploaded' : 'pending', error: null });
 }
 
@@ -1189,6 +1202,17 @@ async function websiteStage(job, server) {
   update(job, { status: 'SYNC_COMPLETE', websiteStatus: 'updated', syncedAt: Date.now(), error: null, attachedTo: r.json && r.json.attachedTo ? r.json.attachedTo : null });
   console.log(`✅ [${job.eventType}] ${job.clipId}: SYNC COMPLETE — local ✓ · R2 ✓ · Drive ✓ · website ✓`);
 }
+
+// 🪪 WHO IS CALLING. Node sends NO User-Agent of its own, and a request
+// with no User-Agent is what bot protection in front of a website (e.g.
+// Cloudflare's managed rules) is most likely to DROP — not answer with a
+// 403, just close the connection without a word. That is exactly what a
+// clip upload looked like from here: the body went out, nothing came back,
+// and the connection died ~15 s later as "socket hang up", every single
+// attempt, while a plain GET sailed through. Every request this helper
+// makes now says who it is.
+const HELPER_UA = `ClipperHelper/${HELPER_VERSION} (local vMix clip cutter; +https://github.com/jeeth-ops/tt-overlay)`;
+const BASE_HEADERS = { 'User-Agent': HELPER_UA, 'Accept': 'application/json' };
 
 // 🔤 JSON safe to put in an HTTP header. Node (rightly) refuses a header
 // value containing anything outside Latin-1, so a single accented player
@@ -1217,8 +1241,12 @@ function syncBackoffMs(attempt) {
   return UPLOAD_BACKOFF_MS[Math.min(Math.max(1, attempt), UPLOAD_BACKOFF_MS.length) - 1] || SYNC_MAX_BACKOFF_MS;
 }
 
-function onSyncFailure(job, reason, stats) {
-  if (stats) console.log(`   ↳ died after ${stats}`);
+function onSyncFailure(job, reason, stats, phases) {
+  // The phase breakdown is what tells a slow link apart from a request
+  // nobody answered: "body 98KB in 74ms · reply wait 15.5s" is the second
+  // one, and no amount of retrying or compressing will help it.
+  if (phases) console.log(`   ↳ ${phases}`);
+  else if (stats) console.log(`   ↳ died after ${stats}`);
   const delay = syncBackoffMs(job.syncAttempts || 1);
   // Which stage is being retried — so the operator sees "R2 retry" (or
   // "DRIVE retry", or "WEBSITE UPDATE retry") and never "clip failed" for a
@@ -1231,19 +1259,39 @@ function onSyncFailure(job, reason, stats) {
 
 // Streams a file as the request body. Times out only when nothing moves
 // for UPLOAD_IDLE_TIMEOUT_MS — a big clip on a slow link is fine.
-function postFile(url, filePath, extraHeaders) {
+// Streams a file as the request body, and MEASURES each phase: how long
+// the connection took, how long the body took to go out, and how long we
+// then sat waiting for the website to answer. That last number is the one
+// that matters — a body that left in 80 ms followed by a 15-second silence
+// is not a slow upload, it is a request something decided not to answer.
+//
+// `chunked` sends the same bytes without a Content-Length (HTTP chunked
+// framing). A retry alternates between the two shapes, because a proxy or
+// bot filter that refuses one sometimes passes the other — and whichever
+// one works is printed, so the fix is knowable rather than guessed.
+function postFile(url, filePath, extraHeaders, { chunked = false } = {}) {
   return new Promise((resolve) => {
     let u;
     try { u = new URL(url); } catch (e) { return resolve({ ok: false, error: 'bad website URL' }); }
     let size;
     try { size = fs.statSync(filePath).size; } catch (e) { return resolve({ ok: false, error: 'clip file missing' }); }
     const lib = u.protocol === 'https:' ? https : http;
+    const lengthHeaders = chunked ? {} : { 'Content-Length': size };
+    const t0 = Date.now();
+    const t = { connected: null, sent: null };
+    let sentBytes = 0;
     let settled = false;
-    const finish = (res) => { if (!settled) { settled = true; resolve(res); } };
+    const phases = () => {
+      const conn = t.connected ? t.connected - t0 : null;
+      const send = t.sent && t.connected ? t.sent - t.connected : null;
+      const wait = t.sent ? Date.now() - t.sent : null;
+      return `connect ${conn == null ? '—' : conn + 'ms'} · body ${send == null ? 'NOT SENT' : `${(sentBytes / 1024).toFixed(0)}KB in ${send}ms`} · reply wait ${wait == null ? '—' : (wait / 1000).toFixed(1) + 's'}${chunked ? ' · chunked' : ''}`;
+    };
+    const finish = (res) => { if (!settled) { settled = true; resolve({ ...res, phases: phases() }); } };
     const req = lib.request(u, {
       method: 'POST',
       agent: false, // one fresh connection per upload — nothing pooled can go stale over a 7-hour match
-      headers: { 'Content-Type': 'video/mp4', 'Content-Length': size, ...extraHeaders },
+      headers: { ...BASE_HEADERS, 'Content-Type': 'video/mp4', ...lengthHeaders, ...extraHeaders },
     }, (res) => {
       let body = '';
       res.setEncoding('utf8');
@@ -1254,9 +1302,15 @@ function postFile(url, filePath, extraHeaders) {
       });
       res.on('error', (e) => finish({ ok: false, error: e.message }));
     });
+    req.on('socket', (sock) => {
+      if (sock.connecting) sock.once('connect', () => { t.connected = Date.now(); });
+      else t.connected = Date.now();
+    });
     req.setTimeout(UPLOAD_IDLE_TIMEOUT_MS, () => { req.destroy(new Error(`no progress for ${UPLOAD_IDLE_TIMEOUT_MS / 1000}s`)); });
     req.on('error', (e) => finish({ ok: false, error: e.message }));
     const stream = fs.createReadStream(filePath);
+    stream.on('data', (c) => { sentBytes += c.length; });
+    stream.on('end', () => { t.sent = Date.now(); });
     stream.on('error', (e) => { req.destroy(e); finish({ ok: false, error: `read error: ${e.message}` }); });
     stream.pipe(req);
   });
@@ -1275,7 +1329,7 @@ function postJson(url, body, timeoutMs = 20000) {
     const req = lib.request(u, {
       method: 'POST',
       agent: false,
-      headers: { 'Content-Type': 'application/json', 'Content-Length': payload.length },
+      headers: { ...BASE_HEADERS, 'Content-Type': 'application/json', 'Content-Length': payload.length },
     }, (res) => {
       let text = '';
       res.setEncoding('utf8');
@@ -1299,7 +1353,7 @@ function getJson(url, timeoutMs = 10000) {
     let u;
     try { u = new URL(url); } catch (e) { return resolve(null); }
     const lib = u.protocol === 'https:' ? https : http;
-    const req = lib.get(u, { agent: false }, (res) => {
+    const req = lib.get(u, { agent: false, headers: BASE_HEADERS }, (res) => {
       let body = '';
       res.setEncoding('utf8');
       res.on('data', (d) => { if (body.length < 20000) body += d; });
@@ -1916,7 +1970,7 @@ setInterval(() => {
 
 const server = app.listen(config.port, () => {
   console.log('================================================');
-  console.log(`🎥 Clipper Helper v5.1 (offline-first) running at http://localhost:${config.port}`);
+  console.log(`🎥 Clipper Helper v${HELPER_VERSION} (offline-first) running at http://localhost:${config.port}`);
   console.log(`👉 Setup page: http://localhost:${config.port}/setup`);
   console.log(`Using ffmpeg: ${ffmpegPath}`);
   console.log(`Clip window: ${PRE_ROLL_SECONDS}s before + ${POST_ROLL_SECONDS}s after the press = ${CLIP_SECONDS}s`);
