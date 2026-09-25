@@ -84,6 +84,19 @@ const app = express();
 // ================================================================
 app.disable('x-powered-by');
 
+// 🛟 The site must never die in the middle of someone's upload. Node 18+
+// kills the whole process on a single unhandled promise rejection, and
+// Render then takes ~15 s to come back — during which every in-flight
+// request (a clip being uploaded, for instance) just gets its connection
+// closed with no answer at all. Whatever the stray rejection was, losing
+// the server over it is always worse. Logged loudly so it still gets fixed.
+process.on('unhandledRejection', (err) => {
+    console.log('❌ Unhandled promise rejection (server kept running):', (err && err.stack) || err);
+});
+process.on('uncaughtException', (err) => {
+    console.log('❌ Uncaught exception (server kept running):', (err && err.stack) || err);
+});
+
 // Never redirect Render's own health check / uptime pings, or the
 // redirect could make Render think the service is down and restart it.
 // Add any other health-check path you've set in Render's dashboard here.
@@ -1329,12 +1342,19 @@ function clipBallMetaFromClipMeta(meta) {
 // GET /api/clips/status/:clipId for the eventual R2/Drive outcome.
 // ================================================================
 app.post('/api/clips/ingest', express.raw({ type: '*/*', limit: '60mb' }), async (req, res) => {
+    const ingestStartedAt = Date.now();
     const matchId = safeMatchId(req.query.matchId);
     const eventType = String(req.query.eventType || 'CLIP').toUpperCase();
     const eventTimestamp = parseInt(req.query.timestamp, 10) || Date.now();
     const clipId = req.query.clipId ? String(req.query.clipId).replace(/[^a-zA-Z0-9_-]/g, '') : buildClipId(matchId, eventType, eventTimestamp);
     if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
     if (!req.body || !req.body.length) return res.status(400).json({ success: false, error: 'Empty clip body' });
+
+    // First line of the log, before anything can go slow or wrong: proof in
+    // Render's own logs that the request actually arrived, how big it was
+    // and for which clip. Without it, a clip upload that dies with no
+    // answer is indistinguishable from one that never reached the server.
+    console.log(`⬇️  [INGEST] clipId=${clipId} matchId=${matchId} bytes=${req.body ? req.body.length : 0} ua=${(req.headers['user-agent'] || 'none').slice(0, 40)}`);
 
     let ballMeta = null;
     try {
@@ -1371,6 +1391,7 @@ app.post('/api/clips/ingest', express.raw({ type: '*/*', limit: '60mb' }), async
     // disk — R2/Drive upload continues in the background; poll
     // /api/clips/status/:clipId for that outcome.
     res.json({ success: true, clipId, status: 'LOCAL_RECEIVED' });
+    console.log(`✅ [INGEST] clipId=${clipId} acknowledged in ${Date.now() - ingestStartedAt}ms (R2/Drive continue in the background)`);
 
     try {
         await finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMeta, uid: null, outFile, clipMeta });
