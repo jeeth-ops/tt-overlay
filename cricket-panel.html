@@ -1157,6 +1157,23 @@
     </div>
   </div>
 
+  <!-- 🏏 Automatic player card confirmation — SHOW/SKIP with a 7s
+       auto-continue, opened by queueAutoCardFlow() for a newly-selected
+       batsman or bowler (never for the outgoing/dismissed player — see
+       the AUTOMATIC PLAYER CARD FLOW block). Reuses the same
+       wicket-modal-overlay/wicket-modal shell as every other panel popup
+       for visual consistency. -->
+  <div class="wicket-modal-overlay" id="auto-card-modal-overlay">
+    <div class="wicket-modal" id="auto-card-modal">
+      <h3 id="auto-card-modal-title">SHOW CARD?</h3>
+      <div class="wm-sub" id="auto-card-modal-sub">—</div>
+      <div class="wm-actions">
+        <button type="button" class="ghost wm-cancel" id="auto-card-modal-skip">Skip</button>
+        <button type="button" class="primary" id="auto-card-modal-show">Show</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Wicket dismissal picker — appears the instant WICKET is pressed. -->
   <div class="wicket-modal-overlay" id="wicket-modal-overlay">
     <div class="wicket-modal" id="wicket-modal">
@@ -4051,6 +4068,14 @@ function sendInNewBatsman(name, id){
   state.partnershipRuns = 0; state.partnershipBalls = 0;
   renderRosterControls();
   pushState(true);
+  // 🏏 AUTOMATIC BATSMAN CARD — only once real balls have been bowled this
+  // match (skips the very first two openers at match start, when there's
+  // nothing meaningful to show yet). Triggered by the NEW BATSMAN
+  // selection itself, never by the wicket that preceded it — see the
+  // header comment on the AUTOMATIC PLAYER CARD FLOW block above.
+  if(state.score.overs > 0 || state.score.balls > 0){
+    queueAutoCardFlow('batsman', { name, payload: buildAutoBatsmanCardPayload(name) });
+  }
 }
 document.getElementById('new-batsman-btn').addEventListener('click', () => {
   const select = document.getElementById('new-batsman-select');
@@ -4391,6 +4416,18 @@ function applyBowlerChange(name, id, opts){
 
   pushState(true);
   toast(replaceMidOver ? `${name} takes over mid-over — earlier balls stay with the previous bowler` : `${name} is now bowling`);
+  // 🏏 AUTOMATIC BOWLER CARD — triggered by the NEW BOWLER selection
+  // itself, never by the over completing or by the OUTGOING bowler (see
+  // the header comment on the AUTOMATIC PLAYER CARD FLOW block above).
+  // Only for a genuine over-boundary change (carryBalls === 0) — a
+  // mid-over name/typo correction is the same spell continuing under a
+  // corrected name, not a new bowler coming on, so it stays silent here
+  // exactly like a batsman name-correction never re-triggers the batsman
+  // card either. state.bowler already holds this bowler's own correct
+  // starting-this-spell figures by this point.
+  if(carryBalls === 0){
+    queueAutoCardFlow('bowler', { name, payload: buildAutoBowlerCardPayload(name) });
+  }
   return true;
 }
 
@@ -4441,6 +4478,142 @@ document.getElementById('match-summary-toggle').addEventListener('change', (e) =
   pushState(true, true);
 });
 
+/* ------------------------------------------------------------
+   🏏 AUTOMATIC PLAYER CARD FLOW (+ QUEUE) — ported from the Stream Engine
+   panel. Triggered ONLY by a NEW PLAYER being selected — a batsman
+   walking in (sendInNewBatsman()) or a genuine new bowler coming on for a
+   fresh over (applyBowlerChange(), guarded to skip a mid-over name
+   correction) — NEVER by the wicket/dismissal itself or by an over simply
+   completing.
+
+   SHOW/SKIP popup appears the INSTANT a new batsman/bowler is selected
+   (7s auto-continue if the operator doesn't answer) → SHOW pressed (or
+   the auto-continue) → card appears immediately, no delay → exactly 4s
+   later it disappears on its own — using this panel's existing
+   cricketPlayerStat/cricketHidePlayerStat and cricketBowlerStat/
+   cricketHideBowlerStat events (the same ones the manual toggles below
+   already use), instead of the Stream Engine's separate "active card"
+   machinery.
+
+   Only a deliberate MANUAL toggle (or Reset) wipes the whole queue
+   outright; a SKIP or a natural auto-hide just advances to whatever's
+   queued next.
+   ------------------------------------------------------------ */
+let autoCardFlow = null;   // the flow currently on screen/counting down: { seq, kind, name, payload, timers:[] }
+let autoCardQueue = [];    // flows waiting their turn, same shape minus seq/timers
+let autoCardFlowSeq = 0;
+
+// Full wipe — used by manual toggles and Reset, where EVERYTHING
+// automatic (current + queued) must stand down, not just the current card.
+function clearAutoCardFlow(){
+  if(autoCardFlow){
+    (autoCardFlow.timers || []).forEach(id => clearTimeout(id));
+    const isBatsman = autoCardFlow.kind === 'batsman';
+    const showFlag = isBatsman ? 'showPlayerStatCard' : 'showBowlerStatCard';
+    const toggleId = isBatsman ? 'player-stat-toggle' : 'bowler-stat-toggle';
+    const hideEvent = isBatsman ? 'cricketHidePlayerStat' : 'cricketHideBowlerStat';
+    autoCardFlow = null;
+    state[showFlag] = false;
+    saveLocal();
+    const toggleEl = document.getElementById(toggleId); if(toggleEl) toggleEl.checked = false;
+    if(socket && socket.connected) socket.emit(hideEvent, {});
+  }
+  autoCardQueue = [];
+  const overlay = document.getElementById('auto-card-modal-overlay');
+  if(overlay) overlay.classList.remove('show');
+}
+// Adds a flow to the back of the queue; starts it immediately if nothing
+// is currently running. Use this (never a direct "start") so a wicket's
+// out-batter card and the next incoming batter's card always play in
+// order instead of the second discarding the first.
+function queueAutoCardFlow(kind, info){
+  autoCardQueue.push({ kind, name: info.name, payload: info.payload });
+  if(!autoCardFlow) advanceAutoCardQueue();
+}
+function advanceAutoCardQueue(){
+  if(autoCardQueue.length === 0) return;
+  const next = autoCardQueue.shift();
+  const seq = ++autoCardFlowSeq;
+  autoCardFlow = { seq, kind: next.kind, name: next.name, payload: next.payload, timers: [] };
+  openAutoCardConfirm(next.kind, next.name);
+  const t = setTimeout(() => resolveAutoCardConfirm(seq, true), 7000); // no response in 7s → continue
+  autoCardFlow.timers.push(t);
+}
+function openAutoCardConfirm(kind, name){
+  const overlay = document.getElementById('auto-card-modal-overlay');
+  if(!overlay) return;
+  document.getElementById('auto-card-modal-title').textContent = kind === 'bowler' ? 'SHOW BOWLER CARD?' : 'SHOW BATSMAN CARD?';
+  document.getElementById('auto-card-modal-sub').textContent = name || '—';
+  overlay.classList.add('show');
+}
+function resolveAutoCardConfirm(seq, proceed){
+  if(!autoCardFlow || autoCardFlow.seq !== seq) return; // stale — a newer/cleared flow already won
+  const overlay = document.getElementById('auto-card-modal-overlay');
+  if(overlay) overlay.classList.remove('show');
+  if(!proceed){ autoCardFlow = null; advanceAutoCardQueue(); return; }
+  showAutoCard(seq); // SHOW pressed (or the popup auto-continued) — no delay, straight to the card
+}
+function showAutoCard(seq){
+  if(!autoCardFlow || autoCardFlow.seq !== seq) return;
+  if(!socket || !socket.connected){ autoCardFlow = null; advanceAutoCardQueue(); return; }
+  const flow = autoCardFlow;
+  const isBatsman = flow.kind === 'batsman';
+  const emitEvent = isBatsman ? 'cricketPlayerStat' : 'cricketBowlerStat';
+  const hideEvent = isBatsman ? 'cricketHidePlayerStat' : 'cricketHideBowlerStat';
+  const toggleId = isBatsman ? 'player-stat-toggle' : 'bowler-stat-toggle';
+  const showFlag = isBatsman ? 'showPlayerStatCard' : 'showBowlerStatCard';
+
+  state[showFlag] = true;
+  saveLocal();
+  const toggleEl = document.getElementById(toggleId); if(toggleEl) toggleEl.checked = true;
+  socket.emit(emitEvent, { data: flow.payload });
+
+  // Flat 4s window from this card's first frame — Show → 4s → gone.
+  const t = setTimeout(() => {
+    if(!autoCardFlow || autoCardFlow.seq !== seq) return; // a manual action already took over
+    state[showFlag] = false;
+    saveLocal();
+    if(toggleEl) toggleEl.checked = false;
+    if(socket && socket.connected) socket.emit(hideEvent, {});
+    autoCardFlow = null;
+    advanceAutoCardQueue();
+  }, 4000);
+  flow.timers.push(t);
+}
+document.getElementById('auto-card-modal-show').addEventListener('click', () => {
+  if(autoCardFlow) resolveAutoCardConfirm(autoCardFlow.seq, true);
+});
+document.getElementById('auto-card-modal-skip').addEventListener('click', () => {
+  if(autoCardFlow) resolveAutoCardConfirm(autoCardFlow.seq, false);
+});
+// Frozen (built-once-at-selection-time) payloads for the auto flow — a
+// fresh batsman always starts 0/0/0.0/0/0, and a fresh bowler's figures
+// are whatever state.bowler already holds the instant they're selected
+// (0 for a brand-new spell, or a resumed spell's own carried-forward
+// figures — see applyBowlerChange()). Always "match" scope, matching what
+// the automatic popup is for.
+function buildAutoBatsmanCardPayload(name){
+  const battingTeamObj = state.battingTeam === 'A' ? state.teamA : state.teamB;
+  return {
+    scope: 'match',
+    teamName: battingTeamObj.name, teamShort: battingTeamObj.short,
+    teamColor: battingTeamObj.color, teamLogo: battingTeamObj.logoUrl,
+    playerName: name,
+    runs: 0, balls: 0, sr: '0.0', fours: 0, sixes: 0
+  };
+}
+function buildAutoBowlerCardPayload(name){
+  const bowlingTeamObj = bowlingTeamKey() === 'A' ? state.teamA : state.teamB;
+  return {
+    scope: 'match',
+    teamName: bowlingTeamObj.name, teamShort: bowlingTeamObj.short,
+    teamColor: bowlingTeamObj.color, teamLogo: bowlingTeamObj.logoUrl,
+    playerName: name,
+    overs: fmtBowlerOvers(state.bowler.overs, state.bowler.balls), maidens: state.bowler.maidens,
+    runs: state.bowler.runs, wickets: state.bowler.wickets, economy: bowlerEcon(state.bowler)
+  };
+}
+
 /* ============================================================
    LEFT-SLIDE PLAYER / BOWLER STAT CARD CONTROLS
    Unlike the summary toggles above, these ARE the on/off switch for the
@@ -4448,6 +4621,7 @@ document.getElementById('match-summary-toggle').addEventListener('change', (e) =
    immediately, on top of the normal state save.
    ============================================================ */
 document.getElementById('player-stat-toggle').addEventListener('change', (e) => {
+  clearAutoCardFlow(); // any manual toggle wins over a pending automatic popup/timer
   state.showPlayerStatCard = e.target.checked;
   saveLocal();
   if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
@@ -4455,6 +4629,7 @@ document.getElementById('player-stat-toggle').addEventListener('change', (e) => 
   else socket.emit('cricketHidePlayerStat', {});
 });
 document.getElementById('bowler-stat-toggle').addEventListener('change', (e) => {
+  clearAutoCardFlow(); // any manual toggle wins over a pending automatic popup/timer
   state.showBowlerStatCard = e.target.checked;
   saveLocal();
   if(!socket || !socket.connected){ toast('Not connected to overlay'); return; }
@@ -5667,6 +5842,10 @@ async function resumeSavedMatch(rec, btn, listTournament){
     if(currentMatchTournament()) saveMatchToLeague(true); // always its OWN tournament, whatever the dropdown shows
     else saveMatchToSingleHistory(true);
   }
+  // 🔒 Any automatic player-card popup/timer still pending for the match
+  // we're LEAVING must die right here — otherwise its queued timers would
+  // eventually fire against the NEW match this same panel is about to load.
+  clearAutoCardFlow();
   clearTimeout(pushTimer);
   if(socket && socket.connected && !isAwaitingNextInnings()) socket.emit('updateCricketScore', state);
   if(socket){ try{ socket.disconnect(); }catch(e){} socket = null; }
@@ -6758,11 +6937,65 @@ function refreshLiveStatCards(){
   }
 }
 
+/* ------------------------------------------------------------
+   🏏 AUTOMATIC RECENT OVER SUMMARY + LAST-5-OVERS MOMENTUM (ported from
+   the Stream Engine panel). Called once per genuinely-completed over from
+   inside recordBall() (see overCompletedThisBall there). Builds a
+   broadcast-style payload from data the overlay already trusts
+   (state.score/striker/nonStriker/bowler) and appends to
+   state.overHistory, which Last-5-overs reads back from.
+   ------------------------------------------------------------ */
+function emitOverSummary(overIndexZeroBased, overRuns, overWickets, overBalls){
+  state.overHistory = state.overHistory || [];
+  state.overHistory.push({
+    overNumber: overIndexZeroBased + 1,
+    runs: overRuns,
+    wickets: overWickets,
+    inningsNo: state.inningsNumber
+  });
+  saveLocal();
+  if(!socket || !socket.connected) return;
+  const battingTeamObj = state.battingTeam === 'A' ? state.teamA : state.teamB;
+  const bowlingTeamObj = state.battingTeam === 'A' ? state.teamB : state.teamA;
+  const totalBalls = state.score.overs * 6 + state.score.balls;
+  const crr = totalBalls > 0 ? (state.score.runs / (totalBalls / 6)) : 0;
+  const recentOvers = state.overHistory.filter(o => o.inningsNo === state.inningsNumber).slice(-5);
+  const srOf = (p) => (p.balls > 0 ? ((p.runs / p.balls) * 100).toFixed(1) : '0.0');
+  socket.emit('cricketOverSummary', { data: {
+    // Identity of THIS emission + which over/innings/side it belongs to — the
+    // overlay uses these to drop duplicate deliveries and never restart the
+    // 4 s hold for an over that is already on screen.
+    eventId: `${currentMatchId() || 'm'}-${state.inningsNumber}-${overIndexZeroBased + 1}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    inningsNo: state.inningsNumber,
+    battingKey: state.battingTeam === 'B' ? 'B' : 'A',
+    overNumber: overIndexZeroBased + 1,
+    overRuns, overWickets, balls: overBalls,
+    format: state.format,
+    teamName: battingTeamObj.name, teamShort: battingTeamObj.short,
+    teamColor: battingTeamObj.color, teamLogo: battingTeamObj.logoUrl,
+    oppTeamName: bowlingTeamObj.name, oppTeamShort: bowlingTeamObj.short,
+    oppTeamColor: bowlingTeamObj.color, oppTeamLogo: bowlingTeamObj.logoUrl,
+    score: state.score.runs, wickets: state.score.wickets,
+    overs: state.score.overs, ballsIntoOver: state.score.balls,
+    crr: crr.toFixed(2),
+    striker: { name: state.striker.name, runs: state.striker.runs, balls: state.striker.balls, fours: state.striker.fours, sixes: state.striker.sixes, sr: srOf(state.striker) },
+    nonStriker: { name: state.nonStriker.name, runs: state.nonStriker.runs, balls: state.nonStriker.balls, fours: state.nonStriker.fours, sixes: state.nonStriker.sixes, sr: srOf(state.nonStriker) },
+    bowler: { name: state.bowler.name, overs: state.bowler.overs, balls: state.bowler.balls, maidens: state.bowler.maidens, runs: state.bowler.runs, wickets: state.bowler.wickets },
+    recentOvers
+  }});
+}
+
 function addLegalBall(runsThisBall){
   state.freeHit = false;
   state.score.balls++;
   let overCompleted = false;
-  if(state.score.balls >= 6){ state.score.balls = 0; state.score.overs++; state.thisOver = []; overCompleted = true; }
+  if(state.score.balls >= 6){
+    // 🏏 Snapshot this over's ball-by-ball tokens BEFORE they're wiped — the
+    // Recent Over Summary graphic needs the exact sequence just bowled, and
+    // thisOver is reset to [] for the next over on the very next line.
+    state.lastCompletedOverBalls = [...state.thisOver];
+    state.score.balls = 0; state.score.overs++; state.thisOver = []; overCompleted = true;
+  }
   state.striker.balls++;
   state.partnershipBalls++;
   return overCompleted;
@@ -6950,6 +7183,10 @@ function autoSyncMatchSnapshot(){
   }, 2000);
 }
 
+// 🏏 Over-summary accumulators — feed emitOverSummary() the exact runs/
+// wickets conceded during the over currently in progress; reset to 0 the
+// instant that over's summary has been emitted (see recordBall() below).
+let overRunsAcc = 0, overWicketsAcc = 0;
 function recordBall(kind, meta){
   inningsSummaryJustFired = false;
   // Tell the public page (tournament portal's "Live Now" card, or a
@@ -7538,6 +7775,10 @@ function recordBall(kind, meta){
     scoreAfter: `${state.score.runs}-${state.score.wickets}`,
     timestamp: ballTimestamp
   });
+  // 🏏 Over-summary accumulators — see the `overRunsAcc`/`overWicketsAcc`
+  // declaration above. Uses the exact same delta just computed for ballLog.
+  overRunsAcc += (state.score.runs - runsBefore);
+  if(kindIsWicket) overWicketsAcc++;
 
   // Cricket's "swap ends" rule: whoever wasn't on strike for the last ball
   // of the over faces the next one (a different bowler comes on from the
@@ -7548,6 +7789,18 @@ function recordBall(kind, meta){
   // would swap them right back.
   if(overCompletedThisBall && kind !== 'W'){
     swapStrikeSilent();
+  }
+
+  // 🏏 AUTOMATIC RECENT OVER SUMMARY — fires exactly once, the instant the
+  // over is GENUINELY complete (overCompletedThisBall, computed above from
+  // addLegalBall()'s return value — never on a Wide/No Ball alone). Placed
+  // after every mutation this ball can trigger (score, strike swap, bowler
+  // figures) so the payload reflects the fully-settled state, using the
+  // ball-token snapshot addLegalBall() just captured before clearing
+  // state.thisOver for the next over.
+  if(overCompletedThisBall){
+    emitOverSummary(logOverForBall, overRunsAcc, overWicketsAcc, state.lastCompletedOverBalls || []);
+    overRunsAcc = 0; overWicketsAcc = 0;
   }
 
   checkMilestones();
@@ -8886,6 +9139,7 @@ document.getElementById('next-innings-btn').addEventListener('click', () => {
   // team (in a Test) bats again later and reuses this same key.
   state.extras[nextTeam] = { wd:0, nb:0, b:0, lb:0 };
   state.thisOver = [];
+  overRunsAcc = 0; overWicketsAcc = 0; // see the matching reset in recordBall() above
   state.ballHistory = [];
   state.partnershipRuns = 0; state.partnershipBalls = 0;
   // Reset per-innings player-selection bookkeeping — a batter out in the
@@ -10251,6 +10505,12 @@ document.getElementById('reset-btn').addEventListener('click', () => {
   state = defaultState();
   state.leagueName = keepLeagueName;
   state.matchMode = keepMatchMode || (keepLeagueName ? 'tournament' : 'single');
+  overRunsAcc = 0; overWicketsAcc = 0;
+  clearAutoCardFlow(); // cancel any in-flight automatic card popup/timer — see the AUTOMATIC PLAYER CARD FLOW block
+  if(socket && socket.connected){
+    socket.emit('cricketHidePlayerStat', {});
+    socket.emit('cricketHideBowlerStat', {});
+  }
   history = [];
   saveHistoryLocal(); // clear the persisted stack too, so a stale pre-reset undo can't resurface
   document.getElementById('milestone-log').innerHTML = '<div>No events yet.</div>';
