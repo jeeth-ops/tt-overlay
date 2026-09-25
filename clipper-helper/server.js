@@ -1916,7 +1916,7 @@ setInterval(() => {
 
 const server = app.listen(config.port, () => {
   console.log('================================================');
-  console.log(`🎥 Clipper Helper v5.0 (offline-first) running at http://localhost:${config.port}`);
+  console.log(`🎥 Clipper Helper v5.1 (offline-first) running at http://localhost:${config.port}`);
   console.log(`👉 Setup page: http://localhost:${config.port}/setup`);
   console.log(`Using ffmpeg: ${ffmpegPath}`);
   console.log(`Clip window: ${PRE_ROLL_SECONDS}s before + ${POST_ROLL_SECONDS}s after the press = ${CLIP_SECONDS}s`);
