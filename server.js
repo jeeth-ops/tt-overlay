@@ -724,6 +724,19 @@ function computeClipStatus(r2Status, driveStatus) {
     return 'UPLOADING';
 }
 
+// 🛡️ Mongo rejects an update whose $set and $setOnInsert touch the SAME
+// field ("would create a conflict at ..."), and that rejection would fail
+// the whole clip write — including the player/ball attachment. $set always
+// carries the fresher value (it is what this request actually knows), so
+// anything it writes is dropped from the insert-only defaults. Belt and
+// braces around the two clip upserts below, both of which now merge in
+// metadata from the offline queue.
+function insertOnlyDefaults(setDoc, defaults) {
+    const out = {};
+    for (const [k, v] of Object.entries(defaults)) if (!(k in setDoc)) out[k] = v;
+    return out;
+}
+
 // ================================================================
 // 🔗 finalizeClip — called by /api/clips/ingest below once a FINISHED
 // clip file (cut locally, on the operator's own PC, by the local
@@ -764,9 +777,16 @@ async function computeClipLinkage(matchId, ballMeta, uid) {
     // 🌟 Prefer the canonical ball's already-resolved playerIds (same
     // identity the ball itself was logged under) and only fall back
     // to a fresh resolve if this clip has no matching ball yet.
-    const strikerPlayerId = (canonicalBall && canonicalBall.strikerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, striker) : null);
-    const nonStrikerPlayerId = (canonicalBall && canonicalBall.nonStrikerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, nonStriker) : null);
-    const bowlerPlayerId = (canonicalBall && canonicalBall.bowlerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, bowler) : null);
+    // 🌟 Order of trust: the canonical ball's own resolved id → the roster
+    // id the event itself carried (strikerId/bowlerId, exactly what the
+    // logBall handler prefers) → a name-based resolve. This matters most
+    // for a clip that synced hours later from an offline queue: its ball
+    // row may not exist yet, but the ids captured at the press do, so the
+    // clip still attaches to the right player instead of guessing from a
+    // name string.
+    const strikerPlayerId = (canonicalBall && canonicalBall.strikerPlayerId) || (ownerUid ? await resolvePlayerIdExplicit(ownerUid, ballMeta && ballMeta.strikerId, striker) : (ballMeta && ballMeta.strikerId) || null);
+    const nonStrikerPlayerId = (canonicalBall && canonicalBall.nonStrikerPlayerId) || (ownerUid ? await resolvePlayerIdExplicit(ownerUid, ballMeta && ballMeta.nonStrikerId, nonStriker) : (ballMeta && ballMeta.nonStrikerId) || null);
+    const bowlerPlayerId = (canonicalBall && canonicalBall.bowlerPlayerId) || (ownerUid ? await resolvePlayerIdExplicit(ownerUid, ballMeta && ballMeta.bowlerId, bowler) : (ballMeta && ballMeta.bowlerId) || null);
     const fielderPlayerId = (canonicalBall && canonicalBall.dismissalFielderPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, dismissal && dismissal.fielder) : null);
     return {
         ownerUid: ownerUid || null,
@@ -794,22 +814,70 @@ async function computeClipLinkage(matchId, ballMeta, uid) {
 // A classified clip whose video never arrived (cut failed) isn't listed either.
 const HIGHLIGHT_VISIBLE = { isHighlight: { $ne: false }, status: { $ne: 'AWAITING_CLIP' } };
 
-async function finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMeta, uid, outFile, offsetStartSec, offsetEndSec }) {
+async function finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMeta, uid, outFile, offsetStartSec, offsetEndSec, clipMeta }) {
     clipId = clipId || buildClipId(matchId, eventType, eventTimestamp);
     if (clipsCollection) {
         const link = await computeClipLinkage(matchId, ballMeta, uid);
         const { linkedToCanonicalBall, ...linkFields } = link;
+        // 🧾 Offline-queue metadata (see /api/clips/attach for the same
+        // fields): kept on the doc from the very first ingest, so a clip
+        // that was cut with no internet carries its tournament/match/ball
+        // identity even before the attach stage runs.
+        const offlineFields = clipMeta ? {
+            tournamentId: clipMeta.tournamentId || null,
+            tournamentName: clipMeta.tournamentName || clipMeta.tournamentId || null,
+            tournamentMatchId: clipMeta.tournamentMatchId || null,
+            matchLabel: clipMeta.matchLabel || null,
+            ballLabel: clipMeta.ballLabel || null,
+            battingTeamId: clipMeta.battingTeamId || null,
+            bowlingTeamId: clipMeta.bowlingTeamId || null,
+            bowlingTeam: clipMeta.bowlingTeam || null,
+            eventId: clipMeta.eventId || null,
+            clipStart: clipMeta.clipStart || null,
+            clipEnd: clipMeta.clipEnd || null,
+            clipSeconds: clipMeta.clipSeconds || null,
+            localFilename: clipMeta.filename || null,
+            cutOffline: !!clipMeta.cutOffline,
+            cutAt: clipMeta.cutAt || null,
+            ...(clipMeta.outcomeLabel ? { outcomeLabel: String(clipMeta.outcomeLabel).slice(0, 60) } : {}),
+            // Only an explicit YES/NO is honoured — never a null that would
+            // undo the operator's Highlights decision.
+            ...(clipMeta.isHighlight === true || clipMeta.isHighlight === false ? { isHighlight: clipMeta.isHighlight, highlightPending: false } : {}),
+        } : {};
         const isHighlightButtonClip = eventType === 'HIGHLIGHT';
+        // The helper already knows the operator's YES/NO for this clip (it
+        // is told locally, so it works offline). When it does, that answer
+        // is written in $set below — so the $setOnInsert default must NOT
+        // also touch isHighlight, or Mongo rejects the whole update for
+        // writing the same path twice.
+        const explicitHighlight = Object.prototype.hasOwnProperty.call(offlineFields, 'isHighlight');
         // A re-send of a clip the website already has (the helper retries when
         // an acknowledgement got lost) must not re-upload a leg that already
         // succeeded — Drive would get a second copy of the file.
         const prior = await clipsCollection.findOne({ clipId }, { projection: { r2Status: 1, driveStatus: 1 } }).catch(() => null);
         const legR2 = prior && prior.r2Status === 'uploaded' ? 'uploaded' : 'pending';
         const legDrive = prior && prior.driveStatus === 'uploaded' ? 'uploaded' : 'pending';
+        // Runtime fields refreshed on every ingest (including a retry-forward
+        // of the same clip) — see the comments on each below.
+        const setFields = {
+            // filePath always points at THIS Render process's current temp
+            // copy (the previous one, if any, is long gone after a restart)
+            // so the retry sweep below reads from disk correctly rather than
+            // from a stale path.
+            filePath: outFile,
+            status: 'LOCAL_RECEIVED',
+            ...offlineFields,
+            r2Status: legR2, driveStatus: legDrive,
+            lastReceivedAt: Date.now(),
+            // A fresh copy (first ingest, or the helper re-sending after a
+            // Render restart wiped the temp disk) gets a full set of
+            // retries again.
+            retryCount: 0,
+        };
         await clipsCollection.updateOne(
             { clipId },
             {
-                $setOnInsert: {
+                $setOnInsert: insertOnlyDefaults(setFields, {
                     clipId, matchId, eventType, ballMeta: ballMeta || null,
                     eventTimestamp, offsetStartSec: offsetStartSec ?? null, offsetEndSec: offsetEndSec ?? null,
                     createdAt: Date.now(),
@@ -820,24 +888,9 @@ async function finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMe
                     // HIGHLIGHTS-button clips are cut before the ball's outcome
                     // exists; they stay out of the public Highlights until
                     // /api/clips/classify links and approves them.
-                    ...(isHighlightButtonClip ? { isHighlight: false, highlightPending: true } : {}),
-                },
-                $set: {
-                    // Runtime fields refreshed on every ingest (including a
-                    // retry-forward of the same clip) — filePath always
-                    // points at THIS Render process's current temp copy
-                    // (the previous one, if any, is long gone after a
-                    // restart) so the retry sweep below reads from disk
-                    // correctly rather than a stale path.
-                    filePath: outFile,
-                    status: 'LOCAL_RECEIVED',
-                    r2Status: legR2, driveStatus: legDrive,
-                    lastReceivedAt: Date.now(),
-                    // A fresh copy (first ingest, or the helper re-sending
-                    // after a Render restart wiped the temp disk) gets a
-                    // full set of retries again.
-                    retryCount: 0,
-                },
+                    ...(isHighlightButtonClip && !explicitHighlight ? { isHighlight: false, highlightPending: true } : {}),
+                }),
+                $set: setFields,
                 $unset: { permanentFailureReason: '', needsReuploadAt: '' }
             },
             { upsert: true }
@@ -1023,7 +1076,10 @@ app.get('/api/clips/status/:clipId', async (req, res) => {
     try {
         const doc = await clipsCollection.findOne(
             { clipId: req.params.clipId },
-            { projection: { clipId: 1, status: 1, r2Status: 1, driveStatus: 1, r2Url: 1, driveUrl: 1, retryCount: 1, createdAt: 1, r2Error: 1, driveError: 1, permanentFailureReason: 1 } }
+            // r2Key/driveFileId are here so the local helper can record the
+            // REAL destination references it ended up with (see the queue
+            // record's r2Destination/driveDestination) rather than assuming.
+            { projection: { clipId: 1, status: 1, r2Status: 1, driveStatus: 1, r2Key: 1, r2Url: 1, driveFileId: 1, driveUrl: 1, retryCount: 1, createdAt: 1, r2Error: 1, driveError: 1, permanentFailureReason: 1, isHighlight: 1, over: 1, ballInOver: 1, innings: 1, strikerPlayerId: 1, bowlerPlayerId: 1 } }
         );
         if (!doc) return res.status(404).json({ success: false, error: 'No clip job with that clipId' });
         res.json({ success: true, ...doc });
@@ -1103,6 +1159,148 @@ app.post('/api/clips/classify', async (req, res) => {
 });
 
 // ================================================================
+// 📡 CONNECTIVITY PROBE — the cheapest possible "is the internet back?"
+// answer for the operator's local Clipper Helper. No database, no auth,
+// no work: while a laptop is offline this is the ONLY request it makes
+// (once every 10 s), instead of repeatedly throwing whole clip uploads at
+// a dead connection. See clipper-helper/server.js → probeInternet().
+// ================================================================
+app.get('/api/ping', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json({ ok: true, t: Date.now() });
+});
+
+// ================================================================
+// 📌 OFFLINE CLIP ATTACHMENT — the last stage of the Clipper Helper's
+// sync pipeline. The clip's bytes are already in R2 (and Drive); this
+// writes/refreshes the clip's place in the match:
+//
+//   tournament → match → innings → over → ball → event → players
+//
+// using the ids captured at the MOMENT OF THE EVENT on the operator's PC
+// (see clipMetaFor() in clipper-helper/server.js), not names, filenames or
+// "whatever is on screen now". That is what makes a clip cut while the
+// laptop was offline — and uploaded three hours later — attach to the same
+// 8.5 SIX, the same striker and the same bowler it would have attached to
+// instantly.
+//
+// Idempotent by clipId: the helper may call this again after a restart, a
+// timeout, or a corrected outcome. It always updates the SAME clip doc
+// (clipId is uniquely indexed), so it can never create a duplicate clip
+// record, a duplicate ball attachment or a duplicate player clip.
+// It never touches r2Status/driveStatus/filePath — the upload legs are
+// owned by finalizeClip and the retry sweep.
+// ================================================================
+app.post('/api/clips/attach', async (req, res) => {
+    if (!clipsCollection) return res.status(503).json({ success: false, error: 'Mongo not connected' });
+    const body = req.body || {};
+    const meta = (body.clipMeta && typeof body.clipMeta === 'object') ? body.clipMeta : body;
+    const matchId = safeMatchId(meta.matchId || body.matchId);
+    const clipId = String(meta.clipId || body.clipId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!matchId || !clipId) return res.status(400).json({ success: false, error: 'matchId and clipId are required' });
+    // A clipId always starts with its own match's id (see buildClipId), so
+    // this route can never be used to touch another match's clip.
+    if (!clipId.startsWith(`${matchId}_`)) return res.status(400).json({ success: false, error: 'clipId does not belong to this match' });
+
+    const ballMeta = (body.ballMeta && typeof body.ballMeta === 'object') ? body.ballMeta : clipBallMetaFromClipMeta(meta);
+    try {
+        const link = await computeClipLinkage(matchId, ballMeta, null);
+        const { linkedToCanonicalBall, ...linkFields } = link;
+        // Only the fields the offline queue is authoritative about. Upload
+        // state, file paths and retry counters are deliberately untouched.
+        const set = {
+            ...linkFields,
+            ballMeta,
+            offlineQueued: true,
+            offlineSyncedAt: Date.now(),
+            tournamentId: meta.tournamentId || null,
+            tournamentName: meta.tournamentName || meta.tournamentId || null,
+            tournamentMatchId: meta.tournamentMatchId || null,
+            matchLabel: meta.matchLabel || null,
+            ballLabel: meta.ballLabel || null,
+            battingTeamId: meta.battingTeamId || null,
+            bowlingTeamId: meta.bowlingTeamId || null,
+            bowlingTeam: meta.bowlingTeam || null,
+            eventId: meta.eventId || null,
+            clipStart: meta.clipStart || null,
+            clipEnd: meta.clipEnd || null,
+            clipSeconds: meta.clipSeconds || null,
+            localFilename: meta.filename || null,
+            cutOffline: !!meta.cutOffline,
+            cutAt: meta.cutAt || null,
+        };
+        if (meta.outcomeLabel) set.outcomeLabel = String(meta.outcomeLabel).slice(0, 60);
+        // The trigger's event type can be refined once the outcome is known
+        // (a HIGHLIGHTS press that turned out to be a SIX). Restricted to
+        // the same safe set /api/clips/classify uses.
+        const refined = String(meta.outcomeType || '').toUpperCase();
+        if (CLASSIFY_EVENT_TYPES.has(refined)) set.eventType = refined;
+        // Only an explicit decision is written — never a null that would
+        // undo the operator's "Add to Highlights? YES/NO" answer.
+        if (meta.isHighlight === true || meta.isHighlight === false) {
+            set.isHighlight = meta.isHighlight;
+            set.highlightPending = false;
+        }
+        await clipsCollection.updateOne(
+            { clipId },
+            {
+                $set: set,
+                // insertOnlyDefaults drops anything $set already writes
+                // (e.g. a refined eventType), which Mongo would otherwise
+                // reject as a conflicting path.
+                $setOnInsert: insertOnlyDefaults(set, {
+                    clipId, matchId,
+                    eventType: String(meta.eventType || 'CLIP').toUpperCase(),
+                    eventTimestamp: Number(meta.timestamp) || Number(meta.eventTimestamp) || Date.now(),
+                    createdAt: Date.now(),
+                    retryCount: 0,
+                    // The bytes are handled by /api/clips/ingest; if this
+                    // ever runs first, the doc waits for them exactly like
+                    // a classified-but-not-yet-uploaded clip does.
+                    status: 'AWAITING_CLIP',
+                    r2Status: 'pending', driveStatus: 'pending',
+                }),
+            },
+            { upsert: true }
+        );
+        invalidateClipsCache(matchId);
+        const doc = await clipsCollection.findOne({ clipId }, { projection: { r2Url: 1, driveFileId: 1, status: 1, r2Status: 1, driveStatus: 1 } }).catch(() => null);
+        console.log(`📌 [CLIP ATTACHED] clipId=${clipId} match=${matchId} innings=${linkFields.innings} over=${linkFields.over}.${linkFields.ballInOver} ${set.outcomeLabel || ''} striker=${linkFields.strikerName || '?'}(${linkFields.strikerPlayerId || '-'}) bowler=${linkFields.bowlerName || '?'}(${linkFields.bowlerPlayerId || '-'}) canonicalBall=${linkedToCanonicalBall}${set.cutOffline ? ' [cut offline]' : ''}`);
+        res.json({
+            success: true, clipId, linkedToCanonicalBall,
+            attachedTo: {
+                matchId, innings: linkFields.innings, over: linkFields.over, ballInOver: linkFields.ballInOver,
+                strikerPlayerId: linkFields.strikerPlayerId || null, bowlerPlayerId: linkFields.bowlerPlayerId || null,
+                isHighlight: set.isHighlight === undefined ? null : set.isHighlight,
+            },
+            r2Status: doc && doc.r2Status, driveStatus: doc && doc.driveStatus, status: doc && doc.status,
+        });
+    } catch (err) {
+        console.log(`Clip attach error (${clipId}):`, err.message || err);
+        res.status(500).json({ success: false, error: 'Could not attach clip' });
+    }
+});
+
+// The helper sends both a ballMeta (the shape this file already links by)
+// and a clipMeta; this rebuilds the former from the latter for any caller
+// that only sends the clipMeta.
+function clipBallMetaFromClipMeta(meta) {
+    if (!meta) return null;
+    return {
+        innings: meta.innings ?? undefined,
+        over: meta.over ?? undefined,
+        ballInOver: meta.ballInOver ?? undefined,
+        battingTeam: meta.battingTeam || undefined,
+        striker: meta.strikerName || undefined,
+        nonStriker: meta.nonStrikerName || undefined,
+        bowler: meta.bowlerName || undefined,
+        strikerId: meta.strikerId || null,
+        nonStrikerId: meta.nonStrikerId || null,
+        bowlerId: meta.bowlerId || null,
+    };
+}
+
+// ================================================================
 // 🖥️ EXTERNAL CLIP INGEST — for the local Stream Engine (the current,
 // active pipeline — see stream-engine/server.js, which cuts the clip
 // from its own local buffer using NVENC-adjacent ffmpeg and forwards
@@ -1142,6 +1340,15 @@ app.post('/api/clips/ingest', express.raw({ type: '*/*', limit: '60mb' }), async
     try {
         if (req.headers['x-ball-meta']) ballMeta = JSON.parse(req.headers['x-ball-meta']);
     } catch (err) { /* bad JSON from an old helper version — just skip linking-by-ballMeta */ }
+    // 🧾 The offline queue's own record of the event (clipper-helper →
+    // clipMetaFor): tournament/match labels, the ball label, both teams,
+    // the player ids and whether this clip was cut while the laptop had no
+    // internet. Additive — an older helper simply doesn't send it.
+    let clipMeta = null;
+    try {
+        if (req.headers['x-clip-meta']) clipMeta = JSON.parse(req.headers['x-clip-meta']);
+    } catch (err) { /* ignore a malformed envelope — ballMeta above still links the clip */ }
+    if (!ballMeta && clipMeta) ballMeta = clipBallMetaFromClipMeta(clipMeta);
 
     const clipDir = path.join(CLIPS_DIR, matchId);
     if (!fs.existsSync(clipDir)) fs.mkdirSync(clipDir, { recursive: true });
@@ -1166,7 +1373,7 @@ app.post('/api/clips/ingest', express.raw({ type: '*/*', limit: '60mb' }), async
     res.json({ success: true, clipId, status: 'LOCAL_RECEIVED' });
 
     try {
-        await finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMeta, uid: null, outFile });
+        await finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMeta, uid: null, outFile, clipMeta });
     } catch (err) {
         console.log(`External clip ingest error (${matchId}/${eventType}):`, err.message || err);
     }

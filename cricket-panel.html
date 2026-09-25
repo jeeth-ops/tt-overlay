@@ -799,7 +799,7 @@
       </div>
     </div>
     <div class="lc-side">
-      <button type="button" class="full b-highlight" id="highlight-btn" title="Press when the batsman plays the ball — cuts 15s before to 3s after this press from the vMix recording">🎬 HIGHLIGHTS <span style="opacity:.6;font-size:13px;">(H)</span></button>
+      <button type="button" class="full b-highlight" id="highlight-btn" title="Press when the batsman plays the ball — cuts 15s before to 5s after this press (20s) from the vMix recording. Works with no internet.">🎬 HIGHLIGHTS <span style="opacity:.6;font-size:13px;">(H)</span></button>
       <div class="hl-pending" id="hl-pending"></div>
       <button type="button" class="full ghost" id="undo-btn">↶ Undo Last Ball (U)</button>
       <button type="button" class="full ghost small" id="edit-scorecard-btn" style="display:none;">✏️ Edit Scorecard (Delete a Ball)</button>
@@ -1476,7 +1476,7 @@
         <div class="dot" id="clipper-status-dot"></div>
         <span id="clipper-status-text" style="font-size:13px; opacity:.85;">Checking…</span>
       </div>
-      <div style="font-size:11px; opacity:.6;">Clips (newest first) — ⏳ 3 sec wait → ✂️ cutting → 💾 local → R2 → Drive</div>
+      <div style="font-size:11px; opacity:.6;">Clips (newest first) — ⏳ wait → ✂️ cutting locally → 💾 saved locally → R2 → Drive → website. No internet? The clip is still cut and saved; it syncs by itself when the connection is back.</div>
       <div id="clip-jobs-list"></div>
 
       <div style="font-size:12px; opacity:.75; margin-bottom:10px; line-height:1.5;">
@@ -2101,11 +2101,17 @@ async function checkClipperHelperStatus(){
     const s = await fetch(`${CLIPPER_HELPER_URL}/status`, { signal: AbortSignal.timeout(3000) }).then(r => r.json());
     dot.classList.add('on');
     if(s.version >= 4){
+      // 📴 The connection is reported separately from the clipper itself:
+      // being offline does not stop a single clip being cut and saved — it
+      // only delays the upload, which the helper resumes by itself.
+      const net = s.online === false
+        ? ` · 📴 no internet — ${s.offlinePendingCount || s.pendingSyncCount || 0} clip${(s.offlinePendingCount || s.pendingSyncCount) === 1 ? '' : 's'} waiting to sync (clips are still being cut)`
+        : s.pendingSyncCount ? ` · ⬆️ ${s.pendingSyncCount} syncing` : '';
       text.textContent = s.recordingError
-        ? `🟡 Running — ${s.recordingError}`
+        ? `🟡 Running — ${s.recordingError}${net}`
         : s.recordingGrowing
-          ? `🟢 Running — vMix recording (${Math.round((s.recordingSeconds || 0) / 60)} min) · ${s.clipsOk || 0} clips${s.failedClipsCount ? ` · ${s.failedClipsCount} failed` : ''}`
-          : '🟡 Running — vMix is NOT recording right now (start Record in vMix)';
+          ? `🟢 Running — vMix recording (${Math.round((s.recordingSeconds || 0) / 60)} min) · ${s.clipsOk || 0} clips${s.failedClipsCount ? ` · ${s.failedClipsCount} could not be cut` : ''}${net}`
+          : `🟡 Running — vMix is NOT recording right now (start Record in vMix)${net}`;
     } else {
       text.textContent = s.vmixRecordingFile
         ? '🟢 Running — ready for match day'
@@ -2126,7 +2132,10 @@ function currentMatchId(){
 /* ============================================================
    🎬 HIGHLIGHTS — operator presses HIGHLIGHTS as the batsman plays the
    ball. The local Clipper Helper freezes that exact moment, waits 3s,
-   and cuts 15s before → 3s after it (18s) from the vMix recording.
+   and cuts 15s before → 5s after it (20s) from the vMix recording.
+   None of this needs the internet: the clip is cut, named and filed into
+   its Highlights / Batsmen / Bowlers folders locally, and the upload to
+   R2 + Drive + the website happens whenever the connection is available.
    Once the ball's outcome is recorded, the clip is linked to that ball
    (innings/over/ball/batsman/bowler/outcome) and — for 4, 6, wicket and
    boundary extras automatically, otherwise on the operator's YES/NO —
@@ -2162,14 +2171,19 @@ function pressHighlight(){
   // Press-time snapshot only as a fallback — the real linking happens
   // when the outcome is recorded (classifyHighlightClips below).
   const ballMeta = {
-    innings: state.inningsNumber, battingTeam: state.battingTeam,
+    innings: state.inningsNumber, ...clipTeamMeta(state.battingTeam),
+    // The delivery being played right now: state.score holds the COMPLETED
+    // count, so this press is on ball (balls + 1) — the same +1 the wicket
+    // trigger applies. Corrected to the real ball by /clip-meta the moment
+    // the scorer records the outcome, online or offline.
+    over: state.score.overs, ballInOver: state.score.balls + 1,
     striker: state.striker.name, nonStriker: state.nonStriker.name, bowler: state.bowler.name,
     strikerId: state.striker.id || null, nonStrikerId: state.nonStriker.id || null, bowlerId: state.bowler.id || null
   };
   sendClipToHelper({ eventType: 'HIGHLIGHT', timestamp: t0, matchId, clipId, ballMeta }, (r) => {
     if(!r.success) toast(`⚠️ Clipper: ${r.error || 'clip not accepted'}`, 4000);
     else if(r.recordingActive === false) toast('⚠️ vMix is NOT recording — this clip will have no footage. Start Record in vMix!', 5000);
-    else toast('🎬 Highlight captured — cutting 15s before → 3s after');
+    else toast('🎬 Highlight captured — cutting 15s before → 5s after (20s clip)');
     refreshClipJobs();
   });
 }
@@ -2194,8 +2208,72 @@ async function postClipRequest(body){
   });
   return res.json();
 }
+/* 🗂️ What this match IS, for the helper's LOCAL folder tree and for the
+   offline queue record (tournament → match → innings → over → ball →
+   event → player). Sent with every clip request, so a clip cut with no
+   internet already knows where it belongs — locally and, later, on the
+   website. */
+function clipMatchMeta(){
+  const tour = currentMatchTournament() || null;
+  return {
+    tournamentId: tour, tournamentName: tour,
+    tournamentMatchId: state.tournamentMatchId || null,
+    matchLabel: matchLabelForToast(state)
+  };
+}
+/* Both team sides of the delivery, from the ball's own snapshot. */
+function clipTeamMeta(battingSide){
+  const bat = battingSide || state.battingTeam;
+  const bowl = bat === 'A' ? 'B' : 'A';
+  const nameOf = (side) => { const t = side === 'A' ? state.teamA : state.teamB; return (t && (t.name || t.short)) || side; };
+  return { battingTeam: bat, bowlingTeam: bowl, battingTeamId: nameOf(bat), bowlingTeamId: nameOf(bowl) };
+}
+
+/* 🏷️ The ball's outcome, delivered to the LOCAL helper (localhost, so it
+   works with zero internet). This is what lets an offline clip be filed
+   under Highlights/<category>/, Batsmen/<striker>/ and Bowlers/<bowler>/
+   with its real 08.4_SIX_Name_vs_Name.mp4 name, and what keeps the exact
+   event ids with the clip for when the upload finally happens. Queued in
+   localStorage if the helper is momentarily unreachable. */
+const CLIP_META_OUTBOX_KEY = 'clip-meta-outbox-v1';
+function loadClipMetaOutbox(){ try { return JSON.parse(localStorage.getItem(CLIP_META_OUTBOX_KEY)) || []; } catch(e){ return []; } }
+function saveClipMetaOutbox(list){ try { localStorage.setItem(CLIP_META_OUTBOX_KEY, JSON.stringify(list.slice(-300))); } catch(e){} }
+async function postClipMeta(payload){
+  const res = await fetch(`${CLIPPER_HELPER_URL}/clip-meta`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload), signal: AbortSignal.timeout(5000)
+  });
+  return res.json();
+}
+function sendClipMetaToHelper(payload){
+  if(!payload || !payload.clipId) return;
+  payload = { ...clipMatchMeta(), ...payload };
+  postClipMeta(payload).then(() => refreshClipJobs()).catch(() => {
+    const list = loadClipMetaOutbox().filter(x => x.clipId !== payload.clipId);
+    list.push(payload);
+    saveClipMetaOutbox(list);
+  });
+}
+let clipMetaOutboxBusy = false;
+async function flushClipMetaOutbox(){
+  if(clipMetaOutboxBusy) return;
+  const list = loadClipMetaOutbox();
+  if(!list.length) return;
+  clipMetaOutboxBusy = true;
+  try {
+    const left = [];
+    for(const payload of list){
+      if(Date.now() - Number(payload.timestamp || 0) > CLIP_OUTBOX_MAX_AGE_MS) continue;
+      try { await postClipMeta(payload); } catch(e){ left.push(payload); }
+    }
+    saveClipMetaOutbox(left);
+    if(left.length !== list.length) refreshClipJobs();
+  } finally { clipMetaOutboxBusy = false; }
+}
+setInterval(flushClipMetaOutbox, 5000);
+
 function sendClipToHelper(body, onAck){
-  body = { ...body, clipId: clipRequestId(body) };
+  body = { ...body, clipId: clipRequestId(body), clipMeta: { ...clipMatchMeta(), ...(body.clipMeta || {}) } };
   postClipRequest(body).then(r => { if(onAck) onAck(r); }).catch(() => {
     const list = loadClipOutbox().filter(x => x.clipId !== body.clipId);
     list.push(body);
@@ -2305,6 +2383,14 @@ function linkPendingHighlightsToBall(kind, meta, ball){
   };
   const send = (isHighlight) => fresh.forEach(h => {
     clipDecisions[h.clipId] = isHighlight ? 'YES' : 'NO';
+    // 1️⃣ LOCAL first (localhost — works with zero internet): the helper
+    // now knows the real over/ball, the outcome and the YES/NO decision,
+    // so the clip is filed and named correctly on disk straight away.
+    sendClipMetaToHelper({
+      clipId: h.clipId, matchId: h.matchId, timestamp: h.t0,
+      isHighlight, eventType: outcome.eventType, outcomeLabel: outcome.label, ballMeta
+    });
+    // 2️⃣ Then the website (queued in localStorage while offline).
     setTimeout(() => sendClipClassification({
       clipId: h.clipId, matchId: h.matchId, eventTimestamp: h.t0,
       isHighlight, eventType: outcome.eventType, outcomeLabel: outcome.label, ballMeta
@@ -2383,14 +2469,18 @@ setInterval(flushClassifyQueue, 20000);
 flushClassifyQueue();
 
 // Live per-clip status from the local Clipper Helper.
-const CJ_ACTIVE = ['WAITING', 'CUTTING', 'CUT_RETRY', 'LOCAL_SAVED', 'UPLOADING', 'UPLOAD_RETRY', 'UPLOADED'];
+const CJ_ACTIVE = ['WAITING', 'CUTTING', 'CUT_RETRY', 'LOCAL_SAVED', 'UPLOADING', 'UPLOAD_RETRY', 'UPLOADED',
+  // v5 (offline-first) sync states, reported by the helper as syncStatus.
+  'OFFLINE_PENDING', 'SENDING', 'SENT', 'SYNC_RETRY', 'WEBSITE_UPDATE', 'WEBSITE_RETRY'];
 let clipJobsTimer = null;
 // The website is the source of truth for R2/Drive once it has the clip —
 // the helper can show a stale ❌ (e.g. an older helper that stopped
 // following a clip after a website restart). Ask the website directly.
 const serverClipStatus = {}; // clipId -> { at, d }
 async function refreshServerClipStatus(list){
-  const need = list.filter(j => ['UPLOADED', 'FAILED'].includes(j.status) || j.driveBackupFailed);
+  // Only clips the website could already know about — and never while this
+  // laptop is offline (the helper says so), so no pointless requests.
+  const need = list.filter(j => ['SENT', 'SYNC_RETRY', 'WEBSITE_UPDATE', 'WEBSITE_RETRY', 'UPLOADED', 'FAILED'].includes(j.syncStatus || j.status) || j.driveBackupFailed);
   await Promise.all(need.map(async j => {
     const c = serverClipStatus[j.clipId];
     // 1.5s, down from 15s: this only ever runs for clips still in flight
@@ -2414,48 +2504,53 @@ function furthestLeg(a, b){ return (LEG_RANK[b] || 0) > (LEG_RANK[a] || 0) ? b :
 function withServerClipStatus(j){
   const c = serverClipStatus[j.clipId];
   const d = c && c.d;
-  if(!d) return j; // website never got it (e.g. cut failed) — helper's view is right
-  // Take whichever source has seen each leg get further, rather than always
-  // preferring the website snapshot: that snapshot can be seconds old, and
-  // a stale 'pending' used to hide a ✓ the helper already knew about.
+  if(!d) return j; // website never got it (e.g. cut failed, or we are offline) — helper's view is right
+  // 🧭 The helper owns the STAGE (it is the one doing the work and the one
+  // that knows whether this laptop is online); the website is simply a
+  // second, sometimes-fresher opinion on how far each upload leg has got.
+  // Take whichever source has seen each leg get further — a leg that
+  // landed cannot un-land.
   const legs = {
     r2Status: furthestLeg(j.r2Status, d.r2Status),
     driveStatus: furthestLeg(j.driveStatus, d.driveStatus)
   };
   // Carry WHY a leg is failing, so a clip stuck on "Drive ✕ (retrying)"
   // says what to fix (expired Google token, folder gone, quota) instead
-  // of retrying silently behind an icon. Read off the MERGED legs so a
-  // since-succeeded leg stops showing its old error.
+  // of retrying silently behind an icon.
   legs.legError = legs.driveStatus === 'failed' && d.driveError ? `Drive: ${d.driveError}`
     : legs.r2Status === 'failed' && d.r2Error ? `R2: ${d.r2Error}`
     : null;
-  const r2Ok = legs.r2Status === 'uploaded';
-  if(d.status === 'COMPLETE') return { ...j, ...legs, status: 'COMPLETE', driveBackupFailed: false, error: null };
-  // 🩹 The helper reaches COMPLETE on its own 2s poll — and the moment it
-  // does, refreshServerClipStatus above stops refreshing this clip (it only
-  // follows UPLOADED/FAILED ones). Without this line the snapshot cached
-  // while it was still uploading stays in the map forever and pins a
-  // genuinely-finished clip on ⏳ for the rest of the match.
-  if(j.status === 'COMPLETE') return { ...j, ...legs, error: null };
-  if(d.status === 'NEEDS_REUPLOAD') return { ...j, ...legs, status: 'SERVER_REUPLOAD', error: null };
-  if(d.status === 'FAILED_PERMANENT') return r2Ok ? { ...j, ...legs, status: 'COMPLETE', driveBackupFailed: true, error: null } : { ...j, ...legs, error: d.permanentFailureReason || j.error };
-  return { ...j, ...legs, status: 'UPLOADED', error: null }; // still uploading / retrying on the website
+  if(d.status === 'NEEDS_REUPLOAD' && (j.syncStatus || j.status) !== 'SYNC_COMPLETE'){
+    return { ...j, ...legs, status: 'SERVER_REUPLOAD', syncStatus: 'SERVER_REUPLOAD', error: null };
+  }
+  return { ...j, ...legs };
 }
 function legIcon(s){ return s === 'uploaded' ? '✓' : s === 'failed' ? '✕ (retrying)' : '⏳'; }
+/* 🎬 One line per clip, in the language of the two stages: the clip is
+   either not cut yet, or it IS cut and safe on the operator's disk and
+   only the cloud is outstanding. A clip that was cut perfectly and is
+   merely waiting for the internet is NEVER shown as a failure — that is
+   what "UPLOAD PENDING - OFFLINE" is for. */
 function clipJobLine(j){
   const secs = j.nextUploadAt ? Math.max(0, Math.round((j.nextUploadAt - Date.now()) / 1000)) : null;
-  switch(j.status){
-    case 'WAITING': return '⏳ 3 sec waiting…';
-    case 'CUTTING': return j.cutAttempts > 1 ? `✂️ Cutting (attempt ${j.cutAttempts})…` : '✂️ Cutting…';
+  const legs = `R2 ${legIcon(j.r2Status)} · Drive ${legIcon(j.driveStatus)}`;
+  switch(j.syncStatus || j.status){
+    case 'WAITING': return '⏳ Waiting for the footage…';
+    case 'CUTTING': return j.cutAttempts > 1 ? `✂️ Cutting locally (attempt ${j.cutAttempts})…` : '✂️ Cutting locally…';
     case 'CUT_RETRY': return `🔁 Cut retry — ${j.error || ''}`;
-    case 'LOCAL_SAVED': return '💾 Local saved · ⬆️ upload queued';
-    case 'UPLOADING': return '💾 Local ✓ · ⬆️ uploading…';
+    case 'CUT_FAILED': return '❌ Clip could not be cut';
+    case 'LOCAL_SAVED': return '💾 Clip saved locally · ⬆️ sync queued';
+    case 'OFFLINE_PENDING': return '💾 Clip saved locally · 📴 UPLOAD PENDING — OFFLINE';
+    case 'SENDING': case 'UPLOADING': return '💾 Local ✓ · ☁️ uploading to R2…';
+    case 'SENT': case 'UPLOADED': return `💾 Local ✓ · ${legs}`;
+    case 'SYNC_RETRY': return `💾 Local ✓ · 🔁 ${j.r2Status === 'uploaded' ? 'Drive' : 'R2'} retry queued${secs != null ? ` (${secs}s)` : ''}`;
+    case 'WEBSITE_UPDATE': return '💾 Local ✓ · R2 ✓ · Drive ✓ · 🗄️ updating website…';
+    case 'WEBSITE_RETRY': return `💾 Local ✓ · R2 ✓ · Drive ✓ · 🔁 website update retry${secs != null ? ` (${secs}s)` : ''}`;
+    case 'SYNC_COMPLETE': case 'COMPLETE': return j.driveBackupFailed ? '✅ Local ✓ · R2 ✓ (plays fine) · Drive ✕ backup skipped · website ✓' : '✅ Sync complete — local ✓ · R2 ✓ · Drive ✓ · website ✓';
     case 'UPLOAD_RETRY': return `💾 Local ✓ · 🔁 upload retry${secs != null ? ` in ${secs}s` : ''}`;
-    case 'UPLOADED': return `💾 Local ✓ · R2 ${legIcon(j.r2Status)} · Drive ${legIcon(j.driveStatus)}`;
-    case 'COMPLETE': return j.driveBackupFailed ? '✅ Local ✓ · R2 ✓ (plays fine) · Drive ✕ backup skipped' : '✅ Local ✓ · R2 ✓ · Drive ✓';
     case 'SERVER_REUPLOAD': return '💾 Local ✓ · 🔁 website restarted — helper re-sending clip';
-    case 'FAILED': return '❌ Failed';
-    default: return j.status;
+    case 'FAILED': return j.localSaved ? '💾 Clip saved locally · 🔁 sync pending' : '❌ Failed';
+    default: return j.statusText || j.status;
   }
 }
 function renderClipJobs(list){
@@ -2464,11 +2559,15 @@ function renderClipJobs(list){
   el.innerHTML = '';
   list.slice(0, 10).forEach(j => {
     const row = document.createElement('div');
-    row.className = `cj-row ${j.status === 'COMPLETE' ? 'ok' : j.status === 'FAILED' ? 'bad' : 'busy'}`;
+    const st = j.syncStatus || j.status;
+    const isDone = st === 'COMPLETE' || st === 'SYNC_COMPLETE';
+    const isBad = (st === 'FAILED' && !j.localSaved) || st === 'CUT_FAILED';
+    row.className = `cj-row ${isDone ? 'ok' : isBad ? 'bad' : 'busy'}`;
     const time = new Date(j.t0).toLocaleTimeString();
     const dec = clipDecisions[j.clipId];
-    const tag = j.eventType !== 'HIGHLIGHT' ? '' : dec === 'YES' ? '⭐ Highlight' : dec === 'NO' ? 'Not in Highlights' : 'Awaiting outcome';
-    const shownError = (j.error && (j.status === 'FAILED' || j.status === 'UPLOAD_RETRY')) ? j.error : (j.legError || '');
+    const ballTag = j.ball && j.ball.label ? `${j.ball.label}${j.outcomeLabel ? ` ${j.outcomeLabel}` : ''}` : '';
+    const tag = [ballTag, j.eventType !== 'HIGHLIGHT' ? '' : dec === 'YES' ? '⭐ Highlight' : dec === 'NO' ? 'Not in Highlights' : 'Awaiting outcome'].filter(Boolean).join(' · ');
+    const shownError = (j.error && ['FAILED', 'CUT_FAILED', 'UPLOAD_RETRY', 'SYNC_RETRY', 'WEBSITE_RETRY'].includes(st) && !(st === 'FAILED' && j.localSaved)) ? j.error : (j.legError || '');
     row.innerHTML = `<div><span class="t"></span><span class="tag"></span></div><div class="s"></div>${shownError ? '<div class="err"></div>' : ''}`;
     row.querySelector('.t').textContent = `${j.eventType} @ ${time}${j.clipSeconds ? ` · ${j.clipSeconds}s` : ''}`;
     const tagEl = row.querySelector('.tag');
@@ -2504,7 +2603,7 @@ async function startRecording(){
     // matchId + mainServerUrl (this site's own address) so the helper
     // knows WHERE to send finished clips for R2/Drive upload + player
     // linking (see /api/clips/ingest on the main server).
-    body: JSON.stringify({ startedAt: Date.now(), matchId, mainServerUrl: location.origin })
+    body: JSON.stringify({ startedAt: Date.now(), matchId, mainServerUrl: location.origin, ...clipMatchMeta() })
   }).then(r => r.json()).catch(() => ({ success:false }));
 
   if(!result.success){
@@ -7586,8 +7685,14 @@ function recordBall(kind, meta){
     bowler: logBowlerName,
     strikerId: logStrikerId,
     nonStrikerId: logNonStrikerId,
-    bowlerId: logBowlerId
-  }, extraBoundaryEventType, linkedHighlightClips > 0);
+    bowlerId: logBowlerId,
+    battingTeam: logBattingTeam
+  }, extraBoundaryEventType, linkedHighlightClips > 0,
+  // The outcome in words ("Wide 4", "No Ball 6", "WICKET — Run Out") —
+  // computed once here, from this ball's own snapshot, and handed to the
+  // local clipper so the clip lands in the right Highlights folder and
+  // carries the right event label even with no internet.
+  describeBallOutcome(kind, meta, state.score.runs - runsBefore));
 }
 let pendingBowlerPrompt = false;
 // Called right after every recordBall() call site has finished whatever
@@ -7603,10 +7708,20 @@ function maybePromptNewBowler(){
 // cricketState broadcast above. Also asks the server to cut a 20s
 // highlight clip (10s before / 10s after) on WICKET / FOUR / SIX.
 // skipAutoClip: a HIGHLIGHTS press already captured this ball — no second clip.
-function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundaryEventType, skipAutoClip){
-  if(!socket || !socket.connected) return;
+function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundaryEventType, skipAutoClip, ballOutcome){
   const matchId = currentMatchId();
   if(!matchId) return;
+  // 🛟 ROOT CAUSE OF "NO CLIPS WHEN THE INTERNET IS DOWN": this function
+  // used to `return` right here whenever the socket to the website was
+  // disconnected — and the FOUR / SIX / boundary-extra clip trigger lives
+  // at the bottom of it. So with no internet, the automatic clips were
+  // never even requested: nothing reached the local helper, nothing was
+  // cut, and the operator only found out after the match. Cutting a clip
+  // is a purely LOCAL operation (panel → http://localhost:5005 → vMix
+  // recording → ffmpeg), so it must never depend on the website being
+  // reachable. The socket write below is now the only thing that is
+  // skipped when offline; the clip request always goes out.
+  const dbConnected = !!(socket && socket.connected);
   // WdW/NbW are this panel's own internal "wicket on this extra" kinds —
   // the server's ballsCollection schema (same one the correction engine in
   // server.js reads/writes) only knows 'Wd'/'Nb' for kind, with dismissal
@@ -7634,7 +7749,7 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundar
     strikerId: state.striker.id || null, nonStrikerId: state.nonStriker.id || null, bowlerId: state.bowler.id || null
   };
 
-  socket.emit('logBall', {
+  if(dbConnected) socket.emit('logBall', {
     matchId,
     innings: state.inningsNumber,
     over: id.over,
@@ -7693,7 +7808,7 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundar
       over: id.over,
       ballInOver: id.ballInOver,
       runs: state.score.runs - runsBefore,
-      battingTeam: state.battingTeam,
+      ...clipTeamMeta(id.battingTeam || state.battingTeam),
       striker: id.striker,
       nonStriker: id.nonStriker,
       bowler: id.bowler,
@@ -7702,7 +7817,36 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundar
       bowlerId: id.bowlerId,
       dismissal: null
     };
-    sendClipToHelper({ eventType, timestamp: ballTimestamp, matchId, ballMeta });
+    // Everything this clip needs is already known at the trigger, so it
+    // travels WITH the request: the local helper can name and file the
+    // clip (Highlights/<4|6|Wide-4|…>, Batsmen/<striker>, Bowlers/<bowler>)
+    // without asking anyone anything.
+    sendClipToHelper({
+      eventType, timestamp: ballTimestamp, matchId, ballMeta,
+      clipMeta: { outcomeLabel: (ballOutcome && ballOutcome.label) || null, isHighlight: true }
+    });
+  }
+
+  // 🏷️ A wicket clip was cut the instant the WICKET button was pressed —
+  // before the dismissal type existed. Now that the ball is recorded, tell
+  // the LOCAL helper what it actually was (localhost, so this works with
+  // no internet) so the clip is named and filed with the real outcome.
+  if(kindIsWicket && lastAutoWicketClip && Date.now() - lastAutoWicketClip.t0 < HL_MAX_PRESS_AGE_MS){
+    const wicketClip = lastAutoWicketClip;
+    lastAutoWicketClip = null;
+    sendClipMetaToHelper({
+      clipId: wicketClip.clipId, matchId: wicketClip.matchId || matchId, timestamp: wicketClip.t0,
+      eventType: 'WICKET', isHighlight: true,
+      outcomeLabel: (ballOutcome && ballOutcome.label) || 'WICKET',
+      ballMeta: {
+        innings: state.inningsNumber, over: id.over, ballInOver: id.ballInOver,
+        runs: state.score.runs - runsBefore,
+        ...clipTeamMeta(id.battingTeam || state.battingTeam),
+        striker: id.striker, nonStriker: id.nonStriker, bowler: id.bowler,
+        strikerId: id.strikerId, nonStrikerId: id.nonStrikerId, bowlerId: id.bowlerId,
+        dismissal: { type: lastDismissalType || 'Bowled', fielder: lastDismissalFielder || null }
+      }
+    });
   }
 }
 
@@ -7918,7 +8062,7 @@ function triggerWicketClip(){
     over: clipOver,
     ballInOver: clipBallInOver,
     runs: 0,
-    battingTeam: state.battingTeam,
+    ...clipTeamMeta(state.battingTeam),
     striker: state.striker.name,
     nonStriker: state.nonStriker.name,
     bowler: state.bowler.name,
@@ -7936,7 +8080,7 @@ function triggerWicketClip(){
   const clipMatchId = safeClipMatchId(matchId);
   const clipId = `${clipMatchId}_WICKET_${ballTimestamp}`;
   lastAutoWicketClip = { clipId, t0: ballTimestamp, matchId: clipMatchId };
-  sendClipToHelper({ eventType: 'WICKET', timestamp: ballTimestamp, matchId: clipMatchId, clipId, ballMeta });
+  sendClipToHelper({ eventType: 'WICKET', timestamp: ballTimestamp, matchId: clipMatchId, clipId, ballMeta, clipMeta: { outcomeLabel: 'WICKET', isHighlight: true } });
 }
 let lastAutoWicketClip = null;
 

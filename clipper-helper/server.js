@@ -58,6 +58,7 @@ const http = require('http');
 const https = require('https');
 const { spawn, exec } = require('child_process');
 const { Fmp4Index } = require('./fmp4');
+const organizer = require('./clipOrganizer');
 
 // When bundled by pkg into ClipperHelper.exe, __dirname points inside a
 // virtual snapshot, not the real folder the .exe sits in.
@@ -91,6 +92,9 @@ let config = {
   // Your website's address. Only its origin is used (https://site.com),
   // so a pasted panel URL like https://site.com/cricket-panel still works.
   mainServerUrl: 'https://YOUR-SITE.example.com',
+  // The clip window, in seconds. 15 before + 5 after the press = 20 s.
+  preRollSeconds: 15,
+  postRollSeconds: 5,
 };
 try {
   if (fs.existsSync(CONFIG_PATH)) config = { ...config, ...JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) };
@@ -105,6 +109,11 @@ function saveConfig() {
 // "https://site.com/cricket-panel/" -> "https://site.com"
 function toOrigin(url) {
   try { return new URL(String(url).trim()).origin; } catch (_) { return ''; }
+}
+// The website this helper syncs to (session value wins — the panel sends
+// it on every "Start Recording" — with config.json as the fallback).
+function websiteOrigin() {
+  return session.mainServerUrl || toOrigin(config.mainServerUrl) || '';
 }
 
 const STATE_PATH = path.join(BASE_DIR, 'helper-state.json');
@@ -122,10 +131,18 @@ function saveSession() {
 
 // ----------------------------------------------------------------
 // 🎯 CLIP WINDOW — the one place these numbers live.
+// 15 s before the press + 5 s after it = a 20 s clip. Both are
+// overridable in config.json for a venue that wants a different window;
+// the cut, the wait for the footage and everything downstream read these
+// two numbers only, so they always agree.
 // ----------------------------------------------------------------
-const PRE_ROLL_SECONDS = 15;   // footage kept BEFORE the press
-const POST_ROLL_SECONDS = 3;   // footage kept AFTER the press (and the wait before cutting)
-const CLIP_SECONDS = PRE_ROLL_SECONDS + POST_ROLL_SECONDS; // 18
+const PRE_ROLL_SECONDS = clampSeconds(config.preRollSeconds, 15, 1, 120);   // footage kept BEFORE the press
+const POST_ROLL_SECONDS = clampSeconds(config.postRollSeconds, 5, 1, 60);   // footage kept AFTER the press (and the wait before cutting)
+const CLIP_SECONDS = PRE_ROLL_SECONDS + POST_ROLL_SECONDS; // 20
+function clampSeconds(value, fallback, min, max) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= min && n <= max ? n : fallback;
+}
 
 const COVERAGE_WAIT_MAX_MS = 30000;   // max extra wait for the recording to reach T0+3s on disk
 const CUT_TIMEOUT_MS = 120000;        // one ffmpeg cut; killed after this
@@ -140,7 +157,20 @@ const UPLOAD_IDLE_TIMEOUT_MS = 60000; // no bytes moving for this long = dead co
 // idle for minutes across a few failures. Fast at first, then backs off the
 // same way for the genuinely-down case.
 const UPLOAD_BACKOFF_MS = [2000, 5000, 10000, 20000, 45000, 90000, 180000, 300000]; // then every 5 min
-const UPLOAD_MAX_ATTEMPTS = 60;       // ≈ 4–5 hours of retrying
+// 🛟 A clip that exists on this disk is NEVER given up on. The old build
+// stopped after 60 attempts and marked the clip FAILED — which, on a
+// laptop that was simply offline for a few hours, permanently abandoned
+// perfectly good clips that only needed the internet to come back. There
+// is no attempt limit any more: sync retries with a capped backoff for as
+// long as the clip is unsynced, and only a MISSING/never-cut local file
+// is a real failure.
+const SYNC_MAX_BACKOFF_MS = 5 * 60 * 1000;
+// Connectivity probe cadence. Offline: one tiny request every 10 s (the
+// ONE network call made while offline — nothing else is attempted, so R2,
+// Drive and the website are never hammered). Online: a refresh every 30 s.
+const NET_PROBE_OFFLINE_MS = 10000;
+const NET_PROBE_ONLINE_MS = 30000;
+const NET_PROBE_TIMEOUT_MS = 8000;
 const STATUS_POLL_WINDOW_MS = 12 * 60 * 60 * 1000; // follow R2/Drive progress for up to 12 hours per clip
 // How fast a finished R2/Drive upload turns into a ✓ on the panel. The
 // whole batch is polled in parallel (see statusPollTick), so a shorter
@@ -159,6 +189,18 @@ function recordingDir() {
   const p = config.vmixRecordingFile || '.';
   try { if (fs.statSync(p).isDirectory()) return p; } catch (_) { /* not there (yet) */ }
   return path.dirname(p);
+}
+// ffmpeg's scratch space (.part/.src pieces). Kept in its own folder so
+// the organised tree beside the master recording only ever contains real,
+// finished, properly-named clips.
+function getWorkDir() {
+  return path.join(getClipsDir(), '_work');
+}
+// Is this path inside the Clips tree? (Used so a clip is never mistaken
+// for the master recording — the tree is now several folders deep.)
+function insideClipsDir(file) {
+  const root = path.resolve(getClipsDir()) + path.sep;
+  return (path.resolve(file) + path.sep).startsWith(root);
 }
 
 // ----------------------------------------------------------------
@@ -244,12 +286,11 @@ async function resolveActiveRecording() {
   const candidates = [];
   const configured = config.vmixRecordingFile;
   const dir = recordingDir();
-  const clipsDir = path.resolve(getClipsDir());
   try {
     for (const name of await fs.promises.readdir(dir)) {
       if (!MEDIA_EXT.has(path.extname(name).toLowerCase()) || isClipFileName(name)) continue;
       const full = path.join(dir, name);
-      if (path.resolve(path.dirname(full)) === clipsDir) continue;
+      if (insideClipsDir(full)) continue; // a clip (anywhere in the Clips tree) is never the master recording
       candidates.push(full);
     }
   } catch (_) { /* folder missing — handled below */ }
@@ -331,18 +372,163 @@ async function sourceTick() {
 setInterval(sourceTick, 5000);
 
 // ----------------------------------------------------------------
-// 🗂️ CLIP JOBS — one per HIGHLIGHTS/FOUR/SIX/WICKET press. Persisted
-// (clip-jobs.json) so a restart resumes cuts and uploads.
+// 🌐 CONNECTIVITY — the ONLY thing in this helper that ever asks whether
+// the internet exists, and it is asked by the SYNC side only. Cutting a
+// clip, naming it and filing it never consult this: Stage A (local clip)
+// is complete before Stage B (cloud sync) is even considered.
 //
-// status: WAITING → CUTTING → LOCAL_SAVED → UPLOADING → UPLOADED
-//         (→ R2/Drive progress from the website) → COMPLETE
-//         CUT_RETRY / UPLOAD_RETRY on failure, FAILED when out of attempts.
+// Offline means exactly one tiny request every 10 s (GET <website>/api/ping,
+// which is a few bytes and touches no database) and nothing else — no
+// upload attempts to burn, no R2/Drive traffic, no retry budget consumed.
+// The moment it answers, every pending clip is resumed from the stage it
+// had reached, in order.
 // ----------------------------------------------------------------
+const net = {
+  online: null,        // null = not probed yet
+  lastOkAt: 0,
+  lastCheckAt: 0,
+  lastError: null,
+  probing: null,
+  wentOfflineAt: 0,
+};
+
+function probeInternet(force = false) {
+  if (net.probing) return net.probing;
+  const server = websiteOrigin();
+  if (!server) {
+    net.online = false;
+    net.lastError = 'website URL not set — open the Setup page';
+    return Promise.resolve(false);
+  }
+  const due = net.online ? NET_PROBE_ONLINE_MS : NET_PROBE_OFFLINE_MS;
+  if (!force && net.lastCheckAt && Date.now() - net.lastCheckAt < due) return Promise.resolve(!!net.online);
+  net.probing = (async () => {
+    net.lastCheckAt = Date.now();
+    // ANY HTTP answer proves the website is reachable — /api/ping is the
+    // cheap dedicated endpoint, but an older deploy answering 404 is just
+    // as good a proof of connectivity.
+    const r = await getJson(`${server}/api/ping`, NET_PROBE_TIMEOUT_MS);
+    const ok = !!(r && r.status);
+    setOnline(ok, ok ? null : 'no answer from the website');
+    return ok;
+  })().finally(() => { net.probing = null; });
+  return net.probing;
+}
+
+function setOnline(ok, reason) {
+  const was = net.online;
+  net.online = ok;
+  net.lastError = ok ? null : (reason || net.lastError);
+  if (ok) net.lastOkAt = Date.now();
+  if (was === ok) return;
+  if (ok) {
+    const pending = [...jobs.values()].filter(isUnsynced).length;
+    console.log(`🌐 INTERNET DETECTED${was === false ? ` after ${Math.round((Date.now() - (net.wentOfflineAt || Date.now())) / 1000)}s offline` : ''} — ${pending} clip(s) pending sync`);
+    resumePendingSync('internet is back');
+  } else {
+    net.wentOfflineAt = Date.now();
+    const pending = [...jobs.values()].filter(isUnsynced).length;
+    console.log(`📴 No internet (${net.lastError || 'unreachable'}) — clips keep being cut and saved locally${pending ? `; ${pending} waiting to sync` : ''}`);
+  }
+}
+
+// Every clip whose cloud sync has not finished yet (and whose local file
+// is the safe copy in the meantime).
+function isUnsynced(job) {
+  return !['SYNC_COMPLETE', 'CUT_FAILED'].includes(job.status);
+}
+
+function resumePendingSync(why) {
+  let n = 0;
+  for (const job of jobs.values()) {
+    if (!SYNCABLE.includes(job.status)) continue;
+    // Being offline never counted as a real failure — give every clip a
+    // clean slate the moment the connection is back.
+    job.syncAttempts = 0;
+    job.nextUploadAt = null;
+    queueSync(job);
+    n++;
+  }
+  if (n) console.log(`🔄 Resuming sync of ${n} pending clip(s) — ${why}`);
+  return n;
+}
+
+// Reachability is also learned for free from real traffic: a successful
+// upload proves we are online, a DNS/connect error proves we are not
+// (an HTTP error answer does NOT — that is the website talking to us).
+const OFFLINE_ERROR_RE = /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|EHOSTUNREACH|ENETUNREACH|ENETDOWN|EPIPE|ECONNRESET|socket hang up|network|timed out|no progress for/i;
+function noteNetworkOutcome(ok, error) {
+  if (ok) return setOnline(true, null);
+  if (error && OFFLINE_ERROR_RE.test(String(error))) probeInternet(true).catch(() => {});
+}
+
+setInterval(() => { probeInternet().catch(() => {}); }, NET_PROBE_OFFLINE_MS);
+
+// ----------------------------------------------------------------
+// 🗂️ CLIP JOBS — one per HIGHLIGHTS/FOUR/SIX/WICKET press, and the
+// persistent record of BOTH stages. Written to clip-jobs.json (atomically,
+// and before a press is even acknowledged), so internet loss, an app
+// restart and a laptop restart all resume exactly where they left off.
+//
+//  STAGE A (local, never needs the network):
+//    WAITING → CUTTING → LOCAL_SAVED        (CUT_RETRY → CUT_FAILED)
+//  STAGE B (cloud, only ever waits for the internet):
+//    LOCAL_SAVED → OFFLINE_PENDING (no internet)
+//               → SENDING → SENT → (R2 ✓, Drive ✓ reported by the website)
+//               → WEBSITE_UPDATE → SYNC_COMPLETE
+//    SYNC_RETRY / WEBSITE_RETRY while a stage is failing — never FAILED:
+//    a clip that exists on this disk is retried for as long as it takes.
+//
+// A job also IS the queue record: every id needed to put the clip back on
+// the exact ball it came from (match/tournament/innings/over/ball/event/
+// striker/non-striker/bowler + the R2 and Drive destinations) is stored
+// here at the moment of the press, so a clip that syncs hours later still
+// lands in the same place it would have landed instantly.
+// ----------------------------------------------------------------
+// Stage A states (the clip is not on disk yet).
+const CUT_STATES = ['WAITING', 'CUTTING', 'CUT_RETRY'];
+// Stage B states (the clip IS on disk; only the cloud is outstanding).
+const SYNCABLE = ['LOCAL_SAVED', 'OFFLINE_PENDING', 'SENDING', 'SENT', 'SYNC_RETRY', 'WEBSITE_UPDATE', 'WEBSITE_RETRY'];
+// Old (pre-offline-queue) statuses found in an existing clip-jobs.json.
+const LEGACY_STATUS = { UPLOADING: 'SENDING', UPLOAD_RETRY: 'SYNC_RETRY', UPLOADED: 'SENT', COMPLETE: 'SYNC_COMPLETE', FAILED: 'SYNC_RETRY' };
+// What the operator sees — the exact vocabulary of the sync pipeline, so a
+// clip that was cut perfectly and is only waiting for the internet never
+// reads as a failure.
+const STATUS_TEXT = {
+  WAITING: 'WAITING FOR FOOTAGE',
+  CUTTING: 'CUTTING LOCALLY',
+  CUT_RETRY: 'CUT RETRY QUEUED',
+  CUT_FAILED: 'CLIP COULD NOT BE CUT',
+  LOCAL_SAVED: 'CLIP SAVED LOCALLY',
+  OFFLINE_PENDING: 'UPLOAD PENDING - OFFLINE',
+  SENDING: 'UPLOADING TO R2',
+  SENT: 'R2 / DRIVE IN PROGRESS',
+  SYNC_RETRY: 'R2 RETRY QUEUED',
+  WEBSITE_UPDATE: 'UPDATING WEBSITE',
+  WEBSITE_RETRY: 'WEBSITE UPDATE RETRY QUEUED',
+  SYNC_COMPLETE: 'SYNC COMPLETE',
+};
 const JOBS_PATH = path.join(BASE_DIR, 'clip-jobs.json');
 const jobs = new Map();
 try {
   for (const j of JSON.parse(fs.readFileSync(JOBS_PATH, 'utf8'))) jobs.set(j.clipId, j);
 } catch (_) { /* first run */ }
+
+// 🏷️ Ball metadata that arrived before its own press did (an out-of-order
+// panel outbox flush, or a press the helper never received). Persisted, so
+// a restart still applies it to the clip when the press shows up.
+const ORPHAN_META_PATH = path.join(BASE_DIR, 'clip-meta-pending.json');
+const orphanMeta = new Map();
+try {
+  const raw = JSON.parse(fs.readFileSync(ORPHAN_META_PATH, 'utf8'));
+  for (const [k, v] of Object.entries(raw || {})) orphanMeta.set(k, v);
+} catch (_) { /* first run */ }
+function saveOrphanMeta() {
+  // Anything older than 12 hours belongs to a match that is long over.
+  const cutoff = Date.now() - 12 * 60 * 60 * 1000;
+  for (const [k, v] of orphanMeta) if (Number(v && v.receivedAt) && v.receivedAt < cutoff) orphanMeta.delete(k);
+  fs.writeFile(ORPHAN_META_PATH, JSON.stringify(Object.fromEntries(orphanMeta)), () => {});
+}
 
 let jobsSaveTimer = null;
 let jobsWriting = false;
@@ -366,7 +552,7 @@ function persistJobs() {
 }
 function jobsToKeep() {
   const all = [...jobs.values()];
-  return all.filter((j, i) => i >= all.length - 300 || !['COMPLETE', 'FAILED'].includes(j.status));
+  return all.filter((j, i) => i >= all.length - 300 || !['SYNC_COMPLETE', 'CUT_FAILED'].includes(j.status));
 }
 function flushJobsNow() {
   try { fs.writeFileSync(JOBS_PATH, JSON.stringify(jobsToKeep())); } catch (_) { persistJobs(); }
@@ -379,12 +565,146 @@ function pruneJobs() {
   if (jobs.size <= 500) return;
   for (const [id, j] of jobs) {
     if (jobs.size <= 400) break;
-    if (['COMPLETE', 'FAILED'].includes(j.status)) jobs.delete(id);
+    if (['SYNC_COMPLETE', 'CUT_FAILED'].includes(j.status)) jobs.delete(id);
   }
 }
 
 function buildClipId(matchId, eventType, t0) {
   return `${String(matchId || 'match').replace(/[^a-zA-Z0-9_-]/g, '')}_${String(eventType || 'CLIP').toUpperCase().replace(/[^A-Z0-9-]/g, '')}_${t0}`;
+}
+
+// ----------------------------------------------------------------
+// 🧾 THE EVENT, AS THE PRESS SAW IT — everything the queue record needs
+// to (a) file the clip locally and (b) later attach it, unchanged, to the
+// exact ball it came from. Built from what the panel sent with the press
+// (and refined once by /clip-meta when the scorer enters the outcome);
+// never from anything that has to be fetched.
+// ----------------------------------------------------------------
+const str = (v) => {
+  if (v == null) return null;
+  if (typeof v === 'object') return typeof v.name === 'string' ? (v.name.trim() || null) : null;
+  const s = String(v).trim();
+  return s || null;
+};
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+
+// Merges a ballMeta/clipMeta payload into a job, keeping whatever is
+// already known when the new payload is silent about it (a press-time
+// snapshot must never be wiped by a later, partial update).
+function applyEventMeta(job, payload) {
+  const m = payload || {};
+  const ball = m.ballMeta && typeof m.ballMeta === 'object' ? m.ballMeta : m;
+  const pick = (next, prev) => (next === null || next === undefined ? (prev === undefined ? null : prev) : next);
+
+  job.tournamentId = pick(str(m.tournamentId || m.tournament), job.tournamentId);
+  job.tournamentName = pick(str(m.tournamentName || m.tournament), job.tournamentName);
+  job.tournamentMatchId = pick(str(m.tournamentMatchId), job.tournamentMatchId);
+  job.matchLabel = pick(str(m.matchLabel), job.matchLabel);
+  job.eventId = pick(str(m.eventId || ball.eventId || ball.ballId), job.eventId);
+  job.innings = pick(num(ball.innings), job.innings);
+  job.over = pick(num(ball.over), job.over);
+  job.ballInOver = pick(num(ball.ballInOver), job.ballInOver);
+  job.runs = pick(num(ball.runs), job.runs);
+  job.battingTeam = pick(str(ball.battingTeam), job.battingTeam);
+  job.bowlingTeam = pick(str(ball.bowlingTeam), job.bowlingTeam);
+  job.battingTeamId = pick(str(ball.battingTeamId), job.battingTeamId);
+  job.bowlingTeamId = pick(str(ball.bowlingTeamId), job.bowlingTeamId);
+  job.strikerName = pick(str(ball.striker), job.strikerName);
+  job.nonStrikerName = pick(str(ball.nonStriker), job.nonStrikerName);
+  job.bowlerName = pick(str(ball.bowler), job.bowlerName);
+  job.strikerId = pick(str(ball.strikerId), job.strikerId);
+  job.nonStrikerId = pick(str(ball.nonStrikerId), job.nonStrikerId);
+  job.bowlerId = pick(str(ball.bowlerId), job.bowlerId);
+  job.dismissal = pick(ball.dismissal || null, job.dismissal);
+  job.outcomeLabel = pick(str(m.outcomeLabel), job.outcomeLabel);
+  if (m.isHighlight === true || m.isHighlight === false) job.isHighlight = m.isHighlight;
+  if (m.eventType) {
+    const et = String(m.eventType).toUpperCase().replace(/[^A-Z0-9-]/g, '');
+    // The trigger's own type is kept in eventType (it is part of clipId and
+    // must never change); a re-classified outcome lands in outcomeType.
+    if (et) job.outcomeType = et;
+  }
+  job.ballLabel = organizer.ballLabel(job) || job.ballLabel || null;
+  job.playerIds = [job.strikerId, job.nonStrikerId, job.bowlerId].filter(Boolean);
+  return job;
+}
+
+// The ballMeta the website already understands (unchanged shape — this is
+// what links the clip to the canonical ball and the real players), plus
+// the ids the offline queue carries.
+function ballMetaFor(job) {
+  return {
+    innings: job.innings ?? undefined,
+    over: job.over ?? undefined,
+    ballInOver: job.ballInOver ?? undefined,
+    runs: job.runs ?? undefined,
+    battingTeam: job.battingTeam || undefined,
+    bowlingTeam: job.bowlingTeam || undefined,
+    striker: job.strikerName || undefined,
+    nonStriker: job.nonStrikerName || undefined,
+    bowler: job.bowlerName || undefined,
+    strikerId: job.strikerId || null,
+    nonStrikerId: job.nonStrikerId || null,
+    bowlerId: job.bowlerId || null,
+    dismissal: job.dismissal || null,
+  };
+}
+
+// The offline-sync envelope: the clip's identity and destination exactly
+// as it was decided at the press, whatever happened in between.
+function clipMetaFor(job) {
+  return {
+    clipId: job.clipId,
+    matchId: job.matchId,
+    tournamentId: job.tournamentId || null,
+    tournamentName: job.tournamentName || null,
+    tournamentMatchId: job.tournamentMatchId || null,
+    matchLabel: job.matchLabel || null,
+    eventId: job.eventId || null,
+    eventType: job.eventType,
+    outcomeType: job.outcomeType || job.eventType,
+    outcomeLabel: job.outcomeLabel || null,
+    isHighlight: job.isHighlight === true || job.isHighlight === false ? job.isHighlight : null,
+    innings: job.innings ?? null,
+    over: job.over ?? null,
+    ballInOver: job.ballInOver ?? null,
+    ballLabel: job.ballLabel || null,
+    battingTeam: job.battingTeam || null,
+    bowlingTeam: job.bowlingTeam || null,
+    battingTeamId: job.battingTeamId || null,
+    bowlingTeamId: job.bowlingTeamId || null,
+    strikerId: job.strikerId || null,
+    nonStrikerId: job.nonStrikerId || null,
+    bowlerId: job.bowlerId || null,
+    playerIds: job.playerIds || [],
+    strikerName: job.strikerName || null,
+    nonStrikerName: job.nonStrikerName || null,
+    bowlerName: job.bowlerName || null,
+    timestamp: job.t0,
+    clipStart: job.window && job.window.startWall,
+    clipEnd: job.window && job.window.endWall,
+    clipSeconds: job.clipSeconds || null,
+    filename: job.filename || null,
+    localFilePath: job.localFilePath || job.localPath || null,
+    cutOffline: !!job.cutOffline,
+    createdAt: job.createdAt,
+    cutAt: job.savedAt || null,
+  };
+}
+
+// The destinations, decided locally and stored with the job, so an offline
+// clip's target is the SAME string the online path would have used:
+//   R2    matches/<matchId>/clips/<clipId>.mp4   (server.js uploadClipToR2)
+//   Drive <this match's connected folder>/<clipId>.mp4 (uploadClipToDrive)
+function destinationsFor(job) {
+  return {
+    r2Destination: `matches/${job.matchId}/clips/${job.clipId}.mp4`,
+    driveDestination: {
+      folderId: session.driveFolderId || null,
+      folderName: session.driveFolderName || null,
+      fileName: `${job.clipId}.mp4`,
+    },
+  };
 }
 
 // ----------------------------------------------------------------
@@ -413,7 +733,10 @@ async function pumpCuts() {
   try {
     while (cutQueue.length) {
       const job = jobs.get(cutQueue.shift());
-      if (!job || !['WAITING', 'CUT_RETRY', 'CUTTING'].includes(job.status)) continue;
+      if (!job || !CUT_STATES.includes(job.status)) continue;
+      // 🛟 Already cut (a restart, or a duplicate enqueue) — NEVER cut the
+      // same event twice just because the app came back.
+      if (job.localPath && fs.existsSync(job.localPath)) { adoptExistingClip(job); continue; }
       try {
         await cutJob(job);
       } catch (err) {
@@ -491,7 +814,9 @@ async function cutJob(job) {
   if (segments.length > 1 && segments[0].to - segments[0].from < 0.3) segments.shift(); // nothing worth joining
   const expected = segments.reduce((a, g) => a + (g.to - g.from), 0);
 
-  const clipsDir = getClipsDir();
+  // ffmpeg works entirely inside the scratch folder; the finished clip is
+  // then filed into the organised tree by finalizeLocalClip() below.
+  const clipsDir = getWorkDir();
   await fs.promises.mkdir(clipsDir, { recursive: true });
   const outFile = path.join(clipsDir, `${job.clipId}.mp4`);
   const partFile = path.join(clipsDir, `${job.clipId}.part.mp4`);
@@ -536,9 +861,87 @@ async function cutJob(job) {
     fs.unlink(partFile, () => {});
     return onCutFailure(job, `could not save clip: ${err.message}`);
   }
-  console.log(`💾 [${job.eventType}] ${job.clipId}: saved locally (${check.seconds.toFixed(1)}s) → ${outFile}`);
-  update(job, { status: 'LOCAL_SAVED', localPath: outFile, clipSeconds: Number(check.seconds.toFixed(1)), savedAt: Date.now(), error: null });
-  queueUpload(job);
+  update(job, { localPath: outFile, clipSeconds: Number(check.seconds.toFixed(1)), savedAt: Date.now(), error: null });
+  await finalizeLocalClip(job);
+}
+
+// ----------------------------------------------------------------
+// 💾 STAGE A COMPLETE — the clip exists. File it into the organised tree
+// beside the master recording, write its metadata next to it, and only
+// THEN hand it to the (completely separate) sync queue.
+//
+// Nothing in here touches the network: the folders, the category, the
+// filename and the batsman/bowler views are all decided from the event
+// metadata that arrived with the press. Offline, this runs exactly as it
+// does online.
+// ----------------------------------------------------------------
+async function finalizeLocalClip(job) {
+  // Was this clip made with no connection? Taken at the moment it was
+  // actually saved (the press may have happened a few seconds earlier,
+  // before the connection dropped) — and set again if its sync ends up
+  // waiting for the internet. Purely informational: it is what lets the
+  // website (and the operator) see which clips came from an offline spell.
+  if (net.online === false) job.cutOffline = true;
+  await organizeClipFiles(job);
+  const where = job.localPath;
+  console.log(`💾 [${job.eventType}] ${job.clipId}: CLIP SAVED LOCALLY (${job.clipSeconds || '?'}s) → ${where}`);
+  for (const l of job.links || []) {
+    if (l.mode !== 'failed') console.log(`   ↳ ${l.role === 'batsman' ? '🏏' : '🎯'} ${l.playerName}: ${l.path}${l.mode === 'copy' ? ' (copy — this filesystem has no hard links)' : ''}`);
+  }
+  update(job, { status: 'LOCAL_SAVED', error: null, ...destinationsFor(job) });
+  queueSync(job);
+}
+
+// Puts (or re-puts) the one physical clip where its metadata says it
+// belongs, with hard links in the batsman's and bowler's folders.
+// Idempotent, so it is safe to call again when the outcome arrives — the
+// clip is MOVED and re-linked, never re-cut.
+async function organizeClipFiles(job) {
+  if (!job.localPath || !fs.existsSync(job.localPath)) return false;
+  try {
+    const placed = await organizer.placeClip({
+      clipsRoot: getClipsDir(),
+      currentPath: job.localPath,
+      meta: {
+        eventType: job.outcomeType || job.eventType,
+        outcomeLabel: job.outcomeLabel,
+        isHighlight: job.isHighlight,
+        matchId: job.matchId, matchLabel: job.matchLabel,
+        tournamentId: job.tournamentId, tournamentName: job.tournamentName,
+        tournamentMatchId: job.tournamentMatchId,
+        innings: job.innings, over: job.over, ballInOver: job.ballInOver,
+        strikerName: job.strikerName, strikerId: job.strikerId,
+        bowlerName: job.bowlerName, bowlerId: job.bowlerId,
+        t0: job.t0,
+      },
+      previous: { primary: job.localPath, links: job.links || [] },
+    });
+    update(job, {
+      localPath: placed.primary,
+      localFilePath: placed.primary,
+      filename: placed.filename,
+      links: placed.links,
+      matchRoot: placed.matchRoot,
+      highlightCategory: placed.category,
+      isHighlight: placed.isHighlight,
+      organizedAt: Date.now(),
+    });
+    await organizer.writeClipMetadata(placed.matchRoot, clipMetaFor(job));
+    return true;
+  } catch (err) {
+    // The clip itself is safe where it is — filing it is a browsing
+    // convenience, and is retried the next time metadata arrives.
+    console.log(`⚠️  [${job.eventType}] ${job.clipId}: could not file the clip into its folders (${err.message}) — the clip is still saved at ${job.localPath}`);
+    return false;
+  }
+}
+
+// A clip whose file is already on disk (restart, or a duplicate enqueue):
+// adopt it instead of cutting it again.
+function adoptExistingClip(job) {
+  console.log(`♻️  [${job.eventType}] ${job.clipId}: already cut — reusing ${job.localPath} (no re-cut)`);
+  update(job, { status: 'LOCAL_SAVED', error: null, ...destinationsFor(job) });
+  queueSync(job);
 }
 
 // Cuts one piece [g.from, g.to] (seconds of g.file) to `out`. fMP4
@@ -581,7 +984,7 @@ function onCutFailure(job, reason, { final = false } = {}) {
     return;
   }
   console.log(`❌ [${job.eventType}] ${job.clipId}: clip could not be cut — ${reason}`);
-  update(job, { status: 'FAILED', error: reason, failedAt: Date.now() });
+  update(job, { status: 'CUT_FAILED', error: reason, failedAt: Date.now() });
 }
 
 async function renameWithRetry(from, to, attempts = 6) {
@@ -594,64 +997,194 @@ async function renameWithRetry(from, to, attempts = 6) {
 }
 
 // ----------------------------------------------------------------
-// ☁️ UPLOAD QUEUE — network only, independent of cutting. Sends each
-// clip ONCE (per successful acknowledgement) to the website, which
-// uploads it to Cloudflare R2 and Google Drive as two independent,
-// separately-retried legs and links it to the ball/players.
+// ☁️ STAGE B — CLOUD SYNC QUEUE. Network only, and completely separate
+// from Stage A: a clip is already cut, named and filed on this disk
+// before anything here runs, so nothing in this section can ever be a
+// prerequisite for making a clip.
+//
+// The website holds the R2 and Drive credentials (the operator's laptop
+// deliberately does not), so one POST of the finished clip drives both
+// legs there — /api/clips/ingest → R2 + Drive, each retried independently
+// — and this queue follows them and then writes the event attachment.
+// Every step is keyed by the clip's stable clipId, so re-running any of
+// them can only ever update the SAME R2 object, the SAME Drive file and
+// the SAME database record:
+//
+//   verify local file → (R2 already there? skip the bytes)
+//   → send clip → R2 ✓ → Drive ✓ → attach/update the website → SYNC COMPLETE
+//
+// A stage that fails is the ONLY stage retried: an R2 object that already
+// landed is never uploaded twice, and a Drive failure never re-sends
+// anything to R2 or re-cuts the clip.
 // ----------------------------------------------------------------
-const uploadQueue = [];
-let uploadsRunning = 0;
-// Back to 2 (from a brief 3): on a venue uplink that is the bottleneck,
-// more parallel uploads just split the same bandwidth, so each clip's
-// connection stays open ~50% longer and is that much likelier to be reset
-// or timed out mid-body — the ECONNRESET / "socket hang up" failures seen
-// in the field. Overridable for venues with bandwidth to spare.
+const syncQueue = [];
+let syncRunning = 0;
+// Controlled concurrency — the laptop, the venue uplink, the website, R2
+// and Drive all stay comfortable even when 25 offline clips arrive at
+// once. On a venue uplink that is the bottleneck, more parallel uploads
+// just split the same bandwidth, so each clip's connection stays open
+// longer and is that much likelier to be reset mid-body.
 const UPLOAD_CONCURRENCY = Math.max(1, parseInt(process.env.UPLOAD_CONCURRENCY, 10) || 2);
 
-function queueUpload(job) {
-  if (!uploadQueue.includes(job.clipId)) uploadQueue.push(job.clipId);
-  pumpUploads();
+function queueSync(job) {
+  if (!syncQueue.includes(job.clipId)) syncQueue.push(job.clipId);
+  pumpSync();
 }
-function pumpUploads() {
-  while (uploadsRunning < UPLOAD_CONCURRENCY && uploadQueue.length) {
-    const job = jobs.get(uploadQueue.shift());
-    if (!job || !['LOCAL_SAVED', 'UPLOAD_RETRY'].includes(job.status)) continue;
-    uploadsRunning++;
-    uploadJob(job)
-      .catch((err) => onUploadFailure(job, `unexpected: ${err.message}`))
-      .finally(() => { uploadsRunning--; pumpUploads(); });
+// Kept as an alias so nothing that used the old name breaks.
+const queueUpload = queueSync;
+
+function pumpSync() {
+  while (syncRunning < UPLOAD_CONCURRENCY && syncQueue.length) {
+    const job = jobs.get(syncQueue.shift());
+    if (!job || !SYNCABLE.includes(job.status)) continue;
+    syncRunning++;
+    syncJob(job)
+      .catch((err) => onSyncFailure(job, `unexpected: ${err.message}`))
+      .finally(() => { syncRunning--; pumpSync(); });
   }
 }
 
-async function uploadJob(job) {
-  const server = session.mainServerUrl || toOrigin(config.mainServerUrl);
+// The local clip is the thing being synced, so it is checked first, every
+// time — and a missing file is NEVER a reason to cut the event again.
+function verifyLocalFile(job) {
+  if (job.localPath && fs.existsSync(job.localPath)) return true;
+  // The batsman/bowler folders hold hard links to the same bytes: if the
+  // primary copy was moved or deleted by hand, one of those IS the clip.
+  for (const l of job.links || []) {
+    if (l && l.path && fs.existsSync(l.path)) {
+      update(job, { localPath: l.path, localFilePath: l.path });
+      return true;
+    }
+  }
+  return false;
+}
+
+// Offline is a WAITING state, not a failure: no attempt is spent, no
+// request is made, and the clip sits safely on disk until the connectivity
+// probe (or the next restart) says the internet is back.
+function markOfflinePending(job, reason) {
+  job.cutOffline = true; // this clip's sync waited for the connection
+  if (job.status !== 'OFFLINE_PENDING') {
+    console.log(`📦 [${job.eventType}] ${job.clipId}: UPLOAD PENDING - OFFLINE (clip is safe at ${job.localPath})`);
+  }
+  update(job, { status: 'OFFLINE_PENDING', error: reason || net.lastError || 'no internet', nextUploadAt: null });
+}
+
+async function syncJob(job) {
+  const server = websiteOrigin();
   const matchId = job.matchId || session.matchId;
+
+  // 1️⃣ Verify the local file exists.
+  if (!verifyLocalFile(job)) {
+    console.log(`❌ [${job.eventType}] ${job.clipId}: local clip file is gone — cannot sync (the event is NOT re-cut)`);
+    update(job, { status: 'CUT_FAILED', error: 'local clip file is missing — cannot sync' });
+    return;
+  }
   if (!server || !matchId) {
-    // Not an upload failure (nothing was sent): wait for Setup / a match id
-    // without using up attempts, checking every 30 s.
-    update(job, { status: 'UPLOAD_RETRY', error: !server ? 'website URL not set — open the Setup page' : 'no match id for this clip', nextUploadAt: Date.now() + 30000 });
-    later(() => queueUpload(job), 30000);
+    update(job, { status: 'OFFLINE_PENDING', error: !server ? 'website URL not set — open the Setup page' : 'no match id for this clip', nextUploadAt: Date.now() + 30000 });
+    later(() => queueSync(job), 30000);
     return;
   }
-  if (!job.localPath || !fs.existsSync(job.localPath)) {
-    update(job, { status: 'FAILED', error: 'local clip file is missing — cannot upload' });
+
+  // 2️⃣ Internet? If not, stop here — nothing is attempted or wasted.
+  if (net.online === null) await probeInternet(true).catch(() => {});
+  if (net.online === false) return markOfflinePending(job);
+
+  job.syncAttempts = (job.syncAttempts || 0) + 1;
+  job.retryCount = job.syncAttempts; // the queue record's own counter
+
+  // 3️⃣ What does the website ALREADY have for this clipId? This is the
+  // idempotency check: it decides whether the bytes still need sending at
+  // all, and which leg is outstanding.
+  const remote = await getJson(`${server}/api/clips/status/${encodeURIComponent(job.clipId)}`, 12000);
+  if (!remote) { // no answer at all = the network, not the website
+    noteNetworkOutcome(false, 'website unreachable');
+    if (net.online === false) return markOfflinePending(job);
+    return onSyncFailure(job, 'website unreachable');
+  }
+  noteNetworkOutcome(true);
+  const doc = remote.status === 200 && remote.json && remote.json.success ? remote.json : null;
+  const r2Done = !!doc && doc.r2Status === 'uploaded';
+  const driveDone = !!doc && doc.driveStatus === 'uploaded';
+  update(job, {
+    r2Status: doc ? doc.r2Status || 'pending' : job.r2Status || 'pending',
+    driveStatus: doc ? doc.driveStatus || 'pending' : job.driveStatus || 'pending',
+    serverStatus: doc ? doc.status : null,
+    r2Key: (doc && doc.r2Key) || job.r2Key || null,
+    r2Url: (doc && doc.r2Url) || job.r2Url || null,
+    driveFileId: (doc && doc.driveFileId) || job.driveFileId || null,
+    driveUrl: (doc && doc.driveUrl) || job.driveUrl || null,
+  });
+
+  // 4️⃣ Both uploads already done → only the website attachment is left.
+  if (r2Done && driveDone) return websiteStage(job, server);
+
+  // 5️⃣ Send the clip, unless R2 already has it and the website still has
+  // a usable copy for the Drive leg — in that case the Drive leg alone is
+  // retried (by the website's own sweep) and we just follow it.
+  const websiteLostItsCopy = !doc || doc.status === 'NEEDS_REUPLOAD' || doc.status === 'FAILED_PERMANENT';
+  if (r2Done && !websiteLostItsCopy) {
+    console.log(`⏭️  [${job.eventType}] ${job.clipId}: R2 already has this clip — not uploading it again; waiting on Drive only`);
+    update(job, { status: 'SENT', uploadedAt: job.uploadedAt || Date.now(), error: null });
     return;
   }
-  job.uploadAttempts = (job.uploadAttempts || 0) + 1;
-  update(job, { status: 'UPLOADING', uploadAttempts: job.uploadAttempts, error: null });
+  if (r2Done) console.log(`🔁 [${job.eventType}] ${job.clipId}: R2 ✓ already — re-sending the local clip so the DRIVE leg can finish (R2 is not uploaded twice)`);
+
+  update(job, { status: 'SENDING', error: null });
   const qs = new URLSearchParams({ matchId, eventType: job.eventType, timestamp: String(job.t0), clipId: job.clipId });
-  // Size + elapsed on EVERY outcome. An ECONNRESET one second in (something
-  // actively refusing the connection) and one forty seconds in (a saturated
-  // uplink being cut off mid-body) look identical in the error text alone,
-  // and they need opposite fixes — so measure instead of guessing.
   let sizeBytes = 0;
   try { sizeBytes = fs.statSync(job.localPath).size; } catch (_) { /* reported by postFile */ }
   const startedAt = Date.now();
-  const r = await postFile(`${server}/api/clips/ingest?${qs}`, job.localPath, { 'X-Ball-Meta': JSON.stringify(job.ballMeta || {}) });
+  console.log(`⬆️  [${job.eventType}] ${job.clipId}: UPLOADING TO R2 (via the website) — attempt ${job.syncAttempts}`);
+  const r = await postFile(`${server}/api/clips/ingest?${qs}`, job.localPath, {
+    // Unchanged header the website already links clips by…
+    'X-Ball-Meta': headerJson(ballMetaFor(job)),
+    // …plus the offline queue's own record of the event and its ids.
+    'X-Clip-Meta': headerJson(clipMetaFor(job)),
+  });
   const stats = uploadStats(sizeBytes, startedAt);
-  if (!r.ok) return onUploadFailure(job, r.error, stats);
+  if (!r.ok) {
+    noteNetworkOutcome(false, r.error);
+    if (net.online === false) return markOfflinePending(job);
+    return onSyncFailure(job, r.error, stats);
+  }
+  noteNetworkOutcome(true);
   console.log(`📤 [${job.eventType}] ${job.clipId}: received by website (${stats}) — R2 + Drive uploads running there`);
-  update(job, { status: 'UPLOADED', uploadedAt: Date.now(), r2Status: 'pending', driveStatus: 'pending', error: null });
+  update(job, { status: 'SENT', uploadedAt: Date.now(), r2Status: job.r2Status === 'uploaded' ? 'uploaded' : 'pending', driveStatus: job.driveStatus === 'uploaded' ? 'uploaded' : 'pending', error: null });
+}
+
+// 📌 THE LAST STAGE — tell the website exactly which event this clip
+// belongs to, using the ids captured at the press: tournament → match →
+// innings → over → ball → event → striker/non-striker/bowler. Idempotent
+// (keyed by clipId), so running it twice updates the same record and can
+// never create a duplicate clip, event or player attachment.
+async function websiteStage(job, server) {
+  update(job, { status: 'WEBSITE_UPDATE', error: null });
+  console.log(`🗄️  [${job.eventType}] ${job.clipId}: R2 ✓ · Drive ✓ · UPDATING WEBSITE (${job.ballLabel || 'ball ?'} ${job.outcomeLabel || job.eventType}${job.strikerName ? ` · ${job.strikerName}` : ''}${job.bowlerName ? ` vs ${job.bowlerName}` : ''})`);
+  const r = await postJson(`${server}/api/clips/attach`, { clipMeta: clipMetaFor(job), ballMeta: ballMetaFor(job) });
+  if (!r.ok) {
+    noteNetworkOutcome(false, r.error);
+    if (net.online === false) return markOfflinePending(job);
+    const delay = syncBackoffMs(job.websiteAttempts = (job.websiteAttempts || 0) + 1);
+    console.log(`⚠️  [${job.eventType}] ${job.clipId}: WEBSITE UPDATE RETRY QUEUED (${r.error}) — in ${Math.round(delay / 1000)}s; R2 + Drive stay done`);
+    update(job, { status: 'WEBSITE_RETRY', error: r.error, nextUploadAt: Date.now() + delay });
+    later(() => queueSync(job), delay);
+    return;
+  }
+  noteNetworkOutcome(true);
+  update(job, { status: 'SYNC_COMPLETE', websiteStatus: 'updated', syncedAt: Date.now(), error: null, attachedTo: r.json && r.json.attachedTo ? r.json.attachedTo : null });
+  console.log(`✅ [${job.eventType}] ${job.clipId}: SYNC COMPLETE — local ✓ · R2 ✓ · Drive ✓ · website ✓`);
+}
+
+// 🔤 JSON safe to put in an HTTP header. Node (rightly) refuses a header
+// value containing anything outside Latin-1, so a single accented player
+// name — "Shivam Dubé", "Ángel", any Devanagari spelling — used to make
+// the whole upload throw before a byte left the laptop (the clip stayed
+// safe locally and retried forever, but never actually synced). Escaping
+// non-ASCII as \uXXXX keeps it valid JSON that JSON.parse turns straight
+// back into the original name on the website, with no server change.
+function headerJson(obj) {
+  return JSON.stringify(obj).replace(/[\u0080-\uffff]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
 
 // "6.5MB in 12.3s = 4.2 Mbps" — the one line that tells a dropped connection
@@ -663,18 +1196,23 @@ function uploadStats(sizeBytes, startedAt) {
   return `${mb.toFixed(1)}MB in ${secs.toFixed(1)}s = ${mbps.toFixed(1)} Mbps`;
 }
 
-function onUploadFailure(job, reason, stats) {
-  const attempts = job.uploadAttempts || 0;
-  if (attempts >= UPLOAD_MAX_ATTEMPTS) {
-    console.log(`❌ [${job.eventType}] ${job.clipId}: upload gave up after ${attempts} attempts — clip is safe at ${job.localPath}`);
-    update(job, { status: 'FAILED', error: `upload failed: ${reason}` });
-    return;
-  }
+// Fast at first (most failures that recover, recover at once), then capped
+// at 5 minutes — and it never stops: the clip is on this disk, so there is
+// always something worth retrying.
+function syncBackoffMs(attempt) {
+  return UPLOAD_BACKOFF_MS[Math.min(Math.max(1, attempt), UPLOAD_BACKOFF_MS.length) - 1] || SYNC_MAX_BACKOFF_MS;
+}
+
+function onSyncFailure(job, reason, stats) {
   if (stats) console.log(`   ↳ died after ${stats}`);
-  const delay = UPLOAD_BACKOFF_MS[Math.min(attempts, UPLOAD_BACKOFF_MS.length) - 1] || UPLOAD_BACKOFF_MS[0];
-  console.log(`⚠️  [${job.eventType}] ${job.clipId}: upload failed (${reason}) — retry ${attempts + 1} in ${Math.round(delay / 1000)}s; clip is safe locally`);
-  update(job, { status: 'UPLOAD_RETRY', error: reason, nextUploadAt: Date.now() + delay });
-  later(() => queueUpload(job), delay);
+  const delay = syncBackoffMs(job.syncAttempts || 1);
+  // Which stage is being retried — so the operator sees "R2 retry" (or
+  // "DRIVE retry", or "WEBSITE UPDATE retry") and never "clip failed" for a
+  // clip that was cut perfectly.
+  const stage = job.r2Status !== 'uploaded' ? 'R2' : job.driveStatus !== 'uploaded' ? 'DRIVE' : 'WEBSITE UPDATE';
+  console.log(`⚠️  [${job.eventType}] ${job.clipId}: ${stage} RETRY QUEUED (${reason}) — next try in ${Math.round(delay / 1000)}s; the clip itself is safe at ${job.localPath}`);
+  update(job, { status: 'SYNC_RETRY', error: reason, nextUploadAt: Date.now() + delay });
+  later(() => queueSync(job), delay);
 }
 
 // Streams a file as the request body. Times out only when nothing moves
@@ -710,6 +1248,38 @@ function postFile(url, filePath, extraHeaders) {
   });
 }
 
+// Small JSON POST (the website-attachment stage). Same shape of answer as
+// postFile: { ok, json } or { ok:false, error }.
+function postJson(url, body, timeoutMs = 20000) {
+  return new Promise((resolve) => {
+    let u;
+    try { u = new URL(url); } catch (e) { return resolve({ ok: false, error: 'bad website URL' }); }
+    const payload = Buffer.from(JSON.stringify(body || {}), 'utf8');
+    const lib = u.protocol === 'https:' ? https : http;
+    let settled = false;
+    const finish = (res) => { if (!settled) { settled = true; resolve(res); } };
+    const req = lib.request(u, {
+      method: 'POST',
+      agent: false,
+      headers: { 'Content-Type': 'application/json', 'Content-Length': payload.length },
+    }, (res) => {
+      let text = '';
+      res.setEncoding('utf8');
+      res.on('data', (d) => { if (text.length < 8000) text += d; });
+      res.on('end', () => {
+        let json = null;
+        try { json = JSON.parse(text); } catch (_) { /* non-JSON answer */ }
+        if (res.statusCode >= 200 && res.statusCode < 300) finish({ ok: true, json });
+        else finish({ ok: false, error: `website answered HTTP ${res.statusCode}${text ? `: ${text.slice(0, 150)}` : ''}`, json });
+      });
+      res.on('error', (e) => finish({ ok: false, error: e.message }));
+    });
+    req.setTimeout(timeoutMs, () => { req.destroy(new Error(`no answer in ${timeoutMs / 1000}s`)); });
+    req.on('error', (e) => finish({ ok: false, error: e.message }));
+    req.end(payload);
+  });
+}
+
 function getJson(url, timeoutMs = 10000) {
   return new Promise((resolve) => {
     let u;
@@ -738,56 +1308,69 @@ function getJson(url, timeoutMs = 10000) {
 async function pollOneClipStatus(server, job) {
   job.lastPolledAt = Date.now();
   const r = await getJson(`${server}/api/clips/status/${encodeURIComponent(job.clipId)}`);
-  if (!r || r.status !== 200 || !r.json || !r.json.success) return;
+  if (!r) { noteNetworkOutcome(false, 'status poll got no answer'); return; }
+  noteNetworkOutcome(true);
+  if (r.status !== 200 || !r.json || !r.json.success) return;
   const d = r.json;
 
   // Remembered before the patch so each leg is announced EXACTLY once,
   // on the tick it actually changes — never re-logged on later polls.
   const prevR2 = job.r2Status;
   const prevDrive = job.driveStatus;
-  const wasComplete = job.status === 'COMPLETE';
 
-  const patch = { r2Status: d.r2Status || job.r2Status, driveStatus: d.driveStatus || job.driveStatus, serverStatus: d.status };
+  const patch = {
+    r2Status: d.r2Status || job.r2Status,
+    driveStatus: d.driveStatus || job.driveStatus,
+    serverStatus: d.status,
+    r2Key: d.r2Key || job.r2Key || null,
+    r2Url: d.r2Url || job.r2Url || null,
+    driveFileId: d.driveFileId || job.driveFileId || null,
+    driveUrl: d.driveUrl || job.driveUrl || null,
+  };
 
-  // 📣 Per-leg progress in this window, so R2 and Drive each announce
-  // themselves the moment they land instead of only a combined line at
-  // the very end (and a failing leg says WHY, so it can be fixed rather
-  // than just silently retried).
-  if (patch.r2Status === 'uploaded' && prevR2 !== 'uploaded') {
-    console.log(`☁️  [${job.eventType}] ${job.clipId}: R2 ✓`);
-  }
-  if (patch.driveStatus === 'uploaded' && prevDrive !== 'uploaded') {
-    console.log(`📁 [${job.eventType}] ${job.clipId}: Google Drive ✓`);
-  }
-  if (patch.r2Status === 'failed' && prevR2 !== 'failed') {
-    console.log(`⚠️  [${job.eventType}] ${job.clipId}: R2 upload failed — ${d.r2Error || 'no reason reported'} (retrying)`);
-  }
-  if (patch.driveStatus === 'failed' && prevDrive !== 'failed') {
-    console.log(`⚠️  [${job.eventType}] ${job.clipId}: Google Drive upload failed — ${d.driveError || 'no reason reported'} (retrying)`);
-  }
+  // 📣 Per-leg progress, so R2 and Drive each announce themselves the
+  // moment they land (and a failing leg says WHY, so it can be fixed
+  // rather than just silently retried).
+  if (patch.r2Status === 'uploaded' && prevR2 !== 'uploaded') console.log(`☁️  [${job.eventType}] ${job.clipId}: R2 COMPLETE`);
+  if (patch.driveStatus === 'uploaded' && prevDrive !== 'uploaded') console.log(`📁 [${job.eventType}] ${job.clipId}: DRIVE COMPLETE`);
+  if (patch.r2Status === 'failed' && prevR2 !== 'failed') console.log(`⚠️  [${job.eventType}] ${job.clipId}: R2 RETRY QUEUED — ${d.r2Error || 'no reason reported'}`);
+  if (patch.driveStatus === 'failed' && prevDrive !== 'failed') console.log(`⚠️  [${job.eventType}] ${job.clipId}: DRIVE RETRY QUEUED — ${d.driveError || 'no reason reported'}`);
 
-  if (d.status === 'COMPLETE') {
-    Object.assign(patch, { status: 'COMPLETE', serverFailed: false, driveBackupFailed: false, error: null });
-    if (!wasComplete) console.log(`✅ [${job.eventType}] ${job.clipId}: in R2 + Drive`);
-  } else if (d.status === 'NEEDS_REUPLOAD') {
+  if (d.status === 'NEEDS_REUPLOAD') {
     // The website restarted and lost its temporary copy before R2/Drive
-    // finished. Our local copy is the source of truth — send it again.
-    if (job.localPath && fs.existsSync(job.localPath)) {
+    // finished. Our local copy is the source of truth — send it again
+    // (never re-cut, and R2 is skipped if it already has the object).
+    if (verifyLocalFile(job)) {
       console.log(`🔁 [${job.eventType}] ${job.clipId}: website lost its copy — re-sending the local clip`);
-      Object.assign(patch, { status: 'UPLOAD_RETRY', serverFailed: false, uploadAttempts: 0, error: 'website restarted — re-sending clip', nextUploadAt: Date.now() });
-      update(job, patch);
-      job.uploadAttempts = 0;
-      queueUpload(job);
+      update(job, { ...patch, status: 'SYNC_RETRY', syncAttempts: 0, error: 'website restarted — re-sending clip', nextUploadAt: Date.now() });
+      queueSync(job);
       return;
     }
-    Object.assign(patch, { status: 'FAILED', serverFailed: false, error: 'website lost its copy and the local clip file is missing' });
-  } else if (d.status === 'FAILED_PERMANENT') {
-    if (d.r2Status === 'uploaded') {
-      // Clip plays from R2 — only the Drive backup copy is missing.
-      Object.assign(patch, { status: 'COMPLETE', serverFailed: true, driveBackupFailed: true, error: null });
-    } else {
-      Object.assign(patch, { status: 'FAILED', serverFailed: true, error: d.permanentFailureReason || 'website could not upload to R2/Drive' });
+    update(job, { ...patch, status: 'CUT_FAILED', error: 'website lost its copy and the local clip file is missing' });
+    return;
+  }
+
+  // ✅ Both legs done → the final stage: attach/update the clip on the
+  // website against the exact event it came from.
+  const bothDone = patch.r2Status === 'uploaded' && patch.driveStatus === 'uploaded';
+  // Drive gave up but the clip plays from R2: treat Drive as a best-effort
+  // backup (exactly as before) and still finish the website attachment.
+  const driveGaveUp = d.status === 'FAILED_PERMANENT' && patch.r2Status === 'uploaded';
+  if (bothDone || driveGaveUp) {
+    update(job, { ...patch, driveBackupFailed: !!driveGaveUp && patch.driveStatus !== 'uploaded' });
+    if (['SENT', 'SYNC_RETRY'].includes(job.status)) queueSync(job); // → websiteStage()
+    return;
+  }
+  if (d.status === 'FAILED_PERMANENT') {
+    // R2 itself never landed — keep retrying from here (the clip is local
+    // and safe, so this is never a permanent failure for us).
+    update(job, { ...patch, status: 'SYNC_RETRY', error: d.permanentFailureReason || 'website could not upload to R2/Drive' });
+    if (!job.nextUploadAt || job.nextUploadAt < Date.now()) {
+      const delay = syncBackoffMs((job.syncAttempts || 1) + 1);
+      update(job, { nextUploadAt: Date.now() + delay });
+      later(() => queueSync(job), delay);
     }
+    return;
   }
   update(job, patch);
 }
@@ -805,10 +1388,11 @@ async function statusPollTick() {
   if (!server) return;
   statusPollRunning = true;
   try {
-    // UPLOADED = website still finishing R2/Drive. A website-side failure
-    // (serverFailed) is still followed, since the website can recover it.
+    // SENT = the website has the clip and is finishing R2/Drive; a clip
+    // whose leg is retrying there is still followed, since it can recover.
+    if (net.online === false) return; // offline: nothing to ask, nothing to hammer
     const due = [...jobs.values()]
-      .filter((j) => (j.status === 'UPLOADED' || (j.status === 'FAILED' && j.serverFailed)) && Date.now() - (j.uploadedAt || 0) < STATUS_POLL_WINDOW_MS)
+      .filter((j) => ['SENT', 'SYNC_RETRY'].includes(j.status) && j.uploadedAt && Date.now() - j.uploadedAt < STATUS_POLL_WINDOW_MS)
       .sort((a, b) => (a.lastPolledAt || 0) - (b.lastPolledAt || 0));
     await Promise.all(due.slice(0, STATUS_POLL_BATCH).map((job) => pollOneClipStatus(server, job).catch(() => {})));
   } finally {
@@ -835,6 +1419,9 @@ app.use((req, res, next) => {
   next();
 });
 
+function pendingCount() {
+  return [...jobs.values()].filter((j) => SYNCABLE.includes(j.status)).length;
+}
 function setupPageHtml(message) {
   const esc = (v) => String(v || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
   const src = activeRecording ? sourceFor(activeRecording.file) : null;
@@ -866,6 +1453,7 @@ function setupPageHtml(message) {
     Recording: ${activeRecording ? `<span class="good">${esc(activeRecording.file)}</span> ${activeRecording.growing ? '(recording ✅)' : '(not growing — vMix not recording right now)'}` : `<span class="bad">${esc(recordingError || 'not found yet')}</span>`}<br>
     ${src && src.lastError ? `<span class="bad">Recording read error: ${esc(src.lastError)}</span><br>` : ''}
     Clips folder: ${esc(getClipsDir())}<br>
+    Internet: ${net.online === false ? `<span class="bad">offline — clips are still cut and saved locally${pendingCount() ? `, ${pendingCount()} waiting to sync` : ''}</span>` : net.online ? '<span class="good">connected</span>' : 'checking…'}<br>
     Website: ${esc(session.mainServerUrl || toOrigin(config.mainServerUrl) || 'not set')} · Port ${config.port}<br>
     Iss window ko match khatam hone tak khula rakho.
   </div>
@@ -890,16 +1478,44 @@ app.post('/setup', async (req, res) => {
   res.send(setupPageHtml('✅ Saved! Ab is tab ko band karke match shuru kar sakte ho.'));
 });
 
+// The panel reads this. `status` is the real state machine; `statusText` is
+// the operator-facing line ("CLIP SAVED LOCALLY", "UPLOAD PENDING -
+// OFFLINE", "SYNC COMPLETE"), and `legacyStatus` keeps an older panel
+// build working unchanged.
+const LEGACY_VIEW = {
+  WAITING: 'WAITING', CUTTING: 'CUTTING', CUT_RETRY: 'CUT_RETRY', CUT_FAILED: 'FAILED',
+  LOCAL_SAVED: 'LOCAL_SAVED', OFFLINE_PENDING: 'UPLOAD_RETRY', SENDING: 'UPLOADING',
+  SENT: 'UPLOADED', SYNC_RETRY: 'UPLOAD_RETRY', WEBSITE_UPDATE: 'UPLOADED',
+  WEBSITE_RETRY: 'UPLOAD_RETRY', SYNC_COMPLETE: 'COMPLETE',
+};
 function jobView(j) {
+  const localSaved = !!(j.localPath && ['LOCAL_SAVED', 'OFFLINE_PENDING', 'SENDING', 'SENT', 'SYNC_RETRY', 'WEBSITE_UPDATE', 'WEBSITE_RETRY', 'SYNC_COMPLETE'].includes(j.status));
   return {
     clipId: j.clipId, matchId: j.matchId, eventType: j.eventType, t0: j.t0,
-    status: j.status, error: j.error || null,
-    cutAttempts: j.cutAttempts || 0, uploadAttempts: j.uploadAttempts || 0,
+    status: LEGACY_VIEW[j.status] || j.status,   // what older panels understand
+    syncStatus: j.status,                       // the real state
+    statusText: STATUS_TEXT[j.status] || j.status,
+    offline: j.status === 'OFFLINE_PENDING',
+    localSaved,
+    error: j.error || null,
+    cutAttempts: j.cutAttempts || 0,
+    uploadAttempts: j.syncAttempts || j.uploadAttempts || 0,
+    retryCount: j.retryCount || 0,
     nextUploadAt: j.nextUploadAt || null,
-    clipSeconds: j.clipSeconds || null, localPath: j.localPath || null,
+    clipSeconds: j.clipSeconds || null,
+    localPath: j.localPath || null,
+    filename: j.filename || null,
+    links: (j.links || []).map((l) => ({ role: l.role, playerName: l.playerName, path: l.path, mode: l.mode })),
+    highlightCategory: j.highlightCategory || null,
+    isHighlight: j.isHighlight === true || j.isHighlight === false ? j.isHighlight : null,
+    ball: { innings: j.innings ?? null, over: j.over ?? null, ballInOver: j.ballInOver ?? null, label: j.ballLabel || null },
+    outcomeLabel: j.outcomeLabel || null,
+    striker: j.strikerName || null, bowler: j.bowlerName || null,
+    strikerId: j.strikerId || null, bowlerId: j.bowlerId || null,
     r2Status: j.r2Status || null, driveStatus: j.driveStatus || null,
+    websiteStatus: j.status === 'SYNC_COMPLETE' ? 'updated' : (j.websiteStatus || 'pending'),
     driveBackupFailed: !!j.driveBackupFailed,
-    createdAt: j.createdAt, updatedAt: j.updatedAt,
+    createdAt: j.createdAt, updatedAt: j.updatedAt, syncedAt: j.syncedAt || null,
   };
 }
 
@@ -907,11 +1523,12 @@ app.get('/status', async (req, res) => {
   const rec = activeRecording;
   const src = rec ? sourceFor(rec.file) : null;
   const all = [...jobs.values()];
+  const count = (...s) => all.filter((j) => s.includes(j.status)).length;
   res.json({
     running: true,
-    version: 4,
+    version: 5,
     matchId: session.matchId,
-    mainServerUrl: session.mainServerUrl || toOrigin(config.mainServerUrl) || null,
+    mainServerUrl: websiteOrigin() || null,
     recordingStartedAt: session.recordingStartedAt,
     vmixRecordingFile: config.vmixRecordingFile,
     vmixRecordingFolder: recordingDir(),
@@ -920,13 +1537,21 @@ app.get('/status', async (req, res) => {
     recordingSeconds: src ? Math.round(src.durationSec) : null,
     recordingError: recordingError || (src && src.lastError) || null,
     clipsDir: getClipsDir(),
+    matchClipsFolder: session.matchId ? organizer.matchRootFor(getClipsDir(), matchMetaFromSession()) : null,
     clipTiming: { beforeSeconds: PRE_ROLL_SECONDS, afterSeconds: POST_ROLL_SECONDS, durationSeconds: CLIP_SECONDS },
+    // 🌐 Local clipping never depends on this; only syncing does.
+    online: net.online,
+    onlineCheckedAt: net.lastCheckAt || null,
+    onlineError: net.online ? null : net.lastError,
     driveConnected: !!session.driveFolderId,
     driveFolderName: session.driveFolderName,
     cutQueueLength: cutQueue.length + (cutRunning ? 1 : 0),
-    uploadQueueLength: uploadQueue.length + uploadsRunning,
-    clipsOk: all.filter((j) => ['LOCAL_SAVED', 'UPLOADING', 'UPLOADED', 'UPLOAD_RETRY', 'COMPLETE'].includes(j.status)).length,
-    failedClipsCount: all.filter((j) => j.status === 'FAILED').length,
+    uploadQueueLength: syncQueue.length + syncRunning,
+    pendingSyncCount: all.filter(isUnsynced).length,
+    offlinePendingCount: count('OFFLINE_PENDING'),
+    syncedCount: count('SYNC_COMPLETE'),
+    clipsOk: all.filter((j) => j.localPath && isUnsynced(j)).length + count('SYNC_COMPLETE'),
+    failedClipsCount: count('CUT_FAILED'),
     ffmpegChildren: children.size,
     memoryMB: Math.round(process.memoryUsage().rss / 1048576),
   });
@@ -946,18 +1571,49 @@ app.get('/clip-jobs/:clipId', (req, res) => {
   res.json({ success: true, job: jobView(j) });
 });
 app.get('/failed-clips', (req, res) => {
-  res.json({ failedClips: [...jobs.values()].filter((j) => j.status === 'FAILED').map(jobView) });
+  // Only clips that could not be CUT are failures. A clip waiting for the
+  // internet is not failed — see /clip-jobs (status OFFLINE_PENDING).
+  res.json({ failedClips: [...jobs.values()].filter((j) => j.status === 'CUT_FAILED').map(jobView) });
 });
 
-app.post('/recording-start', (req, res) => {
+// The match this recording belongs to, as the panel described it — used
+// only for naming the LOCAL folder tree (the cloud destination keeps using
+// the website's own R2/Drive structure, keyed by matchId).
+function matchMetaFromSession() {
+  return {
+    matchId: session.matchId,
+    matchLabel: session.matchLabel || null,
+    tournamentId: session.tournamentId || null,
+    tournamentName: session.tournamentName || session.tournamentId || null,
+    tournamentMatchId: session.tournamentMatchId || null,
+  };
+}
+
+app.post('/recording-start', async (req, res) => {
   const b = req.body || {};
   session.recordingStartedAt = Number(b.startedAt) || Date.now();
   if (b.matchId) session.matchId = String(b.matchId);
+  if (b.matchLabel !== undefined) session.matchLabel = str(b.matchLabel);
+  if (b.tournamentId !== undefined || b.tournament !== undefined) session.tournamentId = str(b.tournamentId || b.tournament);
+  if (b.tournamentName !== undefined || b.tournament !== undefined) session.tournamentName = str(b.tournamentName || b.tournament);
+  if (b.tournamentMatchId !== undefined) session.tournamentMatchId = str(b.tournamentMatchId);
   const origin = toOrigin(b.mainServerUrl);
   if (origin) session.mainServerUrl = origin;
   saveSession();
   console.log(`🔴 Recording session started${session.matchId ? ` (match ${session.matchId})` : ''} — website ${session.mainServerUrl || 'not set'}`);
-  res.json({ success: true, vmixControlled: false });
+  // 🗂️ Create this match's clip folders NOW, beside the master recording,
+  // so they exist before the first ball — with or without internet.
+  let clipsFolder = null;
+  if (session.matchId) {
+    try {
+      clipsFolder = await organizer.ensureMatchTree(getClipsDir(), matchMetaFromSession());
+      console.log(`🗂️  Clip folders ready: ${clipsFolder}`);
+    } catch (err) {
+      console.log(`⚠️  Could not create the clip folders (${err.message}) — they are retried on the first clip`);
+    }
+  }
+  probeInternet(true).catch(() => {});
+  res.json({ success: true, vmixControlled: false, clipsFolder, online: net.online });
 });
 app.post('/recording-stop', (req, res) => {
   console.log('⏹  Recording session stopped (clips already requested are still cut and uploaded)');
@@ -989,8 +1645,11 @@ app.post('/set-folder', (req, res) => {
 });
 app.post('/set-token', (req, res) => res.json({ success: true }));
 
-// POST /clip { eventType, timestamp, matchId, ballMeta, clipId? }
-// Acknowledged immediately; T0 (the press) is frozen into the job.
+// POST /clip { eventType, timestamp, matchId, ballMeta, clipMeta?, clipId? }
+// Acknowledged immediately; T0 (the press) is frozen into the job, and the
+// whole event — match, tournament, innings, over, ball, players and their
+// IDs — is written to disk with it BEFORE the answer is sent. Nothing here
+// touches the network: this is the entry point of Stage A.
 app.post('/clip', async (req, res) => {
   const b = req.body || {};
   const t0 = Number(b.timestamp) || Date.now();
@@ -1001,42 +1660,165 @@ app.post('/clip', async (req, res) => {
   const clipId = b.clipId ? String(b.clipId).replace(/[^a-zA-Z0-9_-]/g, '') : buildClipId(matchId, eventType, t0);
 
   const existing = jobs.get(clipId);
-  if (existing) return res.json({ success: true, clipId, duplicate: true, status: existing.status });
+  if (existing) {
+    // A genuine re-send of the SAME press (the panel's outbox). Never a
+    // second clip — but any metadata it carries is still worth keeping.
+    if (b.ballMeta || b.clipMeta) applyLateMeta(existing, { ...(b.clipMeta || {}), ballMeta: b.ballMeta || (b.clipMeta && b.clipMeta.ballMeta) || null });
+    return res.json({ success: true, clipId, duplicate: true, status: existing.status, statusText: STATUS_TEXT[existing.status] || existing.status });
+  }
 
   const job = {
     clipId, matchId, eventType, t0,
     // Frozen at the press — the ONLY timing this clip ever uses.
     window: { startWall: t0 - PRE_ROLL_SECONDS * 1000, endWall: t0 + POST_ROLL_SECONDS * 1000 },
-    ballMeta: b.ballMeta || null,
-    sourceFile: activeRecording && activeRecording.growing ? activeRecording.file : null,
-    status: 'WAITING', createdAt: Date.now(), updatedAt: Date.now(),
+    clipStart: t0 - PRE_ROLL_SECONDS * 1000,
+    clipEnd: t0 + POST_ROLL_SECONDS * 1000,
+    timestamp: t0,
+    // The persistent queue record's event fields (filled from the press).
+    tournamentId: session.tournamentId || null,
+    tournamentName: session.tournamentName || null,
+    tournamentMatchId: session.tournamentMatchId || null,
+    matchLabel: session.matchLabel || null,
+    eventId: null, innings: null, over: null, ballInOver: null, ballLabel: null,
+    battingTeam: null, bowlingTeam: null, battingTeamId: null, bowlingTeamId: null,
+    strikerName: null, nonStrikerName: null, bowlerName: null,
+    strikerId: null, nonStrikerId: null, bowlerId: null, playerIds: [],
+    outcomeLabel: null, outcomeType: eventType, isHighlight: null, dismissal: null,
+    // Local + cloud state.
+    localPath: null, localFilePath: null, filename: null, links: [],
+    r2Status: 'pending', driveStatus: 'pending', websiteStatus: 'pending',
+    cutOffline: net.online === false,
+    status: 'WAITING', retryCount: 0, createdAt: Date.now(), updatedAt: Date.now(),
   };
+  applyEventMeta(job, { ...(b.clipMeta || {}), ballMeta: b.ballMeta || (b.clipMeta && b.clipMeta.ballMeta) || null, eventType: undefined });
+  Object.assign(job, destinationsFor(job));
+  job.sourceFile = activeRecording && activeRecording.growing ? activeRecording.file : null;
   jobs.set(clipId, job);
+  // Any metadata that arrived before this press did (out-of-order outbox).
+  const early = orphanMeta.get(clipId);
+  if (early) { orphanMeta.delete(clipId); applyEventMeta(job, early); saveOrphanMeta(); }
   pruneJobs();
   flushJobsNow(); // a press is written to disk before it's acknowledged — a crash right after can't lose it
   scheduleCut(job);
-  console.log(`📥 [${eventType}] ${clipId} at ${new Date(t0).toLocaleTimeString()} — cutting ${PRE_ROLL_SECONDS}s before → ${POST_ROLL_SECONDS}s after`);
+  console.log(`📥 [${eventType}] ${clipId}${job.ballLabel ? ` ball ${job.ballLabel}` : ''} at ${new Date(t0).toLocaleTimeString()} — cutting ${PRE_ROLL_SECONDS}s before → ${POST_ROLL_SECONDS}s after${net.online === false ? ' (OFFLINE — local cut and local folders work exactly the same)' : ''}`);
   // recordingActive:false lets the panel warn the operator right away
   // that vMix isn't recording (the clip would have no footage).
-  res.json({ success: true, clipId, status: job.status, recordingActive: !!job.sourceFile });
+  res.json({ success: true, clipId, status: job.status, statusText: STATUS_TEXT[job.status], recordingActive: !!job.sourceFile, online: net.online });
+  // Create the folder tree for this match in the background (offline-safe).
+  organizer.ensureMatchTree(getClipsDir(), { ...matchMetaFromSession(), ...job }).catch(() => {});
   if (!job.sourceFile) resolveActiveRecording().then((rec) => { if (rec && !job.sourceFile) job.sourceFile = rec.file; }).catch(() => {});
 });
 
+// POST /clip-meta { clipId, matchId, ballMeta, outcomeLabel, eventType, isHighlight, eventId }
+//
+// The scorer's answer, delivered LOCALLY (localhost) — so it works with no
+// internet at all. A HIGHLIGHTS press is cut before the ball's outcome is
+// known; this is how the helper learns the real over/ball, the outcome and
+// the batsman/bowler for that press, and it is what lets the clip be filed
+// under Highlights/<category>/, Batsmen/<striker>/ and Bowlers/<bowler>/
+// with its proper 08.4_SIX_… name while still offline.
+//
+// Idempotent: the same answer can be delivered any number of times. The
+// clip is MOVED/re-linked, never re-cut, and its clipId never changes — so
+// the cloud destination and the website record stay exactly the same.
+app.post('/clip-meta', async (req, res) => {
+  const b = req.body || {};
+  const clipId = String(b.clipId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!clipId) return res.status(400).json({ success: false, error: 'clipId required' });
+  const job = jobs.get(clipId);
+  if (!job) {
+    // Arrived before the press itself (an out-of-order outbox flush):
+    // remember it, persistently, and apply it when the job appears.
+    orphanMeta.set(clipId, { ...b, receivedAt: Date.now() });
+    saveOrphanMeta();
+    return res.json({ success: true, clipId, pending: true });
+  }
+  await applyLateMeta(job, b);
+  res.json({
+    success: true, clipId, status: job.status, statusText: STATUS_TEXT[job.status] || job.status,
+    filename: job.filename || null, localPath: job.localPath || null,
+    highlightCategory: job.highlightCategory || null,
+    links: (job.links || []).map((l) => ({ role: l.role, playerName: l.playerName, path: l.path })),
+  });
+});
+
+// Applies metadata to an existing job: update the record, re-file the
+// clip if it is already cut, and make sure the website eventually hears
+// about the corrected event (a clip already synced is re-attached, never
+// re-uploaded).
+async function applyLateMeta(job, payload) {
+  const before = { ball: job.ballLabel, highlight: job.isHighlight, outcome: job.outcomeLabel, striker: job.strikerName, bowler: job.bowlerName };
+  applyEventMeta(job, payload);
+  update(job, destinationsFor(job));
+  const changed = before.ball !== job.ballLabel || before.highlight !== job.isHighlight || before.outcome !== job.outcomeLabel || before.striker !== job.strikerName || before.bowler !== job.bowlerName;
+  if (job.localPath && fs.existsSync(job.localPath)) {
+    await organizeClipFiles(job);
+    console.log(`🏷️  [${job.eventType}] ${job.clipId}: ${job.ballLabel || 'ball ?'} ${job.outcomeLabel || ''}${job.isHighlight === false ? ' (kept out of Highlights)' : ''} → ${job.filename}`);
+  }
+  // Already synced, and the event details have since changed: re-run the
+  // website attachment only (no upload, no re-cut, same records).
+  if (changed && job.status === 'SYNC_COMPLETE') {
+    update(job, { status: 'WEBSITE_UPDATE', error: null });
+    queueSync(job);
+  }
+  persistJobs();
+  return job;
+}
+
+// 🔁 "Try now" — re-checks the internet and resumes every pending clip.
+// Handy for the operator (and for tests); the queue does this by itself
+// anyway, on every connectivity change.
+app.post('/sync-now', async (req, res) => {
+  const online = await probeInternet(true).catch(() => false);
+  const resumed = resumePendingSync('asked to sync now');
+  res.json({ success: true, online, resumed, pending: [...jobs.values()].filter(isUnsynced).length });
+});
+
 // ----------------------------------------------------------------
-// 🔄 STARTUP RECOVERY — resume whatever the last run left unfinished,
-// and import v3's "cut but never uploaded" clips so none are lost.
+// 🔄 STARTUP RECOVERY — the persistent queue is read from disk and every
+// unfinished clip carries on from the stage it had reached. Nothing is
+// ever re-cut because the app (or the laptop) restarted: if the clip file
+// is on disk, that clip is done with Stage A for good.
+//
+// Also imports v3's "cut but never uploaded" clips so none are lost.
 // ----------------------------------------------------------------
 function resumeJobs() {
-  let cuts = 0, ups = 0;
+  let cuts = 0, ups = 0, adopted = 0, gone = 0;
   for (const job of jobs.values()) {
-    if (['WAITING', 'CUTTING', 'CUT_RETRY'].includes(job.status)) {
+    // Old status names from a previous build.
+    if (LEGACY_STATUS[job.status]) job.status = LEGACY_STATUS[job.status];
+    if (job.localPath && !job.localFilePath) job.localFilePath = job.localPath;
+    const fileThere = verifyLocalFile(job);
+
+    if (job.status === 'SYNC_COMPLETE') continue;
+    if (CUT_STATES.includes(job.status)) {
+      if (fileThere) {
+        // ✅ Already cut before the restart — adopt it, never cut again.
+        job.status = 'LOCAL_SAVED';
+        Object.assign(job, destinationsFor(job));
+        queueSync(job);
+        adopted++; ups++;
+        continue;
+      }
       job.cutAttempts = Math.min(job.cutAttempts || 0, CUT_MAX_ATTEMPTS - 1);
       job.status = 'WAITING';
       scheduleCut(job);
       cuts++;
-    } else if (['LOCAL_SAVED', 'UPLOADING', 'UPLOAD_RETRY'].includes(job.status)) {
-      job.status = 'UPLOAD_RETRY';
-      queueUpload(job);
+      continue;
+    }
+    if (SYNCABLE.includes(job.status)) {
+      if (!fileThere) {
+        job.status = 'CUT_FAILED';
+        job.error = 'local clip file is missing (deleted or moved away) — nothing was re-cut';
+        gone++;
+        continue;
+      }
+      // Being offline never counts against a clip: it starts with a clean
+      // slate and simply waits for the connectivity probe.
+      job.syncAttempts = 0;
+      job.status = 'LOCAL_SAVED';
+      Object.assign(job, destinationsFor(job));
+      queueSync(job);
       ups++;
     }
   }
@@ -1048,8 +1830,11 @@ function resumeJobs() {
       if (e.outputPath && fs.existsSync(e.outputPath) && e.matchId && e.eventTime) {
         const clipId = buildClipId(e.matchId, e.eventType, e.eventTime);
         if (!jobs.has(clipId)) {
-          jobs.set(clipId, { clipId, matchId: e.matchId, eventType: String(e.eventType || 'CLIP').toUpperCase(), t0: e.eventTime, ballMeta: e.ballMeta || null, localPath: e.outputPath, status: 'UPLOAD_RETRY', createdAt: Date.now(), updatedAt: Date.now() });
-          queueUpload(jobs.get(clipId));
+          const job = { clipId, matchId: e.matchId, eventType: String(e.eventType || 'CLIP').toUpperCase(), t0: e.eventTime, localPath: e.outputPath, localFilePath: e.outputPath, status: 'LOCAL_SAVED', createdAt: Date.now(), updatedAt: Date.now() };
+          applyEventMeta(job, { ballMeta: e.ballMeta || null });
+          Object.assign(job, destinationsFor(job));
+          jobs.set(clipId, job);
+          queueSync(job);
           ups++;
         }
       } else left.push(e);
@@ -1057,16 +1842,40 @@ function resumeJobs() {
     fs.writeFileSync(v3Log, JSON.stringify(left, null, 2));
   } catch (_) { /* no v3 log */ }
   persistJobs();
-  if (cuts || ups) console.log(`🔄 Resumed from last run: ${cuts} clip(s) to cut, ${ups} to upload`);
+  if (cuts || ups) {
+    console.log(`🔄 Resumed from last run: ${cuts} clip(s) still to cut, ${ups} waiting to sync${adopted ? ` (${adopted} already cut — reused as-is, NOT re-cut)` : ''}${gone ? `, ${gone} whose local file is gone` : ''}`);
+  }
+  // Decide online/offline once at startup so the first clip's status line
+  // is honest, then let the queue do its thing.
+  probeInternet(true).catch(() => {});
 }
 
 // Leftover .part/.src files can only come from a cut interrupted by a restart.
 function sweepPartFiles() {
-  fs.readdir(getClipsDir(), (err, names) => {
-    if (err) return;
-    for (const n of names) if (/\.(part|src)\.mp4$|\.list\.txt$/.test(n)) fs.unlink(path.join(getClipsDir(), n), () => {});
-  });
+  for (const dir of [getWorkDir(), getClipsDir()]) {
+    fs.readdir(dir, (err, names) => {
+      if (err) return;
+      for (const n of names) if (/\.(part|src)\.mp4$|\.list\.txt$/.test(n)) fs.unlink(path.join(dir, n), () => {});
+    });
+  }
 }
+
+// 🧹 STALL SWEEP — a safety net under every timer above. Any clip that is
+// cut but unsynced and has had no movement for 10 minutes is put back in
+// the sync queue (and the connection is re-checked first). Nothing is
+// re-cut and nothing already uploaded is uploaded again — this only makes
+// sure a clip can never be left sitting in a stage nobody is driving,
+// whatever went wrong (a missed poll, a lost timer, a website that never
+// finished a leg, a connection that came back without being noticed).
+const STALL_AFTER_MS = 10 * 60 * 1000;
+setInterval(async () => {
+  const stalled = [...jobs.values()].filter((j) => SYNCABLE.includes(j.status) && Date.now() - (j.updatedAt || 0) > STALL_AFTER_MS && !syncQueue.includes(j.clipId));
+  if (!stalled.length) return;
+  await probeInternet(true).catch(() => {});
+  if (net.online === false) return; // still offline — they are already marked pending
+  console.log(`🧹 ${stalled.length} clip(s) had not moved for ${STALL_AFTER_MS / 60000} min — re-queuing their sync`);
+  for (const job of stalled) { job.syncAttempts = 0; queueSync(job); }
+}, 2 * 60 * 1000);
 
 // 🩺 One line every 10 minutes: proof over a 6–7 hour match that queues,
 // processes and memory stay flat.
@@ -1074,16 +1883,17 @@ setInterval(() => {
   const all = [...jobs.values()];
   const count = (s) => all.filter((j) => j.status === s).length;
   const src = activeRecording ? sourceFor(activeRecording.file) : null;
-  console.log(`[health] recording ${activeRecording ? `${path.basename(activeRecording.file)} ${src ? Math.round(src.durationSec / 60) : '?'}min${activeRecording.growing ? '' : ' (not growing)'}` : 'none'} | cut queue ${cutQueue.length} | uploads ${uploadQueue.length + uploadsRunning} | done ${count('COMPLETE') + count('UPLOADED')} | failed ${count('FAILED')} | ffmpeg ${children.size} | mem ${Math.round(process.memoryUsage().rss / 1048576)}MB`);
+  console.log(`[health] recording ${activeRecording ? `${path.basename(activeRecording.file)} ${src ? Math.round(src.durationSec / 60) : '?'}min${activeRecording.growing ? '' : ' (not growing)'}` : 'none'} | internet ${net.online === false ? 'OFFLINE' : net.online ? 'ok' : '?'} | cut queue ${cutQueue.length} | sync queue ${syncQueue.length + syncRunning} | offline-pending ${count('OFFLINE_PENDING')} | synced ${count('SYNC_COMPLETE')} | cut-failed ${count('CUT_FAILED')} | ffmpeg ${children.size} | mem ${Math.round(process.memoryUsage().rss / 1048576)}MB`);
 }, 10 * 60 * 1000);
 
 const server = app.listen(config.port, () => {
   console.log('================================================');
-  console.log(`🎥 Clipper Helper v4.4 running at http://localhost:${config.port}`);
+  console.log(`🎥 Clipper Helper v5.0 (offline-first) running at http://localhost:${config.port}`);
   console.log(`👉 Setup page: http://localhost:${config.port}/setup`);
   console.log(`Using ffmpeg: ${ffmpegPath}`);
   console.log(`Clip window: ${PRE_ROLL_SECONDS}s before + ${POST_ROLL_SECONDS}s after the press = ${CLIP_SECONDS}s`);
-  console.log(`Clips folder: ${getClipsDir()}`);
+  console.log(`Clips folder: ${getClipsDir()} (organised per match: Highlights / Normal / Batsmen / Bowlers)`);
+  console.log('Clips are cut, named and filed locally with NO internet; R2 + Drive + website sync happens whenever the connection is there.');
   console.log(`Website: ${session.mainServerUrl || toOrigin(config.mainServerUrl) || 'not set — open the Setup page'}`);
   if (!fs.existsSync(ffmpegPath)) {
     console.log('⚠️  WARNING: ffmpeg.exe not found — clips cannot be cut. Put ffmpeg.exe in the SAME folder as ClipperHelper.exe.');
