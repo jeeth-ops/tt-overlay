@@ -684,8 +684,10 @@ function clipMetaFor(job) {
     clipStart: job.window && job.window.startWall,
     clipEnd: job.window && job.window.endWall,
     clipSeconds: job.clipSeconds || null,
+    // The filename yes, the full local path never: the website has no use
+    // for the operator's disk layout, and a "D:\\…" string in a request is
+    // exactly what a WAF blocks (see the note in syncJob above).
     filename: job.filename || null,
-    localFilePath: job.localFilePath || job.localPath || null,
     cutOffline: !!job.cutOffline,
     createdAt: job.createdAt,
     cutAt: job.savedAt || null,
@@ -1096,13 +1098,19 @@ async function syncJob(job) {
   // 3️⃣ What does the website ALREADY have for this clipId? This is the
   // idempotency check: it decides whether the bytes still need sending at
   // all, and which leg is outstanding.
-  const remote = await getJson(`${server}/api/clips/status/${encodeURIComponent(job.clipId)}`, 12000);
+  //
+  // Skipped entirely the first time a clip is sent: nothing can be there
+  // yet, so asking would only put a round trip between the operator's
+  // press and the upload actually starting. The check matters on every
+  // LATER attempt, which is exactly where a duplicate upload could happen.
+  const neverSent = !job.uploadedAt && (job.syncAttempts || 0) <= 1;
+  const remote = neverSent ? { status: 404, json: null } : await getJson(`${server}/api/clips/status/${encodeURIComponent(job.clipId)}`, 12000);
   if (!remote) { // no answer at all = the network, not the website
     noteNetworkOutcome(false, 'website unreachable');
     if (net.online === false) return markOfflinePending(job);
     return onSyncFailure(job, 'website unreachable');
   }
-  noteNetworkOutcome(true);
+  if (!neverSent) noteNetworkOutcome(true); // a real answer proves the connection; a skipped check proves nothing
   const doc = remote.status === 200 && remote.json && remote.json.success ? remote.json : null;
   const r2Done = !!doc && doc.r2Status === 'uploaded';
   const driveDone = !!doc && doc.driveStatus === 'uploaded';
@@ -1136,11 +1144,17 @@ async function syncJob(job) {
   try { sizeBytes = fs.statSync(job.localPath).size; } catch (_) { /* reported by postFile */ }
   const startedAt = Date.now();
   console.log(`⬆️  [${job.eventType}] ${job.clipId}: UPLOADING TO R2 (via the website) — attempt ${job.syncAttempts}`);
+  // ⚠️ ONE header only — exactly the request shape that has always worked.
+  // An extra X-Clip-Meta header here (the offline queue's full record) got
+  // the whole upload killed in production: it carried the clip's Windows
+  // path, and a WAF in front of the website reads "D:\\ClipperRecording\\…"
+  // in a header as a path-traversal attempt, rejects the request at the
+  // header stage and never reads the body — the upload then stalled after
+  // ~0.1 MB and died as "socket hang up", on every attempt. All of that
+  // metadata now travels in the JSON body of the attach call below, where
+  // it belongs; nothing is lost.
   const r = await postFile(`${server}/api/clips/ingest?${qs}`, job.localPath, {
-    // Unchanged header the website already links clips by…
     'X-Ball-Meta': headerJson(ballMetaFor(job)),
-    // …plus the offline queue's own record of the event and its ids.
-    'X-Clip-Meta': headerJson(clipMetaFor(job)),
   });
   const stats = uploadStats(sizeBytes, startedAt);
   if (!r.ok) {
@@ -1782,8 +1796,11 @@ app.post('/sync-now', async (req, res) => {
 //
 // Also imports v3's "cut but never uploaded" clips so none are lost.
 // ----------------------------------------------------------------
+// A press older than this whose clip was never cut belongs to a previous
+// match, not this one.
+const OLD_PRESS_MS = 3 * 60 * 60 * 1000;
 function resumeJobs() {
-  let cuts = 0, ups = 0, adopted = 0, gone = 0;
+  let cuts = 0, ups = 0, adopted = 0, gone = 0, stale = 0;
   for (const job of jobs.values()) {
     // Old status names from a previous build.
     if (LEGACY_STATUS[job.status]) job.status = LEGACY_STATUS[job.status];
@@ -1792,6 +1809,17 @@ function resumeJobs() {
 
     if (job.status === 'SYNC_COMPLETE') continue;
     if (CUT_STATES.includes(job.status)) {
+      // A press from an old session whose footage is long gone (vMix has
+      // since recorded over it, or moved to a new file). Retrying it can
+      // only ever produce "this moment is before the start of the
+      // recording" — so it is closed quietly here instead of filling the
+      // operator's list with red rows at the start of the next match.
+      if (!fileThere && Date.now() - (job.t0 || 0) > OLD_PRESS_MS) {
+        job.status = 'CUT_FAILED';
+        job.error = 'from an earlier session — that part of the recording is no longer available';
+        stale++;
+        continue;
+      }
       if (fileThere) {
         // ✅ Already cut before the restart — adopt it, never cut again.
         job.status = 'LOCAL_SAVED';
@@ -1842,8 +1870,8 @@ function resumeJobs() {
     fs.writeFileSync(v3Log, JSON.stringify(left, null, 2));
   } catch (_) { /* no v3 log */ }
   persistJobs();
-  if (cuts || ups) {
-    console.log(`🔄 Resumed from last run: ${cuts} clip(s) still to cut, ${ups} waiting to sync${adopted ? ` (${adopted} already cut — reused as-is, NOT re-cut)` : ''}${gone ? `, ${gone} whose local file is gone` : ''}`);
+  if (cuts || ups || stale) {
+    console.log(`🔄 Resumed from last run: ${cuts} clip(s) still to cut, ${ups} waiting to sync${adopted ? ` (${adopted} already cut — reused as-is, NOT re-cut)` : ''}${gone ? `, ${gone} whose local file is gone` : ''}${stale ? `, ${stale} old press(es) from an earlier session closed` : ''}`);
   }
   // Decide online/offline once at startup so the first clip's status line
   // is honest, then let the queue do its thing.
