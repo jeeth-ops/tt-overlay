@@ -1,9 +1,67 @@
-# Clipper Helper v4.2 — Setup (one-time, operator ka apna PC)
+# Clipper Helper v5.0 — Setup (one-time, operator ka apna PC)
 
 Ye chhota program (`ClipperHelper.exe`) vMix ke saath usi PC par chalta hai
 jahan match record ho raha hai. Isi ke wajah se panel me FOUR/SIX/WICKET
 (aur Wide 4/6, No-ball 4/6, Leg-bye 4, manual trigger) dabane par clip
 apne aap **local recording se hi** cut hoke website/Drive ko bhej di jaati hai.
+
+**v5.0 me kya badla — INTERNET KE BINA BHI CLIP BANTI HAI (offline-first):**
+
+- **Net band ho to bhi clip cut hoti hai.** Pehle FOUR/SIX/boundary ki
+  automatic clip ka request panel ke us code se jaata tha jo website ka
+  socket disconnect hote hi `return` kar deta tha — matlab net jaate hi
+  woh clips maangi hi nahi jaati thi. Ab clip ka trigger website se
+  bilkul alag hai: panel → `localhost:5005` → vMix recording → ffmpeg.
+  Net ka kaam sirf upload me hai.
+- **Do alag stage:** (A) local clip — cut, naam, folder, metadata; ye
+  100% offline chalta hai. (B) cloud sync — R2 → Drive → website. Stage B
+  kabhi Stage A ki shart nahi hai.
+- **Clip kabhi "FAILED" nahi dikhayi jaati** sirf isliye ki net nahi tha.
+  Status ab: `CLIP SAVED LOCALLY` → `UPLOAD PENDING - OFFLINE` →
+  (net aane par) `UPLOADING TO R2` → `R2 COMPLETE` → `DRIVE COMPLETE` →
+  `UPDATING WEBSITE` → `SYNC COMPLETE`. Purana build 60 koshish ke baad
+  clip ko hamesha ke liye FAILED maan leta tha — 3-4 ghante net na hone par
+  theek-thaak clips permanently chhoot jaati thi. Ab local file jab tak
+  disk par hai, retry chalta rehta hai (max 5 min gap).
+- **Net wapas aaya = khud-ba-khud sync.** Helper har 10 second me ek chhoti
+  si request (`/api/ping`) se check karta hai. Net band hai to sirf wahi ek
+  request — R2/Drive par koi bekaar upload nahi. Net aate hi saari pending
+  clips apne aap, ek-ek karke (2 parallel) upload hoti hain. Operator ko
+  clip dobara cut karne ki zaroorat nahi.
+- **Jahan atka tha, wahin se aage:** R2 ho gaya aur Drive reh gaya to sirf
+  Drive retry hota hai — R2 dobara upload NAHI hota. Website update reh
+  gaya to sirf wahi. Ek clip ka R2 object, Drive file aur website record
+  hamesha ek hi `clipId` par — duplicate kabhi nahi.
+- **Restart-proof:** app ya laptop restart ho jaaye to jo clip pehle se cut
+  ho chuki hai wo **dobara cut nahi hoti** — wahi file use hoti hai aur sync
+  wahin se aage badhta hai (queue `clip-jobs.json` me disk par hai).
+- **Clips ab folder-wise organize hoti hain** (Master Recording ke bagal me,
+  bina internet):
+
+```
+MATCH RECORDING FOLDER/
+├── match-recording.mp4            ← vMix ki master recording
+└── Clips/
+    └── <Tournament>/<Teams_MatchId>/
+        ├── Highlights/  4/ 6/ Wickets/ Wide-4/ Wide-6/
+        │                No-Ball-4/ No-Ball-6/ Bye-4/ Leg-Bye-4/
+        ├── Normal/                 ← "Add to Highlights? NO" wali clips
+        ├── Batsmen/<Player-Name>/<1st-Innings>/
+        ├── Bowlers/<Player-Name>/<1st-Innings>/
+        └── metadata/<clipId>.json  ← ball, event, asli player IDs
+```
+
+  Filename me poora ball hota hai:
+  `08.4_SIX_Rohit-Sharma_vs_Jasprit-Bumrah.mp4` (0.6 ko galti se 1.0 nahi
+  banaya jaata — jo ball scoring engine me hai, wahi naam me hai).
+  **Disk waste nahi hota:** ffmpeg ek hi baar chalta hai; batsman/bowler
+  folder me usi file ke *hard link* hote hain (ek 20-sec MP4, teen jagah
+  se khulta hai). Player folder me `player.json` bhi hota hai jisme asli
+  `playerId` hai — clip kabhi folder ke naam se match nahi ki jaati.
+- **Clip window ab 15 sec pehle + 5 sec baad = 20 sec** (`config.json` me
+  `preRollSeconds` / `postRollSeconds` se badal sakte ho).
+- **Nayi file:** `clipOrganizer.js` — ise `server.js` aur `fmp4.js` ke saath
+  hi rakhna hai (`npm run build` khud exe me daal deta hai).
 
 **v4.2 me kya badla (lambe match ka asli root cause):**
 - **Recording kitni bhi lambi ho, clip ki speed same:** pehle har 5 sec me aur har clip
@@ -20,8 +78,8 @@ apne aap **local recording se hi** cut hoke website/Drive ko bhej di jaati hai.
 
 **v4 me kya badla (10–12 clips ke baad clips miss hona / "fetching" error / restart ki zaroorat — root cause fix):**
 - **HIGHLIGHTS button:** ball khelte hi panel me **🎬 HIGHLIGHTS** (ya keyboard `H`) dabao.
-  Press ka exact time save hota hai, **3 second** wait hota hai, phir vMix recording se
-  **15 sec pehle → 3 sec baad = 18 sec** ki clip cut hoti hai.
+  Press ka exact time save hota hai, **5 second** wait hota hai, phir vMix recording se
+  **15 sec pehle → 5 sec baad = 20 sec** ki clip cut hoti hai.
 - **Har clip ka apna time:** pehle "file ke aakhri 19 second" cut hote the — queue me
   ruki clip galat moment ki ban jaati thi. Ab har press ka apna fixed time hai, isliye
   back-to-back presses bhi sahi aur poore 18 sec ke aate hain.
@@ -36,7 +94,7 @@ apne aap **local recording se hi** cut hoke website/Drive ko bhej di jaati hai.
 - **Restart ke baad bhi kaam:** "Start Recording" dobara dabane ki zaroorat nahi.
   Jo recording file vMix abhi likh raha hai, wahi use hoti hai (naya timestamped
   file bhi apne aap pakda jaata hai).
-- Panel me har clip ka live status: ⏳ 3 sec wait → ✂️ cutting → 💾 local → R2 → Drive.
+- Panel me har clip ka live status: ⏳ wait → ✂️ cutting → 💾 local → R2 → Drive → website.
 - Ball ka outcome daalte hi clip us ball se link hoti hai. 4 / 6 / Wicket / Wide 4 /
   No-ball 4-6 / Bye 4 / Leg-bye 4 apne aap Highlights me jaate hain; baaki par panel
   poochta hai **"Add this clip to Highlights? YES / NO"** (keyboard `Y` / `N`).
@@ -115,9 +173,11 @@ sakta hai — **"More info" → "Run anyway"** dabake chala sakte ho, ye safe ha
    tumhari website ko bhej di jayegi, jo use Cloudflare R2 + Drive dono me
    upload karke us over/ball ke asli batter-bowler se link kar degi — isi
    wajah se scorecard me player ke naam ke saamne clip dikhti hai.
-   (Agar website tak pahunch na ho paye — jaise net down — clip local folder
-   me safe rehti hai aur helper khud baar-baar upload try karta rehta hai;
-   net aate hi upload ho jaati hai. Ek clip kabhi do baar upload nahi hoti.)
+   (Net down ho to bhi sab kuch chalta hai: clip cut hoti hai, sahi folder
+   me sahi naam se save hoti hai, aur queue me `UPLOAD PENDING - OFFLINE`
+   dikhati hai. Net aate hi khud-ba-khud R2 + Drive + website par chali
+   jaati hai — usi over/ball/batsman/bowler par. Ek clip kabhi do baar
+   upload nahi hoti, aur restart ke baad dobara cut bhi nahi hoti.)
 
 ---
 
