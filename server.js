@@ -204,6 +204,7 @@ async function connectMongo() {
         await playersCollection.createIndex({ playerId: 1 }, { unique: true });
         await playersCollection.createIndex({ ownerUid: 1, nameKeys: 1 }, { unique: true });
         console.log('🍃 MongoDB connected —', mongoDb.databaseName);
+        dedupeCrossTournamentMatches(); // background, never blocks startup
 
         // 🩹 One-time migration: move any matches still embedded in a league
         // doc's `matches[]` array (the old, size-limited design) into their
@@ -376,10 +377,15 @@ function buildClipFileName(clipId) {
 // (e.g. the retry sweep and an in-flight finalizeClip() raced), this
 // returns true immediately without uploading a second copy.
 async function uploadClipToDrive(clipId, matchId, filePath) {
+    // 'failed' here means a previous attempt already ran for this clip —
+    // the only case where Drive might already be holding a copy we don't
+    // know about, and so the only case worth paying for the lookup below.
+    let priorDriveStatus = null;
     if (clipsCollection) {
         try {
             const existing = await clipsCollection.findOne({ clipId }, { projection: { driveStatus: 1 } });
             if (existing && existing.driveStatus === 'uploaded') return true;
+            priorDriveStatus = existing ? existing.driveStatus || null : null;
         } catch (err) { /* fall through and attempt the upload anyway */ }
     }
 
@@ -412,20 +418,44 @@ async function uploadClipToDrive(clipId, matchId, filePath) {
     }
 
     const fileName = buildClipFileName(clipId);
+
+    // 🩹 Self-heal, on RETRIES ONLY: if a previous attempt actually created
+    // this file in Drive but still reported failure (e.g. the write-after-
+    // upload race fixed below, before this fix existed), don't upload a
+    // second copy — find the one that's already there and adopt it. Skipped
+    // on a clip's first attempt, where nothing can be there yet and the
+    // extra round-trip would only delay every single upload.
+    if (priorDriveStatus === 'failed') try {
+        const existingFile = await uploadClient.files.list({
+            q: `name = '${fileName.replace(/'/g, "\\'")}' and '${folderId}' in parents and trashed = false`,
+            fields: 'files(id, webViewLink)',
+            pageSize: 1
+        });
+        const found = existingFile.data && existingFile.data.files && existingFile.data.files[0];
+        if (found) {
+            if (clipsCollection) {
+                await clipsCollection.updateOne(
+                    { clipId },
+                    { $set: { driveStatus: 'uploaded', driveFileId: found.id, driveUrl: found.webViewLink, driveUploadedAt: Date.now() }, $unset: { driveError: '' } }
+                ).catch(() => {});
+            }
+            console.log(`☁️  Drive already has ${fileName} (from an earlier attempt) — reusing it instead of uploading again`);
+            return true;
+        }
+    } catch (err) {
+        // Lookup failing is not fatal — just fall through to a normal upload.
+    }
+
+    // Step 1: the upload itself. Only a failure HERE means Drive doesn't
+    // have the file — anything after this point must never be allowed to
+    // turn a real success back into a reported failure.
+    let uploadRes;
     try {
-        const uploadRes = await uploadClient.files.create({
+        uploadRes = await uploadClient.files.create({
             requestBody: { name: fileName, parents: [folderId] },
             media: { mimeType: 'video/mp4', body: fs.createReadStream(filePath) },
             fields: 'id, webViewLink'
         });
-        if (clipsCollection) {
-            await clipsCollection.updateOne(
-                { clipId },
-                { $set: { driveStatus: 'uploaded', driveFileId: uploadRes.data.id, driveUrl: uploadRes.data.webViewLink, driveUploadedAt: Date.now() }, $unset: { driveError: '' } }
-            );
-        }
-        console.log(`☁️  Uploaded to Drive: ${fileName}`);
-        return true;
     } catch (err) {
         console.log(`Drive upload error (${fileName}):`, err.message || err);
         if (clipsCollection) {
@@ -433,6 +463,30 @@ async function uploadClipToDrive(clipId, matchId, filePath) {
         }
         return false;
     }
+    console.log(`☁️  Uploaded to Drive: ${fileName}`);
+
+    // Step 2: record it. The file is genuinely in Drive now — a transient
+    // Mongo hiccup here must NEVER be reported as an upload failure (that
+    // used to make the retry sweep upload a DUPLICATE copy of the exact
+    // same clip on its next pass, and kept the "tick" from ever showing
+    // even though the clip was already safely on Drive). Retry the write
+    // a few times instead; if it still doesn't stick, the self-heal lookup
+    // above will find this file next time round rather than re-uploading.
+    if (clipsCollection) {
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+                await clipsCollection.updateOne(
+                    { clipId },
+                    { $set: { driveStatus: 'uploaded', driveFileId: uploadRes.data.id, driveUrl: uploadRes.data.webViewLink, driveUploadedAt: Date.now() }, $unset: { driveError: '' } }
+                );
+                break;
+            } catch (err) {
+                console.log(`Drive status write for ${clipId} failed (attempt ${attempt}/3):`, err.message || err);
+                if (attempt < 3) await new Promise((r) => setTimeout(r, 400 * attempt));
+            }
+        }
+    }
+    return true;
 }
 
 // Uploads a clip to Cloudflare R2 (same shape as uploadClipToDrive above)
@@ -466,6 +520,13 @@ async function uploadClipToR2(clipId, matchId, filePath) {
 
     const key = `matches/${matchId}/clips/${clipId}.mp4`;
 
+    // Step 1: the upload itself. Only a failure HERE means R2 doesn't have
+    // the bytes — anything after this point must never turn a real success
+    // back into a reported failure (see the matching fix in
+    // uploadClipToDrive above for the exact bug this avoids: a transient
+    // Mongo hiccup right after a real upload was making the clip retry
+    // forever and never show as done, even though the object already
+    // existed in R2 the whole time).
     try {
         // Reading the whole clip into a Buffer (clips are only a few MB —
         // well within memory limits) instead of streaming it lets the SDK
@@ -484,16 +545,6 @@ async function uploadClipToR2(clipId, matchId, filePath) {
             // edge keep them for a year instead of revalidating / re-fetching from R2 every view.
             CacheControl: clipMedia.CLIP_CACHE_CONTROL
         }));
-
-        const publicUrl = R2_PUBLIC_URL ? `${R2_PUBLIC_URL}/${key}` : null;
-        if (clipsCollection) {
-            await clipsCollection.updateOne(
-                { clipId },
-                { $set: { r2Status: 'uploaded', r2Key: key, r2Url: publicUrl, r2UploadedAt: Date.now() }, $unset: { r2Error: '' } }
-            );
-        }
-        console.log(`☁️  Uploaded to R2: ${key}`);
-        return true;
     } catch (err) {
         console.log(`R2 upload error (${key}):`, err.message || err);
         if (clipsCollection) {
@@ -501,6 +552,29 @@ async function uploadClipToR2(clipId, matchId, filePath) {
         }
         return false;
     }
+    console.log(`☁️  Uploaded to R2: ${key}`);
+
+    // Step 2: record it. Retry the write a few times rather than ever
+    // reporting this leg as failed once the bytes are genuinely in R2 —
+    // the deterministic key means a later retry (from a stale status)
+    // simply overwrites the same object, so this can never create a
+    // duplicate the way a Drive miss used to.
+    const publicUrl = R2_PUBLIC_URL ? `${R2_PUBLIC_URL}/${key}` : null;
+    if (clipsCollection) {
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+                await clipsCollection.updateOne(
+                    { clipId },
+                    { $set: { r2Status: 'uploaded', r2Key: key, r2Url: publicUrl, r2UploadedAt: Date.now() }, $unset: { r2Error: '' } }
+                );
+                break;
+            } catch (err) {
+                console.log(`R2 status write for ${clipId} failed (attempt ${attempt}/3):`, err.message || err);
+                if (attempt < 3) await new Promise((r) => setTimeout(r, 400 * attempt));
+            }
+        }
+    }
+    return true;
 }
 
 // Poster JPEG for the <video poster> (best-effort: a failure here never affects the clip itself).
@@ -538,6 +612,15 @@ app.use(express.static(__dirname, {
     }
 }));
 app.use(express.json());
+
+// 👥 Player Helper — phone picks player names for the operator (see player-helper.js).
+const playerHelper = require('./player-helper').setup({
+    app, io,
+    getRoomState: (room) => getRoomState(room),
+    getCollection: () => (mongoDb ? mongoDb.collection('playerHelperLinks') : null),
+});
+app.get('/player-helper', (req, res) => sendHtmlNoCache(res, __dirname + '/player-helper.html'));
+app.get('/ph/:token', (req, res) => sendHtmlNoCache(res, __dirname + '/player-helper-mobile.html'));
 
 // ================================================================
 // 🎬 RECORDING + CLIPS
@@ -661,53 +744,83 @@ function computeClipStatus(r2Status, driveStatus) {
 // succeeded — never a duplicate R2 object or Drive file (see the
 // idempotency guards inside uploadClipToR2/uploadClipToDrive above).
 // ================================================================
+// 🔗 Everything that links a clip to Match → Innings → Over → Ball →
+// Batsman → Bowler (→ fielder/dismissal), resolved from the canonical
+// ball (logged via `logBall`, the permanent source of truth) with the
+// panel-supplied ballMeta as fallback. Shared by finalizeClip (at ingest)
+// and /api/clips/classify (HIGHLIGHTS clips, linked once the operator has
+// entered the ball's outcome).
+async function computeClipLinkage(matchId, ballMeta, uid) {
+    const canonicalBall = await findCanonicalBall(matchId, ballMeta);
+    const ownerUid = await resolveOwnerUidForMatch(matchId, uid || (canonicalBall && canonicalBall.ownerUid));
+    // personName() unwraps any stray {name,...} object (old data, or
+    // any future client that sends one) into a clean string — see the
+    // comment on personName() near playerKey() for why this matters.
+    const striker = personName(canonicalBall && canonicalBall.striker) || personName(ballMeta && ballMeta.striker);
+    const bowler = personName(canonicalBall && canonicalBall.bowler) || personName(ballMeta && ballMeta.bowler);
+    const nonStriker = personName(canonicalBall && canonicalBall.nonStriker) || personName(ballMeta && ballMeta.nonStriker);
+    const dismissal = (canonicalBall && canonicalBall.dismissal) || (ballMeta && ballMeta.dismissal) || null;
+    const battingTeam = (canonicalBall && canonicalBall.battingTeam) || (ballMeta && ballMeta.battingTeam) || null;
+    // 🌟 Prefer the canonical ball's already-resolved playerIds (same
+    // identity the ball itself was logged under) and only fall back
+    // to a fresh resolve if this clip has no matching ball yet.
+    const strikerPlayerId = (canonicalBall && canonicalBall.strikerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, striker) : null);
+    const nonStrikerPlayerId = (canonicalBall && canonicalBall.nonStrikerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, nonStriker) : null);
+    const bowlerPlayerId = (canonicalBall && canonicalBall.bowlerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, bowler) : null);
+    const fielderPlayerId = (canonicalBall && canonicalBall.dismissalFielderPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, dismissal && dismissal.fielder) : null);
+    return {
+        ownerUid: ownerUid || null,
+        linkedToCanonicalBall: !!canonicalBall,
+        over: canonicalBall ? canonicalBall.over : (ballMeta && ballMeta.over),
+        ballInOver: canonicalBall ? canonicalBall.ballInOver : (ballMeta && ballMeta.ballInOver),
+        innings: canonicalBall ? canonicalBall.innings : (ballMeta && ballMeta.innings),
+        runs: canonicalBall ? canonicalBall.runs : (ballMeta && ballMeta.runs),
+        battingTeam,
+        strikerName: striker, strikerKey: playerKey(striker), strikerPlayerId,
+        nonStrikerName: nonStriker, nonStrikerKey: playerKey(nonStriker), nonStrikerPlayerId,
+        bowlerName: bowler, bowlerKey: playerKey(bowler), bowlerPlayerId,
+        dismissalType: dismissal && dismissal.type ? dismissal.type : null,
+        fielderName: personName(dismissal && dismissal.fielder),
+        fielderKey: playerKey(dismissal && dismissal.fielder), fielderPlayerId,
+    };
+}
+
+// A clip is shown in the public Highlights sections (match, player,
+// team, scorecard, compiled reels) unless it was explicitly kept out:
+// HIGHLIGHTS-button clips start hidden (isHighlight:false) until the
+// operator's "Add this clip to Highlights?" answer — or a default-YES
+// outcome (4, 6, wicket, boundary extras) — sets isHighlight:true.
+// Clips from before this field existed have no isHighlight and stay visible.
+// A classified clip whose video never arrived (cut failed) isn't listed either.
+const HIGHLIGHT_VISIBLE = { isHighlight: { $ne: false }, status: { $ne: 'AWAITING_CLIP' } };
+
 async function finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMeta, uid, outFile, offsetStartSec, offsetEndSec }) {
     clipId = clipId || buildClipId(matchId, eventType, eventTimestamp);
     if (clipsCollection) {
-        // 🔗 Link this clip to real player identities/dismissal info by
-        // cross-referencing the canonical ball (logged via `logBall`,
-        // the permanent source of truth) instead of trusting only the
-        // ballMeta the panel happened to attach to the clip request.
-        // Falls back gracefully to whatever ballMeta was sent if no
-        // matching ball is found (e.g. Mongo briefly unavailable).
-        const canonicalBall = await findCanonicalBall(matchId, ballMeta);
-        const ownerUid = await resolveOwnerUidForMatch(matchId, uid || (canonicalBall && canonicalBall.ownerUid));
-        // personName() unwraps any stray {name,...} object (old data, or
-        // any future client that sends one) into a clean string — see the
-        // comment on personName() near playerKey() for why this matters.
-        const striker = personName(canonicalBall && canonicalBall.striker) || personName(ballMeta && ballMeta.striker);
-        const bowler = personName(canonicalBall && canonicalBall.bowler) || personName(ballMeta && ballMeta.bowler);
-        const nonStriker = personName(canonicalBall && canonicalBall.nonStriker) || personName(ballMeta && ballMeta.nonStriker);
-        const dismissal = (canonicalBall && canonicalBall.dismissal) || (ballMeta && ballMeta.dismissal) || null;
-        const battingTeam = (canonicalBall && canonicalBall.battingTeam) || (ballMeta && ballMeta.battingTeam) || null;
-        // 🌟 Prefer the canonical ball's already-resolved playerIds (same
-        // identity the ball itself was logged under) and only fall back
-        // to a fresh resolve if this clip has no matching ball yet.
-        const strikerPlayerId = (canonicalBall && canonicalBall.strikerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, striker) : null);
-        const nonStrikerPlayerId = (canonicalBall && canonicalBall.nonStrikerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, nonStriker) : null);
-        const bowlerPlayerId = (canonicalBall && canonicalBall.bowlerPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, bowler) : null);
-        const fielderPlayerId = (canonicalBall && canonicalBall.dismissalFielderPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, dismissal && dismissal.fielder) : null);
-
+        const link = await computeClipLinkage(matchId, ballMeta, uid);
+        const { linkedToCanonicalBall, ...linkFields } = link;
+        const isHighlightButtonClip = eventType === 'HIGHLIGHT';
+        // A re-send of a clip the website already has (the helper retries when
+        // an acknowledgement got lost) must not re-upload a leg that already
+        // succeeded — Drive would get a second copy of the file.
+        const prior = await clipsCollection.findOne({ clipId }, { projection: { r2Status: 1, driveStatus: 1 } }).catch(() => null);
+        const legR2 = prior && prior.r2Status === 'uploaded' ? 'uploaded' : 'pending';
+        const legDrive = prior && prior.driveStatus === 'uploaded' ? 'uploaded' : 'pending';
         await clipsCollection.updateOne(
             { clipId },
             {
                 $setOnInsert: {
-                    clipId, matchId, ownerUid: ownerUid || null, eventType, ballMeta: ballMeta || null,
+                    clipId, matchId, eventType, ballMeta: ballMeta || null,
                     eventTimestamp, offsetStartSec: offsetStartSec ?? null, offsetEndSec: offsetEndSec ?? null,
                     createdAt: Date.now(),
                     // --- player/dismissal linking, for the clips & stats APIs ---
-                    over: canonicalBall ? canonicalBall.over : (ballMeta && ballMeta.over),
-                    ballInOver: canonicalBall ? canonicalBall.ballInOver : (ballMeta && ballMeta.ballInOver),
-                    innings: canonicalBall ? canonicalBall.innings : (ballMeta && ballMeta.innings),
-                    runs: canonicalBall ? canonicalBall.runs : (ballMeta && ballMeta.runs),
-                    battingTeam,
-                    strikerName: striker, strikerKey: playerKey(striker), strikerPlayerId,
-                    nonStrikerName: nonStriker, nonStrikerKey: playerKey(nonStriker), nonStrikerPlayerId,
-                    bowlerName: bowler, bowlerKey: playerKey(bowler), bowlerPlayerId,
-                    dismissalType: dismissal && dismissal.type ? dismissal.type : null,
-                    fielderName: personName(dismissal && dismissal.fielder),
-                    fielderKey: playerKey(dismissal && dismissal.fielder), fielderPlayerId,
-                    retryCount: 0,
+                    // (a HIGHLIGHTS clip the operator already classified has
+                    // these from /api/clips/classify — $setOnInsert keeps them)
+                    ...linkFields,
+                    // HIGHLIGHTS-button clips are cut before the ball's outcome
+                    // exists; they stay out of the public Highlights until
+                    // /api/clips/classify links and approves them.
+                    ...(isHighlightButtonClip ? { isHighlight: false, highlightPending: true } : {}),
                 },
                 $set: {
                     // Runtime fields refreshed on every ingest (including a
@@ -718,9 +831,14 @@ async function finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMe
                     // correctly rather than a stale path.
                     filePath: outFile,
                     status: 'LOCAL_RECEIVED',
-                    r2Status: 'pending', driveStatus: 'pending',
+                    r2Status: legR2, driveStatus: legDrive,
                     lastReceivedAt: Date.now(),
-                }
+                    // A fresh copy (first ingest, or the helper re-sending
+                    // after a Render restart wiped the temp disk) gets a
+                    // full set of retries again.
+                    retryCount: 0,
+                },
+                $unset: { permanentFailureReason: '', needsReuploadAt: '' }
             },
             { upsert: true }
         );
@@ -788,36 +906,83 @@ async function finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMe
 // marked FAILED_PERMANENT (loud, not silent) but its local file is
 // NEVER deleted — it stays recoverable for manual intervention.
 // ================================================================
-const CLIP_RETRY_INTERVAL_MS = 30 * 1000;
+const CLIP_RETRY_INTERVAL_MS = 10 * 1000;
+const CLIP_COPY_MISSING_REASON = 'Local Render-disk copy is missing — cannot retry';
+// Downloads a clip back from R2 into Render's temp folder so a pending
+// Drive upload can finish after a restart. Returns the path, or null.
+async function restoreClipCopyFromR2(doc) {
+    if (doc.r2Status !== 'uploaded' || !doc.r2Url) return null;
+    try {
+        const r = await fetch(doc.r2Url);
+        if (!r.ok) return null;
+        const buf = Buffer.from(await r.arrayBuffer());
+        if (!buf.length) return null;
+        const dir = path.join(CLIPS_DIR, safeMatchId(doc.matchId) || 'unknown');
+        await fs.promises.mkdir(dir, { recursive: true });
+        const file = path.join(dir, `${doc.clipId}.mp4`);
+        await fs.promises.writeFile(file, buf);
+        await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { filePath: file } }).catch(() => {});
+        return file;
+    } catch (err) {
+        console.log(`[CLIP RETRY] clipId=${doc.clipId} — R2 restore failed:`, err.message || err);
+        return null;
+    }
+}
 const MAX_CLIP_RETRY_ATTEMPTS = 15; // ~ up to a few hours of backoff-spaced attempts across a match
+// Most failures that actually recover (a blipped connection, a moment of
+// Drive/R2 rate-limiting) recover within seconds, so the first few
+// attempts come fast — a clip mid-match shouldn't sit on "retrying" for
+// half a minute before anything is even tried again. It still backs off
+// steeply for the genuinely-broken cases (expired Google token, deleted
+// folder) rather than hammering: ~8s, 14s, 23s, 39s, 1m, 2m, 3m … 15m,
+// which across MAX_CLIP_RETRY_ATTEMPTS still spans a couple of hours.
 function clipRetryBackoffMs(retryCount) {
-    return Math.min(30 * 1000 * Math.pow(1.6, retryCount), 20 * 60 * 1000); // caps at 20 minutes between attempts
+    return Math.min(8 * 1000 * Math.pow(1.7, retryCount), 15 * 60 * 1000);
 }
 async function runClipRetrySweep() {
     if (!clipsCollection) return;
     let candidates;
     try {
-        candidates = await clipsCollection.find({
-            status: { $in: ['RETRY_PENDING', 'LOCAL_RECEIVED'] }, // LOCAL_RECEIVED here means a crash happened mid-upload last time
-            retryCount: { $lt: MAX_CLIP_RETRY_ATTEMPTS },
-        }).limit(25).toArray(); // bounded per tick — a burst of failures drains over several ticks, never floods R2/Drive at once
+        candidates = await clipsCollection.find({ $or: [
+            {
+                status: { $in: ['RETRY_PENDING', 'LOCAL_RECEIVED'] }, // LOCAL_RECEIVED here means a crash happened mid-upload last time
+                retryCount: { $lt: MAX_CLIP_RETRY_ATTEMPTS },
+            },
+            // Older builds gave up as soon as a Render restart wiped the
+            // temp copy — pick those up once more so they can recover.
+            { status: 'FAILED_PERMANENT', permanentFailureReason: CLIP_COPY_MISSING_REASON },
+        ] }).limit(25).toArray(); // bounded per tick — a burst of failures drains over several ticks, never floods R2/Drive at once
     } catch (err) {
         console.log('Clip retry sweep — Mongo query error:', err.message || err);
         return;
     }
 
     for (const doc of candidates) {
-        const dueAt = (doc.lastRetryAt || doc.createdAt || 0) + clipRetryBackoffMs(doc.retryCount || 0);
+        const lastTouch = Math.max(doc.lastRetryAt || 0, doc.lastReceivedAt || 0, doc.createdAt || 0);
+        const dueAt = lastTouch + clipRetryBackoffMs(doc.retryCount || 0);
         if (Date.now() < dueAt) continue; // not due yet — backoff still in effect
 
         if (!doc.filePath || !fs.existsSync(doc.filePath)) {
-            // The local copy is gone (e.g. it WAS fully uploaded once,
-            // then manually deleted, or this doc predates this retry
-            // system) — nothing left to retry from. Mark it loudly
-            // instead of retrying forever against a file that can't exist.
-            await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { status: 'FAILED_PERMANENT', permanentFailureReason: 'Local Render-disk copy is missing — cannot retry' } }).catch(() => {});
-            console.log(`[CLIP RETRY] clipId=${doc.clipId} — local file missing, marking FAILED_PERMANENT`);
-            continue;
+            // Render's disk is temporary: a restart/deploy wipes the copy
+            // while a leg is still pending. Rebuild it from R2 when R2 has
+            // it; otherwise ask the Clipper Helper (which keeps the clip on
+            // the operator's PC) to send it again.
+            const restored = await restoreClipCopyFromR2(doc);
+            if (!restored) {
+                if (doc.status !== 'NEEDS_REUPLOAD') {
+                    await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { status: 'NEEDS_REUPLOAD', needsReuploadAt: Date.now() }, $unset: { permanentFailureReason: '' } }).catch(() => {});
+                    console.log(`[CLIP RETRY] clipId=${doc.clipId} — Render copy gone and not in R2 yet; asking the helper to re-send`);
+                }
+                continue;
+            }
+            doc.filePath = restored;
+            if (doc.status === 'FAILED_PERMANENT') {
+                // Given up by an older build only because the copy was gone —
+                // it has a real copy again, so give it a full set of retries.
+                doc.retryCount = 0;
+                await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { retryCount: 0 } }).catch(() => {});
+            }
+            console.log(`[CLIP RETRY] clipId=${doc.clipId} — Render copy was gone; restored it from R2`);
         }
 
         console.log(`[CLIP RETRY] clipId=${doc.clipId} attempt=${(doc.retryCount || 0) + 1}/${MAX_CLIP_RETRY_ATTEMPTS} — r2=${doc.r2Status} drive=${doc.driveStatus}`);
@@ -832,7 +997,7 @@ async function runClipRetrySweep() {
 
         const newRetryCount = (doc.retryCount || 0) + 1;
         if (r2Ok && driveOk) {
-            await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { status: 'COMPLETE' } }).catch(() => {});
+            await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { status: 'COMPLETE' }, $unset: { permanentFailureReason: '' } }).catch(() => {});
             fs.unlink(doc.filePath, () => {
                 console.log(`🧹 [CLIP RETRY] clipId=${doc.clipId} — retry succeeded, local copy removed`);
             });
@@ -864,6 +1029,76 @@ app.get('/api/clips/status/:clipId', async (req, res) => {
         res.json({ success: true, ...doc });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message || String(err) });
+    }
+});
+
+// ================================================================
+// 🏷️ HIGHLIGHTS CLASSIFICATION — the panel's HIGHLIGHTS button cuts a
+// clip at the moment of the ball, before its outcome is known. Once the
+// operator records the outcome (and answers "Add this clip to
+// Highlights? YES/NO", or it's a default-YES outcome), the panel posts
+// here to link the clip to Match → Innings → Over → Ball → Batsman →
+// Bowler → Outcome and set whether it appears in the Highlights.
+//
+// Order-independent: this may arrive BEFORE the clip itself has been
+// uploaded (the clip is cut ~3s after the press and uploaded after that;
+// the outcome can be entered sooner). It then creates the clip doc with
+// the linkage + decision, and the later ingest (finalizeClip) keeps them
+// ($setOnInsert). Idempotent — re-sending the same answer is harmless.
+//
+// POST /api/clips/classify
+// { clipId, matchId, eventTimestamp, isHighlight, eventType, outcomeLabel, ballMeta }
+// Only HIGHLIGHTS-button clips (clipId "<matchId>_HIGHLIGHT_<ms>") can be
+// classified here, so this route can't re-label any other clip.
+// ================================================================
+const CLASSIFY_EVENT_TYPES = new Set(['FOUR', 'SIX', 'WICKET', 'CLIP']);
+app.post('/api/clips/classify', async (req, res) => {
+    if (!clipsCollection) return res.status(503).json({ success: false, error: 'Mongo not connected' });
+    const body = req.body || {};
+    const matchId = safeMatchId(body.matchId);
+    const clipId = String(body.clipId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    // HIGHLIGHTS clips, and the automatic WICKET clip (re-labelled when
+    // the "wicket" turns out to be Retired Hurt, which is not a dismissal).
+    const m = /_(?:HIGHLIGHT|WICKET)_(\d{10,})$/.exec(clipId);
+    if (!matchId || !m || !clipId.startsWith(`${matchId}_`)) {
+        return res.status(400).json({ success: false, error: 'clipId must be a HIGHLIGHTS or WICKET clip of this match' });
+    }
+    const eventType = CLASSIFY_EVENT_TYPES.has(String(body.eventType || '').toUpperCase()) ? String(body.eventType).toUpperCase() : 'CLIP';
+    const isHighlight = body.isHighlight === true;
+    const ballMeta = body.ballMeta && typeof body.ballMeta === 'object' ? body.ballMeta : null;
+    try {
+        const link = await computeClipLinkage(matchId, ballMeta, null);
+        const { linkedToCanonicalBall, ...linkFields } = link;
+        await clipsCollection.updateOne(
+            { clipId },
+            {
+                $set: {
+                    ...linkFields,
+                    eventType,
+                    isHighlight,
+                    highlightPending: false,
+                    outcomeLabel: body.outcomeLabel ? String(body.outcomeLabel).slice(0, 60) : null,
+                    classifiedBallMeta: ballMeta,
+                    classifiedAt: Date.now(),
+                },
+                $setOnInsert: {
+                    clipId, matchId,
+                    eventTimestamp: Number(body.eventTimestamp) || Number(m[1]),
+                    ballMeta,
+                    createdAt: Date.now(),
+                    retryCount: 0,
+                    status: 'AWAITING_CLIP', // the clip file itself hasn't arrived yet — ingest fills the rest in
+                    r2Status: 'pending', driveStatus: 'pending',
+                },
+            },
+            { upsert: true }
+        );
+        invalidateClipsCache(matchId);
+        console.log(`🏷️ [CLIP CLASSIFIED] clipId=${clipId} ${isHighlight ? 'HIGHLIGHT' : 'normal clip'} ${eventType} ${body.outcomeLabel || ''} over=${linkFields.over}.${linkFields.ballInOver} linked=${linkedToCanonicalBall}`);
+        res.json({ success: true, clipId, isHighlight, eventType, linkedToCanonicalBall });
+    } catch (err) {
+        console.log(`Clip classify error (${clipId}):`, err.message || err);
+        res.status(500).json({ success: false, error: 'Could not classify clip' });
     }
 });
 
@@ -1082,11 +1317,25 @@ async function requireAuthorizedCreator(req, res, next) {
     next();
 }
 
-// Resolves whether a league doc belongs to the private creator
-// (chhayajeeth@gmail.com) — used to keep it out of every public
-// list/token/API response for anyone else.
+// Resolves whether a league doc is private — used to keep it out of every
+// public list/token/API response for anyone else.
+//
+// Default (no explicit per-tournament choice) is still derived from the
+// creator's account, same as always. But the owner (chhayajeeth@gmail.com)
+// can flip ANY single tournament public/private regardless of who created
+// it or their account default, via `doc.visibilityOverride` ('public' |
+// 'private') — set only through POST /api/admin/tournaments/:ownerUid/:leagueKey/manage.
+// An explicit override always wins over the creator-account default.
+function effectiveIsPrivate(doc, creatorEmail) {
+    if (doc && doc.visibilityOverride === 'private') return true;
+    if (doc && doc.visibilityOverride === 'public') return false;
+    return isPrivateCreatorEmail(creatorEmail);
+}
 async function isPrivateLeagueDoc(doc) {
-    if (!doc || !doc.ownerUid) return false;
+    if (!doc) return false;
+    if (doc.visibilityOverride === 'private') return true;
+    if (doc.visibilityOverride === 'public') return false;
+    if (!doc.ownerUid) return false;
     const email = await getVerifiedEmailForUid(doc.ownerUid);
     return isPrivateCreatorEmail(email);
 }
@@ -1209,6 +1458,66 @@ async function getLeagueMatches(ownerUid, leagueKey) {
     return matchRecordsCollection.find({ ownerUid, leagueKey }).sort({ savedAt: 1 }).toArray();
 }
 
+// 🧹 One match = one tournament. Before the panel bound each match to its
+// own tournament, browsing another tournament while a match was on the
+// panel could save a COPY of it (same matchId) into the tournament being
+// viewed. This finds those copies and keeps only the match's original
+// home — the tournament it was first saved in (oldest _id) — carrying
+// over the newest score into it, then removes the stray copies (and any
+// stale "live" pointer they left). Single-match history copies are left
+// alone. Idempotent; runs at startup.
+async function dedupeCrossTournamentMatches() {
+    if (!matchRecordsCollection || !leaguesCollection) return;
+    const SINGLE_KEY = leagueKeyFor('__single_matches__');
+    try {
+        const groups = await matchRecordsCollection.aggregate([
+            { $match: { leagueKey: { $ne: SINGLE_KEY }, matchId: { $type: 'string' } } },
+            { $group: { _id: { ownerUid: '$ownerUid', matchId: '$matchId' }, n: { $sum: 1 } } },
+            { $match: { n: { $gt: 1 } } }
+        ]).toArray();
+        for (const g of groups) {
+            const { ownerUid, matchId } = g._id;
+            const copies = await matchRecordsCollection.find({ ownerUid, matchId, leagueKey: { $ne: SINGLE_KEY } }).sort({ _id: 1 }).toArray();
+            if (copies.length < 2) continue;
+            const home = copies[0];
+            const newest = copies.reduce((a, b) => String(b.savedAt || '') > String(a.savedAt || '') ? b : a, home);
+            if (newest !== home) {
+                const { _id, leagueKey, ...content } = newest;
+                await matchRecordsCollection.updateOne({ _id: home._id }, { $set: { ...content, leagueKey: home.leagueKey } });
+            }
+            const strays = copies.slice(1);
+            await matchRecordsCollection.deleteMany({ _id: { $in: strays.map(c => c._id) } });
+            for (const c of strays) {
+                await leaguesCollection.updateOne({ ownerUid, leagueKey: c.leagueKey, liveMatchId: matchId }, { $set: { liveMatchId: null, liveRoomId: null } });
+                await leaguesCollection.updateOne({ ownerUid, leagueKey: c.leagueKey }, { $pull: { liveMatches: { matchId } } });
+            }
+            console.log(`🧹 Match ${matchId}: kept in "${home.leagueKey}", removed stray cop${strays.length === 1 ? 'y' : 'ies'} from ${strays.map(c => `"${c.leagueKey}"`).join(', ')}`);
+        }
+    } catch (err) {
+        console.log('Cross-tournament duplicate cleanup error:', err.message || err);
+    }
+}
+
+// GET /api/cricket/room-state/:roomId — the full saved panel state of one
+// live match room (the same thing the overlay receives on join). The panel's
+// "Resume" uses it to switch back to an earlier match without mixing it
+// with the one currently loaded.
+app.get('/api/cricket/room-state/:roomId', async (req, res) => {
+    const roomId = String(req.params.roomId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!roomId || roomId === 'default') return res.status(400).json({ success: false, error: 'roomId required' });
+    try {
+        const roomState = await getRoomState(`room-${roomId}`);
+        const cs = roomState && roomState.cricketState;
+        // A room that never had a panel in it only holds the server's
+        // overlay defaults — no ball log / batting card.
+        if (!cs || !cs.battingCard || !Array.isArray(cs.ballLog)) return res.status(404).json({ success: false, error: 'No saved match in this room' });
+        res.json({ success: true, roomId, state: cs });
+    } catch (err) {
+        console.log('Room state fetch error:', err.message || err);
+        res.status(500).json({ success: false, error: 'Could not load match' });
+    }
+});
+
 // GET /api/whoami?uid= — resolves the REAL account email for a
 // (client-supplied, unverified) Firebase uid via the Admin SDK, same trust
 // level as the rest of this uid-based league API (see the big comment
@@ -1309,6 +1618,27 @@ app.post('/api/league/:name/match', requireAuthorizedCreator, async (req, res) =
         // a roomId, backfill it from that same league doc here, before
         // it's potentially lost when a later active:false ping prunes the
         // liveMatches entry.
+        // 🔒 One match lives in ONE tournament. A save that would create a
+        // copy of this matchId in a second tournament is refused (the panel
+        // saves to the match's own tournament; this also stops an older
+        // panel on another laptop). A copy in the single-match history is
+        // moved, since a single match can be promoted into a tournament.
+        const SINGLE_KEY = leagueKeyFor('__single_matches__');
+        const alreadyHere = await matchRecordsCollection.findOne({ ownerUid, leagueKey, matchId: record.matchId }, { projection: { _id: 1 } });
+        if (!alreadyHere) {
+            const elsewhere = await matchRecordsCollection.find({ ownerUid, matchId: record.matchId, leagueKey: { $ne: leagueKey } }, { projection: { leagueKey: 1 } }).toArray();
+            const otherTournament = elsewhere.find(m => m.leagueKey !== SINGLE_KEY);
+            if (otherTournament && leagueKey !== SINGLE_KEY) {
+                const owner = await leaguesCollection.findOne({ ownerUid, leagueKey: otherTournament.leagueKey }, { projection: { displayName: 1 } });
+                return res.status(409).json({ success: false, code: 'MATCH_IN_OTHER_TOURNAMENT', tournament: (owner && owner.displayName) || otherTournament.leagueKey, error: 'This match belongs to another tournament' });
+            }
+            if (otherTournament && leagueKey === SINGLE_KEY) {
+                return res.status(409).json({ success: false, code: 'MATCH_IN_OTHER_TOURNAMENT', error: 'This match belongs to a tournament' });
+            }
+            if (elsewhere.length && leagueKey !== SINGLE_KEY) {
+                await matchRecordsCollection.deleteMany({ ownerUid, matchId: record.matchId, leagueKey: SINGLE_KEY });
+            }
+        }
         let roomId = record.roomId || null;
         if (!roomId) {
             const liveDoc = await leaguesCollection.findOne(
@@ -2083,21 +2413,18 @@ app.get('/api/public/match/:id/balls', async (req, res) => {
 
 // ================================================================
 // 🏠 HOMEPAGE TOURNAMENTS DIRECTORY — public, read-only, no auth.
-// "All tournaments" means every cricket league that a PUBLIC authorized
-// creator (workallsportslive@gmail.com, vinitkrkr1@gmail.com) has
-// generated a public link for — same trust model as
-// /api/public/tournament/:token above, just listed instead of requiring
-// the token up front. chhayajeeth@gmail.com's tournaments are private and
-// are never included here (getVerifiedEmailForUid/isPrivateLeagueDoc keeps
-// them out even defensively, on top of only querying the 2 public uids).
-// Cards on the homepage link straight to the existing
-// /score/tournament/:token page, which already renders matches,
+// "All tournaments" means every cricket league, from any of the 3
+// authorized creators, that (a) has a public link AND (b) is currently
+// PUBLIC — same trust model as /api/public/tournament/:token above, just
+// listed instead of requiring the token up front. A tournament's
+// visibility is normally its creator's account default
+// (chhayajeeth@gmail.com's are private by default) but the owner can flip
+// any single tournament public/private regardless of creator via
+// doc.visibilityOverride — see effectiveIsPrivate() above, which is what
+// actually filters this list. Cards on the homepage link straight to the
+// existing /score/tournament/:token page, which already renders matches,
 // scorecards, stats and clips — nothing is duplicated here.
 // ================================================================
-async function getPublicCreatorUids() {
-    const uids = await Promise.all(PUBLIC_CREATOR_EMAILS.map(getUidForEmail));
-    return uids.filter(Boolean);
-}
 
 const PUBLIC_TOURNAMENTS_CACHE_TTL_MS = 8000;
 let publicTournamentsListCache = null; // { expiresAt, payload }
@@ -2126,23 +2453,32 @@ app.get('/api/public/tournaments', async (req, res) => {
                 ownerUid: { $in: validUids },
                 leagueKey: { $ne: SINGLE_MATCHES_LEAGUE_KEY },
                 publicToken: { $exists: true, $ne: null }
-            }).project({ ownerUid: 1, leagueKey: 1, displayName: 1, publicToken: 1, updatedAt: 1, liveMatches: 1, sport: 1, completed: 1, statusOverride: 1, createdBy: 1 }).toArray();
+            }).project({ ownerUid: 1, leagueKey: 1, displayName: 1, publicToken: 1, updatedAt: 1, liveMatches: 1, sport: 1, completed: 1, statusOverride: 1, visibilityOverride: 1, createdBy: 1 }).toArray();
 
             const allTournaments = await Promise.all(leagues.map(async doc => {
                 const matches = await getLeagueMatches(doc.ownerUid, doc.leagueKey);
                 const isLive = !!(doc.liveMatches && doc.liveMatches.length > 0);
                 const creatorEmail = doc.createdBy || uidToEmail.get(doc.ownerUid) || null;
+                const isPrivate = effectiveIsPrivate(doc, creatorEmail);
                 return {
+                    // Owner-view needs the raw identifiers so the Manage
+                    // control can target this exact tournament regardless of
+                    // who created it — never present in the public response.
+                    ownerUid: doc.ownerUid,
+                    leagueKey: doc.leagueKey,
                     token: doc.publicToken,
                     name: doc.displayName || doc.leagueKey,
                     status: doc.statusOverride || (isLive ? 'live' : (doc.completed ? 'completed' : (matches.length > 0 ? 'ongoing' : 'upcoming'))),
+                    statusOverride: doc.statusOverride || null,
                     matchCount: matches.length,
                     updatedAt: doc.updatedAt || 0,
                     sport: doc.sport || detectSportFromName(doc.displayName || doc.leagueKey),
                     // Owner-only fields — never present in the normal (cached,
                     // anonymous) response below.
                     createdBy: creatorEmail || 'Unknown',
-                    isPrivate: isPrivateCreatorEmail(creatorEmail)
+                    isPrivate,
+                    visibility: isPrivate ? 'private' : 'public',
+                    visibilityOverride: doc.visibilityOverride || null
                 };
             }));
 
@@ -2157,28 +2493,40 @@ app.get('/api/public/tournaments', async (req, res) => {
         if (publicTournamentsListCache && publicTournamentsListCache.expiresAt > Date.now()) {
             return res.json(publicTournamentsListCache.payload);
         }
-        const ownerUids = await getPublicCreatorUids();
-        if (ownerUids.length === 0) return res.json({ success: true, tournaments: [] });
+        // 🔒 Query every authorized creator (not just the "public" ones) —
+        // visibility is now decided per-tournament (doc.visibilityOverride,
+        // set only by the owner) on top of the creator-account default, so a
+        // normally-private creator's tournament can be flipped public (and
+        // vice versa) and this list has to see it to filter it correctly.
+        // effectiveIsPrivate() below is what actually keeps private ones out.
+        const ownerUids = await Promise.all(AUTHORIZED_CREATOR_EMAILS.map(getUidForEmail));
+        const validUids = ownerUids.filter(Boolean);
+        if (validUids.length === 0) return res.json({ success: true, tournaments: [] });
 
         const leagues = await leaguesCollection.find({
-            ownerUid: { $in: ownerUids },
+            ownerUid: { $in: validUids },
             leagueKey: { $ne: SINGLE_MATCHES_LEAGUE_KEY },
             publicToken: { $exists: true, $ne: null }
-        }).project({ ownerUid: 1, leagueKey: 1, displayName: 1, publicToken: 1, updatedAt: 1, liveMatches: 1, sport: 1, completed: 1, statusOverride: 1 }).toArray();
+        }).project({ ownerUid: 1, leagueKey: 1, displayName: 1, publicToken: 1, updatedAt: 1, liveMatches: 1, sport: 1, completed: 1, statusOverride: 1, visibilityOverride: 1, createdBy: 1 }).toArray();
 
-        const allTournaments = await Promise.all(leagues.map(async doc => {
+        const allTournaments = (await Promise.all(leagues.map(async doc => {
+            const creatorEmail = doc.createdBy || await getVerifiedEmailForUid(doc.ownerUid);
+            // 🔒 Never let a private tournament (creator default OR explicit
+            // owner override) reach an anonymous/non-owner visitor — not in
+            // this list, not in its match count, nothing.
+            if (effectiveIsPrivate(doc, creatorEmail)) return null;
             const matches = await getLeagueMatches(doc.ownerUid, doc.leagueKey);
             const isLive = !!(doc.liveMatches && doc.liveMatches.length > 0);
             return {
                 token: doc.publicToken,
                 name: doc.displayName || doc.leagueKey,
                 // Manual override (set only via the owner-only admin route
-                // POST /api/admin/tournaments/:leagueKey/status) always wins.
-                // Otherwise: 'live' while a match is actually live, 'completed'
-                // only once the operator has explicitly marked the WHOLE
-                // tournament finished (doc.completed) — NOT just "has a saved
-                // match", 'ongoing' once matches exist but it isn't finished
-                // yet, else 'upcoming'.
+                // POST /api/admin/tournaments/:ownerUid/:leagueKey/manage)
+                // always wins. Otherwise: 'live' while a match is actually
+                // live, 'completed' only once the operator has explicitly
+                // marked the WHOLE tournament finished (doc.completed) — NOT
+                // just "has a saved match", 'ongoing' once matches exist but
+                // it isn't finished yet, else 'upcoming'.
                 status: doc.statusOverride || (isLive ? 'live' : (doc.completed ? 'completed' : (matches.length > 0 ? 'ongoing' : 'upcoming'))),
                 matchCount: matches.length,
                 updatedAt: doc.updatedAt || 0,
@@ -2187,7 +2535,7 @@ app.get('/api/public/tournaments', async (req, res) => {
                 // guess used at save time (see detectSportFromName above).
                 sport: doc.sport || detectSportFromName(doc.displayName || doc.leagueKey)
             };
-        }));
+        }))).filter(Boolean);
 
         // Public Tournaments section on index.html is cricket-only — Football
         // and Table Tennis tournaments (e.g. "TT::Amitabh") must never appear
@@ -2222,7 +2570,9 @@ function serializeClip(c) {
     return {
         clipId: c._id.toString(),
         matchId: c.matchId,
-        eventType: c.eventType,                 // 'FOUR' | 'SIX' | 'WICKET'
+        eventType: c.eventType,                 // 'FOUR' | 'SIX' | 'WICKET' | 'CLIP'
+        outcome: c.outcomeLabel || null,        // e.g. 'Wide +4', '2 runs' — set for HIGHLIGHTS-button clips
+        isHighlight: c.isHighlight !== false,   // false = HIGHLIGHTS clip answered NO (commentary only)
         dismissalType: c.dismissalType || null,  // 'Bowled' | 'Caught' | 'LBW' | 'Run Out' | 'Stumped' | 'Hit Wicket' | ...
         over: c.over, ballInOver: c.ballInOver, innings: c.innings,
         runs: c.runs, battingTeam: c.battingTeam,
@@ -2271,7 +2621,10 @@ function invalidateClipsCache(matchId) {
 app.get('/api/clips/match/:matchId', async (req, res) => {
     if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     const matchId = safeMatchId(req.params.matchId);
-    const query = { matchId };
+    // ?all=1 — commentary wants EVERY cut clip, including HIGHLIGHTS-button
+    // clips answered NO (hidden from Highlights, still a replay on the ball).
+    const includeHidden = req.query.all === '1';
+    const query = includeHidden ? { matchId, status: { $ne: 'AWAITING_CLIP' } } : { matchId, ...HIGHLIGHT_VISIBLE };
     if (req.query.type) query.eventType = String(req.query.type).toUpperCase();
     if (req.query.team) query.battingTeam = String(req.query.team).toUpperCase();
     if (req.query.playerKey) {
@@ -2280,7 +2633,7 @@ app.get('/api/clips/match/:matchId', async (req, res) => {
     }
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
     const skip = Math.max(parseInt(req.query.skip, 10) || 0, 0);
-    const cacheKey = `${matchId}::match::${req.query.type || ''}::${req.query.team || ''}::${req.query.playerKey || ''}::${limit}::${skip}`;
+    const cacheKey = `${matchId}::match::${includeHidden ? 'all' : 'vis'}::${req.query.type || ''}::${req.query.team || ''}::${req.query.playerKey || ''}::${limit}::${skip}`;
     const cached = getCached(clipsListCache, cacheKey);
     if (cached) return res.json(cached);
     try {
@@ -2304,7 +2657,7 @@ app.get('/api/clips/team/:matchId/:teamKey', async (req, res) => {
     const cached = getCached(clipsListCache, cacheKey);
     if (cached) return res.json(cached);
     try {
-        const clips = await clipsCollection.find({ matchId, battingTeam: teamKey, eventType: 'WICKET' })
+        const clips = await clipsCollection.find({ matchId, battingTeam: teamKey, eventType: 'WICKET', ...HIGHLIGHT_VISIBLE })
             .sort({ over: 1, ballInOver: 1 }).toArray();
         const payload = { success: true, clips: clips.map(serializeClip) };
         setCached(clipsListCache, cacheKey, payload, CLIPS_CACHE_TTL_MS);
@@ -2345,7 +2698,7 @@ async function runPlayerClipsQuery(pk, req) {
     // until a real season field is added) — no matchId restriction, just
     // ownerUid if we have one, so results stay scoped to one account.
 
-    const base = { $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }, { fielderKey: { $in: pkList } }] };
+    const base = { $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }, { fielderKey: { $in: pkList } }], ...HIGHLIGHT_VISIBLE };
     if (matchFilter) base.matchId = matchFilter;
     const ownerUid = ownerUidFrom(req);
     if (!matchFilter && ownerUid) base.ownerUid = ownerUid;
@@ -2733,26 +3086,26 @@ async function clipsForCompileRequest(body) {
         const pk = playerKey(body.playerKey);
         if (!pk) return { error: 'playerKey required' };
         const clips = await clipsCollection.find({
-            matchId, $or: [{ strikerKey: pk }, { bowlerKey: pk }, { fielderKey: pk }]
+            matchId, $or: [{ strikerKey: pk }, { bowlerKey: pk }, { fielderKey: pk }], ...HIGHLIGHT_VISIBLE
         }).toArray();
         return { matchId, clips };
     }
     if (type === 'team') {
         const team = String(body.team || '').toUpperCase();
         if (!team) return { error: 'team required' };
-        const clips = await clipsCollection.find({ matchId, battingTeam: team }).toArray();
+        const clips = await clipsCollection.find({ matchId, battingTeam: team, ...HIGHLIGHT_VISIBLE }).toArray();
         return { matchId, clips };
     }
     if (type === 'sixes' || type === 'fours' || type === 'wickets') {
         const team = String(body.team || '').toUpperCase();
         const eventType = type === 'sixes' ? 'SIX' : type === 'fours' ? 'FOUR' : 'WICKET';
-        const query = { matchId, eventType };
+        const query = { matchId, eventType, ...HIGHLIGHT_VISIBLE };
         if (team) query.battingTeam = team;
         const clips = await clipsCollection.find(query).toArray();
         return { matchId, clips };
     }
     if (type === 'full') {
-        const clips = await clipsCollection.find({ matchId }).toArray();
+        const clips = await clipsCollection.find({ matchId, ...HIGHLIGHT_VISIBLE }).toArray();
         return { matchId, clips };
     }
     return { error: 'Unknown compile type' };
@@ -2905,7 +3258,8 @@ app.get('/api/public/tournament/:token/players', async (req, res) => {
         if (matchIds.length && pkList.length) {
             const clips = await clipsCollection.find({
                 matchId: { $in: matchIds },
-                $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }]
+                $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }],
+                ...HIGHLIGHT_VISIBLE,
             }, { projection: { matchId: 1, strikerKey: 1, bowlerKey: 1, eventType: 1 } }).toArray();
             clips.forEach(c => {
                 // 🩹 FIX: a clip manually attached to an ordinary ball (tagged
@@ -2965,7 +3319,7 @@ app.get('/api/public/tournament/:token/player-clips', async (req, res) => {
         const matchById = new Map(ctx.matches.map(m => [clipId(m), m]));
 
         const clips = matchIds.length
-            ? await clipsCollection.find({ matchId: { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }] }).toArray()
+            ? await clipsCollection.find({ matchId: { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }], ...HIGHLIGHT_VISIBLE }).toArray()
             : [];
 
         function decorate(c) {
@@ -3029,7 +3383,7 @@ app.post('/api/public/tournament/:token/highlights/compile', async (req, res) =>
         const matchIndex = new Map(ctx.matches.map((m, i) => [m.roomId || m.matchId, i]));
         if (!matchIds.length) return res.json({ success: true, empty: true, message: 'No highlights available for this player yet.' });
 
-        const clips = await clipsCollection.find({ matchId: { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }] }).toArray();
+        const clips = await clipsCollection.find({ matchId: { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }], ...HIGHLIGHT_VISIBLE }).toArray();
         let selected;
         if (category === 'sixes') selected = clips.filter(c => c.strikerKey === pk && c.eventType === 'SIX');
         else if (category === 'fours') selected = clips.filter(c => c.strikerKey === pk && c.eventType === 'FOUR');
@@ -3246,7 +3600,8 @@ app.post('/api/public/tournament/:token/highlights/compile-all-players', async (
             // the bowler) — matching the same gap fixed above, so a
             // manually-attached general clip never made it into anyone's
             // ZIP entry either.
-            $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }]
+            $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }],
+            ...HIGHLIGHT_VISIBLE,
         }).toArray();
         clips.forEach(c => { c._tourneySeq = matchIndex.get(c.matchId) || 0; });
 
@@ -3707,6 +4062,91 @@ adminRouter.post('/tournaments/:leagueKey/status', async (req, res) => {
     }
 });
 
+// ---- Tournaments: status + visibility manager (owner-only, ANY creator) ----
+// Powers the "Manage" control on every tournament card on index.html. Unlike
+// the route above (which is pinned to req.ownerUid — the OWNER's own
+// tournaments only), this one takes the target tournament's ownerUid
+// explicitly in the URL, exactly like the existing cross-owner
+// /tournaments/search and /tournament/:ownerUid/:leagueKey routes above, so
+// chhayajeeth@gmail.com can flip the status/visibility of ANY tournament —
+// workallsportslive@gmail.com's, vinitkrkr1@gmail.com's, or their own —
+// regardless of who created it. Authorization is still 100% server-side:
+// adminRouter.use(requireOwner) above already rejected anyone whose verified
+// Firebase ID token isn't chhayajeeth@gmail.com before this handler even
+// runs — nothing here trusts a client-supplied email, uid, or role.
+//
+// Body: { status?: 'live'|'ongoing'|'completed'|'upcoming'|null,
+//          visibility?: 'public'|'private'|null }
+// Either or both may be sent; only the fields actually present are changed
+// (matches, players, clips, leaderboard, creator and every other field on
+// the tournament doc are left untouched). null clears that override and
+// falls back to the automatic value.
+adminRouter.post('/tournaments/:ownerUid/:leagueKey/manage', async (req, res) => {
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const ownerUid = String(req.params.ownerUid || '').trim();
+    const leagueKey = leagueKeyFor(req.params.leagueKey);
+    if (!ownerUid || !leagueKey) return res.status(400).json({ success: false, error: 'Tournament identifier required' });
+    if (leagueKey === SINGLE_MATCHES_LEAGUE_KEY) return res.status(400).json({ success: false, error: 'Cannot manage the single-matches bucket' });
+
+    const body = req.body || {};
+    const hasStatus = Object.prototype.hasOwnProperty.call(body, 'status');
+    const hasVisibility = Object.prototype.hasOwnProperty.call(body, 'visibility');
+    if (!hasStatus && !hasVisibility) return res.status(400).json({ success: false, error: 'status or visibility required' });
+
+    const allowedStatus = ['live', 'ongoing', 'completed', 'upcoming', null];
+    const allowedVisibility = ['public', 'private', null];
+    const status = hasStatus ? (body.status ? String(body.status) : null) : undefined;
+    const visibility = hasVisibility ? (body.visibility ? String(body.visibility) : null) : undefined;
+    if (hasStatus && !allowedStatus.includes(status)) return res.status(400).json({ success: false, error: 'status must be live, ongoing, completed, upcoming, or null' });
+    if (hasVisibility && !allowedVisibility.includes(visibility)) return res.status(400).json({ success: false, error: 'visibility must be public, private, or null' });
+
+    try {
+        const before = await leaguesCollection.findOne(
+            { ownerUid, leagueKey },
+            { projection: { statusOverride: 1, visibilityOverride: 1, displayName: 1, publicToken: 1 } }
+        );
+        // Validate the tournament ID for real — a caller can't reach another
+        // tournament just by editing ownerUid/leagueKey in the request, they
+        // can only ever act on a doc that genuinely exists at that address.
+        if (!before) return res.status(404).json({ success: false, error: 'Tournament not found' });
+
+        const setFields = {};
+        const unsetFields = {};
+        if (hasStatus) { if (status) setFields.statusOverride = status; else unsetFields.statusOverride = ''; }
+        if (hasVisibility) { if (visibility) setFields.visibilityOverride = visibility; else unsetFields.visibilityOverride = ''; }
+        const update = {};
+        if (Object.keys(setFields).length) update.$set = setFields;
+        if (Object.keys(unsetFields).length) update.$unset = unsetFields;
+
+        // Only the two override fields are ever touched here — matches,
+        // players, clips, leaderboards, creator and every other field on the
+        // tournament doc are left exactly as they were.
+        await leaguesCollection.updateOne({ ownerUid, leagueKey }, update);
+
+        publicTournamentsListCache = null; // reflect on the homepage immediately, not after up to 8s
+        if (before.publicToken) publicTournamentCache.delete(before.publicToken); // ditto for the tournament's own public page
+
+        const previousStatus = before.statusOverride || null;
+        const previousVisibility = before.visibilityOverride || null;
+        const newStatus = hasStatus ? status : previousStatus;
+        const newVisibility = hasVisibility ? visibility : previousVisibility;
+
+        await logAuditAction(
+            req.ownerEmail,
+            'Tournament status/visibility update',
+            before.displayName || leagueKey,
+            { previousStatus, previousVisibility },
+            { newStatus, newVisibility },
+            { changedBy: req.ownerEmail, changedAt: new Date(), previousStatus, newStatus, previousVisibility, newVisibility }
+        );
+
+        res.json({ success: true, status: newStatus, visibility: newVisibility });
+    } catch (err) {
+        console.log('Tournament manage error:', err);
+        res.status(500).json({ success: false, error: 'Could not update tournament' });
+    }
+});
+
 // ================================================================
 // 🛡️ OWNER GLOBAL CORRECTION & MANAGEMENT — chhayajeeth@gmail.com only.
 // Everything below sits on adminRouter (requireOwner already verified the
@@ -3739,7 +4179,7 @@ adminRouter.get('/tournaments/search', async (req, res) => {
         const filter = { leagueKey: { $ne: SINGLE_MATCHES_LEAGUE_KEY } };
         if (q) filter.displayName = { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
         const leagues = await leaguesCollection.find(filter)
-            .project({ ownerUid: 1, leagueKey: 1, displayName: 1, updatedAt: 1, sport: 1, publicToken: 1, createdBy: 1, completed: 1, statusOverride: 1, liveMatches: 1 })
+            .project({ ownerUid: 1, leagueKey: 1, displayName: 1, updatedAt: 1, sport: 1, publicToken: 1, createdBy: 1, completed: 1, statusOverride: 1, visibilityOverride: 1, liveMatches: 1 })
             .sort({ updatedAt: -1 }).limit(200).toArray();
         const tournaments = await Promise.all(leagues.map(async l => {
             const matchCount = await matchRecordsCollection.countDocuments({ ownerUid: l.ownerUid, leagueKey: l.leagueKey });
@@ -3753,6 +4193,7 @@ adminRouter.get('/tournaments/search', async (req, res) => {
             // computation as GET /api/admin/cricket, so both routes now agree.
             const isLive = !!(l.liveMatches && l.liveMatches.length > 0);
             const publicStatus = l.statusOverride || (isLive ? 'live' : (l.completed ? 'completed' : (matchCount > 0 ? 'ongoing' : 'upcoming')));
+            const isPrivate = effectiveIsPrivate(l, creatorEmail);
             return {
                 ownerUid: l.ownerUid, leagueKey: l.leagueKey, displayName: l.displayName || l.leagueKey,
                 sport: l.sport || 'cricket', matchCount, updatedAt: l.updatedAt || null,
@@ -3762,7 +4203,8 @@ adminRouter.get('/tournaments/search', async (req, res) => {
                 // is ever surfaced (Owner Admin Panel only, never the public
                 // API/homepage).
                 createdBy: creatorEmail || 'Unknown',
-                isPrivate: isPrivateCreatorEmail(creatorEmail)
+                isPrivate, visibility: isPrivate ? 'private' : 'public',
+                visibilityOverride: l.visibilityOverride || null
             };
         }));
         res.json({ success: true, tournaments });
@@ -3783,12 +4225,16 @@ adminRouter.get('/tournament/:ownerUid/:leagueKey', async (req, res) => {
         if (!league) return res.status(404).json({ success: false, error: 'Tournament not found' });
         const matches = await getLeagueMatches(ownerUid, leagueKey);
         const creatorEmail = league.createdBy || await getVerifiedEmailForUid(ownerUid);
+        const isPrivate = effectiveIsPrivate(league, creatorEmail);
         res.json({
             success: true,
             league: {
                 ownerUid, leagueKey, displayName: league.displayName || leagueKey,
                 sport: league.sport || 'cricket', publicToken: league.publicToken || null,
-                createdBy: creatorEmail || 'Unknown', isPrivate: isPrivateCreatorEmail(creatorEmail)
+                createdBy: creatorEmail || 'Unknown', isPrivate,
+                visibility: isPrivate ? 'private' : 'public',
+                visibilityOverride: league.visibilityOverride || null,
+                statusOverride: league.statusOverride || null
             },
             matches
         });
@@ -6584,6 +7030,7 @@ io.on('connection', async (socket) => {
         state.cricketState = { ...state.cricketState, ...data };
 
         io.to(room).emit('liveCricketScore', state.cricketState);
+        playerHelper.onCricketUpdate(room);
 
         if (targetId && targetId !== 'default') {
             clearTimeout(firestoreWriteTimers[`cricket-${targetId}`]);
