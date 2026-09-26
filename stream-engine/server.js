@@ -2743,11 +2743,68 @@ async function pollRenderStatus(job) {
     }
 }
 
-const MAX_RETRY_ATTEMPTS = 20; // ~ backoff up to a few minutes total, then give up but KEEP the local file for manual recovery
+// 🛠 ROOT-CAUSE FIX (clips stranded by an internet outage longer than
+// ~16 minutes).
+//
+// This used to stop after MAX_RETRY_ATTEMPTS = 20. With the 5s * 1.5^n
+// backoff capped at 60s, those 20 attempts are spent in about 15.7
+// MINUTES — after which the clip was marked FAILED_PERMANENT and never
+// retried again, even though the file was sitting right there on disk and
+// the internet came back ten minutes later.
+//
+// For a 3-hour match on a venue connection that is the wrong behaviour in
+// the most damaging way possible: every clip cut during an outage is
+// silently abandoned, and the operator finds out afterwards.
+//
+// The rule now distinguishes the two genuinely different failures:
+//
+//   • CONNECTIVITY (no internet, DNS fails, host unreachable, timeout):
+//     never give up. The local file exists and the upload WILL succeed
+//     once the line is back, so keep retrying at a steady interval
+//     forever. An outage of any length is survivable.
+//
+//   • REJECTION (the server answered, and said no — 4xx): that will not
+//     fix itself by waiting, so the old attempt limit still applies.
+//
+// Plus: the moment ANY upload succeeds, the whole queue is flushed at
+// once (see flushRetryQueueNow) rather than each clip waiting out its own
+// backoff — which is what makes a backlog clear "fatafat" the instant the
+// connection returns, instead of trickling out one per minute.
+const MAX_RETRY_ATTEMPTS = 20;          // applies to REJECTIONS only (see above)
+const OFFLINE_RETRY_INTERVAL_MS = 30000; // steady re-probe while the line is down
+// A failure that waiting can actually fix. postFileToServer surfaces the
+// underlying socket/DNS error text, so match on that rather than trying to
+// enumerate every Node error code.
+function isConnectivityFailure(errorText) {
+    const e = String(errorText || '').toLowerCase();
+    return /enotfound|eai_again|econnrefused|econnreset|etimedout|ehostunreach|enetunreach|epipe|socket hang up|timeout|network|getaddrinfo|request to .* failed|fetch failed/.test(e);
+}
 function scheduleRetry(entry) {
     const attempt = (entry.attempts || 0);
-    const delayMs = Math.min(5000 * Math.pow(1.5, attempt), 60000);
-    setTimeout(() => processRetryEntry(entry), delayMs);
+    // While the line is down, stop escalating the backoff: a steady probe
+    // means the backlog starts clearing within seconds of it returning.
+    const delayMs = entry.offline
+        ? OFFLINE_RETRY_INTERVAL_MS
+        : Math.min(5000 * Math.pow(1.5, attempt), 60000);
+    entry.timer = setTimeout(() => processRetryEntry(entry), delayMs);
+}
+// Connectivity is back — retry EVERY queued clip immediately instead of
+// letting each one wait out its own timer. Cancelling the pending timer
+// first is what stops a clip being retried twice concurrently.
+let flushingRetryQueue = false;
+function flushRetryQueueNow(reason) {
+    if (flushingRetryQueue || !retryQueue.length) return;
+    flushingRetryQueue = true;
+    const pending = retryQueue.slice();
+    console.log(`[stream-engine] 📤 Connection is back (${reason}) — flushing ${pending.length} queued clip(s) now`);
+    pending.forEach((entry) => {
+        if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; }
+        entry.offline = false;
+        processRetryEntry(entry);
+    });
+    // Released on the next tick: processRetryEntry is async, and this flag
+    // only needs to stop the SAME success re-entering the flush.
+    setTimeout(() => { flushingRetryQueue = false; }, 1000);
 }
 async function processRetryEntry(entry) {
     if (!fs.existsSync(entry.filePath)) {
@@ -2757,6 +2814,7 @@ async function processRetryEntry(entry) {
         return; // was cleaned up (e.g. manually) — nothing left to retry
     }
     entry.attempts = (entry.attempts || 0) + 1;
+    entry.timer = null;
     if (entry.clipId) updateJob(entry.clipId, { status: 'RETRY_PENDING', forwardAttempts: entry.attempts });
     const result = await postFileToServer(entry.mainServerUrl, entry.matchId, entry.eventType, entry.timestamp, entry.ballMeta, entry.filePath, entry.clipId);
     if (result.ok) {
@@ -2769,9 +2827,29 @@ async function processRetryEntry(entry) {
             const job = clipJobs.get(entry.clipId);
             if (job) pollRenderStatus(job);
         }
+        // This upload proved the line is back — clear the rest of the
+        // backlog at once rather than one-per-backoff.
+        flushRetryQueueNow('a queued clip uploaded');
     } else {
         clipWorker.cloudflareConnected = false;
         clipWorker.lastError = result.error;
+        const offline = isConnectivityFailure(result.error);
+        entry.offline = offline;
+        if (offline) {
+            // No internet. The file is on disk and the upload will work as
+            // soon as the line is back, so this NEVER becomes permanent —
+            // it just keeps probing. Logged once per 10 attempts so a long
+            // outage doesn't flood the console during a match.
+            if (entry.attempts === 1 || entry.attempts % 10 === 0) {
+                console.log(`[stream-engine] ⏸ Offline — ${retryQueue.length} clip(s) waiting to upload; will keep retrying every ${OFFLINE_RETRY_INTERVAL_MS / 1000}s and send them all the moment the connection returns (attempt ${entry.attempts}: ${result.error})`);
+            }
+            if (entry.clipId) updateJob(entry.clipId, { status: 'RETRY_PENDING', error: `Waiting for internet — clip is saved locally at ${entry.filePath} and will upload automatically` });
+            persistRetryQueue();
+            scheduleRetry(entry);
+            return;
+        }
+        // The server answered and refused. Waiting will not change that, so
+        // the original attempt limit still applies.
         if (entry.attempts >= MAX_RETRY_ATTEMPTS) {
             console.log(`[stream-engine] Giving up on queued clip after ${entry.attempts} attempts (kept locally at ${entry.filePath}): ${result.error}`);
             if (entry.clipId) updateJob(entry.clipId, { status: 'FAILED_PERMANENT', error: `Could not reach Render after ${entry.attempts} attempts: ${result.error} (local file kept at ${entry.filePath})` });
