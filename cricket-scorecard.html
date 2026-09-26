@@ -1932,6 +1932,10 @@
         <div class="extra-box"><div class="k">No Ball</div><div class="v tabnum" id="ex-nb">0</div></div>
         <div class="extra-box"><div class="k">Bye</div><div class="v tabnum" id="ex-b">0</div></div>
         <div class="extra-box"><div class="k">Leg Bye</div><div class="v tabnum" id="ex-lb">0</div></div>
+        <!-- 🏏 Penalty runs (MCC Laws 18.10 / 18.11 / 41 / 42) — their own box,
+             because a penalty is not a wide, no ball, bye or leg bye, and Law
+             18.10 excludes 5-run penalties from the striker's credit. -->
+        <div class="extra-box"><div class="k">Penalty</div><div class="v tabnum" id="ex-pen">0</div></div>
       </div>
       <div class="extras-total" id="ex-total">Total extras: 0</div>
     </div>
@@ -3048,7 +3052,8 @@ function renderFinalInnings(){
 
   const ex = (m.extras && m.extras[team]) || { wd:0,nb:0,b:0,lb:0 };
   setText('ex-wd', ex.wd||0); setText('ex-nb', ex.nb||0); setText('ex-b', ex.b||0); setText('ex-lb', ex.lb||0);
-  setText('ex-total', 'Total extras: ' + ((ex.wd||0)+(ex.nb||0)+(ex.b||0)+(ex.lb||0)));
+  setText('ex-pen', ex.pen||0);
+  setText('ex-total', 'Total extras: ' + ((ex.wd||0)+(ex.nb||0)+(ex.b||0)+(ex.lb||0)+(ex.pen||0)));
 
   // Partnerships: finished match has the full list (unlike the live view's
   // single current-partnership figure) — show them all for this innings.
@@ -3360,6 +3365,12 @@ function commentaryLine(b){
   }
   if(b.ballType === '6') return { cls:'cm-six', text:`SIX! ${escapeHtml(striker)} sends ${escapeHtml(bowler)} over the ropes` };
   if(b.ballType === '4') return { cls:'cm-four', text:`FOUR! ${escapeHtml(striker)} finds the gap off ${escapeHtml(bowler)}` };
+  // 🏏 A PENALTY AWARD, not a delivery — it has no striker and no bowler,
+  // so it must never be described as one bowling to the other.
+  if(b.ballType === 'PEN'){
+    const why = (b.penalty && b.penalty.reasonLabel) ? ` — ${escapeHtml(b.penalty.reasonLabel)}` : '';
+    return { cls:'', text:`${b.runs||0} PENALTY RUN${(b.runs||0)===1?'':'S'} awarded${why}` };
+  }
   if(b.ballType === 'B') return { cls:'', text:`${b.runs||0} run${b.runs===1?'':'s'} (Bye)` };
   if(b.ballType === 'LB') return { cls:'', text:`${b.runs||0} run${b.runs===1?'':'s'} (Leg Bye)` };
   // OVERTHROW — a legal, off-the-bat delivery (see the 'OT' case in
@@ -3367,9 +3378,18 @@ function commentaryLine(b){
   // as any other shot, so this stays out of the generic "extra" branch
   // below despite the name.
   if(b.ballType === 'OT'){
-    if((b.runs || 0) === 6) return { cls:'cm-six', text:`OVERTHROW SIX! ${escapeHtml(striker)} — the fielder's return runs away for six off ${escapeHtml(bowler)}` };
-    if((b.runs || 0) === 4) return { cls:'cm-four', text:`OVERTHROW FOUR! ${escapeHtml(striker)} benefits from a misfield off ${escapeHtml(bowler)}` };
-    return { cls:'', text:`${b.runs||0} run${b.runs===1?'':'s'} (Overthrow). ${escapeHtml(striker)} off ${escapeHtml(bowler)}` };
+    // Law 19.8 components, when the panel recorded them — so the line says
+    // what actually happened rather than guessing from the total.
+    const ot = b.overthrow || null;
+    const detail = ot && typeof ot.runsCompleted === 'number'
+      ? ` (${ot.runsCompleted} run${ot.runsCompleted === 1 ? '' : 's'} completed${ot.crossed ? ', crossed at the throw' : ''}${ot.boundaryAllowance ? ` + ${ot.boundaryAllowance} boundary` : ''})`
+      : '';
+    // Note the wording: the ALLOWANCE runs away to the boundary — the striker
+    // is credited the runs (Law 18.10) but it is not a boundary off the bat,
+    // which is why it is not counted in their 4s/6s either.
+    if(ot && ot.boundary) return { cls:'cm-four', text:`OVERTHROW TO THE BOUNDARY! ${b.runs||0} to ${escapeHtml(striker)} off ${escapeHtml(bowler)}${detail}` };
+    if((b.runs || 0) >= 4) return { cls:'cm-four', text:`OVERTHROW! ${b.runs||0} runs — ${escapeHtml(striker)} off ${escapeHtml(bowler)}${detail}` };
+    return { cls:'', text:`${b.runs||0} run${b.runs===1?'':'s'} (Overthrow). ${escapeHtml(striker)} off ${escapeHtml(bowler)}${detail}` };
   }
   if(!LEGAL_KINDS.has(b.ballType)) return { cls:'', text:`${b.runs||0} run${b.runs===1?'':'s'} — extra, ${escapeHtml(bowler)} to ${escapeHtml(striker)}` };
   if((b.runs || 0) === 0) return { cls:'', text:`Dot ball. ${escapeHtml(bowler)} to ${escapeHtml(striker)}` };
@@ -3567,6 +3587,7 @@ function overBallLabel(overVal, ballType){
 
 function ballBadgeInfo(b){
   if(b.isWicket) return { label:'W', cls:'bb-wicket' };
+  if(b.ballType === 'PEN') return { label:'pen', cls:'bb-extra' };
   if(b.ballType === '6') return { label:'6', cls:'bb-six' };
   if(b.ballType === '4') return { label:'4', cls:'bb-four' };
   if(b.ballType === 'OT'){
@@ -5365,7 +5386,8 @@ function renderBottom(s){
 
   const ex = (s.extras && s.extras[team]) || { wd:0,nb:0,b:0,lb:0 };
   setText('ex-wd', ex.wd||0); setText('ex-nb', ex.nb||0); setText('ex-b', ex.b||0); setText('ex-lb', ex.lb||0);
-  setText('ex-total', 'Total extras: ' + ((ex.wd||0)+(ex.nb||0)+(ex.b||0)+(ex.lb||0)));
+  setText('ex-pen', ex.pen||0);
+  setText('ex-total', 'Total extras: ' + ((ex.wd||0)+(ex.nb||0)+(ex.b||0)+(ex.lb||0)+(ex.pen||0)));
 
   renderTeamWicketClips(s);
 }
