@@ -2088,7 +2088,14 @@ async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec 
             return { ok: false, error: compResult.error };
         }
         engine.holdsCompositorRef = true;
-        const args = nativePipeline.buildLiveEncoderArgs({ ...resolved, destinationUrl, useTune: checkNvencTuneRuntime() });
+        // Tell the encoder what size the relay ACTUALLY carries, so it can
+        // skip the scale filter entirely when no resize is needed (see
+        // buildLiveEncoderArgs). The compositor is the authority on that.
+        const args = nativePipeline.buildLiveEncoderArgs({
+            ...resolved, destinationUrl, useTune: checkNvencTuneRuntime(),
+            relayWidth: compositor ? compositor.width : null,
+            relayHeight: compositor ? compositor.height : null,
+        });
         proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] }, 'live-encoder');
         // Joins the running relay at its next packet — never restarts the
         // compositor and never disturbs the recorder (see nativePipeline.js).
