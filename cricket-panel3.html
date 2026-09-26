@@ -1953,6 +1953,10 @@ function mergeWithDefaults(saved){
     // balls), this is never trimmed and survives across innings and
     // localStorage reloads, only cleared on Reset.
     ballLog: saved.ballLog || [],
+    // Survives a reload so a refresh mid-outage doesn't reset our revision
+    // to 0 and hand the stale server copy the win.
+    localRev: Number(saved.localRev) || 0,
+    localRevAt: Number(saved.localRevAt) || 0,
     // Permanent record of every innings completed so far this match —
     // {no, team, runs, wickets, overs, declared}. This is what makes a
     // real 4-innings Test match possible: the old code only ever knew
@@ -2379,11 +2383,66 @@ function connect(){
   socket.on('connect_error', () => { dot.classList.remove('on'); });
 
   socket.on('liveCricketScore', (serverState) => {
-    if(serverState && Object.keys(serverState).length){
-      state = mergeWithDefaults({ ...state, ...serverState });
-      lastBroadcastState = snapshot();
+    /* 🛠 ROOT CAUSE OF "OFFLINE SCORING DISAPPEARS WHEN THE INTERNET
+       COMES BACK".
+
+       This used to be, unconditionally:
+
+           state = mergeWithDefaults({ ...state, ...serverState });
+
+       serverState is spread LAST, so it wins every key it has. On a
+       RECONNECT the server is holding the state from before the line
+       dropped — which is exactly the state that is missing every ball
+       scored while offline. So the moment the internet returned, the
+       stale copy overwrote the live one and the operator watched an
+       over's worth of scoring vanish.
+
+       The handler has two genuinely different jobs and was doing only
+       one of them:
+
+         RESUME  — a freshly opened panel, or one switched to another
+                   match, legitimately needs the server's state. Local
+                   state here is empty/unstarted, so taking the server's
+                   is right.
+
+         RECONNECT — the same panel coming back after a network drop,
+                   holding scoring the server has never seen. Here LOCAL
+                   is authoritative and must be pushed UP, not replaced.
+
+       localRev (bumped in pushState, and travelling with the state)
+       decides which is which. It also makes the genuine multi-device
+       case work properly: if another device really has scored further,
+       ITS revision is higher and it correctly wins. */
+    if(!serverState || !Object.keys(serverState).length){ completeInitialHydration(); return; }
+
+    const serverRev = Number(serverState.localRev) || 0;
+    const localRev  = Number(state.localRev) || 0;
+    // "Have I scored anything at all in this browser?" — a panel that has
+    // never recorded a ball has nothing to protect, so the server wins.
+    const localHasScoring = (state.ballLog && state.ballLog.length > 0)
+      || (state.score && (state.score.runs > 0 || state.score.wickets > 0 || state.score.overs > 0 || state.score.balls > 0));
+
+    if(localHasScoring && localRev > serverRev){
+      // We are ahead of the server. Do NOT take its state. Re-assert ours
+      // so the website, the overlay and every viewer catch up to what was
+      // scored while the connection was down.
+      const missedBalls = (state.ballLog ? state.ballLog.length : 0) - (serverState.ballLog ? serverState.ballLog.length : 0);
+      completeInitialHydration();
+      send(state);
+      if(missedBalls > 0){
+        toast(`🔁 Back online — ${missedBalls} ball${missedBalls === 1 ? '' : 's'} scored offline have been sent up. Nothing was lost.`, 6000);
+      } else {
+        toast('🔁 Back online — your scoring is intact and has been re-sent.', 4000);
+      }
       renderPanel();
+      return;
     }
+
+    // Either this panel has nothing of its own (a genuine resume), or the
+    // server genuinely is ahead (another device scored) — take its state.
+    state = mergeWithDefaults({ ...state, ...serverState });
+    lastBroadcastState = snapshot();
+    renderPanel();
     completeInitialHydration();
   });
 
@@ -4367,6 +4426,14 @@ function send(obj){
   lastBroadcastState = JSON.parse(JSON.stringify(obj));
 }
 function pushState(immediate, force){
+  // 🔒 LOCAL REVISION — bumped on every real state change, and carried
+  // WITH the state to the server. This is what lets a reconnect tell
+  // "the server knows more than me" (another device scored) apart from
+  // "I know more than the server" (I have been scoring offline). Without
+  // it the two are indistinguishable and the stale copy wins by accident.
+  // See the liveCricketScore handler.
+  state.localRev = (state.localRev || 0) + 1;
+  state.localRevAt = Date.now();
   saveLocal();
   renderPanel();
   // 🔒 FIX ("Undo" leaving the scoring buttons frozen): checkMatchResult()
@@ -9422,9 +9489,21 @@ function maybePromptNewBowler(){
 // cricketState broadcast above. Also asks the server to cut a 20s
 // highlight clip (10s before / 10s after) on WICKET / FOUR / SIX.
 function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundaryEventType){
-  if(!socket || !socket.connected) return;
   const matchId = currentMatchId();
   if(!matchId) return;
+  // 🛟 ROOT CAUSE OF "NO CLIPS WHEN THE INTERNET IS DOWN": this function
+  // used to `return` right here whenever the socket to the WEBSITE was
+  // disconnected — and the FOUR / SIX / WICKET clip trigger lives at the
+  // bottom of it. So with no internet nothing was ever even requested:
+  // no clip was cut, nothing reached the Stream Engine, and the operator
+  // only found out after the match was over.
+  //
+  // Cutting a clip is a purely LOCAL operation — panel → 127.0.0.1:5006 →
+  // the master recording on this same PC → ffmpeg. It has no business
+  // depending on a website on the other side of the internet being
+  // reachable. Only the socket write below is skipped when offline; the
+  // clip request ALWAYS goes out.
+  const dbConnected = !!(socket && socket.connected);
   // WdW/NbW are this panel's own internal "wicket on this extra" kinds —
   // the server's ballsCollection schema (same one the correction engine in
   // server.js reads/writes) only knows 'Wd'/'Nb' for kind, with dismissal
@@ -9452,7 +9531,7 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundar
     strikerId: state.striker.id || null, nonStrikerId: state.nonStriker.id || null, bowlerId: state.bowler.id || null
   };
 
-  socket.emit('logBall', {
+  if(dbConnected) socket.emit('logBall', {
     matchId,
     innings: state.inningsNumber,
     over: id.over,
