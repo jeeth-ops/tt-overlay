@@ -5922,7 +5922,14 @@ function updateBallButtonsState(){
   const over = isInningsOver();
   document.querySelectorAll('[data-ball]').forEach(btn => { btn.disabled = over; });
   const nextBtn = document.getElementById('next-innings-btn');
-  if(nextBtn) nextBtn.disabled = !over || !!state.milestonesHit['match-result'];
+  // The regulation innings-transition button is meaningless — and actively
+  // destructive — during a Super Over, which has its own transition control.
+  if(nextBtn) nextBtn.disabled = !over || !!state.milestonesHit['match-result'] || inSuperOver();
+  // A penalty award is not a delivery, so it stays available at an innings
+  // break or after a result (the owner can still apply a Laws correction) —
+  // but never once the ledger can no longer be reasoned about.
+  const penBtn = document.getElementById('lc-penalty-btn');
+  if(penBtn) penBtn.disabled = false;
 }
 // Set true for the rest of the current recordBall() call if
 // checkInningsComplete() actually fired — lets checkMatchResult() delay its
@@ -10409,6 +10416,17 @@ function fireMatchResultInningsWin(winnerKey, margin){
   toast(`${teamLabel(winnerKey)} win by an innings and ${margin} run${margin === 1 ? '' : 's'} — no further innings needed`);
 }
 document.getElementById('next-innings-btn').addEventListener('click', () => {
+  // 🔒 This button moves the REGULATION match on. A Super Over is a
+  // different phase with its own transition (endSuperOverInnings), so letting
+  // this run during one pushed the Super Over innings into the regulation
+  // inningsArchive, bumped inningsNumber and set a regulation target from the
+  // Super Over score — corrupting the match record outright. The button is
+  // also disabled during a Super Over (see updateBallButtonsState); this is
+  // the backstop for a keyboard/programmatic click that bypasses that.
+  if(inSuperOver()){
+    toast('🏆 A Super Over is in progress — use the Super Over controls, not Start Next Innings');
+    return;
+  }
   if(!isInningsOver()){ toast('Current innings is not over yet'); return; }
   if(state.milestonesHit['match-result']){ toast('Match is already complete — Reset to start a new match'); return; }
 

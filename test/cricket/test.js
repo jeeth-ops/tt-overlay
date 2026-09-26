@@ -465,6 +465,26 @@ eq('start Super Over 2', E('startSuperOver()'), true);
 eq('this is Super Over 2', E('state.superOver.number'), 2);
 eq('Super Over 1 history preserved', E('state.superOver.archive.length'), 2);
 
+head('SUPER OVER — the regulation controls cannot corrupt it');
+newMatch('T20');
+E(`state.battingTeam='B'; state.superOverReady = true; startSuperOver();
+   state.striker={name:'S',id:'s',runs:0,balls:0,fours:0,sixes:0};
+   state.nonStriker={name:'N',id:'n',runs:0,balls:0,fours:0,sixes:0};
+   state.bowler={name:'B',id:'b',overs:0,balls:0,maidens:0,runs:0,wickets:0,runsThisOver:0,wicketsThisOver:0};
+   for(let i=0;i<6;i++) recordBall('1');`);
+eq('the Super Over innings is over', E('isInningsOver()'), true);
+eq('"Start Next Innings" is disabled during a Super Over', E('document.getElementById("next-innings-btn").disabled'), true);
+// and even if something clicks it anyway, it must be a no-op
+const soBefore = E('JSON.stringify({inn:state.inningsNumber,phase:state.phase,arch:state.inningsArchive.length,target:state.target,runs:state.score.runs})');
+E('document.getElementById("next-innings-btn").disabled = false; document.getElementById("next-innings-btn").click();');
+const soAfter = E('JSON.stringify({inn:state.inningsNumber,phase:state.phase,arch:state.inningsArchive.length,target:state.target,runs:state.score.runs})');
+eq('a forced click changes nothing (no regulation innings invented)', soAfter, soBefore);
+eq('the Super Over innings is still intact', E('state.score.runs'), 6);
+eq('no Super Over innings leaked into the regulation archive', E('state.inningsArchive.length'), 0);
+eq('the proper Super Over transition still works', E('endSuperOverInnings()'), true);
+eq('and it archived to the Super Over, not the regulation innings', E('state.superOver.archive.length'), 1);
+eq('regulation archive still untouched', E('state.inningsArchive.length'), 0);
+
 head('SUPER OVER — never applied where the conditions do not provide for one');
 newMatch('Test');
 E('state.superOverReady = false');
