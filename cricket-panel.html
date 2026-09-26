@@ -256,6 +256,27 @@
   .lc-key.kw{ height:58px; font:800 22px/1 var(--lc-num); letter-spacing:1px; background:rgba(239,68,68,.2); border-color:var(--red); color:#fca5a5; }
   .lc-key.krh{ height:58px; font:800 14px/1.1 system-ui, sans-serif; text-transform:uppercase; background:rgba(56,189,248,.12); border-color:rgba(56,189,248,.6); color:#7dd3fc; }
   .lc-key.ksw{ height:58px; font:800 14px/1.1 system-ui, sans-serif; text-transform:uppercase; }
+  /* A penalty award reads as an umpire's intervention, not a run button —
+     amber, like the Laws-penalty signal, and visually apart from the runs. */
+  .lc-key.kpen{ height:58px; font:800 13px/1.1 system-ui, sans-serif; text-transform:uppercase; background:rgba(240,180,41,.14); border-color:rgba(240,180,41,.6); color:#f0b429; }
+  /* 🏆 SUPER OVER MODE bar — unmistakable, so the operator can never
+     confuse a Super Over delivery with a regulation one. */
+  .so-bar{ grid-column:1/-1; border:1px solid rgba(240,180,41,.55); background:linear-gradient(180deg, rgba(240,180,41,.16), rgba(240,180,41,.06)); border-radius:12px; padding:10px 12px; margin-bottom:10px; }
+  .so-bar-head{ display:flex; align-items:center; gap:8px; font:800 14px/1.2 system-ui, sans-serif; color:#f5d888; text-transform:uppercase; letter-spacing:.04em; }
+  .so-pill{ background:#f0b429; color:#1a1300; border-radius:999px; padding:2px 9px; font:900 11px/1.4 system-ui, sans-serif; letter-spacing:.06em; }
+  .so-bar-line{ margin-top:6px; font:600 13px/1.45 system-ui, sans-serif; color:#ffe9b0; }
+  .so-bar-actions{ display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+  .so-bar-actions button[hidden]{ display:none; }
+  /* Penalty / overthrow modal fields */
+  .pen-label{ display:block; margin:10px 0 4px; font:700 12px/1.3 system-ui, sans-serif; text-transform:uppercase; letter-spacing:.05em; opacity:.75; }
+  .pen-field{ width:100%; box-sizing:border-box; padding:9px 10px; border-radius:9px; border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.06); color:inherit; font:600 14px/1.3 system-ui, sans-serif; }
+  .ot-toggle{ display:flex; gap:6px; }
+  .ot-toggle .wm-option{ flex:1; }
+  .ot-toggle .wm-option.is-on{ border-color:#f0b429; background:rgba(240,180,41,.18); color:#f0b429; }
+  .pen-ledger{ margin-top:8px; display:flex; flex-direction:column; gap:5px; }
+  .pen-ledger-row{ display:flex; align-items:center; gap:8px; font:600 12px/1.35 system-ui, sans-serif; background:rgba(255,255,255,.05); border-radius:8px; padding:6px 8px; }
+  .pen-ledger-row b{ color:#f0b429; }
+  .pen-ledger-row button{ margin-left:auto; background:none; border:1px solid rgba(255,255,255,.2); color:inherit; border-radius:7px; padding:2px 8px; cursor:pointer; font:600 11px system-ui, sans-serif; }
   .lc-side{ display:flex; flex-direction:column; gap:8px; min-width:0; }
   .lc-side .b-highlight{ height:92px; margin:0; font-size:20px; border-radius:14px; letter-spacing:1px; }
   .lc-side .hl-pending{ margin:0; min-height:0; font-size:12px; font-weight:700; }
@@ -775,6 +796,21 @@
 
   <div class="lc-pad">
     <div class="freehit-banner" id="freehit-banner">⚡ FREE HIT IN PLAY <button type="button" id="clear-freehit-btn" style="margin-left:auto;">Clear</button></div>
+    <!-- 🏆 SUPER OVER MODE — hidden during the regulation match. Once a Super
+         Over is live this is the operator's unmistakable signal that they are
+         no longer scoring the regulation innings: which Super Over it is,
+         which side is batting, the score, and the balls/wickets left under the
+         Super Over's OWN limits (not the regulation ones). Also carries the
+         only controls that move a Super Over along. See renderSuperOverPanel(). -->
+    <div class="so-bar" id="so-bar" hidden>
+      <div class="so-bar-head"><span class="so-pill" id="so-pill">SUPER OVER</span><span id="so-bar-title">—</span></div>
+      <div class="so-bar-line" id="so-bar-line">—</div>
+      <div class="so-bar-actions">
+        <button type="button" class="full small primary" id="so-start-btn" hidden>🏆 Start Super Over</button>
+        <button type="button" class="full small" id="so-next-btn" hidden>End Super Over Innings</button>
+        <button type="button" class="full small ghost" id="so-tie-btn" hidden>Accept the tie as the final result</button>
+      </div>
+    </div>
     <div class="lc-keys">
       <div class="lc-row lc-runs">
         <button type="button" class="lc-key" data-ball="0"><span class="kb">0</span>0</button>
@@ -796,6 +832,9 @@
         <button type="button" class="lc-key kw" data-ball="W"><span class="kb">W</span><span class="star" title="Auto Highlight">★</span>WICKET</button>
         <button type="button" class="lc-key krh" id="lc-retired-btn">Retired<br>Hurt</button>
         <button type="button" class="lc-key ksw" id="lc-swap-btn"><span class="kb">S</span>⇄ Swap<br>Strike</button>
+        <!-- A penalty is not a delivery — deliberately on the events row
+             beside Retired Hurt, never among the run buttons. -->
+        <button type="button" class="lc-key kpen" id="lc-penalty-btn" title="Umpire's penalty award (MCC Laws 18.10 / 41 / 42). Not a delivery: no ball is bowled and no batsman is credited.">+ Penalty<br>Runs</button>
       </div>
     </div>
     <div class="lc-side">
@@ -1378,6 +1417,85 @@
     </div>
   </div>
 
+  <!-- 🏏 PENALTY RUNS — a penalty is a match EVENT, not a delivery, so it
+       gets its own control and its own modal rather than being typed in as
+       "+5" on some run picker. The modal insists on a reason: an award that
+       doesn't say which Law it is under can't be audited later, and can't be
+       validated against which side it may be awarded to. See
+       recordPenaltyRuns(). -->
+  <div class="wicket-modal-overlay" id="penalty-modal-overlay">
+    <div class="wicket-modal" id="penalty-modal">
+      <h3>🏏 Penalty Runs</h3>
+      <div class="wm-sub" id="penalty-modal-sub">Awarded by the umpire — not a delivery. No ball is bowled, no batsman is credited.</div>
+      <label class="pen-label" for="penalty-runs">Penalty runs</label>
+      <select id="penalty-runs" class="pen-field">
+        <option value="5" selected>5 (the standard award)</option>
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+      </select>
+      <label class="pen-label" for="penalty-awarded-to">Awarded to</label>
+      <select id="penalty-awarded-to" class="pen-field">
+        <option value="BATTING">Batting side</option>
+        <option value="FIELDING">Fielding side</option>
+      </select>
+      <label class="pen-label" for="penalty-reason">Reason</label>
+      <select id="penalty-reason" class="pen-field"></select>
+      <label class="pen-label" for="penalty-context">Event context</label>
+      <select id="penalty-context" class="pen-field">
+        <option value="BETWEEN_DELIVERIES">Between deliveries (ball dead)</option>
+        <option value="DURING_DELIVERY">During the last delivery</option>
+        <option value="INNINGS_BREAK">Innings break</option>
+        <option value="AFTER_MATCH">After the match (correction)</option>
+      </select>
+      <label class="pen-label" for="penalty-notes">Notes (optional)</label>
+      <input id="penalty-notes" class="pen-field" type="text" placeholder="e.g. umpire's signal, over 12.3" />
+      <div class="wm-sub" id="penalty-modal-effect" style="margin-top:8px;"></div>
+      <button type="button" class="full primary" id="penalty-modal-submit" style="margin-top:10px;">Confirm Penalty</button>
+      <button type="button" class="full ghost wm-cancel" id="penalty-modal-cancel" style="margin-top:6px;">Cancel</button>
+    </div>
+  </div>
+
+  <!-- 🏏 OVERTHROW — MCC Law 19.8 is a calculation over components, so the
+       modal collects the components rather than one lump total: how many runs
+       the batters had completed, whether the overthrow reached the boundary,
+       and (the part everyone forgets) whether they had already crossed at the
+       instant of the throw. See the 'OT' case in recordBall(). -->
+  <div class="wicket-modal-overlay" id="overthrow-modal-overlay">
+    <div class="wicket-modal" id="overthrow-modal">
+      <h3>🏏 Overthrow</h3>
+      <div class="wm-sub" id="overthrow-modal-sub">—</div>
+      <label class="pen-label" for="ot-completed">Runs completed BEFORE the throw</label>
+      <select id="ot-completed" class="pen-field">
+        <option value="0">0</option><option value="1" selected>1</option><option value="2">2</option>
+        <option value="3">3</option><option value="4">4</option>
+      </select>
+      <label class="pen-label">Did the overthrow reach the boundary?</label>
+      <div class="ot-toggle">
+        <button type="button" class="wm-option ot-bnd" data-ot-boundary="1">Yes — boundary</button>
+        <button type="button" class="wm-option ot-bnd is-on" data-ot-boundary="0">No — they kept running</button>
+      </div>
+      <div id="ot-boundary-block" style="display:none;">
+        <label class="pen-label" for="ot-crossed">Had the batters already crossed at the instant of the throw?</label>
+        <select id="ot-crossed" class="pen-field">
+          <option value="0" selected>No — they had not crossed</option>
+          <option value="1">Yes — they had crossed</option>
+        </select>
+        <div class="wm-sub" style="margin-top:6px;">A boundary from an overthrow is worth 4. A 6 requires the ball to have been struck over the boundary by the bat, which a fielder's throw was not (Law 19.7).</div>
+      </div>
+      <div id="ot-extra-block">
+        <label class="pen-label" for="ot-extra">Further runs completed AFTER the throw</label>
+        <select id="ot-extra" class="pen-field">
+          <option value="0" selected>0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option>
+        </select>
+      </div>
+      <div class="wm-sub" id="overthrow-modal-effect" style="margin-top:8px;"></div>
+      <button type="button" class="full primary" id="overthrow-modal-submit" style="margin-top:10px;">Record Overthrow</button>
+      <button type="button" class="full ghost wm-cancel" id="overthrow-modal-cancel" style="margin-top:6px;">Cancel</button>
+    </div>
+  </div>
+
   <!-- ✏️ EDIT SCORECARD — lists every ball bowled this innings, most recent
        first, so a wrong ball can be found and deleted. Deletion always walks
        backward one ball at a time from the CURRENT last ball — cricket state
@@ -1643,6 +1761,14 @@
       <button class="full small" id="declare-btn" style="display:none; margin-bottom:6px;">🏳️ Declare Innings (Test)</button>
       <button class="full small" id="next-innings-btn" disabled>Start Next Innings</button>
       <button class="full small" id="draw-btn" style="display:none; margin-top:6px;">🤝 Match Drawn (Test)</button>
+      <!-- 🏏 Penalty awards made this match, each reversible from its own
+           ledger entry rather than by subtracting a number by hand. -->
+      <div class="pen-ledger" id="pen-ledger"></div>
+      <!-- 🔍 RECONCILIATION — re-derives the innings in progress from its
+           own parts and reports any disagreement. All four identities are
+           exact integer identities, so anything it reports is a real bug. -->
+      <button class="full small ghost" id="reconcile-btn" style="margin-top:6px;">🔍 Check This Innings Adds Up</button>
+      <div class="shortcut-hint" id="reconcile-out" style="margin-top:4px;"></div>
       <button class="full small" id="reset-btn" style="margin-top:6px;">Reset Match (clears everything)</button>
     </div>
   </div>
@@ -1656,12 +1782,672 @@
 /* ============================================================
    STATE
    ============================================================ */
+/* ============================================================
+   🏏 CENTRAL MATCH RULES MODEL
+   ------------------------------------------------------------
+   One table, consumed by the scoring engine — NOT `if(format ===
+   'T20')` scattered through dozens of functions. Everything the
+   engine needs to know about "how is this match played" lives
+   here and is read back through the accessors underneath
+   (matchRules()/ballsPerOver()/maxWickets()/...), so a Custom
+   tournament with 8 overs, 5 wickets a side and no Super Over is
+   the same code path as an ICC T20I.
+
+   Three DIFFERENT things are deliberately kept separate, because
+   they are separate in real cricket and change on their own
+   schedules:
+
+     1. MCC LAWS OF CRICKET — how a delivery is scored (what a
+        wide is worth, who a run is credited to, Law 19.8's
+        overthrow-boundary calculation, Law 18.10's penalty
+        exceptions). That lives in recordBall()'s scoring
+        branches, is format-independent, and is versioned by
+        `lawsEdition` below rather than frozen: MCC's 2026 Laws
+        edition takes effect 1 October 2026, so the edition a
+        match was played under is recorded WITH the match instead
+        of being hard-coded once for all time.
+
+     2. ICC PLAYING CONDITIONS — competition rules layered on top
+        of the Laws and genuinely different per format (overs per
+        innings, whether a Free Hit exists, whether a tie goes to
+        a Super Over, the Super Over's own wicket limit and
+        batting order). That is this table.
+
+     3. ALLSPORTSLIVE CUSTOM TOURNAMENT SETTINGS — whatever the
+        organiser configured for THIS competition, which may
+        legitimately override (2). Those arrive as state.customOvers
+        / state.customRules and are folded in by matchRules().
+   ============================================================ */
+const LAWS_EDITION_DEFAULT = '2017-code-3rd-2022';
 const FORMAT_RULES = {
-  T20:   { oversPerInnings: 20, powerplayEnd: 6,  lastOverFrom: 20 },
-  ODI:   { oversPerInnings: 50, powerplayEnd: 10, lastOverFrom: 50 },
-  Test:  { oversPerInnings: Infinity, powerplayEnd: null, lastOverFrom: null },
-  Custom:{ oversPerInnings: 20, powerplayEnd: 6,  lastOverFrom: 20 }
+  T20:   { oversPerInnings: 20,       powerplayEnd: 6,    lastOverFrom: 20,   ballsPerOver: 6, maxWickets: 10, inningsCount: 2, freeHitOnNoBall: true,  superOverEnabled: true,  followOnDeficit: null },
+  ODI:   { oversPerInnings: 50,       powerplayEnd: 10,   lastOverFrom: 50,   ballsPerOver: 6, maxWickets: 10, inningsCount: 2, freeHitOnNoBall: true,  superOverEnabled: true,  followOnDeficit: null },
+  Test:  { oversPerInnings: Infinity, powerplayEnd: null, lastOverFrom: null, ballsPerOver: 6, maxWickets: 10, inningsCount: 4, freeHitOnNoBall: false, superOverEnabled: false, followOnDeficit: 200 },
+  Custom:{ oversPerInnings: 20,       powerplayEnd: 6,    lastOverFrom: 20,   ballsPerOver: 6, maxWickets: 10, inningsCount: 2, freeHitOnNoBall: true,  superOverEnabled: true,  followOnDeficit: null }
 };
+
+/* Super Over procedure. Defaults mirror the current ICC T20I
+   playing conditions (one over per side, a maximum of six legal
+   balls, the innings also ending on the SECOND wicket, and the
+   side that batted second in the regulation match batting first)
+   — but every one of those is a value here, not an assumption
+   baked into the code, so a competition that runs a different
+   procedure configures it instead of needing different code. */
+const SUPER_OVER_RULES_DEFAULT = {
+  ballsPerInnings: 6,
+  maxWickets: 2,
+  battingOrder: 'SECOND_TEAM_FIRST',   // | 'FIRST_TEAM_FIRST'
+  repeatUntilDecided: true,            // a tied Super Over is followed by another one
+  maxSuperOvers: 5,                    // safety stop, not a cricket rule
+  eligibilityFromSquad: true           // only players from the regulation XI/squad may take part
+};
+
+/* The fully-resolved rules for the match in progress: format
+   defaults, with the operator's Custom-format overs and any
+   tournament-level custom rules layered on top. Every caller in
+   the engine goes through this — nothing reads FORMAT_RULES
+   directly any more. */
+function matchRules(){
+  const base = FORMAT_RULES[state.format] || FORMAT_RULES.T20;
+  const resolved = { ...base };
+  if(state.format === 'Custom' && state.customOvers) resolved.oversPerInnings = state.customOvers;
+  if(state.customMaxWickets) resolved.maxWickets = state.customMaxWickets;
+  if(typeof state.customSuperOverEnabled === 'boolean') resolved.superOverEnabled = state.customSuperOverEnabled;
+  resolved.superOver = { ...SUPER_OVER_RULES_DEFAULT, ...(state.superOverRules || {}) };
+  resolved.lawsEdition = state.lawsEdition || LAWS_EDITION_DEFAULT;
+  return resolved;
+}
+function ballsPerOver(){ return matchRules().ballsPerOver || 6; }
+/* Wickets that end the innings in progress. Phase-aware: a Super
+   Over innings ends on its own (much smaller) wicket limit, which
+   is exactly why this is one accessor and not `>= 10` written out
+   in nine places. */
+function maxWickets(){
+  const r = matchRules();
+  return inSuperOver() ? (r.superOver.maxWickets || 2) : (r.maxWickets || 10);
+}
+function isAllOut(){ return state.score.wickets >= maxWickets(); }
+/* Wickets still standing — the "won by N wickets" margin. */
+function wicketsRemaining(){ return Math.max(0, maxWickets() - state.score.wickets); }
+function superOverEnabledForMatch(){ return !!matchRules().superOverEnabled; }
+
+/* ============================================================
+   🏆 PHASE ACCESSORS
+   ------------------------------------------------------------
+   The scoring engine writes a delivery's consequences through
+   these rather than straight into state.battingCard / extras /
+   fallOfWickets, which is the whole mechanism that keeps Super
+   Over figures OUT of the regulation scorecard while still
+   running both through one engine. In the regulation phase they
+   return the regulation containers, so behaviour is unchanged.
+   ============================================================ */
+function inSuperOver(){ return state.phase === 'SUPER_OVER'; }
+function activeBattingCard(team){
+  if(inSuperOver()){
+    state.superOver.battingCard[team] = state.superOver.battingCard[team] || [];
+    return state.superOver.battingCard[team];
+  }
+  return state.battingCard[team];
+}
+function activeBowlingCard(team){
+  if(inSuperOver()){
+    state.superOver.bowlingCard[team] = state.superOver.bowlingCard[team] || [];
+    return state.superOver.bowlingCard[team];
+  }
+  return state.bowlingCard[team];
+}
+function activeFallOfWickets(team){
+  if(inSuperOver()){
+    state.superOver.fallOfWickets[team] = state.superOver.fallOfWickets[team] || [];
+    return state.superOver.fallOfWickets[team];
+  }
+  return state.fallOfWickets[team];
+}
+function activeExtras(team){
+  const bag = inSuperOver() ? state.superOver.extras : state.extras;
+  // ⚠ Must normalise IN PLACE and return a STABLE reference. An earlier
+  // version rebuilt the bucket object on every call, which quietly broke any
+  // expression that called it twice — `activeExtras(t).pen = activeExtras(t).pen - n`
+  // set the field on an object the bag had already replaced, so the subtraction
+  // appeared to work and the stored total never moved.
+  if(!bag[team]) bag[team] = EMPTY_EXTRAS();
+  else {
+    const def = EMPTY_EXTRAS();
+    Object.keys(def).forEach(k => { if(typeof bag[team][k] !== 'number') bag[team][k] = def[k]; });
+  }
+  return bag[team];
+}
+/* Total extras for a bucket, penalty runs included — one definition so
+   the panel, the summary graphics and the Excel export can never disagree
+   about whether penalties are part of "Extras". */
+function extrasTotalOf(e){
+  if(!e) return 0;
+  return (e.wd||0) + (e.nb||0) + (e.b||0) + (e.lb||0) + (e.pen||0);
+}
+
+/* ============================================================
+   🏏 PENALTY RUNS — MCC Laws 18.10 / 18.11 / 41 / 42
+   ------------------------------------------------------------
+   A penalty award is a MATCH EVENT, not a delivery. It therefore:
+     • consumes no legal ball and never advances the over,
+     • never changes the striker, the non-striker or the bowler,
+     • never touches any batsman's runs or balls faced,
+     • is never charged to the bowler's figures,
+     • and is scored in its OWN extras bucket (`pen`), because Law
+       18.10 expressly excludes 5-run penalties from the striker's
+       credit and a penalty is not a wide, no ball, bye or leg bye.
+
+   Law 18.11 decides WHOSE total it joins, and it is not always the
+   side batting: a penalty awarded to the side that is NOT batting
+   goes onto that side's most recently completed innings, or — if
+   they have not batted yet — is carried forward and seeded into
+   their next innings as penalty extras. Both routes are
+   implemented below, and either one re-derives the chase target,
+   since changing a completed innings total changes what the other
+   side needs.
+
+   Every award is appended to state.penaltyLog as its own immutable
+   entry (id, runs, team, reason, phase, innings, timestamp), so the
+   resulting totals can always be re-derived and a mistaken award
+   can be reversed exactly rather than guessed at.
+   ============================================================ */
+const PENALTY_REASONS = [
+  { code: 'UNFAIR_PLAY',            runs: 5, side: 'EITHER',   label: 'Unfair play (Law 41)' },
+  { code: 'BALL_STRIKING_HELMET',   runs: 5, side: 'BATTING',  label: 'Ball struck fielding side’s helmet on the ground (Law 28.3)' },
+  { code: 'ILLEGAL_FIELDING',       runs: 5, side: 'BATTING',  label: 'Fielding the ball illegally (Law 28.2)' },
+  { code: 'FIELDER_RETURN_NO_PERM', runs: 5, side: 'BATTING',  label: 'Fielder returned without permission (Law 24.2 / 28.2)' },
+  { code: 'DELIBERATE_SHORT_RUN',   runs: 5, side: 'FIELDING', label: 'Deliberate short run (Law 18.5.2)' },
+  { code: 'DAMAGING_PITCH',         runs: 5, side: 'FIELDING', label: 'Batter damaging the pitch (Law 41.14)' },
+  { code: 'TIME_WASTING',           runs: 5, side: 'EITHER',   label: 'Time wasting (Law 41.9 / 41.10)' },
+  { code: 'CONDUCT_LEVEL_3_4',      runs: 5, side: 'EITHER',   label: 'Conduct offence — Level 3 or 4 (Law 42)' },
+  { code: 'OTHER_LAW_PENALTY',      runs: 0, side: 'EITHER',   label: 'Other Laws / playing-condition penalty' }
+];
+function penaltyReason(code){ return PENALTY_REASONS.find(r => r.code === code) || null; }
+
+/* Which side's innings a limited-overs/Test chase is measured against —
+   re-derived from the innings archive rather than left as whatever
+   `target` was set to when the innings started, so a penalty (or any
+   later correction) that changes a completed innings total also changes
+   what the chasing side needs. Returns true if the target moved. */
+function recomputeTarget(){
+  const before = state.target;
+  if(inSuperOver()){
+    // A Super Over chase is measured against the other side's Super Over
+    // innings, which is archived separately (never merged into the
+    // regulation innings) — see state.superOver.archive.
+    const mine = state.superOver.archive.filter(i => i.number === state.superOver.number);
+    if(state.superOver.inningsIndex === 1 && mine.length >= 1) state.target = mine[0].runs + 1;
+  } else if(state.format !== 'Test'){
+    if(state.inningsNumber === 2 && state.inningsArchive.length >= 1) state.target = state.inningsArchive[0].runs + 1;
+  } else if(state.inningsNumber === 4 && state.inningsArchive.length >= 3){
+    const twiceTeam = state.inningsArchive[2].team;
+    const onceTeam = twiceTeam === 'A' ? 'B' : 'A';
+    const twiceTotal = state.inningsArchive.filter(i => i.team === twiceTeam).reduce((s, i) => s + i.runs, 0);
+    const onceTotal = state.inningsArchive.filter(i => i.team === onceTeam).reduce((s, i) => s + i.runs, 0);
+    state.target = twiceTotal - onceTotal + 1;
+  }
+  return state.target !== before;
+}
+
+/* Records a penalty award. `awardedTo` is 'BATTING' or 'FIELDING' —
+   resolved here to a concrete team key so the ledger entry is
+   unambiguous even after the innings changes. Returns the ledger entry,
+   or null with a toast if the award was rejected. */
+function recordPenaltyRuns({ runs, awardedTo, reasonCode, notes, eventContext }){
+  const n = parseInt(runs, 10);
+  if(!Number.isFinite(n) || n <= 0){ toast('⚠️ Penalty runs must be a positive number'); return null; }
+  if(n > 25){ toast('⚠️ That is not a penalty award the Laws provide for — check the number'); return null; }
+  const reason = penaltyReason(reasonCode);
+  if(!reason){ toast('⚠️ Pick a penalty reason — an award has to say which Law it is under'); return null; }
+  if(awardedTo !== 'BATTING' && awardedTo !== 'FIELDING'){ toast('⚠️ Choose which side the penalty is awarded to'); return null; }
+  // A reason that only exists for one side can't be awarded to the other —
+  // a helmet penalty, for instance, is only ever to the batting side.
+  if(reason.side !== 'EITHER' && reason.side !== awardedTo){
+    toast(`⚠️ "${reason.label}" is a penalty to the ${reason.side.toLowerCase()} side — it cannot be awarded to the other side`);
+    return null;
+  }
+  if(state.milestonesHit['match-result'] && !isOwnerOperator){
+    toast('⚠️ This match already has a result — only the owner can apply a post-match penalty correction');
+    return null;
+  }
+
+  pushHistory(); // same snapshot-based undo every delivery gets
+
+  const battingKey = state.battingTeam;
+  const fieldingKey = bowlingTeamKey();
+  const team = awardedTo === 'BATTING' ? battingKey : fieldingKey;
+
+  const entry = {
+    id: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ('pen-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)),
+    eventType: 'PENALTY',
+    runs: n,
+    awardedTo,                 // 'BATTING' | 'FIELDING' — as the umpire signalled it
+    team,                      // the concrete side whose total it joins
+    reasonCode,
+    reasonLabel: reason.label,
+    notes: (notes || '').trim() || null,
+    eventContext: eventContext || 'BETWEEN_DELIVERIES',
+    phase: state.phase || 'REGULATION',
+    superOverNumber: inSuperOver() ? state.superOver.number : null,
+    inningsNumber: state.inningsNumber,
+    // Where the runs actually landed — filled in just below. Recorded so the
+    // award can be reversed exactly, and so the ledger explains itself.
+    appliedTo: null,
+    timestamp: Date.now()
+  };
+
+  if(team === battingKey){
+    // Straight onto the innings in progress.
+    state.score.runs += n;
+    activeExtras(team).pen += n;
+    entry.appliedTo = { kind: 'CURRENT_INNINGS', inningsNumber: state.inningsNumber };
+  } else {
+    // Law 18.11 — the side not batting. Their most recently completed
+    // innings if they have one, otherwise carried into their next innings.
+    const theirInnings = state.inningsArchive.filter(i => i.team === team);
+    if(theirInnings.length){
+      const last = theirInnings[theirInnings.length - 1];
+      last.runs += n;
+      last.extras = { ...EMPTY_EXTRAS(), ...(last.extras || {}) };
+      last.extras.pen += n;
+      entry.appliedTo = { kind: 'COMPLETED_INNINGS', inningsNumber: last.no };
+      // Their total moved, so the chase does too.
+      if(recomputeTarget()) toast(`ℹ️ Target recalculated to ${state.target} — the penalty changed a completed innings total`);
+    } else {
+      state.pendingPenalty = state.pendingPenalty || { A: 0, B: 0 };
+      state.pendingPenalty[team] = (state.pendingPenalty[team] || 0) + n;
+      entry.appliedTo = { kind: 'CARRIED_TO_NEXT_INNINGS' };
+      toast(`ℹ️ ${teamLabel(team)} have not batted yet — ${n} penalty run${n === 1 ? '' : 's'} carried into their innings (Law 18.11)`);
+    }
+  }
+
+  state.penaltyLog.push(entry);
+  pushBallHistory(`P${n}`);
+  // The award also goes into the full match log and — as its own 'PEN'
+  // event, never a delivery — into the canonical ball collection, so the
+  // server's recalculation (buildLiveCardsFromBallsArray) derives the same
+  // extras and the same team total the panel is showing, instead of the
+  // penalty existing only in this browser's state. deriveBallFacts('PEN')
+  // on the server treats it as no legal ball, no striker, no bowler.
+  state.ballLog.push({
+    innings: state.inningsNumber,
+    battingTeam: entry.team,
+    over: fmtOvers(state.score.overs, state.score.balls),
+    ballType: 'PEN',
+    eventType: 'PENALTY',
+    penaltyId: entry.id,
+    striker: null, nonStriker: null, bowler: null,
+    runs: n,
+    isWicket: false,
+    dismissal: null,
+    penalty: { runs: n, awardedTo: entry.awardedTo, team: entry.team, reasonCode: entry.reasonCode, reasonLabel: entry.reasonLabel, notes: entry.notes, eventContext: entry.eventContext },
+    phase: entry.phase,
+    superOverId: inSuperOver() ? currentSuperOverId() : null,
+    superOverInningsId: inSuperOver() ? currentSuperOverInningsId() : null,
+    scoreAfter: `${state.score.runs}-${state.score.wickets}`,
+    timestamp: entry.timestamp
+  });
+  if(socket && socket.connected && currentMatchId()){
+    socket.emit('logBall', {
+      matchId: currentMatchId(),
+      uid: currentOwnerUid(),
+      innings: state.inningsNumber,
+      over: state.score.overs,
+      ballInOver: state.score.balls,
+      kind: 'PEN',
+      runs: n,
+      battingTeam: entry.team,
+      // Deliberately no striker/nonStriker/bowler: a penalty belongs to no
+      // batsman and no bowler, and sending names here is exactly how a
+      // penalty would end up wrongly inside someone's figures.
+      striker: null, nonStriker: null, bowler: null,
+      dismissal: null,
+      penalty: entry,
+      score: { runs: state.score.runs, wickets: state.score.wickets, overs: state.score.overs, balls: state.score.balls },
+      timestamp: entry.timestamp
+    });
+  }
+
+  fireEvent('PENALTY', `${n} PENALTY RUN${n === 1 ? '' : 'S'}`, `${teamLabel(team)} — ${reason.label}`, 4000);
+
+  // A penalty can legitimately finish a chase (or a Super Over), so the
+  // result has to be re-checked — but it can never end an innings on its
+  // own, since it consumes no ball and takes no wicket.
+  checkMatchResult();
+  if(inSuperOver()) checkSuperOverInningsComplete();
+  updateBallButtonsState();
+  pushState(true, true);
+  renderPenaltyLedger();
+  return entry;
+}
+
+/* Reverses one award exactly, from its own ledger entry — the runs go back
+   where the entry says they landed, never guessed at. */
+function removePenaltyRuns(id){
+  const idx = state.penaltyLog.findIndex(p => p.id === id);
+  if(idx < 0) return false;
+  const entry = state.penaltyLog[idx];
+  pushHistory();
+  const where = entry.appliedTo || {};
+  if(where.kind === 'CURRENT_INNINGS' && where.inningsNumber === state.inningsNumber && entry.team === state.battingTeam){
+    state.score.runs = Math.max(0, state.score.runs - entry.runs);
+    activeExtras(entry.team).pen = Math.max(0, activeExtras(entry.team).pen - entry.runs);
+  } else if(where.kind === 'COMPLETED_INNINGS'){
+    const inn = state.inningsArchive.find(i => i.no === where.inningsNumber && i.team === entry.team);
+    if(inn){
+      inn.runs = Math.max(0, inn.runs - entry.runs);
+      inn.extras = { ...EMPTY_EXTRAS(), ...(inn.extras || {}) };
+      inn.extras.pen = Math.max(0, inn.extras.pen - entry.runs);
+    }
+    recomputeTarget();
+  } else if(where.kind === 'CARRIED_TO_NEXT_INNINGS'){
+    state.pendingPenalty = state.pendingPenalty || { A: 0, B: 0 };
+    state.pendingPenalty[entry.team] = Math.max(0, (state.pendingPenalty[entry.team] || 0) - entry.runs);
+  } else {
+    // The innings it was applied to is no longer the one in progress and
+    // isn't archived under that number either — say so rather than silently
+    // subtracting from the wrong total.
+    toast('⚠️ That penalty was applied to an innings this panel can no longer address — use ✏️ Edit Scorecard');
+    return false;
+  }
+  state.penaltyLog.splice(idx, 1);
+  // Removing runs can un-win a match — clear the result so it is re-derived.
+  if(state.milestonesHit['match-result'] && !isChaseWon()){
+    delete state.milestonesHit['match-result'];
+    state.matchResultText = null;
+    state.matchWinnerKey = null;
+  }
+  checkMatchResult();
+  updateBallButtonsState();
+  pushState(true, true);
+  renderPenaltyLedger();
+  return true;
+}
+
+/* ============================================================
+   🏆 SUPER OVER — a separate match phase, never "over 21"
+   ------------------------------------------------------------
+   Every Super Over delivery is scored by the SAME recordBall()
+   engine as a regulation ball: there is deliberately no second,
+   simpler Super Over scorer. What changes is only what the rules
+   layer reports while state.phase === 'SUPER_OVER' — a six-legal-
+   ball innings with a two-wicket limit (matchRules().superOver) —
+   and where the resulting cards are archived (state.superOver.*,
+   never the regulation battingCard/bowlingCard/extras).
+   ============================================================ */
+function currentSuperOverId(){
+  if(!inSuperOver()) return null;
+  return `${state.tournamentMatchId || currentMatchId() || 'match'}-SO${state.superOver.number}`;
+}
+function currentSuperOverInningsId(){
+  if(!inSuperOver()) return null;
+  return `${currentSuperOverId()}-I${state.superOver.inningsIndex + 1}`;
+}
+/* A tie that a Super Over is supposed to resolve, rather than a final
+   result. Set by checkMatchResult() instead of locking the match as tied. */
+function isSuperOverPending(){ return !!state.superOverReady; }
+
+/* Clears the crease/score for a fresh (Super Over) innings, without
+   touching anything the regulation match owns. */
+function resetInningsScoringState(){
+  state.score = { runs: 0, wickets: 0, overs: 0, balls: 0 };
+  state.thisOver = [];
+  state.ballHistory = [];
+  state.partnershipRuns = 0; state.partnershipBalls = 0;
+  state.declared = false;
+  state.freeHit = false;
+  state.newBatsmanEnd = 'striker';
+  state.lastOverBowlerId = null;
+  overRunsAcc = 0; overWicketsAcc = 0;
+  state.striker = { name: '', id: null, runs: 0, balls: 0, fours: 0, sixes: 0 };
+  state.nonStriker = { name: '', id: null, runs: 0, balls: 0, fours: 0, sixes: 0 };
+  state.bowler = { name: '', overs: 0, balls: 0, maidens: 0, runs: 0, wickets: 0, runsThisOver: 0, wicketsThisOver: 0, id: null };
+  ['team-', 'partnership-', 'need-'].forEach(prefix => {
+    Object.keys(state.milestonesHit).forEach(k => { if(k.startsWith(prefix)) delete state.milestonesHit[k]; });
+  });
+  delete state.milestonesHit['innings-complete'];
+  delete state.milestonesHit['powerplay-end'];
+  delete state.milestonesHit['last-over'];
+}
+
+/* Starts Super Over N. Which side bats first is a configured value
+   (SUPER_OVER_RULES_DEFAULT.battingOrder) — the ICC T20I procedure has
+   the side that batted SECOND in the regulation match batting first,
+   but a competition running a different procedure configures it rather
+   than needing different code. */
+function startSuperOver(){
+  const rules = matchRules();
+  if(!rules.superOverEnabled){
+    toast(`⚠️ ${state.format} is not configured to use a Super Over — enable it in the match rules first`);
+    return false;
+  }
+  if(inSuperOver() && !state.superOverDecided){
+    toast('⚠️ A Super Over is already in progress');
+    return false;
+  }
+  if(state.phase === 'REGULATION' && !isSuperOverPending()){
+    toast('⚠️ A Super Over only follows a tied match');
+    return false;
+  }
+  if(state.superOver.number >= (rules.superOver.maxSuperOvers || 5)){
+    toast('⚠️ Super Over limit reached for this competition');
+    return false;
+  }
+  pushHistory();
+
+  // First Super Over of the match: freeze the tied REGULATION result so the
+  // scorecard can always show the two as the separate results they are —
+  // including WHICH side batted second, which the Super Over batting order
+  // depends on.
+  if(state.superOver.number === 0){
+    state.superOver.regulation = {
+      teamA: teamScoreLine('A'),
+      teamB: teamScoreLine('B'),
+      resultText: 'MATCH TIED',
+      // ⚠ NOT read from inningsArchive: the innings in progress is only
+      // archived by "Start Next Innings", which never runs on the LAST
+      // innings of the match — so at the moment of a tie the archive still
+      // ends at the FIRST innings, and reading the last archived team gave
+      // the side that batted FIRST. The side batting when the regulation
+      // match ended is the side that batted second, by definition.
+      secondTeam: state.battingTeam,
+      innings: state.inningsArchive.map(i => ({ ...i }))
+    };
+  }
+
+  const secondTeam = (state.superOver.regulation && state.superOver.regulation.secondTeam) || state.battingTeam;
+  const firstTeam = secondTeam === 'A' ? 'B' : 'A';
+
+  state.phase = 'SUPER_OVER';
+  state.superOverReady = false;
+  state.superOverDecided = false;
+  state.superOver.number += 1;
+  state.superOver.inningsIndex = 0;
+  state.superOver.extras = { A: EMPTY_EXTRAS(), B: EMPTY_EXTRAS() };
+  state.superOver.battingCard = { A: [], B: [] };
+  state.superOver.bowlingCard = { A: [], B: [] };
+  state.superOver.fallOfWickets = { A: [], B: [] };
+  state.battingTeam = rules.superOver.battingOrder === 'FIRST_TEAM_FIRST' ? firstTeam : secondTeam;
+  state.target = null;
+  // The regulation tie is not a result while a Super Over is deciding it.
+  delete state.milestonesHit['match-result'];
+  state.matchResultText = null;
+  state.matchWinnerKey = null;
+  // A batter dismissed in the regulation match is eligible again here; the
+  // Super Over is its own innings.
+  state.dismissedThisInnings = { A: [], B: [] };
+  state.retiredHurt = { A: [], B: [] };
+  resetInningsScoringState();
+
+  fireEvent('INNINGS_BREAK', `SUPER OVER ${state.superOver.number}`, `${teamLabel(state.battingTeam)} to bat — ${rules.superOver.ballsPerInnings} balls, ${rules.superOver.maxWickets} wickets`, 4000);
+  toast(`🏆 Super Over ${state.superOver.number} — ${teamLabel(state.battingTeam)} batting. Pick the two batters and the bowler.`);
+  updateBallButtonsState();
+  renderSuperOverPanel();
+  pushState(true, true);
+  return true;
+}
+
+/* Archives the Super Over innings just completed, then either sets up the
+   second side's over or resolves the Super Over. */
+function endSuperOverInnings(){
+  if(!inSuperOver()){ toast('Not in a Super Over'); return false; }
+  if(!isInningsOver()){ toast('This Super Over innings is not over yet'); return false; }
+  pushHistory();
+
+  const team = state.battingTeam;
+  // Anyone not dismissed is archived now, exactly as an innings break does.
+  [state.striker, state.nonStriker].forEach(p => {
+    if(p && p.name && !state.superOver.battingCard[team].some(b => b.name === p.name)){
+      state.superOver.battingCard[team].push({ name: p.name, id: p.id || null, runs: p.runs, balls: p.balls, fours: p.fours, sixes: p.sixes, out: false, howOut: 'not out' });
+    }
+  });
+  if(state.bowler.name) state.superOver.bowlingCard[bowlingTeamKey()].push({ ...state.bowler });
+
+  const completed = {
+    superOverId: currentSuperOverId(),
+    superOverInningsId: currentSuperOverInningsId(),
+    number: state.superOver.number,
+    inningsIndex: state.superOver.inningsIndex,
+    team,
+    runs: state.score.runs,
+    wickets: state.score.wickets,
+    overs: fmtOvers(state.score.overs, state.score.balls),
+    extras: { ...activeExtras(team) },
+    battingCard: state.superOver.battingCard[team].map(r => ({ ...r })),
+    bowlingCard: state.superOver.bowlingCard[bowlingTeamKey()].map(r => ({ ...r })),
+    fallOfWickets: state.superOver.fallOfWickets[team].map(r => ({ ...r })),
+    ballLog: state.ballLog.filter(b => b.superOverInningsId === currentSuperOverInningsId()).map(b => ({ ...b }))
+  };
+  state.superOver.archive.push(completed);
+
+  if(state.superOver.inningsIndex === 0){
+    state.superOver.inningsIndex = 1;
+    state.battingTeam = team === 'A' ? 'B' : 'A';
+    state.dismissedThisInnings = { A: [], B: [] };
+    resetInningsScoringState();
+    state.target = completed.runs + 1;
+    fireEvent('INNINGS_BREAK', `SUPER OVER ${state.superOver.number}`, `${teamLabel(state.battingTeam)} need ${state.target} to win`, 4000);
+    toast(`🏆 ${teamLabel(state.battingTeam)} to bat — target ${state.target} off ${matchRules().superOver.ballsPerInnings} balls.`);
+    renderSuperOverPanel();
+    pushState(true, true);
+    return true;
+  }
+  return resolveSuperOver();
+}
+
+/* Compares the two innings of the current Super Over and either declares a
+   winner or — where the playing conditions require it — sets up another
+   Super Over, keeping every previous one in the archive. */
+function resolveSuperOver(){
+  const rules = matchRules();
+  const mine = state.superOver.archive.filter(i => i.number === state.superOver.number);
+  if(mine.length < 2) return false;
+  const first = mine[0], second = mine[1];
+  state.superOverDecided = true;
+
+  if(first.runs === second.runs){
+    if(rules.superOver.repeatUntilDecided && state.superOver.number < (rules.superOver.maxSuperOvers || 5)){
+      state.superOverReady = true;   // another Super Over, previous ones preserved
+      state.matchResultText = null;
+      state.matchWinnerKey = null;
+      delete state.milestonesHit['match-result'];
+      fireEvent('MATCH_TIED', `SUPER OVER ${state.superOver.number} TIED`, 'Another Super Over to follow', 5000);
+      toast(`🤝 Super Over ${state.superOver.number} tied — start Super Over ${state.superOver.number + 1}.`);
+      renderSuperOverPanel();
+      pushState(true, true);
+      return true;
+    }
+    state.milestonesHit['match-result'] = true;
+    state.matchResultText = 'MATCH TIED';
+    state.matchWinnerKey = 'TIE';
+    fireEvent('MATCH_TIED', 'MATCH TIED', `after ${state.superOver.number} Super Over${state.superOver.number === 1 ? '' : 's'}`, 5000);
+  } else {
+    const winner = first.runs > second.runs ? first.team : second.team;
+    const margin = Math.abs(first.runs - second.runs);
+    state.milestonesHit['match-result'] = true;
+    state.matchResultText = `${teamLabel(winner).toUpperCase()} WON THE SUPER OVER BY ${margin} RUN${margin === 1 ? '' : 'S'}`;
+    state.matchWinnerKey = winner;
+    fireEvent('VICTORY', `${teamLabel(winner)} WIN`, `Super Over ${state.superOver.number} — by ${margin} run${margin === 1 ? '' : 's'}`, 5000);
+  }
+
+  // Now — and only now — the match has a result worth saving.
+  if(currentMatchTournament()) saveMatchToLeague(true);
+  else saveMatchToSingleHistory(true);
+  updateBallButtonsState();
+  renderSuperOverPanel();
+  pushState(true, true);
+  return true;
+}
+
+/* Super Over innings end automatically on the wicket limit or the last
+   legal ball — the panel should never accept a further delivery. Called
+   from recordBall()'s tail and after a penalty. */
+function checkSuperOverInningsComplete(){
+  if(!inSuperOver()) return;
+  if(!isInningsOver()) return;
+  updateBallButtonsState();
+  renderSuperOverPanel();
+}
+
+/* ============================================================
+   🔍 RECONCILIATION — the check that makes "cricket rules
+   compliant" an assertion rather than a claim.
+   ------------------------------------------------------------
+   Re-derives the innings in progress from its own parts and
+   reports every disagreement:
+     team total   === batsmen's runs + extras (incl. penalties)
+     legal balls  === the legal deliveries actually in the ball log
+     over.ball    === that legal-ball count, structurally
+     wickets      === the wicket events actually in the ball log
+   Anything that fails here is a scoring bug, not a rounding
+   difference — the numbers are integers and all four identities
+   are exact.
+   ============================================================ */
+function reconcileInnings(){
+  const team = state.battingTeam;
+  const issues = [];
+  const inn = state.inningsNumber;
+  const phase = state.phase || 'REGULATION';
+  const soInningsId = inSuperOver() ? currentSuperOverInningsId() : null;
+
+  const log = (state.ballLog || []).filter(b => {
+    if((b.phase || 'REGULATION') !== phase) return false;
+    if(phase === 'SUPER_OVER') return b.superOverInningsId === soInningsId;
+    return (b.innings || 1) === inn;
+  });
+
+  const LEGAL = ['0','1','2','3','4','5','6','W','B','LB','OT'];
+  const legalBalls = log.filter(b => LEGAL.includes(b.ballType)).length;
+  const wickets = log.filter(b => b.isWicket).length;
+
+  const scoredBalls = state.score.overs * ballsPerOver() + state.score.balls;
+  if(scoredBalls !== legalBalls){
+    issues.push(`legal balls: score says ${scoredBalls} (${fmtOvers(state.score.overs, state.score.balls)}), ball log has ${legalBalls}`);
+  }
+  if(state.score.balls >= ballsPerOver()){
+    issues.push(`over structure: ${state.score.balls} balls shown inside an over of ${ballsPerOver()}`);
+  }
+  if(state.score.wickets !== wickets){
+    issues.push(`wickets: score says ${state.score.wickets}, ball log has ${wickets} wicket event${wickets === 1 ? '' : 's'}`);
+  }
+  if(state.score.wickets > maxWickets()){
+    issues.push(`wickets: ${state.score.wickets} exceeds this innings' limit of ${maxWickets()}`);
+  }
+
+  // Runs: every batter who has batted in this innings, dismissed or not.
+  const card = inSuperOver() ? (state.superOver.battingCard[team] || []) : (state.battingCard[team] || []).filter(r => (r.inningsNo || 1) === inn);
+  const archivedNames = new Set(card.map(r => r.name));
+  let batRuns = card.reduce((s, r) => s + (r.runs || 0), 0);
+  [state.striker, state.nonStriker].forEach(p => { if(p && p.name && !archivedNames.has(p.name)) batRuns += (p.runs || 0); });
+  const extras = extrasTotalOf(activeExtras(team));
+  const carried = (state.pendingPenalty && state.pendingPenalty[team]) || 0;
+  if(batRuns + extras !== state.score.runs){
+    issues.push(`total: ${state.score.runs} on the board, but batters ${batRuns} + extras ${extras} = ${batRuns + extras}`);
+  }
+  if(carried) issues.push(`note: ${carried} penalty run${carried === 1 ? '' : 's'} carried in for this side but not yet in an innings total (Law 18.11)`);
+
+  return { ok: issues.filter(i => !i.startsWith('note:')).length === 0, issues, legalBalls, wickets, batRuns, extras };
+}
 
 function mergeWithDefaults(saved){
   const def = defaultState();
@@ -1825,6 +2611,12 @@ function pushHistory(){
 let history = loadHistory();
 let lastDismissalType = null; // set by the wicket modal, read by logBallToDb
 let lastDismissalFielder = null; // set alongside lastDismissalType, read by logBallToDb
+// Law 19.8 component breakdown of the overthrow just scored — set by the
+// 'OT' case in recordBall(), read straight afterwards when the ball is
+// written to state.ballLog and to the database, then cleared. Kept beside
+// the dismissal carriers above for the same reason: it belongs to the ball
+// that was just bowled, never to whatever state.* looks like later.
+let lastOverthrowDetail = null;
 
 function defaultState(){
   return {
@@ -1862,7 +2654,14 @@ function defaultState(){
     battingCard: { A: [], B: [] },
     bowlingCard: { A: [], B: [] },
     fallOfWickets: { A: [], B: [] },
-    extras: { A: { wd:0, nb:0, b:0, lb:0 }, B: { wd:0, nb:0, b:0, lb:0 } },
+    // 🏏 `pen` = PENALTY RUNS awarded to this side (MCC Laws 18.10/41/42
+    // — 5-run penalties, a fielding-side helmet, a player returning
+    // without permission, and so on). Deliberately its OWN bucket: a
+    // penalty is not a wide, no ball, bye or leg bye, and Law 18.10
+    // explicitly excludes 5-run penalties from the striker's credit, so
+    // folding it into any existing extras field would mis-state both the
+    // batsman's score and the extras breakdown. See recordPenaltyRuns().
+    extras: { A: { wd:0, nb:0, b:0, lb:0, pen:0 }, B: { wd:0, nb:0, b:0, lb:0, pen:0 } },
     firstInningsSummary: null,
     // Which innings of the match we're currently in: 1-2 for limited-overs
     // formats, 1-4 for Test (two innings per side). Drives follow-on /
@@ -1960,9 +2759,76 @@ function defaultState(){
     // still applies on an over-ending wicket, so the survivor (till-now
     // non-striker) takes strike for the new over and the new batsman comes
     // in at the other end. See the 'W' case in recordBall().
-    newBatsmanEnd: 'striker'
+    newBatsmanEnd: 'striker',
+    /* ============================================================
+       🏆 SUPER OVER — a SEPARATE MATCH PHASE, never "over 21".
+       ------------------------------------------------------------
+       state.phase is 'REGULATION' for the whole real match and
+       'SUPER_OVER' only while a Super Over is actually being bowled.
+       Every Super Over delivery goes through the SAME recordBall()
+       engine as a regulation ball (wides, no balls, byes, leg byes,
+       overthrows, every wicket type, penalty runs — all of it), and
+       the rules layer above simply reports a 6-legal-ball innings
+       with a 2-wicket limit while the phase is active.
+
+       Its runs/wickets/cards are accumulated in the SAME live
+       state.score/striker/bowler fields (that is what "reuse the
+       authoritative engine" means in practice) but archived into
+       superOver.* below — never into the regulation battingCard /
+       bowlingCard / extras — so a Super Over can never inflate a
+       batsman's or bowler's regulation figures, and the regulation
+       innings score is never merged with it.
+
+         number        which Super Over this is (1, 2, 3…)
+         inningsIndex  0 = the first side's over, 1 = the second's
+         battingCard / bowlingCard / fallOfWickets / extras
+                       Super-Over-only mirrors of the regulation
+                       containers, routed to by activeBattingCard()
+                       and friends while the phase is active
+         archive       every completed Super Over innings, in order,
+                       each with its own superOverId + full ball log
+         regulation    the tied regulation scores, kept so the
+                       scorecard can show REGULATION and SUPER OVER
+                       as the separate results they are
+       ============================================================ */
+    phase: 'REGULATION',
+    superOver: {
+      number: 0,
+      inningsIndex: 0,
+      battingCard: { A: [], B: [] },
+      bowlingCard: { A: [], B: [] },
+      fallOfWickets: { A: [], B: [] },
+      extras: { A: { wd:0, nb:0, b:0, lb:0, pen:0 }, B: { wd:0, nb:0, b:0, lb:0, pen:0 } },
+      archive: [],
+      regulation: null
+    },
+    /* Which Laws of Cricket edition this match is scored under.
+       Recorded WITH the match rather than assumed, because MCC's
+       2026 edition takes effect on 1 October 2026 and a match
+       played before that must keep being read back under the code
+       it was actually played under. See matchRules(). */
+    lawsEdition: LAWS_EDITION_DEFAULT,
+    superOverRules: null,          // per-competition overrides, see SUPER_OVER_RULES_DEFAULT
+    customMaxWickets: null,        // Custom format: wickets that end an innings
+    customSuperOverEnabled: null,  // Custom format: null = follow the format default
+    /* 🏏 PENALTY RUNS LEDGER — one immutable entry per award, so the
+       resulting totals can always be re-derived (and an award undone)
+       instead of a number being silently mutated somewhere. A penalty
+       is a MATCH EVENT, not a delivery: it has no over/ball number,
+       consumes no legal ball and changes no batsman's or bowler's
+       figures. See recordPenaltyRuns(). */
+    penaltyLog: [],
+    // Law 18.11 — penalty runs awarded to a side that has not batted yet,
+    // held here until their innings starts and then seeded into it.
+    pendingPenalty: { A: 0, B: 0 },
+    // A tie a Super Over is about to resolve — NOT a final result.
+    superOverReady: false,
+    superOverDecided: false
   };
 }
+/* Shape of a fresh extras bucket — one definition, so adding a bucket
+   (as `pen` was) can never again leave some reset path behind. */
+function EMPTY_EXTRAS(){ return { wd:0, nb:0, b:0, lb:0, pen:0 }; }
 
 // Lazily assigns this match's permanent tournament-record id the first
 // time it's needed (first save to a league). Uses crypto.randomUUID()
@@ -3110,10 +3976,13 @@ function calcCRR(){
   return (state.score.runs / (totalBalls/6));
 }
 function ballsPerInnings(){
-  if(state.format === 'Custom') return state.customOvers*6;
-  const rules = FORMAT_RULES[state.format];
-  if(rules.oversPerInnings === Infinity) return null;
-  return rules.oversPerInnings*6;
+  const rules = matchRules();
+  // A Super Over is its own innings length (six legal balls under the
+  // current ICC T20I procedure) — never the regulation 20/50 overs, and
+  // never "one more over on the end of the innings".
+  if(inSuperOver()) return rules.superOver.ballsPerInnings || 6;
+  if(rules.oversPerInnings === Infinity) return null; // Test — no overs limit
+  return rules.oversPerInnings * (rules.ballsPerOver || 6);
 }
 function calcRRR(){
   if(!state.target) return null;
@@ -3133,6 +4002,10 @@ function calcBallsLeft(){
 }
 
 function renderPanel(){
+  // 🏆 Phase controls are part of every render — the operator must never
+  // be left looking at a stale Super Over bar (or a missing one) after a
+  // reload, an undo or a restored snapshot.
+  try{ renderSuperOverPanel(); renderPenaltyLedger(); }catch(e){}
   document.getElementById('disp-score').textContent = `${state.score.runs}-${state.score.wickets}`;
   document.getElementById('disp-overs').textContent = fmtOvers(state.score.overs, state.score.balls);
   document.getElementById('disp-crr').textContent = calcCRR().toFixed(2);
@@ -5037,7 +5910,7 @@ function isChaseWon(){
 function isInningsOver(){
   const totalBallsAllowed = ballsPerInnings();
   const ballsBowled = state.score.overs*6 + state.score.balls;
-  return state.score.wickets >= 10 || (totalBallsAllowed !== null && ballsBowled >= totalBallsAllowed) || isChaseWon() || !!state.declared;
+  return isAllOut() || (totalBallsAllowed !== null && ballsBowled >= totalBallsAllowed) || isChaseWon() || !!state.declared;
 }
 // True during the gap between innings — current innings has ended, next
 // one hasn't been started yet (target not set), and the match itself
@@ -5049,7 +5922,14 @@ function updateBallButtonsState(){
   const over = isInningsOver();
   document.querySelectorAll('[data-ball]').forEach(btn => { btn.disabled = over; });
   const nextBtn = document.getElementById('next-innings-btn');
-  if(nextBtn) nextBtn.disabled = !over || !!state.milestonesHit['match-result'];
+  // The regulation innings-transition button is meaningless — and actively
+  // destructive — during a Super Over, which has its own transition control.
+  if(nextBtn) nextBtn.disabled = !over || !!state.milestonesHit['match-result'] || inSuperOver();
+  // A penalty award is not a delivery, so it stays available at an innings
+  // break or after a result (the owner can still apply a Laws correction) —
+  // but never once the ledger can no longer be reasoned about.
+  const penBtn = document.getElementById('lc-penalty-btn');
+  if(penBtn) penBtn.disabled = false;
 }
 // Set true for the rest of the current recordBall() call if
 // checkInningsComplete() actually fired — lets checkMatchResult() delay its
@@ -5063,7 +5943,7 @@ function checkInningsComplete(){
   // (all-out/overs-complete) event — checkMatchResult() owns that banner.
   if(isChaseWon()) return;
   state.milestonesHit['innings-complete'] = true;
-  const reason = state.declared ? 'DECLARED' : (state.score.wickets >= 10 ? 'ALL OUT' : 'OVERS COMPLETE');
+  const reason = state.declared ? 'DECLARED' : (isAllOut() ? 'ALL OUT' : 'OVERS COMPLETE');
   fireEvent('INNINGS_COMPLETE', reason, `${state.score.runs}-${state.score.wickets} in ${fmtOvers(state.score.overs, state.score.balls)} overs`, 4000);
 
   if(state.showInningsSummary && socket && socket.connected){
@@ -5082,7 +5962,7 @@ function checkMatchResult(){
 
   if(state.score.runs >= state.target){
     state.milestonesHit['match-result'] = true;
-    const left = 10 - state.score.wickets;
+    const left = wicketsRemaining();
     state.matchResultText = `${battingShort.toUpperCase()} WON BY ${left} WICKET${left === 1 ? '' : 'S'}`;
     state.matchWinnerKey = state.battingTeam;
     fireEvent('VICTORY', `${battingShort} WIN`, `by ${left} wicket${left === 1 ? '' : 's'}`, 5000);
@@ -5091,6 +5971,24 @@ function checkMatchResult(){
     state.milestonesHit['match-result'] = true;
     const margin = state.target - 1 - state.score.runs;
     if(margin <= 0){
+      // 🏆 A TIE IS NOT AUTOMATICALLY THE RESULT. Where the competition's
+      // playing conditions resolve a tie with a Super Over, the match is not
+      // over — it moves to a new PHASE. So don't lock in a result here:
+      // surface the Super Over controls and let the operator start it (or
+      // explicitly accept the tie). Formats/competitions with no Super Over
+      // provision (Test, or superOverEnabled: false) are unchanged and end
+      // tied exactly as before.
+      if(superOverEnabledForMatch() && state.phase === 'REGULATION'){
+        delete state.milestonesHit['match-result'];
+        state.superOverReady = true;
+        state.matchResultText = null;
+        state.matchWinnerKey = null;
+        fireEvent('MATCH_TIED', 'MATCH TIED', 'Super Over to follow', 5000);
+        updateBallButtonsState();
+        renderSuperOverPanel();
+        pushState(true, true);
+        return; // nothing saved as a final result yet — resolveSuperOver() does that
+      }
       state.matchResultText = 'MATCH TIED';
       state.matchWinnerKey = 'TIE';
       fireEvent('MATCH_TIED', 'MATCH TIED', '', 5000);
@@ -5185,7 +6083,7 @@ function buildInningsSummaryPayload(){
       howOut: b.out ? (b.howOut || 'out') : (b.retiredHurt ? (b.howOut || 'retired hurt') : 'not out')
     })),
     fallOfWickets: rowsForInnings(state.fallOfWickets[battingKey], inn),
-    extrasTotal: (extras.wd||0) + (extras.nb||0) + (extras.b||0) + (extras.lb||0),
+    extrasTotal: extrasTotalOf(extras),
     overs: fmtOvers(state.score.overs, state.score.balls),
     total: `${state.score.runs}-${state.score.wickets}`
   };
@@ -5230,7 +6128,7 @@ function buildMatchSummaryPayload(){
   } else if(!state.target){
     winnerText = 'MATCH IN PROGRESS';
   } else if(state.score.runs >= state.target){
-    const left = 10 - state.score.wickets;
+    const left = wicketsRemaining();
     winnerText = `${(chasingTeam.short || chasingTeam.name).toUpperCase()} WON BY ${left} WICKET${left === 1 ? '' : 'S'}`;
   } else if(isInningsOver()){
     const margin = state.target - 1 - state.score.runs;
@@ -6204,7 +7102,7 @@ function renderScorecardHtml(m){
         </div>
         <table class="sc-table"><thead><tr><th>Batsman</th><th>Runs</th><th>Balls</th><th>4s</th><th>6s</th><th>S/R</th><th>Dismissal</th></tr></thead>
         <tbody>${batting.map(b => scRow([escapeHtmlPanel(b.name), b.runs, b.balls, b.fours, b.sixes, b.balls > 0 ? ((b.runs / b.balls) * 100).toFixed(1) : '0.0', escapeHtmlPanel(b.howOut || 'not out')])).join('')}</tbody></table>
-        ${(extr.wd || extr.nb || extr.b || extr.lb) ? `<div class="sc-extras">Extras: Wd ${extr.wd || 0} · NB ${extr.nb || 0} · B ${extr.b || 0} · LB ${extr.lb || 0}</div>` : ''}
+        ${extrasTotalOf(extr) ? `<div class="sc-extras">Extras: Wd ${extr.wd || 0} · NB ${extr.nb || 0} · B ${extr.b || 0} · LB ${extr.lb || 0}${extr.pen ? ` · Pen ${extr.pen}` : ''}</div>` : ''}
         ${fow.length ? `<div class="sc-fow">Fall of wickets: ${fow.map(f => `${f.wkt}-${f.runs} (${f.over})`).join('  ')}</div>` : ''}
         <table class="sc-table" style="margin-top:8px;"><thead><tr><th>Bowler</th><th>Overs</th><th>Maidens</th><th>Runs</th><th>Wkts</th><th>Econ</th></tr></thead>
         <tbody>${bowling.map(b => scRow([escapeHtmlPanel(b.name), `${b.overs}.${b.balls}`, b.maidens, b.runs, b.wickets, (b.overs + b.balls / 6) > 0 ? (b.runs / (b.overs + b.balls / 6)).toFixed(2) : '0.00'])).join('')}</tbody></table>
@@ -7088,7 +7986,7 @@ function addLegalBall(runsThisBall){
   state.freeHit = false;
   state.score.balls++;
   let overCompleted = false;
-  if(state.score.balls >= 6){
+  if(state.score.balls >= ballsPerOver()){
     // 🏏 Snapshot this over's ball-by-ball tokens BEFORE they're wiped — the
     // Recent Over Summary graphic needs the exact sequence just bowled, and
     // thisOver is reset to [] for the next over on the very next line.
@@ -7305,14 +8203,14 @@ function recordBall(kind, meta){
   autoSyncMatchSnapshot();
   if(isInningsOver()){
     let msg = '🚫 Overs complete for this innings';
-    if(state.score.wickets >= 10) msg = '🚫 All out — 10 wickets already, innings is over';
+    if(isAllOut()) msg = `🚫 All out — ${maxWickets()} wicket${maxWickets() === 1 ? '' : 's'} already, innings is over`;
     else if(isChaseWon()) msg = '🏆 Target already reached — match is won, no more balls to record';
     toast(msg);
     updateBallButtonsState();
     return;
   }
-  if((kind === 'W' || kind === 'WdW' || kind === 'NbW') && state.score.wickets >= 10){
-    toast('🚫 All out — cannot take an 11th wicket');
+  if((kind === 'W' || kind === 'WdW' || kind === 'NbW') && isAllOut()){
+    toast(`🚫 All out — ${maxWickets()} wickets already, cannot take another`);
     return;
   }
   // A Free Hit ball is only ever dismissible by a Run Out under the Laws
@@ -7366,26 +8264,95 @@ function recordBall(kind, meta){
 
   switch(kind){
     case 'OT': {
-      // Overthrow off a normal batted shot (MCC Law 19.8) — the TOTAL runs
-      // (runs run + overthrow/boundary allowance) are credited to the
-      // striker like any shot off the bat: a legal ball, bowler charged,
-      // strike rotates on an odd total. (Restored — the scorecard, server
-      // and overlay already understand ballType 'OT'.)
-      const otRuns = (meta && typeof meta.runs === 'number') ? meta.runs : 0;
+      /* ============================================================
+         🏏 OVERTHROW — MCC Law 19.8 + Law 18.10
+         ------------------------------------------------------------
+         This is a CALCULATION, not "add 4". Law 19.8 says that when a
+         boundary results from an overthrow (or a wilful act of a
+         fielder), the batting side scores:
+
+             any applicable penalty runs
+           + the boundary allowance
+           + the runs completed by the batters before the throw
+           + the run in progress, IF the batters had already crossed
+             at the instant of the throw
+
+         and Law 18.10 says that because the ball was struck by the
+         bat, those runs are credited to the STRIKER — with the
+         explicitly listed exceptions (a 5-run penalty, and the
+         one-run No Ball penalty) which are not this event and are
+         handled separately (see recordPenaltyRuns() and the 'Nb'
+         case).
+
+         So the event stores its COMPONENTS, not just a total:
+           runsCompleted     runs completed before the throw
+           crossed           had they crossed on the run in progress
+                             at the instant of the throw?
+           boundary          did the overthrow reach the boundary?
+           boundaryAllowance the allowance awarded if it did (4 — a
+                             6 needs the ball to have been struck OVER
+                             the boundary by the bat, which a fielder's
+                             throw by definition was not)
+           extraCompleted    further runs completed after the throw,
+                             when it did NOT reach the boundary
+
+         Two consequences fall straight out of the components and were
+         BOTH wrong when this case only knew a single total:
+
+         1. Strike rotation follows the runs actually RUN, never the
+            total credited. 2 completed + a 4-run overthrow is 6 runs
+            but an EVEN number of runs run, so the striker keeps
+            strike — the 2019 World Cup final's famous overthrow,
+            scored exactly this way. The old `otRuns % 2 === 1` saw 6,
+            called it even by luck there, and got 1-completed-plus-4
+            (5 runs, odd total, but ONE run run) exactly backwards.
+
+         2. The striker's 4s/6s columns are NOT incremented. Those
+            count boundaries struck to the rope off the bat; an
+            overthrow allowance is not one, however many runs it is
+            worth. This also makes the panel agree with the server's
+            own recalculation from the canonical ball log
+            (buildLiveCardsFromBallsArray in server.js), which has
+            always declined to count an 'OT' as a four or a six.
+
+         A legacy `{ runs: n }` meta (the old single-total picker) is
+         still accepted so nothing that already calls this breaks — it
+         is treated as n runs run, exactly as before.
+         ============================================================ */
+      const otHasBreakdown = !!(meta && (typeof meta.runsCompleted === 'number' || meta.boundary));
+      const otCompleted = (meta && typeof meta.runsCompleted === 'number') ? Math.max(0, meta.runsCompleted) : 0;
+      const otCrossed = !!(meta && meta.crossed);
+      const otBoundary = !!(meta && meta.boundary);
+      const otAllowance = otBoundary ? ((meta && typeof meta.boundaryAllowance === 'number') ? meta.boundaryAllowance : 4) : 0;
+      const otExtraCompleted = (!otBoundary && meta && typeof meta.extraCompleted === 'number') ? Math.max(0, meta.extraCompleted) : 0;
+      // Runs the batters physically RAN — what decides which end each
+      // batter finishes at, and therefore the strike.
+      const otRunsRun = otHasBreakdown
+        ? (otCompleted + (otBoundary ? (otCrossed ? 1 : 0) : otExtraCompleted))
+        : ((meta && typeof meta.runs === 'number') ? meta.runs : 0);
+      // Total credited to the batting side — and, the bat having struck
+      // the ball, to the striker (Law 18.10).
+      const otRuns = otRunsRun + otAllowance;
+
       state.score.runs += otRuns;
       state.striker.runs += otRuns;
       state.partnershipRuns += otRuns;
-      if(otRuns === 4) state.striker.fours++;
-      if(otRuns === 6) state.striker.sixes++;
-      const otLabel = `OT${otRuns}`;
+      const otLabel = otBoundary ? `OT${otRuns}•` : `OT${otRuns}`;
       state.thisOver.push(otLabel);
       pushBallHistory(otLabel);
       overCompletedThisBall = addLegalBall(otRuns);
       addBowlerBall(otRuns);
+      // Record the components on the event itself, so the scorecard,
+      // commentary and any later correction can re-derive this delivery
+      // instead of trusting a total nobody can decompose again.
+      lastOverthrowDetail = otHasBreakdown
+        ? { runsCompleted: otCompleted, crossed: otCrossed, boundary: otBoundary, boundaryAllowance: otAllowance, extraCompleted: otExtraCompleted, runsRun: otRunsRun, total: otRuns }
+        : { legacyTotal: otRuns, runsRun: otRunsRun, total: otRuns };
       fireEvent('OVERTHROW', 'OVERTHROW', `${otRuns} run${otRuns === 1 ? '' : 's'} — ${state.striker.name || 'Striker'}`);
-      if(otRuns === 4) extraBoundaryEventType = 'FOUR';
-      else if(otRuns === 6) extraBoundaryEventType = 'SIX';
-      if(otRuns % 2 === 1) swapStrikeSilent();
+      // Still a boundary-worthy highlight to clip, even though it is not a
+      // boundary in the striker's 4s/6s columns.
+      if(otBoundary || otRuns >= 4) extraBoundaryEventType = otRuns >= 6 ? 'SIX' : 'FOUR';
+      if(otRunsRun % 2 === 1) swapStrikeSilent();
       break;
     }
     case '0': case '1': case '2': case '3': case '4': case '5': case '6': {
@@ -7488,7 +8455,7 @@ function recordBall(kind, meta){
       // Archive the dismissed batsman (not necessarily the striker, on a
       // run-out) + this fall of wicket — this is what powers the
       // Innings/Match Summary graphics and the scorecard later.
-      state.battingCard[state.battingTeam].push({
+      activeBattingCard(state.battingTeam).push({
         name: dismissedBatter.name, id: dismissedBatter.id || null, runs: dismissedBatter.runs, balls: dismissedBatter.balls,
         fours: dismissedBatter.fours, sixes: dismissedBatter.sixes, out: true, howOut: dismissalText, retiredHurtCount: dismissedBatter.retiredHurtCount || 0,
         dismissalType, fielderName: fielderName || null,
@@ -7502,7 +8469,7 @@ function recordBall(kind, meta){
           state.dismissedThisInnings[state.battingTeam].push(dismissedBatter.id);
         }
       }
-      state.fallOfWickets[state.battingTeam].push({
+      activeFallOfWickets(state.battingTeam).push({
         wkt: state.score.wickets, runs: state.score.runs, over: fmtOvers(state.score.overs, state.score.balls),
         inningsNo: state.inningsNumber
       });
@@ -7580,7 +8547,7 @@ function recordBall(kind, meta){
 
       state.score.runs += wdTotal;
       state.partnershipRuns += wdTotal;
-      state.extras[state.battingTeam].wd += wdTotal;
+      activeExtras(state.battingTeam).wd += wdTotal;
       state.score.wickets++;
       const wdLabel = `Wd${extraRun > 0 ? `+${extraRun}` : ''}+W`;
       state.thisOver.push(wdLabel);
@@ -7588,10 +8555,21 @@ function recordBall(kind, meta){
       addBowlerExtra(wdTotal);
       if(isBowlerWicket){ state.bowler.wickets++; state.bowler.wicketsThisOver = (state.bowler.wicketsThisOver || 0) + 1; }
 
-      // Completed runs (Run Out only) belong to the team total (already
-      // added above via wdTotal) AND to whoever faced the delivery
-      // individually — same rule as a normal Run Out.
-      if(dismissalType === 'Run Out' && extraRun > 0) originalStriker.runs += extraRun;
+      // 🛠 ROOT-CAUSE FIX (batsman credited with runs run off a Wide).
+      // This branch used to do `originalStriker.runs += extraRun`, copying
+      // the normal Run Out rule. That rule does not apply to a Wide: under
+      // the Laws, EVERY run resulting from a wide — the one-run penalty and
+      // every run the batters then complete — is scored as a Wide to the
+      // batting side's extras, and nothing whatsoever is credited to the
+      // striker (the ball was, by definition, not within reach of the bat).
+      // The runs are already in the team total and in extras.wd via wdTotal
+      // above, so crediting the striker as well double-counted them: the
+      // batting card's runs + extras came to MORE than the team total, and
+      // the panel's live card disagreed with the server's own recalculation
+      // from the canonical ball log (buildLiveCardsFromBallsArray in
+      // server.js, which correctly gives the striker nothing on a 'Wd').
+      // The plain 'Wd' case in this same switch never had the bug — only
+      // the wicket-on-a-wide path did. Nothing is credited here now.
 
       if(fielderName && ['Run Out', 'Stumped'].includes(dismissalType)){
         const fKey = bowlingTeamKey();
@@ -7605,7 +8583,7 @@ function recordBall(kind, meta){
         state.fieldingStats[fKey][fId] = rec;
       }
 
-      state.battingCard[state.battingTeam].push({
+      activeBattingCard(state.battingTeam).push({
         name: dismissedBatter.name, id: dismissedBatter.id || null, runs: dismissedBatter.runs, balls: dismissedBatter.balls,
         fours: dismissedBatter.fours, sixes: dismissedBatter.sixes, out: true, howOut: dismissalText, retiredHurtCount: dismissedBatter.retiredHurtCount || 0,
         dismissalType, fielderName: fielderName || null,
@@ -7617,7 +8595,7 @@ function recordBall(kind, meta){
         state.dismissedThisInnings[state.battingTeam] = state.dismissedThisInnings[state.battingTeam] || [];
         if(!state.dismissedThisInnings[state.battingTeam].includes(dismissedBatter.id)) state.dismissedThisInnings[state.battingTeam].push(dismissedBatter.id);
       }
-      state.fallOfWickets[state.battingTeam].push({
+      activeFallOfWickets(state.battingTeam).push({
         wkt: state.score.wickets, runs: state.score.runs, over: fmtOvers(state.score.overs, state.score.balls),
         inningsNo: state.inningsNumber
       });
@@ -7669,8 +8647,14 @@ function recordBall(kind, meta){
       state.score.runs += nbTotal;
       state.striker.runs += batRuns;
       if(batRuns === 4) state.striker.fours++;
+      // 🛠 FIX: the six case was missing here, so a No Ball struck for six
+      // on which a batter was then run out credited the runs but silently
+      // dropped the striker's boundary tally — the plain 'Nb' case above
+      // already tallies both. Same Law 19.7.1 reasoning: the bat touched it,
+      // so it is a genuine boundary six.
+      if(batRuns === 6) state.striker.sixes++;
       state.partnershipRuns += nbTotal;
-      state.extras[state.battingTeam].nb += 1;
+      activeExtras(state.battingTeam).nb += 1;
       state.score.wickets++;
       const nbLabel = `Nb${batRuns > 0 ? `+${batRuns}` : ''}+W`;
       state.thisOver.push(nbLabel);
@@ -7689,7 +8673,7 @@ function recordBall(kind, meta){
         state.fieldingStats[fKey][fId] = rec;
       }
 
-      state.battingCard[state.battingTeam].push({
+      activeBattingCard(state.battingTeam).push({
         name: dismissedBatter.name, id: dismissedBatter.id || null, runs: dismissedBatter.runs, balls: dismissedBatter.balls,
         fours: dismissedBatter.fours, sixes: dismissedBatter.sixes, out: true, howOut: dismissalText, retiredHurtCount: dismissedBatter.retiredHurtCount || 0,
         dismissalType, fielderName: fielderName || null,
@@ -7701,7 +8685,7 @@ function recordBall(kind, meta){
         state.dismissedThisInnings[state.battingTeam] = state.dismissedThisInnings[state.battingTeam] || [];
         if(!state.dismissedThisInnings[state.battingTeam].includes(dismissedBatter.id)) state.dismissedThisInnings[state.battingTeam].push(dismissedBatter.id);
       }
-      state.fallOfWickets[state.battingTeam].push({
+      activeFallOfWickets(state.battingTeam).push({
         wkt: state.score.wickets, runs: state.score.runs, over: fmtOvers(state.score.overs, state.score.balls),
         inningsNo: state.inningsNumber
       });
@@ -7720,7 +8704,7 @@ function recordBall(kind, meta){
       if(!meta || !meta.deferAnimation) fireEvent('WICKET', 'WICKET!', dismissedBatter.name);
       // A No Ball still sets up the next ball as a Free Hit regardless of
       // the wicket that happened on it — same rule as the plain 'Nb' case.
-      if(state.format !== 'Test'){
+      if(matchRules().freeHitOnNoBall){
         state.freeHit = true;
         setTimeout(() => fireEvent('FREE_HIT', 'FREE HIT', 'Next ball is a Free Hit'), 2500);
       }
@@ -7734,7 +8718,7 @@ function recordBall(kind, meta){
       const wdTotal = 1 + extraRun;
       state.score.runs += wdTotal;
       state.partnershipRuns += wdTotal;
-      state.extras[state.battingTeam].wd += wdTotal;
+      activeExtras(state.battingTeam).wd += wdTotal;
       const wdLabel = extraRun > 0 ? `Wd+${extraRun}` : 'Wd';
       state.thisOver.push(wdLabel);
       pushBallHistory(wdLabel);
@@ -7780,8 +8764,8 @@ function recordBall(kind, meta){
         else if(batRuns === 6) extraBoundaryEventType = 'SIX';
       }
       state.partnershipRuns += nbTotal;
-      state.extras[state.battingTeam].nb += 1;
-      if(legByeRuns > 0) state.extras[state.battingTeam].lb += legByeRuns;
+      activeExtras(state.battingTeam).nb += 1;
+      if(legByeRuns > 0) activeExtras(state.battingTeam).lb += legByeRuns;
       const nbLabel = legByeRuns > 0 ? `Nb+${legByeRuns}lb` : (batRuns > 0 ? `Nb+${batRuns}` : 'Nb');
       state.thisOver.push(nbLabel);
       pushBallHistory(nbLabel);
@@ -7794,7 +8778,7 @@ function recordBall(kind, meta){
       // Free Hit only exists in limited-overs cricket (ODI/T20/Custom) —
       // Test/first-class cricket has no Free Hit provision under the Laws
       // of Cricket or ICC playing conditions, so skip it for that format.
-      if(state.format !== 'Test'){
+      if(matchRules().freeHitOnNoBall){
         state.freeHit = true;
         // Let the No Ball graphic finish its full run (~2.5s: intro + hold +
         // exit) before Free Hit appears, so the two never overlap on screen.
@@ -7808,7 +8792,7 @@ function recordBall(kind, meta){
       const byeRuns = (meta && typeof meta.runs === 'number') ? meta.runs : 1;
       state.score.runs += byeRuns;
       state.partnershipRuns += byeRuns;
-      state.extras[state.battingTeam].b += byeRuns;
+      activeExtras(state.battingTeam).b += byeRuns;
       const bLabel = byeRuns === 1 ? 'B' : `B${byeRuns}`;
       state.thisOver.push(bLabel);
       pushBallHistory(bLabel);
@@ -7821,7 +8805,7 @@ function recordBall(kind, meta){
       const lbRuns = (meta && typeof meta.runs === 'number') ? meta.runs : 1;
       state.score.runs += lbRuns;
       state.partnershipRuns += lbRuns;
-      state.extras[state.battingTeam].lb += lbRuns;
+      activeExtras(state.battingTeam).lb += lbRuns;
       const lbLabel = lbRuns === 1 ? 'LB' : `LB${lbRuns}`;
       state.thisOver.push(lbLabel);
       pushBallHistory(lbLabel);
@@ -7871,9 +8855,20 @@ function recordBall(kind, meta){
     dismissalType: kindIsWicket ? ((meta && meta.dismissalType) || 'Bowled') : null,
     fielderName: kindIsWicket ? ((meta && meta.fielderName) || null) : null,
     runOutRunsCompleted: (kindIsWicket && meta && meta.dismissalType === 'Run Out') ? (meta.runsCompleted || 0) : null,
+    // 🏏 Law 19.8 components of an overthrow (completed runs / crossed /
+    // boundary allowance) — stored with the delivery so the total can always
+    // be re-derived and audited, never just the total. null on every other kind.
+    overthrow: kind === 'OT' ? lastOverthrowDetail : null,
+    // Which match phase this delivery belongs to. A Super Over delivery is
+    // tagged here (with the Super Over's own id) so it can never be read back
+    // as part of the regulation innings.
+    phase: state.phase || 'REGULATION',
+    superOverId: inSuperOver() ? currentSuperOverId() : null,
+    superOverInningsId: inSuperOver() ? currentSuperOverInningsId() : null,
     scoreAfter: `${state.score.runs}-${state.score.wickets}`,
     timestamp: ballTimestamp
   });
+  if(kind === 'OT') lastOverthrowDetail = null;
   // 🏏 Over-summary accumulators — see the `overRunsAcc`/`overWicketsAcc`
   // declaration above. Uses the exact same delta just computed for ballLog.
   overRunsAcc += (state.score.runs - runsBefore);
@@ -7905,6 +8900,10 @@ function recordBall(kind, meta){
   checkMilestones();
   checkInningsComplete();
   checkMatchResult();
+  // A Super Over innings ends on six legal balls or the wicket limit — both
+  // already covered by isInningsOver() through the rules layer; this just
+  // refreshes the phase controls so no further delivery can be entered.
+  checkSuperOverInningsComplete();
   // Over just ended and there's more cricket left to bowl → the very next
   // thing the operator needs to do is name the incoming bowler, so flag it
   // here and let the caller open the prompt once any wicket flow (new
@@ -8107,11 +9106,16 @@ function swapStrikeSilent(){
   const tmp = state.striker; state.striker = state.nonStriker; state.nonStriker = tmp;
 }
 
-const EXTRAS_RUN_PICKER_KINDS = ['B', 'LB', 'Wd', 'Nb', 'OT'];
+// 🏏 'OT' is deliberately NOT in here any more. An overthrow is a Law 19.8
+// calculation over components (completed runs / crossed at the throw /
+// boundary allowance), which a single 1-8 run picker cannot express — it
+// opens openOverthrowModal() instead. See the 'OT' case in recordBall().
+const EXTRAS_RUN_PICKER_KINDS = ['B', 'LB', 'Wd', 'Nb'];
 document.querySelectorAll('[data-ball]').forEach(btn => {
   btn.addEventListener('click', () => {
     const kind = btn.dataset.ball;
     if(kind === 'W') openWicketModal();
+    else if(kind === 'OT') openOverthrowModal();
     else if(EXTRAS_RUN_PICKER_KINDS.includes(kind)) openExtrasModal(kind);
     else { recordBall(kind); maybePromptNewBowler(); }
   });
@@ -8150,7 +9154,7 @@ let nbLegByeMode = false;
 function openExtrasModal(kind){
   if(isInningsOver()){
     let msg = '🚫 Overs complete for this innings';
-    if(state.score.wickets >= 10) msg = '🚫 All out — 10 wickets already, innings is over';
+    if(isAllOut()) msg = `🚫 All out — ${maxWickets()} wicket${maxWickets() === 1 ? '' : 's'} already, innings is over`;
     else if(isChaseWon()) msg = '🏆 Target already reached — match is won, no more balls to record';
     toast(msg);
     return;
@@ -8186,7 +9190,7 @@ function openExtrasModal(kind){
   // Bye never do (any dismissal on those balls is recorded as a plain
   // legal-delivery wicket instead, exactly as before).
   const wicketLink = document.getElementById('extras-modal-wicket-link');
-  if((kind === 'Wd' || kind === 'Nb') && state.score.wickets < 10){
+  if((kind === 'Wd' || kind === 'Nb') && !isAllOut()){
     wicketLink.style.display = 'block';
     wicketLink.onclick = () => {
       closeExtrasModal();
@@ -8244,6 +9248,218 @@ function closeExtrasModal(){
 document.getElementById('extras-modal-cancel').addEventListener('click', closeExtrasModal);
 document.getElementById('extras-modal-overlay').addEventListener('click', (e) => {
   if(e.target.id === 'extras-modal-overlay') closeExtrasModal();
+});
+
+/* ============================================================
+   🏏 PENALTY RUNS / OVERTHROW / SUPER OVER — operator controls
+   ============================================================ */
+function penaltyModalRefresh(){
+  const awardedTo = document.getElementById('penalty-awarded-to').value;
+  const sel = document.getElementById('penalty-reason');
+  const keep = sel.value;
+  // Only offer reasons the Laws allow for the side being awarded — an
+  // invalid reason can't be entered in the first place, rather than being
+  // rejected after the fact.
+  sel.innerHTML = PENALTY_REASONS
+    .filter(r => r.side === 'EITHER' || r.side === awardedTo)
+    .map(r => `<option value="${r.code}">${escapeHtmlAttr(r.label)}</option>`)
+    .join('');
+  if([...sel.options].some(o => o.value === keep)) sel.value = keep;
+
+  const runs = parseInt(document.getElementById('penalty-runs').value, 10) || 0;
+  const team = awardedTo === 'BATTING' ? state.battingTeam : bowlingTeamKey();
+  const hasBatted = state.inningsArchive.some(i => i.team === team);
+  const isBatting = team === state.battingTeam;
+  let where;
+  if(isBatting) where = `added to ${teamLabel(team)}'s innings in progress`;
+  else if(hasBatted) where = `added to ${teamLabel(team)}'s completed innings — the target will be recalculated (Law 18.11)`;
+  else where = `carried into ${teamLabel(team)}'s next innings as penalty extras (Law 18.11)`;
+  document.getElementById('penalty-modal-effect').textContent =
+    `${runs} run${runs === 1 ? '' : 's'} to ${teamLabel(team)} — ${where}. No ball is bowled, no batsman is credited, the bowler is not charged.`;
+}
+function openPenaltyModal(){
+  document.getElementById('penalty-modal-sub').textContent = inSuperOver()
+    ? `Super Over ${state.superOver.number} — ${teamLabel(state.battingTeam)} batting. A penalty is not a delivery.`
+    : 'Awarded by the umpire — not a delivery. No ball is bowled, no batsman is credited.';
+  document.getElementById('penalty-notes').value = '';
+  penaltyModalRefresh();
+  document.getElementById('penalty-modal-overlay').classList.add('show');
+}
+function closePenaltyModal(){ document.getElementById('penalty-modal-overlay').classList.remove('show'); }
+/* Lists every award made this match, so a mistaken one can be reversed
+   exactly from its own ledger entry (see removePenaltyRuns). */
+function renderPenaltyLedger(){
+  const wrap = document.getElementById('pen-ledger');
+  if(!wrap) return;
+  const log = state.penaltyLog || [];
+  if(!log.length){ wrap.innerHTML = ''; return; }
+  wrap.innerHTML = log.map(p => `<div class="pen-ledger-row"><b>+${p.runs}</b> ${escapeHtmlAttr(teamLabel(p.team))}${p.phase === 'SUPER_OVER' ? ` · SO${p.superOverNumber}` : ''} · ${escapeHtmlAttr(p.reasonLabel)}<button type="button" data-pen-remove="${escapeHtmlAttr(p.id)}">Remove</button></div>`).join('');
+  wrap.querySelectorAll('[data-pen-remove]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if(removePenaltyRuns(btn.getAttribute('data-pen-remove'))) toast('Penalty award removed and totals recalculated');
+    });
+  });
+}
+
+/* ---- Overthrow modal (Law 19.8 components, not a lump total) ---- */
+let otBoundarySelected = false;
+function overthrowModalRefresh(){
+  const completed = parseInt(document.getElementById('ot-completed').value, 10) || 0;
+  const crossed = document.getElementById('ot-crossed').value === '1';
+  const extra = parseInt(document.getElementById('ot-extra').value, 10) || 0;
+  document.getElementById('ot-boundary-block').style.display = otBoundarySelected ? 'block' : 'none';
+  document.getElementById('ot-extra-block').style.display = otBoundarySelected ? 'none' : 'block';
+  document.querySelectorAll('[data-ot-boundary]').forEach(b => {
+    b.classList.toggle('is-on', (b.getAttribute('data-ot-boundary') === '1') === otBoundarySelected);
+  });
+  const allowance = otBoundarySelected ? 4 : 0;
+  const runsRun = completed + (otBoundarySelected ? (crossed ? 1 : 0) : extra);
+  const total = runsRun + allowance;
+  document.getElementById('overthrow-modal-effect').textContent =
+    `${total} run${total === 1 ? '' : 's'} to ${state.striker.name || 'the striker'} — ${completed} completed`
+    + (otBoundarySelected ? ` + ${crossed ? '1 (crossed at the throw) + ' : ''}${allowance} boundary allowance` : (extra ? ` + ${extra} after the throw` : ''))
+    + `. ${runsRun % 2 === 1 ? 'Strike rotates' : 'Strike stays'} — ${runsRun} run${runsRun === 1 ? '' : 's'} actually run.`;
+}
+function openOverthrowModal(){
+  if(isInningsOver()){ toast('🚫 This innings is over — no more balls to record'); return; }
+  otBoundarySelected = false;
+  document.getElementById('ot-completed').value = '1';
+  document.getElementById('ot-crossed').value = '0';
+  document.getElementById('ot-extra').value = '0';
+  document.getElementById('overthrow-modal-sub').textContent = `${state.bowler.name || 'Bowler'} to ${state.striker.name || 'Striker'} — struck by the bat, then an overthrow.`;
+  overthrowModalRefresh();
+  document.getElementById('overthrow-modal-overlay').classList.add('show');
+}
+function closeOverthrowModal(){ document.getElementById('overthrow-modal-overlay').classList.remove('show'); }
+
+/* ---- Super Over panel ---- */
+function renderSuperOverPanel(){
+  const bar = document.getElementById('so-bar');
+  if(!bar) return;
+  const startBtn = document.getElementById('so-start-btn');
+  const nextBtn = document.getElementById('so-next-btn');
+  const tieBtn = document.getElementById('so-tie-btn');
+  const pending = isSuperOverPending();
+  if(!inSuperOver() && !pending){ bar.hidden = true; return; }
+  bar.hidden = false;
+  const rules = matchRules().superOver;
+
+  if(pending){
+    const next = state.superOver.number + 1;
+    document.getElementById('so-pill').textContent = 'TIED';
+    document.getElementById('so-bar-title').textContent = state.superOver.number
+      ? `Super Over ${state.superOver.number} tied`
+      : 'Regulation match tied';
+    document.getElementById('so-bar-line').textContent =
+      `This competition resolves a tie with a Super Over — ${rules.ballsPerInnings} legal balls a side, innings also ends on the ${rules.maxWickets === 2 ? '2nd' : rules.maxWickets + 'th'} wicket. ${rules.battingOrder === 'SECOND_TEAM_FIRST' ? 'The side that batted second bats first.' : 'The side that batted first bats first.'}`;
+    startBtn.hidden = false;
+    startBtn.textContent = `🏆 Start Super Over ${next}`;
+    nextBtn.hidden = true;
+    tieBtn.hidden = false;
+    return;
+  }
+
+  const ballsAllowed = ballsPerInnings();
+  const ballsBowled = state.score.overs * ballsPerOver() + state.score.balls;
+  const left = Math.max(0, ballsAllowed - ballsBowled);
+  document.getElementById('so-pill').textContent = `SUPER OVER ${state.superOver.number}`;
+  document.getElementById('so-bar-title').textContent =
+    `${teamLabel(state.battingTeam)} batting — innings ${state.superOver.inningsIndex + 1} of 2`;
+  const parts = [
+    `${state.score.runs}/${state.score.wickets}`,
+    `${left} legal ball${left === 1 ? '' : 's'} left`,
+    `${wicketsRemaining()} wicket${wicketsRemaining() === 1 ? '' : 's'} left`
+  ];
+  if(state.target) parts.push(`need ${Math.max(0, state.target - state.score.runs)} to win`);
+  document.getElementById('so-bar-line').textContent = parts.join(' · ');
+  startBtn.hidden = true;
+  tieBtn.hidden = true;
+  nextBtn.hidden = !isInningsOver() || !!state.milestonesHit['match-result'];
+  nextBtn.textContent = state.superOver.inningsIndex === 0
+    ? `End Super Over innings — ${teamLabel(state.battingTeam === 'A' ? 'B' : 'A')} to bat`
+    : 'End Super Over innings and decide the match';
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const on = (id, ev, fn) => { const el = document.getElementById(id); if(el) el.addEventListener(ev, fn); };
+  on('lc-penalty-btn', 'click', openPenaltyModal);
+  on('penalty-modal-cancel', 'click', closePenaltyModal);
+  on('penalty-awarded-to', 'change', penaltyModalRefresh);
+  on('penalty-runs', 'change', penaltyModalRefresh);
+  on('penalty-reason', 'change', penaltyModalRefresh);
+  on('penalty-modal-submit', 'click', () => {
+    const entry = recordPenaltyRuns({
+      runs: document.getElementById('penalty-runs').value,
+      awardedTo: document.getElementById('penalty-awarded-to').value,
+      reasonCode: document.getElementById('penalty-reason').value,
+      eventContext: document.getElementById('penalty-context').value,
+      notes: document.getElementById('penalty-notes').value
+    });
+    if(entry){
+      closePenaltyModal();
+      toast(`🏏 ${entry.runs} penalty run${entry.runs === 1 ? '' : 's'} to ${teamLabel(entry.team)} — ${entry.reasonLabel}`, 5000);
+    }
+  });
+  const penOverlay = document.getElementById('penalty-modal-overlay');
+  if(penOverlay) penOverlay.addEventListener('click', e => { if(e.target.id === 'penalty-modal-overlay') closePenaltyModal(); });
+
+  on('overthrow-modal-cancel', 'click', closeOverthrowModal);
+  on('ot-completed', 'change', overthrowModalRefresh);
+  on('ot-crossed', 'change', overthrowModalRefresh);
+  on('ot-extra', 'change', overthrowModalRefresh);
+  document.querySelectorAll('[data-ot-boundary]').forEach(b => b.addEventListener('click', () => {
+    otBoundarySelected = b.getAttribute('data-ot-boundary') === '1';
+    overthrowModalRefresh();
+  }));
+  on('overthrow-modal-submit', 'click', () => {
+    const meta = {
+      runsCompleted: parseInt(document.getElementById('ot-completed').value, 10) || 0,
+      boundary: otBoundarySelected,
+      crossed: otBoundarySelected && document.getElementById('ot-crossed').value === '1',
+      boundaryAllowance: otBoundarySelected ? 4 : 0,
+      extraCompleted: otBoundarySelected ? 0 : (parseInt(document.getElementById('ot-extra').value, 10) || 0)
+    };
+    if(!meta.runsCompleted && !meta.boundary && !meta.extraCompleted){
+      toast('⚠️ An overthrow has to produce at least one run — set the completed runs or mark the boundary');
+      return;
+    }
+    closeOverthrowModal();
+    recordBall('OT', meta);
+    maybePromptNewBowler();
+  });
+  const otOverlay = document.getElementById('overthrow-modal-overlay');
+  if(otOverlay) otOverlay.addEventListener('click', e => { if(e.target.id === 'overthrow-modal-overlay') closeOverthrowModal(); });
+
+  on('so-start-btn', 'click', () => startSuperOver());
+  on('so-next-btn', 'click', () => endSuperOverInnings());
+  on('so-tie-btn', 'click', () => {
+    if(!confirm('Record the tie as this match\'s final result, with no Super Over?')) return;
+    state.superOverReady = false;
+    state.milestonesHit['match-result'] = true;
+    state.matchResultText = 'MATCH TIED';
+    state.matchWinnerKey = 'TIE';
+    if(currentMatchTournament()) saveMatchToLeague(true); else saveMatchToSingleHistory(true);
+    updateBallButtonsState();
+    renderSuperOverPanel();
+    pushState(true, true);
+    toast('Match recorded as tied.');
+  });
+
+  const rec = document.getElementById('reconcile-btn');
+  if(rec) rec.addEventListener('click', () => {
+    const out = document.getElementById('reconcile-out');
+    const r = reconcileInnings();
+    if(r.ok && !r.issues.length){
+      out.textContent = `✅ This innings adds up: ${state.score.runs} runs = batters ${r.batRuns} + extras ${r.extras}; ${r.legalBalls} legal ball${r.legalBalls === 1 ? '' : 's'} (${fmtOvers(state.score.overs, state.score.balls)}); ${r.wickets} wicket${r.wickets === 1 ? '' : 's'}.`;
+      toast('✅ Innings reconciles — total, legal balls and wickets all agree with the ball log');
+    } else {
+      out.textContent = (r.ok ? 'ℹ️ ' : '⚠️ ') + r.issues.join(' — ');
+      toast(r.ok ? 'ℹ️ Reconciled with notes — see the Session panel' : '⚠️ This innings does not add up — see the Session panel', 7000);
+    }
+  });
+
+  renderSuperOverPanel();
+  renderPenaltyLedger();
 });
 // Finalizes the "wicket on a Wide/No Ball" flow, called from the same
 // dismissal-detail submit handlers (Stumped/Run Out/direct Hit Wicket)
@@ -8340,13 +9556,13 @@ let lastAutoWicketClip = null;
 function openWicketModal(){
   if(isInningsOver()){
     let msg = '🚫 Overs complete for this innings';
-    if(state.score.wickets >= 10) msg = '🚫 All out — 10 wickets already, innings is over';
+    if(isAllOut()) msg = `🚫 All out — ${maxWickets()} wicket${maxWickets() === 1 ? '' : 's'} already, innings is over`;
     else if(isChaseWon()) msg = '🏆 Target already reached — match is won, no more balls to record';
     toast(msg);
     pendingExtraWicketContext = null;
     return;
   }
-  if(state.score.wickets >= 10){ toast('🚫 All out — cannot take an 11th wicket'); pendingExtraWicketContext = null; return; }
+  if(isAllOut()){ toast(`🚫 All out — ${maxWickets()} wickets already, cannot take another`); pendingExtraWicketContext = null; return; }
 
   const overlay = document.getElementById('wicket-modal-overlay');
   const modal = document.getElementById('wicket-modal');
@@ -8956,7 +10172,7 @@ function reverseLastBallDelta(){
       state.bowler.runsThisOver = Math.max(0, (state.bowler.runsThisOver || 0) - r);
     }
   } else if(kind === 'Wd'){
-    state.extras[state.battingTeam].wd = Math.max(0, state.extras[state.battingTeam].wd - runs);
+    activeExtras(state.battingTeam).wd = Math.max(0, activeExtras(state.battingTeam).wd - runs);
     state.partnershipRuns = Math.max(0, state.partnershipRuns - runs);
     if(state.bowler.name){
       state.bowler.runs = Math.max(0, state.bowler.runs - runs);
@@ -8964,7 +10180,7 @@ function reverseLastBallDelta(){
     }
     if((runs - 1) % 2 === 1) strikeSwapsForward++;
   } else if(kind === 'Nb'){
-    state.extras[state.battingTeam].nb = Math.max(0, state.extras[state.battingTeam].nb - 1);
+    activeExtras(state.battingTeam).nb = Math.max(0, activeExtras(state.battingTeam).nb - 1);
     // Credited back to the striker as "off the bat" — see the disclosed
     // limitation in the comment block above.
     const nonPenalty = runs - 1;
@@ -8979,7 +10195,7 @@ function reverseLastBallDelta(){
     if(nonPenalty % 2 === 1) strikeSwapsForward++;
   } else if(kind === 'B' || kind === 'LB'){
     const key = kind === 'B' ? 'b' : 'lb';
-    state.extras[state.battingTeam][key] = Math.max(0, state.extras[state.battingTeam][key] - runs);
+    activeExtras(state.battingTeam)[key] = Math.max(0, activeExtras(state.battingTeam)[key] - runs);
     state.partnershipRuns = Math.max(0, state.partnershipRuns - runs);
     if(runs % 2 === 1) strikeSwapsForward++;
   }
@@ -9200,6 +10416,17 @@ function fireMatchResultInningsWin(winnerKey, margin){
   toast(`${teamLabel(winnerKey)} win by an innings and ${margin} run${margin === 1 ? '' : 's'} — no further innings needed`);
 }
 document.getElementById('next-innings-btn').addEventListener('click', () => {
+  // 🔒 This button moves the REGULATION match on. A Super Over is a
+  // different phase with its own transition (endSuperOverInnings), so letting
+  // this run during one pushed the Super Over innings into the regulation
+  // inningsArchive, bumped inningsNumber and set a regulation target from the
+  // Super Over score — corrupting the match record outright. The button is
+  // also disabled during a Super Over (see updateBallButtonsState); this is
+  // the backstop for a keyboard/programmatic click that bypasses that.
+  if(inSuperOver()){
+    toast('🏆 A Super Over is in progress — use the Super Over controls, not Start Next Innings');
+    return;
+  }
   if(!isInningsOver()){ toast('Current innings is not over yet'); return; }
   if(state.milestonesHit['match-result']){ toast('Match is already complete — Reset to start a new match'); return; }
 
@@ -9230,7 +10457,7 @@ document.getElementById('next-innings-btn').addEventListener('click', () => {
     // Snapshot this innings' extras before the running counter gets reset
     // below — needed since, in a Test, the same team's key gets reused for
     // their 2nd innings and would otherwise mix the two innings' totals.
-    extras: { ...(state.extras[oldBattingTeam] || { wd:0, nb:0, b:0, lb:0 }) }
+    extras: { ...(EMPTY_EXTRAS()), ...(state.extras[oldBattingTeam] || {}) }
   };
   state.inningsArchive.push(completedInnings);
   // Kept for the Match Summary graphic / league record, which only ever
@@ -9250,7 +10477,7 @@ document.getElementById('next-innings-btn').addEventListener('click', () => {
     const inn1 = state.inningsArchive[0], inn2 = state.inningsArchive[1];
     const deficit = inn1.runs - inn2.runs;
     let followOn = false;
-    if(deficit >= 200){
+    if(matchRules().followOnDeficit && deficit >= matchRules().followOnDeficit){
       followOn = confirm(`${teamLabel(inn1.team)} lead by ${deficit} runs after the 1st innings — enforce the follow-on and send ${teamLabel(inn2.team)} straight back in?\n\nOK = enforce follow-on (${teamLabel(inn2.team)} bats again)\nCancel = ${teamLabel(inn1.team)} bats again instead`);
     }
     nextTeam = followOn ? inn2.team : inn1.team;
@@ -9281,7 +10508,7 @@ document.getElementById('next-innings-btn').addEventListener('click', () => {
   // innings that just finished had its own extras snapshotted onto
   // completedInnings.extras above, so nothing is lost even when the same
   // team (in a Test) bats again later and reuses this same key.
-  state.extras[nextTeam] = { wd:0, nb:0, b:0, lb:0 };
+  state.extras[nextTeam] = EMPTY_EXTRAS();
   state.thisOver = [];
   overRunsAcc = 0; overWicketsAcc = 0; // see the matching reset in recordBall() above
   state.ballHistory = [];
@@ -9321,6 +10548,22 @@ document.getElementById('next-innings-btn').addEventListener('click', () => {
       delete state.milestonesHit[key];
     }
   });
+
+  // 🏏 Law 18.11 — penalty runs awarded to this side before they had
+  // batted are seeded into their innings now, as penalty extras.
+  state.pendingPenalty = state.pendingPenalty || { A: 0, B: 0 };
+  const carriedPenalty = state.pendingPenalty[nextTeam] || 0;
+  if(carriedPenalty > 0){
+    state.score.runs += carriedPenalty;
+    state.extras[nextTeam].pen += carriedPenalty;
+    state.pendingPenalty[nextTeam] = 0;
+    (state.penaltyLog || []).forEach(pen => {
+      if(pen.team === nextTeam && pen.appliedTo && pen.appliedTo.kind === 'CARRIED_TO_NEXT_INNINGS'){
+        pen.appliedTo = { kind: 'CURRENT_INNINGS', inningsNumber: state.inningsNumber };
+      }
+    });
+    toast(`ℹ️ ${carriedPenalty} penalty run${carriedPenalty === 1 ? '' : 's'} carried into ${teamLabel(nextTeam)}'s innings (Law 18.11)`);
+  }
 
   const subText = isTest ? `Innings ${state.inningsNumber}${state.target ? ' — Target: ' + state.target : ''}` : `Target: ${state.target}`;
   fireEvent('INNINGS_BREAK', 'INNINGS BREAK', subText, 4000);
@@ -9747,7 +10990,7 @@ function exportResultText(){
   const battingShort = battingTeam.short || battingTeam.name;
   const bowlingShort = bowlingTeam.short || bowlingTeam.name;
   if(state.score.runs >= state.target){
-    const left = 10 - state.score.wickets;
+    const left = wicketsRemaining();
     return { text: `${battingShort} won by ${left} wicket${left === 1 ? '' : 's'}`, winner: state.battingTeam };
   }
   if(isInningsOver()){
@@ -10102,9 +11345,9 @@ async function buildMatchExcelWorkbook(){
     // innings is done, otherwise the live running total — never the
     // team's OTHER (already-archived) innings extras, which the plain
     // state.extras[team] lookup used to return once that team batted twice.
-    const extr = entry.archived ? (entry.archived.extras || { wd:0, nb:0, b:0, lb:0 }) : (state.extras[team] || { wd:0, nb:0, b:0, lb:0 });
-    const extrasTotal = (extr.wd||0) + (extr.nb||0) + (extr.b||0) + (extr.lb||0);
-    const extrasRow = ws.addRow(['Extras', extrasTotal, '', '', '', '', `Wd ${extr.wd||0} · NB ${extr.nb||0} · B ${extr.b||0} · LB ${extr.lb||0}`]);
+    const extr = { ...EMPTY_EXTRAS(), ...(entry.archived ? (entry.archived.extras || {}) : (state.extras[team] || {})) };
+    const extrasTotal = extrasTotalOf(extr);
+    const extrasRow = ws.addRow(['Extras', extrasTotal, '', '', '', '', `Wd ${extr.wd||0} · NB ${extr.nb||0} · B ${extr.b||0} · LB ${extr.lb||0}${extr.pen ? ` · Pen ${extr.pen}` : ''}`]);
     extrasRow.getCell(1).font = { italic: true }; extrasRow.getCell(7).font = { italic: true, size: 9.5 };
     const totalsRow = ws.addRow(['TOTAL', sc.runs, '', '', '', '', `${sc.wickets} wkt${sc.wickets === 1 ? '' : 's'}${sc.declared ? ' (dec)' : ''} · ${sc.overs} overs`]);
     xlBoldRow(totalsRow);

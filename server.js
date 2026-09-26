@@ -4837,6 +4837,11 @@ function deriveBallFacts(kind, runs) {
         case 'Nb': { const bat = Math.max(0, total - 1); return { legalBall: false, extraType: 'noball', runsOffBat: bat, extraRuns: total - bat }; }
         case 'B': return { legalBall: true, extraType: 'bye', runsOffBat: 0, extraRuns: total };
         case 'LB': return { legalBall: true, extraType: 'legbye', runsOffBat: 0, extraRuns: total };
+        // 🏏 A PENALTY AWARD, not a delivery: it consumes no legal ball, is
+        // credited to no batsman and is charged to no bowler. Its runs are
+        // penalty extras belonging to whichever side the award was made to
+        // (which is what battingTeam carries on a 'PEN' document).
+        case 'PEN': return { legalBall: false, extraType: 'penalty', runsOffBat: 0, extraRuns: total };
         default: return { legalBall: true, extraType: 'none', runsOffBat: total, extraRuns: 0 }; // '0'-'6' and 'W'
     }
 }
@@ -4851,6 +4856,7 @@ function deriveBallFacts(kind, runs) {
 function normalizeKindForPublic(kind) {
     if (kind === 'Wd') return 'WD';
     if (kind === 'Nb') return 'NB';
+    if (kind === 'PEN') return 'PEN'; // a penalty AWARD, not a delivery — see deriveBallFacts
     return kind;
 }
 function mapBallForPublic(b) {
@@ -5036,6 +5042,18 @@ async function correctDelivery(ballId, actorEmail, input, dryRun, requestOwnerUi
     // below now passes the authenticated owner's own uid (req.ownerUid) as
     // a fallback, the same way the merge endpoints already do.
     const ownerUid = original.ownerUid || requestOwnerUid || null;
+
+    // 🏏 A PENALTY AWARD ('PEN') is not a delivery and cannot be edited
+    // through this screen. Its composite input (runs off bat / extras / extra
+    // type / wicket) has no way to express a penalty, so re-deriving one from
+    // that input would silently turn the award into an ordinary delivery —
+    // crediting a batsman, charging a bowler and, for a legal kind, inventing
+    // a ball that was never bowled. A penalty is corrected from the panel's
+    // own penalty ledger instead, which reverses it exactly from the recorded
+    // award (see removePenaltyRuns() in cricket-panel.html).
+    if (original.kind === 'PEN') {
+        return { errors: ['This is a penalty award, not a delivery — it has no striker, bowler or ball number, so it cannot be edited here. Remove or re-award it from the Penalty Runs ledger in the scoring panel.'] };
+    }
 
     let kind, runs, isWicket;
     try { ({ kind, runs, isWicket } = buildBallFromCorrection(input)); }
@@ -6055,7 +6073,16 @@ adminRouter.post('/cricket/match/:matchId/undo-last', async (req, res) => {
 //      Firebase client SDK and only ever knows a bare uid.
 async function deleteLastBallFromDb(matchId, requestedInnings, actorEmail) {
     if (!ballsCollection || !matchRecordsCollection) return { error: 'Database not configured', status: 503 };
-    const query = requestedInnings ? { matchId, innings: Number(requestedInnings) } : { matchId };
+    // 🏏 Penalty awards are excluded. This endpoint exists to undo the last
+    // DELIVERY (it is the panel's fallback for "Undo Last Ball"), and a
+    // penalty is not one — if an award happened to be the most recent event,
+    // deleting it here would silently remove a penalty while the operator was
+    // asking for their last ball back, and would leave the panel's own penalty
+    // ledger claiming an award the database no longer holds. Penalties are
+    // removed from that ledger instead (removePenaltyRuns() in the panel).
+    const query = requestedInnings
+        ? { matchId, innings: Number(requestedInnings), kind: { $ne: 'PEN' } }
+        : { matchId, kind: { $ne: 'PEN' } };
     // Sort by _id (Mongo's own insertion order, which is monotonically
     // chronological) rather than innings/over/ballInOver — extras (Wide/No
     // Ball) don't advance the ball-in-over counter, so more than one
@@ -6698,7 +6725,13 @@ function buildLiveCardsFromBallsArray(balls) {
     // last saved live, silently going stale the instant an edit touched a
     // wide/bye/leg-bye or moved a wicket to a different ball. Same genuine-
     // sum-over-canonical-balls treatment as teamTotals above, every time.
-    const extras = { A: { wd: 0, nb: 0, b: 0, lb: 0 }, B: { wd: 0, nb: 0, b: 0, lb: 0 } };
+    // 🏏 `pen` = PENALTY RUNS (MCC Laws 18.10 / 18.11 / 41 / 42). Its own
+    // bucket, never folded into wd/nb/b/lb: Law 18.10 expressly excludes
+    // 5-run penalties from the striker's credit, and a penalty is not any of
+    // the other four extras. Fed by kind 'PEN' documents — penalty AWARDS,
+    // which are match events rather than deliveries (no legal ball, no
+    // striker, no bowler, no wicket). See the 'PEN' handling below.
+    const extras = { A: { wd: 0, nb: 0, b: 0, lb: 0, pen: 0 }, B: { wd: 0, nb: 0, b: 0, lb: 0, pen: 0 } };
     const fallOfWickets = { A: [], B: [] };
 
     balls.forEach(b => {
@@ -6721,6 +6754,7 @@ function buildLiveCardsFromBallsArray(balls) {
         else if (b.kind === 'Nb') extras[bt].nb += 1;
         else if (b.kind === 'B') extras[bt].b += b.runs || 0;
         else if (b.kind === 'LB') extras[bt].lb += b.runs || 0;
+        else if (b.kind === 'PEN') extras[bt].pen += b.runs || 0;
 
         // Fall of wickets — the cumulative team score/wicket count AT this
         // exact ball (teamTotals[bt] already reflects THIS ball, since it
@@ -6742,17 +6776,31 @@ function buildLiveCardsFromBallsArray(balls) {
         // inningsNo here — and keying the per-player maps by player+innings,
         // not just player — also stops a player's multiple innings (Test
         // format) from being summed into one merged row.
-        if (b.strikerKey && b.kind !== 'Wd') {
+        if (b.strikerKey && b.kind !== 'Wd' && b.kind !== 'PEN') {
             const rowKey = `${b.strikerKey}::${inn}`;
             if (!batting[bt][rowKey]) batting[bt][rowKey] = { name: b.striker || b.strikerKey, runs: 0, balls: 0, fours: 0, sixes: 0, inningsNo: inn };
             const row = batting[bt][rowKey];
             row.balls++;
-            if (b.kind !== 'B' && b.kind !== 'LB') row.runs += b.runs || 0;
+            // 🛠 ROOT-CAUSE FIX (striker over-credited on every No Ball).
+            // This used to add the delivery's FULL runs to the striker for any
+            // kind but a Bye/Leg Bye — which on a No Ball means the 1-run
+            // no-ball PENALTY was credited to the batsman as well as being
+            // counted in extras.nb. Every no ball therefore inflated the
+            // batsman's score by 1 and made this card's own arithmetic
+            // impossible: batters + extras came to more than the team total,
+            // by exactly the number of no balls bowled. deriveBallFacts()
+            // already splits a delivery into runsOffBat vs extraRuns (and the
+            // comment on the extras block above already described this as the
+            // intended rule) — so use it, instead of re-deciding the split
+            // here and getting it wrong. runsOffBat is the full total for
+            // '0'-'6', 'W' and 'OT', total-1 for 'Nb', and 0 for a
+            // Wide/Bye/Leg Bye/penalty, which is exactly the crediting rule.
+            row.runs += facts.runsOffBat || 0;
             if (b.kind === '4') row.fours++;
             if (b.kind === '6') row.sixes++;
         }
 
-        if (b.bowlerKey && b.kind !== 'B' && b.kind !== 'LB') {
+        if (b.bowlerKey && b.kind !== 'B' && b.kind !== 'LB' && b.kind !== 'PEN') {
             const rowKey = `${b.bowlerKey}::${inn}`;
             if (!bowling[bowlTeam][rowKey]) bowling[bowlTeam][rowKey] = { name: b.bowler || b.bowlerKey, balls: 0, runs: 0, wickets: 0, inningsNo: inn, _bowlerKey: b.bowlerKey };
             const row = bowling[bowlTeam][rowKey];
@@ -6793,7 +6841,13 @@ function buildLiveCardsFromBallsArray(balls) {
     // way cricket-scorecard.html already reads a saved match record.
     const partnerships = { 1: [], 2: [], 3: [], 4: [] };
     [1, 2, 3, 4].forEach(inn => {
-        const inningsBalls = balls.filter(b => (b.innings || 1) === inn);
+        // 🏏 A PENALTY AWARD is excluded here. It is not a delivery: it has no
+        // striker and no non-striker, so leaving it in would break the pair
+        // key (making every penalty look like a new partnership) and would
+        // count the award itself as a ball faced by that partnership.
+        // Penalty runs belong to the team total and to extras, which the
+        // pass above already handles.
+        const inningsBalls = balls.filter(b => (b.innings || 1) === inn && b.kind !== 'PEN');
         if (!inningsBalls.length) return;
         let cur = null, wktSoFar = 0;
         inningsBalls.forEach(b => {
@@ -7503,6 +7557,20 @@ io.on('connection', async (socket) => {
                 bowlerKey: playerKey(bowlerName),
                 bowlerPlayerId,
                 dismissal: data.dismissal ? { type: data.dismissal.type || 'Out', fielder: fielderName } : null,
+                // 🏏 Penalty AWARD detail (kind 'PEN' only) — the reason, the side
+                // it was awarded to and where it was applied, kept with the event so
+                // the award is auditable and reversible rather than being an
+                // unexplained +5 in a total. Null on every actual delivery.
+                penalty: data.kind === 'PEN' && data.penalty ? {
+                    runs: Number(data.penalty.runs) || Number(data.runs) || 0,
+                    awardedTo: data.penalty.awardedTo === 'FIELDING' ? 'FIELDING' : 'BATTING',
+                    team: data.penalty.team === 'B' ? 'B' : 'A',
+                    reasonCode: data.penalty.reasonCode || null,
+                    reasonLabel: data.penalty.reasonLabel || null,
+                    notes: data.penalty.notes || null,
+                    eventContext: data.penalty.eventContext || null,
+                    penaltyId: data.penalty.id || null
+                } : null,
                 dismissalFielderKey: playerKey(fielderName),
                 dismissalFielderPlayerId,
                 score: data.score,        // { runs, wickets, overs, balls } snapshot after this ball
