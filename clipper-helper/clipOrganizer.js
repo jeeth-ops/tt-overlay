@@ -132,7 +132,42 @@ function buildClipFileName(meta) {
   const bat = meta && meta.strikerName ? sanitizeSegment(meta.strikerName, '') : '';
   const bowl = meta && meta.bowlerName ? sanitizeSegment(meta.bowlerName, '') : '';
   const who = bat && bowl ? `_${bat}_vs_${bowl}` : bat ? `_${bat}` : bowl ? `_vs_${bowl}` : '';
-  return `${ball}_${token}${who}.mp4`;
+  // 🛠 COLLISION FIX (a clip silently overwriting an earlier one).
+  //
+  // The name was ball + event + players and nothing else, so two clips that
+  // agree on all three landed on the SAME path and the second one replaced
+  // the first. That is not a rare edge case in cricket:
+  //
+  //   • a No Ball six, then the free-hit six off the re-bowled 17.4
+  //   • the same delivery clipped twice (auto FOUR + an operator press)
+  //   • any ball re-bowled after a dead-ball call
+  //
+  // and the loss was silent — the tree still showed one tidy file.
+  //
+  // A short discriminator drawn from the clip's own identity fixes it
+  // without making the name unreadable: the filename stays human-browsable
+  // ("17.4_SIX_Rohit-Sharma_vs_Jasprit-Bumrah_a3f1.mp4") while being unique
+  // per event. clipId is preferred because it is already deterministic from
+  // matchId+eventType+timestamp, so re-filing the SAME clip (see placeClip's
+  // `previous` handling) still resolves to the same name and does not
+  // accumulate duplicates; the timestamp is the fallback.
+  const unique = clipDiscriminator(meta);
+  return `${ball}_${token}${who}${unique ? '_' + unique : ''}.mp4`;
+}
+
+// A short, stable, filesystem-safe tail that makes a clip's filename unique
+// to that EVENT while staying the same across re-files of the same clip.
+function clipDiscriminator(meta) {
+  const id = meta && meta.clipId ? String(meta.clipId) : '';
+  if (id) {
+    // Last 4 hex-ish chars of the deterministic clipId — short enough to
+    // stay readable, and identical every time this clip is re-filed.
+    const cleaned = sanitizeSegment(id, '').replace(/[^A-Za-z0-9]/g, '');
+    if (cleaned) return cleaned.slice(-4).toLowerCase();
+  }
+  const t = Number(meta && meta.t0);
+  if (Number.isFinite(t) && t > 0) return String(t).slice(-5);
+  return '';
 }
 
 // Where this match's tree lives inside Clips/. A tournament level only
@@ -286,6 +321,7 @@ async function writeClipMetadata(matchRoot, job) {
 
 module.exports = {
   HIGHLIGHT_CATEGORIES,
+  clipDiscriminator,
   sanitizeSegment,
   inningsFolder,
   ballLabel,
