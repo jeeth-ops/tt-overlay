@@ -95,10 +95,30 @@ const { URL } = require('url');
 // Loaded defensively: an operator who only copied stream-engine/ still gets
 // working clips (flat, as before), just without the tree.
 let clipOrganizer = null;
-try {
-    clipOrganizer = require('../clipper-helper/clipOrganizer');
-} catch (e) {
-    console.log('[stream-engine] clipper-helper/clipOrganizer.js not found alongside this folder — clips will be saved flat (no player/team tree). Copy clipper-helper/ next to stream-engine/ to enable it.');
+{
+    // Resolved explicitly so the log can print the EXACT path that was
+    // checked. The first version of this just said "not found", which is
+    // the same message whether the file is genuinely missing, in the wrong
+    // folder, or present but failing to load — and that is not enough to
+    // fix it from a console line.
+    const organizerPath = path.join(__dirname, '..', 'clipper-helper', 'clipOrganizer.js');
+    try {
+        clipOrganizer = require(organizerPath);
+        console.log(`[stream-engine] \u2713 clip organiser loaded — clips will be filed into Highlights / Batsmen / Bowlers folders (${organizerPath})`);
+    } catch (e) {
+        const exists = fs.existsSync(organizerPath);
+        console.log('[stream-engine] \u26a0 clip organiser NOT loaded — clips will be saved flat (no player/team tree).');
+        console.log(`[stream-engine]   Looked for : ${organizerPath}`);
+        console.log(`[stream-engine]   File there?: ${exists ? 'YES' : 'NO'}`);
+        if (!exists) {
+            console.log('[stream-engine]   Fix: the clipper-helper folder must sit NEXT TO stream-engine, not inside it:');
+            console.log(`[stream-engine]        ${path.join(__dirname, '..')}\\clipper-helper\\clipOrganizer.js`);
+        } else {
+            // The file is there but would not load — a truncated/partial copy,
+            // or an older Node. The real error is the only useful thing here.
+            console.log(`[stream-engine]   The file IS there but failed to load: ${e.message}`);
+        }
+    }
 }
 
 const PORT = process.env.STREAM_ENGINE_PORT || 5006;
