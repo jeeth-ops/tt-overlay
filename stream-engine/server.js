@@ -1937,9 +1937,66 @@ function abrTick() {
 // this pattern — genuinely permanent config errors (wrong ffmpeg flags,
 // no NVENC-capable device at all, wrong permissions, out of disk) stay
 // fatal; a device that's merely unavailable RIGHT NOW does not.
-const FATAL_ERROR_PATTERN = /unrecognized option|no such filter|cannot find a matching stream|invalid argument|no nvenc capable devices|permission denied|unknown encoder|no space left|disk full/i;
+// 🛠 ROOT-CAUSE FIX (YouTube stopping for good after an internet outage).
+//
+// When the connection drops mid-push, ffmpeg's RTMP muxer almost always
+// fails with one of:
+//
+//     av_interleaved_write_frame(): Invalid argument
+//     Error writing trailer of rtmps://...: Invalid argument
+//     av_interleaved_write_frame(): Broken pipe
+//     rtmp://... Input/output error
+//
+// FATAL_ERROR_PATTERN contained a bare `invalid argument`, so the FIRST
+// two matched it. That routed a plain network drop into the "config or
+// hardware problem" branch, which is deliberately bounded: three
+// restarts inside five minutes and then `engine.desiredLive = false` --
+// the stream gives up permanently and only a manual Go Live brings it
+// back. On a venue connection that dips more than three times, the
+// stream was dead for the rest of the match with the operator watching.
+//
+// Network failures are now classified FIRST and always win. A dropped
+// connection can therefore only ever reach scheduleReconnect(), which
+// retries at capped backoff for as long as the operator wants to be
+// live and never gives up on its own -- the vMix-like behaviour that was
+// intended all along. The bounded branch is kept for what it was
+// actually meant for: a missing encoder, a full disk, a bad argument in
+// the command line -- things retrying genuinely cannot fix.
+const NETWORK_ERROR_PATTERN = new RegExp([
+    // ffmpeg's own write/muxer failures when the far end goes away
+    'av_interleaved_write_frame',
+    'error writing trailer',
+    'error muxing a packet',
+    'broken pipe',
+    'connection reset',
+    'connection refused',
+    'connection timed out',
+    'input/output error',
+    'end of file',
+    'network is unreachable',
+    'no route to host',
+    'temporary failure in name resolution',
+    'failed to resolve hostname',
+    'name or service not known',
+    // librtmp / rtmp-specific
+    'rtmp',
+    'writen, rtmp send error',
+    'unable to open resource',
+    'cannot open connection',
+    'handshake failed',
+    // socket-level
+    'econnreset', 'econnrefused', 'etimedout', 'ehostunreach', 'enetunreach', 'epipe', 'enotfound', 'eai_again',
+    'socket hang up',
+    'timed out',
+].join('|'), 'i');
+const FATAL_ERROR_PATTERN = /unrecognized option|no such filter|cannot find a matching stream|no nvenc capable devices|permission denied|unknown encoder|no space left|disk full/i;
+// A genuine config/hardware fault -- NEVER a network blip. Anything that
+// looks even slightly like the connection going away is excluded here, so
+// it falls through to the unlimited reconnect path instead.
 function isFatalError(message) {
-    return !!message && (FATAL_ERROR_PATTERN.test(message) || WINDOW_NOT_FOUND_PATTERN.test(message));
+    if (!message) return false;
+    if (NETWORK_ERROR_PATTERN.test(message)) return false; // network always wins
+    return FATAL_ERROR_PATTERN.test(message) || WINDOW_NOT_FOUND_PATTERN.test(message);
 }
 
 // Network-flavored disconnect: keep retrying at capped exponential
@@ -1956,15 +2013,38 @@ function scheduleReconnect() {
     console.log(`[stream-engine] Live stream interrupted (${engine.lastError}) — reconnecting in ${backoff / 1000}s (attempt ${engine.reconnect.attempts}); recording is unaffected`);
     setTimeout(async () => {
         if (!engine.desiredLive || shuttingDown) return; // operator pressed Stop while we were waiting to retry
-        const result = await startEncoder(engine.settings);
+        const result = await startEncoder(engine.settings, { fromReconnect: true });
         if (!result.ok) {
             engine.lastError = result.error;
+            // Logged so a repeatedly-failing reconnect is visible rather
+            // than looking like silence.
+            console.log(`[stream-engine] Reconnect attempt failed (${result.error}) — will keep trying; recording is unaffected`);
             scheduleReconnect();
         }
     }, backoff);
 }
 
-async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
+// 🛠 SECOND PATH THAT KILLED THE STREAM FOR GOOD.
+//
+// The two compositor failures below used to clear engine.desiredLive --
+// the operator's INTENT to be live -- on any failure. That is right when
+// the operator has just pressed Go Live and nothing is running yet: the
+// start failed, they get the error, and the engine should not sit there
+// pretending it is trying.
+//
+// It is badly wrong during a RECONNECT. scheduleReconnect() calls this,
+// and its next scheduled attempt begins with
+// `if (!engine.desiredLive) return;`. So if the compositor happened to be
+// mid-restart (its own watchdog restarts it after 10s without video --
+// exactly the sort of thing that happens while a connection is flapping),
+// one failed attach cleared the intent and the ENTIRE reconnect loop went
+// silent. Same symptom as the misclassified network error: the stream
+// never came back, with nothing in the log saying it had stopped trying.
+//
+// `opts.fromReconnect` keeps the intent intact for retry-driven calls, so
+// only the operator -- or a genuinely fatal fault -- can end a live push.
+async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec }, opts) {
+    const fromReconnect = !!(opts && opts.fromReconnect);
     if (engine.state === 'live' || engine.state === 'starting') {
         return { ok: false, error: 'Already live — stop the current stream first' };
     }
@@ -2002,7 +2082,9 @@ async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec 
         const compResult = await ensureCompositor({ matchId: engine.matchId, mainServerUrl: engine.mainServerUrl, cameraDeviceName: engine.cameraDeviceName, audioDeviceName: engine.audioDeviceName, who: 'live' });
         if (!compResult.ok) {
             engine.state = 'idle';
-            engine.desiredLive = false;
+            // A reconnect must keep trying: the compositor may simply be
+            // mid-restart and back in a second.
+            if (!fromReconnect) engine.desiredLive = false;
             return { ok: false, error: compResult.error };
         }
         engine.holdsCompositorRef = true;
@@ -2014,7 +2096,7 @@ async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec 
         if (!attachResult.ok) {
             try { proc.kill('SIGKILL'); } catch (e) {}
             engine.state = 'idle';
-            engine.desiredLive = false;
+            if (!fromReconnect) engine.desiredLive = false;
             releaseLiveCompositorRef();
             return { ok: false, error: attachResult.error || 'Could not attach to the native compositor relay' };
         }
@@ -2071,7 +2153,16 @@ async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec 
     // attempt counter — otherwise a stream that's been flapping for an
     // hour would keep reporting attempt #40 forever even after it's fine.
     const stabilizeTimer = setTimeout(() => {
-        if (engine.proc === proc) engine.reconnect.attempts = 0;
+        if (engine.proc !== proc) return;
+        engine.reconnect.attempts = 0;
+        // Also clear the BOUNDED fatal-restart tally. It exists to stop a
+        // genuine config fault (no encoder, full disk) looping forever, and
+        // a push that has been healthy for five seconds is evidence there
+        // is no such fault. Without this, three unrelated hiccups spread
+        // across a long match could still add up and stop the stream for
+        // good -- the same "gives up mid-match" failure this is meant to
+        // prevent. The recorder already resets its own tally this way.
+        engine.restarts = [];
     }, 5000);
 
     proc.on('exit', (code, signal) => {
@@ -2114,7 +2205,7 @@ async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec 
             const attempt = engine.restarts.length;
             console.log(`[stream-engine] Auto-restarting encoder after fatal-looking error (attempt ${attempt}/${MAX_AUTO_RESTARTS})…`);
             setTimeout(async () => {
-                if (engine.desiredLive && !shuttingDown) await startEncoder(engine.settings).catch((e) => console.log('[stream-engine] fatal-error auto-restart threw:', e.message));
+                if (engine.desiredLive && !shuttingDown) await startEncoder(engine.settings, { fromReconnect: true }).catch((e) => console.log('[stream-engine] fatal-error auto-restart threw:', e.message));
             }, Math.min(2000 * attempt, 8000));
             return;
         }
