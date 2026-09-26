@@ -72,6 +72,35 @@ const net = require('net');
 const tls = require('tls');
 const { URL } = require('url');
 
+// 🗂️ LOCAL CLIP ORGANISER — reused, not reimplemented.
+//
+// clipper-helper/clipOrganizer.js already turns one freshly-cut clip into
+// the broadcast-style tree the operator expects:
+//
+//     <Match>/Highlights/{4,6,Wickets,...}/   or  <Match>/Normal/
+//     <Match>/Batsmen/<Player>/<1st-Innings>/
+//     <Match>/Bowlers/<Player>/<1st-Innings>/
+//     <Match>/metadata/<clipId>.json
+//
+// and it does so under two rules that are exactly what is wanted here:
+// every decision comes from the event's OWN stored metadata (so it is
+// identical offline), and there is ONE physical clip with hard links for
+// the player views (so a 20s MP4 is not copied three times).
+//
+// The Stream Engine used to drop its clips flat into <matchId>/<clipId>.mp4
+// with none of that, purely because this module lived next to the OTHER
+// local helper. Requiring it here is what closes that gap without writing
+// a second, divergent copy of the same rules.
+//
+// Loaded defensively: an operator who only copied stream-engine/ still gets
+// working clips (flat, as before), just without the tree.
+let clipOrganizer = null;
+try {
+    clipOrganizer = require('../clipper-helper/clipOrganizer');
+} catch (e) {
+    console.log('[stream-engine] clipper-helper/clipOrganizer.js not found alongside this folder — clips will be saved flat (no player/team tree). Copy clipper-helper/ next to stream-engine/ to enable it.');
+}
+
 const PORT = process.env.STREAM_ENGINE_PORT || 5006;
 const CONFIG_FILE = path.join(__dirname, 'config.local.json'); // gitignored — never committed
 
@@ -2743,11 +2772,68 @@ async function pollRenderStatus(job) {
     }
 }
 
-const MAX_RETRY_ATTEMPTS = 20; // ~ backoff up to a few minutes total, then give up but KEEP the local file for manual recovery
+// 🛠 ROOT-CAUSE FIX (clips stranded by an internet outage longer than
+// ~16 minutes).
+//
+// This used to stop after MAX_RETRY_ATTEMPTS = 20. With the 5s * 1.5^n
+// backoff capped at 60s, those 20 attempts are spent in about 15.7
+// MINUTES — after which the clip was marked FAILED_PERMANENT and never
+// retried again, even though the file was sitting right there on disk and
+// the internet came back ten minutes later.
+//
+// For a 3-hour match on a venue connection that is the wrong behaviour in
+// the most damaging way possible: every clip cut during an outage is
+// silently abandoned, and the operator finds out afterwards.
+//
+// The rule now distinguishes the two genuinely different failures:
+//
+//   • CONNECTIVITY (no internet, DNS fails, host unreachable, timeout):
+//     never give up. The local file exists and the upload WILL succeed
+//     once the line is back, so keep retrying at a steady interval
+//     forever. An outage of any length is survivable.
+//
+//   • REJECTION (the server answered, and said no — 4xx): that will not
+//     fix itself by waiting, so the old attempt limit still applies.
+//
+// Plus: the moment ANY upload succeeds, the whole queue is flushed at
+// once (see flushRetryQueueNow) rather than each clip waiting out its own
+// backoff — which is what makes a backlog clear "fatafat" the instant the
+// connection returns, instead of trickling out one per minute.
+const MAX_RETRY_ATTEMPTS = 20;          // applies to REJECTIONS only (see above)
+const OFFLINE_RETRY_INTERVAL_MS = 30000; // steady re-probe while the line is down
+// A failure that waiting can actually fix. postFileToServer surfaces the
+// underlying socket/DNS error text, so match on that rather than trying to
+// enumerate every Node error code.
+function isConnectivityFailure(errorText) {
+    const e = String(errorText || '').toLowerCase();
+    return /enotfound|eai_again|econnrefused|econnreset|etimedout|ehostunreach|enetunreach|epipe|socket hang up|timeout|network|getaddrinfo|request to .* failed|fetch failed/.test(e);
+}
 function scheduleRetry(entry) {
     const attempt = (entry.attempts || 0);
-    const delayMs = Math.min(5000 * Math.pow(1.5, attempt), 60000);
-    setTimeout(() => processRetryEntry(entry), delayMs);
+    // While the line is down, stop escalating the backoff: a steady probe
+    // means the backlog starts clearing within seconds of it returning.
+    const delayMs = entry.offline
+        ? OFFLINE_RETRY_INTERVAL_MS
+        : Math.min(5000 * Math.pow(1.5, attempt), 60000);
+    entry.timer = setTimeout(() => processRetryEntry(entry), delayMs);
+}
+// Connectivity is back — retry EVERY queued clip immediately instead of
+// letting each one wait out its own timer. Cancelling the pending timer
+// first is what stops a clip being retried twice concurrently.
+let flushingRetryQueue = false;
+function flushRetryQueueNow(reason) {
+    if (flushingRetryQueue || !retryQueue.length) return;
+    flushingRetryQueue = true;
+    const pending = retryQueue.slice();
+    console.log(`[stream-engine] 📤 Connection is back (${reason}) — flushing ${pending.length} queued clip(s) now`);
+    pending.forEach((entry) => {
+        if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; }
+        entry.offline = false;
+        processRetryEntry(entry);
+    });
+    // Released on the next tick: processRetryEntry is async, and this flag
+    // only needs to stop the SAME success re-entering the flush.
+    setTimeout(() => { flushingRetryQueue = false; }, 1000);
 }
 async function processRetryEntry(entry) {
     if (!fs.existsSync(entry.filePath)) {
@@ -2757,6 +2843,7 @@ async function processRetryEntry(entry) {
         return; // was cleaned up (e.g. manually) — nothing left to retry
     }
     entry.attempts = (entry.attempts || 0) + 1;
+    entry.timer = null;
     if (entry.clipId) updateJob(entry.clipId, { status: 'RETRY_PENDING', forwardAttempts: entry.attempts });
     const result = await postFileToServer(entry.mainServerUrl, entry.matchId, entry.eventType, entry.timestamp, entry.ballMeta, entry.filePath, entry.clipId);
     if (result.ok) {
@@ -2769,9 +2856,29 @@ async function processRetryEntry(entry) {
             const job = clipJobs.get(entry.clipId);
             if (job) pollRenderStatus(job);
         }
+        // This upload proved the line is back — clear the rest of the
+        // backlog at once rather than one-per-backoff.
+        flushRetryQueueNow('a queued clip uploaded');
     } else {
         clipWorker.cloudflareConnected = false;
         clipWorker.lastError = result.error;
+        const offline = isConnectivityFailure(result.error);
+        entry.offline = offline;
+        if (offline) {
+            // No internet. The file is on disk and the upload will work as
+            // soon as the line is back, so this NEVER becomes permanent —
+            // it just keeps probing. Logged once per 10 attempts so a long
+            // outage doesn't flood the console during a match.
+            if (entry.attempts === 1 || entry.attempts % 10 === 0) {
+                console.log(`[stream-engine] ⏸ Offline — ${retryQueue.length} clip(s) waiting to upload; will keep retrying every ${OFFLINE_RETRY_INTERVAL_MS / 1000}s and send them all the moment the connection returns (attempt ${entry.attempts}: ${result.error})`);
+            }
+            if (entry.clipId) updateJob(entry.clipId, { status: 'RETRY_PENDING', error: `Waiting for internet — clip is saved locally at ${entry.filePath} and will upload automatically` });
+            persistRetryQueue();
+            scheduleRetry(entry);
+            return;
+        }
+        // The server answered and refused. Waiting will not change that, so
+        // the original attempt limit still applies.
         if (entry.attempts >= MAX_RETRY_ATTEMPTS) {
             console.log(`[stream-engine] Giving up on queued clip after ${entry.attempts} attempts (kept locally at ${entry.filePath}): ${result.error}`);
             if (entry.clipId) updateJob(entry.clipId, { status: 'FAILED_PERMANENT', error: `Could not reach Render after ${entry.attempts} attempts: ${result.error} (local file kept at ${entry.filePath})` });
@@ -3037,13 +3144,76 @@ async function runClipCut(clipId) {
         return;
     }
     clipStats.cut++;
-    updateJob(clipId, { status: 'LOCAL_SAVED', localPath: cutResult.outFile, error: null, clipDurationSec: cutResult.durationSec });
+    // 🗂️ File the clip into the player/team/highlight tree NOW — before any
+    // upload is attempted, and never conditional on one succeeding. This is
+    // the step that has to survive a dead internet connection: the operator
+    // gets the organised tree on disk either way, and the upload queue is a
+    // separate, later concern.
+    const organised = await organiseClipLocally(job, cutResult.outFile);
+    const localPath = organised.path;
+    updateJob(clipId, {
+        status: 'LOCAL_SAVED',
+        localPath,
+        organised: organised.info || null,
+        error: null,
+        clipDurationSec: cutResult.durationSec
+    });
     // Upload runs detached from the cut worker.
     clipUploadsInFlight++;
     refreshClipWorkerState();
-    forwardClip(job, cutResult.outFile)
+    forwardClip(job, localPath)
         .catch((e) => console.log(`[CLIP ERROR] clipId=${clipId} forward threw: ${e.message}`))
         .finally(() => { clipUploadsInFlight--; refreshClipWorkerState(); });
+}
+
+// Maps a Stream Engine clip job onto the organiser's meta shape and files
+// the clip. Returns the path the clip now lives at (the organiser MOVES the
+// physical file), or the original path if organising was skipped or failed
+// — a clip is never lost because the tidying step had a problem.
+async function organiseClipLocally(job, outFile) {
+    if (!clipOrganizer) return { path: outFile, info: null };
+    const bm = job.ballMeta || {};
+    const meta = {
+        clipId: job.clipId,
+        matchId: job.matchId,
+        eventType: job.eventType,
+        t0: job.timestamp,
+        // Everything below comes from the ball's OWN snapshot, taken when the
+        // event happened — never from whoever is on strike now. That is what
+        // stops a last-ball six being filed under the next over's batsman.
+        tournament: bm.tournament || bm.leagueName || null,
+        matchName: bm.matchName || bm.match || null,
+        innings: bm.innings,
+        over: bm.over,
+        ballInOver: bm.ballInOver,
+        strikerName: bm.striker || bm.strikerName || null,
+        strikerId: bm.strikerId || null,
+        bowlerName: bm.bowler || bm.bowlerName || null,
+        bowlerId: bm.bowlerId || null,
+        battingTeam: bm.battingTeam || null,
+        outcome: bm.outcome || bm.ballOutcome || null,
+        // undefined (not false) means "no operator decision yet", which lets
+        // the organiser apply its own default for the event type.
+        isHighlight: typeof bm.isHighlight === 'boolean' ? bm.isHighlight : undefined,
+    };
+    try {
+        const result = await clipOrganizer.placeClip({
+            clipsRoot: CLIPS_ROOT,
+            currentPath: outFile,
+            meta,
+            previous: job.organised || null,
+        });
+        // The event itself, on disk next to the clips — the local answer to
+        // "which ball, which players, which IDs" with no database needed.
+        await clipOrganizer.writeClipMetadata(result.matchRoot, { ...job, ...meta, localPath: result.primary });
+        console.log(`🗂️ [CLIP FILED] clipId=${job.clipId} -> ${result.isHighlight ? `Highlights/${result.category}` : 'Normal'}${result.links.length ? ` (+${result.links.length} player folder${result.links.length === 1 ? '' : 's'})` : ''}`);
+        return { path: result.primary, info: { primary: result.primary, links: result.links, category: result.category, isHighlight: result.isHighlight, matchRoot: result.matchRoot } };
+    } catch (e) {
+        // Organising is a convenience on top of a clip that already exists.
+        // If it fails, keep the clip exactly where it is and carry on.
+        console.log(`[stream-engine] could not file clip ${job.clipId} into the player/team tree (${e.message}) — the clip itself is safe at ${outFile}`);
+        return { path: outFile, info: null };
+    }
 }
 
 async function forwardClip(job, outFile) {
@@ -3339,6 +3509,63 @@ app.post('/capture-window/camera-ended', (req, res) => {
 // DROPPED, never queued — see `busy` below), and if the socket dies the
 // subscription is torn down. It therefore cannot affect the recording or
 // the YouTube push, which is the property that matters most here.
+// 🎬 POST /clip-meta — the operator's Highlights decision, and the ball's
+// real identity, arriving AFTER the clip was already cut.
+//
+// WHY THIS EXISTS: a clip is cut the instant the event happens, but at that
+// moment the panel does not yet know the ball's true over/ball number or
+// whether the operator wants it in the Highlights — the scorer enters the
+// outcome a moment later. clipper-helper has always had this endpoint; the
+// Stream Engine did not, which is exactly why the Highlights prompt could
+// not work on the Stream Engine panel: there was nowhere to send the answer.
+//
+// Re-filing is safe and idempotent. placeClip() takes the clip's PREVIOUS
+// placement and removes the paths it no longer belongs at, so answering YES
+// moves it from Normal/ into Highlights/<category>/ (and re-links the player
+// folders) without ever leaving a stale duplicate behind. Answering the same
+// way twice is a no-op.
+//
+// Entirely local: no network, so the operator's decision is never lost to a
+// dead connection. The cloud classification is a separate, queued concern.
+app.post('/clip-meta', async (req, res) => {
+    const body = req.body || {};
+    const clipId = String(body.clipId || '');
+    if (!clipId) return res.status(400).json({ success: false, error: 'clipId required' });
+    const job = clipJobs.get(clipId);
+    if (!job) return res.status(404).json({ success: false, error: `No clip job known for clipId ${clipId}` });
+
+    // Merge the corrected ball identity + the decision onto the job's own
+    // metadata. The panel's ballMeta is authoritative for the ball; the
+    // decision is authoritative for the Highlights classification.
+    job.ballMeta = { ...(job.ballMeta || {}), ...(body.ballMeta || {}) };
+    if (body.outcomeLabel) job.ballMeta.outcome = body.outcomeLabel;
+    if (typeof body.isHighlight === 'boolean') job.ballMeta.isHighlight = body.isHighlight;
+    if (body.eventType) job.eventType = body.eventType;
+
+    const currentPath = job.localPath || (job.organised && job.organised.primary) || null;
+    if (!currentPath || !fs.existsSync(currentPath)) {
+        // The decision still counts — it is recorded on the job, so whenever
+        // the clip does land it will be filed correctly.
+        updateJob(clipId, { ballMeta: job.ballMeta, highlightDecision: body.isHighlight === true ? 'YES' : body.isHighlight === false ? 'NO' : 'ASK' });
+        return res.json({ success: true, refiled: false, note: 'Clip file not on disk yet — the decision is stored and will be applied when it is cut' });
+    }
+
+    const organised = await organiseClipLocally({ ...job, localPath: currentPath }, currentPath);
+    updateJob(clipId, {
+        localPath: organised.path,
+        organised: organised.info || null,
+        ballMeta: job.ballMeta,
+        highlightDecision: body.isHighlight === true ? 'YES' : body.isHighlight === false ? 'NO' : 'ASK'
+    });
+    res.json({
+        success: true,
+        refiled: true,
+        localPath: organised.path,
+        isHighlight: organised.info ? organised.info.isHighlight : null,
+        category: organised.info ? organised.info.category : null
+    });
+});
+
 app.get('/capture-preview/stream', (req, res) => {
     const matchId = safeMatchId(req.query.matchId);
     if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
