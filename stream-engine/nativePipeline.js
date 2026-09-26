@@ -70,6 +70,19 @@ const { OverlayBridge, available: overlayBridgeAvailable } = require('./overlayB
 // enough that a score change reaches the program feed without a
 // noticeable delay.
 const OVERLAY_FPS = 15;
+// 🖥️ PROGRAM PREVIEW — what the operator actually watches in the panel.
+// This used to be 2fps at 640px wide, which is a slideshow, not a monitor:
+// you cannot judge framing, focus or whether the feed is live from it. It
+// is decimated BEFORE scaling and encoded as plain MJPEG, so even at these
+// values it costs a small fraction of what the real encode costs, and it
+// is a separate filter branch — it can never slow the recording or the
+// YouTube push down. Tunable for weaker machines.
+const PREVIEW_FPS = Number(process.env.STREAM_ENGINE_PREVIEW_FPS) || 15;
+const PREVIEW_WIDTH = Number(process.env.STREAM_ENGINE_PREVIEW_WIDTH) || 960;
+// See the -rtbufsize comment in buildCompositorArgs() for why this is
+// deliberately small. Raise it only if ffmpeg reports dropped frames on a
+// machine you know is otherwise keeping up.
+const CAMERA_RTBUFSIZE = process.env.STREAM_ENGINE_CAMERA_RTBUFSIZE || '64M';
 
 const RELAY_CONTAINER_ARGS = ['-f', 'nut', '-c:v', 'rawvideo', '-pix_fmt', 'yuv420p', '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2'];
 
@@ -369,7 +382,45 @@ function parseDshowVideoModes(listOptionsOutput) {
 // (~250 MB/s, confirmed in the field). Compressed (vcodec=) modes are
 // assumed safe regardless of resolution since onboard compression does
 // the heavy lifting before it ever reaches USB.
-const RAW_BANDWIDTH_CAP_BYTES_PER_SEC = 40 * 1024 * 1024;
+//
+// 🛠 ROOT-CAUSE FIX (that same AVMATRIX then being opened at 640x480).
+// The cap that stopped the 1080p60 overrun was set to 40 MB/s, which is
+// far below what the overrun actually required — raw 4:2:2 costs
+// width*height*2 bytes per frame, so 40 MB/s rules out almost everything
+// a capture card wants to run at:
+//
+//     1920x1080 @60 raw = 248 MB/s   <- the mode that really did overrun
+//     1920x1080 @30 raw = 124 MB/s   <- fine on USB 3.0, but was rejected
+//     1280x720  @30 raw =  55 MB/s   <- fine anywhere, but was rejected
+//      960x540  @30 raw =  31 MB/s   <- allowed
+//      640x480  @30 raw =  18 MB/s   <- allowed, and so this is what won
+//
+// The device was then opened at 640x480 and UPSCALED to 720p/1080p for
+// the stream: soft, blocky output that looks nothing like the source,
+// with no error anywhere — the log line just read
+// "camera mode auto-detected: 640x480@30 (raw)".
+//
+// So the cap is kept, but set where the evidence actually puts it: above
+// 1080p30/720p60, below the 1080p60 mode that overran. USB 3.0 sustains
+// roughly 300-400 MB/s in practice, so 1080p30 has real headroom; 1080p60
+// raw stays excluded exactly as the field fix intended.
+// STREAM_ENGINE_RAW_CAP_MBPS=40 restores the old behaviour exactly.
+const RAW_BANDWIDTH_CAP_BYTES_PER_SEC =
+    (Number(process.env.STREAM_ENGINE_RAW_CAP_MBPS) || 150) * 1024 * 1024;
+
+// Explicit operator override, e.g. STREAM_ENGINE_CAMERA_MODE=1920x1080@30.
+// Auto-detection can only choose from what the driver ADVERTISES, and
+// capture cards under-report constantly; this ends the guessing.
+function parseCameraModeOverride(raw) {
+    const m = /^\s*(\d+)\s*[xX*]\s*(\d+)\s*(?:@\s*([\d.]+))?\s*$/.exec(String(raw || ''));
+    if (!m) return null;
+    const width = Number(m[1]), height = Number(m[2]);
+    const fps = m[3] ? Number(m[3]) : 30;
+    if (!width || !height || !fps) return null;
+    // Shaped exactly like a pickCameraMode() result so every caller
+    // downstream (buildCompositorArgs' -video_size/-framerate) is unchanged.
+    return { width, height, fps, minFps: fps, maxFps: fps, compressed: false, forced: true };
+}
 
 function pickCameraMode(listOptionsOutput, targetWidth, targetHeight, targetFps) {
     const modes = parseDshowVideoModes(listOptionsOutput);
@@ -405,7 +456,7 @@ function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height,
             // The preview branch is decimated to 2fps BEFORE scaling, so it
             // costs next to nothing; out_range=full gives the JPEG encoder
             // the full-range YUV it requires without a deprecated yuvj format.
-            ? `,split=2[vout1][pv];[pv]fps=2,scale=640:-2:out_range=full[vout2]`
+            ? `,split=2[vout1][pv];[pv]fps=${PREVIEW_FPS},scale=${PREVIEW_WIDTH}:-2:out_range=full[vout2]`
             : '[vout1]');
     const args = [
         '-hide_banner', '-loglevel', 'warning', '-nostats',
@@ -417,11 +468,34 @@ function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height,
         // devices. cameraMode is resolved by probeCameraMode() FROM THE
         // DEVICE ITSELF (ffmpeg -f dshow -list_options true) — a
         // hardcoded -video_size/-framerate was wrong twice in the field.
-        '-f', 'dshow', '-rtbufsize', '512M',
+        // 🛠 ROOT-CAUSE FIX (live output arriving seconds behind reality).
+        // -rtbufsize is the ceiling on how much CAPTURED-BUT-NOT-YET-CONSUMED
+        // video ffmpeg will hold in memory. It is not a safety net: it is a
+        // latency allowance. Whenever the compositor falls even slightly
+        // behind the camera, ffmpeg fills this buffer instead of dropping,
+        // and every byte in it is delay the viewer sees and never gets back.
+        //
+        // At 512M that was catastrophic on a raw feed:
+        //     512 MB / (640*480*2 bytes/frame) = ~833 frames = ~27 SECONDS
+        // The stream was not "laggy" in the sense of stuttering — it was
+        // running tens of seconds late, which is exactly what makes a
+        // YouTube go-live unusable.
+        //
+        // A live program feed must DROP late frames, not queue them. This
+        // buffer is now sized for a fraction of a second of absorption
+        // (momentary scheduling hiccups) and nothing more; past that,
+        // ffmpeg logs "real-time buffer too full, frame dropped", which is
+        // the correct behaviour for live and keeps latency flat.
+        // -fflags nobuffer / -flags low_delay stop the demuxer adding its
+        // own reordering delay on top.
+        '-fflags', 'nobuffer', '-flags', 'low_delay',
+        '-f', 'dshow', '-rtbufsize', CAMERA_RTBUFSIZE,
         ...(cameraVideoSize ? ['-video_size', cameraVideoSize] : []),
         ...(cameraFramerate ? ['-framerate', String(cameraFramerate)] : []),
         '-i', `video=${cameraDeviceName}`,
-        '-f', 'dshow', '-rtbufsize', '64M', '-i', `audio=${audioDeviceName}`,
+        // Audio is tiny by comparison; a small buffer here is genuinely just
+        // jitter absorption and costs no meaningful latency.
+        '-f', 'dshow', '-rtbufsize', '32M', '-i', `audio=${audioDeviceName}`,
         // Input 2: the overlay — back-to-back PNGs over loopback TCP from
         // OverlayPacer (image2pipe's png demuxer splits consecutive PNGs
         // on its own). Deliberately NOT stdin: stdin stays free for the
@@ -520,6 +594,9 @@ class Compositor extends EventEmitter {
         this.startedAt = null;
         this.cameraMode = null;     // resolved once by probeCameraMode(), cached for this instance's lifetime
         this.previewJpeg = null;
+        // Live preview subscribers (see onPreviewFrame) — each is a function
+        // that receives every composited preview JPEG as it is produced.
+        this.previewSubscribers = new Set();
         this.previewAt = null;
         this.stopped = false;
         this._startPromise = null;
@@ -543,6 +620,15 @@ class Compositor extends EventEmitter {
     // Best-effort — a device this can't probe/parse falls back to no
     // constraint. Async (the old spawnSync froze the event loop for up
     // to 8s, stalling every other process's pipes with it).
+    // Subscribe to the live preview. Returns an unsubscribe function.
+    // Back-pressure is the caller's problem by design: a slow viewer must
+    // never be allowed to stall the compositor, so callers drop frames
+    // rather than queue them (see the /capture-preview/stream handler).
+    onPreviewFrame(fn) {
+        this.previewSubscribers.add(fn);
+        return () => this.previewSubscribers.delete(fn);
+    }
+
     probeCameraMode(cameraDeviceName) {
         return new Promise((resolve) => {
             let out = '';
@@ -559,9 +645,35 @@ class Compositor extends EventEmitter {
             proc.on('error', () => {});
             proc.on('close', () => {
                 clearTimeout(timer);
+                // 🩹 The override exists because auto-detection can only pick
+                // from what the driver ADVERTISES, and capture cards lie or
+                // under-report all the time. If the operator knows the card
+                // does 1920x1080@30, STREAM_ENGINE_CAMERA_MODE=1920x1080@30
+                // settles it with no guessing at all.
+                const override = parseCameraModeOverride(process.env.STREAM_ENGINE_CAMERA_MODE);
+                if (override) {
+                    this.log(`[compositor] camera mode FORCED by STREAM_ENGINE_CAMERA_MODE: ${override.width}x${override.height}@${override.fps}`);
+                    clearTimeout(timer);
+                    return resolve(override);
+                }
+                // Log every mode the device actually offered. Without this the
+                // operator had no way to tell a bad PICK from a device that
+                // genuinely only offers one small mode — the single
+                // "auto-detected: 640x480@30" line looked the same either way.
+                const offered = parseDshowVideoModes(out);
+                if (offered.length) {
+                    const seen = [...new Set(offered.map((m) => `${m.width}x${m.height}@${Math.round(m.maxFps)}${m.compressed ? ' mjpeg' : ' raw'}`))];
+                    this.log(`[compositor] camera offers ${seen.length} mode(s): ${seen.join(', ')}`);
+                }
                 const mode = pickCameraMode(out, this.width, this.height, this.fps);
-                if (mode) this.log(`[compositor] camera mode auto-detected: ${mode.width}x${mode.height}@${mode.fps}${mode.compressed ? ' (compressed)' : ' (raw)'}`);
-                else this.log('[compositor] could not auto-detect a camera mode from -list_options output — opening unconstrained');
+                if (mode) {
+                    this.log(`[compositor] camera mode auto-detected: ${mode.width}x${mode.height}@${mode.fps}${mode.compressed ? ' (compressed)' : ' (raw)'}`);
+                    if (!mode.compressed && (mode.width < this.width || mode.height < this.height)) {
+                        this.log(`[compositor] ⚠ the camera is opening BELOW the program resolution (${mode.width}x${mode.height} < ${this.width}x${this.height}) — the feed will be upscaled and look soft. If this device really does support ${this.width}x${this.height}, force it with STREAM_ENGINE_CAMERA_MODE=${this.width}x${this.height}@${this.fps}`);
+                    }
+                } else {
+                    this.log('[compositor] could not auto-detect a camera mode from -list_options output — opening unconstrained');
+                }
                 resolve(mode);
             });
         });
@@ -664,7 +776,20 @@ class Compositor extends EventEmitter {
                 leg.sockets.add(socket);
                 socket.on('error', () => {});
                 socket.on('close', () => leg.sockets.delete(socket));
-                const parser = new MpjpegParser((jpeg) => { this.previewJpeg = jpeg; this.previewAt = Date.now(); });
+                const parser = new MpjpegParser((jpeg) => {
+                    this.previewJpeg = jpeg;
+                    this.previewAt = Date.now();
+                    // 🖥️ Push to anyone watching the live preview stream. Kept
+                    // deliberately trivial: a failed write to one dead socket
+                    // must never touch the compositor, the recording or the
+                    // YouTube push, so every subscriber is wrapped and a
+                    // broken one is simply dropped.
+                    if (this.previewSubscribers && this.previewSubscribers.size) {
+                        for (const sub of this.previewSubscribers) {
+                            try { sub(jpeg); } catch (e) { this.previewSubscribers.delete(sub); }
+                        }
+                    }
+                });
                 socket.on('data', (d) => parser.push(d));
             });
         } catch (e) {
@@ -906,4 +1031,8 @@ module.exports = {
     OVERLAY_FPS,
     parseDshowVideoModes,
     pickCameraMode,
+    parseCameraModeOverride,
+    RAW_BANDWIDTH_CAP_BYTES_PER_SEC,
+    PREVIEW_FPS,
+    PREVIEW_WIDTH,
 };
