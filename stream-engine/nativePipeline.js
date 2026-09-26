@@ -448,8 +448,15 @@ function pickCameraMode(listOptionsOutput, targetWidth, targetHeight, targetFps)
 
 
 function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height, fps, overlayInputUrl, previewOutputUrl, cameraVideoSize, cameraFramerate }) {
+    // Same reasoning as the live encoder: when the camera is already
+    // opening at the program resolution (which is what
+    // STREAM_ENGINE_CAMERA_MODE is for), scaling it is a no-op that still
+    // costs a full CPU resample of every frame. setsar/fps/format are kept
+    // — they are cheap and still needed to normalise the stream.
+    const camNeedsResize = !cameraVideoSize || cameraVideoSize !== `${width}x${height}`;
+    const camScale = camNeedsResize ? `scale=${width}:${height}:flags=bicubic,` : '';
     const filterComplex =
-        `[0:v]scale=${width}:${height}:flags=lanczos,setsar=1,fps=${fps},format=yuv420p[cam];` +
+        `[0:v]${camScale}setsar=1,fps=${fps},format=yuv420p[cam];` +
         `[2:v]scale=${width}:${height},format=rgba[ovl];` +
         `[cam][ovl]overlay=0:0:format=auto,format=yuv420p` +
         (previewOutputUrl
@@ -539,15 +546,36 @@ function buildRecorderEncoderArgs({ width, height, fps, bitrateKbps, outFile, us
     ];
 }
 
-function buildLiveEncoderArgs({ width, height, fps, bitrateKbps, keyframeIntervalSec, destinationUrl, useTune }) {
+function buildLiveEncoderArgs({ width, height, fps, bitrateKbps, keyframeIntervalSec, destinationUrl, useTune, relayWidth, relayHeight }) {
     const gop = Math.round(fps * keyframeIntervalSec);
+    // 🛠 "YouTube is not receiving enough video to maintain smooth
+    // streaming" — a SENDING-side problem, not a bandwidth one: the encoder
+    // is not delivering frames fast enough to keep the pipe fed.
+    //
+    // This used to scale UNCONDITIONALLY with flags=lanczos. Two problems:
+    //
+    //  1. When the relay is already at the streaming resolution (the normal
+    //     case — camera, compositor and stream all at 720p or all at 1080p)
+    //     the filter still ran, resampling every frame to the size it
+    //     already was. Pure waste.
+    //  2. On a machine where ffmpeg reports "GPU scale not available" that
+    //     resample is CPU swscale, and lanczos is the most expensive kernel
+    //     there is — several times bicubic for a difference nobody can see
+    //     after a lossy H.264 encode of already-composited frames.
+    //
+    // So: skip the filter entirely when no resize is needed, and use
+    // bicubic when one genuinely is. Visually indistinguishable at this
+    // stage, and it hands the frame budget back to the encoder.
+    const needsResize = !relayWidth || !relayHeight || relayWidth !== width || relayHeight !== height;
+    const scaleArgs = needsResize ? ['-vf', `scale=${width}:${height}:flags=bicubic`] : [];
     return [
         '-hide_banner', '-loglevel', 'warning',
         '-f', 'nut', '-thread_queue_size', '1024', '-i', 'pipe:0',
-        // The relay carries the RECORDER's fixed resolution regardless
-        // of the operator's selected/ABR-adjusted STREAMING resolution
-        // — this scales to whatever this encoder was asked to push.
-        '-vf', `scale=${width}:${height}:flags=lanczos`,
+        ...scaleArgs,
+        // Constant frame rate out. RTMP/YouTube expect a steady cadence;
+        // an irregular one reads to them as "not enough video" even when
+        // the average rate is right.
+        '-fps_mode', 'cfr',
         '-r', String(fps),
         '-c:v', 'h264_nvenc',
         '-preset', 'p4', ...(useTune ? ['-tune', 'll'] : []),
@@ -557,6 +585,11 @@ function buildLiveEncoderArgs({ width, height, fps, bitrateKbps, keyframeInterva
         '-bufsize', `${bitrateKbps * 2}k`,
         '-g', String(gop), '-keyint_min', String(gop),
         '-bf', '0',
+        // Nothing may sit between a frame arriving and it going out:
+        // no lookahead buffer, no scene-cut analysis, no encoder delay.
+        '-rc-lookahead', '0',
+        '-no-scenecut', '1',
+        '-delay', '0',
         '-af', 'aresample=async=1:first_pts=0',
         '-c:a', 'aac', '-b:a', '160k', '-ar', '44100',
         '-max_muxing_queue_size', '4096',
