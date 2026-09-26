@@ -167,6 +167,61 @@
   .layout{ display:grid; grid-template-columns: 340px 1fr 300px; gap:14px; padding:14px; align-items:start; }
   @media (max-width: 1100px){ .layout{ grid-template-columns:1fr; } }
 
+  /* ============================================================
+     📺 PROGRAM MONITOR — deliberately the biggest thing in the middle
+     column. The operator is watching a live match: the program feed has
+     to be readable at a glance from a normal sitting distance, not a
+     thumbnail they have to lean into. 16:9 keeps it honest — it is
+     exactly the shape YouTube receives.
+     ============================================================ */
+  #card-program-monitor h2{ display:flex; align-items:center; gap:8px; }
+  .pm-chip{
+    background:#ef4444; color:#fff; border-radius:999px;
+    padding:2px 8px; font:900 10px/1.5 system-ui, sans-serif;
+    letter-spacing:.08em; animation:pm-pulse 2s ease-in-out infinite;
+  }
+  @keyframes pm-pulse{ 0%,100%{ opacity:1; } 50%{ opacity:.45; } }
+  .pm-stage{
+    position:relative; width:100%; aspect-ratio:16/9;
+    background:#000; border-radius:10px; overflow:hidden;
+    border:1px solid var(--border);
+  }
+  #pm-stream-img{
+    position:absolute; inset:0; width:100%; height:100%;
+    object-fit:contain; background:#000; display:block;
+  }
+  #pm-stream-img[hidden]{ display:none; }
+  .pm-placeholder{
+    position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center;
+    padding:14px; color:rgba(255,255,255,.45);
+    font:600 12.5px/1.6 system-ui, sans-serif;
+  }
+  .pm-placeholder[hidden]{ display:none; }
+  .pm-badge{
+    position:absolute; left:8px; bottom:8px;
+    background:rgba(0,0,0,.66); backdrop-filter:blur(3px);
+    border-radius:6px; padding:3px 8px;
+    font:700 11px/1.5 system-ui, sans-serif; pointer-events:none;
+  }
+  .pm-badge[hidden]{ display:none; }
+  .pm-meta{
+    display:flex; align-items:center; gap:8px; margin-top:7px;
+    font:600 11.5px/1.4 system-ui, sans-serif; opacity:.75;
+  }
+  #pm-source{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pm-btn{
+    background:rgba(255,255,255,.06); border:1px solid var(--border);
+    color:inherit; border-radius:7px; padding:3px 9px; cursor:pointer;
+    font:600 11.5px system-ui, sans-serif; white-space:nowrap;
+  }
+  .pm-btn:hover{ background:rgba(255,255,255,.12); }
+  /* Expanded: the feed takes the whole window. Useful for checking
+     framing/focus before going live without leaving the panel. */
+  .pm-stage.pm-expanded{
+    position:fixed; inset:0; z-index:9999; width:100vw; height:100vh;
+    aspect-ratio:auto; border-radius:0; border:0;
+  }
   .card{
     background:linear-gradient(180deg, var(--panel), var(--bg-2) 140%);
     border:1px solid var(--border); border-radius:var(--radius);
@@ -626,6 +681,7 @@
     <span class="qn-label">🎮 Live</span>
     <button type="button" data-target="card-score">Score</button>
     <button type="button" data-target="card-ball-outcome">Ball Outcome</button>
+    <button type="button" data-target="card-program-monitor">Program Monitor</button>
     <button type="button" data-target="card-new-batsman">New Batsman</button>
     <button type="button" data-target="card-bowler">Bowler</button>
     <button type="button" data-target="card-live-players">Live Players</button>
@@ -985,6 +1041,38 @@
       <button class="full ghost" id="edit-scorecard-btn" style="margin-top:8px;display:none;">✏️ Edit Scorecard (Delete a Ball)</button>
       <div class="shortcut-hint">
         Shortcuts: <kbd>0-6</kbd> runs · <kbd>W</kbd> wicket · <kbd>S</kbd> swap strike · <kbd>U</kbd> undo
+      </div>
+    </div>
+
+    <!-- ============================================================
+         📺 PROGRAM MONITOR — the real composited program feed, large,
+         directly under Ball Outcome where the operator is already looking.
+
+         This is the SAME feed that goes to YouTube, to master.mp4 and to
+         every clip — not this tab's own render of live-output.html. It is
+         the Stream Engine's composited camera+overlay output, read back
+         over one long-lived multipart/x-mixed-replace connection
+         (/capture-preview/stream), so it moves like video instead of
+         being a still that changes every few seconds.
+
+         The small preview inside the LIVE STUDIO card is left exactly as
+         it was: that card is where the feed is SET UP (device pickers,
+         health rows, Go Live), and this is where it is WATCHED during
+         play. Both read the same source, so they can never disagree.
+         ============================================================ -->
+    <div class="card" id="card-program-monitor">
+      <h2>📺 Program Monitor <span id="pm-live-chip" class="pm-chip" hidden>LIVE</span></h2>
+      <div class="pm-stage" id="pm-stage">
+        <img id="pm-stream-img" alt="Program feed" hidden>
+        <div class="pm-placeholder" id="pm-placeholder">
+          Program feed not running yet.<br>
+          <span style="opacity:.7;">Start the preview, recording or Go Live under 🎬 Live Studio.</span>
+        </div>
+        <div class="pm-badge" id="pm-badge" hidden></div>
+      </div>
+      <div class="pm-meta">
+        <span id="pm-source">—</span>
+        <button type="button" class="pm-btn" id="pm-expand-btn" title="Fill the window with the program feed">⤢ Expand</button>
       </div>
     </div>
 
@@ -3063,6 +3151,7 @@ function startNativePreviewPolling(matchId){
   async function tickHealth(){
     try {
       const health = await fetch(`${STREAM_ENGINE_URL}/program-feed-health?matchId=${encodeURIComponent(matchId)}`).then(r => r.json());
+      setProgramMonitorHealth(health);
       if(badge){
         if(health.black){ badge.textContent = '⚠ PROGRAM FEED: BLACK FRAME'; badge.style.color = '#ff6b6b'; }
         else if(health.white){ badge.textContent = '⚠ PROGRAM FEED: WHITE FRAME'; badge.style.color = '#ff6b6b'; }
@@ -3075,10 +3164,135 @@ function startNativePreviewPolling(matchId){
 
   tickImage();
   tickHealth();
+  // 📺 The big Program Monitor follows the same lifecycle as Live
+  // Studio's own small preview, so the operator never has to start or stop
+  // it separately — it simply shows the feed whenever there is one.
+  startProgramMonitor(matchId);
   nativePreviewTimer = setInterval(tickImage, NATIVE_PREVIEW_IMAGE_INTERVAL_MS);
   nativePreviewHealthTimer = setInterval(tickHealth, NATIVE_PREVIEW_HEALTH_INTERVAL_MS);
 }
+/* ============================================================
+   📺 PROGRAM MONITOR — the big feed under Ball Outcome.
+
+   Uses ONE long-lived multipart/x-mixed-replace connection to the Stream
+   Engine (/capture-preview/stream) instead of re-requesting a still every
+   few seconds. The browser swaps each part into the <img> as it arrives,
+   so this is real motion with no polling, no JS decode and no timers.
+
+   It is a passive viewer of frames the compositor already produces: it
+   starts nothing, and the engine drops frames for a slow viewer rather
+   than queueing them, so this window can never slow the recording or the
+   YouTube push down.
+
+   If the stream endpoint isn't available (an older Stream Engine, or the
+   gdigrab path, which has no in-memory preview to stream), it falls back
+   to the still-image polling the panel already did — the monitor is then
+   less smooth, but never blank, and it says which mode it is in.
+   ============================================================ */
+let programMonitorMatchId = null;
+let programMonitorFallbackTimer = null;
+let programMonitorMode = null;   // 'stream' | 'poll' | null
+const PROGRAM_MONITOR_FALLBACK_MS = 1000;
+
+function programMonitorEls(){
+  return {
+    img: document.getElementById('pm-stream-img'),
+    placeholder: document.getElementById('pm-placeholder'),
+    badge: document.getElementById('pm-badge'),
+    chip: document.getElementById('pm-live-chip'),
+    source: document.getElementById('pm-source'),
+    stage: document.getElementById('pm-stage')
+  };
+}
+function startProgramMonitor(matchId){
+  const el = programMonitorEls();
+  if(!el.img || !matchId) return;
+  if(programMonitorMatchId === matchId && programMonitorMode) return; // already running for this match
+  stopProgramMonitor();
+  programMonitorMatchId = matchId;
+
+  const streamUrl = `${STREAM_ENGINE_URL}/capture-preview/stream?matchId=${encodeURIComponent(matchId)}`;
+
+  // A multipart response that the engine refuses (older build, or the
+  // gdigrab path) surfaces as an <img> load error — that is the signal to
+  // drop back to polling rather than leaving the operator with a black box.
+  el.img.onerror = () => { if(programMonitorMode === 'stream') startProgramMonitorFallback(matchId); };
+  el.img.onload = () => {
+    el.img.hidden = false;
+    if(el.placeholder) el.placeholder.hidden = true;
+  };
+  programMonitorMode = 'stream';
+  el.img.src = streamUrl;
+  if(el.source) el.source.textContent = 'Live program feed — same picture YouTube and the recording receive';
+}
+function startProgramMonitorFallback(matchId){
+  const el = programMonitorEls();
+  if(!el.img) return;
+  programMonitorMode = 'poll';
+  el.img.onerror = null;
+  if(el.source) el.source.textContent = 'Program feed (still frames — this Stream Engine has no live preview stream)';
+  const tick = () => {
+    el.img.src = `${STREAM_ENGINE_URL}/capture-preview?matchId=${encodeURIComponent(matchId)}&t=${Date.now()}`;
+  };
+  tick();
+  clearInterval(programMonitorFallbackTimer);
+  programMonitorFallbackTimer = setInterval(tick, PROGRAM_MONITOR_FALLBACK_MS);
+}
+function stopProgramMonitor(){
+  const el = programMonitorEls();
+  clearInterval(programMonitorFallbackTimer);
+  programMonitorFallbackTimer = null;
+  programMonitorMode = null;
+  programMonitorMatchId = null;
+  if(el.img){
+    el.img.onerror = null; el.img.onload = null;
+    el.img.src = '';        // closes the multipart connection
+    el.img.hidden = true;
+  }
+  if(el.placeholder) el.placeholder.hidden = false;
+  if(el.badge) el.badge.hidden = true;
+  if(el.chip) el.chip.hidden = true;
+  if(el.source) el.source.textContent = '—';
+}
+/* Mirrors whatever the Live Studio health check already worked out, so the
+   two can never tell the operator different things about the same feed. */
+function setProgramMonitorHealth(health){
+  const el = programMonitorEls();
+  if(!el.badge) return;
+  if(!health){ el.badge.hidden = true; return; }
+  let text = null, color = null;
+  if(health.black){ text = '⚠ BLACK FRAME'; color = '#ff6b6b'; }
+  else if(health.white){ text = '⚠ WHITE FRAME'; color = '#ff6b6b'; }
+  else if(health.frozen){ text = '⚠ FROZEN'; color = '#ffb020'; }
+  else if(health.ok){ text = '● FEED OK'; color = '#3ddc84'; }
+  if(text){ el.badge.textContent = text; el.badge.style.color = color; el.badge.hidden = false; }
+  else el.badge.hidden = true;
+}
+function setProgramMonitorLive(isLive){
+  const el = programMonitorEls();
+  if(el.chip) el.chip.hidden = !isLive;
+}
+document.addEventListener('DOMContentLoaded', () => {
+  const btn = document.getElementById('pm-expand-btn');
+  const stage = document.getElementById('pm-stage');
+  if(btn && stage){
+    btn.addEventListener('click', () => {
+      const on = stage.classList.toggle('pm-expanded');
+      btn.textContent = on ? '⤡ Collapse' : '⤢ Expand';
+    });
+    // Escape always gets the operator back to the panel — a full-screen
+    // feed with no way out mid-over would be its own emergency.
+    document.addEventListener('keydown', (e) => {
+      if(e.key === 'Escape' && stage.classList.contains('pm-expanded')){
+        stage.classList.remove('pm-expanded');
+        btn.textContent = '⤢ Expand';
+      }
+    });
+  }
+});
+
 function stopNativePreviewPolling(){
+  stopProgramMonitor();
   if(nativePreviewTimer) clearInterval(nativePreviewTimer);
   if(nativePreviewHealthTimer) clearInterval(nativePreviewHealthTimer);
   nativePreviewTimer = null;
@@ -3755,6 +3969,11 @@ async function stopLive(){
 }
 
 function updateLiveUI(active){
+  // 📺 The Program Monitor's LIVE chip is driven from HERE, the one
+  // place that already knows whether the YouTube push is actually running,
+  // rather than from any of the several lsSetHealth('ls-h-youtube', ...)
+  // call sites — so the chip and the health row can never disagree.
+  setProgramMonitorLive(!!active);
   document.getElementById('start-live-btn').style.display = active ? 'none' : 'block';
   document.getElementById('stop-live-btn').style.display = active ? 'block' : 'none';
   document.getElementById('ls-resolution-select').disabled = active;

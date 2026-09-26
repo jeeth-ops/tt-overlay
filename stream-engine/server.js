@@ -3320,6 +3320,61 @@ app.post('/capture-window/camera-ended', (req, res) => {
 // gdigrab is actually finding the Live Output window BEFORE going live
 // — exact OS title-bar/DPI pixel dimensions can't be verified without
 // the real machine, hence this endpoint.
+// 🖥️ LIVE PROGRAM MONITOR — a real multipart/x-mixed-replace MJPEG stream
+// of the composited camera+overlay feed.
+//
+// WHY THIS EXISTS: the panel used to show the program feed by re-requesting
+// GET /capture-preview (one still JPEG) on a timer. At the interval it
+// actually ran, that is a photo that changes every few seconds — you cannot
+// tell from it whether the feed is live, whether the camera is in focus, or
+// whether framing is right, which is the whole job of a program monitor.
+//
+// multipart/x-mixed-replace is the oldest and most reliable way to put real
+// motion into a plain <img>: ONE connection, the browser swaps each part in
+// as it arrives, no polling, no JS decode, no MediaSource, no WebRTC.
+//
+// SAFETY: this is a passive subscriber to frames the compositor already
+// produces for the in-memory preview. It starts nothing, it never
+// back-pressures the compositor (a viewer that cannot keep up has frames
+// DROPPED, never queued — see `busy` below), and if the socket dies the
+// subscription is torn down. It therefore cannot affect the recording or
+// the YouTube push, which is the property that matters most here.
+app.get('/capture-preview/stream', (req, res) => {
+    const matchId = safeMatchId(req.query.matchId);
+    if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
+    if (!NATIVE_PROGRAM_FEED) return res.status(400).json({ success: false, error: 'The live preview stream needs the native program feed (NATIVE_PROGRAM_FEED=true)' });
+    if (!compositor) return res.status(404).json({ success: false, error: 'No compositor running — start the preview, recording or go live first' });
+
+    const BOUNDARY = 'aslframe';
+    res.writeHead(200, {
+        'Content-Type': `multipart/x-mixed-replace; boundary=${BOUNDARY}`,
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Pragma': 'no-cache',
+        'Connection': 'close',
+        // This response never ends on its own; proxies must not buffer it.
+        'X-Accel-Buffering': 'no',
+    });
+
+    let busy = false;
+    const send = (jpeg) => {
+        // Drop rather than queue: if the previous frame has not finished
+        // going out, this viewer is slower than the feed and the correct
+        // thing for a LIVE monitor is to skip ahead, not to fall behind.
+        if (busy || res.writableEnded) return;
+        busy = true;
+        res.write(`--${BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpeg.length}\r\n\r\n`);
+        res.write(jpeg, () => { busy = false; });
+        res.write('\r\n');
+    };
+
+    if (compositor.previewJpeg) send(compositor.previewJpeg); // paint immediately, don't wait for the next frame
+    const unsubscribe = compositor.onPreviewFrame(send);
+    const done = () => { try { unsubscribe(); } catch (e) {} };
+    req.on('close', done);
+    req.on('error', done);
+    res.on('error', done);
+});
+
 app.get('/capture-preview', (req, res) => {
     const matchId = safeMatchId(req.query.matchId);
     if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
