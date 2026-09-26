@@ -222,6 +222,26 @@
     position:fixed; inset:0; z-index:9999; width:100vw; height:100vh;
     aspect-ratio:auto; border-radius:0; border:0;
   }
+  /* 🎬 HIGHLIGHTS press indicator + YES/NO prompt cards */
+  .b-highlight{ background:rgba(240,180,41,.14) !important; border-color:rgba(240,180,41,.55) !important; color:#f0b429 !important; font-weight:800 !important; }
+  .b-highlight.fired{ background:rgba(240,180,41,.45) !important; transition:background .12s; }
+  .hl-pending{ font:600 11.5px/1.4 system-ui, sans-serif; color:#f0b429; margin-top:5px; min-height:14px; }
+  #hl-prompts{ position:fixed; right:16px; bottom:16px; z-index:10000; display:flex; flex-direction:column; gap:8px; max-width:330px; }
+  .hl-prompt{
+    background:#141a2e; border:1px solid rgba(240,180,41,.6); border-radius:12px;
+    padding:12px 14px; box-shadow:0 10px 30px rgba(0,0,0,.5); animation:hl-in .16s ease-out;
+  }
+  @keyframes hl-in{ from{ transform:translateY(8px); opacity:0; } to{ transform:none; opacity:1; } }
+  .hl-prompt .q{ font:800 13.5px/1.35 system-ui, sans-serif; color:#f5d888; }
+  .hl-prompt .d{ font:600 11.5px/1.5 system-ui, sans-serif; opacity:.8; margin:5px 0 9px; }
+  .hl-prompt .btns{ display:flex; gap:7px; }
+  .hl-prompt .btns button{
+    flex:1; border-radius:8px; padding:7px 0; cursor:pointer;
+    font:800 12px system-ui, sans-serif; border:1px solid var(--border); color:inherit;
+    background:rgba(255,255,255,.06);
+  }
+  .hl-prompt .btns .yes{ background:rgba(61,220,132,.16); border-color:rgba(61,220,132,.6); color:#3ddc84; }
+  .hl-prompt .btns .no{ background:rgba(255,107,107,.12); border-color:rgba(255,107,107,.5); color:#ff6b6b; }
   .card{
     background:linear-gradient(180deg, var(--panel), var(--bg-2) 140%);
     border:1px solid var(--border); border-radius:var(--radius);
@@ -1527,7 +1547,8 @@
         </div>
       </div>
 
-      <button class="full small ghost" id="save-highlight-btn" style="margin-top:12px;">⭐ Save Highlight</button>
+      <button class="full small ghost b-highlight" id="save-highlight-btn" style="margin-top:12px;">🎬 HIGHLIGHTS <span style="opacity:.6;">(H)</span></button>
+      <div class="hl-pending" id="hl-pending"></div>
 
       <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,.08);">
         <label style="font-size:12px; opacity:.8; display:block; margin-bottom:6px;">Google Drive</label>
@@ -9361,6 +9382,21 @@ function recordBall(kind, meta){
   // logBallToDb() read state.striker/nonStriker/bowler/score.overs/balls
   // live itself, or a last-ball clip/DB row silently inherits whichever
   // over/batsman/bowler the NEXT delivery already put into state.
+  // 🎬 Attach any HIGHLIGHTS press since the previous ball to THIS ball,
+  // from the same immutable snapshot the DB row uses — never live state.
+  linkPendingHighlightsToBall(kind, meta, {
+    innings: logInnings,
+    over: logOverForBall,
+    ballInOver: logBallInOverForBall,
+    runs: state.score.runs - runsBefore,
+    battingTeam: logBattingTeam,
+    striker: logStrikerName,
+    nonStriker: logNonStrikerName,
+    bowler: logBowlerName,
+    strikerId: logStrikerId,
+    nonStrikerId: logNonStrikerId,
+    bowlerId: logBowlerId
+  });
   logBallToDb(kind, runsBefore, ballTimestamp, {
     over: logOverForBall,
     ballInOver: logBallInOverForBall,
@@ -9487,6 +9523,291 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundar
     triggerClip(eventType, ballTimestamp, matchId, ballMeta); // fire-and-forget — never blocks scoring
   }
 }
+
+
+/* ============================================================
+   🎬 HIGHLIGHTS — press first, classify when the ball is scored.
+   ------------------------------------------------------------
+   The button used to cut a clip and stop there, which is why a
+   highlight never reached the Highlights list, the scorecard or the
+   player: nothing ever told the system WHICH ball it was or whether the
+   operator wanted it kept. The flow now is:
+
+     1. Operator presses HIGHLIGHTS (or H) as the shot is played.
+        The clip is cut IMMEDIATELY — cutting never waits for anything,
+        because the footage is what is perishable. The press is held as
+        "pending", awaiting the ball's outcome.
+
+     2. Operator scores the ball (0/1/2/3/5, Wide, No Ball, Bye, Leg Bye,
+        Overthrow, Run Out, anything). That is when the real over/ball,
+        batsman, bowler and outcome exist.
+
+     3. FOUR / SIX / WICKET (and boundary extras) go into Highlights
+        automatically — there is nothing to ask about.
+        Everything else asks: "Add this clip to Highlights?" — answered
+        with the mouse, or Y / N.
+
+     4. YES → Highlights + the scorecard + that player's clips.
+        NO  → kept as a normal clip; it still appears in commentary.
+
+   EVERY clip, whatever the answer, is filed locally and reaches
+   commentary. NO only means "not in the Highlights reel".
+
+   Offline-safe by design: the decision goes to the LOCAL Stream Engine
+   first (127.0.0.1, works with the internet unplugged), which re-files
+   the clip on disk. The website copy is queued in localStorage and
+   flushed whenever the connection is there.
+   ============================================================ */
+const HL_MAX_PRESS_AGE_MS = 3 * 60 * 1000;   // a press with no ball within this can't be matched to one
+const HL_PROMPT_TIMEOUT_MS = 3 * 60 * 1000;  // an unanswered prompt keeps the clip as a normal clip
+const HL_CLASSIFY_DELAY_MS = 2000;           // let this ball's own logBall row land first
+let pendingHighlights = [];                  // [{ clipId, t0, matchId }]
+const clipDecisions = {};                    // clipId -> 'YES' | 'NO' | 'ASK'
+
+function renderPendingHighlights(){
+  const el = document.getElementById('hl-pending');
+  if(!el) return;
+  el.textContent = pendingHighlights.length
+    ? `🎬 ${pendingHighlights.length} clip${pendingHighlights.length === 1 ? '' : 's'} waiting for this ball's outcome`
+    : '';
+}
+
+/* The HIGHLIGHTS press. Cuts the clip now; classification comes later. */
+function pressHighlight(){
+  const matchId = currentMatchId();
+  if(!matchId){ toast('Enter a Match ID and Connect first'); return; }
+  const t0 = Date.now();
+  const clipId = buildClientClipId(matchId, 'HIGHLIGHT', t0);
+  pendingHighlights.push({ clipId, t0, matchId });
+  clipDecisions[clipId] = 'ASK';
+  renderPendingHighlights();
+  const btn = document.getElementById('save-highlight-btn');
+  if(btn){ btn.classList.add('fired'); setTimeout(() => btn.classList.remove('fired'), 400); }
+  // A press-time snapshot only — corrected to the ball's real identity by
+  // linkPendingHighlightsToBall() the moment the outcome is scored.
+  const ballMeta = {
+    innings: state.inningsNumber,
+    over: state.score.overs, ballInOver: state.score.balls + 1,
+    runs: 0, battingTeam: state.battingTeam,
+    striker: state.striker && state.striker.name,
+    nonStriker: state.nonStriker && state.nonStriker.name,
+    bowler: state.bowler && state.bowler.name,
+    strikerId: (state.striker && state.striker.id) || null,
+    nonStrikerId: (state.nonStriker && state.nonStriker.id) || null,
+    bowlerId: (state.bowler && state.bowler.id) || null,
+    dismissal: null
+  };
+  triggerClip('HIGHLIGHT', t0, matchId, ballMeta);
+  toast('🎬 Clip cut — score the ball and choose Y / N', 2200);
+}
+
+/* What this ball WAS, in words — and whether it is obviously a highlight.
+   Kept identical to the main scoring panel so both classify the same ball
+   the same way. */
+function describeBallOutcome(kind, meta, runs){
+  meta = meta || {};
+  if(kind === 'RH') return { label: 'Retired Hurt', eventType: 'CLIP', isDefault: false };
+  const isWicket = kind === 'W' || kind === 'WdW' || kind === 'NbW';
+  if(isWicket){
+    const how = meta.dismissalType || 'Bowled';
+    const on = kind === 'WdW' ? ' (Wide)' : kind === 'NbW' ? ' (No Ball)' : '';
+    if(how === 'Retired Hurt') return { label: 'Retired Hurt', eventType: 'CLIP', isDefault: false };
+    return { label: `WICKET — ${how}${on}`, eventType: 'WICKET', isDefault: true };
+  }
+  switch(kind){
+    case '4': return { label: 'FOUR', eventType: 'FOUR', isDefault: true };
+    case '6': return { label: 'SIX', eventType: 'SIX', isDefault: true };
+    case '0': return { label: 'Dot ball', eventType: 'CLIP', isDefault: false };
+    case 'Wd': {
+      const x = meta.extraRuns || 0;
+      if(x >= 6) return { label: 'Wide 6', eventType: 'SIX', isDefault: true };
+      if(x === 4) return { label: 'Wide 4', eventType: 'FOUR', isDefault: true };
+      return { label: x ? `Wide +${x}` : 'Wide', eventType: 'CLIP', isDefault: false };
+    }
+    case 'Nb': {
+      const bat = meta.runsOffBat || 0, lb = meta.legByeRuns || 0;
+      if(bat === 6) return { label: 'No Ball 6', eventType: 'SIX', isDefault: true };
+      if(bat === 4) return { label: 'No Ball 4', eventType: 'FOUR', isDefault: true };
+      if(lb === 4) return { label: 'No Ball + Leg Bye 4', eventType: 'CLIP', isDefault: true };
+      return { label: bat ? `No Ball +${bat}` : lb ? `No Ball + ${lb} leg bye${lb === 1 ? '' : 's'}` : 'No Ball', eventType: 'CLIP', isDefault: false };
+    }
+    case 'B': {
+      const r = typeof meta.runs === 'number' ? meta.runs : 1;
+      return { label: `Bye ${r}`, eventType: 'CLIP', isDefault: r === 4 };
+    }
+    case 'LB': {
+      const r = typeof meta.runs === 'number' ? meta.runs : 1;
+      return { label: `Leg Bye ${r}`, eventType: 'CLIP', isDefault: r === 4 };
+    }
+    case 'OT': {
+      const r = typeof runs === 'number' ? runs : (typeof meta.runs === 'number' ? meta.runs : 0);
+      if(r >= 6) return { label: `Overthrow ${r}`, eventType: 'SIX', isDefault: true };
+      if(r === 4) return { label: 'Overthrow 4', eventType: 'FOUR', isDefault: true };
+      return { label: `Overthrow ${r}`, eventType: 'CLIP', isDefault: false };
+    }
+    default: {
+      const r = Number(kind);
+      return { label: Number.isFinite(r) ? `${r} run${r === 1 ? '' : 's'}` : String(kind), eventType: 'CLIP', isDefault: false };
+    }
+  }
+}
+
+/* Called from recordBall() for every scored ball: attaches every press
+   since the previous ball to THIS ball. Returns how many were linked. */
+function linkPendingHighlightsToBall(kind, meta, ball){
+  if(!pendingHighlights.length) return 0;
+  const presses = pendingHighlights;
+  pendingHighlights = [];
+  renderPendingHighlights();
+  const fresh = presses.filter(h => Date.now() - h.t0 < HL_MAX_PRESS_AGE_MS);
+  // A press with no ball scored within the window can't be matched to one
+  // reliably — keep it as a normal clip rather than guess at a ball.
+  presses.filter(h => !fresh.includes(h)).forEach(h => {
+    clipDecisions[h.clipId] = 'NO';
+    sendClipMetaToStreamEngine({ clipId: h.clipId, matchId: h.matchId, timestamp: h.t0, isHighlight: false, eventType: 'CLIP', outcomeLabel: 'Not linked to a ball', ballMeta: null });
+  });
+  if(!fresh.length) return 0;
+
+  const outcome = describeBallOutcome(kind, meta, ball.runs);
+  const isWicket = kind === 'W' || kind === 'WdW' || kind === 'NbW';
+  const ballMeta = {
+    ...ball,
+    dismissal: isWicket ? { type: (meta && meta.dismissalType) || 'Bowled', fielder: (meta && meta.fielderName) || null } : null
+  };
+  const send = (isHighlight) => fresh.forEach(h => {
+    clipDecisions[h.clipId] = isHighlight ? 'YES' : 'NO';
+    // 1️⃣ LOCAL first — 127.0.0.1, works with the internet unplugged. This
+    //    is what re-files the clip into Highlights/<category>/ and the
+    //    player folders on disk.
+    sendClipMetaToStreamEngine({
+      clipId: h.clipId, matchId: h.matchId, timestamp: h.t0,
+      isHighlight, eventType: outcome.eventType, outcomeLabel: outcome.label, ballMeta
+    });
+    // 2️⃣ Then the website — queued in localStorage while offline, so the
+    //    scorecard/player association is never lost to a dead connection.
+    setTimeout(() => sendClipClassification({
+      clipId: h.clipId, matchId: h.matchId, eventTimestamp: h.t0,
+      isHighlight, eventType: outcome.eventType, outcomeLabel: outcome.label, ballMeta
+    }), HL_CLASSIFY_DELAY_MS);
+  });
+
+  if(outcome.isDefault){
+    send(true);
+    toast(`🎬 ${outcome.label} — added to Highlights automatically`, 2500);
+  } else {
+    showHighlightPrompt(outcome, ballMeta, fresh.length, send);
+  }
+  return fresh.length;
+}
+
+/* The YES / NO card. Never modal — the operator must always be able to
+   score the next ball while it is open. */
+function showHighlightPrompt(outcome, ball, count, send){
+  const box = document.getElementById('hl-prompts');
+  if(!box){ send(false); return; }
+  const card = document.createElement('div');
+  card.className = 'hl-prompt';
+  const who = [ball.striker, ball.bowler ? `b ${ball.bowler}` : ''].filter(Boolean).join(' ');
+  card.innerHTML = `<div class="q">🎬 Add this clip to Highlights?</div>
+    <div class="d"></div>
+    <div class="btns"><button type="button" class="yes">YES (Y)</button><button type="button" class="no">NO (N)</button></div>`;
+  card.querySelector('.d').textContent =
+    `Over ${ball.over}.${ball.ballInOver} · ${outcome.label}${who ? ` · ${who}` : ''}${count > 1 ? ` · ${count} clips` : ''}`;
+  let done = false;
+  const answer = (yes) => {
+    if(done) return;
+    done = true;
+    clearTimeout(timer);
+    card.remove();
+    send(yes);
+    toast(yes
+      ? `🎬 Added to Highlights — ${outcome.label}`
+      : `Kept as a normal clip (commentary only) — ${outcome.label}`, 2200);
+  };
+  card.querySelector('.yes').addEventListener('click', () => answer(true));
+  card.querySelector('.no').addEventListener('click', () => answer(false));
+  card._answer = answer;
+  // Unanswered means "not a highlight" — the clip still exists and still
+  // reaches commentary, it just doesn't join the reel.
+  const timer = setTimeout(() => answer(false), HL_PROMPT_TIMEOUT_MS);
+  box.appendChild(card);
+}
+/* Y / N answer the OLDEST open prompt, so rapid-fire answers stay in the
+   order the balls were bowled. */
+function answerOldestHighlightPrompt(yes){
+  const card = document.querySelector('#hl-prompts .hl-prompt');
+  if(card && card._answer){ card._answer(yes); return true; }
+  return false;
+}
+
+/* ---- LOCAL: the Stream Engine re-files the clip on disk (no internet) ---- */
+async function sendClipMetaToStreamEngine(payload){
+  if(!payload || !payload.clipId) return;
+  try {
+    await fetch(`${STREAM_ENGINE_URL}/clip-meta`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  } catch(e){
+    // The Stream Engine is on this same PC; if it is not reachable the clip
+    // itself was never cut either, so there is nothing to re-file.
+  }
+}
+
+/* ---- WEBSITE: scorecard / player association, with a durable queue ---- */
+const HL_CLASSIFY_QUEUE_KEY = 'hlClassifyQueue-p3';
+function loadClassifyQueue(){ try { return JSON.parse(localStorage.getItem(HL_CLASSIFY_QUEUE_KEY) || '[]'); } catch(e){ return []; } }
+function saveClassifyQueue(q){ try { localStorage.setItem(HL_CLASSIFY_QUEUE_KEY, JSON.stringify(q.slice(-200))); } catch(e){} }
+async function postClassification(payload){
+  try {
+    const r = await fetch('/api/clips/classify', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if(r.status === 400) return true; // not retryable — drop it
+    return r.ok;
+  } catch(e){ return false; }
+}
+async function sendClipClassification(payload){
+  if(await postClassification(payload)) return;
+  const q = loadClassifyQueue().filter(p => p.clipId !== payload.clipId);
+  q.push(payload);
+  saveClassifyQueue(q);
+}
+async function flushClassifyQueue(){
+  const q = loadClassifyQueue();
+  if(!q.length) return;
+  const left = [];
+  for(const p of q){ if(!(await postClassification(p))) left.push(p); }
+  saveClassifyQueue(left);
+}
+// Drains whenever the browser says the connection is back, and on a slow
+// timer as a backstop (the event alone is not reliable).
+window.addEventListener('online', () => flushClassifyQueue());
+setInterval(() => { if(navigator.onLine) flushClassifyQueue(); }, 60000);
+
+document.addEventListener('DOMContentLoaded', () => {
+  const btn = document.getElementById('save-highlight-btn');
+  if(btn){
+    const fresh = btn.cloneNode(true);   // drop the old "cut a clip now" handler
+    btn.parentNode.replaceChild(fresh, btn);
+    fresh.addEventListener('click', pressHighlight);
+  }
+  renderPendingHighlights();
+  flushClassifyQueue();
+});
+
+// H = press highlight, Y / N = answer the oldest prompt. Ignored while the
+// operator is typing in a field, so a player's name can contain y or n.
+document.addEventListener('keydown', (e) => {
+  if(e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target;
+  if(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+  const k = e.key.toLowerCase();
+  if(k === 'y' && answerOldestHighlightPrompt(true)) { e.preventDefault(); return; }
+  if(k === 'n' && answerOldestHighlightPrompt(false)) { e.preventDefault(); return; }
+  if(k === 'h'){ e.preventDefault(); pressHighlight(); }
+});
 
 function swapStrikeSilent(){
   const tmp = state.striker; state.striker = state.nonStriker; state.nonStriker = tmp;
@@ -12253,5 +12574,10 @@ document.addEventListener('keydown', (e) => {
   connect();
 })();
 </script>
+<!-- 🎬 HIGHLIGHTS prompts — "Add this clip to Highlights?" cards stack
+     here, answered with the mouse or the Y / N keys. Deliberately floating
+     and non-modal: answering is never allowed to block the next delivery
+     being scored. -->
+<div id="hl-prompts"></div>
 </body>
 </html>
