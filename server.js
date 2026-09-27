@@ -8296,11 +8296,13 @@ async function syncMatchRecordFromBalls(ownerUid, matchId, opts) {
     }
 }
 
-function scheduleMatchRecordSync(ownerUid, matchId) {
+function scheduleMatchRecordSync(ownerUid, matchId, opts) {
     if (!ownerUid || !matchId) return;
     clearTimeout(matchRecordSyncTimers[matchId]);
     matchRecordSyncTimers[matchId] = setTimeout(() => {
-        syncMatchRecordFromBalls(ownerUid, matchId);
+        // An undo is the one live-path rebuild that is MEANT to make the
+        // scorecard smaller, so it carries force — see the safety net.
+        syncMatchRecordFromBalls(ownerUid, matchId, opts || {});
     }, 900);
 }
 
@@ -8980,6 +8982,42 @@ io.on('connection', async (socket) => {
             }
             console.log('logBall Mongo insert error:', err);
             reply({ ok: false, retry: true, error: 'insert-failed' });
+        }
+    });
+
+    // 🛟 UNDO, ALL THE WAY DOWN TO THE LOG.
+    // The panel's Undo used to stop at the panel: the delivery it had
+    // already written to ballsCollection stayed, and the ball re-scored in
+    // its place was written alongside it. The log then held both, which is
+    // invisible until a scorecard is rebuilt from it — and then the innings
+    // reads several runs and several balls too high.
+    //
+    // The panel points at the exact row it wrote (the ballUid it minted for
+    // that delivery), never at "whatever is last in the database", which
+    // might belong to another device. Same trust level as logBall itself:
+    // whoever can write a delivery into this room can take their own one
+    // back out. The row is archived, not destroyed.
+    socket.on('undoBall', async (data, ack) => {
+        const reply = (payload) => { if (typeof ack === 'function') { try { ack(payload); } catch (e) {} } };
+        if (!ballsCollection) return reply({ ok: false });
+        const matchId = safeMatchId((data && data.matchId) || matchIdForClient);
+        const ballUid = String((data && data.ballUid) || '');
+        if (!matchId || !ballUid) return reply({ ok: false, error: 'no-ball' });
+        try {
+            const doc = await ballsCollection.findOne({ matchId, ballUid });
+            if (!doc) return reply({ ok: true, alreadyGone: true });
+            if (ballsArchiveCollection) {
+                await ballsArchiveCollection.insertOne({
+                    ...doc, _id: undefined, originalBallId: String(doc._id),
+                    archivedAt: Date.now(), archivedBy: 'panel undo', reason: 'undone on the panel'
+                });
+            }
+            await ballsCollection.deleteOne({ _id: doc._id });
+            if (doc.ownerUid) scheduleMatchRecordSync(doc.ownerUid, matchId, { force: true });
+            reply({ ok: true });
+        } catch (err) {
+            console.log('undoBall error:', err);
+            reply({ ok: false });
         }
     });
 

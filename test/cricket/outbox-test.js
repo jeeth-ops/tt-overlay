@@ -105,5 +105,33 @@ E(`recordBall('6');`);
 eq('a ball sent and acknowledged straight away never lingers', outbox().length, 0);
 eq('and it did go out', sent.filter(s => s.ev === 'logBall').length, 7);
 
+console.log('\n=== UNDO REACHES THE BALL LOG ===');
+// A ball still sitting in the outbox never needs the server: drop it before
+// it goes.
+socketStub.connected = false; socketStub.serverUp = false;
+E(`ballOutbox = []; saveBallOutbox(); sentBallUids = []; recordBall('4');`);
+eq('the ball is queued', outbox().length, 1);
+E(`unlogLastBall();`);
+eq('undoing it before it is sent just drops it', outbox().length, 0);
+eq('and nothing was sent to the server', sent.filter(s => s.ev === 'undoBall').length, 0);
+
+// A ball the server has already acknowledged has to be taken back out.
+socketStub.connected = true; socketStub.serverUp = true;
+E(`recordBall('6');`);
+eq('it went straight out', outbox().length, 0);
+E(`unlogLastBall();`);
+const undos = sent.filter(s => s.ev === 'undoBall');
+eq('undo tells the server to remove it', undos.length, 1);
+eq('and points at the exact row it wrote', typeof undos[0].data.ballUid, 'string');
+
+// Offline, the undo is remembered rather than lost.
+socketStub.connected = false;
+E(`recordBall('1'); ballOutbox = []; saveBallOutbox(); unlogLastBall();`);
+eq('an undo made offline is queued', JSON.parse(w.localStorage.getItem('cricket-ball-undo-queue') || '[]').length, 1);
+socketStub.connected = true;
+E(`flushUndoQueue();`);
+eq('and goes up when the line is back', sent.filter(s => s.ev === 'undoBall').length, 2);
+eq('the queue is cleared once it has', w.localStorage.getItem('cricket-ball-undo-queue'), null);
+
 console.log(`\n================  ${pass} passed, ${fail} failed  ================\n`);
 process.exit(fail ? 1 : 0);

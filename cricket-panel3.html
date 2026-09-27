@@ -2386,6 +2386,7 @@ function connect(){
     // 🛟 Anything scored while the line was down goes up now, before
     // anything else — see the BALL OUTBOX section above.
     flushBallOutbox();
+    flushUndoQueue();
     resendMatchSnapshotNow();
     // Wait for the server's reply before pushing anything — see the
     // RESUME SAFETY comment above. Normally resolved within one round
@@ -9588,7 +9589,11 @@ function newBallUid(){
 // Called instead of socket.emit('logBall', …). Never blocks scoring and
 // never throws — the ball is on disk before anything network happens.
 function queueBallForDb(payload){
-  ballOutbox.push({ uid: newBallUid(), payload, queuedAt: Date.now(), sentAt: 0 });
+  const uid = newBallUid();
+  ballOutbox.push({ uid, payload, queuedAt: Date.now(), sentAt: 0 });
+  // Remembered in order so Undo can take this exact row back out again —
+  // see unlogLastBall().
+  rememberBallUid({ uid, matchId: payload.matchId, kind: payload.kind, innings: payload.innings, over: payload.over, ballInOver: payload.ballInOver });
   saveBallOutbox();
   flushBallOutbox();
 }
@@ -9616,6 +9621,62 @@ function flushBallOutbox(){
 // Tells the operator, while there is still time to do something about it,
 // that deliveries are sitting on this laptop and have not reached the
 // website yet. Quiet for the first 45s so a normal blip says nothing.
+// 🛟 UNDO HAS TO REACH THE BALL LOG TOO.
+//
+// Undo restores the panel's previous snapshot, which is right for the panel
+// — but the delivery had already been written to MongoDB, and nothing ever
+// took it back out. The panel then re-scored the ball in its place, so the
+// log ended up holding BOTH. Invisible while the panel's own record was the
+// one being read; the moment a scorecard was rebuilt from the log (a
+// correction, or a recovery) the innings came out several runs and several
+// balls too high. On one 2-innings match that was 11 extra deliveries.
+//
+// Every queued delivery's uid is kept here in order, so an undo can point
+// at exactly the row it wrote — no guessing at "the last ball in the
+// database", which is not necessarily this panel's.
+const BALL_SENT_KEY = 'cricket-ball-sent';
+let sentBallUids = (() => {
+  try{ const p = JSON.parse(localStorage.getItem(BALL_SENT_KEY) || '[]'); return Array.isArray(p) ? p : []; }catch(e){ return []; }
+})();
+function rememberBallUid(entry){
+  sentBallUids.push(entry);
+  if(sentBallUids.length > 500) sentBallUids = sentBallUids.slice(-500);
+  try{ localStorage.setItem(BALL_SENT_KEY, JSON.stringify(sentBallUids)); }catch(e){}
+}
+// Takes the delivery this panel logged last back out of the permanent log.
+// If it never left the outbox there is nothing to undo on the server — just
+// drop it before it goes. Fire-and-forget: an undo must never block or fail
+// the scoring in front of the operator.
+function unlogLastBall(){
+  const last = sentBallUids.pop();
+  if(!last) return;
+  try{ localStorage.setItem(BALL_SENT_KEY, JSON.stringify(sentBallUids)); }catch(e){}
+  const pending = ballOutbox.some(b => b.uid === last.uid);
+  if(pending){
+    ballOutbox = ballOutbox.filter(b => b.uid !== last.uid);
+    saveBallOutbox();
+    return;
+  }
+  if(socket && socket.connected){
+    socket.emit('undoBall', { matchId: last.matchId, ballUid: last.uid });
+  } else {
+    // Offline: remember it so the row still goes when the line is back.
+    try{
+      const q = JSON.parse(localStorage.getItem('cricket-ball-undo-queue') || '[]');
+      q.push(last);
+      localStorage.setItem('cricket-ball-undo-queue', JSON.stringify(q.slice(-200)));
+    }catch(e){}
+  }
+}
+function flushUndoQueue(){
+  if(!socket || !socket.connected) return;
+  let q = [];
+  try{ q = JSON.parse(localStorage.getItem('cricket-ball-undo-queue') || '[]'); }catch(e){ q = []; }
+  if(!q.length) return;
+  q.forEach(item => socket.emit('undoBall', { matchId: item.matchId, ballUid: item.uid }));
+  try{ localStorage.removeItem('cricket-ball-undo-queue'); }catch(e){}
+}
+
 function checkBallOutboxHealth(){
   const pending = ballOutbox.length;
   const el = document.getElementById('outbox-indicator');
@@ -10980,6 +11041,7 @@ async function deleteLastBall(){
   if(history.length > 0){
     restoreHistorySnapshot(history.pop());
     saveHistoryLocal();
+    unlogLastBall(); // the panel's undo must reach the permanent log too
     return { ok: true, mode: 'exact' };
   }
   // No real snapshot to restore from — the local best-effort arithmetic
@@ -10990,6 +11052,7 @@ async function deleteLastBall(){
   const entry = state.ballLog[state.ballLog.length - 1];
   if(canDeltaReverseBall(entry)){
     reverseLastBallDelta();
+    unlogLastBall();
     return { ok: true, mode: 'approx' };
   }
   // Wicket ball, no local snapshot — can't safely reverse it from what
