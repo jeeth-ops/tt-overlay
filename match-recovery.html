@@ -536,7 +536,10 @@ async function inspect(roomId, matchId){
     const localBest = (localScan && localScan.states[0]) || null;
     const sources = [
       { key: 'saved',  name: 'Saved scorecard (what the public page shows now)', balls: d.savedBalls, action: null },
-      { key: 'balls',  name: 'Permanent delivery log (MongoDB balls)', balls: d.ballCount, action: 'balls' },
+      // Balls FACED, not rows: a wide is a row in the log but not a ball
+      // faced, so comparing the raw row count against the saved card's
+      // footprint made every match look like the log held more than it does.
+      { key: 'balls',  name: 'Permanent delivery log (MongoDB balls)', balls: d.fromBalls ? footprintOf(d.fromBallsFootprint) : 0, rows: d.ballCount, action: 'balls' },
       { key: 'live',   name: 'Room\'s last live panel state (Firestore)', balls: d.liveRecordBalls, action: d.liveRecord ? 'liveState' : null },
       { key: 'local',  name: 'Fullest copy in THIS browser', balls: localBest ? localBest.weight.cardBalls : 0, action: localBest ? 'local' : null }
     ];
@@ -578,6 +581,13 @@ async function inspect(roomId, matchId){
         <div id="rescoredBox"><button id="btnRescored">🔎 Scan the ball log</button></div>
       </details>
       <details style="margin-top:10px">
+        <summary>Deliveries this clean-up removed — put any of them back</summary>
+        <p class="hint">The clean-up keeps every row it takes out. If it took one too many — an older panel
+          could label the delivery that ends an over as the next over's first, which puts two genuine balls
+          in one slot — tick it here and it goes straight back.</p>
+        <div id="archivedBox"><button id="btnArchived">Show what was removed</button></div>
+      </details>
+      <details style="margin-top:10px">
         <summary>Set the result and declarations by hand</summary>
         <p class="hint">A ball log cannot know these: an innings closed at 241/4 looks the same whether it
           was declared or all out.</p>
@@ -599,6 +609,8 @@ async function inspect(roomId, matchId){
       document.querySelector('#localResults button[data-act="push"]').click();
     };
     body.querySelectorAll('button[data-version]').forEach(b => b.onclick = () => doRestore('version', d, b.dataset.version));
+    const arBtn = document.getElementById('btnArchived');
+    if(arBtn) arBtn.onclick = () => loadArchived(d);
     const rsBtn = document.getElementById('btnRescored');
     if(rsBtn) rsBtn.onclick = () => scanRescored(d);
     renderResultForm(d);
@@ -666,6 +678,48 @@ async function scanRescored(d){
           body: JSON.stringify({ ballIds: ids, matchId: (d.saved && d.saved.roomId) || (d.saved && d.saved.matchId) || d.ids[0] })
         });
         toast(`Removed ${done.removed} — now ${line(done.scoreA)} and ${line(done.scoreB)}.`);
+        inspect(d.ids[0], (d.saved && d.saved.matchId) || '');
+      }catch(err){ toast(err.message, true); }
+    };
+  }catch(err){ box.innerHTML = `<div class="banner err">${esc(err.message)}</div>`; }
+}
+
+// Balls faced across every batting group of a footprint — the same measure
+// the server's footprintTotalBalls() uses, so the two sides are comparable.
+function footprintOf(fp){
+  if(!fp) return 0;
+  return Object.keys(fp).reduce((n,k) => n + (k.indexOf('bat::') === 0 ? (fp[k].balls || 0) : 0), 0);
+}
+
+// Everything the clean-up has taken out, with a way to put any of it back —
+// the clean-up's rule is right for a re-scored ball but not for every case,
+// so it is never the last word.
+async function loadArchived(d){
+  const box = document.getElementById('archivedBox');
+  box.innerHTML = '<p class="meta">Loading…</p>';
+  try{
+    const r = await api(`/cricket/recover/archived?matchId=${encodeURIComponent((d.saved && d.saved.matchId) || d.ids[0])}&roomId=${encodeURIComponent((d.saved && d.saved.roomId) || '')}`);
+    if(!r.archived.length){ box.innerHTML = '<p class="meta">Nothing has been removed from this match.</p>'; return; }
+    box.innerHTML = `
+      <table><thead><tr><th></th><th>Innings</th><th>Ball</th><th>What it was</th><th>Removed</th></tr></thead><tbody>
+      ${r.archived.map(a => `<tr>
+        <td><input type="checkbox" class="arPick" value="${esc(a.archiveId)}"></td>
+        <td>${a.innings}</td><td>${a.over}.${a.ballInOver}</td>
+        <td>${esc(a.kind)} · ${a.runs} run${a.runs === 1 ? '' : 's'}${a.wicket ? ' · WICKET' : ''} · ${esc(a.striker || '')} off ${esc(a.bowler || '')}</td>
+        <td class="meta">${when(a.archivedAt)}</td>
+      </tr>`).join('')}
+      </tbody></table>
+      <div class="row" style="margin-top:12px"><button id="arApply">Put the ticked deliveries back</button></div>`;
+    document.getElementById('arApply').onclick = async () => {
+      const ids = [...box.querySelectorAll('.arPick')].filter(c => c.checked).map(c => c.value);
+      if(!ids.length) return toast('Nothing ticked', true);
+      try{
+        const done = await api('/cricket/recover/restore-balls', {
+          method: 'POST',
+          body: JSON.stringify({ archiveIds: ids, matchId: (d.saved && d.saved.roomId) || (d.saved && d.saved.matchId) || d.ids[0] })
+        });
+        const line = (s) => `${s.runs}/${s.wickets} (${s.overs} ov)`;
+        toast(`Put ${done.restored} back — now ${line(done.scoreA)} and ${line(done.scoreB)}.`);
         inspect(d.ids[0], (d.saved && d.saved.matchId) || '');
       }catch(err){ toast(err.message, true); }
     };

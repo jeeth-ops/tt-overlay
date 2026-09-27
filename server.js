@@ -6719,6 +6719,79 @@ adminRouter.post('/cricket/recover/set-result', async (req, res) => {
     }
 });
 
+// Everything the clean-up has taken out of this match's ball log, newest
+// first. The clean-up's rule (two legal deliveries in one over.ball slot,
+// the last one wins) is right for a re-score but not for every case — an
+// older panel could mislabel the delivery that ends an over, which puts two
+// genuine balls in one slot. So what it removed stays listed, and goes back
+// one tick at a time.
+adminRouter.get('/cricket/recover/archived', async (req, res) => {
+    if (!ballsArchiveCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const ids = [...new Set([safeMatchId(req.query.matchId || ''), safeMatchId(req.query.roomId || '')].filter(Boolean))];
+        if (!ids.length) return res.status(400).json({ success: false, error: 'matchId or roomId required' });
+        const saved = await matchRecordsCollection.findOne({ $or: [{ matchId: { $in: ids } }, { roomId: { $in: ids } }] });
+        const lookupIds = [...new Set(ids.concat(saved ? [saved.matchId, saved.roomId] : []).filter(Boolean))];
+        const rows = await ballsArchiveCollection.find({ matchId: { $in: lookupIds } }).sort({ archivedAt: -1, innings: 1, over: 1, ballInOver: 1 }).limit(300).toArray();
+        res.json({
+            success: true,
+            archived: rows.map(r => ({
+                archiveId: String(r._id),
+                innings: r.innings || 1, over: r.over, ballInOver: r.ballInOver,
+                kind: r.kind, runs: r.runs, striker: r.striker, bowler: r.bowler,
+                wicket: !!r.dismissal, at: r.timestamp || null,
+                archivedAt: r.archivedAt, reason: r.reason || ''
+            }))
+        });
+    } catch (err) {
+        console.log('Archived-deliveries fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not read the archive' });
+    }
+});
+
+// Puts archived deliveries back into the ball log and rebuilds the
+// scorecard. The reverse of drop-balls, row for row.
+adminRouter.post('/cricket/recover/restore-balls', async (req, res) => {
+    if (!ballsCollection || !ballsArchiveCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const archiveIds = Array.isArray(req.body && req.body.archiveIds) ? req.body.archiveIds : [];
+    if (!archiveIds.length) return res.status(400).json({ success: false, error: 'Nothing selected' });
+    try {
+        const { ObjectId } = require('mongodb');
+        const oids = archiveIds.map(id => { try { return new ObjectId(String(id)); } catch (e) { return null; } }).filter(Boolean);
+        const rows = await ballsArchiveCollection.find({ _id: { $in: oids } }).toArray();
+        if (!rows.length) return res.status(404).json({ success: false, error: 'Those deliveries are not in the archive' });
+
+        const matchId = safeMatchId((req.body && req.body.matchId) || rows[0].matchId);
+        const docs = rows.map(r => {
+            const { _id, originalBallId, archivedAt, archivedBy, reason, ...ball } = r;
+            // A fresh uid, so putting a row back can never collide with the
+            // unique index on a ballUid it carried the first time around.
+            return { ...ball, ballUid: `back-${String(_id)}` };
+        });
+        await ballsCollection.insertMany(docs, { ordered: false });
+        await ballsArchiveCollection.deleteMany({ _id: { $in: rows.map(r => r._id) } });
+
+        const rec = await matchRecordsCollection.findOne({ $or: [{ matchId }, { roomId: matchId }] });
+        const ownerUid = (rec && rec.ownerUid) || rows[0].ownerUid;
+        if (ownerUid) await syncMatchRecordFromBalls(ownerUid, matchId, { force: true, reason: 'put archived deliveries back' });
+
+        const left = await ballsCollection.find({ matchId }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
+        if (rec) {
+            await matchRecordsCollection.updateOne(
+                { _id: rec._id },
+                { $set: { inningsArchive: inningsArchiveFromBalls(left, rec.inningsArchive) } }
+            );
+        }
+        const cards = buildLiveCardsFromBallsArray(left);
+        await logAuditAction(req.ownerEmail, 'Put archived deliveries back', `Match ${matchId} — ${docs.length} deliveries`, null,
+            docs.map(d => ({ innings: d.innings, over: d.over, ballInOver: d.ballInOver, kind: d.kind, runs: d.runs })), { matchId });
+        res.json({ success: true, restored: docs.length, scoreA: cards.scoreA, scoreB: cards.scoreB });
+    } catch (err) {
+        console.log('Restore-balls error:', err);
+        res.status(500).json({ success: false, error: 'Could not put those deliveries back' });
+    }
+});
+
 adminRouter.get('/dashboard', async (req, res) => {
     try {
         const [userList, leagueCount, matchCount, ballCount, templateCount, logEventCount] = await Promise.all([
