@@ -685,6 +685,11 @@
     <div class="dot" id="conn-dot"></div>
     <input type="text" id="match-id" value="" placeholder="Match ID (shared with overlay)" style="width:230px">
     <button id="connect-btn" class="small">Connect</button>
+    <!-- 🛟 Deliveries scored but not yet confirmed by the website. Normally
+         invisible; it only appears while the outbox has something in it, so
+         the operator can see at a glance that the laptop is holding balls
+         the server has not got yet (see the BALL OUTBOX in the script). -->
+    <span id="outbox-indicator" style="display:none;font-size:12.5px;padding:3px 9px;border-radius:999px;background:#5a3a00;color:#ffd27a;border:1px solid #8a5c00"></span>
   </div>
 </header>
 
@@ -2087,8 +2092,10 @@ function recordPenaltyRuns({ runs, awardedTo, reasonCode, notes, eventContext })
     scoreAfter: `${state.score.runs}-${state.score.wickets}`,
     timestamp: entry.timestamp
   });
-  if(socket && socket.connected && currentMatchId()){
-    socket.emit('logBall', {
+  if(currentMatchId()){
+    // 🛟 Through the outbox, like every other delivery — a penalty awarded
+    // while the line is down belongs in the permanent log just as much.
+    queueBallForDb({
       matchId: currentMatchId(),
       uid: currentOwnerUid(),
       innings: state.inningsNumber,
@@ -2457,6 +2464,10 @@ function mergeWithDefaults(saved){
   // can never leave a nested key undefined and crash init()/renderPanel().
   return {
     ...def, ...saved,
+    // Survives a reload so a refresh mid-outage doesn't reset our revision
+    // to 0 and hand the stale server copy the win (see liveCricketScore).
+    localRev: Number(saved.localRev) || 0,
+    localRevAt: Number(saved.localRevAt) || 0,
     teamA: { ...def.teamA, ...(saved.teamA||{}) },
     teamB: { ...def.teamB, ...(saved.teamB||{}) },
     toss: { ...def.toss, ...(saved.toss||{}) },
@@ -2927,6 +2938,10 @@ function connect(){
     // between "Connect" and "first ball" resolved to the wrong room and
     // sat stuck on "Connecting".
     pingTournamentLiveStatus(true);
+    // 🛟 Anything scored while the line was down goes up now, before
+    // anything else — see the BALL OUTBOX section above.
+    flushBallOutbox();
+    resendMatchSnapshotNow();
     // A freshly-joining/reconnecting overlay must see the last real
     // broadcast — never an in-progress "next innings" edit the operator
     // hasn't committed yet by clicking Start.
@@ -2940,11 +2955,48 @@ function connect(){
   socket.on('connect_error', () => { dot.classList.remove('on'); });
 
   socket.on('liveCricketScore', (serverState) => {
-    if(serverState && Object.keys(serverState).length){
-      state = mergeWithDefaults({ ...state, ...serverState });
-      lastBroadcastState = snapshot();
+    /* 🛠 ROOT CAUSE OF "OFFLINE SCORING DISAPPEARS WHEN THE INTERNET COMES
+       BACK". This used to be, unconditionally:
+
+           state = mergeWithDefaults({ ...state, ...serverState });
+
+       serverState is spread LAST, so it wins every key it has. On a
+       RECONNECT the server is holding the state from before the line
+       dropped — the one missing every ball scored while offline. So the
+       moment the internet returned, the stale copy overwrote the live one
+       and an over's worth of scoring (or an entire innings) vanished,
+       including from this browser's own saved copy on the next push.
+
+       The handler has two genuinely different jobs:
+         RESUME    — a freshly opened panel, or one switched to another
+                     match, legitimately needs the server's state.
+         RECONNECT — the same panel coming back after a network drop,
+                     holding scoring the server has never seen. Here LOCAL
+                     is authoritative and must be pushed UP, not replaced.
+       localRev (bumped in pushState, travelling with the state) decides
+       which is which, and makes the genuine two-device case work too: if
+       another device really has scored further, its revision is higher
+       and it correctly wins. */
+    if(!serverState || !Object.keys(serverState).length) return;
+    const serverRev = Number(serverState.localRev) || 0;
+    const localRev = Number(state.localRev) || 0;
+    const localHasScoring = (state.ballLog && state.ballLog.length > 0)
+      || (state.score && (state.score.runs > 0 || state.score.wickets > 0 || state.score.overs > 0 || state.score.balls > 0));
+
+    if(localHasScoring && localRev > serverRev){
+      const missedBalls = (state.ballLog ? state.ballLog.length : 0) - (serverState.ballLog ? serverState.ballLog.length : 0);
+      send(state);
+      resendMatchSnapshotNow();
       renderPanel();
+      toast(missedBalls > 0
+        ? `🔁 Back online — ${missedBalls} ball${missedBalls === 1 ? '' : 's'} scored offline have been sent up. Nothing was lost.`
+        : '🔁 Back online — your scoring is intact and has been re-sent.', 6000);
+      return;
     }
+
+    state = mergeWithDefaults({ ...state, ...serverState });
+    lastBroadcastState = snapshot();
+    renderPanel();
   });
 
   // 🎬 Real clip/Drive status from the server — this is the ONLY place
@@ -3812,6 +3864,16 @@ function send(obj){
 }
 function pushState(immediate, force){
   bindMatchTournament();
+  // 🔒 LOCAL REVISION — bumped on every real state change and carried WITH
+  // the state to the server, so a reconnect can tell "the server knows
+  // more than me" (another device scored) apart from "I know more than
+  // the server" (I have been scoring while the line was down). Without it
+  // the two are indistinguishable and the stale copy wins by accident —
+  // which is exactly how an evening's scoring disappears. Persisted with
+  // the rest of the state, so a mid-outage refresh doesn't reset it to 0.
+  // See the liveCricketScore handler.
+  state.localRev = (state.localRev || 0) + 1;
+  state.localRevAt = Date.now();
   saveLocal();
   renderPanel();
   // 🔒 FIX ("Undo" leaving the scoring buttons frozen): checkMatchResult()
@@ -8169,16 +8231,47 @@ let matchSyncTimer = null;
 function autoSyncMatchSnapshot(){
   if(!currentOwnerUid()) return; // not logged in — nothing to sync yet
   clearTimeout(matchSyncTimer);
-  matchSyncTimer = setTimeout(() => {
-    const rec = buildMatchRecordForLeague();
-    const name = currentMatchTournament() || SINGLE_MATCHES_NAME;
-    fetch(withUid(`${leagueApiPath(name)}/match`), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(rec)
-    }).catch(() => {}); // best-effort only
-  }, 2000);
+  matchSyncTimer = setTimeout(() => sendMatchSnapshot(buildMatchRecordForLeague()), 2000);
 }
+
+// 🛟 The snapshot is no longer fire-and-forget. If the POST fails — the
+// line is down, the server is restarting, Render is cold — the record is
+// kept and retried until it lands, because for an operator who never gets
+// to press "Save this match" (or whose laptop dies right after the last
+// ball) this snapshot IS the saved match. Retrying also means the moment
+// the internet comes back the website gets the WHOLE scorecard, not just
+// whatever balls happen to be scored from then on.
+let matchSyncPending = null;   // newest record the server has not confirmed
+let matchSyncRetryTimer = null;
+function sendMatchSnapshot(rec){
+  if(!rec || !currentOwnerUid()) return;
+  matchSyncPending = rec;
+  const name = currentMatchTournament() || SINGLE_MATCHES_NAME;
+  fetch(withUid(`${leagueApiPath(name)}/match`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(rec)
+  }).then(res => res.json()).then(data => {
+    if(!data || data.success === false) throw new Error('rejected');
+    if(matchSyncPending === rec) matchSyncPending = null;
+    // The server refused to let this save delete cricket it already had
+    // (see the MATCH DATA SAFETY NET in server.js) — which means this
+    // panel is missing part of the match. Say so out loud rather than
+    // letting the two quietly disagree.
+    if(data.protectedGroups && data.protectedGroups.length){
+      toast('🛟 The website is holding a fuller copy of this match than this panel has. Nothing was lost — open /recover to compare them.', 9000);
+    }
+  }).catch(() => {
+    clearTimeout(matchSyncRetryTimer);
+    matchSyncRetryTimer = setTimeout(() => { if(matchSyncPending) sendMatchSnapshot(matchSyncPending); }, 15000);
+  });
+}
+// Used on reconnect: push the full scorecard up immediately, no debounce.
+function resendMatchSnapshotNow(){
+  if(!currentOwnerUid()) return;
+  try{ sendMatchSnapshot(matchSyncPending || buildMatchRecordForLeague()); }catch(e){}
+}
+
 
 // 🏏 Over-summary accumulators — feed emitOverSummary() the exact runs/
 // wickets conceded during the over currently in progress; reset to 0 the
@@ -8960,6 +9053,100 @@ function maybePromptNewBowler(){
 // cricketState broadcast above. Also asks the server to cut a 20s
 // highlight clip (10s before / 10s after) on WICKET / FOUR / SIX.
 // skipAutoClip: a HIGHLIGHTS press already captured this ball — no second clip.
+/* ============================================================
+   🛟 BALL OUTBOX — every delivery reaches the permanent log, even
+   when the internet doesn't.
+
+   ROOT CAUSE THIS FIXES (the Kanga League match). Logging a ball to
+   MongoDB used to be one line:
+
+       a single fire-and-forget emit, skipped whenever the socket
+       happened to be disconnected.
+
+   Fire-and-forget, and skipped entirely while the socket was down. So
+   every delivery scored during an internet drop was simply never
+   written to the permanent log — and it never got a second chance,
+   because nothing remembered it had failed. The server then rebuilt the
+   saved scorecard from that incomplete log after the next ball that DID
+   get through (see syncMatchRecordFromBalls in server.js) and a whole
+   innings disappeared from a finished match.
+
+   Now every delivery is written into this outbox in localStorage FIRST,
+   emitted with an acknowledgement callback, and only removed once the
+   server confirms it is in MongoDB. Anything unconfirmed is re-sent on
+   the next connection, and on a timer, and survives a reload or a
+   laptop restart because it lives in localStorage — not memory. Each
+   ball carries a ballUid that the server has a unique index on, so a
+   re-send can never become a second delivery.
+   ============================================================ */
+const BALL_OUTBOX_KEY = 'cricket-ball-outbox';
+const BALL_ACK_TIMEOUT_MS = 15000;   // no receipt in this long → send it again
+const OUTBOX_STALE_MS = 7 * 24 * 3600 * 1000;
+let ballOutbox = loadBallOutbox();
+let outboxWarnedAt = 0;
+
+function loadBallOutbox(){
+  try{
+    const raw = localStorage.getItem(BALL_OUTBOX_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) ? parsed.filter(b => b && b.payload) : [];
+  }catch(e){ return []; }
+}
+function saveBallOutbox(){
+  try{ localStorage.setItem(BALL_OUTBOX_KEY, JSON.stringify(ballOutbox.slice(-800))); }catch(e){}
+}
+function newBallUid(){
+  return (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : ('b-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10));
+}
+// Called instead of socket.emit('logBall', …). Never blocks scoring and
+// never throws — the ball is on disk before anything network happens.
+function queueBallForDb(payload){
+  ballOutbox.push({ uid: newBallUid(), payload, queuedAt: Date.now(), sentAt: 0 });
+  saveBallOutbox();
+  flushBallOutbox();
+}
+function flushBallOutbox(){
+  if(!ballOutbox.length) return;
+  const now = Date.now();
+  const before = ballOutbox.length;
+  ballOutbox = ballOutbox.filter(b => (now - (b.queuedAt || now)) < OUTBOX_STALE_MS);
+  if(ballOutbox.length !== before) saveBallOutbox();
+  if(!socket || !socket.connected) return;
+  ballOutbox.slice().forEach(item => {
+    if(item.sentAt && (now - item.sentAt) < BALL_ACK_TIMEOUT_MS) return; // still waiting on its receipt
+    item.sentAt = now;
+    socket.emit('logBall', { ...item.payload, ballUid: item.uid }, (ack) => {
+      // ok:true covers "stored" and "already stored" (a duplicate uid) —
+      // both mean this delivery is safely in the permanent log.
+      if(ack && ack.ok){
+        ballOutbox = ballOutbox.filter(b => b.uid !== item.uid);
+        saveBallOutbox();
+      }
+    });
+  });
+  saveBallOutbox();
+}
+// Tells the operator, while there is still time to do something about it,
+// that deliveries are sitting on this laptop and have not reached the
+// website yet. Quiet for the first 45s so a normal blip says nothing.
+function checkBallOutboxHealth(){
+  const pending = ballOutbox.length;
+  const el = document.getElementById('outbox-indicator');
+  if(el){
+    el.style.display = pending ? '' : 'none';
+    el.textContent = pending ? `⏳ ${pending} ball${pending === 1 ? '' : 's'} not yet saved online` : '';
+  }
+  if(!pending) return;
+  const oldest = Math.min.apply(null, ballOutbox.map(b => b.queuedAt || Date.now()));
+  if(Date.now() - oldest < 45000) return;
+  if(Date.now() - outboxWarnedAt < 60000) return;
+  outboxWarnedAt = Date.now();
+  toast(`⏳ ${pending} ball${pending === 1 ? '' : 's'} haven't reached the website yet — they're safe on this laptop and will send themselves when the connection is back. Don't clear this browser.`, 8000);
+}
+setInterval(() => { flushBallOutbox(); checkBallOutboxHealth(); }, 8000);
+
 function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundaryEventType, skipAutoClip, ballOutcome){
   const matchId = currentMatchId();
   if(!matchId) return;
@@ -9001,7 +9188,10 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundar
     strikerId: state.striker.id || null, nonStrikerId: state.nonStriker.id || null, bowlerId: state.bowler.id || null
   };
 
-  if(dbConnected) socket.emit('logBall', {
+  // 🛟 Always queued, never dropped — see the BALL OUTBOX above.
+  // dbConnected is deliberately no longer consulted here: a delivery
+  // scored while the line is down is exactly the one that has to survive.
+  queueBallForDb({
     matchId,
     innings: state.inningsNumber,
     over: id.over,
