@@ -494,7 +494,7 @@
     .meta-line:last-child{ justify-content:flex-start; }
   }
 
-  #teams-row{ position:relative; display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); gap:16px; align-items:center; }
+  #teams-row{ position:relative; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,auto) minmax(0,1fr); gap:16px; align-items:center; }
   .team-block{ display:flex; align-items:center; gap:13px; min-width:0; }
   .team-block.right{ flex-direction:row-reverse; text-align:right; }
   .team-logo{
@@ -535,6 +535,11 @@
     padding:8px 16px; border-radius:99px; max-width:100%;
     white-space:normal; overflow-wrap:break-word;
   }
+  /* The result banner lives in the middle column of a three-column row, so
+     it is capped in characters as well as in percent — a long one used to
+     widen that column until the team blocks beside it had nothing left and
+     their names ran underneath it. */
+  #hero.hero-final #score-center{ max-width:min(100%, 26ch); margin-inline:auto; }
   #main-overs{ font-size:13px; color:var(--text-dim); font-weight:600; }
   #batting-tag{ font-size:10.5px; color:var(--accent); font-weight:700; letter-spacing:.4px; text-transform:uppercase; margin-top:4px; }
   /* The drawn-match note under the result reads as a sentence, not as the
@@ -2919,6 +2924,41 @@ function firstInningsLeadNote(m){
 // construction (never more than a few words), so it can safely sit in
 // the big center slot without ever risking the overlap the old combined
 // "162-10 vs 233-4" string caused.
+// The result in as few words as it can be said — for the banner in the
+// middle of the header, which sits between the two team blocks and has no
+// room for a sentence. A typed result line ("Match drawn, New Hind SC took
+// the 1st-innings lead") belongs on its own row underneath, not in here:
+// squeezed into the banner it overflows the centre column and rides over
+// the team name and logo beside it. Reads either shape of record — a saved
+// match carries winningTeam, a live state carries matchWinnerKey.
+function shortResultText(x){
+  const k = (x && (x.winningTeam || x.matchWinnerKey)) || null;
+  if(k === 'DRAW') return 'Match Drawn';
+  if(k === 'TIE') return 'Match Tied';
+  if(k === 'A' || k === 'B'){
+    const t = (k === 'A' ? x.teamA : x.teamB) || {};
+    return `${t.short || t.name || ('Team ' + k)} won`;
+  }
+  return '';
+}
+// The fuller line that goes under it: whatever the operator typed, or, for
+// a draw, who finished ahead on first innings.
+function resultDetailLine(x){
+  if(x && x.matchResultText){
+    // The banner above already says "Match Drawn". If the typed line opens
+    // with the same words, don't say them twice — keep what it adds.
+    const short = shortResultText(x);
+    let line = String(x.matchResultText).trim();
+    if(short && line.toLowerCase().startsWith(short.toLowerCase())){
+      const rest = line.slice(short.length).replace(/^[\s,;:—–-]+/, '');
+      if(rest) line = rest.charAt(0).toUpperCase() + rest.slice(1);
+    }
+    return line;
+  }
+  const k = (x && (x.winningTeam || x.matchWinnerKey)) || null;
+  return (k === 'DRAW' || !k) ? firstInningsLeadNote(x) : '';
+}
+
 function winMarginText(m){
   if(m.winningTeam === 'DRAW') return 'Match Drawn';
   if(m.winningTeam === 'TIE') return 'Match Tied';
@@ -2967,7 +3007,7 @@ function renderFinalSnapshot(match, displayName){
   const statusChip = document.getElementById('chip-status');
   statusChip.classList.add('result');
   statusChip.querySelector('.lv-dot').style.display = 'none';
-  document.getElementById('chip-status-text').textContent = finalResultText(match);
+  document.getElementById('chip-status-text').textContent = winMarginText(match) || shortResultText(match) || finalResultText(match);
 
   const A = match.teamA || {}, B = match.teamB || {};
   setPageTeamTheme(A, B);
@@ -3000,7 +3040,7 @@ function renderFinalSnapshot(match, displayName){
     prevB.style.display = '';
     prevB.textContent = `${scoreB.runs||0}-${scoreB.wickets||0} (${scoreB.overs||'0.0'} ov)`;
   }
-  setText('main-score', winMarginText(match) || 'Match Completed');
+  setText('main-score', winMarginText(match) || shortResultText(match) || 'Match Completed');
   document.getElementById('main-score').classList.add('result-margin');
   // Quiet accent ring/color on whichever side actually won — makes the
   // result readable at a glance instead of both team blocks looking
@@ -3021,7 +3061,7 @@ function renderFinalSnapshot(match, displayName){
   // "Match Drawn" and leave the viewer none the wiser about who finished
   // ahead. The line underneath carries that, on its own row, so neither
   // has to be crammed into the other — on a phone especially.
-  const leadNote = (m => (m.winningTeam === 'DRAW' || !m.winningTeam) ? firstInningsLeadNote(m) : '')(match);
+  const leadNote = resultDetailLine(match);
   const battingTagEl = document.getElementById('batting-tag');
   if(battingTagEl) battingTagEl.classList.toggle('result-note', !!leadNote);
   setText('batting-tag', leadNote);
@@ -4161,6 +4201,9 @@ function renderHero(s){
   if(s.leagueName){ leagueChip.style.display=''; leagueChip.textContent = '🏆 ' + s.leagueName; } else leagueChip.style.display='none';
 
   const status = matchStatusText(s);
+  // The chip is a pill on one line; a typed result sentence stretches it
+  // across the whole header. Short phrase here, sentence on its own row.
+  if(status.badge === 'RESULT'){ const short = shortResultText(s); if(short) status.text = short; }
   // 🐛 FIX: matchStatusText() already correctly detects a decided result
   // (RESULT badge + correct "X won by Y" text) the instant the panel
   // confirms it — but nothing downstream ever ACTED on that. The status
@@ -4207,7 +4250,7 @@ function renderHero(s){
   const mainScoreEl = document.getElementById('main-score');
   const mainOversEl = document.getElementById('main-overs');
   if(isFinished){
-    setText('main-score', status.text);
+    setText('main-score', shortResultText(s) || status.text);
     mainScoreEl.classList.add('result-margin');
     const winnerColor = s.matchWinnerKey === 'A' ? A.color : s.matchWinnerKey === 'B' ? B.color : '';
     mainScoreEl.style.setProperty('--result-color', winnerColor || '');
@@ -4222,7 +4265,7 @@ function renderHero(s){
   // On a finished Test the "X batting" tag has nothing left to say, so the
   // slot carries the line that does: who finished ahead on first innings.
   // Same line, same styling, as the saved-scorecard view.
-  const liveLeadNote = (isFinished && (s.matchWinnerKey === 'DRAW' || !s.matchWinnerKey)) ? firstInningsLeadNote(s) : '';
+  const liveLeadNote = isFinished ? resultDetailLine(s) : '';
   const battingTagLive = document.getElementById('batting-tag');
   if(battingTagLive) battingTagLive.classList.toggle('result-note', !!liveLeadNote);
   setText('batting-tag', isFinished ? liveLeadNote : (battingObj.short || battingObj.name || '') + ' batting');
