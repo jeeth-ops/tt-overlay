@@ -132,6 +132,10 @@ let auditLogsCollection = null;
 let settingsCollection = null;
 let matchRecordsCollection = null;
 let playersCollection = null;
+// 🛟 Append-only version history of every match record (see
+// versionMatchRecord below) — the safety net that makes any overwrite of a
+// saved scorecard reversible from the Recovery Centre (/recover).
+let matchVersionsCollection = null;
 
 async function connectMongo() {
     const uri = process.env.MONGODB_URI;
@@ -174,6 +178,8 @@ async function connectMongo() {
         // routes below. nameKeys is intentionally an array (not a single
         // field) so merges are just a $push, never a rewrite of history.
         playersCollection = mongoDb.collection('players');
+        // 🛟 See the MATCH DATA SAFETY NET section below.
+        matchVersionsCollection = mongoDb.collection('matchRecordVersions');
         // Fast lookups: all balls of a match in bowling order, and one
         // match doc per matchId.
         await ballsCollection.createIndex({ matchId: 1, innings: 1, over: 1, ballInOver: 1 });
@@ -216,6 +222,13 @@ async function connectMongo() {
         // owner, resolves straight to the right playerId doc.
         await playersCollection.createIndex({ playerId: 1 }, { unique: true });
         await playersCollection.createIndex({ ownerUid: 1, nameKeys: 1 }, { unique: true });
+        await matchVersionsCollection.createIndex({ ownerUid: 1, matchId: 1, versionedAt: -1 });
+        // 🛟 One row per delivery, even if the panel has to send it more than
+        // once. ballUid is minted client-side per delivery (see the ball
+        // outbox in cricket-panel*.html) so a retried/queued ball can never
+        // land twice; sparse because every ball logged before the outbox
+        // existed has none.
+        await ballsCollection.createIndex({ ballUid: 1 }, { unique: true, sparse: true });
         console.log('🍃 MongoDB connected —', mongoDb.databaseName);
         dedupeCrossTournamentMatches(); // background, never blocks startup
 
@@ -1880,10 +1893,18 @@ app.post('/api/league/:name/match', requireAuthorizedCreator, async (req, res) =
                     || null;
             }
         }
-        await matchRecordsCollection.updateOne(
+        // 🛟 Every save goes through the safety net (see MATCH DATA SAFETY
+        // NET below): the doc as it stands is snapshotted into
+        // matchRecordVersions first, and a payload that would delete an
+        // innings this match already has saved — a panel that reloaded
+        // into an older state, a second device that never saw the rest of
+        // the match — keeps the fuller version instead of erasing it.
+        // ?force=1 (the Recovery Centre, and an operator who has been
+        // shown what they are about to overwrite) skips the guard.
+        const guard = await writeMatchRecordSafely(
             { ownerUid, leagueKey, matchId: record.matchId },
-            { $set: { ...record, roomId: roomId || record.roomId || null, ownerUid, leagueKey, savedAt: record.savedAt || new Date().toISOString() } },
-            { upsert: true }
+            { ...record, roomId: roomId || record.roomId || null, ownerUid, leagueKey, savedAt: record.savedAt || new Date().toISOString() },
+            { upsert: true, force: req.query.force === '1', reason: 'panel save' }
         );
         // League doc itself stays tiny now — just metadata (displayName,
         // publicToken, live pointer). matches[] is intentionally never
@@ -1907,7 +1928,14 @@ app.post('/api/league/:name/match', requireAuthorizedCreator, async (req, res) =
             { upsert: true }
         );
         const matches = await getLeagueMatches(ownerUid, leagueKey);
-        res.json({ success: true, matches });
+        res.json({
+            success: true,
+            matches,
+            // Non-empty only when this save tried to remove cricket the
+            // saved match already had; the panel turns it into a visible
+            // warning instead of letting it pass silently.
+            protectedGroups: guard.lost.map(l => ({ group: l.key, hadBalls: l.was.balls, sentBalls: l.now.balls }))
+        });
     } catch (err) {
         console.log('League save error:', err);
         res.status(500).json({ success: false, error: 'Could not save match' });
@@ -5115,7 +5143,7 @@ async function correctDelivery(ballId, actorEmail, input, dryRun, requestOwnerUi
     // final win/loss/tie verdict on an already-completed match, which
     // this deliberately does not auto-flip (see resultMayNeedReview
     // below) rather than risk guessing a DLS/target situation wrong.
-    if (ownerUid) await syncMatchRecordFromBalls(ownerUid, original.matchId);
+    if (ownerUid) await syncMatchRecordFromBalls(ownerUid, original.matchId, { force: true, reason: 'owner delivery correction' });
     else console.log('[syncDebug] correctDelivery: no ownerUid available (ball had none, and no requestOwnerUid was passed in) — sync skipped for match', original.matchId);
 
     // Keep a clip cut around this exact delivery (same innings/over/ball —
@@ -5327,7 +5355,7 @@ async function correctBowlerForOvers(matchId, actorEmail, input, dryRun, request
     const bulkOps = targets.map(b => ({ replaceOne: { filter: { _id: b._id }, replacement: correctedById.get(String(b._id)) } }));
     await ballsCollection.bulkWrite(bulkOps);
 
-    if (ownerUid) await syncMatchRecordFromBalls(ownerUid, matchId);
+    if (ownerUid) await syncMatchRecordFromBalls(ownerUid, matchId, { force: true, reason: 'owner correction' });
 
     // Clips keep their identity (same Cloudflare video/clip id, same
     // match/over/ball) and simply follow onto the corrected bowler — never
@@ -5481,7 +5509,7 @@ async function correctBatsmanForDeliveries(matchId, actorEmail, input, dryRun, r
     const bulkOps = targets.map(b => ({ replaceOne: { filter: { _id: b._id }, replacement: correctedById.get(String(b._id)) } }));
     await ballsCollection.bulkWrite(bulkOps);
 
-    if (ownerUid) await syncMatchRecordFromBalls(ownerUid, matchId);
+    if (ownerUid) await syncMatchRecordFromBalls(ownerUid, matchId, { force: true, reason: 'owner correction' });
 
     // Clips keep their identity (same Cloudflare video/clip id) and follow
     // onto the corrected batsman — never deleted, re-uploaded or duplicated.
@@ -5703,7 +5731,7 @@ async function mergePlayersDeep(ownerUid, actorEmail, wrongPlayerName, correctPl
     // read fresh off matchRecordsCollection on every request (see
     // computeLeaderboards above), it is ALSO what fixes those, with no
     // separate tournament-side merge logic needed.
-    await Promise.all(matchIds.map(mid => syncMatchRecordFromBalls(ownerUid, mid)));
+    await Promise.all(matchIds.map(mid => syncMatchRecordFromBalls(ownerUid, mid, { force: true, reason: 'player merge' })));
 
     // Clips keep their identity (same Cloudflare clip, event/ball id, video
     // URL) and simply follow onto the corrected player — never deleted,
@@ -5825,7 +5853,7 @@ adminRouter.post('/cricket/players/merge/undo', async (req, res) => {
 
         const ownerUid = prev.ownerUid || restoredBalls[0].ownerUid;
         const matchIds = prev.matchIds || [...new Set(restoredBalls.map(b => b.matchId))];
-        if (ownerUid) await Promise.all(matchIds.map(mid => syncMatchRecordFromBalls(ownerUid, mid)));
+        if (ownerUid) await Promise.all(matchIds.map(mid => syncMatchRecordFromBalls(ownerUid, mid, { force: true, reason: 'player merge undo' })));
 
         // Clips: put back the EXACT pre-merge docs we snapshotted, rather
         // than trying to reverse-derive them from field values — the
@@ -5974,7 +6002,7 @@ adminRouter.post('/cricket/match/:matchId/undo-last', async (req, res) => {
             const bulkOps = restoredBalls.map(b => ({ replaceOne: { filter: { _id: b._id }, replacement: b } }));
             await ballsCollection.bulkWrite(bulkOps);
             const ownerUid = restoredBalls[0].ownerUid;
-            if (ownerUid) await syncMatchRecordFromBalls(ownerUid, matchId);
+            if (ownerUid) await syncMatchRecordFromBalls(ownerUid, matchId, { force: true, reason: 'owner correction' });
             if (clipsCollection) {
                 clipsCollection.updateMany(
                     { matchId, innings: prev.innings, over: { $in: prev.overs || [] }, bowlerKey: playerKey(prev.correctBowler) },
@@ -6002,7 +6030,7 @@ adminRouter.post('/cricket/match/:matchId/undo-last', async (req, res) => {
             const bulkOps = restoredBalls.map(b => ({ replaceOne: { filter: { _id: b._id }, replacement: b } }));
             await ballsCollection.bulkWrite(bulkOps);
             const ownerUid = restoredBalls[0].ownerUid;
-            if (ownerUid) await syncMatchRecordFromBalls(ownerUid, matchId);
+            if (ownerUid) await syncMatchRecordFromBalls(ownerUid, matchId, { force: true, reason: 'owner correction' });
             if (clipsCollection) {
                 clipsCollection.updateMany(
                     { matchId, innings: prev.innings, strikerKey: playerKey(prev.correctBatsman), $or: restoredBalls.map(b => ({ over: b.over, ballInOver: b.ballInOver })) },
@@ -6021,7 +6049,7 @@ adminRouter.post('/cricket/match/:matchId/undo-last', async (req, res) => {
 
         const restoredBall = lastEntry.previousValue;
         await ballsCollection.replaceOne({ _id: restoredBall._id }, restoredBall);
-        if (restoredBall.ownerUid) await syncMatchRecordFromBalls(restoredBall.ownerUid, matchId);
+        if (restoredBall.ownerUid) await syncMatchRecordFromBalls(restoredBall.ownerUid, matchId, { force: true, reason: 'owner correction undo' });
         if (clipsCollection) {
             clipsCollection.updateMany(
                 { matchId, innings: restoredBall.innings, over: restoredBall.over, ballInOver: restoredBall.ballInOver },
@@ -6092,7 +6120,7 @@ async function deleteLastBallFromDb(matchId, requestedInnings, actorEmail) {
     if (!lastBall) return { error: 'No deliveries recorded for this match yet', status: 404 };
 
     await ballsCollection.deleteOne({ _id: lastBall._id });
-    if (lastBall.ownerUid) await syncMatchRecordFromBalls(lastBall.ownerUid, matchId);
+    if (lastBall.ownerUid) await syncMatchRecordFromBalls(lastBall.ownerUid, matchId, { force: true, reason: 'owner deleted last delivery' });
 
     await logAuditAction(
         actorEmail, 'Delete last delivery',
@@ -6172,6 +6200,373 @@ adminRouter.put('/cricket/match/:matchId/apply-result', async (req, res) => {
 });
 
 // ---- Dashboard ----
+// ================================================================
+// 🛟 RECOVERY CENTRE API  (owner only — see adminRouter.use(requireOwner))
+//
+// Everything the Recovery Centre page (/recover) needs to put a match
+// back together after part of it went missing, out of every copy that
+// still exists anywhere:
+//
+//   • matchRecordsCollection  — the saved scorecard (what the public
+//     scorecard page reads)
+//   • matchRecordVersions     — every previous version of that scorecard
+//     (see versionMatchRecord)
+//   • ballsCollection         — the permanent delivery log
+//   • Firestore scorvix/{roomId}.cricketState — the room's last live
+//     panel state, which is a complete scorecard in itself
+//   • the operator's own browser — the panel's localStorage state and its
+//     300 undo snapshots, which the page reads locally and posts up here
+//
+// Nothing here ever deletes cricket: a restore is a UNION (the fuller
+// side of every innings wins, via guardMatchRecordWrite) and the doc as
+// it stands is always versioned first.
+// ================================================================
+
+// Everything we can find that might belong to a match, with enough detail
+// to recognise it: who batted, when, how many deliveries, and whether a
+// saved scorecard still points at it.
+adminRouter.get('/cricket/recover/scan', async (req, res) => {
+    if (!ballsCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const q = String(req.query.q || '').trim().toLowerCase();
+    const days = Math.min(400, Math.max(1, parseInt(req.query.days, 10) || 30));
+    const since = Date.now() - days * 86400000;
+    try {
+        const perInnings = await ballsCollection.aggregate([
+            { $match: { timestamp: { $gte: since } } },
+            {
+                $group: {
+                    _id: { matchId: '$matchId', innings: '$innings' },
+                    balls: { $sum: 1 },
+                    runs: { $sum: '$runs' },
+                    wickets: { $sum: { $cond: [{ $ifNull: ['$dismissal', false] }, 1, 0] } },
+                    firstAt: { $min: '$timestamp' },
+                    lastAt: { $max: '$timestamp' },
+                    ownerUid: { $first: '$ownerUid' },
+                    battingTeam: { $first: '$battingTeam' },
+                    batters: { $addToSet: '$striker' },
+                    bowlers: { $addToSet: '$bowler' }
+                }
+            },
+            { $sort: { lastAt: -1 } },
+            { $limit: 400 }
+        ]).toArray();
+
+        const byMatch = {};
+        perInnings.forEach(g => {
+            const id = g._id.matchId;
+            if (!byMatch[id]) byMatch[id] = { matchId: id, ownerUid: g.ownerUid || null, innings: [], balls: 0, firstAt: g.firstAt, lastAt: g.lastAt, players: [] };
+            const m = byMatch[id];
+            m.balls += g.balls;
+            m.firstAt = Math.min(m.firstAt, g.firstAt);
+            m.lastAt = Math.max(m.lastAt, g.lastAt);
+            m.players = [...new Set(m.players.concat(g.batters || [], g.bowlers || []).filter(Boolean))].slice(0, 40);
+            m.innings.push({
+                no: g._id.innings || 1, balls: g.balls, runs: g.runs, wickets: g.wickets,
+                battingTeam: g.battingTeam, overs: ballsToOversStr(g.balls), firstAt: g.firstAt, lastAt: g.lastAt
+            });
+            m.innings.sort((a, b) => a.no - b.no);
+        });
+
+        const ids = Object.keys(byMatch);
+        const records = ids.length
+            ? await matchRecordsCollection.find({ $or: [{ matchId: { $in: ids } }, { roomId: { $in: ids } }] }).toArray()
+            : [];
+        // Also surface saved matches from the window that have NO balls at
+        // all under either id — the other half of the same problem.
+        const savedRecent = await matchRecordsCollection.find({ savedAt: { $gte: new Date(since).toISOString() } }).sort({ savedAt: -1 }).limit(120).toArray();
+        const recordFor = (id) => records.find(r => r.matchId === id || r.roomId === id) || null;
+
+        const describe = (rec) => rec ? {
+            matchId: rec.matchId, roomId: rec.roomId || null, ownerUid: rec.ownerUid, leagueKey: rec.leagueKey,
+            teamA: (rec.teamA && rec.teamA.name) || '', teamB: (rec.teamB && rec.teamB.name) || '',
+            format: rec.format || '', venue: rec.venue || '', savedAt: rec.savedAt || null,
+            scoreA: rec.scoreA || null, scoreB: rec.scoreB || null,
+            ballsHeld: footprintTotalBalls(rec), footprint: matchRecordFootprint(rec)
+        } : null;
+
+        const clipCounts = {};
+        if (clipsCollection && ids.length) {
+            const cg = await clipsCollection.aggregate([
+                { $match: { matchId: { $in: ids } } },
+                { $group: { _id: '$matchId', n: { $sum: 1 } } }
+            ]).toArray();
+            cg.forEach(c => { clipCounts[c._id] = c.n; });
+        }
+
+        let ballGroups = ids.map(id => {
+            const rec = recordFor(id);
+            const derivedBalls = byMatch[id].balls;
+            return {
+                ...byMatch[id],
+                clips: clipCounts[id] || 0,
+                savedRecord: describe(rec),
+                // The tell-tale of the failure this page exists for: the
+                // saved scorecard holds far more cricket than the ball log
+                // does, or the other way round.
+                mismatch: rec ? (footprintTotalBalls(rec) - derivedBalls) : null,
+                orphan: !rec
+            };
+        });
+        let savedGroups = savedRecent
+            .filter(r => !ids.some(id => r.matchId === id || r.roomId === id))
+            .map(r => ({ ...describe(r), noBallLog: true }));
+
+        if (q) {
+            const hit = (txt) => String(txt || '').toLowerCase().includes(q);
+            const groupHit = (g) => hit(g.matchId) || (g.players || []).some(hit) ||
+                (g.savedRecord && (hit(g.savedRecord.teamA) || hit(g.savedRecord.teamB) || hit(g.savedRecord.venue) || hit(g.savedRecord.leagueKey)));
+            ballGroups = ballGroups.filter(groupHit);
+            savedGroups = savedGroups.filter(r => hit(r.matchId) || hit(r.roomId) || hit(r.teamA) || hit(r.teamB) || hit(r.venue) || hit(r.leagueKey));
+        }
+        ballGroups.sort((a, b) => b.lastAt - a.lastAt);
+        res.json({ success: true, days, ballGroups, savedWithoutBalls: savedGroups });
+    } catch (err) {
+        console.log('Recovery scan error:', err);
+        res.status(500).json({ success: false, error: 'Could not scan for match data' });
+    }
+});
+
+// Every surviving copy of ONE match, side by side, so the owner can see
+// exactly which source still has the missing innings before restoring.
+adminRouter.get('/cricket/recover/inspect', async (req, res) => {
+    if (!matchRecordsCollection || !ballsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const matchId = safeMatchId(req.query.matchId || '');
+    const roomId = safeMatchId(req.query.roomId || '');
+    if (!matchId && !roomId) return res.status(400).json({ success: false, error: 'matchId or roomId required' });
+    try {
+        const ids = [...new Set([matchId, roomId].filter(Boolean))];
+        const saved = await matchRecordsCollection.findOne({ $or: [{ matchId: { $in: ids } }, { roomId: { $in: ids } }] });
+        const lookupIds = [...new Set(ids.concat(saved ? [saved.matchId, saved.roomId] : []).filter(Boolean))];
+
+        const balls = await ballsCollection.find({ matchId: { $in: lookupIds } }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
+        const fromBalls = balls.length ? buildLiveCardsFromBallsArray(balls) : null;
+
+        // The room's last live panel state, straight out of Firestore.
+        let liveState = null, liveRecord = null;
+        for (const id of lookupIds) {
+            try {
+                const doc = await db.collection('scorvix').doc(id).get();
+                const st = doc.exists && doc.data() && doc.data().cricketState;
+                if (st && (st.battingCard || st.score)) {
+                    liveState = { roomId: id, localRev: st.localRev || 0, localRevAt: st.localRevAt || 0 };
+                    liveRecord = matchRecordFromPanelState(st, { matchId: (saved && saved.matchId) || matchId || id, roomId: id });
+                    break;
+                }
+            } catch (e) { /* a room with no Firestore doc is normal */ }
+        }
+
+        const versions = matchVersionsCollection
+            ? await matchVersionsCollection.find({ matchId: { $in: lookupIds } }, {
+                projection: { record: 0 }
+            }).sort({ versionedAt: -1 }).limit(80).toArray()
+            : [];
+        const clips = clipsCollection ? await clipsCollection.countDocuments({ matchId: { $in: lookupIds } }) : 0;
+
+        res.json({
+            success: true,
+            ids: lookupIds,
+            saved: saved || null,
+            savedFootprint: saved ? matchRecordFootprint(saved) : null,
+            savedBalls: saved ? footprintTotalBalls(saved) : 0,
+            fromBalls,
+            fromBallsFootprint: fromBalls ? matchRecordFootprint(fromBalls) : null,
+            ballCount: balls.length,
+            ballsByInnings: balls.reduce((acc, b) => { const k = b.innings || 1; acc[k] = (acc[k] || 0) + 1; return acc; }, {}),
+            liveState,
+            liveRecord,
+            liveRecordBalls: liveRecord ? footprintTotalBalls(liveRecord) : 0,
+            versions: versions.map(v => ({ id: String(v._id), versionedAt: v.versionedAt, reason: v.reason, ballsHeld: v.ballsHeld, destructive: !!v.destructive, forced: !!v.forced })),
+            clips
+        });
+    } catch (err) {
+        console.log('Recovery inspect error:', err);
+        res.status(500).json({ success: false, error: 'Could not inspect this match' });
+    }
+});
+
+// One saved version, in full — so the page can preview it before rolling back.
+adminRouter.get('/cricket/recover/version/:id', async (req, res) => {
+    if (!matchVersionsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const { ObjectId } = require('mongodb');
+        const doc = await matchVersionsCollection.findOne({ _id: new ObjectId(req.params.id) });
+        if (!doc) return res.status(404).json({ success: false, error: 'Version not found' });
+        res.json({ success: true, version: { ...doc, id: String(doc._id) } });
+    } catch (err) {
+        res.status(400).json({ success: false, error: 'Bad version id' });
+    }
+});
+
+// 🛟 THE RESTORE ITSELF.
+// source:
+//   'panelState' — a panel state posted up from the scoring laptop's
+//                  localStorage (live state, or one of its undo snapshots)
+//   'liveState'  — the room's last live state, from Firestore
+//   'balls'      — rebuild purely from the permanent delivery log
+//   'version'    — roll back to an earlier saved version
+// Default behaviour is a UNION: whichever side holds more of an innings
+// wins, nothing already saved is dropped. force:true overwrites instead,
+// and is only ever sent after the page has shown what will be replaced.
+adminRouter.post('/cricket/recover/restore', async (req, res) => {
+    if (!matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const body = req.body || {};
+    const source = body.source;
+    const dryRun = !!body.dryRun;
+    try {
+        const ids = [...new Set([safeMatchId(body.matchId || ''), safeMatchId(body.roomId || '')].filter(Boolean))];
+        if (!ids.length) return res.status(400).json({ success: false, error: 'matchId or roomId required' });
+        let saved = await matchRecordsCollection.findOne({ $or: [{ matchId: { $in: ids } }, { roomId: { $in: ids } }] });
+
+        // A match whose saved record was deleted outright can still be
+        // rebuilt, as long as we are told where to file it.
+        const ownerUid = (saved && saved.ownerUid) || body.ownerUid;
+        const leagueKey = (saved && saved.leagueKey) || leagueKeyFor(body.leagueName || '__single_matches__');
+        const matchId = (saved && saved.matchId) || body.matchId || ids[0];
+        const roomId = (saved && saved.roomId) || body.roomId || null;
+        if (!ownerUid) return res.status(400).json({ success: false, error: 'ownerUid required to rebuild a match that has no saved record' });
+
+        let candidate = null;
+        let backfilled = 0;
+        const ballLogIds = [...new Set(ids.concat([matchId, roomId]).filter(Boolean))];
+
+        if (source === 'panelState' || source === 'liveState') {
+            let st = body.panelState;
+            if (source === 'liveState') {
+                st = null;
+                for (const id of ballLogIds) {
+                    try {
+                        const doc = await db.collection('scorvix').doc(id).get();
+                        const cs = doc.exists && doc.data() && doc.data().cricketState;
+                        if (cs && (cs.battingCard || cs.score)) { st = cs; break; }
+                    } catch (e) { /* no doc for this room */ }
+                }
+            }
+            if (!st) return res.status(400).json({ success: false, error: 'No panel state to restore from' });
+            candidate = matchRecordFromPanelState(st, { matchId, roomId });
+
+            // Put the deliveries themselves back into the permanent log
+            // too — not just the scorecard — so ball-by-ball, player stats
+            // and clip linking come back with it. Existing deliveries are
+            // matched on (innings, over, ballInOver) and left alone.
+            if (body.backfillBalls !== false && ballsCollection) {
+                const target = roomId || matchId;
+                const have = await ballsCollection.find({ matchId: { $in: ballLogIds } }, { projection: { innings: 1, over: 1, ballInOver: 1 } }).toArray();
+                // COUNTS, not presence: a wide and the delivery re-bowled
+                // after it legitimately share the same (over, ballInOver),
+                // so "have I seen this slot before?" would silently drop
+                // the second one. Skip exactly as many as are already
+                // stored for each slot, and restore the rest.
+                const haveCount = {};
+                have.forEach(b => { const k = `${b.innings || 1}|${b.over}|${b.ballInOver}`; haveCount[k] = (haveCount[k] || 0) + 1; });
+                const docs = [];
+                ballDocsFromPanelState(st, target, ownerUid).forEach((d, i) => {
+                    const k = `${d.innings}|${d.over}|${d.ballInOver}`;
+                    if (haveCount[k] > 0) { haveCount[k]--; return; }
+                    // Position in the panel's own ball log, so a restore
+                    // run twice recreates the same uids and the unique
+                    // index makes the second run a no-op.
+                    docs.push({ ...d, ballUid: `rec-${target}-${d.innings}-${i}` });
+                });
+                if (docs.length && !dryRun) {
+                    try { await ballsCollection.insertMany(docs, { ordered: false }); } catch (e) { /* duplicate uids are the re-run case */ }
+                }
+                backfilled = docs.length;
+            }
+        } else if (source === 'balls') {
+            if (!ballsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+            const balls = await ballsCollection.find({ matchId: { $in: ballLogIds } }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
+            if (!balls.length) return res.status(400).json({ success: false, error: 'No deliveries logged for this match' });
+            candidate = { ...(saved || {}), ...buildLiveCardsFromBallsArray(balls) };
+        } else if (source === 'version') {
+            if (!matchVersionsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+            const { ObjectId } = require('mongodb');
+            const v = await matchVersionsCollection.findOne({ _id: new ObjectId(body.versionId) });
+            if (!v) return res.status(404).json({ success: false, error: 'Version not found' });
+            candidate = v.record;
+        } else {
+            return res.status(400).json({ success: false, error: 'Unknown source' });
+        }
+
+        // Keep the saved record's identity and tournament placement — a
+        // restore replaces the CRICKET, never where the match lives.
+        const record = {
+            ...(saved || {}),
+            ...candidate,
+            matchId, roomId, ownerUid, leagueKey,
+            savedAt: new Date().toISOString(),
+            recoveredAt: Date.now(),
+            recoveredFrom: source
+        };
+        delete record._id;
+
+        const before = saved ? footprintTotalBalls(saved) : 0;
+        const preview = body.force ? { record, lost: [] } : guardMatchRecordWrite(saved, record);
+        if (dryRun) {
+            return res.json({
+                success: true, dryRun: true, backfilled,
+                before, after: footprintTotalBalls(preview.record),
+                keptFromSaved: preview.lost.map(l => l.key),
+                record: preview.record
+            });
+        }
+
+        const guard = await writeMatchRecordSafely(
+            { ownerUid, leagueKey, matchId },
+            record,
+            { upsert: true, force: !!body.force, reason: `recovery restore (${source})` }
+        );
+        await logAuditAction(req.ownerEmail, 'Match recovery restore',
+            `Match ${matchId} — restored from ${source}`,
+            { ballsHeld: before }, { ballsHeld: footprintTotalBalls(preview.record), backfilledBalls: backfilled },
+            { matchId });
+
+        // The public tournament portal caches its payload — drop it so the
+        // restored scorecard is visible immediately.
+        if (leaguesCollection) {
+            const league = await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { publicToken: 1 } });
+            if (league && league.publicToken) publicTournamentCache.delete(league.publicToken);
+        }
+        const after = await matchRecordsCollection.findOne({ ownerUid, leagueKey, matchId });
+        res.json({
+            success: true, backfilled, before, after: footprintTotalBalls(after),
+            keptFromSaved: guard.lost.map(l => l.key)
+        });
+    } catch (err) {
+        console.log('Recovery restore error:', err);
+        res.status(500).json({ success: false, error: 'Could not restore this match' });
+    }
+});
+
+// Deliveries and clips that were recorded under a DIFFERENT room id than
+// the one the match ended up saved under (the panel was reconnected with
+// a new Match ID mid-match, say) are not lost — they are just filed under
+// the wrong key. This moves them onto the match they belong to.
+adminRouter.post('/cricket/recover/relink', async (req, res) => {
+    if (!ballsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const from = safeMatchId((req.body && req.body.fromMatchId) || '');
+    const to = safeMatchId((req.body && req.body.toMatchId) || '');
+    const dryRun = !!(req.body && req.body.dryRun);
+    if (!from || !to || from === to) return res.status(400).json({ success: false, error: 'Two different match ids are required' });
+    try {
+        const balls = await ballsCollection.countDocuments({ matchId: from });
+        const clips = clipsCollection ? await clipsCollection.countDocuments({ matchId: from }) : 0;
+        if (dryRun) return res.json({ success: true, dryRun: true, balls, clips });
+
+        // originalMatchId is kept on every moved document so this is
+        // reversible — nothing here throws away where the data came from.
+        await ballsCollection.updateMany({ matchId: from }, { $set: { matchId: to, originalMatchId: from, relinkedAt: Date.now() } });
+        if (clipsCollection) await clipsCollection.updateMany({ matchId: from }, { $set: { matchId: to, originalMatchId: from, relinkedAt: Date.now() } });
+
+        const rec = await matchRecordsCollection.findOne({ $or: [{ matchId: to }, { roomId: to }] });
+        if (rec && rec.ownerUid) await syncMatchRecordFromBalls(rec.ownerUid, to, { force: false, reason: 'recovery relink' });
+        await logAuditAction(req.ownerEmail, 'Match recovery relink', `${balls} deliveries and ${clips} clips moved from ${from} to ${to}`, { from }, { to }, { matchId: to });
+        res.json({ success: true, balls, clips });
+    } catch (err) {
+        console.log('Recovery relink error:', err);
+        res.status(500).json({ success: false, error: 'Could not relink this data' });
+    }
+});
+
 adminRouter.get('/dashboard', async (req, res) => {
     try {
         const [userList, leagueCount, matchCount, ballCount, templateCount, logEventCount] = await Promise.all([
@@ -6588,6 +6983,11 @@ app.get('/', (req, res) => sendHtmlNoCache(res, __dirname + '/index.html'));
 // A non-owner opening this URL sees the page's own "Access Denied" state,
 // not any admin data.
 app.get('/admin', (req, res) => sendHtmlNoCache(res, __dirname + '/admin.html'));
+// 🛟 Recovery Centre — finds every surviving copy of a match (this
+// browser's panel state and undo snapshots, the delivery log, the room's
+// last live state, earlier saved versions) and puts it back together.
+// The page shell is public; every server call inside it is owner-only.
+app.get('/recover', (req, res) => sendHtmlNoCache(res, __dirname + '/match-recovery.html'));
 app.get('/overlay', (req, res) => sendHtmlNoCache(res, __dirname + '/overlay.html'));
 app.get('/tt-templates', (req, res) => sendHtmlNoCache(res, __dirname + '/tt-templates.html'));
 app.get('/tt-panel', (req, res) => sendHtmlNoCache(res, __dirname + '/tt-panel.html'));
@@ -6874,7 +7274,366 @@ function buildLiveCardsFromBallsArray(balls) {
     };
 }
 
-async function syncMatchRecordFromBalls(ownerUid, matchId) {
+// ================================================================
+// 🛟 MATCH DATA SAFETY NET — version history, and "a write may never
+// erase an innings".
+//
+// WHY THIS EXISTS. A saved match's scorecard is written from two
+// completely independent directions:
+//
+//   1. the PANEL, which POSTs its whole in-memory record to
+//      POST /api/league/:name/match on every ball (autoSyncMatchSnapshot)
+//      and again when the result lands, and
+//   2. this SERVER, which rebuilds battingCard/bowlingCard/scoreA/scoreB
+//      from ballsCollection after every logged ball
+//      (syncMatchRecordFromBalls).
+//
+// Both used to be blind, unconditional overwrites, which made a saved
+// match only ever as complete as whichever side wrote LAST. If the
+// operator's internet dropped mid-innings, the deliveries scored while
+// offline never reached ballsCollection at all (logBall was fire-and-
+// forget — no queue, no ack, no retry), so the very next ball that DID
+// get through made the server rebuild the scorecard from a ball log that
+// was missing an entire innings, and $set that over the complete one the
+// panel had already saved. A whole innings disappeared from a finished
+// match, and nothing anywhere kept a copy of what it used to say.
+//
+// Two defences, both here, plus the ball outbox in the panel (which stops
+// the deliveries going missing in the first place):
+//
+//   • versionMatchRecord() snapshots the CURRENT doc into
+//     matchRecordVersions BEFORE every write, so any overwrite stays
+//     reversible from the Recovery Centre (/recover) forever.
+//   • guardMatchRecordWrite() compares the incoming write to what is
+//     already stored, per (card, team, innings), and refuses to let a
+//     write delete an innings — or more than SHRINK_TOLERANCE_BALLS of
+//     one — that the stored record already has. An undo or a correction
+//     is a ball or two and passes straight through; a wipe does not.
+//     Deliberate rewrites (the Recovery Centre, the owner's correction
+//     tools) pass force:true and skip the guard, still versioned.
+// ================================================================
+
+// How much cricket a write is allowed to remove before it is treated as
+// data loss rather than an edit. 5 overs — far beyond any real undo, far
+// below the innings-sized losses this exists to stop.
+const SHRINK_TOLERANCE_BALLS = 30;
+const MAX_VERSIONS_PER_MATCH = 80;
+// Don't snapshot on every single ball of a live match — one rolling
+// version a minute per match, plus ALWAYS one whenever a write is
+// destructive or forced (those are the ones anyone ever needs back).
+const VERSION_MIN_INTERVAL_MS = 60000;
+const lastVersionAt = {}; // matchId -> ms
+
+function oversStrToBallsCount(overs) {
+    if (overs === null || overs === undefined) return 0;
+    const parts = String(overs).split('.');
+    return (parseInt(parts[0], 10) || 0) * 6 + (parseInt(parts[1], 10) || 0);
+}
+function ballsToOversStr(balls) {
+    const b = Math.max(0, Math.floor(Number(balls) || 0));
+    return `${Math.floor(b / 6)}.${b % 6}`;
+}
+
+// How much cricket a saved record actually holds, split by (card, team,
+// innings) — e.g. 'bat::B::2'. Only ever used to compare two versions of
+// the SAME match; never for scoring or display.
+function matchRecordFootprint(rec) {
+    const fp = {};
+    const add = (key, balls, runs) => {
+        if (!fp[key]) fp[key] = { balls: 0, runs: 0, rows: 0 };
+        fp[key].balls += Number(balls) || 0;
+        fp[key].runs += Number(runs) || 0;
+        fp[key].rows += 1;
+    };
+    ['A', 'B'].forEach(team => {
+        ((rec && rec.battingCard && rec.battingCard[team]) || []).forEach(r => {
+            add(`bat::${team}::${r.inningsNo || 1}`, r.balls, r.runs);
+        });
+        ((rec && rec.bowlingCard && rec.bowlingCard[team]) || []).forEach(r => {
+            add(`bowl::${team}::${r.inningsNo || 1}`, (Number(r.overs) || 0) * 6 + (Number(r.balls) || 0), r.runs);
+        });
+    });
+    return fp;
+}
+
+function footprintTotalBalls(rec) {
+    const fp = matchRecordFootprint(rec);
+    return Object.keys(fp).reduce((n, k) => n + (k.startsWith('bat::') ? fp[k].balls : 0), 0);
+}
+
+// Which (card, team, innings) groups would this write destroy?
+function groupsLostBy(existing, incoming) {
+    const was = matchRecordFootprint(existing);
+    const now = matchRecordFootprint(incoming);
+    const lost = [];
+    Object.keys(was).forEach(key => {
+        const a = was[key];
+        const b = now[key] || { balls: 0, runs: 0, rows: 0 };
+        if (!a.rows || (!a.balls && !a.runs)) return; // nothing real to lose
+        const wipedOut = b.rows === 0;
+        const shrank = (a.balls - b.balls) > SHRINK_TOLERANCE_BALLS;
+        if (wipedOut || shrank) lost.push({ key, was: a, now: b });
+    });
+    return lost;
+}
+
+// Builds the record that should actually be written: the incoming one,
+// with every group it would have destroyed put back from the stored copy.
+// Returns { record, lost } — `lost` empty means the write was harmless and
+// `record` is the incoming one untouched.
+function guardMatchRecordWrite(existing, incoming) {
+    if (!existing) return { record: incoming, lost: [] };
+    const lost = groupsLostBy(existing, incoming);
+    if (!lost.length) return { record: incoming, lost: [] };
+
+    const merged = { ...incoming };
+    merged.battingCard = { A: [...((incoming.battingCard && incoming.battingCard.A) || [])], B: [...((incoming.battingCard && incoming.battingCard.B) || [])] };
+    merged.bowlingCard = { A: [...((incoming.bowlingCard && incoming.bowlingCard.A) || [])], B: [...((incoming.bowlingCard && incoming.bowlingCard.B) || [])] };
+    merged.extras = { A: { ...((incoming.extras && incoming.extras.A) || {}) }, B: { ...((incoming.extras && incoming.extras.B) || {}) } };
+    merged.fallOfWickets = { A: [...((incoming.fallOfWickets && incoming.fallOfWickets.A) || [])], B: [...((incoming.fallOfWickets && incoming.fallOfWickets.B) || [])] };
+    merged.partnerships = { ...(incoming.partnerships || {}) };
+
+    const restoredBattingTeams = new Set();
+    const restoredInnings = new Set();
+
+    lost.forEach(({ key }) => {
+        const [card, team, innStr] = key.split('::');
+        const inn = Number(innStr) || 1;
+        const cardName = card === 'bat' ? 'battingCard' : 'bowlingCard';
+        const keepRows = ((existing[cardName] && existing[cardName][team]) || []).filter(r => (r.inningsNo || 1) === inn);
+        if (!keepRows.length) return;
+        // Drop whatever partial rows the incoming write had for this exact
+        // group and put the stored, fuller ones back in their place.
+        merged[cardName][team] = merged[cardName][team].filter(r => (r.inningsNo || 1) !== inn).concat(keepRows.map(r => ({ ...r })));
+        restoredInnings.add(inn);
+        if (card === 'bat') restoredBattingTeams.add(team);
+    });
+
+    // A team whose batting we just put back must keep the totals that go
+    // with it — a team score, its extras and its fall-of-wickets are sums
+    // over that team's innings, so taking half from each side would leave
+    // a scorecard whose own arithmetic no longer adds up.
+    restoredBattingTeams.forEach(team => {
+        const scoreKey = team === 'A' ? 'scoreA' : 'scoreB';
+        if (existing[scoreKey]) merged[scoreKey] = { ...existing[scoreKey] };
+        if (existing.extras && existing.extras[team]) merged.extras[team] = { ...existing.extras[team] };
+        if (existing.fallOfWickets && existing.fallOfWickets[team]) merged.fallOfWickets[team] = [...existing.fallOfWickets[team]];
+    });
+    restoredInnings.forEach(inn => {
+        if (existing.partnerships && existing.partnerships[inn]) merged.partnerships[inn] = existing.partnerships[inn];
+    });
+    // Never let the innings list itself shrink — it is what tells the
+    // scorecard which team batted when.
+    if ((existing.inningsArchive || []).length > (incoming.inningsArchive || []).length) {
+        merged.inningsArchive = existing.inningsArchive;
+    }
+    // A result already recorded is never un-recorded by a write that is
+    // simultaneously losing an innings.
+    if (!merged.winningTeam && existing.winningTeam) merged.winningTeam = existing.winningTeam;
+
+    return { record: merged, lost };
+}
+
+// Snapshots the record as it stands right now, before it is overwritten.
+// Best-effort and never throws into the caller: a failed snapshot must
+// never stop a match being saved.
+async function versionMatchRecord(doc, reason, extra) {
+    if (!matchVersionsCollection || !doc || !doc.matchId) return null;
+    const important = !!(extra && (extra.destructive || extra.forced));
+    const last = lastVersionAt[doc.matchId] || 0;
+    if (!important && (Date.now() - last) < VERSION_MIN_INTERVAL_MS) return null;
+    lastVersionAt[doc.matchId] = Date.now();
+    try {
+        const { _id, ...record } = doc;
+        const res = await matchVersionsCollection.insertOne({
+            ownerUid: doc.ownerUid || null,
+            leagueKey: doc.leagueKey || null,
+            matchId: doc.matchId,
+            roomId: doc.roomId || null,
+            reason: reason || 'write',
+            versionedAt: Date.now(),
+            ballsHeld: footprintTotalBalls(record),
+            record,
+            ...(extra || {})
+        });
+        const stale = await matchVersionsCollection
+            .find({ ownerUid: doc.ownerUid || null, matchId: doc.matchId }, { projection: { _id: 1 } })
+            .sort({ versionedAt: -1 }).skip(MAX_VERSIONS_PER_MATCH).toArray();
+        if (stale.length) await matchVersionsCollection.deleteMany({ _id: { $in: stale.map(v => v._id) } });
+        return res.insertedId;
+    } catch (err) {
+        console.log('versionMatchRecord error:', err);
+        return null;
+    }
+}
+
+// The ONE place a match record is written. Versions the current doc,
+// runs the guard (unless forced), writes, and reports what it protected.
+async function writeMatchRecordSafely(filter, incoming, opts) {
+    opts = opts || {};
+    const existing = await matchRecordsCollection.findOne(filter);
+    const { record, lost } = opts.force ? { record: incoming, lost: [] } : guardMatchRecordWrite(existing, incoming);
+    if (existing) {
+        await versionMatchRecord(existing, opts.reason || 'write', { destructive: lost.length > 0, forced: !!opts.force });
+    }
+    if (lost.length) {
+        console.log('🛟 Blocked a match-record write that would have erased saved cricket:', {
+            matchId: filter.matchId, reason: opts.reason, lost: lost.map(l => `${l.key} ${l.was.balls}→${l.now.balls} balls`)
+        });
+    }
+    await matchRecordsCollection.updateOne(filter, {
+        $set: {
+            ...record,
+            ...(lost.length ? { dataLossBlockedAt: Date.now(), dataLossBlockedGroups: lost.map(l => l.key) } : {})
+        }
+    }, { upsert: !!opts.upsert });
+    return { lost, existed: !!existing };
+}
+
+// ================================================================
+// 🛟 PANEL STATE → MATCH RECORD
+// The panel's own live state (what cricket-panel*.html keeps in memory,
+// mirrors into localStorage on every ball, and pushes to the room's
+// Firestore doc) is a complete scorecard in its own right. This turns one
+// of those states into exactly the record shape matchRecordsCollection
+// stores, so the Recovery Centre can rebuild a lost match out of any copy
+// of it that survived — the scoring laptop's localStorage, one of its 300
+// undo snapshots, or the room's last live state on the server.
+// Mirrors buildMatchRecordForLeague() in cricket-panel3.html.
+// ================================================================
+function matchRecordFromPanelState(st, base) {
+    if (!st || typeof st !== 'object') return null;
+    base = base || {};
+    const battingCard = { A: [...((st.battingCard && st.battingCard.A) || [])], B: [...((st.battingCard && st.battingCard.B) || [])] };
+    const bowlingCard = { A: [...((st.bowlingCard && st.bowlingCard.A) || [])], B: [...((st.bowlingCard && st.bowlingCard.B) || [])] };
+    const inningsNumber = Number(st.inningsNumber) || 1;
+    const battingTeam = st.battingTeam === 'B' ? 'B' : 'A';
+    const bowlingTeam = battingTeam === 'A' ? 'B' : 'A';
+
+    // The batters/bowler still at the crease are not in the cards yet —
+    // the panel folds them in at save time, and so must this.
+    [st.striker, st.nonStriker].forEach(p => {
+        if (p && p.name && !battingCard[battingTeam].some(b => b.name === p.name && (b.inningsNo || 1) === inningsNumber)) {
+            battingCard[battingTeam].push({ name: p.name, runs: p.runs || 0, balls: p.balls || 0, fours: p.fours || 0, sixes: p.sixes || 0, out: false, howOut: 'not out', inningsNo: inningsNumber });
+        }
+    });
+    const bw = st.bowler;
+    if (bw && bw.name && ((bw.overs || 0) > 0 || (bw.balls || 0) > 0) && !bowlingCard[bowlingTeam].some(b => b.name === bw.name && (b.inningsNo || 1) === inningsNumber)) {
+        bowlingCard[bowlingTeam].push({ ...bw, inningsNo: inningsNumber });
+    }
+
+    // Every innings this team has played, current one included.
+    const archive = Array.isArray(st.inningsArchive) ? st.inningsArchive : [];
+    const entries = archive.map(i => ({ no: i.no, team: i.team, archived: i }));
+    if (!entries.some(e => e.no === inningsNumber)) entries.push({ no: inningsNumber, team: battingTeam, archived: null });
+    entries.sort((a, b) => a.no - b.no);
+    const liveScore = st.score || { runs: 0, wickets: 0, overs: 0, balls: 0 };
+    const scoreForTeam = (teamKey) => {
+        const mine = entries.filter(e => e.team === teamKey);
+        if (!mine.length) return { runs: 0, wickets: 0, overs: '0.0' };
+        let runs = 0, balls = 0, wickets = 0;
+        mine.forEach(e => {
+            if (e.archived) {
+                runs += Number(e.archived.runs) || 0;
+                balls += oversStrToBallsCount(e.archived.overs);
+                wickets = Number(e.archived.wickets) || 0;
+            } else {
+                runs += Number(liveScore.runs) || 0;
+                balls += (Number(liveScore.overs) || 0) * 6 + (Number(liveScore.balls) || 0);
+                wickets = Number(liveScore.wickets) || 0;
+            }
+        });
+        return { runs, wickets, overs: ballsToOversStr(balls) };
+    };
+
+    // Partnerships, from the panel's own ball log, by the same rules
+    // computeLivePartnerships() uses.
+    const partnerships = { 1: [], 2: [], 3: [], 4: [] };
+    const ballLog = Array.isArray(st.ballLog) ? st.ballLog : [];
+    [1, 2, 3, 4].forEach(inn => {
+        const mine = ballLog.filter(b => (b.innings || 1) === inn);
+        if (!mine.length) return;
+        let cur = null, wkts = 0, prev = '0-0';
+        mine.forEach(b => {
+            const pairKey = [b.striker || '', b.nonStriker || ''].sort().join('|');
+            if (!cur || cur.pairKey !== pairKey) {
+                if (cur) partnerships[inn].push(cur);
+                cur = { pairKey, batters: [b.striker, b.nonStriker], runs: 0, balls: 0, forWicket: wkts + 1, startScore: prev, endScore: prev };
+            }
+            cur.runs += Number(b.runs) || 0;
+            if (['Wd', 'Nb', 'WdW', 'NbW'].indexOf(b.ballType) === -1) cur.balls++;
+            if (b.isWicket) wkts++;
+            cur.endScore = b.scoreAfter || cur.endScore;
+            prev = b.scoreAfter || prev;
+        });
+        if (cur) partnerships[inn].push(cur);
+    });
+
+    return {
+        matchId: base.matchId || st.tournamentMatchId || null,
+        roomId: base.roomId || null,
+        savedAt: new Date().toISOString(),
+        venue: st.venue || '',
+        streamUrl: st.streamUrl || '',
+        format: st.format || 'T20',
+        teamA: { name: (st.teamA && st.teamA.name) || 'Team A', short: (st.teamA && st.teamA.short) || '', color: (st.teamA && st.teamA.color) || '', logoUrl: (st.teamA && st.teamA.logoUrl) || '' },
+        teamB: { name: (st.teamB && st.teamB.name) || 'Team B', short: (st.teamB && st.teamB.short) || '', color: (st.teamB && st.teamB.color) || '', logoUrl: (st.teamB && st.teamB.logoUrl) || '' },
+        winningTeam: (st.milestonesHit && st.milestonesHit['match-result'] && st.matchWinnerKey) ? st.matchWinnerKey : null,
+        scoreA: scoreForTeam('A'),
+        scoreB: scoreForTeam('B'),
+        battingCard,
+        bowlingCard,
+        inningsArchive: archive.map(i => ({ ...i })),
+        extras: { A: { ...((st.extras && st.extras.A) || {}) }, B: { ...((st.extras && st.extras.B) || {}) } },
+        fallOfWickets: { A: [...((st.fallOfWickets && st.fallOfWickets.A) || [])], B: [...((st.fallOfWickets && st.fallOfWickets.B) || [])] },
+        partnerships,
+        dayNumber: st.dayNumber || 1,
+        dayStatus: st.dayStatus || 'LIVE'
+    };
+}
+
+// A panel state's ball log, in the exact shape ballsCollection stores —
+// so deliveries that never reached the server (scored while the internet
+// was down) can be put back into the permanent log, not just the
+// scorecard. Mirrors logBallToDb() in cricket-panel3.html.
+function ballDocsFromPanelState(st, matchId, ownerUid) {
+    const log = (st && Array.isArray(st.ballLog)) ? st.ballLog : [];
+    return log.map(b => {
+        const kind = b.ballType;
+        const isWicket = kind === 'W' || kind === 'WdW' || kind === 'NbW' || !!b.isWicket;
+        const dbKind = kind === 'WdW' ? 'Wd' : kind === 'NbW' ? 'Nb' : kind;
+        const parts = String(b.over || '0.0').split('.');
+        return {
+            matchId,
+            ownerUid: ownerUid || null,
+            innings: Number(b.innings) || 1,
+            over: parseInt(parts[0], 10) || 0,
+            ballInOver: parseInt(parts[1], 10) || 0,
+            kind: dbKind,
+            runs: Number(b.runs) || 0,
+            battingTeam: b.battingTeam === 'B' ? 'B' : 'A',
+            striker: personName(b.striker),
+            strikerKey: playerKey(personName(b.striker)),
+            nonStriker: personName(b.nonStriker),
+            nonStrikerKey: playerKey(personName(b.nonStriker)),
+            bowler: personName(b.bowler),
+            bowlerKey: playerKey(personName(b.bowler)),
+            dismissal: isWicket ? { type: b.dismissalType || 'Out', fielder: personName(b.fielderName) } : null,
+            dismissalFielderKey: playerKey(personName(b.fielderName)),
+            timestamp: Number(b.timestamp) || 0,
+            recoveredAt: Date.now()
+        };
+    });
+}
+
+async function syncMatchRecordFromBalls(ownerUid, matchId, opts) {
+    // 🛟 opts.force — this rebuild is a DELIBERATE rewrite (an owner
+    // correction, a delivery deleted on purpose, a Recovery Centre
+    // restore), so it is allowed to make the scorecard smaller. The
+    // per-ball live path never passes it: see the MATCH DATA SAFETY NET
+    // section above for why a live rebuild must never be able to erase an
+    // innings the saved record already holds.
+    opts = opts || {};
     if (!ballsCollection || !matchRecordsCollection || !ownerUid || !matchId) return;
     try {
         // Only UPDATE an existing shell doc (created by the normal
@@ -6911,11 +7670,14 @@ async function syncMatchRecordFromBalls(ownerUid, matchId) {
         const cards = await buildLiveCardsFromBalls(matchId);
         console.log('[syncDebug] recomputed bowlingCard A:', JSON.stringify((cards.bowlingCard && cards.bowlingCard.A) || []));
         console.log('[syncDebug] recomputed bowlingCard B:', JSON.stringify((cards.bowlingCard && cards.bowlingCard.B) || []));
-        const writeResult = await matchRecordsCollection.updateOne(
+        const guard = await writeMatchRecordSafely(
             { ownerUid, leagueKey: existing.leagueKey, matchId: existing.matchId },
-            { $set: { ...cards, liveSyncedAt: Date.now() } }
+            { ...cards, liveSyncedAt: Date.now() },
+            { reason: opts.reason || 'balls-sync', force: !!opts.force }
         );
-        console.log('[syncDebug] write result:', { matchedCount: writeResult.matchedCount, modifiedCount: writeResult.modifiedCount });
+        if (guard.lost.length) {
+            console.log('[syncDebug] kept saved cricket the ball log no longer has:', guard.lost.map(l => l.key).join(', '));
+        }
         // Public tournament portal caches its payload for up to 4s (see
         // PUBLIC_CACHE_TTL_MS below) — invalidate it now so viewers see
         // this ball within ~1s instead of waiting out the full TTL.
@@ -7509,10 +8271,17 @@ io.on('connection', async (socket) => {
     // Fired once per recordBall() call in cricket-panel.html, independent
     // of the cricketState broadcast above (that one's just "what the
     // overlay shows right now"; this is "what actually happened, forever").
-    socket.on('logBall', async (data) => {
-        if (!ballsCollection) return; // Mongo not configured yet — no-op
+    // 🛟 `ack` is the panel's delivery receipt. The ball outbox in
+    // cricket-panel*.html keeps every delivery in localStorage until this
+    // callback confirms it reached MongoDB, and re-sends it on the next
+    // connection otherwise — which is what stops an internet drop
+    // mid-innings from leaving deliveries out of the permanent log
+    // forever. Every path out of this handler must call it.
+    socket.on('logBall', async (data, ack) => {
+        const reply = (payload) => { if (typeof ack === 'function') { try { ack(payload); } catch (e) {} } };
+        if (!ballsCollection) return reply({ ok: false, retry: true, error: 'db-unavailable' }); // Mongo not configured yet
         const matchId = safeMatchId(data.matchId || (data.room ? data.room.replace('room-', '') : null) || matchIdForClient);
-        if (!matchId || matchId === 'default') return;
+        if (!matchId || matchId === 'default') return reply({ ok: false, retry: false, error: 'no-match-id' });
         try {
             // Best-effort owner resolution (see resolveOwnerUidForMatch above)
             // so this ball — and any clip cut around it — can be found again
@@ -7540,6 +8309,15 @@ io.on('connection', async (socket) => {
             const fielderName = personName(data.dismissal && data.dismissal.fielder);
             await ballsCollection.insertOne({
                 matchId,
+                // 🛟 Minted once per delivery by the panel and carried
+                // through every retry, with a unique index behind it — a
+                // ball that is sent twice (queued offline, then re-sent on
+                // reconnect) can never become two deliveries.
+                // Spread, never a plain `ballUid: x || undefined` key: the
+                // unique index is sparse, so a doc must OMIT the field
+                // entirely when there is no uid — a stored null would
+                // collide with the next uid-less ball.
+                ...(data.ballUid ? { ballUid: String(data.ballUid) } : {}),
                 ownerUid: ownerUid || null,
                 innings: data.innings,
                 over: data.over,
@@ -7580,8 +8358,18 @@ io.on('connection', async (socket) => {
             // 🩹 Keep the tournament's read path (matchRecordsCollection) from
             // going stale — see the big comment above buildLiveCardsFromBalls.
             if (ownerUid) scheduleMatchRecordSync(ownerUid, matchId);
+            reply({ ok: true, ballUid: data.ballUid || null });
         } catch (err) {
+            // A duplicate ballUid means this exact delivery is already in
+            // the log (the panel re-sent one it had no receipt for) — that
+            // is the outbox working, not an error. Confirm it so the panel
+            // can drop it from the queue.
+            if (err && (err.code === 11000 || err.code === 11001)) {
+                if (ownerUid) scheduleMatchRecordSync(ownerUid, matchId);
+                return reply({ ok: true, duplicate: true, ballUid: data.ballUid || null });
+            }
             console.log('logBall Mongo insert error:', err);
+            reply({ ok: false, retry: true, error: 'insert-failed' });
         }
     });
 
