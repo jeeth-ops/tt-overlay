@@ -20,7 +20,7 @@ function grab(name){
 }
 const names = ['oversStrToBallsCount','ballsToOversStr','matchRecordFootprint','footprintTotalBalls',
                'groupsLostBy','guardMatchRecordWrite','matchRecordFromPanelState','ballDocsFromPanelState',
-               'playerKey','personName'];
+               'findRescoredDeliveries','playerKey','personName'];
 const api = new Function([
   'const SHRINK_TOLERANCE_BALLS = 30;',
   ...names.map(grab),
@@ -141,6 +141,45 @@ eq('a wicket off a wide is stored as a wide + a dismissal', [docs[1].kind, docs[
 eq('the fielder is kept', docs[1].dismissal.fielder, 'Sunil');
 eq('player keys match the ones the server indexes on', docs[0].strikerKey, api.playerKey('Imran'));
 eq('the match id is stamped on every delivery', docs.every(d => d.matchId === 'room7'), true);
+
+console.log('\n=== UNDONE / RE-SCORED DELIVERIES ===');
+// The panel's Undo leaves the row it already wrote to the ball log, so the
+// delivery bowled in its place lands on the SAME over.ball.
+const d = (o) => Object.assign({ _id: o.id, innings: 2, over: 12, ballInOver: 3, kind: '0', runs: 0,
+                                 striker: 'Imran', bowler: 'Ravi', timestamp: 0, dismissal: null }, o);
+let found = api.findRescoredDeliveries([
+  d({ id: 'a', ballInOver: 1, kind: '1', runs: 1, timestamp: 100 }),
+  d({ id: 'b', kind: '4', runs: 4, timestamp: 200 }),   // scored, then undone
+  d({ id: 'c', kind: '0', runs: 0, timestamp: 300 }),   // re-scored in its place
+  d({ id: 'e', ballInOver: 4, kind: '2', runs: 2, timestamp: 400 })
+]);
+eq('only the superseded delivery is proposed', found.map(f => f.ball._id), ['b']);
+eq('and it names the one kept in its place', found[0].keptInstead._id, 'c');
+
+found = api.findRescoredDeliveries([
+  d({ id: 'w1', kind: 'Wd', runs: 1, timestamp: 100 }),
+  d({ id: 'w2', kind: 'Wd', runs: 1, timestamp: 200 }),
+  d({ id: 'l', kind: '1', runs: 1, timestamp: 300 })
+]);
+eq('two wides and the ball re-bowled after them are all legitimate', found.length, 0);
+
+found = api.findRescoredDeliveries([
+  d({ id: 'n', kind: 'Nb', runs: 1, timestamp: 100 }),
+  d({ id: 'f', kind: '6', runs: 6, timestamp: 200 })
+]);
+eq('a no ball never supersedes the free hit that follows it', found.length, 0);
+
+found = api.findRescoredDeliveries([
+  d({ id: 'p', kind: 'PEN', runs: 5, timestamp: 100 }),
+  d({ id: 'q', kind: '0', runs: 0, timestamp: 200 })
+]);
+eq('a penalty award is not a delivery and never supersedes one', found.length, 0);
+
+found = api.findRescoredDeliveries([
+  d({ id: 'i1', innings: 1, kind: '4', runs: 4, timestamp: 100 }),
+  d({ id: 'i2', innings: 2, kind: '4', runs: 4, timestamp: 200 })
+]);
+eq('the same over.ball in two different innings is two real deliveries', found.length, 0);
 
 console.log(`\n================  ${pass} passed, ${fail} failed  ================\n`);
 process.exit(fail ? 1 : 0);

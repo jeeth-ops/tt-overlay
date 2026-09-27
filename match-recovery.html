@@ -568,6 +568,21 @@ async function inspect(roomId, matchId){
         </tr>`).join('') : '<tr><td colspan="4" class="meta">No versions yet — history starts from the first save after this fix went live.</td></tr>'}
         </tbody></table>
       </details>
+      <details open style="margin-top:14px">
+        <summary>Undone / re-scored deliveries still in the ball log</summary>
+        <p class="hint">The panel's Undo takes a delivery off the panel's scorecard but leaves the row it
+          already wrote to the ball log. Invisible until a scorecard is rebuilt from that log — then the
+          innings reads a few runs and a few balls too high. A re-scored ball sits on the same
+          over.ball as the one it replaced, so they can be picked out. Nothing is deleted: what you
+          remove is kept in full and can be put back.</p>
+        <div id="rescoredBox"><button id="btnRescored">🔎 Scan the ball log</button></div>
+      </details>
+      <details style="margin-top:10px">
+        <summary>Set the result and declarations by hand</summary>
+        <p class="hint">A ball log cannot know these: an innings closed at 241/4 looks the same whether it
+          was declared or all out.</p>
+        <div id="resultBox"></div>
+      </details>
       <details style="margin-top:10px">
         <summary>Move deliveries and clips from another room id onto this match</summary>
         <p class="hint">Use this when the panel was reconnected with a different Match ID mid-match, so part of
@@ -584,6 +599,10 @@ async function inspect(roomId, matchId){
       document.querySelector('#localResults button[data-act="push"]').click();
     };
     body.querySelectorAll('button[data-version]').forEach(b => b.onclick = () => doRestore('version', d, b.dataset.version));
+    const rsBtn = document.getElementById('btnRescored');
+    if(rsBtn) rsBtn.onclick = () => scanRescored(d);
+    renderResultForm(d);
+
     const rb = document.getElementById('btnRelink');
     if(rb) rb.onclick = async () => {
       const from = document.getElementById('relinkFrom').value.trim();
@@ -599,6 +618,97 @@ async function inspect(roomId, matchId){
   }catch(err){
     body.innerHTML = `<div class="banner err">${esc(err.message)}</div>`;
   }
+}
+
+// Lists the deliveries that look like they were undone and re-scored, with
+// the innings totals as they are now and as they would read once those rows
+// come out — so the operator can check them against the real scorecard
+// before anything moves.
+async function scanRescored(d){
+  const box = document.getElementById('rescoredBox');
+  box.innerHTML = '<p class="meta">Scanning…</p>';
+  try{
+    const r = await api(`/cricket/recover/rescored?matchId=${encodeURIComponent((d.saved && d.saved.matchId) || d.ids[0])}&roomId=${encodeURIComponent((d.saved && d.saved.roomId) || '')}`);
+    if(!r.candidates.length){
+      box.innerHTML = `<div class="banner ok">No re-scored deliveries found in ${r.total} balls — the ball log has one row per delivery.</div>`;
+      return;
+    }
+    const line = (s) => `${s.runs || 0}/${s.wickets || 0} (${s.overs} ov)`;
+    box.innerHTML = `
+      <div class="grid" style="margin-bottom:12px">
+        <div class="stat"><b>${r.candidates.length}</b><span>deliveries look re-scored</span></div>
+        <div class="stat"><b>${line(r.now.scoreA)}</b><span>Team A now → <b style="font-size:14px">${line(r.after.scoreA)}</b> after</span></div>
+        <div class="stat"><b>${line(r.now.scoreB)}</b><span>Team B now → <b style="font-size:14px">${line(r.after.scoreB)}</b> after</span></div>
+      </div>
+      <table><thead><tr><th><input type="checkbox" id="rsAll" checked></th><th>Innings</th><th>Ball</th><th>What was recorded</th><th>Kept instead</th></tr></thead><tbody>
+      ${r.candidates.map(c => `<tr>
+        <td><input type="checkbox" class="rsPick" value="${esc(c.ballId)}" checked></td>
+        <td>${c.innings}</td>
+        <td>${c.over}.${c.ballInOver}</td>
+        <td>${esc(c.kind)} · ${c.runs} run${c.runs === 1 ? '' : 's'}${c.wicket ? ' · WICKET' : ''} · ${esc(c.striker || '')}<div class="meta">${when(c.at)}</div></td>
+        <td>${esc(c.keptInstead.kind)} · ${c.keptInstead.runs} run${c.keptInstead.runs === 1 ? '' : 's'}${c.keptInstead.wicket ? ' · WICKET' : ''} · ${esc(c.keptInstead.striker || '')}<div class="meta">${when(c.keptInstead.at)}</div></td>
+      </tr>`).join('')}
+      </tbody></table>
+      <div class="row" style="margin-top:12px">
+        <button class="warn" id="rsApply">Remove the ticked deliveries and rebuild</button>
+        <span class="meta">They are kept in full and can be put back.</span>
+      </div>`;
+    document.getElementById('rsAll').onchange = (e) => {
+      box.querySelectorAll('.rsPick').forEach(c => { c.checked = e.target.checked; });
+    };
+    document.getElementById('rsApply').onclick = async () => {
+      const ids = [...box.querySelectorAll('.rsPick')].filter(c => c.checked).map(c => c.value);
+      if(!ids.length) return toast('Nothing ticked', true);
+      if(!confirm(`Remove ${ids.length} deliveries from the ball log and rebuild the scorecard from what is left?\n\nThey are archived, not deleted.`)) return;
+      try{
+        const done = await api('/cricket/recover/drop-balls', {
+          method: 'POST',
+          body: JSON.stringify({ ballIds: ids, matchId: (d.saved && d.saved.roomId) || (d.saved && d.saved.matchId) || d.ids[0] })
+        });
+        toast(`Removed ${done.removed} — now ${line(done.scoreA)} and ${line(done.scoreB)}.`);
+        inspect(d.ids[0], (d.saved && d.saved.matchId) || '');
+      }catch(err){ toast(err.message, true); }
+    };
+  }catch(err){ box.innerHTML = `<div class="banner err">${esc(err.message)}</div>`; }
+}
+
+function renderResultForm(d){
+  const box = document.getElementById('resultBox');
+  if(!box) return;
+  const m = d.saved || {};
+  const nameA = (m.teamA && m.teamA.name) || 'Team A';
+  const nameB = (m.teamB && m.teamB.name) || 'Team B';
+  const archive = m.inningsArchive || [];
+  box.innerHTML = `
+    <div class="row">
+      <select id="resWinner">
+        <option value="">— no result set —</option>
+        <option value="A"${m.winningTeam === 'A' ? ' selected' : ''}>${esc(nameA)} won</option>
+        <option value="B"${m.winningTeam === 'B' ? ' selected' : ''}>${esc(nameB)} won</option>
+        <option value="TIE"${m.winningTeam === 'TIE' ? ' selected' : ''}>Tied</option>
+        <option value="DRAW"${m.winningTeam === 'DRAW' ? ' selected' : ''}>Drawn</option>
+      </select>
+      <input id="resText" placeholder="Result line, e.g. Match drawn — NHSC won the 1st innings on a lead" style="min-width:420px" value="${esc(m.matchResultText || '')}">
+    </div>
+    ${archive.length ? `<div class="row" style="margin-top:10px">${archive.map(i => `
+      <label class="meta"><input type="checkbox" class="resDecl" data-no="${i.no}"${i.declared ? ' checked' : ''}> Innings ${i.no} declared</label>`).join('')}</div>` : '<p class="meta" style="margin-top:8px">This record has no innings list, so declarations cannot be flagged yet — restore from a panel state first if you need them.</p>'}
+    <div class="row" style="margin-top:12px"><button class="primary" id="resSave">Save the result</button></div>`;
+  document.getElementById('resSave').onclick = async () => {
+    const declared = {};
+    box.querySelectorAll('.resDecl').forEach(c => { declared[c.dataset.no] = c.checked; });
+    try{
+      await api('/cricket/recover/set-result', {
+        method: 'POST',
+        body: JSON.stringify({
+          matchId: m.matchId, roomId: m.roomId || '',
+          winningTeam: document.getElementById('resWinner').value || null,
+          matchResultText: document.getElementById('resText').value,
+          declared
+        })
+      });
+      toast('Result saved.');
+    }catch(err){ toast(err.message, true); }
+  };
 }
 
 async function doRestore(source, d, versionId){
