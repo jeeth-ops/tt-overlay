@@ -813,6 +813,24 @@
       display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
     }
     #score-center{ padding:0 2px; }
+    /* On a finished match the result banner and its line need the whole
+       width to read properly. Squeezed into the middle column of three on a
+       phone they left the team blocks so narrow that "DY PATIL SA" broke
+       across three lines and the score under it wrapped mid-number. So on
+       this width the finished header stacks: result across the top, then
+       the two teams side by side underneath exactly as before. */
+    #hero.hero-final #teams-row{
+      grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+      grid-template-areas:"result result" "teama teamb";
+      row-gap:14px; align-items:start;
+    }
+    #hero.hero-final #team-block-a{ grid-area:teama; }
+    #hero.hero-final #team-block-b{ grid-area:teamb; }
+    #hero.hero-final #score-center{ grid-area:result; max-width:100%; padding:0; }
+    #hero.hero-final #main-score.result-margin{ font-size:13px; padding:8px 18px; }
+    #hero.hero-final #batting-tag.result-note{ max-width:100%; font-size:12.5px; }
+    #hero.hero-final .team-name{ font-size:13px; }
+    #hero.hero-final .team-prev-score{ white-space:nowrap; font-size:12.5px; }
     #main-score{ font-size:clamp(26px,9vw,36px); }
     #main-overs{ font-size:11px; }
     #batting-tag{ font-size:9.5px; }
@@ -2512,9 +2530,12 @@ function currentBowlingRows(state){ return bowlingRowsForInnings(state, state.in
 // so this just returns that single score, same as before).
 function teamScoreLine(state, teamKey){
   const archive = (state.inningsArchive || []).filter(i => i.team === teamKey);
-  const parts = archive.map(i => `${i.runs}${i.wickets < 10 ? '/' + i.wickets : ''}${i.declared ? ' d' : ''}`);
+  // Always "237/10", never a bare "237". All out is conventionally written
+  // without the wickets, but sitting next to "241/4 d" on the same card it
+  // just reads as though the wickets column failed to load.
+  const parts = archive.map(i => `${i.runs}/${i.wickets}${i.declared ? ' d' : ''}`);
   if(teamKey === state.battingTeam && !(archive.some(i => i.no === state.inningsNumber))){
-    parts.push(`${state.score.runs}${state.score.wickets < 10 ? '/' + state.score.wickets : ''}${state.declared ? ' d' : ''}`);
+    parts.push(`${state.score.runs}/${state.score.wickets}${state.declared ? ' d' : ''}`);
   }
   return parts.join(' & ');
 }
