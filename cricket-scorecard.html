@@ -2403,6 +2403,18 @@ function matchStatusText(state){
     // a manually-called draw), which the old runs/wickets-only math here
     // couldn't reconstruct.
     if(state.matchResultText) return { badge:'RESULT', text: state.matchResultText };
+    // 🐛 A decided match with no result TEXT used to fall straight through
+    // to "Live" — the only ways out of here were a typed result line or a
+    // target to compare against, and a Test that is drawn (or tied, or
+    // simply recorded as won) has neither. So a finished match kept
+    // announcing itself as in progress, with a running lead underneath it.
+    // matchWinnerKey is set the moment a result is decided; read it.
+    if(state.matchWinnerKey === 'DRAW') return { badge:'RESULT', text: 'Match Drawn' };
+    if(state.matchWinnerKey === 'TIE') return { badge:'RESULT', text: 'Match Tied' };
+    if(state.matchWinnerKey === 'A' || state.matchWinnerKey === 'B'){
+      const w = teamObj(state, state.matchWinnerKey);
+      return { badge:'RESULT', text: `${w.name || w.short || 'Team ' + state.matchWinnerKey} won` };
+    }
     const battingTeam = teamObj(state, state.battingTeam);
     const bowlingTeam = teamObj(state, bowlingKeyOf(state));
     if(state.target && state.score.runs >= state.target){
@@ -4207,7 +4219,13 @@ function renderHero(s){
     if(mainOversEl){ mainOversEl.style.display = ''; setText('main-overs', `(${fmtOvers(s.score.overs, s.score.balls)} ov)`); }
   }
   const battingObj = teamObj(s, s.battingTeam);
-  setText('batting-tag', isFinished ? '' : (battingObj.short || battingObj.name || '') + ' batting');
+  // On a finished Test the "X batting" tag has nothing left to say, so the
+  // slot carries the line that does: who finished ahead on first innings.
+  // Same line, same styling, as the saved-scorecard view.
+  const liveLeadNote = (isFinished && (s.matchWinnerKey === 'DRAW' || !s.matchWinnerKey)) ? firstInningsLeadNote(s) : '';
+  const battingTagLive = document.getElementById('batting-tag');
+  if(battingTagLive) battingTagLive.classList.toggle('result-note', !!liveLeadNote);
+  setText('batting-tag', isFinished ? liveLeadNote : (battingObj.short || battingObj.name || '') + ' batting');
   // 🎨 Tie the Batting/Bowling scorecard cards to the ACTUAL team currently
   // in each role (this flips every innings), instead of a fixed accent
   // colour on both — see --card-accent in the .card-featured CSS.
