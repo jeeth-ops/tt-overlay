@@ -2496,9 +2496,18 @@ function teamScoreLine(state, teamKey){
 function currentLeadTrail(state){
   if(state.format !== 'Test' || (state.inningsNumber || 1) <= 1 || state.target) return null;
   const archive = state.inningsArchive || [];
+  // 🐛 The live score used to be added to the batting side's archived
+  // innings unconditionally. That is right only while the innings in
+  // progress has no archive entry of its own — the panel's convention. The
+  // moment it does have one (a completed match whose whole innings list is
+  // known, e.g. one rebuilt from the ball log), the same runs were counted
+  // twice: 241 archived + 241 live = 482, and a 4-run lead was announced as
+  // 245. teamScoreLine() right above already guards for exactly this; this
+  // never did.
+  const currentInnArchived = archive.some(i => i.no === (state.inningsNumber || 1));
   const teamTotal = (key) => {
     let total = archive.filter(i => i.team === key).reduce((sum, i) => sum + (i.runs || 0), 0);
-    if(key === state.battingTeam) total += (state.score?.runs ?? 0);
+    if(key === state.battingTeam && !currentInnArchived) total += (state.score?.runs ?? 0);
     return total;
   };
   const diff = teamTotal('A') - teamTotal('B');
