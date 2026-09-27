@@ -6242,6 +6242,12 @@ adminRouter.get('/cricket/recover/scan', async (req, res) => {
                 $group: {
                     _id: { matchId: '$matchId', innings: '$innings' },
                     balls: { $sum: 1 },
+                    // Overs are LEGAL deliveries. A wide, a no ball and a
+                    // penalty award are all rows in the log but none of them
+                    // is a ball of the over, so counting rows made this card
+                    // quote an over count several balls ahead of the
+                    // scorecard's own — 42.0 where the innings ended at 41.1.
+                    legal: { $sum: { $cond: [{ $in: ['$kind', ['Wd', 'Nb', 'PEN']] }, 0, 1] } },
                     runs: { $sum: '$runs' },
                     wickets: { $sum: { $cond: [{ $ifNull: ['$dismissal', false] }, 1, 0] } },
                     firstAt: { $min: '$timestamp' },
@@ -6266,8 +6272,8 @@ adminRouter.get('/cricket/recover/scan', async (req, res) => {
             m.lastAt = Math.max(m.lastAt, g.lastAt);
             m.players = [...new Set(m.players.concat(g.batters || [], g.bowlers || []).filter(Boolean))].slice(0, 40);
             m.innings.push({
-                no: g._id.innings || 1, balls: g.balls, runs: g.runs, wickets: g.wickets,
-                battingTeam: g.battingTeam, overs: ballsToOversStr(g.balls), firstAt: g.firstAt, lastAt: g.lastAt
+                no: g._id.innings || 1, balls: g.balls, legal: g.legal, runs: g.runs, wickets: g.wickets,
+                battingTeam: g.battingTeam, overs: ballsToOversStr(g.legal), firstAt: g.firstAt, lastAt: g.lastAt
             });
             m.innings.sort((a, b) => a.no - b.no);
         });
