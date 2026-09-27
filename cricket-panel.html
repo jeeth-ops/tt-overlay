@@ -2621,6 +2621,13 @@ function pushHistory(){
 }
 let history = loadHistory();
 let lastDismissalType = null; // set by the wicket modal, read by logBallToDb
+// 🩹 WHO was given out. The ball log used to record only that a wicket fell
+// and how — never which batter it was — so a scorecard rebuilt from the log
+// had no way to mark anyone out and showed the whole XI as "not out". For
+// every dismissal but a Run Out it is the striker, but a Run Out can take
+// the non-striker, so guessing is not good enough: it is recorded here, at
+// the one moment the panel actually knows, and sent with the delivery.
+let lastDismissedBatter = null;
 let lastDismissalFielder = null; // set alongside lastDismissalType, read by logBallToDb
 // Law 19.8 component breakdown of the overthrow just scored — set by the
 // 'OT' case in recordBall(), read straight afterwards when the ball is
@@ -8500,6 +8507,7 @@ function recordBall(kind, meta){
       const originalNonStriker = state.nonStriker;
       const dismissedIsNonStriker = dismissalType === 'Run Out' && meta && meta.runOutWho === 'nonStriker';
       const dismissedBatter = dismissedIsNonStriker ? originalNonStriker : originalStriker;
+    lastDismissedBatter = (dismissedBatter && dismissedBatter.name) || null; // carried into the ball log — see logBallToDb
       const survivor = dismissedIsNonStriker ? originalStriker : originalNonStriker;
 
       document.getElementById('disp-last-dismissal').textContent = `${dismissedBatter.name || 'Batsman'} — ${dismissalText}`;
@@ -8635,6 +8643,7 @@ function recordBall(kind, meta){
       const originalNonStriker = state.nonStriker;
       const dismissedIsNonStriker = dismissalType === 'Run Out' && meta && meta.runOutWho === 'nonStriker';
       const dismissedBatter = dismissedIsNonStriker ? originalNonStriker : originalStriker;
+    lastDismissedBatter = (dismissedBatter && dismissedBatter.name) || null; // carried into the ball log — see logBallToDb
       const survivor = dismissedIsNonStriker ? originalStriker : originalNonStriker;
       document.getElementById('disp-last-dismissal').textContent = `${dismissedBatter.name || 'Batsman'} — ${dismissalText}`;
 
@@ -8734,6 +8743,7 @@ function recordBall(kind, meta){
       const originalNonStriker = state.nonStriker;
       const dismissedIsNonStriker = dismissalType === 'Run Out' && meta && meta.runOutWho === 'nonStriker';
       const dismissedBatter = dismissedIsNonStriker ? originalNonStriker : originalStriker;
+    lastDismissedBatter = (dismissedBatter && dismissedBatter.name) || null; // carried into the ball log — see logBallToDb
       const survivor = dismissedIsNonStriker ? originalStriker : originalNonStriker;
       document.getElementById('disp-last-dismissal').textContent = `${dismissedBatter.name || 'Batsman'} — ${dismissalText}`;
 
@@ -9218,7 +9228,7 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundar
     strikerId: id.strikerId,
     nonStrikerId: id.nonStrikerId,
     bowlerId: id.bowlerId,
-    dismissal: kindIsWicket ? { type: lastDismissalType || 'Bowled', fielder: lastDismissalFielder || null } : null,
+    dismissal: kindIsWicket ? { type: lastDismissalType || 'Bowled', fielder: lastDismissalFielder || null, batter: lastDismissedBatter || null } : null,
     score: { ...state.score },
     timestamp: ballTimestamp
   });

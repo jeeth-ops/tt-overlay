@@ -7441,7 +7441,59 @@ function buildLiveCardsFromBallsArray(balls) {
         }
     });
 
-    const toBattingCard = (team) => Object.values(batting[team]);
+    // ---- WHO WAS OUT, AND HOW -------------------------------------
+    // A rebuilt card used to show every batter as "not out": the rows come
+    // from deliveries, and a delivery only says that a wicket fell, not
+    // whose. Newer deliveries carry dismissal.batter (see the panel's
+    // lastDismissedBatter); for everything logged before that, the striker
+    // is the one out for every dismissal except a Run Out — and a Run Out
+    // is settled by looking at the next delivery, where whichever of the
+    // two at the crease is no longer there is the one who went.
+    const howOutText = (type, fielder, bowler) => {
+        const t = String(type || '').toLowerCase();
+        if (t === 'caught') return fielder ? `c ${fielder} b ${bowler || 'bowler'}` : `c b ${bowler || 'bowler'}`;
+        if (t === 'stumped') return fielder ? `st ${fielder} b ${bowler || 'bowler'}` : `st b ${bowler || 'bowler'}`;
+        if (t === 'run out') return fielder ? `run out (${fielder})` : 'run out';
+        if (t === 'bowled') return bowler ? `b ${bowler}` : 'b';
+        if (t === 'lbw') return bowler ? `lbw b ${bowler}` : 'lbw';
+        if (t === 'hit wicket') return bowler ? `hit wicket b ${bowler}` : 'hit wicket';
+        if (t === 'retired hurt' || t === 'retired') return 'retired hurt';
+        return bowler ? `${type} b ${bowler}` : String(type || 'out');
+    };
+    [...new Set(balls.map(b => b.innings || 1))].forEach(inn => {
+        const seq = balls.filter(b => (b.innings || 1) === inn && b.kind !== 'PEN');
+        seq.forEach((b, i) => {
+            if (!b.dismissal) return;
+            const bt = b.battingTeam === 'B' ? 'B' : 'A';
+            const type = b.dismissal.type || 'Out';
+            let outName = b.dismissal.batter || null;
+            if (!outName) {
+                if (String(type).toLowerCase() === 'run out') {
+                    const next = seq[i + 1];
+                    const atCrease = [b.striker, b.nonStriker].filter(Boolean);
+                    const stillThere = next ? [next.striker, next.nonStriker].filter(Boolean) : [];
+                    outName = (next && atCrease.find(n => stillThere.indexOf(n) === -1)) || b.striker || null;
+                } else {
+                    outName = b.striker || null;
+                }
+            }
+            if (!outName) return;
+            const rowKey = `${playerKey(outName)}::${inn}`;
+            // A non-striker run out without facing a ball has no row yet.
+            if (!batting[bt][rowKey]) batting[bt][rowKey] = { name: outName, runs: 0, balls: 0, fours: 0, sixes: 0, inningsNo: inn };
+            batting[bt][rowKey].out = true;
+            batting[bt][rowKey].howOut = howOutText(type, b.dismissal.fielder, b.bowler);
+            batting[bt][rowKey].dismissalType = type;
+            batting[bt][rowKey].fielderName = b.dismissal.fielder || null;
+            batting[bt][rowKey].bowlerName = String(type).toLowerCase() === 'run out' ? null : (b.bowler || null);
+        });
+    });
+
+    const toBattingCard = (team) => Object.values(batting[team]).map(row => ({
+        ...row,
+        out: !!row.out,
+        howOut: row.out ? row.howOut : 'not out'
+    }));
     const toBowlingCard = (team) => Object.values(bowling[team]).map(row => ({
         name: row.name,
         overs: Math.floor(row.balls / 6),
@@ -8631,7 +8683,11 @@ io.on('connection', async (socket) => {
                 bowler: bowlerName,
                 bowlerKey: playerKey(bowlerName),
                 bowlerPlayerId,
-                dismissal: data.dismissal ? { type: data.dismissal.type || 'Out', fielder: fielderName } : null,
+                // `batter` is who was actually given out — the striker for
+                // every dismissal but a Run Out, which can take the
+                // non-striker instead. Without it a scorecard rebuilt from
+                // this log cannot mark anyone out at all.
+                dismissal: data.dismissal ? { type: data.dismissal.type || 'Out', fielder: fielderName, batter: personName(data.dismissal.batter) || null } : null,
                 // 🏏 Penalty AWARD detail (kind 'PEN' only) — the reason, the side
                 // it was awarded to and where it was applied, kept with the event so
                 // the award is auditable and reversible rather than being an

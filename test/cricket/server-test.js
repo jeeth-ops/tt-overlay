@@ -16,7 +16,7 @@ function grab(name){
   throw new Error('unbalanced: ' + name);
 }
 const sandbox = {};
-const code = [grab('deriveBallFacts'), grab('buildLiveCardsFromBallsArray'), 'return { deriveBallFacts, buildLiveCardsFromBallsArray };'].join('\n');
+const code = [grab('deriveBallFacts'), grab('personName'), grab('playerKey'), grab('buildLiveCardsFromBallsArray'), 'return { deriveBallFacts, playerKey, buildLiveCardsFromBallsArray };'].join('\n');
 const api = new Function(code)();
 
 let pass = 0, fail = 0;
@@ -126,6 +126,44 @@ const srvExtras = Object.values(srv.extras.A).reduce((a,b)=>a+b,0);
 eq('server card balances: batters + extras === total', srvBatRuns + srvExtras, srv.scoreA.runs);
 eq('panel reconciles too', E('reconcileInnings().ok'), true);
 eq('bowler runs agree', srv.bowlingCard.B[0].runs, st.bowler.runs);
+
+console.log('\n=== SERVER DERIVATION — who was out, and how ===');
+cards = api.buildLiveCardsFromBallsArray([
+  ball({ kind: '4', runs: 4, ballInOver: 1 }),
+  ball({ kind: 'W', runs: 0, ballInOver: 2, dismissal: { type: 'Bowled', fielder: null } }),
+  ball({ kind: '1', runs: 1, ballInOver: 3, striker: 'NewMan', strikerKey: key('NewMan') })
+]);
+let row = (n) => cards.battingCard.A.find(r => r.name === n);
+eq('the striker is the one given out', row('Striker').out, true);
+eq('and the card says how', row('Striker').howOut, 'b Bowler');
+eq('the batter still in is not out', row('NewMan').out, false);
+eq('and says so', row('NewMan').howOut, 'not out');
+
+cards = api.buildLiveCardsFromBallsArray([
+  ball({ kind: 'W', runs: 0, ballInOver: 1, dismissal: { type: 'Caught', fielder: 'Fielder' } })
+]);
+eq('a catch names the fielder and the bowler', cards.battingCard.A[0].howOut, 'c Fielder b Bowler');
+eq('and the wicket is the bowlers', cards.bowlingCard.B[0].wickets, 1);
+
+// A run out can take the NON-striker. Nothing on that delivery says so, but
+// the next one does: whoever is no longer at the crease is the one who went.
+cards = api.buildLiveCardsFromBallsArray([
+  ball({ kind: '1', runs: 1, ballInOver: 1 }),
+  ball({ kind: 'W', runs: 0, ballInOver: 2, dismissal: { type: 'Run Out', fielder: 'Fielder' } }),
+  ball({ kind: '0', runs: 0, ballInOver: 3, striker: 'Striker', strikerKey: key('Striker'),
+         nonStriker: 'Incoming', nonStrikerKey: key('Incoming') })
+]);
+row = (n) => cards.battingCard.A.find(r => r.name === n);
+eq('the non-striker who left the crease is the one run out', row('NonStriker').out, true);
+eq('the striker who stayed is not out', row('Striker').out, false);
+eq('a run out names the fielder, not a bowler', row('NonStriker').howOut, 'run out (Fielder)');
+eq('and it is never the bowlers wicket', cards.bowlingCard.B[0].wickets, 0);
+
+// When the delivery itself records who was out, that always wins.
+cards = api.buildLiveCardsFromBallsArray([
+  ball({ kind: 'W', runs: 0, ballInOver: 1, dismissal: { type: 'Run Out', fielder: 'Fielder', batter: 'NonStriker' } })
+]);
+eq('dismissal.batter is taken at its word', cards.battingCard.A.find(r => r.name === 'NonStriker').out, true);
 
 console.log(`\n================  ${pass} passed, ${fail} failed  ================`);
 process.exit(fail ? 1 : 0);
