@@ -8116,6 +8116,28 @@ function panelStateFromMatchRecord(rec, balls, previous) {
         };
     });
 
+    // The two at the crease and the bowler in the middle of his over are
+    // held separately from the cards, and the panel shows them as their own
+    // tiles — so leaving the room's old ones in place means a panel that
+    // reads this still shows the batters on the stale figures next to a
+    // corrected total. Take them from the last delivery, with their real
+    // figures out of the corrected cards.
+    const lastBall = balls.length ? balls[balls.length - 1] : null;
+    const battingRows = ((rec.battingCard || {})[battingTeam] || []).filter(r => (r.inningsNo || 1) === inningsNumber);
+    const bowlingRows = ((rec.bowlingCard || {})[battingTeam === 'A' ? 'B' : 'A'] || []).filter(r => (r.inningsNo || 1) === inningsNumber);
+    const batTile = (name) => {
+        const r = battingRows.find(x => x.name === name);
+        return { name: name || '', runs: (r && r.runs) || 0, balls: (r && r.balls) || 0, fours: (r && r.fours) || 0, sixes: (r && r.sixes) || 0 };
+    };
+    const bowlTile = (name) => {
+        const r = bowlingRows.find(x => x.name === name);
+        return {
+            name: name || '', overs: (r && r.overs) || 0, balls: (r && r.balls) || 0,
+            maidens: (r && r.maidens) || 0, runs: (r && r.runs) || 0, wickets: (r && r.wickets) || 0,
+            runsThisOver: 0, wicketsThisOver: 0
+        };
+    };
+
     // A panel that reconnects keeps its own copy only while its revision is
     // HIGHER than the server's, so this has to clear whatever it is holding.
     const prevRev = Number(previous && previous.localRev) || 0;
@@ -8135,6 +8157,9 @@ function panelStateFromMatchRecord(rec, balls, previous) {
             balls: lastBalls % 6
         },
         declared: !!(lastInn && lastInn.declared),
+        striker: lastBall ? batTile(lastBall.striker) : ((previous && previous.striker) || { name: '', runs: 0, balls: 0, fours: 0, sixes: 0 }),
+        nonStriker: lastBall ? batTile(lastBall.nonStriker) : ((previous && previous.nonStriker) || { name: '', runs: 0, balls: 0, fours: 0, sixes: 0 }),
+        bowler: lastBall ? bowlTile(lastBall.bowler) : ((previous && previous.bowler) || { name: '', overs: 0, balls: 0, maidens: 0, runs: 0, wickets: 0, runsThisOver: 0, wicketsThisOver: 0 }),
         battingCard: rec.battingCard || { A: [], B: [] },
         bowlingCard: rec.bowlingCard || { A: [], B: [] },
         extras: rec.extras || { A: {}, B: {} },
