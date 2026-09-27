@@ -458,12 +458,20 @@ auth.onAuthStateChanged(async (user) => {
     btn.style.display = 'none';
   }catch(err){
     idToken = null;
-    stateEl.textContent = 'Signed in as ' + user.email + ' — but this is not the owner account.';
+    stateEl.textContent = 'Signed in as ' + user.email + ' — the website half needs the OWNER account. Click "Sign in with Google" and pick it.';
     btn.style.display = '';
   }
 });
-document.getElementById('btnSignIn').onclick = () => {
-  auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch(err => toast(err.message, true));
+document.getElementById('btnSignIn').onclick = async () => {
+  // Always offer the account chooser. Without prompt:'select_account'
+  // Google silently re-uses whichever account this browser is already
+  // signed in as — which, on the scoring laptop, is the operator account,
+  // not the owner one these APIs need. Signing out first makes the
+  // chooser appear even when only one session exists.
+  const provider = new firebase.auth.GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  try{ await auth.signOut(); }catch(e){}
+  auth.signInWithPopup(provider).catch(err => toast(err.message, true));
 };
 
 document.getElementById('btnScan').onclick = async () => {
