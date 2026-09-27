@@ -6481,7 +6481,11 @@ adminRouter.post('/cricket/recover/restore', async (req, res) => {
             if (!ballsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
             const balls = await ballsCollection.find({ matchId: { $in: ballLogIds } }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
             if (!balls.length) return res.status(400).json({ success: false, error: 'No deliveries logged for this match' });
-            candidate = { ...(saved || {}), ...buildLiveCardsFromBallsArray(balls) };
+            candidate = {
+                ...(saved || {}),
+                ...buildLiveCardsFromBallsArray(balls),
+                inningsArchive: inningsArchiveFromBalls(balls, saved && saved.inningsArchive)
+            };
         } else if (source === 'version') {
             if (!matchVersionsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
             const { ObjectId } = require('mongodb');
@@ -6656,6 +6660,16 @@ adminRouter.post('/cricket/recover/drop-balls', async (req, res) => {
 
         const left = await ballsCollection.find({ matchId }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
         const cards = buildLiveCardsFromBallsArray(left);
+        // syncMatchRecordFromBalls rebuilds the cards but deliberately never
+        // touches the innings list (the panel owns it during a live match).
+        // After a clean-up it has to come down with the totals, or the
+        // scorecard's own header keeps quoting the removed runs.
+        if (rec) {
+            await matchRecordsCollection.updateOne(
+                { _id: rec._id },
+                { $set: { inningsArchive: inningsArchiveFromBalls(left, rec.inningsArchive) } }
+            );
+        }
         res.json({ success: true, removed: del.deletedCount, remaining: left.length, scoreA: cards.scoreA, scoreB: cards.scoreB });
     } catch (err) {
         console.log('Drop-balls error:', err);
@@ -7786,6 +7800,37 @@ function ballDocsFromPanelState(st, matchId, ownerUid) {
 // This only ever proposes; the owner sees the list and the resulting
 // totals before anything moves, and what moves goes to ballsArchive.
 // ================================================================
+
+// One entry per innings actually bowled, derived from the ball log —
+// {no, team, runs, wickets, overs, declared}. A scorecard rebuilt purely
+// from deliveries has no innings list of its own, and that list is what
+// tells the public page which team batted when, and carries the declaration
+// flag. Only the recovery paths use this: a live sync must never touch the
+// archive, because there the panel owns it. Any `declared` already recorded
+// is kept — a ball log cannot know a declaration.
+function inningsArchiveFromBalls(balls, existing) {
+    const per = {};
+    balls.forEach(b => {
+        const inn = b.innings || 1;
+        const team = b.battingTeam === 'B' ? 'B' : 'A';
+        if (!per[inn]) per[inn] = { no: inn, team, runs: 0, wickets: 0, legalBalls: 0 };
+        const e = per[inn];
+        e.runs += b.runs || 0;
+        if (b.dismissal) e.wickets++;
+        if (deriveBallFacts(b.kind, b.runs).legalBall) e.legalBalls++;
+    });
+    const wasDeclared = {};
+    (existing || []).forEach(x => { if (x && x.declared) wasDeclared[Number(x.no)] = true; });
+    return Object.keys(per).map(Number).sort((a, b) => a - b).map(no => ({
+        no,
+        team: per[no].team,
+        runs: per[no].runs,
+        wickets: per[no].wickets,
+        overs: ballsToOversStr(per[no].legalBalls),
+        declared: !!wasDeclared[no]
+    }));
+}
+
 function findRescoredDeliveries(balls) {
     const slots = {};
     balls.forEach(b => {

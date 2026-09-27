@@ -20,7 +20,7 @@ function grab(name){
 }
 const names = ['oversStrToBallsCount','ballsToOversStr','matchRecordFootprint','footprintTotalBalls',
                'groupsLostBy','guardMatchRecordWrite','matchRecordFromPanelState','ballDocsFromPanelState',
-               'findRescoredDeliveries','playerKey','personName'];
+               'findRescoredDeliveries','inningsArchiveFromBalls','deriveBallFacts','playerKey','personName'];
 const api = new Function([
   'const SHRINK_TOLERANCE_BALLS = 30;',
   ...names.map(grab),
@@ -180,6 +180,21 @@ found = api.findRescoredDeliveries([
   d({ id: 'i2', innings: 2, kind: '4', runs: 4, timestamp: 200 })
 ]);
 eq('the same over.ball in two different innings is two real deliveries', found.length, 0);
+
+console.log('\n=== INNINGS LIST FROM THE BALL LOG ===');
+const bl = (o) => Object.assign({ innings: 1, over: 0, ballInOver: 1, battingTeam: 'A', kind: '0', runs: 0, dismissal: null }, o);
+const arch = api.inningsArchiveFromBalls([
+  bl({ kind: '4', runs: 4 }),
+  bl({ ballInOver: 2, kind: 'Wd', runs: 1 }),
+  bl({ ballInOver: 2, kind: 'W', runs: 0, dismissal: { type: 'Bowled' } }),
+  bl({ innings: 2, battingTeam: 'B', kind: '6', runs: 6 })
+], [{ no: 2, declared: true }]);
+eq('one entry per innings, in order', arch.map(a => a.no + a.team), ['1A', '2B']);
+eq('runs include the extras', arch[0].runs, 5);
+eq('a wide is not a ball of the over', arch[0].overs, '0.2');
+eq('wickets are counted', arch[0].wickets, 1);
+eq('a declaration already recorded is kept', arch[1].declared, true);
+eq('and one that was never declared stays false', arch[0].declared, false);
 
 console.log(`\n================  ${pass} passed, ${fail} failed  ================\n`);
 process.exit(fail ? 1 : 0);
