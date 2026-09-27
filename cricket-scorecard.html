@@ -556,6 +556,15 @@
   @media (max-width:520px){ #batting-tag.result-note{ font-size:12px; max-width:26ch; } }
 
   .team-prev-score{ font-size:13.5px; font-weight:700; opacity:.75; margin-top:3px; color:var(--text-dim); transition:color .2s ease, opacity .2s ease; }
+  /* Phone keeps score and overs on one line — the stacked header gives the
+     team columns the full half-width, so it fits. */
+  .ps-overs{ margin-left:5px; }
+  /* Laptop/tablet: the overs go under the score. Side by side with the
+     result banner between them, the one-line version ran past the column
+     and got clipped mid-bracket. */
+  @media (min-width:641px){
+    .ps-overs{ display:block; margin-left:0; margin-top:2px; font-size:.86em; font-weight:600; opacity:.85; }
+  }
   .team-block.winner .team-prev-score{ color:var(--team-color, var(--accent)); opacity:1; }
 
   #target-wrap{ position:relative; margin-top:16px; }
@@ -3060,13 +3069,19 @@ function renderFinalSnapshot(match, displayName){
   // many digits either score has, or how narrow the screen is.
   const prevA = document.getElementById('prev-score-a');
   const prevB = document.getElementById('prev-score-b');
+  // Score and overs as two pieces, not one string: on a laptop the overs
+  // drop onto their own line under the score (the single line was long
+  // enough to be clipped by the team column), while on a phone they stay
+  // inline where the stacked header has the width for them. Which one
+  // happens is CSS's call — see .ps-overs.
+  const prevLine = (sc) => `${sc.runs||0}-${sc.wickets||0}<span class="ps-overs">(${escapeHtml(String(sc.overs||'0.0'))} ov)</span>`;
   if(prevA){
     prevA.style.display = '';
-    prevA.textContent = `${scoreA.runs||0}-${scoreA.wickets||0} (${scoreA.overs||'0.0'} ov)`;
+    prevA.innerHTML = prevLine(scoreA);
   }
   if(prevB){
     prevB.style.display = '';
-    prevB.textContent = `${scoreB.runs||0}-${scoreB.wickets||0} (${scoreB.overs||'0.0'} ov)`;
+    prevB.innerHTML = prevLine(scoreB);
   }
   setText('main-score', winMarginText(match) || shortResultText(match) || 'Match Completed');
   document.getElementById('main-score').classList.add('result-margin');
