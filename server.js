@@ -6792,6 +6792,43 @@ adminRouter.post('/cricket/recover/restore-balls', async (req, res) => {
     }
 });
 
+
+// Pushes a corrected scorecard into the room the match was broadcast under,
+// so the panel and any live /cricket-scorecard?room=… page stop showing the
+// old copy. See panelStateFromMatchRecord above for why this is safe only
+// on a match that is finished.
+adminRouter.post('/cricket/recover/push-live', async (req, res) => {
+    if (!matchRecordsCollection || !ballsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const ids = [...new Set([safeMatchId((req.body && req.body.matchId) || ''), safeMatchId((req.body && req.body.roomId) || '')].filter(Boolean))];
+        if (!ids.length) return res.status(400).json({ success: false, error: 'matchId or roomId required' });
+        const rec = await matchRecordsCollection.findOne({ $or: [{ matchId: { $in: ids } }, { roomId: { $in: ids } }] });
+        if (!rec) return res.status(404).json({ success: false, error: 'Match not found' });
+        const roomId = safeMatchId(rec.roomId || rec.matchId);
+        if (!roomId) return res.status(400).json({ success: false, error: 'This match has no broadcast room' });
+
+        const lookupIds = [...new Set([rec.matchId, rec.roomId].filter(Boolean))];
+        const balls = await ballsCollection.find({ matchId: { $in: lookupIds } }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
+
+        const room = `room-${roomId}`;
+        const roomState = await getRoomState(room);
+        const next = panelStateFromMatchRecord(rec, balls, roomState.cricketState);
+        roomState.cricketState = next;
+        io.to(room).emit('liveCricketScore', next);
+        try {
+            await db.collection('scorvix').doc(roomId).set({ cricketState: next }, { merge: true });
+        } catch (e) {
+            console.log('push-live Firestore write error:', e.message || e);
+        }
+        await logAuditAction(req.ownerEmail, 'Pushed corrected scorecard to the live room', `Match ${rec.matchId} → room ${roomId}`, null,
+            { scoreA: rec.scoreA, scoreB: rec.scoreB, balls: balls.length }, { matchId: rec.matchId });
+        res.json({ success: true, roomId, balls: balls.length, scoreA: rec.scoreA, scoreB: rec.scoreB });
+    } catch (err) {
+        console.log('push-live error:', err);
+        res.status(500).json({ success: false, error: 'Could not update the live room' });
+    }
+});
+
 adminRouter.get('/dashboard', async (req, res) => {
     try {
         const [userList, leagueCount, matchCount, ballCount, templateCount, logEventCount] = await Promise.all([
@@ -7954,6 +7991,91 @@ function inningsArchiveFromBalls(balls, existing) {
         overs: ballsToOversStr(per[no].legalBalls),
         declared: !!wasDeclared[no]
     }));
+}
+
+// ================================================================
+// 🛟 SAVED SCORECARD → THE ROOM'S LIVE STATE
+//
+// The saved record and the room's live state are two different stores with
+// two different readers: the tournament/match pages read the record, while
+// the panel and any /cricket-scorecard?room=… page read the live state
+// straight off the socket. Repairing the record therefore leaves the panel
+// and the live page still showing whatever the room last held — which,
+// after this incident, is the truncated copy.
+//
+// This turns a corrected record (plus its deliveries) back into the panel
+// state shape and pushes it into the room, so every reader agrees again.
+// It is only ever for a match that is over: it carries a deliberately large
+// localRev so a panel that reconnects adopts it instead of re-asserting its
+// own stale copy (see the liveCricketScore handler in cricket-panel*.html).
+// ================================================================
+function panelStateFromMatchRecord(rec, balls, previous) {
+    const archive = (rec.inningsArchive || []).map(i => ({ ...i }));
+    const lastInn = archive.length ? archive[archive.length - 1] : null;
+    const inningsNumber = lastInn ? lastInn.no : 1;
+    const battingTeam = lastInn ? (lastInn.team === 'B' ? 'B' : 'A') : 'A';
+    const lastBalls = oversStrToBallsCount(lastInn && lastInn.overs);
+
+    // The panel's own ball log, rebuilt from the canonical deliveries — this
+    // is what its commentary, over summary and Excel export read.
+    const running = {};
+    const ballLog = balls.map(b => {
+        const inn = b.innings || 1;
+        const bt = b.battingTeam === 'B' ? 'B' : 'A';
+        if (!running[inn]) running[inn] = { runs: 0, wickets: 0 };
+        running[inn].runs += b.runs || 0;
+        if (b.dismissal) running[inn].wickets++;
+        return {
+            innings: inn,
+            battingTeam: bt,
+            over: `${b.over}.${b.ballInOver}`,
+            ballType: b.kind,
+            striker: b.striker || '',
+            nonStriker: b.nonStriker || '',
+            bowler: b.bowler || '',
+            runs: b.runs || 0,
+            isWicket: !!b.dismissal,
+            dismissal: b.dismissal ? (b.dismissal.type || 'Out') : null,
+            dismissalType: b.dismissal ? (b.dismissal.type || null) : null,
+            fielderName: b.dismissal ? (b.dismissal.fielder || null) : null,
+            scoreAfter: `${running[inn].runs}-${running[inn].wickets}`,
+            timestamp: b.timestamp || 0
+        };
+    });
+
+    // A panel that reconnects keeps its own copy only while its revision is
+    // HIGHER than the server's, so this has to clear whatever it is holding.
+    const prevRev = Number(previous && previous.localRev) || 0;
+    return {
+        ...(previous || {}),
+        format: rec.format || (previous && previous.format) || 'T20',
+        venue: rec.venue || '',
+        streamUrl: rec.streamUrl || '',
+        teamA: { ...((previous && previous.teamA) || {}), ...(rec.teamA || {}) },
+        teamB: { ...((previous && previous.teamB) || {}), ...(rec.teamB || {}) },
+        battingTeam,
+        inningsNumber,
+        score: {
+            runs: (lastInn && lastInn.runs) || 0,
+            wickets: (lastInn && lastInn.wickets) || 0,
+            overs: Math.floor(lastBalls / 6),
+            balls: lastBalls % 6
+        },
+        declared: !!(lastInn && lastInn.declared),
+        battingCard: rec.battingCard || { A: [], B: [] },
+        bowlingCard: rec.bowlingCard || { A: [], B: [] },
+        extras: rec.extras || { A: {}, B: {} },
+        fallOfWickets: rec.fallOfWickets || { A: [], B: [] },
+        inningsArchive: archive,
+        ballLog,
+        matchResultText: rec.matchResultText || (previous && previous.matchResultText) || '',
+        matchWinnerKey: rec.winningTeam || null,
+        milestonesHit: { ...((previous && previous.milestonesHit) || {}), 'match-result': !!rec.winningTeam },
+        tournamentMatchId: rec.matchId,
+        localRev: prevRev + 100000,
+        localRevAt: Date.now(),
+        repairedAt: Date.now()
+    };
 }
 
 function findRescoredDeliveries(balls) {

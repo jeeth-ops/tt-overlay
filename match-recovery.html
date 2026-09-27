@@ -571,6 +571,15 @@ async function inspect(roomId, matchId){
         </tr>`).join('') : '<tr><td colspan="4" class="meta">No versions yet — history starts from the first save after this fix went live.</td></tr>'}
         </tbody></table>
       </details>
+      <div class="card" style="margin-top:14px">
+        <h3>Make the panel and the live page agree with this scorecard</h3>
+        <div class="meta">The tournament and match pages read the saved scorecard, but the panel and any
+          <code>/cricket-scorecard?room=…</code> page read the room's own live state — so repairing the
+          record leaves those two still showing the old copy. This pushes the corrected scorecard into
+          the room. Only for a match that is over: a panel that reconnects will take this instead of
+          re-asserting what it is holding.</div>
+        <div class="row" style="margin-top:12px"><button class="warn" id="btnPushLive">⬆️ Update the live room &amp; panel</button></div>
+      </div>
       <details open style="margin-top:14px">
         <summary>Undone / re-scored deliveries still in the ball log</summary>
         <p class="hint">The panel's Undo takes a delivery off the panel's scorecard but leaves the row it
@@ -609,6 +618,18 @@ async function inspect(roomId, matchId){
       document.querySelector('#localResults button[data-act="push"]').click();
     };
     body.querySelectorAll('button[data-version]').forEach(b => b.onclick = () => doRestore('version', d, b.dataset.version));
+    const plBtn = document.getElementById('btnPushLive');
+    if(plBtn) plBtn.onclick = async () => {
+      if(!confirm('Push this scorecard into the match\'s broadcast room?\n\nThe panel and the live scorecard page will show these numbers instead of what the room is holding now. Do this only when the match is over.')) return;
+      try{
+        const done = await api('/cricket/recover/push-live', {
+          method: 'POST',
+          body: JSON.stringify({ matchId: (d.saved && d.saved.matchId) || d.ids[0], roomId: (d.saved && d.saved.roomId) || '' })
+        });
+        toast(`Room ${done.roomId} updated — the panel and the live page now match the saved scorecard.`);
+        inspect(d.ids[0], (d.saved && d.saved.matchId) || '');
+      }catch(err){ toast(err.message, true); }
+    };
     const arBtn = document.getElementById('btnArchived');
     if(arBtn) arBtn.onclick = () => loadArchived(d);
     const rsBtn = document.getElementById('btnRescored');
