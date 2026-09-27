@@ -6829,6 +6829,79 @@ adminRouter.post('/cricket/recover/push-live', async (req, res) => {
     }
 });
 
+
+// Which overs are short of deliveries, and by how many (see
+// findIncompleteOvers), so a missing ball can be put back where it actually
+// belongs instead of being guessed at.
+adminRouter.get('/cricket/recover/gaps', async (req, res) => {
+    if (!ballsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const ids = [...new Set([safeMatchId(req.query.matchId || ''), safeMatchId(req.query.roomId || '')].filter(Boolean))];
+        if (!ids.length) return res.status(400).json({ success: false, error: 'matchId or roomId required' });
+        const saved = await matchRecordsCollection.findOne({ $or: [{ matchId: { $in: ids } }, { roomId: { $in: ids } }] });
+        const lookupIds = [...new Set(ids.concat(saved ? [saved.matchId, saved.roomId] : []).filter(Boolean))];
+        const balls = await ballsCollection.find({ matchId: { $in: lookupIds } }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
+        res.json({ success: true, gaps: findIncompleteOvers(balls), total: balls.length });
+    } catch (err) {
+        console.log('Gap scan error:', err);
+        res.status(500).json({ success: false, error: 'Could not scan for missing deliveries' });
+    }
+});
+
+// Puts one delivery back into the log by hand. Deliberately plain: it takes
+// exactly what a delivery is (innings, over, ball, kind, runs, who faced it,
+// who bowled it), stamps it as added by the owner, and rebuilds. Use it for
+// a ball the log never received, not for editing one it has — that is what
+// the correction tools are for.
+adminRouter.post('/cricket/recover/add-ball', async (req, res) => {
+    if (!ballsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const b = req.body || {};
+    try {
+        const ids = [...new Set([safeMatchId(b.matchId || ''), safeMatchId(b.roomId || '')].filter(Boolean))];
+        const saved = await matchRecordsCollection.findOne({ $or: [{ matchId: { $in: ids } }, { roomId: { $in: ids } }] });
+        if (!saved) return res.status(404).json({ success: false, error: 'Match not found' });
+        const target = safeMatchId(saved.roomId || saved.matchId);
+
+        const innings = Math.max(1, parseInt(b.innings, 10) || 1);
+        const over = Math.max(0, parseInt(b.over, 10) || 0);
+        const ballInOver = Math.max(1, parseInt(b.ballInOver, 10) || 1);
+        const kind = String(b.kind || '0');
+        const runs = Math.max(0, parseInt(b.runs, 10) || 0);
+        const striker = personName(b.striker);
+        const nonStriker = personName(b.nonStriker);
+        const bowler = personName(b.bowler);
+        if (!striker || !bowler) return res.status(400).json({ success: false, error: 'A delivery needs a striker and a bowler' });
+
+        const battingTeam = b.battingTeam === 'B' ? 'B' : (b.battingTeam === 'A' ? 'A' : ((saved.inningsArchive || []).find(i => Number(i.no) === innings) || {}).team || 'A');
+        const doc = {
+            matchId: target,
+            ownerUid: saved.ownerUid || null,
+            innings, over, ballInOver, kind, runs,
+            battingTeam: battingTeam === 'B' ? 'B' : 'A',
+            striker, strikerKey: playerKey(striker),
+            nonStriker, nonStrikerKey: playerKey(nonStriker),
+            bowler, bowlerKey: playerKey(bowler),
+            dismissal: null,
+            timestamp: Number(b.timestamp) || Date.now(),
+            addedByOwnerAt: Date.now(),
+            addedBy: req.ownerEmail,
+            ballUid: `manual-${target}-${innings}-${over}-${ballInOver}-${Date.now()}`
+        };
+        await ballsCollection.insertOne(doc);
+        if (saved.ownerUid) await syncMatchRecordFromBalls(saved.ownerUid, target, { force: true, reason: 'delivery added by hand' });
+
+        const left = await ballsCollection.find({ matchId: target }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
+        await matchRecordsCollection.updateOne({ _id: saved._id }, { $set: { inningsArchive: inningsArchiveFromBalls(left, saved.inningsArchive) } });
+        const cards = buildLiveCardsFromBallsArray(left);
+        await logAuditAction(req.ownerEmail, 'Delivery added by hand',
+            `Match ${saved.matchId} — innings ${innings}, ${over}.${ballInOver} (${kind}, ${runs})`, null, doc, { matchId: saved.matchId });
+        res.json({ success: true, scoreA: cards.scoreA, scoreB: cards.scoreB });
+    } catch (err) {
+        console.log('Add-ball error:', err);
+        res.status(500).json({ success: false, error: 'Could not add that delivery' });
+    }
+});
+
 adminRouter.get('/dashboard', async (req, res) => {
     try {
         const [userList, leagueCount, matchCount, ballCount, templateCount, logEventCount] = await Promise.all([
@@ -8076,6 +8149,43 @@ function panelStateFromMatchRecord(rec, balls, previous) {
         localRevAt: Date.now(),
         repairedAt: Date.now()
     };
+}
+
+// Overs the ball log is short of. An over is six legal deliveries; one that
+// holds fewer, and is not the last over of its innings, is an over where a
+// delivery never reached the log — the internet dropped for a moment, or a
+// ball was undone and never re-scored. That is invisible in the runs (a dot
+// ball costs nothing) and shows up only as an over count that is a ball or
+// two behind what the commentary itself is labelling.
+function findIncompleteOvers(balls) {
+    const overs = {};
+    balls.forEach(b => {
+        if (b.kind === 'PEN') return;
+        const inn = b.innings || 1;
+        const key = `${inn}|${b.over}`;
+        if (!overs[key]) overs[key] = { innings: inn, over: b.over, legal: 0, rows: 0, bowler: b.bowler || null, strikers: new Set(), wicket: false, lastAt: 0 };
+        const o = overs[key];
+        o.rows++;
+        if (b.kind !== 'Wd' && b.kind !== 'Nb') o.legal++;
+        if (b.dismissal) o.wicket = true;
+        if (b.striker) o.strikers.add(b.striker);
+        if (b.nonStriker) o.strikers.add(b.nonStriker);
+        if (!o.bowler && b.bowler) o.bowler = b.bowler;
+        o.lastAt = Math.max(o.lastAt, b.timestamp || 0);
+    });
+    // The final over of each innings is allowed to be short — the innings
+    // ended there.
+    const lastOverOf = {};
+    Object.values(overs).forEach(o => {
+        lastOverOf[o.innings] = Math.max(lastOverOf[o.innings] || 0, Number(o.over) || 0);
+    });
+    return Object.values(overs)
+        .filter(o => o.legal < 6 && Number(o.over) !== lastOverOf[o.innings])
+        .map(o => ({
+            innings: o.innings, over: o.over, legal: o.legal, missing: 6 - o.legal,
+            bowler: o.bowler, batters: [...o.strikers], hadWicket: o.wicket, lastAt: o.lastAt
+        }))
+        .sort((a, b) => a.innings - b.innings || a.over - b.over);
 }
 
 function findRescoredDeliveries(balls) {

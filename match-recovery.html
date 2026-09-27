@@ -590,6 +590,13 @@ async function inspect(roomId, matchId){
         <div id="rescoredBox"><button id="btnRescored">🔎 Scan the ball log</button></div>
       </details>
       <details style="margin-top:10px">
+        <summary>Overs the ball log is short of — put a missing delivery back</summary>
+        <p class="hint">An over is six legal deliveries. One holding fewer, that isn't the last over of its
+          innings, is an over where a ball never reached the log — a dot ball costs no runs, so it shows up
+          only as an over count running behind what the commentary itself is labelling.</p>
+        <div id="gapsBox"><button id="btnGaps">🔎 Find the short overs</button></div>
+      </details>
+      <details style="margin-top:10px">
         <summary>Deliveries this clean-up removed — put any of them back</summary>
         <p class="hint">The clean-up keeps every row it takes out. If it took one too many — an older panel
           could label the delivery that ends an over as the next over's first, which puts two genuine balls
@@ -618,6 +625,8 @@ async function inspect(roomId, matchId){
       document.querySelector('#localResults button[data-act="push"]').click();
     };
     body.querySelectorAll('button[data-version]').forEach(b => b.onclick = () => doRestore('version', d, b.dataset.version));
+    const gpBtn = document.getElementById('btnGaps');
+    if(gpBtn) gpBtn.onclick = () => findGaps(d);
     const plBtn = document.getElementById('btnPushLive');
     if(plBtn) plBtn.onclick = async () => {
       if(!confirm('Push this scorecard into the match\'s broadcast room?\n\nThe panel and the live scorecard page will show these numbers instead of what the room is holding now. Do this only when the match is over.')) return;
@@ -744,6 +753,71 @@ async function loadArchived(d){
         inspect(d.ids[0], (d.saved && d.saved.matchId) || '');
       }catch(err){ toast(err.message, true); }
     };
+  }catch(err){ box.innerHTML = `<div class="banner err">${esc(err.message)}</div>`; }
+}
+
+async function findGaps(d){
+  const box = document.getElementById('gapsBox');
+  box.innerHTML = '<p class="meta">Scanning…</p>';
+  try{
+    const r = await api(`/cricket/recover/gaps?matchId=${encodeURIComponent((d.saved && d.saved.matchId) || d.ids[0])}&roomId=${encodeURIComponent((d.saved && d.saved.roomId) || '')}`);
+    if(!r.gaps.length){
+      box.innerHTML = `<div class="banner ok">Every over in this match has its six deliveries.</div>`;
+      return;
+    }
+    box.innerHTML = `
+      <table><thead><tr><th>Innings</th><th>Over</th><th class="num">Has</th><th class="num">Short by</th><th>Bowler</th><th>At the crease</th><th></th></tr></thead><tbody>
+      ${r.gaps.map((g, i) => `<tr>
+        <td>${g.innings}</td><td>${g.over}</td><td class="num">${g.legal}</td><td class="num">${g.missing}</td>
+        <td>${esc(g.bowler || '')}</td><td>${esc((g.batters || []).join(', '))}</td>
+        <td><button data-gap="${i}">Add a dot ball here</button></td>
+      </tr>`).join('')}
+      </tbody></table>
+      <div id="gapForm"></div>`;
+    box.querySelectorAll('button[data-gap]').forEach(btn => btn.onclick = () => {
+      const g = r.gaps[Number(btn.dataset.gap)];
+      const form = document.getElementById('gapForm');
+      form.innerHTML = `
+        <div class="card">
+          <b>Add a delivery — innings ${g.innings}, over ${g.over}</b>
+          <div class="row" style="margin-top:10px">
+            <input id="gbBall" type="number" min="1" max="9" value="${g.legal + 1}" style="width:90px" title="ball in over">
+            <select id="gbKind">
+              <option value="0">dot ball</option><option value="1">1 run</option><option value="2">2 runs</option>
+              <option value="3">3 runs</option><option value="4">FOUR</option><option value="6">SIX</option>
+              <option value="Wd">wide</option><option value="Nb">no ball</option>
+              <option value="B">bye</option><option value="LB">leg bye</option>
+            </select>
+            <input id="gbRuns" type="number" min="0" max="8" value="0" style="width:90px" title="runs">
+          </div>
+          <div class="row" style="margin-top:10px">
+            <input id="gbStriker" placeholder="striker" value="${esc((g.batters || [])[0] || '')}">
+            <input id="gbNon" placeholder="non-striker" value="${esc((g.batters || [])[1] || '')}">
+            <input id="gbBowler" placeholder="bowler" value="${esc(g.bowler || '')}">
+          </div>
+          <div class="row" style="margin-top:12px"><button class="warn" id="gbAdd">Add this delivery</button></div>
+        </div>`;
+      document.getElementById('gbAdd').onclick = async () => {
+        try{
+          const done = await api('/cricket/recover/add-ball', {
+            method: 'POST',
+            body: JSON.stringify({
+              matchId: (d.saved && d.saved.matchId) || d.ids[0], roomId: (d.saved && d.saved.roomId) || '',
+              innings: g.innings, over: g.over,
+              ballInOver: document.getElementById('gbBall').value,
+              kind: document.getElementById('gbKind').value,
+              runs: document.getElementById('gbRuns').value,
+              striker: document.getElementById('gbStriker').value,
+              nonStriker: document.getElementById('gbNon').value,
+              bowler: document.getElementById('gbBowler').value
+            })
+          });
+          const line = (s) => `${s.runs}/${s.wickets} (${s.overs} ov)`;
+          toast(`Added — now ${line(done.scoreA)} and ${line(done.scoreB)}.`);
+          inspect(d.ids[0], (d.saved && d.saved.matchId) || '');
+        }catch(err){ toast(err.message, true); }
+      };
+    });
   }catch(err){ box.innerHTML = `<div class="banner err">${esc(err.message)}</div>`; }
 }
 

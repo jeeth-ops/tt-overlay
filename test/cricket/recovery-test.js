@@ -20,7 +20,8 @@ function grab(name){
 }
 const names = ['oversStrToBallsCount','ballsToOversStr','matchRecordFootprint','footprintTotalBalls',
                'groupsLostBy','guardMatchRecordWrite','matchRecordFromPanelState','ballDocsFromPanelState',
-               'findRescoredDeliveries','inningsArchiveFromBalls','deriveBallFacts','playerKey','personName'];
+               'findRescoredDeliveries','findIncompleteOvers','inningsArchiveFromBalls','deriveBallFacts',
+               'playerKey','personName'];
 const api = new Function([
   'const SHRINK_TOLERANCE_BALLS = 30;',
   ...names.map(grab),
@@ -195,6 +196,27 @@ eq('a wide is not a ball of the over', arch[0].overs, '0.2');
 eq('wickets are counted', arch[0].wickets, 1);
 eq('a declaration already recorded is kept', arch[1].declared, true);
 eq('and one that was never declared stays false', arch[0].declared, false);
+
+console.log('\n=== OVERS THE BALL LOG IS SHORT OF ===');
+const ob = (o) => Object.assign({ innings: 1, over: 0, ballInOver: 1, battingTeam: 'A', kind: '0', runs: 0,
+                                  striker: 'S', nonStriker: 'N', bowler: 'B', dismissal: null, timestamp: 0 }, o);
+const six = (over, kind) => [1,2,3,4,5,6].map(n => ob({ over, ballInOver: n, kind: kind || '0' }));
+let gaps = api.findIncompleteOvers([].concat(
+  six(0),
+  [ob({ over: 1, ballInOver: 1 }), ob({ over: 1, ballInOver: 2 })],   // four short
+  six(2)
+));
+eq('only the short over is reported', gaps.map(g => g.over), [1]);
+eq('and by how much', gaps[0].missing, 4);
+eq('with the bowler, so the ball can go back where it belongs', gaps[0].bowler, 'B');
+
+gaps = api.findIncompleteOvers([].concat(six(0), [ob({ over: 1, ballInOver: 1 })]));
+eq('the last over of an innings is allowed to be short', gaps.length, 0);
+
+gaps = api.findIncompleteOvers([].concat(
+  [ob({ over: 0, ballInOver: 1, kind: 'Wd', runs: 1 })], six(0), six(1)
+));
+eq('a wide is not one of the six', gaps.length, 0);
 
 console.log(`\n================  ${pass} passed, ${fail} failed  ================\n`);
 process.exit(fail ? 1 : 0);
