@@ -537,6 +537,11 @@
   }
   #main-overs{ font-size:13px; color:var(--text-dim); font-weight:600; }
   #batting-tag{ font-size:10.5px; color:var(--accent); font-weight:700; letter-spacing:.4px; text-transform:uppercase; margin-top:4px; }
+  /* The drawn-match note under the result reads as a sentence, not as the
+     shouty uppercase tag that slot carries during a live match. */
+  #batting-tag.result-note{ text-transform:none; letter-spacing:.1px; font-weight:600; font-size:12.5px;
+    margin-top:8px; opacity:.95; max-width:34ch; margin-left:auto; margin-right:auto; line-height:1.35; }
+  @media (max-width:520px){ #batting-tag.result-note{ font-size:12px; max-width:26ch; } }
 
   .team-prev-score{ font-size:13.5px; font-weight:700; opacity:.75; margin-top:3px; color:var(--text-dim); transition:color .2s ease, opacity .2s ease; }
   .team-block.winner .team-prev-score{ color:var(--team-color, var(--accent)); opacity:1; }
@@ -2870,10 +2875,32 @@ function partnershipsForTeam(m, team){
 }
 
 function finalResultText(m){
+  // The operator's own line always wins — a Test can end in ways no
+  // scoreline reconstructs ("drawn, conceded, abandoned — rain").
+  if(m.matchResultText) return m.matchResultText;
+  if(m.winningTeam === 'DRAW') return 'Match Drawn';
   if(m.winningTeam === 'TIE') return 'Match Tied';
   if(m.winningTeam === 'A') return `${(m.teamA && (m.teamA.name || m.teamA.short)) || 'Team A'} won`;
   if(m.winningTeam === 'B') return `${(m.teamB && (m.teamB.name || m.teamB.short)) || 'Team B'} won`;
   return 'Result pending';
+}
+
+// "New Hind SC took the 1st-innings lead by 4 runs" — the line that
+// actually says something about a drawn Test, where the win/loss slot has
+// nothing to put in it. Each side's FIRST innings is what counts for the
+// lead, so this compares their earliest innings entry, not their match
+// totals. Empty unless both sides have batted and one of them is ahead.
+function firstInningsLeadNote(m){
+  const archive = (m.inningsArchive || []).slice().sort((a, b) => (a.no || 0) - (b.no || 0));
+  const firstOf = (team) => archive.find(i => i.team === team);
+  const a = firstOf('A'), b = firstOf('B');
+  if(!a || !b) return '';
+  const diff = (a.runs || 0) - (b.runs || 0);
+  if(!diff) return 'The first innings were level';
+  const leader = diff > 0 ? (m.teamA || {}) : (m.teamB || {});
+  const name = leader.name || leader.short || (diff > 0 ? 'Team A' : 'Team B');
+  const by = Math.abs(diff);
+  return `${name} took the 1st-innings lead by ${by} run${by === 1 ? '' : 's'}`;
 }
 
 // "Won by 71 runs" / "Won by 6 wickets" / "Match Tied" — short by
@@ -2881,6 +2908,7 @@ function finalResultText(m){
 // the big center slot without ever risking the overlap the old combined
 // "162-10 vs 233-4" string caused.
 function winMarginText(m){
+  if(m.winningTeam === 'DRAW') return 'Match Drawn';
   if(m.winningTeam === 'TIE') return 'Match Tied';
   if(m.winningTeam !== 'A' && m.winningTeam !== 'B') return '';
   const winner = m.winningTeam, loser = winner === 'A' ? 'B' : 'A';
@@ -2977,7 +3005,14 @@ function renderFinalSnapshot(match, displayName){
   const mainScoreEl = document.getElementById('main-score');
   if(mainScoreEl) mainScoreEl.style.setProperty('--result-color', winnerColor || '');
   const mainOversEl = document.getElementById('main-overs'); if(mainOversEl) mainOversEl.style.display = 'none';
-  setText('batting-tag', '');
+  // A drawn match has no win margin, so the big slot alone would just read
+  // "Match Drawn" and leave the viewer none the wiser about who finished
+  // ahead. The line underneath carries that, on its own row, so neither
+  // has to be crammed into the other — on a phone especially.
+  const leadNote = (m => (m.winningTeam === 'DRAW' || !m.winningTeam) ? firstInningsLeadNote(m) : '')(match);
+  const battingTagEl = document.getElementById('batting-tag');
+  if(battingTagEl) battingTagEl.classList.toggle('result-note', !!leadNote);
+  setText('batting-tag', leadNote);
 
   ensureInningsToggle();
   renderFinalInnings();
