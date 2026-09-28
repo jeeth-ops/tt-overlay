@@ -5676,7 +5676,11 @@ async function resolveOwnerUidForMerge(matchId) {
 // clipCount, before, after, errors } — the SAME function powers both the
 // confirmation preview and the real Confirm, exactly like the bowler and
 // batsman correction engines above.
-async function mergePlayersDeep(ownerUid, actorEmail, wrongPlayerName, correctPlayerName, dryRun) {
+// selectedMatchIds (optional): array of matchIds. When given, ONLY deliveries
+// and clips belonging to those matches move to the correct player — every
+// other match keeps the duplicate name untouched. null/undefined = all
+// matches (legacy behaviour). An empty array is rejected.
+async function mergePlayersDeep(ownerUid, actorEmail, wrongPlayerName, correctPlayerName, dryRun, selectedMatchIds) {
     if (!ballsCollection || !matchRecordsCollection) return { errors: ['Database not configured'] };
     if (!ownerUid) return { errors: ['Could not determine which account this match belongs to'] };
     const wrongName = personName(wrongPlayerName);
@@ -5690,8 +5694,22 @@ async function mergePlayersDeep(ownerUid, actorEmail, wrongPlayerName, correctPl
     // could corrupt data that a merge can never undo just by re-merging.
     if (wrongKey === correctKey) return { errors: ['Correct player is the same as the duplicate player'] };
 
-    const targets = await findBallsForPlayerMerge(ownerUid, wrongKey);
-    if (!targets.length) return { errors: [`No deliveries found for "${wrongName}" in this account`] };
+    const allTargets = await findBallsForPlayerMerge(ownerUid, wrongKey);
+    if (!allTargets.length) return { errors: [`No deliveries found for "${wrongName}" in this account`] };
+    const allMatchIds = [...new Set(allTargets.map(b => String(b.matchId)))];
+
+    // Per-match selection: narrow the deliveries to the chosen matches only.
+    let selectedSet = null;
+    if (Array.isArray(selectedMatchIds)) {
+        selectedSet = new Set(selectedMatchIds.map(String));
+        if (!selectedSet.size) return { errors: ['Select at least one match to merge'] };
+    }
+    const targets = selectedSet ? allTargets.filter(b => selectedSet.has(String(b.matchId))) : allTargets;
+    if (!targets.length) return { errors: [`No deliveries found for "${wrongName}" in the selected matches`] };
+    // True when some matches keep the duplicate name — in that case the
+    // player-profile alias fold below is skipped (the duplicate spelling is
+    // still in use elsewhere, so it must keep resolving to its own profile).
+    const partial = !!selectedSet && allMatchIds.some(m => !selectedSet.has(m));
 
     const correctPlayerId = await resolvePlayerId(ownerUid, correctName);
     const correctedById = new Map();
@@ -5716,14 +5734,33 @@ async function mergePlayersDeep(ownerUid, actorEmail, wrongPlayerName, correctPl
     // an older clip logged before ownerUid was stamped on clip docs still
     // belongs to this one account.
     const ownerUidClause = { $or: [{ ownerUid }, { ownerUid: null }, { ownerUid: { $exists: false } }] };
-    const clipFilter = { $and: [ownerUidClause, { $or: [{ strikerKey: wrongKey }, { nonStrikerKey: wrongKey }, { bowlerKey: wrongKey }, { fielderKey: wrongKey }] }] };
+    // Clip matchId may be stored raw or sanitised — accept both spellings.
+    const clipMatchVariants = selectedSet ? [...new Set([...selectedSet, ...[...selectedSet].map(safeMatchId)])] : null;
+    const matchClause = clipMatchVariants ? [{ matchId: { $in: clipMatchVariants } }] : [];
+    const wrongInClip = { $or: [{ strikerKey: wrongKey }, { nonStrikerKey: wrongKey }, { bowlerKey: wrongKey }, { fielderKey: wrongKey }] };
+    const clipFilter = { $and: [ownerUidClause, wrongInClip, ...matchClause] };
     const clipCount = clipsCollection ? await clipsCollection.countDocuments(clipFilter) : 0;
+    // Per-match clip counts (over ALL of this player's clips) so the
+    // confirmation screen can show/recalculate clips per checked match.
+    const clipsPerMatch = new Map();
+    if (clipsCollection) {
+        try {
+            const rows = await clipsCollection.aggregate([
+                { $match: { $and: [ownerUidClause, wrongInClip] } },
+                { $group: { _id: '$matchId', n: { $sum: 1 } } }
+            ]).toArray();
+            rows.forEach(r => clipsPerMatch.set(String(r._id), r.n));
+        } catch (err) { console.log('Per-match clip count error:', err); }
+    }
+    byMatch.forEach(m => { m.clips = clipsPerMatch.get(String(m.matchId)) || clipsPerMatch.get(safeMatchId(m.matchId)) || 0; });
 
     const result = {
         wrongPlayer: wrongName, correctPlayer: correctName,
         matches: [...byMatch.values()],
         affectedCount: targets.length,
         clipCount,
+        partial,
+        totalMatchCount: allMatchIds.length,
         errors: []
     };
     if (dryRun) return result;
@@ -5746,10 +5783,10 @@ async function mergePlayersDeep(ownerUid, actorEmail, wrongPlayerName, correctPl
     if (clipsCollection) {
         clipsBefore = await clipsCollection.find(clipFilter).toArray();
         await Promise.all([
-            clipsCollection.updateMany({ $and: [ownerUidClause, { strikerKey: wrongKey }] }, { $set: { strikerName: correctName, strikerKey: correctKey, strikerPlayerId: correctPlayerId } }),
-            clipsCollection.updateMany({ $and: [ownerUidClause, { nonStrikerKey: wrongKey }] }, { $set: { nonStrikerName: correctName, nonStrikerKey: correctKey, nonStrikerPlayerId: correctPlayerId } }),
-            clipsCollection.updateMany({ $and: [ownerUidClause, { bowlerKey: wrongKey }] }, { $set: { bowlerName: correctName, bowlerKey: correctKey, bowlerPlayerId: correctPlayerId } }),
-            clipsCollection.updateMany({ $and: [ownerUidClause, { fielderKey: wrongKey }] }, { $set: { fielderName: correctName, fielderKey: correctKey, fielderPlayerId: correctPlayerId } })
+            clipsCollection.updateMany({ $and: [ownerUidClause, { strikerKey: wrongKey }, ...matchClause] }, { $set: { strikerName: correctName, strikerKey: correctKey, strikerPlayerId: correctPlayerId } }),
+            clipsCollection.updateMany({ $and: [ownerUidClause, { nonStrikerKey: wrongKey }, ...matchClause] }, { $set: { nonStrikerName: correctName, nonStrikerKey: correctKey, nonStrikerPlayerId: correctPlayerId } }),
+            clipsCollection.updateMany({ $and: [ownerUidClause, { bowlerKey: wrongKey }, ...matchClause] }, { $set: { bowlerName: correctName, bowlerKey: correctKey, bowlerPlayerId: correctPlayerId } }),
+            clipsCollection.updateMany({ $and: [ownerUidClause, { fielderKey: wrongKey }, ...matchClause] }, { $set: { fielderName: correctName, fielderKey: correctKey, fielderPlayerId: correctPlayerId } })
         ]).catch(err => console.log('Clip resync after player merge error:', err));
         matchIds.forEach(mid => invalidateClipsCache(mid));
     }
@@ -5762,7 +5799,7 @@ async function mergePlayersDeep(ownerUid, actorEmail, wrongPlayerName, correctPl
     // undo — but its nameKeys are cleared so it can never match anything
     // new. Both docs are snapshotted BEFORE the change for Undo.
     let playersBefore = null;
-    if (playersCollection) {
+    if (playersCollection && !partial) {
         try {
             const [into, from] = await Promise.all([
                 playersCollection.findOne({ ownerUid, nameKeys: correctKey }),
@@ -5815,19 +5852,21 @@ adminRouter.post('/cricket/players/merge/preview', async (req, res) => {
 // "Undo last merge" can restore all of them together.
 adminRouter.put('/cricket/players/merge', async (req, res) => {
     try {
-        const { matchId, wrongPlayer, correctPlayer } = req.body || {};
+        const { matchId, matchIds, wrongPlayer, correctPlayer } = req.body || {};
         // 🩹 Same fix as the preview route above — prefer the authenticated
         // owner's own uid over deriving one from the match.
         const ownerUid = req.ownerUid || (matchId ? await resolveOwnerUidForMerge(safeMatchId(matchId)) : null);
-        const result = await mergePlayersDeep(ownerUid, req.ownerEmail, wrongPlayer, correctPlayer, false);
+        // matchIds = the matches the owner ticked on the confirmation screen.
+        // Only those matches' deliveries/clips move (see mergePlayersDeep).
+        const result = await mergePlayersDeep(ownerUid, req.ownerEmail, wrongPlayer, correctPlayer, false, Array.isArray(matchIds) ? matchIds : null);
         if (result.errors && result.errors.length) return res.status(400).json({ success: false, error: result.errors[0] });
-        const matchIds = result.matches.map(m => m.matchId);
+        const mergedMatchIds = result.matches.map(m => m.matchId);
         await logAuditAction(
             req.ownerEmail, 'Owner player merge',
-            `${result.wrongPlayer} → ${result.correctPlayer} (${result.affectedCount} deliveries, ${result.clipCount} clips, across ${matchIds.length} match${matchIds.length === 1 ? '' : 'es'})`,
-            { ownerUid, balls: result.before.balls, clips: result.before.clips, players: result.before.players, wrongPlayer: result.wrongPlayer, correctPlayer: result.correctPlayer, matchIds },
+            `${result.wrongPlayer} → ${result.correctPlayer} (${result.affectedCount} deliveries, ${result.clipCount} clips, across ${mergedMatchIds.length} match${mergedMatchIds.length === 1 ? '' : 'es'}${result.partial ? ' — selected matches only' : ''})`,
+            { ownerUid, balls: result.before.balls, clips: result.before.clips, players: result.before.players, wrongPlayer: result.wrongPlayer, correctPlayer: result.correctPlayer, matchIds: mergedMatchIds },
             { balls: result.after.balls },
-            { matchIds, ballIds: result.before.balls.map(b => String(b._id)) }
+            { matchIds: mergedMatchIds, ballIds: result.before.balls.map(b => String(b._id)) }
         );
         res.json({ success: true, ...result });
     } catch (err) {
