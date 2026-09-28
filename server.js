@@ -7813,6 +7813,29 @@ function buildLiveCardsFromBallsArray(balls) {
     const extras = { A: { wd: 0, nb: 0, b: 0, lb: 0, pen: 0 }, B: { wd: 0, nb: 0, b: 0, lb: 0, pen: 0 } };
     const fallOfWickets = { A: [], B: [] };
 
+    // 🔢 CANONICAL ROW ORDER (scorecard). Batting rows are numbered by the
+    // order each batter FIRST APPEARED AT THE CREASE in that innings —
+    // striker or non-striker, faced a ball or not — and bowling rows by the
+    // order each bowler FIRST BOWLED in that innings. Never wicket order,
+    // runs, not-out status, or the order rows happen to get created below
+    // (a row is only created when a batter first FACES a ball, or is
+    // dismissed, so an opener who stood at the non-striker's end while
+    // #3 faced would otherwise land below #3). Keys are per innings, so a
+    // player's position in one innings never leaks into another. Stored as
+    // battingPosition / bowlingPosition; playerId/name are untouched.
+    const seqBalls = balls.filter(b => b.kind !== 'PEN');
+    const entryOrder = {};   // `${inn}` -> Map(playerKey -> { pos, name })
+    const bowlOrder = {};    // `${inn}` -> Map(bowlerKey -> pos)
+    seqBalls.forEach(b => {
+        const inn = b.innings || 1;
+        const em = entryOrder[inn] || (entryOrder[inn] = new Map());
+        [[b.strikerKey, b.striker], [b.nonStrikerKey || playerKey(b.nonStriker), b.nonStriker]].forEach(([k, n]) => {
+            if (k && n && !em.has(k)) em.set(k, { pos: em.size + 1, name: n });
+        });
+        const bm = bowlOrder[inn] || (bowlOrder[inn] = new Map());
+        if (b.bowlerKey && !bm.has(b.bowlerKey)) bm.set(b.bowlerKey, bm.size + 1);
+    });
+
     balls.forEach(b => {
         const bt = b.battingTeam === 'B' ? 'B' : 'A';
         const bowlTeam = bt === 'A' ? 'B' : 'A';
@@ -7943,12 +7966,32 @@ function buildLiveCardsFromBallsArray(balls) {
         });
     });
 
-    const toBattingCard = (team) => Object.values(batting[team]).map(row => ({
-        ...row,
-        out: !!row.out,
-        howOut: row.out ? row.howOut : 'not out'
-    }));
+    // A batter who walked out but was never on strike and never dismissed
+    // (typically the not-out non-striker when the innings ends) has no row
+    // yet — without one the numbering would skip a place (1, 2, 4).
+    const teamOfInnings = {};
+    seqBalls.forEach(b => { teamOfInnings[b.innings || 1] = b.battingTeam === 'B' ? 'B' : 'A'; });
+    Object.keys(entryOrder).forEach(inn => {
+        const bt = teamOfInnings[inn] || 'A';
+        entryOrder[inn].forEach((info, k) => {
+            const rowKey = `${k}::${Number(inn)}`;
+            if (!batting[bt][rowKey]) batting[bt][rowKey] = { name: info.name, runs: 0, balls: 0, fours: 0, sixes: 0, inningsNo: Number(inn) };
+        });
+    });
+    const byPos = (a, b) => ((a.inningsNo || 1) - (b.inningsNo || 1)) || ((a.pos || 1e9) - (b.pos || 1e9));
+    const toBattingCard = (team) => Object.entries(batting[team]).map(([rowKey, row]) => {
+        const k = rowKey.slice(0, rowKey.lastIndexOf('::'));
+        const e = entryOrder[row.inningsNo || 1] && entryOrder[row.inningsNo || 1].get(k);
+        return {
+            ...row,
+            out: !!row.out,
+            howOut: row.out ? row.howOut : 'not out',
+            battingPosition: e ? e.pos : undefined,
+            pos: e ? e.pos : undefined
+        };
+    }).sort(byPos).map(({ pos, ...row }) => row);
     const toBowlingCard = (team) => Object.values(bowling[team]).map(row => ({
+        bowlingPosition: (bowlOrder[row.inningsNo || 1] && bowlOrder[row.inningsNo || 1].get(row._bowlerKey)) || undefined,
         name: row.name,
         overs: Math.floor(row.balls / 6),
         balls: row.balls % 6, // same (overs, balls) pair shape fmtOversLike()/computeLeaderboards already expect
@@ -7956,7 +7999,7 @@ function buildLiveCardsFromBallsArray(balls) {
         wickets: row.wickets,
         inningsNo: row.inningsNo,
         maidens: Object.values(oversBowled[team]).filter(o => o.bowlerKey === row._bowlerKey && o.inningsNo === row.inningsNo && o.legalBalls === 6 && o.runs === 0).length
-    }));
+    })).sort((a, b) => ((a.inningsNo || 1) - (b.inningsNo || 1)) || ((a.bowlingPosition || 1e9) - (b.bowlingPosition || 1e9)));
     const toScore = (team) => {
         const t = teamTotals[team];
         return { runs: t.runs, wickets: t.wickets, overs: `${Math.floor(t.legalBalls / 6)}.${t.legalBalls % 6}` };
