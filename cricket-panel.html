@@ -6155,21 +6155,23 @@ function buildInningsSummaryPayload(){
   // Both teams' archive arrays can now hold rows from an EARLIER innings of
   // the same team (Test cricket), so every lookup here is scoped to the
   // innings that just ended, not the whole team's history.
-  const rows = rowsForInnings(state.bowlingCard[bowlingKey], inn);
+  let rows = rowsForInnings(state.bowlingCard[bowlingKey], inn);
   if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0)){
     rows.push({ ...state.bowler });
   }
+  rows = orderRowsCanonical(rows, inn, 'bowl');
 
   // Batting card for the innings: archived batsmen so far, plus the two
   // still "live" at the crease — they're only archived into battingCard on
   // Next Innings (after this summary already fired), so fold them in here
   // the same way `rows` above folds in the still-live bowler.
-  const battingRows = rowsForInnings(state.battingCard[battingKey], inn);
+  let battingRows = rowsForInnings(state.battingCard[battingKey], inn);
   [state.striker, state.nonStriker].forEach(p => {
     if(p && p.name && !battingRows.some(b => b.name === p.name)){
       battingRows.push({ name:p.name, runs:p.runs, balls:p.balls, fours:p.fours, sixes:p.sixes, out:false, howOut:'not out' });
     }
   });
+  battingRows = orderRowsCanonical(battingRows, inn, 'bat');
 
   const extras = state.extras[battingKey];
   return {
@@ -6538,6 +6540,10 @@ function buildMatchRecordForLeague(){
   if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0) && !liveBowlingArr.some(b => b.name === state.bowler.name && b.inningsNo === state.inningsNumber)){
     liveBowlingArr.push({ ...state.bowler, inningsNo: state.inningsNumber });
   }
+  // Canonical order (crease entry / first bowled) — the saved record is what
+  // completed matches, resume and the public scorecard all read.
+  const orderedBatA = canonicalCardArray(battingCardA, 'bat'), orderedBatB = canonicalCardArray(battingCardB, 'bat');
+  const orderedBowlA = canonicalCardArray(bowlingCardA, 'bowl'), orderedBowlB = canonicalCardArray(bowlingCardB, 'bowl');
 
   // Team totals across every innings they've played (1 or 2 for Test) —
   // authoritative winningTeam comes from matchWinnerKey (set the instant a
@@ -6589,8 +6595,8 @@ function buildMatchRecordForLeague(){
     winningTeam,
     scoreA: scoreForTeam('A'),
     scoreB: scoreForTeam('B'),
-    battingCard: { A: battingCardA, B: battingCardB },
-    bowlingCard: { A: bowlingCardA, B: bowlingCardB },
+    battingCard: { A: orderedBatA, B: orderedBatB },
+    bowlingCard: { A: orderedBowlA, B: orderedBowlB },
     // Squads (same permanent player ids) — lets "Create New Match" bring a
     // team back later with its full squad instead of retyping every player.
     squadA: squadSnapshotOf(state.teamA),
@@ -8265,6 +8271,56 @@ function bowlerEcon(b){
 /* ---- Multi-innings helpers (Test needs up to 4 innings per match,
    2 of them for the same team, so a lot of what used to be a flat
    per-team lookup now has to be scoped to a specific innings number). ---- */
+/* ---------- CANONICAL SCORECARD ROW ORDER ----------
+   Batting rows = order batsmen FIRST APPEARED AT THE CREASE in that innings
+   (striker or non-striker, ball by ball). Bowling rows = order each bowler
+   FIRST BOWLED in that innings. The source of truth is state.ballLog (plus
+   whoever is live right now), never wicket order, runs, not-out status or
+   the order rows were pushed into the card (dismissals push batting rows in
+   wicket order; a returning bowler is spliced out and re-pushed at the end).
+   Only ORDER and battingPosition/bowlingPosition are set — every figure is
+   copied untouched, the inputs are never mutated, and player id/name are
+   never changed. Positions are per innings. Rows the ball log doesn't know
+   keep their original relative order after the known ones. */
+function _ordKey(n){ return String(n == null ? '' : n).trim().toLowerCase(); }
+function _entryRank(inn, kind){
+  const rank = new Map();
+  const add = (n) => { const k = _ordKey(n); if(k && !rank.has(k)) rank.set(k, rank.size + 1); };
+  (state.ballLog || []).forEach(b => {
+    if(!b || (b.innings || 1) !== inn || b.ballType === 'PEN') return;
+    if(kind === 'bat'){ add(b.striker); add(b.nonStriker); } else { add(b.bowler); }
+  });
+  if(inn === state.inningsNumber){          // whoever is live now (covers the very start of an innings)
+    if(kind === 'bat'){ add(state.striker && state.striker.name); add(state.nonStriker && state.nonStriker.name); }
+    else { add(state.bowler && state.bowler.name); }
+  }
+  return rank;
+}
+function orderRowsCanonical(rows, inn, kind, nameOf){
+  nameOf = nameOf || (r => r.name);
+  const rank = _entryRank(inn, kind);
+  return (rows || [])
+    .map((r, i) => ({ r, i, k: rank.get(_ordKey(nameOf(r))) || 1e9 }))
+    .sort((a, b) => (a.k - b.k) || (a.i - b.i))
+    .map(x => x.r);
+}
+// Whole team card array (may hold several innings): reorder each innings
+// canonically, stamp the position, keep innings in ascending order.
+function canonicalCardArray(arr, kind){
+  const rows = arr || [];
+  const inns = [...new Set(rows.map(r => r.inningsNo || 1))].sort((a, b) => a - b);
+  const posField = kind === 'bat' ? 'battingPosition' : 'bowlingPosition';
+  const out = [];
+  inns.forEach(inn => {
+    const rank = _entryRank(inn, kind);
+    orderRowsCanonical(rows.filter(r => (r.inningsNo || 1) === inn), inn, kind).forEach(r => {
+      const p = rank.get(_ordKey(r.name));
+      out.push(p ? { ...r, [posField]: p } : { ...r });
+    });
+  });
+  return out;
+}
+
 function rowsForInnings(arr, inningsNo){
   return (arr || []).filter(r => r.inningsNo === inningsNo);
 }
@@ -11472,7 +11528,7 @@ function computeOverSummary(){
 // rows from an EARLIER innings of the same team (Test), so every per-innings
 // sheet must ask for exactly the innings it's building.
 function battingRowsForExcel(teamKey, inningsNo){
-  const rows = rowsForInnings(state.battingCard[teamKey], inningsNo).map(b => ({
+  const rows = orderRowsCanonical(rowsForInnings(state.battingCard[teamKey], inningsNo), inningsNo, 'bat').map(b => ({
     Batsman: b.name, Runs: b.runs, Balls: b.balls,
     '4s': b.fours, '6s': b.sixes,
     'S/R': b.balls > 0 ? ((b.runs / b.balls) * 100).toFixed(2) : '0.00',
@@ -11489,11 +11545,12 @@ function battingRowsForExcel(teamKey, inningsNo){
         });
       }
     });
+    return orderRowsCanonical(rows, inningsNo, 'bat', r => r.Batsman);
   }
   return rows;
 }
 function bowlingRowsForExcel(teamKey, inningsNo){
-  const rows = rowsForInnings(state.bowlingCard[teamKey], inningsNo).map(b => ({
+  const rows = orderRowsCanonical(rowsForInnings(state.bowlingCard[teamKey], inningsNo), inningsNo, 'bowl').map(b => ({
     Bowler: b.name, Overs: fmtBowlerOvers(b.overs, b.balls),
     Maidens: b.maidens, Runs: b.runs, Wickets: b.wickets, Economy: bowlerEcon(b)
   }));
@@ -11503,6 +11560,7 @@ function bowlingRowsForExcel(teamKey, inningsNo){
       Maidens: state.bowler.maidens, Runs: state.bowler.runs, Wickets: state.bowler.wickets,
       Economy: bowlerEcon(state.bowler)
     });
+    return orderRowsCanonical(rows, inningsNo, 'bowl', r => r.Bowler);
   }
   return rows;
 }
