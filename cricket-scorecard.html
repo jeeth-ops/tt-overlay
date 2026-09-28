@@ -768,19 +768,31 @@
     font-weight:700; padding:0 8px 8px; border-bottom:1px solid var(--border);
   }
   thead th.num, td.num{ text-align:right; }
-  tbody td{ padding:9px 8px; border-bottom:1px solid var(--border-soft); }
+  tbody td{ padding:9px 8px; border-bottom:1px solid var(--border-soft); vertical-align:middle; }
+  #tables-grid td.num, #tables-grid th.num{ white-space:nowrap; }
+  #tables-grid td:first-child{ line-height:1.3; overflow-wrap:anywhere; }
+  @media (max-width:640px){
+    #tables-grid table{ font-size:12px; }
+    #tables-grid thead th{ padding:0 4px 8px; letter-spacing:.2px; }
+    #tables-grid tbody td{ padding:8px 4px; }
+    #tables-grid thead th:first-child, #tables-grid tbody td:first-child{ padding-left:2px; min-width:104px; }
+    #tables-grid tbody td:first-child{ font-size:12.5px; }
+    #tables-grid .howout, #tables-grid .not-out-tag{ font-size:10px; }
+    #tables-grid th.clip-col, #tables-grid td.clip-col{ width:30px; padding-right:2px; }
+  }
   tbody tr:last-child td{ border-bottom:none; }
   /* Player names are the thing people scan for first — make them the
      boldest, most prominent text in the table instead of the same
      regular weight as the surrounding numbers. */
   tbody td:first-child{ font-weight:700; font-size:13px; color:var(--text); }
-  .pos-no{ display:inline-block; min-width:16px; margin-right:5px; font-size:11px; font-weight:600; color:var(--text-faint); }
   tbody tr.on-strike td:first-child{ color:var(--card-accent, var(--accent)); font-weight:800; }
   @media (hover:hover) and (pointer:fine){
     #tables-grid tbody tr:hover td{ background:var(--panel-2); }
   }
-  .howout{ font-size:10.5px; color:var(--text-faint); display:block; margin-top:2px; }
-  .not-out-tag{ display:inline-flex; align-items:center; gap:5px; color:var(--accent); font-size:10.5px; font-weight:700; margin-left:8px; }
+  .howout{ font-size:10.5px; color:var(--text-faint); display:block; margin-top:2px; line-height:1.35; overflow-wrap:anywhere; }
+  /* "not out" sits on its own line under the name — same place the dismissal
+     text goes for everyone else — so every row lines up the same way. */
+  .not-out-tag{ display:flex; align-items:center; gap:5px; color:var(--accent); font-size:10.5px; font-weight:700; margin-top:2px; line-height:1.35; }
   .not-out-tag::before{ content:''; width:4px; height:4px; border-radius:50%; background:var(--accent); flex:none; }
   /* Captain / Wicketkeeper role tags — small pills next to a player's name,
      same treatment wherever a name appears (tables + at-the-crease cards).
@@ -1877,33 +1889,53 @@
   </div>
 </div>
 
-  <!-- CURRENT PLAYERS -->
-  <div class="card">
-    <div class="section-title"><span class="dash"></span>At the Crease</div>
-    <div id="players-grid">
-      <div class="player-card player-card--striker">
-        <div class="pc-label">Striker</div>
-        <div class="pc-row"><span class="pc-name"><span class="strike-dot"></span><span id="striker-name">—</span></span><span class="pc-figs tabnum" id="striker-figs">0 (0)</span></div>
-        <div class="pc-sub" id="striker-sr">SR —</div>
-      </div>
-      <div class="player-card">
-        <div class="pc-label">Non-Striker</div>
-        <div class="pc-row"><span class="pc-name"><span id="nonstriker-name">—</span></span><span class="pc-figs tabnum" id="nonstriker-figs">0 (0)</span></div>
-        <div class="pc-sub" id="nonstriker-sr">SR —</div>
-        <div class="pship-line"><span>Partnership</span><b id="pship-inline">0 (0)</b></div>
-      </div>
-      <div class="player-card player-card--bowler">
-        <div class="pc-label">Bowler</div>
-        <div class="pc-row"><span class="pc-name"><span id="bowler-name">—</span></span><span class="pc-figs tabnum" id="bowler-figs">0-0-0</span></div>
-        <div class="pc-sub" id="bowler-econ">Econ —</div>
-      </div>
+  <!-- SCORECARD TABLES — batting/bowling, promoted right under the live score / stream
+       since this is the section people actually came here for. -->
+  <div id="tables-grid">
+    <div class="card card-featured" id="batting-card">
+      <div class="section-title"><span class="dash"></span>Batting</div>
+      <table>
+        <thead><tr><th>Batter</th><th class="num">R</th><th class="num">B</th><th class="num">4s</th><th class="num">6s</th><th class="num">SR</th><th class="clip-col"></th></tr></thead>
+        <tbody id="batting-table-body"></tbody>
+      </table>
+    </div>
+    <div class="card card-featured" id="bowling-card">
+      <div class="section-title"><span class="dash"></span>Bowling</div>
+      <table>
+        <thead><tr><th>Bowler</th><th class="num">O</th><th class="num">M</th><th class="num">R</th><th class="num">W</th><th class="num">Econ</th><th class="clip-col"></th></tr></thead>
+        <tbody id="bowling-table-body"></tbody>
+      </table>
     </div>
   </div>
 
-  <!-- RECENT BALLS -->
+  <!-- COMMENTARY FEED — auto-generated, ball by ball -->
+  <div class="card" id="commentary-card" style="display:none;">
+    <div class="section-title"><span class="dash"></span>Commentary</div>
+    <div id="commentary-feed"></div>
+    <button class="commentary-cta" id="commentary-open-btn" type="button">
+      <span class="cta-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
+      <span class="cta-text">
+        <span class="cta-title">Watch Full Commentary</span>
+        <span class="cta-sub">Every over, ball by ball — with boundary &amp; wicket clips</span>
+      </span>
+      <span class="cta-arrow">›</span>
+    </button>
+  </div>
+
+  <!-- FALL OF WICKETS (+ team wicket clips) — sits right under Commentary -->
   <div class="card">
-    <div class="section-title"><span class="dash"></span>Recent Balls</div>
-    <div id="balls-scroll"></div>
+    <div class="section-title"><span class="dash"></span>Fall of Wickets</div>
+    <div id="fow-list"><div class="empty-state">No wickets yet</div></div>
+    <div class="team-wkt-clips">
+      <div class="twc-head">
+        <span>Team Wicket Clips</span>
+        <div class="twc-toggle" id="twc-toggle">
+          <button data-team="A" id="twc-btn-a">A</button>
+          <button data-team="B" id="twc-btn-b">B</button>
+        </div>
+      </div>
+      <div class="twc-list" id="twc-list"><div class="empty-state" style="padding:10px 0;">No wickets yet</div></div>
+    </div>
   </div>
 
   <!-- MATCH HIGHLIGHTS — innings-aware, category-filtered, 6-at-a-time library.
@@ -1948,23 +1980,33 @@
     <button class="hl-btn hl-full" data-hl-type="full"><span class="hl-ico hl-ico--full"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M7 6v12M17 6v12M2 10h5M2 14h5M17 10h5M17 14h5"/></svg></span><span>Download Complete Match Highlights</span></button>
   </div>
 
-  <!-- SCORECARD TABLES — batting/bowling, promoted right under Highlights
-       since this is the section people actually came here for. -->
-  <div id="tables-grid">
-    <div class="card card-featured" id="batting-card">
-      <div class="section-title"><span class="dash"></span>Batting</div>
-      <table>
-        <thead><tr><th>Batter</th><th class="num">R</th><th class="num">B</th><th class="num">4s</th><th class="num">6s</th><th class="num">SR</th><th class="clip-col"></th></tr></thead>
-        <tbody id="batting-table-body"></tbody>
-      </table>
+  <!-- CURRENT PLAYERS -->
+  <div class="card">
+    <div class="section-title"><span class="dash"></span>At the Crease</div>
+    <div id="players-grid">
+      <div class="player-card player-card--striker">
+        <div class="pc-label">Striker</div>
+        <div class="pc-row"><span class="pc-name"><span class="strike-dot"></span><span id="striker-name">—</span></span><span class="pc-figs tabnum" id="striker-figs">0 (0)</span></div>
+        <div class="pc-sub" id="striker-sr">SR —</div>
+      </div>
+      <div class="player-card">
+        <div class="pc-label">Non-Striker</div>
+        <div class="pc-row"><span class="pc-name"><span id="nonstriker-name">—</span></span><span class="pc-figs tabnum" id="nonstriker-figs">0 (0)</span></div>
+        <div class="pc-sub" id="nonstriker-sr">SR —</div>
+        <div class="pship-line"><span>Partnership</span><b id="pship-inline">0 (0)</b></div>
+      </div>
+      <div class="player-card player-card--bowler">
+        <div class="pc-label">Bowler</div>
+        <div class="pc-row"><span class="pc-name"><span id="bowler-name">—</span></span><span class="pc-figs tabnum" id="bowler-figs">0-0-0</span></div>
+        <div class="pc-sub" id="bowler-econ">Econ —</div>
+      </div>
     </div>
-    <div class="card card-featured" id="bowling-card">
-      <div class="section-title"><span class="dash"></span>Bowling</div>
-      <table>
-        <thead><tr><th>Bowler</th><th class="num">O</th><th class="num">M</th><th class="num">R</th><th class="num">W</th><th class="num">Econ</th><th class="clip-col"></th></tr></thead>
-        <tbody id="bowling-table-body"></tbody>
-      </table>
-    </div>
+  </div>
+
+  <!-- RECENT BALLS -->
+  <div class="card">
+    <div class="section-title"><span class="dash"></span>Recent Balls</div>
+    <div id="balls-scroll"></div>
   </div>
 
   <!-- COMPARISON CHARTS -->
@@ -2004,20 +2046,6 @@
     <div id="mvp-rows"></div>
   </div>
 
-  <!-- COMMENTARY FEED — auto-generated, ball by ball -->
-  <div class="card" id="commentary-card" style="display:none;">
-    <div class="section-title"><span class="dash"></span>Commentary</div>
-    <div id="commentary-feed"></div>
-    <button class="commentary-cta" id="commentary-open-btn" type="button">
-      <span class="cta-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
-      <span class="cta-text">
-        <span class="cta-title">Watch Full Commentary</span>
-        <span class="cta-sub">Every over, ball by ball — with boundary &amp; wicket clips</span>
-      </span>
-      <span class="cta-arrow">›</span>
-    </button>
-  </div>
-
   <!-- CHARTS: OVER-BY-OVER + PROGRESSION -->
   <div id="charts-grid">
     <div class="card chart-card">
@@ -2030,26 +2058,12 @@
     </div>
   </div>
 
-  <!-- PARTNERSHIP / FOW / EXTRAS -->
+  <!-- PARTNERSHIP / EXTRAS (Fall of Wickets moved up, under Commentary) -->
   <div id="bottom-grid">
     <div class="card">
       <div class="section-title"><span class="dash"></span>Partnership</div>
       <div class="pship-big"><div class="v tabnum" id="pship-big-runs">0 (0)</div><div class="k">Runs (Balls)</div></div>
       <div class="pship-rr" id="pship-rr">Run rate —</div>
-    </div>
-    <div class="card">
-      <div class="section-title"><span class="dash"></span>Fall of Wickets</div>
-      <div id="fow-list"><div class="empty-state">No wickets yet</div></div>
-      <div class="team-wkt-clips">
-        <div class="twc-head">
-          <span>Team Wicket Clips</span>
-          <div class="twc-toggle" id="twc-toggle">
-            <button data-team="A" id="twc-btn-a">A</button>
-            <button data-team="B" id="twc-btn-b">B</button>
-          </div>
-        </div>
-        <div class="twc-list" id="twc-list"><div class="empty-state" style="padding:10px 0;">No wickets yet</div></div>
-      </div>
     </div>
     <div class="card">
       <div class="section-title"><span class="dash"></span>Extras</div>
@@ -2590,10 +2604,28 @@ function battingTeamForInnings(state, inn){
 // "not out" / how out — plus "retired hurt" for a batter currently off
 // the field hurt, and a note when a batter retired hurt earlier and came
 // back (their figures on this one line include both stints).
+/* Dismissal line with the FIELDER named: "c FIELDER b BOWLER", "st KEEPER b BOWLER",
+   "run out (FIELDER)". The bowler part is left exactly as it was saved. Only adds
+   the fielder when the saved text doesn't already have them and one is known
+   (row.fielderName, or picked up from the wicket ball — see orderBattingRows). */
+function howOutFull(b){
+  const base = String(b.howOut || 'out');
+  const f = String(b.fielderName || '').trim();
+  if(!f || base.toLowerCase().indexOf(f.toLowerCase()) !== -1) return base;
+  const sfx = (base.match(/\s*\((?:Wd|Nb)\)\s*$/i) || [''])[0];
+  const core = sfx ? base.slice(0, base.length - sfx.length) : base;
+  const t = String(b.dismissalType || '').toLowerCase()
+    || (/^c\b/i.test(core) ? 'caught' : /^st\b/i.test(core) ? 'stumped' : /^run out/i.test(core) ? 'run out' : '');
+  const bw = String(b.bowlerName || '').trim() || ((core.match(/\bb\s+(.+)$/i) || [])[1] || '');
+  if(t === 'caught')  return `c ${f} b ${bw || 'bowler'}${sfx}`;
+  if(t === 'stumped') return `st ${f} b ${bw || 'bowler'}${sfx}`;
+  if(t === 'run out') return `run out (${f})${sfx}`;
+  return base;
+}
 function battingStatusHtml(b){
   const main = b.retiredHurt
     ? `<span class="howout">${escapeHtml(b.howOut || 'retired hurt')}</span>`
-    : (b.out ? `<span class="howout">${escapeHtml(b.howOut || 'out')}</span>` : '<span class="not-out-tag">not out</span>');
+    : (b.out ? `<span class="howout">${escapeHtml(howOutFull(b))}</span>` : '<span class="not-out-tag">not out</span>');
   const n = b.retiredHurtCount || 0;
   const note = !b.retiredHurt && n > 0 ? `<span class="howout">(retired hurt${n > 1 ? ` ${n} times` : ''}, returned)</span>` : '';
   return main + note;
@@ -2625,9 +2657,24 @@ function _orderByRank(rows, rank){
     // has no row can never shift everyone below them by one.
     .map((x, idx) => ({ ...x.r, pos: x.k < 1e9 ? x.k + 1 : idx + 1 }));
 }
-function orderBattingRows(rows, inningsBalls){ return _orderByRank(rows, _appearanceRank(inningsBalls, ['striker', 'nonStriker'])); }
+function _fielderFromBalls(row, inningsBalls){
+  if(row.fielderName || !row.out) return row;
+  const me = _apKey(row.name);
+  for(const b of (inningsBalls || [])){
+    if(!b || !b.isWicket) continue;
+    const d = (b.dismissal && typeof b.dismissal === 'object') ? b.dismissal : null;
+    const type = String((b.dismissalType || (d && d.type) || '')).toLowerCase();
+    const outName = _apKey((d && d.batter) || (type !== 'run out' ? b.striker : ''));
+    if(outName !== me) continue;
+    const f = String(b.fielderName || (d && d.fielder) || '').trim();
+    if(f) return { ...row, fielderName: f, dismissalType: row.dismissalType || (d && d.type) || b.dismissalType || '' };
+  }
+  return row;
+}
+function orderBattingRows(rows, inningsBalls){
+  return _orderByRank(rows, _appearanceRank(inningsBalls, ['striker', 'nonStriker'])).map(r => _fielderFromBalls(r, inningsBalls));
+}
 function orderBowlingRows(rows, inningsBalls){ return _orderByRank(rows, _appearanceRank(inningsBalls, ['bowler'])); }
-const posNoHtml = (b) => b && b.pos ? `<span class="pos-no">${b.pos}</span>` : '';
 
 function battingRowsForInnings(state, inn){
   const target = inn == null ? (state.inningsNumber || 1) : inn;
@@ -3292,7 +3339,7 @@ function renderFinalInnings(){
 
   const battingBody = document.getElementById('batting-table-body');
   battingBody.innerHTML = bat.length ? bat.map(b => `<tr>
-      <td>${posNoHtml(b)}${escapeHtml(b.name)}${roleBadgesHtml(b)}${battingStatusHtml(b)}</td>
+      <td>${escapeHtml(b.name)}${roleBadgesHtml(b)}${battingStatusHtml(b)}</td>
       <td class="num tabnum">${b.runs||0}</td>
       <td class="num tabnum">${b.balls||0}</td>
       <td class="num tabnum">${b.fours||0}</td>
@@ -3303,7 +3350,7 @@ function renderFinalInnings(){
 
   const bowlingBody = document.getElementById('bowling-table-body');
   bowlingBody.innerHTML = bowl.length ? bowl.map(b => `<tr>
-      <td>${posNoHtml(b)}${escapeHtml(b.name)}${roleBadgesHtml(b)}</td>
+      <td>${escapeHtml(b.name)}${roleBadgesHtml(b)}</td>
       <td class="num tabnum">${fmtOvers(b.overs,b.balls)}</td>
       <td class="num tabnum">${b.maidens||0}</td>
       <td class="num tabnum">${b.runs||0}</td>
@@ -5774,7 +5821,7 @@ function renderTables(s){
     battingBody.innerHTML = bat.map(b => {
       const isStriking = isLive && !b.out && s.striker && s.striker.name === b.name;
       return `<tr class="${isStriking ? 'on-strike' : ''}">
-        <td>${posNoHtml(b)}${escapeHtml(b.name)}${roleBadgesHtml(b)}${battingStatusHtml(b)}</td>
+        <td>${escapeHtml(b.name)}${roleBadgesHtml(b)}${battingStatusHtml(b)}</td>
         <td class="num tabnum">${b.runs}</td>
         <td class="num tabnum">${b.balls}</td>
         <td class="num tabnum">${b.fours}</td>
@@ -5790,7 +5837,7 @@ function renderTables(s){
     bowlingBody.innerHTML = `<tr><td colspan="7" class="empty-state">No bowling yet</td></tr>`;
   } else {
     bowlingBody.innerHTML = bowl.map(b => `<tr>
-        <td>${posNoHtml(b)}${escapeHtml(b.name)}${roleBadgesHtml(b)}</td>
+        <td>${escapeHtml(b.name)}${roleBadgesHtml(b)}</td>
         <td class="num tabnum">${fmtOvers(b.overs,b.balls)}</td>
         <td class="num tabnum">${b.maidens||0}</td>
         <td class="num tabnum">${b.runs||0}</td>
