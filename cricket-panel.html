@@ -12351,7 +12351,11 @@ function collectTournamentTeams(){
     if(squad && Array.isArray(squad.players) && squad.players.length){
       players = squad.players.map(pl => ({ id: pl.id, name: pl.name, isXI: pl.isXI !== false }));
     } else if(cardNames && cardNames.length){
-      players = cardNames.map(n => ({ id: null, name: n, isXI: true }));
+      // Older match (no saved squad): only names. If this team already has a
+      // player with that name from a newer/older squad, keep THAT player's saved
+      // id instead of dropping it and re-resolving by name.
+      const known = n => (prev ? prev.players : []).find(pp => pp.id && String(pp.name || '').trim().toLowerCase() === n.trim().toLowerCase());
+      players = cardNames.map(n => { const k = known(n); return { id: k ? k.id : null, name: n, isXI: true }; });
     } else {
       players = prev ? prev.players : [];
     }
