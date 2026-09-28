@@ -2620,7 +2620,10 @@ function _orderByRank(rows, rank){
   return rows
     .map((r, i) => ({ r, i, k: rank.has(_apKey(r.name)) ? rank.get(_apKey(r.name)) : 1e9 }))
     .sort((a, b) => (a.k - b.k) || (a.i - b.i))
-    .map((x, idx) => ({ ...x.r, pos: idx + 1 }));
+    // number = real entry/first-bowl rank (same number the server stamps as
+    // battingPosition/bowlingPosition), not the row index, so a batter who
+    // has no row can never shift everyone below them by one.
+    .map((x, idx) => ({ ...x.r, pos: x.k < 1e9 ? x.k + 1 : idx + 1 }));
 }
 function orderBattingRows(rows, inningsBalls){ return _orderByRank(rows, _appearanceRank(inningsBalls, ['striker', 'nonStriker'])); }
 function orderBowlingRows(rows, inningsBalls){ return _orderByRank(rows, _appearanceRank(inningsBalls, ['bowler'])); }
