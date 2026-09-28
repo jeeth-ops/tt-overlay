@@ -788,6 +788,29 @@
      .import-step.active: (1) upload, (2) processing, (3) review & confirm.
      Uses the same wicket-modal shell as every other popup in this app so
      it looks native rather than bolted on. -->
+<!-- ➕ CREATE NEW MATCH — pick each side from this tournament's existing
+     teams (name, colours, logo, full squad with the SAME permanent player
+     ids) or choose "New team" and type it in the panel as usual. -->
+<div class="wicket-modal-overlay" id="newmatch-modal-overlay">
+  <div class="wicket-modal wide" id="newmatch-modal">
+    <h3>➕ Create New Match</h3>
+    <div class="wm-sub" id="newmatch-sub">The saved match stays untouched. Choose the teams for the new match.</div>
+    <label>Team A</label>
+    <select id="newmatch-team-a"></select>
+    <div class="shortcut-hint" id="newmatch-preview-a" style="margin-top:6px;"></div>
+    <label style="margin-top:10px;">Team B</label>
+    <select id="newmatch-team-b"></select>
+    <div class="shortcut-hint" id="newmatch-preview-b" style="margin-top:6px;"></div>
+    <label style="margin-top:10px;">Match title (optional)</label>
+    <input type="text" id="newmatch-title" maxlength="60" placeholder="e.g. Semi Final, League Match 5" style="width:100%;">
+    <div class="shortcut-hint" id="newmatch-hint" style="margin-top:8px;"></div>
+    <div class="wm-actions" style="display:flex; gap:8px; margin-top:14px;">
+      <button type="button" class="small ghost" id="newmatch-cancel" style="flex:1;">Cancel</button>
+      <button type="button" class="small primary" id="newmatch-start" style="flex:1;">Start New Match</button>
+    </div>
+  </div>
+</div>
+
 <div class="wicket-modal-overlay" id="import-modal-overlay">
   <div class="wicket-modal wide wm-import" id="import-modal">
     <h3>📋 Import Players from List</h3>
@@ -977,6 +1000,8 @@
           <button class="small primary" id="save-match-league-btn" type="button">💾 Save This Match</button>
           <button class="small ghost" id="view-league-matches-btn" type="button">📋 Matches</button>
         </div>
+        <button class="small ghost full" id="new-match-btn" type="button" style="margin-top:6px;">➕ Create New Match</button>
+        <div class="shortcut-hint">Create New Match saves the match on the panel (if it has scoring), then starts a fresh, empty match in this same tournament. Saved matches stay exactly as they are — nothing is deleted or overwritten.</div>
         <div class="row2" style="margin-top:6px;">
           <button class="small ghost" id="view-player-history-btn" type="button">👤 Player History</button>
           <button class="small ghost" id="view-team-history-btn" type="button">🏏 Team History</button>
@@ -2237,6 +2262,8 @@ function defaultState(){
     // correctly, but starting a NEW match always gets its own fresh id and
     // can never collide with (overwrite) a previous match's saved record.
     tournamentMatchId: null,
+    matchNo: null,
+    matchTitle: '',
     visible: true,
     partnershipRuns: 0,
     partnershipBalls: 0,
@@ -6850,8 +6877,14 @@ function buildMatchRecordForLeague(){
     venue: state.venue,
     streamUrl: state.streamUrl || '',
     format: state.format,
+    matchNo: state.matchNo || null,
+    matchTitle: state.matchTitle || '',
     teamA: { name: state.teamA.name, short: state.teamA.short, color: state.teamA.color || '', logoUrl: state.teamA.logoUrl || '' },
     teamB: { name: state.teamB.name, short: state.teamB.short, color: state.teamB.color || '', logoUrl: state.teamB.logoUrl || '' },
+    // Exact squads WITH their permanent player ids — this is what lets
+    // Create New Match bring a team back with the same ids.
+    squadA: squadSnapshotOf(state.teamA),
+    squadB: squadSnapshotOf(state.teamB),
     winningTeam,
     scoreA: scoreForTeam('A'),
     scoreB: scoreForTeam('B'),
@@ -6905,6 +6938,15 @@ function syncFailureToast(res, fallbackMsg){
   } else {
     toast(fallbackMsg);
   }
+}
+
+function squadSnapshotOf(t){
+  t = t || {};
+  return {
+    players: (t.players || []).map(pl => ({ id: pl.id, name: pl.name, isXI: pl.isXI !== false })),
+    captainId: t.captainId || null,
+    wkId: t.wkId || null
+  };
 }
 
 function saveMatchToLeague(silent){
@@ -7299,6 +7341,7 @@ function renderLeagueMatchesList(matches){
       : '';
     return `<div class="league-match-row" data-view-match="${escapeHtmlPanel(m.matchId)}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:11.5px;cursor:pointer;">
       <div style="min-width:0;">
+        ${(m.matchNo || m.matchTitle || m.savedAt) ? `<div style="color:var(--text-dim);font-size:10.5px;">${escapeHtmlPanel([m.matchNo ? 'Match ' + m.matchNo : '', m.matchTitle || '', m.savedAt ? new Date(m.savedAt).toLocaleDateString() : ''].filter(Boolean).join(' · '))}</div>` : ''}
         <div style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtmlPanel(m.teamA.short || m.teamA.name)} vs ${escapeHtmlPanel(m.teamB.short || m.teamB.name)}${inProgress ? ' <span style="color:var(--live,#e5484d);font-weight:800;">● LIVE</span>' : ''}</div>
         <div style="color:var(--text-dim);">${escapeHtmlPanel(resultText)} · ${m.scoreA.runs}-${m.scoreA.wickets} / ${m.scoreB.runs}-${m.scoreB.wickets}</div>
       </div>
@@ -12690,8 +12733,7 @@ document.getElementById('download-tournament-excel-btn').addEventListener('click
 /* ============================================================
    RESET
    ============================================================ */
-document.getElementById('reset-btn').addEventListener('click', () => {
-  if(!confirm('Reset the entire match? This cannot be undone.')) return;
+function startFreshMatch(opts){
   // The league name spans multiple matches (that's the whole point of it),
   // so it survives a Reset — everything else about the match goes back to
   // defaults as before, ready for the next match in the same tournament.
@@ -12717,6 +12759,11 @@ document.getElementById('reset-btn').addEventListener('click', () => {
   state = defaultState();
   state.leagueName = keepLeagueName;
   state.matchMode = keepMatchMode || (keepLeagueName ? 'tournament' : 'single');
+  // 🔒 Create New Match hands in the already-resolved teams here — they must be
+  // on `state` BEFORE connect()/pushState() below. Otherwise the reconnect
+  // broadcasts the blank default (India/Australia) first, and the server's
+  // echo of that default gets merged back over the freshly loaded teams.
+  if(opts && typeof opts.applyToState === 'function') opts.applyToState();
   history = [];
   saveHistoryLocal(); // clear the persisted stack too, so a stale pre-reset undo can't resurface
   document.getElementById('milestone-log').innerHTML = '<div>No events yet.</div>';
@@ -12744,6 +12791,256 @@ document.getElementById('reset-btn').addEventListener('click', () => {
 
   pushState(true, true);
   toast('🔄 New match ready — Match ID refreshed. Copy the new Overlay/Scorecard links (and update OBS\'s browser source) before you go live.', 7000);
+}
+document.getElementById('reset-btn').addEventListener('click', () => {
+  if(!confirm('Reset the entire match? This cannot be undone.')) return;
+  startFreshMatch();
+});
+
+// This panel has no separate per-match tournament binding: a match belongs to
+// the tournament selected in the panel while in Tournament mode.
+function newMatchTournament(){
+  return (state.matchMode === 'tournament' && (state.leagueName || '').trim()) ? state.leagueName.trim() : '';
+}
+/* ============================================================
+   CREATE NEW MATCH — team picker
+   Teams come from this tournament's saved matches (name/short/colour/logo
+   + squad). Matches saved after this update carry the exact squad with
+   permanent player ids; older matches only carry the names on their
+   batting/bowling cards, so those players are re-resolved by name through
+   the same server find-or-create the squad "+ Add" uses — the same name
+   always maps to the same permanent player id, so nothing is forked.
+   ============================================================ */
+let newMatchTeams = []; // [{ key, name, short, color, logoUrl, players:[{id?,name,isXI}], captainId, wkId }]
+
+function collectTournamentTeams(){
+  const byKey = new Map();
+  const put = (t, squad, cardNames) => {
+    if(!t || !(t.name || '').trim()) return;
+    const key = teamKeyOf(t.name);
+    const prev = byKey.get(key);
+    let players = null;
+    if(squad && Array.isArray(squad.players) && squad.players.length){
+      players = squad.players.map(pl => ({ id: pl.id, name: pl.name, isXI: pl.isXI !== false }));
+    } else if(cardNames && cardNames.length){
+      // Older match (no saved squad): only names. If this team already has a
+      // player with that name from a newer/older squad, keep THAT player's saved
+      // id instead of dropping it and re-resolving by name.
+      const known = n => (prev ? prev.players : []).find(pp => pp.id && String(pp.name || '').trim().toLowerCase() === n.trim().toLowerCase());
+      players = cardNames.map(n => { const k = known(n); return { id: k ? k.id : null, name: n, isXI: true }; });
+    } else {
+      players = prev ? prev.players : [];
+    }
+    // The team keeps EVERY player it has had in this tournament. A later match
+    // that dropped someone from its lineup is a match-only change: that player
+    // stays on the team (as a bench player) instead of silently disappearing.
+    // Playing XI / captain / keeper come from the most recent match.
+    if(prev && players !== prev.players){
+      const sameName = (a, b) => String(a.name || '').trim().toLowerCase() === String(b.name || '').trim().toLowerCase();
+      const merged = players.slice();
+      prev.players.forEach(pp => {
+        const dup = merged.some(np => (pp.id && np.id) ? pp.id === np.id : sameName(pp, np));
+        if(!dup) merged.push({ ...pp, isXI: false });
+      });
+      players = merged;
+    }
+    byKey.set(key, {
+      key, name: t.name,
+      // A later match saved without a logo/colour/short must not wipe the one
+      // the team already has — keep the newest NON-EMPTY value.
+      short: t.short || (prev ? prev.short : '') || '',
+      color: t.color || (prev ? prev.color : '') || '',
+      logoUrl: t.logoUrl || (prev ? prev.logoUrl : '') || '',
+      players,
+      captainId: squad ? (squad.captainId || null) : (prev ? prev.captainId : null),
+      wkId: squad ? (squad.wkId || null) : (prev ? prev.wkId : null)
+    });
+  };
+  const cardNamesFor = (rec, side) => {
+    const names = [];
+    const add = n => { n = String(n || '').trim(); if(n && n.toLowerCase() !== 'bowler' && !names.some(x => x.toLowerCase() === n.toLowerCase())) names.push(n); };
+    ((rec.battingCard && rec.battingCard[side]) || []).forEach(r => add(r.name));
+    ((rec.bowlingCard && rec.bowlingCard[side]) || []).forEach(r => add(r.name));
+    return names;
+  };
+  const matches = currentLeagueMatches().slice().sort((a, b) => String(a.savedAt || '').localeCompare(String(b.savedAt || '')));
+  matches.forEach(m => {
+    put(m.teamA, m.squadA, cardNamesFor(m, 'A'));
+    put(m.teamB, m.squadB, cardNamesFor(m, 'B'));
+  });
+  // The teams currently on the panel, if they have a squad — the freshest
+  // source, and they may not be saved yet.
+  [['A', state.teamA], ['B', state.teamB]].forEach(([k, t]) => {
+    if(t && (t.players || []).length) put(t, squadSnapshotOf(t), null);
+  });
+  return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function fillNewMatchTeamSelect(sel, other){
+  sel.innerHTML = '<option value="">➕ New team — I\'ll type it in the panel</option>' +
+    newMatchTeams.map(t => `<option value="${escapeHtmlAttr(t.key)}">${escapeHtmlPanel(t.name)}${t.short ? ' (' + escapeHtmlPanel(t.short) + ')' : ''} — ${t.players.length} player${t.players.length === 1 ? '' : 's'}</option>`).join('');
+}
+
+async function openNewMatchModal(){
+  const t = newMatchTournament();
+  const sub = document.getElementById('newmatch-sub');
+  sub.textContent = (t ? `Tournament: ${t}. ` : '') + 'Saved matches stay exactly as they are — nothing is deleted or overwritten. If the match on this panel has scoring, it is saved to its own tournament first (and can be resumed later); then a fresh match starts.';
+  // Teams are read from the tournament the dropdown is showing (state.leagueName),
+  // which can differ from the live match's own tournament — sync THAT one.
+  const readFrom = (state.leagueName || '').trim();
+  if(readFrom) await syncLeagueFromServer(readFrom); // make sure other laptops' matches are included
+  newMatchTeams = collectTournamentTeams();
+  const a = document.getElementById('newmatch-team-a');
+  const b = document.getElementById('newmatch-team-b');
+  fillNewMatchTeamSelect(a); fillNewMatchTeamSelect(b);
+  document.getElementById('newmatch-hint').textContent = newMatchTeams.length
+    ? 'Pick a team to bring back its name, colours, logo and squad with the same player IDs — or leave "New team" and set it up yourself.'
+    : 'No teams saved in this tournament yet — both teams will be new; set them up in the panel.';
+  document.getElementById('newmatch-title').value = '';
+  renderNewMatchPreview('a'); renderNewMatchPreview('b');
+  document.getElementById('newmatch-modal-overlay').classList.add('show');
+}
+function closeNewMatchModal(){
+  document.getElementById('newmatch-modal-overlay').classList.remove('show');
+}
+
+// Read-only roster preview of the team picked for a side (names only — the
+// permanent player ids are kept internally, never shown to the operator).
+function renderNewMatchPreview(sideLower){
+  const sel = document.getElementById('newmatch-team-' + sideLower);
+  const box = document.getElementById('newmatch-preview-' + sideLower);
+  if(!sel || !box) return;
+  const t = sel.value ? newMatchTeams.find(x => x.key === sel.value) : null;
+  if(!t){ box.innerHTML = ''; return; }
+  const names = list => list.map(p => escapeHtmlPanel(p.name)).join(', ') || '—';
+  const xi = t.players.filter(p => p.isXI !== false), bench = t.players.filter(p => p.isXI === false);
+  box.innerHTML = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">${t.logoUrl ? `<img src="${escapeHtmlAttr(t.logoUrl)}" alt="" style="width:26px;height:26px;border-radius:6px;object-fit:cover;">` : ''}<b>${escapeHtmlPanel(t.name)}</b></div>`
+    + `<div><b>Playing XI (${xi.length}):</b> ${names(xi)}</div>`
+    + (bench.length ? `<div><b>Squad (${bench.length}):</b> ${names(bench)}</div>` : '')
+    + `<div style="opacity:.75;">Changes you make for this match apply to this match only.</div>`;
+}
+document.getElementById('newmatch-team-a').addEventListener('change', () => renderNewMatchPreview('a'));
+document.getElementById('newmatch-team-b').addEventListener('change', () => renderNewMatchPreview('b'));
+
+// Step 1 (async, touches NOTHING on the panel): resolve the picked team's
+// canonical roster. Saved ids are kept as-is; only players that have no saved
+// id (very old matches) are looked up by name through the same server
+// find-or-create the squad "+ Add" uses. Returns a plain object.
+async function canonicalIdMap(ids){
+  const map = {};
+  ids = ids.filter(Boolean);
+  if(!ids.length || !currentOwnerUid()) return map;
+  try{
+    const res = await fetch(withUid('/api/players/canonicalize'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids })
+    });
+    const data = await res.json();
+    if(data && data.success && data.map) return data.map;
+  }catch(e){ /* older server / offline — keep the saved ids as they are */ }
+  return map;
+}
+async function prepareTeamForNewMatch(team){
+  const players = [];
+  let unverified = 0;
+  // A saved id that was later merged into another profile follows the merge.
+  const canon = await canonicalIdMap(team.players.map(p => p.id));
+  for(const pl of team.players){
+    let id = canon[pl.id] || pl.id;
+    if(!id){
+      id = await resolveOrCreatePlayerIdStrict(pl.name);
+      if(!id){ id = genPlayerId(); unverified++; }
+    }
+    if(players.some(x => x.id === id)) continue;
+    players.push({ id, name: pl.name, isXI: pl.isXI !== false });
+  }
+  return {
+    name: team.name, short: team.short || '', color: team.color || '', logoUrl: team.logoUrl || '',
+    players,
+    captainId: players.some(x => x.id === team.captainId) ? team.captainId : null,
+    wkId: players.some(x => x.id === team.wkId) ? team.wkId : null,
+    unverified
+  };
+}
+// Same as resolveOrCreatePlayerId but returns null instead of inventing a new
+// local id when the server can't be reached, so the caller can tell.
+async function resolveOrCreatePlayerIdStrict(name){
+  if(!currentOwnerUid()) return null;
+  try{
+    const res = await fetch(withUid('/api/players/resolve'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+    const data = await res.json();
+    if(data && data.success && data.playerId) return data.playerId;
+  }catch(e){}
+  return null;
+}
+// Step 2 (sync): copy a prepared team onto the (fresh) panel state.
+function applyPreparedTeam(side, prepared){
+  const target = side === 'A' ? state.teamA : state.teamB;
+  target.name = prepared.name; target.short = prepared.short;
+  target.color = prepared.color || target.color;
+  target.logoUrl = prepared.logoUrl || '';
+  target.players = prepared.players.map(p => ({ ...p }));
+  target.captainId = prepared.captainId;
+  target.wkId = prepared.wkId;
+}
+
+document.getElementById('new-match-btn').addEventListener('click', () => { openNewMatchModal(); });
+document.getElementById('newmatch-cancel').addEventListener('click', closeNewMatchModal);
+document.getElementById('newmatch-modal-overlay').addEventListener('click', e => { if(e.target.id === 'newmatch-modal-overlay') closeNewMatchModal(); });
+document.getElementById('newmatch-start').addEventListener('click', async () => {
+  const keyA = document.getElementById('newmatch-team-a').value;
+  const keyB = document.getElementById('newmatch-team-b').value;
+  if(keyA && keyA === keyB){ toast('Team A and Team B cannot be the same team'); return; }
+  const btn = document.getElementById('newmatch-start');
+  btn.disabled = true; btn.textContent = 'Loading Team…';
+  try{
+    const pickA = keyA ? newMatchTeams.find(t => t.key === keyA) : null;
+    const pickB = keyB ? newMatchTeams.find(t => t.key === keyB) : null;
+    // 1️⃣ Resolve both teams FIRST, before the panel is touched. If this fails
+    // nothing has been parked, reset or reconnected — the current match is safe.
+    const teamA = pickA ? await prepareTeamForNewMatch(pickA) : null;
+    const teamB = pickB ? await prepareTeamForNewMatch(pickB) : null;
+
+    // 🛟 2️⃣ Park the match that is on the panel (same as Resume does) — a
+    // match with scoring is never thrown away just because a new one starts.
+    if((state.ballLog || []).length > 0){
+      if(newMatchTournament()) saveMatchToLeague(true); else saveMatchToSingleHistory(true);
+      clearTimeout(pushTimer);
+      if(socket && socket.connected && !isAwaitingNextInnings()) socket.emit('updateCricketScore', state);
+    }
+    const titleTyped = (document.getElementById('newmatch-title').value || '').trim().slice(0, 60);
+
+    // 3️⃣ Fresh match (new Match ID / room / score) with the loaded teams put on
+    // state BEFORE the reconnect, in one synchronous step — no awaits between
+    // the reset and the teams landing, so nothing can overwrite them.
+    startFreshMatch({ applyToState: () => {
+      if(state.matchMode === 'tournament' && (state.leagueName || '').trim()){
+        const existing = currentLeagueMatches();
+        state.matchNo = Math.max(existing.length, ...existing.map(m => Number(m.matchNo) || 0)) + 1;
+        state.matchTitle = titleTyped;
+      }
+      if(teamA) applyPreparedTeam('A', teamA);
+      if(teamB) applyPreparedTeam('B', teamB);
+    }});
+    if(teamA || teamB){
+      renderPanel();
+      renderSquadUI();
+      renderRosterControls();
+      pushState(true, true);
+      const unverified = (teamA ? teamA.unverified : 0) + (teamB ? teamB.unverified : 0);
+      toast(`✅ New match ready${state.matchNo ? ' (Match ' + state.matchNo + ')' : ''}${teamA ? ' — ' + teamA.name : ''}${teamA && teamB ? ' vs ' : (teamB ? ' — ' : '')}${teamB ? teamB.name : ''}. Squads loaded with their existing player IDs.`
+        + (unverified ? ` ⚠️ ${unverified} older player(s) could not be matched to a saved Player ID (offline / not signed in) — check them before scoring.` : ''), unverified ? 10000 : 6000);
+    }
+    closeNewMatchModal();
+  }catch(err){
+    console.error('Create New Match failed', err);
+    toast('⚠️ Could not load the chosen team(s) — nothing was changed. Try again.');
+  }finally{
+    btn.disabled = false; btn.textContent = 'Start New Match';
+  }
 });
 
 /* ============================================================
