@@ -200,6 +200,7 @@ async function connectMongo() {
         await ballsCollection.createIndex({ matchId: 1, innings: 1, over: 1, ballInOver: 1 });
         await matchesCollection.createIndex({ matchId: 1 }, { unique: true });
         await clipsCollection.createIndex({ matchId: 1, createdAt: 1 });
+        await clipsCollection.createIndex({ matchId: 1, innings: 1, over: 1, ballInOver: 1 });
         // Canonical job identity (see buildClipId/finalizeClip) — sparse
         // because clips ingested before this field existed have none;
         // unique so two ingests of the exact same event can never create
@@ -3086,8 +3087,45 @@ function serializeClip(c) {
         playbackUrl: (c.r2Url && c.r2Status !== 'failed') ? c.r2Url : null,
         posterUrl: c.r2PosterUrl || null,
         downloadUrl: `/api/clips/${c._id}/download`,
-        createdAt: c.createdAt
+        createdAt: c.createdAt,
+        // Highlights library extras (additive — existing readers ignore them):
+        // clip length, the ball/event identity, and the two upload legs so the
+        // card can tell "uploading" from "retrying" from "unavailable".
+        duration: c.clipSeconds || null,
+        eventId: c.eventId || null,
+        battingTeamId: c.battingTeamId || null,
+        strikerPlayerId: c.strikerPlayerId || null,
+        r2Status: c.r2Status || null,
+        driveStatus: c.driveStatus || null
     };
+}
+
+// 🏏 Older clips (cut before `innings` was stored on the clip doc) have
+// innings === undefined. Derive it from the match's own ball records — but
+// only when it is unambiguous: either the match only ever had one innings,
+// or exactly one ball at that over.ball (with the same striker, when known)
+// exists. Anything still ambiguous is left untouched (client treats it as
+// innings 1, as it always did) rather than guessed wrong.
+async function backfillClipInnings(matchId, clips) {
+    const missing = clips.filter(c => c.innings == null);
+    if (!missing.length || !ballsCollection) return clips;
+    try {
+        const balls = await ballsCollection.find({ matchId }, { projection: { innings: 1, over: 1, ballInOver: 1, striker: 1 } }).toArray();
+        const inningsSet = new Set(balls.map(b => b.innings).filter(n => n != null));
+        for (const c of missing) {
+            if (inningsSet.size === 1) { c.innings = [...inningsSet][0]; continue; }
+            let cand = balls.filter(b => b.over === c.over && b.ballInOver === c.ballInOver && b.innings != null);
+            if (cand.length > 1 && c.strikerName) {
+                const byName = cand.filter(b => personName(b.striker) === c.strikerName);
+                if (byName.length) cand = byName;
+            }
+            const inn = new Set(cand.map(b => b.innings));
+            if (inn.size === 1) c.innings = [...inn][0];
+        }
+    } catch (err) {
+        console.log('Clip innings backfill skipped:', err.message || err);
+    }
+    return clips;
 }
 
 // GET /api/clips/match/:matchId?type=FOUR|SIX|WICKET&playerKey=...&team=A|B&limit=&skip=
@@ -3131,7 +3169,12 @@ app.get('/api/clips/match/:matchId', async (req, res) => {
     const cached = getCached(clipsListCache, cacheKey);
     if (cached) return res.json(cached);
     try {
-        const clips = await clipsCollection.find(query).sort({ over: 1, ballInOver: 1 }).skip(skip).limit(limit).toArray();
+        // Sort by the real ball sequence (innings → over → ball) with _id as a
+        // final tiebreak so skip/limit paging is stable — sorting on over/ball
+        // alone let same-numbered balls from two innings swap places between
+        // pages, silently dropping or repeating clips past the first 100.
+        const clips = await clipsCollection.find(query).sort({ innings: 1, over: 1, ballInOver: 1, _id: 1 }).skip(skip).limit(limit).toArray();
+        await backfillClipInnings(matchId, clips);
         const payload = { success: true, clips: clips.map(serializeClip) };
         setCached(clipsListCache, cacheKey, payload, CLIPS_CACHE_TTL_MS);
         res.json(payload);
@@ -3152,7 +3195,8 @@ app.get('/api/clips/team/:matchId/:teamKey', async (req, res) => {
     if (cached) return res.json(cached);
     try {
         const clips = await clipsCollection.find({ matchId, battingTeam: teamKey, eventType: 'WICKET', ...HIGHLIGHT_VISIBLE })
-            .sort({ over: 1, ballInOver: 1 }).toArray();
+            .sort({ innings: 1, over: 1, ballInOver: 1, _id: 1 }).toArray();
+        await backfillClipInnings(matchId, clips);
         const payload = { success: true, clips: clips.map(serializeClip) };
         setCached(clipsListCache, cacheKey, payload, CLIPS_CACHE_TTL_MS);
         res.json(payload);
