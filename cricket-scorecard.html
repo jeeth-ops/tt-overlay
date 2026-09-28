@@ -1429,7 +1429,12 @@
   .mp-confirm-value.mp-correct{ color:var(--accent); }
   .mp-confirm-arrow{ text-align:center; font-size:11px; color:var(--text-faint); margin:8px 0; }
   .mp-match-list{ max-height:26vh; overflow-y:auto; border:1px solid var(--border-soft); border-radius:var(--radius-sm); margin-top:6px; }
-  .mp-match-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; font-size:11.5px; border-bottom:1px solid var(--border-soft); }
+  .mp-match-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; font-size:11.5px; border-bottom:1px solid var(--border-soft); cursor:pointer; }
+  .mp-match-pick{ display:flex; align-items:center; gap:8px; min-width:0; }
+  .mp-match-pick input{ width:16px; height:16px; accent-color:var(--accent); flex:none; }
+  .mp-pick-tools{ display:flex; gap:12px; margin:8px 0 2px; font-size:11.5px; }
+  .mp-pick-tools button{ background:none; border:none; padding:0; color:var(--accent); font-weight:700; cursor:pointer; }
+  .mp-danger-btn:disabled{ opacity:.45; cursor:not-allowed; }
   .mp-match-row:last-child{ border-bottom:none; }
   .mp-match-id{ color:var(--text-dim); font-family:monospace; }
   .mp-match-counts{ color:var(--text-faint); text-align:right; }
@@ -5803,7 +5808,7 @@ function renderMergePlayersForm(matchId, roster, prefill){
   const content = document.getElementById('edit-modal-content');
   content.innerHTML = `
     <div class="em-title">Merge Players</div>
-    <div class="em-sub">Fold a duplicate player's runs, balls, 4s/6s, wickets, dismissals, fielding credits and clips into the correct player — everywhere they've ever been scored, not just this match. This cannot be undone from here except with "Undo last merge".</div>
+    <div class="em-sub">Fold a duplicate player's runs, balls, 4s/6s, wickets, dismissals, fielding credits and clips into the correct player — On the next screen you choose exactly which matches to merge — unticked matches are not touched. You can reverse it with "Undo last merge".</div>
     <div class="em-field-row">
       <div><label>Duplicate / wrongly-spelled player</label>
         <select id="mpWrong">${names.map(n => `<option value="${escapeHtml(n)}" ${n===selWrong?'selected':''}>${escapeHtml(n)}</option>`).join('')}</select>
@@ -5849,11 +5854,17 @@ function renderMergePlayersForm(matchId, roster, prefill){
 // will be merged and how much data moves, and requires an explicit
 // Confirm click before anything is written.
 function renderMergeConfirmScreen(matchId, data){
-  const matchRows = (data.matches || []).map(m => `
-    <div class="mp-match-row">
-      <span class="mp-match-id">${escapeHtml(m.matchId)}</span>
-      <span class="mp-match-counts">${m.deliveries} ${m.deliveries===1?'delivery':'deliveries'}${m.asBatsman?` · batting ${m.asBatsman}`:''}${m.asBowler?` · bowling ${m.asBowler}`:''}${m.asFielder?` · fielding ${m.asFielder}`:''}</span>
-    </div>`).join('') || '<div class="em-empty">No matches affected.</div>';
+  const matches = data.matches || [];
+  const curId = String(matchId || '');
+  const plural = (n, one, many) => n === 1 ? one : many;
+  // One checkbox row per match. The match you're currently viewing is
+  // pre-ticked; everything else starts unticked so nothing moves unless you
+  // pick it.
+  const matchRows = matches.map((m, i) => `
+    <label class="mp-match-row">
+      <span class="mp-match-pick"><input type="checkbox" class="mp-match-cb" data-idx="${i}" ${String(m.matchId)===curId?'checked':''}><span class="mp-match-id">${escapeHtml(m.matchId)}${String(m.matchId)===curId?' (this match)':''}</span></span>
+      <span class="mp-match-counts">${m.deliveries} ${plural(m.deliveries,'delivery','deliveries')}${m.asBatsman?` · batting ${m.asBatsman}`:''}${m.asBowler?` · bowling ${m.asBowler}`:''}${m.asFielder?` · fielding ${m.asFielder}`:''}${m.clips?` · ${m.clips} ${plural(m.clips,'clip','clips')}`:''}</span>
+    </label>`).join('') || '<div class="em-empty">No matches affected.</div>';
 
   const content = document.getElementById('edit-modal-content');
   content.innerHTML = `
@@ -5863,28 +5874,54 @@ function renderMergeConfirmScreen(matchId, data){
       <div class="mp-confirm-arrow">↓ merges into ↓</div>
       <div class="mp-confirm-row"><span class="mp-confirm-label">Correct Player</span><span class="mp-confirm-value mp-correct">${escapeHtml(data.correctPlayer)}</span></div>
     </div>
-    <div class="em-sub">This will move <b>${data.affectedCount}</b> ${data.affectedCount===1?'delivery':'deliveries'} and <b>${data.clipCount}</b> ${data.clipCount===1?'clip':'clips'} across <b>${(data.matches||[]).length}</b> ${(data.matches||[]).length===1?'match':'matches'}. Batting, bowling, dismissal, fielding and clip data all move together — nothing is deleted or re-uploaded.</div>
+    <div class="em-sub">Tick the matches whose data should move. Only ticked matches are merged.</div>
+    <div class="mp-pick-tools"><button type="button" id="mpSelAll">Select all</button><button type="button" id="mpSelNone">Clear</button></div>
     <div class="mp-match-list">${matchRows}</div>
+    <div class="em-sub" id="mpSummary"></div>
     <div class="em-actions">
       <button id="mpCancel" class="em-btn cancel">Cancel</button>
       <button id="mpConfirm" class="em-btn save mp-danger-btn">Confirm Merge</button>
     </div>`;
 
+  const cbs = () => [...content.querySelectorAll('.mp-match-cb')];
+  const picked = () => cbs().filter(c => c.checked).map(c => matches[Number(c.dataset.idx)]);
+  const refresh = () => {
+    const p = picked();
+    const deliveries = p.reduce((a, m) => a + (m.deliveries || 0), 0);
+    const clips = p.reduce((a, m) => a + (m.clips || 0), 0);
+    const sum = document.getElementById('mpSummary');
+    const btn = document.getElementById('mpConfirm');
+    if(!p.length){
+      sum.innerHTML = 'Select at least one match to merge.';
+    } else {
+      sum.innerHTML = `This will move <b>${deliveries}</b> ${plural(deliveries,'delivery','deliveries')} and <b>${clips}</b> ${plural(clips,'clip','clips')} across <b>${p.length}</b> selected ${plural(p.length,'match','matches')}. Batting, bowling, dismissal, fielding and clip data of those matches move together — nothing is deleted or re-uploaded.` +
+        (p.length < matches.length ? ` The other ${matches.length - p.length} ${plural(matches.length - p.length,'match keeps','matches keep')} “${escapeHtml(data.wrongPlayer)}” as is.` : '');
+    }
+    btn.disabled = !p.length;
+    btn.textContent = p.length ? `Confirm Merge (${p.length})` : 'Confirm Merge';
+  };
+  cbs().forEach(c => c.addEventListener('change', refresh));
+  document.getElementById('mpSelAll').onclick = () => { cbs().forEach(c => c.checked = true); refresh(); };
+  document.getElementById('mpSelNone').onclick = () => { cbs().forEach(c => c.checked = false); refresh(); };
+  refresh();
+
   document.getElementById('mpCancel').onclick = () => openMergePlayersPanel(matchId);
   document.getElementById('mpConfirm').onclick = async () => {
+    const chosen = picked();
+    if(!chosen.length){ emToast('Select at least one match'); return; }
     const btn = document.getElementById('mpConfirm');
     btn.disabled = true; btn.textContent = 'Merging…';
     try{
       await adminApi(`/cricket/players/merge`, {
         method: 'PUT',
-        body: JSON.stringify({ matchId, wrongPlayer: data.wrongPlayer, correctPlayer: data.correctPlayer })
+        body: JSON.stringify({ matchId, matchIds: chosen.map(m => m.matchId), wrongPlayer: data.wrongPlayer, correctPlayer: data.correctPlayer })
       });
-      emToast(`Merged ${data.wrongPlayer} into ${data.correctPlayer}`);
+      emToast(`Merged ${data.wrongPlayer} into ${data.correctPlayer} (${chosen.length} ${plural(chosen.length,'match','matches')})`);
       await loadDeliveryList(matchId);
       openOwnerPanel();
     }catch(err){
       emToast(err.message || 'Could not merge players');
-      btn.disabled = false; btn.textContent = 'Confirm Merge';
+      refresh();
     }
   };
 }
