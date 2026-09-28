@@ -856,6 +856,76 @@
     #batting-card th:nth-child(7), #bowling-card th:nth-child(7){ width:28px; }
     #tables-grid tbody td:first-child{ font-size:12px; }
   }
+
+  /* ---- Dismissal line: label (c / b / st) muted, names clear ---- */
+  #tables-grid .howout{ display:flex; flex-wrap:wrap; column-gap:10px; row-gap:1px; margin-top:4px; font-size:11.5px; line-height:1.4; font-weight:500; color:var(--text-faint); }
+  #tables-grid .howout .ho-part{ display:inline-block; max-width:100%; overflow-wrap:break-word; }
+  #tables-grid .howout em{ font-style:normal; font-weight:600; color:var(--text-faint); margin-right:1px; }
+  #tables-grid .howout strong{ font-weight:700; color:var(--text-dim); }
+  #tables-grid tbody td:first-child{ padding-top:11px; padding-bottom:11px; }
+  #tables-grid tbody td{ height:auto; min-height:56px; }
+  @media (max-width:640px){
+    #tables-grid .howout{ font-size:11px; column-gap:8px; margin-top:3px; }
+    #tables-grid tbody td:first-child{ padding-top:10px; padding-bottom:10px; }
+    #tables-grid tbody td{ height:auto; }
+  }
+
+  /* ============================================================
+     PHONE LAYOUT (<= 560px): each player becomes a small card row
+        NAME (full width)
+        dismissal:  c Fielder   b Bowler
+        R  B  4s  6s  SR                    [clip]
+     so a long name never has to share a line with the figures.
+     Laptop / tablet keep the normal table above.
+     ============================================================ */
+  @media (max-width:560px){
+    #tables-grid thead{ display:none; }
+    #tables-grid table, #tables-grid tbody{ display:block; width:100%; }
+    #tables-grid tbody tr{
+      display:grid; grid-template-columns:repeat(5, minmax(0,1fr)) 38px; column-gap:6px; align-items:end;
+      padding:13px 2px 11px; border-bottom:1px solid var(--border-soft);
+    }
+    #tables-grid tbody tr:last-child{ border-bottom:none; }
+    #tables-grid tbody td{ display:block; border:none; padding:0; height:auto; min-height:0; min-width:0; }
+    #tables-grid tbody td:first-child{
+      grid-column:1 / -1; padding:0 0 9px; min-width:0; font-size:14px; line-height:1.3; overflow-wrap:break-word;
+    }
+    #tables-grid tbody td.num{ text-align:left; font-size:14px; font-weight:700; color:var(--text); line-height:1.2; }
+    #tables-grid tbody td.num::before{
+      display:block; margin-bottom:3px; font-size:9.5px; font-weight:700; letter-spacing:.4px;
+      text-transform:uppercase; color:var(--text-faint);
+    }
+    #batting-card td:nth-child(2)::before{ content:'Runs'; }
+    #batting-card td:nth-child(3)::before{ content:'Balls'; }
+    #batting-card td:nth-child(4)::before{ content:'4s'; }
+    #batting-card td:nth-child(5)::before{ content:'6s'; }
+    #batting-card td:nth-child(6)::before{ content:'SR'; }
+    #bowling-card td:nth-child(2)::before{ content:'Overs'; }
+    #bowling-card td:nth-child(3)::before{ content:'Mdns'; }
+    #bowling-card td:nth-child(4)::before{ content:'Runs'; }
+    #bowling-card td:nth-child(5)::before{ content:'Wkts'; }
+    #bowling-card td:nth-child(6)::before{ content:'Econ'; }
+    /* the headline figure of each row: runs for batters, wickets for bowlers */
+    #batting-card td:nth-child(2), #bowling-card td:nth-child(5){ font-size:17px; color:var(--card-accent, var(--text)); }
+    #tables-grid tbody td.clip-col{ text-align:right; width:auto; justify-self:end; align-self:end; }
+    #tables-grid .clip-btn{ width:32px; height:32px; }
+    #tables-grid tbody td.empty-state{ grid-column:1 / -1; padding:14px 0; }
+    #tables-grid .howout{ font-size:12px; margin-top:4px; column-gap:12px; }
+    #tables-grid .not-out-tag{ font-size:12px; margin-top:4px; }
+    #tables-grid > .card{ padding:14px 12px 6px; }
+  }
+
+  @media (max-width:560px){
+    #tables-grid tbody tr{ grid-template-columns:repeat(4, minmax(0,1fr)) minmax(0,1.35fr) 34px; column-gap:4px; }
+    #tables-grid tbody td.num{ white-space:nowrap; letter-spacing:-.1px; }
+  }
+  @media (max-width:380px){
+    #tables-grid tbody td.num{ font-size:13px; }
+    #batting-card td:nth-child(2), #bowling-card td:nth-child(5){ font-size:15px; }
+    #tables-grid tbody td.num::before{ font-size:9px; letter-spacing:.2px; }
+    #tables-grid .clip-btn{ width:30px; height:30px; }
+    #tables-grid tbody tr{ grid-template-columns:repeat(4, minmax(0,1fr)) minmax(0,1.4fr) 32px; column-gap:3px; }
+  }
   /* Captain / Wicketkeeper role tags — small pills next to a player's name,
      same treatment wherever a name appears (tables + at-the-crease cards).
      Mirrors the badges already shown in the scoring panel. */
@@ -2701,10 +2771,34 @@ function applyScorecardTeams(battingTeam, bowlingTeam){
   set('batting-card', 'batting-team-chip', battingTeam, 'var(--accent)');
   set('bowling-card', 'bowling-team-chip', bowlingTeam, 'var(--six)');
 }
+
+/* Dismissal line split into readable chunks:  [c Fielder]  [b Bowler]
+   Each chunk stays together and wraps as a unit, so on a phone a long
+   fielder / bowler name drops to its own line instead of being cut or
+   squeezed against the figures. Text itself is unchanged. */
+function howOutHtml(text){
+  const raw = String(text || 'out').trim();
+  const sfxM = raw.match(/\s*\((?:Wd|Nb)\)\s*$/i);
+  const sfx = sfxM ? sfxM[0].trim() : '';
+  const core = sfxM ? raw.slice(0, raw.length - sfxM[0].length).trim() : raw;
+  const part = (tag, name) => `<span class="ho-part"><em>${escapeHtml(tag)}</em>${name ? ' <strong>' + escapeHtml(name) + '</strong>' : ''}</span>`;
+  let parts = null, m;
+  if((m = core.match(/^c\s*&\s*b\s+(.+)$/i)))            parts = [part('c & b', m[1])];
+  else if((m = core.match(/^c\s+(.+?)\s+b\s+(.+)$/i)))    parts = [part('c', m[1]), part('b', m[2])];
+  else if((m = core.match(/^c\s+b\s+(.+)$/i)))            parts = [part('c', ''), part('b', m[1])];
+  else if((m = core.match(/^st\s+(.+?)\s+b\s+(.+)$/i)))   parts = [part('st', m[1]), part('b', m[2])];
+  else if((m = core.match(/^st\s+b\s+(.+)$/i)))           parts = [part('st', ''), part('b', m[1])];
+  else if((m = core.match(/^run out\s*\((.+)\)$/i)))      parts = [part('run out', m[1])];
+  else if((m = core.match(/^(lbw|hit wkt|hit wicket)\s+b\s+(.+)$/i))) parts = [part(m[1].toLowerCase(), ''), part('b', m[2])];
+  else if((m = core.match(/^b\s+(.+)$/i)))                parts = [part('b', m[1])];
+  if(!parts) return `<span class="howout"><span class="ho-part">${escapeHtml(raw)}</span></span>`;
+  if(sfx) parts.push(`<span class="ho-part"><em>${escapeHtml(sfx.replace(/[()]/g,''))}</em></span>`);
+  return `<span class="howout">${parts.join('')}</span>`;
+}
 function battingStatusHtml(b){
   const main = b.retiredHurt
     ? `<span class="howout">${escapeHtml(b.howOut || 'retired hurt')}</span>`
-    : (b.out ? `<span class="howout">${escapeHtml(howOutFull(b))}</span>` : '<span class="not-out-tag">not out</span>');
+    : (b.out ? howOutHtml(howOutFull(b)) : '<span class="not-out-tag">not out</span>');
   const n = b.retiredHurtCount || 0;
   const note = !b.retiredHurt && n > 0 ? `<span class="howout">(retired hurt${n > 1 ? ` ${n} times` : ''}, returned)</span>` : '';
   return main + note;
