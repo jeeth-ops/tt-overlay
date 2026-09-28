@@ -10148,6 +10148,16 @@ function makeProDropdown(selectEl, opts){
         row.innerHTML = `<span class="pro-dd-name">${escapeHtmlPanel(it.label)}</span>` +
           (it.sub ? `<span class="pro-dd-sub">${escapeHtmlPanel(it.sub)}</span>` : '');
         row.addEventListener('click', () => {
+          // The caught / stumped / run-out selects ship with only one empty
+          // <option>, so assigning a player id that has no matching option
+          // silently reset .value to '' and the fielder name was lost (the
+          // scorecard then showed "c b BOWLER"). Make sure an option exists first.
+          if(!Array.prototype.some.call(selectEl.options, o => o.value === String(it.id))){
+            const opt = document.createElement('option');
+            opt.value = it.id;
+            opt.textContent = it.label;
+            selectEl.appendChild(opt);
+          }
           selectEl.value = it.id;
           selectEl.dispatchEvent(new Event('change', { bubbles: true }));
           trigger.querySelector('span').textContent = it.label;
