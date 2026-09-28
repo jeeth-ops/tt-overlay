@@ -12413,7 +12413,10 @@ async function openNewMatchModal(){
   const t = (currentMatchTournament() || state.leagueName || '').trim();
   const sub = document.getElementById('newmatch-sub');
   sub.textContent = (t ? `Tournament: ${t}. ` : '') + 'Saved matches stay exactly as they are — nothing is deleted or overwritten. If the match on this panel has scoring, it is saved to its own tournament first (and can be resumed later); then a fresh match starts.';
-  if(t) await syncLeagueFromServer(t); // make sure other laptops' matches are included
+  // Teams are read from the tournament the dropdown is showing (state.leagueName),
+  // which can differ from the live match's own tournament — sync THAT one.
+  const readFrom = (state.leagueName || '').trim();
+  if(readFrom) await syncLeagueFromServer(readFrom); // make sure other laptops' matches are included
   newMatchTeams = collectTournamentTeams();
   const a = document.getElementById('newmatch-team-a');
   const b = document.getElementById('newmatch-team-b');
@@ -12451,11 +12454,27 @@ document.getElementById('newmatch-team-b').addEventListener('change', () => rend
 // canonical roster. Saved ids are kept as-is; only players that have no saved
 // id (very old matches) are looked up by name through the same server
 // find-or-create the squad "+ Add" uses. Returns a plain object.
+async function canonicalIdMap(ids){
+  const map = {};
+  ids = ids.filter(Boolean);
+  if(!ids.length || !currentOwnerUid()) return map;
+  try{
+    const res = await fetch(withUid('/api/players/canonicalize'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids })
+    });
+    const data = await res.json();
+    if(data && data.success && data.map) return data.map;
+  }catch(e){ /* older server / offline — keep the saved ids as they are */ }
+  return map;
+}
 async function prepareTeamForNewMatch(team){
   const players = [];
   let unverified = 0;
+  // A saved id that was later merged into another profile follows the merge.
+  const canon = await canonicalIdMap(team.players.map(p => p.id));
   for(const pl of team.players){
-    let id = pl.id;
+    let id = canon[pl.id] || pl.id;
     if(!id){
       id = await resolveOrCreatePlayerIdStrict(pl.name);
       if(!id){ id = genPlayerId(); unverified++; }
