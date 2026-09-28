@@ -515,6 +515,34 @@
   .tpm-stat-chip.bowl .tpm-chip-icon{ background:color-mix(in srgb, var(--wicket) 18%, transparent); color:var(--wicket); }
   .tpm-stat-chip .tpm-chip-text{ font-size:11.5px; font-weight:700; font-family:var(--font-display); white-space:nowrap; }
   .tpm-stat-chip .tpm-chip-text .dim{ color:var(--text-dim); font-weight:600; font-family:var(--font-body); }
+
+  /* ---------- Tournament v2: match cards, sticky tabs, points table ---------- */
+  .mc-list{ display:flex; flex-direction:column; gap:8px; }
+  .match-row.mcard{ display:flex; flex-direction:column; align-items:stretch; gap:6px; padding:12px 14px; background:var(--panel-2); border:1px solid var(--border-soft); border-radius:var(--radius-md); transition:transform .18s ease, border-color .18s ease; }
+  .match-row.mcard:last-child{ border-bottom:1px solid var(--border-soft); }
+  @media (hover:hover){ .match-row.mcard:hover{ transform:translateY(-2px); border-color:var(--accent); border-radius:var(--radius-md); } }
+  .match-row.mcard:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .mc-hidden{ display:none !important; }
+  .mc-team{ display:flex; align-items:center; gap:10px; min-width:0; color:var(--text-dim); }
+  .mc-team.win{ color:var(--text); }
+  .mc-badge{ flex:none; width:28px; height:28px; border-radius:50%; display:grid; place-items:center; font:800 10.5px var(--font-display); color:#fff; overflow:hidden; }
+  .mc-badge img{ width:100%; height:100%; object-fit:cover; }
+  .mc-name{ flex:1; min-width:0; font-weight:700; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .mc-team.win .mc-name{ font-weight:800; }
+  .mc-score{ flex:none; font:800 15px var(--font-display); }
+  .mc-score small{ font:600 11px var(--font-body); color:var(--text-faint); margin-left:5px; }
+  .mc-score em{ font:600 12px var(--font-body); color:var(--text-faint); font-style:normal; }
+  .mc-foot{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-top:4px; padding-top:8px; border-top:1px dashed var(--border-soft); }
+  .mc-result{ font-size:12px; font-weight:700; color:var(--accent); display:inline-flex; align-items:center; gap:6px; }
+  .mc-result.live{ color:var(--live); }
+  .mc-meta{ font-size:11px; color:var(--text-faint); }
+  .mc-more{ display:block; width:100%; margin-top:10px; padding:11px; min-height:44px; border-radius:var(--radius-sm); border:1px solid var(--border); background:var(--panel-2); color:var(--text); font-weight:700; font-size:12.5px; cursor:pointer; }
+  .upcoming-note{ text-align:center; font-size:12px; color:var(--text-faint); padding:2px 0 6px; }
+  .section-title{ flex-wrap:wrap; }
+  #tabs{ position:sticky; top:0; z-index:30; padding:6px 0; background:color-mix(in srgb, var(--bg) 86%, transparent); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px); }
+  .tab-btn{ min-height:42px; }
+  #points-table th:first-child, #points-table td:first-child{ position:sticky; left:0; z-index:2; background:var(--panel); box-shadow:1px 0 0 var(--border-soft); white-space:nowrap; }
+  @media (max-width:640px){ .mc-score{ font-size:14px; } .mc-name{ font-size:13.5px; } .watch-btn{ padding:9px 14px; } }
 </style>
 </head>
 <body>
@@ -659,11 +687,38 @@ function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&'
 function fmtOvers(o,b){ return `${o||0}.${b||0}`; }
 function strikeRate(r,b){ return b?((r/b)*100).toFixed(1):'0.0'; }
 function economy(r,o,b){ const of=(o||0)+((b||0)/6); return of?(r/of).toFixed(2):'0.00'; }
+const PAGE_STEP = 10;
+function winnerSide(m){
+  const w = m.winningTeam; if(!w) return '';
+  if(w === 'A' || w === 'B') return w;
+  const k = String(w).toLowerCase();
+  const eq = t => t && [t.name, t.short, t.id, t.teamId].some(x => x != null && String(x).toLowerCase() === k);
+  return eq(m.teamA) ? 'A' : eq(m.teamB) ? 'B' : '';
+}
 function resultText(m){
-  if(m.winningTeam==='TIE') return 'Match Tied';
-  if(m.winningTeam==='A') return `${m.teamA.short||m.teamA.name} won`;
-  if(m.winningTeam==='B') return `${m.teamB.short||m.teamB.name} won`;
+  if(m.matchResultText) return m.matchResultText;            // operator's own line always wins
+  const w = m.winningTeam;
+  if(w === 'TIE') return 'Match Tied';
+  if(w === 'DRAW') return 'Match Drawn';
+  const side = winnerSide(m);
+  if(side){
+    const win = side === 'A' ? m.teamA : m.teamB, ws = (side === 'A' ? m.scoreA : m.scoreB) || {}, ls = (side === 'A' ? m.scoreB : m.scoreA) || {};
+    const nm = win.short || win.name;
+    const first = (m.inningsArchive || []).slice().sort((a, b) => (a.no || 0) - (b.no || 0))[0];
+    if(first && first.team){
+      if(first.team === side){ const d = (ws.runs || 0) - (ls.runs || 0); if(d > 0) return `${nm} won by ${d} run${d === 1 ? '' : 's'}`; }
+      else { const left = 10 - (ws.wickets || 0); if(left > 0) return `${nm} won by ${left} wicket${left === 1 ? '' : 's'}`; }
+    }
+    return `${nm} won`;
+  }
+  if(w) return 'Completed';                                   // finished, but result value not recognised — never "In progress"
   return 'In progress';
+}
+function teamBadgeHtml(t){
+  const nm = (t && (t.short || t.name)) || '?', url = t && (t.logo || t.logoUrl);
+  const bg = (t && t.color) || avatarColor(nm);
+  return url ? `<span class="mc-badge"><img src="${escapeHtml(url)}" alt="" loading="lazy" decoding="async"></span>`
+             : `<span class="mc-badge" style="background:${escapeHtml(bg)}">${escapeHtml(initials(nm))}</span>`;
 }
 
 /* ---- Leaderboard visual helpers (avatars, medals, form bars, cap strip) ---- */
@@ -923,7 +978,8 @@ function renderPortal(data, token){
     <button class="tab-btn" data-tab="leaderboards">Leaderboards</button>
   </div>`;
 
-  const liveHtml = isLive ? `
+  // Generic "Live Now" card only when there is no in-progress match to show scores for (avoids the duplicate).
+  const liveHtml = (isLive && !inProgress.length) ? `
     <div class="card"><div class="section-title"><span class="dash"></span>Live Now</div>
       <div class="live-card">
         <div><div class="match-teams">Match in progress</div><div class="match-meta">Follow ball-by-ball updates</div></div>
@@ -931,30 +987,34 @@ function renderPortal(data, token){
       </div>
     </div>` : '';
 
-  const matchRow = (m) => `
-    <div class="match-row" data-goto-match="${escapeHtml(m.matchId)}">
-      <div>
-        <div class="match-teams">${escapeHtml(m.teamA.short||m.teamA.name)} vs ${escapeHtml(m.teamB.short||m.teamB.name)}</div>
-        <div class="match-meta">${escapeHtml(m.venue||'')}${m.venue?' · ':''}${m.savedAt ? new Date(m.savedAt).toLocaleDateString() : ''}</div>
-      </div>
-      <div class="match-score">
-        <div class="tabnum">${m.scoreA.runs}-${m.scoreA.wickets} / ${m.scoreB.runs}-${m.scoreB.wickets}</div>
-        <div class="match-result">${escapeHtml(resultText(m))}</div>
-      </div>
-    </div>`;
+  const teamLine = (m, side, live) => {
+    const t = side === 'A' ? m.teamA : m.teamB, sc = (side === 'A' ? m.scoreA : m.scoreB) || {};
+    const yet = live && !sc.runs && !sc.wickets && !sc.overs && !sc.balls;
+    const ov = (sc.overs != null || sc.balls != null) && !yet ? `<small>(${fmtOvers(sc.overs, sc.balls)})</small>` : '';
+    return `<div class="mc-team${winnerSide(m) === side ? ' win' : ''}">${teamBadgeHtml(t)}<span class="mc-name">${escapeHtml(t.name || t.short)}</span>
+      <span class="mc-score tabnum">${yet ? '<em>Yet to bat</em>' : `${sc.runs || 0}/${sc.wickets || 0}${ov}`}</span></div>`;
+  };
+  const matchRow = (m, hidden) => { const live = !m.winningTeam; return `
+    <div class="match-row mcard${hidden ? ' mc-hidden' : ''}" data-goto-match="${escapeHtml(m.matchId)}" role="link" tabindex="0">
+      ${teamLine(m, 'A', live)}${teamLine(m, 'B', live)}
+      <div class="mc-foot"><span class="mc-result${live ? ' live' : ''}">${live ? '<i class="lv-dot"></i>' : ''}${escapeHtml(resultText(m))}</span>
+        <span class="mc-meta">${escapeHtml(m.venue || '')}${m.venue && m.savedAt ? ' · ' : ''}${m.savedAt ? new Date(m.savedAt).toLocaleDateString() : ''}</span></div>
+    </div>`; };
+  const PAGE = 10;
+  const moreBtn = n => n > PAGE ? `<button class="mc-more" data-more="1">Show more · ${n - PAGE} left</button>` : '';
 
   const previousHtml = finished.length
-    ? `<div class="card"><div class="section-title"><span class="dash"></span>Previous Matches</div>${finished.slice().reverse().map(matchRow).join('')}</div>`
+    ? `<div class="card"><div class="section-title"><span class="dash"></span>Previous Matches</div><div class="mc-list">${finished.slice().reverse().map((m, i) => matchRow(m, i >= PAGE)).join('')}</div>${moreBtn(finished.length)}</div>`
     : `<div class="card"><div class="empty-state">No completed matches yet.</div></div>`;
 
   const inProgressHtml = inProgress.length
-    ? `<div class="card"><div class="section-title"><span class="dash"></span>In Progress</div>${inProgress.map(matchRow).join('')}</div>` : '';
+    ? `<div class="card"><div class="section-title"><span class="dash"></span>${isLive ? 'Live Now' : 'In Progress'}${isLive ? `<a class="watch-btn" style="margin-left:auto" href="/cricket-scorecard?room=${encodeURIComponent(data.live.roomId)}">Watch Live →</a>` : ''}</div><div class="mc-list">${inProgress.map(m => matchRow(m)).join('')}</div></div>` : '';
 
   // Upcoming fixtures aren't part of the current data model (the panel has
   // no "schedule a future match" feature yet — matches only exist once
   // they've started being scored) — shown honestly as empty rather than
   // faked.
-  const upcomingHtml = `<div class="card"><div class="section-title"><span class="dash"></span>Upcoming Matches</div><div class="empty-state">No upcoming fixtures scheduled yet.</div></div>`;
+  const upcomingHtml = `<div class="upcoming-note">Upcoming: no fixtures scheduled yet.</div>`;
 
   const matchesPanel = `<div class="tab-panel active" data-panel="matches">${liveHtml}${inProgressHtml}${previousHtml}${upcomingHtml}</div>`;
 
@@ -1013,6 +1073,12 @@ function renderPortal(data, token){
     c.querySelector(`.tab-panel[data-panel="${btn.dataset.tab}"]`).classList.add('active');
     moveTabIndicator(btn);
   }));
+  c.querySelectorAll('[data-more]').forEach(btn => btn.addEventListener('click', () => {
+    const box = btn.closest('.card');
+    [...box.querySelectorAll('.mc-hidden')].slice(0, PAGE_STEP).forEach(r => r.classList.remove('mc-hidden'));
+    if(!box.querySelector('.mc-hidden')) btn.remove(); else btn.textContent = `Show more · ${box.querySelectorAll('.mc-hidden').length} left`;
+  }));
+  c.querySelectorAll('.mcard').forEach(r => r.addEventListener('keydown', e => { if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); r.click(); } }));
   requestAnimationFrame(() => moveTabIndicator(c.querySelector('.tab-btn.active')));
   c.classList.remove('in'); void c.offsetWidth; c.classList.add('in');
   c.querySelectorAll('[data-goto-match]').forEach(row => row.addEventListener('click', (e) => {
