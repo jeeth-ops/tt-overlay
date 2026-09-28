@@ -2930,7 +2930,14 @@ async function loadMatchSnapshot(matchId){
     // Prefer the match's own original capture-time room id for clips
     // (see getClipMatchId() above). Falls back to the URL's matchId if
     // the backend doesn't send one yet.
+    const _prevClipScope = clipScopeOverride;
     clipScopeOverride = match.roomId || data.roomId || null;
+    // Highlights were first requested BEFORE this snapshot arrived, i.e. with the URL's
+    // tournament matchId — not the room id the clips were actually recorded under — so a
+    // finished match's Highlights stayed empty (the player/team clip icons worked only
+    // because they open later, after this line has run). Re-fetch as soon as the real
+    // clip scope is known, or while nothing has loaded yet.
+    if(typeof renderHighlights === 'function') renderHighlights();
     // NOTE: a saved match record (from /api/public/tournament/:token/match/:id
     // or /api/public/match/:id) is shaped like a FINISHED scorecard —
     // teamA/teamB/scoreA/scoreB/battingCard:{A,B}/bowlingCard:{A,B}/... —
@@ -4952,8 +4959,8 @@ function matchStatsForPlayer(name){
 // scorecard just never asked for that page. Now pages through with
 // skip/limit until the server returns a short page (fewer than asked),
 // so the WHOLE match's clips end up in the map regardless of count.
-async function fetchMatchClips(type, includeHidden){
-  const matchId = getClipMatchId();
+async function fetchMatchClips(type, includeHidden, matchIdOverride){
+  const matchId = matchIdOverride || getClipMatchId();
   if(!matchId) return [];
   const pageSize = 100;
   const all = [];
@@ -4964,6 +4971,7 @@ async function fetchMatchClips(type, includeHidden){
       if(type) qs.set('type', type);
       if(includeHidden) qs.set('all', '1');
       const res = await apiFetch(`${clipApiBase()}/api/clips/match/${encodeURIComponent(matchId)}?${qs.toString()}`);
+      if(page === 0) window.__hlDiag = { matchId, status: res.status };
       if(!res.ok){ console.warn('[Highlights] clips request failed', res.status, matchId); break; }
       const data = await res.json();
       const batch = (data && data.clips) || [];
@@ -5028,10 +5036,33 @@ function hlNormalize(clips){
   return out;
 }
 
+let hlReqSeq = 0;
 async function renderHighlights(){
-  const clips = await fetchMatchClips(); // whole match; innings/category filtering happens client-side
+  // Several callers fire this at once (page init with the URL's matchId, the snapshot with the
+  // real clip room id, the auth callback). Only the NEWEST request may write the result — an
+  // older, slower response (e.g. the URL-id one that found nothing) must never overwrite it.
+  const seq = ++hlReqSeq;
+  const primary = getClipMatchId();
+  let clips = await fetchMatchClips(undefined, false, primary); // whole match; innings/category filtering is client-side
+  const diag = window.__hlDiag;
+  // Clips are tagged with the live room id, but a saved match may be addressed by a different
+  // id in the URL — if the first id has nothing, try the other one before giving up.
+  const alt = getMatchId();
+  if(!clips.length && alt && alt !== primary){
+    clips = await fetchMatchClips(undefined, false, alt);
+  }
+  if(seq !== hlReqSeq) return;
+  window.__hlDiagFinal = { tried: [primary, alt].filter(Boolean), first: diag, count: clips.length };
   hlClips = hlNormalize(clips);
-  hlPaint();
+  hlLastKey = null;
+  try{ hlPaint(); }
+  catch(err){
+    // Never leave a stale/empty card if painting throws — say what broke and fall back to the plain list.
+    console.error('[Highlights] paint failed', err);
+    window.__hlDiagFinal = Object.assign(window.__hlDiagFinal || {}, { paintError: String(err && err.message || err) });
+    const list = document.getElementById('highlights-list');
+    if(list && hlClips.length){ list.style.display = 'block'; list.innerHTML = hlClips.map(clipRowHtml).join(''); wireClipRows(list); }
+  }
 }
 
 function hlPaint(){
@@ -5082,7 +5113,8 @@ function hlPaint(){
 
   // cards
   if(!dataset.length){
-    list.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">${hlClips.length || total > 1 ? 'No highlights yet for this innings' : 'No highlights yet — clips appear here as 4s, 6s and wickets happen.'}</div>`;
+    const dbg = true ? `<div style="font-size:11px;margin-top:8px;opacity:.7;word-break:break-all;">debug: ${escapeHtml(JSON.stringify(window.__hlDiagFinal || {}))}</div>` : '';
+    list.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">${hlClips.length || total > 1 ? 'No highlights yet for this innings' : 'No highlights yet — clips appear here as 4s, 6s and wickets happen.'}${dbg}</div>`;
     document.getElementById('hl-more').innerHTML = '';
     return;
   }
