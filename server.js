@@ -131,6 +131,10 @@ let templatesCollection = null;
 let auditLogsCollection = null;
 let settingsCollection = null;
 let matchRecordsCollection = null;
+// 🛟 One full panel-state snapshot PER MATCH (keyed by the match's permanent
+// tournamentMatchId) — so "Resume" never depends on whatever match currently
+// happens to occupy that match's live room. See /api/cricket/match-resume-state.
+let matchPanelStatesCollection = null;
 let playersCollection = null;
 // 🛟 Append-only version history of every match record (see
 // versionMatchRecord below) — the safety net that makes any overwrite of a
@@ -171,6 +175,13 @@ async function connectMongo() {
         // the "old matches won't load" symptom this fixes. Matches now
         // scale to unlimited history with no per-owner size ceiling.
         matchRecordsCollection = mongoDb.collection('matchRecords');
+        try {
+            matchPanelStatesCollection = mongoDb.collection('matchPanelStates');
+            await matchPanelStatesCollection.createIndex({ matchId: 1 }, { unique: true });
+        } catch (e) {
+            console.log('matchPanelStates init error (Resume fallback disabled):', e.message || e);
+            matchPanelStatesCollection = null;
+        }
         // 🌟 GLOBAL PLAYER PROFILES — one permanent playerId per real person,
         // per owner account, instead of every ball/clip/stats query matching
         // purely on a lowercased name string (playerKey). A playerId doc
@@ -1760,6 +1771,187 @@ app.get('/api/cricket/room-state/:roomId', async (req, res) => {
         res.json({ success: true, roomId, state: cs });
     } catch (err) {
         console.log('Room state fetch error:', err.message || err);
+        res.status(500).json({ success: false, error: 'Could not load match' });
+    }
+});
+
+// ================================================================
+// 🛟 RESUME FALLBACK — a saved match whose live room no longer holds it.
+//
+// "Resume" first asks /api/cricket/room-state/:roomId. That only works while
+// the match's room STILL holds that match. A room can end up holding a
+// different match (matches saved before every new match got its own room,
+// a panel opened on another match's ?room= link, ...), and then the panel
+// used to refuse: "this match's room now holds a different match".
+//
+// GET /api/cricket/match-resume-state/:matchId?uid= returns the best copy of
+// the match's full panel state that still exists, without touching any room:
+//   1. the per-match snapshot (kept for every match from now on)
+//   2. otherwise a rebuild from the saved match record (+ its ball log when
+//      that room only ever held this one match)
+// The result is only ever LOADED into the panel; nothing is written anywhere.
+// ================================================================
+function panelStateFromSavedMatch(rec, balls, prevRev) {
+    const squadOf = (side) => {
+        const sq = rec['squad' + side];
+        const base = { ...(rec['team' + side] || {}) };
+        if (sq && Array.isArray(sq.players)) {
+            base.players = sq.players.map(p => ({ ...p }));
+            base.captainId = sq.captainId || null;
+            base.wkId = sq.wkId || null;
+        }
+        return base;
+    };
+    const archive = (rec.inningsArchive || []).map(i => ({ ...i })).sort((a, b) => a.no - b.no);
+    const lastArch = archive.length ? archive[archive.length - 1] : null;
+    const lastBall = balls.length ? balls[balls.length - 1] : null;
+    const inningsNumber = Math.max(lastBall ? (Number(lastBall.innings) || 1) : 1, lastArch ? lastArch.no + 1 : 1);
+
+    let battingTeam;
+    if (lastBall && (Number(lastBall.innings) || 1) === inningsNumber) battingTeam = lastBall.battingTeam === 'B' ? 'B' : 'A';
+    else if (lastArch) battingTeam = lastArch.team === 'A' ? 'B' : 'A';
+    else {
+        const rows = (side) => ((rec.battingCard || {})[side] || []).some(r => (r.inningsNo || 1) === inningsNumber);
+        battingTeam = (!rows('A') && rows('B')) ? 'B' : 'A';
+    }
+    const bowlingTeam = battingTeam === 'A' ? 'B' : 'A';
+
+    // Live innings = the team's saved total minus the innings already archived.
+    const tot = (battingTeam === 'A' ? rec.scoreA : rec.scoreB) || {};
+    const mine = archive.filter(i => i.team === battingTeam);
+    const runs = Math.max(0, (Number(tot.runs) || 0) - mine.reduce((n, i) => n + (Number(i.runs) || 0), 0));
+    const legal = Math.max(0, oversStrToBallsCount(tot.overs) - mine.reduce((n, i) => n + oversStrToBallsCount(i.overs), 0));
+    const wickets = Number(tot.wickets) || 0;
+
+    // The two at the crease and the live bowler are held as tiles; the saved
+    // record carries a COPY of them as card rows — take them back out of the
+    // cards so they are not counted twice once play carries on.
+    const batRows = ((rec.battingCard || {})[battingTeam] || []).map(r => ({ ...r }));
+    const bowlRows = ((rec.bowlingCard || {})[bowlingTeam] || []).map(r => ({ ...r }));
+    const inLive = (r) => (r.inningsNo || 1) === inningsNumber;
+    const takeBatter = (name) => {
+        if (!name) return null;
+        const i = batRows.findIndex(r => r.name === name && inLive(r) && !r.out && !r.retiredHurt);
+        return i >= 0 ? batRows.splice(i, 1)[0] : null;
+    };
+    const stName = lastBall ? lastBall.striker : '';
+    const nsName = lastBall ? lastBall.nonStriker : '';
+    const dismissedLast = !!(lastBall && lastBall.dismissal);
+    const stRow = takeBatter(stName), nsRow = takeBatter(nsName);
+    const tile = (name, r) => ({ name: name || '', runs: (r && r.runs) || 0, balls: (r && r.balls) || 0, fours: (r && r.fours) || 0, sixes: (r && r.sixes) || 0 });
+    let bowlTile = { name: '', overs: 0, balls: 0, maidens: 0, runs: 0, wickets: 0, runsThisOver: 0, wicketsThisOver: 0 };
+    if (lastBall && lastBall.bowler) {
+        let bi = -1;
+        bowlRows.forEach((r, idx) => { if (r.name === lastBall.bowler && inLive(r)) bi = idx; });
+        if (bi >= 0) {
+            const r = bowlRows.splice(bi, 1)[0];
+            bowlTile = { ...bowlTile, ...r, runsThisOver: 0, wicketsThisOver: 0 };
+        } else bowlTile.name = lastBall.bowler;
+    }
+
+    // Ball log — same shape the panel keeps.
+    const running = {};
+    const ballLog = balls.map(b => {
+        const inn = Number(b.innings) || 1;
+        if (!running[inn]) running[inn] = { runs: 0, wickets: 0 };
+        running[inn].runs += b.runs || 0;
+        if (b.dismissal) running[inn].wickets++;
+        return {
+            innings: inn, battingTeam: b.battingTeam === 'B' ? 'B' : 'A',
+            over: `${b.over}.${b.ballInOver}`, ballType: b.kind,
+            striker: b.striker || '', nonStriker: b.nonStriker || '', bowler: b.bowler || '',
+            runs: b.runs || 0, isWicket: !!b.dismissal,
+            dismissal: b.dismissal ? (b.dismissal.type || 'Out') : null,
+            dismissalType: b.dismissal ? (b.dismissal.type || null) : null,
+            fielderName: b.dismissal ? (b.dismissal.fielder || null) : null,
+            scoreAfter: `${running[inn].runs}-${running[inn].wickets}`,
+            timestamp: b.timestamp || 0
+        };
+    });
+
+    const finished = !!rec.winningTeam;
+    const first = archive.find(i => i.no === 1);
+    const target = (!finished && inningsNumber === 2 && first && !/test/i.test(rec.format || '')) ? (Number(first.runs) || 0) + 1 : null;
+
+    return {
+        format: rec.format || 'T20',
+        venue: rec.venue || '',
+        streamUrl: rec.streamUrl || '',
+        teamA: squadOf('A'),
+        teamB: squadOf('B'),
+        battingTeam,
+        inningsNumber,
+        score: { runs, wickets, overs: Math.floor(legal / 6), balls: legal % 6 },
+        target,
+        striker: dismissedLast ? tile('', null) : tile(stName, stRow),
+        nonStriker: tile(nsName === stName ? '' : nsName, nsRow),
+        bowler: bowlTile,
+        battingCard: { A: battingTeam === 'A' ? batRows : ((rec.battingCard || {}).A || []), B: battingTeam === 'B' ? batRows : ((rec.battingCard || {}).B || []) },
+        bowlingCard: { A: bowlingTeam === 'A' ? bowlRows : ((rec.bowlingCard || {}).A || []), B: bowlingTeam === 'B' ? bowlRows : ((rec.bowlingCard || {}).B || []) },
+        extras: rec.extras || { A: {}, B: {} },
+        fallOfWickets: rec.fallOfWickets || { A: [], B: [] },
+        inningsArchive: archive,
+        ballLog,
+        matchWinnerKey: rec.winningTeam || null,
+        matchResultText: rec.matchResultText || '',
+        milestonesHit: rec.winningTeam ? { 'match-result': true } : {},
+        tournamentMatchId: rec.matchId,
+        // High revision so a panel that joins the room adopts THIS, instead of
+        // the other match that room now holds (see the liveCricketScore handler).
+        localRev: (Number(prevRev) || 0) + 100000,
+        localRevAt: Date.now(),
+        rebuiltFromRecordAt: Date.now()
+    };
+}
+
+app.get('/api/cricket/match-resume-state/:matchId', async (req, res) => {
+    const matchId = String(req.params.matchId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    const ownerUid = ownerUidFrom(req);
+    if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
+    if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
+    if (!matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const rec = await matchRecordsCollection.findOne({ ownerUid, matchId });
+        if (!rec) return res.status(404).json({ success: false, error: 'Match not found' });
+
+        // 1) the match's own snapshot — unless the owner corrected the saved
+        //    scorecard AFTER it was taken (then the record is the newer truth).
+        if (matchPanelStatesCollection) {
+            const snap = await matchPanelStatesCollection.findOne({ matchId });
+            const st = snap && snap.state;
+            const correctedAt = rec.ownerCorrectedAt ? new Date(rec.ownerCorrectedAt).getTime() : 0;
+            if (st && st.battingCard && Array.isArray(st.ballLog) && st.tournamentMatchId === matchId
+                && !(correctedAt && correctedAt > (snap.updatedAt || 0))) {
+                return res.json({ success: true, source: 'snapshot', state: st });
+            }
+        }
+
+        // 2) rebuild from the saved record. The ball log is only used when this
+        //    room never held another match (else its balls are mixed together).
+        const roomId = safeMatchId(rec.roomId || '');
+        let balls = [];
+        let ballsUsed = false;
+        if (roomId && ballsCollection) {
+            const shared = await matchRecordsCollection.countDocuments({ ownerUid, roomId: rec.roomId, matchId: { $ne: matchId } });
+            if (!shared) {
+                balls = await ballsCollection.find({ matchId: { $in: [rec.matchId, rec.roomId].filter(Boolean) } })
+                    .sort({ innings: 1, over: 1, ballInOver: 1, timestamp: 1 }).toArray();
+                const dropped = new Set(findRescoredDeliveries(balls).map(x => x.ball));
+                balls = balls.filter(b => !dropped.has(b));
+                ballsUsed = balls.length > 0;
+            }
+        }
+        let prevRev = 0;
+        try {
+            if (roomId) {
+                const rs = await getRoomState(`room-${roomId}`);
+                prevRev = Number(rs && rs.cricketState && rs.cricketState.localRev) || 0;
+            }
+        } catch (e) { /* revision is only a nicety */ }
+        const state = panelStateFromSavedMatch(rec, balls, prevRev);
+        res.json({ success: true, source: 'rebuilt', ballLogRestored: ballsUsed, state });
+    } catch (err) {
+        console.log('match-resume-state error:', err.message || err);
         res.status(500).json({ success: false, error: 'Could not load match' });
     }
 });
@@ -8771,6 +8963,28 @@ io.on('connection', async (socket) => {
                 db.collection("scorvix").doc(targetId).set({ cricketState: state.cricketState }, { merge: true }).catch(err => console.log("DB update error:", err));
             }, 700);
         }
+
+        // 🛟 Per-match snapshot for Resume (see matchPanelStatesCollection).
+        // Only when THIS update itself carries the match's permanent id, so a
+        // partial update can never file one match's state under another's id.
+        // Fire-and-forget + fully guarded: it can never affect live scoring.
+        try {
+            const tmid = data && data.tournamentMatchId;
+            if (matchPanelStatesCollection && tmid && typeof tmid === 'string' && tmid.length < 100
+                && state.cricketState && state.cricketState.tournamentMatchId === tmid
+                && Array.isArray(state.cricketState.ballLog) && state.cricketState.battingCard) {
+                const snapKey = `cricketsnap-${tmid}`;
+                clearTimeout(firestoreWriteTimers[snapKey]);
+                firestoreWriteTimers[snapKey] = setTimeout(() => {
+                    delete firestoreWriteTimers[snapKey];
+                    matchPanelStatesCollection.updateOne(
+                        { matchId: tmid },
+                        { $set: { matchId: tmid, roomId: targetId || null, state: state.cricketState, updatedAt: Date.now() } },
+                        { upsert: true }
+                    ).catch(err => console.log('Match snapshot write error:', err.message || err));
+                }, 1500);
+            }
+        } catch (e) { /* never let the snapshot touch live scoring */ }
     };
 
     socket.on('updateCricketScore', handleCricketUpdate);
