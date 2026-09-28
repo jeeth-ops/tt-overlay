@@ -963,7 +963,12 @@
   .fow-bar i{ display:block; height:100%; border-radius:4px; background:var(--accent); }
   .fow-row.best .fow-bar i{ background:var(--extra); }
   .fow-best{ font-size:9px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; color:var(--extra); background:var(--extra-soft); padding:2px 6px; border-radius:99px; font-family:var(--font-body); }
+  .fow-tabs{ margin:0 0 12px; }
+  .fow-tabs .cd-tab{ min-height:38px; }
   @media (max-width:640px){
+    .fow-tabs{ display:grid; grid-template-columns:repeat(auto-fit, minmax(0,1fr)); gap:6px; }
+    .fow-tabs .cd-tab, .hl-innings .cd-tab{ min-height:42px; padding:8px 6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .team-wkt-clips .clip-row{ padding:10px 12px; }
     .fow-rows{ grid-template-columns:1fr; }
     .fow-stats b{ font-size:16px; }
     .fow-seg{ width:100%; } .fow-seg button{ flex:1; max-width:none; }
@@ -2082,15 +2087,11 @@
 
   <!-- FALL OF WICKETS (+ team wicket clips) — sits right under Commentary -->
   <div class="card">
-    <div class="section-title fow-head"><span class="dash"></span>Fall of Wickets
-      <div class="fow-seg" id="twc-toggle">
-        <button data-team="A" id="twc-btn-a">A</button>
-        <button data-team="B" id="twc-btn-b">B</button>
-      </div>
-    </div>
+    <div class="section-title fow-head"><span class="dash"></span>Fall of Wickets</div>
+    <div id="fow-innings" class="hl-innings fow-tabs"></div>
     <div id="fow-list"><div class="empty-state">No wickets yet</div></div>
     <div class="team-wkt-clips">
-      <div class="twc-head"><span>Team Wicket Clips</span></div>
+      <div class="twc-head"><span id="twc-title">Wicket Clips</span></div>
       <div class="twc-list" id="twc-list"><div class="empty-state" style="padding:10px 0;">No wickets yet</div></div>
     </div>
   </div>
@@ -3565,7 +3566,7 @@ function renderFinalInnings(){
   // Fall of wickets + extras for the selected innings.
   const fow = (m.fallOfWickets && m.fallOfWickets[team]) || [];
   const fowList = document.getElementById('fow-list');
-  renderFowPanel(m, team, typeof finalBallLog !== 'undefined' ? finalBallLog : []);
+  renderFowPanel(m, typeof finalBallLog !== 'undefined' ? finalBallLog : [], true);
 
   const ex = (m.extras && m.extras[team]) || { wd:0,nb:0,b:0,lb:0 };
   setText('ex-wd', ex.wd||0); setText('ex-nb', ex.nb||0); setText('ex-b', ex.b||0); setText('ex-lb', ex.lb||0);
@@ -5928,9 +5929,7 @@ document.addEventListener('keydown', (e) => {
 // ---- Team Wicket Clips strip (Fall of Wickets card) ----
 let twcActiveTeam = null; // set on first render to whichever team is currently batting
 async function renderTeamWicketClips(s){
-  if(!twcActiveTeam) twcActiveTeam = s.battingTeam || 'A';
-  document.getElementById('twc-btn-a').classList.toggle('active', twcActiveTeam === 'A');
-  document.getElementById('twc-btn-b').classList.toggle('active', twcActiveTeam === 'B');
+  twcActiveTeam = fowTeamNow || s.battingTeam || 'A';
   // 🚀 PERF: renderBottom() calls this on every ball its own key changes —
   // which includes partnershipRuns/Balls, so almost every legal delivery.
   // Most of those calls have no reason to touch this card at all (a new
@@ -5942,26 +5941,18 @@ async function renderTeamWicketClips(s){
   // (8s — matches the cadence a real clip-cut/upload takes) since the
   // last refresh, so a pending clip's ready-state still catches up on
   // its own instead of only ever updating on the next wicket.
-  const twcKey = twcActiveTeam + '|' + JSON.stringify((s.fallOfWickets && s.fallOfWickets[twcActiveTeam]) || null);
+  const twcKey = twcActiveTeam + '|' + fowInnNow + '|' + JSON.stringify((s.fallOfWickets && s.fallOfWickets[twcActiveTeam]) || null);
   const twcKeyChanged = changed('twc', twcKey);
   const staleEnough = (Date.now() - (renderTeamWicketClips._lastFetchAt || 0)) > 8000;
   if(!twcKeyChanged && !staleEnough) return;
   renderTeamWicketClips._lastFetchAt = Date.now();
   const list = document.getElementById('twc-list');
-  const clips = await fetchTeamClips(twcActiveTeam);
+  let clips = await fetchTeamClips(twcActiveTeam);
+  // Same rule as Highlights: innings comes from the clip's own metadata, never upload time or the live innings.
+  if(clips.some(c => c.innings != null)) clips = clips.filter(c => hlInningsOf(c) === fowInnNow);
   list.innerHTML = clips.length ? clips.map(clipRowHtml).join('') : '<div class="empty-state" style="padding:10px 0;">No wickets yet</div>';
   wireClipRows(list);
 }
-document.getElementById('twc-toggle').addEventListener('click', (e) => {
-  const btn = e.target.closest('button[data-team]');
-  // Falls back to a plain {battingTeam} stub in finished-match view, where
-  // there's no live socket state — renderTeamWicketClips only reads that
-  // one field anyway.
-  if(!btn || (!latestState && !finalMatchData)) return;
-  twcActiveTeam = btn.dataset.team;
-  if(latestState){ _lastKey.bottom = null; renderBottom(latestState); }
-  else { renderFowPanel(finalMatchData, finalActiveInnings, finalBallLog); renderTeamWicketClips({ battingTeam: 'A' }); }
-});
 // Small toggle bar above the live batting/bowling tables, mirroring the
 // finished-match one — only built (and only visible) once a 2nd innings
 // has actually started, so nothing changes about the layout before that.
@@ -6086,18 +6077,44 @@ function fowHtml(list, balls){
     return `${groups.length > 1 ? `<div class="fow-inn">Innings ${g}</div>` : ''}${stats}<div class="fow-rows">${list}</div>`;
   }).join('');
 }
-// One team's fall of wickets (independent of the tables' innings picker) so
-// both innings are always reachable; the tabs also drive Team Wicket Clips.
-function renderFowPanel(st, defTeam, allBalls){
-  let picked = null; try{ picked = twcActiveTeam; }catch(e){}
-  const team = picked || defTeam || 'A';
-  const nm = t => (t && (t.short || t.name)) || '';
-  const a = document.getElementById('twc-btn-a'), b = document.getElementById('twc-btn-b');
-  if(a){ a.textContent = nm(st.teamA) || 'Team A'; a.classList.toggle('active', team === 'A'); }
-  if(b){ b.textContent = nm(st.teamB) || 'Team B'; b.classList.toggle('active', team === 'B'); }
-  const list = (st.fallOfWickets && st.fallOfWickets[team]) || [];
-  document.getElementById('fow-list').innerHTML = fowHtml(list, (allBalls || []).filter(x => x && (!x.battingTeam || x.battingTeam === team)));
+// Fall of Wickets + Team Wicket Clips are INNINGS-aware, using the same
+// innings model as Highlights (inningsArchive / inningsNo / hlInningsOf) —
+// never a team letter and never "whatever is batting now".
+var fowSelInn = null, fowInnNow = 1, fowTeamNow = null;
+function fowTeamOf(st, inn){
+  const e = (st.inningsArchive || []).find(i => Number(i.no) === inn);
+  if(e && (e.team === 'A' || e.team === 'B')) return e.team;
+  if(st.battingTeam && inn === (st.inningsNumber || 1)) return st.battingTeam;
+  const first = firstBattingTeamOf(st);
+  return inn % 2 === 1 ? first : (first === 'A' ? 'B' : 'A');
 }
+function renderFowPanel(st, allBalls, withClips){
+  const fw = st.fallOfWickets || {}, arch = st.inningsArchive || [], cur = st.inningsNumber || 0;
+  const nums = [cur, ...arch.map(i => Number(i.no) || 0)];
+  ['A', 'B'].forEach(t => (fw[t] || []).forEach(f => nums.push(Number(f.inningsNo) || 0)));
+  (typeof hlClips !== 'undefined' ? hlClips : []).forEach(c => nums.push(hlInningsOf(c)));
+  const total = Math.max(1, ...nums);
+  const inn = (fowSelInn != null && fowSelInn <= total) ? fowSelInn : Math.min(cur || 1, total);
+  const team = fowTeamOf(st, inn);
+  fowInnNow = inn; fowTeamNow = team;
+  const short = t => { const o = t === 'A' ? st.teamA : st.teamB; return (o && (o.short || o.name)) || ''; };
+  const tabs = document.getElementById('fow-innings');
+  if(tabs) tabs.innerHTML = total > 1 ? Array.from({ length: total }, (_, i) => i + 1).map(n =>
+    `<button class="cd-tab${n === inn ? ' active' : ''}" data-fow-inn="${n}">${hlOrdinal(n)} Innings<span class="hl-n">· ${escapeHtml(short(fowTeamOf(st, n)))}</span></button>`).join('') : '';
+  const teamInns = arch.filter(i => i.team === team).length;
+  const list = (fw[team] || []).filter(f => f.inningsNo != null ? Number(f.inningsNo) === inn : teamInns <= 1);
+  document.getElementById('fow-list').innerHTML = fowHtml(list, (allBalls || []).filter(b => b && (b.innings || 1) === inn));
+  const ttl = document.getElementById('twc-title');
+  if(ttl) ttl.textContent = `${hlOrdinal(inn)} Innings Wicket Clips`;
+  if(withClips) renderTeamWicketClips({ battingTeam: team });
+}
+document.getElementById('fow-innings').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-fow-inn]');
+  if(!btn) return;
+  fowSelInn = Number(btn.dataset.fowInn);
+  if(latestState){ _lastKey.bottom = null; renderBottom(latestState); }
+  else if(finalMatchData){ renderFowPanel(finalMatchData, finalBallLog, true); }
+});
 
 /* ---------- Partnership / FOW / Extras ---------- */
 function renderBottom(s){
@@ -6106,7 +6123,7 @@ function renderBottom(s){
   const team = battingTeamForInnings(s, inn);
   const fowAll = (s.fallOfWickets && s.fallOfWickets[team]) || [];
   const fow = fowAll.filter(f => (f.inningsNo || 1) === inn);
-  const key = inn + '|' + JSON.stringify(s.fallOfWickets || null) + '|' + twcActiveTeam + '|' + JSON.stringify(s.extras && s.extras[team]) + '|' + (isLive ? s.partnershipRuns + ':' + s.partnershipBalls : 'past');
+  const key = inn + '|' + JSON.stringify(s.fallOfWickets || null) + '|' + fowSelInn + '|' + (s.inningsNumber || 1) + '|' + JSON.stringify(s.extras && s.extras[team]) + '|' + (isLive ? s.partnershipRuns + ':' + s.partnershipBalls : 'past');
   if(!changed('bottom', key)) return;
 
   const pshipCard = document.getElementById('pship-big-runs') && document.getElementById('pship-big-runs').closest('.card');
@@ -6137,7 +6154,7 @@ function renderBottom(s){
   }
 
   const fowList = document.getElementById('fow-list');
-  renderFowPanel(s, team, s.ballLog);
+  renderFowPanel(s, s.ballLog, false);
 
   const ex = (s.extras && s.extras[team]) || { wd:0,nb:0,b:0,lb:0 };
   setText('ex-wd', ex.wd||0); setText('ex-nb', ex.nb||0); setText('ex-b', ex.b||0); setText('ex-lb', ex.lb||0);
