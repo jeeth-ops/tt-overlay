@@ -774,6 +774,7 @@
      boldest, most prominent text in the table instead of the same
      regular weight as the surrounding numbers. */
   tbody td:first-child{ font-weight:700; font-size:13px; color:var(--text); }
+  .pos-no{ display:inline-block; min-width:16px; margin-right:5px; font-size:11px; font-weight:600; color:var(--text-faint); }
   tbody tr.on-strike td:first-child{ color:var(--card-accent, var(--accent)); font-weight:800; }
   @media (hover:hover) and (pointer:fine){
     #tables-grid tbody tr:hover td{ background:var(--panel-2); }
@@ -2597,6 +2598,34 @@ function battingStatusHtml(b){
   const note = !b.retiredHurt && n > 0 ? `<span class="howout">(retired hurt${n > 1 ? ` ${n} times` : ''}, returned)</span>` : '';
   return main + note;
 }
+/* ---------- CANONICAL ROW ORDER (single rule for live + completed) ----------
+   Batting  = order batsmen first appeared at the crease in that innings
+              (striker, then non-striker, ball by ball).
+   Bowling  = order each unique bowler first bowled in that innings.
+   Source of truth is the ball-by-ball log, never wicket order, runs,
+   not-out status or array position. Only ORDER (and a display `pos`) is
+   set here — no statistic is touched, input rows are never mutated.
+   Rows the ball log doesn't know about keep their original relative
+   order after the known ones (safe fallback). */
+const _apKey = n => String(n == null ? '' : n).trim().toLowerCase();
+function _appearanceRank(balls, fields){
+  const rank = new Map();
+  (balls || []).forEach(b => fields.forEach(f => {
+    const k = _apKey(b && b[f]);
+    if(k && !rank.has(k)) rank.set(k, rank.size);
+  }));
+  return rank;
+}
+function _orderByRank(rows, rank){
+  return rows
+    .map((r, i) => ({ r, i, k: rank.has(_apKey(r.name)) ? rank.get(_apKey(r.name)) : 1e9 }))
+    .sort((a, b) => (a.k - b.k) || (a.i - b.i))
+    .map((x, idx) => ({ ...x.r, pos: idx + 1 }));
+}
+function orderBattingRows(rows, inningsBalls){ return _orderByRank(rows, _appearanceRank(inningsBalls, ['striker', 'nonStriker'])); }
+function orderBowlingRows(rows, inningsBalls){ return _orderByRank(rows, _appearanceRank(inningsBalls, ['bowler'])); }
+const posNoHtml = (b) => b && b.pos ? `<span class="pos-no">${b.pos}</span>` : '';
+
 function battingRowsForInnings(state, inn){
   const target = inn == null ? (state.inningsNumber || 1) : inn;
   const key = battingTeamForInnings(state, target);
@@ -2608,7 +2637,7 @@ function battingRowsForInnings(state, inn){
       }
     });
   }
-  return rows;
+  return orderBattingRows(rows, (state.ballLog || []).filter(b => (b.innings || 1) === target));
 }
 function bowlingRowsForInnings(state, inn){
   const target = inn == null ? (state.inningsNumber || 1) : inn;
@@ -2620,7 +2649,7 @@ function bowlingRowsForInnings(state, inn){
     if(idx > -1) rows[idx] = { ...state.bowler }; // live bowler already archived under an older spell entry — refresh figures in place
     else rows.push({ ...state.bowler });
   }
-  return rows;
+  return orderBowlingRows(rows, (state.ballLog || []).filter(b => (b.innings || 1) === target));
 }
 function currentBattingRows(state){ return battingRowsForInnings(state, state.inningsNumber || 1); }
 function currentBowlingRows(state){ return bowlingRowsForInnings(state, state.inningsNumber || 1); }
@@ -2894,6 +2923,7 @@ async function loadFinalBallLog(token, matchId){
     console.warn('Final ball log fetch failed', err);
     finalBallLog = [];
   }
+  if(finalMatchData) renderFinalInnings();
   renderFinalCommentary();
 }
 
@@ -3253,12 +3283,13 @@ function renderFinalInnings(){
   if(!m) return;
   const team = finalActiveInnings;
   const other = team === 'A' ? 'B' : 'A';
-  const bat = (m.battingCard && m.battingCard[team]) || [];
-  const bowl = (m.bowlingCard && m.bowlingCard[other]) || [];
+  const teamBalls = (finalBallLog || []).filter(b => b.battingTeam === team);
+  const bat = orderBattingRows((m.battingCard && m.battingCard[team]) || [], teamBalls);
+  const bowl = orderBowlingRows((m.bowlingCard && m.bowlingCard[other]) || [], teamBalls);
 
   const battingBody = document.getElementById('batting-table-body');
   battingBody.innerHTML = bat.length ? bat.map(b => `<tr>
-      <td>${escapeHtml(b.name)}${roleBadgesHtml(b)}${battingStatusHtml(b)}</td>
+      <td>${posNoHtml(b)}${escapeHtml(b.name)}${roleBadgesHtml(b)}${battingStatusHtml(b)}</td>
       <td class="num tabnum">${b.runs||0}</td>
       <td class="num tabnum">${b.balls||0}</td>
       <td class="num tabnum">${b.fours||0}</td>
@@ -3269,7 +3300,7 @@ function renderFinalInnings(){
 
   const bowlingBody = document.getElementById('bowling-table-body');
   bowlingBody.innerHTML = bowl.length ? bowl.map(b => `<tr>
-      <td>${escapeHtml(b.name)}${roleBadgesHtml(b)}</td>
+      <td>${posNoHtml(b)}${escapeHtml(b.name)}${roleBadgesHtml(b)}</td>
       <td class="num tabnum">${fmtOvers(b.overs,b.balls)}</td>
       <td class="num tabnum">${b.maidens||0}</td>
       <td class="num tabnum">${b.runs||0}</td>
@@ -5740,7 +5771,7 @@ function renderTables(s){
     battingBody.innerHTML = bat.map(b => {
       const isStriking = isLive && !b.out && s.striker && s.striker.name === b.name;
       return `<tr class="${isStriking ? 'on-strike' : ''}">
-        <td>${escapeHtml(b.name)}${roleBadgesHtml(b)}${battingStatusHtml(b)}</td>
+        <td>${posNoHtml(b)}${escapeHtml(b.name)}${roleBadgesHtml(b)}${battingStatusHtml(b)}</td>
         <td class="num tabnum">${b.runs}</td>
         <td class="num tabnum">${b.balls}</td>
         <td class="num tabnum">${b.fours}</td>
@@ -5756,7 +5787,7 @@ function renderTables(s){
     bowlingBody.innerHTML = `<tr><td colspan="7" class="empty-state">No bowling yet</td></tr>`;
   } else {
     bowlingBody.innerHTML = bowl.map(b => `<tr>
-        <td>${escapeHtml(b.name)}${roleBadgesHtml(b)}</td>
+        <td>${posNoHtml(b)}${escapeHtml(b.name)}${roleBadgesHtml(b)}</td>
         <td class="num tabnum">${fmtOvers(b.overs,b.balls)}</td>
         <td class="num tabnum">${b.maidens||0}</td>
         <td class="num tabnum">${b.runs||0}</td>
