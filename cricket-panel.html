@@ -3007,6 +3007,17 @@ function connect(){
        another device really has scored further, its revision is higher
        and it correctly wins. */
     if(!serverState || !Object.keys(serverState).length) return;
+    // Just resumed through the fallback: the room's first message is the OTHER
+    // match that room still holds — keep what was resumed and re-assert it.
+    if(resumeGuardMatchId){
+      const guarded = resumeGuardMatchId;
+      resumeGuardMatchId = null;
+      if(state.tournamentMatchId === guarded && serverState.tournamentMatchId !== guarded){
+        send(state);
+        renderPanel();
+        return;
+      }
+    }
     const serverRev = Number(serverState.localRev) || 0;
     const localRev = Number(state.localRev) || 0;
     const localHasScoring = (state.ballLog && state.ballLog.length > 0)
@@ -6906,6 +6917,10 @@ function matchLabelForToast(st){
   return `${a} vs ${b}`;
 }
 let resumeInFlight = false;
+// Set only while a match that was loaded through the Resume FALLBACK (its room
+// now holds a different match) is joining its room: the room's first message
+// belongs to that other match and must not replace what was just resumed.
+let resumeGuardMatchId = null;
 async function resumeSavedMatch(rec, btn, listTournament){
   if(resumeInFlight) return;
   const owner = (listTournament || '').trim(); // the tournament this record lives in
@@ -6919,19 +6934,37 @@ async function resumeSavedMatch(rec, btn, listTournament){
   const oldText = btn ? btn.textContent : '';
   if(btn){ btn.disabled = true; btn.textContent = 'Loading…'; }
   let loaded = null;
+  let fallbackInfo = null;   // set when the match came from the per-match fallback, not its live room
+  let needFallback = false, roomHoldsOther = false;
   try {
     const res = await fetch(`/api/cricket/room-state/${encodeURIComponent(rec.roomId)}`, { signal: AbortSignal.timeout(10000) });
     const data = await res.json().catch(() => null);
-    if(res.ok && data && data.success) loaded = data.state;
-    else if(res.status === 404) toast('⚠️ No saved live data found for this match');
+    if(res.ok && data && data.success){
+      loaded = data.state;
+      // The room must really hold THIS match. If it now holds another one, do
+      // NOT load it — get this match's own saved copy instead (below).
+      if(loaded && loaded.tournamentMatchId && loaded.tournamentMatchId !== rec.matchId){ loaded = null; needFallback = true; roomHoldsOther = true; }
+    }
+    else if(res.status === 404) needFallback = true;
     else toast('⚠️ Could not load this match — try again');
   } catch(e){ toast('⚠️ Could not load this match — check the connection'); }
+  if(!loaded && needFallback && currentOwnerUid()){
+    try {
+      const r2 = await fetch(withUid(`/api/cricket/match-resume-state/${encodeURIComponent(rec.matchId)}`), { signal: AbortSignal.timeout(15000) });
+      const d2 = await r2.json().catch(() => null);
+      if(r2.ok && d2 && d2.success && d2.state){ loaded = d2.state; fallbackInfo = d2; }
+    } catch(e){ /* falls through to the messages below */ }
+  }
+  if(!loaded && needFallback){
+    toast(roomHoldsOther
+      ? '⚠️ This match\'s room now holds a different match and its own saved copy could not be loaded — cannot resume it safely'
+      : '⚠️ No saved live data found for this match', 6000);
+  }
   resumeInFlight = false;
   if(btn){ btn.disabled = false; btn.textContent = oldText; }
   if(!loaded) return; // nothing on the panel has changed
 
-  // The room must really hold THIS match — refuse anything else rather
-  // than load the wrong match's score.
+  // Last safety net (unchanged rule): never load a state that belongs to another match.
   if(loaded.tournamentMatchId && loaded.tournamentMatchId !== rec.matchId){
     toast('⚠️ This match\'s room now holds a different match — cannot resume it safely', 6000);
     return;
@@ -6956,6 +6989,8 @@ async function resumeSavedMatch(rec, btn, listTournament){
   const keepLeague = (state.leagueName || '').trim();
   state = mergeWithDefaults(loaded);
   state.tournamentMatchId = rec.matchId;
+  resumeGuardMatchId = fallbackInfo ? rec.matchId : null;
+  if(fallbackInfo) state.localRev = Math.max(Number(state.localRev) || 0, 100000);
   // The list it was opened from decides its tournament — and the panel
   // switches to showing that tournament.
   state.matchLeague = owner;
@@ -6986,7 +7021,10 @@ async function resumeSavedMatch(rec, btn, listTournament){
   connect();
 
   const sc = state.score || {};
-  toast(`▶️ Resumed ${matchLabelForToast(state)}${owner ? ` in "${owner}"` : ''} — ${sc.runs || 0}-${sc.wickets || 0} (${fmtOvers(sc.overs || 0, sc.balls || 0)}). Match ID is now ${rec.roomId} — update the overlay link in vMix/OBS.`, 8000);
+  const rebuiltNote = (fallbackInfo && fallbackInfo.source === 'rebuilt')
+    ? ` ⚠️ Restored from the saved scorecard${fallbackInfo.ballLogRestored ? '' : ' (ball-by-ball log was not recoverable)'} — please check the batters at the crease, strike and bowler before scoring.`
+    : '';
+  toast(`▶️ Resumed ${matchLabelForToast(state)}${owner ? ` in "${owner}"` : ''} — ${sc.runs || 0}-${sc.wickets || 0} (${fmtOvers(sc.overs || 0, sc.balls || 0)}). Match ID is now ${rec.roomId} — update the overlay link in vMix/OBS.${rebuiltNote}`, rebuiltNote ? 12000 : 8000);
 }
 
 function deleteMatchFromLeague(matchId){
