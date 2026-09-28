@@ -2243,6 +2243,15 @@ auth.onAuthStateChanged((user) => {
   // without needing a manual refresh once the owner's sign-in resolves.
   if(typeof renderHighlights === 'function') renderHighlights();
 });
+// After any owner edit/merge the saved scorecard changes on the server — force
+// the page behind the edit panel to re-fetch and redraw it (the 30s poll skips
+// redraws when its change-signature looks the same).
+function refreshScorecardAfterEdit(){
+  try{
+    lastSnapshotSignature = null;
+    if(isHistoryMode()) setTimeout(() => loadMatchSnapshot(getMatchId()), 400);
+  }catch(e){ /* non-fatal */ }
+}
 async function adminApi(path, opts){
   const headers = Object.assign({ 'Content-Type': 'application/json' }, (opts && opts.headers) || {}, await authHeaders());
   const res = await fetch(`/api/admin${path}`, Object.assign({}, opts, { headers }));
@@ -2883,7 +2892,7 @@ async function loadMatchSnapshot(matchId){
     // shouldn't be quietly rebuilding the whole DOM under the viewer while they're doing that. A
     // cheap signature (updatedAt if the backend sends one, else the score line + wicket count) skips
     // the render when nothing has actually moved; a genuine post-finish correction still applies.
-    const signature = JSON.stringify(match.updatedAt || [match.scoreA, match.scoreB, match.oversA, match.oversB, (match.fallOfWickets && match.fallOfWickets.length)]);
+    const signature = JSON.stringify([match.updatedAt, match.liveSyncedAt, match.scoreA, match.scoreB, match.oversA, match.oversB, (match.fallOfWickets && match.fallOfWickets.length)]);
     if(signature === lastSnapshotSignature) return;
     lastSnapshotSignature = signature;
     renderFinalSnapshot(match, data.displayName || '');
@@ -5912,11 +5921,16 @@ function renderMergeConfirmScreen(matchId, data){
     const btn = document.getElementById('mpConfirm');
     btn.disabled = true; btn.textContent = 'Merging…';
     try{
-      await adminApi(`/cricket/players/merge`, {
+      const done = await adminApi(`/cricket/players/merge`, {
         method: 'PUT',
         body: JSON.stringify({ matchId, matchIds: chosen.map(m => m.matchId), wrongPlayer: data.wrongPlayer, correctPlayer: data.correctPlayer })
       });
-      emToast(`Merged ${data.wrongPlayer} into ${data.correctPlayer} (${chosen.length} ${plural(chosen.length,'match','matches')})`);
+      if(done && done.syncFailed && done.syncFailed.length){
+        emToast(`Merged, but the scorecard of ${done.syncFailed.length} match(es) could not be refreshed`);
+      } else {
+        emToast(`Merged ${data.wrongPlayer} into ${data.correctPlayer} (${chosen.length} ${plural(chosen.length,'match','matches')})`);
+      }
+      refreshScorecardAfterEdit();
       await loadDeliveryList(matchId);
       openOwnerPanel();
     }catch(err){
@@ -5935,6 +5949,7 @@ async function undoLastPlayerMerge(matchId){
   try{
     const data = await adminApi(`/cricket/players/merge/undo`, { method: 'POST' });
     emToast(`Restored ${data.restoredCount} deliveries across ${(data.matchIds||[]).length} match(es)`);
+    refreshScorecardAfterEdit();
     await loadDeliveryList(matchId);
   }catch(err){
     emToast(err.message || 'Could not undo the last merge');
@@ -6607,7 +6622,7 @@ async function undoLastCorrection(matchId){
     await adminApi(`/cricket/match/${encodeURIComponent(matchId)}/undo-last`, { method:'POST' });
     emToast('Last correction undone');
     loadDeliveryList(matchId);
-    setTimeout(() => { if(isHistoryMode()) loadMatchSnapshot(getMatchId()); }, 300);
+    refreshScorecardAfterEdit();
   }catch(err){
     emToast(err.message || 'Nothing to undo');
   }
