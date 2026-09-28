@@ -5773,7 +5773,8 @@ async function mergePlayersDeep(ownerUid, actorEmail, wrongPlayerName, correctPl
     // read fresh off matchRecordsCollection on every request (see
     // computeLeaderboards above), it is ALSO what fixes those, with no
     // separate tournament-side merge logic needed.
-    await Promise.all(matchIds.map(mid => syncMatchRecordFromBalls(ownerUid, mid, { force: true, reason: 'player merge' })));
+    const syncResults = await Promise.all(matchIds.map(mid => syncMatchRecordFromBalls(ownerUid, mid, { force: true, reason: 'player merge' })));
+    const syncFailed = matchIds.filter((mid, i) => !(syncResults[i] && syncResults[i].synced));
 
     // Clips keep their identity (same Cloudflare clip, event/ball id, video
     // URL) and simply follow onto the corrected player — never deleted,
@@ -5814,6 +5815,7 @@ async function mergePlayersDeep(ownerUid, actorEmail, wrongPlayerName, correctPl
         } catch (err) { console.log('Player-profile fold after merge error:', err); }
     }
 
+    result.syncFailed = syncFailed;
     result.before = { balls: targets, clips: clipsBefore, players: playersBefore };
     result.after = { balls: targets.map(b => correctedById.get(String(b._id))) };
     return result;
@@ -8285,7 +8287,7 @@ async function syncMatchRecordFromBalls(ownerUid, matchId, opts) {
     // section above for why a live rebuild must never be able to erase an
     // innings the saved record already holds.
     opts = opts || {};
-    if (!ballsCollection || !matchRecordsCollection || !ownerUid || !matchId) return;
+    if (!ballsCollection || !matchRecordsCollection || !matchId) return { synced: false, reason: 'not-configured' };
     try {
         // Only UPDATE an existing shell doc (created by the normal
         // POST /api/league/:name/match save at match start) — never upsert
@@ -8307,22 +8309,37 @@ async function syncMatchRecordFromBalls(ownerUid, matchId, opts) {
         // roomId too, and always writing back using the doc's OWN matchId
         // (never the possibly-a-roomId value we were called with), fixes
         // that the same way the public-match lookup already does.
-        const existing = await matchRecordsCollection.findOne(
+        let existing = ownerUid ? await matchRecordsCollection.findOne(
             { ownerUid, $or: [{ matchId }, { roomId: matchId }] },
-            { projection: { leagueKey: 1, matchId: 1, roomId: 1 } }
-        );
+            { projection: { leagueKey: 1, matchId: 1, roomId: 1, ownerUid: 1 } }
+        ) : null;
+        // 🩹 FIX (scorecard not reflecting merges/edits): the saved record's
+        // ownerUid can differ from the uid we were called with (record saved
+        // by another authorised creator, or saved before ownerUid was
+        // stamped). The lookup above then missed and this function silently
+        // did nothing — balls were corrected but the scorecard the public
+        // page reads (matchRecords) stayed stale. Fall back to matching by
+        // matchId/roomId alone (ids are unique per match) and write back to
+        // that exact doc by _id.
+        if (!existing) {
+            existing = await matchRecordsCollection.findOne(
+                { $or: [{ matchId }, { roomId: matchId }] },
+                { projection: { leagueKey: 1, matchId: 1, roomId: 1, ownerUid: 1 } }
+            );
+            if (existing) console.log('[syncDebug] record matched by id only (ownerUid differed)', { matchId, calledWith: ownerUid, recordOwner: existing.ownerUid });
+        }
         // 🔍 TEMP DEBUG — remove once the stale-leaderboard issue is
         // confirmed fixed. Prints exactly what this sync attempt saw, so a
         // silent miss/mismatch shows up in the Render logs instead of just
         // failing invisibly.
         console.log('[syncDebug] called with', { ownerUid, matchId });
         console.log('[syncDebug] existing doc found:', existing ? { leagueKey: existing.leagueKey, matchId: existing.matchId, roomId: existing.roomId } : null);
-        if (!existing) { console.log('[syncDebug] NO MATCHING matchRecords DOC — aborting sync'); return; }
+        if (!existing) { console.log('[syncDebug] NO MATCHING matchRecords DOC — aborting sync', { matchId }); return { synced: false, reason: 'no-match-record' }; }
         const cards = await buildLiveCardsFromBalls(matchId);
         console.log('[syncDebug] recomputed bowlingCard A:', JSON.stringify((cards.bowlingCard && cards.bowlingCard.A) || []));
         console.log('[syncDebug] recomputed bowlingCard B:', JSON.stringify((cards.bowlingCard && cards.bowlingCard.B) || []));
         const guard = await writeMatchRecordSafely(
-            { ownerUid, leagueKey: existing.leagueKey, matchId: existing.matchId },
+            { _id: existing._id, matchId: existing.matchId },
             { ...cards, liveSyncedAt: Date.now() },
             { reason: opts.reason || 'balls-sync', force: !!opts.force }
         );
@@ -8333,11 +8350,13 @@ async function syncMatchRecordFromBalls(ownerUid, matchId, opts) {
         // PUBLIC_CACHE_TTL_MS below) — invalidate it now so viewers see
         // this ball within ~1s instead of waiting out the full TTL.
         if (leaguesCollection) {
-            const league = await leaguesCollection.findOne({ ownerUid, leagueKey: existing.leagueKey }, { projection: { publicToken: 1 } });
+            const league = await leaguesCollection.findOne({ ownerUid: existing.ownerUid || ownerUid, leagueKey: existing.leagueKey }, { projection: { publicToken: 1 } });
             if (league && league.publicToken) publicTournamentCache.delete(league.publicToken);
         }
+        return { synced: true };
     } catch (err) {
         console.log('syncMatchRecordFromBalls error:', err);
+        return { synced: false, reason: 'error' };
     }
 }
 
