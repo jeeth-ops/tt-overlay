@@ -1906,9 +1906,26 @@ app.post('/api/league/:name/match', requireAuthorizedCreator, async (req, res) =
         // the match — keeps the fuller version instead of erasing it.
         // ?force=1 (the Recovery Centre, and an operator who has been
         // shown what they are about to overwrite) skips the guard.
+        let incomingRecord = { ...record, roomId: roomId || record.roomId || null, ownerUid, leagueKey, savedAt: record.savedAt || new Date().toISOString() };
+        // 🛡️ A FINISHED match whose scorecard the owner has corrected/merged
+        // (ownerCorrectedAt) must not be rolled back by a later panel save —
+        // the panel still holds the pre-correction cards in memory, so
+        // "Save This Match" (or an auto-sync) would bring the old names back.
+        // For such a record the corrected cards/score stay; other fields
+        // (venue, logos, result text...) still update. ?force=1 overrides.
+        if (req.query.force !== '1') {
+            const stored = await matchRecordsCollection.findOne({ ownerUid, leagueKey, matchId: record.matchId });
+            if (stored && stored.ownerCorrectedAt && stored.winningTeam) {
+                ['battingCard', 'bowlingCard', 'extras', 'fallOfWickets', 'partnerships', 'scoreA', 'scoreB', 'inningsArchive', 'winningTeam'].forEach(k => {
+                    if (stored[k] !== undefined) incomingRecord[k] = stored[k];
+                });
+                incomingRecord.ownerCorrectedAt = stored.ownerCorrectedAt;
+                console.log('🛡️ Panel save kept owner-corrected scorecard for match', record.matchId);
+            }
+        }
         const guard = await writeMatchRecordSafely(
             { ownerUid, leagueKey, matchId: record.matchId },
-            { ...record, roomId: roomId || record.roomId || null, ownerUid, leagueKey, savedAt: record.savedAt || new Date().toISOString() },
+            incomingRecord,
             { upsert: true, force: req.query.force === '1', reason: 'panel save' }
         );
         // League doc itself stays tiny now — just metadata (displayName,
@@ -8340,7 +8357,7 @@ async function syncMatchRecordFromBalls(ownerUid, matchId, opts) {
         console.log('[syncDebug] recomputed bowlingCard B:', JSON.stringify((cards.bowlingCard && cards.bowlingCard.B) || []));
         const guard = await writeMatchRecordSafely(
             { _id: existing._id, matchId: existing.matchId },
-            { ...cards, liveSyncedAt: Date.now() },
+            { ...cards, liveSyncedAt: Date.now(), ...(opts.force ? { ownerCorrectedAt: Date.now() } : {}) },
             { reason: opts.reason || 'balls-sync', force: !!opts.force }
         );
         if (guard.lost.length) {
