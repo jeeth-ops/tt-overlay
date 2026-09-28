@@ -871,61 +871,79 @@
   }
 
   /* ============================================================
-     PHONE LAYOUT (<= 560px): each player becomes a small card row
-        NAME (full width)
-        dismissal:  c Fielder   b Bowler
-        R  B  4s  6s  SR                    [clip]
-     so a long name never has to share a line with the figures.
+     PHONE LAYOUT (<= 560px) — compact scorecard rows
+        AMAN KHAN                                  63 (29)
+        c RIYA SHARMA   b JUGRAJ MEHTA
+        [4s 3] [6s 7] [SR 217.2]                      [clip]
+     Big score on the right, small stat chips underneath: no repeated
+     column labels, so a row is ~half as tall and nothing feels crowded.
+     Bowlers:  name .......... 3/73   then  [Ov 10.1] [Mdn 2] [Econ 7.18]
      Laptop / tablet keep the normal table above.
      ============================================================ */
   @media (max-width:560px){
+    #tables-grid > .card{ padding:14px 12px 4px; }
     #tables-grid thead{ display:none; }
     #tables-grid table, #tables-grid tbody{ display:block; width:100%; }
     #tables-grid tbody tr{
-      display:grid; grid-template-columns:repeat(5, minmax(0,1fr)) 38px; column-gap:6px; align-items:end;
-      padding:13px 2px 11px; border-bottom:1px solid var(--border-soft);
+      display:flex; flex-wrap:wrap; align-items:baseline; column-gap:6px; row-gap:0;
+      padding:13px 2px 12px; border-bottom:1px solid var(--border-soft);
     }
     #tables-grid tbody tr:last-child{ border-bottom:none; }
-    #tables-grid tbody td{ display:block; border:none; padding:0; height:auto; min-height:0; min-width:0; }
-    #tables-grid tbody td:first-child{
-      grid-column:1 / -1; padding:0 0 9px; min-width:0; font-size:14px; line-height:1.3; overflow-wrap:break-word;
-    }
-    #tables-grid tbody td.num{ text-align:left; font-size:14px; font-weight:700; color:var(--text); line-height:1.2; }
-    #tables-grid tbody td.num::before{
-      display:block; margin-bottom:3px; font-size:9.5px; font-weight:700; letter-spacing:.4px;
-      text-transform:uppercase; color:var(--text-faint);
-    }
-    #batting-card td:nth-child(2)::before{ content:'Runs'; }
-    #batting-card td:nth-child(3)::before{ content:'Balls'; }
-    #batting-card td:nth-child(4)::before{ content:'4s'; }
-    #batting-card td:nth-child(5)::before{ content:'6s'; }
-    #batting-card td:nth-child(6)::before{ content:'SR'; }
-    #bowling-card td:nth-child(2)::before{ content:'Overs'; }
-    #bowling-card td:nth-child(3)::before{ content:'Mdns'; }
-    #bowling-card td:nth-child(4)::before{ content:'Runs'; }
-    #bowling-card td:nth-child(5)::before{ content:'Wkts'; }
-    #bowling-card td:nth-child(6)::before{ content:'Econ'; }
-    /* the headline figure of each row: runs for batters, wickets for bowlers */
-    #batting-card td:nth-child(2), #bowling-card td:nth-child(5){ font-size:17px; color:var(--card-accent, var(--text)); }
-    #tables-grid tbody td.clip-col{ text-align:right; width:auto; justify-self:end; align-self:end; }
-    #tables-grid .clip-btn{ width:32px; height:32px; }
-    #tables-grid tbody td.empty-state{ grid-column:1 / -1; padding:14px 0; }
-    #tables-grid .howout{ font-size:12px; margin-top:4px; column-gap:12px; }
-    #tables-grid .not-out-tag{ font-size:12px; margin-top:4px; }
-    #tables-grid > .card{ padding:14px 12px 6px; }
-  }
+    #tables-grid tbody tr::after{ content:''; flex:1 0 100%; height:0; order:3; }   /* forces the chip row onto its own line */
+    #tables-grid tbody td{ display:block; border:none; padding:0; height:auto; min-height:0; min-width:0; background:none !important; }
 
-  @media (max-width:560px){
-    #tables-grid tbody tr{ grid-template-columns:repeat(4, minmax(0,1fr)) minmax(0,1.35fr) 34px; column-gap:4px; }
-    #tables-grid tbody td.num{ white-space:nowrap; letter-spacing:-.1px; }
+    /* name + dismissal (left) */
+    #tables-grid tbody td:first-child{ order:0; flex:1 1 0; min-width:0; padding:0 8px 0 0; font-size:14.5px; line-height:1.3; overflow-wrap:break-word; }
+    #tables-grid .howout{ font-size:12px; margin-top:5px; column-gap:12px; row-gap:1px; }
+    #tables-grid .not-out-tag{ font-size:12px; margin-top:5px; }
+
+    /* big figure (right): batters = runs (balls) · bowlers = wickets/runs */
+    #tables-grid tbody td.num{ flex:none; text-align:right; white-space:nowrap; }
+    #batting-card td:nth-child(2), #bowling-card td:nth-child(5){
+      order:1; font-family:var(--font-display); font-size:23px; font-weight:800; line-height:1; letter-spacing:-.6px; color:var(--card-accent, var(--text));
+    }
+    #batting-card td:nth-child(3){ order:2; font-size:12.5px; font-weight:600; color:var(--text-faint); margin-left:-2px; }
+    #batting-card td:nth-child(3)::before{ content:'('; } #batting-card td:nth-child(3)::after{ content:')'; }
+    #bowling-card td:nth-child(4){ order:2; font-family:var(--font-display); font-size:23px; font-weight:800; line-height:1; letter-spacing:-.6px; color:var(--text); margin-left:-4px; }
+    #bowling-card td:nth-child(4)::before{ content:'/'; font-weight:600; color:var(--text-faint); margin-right:1px; }
+
+    /* stat chips (second line) */
+    #batting-card td:nth-child(4), #batting-card td:nth-child(5), #batting-card td:nth-child(6),
+    #bowling-card td:nth-child(2), #bowling-card td:nth-child(3), #bowling-card td:nth-child(6){
+      order:4; margin-top:11px; padding:5px 10px; border-radius:99px; text-align:center;
+      background:var(--panel-2) !important; border:1px solid var(--border);
+      font-size:12px; font-weight:700; color:var(--text); line-height:1.2;
+    }
+    #batting-card td:nth-child(4)::before{ content:'4s '; } #batting-card td:nth-child(5)::before{ content:'6s '; } #batting-card td:nth-child(6)::before{ content:'SR '; }
+    #bowling-card td:nth-child(2)::before{ content:'Ov '; } #bowling-card td:nth-child(3)::before{ content:'Mdn '; } #bowling-card td:nth-child(6)::before{ content:'Econ '; }
+    #tables-grid tbody td.num.chip-x::before{ content:''; }
+    #batting-card td:nth-child(4)::before, #batting-card td:nth-child(5)::before, #batting-card td:nth-child(6)::before,
+    #bowling-card td:nth-child(2)::before, #bowling-card td:nth-child(3)::before, #bowling-card td:nth-child(6)::before{
+      font-weight:600; color:var(--text-faint); letter-spacing:0; text-transform:none; font-size:11.5px; display:inline; margin:0;
+    }
+    #batting-card td:nth-child(2)::before, #bowling-card td:nth-child(5)::before{ content:none; }
+
+    /* clip button */
+    #tables-grid tbody td.clip-col{ order:5; margin:6px 0 0 auto; align-self:center; text-align:right; width:auto; }
+    #tables-grid .clip-btn{ width:34px; height:34px; }
+    #tables-grid tbody td.empty-state{ flex:1 1 100%; padding:14px 0; text-align:center; order:0; }
+  }
+  @media (max-width:360px){
+    #batting-card td:nth-child(2), #bowling-card td:nth-child(5), #bowling-card td:nth-child(4){ font-size:21px; }
+    #batting-card td:nth-child(4), #batting-card td:nth-child(5), #batting-card td:nth-child(6),
+    #bowling-card td:nth-child(2), #bowling-card td:nth-child(3), #bowling-card td:nth-child(6){ padding:5px 8px; font-size:11.5px; }
+    #tables-grid tbody td:first-child{ font-size:14px; }
+    #tables-grid .clip-btn{ width:30px; height:30px; }
   }
   @media (max-width:380px){
-    #tables-grid tbody td.num{ font-size:13px; }
-    #batting-card td:nth-child(2), #bowling-card td:nth-child(5){ font-size:15px; }
-    #tables-grid tbody td.num::before{ font-size:9px; letter-spacing:.2px; }
-    #tables-grid .clip-btn{ width:30px; height:30px; }
-    #tables-grid tbody tr{ grid-template-columns:repeat(4, minmax(0,1fr)) minmax(0,1.4fr) 32px; column-gap:3px; }
+    #tables-grid tbody tr{ column-gap:4px; }
+    #batting-card td:nth-child(4), #batting-card td:nth-child(5), #batting-card td:nth-child(6),
+    #bowling-card td:nth-child(2), #bowling-card td:nth-child(3), #bowling-card td:nth-child(6){ padding:4px 7px; font-size:11px; }
+    #batting-card td:nth-child(4)::before, #batting-card td:nth-child(5)::before, #batting-card td:nth-child(6)::before,
+    #bowling-card td:nth-child(2)::before, #bowling-card td:nth-child(3)::before, #bowling-card td:nth-child(6)::before{ font-size:10.5px; }
+    #tables-grid tbody td.clip-col{ margin-left:auto; }
   }
+
   /* Captain / Wicketkeeper role tags — small pills next to a player's name,
      same treatment wherever a name appears (tables + at-the-crease cards).
      Mirrors the badges already shown in the scoring panel. */
