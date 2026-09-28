@@ -4964,9 +4964,10 @@ async function fetchMatchClips(type, includeHidden){
       if(type) qs.set('type', type);
       if(includeHidden) qs.set('all', '1');
       const res = await apiFetch(`${clipApiBase()}/api/clips/match/${encodeURIComponent(matchId)}?${qs.toString()}`);
-      if(!res.ok) break;
+      if(!res.ok){ console.warn('[Highlights] clips request failed', res.status, matchId); break; }
       const data = await res.json();
       const batch = (data && data.clips) || [];
+      if(page === 0) console.info('[Highlights] matchId =', matchId, '→', batch.length, 'clips');
       all.push(...batch);
       if(batch.length < pageSize) break; // last page
       skip += pageSize;
@@ -5151,17 +5152,21 @@ function hlCardHtml(c, newIdx){
   const deleteBtn = isOwner
     ? `<button class="clip-delete-btn" data-delete-clip="${c.clipId}" data-delete-title="${escapeHtml((c.striker||c.bowler||'') + ' — ' + c.eventType)}" title="Delete this clip">${TRASH_ICON}</button>` : '';
   const ready = !!c.ready;
+  // Not playable yet: say why, using the server's own upload status.
+  const pendLabel = c.status === 'FAILED_PERMANENT' ? 'Unavailable'
+    : (c.status === 'RETRY_PENDING' || c.status === 'NEEDS_REUPLOAD') ? 'Retrying upload…'
+    : 'Uploading…';
   const color = t === 'FOUR' ? 'var(--four)' : t === 'SIX' ? 'var(--six)' : t === 'WICKET' ? 'var(--wicket)' : 'var(--text-dim)';
   return `<div class="clip-row clip-row--${cls} hl-card${newIdx >= 0 ? ' hl-in' : ''}" style="--hl-c:${color};${newIdx >= 0 ? '--i:' + newIdx : ''}" data-clip-id="${c.clipId}" data-innings="${hlInningsOf(c)}" data-title="${escapeHtml((c.striker||c.bowler||'') + ' — ' + c.eventType)}" data-playback-url="${escapeHtml(c.playbackUrl || '')}" data-poster-url="${escapeHtml(c.posterUrl || '')}">
     <div class="hl-thumb">
       ${c.posterUrl ? `<img src="${escapeHtml(c.posterUrl)}" loading="lazy" decoding="async" alt="">` : ''}
       <div class="cr-badge ${cls}">${badge}</div>
-      ${ready ? `<div class="hl-play">${PLAY_ICON}</div>` : '<div class="hl-pending">Uploading…</div>'}
+      ${ready ? `<div class="hl-play">${PLAY_ICON}</div>` : `<div class="hl-pending">${pendLabel}</div>`}
       <div class="hl-over tabnum">${overLabel}</div>
     </div>
     <div class="hl-body">
       <div class="hl-name">${escapeHtml(name || label)}</div>
-      <div class="cr-sub">${escapeHtml(sub || (ready ? 'Tap to watch' : 'Processing…'))}</div>
+      <div class="cr-sub">${escapeHtml(sub || (ready ? 'Tap to watch' : (c.status === 'FAILED_PERMANENT' ? 'Clip unavailable' : 'Processing…')))}</div>
       <div class="hl-meta">${label}${runs ? ' · ' + runs : ''}${dur}</div>
       <div class="cr-actions">
         <button class="clip-watch-btn" ${ready ? '' : 'disabled'} aria-label="Watch">${PLAY_ICON}</button>
