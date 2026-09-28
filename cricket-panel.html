@@ -1105,6 +1105,8 @@
           <button class="small primary" id="save-match-league-btn" type="button">💾 Save This Match</button>
           <button class="small ghost" id="view-league-matches-btn" type="button">📋 Matches</button>
         </div>
+        <button class="small ghost full" id="new-match-btn" type="button" style="margin-top:6px;">➕ Create New Match</button>
+        <div class="shortcut-hint">Create New Match starts a fresh, empty match in this same tournament. The match already saved stays exactly as it is — nothing is deleted or overwritten, and the current panel is NOT saved on the way out (use Save This Match first if this match is still unsaved).</div>
         <div class="row2" style="margin-top:6px;">
           <button class="small ghost" id="view-player-history-btn" type="button">👤 Player History</button>
           <button class="small ghost" id="view-team-history-btn" type="button">🏏 Team History</button>
@@ -12140,8 +12142,10 @@ document.getElementById('download-tournament-excel-btn').addEventListener('click
 /* ============================================================
    RESET
    ============================================================ */
-document.getElementById('reset-btn').addEventListener('click', () => {
-  if(!confirm('Reset the entire match? This cannot be undone.')) return;
+// Shared by Reset and Create New Match. Neither deletes anything that is
+// already saved: the saved match keeps its own tournamentMatchId/room, and
+// the panel just starts a brand-new match (fresh ids) in the same tournament.
+function startFreshMatch(){
   // The league name spans multiple matches (that's the whole point of it),
   // so it survives a Reset — everything else about the match goes back to
   // defaults as before, ready for the next match in the same tournament.
@@ -12188,6 +12192,15 @@ document.getElementById('reset-btn').addEventListener('click', () => {
 
   pushState(true, true);
   toast('🔄 New match ready — Match ID refreshed. Copy the new Overlay/Scorecard links (and update OBS\'s browser source) before you go live.', 7000);
+}
+document.getElementById('reset-btn').addEventListener('click', () => {
+  if(!confirm('Reset the entire match? This cannot be undone.')) return;
+  startFreshMatch();
+});
+document.getElementById('new-match-btn').addEventListener('click', () => {
+  const t = (currentMatchTournament() || state.leagueName || '').trim();
+  if(!confirm('Start a NEW match' + (t ? ' in "' + t + '"' : '') + '?\n\nThe match already saved stays exactly as it is (nothing is deleted or overwritten).\nThe scoring currently on this panel is cleared and NOT saved — press Cancel and use Save This Match first if this match is still unsaved.')) return;
+  startFreshMatch();
 });
 
 /* ============================================================
