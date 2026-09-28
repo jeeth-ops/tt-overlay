@@ -941,7 +941,36 @@
   #bottom-grid{ display:grid; grid-template-columns:1fr; gap:14px; }
   .fow-item{ display:flex; justify-content:space-between; font-size:12.5px; padding:7px 0; border-bottom:1px dashed var(--border-soft); }
   .fow-item:last-child{ border-bottom:none; }
-  .fow-wkt{ color:var(--wicket); font-weight:700; }
+  /* ---------- Fall of Wickets v2: innings timeline + wicket cards ---------- */
+  .fow-wrap{ display:flex; flex-direction:column; gap:12px; }
+  .fow-track{ position:relative; height:34px; margin:2px 12px 0; }
+  .fow-track::before{ content:''; position:absolute; left:0; right:0; top:15px; height:4px; border-radius:4px;
+    background:linear-gradient(90deg, var(--accent-soft), var(--wicket-soft)); }
+  .fow-dot{ position:absolute; top:6px; transform:translateX(-50%); width:22px; height:22px; border-radius:50%;
+    background:var(--wicket); color:#fff; font:800 10.5px var(--font-display); display:grid; place-items:center;
+    box-shadow:0 0 0 3px color-mix(in srgb, var(--panel) 92%, transparent); }
+  .fow-axis{ display:flex; justify-content:space-between; margin:-4px 4px 0; font-size:10px; color:var(--text-faint); font-weight:600; letter-spacing:.3px; }
+  .fow-cards{ display:grid; grid-template-columns:repeat(auto-fill, minmax(215px, 1fr)); gap:10px; }
+  .fow-card{ position:relative; display:grid; grid-template-columns:auto 1fr; column-gap:12px; align-items:center;
+    padding:12px 14px 12px 16px; background:var(--panel-2); border:1px solid var(--border-soft); border-radius:var(--radius-sm); overflow:hidden; }
+  .fow-card::before{ content:''; position:absolute; inset:0 auto 0 0; width:3px; background:var(--wicket); }
+  .fow-card.best{ border-color:color-mix(in srgb, var(--extra) 55%, transparent); }
+  .fow-no{ grid-row:span 2; width:36px; height:36px; border-radius:10px; background:var(--wicket-soft); color:var(--wicket);
+    font:800 15px var(--font-display); display:grid; place-items:center; }
+  .fow-score{ font:800 17px var(--font-display); letter-spacing:-.2px; line-height:1.2; }
+  .fow-score small{ font:600 11.5px var(--font-body); color:var(--text-dim); margin-left:6px; letter-spacing:0; }
+  .fow-who{ font-size:12px; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-height:1em; }
+  .fow-stand{ grid-column:1 / -1; margin-top:10px; display:flex; align-items:center; gap:8px; font-size:10.5px; color:var(--text-dim); font-weight:600; }
+  .fow-stand .bar{ flex:1; height:5px; border-radius:5px; background:var(--border-soft); overflow:hidden; }
+  .fow-stand .bar i{ display:block; height:100%; border-radius:5px; background:linear-gradient(90deg, var(--accent), var(--four)); }
+  .fow-stand b{ color:var(--text); font-family:var(--font-display); font-weight:800; font-size:11.5px; }
+  .fow-best{ font-size:9px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; color:var(--extra); background:var(--extra-soft); padding:2px 6px; border-radius:99px; }
+  @media (min-width:641px){ .fow-card{ transition:transform .15s ease, border-color .15s ease; } .fow-card:hover{ transform:translateY(-2px); border-color:var(--wicket); } }
+  @media (max-width:640px){
+    .fow-cards{ grid-template-columns:1fr; gap:8px; }
+    .fow-card{ padding:12px 12px 12px 14px; }
+    .fow-dot{ width:19px; height:19px; top:7px; font-size:9.5px; }
+  }
   .extras-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
   .extra-box{ background:var(--panel-2); border-radius:var(--radius-sm); padding:9px 10px; text-align:center; }
   .extra-box .k{ font-size:10px; color:var(--text-dim); text-transform:uppercase; font-weight:700; }
@@ -3540,7 +3569,7 @@ function renderFinalInnings(){
   // Fall of wickets + extras for the selected innings.
   const fow = (m.fallOfWickets && m.fallOfWickets[team]) || [];
   const fowList = document.getElementById('fow-list');
-  fowList.innerHTML = fow.length ? fow.map(f => `<div class="fow-item"><span class="fow-wkt">${f.wicket||''}</span><span class="tabnum">${(f.score!=null?f.score:f.runs)||0}-${f.wicket||''} <span style="color:var(--text-faint)">(${fmtOvers(f.overs,f.balls)} ov)</span></span></div>`).join('') : '<div class="empty-state">No wickets</div>';
+  fowList.innerHTML = fowHtml(fow, (typeof finalBallLog !== 'undefined' ? finalBallLog : []).filter(b => b.battingTeam === team));
 
   const ex = (m.extras && m.extras[team]) || { wd:0,nb:0,b:0,lb:0 };
   setText('ex-wd', ex.wd||0); setText('ex-nb', ex.nb||0); setText('ex-b', ex.b||0); setText('ex-lb', ex.lb||0);
@@ -6030,6 +6059,32 @@ function renderTables(s){
   });
 }
 
+/* ---------- Fall of Wickets v2 (shared by live + finished views) ---------- */
+function fowHtml(list, balls){
+  const wb = (balls || []).filter(b => b && b.isWicket);
+  const names = wb.length === (list || []).length
+    ? wb.map(b => String((b.dismissal && b.dismissal.batter) || b.striker || '')) : [];
+  const rows = (list || []).map((f, i) => ({
+    no: f.wkt != null ? f.wkt : (f.wicket != null ? f.wicket : i + 1),
+    runs: Number(f.score != null ? f.score : f.runs) || 0,
+    ov: f.over != null ? f.over : fmtOvers(f.overs, f.balls),
+    who: String(f.batter || f.player || f.batsman || f.playerName || f.name || names[i] || '')
+  }));
+  if(!rows.length) return '<div class="empty-state">No wickets yet</div>';
+  rows.forEach((r, i) => { r.stand = Math.max(0, r.runs - (i ? rows[i-1].runs : 0)); });
+  const maxStand = Math.max(1, ...rows.map(r => r.stand));
+  const total = Math.max(1, ...rows.map(r => r.runs));
+  const best = rows.length > 1 ? rows.reduce((a, r) => r.stand > a.stand ? r : a, rows[0]) : null;
+  const dots = rows.map((r, i) => `<span class="fow-dot" style="left:${Math.min(97, Math.max(3, r.runs / total * 100))}%; z-index:${i+1}" title="${r.runs}/${escapeHtml(String(r.no))}">${escapeHtml(String(r.no))}</span>`).join('');
+  const cards = rows.map(r => `<div class="fow-card${best && r === best ? ' best' : ''}">
+    <div class="fow-no">${escapeHtml(String(r.no))}</div>
+    <div class="fow-score tabnum">${r.runs}/${escapeHtml(String(r.no))}<small>${escapeHtml(String(r.ov))} ov</small></div>
+    <div class="fow-who">${r.who ? escapeHtml(r.who) : 'Wicket ' + escapeHtml(String(r.no))}</div>
+    <div class="fow-stand"><span>Stand</span><span class="bar"><i style="width:${Math.round(r.stand / maxStand * 100)}%"></i></span><b class="tabnum">${r.stand}</b>${best && r === best ? '<span class="fow-best">Best</span>' : ''}</div>
+  </div>`).join('');
+  return `<div class="fow-wrap"><div class="fow-track">${dots}</div><div class="fow-axis"><span>0</span><span>${total} runs</span></div><div class="fow-cards">${cards}</div></div>`;
+}
+
 /* ---------- Partnership / FOW / Extras ---------- */
 function renderBottom(s){
   const inn = liveSelectedInnings == null ? (s.inningsNumber || 1) : liveSelectedInnings;
@@ -6068,11 +6123,7 @@ function renderBottom(s){
   }
 
   const fowList = document.getElementById('fow-list');
-  if(!fow.length){
-    fowList.innerHTML = '<div class="empty-state">No wickets yet</div>';
-  } else {
-    fowList.innerHTML = fow.map(f => `<div class="fow-item"><span class="fow-wkt">${f.wkt}</span><span class="tabnum">${f.runs}-${f.wkt} <span style="color:var(--text-faint)">(${f.over} ov)</span></span></div>`).join('');
-  }
+  fowList.innerHTML = fowHtml(fow, (s.ballLog || []).filter(b => b && (b.innings || 1) === inn));
 
   const ex = (s.extras && s.extras[team]) || { wd:0,nb:0,b:0,lb:0 };
   setText('ex-wd', ex.wd||0); setText('ex-nb', ex.nb||0); setText('ex-b', ex.b||0); setText('ex-lb', ex.lb||0);
