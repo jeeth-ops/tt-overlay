@@ -2398,6 +2398,26 @@ function personName(x) {
 // round-trip for the common case of the same four names repeating over and
 // over within one match.
 const playerIdCache = new Map(); // `${ownerUid}::${nameKey}` -> playerId
+// 🩹 After two player profiles are merged, every cached name -> id entry that
+// still points at the merged-away id must follow the merge. Before this the
+// cache kept handing out the dead id until the server restarted, so a player
+// typed/added after a merge could silently fork back onto the old identity.
+function repointPlayerIdCache(fromPlayerId, intoPlayerId) {
+    if (!fromPlayerId || !intoPlayerId) return;
+    for (const [k, v] of playerIdCache) if (v === fromPlayerId) playerIdCache.set(k, intoPlayerId);
+}
+// Follows mergedInto links (max 5 hops) so a squad that still remembers an id
+// that was later merged resolves to the surviving profile.
+async function canonicalPlayerId(ownerUid, playerId) {
+    if (!playersCollection || !ownerUid || !playerId) return playerId;
+    let id = playerId;
+    for (let i = 0; i < 5; i++) {
+        const doc = await playersCollection.findOne({ playerId: id, ownerUid }, { projection: { mergedInto: 1 } });
+        if (!doc || !doc.mergedInto || doc.mergedInto === id) return id;
+        id = doc.mergedInto;
+    }
+    return id;
+}
 async function resolvePlayerId(ownerUid, name) {
     const nameKey = playerKey(name);
     if (!nameKey || !ownerUid || !playersCollection) return null;
@@ -2443,6 +2463,10 @@ async function resolvePlayerIdExplicit(ownerUid, explicitId, name){
   if(!explicitId) return resolvePlayerId(ownerUid, name);
   if(!ownerUid || !playersCollection) return explicitId;
   const nameKey = playerKey(name);
+  // 🩹 An id that was merged into another profile must not be upserted back to
+  // life (that re-attached the name to the dead profile and split the player
+  // in two again) — use the surviving profile instead.
+  try{ explicitId = await canonicalPlayerId(ownerUid, explicitId); }catch(e){}
   try{
     await playersCollection.updateOne(
       { playerId: explicitId, ownerUid },
@@ -4325,6 +4349,24 @@ app.post('/api/players/resolve', requireAuthorizedCreator, async (req, res) => {
     }
 });
 
+// POST /api/players/canonicalize  { uid, ids: [...] } — maps each saved player id
+// to the surviving id if it was merged into another profile (unchanged
+// otherwise). Create New Match calls this so an old squad never brings back a
+// merged-away id. Read-only: creates nothing.
+app.post('/api/players/canonicalize', requireAuthorizedCreator, async (req, res) => {
+    const ownerUid = ownerUidFrom(req) || (req.body && req.body.uid);
+    const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.filter(x => typeof x === 'string' && x).slice(0, 200) : [];
+    if (!ownerUid) return res.status(400).json({ success: false, error: 'uid required' });
+    try {
+        const map = {};
+        for (const id of ids) map[id] = await canonicalPlayerId(ownerUid, id);
+        res.json({ success: true, map });
+    } catch (err) {
+        console.log('Player canonicalize error:', err);
+        res.status(500).json({ success: false, error: 'Could not check players' });
+    }
+});
+
 // POST /api/players/:playerId/merge  { uid, intoNameKeys: [...] } — folds
 // another set of nameKeys (typically every alias of a duplicate playerId
 // created by mistake) into this playerId, then leaves the duplicate doc's
@@ -4356,6 +4398,7 @@ app.post('/api/players/:playerId/merge', requireAuthorizedCreator, async (req, r
         const mergedKeys = [...new Set([...(into.nameKeys || []), ...(from.nameKeys || [])])];
         await playersCollection.updateOne({ _id: from._id }, { $set: { nameKeys: [], mergedInto: into.playerId, updatedAt: Date.now() } });
         await playersCollection.updateOne({ _id: into._id }, { $set: { nameKeys: mergedKeys, updatedAt: Date.now() } });
+        repointPlayerIdCache(from.playerId, into.playerId);
         res.json({ success: true, playerId: into.playerId, nameKeys: mergedKeys });
     } catch (err) {
         console.log('Player merge error:', err);
@@ -6020,6 +6063,7 @@ async function mergePlayersDeep(ownerUid, actorEmail, wrongPlayerName, correctPl
                 const mergedKeys = [...new Set([...(into.nameKeys || []), ...(from.nameKeys || [])])];
                 await playersCollection.updateOne({ _id: from._id }, { $set: { nameKeys: [], mergedInto: into.playerId, updatedAt: Date.now() } });
                 await playersCollection.updateOne({ _id: into._id }, { $set: { nameKeys: mergedKeys, updatedAt: Date.now() } });
+                repointPlayerIdCache(from.playerId, into.playerId);
             }
         } catch (err) { console.log('Player-profile fold after merge error:', err); }
     }
