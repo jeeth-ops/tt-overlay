@@ -62,6 +62,7 @@
 // as before. The continuous 1080p YouTube feed never touches Render.
 // ================================================================
 const express = require('express');
+const retryQueueStore = require('./retryQueueStore');
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -2811,11 +2812,16 @@ persistClipJobs();
 // local .mp4 is never deleted (clips are kept locally next to master.mp4);
 // the retry only stops once server.js has confirmed it received
 // the bytes.
+// Persistence lives in retryQueueStore.js — see that file's header for the
+// root cause it fixes (a live setTimeout handle on a queue entry made
+// JSON.stringify throw, so from the SECOND offline clip onward this file
+// silently stopped being written and those clips were lost on restart).
 const RETRY_QUEUE_FILE = path.join(__dirname, 'retry-queue.local.json');
-let retryQueue = [];
-try { retryQueue = JSON.parse(fs.readFileSync(RETRY_QUEUE_FILE, 'utf8')); } catch (e) { retryQueue = []; }
+let retryQueue = retryQueueStore.loadRetryQueue(RETRY_QUEUE_FILE);
 function persistRetryQueue() {
-    try { fs.writeFileSync(RETRY_QUEUE_FILE, JSON.stringify(retryQueue)); } catch (e) { /* best effort */ }
+    retryQueueStore.saveRetryQueue(RETRY_QUEUE_FILE, retryQueue, (e) => {
+        console.error(`[stream-engine] \u26a0 CLIP QUEUE NOT SAVED (${RETRY_QUEUE_FILE}): ${e.message} — clips already cut are still on disk, but a restart right now would not resume their upload automatically.`);
+    });
 }
 
 function postFileToServer(mainServerUrl, matchId, eventType, timestamp, ballMeta, filePath, clipId) {
@@ -3006,6 +3012,43 @@ async function processRetryEntry(entry) {
         scheduleRetry(entry);
     }
 }
+// 🛟 ORPHAN RECOVERY — the queue file is no longer the ONLY record that a
+// clip still needs uploading.
+//
+// clip-jobs.local.json already tracks every clip and its status, and it is
+// written through a different (debounced, async) path. So on startup, any
+// job that is still mid-forward (RETRY_PENDING / FORWARDING) and whose .mp4
+// is still on disk, but which has no entry in the retry queue, is put back
+// into the queue rather than left as an orphan nobody will ever retry.
+//
+// This is what recovers the clips lost by the serialisation bug described in
+// retryQueueStore.js: their files and their jobs both survived, only the
+// queue entry was missing. It is also a genuine belt-and-braces guarantee
+// going forward — two independent records now have to BOTH be wrong before a
+// cut clip stops being retried.
+function recoverOrphanedClipUploads() {
+    const queued = new Set(retryQueue.map((e) => e.clipId).filter(Boolean));
+    const recovered = [];
+    for (const job of clipJobs.values()) {
+        if (job.status !== 'RETRY_PENDING' && job.status !== 'FORWARDING') continue;
+        if (!job.clipId || queued.has(job.clipId)) continue;
+        if (!job.localPath || !fs.existsSync(job.localPath)) continue;   // nothing to upload
+        if (!job.mainServerUrl) continue;                                 // nowhere to upload it to
+        const entry = {
+            clipId: job.clipId, matchId: job.matchId, eventType: job.eventType,
+            timestamp: job.timestamp, ballMeta: job.ballMeta, filePath: job.localPath,
+            mainServerUrl: job.mainServerUrl, attempts: 0, enqueuedAt: Date.now(),
+        };
+        retryQueue.push(entry);
+        recovered.push(job.clipId);
+    }
+    if (recovered.length) {
+        persistRetryQueue();
+        console.log(`[stream-engine] \ud83d\udee1 Recovered ${recovered.length} clip(s) that were cut but never uploaded, and had no queue entry: ${recovered.join(', ')}`);
+    }
+}
+recoverOrphanedClipUploads();
+
 // Resume any clips that were still queued from a previous run of this process.
 retryQueue.forEach((entry) => scheduleRetry(entry));
 
