@@ -462,8 +462,9 @@
     --u:min(1vw,19.2px);
     --ic-accent:#17337a; --ic-ink:#fff; --ic-dark:#0e2159;
     --ic-fs:calc(var(--u)*1.7); --ic-rp:calc(var(--u)*.75); --ic-cols:1fr;
-    position:absolute; left:50%; top:auto; bottom:19vh; transform:translateX(-50%);
-    width:min(84vw,1400px); max-width:96vw; max-height:76vh; display:none; flex-direction:column;
+    /* CENTRED on screen with no transform (GSAP owns transform for the motion): inset:0 + margin:auto + fit-content height. */
+    position:absolute; left:0; right:0; top:0; bottom:0; margin:auto; height:fit-content;
+    width:min(84vw,1400px); max-width:96vw; max-height:92vh; display:none; flex-direction:column;
     border-radius:20px; overflow:hidden;
     background:var(--bc-paper,#f3f6fc); color:var(--bc-ink,#12213f); font-family:var(--font-ui);
     box-shadow:0 34px 80px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.08);
@@ -483,12 +484,17 @@
     font-family:var(--font-num); font-weight:800; font-size:var(--ic-fs); font-variant-numeric:tabular-nums; line-height:1.15; }
   .ic-row > span{ min-width:0; white-space:nowrap; }
   .ic-row .n{ text-align:left; overflow:hidden; text-overflow:ellipsis; }
+  .ic-row .no{ text-align:left; font-size:.8em; opacity:.55; letter-spacing:.04em; }
+  .ic-row.cur .no{ opacity:.8; }
+  .ic-row.yet .how{ font-family:var(--font-ui); font-weight:800; font-size:.62em; letter-spacing:.14em; opacity:.6; }
   .ic-row .how{ text-align:left; font-family:var(--font-ui); font-weight:600; font-size:.78em; color:var(--bc-ink-dim,#5c6c8a); overflow:hidden; text-overflow:ellipsis; }
-  .ic-row.cur{ background:rgba(11,61,145,.10); background:color-mix(in srgb,var(--ic-accent) 13%,transparent); box-shadow:inset calc(var(--u)*.35) 0 0 var(--ic-accent); }
+  .ic-row.cur{ background:var(--ic-dark); color:var(--ic-ink); }
+  .ic-row.cur .how{ color:var(--ic-ink); opacity:.8; }
+  .ic-row.yet{ color:var(--bc-ink,#12213f); font-weight:700; }
+  .ic-row:nth-child(even):not(.cur):not(.hdr){ background:rgba(16,25,58,.045); }
   .ic-row.out .n{ font-weight:700; }
   .ic-row.hdr{ font-family:var(--font-ui); font-size:calc(var(--u)*1.05); letter-spacing:.14em; color:var(--bc-ink-dim,#5c6c8a); padding-top:calc(var(--u)*.3); padding-bottom:calc(var(--u)*.3); }
-  .ic-row .dot{ display:inline-block; width:calc(var(--u)*.75); height:calc(var(--u)*.75); margin-right:calc(var(--u)*.8); border-radius:50%; background:var(--ic-accent); vertical-align:middle; }
-  .ic-row:not(.cur) .dot{ display:none; }
+  .ic-row .dot{ display:inline-block; width:calc(var(--u)*.75); height:calc(var(--u)*.75); margin-right:calc(var(--u)*.8); border-radius:50%; background:currentColor; vertical-align:middle; }
   .ic-sec{ display:flex; align-items:center; gap:calc(var(--u)*.8); margin-top:calc(var(--u)*.55);
     font-size:calc(var(--u)*.95); font-weight:800; letter-spacing:.18em; color:var(--ic-accent); }
   .ic-sec::after{ content:''; flex:1; height:1px; background:var(--hairline,rgba(16,25,58,.14)); }
@@ -501,6 +507,10 @@
     background:#0a1330; color:#fff; border-top:calc(var(--u)*.25) solid var(--ic-accent);
     font-weight:800; font-size:calc(var(--u)*1.25); letter-spacing:.04em; white-space:nowrap; overflow:hidden; }
   .ic-foot span{ min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  .ic-foot.tri{ gap:calc(var(--u)*.8); background:#eef2fa; border-top:0; padding:calc(var(--u)*.9) calc(var(--u)*1.8); }
+  .ic-foot.tri span{ flex:1; display:flex; justify-content:space-between; align-items:center; padding:calc(var(--u)*.8) calc(var(--u)*1.4); border-radius:calc(var(--u)*.6); background:#fff; color:#12213f; font-size:calc(var(--u)*1.5); }
+  .ic-foot.tri span b{ font-family:var(--font-num); font-size:1.25em; }
+  .ic-foot.tri span.tot{ flex:1.3; background:var(--ic-dark); color:var(--ic-ink); }
 
   /* Bottom black stat bar removed per spec — Target / Balls Remaining
      now live inline in #crr-seg (see above), and CRR/RRR occupy the
@@ -1438,6 +1448,7 @@ socket.on('disconnect', () => { connStatus.classList.add('visible'); connStatus.
 socket.on('connect_error', () => { connStatus.classList.add('visible'); connStatus.textContent = 'Connection error — retrying…'; });
 
 socket.on('liveCricketScore', (data) => {
+  try{ noteBattersFromState(data); }catch(e){}
   if(data && data.infoCards) applyInfoCfg(data.infoCards); // optional panel toggle: { enabled, durationMs }
   if(data && data.visible === false){ pendingStateUpdate = null; renderState(data); return; }
   // While an event graphic is on the bar, OR the over-summary sequencer is
@@ -3449,11 +3460,28 @@ function noteBowler(d){
   if(bowlerBook.key !== k){ bowlerBook.key = k; bowlerBook.map.clear(); }
   const b = d.bowler;
   if(!b || !b.name) return;
-  bowlerBook.map.delete(b.name);
-  bowlerBook.map.set(b.name, Object.assign({}, b));
+  bowlerBook.map.set(b.name, Object.assign({}, b));   // Map.set keeps the original position -> bowling order preserved
 }
 const txt = (v) => (v == null ? '' : String(v));
 function el(tag, cls, t){ const e = document.createElement(tag); if(cls) e.className = cls; if(t != null) e.textContent = t; return e; }
+// FALLBACK ONLY: when the panel's over-end payload has no batsmen[] list, build
+// the batting order from the live state stream (striker / non-striker seen so
+// far this innings). Gives who has batted + stats; dismissal METHOD and the
+// yet-to-bat list can only come from the panel, so they are left out, not guessed.
+const batterBook = { key: null, order: [], map: new Map(), wkts: 0 };
+function noteBattersFromState(st){
+  if(!st || st.visible === false) return;
+  const key = (st.inningsNumber || 1) + ':' + (st.battingTeam || '');
+  if(batterBook.key !== key){ batterBook.key = key; batterBook.order = []; batterBook.map.clear(); batterBook.wkts = st.score?.wickets ?? 0; }
+  const cur = [st.striker, st.nonStriker].filter(b => b && b.name);
+  const wk = st.score?.wickets ?? 0;
+  batterBook.map.forEach((b, n) => { if(b.st === 'in' && !cur.some(c => c.name === n)) b.st = wk > batterBook.wkts ? 'out' : 'gone'; });
+  cur.forEach(c => {
+    if(!batterBook.map.has(c.name)) batterBook.order.push(c.name);
+    batterBook.map.set(c.name, Object.assign({}, c, { st: 'in', isStriker: c === st.striker }));
+  });
+  batterBook.wkts = wk;
+}
 function icRow(cls, cells){            // cells: [{t, c}]  (c = class)
   const r = el('div', 'ic-row ' + cls);
   cells.forEach((c, k) => {
@@ -3477,7 +3505,7 @@ function bowlerFig(b){
 // Density: fit the whole XI in the SAME card size by tightening type/row
 // padding — never by dropping players.
 function setDensity(card, units){
-  const t = units <= 7 ? [1.9, .9] : units <= 10 ? [1.6, .6] : units <= 12 ? [1.4, .4] : units <= 14 ? [1.25, .28] : [1.1, .2];
+  const t = units <= 7 ? [1.9, .9] : units <= 10 ? [1.7, .65] : units <= 12 ? [1.6, .5] : units <= 14 ? [1.35, .3] : [1.15, .2];
   card.dataset.fs = t[0]; card.dataset.rp = t[1];
   card.style.setProperty('--ic-fs', `calc(var(--u)*${t[0]})`);
   card.style.setProperty('--ic-rp', `calc(var(--u)*${t[1]})`);
@@ -3487,12 +3515,18 @@ function setDensity(card, units){
 // time until the whole XI fits — nobody is ever dropped.
 function fitInfoCard(card){
   const body = card.querySelector('.ic-body'); if(!body) return;
-  let fs = parseFloat(card.dataset.fs) || 1.7, rp = parseFloat(card.dataset.rp) || .7, guard = 0;
-  while(body.scrollHeight > body.clientHeight + 1 && guard++ < 8 && fs > .85){
-    fs = Math.max(.85, fs - .1); rp = Math.max(.08, rp - .06);
-    card.style.setProperty('--ic-fs', `calc(var(--u)*${fs})`);
-    card.style.setProperty('--ic-rp', `calc(var(--u)*${rp})`);
-  }
+  const base = { fs: parseFloat(card.dataset.fs) || 1.7, rp: parseFloat(card.dataset.rp) || .7 };
+  const pass = () => {
+    let fs = base.fs, rp = base.rp, guard = 0;
+    const apply = () => { card.style.setProperty('--ic-fs', `calc(var(--u)*${fs})`); card.style.setProperty('--ic-rp', `calc(var(--u)*${rp})`); };
+    apply();
+    while(body.scrollHeight > body.clientHeight + 1 && guard++ < 10 && fs > .85){ fs = Math.max(.85, fs - .1); rp = Math.max(.08, rp - .05); apply(); }
+    return { fs, over: body.scrollHeight > body.clientHeight + 1 };
+  };
+  let r = pass();
+  // Fall of Wickets is optional garnish: if keeping it would shrink the XI below a
+  // readable size, drop it and give every player row the room instead.
+  if((r.fs < 1.25 || r.over) && body.querySelector('.optional')){ body.querySelectorAll('.optional').forEach(e => e.remove()); pass(); }
 }
 // Paints the FULL batting or bowling scorecard ONLY from the frozen over-end
 // payload (same snapshot the Over Summary uses). Team identity: batting card =
@@ -3521,58 +3555,77 @@ function fillInfoCard(kind, d){
   let rowsN = 0;
 
   if(bat){
-    card.style.setProperty('--ic-cols', '1.05fr 1.5fr calc(var(--u)*4.6) calc(var(--u)*4.6) calc(var(--u)*3.8) calc(var(--u)*3.8) calc(var(--u)*6.4)');
-    const all = Array.isArray(d.batsmen) ? d.batsmen.filter(b => b && b.name) : [];
+    foot.className = 'ic-foot tri';
+    card.style.setProperty('--ic-cols', 'calc(var(--u)*2.8) 1.2fr 1.3fr calc(var(--u)*4.6) calc(var(--u)*4.6) calc(var(--u)*3.8) calc(var(--u)*3.8) calc(var(--u)*6.4)');
+    let all = Array.isArray(d.batsmen) ? d.batsmen.filter(b => b && b.name) : [];
+    if(!all.length) all = batterBook.order.map(n => { const b = batterBook.map.get(n); return Object.assign({}, b, { howOut: b.st === 'in' ? 'not out' : b.st === 'out' ? 'out' : 'left crease' }); });
+    // Batting order = the panel's own order (or its explicit order/no field). Never re-sorted by runs/status.
+    const ordOf = (b) => Number(b.order ?? b.battingOrder ?? b.no);
+    if(all.length && all.every(b => Number.isFinite(ordOf(b)))) all = all.slice().sort((a, b) => ordOf(a) - ordOf(b));
     const isYet = (b) => /^(yet|did not|dnb)/i.test(txt(b.howOut)) || b.status === 'YET_TO_BAT';
     const isOut = (b) => !!txt(b.howOut) && !/not out|batting/i.test(txt(b.howOut)) && !isYet(b);
-    let cur, out, yet;
-    if(all.length){
-      yet = all.filter(isYet).map(nameOf);
-      out = all.filter(isOut);
-      cur = all.filter(b => !isYet(b) && !isOut(b));
-      if(cur.some(b => b.isStriker || b.onStrike)) cur.sort((a, b) => ((b.isStriker || b.onStrike) ? 1 : 0) - ((a.isStriker || a.onStrike) ? 1 : 0));
-      cur.forEach(b => { if(!(b.isStriker || b.onStrike) && d.striker && b.name === d.striker.name) b.isStriker = true; });
-    } else {                                   // panel hasn't sent the full card yet → current pair only
-      cur = [Object.assign({}, d.striker, { isStriker: true }), d.nonStriker].filter(b => b && b.name); out = []; yet = [];
-    }
-    if(Array.isArray(d.yetToBat) && d.yetToBat.length) yet = d.yetToBat.map(nameOf);
+    const isStr = (b) => !!(b.isStriker || b.onStrike || (d.striker && b.name === d.striker.name));
+    let yet = all.filter(isYet).length ? [] : [];
+    const yetObjs = all.filter(isYet);
+    const yetNames = (Array.isArray(d.yetToBat) && d.yetToBat.length) ? d.yetToBat.map(x => (typeof x === 'string' ? { name: x } : x)) : yetObjs;
     const sr = (b) => b.sr != null ? b.sr : (b.balls ? ((b.runs || 0) * 100 / b.balls).toFixed(1) : '0.0');
-    const cells = (b, isCur, how) => [
-      { t: nameOf(b), c: 'n', dot: isCur }, { t: how, c: 'how' },
-      { t: b.runs ?? 0 }, { t: b.balls ?? 0 }, { t: b.fours ?? 0 }, { t: b.sixes ?? 0 }, { t: sr(b) }];
-    body.appendChild(icRow('hdr', [{ t: 'BATTER', c: 'n' }, { t: 'STATUS', c: 'how' }, { t: 'R' }, { t: 'B' }, { t: '4S' }, { t: '6S' }, { t: 'SR' }]));
-    if(cur.length){ body.appendChild(icSec('AT THE CREASE')); cur.forEach(b => { body.appendChild(icRow('cur', cells(b, true, (b.isStriker || b.onStrike) ? 'on strike' : 'not out'))); rowsN++; }); }
-    if(out.length){ body.appendChild(icSec('OUT')); out.forEach(b => { body.appendChild(icRow('out', cells(b, false, txt(b.howOut)))); rowsN++; }); }
-    if(yet.length){ body.appendChild(icSec('YET TO BAT')); body.appendChild(icChips(yet)); }
+    const no2 = (n) => String(n).padStart(2, '0');
+    body.appendChild(icRow('hdr', [{ t: 'NO.', c: 'no' }, { t: 'BATTER', c: 'n' }, { t: '', c: 'how' }, { t: 'R' }, { t: 'B' }, { t: '4S' }, { t: '6S' }, { t: 'SR' }]));
+    let pos = 0;
+    all.filter(b => !isYet(b)).forEach(b => {
+      pos++;
+      const out = isOut(b), st = !out && isStr(b);
+      body.appendChild(icRow(out ? 'out' : 'cur', [
+        { t: no2(Number.isFinite(ordOf(b)) ? ordOf(b) : pos), c: 'no' }, { t: nameOf(b), c: 'n' },
+        { t: out ? txt(b.howOut) : (st ? '● STRIKER' : '● NON-STRIKER'), c: 'how' },
+        { t: b.runs ?? 0 }, { t: b.balls ?? 0 }, { t: b.fours ?? 0 }, { t: b.sixes ?? 0 }, { t: sr(b) }]));
+      rowsN++;
+    });
+    yetNames.forEach(x => {
+      pos++;
+      body.appendChild(icRow('yet', [{ t: no2(Number.isFinite(ordOf(x)) ? ordOf(x) : pos), c: 'no' }, { t: nameOf(x), c: 'n' }, { t: 'YET TO BAT', c: 'how' }, { t: '' }, { t: '' }, { t: '' }, { t: '' }, { t: '' }]));
+      rowsN++;
+    });
     if(Array.isArray(d.fallOfWickets) && d.fallOfWickets.length){
-      body.appendChild(icSec('FALL OF WICKETS'));
-      body.appendChild(icChips(d.fallOfWickets.map(f => `${f.wkt}-${f.runs}${f.name ? ' ' + nameOf(f) : ''}${f.over != null ? ' (' + f.over + ')' : ''}`), 'fow'));
+      const a = icSec('FALL OF WICKETS'), c = icChips(d.fallOfWickets.map(f => `${f.runs}/${f.wkt}${f.name ? ' ' + nameOf(f) : ''}${f.over != null ? ' ' + f.over : ''}`), 'fow');
+      a.classList.add('optional'); c.classList.add('optional'); body.appendChild(a); body.appendChild(c);
     }
-    const ex = d.extrasTotal ?? d.extras, eb = d.extrasBreakdown;
-    if(ex != null) foot1(`EXTRAS ${ex}${eb ? ` (${[['wd', 'Wd'], ['nb', 'Nb'], ['b', 'B'], ['lb', 'Lb']].filter(k => eb[k[0]]).map(k => k[1] + ' ' + eb[k[0]]).join(', ')})` : ''}`);
-    if(d.partnership && d.partnership.runs != null) foot1(`PARTNERSHIP ${d.partnership.runs} (${d.partnership.balls ?? 0})`);
-    foot1(`CRR ${tb ? ((d.score || 0) / (tb / 6)).toFixed(2) : '0.00'}`);
-    if(d.target){ const need = d.target - (d.score || 0); foot1(need > 0 ? `TARGET ${d.target} · NEED ${need}` : `TARGET ${d.target}`); }
+    const ex = d.extrasTotal ?? d.extras;
+    const box = (cls, label, val) => { const sp = el('span', cls, label + ' '); sp.appendChild(el('b', '', txt(val))); foot.appendChild(sp); };
+    box('', 'EXTRAS', ex ?? 0);
+    box('', 'OVERS', `${d.overs ?? 0}.${d.ballsIntoOver ?? 0}`);
+    box('tot', 'TOTAL', `${d.score ?? 0}-${d.wickets ?? 0}`);
   } else {
+    foot.className = 'ic-foot';
     let list = (Array.isArray(d.bowlers) && d.bowlers.length) ? d.bowlers : Array.from(bowlerBook.map.values());
     if(!list.length && d.bowler && d.bowler.name) list = [d.bowler];
     const curName = d.bowler && d.bowler.name;
     const showExtras = list.some(b => b.wides != null || b.noBalls != null);
     card.style.setProperty('--ic-cols', showExtras
-      ? '1fr calc(var(--u)*5) calc(var(--u)*4) calc(var(--u)*4.6) calc(var(--u)*4) calc(var(--u)*6.4) calc(var(--u)*4) calc(var(--u)*4)'
-      : '1fr calc(var(--u)*6) calc(var(--u)*5) calc(var(--u)*5.5) calc(var(--u)*5) calc(var(--u)*7.5)');
-    const cells = (b, isCur) => { const f = bowlerFig(b); return [{ t: nameOf(b), c: 'n', dot: isCur }, { t: f.ov }, { t: b.maidens ?? 0 }, { t: b.runs ?? 0 }, { t: b.wickets ?? 0 }, { t: f.econ }]
-      .concat(showExtras ? [{ t: b.wides ?? 0 }, { t: b.noBalls ?? 0 }] : []); };
-    body.appendChild(icRow('hdr', [{ t: 'BOWLER', c: 'n' }, { t: 'O' }, { t: 'M' }, { t: 'R' }, { t: 'W' }, { t: 'ECON' }].concat(showExtras ? [{ t: 'WD' }, { t: 'NB' }] : [])));
-    const curB = list.filter(b => b.current || b.name === curName), done = list.filter(b => !(b.current || b.name === curName));
-    if(curB.length){ body.appendChild(icSec('CURRENT BOWLER')); curB.forEach(b => { body.appendChild(icRow('cur', cells(b, true))); rowsN++; }); }
-    if(done.length){ body.appendChild(icSec('BOWLED')); done.forEach(b => { body.appendChild(icRow('out', cells(b, false))); rowsN++; }); }
-    if(Array.isArray(d.yetToBowl) && d.yetToBowl.length){ body.appendChild(icSec('YET TO BOWL')); body.appendChild(icChips(d.yetToBowl.map(nameOf))); }
+      ? 'calc(var(--u)*2.8) 1.2fr 1.1fr calc(var(--u)*5) calc(var(--u)*4) calc(var(--u)*4.6) calc(var(--u)*4) calc(var(--u)*6.4) calc(var(--u)*4) calc(var(--u)*4)'
+      : 'calc(var(--u)*2.8) 1.2fr 1.1fr calc(var(--u)*5.5) calc(var(--u)*4.5) calc(var(--u)*5) calc(var(--u)*4.5) calc(var(--u)*7)');
+    const no2 = (n) => String(n).padStart(2, '0');
+    const bord = (b) => Number(b.order ?? b.bowlingOrder ?? b.no);
+    if(list.length && list.every(b => Number.isFinite(bord(b)))) list = list.slice().sort((a, b) => bord(a) - bord(b));
+    body.appendChild(icRow('hdr', [{ t: 'NO.', c: 'no' }, { t: 'BOWLER', c: 'n' }, { t: '', c: 'how' }, { t: 'O' }, { t: 'M' }, { t: 'R' }, { t: 'W' }, { t: 'ECON' }].concat(showExtras ? [{ t: 'WD' }, { t: 'NB' }] : [])));
+    // Bowling order as recorded (first-appearance order); the current bowler is marked IN PLACE, never moved.
+    let pos = 0;
+    list.forEach(b => {
+      pos++;
+      const f = bowlerFig(b), cur = !!b.current || (!!curName && b.name === curName);
+      body.appendChild(icRow(cur ? 'cur' : 'out', [{ t: no2(Number.isFinite(bord(b)) ? bord(b) : pos), c: 'no' }, { t: nameOf(b), c: 'n' }, { t: cur ? '● CURRENT BOWLER' : '', c: 'how' },
+        { t: f.ov }, { t: b.maidens ?? 0 }, { t: b.runs ?? 0 }, { t: b.wickets ?? 0 }, { t: f.econ }].concat(showExtras ? [{ t: b.wides ?? 0 }, { t: b.noBalls ?? 0 }] : [])));
+      rowsN++;
+    });
+    (Array.isArray(d.yetToBowl) ? d.yetToBowl : []).forEach(x => {
+      pos++;
+      body.appendChild(icRow('yet', [{ t: no2(pos), c: 'no' }, { t: nameOf(x), c: 'n' }, { t: 'YET TO BOWL', c: 'how' }].concat(Array(showExtras ? 7 : 5).fill({ t: '' }))));
+      rowsN++;
+    });
     foot1(`THIS OVER ${d.overRuns ?? 0} RUN${d.overRuns === 1 ? '' : 'S'}${d.overWickets ? ` · ${d.overWickets} WKT` : ''}`);
     foot1(`${d.score ?? 0}/${d.wickets ?? 0} AFTER ${d.overs ?? 0}.${d.ballsIntoOver ?? 0} OV`);
   }
-  const secs = body.querySelectorAll('.ic-sec').length, chips = body.querySelectorAll('.ic-chips').length;
-  setDensity(card, rowsN + secs * .7 + chips * 1.1);
+  setDensity(card, rowsN);
 }
 // Operator/dev preview (console or OBS "Interact"): previewInfoCard('SUMMARY'|'BATTING'|'BOWLING').
 // Uses the newest live state; never touches dedupe/rotation bookkeeping.
