@@ -372,7 +372,20 @@
      --osc-glow-a/--osc-glow-b, ambientTeamColor()) — the "alive but
      never on top of the data" trick from the contrast-aware design
      system above. Transform/opacity only for motion (playOverSummaryCard). */
-  #over-summary-card{
+  /* All three between-overs graphics — OVER SUMMARY, BATTING SCORECARD and
+     BOWLING SCORECARD — share this one geometry block, so they are byte-for-
+     byte the same box: same centring, same width, same max-height, same
+     radius/shadow/stacking. The cycler swaps WHICH of them is on air; it must
+     never look like the card moved or resized between overs.
+
+     Selector is .summary-card.cycle-card, not a bare .cycle-card: the shared
+     .summary-card rules below are declared LATER in this stylesheet, so at
+     equal specificity THEY would win the width/top cascade — collapsing these
+     cards to the narrow 880px shell and, because .summary-card sets top:40%
+     while this block sets bottom, giving them a computed top-to-bottom height
+     that clips the rows instead of shrink-to-fit. Chaining both classes keeps
+     this block ahead of them no matter where either sits in the file. */
+  .summary-card.cycle-card{
     --osc-accent: var(--bc-blue,#0b3d91);
     --osc-accent-b: var(--bc-red,#7a1620);
     --osc-glow-a: rgba(11,61,145,0.30);
@@ -427,10 +440,10 @@
   /* This card is much wider than the other .summary-card members — scale
      the shared table/footer text up to fill it instead of leaving the
      extra width as bare space. */
-  #over-summary-card .sc-rows{ padding:20px 34px 6px; }
-  #over-summary-card .sc-row{ font-size:22px; padding:14px 10px; }
-  #over-summary-card .sc-row-head{ font-size:16px; }
-  #over-summary-card .sc-footer{ padding:20px 34px; font-size:26px; }
+  .cycle-card .sc-rows{ padding:20px 34px 6px; }
+  .cycle-card .sc-row{ font-size:22px; padding:14px 10px; }
+  .cycle-card .sc-row-head{ font-size:16px; }
+  .cycle-card .sc-footer{ padding:20px 34px; font-size:26px; }
   .osc-footer{ display:flex; }
   .osc-footer > div{ flex:1; }
   #osc-bowler-line{
@@ -448,6 +461,64 @@
   .osc-mom-pill .ov{ font-size:10.5px; font-weight:700; color:var(--bc-ink-dim,#5c6c8a); letter-spacing:.4px; }
   .osc-mom-pill.current{ background:var(--osc-accent); border-color:var(--osc-accent); color:#fff; }
   .osc-mom-pill.current .ov{ color:rgba(255,255,255,0.75); }
+
+  /* ---- 🏏 BATTING / BOWLING SCORECARD GRAPHICS ----
+     The two cards that alternate with the over summary between overs (see
+     the CYCLE table in the over-summary sequencer). Same .cycle-card shell
+     as the over summary — identical size and position — but headed by ONE
+     team's identity (logo, name, colour) rather than the match's, because a
+     batting card belongs to the batting side and a bowling card to the
+     bowling side. The team colour drives the header via --card-accent, over
+     a dark diagonal wash so white header text stays readable even against a
+     very light team colour (the same trick #team-stat-card uses). */
+  #batting-card-graphic .sc-header, #bowling-card-graphic .sc-header{
+    background:
+      linear-gradient(135deg, rgba(0,0,0,0.12) 0%, rgba(0,0,0,0.58) 100%),
+      linear-gradient(135deg, var(--card-accent,#0b3d91), var(--card-accent,#0b3d91));
+    padding:20px 34px; gap:22px;
+  }
+  #batting-card-graphic .sc-badge, #bowling-card-graphic .sc-badge{ width:78px; height:78px; font-size:21px; }
+  #batting-card-graphic .sc-title, #bowling-card-graphic .sc-title{ font-size:min(2.9vw,34px); }
+  #batting-card-graphic .sc-sub, #bowling-card-graphic .sc-sub{ color:rgba(255,255,255,0.88); }
+  /* Score block on the right of the header — the innings total/overs, so the
+     scorecard is readable on its own without the bar underneath (which the
+     cycler has taken off air while this card is up). */
+  .cardg-score{ flex:none; text-align:right; font-family:var(--font-num); color:#fff; }
+  .cardg-score .big{ font-weight:900; font-size:min(3.1vw,37px); letter-spacing:.5px; text-shadow:0 2px 6px rgba(0,0,0,0.45); }
+  .cardg-score .sml{ font-weight:800; font-size:15px; letter-spacing:1.3px; color:rgba(255,255,255,0.82); margin-top:3px; }
+
+  /* Batter's dismissal line, under the name — "c Wade b Hastings" /
+     "not out". The detail that makes this read as a real broadcast
+     scorecard rather than a bare stats table. */
+  .cardg-name-wrap{ min-width:0; }
+  .cardg-name{ font-weight:700; color:var(--bc-ink,#12213f); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .cardg-out{
+    font-size:13.5px; font-weight:600; letter-spacing:.2px; color:var(--bc-ink-dim,#5c6c8a);
+    margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .cardg-out.notout{ color:var(--card-ink,#0b3d91); font-weight:800; }
+  /* At-the-crease batters / the bowler mid-spell get the accent rail so the
+     eye lands on the live players first. */
+  .sc-row.cardg-live{ background:rgba(11,61,145,0.09); box-shadow:inset 3px 0 0 var(--card-ink,#0b3d91); }
+  .cardg-extras{
+    display:flex; justify-content:space-between; align-items:center;
+    margin:10px 34px 0; padding:12px 18px; background:rgba(11,61,145,0.06);
+    border-radius:9px; border:1px solid var(--hairline,rgba(16,25,58,.1));
+    font-family:var(--font-num); font-weight:800; font-size:18px; color:var(--bc-ink,#12213f);
+  }
+  .cardg-extras .lbl{ font-size:14px; letter-spacing:1.2px; color:var(--bc-ink-dim,#5c6c8a); text-transform:uppercase; }
+  .cardg-empty{ padding:34px; text-align:center; font-size:20px; font-weight:700; color:var(--bc-ink-dim,#5c6c8a); }
+  /* A full innings card can run to 11 batters. Rather than letting the
+     shared max-height clip the tail (overflow:hidden), the fill functions
+     add .dense once a card passes 7 rows, which tightens type and padding
+     enough for a full card to fit inside the SAME box — the cycler's whole
+     point is that the box never changes size. */
+  .cycle-card.dense .sc-rows{ padding:12px 34px 3px; }
+  .cycle-card.dense .sc-row{ font-size:17px; padding:5px 10px; }
+  .cycle-card.dense .cardg-out{ font-size:11.5px; margin-top:1px; }
+  .cycle-card.dense .sc-row-head{ font-size:13.5px; padding:6px 10px; }
+  .cycle-card.dense .cardg-extras{ margin-top:6px; padding:8px 18px; font-size:16px; }
+  .cycle-card.dense .sc-footer{ margin-top:10px; padding:14px 34px; font-size:23px; }
 
   /* Bottom black stat bar removed per spec — Target / Balls Remaining
      now live inline in #crr-seg (see above), and CRR/RRR occupy the
@@ -1294,7 +1365,7 @@
        and team-stat cards — team badge + name + format header, current
        batters table, overs/total footer, a thin ball-by-ball strip and a
        last-5-overs momentum row. -->
-  <div id="over-summary-card" class="summary-card">
+  <div id="over-summary-card" class="summary-card cycle-card">
     <div class="sc-header osc-vs-header">
       <div class="osc-vs-side">
         <div class="sc-badge" id="osc-badge-a">TM</div>
@@ -1340,6 +1411,56 @@
     <div class="osc-momentum">
       <div class="osc-momentum-label">LAST 5 OVERS</div>
       <div class="osc-momentum-row" id="osc-momentum-row"></div>
+    </div>
+  </div>
+
+  <!-- 🏏 BATTING SCORECARD GRAPHIC — the second face of the between-overs
+       cycle (over summary -> batting card -> bowling card -> repeat, see the
+       CYCLE table in the over-summary sequencer). Same .cycle-card shell and
+       therefore the exact same box as the over summary; headed by the
+       BATTING team's logo / name / colour. Rows are built in JS from the
+       frozen over-summary payload's `batsmen` array. -->
+  <div id="batting-card-graphic" class="summary-card cycle-card">
+    <div class="sc-header">
+      <div class="sc-badge" id="bat-card-badge">TM</div>
+      <div class="sc-header-text">
+        <div class="sc-title" id="bat-card-team">TEAM</div>
+        <div class="sc-sub" id="bat-card-sub">BATTING</div>
+      </div>
+      <div class="cardg-score">
+        <div class="big" id="bat-card-total">0-0</div>
+        <div class="sml" id="bat-card-overs">0.0 OVERS</div>
+      </div>
+    </div>
+    <div class="sc-rows" id="bat-card-rows"></div>
+    <div class="cardg-extras">
+      <span class="lbl">EXTRAS</span><span id="bat-card-extras">0</span>
+    </div>
+    <div class="sc-footer">
+      <div id="bat-card-foot-l">TOTAL</div>
+      <div id="bat-card-foot-r" style="text-align:right;">0-0</div>
+    </div>
+  </div>
+
+  <!-- 🏏 BOWLING SCORECARD GRAPHIC — third face of the same cycle, headed by
+       the BOWLING team's logo / name / colour, rows built from the frozen
+       payload's `bowlers` array. -->
+  <div id="bowling-card-graphic" class="summary-card cycle-card">
+    <div class="sc-header">
+      <div class="sc-badge" id="bowl-card-badge">TM</div>
+      <div class="sc-header-text">
+        <div class="sc-title" id="bowl-card-team">TEAM</div>
+        <div class="sc-sub" id="bowl-card-sub">BOWLING</div>
+      </div>
+      <div class="cardg-score">
+        <div class="big" id="bowl-card-total">0-0</div>
+        <div class="sml" id="bowl-card-overs">0.0 OVERS</div>
+      </div>
+    </div>
+    <div class="sc-rows" id="bowl-card-rows"></div>
+    <div class="sc-footer">
+      <div id="bowl-card-foot-l">OVERS 0.0</div>
+      <div id="bowl-card-foot-r" style="text-align:right;">TOTAL 0-0</div>
     </div>
   </div>
 
@@ -1580,6 +1701,29 @@ function ambientTeamColor(hex, baseAlpha){
     const alpha = luminance > 0.62 ? Math.min(0.9, baseAlpha * 1.5) : baseAlpha;
     return `rgba(${r},${g},${b},${alpha.toFixed(2)})`;
   }catch(e){ return `rgba(255,255,255,${baseAlpha})`; }
+}
+// 🎨 The counterpart to idealTextColor(): a version of a team colour dark
+// enough to be READ as text/rules on the light "paper" card surface. A team
+// whose colour is a light yellow or a pastel is perfectly legible as a header
+// fill (where idealTextColor flips the text to dark ink) but nearly invisible
+// as ink on #f3f6fc — so anything the scorecard graphics paint in the team's
+// own colour on paper goes through here first. Hue is kept; only the level is
+// pulled down, and only as far as it needs to go, so a team that is already
+// dark enough comes back untouched and still looks like itself.
+function inkTeamColor(hex){
+  try{
+    let h = String(hex || '').replace('#','');
+    if(h.length === 3) h = h.split('').map(c => c+c).join('');
+    if(!/^[0-9a-fA-F]{6}$/.test(h)) return 'var(--bc-blue,#0b3d91)';
+    let r = parseInt(h.substr(0,2),16), g = parseInt(h.substr(2,2),16), b = parseInt(h.substr(4,2),16);
+    const lum = (0.299*r + 0.587*g + 0.114*b) / 255;
+    const TARGET = 0.34;              // comfortably readable on the paper surface
+    if(lum > TARGET){
+      const k = TARGET / lum;
+      r = Math.round(r*k); g = Math.round(g*k); b = Math.round(b*k);
+    }
+    return `rgb(${r},${g},${b})`;
+  }catch(e){ return 'var(--bc-blue,#0b3d91)'; }
 }
 
 /* ============================================================
@@ -3310,14 +3454,177 @@ function fillOverSummaryCard(d){
 }
 
 /* ============================================================
+   🏏 BATTING / BOWLING SCORECARD GRAPHICS
+   The two cards that alternate with the over summary between overs. Both are
+   painted from the SAME frozen cricketOverSummary payload the over summary
+   uses (d.batsmen / d.bowlers, added by buildLiveInningsCardRows() in
+   cricket-panel.html), so all three faces of the cycle describe the same
+   instant — the moment that over ended — even though they go on air one over
+   apart and newer liveCricketScore updates keep arriving in between.
+
+   Rows are built with createElement/textContent rather than innerHTML:
+   player and dismissal text is operator-typed, so it is never parsed as
+   markup here.
+   ============================================================ */
+const CARD_DENSE_AFTER_ROWS = 7;   // past this, .dense tightens type so a full card still fits the same box
+
+// One scorecard row: a name cell (with an optional dim second line) followed
+// by five numeric cells — the shared .sc-row 6-column grid every summary
+// card in this overlay already uses.
+function buildCardRow(name, sub, subClass, nums, opts){
+  opts = opts || {};
+  const row = document.createElement('div');
+  row.className = 'sc-row' + (opts.alt ? ' sc-row-alt' : '') + (opts.live ? ' cardg-live' : '');
+  const wrap = document.createElement('div');
+  wrap.className = 'sc-c-name cardg-name-wrap';
+  const nameEl = document.createElement('div');
+  nameEl.className = 'cardg-name';
+  nameEl.textContent = name;
+  wrap.appendChild(nameEl);
+  if(sub){
+    const subEl = document.createElement('div');
+    subEl.className = 'cardg-out' + (subClass ? ' ' + subClass : '');
+    subEl.textContent = sub;
+    wrap.appendChild(subEl);
+  }
+  row.appendChild(wrap);
+  nums.forEach(v => {
+    const c = document.createElement('span');
+    c.className = 'sc-c-num';
+    c.textContent = v;
+    row.appendChild(c);
+  });
+  return row;
+}
+function buildCardHeadRow(cols){
+  const row = document.createElement('div');
+  row.className = 'sc-row sc-row-head';
+  cols.forEach((label, i) => {
+    const c = document.createElement('span');
+    c.className = i === 0 ? 'sc-c-name' : 'sc-c-num';
+    c.textContent = label;
+    row.appendChild(c);
+  });
+  return row;
+}
+function cardEmptyRow(text){
+  const el = document.createElement('div');
+  el.className = 'cardg-empty';
+  el.textContent = text;
+  return el;
+}
+// Shared header paint for both scorecard graphics: one team's badge, full
+// name, a label line, and the innings score on the right. `teamColor` becomes
+// --card-accent, which the header gradient, the not-out text and the
+// at-the-crease rail all read from.
+function paintCardHeader(cardId, prefix, d, team, label){
+  const card = document.getElementById(cardId);
+  const accent = team.color || 'var(--bc-blue,#0b3d91)';
+  // --card-accent fills the header (white text over a dark wash, so any
+  // colour works there); --card-ink is the same colour pulled dark enough to
+  // be read as text/rules on the light card body underneath.
+  card.style.setProperty('--card-accent', accent);
+  card.style.setProperty('--card-ink', team.color ? inkTeamColor(team.color) : 'var(--bc-blue,#0b3d91)');
+  setBadge(document.getElementById(prefix + '-badge'), team.logo, badgeText(team.short, team.name));
+  document.getElementById(prefix + '-team').textContent = (team.name || team.short || '—').toUpperCase();
+  const over = d.overNumber != null ? ` · AFTER OVER ${d.overNumber}` : '';
+  document.getElementById(prefix + '-sub').textContent = `${label}${d.format ? ' · ' + String(d.format).toUpperCase() : ''}${over}`;
+  document.getElementById(prefix + '-total').textContent = `${d.score ?? 0}-${d.wickets ?? 0}`;
+  document.getElementById(prefix + '-overs').textContent = `${d.overs ?? 0}.${d.ballsIntoOver ?? 0} OVERS`;
+  return card;
+}
+
+function fillBattingCardGraphic(d){
+  const card = paintCardHeader('batting-card-graphic', 'bat-card', d, {
+    name: d.teamName, short: d.teamShort, color: d.teamColor, logo: d.teamLogo
+  }, 'BATTING');
+
+  const rows = document.getElementById('bat-card-rows');
+  rows.innerHTML = '';
+  const batsmen = d.batsmen || [];
+  rows.appendChild(buildCardHeadRow(['BATTER', 'R', 'B', '4S', '6S', 'SR']));
+  if(!batsmen.length){
+    rows.appendChild(cardEmptyRow('NO BATTING YET'));
+  } else {
+    batsmen.forEach((b, i) => {
+      const live = !!(b.striker || b.nonStriker);
+      // Broadcast convention: * marks the batter on strike, and a not-out
+      // line is accented rather than the same dim grey as a dismissal.
+      const name = (b.name || '—') + (b.striker ? ' *' : '');
+      const sub = b.out ? (b.howOut || 'out') : (b.howOut || 'not out');
+      rows.appendChild(buildCardRow(
+        name, sub, b.out ? '' : 'notout',
+        [b.runs ?? 0, b.balls ?? 0, b.fours ?? 0, b.sixes ?? 0, b.sr ?? '0.0'],
+        { alt: i % 2 === 1, live }
+      ));
+    });
+  }
+  card.classList.toggle('dense', batsmen.length > CARD_DENSE_AFTER_ROWS);
+
+  document.getElementById('bat-card-extras').textContent = d.extrasTotal ?? 0;
+  document.getElementById('bat-card-foot-l').textContent = `OVERS ${d.overs ?? 0}.${d.ballsIntoOver ?? 0}`;
+  document.getElementById('bat-card-foot-r').textContent = `TOTAL ${d.score ?? 0}-${d.wickets ?? 0}`;
+}
+
+function fillBowlingCardGraphic(d){
+  const card = paintCardHeader('bowling-card-graphic', 'bowl-card', d, {
+    name: d.oppTeamName, short: d.oppTeamShort, color: d.oppTeamColor, logo: d.oppTeamLogo
+  }, 'BOWLING');
+
+  const rows = document.getElementById('bowl-card-rows');
+  rows.innerHTML = '';
+  const bowlers = d.bowlers || [];
+  rows.appendChild(buildCardHeadRow(['BOWLER', 'O', 'M', 'R', 'W', 'ECON']));
+  if(!bowlers.length){
+    rows.appendChild(cardEmptyRow('NO BOWLING YET'));
+  } else {
+    bowlers.forEach((b, i) => {
+      // The bowler who has just finished the over gets the accent rail and a
+      // "this over" line — the one figure a viewer is looking for here.
+      const isCurrent = !!b.current;
+      const sub = isCurrent && d.overRuns != null
+        ? `THIS OVER  ${d.overRuns} RUN${d.overRuns === 1 ? '' : 'S'}${d.overWickets ? ` · ${d.overWickets} WKT${d.overWickets === 1 ? '' : 'S'}` : ''}`
+        : '';
+      rows.appendChild(buildCardRow(
+        b.name || '—', sub, 'notout',
+        [b.overs ?? '0.0', b.maidens ?? 0, b.runs ?? 0, b.wickets ?? 0, b.econ ?? '0.00'],
+        { alt: i % 2 === 1, live: isCurrent }
+      ));
+    });
+  }
+  card.classList.toggle('dense', bowlers.length > CARD_DENSE_AFTER_ROWS);
+
+  document.getElementById('bowl-card-foot-l').textContent = `OVERS ${d.overs ?? 0}.${d.ballsIntoOver ?? 0}`;
+  document.getElementById('bowl-card-foot-r').textContent = `TOTAL ${d.score ?? 0}-${d.wickets ?? 0}`;
+}
+
+/* ============================================================
    🏏 OVER-SUMMARY SEQUENCER  (state machine, event-driven, no polling)
 
      LAST BALL -> cricketOverSummary arrives
-       idle -> entering : bar animates OUT, summary animates IN (same instant)
-       entering -> holding : summary fully in
+       idle -> entering : bar animates OUT, the card animates IN (same instant)
+       entering -> holding : card fully in
        holding : EXACTLY OVER_SUMMARY_HOLD_MS (4000 ms) of full visibility
-       holding -> exiting : summary animates OUT, bar animates back IN
+       holding -> exiting : card animates OUT, bar animates back IN
        exiting -> settling -> idle
+
+   WHICH card goes on air rotates over by over (see CYCLE below):
+
+       over 1 -> OVER SUMMARY
+       over 2 -> BATTING SCORECARD
+       over 3 -> BOWLING SCORECARD
+       over 4 -> OVER SUMMARY ... and so on, forever
+
+   All three are .cycle-card, i.e. literally the same box (size, position,
+   radius, shadow) — only the contents change — and every one of them gets
+   the identical enter / 4 s hold / exit treatment, with the score bar taken
+   off air for the whole sequence and animated back as the card leaves. From
+   the viewer's side it reads as one recurring graphic that shows a different
+   page each over, which is the point.
+
+   All three faces are painted from the SAME frozen payload, so the batting
+   and bowling cards describe the over that just ended rather than the live
+   state that has moved on since.
 
    Timing is wall-clock (setTimeout armed ONCE per sequence, all handles in
    one list), deliberately NOT a GSAP timeline position: GSAP's ticker can
@@ -3343,6 +3650,19 @@ const overFlow = (() => {
   const BAR_SETTLE_MS = () => reduceMotion() ? 300 : 950;     // bar's own entrance animation
   const LEGACY_DUP_WINDOW_MS = 8000;                           // only used when a payload has no eventId
 
+  // The rotation. `has` lets a face be skipped when this payload cannot fill
+  // it (an older panel build that emits no batsmen/bowlers arrays, or the very
+  // first over of an innings where nobody has bowled yet) — the cycle then
+  // simply moves on to the next face that CAN be filled rather than showing an
+  // empty card or dropping the graphic for that over entirely.
+  const CYCLE = [
+    { id: 'over-summary-card',    fill: fillOverSummaryCard,    has: () => true },
+    { id: 'batting-card-graphic', fill: fillBattingCardGraphic, has: (d) => Array.isArray(d.batsmen) && d.batsmen.length > 0 },
+    { id: 'bowling-card-graphic', fill: fillBowlingCardGraphic, has: (d) => Array.isArray(d.bowlers) && d.bowlers.length > 0 }
+  ];
+  let cycleIdx = 0;         // which face the NEXT accepted over gets
+  let face = CYCLE[0];      // the face this sequence is showing
+
   let phase = 'idle';   // idle | entering | holding | exiting | settling
   let run = 0;          // bumped per sequence; every callback checks it, so a stale one can never act
   let barOut = false;   // true from "bar animates out" until "bar animates back in"
@@ -3362,10 +3682,33 @@ const overFlow = (() => {
   const clearAll = () => { timers.forEach(clearTimeout); timers = []; if(tl){ tl.kill(); tl = null; } };
   const keyOf = (d) => [d.inningsNo == null ? '' : d.inningsNo, d.battingKey || '', d.overNumber == null ? '' : d.overNumber].join(':');
 
+  // The row selector spans every band of all three faces, so the same
+  // stagger-in/out runs over whichever card is up without the animation code
+  // needing to know which one that is.
+  const CARD_BANDS = '.sc-header, .osc-overband, .sc-row, #osc-bowler-line, .sc-footer, .osc-momentum, .cardg-extras, .cardg-empty';
   function cardEls(){
-    const card = document.getElementById('over-summary-card');
-    const rows = card.querySelectorAll('.sc-header, .osc-overband, .sc-row, #osc-bowler-line, .sc-footer, .osc-momentum');
-    return { card, rows };
+    const card = document.getElementById(face.id);
+    return { card, rows: card.querySelectorAll(CARD_BANDS) };
+  }
+  // Hard reset of every face — used when a new over supersedes a sequence
+  // mid-flight, so the outgoing face can never be left on screen underneath
+  // the incoming one.
+  function hideAllFaces(){
+    CYCLE.forEach(f => {
+      const el = document.getElementById(f.id);
+      if(!el) return;
+      gsap.killTweensOf(el); gsap.killTweensOf(el.querySelectorAll(CARD_BANDS));
+      el.style.display = 'none';
+    });
+  }
+  // Next face in the rotation that this payload can actually fill.
+  function pickFace(d){
+    for(let i = 0; i < CYCLE.length; i++){
+      const f = CYCLE[(cycleIdx + i) % CYCLE.length];
+      if(f.has(d)){ cycleIdx = (cycleIdx + i + 1) % CYCLE.length; return f; }
+    }
+    cycleIdx = 1;
+    return CYCLE[0];   // over summary always works — it needs no extra arrays
   }
   function playIn(){
     const { card, rows } = cardEls();
@@ -3411,13 +3754,15 @@ const overFlow = (() => {
 
     const wasBusy = phase !== 'idle';
     clearAll();                       // every timer/tween of any earlier sequence dies here
+    if(wasBusy) hideAllFaces();       // the superseded face leaves the screen at once, never stacks
     const myRun = ++run;
     activeKey = lastKey = key; lastStartAt = now;
     phase = 'entering';
-    mark(wasBusy ? 'supersede' : 'start');
+    face = pickFace(d);               // over summary -> batting -> bowling -> repeat
+    mark((wasBusy ? 'supersede' : 'start') + ':' + face.id);
 
     cancelRunningEvent();             // the last ball's own FOUR/SIX/WICKET graphic yields immediately
-    fillOverSummaryCard(d);           // frozen payload -> DOM, before it becomes visible
+    face.fill(d);                     // frozen payload -> DOM, before it becomes visible
     if(!barOut){ barOut = true; if(hasEntered) animateExit(); }
     playIn();
 
@@ -3464,6 +3809,8 @@ const overFlow = (() => {
     holdsBar: () => barOut,                 // the bar is (being) hidden -> park liveCricketScore
     blocksEvents: () => phase !== 'idle',   // don't start bar event graphics mid-sequence
     get phase(){ return phase; },
+    get cardId(){ return face.id; },        // which face is on air (?debug=1)
+    get nextCardId(){ return CYCLE[cycleIdx].id; },
     trace
   };
 })();
