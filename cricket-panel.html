@@ -8123,6 +8123,54 @@ function refreshLiveStatCards(){
    (state.score/striker/nonStriker/bowler) and appends to
    state.overHistory, which Last-5-overs reads back from.
    ------------------------------------------------------------ */
+/* Full live innings card (every batter + every bowler of the innings in
+   progress), built exactly the way buildInningsSummaryPayload() builds the
+   end-of-innings one: archived rows for this innings, plus whoever is still
+   un-archived at the crease / mid-spell, then put back into canonical
+   batting / bowling order. Rides along on every over-summary emission so the
+   overlay's BATTING and BOWLING scorecard graphics — the two cards that
+   alternate with the over summary between overs — can be painted from a
+   frozen snapshot of the over that just ended, never from the live bar. */
+function buildLiveInningsCardRows(){
+  const battingKey = state.battingTeam;
+  const bowlingKey = bowlingTeamKey();
+  const inn = state.inningsNumber;
+
+  let battingRows = rowsForInnings(state.battingCard[battingKey], inn);
+  [state.striker, state.nonStriker].forEach(p => {
+    if(p && p.name && !battingRows.some(b => b.name === p.name)){
+      battingRows.push({ name:p.name, runs:p.runs, balls:p.balls, fours:p.fours, sixes:p.sixes, out:false, howOut:'not out' });
+    }
+  });
+  battingRows = orderRowsCanonical(battingRows, inn, 'bat');
+
+  let bowlingRows = rowsForInnings(state.bowlingCard[bowlingKey], inn);
+  if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0) && !bowlingRows.some(b => b.name === state.bowler.name)){
+    bowlingRows.push({ ...state.bowler });
+  }
+  bowlingRows = orderRowsCanonical(bowlingRows, inn, 'bowl');
+
+  const extras = state.extras[battingKey];
+  return {
+    batsmen: battingRows.map(b => ({
+      name: b.name, runs: b.runs, balls: b.balls, fours: b.fours, sixes: b.sixes,
+      sr: b.balls > 0 ? ((b.runs / b.balls) * 100).toFixed(1) : '0.0',
+      // "striker"/"nonStriker" drive the * marker and the highlight row on the
+      // batting graphic — an archived (out) row is never either of them.
+      striker: !b.out && !!state.striker.name && b.name === state.striker.name,
+      nonStriker: !b.out && !!state.nonStriker.name && b.name === state.nonStriker.name,
+      out: !!b.out,
+      howOut: b.out ? (b.howOut || 'out') : (b.retiredHurt ? (b.howOut || 'retired hurt') : 'not out')
+    })),
+    bowlers: bowlingRows.map(b => ({
+      name: b.name, overs: fmtBowlerOvers(b.overs, b.balls),
+      maidens: b.maidens, runs: b.runs, wickets: b.wickets, econ: bowlerEcon(b),
+      current: !!state.bowler.name && b.name === state.bowler.name
+    })),
+    extrasTotal: extrasTotalOf(extras)
+  };
+}
+
 function emitOverSummary(overIndexZeroBased, overRuns, overWickets, overBalls){
   state.overHistory = state.overHistory || [];
   state.overHistory.push({
@@ -8159,7 +8207,10 @@ function emitOverSummary(overIndexZeroBased, overRuns, overWickets, overBalls){
     striker: { name: state.striker.name, runs: state.striker.runs, balls: state.striker.balls, fours: state.striker.fours, sixes: state.striker.sixes, sr: srOf(state.striker) },
     nonStriker: { name: state.nonStriker.name, runs: state.nonStriker.runs, balls: state.nonStriker.balls, fours: state.nonStriker.fours, sixes: state.nonStriker.sixes, sr: srOf(state.nonStriker) },
     bowler: { name: state.bowler.name, overs: state.bowler.overs, balls: state.bowler.balls, maidens: state.bowler.maidens, runs: state.bowler.runs, wickets: state.bowler.wickets },
-    recentOvers
+    recentOvers,
+    // Full innings card for the overlay's BATTING / BOWLING scorecard
+    // graphics (see buildLiveInningsCardRows above).
+    ...buildLiveInningsCardRows()
   }});
 }
 
