@@ -449,6 +449,45 @@
   .osc-mom-pill.current{ background:var(--osc-accent); border-color:var(--osc-accent); color:#fff; }
   .osc-mom-pill.current .ov{ color:rgba(255,255,255,0.75); }
 
+
+  /* ---- AUTO INFO CARDS: BATTING / BOWLING (over-end rotation) ----
+     Compact broadcast cards, sit ABOVE the scoreboard bar (bottom:19vh, same
+     anchor as #over-summary-card) so the bar is never covered. Everything is
+     sized off --u (1% of the viewport, capped) so 1080p/720p/480p scale
+     identically. Colour comes ONLY from --ic-accent (the team's own colour,
+     set per show by fillInfoCard). Motion: transform/opacity only. */
+  .info-card{
+    --u:min(1vw,1.7778vh,19.2px);
+    --ic-accent:#17337a; --ic-ink:#fff; --ic-dark:#0e2159;
+    position:absolute; left:0; right:0; margin:0 auto; bottom:19vh;
+    width:calc(var(--u)*50); max-width:96vw; display:none; flex-direction:column;
+    border-radius:calc(var(--u)*1.1); overflow:hidden;
+    background:#f3f6fc; color:#12213f; font-family:var(--font-ui);
+    box-shadow:0 calc(var(--u)*1.6) calc(var(--u)*4) rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.08);
+    z-index:32; will-change:transform, opacity;
+  }
+  .ic-head{ display:flex; align-items:center; gap:calc(var(--u)*1.2); padding:calc(var(--u)*1) calc(var(--u)*1.6);
+    background:linear-gradient(100deg,var(--ic-dark),var(--ic-accent)); color:var(--ic-ink); }
+  .ic-head .sc-badge{ width:calc(var(--u)*4.4); height:calc(var(--u)*4.4); flex:none; font-size:calc(var(--u)*1.5); }
+  .ic-team{ flex:1; min-width:0; }
+  .ic-role{ font-weight:800; font-size:calc(var(--u)*.95); letter-spacing:.18em; opacity:.75; }
+  .ic-name{ font-family:var(--font-num); font-weight:900; font-size:calc(var(--u)*2.3); letter-spacing:.03em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ic-total{ text-align:right; font-family:var(--font-num); font-weight:900; font-size:calc(var(--u)*2.8); line-height:1; font-variant-numeric:tabular-nums; }
+  .ic-total small{ display:block; margin-top:calc(var(--u)*.35); font-size:calc(var(--u)*1); font-weight:700; opacity:.8; letter-spacing:.08em; }
+  .ic-body{ padding:calc(var(--u)*.7) calc(var(--u)*1.2); }
+  .ic-row{ display:grid; grid-template-columns:1fr repeat(5,calc(var(--u)*4.8)); align-items:center; text-align:right;
+    padding:calc(var(--u)*.85) calc(var(--u)*.6); border-radius:calc(var(--u)*.5);
+    font-family:var(--font-num); font-weight:800; font-size:calc(var(--u)*1.75); font-variant-numeric:tabular-nums; }
+  .ic-row .n{ text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ic-row.cur{ background:rgba(11,61,145,.10); background:color-mix(in srgb,var(--ic-accent) 12%,transparent); box-shadow:inset calc(var(--u)*.35) 0 0 var(--ic-accent); }
+  .ic-hdr{ font-size:calc(var(--u)*1.05); letter-spacing:.14em; color:#5c6c8a; padding-top:calc(var(--u)*.4); padding-bottom:calc(var(--u)*.4); }
+  .ic-hdr .n{ padding-left:calc(var(--u)*1.5); }
+  .ic-row .dot{ display:inline-block; width:calc(var(--u)*.7); height:calc(var(--u)*.7); margin-right:calc(var(--u)*.8); border-radius:50%; background:var(--ic-accent); opacity:0; vertical-align:middle; }
+  .ic-row.cur .dot{ opacity:1; }
+  .ic-foot{ display:flex; justify-content:space-between; gap:calc(var(--u)*1.5); padding:calc(var(--u)*.9) calc(var(--u)*1.6);
+    background:#0a1330; color:#fff; border-top:calc(var(--u)*.25) solid var(--ic-accent);
+    font-weight:800; font-size:calc(var(--u)*1.3); letter-spacing:.06em; }
+
   /* Bottom black stat bar removed per spec — Target / Balls Remaining
      now live inline in #crr-seg (see above), and CRR/RRR occupy the
      same slot on a 15s toggle instead of a separate bar underneath. */
@@ -1343,6 +1382,32 @@
     </div>
   </div>
 
+  <!-- AUTO INFO CARDS (over-end rotation) — filled by fillInfoCard(), driven by overFlow -->
+  <div id="info-bat-card" class="info-card">
+    <div class="ic-head">
+      <div class="sc-badge" id="ib-badge">TM</div>
+      <div class="ic-team"><div class="ic-role">BATTING</div><div class="ic-name" id="ib-name">—</div></div>
+      <div class="ic-total"><span id="ib-score">0/0</span><small id="ib-overs">0.0 OV</small></div>
+    </div>
+    <div class="ic-body">
+      <div class="ic-row ic-hdr"><span class="n">BATTER</span><span>R</span><span>B</span><span>4S</span><span>6S</span><span>SR</span></div>
+      <div id="ib-rows"></div>
+    </div>
+    <div class="ic-foot" id="ib-foot"></div>
+  </div>
+  <div id="info-bowl-card" class="info-card">
+    <div class="ic-head">
+      <div class="sc-badge" id="ob-badge">TM</div>
+      <div class="ic-team"><div class="ic-role">BOWLING</div><div class="ic-name" id="ob-name">—</div></div>
+      <div class="ic-total"><span id="ob-score">0/0</span><small id="ob-overs">0.0 OV</small></div>
+    </div>
+    <div class="ic-body">
+      <div class="ic-row ic-hdr"><span class="n">BOWLER</span><span>O</span><span>M</span><span>R</span><span>W</span><span>ECON</span></div>
+      <div id="ob-rows"></div>
+    </div>
+    <div class="ic-foot" id="ob-foot"></div>
+  </div>
+
   <div id="conn-status">Connecting…</div>
 
 </div>
@@ -1365,6 +1430,7 @@ socket.on('disconnect', () => { connStatus.classList.add('visible'); connStatus.
 socket.on('connect_error', () => { connStatus.classList.add('visible'); connStatus.textContent = 'Connection error — retrying…'; });
 
 socket.on('liveCricketScore', (data) => {
+  if(data && data.infoCards) applyInfoCfg(data.infoCards); // optional panel toggle: { enabled, durationMs }
   if(data && data.visible === false){ pendingStateUpdate = null; renderState(data); return; }
   // While an event graphic is on the bar, OR the over-summary sequencer is
   // holding the bar off-air, the newest state is parked (latest wins) and
@@ -3335,18 +3401,147 @@ function fillOverSummaryCard(d){
    Debug: open the overlay with ?debug=1 to log every phase change with
    timestamps (also kept in window.__overlayDebug.overFlow.trace).
    ============================================================ */
-const OVER_SUMMARY_HOLD_MS = 4000;
+/* ============================================================
+   AUTO INFO CARDS — rotation config + helpers (all inside the ONE sequencer)
+   Rotation is a pure function of the completed-over number, so there is no
+   counter to lose on reload / reconnect:
+     over 1 SUMMARY, 2 BATTING, 3 BOWLING, 4 SUMMARY, ...
+   Operator config: ?infocards=0 (off) / ?cardms=4000, or live via the state
+   payload  infoCards:{ enabled, durationMs }.  OFF = legacy behaviour
+   (over summary after every over). Default ON, 4000 ms.
+   ============================================================ */
+const INFO_CARD_ORDER = ['SUMMARY', 'BATTING', 'BOWLING'];
+const INFO_CARD_ID = { SUMMARY: 'over-summary-card', BATTING: 'info-bat-card', BOWLING: 'info-bowl-card' };
+function clampHold(v){ const n = parseInt(v, 10); return Number.isFinite(n) ? Math.min(Math.max(n, 2000), 15000) : 4000; }
+const infoCfg = { enabled: params.get('infocards') !== '0', holdMs: clampHold(params.get('cardms')) };
+function applyInfoCfg(c){
+  if(!c) return;
+  if(typeof c.enabled === 'boolean') infoCfg.enabled = c.enabled;
+  if(c.durationMs != null) infoCfg.holdMs = clampHold(c.durationMs);
+}
+// The panel's cricketOverSummary fires only when the scoring engine says the
+// over is genuinely complete (wides/no-balls don't count), so we never
+// re-detect completion here. overNumber = the over that JUST finished (1-based).
+function completedOverOf(d){
+  const n = Number(d.overNumber);
+  if(Number.isFinite(n) && n > 0) return n;
+  const o = Number(d.overs) || 0;
+  return d.ballsIntoOver ? o + 1 : Math.max(o, 1);
+}
+function infoCardTypeFor(d){
+  if(!infoCfg.enabled) return 'SUMMARY';
+  return INFO_CARD_ORDER[(completedOverOf(d) - 1) % 3];
+}
+// Per-innings bowler figures, taken from the frozen payload's CUMULATIVE
+// bowler line (the panel stays the source of truth). Used only when the
+// panel doesn't send a full  bowlers[]  list. Reset on innings change.
+const bowlerBook = { key: null, map: new Map() };
+function noteBowler(d){
+  const k = (d.inningsNo == null ? '' : d.inningsNo) + ':' + (d.battingKey || '');
+  if(bowlerBook.key !== k){ bowlerBook.key = k; bowlerBook.map.clear(); }
+  const b = d.bowler;
+  if(!b || !b.name) return;
+  bowlerBook.map.delete(b.name);
+  bowlerBook.map.set(b.name, Object.assign({}, b));
+}
+function icRow(cur, name, cells){
+  const r = document.createElement('div');
+  r.className = 'ic-row' + (cur ? ' cur' : '');
+  const n = document.createElement('span'); n.className = 'n';
+  const dot = document.createElement('i'); dot.className = 'dot';
+  n.appendChild(dot); n.appendChild(document.createTextNode(String(name || '—').toUpperCase()));
+  r.appendChild(n);
+  cells.forEach(c => { const sp = document.createElement('span'); sp.textContent = c; r.appendChild(sp); });
+  return r;
+}
+function bowlerFig(b){
+  let o, bl;
+  if(b.balls != null){ o = +b.overs || 0; bl = +b.balls || 0; }
+  else { const p = String(b.overs == null ? '0' : b.overs).split('.'); o = +p[0] || 0; bl = +p[1] || 0; }
+  const tb = o * 6 + bl;
+  return { ov: `${o}.${bl}`, econ: b.econ != null ? b.econ : (tb ? ((b.runs || 0) / (tb / 6)).toFixed(2) : '0.00') };
+}
+// Paints a BATTING or BOWLING card ONLY from the frozen over-end payload.
+// Batting card = batting team (teamName/teamLogo/teamColor); bowling card =
+// bowling team (oppTeam*) — the same team objects the panel already sends, so
+// an innings change flips logo + colour automatically. Optional richer fields
+// are used when the panel sends them: batters[], bowlers[], partnership{runs,balls}, extras, target.
+function fillInfoCard(kind, d){
+  const bat = kind === 'BATTING', p = bat ? 'ib' : 'ob';
+  const card = document.getElementById(INFO_CARD_ID[kind]);
+  const color = (bat ? d.teamColor : d.oppTeamColor) || TEAM_FALLBACK_COLOR[bat ? 'A' : 'B'];
+  const name = bat ? d.teamName : d.oppTeamName, short = bat ? d.teamShort : d.oppTeamShort, logo = bat ? d.teamLogo : d.oppTeamLogo;
+  card.style.setProperty('--ic-accent', color);
+  card.style.setProperty('--ic-ink', idealTextColor(color));
+  card.style.setProperty('--ic-dark', shade(color, -34));
+  setBadge(document.getElementById(p + '-badge'), logo, badgeText(short, name));
+  document.getElementById(p + '-name').textContent = String(name || short || (bat ? 'BATTING' : 'BOWLING')).toUpperCase();
+  const ov = `${d.overs ?? 0}.${d.ballsIntoOver ?? 0}`;
+  document.getElementById(p + '-score').textContent = `${d.score ?? 0}/${d.wickets ?? 0}`;
+  document.getElementById(p + '-overs').textContent = `${ov} OV`;
+  const rows = document.getElementById(p + '-rows'); rows.innerHTML = '';
+  const foot = document.getElementById(p + '-foot'); foot.innerHTML = '';
+  const foot1 = (t) => { const sp = document.createElement('span'); sp.textContent = t; foot.appendChild(sp); };
+  const tb = (Number(d.overs) || 0) * 6 + (Number(d.ballsIntoOver) || 0);
+  const crr = tb ? ((d.score || 0) / (tb / 6)).toFixed(2) : '0.00';
+  if(bat){
+    const list = (Array.isArray(d.batters) && d.batters.length) ? d.batters
+      : [Object.assign({}, d.striker, { isStriker: true }), d.nonStriker].filter(b => b && b.name);
+    list.forEach(b => {
+      const st = !!(b.isStriker || b.onStrike || b.striker === true);
+      const sr = b.sr != null ? b.sr : (b.balls ? ((b.runs || 0) * 100 / b.balls).toFixed(1) : '0.0');
+      rows.appendChild(icRow(st, b.name, [b.runs ?? 0, b.balls ?? 0, b.fours ?? 0, b.sixes ?? 0, sr]));
+    });
+    if(d.partnership && d.partnership.runs != null) foot1(`PARTNERSHIP ${d.partnership.runs} (${d.partnership.balls ?? 0})`);
+    foot1(`CRR ${crr}`);
+    if(d.target) foot1(`TARGET ${d.target}`);
+  } else {
+    let list = (Array.isArray(d.bowlers) && d.bowlers.length) ? d.bowlers : Array.from(bowlerBook.map.values()).reverse().slice(0, 4);
+    if(!list.length && d.bowler && d.bowler.name) list = [d.bowler];
+    list.forEach(b => {
+      const f = bowlerFig(b);
+      const cur = !!b.current || (!!d.bowler && b.name === d.bowler.name);
+      rows.appendChild(icRow(cur, b.name, [f.ov, b.maidens ?? 0, b.runs ?? 0, b.wickets ?? 0, f.econ]));
+    });
+    foot1(`THIS OVER ${d.overRuns ?? 0} RUN${d.overRuns === 1 ? '' : 'S'}${d.overWickets ? ` · ${d.overWickets} WKT` : ''}`);
+    if(d.extras != null) foot1(`EXTRAS ${d.extras}`);
+    if(d.bowler && d.bowler.name) foot1(`● CURRENT BOWLER`);
+  }
+}
+// Operator/dev preview (console or OBS "Interact"): previewInfoCard('SUMMARY'|'BATTING'|'BOWLING').
+// Uses the newest live state; never touches dedupe/rotation bookkeeping.
+window.previewInfoCard = function(type){
+  const s = lastState; if(!s || !INFO_CARD_ID[type]) return;
+  const bA = s.battingTeam !== 'B', bt = (bA ? s.teamA : s.teamB) || {}, wt = (bA ? s.teamB : s.teamA) || {};
+  overFlow.start({
+    __preview: true, __forceType: type, overNumber: s.score?.overs || 1, inningsNo: s.inningsNumber, battingKey: s.battingTeam,
+    teamName: bt.name, teamShort: bt.short, teamLogo: bt.logoUrl, teamColor: bt.color,
+    oppTeamName: wt.name, oppTeamShort: wt.short, oppTeamLogo: wt.logoUrl, oppTeamColor: wt.color,
+    format: s.format, striker: s.striker, nonStriker: s.nonStriker, bowler: s.bowler,
+    overs: s.score?.overs, ballsIntoOver: s.score?.balls, score: s.score?.runs, wickets: s.score?.wickets,
+    balls: [], overRuns: 0, recentOvers: []
+  });
+};
+
+/* ============================================================
+   OVER-END CARD SEQUENCER — see the state-machine notes above. Now drives
+   all three cards (SUMMARY / BATTING / BOWLING) through the SAME single
+   path: one phase, one run id, one timer list, one card on air at a time.
+   Only SUMMARY takes the scoreboard bar off-air (legacy behaviour); the
+   batting/bowling cards sit above the bar and leave it untouched.
+   ============================================================ */
 const overFlow = (() => {
-  const ENTER_MS = () => reduceMotion() ? 260 : 700;          // card fully in
-  const EXIT_MS = () => reduceMotion() ? 260 : 450;           // card fully out
-  const BAR_RETURN_LEAD_MS = () => reduceMotion() ? 0 : 150;   // bar starts back this long after the card starts leaving
-  const BAR_SETTLE_MS = () => reduceMotion() ? 300 : 950;     // bar's own entrance animation
-  const LEGACY_DUP_WINDOW_MS = 8000;                           // only used when a payload has no eventId
+  const ENTER_MS = (t) => reduceMotion() ? 260 : (t === 'SUMMARY' ? 700 : 480);
+  const EXIT_MS = (t) => reduceMotion() ? 260 : (t === 'SUMMARY' ? 450 : 380);
+  const BAR_RETURN_LEAD_MS = () => reduceMotion() ? 0 : 150;
+  const BAR_SETTLE_MS = () => reduceMotion() ? 300 : 950;
+  const LEGACY_DUP_WINDOW_MS = 8000;
+  const LS_KEY = 'asl:infoCard:last:' + matchId;
 
   let phase = 'idle';   // idle | entering | holding | exiting | settling
-  let run = 0;          // bumped per sequence; every callback checks it, so a stale one can never act
-  let barOut = false;   // true from "bar animates out" until "bar animates back in"
-  let activeKey = null, lastKey = null, lastStartAt = 0;
+  let run = 0;
+  let barOut = false;
+  let activeKey = null, lastKey = null, lastStartAt = 0, activeType = null;
   let timers = [];
   let tl = null;
   const seenIds = new Map();
@@ -3356,25 +3551,37 @@ const overFlow = (() => {
     const t = performance.now();
     trace.push([name, Math.round(t)]);
     if(trace.length > 80) trace.shift();
-    if(DEBUG_OVERLAY) console.log('[over-summary] ' + name + ' @' + Math.round(t));
+    if(DEBUG_OVERLAY) console.log('[over-card] ' + name + ' @' + Math.round(t));
   };
   const later = (fn, ms) => { timers.push(setTimeout(fn, Math.max(0, ms))); };
   const clearAll = () => { timers.forEach(clearTimeout); timers = []; if(tl){ tl.kill(); tl = null; } };
   const keyOf = (d) => [d.inningsNo == null ? '' : d.inningsNo, d.battingKey || '', d.overNumber == null ? '' : d.overNumber].join(':');
+  const readLast = () => { try{ return JSON.parse(localStorage.getItem(LS_KEY) || 'null'); }catch(e){ return null; } };
+  const saveLast = (o) => { try{ localStorage.setItem(LS_KEY, JSON.stringify(o)); }catch(e){} };
+  const hideAll = () => { Object.values(INFO_CARD_ID).forEach(id => { document.getElementById(id).style.display = 'none'; }); };
 
-  function cardEls(){
-    const card = document.getElementById('over-summary-card');
-    const rows = card.querySelectorAll('.sc-header, .osc-overband, .sc-row, #osc-bowler-line, .sc-footer, .osc-momentum');
+  function cardEls(t){
+    const card = document.getElementById(INFO_CARD_ID[t]);
+    const rows = card.querySelectorAll(t === 'SUMMARY'
+      ? '.sc-header, .osc-overband, .sc-row, #osc-bowler-line, .sc-footer, .osc-momentum'
+      : '.ic-head, .ic-row, .ic-foot');
     return { card, rows };
   }
-  function playIn(){
-    const { card, rows } = cardEls();
+  function playIn(t){
+    const { card, rows } = cardEls(t);
     gsap.killTweensOf(card); gsap.killTweensOf(rows);
     card.style.display = 'flex';
     if(reduceMotion()){
-      gsap.set(card, { scale: 1, clipPath: 'inset(0% 0% 0% 0% round 18px)' });
       gsap.set(rows, { opacity: 1, y: 0 });
       tl = gsap.fromTo(card, { opacity: 0 }, { opacity: 1, duration: 0.25, ease: 'power1.out' });
+      return;
+    }
+    if(t !== 'SUMMARY'){
+      gsap.set(card, { opacity: 0, y: 18, scale: 0.98 });
+      gsap.set(rows, { opacity: 0, y: 8 });
+      tl = gsap.timeline()
+        .to(card, { opacity: 1, y: 0, scale: 1, duration: 0.4, ease: 'power3.out' }, 0)
+        .to(rows, { opacity: 1, y: 0, duration: 0.26, stagger: 0.03, ease: 'power2.out' }, 0.08);
       return;
     }
     gsap.set(card, { opacity: 0, scale: 0.94, clipPath: 'inset(50% 50% 50% 50% round 18px)' });
@@ -3384,12 +3591,13 @@ const overFlow = (() => {
       .to(card, { opacity: 1, scale: 1, clipPath: 'inset(0% 0% 0% 0% round 18px)', duration: 0.5, ease: 'expo.out' }, 0)
       .to(rows, { opacity: 1, y: 0, duration: 0.28, stagger, ease: 'power3.out' }, 0.1);
   }
-  function playOut(){
-    const { card, rows } = cardEls();
+  function playOut(t){
+    const { card, rows } = cardEls(t);
     if(tl){ tl.kill(); tl = null; }
     gsap.killTweensOf(card); gsap.killTweensOf(rows);
-    if(reduceMotion()){
-      tl = gsap.to(card, { opacity: 0, duration: 0.25, ease: 'power1.in' });
+    if(reduceMotion()){ tl = gsap.to(card, { opacity: 0, duration: 0.25, ease: 'power1.in' }); return; }
+    if(t !== 'SUMMARY'){
+      tl = gsap.to(card, { opacity: 0, y: -10, scale: 0.99, duration: 0.32, ease: 'power2.in' });
       return;
     }
     tl = gsap.timeline()
@@ -3398,47 +3606,57 @@ const overFlow = (() => {
   }
 
   function start(d){
-    const now = performance.now();
+    const now = performance.now(), preview = !!d.__preview;
     seenIds.forEach((t, k) => { if(now - t > 60000) seenIds.delete(k); });
-    if(d.eventId){
-      if(seenIds.has(d.eventId)){ mark('ignored:duplicate-event'); return; }
-      seenIds.set(d.eventId, now);
+    const key = preview ? 'preview:' + Math.round(now) : keyOf(d);
+    if(!preview){
+      if(d.eventId){
+        if(seenIds.has(d.eventId)){ mark('ignored:duplicate-event'); return; }
+      }
+      const live = phase === 'entering' || phase === 'holding' || phase === 'exiting';
+      if(live && key === activeKey){ mark('ignored:already-showing'); return; }
+      if(!d.eventId && key === lastKey && now - lastStartAt < LEGACY_DUP_WINDOW_MS){ mark('ignored:legacy-duplicate'); return; }
+      // Survives page reload / socket reconnect: the same delivery (eventId) or the
+      // same over seen moments ago is never replayed.
+      const last = readLast();
+      if(last && ((d.eventId && last.eventId === d.eventId) || (!d.eventId && last.key === key && Date.now() - last.at < 60000))){
+        mark('ignored:replayed-after-reconnect'); return;
+      }
+      if(d.eventId) seenIds.set(d.eventId, now);
+      saveLast({ key, eventId: d.eventId || null, at: Date.now() });
+      noteBowler(d);
     }
-    const key = keyOf(d);
-    const live = phase === 'entering' || phase === 'holding' || phase === 'exiting';
-    if(live && key === activeKey){ mark('ignored:already-showing'); return; }
-    if(!d.eventId && key === lastKey && now - lastStartAt < LEGACY_DUP_WINDOW_MS){ mark('ignored:legacy-duplicate'); return; }
-
+    const type = d.__forceType || infoCardTypeFor(d);
     const wasBusy = phase !== 'idle';
     clearAll();                       // every timer/tween of any earlier sequence dies here
+    hideAll();                        // ...and no earlier card can linger under the new one
     const myRun = ++run;
-    activeKey = lastKey = key; lastStartAt = now;
+    activeKey = key; if(!preview) lastKey = key; lastStartAt = now; activeType = type;
     phase = 'entering';
-    mark(wasBusy ? 'supersede' : 'start');
+    mark((wasBusy ? 'supersede:' : 'start:') + type + ':over' + completedOverOf(d));
 
     cancelRunningEvent();             // the last ball's own FOUR/SIX/WICKET graphic yields immediately
-    fillOverSummaryCard(d);           // frozen payload -> DOM, before it becomes visible
-    if(!barOut){ barOut = true; if(hasEntered) animateExit(); }
-    playIn();
+    if(type === 'SUMMARY') fillOverSummaryCard(d); else fillInfoCard(type, d);
+    if(type === 'SUMMARY' && !barOut){ barOut = true; if(hasEntered) animateExit(); }
+    else if(type !== 'SUMMARY' && barOut){ restoreBar(myRun); }   // superseded a summary that held the bar
+    playIn(type);
 
-    later(() => { if(run === myRun && phase === 'entering'){ phase = 'holding'; mark('hold-begin'); } }, ENTER_MS());
-    // The ONE hold timer of this sequence: card fully in + exactly 4000 ms.
-    later(() => beginExit(myRun), ENTER_MS() + OVER_SUMMARY_HOLD_MS);
+    later(() => { if(run === myRun && phase === 'entering'){ phase = 'holding'; mark('hold-begin'); } }, ENTER_MS(type));
+    // The ONE hold timer of this sequence: card fully in + holdMs (default 4000).
+    later(() => beginExit(myRun), ENTER_MS(type) + infoCfg.holdMs);
   }
 
   function beginExit(myRun){
     if(run !== myRun || phase === 'exiting' || phase === 'settling' || phase === 'idle') return;
     phase = 'exiting'; mark('exit-begin');
-    playOut();
-    later(() => restoreBar(myRun), BAR_RETURN_LEAD_MS());
-    later(() => endCard(myRun), EXIT_MS());
+    playOut(activeType);
+    if(barOut) later(() => restoreBar(myRun), BAR_RETURN_LEAD_MS());
+    later(() => endCard(myRun), EXIT_MS(activeType));
   }
 
   function restoreBar(myRun){
-    if(run !== myRun) return;
+    if(run !== myRun || !barOut) return;
     barOut = false;
-    // Newest state wins: whatever arrived while the bar was off-air, else the
-    // last thing it showed. An operator-hidden overlay (visible:false) stays hidden.
     const s = pendingStateUpdate || lastState;
     pendingStateUpdate = null;
     if(s && s.visible !== false){ renderState(s); mark('bar-return'); }
@@ -3447,23 +3665,24 @@ const overFlow = (() => {
 
   function endCard(myRun){
     if(run !== myRun) return;
-    const { card } = cardEls();
-    card.style.display = 'none';
+    hideAll();
     phase = 'settling'; mark('card-gone');
-    later(() => settle(myRun), Math.max(0, BAR_RETURN_LEAD_MS() + BAR_SETTLE_MS() - EXIT_MS()));
+    const wait = activeType === 'SUMMARY' ? Math.max(0, BAR_RETURN_LEAD_MS() + BAR_SETTLE_MS() - EXIT_MS('SUMMARY')) : 0;
+    later(() => settle(myRun), wait);
   }
 
   function settle(myRun){
     if(run !== myRun) return;
-    phase = 'idle'; activeKey = null; mark('idle');
-    if(eventState === 'idle' && eventQueue.length) advanceEventQueue(); // events that arrived while the bar was off-air
+    phase = 'idle'; activeKey = null; activeType = null; mark('idle');
+    if(eventState === 'idle' && eventQueue.length) advanceEventQueue();
   }
 
   return {
     start,
-    holdsBar: () => barOut,                 // the bar is (being) hidden -> park liveCricketScore
-    blocksEvents: () => phase !== 'idle',   // don't start bar event graphics mid-sequence
+    holdsBar: () => barOut,
+    blocksEvents: () => phase !== 'idle',
     get phase(){ return phase; },
+    get type(){ return activeType; },
     trace
   };
 })();
