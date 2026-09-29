@@ -6515,6 +6515,40 @@ app.post('/api/cricket/match/:matchId/delete-last-ball', async (req, res) => {
     }
 });
 
+// POST /api/cricket/match/:matchId/transfer-over[/preview] — panel-facing
+// wrapper around correctBowlerForOvers(), the ONE bowler-correction engine
+// the Scorecard also uses. Same uid -> verified-email owner gate as
+// delete-last-ball above. Body: { innings, overs:[n,...], wrongBowler, correctBowler }.
+async function panelTransferOver(req, res, dryRun) {
+    try {
+        const uid = ownerUidFrom(req);
+        const email = await getVerifiedEmailForUid(uid);
+        if (!email || email !== String(OWNER_EMAIL).toLowerCase()) {
+            return res.status(403).json({ success: false, error: 'Access Denied' });
+        }
+        const matchId = safeMatchId(req.params.matchId);
+        const result = await correctBowlerForOvers(matchId, email, req.body || {}, dryRun, uid);
+        if (result.errors && result.errors.length && (!dryRun || !result.affectedCount)) {
+            return res.status(400).json({ success: false, error: result.errors[0] });
+        }
+        if (!dryRun) {
+            await logAuditAction(
+                email, 'Owner bowler correction',
+                `Match ${matchId} — Innings ${result.innings} Over(s) ${result.overs.join(', ')}: ${result.wrongBowler} → ${result.correctBowler} (panel transfer)`,
+                { balls: result.before.balls, wrongBowler: result.wrongBowler, correctBowler: result.correctBowler, innings: result.innings, overs: result.overs },
+                { balls: result.after.balls },
+                { matchId, ballIds: result.before.balls.map(b => String(b._id)) }
+            );
+        }
+        res.json({ success: true, ...result });
+    } catch (err) {
+        console.log('Panel transfer over error:', err);
+        res.status(500).json({ success: false, error: 'Could not transfer the over' });
+    }
+}
+app.post('/api/cricket/match/:matchId/transfer-over/preview', (req, res) => panelTransferOver(req, res, true));
+app.post('/api/cricket/match/:matchId/transfer-over', (req, res) => panelTransferOver(req, res, false));
+
 // Apply a (owner-reviewed, never silent) result update after a correction
 // flips the score on an already-completed match — see suggestedResult on
 // correctDelivery()'s return value. Recomputes the winner server-side from
