@@ -51,6 +51,18 @@
 (function () {
   window.__scorvixLoggedIn = false;
   document.addEventListener('click', function (e) {
+    // Owner "Manage" button lives INSIDE the card's <a href>. It must be
+    // caught here, in the same first-registered capture listener: the
+    // button's own listener only runs at target phase, i.e. AFTER
+    // page-transitions.js's document capture listener has already
+    // navigated to the tournament page.
+    var mb = e.target && e.target.closest && e.target.closest('[data-manage-btn]');
+    if (mb) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (typeof mb.__openManage === 'function') mb.__openManage();
+      return;
+    }
     var card = e.target && e.target.closest && e.target.closest('.tournament-card');
     if (!card || window.__scorvixLoggedIn) return;
     e.preventDefault();
@@ -4086,6 +4098,7 @@
                     manageBtn.style.marginTop = '12px';
                     manageBtn.style.width = '100%';
                     manageBtn.style.justifyContent = 'center';
+                    manageBtn.__openManage = () => openManageModal(t);
                     manageBtn.addEventListener('click', (e) => {
                         // Card itself is a navigation link — stop this click
                         // from also triggering that navigation.
