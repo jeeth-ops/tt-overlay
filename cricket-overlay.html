@@ -380,30 +380,43 @@
 
      Selector is .summary-card.cycle-card, not a bare .cycle-card: the shared
      .summary-card rules below are declared LATER in this stylesheet, so at
-     equal specificity THEY would win the width/top cascade — collapsing these
-     cards to the narrow 880px shell and, because .summary-card sets top:40%
-     while this block sets bottom, giving them a computed top-to-bottom height
-     that clips the rows instead of shrink-to-fit. Chaining both classes keeps
-     this block ahead of them no matter where either sits in the file. */
+     equal specificity THEY would win the width/top/transform cascade —
+     collapsing these cards to the narrow 880px shell and replacing the
+     centring below with .summary-card's own top:40% translate(-50%,-50%).
+     Chaining both classes keeps this block ahead of them no matter where
+     either sits in the file. */
   .summary-card.cycle-card{
     --osc-accent: var(--bc-blue,#0b3d91);
     --osc-accent-b: var(--bc-red,#7a1620);
     --osc-glow-a: rgba(11,61,145,0.30);
     --osc-glow-b: rgba(122,22,32,0.30);
-    /* top:auto explicitly cancels the shared .summary-card class's own
-       top:40% — without this, having BOTH top and bottom set makes the
-       browser compute height as the gap between them (340px-ish here)
-       instead of shrink-to-fit-content, silently squashing/clipping the
-       card regardless of max-height. */
-    position:absolute; left:50%; top:auto; bottom:19vh; transform:translateX(-50%);
-    /* Anchored to a fixed gap ABOVE the bottom scoreboard bar (which sits
-       within ~2.2vh + a ~118px-capped top-row, i.e. well under 15vh at
-       any realistic viewport size) instead of vertical-centring or a
-       percentage-from-top — the card grows UPWARD as its content grows,
-       so its bottom edge can never drift into the scoreboard no matter
-       how tall the card ends up or what the actual browser/canvas size
-       is. Still reads as "centred" because the reserved gap is modest
-       relative to the whole screen. */
+    /* Vertically CENTRED inside a fixed band, so every face of the cycle
+       shares one centre line no matter how tall it is. Bottom-anchoring
+       (the earlier approach) kept the bottom edges aligned instead, which
+       meant a short card — a bowling card with a single bowler in it — sat
+       low on screen while a tall 11-man batting card reached up to the
+       middle: the graphic visibly jumped between overs.
+
+       The band stops short of the bottom scoreboard bar (which sits within
+       ~2.2vh + a ~118px-capped top row, i.e. well under 15vh at any
+       realistic viewport size), so even a card at the full max-height below
+       still clears it.
+
+       The centring is done with top + bottom + height:fit-content +
+       margin-block:auto rather than a translateY: for an absolutely
+       positioned box with both offsets set, a definite height and auto
+       block margins, CSS splits the leftover space equally — which centres
+       it while leaving `transform` free to carry translateX(-50%) alone.
+       That matters because GSAP animates scale/clipPath on this element
+       every time it enters and leaves; keeping the vertical placement OUT
+       of the transform means those tweens can never fight it.
+
+       height:fit-content is what makes this safe: with both top and bottom
+       set and height:auto, the browser would stretch the box to the gap
+       between them instead of shrinking to its content — the squashing bug
+       this block used to carry a warning about. */
+    position:absolute; left:50%; top:5vh; bottom:14vh; transform:translateX(-50%);
+    height:fit-content; margin-block:auto;
     max-height:76vh; overflow:hidden;
     /* Big rectangular broadcast card — wide, not the near-square shape of
        the other summary cards. */
