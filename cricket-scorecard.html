@@ -1619,6 +1619,28 @@
   /* ===== EDIT SCORECARD — correction center (layout refresh, same engine) ===== */
   #edit-modal{ width:min(780px,100%); max-height:92vh; padding:0 20px 16px; scroll-behavior:smooth; }
   #edit-modal .em-list{ max-height:none; overflow:visible; }
+  /* FIX: Correct Bowler / Correct Batsman lists — the override above made every
+     .em-list overflow:visible, so the long over/ball lists spilled OUT of their box and
+     painted on top of the fields + buttons below. These lists get their own scroll area. */
+  #edit-modal .em-list.em-scroll{
+    max-height:min(30vh,260px); overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain;
+    -webkit-overflow-scrolling:touch; padding:2px 2px 0; margin:0 0 14px;
+    border:1px solid var(--border-soft); border-radius:var(--radius-md); background:var(--bg-soft);
+    position:relative; z-index:0; isolation:isolate;
+  }
+  #edit-modal .em-list.em-scroll .em-ball-row{ margin:0 0 6px; }
+  #edit-modal .em-list.em-scroll .em-ball-row:last-child{ margin-bottom:2px; }
+  #edit-modal .em-list.em-scroll .em-ball-row span{ display:flex; align-items:center; gap:8px; min-width:0; }
+  #edit-modal .em-list.em-scroll input[type=checkbox]{ width:16px; height:16px; margin:0; flex:none; accent-color:var(--accent); }
+  .em-scroll-lbl{ display:block; font-size:11px; font-weight:700; color:var(--text-dim); margin-bottom:6px; }
+  /* form grids: children can shrink, long names never push/overlap neighbours */
+  #edit-modal .em-field-row{ position:relative; z-index:1; align-items:start; }
+  #edit-modal .em-field-row > div{ min-width:0; }
+  #edit-modal .em-pick-btn{ min-width:0; }
+  #edit-modal .em-pick-btn > *{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* action buttons always sit BELOW the form, never over it */
+  #edit-modal .em-actions{ position:relative; z-index:1; margin-top:14px; flex-wrap:wrap; }
+  #edit-modal .em-actions .em-btn{ min-width:120px; }
   #edit-modal-content{ padding-top:20px; }
   .em-sticky{ position:sticky; top:0; z-index:6; background:var(--panel); margin:0 -20px; padding:0 20px 8px; border-bottom:1px solid var(--border-soft); }
   .em-head{ padding-right:34px; }
@@ -6854,8 +6876,8 @@ function renderCorrectBowlerForm(matchId, balls, roster, prefill){
       <div><label>Wrong bowler</label><select id="cbWrongBowler">${bowlerNames.length ? bowlerNames.map(n => `<option value="${escapeHtml(n)}" ${n===selWrong?'selected':''}>${escapeHtml(n)}</option>`).join('') : '<option value="">—</option>'}</select></div>
     </div>
     <div>
-      <label style="display:block; font-size:11px; font-weight:700; color:var(--text-dim); margin-bottom:4px;">Affected over(s) bowled by ${escapeHtml(selWrong || '—')}</label>
-      <div id="cbOversList" class="em-list" style="max-height:30vh;">
+      <label class="em-scroll-lbl">Affected over(s) bowled by ${escapeHtml(selWrong || '—')}</label>
+      <div id="cbOversList" class="em-list em-scroll">
         ${oversByWrong.length ? oversByWrong.map(o => `
           <label class="em-ball-row" style="cursor:pointer;">
             <span><input type="checkbox" class="cbOverCheck" value="${o}" ${selOvers.includes(o)?'checked':''}> Over ${o}</span>
@@ -6993,8 +7015,8 @@ function renderCorrectBatsmanForm(matchId, balls, roster, prefill){
       <div><label>Wrongly selected batsman</label><select id="cbmWrongBatsman">${batsmanNames.length ? batsmanNames.map(n => `<option value="${escapeHtml(n)}" ${n===selWrong?'selected':''}>${escapeHtml(n)}</option>`).join('') : '<option value="">—</option>'}</select></div>
     </div>
     <div>
-      <label style="display:block; font-size:11px; font-weight:700; color:var(--text-dim); margin-bottom:4px;">Affected delivery(ies) faced by ${escapeHtml(selWrong || '—')}</label>
-      <div id="cbmBallsList" class="em-list" style="max-height:30vh;">
+      <label class="em-scroll-lbl">Affected delivery(ies) faced by ${escapeHtml(selWrong || '—')}</label>
+      <div id="cbmBallsList" class="em-list em-scroll">
         ${ballsByWrong.length ? ballsByWrong.map(b => `
           <label class="em-ball-row" style="cursor:pointer;">
             <span><input type="checkbox" class="cbmBallCheck" value="${escapeHtml(b.ballId)}" ${selBallIds.includes(b.ballId)?'checked':''}> ${b.over}.${b.ballInOver} — ${escapeHtml(ballLabel(b))}${b.dismissal?` <span class="em-wkt">(${escapeHtml(b.dismissal.type||'Out')})</span>`:''}</span>
