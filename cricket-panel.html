@@ -1565,7 +1565,7 @@
       <div class="wm-sub" id="newover-modal-sub">—</div>
       <div id="newover-same-wrap" style="display:none;margin-bottom:10px;">
         <div class="wm-sub" id="newover-same-q" style="margin-bottom:6px;"></div>
-        <button type="button" class="full primary" id="newover-same-btn">✓ USE SAME BOWLER</button>
+        <button type="button" class="full primary" id="newover-same-btn">✓ USE PREVIOUS OVER BOWLER</button>
         <div class="wm-sub" id="newover-same-msg" style="display:none;margin:6px 0 0;color:#fca5a5;">Same bowler cannot bowl consecutive overs.</div>
         <div class="wm-sub" style="text-align:center;margin:8px 0 0;">— OR —</div>
       </div>
@@ -10557,21 +10557,46 @@ document.getElementById('newbat-modal-input').addEventListener('keydown', (e) =>
 // restriction to be removed (see applyBowlerChange). Historical corrections
 // through Edit Scorecard are never blocked by this.
 const ENFORCE_NO_CONSECUTIVE_OVERS = false;
+// 🏏 Returns the bowler of the over BEFORE the one that just finished
+// (the "second-last over" bowler) — the person who normally bowls next in
+// real cricket, since the bowler of the last over can't bowl back-to-back.
+// Derived from the ball log (current innings / current Super Over only).
+// Returns { name, id } or null (e.g. only one over bowled so far).
+function getSecondLastOverBowler(){
+  try{
+    const soId = (typeof inSuperOver === 'function' && inSuperOver()) ? currentSuperOverId() : null;
+    const rows = (state.ballLog || []).filter(e => e && e.innings === state.inningsNumber
+      && e.ballType !== 'PEN' && e.bowler && e.over != null
+      && (e.superOverId || null) === (soId || null));
+    if(!rows.length) return null;
+    const overIdx = e => parseInt(String(e.over).split('.')[0], 10);
+    const lastIdx = overIdx(rows[rows.length - 1]);
+    for(let k = rows.length - 1; k >= 0; k--){
+      if(overIdx(rows[k]) < lastIdx){
+        const name = rows[k].bowler;
+        const p = rosterPlayers(bowlingTeamKey()).find(x => x.name === name);
+        return { name, id: p ? p.id : null };
+      }
+    }
+  }catch(e){ console.error('[NewBowler] second-last bowler lookup failed', e); }
+  return null;
+}
+let newOverPrevBowler = null;
 function setupSameBowlerOption(){
   const wrap = document.getElementById('newover-same-wrap');
   if(!wrap) return;
   try{
-    const last = state.bowler && state.bowler.name;
-    if(!last){ wrap.style.display = 'none'; return; }
+    newOverPrevBowler = getSecondLastOverBowler();
+    if(!newOverPrevBowler){ wrap.style.display = 'none'; return; }
+    const prev = newOverPrevBowler.name;
     wrap.style.display = 'block';
-    document.getElementById('newover-same-q').textContent = `Last over bowler: ${last}. Was the next over also bowled by ${last}?`;
+    document.getElementById('newover-same-q').textContent = `Second-last over bowler: ${prev}. Is ${prev} bowling the next over?`;
     const btn = document.getElementById('newover-same-btn');
     const msg = document.getElementById('newover-same-msg');
-    const blocked = ENFORCE_NO_CONSECUTIVE_OVERS;
-    btn.style.display = blocked ? 'none' : 'block';
-    msg.style.display = blocked ? 'block' : 'none';
-    btn.textContent = `✓ USE ${String(last).toUpperCase()}`;
-  }catch(e){ console.error('[NewBowler] same-bowler option failed', e); wrap.style.display = 'none'; }
+    msg.style.display = 'none';
+    btn.style.display = 'block';
+    btn.textContent = `✓ USE ${String(prev).toUpperCase()}`;
+  }catch(e){ console.error('[NewBowler] previous-over bowler option failed', e); wrap.style.display = 'none'; }
 }
 function openNewOverModal(){
   updateBowlerSuggestions();
@@ -10622,14 +10647,18 @@ document.getElementById('newover-modal-submit').addEventListener('click', () => 
   if(applyBowlerChange(name)) closeNewOverModal();
 });
 document.getElementById('newover-same-btn').addEventListener('click', () => {
-  // The over just ended, so per-over counters are already reset and
-  // state.bowler (same name + id) is exactly who continues. Nothing to
-  // re-apply — applyBowlerChange() would reject it as "already set".
-  if(ENFORCE_NO_CONSECUTIVE_OVERS) return;
-  state.lastOverBowlerId = (state.bowler && state.bowler.id) || null;
-  closeNewOverModal();
-  toast(`${state.bowler.name} continues`);
-  try{ pushState(true); }catch(e){ console.error('[NewBowler] pushState failed', e); }
+  const pb = newOverPrevBowler;
+  if(!pb) return;
+  // Same person is already set (they bowled both overs) — nothing to re-apply.
+  const alreadySet = pb.id ? (pb.id === state.bowler.id) : (pb.name === state.bowler.name);
+  if(alreadySet){
+    state.lastOverBowlerId = (state.bowler && state.bowler.id) || null;
+    closeNewOverModal();
+    toast(`${state.bowler.name} continues`);
+    try{ pushState(true); }catch(e){ console.error('[NewBowler] pushState failed', e); }
+    return;
+  }
+  if(applyBowlerChange(pb.name, pb.id)) closeNewOverModal();
 });
 document.getElementById('newover-modal-cancel').addEventListener('click', closeNewOverModal);
 document.getElementById('newover-modal-overlay').addEventListener('click', (e) => {
