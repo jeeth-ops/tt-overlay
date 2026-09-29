@@ -175,6 +175,31 @@
       // background and is easy to mistake for a stream-engine bug rather
       // than "no signal reaching the capture device".
       const videoTrack = stream.getVideoTracks()[0];
+
+      // 🩹 REPORT THE MODE THAT WAS ACTUALLY NEGOTIATED, not the one asked for.
+      // The width/height above are IDEAL constraints, so getUserMedia never
+      // fails when a device cannot do 1080p — it quietly gives back whatever
+      // it can, and everything downstream upscales it. That exact failure has
+      // already happened once on the AVMATRIX capture card (opened at 640x480,
+      // upscaled to 1080p for the stream: soft, blocky output, no error
+      // anywhere — see the root-cause note in stream-engine/nativePipeline.js).
+      // A laptop webcam hides this because its native mode is usually close to
+      // what was asked for; a capture card is exactly where it bites.
+      // Reporting the real settings is what turns that silent downgrade into
+      // something the operator can see BEFORE going live.
+      try {
+        const st = videoTrack.getSettings ? videoTrack.getSettings() : {};
+        fetch(`${STREAM_ENGINE_URL}/capture-window/camera-info`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
+          body: JSON.stringify({
+            room, label: videoTrack.label || null,
+            width: st.width || null, height: st.height || null,
+            frameRate: st.frameRate ? Math.round(st.frameRate) : null,
+            requestedWidth: 1920, requestedHeight: 1080,
+          }),
+        }).catch(() => {});   // engine not up / older build — never block the feed
+      } catch (e) { /* getSettings unsupported — nothing to report */ }
+
       if (videoTrack.muted) { statusEl.textContent = '⚠️ No video signal from camera/capture card'; statusEl.classList.remove('hidden'); }
       videoTrack.addEventListener('mute', () => {
         statusEl.textContent = '⚠️ No video signal from camera/capture card (input connected but not sending frames)';

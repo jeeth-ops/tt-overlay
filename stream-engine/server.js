@@ -63,6 +63,23 @@
 // ================================================================
 const express = require('express');
 const retryQueueStore = require('./retryQueueStore');
+
+// 🔊 AUDIO SAMPLE RATE — 48 kHz, everywhere, deliberately.
+//
+// Every path here used to encode at 44100. HDMI embedded audio — which is
+// what an AV Matrix / capture card delivers — is 48000 Hz by specification,
+// so that meant EVERY stage resampled 48k -> 44.1k at a non-integer 160:147
+// ratio, for the whole match, for no benefit. YouTube's own ingest
+// recommendation is 48 kHz AAC, so the conversion was not even buying
+// compatibility.
+//
+// Matching the source rate removes a conversion from the recorder, the live
+// encoder and the compositor relay alike, and removes one thing that can
+// accumulate over a 7-hour run alongside aresample's own drift correction.
+// A 44.1 kHz source (a laptop mic) now resamples instead — one conversion
+// either way, and this is the direction that matches the broadcast hardware.
+const AUDIO_SAMPLE_RATE_HZ = 48000;
+
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -1299,6 +1316,9 @@ const captureWindow = {
     execPath: null,
     lastCameraEndedAt: null,
     lastCameraEndedReason: null,
+    // What the camera/capture card ACTUALLY gave us, as reported by
+    // live-output.html — see /capture-window/camera-info.
+    cameraInfo: null,   // { label, width, height, frameRate, requestedWidth, requestedHeight, downgraded, at }
 };
 
 function launchCaptureWindow({ matchId, videoDeviceId, videoLabel, origin, width, height }) {
@@ -1669,7 +1689,7 @@ function buildLiveEncoderArgs({ windowTitle, audioDeviceName, width, height, fps
         // IPPP... structure.
         '-bf', '0',
         '-af', 'aresample=async=1:first_pts=0',
-        '-c:a', 'aac', '-b:a', '160k', '-ar', '44100',
+        '-c:a', 'aac', '-b:a', '160k', '-ar', String(AUDIO_SAMPLE_RATE_HZ),
         '-max_muxing_queue_size', '4096',
         '-flvflags', 'no_duration_filesize', // RTMP isn't seekable — avoids "Failed to update header with correct duration/filesize" on every stop
         '-f', 'flv',
@@ -2451,7 +2471,7 @@ function buildRecorderArgs({ windowTitle, audioDeviceName, width, height, fps, b
         // 30fps) would leave a much bigger unflushed/unplayable window.
         '-g', String(fps * 2), '-keyint_min', String(fps * 2),
         '-af', 'aresample=async=1:first_pts=0',
-        '-c:a', 'aac', '-b:a', '192k', '-ar', '44100',
+        '-c:a', 'aac', '-b:a', '192k', '-ar', String(AUDIO_SAMPLE_RATE_HZ),
         // Fragmented MP4: writes a valid, playable file incrementally as
         // it records (a moof+mdat per GOP) instead of one index (moov)
         // written only at a clean close — so a laptop crash, a killed
@@ -2685,6 +2705,23 @@ function resetRecorderForNewMatch() {
 
 // Best-effort free disk space for the recordings volume — Node 18.15+
 // has fs.statfs; older Node just reports null rather than failing here.
+// The disk state as a value the OPERATOR'S UI can act on, not just a console
+// line. The console already warned, but a warning nobody is watching during a
+// match is the same as no warning: /status and /health now carry the level so
+// the panel can show it, and "critical" fires well before a write actually
+// fails and leaves a truncated master.mp4.
+const DISK_CRITICAL_BYTES = 2 * 1024 * 1024 * 1024;   // ~10 min of 1080p headroom left
+function diskHealth() {
+    const freeBytes = diskFreeBytes(RECORDING_ROOT);
+    if (freeBytes == null) return { level: 'unknown', freeBytes: null, path: RECORDING_ROOT, message: 'Could not read free space on the recording drive' };
+    if (freeBytes < DISK_CRITICAL_BYTES) {
+        return { level: 'critical', freeBytes, path: RECORDING_ROOT, message: `CRITICAL: only ${(freeBytes / 1024 / 1024 / 1024).toFixed(1)}GB free — the recording will be truncated when this runs out. Free space now.` };
+    }
+    if (freeBytes < LOW_DISK_WARNING_BYTES) {
+        return { level: 'low', freeBytes, path: RECORDING_ROOT, message: `Low disk: ${(freeBytes / 1024 / 1024 / 1024).toFixed(1)}GB free on the recording drive` };
+    }
+    return { level: 'ok', freeBytes, path: RECORDING_ROOT, message: null };
+}
 function diskFreeBytes(dir) {
     try {
         if (typeof fs.statfsSync !== 'function') return null;
@@ -2864,36 +2901,93 @@ function postFileToServer(mainServerUrl, matchId, eventType, timestamp, ballMeta
 // "forwarded" and nothing else.
 const RENDER_POLL_INTERVAL_MS = 3000;
 const RENDER_POLL_MAX_MS = 5 * 60 * 1000; // give up polling after 5 min — server.js's OWN retry sweep keeps going regardless; this just stops this process polling forever
-async function pollRenderStatus(job) {
-    const deadline = Date.now() + RENDER_POLL_MAX_MS;
-    while (Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, RENDER_POLL_INTERVAL_MS));
-        let url;
-        try { url = new URL(`/api/clips/status/${encodeURIComponent(job.clipId)}`, job.mainServerUrl); }
-        catch (e) { return; }
-        const lib = url.protocol === 'https:' ? https : http;
-        const body = await new Promise((resolve) => {
-            const req = lib.request(url, { method: 'GET', timeout: 5000 }, (res) => {
-                let b = ''; res.on('data', (d) => b += d); res.on('end', () => resolve({ code: res.statusCode, body: b }));
-            });
-            req.on('error', () => resolve(null));
-            req.on('timeout', () => { req.destroy(); resolve(null); });
-            req.end();
+// 🛠 ONE POLLER, NOT ONE PER CLIP.
+//
+// This used to be a detached async loop per forwarded clip: each one slept 3s
+// and issued its own request for up to 5 minutes. With a busy over that is a
+// dozen overlapping loops; across a match's backlog draining at once it is
+// dozens — all firing on their own schedule, so the engine can put ~17
+// requests/second at Render purely to ask about status, exactly while it is
+// also uploading those clips. Nothing bounded it, nothing cancelled it on
+// shutdown, and a restart left the loops gone with jobs still FORWARDING
+// (recovered now by recoverOrphanedClipUploads, but they were simply lost).
+//
+// It is now a single timer over a map of jobs, polling at most
+// RENDER_POLL_CONCURRENCY of them per tick, round-robin. The timer only
+// exists while something needs polling and is cleared on shutdown.
+const RENDER_POLL_CONCURRENCY = 4;
+const renderPolls = new Map();   // clipId -> { job, deadline }
+let renderPollTimer = null;
+
+function pollRenderStatus(job) {
+    if (!job || !job.clipId || shuttingDown) return;
+    if (!renderPolls.has(job.clipId)) {
+        renderPolls.set(job.clipId, { job, deadline: Date.now() + RENDER_POLL_MAX_MS });
+    }
+    startRenderPolling();
+}
+function startRenderPolling() {
+    if (renderPollTimer || !renderPolls.size || shuttingDown) return;
+    renderPollTimer = setInterval(() => { renderPollTick().catch(() => {}); }, RENDER_POLL_INTERVAL_MS);
+    if (typeof renderPollTimer.unref === 'function') renderPollTimer.unref();
+}
+function stopRenderPolling() {
+    if (renderPollTimer) { clearInterval(renderPollTimer); renderPollTimer = null; }
+}
+function fetchClipStatus(job) {
+    let url;
+    try { url = new URL(`/api/clips/status/${encodeURIComponent(job.clipId)}`, job.mainServerUrl); }
+    catch (e) { return Promise.resolve(null); }
+    const lib = url.protocol === 'https:' ? https : http;
+    return new Promise((resolve) => {
+        const req = lib.request(url, { method: 'GET', timeout: 5000 }, (res) => {
+            let b = ''; res.on('data', (d) => { b += d; }); res.on('end', () => resolve({ code: res.statusCode, body: b }));
         });
-        if (!body || body.code !== 200) continue; // Render/Mongo briefly unreachable — just try again next tick
-        let data;
-        try { data = JSON.parse(body.body); } catch (e) { continue; }
-        if (!data.success) continue;
-        updateJob(job.clipId, { status: data.status, r2Status: data.r2Status, driveStatus: data.driveStatus, r2Url: data.r2Url || null, driveUrl: data.driveUrl || null, renderRetryCount: data.retryCount });
-        if (data.status === 'COMPLETE') {
-            // Render has confirmed BOTH R2 and Drive have this clip. The
-            // local copy is KEPT on purpose (operator request): every clip
-            // stays in the match's recording folder next to master.mp4.
-            console.log(`✅ [CLIP] clipId=${job.clipId} — uploaded to R2 + Drive; local copy kept at ${job.localPath}`);
+        req.on('error', () => resolve(null));
+        req.on('timeout', () => { req.destroy(); resolve(null); });
+        req.end();
+    });
+}
+let renderPollCursor = 0;
+async function renderPollTick() {
+    if (shuttingDown) { stopRenderPolling(); return; }
+    const entries = [...renderPolls.values()];
+    if (!entries.length) { stopRenderPolling(); return; }
+    // Round-robin so a long backlog is polled evenly instead of the first
+    // few starving the rest.
+    const batch = [];
+    for (let n = 0; n < Math.min(RENDER_POLL_CONCURRENCY, entries.length); n++) {
+        batch.push(entries[(renderPollCursor + n) % entries.length]);
+    }
+    renderPollCursor = (renderPollCursor + batch.length) % entries.length;
+
+    await Promise.all(batch.map(async (slot) => {
+        const { job } = slot;
+        if (Date.now() > slot.deadline) {
+            // Render's OWN retry sweep keeps going regardless — this only
+            // stops THIS process asking.
+            renderPolls.delete(job.clipId);
             return;
         }
-        if (data.status === 'FAILED_PERMANENT') return; // done — stop polling; local file is deliberately left in place
-    }
+        const res = await fetchClipStatus(job);
+        if (!res || res.code !== 200) return;          // briefly unreachable — try again next tick
+        let data;
+        try { data = JSON.parse(res.body); } catch (e) { return; }
+        if (!data.success) return;
+        updateJob(job.clipId, {
+            status: data.status, r2Status: data.r2Status, driveStatus: data.driveStatus,
+            r2Url: data.r2Url || null, driveUrl: data.driveUrl || null, renderRetryCount: data.retryCount,
+        });
+        if (data.status === 'COMPLETE') {
+            // The local copy is KEPT on purpose (operator request): every clip
+            // stays in the match's recording folder next to master.mp4.
+            console.log(`✅ [CLIP] clipId=${job.clipId} — uploaded to R2 + Drive; local copy kept at ${job.localPath}`);
+            renderPolls.delete(job.clipId);
+        } else if (data.status === 'FAILED_PERMANENT') {
+            renderPolls.delete(job.clipId);
+        }
+    }));
+    if (!renderPolls.size) stopRenderPolling();
 }
 
 // 🛠 ROOT-CAUSE FIX (clips stranded by an internet outage longer than
@@ -2932,34 +3026,57 @@ function isConnectivityFailure(errorText) {
     const e = String(errorText || '').toLowerCase();
     return /enotfound|eai_again|econnrefused|econnreset|etimedout|ehostunreach|enetunreach|epipe|socket hang up|timeout|network|getaddrinfo|request to .* failed|fetch failed/.test(e);
 }
+// Every armed retry timer, so shutdown can cancel them. These used to be
+// raw setTimeouts nobody held a handle to collectively: harmless only
+// because gracefulShutdown ends in process.exit(0), but it meant a retry
+// could fire and start streaming a file to the network while the engine was
+// mid-shutdown killing its own children.
+const retryTimers = new Set();
+function clearAllRetryTimers() {
+    for (const t of retryTimers) clearTimeout(t);
+    retryTimers.clear();
+    for (const e of retryQueue) e.timer = null;
+}
 function scheduleRetry(entry) {
+    if (shuttingDown) return;
     const attempt = (entry.attempts || 0);
     // While the line is down, stop escalating the backoff: a steady probe
     // means the backlog starts clearing within seconds of it returning.
     const delayMs = entry.offline
         ? OFFLINE_RETRY_INTERVAL_MS
         : Math.min(5000 * Math.pow(1.5, attempt), 60000);
-    entry.timer = setTimeout(() => processRetryEntry(entry), delayMs);
+    const t = setTimeout(() => {
+        retryTimers.delete(t);
+        entry.timer = null;
+        processRetryEntry(entry);
+    }, delayMs);
+    retryTimers.add(t);
+    entry.timer = t;
 }
 // Connectivity is back — retry EVERY queued clip immediately instead of
 // letting each one wait out its own timer. Cancelling the pending timer
 // first is what stops a clip being retried twice concurrently.
+// The guard tracks the actual flush rather than a fixed 1-second window: a
+// backlog of 50 clips on a slow line takes far longer than a second to send,
+// and the old timer re-opened the gate while those were still in flight, so
+// the next success could start a second overlapping flush of the same
+// entries. Now it is released when the entries this flush started have
+// settled, whenever that is.
 let flushingRetryQueue = false;
 function flushRetryQueueNow(reason) {
-    if (flushingRetryQueue || !retryQueue.length) return;
+    if (flushingRetryQueue || !retryQueue.length || shuttingDown) return;
     flushingRetryQueue = true;
     const pending = retryQueue.slice();
     console.log(`[stream-engine] 📤 Connection is back (${reason}) — flushing ${pending.length} queued clip(s) now`);
-    pending.forEach((entry) => {
-        if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; }
+    const runs = pending.map((entry) => {
+        if (entry.timer) { clearTimeout(entry.timer); retryTimers.delete(entry.timer); entry.timer = null; }
         entry.offline = false;
-        processRetryEntry(entry);
+        return Promise.resolve(processRetryEntry(entry)).catch(() => {});
     });
-    // Released on the next tick: processRetryEntry is async, and this flag
-    // only needs to stop the SAME success re-entering the flush.
-    setTimeout(() => { flushingRetryQueue = false; }, 1000);
+    Promise.all(runs).then(() => { flushingRetryQueue = false; });
 }
 async function processRetryEntry(entry) {
+    if (shuttingDown) return;
     if (!fs.existsSync(entry.filePath)) {
         retryQueue = retryQueue.filter((e) => e !== entry);
         persistRetryQueue();
@@ -3592,10 +3709,15 @@ app.get('/status', async (req, res) => {
             lastWriteAgoMs: recorder.lastProgressAdvanceAt ? Date.now() - recorder.lastProgressAdvanceAt : null,
             programFeedHealth: recorder.lastProgramFeedHealth || null,
         },
+        // Disk level the panel can act on, and the mode the camera/capture
+        // card ACTUALLY negotiated (see /capture-window/camera-info) — both
+        // are things the operator needs to see BEFORE going live, not after.
+        disk: diskHealth(),
         captureWindow: {
             running: !!captureWindow.proc,
             matchId: captureWindow.matchId,
             launchedAt: captureWindow.launchedAt,
+            cameraInfo: captureWindow.cameraInfo,
             lastCameraEndedAt: captureWindow.lastCameraEndedAt,
             lastCameraEndedReason: captureWindow.lastCameraEndedReason,
         },
@@ -3676,6 +3798,7 @@ app.get('/capture-window/status', (req, res) => {
         execPath: captureWindow.execPath,
         lastCameraEndedAt: captureWindow.lastCameraEndedAt,
         lastCameraEndedReason: captureWindow.lastCameraEndedReason,
+        cameraInfo: captureWindow.cameraInfo,
     });
 });
 // live-output.html POSTs here directly (see its own header comment) so
@@ -3684,6 +3807,40 @@ app.get('/capture-window/status', (req, res) => {
 // it's a separate process) or the window.open() popup fallback. Purely
 // informational: this engine has no independent way to know the camera
 // died other than the page itself reporting it.
+// 🩹 THE SILENT DOWNGRADE — live-output.html asks for 1920x1080 as an IDEAL
+// constraint, so a device that cannot do it does not fail: it returns a lower
+// mode and every stage downstream upscales. That produced soft, blocky output
+// with no error anywhere on the AVMATRIX card before (see nativePipeline.js's
+// root-cause note). A laptop webcam masks the problem because its native mode
+// is usually near what was asked for — a capture card is exactly where it
+// bites, which is the worst possible time to find out.
+//
+// live-output.html now reports the mode it really got, and this endpoint
+// records it and says so plainly in the log. /status carries it too, so the
+// operator can confirm the real resolution BEFORE going live rather than
+// inferring it from how the stream looks afterwards.
+app.post('/capture-window/camera-info', (req, res) => {
+    const b = req.body || {};
+    const width = Number(b.width) || null;
+    const height = Number(b.height) || null;
+    const reqW = Number(b.requestedWidth) || null;
+    const downgraded = !!(width && reqW && width < reqW);
+    captureWindow.cameraInfo = {
+        label: b.label || null, width, height,
+        frameRate: Number(b.frameRate) || null,
+        requestedWidth: reqW, requestedHeight: Number(b.requestedHeight) || null,
+        downgraded, at: Date.now(),
+    };
+    const mode = `${width || '?'}x${height || '?'}${b.frameRate ? `@${Math.round(Number(b.frameRate))}` : ''}`;
+    if (downgraded) {
+        console.log(`[stream-engine] ⚠ CAMERA IS BELOW THE REQUESTED RESOLUTION — "${b.label || 'camera'}" opened at ${mode}, but ${reqW}x${b.requestedHeight} was requested.`);
+        console.log('[stream-engine]   Everything downstream will UPSCALE this, so the stream will look soft/blocky with no other error.');
+        console.log('[stream-engine]   Usual causes on a capture card: the HDMI source is outputting a lower mode, the wrong input is selected, or a USB 2.0 port is limiting it.');
+    } else {
+        console.log(`[stream-engine] ✓ Camera negotiated ${mode} — "${b.label || 'camera'}"`);
+    }
+    res.json({ success: true, downgraded });
+});
 app.post('/capture-window/camera-ended', (req, res) => {
     captureWindow.lastCameraEndedAt = Date.now();
     captureWindow.lastCameraEndedReason = (req.body && req.body.reason) || 'camera ended';
@@ -3963,6 +4120,7 @@ app.get('/recording-info', (req, res) => {
         segments: recorder.segments,
         totalSizeBytes: sizeBytes,
         diskFreeBytes: diskFreeBytes(RECORDING_ROOT),
+        disk: diskHealth(),
     });
 });
 
@@ -4233,7 +4391,12 @@ app.get('/health', (req, res) => {
             running: !!captureWindow.proc,
             lastCameraEndedAt: captureWindow.lastCameraEndedAt,
             lastCameraEndedReason: captureWindow.lastCameraEndedReason,
+            // The mode the camera/capture card actually negotiated, and
+            // whether that is below what was asked for — see
+            // /capture-window/camera-info.
+            cameraInfo: captureWindow.cameraInfo,
         },
+        disk: diskHealth(),
         clipEngine: {
             clipWorkerState: clipWorker.state,
             cloudflareConnected: clipWorker.cloudflareConnected,
@@ -4293,10 +4456,9 @@ async function monitorProgramFeedHealth() {
     // the operator gets a warning well before a write actually fails and
     // leaves a truncated/corrupted master.mp4.
     if (recorder.state === 'recording') {
-        const freeBytes = diskFreeBytes(RECORDING_ROOT);
-        if (freeBytes != null && freeBytes < LOW_DISK_WARNING_BYTES) {
-            console.log(`[stream-engine] ⚠ LOW DISK SPACE: only ${(freeBytes / 1024 / 1024 / 1024).toFixed(1)}GB free on the recording drive while recording is active`);
-        }
+        const disk = diskHealth();
+        if (disk.level === 'critical') console.log(`[stream-engine] 🛑 DISK ${disk.message}`);
+        else if (disk.level === 'low') console.log(`[stream-engine] ⚠ ${disk.message} while recording is active`);
     }
 }
 setInterval(() => { monitorProgramFeedHealth().catch((e) => console.log('[stream-engine] monitorProgramFeedHealth error (kept running):', e.message)); }, PROGRAM_FEED_MONITOR_INTERVAL_MS);
@@ -4514,6 +4676,9 @@ async function gracefulShutdown(signal) {
     if (recorder.restartTimer) { clearTimeout(recorder.restartTimer); recorder.restartTimer = null; }
     for (const t of clipTimers) clearTimeout(t);
     clipTimers.clear();
+    clearAllRetryTimers();
+    stopRenderPolling();
+    renderPolls.clear();
     clipCutQueue.length = 0;
 
     const waits = [];

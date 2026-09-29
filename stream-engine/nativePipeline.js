@@ -84,7 +84,23 @@ const PREVIEW_WIDTH = Number(process.env.STREAM_ENGINE_PREVIEW_WIDTH) || 960;
 // machine you know is otherwise keeping up.
 const CAMERA_RTBUFSIZE = process.env.STREAM_ENGINE_CAMERA_RTBUFSIZE || '64M';
 
-const RELAY_CONTAINER_ARGS = ['-f', 'nut', '-c:v', 'rawvideo', '-pix_fmt', 'yuv420p', '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2'];
+// 🔊 AUDIO SAMPLE RATE — 48 kHz, everywhere, deliberately.
+//
+// Every path here used to encode at 44100. HDMI embedded audio — which is
+// what an AV Matrix / capture card delivers — is 48000 Hz by specification,
+// so that meant EVERY stage resampled 48k -> 44.1k at a non-integer 160:147
+// ratio, for the whole match, for no benefit. YouTube's own ingest
+// recommendation is 48 kHz AAC, so the conversion was not even buying
+// compatibility.
+//
+// Matching the source rate removes a conversion from the recorder, the live
+// encoder and the compositor relay alike, and removes one thing that can
+// accumulate over a 7-hour run alongside aresample's own drift correction.
+// A 44.1 kHz source (a laptop mic) now resamples instead — one conversion
+// either way, and this is the direction that matches the broadcast hardware.
+const AUDIO_SAMPLE_RATE_HZ = 48000;
+
+const RELAY_CONTAINER_ARGS = ['-f', 'nut', '-c:v', 'rawvideo', '-pix_fmt', 'yuv420p', '-c:a', 'pcm_s16le', '-ar', String(AUDIO_SAMPLE_RATE_HZ), '-ac', '2'];
 
 // NUT's SYNCPOINT_STARTCODE (libavformat/nut.h: 0xE4ADEECA4569 + ('N'<<8|'K')<<48),
 // big-endian on the wire.
@@ -533,7 +549,7 @@ function buildRecorderEncoderArgs({ width, height, fps, bitrateKbps, outFile, us
         // playable up to the last flushed fragment.
         '-g', String(fps * 2), '-keyint_min', String(fps * 2),
         '-af', 'aresample=async=1:first_pts=0',
-        '-c:a', 'aac', '-b:a', '192k', '-ar', '44100',
+        '-c:a', 'aac', '-b:a', '192k', '-ar', String(AUDIO_SAMPLE_RATE_HZ),
         '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
         '-flush_packets', '1',
         '-max_muxing_queue_size', '4096',
@@ -591,7 +607,7 @@ function buildLiveEncoderArgs({ width, height, fps, bitrateKbps, keyframeInterva
         '-no-scenecut', '1',
         '-delay', '0',
         '-af', 'aresample=async=1:first_pts=0',
-        '-c:a', 'aac', '-b:a', '160k', '-ar', '44100',
+        '-c:a', 'aac', '-b:a', '160k', '-ar', String(AUDIO_SAMPLE_RATE_HZ),
         '-max_muxing_queue_size', '4096',
         // RTMP is not seekable — without this, every stop logs "Failed to
         // update header with correct duration/filesize" (harmless noise).

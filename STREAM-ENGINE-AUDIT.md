@@ -149,20 +149,127 @@ should not be treated as proven:
   recording to cut from. The persistence half of it is covered by the unit
   tests above; the cut half is not.
 
-## E. Remaining findings, not yet fixed
+## E. Second pass — camera/capture-card, poller, disk, audio
 
-Ranked. None are as severe as B1.
+### E1. The camera's REAL resolution was never reported — highest risk for a capture card
 
-1. **`pollRenderStatus` floating promises.** One detached 5-minute poll loop per
-   forwarded clip, not cancelled on shutdown and not restarted after a restart
-   (a clip left `FORWARDING` relies on B2's recovery instead). Bounded, so not a
-   leak — but it should be a single sweep over jobs rather than a promise each.
-2. **Retry timers are untracked.** `scheduleRetry` uses a raw `setTimeout` not
-   in `clipTimers`. Currently harmless because shutdown ends in `process.exit(0)`,
-   but it means a retry can fire mid-shutdown.
-3. **`flushRetryQueueNow`'s re-entry guard is a 1-second timer**, not tied to the
-   actual completion of the flush.
-4. **Disk-space protection** (brief §27) — `diskFreeBytes` is reported via
-   `/recording-info` and `/status`, but nothing acts on a critical threshold.
-5. **Upload/media priority** (brief §42) — clip cuts run below-normal priority;
-   the forward itself is not throttled by system load.
+`live-output.html` asks for `width: 1920, height: 1080` as **ideal** constraints, so
+`getUserMedia` never fails on a device that cannot deliver it — it quietly returns a
+lower mode and every stage downstream upscales. Nothing anywhere read
+`videoTrack.getSettings()`, so the actual mode was invisible.
+
+This exact failure is already in the codebase's own history: the AVMATRIX card was
+opened at 640x480 and upscaled to 1080p for the stream — "soft, blocky output that
+looks nothing like the source, with no error anywhere" (root-cause note in
+`nativePipeline.js`). A laptop webcam hides it, because its native mode is usually
+close to what was asked for. A capture card is exactly where it bites.
+
+**Fix.** `live-output.html` reports the negotiated `getSettings()` to a new
+`POST /capture-window/camera-info`. The engine records it, says so plainly in the log,
+and exposes it on `/status` and `/capture-window/status` so the operator can confirm
+the real resolution **before** going live. A mode below what was requested logs a
+three-line warning naming the usual capture-card causes.
+
+Verified live: posting a simulated 640x480 open against a 1920x1080 request returns
+`downgraded: true` and logs the warning; a matching 1920x1080 open logs the tick and
+appears in `/status`.
+
+### E2. One status poller instead of one per clip
+
+`pollRenderStatus` was a detached async loop **per forwarded clip** — each sleeping 3s
+and issuing its own request for up to 5 minutes. A busy over is a dozen overlapping
+loops; a backlog draining at once is dozens, putting ~17 requests/second at Render
+purely to ask about status, precisely while it is also uploading those clips. Nothing
+bounded it and nothing cancelled it on shutdown.
+
+Replaced with a single timer over a map of jobs, polling at most 4 per tick
+round-robin, existing only while something needs polling, cleared on shutdown.
+
+### E3. Retry timers are now tracked and cancellable
+
+`scheduleRetry` used raw `setTimeout`s nobody held collectively. Harmless only because
+shutdown ends in `process.exit(0)` — but a retry could fire and start streaming a file
+to the network while the engine was mid-shutdown killing its children. They are now in
+a set, cleared in `gracefulShutdown`, and both `scheduleRetry` and `processRetryEntry`
+bail when `shuttingDown`.
+
+### E4. The flush guard tracks the actual flush
+
+`flushRetryQueueNow`'s re-entry guard released after a fixed 1 second. A backlog of 50
+clips on a slow line takes far longer, so the gate re-opened while those were still in
+flight and the next success could start a second overlapping flush of the same entries.
+It now releases when the entries that flush started have settled.
+
+### E5. Disk state is a value the UI can act on
+
+The console already warned, but a warning nobody is watching during a match is no
+warning. `diskHealth()` returns `ok` / `low` / `critical` / `unknown` with a message,
+exposed on `/status`, `/health` and `/recording-info`; `critical` (< 2 GB) fires well
+before a write fails and truncates `master.mp4`. The existing hard floor at recording
+start is unchanged.
+
+### E6. Audio is 48 kHz everywhere
+
+Every path encoded at 44100. HDMI embedded audio — what an AV Matrix delivers — is
+48000 Hz by specification, so every stage resampled 48k → 44.1k at a non-integer
+160:147 ratio for the whole match, for no benefit; YouTube's own ingest recommendation
+is 48 kHz AAC, so it was not buying compatibility either. Recorder, live encoder and
+the compositor relay now all use `AUDIO_SAMPLE_RATE_HZ = 48000`.
+
+**This one is a deliberate behaviour change and could not be listened to here — check
+audio on the first test stream.**
+
+## F. NVENC / RTMPS — audited by reading, found sound
+
+The live encoder arguments are correct for a YouTube RTMPS push and need no change:
+CBR with `-maxrate` equal to `-b:v` and `-bufsize` at 2x; `-g` and `-keyint_min` both
+pinned to `fps × keyframeInterval`; `-bf 0`; forced CFR via whichever of
+`-fps_mode`/`-vsync` the build accepts; `-max_muxing_queue_size 4096`;
+`-flvflags no_duration_filesize`. NVENC uses `p4` and adds `-tune ll` only after a
+runtime check that the build accepts it — a build that does not would otherwise exit
+instantly on every Go Live.
+
+ABR is a rate-limited hot-restart of the live encoder only. Because the live encoder
+does its own capture, that restart cannot touch the recorder process — recording and
+clips are unaffected by any bitrate or resolution change.
+
+**Not verifiable here:** actual NVENC session behaviour, GPU scaling, RTMPS smoothness
+under real packet loss, and the multi-hour soak. This container has no GPU, camera or
+ffmpeg build.
+
+## G. Still open
+
+1. **Upload throttling under load** (brief §42). Clip cuts already run at
+   below-normal priority and are capped at 2 concurrent, but the forward itself is
+   not throttled when CPU/disk are saturated. Low risk — a forward is a single
+   ~20 s file over HTTP, not a sustained load — but it is the one place where a
+   large backlog draining could, in principle, compete with the media pipeline.
+2. **Program-feed health on the native path** (README "Known gaps"). The gdigrab
+   path samples real `blackdetect`/`freezedetect`; the `NATIVE_PROGRAM_FEED` path
+   only checks the preview snapshot exists and is recent, so it cannot actually
+   detect an all-black frame. Only affects the opt-in path, which is off by default.
+3. **The README's "Known gaps" section is out of date.** It still lists "dshow
+   format negotiation isn't probed" as a gap for the native path; `nativePipeline.js`
+   has since grown full `-list_options` auto-detection with AVMATRIX-specific
+   root-cause fixes. Worth correcting so it does not mislead before a match.
+
+## H. If you are moving from a laptop webcam to a real camera + AV Matrix
+
+What actually changes, and what to check:
+
+- **Which path runs.** `NATIVE_PROGRAM_FEED` is **off** by default, so the camera is
+  opened by the browser (`getUserMedia`), not by ffmpeg — same as the laptop webcam.
+  The AV Matrix is just another device to that code. The native-dshow path, where
+  ffmpeg opens the card directly and the AVMATRIX format auto-detection lives, only
+  runs if you set `NATIVE_PROGRAM_FEED=true`.
+- **Resolution is the real risk**, and it is now visible: check `/status` →
+  `captureWindow.cameraInfo`, or the engine console, right after Live Output opens.
+  `downgraded: true` means the card gave less than 1080p and everything is upscaling.
+- **Audio moves.** HDMI audio arrives as its own dshow device, opened directly by
+  ffmpeg — it is not the laptop mic any more. Select the card's audio device in the
+  panel, and listen to the first test stream (also because of the 48 kHz change above).
+- **No-signal is already handled** — `live-output.html` watches the track's
+  `mute`/`unmute` events, which is exactly what a capture card reports when HDMI has
+  no signal, and reports it to the engine.
+- **Clips are unaffected by any of this.** They are cut from `master.mp4`, so the
+  camera type cannot change clip behaviour.
