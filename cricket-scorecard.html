@@ -1701,6 +1701,102 @@
     .em-actions .em-btn{ min-height:46px; }
   }
   @media (prefers-reduced-motion:reduce){ .em-skel{ animation:none; } #edit-modal{ scroll-behavior:auto; } }
+
+  /* ===== EDIT SCORECARD v2 — contextual editor (premium layer, same engine) ===== */
+  #edit-modal{ --em-ease:cubic-bezier(.2,.8,.2,1); border-radius:22px; }
+  #edit-modal-backdrop{ backdrop-filter:blur(10px) saturate(1.2); -webkit-backdrop-filter:blur(10px) saturate(1.2); background:rgba(4,8,16,.55); }
+  .em-status{ display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:700; color:var(--text-dim); padding:3px 9px 3px 8px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border-soft); transition:color .2s,border-color .2s; }
+  .em-status::before{ content:''; width:7px; height:7px; border-radius:99px; background:#22c55e; transition:background .2s; }
+  .em-status.dirty{ color:var(--accent); border-color:var(--accent); }
+  .em-status.dirty::before{ background:var(--accent); animation:emPulse 1.4s ease-in-out infinite; }
+  .em-status.err{ color:var(--wicket,#ef4444); } .em-status.err::before{ background:var(--wicket,#ef4444); }
+  .em-headrow{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:-2px 0 6px; padding-right:34px; }
+  .em-headrow .em-tag{ margin:0; }
+  .em-overview{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; margin:10px 0 10px; }
+  .em-ov-card{ text-align:left; padding:10px 12px; border-radius:14px; background:var(--panel-2); border:1px solid var(--border-soft); color:var(--text); cursor:pointer; transition:border-color .18s,transform .18s var(--em-ease),background .18s; font-family:inherit; }
+  .em-ov-card:hover{ border-color:var(--accent); transform:translateY(-1px); }
+  .em-ov-card.active{ border-color:var(--accent); background:var(--accent-soft); }
+  .em-ov-card small{ display:block; font-size:10px; font-weight:800; letter-spacing:.6px; text-transform:uppercase; color:var(--text-faint); }
+  .em-ov-card b{ font-size:20px; font-variant-numeric:tabular-nums; letter-spacing:-.3px; }
+  .em-ov-card span{ font-size:11.5px; color:var(--text-dim); margin-left:6px; }
+  /* ball timeline chips */
+  .em-tline{ display:flex; gap:6px; overflow-x:auto; scrollbar-width:none; padding:2px 0 6px; margin:0 -2px; }
+  .em-tline::-webkit-scrollbar{ display:none; }
+  .em-tb{ flex:none; min-width:42px; height:42px; padding:0 8px; border-radius:13px; border:1px solid var(--border); background:var(--panel-2); color:var(--text); font:800 13px/1 inherit; font-family:inherit; cursor:pointer; position:relative; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; transition:transform .15s var(--em-ease),border-color .15s,background .15s; }
+  .em-tb i{ font-style:normal; font-size:8.5px; font-weight:700; color:var(--text-faint); letter-spacing:.3px; }
+  .em-tb:hover{ transform:translateY(-1px); border-color:var(--accent); }
+  .em-tb.active{ background:var(--accent); border-color:var(--accent); color:var(--accent-contrast,#fff); box-shadow:0 4px 14px var(--accent-soft); }
+  .em-tb.active i{ color:inherit; opacity:.75; }
+  .em-tb.w{ color:var(--wicket,#ef4444); border-color:var(--wicket,#ef4444); }
+  .em-tb.w.active{ color:#fff; background:var(--wicket,#ef4444); }
+  .em-tb.b{ color:var(--accent); }
+  .em-tb.b.active{ color:var(--accent-contrast,#fff); }
+  .em-tb.x{ border-style:dashed; }
+  /* ball editor */
+  .ed-card{ padding:14px; border-radius:16px; background:var(--panel-2); border:1px solid var(--border-soft); margin-bottom:10px; }
+  @keyframes edIn{ from{ opacity:0; transform:translateY(6px); } }
+  .ed-h{ display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:10.5px; font-weight:800; letter-spacing:.6px; text-transform:uppercase; color:var(--text-faint); margin-bottom:9px; }
+  .ed-chips{ display:flex; flex-wrap:wrap; gap:7px; }
+  .ed-chip{ min-width:46px; height:42px; padding:0 14px; border-radius:12px; border:1px solid var(--border); background:var(--panel); color:var(--text); font:800 14px/1 inherit; font-family:inherit; cursor:pointer; transition:transform .12s var(--em-ease),background .15s,border-color .15s,color .15s; -webkit-tap-highlight-color:transparent; }
+  .ed-chip:hover:not(:disabled){ border-color:var(--accent); }
+  .ed-chip:active:not(:disabled){ transform:scale(.95); }
+  .ed-chip:disabled{ opacity:.35; cursor:not-allowed; }
+  .ed-chip.on{ background:var(--accent); border-color:var(--accent); color:var(--accent-contrast,#fff); box-shadow:0 3px 12px var(--accent-soft); }
+  .ed-chip.wk{ color:var(--wicket,#ef4444); border-color:var(--wicket,#ef4444); }
+  .ed-chip.wk.on{ background:var(--wicket,#ef4444); color:#fff; box-shadow:none; }
+  .ed-chip.sm{ height:36px; font-size:12.5px; padding:0 12px; }
+  .ed-sep{ width:1px; background:var(--border-soft); margin:2px 3px; }
+  .ed-people{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+  .ed-person{ text-align:left; padding:9px 11px; border-radius:12px; border:1px solid var(--border); background:var(--panel); color:var(--text); cursor:pointer; min-width:0; font-family:inherit; transition:border-color .15s,transform .12s; }
+  .ed-person:hover{ border-color:var(--accent); }
+  .ed-person small{ display:block; font-size:9.5px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; color:var(--text-faint); }
+  .ed-person b{ display:block; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px; }
+  .ed-person.changed{ border-color:var(--accent); background:var(--accent-soft); }
+  .ed-swap{ margin-top:8px; }
+  .ed-step{ display:inline-flex; align-items:center; gap:0; border:1px solid var(--border); border-radius:12px; overflow:hidden; background:var(--panel); }
+  .ed-step button{ width:40px; height:40px; border:none; background:transparent; color:var(--text); font-size:18px; font-weight:700; cursor:pointer; }
+  .ed-step button:hover{ background:var(--accent-soft); color:var(--accent); }
+  .ed-step output{ min-width:38px; text-align:center; font-weight:800; font-variant-numeric:tabular-nums; }
+  .ed-warn{ display:flex; gap:8px; align-items:flex-start; padding:9px 12px; border-radius:12px; font-size:12px; line-height:1.45; margin-bottom:8px; background:var(--wicket-soft,rgba(239,68,68,.12)); color:var(--text); border:1px solid var(--wicket,#ef4444); animation:edIn .18s var(--em-ease); }
+  .ed-info{ background:var(--accent-soft); border-color:transparent; }
+  .ed-delta{ font-size:12px; font-weight:800; color:var(--accent); font-variant-numeric:tabular-nums; }
+  .ed-reveal{ }
+  .ed-actions{ position:sticky; bottom:-16px; margin:0 -20px -16px; padding:12px 20px calc(14px + env(safe-area-inset-bottom)); background:linear-gradient(to top,var(--panel) 70%,transparent); display:flex; gap:8px; justify-content:flex-end; align-items:center; }
+  .ed-actions .em-status{ margin-right:auto; }
+  .ed-actions .em-btn{ min-height:42px; padding:0 18px; }
+  .ed-kbd{ font-size:10px; color:var(--text-faint); margin-top:6px; }
+  #ed-root .em-nav{ margin-top:30px; }
+  /* searchable picker (popover on desktop, bottom sheet on mobile) */
+  .pk-back{ position:fixed; inset:0; z-index:140; background:rgba(0,0,0,.25); animation:pkFade .15s ease; }
+  @keyframes pkFade{ from{ opacity:0; } }
+  .pk{ position:fixed; z-index:141; width:min(340px,calc(100vw - 24px)); max-height:min(420px,70vh); display:flex; flex-direction:column; background:var(--panel); border:1px solid var(--border); border-radius:16px; box-shadow:0 24px 70px rgba(0,0,0,.5); overflow:hidden; animation:pkIn .18s var(--em-ease,ease); }
+  @keyframes pkIn{ from{ opacity:0; transform:translateY(8px) scale(.98); } }
+  .pk input{ margin:10px 10px 6px; min-height:40px; border-radius:11px; padding:0 12px; }
+  .pk-list{ overflow-y:auto; padding:0 6px 8px; -webkit-overflow-scrolling:touch; }
+  .pk-it{ display:flex; align-items:center; gap:10px; width:100%; min-height:42px; padding:0 10px; border:none; background:transparent; color:var(--text); border-radius:10px; font:600 13.5px inherit; font-family:inherit; text-align:left; cursor:pointer; }
+  .pk-it .av{ flex:none; width:26px; height:26px; border-radius:99px; background:var(--accent-soft); color:var(--accent); display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; }
+  .pk-it.hl, .pk-it:hover{ background:var(--accent-soft); }
+  .pk-it.cur::after{ content:'✓'; margin-left:auto; color:var(--accent); font-weight:800; }
+  .pk-empty{ padding:18px; text-align:center; font-size:12.5px; color:var(--text-dim); }
+  .pk-t{ font-size:10.5px; font-weight:800; letter-spacing:.6px; text-transform:uppercase; color:var(--text-faint); padding:10px 14px 0; }
+  select.em-native{ display:none !important; }
+  .em-pick-btn{ width:100%; min-height:42px; padding:0 12px; border-radius:12px; border:1px solid var(--border); background:var(--panel-2); color:var(--text); font:700 13px inherit; font-family:inherit; text-align:left; cursor:pointer; display:flex; align-items:center; justify-content:space-between; gap:8px; transition:border-color .15s; }
+  .em-pick-btn:hover{ border-color:var(--accent); }
+  .em-pick-btn::after{ content:'⌕'; color:var(--text-faint); }
+  /* quick edit palette (Ctrl/Cmd+K) */
+  .pal-it small{ margin-left:auto; color:var(--text-faint); font-size:11px; font-weight:700; }
+  #em-undo-toast{ position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(20px); z-index:131; display:flex; align-items:center; gap:12px; background:var(--panel); border:1px solid var(--border); color:var(--text); padding:9px 10px 9px 18px; border-radius:99px; font-size:12.5px; font-weight:600; box-shadow:0 10px 30px rgba(0,0,0,.3); opacity:0; pointer-events:none; transition:opacity .2s,transform .2s; }
+  #em-undo-toast.show{ opacity:1; transform:translateX(-50%) translateY(0); pointer-events:auto; }
+  #em-undo-toast button{ border:none; border-radius:99px; background:var(--accent-soft); color:var(--accent); font-weight:800; font-size:12px; padding:7px 14px; cursor:pointer; }
+  @media (max-width:640px){
+    .ed-people{ grid-template-columns:1fr; }
+    .ed-chip{ height:46px; min-width:48px; }
+    .ed-actions{ margin:0 -14px -14px; padding:12px 14px calc(14px + env(safe-area-inset-bottom)); }
+    .pk{ left:0 !important; right:0 !important; bottom:0 !important; top:auto !important; width:100%; max-height:78vh; border-radius:20px 20px 0 0; animation:pkUp .22s var(--em-ease,ease); }
+    @keyframes pkUp{ from{ transform:translateY(40px); opacity:0; } }
+    .em-overview{ grid-template-columns:1fr 1fr; }
+  }
+  @media (prefers-reduced-motion:reduce){ .ed-card,.ed-reveal,.pk,.pk-back,.ed-warn{ animation:none; } .em-status.dirty::before{ animation:none; } }
   #em-toast{
     position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(20px); z-index:130;
     background:var(--panel); border:1px solid var(--border); color:var(--text); padding:11px 18px; border-radius:99px;
@@ -6463,7 +6559,7 @@ async function openOwnerPanel(opts){
     <div class="em-sticky">
       <div class="em-head">
         <div class="em-title">Edit Scorecard</div>
-        <div class="em-tag">Match correction &amp; scoring control</div>
+        <div class="em-headrow"><div class="em-tag">Match correction &amp; scoring control</div><span class="em-status" id="em-status" role="status">All changes saved</span></div>
         <div class="em-sub">Select any delivery to correct batting, bowling, extras or wicket details. All dependent scorecard and statistics are recalculated automatically.</div>
       </div>
       <div class="em-toolbar">
@@ -6472,6 +6568,7 @@ async function openOwnerPanel(opts){
         <button id="em-merge-players-btn">🔀 Merge Players</button>
         <button id="em-undo-btn">↩️ Undo last change</button>
         <button id="em-history-btn">🕓 Recent corrections</button>
+        <button id="em-cmdk-btn" title="Quick edit (Ctrl/⌘ + K)">⌘K Quick edit</button>
       </div>
       <div class="em-search-row">
         <input type="text" id="em-search" placeholder="Search ball (17.4), player, wicket, wide, six, over 12…" autocomplete="off" aria-label="Search deliveries" value="${escapeHtml(emState.q)}">
@@ -6484,6 +6581,7 @@ async function openOwnerPanel(opts){
       <div class="em-seg" id="em-innings" role="tablist" aria-label="Innings"></div>
       <div class="em-ovwrap" id="em-overnav" aria-label="Overs"></div>
     </div>
+    <div id="em-overview" class="em-overview"></div>
     <div id="em-overcard"></div>
     <div id="em-body" class="em-list"><div class="em-skel"></div><div class="em-skel"></div><div class="em-skel"></div></div>`;
   document.getElementById('em-correct-bowler-btn').onclick = () => openCorrectBowlerPanel(matchId);
@@ -6491,6 +6589,7 @@ async function openOwnerPanel(opts){
   document.getElementById('em-merge-players-btn').onclick = () => openMergePlayersPanel(matchId);
   document.getElementById('em-undo-btn').onclick = () => undoLastCorrection(matchId);
   document.getElementById('em-history-btn').onclick = () => showHistory(matchId);
+  document.getElementById('em-cmdk-btn').onclick = () => emOpenPalette();
   // Wired once per (re)injected shell — never inside the render functions,
   // which run on every keystroke / chip click.
   let deb = null;
@@ -7168,7 +7267,9 @@ function emRenderList(){
     const eb = e.target.closest('[data-ball]');
     if(eb){ const ball = balls.find(b => b.ballId === eb.dataset.ball); openDeliveryEditForm(matchId, ball, roster); return; }
     const cb = e.target.closest('[data-clip]');
-    if(cb){ const ball = balls.find(b => b.ballId === cb.dataset.clip); openAttachClipForm(matchId, ball); }
+    if(cb){ const ball = balls.find(b => b.ballId === cb.dataset.clip); openAttachClipForm(matchId, ball); return; }
+    const rw = e.target.closest('[data-row]');
+    if(rw){ const ball = balls.find(b => b.ballId === rw.dataset.row); if(ball) openDeliveryEditForm(matchId, ball, roster); }
   };
   if(emState.focusBallId){
     const row = body.querySelector(`[data-row="${CSS.escape(emState.focusBallId)}"]`);
@@ -7204,105 +7305,454 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-function openDeliveryEditForm(matchId, ball, roster){
-  const facts = { // mirrors deriveBallFacts() on the server, just for pre-filling the form
-    runsOffBat: ball.kind==='Nb' ? Math.max(0,(ball.runs||0)-1) : (ball.kind==='W'||ball.kind==='OT'||/^[0-6]$/.test(ball.kind)) ? (ball.runs||0) : 0,
-    extras: ball.kind==='Wd' ? (ball.runs||0) : ball.kind==='Nb' ? 1 : (ball.kind==='B'||ball.kind==='LB') ? (ball.runs||0) : 0,
-    extraType: ball.kind==='Wd'?'wide':ball.kind==='Nb'?'noball':ball.kind==='B'?'bye':ball.kind==='LB'?'legbye':ball.kind==='OT'?'overthrow':'none'
+
+/* =====================================================================
+   EDIT SCORECARD v2 — contextual editor layer.
+   UI only. Every write still goes through the existing endpoints
+   (POST /cricket/ball/:id/preview → PUT /cricket/ball/:id, correct-bowler,
+   correct-batsman, players/merge, undo-last). Player names are only ever
+   picked from the match roster, so no new player identity is created here —
+   the server resolves the existing playerId exactly as before.
+   ===================================================================== */
+let emPickEl = null;
+function emClosePicker(){
+  if(!emPickEl) return;
+  const p = emPickEl; emPickEl = null;
+  p.back.remove(); p.box.remove();
+  document.removeEventListener('keydown', p.key, true);
+  if(p.returnFocus && p.returnFocus.focus){ try{ p.returnFocus.focus(); }catch(e){} }
+}
+// Command-style searchable picker: popover on desktop, bottom sheet on phones.
+// opts: { title, items:[{value,label,sub?}], current, anchor, onPick, placeholder, extra(q)->items, empty }
+function emPick(opts){
+  emClosePicker();
+  const items = Array.isArray(opts.items) ? opts.items : [];
+  const back = document.createElement('div'); back.className = 'pk-back';
+  const box = document.createElement('div'); box.className = 'pk';
+  box.setAttribute('role', 'dialog'); box.setAttribute('aria-label', opts.title || 'Select');
+  box.innerHTML = (opts.title ? `<div class="pk-t">${escapeHtml(opts.title)}</div>` : '') +
+    `<input type="text" placeholder="${escapeHtml(opts.placeholder || 'Search…')}" aria-label="Search" autocomplete="off"><div class="pk-list" role="listbox"></div>`;
+  document.body.append(back, box);
+  const input = box.querySelector('input'), list = box.querySelector('.pk-list');
+  let shown = [], hl = 0;
+  const initials = (n) => String(n||'?').trim().split(/\s+/).slice(0,2).map(s => s[0] || '').join('').toUpperCase() || '?';
+  const draw = () => {
+    const q = input.value.trim().toLowerCase();
+    shown = items.filter(i => !q || String(i.label).toLowerCase().includes(q) || String(i.sub||'').toLowerCase().includes(q));
+    if(opts.extra){ try{ shown = opts.extra(q).concat(shown); }catch(e){} }
+    if(hl >= shown.length) hl = Math.max(0, shown.length - 1);
+    list.innerHTML = shown.length ? shown.map((i, n) => `<button type="button" role="option" class="pk-it${n===hl?' hl':''}${i.value===opts.current?' cur':''}" data-i="${n}"><span class="av">${escapeHtml(i.icon || initials(i.label))}</span><span>${escapeHtml(i.label)}</span>${i.sub?`<small style="margin-left:auto;color:var(--text-faint);font-size:11px">${escapeHtml(i.sub)}</small>`:''}</button>`).join('')
+      : `<div class="pk-empty">${escapeHtml(opts.empty || 'No matching player in this match.')}</div>`;
+    const h = list.querySelector('.hl'); if(h && h.scrollIntoView) h.scrollIntoView({ block:'nearest' });
   };
-  const rosterOpts = (selected) => roster.map(n => `<option value="${escapeHtml(n)}" ${n===selected?'selected':''}>${escapeHtml(n)}</option>`).join('');
-  const content = document.getElementById('edit-modal-content');
-  const siblings = (deliveryListCache && deliveryListCache.balls || []).filter(b => b.innings === ball.innings);
-  const idx = siblings.findIndex(b => b.ballId === ball.ballId);
-  const prevBall = idx > 0 ? siblings[idx-1] : null, nextBall = idx >= 0 && idx < siblings.length-1 ? siblings[idx+1] : null;
-  content.innerHTML = `
-    <div class="em-nav">
-      <button type="button" id="dv-prev" ${prevBall?'':'disabled'} aria-label="Previous ball">← Previous Ball</button>
-      <div style="text-align:center"><div class="em-tag" style="margin:0">Edit Delivery</div><div class="em-title" style="margin:0;font-size:18px">${ball.over}.${ball.ballInOver}</div></div>
-      <button type="button" id="dv-next" ${nextBall?'':'disabled'} aria-label="Next ball">Next Ball →</button>
-    </div>
-    <div class="em-sub" style="text-align:center">Innings ${ball.innings} • Over ${ball.over} • Current result: <b>${escapeHtml(ballLabel(ball))}</b>${ball.correctionOf ? ' • <span class="em-chip ce">Edited</span>' : ''}</div>
-    <div class="em-group">Batters</div>
-    <div class="em-field-row">
-      <div><label for="dvStriker">Striker</label><select id="dvStriker">${rosterOpts(ball.striker)}</select></div>
-      <div><label for="dvNonStriker">Non-striker</label><select id="dvNonStriker">${rosterOpts(ball.nonStriker)}</select></div>
-    </div>
-    <div class="em-group">Bowling</div>
-    <div class="em-field-row">
-      <div><label for="dvBowler">Bowler</label><select id="dvBowler">${rosterOpts(ball.bowler)}</select></div>
-      <div></div>
-    </div>
-    <div class="em-group">Result</div>
-    <div class="em-field-row">
-      <div><label for="dvRunsOffBat">Runs off bat</label><input id="dvRunsOffBat" type="number" inputmode="numeric" min="0" max="11" value="${facts.runsOffBat}"></div>
-      <div><label for="dvExtras">Extras</label><input id="dvExtras" type="number" inputmode="numeric" min="0" max="11" value="${facts.extras}"></div>
-    </div>
-    <div class="em-field-row">
-      <div><label for="dvExtraType">Extra type</label><select id="dvExtraType">${Object.entries(EXTRA_TYPE_LABELS).map(([v,l]) => `<option value="${v}" ${v===facts.extraType?'selected':''}>${l}</option>`).join('')}</select></div>
-      <div><label for="dvWicket">Wicket</label><select id="dvWicket"><option value="no" ${!ball.dismissal?'selected':''}>No</option><option value="yes" ${ball.dismissal?'selected':''}>Yes</option></select></div>
-    </div>
-    <div class="em-hint" id="dvExtraHint"></div>
-    <div id="dvWicketBlock" style="${ball.dismissal ? '' : 'display:none;'}">
-      <div class="em-group">Wicket</div>
-      <div class="em-field-row" id="dvWicketFields">
-        <div><label for="dvDismissalType">Dismissal type</label><select id="dvDismissalType">${dismissalOptionsFor(facts.extraType, ball.dismissal && ball.dismissal.type)}</select></div>
-        <div id="dvFielderWrap"><label for="dvFielder" id="dvFielderLbl">Fielder</label><select id="dvFielder"><option value="">—</option>${rosterOpts(ball.dismissal && ball.dismissal.fielder)}</select></div>
-      </div>
-    </div>
-    <div class="em-dirty" id="dv-dirty" role="status">Unsaved changes</div>
-    <div class="em-actions">
-      <button class="em-btn cancel" id="dv-back-btn">Back</button>
-      <button class="em-btn cancel" id="dv-discard-btn" style="display:none">Discard</button>
-      <button class="em-btn save" id="dv-save-btn" disabled>Preview &amp; Save</button>
-    </div>`;
-  const $ = (id) => document.getElementById(id);
-  const fields = ['dvStriker','dvNonStriker','dvBowler','dvRunsOffBat','dvExtras','dvExtraType','dvWicket','dvDismissalType','dvFielder'];
-  const snap = () => JSON.stringify(fields.map(f => $(f).value));
-  // Show only the fields that matter for the current combination.
-  function syncDv(){
-    const et = $('dvExtraType').value, wk = $('dvWicket').value === 'yes';
-    $('dvWicketBlock').style.display = wk ? '' : 'none';
-    const noBat = et === 'wide' || et === 'bye' || et === 'legbye';
-    $('dvRunsOffBat').disabled = noBat; if(noBat) $('dvRunsOffBat').value = 0;
-    $('dvExtras').disabled = et === 'none' || et === 'overthrow';
-    $('dvExtraHint').textContent = et === 'wide' ? 'Wide — enter the TOTAL wide runs (1 penalty + any runs run). Nothing is credited to the batter.'
-      : et === 'noball' ? 'No ball — enter runs off the bat separately; the 1-run penalty is added automatically.'
-      : et === 'bye' || et === 'legbye' ? 'Byes / leg byes are never credited to the batter.'
-      : et === 'overthrow' ? 'Overthrow — put the total runs in “Runs off bat”.' : '';
-    if(wk){
-      const sel = $('dvDismissalType'); const cur = sel.value;
-      sel.innerHTML = dismissalOptionsFor(et, cur);
-      const needsFielder = ['Caught','Stumped','Run Out'].includes(sel.value);
-      $('dvFielderWrap').style.display = needsFielder ? '' : 'none';
-      $('dvFielderLbl').textContent = sel.value === 'Run Out' ? 'Run-out fielder' : sel.value === 'Stumped' ? 'Wicketkeeper' : 'Caught by';
-      if(!needsFielder) $('dvFielder').value = '';
-    }
+  const choose = (n) => { const it = shown[n]; if(!it) return; const cb = opts.onPick; emClosePicker(); if(cb) cb(it.value, it); };
+  const key = (e) => {
+    if(e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); emClosePicker(); return; }
+    if(e.key === 'ArrowDown'){ e.preventDefault(); e.stopPropagation(); hl = Math.min(shown.length-1, hl+1); draw(); return; }
+    if(e.key === 'ArrowUp'){ e.preventDefault(); e.stopPropagation(); hl = Math.max(0, hl-1); draw(); return; }
+    if(e.key === 'Enter'){ e.preventDefault(); e.stopPropagation(); choose(hl); return; }
+    if(e.key === 'Tab'){ e.preventDefault(); }
+    e.stopPropagation();
+  };
+  document.addEventListener('keydown', key, true);
+  input.addEventListener('input', () => { hl = 0; draw(); });
+  list.addEventListener('click', (e) => { const b = e.target.closest('[data-i]'); if(b) choose(Number(b.dataset.i)); });
+  list.addEventListener('mousemove', (e) => { const b = e.target.closest('[data-i]'); if(b && Number(b.dataset.i) !== hl){ hl = Number(b.dataset.i); list.querySelectorAll('.pk-it').forEach((x, n) => x.classList.toggle('hl', n === hl)); } });
+  back.addEventListener('click', emClosePicker);
+  emPickEl = { back, box, key, returnFocus: opts.anchor || document.activeElement };
+  draw();
+  const cur = shown.findIndex(i => i.value === opts.current); if(cur > 0){ hl = cur; draw(); }
+  if(opts.anchor && window.innerWidth > 640){
+    const r = opts.anchor.getBoundingClientRect();
+    let left = Math.min(Math.max(12, r.left), window.innerWidth - box.offsetWidth - 12);
+    let top = r.bottom + 6;
+    if(top + box.offsetHeight > window.innerHeight - 12) top = Math.max(12, r.top - box.offsetHeight - 6);
+    box.style.left = left + 'px'; box.style.top = top + 'px';
+  } else if(window.innerWidth > 640){
+    box.style.left = Math.max(12, (window.innerWidth - box.offsetWidth) / 2) + 'px'; box.style.top = '12vh';
   }
-  const initial = (syncDv(), snap());
-  function dvUpdateDirty(){
-    const dirty = snap() !== initial;
-    $('dv-dirty').classList.toggle('show', dirty);
-    $('dv-discard-btn').style.display = dirty ? '' : 'none';
-    $('dv-save-btn').disabled = !dirty;
-  }
-  fields.forEach(f => { $(f).addEventListener('input', () => { syncDv(); dvUpdateDirty(); }); $(f).addEventListener('change', () => { syncDv(); dvUpdateDirty(); }); });
-  $('dv-discard-btn').onclick = () => openDeliveryEditForm(matchId, ball, roster);
-  const go = (b) => { if(!b) return; if(snap() !== initial && !confirm('Discard your unsaved changes on this delivery?')) return; openDeliveryEditForm(matchId, b, roster); };
-  $('dv-prev').onclick = () => go(prevBall);
-  $('dv-next').onclick = () => go(nextBall);
-  $('dv-back-btn').onclick = () => { if(snap() !== initial && !confirm('Discard your unsaved changes on this delivery?')) return; emState.focusBallId = ball.ballId; emState.innings = ball.innings; if(!emSearching()) emState.over = Number(ball.over); openOwnerPanel(); };
-  document.getElementById('dv-save-btn').onclick = async () => {
-    const input = {
-      striker: document.getElementById('dvStriker').value,
-      nonStriker: document.getElementById('dvNonStriker').value,
-      bowler: document.getElementById('dvBowler').value,
-      runsOffBat: Number(document.getElementById('dvRunsOffBat').value) || 0,
-      extras: Number(document.getElementById('dvExtras').value) || 0,
-      extraType: document.getElementById('dvExtraType').value,
-      wicket: document.getElementById('dvWicket').value === 'yes',
-      dismissalType: document.getElementById('dvDismissalType') ? document.getElementById('dvDismissalType').value : null,
-      fielder: document.getElementById('dvFielder') ? document.getElementById('dvFielder').value : null
+  input.focus();
+}
+
+// Turns every remaining native <select> inside the edit panel (Correct Bowler,
+// Correct Batsman, Merge Players…) into the same searchable picker. The real
+// <select> stays in the DOM (hidden) so all existing logic keeps reading and
+// writing it exactly as before.
+function emEnhanceSelects(root){
+  if(!root) return;
+  root.querySelectorAll('select:not([data-em-enh])').forEach(sel => {
+    if(sel.multiple || sel.size > 1) return;
+    sel.setAttribute('data-em-enh', '1'); sel.classList.add('em-native');
+    const lblEl = sel.id ? root.querySelector(`label[for="${sel.id}"]`) : null;
+    const title = lblEl ? lblEl.textContent : '';
+    const lab = () => { const o = sel.options[sel.selectedIndex]; return o ? o.textContent : 'Select…'; };
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'em-pick-btn';
+    btn.setAttribute('aria-label', (title || 'Select') + ': ' + lab());
+    btn.innerHTML = `<span>${escapeHtml(lab())}</span>`;
+    sel.after(btn);
+    const sync = () => { btn.firstChild.textContent = lab(); btn.setAttribute('aria-label', (title || 'Select') + ': ' + lab()); };
+    sel.addEventListener('change', sync);
+    btn.onclick = () => emPick({
+      title, anchor: btn, current: sel.value,
+      items: [...sel.options].map(o => ({ value: o.value, label: o.textContent })),
+      onPick: (v) => { sel.value = v; sel.dispatchEvent(new Event('input', { bubbles:true })); sel.dispatchEvent(new Event('change', { bubbles:true })); sync(); }
+    });
+  });
+}
+(function(){
+  const c = document.getElementById('edit-modal-content');
+  if(c && window.MutationObserver) new MutationObserver(() => emEnhanceSelects(c)).observe(c, { childList:true, subtree:true });
+})();
+
+// Toast with an inline Undo action (the plain emToast has none).
+function emUndoToast(msg, onUndo){
+  let t = document.getElementById('em-undo-toast');
+  if(!t){ t = document.createElement('div'); t.id = 'em-undo-toast'; t.setAttribute('role', 'status'); document.body.appendChild(t); }
+  t.innerHTML = `<span>${escapeHtml(msg)}</span><button type="button">Undo</button>`;
+  t.querySelector('button').onclick = () => { t.classList.remove('show'); onUndo(); };
+  t.classList.add('show');
+  clearTimeout(emUndoToast._t);
+  emUndoToast._t = setTimeout(() => t.classList.remove('show'), 7000);
+}
+
+/* ---------- Ball timeline chip ---------- */
+function emTlMain(b){
+  const r = b.runs || 0;
+  if(b.dismissal) return 'W';
+  if(b.kind === 'Wd') return r > 1 ? 'Wd+' + (r-1) : 'Wd';
+  if(b.kind === 'Nb') return r > 1 ? 'Nb+' + (r-1) : 'Nb';
+  if(b.kind === 'B') return 'B' + r;
+  if(b.kind === 'LB') return 'LB' + r;
+  return String(r);
+}
+function emTlChip(b, activeId){
+  const cls = b.dismissal ? ' w' : (isBoundaryDelivery(b) ? ' b' : (/^(Wd|Nb|B|LB)$/.test(b.kind) ? ' x' : ''));
+  return `<button type="button" class="em-tb${cls}${b.ballId === activeId ? ' active' : ''}" data-tb="${escapeHtml(b.ballId)}" aria-label="Ball ${b.over}.${b.ballInOver}: ${escapeHtml(emOutcome(b))}"><span>${escapeHtml(emTlMain(b))}</span><i>${b.over}.${b.ballInOver}</i></button>`;
+}
+
+/* ---------- Match overview cards (also the innings switcher) ---------- */
+function emRenderOverview(){
+  const el = document.getElementById('em-overview');
+  if(!el || !deliveryListCache) return;
+  const { balls, inningsList } = deliveryListCache;
+  el.innerHTML = inningsList.map(n => {
+    const bs = balls.filter(b => b.innings === n);
+    const runs = bs.reduce((a, b) => a + (b.runs || 0), 0);
+    const wk = bs.filter(b => b.dismissal && b.dismissal.type !== 'Retired Hurt').length;
+    const legal = bs.filter(b => b.kind !== 'Wd' && b.kind !== 'Nb').length;
+    return `<button type="button" class="em-ov-card${n === emState.innings ? ' active' : ''}" data-inn="${n}" aria-label="Innings ${n}: ${runs} for ${wk}"><small>Innings ${n}</small><b>${runs}/${wk}</b><span>${Math.floor(legal/6)}.${legal%6} ov</span></button>`;
+  }).join('');
+  el.onclick = (e) => {
+    const c = e.target.closest('[data-inn]'); if(!c) return;
+    emState.innings = Number(c.dataset.inn); emState.over = null; emState.rangeStart = null; emState.limit = 120;
+    emRenderAll();
+  };
+}
+// Wrap the existing renderers (called by name from the existing code).
+(function(){
+  const baseAll = emRenderAll;
+  emRenderAll = function(){
+    baseAll();
+    emRenderOverview();
+    const t = document.getElementById('em-innings'); if(t) t.style.display = 'none'; // overview cards replace the tab row
+  };
+  const baseCard = emRenderOverCard;
+  emRenderOverCard = function(){
+    baseCard();
+    const card = document.getElementById('em-overcard');
+    if(!card || !deliveryListCache || !card.innerHTML || emState.q || !(emState.over > 0)) return;
+    const bs = deliveryListCache.balls.filter(b => b.innings === emState.innings && Number(b.over) === emState.over);
+    if(!bs.length) return;
+    card.insertAdjacentHTML('beforeend', `<div class="em-tline" role="group" aria-label="Ball timeline">${bs.map(b => emTlChip(b, null)).join('')}</div>`);
+    card.querySelector('.em-tline').onclick = (e) => {
+      const t = e.target.closest('[data-tb]'); if(!t) return;
+      const ball = deliveryListCache.balls.find(b => b.ballId === t.dataset.tb);
+      if(ball) openDeliveryEditForm(deliveryListCache.matchId, ball, deliveryListCache.roster);
     };
+  };
+})();
+
+/* ---------- Quick Edit palette (Ctrl/Cmd + K) ---------- */
+function emOpenPalette(){
+  const modalOpen = document.getElementById('edit-modal-backdrop').classList.contains('open');
+  if(!modalOpen) return;
+  const cache = deliveryListCache, matchId = cache && cache.matchId;
+  const items = [];
+  if(matchId){
+    items.push({ value:'a:bowler', label:'Correct bowler', sub:'action', icon:'🎯' });
+    items.push({ value:'a:batsman', label:'Correct batsman', sub:'action', icon:'🏏' });
+    items.push({ value:'a:merge', label:'Merge duplicate players', sub:'action', icon:'🔀' });
+    items.push({ value:'a:undo', label:'Undo last change', sub:'action', icon:'↩' });
+    items.push({ value:'a:history', label:'Recent corrections', sub:'action', icon:'🕓' });
+    items.push({ value:'f:wicket', label:'Show all wickets', sub:'filter', icon:'W' });
+    items.push({ value:'f:boundary', label:'Show 4s & 6s', sub:'filter', icon:'4' });
+    items.push({ value:'f:extra', label:'Show extras', sub:'filter', icon:'Wd' });
+    items.push({ value:'f:clip', label:'Show deliveries with clips', sub:'filter', icon:'🎬' });
+    (cache.inningsList || []).forEach(n => items.push({ value:'i:' + n, label:'Go to innings ' + n, sub:'navigate', icon:String(n) }));
+    (cache.roster || []).forEach(n => items.push({ value:'p:' + n, label:n, sub:'find balls', icon:'' }));
+  }
+  emPick({
+    title:'Quick edit', placeholder:'Ball (12.4), over 12, player, wicket…', items,
+    empty:'Nothing found. Try a ball like 12.4, or a player name.',
+    extra: (q) => {
+      const out = [];
+      const mb = q.match(/^(\d+)\.([1-9]\d?)$/);
+      if(mb && cache){
+        const hits = cache.balls.filter(b => Number(b.over) === Number(mb[1]) && Number(b.ballInOver) === Number(mb[2]));
+        hits.forEach(b => out.push({ value:'b:' + b.ballId, label:`Edit ball ${b.over}.${b.ballInOver}`, sub:`Innings ${b.innings} · ${emOutcome(b).toLowerCase()}`, icon:'✎' }));
+      }
+      const mo = q.match(/^(?:over|ov|o)\s*(\d+)$/);
+      if(mo) out.push({ value:'o:' + mo[1], label:'Go to over ' + mo[1], sub:'navigate', icon:'#' });
+      return out;
+    },
+    onPick: (v) => {
+      const [k, ...rest] = v.split(':'); const arg = rest.join(':');
+      const home = () => { if(!document.getElementById('em-body')) return openOwnerPanel().then(() => true); return Promise.resolve(false); };
+      if(k === 'a'){
+        if(arg === 'bowler') openCorrectBowlerPanel(matchId);
+        else if(arg === 'batsman') openCorrectBatsmanPanel(matchId);
+        else if(arg === 'merge') openMergePlayersPanel(matchId);
+        else if(arg === 'undo') undoLastCorrection(matchId);
+        else if(arg === 'history') showHistory(matchId);
+      } else if(k === 'b'){
+        const ball = cache.balls.find(b => b.ballId === arg);
+        if(ball) openDeliveryEditForm(matchId, ball, cache.roster);
+      } else {
+        home().then(() => {
+          if(!deliveryListCache) return;
+          if(k === 'f'){ emState.filters = new Set([arg]); emState.q = ''; }
+          else if(k === 'p'){ emState.q = arg.toLowerCase(); emState.filters.clear(); }
+          else if(k === 'i'){ emState.innings = Number(arg); emState.over = null; emState.q = ''; emState.filters.clear(); }
+          else if(k === 'o'){ emState.q = ''; emState.filters.clear(); emState.over = Number(arg); }
+          emState.limit = 120;
+          const s = document.getElementById('em-search'); if(s) s.value = emState.q;
+          emRenderAll();
+        });
+      }
+    }
+  });
+}
+document.addEventListener('keydown', (e) => {
+  if((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && String(e.key).toLowerCase() === 'k'){
+    if(!document.getElementById('edit-modal-backdrop').classList.contains('open')) return;
+    if(document.getElementById('confirm-modal-backdrop').classList.contains('open')) return;
+    if(emPickEl) return;
+    e.preventDefault(); emOpenPalette();
+  }
+});
+
+/* =====================================================================
+   Single-delivery contextual editor (replaces the dropdown form)
+   ===================================================================== */
+function openDeliveryEditForm(matchId, ball, roster){
+  const content = document.getElementById('edit-modal-content');
+  const fail = (msg) => {
+    content.innerHTML = `<div class="em-empty">${escapeHtml(msg)}<br><button type="button" class="em-more" id="ed-fail-back" style="max-width:220px;margin-top:12px">← Back to deliveries</button></div>`;
+    const b = document.getElementById('ed-fail-back'); if(b) b.onclick = () => openOwnerPanel();
+  };
+  try{
+    if(!ball || !ball.ballId) return fail('Delivery information unavailable.');
+    roster = Array.isArray(roster) ? roster.filter(Boolean) : [];
+    const $ = (id) => document.getElementById(id);
+    const facts = { // mirrors deriveBallFacts() on the server, just to pre-fill the editor
+      runsOffBat: ball.kind==='Nb' ? Math.max(0,(ball.runs||0)-1) : (ball.kind==='W'||ball.kind==='OT'||/^[0-6]$/.test(ball.kind)) ? (ball.runs||0) : 0,
+      extras: ball.kind==='Wd' ? (ball.runs||0) : ball.kind==='Nb' ? 1 : (ball.kind==='B'||ball.kind==='LB') ? (ball.runs||0) : 0,
+      extraType: ball.kind==='Wd'?'wide':ball.kind==='Nb'?'noball':ball.kind==='B'?'bye':ball.kind==='LB'?'legbye':ball.kind==='OT'?'overthrow':'none'
+    };
+    const S = {
+      striker: ball.striker || '', nonStriker: ball.nonStriker || '', bowler: ball.bowler || '',
+      runsOffBat: facts.runsOffBat, extras: facts.extras, extraType: facts.extraType,
+      wicket: !!ball.dismissal, dismissalType: (ball.dismissal && ball.dismissal.type) || 'Bowled', fielder: (ball.dismissal && ball.dismissal.fielder) || ''
+    };
+    const INIT = JSON.stringify(S);
+    const orig = JSON.parse(INIT);
+    let notice = '', prevWicket = S.wicket;
+    const names = roster.slice();
+    [S.striker, S.nonStriker, S.bowler, S.fielder].forEach(n => { if(n && !names.includes(n)) names.push(n); });
+    const siblings = (deliveryListCache && deliveryListCache.balls || []).filter(b => b.innings === ball.innings);
+    const idx = siblings.findIndex(b => b.ballId === ball.ballId);
+    const prevBall = idx > 0 ? siblings[idx-1] : null, nextBall = idx >= 0 && idx < siblings.length-1 ? siblings[idx+1] : null;
+    const overBalls = siblings.filter(b => Number(b.over) === Number(ball.over));
+
+    const allowedDis = (et) => et === 'wide' ? ['Run Out','Stumped'] : et === 'noball' ? ['Run Out','Hit Wicket'] : DISMISSAL_TYPES;
+    const runValue = () => S.extraType === 'wide' ? Math.max(0, S.extras - 1) : (S.extraType === 'bye' || S.extraType === 'legbye') ? S.extras : S.runsOffBat;
+    const total = () => S.extraType === 'wide' ? S.extras : S.extraType === 'noball' ? 1 + S.runsOffBat : (S.extraType === 'bye' || S.extraType === 'legbye') ? S.extras : S.runsOffBat;
+    const origTotal = ball.runs || 0;
+    const dirty = () => JSON.stringify(S) !== INIT;
+    const needsFielder = () => S.wicket && ['Caught','Stumped','Run Out'].includes(S.dismissalType);
+    const fielderLabel = () => S.dismissalType === 'Run Out' ? 'Run-out fielder' : S.dismissalType === 'Stumped' ? 'Wicketkeeper' : 'Caught by';
+
+    const setRun = (n) => {
+      if(S.extraType === 'wide') S.extras = 1 + n;
+      else if(S.extraType === 'bye' || S.extraType === 'legbye') S.extras = Math.max(1, n);
+      else S.runsOffBat = n;
+      if(S.wicket && S.extraType === 'none' && S.dismissalType !== 'Run Out' && n > 0){ S.dismissalType = 'Run Out'; notice = 'Runs were completed, so the dismissal is now a Run Out.'; }
+    };
+    const setExtra = (et) => {
+      const prev = S.extraType; if(et === prev) et = 'none';
+      const carried = runValue();
+      S.extraType = et;
+      if(et === 'none'){ S.extras = 0; S.runsOffBat = (prev === 'wide' || prev === 'bye' || prev === 'legbye') ? 0 : S.runsOffBat; }
+      else if(et === 'wide'){ S.runsOffBat = 0; S.extras = Math.max(1, prev === 'none' ? 1 : S.extras); }
+      else if(et === 'noball'){ S.extras = 1; if(prev === 'wide' || prev === 'bye' || prev === 'legbye') S.runsOffBat = 0; }
+      else if(et === 'bye' || et === 'legbye'){ S.extras = Math.max(1, carried); S.runsOffBat = 0; }
+      else if(et === 'overthrow'){ S.extras = 0; }
+      if(S.wicket){
+        if(et === 'overthrow'){ S.wicket = false; notice = 'An overthrow can’t also be a wicket — record a Run Out with the completed runs instead.'; }
+        else if(!allowedDis(et).includes(S.dismissalType)){ S.dismissalType = allowedDis(et)[0]; notice = `Only ${allowedDis(et).join(' or ')} can happen on a ${et === 'wide' ? 'wide' : 'no ball'}.`; }
+      }
+    };
+    const setWicket = (on) => {
+      S.wicket = on;
+      if(on){
+        if(S.extraType === 'overthrow') S.extraType = 'none';
+        if(!allowedDis(S.extraType).includes(S.dismissalType)) S.dismissalType = allowedDis(S.extraType)[0];
+        if(S.extraType === 'none' && S.dismissalType !== 'Run Out' && S.runsOffBat > 0) S.runsOffBat = 0;
+      }
+    };
+    const setDis = (t) => {
+      S.dismissalType = t;
+      if(S.extraType === 'none' && t !== 'Run Out' && S.runsOffBat > 0){ S.runsOffBat = 0; notice = `${t} ends the ball — runs off the bat reset to 0. Use Run Out if runs were completed.`; }
+      if(!['Caught','Stumped','Run Out'].includes(t)) S.fielder = '';
+    };
+
+    const problems = () => {
+      const out = [];
+      if(!names.length) out.push({ err:true, t:'Player information unavailable for this match.' });
+      if(S.striker && S.striker === S.nonStriker) out.push({ err:true, t:'Striker and non-striker can’t be the same player.' });
+      if(S.bowler && (S.bowler === S.striker || S.bowler === S.nonStriker)) out.push({ err:false, warn:true, t:'The bowler is also one of the batters on this ball — double-check the names.' });
+      if(needsFielder() && !S.fielder) out.push({ err:false, info:true, t:`Add the ${fielderLabel().toLowerCase()} for a complete dismissal record.` });
+      if(S.bowler !== orig.bowler) out.push({ err:false, info:true, t:`Bowler changes to ${S.bowler || '—'}: this ball’s runs${S.wicket ? ', the wicket' : ''} and any clip on it move to them.` });
+      if(S.striker !== orig.striker) out.push({ err:false, info:true, t:`Striker changes to ${S.striker || '—'}: batting figures and any clip on this ball follow. Later balls may need review.` });
+      const legalNow = S.extraType !== 'wide' && S.extraType !== 'noball', legalWas = orig.extraType !== 'wide' && orig.extraType !== 'noball';
+      if(legalNow !== legalWas) out.push({ err:false, info:true, t:'This changes whether the ball counts in the over — the over length and later ball numbers are checked before saving.' });
+      const t = total(); if(t !== origTotal) out.push({ err:false, info:true, t:`Ball total ${origTotal} → ${t} (${t > origTotal ? '+' : ''}${t - origTotal}). Innings total, batter and bowler figures update on save.` });
+      return out;
+    };
+
+    const person = (k, label) => `<button type="button" class="ed-person${S[k] !== orig[k] ? ' changed' : ''}" data-person="${k}" data-k="p-${k}" aria-label="${label}: ${escapeHtml(S[k] || 'none')}. Change"><small>${label}</small><b>${escapeHtml(S[k] || '—')}</b></button>`;
+    const chip = (attrs, txt, on, extra) => `<button type="button" class="ed-chip${extra||''}${on ? ' on' : ''}" ${attrs} aria-pressed="${on ? 'true' : 'false'}">${txt}</button>`;
+
+    const paint = () => {
+      const active = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.k : null;
+      const rv = runValue(), pr = problems(), hasErr = pr.some(p => p.err);
+      const runMin = (S.extraType === 'bye' || S.extraType === 'legbye') ? 1 : 0;
+      const runHint = S.extraType === 'wide' ? 'Extra runs run on the wide (the 1-run penalty is added for you)'
+        : S.extraType === 'noball' ? 'Runs off the bat (the 1-run penalty is added for you)'
+        : S.extraType === 'bye' ? 'Byes run' : S.extraType === 'legbye' ? 'Leg byes run'
+        : S.extraType === 'overthrow' ? 'Total runs including the overthrow' : 'Runs off the bat';
+      const dis = allowedDis(S.extraType);
+      const wk = S.wicket ? `
+        <div class="ed-card ${prevWicket ? '' : 'ed-reveal'}">
+          <div class="ed-h"><span>Dismissal</span></div>
+          <div class="ed-chips">${dis.map(t => chip(`data-dis="${t}" data-k="d-${t}"`, t, S.dismissalType === t, ' sm')).join('')}</div>
+          ${needsFielder() ? `<div style="margin-top:10px" class="ed-reveal"><div class="ed-h"><span>${fielderLabel()}</span></div><button type="button" class="ed-person${S.fielder !== orig.fielder ? ' changed' : ''}" data-person="fielder" data-k="p-fielder" style="width:100%"><small>Search player</small><b>${escapeHtml(S.fielder || 'Select a player')}</b></button></div>` : ''}
+        </div>` : '';
+      $('ed-dyn').innerHTML = `
+        <div class="ed-card">
+          <div class="ed-h"><span>Outcome</span><span class="ed-delta">${total() !== origTotal ? `${origTotal} → ${total()}` : ''}</span></div>
+          <div class="ed-chips" role="group" aria-label="Runs">
+            ${[0,1,2,3,4,5,6].map(n => chip(`data-run="${n}" data-k="r-${n}" ${n < runMin ? 'disabled' : ''}`, n, rv === n && !(S.wicket && S.extraType === 'none' && S.dismissalType !== 'Run Out' && false))).join('')}
+            <span class="ed-sep"></span>
+            ${chip(`data-wk="1" data-k="wk"`, 'W', S.wicket, ' wk')}
+          </div>
+          <div class="ed-kbd">${runHint}</div>
+          <div class="ed-chips" style="margin-top:10px" role="group" aria-label="Extras">
+            ${[['wide','WD'],['noball','NB'],['bye','B'],['legbye','LB'],['overthrow','OT']].map(([v,l]) => chip(`data-ex="${v}" data-k="x-${v}" title="${EXTRA_TYPE_LABELS[v]}"`, l, S.extraType === v, ' sm')).join('')}
+          </div>
+          ${rv > 6 || S.extras > 6 ? `<div style="margin-top:10px" class="ed-chips"><div class="ed-step" role="group" aria-label="Runs"><button type="button" data-step="-1" data-k="s-" aria-label="Decrease">−</button><output>${rv}</output><button type="button" data-step="1" data-k="s+" aria-label="Increase">+</button></div></div>` : `<div style="margin-top:10px" class="ed-chips"><div class="ed-step" role="group" aria-label="Fine-tune runs"><button type="button" data-step="-1" data-k="s-" aria-label="Decrease runs">−</button><output>${rv}</output><button type="button" data-step="1" data-k="s+" aria-label="Increase runs">+</button></div></div>`}
+        </div>
+        ${wk}
+        <div class="ed-card">
+          <div class="ed-h"><span>Players on this ball</span></div>
+          <div class="ed-people">${person('bowler','Bowler')}${person('striker','Striker')}${person('nonStriker','Non-striker')}</div>
+          <button type="button" class="ed-chip sm ed-swap" id="ed-swap" data-k="swap">⇄ Swap batters</button>
+        </div>
+        <div id="ed-msgs">${notice ? `<div class="ed-warn ed-info" role="status">ℹ️ <span>${escapeHtml(notice)}</span></div>` : ''}${pr.map(p => `<div class="ed-warn${p.err ? '' : ' ed-info'}" role="${p.err ? 'alert' : 'status'}">${p.err ? '⚠️' : 'ℹ️'} <span>${escapeHtml(p.t)}</span></div>`).join('')}</div>`;
+      prevWicket = S.wicket;
+      const d = dirty();
+      const st = $('ed-status'); st.className = 'em-status' + (d ? ' dirty' : ''); st.textContent = d ? 'Unsaved changes' : 'All changes saved';
+      $('dv-discard-btn').style.display = d ? '' : 'none';
+      $('dv-save-btn').disabled = !d || hasErr;
+      if(active){ const el = $('ed-dyn').querySelector(`[data-k="${CSS.escape(active)}"]`); if(el && !el.disabled) el.focus(); }
+    };
+
+    content.innerHTML = `
+      <div id="ed-root">
+        <div class="em-nav">
+          <button type="button" id="dv-prev" ${prevBall?'':'disabled'} aria-label="Previous ball">←</button>
+          <div style="text-align:center"><div class="em-tag" style="margin:0">Edit delivery</div><div class="em-title" style="margin:0;font-size:20px">Ball ${ball.over}.${ball.ballInOver}</div></div>
+          <button type="button" id="dv-next" ${nextBall?'':'disabled'} aria-label="Next ball">→</button>
+        </div>
+        <div class="em-sub" style="text-align:center;margin-bottom:8px">Innings ${ball.innings} · Over ${ball.over} · Recorded: <b>${escapeHtml(ballLabel(ball))}</b>${ball.correctionOf ? ' · <span class="em-chip ce">Edited</span>' : ''}</div>
+        <div class="em-tline" id="ed-tl" role="group" aria-label="Balls in this over">${overBalls.map(b => emTlChip(b, ball.ballId)).join('')}</div>
+        <div id="ed-dyn" style="margin-top:8px"></div>
+        <div class="ed-actions">
+          <span class="em-status" id="ed-status" role="status">All changes saved</span>
+          <button class="em-btn cancel" id="dv-back-btn">Back</button>
+          <button class="em-btn cancel" id="dv-discard-btn" style="display:none">Discard</button>
+          <button class="em-btn save" id="dv-save-btn" disabled>Preview &amp; Save</button>
+        </div>
+      </div>`;
+    const tl = $('ed-tl'); const act = tl.querySelector('.active'); if(act && act.scrollIntoView) act.scrollIntoView({ block:'nearest', inline:'center' });
+    paint();
+
+    $('ed-dyn').addEventListener('click', (e) => {
+      const t = e.target.closest('button'); if(!t || t.disabled) return;
+      notice = '';
+      if(t.dataset.run != null) setRun(Number(t.dataset.run));
+      else if(t.dataset.wk) setWicket(!S.wicket);
+      else if(t.dataset.ex) setExtra(t.dataset.ex);
+      else if(t.dataset.dis) setDis(t.dataset.dis);
+      else if(t.dataset.step){
+        const d = Number(t.dataset.step), v = Math.max(runMin0(), runValue() + d); setRun(v);
+      }
+      else if(t.id === 'ed-swap'){ const x = S.striker; S.striker = S.nonStriker; S.nonStriker = x; }
+      else if(t.dataset.person){
+        const key = t.dataset.person;
+        const label = { bowler:'Bowler', striker:'Striker', nonStriker:'Non-striker', fielder: fielderLabel() }[key];
+        emPick({
+          title: label, anchor: t, current: S[key],
+          items: names.map(n => ({ value:n, label:n })),
+          onPick: (v) => { notice = ''; S[key] = v; paint(); const b = $('ed-dyn').querySelector(`[data-k="p-${key}"]`); if(b) b.focus(); }
+        });
+        return;
+      } else return;
+      paint();
+    });
+    const runMin0 = () => (S.extraType === 'bye' || S.extraType === 'legbye') ? 1 : 0;
+
+    // Keyboard: 0–6 runs · W wicket · Ctrl/⌘+Enter save
+    if(openDeliveryEditForm._keys) document.removeEventListener('keydown', openDeliveryEditForm._keys);
+    openDeliveryEditForm._keys = (e) => {
+      if(!$('ed-root')){ document.removeEventListener('keydown', openDeliveryEditForm._keys); return; }
+      if(emPickEl || document.getElementById('confirm-modal-backdrop').classList.contains('open')) return;
+      const tag = (e.target.tagName || '').toLowerCase();
+      if(tag === 'input' || tag === 'textarea' || tag === 'select' || e.ctrlKey || e.metaKey || e.altKey){
+        if((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ e.preventDefault(); const s = $('dv-save-btn'); if(s && !s.disabled) s.click(); }
+        return;
+      }
+      if(/^[0-6]$/.test(e.key) && !(runMin0() && e.key === '0')){ notice = ''; setRun(Number(e.key)); paint(); e.preventDefault(); }
+      else if(e.key === 'w' || e.key === 'W'){ notice = ''; setWicket(!S.wicket); paint(); e.preventDefault(); }
+    };
+    document.addEventListener('keydown', openDeliveryEditForm._keys);
+
+    const confirmLeave = () => !dirty() || confirm('Discard your unsaved changes on this delivery?');
+    const go = (b) => { if(!b || !confirmLeave()) return; openDeliveryEditForm(matchId, b, roster); };
+    $('dv-prev').onclick = () => go(prevBall);
+    $('dv-next').onclick = () => go(nextBall);
+    tl.onclick = (e) => { const t = e.target.closest('[data-tb]'); if(!t || t.dataset.tb === ball.ballId) return; go(siblings.find(b => b.ballId === t.dataset.tb)); };
+    $('dv-discard-btn').onclick = () => openDeliveryEditForm(matchId, ball, roster);
+    $('dv-back-btn').onclick = () => { if(!confirmLeave()) return; emState.focusBallId = ball.ballId; emState.innings = ball.innings; if(!emSearching()) emState.over = Number(ball.over); openOwnerPanel(); };
+    const dvUpdateDirty = () => paint();
+    const buildInput = () => ({
+      striker: S.striker, nonStriker: S.nonStriker, bowler: S.bowler,
+      runsOffBat: S.runsOffBat, extras: S.extras, extraType: S.extraType,
+      wicket: S.wicket, dismissalType: S.wicket ? S.dismissalType : null, fielder: needsFielder() ? S.fielder : ''
+    });
+  document.getElementById('dv-save-btn').onclick = async () => {
+    const input = buildInput();
     const saveBtn = document.getElementById('dv-save-btn');
     saveBtn.textContent = 'Checking…'; saveBtn.disabled = true;
     try{
@@ -7324,7 +7774,7 @@ function openDeliveryEditForm(matchId, ball, roster){
         ${diffHtml}${warn}${strikeWarn}`,
         async () => {
           const saved = await adminApi(`/cricket/ball/${encodeURIComponent(ball.ballId)}`, { method:'PUT', body: JSON.stringify(input) });
-          emToast('✓ Scorecard corrected');
+          emUndoToast('✓ Scorecard updated · ' + ballLabel(ball) + ' → ' + (saved && saved.after && saved.after.ball ? ballLabel(saved.after.ball) : 'corrected'), () => undoLastCorrection(matchId));
           refreshScorecardAfterEdit();
           emState.focusBallId = ball.ballId; emState.innings = ball.innings; if(!emSearching()) emState.over = Number(ball.over);
           openOwnerPanel(); // reload the list from the server — shows the recalculated data, stays on this over
@@ -7354,6 +7804,10 @@ function openDeliveryEditForm(matchId, ball, roster){
       saveBtn.textContent = 'Preview & Save'; dvUpdateDirty();
     }
   };
+  }catch(err){
+    console.error('Edit delivery failed to render', err);
+    fail('This delivery could not be opened. The match data has not been changed.');
+  }
 }
 
 // Shared before/after diff — used for BOTH the pre-save preview above and
