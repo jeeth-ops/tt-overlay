@@ -717,7 +717,13 @@ class Compositor extends EventEmitter {
                 const mode = pickCameraMode(out, this.width, this.height, this.fps);
                 if (mode) {
                     this.log(`[compositor] camera mode auto-detected: ${mode.width}x${mode.height}@${mode.fps}${mode.compressed ? ' (compressed)' : ' (raw)'}`);
-                    if (!mode.compressed && (mode.width < this.width || mode.height < this.height)) {
+                    // An upscale is an upscale whether the source mode was raw or
+                    // MJPEG — the picture is just as soft either way. This used to
+                    // skip compressed modes, so a card that offers only
+                    // mjpeg 1280x720 against a 1080p program went silently upscaled,
+                    // which is the same invisible quality loss the raw-mode warning
+                    // exists to prevent.
+                    if (mode.width < this.width || mode.height < this.height) {
                         this.log(`[compositor] ⚠ the camera is opening BELOW the program resolution (${mode.width}x${mode.height} < ${this.width}x${this.height}) — the feed will be upscaled and look soft. If this device really does support ${this.width}x${this.height}, force it with STREAM_ENGINE_CAMERA_MODE=${this.width}x${this.height}@${this.fps}`);
                     }
                 } else {
