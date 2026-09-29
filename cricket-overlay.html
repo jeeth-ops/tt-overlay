@@ -450,43 +450,57 @@
   .osc-mom-pill.current .ov{ color:rgba(255,255,255,0.75); }
 
 
-  /* ---- AUTO INFO CARDS: BATTING / BOWLING (over-end rotation) ----
-     Compact broadcast cards, sit ABOVE the scoreboard bar (bottom:19vh, same
-     anchor as #over-summary-card) so the bar is never covered. Everything is
-     sized off --u (1% of the viewport, capped) so 1080p/720p/480p scale
-     identically. Colour comes ONLY from --ic-accent (the team's own colour,
-     set per show by fillInfoCard). Motion: transform/opacity only. */
+  /* ---- AUTO INFO CARDS: FULL BATTING / BOWLING SCORECARD ----
+     SAME canvas region as #over-summary-card (same width formula, same
+     bottom:19vh anchor, same 76vh ceiling) — the three over-end graphics are
+     three "pages" of one design. Type/spacing scale off --u (1vw, capped at
+     19.2px = 1080p) so 720p/480p keep the same composition. Density vars
+     (--ic-fs / --ic-rp) are set per show from the row count so a full XI
+     fits without dropping anyone. Team colour only touches the header, the
+     current-row marker and thin accents. Motion: transform/opacity only. */
   .info-card{
-    --u:min(1vw,1.7778vh,19.2px);
+    --u:min(1vw,19.2px);
     --ic-accent:#17337a; --ic-ink:#fff; --ic-dark:#0e2159;
-    position:absolute; left:0; right:0; margin:0 auto; bottom:19vh;
-    width:calc(var(--u)*50); max-width:96vw; display:none; flex-direction:column;
-    border-radius:calc(var(--u)*1.1); overflow:hidden;
-    background:#f3f6fc; color:#12213f; font-family:var(--font-ui);
-    box-shadow:0 calc(var(--u)*1.6) calc(var(--u)*4) rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.08);
+    --ic-fs:calc(var(--u)*1.7); --ic-rp:calc(var(--u)*.75); --ic-cols:1fr;
+    position:absolute; left:50%; top:auto; bottom:19vh; transform:translateX(-50%);
+    width:min(84vw,1400px); max-width:96vw; max-height:76vh; display:none; flex-direction:column;
+    border-radius:20px; overflow:hidden;
+    background:var(--bc-paper,#f3f6fc); color:var(--bc-ink,#12213f); font-family:var(--font-ui);
+    box-shadow:0 34px 80px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.08);
     z-index:32; will-change:transform, opacity;
   }
-  .ic-head{ display:flex; align-items:center; gap:calc(var(--u)*1.2); padding:calc(var(--u)*1) calc(var(--u)*1.6);
-    background:linear-gradient(100deg,var(--ic-dark),var(--ic-accent)); color:var(--ic-ink); }
-  .ic-head .sc-badge{ width:calc(var(--u)*4.4); height:calc(var(--u)*4.4); flex:none; font-size:calc(var(--u)*1.5); }
+  .ic-head{ display:flex; align-items:center; gap:calc(var(--u)*1.6); padding:calc(var(--u)*1.1) calc(var(--u)*2);
+    background:linear-gradient(100deg,var(--ic-dark),var(--ic-accent)); color:var(--ic-ink); flex:none; }
+  .ic-head .sc-badge{ width:calc(var(--u)*5.2); height:calc(var(--u)*5.2); flex:none; font-size:calc(var(--u)*1.7); }
   .ic-team{ flex:1; min-width:0; }
-  .ic-role{ font-weight:800; font-size:calc(var(--u)*.95); letter-spacing:.18em; opacity:.75; }
-  .ic-name{ font-family:var(--font-num); font-weight:900; font-size:calc(var(--u)*2.3); letter-spacing:.03em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .ic-total{ text-align:right; font-family:var(--font-num); font-weight:900; font-size:calc(var(--u)*2.8); line-height:1; font-variant-numeric:tabular-nums; }
-  .ic-total small{ display:block; margin-top:calc(var(--u)*.35); font-size:calc(var(--u)*1); font-weight:700; opacity:.8; letter-spacing:.08em; }
-  .ic-body{ padding:calc(var(--u)*.7) calc(var(--u)*1.2); }
-  .ic-row{ display:grid; grid-template-columns:1fr repeat(5,calc(var(--u)*4.8)); align-items:center; text-align:right;
-    padding:calc(var(--u)*.85) calc(var(--u)*.6); border-radius:calc(var(--u)*.5);
-    font-family:var(--font-num); font-weight:800; font-size:calc(var(--u)*1.75); font-variant-numeric:tabular-nums; }
-  .ic-row .n{ text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .ic-row.cur{ background:rgba(11,61,145,.10); background:color-mix(in srgb,var(--ic-accent) 12%,transparent); box-shadow:inset calc(var(--u)*.35) 0 0 var(--ic-accent); }
-  .ic-hdr{ font-size:calc(var(--u)*1.05); letter-spacing:.14em; color:#5c6c8a; padding-top:calc(var(--u)*.4); padding-bottom:calc(var(--u)*.4); }
-  .ic-hdr .n{ padding-left:calc(var(--u)*1.5); }
-  .ic-row .dot{ display:inline-block; width:calc(var(--u)*.7); height:calc(var(--u)*.7); margin-right:calc(var(--u)*.8); border-radius:50%; background:var(--ic-accent); opacity:0; vertical-align:middle; }
-  .ic-row.cur .dot{ opacity:1; }
-  .ic-foot{ display:flex; justify-content:space-between; gap:calc(var(--u)*1.5); padding:calc(var(--u)*.9) calc(var(--u)*1.6);
+  .ic-role{ font-weight:800; font-size:calc(var(--u)*.95); letter-spacing:.22em; opacity:.78; }
+  .ic-name{ font-family:var(--font-num); font-weight:900; font-size:calc(var(--u)*2.6); letter-spacing:.03em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ic-total{ text-align:right; font-family:var(--font-num); font-weight:900; font-size:calc(var(--u)*3.2); line-height:1; font-variant-numeric:tabular-nums; }
+  .ic-total small{ display:block; margin-top:calc(var(--u)*.4); font-size:calc(var(--u)*1.1); font-weight:700; opacity:.85; letter-spacing:.08em; }
+  .ic-body{ padding:calc(var(--u)*.6) calc(var(--u)*1.8) calc(var(--u)*.5); overflow:hidden; flex:1 1 auto; min-height:0; }
+  .ic-row{ display:grid; grid-template-columns:var(--ic-cols); column-gap:calc(var(--u)*.6); align-items:center; text-align:right;
+    padding:var(--ic-rp) calc(var(--u)*.8); border-radius:calc(var(--u)*.5);
+    font-family:var(--font-num); font-weight:800; font-size:var(--ic-fs); font-variant-numeric:tabular-nums; line-height:1.15; }
+  .ic-row > span{ min-width:0; white-space:nowrap; }
+  .ic-row .n{ text-align:left; overflow:hidden; text-overflow:ellipsis; }
+  .ic-row .how{ text-align:left; font-family:var(--font-ui); font-weight:600; font-size:.78em; color:var(--bc-ink-dim,#5c6c8a); overflow:hidden; text-overflow:ellipsis; }
+  .ic-row.cur{ background:rgba(11,61,145,.10); background:color-mix(in srgb,var(--ic-accent) 13%,transparent); box-shadow:inset calc(var(--u)*.35) 0 0 var(--ic-accent); }
+  .ic-row.out .n{ font-weight:700; }
+  .ic-row.hdr{ font-family:var(--font-ui); font-size:calc(var(--u)*1.05); letter-spacing:.14em; color:var(--bc-ink-dim,#5c6c8a); padding-top:calc(var(--u)*.3); padding-bottom:calc(var(--u)*.3); }
+  .ic-row .dot{ display:inline-block; width:calc(var(--u)*.75); height:calc(var(--u)*.75); margin-right:calc(var(--u)*.8); border-radius:50%; background:var(--ic-accent); vertical-align:middle; }
+  .ic-row:not(.cur) .dot{ display:none; }
+  .ic-sec{ display:flex; align-items:center; gap:calc(var(--u)*.8); margin-top:calc(var(--u)*.55);
+    font-size:calc(var(--u)*.95); font-weight:800; letter-spacing:.18em; color:var(--ic-accent); }
+  .ic-sec::after{ content:''; flex:1; height:1px; background:var(--hairline,rgba(16,25,58,.14)); }
+  .ic-chips{ display:flex; flex-wrap:wrap; gap:calc(var(--u)*.5) calc(var(--u)*1.1); padding:calc(var(--u)*.45) calc(var(--u)*.8);
+    font-size:calc(var(--u)*1.35); font-weight:700; color:var(--bc-ink,#12213f); }
+  .ic-chips.fow{ font-family:var(--font-num); font-size:calc(var(--u)*1.15); font-weight:700; color:var(--bc-ink-dim,#5c6c8a); }
+  .ic-chips span::before{ content:'•'; margin-right:calc(var(--u)*.5); color:var(--ic-accent); }
+  .ic-chips.fow span::before{ content:none; }
+  .ic-foot{ display:flex; justify-content:space-between; gap:calc(var(--u)*1.5); flex:none; padding:calc(var(--u)*1.05) calc(var(--u)*2);
     background:#0a1330; color:#fff; border-top:calc(var(--u)*.25) solid var(--ic-accent);
-    font-weight:800; font-size:calc(var(--u)*1.3); letter-spacing:.06em; }
+    font-weight:800; font-size:calc(var(--u)*1.25); letter-spacing:.04em; white-space:nowrap; overflow:hidden; }
+  .ic-foot span{ min-width:0; overflow:hidden; text-overflow:ellipsis; }
 
   /* Bottom black stat bar removed per spec — Target / Balls Remaining
      now live inline in #crr-seg (see above), and CRR/RRR occupy the
@@ -1386,25 +1400,19 @@
   <div id="info-bat-card" class="info-card">
     <div class="ic-head">
       <div class="sc-badge" id="ib-badge">TM</div>
-      <div class="ic-team"><div class="ic-role">BATTING</div><div class="ic-name" id="ib-name">—</div></div>
+      <div class="ic-team"><div class="ic-role">BATTING SCORECARD</div><div class="ic-name" id="ib-name">—</div></div>
       <div class="ic-total"><span id="ib-score">0/0</span><small id="ib-overs">0.0 OV</small></div>
     </div>
-    <div class="ic-body">
-      <div class="ic-row ic-hdr"><span class="n">BATTER</span><span>R</span><span>B</span><span>4S</span><span>6S</span><span>SR</span></div>
-      <div id="ib-rows"></div>
-    </div>
+    <div class="ic-body" id="ib-rows"></div>
     <div class="ic-foot" id="ib-foot"></div>
   </div>
   <div id="info-bowl-card" class="info-card">
     <div class="ic-head">
       <div class="sc-badge" id="ob-badge">TM</div>
-      <div class="ic-team"><div class="ic-role">BOWLING</div><div class="ic-name" id="ob-name">—</div></div>
+      <div class="ic-team"><div class="ic-role">BOWLING SCORECARD</div><div class="ic-name" id="ob-name">—</div></div>
       <div class="ic-total"><span id="ob-score">0/0</span><small id="ob-overs">0.0 OV</small></div>
     </div>
-    <div class="ic-body">
-      <div class="ic-row ic-hdr"><span class="n">BOWLER</span><span>O</span><span>M</span><span>R</span><span>W</span><span>ECON</span></div>
-      <div id="ob-rows"></div>
-    </div>
+    <div class="ic-body" id="ob-rows"></div>
     <div class="ic-foot" id="ob-foot"></div>
   </div>
 
@@ -3444,28 +3452,56 @@ function noteBowler(d){
   bowlerBook.map.delete(b.name);
   bowlerBook.map.set(b.name, Object.assign({}, b));
 }
-function icRow(cur, name, cells){
-  const r = document.createElement('div');
-  r.className = 'ic-row' + (cur ? ' cur' : '');
-  const n = document.createElement('span'); n.className = 'n';
-  const dot = document.createElement('i'); dot.className = 'dot';
-  n.appendChild(dot); n.appendChild(document.createTextNode(String(name || '—').toUpperCase()));
-  r.appendChild(n);
-  cells.forEach(c => { const sp = document.createElement('span'); sp.textContent = c; r.appendChild(sp); });
+const txt = (v) => (v == null ? '' : String(v));
+function el(tag, cls, t){ const e = document.createElement(tag); if(cls) e.className = cls; if(t != null) e.textContent = t; return e; }
+function icRow(cls, cells){            // cells: [{t, c}]  (c = class)
+  const r = el('div', 'ic-row ' + cls);
+  cells.forEach((c, k) => {
+    const sp = el('span', c.c || '');
+    if(c.dot){ sp.appendChild(el('i', 'dot')); }
+    sp.appendChild(document.createTextNode(txt(c.t)));
+    r.appendChild(sp);
+  });
   return r;
 }
+function icSec(label){ return el('div', 'ic-sec', label); }
+function icChips(list, cls){ const w = el('div', 'ic-chips ' + (cls || '')); list.forEach(t => w.appendChild(el('span', '', t))); return w; }
+const nameOf = (x) => txt(typeof x === 'string' ? x : (x && x.name)).toUpperCase();
 function bowlerFig(b){
   let o, bl;
   if(b.balls != null){ o = +b.overs || 0; bl = +b.balls || 0; }
-  else { const p = String(b.overs == null ? '0' : b.overs).split('.'); o = +p[0] || 0; bl = +p[1] || 0; }
+  else { const p = txt(b.overs == null ? '0' : b.overs).split('.'); o = +p[0] || 0; bl = +p[1] || 0; }
   const tb = o * 6 + bl;
   return { ov: `${o}.${bl}`, econ: b.econ != null ? b.econ : (tb ? ((b.runs || 0) / (tb / 6)).toFixed(2) : '0.00') };
 }
-// Paints a BATTING or BOWLING card ONLY from the frozen over-end payload.
-// Batting card = batting team (teamName/teamLogo/teamColor); bowling card =
-// bowling team (oppTeam*) — the same team objects the panel already sends, so
-// an innings change flips logo + colour automatically. Optional richer fields
-// are used when the panel sends them: batters[], bowlers[], partnership{runs,balls}, extras, target.
+// Density: fit the whole XI in the SAME card size by tightening type/row
+// padding — never by dropping players.
+function setDensity(card, units){
+  const t = units <= 7 ? [1.9, .9] : units <= 10 ? [1.6, .6] : units <= 12 ? [1.4, .4] : units <= 14 ? [1.25, .28] : [1.1, .2];
+  card.dataset.fs = t[0]; card.dataset.rp = t[1];
+  card.style.setProperty('--ic-fs', `calc(var(--u)*${t[0]})`);
+  card.style.setProperty('--ic-rp', `calc(var(--u)*${t[1]})`);
+}
+// Safety net, run the instant the card is displayed (layout is measurable):
+// if the body still overflows the card's 76vh ceiling, tighten a step at a
+// time until the whole XI fits — nobody is ever dropped.
+function fitInfoCard(card){
+  const body = card.querySelector('.ic-body'); if(!body) return;
+  let fs = parseFloat(card.dataset.fs) || 1.7, rp = parseFloat(card.dataset.rp) || .7, guard = 0;
+  while(body.scrollHeight > body.clientHeight + 1 && guard++ < 8 && fs > .85){
+    fs = Math.max(.85, fs - .1); rp = Math.max(.08, rp - .06);
+    card.style.setProperty('--ic-fs', `calc(var(--u)*${fs})`);
+    card.style.setProperty('--ic-rp', `calc(var(--u)*${rp})`);
+  }
+}
+// Paints the FULL batting or bowling scorecard ONLY from the frozen over-end
+// payload (same snapshot the Over Summary uses). Team identity: batting card =
+// teamName/teamLogo/teamColor, bowling card = oppTeam*. Full-scorecard data
+// the panel sends (all optional — nothing is invented when absent):
+//   batsmen[]  {name,runs,balls,fours,sixes,sr,howOut,isStriker,onCrease}  (same shape as the innings-summary payload)
+//   yetToBat[] names            fallOfWickets[] {wkt,runs,name,over}
+//   extrasTotal / extrasBreakdown{wd,nb,b,lb}   partnership{runs,balls}   target
+//   bowlers[]  {name,overs,maidens,runs,wickets,econ,wides,noBalls,current}   yetToBowl[] names
 function fillInfoCard(kind, d){
   const bat = kind === 'BATTING', p = bat ? 'ib' : 'ob';
   const card = document.getElementById(INFO_CARD_ID[kind]);
@@ -3475,38 +3511,68 @@ function fillInfoCard(kind, d){
   card.style.setProperty('--ic-ink', idealTextColor(color));
   card.style.setProperty('--ic-dark', shade(color, -34));
   setBadge(document.getElementById(p + '-badge'), logo, badgeText(short, name));
-  document.getElementById(p + '-name').textContent = String(name || short || (bat ? 'BATTING' : 'BOWLING')).toUpperCase();
-  const ov = `${d.overs ?? 0}.${d.ballsIntoOver ?? 0}`;
+  document.getElementById(p + '-name').textContent = txt(name || short || (bat ? 'BATTING' : 'BOWLING')).toUpperCase();
   document.getElementById(p + '-score').textContent = `${d.score ?? 0}/${d.wickets ?? 0}`;
-  document.getElementById(p + '-overs').textContent = `${ov} OV`;
-  const rows = document.getElementById(p + '-rows'); rows.innerHTML = '';
+  document.getElementById(p + '-overs').textContent = `${d.overs ?? 0}.${d.ballsIntoOver ?? 0} OV`;
+  const body = document.getElementById(p + '-rows'); body.innerHTML = '';
   const foot = document.getElementById(p + '-foot'); foot.innerHTML = '';
-  const foot1 = (t) => { const sp = document.createElement('span'); sp.textContent = t; foot.appendChild(sp); };
+  const foot1 = (t) => foot.appendChild(el('span', '', t));
   const tb = (Number(d.overs) || 0) * 6 + (Number(d.ballsIntoOver) || 0);
-  const crr = tb ? ((d.score || 0) / (tb / 6)).toFixed(2) : '0.00';
+  let rowsN = 0;
+
   if(bat){
-    const list = (Array.isArray(d.batters) && d.batters.length) ? d.batters
-      : [Object.assign({}, d.striker, { isStriker: true }), d.nonStriker].filter(b => b && b.name);
-    list.forEach(b => {
-      const st = !!(b.isStriker || b.onStrike || b.striker === true);
-      const sr = b.sr != null ? b.sr : (b.balls ? ((b.runs || 0) * 100 / b.balls).toFixed(1) : '0.0');
-      rows.appendChild(icRow(st, b.name, [b.runs ?? 0, b.balls ?? 0, b.fours ?? 0, b.sixes ?? 0, sr]));
-    });
+    card.style.setProperty('--ic-cols', '1.05fr 1.5fr calc(var(--u)*4.6) calc(var(--u)*4.6) calc(var(--u)*3.8) calc(var(--u)*3.8) calc(var(--u)*6.4)');
+    const all = Array.isArray(d.batsmen) ? d.batsmen.filter(b => b && b.name) : [];
+    const isYet = (b) => /^(yet|did not|dnb)/i.test(txt(b.howOut)) || b.status === 'YET_TO_BAT';
+    const isOut = (b) => !!txt(b.howOut) && !/not out|batting/i.test(txt(b.howOut)) && !isYet(b);
+    let cur, out, yet;
+    if(all.length){
+      yet = all.filter(isYet).map(nameOf);
+      out = all.filter(isOut);
+      cur = all.filter(b => !isYet(b) && !isOut(b));
+      if(cur.some(b => b.isStriker || b.onStrike)) cur.sort((a, b) => ((b.isStriker || b.onStrike) ? 1 : 0) - ((a.isStriker || a.onStrike) ? 1 : 0));
+      cur.forEach(b => { if(!(b.isStriker || b.onStrike) && d.striker && b.name === d.striker.name) b.isStriker = true; });
+    } else {                                   // panel hasn't sent the full card yet → current pair only
+      cur = [Object.assign({}, d.striker, { isStriker: true }), d.nonStriker].filter(b => b && b.name); out = []; yet = [];
+    }
+    if(Array.isArray(d.yetToBat) && d.yetToBat.length) yet = d.yetToBat.map(nameOf);
+    const sr = (b) => b.sr != null ? b.sr : (b.balls ? ((b.runs || 0) * 100 / b.balls).toFixed(1) : '0.0');
+    const cells = (b, isCur, how) => [
+      { t: nameOf(b), c: 'n', dot: isCur }, { t: how, c: 'how' },
+      { t: b.runs ?? 0 }, { t: b.balls ?? 0 }, { t: b.fours ?? 0 }, { t: b.sixes ?? 0 }, { t: sr(b) }];
+    body.appendChild(icRow('hdr', [{ t: 'BATTER', c: 'n' }, { t: 'STATUS', c: 'how' }, { t: 'R' }, { t: 'B' }, { t: '4S' }, { t: '6S' }, { t: 'SR' }]));
+    if(cur.length){ body.appendChild(icSec('AT THE CREASE')); cur.forEach(b => { body.appendChild(icRow('cur', cells(b, true, (b.isStriker || b.onStrike) ? 'on strike' : 'not out'))); rowsN++; }); }
+    if(out.length){ body.appendChild(icSec('OUT')); out.forEach(b => { body.appendChild(icRow('out', cells(b, false, txt(b.howOut)))); rowsN++; }); }
+    if(yet.length){ body.appendChild(icSec('YET TO BAT')); body.appendChild(icChips(yet)); }
+    if(Array.isArray(d.fallOfWickets) && d.fallOfWickets.length){
+      body.appendChild(icSec('FALL OF WICKETS'));
+      body.appendChild(icChips(d.fallOfWickets.map(f => `${f.wkt}-${f.runs}${f.name ? ' ' + nameOf(f) : ''}${f.over != null ? ' (' + f.over + ')' : ''}`), 'fow'));
+    }
+    const ex = d.extrasTotal ?? d.extras, eb = d.extrasBreakdown;
+    if(ex != null) foot1(`EXTRAS ${ex}${eb ? ` (${[['wd', 'Wd'], ['nb', 'Nb'], ['b', 'B'], ['lb', 'Lb']].filter(k => eb[k[0]]).map(k => k[1] + ' ' + eb[k[0]]).join(', ')})` : ''}`);
     if(d.partnership && d.partnership.runs != null) foot1(`PARTNERSHIP ${d.partnership.runs} (${d.partnership.balls ?? 0})`);
-    foot1(`CRR ${crr}`);
-    if(d.target) foot1(`TARGET ${d.target}`);
+    foot1(`CRR ${tb ? ((d.score || 0) / (tb / 6)).toFixed(2) : '0.00'}`);
+    if(d.target){ const need = d.target - (d.score || 0); foot1(need > 0 ? `TARGET ${d.target} · NEED ${need}` : `TARGET ${d.target}`); }
   } else {
-    let list = (Array.isArray(d.bowlers) && d.bowlers.length) ? d.bowlers : Array.from(bowlerBook.map.values()).reverse().slice(0, 4);
+    let list = (Array.isArray(d.bowlers) && d.bowlers.length) ? d.bowlers : Array.from(bowlerBook.map.values());
     if(!list.length && d.bowler && d.bowler.name) list = [d.bowler];
-    list.forEach(b => {
-      const f = bowlerFig(b);
-      const cur = !!b.current || (!!d.bowler && b.name === d.bowler.name);
-      rows.appendChild(icRow(cur, b.name, [f.ov, b.maidens ?? 0, b.runs ?? 0, b.wickets ?? 0, f.econ]));
-    });
+    const curName = d.bowler && d.bowler.name;
+    const showExtras = list.some(b => b.wides != null || b.noBalls != null);
+    card.style.setProperty('--ic-cols', showExtras
+      ? '1fr calc(var(--u)*5) calc(var(--u)*4) calc(var(--u)*4.6) calc(var(--u)*4) calc(var(--u)*6.4) calc(var(--u)*4) calc(var(--u)*4)'
+      : '1fr calc(var(--u)*6) calc(var(--u)*5) calc(var(--u)*5.5) calc(var(--u)*5) calc(var(--u)*7.5)');
+    const cells = (b, isCur) => { const f = bowlerFig(b); return [{ t: nameOf(b), c: 'n', dot: isCur }, { t: f.ov }, { t: b.maidens ?? 0 }, { t: b.runs ?? 0 }, { t: b.wickets ?? 0 }, { t: f.econ }]
+      .concat(showExtras ? [{ t: b.wides ?? 0 }, { t: b.noBalls ?? 0 }] : []); };
+    body.appendChild(icRow('hdr', [{ t: 'BOWLER', c: 'n' }, { t: 'O' }, { t: 'M' }, { t: 'R' }, { t: 'W' }, { t: 'ECON' }].concat(showExtras ? [{ t: 'WD' }, { t: 'NB' }] : [])));
+    const curB = list.filter(b => b.current || b.name === curName), done = list.filter(b => !(b.current || b.name === curName));
+    if(curB.length){ body.appendChild(icSec('CURRENT BOWLER')); curB.forEach(b => { body.appendChild(icRow('cur', cells(b, true))); rowsN++; }); }
+    if(done.length){ body.appendChild(icSec('BOWLED')); done.forEach(b => { body.appendChild(icRow('out', cells(b, false))); rowsN++; }); }
+    if(Array.isArray(d.yetToBowl) && d.yetToBowl.length){ body.appendChild(icSec('YET TO BOWL')); body.appendChild(icChips(d.yetToBowl.map(nameOf))); }
     foot1(`THIS OVER ${d.overRuns ?? 0} RUN${d.overRuns === 1 ? '' : 'S'}${d.overWickets ? ` · ${d.overWickets} WKT` : ''}`);
-    if(d.extras != null) foot1(`EXTRAS ${d.extras}`);
-    if(d.bowler && d.bowler.name) foot1(`● CURRENT BOWLER`);
+    foot1(`${d.score ?? 0}/${d.wickets ?? 0} AFTER ${d.overs ?? 0}.${d.ballsIntoOver ?? 0} OV`);
   }
+  const secs = body.querySelectorAll('.ic-sec').length, chips = body.querySelectorAll('.ic-chips').length;
+  setDensity(card, rowsN + secs * .7 + chips * 1.1);
 }
 // Operator/dev preview (console or OBS "Interact"): previewInfoCard('SUMMARY'|'BATTING'|'BOWLING').
 // Uses the newest live state; never touches dedupe/rotation bookkeeping.
@@ -3527,8 +3593,8 @@ window.previewInfoCard = function(type){
    OVER-END CARD SEQUENCER — see the state-machine notes above. Now drives
    all three cards (SUMMARY / BATTING / BOWLING) through the SAME single
    path: one phase, one run id, one timer list, one card on air at a time.
-   Only SUMMARY takes the scoreboard bar off-air (legacy behaviour); the
-   batting/bowling cards sit above the bar and leave it untouched.
+   ALL three cards take the live scoreboard bar off-air first and hand it back
+   after they leave (same idiom as before, one barOut flag).
    ============================================================ */
 const overFlow = (() => {
   const ENTER_MS = (t) => reduceMotion() ? 260 : (t === 'SUMMARY' ? 700 : 480);
@@ -3564,13 +3630,14 @@ const overFlow = (() => {
     const card = document.getElementById(INFO_CARD_ID[t]);
     const rows = card.querySelectorAll(t === 'SUMMARY'
       ? '.sc-header, .osc-overband, .sc-row, #osc-bowler-line, .sc-footer, .osc-momentum'
-      : '.ic-head, .ic-row, .ic-foot');
+      : '.ic-head, .ic-row, .ic-sec, .ic-chips, .ic-foot');
     return { card, rows };
   }
   function playIn(t){
     const { card, rows } = cardEls(t);
     gsap.killTweensOf(card); gsap.killTweensOf(rows);
     card.style.display = 'flex';
+    if(t !== 'SUMMARY') fitInfoCard(card);
     if(reduceMotion()){
       gsap.set(rows, { opacity: 1, y: 0 });
       tl = gsap.fromTo(card, { opacity: 0 }, { opacity: 1, duration: 0.25, ease: 'power1.out' });
@@ -3637,8 +3704,7 @@ const overFlow = (() => {
 
     cancelRunningEvent();             // the last ball's own FOUR/SIX/WICKET graphic yields immediately
     if(type === 'SUMMARY') fillOverSummaryCard(d); else fillInfoCard(type, d);
-    if(type === 'SUMMARY' && !barOut){ barOut = true; if(hasEntered) animateExit(); }
-    else if(type !== 'SUMMARY' && barOut){ restoreBar(myRun); }   // superseded a summary that held the bar
+    if(!barOut){ barOut = true; if(hasEntered) animateExit(); }   // the live bar leaves for ALL three cards
     playIn(type);
 
     later(() => { if(run === myRun && phase === 'entering'){ phase = 'holding'; mark('hold-begin'); } }, ENTER_MS(type));
@@ -3650,7 +3716,7 @@ const overFlow = (() => {
     if(run !== myRun || phase === 'exiting' || phase === 'settling' || phase === 'idle') return;
     phase = 'exiting'; mark('exit-begin');
     playOut(activeType);
-    if(barOut) later(() => restoreBar(myRun), BAR_RETURN_LEAD_MS());
+    later(() => restoreBar(myRun), BAR_RETURN_LEAD_MS());
     later(() => endCard(myRun), EXIT_MS(activeType));
   }
 
@@ -3667,7 +3733,7 @@ const overFlow = (() => {
     if(run !== myRun) return;
     hideAll();
     phase = 'settling'; mark('card-gone');
-    const wait = activeType === 'SUMMARY' ? Math.max(0, BAR_RETURN_LEAD_MS() + BAR_SETTLE_MS() - EXIT_MS('SUMMARY')) : 0;
+    const wait = Math.max(0, BAR_RETURN_LEAD_MS() + BAR_SETTLE_MS() - EXIT_MS(activeType));
     later(() => settle(myRun), wait);
   }
 
