@@ -3030,7 +3030,10 @@ function recoverOrphanedClipUploads() {
     const queued = new Set(retryQueue.map((e) => e.clipId).filter(Boolean));
     const recovered = [];
     for (const job of clipJobs.values()) {
-        if (job.status !== 'RETRY_PENDING' && job.status !== 'FORWARDING') continue;
+        // LOCAL_SAVED is included: a crash between the cut finishing and
+        // forwardClip running leaves a perfectly good clip in that state with
+        // nothing scheduled to upload it.
+        if (job.status !== 'RETRY_PENDING' && job.status !== 'FORWARDING' && job.status !== 'LOCAL_SAVED') continue;
         if (!job.clipId || queued.has(job.clipId)) continue;
         if (!job.localPath || !fs.existsSync(job.localPath)) continue;   // nothing to upload
         if (!job.mainServerUrl) continue;                                 // nowhere to upload it to
@@ -3048,6 +3051,37 @@ function recoverOrphanedClipUploads() {
     }
 }
 recoverOrphanedClipUploads();
+
+// A match can be recorded before its upload destination is known (or with
+// none at all). Those clips are parked LOCAL_ONLY by forwardClip. The moment
+// /recording-start registers a destination for the match, they become
+// ordinary queued uploads — nothing is re-cut, the existing local file is
+// simply given somewhere to go.
+function adoptLocalOnlyClips(matchId, mainServerUrl) {
+    if (!mainServerUrl) return 0;
+    const queued = new Set(retryQueue.map((e) => e.clipId).filter(Boolean));
+    let adopted = 0;
+    for (const job of clipJobs.values()) {
+        if (job.status !== 'LOCAL_ONLY' || job.matchId !== matchId) continue;
+        if (!job.localPath || !fs.existsSync(job.localPath)) continue;
+        job.mainServerUrl = mainServerUrl;
+        if (queued.has(job.clipId)) continue;
+        const entry = {
+            clipId: job.clipId, matchId: job.matchId, eventType: job.eventType,
+            timestamp: job.timestamp, ballMeta: job.ballMeta, filePath: job.localPath,
+            mainServerUrl, attempts: 0, enqueuedAt: Date.now(),
+        };
+        retryQueue.push(entry);
+        updateJob(job.clipId, { status: 'RETRY_PENDING', mainServerUrl, error: null });
+        scheduleRetry(entry);
+        adopted++;
+    }
+    if (adopted) {
+        persistRetryQueue();
+        console.log(`[stream-engine] ${adopted} clip(s) cut earlier for match ${matchId} now have an upload destination — queued`);
+    }
+    return adopted;
+}
 
 // Resume any clips that were still queued from a previous run of this process.
 retryQueue.forEach((entry) => scheduleRetry(entry));
@@ -3379,6 +3413,17 @@ async function organiseClipLocally(job, outFile) {
 
 async function forwardClip(job, outFile) {
     const { clipId, matchId, eventType, timestamp, ballMeta, mainServerUrl } = job;
+    // No destination configured for this match. The clip is cut, organised
+    // and safe on disk — that is the whole local job done. Park it as
+    // LOCAL_ONLY rather than burning 20 retry attempts against an invalid
+    // URL and then marking a perfectly good clip FAILED_PERMANENT.
+    // adoptLocalOnlyClips() picks these up the moment a destination is
+    // registered for the match.
+    if (!mainServerUrl) {
+        updateJob(clipId, { status: 'LOCAL_ONLY', localPath: outFile, error: null });
+        console.log(`[CLIP] clipId=${clipId} saved locally at ${outFile} — no upload destination configured for match ${matchId}; it will upload automatically once one is`);
+        return;
+    }
     updateJob(clipId, { status: 'FORWARDING' });
     const forwardResult = await postFileToServer(mainServerUrl, matchId, eventType, timestamp, ballMeta, outFile, clipId);
     if (forwardResult.ok) {
@@ -3409,11 +3454,18 @@ function acceptClipEvent({ matchId, eventType, timestamp, ballMeta, mainServerUr
     const existing = clipJobs.get(clipId);
     if (existing) return { success: true, clipId, status: existing.status, duplicate: true };
 
+    // What a clip actually REQUIRES is a recording session to cut from.
+    // It does NOT require somewhere to upload to: this guard used to test
+    // `mainServerUrl` and refuse the whole event when it was absent, which
+    // conflated "there is no footage" with "there is nowhere to send it" and
+    // threw away a clip the operator could still have had on disk. The cut
+    // is local work; the destination is a separate, later concern that can
+    // be filled in when recording is (re-)registered — see adoptLocalOnlyClips.
     const rec = recordingMatches[matchId];
-    const resolvedMainServerUrl = mainServerUrl || (rec && rec.mainServerUrl);
-    if (!resolvedMainServerUrl) {
+    if (!rec) {
         return { success: false, error: 'No recording session for this match — start recording first' };
     }
+    const resolvedMainServerUrl = mainServerUrl || rec.mainServerUrl || null;
 
     const job = {
         clipId, matchId, eventType, timestamp: t0, ballMeta: ballMeta || null,
@@ -3862,6 +3914,7 @@ app.post('/recording-start', async (req, res) => {
 
     recordingMatches[matchId] = { mainServerUrl, tournamentId };
     console.log(`🔴 [clip engine] Recording session registered for match ${matchId}`);
+    adoptLocalOnlyClips(matchId, mainServerUrl);
 
     // A previous match's recorder left running (operator forgot to press
     // Stop, or a previous Stream Engine session never got a clean
@@ -4486,6 +4539,11 @@ async function gracefulShutdown(signal) {
     if (compositorStopping) await compositorStopping;
     if (captureWindow.proc) closeCaptureWindow(); // never leave the dedicated capture browser process orphaned
     flushClipJobsSync();
+    // The queue's attempt counts / offline flags move during a match; now
+    // that this file is actually written (see retryQueueStore.js), make sure
+    // the last state reaches disk before exit rather than relying on
+    // whatever the last incidental write happened to contain.
+    persistRetryQueue();
     killAllChildren();
     try { fs.writeFileSync(CHILD_PIDS_FILE, JSON.stringify({ ffmpegPath: FFMPEG_PATH, pids: [] })); } catch (e) { /* best effort */ }
     clearTimeout(deadline);
