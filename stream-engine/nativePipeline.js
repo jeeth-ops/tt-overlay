@@ -64,6 +64,7 @@ const { EventEmitter } = require('events');
 const net = require('net');
 const os = require('os');
 const { OverlayBridge, available: overlayBridgeAvailable } = require('./overlayBridge');
+const sourceProbe = require('./sourceProbe');
 
 // Modest, steady rate for the overlay input — a scoreboard doesn't need
 // full 30fps of its own repaint cadence; this just needs to be fast
@@ -77,33 +78,47 @@ const OVERLAY_FPS = 15;
 // values it costs a small fraction of what the real encode costs, and it
 // is a separate filter branch — it can never slow the recording or the
 // YouTube push down. Tunable for weaker machines.
-const PREVIEW_FPS = Number(process.env.STREAM_ENGINE_PREVIEW_FPS) || 15;
+// 🛠 A CEILING, applied as an INTEGER step of the program rate (framestep).
+// It used to be a flat `fps=15`: a 2:1 knife edge on a 30p program and an
+// uneven 3.33:1 on 50p — so the operator's preview juddered even when the
+// program itself was clean, and "the preview stutters" was indistinguishable
+// from "the program stutters". Now 25/30p preview at full rate, 50/60p at
+// half: every preview frame is a program frame, evenly spaced.
+const PREVIEW_FPS = Number(process.env.STREAM_ENGINE_PREVIEW_FPS) || 30;
+function previewStep(programFps) { return Math.max(1, Math.ceil((Number(programFps) || 30) / PREVIEW_FPS - 0.01)); }
 const PREVIEW_WIDTH = Number(process.env.STREAM_ENGINE_PREVIEW_WIDTH) || 960;
 // See the -rtbufsize comment in buildCompositorArgs() for why this is
 // deliberately small. Raise it only if ffmpeg reports dropped frames on a
 // machine you know is otherwise keeping up.
 const CAMERA_RTBUFSIZE = process.env.STREAM_ENGINE_CAMERA_RTBUFSIZE || '64M';
 
-// 🕐 ONE REAL SECOND MUST STAY ONE REAL SECOND.
+// 🕐 ONE REAL SECOND MUST STAY ONE REAL SECOND — and which clock says so.
 //
-// -framerate on a dshow input is a REQUEST. The device answers with what it
-// can actually do, and that is not always what was asked: a capture card
-// publishes whatever its HDMI input is currently sending, so asking a card
-// carrying a 1080i50 signal for 30 fps gets 30 accepted and something else
-// delivered. Without this flag ffmpeg then stamps the frames it receives as
-// if they had arrived at the REQUESTED rate — so N frames that really took N/25
-// seconds get timestamps spanning N/30, and everything downstream (recording,
-// clips, RTMPS) plays fast by exactly that ratio.
+// Two candidate clocks for a camera frame:
 //
-// -use_wallclock_as_timestamps 1 stamps each frame with the moment it actually
-// arrived, so the timeline is the real clock no matter what the device does
-// with the request. The fps filter in the compositor then resamples that real
-// timeline to the program rate, which is the one deliberate frame-rate
-// decision in the pipeline.
+//   device    dshow's sample time: stamped by the capture driver when the
+//             frame was CAPTURED. Microsecond-steady, and unaffected by
+//             ffmpeg reading late. What vMix/OBS time frames by.
+//   wallclock -use_wallclock_as_timestamps: the moment ffmpeg READS the
+//             frame. Honest in aggregate, but it carries every scheduling
+//             hiccup, and after a stall a backlog is read in a burst and
+//             stamped microseconds apart.
 //
-// Set STREAM_ENGINE_WALLCLOCK_TS=0 to go back to device timestamps — kept as
-// an escape hatch because this changes the timing model for every capture.
-const CAMERA_WALLCLOCK_TS = process.env.STREAM_ENGINE_WALLCLOCK_TS !== '0';
+// Device stamps are only wrong on a device that stamps frames at its
+// NOMINAL rate instead of their real capture time (50 real frames stamped
+// as 60 → plays 1.2× fast). That is a measurable property, so it is
+// measured: the source probe compares device time against real time (see
+// sourceProbe.js) and the plan picks `device` only when they agree within
+// 1%. Unmeasured, wallclock stays the default, exactly as before.
+//
+// STREAM_ENGINE_WALLCLOCK_TS=1 forces wallclock, =0 forces device stamps.
+const WALLCLOCK_TS_OVERRIDE = process.env.STREAM_ENGINE_WALLCLOCK_TS === '1' ? 'wallclock'
+    : process.env.STREAM_ENGINE_WALLCLOCK_TS === '0' ? 'device' : null;
+// The source probe runs once per device+mode+program rate, before the first
+// compositor leg. STREAM_ENGINE_SOURCE_PROBE=0 skips it (plan from the
+// advertised mode instead); STREAM_ENGINE_SOURCE_PROBE_SECONDS tunes it.
+const SOURCE_PROBE_ENABLED = process.env.STREAM_ENGINE_SOURCE_PROBE !== '0';
+const SOURCE_PROBE_SECONDS = Number(process.env.STREAM_ENGINE_SOURCE_PROBE_SECONDS) || 4;
 
 // 🔊 AUDIO SAMPLE RATE — 48 kHz, everywhere, deliberately.
 //
@@ -308,7 +323,15 @@ const OVERLAY_MAX_BACKLOG_BYTES = 32 * 1024 * 1024;
 // the camera feed, recording and stream never wait on the overlay page
 // (a slow/unreachable overlay URL used to block the compositor from
 // producing ANY video, and a failed page load failed Recording itself).
-const TRANSPARENT_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+//
+// 🛠 THIS PNG WAS NOT TRANSPARENT. The previous bytes decode to one pixel of
+// RGBA (0, 0, 255, 127) — 50%-opaque BLUE — which the compositor scaled over
+// the whole frame: until the overlay page delivered its first frame (or for
+// the whole match if puppeteer/Chromium was unavailable) the program, the
+// master recording and YouTube were all tinted half blue. Found by the
+// end-to-end simulation (every camera value came back at ~0.45× + an offset).
+// These bytes decode to RGBA (0, 0, 0, 0); test/localIsolation.test.js pins it.
+const TRANSPARENT_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=', 'base64');
 class OverlayPacer {
     constructor(writable, getFrame, fps) {
         this.writable = writable;
@@ -572,7 +595,7 @@ function pickCameraMode(listOptionsOutput, targetWidth, targetHeight, targetFps)
 }
 
 
-function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height, fps, overlayInputUrl, previewOutputUrl, cameraVideoSize, cameraFramerate, interlacedSource = false }) {
+function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height, fps, overlayInputUrl, previewOutputUrl, cameraVideoSize, cameraFramerate, interlacedSource = false, sourcePlan = null, meter = true, clockBaseSec = null }) {
     // 🎯 CAPTURE FORMAT vs OUTPUT FORMAT. The camera opens at ITS best mode;
     // the program feed is whatever the operator chose. They are not the same
     // choice — a 720×480 program must NOT be got by forcing the capture card
@@ -593,90 +616,127 @@ function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height,
     // motion that makes 50i worth shooting), and parity=-1 takes field order
     // from the stream instead of assuming top-field-first.
     const camNeedsResize = !cameraVideoSize || cameraVideoSize !== `${width}x${height}`;
-    const camDeint = interlacedSource ? 'yadif=mode=send_field:parity=-1:deint=all,' : '';
     const camScale = camNeedsResize ? `scale=${width}:${height}:flags=bicubic,` : '';
-    // 🛠 ORDER: deinterlace -> DECIMATE -> scale. The rate filter used to run
-    // AFTER the scale, so a 60fps source feeding a 30fps program was scaled
-    // 60 times a second and half of that work thrown away immediately. With
-    // GPU scaling unavailable that resample is CPU swscale and the single
-    // most expensive step in the graph — doing it to frames that are about to
-    // be discarded is what pushed the compositor behind the camera and
-    // overflowed dshow's input buffer ("frame dropped!"). Decimating first
-    // halves the work exactly. yadif stays first: it needs the fields.
+    // 🎯 THE NORMALIZATION CHAIN comes from the source PLAN (sourceProbe.js):
+    // [drop the card's repeated frames] → [deinterlace, only if the pixels
+    // are interlaced] → [rate: passthrough | framestep=k | fps (uneven,
+    // warned)]. Without a measured plan it is derived from the advertised
+    // device rate with the same rules.
+    //
+    // 🛠 WHY NOT `fps=<program>` ANY MORE. The fps filter anchors its output
+    // grid on the FIRST frame, so on an exact 2:1 source (AVMATRIX 60 → 30p,
+    // 50 → 25p) every odd source frame sits exactly on a rounding edge, and
+    // the tiniest timestamp difference decides which of each pair is shown.
+    // Simulated with the real filter: ~39% of program frames were the wrong
+    // one (source steps 1/2/3 instead of 2) — judder — while the laptop
+    // webcam (30 → 30, no decimation) was clean under the same jitter. That
+    // is the AVMATRIX-only stutter. `framestep=k` selects by COUNT: 100%
+    // clean, and cheaper. STREAM-ENGINE-AUDIT.md §K has the numbers.
+    const plan = sourcePlan || sourceProbe.planFromAdvertised({ deviceFps: cameraFramerate, programFps: fps, interlacedSelected: interlacedSource });
+    const camNorm = plan.chain ? `${plan.chain},` : '';
+    // 🕐 ONE PROGRAM CLOCK (see PROGRAM_CLOCK below). 'device' only by explicit override.
+    const timestamps = WALLCLOCK_TS_OVERRIDE || 'wallclock';
+    const clockBase = Number.isFinite(clockBaseSec) ? clockBaseSec : Date.now() / 1000;
+    const onProgramClock = timestamps === 'wallclock'
+        ? ['-use_wallclock_as_timestamps', '1', '-itsoffset', (-clockBase).toFixed(3)]
+        : [];
+    // 🛠 ORDER: normalize (dedupe → deinterlace → DECIMATE) -> scale. Scaling
+    // frames that are about to be discarded is what pushed the compositor
+    // behind the camera and overflowed dshow's input buffer. yadif stays
+    // before the scale: it needs the fields intact.
+    //
+    // 📏 CAPTURE METER: a point-sampled 64×36 copy of every RAW captured
+    // frame (before any normalization) goes to showinfo on a separate null
+    // output. It is the live record of what the device is really delivering —
+    // arrival rate, timestamp honesty, repeated frames, gaps — and costs a
+    // few thousand pixels per frame. See CaptureMeter.
+    //
+    // Inputs: 0 = overlay, 1 = audio, 2 = camera (see PROGRAM_CLOCK for why
+    // the camera is opened LAST).
+    const camIn = meter ? '[camraw]' : '[2:v]';
+    const meterGraph = meter ? '[2:v]split=2[camraw][mraw];[mraw]scale=64:36:flags=neighbor,showinfo[meter];' : '';
     const filterComplex =
-        `[0:v]${camDeint}fps=${fps},${camScale}setsar=1,format=yuv420p[cam];` +
-        `[2:v]scale=${width}:${height},format=rgba[ovl];` +
+        meterGraph +
+        `${camIn}${camNorm}${camScale}setsar=1,format=yuv420p[cam];` +
+        `[0:v]scale=${width}:${height},format=rgba[ovl];` +
         `[cam][ovl]overlay=0:0:format=auto,format=yuv420p` +
         (previewOutputUrl
             // The preview branch is decimated to 2fps BEFORE scaling, so it
             // costs next to nothing; out_range=full gives the JPEG encoder
             // the full-range YUV it requires without a deprecated yuvj format.
-            ? `,split=2[vout1][pv];[pv]fps=${PREVIEW_FPS},scale=${PREVIEW_WIDTH}:-2:out_range=full[vout2]`
+            ? `,split=2[vout1][pv];[pv]${previewStep(fps) > 1 ? `framestep=${previewStep(fps)},` : ''}scale=${PREVIEW_WIDTH}:-2:out_range=full[vout2]`
             : '[vout1]');
     const args = [
-        '-hide_banner', '-loglevel', 'warning', '-nostats',
-        // Input 0: camera (video only). Input 1: mic/capture-card audio
-        // (separate dshow input, NOT combined as one "video=X:audio=Y"
-        // graph) — 🩹 CONFIRMED IN THE FIELD: the combined syntax failed
-        // with a generic "Error opening input files: I/O error" the
-        // moment video and audio came from two independent physical
-        // devices. cameraMode is resolved by probeCameraMode() FROM THE
-        // DEVICE ITSELF (ffmpeg -f dshow -list_options true) — a
-        // hardcoded -video_size/-framerate was wrong twice in the field.
-        // 🛠 ROOT-CAUSE FIX (live output arriving seconds behind reality).
-        // -rtbufsize is the ceiling on how much CAPTURED-BUT-NOT-YET-CONSUMED
-        // video ffmpeg will hold in memory. It is not a safety net: it is a
-        // latency allowance. Whenever the compositor falls even slightly
-        // behind the camera, ffmpeg fills this buffer instead of dropping,
-        // and every byte in it is delay the viewer sees and never gets back.
-        //
-        // At 512M that was catastrophic on a raw feed:
-        //     512 MB / (640*480*2 bytes/frame) = ~833 frames = ~27 SECONDS
-        // The stream was not "laggy" in the sense of stuttering — it was
-        // running tens of seconds late, which is exactly what makes a
-        // YouTube go-live unusable.
-        //
-        // A live program feed must DROP late frames, not queue them. This
-        // buffer is now sized for a fraction of a second of absorption
-        // (momentary scheduling hiccups) and nothing more; past that,
-        // ffmpeg logs "real-time buffer too full, frame dropped", which is
-        // the correct behaviour for live and keeps latency flat.
-        // -fflags nobuffer / -flags low_delay stop the demuxer adding its
-        // own reordering delay on top.
+        // level+info: the capture meter's showinfo lines and the negotiated
+        // input stream description are info-level; every line carries its
+        // [level] tag so Compositor routes them (warnings still reach the log).
+        '-hide_banner', '-loglevel', 'level+info', '-nostats',
+        // -fflags nobuffer / -flags low_delay stop the demuxers adding their
+        // own reordering delay.
         '-fflags', 'nobuffer', '-flags', 'low_delay',
-        // 🛠 WHY THE OUTPUT WENT FAST AGAIN, AND WHY IT IS THE SAME BUG AS THE
-        // STUTTER. -use_wallclock_as_timestamps stamps each frame with the
-        // moment ffmpeg READS it. That is correct only while ffmpeg is keeping
-        // up. Once the filter graph falls behind the camera, dshow's buffer
-        // fills ("real-time buffer too full (81%)! frame dropped!") and then
-        // drains in a BURST: ffmpeg reads a run of queued frames back to back
-        // and stamps them microseconds apart, so the stream's media time
-        // advances far less than the real time that actually passed. The fps
-        // filter faithfully reproduces that compressed timeline, the recorder
-        // writes fewer media-seconds per real second, and the file comes out
-        // SHORT — which plays fast. Same overload, two symptoms.
+        // 🕐 PROGRAM_CLOCK — THE ONE AUTHORITATIVE MEDIA TIMELINE.
         //
-        // -thread_queue_size gives the input its own reading thread with room
-        // to queue, so a momentary hiccup downstream does not turn into a
-        // burst read with collapsed timestamps. The real cure is not being
-        // overloaded at all (see pickCaptureMode's exact-match tier and the
-        // decimate-before-scale order); this is the guard for when something
-        // still runs late.
-        '-f', 'dshow', '-rtbufsize', CAMERA_RTBUFSIZE, '-thread_queue_size', '512',
-        // Real arrival time, not the requested rate — see CAMERA_WALLCLOCK_TS.
-        ...(CAMERA_WALLCLOCK_TS ? ['-use_wallclock_as_timestamps', '1'] : []),
-        ...(cameraVideoSize ? ['-video_size', cameraVideoSize] : []),
-        ...(cameraFramerate ? ['-framerate', String(cameraFramerate)] : []),
-        '-i', `video=${cameraDeviceName}`,
-        // Audio is tiny by comparison; a small buffer here is genuinely just
-        // jitter absorption and costs no meaningful latency.
-        '-f', 'dshow', '-rtbufsize', '32M', '-i', `audio=${audioDeviceName}`,
-        // Input 2: the overlay — back-to-back PNGs over loopback TCP from
+        // 🛠 ROOT CAUSE THIS FIXES (measured, STREAM-ENGINE-AUDIT.md §K3).
+        // ffmpeg opens inputs one after another and, without -copyts, moves
+        // EACH input's first packet to t=0 on its own. The inputs do not start
+        // together: the overlay pipe took 7.9 s to open in simulation, the
+        // audio device opens after the camera. So the camera's t=0 and the
+        // overlay's t=0 were seconds apart in real time, and the overlay
+        // filter — which cannot emit camera frame t until it has an overlay
+        // frame at t — held EVERY camera frame for that gap:
+        //   • with a queue big enough (the old 512 packets = ~2 GB at 1080p60)
+        //     the program ran ~8 s behind reality;
+        //   • with anything smaller, the queue filled, dshow dropped, and the
+        //     feed moved in bursts between long freezes ("More than 1000
+        //     frames duplicated" in the relay).
+        // A 60 fps capture card needs twice the queue a 30 fps webcam does to
+        // ride out the same gap — the AVMATRIX path hits the wall first.
+        // The same per-input zero put AUDIO off the video by however long
+        // the audio device took to open: a lip-sync error.
+        //
+        // Now every input is stamped by the SAME clock (arrival wall time),
+        // -copyts keeps those stamps instead of re-zeroing each input, and one
+        // common -itsoffset subtracts the same base from all of them. Camera
+        // frame, audio sample and overlay frame that happened at the same
+        // moment carry the same timestamp; the overlay filter picks the
+        // latest overlay at or before each camera frame and never waits more
+        // than one overlay interval.
+        //
+        // The camera is opened LAST, so the moment it starts delivering,
+        // overlay and audio are already flowing: nothing it produces ever
+        // waits on another input, and its bounded queue stays near empty.
+        ...(timestamps === 'wallclock' ? ['-copyts'] : []),
+        // Input 0: the overlay — back-to-back PNGs over loopback TCP from
         // OverlayPacer (image2pipe's png demuxer splits consecutive PNGs
         // on its own). Deliberately NOT stdin: stdin stays free for the
         // 'q' keypress, so Stop ends this process gracefully and the
         // camera driver is released properly instead of TerminateProcess.
-        '-f', 'image2pipe', '-vcodec', 'png', '-framerate', String(OVERLAY_FPS), '-thread_queue_size', '512', '-i', overlayInputUrl,
+        // Tiny probe: the stream is fully described by its first PNG.
+        '-f', 'image2pipe', '-vcodec', 'png', '-framerate', String(OVERLAY_FPS), '-thread_queue_size', '512',
+        '-probesize', '32', '-analyzeduration', '0', ...onProgramClock, '-i', overlayInputUrl,
+        // Input 1: mic/capture-card audio (separate dshow input, NOT combined
+        // as one "video=X:audio=Y" graph) — 🩹 CONFIRMED IN THE FIELD: the
+        // combined syntax failed with "I/O error" the moment video and audio
+        // came from two independent physical devices. A small buffer here is
+        // genuinely just jitter absorption.
+        '-f', 'dshow', '-rtbufsize', '32M', '-thread_queue_size', '64', ...onProgramClock, '-i', `audio=${audioDeviceName}`,
+        // Input 2: the camera. cameraMode is resolved by probeCameraMode()
+        // FROM THE DEVICE ITSELF (ffmpeg -f dshow -list_options true).
+        //
+        // -rtbufsize is a LATENCY allowance, not a safety net: at 512M it once
+        // held ~27 s of raw frames and the stream ran that far behind. A live
+        // feed must DROP late frames, not queue them; "real-time buffer too
+        // full, frame dropped" is now counted by the capture meter as a
+        // CAPTURE drop — the first failure class, before any encoder.
+        //
+        // 🛠 -thread_queue_size BOUNDED: it was 512 packets (~2 GB, ~8.5 s at
+        // 1080p60 raw) — the size needed to hide the input-clock gap above.
+        // With one program clock nothing waits, so half a second is ample.
+        '-f', 'dshow', '-rtbufsize', CAMERA_RTBUFSIZE, '-thread_queue_size', String(Math.max(8, Math.ceil((Number(cameraFramerate) || 30) * 0.5))),
+        ...onProgramClock,
+        ...(cameraVideoSize ? ['-video_size', cameraVideoSize] : []),
+        ...(cameraFramerate ? ['-framerate', String(cameraFramerate)] : []),
+        '-i', `video=${cameraDeviceName}`,
         '-filter_complex', filterComplex,
         // Output 1: the relay — never displayed, so never re-encoded here.
         // Strict CFR at the program rate: the relay then carries an
@@ -687,6 +747,8 @@ function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height,
     // Output 2: the Program Preview (see MpjpegParser) — a real consumer
     // of the same composited stream, camera+overlay together.
     if (previewOutputUrl) args.push('-map', '[vout2]', '-an', '-c:v', 'mjpeg', '-q:v', '5', '-f', 'mpjpeg', previewOutputUrl);
+    // Output 3: the capture meter — never written anywhere.
+    if (meter) args.push('-map', '[meter]', '-f', 'null', '-');
     return args;
 }
 
@@ -796,6 +858,63 @@ function buildLiveEncoderArgs({ width, height, fps, bitrateKbps, keyframeInterva
 }
 
 // ----------------------------------------------------------------
+// 📏 CAPTURE METER — the live first-stage measurement.
+//
+// Fed by the compositor's own showinfo lines (one per RAW captured frame,
+// before any normalization) plus dshow's "real-time buffer too full … frame
+// dropped" warnings. It answers, continuously and from evidence, what
+// /status used to infer from the RECORDER's output clock — which after the
+// relay's CFR grid always reads ~1.0× and so could never reveal a source
+// delivering 50 instead of 60, or repeating frames. A CAPTURE drop is
+// counted HERE, separately from any encoder/network drop further down.
+// ----------------------------------------------------------------
+const METER_WINDOW_FRAMES = 600;
+class CaptureMeter {
+    constructor() { this.reset(); }
+    reset() {
+        this.ring = [];
+        this.totalFrames = 0;
+        this.captureDrops = 0;
+        this.firstAt = null;
+        this.lastAt = null;
+        this._cache = null;
+    }
+    noteFrame(f, wallMs) {
+        this.ring.push({ pts: f.pts, checksum: f.checksum, scan: f.scan, wallMs });
+        if (this.ring.length > METER_WINDOW_FRAMES) this.ring.shift();
+        this.totalFrames++;
+        if (!this.firstAt) this.firstAt = wallMs;
+        this.lastAt = wallMs;
+    }
+    noteDrop() { this.captureDrops++; }
+    snapshot() {
+        const now = Date.now();
+        if (this._cache && now - this._cache.at < 1000) return this._cache.value;
+        const a = this.ring.length >= 10 ? sourceProbe.analyseFrames(this.ring, { warmupSec: 0 }) : null;
+        const value = {
+            totalFrames: this.totalFrames,
+            captureDrops: this.captureDrops,
+            lastFrameAgoMs: this.lastAt ? now - this.lastAt : null,
+            window: a && a.ok ? {
+                seconds: a.wallSpanSec, arrivalFps: a.arrivalFps, timestampFps: a.timestampFps,
+                timestampHonesty: a.timestampHonesty, jitterMs: a.interval.jitterMs,
+                gaps: a.gaps, missingFrames: a.missingFrames, nonMonotonic: a.nonMonotonic,
+                repeatedFrames: a.duplicates.count, repeatCycle: a.duplicates.cycle,
+                contentFps: a.contentFps, staticContent: a.duplicates.staticContent,
+            } : null,
+        };
+        this._cache = { at: now, value };
+        return value;
+    }
+}
+
+// Plans measured by the source probe, per device + mode + program rate, for
+// the life of the engine: a compositor relaunch never re-probes, and a
+// restart of preview/recording with the same settings reuses the evidence.
+const SOURCE_PLAN_CACHE = new Map();
+const LEVEL_TAG_RE = /\[(trace|debug|verbose|info|warning|error|fatal|panic)\] /;
+
+// ----------------------------------------------------------------
 // 🔗 COMPOSITOR — ref-counted (see this file's header comment). One
 // instance total; started by whichever of recording/streaming/preview
 // asks for it first, stopped by server.js once none of them needs it.
@@ -819,7 +938,12 @@ class Compositor extends EventEmitter {
         this.lastError = null;
         this.startedAt = null;
         this.cameraMode = null;     // resolved by probeCameraMode(), cached until an open failure invalidates it
-        this.interlacedSource = false; // true for a 50i source — see buildCompositorArgs's yadif branch
+        this.interlacedSource = false; // the OPERATOR SELECTED 50i — a request; whether fields are really arriving is measured (sourcePlan)
+        this.sourcePlan = null;     // normalization plan: measured by sourceProbe, or derived from the advertised mode
+        this.sourceReport = null;   // the full probe report behind it (null when not measured)
+        this.negotiated = null;     // the input stream ffmpeg actually opened, read back from its own log
+        this.meter = new CaptureMeter();
+        this._meterWarned = {};
         // 🎯 CAPTURE TARGET — what to ask the DEVICE for, which is NOT the
         // program format. captureFps differs from the program rate for 50i
         // (25 interlaced frames in, 50 progressive frames out), and the size
@@ -847,7 +971,9 @@ class Compositor extends EventEmitter {
         this.legCount = 0;
         this.relay = { bytes: 0, units: 0, lastDataAt: null, bytesPerSec: 0 };
         const frameBytes = Math.round(width * height * 1.5);
-        this.relayBytesPerSec = frameBytes * fps + 44100 * 2 * 2;
+        this.relayBytesPerSec = frameBytes * fps + AUDIO_SAMPLE_RATE_HZ * 2 * 2;
+        this._relaySample = null;   // { at, bytes } — see _sampleRelay
+        this.relayMeasuredBytesPerSec = null;
         this.pauseBytes = Math.round(this.relayBytesPerSec * RELAY_PAUSE_SEC);
         this.resumeBytes = Math.round(this.relayBytesPerSec * RELAY_RESUME_SEC);
         this._watchdog = setInterval(() => this._checkHealth(), 2000);
@@ -938,16 +1064,9 @@ class Compositor extends EventEmitter {
                         // capture native, downscale once under our control.
                         this.log(`[compositor] camera captures ${mode.width}x${mode.height}, program is ${this.width}x${this.height} — scaling down in the compositor (the card is not asked to do it)`);
                     }
-                    // A device that only runs faster than we need is fine —
-                    // we decimate. What matters is whether it decimates EVENLY.
-                    const cad = cadenceCheck(mode.fps, this.fps);
-                    if (!cad.even) {
-                        this.log(`[compositor] ⚠ UNEVEN CADENCE — this device runs at ${Math.round(mode.fps)} fps and the program is ${this.fps} fps (${cad.ratio}:1). ${cad.reason}, so the motion will judder however good the rest of the chain is.`);
-                        const clean = [60, 50, 30, 25].filter((r) => r <= mode.fps && Math.abs(mode.fps / r - Math.round(mode.fps / r)) < 0.02);
-                        if (clean.length) this.log(`[compositor]   Rates that divide evenly from ${Math.round(mode.fps)} fps: ${clean.join(', ')}. Pick one of those in the panel for smooth motion.`);
-                    } else if (Math.round(mode.fps) !== Math.round(this.fps)) {
-                        this.log(`[compositor] device runs at ${Math.round(mode.fps)} fps, program is ${this.fps} fps — decimating ${cad.ratio}:1 (even, so motion stays smooth)`);
-                    }
+                    // Cadence is judged from the MEASURED source (see
+                    // _resolveSourcePlan), not from this advertised rate: a card
+                    // that advertises 60 may be carrying a 50 Hz camera.
                 } else {
                     this.log('[compositor] could not auto-detect a camera mode from -list_options output — opening unconstrained');
                 }
@@ -979,6 +1098,8 @@ class Compositor extends EventEmitter {
         if (this._cameraModeLevel >= 2) this.cameraMode = false;
         else if (this.cameraMode === null) this.cameraMode = (await this.probeCameraMode(this._cameraDeviceName)) || false; // false = "probed, nothing usable"
         if (this.stopped) return { ok: false, error: 'Compositor is stopping' };
+        if (!this.sourcePlan) await this._resolveSourcePlan();
+        if (this.stopped) return { ok: false, error: 'Compositor is stopping' };
         // The overlay renderer is started alongside, never in front of,
         // the camera: if it can't come up, the program feed runs with a
         // transparent overlay and the bridge keeps retrying in background.
@@ -986,6 +1107,70 @@ class Compositor extends EventEmitter {
         const result = await this._spawnLeg();
         if (!result.ok) this.state = 'idle';
         return result;
+    }
+
+    // 🔬 MEASURE THE SOURCE BEFORE BUILDING ITS CHAIN — once per device+mode+
+    // program rate. A few seconds, before the camera is opened for real (a
+    // capture device can only be open once, so this cannot run alongside).
+    async _resolveSourcePlan() {
+        const mode = this.cameraMode || null;
+        const key = `${this._cameraDeviceName}|${mode ? `${mode.width}x${mode.height}@${mode.fps}` : 'auto'}|${this.fps}|${this.interlacedSource ? 'i' : 'p'}`;
+        const cached = SOURCE_PLAN_CACHE.get(key);
+        if (cached) { this.sourcePlan = cached.plan; this.sourceReport = cached.report; return; }
+        let report = null;
+        if (SOURCE_PROBE_ENABLED && this._cameraDeviceName) {
+            this.log(`[compositor] 🔬 measuring what "${this._cameraDeviceName}" really delivers (${SOURCE_PROBE_SECONDS}s) — real frame rate, timestamps, repeated frames, interlace…`);
+            report = await sourceProbe.runProbe({
+                spawnFfmpeg: (args, opts) => this.spawnFfmpeg(args, opts, 'source-probe'),
+                inputArgs: sourceProbe.dshowInputArgs({ device: this._cameraDeviceName, width: mode && mode.width, height: mode && mode.height, fps: mode && mode.fps }),
+                seconds: SOURCE_PROBE_SECONDS, label: this._cameraDeviceName, device: this._cameraDeviceName,
+                requested: mode ? { width: mode.width, height: mode.height, fps: mode.fps } : {}, programFps: this.fps,
+            });
+        }
+        let plan;
+        if (report && report.measurement.ok && report.plan) {
+            plan = { ...report.plan, measured: true };
+            for (const line of sourceProbe.formatReport(report).split('\n')) this.log(`[compositor] ${line}`);
+            if (this.interlacedSource && !plan.deinterlace) this.log('[compositor] ⚠ 50i was SELECTED, but the frames arriving are progressive (the card or camera has already converted them) — NOT deinterlacing: bobbing progressive frames would halve the vertical detail and double the frame rate into an uneven decimation.');
+            if (!this.interlacedSource && plan.deinterlace) this.log(`[compositor] ⚠ the frames arriving are INTERLACED (${plan.deinterlace}) although a progressive mode was selected — deinterlacing them (each field becomes a frame) rather than recording combing.`);
+        } else {
+            plan = sourceProbe.planFromAdvertised({ deviceFps: mode ? mode.fps : null, programFps: this.fps, interlacedSelected: this.interlacedSource });
+            if (report) this.log(`[compositor] ⚠ source probe could not measure the device (${report.measurement.error || 'no frames'}) — chain built from the advertised mode instead: ${plan.chain || 'passthrough'}`);
+            for (const n of plan.notes) this.log(`[compositor]   • ${n}`);
+        }
+        if (WALLCLOCK_TS_OVERRIDE) plan.timestamps = WALLCLOCK_TS_OVERRIDE;
+        this.sourcePlan = plan;
+        this.sourceReport = report;
+        SOURCE_PLAN_CACHE.set(key, { plan, report });
+        this.log(`[compositor] camera chain: ${plan.chain || 'passthrough'} → program ${this.fps} fps (${plan.cadence === 'judder' ? '⚠ JUDDER — see above' : 'clean cadence'}); one program clock for camera, audio and overlay${plan.timestamps === 'device' ? ' — OVERRIDDEN to device stamps' : ''}`);
+    }
+
+    // Live view of the capture stage for /status.
+    captureStatus() {
+        const plan = this.sourcePlan;
+        const live = this.meter.snapshot();
+        const expected = plan && plan.deliveredFps;
+        const w = live.window;
+        let verdict = 'measuring';
+        const problems = [];
+        if (w && w.seconds >= 5) {
+            if (expected && Math.abs(w.arrivalFps - expected) / expected > 0.03) problems.push(plan.measured
+                ? `device delivering ${w.arrivalFps} fps, ${expected} when measured at start — the HDMI source may have changed; stop and restart preview to re-measure`
+                : `device delivering ${w.arrivalFps} fps although it advertises ${expected} — the camera chain was built for ${expected}; enable the source probe (STREAM_ENGINE_SOURCE_PROBE) so it is built from what really arrives`);
+            if (Number.isFinite(w.timestampHonesty) && Math.abs(w.timestampHonesty - 1) > 0.01) problems.push(`camera timestamps run at ${w.timestampHonesty}× real time`);
+            // The program clock is arrival time; if this PC's clock is coarse
+            // (a 15.6 ms Windows tick) the stamps say so here.
+            if (w.arrivalFps && w.jitterMs > 250 / w.arrivalFps) problems.push(`camera timestamps jitter ±${w.jitterMs} ms (${Math.round(1000 / w.arrivalFps)} ms frames) — the clock on this PC is coarse or the capture thread is being starved`);
+            if (w.missingFrames) problems.push(`${w.missingFrames} frame(s) missing in the last ${w.seconds}s`);
+            if (w.nonMonotonic) problems.push(`${w.nonMonotonic} non-monotonic timestamp(s)`);
+            verdict = problems.length ? 'warning' : 'ok';
+        }
+        return {
+            requested: this.cameraMode ? { width: this.cameraMode.width, height: this.cameraMode.height, fps: this.cameraMode.fps } : null,
+            negotiated: this.negotiated,
+            plan, probe: this.sourceReport ? { health: this.sourceReport.health, stages: this.sourceReport.stages, firstProblem: this.sourceReport.firstProblem, at: this.sourceReport.at } : null,
+            live, verdict, problems,
+        };
     }
 
     _startOverlayInBackground() {
@@ -1089,7 +1274,11 @@ class Compositor extends EventEmitter {
             cameraVideoSize: this.cameraMode ? `${this.cameraMode.width}x${this.cameraMode.height}` : null,
             cameraFramerate: this.cameraMode ? this.cameraMode.fps : null,
             interlacedSource: this.interlacedSource,
+            sourcePlan: this.sourcePlan,
         });
+        this.meter.reset();
+        leg.info = '';
+        leg.infoDone = false;
         let proc;
         try {
             proc = this.spawnFfmpeg(args, { stdio: ['pipe', 'pipe', 'pipe'] }, 'compositor');
@@ -1125,12 +1314,31 @@ class Compositor extends EventEmitter {
         const logLine = this._makeLineLogger('[compositor]');
         let stderrBuf = '';
         proc.stderr.on('data', (chunk) => {
+            const now = Date.now();
             stderrBuf += chunk.toString();
             let idx;
             while ((idx = stderrBuf.search(/[\r\n]/)) >= 0) {
-                const line = stderrBuf.slice(0, idx).trim();
+                const raw = stderrBuf.slice(0, idx).trim();
                 stderrBuf = stderrBuf.slice(idx + 1);
-                if (!line) continue;
+                if (!raw) continue;
+                // 📏 capture meter lines — measured, never printed
+                const frame = sourceProbe.parseShowinfoLine(raw);
+                if (frame) { this.meter.noteFrame(frame, now); continue; }
+                if (/Parsed_showinfo/.test(raw)) continue; // its color_range / config lines
+                const lvl = LEVEL_TAG_RE.exec(raw);
+                const line = raw.replace(LEVEL_TAG_RE, '');
+                if (lvl && (lvl[1] === 'info' || lvl[1] === 'verbose' || lvl[1] === 'debug' || lvl[1] === 'trace')) {
+                    // Startup description: read back what ffmpeg REALLY opened.
+                    if (!leg.infoDone) {
+                        leg.info += line + '\n';
+                        if (/Press \[q\]|Output #0/.test(line) || leg.info.length > 20000) {
+                            leg.infoDone = true;
+                            this._noteNegotiated(sourceProbe.parseInputVideoStream(leg.info, 2)); // input #2 = the camera
+                        }
+                    }
+                    continue;
+                }
+                if (sourceProbe.CAPTURE_DROP_RE.test(line)) this.meter.noteDrop();
                 if (!BENIGN_LINE_RE.test(line)) logLine(line);
                 if (/error|failed|cannot|invalid|no space/i.test(line)) this.lastError = line;
             }
@@ -1140,6 +1348,41 @@ class Compositor extends EventEmitter {
         proc.on('error', (err) => { this.lastError = err.message; });
         proc.on('exit', (code, signal) => this._onLegExit(proc, leg, code, signal));
         return { ok: true };
+    }
+
+    // REQUESTED vs NEGOTIATED, from ffmpeg's own description of the input.
+    _noteNegotiated(neg) {
+        if (!neg) return;
+        this.negotiated = neg;
+        const req = this.cameraMode;
+        this.log(`[compositor] device opened as: ${neg.width}x${neg.height} ${neg.pixFmt || ''} ${neg.codec}${neg.fourcc ? ` (${neg.fourcc})` : ''} @ ${neg.fps || '?'} fps, field order ${neg.fieldOrder}`);
+        if (req && (neg.width !== req.width || neg.height !== req.height || (neg.fps && Math.abs(neg.fps - req.fps) / req.fps > 0.02))) {
+            this.log(`[compositor] ⚠ FORMAT MISMATCH — asked the device for ${req.width}x${req.height}@${req.fps}, it opened ${neg.width}x${neg.height}@${neg.fps}`);
+        }
+    }
+
+    _checkMeter() {
+        const st = this.captureStatus();
+        const w = st.live.window;
+        const warnOnce = (key, msg) => { if (this._meterWarned[key] && Date.now() - this._meterWarned[key] < 5 * 60000) return; this._meterWarned[key] = Date.now(); this.log(msg); };
+        if (st.live.captureDrops > (this._lastDropsLogged || 0)) {
+            warnOnce('drops', `[compositor] ⚠ CAPTURE DROP — ${st.live.captureDrops} frame(s) dropped at the device input so far (the compositor is not keeping up with the camera; this is the FIRST stage, before any encoder or network)`);
+            this._lastDropsLogged = st.live.captureDrops;
+        }
+        if (w && st.problems.length) warnOnce('problems:' + st.problems.join('|').replace(/[\d.]+/g, '#'), `[compositor] ⚠ CAPTURE: ${st.problems.join('; ')}`);
+    }
+
+    // MEASURED relay throughput. /status used to report the THEORETICAL
+    // bytes/s whenever any data had arrived in the last 5 s — a number that
+    // read "healthy" whether the program feed ran at full rate or at half.
+    _sampleRelay() {
+        const now = Date.now();
+        const prev = this._relaySample;
+        this._relaySample = { at: now, bytes: this.relay.bytes };
+        if (prev && now - prev.at >= 1000 && this.relay.bytes >= prev.bytes) {
+            const rate = (this.relay.bytes - prev.bytes) * 1000 / (now - prev.at);
+            this.relayMeasuredBytesPerSec = this.relayMeasuredBytesPerSec == null ? rate : this.relayMeasuredBytesPerSec * 0.7 + rate * 0.3;
+        }
     }
 
     _closeLegResources(leg) {
@@ -1238,6 +1481,7 @@ class Compositor extends EventEmitter {
     // is alive, nothing is written. Kill it; _onLegExit handles the rest.
     _checkHealth() {
         if (this.state !== 'running' || !this.proc || this.stopped) return;
+        try { this._checkMeter(); this._sampleRelay(); } catch (e) { /* diagnostics must never take the feed down */ }
         const now = Date.now();
         const sinceStart = now - this.legStartedAt;
         const last = this.relay.lastDataAt;
@@ -1306,7 +1550,12 @@ class Compositor extends EventEmitter {
         return {
             state: this.state,
             legs: this.legCount,
-            relayMBps: this.relay.lastDataAt && now - this.relay.lastDataAt < 5000 ? Math.round(this.relayBytesPerSec / 1e5) / 10 : 0,
+            relayMBps: this.relayMeasuredBytesPerSec != null && this.relay.lastDataAt && now - this.relay.lastDataAt < 5000 ? Math.round(this.relayMeasuredBytesPerSec / 1e5) / 10 : 0,
+            relayExpectedMBps: Math.round(this.relayBytesPerSec / 1e5) / 10,
+            // < 1.0 = the compositor is producing the program feed slower than
+            // real time (processing can't keep up) — a PROCESSING failure,
+            // distinct from a capture drop before it or an encoder backlog after.
+            relayRealtimeRatio: this.relayMeasuredBytesPerSec != null ? Number((this.relayMeasuredBytesPerSec / this.relayBytesPerSec).toFixed(3)) : null,
             lastRelayDataAgoMs: this.relay.lastDataAt ? now - this.relay.lastDataAt : null,
             previewAgeMs: this.previewAt ? now - this.previewAt : null,
             consumers: [...this.consumers.values()].map((c) => c.stats()),
@@ -1359,4 +1608,8 @@ module.exports = {
     RAW_BANDWIDTH_CAP_BYTES_PER_SEC,
     PREVIEW_FPS,
     PREVIEW_WIDTH,
+    previewStep,
+    TRANSPARENT_PNG,
+    CaptureMeter,
+    SOURCE_PLAN_CACHE,
 };

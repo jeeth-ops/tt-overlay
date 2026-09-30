@@ -122,5 +122,22 @@ test('a consumer with no header yet waits instead of writing a headless stream',
   assert.strictEqual(c.state, 'joining');
 });
 
+test('the placeholder overlay is REALLY transparent (it used to be 50% blue over the whole program)', () => {
+  const zlib = require('zlib');
+  const { TRANSPARENT_PNG } = require('../nativePipeline');
+  let i = 8, rgba = null, hdr = null;
+  while (i < TRANSPARENT_PNG.length) {
+    const len = TRANSPARENT_PNG.readUInt32BE(i);
+    const type = TRANSPARENT_PNG.toString('latin1', i + 4, i + 8);
+    const data = TRANSPARENT_PNG.subarray(i + 8, i + 8 + len);
+    if (type === 'IHDR') hdr = { w: data.readUInt32BE(0), h: data.readUInt32BE(4), depth: data[8], colorType: data[9] };
+    if (type === 'IDAT') rgba = [...zlib.inflateSync(data)];
+    i += 12 + len;
+  }
+  assert.deepStrictEqual(hdr, { w: 1, h: 1, depth: 8, colorType: 6 });
+  assert.strictEqual(rgba[0], 0, 'filter type None');
+  assert.deepStrictEqual(rgba.slice(1), [0, 0, 0, 0], `pixel is RGBA(${rgba.slice(1)}) — alpha must be 0`);
+});
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

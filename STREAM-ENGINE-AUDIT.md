@@ -535,3 +535,227 @@ Per profile, on the match PC: select it, read **CAPTURE CHECK** (must say
 MATCHED), record one minute and confirm the file is about one minute long, and
 watch the preview for cadence. A MISMATCH row names the real rate, which is
 the number that says which mode the card is genuinely in.
+
+---
+
+## K. Laptop camera works, Sony → AVMATRIX does not — the first divergence, proven
+
+The laptop webcam is the control: the same Stream Engine code downstream,
+working end to end. So the question was never "is the Stream Engine
+broken?" but **"what does the AVMATRIX source make the SAME code do
+differently, and at which stage first?"**
+
+Every claim below was either run against real ffmpeg 7.0.2 (the Windows
+"full" build is the same codebase) or is marked as not verified. The
+container has no Windows, no capture card and no GPU, so the camera was
+replaced by real-time lavfi sources that behave like each device —
+everything downstream of the camera is the real code, real processes.
+
+### K0. The pipeline as implemented (native program feed)
+
+```
+CAMERA dshow  ──┐ raw YUY2 1920×1080 @ 60.0002 (AVMATRIX: every mode fixed at 60)
+AUDIO  dshow  ──┤ pcm 48 kHz
+OVERLAY png   ──┤ Chromium screencast → Node OverlayPacer → TCP, 15 fps
+                ▼
+COMPOSITOR ffmpeg (one process, CPU filters)
+  camera: [normalize chain] → [scale if needed] → yuv420p
+  overlay: scale → rgba ;  overlay=format=auto → yuv420p
+  ├─ relay  : -fps_mode cfr -r <program>  rawvideo+pcm in NUT → Node stdout
+  ├─ preview: MJPEG 960 px → TCP → /capture-preview
+  └─ meter  : 64×36 point-sampled copy of every RAW camera frame → showinfo  (NEW)
+                ▼ Node NutUnitSplitter / RelayConsumer (bounded, skip-on-backlog)
+   ├─ RECORDER ffmpeg: h264_nvenc VBR (libx264 fallback), 2 s GOP, fMP4 → master.mp4
+   └─ LIVE     ffmpeg: h264_nvenc CBR, -bf 0, 2 s GOP, FLV → RTMPS
+CLIPS: cut from master.mp4 (never from YouTube); R2/Drive retry queue offline-safe
+```
+
+GPU/CPU: capture, normalization, scale, overlay blend and pixel-format
+conversion are CPU (swscale — this PC reports "GPU scale not available");
+NVENC does only the two encodes. There is no GPU→CPU readback anywhere;
+the costly moves are the raw relay through Node pipes (~93 MB/s at
+1080p30, ~155 MB/s at 1080p50) and two raw copies into two encoders.
+
+### K1. ROOT CAUSE 1 — the rate filter picks the wrong frame on a 2:1 source
+
+The compositor turned the capture rate into the program rate with
+`fps=<program>`. The fps filter anchors its output grid on the **first**
+frame. On an exact 2:1 source (AVMATRIX 60 → 30p, or 50 → 25p) every odd
+source frame then lies exactly on a rounding edge, and the smallest
+timestamp difference decides which frame of each pair is shown.
+
+Measured with the real filter (source frame number written into the
+picture, read back from the output; 20 s each):
+
+| Source → program | Chain | Camera steps seen | Verdict |
+|---|---|---|---|
+| **webcam 30 → 30** (control) | `fps=30` | 1×599 | clean |
+| 60 → 30, no jitter | `fps=30` | 1×200 **2×199** 3×200 | **judder** |
+| 60 → 30, ±2 ms jitter | `fps=30` | 1×116 **2×366** 3×117 | **judder (39 % wrong)** |
+| 60 → 30, any jitter tested | `framestep=2` | **2×599** | clean |
+| 50 → 25, ±2 ms | `fps=25` | 1×98 2×303 3×98 | judder |
+| 50 → 25, ±2 ms | `framestep=2` | 2×499 | clean |
+
+The webcam never decimates (30 → 30), so it sits in the middle of the
+rounding window and is immune. **That is the first divergence between the
+two paths**: identical code, a source that needs decimation, and a filter
+that is unstable exactly there. Through the full end-to-end pipeline
+(K5) the old chain showed wrong-neighbour picks on 0.3–1.5 % of frames
+across runs at the low jitter of this Linux box — how often depends entirely
+on real timestamp jitter, which is why `test/decimationCadence.test.js`
+asserts it deterministically (seeded jitter) instead.
+
+**Fix:** decimation by **count** — `framestep=k` whenever the source rate is
+an integer multiple of the program rate. `fps=` remains only for uneven
+ratios, which are now reported as judder rather than hidden.
+
+### K2. ROOT CAUSE 2 — a 50 Hz camera behind a 60-only card is 50 fps of motion, not 60
+
+The field console showed every AVMATRIX mode fixed at 60.0002 fps. An
+Indian (PAL) Sony outputs 25/50 Hz. A card that only offers 60 has to put
+50 camera frames into 60 slots: one repeat in every six. Measured:
+
+| Program | Chain | Camera steps | Verdict |
+|---|---|---|---|
+| 30p (the previous HOW-TO-CHECK advice) | `fps=30` | 1×236 2×326 3×37 | judder |
+| 30p | `framestep=2` | 1×200 2×399 | judder — **cannot** be smooth |
+| **50p** | `decimate=cycle=6` | 1×999 | clean |
+| **25p** | `decimate=cycle=6,framestep=2` | 2×499 | clean |
+
+**The previous "use 30p on this card" advice was only right if the card is
+really carrying 60 fps.** Whether it is depends on the Sony's HDMI output,
+which only a measurement can settle — so it is now measured (K4).
+
+### K3. ROOT CAUSE 3 — the inputs had different clocks; every camera frame waited for the overlay
+
+ffmpeg opens inputs one after another and, without `-copyts`, moves each
+input's first packet to t = 0 on its own. Measured in the real compositor:
+
+```
+0.06 s  Input #0 camera opened        ← camera t=0 here
+0.06 s  Input #1 audio opened
+7.93 s  Input #2 overlay pipe opened   ← overlay t=0 here
+```
+
+The overlay filter cannot emit camera frame *t* until the overlay has a
+frame at *t*, so **every camera frame waited 7.9 s**. With the 512-packet
+queue this needs ~2 GB at 1080p60 and puts the program ~8 s behind
+reality; with anything smaller the queue fills, dshow drops, and the feed
+moves in bursts between freezes (reproduced: "More than 1000 frames
+duplicated" and the camera meter receiving < 1 fps). A 60 fps card needs
+twice the queue a 30 fps webcam does to ride out the same gap. The same
+per-input zero put **audio** off the video by however long the audio
+device took to open.
+
+**Fix — one program clock:** overlay, audio and camera are all stamped by
+the same clock (arrival wall time), `-copyts` keeps those stamps, and one
+common `-itsoffset` subtracts the same base from all three. The camera is
+opened **last**, so when it starts, overlay and audio are already flowing
+and nothing it produces waits. The overlay input also probes only its first
+PNG (`-probesize 32 -analyzeduration 0`): startup 7.95 s → 4.3 s. The
+camera queue is now bounded to 0.5 s.
+
+### K4. The capture stage is measured, not assumed
+
+`sourceProbe.js` opens the device for 4 s **before** the compositor does
+(once per device + mode + program rate) and measures, per frame: wall-clock
+arrival, the device's own timestamp, a checksum of a point-sampled
+thumbnail (identical successor = repeated frame) and idet on the full
+picture; plus the negotiated media type read back from ffmpeg and every
+dshow overflow. From that it builds the **normalization plan**:
+
+```
+[decimate=cycle=N]  only if the card repeats frames
+[yadif send_field]  only if the PIXELS are interlaced — never because "50i" was selected
+[passthrough | framestep=k | fps (judder, warned)]
+```
+
+Two further defects this replaced:
+
+- **"50i" selected on this card bobbed progressive frames.** 60 progressive
+  frames/s were deinterlaced as if they were 25 interlaced ones: half the
+  vertical detail, 120 fields/s into an uneven 2.4:1 decimation, and yadif at
+  1080p120 on the CPU. Measured: 20 % repeated program frames. Now decided
+  by idet, and without a measurement only if the device really runs ≤ 30.
+- **CAPTURE CHECK could not fail.** It compared the request against the
+  *recorder's* output clock, which after the relay's CFR grid is ~1.0× no
+  matter what the camera does. It now uses the **capture meter** inside the
+  compositor: a 64×36 copy of every raw camera frame → arrival fps,
+  timestamp rate, unique frames, gaps, overflow drops. `/status` also gained
+  `failureClasses` (CAPTURE → PROCESSING → ENCODER → NETWORK → PREVIEW, each
+  from its own measurement), and `compositor.relay.relayMBps` is now measured
+  (it used to print the theoretical value whenever any byte had arrived).
+
+Also found and fixed on the way:
+
+- **The "transparent" placeholder overlay was 50 % blue.** Its bytes decode
+  to RGBA (0, 0, 255, 127), scaled over the whole frame until the overlay
+  page delivered its first frame — or for the entire match if
+  puppeteer/Chromium was unavailable. Found because every camera value in
+  the simulation came back at ~0.45× + an offset. Pinned by a test.
+- **The preview juddered on its own.** It was a flat `fps=15` — a 2:1 knife
+  edge on 30p and 3.33:1 on 50p — so the operator saw stutter even when the
+  program was clean. Now an integer `framestep` (25/30p at full rate,
+  50/60p at half).
+
+### K5. End-to-end result (real Compositor + recorder, simulated devices)
+
+`test/pipelineSimulation.test.js`, 20 s of recording each, file checked by
+`verifyMedia.js`:
+
+| Source → program | Chain chosen by the probe | File vs real time | A/V | Camera steps |
+|---|---|---|---|---|
+| **webcam 30 → 30** (control) | passthrough | 1.002× | +0.13 s | 1×592 (+3) |
+| 60 card → 30, **old chain** | `fps=30` | 0.998–0.999× | +0.15 s | 2×575, **2–9 odd steps per run** |
+| 60 card → 30 | `framestep=2` | 1.003× | +0.13 s | 2×584, odd 0 |
+| Sony 50 → 60 card → 50 | `decimate=cycle=6` | 0.998× | +0.07 s | **1×993** |
+| Sony 50 → 60 card → 25 | `decimate=cycle=6,framestep=2` | 0.997× | +0.17 s | 2×490 |
+| Sony 50 → 60 card → 30 | `decimate=cycle=6,fps=30` | 0.998× | +0.14 s | 1×198 2×394 — **flagged JUDDER** |
+| card stamping 50 as 60 → 50 | passthrough (stamps flagged nominal) | 0.999× | +0.09 s | 1×977 |
+
+"A/V" is audio duration minus video duration in the file (both streams
+start at the recorder's join point, so this includes the audio packet
+that straddles it) — it is not a lip-sync measurement; see K7.
+
+The small residue of 0/2 steps in the 1:1 rows (≈ 0.5 %) is the relay's CFR
+grid meeting arrival-time jitter on this container. It is the same in the
+control, so it is not specific to the capture card.
+
+### K6. What to run on the match PC
+
+```
+cd stream-engine
+node sourceProbe.js --list
+node sourceProbe.js --compare "<laptop camera name>" "AVMATRIX USB Capture Video" --program-fps 50 --out compare.json
+```
+
+That prints the §6 table (device, resolution, requested/negotiated/actual
+fps, unique fps, scan mode, pixel format, timestamps, interval, drops,
+repeats, CPU, old vs new chain) and `FIRST POINT OF DIVERGENCE`. Run it with
+the Sony set to each output mode you intend to use. The same probe runs
+automatically when the program feed starts and prints to the console;
+`POST /diagnostics/source-probe` and `GET /diagnostics/source-compare` do it
+from the panel side. After a test recording:
+
+```
+node verifyMedia.js "StreamEngineData\Recordings\<match>\master.mp4" --expect-seconds 3600
+```
+
+### K7. NOT verified here — genuinely open
+
+- **The real AVMATRIX + Sony numbers.** Everything above proves the
+  mechanisms and the fixes against simulated devices. Which of K1/K2 (or
+  both) the operator's card actually exhibits is exactly what
+  `sourceProbe.js --compare` answers on the match PC — nothing here claims it.
+- **Wall-clock precision on Windows.** The program clock is arrival time.
+  If this PC's clock ticks at 15.6 ms, 50/60p 1:1 passthrough will show
+  occasional dup/drop pairs; the capture meter reports the jitter
+  (`CAPTURE: camera timestamps jitter ±X ms`) so it cannot hide.
+  `STREAM_ENGINE_WALLCLOCK_TS=0` returns to device stamps (per-input clocks).
+- **Lip sync** is correct by construction (one clock for audio and video)
+  but was not measured with a real flash-and-beep source through the card.
+- **NVENC, GPU load, RTMPS under real loss, the 7-hour soak, internet
+  loss/recovery** — unchanged by this pass and still need the match PC. The
+  probe adds a few seconds to the FIRST start of the program feed per
+  device/mode (cached afterwards); `STREAM_ENGINE_SOURCE_PROBE=0` skips it.
+- **Overlay and scoring still need the internet** (§I3) — unchanged.

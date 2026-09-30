@@ -2726,7 +2726,7 @@ async function refreshClipEngineStatus(){
   ceSetDot('ce-cloudflare', status.cloudflareConnected, status.cloudflareConnected ? 'Connected' : `Retrying (${status.retryQueueLength} queued)`);
 
   updateRecorderStatusUI(status.recorder, status.compositor);
-  renderActiveFormat(status.activeFormat, status.captureMatch);
+  renderActiveFormat(status.activeFormat, status.captureMatch, status.failureClasses);
 }
 
 function formatBytes(n){
@@ -3252,30 +3252,44 @@ document.getElementById('live-video-device')?.addEventListener('change', refresh
 
 /* SOURCE → PROGRAM → RECORDING → YOUTUBE, each with the format actually in
    use. Anything the engine is not currently running simply has no row. */
-function renderActiveFormat(active, match){
+function renderActiveFormat(active, match, failures){
   const el = document.getElementById('ls-active-format');
   if(!el) return;
+  const e = (x) => escapeHtmlPanel(x == null ? '' : String(x));
   const rows = [
-    ['CAPTURE',   active && active.source,    'The mode the camera/capture card was opened in'],
+    ['CAPTURE',   active && active.source,    'The mode the camera/capture card NEGOTIATED (read back from ffmpeg, not the dropdown)'],
     ['PROGRAM',   active && active.program,   'The shared local program feed everything is cut from'],
     ['RECORDING', active && active.recording, 'The local master recording'],
     ['STREAM',    active && active.youtube,   'What is being pushed to YouTube'],
   ].filter(([, v]) => v);
   if(!rows.length){ el.style.display = 'none'; el.innerHTML = ''; return; }
   el.style.display = 'block';
-  let html = rows.map(([k, v, title]) =>
-    `<div style="display:flex; justify-content:space-between; gap:10px;" title="${title}"><span style="opacity:.6;">${k}</span><span style="font-variant-numeric:tabular-nums;">${v}</span></div>`
-  ).join('');
-  /* REQUESTED vs ACTUAL for the capture stage. "50p selected" is not evidence
-     that 50 frames are arriving — a capture card that advertises an fps RANGE
-     accepts the request and then passes through whatever the camera sends. So
-     the verdict comes from the measured rate, not from the dropdown. */
+  const line = (k, v, color, title) => `<div style="display:flex; justify-content:space-between; gap:10px; margin-top:3px;${color ? ` color:${color};` : ''}"${title ? ` title="${e(title)}"` : ''}><span style="opacity:.75;">${k}</span><span style="font-variant-numeric:tabular-nums; text-align:right;">${v}</span></div>`;
+  let html = rows.map(([k, v, title]) => line(k, e(v), null, title)).join('');
+  /* REQUESTED vs ACTUAL for the capture stage, from the engine's capture
+     meter: frames really ARRIVING from the device, and how many of them are
+     unique (a 60-only card carrying a 50 Hz camera repeats 1 frame in 6). */
   if(match && match.status === 'matched'){
-    html += `<div style="display:flex; justify-content:space-between; gap:10px; color:#3fce6e; margin-top:3px;"><span style="opacity:.75;">CAPTURE CHECK</span><span>✓ MATCHED (${match.actualFps} fps)</span></div>`;
+    html += line('CAPTURE CHECK', `✓ ${e(match.actualFps)} fps arriving`, '#3fce6e', 'Measured at the device input, before any processing');
   } else if(match && match.status === 'mismatch'){
-    html += `<div style="display:flex; justify-content:space-between; gap:10px; color:#ff6b6b; margin-top:3px;" title="The device was asked for ${match.requestedFps} fps but about ${match.actualFps} is really arriving. Pick a mode this card genuinely provides — the engine will not pretend the requested rate is what you are getting."><span style="opacity:.75;">CAPTURE CHECK</span><span>⚠ MISMATCH — asked ${match.requestedFps}, getting ${match.actualFps}</span></div>`;
+    html += line('CAPTURE CHECK', `⚠ asked ${e(match.requestedFps)}, getting ${e(match.actualFps)}`, '#ff6b6b', `The device was asked for ${match.requestedFps} fps but ${match.actualFps} frames/s are really arriving.`);
   } else if(match && match.status === 'measuring'){
     html += `<div style="display:flex; justify-content:space-between; gap:10px; opacity:.55; margin-top:3px;"><span>CAPTURE CHECK</span><span>measuring…</span></div>`;
+  }
+  if(match && match.contentFps != null){
+    const rep = match.repeatCycle ? ` — card repeats 1 in ${e(match.repeatCycle)}` : '';
+    html += line('UNIQUE FRAMES', `${e(match.contentFps)} fps${rep}`, match.repeatCycle ? '#ffb347' : null, 'Frames that actually differ from the previous one — the camera\'s real motion rate');
+  }
+  if(match && match.chain){
+    const judder = match.cadence === 'judder';
+    html += line('NORMALIZE', e(match.chain), null, 'The one filter chain between capture and program (repeat removal → deinterlace → decimation)');
+    html += line('CADENCE', judder ? `⚠ JUDDER — smooth: ${e((match.smoothRates || []).join(', ') || 'none')}` : '✓ clean', judder ? '#ff6b6b' : '#3fce6e',
+      judder ? 'The program rate does not divide the source\'s real frame rate evenly — pick one of the smooth rates for this camera.' : 'Every program frame is an evenly spaced camera frame');
+  }
+  /* FIRST FAILING STAGE — capture → processing → encoder → network → preview */
+  if(failures && failures.first){
+    const f = (failures.classes || []).find((c) => c.class === failures.first);
+    if(f) html += line('FIRST PROBLEM', `${e(f.class)}: ${e(f.detail)}`, f.status === 'fail' ? '#ff6b6b' : '#ffb347', 'The earliest stage of the pipeline that is not healthy');
   }
   el.innerHTML = html;
 }

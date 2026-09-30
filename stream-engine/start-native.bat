@@ -53,6 +53,18 @@ REM set STREAM_ENGINE_CAMERA_MODE=1920x1080@30
 REM ----------------------------------------------------------------
 
 REM ----------------------------------------------------------------
+REM SOURCE PROBE - when the program feed starts, the engine first opens
+REM the camera for ~4 seconds and MEASURES what it really delivers (real
+REM frame rate, repeated frames, interlace, timestamps) and builds the
+REM camera chain from that. Look for "measuring what ... really delivers"
+REM in this window. To compare the laptop camera with the AVMATRIX by hand
+REM (with the engine stopped):
+REM     node sourceProbe.js --compare "<laptop camera>" "AVMATRIX USB Capture Video" --program-fps 50
+REM Skip the automatic probe with:
+REM set STREAM_ENGINE_SOURCE_PROBE=0
+REM ----------------------------------------------------------------
+
+REM ----------------------------------------------------------------
 REM WHERE RECORDINGS AND CLIPS ARE SAVED - by default right next to this
 REM folder (stream-engine\StreamEngineData\Recordings\...). If this
 REM folder sits somewhere OneDrive or a backup tool syncs (Downloads is

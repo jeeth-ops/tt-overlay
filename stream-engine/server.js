@@ -171,6 +171,7 @@ const NATIVE_CAPTURE_SUPPORTED = process.platform === 'win32';
 // ----------------------------------------------------------------
 const NATIVE_PROGRAM_FEED = process.env.NATIVE_PROGRAM_FEED === 'true';
 const nativePipeline = NATIVE_PROGRAM_FEED ? require('./nativePipeline') : null;
+const sourceProbe = require('./sourceProbe');
 const { makeRepeatSuppressingLogger, setProcessPriority } = require('./nativePipeline');
 
 // Set once a shutdown starts: every auto-restart/retry path checks it so
@@ -3917,6 +3918,91 @@ app.use((req, res, next) => {
 });
 app.use(express.json());
 
+// 🧭 FAILURE CLASSES — the six ways a live feed goes bad, each judged by
+// its OWN measurement, in pipeline order, so the first failing stage is
+// visible instead of every symptom being blamed on "the internet":
+//   CAPTURE    frames the device delivered that never reached us (dshow
+//              overflow, timeline gaps) — the capture meter
+//   PROCESSING the compositor producing the program slower than real time —
+//              measured relay throughput vs what the format requires
+//   ENCODER    a recorder/live encoder that cannot keep up — its relay
+//              backlog skips and its own media-time vs wall-time
+//   NETWORK    RTMPS state, reconnects, encoder speed on the push
+//   PREVIEW    the operator's preview going stale (never affects the others)
+function failureClasses() {
+    const out = [];
+    const add = (cls, status, detail) => out.push({ class: cls, status, detail });
+    if (!NATIVE_PROGRAM_FEED || !compositor || compositor.state !== 'running') {
+        return { first: null, classes: [], note: NATIVE_PROGRAM_FEED ? 'program feed not running' : 'native program feed not enabled' };
+    }
+    const cap = compositor.captureStatus();
+    const w = cap.live.window;
+    if (cap.live.captureDrops || (w && w.missingFrames)) add('CAPTURE', 'fail', `${cap.live.captureDrops} device-buffer drops since start; ${w ? w.missingFrames : 0} frames missing in the last ${w ? w.seconds : 0}s`);
+    else if (cap.problems.length) add('CAPTURE', 'warn', cap.problems.join('; '));
+    else add('CAPTURE', w ? 'ok' : 'measuring', w ? `${w.arrivalFps} fps arriving (${w.contentFps} unique), timestamps ${w.timestampHonesty}× real time, ±${w.jitterMs} ms` : 'waiting for frames');
+    if (cap.plan && cap.plan.cadence === 'judder') add('CADENCE', 'warn', `${cap.plan.sourceFps} fps source → ${cap.plan.programFps} fps program cannot be smooth; smooth: ${(cap.plan.smoothRates || []).join(', ')}`);
+    const rs = compositor.stats();
+    if (rs.relayRealtimeRatio == null) add('PROCESSING', 'measuring', 'measuring program feed throughput');
+    else if (rs.relayRealtimeRatio < 0.97) add('PROCESSING', 'fail', `program feed produced at ${rs.relayRealtimeRatio}× real time (${rs.relayMBps} of ${rs.relayExpectedMBps} MB/s) — the compositor cannot keep up`);
+    else add('PROCESSING', 'ok', `program feed at ${rs.relayRealtimeRatio}× real time`);
+    for (const c of rs.consumers) {
+        const label = c.who === 'recorder' ? 'ENCODER (recording)' : 'ENCODER (live)';
+        if (c.unitsSkipped) add(label, 'fail', `fell behind ${c.skipEpisodes}× — ${c.unitsSkipped} relay packets skipped`);
+        else add(label, 'ok', `${c.unitsWritten} packets, no backlog`);
+    }
+    if (recorder.state === 'recording') {
+        const tb = rateHealth(recorder.rate, recorder.settings && recorder.settings.fps);
+        if (tb.verdict === 'fast' || tb.verdict === 'slow') add('ENCODER (recording)', 'fail', `recording timeline at ${tb.ratio}× real time`);
+    }
+    if (engine.desiredLive) {
+        const net = engine.network || {};
+        const st = engine.state === 'live' && net.state === 'stable' ? 'ok' : engine.state === 'live' ? 'warn' : 'fail';
+        add('NETWORK', st, `RTMPS ${engine.state}, link ${net.state || '?'}${engine.reconnect.attempts ? `, reconnect attempt ${engine.reconnect.attempts}` : ''}${engine.metrics.speed ? `, encoder speed ${engine.metrics.speed}×` : ''}${engine.lastError && st !== 'ok' ? ` — ${engine.lastError}` : ''}`);
+    }
+    const age = rs.previewAgeMs;
+    add('PREVIEW', age == null ? 'measuring' : age > 3000 ? 'warn' : 'ok', age == null ? 'no preview frame yet' : `last preview frame ${age} ms ago`);
+    const first = out.find((c) => c.status === 'fail' || c.status === 'warn') || null;
+    return { first: first ? first.class : null, classes: out };
+}
+
+// 🔬 SOURCE PROBE on demand — "compare the laptop camera with the AVMATRIX".
+// A capture device can be open in only one process, so a device the running
+// program feed holds is not re-opened: its own start-up probe and live meter
+// are returned instead.
+const lastSourceProbes = new Map(); // device name -> report
+app.post('/diagnostics/source-probe', async (req, res) => {
+    const b = req.body || {};
+    const device = b.cameraDeviceName;
+    if (!device) return res.status(400).json({ success: false, error: 'cameraDeviceName required' });
+    if (!NATIVE_CAPTURE_SUPPORTED) return res.status(400).json({ success: false, error: `Capture probing needs Windows (dshow) — this engine runs on ${process.platform}` });
+    if (compositor && compositor._cameraDeviceName === device) {
+        const cap = compositor.captureStatus();
+        return res.json({ success: true, inUse: true, note: 'this device is open in the running program feed — showing its start-up probe and live meter', report: compositor.sourceReport, capture: cap });
+    }
+    const width = Number(b.width) || null, height = Number(b.height) || null, fps = Number(b.fps) || null;
+    const seconds = Math.min(20, Math.max(3, Number(b.seconds) || 6));
+    const report = await sourceProbe.runProbe({
+        spawnFfmpeg: (args, opts) => spawnFfmpeg(args, opts, 'source-probe'),
+        inputArgs: sourceProbe.dshowInputArgs({ device, width, height, fps, audioDevice: b.audioDeviceName || null }),
+        seconds, label: b.label || device, device, requested: { width, height, fps }, programFps: Number(b.programFps) || 30,
+    });
+    lastSourceProbes.set(device, report);
+    console.log(`[stream-engine] source probe:\n${sourceProbe.formatReport(report)}`);
+    res.json({ success: true, report, text: sourceProbe.formatReport(report) });
+});
+app.get('/diagnostics/source-probe', (req, res) => {
+    const reports = Object.fromEntries(lastSourceProbes);
+    if (compositor && compositor.sourceReport) reports[compositor._cameraDeviceName] = compositor.sourceReport;
+    res.json({ success: true, reports });
+});
+// Side by side: ?a=<control device>&b=<problem device>, from the last probes.
+app.get('/diagnostics/source-compare', (req, res) => {
+    const get = (d) => lastSourceProbes.get(d) || (compositor && compositor._cameraDeviceName === d ? compositor.sourceReport : null);
+    const a = get(req.query.a), b = get(req.query.b);
+    if (!a || !b) return res.status(404).json({ success: false, error: 'probe both devices first (POST /diagnostics/source-probe)', have: [...lastSourceProbes.keys()] });
+    res.json({ success: true, comparison: sourceProbe.compareReports(a, b), text: sourceProbe.formatComparison(a, b) });
+});
+
 app.get('/status', async (req, res) => {
     const nvenc = checkNvenc();
     // Only check network reachability once a Stream URL is actually
@@ -3952,7 +4038,15 @@ app.get('/status', async (req, res) => {
             refs: compositor ? [...compositor.refs] : [],
             lastError: compositor ? compositor.lastError : null,
             relay: compositor ? compositor.stats() : null,
+            // 📏 THE CAPTURE STAGE, MEASURED: what the device was asked for,
+            // what it negotiated, what the source probe found before opening
+            // it, the normalization chain built from that, and what the live
+            // meter sees arriving right now. See sourceProbe.js.
+            capture: compositor ? compositor.captureStatus() : null,
         } : null,
+        // Which stage is failing — capture, processing, encoder, network,
+        // preview — each from its own measurement, never inferred from another.
+        failureClasses: failureClasses(),
         resources: resourceSnapshot(),
         nvencAvailable: nvenc.available,
         nvencDetail: nvenc.detail,
@@ -3969,8 +4063,13 @@ app.get('/status', async (req, res) => {
         // 🎛 THE ACTIVE FORMAT AT EVERY STAGE. One row per stage so a mismatch
         // anywhere in the chain is visible instead of having to be inferred.
         activeFormat: captureModes.activeFormatSummary({
-            source: compositor && compositor.cameraMode
-                ? { width: compositor.cameraMode.width, height: compositor.cameraMode.height, fps: compositor.cameraMode.fps, interlaced: !!compositor.interlacedSource }
+            // What the device NEGOTIATED (read back from ffmpeg), not what was
+            // asked; interlaced only if the pixels were measured interlaced.
+            source: compositor && (compositor.negotiated || compositor.cameraMode)
+                ? (() => {
+                    const n = compositor.negotiated && compositor.negotiated.width ? compositor.negotiated : compositor.cameraMode;
+                    return { width: n.width, height: n.height, fps: n.fps, interlaced: !!(compositor.sourcePlan && compositor.sourcePlan.deinterlace) };
+                })()
                 : null,
             program: compositor ? { width: compositor.width, height: compositor.height, fps: compositor.fps } : null,
             recording: recorder.settings && (recorder.state === 'recording' || recorder.state === 'stopping')
@@ -3982,10 +4081,23 @@ app.get('/status', async (req, res) => {
         // 🎯 REQUESTED vs ACTUAL for the CAPTURE stage: what the device was
         // asked for, against what the timebase measurement says is really
         // arriving. "Selected 50p" is not evidence of 50p.
+        // 🛠 This used to compare the request against the RECORDER's clock
+        // (media time / wall time × requested fps). After the relay's CFR grid
+        // that ratio is ~1.0 whatever the camera does, so a card delivering 50
+        // instead of 60 — or repeating one frame in six — always read
+        // "MATCHED". Now: asked = what the DEVICE was asked for, actual = what
+        // the capture meter counts arriving, content = unique frames of those.
         captureMatch: (() => {
-            const asked = (compositor && compositor.captureTarget && compositor.captureTarget.fps) || null;
-            const tb = rateHealth(recorder.rate, recorder.settings && recorder.settings.fps);
-            return captureModes.captureMatch(asked, tb.actualFps);
+            if (!compositor) return captureModes.captureMatch(null, null);
+            const asked = (compositor.cameraMode && compositor.cameraMode.fps) || (compositor.captureTarget && compositor.captureTarget.fps) || null;
+            const w = compositor.meter.snapshot().window;
+            const m = captureModes.captureMatch(asked, w && w.seconds >= 5 ? w.arrivalFps : null);
+            m.contentFps = w ? w.contentFps : null;
+            m.repeatCycle = w ? w.repeatCycle : null;
+            m.chain = compositor.sourcePlan ? (compositor.sourcePlan.chain || 'passthrough') : null;
+            m.cadence = compositor.sourcePlan ? compositor.sourcePlan.cadence : null;
+            m.smoothRates = compositor.sourcePlan ? compositor.sourcePlan.smoothRates : null;
+            return m;
         })(),
         cameraCapability: engine.lastCapability || null,
         // Same real-time check for the YouTube push as for the recording.

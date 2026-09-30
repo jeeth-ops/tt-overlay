@@ -59,8 +59,8 @@ test('an exact match means NO scale filter at all — the expensive step disappe
     width: 1920, height: 1080, fps: 30,
     overlayInputUrl: 'tcp://127.0.0.1:1', cameraVideoSize: '1920x1080', cameraFramerate: 60,
   });
-  const fc = args[args.indexOf('-filter_complex') + 1];
-  assert.ok(!/\[0:v\][^;]*scale=/.test(fc), `camera branch still scales: ${fc.split(';')[0]}`);
+  const cam = args[args.indexOf('-filter_complex') + 1].split(';').find((p) => p.startsWith('[camraw]'));
+  assert.ok(!/scale=/.test(cam), `camera branch still scales: ${cam}`);
 });
 
 test('the rate filter runs BEFORE the scale, so discarded frames are never scaled', () => {
@@ -69,10 +69,31 @@ test('the rate filter runs BEFORE the scale, so discarded frames are never scale
     width: 1920, height: 1080, fps: 30,
     overlayInputUrl: 'tcp://127.0.0.1:1', cameraVideoSize: '1440x900', cameraFramerate: 60,
   });
-  const cam = args[args.indexOf('-filter_complex') + 1].split(';')[0];
+  const cam = args[args.indexOf('-filter_complex') + 1].split(';').find((p) => p.startsWith('[camraw]'));
   assert.ok(cam.includes('scale='), 'this case does need a scale');
-  assert.ok(cam.indexOf('fps=') < cam.indexOf('scale='),
+  assert.ok(cam.indexOf('framestep=2') >= 0 && cam.indexOf('framestep=2') < cam.indexOf('scale='),
     `scaling 60fps and throwing half away is what overflowed the input buffer: ${cam}`);
+});
+
+test('60 → 30 decimates by COUNT (framestep), never with the fps filter\'s knife-edge grid', () => {
+  const args = buildCompositorArgs({
+    cameraDeviceName: 'cam', audioDeviceName: 'mic',
+    width: 1920, height: 1080, fps: 30,
+    overlayInputUrl: 'tcp://127.0.0.1:1', cameraVideoSize: '1920x1080', cameraFramerate: 60.0002,
+  });
+  const cam = args[args.indexOf('-filter_complex') + 1].split(';').find((p) => p.startsWith('[camraw]'));
+  assert.ok(/framestep=2/.test(cam), cam);
+  assert.ok(!/fps=/.test(cam), `fps= picks the wrong frame of each pair ~39% of the time: ${cam}`);
+});
+
+test('"50i" selected on this 60-fps card does NOT bob progressive frames', () => {
+  const args = buildCompositorArgs({
+    cameraDeviceName: 'cam', audioDeviceName: 'mic',
+    width: 1920, height: 1080, fps: 50, interlacedSource: true,
+    overlayInputUrl: 'tcp://127.0.0.1:1', cameraVideoSize: '1920x1080', cameraFramerate: 60.0002,
+  });
+  const fc = args[args.indexOf('-filter_complex') + 1];
+  assert.ok(!/yadif|bwdif/.test(fc), `60 progressive frames/s are not 25 interlaced ones: ${fc}`);
 });
 
 test('a 720×480 program prefers a BIGGER mode and downscales, never the tiny exact one', () => {

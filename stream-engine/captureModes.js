@@ -176,7 +176,7 @@ function validateCaptureMode(offered, { captureFps, captureWidth = null, capture
         if (even) {
             return {
                 ok: true, confidence: 'decimated',
-                detail: `The device runs at ${src} fps and ${captureFps} divides into it evenly (${Math.round(ratio)}:1), so every ${ratio === 2 ? 'other' : Math.round(ratio) + 'th'} frame is kept — motion stays smooth.`,
+                detail: `The device ADVERTISES ${src} fps and ${captureFps} divides into it evenly (${Math.round(ratio)}:1), so every ${ratio === 2 ? 'other' : Math.round(ratio) + 'th'} frame is kept — smooth IF the card really carries ${src} fps. A 50 Hz (PAL) camera behind a 60-only card is not: the source probe measures what actually arrives when the camera opens.`,
             };
         }
         return {
