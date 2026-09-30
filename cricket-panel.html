@@ -678,6 +678,48 @@
   .logo-actions .filebtn{ position:relative; overflow:hidden; text-align:center; }
   .logo-actions .filebtn input[type=file]{ position:absolute; inset:0; opacity:0; cursor:pointer; }
   .logo-meta{ font-size:10px; color:var(--text-dim); }
+  /* ---- Squad builder cards + smart import review ---- */
+  .squad-list-headrow{ display:none !important; }
+  .sp-card{ display:flex !important; align-items:center; gap:10px; padding:9px 12px; border-radius:12px; background:rgba(255,255,255,.04) !important; border:1px solid var(--border); margin-bottom:6px; transition:transform .15s, background .15s, opacity .15s; }
+  .sp-card:hover{ background:rgba(255,255,255,.07) !important; }
+  .sp-card.benched{ opacity:.55; }
+  .sp-card.dragging{ opacity:.4; transform:scale(.98); }
+  .sp-card.drop-target{ border-color:var(--accent, #ff7a00); }
+  .sp-grip{ cursor:grab; color:var(--text-dim); font-size:16px; user-select:none; }
+  .sp-num{ font-weight:800; font-size:12px; color:var(--text-dim); width:20px; text-align:center; }
+  .sp-avatar{ flex:none; width:36px; height:36px; border-radius:50%; background:linear-gradient(135deg,#334, #223); display:grid; place-items:center; font-weight:800; font-size:12px; color:var(--text); border:1px solid var(--border); }
+  .sp-body{ flex:1; min-width:0; }
+  .sp-body .sp-name{ width:100%; margin:0 0 5px; padding:5px 8px; font-size:14px; font-weight:600; background:transparent; border-color:transparent; }
+  .sp-body .sp-name:focus, .sp-body .sp-name:hover{ background:rgba(255,255,255,.06); border-color:var(--border); }
+  .sp-meta{ display:flex; flex-wrap:wrap; gap:5px; align-items:center; }
+  .sp-chip{ background:none; border:1px solid var(--border); color:var(--text-dim); border-radius:999px; font-size:11px; padding:2px 9px; cursor:pointer; }
+  .sp-chip.on{ background:var(--accent, #ff7a00); border-color:transparent; color:#fff; font-weight:700; }
+  .sp-xi{ flex:none; border:1px solid var(--border); background:none; color:var(--text-dim); border-radius:8px; font-weight:800; font-size:11px; padding:6px 9px; cursor:pointer; }
+  .sp-xi.on{ background:#16a34a; border-color:transparent; color:#fff; }
+  .pm-badge{ display:inline-block; font-size:11px; font-weight:700; border-radius:999px; padding:2px 8px; }
+  .pm-badge.ok{ background:rgba(34,197,94,.16); color:#4ade80; }
+  .pm-badge.warn{ background:rgba(250,204,21,.16); color:#facc15; }
+  .pm-badge.new{ background:rgba(96,165,250,.16); color:#60a5fa; }
+  .pm-badge.dup{ background:rgba(148,163,184,.16); color:#94a3b8; }
+  .pm-badge.role{ background:rgba(255,255,255,.08); }
+  .pm-choices{ display:flex; flex-direction:column; gap:8px; margin-top:12px; }
+  .wicket-modal.wm-import.has-image{ max-width:1080px; }
+  .wm-import.has-image .import-review-split{ display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.25fr); gap:14px; }
+  @media (max-width:800px){ .wm-import.has-image .import-review-split{ grid-template-columns:1fr; } }
+  .import-summary{ font-size:13px; padding:8px 12px; border-radius:10px; background:rgba(255,255,255,.05); margin-bottom:10px; display:flex; flex-wrap:wrap; gap:4px 6px; align-items:center; }
+  .import-summary .ok{ color:#4ade80; } .import-summary .warn{ color:#facc15; } .import-summary .new{ color:#60a5fa; } .dim{ color:var(--text-dim); font-size:12px; }
+  #import-img-pane{ position:relative; max-height:60vh; overflow:auto; border:1px solid var(--border); border-radius:10px; background:#000; }
+  #import-img-pane .iip-wrap{ position:relative; }
+  #import-img{ width:100%; display:block; }
+  #import-hl{ display:none; position:absolute; border:2px solid #facc15; background:rgba(250,204,21,.18); border-radius:4px; pointer-events:none; transition:all .15s; }
+  #import-review-list{ max-height:60vh; overflow:auto; }
+  .pm-row{ display:grid !important; grid-template-columns:22px 1fr; gap:10px; align-items:start; }
+  .pm-line1{ display:flex; align-items:center; gap:8px; } .pm-line1 input[type=text]{ flex:1; }
+  .pm-num{ color:var(--text-dim); font-size:11px; width:16px; }
+  .pm-line2{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:6px; font-size:12.5px; }
+  .pm-q{ font-size:11px; font-weight:700; white-space:nowrap; } .pm-q.high{ color:#4ade80; } .pm-q.med{ color:#facc15; } .pm-q.low{ color:#f87171; }
+  .pm-search{ margin-top:8px; } .pm-search-res{ display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  #import-accept-all{ margin-left:auto; }
 </style>
 </head>
 <body>
@@ -958,6 +1000,7 @@
           <div class="idz-main">Click to choose a photo or PDF</div>
           <div class="idz-sub">JPG, PNG or PDF · printed or handwritten team list</div>
         </div>
+        <button type="button" class="small ghost" id="import-retry-btn" style="display:none;margin-top:10px;">↻ Retry last file</button>
       </div>
 
       <div class="import-mode" id="import-text-mode">
@@ -976,22 +1019,25 @@
     </div>
 
     <div class="import-step" id="import-step-review">
-      <label>Detected players <span class="note">— untick or edit anything that's wrong</span></label>
-      <div class="import-low-conf-hint" id="import-low-conf-hint">⚠️ Names outlined in yellow look uncertain (poor scan/handwriting) — please double-check them before importing.</div>
-      <div class="import-review-list" id="import-review-list"></div>
-      <div class="import-add-row">
-        <input type="text" id="import-add-name" placeholder="Add a missing player name">
-        <button class="small" type="button" id="import-add-name-btn">+ Add</button>
+      <div class="import-summary" id="import-summary"></div>
+      <div class="import-low-conf-hint" id="import-low-conf-hint">⚠️ Names marked “Hard to read” are uncertain (poor scan / handwriting) — please check them against the original before importing.</div>
+      <div style="display:flex;margin-bottom:8px;"><button type="button" class="small" id="import-accept-all" style="display:none;">Accept all likely matches</button></div>
+      <div class="import-review-split">
+        <div id="import-img-pane" style="display:none;"><div class="iip-wrap"><img id="import-img" alt="Original uploaded list"><div id="import-hl"></div></div></div>
+        <div>
+          <div class="import-review-list" id="import-review-list"></div>
+          <div class="import-add-row">
+            <input type="text" id="import-add-name" placeholder="Add a missing player name">
+            <button class="small" type="button" id="import-add-name-btn">+ Add</button>
+          </div>
+        </div>
       </div>
-      <div class="import-dup-box" id="import-dup-box">
-        <div class="idb-title">Already in this squad — skipped by default</div>
-        <div id="import-dup-list"></div>
-      </div>
+      <div class="import-dup-box" id="import-dup-box" style="display:none;"><div id="import-dup-list"></div></div>
     </div>
 
     <div class="wm-actions">
       <button type="button" class="ghost wm-cancel" id="import-modal-cancel">Cancel</button>
-      <button type="button" class="primary" id="import-modal-confirm" style="display:none;">Import Players</button>
+      <button type="button" class="primary" id="import-modal-confirm" style="display:none;">Import Squad</button>
     </div>
   </div>
 </div>
@@ -4380,61 +4426,52 @@ document.getElementById('swap-strike').addEventListener('click', swapStrike);
    squad keep using the original free-text striker/non-striker/bowler
    fields exactly as before (see renderRosterControls()).
    ============================================================ */
+const ROLE_CHIPS = [['BAT', 'Batter'], ['AR', 'All-Rounder'], ['BOWL', 'Bowler'], ['WK', 'WK']];
+let squadDragId = null;
 function renderSquadList(key){
   const list = document.getElementById(key === 'A' ? 'squadA-list' : 'squadB-list');
   list.innerHTML = '';
-  rosterPlayers(key).forEach(p => {
+  const t = teamObj(key);
+  rosterPlayers(key).forEach((p, idx) => {
     const row = document.createElement('div');
-    row.className = 'squad-player-row';
+    row.className = 'squad-player-row sp-card' + (p.isXI === false ? ' benched' : '');
     row.dataset.id = p.id;
+    row.draggable = true;
+    const initials = String(p.name || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
+    row.innerHTML = `<span class="sp-grip" title="Drag to reorder">⠿</span><span class="sp-num">${String(idx + 1).padStart(2, '0')}</span>
+      <span class="sp-avatar">${escapeHtmlPanel(initials)}</span>
+      <div class="sp-body"><input type="text" class="sp-name" value="${escapeHtmlAttr(p.name)}" title="Player ID: ${escapeHtmlAttr(p.id)}">
+        <div class="sp-meta">${p.origin === 'existing' ? '<span class="pm-badge ok">✓ Existing player</span>' : ''}${p.origin === 'new' ? '<span class="pm-badge new">New</span>' : ''}
+          ${ROLE_CHIPS.map(([v, l]) => `<button type="button" class="sp-chip ${p.role === v ? 'on' : ''}" data-role="${v}">${l}</button>`).join('')}</div></div>
+      <button type="button" class="sp-xi ${p.isXI !== false ? 'on' : ''}" title="Playing XI (off = bench / substitute)">XI</button>
+      <button type="button" class="remove-player-btn" title="Remove from squad">✕</button>`;
 
-    const xiCb = document.createElement('input');
-    xiCb.type = 'checkbox';
-    xiCb.checked = p.isXI !== false;
-    xiCb.title = 'Playing XI (untick to bench as substitute)';
-    xiCb.addEventListener('change', () => {
-      p.isXI = xiCb.checked;
-      renderRosterControls();
-      pushState(true);
-    });
-
-    const nameInput = document.createElement('input');
-    nameInput.type = 'text';
-    nameInput.value = p.name;
-    nameInput.addEventListener('input', () => {
-      p.name = nameInput.value;
-      renderSquadSelects(key);
-      renderRosterControls();
-      pushState();
-    });
-
-    const idBadge = document.createElement('span');
-    idBadge.className = 'player-id-badge';
-    idBadge.textContent = p.id;
-
-    const removeBtn = document.createElement('button');
-    removeBtn.type = 'button';
-    removeBtn.className = 'remove-player-btn';
-    removeBtn.textContent = '✕';
-    removeBtn.title = 'Remove from squad';
-    removeBtn.addEventListener('click', () => {
-      if(p.id === state.striker.id || p.id === state.nonStriker.id || p.id === state.bowler.id){
-        toast('Can\'t remove a player currently batting/bowling');
-        return;
-      }
-      const t = teamObj(key);
+    row.querySelector('.sp-name').addEventListener('input', e => { p.name = e.target.value; renderSquadSelects(key); renderRosterControls(); pushState(); });
+    row.querySelector('.sp-xi').addEventListener('click', () => { p.isXI = p.isXI === false; renderSquadList(key); renderRosterControls(); pushState(true); });
+    row.querySelectorAll('.sp-chip').forEach(b => b.addEventListener('click', () => {
+      p.role = p.role === b.dataset.role ? undefined : b.dataset.role;
+      if(p.role === undefined) delete p.role;
+      renderSquadList(key); pushState(true);
+    }));
+    row.querySelector('.remove-player-btn').addEventListener('click', () => {
+      if(p.id === state.striker.id || p.id === state.nonStriker.id || p.id === state.bowler.id){ toast('Can\'t remove a player currently batting/bowling'); return; }
       t.players = t.players.filter(x => x.id !== p.id);
       if(t.captainId === p.id) t.captainId = null;
       if(t.wkId === p.id) t.wkId = null;
-      renderSquadUI();
-      renderRosterControls();
-      pushState(true);
+      renderSquadUI(); renderRosterControls(); pushState(true);
     });
-
-    row.appendChild(xiCb);
-    row.appendChild(nameInput);
-    row.appendChild(idBadge);
-    row.appendChild(removeBtn);
+    // Drag to reorder — only the array order changes; every player keeps the same ID.
+    row.addEventListener('dragstart', e => { if(e.target.tagName === 'INPUT'){ e.preventDefault(); return; } squadDragId = p.id; row.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
+    row.addEventListener('dragend', () => { squadDragId = null; row.classList.remove('dragging'); });
+    row.addEventListener('dragover', e => { if(squadDragId && squadDragId !== p.id){ e.preventDefault(); row.classList.add('drop-target'); } });
+    row.addEventListener('dragleave', () => row.classList.remove('drop-target'));
+    row.addEventListener('drop', e => {
+      e.preventDefault(); row.classList.remove('drop-target');
+      const from = t.players.findIndex(x => x.id === squadDragId), to = t.players.findIndex(x => x.id === p.id);
+      if(from < 0 || to < 0 || from === to) return;
+      t.players.splice(to, 0, t.players.splice(from, 1)[0]);
+      renderSquadUI(); renderRosterControls(); pushState(true);
+    });
     list.appendChild(row);
   });
 }
@@ -4465,13 +4502,13 @@ function renderSquadUI(){
 // ID instead of forking a new one. Best-effort: offline, not signed in,
 // or a slow/failed request all fall back to the old local-id behavior
 // rather than blocking the scorer from adding a player.
-async function resolveOrCreatePlayerId(name){
+async function resolveOrCreatePlayerId(name, forceNew){
   if(!currentOwnerUid()) return genPlayerId();
   try{
     const res = await fetch(withUid('/api/players/resolve'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name })
+      body: JSON.stringify(forceNew ? { name, forceNew: true } : { name })
     });
     const data = await res.json();
     if(data && data.success && data.playerId) return data.playerId;
@@ -4484,17 +4521,29 @@ async function addSquadPlayer(key){
   const name = input.value.trim();
   if(!name) return;
   input.value = ''; // clear immediately so a fast typist isn't blocked on the network round-trip
-  const playerId = await resolveOrCreatePlayerId(name);
+  // Existing player MUST win over a new spelling: look in squads → tournament → account
+  // history first; only create a new identity when nothing reliable matches.
+  await loadGlobalPool([name]);
+  const r = PM.classify(name, buildPlayerPool());
+  let playerId = null, finalName = name, origin = 'new';
+  if(r.status === 'existing'){
+    const c = r.cands[0];
+    playerId = c.id || await resolveOrCreatePlayerId(c.name); finalName = c.name; origin = 'existing';
+  } else if(r.status === 'possible'){
+    const pick = await askPossibleMatch(name, r.cands.slice(0, 3));
+    if(pick === null){ input.value = name; return; }
+    if(pick !== 'new'){ playerId = pick.id || await resolveOrCreatePlayerId(pick.name); finalName = pick.name; origin = 'existing'; }
+  }
+  if(!playerId) playerId = await resolveOrCreatePlayerId(name, origin === 'new' && r.status === 'possible');
   const t = teamObj(key);
   t.players = t.players || [];
-  // Guard against the same person being added twice while the resolve
-  // call above was in flight (e.g. double-click, or Enter + click both
-  // firing) — same playerId means same person, don't duplicate the row.
-  if(t.players.some(p => p.id === playerId)) { renderSquadUI(); return; }
-  t.players.push({ id: playerId, name, isXI: true });
+  // Same ID = same person (also covers double-click / Enter+click racing the lookup above).
+  if(t.players.some(p => p.id === playerId)){ toast(`${finalName} is already in this squad`); renderSquadUI(); return; }
+  t.players.push({ id: playerId, name: finalName, isXI: true, origin });
   renderSquadUI();
   renderRosterControls();
   pushState(true);
+  if(origin === 'existing') toast(`✓ Linked to existing player ${finalName}`);
 }
 document.getElementById('squadA-add-btn').addEventListener('click', () => addSquadPlayer('A'));
 document.getElementById('squadB-add-btn').addEventListener('click', () => addSquadPlayer('B'));
@@ -4533,6 +4582,9 @@ function openImportModal(key){
   importTargetTeam = key;
   importRows = [];
   importDupRows = [];
+  importPages = [];
+  document.getElementById('import-retry-btn').style.display = 'none';
+  document.getElementById('import-modal').classList.remove('has-image');
   document.getElementById('import-modal-sub').textContent =
     `Upload a photo or PDF of the ${teamObj(key).name || (key === 'A' ? 'Team A' : 'Team B')} roster — player names will be read automatically.`;
   document.getElementById('import-file-input').value = '';
@@ -4658,43 +4710,66 @@ async function preprocessImageForOCR(file){
   return canvas;
 }
 
+// Split one OCR line into several names when a multi-column sheet was read
+// as a single row ("Rohit Sharma      Akash More"), sharing the line's box.
+function splitOcrLine(ln){
+  const txt = ln.text || '', b = ln.bbox;
+  const segs = []; let idx = 0;
+  txt.replace(/\n/g, ' ').split(/(\s{3,})/).forEach(part => {
+    if(/^\s{3,}$/.test(part)){ idx += part.length; return; }
+    if(part.trim()) segs.push({ t: part, s: idx, e: idx + part.length });
+    idx += part.length;
+  });
+  if(segs.length < 2 || !b) return [{ text: txt, bbox: b }];
+  const total = Math.max(1, idx), w = b.x1 - b.x0;
+  return segs.map(g => ({ text: g.t, bbox: { x0: b.x0 + g.s / total * w, x1: b.x0 + g.e / total * w, y0: b.y0, y1: b.y1 } }));
+}
 async function handleImportFile(file){
+  importLastFile = file;
+  importPages = [];
+  document.getElementById('import-retry-btn').style.display = 'none';
   showImportStep('processing');
-  setImportProgress(0, 'Reading list…');
+  setImportProgress(0, 'Preparing image…');
   try{
-    if(typeof Tesseract === 'undefined') throw new Error('OCR library failed to load (no internet?)');
+    if(typeof Tesseract === 'undefined') throw new Error('OCR service unavailable (offline?). Your file is kept — tap Retry when you\'re back online');
     const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
     let sources;
-    if(isPdf){
-      sources = await pdfFileToCanvases(file);
-    } else {
-      try{ sources = [await preprocessImageForOCR(file)]; }
-      catch(e){ sources = [file]; } // preprocessing failed — OCR the original photo instead of blocking
-    }
-
-    let fullText = '';
+    if(isPdf){ sources = await pdfFileToCanvases(file); }
+    else { try{ sources = [await preprocessImageForOCR(file)]; } catch(e){ sources = [file]; } }
+    const found = [];
     for(let i = 0; i < sources.length; i++){
-      const { data } = await Tesseract.recognize(sources[i], 'eng', {
+      const src = sources[i];
+      const isCanvas = src instanceof HTMLCanvasElement;
+      importPages.push(isCanvas ? { url: src.toDataURL('image/jpeg', 0.85), w: src.width, h: src.height } : { url: URL.createObjectURL(file) });
+      const { data } = await Tesseract.recognize(src, 'eng', {
         logger: m => {
           if(m.status === 'recognizing text'){
-            // Spread progress evenly across however many pages/images there are.
-            const pageShare = 1 / sources.length;
-            const pct = (i * pageShare + (m.progress || 0) * pageShare) * 100;
-            setImportProgress(pct, sources.length > 1 ? `Reading page ${i + 1} of ${sources.length}…` : 'Reading list…');
+            const share = 1 / sources.length;
+            setImportProgress((i * share + (m.progress || 0) * share) * 90, sources.length > 1 ? `Reading page ${i + 1} of ${sources.length}…` : 'Detecting player names…');
           }
         }
       });
-      fullText += '\n' + (data && data.text ? data.text : '');
+      const lines = (data && data.lines) || [];
+      if(lines.length){
+        lines.forEach(ln => splitOcrLine(ln).forEach(part => {
+          extractPlayerNames(part.text).forEach(n => found.push({ ...n, conf: ln.confidence, bbox: isCanvas ? part.bbox : null, page: i }));
+        }));
+      } else {
+        extractPlayerNames((data && data.text) || '').forEach(n => found.push({ ...n, page: i }));
+      }
     }
+    if(!found.length) throw new Error('No player names found in that image — try a clearer photo, or use Type / Paste Names');
+    setImportProgress(95, 'Matching existing players…');
+    await buildImportReview(found);
     setImportProgress(100, 'Done');
-    const names = extractPlayerNames(fullText);
-    buildImportReview(names);
     showImportStep('review');
   } catch(err){
     showImportStep('upload');
-    toast(`❌ Couldn't read that file: ${err.message || err}`, 6000);
+    document.getElementById('import-retry-btn').style.display = importLastFile ? '' : 'none';
+    toast(`❌ ${err.message || err}`, 7000);
   }
 }
+document.getElementById('import-retry-btn').addEventListener('click', () => { if(importLastFile) handleImportFile(importLastFile); });
 
 // --- Text → player names -------------------------------------------------
 // Heuristic cleanup, not a guarantee — that's exactly why the review step
@@ -4715,6 +4790,20 @@ function extractPlayerNames(rawText){
     if(headerMatch && IMPORT_HEADER_WORDS.includes(headerMatch[1].trim().toLowerCase())) return;
     if(IMPORT_HEADER_WORDS.includes(line.toLowerCase())) return;
 
+    // Role tag → metadata ("- Batter", "(WK)", "| All-Rounder"); pipe-separated rows keep the name cell.
+    let role = null;
+    const rm = line.match(/[-–|,(]\s*(all[\s-]?rounder|batsman|batter|bowler|wicket[\s-]?keeper|wk|ar)\s*\)?\s*$/i);
+    if(rm){
+      const w = rm[1].toLowerCase();
+      role = /^wk|keeper/.test(w) ? 'WK' : /all|^ar$/.test(w) ? 'AR' : /bowl/.test(w) ? 'BOWL' : 'BAT';
+      line = line.slice(0, rm.index).trim();
+    }
+    if(line.includes('|')){
+      const cells = line.split('|').map(c => c.trim()).filter(c => c.replace(/[^a-zA-Z]/g, '').length >= 3);
+      if(cells.length) line = cells.sort((a, b) => b.replace(/[^a-zA-Z]/g, '').length - a.replace(/[^a-zA-Z]/g, '').length)[0];
+    }
+    // Jersey number is metadata only when it clearly sits at the edge of a name ("01 Rohit Sharma", "Rohit Sharma 18").
+    line = line.replace(/^\s*\d{1,2}\s+(?=[A-Za-z]{2})/, '').replace(/(?<=[A-Za-z]{2})\s+#?\d{1,3}\s*$/, '');
     // Leading serial number: "1.", "01)", "12 -"
     line = line.replace(/^\s*\d{1,2}\s*[\.\)\-]\s*/, '');
     // Leading jersey-number style prefix: "#7 ", "No.7 "
@@ -4742,7 +4831,7 @@ function extractPlayerNames(rawText){
     const nonLetterRatio = 1 - (letters.length / line.replace(/\s/g, '').length || 1);
     const flagged = hasDigitInWord || nonLetterRatio > 0.35;
 
-    out.push({ name: line.toUpperCase(), flagged });
+    out.push({ name: line.toUpperCase(), flagged, role });
   });
   return out;
 }
@@ -4763,172 +4852,298 @@ function parseManualNames(rawText){
   const useCommaSplit = lines.length === 1 && commaParts.length > 1;
   return extractPlayerNames(useCommaSplit ? commaParts.join('\n') : text);
 }
-document.getElementById('import-paste-process-btn').addEventListener('click', () => {
+document.getElementById('import-paste-process-btn').addEventListener('click', async () => {
+  importPages = [];
   const text = document.getElementById('import-paste-text').value;
   const names = parseManualNames(text);
   if(!names.length){
     toast('Could not find any names in that text — check the formatting and try again.', 5000);
     return;
   }
-  buildImportReview(names);
+  await buildImportReview(names);
   showImportStep('review');
 });
 
-// --- Review step ----------------------------------------------------------
-// Classic edit-distance, used only to flag POSSIBLE matches for a human to
-// confirm (see below) — never to auto-merge. Small inputs only (player
-// names), so the plain O(n*m) table is plenty fast.
+// --- Player matching engine ------------------------------------------------
+// One shared pipeline used by "+ Add", pasted lists and photo scans:
+//   normalise → exact → token-order → OCR-fold → initials → fuzzy, searched
+//   in this order of authority: current squads → this tournament's teams →
+//   the account's global player history (/api/players/search).
+// Only HIGH matches auto-link. Anything fuzzy/ambiguous is MEDIUM and always
+// needs one tap from the operator — a similar name is never silently merged,
+// and a new spelling never silently forks a second Player ID.
 function levenshtein(a, b){
   const m = a.length, n = b.length;
   if(m === 0) return n;
   if(n === 0) return m;
-  const prev = new Array(n + 1);
-  for(let j = 0; j <= n; j++) prev[j] = j;
+  let prev = Array.from({length: n + 1}, (_, j) => j);
   for(let i = 1; i <= m; i++){
-    let cur = [i];
+    const cur = [i];
     for(let j = 1; j <= n; j++){
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
     }
-    prev.splice(0, prev.length, ...cur);
+    prev = cur;
   }
   return prev[n];
 }
-// Same-person heuristic for names that are close but not identical
-// ("JEETH SUVARN" vs "JEETH SUVARNA") — small absolute distance relative to
-// length, so short names need a near-exact match while longer ones tolerate
-// a couple of character slips (a missed vowel, a transposed letter).
-function findFuzzyMatch(name, existingNames){
-  let best = null, bestDist = Infinity;
-  existingNames.forEach(existing => {
-    if(existing === name) return;
-    const dist = levenshtein(name, existing);
-    const tolerance = Math.max(1, Math.floor(Math.max(name.length, existing.length) * 0.2));
-    if(dist <= tolerance && dist < bestDist){ best = existing; bestDist = dist; }
-  });
-  return best;
-}
-function buildImportReview(names){
-  importRows = [];
-  importDupRows = [];
-  const existingList = rosterPlayers(importTargetTeam).map(p => (p.name || '').trim().toUpperCase());
-  const existing = new Set(existingList);
-  const seen = new Set(); // de-dupe names detected twice within the same upload
-  names.forEach(n => {
-    if(seen.has(n.name)) return;
-    seen.add(n.name);
-    const row = { rowId: importRowId(), name: n.name, flagged: n.flagged, checked: true };
-    if(existing.has(n.name)){
-      row.checked = false;
-      importDupRows.push(row);
-    } else {
-      // Not an exact match — but flag a close one so the scorer can choose
-      // "Use Existing" instead of accidentally forking a second Player ID
-      // for what's really the same teammate (see item 5/6 in the spec:
-      // reuse existing IDs, but never silently auto-merge).
-      row.possibleMatch = findFuzzyMatch(n.name, existingList);
-      importRows.push(row);
+const PM = (() => {
+  const norm = s => String(s || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/['’`´]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  // OCR-confusable folding — used ONLY for comparison, never to rewrite the name.
+  const fold1 = s => norm(s).split(' ').map(w => /[a-z]/.test(w) ? w.replace(/0/g, 'o').replace(/[1|]/g, 'l').replace(/5/g, 's') : w)
+    .join(' ').replace(/(.)\1+/g, '$1');
+  const fold2 = s => fold1(s).replace(/rn/g, 'm').replace(/vv/g, 'w').replace(/cl/g, 'd');
+  const sortTok = s => s.split(' ').sort().join(' ');
+  function score(a, b){
+    const na = norm(a), nb = norm(b);
+    if(!na || !nb) return 0;
+    if(na === nb) return 1;
+    if(sortTok(na) === sortTok(nb)) return 0.98;
+    const fa = fold1(a), fb = fold1(b);
+    if(fa === fb) return 0.95;
+    if(sortTok(fa) === sortTok(fb)) return 0.94;
+    let best = 0;
+    const ta = na.split(' '), tb = nb.split(' ');
+    if(ta.length >= 2 && tb.length >= 2){          // "R Sharma" ~ "Rohit Sharma"
+      const la = ta[ta.length - 1], lb = tb[tb.length - 1];
+      const fa0 = ta[0], fb0 = tb[0];
+      const lastOk = fold1(la) === fold1(lb);
+      const initOk = (fa0.length === 1 && fb0[0] === fa0) || (fb0.length === 1 && fa0[0] === fb0);
+      if(lastOk && initOk) best = 0.88;              // ambiguous by nature → medium
     }
+    const f2a = fold2(a), f2b = fold2(b);
+    if(f2a === f2b) best = Math.max(best, 0.88);
+    const shortName = Math.min(na.length, nb.length) < 5;
+    [[fa, fb], [sortTok(fa), sortTok(fb)]].forEach(([x, y]) => {
+      const d = levenshtein(x, y), len = Math.max(x.length, y.length);
+      if(shortName && d > 1) return;
+      best = Math.max(best, Math.min(0.91, 1 - d / len));
+    });
+    return best;
+  }
+  const SRC_BONUS = { squad: 0.02, tournament: 0.015, global: 0 };
+  function rank(name, pool, limit){
+    return pool.map(p => ({ id: p.id, name: p.name, src: p.src, score: Math.max(...(p.names || [p.name]).map(n => score(name, n))) }))
+      .filter(c => c.score >= 0.6)
+      .sort((a, b) => (b.score + (SRC_BONUS[b.src] || 0)) - (a.score + (SRC_BONUS[a.src] || 0)))
+      .slice(0, limit || 5);
+  }
+  function classify(name, pool){
+    const cands = rank(name, pool, 5);
+    if(!cands.length || cands[0].score < 0.72) return { status: 'new', cands };
+    const top = cands[0], rival = cands.find(c => c !== top && c.score >= top.score - 0.04);
+    if(top.score >= 0.94 && !rival) return { status: 'existing', cands };
+    return { status: 'possible', cands };
+  }
+  return { norm, score, rank, classify };
+})();
+
+let globalPool = [];           // players found via /api/players/search this session
+const globalPoolQueried = new Set();
+function buildPlayerPool(){
+  const map = new Map();
+  const add = (id, name, src) => {
+    name = String(name || '').trim();
+    if(!name) return;
+    const k = id || ('n:' + PM.norm(name));
+    const cur = map.get(k);
+    if(!cur) map.set(k, { id: id || null, name, src, names: [name] });
+    else if(!cur.names.includes(name)) cur.names.push(name);
+  };
+  ['A', 'B'].forEach(k => rosterPlayers(k).forEach(p => add(p.id, p.name, 'squad')));
+  try{ collectTournamentTeams().forEach(t => (t.players || []).forEach(p => add(p.id, p.name, 'tournament'))); }catch(e){}
+  globalPool.forEach(p => add(p.id, p.name, 'global'));
+  return [...map.values()];
+}
+// Best-effort: pull likely candidates from the account-wide player history.
+// Queries by 3-letter prefixes of each name part so a misspelt surname still
+// surfaces "Sharma" for "Sharmma". Offline/failed → silently keep local pool.
+async function loadGlobalPool(names){
+  if(!currentOwnerUid()) return;
+  const todo = [...new Set(names.map(n => String(n || '').trim()).filter(n => n.length >= 2))].filter(n => !globalPoolQueried.has(n)).slice(0, 30);
+  await Promise.all(todo.map(async n => {
+    globalPoolQueried.add(n);
+    try{
+      // Server-ranked, typo-tolerant candidates (merged-away profiles already excluded).
+      let res = await fetch(withUid(`/api/players/candidates?q=${encodeURIComponent(n)}`));
+      if(res.status === 404) res = await fetch(withUid(`/api/players/search?q=${encodeURIComponent(n.split(' ')[0])}`)); // older server
+      const data = await res.json();
+      ((data && data.players) || []).forEach(p => {
+        const id = p.playerId || p.id || null, name = p.displayName || p.name;
+        if(name && !globalPool.some(g => (id ? g.id === id : g.name === name))) globalPool.push({ id, name });
+      });
+    }catch(e){ globalPoolQueried.delete(n); }
+  }));
+}
+function titleCase(s){
+  return String(s || '').toLowerCase().replace(/(^|[\s'\-.])([a-z])/g, (m, a, b) => a + b.toUpperCase());
+}
+
+// Small chooser used by the single "+ Add" flow when the match is uncertain.
+function askPossibleMatch(name, cands){
+  return new Promise(resolve => {
+    const ov = document.createElement('div');
+    ov.className = 'wicket-modal-overlay show';
+    ov.innerHTML = `<div class="wicket-modal"><h3>Possible existing player</h3>
+      <div class="wm-sub">“${escapeHtmlPanel(name)}” looks like a player who already exists. Reusing them keeps their stats, clips and Player ID together.</div>
+      <div class="pm-choices">${cands.map((c, i) => `<button type="button" class="small primary" data-i="${i}">Use ${escapeHtmlPanel(c.name)}</button>`).join('')}
+      <button type="button" class="small ghost" data-new="1">Create separate player</button>
+      <button type="button" class="small ghost" data-cancel="1">Cancel</button></div></div>`;
+    ov.addEventListener('click', e => {
+      const b = e.target.closest('button'); if(!b) return;
+      ov.remove();
+      resolve(b.dataset.cancel ? null : b.dataset.new ? 'new' : cands[+b.dataset.i]);
+    });
+    document.body.appendChild(ov);
   });
+}
+
+// --- Review step ------------------------------------------------------------
+let importPages = [];          // [{url,w,h}] — original scan kept for side-by-side review
+let importLastFile = null;     // never lose the upload: Retry works after OCR/network failure
+
+function summaryOf(rows){
+  const live = rows.filter(r => !r.dupOf);
+  const c = { total: live.length, existing: 0, possible: 0, fresh: 0, skipped: rows.filter(r => r.dupOf || r.inSquad).length };
+  live.forEach(r => { if(r.inSquad) return; if(r.status === 'existing') c.existing++; else if(r.status === 'possible' && !r.decided) c.possible++; else c.fresh++; });
+  return c;
+}
+function rematchRow(row){
+  const r = PM.classify(row.name, buildPlayerPool());
+  row.cands = r.cands;
+  row.status = r.status;
+  row.match = r.status === 'existing' ? r.cands[0] : null;
+  row.decided = r.status !== 'possible';
+  const inSquad = new Set(rosterPlayers(importTargetTeam).map(p => p.id).filter(Boolean));
+  row.inSquad = !!(row.match && row.match.id && inSquad.has(row.match.id));
+  row.checked = !row.inSquad;
+}
+// Two lines that resolve to the same identity are ONE player.
+function dedupeImportRows(){
+  const seen = new Map();
+  importRows.forEach((row, i) => {
+    row.dupOf = null;
+    const key = (row.status === 'existing' && row.match) ? 'm:' + (row.match.id || PM.norm(row.match.name))
+      : (row.status === 'new' || (row.status === 'possible' && row.decided)) ? 'n:' + PM.norm(row.name) : null;
+    if(!key) return;
+    if(seen.has(key)){ row.dupOf = seen.get(key) + 1; row.checked = false; } else seen.set(key, i);
+  });
+}
+async function buildImportReview(names){
+  importRows = names.map(n => ({
+    rowId: importRowId(), ocrText: n.name, name: titleCase(n.name), flagged: !!n.flagged,
+    ocrConf: n.conf, bbox: n.bbox, page: n.page || 0, role: n.role || null, checked: true
+  }));
+  importDupRows = [];
+  try{ await loadGlobalPool(importRows.map(r => r.name)); }catch(e){}
+  importRows.forEach(rematchRow);
+  dedupeImportRows();
   renderImportReview();
+}
+function readQuality(row){
+  if(row.flagged || (row.ocrConf != null && row.ocrConf < 55)) return ['low', '? Hard to read — please check'];
+  if(row.ocrConf != null && row.ocrConf < 75) return ['med', '⚠ Check spelling'];
+  return ['high', '✓ Clear'];
 }
 function renderImportReview(){
   const list = document.getElementById('import-review-list');
-  list.innerHTML = '';
-  let anyFlagged = false;
-  importRows.forEach(row => {
-    if(row.flagged) anyFlagged = true;
-    const el = document.createElement('div');
-    el.className = 'import-review-row' + (row.flagged ? ' low-conf' : '');
-    el.dataset.rowId = row.rowId;
+  const s = summaryOf(importRows);
+  document.getElementById('import-summary').innerHTML =
+    `<b>${s.total}</b> detected · <span class="ok">${s.existing} existing</span> · <span class="warn">${s.possible} need a decision</span> · <span class="new">${s.fresh} new</span>` +
+    (s.skipped ? ` · <span class="dim">${s.skipped} skipped (duplicate / already in squad)</span>` : '');
+  document.getElementById('import-accept-all').style.display = importRows.some(r => r.status === 'possible' && !r.decided) ? '' : 'none';
+  const hasImg = importPages.some(Boolean);
+  document.getElementById('import-modal').classList.toggle('has-image', hasImg);
+  document.getElementById('import-img-pane').style.display = hasImg ? '' : 'none';
 
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = row.checked;
-    cb.addEventListener('change', () => { row.checked = cb.checked; });
-
-    const nameInput = document.createElement('input');
-    nameInput.type = 'text';
-    nameInput.value = row.name;
-    nameInput.addEventListener('input', () => {
-      row.name = nameInput.value.toUpperCase();
-      row.flagged = false; // an edited name has been human-verified — stop flagging it
-      el.classList.remove('low-conf');
-    });
-
-    const removeBtn = document.createElement('button');
-    removeBtn.type = 'button';
-    removeBtn.className = 'irr-remove';
-    removeBtn.textContent = '✕';
-    removeBtn.title = 'Remove from import';
-    removeBtn.addEventListener('click', () => {
-      importRows = importRows.filter(r => r.rowId !== row.rowId);
-      renderImportReview();
-    });
-
-    el.appendChild(cb); el.appendChild(nameInput); el.appendChild(removeBtn);
-
-    if(row.possibleMatch){
-      const hint = document.createElement('div');
-      hint.className = 'irr-fuzzy-hint';
-      const label = document.createElement('span');
-      label.innerHTML = `Possible existing player — looks like <b>${row.possibleMatch}</b>`;
-      const useBtn = document.createElement('button');
-      useBtn.type = 'button';
-      useBtn.className = 'small';
-      useBtn.textContent = 'Use Existing';
-      useBtn.title = `Skip this and keep using ${row.possibleMatch}'s existing Player ID`;
-      useBtn.addEventListener('click', () => {
-        // Same treatment as an exact duplicate: don't create a new player,
-        // just leave the existing one in the squad (skipped by default,
-        // but the scorer can still tick it to add as a genuinely separate
-        // person if that's what they actually meant).
-        importRows = importRows.filter(r => r.rowId !== row.rowId);
-        importDupRows.push({ rowId: row.rowId, name: row.possibleMatch, checked: false });
-        renderImportReview();
-      });
-      const keepBtn = document.createElement('button');
-      keepBtn.type = 'button';
-      keepBtn.className = 'small ghost';
-      keepBtn.textContent = 'Keep as New';
-      keepBtn.title = 'This is actually a different person — import as a new player';
-      keepBtn.addEventListener('click', () => {
-        row.possibleMatch = null;
-        renderImportReview();
-      });
-      hint.appendChild(label); hint.appendChild(useBtn); hint.appendChild(keepBtn);
-      el.appendChild(hint);
-    }
-
-    list.appendChild(el);
-  });
-  document.getElementById('import-low-conf-hint').classList.toggle('show', anyFlagged);
-
-  const dupBox = document.getElementById('import-dup-box');
-  const dupList = document.getElementById('import-dup-list');
-  dupList.innerHTML = '';
-  importDupRows.forEach(row => {
-    const el = document.createElement('div');
-    el.className = 'import-dup-row';
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = row.checked;
-    cb.title = 'Import anyway as a separate player';
-    cb.addEventListener('change', () => { row.checked = cb.checked; });
-    const span = document.createElement('span');
-    span.textContent = row.name;
-    el.appendChild(cb); el.appendChild(span);
-    dupList.appendChild(el);
-  });
-  dupBox.classList.toggle('show', importDupRows.length > 0);
+  list.innerHTML = importRows.map((row, i) => {
+    const [q, qLabel] = readQuality(row);
+    let status = '';
+    if(row.dupOf) status = `<span class="pm-badge dup">Duplicate — same player as #${row.dupOf}, imported once</span>`;
+    else if(row.inSquad) status = `<span class="pm-badge dup">Already in this squad — skipped</span>`;
+    else if(row.status === 'existing') status = `<span class="pm-badge ok">✓ Existing player</span> <b>${escapeHtmlPanel(row.match.name)}</b> <span class="dim">— same Player ID kept</span>`;
+    else if(row.status === 'possible' && !row.decided){
+      status = `<span class="pm-badge warn">⚠ Possible match</span> ` + row.cands.slice(0, 3).map(c =>
+        `<button type="button" class="small" data-act="use" data-pid="${escapeHtmlAttr(c.id || '')}" data-pname="${escapeHtmlAttr(c.name)}">Use ${escapeHtmlPanel(c.name)}</button>`).join('')
+        + `<button type="button" class="small ghost" data-act="sep">Create separate</button>`;
+    } else status = `<span class="pm-badge new">+ New player</span>` + (row.status === 'possible' ? ' <span class="dim">(kept separate on purpose)</span>' : ' <span class="dim">no reliable match found</span>');
+    const showEdit = !row.dupOf && !row.inSquad;
+    return `<div class="import-review-row pm-row ${q === 'low' ? 'low-conf' : ''}" data-row="${row.rowId}">
+      <input type="checkbox" data-act="chk" ${row.checked ? 'checked' : ''} ${row.dupOf || row.inSquad ? 'disabled' : ''}>
+      <div class="pm-main">
+        <div class="pm-line1"><span class="pm-num">${i + 1}</span>
+          <input type="text" data-act="name" value="${escapeHtmlAttr(row.name)}" title="Edit and press Enter to re-match">
+          ${row.ocrConf != null || row.flagged ? `<span class="pm-q ${q}">${qLabel}</span>` : ''}
+          <button type="button" class="irr-remove" data-act="rm" title="Remove">✕</button></div>
+        <div class="pm-line2">${status}${showEdit ? ` <button type="button" class="small ghost" data-act="search">Search</button>` : ''}${row.role ? ` <span class="pm-badge role">${escapeHtmlPanel(row.role)}</span>` : ''}</div>
+        ${row.ocrText && PM.norm(row.ocrText) !== PM.norm(row.name) ? `<div class="dim pm-read">scan read: “${escapeHtmlPanel(row.ocrText)}”</div>` : ''}
+        <div class="pm-search" style="display:none"><input type="text" placeholder="Search players…" data-act="q"><div class="pm-search-res"></div></div>
+      </div></div>`;
+  }).join('') || '<div class="dim" style="padding:14px;">Nothing detected yet — add a name below.</div>';
+  document.getElementById('import-low-conf-hint').classList.toggle('show', importRows.some(r => readQuality(r)[0] === 'low'));
+  document.getElementById('import-dup-box').classList.remove('show');
 }
-document.getElementById('import-add-name-btn').addEventListener('click', () => {
+function importRowFrom(el){ const r = el.closest('[data-row]'); return r ? importRows.find(x => x.rowId === r.dataset.row) : null; }
+function showImportHighlight(row){
+  const pg = importPages[row.page || 0], img = document.getElementById('import-img'), hl = document.getElementById('import-hl');
+  if(!pg){ hl.style.display = 'none'; return; }
+  if(img.dataset.src !== pg.url){ img.src = pg.url; img.dataset.src = pg.url; }
+  if(row.bbox && pg.w){
+    const b = row.bbox, pad = 6;
+    hl.style.cssText = `display:block;left:${Math.max(0, (b.x0 - pad) / pg.w * 100)}%;top:${Math.max(0, (b.y0 - pad) / pg.h * 100)}%;width:${(b.x1 - b.x0 + pad * 2) / pg.w * 100}%;height:${(b.y1 - b.y0 + pad * 2) / pg.h * 100}%`;
+    hl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  } else hl.style.display = 'none';
+}
+(() => {
+  const list = document.getElementById('import-review-list');
+  list.addEventListener('focusin', e => { const row = importRowFrom(e.target); if(row) showImportHighlight(row); });
+  list.addEventListener('click', e => {
+    const b = e.target.closest('[data-act]'); const row = importRowFrom(e.target);
+    if(!b || !row) return;
+    const act = b.dataset.act;
+    if(act === 'use'){ row.status = 'existing'; row.match = { id: b.dataset.pid || null, name: b.dataset.pname }; row.decided = true; row.inSquad = !!(row.match.id && rosterPlayers(importTargetTeam).some(p => p.id === row.match.id)); row.checked = !row.inSquad; dedupeImportRows(); renderImportReview(); }
+    else if(act === 'sep'){ row.status = 'new'; row.match = null; row.decided = true; row.forceNew = true; dedupeImportRows(); renderImportReview(); }
+    else if(act === 'rm'){ importRows = importRows.filter(r => r.rowId !== row.rowId); dedupeImportRows(); renderImportReview(); }
+    else if(act === 'search'){ const box = b.closest('[data-row]').querySelector('.pm-search'); box.style.display = box.style.display === 'none' ? '' : 'none'; box.querySelector('input').focus(); }
+    else if(act === 'pick'){ row.status = 'existing'; row.match = { id: b.dataset.pid || null, name: b.dataset.pname }; row.decided = true; row.inSquad = !!(row.match.id && rosterPlayers(importTargetTeam).some(p => p.id === row.match.id)); row.checked = !row.inSquad; dedupeImportRows(); renderImportReview(); }
+    if(act !== 'chk') showImportHighlight(row);
+  });
+  list.addEventListener('change', async e => {
+    const row = importRowFrom(e.target); if(!row) return;
+    if(e.target.dataset.act === 'chk') row.checked = e.target.checked;
+    else if(e.target.dataset.act === 'name'){     // edited by a human → trusted, re-match immediately
+      row.name = e.target.value.trim(); row.flagged = false; row.ocrConf = null; row.forceNew = false;
+      await loadGlobalPool([row.name]); rematchRow(row); dedupeImportRows(); renderImportReview();
+    }
+  });
+  let t = null;
+  list.addEventListener('input', e => {
+    if(e.target.dataset.act !== 'q') return;
+    const inp = e.target; clearTimeout(t);
+    t = setTimeout(async () => {
+      const q = inp.value.trim(); const res = inp.parentNode.querySelector('.pm-search-res');
+      if(q.length < 2){ res.innerHTML = ''; return; }
+      await loadGlobalPool([q]);
+      const pool = buildPlayerPool(), nq = PM.norm(q);
+      const hits = pool.filter(p => (p.names || [p.name]).some(n => PM.norm(n).includes(nq))).concat(PM.rank(q, pool, 5)).filter((p, i, a) => a.findIndex(x => (x.id || x.name) === (p.id || p.name)) === i).slice(0, 6);
+      res.innerHTML = hits.map(h => `<button type="button" class="small" data-act="pick" data-pid="${escapeHtmlAttr(h.id || '')}" data-pname="${escapeHtmlAttr(h.name)}">${escapeHtmlPanel(h.name)}</button>`).join('') || '<span class="dim">No player found — it will be created as new.</span>';
+    }, 250);
+  });
+})();
+document.getElementById('import-accept-all').addEventListener('click', () => {
+  importRows.filter(r => r.status === 'possible' && !r.decided).forEach(r => {
+    const c = r.cands[0]; r.status = 'existing'; r.match = { id: c.id, name: c.name }; r.decided = true;
+    r.inSquad = !!(c.id && rosterPlayers(importTargetTeam).some(p => p.id === c.id)); r.checked = !r.inSquad;
+  });
+  dedupeImportRows(); renderImportReview();
+});
+document.getElementById('import-add-name-btn').addEventListener('click', async () => {
   const input = document.getElementById('import-add-name');
-  const name = input.value.trim().toUpperCase();
+  const name = titleCase(input.value.trim());
   if(!name) return;
-  importRows.push({ rowId: importRowId(), name, flagged: false, checked: true });
   input.value = '';
-  renderImportReview();
+  const row = { rowId: importRowId(), ocrText: '', name, flagged: false, checked: true, page: 0 };
+  await loadGlobalPool([name]); rematchRow(row); importRows.push(row); dedupeImportRows(); renderImportReview();
 });
 document.getElementById('import-add-name').addEventListener('keydown', e => {
   if(e.key === 'Enter') document.getElementById('import-add-name-btn').click();
@@ -4937,36 +5152,33 @@ document.getElementById('import-add-name').addEventListener('keydown', e => {
 document.getElementById('import-modal-confirm').addEventListener('click', async () => {
   const key = importTargetTeam;
   if(!key) return;
-  const toAdd = [...importRows, ...importDupRows]
-    .filter(r => r.checked && r.name.trim())
-    .map(r => r.name.trim());
-  if(!toAdd.length){ toast('No players selected to import'); return; }
+  const undecided = importRows.filter(r => r.status === 'possible' && !r.decided && r.checked && !r.dupOf);
+  if(undecided.length){
+    toast(`Decide ${undecided.length} possible match${undecided.length === 1 ? '' : 'es'} first (or untick them)`, 4500);
+    const el = document.querySelector(`[data-row="${undecided[0].rowId}"]`); if(el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    return;
+  }
+  const rows = importRows.filter(r => r.checked && !r.dupOf && !r.inSquad && r.name.trim());
+  if(!rows.length){ toast('No players selected to import'); return; }
   const t = teamObj(key);
   t.players = t.players || [];
-  // Same duplicate-protection as the single "+ Add" flow (see
-  // resolveOrCreatePlayerId above) — a printed team sheet imported into a
-  // second match of the same tournament should reuse each player's
-  // existing permanent ID, not fork a fresh one per import.
   const btn = document.getElementById('import-modal-confirm');
-  btn.disabled = true;
-  const prevLabel = btn.textContent;
-  btn.textContent = 'Importing…';
+  btn.disabled = true; const prevLabel = btn.textContent; btn.textContent = 'Importing…';
+  let added = 0, linked = 0;
   try{
-    const playerIds = await Promise.all(toAdd.map(name => resolveOrCreatePlayerId(name)));
-    toAdd.forEach((name, i) => {
-      const playerId = playerIds[i];
-      if(t.players.some(p => p.id === playerId)) return; // already on the squad
-      t.players.push({ id: playerId, name, isXI: true });
+    // Existing players keep their exact ID; only genuinely new ones go to the server's find-or-create.
+    const ids = await Promise.all(rows.map(r => (r.status === 'existing' && r.match)
+      ? (r.match.id ? Promise.resolve(r.match.id) : resolveOrCreatePlayerId(r.match.name))
+      : resolveOrCreatePlayerId(r.name.trim(), !!r.forceNew)));
+    rows.forEach((r, i) => {
+      if(t.players.some(p => p.id === ids[i])) return;          // same identity already on squad
+      const isLinked = r.status === 'existing' && r.match;
+      t.players.push({ id: ids[i], name: isLinked ? r.match.name : r.name.trim(), isXI: true, origin: isLinked ? 'existing' : 'new', ...(r.role ? { role: r.role } : {}) });
+      added++; if(isLinked) linked++;
     });
-  } finally {
-    btn.disabled = false;
-    btn.textContent = prevLabel;
-  }
-  renderSquadUI();
-  renderRosterControls();
-  pushState(true);
-  closeImportModal();
-  toast(`✅ Imported ${toAdd.length} player${toAdd.length === 1 ? '' : 's'} into ${t.name || (key === 'A' ? 'Team A' : 'Team B')}`);
+  } finally { btn.disabled = false; btn.textContent = prevLabel; }
+  renderSquadUI(); renderRosterControls(); pushState(true); closeImportModal();
+  toast(`✅ ${added} player${added === 1 ? '' : 's'} added to ${t.name || (key === 'A' ? 'Team A' : 'Team B')} (${linked} linked to existing IDs, ${added - linked} new)`);
 });
 
 /* ============================================================
@@ -6669,7 +6881,7 @@ function syncFailureToast(res, fallbackMsg){
 function squadSnapshotOf(t){
   t = t || {};
   return {
-    players: (t.players || []).map(pl => ({ id: pl.id, name: pl.name, isXI: pl.isXI !== false })),
+    players: (t.players || []).map(pl => ({ id: pl.id, name: pl.name, isXI: pl.isXI !== false, ...(pl.role ? { role: pl.role } : {}) })),
     captainId: t.captainId || null,
     wkId: t.wkId || null
   };
@@ -12848,7 +13060,7 @@ async function prepareTeamForNewMatch(team){
       if(!id){ id = genPlayerId(); unverified++; }
     }
     if(players.some(x => x.id === id)) continue;
-    players.push({ id, name: pl.name, isXI: pl.isXI !== false });
+    players.push({ id, name: pl.name, isXI: pl.isXI !== false, ...(pl.role ? { role: pl.role } : {}) });
   }
   return {
     name: team.name, short: team.short || '', color: team.color || '', logoUrl: team.logoUrl || '',
