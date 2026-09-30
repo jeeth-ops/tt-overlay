@@ -138,6 +138,26 @@ test('unmeasured: a device that really runs at 25 with 50i selected IS deinterla
   assert.ok(/yadif/.test(p.chain)); assert.strictEqual(p.cadence, 'clean');
 });
 
+test('the FIELD case: a 25 fps camera held over a 60 fps grid is NOT "1 in 2" — it is 25 fps of motion', () => {
+  // 60 slots/s, each of 25 unique frames held 2 or 3 slots (pattern 3,2,3,2,2…)
+  const f = []; let content = 0, slot = 0;
+  for (let i = 0; i < 360; i++) { const c = Math.floor((i * 25) / 60); f.push({ wallMs: 1000 + i * 1000 / 60, pts: i / 60, checksum: `C${c}`, scan: 'P' }); }
+  const a = sp.analyseFrames(f);
+  assert.strictEqual(a.duplicates.cycle, null, `reported a clean cycle of ${a.duplicates.cycle}`);
+  assert.strictEqual(a.contentRate, 25);
+  const p = sp.planNormalization(a, { mode: 'progressive' }, { programFps: 30 });
+  assert.strictEqual(p.cadence, 'judder'); assert.deepStrictEqual(p.smoothRates, [25]);
+  assert.strictEqual(sp.planNormalization(a, { mode: 'progressive' }, { programFps: 25 }).cadence, 'clean');
+});
+
+test('the FIELD case: 1080p raw delivering 10 of 60 fps is a DELIVERY failure with the MB/s named', () => {
+  const r = sp.buildReport({ label: 'avm', device: 'avm', frames: frames({ arrive: 10, stamp: 60 }), programFps: 30,
+    stderrText: '[info]   Stream #0:0: Video: rawvideo (YUY2 / 0x32595559), yuyv422, 1920x1080, 60 fps, 60 tbr, 10000k tbn' });
+  const d = r.stages.find((x) => x.stage === 'DELIVERY');
+  assert.strictEqual(d.status, 'fail'); assert.ok(/41 MB\/s/.test(d.detail), d.detail);
+  assert.strictEqual(r.firstProblem.stage, 'DELIVERY');
+});
+
 console.log('\ncontrol vs problem');
 
 test('the comparison names the FIRST stage where the control is fine and the problem source is not', () => {

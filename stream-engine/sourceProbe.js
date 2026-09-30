@@ -141,7 +141,7 @@ function dupCycle(dupPositions, total) {
     // Average spacing is the cycle (a 50→60 repeat lands every 6 frames on average,
     // a 25→60 repeat is not "1 in N" at all and is caught by fraction instead).
     const cycle = Math.round((dupPositions[dupPositions.length - 1] - dupPositions[0]) / (dupPositions.length - 1));
-    return cycle >= 2 && cycle <= 12 && Math.abs(dupPositions.length / total - 1 / cycle) < 0.35 / cycle ? cycle : null;
+    return cycle >= 2 && cycle <= 12 && Math.abs(dupPositions.length / total - 1 / cycle) < 0.1 / cycle ? cycle : null; // a real "1 in N" repeat matches 1/N closely; 25 frames held over 60 slots (58% repeats) is NOT "1 in 2"
 }
 
 // frames: [{ wallMs, pts, checksum, scan }] in arrival order.
@@ -287,6 +287,15 @@ function planNormalization(measurement, scan, { programFps }) {
         sourceFps = sourceFps ? sourceFps * (cycle - 1) / cycle : null;
         notes.push(`the device repeats 1 frame in every ${cycle} — removing the repeats restores the camera's own ${snapRate(sourceFps) || round(sourceFps, 2)} fps`);
     }
+    // Repeats that are NOT a clean 1-in-N (e.g. a 25 fps camera held over a
+    // 60 fps grid: frames shown 2, 3, 2, 3… times) cannot be removed by a
+    // fixed cycle. The motion rate is the unique-frame rate, so that is what
+    // the cadence is judged against.
+    const d = m.duplicates || {};
+    const irregular = !cycle && !d.staticContent && d.fraction > 0.05 && m.contentRate;
+    if (irregular) {
+        notes.push(`the device repeats frames irregularly (${Math.round(d.fraction * 100)}% repeats): ${m.deliveredRate || m.arrivalFps} delivered but only ${m.contentFps} unique — the camera's real rate is about ${m.contentRate} fps`);
+    }
     const interlaced = scan && scan.mode === 'interlaced';
     if (interlaced) {
         steps.push(`yadif=mode=send_field:parity=${scan.fieldOrder === 'bff' ? 'bff' : 'tff'}:deint=all`);
@@ -294,9 +303,13 @@ function planNormalization(measurement, scan, { programFps }) {
         notes.push(`the picture is interlaced (${scan.fieldOrder}) — each field becomes a frame`);
     }
     const snapped = snapRate(sourceFps) || (sourceFps ? round(sourceFps, 3) : null);
-    const rate = rateStep(snapped, programFps);
+    let rate = rateStep(snapped, programFps);
+    if (irregular) {
+        const same = Math.abs(m.contentRate - programFps) / programFps < 0.02;
+        rate = { kind: 'irregular', filter: `fps=${programFps}`, judder: !same, reason: `${m.contentRate} fps of real motion arrives with irregular repeats${same ? '' : `, and ${programFps} is not that rate`}` };
+    }
     if (rate.filter) steps.push(rate.filter);
-    const smooth = smoothProgramRates(snapped);
+    const smooth = irregular ? [m.contentRate] : smoothProgramRates(snapped);
     if (rate.judder) notes.push(`⚠ ${rate.reason} — motion WILL judder. Smooth program rates for this source: ${smooth.join(', ') || 'none of 25/30/50/60'}`);
     return {
         deliveredFps: m.deliveredRate || m.arrivalFps || null,
@@ -355,7 +368,10 @@ function stageVerdicts(report) {
         push('NEGOTIATION', 'warn', `asked ${req.width || '?'}×${req.height || '?'}@${req.fps || '?'}, device set ${neg.width}×${neg.height}@${neg.fps}`);
     } else push('NEGOTIATION', 'ok', `${neg.width}×${neg.height} ${neg.pixFmt || neg.codec} @ ${neg.fps || '?'} fps (field order: ${neg.fieldOrder})`);
     if (neg && neg.fps && m.arrivalFps && Math.abs(m.arrivalFps - neg.fps) / neg.fps > 0.03) {
-        push('DELIVERY', 'warn', `negotiated ${neg.fps} fps but ${m.arrivalFps} frames/s actually arrive`);
+        const short = m.arrivalFps < 0.9 * neg.fps;
+        const bytesPerSec = neg.width && neg.height && /yuyv|uyvy|yuy2/i.test(neg.pixFmt || '') ? neg.width * neg.height * 2 * m.arrivalFps : null;
+        push('DELIVERY', short ? 'fail' : 'warn', `negotiated ${neg.fps} fps but ${m.arrivalFps} frames/s actually arrive` +
+            (short && bytesPerSec ? ` (${Math.round(bytesPerSec / 1e6)} MB/s of raw video — if every mode tops out near the same MB/s, the USB link is the limit)` : ''));
     } else push('DELIVERY', 'ok', `${m.arrivalFps} frames/s arrive`);
     if (report.captureDrops > 0 || m.missingFrames > 0) push('CAPTURE', 'fail', `${report.captureDrops} buffer-overflow drops, ${m.missingFrames} frames missing from the timeline (${m.gaps} gaps)`);
     else push('CAPTURE', 'ok', 'no dropped frames');
