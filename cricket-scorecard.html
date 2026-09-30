@@ -542,13 +542,16 @@
       color-mix(in srgb, var(--team-a-color) 50%, var(--team-b-color)) 50%,
       var(--team-b-color) 66%, var(--team-b-color) 100%);
   }
-  .sb-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:15px 16px 12px; }
+  .sb-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:15px 16px 11px; }
   .sb-head .section-title{ margin-bottom:0; }
+  /* Inset a little and rounded rather than butting against the card's own
+     edges — square corners inside a rounded card read as an oversight, and
+     the small margin is what lets the rounding actually show. */
   #stream-embed-wrap{
-    position:relative; width:100%; aspect-ratio:16/9;
-    overflow:hidden; background:#000;
+    position:relative; width:auto; margin:0 12px; aspect-ratio:16/9;
+    overflow:hidden; background:#000; border-radius:13px;
   }
-  .sb-foot{ padding:12px 14px 14px; }
+  .sb-foot{ padding:12px 12px 13px; }
   /* Full-width so it is unmistakably the thing to press on a phone, where the
      card sits under the score and the player is the reason people scrolled. */
   #stream-youtube-btn{
@@ -5010,14 +5013,11 @@ function renderStreamBox(streamUrl, isFinished){
     return;
   }
   box.style.display = '';
-  // The badge must not say "Live" over a finished match's recording — the box
-  // shows for both, since the stream URL outlives the result.
+  // The stream URL outlives the result, so this card also appears over a
+  // finished match's recording — the Live pill is hidden there rather than
+  // relabelled, since "Replay" only restated what the result already says.
   const badge = document.getElementById('stream-badge');
-  if(badge){
-    badge.classList.toggle('live', !isFinished);
-    badge.firstElementChild.style.display = isFinished ? 'none' : '';
-    badge.lastChild.textContent = isFinished ? 'Replay' : 'Live';
-  }
+  if(badge) badge.style.display = isFinished ? 'none' : '';
   // Opens the video on YouTube itself — full screen, comments, the channel.
   // Deliberately a button rather than a link: it is an action on this card,
   // and this way it can never be dragged, middle-clicked into a broken tab, or
