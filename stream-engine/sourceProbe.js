@@ -321,7 +321,9 @@ function planNormalization(measurement, scan, { programFps }) {
     return {
         deliveredFps: m.deliveredRate || m.arrivalFps || null,
         timestamps, deviceTimestamps, dedupeCycle: cycle || null, deinterlace: interlaced ? scan.fieldOrder : null,
-        sourceFps: snapped, programFps: Number(programFps) || null,
+        // With irregular repeats the motion rate is the unique-frame rate, not
+        // the delivery rate — that is what every message must name.
+        sourceFps: irregular ? m.contentRate : snapped, programFps: Number(programFps) || null,
         rate, smoothRates: smooth, cadence: rate.judder ? 'judder' : 'clean',
         chain: steps.join(','), notes,
     };

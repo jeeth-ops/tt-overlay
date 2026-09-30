@@ -147,6 +147,7 @@ test('the FIELD case: a 25 fps camera held over a 60 fps grid is NOT "1 in 2" â€
   assert.strictEqual(a.contentRate, 25);
   const p = sp.planNormalization(a, { mode: 'progressive' }, { programFps: 30 });
   assert.strictEqual(p.cadence, 'judder'); assert.deepStrictEqual(p.smoothRates, [25]);
+  assert.strictEqual(p.sourceFps, 25, 'the panel said "the camera really delivers 60 fps of motion" for 25 unique frames');
   assert.strictEqual(sp.planNormalization(a, { mode: 'progressive' }, { programFps: 25 }).cadence, 'clean');
 });
 
