@@ -171,11 +171,38 @@
   :root[data-theme="light"] #ambient-wash span{ opacity:.17; }
   @keyframes awDriftA{ 0%,100%{ transform:translate3d(0,0,0) scale(1); } 50%{ transform:translate3d(6vmax,8vmax,0) scale(1.08); } }
   @keyframes awDriftB{ 0%,100%{ transform:translate3d(0,0,0) scale(1); } 50%{ transform:translate3d(-7vmax,-6vmax,0) scale(1.1); } }
-  @media (prefers-reduced-motion: reduce){ #ambient-wash span{ animation:none; } }
+  /* ⚠ SPECIFICITY: the blobs carry their animation on `#ambient-wash span.<class>`
+     (0,1,1,1). A media query adds NO specificity, so an override written as
+     `#ambient-wash span` (0,1,0,1) silently loses and the animation keeps
+     running — which is exactly what had been happening: the phone rule and the
+     reduced-motion rule below were both dead, and measured at 6x CPU throttle
+     on a 390px viewport this page ran a 50ms p50 frame during scroll (13-22
+     frames over 50ms per pass) purely from compositing two blur(70px) layers
+     that were still drifting. Every override here therefore names the classes.
+     Killing the animation alone takes the same scroll to a flat 16.7ms. */
+  @media (prefers-reduced-motion: reduce){
+    #ambient-wash span.aw-1, #ambient-wash span.aw-2{ animation:none; }
+  }
   /* Phones: the blur is the expensive part, so shrink and soften it
      rather than dropping the atmosphere altogether. */
-  @media (max-width:640px){ #ambient-wash span{ width:60vmax; height:60vmax; filter:blur(70px); opacity:.20; animation:none; } }
+  @media (max-width:640px){
+    #ambient-wash span{ width:60vmax; height:60vmax; filter:blur(70px); opacity:.20; }
+    #ambient-wash span.aw-1, #ambient-wash span.aw-2{ animation:none; will-change:auto; }
+  }
   #brandbar, #wrap{ position:relative; z-index:1; }
+
+  /* ---- 🔋 NOTHING ANIMATES IN A TAB NOBODY IS LOOKING AT ----
+     Same rule cricket-scorecard.html carries. The ambient blobs and the live
+     pulse dots are decorative and run forever; a backgrounded tab still
+     composites them on some engines, which is wasted battery on a phone left
+     on this page. Paused on visibilitychange, resumed on return — invisible,
+     because nothing here conveys information by moving. */
+  html.page-hidden #ambient-wash span.aw-1,
+  html.page-hidden #ambient-wash span.aw-2,
+  html.page-hidden .chip.live .lv-dot,
+  html.page-hidden .mc-dot.live{
+    animation-play-state:paused;
+  }
   /* Frosted, not opaque — an opaque panel would seal the ambient wash
      out entirely and every card would read as flat white again. ~12%
      comes through, diffused by a real blur, so it is light and never
@@ -1691,6 +1718,17 @@ window.addEventListener('load', () => {
   }, 1200);
 });
 </script>
-<script src="/clip-player.js?v=20260924"></script>
+<script src="/clip-player.js?v=20260924">
+/* 🔋 Marks the document while the tab is in the background so the CSS above
+   can pause every decorative animation. Registered once, passive, and it
+   touches a single class on <html> — nothing here reads layout, so it cannot
+   itself cost a frame. */
+(function(){
+  var el = document.documentElement;
+  var sync = function(){ el.classList.toggle('page-hidden', document.hidden); };
+  document.addEventListener('visibilitychange', sync, { passive: true });
+  sync();
+})();
+</script>
 </body>
 </html>

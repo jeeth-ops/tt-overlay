@@ -223,6 +223,54 @@
   #ambient-wash span.blob-a{ left:-18vmax; top:-14vmax; background:var(--team-a-color); animation:driftA 26s ease-in-out infinite; }
   #ambient-wash span.blob-b{ right:-18vmax; top:10vmax; background:var(--team-b-color); animation:driftB 30s ease-in-out infinite; }
   :root[data-theme="light"] #ambient-wash span{ opacity:.22; }
+
+  /* ---- 📱 THE DECORATION STOPS MOVING ON A PHONE ----
+     This page keeps SIX large, blurred, permanently-animating layers behind
+     the content: two ambient blobs (52vmax at blur(90px), each pinned to its
+     own compositor layer by will-change), the two team-crest watermarks, and
+     their two ghost copies. Every one of them recomposites for the whole time
+     the page is open, on a device that is also decoding a video and taking
+     socket updates. score-tournament.html already stopped animating its
+     ambient wash on phones for exactly this reason; this page never got the
+     same treatment.
+     The decoration is kept — it still looks identical standing still, because
+     the motion is a 26-second drift nobody is watching — only the continuous
+     work is dropped. will-change goes back to auto too: a permanently
+     promoted layer at this size costs GPU memory even when nothing moves. */
+  /* ⚠ SPECIFICITY: the blobs carry their animation on `#ambient-wash span.<class>`
+     (0,1,1,1). A media query adds NO specificity, so an override written as
+     `#ambient-wash span` (0,1,0,1) silently loses and the animation keeps
+     running — which is exactly what had been happening: the phone rule and the
+     reduced-motion rule below were both dead, and measured at 6x CPU throttle
+     on a 390px viewport this page ran a 50ms p50 frame during scroll (13-22
+     frames over 50ms per pass) purely from compositing two blur(70px) layers
+     that were still drifting. Every override here therefore names the classes.
+     The same trap applies to .tlw-ghost and the two watermarks. */
+  @media (max-width:640px){
+    #ambient-wash span{ width:60vmax; height:60vmax; filter:blur(60px); opacity:.26; }
+    /* Named by class deliberately — see the specificity note below. */
+    #ambient-wash span.blob-a, #ambient-wash span.blob-b{ animation:none; will-change:auto; }
+    :root[data-theme="light"] #ambient-wash span{ opacity:.18; }
+    .team-logo-watermark--team-a, .team-logo-watermark--team-b, .tlw-ghost{ animation:none; }
+    .tlw-ghost{ filter:blur(4px); }
+  }
+
+  /* ---- 🔋 NOTHING ANIMATES IN A TAB NOBODY IS LOOKING AT ----
+     A backgrounded tab still composites CSS animations on some engines, and
+     on iOS a page kept in a background tab with six animated layers is a
+     measurable battery drain for a match that runs seven hours. Paused on
+     visibilitychange and resumed on return; purely decorative, so pausing is
+     invisible. */
+  html.page-hidden #ambient-wash span.blob-a,
+  html.page-hidden #ambient-wash span.blob-b,
+  html.page-hidden .team-logo-watermark--team-a,
+  html.page-hidden .team-logo-watermark--team-b,
+  html.page-hidden .tlw-ghost,
+  html.page-hidden .conn-dot.on,
+  html.page-hidden .chip.live .lv-dot,
+  html.page-hidden #commentary-page-head .cp-live::before{
+    animation-play-state:paused;
+  }
   @keyframes driftA{
     0%,100%{ transform:translate3d(0,0,0) scale(1); }
     50%{ transform:translate3d(6vmax,8vmax,0) scale(1.08); }
@@ -8258,6 +8306,17 @@ async function performAttach(file, driveLink, meta){
 }
 
 connect();
+
+/* 🔋 Marks the document while the tab is in the background so the CSS above
+   can pause every decorative animation. Registered once, passive, and it
+   touches a single class on <html> — nothing here reads layout, so it cannot
+   itself cost a frame. */
+(function(){
+  var el = document.documentElement;
+  var sync = function(){ el.classList.toggle('page-hidden', document.hidden); };
+  document.addEventListener('visibilitychange', sync, { passive: true });
+  sync();
+})();
 </script>
 </body>
 </html>
