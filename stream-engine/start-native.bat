@@ -1,18 +1,14 @@
 @echo off
 REM ================================================================
-REM AllSportsLive Stream Engine — NATIVE PROGRAM FEED launcher.
+REM AllSportsLive Stream Engine - NATIVE PROGRAM FEED launcher.
 REM
-REM Same as start.bat, but also sets NATIVE_PROGRAM_FEED=true — the
-REM opt-in camera+overlay compositor pipeline (no gdigrab) documented in
-REM README.md. This is UNVERIFIED on real hardware — if something looks
-REM wrong, close this window and use the normal start.bat instead (the
-REM old gdigrab path is unaffected by anything here).
+REM Same as start.bat, but also sets NATIVE_PROGRAM_FEED=true - the
+REM camera+overlay compositor pipeline (no gdigrab), where ffmpeg opens
+REM the camera / capture card directly.
 REM
-REM Double-click this file to start the Stream Engine in native mode. It
-REM automatically points FFMPEG_PATH at the ffmpeg.exe sitting in this
-REM SAME folder (using %~dp0) — no need to type "set FFMPEG_PATH=..." by
-REM hand, and it keeps working even if this whole stream-engine folder
-REM is moved/renamed/copied to a different PC.
+REM FFMPEG_PATH is computed from %~dp0 (the folder this .bat is in), so
+REM it keeps working if this whole folder is moved, renamed or copied to
+REM another PC. Never type a path by hand.
 REM ================================================================
 cd /d "%~dp0"
 
@@ -20,8 +16,8 @@ if not exist "%~dp0ffmpeg.exe" (
     echo.
     echo  WARNING: ffmpeg.exe was not found in this folder:
     echo    %~dp0ffmpeg.exe
-    echo  Put ffmpeg.exe here, or edit this start-native.bat's FFMPEG_PATH line
-    echo  to point at wherever it actually is.
+    echo  Put ffmpeg.exe here, or edit this file's FFMPEG_PATH line to
+    echo  point at wherever it actually is.
     echo.
     pause
 )
@@ -29,30 +25,68 @@ if not exist "%~dp0ffmpeg.exe" (
 set FFMPEG_PATH=%~dp0ffmpeg.exe
 set NATIVE_PROGRAM_FEED=true
 
-REM 📁 WHERE RECORDINGS/CLIPS ARE SAVED — by default, right next to this
-REM folder (stream-engine\StreamEngineData\Recordings\...). If
-REM stream-engine sits inside a folder Windows/OneDrive backs up or syncs
-REM (Downloads is a common one), that sync can intermittently lock the
-REM recording file while it's being actively written, causing "Error
-REM opening output file" mid-match. To save recordings/clips somewhere
-REM else instead (a plain folder on C:\, or a separate drive — anywhere
-REM OneDrive/backup software doesn't touch), uncomment the next line and
-REM set it to that folder (it will create a StreamEngineData subfolder
-REM there):
-REM set STREAM_ENGINE_DATA_ROOT=C:\StreamEngineRecordings
+REM ----------------------------------------------------------------
+REM CAMERA MODE - leave this OFF unless you have a reason.
+REM
+REM Off (the default), the engine asks the camera what it supports and
+REM picks the best real mode itself. That is what you want, and it is
+REM the only thing that works when the source changes - a capture card
+REM publishes whatever its HDMI input is currently sending, so the right
+REM mode is not the same on every ground or with every camera.
+REM
+REM Forcing a mode the device does NOT support does not fall back - the
+REM device refuses it, ffmpeg cannot open the input at all, and you get
+REM no picture:
+REM
+REM     [in#0] Could not set video options
+REM     Error opening input file video=AVMATRIX USB Capture Video.
+REM     ffmpeg exited unexpectedly after 0s
+REM
+REM A laptop webcam hides this, because 1280x720@30 is a mode almost
+REM every webcam has. A capture card is where it bites.
+REM
+REM Only set this if the "camera offers ..." line in this window shows
+REM the mode you want AND auto-detect is picking a smaller one. Use a
+REM mode from that list exactly as it is printed.
+REM
+REM set STREAM_ENGINE_CAMERA_MODE=1920x1080@30
+REM ----------------------------------------------------------------
 
-echo Starting AllSportsLive Stream Engine — NATIVE PROGRAM FEED mode...
-echo ffmpeg: %FFMPEG_PATH%
-echo NATIVE_PROGRAM_FEED: %NATIVE_PROGRAM_FEED%
-if defined STREAM_ENGINE_DATA_ROOT echo Recordings/Clips folder: %STREAM_ENGINE_DATA_ROOT%\StreamEngineData
+REM ----------------------------------------------------------------
+REM WHERE RECORDINGS AND CLIPS ARE SAVED - by default right next to this
+REM folder (stream-engine\StreamEngineData\Recordings\...). If this
+REM folder sits somewhere OneDrive or a backup tool syncs (Downloads is
+REM the common one), that sync can lock the recording file while it is
+REM being written and the recording fails mid-match. To store them on a
+REM plain folder instead, uncomment the next line.
+REM
+REM set STREAM_ENGINE_DATA_ROOT=C:\StreamEngineRecordings
+REM ----------------------------------------------------------------
+
+echo.
+echo  Starting AllSportsLive Stream Engine - NATIVE PROGRAM FEED
+echo  ---------------------------------------------------------
+echo   ffmpeg      : %FFMPEG_PATH%
+if defined STREAM_ENGINE_CAMERA_MODE (
+    echo   Camera mode : %STREAM_ENGINE_CAMERA_MODE%  ^(FORCED^)
+    echo                 Set Live Studio -^> Resolution to match this.
+) else (
+    echo   Camera mode : auto-detect ^(recommended^)
+)
+if defined STREAM_ENGINE_DATA_ROOT echo   Recordings  : %STREAM_ENGINE_DATA_ROOT%\StreamEngineData
+echo.
+echo  Watch this window for:
+echo    "camera offers ..."          - every mode the card really supports
+echo    "camera mode auto-detected"  - the one it chose
+echo    "clip organiser loaded"      - player/team clip folders are on
+echo    "[CLIP FILED]"               - a clip was filed into its folders
 echo.
 
-REM Run node directly (not through npm): Ctrl+C then reaches the Stream Engine's
-REM own clean shutdown without npm's extra process and its error spam.
+REM Run node directly (not through npm): Ctrl+C then reaches the Stream
+REM Engine's own clean shutdown without npm's extra process and its
+REM error spam.
 node server.js
 
-REM Keeps the window open after Stream Engine stops/crashes, so any
-REM error message is actually readable instead of the window vanishing.
 echo.
 echo Stream Engine stopped. Press any key to close this window.
 pause >nul
