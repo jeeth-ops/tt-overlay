@@ -3475,12 +3475,7 @@ flushClassifyQueue();
 // Live per-clip status from the local Clipper Helper.
 const CJ_ACTIVE = ['WAITING', 'CUTTING', 'CUT_RETRY', 'LOCAL_SAVED', 'UPLOADING', 'UPLOAD_RETRY', 'UPLOADED',
   // v5 (offline-first) sync states, reported by the helper as syncStatus.
-  'OFFLINE_PENDING', 'SENDING', 'SENT', 'SYNC_RETRY', 'WEBSITE_UPDATE', 'WEBSITE_RETRY',
-  // Stream Engine's own job states (stream-engine/server.js). These were
-  // missing, so while a clip sat in WAITING_FOR_POSTROLL / FORWARDING /
-  // RETRY_PENDING the panel treated it as finished: it dropped to the idle
-  // 8s poll and the row showed the raw status string instead of a sentence.
-  'WAITING_FOR_POSTROLL', 'FORWARDING', 'RETRY_PENDING', 'LOCAL_ONLY'];
+  'OFFLINE_PENDING', 'SENDING', 'SENT', 'SYNC_RETRY', 'WEBSITE_UPDATE', 'WEBSITE_RETRY'];
 let clipJobsTimer = null;
 // The website is the source of truth for R2/Drive once it has the clip —
 // the helper can show a stale ❌ (e.g. an older helper that stopped
@@ -3544,12 +3539,7 @@ function clipJobLine(j){
   const secs = j.nextUploadAt ? Math.max(0, Math.round((j.nextUploadAt - Date.now()) / 1000)) : null;
   const legs = `R2 ${legIcon(j.r2Status)} · Drive ${legIcon(j.driveStatus)}`;
   switch(j.syncStatus || j.status){
-    case 'WAITING': case 'WAITING_FOR_POSTROLL': return '⏳ Waiting for the footage…';
-    // A clip that is cut and safe on this PC but has nowhere to upload to
-    // yet — it is NOT a failure, and it uploads by itself as soon as the
-    // match has an upload destination (see adoptLocalOnlyClips).
-    case 'LOCAL_ONLY': return '💾 Clip saved locally · ⏸️ no upload destination yet';
-    case 'FORWARDING': return '💾 Local ✓ · ☁️ sending to the website…';
+    case 'WAITING': return '⏳ Waiting for the footage…';
     case 'CUTTING': return j.cutAttempts > 1 ? `✂️ Cutting locally (attempt ${j.cutAttempts})…` : '✂️ Cutting locally…';
     case 'CUT_RETRY': return `🔁 Cut retry — ${j.error || ''}`;
     case 'CUT_FAILED': return '❌ Clip could not be cut';
@@ -3563,8 +3553,6 @@ function clipJobLine(j){
     case 'SYNC_COMPLETE': case 'COMPLETE': return j.driveBackupFailed ? '✅ Local ✓ · R2 ✓ (plays fine) · Drive ✕ backup skipped · website ✓' : '✅ Sync complete — local ✓ · R2 ✓ · Drive ✓ · website ✓';
     case 'UPLOAD_RETRY': return `💾 Local ✓ · 🔁 upload retry${secs != null ? ` in ${secs}s` : ''}`;
     case 'SERVER_REUPLOAD': return '💾 Local ✓ · 🔁 website restarted — helper re-sending clip';
-    case 'RETRY_PENDING': return `💾 Clip saved locally · 🔁 upload queued${secs != null ? ` (${secs}s)` : ''}${j.error ? ' — ' + j.error : ''}`;
-    case 'FAILED_PERMANENT': return `❌ ${j.error || 'Upload gave up — the clip is still saved locally'}`;
     case 'FAILED': return j.localSaved ? '💾 Clip saved locally · 🔁 sync pending' : '❌ Failed';
     default: return j.statusText || j.status;
   }

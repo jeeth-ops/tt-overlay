@@ -104,21 +104,27 @@ Attempt counts and offline flags move during a match, but `gracefulShutdown`
 flushed clip jobs only. Now it persists the queue too. (Harmless while B1 meant
 the file was never written anyway — it matters now that it is.)
 
-### B5. The panel misreported live clip status
+### B5. WITHDRAWN — I audited the wrong panel
 
-**Root cause.** `CJ_ACTIVE` and `clipJobLine()` in `cricket-panel.html` carry
-the *old ClipperHelper.exe* status names. The Stream Engine reports its own
-(`WAITING_FOR_POSTROLL`, `FORWARDING`, `RETRY_PENDING`, `FAILED_PERMANENT`),
-none of which were listed. So during those phases the panel treated the clip as
-finished — it dropped to the idle 8-second poll and rendered the raw status
-string instead of a sentence.
+I reported that `CJ_ACTIVE` and `clipJobLine()` were missing the Stream Engine's
+status names, and changed `cricket-panel.html` to add them.
 
-This is the brief's "operator must see real status" requirement failing in the
-exact situation it exists for: a clip waiting on a dead line showed as a bare
-`RETRY_PENDING` rather than "saved locally, upload queued".
+That was wrong. `cricket-panel.html` is the **Clipper Helper** panel — its own
+comment says "Live per-clip status from the local Clipper Helper" — and it never
+receives Stream Engine statuses, so nothing was broken there.
 
-**Fix.** The engine's status names are now in `CJ_ACTIVE` and have proper
-labels, including `LOCAL_ONLY`.
+The Stream Engine panel is `cricket-panel3.html` (67 references to the engine,
+against 1 in `cricket-panel.html`). It has its own `clipJobStageLine()` polling
+`STREAM_ENGINE_URL/clip-jobs/:clipId`, and it already handled
+`WAITING_FOR_POSTROLL`, `CUTTING`, `LOCAL_SAVED`, `FORWARDING`, `RETRY_PENDING`,
+`COMPLETE` and `FAILED_PERMANENT` correctly.
+
+The change to `cricket-panel.html` has been reverted in full. The only thing
+genuinely needed was `LOCAL_ONLY` — the status this audit's B3 introduced — which
+is now added to `cricket-panel3.html`, where it belongs.
+
+Lesson for the rest of this audit: this repo has several same-shaped panel files,
+and matching code in one is not evidence about the one actually in use.
 
 ---
 
