@@ -484,16 +484,31 @@ function pickCameraMode(listOptionsOutput, targetWidth, targetHeight, targetFps)
 }
 
 
-function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height, fps, overlayInputUrl, previewOutputUrl, cameraVideoSize, cameraFramerate }) {
-    // Same reasoning as the live encoder: when the camera is already
-    // opening at the program resolution (which is what
-    // STREAM_ENGINE_CAMERA_MODE is for), scaling it is a no-op that still
-    // costs a full CPU resample of every frame. setsar/fps/format are kept
-    // — they are cheap and still needed to normalise the stream.
+function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height, fps, overlayInputUrl, previewOutputUrl, cameraVideoSize, cameraFramerate, interlacedSource = false }) {
+    // 🎯 CAPTURE FORMAT vs OUTPUT FORMAT. The camera opens at ITS best mode;
+    // the program feed is whatever the operator chose. They are not the same
+    // choice — a 720×480 program must NOT be got by forcing the capture card
+    // down to 720×480, because then the downscale happens in the card's
+    // firmware with no control over it (and the card may not even offer the
+    // mode). So the scale happens HERE, once, with a filter we control.
+    //
+    // Same reasoning as the live encoder for skipping it entirely: when the
+    // camera already opens at the program resolution, scaling is a no-op
+    // that still costs a full resample of every frame. setsar/fps/format are
+    // kept either way — cheap, and still needed to normalise the stream.
+    //
+    // 🎞 interlacedSource (50i): deinterlace BEFORE scaling. Scaling an
+    // interlaced frame first blends the two fields together, after which
+    // they can never be separated and the picture is permanently soft —
+    // which is exactly the "feed clear nahi aata" difference against vMix.
+    // mode=send_field gives one frame per field (50i -> 50p, keeping the
+    // motion that makes 50i worth shooting), and parity=-1 takes field order
+    // from the stream instead of assuming top-field-first.
     const camNeedsResize = !cameraVideoSize || cameraVideoSize !== `${width}x${height}`;
+    const camDeint = interlacedSource ? 'yadif=mode=send_field:parity=-1:deint=all,' : '';
     const camScale = camNeedsResize ? `scale=${width}:${height}:flags=bicubic,` : '';
     const filterComplex =
-        `[0:v]${camScale}setsar=1,fps=${fps},format=yuv420p[cam];` +
+        `[0:v]${camDeint}${camScale}setsar=1,fps=${fps},format=yuv420p[cam];` +
         `[2:v]scale=${width}:${height},format=rgba[ovl];` +
         `[cam][ovl]overlay=0:0:format=auto,format=yuv420p` +
         (previewOutputUrl
@@ -687,6 +702,7 @@ class Compositor extends EventEmitter {
         this.lastError = null;
         this.startedAt = null;
         this.cameraMode = null;     // resolved by probeCameraMode(), cached until an open failure invalidates it
+        this.interlacedSource = false; // true for a 50i source — see buildCompositorArgs's yadif branch
         // 🛠 How hard we are still trying to constrain the camera. dshow
         // refuses an unsupported -video_size/-framerate outright ("Could not
         // set video options" -> I/O error) and ffmpeg exits in under a second,
@@ -923,6 +939,7 @@ class Compositor extends EventEmitter {
             previewOutputUrl: `tcp://127.0.0.1:${leg.previewServer.address().port}`,
             cameraVideoSize: this.cameraMode ? `${this.cameraMode.width}x${this.cameraMode.height}` : null,
             cameraFramerate: this.cameraMode ? this.cameraMode.fps : null,
+            interlacedSource: this.interlacedSource,
         });
         let proc;
         try {

@@ -64,6 +64,7 @@
 const express = require('express');
 const retryQueueStore = require('./retryQueueStore');
 const recordingSession = require('./recordingSession');
+const captureModes = require('./captureModes');
 
 // 🔊 AUDIO SAMPLE RATE — 48 kHz, everywhere, deliberately.
 //
@@ -871,16 +872,24 @@ function readGpuUtilization() {
 // explicitly if the panel sends one, but the table means a sensible
 // value is always used even if it doesn't.
 // ================================================================
-const RESOLUTIONS = {
-    '480p':  { width: 854,  height: 480 },
-    '720p':  { width: 1280, height: 720 },
-    '1080p': { width: 1920, height: 1080 },
-};
-const DEFAULT_BITRATE_KBPS = {
-    '480p':  { 30: 2000,  60: 2500 },
-    '720p':  { 30: 3500,  60: 5500 },
-    '1080p': { 30: 6000,  60: 12000 },
-};
+// The output formats the operator can choose, and what each costs. Both
+// tables live in captureModes.js so the panel, the encoder, the recorder and
+// the validation can never disagree about what a mode means.
+const RESOLUTIONS = captureModes.OUTPUT_RESOLUTIONS;
+const DEFAULT_BITRATE_KBPS = captureModes.DEFAULT_BITRATE_KBPS;
+// 🛠 25p and 50p used to be impossible: fps was clamped with
+// `[30, 60].includes(n) ? n : 30` in three places, so a PAL camera's 25 was
+// silently rewritten to 30 and nobody was told. Now every rate a listed
+// video mode declares is accepted, and anything else is REPORTED as changed
+// rather than quietly swapped.
+const SUPPORTED_FPS = [...new Set(Object.values(captureModes.VIDEO_MODES).map((m) => m.programFps))].sort((a, b) => a - b);
+function coerceFps(fps, who) {
+    const n = Number(fps);
+    if (SUPPORTED_FPS.includes(n)) return n;
+    const fallback = 25;
+    console.log(`[stream-engine] ⚠ ${who}: ${fps}fps is not one of the supported rates (${SUPPORTED_FPS.join(', ')}) — using ${fallback}. This is a fallback, not your setting; pick a listed mode to avoid it.`);
+    return fallback;
+}
 
 // ================================================================
 // 🪟 CAPTURE TARGET — the window ffmpeg's gdigrab reads from is
@@ -1614,6 +1623,10 @@ const engine = {
     },
     metrics: { bitrateKbps: null, fps: null, droppedFrames: null, totalFrames: null, outTimeSec: null, speed: null },
     rate: createRateTracker('Live stream'), // media-time vs wall-time for the LIVE push — see rateHealth
+    videoMode: null,          // '25p' | '50p' | '50i' — see captureModes.js
+    interlacedSource: false,
+    requestedFps: null,       // what the operator SELECTED, when it differs from what is sent
+    lastCapability: null,     // the device's answer to "can you do this mode?" — see validateCameraCapability
     lastProgramFeedHealth: null, // {ok, black, white, frozen, checkedAt} — see runProgramFeedHealthCheck/monitorProgramFeedHealth
 };
 
@@ -2107,7 +2120,7 @@ async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec 
         // also running) relays to THIS process, which holds its own
         // independent NVENC session and pushes RTMPS — a network
         // problem here can never touch the recorder, and vice versa.
-        const compResult = await ensureCompositor({ matchId: engine.matchId, mainServerUrl: engine.mainServerUrl, cameraDeviceName: engine.cameraDeviceName, audioDeviceName: engine.audioDeviceName, who: 'live', fps: resolved.fps });
+        const compResult = await ensureCompositor({ matchId: engine.matchId, mainServerUrl: engine.mainServerUrl, cameraDeviceName: engine.cameraDeviceName, audioDeviceName: engine.audioDeviceName, who: 'live', fps: resolved.fps, interlacedSource: engine.interlacedSource });
         if (!compResult.ok) {
             engine.state = 'idle';
             // A reconnect must keep trying: the compositor may simply be
@@ -2308,9 +2321,9 @@ function stopEncoder({ forRestart = false } = {}) {
 
 function resolveEncodeSettings({ resolution, fps, bitrateKbps, keyframeIntervalSec }) {
     const resKey = RESOLUTIONS[resolution] ? resolution : '1080p';
-    const fpsNum = [30, 60].includes(Number(fps)) ? Number(fps) : 30;
+    const fpsNum = coerceFps(fps, 'live stream');
     const { width, height } = RESOLUTIONS[resKey];
-    const kbps = Number(bitrateKbps) > 0 ? Number(bitrateKbps) : DEFAULT_BITRATE_KBPS[resKey][fpsNum];
+    const kbps = Number(bitrateKbps) > 0 ? Number(bitrateKbps) : captureModes.defaultBitrateKbps(resKey, fpsNum);
     const gopSec = Number(keyframeIntervalSec) > 0 ? Number(keyframeIntervalSec) : 2;
     return { width, height, fps: fpsNum, bitrateKbps: kbps, keyframeIntervalSec: gopSec, resolution: resKey };
 }
@@ -2341,7 +2354,14 @@ try { fs.mkdirSync(RECORDING_ROOT, { recursive: true }); } catch (e) { /* create
 const CLIPS_ROOT = RECORDING_ROOT;
 // Deliberately independent of the live-stream ABR ladder — this is a
 // fixed local recording quality, never adapted to network conditions.
-const RECORDING_BITRATE_KBPS = { '480p': 2500, '720p': 5000, '1080p': 8000 };
+// The master recording is the archive copy, so it is given more bitrate than
+// the stream at the same resolution. Scaled by frame rate for the same reason
+// the stream is: 50p carries twice the frames of 25p and needs the headroom.
+const RECORDING_BITRATE_KBPS = { '480p': 2500, '720p': 5000, '1080p': 8000, '480sd': 2200 };
+function recordingBitrateKbps(resKey, fps) {
+    const base = RECORDING_BITRATE_KBPS[resKey] || RECORDING_BITRATE_KBPS['1080p'];
+    return Math.round(base * Math.max(0.8, Math.min(2, (Number(fps) || 25) / 25)));
+}
 
 function recorderDir(matchId) {
     return path.join(RECORDING_ROOT, safeMatchId(matchId));
@@ -2364,7 +2384,7 @@ let compositorStopping = null; // promise while a released compositor is still s
 // recorder's own existing "already recording a different match" guard
 // below) — a genuine multi-match-simultaneously native pipeline isn't
 // implemented; the operator stops the previous match first, same as today.
-async function ensureCompositor({ matchId, mainServerUrl, cameraDeviceName, audioDeviceName, who, fps }) {
+async function ensureCompositor({ matchId, mainServerUrl, cameraDeviceName, audioDeviceName, who, fps, interlacedSource }) {
     // A compositor that was just released may still hold the camera for
     // a moment — starting a new one before it has exited fails with
     // "device busy" (an exclusive dshow device can only be opened once).
@@ -2398,6 +2418,9 @@ async function ensureCompositor({ matchId, mainServerUrl, cameraDeviceName, audi
             console.log(`[stream-engine] Program feed at ${programFps}fps — the internal raw relay will carry ~${Math.round(width * height * 1.5 * programFps / 1e6)} MB/s. If the feed stalls, drop to 30.`);
         }
         compositor.matchId = matchId;
+        // 50i: the source carries fields, so the compositor deinterlaces
+        // before it scales — see buildCompositorArgs.
+        compositor.interlacedSource = !!interlacedSource;
     }
     const comp = compositor;
     // The program feed is SHARED and cannot change rate without restarting
@@ -2449,6 +2472,8 @@ const recorder = {
     lastSizeBytes: null,
     lastSizeChangeAt: null,
     rate: createRateTracker('Recording'), // media-time vs wall-time for the MASTER RECORDING — see rateHealth
+    videoMode: null,          // '25p' | '50p' | '50i' — see captureModes.js
+    interlacedSource: false,  // 50i: the compositor deinterlaces before it scales
     session: null,            // the durable ONE-master-per-match record — see recordingSession.js
     sessionDir: null,         // folder the session file and the segments live in
     finalizing: null,         // {status:'joining'|'done'|'failed', path, error} while/after the parts are joined
@@ -2564,9 +2589,9 @@ async function startRecorder(matchId, { resolution, fps, audioDeviceName, camera
     if (!audioDeviceName) return { ok: false, error: 'No audio device selected — pick one under Live Studio first' };
     if (NATIVE_PROGRAM_FEED && !cameraDeviceName) return { ok: false, error: 'No camera device selected — pick one under Live Studio first' };
     const resKey = RESOLUTIONS[resolution] ? resolution : '1080p';
-    const fpsNum = [30, 60].includes(Number(fps)) ? Number(fps) : 30;
+    const fpsNum = coerceFps(fps, 'recording');
     const { width, height } = RESOLUTIONS[resKey];
-    const bitrateKbps = RECORDING_BITRATE_KBPS[resKey];
+    const bitrateKbps = recordingBitrateKbps(resKey, fpsNum);
 
     const fail = (error) => {
         recorder.state = isRetry ? 'crashed' : 'idle';
@@ -2641,7 +2666,7 @@ async function startRecorder(matchId, { resolution, fps, audioDeviceName, camera
         // camera+overlay compositor (opened once, shared with the live
         // encoder if that's also running) relays to THIS process, which
         // holds its own independent NVENC session and writes master.mp4.
-        const compResult = await ensureCompositor({ matchId, mainServerUrl: recorder.mainServerUrl, cameraDeviceName: recorder.cameraDeviceName, audioDeviceName, who: 'recorder', fps: fpsNum });
+        const compResult = await ensureCompositor({ matchId, mainServerUrl: recorder.mainServerUrl, cameraDeviceName: recorder.cameraDeviceName, audioDeviceName, who: 'recorder', fps: fpsNum, interlacedSource: recorder.interlacedSource });
         if (!compResult.ok) return fail(compResult.error);
         recorder.holdsCompositorRef = true;
         if (!recorder.desiredRecording || shuttingDown) return fail('Recording was stopped while starting');
@@ -3931,6 +3956,20 @@ app.get('/status', async (req, res) => {
         networkOk: network.available,
         networkDetail: network.detail,
         encoderState: engine.state,
+        // 🎛 THE ACTIVE FORMAT AT EVERY STAGE. One row per stage so a mismatch
+        // anywhere in the chain is visible instead of having to be inferred.
+        activeFormat: captureModes.activeFormatSummary({
+            source: compositor && compositor.cameraMode
+                ? { width: compositor.cameraMode.width, height: compositor.cameraMode.height, fps: compositor.cameraMode.fps, interlaced: !!compositor.interlacedSource }
+                : null,
+            program: compositor ? { width: compositor.width, height: compositor.height, fps: compositor.fps } : null,
+            recording: recorder.settings && (recorder.state === 'recording' || recorder.state === 'stopping')
+                ? { width: recorder.settings.width, height: recorder.settings.height, fps: recorder.settings.fps } : null,
+            youtube: engine.settings && engine.state === 'live'
+                ? { width: engine.settings.width, height: engine.settings.height, fps: engine.settings.fps } : null,
+        }),
+        videoMode: engine.videoMode || recorder.videoMode || null,
+        cameraCapability: engine.lastCapability || null,
         // Same real-time check for the YouTube push as for the recording.
         encoderTimebase: rateHealth(engine.rate, engine.settings && engine.settings.fps),
         // What the operator SELECTED vs what is really being sent. They differ
@@ -4088,6 +4127,79 @@ app.get('/capture-window/status', (req, res) => {
 // records it and says so plainly in the log. /status carries it too, so the
 // operator can confirm the real resolution BEFORE going live rather than
 // inferring it from how the stream looks afterwards.
+// ================================================================
+// 🚦 CAPABILITY VALIDATION — ask the device, do not assume
+// ================================================================
+// Runs `-list_options` against the dshow device and checks the requested
+// mode against what it actually reports. The result carries a CONFIDENCE,
+// because "the device accepted it" and "the device will deliver it" are not
+// the same claim: a capture card that advertises 5–60fps as a RANGE will
+// accept any rate in it and then pass through whatever the camera sends.
+// That distinction is the difference between a stream at the right speed and
+// the wrong-speed recordings this engine produced before — so it is surfaced
+// rather than flattened into a boolean.
+//
+// Cached briefly: Go Live and Start Recording both check, moments apart, and
+// probing spins the device up each time.
+const CAPABILITY_CACHE_MS = 30000;
+const capabilityCache = new Map(); // deviceName -> { at, modes }
+
+async function probeDeviceModes(deviceName) {
+    const hit = capabilityCache.get(deviceName);
+    if (hit && Date.now() - hit.at < CAPABILITY_CACHE_MS) return hit.modes;
+    const modes = await new Promise((resolve) => {
+        let out = '';
+        let proc;
+        try {
+            proc = spawnFfmpeg(['-hide_banner', '-f', 'dshow', '-list_options', 'true', '-i', `video=${deviceName}`], { stdio: ['ignore', 'pipe', 'pipe'] }, 'device-probe');
+        } catch (e) {
+            return resolve([]);
+        }
+        const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch (e) {} }, 8000);
+        proc.stdout.on('data', (d) => { out += d; });
+        proc.stderr.on('data', (d) => { out += d; });
+        proc.on('error', () => {});
+        proc.on('close', () => {
+            clearTimeout(timer);
+            try { resolve(nativePipeline.parseDshowVideoModes(out) || []); } catch (e) { resolve([]); }
+        });
+    });
+    capabilityCache.set(deviceName, { at: Date.now(), modes });
+    return modes;
+}
+
+// The requested mode is checked on FRAME RATE only, deliberately. Capture
+// resolution is NOT constrained to the output resolution: a 720×480 program
+// must not force the card to 720×480 (the card may not offer it, and the
+// downscale would happen in its firmware). The card keeps its own best mode
+// and the compositor scales once — see buildCompositorArgs.
+async function validateCameraCapability(deviceName, outFormat) {
+    const modes = await probeDeviceModes(deviceName);
+    const v = captureModes.validateCaptureMode(modes, { captureFps: outFormat.captureFps });
+    return { ...v, requested: { mode: outFormat.mode, captureFps: outFormat.captureFps, programFps: outFormat.programFps, width: outFormat.width, height: outFormat.height }, offered: modes };
+}
+
+// What the panel populates its dropdowns from, plus what THIS device can
+// really do. Everything the operator is offered comes from here, so the UI
+// can never list a mode the engine does not implement.
+app.get('/capture-formats', async (req, res) => {
+    const deviceName = req.query.cameraDeviceName || null;
+    const resolutions = Object.entries(captureModes.OUTPUT_RESOLUTIONS).map(([key, r]) => ({ key, ...r }));
+    const modes = Object.entries(captureModes.VIDEO_MODES).map(([key, m]) => ({ key, ...m }));
+    let device = null;
+    if (deviceName && NATIVE_CAPTURE_SUPPORTED) {
+        const offered = await probeDeviceModes(deviceName);
+        device = {
+            name: deviceName,
+            offered,
+            summary: offered.length ? captureModes.describeOffered(offered) : null,
+            // Per video mode: can this device do it, and how sure are we?
+            modeSupport: Object.fromEntries(modes.map((m) => [m.key, captureModes.validateCaptureMode(offered, { captureFps: m.captureFps })])),
+        };
+    }
+    res.json({ success: true, resolutions, modes, device });
+});
+
 app.post('/capture-window/camera-info', (req, res) => {
     const b = req.body || {};
     const width = Number(b.width) || null;
@@ -4334,9 +4446,14 @@ app.post('/recording-start', async (req, res) => {
     const mainServerUrl = (req.body && req.body.mainServerUrl) || null;
     const tournamentId = (req.body && req.body.tournamentId) || null;
     const resolution = (req.body && req.body.recordingResolution) || '1080p';
-    const fps = (req.body && req.body.recordingFps) || 30;
+    // The recording follows the same video mode as everything else when the
+    // panel sends one. A bare recordingFps is still honoured for older panels.
+    const recMode = req.body && captureModes.VIDEO_MODES[req.body.videoMode] ? req.body.videoMode : null;
+    const fps = recMode ? captureModes.VIDEO_MODES[recMode].programFps : ((req.body && req.body.recordingFps) || 25);
     const audioDeviceName = (req.body && req.body.audioDeviceName) || null;
     const cameraDeviceName = (req.body && req.body.cameraDeviceName) || null; // only used when NATIVE_PROGRAM_FEED is on
+    recorder.videoMode = recMode;
+    recorder.interlacedSource = recMode ? captureModes.VIDEO_MODES[recMode].interlaced : false;
 
     recordingMatches[matchId] = { mainServerUrl, tournamentId };
     console.log(`🔴 [clip engine] Recording session registered for match ${matchId}`);
@@ -4514,7 +4631,7 @@ app.get('/browse-folders', (req, res) => {
 });
 
 app.post('/go-live', async (req, res) => {
-    const { resolution, fps, bitrateKbps, keyframeIntervalSec, qualityMode, autoResolutionFallback, matchId, audioDeviceName, cameraDeviceName, mainServerUrl, skipProgramFeedHealthCheck } = req.body || {};
+    const { resolution, fps, videoMode, bitrateKbps, keyframeIntervalSec, qualityMode, autoResolutionFallback, matchId, audioDeviceName, cameraDeviceName, mainServerUrl, skipProgramFeedHealthCheck } = req.body || {};
     engine.opToken++; // a fresh operator-initiated Go Live always wins over any stale in-flight ABR restart
 
     if (!matchId) return res.status(400).json({ success: false, error: 'matchId required — select a match in the panel first' });
@@ -4526,7 +4643,34 @@ app.post('/go-live', async (req, res) => {
     if (mainServerUrl) engine.mainServerUrl = mainServerUrl;
 
     const resKey = RESOLUTIONS[resolution] ? resolution : '1080p';
-    const fpsNum = [30, 60].includes(Number(fps)) ? Number(fps) : 30;
+    // 🎛 The VIDEO MODE (25p / 50p / 50i) is the authority on frame rate when
+    // the panel sends one; a bare `fps` is still accepted so older panels and
+    // saved settings keep working. 50i declares a 25fps interlaced CAPTURE and
+    // a 50fps progressive PROGRAM — see captureModes.js.
+    const modeKey = captureModes.VIDEO_MODES[videoMode] ? videoMode : null;
+    const outFormat = modeKey ? captureModes.resolveOutput(resKey, modeKey) : null;
+    const fpsNum = outFormat ? outFormat.programFps : coerceFps(fps, 'live stream');
+    if (outFormat) {
+        engine.videoMode = modeKey;
+        engine.interlacedSource = outFormat.interlacedSource;
+    }
+
+    // 🚦 CAPABILITY CHECK BEFORE ANYTHING STARTS — no silent fallback.
+    // The device is asked what it really offers and the requested mode is
+    // checked against it. A mode the device does not have is REFUSED with the
+    // list of what it does have, rather than opened and quietly delivered at
+    // some other rate (which is how the wrong-speed recordings happened).
+    if (NATIVE_PROGRAM_FEED && engine.cameraDeviceName && outFormat) {
+        const cap = await validateCameraCapability(engine.cameraDeviceName, outFormat);
+        engine.lastCapability = cap;
+        if (!cap.ok) {
+            return res.status(400).json({
+                success: false, error: `${outFormat.mode} is not available on this capture device. ${cap.detail}`,
+                capability: cap,
+            });
+        }
+        if (cap.confidence === 'range') console.log(`[stream-engine] ${outFormat.mode}: ${cap.detail}`);
+    }
 
     // 🩺 GO LIVE SEQUENCE, steps "validate frames / validate FPS" — BEFORE
     // ever touching the encoder or RTMPS: sample the exact gdigrab window
@@ -4586,7 +4730,7 @@ app.post('/go-live', async (req, res) => {
     // Adaptive mode starts at this resolution's ladder ceiling and lets
     // the ABR loop react to real conditions from there.
     const startBitrateKbps = engine.qualityMode === 'manual'
-        ? (Number(bitrateKbps) > 0 ? Number(bitrateKbps) : DEFAULT_BITRATE_KBPS[resKey][fpsNum])
+        ? (Number(bitrateKbps) > 0 ? Number(bitrateKbps) : captureModes.defaultBitrateKbps(resKey, fpsNum))
         : engine.sessionLadder[resKey].high;
 
     const result = await startEncoder({ resolution: resKey, fps: fpsNum, bitrateKbps: startBitrateKbps, keyframeIntervalSec });

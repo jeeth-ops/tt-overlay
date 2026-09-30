@@ -1551,9 +1551,10 @@
         </div>
         <label style="font-size:11px; opacity:.7; display:block; margin-bottom:8px;">Recording Resolution (independent of the live stream's resolution/bitrate)
           <select id="rec-resolution-select" class="full" style="margin-top:3px;">
-            <option value="1080p">1080p (1920×1080)</option>
-            <option value="720p">720p (1280×720)</option>
-            <option value="480p">480p (854×480)</option>
+            <option value="1080p">1920×1080</option>
+            <option value="720p">1280×720</option>
+            <option value="480p">854×480</option>
+            <option value="480sd">720×480 (4:3 SD)</option>
           </select>
         </label>
         <label style="font-size:11px; opacity:.7; display:block; margin-bottom:8px;">Recordings/Clips Folder (this PC)
@@ -1674,20 +1675,38 @@
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px 10px; font-size:12px; opacity:.85; margin-bottom:12px;">
         <label style="display:flex; flex-direction:column; gap:3px;">Resolution
           <select id="ls-resolution-select" class="full">
-            <option value="1080p">1080p (1920×1080)</option>
-            <option value="720p">720p (1280×720)</option>
-            <option value="480p">480p (854×480)</option>
+            <option value="1080p">1920×1080</option>
+            <option value="720p">1280×720</option>
+            <option value="480p">854×480</option>
+            <option value="480sd">720×480 (4:3 SD)</option>
           </select>
         </label>
-        <label style="display:flex; flex-direction:column; gap:3px;">FPS
-          <select id="ls-fps-select" class="full">
-            <option value="30">30</option>
-            <option value="60">60</option>
+        <!-- 🎛 VIDEO MODE, not a bare FPS number. 50i is 50 FIELDS/sec = 25
+             interlaced frames, which is a different request to the device
+             than 50p and needs a deliberate deinterlace — so the mode is the
+             setting, and the frame rate follows from it. -->
+        <label style="display:flex; flex-direction:column; gap:3px;">Video Mode
+          <select id="ls-mode-select" class="full">
+            <option value="25p">25p</option>
+            <option value="50p">50p</option>
+            <option value="50i">50i → 50p</option>
+            <option value="30p">30p</option>
+            <option value="60p">60p</option>
           </select>
         </label>
         <label style="display:flex; flex-direction:column; gap:3px;">Bitrate (Mbps)
           <input type="number" id="ls-bitrate-input" class="full" min="1" max="51" step="0.5" placeholder="auto">
         </label>
+        <!-- Whether the SELECTED camera really supports the selected mode,
+             asked of the device itself before anything starts. A card that
+             advertises a RANGE will accept any rate and then pass through
+             whatever the camera sends, so that case is called out as a
+             weaker answer rather than a green tick. -->
+        <div id="ls-capability" style="grid-column:1/-1; font-size:10.5px; line-height:1.45; opacity:.75;"></div>
+        <!-- 🎛 THE ACTIVE FORMAT AT EVERY STAGE. A mismatch anywhere in the
+             chain is the thing that makes a feed look wrong, so it is shown
+             rather than left to be inferred. -->
+        <div id="ls-active-format" style="grid-column:1/-1; display:none; font-size:10.5px; line-height:1.6; border-top:1px solid rgba(255,255,255,.08); padding-top:6px; margin-top:2px;"></div>
         <label style="display:flex; flex-direction:column; gap:3px;">Keyframe Interval (sec)
           <input type="number" id="ls-keyframe-input" class="full" min="1" max="10" step="1" value="2">
         </label>
@@ -2707,6 +2726,7 @@ async function refreshClipEngineStatus(){
   ceSetDot('ce-cloudflare', status.cloudflareConnected, status.cloudflareConnected ? 'Connected' : `Retrying (${status.retryQueueLength} queued)`);
 
   updateRecorderStatusUI(status.recorder, status.compositor);
+  renderActiveFormat(status.activeFormat);
 }
 
 function formatBytes(n){
@@ -3040,7 +3060,7 @@ async function startRecording(){
     // exactly the same endpoint ClipperHelper.exe always posted to).
     // audioDeviceName is the NATIVE dshow device the recorder's own
     // ffmpeg process opens directly — this tab no longer captures audio.
-    body: JSON.stringify({ matchId, tournamentId, mainServerUrl: location.origin, recordingResolution: document.getElementById('rec-resolution-select')?.value || '1080p', recordingFps: 30, audioDeviceName, cameraDeviceName: document.getElementById('live-video-device').value })
+    body: JSON.stringify({ matchId, tournamentId, mainServerUrl: location.origin, recordingResolution: document.getElementById('rec-resolution-select')?.value || '1080p', videoMode: document.getElementById('ls-mode-select')?.value || '25p', recordingFps: (VIDEO_MODES[document.getElementById('ls-mode-select')?.value] || VIDEO_MODES['25p']).programFps, audioDeviceName, cameraDeviceName: document.getElementById('live-video-device').value })
   }).then(r => r.json()).catch(() => ({ success:false }));
 
   if(!result.success){
@@ -3113,15 +3133,29 @@ document.getElementById('stop-recording-btn').addEventListener('click', stopReco
 // fps choice will use before going live. The Stream Engine is still the
 // one source of truth that actually picks the bitrate (its own copy of
 // this table applies if bitrateKbps isn't sent at all).
+/* Mirrors stream-engine/captureModes.js — keep the two in step. The engine
+   is the authority (it validates against the device); these are here so the
+   bitrate preview can be shown before anything is started. */
 const RESOLUTION_PRESETS = {
-  '480p':  { width: 854,  height: 480 },
-  '720p':  { width: 1280, height: 720 },
   '1080p': { width: 1920, height: 1080 },
+  '720p':  { width: 1280, height: 720 },
+  '480p':  { width: 854,  height: 480 },
+  '480sd': { width: 720,  height: 480 },
+};
+/* 50i declares a 25fps interlaced CAPTURE and a 50fps progressive PROGRAM —
+   each field becomes a frame, which is the reason to shoot 50i at all. */
+const VIDEO_MODES = {
+  '25p': { programFps: 25 },
+  '50p': { programFps: 50 },
+  '50i': { programFps: 50 },
+  '30p': { programFps: 30 },
+  '60p': { programFps: 60 },
 };
 const DEFAULT_BITRATE_KBPS = {
-  '480p':  { 30: 2000,  60: 2500 },
-  '720p':  { 30: 3500,  60: 5500 },
-  '1080p': { 30: 6000,  60: 12000 },
+  '1080p': { 25: 5000, 30: 6000, 50: 10000, 60: 12000 },
+  '720p':  { 25: 3000, 30: 3500, 50: 4800,  60: 5500 },
+  '480p':  { 25: 1800, 30: 2000, 50: 2200,  60: 2500 },
+  '480sd': { 25: 1500, 30: 1800, 50: 2000,  60: 2200 },
 };
 // Bitrate + keyframe interval are quality/stability controls, not
 // connection parameters — kept independently configurable here (with
@@ -3130,13 +3164,15 @@ const DEFAULT_BITRATE_KBPS = {
 // without new code paths.
 function getSelectedStreamSettings(){
   const resolution = document.getElementById('ls-resolution-select')?.value || '1080p';
-  const fps = parseInt(document.getElementById('ls-fps-select')?.value, 10) || 30;
+  const videoMode = document.getElementById('ls-mode-select')?.value || '25p';
+  const fps = (VIDEO_MODES[videoMode] || VIDEO_MODES['25p']).programFps;
   const customMbps = parseFloat(document.getElementById('ls-bitrate-input')?.value);
-  const bitrateKbps = Number.isFinite(customMbps) && customMbps > 0 ? Math.round(customMbps * 1000) : DEFAULT_BITRATE_KBPS[resolution][fps];
+  const row = DEFAULT_BITRATE_KBPS[resolution] || DEFAULT_BITRATE_KBPS['1080p'];
+  const bitrateKbps = Number.isFinite(customMbps) && customMbps > 0 ? Math.round(customMbps * 1000) : row[fps];
   const keyframeIntervalSec = parseInt(document.getElementById('ls-keyframe-input')?.value, 10) || 2;
   const qualityMode = document.getElementById('ls-mode-manual')?.checked ? 'manual' : 'adaptive';
   const autoResolutionFallback = !!document.getElementById('ls-auto-resolution-fallback')?.checked;
-  return { resolution, fps, bitrateKbps, keyframeIntervalSec, qualityMode, autoResolutionFallback, ...RESOLUTION_PRESETS[resolution] };
+  return { resolution, videoMode, fps, bitrateKbps, keyframeIntervalSec, qualityMode, autoResolutionFallback, ...RESOLUTION_PRESETS[resolution] };
 }
 document.getElementById('ls-mode-manual')?.addEventListener('change', updateQualityModeUI);
 document.getElementById('ls-mode-adaptive')?.addEventListener('change', updateQualityModeUI);
@@ -3151,13 +3187,73 @@ function updateQualityModeUI(){
   if(lowerBtn) lowerBtn.dataset.manualOnly = isManual ? '0' : '1';
 }
 updateQualityModeUI();
+/* Ask the DEVICE, before anything starts, whether it can really do the
+   selected mode. Three outcomes, deliberately distinguished:
+     exact   the device lists this rate as a fixed mode
+     range   it advertises a range, so it will ACCEPT the rate without
+             promising to deliver it — the AVMATRIX pass-through case that
+             produced wrong-speed recordings. Not the same as exact.
+     none    it does not offer this rate: Go Live will refuse and say what
+             the device does offer, instead of quietly using another rate. */
+let capabilityReqSeq = 0;
+async function refreshCaptureCapability(){
+  const el = document.getElementById('ls-capability');
+  if(!el) return;
+  const cam = document.getElementById('live-video-device')?.value || '';
+  const mode = document.getElementById('ls-mode-select')?.value || '25p';
+  if(!cam){ el.textContent = ''; return; }
+  const seq = ++capabilityReqSeq;
+  el.style.color = ''; el.textContent = `Checking whether this device can do ${mode}…`;
+  let data = null;
+  try {
+    const r = await fetch(`${STREAM_ENGINE_URL}/capture-formats?cameraDeviceName=${encodeURIComponent(cam)}`);
+    data = await r.json();
+  } catch(e){ /* engine not reachable — handled below */ }
+  if(seq !== capabilityReqSeq) return; // a newer check already started
+  if(!data || !data.success || !data.device){ el.textContent = ''; return; }
+  const sup = data.device.modeSupport && data.device.modeSupport[mode];
+  if(!sup){ el.textContent = ''; return; }
+  if(!sup.ok){
+    el.style.color = '#ff6b6b';
+    el.textContent = `✗ ${mode} is not available on this device. ${sup.detail}`;
+    return;
+  }
+  if(sup.confidence === 'exact'){
+    el.style.color = '#3fce6e';
+    el.textContent = `✓ ${mode}: ${sup.detail}`;
+    return;
+  }
+  el.style.color = '#ffb020';
+  el.textContent = `⚠ ${mode}: ${sup.detail}`;
+}
+document.getElementById('live-video-device')?.addEventListener('change', refreshCaptureCapability);
+
+/* SOURCE → PROGRAM → RECORDING → YOUTUBE, each with the format actually in
+   use. Anything the engine is not currently running simply has no row. */
+function renderActiveFormat(active){
+  const el = document.getElementById('ls-active-format');
+  if(!el) return;
+  const rows = [
+    ['SOURCE',    active && active.source,    'What the camera/capture card is delivering'],
+    ['PROGRAM',   active && active.program,   'The shared local program feed everything is cut from'],
+    ['RECORDING', active && active.recording, 'The local master recording'],
+    ['YOUTUBE',   active && active.youtube,   'What is being pushed out'],
+  ].filter(([, v]) => v);
+  if(!rows.length){ el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = 'block';
+  el.innerHTML = rows.map(([k, v, title]) =>
+    `<div style="display:flex; justify-content:space-between; gap:10px;" title="${title}"><span style="opacity:.6;">${k}</span><span style="font-variant-numeric:tabular-nums;">${v}</span></div>`
+  ).join('');
+}
+
 function refreshBitratePreview(){
   const { bitrateKbps } = getSelectedStreamSettings();
   const el = document.getElementById('ls-bitrate-preview');
   if(el) el.textContent = `${(bitrateKbps/1000).toFixed(1)} Mbps`;
 }
 document.getElementById('ls-resolution-select')?.addEventListener('change', refreshBitratePreview);
-document.getElementById('ls-fps-select')?.addEventListener('change', refreshBitratePreview);
+document.getElementById('ls-mode-select')?.addEventListener('change', refreshBitratePreview);
+document.getElementById('ls-mode-select')?.addEventListener('change', refreshCaptureCapability);
 document.getElementById('ls-bitrate-input')?.addEventListener('input', refreshBitratePreview);
 refreshBitratePreview();
 let liveOutputWindow = null;
@@ -3905,7 +4001,7 @@ async function startLive(){
   }
 
   lsLog('Connecting to YouTube…');
-  const { resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec, qualityMode: selQualityMode, autoResolutionFallback: selAutoFallback } = getSelectedStreamSettings();
+  const { resolution: selResolution, videoMode: selVideoMode, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec, qualityMode: selQualityMode, autoResolutionFallback: selAutoFallback } = getSelectedStreamSettings();
 
   lsLog('Validating program feed…');
   let goLiveRes = await fetch(`${STREAM_ENGINE_URL}/go-live`, {
@@ -3917,7 +4013,7 @@ async function startLive(){
     // itself samples the actual program feed here (black/white/frozen —
     // see runProgramFeedHealthCheck in server.js) BEFORE it ever opens
     // RTMPS, and refuses to start if that comes back bad.
-    body: JSON.stringify({ resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec, qualityMode: selQualityMode, autoResolutionFallback: selAutoFallback, matchId, audioDeviceName, cameraDeviceName: document.getElementById('live-video-device').value, mainServerUrl: location.origin })
+    body: JSON.stringify({ resolution: selResolution, videoMode: selVideoMode, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec, qualityMode: selQualityMode, autoResolutionFallback: selAutoFallback, matchId, audioDeviceName, cameraDeviceName: document.getElementById('live-video-device').value, mainServerUrl: location.origin })
   }).then(r => r.json()).catch(() => ({ success:false, error:'Stream Engine unreachable' }));
 
   if(!goLiveRes.success && goLiveRes.programFeedHealth){
@@ -3942,7 +4038,7 @@ async function startLive(){
     toast('⚠️ Going live anyway — operator override of the program feed check');
     goLiveRes = await fetch(`${STREAM_ENGINE_URL}/go-live`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ resolution: selResolution, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec, qualityMode: selQualityMode, autoResolutionFallback: selAutoFallback, matchId, audioDeviceName, cameraDeviceName: document.getElementById('live-video-device').value, mainServerUrl: location.origin, skipProgramFeedHealthCheck: true })
+      body: JSON.stringify({ resolution: selResolution, videoMode: selVideoMode, fps: selFps, bitrateKbps: selBitrateKbps, keyframeIntervalSec: selKeyframeIntervalSec, qualityMode: selQualityMode, autoResolutionFallback: selAutoFallback, matchId, audioDeviceName, cameraDeviceName: document.getElementById('live-video-device').value, mainServerUrl: location.origin, skipProgramFeedHealthCheck: true })
     }).then(r => r.json()).catch(() => ({ success:false, error:'Stream Engine unreachable' }));
   }
 
@@ -4074,7 +4170,15 @@ async function lowerStreamQuality(){
   // Reflect the new setting in the (still-disabled-while-live) controls so
   // they read correctly, and so a later manual Stop/Go Live keeps it.
   document.getElementById('ls-resolution-select').value = nextResolution;
-  document.getElementById('ls-fps-select').value = String(nextFps);
+  // The ABR ladder steps frame rate as a NUMBER; map it back onto the video
+  // mode so the control keeps reading correctly (an interlaced source is not
+  // re-derivable from a rate, so 50 lands on 50p — the deinterlace decision
+  // was already made when the compositor started and is not changed here).
+  const modeSel = document.getElementById('ls-mode-select');
+  if(modeSel){
+    const want = Object.keys(VIDEO_MODES).find(k => VIDEO_MODES[k].programFps === Number(nextFps));
+    if(want && modeSel.value !== '50i') modeSel.value = want;
+  }
   document.getElementById('ls-bitrate-input').value = (nextBitrateKbps / 1000).toFixed(1);
   refreshBitratePreview();
   lastDroppedFrames = null; lowBitrateStreak = 0; // give the new setting a clean read
@@ -4219,7 +4323,7 @@ function updateLiveUI(active){
   document.getElementById('ls-resolution-select').disabled = active;
   document.getElementById('ls-bitrate-input').disabled = active;
   document.getElementById('ls-keyframe-input').disabled = active;
-  document.getElementById('ls-fps-select').disabled = active;
+  document.getElementById('ls-mode-select').disabled = active;
   document.getElementById('ls-mode-manual').disabled = active;
   document.getElementById('ls-mode-adaptive').disabled = active;
   document.getElementById('ls-auto-resolution-fallback').disabled = active || document.getElementById('ls-mode-manual').checked;
