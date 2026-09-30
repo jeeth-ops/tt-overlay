@@ -3769,11 +3769,19 @@ function renderFinalSnapshot(match, displayName){
   if(match.venue){ venueChip.style.display=''; venueChip.textContent = match.venue; } else venueChip.style.display='none';
   const leagueChip = document.getElementById('chip-tournament');
   if(displayName){ leagueChip.style.display=''; leagueChip.textContent = '🏆 ' + displayName; } else leagueChip.style.display='none';
-  document.getElementById('hero').classList.add('hero-final');
+  // 🐛 This used to be unconditional. A snapshot of a match that is STILL
+  // BEING PLAYED has no winningTeam and no matchResultText, and rendering it
+  // as a finished match captioned it "Match Completed" with a ✓ chip and the
+  // other side on 0-0 — stating a result that does not exist yet. The header
+  // now only claims a result when the record actually carries one.
+  const hasResult = !!(match.winningTeam || match.matchResultText);
+  document.getElementById('hero').classList.toggle('hero-final', hasResult);
   const statusChip = document.getElementById('chip-status');
-  statusChip.classList.add('result');
+  statusChip.classList.toggle('result', hasResult);
   statusChip.querySelector('.lv-dot').style.display = 'none';
-  document.getElementById('chip-status-text').textContent = winMarginText(match) || shortResultText(match) || finalResultText(match);
+  document.getElementById('chip-status-text').textContent = hasResult
+    ? (winMarginText(match) || shortResultText(match) || finalResultText(match))
+    : 'In progress \u2014 snapshot';
 
   const A = match.teamA || {}, B = match.teamB || {};
   setPageTeamTheme(A, B);
@@ -3812,7 +3820,9 @@ function renderFinalSnapshot(match, displayName){
     prevB.style.display = '';
     prevB.innerHTML = prevLine(scoreB);
   }
-  setText('main-score', winMarginText(match) || shortResultText(match) || 'Match Completed');
+  setText('main-score', hasResult
+    ? (winMarginText(match) || shortResultText(match) || 'Match Completed')
+    : 'Match In Progress');
   document.getElementById('main-score').classList.add('result-margin');
   // Quiet accent ring/color on whichever side actually won — makes the
   // result readable at a glance instead of both team blocks looking

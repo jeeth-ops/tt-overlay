@@ -1089,8 +1089,15 @@ function renderPortal(data, token){
       <a class="watch-btn" href="/cricket-scorecard?room=${encodeURIComponent(data.live.roomId)}">Watch Live →</a>
     </div>` : '';
 
+  // 🐛 A match that is still being played has no saved result, so sending it
+  // to the scorecard's history mode showed a stale snapshot captioned "Match
+  // Completed" with the second innings at 0-0 — while the Watch Live button
+  // right above it opened the same match correctly. The row now goes where
+  // Watch Live goes whenever the match is live and its room is known; only a
+  // genuinely finished match uses the saved snapshot.
   const matchRow = (m, kind) => `
-    <div class="mc-row" data-goto-match="${escapeHtml(m.matchId)}">
+    <div class="mc-row" data-goto-match="${escapeHtml(m.matchId)}"${
+      !m.winningTeam && m.roomId ? ` data-goto-room="${escapeHtml(m.roomId)}"` : ''}>
       <span class="mc-dot ${kind}"></span>
       <div class="mc-main">
         <div class="mc-teams">${escapeHtml(teamLabel(m.teamA))}<span class="vs">vs</span>${escapeHtml(teamLabel(m.teamB))}</div>
@@ -1189,10 +1196,16 @@ function renderPortal(data, token){
   requestAnimationFrame(() => moveTabIndicator(c.querySelector('.tab-btn.active')));
   c.classList.remove('in'); void c.offsetWidth; c.classList.add('in');
   c.querySelectorAll('[data-goto-match]').forEach(row => row.addEventListener('click', (e) => {
-    // Same destination as the matchId branch in init() above — one single
-    // place (cricket-scorecard.html, history mode) renders every past
-    // match, clips included, correctly scoped to that one matchId.
-    ptNavigate(`/cricket-scorecard?token=${encodeURIComponent(token)}&match=${encodeURIComponent(row.dataset.gotoMatch)}&history=1`, { x: e.clientX, y: e.clientY });
+    // A live match goes to the live room — the same destination as its own
+    // Watch Live button — because its saved snapshot is by definition
+    // incomplete while it is still being played. Everything else goes to
+    // history mode, the single place that renders a finished match (clips
+    // included) correctly scoped to that one matchId.
+    const room = row.dataset.gotoRoom;
+    const href = room
+      ? `/cricket-scorecard?room=${encodeURIComponent(room)}`
+      : `/cricket-scorecard?token=${encodeURIComponent(token)}&match=${encodeURIComponent(row.dataset.gotoMatch)}&history=1`;
+    ptNavigate(href, { x: e.clientX, y: e.clientY });
   }));
 }
 
