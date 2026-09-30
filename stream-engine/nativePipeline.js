@@ -641,7 +641,15 @@ class Compositor extends EventEmitter {
         this.consumers = new Map(); // consumer proc -> RelayConsumer
         this.lastError = null;
         this.startedAt = null;
-        this.cameraMode = null;     // resolved once by probeCameraMode(), cached for this instance's lifetime
+        this.cameraMode = null;     // resolved by probeCameraMode(), cached until an open failure invalidates it
+        // 🛠 How hard we are still trying to constrain the camera. dshow
+        // refuses an unsupported -video_size/-framerate outright ("Could not
+        // set video options" -> I/O error) and ffmpeg exits in under a second,
+        // so retrying the SAME mode can never succeed. Each open failure steps
+        // this up: 0 = as configured (STREAM_ENGINE_CAMERA_MODE if set, else
+        // auto-detect), 1 = ignore the override and auto-detect from what the
+        // device advertises, 2 = no constraint at all and let the driver pick.
+        this._cameraModeLevel = 0;
         this.previewJpeg = null;
         // Live preview subscribers (see onPreviewFrame) — each is a function
         // that receives every composited preview JPEG as it is produced.
@@ -699,7 +707,11 @@ class Compositor extends EventEmitter {
                 // under-report all the time. If the operator knows the card
                 // does 1920x1080@30, STREAM_ENGINE_CAMERA_MODE=1920x1080@30
                 // settles it with no guessing at all.
-                const override = parseCameraModeOverride(process.env.STREAM_ENGINE_CAMERA_MODE);
+                // Skipped once a forced mode has already been rejected by the
+                // device — see _cameraModeLevel.
+                const override = this._cameraModeLevel === 0
+                    ? parseCameraModeOverride(process.env.STREAM_ENGINE_CAMERA_MODE)
+                    : null;
                 if (override) {
                     this.log(`[compositor] camera mode FORCED by STREAM_ENGINE_CAMERA_MODE: ${override.width}x${override.height}@${override.fps}`);
                     clearTimeout(timer);
@@ -751,7 +763,11 @@ class Compositor extends EventEmitter {
     async _start() {
         this.state = 'starting';
         this.lastError = null;
-        if (this.cameraMode === null) this.cameraMode = (await this.probeCameraMode(this._cameraDeviceName)) || false; // false = "probed, nothing usable"
+        // Level 2 means every constrained attempt has been refused — open the
+        // device with no -video_size/-framerate at all and take whatever it
+        // gives, which is better than not opening it.
+        if (this._cameraModeLevel >= 2) this.cameraMode = false;
+        else if (this.cameraMode === null) this.cameraMode = (await this.probeCameraMode(this._cameraDeviceName)) || false; // false = "probed, nothing usable"
         if (this.stopped) return { ok: false, error: 'Compositor is stopping' };
         // The overlay renderer is started alongside, never in front of,
         // the camera: if it can't come up, the program feed runs with a
@@ -940,10 +956,49 @@ class Compositor extends EventEmitter {
         if (this.stopped) return; // stop() reports this itself
         const ranMs = Date.now() - (this.legStartedAt || Date.now());
         this.log(`[compositor] ffmpeg exited unexpectedly after ${Math.round(ranMs / 1000)}s (code=${code}, signal=${signal})${this.lastError ? ` — last error: ${this.lastError}` : ''}`);
+        this._classifyOpenFailure(ranMs);
         this.emit('unexpected-exit', { code, signal, lastError: this.lastError });
         this.state = 'idle';
         if (ranMs >= COMPOSITOR_STABLE_RESET_MS) this._relaunchAttempt = 0;
         this._scheduleRelaunch();
+    }
+
+    // 🛠 An input that never opened is not a transient crash — relaunching it
+    // unchanged is an infinite loop, and that is exactly what an operator sees:
+    // "Error opening input file video=... I/O error" once every 10 seconds,
+    // attempt after attempt, with no picture and no explanation.
+    //
+    // dshow gives two distinct reasons, and they need opposite responses:
+    //
+    //   • "Could not set video options" — the device does not support the
+    //     resolution/framerate being asked for. Retrying it is pointless, but
+    //     a DIFFERENT mode will work, so step down the ladder and re-probe.
+    //   • device busy / in use — the mode is fine and nothing here can fix it;
+    //     something else already holds the camera. Say so plainly instead of
+    //     stepping down modes that were never the problem.
+    _classifyOpenFailure(ranMs) {
+        const err = String(this.lastError || '');
+        // Only an IMMEDIATE failure is an open failure; a leg that ran for a
+        // while and then died is a genuine crash and keeps the normal retry.
+        if (ranMs > 4000) return;
+        if (/in use|busy|device or resource/i.test(err)) {
+            this.log('[compositor] ⛔ the camera is already open in another program. Nothing here can take it: close the other app (an OBS/vMix source, another Stream Engine window, or a browser tab still holding the camera) and it will connect on the next retry.');
+            return;
+        }
+        if (!/could not set video options|error opening input|i\/o error/i.test(err)) return;
+
+        if (this._cameraModeLevel === 0 && parseCameraModeOverride(process.env.STREAM_ENGINE_CAMERA_MODE)) {
+            this._cameraModeLevel = 1;
+            this.cameraMode = null;   // force a real probe next time
+            this.log(`[compositor] ⛔ the camera REFUSED the forced mode STREAM_ENGINE_CAMERA_MODE=${process.env.STREAM_ENGINE_CAMERA_MODE}. It does not support that resolution/framerate, so retrying it can never work — ignoring it and auto-detecting from what the device actually advertises.`);
+            this.log('[compositor]   To keep the forced mode, set it to one of the modes the next "camera offers ..." line lists; to stop forcing it, remove that line from start-native.bat.');
+            return;
+        }
+        if (this._cameraModeLevel <= 1) {
+            this._cameraModeLevel = 2;
+            this.cameraMode = false;
+            this.log('[compositor] ⛔ the camera refused the auto-detected mode too — opening it unconstrained and taking whatever format it gives.');
+        }
     }
 
     // Self-heal while anything still needs the feed. The recorder and
