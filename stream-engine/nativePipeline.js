@@ -558,7 +558,11 @@ function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height,
     return args;
 }
 
-function buildRecorderEncoderArgs({ width, height, fps, bitrateKbps, outFile, useNvenc }) {
+// Same clamp as the live push: recording 60fps out of a 30fps program feed
+// writes a file that is half duplicate frames and twice the size, with no
+// more motion in it. See effectiveOutputFps.
+function buildRecorderEncoderArgs({ width, height, fps, bitrateKbps, outFile, useNvenc, relayFps }) {
+    fps = effectiveOutputFps(fps, relayFps);
     const videoArgs = useNvenc
         ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-b:v', `${bitrateKbps}k`, '-maxrate', `${Math.round(bitrateKbps * 1.3)}k`]
         : ['-c:v', 'libx264', '-preset', 'veryfast', '-b:v', `${bitrateKbps}k`];
@@ -585,7 +589,25 @@ function buildRecorderEncoderArgs({ width, height, fps, bitrateKbps, outFile, us
     ];
 }
 
-function buildLiveEncoderArgs({ width, height, fps, bitrateKbps, keyframeIntervalSec, destinationUrl, useTune, relayWidth, relayHeight }) {
+// 🎯 relayFps — the rate the PROGRAM FEED actually produces. You cannot
+// send more real frames than the program feed makes: asking for 60 out of a
+// 30fps feed does not produce 60fps of motion, it produces 30fps of motion
+// with every frame duplicated. YouTube then sees an uneven cadence and
+// judders ("not receiving enough video"), and half the CBR bitrate is spent
+// re-sending frames the viewer already has — which is exactly the "20 Mbps
+// par bhi lag" report: not a bandwidth problem at all.
+//
+// So the output rate is min(requested, relay): a HIGHER request is clamped
+// to what really exists, a LOWER one still decimates evenly (60 -> 30 keeps
+// every other frame, which is correct and cheap). Never duplicate.
+// The caller reports the clamp to the operator — it is never silent.
+function effectiveOutputFps(requestedFps, relayFps) {
+    const req = Number(requestedFps) || 30;
+    const relay = Number(relayFps) || 0;
+    return relay > 0 ? Math.min(req, relay) : req;
+}
+function buildLiveEncoderArgs({ width, height, fps, bitrateKbps, keyframeIntervalSec, destinationUrl, useTune, relayWidth, relayHeight, relayFps }) {
+    fps = effectiveOutputFps(fps, relayFps);
     const gop = Math.round(fps * keyframeIntervalSec);
     // 🛠 "YouTube is not receiving enough video to maintain smooth
     // streaming" — a SENDING-side problem, not a bandwidth one: the encoder
@@ -1151,6 +1173,7 @@ function makeRepeatSuppressingLogger(prefix, log = (l) => console.log(l), window
 }
 
 module.exports = {
+    effectiveOutputFps,
     Compositor,
     NutUnitSplitter,
     RelayConsumer,

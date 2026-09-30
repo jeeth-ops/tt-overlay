@@ -279,3 +279,169 @@ What actually changes, and what to check:
   no signal, and reports it to the engine.
 - **Clips are unaffected by any of this.** They are cut from `master.mp4`, so the
   camera type cannot change clip behaviour.
+
+---
+
+## I. Offline-first audit — "internet gaya to recording ruk jaati hai aur 2 parts ban jaate hain"
+
+The rule being audited against: **REMOTE FAILURE ≠ LOCAL MEDIA FAILURE.** The
+internet may only affect YouTube, R2, Drive and remote sync. Camera, program
+output, master recording, clip cutting, preview, scoring, panel and overlay
+must all continue without it.
+
+### I1. YouTube judders on a 20 Mbps line — CONFIRMED, FIXED
+
+This one is not a network problem at all, which is why more bandwidth never
+helped.
+
+```
+EVENT    operator selects 60 FPS in Live Studio and goes live
+  ↓
+CODE     panel3 → /go-live → resolveEncodeSettings()  fps = 30 | 60
+  ↓
+CODE     ensureCompositor() created the Compositor with  fps: 30   ← HARDCODED
+  ↓
+CODE     buildLiveEncoderArgs() received fps = 60 and emitted
+             -fps_mode cfr  -r 60
+  ↓
+PROCESS  the relay carries 30 real frames/sec; ffmpeg must fill a 60-frame
+         grid, so it DUPLICATES every frame
+  ↓
+FAILURE  YouTube receives 60 fps of which half are duplicates: uneven
+         cadence, and roughly half the CBR bitrate spent re-sending frames
+         the viewer already has
+  ↓
+SYMPTOM  juddery/laggy stream regardless of uplink speed; YouTube Studio
+         reports "not receiving enough video to maintain smooth streaming"
+```
+
+The same function already took `relayWidth`/`relayHeight` from the compositor,
+with the comment *"the compositor is the authority on that"* — frame rate was
+simply never given the same treatment.
+
+**Fixed.** The program feed now runs at the rate that was actually requested
+instead of a hardcoded 30, and every consumer runs at
+`min(requested, programFps)` (`effectiveOutputFps`). A higher request is
+clamped to what really exists; a lower one still decimates evenly (60 → 30
+keeps every other frame, which is correct). Frames are never duplicated, the
+GOP follows the real rate so keyframes stay 2 s apart, and the clamp is
+reported in the log, on `/status` (`encoderRequestedFps` /
+`encoderEffectiveFps`, `compositor.fps`) and in the panel — never silent.
+
+### I2. The master recording splitting — root cause report
+
+Traced honestly, and the answer is **not** what it looks like from the
+outside. In native program-feed mode there is no code path where losing the
+internet stops the recorder. Each of these was read and, where it is logic
+rather than configuration, pinned with a test:
+
+| Path | What it actually does |
+|---|---|
+| `RelayConsumer.deliver` | one object per consumer process; a dead YouTube encoder cannot touch the recorder's writes |
+| back-pressure | a backed-up consumer **skips** frames; the shared source is never paused, so the recorder cannot be starved by a collapsing uplink |
+| `superviseRecorder` | gated on `programFeedFlowing()` — it will not blame the recorder for a source that has stopped |
+| `ensureCompositor` | never restarts a running compositor; refcounted, so stopping the stream leaves the recorder's feed alone |
+| overlay Chromium dies | pacer keeps re-sending the last frame from a getter; ffmpeg never sees EOF |
+| `releaseLiveOutputWindowIfUnused` | returns early while `recordingDesired` |
+| panel `socket.on('disconnect')` | dims an indicator; touches nothing else |
+
+So the two real defects were not "recording stops on network loss". They were:
+
+1. **No boundary carried a cause.** A match that came back as
+   `master.mp4` + `master_part2.mp4` was indistinguishable from one that split
+   for a genuine local fault. "It splits when the internet drops" could not be
+   confirmed, refuted or fixed, because nothing recorded why.
+2. **The parts were the deliverable.** The operator recorded one match and was
+   handed pieces to join themselves.
+
+**Leading hypothesis for the mechanism** (stated as a hypothesis — it is not
+yet proven on hardware): when the uplink dies the live encoder dies and
+reconnects with backoff, churning NVENC encode sessions. Consumer GPUs cap
+concurrent NVENC sessions, so the recorder's own session can fail or stall,
+the 30 s stall watchdog fires, and the recorder continues in a new segment.
+That is a **local** encoder fault with a remote *trigger* — which is why
+`classifyBoundaryReason` deliberately classifies it local: calling it "remote"
+would hide the actual defect (two encoders contending for one GPU resource).
+
+**Fixed / instrumented:**
+
+- `recordingSession.js` — one durable session per match
+  (`recording-session.json`, atomic writes). Every part boundary is recorded
+  with its reason, and the reason is **classified** local / remote / unknown.
+- A boundary classified `remote` now logs
+  `⛔ ARCHITECTURE VIOLATION` at the moment it happens, and shows red in the
+  panel. It can no longer pass as normal.
+- An engine restart mid-match **adopts** the running session instead of
+  declaring a second recording.
+- On stop, parts are joined losslessly back into one `master_complete.mp4`
+  (concat demuxer, `-c copy` — no re-encode, no quality change, no second pass
+  over a 7-hour NVENC encode). **The parts are kept**: the join is the
+  convenience, the parts are the evidence, and deleting footage to tidy up is
+  not a trade worth making.
+- Clips are unaffected either way — they are cut from the part covering the
+  moment (`findRecordingSegmentFor`), never from the joined file.
+
+On the operator's next split, the session file names the cause. If it reads
+`nvenc` or `stalled`, the hypothesis above is confirmed and the fix is to stop
+the two encoders contending. If it ever reads `[remote]`, that is a real
+architecture bug and the log says so.
+
+### I3. Overlay and scoring ARE internet-dependent — NOT fixed, needs its own pass
+
+This is the part of the brief that is genuinely not done, and it is not a
+small change.
+
+```
+cricket-overlay.html:10    <script src="/socket.io/socket.io.js">
+cricket-overlay.html:1507  const socket = io({ query: { room: matchId } });
+server.js (compositor)     overlayUrl = `${mainServerUrl}/cricket-overlay?room=…`
+```
+
+`io()` with no URL connects to the origin the page was loaded from, and that
+origin is `mainServerUrl` — the Render deployment, i.e. the internet. So:
+
+- the overlay **page** is fetched over the internet;
+- its score updates arrive over a Socket.IO connection **to the internet**;
+- the scoring panel is served from, and writes to, the same remote origin.
+
+With the line down, the video keeps recording correctly — but the overlay
+freezes at the last score it received, and scoring cannot be entered or
+persisted. Requirements 8–13, 34 and 35 of the brief are therefore **not met**
+and cannot be met by anything in the Stream Engine alone. Doing it properly
+needs:
+
+1. the Stream Engine serving `cricket-overlay` and a **local** Socket.IO on
+   localhost, so the compositor's Chromium never needs the internet;
+2. the panel writing to a **local authoritative match state** first, with the
+   remote server as a follower;
+3. durable local persistence of that state (ball-by-ball, striker, bowler,
+   extras, over state);
+4. idempotent sync on reconnect — stable `matchId`/`inningsId`/`ballId` plus a
+   local sequence number, so nothing is replayed, duplicated or reverted.
+
+That is the next pass, and it should be taken as one piece of work rather than
+bolted on.
+
+### I4. What could NOT be verified in this container
+
+Stated plainly rather than as "should work":
+
+- there is **no ffmpeg build, no capture device and no GPU** here, so the
+  offline integration test (brief §31–§33) — cut the internet, record, score,
+  cut clips, restore, verify the master's duration/speed/sync — has to be run
+  on the operator's PC;
+- the frame-rate clamp, the timebase measurement and the lossless join are
+  verified as **logic** (58 unit tests across six suites) and as ffmpeg
+  argument construction, not as rendered video.
+
+What to run on the match PC, in order:
+
+1. Record for a minute and read **FPS (req/actual)** in the panel — it must
+   say `1.00× real time`.
+2. Read **Program feed** — it must match what you selected; if it is amber,
+   the feed cannot produce the selected rate and the reason is in the tooltip.
+3. Pull the network cable for 10 minutes while recording, scoring and cutting
+   clips. Restore it.
+4. Stop recording. **Master file** should say `one continuous recording`, or
+   `✓ one master (master_complete.mp4, from N parts)` with the boundary
+   reasons in its tooltip — and none of them may read `[remote]`.

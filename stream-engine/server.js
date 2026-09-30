@@ -63,6 +63,7 @@
 // ================================================================
 const express = require('express');
 const retryQueueStore = require('./retryQueueStore');
+const recordingSession = require('./recordingSession');
 
 // 🔊 AUDIO SAMPLE RATE — 48 kHz, everywhere, deliberately.
 //
@@ -2106,7 +2107,7 @@ async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec 
         // also running) relays to THIS process, which holds its own
         // independent NVENC session and pushes RTMPS — a network
         // problem here can never touch the recorder, and vice versa.
-        const compResult = await ensureCompositor({ matchId: engine.matchId, mainServerUrl: engine.mainServerUrl, cameraDeviceName: engine.cameraDeviceName, audioDeviceName: engine.audioDeviceName, who: 'live' });
+        const compResult = await ensureCompositor({ matchId: engine.matchId, mainServerUrl: engine.mainServerUrl, cameraDeviceName: engine.cameraDeviceName, audioDeviceName: engine.audioDeviceName, who: 'live', fps: resolved.fps });
         if (!compResult.ok) {
             engine.state = 'idle';
             // A reconnect must keep trying: the compositor may simply be
@@ -2122,7 +2123,15 @@ async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec 
             ...resolved, destinationUrl, useTune: checkNvencTuneRuntime(),
             relayWidth: compositor ? compositor.width : null,
             relayHeight: compositor ? compositor.height : null,
+            // …and what rate it actually carries. Sending 60 out of a 30fps
+            // feed is duplicated frames, not smoother video — see
+            // effectiveOutputFps in nativePipeline.js.
+            relayFps: compositor ? compositor.fps : null,
         });
+        const effFps = nativePipeline.effectiveOutputFps(resolved.fps, compositor ? compositor.fps : null);
+        if (effFps !== resolved.fps) console.log(`[stream-engine] Live stream is sending ${effFps}fps, not the ${resolved.fps}fps selected — the program feed only produces ${effFps}. Duplicating frames up to ${resolved.fps} would judder on YouTube and waste bitrate, so it is not done.`);
+        engine.requestedFps = resolved.fps;
+        resolved.fps = effFps;
         proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] }, 'live-encoder');
         // Joins the running relay at its next packet — never restarts the
         // compositor and never disturbs the recorder (see nativePipeline.js).
@@ -2355,7 +2364,7 @@ let compositorStopping = null; // promise while a released compositor is still s
 // recorder's own existing "already recording a different match" guard
 // below) — a genuine multi-match-simultaneously native pipeline isn't
 // implemented; the operator stops the previous match first, same as today.
-async function ensureCompositor({ matchId, mainServerUrl, cameraDeviceName, audioDeviceName, who }) {
+async function ensureCompositor({ matchId, mainServerUrl, cameraDeviceName, audioDeviceName, who, fps }) {
     // A compositor that was just released may still hold the camera for
     // a moment — starting a new one before it has exited fails with
     // "device busy" (an exclusive dshow device can only be opened once).
@@ -2369,15 +2378,36 @@ async function ensureCompositor({ matchId, mainServerUrl, cameraDeviceName, audi
         const execPath = resolveCaptureBrowserExecutable();
         if (!execPath) return { ok: false, error: 'Could not find Chrome or Edge on this PC for the overlay renderer (see resolveCaptureBrowserExecutable) — set CAPTURE_BROWSER_PATH to its full .exe path' };
         const { width, height } = RESOLUTIONS[recorder.settings ? recorder.settings.resolution : '1080p'] || RESOLUTIONS['1080p'];
+        // 🎯 THE PROGRAM FEED'S OWN FRAME RATE. This used to be hardcoded to
+        // 30 while the operator could select 60 for the stream — so a 60fps
+        // stream was a 30fps feed with every frame duplicated: juddery on
+        // YouTube and half the bitrate wasted, on any connection. It is now
+        // whatever the caller asked for, and every consumer is told the real
+        // rate (see effectiveOutputFps) instead of guessing.
+        const programFps = Number(fps) > 0 ? Number(fps) : 30;
         compositor = new nativePipeline.Compositor({
             spawnFfmpeg,
             execPath,
             overlayUrl: `${String(mainServerUrl).replace(/\/+$/, '')}/cricket-overlay?room=${encodeURIComponent(matchId)}`,
-            width, height, fps: 30,
+            width, height, fps: programFps,
         });
+        if (programFps > 30) {
+            // The relay carries RAW video between processes: 1080p60 is
+            // ~186 MB/s down a pipe. Worth saying out loud before it shows up
+            // as a mystery stall on a slower disk/CPU.
+            console.log(`[stream-engine] Program feed at ${programFps}fps — the internal raw relay will carry ~${Math.round(width * height * 1.5 * programFps / 1e6)} MB/s. If the feed stalls, drop to 30.`);
+        }
         compositor.matchId = matchId;
     }
     const comp = compositor;
+    // The program feed is SHARED and cannot change rate without restarting
+    // it — which would break the other consumer's file/stream, exactly what
+    // this architecture exists to prevent. So a mismatch is never applied
+    // silently: the consumer runs at the feed's real rate and the operator
+    // is told, rather than being handed duplicated frames.
+    if (Number(fps) > 0 && Number(fps) !== comp.fps) {
+        console.log(`[stream-engine] ⚠ ${who} asked for ${fps}fps but the program feed is already running at ${comp.fps}fps (shared with the other outputs, and restarting it would interrupt them). ${who} will run at ${comp.fps}fps. To stream at ${fps}fps, stop recording and streaming, then start again with both set to ${fps}.`);
+    }
     const hadRef = comp.refs.has(who); // a retry by a holder that still wants the feed keeps its ref on failure (the compositor keeps self-healing)
     comp.addRef(who); // before awaiting, so a concurrent release can't stop it out from under this start
     const result = await comp.ensureRunning({ cameraDeviceName, audioDeviceName });
@@ -2419,7 +2449,30 @@ const recorder = {
     lastSizeBytes: null,
     lastSizeChangeAt: null,
     rate: createRateTracker('Recording'), // media-time vs wall-time for the MASTER RECORDING — see rateHealth
+    session: null,            // the durable ONE-master-per-match record — see recordingSession.js
+    sessionDir: null,         // folder the session file and the segments live in
+    finalizing: null,         // {status:'joining'|'done'|'failed', path, error} while/after the parts are joined
 };
+// The session file is the only durable answer to "why did this match come
+// back in two pieces?" — a failure to write it must be visible, not eaten.
+function persistRecordingSession() {
+    if (!recorder.session || !recorder.sessionDir) return;
+    recordingSession.saveSession(recorder.sessionDir, recorder.session, (e) => {
+        console.log(`[stream-engine] ⚠ could not write the recording session file (${e.message}) — the recording itself is unaffected, but a restart will not be able to adopt this session`);
+    });
+}
+// A segment boundary is only ever legitimate for a LOCAL reason. If one is
+// ever blamed on the network, that is the architecture being violated, and
+// it says so at the moment it happens rather than being discovered after
+// the match.
+function noteSegmentBoundary(reason) {
+    if (!recorder.session) return;
+    const seg = recordingSession.closeOpenSegment(recorder.session, { reason });
+    persistRecordingSession();
+    if (seg && seg.reasonKind === 'remote') {
+        console.error(`[stream-engine] ⛔ ARCHITECTURE VIOLATION: the master recording was interrupted by something REMOTE — "${seg.reason}". Internet, YouTube, R2 and Drive must never be able to end a local recording. Please report this line.`);
+    }
+}
 
 // 🎯 WALL CLOCK → RECORDING TIMELINE. Each segment keeps an anchor: the
 // wall-clock moment its file time 0 corresponds to, derived from the
@@ -2551,11 +2604,28 @@ async function startRecorder(matchId, { resolution, fps, audioDeviceName, camera
     recorder.cameraDeviceName = cameraDeviceName || recorder.cameraDeviceName;
     recorder.mainServerUrl = mainServerUrl || recorder.mainServerUrl;
     recorder.desiredRecording = true;
-    recorder.settings = { resolution: resKey, width, height, fps: fpsNum, bitrateKbps };
+    recorder.settings = { resolution: resKey, width, height, fps: fpsNum, bitrateKbps, requestedFps: fpsNum };
     // Never reuse a name: after a Stream Engine restart the in-memory
     // segment list is empty while master.mp4 from earlier in the same
     // match is still on disk — ffmpeg would then stop to ask "Overwrite?
     // [y/N]" on stdin (hanging, or reading relay bytes as the answer).
+    // ONE session per match. A retry continues the session already open; a
+    // fresh start (including after an engine restart mid-match) ADOPTS the
+    // match's session from disk rather than declaring a second recording.
+    if (!recorder.session || recorder.session.matchId !== matchId || recorder.session.status !== 'recording') {
+        const { session, adopted } = recordingSession.startOrAdoptSession(dir, { matchId, settings: recorder.settings });
+        recorder.session = session;
+        recorder.sessionDir = dir;
+        if (adopted) {
+            console.log(`[stream-engine] Continuing the existing recording session for ${matchId} (${session.segments.length} part(s) already on disk) — this is ONE recording, not a new one`);
+            // The part that was open when the engine went down never got an
+            // ending; name the cause rather than leaving a null in the record.
+            recordingSession.closeOpenSegment(session, { reason: 'Stream Engine restarted while recording' });
+        }
+    } else {
+        recorder.session.settings = recorder.settings;
+    }
+    recorder.finalizing = null;
     const segmentName = (n) => (n === 1 ? 'master.mp4' : `master_part${n}.mp4`);
     let partNo = recorder.segments.length + 1;
     while (fs.existsSync(path.join(dir, segmentName(partNo)))) partNo++;
@@ -2571,13 +2641,16 @@ async function startRecorder(matchId, { resolution, fps, audioDeviceName, camera
         // camera+overlay compositor (opened once, shared with the live
         // encoder if that's also running) relays to THIS process, which
         // holds its own independent NVENC session and writes master.mp4.
-        const compResult = await ensureCompositor({ matchId, mainServerUrl: recorder.mainServerUrl, cameraDeviceName: recorder.cameraDeviceName, audioDeviceName, who: 'recorder' });
+        const compResult = await ensureCompositor({ matchId, mainServerUrl: recorder.mainServerUrl, cameraDeviceName: recorder.cameraDeviceName, audioDeviceName, who: 'recorder', fps: fpsNum });
         if (!compResult.ok) return fail(compResult.error);
         recorder.holdsCompositorRef = true;
         if (!recorder.desiredRecording || shuttingDown) return fail('Recording was stopped while starting');
         const useNvenc = checkNvencRuntime();
         if (!useNvenc) checkLibx264();
-        const args = nativePipeline.buildRecorderEncoderArgs({ width, height, fps: fpsNum, bitrateKbps, outFile, useNvenc });
+        const effFps = nativePipeline.effectiveOutputFps(fpsNum, compositor ? compositor.fps : null);
+        if (effFps !== fpsNum) console.log(`[stream-engine] Recording at ${effFps}fps, not the ${fpsNum}fps requested — that is what the program feed produces. Writing duplicated frames would double the file size for no extra motion.`);
+        recorder.settings.fps = effFps; // the rate actually being written — what the timebase check and the UI must use
+        const args = nativePipeline.buildRecorderEncoderArgs({ width, height, fps: fpsNum, bitrateKbps, outFile, useNvenc, relayFps: compositor ? compositor.fps : null });
         proc = spawnFfmpeg(args, { stdio: ['pipe', 'ignore', 'pipe'] }, 'recorder');
         // Joins the running relay at its next packet — the live encoder
         // (if running) is never disturbed (see nativePipeline.js).
@@ -2602,6 +2675,10 @@ async function startRecorder(matchId, { resolution, fps, audioDeviceName, camera
     Object.defineProperty(seg, 'anchorSamples', { value: [], enumerable: false }); // internal — kept out of /recording-info's JSON
     recorder.segments.push(seg);
     recorder.currentSegment = seg;
+    if (recorder.session) {
+        recordingSession.addSegment(recorder.session, { path: outFile, startedAt: recorder.startedAt });
+        persistRecordingSession();
+    }
     recorder.lastProgressAdvanceAt = null;
     recorder.lastSizeBytes = null;
     recorder.lastSizeChangeAt = null;
@@ -2644,6 +2721,16 @@ async function startRecorder(matchId, { resolution, fps, audioDeviceName, camera
             recorder.state = 'idle';
             if (!shuttingDown) console.log(`[stream-engine] Recording stopped — saved ${outFile}`);
             if (NATIVE_PROGRAM_FEED && !recorder.desiredRecording) releaseRecorderCompositorRef();
+            // End of the match (or a shutdown): close the session and, if
+            // internal fault tolerance left the match in more than one part,
+            // join them back into ONE master. The operator asked for one
+            // recording; the parts are an implementation detail.
+            if (recorder.session) {
+                recordingSession.stopSession(recorder.session, { reason: shuttingDown ? 'Stream Engine shutting down' : 'operator stopped recording' });
+                persistRecordingSession();
+                if (!shuttingDown) finalizeRecordingSession(recorder.session, recorder.sessionDir);
+                else reportSessionShape(recorder.session);
+            }
             return;
         }
         // Unexpected exit while the operator still wants to be
@@ -2653,6 +2740,7 @@ async function startRecorder(matchId, { resolution, fps, audioDeviceName, camera
         // playable on its own, up to its last flushed fragment.
         recorder.state = 'crashed';
         recorder.lastError = recorder.lastError || (spawnError ? `recorder ffmpeg could not start: ${spawnError.message}` : `recorder ffmpeg exited unexpectedly (code=${code}, signal=${signal})`);
+        noteSegmentBoundary(recorder.lastError);
         // Note: this does NOT release the compositor — it's still needed
         // for the retry (and the compositor self-heals if it died too).
         scheduleRecorderRestart(recorder.lastError);
@@ -2686,6 +2774,95 @@ function scheduleRecorderRestart(reason) {
     }, retryDelayMs);
 }
 
+// ================================================================
+// 🧵 ONE MASTER, WHATEVER HAPPENED DURING THE MATCH
+// ================================================================
+// A recorder restart has to open a new file — fragmented MP4 cannot be
+// appended to once the process that owns it is gone — so real crash
+// safety genuinely produces master.mp4 + master_part2.mp4 + … That is
+// the right behaviour internally and the WRONG deliverable: the operator
+// recorded one match and must be handed one recording.
+//
+// So when a session ends with more than one part, they are joined back
+// together losslessly (-c copy, concat DEMUXER: no re-encode, no quality
+// change, no second NVENC pass over seven hours of video) into
+// master_complete.mp4. The parts are deliberately KEPT: the join is the
+// convenience, the parts are the evidence, and deleting footage to tidy
+// up is not a trade worth making.
+//
+// Clips are unaffected either way — they are cut from the part that
+// covers the moment (findRecordingSegmentFor), never from this file.
+function reportSessionShape(session) {
+    const bounds = recordingSession.boundaries(session);
+    if (!bounds.length) return;
+    console.log(`[stream-engine] This match was recorded in ${session.segments.length} part(s). Why each part ended:`);
+    for (const b of bounds) {
+        console.log(`[stream-engine]   after ${path.basename(b.afterSegment)} — [${b.reasonKind}] ${b.reason || 'reason not recorded'}`);
+    }
+    if (recordingSession.hasRemoteCausedBoundary(session)) {
+        console.error('[stream-engine] ⛔ At least one part ended for a REMOTE reason. That must not be possible — the local recording is meant to be completely independent of the internet. Please report the lines above.');
+    }
+}
+
+function finalizeRecordingSession(session, dir) {
+    reportSessionShape(session);
+    const joinable = recordingSession.segmentsAreJoinable(session);
+    if (!joinable.ok) {
+        session.final = { path: session.segments.length ? session.segments[0].path : null, status: 'single', joinedSegments: session.segments.length };
+        persistRecordingSession();
+        return;
+    }
+    // A part written at a different resolution cannot be stream-copied into
+    // the same file. Say so instead of producing something broken.
+    const outFile = recordingSession.finalFilePath(dir);
+    const listFile = recordingSession.concatListPath(dir);
+    try {
+        fs.writeFileSync(listFile, recordingSession.buildConcatList(session));
+    } catch (e) {
+        session.final = { status: 'failed', error: `could not write the parts list: ${e.message}` };
+        recorder.finalizing = { status: 'failed', error: session.final.error };
+        persistRecordingSession();
+        console.log(`[stream-engine] ⚠ Could not join the recording parts (${e.message}) — every part is still on disk and playable.`);
+        return;
+    }
+    session.final = { path: outFile, status: 'joining', joinedSegments: joinable.count };
+    recorder.finalizing = { status: 'joining', path: outFile };
+    persistRecordingSession();
+    console.log(`[stream-engine] Joining ${joinable.count} recording parts into one master (lossless, no re-encode) → ${outFile}`);
+
+    let proc;
+    try {
+        proc = spawnFfmpeg(recordingSession.buildConcatArgs({ listFile, outFile }), { stdio: ['ignore', 'ignore', 'pipe'] }, 'recording-join');
+    } catch (e) {
+        session.final = { ...session.final, status: 'failed', error: e.message };
+        recorder.finalizing = { status: 'failed', error: e.message };
+        persistRecordingSession();
+        console.log(`[stream-engine] ⚠ Could not start the join (${e.message}) — every part is still on disk and playable.`);
+        return;
+    }
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += d; if (stderr.length > 4000) stderr = stderr.slice(-4000); });
+    proc.on('error', () => {});
+    proc.on('exit', (code) => {
+        try { fs.unlinkSync(listFile); } catch (e) {}
+        // The session may already have moved on to the NEXT match by the
+        // time a long join finishes — only touch it if it is still this one.
+        const live = recorder.session === session;
+        if (code === 0) {
+            session.final = { ...session.final, status: 'done', finishedAt: Date.now() };
+            if (live) recorder.finalizing = { status: 'done', path: outFile };
+            console.log(`[stream-engine] ✓ One continuous master written → ${outFile} (the ${joinable.count} parts are kept alongside it)`);
+        } else {
+            const err = (stderr.trim().split('\n').pop() || `ffmpeg exited with code ${code}`).slice(0, 300);
+            session.final = { ...session.final, status: 'failed', error: err, finishedAt: Date.now() };
+            if (live) recorder.finalizing = { status: 'failed', error: err };
+            console.log(`[stream-engine] ⚠ Could not join the recording parts (${err}) — every part is still on disk and playable, nothing was lost.`);
+        }
+        if (live) persistRecordingSession();
+        else recordingSession.saveSession(dir, session, () => {});
+    });
+}
+
 function releaseRecorderCompositorRef() {
     if (!recorder.holdsCompositorRef) return;
     recorder.holdsCompositorRef = false;
@@ -2716,6 +2893,9 @@ function resetRecorderForNewMatch() {
     recorder.segments = [];
     recorder.restarts = [];
     recorder.totalRestarts = 0;
+    recorder.session = null;   // a genuinely new match gets its own session
+    recorder.sessionDir = null;
+    recorder.finalizing = null;
 }
 
 // Best-effort free disk space for the recordings volume — Node 18.15+
@@ -3729,6 +3909,11 @@ app.get('/status', async (req, res) => {
         compositor: NATIVE_PROGRAM_FEED ? {
             state: compositor ? compositor.state : 'idle',
             matchId: compositor ? compositor.matchId : null,
+            // The PROGRAM feed's real format. Everything downstream is bound
+            // to this — no consumer may claim a higher rate than it produces.
+            width: compositor ? compositor.width : null,
+            height: compositor ? compositor.height : null,
+            fps: compositor ? compositor.fps : null,
             refs: compositor ? [...compositor.refs] : [],
             lastError: compositor ? compositor.lastError : null,
             relay: compositor ? compositor.stats() : null,
@@ -3748,6 +3933,11 @@ app.get('/status', async (req, res) => {
         encoderState: engine.state,
         // Same real-time check for the YouTube push as for the recording.
         encoderTimebase: rateHealth(engine.rate, engine.settings && engine.settings.fps),
+        // What the operator SELECTED vs what is really being sent. They differ
+        // when the program feed cannot produce the selected rate — clamped on
+        // purpose (duplicated frames judder on YouTube), and never silently.
+        encoderRequestedFps: engine.requestedFps || null,
+        encoderEffectiveFps: (engine.settings && engine.settings.fps) || null,
         clipWorkerState: clipWorker.state,
         cloudflareConnected: clipWorker.cloudflareConnected,
         clipWorkerLastError: clipWorker.lastError,
@@ -3773,6 +3963,20 @@ app.get('/status', async (req, res) => {
             programFeedHealth: recorder.lastProgramFeedHealth || null,
             // Is one real second still one recorded second? See rateHealth.
             timebase: rateHealth(recorder.rate, recorder.settings && recorder.settings.fps),
+            // ONE recording per match, and the evidence for it: every part
+            // boundary with its cause, classified local/remote. A 'remote'
+            // one is a defect — see recordingSession.js.
+            session: recorder.session ? {
+                sessionId: recorder.session.sessionId,
+                startedAt: recorder.session.startedAt,
+                status: recorder.session.status,
+                partCount: recorder.session.segments.length,
+                adoptions: recorder.session.adoptions || 0,
+                boundaries: recordingSession.boundaries(recorder.session),
+                remoteCausedBoundary: recordingSession.hasRemoteCausedBoundary(recorder.session),
+                final: recorder.session.final || null,
+            } : null,
+            finalizing: recorder.finalizing,
         },
         // Disk level the panel can act on, and the mode the camera/capture
         // card ACTUALLY negotiated (see /capture-window/camera-info) — both

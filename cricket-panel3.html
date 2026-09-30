@@ -1574,6 +1574,13 @@
                the capture card: if it delivers a different rate the footage
                plays at the wrong speed, which this row is here to expose. -->
           <span style="opacity:.7;">FPS (req/actual)</span><span id="rec-timebase">—</span>
+          <!-- The PROGRAM feed's real format. Nothing downstream can carry a
+               higher frame rate than this one produces, so when it disagrees
+               with what was selected the operator has to be able to see it. -->
+          <span style="opacity:.7;">Program feed</span><span id="rec-program-feed">—</span>
+          <!-- ONE master per match. Parts are internal crash safety; if a
+               match did end up in parts, this says how many and why. -->
+          <span style="opacity:.7;">Master file</span><span id="rec-session">—</span>
         </div>
         <div id="rec-error" style="font-size:11px; color:#ff6b6b; margin-top:6px; display:none;"></div>
         <div style="font-size:10.5px; opacity:.5; margin-top:6px;">
@@ -2699,7 +2706,7 @@ async function refreshClipEngineStatus(){
   ceSetDot('ce-worker', status.clipWorkerState !== 'idle' ? true : null, status.clipWorkerState === 'idle' ? 'Idle' : status.clipWorkerState === 'cutting' ? 'Cutting…' : 'Uploading…');
   ceSetDot('ce-cloudflare', status.cloudflareConnected, status.cloudflareConnected ? 'Connected' : `Retrying (${status.retryQueueLength} queued)`);
 
-  updateRecorderStatusUI(status.recorder);
+  updateRecorderStatusUI(status.recorder, status.compositor);
 }
 
 function formatBytes(n){
@@ -2737,7 +2744,69 @@ function renderRecorderTimebase(el, tb){
       : `The camera is delivering about ${actual} FPS but the engine was told ${req}. Recording and clips will play slower than real time.`;
   }
 }
-function updateRecorderStatusUI(recorder){
+/* The program feed's real format, and whether the recorder is getting the
+   rate it asked for. A mismatch is deliberate — a 30fps feed cannot be made
+   into 60fps of motion, only 60fps of duplicated frames, which judders on
+   YouTube and doubles the file for nothing — so it is shown, not hidden. */
+function renderProgramFeed(el, comp, settings){
+  if(!el) return;
+  el.style.color = '';
+  if(!comp || !comp.fps){ el.textContent = '—'; el.title = 'Only the native program feed reports this.'; return; }
+  el.textContent = `${comp.width}×${comp.height} • ${comp.fps} FPS`;
+  const asked = settings && settings.requestedFps;
+  if(asked && asked !== comp.fps){
+    el.style.color = '#ffb020';
+    el.textContent += `  (recording at ${comp.fps}, ${asked} was selected)`;
+    el.title = `The program feed runs at ${comp.fps} FPS and is shared by the recording, the preview and the YouTube push. Padding it up to ${asked} would just duplicate frames. To use ${asked} FPS, stop recording and streaming, then start both at ${asked}.`;
+  } else {
+    el.title = 'The shared program feed every local output is cut from.';
+  }
+}
+
+/* ONE master recording per match. A recorder restart has to open a new file
+   (fragmented MP4 cannot be appended to once its process is gone), so parts
+   are real crash safety — but they are an internal detail, and the operator
+   gets them joined back into one file. If a part boundary was ever caused by
+   something REMOTE (internet, YouTube, R2, Drive) that is an architecture
+   violation, and it is called out here rather than passing as normal. */
+function renderRecorderSession(el, session, finalizing){
+  if(!el) return;
+  el.style.color = '';
+  if(!session){ el.textContent = '—'; el.title = ''; return; }
+  const n = session.partCount || 0;
+  if(finalizing && finalizing.status === 'joining'){
+    el.textContent = `joining ${n} parts into one master…`;
+    el.title = 'Lossless stream copy — no re-encode, no quality change.';
+    return;
+  }
+  if(finalizing && finalizing.status === 'done'){
+    el.style.color = '#3fce6e';
+    el.textContent = `✓ one master (master_complete.mp4, from ${n} parts)`;
+    el.title = 'The individual parts are kept alongside it — nothing was deleted.';
+    return;
+  }
+  if(finalizing && finalizing.status === 'failed'){
+    el.style.color = '#ffb020';
+    el.textContent = `${n} parts — could not be joined`;
+    el.title = (finalizing.error || '') + ' — every part is still on disk and playable, nothing was lost.';
+    return;
+  }
+  if(n <= 1){
+    el.style.color = '#3fce6e';
+    el.textContent = 'one continuous recording';
+    el.title = 'master.mp4 — a single unbroken session.';
+    return;
+  }
+  const remote = session.remoteCausedBoundary;
+  el.style.color = remote ? '#ff6b6b' : '#ffb020';
+  el.textContent = `${n} parts${remote ? '  ⛔ caused by a REMOTE event' : ''} — will be joined on stop`;
+  const why = (session.boundaries || []).map(b => `• [${b.reasonKind}] ${b.reason || 'reason not recorded'}`).join('\n');
+  el.title = (remote
+    ? 'A part boundary was blamed on the internet/YouTube/R2/Drive. That must never happen — the local recording is meant to be fully independent. Please report this.\n\n'
+    : 'Each part ended for a local reason. They are joined into one master when you stop.\n\n') + why;
+}
+
+function updateRecorderStatusUI(recorder, compositorStatus){
   const statusEl = document.getElementById('rec-status');
   const outputEl = document.getElementById('rec-output');
   const durationEl = document.getElementById('rec-duration');
@@ -2745,12 +2814,16 @@ function updateRecorderStatusUI(recorder){
   const diskEl = document.getElementById('rec-disk-free');
   const errEl = document.getElementById('rec-error');
   const tbEl = document.getElementById('rec-timebase');
+  const pfEl = document.getElementById('rec-program-feed');
+  const sesEl = document.getElementById('rec-session');
   const resSelect = document.getElementById('rec-resolution-select');
   if(!statusEl) return;
   if(!recorder || recorder.state === 'idle'){
     statusEl.innerHTML = '● Not recording';
     outputEl.textContent = '—'; durationEl.textContent = '—'; sizeEl.textContent = '—';
     if(tbEl){ tbEl.textContent = '—'; tbEl.style.color = ''; tbEl.title = ''; }
+    if(pfEl){ pfEl.textContent = '—'; pfEl.style.color = ''; }
+    renderRecorderSession(sesEl, recorder && recorder.session, recorder && recorder.finalizing);
     errEl.style.display = 'none';
     if(resSelect) resSelect.disabled = false;
     return;
@@ -2771,6 +2844,8 @@ function updateRecorderStatusUI(recorder){
   sizeEl.textContent = formatBytes(recorder.sizeBytes);
   diskEl.textContent = formatBytes(recorder.diskFreeBytes);
   renderRecorderTimebase(tbEl, recorder.timebase);
+  renderProgramFeed(pfEl, compositorStatus, recorder.settings);
+  renderRecorderSession(sesEl, recorder.session, recorder.finalizing);
   if(recorder.diskFreeBytes != null && recorder.diskFreeBytes < 2 * 1024 * 1024 * 1024){
     diskEl.style.color = '#ff6b6b';
     diskEl.textContent += ' ⚠️ LOW';
