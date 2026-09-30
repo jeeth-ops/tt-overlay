@@ -1,5 +1,24 @@
 # Kaise check karein — Stream Engine capture / timing
 
+> ## ⚡ AAPKE CARD KE LIYE SEEDHA JAWAB
+>
+> Aapke console se pata chala ki AVMATRIX card ke **saare 18 modes 60 fps pe
+> fixed** hain (`1920x1080@60 raw, ... 1440x900@60 raw`).
+>
+> Isliye is card pe:
+>
+> | Video Mode | Kaisa chalega |
+> |---|---|
+> | **30p** | ✅ **yahi use karo** — 60 ÷ 30 = theek 2, har doosra frame, ekdum smooth |
+> | **60p** | ✅ pass-through, par 2× bitrate aur CPU |
+> | 25p | ❌ 60 ÷ 25 = 2.4 — 60 me se 35 frame even tarike se hata hi nahi sakte, **judder aayega hi** |
+> | 50p / 50i | ❌ 60 ÷ 50 = 1.2 — wahi problem |
+>
+> Ye arithmetic hai, code ka bug nahi. 25p/50p tabhi sahi chalega jab camera
+> khud 25/50 pe HDMI bheje (camera ke menu me PAL/25p set karke).
+>
+> **Abhi set karo: Resolution `1920×1080` + Video Mode `30p`.**
+
 Ye sab aapke match PC pe hi check ho sakta hai (is cloud container me ffmpeg,
 capture card aur GPU nahi hai, isliye maine picture khud verify nahi kiya).
 

@@ -90,9 +90,23 @@ test('a mode that cannot carry the rate is not chosen when one that can exists',
   assert.ok(mode.maxFps >= 50);
 });
 
-test('a size ceiling is honoured when one is explicitly given', () => {
-  const mode = pickCaptureMode(AVMATRIX, { fps: 25, preferWidth: 1280, preferHeight: 720 });
-  assert.ok(mode.width <= 1280, `ceiling ignored: got ${mode.width}`);
+test('an EXACT match with the program size wins — it needs no scale filter at all', () => {
+  // The program size is a preference, not a ceiling (that earlier semantics
+  // was wrong: it made "largest mode under the ceiling" the goal, which on a
+  // real card chose a SMALLER mode than the program and forced a CPU upscale).
+  // The cheapest possible graph is the one with no scale in it.
+  const mode = pickCaptureMode(AVMATRIX, { fps: 25, programWidth: 1280, programHeight: 720 });
+  assert.strictEqual(mode.width, 1280, `expected the exact 1280x720 mode, got ${mode.width}x${mode.height}`);
+  assert.strictEqual(mode.height, 720);
+});
+
+test('with no exact mode, a BIGGER one is chosen and downscaled — never a smaller one upscaled', () => {
+  const noExact = `
+[dshow @ 0]   pixel_format=yuyv422  min s=1920x1080 fps=5 max s=1920x1080 fps=60
+[dshow @ 0]   pixel_format=yuyv422  min s=640x480 fps=5 max s=640x480 fps=60
+`;
+  const mode = pickCaptureMode(noExact, { fps: 25, programWidth: 1280, programHeight: 720 });
+  assert.strictEqual(mode.width, 1920, 'an upscale from 640x480 would be soft and pointless');
 });
 
 test('a device that reports nothing yields no constraint rather than a guess', () => {

@@ -479,34 +479,72 @@ function parseCameraModeOverride(raw) {
 // and preferring compressed modes, exactly as before), with preferWidth/
 // preferHeight as a ceiling rather than a target. Scaling to the output size
 // then happens once, in the compositor, with a filter we control.
-function pickCaptureMode(listOptionsOutput, { fps, preferWidth = null, preferHeight = null }) {
+function pickCaptureMode(listOptionsOutput, { fps, programWidth = null, programHeight = null }) {
     const modes = parseDshowVideoModes(listOptionsOutput);
     if (!modes.length) return null;
     const wanted = Number(fps) || 25;
+    const pw = Number(programWidth) || 0, ph = Number(programHeight) || 0;
     const scored = modes.map((mode) => {
+        // The rate the DEVICE will actually run at. A device whose modes are
+        // fixed at 60 runs at 60 whatever we ask for; we decimate afterwards.
         const modeFps = Math.min(mode.maxFps, Math.max(mode.minFps, wanted));
         const rawBytesPerSec = mode.width * mode.height * 2 * modeFps;
         const safe = mode.compressed || rawBytesPerSec <= RAW_BANDWIDTH_CAP_BYTES_PER_SEC;
-        // Can this mode actually carry the rate we need? A mode whose range
-        // cannot reach it is a different mode, not a candidate.
-        const carriesRate = wanted >= Math.floor(mode.minFps) && wanted <= Math.ceil(mode.maxFps);
-        return { ...mode, fps: modeFps, area: mode.width * mode.height, safe, carriesRate };
+        // 🛠 THIS TEST USED TO BE BACKWARDS. It required
+        //     wanted >= floor(minFps) && wanted <= ceil(maxFps)
+        // so on an AVMATRIX card whose modes are all FIXED at 60.0002 fps, a
+        // 30p program failed `30 >= 60` on every single mode — none was a
+        // candidate, and selection fell through to "largest mode that fits the
+        // bandwidth cap", which chose 1440x900 for a 1920x1080 program. The
+        // engine then CPU-upscaled 1440x900 -> 1920x1080 at 60fps, could not
+        // keep up, and dshow's input buffer overflowed:
+        //     real-time buffer ... too full (81%)! frame dropped!  (+112 in 60s)
+        // — which is the stutter the operator saw in the program monitor, and
+        // therefore in the recording and on YouTube too.
+        //
+        // The truth is one-directional: a higher rate can always be decimated
+        // down, a lower one can never be made up. So a mode is a candidate if
+        // it can reach the rate AT ALL.
+        const carriesRate = wanted <= Math.ceil(mode.maxFps);
+        const exact = pw && ph && mode.width === pw && mode.height === ph;
+        const covers = pw && ph && mode.width >= pw && mode.height >= ph;
+        return { ...mode, fps: modeFps, area: mode.width * mode.height, safe, carriesRate, exact, covers };
     });
-    const ceiling = (preferWidth && preferHeight) ? preferWidth * preferHeight : Infinity;
+    const can = scored.filter((m) => m.carriesRate);
+    const pool = can.length ? can : scored;
+    const bySmallest = (a, b) => (a.area - b.area) || ((a.compressed === b.compressed) ? 0 : (a.compressed ? -1 : 1));
+    const byLargest = (a, b) => (b.area - a.area) || ((a.compressed === b.compressed) ? 0 : (a.compressed ? -1 : 1));
+    // Preference order, most to least desirable. The first two need NO scale
+    // filter at all or only a controlled downscale — and with GPU scaling
+    // unavailable (CPU swscale) that is the single biggest cost in the graph,
+    // so it outranks tidy bandwidth arithmetic.
     const tiers = [
-        scored.filter((m) => m.carriesRate && m.safe && m.area <= ceiling),
-        scored.filter((m) => m.carriesRate && m.safe),
-        scored.filter((m) => m.carriesRate),
-        scored.filter((m) => m.safe),
-        scored,
+        [pool.filter((m) => m.exact && m.safe), byLargest],          // perfect: no scale, within bandwidth
+        [pool.filter((m) => m.covers && m.safe), bySmallest],        // downscale, least data to move
+        [pool.filter((m) => m.exact), byLargest],                    // no scale beats an upscale, cap or not
+        [pool.filter((m) => m.covers), bySmallest],                  // downscale, over the cap
+        [pool.filter((m) => m.safe), byLargest],                     // upscale (soft) — warned about by the caller
+        [pool, byLargest],
     ];
-    const pool = tiers.find((t) => t.length) || [];
-    if (!pool.length) return null;
-    // Largest first — the native HDMI format is what we want, and the
-    // compositor scales down from it. Compressed preferred at equal size for
-    // the same USB-bandwidth reason as before.
-    pool.sort((a, b) => (b.area - a.area) || ((a.compressed === b.compressed) ? 0 : (a.compressed ? -1 : 1)));
-    return pool[0];
+    for (const [tier, cmp] of tiers) {
+        if (tier.length) { tier.sort(cmp); return tier[0]; }
+    }
+    return null;
+}
+
+// 🎞 CADENCE. Decimating 60 -> 30 keeps every other frame: even, smooth.
+// Decimating 60 -> 25 is a 2.4:1 ratio — there is no even way to drop 35 of
+// every 60 frames, so the motion judders however good the rest of the chain
+// is. That is a property of the numbers, not a bug to fix downstream, and an
+// operator choosing 25p on a 60fps-only card needs to be told rather than left
+// wondering why it stutters.
+function cadenceCheck(captureFps, programFps) {
+    const cap = Number(captureFps) || 0, prog = Number(programFps) || 0;
+    if (!cap || !prog) return { even: true, ratio: null };
+    if (prog > cap) return { even: false, ratio: cap / prog, reason: 'more frames requested than the source produces' };
+    const ratio = cap / prog;
+    const even = Math.abs(ratio - Math.round(ratio)) < 0.02;
+    return { even, ratio: Number(ratio.toFixed(3)), reason: even ? null : `${Math.round(cap)} does not divide evenly into ${prog}` };
 }
 
 function pickCameraMode(listOptionsOutput, targetWidth, targetHeight, targetFps) {
@@ -557,8 +595,16 @@ function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height,
     const camNeedsResize = !cameraVideoSize || cameraVideoSize !== `${width}x${height}`;
     const camDeint = interlacedSource ? 'yadif=mode=send_field:parity=-1:deint=all,' : '';
     const camScale = camNeedsResize ? `scale=${width}:${height}:flags=bicubic,` : '';
+    // 🛠 ORDER: deinterlace -> DECIMATE -> scale. The rate filter used to run
+    // AFTER the scale, so a 60fps source feeding a 30fps program was scaled
+    // 60 times a second and half of that work thrown away immediately. With
+    // GPU scaling unavailable that resample is CPU swscale and the single
+    // most expensive step in the graph — doing it to frames that are about to
+    // be discarded is what pushed the compositor behind the camera and
+    // overflowed dshow's input buffer ("frame dropped!"). Decimating first
+    // halves the work exactly. yadif stays first: it needs the fields.
     const filterComplex =
-        `[0:v]${camDeint}${camScale}setsar=1,fps=${fps},format=yuv420p[cam];` +
+        `[0:v]${camDeint}fps=${fps},${camScale}setsar=1,format=yuv420p[cam];` +
         `[2:v]scale=${width}:${height},format=rgba[ovl];` +
         `[cam][ovl]overlay=0:0:format=auto,format=yuv420p` +
         (previewOutputUrl
@@ -598,7 +644,25 @@ function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height,
         // -fflags nobuffer / -flags low_delay stop the demuxer adding its
         // own reordering delay on top.
         '-fflags', 'nobuffer', '-flags', 'low_delay',
-        '-f', 'dshow', '-rtbufsize', CAMERA_RTBUFSIZE,
+        // 🛠 WHY THE OUTPUT WENT FAST AGAIN, AND WHY IT IS THE SAME BUG AS THE
+        // STUTTER. -use_wallclock_as_timestamps stamps each frame with the
+        // moment ffmpeg READS it. That is correct only while ffmpeg is keeping
+        // up. Once the filter graph falls behind the camera, dshow's buffer
+        // fills ("real-time buffer too full (81%)! frame dropped!") and then
+        // drains in a BURST: ffmpeg reads a run of queued frames back to back
+        // and stamps them microseconds apart, so the stream's media time
+        // advances far less than the real time that actually passed. The fps
+        // filter faithfully reproduces that compressed timeline, the recorder
+        // writes fewer media-seconds per real second, and the file comes out
+        // SHORT — which plays fast. Same overload, two symptoms.
+        //
+        // -thread_queue_size gives the input its own reading thread with room
+        // to queue, so a momentary hiccup downstream does not turn into a
+        // burst read with collapsed timestamps. The real cure is not being
+        // overloaded at all (see pickCaptureMode's exact-match tier and the
+        // decimate-before-scale order); this is the guard for when something
+        // still runs late.
+        '-f', 'dshow', '-rtbufsize', CAMERA_RTBUFSIZE, '-thread_queue_size', '512',
         // Real arrival time, not the requested rate — see CAMERA_WALLCLOCK_TS.
         ...(CAMERA_WALLCLOCK_TS ? ['-use_wallclock_as_timestamps', '1'] : []),
         ...(cameraVideoSize ? ['-video_size', cameraVideoSize] : []),
@@ -615,7 +679,10 @@ function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height,
         '-f', 'image2pipe', '-vcodec', 'png', '-framerate', String(OVERLAY_FPS), '-thread_queue_size', '512', '-i', overlayInputUrl,
         '-filter_complex', filterComplex,
         // Output 1: the relay — never displayed, so never re-encoded here.
-        '-map', '[vout1]', '-map', '1:a', ...RELAY_CONTAINER_ARGS, 'pipe:1',
+        // Strict CFR at the program rate: the relay then carries an
+        // unambiguous timebase (N frames = N/fps seconds) instead of leaving
+        // each consumer to infer one from whatever timestamps arrive.
+        '-map', '[vout1]', '-map', '1:a', '-fps_mode', 'cfr', '-r', String(fps), ...RELAY_CONTAINER_ARGS, 'pipe:1',
     ];
     // Output 2: the Program Preview (see MpjpegParser) — a real consumer
     // of the same composited stream, camera+overlay together.
@@ -845,13 +912,15 @@ class Compositor extends EventEmitter {
                     this.log(`[compositor] camera offers ${seen.length} mode(s): ${seen.join(', ')}`);
                 }
                 const target = this.captureTarget || {};
+                // The PROGRAM size is a preference, not a constraint: a mode
+                // that matches it exactly needs no scale filter at all, which
+                // is the cheapest possible graph — but a bigger mode
+                // (controlled downscale) is always preferred over a smaller
+                // one (upscale). See pickCaptureMode's tiers.
                 const mode = pickCaptureMode(out, {
                     fps: target.fps || this.fps,
-                    // No ceiling by default: take the card's native format and
-                    // scale in the compositor. A ceiling is only applied when
-                    // the caller explicitly asks for one.
-                    preferWidth: target.width || null,
-                    preferHeight: target.height || null,
+                    programWidth: this.width,
+                    programHeight: this.height,
                 });
                 if (mode) {
                     this.log(`[compositor] camera mode auto-detected: ${mode.width}x${mode.height}@${mode.fps}${mode.compressed ? ' (compressed)' : ' (raw)'}`);
@@ -869,8 +938,15 @@ class Compositor extends EventEmitter {
                         // capture native, downscale once under our control.
                         this.log(`[compositor] camera captures ${mode.width}x${mode.height}, program is ${this.width}x${this.height} — scaling down in the compositor (the card is not asked to do it)`);
                     }
-                    if (this.captureTarget && this.captureTarget.fps && Math.round(mode.fps) !== Math.round(this.captureTarget.fps)) {
-                        this.log(`[compositor] ⚠ CAPTURE RATE MISMATCH — asked this device for ${this.captureTarget.fps} fps, the closest mode it offers is ${mode.fps}. The program will run at the rate that really arrives; watch FPS (req/actual) in the panel.`);
+                    // A device that only runs faster than we need is fine —
+                    // we decimate. What matters is whether it decimates EVENLY.
+                    const cad = cadenceCheck(mode.fps, this.fps);
+                    if (!cad.even) {
+                        this.log(`[compositor] ⚠ UNEVEN CADENCE — this device runs at ${Math.round(mode.fps)} fps and the program is ${this.fps} fps (${cad.ratio}:1). ${cad.reason}, so the motion will judder however good the rest of the chain is.`);
+                        const clean = [60, 50, 30, 25].filter((r) => r <= mode.fps && Math.abs(mode.fps / r - Math.round(mode.fps / r)) < 0.02);
+                        if (clean.length) this.log(`[compositor]   Rates that divide evenly from ${Math.round(mode.fps)} fps: ${clean.join(', ')}. Pick one of those in the panel for smooth motion.`);
+                    } else if (Math.round(mode.fps) !== Math.round(this.fps)) {
+                        this.log(`[compositor] device runs at ${Math.round(mode.fps)} fps, program is ${this.fps} fps — decimating ${cad.ratio}:1 (even, so motion stays smooth)`);
                     }
                 } else {
                     this.log('[compositor] could not auto-detect a camera mode from -list_options output — opening unconstrained');
@@ -1278,6 +1354,7 @@ module.exports = {
     parseDshowVideoModes,
     pickCameraMode,
     pickCaptureMode,
+    cadenceCheck,
     parseCameraModeOverride,
     RAW_BANDWIDTH_CAP_BYTES_PER_SEC,
     PREVIEW_FPS,

@@ -157,6 +157,34 @@ function validateCaptureMode(offered, { captureFps, captureWidth = null, capture
             detail: `The device advertises ${Math.round(inRange[0].minFps)}–${Math.round(inRange[0].maxFps)} fps as a range, so it will ACCEPT ${captureFps} without promising to deliver it. Capture cards commonly pass through whatever the camera sends instead. The real rate is measured once running — watch FPS (req/actual).`,
         };
     }
+    // 🛠 A DEVICE THAT ONLY RUNS FASTER IS NOT A DEVICE THAT CANNOT DO THIS.
+    // This used to return a flat "not available" for any rate the device does
+    // not list — so an AVMATRIX card fixed at 60 fps was reported as unable to
+    // do 30p, which is false: 60 decimates to 30 perfectly, two frames to one.
+    // What actually matters is whether the decimation is EVEN. 60 -> 30 is
+    // 2:1 and smooth; 60 -> 25 is 2.4:1 and there is no even way to drop 35 of
+    // every 60 frames, so it judders no matter what the rest of the chain
+    // does. That is arithmetic, not a bug, and the operator is told which
+    // rates this device CAN give smoothly.
+    const faster = sizeMatches.filter((m) => captureFps < Math.ceil(m.maxFps));
+    if (faster.length) {
+        const best = faster.reduce((a, b) => (b.maxFps > a.maxFps ? b : a));
+        const src = Math.round(best.maxFps);
+        const ratio = best.maxFps / captureFps;
+        const even = Math.abs(ratio - Math.round(ratio)) < 0.02;
+        const clean = [60, 50, 30, 25].filter((r) => r <= best.maxFps && Math.abs(best.maxFps / r - Math.round(best.maxFps / r)) < 0.02);
+        if (even) {
+            return {
+                ok: true, confidence: 'decimated',
+                detail: `The device runs at ${src} fps and ${captureFps} divides into it evenly (${Math.round(ratio)}:1), so every ${ratio === 2 ? 'other' : Math.round(ratio) + 'th'} frame is kept — motion stays smooth.`,
+            };
+        }
+        return {
+            ok: false, confidence: 'uneven',
+            detail: `This device runs at ${src} fps, and ${captureFps} does not divide evenly into it (${ratio.toFixed(2)}:1) — the motion would judder however good the rest of the chain is.` +
+                (clean.length ? ` Rates that ARE smooth from ${src} fps: ${clean.join(', ')}.` : ''),
+        };
+    }
     return {
         ok: false, confidence: 'none',
         detail: `This device does not offer ${captureFps} fps${captureWidth ? ` at ${captureWidth}×${captureHeight}` : ''}. It offers: ${describeOffered(sizeMatches)}.`,
