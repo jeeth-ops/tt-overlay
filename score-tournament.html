@@ -115,13 +115,13 @@
      The bezier is iOS's own release curve — a hair of overshoot so it
      feels springy instead of linear. */
   button, .icon-btn, .tab-btn, .clip-btn, .clip-watch-btn, .watch-btn,
-  .award-card, .match-row, .clip-row, #clip-modal-close, #video-modal-close{
+  .award-card, .mc-row, .clip-row, #clip-modal-close, #video-modal-close{
     transition:background .15s ease, color .15s ease, border-color .15s ease,
       transform .16s cubic-bezier(.34,1.56,.64,1), box-shadow .15s ease, opacity .15s ease;
   }
   button:active, .icon-btn:active, .tab-btn:active, .clip-btn:active:not(:disabled),
   .clip-watch-btn:active:not(:disabled), .watch-btn:active,
-  .award-card:active, .match-row:active, .clip-row:active,
+  .award-card:active, .mc-row:active, .clip-row:active,
   #clip-modal-close:active, #video-modal-close:active{
     transform:scale(.94);
   }
@@ -238,13 +238,6 @@
   #tab-indicator{ position:absolute; top:0; left:0; height:100%; border-radius:99px; background:var(--accent); z-index:0; transition:transform .38s cubic-bezier(.34,1.2,.4,1), width .38s cubic-bezier(.34,1.2,.4,1); pointer-events:none; }
   .tab-btn{ position:relative; z-index:1; background:transparent; transition:color .25s ease; }
   .tab-btn.active{ background:transparent; color:var(--accent-contrast); }
-  .match-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 4px; border-bottom:1px solid var(--border-soft); cursor:pointer; }
-  .match-row:last-child{ border-bottom:none; }
-  .match-row:hover{ background:var(--panel-2); border-radius:var(--radius-sm); }
-  .match-teams{ font-weight:700; font-size:13.5px; }
-  .match-meta{ font-size:11.5px; color:var(--text-dim); margin-top:2px; }
-  .match-score{ text-align:right; font-size:12.5px; color:var(--text-dim); font-weight:600; flex:none; }
-  .match-result{ font-size:11px; color:var(--accent); font-weight:700; margin-top:2px; }
   table{ width:100%; border-collapse:collapse; font-size:12.5px; }
   thead th{ text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:.4px; color:var(--text-faint); font-weight:700; padding:0 8px 8px; border-bottom:1px solid var(--border); }
   thead th.num, td.num{ text-align:right; }
@@ -325,7 +318,75 @@
   .empty-state{ text-align:center; color:var(--text-faint); padding:30px 10px; font-size:13px; }
   .spinner{ width:28px; height:28px; border-radius:50%; border:3px solid var(--border); border-top-color:var(--accent); animation:spin .8s linear infinite; margin:0 auto 12px; }
   @keyframes spin{ to{ transform:rotate(360deg); } }
-  .live-card{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px; background:var(--panel-2); border-radius:var(--radius-md); border:1px solid var(--border-soft); }
+  /* ---- 🏏 MATCHES — ONE card, grouped ----
+     Live / In Progress / Completed / Upcoming used to be four separate
+     .card boxes stacked down the page: four borders, four shadows, four
+     headings, and a lot of vertical space for what is really one list in
+     four states. They are now one card with quiet group labels, so the
+     eye runs down a single column and the emphasis can go where it is
+     actually earned — the live match — instead of being spread evenly
+     across four identical containers. */
+  #matches-card{ padding:0; overflow:hidden; }
+  .mc-head{
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:16px 18px 14px; border-bottom:1px solid var(--border-soft);
+  }
+  .mc-head .section-title{ margin-bottom:0; }
+  .mc-count{ font-size:11.5px; font-weight:700; color:var(--text-faint); font-variant-numeric:tabular-nums; }
+
+  /* The one place emphasis is earned. A tinted wash and an accent rail —
+     not a banner, not a gradient: it has to read as "this one is on now",
+     not as an advertisement. */
+  .mc-live{
+    display:flex; align-items:center; justify-content:space-between; gap:14px;
+    padding:15px 18px; background:var(--accent-soft);
+    border-bottom:1px solid var(--border-soft); box-shadow:inset 3px 0 0 var(--live);
+  }
+  .mc-live-teams{ font-family:var(--font-display); font-weight:700; font-size:16px; letter-spacing:-.2px; margin-top:7px; }
+  .mc-live-meta{ font-size:11.5px; color:var(--text-dim); margin-top:3px; }
+
+  .mc-group + .mc-group{ border-top:1px solid var(--border-soft); }
+  .mc-group-label{
+    display:flex; align-items:center; gap:8px;
+    padding:13px 18px 9px; font-family:var(--font-display); font-weight:700;
+    font-size:10.5px; text-transform:uppercase; letter-spacing:.9px; color:var(--text-faint);
+  }
+  .mc-group-n{
+    font-size:10px; font-weight:700; color:var(--text-faint);
+    background:var(--panel-2); border:1px solid var(--border-soft);
+    border-radius:99px; padding:1px 7px; font-variant-numeric:tabular-nums;
+  }
+  .mc-row{
+    display:flex; align-items:center; gap:12px;
+    padding:12px 18px; cursor:pointer; border-top:1px solid var(--border-soft);
+  }
+  .mc-group-label + .mc-row{ border-top:none; }
+  .mc-row:hover{ background:var(--panel-2); }
+  /* A small status dot carries the state, so the row itself needs no badge
+     and no colour-coded background — the list stays calm when it is long. */
+  .mc-dot{ width:7px; height:7px; border-radius:50%; flex:none; background:var(--text-faint); }
+  .mc-dot.live{ background:var(--live); animation:pulseDot 1.4s infinite; }
+  .mc-dot.progress{ background:#f59e0b; }
+  .mc-dot.done{ background:var(--accent); }
+  .mc-main{ flex:1 1 auto; min-width:0; }
+  .mc-teams{ font-weight:700; font-size:14px; letter-spacing:-.1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mc-teams .vs{ color:var(--text-faint); font-weight:600; margin:0 5px; }
+  .mc-meta{ font-size:11.5px; color:var(--text-dim); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mc-right{ text-align:right; flex:none; }
+  .mc-score{ font-family:var(--font-display); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums; letter-spacing:-.2px; }
+  .mc-result{ font-size:11px; font-weight:700; margin-top:2px; color:var(--accent); }
+  .mc-result.pending{ color:var(--text-faint); }
+  /* Sits directly under its own group label, so it needs no top padding of
+     its own — the label already provides the separation, and 18px on top of
+     that read as a gap the group had lost its content. */
+  .mc-empty{ padding:2px 18px 16px; text-align:center; color:var(--text-faint); font-size:12.5px; }
+  @media (max-width:520px){
+    .mc-live{ flex-direction:column; align-items:stretch; gap:11px; }
+    .mc-live .watch-btn{ text-align:center; }
+    .mc-teams{ font-size:13.5px; }
+    .mc-score{ font-size:13px; }
+    .mc-row, .mc-live, .mc-head, .mc-group-label{ padding-left:14px; padding-right:14px; }
+  }
   .watch-btn{ padding:8px 16px; border-radius:99px; background:var(--accent); color:var(--accent-contrast); font-weight:700; font-size:12.5px; flex:none; }
   footer{ text-align:center; padding:22px 10px 4px; color:var(--text-faint); font-size:11.5px; }
   footer a{ color:var(--accent); font-weight:700; }
@@ -659,11 +720,32 @@ function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&'
 function fmtOvers(o,b){ return `${o||0}.${b||0}`; }
 function strikeRate(r,b){ return b?((r/b)*100).toFixed(1):'0.0'; }
 function economy(r,o,b){ const of=(o||0)+((b||0)/6); return of?(r/of).toFixed(2):'0.00'; }
+// The panel stores winningTeam as 'A' | 'B' | 'TIE' | 'DRAW' | null (see
+// cricket-panel3.html). 'DRAW' was never handled here, so a drawn match fell
+// through to the final return and was labelled "In progress" — under the
+// Completed group, which is where the match had already been filed for having
+// a winningTeam at all. Anything unrecognised now reads "Completed" rather
+// than claiming a finished match is still being played; older records that
+// stored the team's own name instead of the A/B key resolve properly too.
+function teamLabel(t){ return (t && (t.short || t.name)) || ''; }
 function resultText(m){
-  if(m.winningTeam==='TIE') return 'Match Tied';
-  if(m.winningTeam==='A') return `${m.teamA.short||m.teamA.name} won`;
-  if(m.winningTeam==='B') return `${m.teamB.short||m.teamB.name} won`;
-  return 'In progress';
+  const w = m.winningTeam;
+  if(!w) return 'In progress';
+  if(w === 'TIE') return 'Match Tied';
+  if(w === 'DRAW') return 'Match Drawn';
+  if(w === 'A') return `${teamLabel(m.teamA)} won`;
+  if(w === 'B') return `${teamLabel(m.teamB)} won`;
+  const norm = (x) => String(x || '').trim().toLowerCase();
+  if(norm(w) && (norm(w) === norm(m.teamA.short) || norm(w) === norm(m.teamA.name))) return `${teamLabel(m.teamA)} won`;
+  if(norm(w) && (norm(w) === norm(m.teamB.short) || norm(w) === norm(m.teamB.name))) return `${teamLabel(m.teamB)} won`;
+  return 'Completed';
+}
+// Short, readable date — "29 Sep 2026" instead of a bare numeric dd/mm/yyyy,
+// which is ambiguous to half the audience and reads as data entry.
+function matchDate(ts){
+  if(!ts) return '';
+  try { return new Date(ts).toLocaleDateString(undefined, { day:'numeric', month:'short', year:'numeric' }); }
+  catch(e){ return ''; }
 }
 
 /* ---- Leaderboard visual helpers (avatars, medals, form bars, cap strip) ---- */
@@ -923,40 +1005,74 @@ function renderPortal(data, token){
     <button class="tab-btn" data-tab="leaderboards">Leaderboards</button>
   </div>`;
 
+  // 🏏 ONE card for every match state — see #matches-card in the CSS above
+  // for why this stopped being four stacked cards.
+
+  // The live room is one of the in-progress matches; matching it by roomId
+  // (then matchId) is what lets this show the actual teams and score instead
+  // of the generic "Match in progress / Follow ball-by-ball updates" it used
+  // to, which told a viewer nothing about whether they wanted to click.
+  const liveMatch = isLive
+    ? (inProgress.find(m => m.roomId && m.roomId === data.live.roomId)
+       || inProgress.find(m => m.matchId && m.matchId === data.live.matchId)
+       || null)
+    : null;
+
   const liveHtml = isLive ? `
-    <div class="card"><div class="section-title"><span class="dash"></span>Live Now</div>
-      <div class="live-card">
-        <div><div class="match-teams">Match in progress</div><div class="match-meta">Follow ball-by-ball updates</div></div>
-        <a class="watch-btn" href="/cricket-scorecard?room=${encodeURIComponent(data.live.roomId)}">Watch Live →</a>
+    <div class="mc-live">
+      <div>
+        <span class="chip live"><span class="lv-dot"></span>Live</span>
+        <div class="mc-live-teams">${liveMatch
+          ? `${escapeHtml(teamLabel(liveMatch.teamA))}<span class="vs"> vs </span>${escapeHtml(teamLabel(liveMatch.teamB))}`
+          : 'Match in progress'}</div>
+        <div class="mc-live-meta">${liveMatch
+          ? `${escapeHtml(liveMatch.venue || '')}${liveMatch.venue ? ' · ' : ''}${liveMatch.scoreA.runs}-${liveMatch.scoreA.wickets}`
+          : 'Follow ball-by-ball updates'}</div>
       </div>
+      <a class="watch-btn" href="/cricket-scorecard?room=${encodeURIComponent(data.live.roomId)}">Watch Live →</a>
     </div>` : '';
 
-  const matchRow = (m) => `
-    <div class="match-row" data-goto-match="${escapeHtml(m.matchId)}">
-      <div>
-        <div class="match-teams">${escapeHtml(m.teamA.short||m.teamA.name)} vs ${escapeHtml(m.teamB.short||m.teamB.name)}</div>
-        <div class="match-meta">${escapeHtml(m.venue||'')}${m.venue?' · ':''}${m.savedAt ? new Date(m.savedAt).toLocaleDateString() : ''}</div>
+  const matchRow = (m, kind) => `
+    <div class="mc-row" data-goto-match="${escapeHtml(m.matchId)}">
+      <span class="mc-dot ${kind}"></span>
+      <div class="mc-main">
+        <div class="mc-teams">${escapeHtml(teamLabel(m.teamA))}<span class="vs">vs</span>${escapeHtml(teamLabel(m.teamB))}</div>
+        <div class="mc-meta">${escapeHtml(m.venue||'')}${m.venue && m.savedAt ? ' · ' : ''}${matchDate(m.savedAt)}</div>
       </div>
-      <div class="match-score">
-        <div class="tabnum">${m.scoreA.runs}-${m.scoreA.wickets} / ${m.scoreB.runs}-${m.scoreB.wickets}</div>
-        <div class="match-result">${escapeHtml(resultText(m))}</div>
+      <div class="mc-right">
+        <div class="mc-score">${m.scoreA.runs}-${m.scoreA.wickets} <span style="color:var(--text-faint);font-weight:600;">/</span> ${m.scoreB.runs}-${m.scoreB.wickets}</div>
+        <div class="mc-result${m.winningTeam ? '' : ' pending'}">${escapeHtml(resultText(m))}</div>
       </div>
     </div>`;
 
-  const previousHtml = finished.length
-    ? `<div class="card"><div class="section-title"><span class="dash"></span>Previous Matches</div>${finished.slice().reverse().map(matchRow).join('')}</div>`
-    : `<div class="card"><div class="empty-state">No completed matches yet.</div></div>`;
+  const group = (label, count, body) => `
+    <div class="mc-group">
+      <div class="mc-group-label">${label}${count != null ? `<span class="mc-group-n">${count}</span>` : ''}</div>
+      ${body}
+    </div>`;
 
   const inProgressHtml = inProgress.length
-    ? `<div class="card"><div class="section-title"><span class="dash"></span>In Progress</div>${inProgress.map(matchRow).join('')}</div>` : '';
+    ? group('In Progress', inProgress.length, inProgress.map(m => matchRow(m, 'progress')).join('')) : '';
+
+  const previousHtml = finished.length
+    ? group('Completed', finished.length, finished.slice().reverse().map(m => matchRow(m, 'done')).join(''))
+    : group('Completed', null, '<div class="mc-empty">No completed matches yet.</div>');
 
   // Upcoming fixtures aren't part of the current data model (the panel has
   // no "schedule a future match" feature yet — matches only exist once
   // they've started being scored) — shown honestly as empty rather than
   // faked.
-  const upcomingHtml = `<div class="card"><div class="section-title"><span class="dash"></span>Upcoming Matches</div><div class="empty-state">No upcoming fixtures scheduled yet.</div></div>`;
+  const upcomingHtml = group('Upcoming', null, '<div class="mc-empty">No fixtures scheduled yet.</div>');
 
-  const matchesPanel = `<div class="tab-panel active" data-panel="matches">${liveHtml}${inProgressHtml}${previousHtml}${upcomingHtml}</div>`;
+  const matchesPanel = `<div class="tab-panel active" data-panel="matches">
+    <div class="card" id="matches-card">
+      <div class="mc-head">
+        <div class="section-title"><span class="dash"></span>Matches</div>
+        <span class="mc-count">${matches.length} match${matches.length===1?'':'es'}</span>
+      </div>
+      ${liveHtml}${inProgressHtml}${previousHtml}${upcomingHtml}
+    </div>
+  </div>`;
 
   const pt = data.pointsTable || [];
   const formGuide = computeFormGuide(matches);
