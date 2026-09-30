@@ -141,17 +141,21 @@ test('30p is now reported as SUPPORTED by decimation, not falsely refused', () =
   assert.ok(/2:1/.test(v.detail));
 });
 
-test('25p is refused with the REAL reason — uneven cadence — and the smooth rates', () => {
+// FIELD: this exact card, carrying a 25p Sony, delivered 60 frames/s of which
+// only 25 were unique — 25p was the ONE smooth choice, and the advertised-rate
+// check refused it at Go Live. The advertised list cannot decide cadence, so
+// it warns (amber) and the measured plan decides.
+test('25p on a 60-advertising card is a WARNING, never a refusal — the camera may really be 25', () => {
   const v = validateCaptureMode(offered, { captureFps: 25 });
-  assert.strictEqual(v.ok, false);
+  assert.strictEqual(v.ok, true, 'this blocked Go Live on the operator\'s card');
   assert.strictEqual(v.confidence, 'uneven');
-  assert.ok(/judder/.test(v.detail), 'the operator must be told why, not just "not available"');
-  assert.ok(/30/.test(v.detail), 'and which rates ARE smooth on this card');
+  assert.ok(/ADVERTISES 60/.test(v.detail) && /measures/.test(v.detail), v.detail);
+  assert.ok(/30/.test(v.detail), 'and which rates are smooth IF it really carries 60');
 });
 
-test('50p is refused for the same real reason, not a bogus "does not offer 50 fps"', () => {
+test('50p likewise warns, with the real reason, not a bogus "does not offer 50 fps"', () => {
   const v = validateCaptureMode(offered, { captureFps: 50 });
-  assert.strictEqual(v.ok, false);
+  assert.strictEqual(v.ok, true);
   assert.strictEqual(v.confidence, 'uneven');
   assert.ok(/60 fps/.test(v.detail));
 });

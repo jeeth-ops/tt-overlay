@@ -145,7 +145,7 @@ function dupCycle(dupPositions, total) {
 }
 
 // frames: [{ wallMs, pts, checksum, scan }] in arrival order.
-function analyseFrames(frames, { warmupSec = 0.5 } = {}) {
+function analyseFrames(frames, { warmupSec = 0.5, expectedFps = null } = {}) {
     const all = frames.filter((f) => Number.isFinite(f.pts));
     if (all.length < 3) return { ok: false, error: `only ${all.length} frame(s) received — the device delivered (almost) nothing` };
     const t0 = all[0].wallMs;
@@ -166,9 +166,16 @@ function analyseFrames(frames, { warmupSec = 0.5 } = {}) {
     }
     const medMs = median(deltas);
     let gaps = 0, missing = 0;
-    for (const d of deltas) {
-        if (medMs > 0 && d > 1.5 * medMs) { gaps++; missing += Math.round(d / medMs) - 1; }
-    }
+    // With a known delivery rate (the live meter knows what the probe
+    // measured), missing = frames the timeline should hold minus frames it
+    // holds. The median interval is only a fallback: when frames arrive in
+    // bursts (a compositor falling behind) it collapses towards 0 and every
+    // ordinary interval looks like hundreds of lost frames — the field log
+    // read "26710 frame(s) missing in 6 s".
+    const refMs = expectedFps > 0 ? 1000 / expectedFps : medMs;
+    for (const d of deltas) if (refMs > 0 && d > 1.5 * refMs) gaps++;
+    if (expectedFps > 0) missing = Math.max(0, Math.round(tsSpanSec * expectedFps) - (n - 1));
+    else for (const d of deltas) if (medMs > 0 && d > 1.5 * medMs) missing += Math.round(d / medMs) - 1;
     // Duplicates: consecutive IDENTICAL point-sampled thumbnails. A real camera
     // frame always differs from the next one somewhere (sensor noise); a
     // bit-identical successor is a repeated frame.

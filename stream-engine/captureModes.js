@@ -179,10 +179,17 @@ function validateCaptureMode(offered, { captureFps, captureWidth = null, capture
                 detail: `The device ADVERTISES ${src} fps and ${captureFps} divides into it evenly (${Math.round(ratio)}:1), so every ${ratio === 2 ? 'other' : Math.round(ratio) + 'th'} frame is kept — smooth IF the card really carries ${src} fps. A 50 Hz (PAL) camera behind a 60-only card is not: the source probe measures what actually arrives when the camera opens.`,
             };
         }
+        // 🛠 A WARNING, NOT A REFUSAL. This used to return ok:false and block
+        // Go Live — and on the operator's UC2018 that was exactly wrong: the
+        // card ADVERTISES only 60 fps, but carrying a 25p Sony it delivers 25
+        // unique frames held over the 60 slots (measured), so 25p is the one
+        // smooth choice and the check refused it. The advertised rate cannot
+        // decide cadence; the source probe measures it when the camera opens.
         return {
-            ok: false, confidence: 'uneven',
-            detail: `This device runs at ${src} fps, and ${captureFps} does not divide evenly into it (${ratio.toFixed(2)}:1) — the motion would judder however good the rest of the chain is.` +
-                (clean.length ? ` Rates that ARE smooth from ${src} fps: ${clean.join(', ')}.` : ''),
+            ok: true, confidence: 'uneven',
+            detail: `This device ADVERTISES ${src} fps, and ${captureFps} does not divide evenly into that (${ratio.toFixed(2)}:1) — smooth only if the camera's real rate fits ${captureFps}` +
+                (clean.length ? ` (from a real ${src} fps: ${clean.join(', ')})` : '') +
+                `. A 50 Hz camera behind a 60-only card usually carries 25 or 50 real frames — the engine measures this when the camera opens.`,
         };
     }
     return {

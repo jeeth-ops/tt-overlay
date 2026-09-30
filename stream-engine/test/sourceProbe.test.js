@@ -158,6 +158,14 @@ test('the FIELD case: 1080p raw delivering 10 of 60 fps is a DELIVERY failure wi
   assert.strictEqual(r.firstProblem.stage, 'DELIVERY');
 });
 
+test('FIELD: bursty arrival (a compositor falling behind) is not read as thousands of lost frames', () => {
+  // 60 fps timeline, frames arriving in bursts of 6 stamped 0.1 ms apart
+  const f = [];
+  for (let i = 0; i < 600; i++) { const b = Math.floor(i / 6); f.push({ wallMs: 1000 + b * 100, pts: b * 0.1 + (i % 6) * 0.0001, checksum: `C${i}`, scan: 'P' }); }
+  const a = sp.analyseFrames(f, { expectedFps: 60 });
+  assert.ok(a.missingFrames < 10, `missing ${a.missingFrames}`);
+});
+
 console.log('\ncontrol vs problem');
 
 test('the comparison names the FIRST stage where the control is fine and the problem source is not', () => {

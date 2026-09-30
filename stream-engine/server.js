@@ -2122,7 +2122,7 @@ async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec 
         // also running) relays to THIS process, which holds its own
         // independent NVENC session and pushes RTMPS — a network
         // problem here can never touch the recorder, and vice versa.
-        const compResult = await ensureCompositor({ matchId: engine.matchId, mainServerUrl: engine.mainServerUrl, cameraDeviceName: engine.cameraDeviceName, audioDeviceName: engine.audioDeviceName, who: 'live', fps: resolved.fps, interlacedSource: engine.interlacedSource, captureFps: engine.captureFps });
+        const compResult = await ensureCompositor({ matchId: engine.matchId, mainServerUrl: engine.mainServerUrl, cameraDeviceName: engine.cameraDeviceName, audioDeviceName: engine.audioDeviceName, who: 'live', fps: resolved.fps, interlacedSource: engine.interlacedSource, captureFps: engine.captureFps, resolution: resolved.resolution });
         if (!compResult.ok) {
             engine.state = 'idle';
             // A reconnect must keep trying: the compositor may simply be
@@ -2386,7 +2386,7 @@ let compositorStopping = null; // promise while a released compositor is still s
 // recorder's own existing "already recording a different match" guard
 // below) — a genuine multi-match-simultaneously native pipeline isn't
 // implemented; the operator stops the previous match first, same as today.
-async function ensureCompositor({ matchId, mainServerUrl, cameraDeviceName, audioDeviceName, who, fps, interlacedSource, captureFps }) {
+async function ensureCompositor({ matchId, mainServerUrl, cameraDeviceName, audioDeviceName, who, fps, interlacedSource, captureFps, resolution }) {
     // A compositor that was just released may still hold the camera for
     // a moment — starting a new one before it has exited fails with
     // "device busy" (an exclusive dshow device can only be opened once).
@@ -2399,7 +2399,13 @@ async function ensureCompositor({ matchId, mainServerUrl, cameraDeviceName, audi
         if (!mainServerUrl) return { ok: false, error: 'mainServerUrl required to build the overlay URL for the native compositor' };
         const execPath = resolveCaptureBrowserExecutable();
         if (!execPath) return { ok: false, error: 'Could not find Chrome or Edge on this PC for the overlay renderer (see resolveCaptureBrowserExecutable) — set CAPTURE_BROWSER_PATH to its full .exe path' };
-        const { width, height } = RESOLUTIONS[recorder.settings ? recorder.settings.resolution : '1080p'] || RESOLUTIONS['1080p'];
+        // 🛠 The caller's OWN resolution. This used to read only
+        // recorder.settings — null when Preview or Go Live started the feed
+        // first — so the program silently became 1920x1080 whatever was
+        // selected: a 720x480 camera was upscaled to 1080p on the CPU, the
+        // compositor fell behind, and dshow dropped frames (field log).
+        const resKey = RESOLUTIONS[resolution] ? resolution : (recorder.settings && RESOLUTIONS[recorder.settings.resolution] ? recorder.settings.resolution : '1080p');
+        const { width, height } = RESOLUTIONS[resKey];
         // 🎯 THE PROGRAM FEED'S OWN FRAME RATE. This used to be hardcoded to
         // 30 while the operator could select 60 for the stream — so a 60fps
         // stream was a 30fps feed with every frame duplicated: juddery on
@@ -2677,7 +2683,7 @@ async function startRecorder(matchId, { resolution, fps, audioDeviceName, camera
         // camera+overlay compositor (opened once, shared with the live
         // encoder if that's also running) relays to THIS process, which
         // holds its own independent NVENC session and writes master.mp4.
-        const compResult = await ensureCompositor({ matchId, mainServerUrl: recorder.mainServerUrl, cameraDeviceName: recorder.cameraDeviceName, audioDeviceName, who: 'recorder', fps: fpsNum, interlacedSource: recorder.interlacedSource, captureFps: recorder.captureFps });
+        const compResult = await ensureCompositor({ matchId, mainServerUrl: recorder.mainServerUrl, cameraDeviceName: recorder.cameraDeviceName, audioDeviceName, who: 'recorder', fps: fpsNum, interlacedSource: recorder.interlacedSource, captureFps: recorder.captureFps, resolution: recorder.settings && recorder.settings.resolution });
         if (!compResult.ok) return fail(compResult.error);
         recorder.holdsCompositorRef = true;
         if (!recorder.desiredRecording || shuttingDown) return fail('Recording was stopped while starting');
@@ -4090,7 +4096,7 @@ app.get('/status', async (req, res) => {
         captureMatch: (() => {
             if (!compositor) return captureModes.captureMatch(null, null);
             const asked = (compositor.cameraMode && compositor.cameraMode.fps) || (compositor.captureTarget && compositor.captureTarget.fps) || null;
-            const w = compositor.meter.snapshot().window;
+            const w = compositor.meter.snapshot(compositor.sourcePlan && compositor.sourcePlan.deliveredFps).window;
             const m = captureModes.captureMatch(asked, w && w.seconds >= 5 ? w.arrivalFps : null);
             m.contentFps = w ? w.contentFps : null;
             m.repeatCycle = w ? w.repeatCycle : null;
@@ -4303,9 +4309,24 @@ async function probeDeviceModes(deviceName) {
 // must not force the card to 720×480 (the card may not offer it, and the
 // downscale would happen in its firmware). The card keeps its own best mode
 // and the compositor scales once — see buildCompositorArgs.
+// When the running program feed has MEASURED this device, that decides —
+// not the advertised list (see captureModes.validateCaptureMode's 'uneven').
+function measuredModeSupport(deviceName, programFps) {
+    if (!compositor || compositor._cameraDeviceName !== deviceName) return null;
+    const plan = compositor.sourcePlan;
+    if (!plan || !plan.measured) return null;
+    const smooth = plan.smoothRates || [];
+    const ok = smooth.includes(Number(programFps));
+    return {
+        ok: true, confidence: ok ? 'measured' : 'uneven',
+        detail: ok
+            ? `Measured: the camera really delivers ${plan.sourceFps} fps of motion, and ${programFps} fps is smooth from it.`
+            : `Measured: the camera really delivers ${plan.sourceFps} fps of motion — ${programFps} fps will judder. Smooth: ${smooth.join(', ') || 'none of 25/30/50/60'}.`,
+    };
+}
 async function validateCameraCapability(deviceName, outFormat) {
     const modes = await probeDeviceModes(deviceName);
-    const v = captureModes.validateCaptureMode(modes, { captureFps: outFormat.captureFps });
+    const v = measuredModeSupport(deviceName, outFormat.programFps) || captureModes.validateCaptureMode(modes, { captureFps: outFormat.captureFps });
     return { ...v, requested: { mode: outFormat.mode, captureFps: outFormat.captureFps, programFps: outFormat.programFps, width: outFormat.width, height: outFormat.height }, offered: modes };
 }
 
@@ -4324,7 +4345,7 @@ app.get('/capture-formats', async (req, res) => {
             offered,
             summary: offered.length ? captureModes.describeOffered(offered) : null,
             // Per video mode: can this device do it, and how sure are we?
-            modeSupport: Object.fromEntries(modes.map((m) => [m.key, captureModes.validateCaptureMode(offered, { captureFps: m.captureFps })])),
+            modeSupport: Object.fromEntries(modes.map((m) => [m.key, measuredModeSupport(deviceName, m.programFps) || captureModes.validateCaptureMode(offered, { captureFps: m.captureFps })])),
         };
     }
     res.json({ success: true, resolutions, modes, device });
@@ -4554,7 +4575,15 @@ app.post('/native-preview/start', async (req, res) => {
     if (!body.cameraDeviceName) return res.status(400).json({ success: false, error: 'cameraDeviceName required' });
     if (!body.audioDeviceName) return res.status(400).json({ success: false, error: 'audioDeviceName required' });
     if (!body.mainServerUrl) return res.status(400).json({ success: false, error: 'mainServerUrl required' });
-    const result = await ensureCompositor({ matchId, mainServerUrl: body.mainServerUrl, cameraDeviceName: body.cameraDeviceName, audioDeviceName: body.audioDeviceName, who: 'preview' });
+    // 🛠 Preview used to start the SHARED program feed with no format at all
+    // — always 1920x1080 @ 30 — so a later 25p recording was told "the feed
+    // is already running at 30" and the camera was upscaled on the CPU. It
+    // now starts it in the format the operator selected in Live Studio.
+    const out = captureModes.resolveOutput(body.resolution || '1080p', body.videoMode || '25p');
+    const result = await ensureCompositor({
+        matchId, mainServerUrl: body.mainServerUrl, cameraDeviceName: body.cameraDeviceName, audioDeviceName: body.audioDeviceName, who: 'preview',
+        fps: out.programFps, interlacedSource: out.interlacedSource, captureFps: out.captureFps, resolution: out.resolution,
+    });
     res.json(result);
 });
 app.post('/native-preview/stop', (req, res) => {
@@ -4807,7 +4836,7 @@ app.post('/go-live', async (req, res) => {
                 capability: cap,
             });
         }
-        if (cap.confidence === 'range') console.log(`[stream-engine] ${outFormat.mode}: ${cap.detail}`);
+        if (cap.confidence === 'range' || cap.confidence === 'uneven') console.log(`[stream-engine] ⚠ ${outFormat.mode}: ${cap.detail}`);
     }
 
     // 🩺 GO LIVE SEQUENCE, steps "validate frames / validate FPS" — BEFORE

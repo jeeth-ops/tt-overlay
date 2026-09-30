@@ -152,7 +152,9 @@ const RELAY_RESUME_SEC = 0.25;
 
 // Expected, non-actionable ffmpeg notices in this pipeline (the preview
 // branch's full-range JPEG conversion triggers the swscaler one).
-const BENIGN_LINE_RE = /deprecated pixel format used|Guessed Channel Layout/i;
+// The capture meter's null output complains when two raw frames share a
+// timestamp; it writes nothing, so that line is noise, not a fault.
+const BENIGN_LINE_RE = /deprecated pixel format used|Guessed Channel Layout|\[null @[^\]]*\] Application provided invalid, non monotonically increasing dts/i;
 
 // Compositor watchdog — see _checkHealth.
 const COMPOSITOR_STARTUP_GRACE_MS = 30000; // dshow open + overlay connect can legitimately take a while
@@ -887,10 +889,10 @@ class CaptureMeter {
         this.lastAt = wallMs;
     }
     noteDrop() { this.captureDrops++; }
-    snapshot() {
+    snapshot(expectedFps = null) {
         const now = Date.now();
         if (this._cache && now - this._cache.at < 1000) return this._cache.value;
-        const a = this.ring.length >= 10 ? sourceProbe.analyseFrames(this.ring, { warmupSec: 0 }) : null;
+        const a = this.ring.length >= 10 ? sourceProbe.analyseFrames(this.ring, { warmupSec: 0, expectedFps }) : null;
         const value = {
             totalFrames: this.totalFrames,
             captureDrops: this.captureDrops,
@@ -1148,7 +1150,7 @@ class Compositor extends EventEmitter {
     // Live view of the capture stage for /status.
     captureStatus() {
         const plan = this.sourcePlan;
-        const live = this.meter.snapshot();
+        const live = this.meter.snapshot(plan && plan.deliveredFps);
         const expected = plan && plan.deliveredFps;
         const w = live.window;
         let verdict = 'measuring';

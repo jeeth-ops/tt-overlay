@@ -3240,7 +3240,7 @@ async function refreshCaptureCapability(){
     el.textContent = `✗ ${mode} is not available on this device. ${sup.detail}`;
     return;
   }
-  if(sup.confidence === 'exact'){
+  if(sup.confidence === 'exact' || sup.confidence === 'measured'){
     el.style.color = '#3fce6e';
     el.textContent = `✓ ${mode}: ${sup.detail}`;
     return;
@@ -3358,7 +3358,9 @@ async function ensureLiveOutputWindow(matchId){
     // just 404s ("no preview frame yet") until you commit to one of those.
     const startRes = await fetch(`${STREAM_ENGINE_URL}/native-preview/start`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ matchId, cameraDeviceName, audioDeviceName, mainServerUrl: location.origin })
+      // The format selected in Live Studio — the preview starts the SHARED
+      // program feed, so it must start it in the format that will be used.
+      body: JSON.stringify({ matchId, cameraDeviceName, audioDeviceName, mainServerUrl: location.origin, resolution: getSelectedStreamSettings().resolution, videoMode: getSelectedStreamSettings().videoMode })
     }).then(r => r.json()).catch(() => ({ ok:false, error:'Could not reach the local Stream Engine' }));
     if(!startRes.ok) return { ok:false, error: startRes.error || 'Could not start native preview' };
     lsSetHealth('ls-h-camera', true, 'Connected (native)');
