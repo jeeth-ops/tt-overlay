@@ -2394,82 +2394,6 @@ function personName(x) {
 // second device doesn't fragment a player's stats.
 // ================================================================
 
-// ================================================================
-// 🛡️ DUPLICATE-PROOF PLAYER IDENTITY (server side)
-// The squad importer / panel already tries to reuse an existing playerId, but
-// identity must not depend on the browser being well-behaved (or online). So
-// find-or-create itself now:
-//   1. exact nameKey match                        -> that player (as before)
-//   2. SAME-NAME variants (case, punctuation, spacing, word order:
-//      "Sharma, Rohit" / "ROHIT  SHARMA.")        -> that player; the new spelling
-//      is stored as an alias so it hits step 1 next time
-//   3. otherwise create ONE new player
-// Steps 2+3 run under a per-account lock so two simultaneous imports of the
-// same new person can't both miss the lookup and each insert a different ID.
-// Genuinely fuzzy matches (typos, initials) are NEVER merged here — those need
-// a human, and are offered through POST/GET /api/players/candidates.
-// (The lock is per server process; the unique index still covers exact-key
-// races if you ever run several instances.)
-// ================================================================
-const playerCreateLocks = new Map();
-function withOwnerLock(key, fn) {
-    const prev = playerCreateLocks.get(key) || Promise.resolve();
-    const run = prev.then(fn);
-    const tail = run.catch(() => {});
-    playerCreateLocks.set(key, tail);
-    tail.then(() => { if (playerCreateLocks.get(key) === tail) playerCreateLocks.delete(key); });
-    return run;
-}
-function matchNorm(s) {
-    return String(s || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
-        .replace(/['’`´]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
-}
-function matchFold(s) { // OCR look-alikes + doubled letters — comparison only, never stored
-    return matchNorm(s).split(' ').map(w => /[a-z]/.test(w) ? w.replace(/0/g, 'o').replace(/[1|]/g, 'l').replace(/5/g, 's') : w)
-        .join(' ').replace(/(.)\1+/g, '$1');
-}
-function tokenSorted(s) { return s.split(' ').sort().join(' '); }
-function editDistance(a, b) {
-    let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
-    for (let i = 1; i <= a.length; i++) {
-        const cur = [i];
-        for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-        prev = cur;
-    }
-    return prev[b.length];
-}
-// 1.0 identical after normalisation · 0.98 same words in another order ·
-// 0.95 same after OCR/double-letter folding · else edit-distance similarity (capped 0.91).
-function playerNameScore(a, b) {
-    const na = matchNorm(a), nb = matchNorm(b);
-    if (!na || !nb) return 0;
-    if (na === nb) return 1;
-    if (tokenSorted(na) === tokenSorted(nb)) return 0.98;
-    const fa = matchFold(a), fb = matchFold(b);
-    if (fa === fb) return 0.95;
-    if (tokenSorted(fa) === tokenSorted(fb)) return 0.94;
-    const d = editDistance(tokenSorted(fa), tokenSorted(fb)), len = Math.max(fa.length, fb.length);
-    if (Math.min(na.length, nb.length) < 5 && d > 1) return 0;
-    return Math.min(0.91, 1 - d / len);
-}
-async function rankPlayerCandidates(ownerUid, name, limit) {
-    if (!playersCollection || !ownerUid) return [];
-    const docs = await playersCollection.find({ ownerUid, mergedInto: { $exists: false } })
-        .project({ playerId: 1, displayName: 1, nameKeys: 1 }).limit(5000).toArray();
-    return docs.map(d => ({
-        playerId: d.playerId, displayName: d.displayName,
-        score: Math.max(playerNameScore(name, d.displayName), ...(d.nameKeys || []).map(k => playerNameScore(name, k)))
-    })).filter(c => c.score >= 0.6).sort((x, y) => y.score - x.score).slice(0, limit || 8);
-}
-// Only the safe tier (>= 0.98) may auto-link, and only when it is unambiguous.
-async function findSameNamePlayer(ownerUid, name) {
-    const cands = await rankPlayerCandidates(ownerUid, name, 3);
-    const top = cands[0];
-    if (!top || top.score < 0.98) return null;
-    if (cands.some(c => c !== top && c.playerId !== top.playerId && c.score >= 0.98)) return null;
-    return top;
-}
-
 // Find-or-create the playerId for (ownerUid, name). Memoized in-process
 // since this gets called on every single ball logged — avoids a Mongo
 // round-trip for the common case of the same four names repeating over and
@@ -2495,43 +2419,25 @@ async function canonicalPlayerId(ownerUid, playerId) {
     }
     return id;
 }
-async function resolvePlayerId(ownerUid, name, opts) {
+async function resolvePlayerId(ownerUid, name) {
     const nameKey = playerKey(name);
     if (!nameKey || !ownerUid || !playersCollection) return null;
-    opts = opts || {};
     const cacheKey = `${ownerUid}::${nameKey}`;
-    if (playerIdCache.has(cacheKey)) { if (opts.info) opts.info.matched = 'exact'; return playerIdCache.get(cacheKey); }
+    if (playerIdCache.has(cacheKey)) return playerIdCache.get(cacheKey);
     try {
         const existing = await playersCollection.findOne({ ownerUid, nameKeys: nameKey });
         if (existing) {
             playerIdCache.set(cacheKey, existing.playerId);
-            if (opts.info) opts.info.matched = 'exact';
             return existing.playerId;
         }
-        // Serialised per account: re-check inside the lock so a concurrent import of the
-        // same new person finds the record the first one just created.
-        return await withOwnerLock(ownerUid, async () => {
-            const again = await playersCollection.findOne({ ownerUid, nameKeys: nameKey });
-            if (again) { playerIdCache.set(cacheKey, again.playerId); if (opts.info) opts.info.matched = 'exact'; return again.playerId; }
-            if (!opts.forceNew) {
-                const same = await findSameNamePlayer(ownerUid, name);
-                if (same) {
-                    try { await playersCollection.updateOne({ playerId: same.playerId, ownerUid }, { $addToSet: { nameKeys: nameKey }, $set: { updatedAt: Date.now() } }); } catch (e) { /* alias is a nicety; identity is what matters */ }
-                    playerIdCache.set(cacheKey, same.playerId);
-                    if (opts.info) { opts.info.matched = 'variant'; opts.info.displayName = same.displayName; }
-                    return same.playerId;
-                }
-            }
-            const playerId = crypto.randomBytes(6).toString('hex'); // 12-char id
-            await playersCollection.insertOne({
-                playerId, ownerUid, nameKeys: [nameKey],
-                displayName: personName(name) || String(name).trim(),
-                createdAt: Date.now(), updatedAt: Date.now()
-            });
-            playerIdCache.set(cacheKey, playerId);
-            if (opts.info) opts.info.matched = 'new';
-            return playerId;
+        const playerId = crypto.randomBytes(6).toString('hex'); // 12-char id
+        await playersCollection.insertOne({
+            playerId, ownerUid, nameKeys: [nameKey],
+            displayName: personName(name) || String(name).trim(),
+            createdAt: Date.now(), updatedAt: Date.now()
         });
+        playerIdCache.set(cacheKey, playerId);
+        return playerId;
     } catch (err) {
         // Unique-index race: two balls for a brand-new player logged at
         // nearly the same instant can both miss the findOne above and both
@@ -4457,7 +4363,7 @@ app.get('/api/players/search', requireAuthorizedCreator, async (req, res) => {
     if (!ownerUid || q.length < 2) return res.json({ success: true, players: [] });
     try {
         const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const players = await playersCollection.find({ ownerUid, mergedInto: { $exists: false }, displayName: { $regex: escaped, $options: 'i' } })
+        const players = await playersCollection.find({ ownerUid, displayName: { $regex: escaped, $options: 'i' } })
             .project({ playerId: 1, displayName: 1 }).limit(10).toArray();
         res.json({ success: true, players });
     } catch (err) {
@@ -4478,30 +4384,12 @@ app.post('/api/players/resolve', requireAuthorizedCreator, async (req, res) => {
     const name = req.body.name;
     if (!ownerUid || !String(name || '').trim()) return res.status(400).json({ success: false, error: 'uid and name required' });
     try {
-        const info = {};
-        const playerId = await resolvePlayerId(ownerUid, name, { forceNew: req.body.forceNew === true, info });
+        const playerId = await resolvePlayerId(ownerUid, name);
         if (!playerId) return res.status(503).json({ success: false, error: 'Database not configured' });
-        res.json({ success: true, playerId, matched: info.matched || null, displayName: info.displayName || null });
+        res.json({ success: true, playerId });
     } catch (err) {
         console.log('Player resolve error:', err);
         res.status(500).json({ success: false, error: 'Could not resolve player' });
-    }
-});
-
-// GET /api/players/candidates?uid=&q= — ranked "is this an existing player?" lookup for the
-// importer: typo / transposed-letter / initials tolerant, merged-away profiles excluded.
-// Read-only; creates nothing. The panel decides what to do with the result.
-app.get('/api/players/candidates', requireAuthorizedCreator, async (req, res) => {
-    if (!playersCollection) return res.json({ success: true, players: [] });
-    const ownerUid = ownerUidFrom(req);
-    const q = String(req.query.q || '').trim();
-    if (!ownerUid || q.length < 2) return res.json({ success: true, players: [] });
-    try {
-        const players = await rankPlayerCandidates(ownerUid, q.slice(0, 80), 8);
-        res.json({ success: true, players });
-    } catch (err) {
-        console.log('Player candidates error:', err);
-        res.status(500).json({ success: false, players: [] });
     }
 });
 
