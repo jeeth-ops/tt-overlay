@@ -1570,6 +1570,10 @@
           <span style="opacity:.7;">Duration</span><span id="rec-duration">—</span>
           <span style="opacity:.7;">File Size</span><span id="rec-size">—</span>
           <span style="opacity:.7;">Disk Free</span><span id="rec-disk-free">—</span>
+          <!-- Requested vs actual frame rate. -framerate is only a REQUEST to
+               the capture card: if it delivers a different rate the footage
+               plays at the wrong speed, which this row is here to expose. -->
+          <span style="opacity:.7;">FPS (req/actual)</span><span id="rec-timebase">—</span>
         </div>
         <div id="rec-error" style="font-size:11px; color:#ff6b6b; margin-top:6px; display:none;"></div>
         <div style="font-size:10.5px; opacity:.5; margin-top:6px;">
@@ -2704,6 +2708,35 @@ function formatBytes(n){
   if(n < 1024*1024*1024) return `${(n/1024/1024).toFixed(1)} MB`;
   return `${(n/1024/1024/1024).toFixed(2)} GB`;
 }
+/* Is one real second of camera time still one real second in the file?
+   The engine measures media time written against wall-clock time elapsed
+   (server.js -> timebaseMonitor.js) and reports a ratio. 1.00x is correct;
+   below 1 the file is shorter than real time, so it plays FAST; above 1 it
+   plays slow. Shown as requested/actual FPS because that is the number the
+   operator can act on — it names what the capture card is really doing. */
+function renderRecorderTimebase(el, tb){
+  if(!el) return;
+  el.style.color = ''; el.title = '';
+  if(!tb){ el.textContent = '—'; return; }
+  const req = tb.requestedFps != null ? `${tb.requestedFps}` : '—';
+  if(tb.verdict === 'measuring'){
+    el.textContent = `${req} / measuring…`;
+    el.title = 'Needs a few seconds of recording before the real frame rate can be measured.';
+    return;
+  }
+  const actual = tb.actualFps != null ? tb.actualFps.toFixed(1) : '—';
+  el.textContent = `${req} / ${actual}  (${tb.ratio.toFixed(2)}× real time)`;
+  if(tb.verdict === 'ok'){
+    el.style.color = '#3fce6e';
+    el.title = 'One real second of camera time is one recorded second.';
+  } else {
+    el.style.color = '#ff6b6b';
+    el.textContent += tb.verdict === 'fast' ? '  ⚠️ PLAYS FAST' : '  ⚠️ PLAYS SLOW';
+    el.title = tb.verdict === 'fast'
+      ? `The camera is delivering about ${actual} FPS but the engine was told ${req}. Recording and clips will play faster than real time — pick a mode the card actually supports.`
+      : `The camera is delivering about ${actual} FPS but the engine was told ${req}. Recording and clips will play slower than real time.`;
+  }
+}
 function updateRecorderStatusUI(recorder){
   const statusEl = document.getElementById('rec-status');
   const outputEl = document.getElementById('rec-output');
@@ -2711,11 +2744,13 @@ function updateRecorderStatusUI(recorder){
   const sizeEl = document.getElementById('rec-size');
   const diskEl = document.getElementById('rec-disk-free');
   const errEl = document.getElementById('rec-error');
+  const tbEl = document.getElementById('rec-timebase');
   const resSelect = document.getElementById('rec-resolution-select');
   if(!statusEl) return;
   if(!recorder || recorder.state === 'idle'){
     statusEl.innerHTML = '● Not recording';
     outputEl.textContent = '—'; durationEl.textContent = '—'; sizeEl.textContent = '—';
+    if(tbEl){ tbEl.textContent = '—'; tbEl.style.color = ''; tbEl.title = ''; }
     errEl.style.display = 'none';
     if(resSelect) resSelect.disabled = false;
     return;
@@ -2735,6 +2770,7 @@ function updateRecorderStatusUI(recorder){
   durationEl.textContent = recorder.durationSec != null ? `${Math.floor(recorder.durationSec/60)}:${String(recorder.durationSec%60).padStart(2,'0')}${recorder.segmentCount > 1 ? ` (segment ${recorder.segmentCount})` : ''}` : '—';
   sizeEl.textContent = formatBytes(recorder.sizeBytes);
   diskEl.textContent = formatBytes(recorder.diskFreeBytes);
+  renderRecorderTimebase(tbEl, recorder.timebase);
   if(recorder.diskFreeBytes != null && recorder.diskFreeBytes < 2 * 1024 * 1024 * 1024){
     diskEl.style.color = '#ff6b6b';
     diskEl.textContent += ' ⚠️ LOW';

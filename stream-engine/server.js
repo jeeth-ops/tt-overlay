@@ -1576,6 +1576,11 @@ const RESTART_WINDOW_MS = 5 * 60 * 1000;
 // long as the operator wants to be live (only an explicit Stop ends it).
 const RECONNECT_BACKOFF_MS = [2000, 4000, 8000, 15000];
 
+// See timebaseMonitor.js: is one real second of camera time still one real
+// second in the recording and on the stream? dshow's -framerate is only a
+// REQUEST, so this measures what actually arrives.
+const { createRateTracker, noteRateSample, rateHealth } = require('./timebaseMonitor');
+
 const engine = {
     state: 'idle',           // idle | starting | live | reconnecting | stopping | crashed
     proc: null,              // the ffmpeg child process (native gdigrab+dshow capture -> NVENC -> RTMPS)
@@ -1607,6 +1612,7 @@ const engine = {
         stableSince: null,
     },
     metrics: { bitrateKbps: null, fps: null, droppedFrames: null, totalFrames: null, outTimeSec: null, speed: null },
+    rate: createRateTracker('Live stream'), // media-time vs wall-time for the LIVE push — see rateHealth
     lastProgramFeedHealth: null, // {ok, black, white, frozen, checkedAt} — see runProgramFeedHealthCheck/monitorProgramFeedHealth
 };
 
@@ -2139,6 +2145,7 @@ async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec 
     if (!engine.adapting && engine.reconnect.attempts === 0) console.log(`[stream-engine] Live stream started — ${resolved.resolution} ${resolved.fps}fps @ ${resolved.bitrateKbps}kbps`);
     engine.lastProgressAdvanceAt = null;
     engine.lastOutTimeSec = 0;
+    engine.rate = createRateTracker('Live stream'); // a restart starts a new output timeline — never measure across it
     engine.state = 'live';
     proc.stdin.on('error', () => {}); // legacy path: stdin is only ever used for the graceful 'q' stop (see gracefulStop); native path: this IS the compositor's relay input — a write after it's already gone is harmless either way
 
@@ -2150,6 +2157,7 @@ async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec 
             if (outSec !== null && outSec > engine.lastOutTimeSec) {
                 engine.lastOutTimeSec = outSec;
                 engine.lastProgressAdvanceAt = Date.now();
+                noteRateSample(engine.rate, engine.lastProgressAdvanceAt, outSec);
             }
             return;
         }
@@ -2410,6 +2418,7 @@ const recorder = {
     lastProgressAdvanceAt: null, // last time ffmpeg's reported output time moved forward
     lastSizeBytes: null,
     lastSizeChangeAt: null,
+    rate: createRateTracker('Recording'), // media-time vs wall-time for the MASTER RECORDING — see rateHealth
 };
 
 // 🎯 WALL CLOCK → RECORDING TIMELINE. Each segment keeps an anchor: the
@@ -2428,6 +2437,7 @@ function noteRecorderProgress(seg, outTimeSec) {
         seg.outTimeSec = outTimeSec;
         seg.lastProgressWall = now;
         recorder.lastProgressAdvanceAt = now;
+        noteRateSample(recorder.rate, now, outTimeSec);
     }
     if (outTimeSec <= 0) return;
     const samples = seg.anchorSamples;
@@ -2595,6 +2605,7 @@ async function startRecorder(matchId, { resolution, fps, audioDeviceName, camera
     recorder.lastProgressAdvanceAt = null;
     recorder.lastSizeBytes = null;
     recorder.lastSizeChangeAt = null;
+    recorder.rate = createRateTracker('Recording'); // each segment is its own output timeline
     if (!isRetry) console.log(`[stream-engine] Recording started → ${outFile}`);
     proc.stdin.on('error', () => {}); // legacy path: stdin is only ever used for the graceful 'q' stop (see gracefulStop); native path: this IS the compositor's relay input
 
@@ -3735,6 +3746,8 @@ app.get('/status', async (req, res) => {
         networkOk: network.available,
         networkDetail: network.detail,
         encoderState: engine.state,
+        // Same real-time check for the YouTube push as for the recording.
+        encoderTimebase: rateHealth(engine.rate, engine.settings && engine.settings.fps),
         clipWorkerState: clipWorker.state,
         cloudflareConnected: clipWorker.cloudflareConnected,
         clipWorkerLastError: clipWorker.lastError,
@@ -3758,6 +3771,8 @@ app.get('/status', async (req, res) => {
             writtenSec: recorder.currentSegment ? Math.round(recorder.currentSegment.outTimeSec || 0) : null,
             lastWriteAgoMs: recorder.lastProgressAdvanceAt ? Date.now() - recorder.lastProgressAdvanceAt : null,
             programFeedHealth: recorder.lastProgramFeedHealth || null,
+            // Is one real second still one recorded second? See rateHealth.
+            timebase: rateHealth(recorder.rate, recorder.settings && recorder.settings.fps),
         },
         // Disk level the panel can act on, and the mode the camera/capture
         // card ACTUALLY negotiated (see /capture-window/camera-info) — both

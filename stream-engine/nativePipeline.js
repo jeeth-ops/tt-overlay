@@ -84,6 +84,27 @@ const PREVIEW_WIDTH = Number(process.env.STREAM_ENGINE_PREVIEW_WIDTH) || 960;
 // machine you know is otherwise keeping up.
 const CAMERA_RTBUFSIZE = process.env.STREAM_ENGINE_CAMERA_RTBUFSIZE || '64M';
 
+// 🕐 ONE REAL SECOND MUST STAY ONE REAL SECOND.
+//
+// -framerate on a dshow input is a REQUEST. The device answers with what it
+// can actually do, and that is not always what was asked: a capture card
+// publishes whatever its HDMI input is currently sending, so asking a card
+// carrying a 1080i50 signal for 30 fps gets 30 accepted and something else
+// delivered. Without this flag ffmpeg then stamps the frames it receives as
+// if they had arrived at the REQUESTED rate — so N frames that really took N/25
+// seconds get timestamps spanning N/30, and everything downstream (recording,
+// clips, RTMPS) plays fast by exactly that ratio.
+//
+// -use_wallclock_as_timestamps 1 stamps each frame with the moment it actually
+// arrived, so the timeline is the real clock no matter what the device does
+// with the request. The fps filter in the compositor then resamples that real
+// timeline to the program rate, which is the one deliberate frame-rate
+// decision in the pipeline.
+//
+// Set STREAM_ENGINE_WALLCLOCK_TS=0 to go back to device timestamps — kept as
+// an escape hatch because this changes the timing model for every capture.
+const CAMERA_WALLCLOCK_TS = process.env.STREAM_ENGINE_WALLCLOCK_TS !== '0';
+
 // 🔊 AUDIO SAMPLE RATE — 48 kHz, everywhere, deliberately.
 //
 // Every path here used to encode at 44100. HDMI embedded audio — which is
@@ -513,6 +534,8 @@ function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height,
         // own reordering delay on top.
         '-fflags', 'nobuffer', '-flags', 'low_delay',
         '-f', 'dshow', '-rtbufsize', CAMERA_RTBUFSIZE,
+        // Real arrival time, not the requested rate — see CAMERA_WALLCLOCK_TS.
+        ...(CAMERA_WALLCLOCK_TS ? ['-use_wallclock_as_timestamps', '1'] : []),
         ...(cameraVideoSize ? ['-video_size', cameraVideoSize] : []),
         ...(cameraFramerate ? ['-framerate', String(cameraFramerate)] : []),
         '-i', `video=${cameraDeviceName}`,
