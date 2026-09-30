@@ -597,7 +597,19 @@
      independent of the flex `gap` on .team-block, so a winner's glow ring
      (box-shadow, which doesn't take layout space) can never visually
      eat into the gap and leave the name crowding the logo. */
-  .team-name-block{ min-width:0; padding-right:6px; overflow:hidden; }
+  /* container-type here is what lets the score below size itself against
+     THIS column instead of the whole hero: the two are not the same number
+     once a long result banner has taken the middle track, and sizing off the
+     hero is what produced a 29px "237-10 & 189-4d" wrapped over three lines
+     in a 160px column. */
+  /* flex:1 1 0 is REQUIRED alongside container-type. inline-size containment
+     stops an element's own content from contributing to its width, and this is
+     a flex item that previously sized from its content — so adding the
+     container alone collapsed the column to ~115px and shrank the score to its
+     floor even at 1920px. Giving it the remaining row width explicitly is what
+     makes the container meaningful: it now measures the space the column has,
+     which is exactly the number the score needs. */
+  .team-name-block{ flex:1 1 0; min-width:0; padding-right:6px; overflow:hidden; container-type:inline-size; }
   /* Nothing in a team block may spill out of its own column: the logo is
      flex:none so it keeps its size, the name/score column is allowed to
      shrink to nothing and wrap or ellipsis instead. Without this the score
@@ -637,6 +649,19 @@
      it is capped in characters as well as in percent — a long one used to
      widen that column until the team blocks beside it had nothing left and
      their names ran underneath it. */
+  /* 🛡 THE MIDDLE COLUMN MUST NOT EAT THE TEAMS.
+     #teams-row sizes its middle track as minmax(0,auto), so a long result
+     ("NEW HIND SPORTING CLUB WON BY 1 WICKET WITH 3 BALLS REMAINING") takes
+     whatever width it wants and the 1fr sides collapse around it. Measured at
+     1000px that left the team block 40px wide and its name column 12px, which
+     clipped the score away entirely — a header that reads fine for "YCC WON"
+     and silently loses the scores for a Test result.
+     Fixing it in ch alone cannot work, because ch does not know how much room
+     the row actually has. Once a match is finished the three tracks are given
+     fixed proportions instead, so each team always keeps its share no matter
+     how long the result text is; the ch cap below still stops a SHORT result
+     from stretching across its whole track. */
+  #hero.hero-final #teams-row{ grid-template-columns:minmax(0,1fr) minmax(0,1.3fr) minmax(0,1fr); }
   #hero.hero-final #score-center{ max-width:min(100%, 30ch); margin-inline:auto; }
   /* A finished header puts a banner between the two teams, so each team
      column is narrower than it is mid-match. Two lines are allowed here so
@@ -659,21 +684,24 @@
      it read as a caption under the team name; it is now display-weight and
      full-contrast, sized up through the container ladder below. */
   .team-prev-score{
-    font-family:var(--font-display); font-size:19px; font-weight:800; letter-spacing:-.3px;
+    font-family:var(--font-display); font-weight:800; letter-spacing:-.3px;
+    /* ~13% of the column: a two-innings Test score fits on one line in a wide
+       column and shrinks rather than wrapping when the column is squeezed. */
+    font-size:clamp(11px, 16cqi, 19px);
     opacity:1; margin-top:4px; color:var(--text); transition:color .2s ease, opacity .2s ease;
   }
-  .team-prev-score .ps-overs{ font-family:var(--font-body); font-size:.68em; font-weight:700; color:var(--text-dim); }
+  .team-prev-score .ps-overs{ font-family:var(--font-body); font-size:.68em; font-weight:700; color:var(--text-dim); white-space:nowrap; }
   /* The team panels earn their padding on a laptop; on a phone the same
      padding would push the two sides into the result between them, so they
      tighten to a tint with just enough inset to still read as panels. */
   @media (max-width:640px){
     .team-block{ padding:9px 10px; border-radius:12px; gap:9px; }
-    .team-prev-score{ font-size:16px; margin-top:3px; }
+    .team-prev-score{ font-size:clamp(11px, 16cqi, 16px); margin-top:3px; }
     #hero::after{ height:4px; }
   }
   @media (max-width:380px){
     .team-block{ padding:7px 8px; gap:7px; }
-    .team-prev-score{ font-size:14.5px; }
+    .team-prev-score{ font-size:clamp(11px, 16cqi, 14.5px); }
   }
 
   /* Phone keeps score and overs on one line — the stacked header gives the
@@ -1124,6 +1152,13 @@
        needing the short code as a fallback. */
     #teams-row{ grid-template-columns:minmax(0,1fr) minmax(0,auto) minmax(0,1fr); gap:8px; text-align:center; align-items:start; }
     .team-block, .team-block.right{ flex-direction:column; text-align:center; gap:7px; }
+    /* In the stacked (column) layout the name column is no longer the flex
+       item that grows along the main axis, and inline-size containment stops
+       its own content from giving it a width — so without this it collapsed to
+       its padding (measured: 6px wide) and the score sat permanently on its
+       11px floor. Stretching it to the block's full width gives the container
+       a real number to measure again. */
+    .team-name-block{ flex:none; width:100%; align-self:stretch; padding-right:0; padding-left:0; }
     .team-logo{ width:40px; height:40px; font-size:14px; border-radius:11px; box-shadow:0 3px 9px rgba(0,0,0,.16); }
     .team-block.winner .team-logo{ box-shadow:0 0 0 2.5px color-mix(in srgb, var(--team-color, var(--accent)) 22%, transparent), 0 3px 9px rgba(0,0,0,.18); }
     #main-score.result-margin{ padding:7px 13px; font-size:11.5px; }
@@ -1149,7 +1184,7 @@
     #hero.hero-final #main-score.result-margin{ font-size:13px; padding:8px 18px; }
     #hero.hero-final #batting-tag.result-note{ max-width:100%; font-size:12.5px; }
     #hero.hero-final .team-name{ font-size:13px; }
-    #hero.hero-final .team-prev-score{ white-space:nowrap; font-size:17px; }
+    #hero.hero-final .team-prev-score{ white-space:normal; font-size:clamp(11px, 16cqi, 17px); }
     #main-score{ font-size:clamp(26px,9vw,36px); }
     #main-overs{ font-size:11px; }
     #batting-tag{ font-size:9.5px; }
@@ -2187,7 +2222,7 @@
       #hero.hero-final .team-block.winner .team-logo{ box-shadow:0 0 0 3px color-mix(in srgb, var(--team-color, var(--accent)) 24%, transparent), 0 5px 14px rgba(0,0,0,.18); }
       #hero.hero-final .team-name{ font-size:15px; }
       #hero.hero-final .team-short{ font-size:11px; margin-top:2px; }
-      #hero.hero-final .team-prev-score{ font-size:20px; margin-top:6px; white-space:nowrap; }
+      #hero.hero-final .team-prev-score{ font-size:clamp(11px, 16cqi, 20px); margin-top:6px; white-space:normal; }
       #hero.hero-final .team-block{ padding:14px 16px; }
       #hero.hero-final #main-score.result-margin{ font-size:15px; padding:10px 20px; }
     }
@@ -2200,7 +2235,7 @@
       #hero.hero-final .team-logo{ width:62px; height:62px; border-radius:16px; font-size:19px; }
       #hero.hero-final .team-name{ font-size:16.5px; }
       #hero.hero-final .team-short{ font-size:12px; }
-      #hero.hero-final .team-prev-score{ font-size:24px; }
+      #hero.hero-final .team-prev-score{ font-size:clamp(11px, 16cqi, 24px); }
       #hero.hero-final .team-block{ padding:16px 18px; border-radius:17px; }
       #hero.hero-final #main-score.result-margin{ font-size:18px; padding:12px 24px; }
     }
@@ -2212,7 +2247,7 @@
       #hero.hero-final .team-logo{ width:72px; height:72px; border-radius:18px; font-size:22px; }
       #hero.hero-final .team-name{ font-size:17.5px; }
       #hero.hero-final .team-short{ font-size:12.5px; }
-      #hero.hero-final .team-prev-score{ font-size:29px; }
+      #hero.hero-final .team-prev-score{ font-size:clamp(11px, 16cqi, 29px); }
       #hero.hero-final .team-block{ padding:18px 20px; border-radius:18px; }
       #hero.hero-final #main-score.result-margin{ font-size:21px; padding:13px 28px; }
     }
