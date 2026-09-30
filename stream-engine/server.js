@@ -2584,7 +2584,11 @@ async function startRecorder(matchId, { resolution, fps, audioDeviceName, camera
     setProcessPriority(proc, os.constants.priority.PRIORITY_ABOVE_NORMAL);
     recorder.proc = proc;
     recorder.state = 'recording';
-    const seg = { path: outFile, startedAt: recorder.startedAt, anchorMs: null, outTimeSec: 0 };
+    // width/height travel with the segment so a clip cut from it knows the
+    // source size without probing the file: a recorder restart can begin a
+    // new segment at a different resolution, so the CURRENT settings are not
+    // a safe answer for an older segment.
+    const seg = { path: outFile, startedAt: recorder.startedAt, anchorMs: null, outTimeSec: 0, width, height };
     Object.defineProperty(seg, 'anchorSamples', { value: [], enumerable: false }); // internal — kept out of /recording-info's JSON
     recorder.segments.push(seg);
     recorder.currentSegment = seg;
@@ -3282,7 +3286,7 @@ async function cutLocalClip(job) {
     console.log(`[CLIP RANGE] clipId=${clipId} source=${path.basename(seg.path)} file=${fromSec.toFixed(1)}s→${(fromSec + durationSec).toFixed(1)}s (T0-${win.preRollSec}s → T0+${win.postRollSec}s, ${durationSec.toFixed(1)}s)`);
 
     try {
-        await cutFromMasterFile({ clipId, masterFile: seg.path, fromSec, durationSec, outFile: partFile });
+        await cutFromMasterFile({ clipId, masterFile: seg.path, fromSec, durationSec, outFile: partFile, srcWidth: seg.width });
     } catch (e) {
         fs.unlink(partFile, () => {});
         return { ok: false, retryable: true, error: e.message };
@@ -3340,12 +3344,34 @@ async function renameWithRetry(from, to, attempts = 5) {
 // can stop it.
 const CLIP_CUT_TIMEOUT_MS = 120000;
 const activeClipCuts = new Map(); // clipId -> ffmpeg proc
-async function cutFromMasterFile({ clipId, masterFile, fromSec, durationSec, outFile }) {
+// srcWidth: the master recording's own width, so the scale can be skipped
+// when it would be a no-op (see below). Unknown/0 keeps the old behaviour.
+async function cutFromMasterFile({ clipId, masterFile, fromSec, durationSec, outFile, srcWidth }) {
+    // 🚀 A clip is a decode + filter + encode of ~20s of video, and on a
+    // 1080p master every one of those three costs more than it did on the
+    // 720p feed a laptop webcam produced — which is why clips started taking
+    // noticeably longer after the AVMATRIX went in.
+    //
+    // scale='min(iw,1280)':-2 is a no-op when the master is already 1280 wide
+    // or narrower, but a no-op scale is NOT free: swscale still resamples
+    // every pixel of every frame. (Same reasoning the compositor already
+    // applies to its own camera scale — see buildCompositorArgs.) Dropping
+    // the filter entirely in that case removes a full-frame CPU pass per
+    // frame, which matters most on this build, where GPU scale is reported
+    // unavailable and swscale runs on the CPU.
+    const needsScale = !srcWidth || srcWidth > CLIP_MAX_WIDTH;
     const attempt = (useNvenc) => new Promise((resolve, reject) => {
         const args = [
             '-hide_banner', '-loglevel', 'warning', '-nostats', '-y',
+            // Decode on the GPU when this build has NVENC: the same card has
+            // NVDEC, the master is H.264, and without this the CPU decodes
+            // every frame before the GPU re-encodes it. Plain -hwaccel cuda
+            // (no -hwaccel_output_format) hands frames back in system memory,
+            // so the CPU filter below keeps working unchanged. A build that
+            // cannot do it fails immediately and falls back to the CPU path.
+            ...(useNvenc ? ['-hwaccel', 'cuda'] : []),
             '-ss', fromSec.toFixed(3), '-i', masterFile, '-t', durationSec.toFixed(3),
-            '-vf', `scale='min(iw,${CLIP_MAX_WIDTH})':-2`,
+            ...(needsScale ? ['-vf', `scale='min(iw,${CLIP_MAX_WIDTH})':-2`] : []),
             // NVENC doesn't take -crf; '-rc vbr -cq N' is its equivalent
             // "quality, not fixed bitrate" mode (b:v 0 tells it not to
             // also cap by bitrate).
@@ -3377,7 +3403,11 @@ async function cutFromMasterFile({ clipId, masterFile, fromSec, durationSec, out
         await attempt(preferNvenc);
     } catch (e) {
         if (!preferNvenc || shuttingDown || /timed out/.test(e.message)) throw e; // CPU attempt already, or a stuck read — the job-level retry handles it
-        console.log(`[stream-engine] Clip cut failed on NVENC (likely the GPU's concurrent-session limit while recording+live are running), retrying on CPU: ${e.message.split('\n')[0]}`);
+        // Covers both GPU paths this attempt enables: the encoder (session
+        // limit while recorder+live already hold one each) and the decoder
+        // (-hwaccel cuda on a build without NVDEC). Either way the CPU run
+        // below is the answer, so they do not need telling apart.
+        console.log(`[stream-engine] Clip cut failed on the GPU path (encoder session limit, or this ffmpeg has no CUDA decode), retrying on CPU: ${e.message.split('\n')[0]}`);
         await attempt(false);
     }
 }
@@ -3518,7 +3548,27 @@ async function organiseClipLocally(job, outFile) {
         // The event itself, on disk next to the clips — the local answer to
         // "which ball, which players, which IDs" with no database needed.
         await clipOrganizer.writeClipMetadata(result.matchRoot, { ...job, ...meta, localPath: result.primary });
-        console.log(`🗂️ [CLIP FILED] clipId=${job.clipId} -> ${result.isHighlight ? `Highlights/${result.category}` : 'Normal'}${result.links.length ? ` (+${result.links.length} player folder${result.links.length === 1 ? '' : 's'})` : ''}`);
+        // 🩹 The old line named the category but not the PATH, so "my clips
+        // aren't going where they should" could not be checked without
+        // hunting through the folder tree. It now prints the file the
+        // operator can actually go and open.
+        console.log(`🗂️ [CLIP FILED] clipId=${job.clipId} -> ${result.primary}`);
+        if (result.links.length) console.log(`[stream-engine]   also linked into: ${result.links.join(' | ')}`);
+        // The player/team folders come ENTIRELY from the ball's own metadata.
+        // When a field is missing the organiser cannot invent it, and the clip
+        // quietly lands without that folder — which looks exactly like "the
+        // path is wrong". Name what was missing, once, at the moment it
+        // happens, instead of leaving it to be discovered after the match.
+        const missing = [
+            !meta.strikerName && 'batsman',
+            !meta.bowlerName && 'bowler',
+            !meta.battingTeam && 'batting team',
+            meta.innings == null && 'innings',
+            meta.over == null && 'over',
+        ].filter(Boolean);
+        if (missing.length) {
+            console.log(`[stream-engine]   ⚠ this clip had no ${missing.join(', ')} in its ball metadata, so those folders were skipped. The panel sends these with the clip request — if they are missing for every clip, the event is being triggered before the ball's players are set.`);
+        }
         return { path: result.primary, info: { primary: result.primary, links: result.links, category: result.category, isHighlight: result.isHighlight, matchRoot: result.matchRoot } };
     } catch (e) {
         // Organising is a convenience on top of a clip that already exists.
