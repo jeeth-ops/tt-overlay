@@ -445,3 +445,93 @@ What to run on the match PC, in order:
 4. Stop recording. **Master file** should say `one continuous recording`, or
    `✓ one master (master_complete.mp4, from N parts)` with the boundary
    reasons in its tooltip — and none of them may read `[remote]`.
+
+---
+
+## J. Panel 3 camera format — verified against the real device request, not the dropdown
+
+Two bugs survived adding the dropdowns, and both were in the step that
+actually talks to the AVMATRIX card.
+
+### J1. A 720×480 program was asking the card for 720×480 — CONFIRMED, FIXED
+
+```
+EVENT    operator selects 720×480 output
+  ↓
+CODE     ensureCompositor() → Compositor{ width:720, height:480 }
+  ↓
+CODE     probeCameraMode() → pickCameraMode(out, this.width, this.height, this.fps)
+             …whose sort prefers  area <= targetArea
+  ↓
+PROCESS  -video_size 720x480 is handed to dshow
+  ↓
+FAILURE  the HDMI source is 1920×1080 and the engine discarded it AT THE
+         DEVICE, inside the card's firmware, before any filter of ours could
+         do a controlled downscale — and on a card that may not offer the
+         mode at all, the open simply fails
+  ↓
+SYMPTOM  soft/low-detail 720×480, or a camera that will not open
+```
+
+**Fixed** with `pickCaptureMode()` — a separate picker for a separate
+question. It takes the **largest** mode the device offers that can genuinely
+carry the required capture rate (still honouring the raw-USB-bandwidth cap and
+the compressed-mode preference), with the output size as an optional *ceiling*
+rather than a target. The card keeps its native format; the compositor scales
+once, with a filter we choose. `Compositor.captureTarget` now carries that
+question explicitly, separate from the program format.
+
+### J2. 50i was asking the device for 50 — CONFIRMED, FIXED
+
+`this.fps` is the **program** rate. For 50i that is 50, because each field
+becomes a frame. But 50i is 50 **fields** = 25 interlaced **frames**, and
+dshow counts frames — so the device was being asked for a mode it does not
+have. **Fixed:** the video mode now carries `captureFps` (25 for 50i) and
+`programFps` (50) as separate numbers, and the device request uses the capture
+rate.
+
+### J3. Frame-rate conversion inventory (brief §19)
+
+Every place the rate changes, after the fix. The goal was exactly one
+deliberate conversion, and that is now what there is:
+
+| Stage | Rate | Conversion |
+|---|---|---|
+| camera input | `-framerate` = the device's real chosen mode | none — plus `-use_wallclock_as_timestamps` so frames are timed by arrival |
+| compositor filter | `fps=<programFps>` | **the one conversion**: capture rate → program rate (after `yadif` for 50i, before nothing else) |
+| preview branch | `fps=15` | separate `split` branch — decimated for the panel, never feeds the program |
+| overlay input | `-framerate 15` | its own input, composited; not a rate change to the camera |
+| relay | raw NUT | none |
+| recorder | `-r min(requested, programFps)` | **no-op at matching rates** |
+| live/RTMPS | `-fps_mode cfr -r min(requested, programFps)` | **no-op at matching rates** |
+
+Before this work there were three conflicting declarations in that chain: the
+device asked for one rate, the compositor hardcoded 30, and the encoders were
+told the operator's selection — the classic `50p capture → 25 in → 50 filter →
+25 encoder` shape the brief names, which is what produced fast playback and
+judder.
+
+### J4. Requested vs actual, and what is still unproven
+
+`/status.captureMatch` compares what the device was **asked** for against what
+the timebase measurement says is really **arriving**, and the panel shows
+`✓ MATCHED` or `⚠ MISMATCH — asked 50, getting 25`. A selection is never
+displayed as if it were a measurement.
+
+Honest status on the four profiles. The **logic** is verified — 91 unit tests
+across eight suites, including `pickCaptureMode` driven against real
+`-list_options` text from an AVMATRIX-shaped device. The **picture** is not,
+and cannot be from here: this container has no ffmpeg build, no capture device
+and no GPU. So none of the four profiles is claimed as verified end to end:
+
+| Profile | Logic | Real feed |
+|---|---|---|
+| 1920×1080 / 25p | verified | needs the match PC |
+| 1920×1080 / 50p | verified | needs the match PC |
+| 1920×1080 / 50i | verified | needs the match PC |
+| 720×480 / 25p | verified | needs the match PC |
+
+Per profile, on the match PC: select it, read **CAPTURE CHECK** (must say
+MATCHED), record one minute and confirm the file is about one minute long, and
+watch the preview for cadence. A MISMATCH row names the real rate, which is
+the number that says which mode the card is genuinely in.

@@ -2726,7 +2726,7 @@ async function refreshClipEngineStatus(){
   ceSetDot('ce-cloudflare', status.cloudflareConnected, status.cloudflareConnected ? 'Connected' : `Retrying (${status.retryQueueLength} queued)`);
 
   updateRecorderStatusUI(status.recorder, status.compositor);
-  renderActiveFormat(status.activeFormat);
+  renderActiveFormat(status.activeFormat, status.captureMatch);
 }
 
 function formatBytes(n){
@@ -3145,12 +3145,34 @@ const RESOLUTION_PRESETS = {
 /* 50i declares a 25fps interlaced CAPTURE and a 50fps progressive PROGRAM —
    each field becomes a frame, which is the reason to shoot 50i at all. */
 const VIDEO_MODES = {
-  '25p': { programFps: 25 },
-  '50p': { programFps: 50 },
-  '50i': { programFps: 50 },
-  '30p': { programFps: 30 },
-  '60p': { programFps: 60 },
+  '25p': { programFps: 25, label: '25p' },
+  '50p': { programFps: 50, label: '50p' },
+  '50i': { programFps: 50, label: '50i → 50p' },
+  '30p': { programFps: 30, label: '30p' },
+  '60p': { programFps: 60, label: '60p' },
 };
+/* Which modes each resolution actually offers. 720×480 is a 4:3 SD profile
+   and 25p is the only mode for it — showing 50p/50i there would be a promise
+   the pipeline is not making. Mirrors MODES_BY_RESOLUTION in captureModes.js;
+   the engine refuses a combination that is not listed, so the two cannot
+   drift apart silently. */
+const MODES_BY_RESOLUTION = {
+  '1080p': ['25p', '50p', '50i', '30p', '60p'],
+  '720p':  ['25p', '50p', '50i', '30p', '60p'],
+  '480p':  ['25p', '50p', '30p'],
+  '480sd': ['25p'],
+};
+/* Repopulates the Video Mode list for the chosen resolution, keeping the
+   current mode if it is still offered. */
+function syncVideoModeOptions(){
+  const resSel = document.getElementById('ls-resolution-select');
+  const modeSel = document.getElementById('ls-mode-select');
+  if(!resSel || !modeSel) return;
+  const allowed = MODES_BY_RESOLUTION[resSel.value] || MODES_BY_RESOLUTION['1080p'];
+  const keep = allowed.includes(modeSel.value) ? modeSel.value : allowed[0];
+  modeSel.innerHTML = allowed.map(k => `<option value="${k}">${VIDEO_MODES[k].label}</option>`).join('');
+  modeSel.value = keep;
+}
 const DEFAULT_BITRATE_KBPS = {
   '1080p': { 25: 5000, 30: 6000, 50: 10000, 60: 12000 },
   '720p':  { 25: 3000, 30: 3500, 50: 4800,  60: 5500 },
@@ -3230,20 +3252,32 @@ document.getElementById('live-video-device')?.addEventListener('change', refresh
 
 /* SOURCE → PROGRAM → RECORDING → YOUTUBE, each with the format actually in
    use. Anything the engine is not currently running simply has no row. */
-function renderActiveFormat(active){
+function renderActiveFormat(active, match){
   const el = document.getElementById('ls-active-format');
   if(!el) return;
   const rows = [
-    ['SOURCE',    active && active.source,    'What the camera/capture card is delivering'],
+    ['CAPTURE',   active && active.source,    'The mode the camera/capture card was opened in'],
     ['PROGRAM',   active && active.program,   'The shared local program feed everything is cut from'],
     ['RECORDING', active && active.recording, 'The local master recording'],
-    ['YOUTUBE',   active && active.youtube,   'What is being pushed out'],
+    ['STREAM',    active && active.youtube,   'What is being pushed to YouTube'],
   ].filter(([, v]) => v);
   if(!rows.length){ el.style.display = 'none'; el.innerHTML = ''; return; }
   el.style.display = 'block';
-  el.innerHTML = rows.map(([k, v, title]) =>
+  let html = rows.map(([k, v, title]) =>
     `<div style="display:flex; justify-content:space-between; gap:10px;" title="${title}"><span style="opacity:.6;">${k}</span><span style="font-variant-numeric:tabular-nums;">${v}</span></div>`
   ).join('');
+  /* REQUESTED vs ACTUAL for the capture stage. "50p selected" is not evidence
+     that 50 frames are arriving — a capture card that advertises an fps RANGE
+     accepts the request and then passes through whatever the camera sends. So
+     the verdict comes from the measured rate, not from the dropdown. */
+  if(match && match.status === 'matched'){
+    html += `<div style="display:flex; justify-content:space-between; gap:10px; color:#3fce6e; margin-top:3px;"><span style="opacity:.75;">CAPTURE CHECK</span><span>✓ MATCHED (${match.actualFps} fps)</span></div>`;
+  } else if(match && match.status === 'mismatch'){
+    html += `<div style="display:flex; justify-content:space-between; gap:10px; color:#ff6b6b; margin-top:3px;" title="The device was asked for ${match.requestedFps} fps but about ${match.actualFps} is really arriving. Pick a mode this card genuinely provides — the engine will not pretend the requested rate is what you are getting."><span style="opacity:.75;">CAPTURE CHECK</span><span>⚠ MISMATCH — asked ${match.requestedFps}, getting ${match.actualFps}</span></div>`;
+  } else if(match && match.status === 'measuring'){
+    html += `<div style="display:flex; justify-content:space-between; gap:10px; opacity:.55; margin-top:3px;"><span>CAPTURE CHECK</span><span>measuring…</span></div>`;
+  }
+  el.innerHTML = html;
 }
 
 function refreshBitratePreview(){
@@ -3251,7 +3285,12 @@ function refreshBitratePreview(){
   const el = document.getElementById('ls-bitrate-preview');
   if(el) el.textContent = `${(bitrateKbps/1000).toFixed(1)} Mbps`;
 }
-document.getElementById('ls-resolution-select')?.addEventListener('change', refreshBitratePreview);
+document.getElementById('ls-resolution-select')?.addEventListener('change', () => {
+  syncVideoModeOptions();   // 720×480 offers only 25p — the list must follow the resolution
+  refreshBitratePreview();
+  refreshCaptureCapability();
+});
+syncVideoModeOptions();
 document.getElementById('ls-mode-select')?.addEventListener('change', refreshBitratePreview);
 document.getElementById('ls-mode-select')?.addEventListener('change', refreshCaptureCapability);
 document.getElementById('ls-bitrate-input')?.addEventListener('input', refreshBitratePreview);

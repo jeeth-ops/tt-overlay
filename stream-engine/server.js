@@ -1625,6 +1625,7 @@ const engine = {
     rate: createRateTracker('Live stream'), // media-time vs wall-time for the LIVE push — see rateHealth
     videoMode: null,          // '25p' | '50p' | '50i' — see captureModes.js
     interlacedSource: false,
+    captureFps: null,         // what the DEVICE is asked for — 25 for 50i, not the program's 50
     requestedFps: null,       // what the operator SELECTED, when it differs from what is sent
     lastCapability: null,     // the device's answer to "can you do this mode?" — see validateCameraCapability
     lastProgramFeedHealth: null, // {ok, black, white, frozen, checkedAt} — see runProgramFeedHealthCheck/monitorProgramFeedHealth
@@ -2120,7 +2121,7 @@ async function startEncoder({ resolution, fps, bitrateKbps, keyframeIntervalSec 
         // also running) relays to THIS process, which holds its own
         // independent NVENC session and pushes RTMPS — a network
         // problem here can never touch the recorder, and vice versa.
-        const compResult = await ensureCompositor({ matchId: engine.matchId, mainServerUrl: engine.mainServerUrl, cameraDeviceName: engine.cameraDeviceName, audioDeviceName: engine.audioDeviceName, who: 'live', fps: resolved.fps, interlacedSource: engine.interlacedSource });
+        const compResult = await ensureCompositor({ matchId: engine.matchId, mainServerUrl: engine.mainServerUrl, cameraDeviceName: engine.cameraDeviceName, audioDeviceName: engine.audioDeviceName, who: 'live', fps: resolved.fps, interlacedSource: engine.interlacedSource, captureFps: engine.captureFps });
         if (!compResult.ok) {
             engine.state = 'idle';
             // A reconnect must keep trying: the compositor may simply be
@@ -2384,7 +2385,7 @@ let compositorStopping = null; // promise while a released compositor is still s
 // recorder's own existing "already recording a different match" guard
 // below) — a genuine multi-match-simultaneously native pipeline isn't
 // implemented; the operator stops the previous match first, same as today.
-async function ensureCompositor({ matchId, mainServerUrl, cameraDeviceName, audioDeviceName, who, fps, interlacedSource }) {
+async function ensureCompositor({ matchId, mainServerUrl, cameraDeviceName, audioDeviceName, who, fps, interlacedSource, captureFps }) {
     // A compositor that was just released may still hold the camera for
     // a moment — starting a new one before it has exited fails with
     // "device busy" (an exclusive dshow device can only be opened once).
@@ -2421,6 +2422,14 @@ async function ensureCompositor({ matchId, mainServerUrl, cameraDeviceName, audi
         // 50i: the source carries fields, so the compositor deinterlaces
         // before it scales — see buildCompositorArgs.
         compositor.interlacedSource = !!interlacedSource;
+        // 🎯 WHAT THE DEVICE IS ASKED FOR, which is not the program format.
+        // captureFps is the mode's CAPTURE rate: for 50i that is 25 interlaced
+        // frames, not the 50 progressive frames the program produces — dshow
+        // counts frames, so asking a 50i source for 50 asks for a mode it does
+        // not have. No size ceiling: the card keeps its native format and the
+        // compositor scales down, so a 720x480 program never costs capture
+        // quality (see pickCaptureMode).
+        compositor.captureTarget = { fps: Number(captureFps) > 0 ? Number(captureFps) : programFps, width: null, height: null };
     }
     const comp = compositor;
     // The program feed is SHARED and cannot change rate without restarting
@@ -2474,6 +2483,7 @@ const recorder = {
     rate: createRateTracker('Recording'), // media-time vs wall-time for the MASTER RECORDING — see rateHealth
     videoMode: null,          // '25p' | '50p' | '50i' — see captureModes.js
     interlacedSource: false,  // 50i: the compositor deinterlaces before it scales
+    captureFps: null,         // what the DEVICE is asked for — 25 for 50i, not the program's 50
     session: null,            // the durable ONE-master-per-match record — see recordingSession.js
     sessionDir: null,         // folder the session file and the segments live in
     finalizing: null,         // {status:'joining'|'done'|'failed', path, error} while/after the parts are joined
@@ -2666,7 +2676,7 @@ async function startRecorder(matchId, { resolution, fps, audioDeviceName, camera
         // camera+overlay compositor (opened once, shared with the live
         // encoder if that's also running) relays to THIS process, which
         // holds its own independent NVENC session and writes master.mp4.
-        const compResult = await ensureCompositor({ matchId, mainServerUrl: recorder.mainServerUrl, cameraDeviceName: recorder.cameraDeviceName, audioDeviceName, who: 'recorder', fps: fpsNum, interlacedSource: recorder.interlacedSource });
+        const compResult = await ensureCompositor({ matchId, mainServerUrl: recorder.mainServerUrl, cameraDeviceName: recorder.cameraDeviceName, audioDeviceName, who: 'recorder', fps: fpsNum, interlacedSource: recorder.interlacedSource, captureFps: recorder.captureFps });
         if (!compResult.ok) return fail(compResult.error);
         recorder.holdsCompositorRef = true;
         if (!recorder.desiredRecording || shuttingDown) return fail('Recording was stopped while starting');
@@ -3969,6 +3979,14 @@ app.get('/status', async (req, res) => {
                 ? { width: engine.settings.width, height: engine.settings.height, fps: engine.settings.fps } : null,
         }),
         videoMode: engine.videoMode || recorder.videoMode || null,
+        // 🎯 REQUESTED vs ACTUAL for the CAPTURE stage: what the device was
+        // asked for, against what the timebase measurement says is really
+        // arriving. "Selected 50p" is not evidence of 50p.
+        captureMatch: (() => {
+            const asked = (compositor && compositor.captureTarget && compositor.captureTarget.fps) || null;
+            const tb = rateHealth(recorder.rate, recorder.settings && recorder.settings.fps);
+            return captureModes.captureMatch(asked, tb.actualFps);
+        })(),
         cameraCapability: engine.lastCapability || null,
         // Same real-time check for the YouTube push as for the recording.
         encoderTimebase: rateHealth(engine.rate, engine.settings && engine.settings.fps),
@@ -4184,7 +4202,7 @@ async function validateCameraCapability(deviceName, outFormat) {
 // can never list a mode the engine does not implement.
 app.get('/capture-formats', async (req, res) => {
     const deviceName = req.query.cameraDeviceName || null;
-    const resolutions = Object.entries(captureModes.OUTPUT_RESOLUTIONS).map(([key, r]) => ({ key, ...r }));
+    const resolutions = Object.entries(captureModes.OUTPUT_RESOLUTIONS).map(([key, r]) => ({ key, ...r, modes: captureModes.modesFor(key) }));
     const modes = Object.entries(captureModes.VIDEO_MODES).map(([key, m]) => ({ key, ...m }));
     let device = null;
     if (deviceName && NATIVE_CAPTURE_SUPPORTED) {
@@ -4454,6 +4472,7 @@ app.post('/recording-start', async (req, res) => {
     const cameraDeviceName = (req.body && req.body.cameraDeviceName) || null; // only used when NATIVE_PROGRAM_FEED is on
     recorder.videoMode = recMode;
     recorder.interlacedSource = recMode ? captureModes.VIDEO_MODES[recMode].interlaced : false;
+    recorder.captureFps = recMode ? captureModes.VIDEO_MODES[recMode].captureFps : null;
 
     recordingMatches[matchId] = { mainServerUrl, tournamentId };
     console.log(`🔴 [clip engine] Recording session registered for match ${matchId}`);
@@ -4648,11 +4667,18 @@ app.post('/go-live', async (req, res) => {
     // saved settings keep working. 50i declares a 25fps interlaced CAPTURE and
     // a 50fps progressive PROGRAM — see captureModes.js.
     const modeKey = captureModes.VIDEO_MODES[videoMode] ? videoMode : null;
+    if (modeKey && !captureModes.isAllowedCombination(resKey, modeKey)) {
+        return res.status(400).json({
+            success: false,
+            error: `${captureModes.OUTPUT_RESOLUTIONS[resKey].label} does not support ${modeKey}. Supported for this resolution: ${captureModes.modesFor(resKey).join(', ')}.`,
+        });
+    }
     const outFormat = modeKey ? captureModes.resolveOutput(resKey, modeKey) : null;
     const fpsNum = outFormat ? outFormat.programFps : coerceFps(fps, 'live stream');
     if (outFormat) {
         engine.videoMode = modeKey;
         engine.interlacedSource = outFormat.interlacedSource;
+        engine.captureFps = outFormat.captureFps; // what the DEVICE is asked for (25 for 50i)
     }
 
     // 🚦 CAPABILITY CHECK BEFORE ANYTHING STARTS — no silent fallback.

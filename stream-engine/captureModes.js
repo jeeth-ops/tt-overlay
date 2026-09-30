@@ -81,9 +81,35 @@ function defaultBitrateKbps(resolutionKey, programFps) {
     return Math.round(row[30] * (Number(programFps) || 30) / 30);
 }
 
+// ----------------------------------------------------------------
+// WHICH MODES BELONG TO WHICH RESOLUTION
+// ----------------------------------------------------------------
+// The operator must not be offered a combination the product does not
+// support, and 720x480 is the case that matters: it is a 4:3
+// standard-definition profile and 25p is the only mode for it here.
+// Offering 50p/50i there would be a promise the pipeline is not making.
+//
+// This is also why the operator never sees the device's raw capability list
+// (PAL 50i, NTSC 59.94i, FILM 23.976, 100p, 120p, 200p …). Those are device
+// noise; the panel shows production profiles.
+const MODES_BY_RESOLUTION = {
+    '1080p': ['25p', '50p', '50i', '30p', '60p'],
+    '720p':  ['25p', '50p', '50i', '30p', '60p'],
+    '480p':  ['25p', '50p', '30p'],
+    '480sd': ['25p'],
+};
+function modesFor(resolutionKey) {
+    return MODES_BY_RESOLUTION[resolutionKey] || MODES_BY_RESOLUTION['1080p'];
+}
+function isAllowedCombination(resolutionKey, modeKey) {
+    return modesFor(resolutionKey).includes(modeKey);
+}
+
 function resolveOutput(resolutionKey, modeKey) {
     const res = OUTPUT_RESOLUTIONS[resolutionKey] ? resolutionKey : '1080p';
-    const mode = VIDEO_MODES[modeKey] ? modeKey : '25p';
+    // A combination that is not offered for this resolution falls back to the
+    // first mode that IS — and the caller reports it, never silently.
+    const mode = (VIDEO_MODES[modeKey] && isAllowedCombination(res, modeKey)) ? modeKey : modesFor(res)[0];
     const { width, height } = OUTPUT_RESOLUTIONS[res];
     const m = VIDEO_MODES[mode];
     return {
@@ -170,6 +196,22 @@ function cameraFilterChain({ interlacedSource, sourceWidth, sourceHeight, outWid
     return parts.join(',');
 }
 
+// ----------------------------------------------------------------
+// REQUESTED vs ACTUAL
+// ----------------------------------------------------------------
+// "Selected 50p" and "the device is delivering 50" are different facts, and
+// the panel must never show the first as if it were the second. A rate within
+// 2% counts as matched (encoders and cards wobble); anything else is a
+// MISMATCH with both numbers named.
+function captureMatch(requestedFps, actualFps) {
+    const req = Number(requestedFps) || null;
+    const act = Number(actualFps) || null;
+    if (!req) return { status: 'unknown', requestedFps: req, actualFps: act };
+    if (!act) return { status: 'measuring', requestedFps: req, actualFps: null };
+    const matched = Math.abs(act - req) / req <= 0.02;
+    return { status: matched ? 'matched' : 'mismatch', requestedFps: req, actualFps: Number(act.toFixed(2)) };
+}
+
 // What the operator sees: the format at each stage of the chain, so a
 // mismatch anywhere is visible instead of inferred.
 function activeFormatSummary({ source, program, recording, youtube }) {
@@ -180,6 +222,7 @@ function activeFormatSummary({ source, program, recording, youtube }) {
 module.exports = {
     OUTPUT_RESOLUTIONS, VIDEO_MODES, DEFAULT_BITRATE_KBPS,
     defaultBitrateKbps, resolveOutput,
+    MODES_BY_RESOLUTION, modesFor, isAllowedCombination, captureMatch,
     validateCaptureMode, describeOffered,
     cameraFilterChain, activeFormatSummary,
 };

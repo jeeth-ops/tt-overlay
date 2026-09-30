@@ -459,6 +459,56 @@ function parseCameraModeOverride(raw) {
     return { width, height, fps, minFps: fps, maxFps: fps, compressed: false, forced: true };
 }
 
+// 🎯 WHAT TO ASK THE CAPTURE CARD FOR — deliberately NOT the output size.
+//
+// 🛠 THE BUG THIS REPLACES. The camera mode used to be chosen with
+// pickCameraMode(out, this.width, this.height, this.fps) — i.e. targeting the
+// PROGRAM resolution — and its sort prefers a mode whose area is <= the
+// target. So selecting a 720x480 program made the engine ask an AVMATRIX
+// card for a ~720x480-or-smaller mode: the HDMI source is 1920x1080, and the
+// engine threw that away at the device, in the card's firmware, before any
+// filter could do a controlled downscale. A 720x480 output must never cost
+// capture quality.
+//
+// Same class of bug on frame rate: `this.fps` is the PROGRAM rate, which for
+// 50i is 50 — but 50i is 50 FIELDS = 25 interlaced FRAMES, and dshow counts
+// frames. Asking a 50i source for 50 is asking for a mode it does not have.
+//
+// So capture is chosen on its own terms: the LARGEST mode the device offers
+// that can carry the required capture rate (subject to the raw-bandwidth cap
+// and preferring compressed modes, exactly as before), with preferWidth/
+// preferHeight as a ceiling rather than a target. Scaling to the output size
+// then happens once, in the compositor, with a filter we control.
+function pickCaptureMode(listOptionsOutput, { fps, preferWidth = null, preferHeight = null }) {
+    const modes = parseDshowVideoModes(listOptionsOutput);
+    if (!modes.length) return null;
+    const wanted = Number(fps) || 25;
+    const scored = modes.map((mode) => {
+        const modeFps = Math.min(mode.maxFps, Math.max(mode.minFps, wanted));
+        const rawBytesPerSec = mode.width * mode.height * 2 * modeFps;
+        const safe = mode.compressed || rawBytesPerSec <= RAW_BANDWIDTH_CAP_BYTES_PER_SEC;
+        // Can this mode actually carry the rate we need? A mode whose range
+        // cannot reach it is a different mode, not a candidate.
+        const carriesRate = wanted >= Math.floor(mode.minFps) && wanted <= Math.ceil(mode.maxFps);
+        return { ...mode, fps: modeFps, area: mode.width * mode.height, safe, carriesRate };
+    });
+    const ceiling = (preferWidth && preferHeight) ? preferWidth * preferHeight : Infinity;
+    const tiers = [
+        scored.filter((m) => m.carriesRate && m.safe && m.area <= ceiling),
+        scored.filter((m) => m.carriesRate && m.safe),
+        scored.filter((m) => m.carriesRate),
+        scored.filter((m) => m.safe),
+        scored,
+    ];
+    const pool = tiers.find((t) => t.length) || [];
+    if (!pool.length) return null;
+    // Largest first — the native HDMI format is what we want, and the
+    // compositor scales down from it. Compressed preferred at equal size for
+    // the same USB-bandwidth reason as before.
+    pool.sort((a, b) => (b.area - a.area) || ((a.compressed === b.compressed) ? 0 : (a.compressed ? -1 : 1)));
+    return pool[0];
+}
+
 function pickCameraMode(listOptionsOutput, targetWidth, targetHeight, targetFps) {
     const modes = parseDshowVideoModes(listOptionsOutput);
     if (!modes.length) return null;
@@ -703,6 +753,13 @@ class Compositor extends EventEmitter {
         this.startedAt = null;
         this.cameraMode = null;     // resolved by probeCameraMode(), cached until an open failure invalidates it
         this.interlacedSource = false; // true for a 50i source — see buildCompositorArgs's yadif branch
+        // 🎯 CAPTURE TARGET — what to ask the DEVICE for, which is NOT the
+        // program format. captureFps differs from the program rate for 50i
+        // (25 interlaced frames in, 50 progressive frames out), and the size
+        // is a CEILING for the device's own best mode, never a demand to
+        // downscale at the card. Set by the caller; null means "the device's
+        // best mode, no ceiling".
+        this.captureTarget = null; // { fps, width, height } | null
         // 🛠 How hard we are still trying to constrain the camera. dshow
         // refuses an unsupported -video_size/-framerate outright ("Could not
         // set video options" -> I/O error) and ffmpeg exits in under a second,
@@ -787,7 +844,15 @@ class Compositor extends EventEmitter {
                     const seen = [...new Set(offered.map((m) => `${m.width}x${m.height}@${Math.round(m.maxFps)}${m.compressed ? ' mjpeg' : ' raw'}`))];
                     this.log(`[compositor] camera offers ${seen.length} mode(s): ${seen.join(', ')}`);
                 }
-                const mode = pickCameraMode(out, this.width, this.height, this.fps);
+                const target = this.captureTarget || {};
+                const mode = pickCaptureMode(out, {
+                    fps: target.fps || this.fps,
+                    // No ceiling by default: take the card's native format and
+                    // scale in the compositor. A ceiling is only applied when
+                    // the caller explicitly asks for one.
+                    preferWidth: target.width || null,
+                    preferHeight: target.height || null,
+                });
                 if (mode) {
                     this.log(`[compositor] camera mode auto-detected: ${mode.width}x${mode.height}@${mode.fps}${mode.compressed ? ' (compressed)' : ' (raw)'}`);
                     // An upscale is an upscale whether the source mode was raw or
@@ -798,6 +863,14 @@ class Compositor extends EventEmitter {
                     // exists to prevent.
                     if (mode.width < this.width || mode.height < this.height) {
                         this.log(`[compositor] ⚠ the camera is opening BELOW the program resolution (${mode.width}x${mode.height} < ${this.width}x${this.height}) — the feed will be upscaled and look soft. If this device really does support ${this.width}x${this.height}, force it with STREAM_ENGINE_CAMERA_MODE=${this.width}x${this.height}@${this.fps}`);
+                    } else if (mode.width > this.width || mode.height > this.height) {
+                        // Not a warning: this is the intended path for a
+                        // smaller program (e.g. 720x480 out of a 1080p card) —
+                        // capture native, downscale once under our control.
+                        this.log(`[compositor] camera captures ${mode.width}x${mode.height}, program is ${this.width}x${this.height} — scaling down in the compositor (the card is not asked to do it)`);
+                    }
+                    if (this.captureTarget && this.captureTarget.fps && Math.round(mode.fps) !== Math.round(this.captureTarget.fps)) {
+                        this.log(`[compositor] ⚠ CAPTURE RATE MISMATCH — asked this device for ${this.captureTarget.fps} fps, the closest mode it offers is ${mode.fps}. The program will run at the rate that really arrives; watch FPS (req/actual) in the panel.`);
                     }
                 } else {
                     this.log('[compositor] could not auto-detect a camera mode from -list_options output — opening unconstrained');
@@ -1204,6 +1277,7 @@ module.exports = {
     OVERLAY_FPS,
     parseDshowVideoModes,
     pickCameraMode,
+    pickCaptureMode,
     parseCameraModeOverride,
     RAW_BANDWIDTH_CAP_BYTES_PER_SEC,
     PREVIEW_FPS,
