@@ -71,6 +71,14 @@ const sourceProbe = require('./sourceProbe');
 // enough that a score change reaches the program feed without a
 // noticeable delay.
 const OVERLAY_FPS = 15;
+// The width the overlay pages are designed for; height follows the program
+// aspect so a 4:3 program is not squashed (720x480 -> 1920x1280).
+const OVERLAY_DESIGN_WIDTH = 1920;
+function overlayRenderSize(programWidth, programHeight) {
+    const w = OVERLAY_DESIGN_WIDTH;
+    const h = Math.round((w * (Number(programHeight) || 1080)) / (Number(programWidth) || 1920) / 2) * 2;
+    return { width: w, height: h };
+}
 // 🖥️ PROGRAM PREVIEW — what the operator actually watches in the panel.
 // This used to be 2fps at 640px wide, which is a slideshow, not a monitor:
 // you cannot judge framing, focus or whether the feed is live from it. It
@@ -1201,7 +1209,14 @@ class Compositor extends EventEmitter {
 
     async _ensureOverlayBridge() {
         if (this.overlay && !this.overlay.stopped) return { ok: true };
-        const overlay = new OverlayBridge({ execPath: this.execPath, url: this.overlayUrl, width: this.width, height: this.height });
+        // 🛠 The overlay page is laid out for a 1920-wide screen (fixed px
+        // sizes). Rendering it at the PROGRAM size made a 1280- or 720-wide
+        // viewport, where the same scoreboard is relatively much bigger and
+        // ran off the frame (field report: "overlay bahot bada, cut ho
+        // gaya"). Render at the design width with the program's aspect, and
+        // let the compositor scale it down once ([0:v]scale=W:H).
+        const { width: ow, height: oh } = overlayRenderSize(this.width, this.height);
+        const overlay = new OverlayBridge({ execPath: this.execPath, url: this.overlayUrl, width: ow, height: oh });
         overlay.on('frame', (png) => { this.overlayFrame = png; });
         // Chromium dying mid-match must not take the program feed down:
         // the pacer keeps re-sending the last overlay frame while a new
@@ -1611,6 +1626,7 @@ module.exports = {
     PREVIEW_FPS,
     PREVIEW_WIDTH,
     previewStep,
+    overlayRenderSize,
     TRANSPARENT_PNG,
     CaptureMeter,
     SOURCE_PLAN_CACHE,

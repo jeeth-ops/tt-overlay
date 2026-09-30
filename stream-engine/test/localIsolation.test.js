@@ -139,5 +139,13 @@ test('the placeholder overlay is REALLY transparent (it used to be 50% blue over
   assert.deepStrictEqual(rgba.slice(1), [0, 0, 0, 0], `pixel is RGBA(${rgba.slice(1)}) — alpha must be 0`);
 });
 
+test('the overlay is rendered at its 1920-wide design size, not the (smaller) program size', () => {
+  const { overlayRenderSize } = require('../nativePipeline');
+  // field: a 1280x720 / 720x480 program rendered the page in a small viewport and the scoreboard ran off the frame
+  assert.deepStrictEqual(overlayRenderSize(1920, 1080), { width: 1920, height: 1080 });
+  assert.deepStrictEqual(overlayRenderSize(1280, 720), { width: 1920, height: 1080 });
+  assert.deepStrictEqual(overlayRenderSize(720, 480), { width: 1920, height: 1280 }, '4:3-ish program keeps its aspect');
+});
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
