@@ -500,8 +500,26 @@
     /* 🎨 Hero background = the "alive" team-colour moment, kept strong.
        Everything below this (cards/tables — the actual data) stays low. */
     background:
-      radial-gradient(120% 140% at 15% -10%, color-mix(in srgb, var(--team-a-color) 46%, transparent), transparent 55%),
-      radial-gradient(100% 120% at 100% 0%, color-mix(in srgb, var(--team-b-color) 38%, transparent), transparent 50%);
+      radial-gradient(90% 130% at 0% 0%, color-mix(in srgb, var(--team-a-color) 62%, transparent), transparent 62%),
+      radial-gradient(90% 130% at 100% 0%, color-mix(in srgb, var(--team-b-color) 54%, transparent), transparent 62%),
+      /* A downward fade keeps the colour weighted at the top, where the
+         crests and chips are, and hands the lower half back to the card so
+         the scores never sit on a busy field. Without it, raising the two
+         washes above just tinted the numbers too. */
+      linear-gradient(180deg, transparent 35%, var(--panel) 130%);
+  }
+  /* 🎨 The colour rail — both teams' colours meeting across the top edge of
+     the header, blended where they touch. One flat element, no blur and no
+     animation, so it costs nothing on a phone; it is what makes the card
+     read as THIS match's at a glance rather than a generic white panel. */
+  #hero::after{
+    content:''; position:absolute; top:0; left:0; right:0; height:5px; pointer-events:none; z-index:2;
+    background:linear-gradient(90deg,
+      var(--team-a-color) 0%,
+      var(--team-a-color) 34%,
+      color-mix(in srgb, var(--team-a-color) 50%, var(--team-b-color)) 50%,
+      var(--team-b-color) 66%,
+      var(--team-b-color) 100%);
   }
   /* ---------- Live stream box (beside the score on wide screens) ---------- */
   #hero-row{ display:flex; gap:14px; align-items:stretch; }
@@ -549,8 +567,27 @@
   }
 
   #teams-row{ position:relative; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,auto) minmax(0,1fr); gap:16px; align-items:center; }
-  .team-block{ display:flex; align-items:center; gap:13px; min-width:0; }
-  .team-block.right{ flex-direction:row-reverse; text-align:right; }
+  /* Each side is a panel in ITS OWN team colour — the tint fades away from
+     that team's outer edge, so the two colours sit at opposite ends of the
+     row and the result in the middle stays on neutral ground. The mix stays
+     low (≤16%) because a team colour can be anything, including a pale
+     yellow: this has to hold up for every club, not just a dark navy. */
+  .team-block{
+    display:flex; align-items:center; gap:13px; min-width:0;
+    position:relative; padding:12px 14px; border-radius:15px;
+    background:linear-gradient(90deg,
+      color-mix(in srgb, var(--team-color, var(--accent)) 16%, transparent),
+      color-mix(in srgb, var(--team-color, var(--accent)) 4%, transparent) 70%,
+      transparent);
+    box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--team-color, var(--accent)) 18%, transparent);
+  }
+  .team-block.right{
+    flex-direction:row-reverse; text-align:right;
+    background:linear-gradient(270deg,
+      color-mix(in srgb, var(--team-color, var(--accent)) 16%, transparent),
+      color-mix(in srgb, var(--team-color, var(--accent)) 4%, transparent) 70%,
+      transparent);
+  }
   .team-logo{
     width:50px; height:50px; border-radius:13px; flex:none; display:flex; align-items:center; justify-content:center;
     font-family:var(--font-display); font-weight:800; font-size:17px; color:#fff; background-size:cover; background-position:center;
@@ -589,8 +626,8 @@
      this card. Now a proper pill banner so the result is the visual
      anchor of the whole header, on both mobile and desktop. */
   #main-score.result-margin{
-    display:inline-block; font-family:var(--font-body); font-weight:800;
-    font-size:clamp(11.5px,2.6vw,13.5px); text-transform:uppercase; letter-spacing:.4px; line-height:1.3;
+    display:inline-block; font-family:var(--font-display); font-weight:800;
+    font-size:clamp(13px,3vw,16px); text-transform:uppercase; letter-spacing:.4px; line-height:1.25;
     text-shadow:none; background:color-mix(in srgb, var(--result-color, var(--accent)) 14%, transparent);
     color:var(--result-color, var(--accent));
     padding:8px 16px; border-radius:99px; max-width:100%;
@@ -600,7 +637,7 @@
      it is capped in characters as well as in percent — a long one used to
      widen that column until the team blocks beside it had nothing left and
      their names ran underneath it. */
-  #hero.hero-final #score-center{ max-width:min(100%, 20ch); margin-inline:auto; }
+  #hero.hero-final #score-center{ max-width:min(100%, 30ch); margin-inline:auto; }
   /* A finished header puts a banner between the two teams, so each team
      column is narrower than it is mid-match. Two lines are allowed here so
      a long name is never cut — but on a laptop the rule in the ≥641px block
@@ -614,11 +651,31 @@
   #batting-tag{ font-size:10.5px; color:var(--accent); font-weight:700; letter-spacing:.4px; text-transform:uppercase; margin-top:4px; }
   /* The drawn-match note under the result reads as a sentence, not as the
      shouty uppercase tag that slot carries during a live match. */
-  #batting-tag.result-note{ text-transform:none; letter-spacing:.1px; font-weight:600; font-size:12.5px;
-    margin-top:8px; opacity:.95; max-width:34ch; margin-left:auto; margin-right:auto; line-height:1.35; }
+  #batting-tag.result-note{ text-transform:none; letter-spacing:.1px; font-weight:600; font-size:13.5px;
+    margin-top:10px; opacity:.95; max-width:40ch; margin-left:auto; margin-right:auto; line-height:1.4; }
   @media (max-width:520px){ #batting-tag.result-note{ font-size:12px; max-width:26ch; } }
 
-  .team-prev-score{ font-size:13.5px; font-weight:700; opacity:.75; margin-top:3px; color:var(--text-dim); transition:color .2s ease, opacity .2s ease; }
+  /* This is the match's actual score. At 13.5px and 75% opacity in dim grey
+     it read as a caption under the team name; it is now display-weight and
+     full-contrast, sized up through the container ladder below. */
+  .team-prev-score{
+    font-family:var(--font-display); font-size:19px; font-weight:800; letter-spacing:-.3px;
+    opacity:1; margin-top:4px; color:var(--text); transition:color .2s ease, opacity .2s ease;
+  }
+  .team-prev-score .ps-overs{ font-family:var(--font-body); font-size:.68em; font-weight:700; color:var(--text-dim); }
+  /* The team panels earn their padding on a laptop; on a phone the same
+     padding would push the two sides into the result between them, so they
+     tighten to a tint with just enough inset to still read as panels. */
+  @media (max-width:640px){
+    .team-block{ padding:9px 10px; border-radius:12px; gap:9px; }
+    .team-prev-score{ font-size:16px; margin-top:3px; }
+    #hero::after{ height:4px; }
+  }
+  @media (max-width:380px){
+    .team-block{ padding:7px 8px; gap:7px; }
+    .team-prev-score{ font-size:14.5px; }
+  }
+
   /* Phone keeps score and overs on one line — the stacked header gives the
      team columns the full half-width, so it fits. */
   .ps-overs{ margin-left:5px; }
@@ -1092,7 +1149,7 @@
     #hero.hero-final #main-score.result-margin{ font-size:13px; padding:8px 18px; }
     #hero.hero-final #batting-tag.result-note{ max-width:100%; font-size:12.5px; }
     #hero.hero-final .team-name{ font-size:13px; }
-    #hero.hero-final .team-prev-score{ white-space:nowrap; font-size:12.5px; }
+    #hero.hero-final .team-prev-score{ white-space:nowrap; font-size:17px; }
     #main-score{ font-size:clamp(26px,9vw,36px); }
     #main-overs{ font-size:11px; }
     #batting-tag{ font-size:9.5px; }
@@ -2130,8 +2187,9 @@
       #hero.hero-final .team-block.winner .team-logo{ box-shadow:0 0 0 3px color-mix(in srgb, var(--team-color, var(--accent)) 24%, transparent), 0 5px 14px rgba(0,0,0,.18); }
       #hero.hero-final .team-name{ font-size:15px; }
       #hero.hero-final .team-short{ font-size:11px; margin-top:2px; }
-      #hero.hero-final .team-prev-score{ font-size:13px; margin-top:5px; white-space:nowrap; }
-      #hero.hero-final #main-score.result-margin{ font-size:12px; padding:8px 16px; }
+      #hero.hero-final .team-prev-score{ font-size:20px; margin-top:6px; white-space:nowrap; }
+      #hero.hero-final .team-block{ padding:14px 16px; }
+      #hero.hero-final #main-score.result-margin{ font-size:15px; padding:10px 20px; }
     }
     @container hero (min-width:640px){
       #hero.hero-final #hero-top{ margin-bottom:23px; }
@@ -2142,8 +2200,9 @@
       #hero.hero-final .team-logo{ width:62px; height:62px; border-radius:16px; font-size:19px; }
       #hero.hero-final .team-name{ font-size:16.5px; }
       #hero.hero-final .team-short{ font-size:12px; }
-      #hero.hero-final .team-prev-score{ font-size:14px; }
-      #hero.hero-final #main-score.result-margin{ font-size:13.5px; padding:9px 18px; }
+      #hero.hero-final .team-prev-score{ font-size:24px; }
+      #hero.hero-final .team-block{ padding:16px 18px; border-radius:17px; }
+      #hero.hero-final #main-score.result-margin{ font-size:18px; padding:12px 24px; }
     }
     @container hero (min-width:820px){
       #hero.hero-final #teams-row{ gap:25px; }
@@ -2153,8 +2212,9 @@
       #hero.hero-final .team-logo{ width:72px; height:72px; border-radius:18px; font-size:22px; }
       #hero.hero-final .team-name{ font-size:17.5px; }
       #hero.hero-final .team-short{ font-size:12.5px; }
-      #hero.hero-final .team-prev-score{ font-size:14.5px; }
-      #hero.hero-final #main-score.result-margin{ font-size:14.5px; padding:10px 20px; }
+      #hero.hero-final .team-prev-score{ font-size:29px; }
+      #hero.hero-final .team-block{ padding:18px 20px; border-radius:18px; }
+      #hero.hero-final #main-score.result-margin{ font-size:21px; padding:13px 28px; }
     }
   }
   /* Small phones: keep the 2-column grid (matches the reference design)
