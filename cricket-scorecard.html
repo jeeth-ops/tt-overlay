@@ -524,13 +524,43 @@
   /* ---------- Live stream box (beside the score on wide screens) ---------- */
   #hero-row{ display:flex; gap:14px; align-items:stretch; }
   #hero-row #hero{ flex:1; min-width:0; }
+  /* The player used to float inside the card's own 14px padding with a plain
+     "Live Stream" heading over it, which read as a thumbnail dropped in a box
+     rather than as the broadcast. The card now has no padding of its own: a
+     header row, the video edge to edge, and a footer — so the picture is the
+     card, the way a player should be. */
   #stream-box{
-    flex:0 0 clamp(340px, 27%, 480px); display:flex; flex-direction:column; padding:14px; min-width:0;
+    flex:0 0 clamp(340px, 27%, 480px); display:flex; flex-direction:column; padding:0; min-width:0;
+    overflow:hidden; position:relative;
   }
+  /* Same colour rail as the hero, so the two cards beside each other read as
+     one header rather than two unrelated panels. */
+  #stream-box::before{
+    content:''; position:absolute; top:0; left:0; right:0; height:4px; pointer-events:none; z-index:2;
+    background:linear-gradient(90deg,
+      var(--team-a-color) 0%, var(--team-a-color) 34%,
+      color-mix(in srgb, var(--team-a-color) 50%, var(--team-b-color)) 50%,
+      var(--team-b-color) 66%, var(--team-b-color) 100%);
+  }
+  .sb-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:15px 16px 12px; }
+  .sb-head .section-title{ margin-bottom:0; }
   #stream-embed-wrap{
-    position:relative; width:100%; aspect-ratio:16/9; border-radius:var(--radius-md);
-    overflow:hidden; background:#000; margin-top:2px;
+    position:relative; width:100%; aspect-ratio:16/9;
+    overflow:hidden; background:#000;
   }
+  .sb-foot{ padding:12px 14px 14px; }
+  /* Full-width so it is unmistakably the thing to press on a phone, where the
+     card sits under the score and the player is the reason people scrolled. */
+  #stream-youtube-btn{
+    display:flex; align-items:center; justify-content:center; gap:9px; width:100%;
+    padding:11px 16px; border-radius:99px; border:1px solid var(--border);
+    background:var(--panel-2); color:var(--text); font-family:var(--font-body);
+    font-weight:700; font-size:13px; cursor:pointer;
+  }
+  #stream-youtube-btn:hover{ border-color:#ff0000; color:#ff0000; transform:translateY(-1px); }
+  #stream-youtube-btn svg{ width:19px; height:14px; flex:none; }
+  #stream-youtube-btn .yt-mark{ fill:#ff0000; }
+  #stream-youtube-btn:hover .yt-mark{ fill:#ff0000; }
   #stream-embed-wrap iframe{ position:absolute; inset:0; width:100%; height:100%; border:0; display:block; }
   @media (max-width:900px){
     #hero-row{ flex-direction:column; }
@@ -2396,11 +2426,20 @@
        in the panel. Stays visible after the match ends too (renderFinalSnapshot
        calls the same renderStreamBox() with the saved match's streamUrl). -->
   <div class="card" id="stream-box" style="display:none;">
-    <div class="section-title"><span class="dash"></span>Live Stream</div>
+    <div class="sb-head">
+      <div class="section-title"><span class="dash"></span>Live Stream</div>
+      <span class="chip live" id="stream-badge"><span class="lv-dot"></span>Live</span>
+    </div>
     <div id="stream-embed-wrap">
       <iframe id="stream-iframe" src="" title="Match live stream" frameborder="0"
         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
         allowfullscreen loading="lazy"></iframe>
+    </div>
+    <div class="sb-foot">
+      <button type="button" id="stream-youtube-btn">
+        <svg viewBox="0 0 28 20" aria-hidden="true"><path class="yt-mark" d="M27.4 3.1a3.5 3.5 0 0 0-2.5-2.5C22.7 0 14 0 14 0S5.3 0 3.1.6A3.5 3.5 0 0 0 .6 3.1C0 5.3 0 10 0 10s0 4.7.6 6.9a3.5 3.5 0 0 0 2.5 2.5C5.3 20 14 20 14 20s8.7 0 10.9-.6a3.5 3.5 0 0 0 2.5-2.5C28 14.7 28 10 28 10s0-4.7-.6-6.9z"/><path fill="#fff" d="M11.2 14.3 18.5 10l-7.3-4.3z"/></svg>
+        Watch on YouTube
+      </button>
     </div>
   </div>
 </div>
@@ -3751,7 +3790,6 @@ function renderFinalSnapshot(match, displayName){
   const isFirstLoadOfThisMatch = finalMatchData === null;
   finalMatchData = match;
   if(isFirstLoadOfThisMatch) finalActiveInnings = firstBattingTeamOf(match);
-  renderStreamBox(match.streamUrl);
   document.title = `${(match.teamA&&(match.teamA.short||match.teamA.name))||'Team A'} vs ${(match.teamB&&(match.teamB.short||match.teamB.name))||'Team B'} — All Sports Live`;
 
   // Sections that only make sense mid-match — nothing "current" to show
@@ -3775,6 +3813,9 @@ function renderFinalSnapshot(match, displayName){
   // other side on 0-0 — stating a result that does not exist yet. The header
   // now only claims a result when the record actually carries one.
   const hasResult = !!(match.winningTeam || match.matchResultText);
+  // Below the declaration on purpose: hasResult is a const, so calling this
+  // any earlier reads it inside its temporal dead zone and throws.
+  renderStreamBox(match.streamUrl, hasResult);
   document.getElementById('hero').classList.toggle('hero-final', hasResult);
   const statusChip = document.getElementById('chip-status');
   statusChip.classList.toggle('result', hasResult);
@@ -4958,7 +4999,7 @@ function extractYouTubeId(url){
   return '';
 }
 let lastStreamId = null;
-function renderStreamBox(streamUrl){
+function renderStreamBox(streamUrl, isFinished){
   const box = document.getElementById('stream-box');
   const iframe = document.getElementById('stream-iframe');
   if(!box || !iframe) return;
@@ -4969,6 +5010,20 @@ function renderStreamBox(streamUrl){
     return;
   }
   box.style.display = '';
+  // The badge must not say "Live" over a finished match's recording — the box
+  // shows for both, since the stream URL outlives the result.
+  const badge = document.getElementById('stream-badge');
+  if(badge){
+    badge.classList.toggle('live', !isFinished);
+    badge.firstElementChild.style.display = isFinished ? 'none' : '';
+    badge.lastChild.textContent = isFinished ? 'Replay' : 'Live';
+  }
+  // Opens the video on YouTube itself — full screen, comments, the channel.
+  // Deliberately a button rather than a link: it is an action on this card,
+  // and this way it can never be dragged, middle-clicked into a broken tab, or
+  // crawled as navigation.
+  const btn = document.getElementById('stream-youtube-btn');
+  if(btn) btn.onclick = () => window.open(`https://www.youtube.com/watch?v=${id}`, '_blank', 'noopener,noreferrer');
   // Only touch the iframe src when the video actually changes — reassigning
   // the same src reloads the player and interrupts anyone already watching.
   if(id !== lastStreamId){
@@ -4978,7 +5033,6 @@ function renderStreamBox(streamUrl){
 }
 
 function renderHero(s){
-  renderStreamBox(s.streamUrl);
   document.getElementById('chip-format').textContent = s.format || 'T20';
   const venueChip = document.getElementById('chip-venue');
   if(s.venue){ venueChip.style.display=''; venueChip.textContent = s.venue; } else venueChip.style.display='none';
@@ -5000,6 +5054,7 @@ function renderHero(s){
   // makes the LIVE page switch over to the same finished look the moment
   // a result exists, instead of only a live page reload doing that.
   const isFinished = status.badge === 'RESULT';
+  renderStreamBox(s.streamUrl, isFinished);
   document.getElementById('hero').classList.toggle('hero-final', isFinished);
   const statusChip = document.getElementById('chip-status');
   const statusText = document.getElementById('chip-status-text');
