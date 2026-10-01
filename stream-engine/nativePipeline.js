@@ -71,6 +71,9 @@ const sourceProbe = require('./sourceProbe');
 // enough that a score change reaches the program feed without a
 // noticeable delay.
 const OVERLAY_FPS = 15;
+// How far ahead of the camera the overlay timeline is placed when the camera
+// runs on its device clock (see buildCompositorArgs).
+const OVERLAY_LEAD_SEC = Number(process.env.STREAM_ENGINE_OVERLAY_LEAD_SEC) || 1.5;
 // The width the overlay pages are designed for; height follows the program
 // aspect so a 4:3 program is not squashed (720x480 -> 1920x1280).
 const OVERLAY_DESIGN_WIDTH = 1920;
@@ -650,6 +653,28 @@ function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height,
     const onProgramClock = timestamps === 'wallclock'
         ? ['-use_wallclock_as_timestamps', '1', '-itsoffset', (-clockBase).toFixed(3)]
         : [];
+    // 🕐 DEVICE CLOCK FOR CAMERA + AUDIO, mapped onto the program clock.
+    //
+    // Field (UC2018, this laptop): the device's own frame stamps jitter 0 ms;
+    // the moment ffmpeg READS a frame inside the running compositor jitters
+    // ±35–50 ms. Timing a 25p camera held over 60 slots by read time makes
+    // the dejitter's job impossible — that is the "movement feels laggy"
+    // vMix does not have, because vMix times frames by the device.
+    //
+    // Camera and audio are both DirectShow devices on the same system
+    // reference clock, so they stay in sync with each other by their own
+    // stamps. The source probe measured (wall − device clock); that offset
+    // places both on the same timeline as the overlay, which stays on
+    // arrival time but is put OVERLAY_LEAD_SEC ahead, so the overlay filter
+    // never waits for it (the score can trail the picture by about that
+    // much — invisible to a viewer — and slow clock drift over a long match
+    // is absorbed by the lead instead of stalling the camera).
+    const cc = plan.cameraClock;
+    const deviceClock = timestamps === 'wallclock' && cc && cc.mode === 'device' && Number.isFinite(cc.wallMinusDeviceSec) && !WALLCLOCK_TS_OVERRIDE;
+    const onDeviceClock = deviceClock ? ['-itsoffset', (cc.wallMinusDeviceSec - clockBase).toFixed(3)] : null;
+    const overlayClock = deviceClock ? ['-use_wallclock_as_timestamps', '1', '-itsoffset', (-clockBase + OVERLAY_LEAD_SEC).toFixed(3)] : onProgramClock;
+    const audioClock = onDeviceClock || onProgramClock;
+    const cameraClock = onDeviceClock || onProgramClock;
     // 🛠 ORDER: normalize (dedupe → deinterlace → DECIMATE) -> scale. Scaling
     // frames that are about to be discarded is what pushed the compositor
     // behind the camera and overflowed dshow's input buffer. yadif stays
@@ -723,13 +748,13 @@ function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height,
         // camera driver is released properly instead of TerminateProcess.
         // Tiny probe: the stream is fully described by its first PNG.
         '-f', 'image2pipe', '-vcodec', 'png', '-framerate', String(OVERLAY_FPS), '-thread_queue_size', '512',
-        '-probesize', '32', '-analyzeduration', '0', ...onProgramClock, '-i', overlayInputUrl,
+        '-probesize', '32', '-analyzeduration', '0', ...overlayClock, '-i', overlayInputUrl,
         // Input 1: mic/capture-card audio (separate dshow input, NOT combined
         // as one "video=X:audio=Y" graph) — 🩹 CONFIRMED IN THE FIELD: the
         // combined syntax failed with "I/O error" the moment video and audio
         // came from two independent physical devices. A small buffer here is
         // genuinely just jitter absorption.
-        '-f', 'dshow', '-rtbufsize', '32M', '-thread_queue_size', '64', ...onProgramClock, '-i', `audio=${audioDeviceName}`,
+        '-f', 'dshow', '-rtbufsize', '32M', '-thread_queue_size', '64', ...audioClock, '-i', `audio=${audioDeviceName}`,
         // Input 2: the camera. cameraMode is resolved by probeCameraMode()
         // FROM THE DEVICE ITSELF (ffmpeg -f dshow -list_options true).
         //
@@ -743,7 +768,7 @@ function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height,
         // 1080p60 raw) — the size needed to hide the input-clock gap above.
         // With one program clock nothing waits, so half a second is ample.
         '-f', 'dshow', '-rtbufsize', CAMERA_RTBUFSIZE, '-thread_queue_size', String(Math.max(8, Math.ceil((Number(cameraFramerate) || 30) * 0.5))),
-        ...onProgramClock,
+        ...cameraClock,
         ...(cameraVideoSize ? ['-video_size', cameraVideoSize] : []),
         ...(cameraFramerate ? ['-framerate', String(cameraFramerate)] : []),
         '-i', `video=${cameraDeviceName}`,
@@ -1152,7 +1177,7 @@ class Compositor extends EventEmitter {
         this.sourcePlan = plan;
         this.sourceReport = report;
         SOURCE_PLAN_CACHE.set(key, { plan, report });
-        this.log(`[compositor] camera chain: ${sourceProbe.chainLabel(plan.chain)} → program ${this.fps} fps (${plan.cadence === 'judder' ? '⚠ JUDDER — see above' : 'clean cadence'}); one program clock for camera, audio and overlay${plan.timestamps === 'device' ? ' — OVERRIDDEN to device stamps' : ''}`);
+        this.log(`[compositor] camera chain: ${sourceProbe.chainLabel(plan.chain)} → program ${this.fps} fps (${plan.cadence === 'judder' ? '⚠ JUDDER — see above' : 'clean cadence'}); camera+audio timed by ${plan.cameraClock && plan.cameraClock.mode === 'device' && !WALLCLOCK_TS_OVERRIDE ? `the DEVICE clock (offset ${plan.cameraClock.wallMinusDeviceSec}s to wall)` : 'arrival time'}`);
     }
 
     // Live view of the capture stage for /status.

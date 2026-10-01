@@ -214,6 +214,10 @@ function analyseFrames(frames, { warmupSec = 0.5, expectedFps = null } = {}) {
         gaps, missingFrames: missing, nonMonotonic, duplicateTimestamps,
         duplicates: { count: dupPositions.length, fraction: round(dupFraction, 3), cycle, staticContent },
         contentFps: round(contentFps, 2),
+        // Wall clock minus device clock (s), at the smallest delivery latency
+        // seen. Lets the compositor time the camera by the DEVICE's own steady
+        // stamps while still lining it up with the wall-clocked overlay.
+        wallMinusDeviceSec: (() => { let best = Infinity; for (const f of fr) { const d = f.wallMs / 1000 - f.pts; if (d < best) best = d; } return Number.isFinite(best) ? Number(best.toFixed(3)) : null; })(),
         uniqueSpacing: { medianMs: round(ugMed * 1000, 1), evenPercent: evenness == null ? null : round(evenness * 100, 1) },
         contentRate: snapRate(contentFps),
         deliveredRate: snapRate(deliveredFps),
@@ -325,6 +329,11 @@ function planNormalization(measurement, scan, { programFps }) {
     // timed by those stamps play fast.
     const timestamps = 'wallclock';
     const deviceTimestamps = !Number.isFinite(honesty) ? 'unknown' : tsHonest ? 'honest' : `nominal (${honesty}× real time)`;
+    // 🕐 Time the camera (and audio, same DirectShow clock) by the DEVICE's
+    // stamps when they are honest. Field: device stamps jittered 0 ms while
+    // arrival time inside the running compositor jittered ±35–50 ms — more
+    // than any re-timing can hide. That is what vMix does.
+    const cameraClock = tsHonest && Number.isFinite(m.wallMinusDeviceSec) ? { mode: 'device', wallMinusDeviceSec: m.wallMinusDeviceSec } : { mode: 'arrival' };
     if (!tsHonest && Number.isFinite(honesty)) notes.push(`the device stamps frames at ${honesty}× real time — footage timed by those stamps would play ${honesty < 1 ? 'FAST' : 'SLOW'}; the program clock (arrival time) is used instead`);
     let sourceFps = m.deliveredRate || m.arrivalFps || null;
     const cycle = m.duplicates && m.duplicates.cycle;
@@ -363,7 +372,7 @@ function planNormalization(measurement, scan, { programFps }) {
     if (rate.judder) notes.push(`⚠ ${rate.reason} — motion WILL judder. Smooth program rates for this source: ${smooth.join(', ') || 'none of 25/30/50/60'}`);
     return {
         deliveredFps: m.deliveredRate || m.arrivalFps || null,
-        timestamps, deviceTimestamps, dedupeCycle: cycle || null, deinterlace: interlaced ? scan.fieldOrder : null,
+        timestamps, deviceTimestamps, cameraClock, dedupeCycle: cycle || null, deinterlace: interlaced ? scan.fieldOrder : null,
         // With irregular repeats the motion rate is the unique-frame rate, not
         // the delivery rate — that is what every message must name.
         sourceFps: irregular ? m.contentRate : snapped, programFps: Number(programFps) || null,
@@ -487,7 +496,7 @@ function compareReports(a, b) {
         ['TIMESTAMP SOURCE', (r) => r.plan && `program clock; device stamps ${r.plan.deviceTimestamps}`],
         ['TIMEBASE (device/real)', (r) => r.measurement.timestampHonesty && `${r.measurement.timestampHonesty}×`],
         ['FRAME INTERVAL', (r) => `${r.measurement.interval.medianMs} ms ±${r.measurement.interval.jitterMs}`],
-        ['DROPPED FRAMES', (r) => `${r.captureDrops} overflow / ${r.measurement.missingFrames} missing`],
+        ['DROPPED FRAMES', (r) => r.measurement.ok ? `${r.captureDrops} overflow / ${r.measurement.missingFrames} missing` : null],
         ['DUPLICATED FRAMES', (r) => `${r.measurement.duplicates.count}${r.measurement.duplicates.cycle ? ` (1 in ${r.measurement.duplicates.cycle})` : ''}`],
         ['CPU (system)', (r) => r.cpu && `${r.cpu.percent}%`],
         ['OLD CHAIN CADENCE', (r) => r.plan && r.plan.legacyCadence],
@@ -517,15 +526,20 @@ function dshowInputArgs({ device, width, height, fps, audioDevice }) {
     return args;
 }
 
-function probeArgs(inputArgs, maxSeconds) {
+function probeArgs(inputArgs) {
     return [
-        '-hide_banner', '-nostats', '-loglevel', 'level+info',
+        // -copyts: keep the DEVICE's absolute timestamps (DirectShow's system
+        // reference clock). Without it ffmpeg re-zeros the input and the
+        // wall-minus-device offset the compositor needs cannot be measured.
+        '-hide_banner', '-nostats', '-loglevel', 'level+info', '-copyts',
         ...inputArgs,
         // idet on the full-resolution picture; the checksum on a point-sampled
         // thumbnail (neighbor = exact source pixels, so sensor noise still
         // tells two real frames apart, while a repeated frame is identical).
         '-filter_complex', '[0:v]idet,scale=64:36:flags=neighbor,showinfo[m]',
-        '-map', '[m]', '-t', String(maxSeconds), '-f', 'null', '-',
+        // No output -t: with -copyts it would be compared against absolute
+        // device time. The run is ended with 'q' (or the hard timer).
+        '-map', '[m]', '-f', 'null', '-',
     ];
 }
 
@@ -543,7 +557,7 @@ function runProbe({ spawnFfmpeg, inputArgs, seconds = 6, label, device, requeste
         const cpu0 = cpuTimes();
         let proc;
         try {
-            proc = spawnFfmpeg(probeArgs(inputArgs, seconds * 3 + 5), { stdio: ['pipe', 'ignore', 'pipe'] });
+            proc = spawnFfmpeg(probeArgs(inputArgs), { stdio: ['pipe', 'ignore', 'pipe'] });
         } catch (e) {
             return resolve(buildReport({ label, device, requested, stderrText: '', frames: [], programFps, cpu: null, captureDrops: 0 }));
         }

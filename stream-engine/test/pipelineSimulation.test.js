@@ -32,14 +32,19 @@ const { verifyMedia } = require('../verifyMedia');
 const W = 640, H = 360;
 const cam = (r) => `color=black:s=${W}x${H}:r=${r},format=yuv420p,geq=lum='16+4*mod(N\\,50)':cb=128:cr=128,noise=alls=4:allf=t+u`;
 // What each "device" really does.
+// Like DirectShow, each simulated device stamps frames on a SYSTEM clock that
+// keeps running across processes (here: wall time minus an hour, standing in
+// for "time since boot"), so the probe's measured offset is valid for the
+// compositor that opens the device next.
+const DEVCLK = ",settb=1/1000000,setpts='RTCTIME-3600000000'";
 const DEVICES = {
-  'Laptop Webcam':           { src: `${cam(30)},realtime`, advertised: 30 },
-  'AVMATRIX honest 60':      { src: `${cam(60)},realtime`, advertised: 60.0002 },
+  'Laptop Webcam':           { src: `${cam(30)},realtime${DEVCLK}`, advertised: 30 },
+  'AVMATRIX honest 60':      { src: `${cam(60)},realtime${DEVCLK}`, advertised: 60.0002 },
   // A 50 Hz (PAL) Sony behind a card that only offers 60: the card repeats 1 frame in 6.
-  'AVMATRIX + Sony 50 (repeat)': { src: `${cam(50)},fps=60,realtime`, advertised: 60.0002, contentFps: 50 },
+  'AVMATRIX + Sony 50 (repeat)': { src: `${cam(50)},fps=60,realtime${DEVCLK}`, advertised: 60.0002, contentFps: 50 },
   // FIELD: the operator's UC2018 on 720x480 carrying a 25p Sony — each camera
   // frame held over 2-3 of the card's 60 slots.
-  'AVMATRIX + Sony 25p (held)': { src: `${cam(25)},fps=60,realtime`, advertised: 60.0002, contentFps: 25 },
+  'AVMATRIX + Sony 25p (held)': { src: `${cam(25)},fps=60,realtime${DEVCLK}`, advertised: 60.0002, contentFps: 25 },
   // 50 real frames a second, STAMPED as if they were 60.
   'AVMATRIX dishonest stamps':   { src: `${cam(50)},realtime,setpts=N/60/TB`, advertised: 60.0002, contentFps: 50 },
 };
@@ -68,7 +73,7 @@ function makeSpawn(deviceName) {
         }
         const target = args[j + 1];
         if (target.startsWith('video=')) out.push(...keep, '-f', 'lavfi', '-i', dev.src);
-        else out.push(...keep, '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000,arealtime');
+        else out.push(...keep, '-f', 'lavfi', '-i', "sine=frequency=440:sample_rate=48000,arealtime,asettb=1/1000000,asetpts='RTCTIME-3600000000'");
         i = j + 1;
         continue;
       }
