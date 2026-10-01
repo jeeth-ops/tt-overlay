@@ -1445,6 +1445,21 @@ class Compositor extends EventEmitter {
         }
     }
 
+    // How many NEW overlay frames Chromium really renders per second — the
+    // number that says whether a FOUR/SIX graphic can look smooth. Logged
+    // every 30 s while the overlay is changing (it is 0 when nothing moves).
+    _sampleOverlay() {
+        const o = this.overlay;
+        if (!o) return;
+        const now = Date.now();
+        if (!this._ovSample) { this._ovSample = { at: now, count: o.frameCount }; return; }
+        if (now - this._ovSample.at < 30000) return;
+        const fps = (o.frameCount - this._ovSample.count) * 1000 / (now - this._ovSample.at);
+        this._ovSample = { at: now, count: o.frameCount };
+        this.overlayFps = Number(fps.toFixed(1));
+        if (fps > 0.5) this.log(`[overlay] Chromium rendered ${this.overlayFps} new overlay frames/s over the last 30 s (program ${this.fps} fps)${fps < this.fps * 0.8 ? ' — below the program rate: animations will step' : ''}`);
+    }
+
     _closeLegResources(leg) {
         if (!leg) return;
         if (leg.pacer) { leg.pacer.stop(); leg.pacer = null; }
@@ -1541,7 +1556,7 @@ class Compositor extends EventEmitter {
     // is alive, nothing is written. Kill it; _onLegExit handles the rest.
     _checkHealth() {
         if (this.state !== 'running' || !this.proc || this.stopped) return;
-        try { this._checkMeter(); this._sampleRelay(); } catch (e) { /* diagnostics must never take the feed down */ }
+        try { this._checkMeter(); this._sampleRelay(); this._sampleOverlay(); } catch (e) { /* diagnostics must never take the feed down */ }
         const now = Date.now();
         const sinceStart = now - this.legStartedAt;
         const last = this.relay.lastDataAt;
@@ -1612,6 +1627,7 @@ class Compositor extends EventEmitter {
             legs: this.legCount,
             relayMBps: this.relayMeasuredBytesPerSec != null && this.relay.lastDataAt && now - this.relay.lastDataAt < 5000 ? Math.round(this.relayMeasuredBytesPerSec / 1e5) / 10 : 0,
             relayExpectedMBps: Math.round(this.relayBytesPerSec / 1e5) / 10,
+            overlayFps: this.overlayFps == null ? null : this.overlayFps,
             // < 1.0 = the compositor is producing the program feed slower than
             // real time (processing can't keep up) — a PROCESSING failure,
             // distinct from a capture drop before it or an encoder backlog after.

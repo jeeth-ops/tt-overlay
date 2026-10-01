@@ -65,7 +65,15 @@ class OverlayBridge extends EventEmitter {
                 // reads this page's pixels via screen/window capture),
                 // it's just keeping this lightweight since the page is
                 // a simple HTML/CSS scoreboard, not 3D/WebGL content.
-                '--disable-gpu',
+                // 🛠 GPU NOW ALLOWED BY DEFAULT. --disable-gpu was carried over
+                // from the gdigrab era; nothing reads this page through screen
+                // capture any more. Measured: the FOUR/SIX graphic (full-width
+                // gradient bar, rings, glow) rasterised on the CPU at only
+                // ~21-25 frames/s with gaps up to 100 ms — the overlay judder
+                // the operator saw. On the match laptop's NVIDIA GPU the same
+                // page rasterises far faster. STREAM_ENGINE_OVERLAY_GPU=0 puts
+                // the old CPU-only flag back.
+                ...(process.env.STREAM_ENGINE_OVERLAY_GPU === '0' ? ['--disable-gpu'] : []),
                 '--no-sandbox',
                 '--disable-dev-shm-usage',
                 `--window-size=${this.width},${this.height}`,
