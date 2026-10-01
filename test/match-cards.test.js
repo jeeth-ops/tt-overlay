@@ -36,13 +36,13 @@ const FIXTURE = {
       teamA: { name: '<img src=x onerror=alert(1)>', short: '' }, teamB: { name: 'A Team With An Extremely Long Name Cricket Club Mumbai', short: '' },
       scoreA: { runs: 150, wickets: 8 }, scoreB: { runs: 150, wickets: 10 }, winningTeam: 'TIE' },
     { matchId: 'm-live', roomId: 'ROOM-LIVE', matchNo: 4, format: 'T20', venue: 'Police Gymkhana', savedAt: '2026-10-01T09:00:00Z',
-      teamA: { name: 'Parel Sports Club', short: 'PSC', color: '#059669', logoUrl: LOGO }, teamB: { name: 'Young Comrade CC', short: 'YCC', color: '#7c3aed', logoUrl: 'javascript:alert(1)' },
+      teamA: { name: 'Parel Sports Club', short: 'PSC', color: '#059669', logoUrl: LOGO }, teamB: { name: 'Young Comrade Cricket Club Of Greater Mumbai', short: 'YCC', color: '#7c3aed', logoUrl: 'javascript:alert(1)' },
       scoreA: { runs: 89, wickets: 7, overs: '14.2' }, scoreB: { runs: 0, wickets: 0, overs: '0.0' }, winningTeam: null },
     { matchId: 'm-live2', roomId: 'ROOM-2', format: 'T10', venue: 'Oval', savedAt: '2026-10-01T09:30:00Z',
       teamA: { name: 'Gamma', short: 'GAM' }, teamB: { name: 'Delta', short: 'DEL' },
       scoreA: { runs: 40, wickets: 1, overs: '4.0' }, scoreB: { runs: 0, wickets: 0, overs: '0.0' }, winningTeam: null },
     { matchId: 'm-stumps', roomId: 'R-ST', format: 'Test', dayStatus: 'STUMPS', dayNumber: 2, savedAt: '2026-10-01T07:00:00Z',
-      teamA: { name: 'Eps', short: 'EPS' }, teamB: { name: 'Zeta', short: 'ZET' },
+      teamA: { name: 'Eps', short: 'EPS', color: '#facc15' }, teamB: { name: 'Zeta', short: 'ZET' },
       scoreA: { runs: 410, wickets: 10, overs: '120.4' }, scoreB: { runs: 55, wickets: 2, overs: '20.0' }, winningTeam: null },
   ],
   pointsTable: [], leaderboards: { topRuns: [], topWickets: [] },
@@ -154,6 +154,35 @@ async function openPage(browser, { width, height, theme, reduced = false, hasTou
     check(m.sw <= m.cw && m.over === 0, `${w}px: no horizontal overflow (scrollWidth ${m.sw}, clientWidth ${m.cw}, ${m.over} elements past the edge)`);
     check(m.minH >= 44, `${w}px: every card is a ≥44px touch target (smallest ${Math.round(m.minH)}px)`);
     await page.screenshot({ path: path.join(OUT, `match-cards-${w}-${theme}.png`), fullPage: true });
+    await ctx.close();
+  }
+
+  // ---- nothing overlaps, nothing leaves its card — phone to wide laptop ----
+  const LEAVES = '.mc-label-t,.mc-fmt,.mc-status,.mc-logo,.mc-tname .nm,.mc-win,.mc-tname small,.mc-tscore,.mc-vs,.mc-result,.mc-meta span,.mc-meta svg,.mc-go';
+  for (const w of [320, 360, 390, 430, 768, 1024, 1280, 1440]) {
+    const { ctx, page } = await openPage(browser, { width: w, height: 900, theme: 'light', hasTouch: w < 800 });
+    const r = await page.evaluate((sel) => {
+      const tag = (el) => el.tagName.toLowerCase() + '.' + String(el.getAttribute('class') || '').replace(/\s+/g, '.');
+      const issues = [];
+      const docW = document.documentElement.clientWidth;
+      for (const card of document.querySelectorAll('.mcard')) {
+        const cr = card.getBoundingClientRect();
+        const boxes = [...card.querySelectorAll(sel)].map((el) => ({ el, r: el.getBoundingClientRect() })).filter((b) => b.r.width > 0 && b.r.height > 0);
+        for (const b of boxes) {
+          if (b.r.left < cr.left - 0.5 || b.r.right > cr.right + 0.5 || b.r.right > docW + 0.5) issues.push(`${card.dataset.gotoMatch}: ${tag(b.el)} leaves the card (${Math.round(b.r.left)}..${Math.round(b.r.right)} vs ${Math.round(cr.left)}..${Math.round(cr.right)})`);
+        }
+        for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+          const a = boxes[i], b = boxes[j];
+          if (a.el.contains(b.el) || b.el.contains(a.el)) continue;
+          const ox = Math.min(a.r.right, b.r.right) - Math.max(a.r.left, b.r.left);
+          const oy = Math.min(a.r.bottom, b.r.bottom) - Math.max(a.r.top, b.r.top);
+          if (ox > 0.5 && oy > 0.5) issues.push(`${card.dataset.gotoMatch}: ${tag(a.el)} overlaps ${tag(b.el)}`);
+        }
+      }
+      return { issues, sw: document.documentElement.scrollWidth, docW };
+    }, LEAVES);
+    check(r.issues.length === 0 && r.sw <= r.docW, `${w}px: no text/logo overlaps, nothing outside its card${r.issues.length ? ' — ' + r.issues.slice(0, 4).join('; ') : ''}`);
+    if ([320, 768, 1440].includes(w)) await page.screenshot({ path: path.join(OUT, `match-cards-${w}-light.png`), fullPage: true });
     await ctx.close();
   }
 

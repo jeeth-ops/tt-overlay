@@ -14,8 +14,8 @@ const fs = require('fs');
 const src = fs.readFileSync('/home/user/tt-overlay/score-tournament.html','utf8');
 const css = [...src.matchAll(/<style>([\s\S]*?)<\/style>/g)].map(m=>m[1]).join('\n');
 const grab = (n)=>{ const i=src.indexOf(`function ${n}(`); const j=src.indexOf('\n}',i)+2; return src.slice(i,j); };
-const helpers = ['escapeHtml','teamLabel','resultText','winnerSide','matchDate','initials','safeTeamColor','safeLogoUrl','teamInitials','teamLogoHtml','hasBatted','scoreText','oversText','matchStatusOf','matchCardHtml','liveRoomCardHtml'].map(grab).join('\n')
-  + "\nconst MATCH_STATUS_LABEL = { live:'Live', progress:'In Progress', done:'Completed', abandoned:'Abandoned', upcoming:'Upcoming' };";
+const helpers = ['escapeHtml','teamLabel','resultText','winnerSide','matchDate','initials','safeTeamColor','safeLogoUrl','teamInitials','inkOn','teamLogoHtml','hasBatted','scoreText','oversText','matchStatusOf','matchCardHtml','liveRoomCardHtml'].map(grab).join('\n')
+  + "\nconst MATCH_STATUS_LABEL = { live:'Live', progress:'In Progress', done:'Completed', abandoned:'Abandoned', upcoming:'Upcoming' };\nconst PIN_ICON = '';";
 const start = src.indexOf('  // 🏏 Every match is its own card');
 const end = src.indexOf('  const pt = data.pointsTable', start);
 const body = src.slice(start, end);
