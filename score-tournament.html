@@ -115,13 +115,13 @@
      The bezier is iOS's own release curve — a hair of overshoot so it
      feels springy instead of linear. */
   button, .icon-btn, .tab-btn, .clip-btn, .clip-watch-btn, .watch-btn,
-  .award-card, .mc-row, .clip-row, #clip-modal-close, #video-modal-close{
+  .award-card, .clip-row, #clip-modal-close, #video-modal-close{
     transition:background .15s ease, color .15s ease, border-color .15s ease,
       transform .16s cubic-bezier(.34,1.56,.64,1), box-shadow .15s ease, opacity .15s ease;
   }
   button:active, .icon-btn:active, .tab-btn:active, .clip-btn:active:not(:disabled),
   .clip-watch-btn:active:not(:disabled), .watch-btn:active,
-  .award-card:active, .mc-row:active, .clip-row:active,
+  .award-card:active, .clip-row:active,
   #clip-modal-close:active, #video-modal-close:active{
     transform:scale(.94);
   }
@@ -200,7 +200,7 @@
   html.page-hidden #ambient-wash span.aw-1,
   html.page-hidden #ambient-wash span.aw-2,
   html.page-hidden .chip.live .lv-dot,
-  html.page-hidden .mc-dot.live{
+  html.page-hidden .mc-status.live .mc-dot{
     animation-play-state:paused;
   }
   /* Frosted, not opaque — an opaque panel would seal the ambient wash
@@ -370,74 +370,144 @@
   .empty-state{ text-align:center; color:var(--text-faint); padding:30px 10px; font-size:13px; }
   .spinner{ width:28px; height:28px; border-radius:50%; border:3px solid var(--border); border-top-color:var(--accent); animation:spin .8s linear infinite; margin:0 auto 12px; }
   @keyframes spin{ to{ transform:rotate(360deg); } }
-  /* ---- 🏏 MATCHES — ONE card, grouped ----
-     Live / In Progress / Completed / Upcoming used to be four separate
-     .card boxes stacked down the page: four borders, four shadows, four
-     headings, and a lot of vertical space for what is really one list in
-     four states. They are now one card with quiet group labels, so the
-     eye runs down a single column and the emphasis can go where it is
-     actually earned — the live match — instead of being spread evenly
-     across four identical containers. */
-  #matches-card{ padding:0; overflow:hidden; }
-  .mc-head{
-    display:flex; align-items:center; justify-content:space-between; gap:12px;
-    padding:16px 18px 14px; border-bottom:1px solid var(--border-soft);
-  }
+  /* ---- 🏏 MATCHES — premium match cards ----
+     Every match is its own tappable card (an <a>, so Enter, middle-click
+     and "open in new tab" all work), grouped Live / In Progress /
+     Completed / Upcoming under quiet labels. Each card carries its two
+     teams' real crest and colour: the colours set in the scoring panel
+     tint the card's edges (--ca / --cb), never the text, so contrast stays
+     the theme's own whatever colour an operator picks. Only transform,
+     opacity and box-shadow ever animate. */
+  #matches-card{ display:flex; flex-direction:column; gap:6px; }
+  .mc-head{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:2px 2px 0; }
   .mc-head .section-title{ margin-bottom:0; }
   .mc-count{ font-size:11.5px; font-weight:700; color:var(--text-faint); font-variant-numeric:tabular-nums; }
-
-  /* The one place emphasis is earned. A tinted wash and an accent rail —
-     not a banner, not a gradient: it has to read as "this one is on now",
-     not as an advertisement. */
-  .mc-live{
-    display:flex; align-items:center; justify-content:space-between; gap:14px;
-    padding:15px 18px; background:var(--accent-soft);
-    border-bottom:1px solid var(--border-soft); box-shadow:inset 3px 0 0 var(--live);
-  }
-  .mc-live-teams{ font-family:var(--font-display); font-weight:700; font-size:16px; letter-spacing:-.2px; margin-top:7px; }
-  .mc-live-meta{ font-size:11.5px; color:var(--text-dim); margin-top:3px; }
-
-  .mc-group + .mc-group{ border-top:1px solid var(--border-soft); }
   .mc-group-label{
     display:flex; align-items:center; gap:8px;
     padding:13px 18px 9px; font-family:var(--font-display); font-weight:700;
     font-size:10.5px; text-transform:uppercase; letter-spacing:.9px; color:var(--text-faint);
   }
+  #matches-card .mc-group-label{ padding:12px 2px 8px; }
   .mc-group-n{
     font-size:10px; font-weight:700; color:var(--text-faint);
     background:var(--panel-2); border:1px solid var(--border-soft);
     border-radius:99px; padding:1px 7px; font-variant-numeric:tabular-nums;
   }
-  .mc-row{
-    display:flex; align-items:center; gap:12px;
-    padding:12px 18px; cursor:pointer; border-top:1px solid var(--border-soft);
+  .mc-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap:12px; }
+  .mc-empty{
+    padding:22px 16px; text-align:center; color:var(--text-faint); font-size:12.5px; font-weight:600;
+    border:1px dashed var(--border); border-radius:var(--radius-lg);
+    background:color-mix(in srgb, var(--panel) 60%, transparent);
   }
-  .mc-group-label + .mc-row{ border-top:none; }
-  .mc-row:hover{ background:var(--panel-2); }
-  /* A small status dot carries the state, so the row itself needs no badge
-     and no colour-coded background — the list stays calm when it is long. */
-  .mc-dot{ width:7px; height:7px; border-radius:50%; flex:none; background:var(--text-faint); }
-  .mc-dot.live{ background:var(--live); animation:pulseDot 1.4s infinite; }
-  .mc-dot.progress{ background:#f59e0b; }
-  .mc-dot.done{ background:var(--accent); }
-  .mc-main{ flex:1 1 auto; min-width:0; }
-  .mc-teams{ font-weight:700; font-size:14px; letter-spacing:-.1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .mc-teams .vs{ color:var(--text-faint); font-weight:600; margin:0 5px; }
-  .mc-meta{ font-size:11.5px; color:var(--text-dim); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .mc-right{ text-align:right; flex:none; }
-  .mc-score{ font-family:var(--font-display); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums; letter-spacing:-.2px; }
-  .mc-result{ font-size:11px; font-weight:700; margin-top:2px; color:var(--accent); }
-  .mc-result.pending{ color:var(--text-faint); }
-  /* Sits directly under its own group label, so it needs no top padding of
-     its own — the label already provides the separation, and 18px on top of
-     that read as a gap the group had lost its content. */
-  .mc-empty{ padding:2px 18px 16px; text-align:center; color:var(--text-faint); font-size:12.5px; }
+
+  .mcard{
+    --ca:var(--accent); --cb:#8b5cf6;
+    position:relative; display:flex; flex-direction:column; gap:12px; min-width:0;
+    padding:14px 16px 13px; border-radius:var(--radius-lg); cursor:pointer; isolation:isolate;
+    color:var(--text); text-decoration:none; overflow:hidden;
+    background:
+      radial-gradient(90% 120% at 0% 0%, color-mix(in srgb, var(--ca) 13%, transparent), transparent 60%),
+      radial-gradient(90% 120% at 100% 100%, color-mix(in srgb, var(--cb) 13%, transparent), transparent 60%),
+      color-mix(in srgb, var(--panel) 94%, transparent);
+    border:1px solid var(--border);
+    box-shadow:0 1px 2px rgba(0,0,0,.08), inset 0 1px 0 var(--card-top-light);
+    transform:translateZ(0);
+    transition:transform .28s cubic-bezier(.22,1,.36,1), box-shadow .28s ease, border-color .2s ease;
+    -webkit-tap-highlight-color:transparent;
+    /* backwards, not both: a fill that outlives the entrance would pin
+       transform and silently cancel the hover lift and the press-down. */
+    animation:rowIn .36s cubic-bezier(.22,1,.36,1) backwards;
+  }
+  /* Split team-colour rail down the left edge. */
+  .mcard::before{
+    content:''; position:absolute; left:0; top:0; bottom:0; width:3px;
+    background:linear-gradient(180deg, var(--ca) 0 50%, var(--cb) 50% 100%); opacity:.9;
+  }
+  /* Glow layer — opacity-only so a hover never repaints the card. */
+  .mcard::after{
+    content:''; position:absolute; inset:0; z-index:-1; pointer-events:none; opacity:0;
+    border-radius:inherit; transition:opacity .28s ease;
+    box-shadow:0 14px 34px -12px color-mix(in srgb, var(--ca) 45%, transparent), 0 14px 34px -12px color-mix(in srgb, var(--cb) 45%, transparent);
+  }
+  @media (hover:hover) and (pointer:fine){
+    .mcard:hover{ transform:translateY(-3px); border-color:color-mix(in srgb, var(--ca) 35%, var(--border)); box-shadow:var(--shadow); }
+    .mcard:hover::after{ opacity:1; }
+    .mcard:hover .mc-logo{ transform:scale(1.06); }
+    .mcard:hover .mc-go-arrow{ transform:translateX(4px); }
+  }
+  .mcard:active, .mcard.is-opening{ transform:scale(.975); transition-duration:.12s; }
+  .mcard:focus-visible{ outline:2px solid var(--accent); outline-offset:3px; }
+
+  .mc-top{ display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:0; }
+  .mc-label{ font-size:11px; font-weight:700; color:var(--text-dim); letter-spacing:.2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+  .mc-label .mc-fmt{ margin-left:6px; padding:1px 6px; border-radius:6px; background:var(--panel-2); border:1px solid var(--border-soft); color:var(--text-faint); font-size:9.5px; letter-spacing:.4px; }
+  .mc-label .mc-fmt.solo{ margin-left:0; }
+  .mc-status{
+    flex:none; display:inline-flex; align-items:center; gap:5px;
+    padding:3px 8px; border-radius:99px; font-size:9.5px; font-weight:800; letter-spacing:.7px; text-transform:uppercase;
+    background:var(--panel-2); color:var(--text-dim); border:1px solid var(--border-soft);
+  }
+  .mc-status.live{ background:rgba(239,68,68,.13); color:var(--live); border-color:transparent; }
+  .mc-status.progress{ background:rgba(245,158,11,.14); color:#d97706; border-color:transparent; }
+  .mc-status.done{ background:var(--accent-soft); color:var(--accent); border-color:transparent; }
+  .mc-status.off{ background:var(--panel-2); color:var(--text-faint); }
+  .mc-dot{ width:6px; height:6px; border-radius:50%; background:currentColor; flex:none; }
+  .mc-status.live .mc-dot{ animation:pulseDot 1.4s infinite; }
+
+  .mc-teams{ display:flex; flex-direction:column; gap:8px; }
+  .mc-team{ display:flex; align-items:center; gap:11px; min-width:0; }
+  .mc-logo{
+    position:relative; flex:none; width:38px; height:38px; border-radius:11px; overflow:hidden;
+    display:flex; align-items:center; justify-content:center;
+    background:color-mix(in srgb, var(--tc) 14%, var(--panel-2));
+    box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--tc) 35%, var(--border-soft));
+    font-family:var(--font-display); font-weight:800; font-size:12.5px; letter-spacing:.3px; color:var(--text);
+    transition:transform .28s cubic-bezier(.22,1,.36,1);
+  }
+  .mc-logo img{ width:100%; height:100%; object-fit:contain; padding:4px; display:block; }
+  .mc-logo.no-img img{ display:none; }
+  .mc-logo:not(.no-img) .mc-ini{ display:none; }
+  .mc-tname{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; line-height:1.2; }
+  .mc-tname b{ font-family:var(--font-display); font-weight:700; font-size:15px; letter-spacing:-.2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mc-tname small{ font-size:11px; color:var(--text-faint); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mc-tscore{ flex:none; text-align:right; font-family:var(--font-display); font-weight:800; font-size:17px; letter-spacing:-.3px; font-variant-numeric:tabular-nums; line-height:1.15; }
+  .mc-tscore small{ display:block; font-family:var(--font-body); font-size:10.5px; font-weight:600; color:var(--text-faint); letter-spacing:0; }
+  .mcard .mc-team .mc-tscore.ytb{ font-family:var(--font-body); font-size:11.5px; font-weight:700; color:var(--text-faint); letter-spacing:0; }
+  .mc-team.loser .mc-tname b, .mc-team.loser .mc-tscore{ color:var(--text-dim); font-weight:600; }
+  .mc-win{ display:inline-block; width:0; height:0; margin-left:6px; vertical-align:middle;
+    border-top:4px solid transparent; border-bottom:4px solid transparent; border-right:6px solid var(--accent); }
+
+  .mc-foot{ display:flex; align-items:center; gap:10px; padding-top:10px; border-top:1px solid var(--border-soft); min-width:0; }
+  .mc-foot-text{ flex:1 1 auto; min-width:0; }
+  .mc-result{ font-size:12px; font-weight:700; color:var(--accent); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mc-result.pending{ color:var(--text-dim); }
+  .mc-meta{ font-size:11px; color:var(--text-faint); margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mc-go{ flex:none; display:inline-flex; align-items:center; gap:4px; font-size:11.5px; font-weight:700; color:var(--text-dim); }
+  .mc-go-arrow{ display:inline-block; transition:transform .28s cubic-bezier(.22,1,.36,1); }
+
+  /* The live match: same card, more presence — larger crests and scores,
+     a red-tinted edge and a real "Watch Live" call to action. */
+  .mcard.featured{ padding:18px 20px 16px; gap:14px; border-color:color-mix(in srgb, var(--live) 35%, var(--border)); }
+  .mcard.featured .mc-logo{ width:48px; height:48px; border-radius:13px; font-size:14px; }
+  .mcard.featured .mc-tname b{ font-size:17px; }
+  .mcard.featured .mc-tscore{ font-size:21px; }
+  .mcard.featured .mc-go{ padding:8px 15px; border-radius:99px; background:var(--accent); color:var(--accent-contrast); font-size:12.5px; }
+  .mcard.featured .mc-go-arrow{ color:inherit; }
+  .mcard.is-off{ opacity:.82; }
+
   @media (max-width:520px){
-    .mc-live{ flex-direction:column; align-items:stretch; gap:11px; }
-    .mc-live .watch-btn{ text-align:center; }
-    .mc-teams{ font-size:13.5px; }
-    .mc-score{ font-size:13px; }
-    .mc-row, .mc-live, .mc-head, .mc-group-label{ padding-left:14px; padding-right:14px; }
+    .mcard{ padding:13px 14px 12px; }
+    .mcard.featured{ padding:15px 15px 14px; }
+    .mc-logo{ width:36px; height:36px; }
+    .mcard.featured .mc-logo{ width:42px; height:42px; }
+    .mc-tname b{ font-size:14.5px; }
+    .mcard.featured .mc-tname b{ font-size:16px; }
+    .mcard.featured .mc-tscore{ font-size:19px; }
+    .mc-go-label{ display:none; }
+    .mcard.featured .mc-go-label{ display:inline; }
+  }
+  @media (prefers-reduced-motion:reduce){
+    .mcard, .mcard:hover, .mcard:active, .mcard.is-opening, .mcard:hover .mc-logo, .mcard:hover .mc-go-arrow{ transform:none !important; }
   }
   .watch-btn{ padding:8px 16px; border-radius:99px; background:var(--accent); color:var(--accent-contrast); font-weight:700; font-size:12.5px; flex:none; }
   footer{ text-align:center; padding:22px 10px 4px; color:var(--text-faint); font-size:11.5px; }
@@ -782,15 +852,25 @@ function economy(r,o,b){ const of=(o||0)+((b||0)/6); return of?(r/of).toFixed(2)
 function teamLabel(t){ return (t && (t.short || t.name)) || ''; }
 function resultText(m){
   const w = m.winningTeam;
-  if(!w) return 'In progress';
+  // An unfinished Test at stumps says so, as the panel's own list does.
+  if(!w) return m.dayStatus === 'STUMPS' ? `Stumps — Day ${m.dayNumber || '?'}` : 'In progress';
   if(w === 'TIE') return 'Match Tied';
   if(w === 'DRAW') return 'Match Drawn';
-  if(w === 'A') return `${teamLabel(m.teamA)} won`;
-  if(w === 'B') return `${teamLabel(m.teamB)} won`;
-  const norm = (x) => String(x || '').trim().toLowerCase();
-  if(norm(w) && (norm(w) === norm(m.teamA.short) || norm(w) === norm(m.teamA.name))) return `${teamLabel(m.teamA)} won`;
-  if(norm(w) && (norm(w) === norm(m.teamB.short) || norm(w) === norm(m.teamB.name))) return `${teamLabel(m.teamB)} won`;
+  if(w === 'ABANDONED') return 'Match Abandoned';
+  if(w === 'NR' || w === 'NO_RESULT') return 'No Result';
+  const side = winnerSide(m);
+  if(side) return `${teamLabel(side === 'A' ? m.teamA : m.teamB)} won`;
   return 'Completed';
+}
+// 'A' | 'B' | null — which side the saved result names as winner.
+function winnerSide(m){
+  const w = m && m.winningTeam;
+  if(w === 'A' || w === 'B') return w;
+  const norm = (x) => String(x || '').trim().toLowerCase();
+  if(!norm(w)) return null;
+  if(m.teamA && (norm(w) === norm(m.teamA.short) || norm(w) === norm(m.teamA.name))) return 'A';
+  if(m.teamB && (norm(w) === norm(m.teamB.short) || norm(w) === norm(m.teamB.name))) return 'B';
+  return null;
 }
 // Short, readable date — "29 Sep 2026" instead of a bare numeric dd/mm/yyyy,
 // which is ambiguous to half the audience and reads as data entry.
@@ -798,6 +878,111 @@ function matchDate(ts){
   if(!ts) return '';
   try { return new Date(ts).toLocaleDateString(undefined, { day:'numeric', month:'short', year:'numeric' }); }
   catch(e){ return ''; }
+}
+
+/* ---- 🏏 Match card (Matches tab) ----
+   Everything on a card comes from the saved match record — teamA/teamB
+   {name, short, color, logoUrl}, scoreA/scoreB {runs, wickets, overs},
+   winningTeam, venue, format, matchNo/matchTitle, savedAt. Nothing is
+   invented: a field the record doesn't have simply isn't shown. */
+// Operator-entered values go into a style attribute and an <img src>, so
+// only plain colour literals and http(s)/relative/data-image URLs pass.
+function safeTeamColor(c){
+  const s = String(c || '').trim();
+  return /^#[0-9a-f]{3,8}$/i.test(s) || /^(rgb|hsl)a?\([\d\s.,%/-]+\)$/i.test(s) ? s : '';
+}
+function safeLogoUrl(u){
+  const s = String(u || '').trim();
+  return /^(https?:\/\/|\/(?!\/)|data:image\/)/i.test(s) ? s : '';
+}
+function teamInitials(t){
+  const short = String((t && t.short) || '').trim();
+  if(short) return short.slice(0, 3).toUpperCase();
+  return initials((t && t.name) || '?').slice(0, 3);
+}
+// A logo that fails to load (dead link, blocked host) falls back to the
+// team's initials on its own colour instead of a broken-image icon.
+function teamLogoHtml(t){
+  const url = safeLogoUrl(t && t.logoUrl);
+  return `<span class="mc-logo${url ? '' : ' no-img'}" aria-hidden="true">${
+    url ? `<img src="${escapeHtml(url)}" alt="" loading="lazy" decoding="async" onerror="this.parentNode.classList.add('no-img')">` : ''
+  }<span class="mc-ini">${escapeHtml(teamInitials(t))}</span></span>`;
+}
+// A side that hasn't faced a ball yet has no score to show.
+function hasBatted(sc){
+  if(!sc) return false;
+  if(sc.overs != null && String(sc.overs) !== '0.0' && String(sc.overs) !== '0') return true;
+  return (Number(sc.runs) || 0) > 0 || (Number(sc.wickets) || 0) > 0;
+}
+function scoreText(sc){ return `${Number(sc.runs) || 0}-${Number(sc.wickets) || 0}`; }
+function oversText(sc){ return sc && sc.overs != null && String(sc.overs) !== '' ? `${sc.overs} ov` : ''; }
+// 'live' | 'progress' | 'done' | 'abandoned' — the card's status badge.
+function matchStatusOf(m){
+  const w = m.winningTeam;
+  if(!w) return 'progress';
+  if(w === 'ABANDONED' || w === 'NR' || w === 'NO_RESULT') return 'abandoned';
+  return 'done';
+}
+const MATCH_STATUS_LABEL = { live:'Live', progress:'In Progress', done:'Completed', abandoned:'Abandoned', upcoming:'Upcoming' };
+function matchCardHtml(m, { href, status, featured = false }){
+  const A = m.teamA || {}, B = m.teamB || {};
+  const done = !!m.winningTeam;
+  const win = winnerSide(m);
+  const ca = safeTeamColor(A.color), cb = safeTeamColor(B.color);
+  const label = m.matchTitle ? String(m.matchTitle)
+    : m.matchNo != null && m.matchNo !== '' ? `Match ${m.matchNo}` : '';
+  const result = resultText(m);
+  const date = matchDate(m.savedAt);
+  const meta = [m.venue, date].filter(Boolean).map(escapeHtml).join(' · ');
+  const teamRow = (t, sc, side) => {
+    const batted = hasBatted(sc);
+    const cls = win ? (win === side ? ' winner' : ' loser') : '';
+    const scoreHtml = batted
+      ? `${scoreText(sc)}${oversText(sc) ? `<small>${escapeHtml(oversText(sc))}</small>` : ''}`
+      : (done ? '—' : 'Yet to bat');
+    const full = t.short && t.name && t.name !== t.short ? t.name : '';
+    return `<div class="mc-team${cls}" style="--tc:${safeTeamColor(t.color) || (side === 'A' ? 'var(--accent)' : '#8b5cf6')}">
+        ${teamLogoHtml(t)}
+        <span class="mc-tname"><b>${escapeHtml(teamLabel(t) || (side === 'A' ? 'Team A' : 'Team B'))}${win === side ? '<span class="mc-win" title="Winner"></span>' : ''}</b>${full ? `<small>${escapeHtml(full)}</small>` : ''}</span>
+        <span class="mc-tscore${batted ? '' : ' ytb'}">${scoreHtml}</span>
+      </div>`;
+  };
+  const scoreSay = (t, sc) => hasBatted(sc)
+    ? `${teamLabel(t)} ${Number(sc.runs) || 0} for ${Number(sc.wickets) || 0}${sc.overs != null ? ` in ${sc.overs} overs` : ''}`
+    : `${teamLabel(t)} ${done ? 'did not bat' : 'yet to bat'}`;
+  const aria = [label, `${teamLabel(A)} versus ${teamLabel(B)}`, MATCH_STATUS_LABEL[status],
+    scoreSay(A, m.scoreA || {}), scoreSay(B, m.scoreB || {}), done ? result : '', m.venue, date]
+    .filter(Boolean).join('. ');
+  const go = featured ? 'Watch Live' : (done ? 'Scorecard' : 'Follow');
+  const style = [ca && `--ca:${ca}`, cb && `--cb:${cb}`].filter(Boolean).join(';');
+  return `<a class="mcard${featured ? ' featured' : ''}${status === 'abandoned' ? ' is-off' : ''}" href="${escapeHtml(href)}"
+      data-goto-match="${escapeHtml(m.matchId)}"${!done && m.roomId ? ` data-goto-room="${escapeHtml(m.roomId)}"` : ''}
+      ${style ? `style="${style}"` : ''} aria-label="${escapeHtml(aria)}">
+    <div class="mc-top">
+      <span class="mc-label">${escapeHtml(label)}${m.format ? `<span class="mc-fmt${label ? '' : ' solo'}">${escapeHtml(m.format)}</span>` : ''}</span>
+      <span class="mc-status ${status === 'abandoned' ? 'off' : status}"><span class="mc-dot"></span>${MATCH_STATUS_LABEL[status]}</span>
+    </div>
+    <div class="mc-teams">
+      ${teamRow(A, m.scoreA || {}, 'A')}
+      ${teamRow(B, m.scoreB || {}, 'B')}
+    </div>
+    <div class="mc-foot">
+      <div class="mc-foot-text">
+        <div class="mc-result${done ? '' : ' pending'}">${escapeHtml(result)}</div>
+        ${meta ? `<div class="mc-meta">${meta}</div>` : ''}
+      </div>
+      <span class="mc-go" aria-hidden="true"><span class="mc-go-label">${go}</span><span class="mc-go-arrow">→</span></span>
+    </div>
+  </a>`;
+}
+// A live room whose match record hasn't been saved yet — there is no team
+// or score data to show, so it says only what is true.
+function liveRoomCardHtml(roomId){
+  return `<a class="mcard featured" href="/cricket-scorecard?room=${encodeURIComponent(roomId)}" aria-label="Live match in progress. Watch live">
+    <div class="mc-top"><span class="mc-label">Match in progress</span><span class="mc-status live"><span class="mc-dot"></span>Live</span></div>
+    <div class="mc-foot"><div class="mc-foot-text"><div class="mc-result pending">Follow ball-by-ball updates</div></div>
+      <span class="mc-go" aria-hidden="true"><span class="mc-go-label">Watch Live</span><span class="mc-go-arrow">→</span></span></div>
+  </a>`;
 }
 
 /* ---- Leaderboard visual helpers (avatars, medals, form bars, cap strip) ---- */
@@ -1062,74 +1247,69 @@ function renderPortal(data, token){
     <button class="tab-btn" data-tab="leaderboards">Leaderboards</button>
   </div>`;
 
-  // 🏏 ONE card for every match state — see #matches-card in the CSS above
-  // for why this stopped being four stacked cards.
+  // 🏏 Every match is its own card — see .mcard in the CSS above. Grouped
+  // Live / In Progress / Completed / Upcoming inside #matches-card.
 
   // The live room is one of the in-progress matches; matching it by roomId
   // (then matchId) is what lets this show the actual teams and score instead
-  // of the generic "Match in progress / Follow ball-by-ball updates" it used
-  // to, which told a viewer nothing about whether they wanted to click.
+  // of a generic "Match in progress", which told a viewer nothing about
+  // whether they wanted to click.
   const liveMatch = isLive
     ? (inProgress.find(m => m.roomId && m.roomId === data.live.roomId)
        || inProgress.find(m => m.matchId && m.matchId === data.live.matchId)
        || null)
     : null;
-
-  const liveHtml = isLive ? `
-    <div class="mc-live">
-      <div>
-        <span class="chip live"><span class="lv-dot"></span>Live</span>
-        <div class="mc-live-teams">${liveMatch
-          ? `${escapeHtml(teamLabel(liveMatch.teamA))}<span class="vs"> vs </span>${escapeHtml(teamLabel(liveMatch.teamB))}`
-          : 'Match in progress'}</div>
-        <div class="mc-live-meta">${liveMatch
-          ? `${escapeHtml(liveMatch.venue || '')}${liveMatch.venue ? ' · ' : ''}${liveMatch.scoreA.runs}-${liveMatch.scoreA.wickets}`
-          : 'Follow ball-by-ball updates'}</div>
-      </div>
-      <a class="watch-btn" href="/cricket-scorecard?room=${encodeURIComponent(data.live.roomId)}">Watch Live →</a>
-    </div>` : '';
+  // Every room the backend still reports live under this tournament (it
+  // already drops ones whose match was saved finished anywhere) — so a second
+  // match on air at the same time gets its LIVE badge too, not just the most
+  // recent one.
+  const liveRoomIds = new Set(isLive
+    ? [data.live.roomId, ...((data.live.matches || []).map(x => x && x.roomId))].filter(Boolean)
+    : []);
 
   // 🐛 A match that is still being played has no saved result, so sending it
   // to the scorecard's history mode showed a stale snapshot captioned "Match
-  // Completed" with the second innings at 0-0 — while the Watch Live button
-  // right above it opened the same match correctly. The row now goes where
-  // Watch Live goes whenever the match is live and its room is known; only a
-  // genuinely finished match uses the saved snapshot.
-  const matchRow = (m, kind) => `
-    <div class="mc-row" data-goto-match="${escapeHtml(m.matchId)}"${
-      !m.winningTeam && m.roomId ? ` data-goto-room="${escapeHtml(m.roomId)}"` : ''}>
-      <span class="mc-dot ${kind}"></span>
-      <div class="mc-main">
-        <div class="mc-teams">${escapeHtml(teamLabel(m.teamA))}<span class="vs">vs</span>${escapeHtml(teamLabel(m.teamB))}</div>
-        <div class="mc-meta">${escapeHtml(m.venue||'')}${m.venue && m.savedAt ? ' · ' : ''}${matchDate(m.savedAt)}</div>
-      </div>
-      <div class="mc-right">
-        <div class="mc-score">${m.scoreA.runs}-${m.scoreA.wickets} <span style="color:var(--text-faint);font-weight:600;">/</span> ${m.scoreB.runs}-${m.scoreB.wickets}</div>
-        <div class="mc-result${m.winningTeam ? '' : ' pending'}">${escapeHtml(resultText(m))}</div>
-      </div>
-    </div>`;
+  // Completed" with the second innings at 0-0 — while Watch Live opened the
+  // same match correctly. A card goes to the live room whenever the match is
+  // unfinished and its room is known; only a genuinely finished match uses
+  // the saved snapshot.
+  const matchHref = (m) => (!m.winningTeam && m.roomId)
+    ? `/cricket-scorecard?room=${encodeURIComponent(m.roomId)}`
+    : `/cricket-scorecard?token=${encodeURIComponent(token)}&match=${encodeURIComponent(m.matchId)}&history=1`;
 
-  const group = (label, count, body) => `
-    <div class="mc-group">
+  const group = (label, count, body, grid = true) => `
+    <section class="mc-group" aria-label="${escapeHtml(label)}">
       <div class="mc-group-label">${label}${count != null ? `<span class="mc-group-n">${count}</span>` : ''}</div>
-      ${body}
-    </div>`;
+      ${grid ? `<div class="mc-grid">${body}</div>` : body}
+    </section>`;
 
-  const inProgressHtml = inProgress.length
-    ? group('In Progress', inProgress.length, inProgress.map(m => matchRow(m, 'progress')).join('')) : '';
+  // Live match first (featured), the rest of the unfinished matches after
+  // it — the featured one isn't repeated in the In Progress group.
+  const liveHtml = isLive
+    ? group('Live', null, liveMatch
+        ? matchCardHtml(liveMatch, { href: matchHref(liveMatch), status: 'live', featured: true })
+        : liveRoomCardHtml(data.live.roomId))
+    : '';
+
+  const restInProgress = inProgress.filter(m => m !== liveMatch);
+  const inProgressHtml = restInProgress.length
+    ? group('In Progress', restInProgress.length, restInProgress.slice().reverse().map(m =>
+        matchCardHtml(m, { href: matchHref(m), status: (m.roomId && liveRoomIds.has(m.roomId)) ? 'live' : 'progress' })).join(''))
+    : '';
 
   const previousHtml = finished.length
-    ? group('Completed', finished.length, finished.slice().reverse().map(m => matchRow(m, 'done')).join(''))
-    : group('Completed', null, '<div class="mc-empty">No completed matches yet.</div>');
+    ? group('Completed', finished.length, finished.slice().reverse().map(m =>
+        matchCardHtml(m, { href: matchHref(m), status: matchStatusOf(m) })).join(''))
+    : group('Completed', null, '<div class="mc-empty">No completed matches yet.</div>', false);
 
   // Upcoming fixtures aren't part of the current data model (the panel has
   // no "schedule a future match" feature yet — matches only exist once
   // they've started being scored) — shown honestly as empty rather than
   // faked.
-  const upcomingHtml = group('Upcoming', null, '<div class="mc-empty">No fixtures scheduled yet.</div>');
+  const upcomingHtml = group('Upcoming', null, '<div class="mc-empty">No fixtures scheduled yet.</div>', false);
 
   const matchesPanel = `<div class="tab-panel active" data-panel="matches">
-    <div class="card" id="matches-card">
+    <div id="matches-card">
       <div class="mc-head">
         <div class="section-title"><span class="dash"></span>Matches</div>
         <span class="mc-count">${matches.length} match${matches.length===1?'':'es'}</span>
@@ -1137,7 +1317,6 @@ function renderPortal(data, token){
       ${liveHtml}${inProgressHtml}${previousHtml}${upcomingHtml}
     </div>
   </div>`;
-
   const pt = data.pointsTable || [];
   const formGuide = computeFormGuide(matches);
   const qualifyCount = pt.length > 4 ? 4 : Math.ceil(pt.length / 2);
@@ -1195,18 +1374,22 @@ function renderPortal(data, token){
   }));
   requestAnimationFrame(() => moveTabIndicator(c.querySelector('.tab-btn.active')));
   c.classList.remove('in'); void c.offsetWidth; c.classList.add('in');
-  c.querySelectorAll('[data-goto-match]').forEach(row => row.addEventListener('click', (e) => {
-    // A live match goes to the live room — the same destination as its own
-    // Watch Live button — because its saved snapshot is by definition
-    // incomplete while it is still being played. Everything else goes to
-    // history mode, the single place that renders a finished match (clips
-    // included) correctly scoped to that one matchId.
-    const room = row.dataset.gotoRoom;
-    const href = room
-      ? `/cricket-scorecard?room=${encodeURIComponent(room)}`
-      : `/cricket-scorecard?token=${encodeURIComponent(token)}&match=${encodeURIComponent(row.dataset.gotoMatch)}&history=1`;
-    ptNavigate(href, { x: e.clientX, y: e.clientY });
+  // Each card is a real <a href> (see matchCardHtml), so keyboard Enter,
+  // middle-click, Ctrl/⌘-click and long-press "open in new tab" all behave
+  // natively. A plain click is taken over only to play the press-down and
+  // the page transition from the point that was tapped — a keyboard
+  // activation (detail 0, no pointer position) grows it from the card's
+  // centre instead.
+  c.querySelectorAll('.mcard[href]').forEach(card => card.addEventListener('click', (e) => {
+    if(e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    card.classList.add('is-opening');
+    let x = e.clientX, y = e.clientY;
+    if(!e.detail){ const r = card.getBoundingClientRect(); x = r.left + r.width / 2; y = r.top + r.height / 2; }
+    ptNavigate(card.getAttribute('href'), { x, y });
   }));
+  // Back/forward cache restores the page as it was left — mid-press.
+  window.addEventListener('pageshow', () => c.querySelectorAll('.mcard.is-opening').forEach(el => el.classList.remove('is-opening')));
 }
 
 /* ============================================================

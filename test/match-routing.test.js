@@ -14,8 +14,9 @@ const fs = require('fs');
 const src = fs.readFileSync('/home/user/tt-overlay/score-tournament.html','utf8');
 const css = [...src.matchAll(/<style>([\s\S]*?)<\/style>/g)].map(m=>m[1]).join('\n');
 const grab = (n)=>{ const i=src.indexOf(`function ${n}(`); const j=src.indexOf('\n}',i)+2; return src.slice(i,j); };
-const helpers = ['escapeHtml','teamLabel','resultText','matchDate'].map(grab).join('\n');
-const start = src.indexOf('  // 🏏 ONE card for every match state');
+const helpers = ['escapeHtml','teamLabel','resultText','winnerSide','matchDate','initials','safeTeamColor','safeLogoUrl','teamInitials','teamLogoHtml','hasBatted','scoreText','oversText','matchStatusOf','matchCardHtml','liveRoomCardHtml'].map(grab).join('\n')
+  + "\nconst MATCH_STATUS_LABEL = { live:'Live', progress:'In Progress', done:'Completed', abandoned:'Abandoned', upcoming:'Upcoming' };";
+const start = src.indexOf('  // 🏏 Every match is its own card');
 const end = src.indexOf('  const pt = data.pointsTable', start);
 const body = src.slice(start, end);
 
@@ -41,11 +42,12 @@ const matches = data.matches || [];
 const finished = matches.filter(m => m.winningTeam);
 const inProgress = matches.filter(m => !m.winningTeam);
 const isLive = true;
+const token = 'TESTTOKEN';
 ${body}
 document.getElementById('out').innerHTML = matchesPanel;
-const token = 'TESTTOKEN';
 window.__nav = [];
-document.querySelectorAll('[data-goto-match]').forEach(row => row.addEventListener('click', () => {
+document.querySelectorAll('[data-goto-match]').forEach(row => row.addEventListener('click', (e) => {
+  e.preventDefault();
   const room = row.dataset.gotoRoom;
   window.__nav.push(room
     ? '/cricket-scorecard?room=' + encodeURIComponent(room)
@@ -67,9 +69,10 @@ document.querySelectorAll('[data-goto-match]').forEach(row => row.addEventListen
     const want = id==='m-live' ? '/cricket-scorecard?room=ROOM-PSC-YCC'
                : id==='m-done' ? '/cricket-scorecard?token=TESTTOKEN&match=m-done&history=1'
                : '/cricket-scorecard?token=TESTTOKEN&match=m-noroom&history=1';
-    const ok = nav===want;
-    console.log(`  ${ok?'✓':'✗'} ${id.padEnd(10)} -> ${nav}`);
-    if(!ok) fails.push(`${id}: got ${nav}, want ${want}`);
+    const href = await r.getAttribute('href');
+    const ok = nav===want && href===want;
+    console.log(`  ${ok?'✓':'✗'} ${id.padEnd(10)} -> ${nav}  (href ${href})`);
+    if(!ok) fails.push(`${id}: got ${nav} / href ${href}, want ${want}`);
   }
   console.log('');
   console.log(fails.length ? '✗ '+fails.join('; ') : '✓ live match opens the live room; finished and room-less matches open the snapshot');
