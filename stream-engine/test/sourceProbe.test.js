@@ -106,11 +106,12 @@ test('webcam 30 → 30: passthrough', () => {
 
 test('50 Hz camera behind a 60 card → 50p: remove the repeats, nothing else', () => {
   const p = plan({ arrive: 60, dupEvery: 6, n: 600 }, 50);
-  assert.strictEqual(p.chain, 'decimate=cycle=6'); assert.strictEqual(p.cadence, 'clean');
+  assert.ok(p.chain.startsWith('decimate=cycle=6,setpts='), p.chain); assert.ok(!/fps=|framestep/.test(p.chain), p.chain); assert.strictEqual(p.cadence, 'clean');
 });
 
 test('… → 25p: repeats removed, then an even 2:1', () => {
-  assert.strictEqual(plan({ arrive: 60, dupEvery: 6, n: 600 }, 25).chain, 'decimate=cycle=6,framestep=2');
+  const c = plan({ arrive: 60, dupEvery: 6, n: 600 }, 25).chain;
+  assert.ok(c.startsWith('decimate=cycle=6,setpts=') && c.endsWith(',framestep=2'), c);
 });
 
 test('… → 30p: flagged as JUDDER with the smooth alternatives (the old "use 30p" advice was wrong for a PAL camera)', () => {

@@ -56,5 +56,26 @@ test('OLD fps=25 judders, NEW framestep=2 is exact', () => {
   assert.ok(share(o, 2) < 0.8, fmt(o)); assert.strictEqual(share(n, 2), 1, fmt(n));
 });
 
+console.log('\nFIELD: 25p Sony held over the UC2018\'s 60 slots, arrival jitter ±19 ms (measured on the operator\'s laptop)');
+const sp = require('../sourceProbe');
+function heldSteps(jitterMs, chain) {
+  const gen = `color=black:s=64x36:r=25:d=30,format=gray,geq=lum='mod(N\\,200)',setpts=PTS+0.005/TB,fps=60,settb=1/1000000,setpts='PTS+(random(0)-0.5)*${jitterMs}/1000/TB'`;
+  const a = spawnSync(FFMPEG, ['-hide_banner', '-nostats', '-loglevel', 'error', '-f', 'lavfi', '-i', gen, '-filter_complex', `[0:v]${chain}[o]`, '-map', '[o]', '-fps_mode', 'cfr', '-r', '25', '-c:v', 'rawvideo', '-f', 'nut', '-'], { maxBuffer: 256 << 20 });
+  const b = spawnSync(FFMPEG, ['-hide_banner', '-nostats', '-loglevel', 'info', '-f', 'nut', '-i', '-', '-vf', 'showinfo', '-f', 'null', '-'], { input: a.stdout, encoding: 'utf8', maxBuffer: 256 << 20 });
+  const idx = [...b.stderr.matchAll(/mean:\[(\d+)/g)].map((m) => Number(m[1]));
+  const h = {};
+  for (let i = 1; i < idx.length; i++) { let d = idx[i] - idx[i - 1]; if (d < 0) d += 200; h[d] = (h[d] || 0) + 1; }
+  return h;
+}
+// the plan the engine builds for this source (25 unique in 60 slots, program 25p)
+const held = []; for (let i = 0; i < 360; i++) held.push({ wallMs: 1000 + i * 1000 / 60, pts: i / 60, checksum: `C${Math.floor(i * 25 / 60)}`, scan: 'P' });
+const fieldPlan = sp.planNormalization(sp.analyseFrames(held), { mode: 'progressive' }, { programFps: 25 });
+test('OLD fps=25: jitter makes it show the wrong camera frame for a large share of slots', () => {
+  const h = heldSteps(38, 'fps=25'); assert.ok(share(h, 1) < 0.8, fmt(h));
+});
+test(`NEW engine chain (${sp.chainLabel(fieldPlan.chain)}): every camera frame, once, in order`, () => {
+  const h = heldSteps(38, fieldPlan.chain); assert.ok(share(h, 1) >= 0.995, fmt(h));
+});
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

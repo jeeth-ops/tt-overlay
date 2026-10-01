@@ -189,6 +189,16 @@ function analyseFrames(frames, { warmupSec = 0.5, expectedFps = null } = {}) {
     const dupFraction = withChecksum ? dupPositions.length / withChecksum : 0;
     const staticContent = withChecksum > 0 && dupFraction > 0.9;
     const cycle = staticContent ? null : dupCycle(dupPositions, withChecksum);
+    // How evenly the UNIQUE frames are spaced — the number that says whether
+    // motion looks smooth. 100% = every new camera frame arrives after the
+    // same interval (clean 25p shown at 50p is still 100%: a new frame every
+    // 2 slots). Judder shows up as a mix of intervals.
+    const uniqueTimes = [];
+    for (let i = 0; i < n; i++) if (i === 0 || !fr[i].checksum || fr[i].checksum !== fr[i - 1].checksum) uniqueTimes.push(fr[i].pts);
+    const ug = [];
+    for (let i = 1; i < uniqueTimes.length; i++) ug.push(uniqueTimes[i] - uniqueTimes[i - 1]);
+    const ugMed = median(ug);
+    const evenness = ug.length && ugMed > 0 ? ug.filter((g) => Math.abs(g - ugMed) <= 0.25 * ugMed).length / ug.length : null;
     const flagged = fr.filter((f) => f.scan === 'T' || f.scan === 'B');
     const deliveredFps = arrivalFps; // the wall clock is the ground truth for delivery
     const contentFps = deliveredFps && !staticContent ? deliveredFps * (1 - dupFraction) : deliveredFps;
@@ -204,6 +214,7 @@ function analyseFrames(frames, { warmupSec = 0.5, expectedFps = null } = {}) {
         gaps, missingFrames: missing, nonMonotonic, duplicateTimestamps,
         duplicates: { count: dupPositions.length, fraction: round(dupFraction, 3), cycle, staticContent },
         contentFps: round(contentFps, 2),
+        uniqueSpacing: { medianMs: round(ugMed * 1000, 1), evenPercent: evenness == null ? null : round(evenness * 100, 1) },
         contentRate: snapRate(contentFps),
         deliveredRate: snapRate(deliveredFps),
         interlaceFlaggedFrames: flagged.length,
@@ -254,6 +265,34 @@ function scanVerdict(idet, stream) {
 //     capture-time stamps, immune to ffmpeg reading late); wall clock
 //     otherwise.
 // ---------------------------------------------------------------
+// 🕐 DEJITTER — a phase-locked re-stamp of frames whose true rate is KNOWN.
+//
+// The program clock is arrival time, and on the operator's laptop arrival
+// jitters ±19 ms (measured). For a card that holds each camera frame over 2–3
+// of its 60 slots, that jitter decides which slot a program frame lands in:
+// simulated with the real filters, `fps=25` then shows the right camera frame
+// only 63% of the time (vMix, timing by the device, is smooth). The unique
+// rate has been MEASURED, so each frame is pulled to "previous + one period",
+// with a 1/64 correction toward its real arrival (so drift and real gaps are
+// still followed) and a resync when it is more than 1.2 periods off (a real
+// missing frame). Measured: 100% clean at ±19 and ±25 ms.
+function dejitterFilter(fps) {
+    const P = `(1/(${Number(fps)}*TB))`;
+    return `setpts='if(isnan(PREV_OUTPTS),PTS,if(lt(abs(PTS-PREV_OUTPTS-${P}),1.2*${P}),PREV_OUTPTS+${P}+(PTS-PREV_OUTPTS-${P})/64,PTS))'`;
+}
+// Short human form of a chain for the panel/console: the dejitter expression
+// is long and only its rate matters to the operator.
+function chainLabel(chain) {
+    return String(chain || '')
+        .replace(/setpts='if\(isnan\(PREV_OUTPTS\)[^']*?\(1\/\(([\d.]+)\*TB\)\)[^']*'/g, 'dejitter@$1fps')
+        .replace(/mpdecimate=[^,]*/g, 'drop-repeats') || 'passthrough';
+}
+// Drops the card's bit-identical repeats (hi=1: any 8x8 block that differs at
+// all keeps the frame; a real camera frame always differs by sensor noise).
+// max=3 lets at least every 4th frame through, so a frozen "no signal" screen
+// can never starve the program feed into the compositor's stall watchdog.
+const DROP_REPEATS = 'mpdecimate=hi=1:lo=1:frac=0:max=3';
+
 function smoothProgramRates(sourceFps) {
     if (!(sourceFps > 0)) return [];
     return [25, 30, 50, 60].filter((r) => {
@@ -292,6 +331,7 @@ function planNormalization(measurement, scan, { programFps }) {
     if (cycle) {
         steps.push(`decimate=cycle=${cycle}`);
         sourceFps = sourceFps ? sourceFps * (cycle - 1) / cycle : null;
+        if (sourceFps) steps.push(dejitterFilter(snapRate(sourceFps) || sourceFps));
         notes.push(`the device repeats 1 frame in every ${cycle} — removing the repeats restores the camera's own ${snapRate(sourceFps) || round(sourceFps, 2)} fps`);
     }
     // Repeats that are NOT a clean 1-in-N (e.g. a 25 fps camera held over a
@@ -301,6 +341,7 @@ function planNormalization(measurement, scan, { programFps }) {
     const d = m.duplicates || {};
     const irregular = !cycle && !d.staticContent && d.fraction > 0.05 && m.contentRate;
     if (irregular) {
+        steps.push(DROP_REPEATS, dejitterFilter(m.contentRate));
         notes.push(`the device repeats frames irregularly (${Math.round(d.fraction * 100)}% repeats): ${m.deliveredRate || m.arrivalFps} delivered but only ${m.contentFps} unique — the camera's real rate is about ${m.contentRate} fps`);
     }
     const interlaced = scan && scan.mode === 'interlaced';
@@ -312,8 +353,10 @@ function planNormalization(measurement, scan, { programFps }) {
     const snapped = snapRate(sourceFps) || (sourceFps ? round(sourceFps, 3) : null);
     let rate = rateStep(snapped, programFps);
     if (irregular) {
-        const same = Math.abs(m.contentRate - programFps) / programFps < 0.02;
-        rate = { kind: 'irregular', filter: `fps=${programFps}`, judder: !same, reason: `${m.contentRate} fps of real motion arrives with irregular repeats${same ? '' : `, and ${programFps} is not that rate`}` };
+        // Repeats removed and re-timed above: from here it is an ordinary
+        // source at the unique rate.
+        rate = rateStep(m.contentRate, programFps);
+        if (rate.judder) rate.reason = `${m.contentRate} fps of real camera motion${programFps > m.contentRate ? ` — ${programFps} would repeat frames` : ` does not divide evenly into ${programFps}`}`;
     }
     if (rate.filter) steps.push(rate.filter);
     const smooth = irregular ? [m.contentRate] : smoothProgramRates(snapped);
@@ -325,7 +368,7 @@ function planNormalization(measurement, scan, { programFps }) {
         // the delivery rate — that is what every message must name.
         sourceFps: irregular ? m.contentRate : snapped, programFps: Number(programFps) || null,
         rate, smoothRates: smooth, cadence: rate.judder ? 'judder' : 'clean',
-        chain: steps.join(','), notes,
+        chain: steps.join(','), chainLabel: chainLabel(steps.join(',')), notes,
     };
 }
 
@@ -392,6 +435,10 @@ function stageVerdicts(report) {
     else if (m.duplicates.cycle) push('CONTENT', 'warn', `device repeats 1 frame in ${m.duplicates.cycle}: ${m.arrivalFps} delivered, ${m.contentFps} real (${m.contentRate || '?'} fps camera)`);
     else if (m.duplicates.fraction > 0.02) push('CONTENT', 'warn', `${Math.round(m.duplicates.fraction * 100)}% repeated frames, irregular`);
     else push('CONTENT', 'ok', `${m.contentFps} unique frames/s`);
+    if (m.uniqueSpacing && m.uniqueSpacing.evenPercent != null) {
+        const e = m.uniqueSpacing.evenPercent;
+        push('SMOOTHNESS', e >= 97 ? 'ok' : 'warn', `${e}% of new frames arrive at an even interval (${m.uniqueSpacing.medianMs} ms)${e >= 97 ? '' : ' — the rest are early/late: visible judder'}`);
+    }
     const scan = report.scan || {};
     push('SCAN', scan.mode === 'interlaced' ? 'warn' : 'ok', `${scan.mode || 'unknown'} (${scan.basis || ''})`);
     const plan = report.plan || {};
@@ -433,6 +480,7 @@ function compareReports(a, b) {
         ['NEGOTIATED FPS', (r) => r.negotiated && r.negotiated.fps],
         ['ACTUAL FPS (arrival)', (r) => r.measurement.arrivalFps],
         ['UNIQUE FPS (content)', (r) => r.measurement.contentFps],
+        ['EVEN SPACING', (r) => r.measurement.uniqueSpacing && r.measurement.uniqueSpacing.evenPercent != null && `${r.measurement.uniqueSpacing.evenPercent}%`],
         ['SCAN MODE', (r) => r.scan && `${r.scan.mode} (${r.scan.fieldOrder})`],
         ['PIXEL FORMAT', (r) => r.negotiated && `${r.negotiated.pixFmt || '?'} (${r.negotiated.codec}${r.negotiated.fourcc ? '/' + r.negotiated.fourcc : ''})`],
         ['AUDIO FORMAT', (r) => r.audio && `${r.audio.codec} ${r.audio.sampleRate} Hz ${r.audio.channels}`],
@@ -443,7 +491,7 @@ function compareReports(a, b) {
         ['DUPLICATED FRAMES', (r) => `${r.measurement.duplicates.count}${r.measurement.duplicates.cycle ? ` (1 in ${r.measurement.duplicates.cycle})` : ''}`],
         ['CPU (system)', (r) => r.cpu && `${r.cpu.percent}%`],
         ['OLD CHAIN CADENCE', (r) => r.plan && r.plan.legacyCadence],
-        ['NEW CHAIN', (r) => r.plan && (r.plan.chain || 'passthrough')],
+        ['NEW CHAIN', (r) => r.plan && (r.plan.chainLabel || r.plan.chain || 'passthrough')],
         ['NEW CHAIN CADENCE', (r) => r.plan && r.plan.cadence],
         ['HEALTH', (r) => r.health],
     ];
@@ -486,7 +534,7 @@ function cpuTimes() {
 }
 
 // spawnFfmpeg(args, opts) → ChildProcess. Resolves with a report; never rejects.
-function runProbe({ spawnFfmpeg, inputArgs, seconds = 6, label, device, requested, programFps = 30 }) {
+function runProbe({ spawnFfmpeg, inputArgs, seconds = 6, label, device, requested, programFps = 30, file = false }) {
     return new Promise((resolve) => {
         const frames = [];
         let text = '';
@@ -501,9 +549,9 @@ function runProbe({ spawnFfmpeg, inputArgs, seconds = 6, label, device, requeste
         }
         let firstFrameAt = null;
         const stopTimer = setInterval(() => {
-            if (firstFrameAt && Date.now() - firstFrameAt >= seconds * 1000) { clearInterval(stopTimer); try { proc.stdin.write('q'); } catch (e) {} }
+            if (!file && firstFrameAt && Date.now() - firstFrameAt >= seconds * 1000) { clearInterval(stopTimer); try { proc.stdin.write('q'); } catch (e) {} }
         }, 100);
-        const hardTimer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch (e) {} }, (seconds + 20) * 1000);
+        const hardTimer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch (e) {} }, (file ? 600 : seconds + 20) * 1000);
         proc.stdin && proc.stdin.on('error', () => {});
         proc.on('error', () => {});
         proc.stderr.on('data', (chunk) => {
@@ -514,7 +562,7 @@ function runProbe({ spawnFfmpeg, inputArgs, seconds = 6, label, device, requeste
                 const line = buf.slice(0, idx).replace(/\r$/, '');
                 buf = buf.slice(idx + 1);
                 const f = parseShowinfoLine(line);
-                if (f) { if (!firstFrameAt) firstFrameAt = now; frames.push({ ...f, wallMs: now }); continue; }
+                if (f) { if (!firstFrameAt) firstFrameAt = now; frames.push({ ...f, wallMs: file ? f.pts * 1000 : now }); continue; }
                 if (CAPTURE_DROP_RE.test(line)) captureDrops++;
                 if (/color_range:/.test(line)) continue;
                 if (text.length < 200000) text += line + '\n';
@@ -539,7 +587,7 @@ function formatReport(r) {
     if (!m.ok) { lines.push(`  ✗ ${m.error}`); if (r.stderrTail) lines.push(...r.stderrTail.map((l) => '    ' + l)); return lines.join('\n'); }
     for (const s of r.stages) lines.push(`  ${s.status === 'ok' ? '✓' : s.status === 'warn' ? '⚠' : '✗'} ${s.stage.padEnd(16)} ${s.detail}`);
     if (r.plan) {
-        lines.push(`  → normalize: ${r.plan.chain || 'passthrough'}  (device stamps: ${r.plan.deviceTimestamps})`);
+        lines.push(`  → normalize: ${r.plan.chainLabel || r.plan.chain || 'passthrough'}  (device stamps: ${r.plan.deviceTimestamps})`);
         for (const n of r.plan.notes) lines.push(`    • ${n}`);
     }
     lines.push(`  HEALTH: ${r.health}`);
@@ -561,7 +609,7 @@ function formatComparison(a, b) {
 module.exports = {
     parseInputVideoStream, parseInputAudioStream, parseShowinfoLine, parseIdet,
     analyseFrames, scanVerdict, planNormalization, planFromAdvertised, rateStep,
-    smoothProgramRates, snapRate, legacyChainCadence, stageVerdicts, buildReport, compareReports,
+    smoothProgramRates, snapRate, legacyChainCadence, dejitterFilter, DROP_REPEATS, chainLabel, stageVerdicts, buildReport, compareReports,
     dshowInputArgs, probeArgs, runProbe, formatReport, formatComparison, CAPTURE_DROP_RE,
 };
 
@@ -598,7 +646,20 @@ if (require.main === module) {
             return;
         }
         let out;
-        if (has('--compare')) {
+        if (has('--file')) {
+            // A RECORDING (vMix's or ours): count unique frames and how evenly
+            // they are spaced — the same numbers for both, no eyeballing.
+            const files = argv.slice(argv.indexOf('--file') + 1).filter((x) => !x.startsWith('--'));
+            const reps = [];
+            for (const f of files) {
+                console.log(`analysing "${f}" …`);
+                const r = await runProbe({ spawnFfmpeg, inputArgs: ['-t', String(Number(opt('--seconds', 20))), '-i', f], seconds: 0, file: true, label: path.basename(f), device: f, programFps });
+                console.log('\n' + formatReport(r) + '\n');
+                reps.push(r);
+            }
+            if (reps.length === 2) console.log(formatComparison(reps[0], reps[1]));
+            out = reps;
+        } else if (has('--compare')) {
             const i = argv.indexOf('--compare');
             const a = await probeOne(argv[i + 1], `A (control) ${argv[i + 1]}`);
             const b = await probeOne(argv[i + 2], `B (problem) ${argv[i + 2]}`);
@@ -609,7 +670,7 @@ if (require.main === module) {
             console.log('\n' + formatReport(r));
             out = r;
         } else {
-            console.log('usage:\n  node sourceProbe.js --list\n  node sourceProbe.js --device "<name>" [--size 1920x1080] [--fps 60] [--program-fps 50] [--seconds 6] [--audio "<name>"]\n  node sourceProbe.js --compare "<control device>" "<problem device>" [--program-fps 30]');
+            console.log('usage:\n  node sourceProbe.js --file "<vmix recording>" "<master.mp4>" [--seconds 20]\n  node sourceProbe.js --list\n  node sourceProbe.js --device "<name>" [--size 1920x1080] [--fps 60] [--program-fps 50] [--seconds 6] [--audio "<name>"]\n  node sourceProbe.js --compare "<control device>" "<problem device>" [--program-fps 30]');
             return;
         }
         const file = opt('--out', null);

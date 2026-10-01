@@ -4100,7 +4100,7 @@ app.get('/status', async (req, res) => {
             const m = captureModes.captureMatch(asked, w && w.seconds >= 5 ? w.arrivalFps : null);
             m.contentFps = w ? w.contentFps : null;
             m.repeatCycle = w ? w.repeatCycle : null;
-            m.chain = compositor.sourcePlan ? (compositor.sourcePlan.chain || 'passthrough') : null;
+            m.chain = compositor.sourcePlan ? sourceProbe.chainLabel(compositor.sourcePlan.chain) : null;
             m.cadence = compositor.sourcePlan ? compositor.sourcePlan.cadence : null;
             m.smoothRates = compositor.sourcePlan ? compositor.sourcePlan.smoothRates : null;
             return m;

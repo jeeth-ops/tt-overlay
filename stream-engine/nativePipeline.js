@@ -1152,7 +1152,7 @@ class Compositor extends EventEmitter {
         this.sourcePlan = plan;
         this.sourceReport = report;
         SOURCE_PLAN_CACHE.set(key, { plan, report });
-        this.log(`[compositor] camera chain: ${plan.chain || 'passthrough'} → program ${this.fps} fps (${plan.cadence === 'judder' ? '⚠ JUDDER — see above' : 'clean cadence'}); one program clock for camera, audio and overlay${plan.timestamps === 'device' ? ' — OVERRIDDEN to device stamps' : ''}`);
+        this.log(`[compositor] camera chain: ${sourceProbe.chainLabel(plan.chain)} → program ${this.fps} fps (${plan.cadence === 'judder' ? '⚠ JUDDER — see above' : 'clean cadence'}); one program clock for camera, audio and overlay${plan.timestamps === 'device' ? ' — OVERRIDDEN to device stamps' : ''}`);
     }
 
     // Live view of the capture stage for /status.

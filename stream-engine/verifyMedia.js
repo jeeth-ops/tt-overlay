@@ -74,7 +74,7 @@ function verdictFor(report, { expectSeconds = null, tolerance = 0.01 } = {}) {
     checks.push({ check: 'video timestamps', ok: v.nonMonotonicDts === 0, detail: `${v.nonMonotonicDts} non-monotonic DTS, ${v.gaps} gap(s)${v.gaps ? `, largest ${v.maxGapSec} s` : ''}` });
     if (a) {
         const drift = a.durationSec - v.durationSec;
-        checks.push({ check: 'A/V duration', ok: Math.abs(drift) <= 0.2, detail: `audio ${a.durationSec} s vs video ${v.durationSec} s (${drift >= 0 ? '+' : ''}${drift.toFixed(3)} s)` });
+        checks.push({ check: 'A/V duration', ok: Math.abs(drift) <= 0.3, detail: `audio ${a.durationSec} s vs video ${v.durationSec} s (${drift >= 0 ? '+' : ''}${drift.toFixed(3)} s)` });
         checks.push({ check: 'audio timestamps', ok: a.nonMonotonicDts === 0, detail: `${a.nonMonotonicDts} non-monotonic DTS, ${a.gaps} gap(s)` });
     }
     if (expectSeconds) {

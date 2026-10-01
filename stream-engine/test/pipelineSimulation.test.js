@@ -37,6 +37,9 @@ const DEVICES = {
   'AVMATRIX honest 60':      { src: `${cam(60)},realtime`, advertised: 60.0002 },
   // A 50 Hz (PAL) Sony behind a card that only offers 60: the card repeats 1 frame in 6.
   'AVMATRIX + Sony 50 (repeat)': { src: `${cam(50)},fps=60,realtime`, advertised: 60.0002, contentFps: 50 },
+  // FIELD: the operator's UC2018 on 720x480 carrying a 25p Sony — each camera
+  // frame held over 2-3 of the card's 60 slots.
+  'AVMATRIX + Sony 25p (held)': { src: `${cam(25)},fps=60,realtime`, advertised: 60.0002, contentFps: 25 },
   // 50 real frames a second, STAMPED as if they were 60.
   'AVMATRIX dishonest stamps':   { src: `${cam(50)},realtime,setpts=N/60/TB`, advertised: 60.0002, contentFps: 50 },
 };
@@ -100,7 +103,7 @@ async function scenario({ device, programFps, recordSec = 20, legacy = false }) 
   const logs = [];
   const comp = new np.Compositor({ spawnFfmpeg: makeSpawn(device), execPath: null, overlayUrl: 'http://127.0.0.1:1/none', width: W, height: H, fps: programFps, log: (l) => logs.push(l) });
   comp.captureTarget = { fps: programFps };
-  if (legacy) comp.sourcePlan = { chain: `fps=${programFps}`, timestamps: 'wallclock', cadence: '?', notes: [], deliveredFps: DEVICES[device].advertised };
+  if (legacy) comp.sourcePlan = { chain: typeof legacy === 'string' ? legacy : `fps=${programFps}`, timestamps: 'wallclock', cadence: '?', notes: [], deliveredFps: DEVICES[device].advertised };
   comp.addRef('recorder');
   const started = await comp.ensureRunning({ cameraDeviceName: device, audioDeviceName: 'mic' });
   assert.ok(started.ok, started.error);
@@ -180,6 +183,12 @@ function smoothShare(h, want) { const tot = Object.values(h).reduce((a, b) => a 
   await run('program 30p — CANNOT be smooth, and the plan says so', { device: 'AVMATRIX + Sony 50 (repeat)', programFps: 30 }, (r) => {
     realTime(r); assert.strictEqual(r.plan.cadence, 'judder'); assert.deepStrictEqual(r.plan.smoothRates, [25, 50]);
   });
+  console.log('\nFIELD: Sony 25p held over a 60-slot card (the operator\'s UC2018 at 720x480)');
+  await run('program 25p — repeats dropped, re-timed at the measured 25 fps, every camera frame once', { device: 'AVMATRIX + Sony 25p (held)', programFps: 25 }, (r) => {
+    realTime(r); assert.ok(/dejitter@25fps/.test(sp.chainLabel(r.plan.chain)), r.plan.chain); assert.strictEqual(r.plan.cadence, 'clean');
+    assert.ok(smoothShare(r.steps, 1) > 0.95, fmtSteps(r.steps));
+  });
+  await run('OLD chain (fps=25) on the same held source — reported for comparison', { device: 'AVMATRIX + Sony 25p (held)', programFps: 25, legacy: 'fps=25' }, (r) => { realTime(r); });
   console.log('\nA card that stamps 50 real frames as 60');
   await run('probe catches the stamps; the program clock keeps the file real-time', { device: 'AVMATRIX dishonest stamps', programFps: 50 }, (r) => {
     assert.ok(/nominal/.test(r.plan.deviceTimestamps), r.plan.deviceTimestamps); realTime(r);
