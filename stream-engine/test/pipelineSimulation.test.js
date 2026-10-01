@@ -45,6 +45,8 @@ const DEVICES = {
   // FIELD: the operator's UC2018 on 720x480 carrying a 25p Sony — each camera
   // frame held over 2-3 of the card's 60 slots.
   'AVMATRIX + Sony 25p (held)': { src: `${cam(25)},fps=60,realtime${DEVCLK}`, advertised: 60.0002, contentFps: 25 },
+  // A black, motionless camera: only the overlay can change the picture.
+  'Static camera 25': { src: `color=black:s=${W}x${H}:r=25,format=yuv420p,realtime${DEVCLK}`, advertised: 25 },
   // 50 real frames a second, STAMPED as if they were 60.
   'AVMATRIX dishonest stamps':   { src: `${cam(50)},realtime,setpts=N/60/TB`, advertised: 60.0002, contentFps: 50 },
 };
@@ -106,7 +108,7 @@ function steps(frames) {
 async function scenario({ device, programFps, recordSec = 20, legacy = false }) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'se-sim-'));
   const logs = [];
-  const comp = new np.Compositor({ spawnFfmpeg: makeSpawn(device), execPath: null, overlayUrl: 'http://127.0.0.1:1/none', width: W, height: H, fps: programFps, log: (l) => logs.push(l) });
+  const comp = new np.Compositor({ spawnFfmpeg: makeSpawn(device), execPath: process.env.SIM_CHROME || null, overlayUrl: process.env.SIM_OVERLAY_URL || 'http://127.0.0.1:1/none', width: W, height: H, fps: programFps, log: (l) => logs.push(l) });
   comp.captureTarget = { fps: programFps };
   if (legacy) comp.sourcePlan = { chain: typeof legacy === 'string' ? legacy : `fps=${programFps}`, timestamps: 'wallclock', cadence: '?', notes: [], deliveredFps: DEVICES[device].advertised };
   comp.addRef('recorder');
@@ -133,6 +135,13 @@ async function scenario({ device, programFps, recordSec = 20, legacy = false }) 
   const verify = await verifyMedia({ ffmpegPath: FFMPEG, file: outFile });
   const last = rb.frames[rb.frames.length - 1];
   const fileSec = last ? last.t + 1 / programFps : 0;
+  if (process.env.SIM_OVERLAY_URL) {
+    // how often the OVERLAY region of the recording changes per second
+    const r2 = spawnSync(FFMPEG, ['-hide_banner', '-nostats', '-loglevel', 'info', '-i', outFile, '-map', '0:v', '-vf', `crop=${W}:${Math.round(H * 0.25)}:0:${Math.round(H * 0.55)},showinfo`, '-f', 'null', '-'], { encoding: 'utf8', maxBuffer: 64 << 20 });
+    const cs = [...r2.stderr.matchAll(/checksum:([0-9A-F]{8})/g)].map((m) => m[1]);
+    let changes = 0; for (let i = 1; i < cs.length; i++) if (cs[i] !== cs[i - 1]) changes++;
+    console.log(`      overlay region changed ${changes} times in ${cs.length} frames (${(changes / (cs.length / programFps)).toFixed(1)} per second)`);
+  }
   if (process.env.SIM_KEEP) console.log('kept', outFile); else fs.rmSync(tmp, { recursive: true, force: true });
   return { device, programFps, legacy, verify, plan: comp.sourcePlan, capture, wallSec, fileSec, frames: rb.frames.length, audioSec: rb.audioSec, steps: steps(rb.frames.slice(5)), logs };
 }
@@ -194,6 +203,10 @@ function smoothShare(h, want) { const tot = Object.values(h).reduce((a, b) => a 
     assert.ok(smoothShare(r.steps, 1) > 0.95, fmtSteps(r.steps));
   });
   await run('OLD chain (fps=25) on the same held source — reported for comparison', { device: 'AVMATRIX + Sony 25p (held)', programFps: 25, legacy: 'fps=25' }, (r) => { realTime(r); });
+  if (process.env.SIM_OVERLAY_URL) {
+    console.log('\nOVERLAY: a real Chromium rendering an animated page, over a motionless camera');
+    await run('the overlay animates at the program rate (it was a fixed 15 fps)', { device: 'Static camera 25', programFps: 25 }, (r) => { realTime(r); });
+  }
   console.log('\nA card that stamps 50 real frames as 60');
   await run('probe catches the stamps; the program clock keeps the file real-time', { device: 'AVMATRIX dishonest stamps', programFps: 50 }, (r) => {
     assert.ok(/nominal/.test(r.plan.deviceTimestamps), r.plan.deviceTimestamps); realTime(r);

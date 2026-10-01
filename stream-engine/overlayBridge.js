@@ -31,12 +31,17 @@ function available() {
 }
 
 class OverlayBridge extends EventEmitter {
-    constructor({ execPath, url, width, height }) {
+    constructor({ execPath, url, width, height, scale = 1 }) {
         super();
         this.execPath = execPath;
         this.url = url;
         this.width = width;
         this.height = height;
+        // CSS layout size is width x height (the page's 1920-wide design);
+        // the PIXELS rendered are scaled by `scale` (deviceScaleFactor), so a
+        // 1280x720 program gets a 1280x720 PNG with the 1920 layout intact —
+        // a third of the pixels for Chromium to encode and ffmpeg to decode.
+        this.scale = Number(scale) > 0 ? Number(scale) : 1;
         this.browser = null;
         this.page = null;
         this.client = null;
@@ -65,7 +70,7 @@ class OverlayBridge extends EventEmitter {
                 '--disable-dev-shm-usage',
                 `--window-size=${this.width},${this.height}`,
             ],
-            defaultViewport: { width: this.width, height: this.height, deviceScaleFactor: 1 },
+            defaultViewport: { width: this.width, height: this.height, deviceScaleFactor: this.scale },
         });
         if (this._stopped) { await this._closeBrowser(); throw new Error('overlay bridge stopped while starting'); }
         this.browser.on('disconnected', () => {
@@ -113,8 +118,8 @@ class OverlayBridge extends EventEmitter {
         await this.client.send('Page.startScreencast', {
             format: 'png', // PNG, not JPEG — JPEG has no alpha channel, and the transparent backdrop above depends on one
             quality: 100,
-            maxWidth: this.width,
-            maxHeight: this.height,
+            maxWidth: Math.round(this.width * this.scale),
+            maxHeight: Math.round(this.height * this.scale),
             everyNthFrame: 1,
         });
         this.startedAt = Date.now();

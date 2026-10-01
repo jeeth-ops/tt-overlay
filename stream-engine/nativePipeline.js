@@ -70,17 +70,35 @@ const sourceProbe = require('./sourceProbe');
 // full 30fps of its own repaint cadence; this just needs to be fast
 // enough that a score change reaches the program feed without a
 // noticeable delay.
-const OVERLAY_FPS = 15;
+const OVERLAY_FPS = 15; // legacy default; the compositor uses overlayFpsFor(programFps)
+// 🛠 The overlay ran at a fixed 15 fps against a 25p program, so every
+// scoreboard animation stepped at 15 fps while the video moved at 25 —
+// "overlay bahot laggy" in the field. It now follows the program rate (half
+// of it above 30, where 25/30 overlay frames are plenty and PNG decode is the
+// cost). Chromium was measured delivering ~60 frames/s at 1280x720 (below).
+function overlayFpsFor(programFps) {
+    const p = Number(programFps) || 25;
+    return p <= 30 ? p : Math.round(p / 2);
+}
 // How far ahead of the camera the overlay timeline is placed when the camera
 // runs on its device clock (see buildCompositorArgs).
-const OVERLAY_LEAD_SEC = Number(process.env.STREAM_ENGINE_OVERLAY_LEAD_SEC) || 1.5;
+// 🛠 Was 1.5 s, which made every score change appear 1.5 s after the ball on
+// screen ("overlay slow"). The lead only has to cover one overlay frame plus
+// the arrival jitter of its stamps; 0.35 s does, with room for clock drift.
+const OVERLAY_LEAD_SEC = Number(process.env.STREAM_ENGINE_OVERLAY_LEAD_SEC) || 0.35;
 // The width the overlay pages are designed for; height follows the program
 // aspect so a 4:3 program is not squashed (720x480 -> 1920x1280).
 const OVERLAY_DESIGN_WIDTH = 1920;
+// Layout at the design width (so nothing is oversized or cut), but render
+// the PIXELS at the program width via deviceScaleFactor. Measured with the
+// real Chromium: 1920 layout at scale 0.667 -> 1280x720 PNG, 62 KB, ~60
+// frames/s, versus 268 KB at full 1920 — the overlay was the heaviest thing
+// left in the graph.
 function overlayRenderSize(programWidth, programHeight) {
+    const pw = Number(programWidth) || 1920, ph = Number(programHeight) || 1080;
     const w = OVERLAY_DESIGN_WIDTH;
-    const h = Math.round((w * (Number(programHeight) || 1080)) / (Number(programWidth) || 1920) / 2) * 2;
-    return { width: w, height: h };
+    const h = Math.round((w * ph) / pw / 2) * 2;
+    return { width: w, height: h, scale: Math.min(1, pw / w) };
 }
 // 🖥️ PROGRAM PREVIEW — what the operator actually watches in the panel.
 // This used to be 2fps at 640px wide, which is a slideshow, not a monitor:
@@ -747,7 +765,7 @@ function buildCompositorArgs({ cameraDeviceName, audioDeviceName, width, height,
         // 'q' keypress, so Stop ends this process gracefully and the
         // camera driver is released properly instead of TerminateProcess.
         // Tiny probe: the stream is fully described by its first PNG.
-        '-f', 'image2pipe', '-vcodec', 'png', '-framerate', String(OVERLAY_FPS), '-thread_queue_size', '512',
+        '-f', 'image2pipe', '-vcodec', 'png', '-framerate', String(overlayFpsFor(fps)), '-thread_queue_size', '512',
         '-probesize', '32', '-analyzeduration', '0', ...overlayClock, '-i', overlayInputUrl,
         // Input 1: mic/capture-card audio (separate dshow input, NOT combined
         // as one "video=X:audio=Y" graph) — 🩹 CONFIRMED IN THE FIELD: the
@@ -1240,8 +1258,8 @@ class Compositor extends EventEmitter {
         // ran off the frame (field report: "overlay bahot bada, cut ho
         // gaya"). Render at the design width with the program's aspect, and
         // let the compositor scale it down once ([0:v]scale=W:H).
-        const { width: ow, height: oh } = overlayRenderSize(this.width, this.height);
-        const overlay = new OverlayBridge({ execPath: this.execPath, url: this.overlayUrl, width: ow, height: oh });
+        const { width: ow, height: oh, scale } = overlayRenderSize(this.width, this.height);
+        const overlay = new OverlayBridge({ execPath: this.execPath, url: this.overlayUrl, width: ow, height: oh, scale });
         overlay.on('frame', (png) => { this.overlayFrame = png; });
         // Chromium dying mid-match must not take the program feed down:
         // the pacer keeps re-sending the last overlay frame while a new
@@ -1278,7 +1296,7 @@ class Compositor extends EventEmitter {
                 socket.on('close', () => { leg.sockets.delete(socket); if (leg.pacer) { leg.pacer.stop(); leg.pacer = null; } });
                 if (leg.pacer) { socket.destroy(); return; } // only ever one reader
                 socket.setNoDelay(true);
-                leg.pacer = new OverlayPacer(socket, () => this.overlayFrame || TRANSPARENT_PNG, OVERLAY_FPS);
+                leg.pacer = new OverlayPacer(socket, () => this.overlayFrame || TRANSPARENT_PNG, overlayFpsFor(this.fps));
             });
             leg.previewServer = await listenLoopback((socket) => {
                 leg.sockets.add(socket);
@@ -1642,6 +1660,8 @@ module.exports = {
     makeRepeatSuppressingLogger,
     setProcessPriority,
     OVERLAY_FPS,
+    overlayFpsFor,
+    OVERLAY_LEAD_SEC,
     parseDshowVideoModes,
     pickCameraMode,
     pickCaptureMode,

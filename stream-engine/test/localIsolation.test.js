@@ -142,9 +142,16 @@ test('the placeholder overlay is REALLY transparent (it used to be 50% blue over
 test('the overlay is rendered at its 1920-wide design size, not the (smaller) program size', () => {
   const { overlayRenderSize } = require('../nativePipeline');
   // field: a 1280x720 / 720x480 program rendered the page in a small viewport and the scoreboard ran off the frame
-  assert.deepStrictEqual(overlayRenderSize(1920, 1080), { width: 1920, height: 1080 });
-  assert.deepStrictEqual(overlayRenderSize(1280, 720), { width: 1920, height: 1080 });
-  assert.deepStrictEqual(overlayRenderSize(720, 480), { width: 1920, height: 1280 }, '4:3-ish program keeps its aspect');
+  assert.deepStrictEqual(overlayRenderSize(1920, 1080), { width: 1920, height: 1080, scale: 1 });
+  // laid out at 1920, but RENDERED at the program's pixels (deviceScaleFactor)
+  assert.deepStrictEqual(overlayRenderSize(1280, 720), { width: 1920, height: 1080, scale: 1280 / 1920 });
+  assert.deepStrictEqual(overlayRenderSize(720, 480), { width: 1920, height: 1280, scale: 720 / 1920 }, '4:3-ish program keeps its aspect');
+});
+
+test('the overlay follows the program rate (it was a fixed 15 fps against 25p video) and leads by well under a second', () => {
+  const { overlayFpsFor, OVERLAY_LEAD_SEC } = require('../nativePipeline');
+  assert.deepStrictEqual([25, 30, 50, 60].map(overlayFpsFor), [25, 30, 25, 30]);
+  assert.ok(OVERLAY_LEAD_SEC < 0.5, `score changes would trail the picture by ${OVERLAY_LEAD_SEC}s`);
 });
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
