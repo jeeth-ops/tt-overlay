@@ -993,15 +993,22 @@ function matchStatusOf(m){
 }
 const MATCH_STATUS_LABEL = { live:'Live', progress:'In Progress', done:'Completed', abandoned:'Abandoned', upcoming:'Upcoming' };
 const PIN_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-12a7 7 0 0 1 14 0c0 5.8-7 12-7 12z"/><circle cx="12" cy="9" r="2.5"/></svg>';
-// "Starts Sat, 5 Oct · 4:00 PM" — a scheduled fixture's own date/time.
+// A fixture's date as 'YYYY-MM-DD' — fixtures are DATE ONLY (scheduledDate);
+// an older fixture that carried a full timestamp contributes only its date.
+function upcomingDateOf(m){
+  if(!m) return '';
+  if(/^\d{4}-\d{2}-\d{2}$/.test(m.scheduledDate || '')) return m.scheduledDate;
+  if(m.scheduledAt){ const d = new Date(m.scheduledAt); if(!isNaN(d)) return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+  return '';
+}
+// "Sat, 10 Oct 2026" — built from the date parts, so no viewer's time zone
+// can show it as the day before.
 function upcomingWhen(m){
-  if(!m || !m.scheduledAt) return '';
-  const d = new Date(m.scheduledAt);
-  if(isNaN(d)) return '';
-  try {
-    const day = d.toLocaleDateString(undefined, { weekday:'short', day:'numeric', month:'short' });
-    return m.scheduledHasTime ? `${day} · ${d.toLocaleTimeString(undefined, { hour:'numeric', minute:'2-digit' })}` : day;
-  } catch(e){ return ''; }
+  const iso = upcomingDateOf(m);
+  if(!iso) return '';
+  const [y, mo, d] = iso.split('-').map(Number);
+  try { return new Date(y, mo - 1, d).toLocaleDateString(undefined, { weekday:'short', day:'numeric', month:'short', year:'numeric' }); }
+  catch(e){ return iso; }
 }
 function matchCardHtml(m, { href, status, featured = false }){
   const A = m.teamA || {}, B = m.teamB || {};
@@ -1293,7 +1300,7 @@ function renderPortal(data, token){
   const liveRoomsRaw = new Set([data.live && data.live.roomId, ...(((data.live && data.live.matches) || []).map(x => x && x.roomId))].filter(Boolean));
   const allMatches = data.matches || [];
   const upcoming = allMatches.filter(m => m && m.upcoming === true && !(m.roomId && liveRoomsRaw.has(m.roomId)))
-    .sort((a, b) => String(a.scheduledAt || '9').localeCompare(String(b.scheduledAt || '9')));
+    .sort((a, b) => (upcomingDateOf(a) || '9').localeCompare(upcomingDateOf(b) || '9'));
   data = { ...data, matches: allMatches.filter(m => !upcoming.includes(m)) };
   tournamentDataCache = data;
   tournamentTokenCache = token;

@@ -139,6 +139,7 @@ let matchRecordsCollection = null;
 // happens to occupy that match's live room. See /api/cricket/match-resume-state.
 let matchPanelStatesCollection = null;
 let playersCollection = null;
+let teamsCollection = null;
 // 🛟 Append-only version history of every match record (see
 // versionMatchRecord below) — the safety net that makes any overwrite of a
 // saved scorecard reversible from the Recovery Centre (/recover).
@@ -195,6 +196,10 @@ async function connectMongo() {
         // routes below. nameKeys is intentionally an array (not a single
         // field) so merges are just a $push, never a rewrite of history.
         playersCollection = mongoDb.collection('players');
+        // 🏏 SAVED TEAMS — one reusable team per owner + name (see the SAVED
+        // TEAMS routes). Match records keep their own snapshot of each team,
+        // so editing a saved team never rewrites a played match.
+        teamsCollection = mongoDb.collection('teams');
         // 🛟 See the MATCH DATA SAFETY NET section below.
         matchVersionsCollection = mongoDb.collection('matchRecordVersions');
         ballsArchiveCollection = mongoDb.collection('ballsArchive');
@@ -245,6 +250,8 @@ async function connectMongo() {
         // owner, resolves straight to the right playerId doc.
         await playersCollection.createIndex({ playerId: 1 }, { unique: true });
         await playersCollection.createIndex({ ownerUid: 1, nameKeys: 1 }, { unique: true });
+        await teamsCollection.createIndex({ ownerUid: 1, teamId: 1 }, { unique: true });
+        await teamsCollection.createIndex({ ownerUid: 1, nameKey: 1 }, { unique: true });
         await matchVersionsCollection.createIndex({ ownerUid: 1, matchId: 1, versionedAt: -1 });
         await ballsArchiveCollection.createIndex({ matchId: 1, archivedAt: -1 });
         // 🛟 One row per delivery, even if the panel has to send it more than
@@ -4584,6 +4591,137 @@ app.get('/api/players/:playerId/tournaments', async (req, res) => {
     } catch (err) {
         console.log('Player-tournament-history (by playerId) fetch error:', err);
         res.status(500).json({ success: false, error: 'Could not load tournament history' });
+    }
+});
+
+// ================================================================
+// 🏏 SAVED TEAMS — a team created once (name, logo, colour, players with
+// their permanent player ids) and reused for every later match, instead
+// of being re-typed. One document per owner + team name: saving a team
+// whose name already exists never makes "D Y Patil 2" — it is refused
+// (or, with mode 'ensure', the existing team is handed back).
+//
+// Played matches are untouched by any of this: each match record keeps
+// its own copy of the teams as they were (teamA/teamB + squadA/squadB),
+// and only carries the teamId as a reference. Changing a saved team's
+// logo or players later changes future matches only.
+//
+// Players are never minted here on a whim: a player picked from the
+// account's player list keeps their id (resolvePlayerIdExplicit), and a
+// typed name goes through the same find-or-create the squad "+ Add" uses
+// (resolvePlayerId), so an existing player is reused, not duplicated.
+// ================================================================
+function teamNameKey(name) { return String(name || '').trim().toLowerCase().replace(/\s+/g, ' '); }
+const TEAM_LOGO_MAX_CHARS = 400000; // a panel-compressed logo is ~5–40 KB
+function sanitizeTeamColor(c) {
+    const v = String(c || '').trim();
+    return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v) ? v : '';
+}
+// '' = no logo; null = not an acceptable logo (caller refuses the save)
+function sanitizeTeamLogo(u) {
+    const v = String(u || '').trim();
+    if (!v) return '';
+    if (v.length > TEAM_LOGO_MAX_CHARS) return null;
+    if (/^data:image\/(png|jpe?g|webp|gif);base64,[a-z0-9+/=\s]+$/i.test(v)) return v;
+    if (/^https:\/\/[^\s"'<>]+$/i.test(v)) return v;
+    return null;
+}
+function publicTeam(doc) {
+    if (!doc) return null;
+    return {
+        teamId: doc.teamId, name: doc.name, short: doc.short || '', color: doc.color || '', logoUrl: doc.logoUrl || '',
+        players: (doc.players || []).map(p => ({ id: p.id, name: p.name, isXI: p.isXI !== false })),
+        captainId: doc.captainId || null, wkId: doc.wkId || null,
+        createdAt: doc.createdAt || null, updatedAt: doc.updatedAt || null
+    };
+}
+// input: { teamId?, name, short?, color?, logoUrl?, players:[{id?,name,isXI?}], captainId?, wkId? }
+// mode: 'save' (default) | 'ensure' (an existing team of that name is returned as-is)
+async function saveTeamRecord(ownerUid, input, opts) {
+    opts = opts || {};
+    input = input || {};
+    if (!teamsCollection) return { status: 503, body: { success: false, error: 'Database not configured' } };
+    const name = String(input.name || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+    if (!name) return { status: 400, body: { success: false, error: 'Team name required' } };
+    const nameKey = teamNameKey(name);
+    const logoUrl = sanitizeTeamLogo(input.logoUrl);
+    if (logoUrl === null) return { status: 400, body: { success: false, error: 'The logo must be a PNG, JPG or WebP image (or an https link) under 300 KB' } };
+    const color = sanitizeTeamColor(input.color);
+    const short = String(input.short || '').trim().slice(0, 6);
+    const teamId = typeof input.teamId === 'string' && input.teamId.trim() ? input.teamId.trim() : null;
+
+    const sameName = await teamsCollection.findOne({ ownerUid, nameKey });
+    if (!teamId && sameName) {
+        if (opts.mode === 'ensure') return { status: 200, body: { success: true, team: publicTeam(sameName), reused: true } };
+        return { status: 409, body: { success: false, code: 'TEAM_EXISTS', error: `A team called "${sameName.name}" already exists — pick it from Existing Teams`, team: publicTeam(sameName) } };
+    }
+    if (teamId && sameName && sameName.teamId !== teamId) {
+        return { status: 409, body: { success: false, code: 'TEAM_EXISTS', error: `Another team is already called "${sameName.name}"`, team: publicTeam(sameName) } };
+    }
+    let existing = null;
+    if (teamId) {
+        existing = await teamsCollection.findOne({ ownerUid, teamId });
+        if (!existing) return { status: 404, body: { success: false, error: 'Team not found' } };
+    }
+
+    const players = [];
+    const seen = new Set();
+    for (const p of (Array.isArray(input.players) ? input.players : []).slice(0, 60)) {
+        const pname = String((p && p.name) || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+        if (!pname) continue;
+        const given = p && typeof p.id === 'string' && p.id.trim() ? p.id.trim().slice(0, 64) : null;
+        let id = given ? await resolvePlayerIdExplicit(ownerUid, given, pname) : await resolvePlayerId(ownerUid, pname);
+        if (!id) id = given; // no player database — keep what the panel had
+        if (!id) return { status: 503, body: { success: false, error: 'Players could not be registered — try again' } };
+        if (seen.has(id)) continue;
+        seen.add(id);
+        players.push({ id, name: pname, isXI: !(p && p.isXI === false) });
+    }
+    const captainId = players.some(p => p.id === input.captainId) ? input.captainId : null;
+    const wkId = players.some(p => p.id === input.wkId) ? input.wkId : null;
+    const now = Date.now();
+    const fields = { name, nameKey, short, color, logoUrl, players, captainId, wkId, updatedAt: now };
+
+    if (existing) {
+        await teamsCollection.updateOne({ ownerUid, teamId }, { $set: fields });
+        return { status: 200, body: { success: true, team: publicTeam({ ...existing, ...fields }) } };
+    }
+    const doc = { ownerUid, teamId: 't_' + crypto.randomBytes(6).toString('hex'), ...fields, createdAt: now, createdBy: opts.creatorEmail || null };
+    try {
+        await teamsCollection.insertOne(doc);
+    } catch (err) {
+        if (err && err.code === 11000) { // saved at the same instant from another laptop
+            const again = await teamsCollection.findOne({ ownerUid, nameKey });
+            if (again) return opts.mode === 'ensure'
+                ? { status: 200, body: { success: true, team: publicTeam(again), reused: true } }
+                : { status: 409, body: { success: false, code: 'TEAM_EXISTS', error: `A team called "${again.name}" already exists`, team: publicTeam(again) } };
+        }
+        throw err;
+    }
+    return { status: 201, body: { success: true, team: publicTeam(doc) } };
+}
+
+// GET /api/teams?uid= — this account's saved teams, A→Z.
+app.get('/api/teams', requireAuthorizedCreator, async (req, res) => {
+    if (!teamsCollection) return res.json({ success: true, teams: [] });
+    try {
+        const docs = await teamsCollection.find({ ownerUid: ownerUidFrom(req) }).toArray();
+        res.json({ success: true, teams: docs.map(publicTeam).sort((a, b) => a.name.localeCompare(b.name)) });
+    } catch (err) {
+        console.log('Teams fetch error:', err);
+        res.status(500).json({ success: false, error: 'Could not load teams' });
+    }
+});
+
+// POST /api/teams?uid=  { team: {...}, mode?: 'save' | 'ensure' }
+app.post('/api/teams', requireAuthorizedCreator, async (req, res) => {
+    try {
+        const body = req.body || {};
+        const r = await saveTeamRecord(ownerUidFrom(req), body.team, { mode: body.mode === 'ensure' ? 'ensure' : 'save', creatorEmail: req.creatorEmail });
+        res.status(r.status).json(r.body);
+    } catch (err) {
+        console.log('Team save error:', err);
+        res.status(500).json({ success: false, error: 'Could not save the team' });
     }
 });
 

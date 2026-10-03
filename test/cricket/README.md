@@ -20,7 +20,9 @@ node test/cricket/clip-editor-server-test.js     # Advanced Clip Editor, server:
 node test/cricket/clip-editor-ui-test.js         # Advanced Clip Editor, scorecard UI (owner-only ⋯, preview, save)
 node test/cricket/insert-ball-server-test.js     # Add / Insert / Remove a ball: renumbering, strike, clips, undo, 403
 node test/cricket/insert-ball-ui-test.js         # Add / Insert Ball in Edit Scorecard (owner-only ＋, preview, save)
-node test/cricket/upcoming-match-test.js         # 📅 Schedule Upcoming Match: panel fixture, ▶ Start, tournament page
+node test/cricket/upcoming-match-test.js         # 📅 Upcoming Match (date only) + saved teams, both panels, server registry, tournament page
+node test/cricket/cricket-controls-ui-test.js    # Penalty / Retired Hurt / Overthrow / Super Over / mid-over bowler in BOTH panels
+PANEL=cricket-panel3.html node test/cricket/test.js   # the scoring engine suite against the Stream Engine panel
 ```
 
 `server-test.js` is the one that matters most: it feeds the same ball documents
