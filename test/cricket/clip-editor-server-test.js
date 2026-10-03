@@ -81,8 +81,8 @@ function build(world){
     'validateRosterPlacement', 'deliveryCorrectionDelta', 'clipLinkFromBall', 'clipBallMetaFromBall',
     'correctionInputFromBall', 'panelStateFromMatchRecord', 'oversStrToBallsCount', 'ballsToOversStr'
   ];
-  const asyncNames = ['matchRosters', 'findClipsForDelivery', 'relinkClipsForDelivery', 'isMatchFinished', 'announceDeliveryCorrection',
-    'findDeliveryForClip', 'findCanonicalBall', 'correctDelivery', 'loadClipForEditor', 'runClipEdit', 'requireOwner'];
+  const asyncNames = ['matchRosters', 'findClipsForDelivery', 'relinkClipsForDelivery', 'isMatchFinished', 'announceDeliveryCorrection', 'announceMatchChange',
+    'findDeliveryForClip', 'findCanonicalBall', 'assembleDelivery', 'correctDelivery', 'loadClipForEditor', 'runClipEdit', 'requireOwner'];
   const code = [
     grabConst('VALID_EXTRA_TYPES'), grabConst('CLIP_EDITOR_DISMISSALS'), grabConst('CORRECTION_REPLAY_MS'), grabConst('OWNER_EMAIL'),
     ...names.map(n => grab(n)), ...asyncNames.map(n => grab(n, 'async function ')),

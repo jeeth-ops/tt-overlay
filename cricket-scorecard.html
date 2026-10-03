@@ -2045,6 +2045,12 @@
   .ce-impact{ margin-top:8px; font-size:11.5px; color:var(--text-dim); min-height:16px; }
   .ce-toggle{ display:flex; gap:6px; }
   #ce-root .ed-actions .em-btn{ flex:0 0 auto; min-width:120px; }
+  .ce-seq-row{ display:flex; align-items:center; gap:8px; padding:4px 0; font-size:12px; border-bottom:1px solid var(--border-soft); }
+  .ce-seq-row:last-child{ border-bottom:none; }
+  .ce-seq-row b{ min-width:34px; font-variant-numeric:tabular-nums; }
+  .ce-seq-row span{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-dim); }
+  .ce-seq-row i{ font-style:normal; font-size:9.5px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; padding:2px 6px; border-radius:99px; background:var(--panel-2); color:var(--text-dim); }
+  .ce-seq-row.new{ color:var(--accent); } .ce-seq-row.new span{ color:var(--accent); } .ce-seq-row.new i{ background:var(--accent); color:var(--accent-contrast,#fff); }
   @media (max-width:720px){
     /* one column, in working order: watch → edit → check the summary */
     #ce-root .ce-grid{ display:flex; flex-direction:column; align-items:stretch; gap:0; }
@@ -7502,9 +7508,13 @@ function emRenderOverCard(){
       <b>OVER ${emState.over}${s.edited ? ' <span class="em-chip ce">Edited</span>' : ''}</b>
       <div class="em-ovmeta"><b style="color:var(--text)">${escapeHtml(bowler)}</b>${multi ? ' +' + (s.bowlers.size-1) : ''} · ${s.runs} run${s.runs===1?'':'s'}${s.wkts ? ` • ${s.wkts} wicket${s.wkts===1?'':'s'}` : ''} · ${s.balls} deliver${s.balls===1?'y':'ies'}${s.clips ? ` · ${s.clips} clip${s.clips===1?'':'s'}` : ''}</div>
     </div>
-    <button type="button" class="em-edit-btn" id="em-transfer-over" title="Give this whole over to another bowler — every ball outcome stays the same">🔁 Transfer Over</button>
+    <div class="em-acts">
+      <button type="button" class="em-edit-btn" id="em-add-ball" title="A ball that was never recorded: add it at the end of this over (or use ＋ on a ball to put it before that ball)">＋ Add Ball</button>
+      <button type="button" class="em-edit-btn" id="em-transfer-over" title="Give this whole over to another bowler — every ball outcome stays the same">🔁 Transfer Over</button>
+    </div>
   </div>`;
   document.getElementById('em-transfer-over').onclick = () => openCorrectBowlerPanel(deliveryListCache.matchId, { innings: emState.innings, wrongBowler: bowler, overs: [emState.over] });
+  document.getElementById('em-add-ball').onclick = () => openInsertBall({ endOfOver: emState.over });
 }
 
 function emRowHtml(b){
@@ -7518,9 +7528,17 @@ function emRowHtml(b){
     </div>
     <div class="em-acts">
       <button type="button" class="em-edit-btn em-clipbtn ${st}" data-clip="${escapeHtml(b.ballId)}" aria-label="Clip for ball ${b.over}.${b.ballInOver}: ${clipTxt}">${clipTxt}</button>
+      <button type="button" class="em-edit-btn" data-insert-before="${escapeHtml(b.ballId)}" title="Insert a missing ball before ${b.over}.${b.ballInOver}" aria-label="Insert a missing ball before ${b.over}.${b.ballInOver}">＋</button>
       <button type="button" class="em-edit-btn" data-ball="${escapeHtml(b.ballId)}" aria-label="Edit ball ${b.over}.${b.ballInOver}">EDIT</button>
     </div>
   </div>`;
+}
+// ➕ Add / insert a missing ball — owner only (the whole Edit Scorecard is;
+// the server refuses everyone else with 403 regardless). Opens the same
+// editor as a clip edit, in insert mode — see openClipEditor.
+function openInsertBall(position){
+  if(!isOwner || !deliveryListCache) return;
+  openClipEditor(null, { insert: { matchId: deliveryListCache.matchId, innings: emState.innings, position } });
 }
 
 // Renders only what is on screen: one over normally, or the first N matches
@@ -7537,7 +7555,9 @@ function emRenderList(){
   if(!emState.q && emState.over === 0) pool = pool.filter(b => b.innings === emState.innings);
   const rows = pool.filter(b => emMatchesFilters(b) && emMatchesQuery(b, emState.q));
   if(!rows.length){
-    body.innerHTML = `<div class="em-empty">${searching ? 'No deliveries match your search / filters.' : 'No deliveries in this over.'}${searching ? '<br><button type="button" class="em-more" id="em-clear" style="max-width:220px;margin-top:10px">Clear search &amp; filters</button>' : ''}</div>`;
+    body.innerHTML = `<div class="em-empty">${searching ? 'No deliveries match your search / filters.' : 'No deliveries in this over.'}${searching ? '<br><button type="button" class="em-more" id="em-clear" style="max-width:220px;margin-top:10px">Clear search &amp; filters</button>' : ''}${!searching && emState.over != null ? '<br><button type="button" class="em-more" id="em-add-empty" style="max-width:220px;margin-top:10px">＋ Add a ball to this over</button>' : ''}</div>`;
+    const ae = document.getElementById('em-add-empty');
+    if(ae) ae.onclick = () => openInsertBall({ endOfOver: emState.over });
     const c = document.getElementById('em-clear');
     if(c) c.onclick = () => { emState.q=''; emState.filters.clear(); const i=document.getElementById('em-search'); if(i) i.value=''; emRenderAll(); };
     return;
@@ -7554,6 +7574,8 @@ function emRenderList(){
   if(more) more.onclick = () => { emState.limit += 120; emRenderList(); };
   // One delegated listener set per render — no per-row handlers.
   body.onclick = (e) => {
+    const ib = e.target.closest('[data-insert-before]');
+    if(ib){ const ball = balls.find(b => b.ballId === ib.dataset.insertBefore); if(ball){ emState.innings = ball.innings; openInsertBall({ before: ball.ballId }); } return; }
     const eb = e.target.closest('[data-ball]');
     if(eb){ const ball = balls.find(b => b.ballId === eb.dataset.ball); openDeliveryEditForm(matchId, ball, roster); return; }
     const cb = e.target.closest('[data-clip]');
@@ -7981,6 +8003,7 @@ function openDeliveryEditForm(matchId, ball, roster){
         <div class="ed-actions">
           <span class="em-status" id="ed-status" role="status">All changes saved</span>
           <button class="em-btn cancel" id="dv-back-btn">Back</button>
+          <button class="em-btn cancel" id="dv-delete-btn" title="Remove this delivery — the balls after it are renumbered">🗑 Remove ball</button>
           <button class="em-btn cancel" id="dv-discard-btn" style="display:none">Discard</button>
           <button class="em-btn save" id="dv-save-btn" disabled>Preview &amp; Save</button>
         </div>
@@ -8034,6 +8057,25 @@ function openDeliveryEditForm(matchId, ball, roster){
     $('dv-next').onclick = () => go(nextBall);
     tl.onclick = (e) => { const t = e.target.closest('[data-tb]'); if(!t || t.dataset.tb === ball.ballId) return; go(siblings.find(b => b.ballId === t.dataset.tb)); };
     $('dv-discard-btn').onclick = () => openDeliveryEditForm(matchId, ball, roster);
+    $('dv-delete-btn').onclick = async () => {
+      try{
+        const pv = await adminApi(`/cricket/ball/${encodeURIComponent(ball.ballId)}/delete/preview`, { method:'POST', body: '{}' });
+        if(pv.errors && pv.errors.length){ emToast(pv.errors[0]); return; }
+        const rows = (list) => list.map(r => `<div class="ce-seq-row${r.tag ? ' ' + r.tag : ''}"><b>${escapeHtml(r.label)}</b><span>${escapeHtml(r.text)}</span></div>`).join('');
+        openConfirmModal(`
+          <div class="em-tag">Remove ball</div>
+          <div class="em-title">Remove ${escapeHtml(pv.deleted.label)} (${escapeHtml(pv.deleted.text)})?</div>
+          <div class="em-sub">The delivery is archived, the balls after it are renumbered${pv.moved ? ` (${pv.moved} move)` : ''}, and the scorecard and statistics are recalculated.${pv.clipsUnlinked ? ` Its clip stays but leaves the Highlights.` : ''} Undo is available.</div>
+          <div class="ce-sum"><div><h4>Now</h4>${rows(pv.sequence.before)}</div><div class="after"><h4>After</h4>${rows(pv.sequence.after)}</div></div>`,
+          async () => {
+            await adminApi(`/cricket/ball/${encodeURIComponent(ball.ballId)}`, { method:'DELETE', body: '{}' });
+            emUndoToast(`✓ ${pv.deleted.label} removed — scorecard recalculated`, () => undoLastCorrection(matchId));
+            refreshAfterClipEdit();
+            emState.innings = ball.innings; emState.over = Number(ball.over);
+            setTimeout(() => openOwnerPanel(), 50);
+          }, { confirmLabel:'Remove ball', cancelLabel:'Cancel', danger:true });
+      }catch(err){ emToast(err.message || 'Could not remove this ball'); }
+    };
     $('dv-back-btn').onclick = () => { if(!confirmLeave()) return; emState.focusBallId = ball.ballId; emState.innings = ball.innings; if(!emSearching()) emState.over = Number(ball.over); openOwnerPanel(); };
     const dvUpdateDirty = () => paint();
     const buildInput = () => ({
@@ -8426,14 +8468,34 @@ function refreshAfterClipEdit(){
 const CE_EXTRA_LABEL = { none:'Runs', wide:'Wide', noball:'No Ball', bye:'Bye', legbye:'Leg Bye', overthrow:'Overthrow' };
 const CE_WIDE_OUTS = ['Run Out', 'Stumped'], CE_NOBALL_OUTS = ['Run Out', 'Hit Wicket'];
 const CE_BOWLER_CREDIT = ['Bowled', 'Caught', 'LBW', 'Stumped', 'Hit Wicket'];
-async function openClipEditor(clipId){
-  if(!isOwner){ emToast('Only the owner can edit clips'); return; }
+// opts.insert = { matchId, innings, position: { before: ballId } | { endOfOver: n } }
+// opens the SAME editor for a missing ball (see insertDelivery on the server):
+// a new delivery at that place in the innings, with the crease and bowler
+// the history implies pre-filled, and a preview of how the following
+// balls are renumbered before anything is saved.
+async function openClipEditor(clipId, opts){
+  const INS = opts && opts.insert ? opts.insert : null;
+  if(!isOwner){ emToast(INS ? 'Only the owner can add deliveries' : 'Only the owner can edit clips'); return; }
+  const TAG = INS ? 'Add ball' : 'Edit clip';
   const content = document.getElementById('edit-modal-content');
-  content.innerHTML = '<div id="ce-root"><div class="ce-head"><div><div class="em-tag">Edit clip</div><div class="em-title">Loading…</div></div></div><div class="em-skel"></div><div class="em-skel"></div><div class="em-skel"></div></div>';
+  content.innerHTML = `<div id="ce-root"><div class="ce-head"><div><div class="em-tag">${TAG}</div><div class="em-title">Loading…</div></div></div><div class="em-skel"></div><div class="em-skel"></div><div class="em-skel"></div></div>`;
   openEditModal();
   let data;
-  try{ data = await adminApi(`/clips/${encodeURIComponent(clipId)}/editor`); }
-  catch(err){ content.innerHTML = `<div id="ce-root"><div class="ce-head"><div><div class="em-tag">Edit clip</div><div class="em-title">Could not open this clip</div></div></div><div class="ed-warn">⚠️ <span>${escapeHtml(err.message || 'Error')}</span></div></div>`; return; }
+  try{
+    if(INS){
+      const p = INS.position || {};
+      const qs = new URLSearchParams({ innings: String(INS.innings) });
+      if(p.before) qs.set('before', p.before); else if(p.endOfOver != null) qs.set('endOfOver', String(p.endOfOver));
+      const ctx = await adminApi(`/cricket/match/${encodeURIComponent(INS.matchId)}/insert-context?${qs}`);
+      data = Object.assign({}, ctx, {
+        clip: {},
+        delivery: { matchId: ctx.matchId, innings: ctx.innings, battingTeam: ctx.battingTeam, over: ctx.label.legal.over, ballInOver: ctx.label.legal.ballInOver, input: ctx.input, deliveryId: null }
+      });
+    } else {
+      data = await adminApi(`/clips/${encodeURIComponent(clipId)}/editor`);
+    }
+  }
+  catch(err){ content.innerHTML = `<div id="ce-root"><div class="ce-head"><div><div class="em-tag">${TAG}</div><div class="em-title">Could not open ${INS ? 'the new ball' : 'this clip'}</div></div></div><div class="ed-warn">⚠️ <span>${escapeHtml(err.message || 'Error')}</span></div></div>`; return; }
   const clip = data.clip || {}, del = data.delivery;
   if(!del){
     content.innerHTML = `<div id="ce-root"><div class="ce-head"><div><div class="em-tag">Edit clip</div><div class="em-title">${escapeHtml(clip.over ?? '—')}.${escapeHtml(clip.ballInOver ?? '')} • ${escapeHtml(clip.eventType || 'Clip')}</div></div></div>
@@ -8445,10 +8507,22 @@ async function openClipEditor(clipId){
   const rosters = data.rosters || { A:{ players:[] }, B:{ players:[] } };
   const bt = del.battingTeam === 'B' ? 'B' : 'A', bowlT = bt === 'A' ? 'B' : 'A';
   const teamName = (t) => (rosters[t] && rosters[t].name) || `Team ${t}`;
-  const orig = Object.assign({}, del.input, { isHighlight: clip.isHighlight !== false });
+  const orig = Object.assign({}, del.input, { isHighlight: INS ? true : clip.isHighlight !== false }, INS ? { attachClipId: '', restrike: true } : {});
   const S = JSON.parse(JSON.stringify(orig));
   const $ = (id) => document.getElementById(id);
   let preview = null, checking = false, previewSeq = 0, saving = false, previewTimer = null;
+  // The ball's number: a Wide / No Ball keeps the position it was bowled
+  // at, a legal ball takes the next one (the server's labelAtCursor).
+  const ballNo = () => {
+    if(!INS) return `${del.over}.${del.ballInOver}`;
+    const l = (S.extraType === 'wide' || S.extraType === 'noball') ? data.label.extra : data.label.legal;
+    return `${l.over}.${l.ballInOver}`;
+  };
+  const previewUrl = INS ? `/cricket/match/${encodeURIComponent(INS.matchId)}/insert/preview` : `/clips/${encodeURIComponent(clipId)}/edit/preview`;
+  const saveReq = INS ? { url: `/cricket/match/${encodeURIComponent(INS.matchId)}/insert`, method: 'POST' } : { url: `/clips/${encodeURIComponent(clipId)}/edit`, method: 'PUT' };
+  const requestBody = () => INS
+    ? { innings: INS.innings, position: INS.position, delivery: buildInput(), restrike: S.restrike !== false, attachClipId: S.attachClipId || null, isHighlight: S.attachClipId ? S.isHighlight : undefined }
+    : { delivery: buildInput(), isHighlight: S.isHighlight };
 
   const fmtEvent = (st) => {
     if(st.wicket){
@@ -8467,7 +8541,7 @@ async function openClipEditor(clipId){
   const dismissedName = (st) => !st.wicket ? null : (st.dismissalType === 'Run Out' ? (st.dismissed === 'nonStriker' ? st.nonStriker : st.striker) : st.striker);
   const needsFielder = () => S.wicket && ['Caught', 'Run Out', 'Stumped'].includes(S.dismissalType);
   const allowedOuts = () => S.extraType === 'wide' ? CE_WIDE_OUTS : S.extraType === 'noball' ? CE_NOBALL_OUTS : (data.dismissalTypes || CE_BOWLER_CREDIT.concat('Run Out'));
-  const dirty = () => JSON.stringify(S) !== JSON.stringify(orig);
+  const dirty = () => INS ? true : JSON.stringify(S) !== JSON.stringify(orig);
   const localProblems = () => {
     const p = [];
     if(!S.striker) p.push('Choose the batsman.');
@@ -8496,7 +8570,7 @@ async function openClipEditor(clipId){
     previewTimer = setTimeout(async () => {
       const seq = ++previewSeq;
       try{
-        const r = await adminApi(`/clips/${encodeURIComponent(clipId)}/edit/preview`, { method:'POST', body: JSON.stringify({ delivery: buildInput(), isHighlight: S.isHighlight }) });
+        const r = await adminApi(previewUrl, { method:'POST', body: JSON.stringify(requestBody()) });
         if(seq !== previewSeq) return;
         preview = r;
       }catch(err){
@@ -8516,7 +8590,7 @@ async function openClipEditor(clipId){
   const summaryLines = (st, other, isAfter) => {
     const ev = fmtEvent(st);
     const rows = [
-      ['big', `${del.over}.${del.ballInOver} • ${ev}`, fmtEvent(st) !== fmtEvent(other)],
+      ['big', `${ballNo()} • ${ev}`, fmtEvent(st) !== fmtEvent(other)],
       ['', `Batsman: ${st.striker || '—'}`, st.striker !== other.striker],
       ['', `Non-striker: ${st.nonStriker || '—'}`, st.nonStriker !== other.nonStriker],
       ['', `Bowler: ${st.bowler || '—'}`, st.bowler !== other.bowler]
@@ -8540,8 +8614,40 @@ async function openClipEditor(clipId){
     const bits = [];
     if(b && a && (b.runs !== a.runs || b.wickets !== a.wickets)) bits.push(`${teamName(bt)} ${b.runs}/${b.wickets} → <b>${a.runs}/${a.wickets}</b>`);
     if(preview.clipsAfter && preview.clipsAfter.length) bits.push(`${preview.clipsAfter.length} clip${preview.clipsAfter.length === 1 ? '' : 's'} re-linked (same video)`);
+    if(INS && preview.moved) bits.push(`${preview.moved} later deliver${preview.moved === 1 ? 'y' : 'ies'} renumbered`);
+    if(INS && preview.swapped && preview.swapped.length) bits.push(`striker corrected on ${preview.swapped.length} later deliver${preview.swapped.length === 1 ? 'y' : 'ies'}`);
     if(preview.strikeReviewNeeded && preview.strikeReviewNeeded.length) bits.push(`⚠️ ${preview.strikeReviewNeeded.length} later deliver${preview.strikeReviewNeeded.length === 1 ? 'y' : 'ies'} may now need a striker check`);
     return bits.length ? bits.join(' · ') : 'Checked — ready to save.';
+  };
+
+  // Insert mode: where the ball goes, what happens to the balls after it,
+  // and an existing clip to attach (a video is never invented).
+  const insertCards = () => {
+    const seq = preview && preview.sequence;
+    const rowsHtml = (rows) => rows.map(r => `<div class="ce-seq-row${r.tag ? ' ' + r.tag : ''}"><b>${escapeHtml(r.label)}</b><span>${escapeHtml(r.text)}</span>${r.tag === 'new' ? '<i>NEW</i>' : r.tag === 'moved' ? '<i>moved</i>' : ''}</div>`).join('');
+    const clips = data.orphanClips || [];
+    return `<div class="ed-card ce-o1">
+        <div class="ed-h"><span>Position</span><span>Innings ${escapeHtml(String(del.innings))}</span></div>
+        <div class="ce-cap">New ball <b>${escapeHtml(ballNo())}</b><small>${escapeHtml(data.neighbours.prev ? 'after ' + data.neighbours.prev.label : 'at the start of the innings')}${data.neighbours.next ? ' · before ' + escapeHtml(data.neighbours.next.label) : ''}</small></div>
+        ${data.overFull && !(S.extraType === 'wide' || S.extraType === 'noball') ? `<div class="ed-warn ed-info" style="margin-top:8px">ℹ️ <span>That over already has six legal balls, so a legal ball here becomes ${escapeHtml(ballNo())} and the following balls move up.</span></div>` : ''}
+        <div class="ce-credit">Adding this delivery will recalculate all affected deliveries from this point onward.</div>
+        <div class="ce-toggle" style="margin-top:9px" role="group" aria-label="Following balls">
+          ${chip('data-rs="1" data-k="rs1"', 'Fix striker on later balls', S.restrike !== false, ' sm')}${chip('data-rs="0" data-k="rs0"', 'Leave them', S.restrike === false, ' sm')}
+        </div>
+      </div>
+      ${seq ? `<div class="ed-card ce-o3">
+        <div class="ed-h"><span>Ball sequence</span>${seq.moreOvers ? `<span>+${seq.moreOvers} more over${seq.moreOvers === 1 ? '' : 's'}</span>` : ''}</div>
+        <div class="ce-sum"><div><h4>Now</h4>${rowsHtml(seq.before)}</div><div class="after"><h4>After adding</h4>${rowsHtml(seq.after)}</div></div>
+        ${(preview.mixedBowlerOvers || []).map(m => `<div class="ed-warn ed-info" style="margin-top:8px">ℹ️ <span>Over ${escapeHtml(String(m.over))} will have balls from ${escapeHtml(m.bowlers.join(' and '))} — use 🔁 Transfer Over if one bowler bowled it.</span></div>`).join('')}
+      </div>` : ''}
+      <div class="ed-card ce-o2">
+        <div class="ed-h"><span>Clip</span></div>
+        <div class="ce-toggle" style="flex-wrap:wrap" role="group" aria-label="Clip for this ball">
+          ${chip('data-ac="" data-k="ac-"', 'No clip', !S.attachClipId, ' sm')}
+          ${clips.map(c => chip(`data-ac="${escapeHtml(c.id)}" data-k="ac-${escapeHtml(c.id)}"`, `${escapeHtml(c.eventType)}${c.over != null ? ' · ' + escapeHtml(c.over + '.' + c.ballInOver) : ''}`, S.attachClipId === c.id, ' sm')).join('')}
+        </div>
+        <div class="ce-credit">${clips.length ? 'Attach a clip that was cut but never matched to a ball — its players, wicket and type follow this new delivery.' : 'No unmatched clips in this match — a video is never invented for an added ball.'}</div>
+      </div>`;
   };
 
   const paint = () => {
@@ -8558,20 +8664,21 @@ async function openClipEditor(clipId){
     $('ce-dyn').innerHTML = `
       <div class="ce-grid">
         <div class="ce-col">
-          <div class="ed-card ce-o1">
+          ${INS ? insertCards() : ''}
+          <div class="ed-card ce-o1"${INS ? ' hidden' : ''}>
             <div class="ed-h"><span>Clip preview</span><span>${escapeHtml(clip.duration ? Math.round(clip.duration) + 's' : '')}</span></div>
             <div class="ce-video">${videoSrc ? `<video id="ce-video" controls playsinline preload="metadata" src="${escapeHtml(videoSrc)}"${clip.posterUrl ? ` poster="${escapeHtml(clip.posterUrl)}"` : ''}></video>` : '<div class="ce-novid">Video still uploading — you can edit its details now.</div>'}</div>
-            <div class="ce-cap">${escapeHtml(`${del.over}.${del.ballInOver} • ${fmtEvent(S)}`)}<small>${escapeHtml(dismissedName(S) || S.striker || '—')} · Bowler: ${escapeHtml(S.bowler || '—')}</small></div>
+            <div class="ce-cap">${escapeHtml(`${ballNo()} • ${fmtEvent(S)}`)}<small>${escapeHtml(dismissedName(S) || S.striker || '—')} · Bowler: ${escapeHtml(S.bowler || '—')}</small></div>
           </div>
           <div class="ed-card ce-o3">
             <div class="ed-h"><span>Change summary</span></div>
             <div class="ce-sum">
-              <div class="before"><h4>Before</h4>${summaryLines(orig, S, false)}</div>
-              <div class="after"><h4>After</h4>${summaryLines(S, orig, true)}</div>
+              <div class="before"><h4>Before</h4>${INS ? `<p>No delivery recorded here.</p><p>${escapeHtml(data.neighbours.prev ? 'After ' + data.neighbours.prev.label + ' (' + data.neighbours.prev.text + ')' : 'Start of the innings')}</p><p>${escapeHtml(data.neighbours.next ? 'Before ' + data.neighbours.next.label + ' (' + data.neighbours.next.text + ')' : 'End of the innings')}</p>` : summaryLines(orig, S, false)}</div>
+              <div class="after"><h4>${INS ? 'New ball' : 'After'}</h4>${summaryLines(S, INS ? {} : orig, true)}</div>
             </div>
             <div class="ce-impact" role="status">${impactLine()}</div>
           </div>
-          <div class="ed-card ce-o4">
+          <div class="ed-card ce-o4"${INS ? ' hidden' : ''}>
             <div class="ed-h"><span>Delivery link</span></div>
             <div class="ce-meta">
               <span>Delivery ID</span><b>${escapeHtml(del.deliveryId || del.ballId)}</b>
@@ -8610,7 +8717,7 @@ async function openClipEditor(clipId){
             ${needsFielder() ? `<div style="margin-top:10px">${person('fielder', S.dismissalType === 'Stumped' ? 'Keeper' : 'Fielder', bowlT)}</div>` : ''}
             <div class="ce-credit">${credit}</div>
           </div>` : ''}
-          <div class="ed-card ce-o2">
+          <div class="ed-card ce-o2"${INS && !S.attachClipId ? ' hidden' : ''}>
             <div class="ed-h"><span>Clip category</span></div>
             <div class="ce-toggle" role="group" aria-label="Show in Highlights">
               ${chip('data-hl="1" data-k="hl1"', 'In Highlights', S.isHighlight, ' sm')}${chip('data-hl="0" data-k="hl0"', 'Commentary only', !S.isHighlight, ' sm')}
@@ -8620,26 +8727,28 @@ async function openClipEditor(clipId){
         </div>
       </div>`;
     const st = $('ce-status'); st.className = 'em-status' + (dirty() ? ' dirty' : '');
-    st.textContent = saving ? 'Saving…' : dirty() ? (checking ? 'Checking…' : 'Unsaved changes') : 'No changes';
+    st.textContent = saving ? 'Saving…' : INS ? (checking ? 'Checking…' : 'Not saved yet') : dirty() ? (checking ? 'Checking…' : 'Unsaved changes') : 'No changes';
     $('ce-save').disabled = saving || !dirty() || checking || errs.length > 0 || !preview;
-    $('ce-save').textContent = saving ? 'Saving…' : 'Save Changes';
+    $('ce-save').textContent = saving ? 'Saving…' : (INS ? 'Save Ball' : 'Save Changes');
+    if(INS && $('ce-title')) $('ce-title').textContent = `New ball ${ballNo()}`;
     if(active){ const el = $('ce-dyn').querySelector(`[data-k="${CSS.escape(active)}"]`); if(el && !el.disabled) el.focus(); }
   };
 
   content.innerHTML = `
     <div id="ce-root">
       <div class="ce-head">
-        <div><div class="em-tag">Edit clip</div><div class="em-title">${escapeHtml(`${del.over}.${del.ballInOver} • ${fmtEvent(orig)}`)}</div>
+        <div><div class="em-tag">${TAG}</div><div class="em-title" id="ce-title">${escapeHtml(INS ? `New ball ${ballNo()}` : `${del.over}.${del.ballInOver} • ${fmtEvent(orig)}`)}</div>
         <div class="em-sub" style="margin:4px 0 0">Innings ${escapeHtml(String(del.innings))} · ${escapeHtml(teamName(bt))} v ${escapeHtml(teamName(bowlT))}${del.correctedAt ? ' · <span class="em-chip ce">Edited before</span>' : ''}${data.finished ? '' : ' · Match in progress'}</div></div>
       </div>
       <div id="ce-dyn"></div>
       <div class="ed-actions">
         <span class="em-status" id="ce-status" role="status">No changes</span>
         <button class="em-btn cancel" id="ce-cancel">Cancel</button>
-        <button class="em-btn save" id="ce-save" disabled>Save Changes</button>
+        <button class="em-btn save" id="ce-save" disabled>${INS ? 'Save Ball' : 'Save Changes'}</button>
       </div>
     </div>`;
   paint();
+  if(INS) schedulePreview();
 
   $('ce-dyn').addEventListener('click', (e) => {
     const t = e.target.closest('button'); if(!t || t.disabled) return;
@@ -8668,6 +8777,8 @@ async function openClipEditor(clipId){
     }
     if(t.dataset.who){ set({ dismissed: t.dataset.who }); return; }
     if(t.dataset.hl != null){ set({ isHighlight: t.dataset.hl === '1' }); return; }
+    if(t.dataset.rs != null){ set({ restrike: t.dataset.rs === '1' }); return; }
+    if(t.dataset.ac != null){ set({ attachClipId: t.dataset.ac }); return; }
     if(t.dataset.step){
       const d = Number(t.dataset.step);
       if(S.extraType === 'wide') set({ extras: Math.max(1, S.extras + d) });
@@ -8693,12 +8804,24 @@ async function openClipEditor(clipId){
       });
     }
   });
-  $('ce-cancel').onclick = () => { if(dirty() && !confirm('Discard your changes to this clip?')) return; closeEditModal(); };
+  $('ce-cancel').onclick = () => {
+    if(INS){ openOwnerPanel(); return; }
+    if(dirty() && !confirm('Discard your changes to this clip?')) return; closeEditModal();
+  };
   $('ce-save').onclick = async () => {
     if(saving) return;
     saving = true; paint();
     try{
-      const saved = await adminApi(`/clips/${encodeURIComponent(clipId)}/edit`, { method:'PUT', body: JSON.stringify({ delivery: buildInput(), isHighlight: S.isHighlight }) });
+      const saved = await adminApi(saveReq.url, { method: saveReq.method, body: JSON.stringify(requestBody()) });
+      if(INS){
+        const lbl = saved && saved.inserted ? saved.inserted.label : ballNo();
+        emUndoToast(`✓ Ball ${lbl} added — scorecard and stats recalculated`, () => undoLastCorrection(INS.matchId));
+        refreshAfterClipEdit();
+        emState.innings = INS.innings; emState.over = Number(String(lbl).split('.')[0]);
+        emState.focusBallId = saved && saved.inserted ? saved.inserted.id : null;
+        openOwnerPanel();
+        return;
+      }
       closeEditModal();
       const label = saved && saved.clip ? `${saved.clip.over}.${saved.clip.ballInOver} ${saved.clip.outcome || saved.clip.eventType || ''}` : 'Clip';
       emUndoToast(`✓ Saved · ${label} — scorecard, stats and highlights updated`, () => undoLastCorrection(del.matchId));

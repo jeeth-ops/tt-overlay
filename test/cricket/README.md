@@ -18,6 +18,8 @@ node test/cricket/clip-linkage-server-test.js    # the website links a clip to t
 node test/clip-attribution.test.js               # the shared ownership rule + clip organiser folders/names
 node test/cricket/clip-editor-server-test.js     # Advanced Clip Editor, server: owner cases 1-9, 403, rollback
 node test/cricket/clip-editor-ui-test.js         # Advanced Clip Editor, scorecard UI (owner-only ⋯, preview, save)
+node test/cricket/insert-ball-server-test.js     # Add / Insert / Remove a ball: renumbering, strike, clips, undo, 403
+node test/cricket/insert-ball-ui-test.js         # Add / Insert Ball in Edit Scorecard (owner-only ＋, preview, save)
 ```
 
 `server-test.js` is the one that matters most: it feeds the same ball documents
@@ -54,3 +56,12 @@ Caught → Run Out → Bowled (bowler credit), several fields in one save, the
 last ball of an over, an old delivery several overs back, a failing scorecard
 rebuild (everything rolls back) and another Gmail account (403, nothing
 changes).
+
+`insert-ball-server-test.js` generates innings by the Laws and then scores the
+same match with one ball forgotten — the way a live panel does: every later
+ball numbered one early and the strike wrong after it. Inserting the missing
+ball must give back the true innings: every ball's number and striker, the
+team total, the overs, every batter's runs, and every clip still on its own
+delivery. Also: a gap, the last ball of an over, Wide / No Ball, 4 / 6,
+Bowled / Caught / Run Out (striker, non-striker, with runs), both innings and a
+3rd (Test) innings, the live innings guard, remove + undo, rollback, 403.
