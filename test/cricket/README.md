@@ -16,6 +16,8 @@ node test/cricket/outbox-test.js  # the ball outbox: no delivery is lost when th
 node test/cricket/clip-attribution-panel-test.js # both panels: every clip names the players of ITS delivery
 node test/cricket/clip-linkage-server-test.js    # the website links a clip to the same delivery and dismissed batter
 node test/clip-attribution.test.js               # the shared ownership rule + clip organiser folders/names
+node test/cricket/clip-editor-server-test.js     # Advanced Clip Editor, server: owner cases 1-9, 403, rollback
+node test/cricket/clip-editor-ui-test.js         # Advanced Clip Editor, scorecard UI (owner-only ⋯, preview, save)
 ```
 
 `server-test.js` is the one that matters most: it feeds the same ball documents
@@ -44,3 +46,11 @@ classification and the ball-log row still name the delivery's own players.
 
 The ownership rule itself lives in `/clip-attribution.js`; the two panels
 carry an inlined copy. Edit the module, then `node test/clip-attribution.test.js --sync`.
+
+`clip-editor-server-test.js` runs the real `correctDelivery` / `runClipEdit` /
+`requireOwner` code from `server.js` on an in-memory database: FOUR → SIX,
+changing the dismissed batter of a run out, changing batsman and bowler,
+Caught → Run Out → Bowled (bowler credit), several fields in one save, the
+last ball of an over, an old delivery several overs back, a failing scorecard
+rebuild (everything rolls back) and another Gmail account (403, nothing
+changes).

@@ -5434,13 +5434,319 @@ function validateCorrectedBalls(balls, beforeBalls) {
     return errors;
 }
 
+// ================================================================
+// 🎬 DELIVERY ↔ CLIP LINK (owner corrections + the Advanced Clip Editor)
+//
+// A clip belongs to ONE delivery (its deliveryId = the ball row's
+// ballUid). When the owner corrects that delivery, the clip follows it:
+// players, dismissal, dismissed batter and event (4 → 6, 6 → W …) are
+// rewritten on the clip doc from the corrected delivery. The video file,
+// its R2 object and its Drive file are never touched — R2/Drive keys are
+// built from clipId, which never changes, so nothing is re-cut or
+// re-uploaded for a metadata correction.
+// ================================================================
+
+// Which side each player is on, for the editor's pickers and for
+// validateRosterPlacement(): the squads the panel set up (room state,
+// with roster ids) plus everyone recorded on this match's deliveries.
+async function matchRosters(matchId) {
+    const out = { A: { name: 'Team A', players: [], hasSquad: false }, B: { name: 'Team B', players: [], hasSquad: false } };
+    const addP = (team, name, id, from) => {
+        const n = personName(name), k = playerKey(n);
+        if (!k) return;
+        const list = out[team].players;
+        const ex = list.find(p => p.key === k);
+        if (ex) { if (!ex.id && id) ex.id = String(id); return; }
+        list.push({ key: k, name: n, id: id ? String(id) : null, from });
+    };
+    try {
+        const rs = await getRoomState(`room-${matchId}`);
+        const cs = rs && rs.cricketState;
+        ['A', 'B'].forEach(t => {
+            const team = cs && cs['team' + t];
+            if (!team) return;
+            if (team.name || team.short) out[t].name = team.name || team.short;
+            (team.players || []).forEach(p => { if (p && p.name) { addP(t, p.name, p.id, 'squad'); out[t].hasSquad = true; } });
+        });
+    } catch (e) { /* no live room — the deliveries below still give both sides */ }
+    if (matchRecordsCollection) {
+        const rec = await matchRecordsCollection.findOne({ $or: [{ matchId }, { roomId: matchId }] }, { projection: { teamA: 1, teamB: 1 } }).catch(() => null);
+        if (rec && rec.teamA && rec.teamA.name) out.A.name = rec.teamA.name;
+        if (rec && rec.teamB && rec.teamB.name) out.B.name = rec.teamB.name;
+    }
+    if (ballsCollection) {
+        const balls = await ballsCollection.find({ matchId }).toArray();
+        balls.forEach(b => {
+            if (b.kind === 'PEN') return;
+            const bt = b.battingTeam === 'B' ? 'B' : 'A', bowlT = bt === 'A' ? 'B' : 'A';
+            addP(bt, b.striker, b.strikerId, 'match');
+            addP(bt, b.nonStriker, b.nonStrikerId, 'match');
+            addP(bowlT, b.bowler, b.bowlerId, 'match');
+            if (b.dismissal && b.dismissal.fielder) addP(bowlT, b.dismissal.fielder, b.dismissal.fielderId, 'match');
+        });
+    }
+    ['A', 'B'].forEach(t => out[t].players.sort((a, b) => a.name.localeCompare(b.name)));
+    return out;
+}
+
+// The batting side must bat, the bowling side must bowl and field. With a
+// squad set up for a side, a player must be IN that squad; without one,
+// a player already recorded for the OTHER side is refused.
+function validateRosterPlacement(rosters, battingTeam, people) {
+    const bt = battingTeam === 'B' ? 'B' : 'A';
+    const bowlT = bt === 'A' ? 'B' : 'A';
+    const has = (team, name) => !!(rosters[team] && rosters[team].players.some(p => p.key === playerKey(name)));
+    const label = (team) => (rosters[team] && rosters[team].name) || `Team ${team}`;
+    const check = (name, team, role) => {
+        if (!name) return null;
+        const other = team === 'A' ? 'B' : 'A';
+        const bad = (rosters[team] && rosters[team].hasSquad) ? !has(team, name) : (has(other, name) && !has(team, name));
+        return bad ? `This delivery cannot be saved because the selected ${role} (${name}) is not part of the ${team === bt ? 'batting' : 'bowling'} team (${label(team)}).` : null;
+    };
+    return check(people.striker, bt, 'batsman') || check(people.nonStriker, bt, 'non-striker')
+        || check(people.bowler, bowlT, 'bowler') || check(people.fielder, bowlT, 'fielder');
+}
+
+// Per-player differences one delivery correction makes, computed with the
+// SAME rules as the full rebuild (buildLiveCardsFromBallsArray on the
+// delivery alone, before vs after) — what a live panel adds to its own
+// running totals (see applyDeliveryCorrection in clip-attribution.js).
+function deliveryCorrectionDelta(before, after) {
+    const cb = buildLiveCardsFromBallsArray([before]);
+    const ca = buildLiveCardsFromBallsArray([after]);
+    const bt = before.battingTeam === 'B' ? 'B' : 'A';
+    const bowlT = bt === 'A' ? 'B' : 'A';
+    const byKey = (rows) => { const m = new Map(); (rows || []).forEach(r => m.set(playerKey(r.name), r)); return m; };
+    const n = (v) => Number(v) || 0;
+    const bb = byKey(cb.battingCard[bt]), ba = byKey(ca.battingCard[bt]);
+    const batting = [];
+    new Set([...bb.keys(), ...ba.keys()]).forEach(k => {
+        const b = bb.get(k) || {}, a = ba.get(k) || {};
+        const row = {
+            name: a.name || b.name, runs: n(a.runs) - n(b.runs), balls: n(a.balls) - n(b.balls),
+            fours: n(a.fours) - n(b.fours), sixes: n(a.sixes) - n(b.sixes),
+            outBefore: !!b.out, outAfter: !!a.out,
+            howOut: a.howOut || null, dismissalType: a.dismissalType || null,
+            fielderName: a.fielderName || null, bowlerName: a.bowlerName || null
+        };
+        if (row.runs || row.balls || row.fours || row.sixes || row.outBefore || row.outAfter) batting.push(row);
+    });
+    const wb = byKey(cb.bowlingCard[bowlT]), wa = byKey(ca.bowlingCard[bowlT]);
+    const balls = (r) => n(r.overs) * 6 + n(r.balls);
+    const bowling = [];
+    new Set([...wb.keys(), ...wa.keys()]).forEach(k => {
+        const b = wb.get(k) || {}, a = wa.get(k) || {};
+        const row = { name: a.name || b.name, balls: balls(a) - balls(b), runs: n(a.runs) - n(b.runs), wickets: n(a.wickets) - n(b.wickets) };
+        if (row.balls || row.runs || row.wickets) bowling.push(row);
+    });
+    const extras = {};
+    ['wd', 'nb', 'b', 'lb'].forEach(x => { const d = n(ca.extras[bt][x]) - n(cb.extras[bt][x]); if (d) extras[x] = d; });
+    return {
+        legalChanged: deriveBallFacts(before.kind, before.runs).legalBall !== deriveBallFacts(after.kind, after.runs).legalBall,
+        team: { runs: n(after.runs) - n(before.runs), wickets: (after.dismissal ? 1 : 0) - (before.dismissal ? 1 : 0), extras },
+        batting, bowling
+    };
+}
+
+// Clip-doc fields that come from the delivery (see computeClipLinkage for
+// the same fields at ingest time).
+function clipLinkFromBall(ball) {
+    const d = ball.dismissal || null;
+    const isOut = !!(d && !/retired/i.test(String(d.type || '')));
+    const ev = ClipAttribution.clipEventForBall(ball);
+    const dismissedName = isOut ? (personName(d.batter) || personName(ball.striker) || null) : null;
+    return {
+        deliveryId: ball.ballUid || null,
+        innings: ball.innings, over: ball.over, ballInOver: ball.ballInOver,
+        runs: ball.runs, battingTeam: ball.battingTeam || null,
+        strikerName: personName(ball.striker) || null, strikerKey: playerKey(ball.striker), strikerPlayerId: ball.strikerPlayerId || null,
+        nonStrikerName: personName(ball.nonStriker) || null, nonStrikerKey: playerKey(ball.nonStriker), nonStrikerPlayerId: ball.nonStrikerPlayerId || null,
+        bowlerName: personName(ball.bowler) || null, bowlerKey: playerKey(ball.bowler), bowlerPlayerId: ball.bowlerPlayerId || null,
+        dismissalType: d ? (d.type || null) : null,
+        fielderName: d ? (personName(d.fielder) || null) : null, fielderKey: d ? playerKey(d.fielder) : null,
+        fielderPlayerId: d ? (ball.dismissalFielderPlayerId || null) : null,
+        dismissedPlayerName: dismissedName, dismissedPlayerKey: playerKey(dismissedName),
+        dismissedPlayerId: isOut ? (ball.dismissedPlayerId || (playerKey(dismissedName) === playerKey(ball.striker) ? ball.strikerPlayerId : null) || null) : null,
+        eventType: ev.eventType, outcomeLabel: ev.outcomeLabel,
+    };
+}
+
+// The ballMeta a local Clipper Helper / Stream Engine files a clip by —
+// so a correction made on the website re-files the clip on the operator's
+// laptop too (through the panel, see cricketDeliveryCorrected there).
+function clipBallMetaFromBall(ball) {
+    const d = ball.dismissal || null;
+    return {
+        deliveryId: ball.ballUid || null, innings: ball.innings, over: ball.over, ballInOver: ball.ballInOver,
+        runs: ball.runs, battingTeam: ball.battingTeam || null,
+        striker: ball.striker || null, nonStriker: ball.nonStriker || null, bowler: ball.bowler || null,
+        strikerId: ball.strikerId || null, nonStrikerId: ball.nonStrikerId || null, bowlerId: ball.bowlerId || null,
+        dismissal: d ? { type: d.type || null, fielder: d.fielder || null, fielderId: d.fielderId || null, batter: d.batter || null, batterId: d.batterId || null } : null,
+        dismissedPlayer: d ? (d.batter || ball.striker || null) : null,
+        dismissedPlayerId: d ? (d.batterId || null) : null,
+    };
+}
+
+function serializeClipForEditor(c) {
+    if (!c) return null;
+    return {
+        ...serializeClip(c),
+        helperClipId: c.clipId || null,
+        eventType: c.eventType || null, outcomeLabel: c.outcomeLabel || null,
+        isHighlight: c.isHighlight !== false,
+        strikerPlayerId: c.strikerPlayerId || null, bowlerPlayerId: c.bowlerPlayerId || null,
+        dismissedPlayer: c.dismissedPlayerName || null, dismissedPlayerId: c.dismissedPlayerId || null,
+        deliveryId: c.deliveryId || null,
+    };
+}
+
+// Every clip of ONE delivery: by deliveryId; a clip from before deliveryId
+// existed only when it has the same over.ball, the same striker AND the
+// same event — a Wide sharing 12.5 with a FOUR never takes its clip.
+async function findClipsForDelivery(ball) {
+    if (!clipsCollection || !ball) return [];
+    const byUid = ball.ballUid ? await clipsCollection.find({ matchId: ball.matchId, deliveryId: String(ball.ballUid) }).toArray() : [];
+    const sameSlot = await clipsCollection.find({ matchId: ball.matchId, innings: ball.innings, over: ball.over, ballInOver: ball.ballInOver }).toArray();
+    const ev = ClipAttribution.clipEventForBall(ball).eventType;
+    const legacy = sameSlot.filter(c => !c.deliveryId
+        && (!c.strikerKey || !ball.strikerKey || c.strikerKey === ball.strikerKey)
+        && c.eventType === ev);
+    const seen = new Set();
+    return [...byUid, ...legacy].filter(c => { const k = String(c._id); if (seen.has(k)) return false; seen.add(k); return true; });
+}
+
+// Rewrites those clips from the corrected delivery. All-or-nothing: if
+// any write fails, the ones already written are put back and it throws.
+// Returns the clips as they were BEFORE (for the caller's own rollback).
+async function relinkClipsForDelivery(original, corrected) {
+    if (!clipsCollection) return [];
+    const clips = await findClipsForDelivery(original);
+    const link = clipLinkFromBall(corrected);
+    const done = [];
+    try {
+        for (const c of clips) {
+            await clipsCollection.updateOne({ _id: c._id }, { $set: { ...link, relinkedAt: Date.now() } });
+            done.push(c);
+        }
+    } catch (err) {
+        for (const c of done) await clipsCollection.replaceOne({ _id: c._id }, c).catch(() => {});
+        throw err;
+    }
+    return done;
+}
+
+async function isMatchFinished(matchId) {
+    if (!matchRecordsCollection) return false;
+    const rec = await matchRecordsCollection.findOne({ $or: [{ matchId }, { roomId: matchId }] }, { projection: { winningTeam: 1, matchResultText: 1 } }).catch(() => null);
+    return !!(rec && (rec.winningTeam || rec.matchResultText));
+}
+
+// 📡 Tells every open view of the match: the panel adds the differences
+// into its running totals and re-files the clip locally; scorecard pages
+// reload clips and the saved scorecard. Kept on the room for 12 h so a
+// panel that was offline catches up when it asks (getCricketCorrections).
+// A finished match also gets its corrected scorecard pushed into the room
+// (the same rebuild the Recovery Centre's "push live" uses), marked as
+// already containing this correction so nothing is counted twice.
+const CORRECTION_REPLAY_MS = 12 * 60 * 60 * 1000;
+async function announceDeliveryCorrection(original, corrected, delta) {
+    const matchId = original.matchId;
+    const ev = {
+        id: `corr_${String(original._id)}_${Date.now()}`,
+        matchId, ballId: String(original._id), deliveryId: original.ballUid || null,
+        innings: original.innings || 1, battingTeam: original.battingTeam === 'B' ? 'B' : 'A',
+        overLabel: `${original.over}.${original.ballInOver}`,
+        legalChanged: !!(delta && delta.legalChanged),
+        before: { kind: original.kind, runs: original.runs, striker: original.striker, nonStriker: original.nonStriker, bowler: original.bowler, dismissal: original.dismissal || null },
+        after: { kind: corrected.kind, runs: corrected.runs, striker: corrected.striker, nonStriker: corrected.nonStriker, bowler: corrected.bowler, dismissal: corrected.dismissal || null },
+        delta,
+        clips: (await findClipsForDelivery(corrected)).map(c => ({ clipId: c.clipId || null, id: String(c._id), eventType: c.eventType || null, outcomeLabel: c.outcomeLabel || null, isHighlight: c.isHighlight !== false })),
+        ballMeta: clipBallMetaFromBall(corrected),
+        at: Date.now()
+    };
+    try {
+        const room = `room-${matchId}`;
+        const rs = await getRoomState(room);
+        if (await isMatchFinished(matchId) && matchRecordsCollection && ballsCollection) {
+            const rec = await matchRecordsCollection.findOne({ $or: [{ matchId }, { roomId: matchId }] });
+            if (rec) {
+                const lookupIds = [...new Set([rec.matchId, rec.roomId, matchId].filter(Boolean))];
+                const balls = await ballsCollection.find({ matchId: { $in: lookupIds } }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
+                const next = panelStateFromMatchRecord(rec, balls, rs.cricketState);
+                next.appliedCorrections = [...((rs.cricketState && rs.cricketState.appliedCorrections) || []), ev.id].slice(-200);
+                rs.cricketState = next;
+                io.to(room).emit('liveCricketScore', next);
+                try { await db.collection('scorvix').doc(matchId).set({ cricketState: next }, { merge: true }); } catch (e) { /* the room copy is already right */ }
+                ev.statePushed = true;
+            }
+        }
+        rs.cricketCorrections = (rs.cricketCorrections || []).filter(e => Date.now() - e.at < CORRECTION_REPLAY_MS).concat(ev).slice(-50);
+        io.to(room).emit('cricketDeliveryCorrected', ev);
+    } catch (err) {
+        console.log('announceDeliveryCorrection error:', err.message || err);
+    }
+    return ev;
+}
+
+// The delivery a clip belongs to: by deliveryId, else the canonical ball
+// at its over.ball that agrees with the clip's own striker.
+async function findDeliveryForClip(clip) {
+    if (!ballsCollection || !clip) return null;
+    if (clip.deliveryId) {
+        const b = await ballsCollection.findOne({ matchId: clip.matchId, ballUid: String(clip.deliveryId) });
+        if (b) return b;
+    }
+    if (clip.over == null || clip.ballInOver == null) return null;
+    return findCanonicalBall(clip.matchId, {
+        innings: clip.innings == null ? undefined : clip.innings, over: clip.over, ballInOver: clip.ballInOver,
+        striker: clip.strikerName || undefined
+    }, clip.eventType === 'WICKET' ? 'WICKET' : null);
+}
+
+// What the editor's form starts from: the delivery expressed as the
+// correction engine's own input (see buildBallFromCorrection).
+function correctionInputFromBall(ball) {
+    const d = ball.dismissal || null;
+    const runs = Number(ball.runs) || 0;
+    const base = { runsOffBat: 0, extras: 0, extraType: 'none' };
+    switch (ball.kind) {
+        case 'Wd': Object.assign(base, { extraType: 'wide', extras: runs }); break;
+        case 'Nb': Object.assign(base, { extraType: 'noball', runsOffBat: Math.max(0, runs - 1), extras: 1 }); break;
+        case 'B': Object.assign(base, { extraType: 'bye', extras: runs }); break;
+        case 'LB': Object.assign(base, { extraType: 'legbye', extras: runs }); break;
+        case 'OT': Object.assign(base, { extraType: 'overthrow', runsOffBat: runs }); break;
+        default: base.runsOffBat = runs;
+    }
+    return {
+        ...base,
+        wicket: !!d, dismissalType: d ? (d.type || 'Bowled') : null,
+        fielder: d ? (d.fielder || '') : '', fielderId: d ? (d.fielderId || null) : null,
+        dismissed: d && d.batter && playerKey(d.batter) === playerKey(ball.nonStriker) ? 'nonStriker' : 'striker',
+        striker: ball.striker || '', strikerId: ball.strikerId || null,
+        nonStriker: ball.nonStriker || '', nonStrikerId: ball.nonStrikerId || null,
+        bowler: ball.bowler || '', bowlerId: ball.bowlerId || null,
+    };
+}
+
+
 // Runs one full delivery correction: validate → simulate → (if clean and
 // not a dry run) write + resync. Returns { before, after, errors } either
 // way, so the SAME function powers both the Preview screen and the real
 // Save & Recalculate — the preview is never a guess at what the save will
 // do, it's the actual save logic run with the write skipped.
-async function correctDelivery(ballId, actorEmail, input, dryRun, requestOwnerUid) {
+//
+// opts (all optional — the existing Edit Delivery screen passes none):
+//   rosters            { A: {...}, B: {...} } from matchRosters(): the
+//                      batting side's players must bat, the bowling side's
+//                      must bowl/field (see validateRosterPlacement)
+//   strict             Advanced Clip Editor rules: a Caught needs its
+//                      fielder, a Run Out needs its dismissed batter named
+//   blockLegalChange   refuse to turn a legal ball into a Wide/No Ball (or
+//                      back) — used while the match is still being scored,
+//                      because every later ball's position would move
+async function correctDelivery(ballId, actorEmail, input, dryRun, requestOwnerUid, opts) {
     if (!ballsCollection || !matchRecordsCollection) return { errors: ['Database not configured'] };
+    opts = opts || {};
     const { ObjectId } = require('mongodb');
     let _id;
     try { _id = new ObjectId(ballId); } catch { return { errors: ['Invalid delivery id'] }; }
@@ -5480,24 +5786,103 @@ async function correctDelivery(ballId, actorEmail, input, dryRun, requestOwnerUi
     const nonStrikerName = input.nonStriker !== undefined ? personName(input.nonStriker) : original.nonStriker;
     const bowlerName = input.bowler !== undefined ? personName(input.bowler) : original.bowler;
     const fielderName = isWicket ? (personName(input.fielder) || null) : null;
+    const dismissalType = isWicket ? (input.dismissalType || 'Bowled') : null;
+    // Roster id of a player on this delivery: the one sent with the edit,
+    // else the one the delivery already carried — but only while it is
+    // still the same player (a renamed slot never keeps the old id).
+    const keepId = (sentId, newName, oldName, oldId) => {
+        if (sentId !== undefined && sentId !== null && sentId !== '') return String(sentId);
+        return playerKey(newName) === playerKey(oldName) ? (oldId || null) : null;
+    };
+    const strikerId = keepId(input.strikerId, strikerName, original.striker, original.strikerId);
+    const nonStrikerId = keepId(input.nonStrikerId, nonStrikerName, original.nonStriker, original.nonStrikerId);
+    const bowlerId = keepId(input.bowlerId, bowlerName, original.bowler, original.bowlerId);
+    const origDis = original.dismissal || {};
+    const fielderId = isWicket ? keepId(input.fielderId, fielderName, origDis.fielder, origDis.fielderId) : null;
+
+    // Identity checks for the Advanced Clip Editor. Not applied to the
+    // older Edit Delivery path, which must keep working on old matches
+    // whose deliveries were scored with no bowler name at all.
+    if (opts.strict) {
+        if (!strikerName) return { errors: ['Choose the batsman who faced this delivery.'] };
+        if (!bowlerName) return { errors: ['Choose the bowler of this delivery.'] };
+        if (nonStrikerName && playerKey(nonStrikerName) === playerKey(strikerName)) return { errors: ['The striker and the non-striker cannot be the same player.'] };
+        if (playerKey(bowlerName) === playerKey(strikerName) || (nonStrikerName && playerKey(bowlerName) === playerKey(nonStrikerName))) return { errors: ['The bowler cannot also be one of the batters on this delivery.'] };
+    }
+
+    // 🏏 WHO WAS GIVEN OUT — part of the delivery, never inferred later.
+    // Every dismissal but a Run Out takes the striker. A Run Out takes
+    // whichever of THIS delivery's two batters was named (by the editor),
+    // else keeps the batter the delivery already recorded if they are
+    // still one of the two, else the striker (the old default).
+    let dismissedName = null, dismissedRosterId = null;
+    if (isWicket) {
+        if (dismissalType !== 'Run Out') {
+            dismissedName = strikerName; dismissedRosterId = strikerId;
+        } else {
+            const named = personName(input.dismissedPlayer) || (input.dismissed === 'nonStriker' ? nonStrikerName : input.dismissed === 'striker' ? strikerName : null);
+            const pick = named || (origDis.batter && [strikerName, nonStrikerName].some(n => playerKey(n) === playerKey(origDis.batter)) ? origDis.batter : null);
+            if (!pick && opts.strict) return { errors: ['Run Out: choose which batter was out — the striker or the non-striker.'] };
+            // An old Run Out that never recorded its batter, edited through
+            // Edit Delivery without naming one, stays unnamed — the scorecard
+            // rebuild keeps resolving it the way it always has, rather than
+            // this edit silently deciding it was the striker.
+            dismissedName = pick || null;
+            if (!dismissedName) dismissedRosterId = null;
+            else if (playerKey(dismissedName) === playerKey(strikerName)) dismissedRosterId = strikerId;
+            else if (playerKey(dismissedName) === playerKey(nonStrikerName)) dismissedRosterId = nonStrikerId;
+            else return { errors: [`Run Out: ${dismissedName} was not one of the two batters on this delivery.`] };
+        }
+        if (opts.strict && dismissalType === 'Caught' && !fielderName) return { errors: ['Caught: choose the fielder who took the catch.'] };
+        if (fielderName && dismissedName && playerKey(fielderName) === playerKey(dismissedName)) return { errors: ['The fielder cannot be the batter who was given out.'] };
+    }
+    if (opts.rosters) {
+        const placement = validateRosterPlacement(opts.rosters, original.battingTeam === 'B' ? 'B' : 'A',
+            { striker: strikerName, nonStriker: nonStrikerName, bowler: bowlerName, fielder: fielderName });
+        if (placement) return { errors: [placement] };
+    }
 
     const correctedBall = {
         ...original,
         kind, runs,
-        striker: strikerName, strikerKey: playerKey(strikerName),
-        nonStriker: nonStrikerName, nonStrikerKey: playerKey(nonStrikerName),
-        bowler: bowlerName, bowlerKey: playerKey(bowlerName),
-        dismissal: isWicket ? { type: input.dismissalType || 'Bowled', fielder: fielderName } : null,
+        striker: strikerName, strikerKey: playerKey(strikerName), strikerId,
+        nonStriker: nonStrikerName, nonStrikerKey: playerKey(nonStrikerName), nonStrikerId,
+        bowler: bowlerName, bowlerKey: playerKey(bowlerName), bowlerId,
+        dismissal: isWicket ? { type: dismissalType, fielder: fielderName, fielderId, batter: dismissedName, batterId: dismissedRosterId } : null,
         dismissalFielderKey: playerKey(fielderName),
+        dismissedPlayerKey: isWicket && dismissedName ? playerKey(dismissedName) : null,
         correctionOf: original.correctionOf || original._id, // keeps the ORIGINAL id traceable across repeat corrections
         correctedAt: Date.now(), correctedBy: actorEmail || null
     };
 
-    // Re-resolve global playerIds for anyone actually renamed, exactly the
-    // way logBall() does for a brand-new ball — keeps career/roster stats
-    // linked to the right profile after a Batter/Bowler Correction.
-    if (ownerUid && strikerName !== original.striker) correctedBall.strikerPlayerId = await resolvePlayerId(ownerUid, strikerName);
-    if (ownerUid && bowlerName !== original.bowler) correctedBall.bowlerPlayerId = await resolvePlayerId(ownerUid, bowlerName);
+    // Re-resolve global playerIds for anyone actually renamed (or re-picked
+    // by roster id), exactly the way logBall() does for a brand-new ball —
+    // keeps career/roster stats linked to the right profile.
+    const reId = async (field, newName, oldName, sentId) => {
+        if (!ownerUid) return;
+        if (playerKey(newName) !== playerKey(oldName) || (sentId !== undefined && sentId !== null && sentId !== '')) {
+            correctedBall[field] = newName ? await resolvePlayerIdExplicit(ownerUid, sentId, newName) : null;
+        }
+    };
+    await reId('strikerPlayerId', strikerName, original.striker, input.strikerId);
+    await reId('nonStrikerPlayerId', nonStrikerName, original.nonStriker, input.nonStrikerId);
+    await reId('bowlerPlayerId', bowlerName, original.bowler, input.bowlerId);
+    if (isWicket) {
+        await reId('dismissalFielderPlayerId', fielderName, origDis.fielder, input.fielderId);
+        if (dismissedName) {
+            const sameAs = playerKey(dismissedName) === playerKey(strikerName) ? correctedBall.strikerPlayerId
+                : playerKey(dismissedName) === playerKey(nonStrikerName) ? correctedBall.nonStrikerPlayerId : null;
+            correctedBall.dismissedPlayerId = sameAs || (ownerUid ? await resolvePlayerIdExplicit(ownerUid, dismissedRosterId, dismissedName) : dismissedRosterId);
+        } else {
+            correctedBall.dismissedPlayerId = null;
+        }
+    } else {
+        correctedBall.dismissalFielderPlayerId = null;
+        correctedBall.dismissedPlayerId = null;
+    }
+    if (opts.blockLegalChange && deriveBallFacts(original.kind, original.runs).legalBall !== deriveBallFacts(kind, runs).legalBall) {
+        return { errors: ['This match is still being scored: a legal delivery can\'t be turned into a Wide/No Ball (or back) from here, because every later ball in the over would move. Do it after the match, or undo and re-score it in the panel.'] };
+    }
 
     const allBalls = await ballsCollection.find({ matchId: original.matchId }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray();
     const simulated = allBalls.map(b => (String(b._id) === String(_id) ? correctedBall : b));
@@ -5516,6 +5901,11 @@ async function correctDelivery(ballId, actorEmail, input, dryRun, requestOwnerUi
     const issuesBefore = new Set(findStrikeInconsistencies(beforeInnings).map(strikeIssueKey));
     result.strikeReviewNeeded = findStrikeInconsistencies(afterInnings).filter(i => !issuesBefore.has(strikeIssueKey(i)));
 
+    result.delta = deliveryCorrectionDelta(original, correctedBall);
+    const rawClips = clipsCollection ? await findClipsForDelivery(original) : [];
+    result.clipsBefore = rawClips.map(serializeClipForEditor);
+    result.clipsAfter = rawClips.map(c => serializeClipForEditor({ ...c, ...clipLinkFromBall(correctedBall) }));
+
     if (errors.length || dryRun) return result;
 
     await ballsCollection.replaceOne({ _id }, correctedBall);
@@ -5532,21 +5922,30 @@ async function correctDelivery(ballId, actorEmail, input, dryRun, requestOwnerUi
     // final win/loss/tie verdict on an already-completed match, which
     // this deliberately does not auto-flip (see resultMayNeedReview
     // below) rather than risk guessing a DLS/target situation wrong.
-    if (ownerUid) await syncMatchRecordFromBalls(ownerUid, original.matchId, { force: true, reason: 'owner delivery correction' });
-    else console.log('[syncDebug] correctDelivery: no ownerUid available (ball had none, and no requestOwnerUid was passed in) — sync skipped for match', original.matchId);
-
-    // Keep a clip cut around this exact delivery (same innings/over/ball —
-    // identity unchanged) pointing at the corrected player names, per
-    // "CLIP CORRECTION": the clip stays connected to the same event unless
-    // the owner explicitly reassigns the event itself. Best-effort/non-
-    // blocking — a clip metadata miss should never fail the score
-    // correction that already succeeded.
-    if (clipsCollection) {
-        clipsCollection.updateMany(
-            { matchId: original.matchId, innings: original.innings, over: original.over, ballInOver: original.ballInOver },
-            { $set: { strikerName, strikerKey: correctedBall.strikerKey, bowlerName, bowlerKey: correctedBall.bowlerKey, runs: correctedBall.runs } }
-        ).catch(err => console.log('Clip resync after ball correction error:', err));
+    // 🔁 ONE CORRECTION, ALL OR NOTHING. The delivery is written first; the
+    // scorecard rebuild and the clip re-link follow. If either fails, the
+    // delivery (and any clip already re-linked) is put back exactly as it
+    // was and the scorecard rebuilt from that, so a clip can never say
+    // WICKET while the scorecard still says FOUR.
+    let relinked = [];
+    try {
+        if (ownerUid) await syncMatchRecordFromBalls(ownerUid, original.matchId, { force: true, reason: 'owner delivery correction' });
+        else console.log('[syncDebug] correctDelivery: no ownerUid available (ball had none, and no requestOwnerUid was passed in) — sync skipped for match', original.matchId);
+        // Every clip of THIS delivery (by deliveryId; older clips by the
+        // same over.ball AND the same striker, never a neighbouring Wide)
+        // now carries the corrected players, dismissal and event — the
+        // video itself is untouched (no re-cut, no re-upload).
+        relinked = await relinkClipsForDelivery(original, correctedBall);
+    } catch (err) {
+        console.log('Delivery correction failed after write — rolling back:', err);
+        await ballsCollection.replaceOne({ _id }, original).catch(() => {});
+        for (const c of relinked) await clipsCollection.replaceOne({ _id: c._id }, c).catch(() => {});
+        if (ownerUid) await syncMatchRecordFromBalls(ownerUid, original.matchId, { force: true, reason: 'owner correction rollback' }).catch(() => {});
+        return { ...result, errors: ['The correction could not be applied everywhere, so nothing was changed. Please try again.'], rolledBack: true };
     }
+    result.affectedClips = relinked.map(c => String(c._id));
+    if (clipsCollection) invalidateClipsCache(original.matchId);
+    result.event = await announceDeliveryCorrection(original, correctedBall, result.delta);
 
     const existingMatch = await matchRecordsCollection.findOne({ matchId: original.matchId }, { projection: { winningTeam: 1 } });
     result.resultMayNeedReview = !!(existingMatch && existingMatch.winningTeam &&
@@ -5631,6 +6030,97 @@ adminRouter.put('/cricket/ball/:ballId', async (req, res) => {
         console.log('Ball correction save error:', err);
         res.status(500).json({ success: false, error: 'Could not save correction' });
     }
+});
+
+// ================================================================
+// 🎬 ADVANCED CLIP EDITOR — owner only (adminRouter → requireOwner: a
+// verified Firebase ID token whose email is OWNER_EMAIL; anyone else gets
+// 403 before these handlers run). It is NOT a clip-only edit: a clip is
+// edited THROUGH the delivery it belongs to, with the same correction
+// engine as Edit Delivery (correctDelivery → validate → simulate the whole
+// match → write → rebuild the scorecard → re-link the clip(s) → announce).
+// The clip itself keeps its clipId, video, R2 object and Drive file.
+// ================================================================
+const CLIP_EDITOR_DISMISSALS = ['Bowled', 'Caught', 'LBW', 'Stumped', 'Hit Wicket', 'Run Out'];
+
+async function loadClipForEditor(clipIdParam) {
+    const { ObjectId } = require('mongodb');
+    let _id;
+    try { _id = new ObjectId(String(clipIdParam)); } catch { return { status: 400, error: 'Invalid clip id' }; }
+    const clip = clipsCollection ? await clipsCollection.findOne({ _id }) : null;
+    if (!clip) return { status: 404, error: 'Clip not found' };
+    return { clip };
+}
+
+adminRouter.get('/clips/:clipId/editor', async (req, res) => {
+    if (!clipsCollection || !ballsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const { clip, status, error } = await loadClipForEditor(req.params.clipId);
+        if (!clip) return res.status(status).json({ success: false, error });
+        const ball = await findDeliveryForClip(clip);
+        const [rosters, finished] = await Promise.all([matchRosters(clip.matchId), isMatchFinished(clip.matchId)]);
+        res.json({
+            success: true,
+            clip: serializeClipForEditor(clip),
+            delivery: ball ? {
+                ballId: String(ball._id), deliveryId: ball.ballUid || null,
+                matchId: ball.matchId, innings: ball.innings || 1, over: ball.over, ballInOver: ball.ballInOver,
+                battingTeam: ball.battingTeam === 'B' ? 'B' : 'A',
+                kind: ball.kind, runs: ball.runs, legalBall: deriveBallFacts(ball.kind, ball.runs).legalBall,
+                correctedAt: ball.correctedAt || null,
+                input: correctionInputFromBall(ball)
+            } : null,
+            rosters, finished,
+            dismissalTypes: CLIP_EDITOR_DISMISSALS,
+            extraTypes: [...VALID_EXTRA_TYPES]
+        });
+    } catch (err) {
+        console.log('Clip editor load error:', err);
+        res.status(500).json({ success: false, error: 'Could not open this clip' });
+    }
+});
+
+async function runClipEdit(req, dryRun) {
+    const { clip, status, error } = await loadClipForEditor(req.params.clipId);
+    if (!clip) return { status, body: { success: false, error } };
+    const ball = await findDeliveryForClip(clip);
+    if (!ball) {
+        return { status: 409, body: { success: false, error: 'This clip is not linked to a recorded delivery, so it cannot be corrected safely here (the scorecard has nothing to update). Use the ✏️ reassign button for its player credit.' } };
+    }
+    const body = req.body || {};
+    const input = body.delivery && typeof body.delivery === 'object' ? body.delivery : {};
+    const [rosters, finished] = await Promise.all([matchRosters(clip.matchId), isMatchFinished(clip.matchId)]);
+    const result = await correctDelivery(String(ball._id), req.ownerEmail, input, dryRun, req.ownerUid,
+        { rosters, strict: true, blockLegalChange: !finished });
+    if (!result.before) return { status: 400, body: { success: false, error: (result.errors && result.errors[0]) || 'Could not correct this delivery' } };
+    const wantHighlight = typeof body.isHighlight === 'boolean' ? body.isHighlight : (clip.isHighlight !== false);
+    if (dryRun) return { status: 200, body: { success: true, ...result, isHighlight: wantHighlight } };
+    if (result.errors && result.errors.length) return { status: 409, body: { success: false, error: result.errors[0] } };
+
+    if (wantHighlight !== (clip.isHighlight !== false)) {
+        await clipsCollection.updateOne({ _id: clip._id }, { $set: { isHighlight: wantHighlight, highlightPending: false } });
+        invalidateClipsCache(clip.matchId);
+    }
+    const clipAfter = await clipsCollection.findOne({ _id: clip._id });
+    // Same action name as Edit Delivery, so "Undo last change" undoes a
+    // clip edit too (the delivery, and its clips with it).
+    await logAuditAction(
+        req.ownerEmail, 'Owner delivery correction',
+        `Clip edit — Match ${ball.matchId} — Innings ${ball.innings || 1} Over ${ball.over}.${ball.ballInOver}`,
+        result.before.ball, result.after.ball,
+        { matchId: ball.matchId, ballId: String(ball._id), clipId: String(clip._id), via: 'advanced-clip-editor',
+          clipBefore: serializeClipForEditor(clip), clipAfter: serializeClipForEditor(clipAfter) }
+    );
+    return { status: 200, body: { success: true, ...result, clip: serializeClipForEditor(clipAfter) } };
+}
+
+adminRouter.post('/clips/:clipId/edit/preview', async (req, res) => {
+    try { const r = await runClipEdit(req, true); res.status(r.status).json(r.body); }
+    catch (err) { console.log('Clip edit preview error:', err); res.status(500).json({ success: false, error: 'Could not preview this change' }); }
+});
+adminRouter.put('/clips/:clipId/edit', async (req, res) => {
+    try { const r = await runClipEdit(req, false); res.status(r.status).json(r.body); }
+    catch (err) { console.log('Clip edit save error:', err); res.status(500).json({ success: false, error: 'Could not save this change' }); }
 });
 
 // ================================================================
@@ -6486,13 +6976,15 @@ adminRouter.post('/cricket/match/:matchId/undo-last', async (req, res) => {
         }
 
         const restoredBall = lastEntry.previousValue;
+        const currentBall = await ballsCollection.findOne({ _id: restoredBall._id });
         await ballsCollection.replaceOne({ _id: restoredBall._id }, restoredBall);
         if (restoredBall.ownerUid) await syncMatchRecordFromBalls(restoredBall.ownerUid, matchId, { force: true, reason: 'owner correction undo' });
-        if (clipsCollection) {
-            clipsCollection.updateMany(
-                { matchId, innings: restoredBall.innings, over: restoredBall.over, ballInOver: restoredBall.ballInOver },
-                { $set: { strikerName: restoredBall.striker, strikerKey: restoredBall.strikerKey, bowlerName: restoredBall.bowler, bowlerKey: restoredBall.bowlerKey, runs: restoredBall.runs } }
-            ).catch(err => console.log('Clip resync after undo error:', err));
+        // The delivery's clips go back with it (same link rule as the
+        // correction itself), and every open view hears about it.
+        if (currentBall) {
+            await relinkClipsForDelivery(currentBall, restoredBall).catch(err => console.log('Clip relink after undo error:', err));
+            if (clipsCollection) invalidateClipsCache(matchId);
+            await announceDeliveryCorrection(currentBall, restoredBall, deliveryCorrectionDelta(currentBall, restoredBall));
         }
         await logAuditAction(
             req.ownerEmail, 'Undo delivery correction',
@@ -9194,6 +9686,18 @@ io.on('connection', async (socket) => {
 
     socket.on('updateFootballScore', handleFootballUpdate);
     socket.on('liveFootballScore', handleFootballUpdate);
+
+    // 🛠 Owner corrections made while this panel was offline (see
+    // announceDeliveryCorrection). The panel applies each one at most once.
+    socket.on('getCricketCorrections', async (data, ack) => {
+        if (typeof ack !== 'function') return;
+        try {
+            const id = safeMatchId((data && data.matchId) || '');
+            if (!id) return ack({ ok: false, corrections: [] });
+            const rs = await getRoomState(`room-${id}`);
+            ack({ ok: true, corrections: (rs.cricketCorrections || []).filter(e => Date.now() - e.at < CORRECTION_REPLAY_MS) });
+        } catch (e) { ack({ ok: false, corrections: [] }); }
+    });
 
     // 🏏 CRICKET SCOREBOARD PANEL & OVERLAY SOCKET HANDLING
     // Mirrors handleFootballUpdate: merge partial updates into persisted room

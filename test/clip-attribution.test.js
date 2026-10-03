@@ -223,5 +223,37 @@ t('a bowled wicket names the dismissal', () => {
   assert.strictEqual(organizer.buildClipFileName(meta), '00.6_WICKET-BOWLED_Player-A_vs_Bowler-One.mp4');
 });
 
+console.log('\n=== clip event for a stored delivery ===');
+t('4/6/W/extras map to the same buckets the panel uses', () => {
+  const ev = (b) => CA.clipEventForBall(b).eventType + '|' + CA.clipEventForBall(b).outcomeLabel;
+  assert.strictEqual(ev({ kind: '4', runs: 4 }), 'FOUR|FOUR');
+  assert.strictEqual(ev({ kind: '6', runs: 6 }), 'SIX|SIX');
+  assert.strictEqual(ev({ kind: 'W', runs: 0, dismissal: { type: 'Run Out' } }), 'WICKET|WICKET — Run Out');
+  assert.strictEqual(ev({ kind: 'Wd', runs: 5 }), 'FOUR|Wide 4');
+  assert.strictEqual(ev({ kind: 'Nb', runs: 7 }), 'SIX|No Ball 6');
+  assert.strictEqual(ev({ kind: 'LB', runs: 4 }), 'CLIP|Leg Bye 4');
+  assert.strictEqual(ev({ kind: 'W', runs: 0, dismissal: { type: 'Retired Hurt' } }), 'CLIP|0 runs');
+});
+
+console.log('\n=== applying a website correction to panel state ===');
+const liveState = () => ({ inningsNumber: 1, battingTeam: 'A', score: { runs: 100, wickets: 2 },
+  striker: { name: 'B', runs: 10, balls: 8, fours: 0, sixes: 0 }, nonStriker: { name: 'A', runs: 30, balls: 20, fours: 3, sixes: 0 },
+  bowler: { name: 'Two', overs: 0, balls: 1, runs: 1, wickets: 0 }, battingCard: { A: [], B: [] },
+  bowlingCard: { A: [], B: [{ name: 'One', overs: 3, balls: 0, runs: 20, wickets: 1, inningsNo: 1 }] }, extras: { A: { wd: 0, nb: 0, b: 0, lb: 0 }, B: {} }, ballLog: [] });
+const sixEv = { id: 'c1', innings: 1, battingTeam: 'A', overLabel: '12.6', after: { kind: '6', runs: 6 },
+  delta: { team: { runs: 2, wickets: 0, extras: {} }, batting: [{ name: 'A', runs: 2, balls: 0, fours: -1, sixes: 1 }], bowling: [{ name: 'One', balls: 0, runs: 2, wickets: 0 }] } };
+t('FOUR → SIX lands on the right tiles/rows, once', () => {
+  const st = liveState();
+  assert.ok(CA.applyDeliveryCorrection(st, sixEv).applied);
+  assert.deepStrictEqual([st.score.runs, st.nonStriker.runs, st.nonStriker.fours, st.nonStriker.sixes, st.striker.runs, st.bowlingCard.B[0].runs, st.bowler.runs], [102, 32, 2, 1, 10, 22, 1]);
+  assert.ok(CA.applyDeliveryCorrection(st, sixEv).duplicate);
+  assert.strictEqual(st.score.runs, 102);
+});
+t('a legal-ball change is not patched into running totals', () => {
+  const st = liveState();
+  const r = CA.applyDeliveryCorrection(st, Object.assign({}, sixEv, { id: 'c2', legalChanged: true }));
+  assert.ok(!r.applied && r.warnings.length === 1 && st.score.runs === 100);
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if(fail) process.exit(1);

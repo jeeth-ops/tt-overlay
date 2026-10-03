@@ -2010,6 +2010,49 @@
     border:none; display:flex; align-items:center; justify-content:center; cursor:pointer; margin-left:4px;
   }
   .clip-reassign-btn:active{ transform:scale(.9); }
+  /* 🎬 Advanced Clip Editor (owner only) — lives in #edit-modal, same
+     ed-* language as Edit Delivery. */
+  .clip-more-btn{
+    flex:none; width:26px; height:26px; border-radius:8px; background:var(--panel-2); color:var(--text);
+    border:1px solid var(--border); display:flex; align-items:center; justify-content:center; cursor:pointer; margin-left:4px;
+    font:800 15px/1 inherit; letter-spacing:1px;
+  }
+  .clip-more-btn:hover{ border-color:var(--accent); color:var(--accent); }
+  .clip-more-btn:active{ transform:scale(.9); }
+  #ce-root .ce-head{ padding-top:30px; display:flex; align-items:flex-end; justify-content:space-between; gap:10px; margin-bottom:12px; }
+  #ce-root .ce-head .em-title{ font-size:20px; margin:0; }
+  #ce-root .ce-grid{ display:grid; grid-template-columns:minmax(0,1.05fr) minmax(0,1fr); gap:12px; align-items:start; }
+  #ce-root .ce-col{ min-width:0; }
+  .ce-video{ position:relative; width:100%; aspect-ratio:16/9; border-radius:14px; overflow:hidden; background:#000; }
+  .ce-video video{ width:100%; height:100%; object-fit:contain; display:block; background:#000; }
+  .ce-video .ce-novid{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#bbb; font-size:12.5px; text-align:center; padding:12px; }
+  .ce-cap{ margin-top:9px; font-size:13px; font-weight:700; line-height:1.4; }
+  .ce-cap small{ display:block; font-weight:600; color:var(--text-dim); font-size:11.5px; }
+  .ce-pair{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .ce-seg{ display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .ce-seg .ed-chip{ height:auto; min-height:44px; padding:6px 10px; text-align:left; font-size:12.5px; line-height:1.25; }
+  .ce-seg .ed-chip small{ display:block; font-size:9.5px; letter-spacing:.5px; text-transform:uppercase; opacity:.75; }
+  .ce-credit{ margin-top:9px; font-size:12px; color:var(--text-dim); }
+  .ce-credit b{ color:var(--text); }
+  .ce-meta{ display:grid; grid-template-columns:auto 1fr; gap:4px 12px; font-size:11.5px; color:var(--text-dim); }
+  .ce-meta b{ color:var(--text); font-weight:700; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
+  .ce-sum{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .ce-sum > div{ padding:10px 11px; border-radius:12px; background:var(--panel); border:1px solid var(--border-soft); min-width:0; }
+  .ce-sum h4{ margin:0 0 6px; font-size:10px; font-weight:800; letter-spacing:.6px; text-transform:uppercase; color:var(--text-faint); }
+  .ce-sum p{ margin:0 0 3px; font-size:12px; line-height:1.4; overflow-wrap:anywhere; }
+  .ce-sum p.big{ font-size:13.5px; font-weight:800; }
+  .ce-sum .after p.chg{ color:var(--accent); font-weight:800; }
+  .ce-impact{ margin-top:8px; font-size:11.5px; color:var(--text-dim); min-height:16px; }
+  .ce-toggle{ display:flex; gap:6px; }
+  #ce-root .ed-actions .em-btn{ flex:0 0 auto; min-width:120px; }
+  @media (max-width:720px){
+    /* one column, in working order: watch → edit → check the summary */
+    #ce-root .ce-grid{ display:flex; flex-direction:column; align-items:stretch; gap:0; }
+    #ce-root .ce-col{ display:contents; }
+    #ce-root .ce-o1{ order:1; } #ce-root .ce-o2{ order:2; } #ce-root .ce-o3{ order:3; } #ce-root .ce-o4{ order:4; }
+    #ce-root .ed-actions .em-btn{ flex:1; min-width:0; }
+  }
+
   .clip-delete-btn{
     flex:none; width:26px; height:26px; border-radius:8px; background:var(--wicket-soft); color:var(--wicket);
     border:none; display:flex; align-items:center; justify-content:center; cursor:pointer; margin-left:4px;
@@ -3480,6 +3523,10 @@ function connectLive(matchId){
       scheduleRender();
     }
   });
+  // An owner correction of an earlier delivery (Advanced Clip Editor /
+  // Edit Delivery): the clips and the saved scorecard changed on the
+  // server — reload them now instead of waiting for the next poll.
+  socket.on('cricketDeliveryCorrected', () => refreshAfterClipEdit());
   socket.on('cricketPointsTable', (payload) => {
     latestPoints = (payload && payload.data) || null;
     renderPoints();
@@ -5884,7 +5931,7 @@ function hlCardHtml(c, newIdx){
   const dur = Number(c.duration || c.durationSec) > 0 ? ` · ${Math.round(Number(c.duration || c.durationSec))}s` : '';
   const ownerName = t === 'WICKET' ? (c.dismissedPlayer || c.striker || '') : (c.striker || c.bowler || '');
   const reassignBtn = isOwner
-    ? `<button class="clip-reassign-btn" data-reassign-clip="${c.clipId}" data-reassign-name="${escapeHtml(ownerName)}" data-reassign-role="${t === 'WICKET' ? 'dismissed' : 'batter'}" title="Reassign to correct player">✏️</button>` : '';
+    ? `<button class="clip-more-btn" data-edit-clip="${c.clipId}" title="Edit clip — delivery, players, wicket" aria-label="Edit clip">⋯</button><button class="clip-reassign-btn" data-reassign-clip="${c.clipId}" data-reassign-name="${escapeHtml(ownerName)}" data-reassign-role="${t === 'WICKET' ? 'dismissed' : 'batter'}" title="Reassign to correct player">✏️</button>` : '';
   const deleteBtn = isOwner
     ? `<button class="clip-delete-btn" data-delete-clip="${c.clipId}" data-delete-title="${escapeHtml((c.striker||c.bowler||'') + ' — ' + c.eventType)}" title="Delete this clip">${TRASH_ICON}</button>` : '';
   const ready = !!c.ready;
@@ -5929,7 +5976,7 @@ function clipRowHtml(c){
   const ownerName = c.eventType === 'WICKET' ? (c.dismissedPlayer || c.striker || '') : (c.striker || c.bowler || '');
   const ownerRole = c.eventType === 'WICKET' ? 'dismissed' : 'batter';
   const reassignBtn = isOwner
-    ? `<button class="clip-reassign-btn" data-reassign-clip="${c.clipId}" data-reassign-name="${escapeHtml(ownerName)}" data-reassign-role="${ownerRole}" title="Reassign to correct player">✏️</button>`
+    ? `<button class="clip-more-btn" data-edit-clip="${c.clipId}" title="Edit clip — delivery, players, wicket" aria-label="Edit clip">⋯</button><button class="clip-reassign-btn" data-reassign-clip="${c.clipId}" data-reassign-name="${escapeHtml(ownerName)}" data-reassign-role="${ownerRole}" title="Reassign to correct player">✏️</button>`
     : '';
   const deleteBtn = isOwner
     ? `<button class="clip-delete-btn" data-delete-clip="${c.clipId}" data-delete-title="${escapeHtml((c.striker||c.bowler||'') + ' — ' + c.eventType)}" title="Delete this clip">${TRASH_ICON}</button>`
@@ -5973,6 +6020,10 @@ function wireClipRows(root, clipsByIdMap){
         e.stopPropagation();
         openClipReassignForm(reassignBtn.dataset.reassignClip, reassignBtn.dataset.reassignName, reassignBtn.dataset.reassignRole);
       });
+    }
+    const editBtn = row.querySelector('[data-edit-clip]');
+    if(editBtn){
+      editBtn.addEventListener('click', (e) => { e.stopPropagation(); openClipEditor(editBtn.dataset.editClip); });
     }
     const deleteBtn = row.querySelector('[data-delete-clip]');
     if(deleteBtn){
@@ -8353,6 +8404,311 @@ function openClipReassignForm(clipId, currentName, role){
       renderHighlights();
     }
   );
+}
+
+/* ============================================================
+   🎬 ADVANCED CLIP EDITOR — owner only (chhayajeeth@gmail.com).
+   The ⋯ on any clip opens it. The clip is edited THROUGH its delivery:
+   Save sends the corrected delivery to /api/admin/clips/:id/edit, where
+   the same correction engine as Edit Delivery validates it against the
+   Laws (and the two squads), rebuilds the scorecard, statistics and
+   leaderboard from the ball log, re-links every clip of that delivery
+   and tells every open view (scorecard pages, the live panel). The
+   server re-checks the account on every call — hiding this button is
+   only for tidiness, not security. The video itself is never re-cut or
+   re-uploaded: only what it is ABOUT changes.
+   ============================================================ */
+function refreshAfterClipEdit(){
+  try{ renderHighlights(); }catch(e){}
+  try{ refreshCommentaryClips(true); }catch(e){}
+  refreshScorecardAfterEdit();
+}
+const CE_EXTRA_LABEL = { none:'Runs', wide:'Wide', noball:'No Ball', bye:'Bye', legbye:'Leg Bye', overthrow:'Overthrow' };
+const CE_WIDE_OUTS = ['Run Out', 'Stumped'], CE_NOBALL_OUTS = ['Run Out', 'Hit Wicket'];
+const CE_BOWLER_CREDIT = ['Bowled', 'Caught', 'LBW', 'Stumped', 'Hit Wicket'];
+async function openClipEditor(clipId){
+  if(!isOwner){ emToast('Only the owner can edit clips'); return; }
+  const content = document.getElementById('edit-modal-content');
+  content.innerHTML = '<div id="ce-root"><div class="ce-head"><div><div class="em-tag">Edit clip</div><div class="em-title">Loading…</div></div></div><div class="em-skel"></div><div class="em-skel"></div><div class="em-skel"></div></div>';
+  openEditModal();
+  let data;
+  try{ data = await adminApi(`/clips/${encodeURIComponent(clipId)}/editor`); }
+  catch(err){ content.innerHTML = `<div id="ce-root"><div class="ce-head"><div><div class="em-tag">Edit clip</div><div class="em-title">Could not open this clip</div></div></div><div class="ed-warn">⚠️ <span>${escapeHtml(err.message || 'Error')}</span></div></div>`; return; }
+  const clip = data.clip || {}, del = data.delivery;
+  if(!del){
+    content.innerHTML = `<div id="ce-root"><div class="ce-head"><div><div class="em-tag">Edit clip</div><div class="em-title">${escapeHtml(clip.over ?? '—')}.${escapeHtml(clip.ballInOver ?? '')} • ${escapeHtml(clip.eventType || 'Clip')}</div></div></div>
+      <div class="ed-warn">⚠️ <span>This clip isn't linked to a recorded delivery in the ball log, so the scorecard has nothing to correct. Use ✏️ Reassign on the clip to change its player credit.</span></div>
+      <div class="ed-actions"><button class="em-btn cancel" id="ce-close">Close</button></div></div>`;
+    document.getElementById('ce-close').onclick = closeEditModal;
+    return;
+  }
+  const rosters = data.rosters || { A:{ players:[] }, B:{ players:[] } };
+  const bt = del.battingTeam === 'B' ? 'B' : 'A', bowlT = bt === 'A' ? 'B' : 'A';
+  const teamName = (t) => (rosters[t] && rosters[t].name) || `Team ${t}`;
+  const orig = Object.assign({}, del.input, { isHighlight: clip.isHighlight !== false });
+  const S = JSON.parse(JSON.stringify(orig));
+  const $ = (id) => document.getElementById(id);
+  let preview = null, checking = false, previewSeq = 0, saving = false, previewTimer = null;
+
+  const fmtEvent = (st) => {
+    if(st.wicket){
+      const on = st.extraType === 'wide' ? ' (Wide)' : st.extraType === 'noball' ? ' (No Ball)' : '';
+      return `WICKET — ${st.dismissalType || 'Bowled'}${on}`;
+    }
+    if(st.extraType === 'wide') return st.extras > 1 ? `Wide +${st.extras - 1}` : 'Wide';
+    if(st.extraType === 'noball') return st.runsOffBat ? `No Ball +${st.runsOffBat}` : 'No Ball';
+    if(st.extraType === 'bye') return `Bye ${st.extras}`;
+    if(st.extraType === 'legbye') return `Leg Bye ${st.extras}`;
+    if(st.extraType === 'overthrow') return `Overthrow ${st.runsOffBat}`;
+    if(st.runsOffBat === 4) return 'FOUR';
+    if(st.runsOffBat === 6) return 'SIX';
+    return st.runsOffBat ? `${st.runsOffBat} run${st.runsOffBat === 1 ? '' : 's'}` : 'Dot ball';
+  };
+  const dismissedName = (st) => !st.wicket ? null : (st.dismissalType === 'Run Out' ? (st.dismissed === 'nonStriker' ? st.nonStriker : st.striker) : st.striker);
+  const needsFielder = () => S.wicket && ['Caught', 'Run Out', 'Stumped'].includes(S.dismissalType);
+  const allowedOuts = () => S.extraType === 'wide' ? CE_WIDE_OUTS : S.extraType === 'noball' ? CE_NOBALL_OUTS : (data.dismissalTypes || CE_BOWLER_CREDIT.concat('Run Out'));
+  const dirty = () => JSON.stringify(S) !== JSON.stringify(orig);
+  const localProblems = () => {
+    const p = [];
+    if(!S.striker) p.push('Choose the batsman.');
+    if(!S.bowler) p.push('Choose the bowler.');
+    if(S.striker && S.nonStriker && S.striker === S.nonStriker) p.push('Striker and non-striker cannot be the same player.');
+    if(S.bowler && (S.bowler === S.striker || S.bowler === S.nonStriker)) p.push('The bowler cannot also be one of the batters.');
+    if(S.wicket && S.dismissalType === 'Caught' && !S.fielder) p.push('Caught: choose the fielder who took the catch.');
+    if(S.wicket && !allowedOuts().includes(S.dismissalType)) p.push(`${S.dismissalType} is not possible on a ${CE_EXTRA_LABEL[S.extraType]}.`);
+    return p;
+  };
+  const buildInput = () => ({
+    runsOffBat: S.runsOffBat, extras: S.extras, extraType: S.extraType,
+    wicket: S.wicket, dismissalType: S.wicket ? S.dismissalType : null,
+    dismissed: S.wicket && S.dismissalType === 'Run Out' ? S.dismissed : 'striker',
+    dismissedPlayer: dismissedName(S),
+    fielder: needsFielder() ? (S.fielder || '') : '', fielderId: needsFielder() ? (S.fielderId || null) : null,
+    striker: S.striker, strikerId: S.strikerId, nonStriker: S.nonStriker, nonStrikerId: S.nonStrikerId,
+    bowler: S.bowler, bowlerId: S.bowlerId
+  });
+  const pickItems = (team) => ((rosters[team] && rosters[team].players) || []).map(p => ({ value: p.name, label: p.name, sub: teamName(team), id: p.id || null }));
+
+  const schedulePreview = () => {
+    clearTimeout(previewTimer);
+    if(!dirty() || localProblems().length){ preview = null; checking = false; paint(); return; }
+    checking = true;
+    previewTimer = setTimeout(async () => {
+      const seq = ++previewSeq;
+      try{
+        const r = await adminApi(`/clips/${encodeURIComponent(clipId)}/edit/preview`, { method:'POST', body: JSON.stringify({ delivery: buildInput(), isHighlight: S.isHighlight }) });
+        if(seq !== previewSeq) return;
+        preview = r;
+      }catch(err){
+        if(seq !== previewSeq) return;
+        preview = { errors: [err.message || 'This change cannot be saved'] };
+      }
+      checking = false; paint();
+    }, 350);
+    paint();
+  };
+  const set = (patch) => { Object.assign(S, patch); schedulePreview(); paint(); };
+
+  const chip = (attrs, txt, on, extra) => `<button type="button" class="ed-chip${extra||''}${on ? ' on' : ''}" ${attrs} aria-pressed="${on ? 'true' : 'false'}">${txt}</button>`;
+  const person = (k, label, team) => `<button type="button" class="ed-person${S[k] !== orig[k] ? ' changed' : ''}" data-person="${k}" data-team="${team}" aria-label="${label}: ${escapeHtml(S[k] || 'none')}. Change"><small>${label} · ${escapeHtml(teamName(team))}</small><b>${escapeHtml(S[k] || '—')}</b></button>`;
+  const videoSrc = clip.playbackUrl || (clip.ready ? `${clipApiBase()}/api/clips/${encodeURIComponent(clipId)}/watch` : '');
+
+  const summaryLines = (st, other, isAfter) => {
+    const ev = fmtEvent(st);
+    const rows = [
+      ['big', `${del.over}.${del.ballInOver} • ${ev}`, fmtEvent(st) !== fmtEvent(other)],
+      ['', `Batsman: ${st.striker || '—'}`, st.striker !== other.striker],
+      ['', `Non-striker: ${st.nonStriker || '—'}`, st.nonStriker !== other.nonStriker],
+      ['', `Bowler: ${st.bowler || '—'}`, st.bowler !== other.bowler]
+    ];
+    if(st.wicket || other.wicket){
+      rows.push(['', `Dismissed: ${dismissedName(st) || '—'}`, dismissedName(st) !== dismissedName(other)]);
+      if(st.wicket) rows.push(['', `How out: ${st.dismissalType}`, st.dismissalType !== other.dismissalType || st.wicket !== other.wicket]);
+      if(st.wicket && ['Caught','Run Out','Stumped'].includes(st.dismissalType)) rows.push(['', `Fielder: ${st.fielder || '—'}`, (st.fielder || '') !== (other.fielder || '')]);
+    }
+    rows.push(['', `Highlights: ${st.isHighlight ? 'Shown' : 'Hidden'}`, st.isHighlight !== other.isHighlight]);
+    return rows.map(([cls, txt, chg]) => `<p class="${cls}${isAfter && chg ? ' chg' : ''}">${escapeHtml(txt)}</p>`).join('');
+  };
+  const impactLine = () => {
+    if(!dirty()) return 'No changes yet.';
+    if(localProblems().length) return '';
+    if(checking) return 'Checking against the scorecard…';
+    if(!preview) return '';
+    if(preview.errors && preview.errors.length) return '';
+    const sc = (cards) => cards && (bt === 'A' ? cards.scoreA : cards.scoreB);
+    const b = sc(preview.before && preview.before.cards), a = sc(preview.after && preview.after.cards);
+    const bits = [];
+    if(b && a && (b.runs !== a.runs || b.wickets !== a.wickets)) bits.push(`${teamName(bt)} ${b.runs}/${b.wickets} → <b>${a.runs}/${a.wickets}</b>`);
+    if(preview.clipsAfter && preview.clipsAfter.length) bits.push(`${preview.clipsAfter.length} clip${preview.clipsAfter.length === 1 ? '' : 's'} re-linked (same video)`);
+    if(preview.strikeReviewNeeded && preview.strikeReviewNeeded.length) bits.push(`⚠️ ${preview.strikeReviewNeeded.length} later deliver${preview.strikeReviewNeeded.length === 1 ? 'y' : 'ies'} may now need a striker check`);
+    return bits.length ? bits.join(' · ') : 'Checked — ready to save.';
+  };
+
+  const paint = () => {
+    const active = document.activeElement && document.activeElement.dataset ? (document.activeElement.dataset.k || null) : null;
+    const errs = localProblems().concat((preview && preview.errors) || []);
+    const outs = allowedOuts();
+    const credit = S.wicket ? (CE_BOWLER_CREDIT.includes(S.dismissalType)
+      ? `Bowler wicket: <b>+1 to ${escapeHtml(S.bowler || 'the bowler')}</b>`
+      : `<b>Not a bowler's wicket</b> — ${escapeHtml(S.dismissalType)} is credited to the fielder, not the bowler.`) : '';
+    const runChips = [0,1,2,3,4,6].map(n => chip(`data-run="${n}" data-k="r${n}"`, n === 4 ? '4' : n === 6 ? '6' : String(n), S.extraType === 'none' && S.runsOffBat === n, n === 4 || n === 6 ? '' : '')).join('');
+    const exChips = [['wide','Wide'],['noball','No Ball'],['bye','Bye'],['legbye','Leg Bye']].map(([v,l]) => chip(`data-ex="${v}" data-k="x${v}"`, l, S.extraType === v, ' sm')).join('');
+    const stepVal = S.extraType === 'wide' ? Math.max(0, S.extras - 1) : (S.extraType === 'bye' || S.extraType === 'legbye') ? S.extras : S.runsOffBat;
+    const stepLabel = S.extraType === 'wide' ? 'Runs run on the wide (+1 penalty added)' : S.extraType === 'noball' ? 'Runs off the bat (+1 no-ball penalty added)' : (S.extraType === 'bye' || S.extraType === 'legbye') ? `${CE_EXTRA_LABEL[S.extraType]} runs` : 'Runs off the bat';
+    $('ce-dyn').innerHTML = `
+      <div class="ce-grid">
+        <div class="ce-col">
+          <div class="ed-card ce-o1">
+            <div class="ed-h"><span>Clip preview</span><span>${escapeHtml(clip.duration ? Math.round(clip.duration) + 's' : '')}</span></div>
+            <div class="ce-video">${videoSrc ? `<video id="ce-video" controls playsinline preload="metadata" src="${escapeHtml(videoSrc)}"${clip.posterUrl ? ` poster="${escapeHtml(clip.posterUrl)}"` : ''}></video>` : '<div class="ce-novid">Video still uploading — you can edit its details now.</div>'}</div>
+            <div class="ce-cap">${escapeHtml(`${del.over}.${del.ballInOver} • ${fmtEvent(S)}`)}<small>${escapeHtml(dismissedName(S) || S.striker || '—')} · Bowler: ${escapeHtml(S.bowler || '—')}</small></div>
+          </div>
+          <div class="ed-card ce-o3">
+            <div class="ed-h"><span>Change summary</span></div>
+            <div class="ce-sum">
+              <div class="before"><h4>Before</h4>${summaryLines(orig, S, false)}</div>
+              <div class="after"><h4>After</h4>${summaryLines(S, orig, true)}</div>
+            </div>
+            <div class="ce-impact" role="status">${impactLine()}</div>
+          </div>
+          <div class="ed-card ce-o4">
+            <div class="ed-h"><span>Delivery link</span></div>
+            <div class="ce-meta">
+              <span>Delivery ID</span><b>${escapeHtml(del.deliveryId || del.ballId)}</b>
+              <span>Match ID</span><b>${escapeHtml(del.matchId)}</b>
+              <span>Innings</span><b>${escapeHtml(String(del.innings))} · ${escapeHtml(teamName(bt))} batting</b>
+              <span>Over · Ball</span><b>${escapeHtml(String(del.over))} · ${escapeHtml(String(del.ballInOver))}</b>
+              <span>Clip ID</span><b>${escapeHtml(clip.helperClipId || clip.clipId || '')}</b>
+            </div>
+            <div class="ce-credit">Innings, over and ball are this delivery's identity and stay fixed here; the video file is not re-cut or re-uploaded.</div>
+          </div>
+        </div>
+        <div class="ce-col">
+          <div class="ed-card ce-o2">
+            <div class="ed-h"><span>Event</span><span class="ed-delta">${escapeHtml(fmtEvent(S))}</span></div>
+            <div class="ed-chips" role="group" aria-label="Runs">${runChips}</div>
+            <div class="ed-chips" style="margin-top:8px" role="group" aria-label="Extras">${exChips}${chip('data-wk="1" data-k="wk"', 'Wicket', S.wicket, ' sm wk')}</div>
+            ${S.extraType !== 'none' || S.runsOffBat > 6 ? `<div style="margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><div class="ed-step" role="group" aria-label="${escapeHtml(stepLabel)}"><button type="button" data-step="-1" data-k="s-" aria-label="Decrease">−</button><output>${stepVal}</output><button type="button" data-step="1" data-k="s+" aria-label="Increase">+</button></div><span class="ed-kbd" style="margin:0">${escapeHtml(stepLabel)}</span></div>` : ''}
+          </div>
+          <div class="ed-card ce-o2">
+            <div class="ed-h"><span>Batting</span><span>${escapeHtml(teamName(bt))}</span></div>
+            <div class="ce-pair">${person('striker','Batsman',bt)}${person('nonStriker','Non-striker',bt)}</div>
+            <button type="button" class="ed-chip sm ed-swap" id="ce-swap" data-k="swap">⇄ Swap batters</button>
+          </div>
+          <div class="ed-card ce-o2">
+            <div class="ed-h"><span>Bowling</span><span>${escapeHtml(teamName(bowlT))}</span></div>
+            ${person('bowler','Bowler',bowlT)}
+          </div>
+          ${S.wicket ? `<div class="ed-card ce-o2">
+            <div class="ed-h"><span>Wicket details</span></div>
+            <div class="ed-chips" role="group" aria-label="How out">${outs.map(t => chip(`data-dis="${escapeHtml(t)}" data-k="d-${escapeHtml(t)}"`, escapeHtml(t), S.dismissalType === t, ' sm')).join('')}</div>
+            ${S.dismissalType === 'Run Out' ? `<div class="ed-h" style="margin-top:12px"><span>Who was out?</span></div>
+              <div class="ce-seg" role="group" aria-label="Who was out">
+                ${chip('data-who="striker" data-k="w-s"', `<small>Striker</small>${escapeHtml(S.striker || '—')}`, S.dismissed !== 'nonStriker')}
+                ${chip('data-who="nonStriker" data-k="w-n"', `<small>Non-striker</small>${escapeHtml(S.nonStriker || '—')}`, S.dismissed === 'nonStriker')}
+              </div>` : `<div class="ce-credit">Dismissed: <b>${escapeHtml(S.striker || '—')}</b> (the striker)</div>`}
+            ${needsFielder() ? `<div style="margin-top:10px">${person('fielder', S.dismissalType === 'Stumped' ? 'Keeper' : 'Fielder', bowlT)}</div>` : ''}
+            <div class="ce-credit">${credit}</div>
+          </div>` : ''}
+          <div class="ed-card ce-o2">
+            <div class="ed-h"><span>Clip category</span></div>
+            <div class="ce-toggle" role="group" aria-label="Show in Highlights">
+              ${chip('data-hl="1" data-k="hl1"', 'In Highlights', S.isHighlight, ' sm')}${chip('data-hl="0" data-k="hl0"', 'Commentary only', !S.isHighlight, ' sm')}
+            </div>
+          </div>
+          <div id="ce-msgs" class="ce-o2">${errs.map(t => `<div class="ed-warn" role="alert">⚠️ <span>${escapeHtml(t)}</span></div>`).join('')}</div>
+        </div>
+      </div>`;
+    const st = $('ce-status'); st.className = 'em-status' + (dirty() ? ' dirty' : '');
+    st.textContent = saving ? 'Saving…' : dirty() ? (checking ? 'Checking…' : 'Unsaved changes') : 'No changes';
+    $('ce-save').disabled = saving || !dirty() || checking || errs.length > 0 || !preview;
+    $('ce-save').textContent = saving ? 'Saving…' : 'Save Changes';
+    if(active){ const el = $('ce-dyn').querySelector(`[data-k="${CSS.escape(active)}"]`); if(el && !el.disabled) el.focus(); }
+  };
+
+  content.innerHTML = `
+    <div id="ce-root">
+      <div class="ce-head">
+        <div><div class="em-tag">Edit clip</div><div class="em-title">${escapeHtml(`${del.over}.${del.ballInOver} • ${fmtEvent(orig)}`)}</div>
+        <div class="em-sub" style="margin:4px 0 0">Innings ${escapeHtml(String(del.innings))} · ${escapeHtml(teamName(bt))} v ${escapeHtml(teamName(bowlT))}${del.correctedAt ? ' · <span class="em-chip ce">Edited before</span>' : ''}${data.finished ? '' : ' · Match in progress'}</div></div>
+      </div>
+      <div id="ce-dyn"></div>
+      <div class="ed-actions">
+        <span class="em-status" id="ce-status" role="status">No changes</span>
+        <button class="em-btn cancel" id="ce-cancel">Cancel</button>
+        <button class="em-btn save" id="ce-save" disabled>Save Changes</button>
+      </div>
+    </div>`;
+  paint();
+
+  $('ce-dyn').addEventListener('click', (e) => {
+    const t = e.target.closest('button'); if(!t || t.disabled) return;
+    if(t.dataset.run != null){ set({ extraType:'none', runsOffBat:Number(t.dataset.run), extras:0 }); return; }
+    if(t.dataset.ex){
+      const ex = t.dataset.ex;
+      if(S.extraType === ex){ set({ extraType:'none', extras:0 }); return; }
+      const patch = { extraType: ex };
+      if(ex === 'wide'){ patch.runsOffBat = 0; patch.extras = Math.max(1, S.extras || 1); }
+      else if(ex === 'noball'){ patch.extras = 1; }
+      else { patch.runsOffBat = 0; patch.extras = Math.max(1, (S.extraType === 'bye' || S.extraType === 'legbye') ? S.extras : 1); }
+      if(S.wicket){ const ok = ex === 'wide' ? CE_WIDE_OUTS : ex === 'noball' ? CE_NOBALL_OUTS : null; if(ok && !ok.includes(S.dismissalType)) patch.dismissalType = 'Run Out'; }
+      set(patch); return;
+    }
+    if(t.dataset.wk){
+      if(S.wicket){ set({ wicket:false }); return; }
+      const outs = allowedOuts();
+      set({ wicket:true, dismissalType: outs.includes('Bowled') ? 'Bowled' : outs[0], runsOffBat: S.extraType === 'none' ? 0 : S.runsOffBat, dismissed: 'striker' });
+      return;
+    }
+    if(t.dataset.dis){
+      const patch = { dismissalType: t.dataset.dis };
+      if(t.dataset.dis !== 'Run Out'){ patch.dismissed = 'striker'; if(S.extraType === 'none') patch.runsOffBat = 0; }
+      if(!['Caught','Run Out','Stumped'].includes(t.dataset.dis)){ patch.fielder = ''; patch.fielderId = null; }
+      set(patch); return;
+    }
+    if(t.dataset.who){ set({ dismissed: t.dataset.who }); return; }
+    if(t.dataset.hl != null){ set({ isHighlight: t.dataset.hl === '1' }); return; }
+    if(t.dataset.step){
+      const d = Number(t.dataset.step);
+      if(S.extraType === 'wide') set({ extras: Math.max(1, S.extras + d) });
+      else if(S.extraType === 'bye' || S.extraType === 'legbye') set({ extras: Math.max(1, S.extras + d) });
+      else set({ runsOffBat: Math.max(0, S.runsOffBat + d) });
+      return;
+    }
+    if(t.id === 'ce-swap'){ set({ striker: S.nonStriker, strikerId: S.nonStrikerId, nonStriker: S.striker, nonStrikerId: S.strikerId }); return; }
+    if(t.dataset.person){
+      const k = t.dataset.person, team = t.dataset.team;
+      const label = { striker:'Batsman', nonStriker:'Non-striker', bowler:'Bowler', fielder: S.dismissalType === 'Stumped' ? 'Keeper' : 'Fielder' }[k];
+      const items = pickItems(team);
+      emPick({
+        title: `${label} — ${teamName(team)}`, anchor: t, current: S[k], items,
+        placeholder: 'Search player…',
+        empty: 'No player of this team matches — type the full name to use it.',
+        // emPick hands extra() a lower-cased query — use what was typed.
+        extra: (q) => {
+          const typed = ((document.querySelector('.pk input') || {}).value || '').trim();
+          return (typed && !items.some(i => i.label.toLowerCase() === typed.toLowerCase())) ? [{ value: typed, label: `Use “${typed}”`, sub: 'not in this match yet', icon: '+', id: null }] : [];
+        },
+        onPick: (v, it) => { set({ [k]: v, [k + 'Id']: (it && it.id) || null }); const b = $('ce-dyn').querySelector(`[data-person="${k}"]`); if(b) b.focus(); }
+      });
+    }
+  });
+  $('ce-cancel').onclick = () => { if(dirty() && !confirm('Discard your changes to this clip?')) return; closeEditModal(); };
+  $('ce-save').onclick = async () => {
+    if(saving) return;
+    saving = true; paint();
+    try{
+      const saved = await adminApi(`/clips/${encodeURIComponent(clipId)}/edit`, { method:'PUT', body: JSON.stringify({ delivery: buildInput(), isHighlight: S.isHighlight }) });
+      closeEditModal();
+      const label = saved && saved.clip ? `${saved.clip.over}.${saved.clip.ballInOver} ${saved.clip.outcome || saved.clip.eventType || ''}` : 'Clip';
+      emUndoToast(`✓ Saved · ${label} — scorecard, stats and highlights updated`, () => undoLastCorrection(del.matchId));
+      refreshAfterClipEdit();
+    }catch(err){
+      saving = false;
+      preview = { errors: [err.message || 'Could not save — nothing was changed.'] };
+      paint();
+    }
+  };
 }
 
 /* ---------- Owner clip deletion (inline, calls existing

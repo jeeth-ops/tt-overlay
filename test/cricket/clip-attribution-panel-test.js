@@ -247,6 +247,35 @@ async function suite(file, opts){
     eq('ball log 3.5', lastLog(P).over, '3.5');
     P.E(`FORMAT_RULES.T20.ballsPerOver = 6`);
   }
+  console.log('\n=== Owner correction from the website reaches the live panel (12.6 FOUR → SIX) ===');
+  {
+    setup(P);
+    P.E(`recordBall('4')`);
+    const did = lastLog(P).deliveryId;
+    // the over turned; the next bowler is on and Bowler One's spell is on the card
+    P.E(`state.bowlingCard.B = [Object.assign({}, state.bowler, { inningsNo: 1 })]; state.bowler = { name:'Bowler Two', id:'b2', overs:0, balls:0, maidens:0, runs:0, wickets:0 };`);
+    const before = JSON.parse(P.E('JSON.stringify({ runs: state.score.runs, a: state.nonStriker, b: state.striker, bowl: state.bowlingCard.B[0], two: state.bowler })'));
+    P.calls.length = 0;
+    const ev = { id: 'corr_test_1', matchId: 'TESTMATCH', deliveryId: did, innings: 1, battingTeam: 'A', overLabel: '12.6', legalChanged: false,
+      before: { kind: '4', runs: 4, striker: 'Player A', nonStriker: 'Player B', bowler: 'Bowler One', dismissal: null },
+      after: { kind: '6', runs: 6, striker: 'Player A', nonStriker: 'Player B', bowler: 'Bowler One', dismissal: null },
+      delta: { team: { runs: 2, wickets: 0, extras: {} }, batting: [{ name: 'Player A', runs: 2, balls: 0, fours: -1, sixes: 1, outBefore: false, outAfter: false }], bowling: [{ name: 'Bowler One', balls: 0, runs: 2, wickets: 0 }] },
+      clips: [{ clipId: 'TESTMATCH_FOUR_1790000000000', eventType: 'SIX', outcomeLabel: 'SIX', isHighlight: true }],
+      ballMeta: { deliveryId: did, innings: 1, over: 12, ballInOver: 6, striker: 'Player A', strikerId: 'pA', bowler: 'Bowler One', bowlerId: 'b1', dismissal: null } };
+    P.w.__ev = ev;
+    P.E('applyServerCorrection(window.__ev)');
+    const after = JSON.parse(P.E('JSON.stringify({ runs: state.score.runs, a: state.nonStriker, b: state.striker, bowl: state.bowlingCard.B[0], two: state.bowler, log: state.ballLog[state.ballLog.length-1] })'));
+    eq('team total +2', after.runs - before.runs, 2);
+    eq('Player A (now non-striker) +2, 4s -1, 6s +1', [after.a.runs - before.a.runs, after.a.fours - before.a.fours, after.a.sixes - before.a.sixes], [2, -1, 1]);
+    eq('Player B (now on strike) untouched', after.b.runs, before.b.runs);
+    eq("Bowler One's card row +2; Bowler Two (bowling now) untouched", [after.bowl.runs - before.bowl.runs, after.two.runs], [2, 0]);
+    eq('ball log row for that delivery is a 6', [after.log.ballType, after.log.runs], ['6', 6]);
+    const refile = P.calls.filter(c => /\/clip-meta$/.test(c.url)).slice(-1)[0];
+    eq('clip re-filed locally as a SIX (metadata only)', refile && [refile.body.clipId, refile.body.eventType], ['TESTMATCH_FOUR_1790000000000', 'SIX']);
+    P.E('applyServerCorrection(window.__ev)');
+    eq('the same correction twice is applied once', P.E('state.score.runs') - before.runs, 2);
+  }
+
   ok(`${file}: no script errors during the run`, P.errors.length === 0, P.errors.join(' | '));
 }
 

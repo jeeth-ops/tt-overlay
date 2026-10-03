@@ -245,8 +245,176 @@
     return true;
   }
 
+  // 🎬 What a clip of this delivery IS, from the stored ball row
+  // ({ kind, runs, dismissal }) — the same buckets the live panel uses when
+  // it cuts or classifies a clip (describeBallOutcome). Used when an owner
+  // correction changes the delivery, so its clip follows (4 → 6, 6 → W…).
+  function clipEventForBall(ball) {
+    ball = ball || {};
+    var kind = String(ball.kind == null ? '' : ball.kind);
+    var runs = Number(ball.runs) || 0;
+    var d = ball.dismissal || null;
+    if (d && !/retired/i.test(String(d.type || ''))) {
+      var on = kind === 'Wd' ? ' (Wide)' : kind === 'Nb' ? ' (No Ball)' : '';
+      return { eventType: 'WICKET', outcomeLabel: 'WICKET — ' + (d.type || 'Out') + on, defaultHighlight: true };
+    }
+    var plural = function (n) { return n === 1 ? '' : 's'; };
+    switch (kind) {
+      case '4': return { eventType: 'FOUR', outcomeLabel: 'FOUR', defaultHighlight: true };
+      case '6': return { eventType: 'SIX', outcomeLabel: 'SIX', defaultHighlight: true };
+      case '0': return { eventType: 'CLIP', outcomeLabel: 'Dot ball', defaultHighlight: false };
+      case 'Wd': {
+        var x = Math.max(0, runs - 1);
+        if (x >= 6) return { eventType: 'SIX', outcomeLabel: 'Wide 6', defaultHighlight: true };
+        if (x === 4) return { eventType: 'FOUR', outcomeLabel: 'Wide 4', defaultHighlight: true };
+        return { eventType: 'CLIP', outcomeLabel: x ? 'Wide +' + x : 'Wide', defaultHighlight: false };
+      }
+      case 'Nb': {
+        var bat = Math.max(0, runs - 1);
+        if (bat === 6) return { eventType: 'SIX', outcomeLabel: 'No Ball 6', defaultHighlight: true };
+        if (bat === 4) return { eventType: 'FOUR', outcomeLabel: 'No Ball 4', defaultHighlight: true };
+        return { eventType: 'CLIP', outcomeLabel: bat ? 'No Ball +' + bat : 'No Ball', defaultHighlight: false };
+      }
+      case 'B': return { eventType: 'CLIP', outcomeLabel: 'Bye ' + runs, defaultHighlight: runs === 4 };
+      case 'LB': return { eventType: 'CLIP', outcomeLabel: 'Leg Bye ' + runs, defaultHighlight: runs === 4 };
+      case 'OT':
+        if (runs >= 6) return { eventType: 'SIX', outcomeLabel: 'Overthrow ' + runs, defaultHighlight: true };
+        if (runs >= 4) return { eventType: 'FOUR', outcomeLabel: 'Overthrow ' + runs, defaultHighlight: true };
+        return { eventType: 'CLIP', outcomeLabel: 'Overthrow ' + runs, defaultHighlight: false };
+      default:
+        return { eventType: 'CLIP', outcomeLabel: runs + ' run' + plural(runs), defaultHighlight: false };
+    }
+  }
+
+  // 🛠 An owner correction of a past delivery, applied to a LIVE panel's
+  // own state. The server already rebuilt the authoritative record from
+  // the ball log; the panel holds running totals of its own (the live
+  // scorecard reads them), so it receives the correction as per-player
+  // DIFFERENCES computed by the server's scoring rules and adds them in.
+  // Never recomputes anything itself and never touches who is at the
+  // crease or who is bowling now — only the figures that delivery fed.
+  //
+  // Idempotent by ev.id (kept in state.appliedCorrections, which travels
+  // with the state between devices), so a re-delivered event, a second
+  // device or a reconnect replay can never apply it twice.
+  //
+  // ev: { id, innings, battingTeam, deliveryId, overLabel, legalChanged,
+  //       before: {…ball}, after: {…ball},
+  //       delta: { team: { runs, wickets, extras: { wd, nb, b, lb } },
+  //                batting: [{ name, runs, balls, fours, sixes, outBefore, outAfter, howOut, dismissalType, fielderName, bowlerName }],
+  //                bowling: [{ name, balls, runs, wickets }] } }
+  // Returns { applied, duplicate, warnings: [] }.
+  function applyDeliveryCorrection(state, ev, opts) {
+    var res = { applied: false, duplicate: false, warnings: [] };
+    if (!state || !ev || !ev.id) return res;
+    opts = opts || {};
+    var bpo = Number(opts.ballsPerOver) > 0 ? Number(opts.ballsPerOver) : 6;
+    if (!Array.isArray(state.appliedCorrections)) state.appliedCorrections = [];
+    if (state.appliedCorrections.indexOf(ev.id) !== -1) { res.duplicate = true; return res; }
+    var label = ev.overLabel ? 'ball ' + ev.overLabel : 'an earlier ball';
+    if (ev.legalChanged) {
+      // A legal ball became a Wide/No Ball (or back): every later ball's
+      // position in its over moves. That cannot be patched into running
+      // totals safely — the record is right; the panel needs a reload.
+      res.warnings.push('The correction to ' + label + ' changed whether it was a legal ball. The website scorecard is updated; reload this panel before scoring on.');
+      state.appliedCorrections.push(ev.id);
+      return res;
+    }
+    var inn = Number(ev.innings) || 1;
+    var bt = ev.battingTeam === 'B' ? 'B' : 'A';
+    var bowlT = bt === 'A' ? 'B' : 'A';
+    var d = ev.delta || {};
+    var team = d.team || {};
+    var isCurrent = Number(state.inningsNumber || 1) === inn && state.battingTeam === bt;
+    var same = function (a, b) { return !!(nameKey(a) && nameKey(a) === nameKey(b)); };
+    var findRow = function (list, name) {
+      list = Array.isArray(list) ? list : [];
+      for (var i = list.length - 1; i >= 0; i--) {
+        if (same(list[i].name, name) && (list[i].inningsNo == null || Number(list[i].inningsNo) === inn)) return list[i];
+      }
+      return null;
+    };
+    var add = function (obj, k, v) { if (v) obj[k] = Math.max(0, (Number(obj[k]) || 0) + v); };
+
+    // Team total / wickets.
+    if (team.runs || team.wickets) {
+      if (isCurrent && state.score) { add(state.score, 'runs', team.runs); add(state.score, 'wickets', team.wickets); }
+      else {
+        var arch = (state.inningsArchive || []).filter(function (a) { return Number(a.no) === inn; })[0];
+        if (arch) { add(arch, 'runs', team.runs); add(arch, 'wickets', team.wickets); }
+      }
+    }
+    if (team.extras && state.extras && state.extras[bt]) {
+      Object.keys(team.extras).forEach(function (k) { add(state.extras[bt], k, team.extras[k]); });
+    }
+
+    // Batting figures — the live tile when that batter is at the crease in
+    // this innings, otherwise their scorecard row.
+    (d.batting || []).forEach(function (r) {
+      var tile = null;
+      if (isCurrent && state.striker && same(state.striker.name, r.name)) tile = state.striker;
+      else if (isCurrent && state.nonStriker && same(state.nonStriker.name, r.name)) tile = state.nonStriker;
+      var row = tile || findRow(state.battingCard && state.battingCard[bt], r.name);
+      var moves = r.runs || r.balls || r.fours || r.sixes;
+      if (!row) { if (moves) res.warnings.push(r.name + "'s batting figures for " + label + ' are not on this panel — check the batting card.'); }
+      else { add(row, 'runs', r.runs); add(row, 'balls', r.balls); add(row, 'fours', r.fours); add(row, 'sixes', r.sixes); }
+      if (r.outBefore !== r.outAfter) {
+        res.warnings.push('The batter given out on ' + label + ' changed (' + r.name + (r.outAfter ? ' is now out' : ' is no longer out') + '). Check the batting card and who is at the crease.');
+      } else if (r.outAfter && row && row.out) {
+        if (r.howOut) row.howOut = r.howOut;
+        if (r.dismissalType) row.dismissalType = r.dismissalType;
+        row.fielderName = r.fielderName || null;
+        row.bowlerName = r.bowlerName || null;
+      }
+    });
+
+    // Bowling figures — the live bowler tile or the bowler's card row.
+    (d.bowling || []).forEach(function (r) {
+      var tile = isCurrent && state.bowler && same(state.bowler.name, r.name) ? state.bowler : null;
+      var row = tile || findRow(state.bowlingCard && state.bowlingCard[bowlT], r.name);
+      if (!row) { if (r.balls || r.runs || r.wickets) res.warnings.push(r.name + "'s bowling figures for " + label + ' are not on this panel — check the bowling card.'); return; }
+      add(row, 'runs', r.runs);
+      add(row, 'wickets', r.wickets);
+      if (r.balls) {
+        var total = Math.max(0, (Number(row.overs) || 0) * bpo + (Number(row.balls) || 0) + r.balls);
+        row.overs = Math.floor(total / bpo); row.balls = total % bpo;
+      }
+    });
+    if (team.wickets) res.warnings.push('A wicket was added or removed on ' + label + ' — check the fall of wickets and the batters at the crease.');
+
+    // The panel's own ball log row for that delivery.
+    var a = ev.after || {};
+    var log = Array.isArray(state.ballLog) ? state.ballLog : [];
+    var entry = null;
+    for (var i = log.length - 1; i >= 0 && !entry; i--) {
+      var e = log[i];
+      if (ev.deliveryId && e.deliveryId === ev.deliveryId) entry = e;
+      else if (!ev.deliveryId && Number(e.innings || 1) === inn && e.over === ev.overLabel && ev.before && same(e.striker, ev.before.striker)) entry = e;
+    }
+    if (entry) {
+      var dis = a.dismissal || null;
+      entry.ballType = a.kind === 'Wd' && dis ? 'WdW' : a.kind === 'Nb' && dis ? 'NbW' : a.kind;
+      if (typeof a.runs === 'number') entry.runs = a.runs;
+      entry.striker = a.striker || entry.striker;
+      entry.nonStriker = a.nonStriker || entry.nonStriker;
+      entry.bowler = a.bowler || entry.bowler;
+      entry.isWicket = !!dis;
+      entry.dismissalType = dis ? (dis.type || null) : null;
+      entry.fielderName = dis ? (dis.fielder || null) : null;
+      entry.dismissedPlayer = dis ? (dis.batter || null) : null;
+      entry.correctedAt = Date.now();
+    }
+
+    state.appliedCorrections.push(ev.id);
+    if (state.appliedCorrections.length > 200) state.appliedCorrections = state.appliedCorrections.slice(-200);
+    res.applied = true;
+    return res;
+  }
+
   return {
     BOWLER_CREDITED: BOWLER_CREDITED,
+    clipEventForBall: clipEventForBall,
+    applyDeliveryCorrection: applyDeliveryCorrection,
     samePlayer: samePlayer,
     nextDeliveryPosition: nextDeliveryPosition,
     appliedDeliveryPosition: appliedDeliveryPosition,
