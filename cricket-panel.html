@@ -927,12 +927,22 @@
     <div class="wm-sub" id="newmatch-sub">The saved match stays untouched. Choose the teams for the new match.</div>
     <label>Team A</label>
     <select id="newmatch-team-a"></select>
+    <input type="text" class="nm-schedule-only" id="newmatch-name-a" maxlength="40" placeholder="New team name (Team A)" style="width:100%; margin-top:6px; display:none;">
     <div class="shortcut-hint" id="newmatch-preview-a" style="margin-top:6px;"></div>
     <label style="margin-top:10px;">Team B</label>
     <select id="newmatch-team-b"></select>
+    <input type="text" class="nm-schedule-only" id="newmatch-name-b" maxlength="40" placeholder="New team name (Team B)" style="width:100%; margin-top:6px; display:none;">
     <div class="shortcut-hint" id="newmatch-preview-b" style="margin-top:6px;"></div>
     <label style="margin-top:10px;">Match title (optional)</label>
     <input type="text" id="newmatch-title" maxlength="60" placeholder="e.g. Semi Final, League Match 5" style="width:100%;">
+    <div class="nm-schedule-only" style="display:none;">
+      <div class="row2" style="margin-top:10px;">
+        <div><label>Date</label><input type="date" id="newmatch-date" style="width:100%;"></div>
+        <div><label>Time (optional)</label><input type="time" id="newmatch-time" style="width:100%;"></div>
+      </div>
+      <label style="margin-top:10px;">Venue (optional)</label>
+      <input type="text" id="newmatch-venue" maxlength="60" placeholder="e.g. DY Patil Ground" style="width:100%;">
+    </div>
     <div class="shortcut-hint" id="newmatch-hint" style="margin-top:8px;"></div>
     <div class="wm-actions" style="display:flex; gap:8px; margin-top:14px;">
       <button type="button" class="small ghost" id="newmatch-cancel" style="flex:1;">Cancel</button>
@@ -1132,7 +1142,8 @@
           <button class="small ghost" id="view-league-matches-btn" type="button">📋 Matches</button>
         </div>
         <button class="small ghost full" id="new-match-btn" type="button" style="margin-top:6px;">➕ Create New Match</button>
-        <div class="shortcut-hint">Create New Match starts a fresh, empty match in this same tournament. The match already saved stays exactly as it is — nothing is deleted or overwritten, and the current panel is NOT saved on the way out (use Save This Match first if this match is still unsaved).</div>
+        <button class="small ghost full" id="schedule-match-btn" type="button" style="margin-top:6px;">📅 Schedule Upcoming Match</button>
+        <div class="shortcut-hint">Create New Match starts a fresh, empty match in this same tournament. The match already saved stays exactly as it is — nothing is deleted or overwritten, and the current panel is NOT saved on the way out (use Save This Match first if this match is still unsaved). Schedule Upcoming Match only saves a fixture (teams, date, venue) into 📋 Matches — the panel is not touched. Press ▶ Start on it there when the match begins; it goes live on the tournament page like any other match.</div>
         <div class="row2" style="margin-top:6px;">
           <button class="small ghost" id="view-player-history-btn" type="button">👤 Player History</button>
           <button class="small ghost" id="view-team-history-btn" type="button">🏏 Team History</button>
@@ -3337,11 +3348,14 @@ function EMPTY_EXTRAS(){ return { wd:0, nb:0, b:0, lb:0, pen:0 }; }
 // where available; falls back to a timestamp+random string on older
 // browsers/webviews that lack it. Idempotent — calling it again on the
 // same match just returns the id already assigned.
+function newTournamentMatchId(){
+  return (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : ('tm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10));
+}
 function ensureTournamentMatchId(){
   if(!state.tournamentMatchId){
-    state.tournamentMatchId = (window.crypto && crypto.randomUUID)
-      ? crypto.randomUUID()
-      : ('tm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10));
+    state.tournamentMatchId = newTournamentMatchId();
     saveLocal();
   }
   return state.tournamentMatchId;
@@ -6925,11 +6939,19 @@ function loadLeagueMatchesLocal(name){
 function saveLeagueMatchesLocal(name, matches){
   try{ localStorage.setItem(leagueStorageKey(name), JSON.stringify(matches)); }catch(e){}
 }
-function currentLeagueMatches(){
+// 📅 Every record saved under the tournament, scheduled (not yet started)
+// fixtures included — for the Matches list, team pickers and numbering.
+function currentLeagueMatchesAll(){
   const name = (state.leagueName || '').trim();
   if(!name) return [];
   const key = leagueStorageKey(name);
   return leagueCache[key] || loadLeagueMatchesLocal(name);
+}
+function isUpcomingMatch(m){ return !!(m && m.upcoming === true); }
+// Matches that have actually been started. A scheduled fixture has no
+// cricket in it yet, so it never counts in points, history or stats.
+function currentLeagueMatches(){
+  return currentLeagueMatchesAll().filter(m => !isUpcomingMatch(m));
 }
 
 // Same as currentLeagueMatches() but folds in THIS match's live, not-yet-
@@ -7051,6 +7073,9 @@ function buildMatchRecordForLeague(){
     roomId: currentMatchId() || null,
     matchNo: state.matchNo || null,
     matchTitle: state.matchTitle || '',
+    // A match on the panel is being played — never a scheduled fixture any
+    // more (the server merges saves, so this must be sent explicitly).
+    upcoming: false,
     savedAt: new Date().toISOString(),
     venue: state.venue,
     streamUrl: state.streamUrl || '',
@@ -7380,6 +7405,7 @@ function isMatchOnPanel(m, listTournament){
 }
 function matchResumeHtml(m, listTournament){
   if(isMatchOnPanel(m, listTournament)) return `<span class="lm-onpanel">● On panel</span>`;
+  if(isUpcomingMatch(m) && m.roomId) return `<button type="button" class="small primary lm-resume" data-start-upcoming="${escapeHtmlPanel(m.matchId)}">▶ Start</button>`;
   if(!m.roomId) return '';
   const label = m.winningTeam ? '📂 Open' : '▶ Resume';
   return `<button type="button" class="small primary lm-resume" data-resume-match="${escapeHtmlPanel(m.matchId)}">${label}</button>`;
@@ -7390,6 +7416,13 @@ function wireResumeButtons(listEl, matches, listTournament){
       e.stopPropagation();
       const rec = matches.find(x => x.matchId === btn.getAttribute('data-resume-match'));
       if(rec) resumeSavedMatch(rec, btn, listTournament);
+    });
+  });
+  listEl.querySelectorAll('[data-start-upcoming]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const rec = matches.find(x => x.matchId === btn.getAttribute('data-start-upcoming'));
+      if(rec) startUpcomingMatch(rec, btn, listTournament);
     });
   });
 }
@@ -7514,7 +7547,7 @@ function deleteMatchFromLeague(matchId){
   if(!name) return;
   const key = leagueStorageKey(name);
 
-  const matches = currentLeagueMatches().filter(m => m.matchId !== matchId);
+  const matches = currentLeagueMatchesAll().filter(m => m.matchId !== matchId);
   leagueCache[key] = matches;
   saveLeagueMatchesLocal(name, matches);
   refreshLeagueUI();
@@ -7576,7 +7609,7 @@ function deleteEntireTournament(name){
 document.getElementById('delete-tournament-btn').addEventListener('click', () => {
   const name = (state.leagueName || '').trim();
   if(!name){ toast('Select a tournament first'); return; }
-  const matchCount = currentLeagueMatches().length;
+  const matchCount = currentLeagueMatchesAll().length;
   if(!confirm(`Delete the ENTIRE tournament "${name}" — all ${matchCount} saved match${matchCount === 1 ? '' : 'es'} — permanently? This cannot be undone.`)) return;
   deleteEntireTournament(name);
 });
@@ -7655,25 +7688,42 @@ function refreshLeagueUI(){
     return;
   }
   const matches = currentLeagueMatches();
+  const upcomingN = currentLeagueMatchesAll().length - matches.length;
+  const upcomingNote = upcomingN ? ` 📅 ${upcomingN} upcoming match${upcomingN === 1 ? '' : 'es'} scheduled.` : '';
   const notLoggedInNote = currentOwnerUid() ? '' : ' (not logged in — only saved on this device)';
-  countEl.textContent = matches.length
+  countEl.textContent = (matches.length
     ? `"${name}" — ${matches.length} match${matches.length === 1 ? '' : 'es'} saved${notLoggedInNote}.`
-    : `"${name}" — no matches saved yet${notLoggedInNote}. Matches are saved automatically as you score — start one to build it.`;
+    : `"${name}" — no matches saved yet${notLoggedInNote}. Matches are saved automatically as you score — start one to build it.`) + upcomingNote;
   if(listEl.style.display !== 'none') renderLeagueHistoryPanel();
+}
+// "Sat, 5 Oct · 4:00 PM" — the fixture's own date (and time, when one was set).
+function upcomingWhenText(m){
+  if(!m || !m.scheduledAt) return 'Date not set';
+  const d = new Date(m.scheduledAt);
+  if(isNaN(d)) return 'Date not set';
+  const day = d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+  return m.scheduledHasTime ? `${day} · ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}` : day;
 }
 function renderLeagueMatchesList(matches){
   const listEl = document.getElementById('league-matches-list');
   if(!matches.length){ listEl.innerHTML = '<div class="shortcut-hint">No matches saved yet.</div>'; return; }
-  listEl.innerHTML = [...matches].reverse().map(m => {
-    const resultText = m.winningTeam === 'TIE' ? 'Tied'
+  // Upcoming fixtures first (soonest at the top), then the played matches newest first.
+  const upcoming = matches.filter(isUpcomingMatch).sort((a, b) => String(a.scheduledAt || '9').localeCompare(String(b.scheduledAt || '9')));
+  const played = matches.filter(m => !isUpcomingMatch(m)).reverse();
+  listEl.innerHTML = [...upcoming, ...played].map(m => {
+    const up = isUpcomingMatch(m);
+    const resultText = up ? `📅 Upcoming · ${upcomingWhenText(m)}`
+      : m.winningTeam === 'TIE' ? 'Tied'
       : m.winningTeam === 'A' ? `${m.teamA.short || m.teamA.name} won`
       : m.winningTeam === 'B' ? `${m.teamB.short || m.teamB.name} won`
       : ((m.scoreA && m.scoreA.runs === 0 && m.scoreB && m.scoreB.runs === 0 && !((m.battingCard && m.battingCard.A || []).length + (m.battingCard && m.battingCard.B || []).length)) ? 'Not started' : 'In progress');
-    return `<div class="league-match-row" data-view-match="${escapeHtmlPanel(m.matchId)}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:11.5px;cursor:pointer;">
+    const sA = m.scoreA || { runs: 0, wickets: 0 }, sB = m.scoreB || { runs: 0, wickets: 0 };
+    const metaBits = [m.matchNo ? 'Match ' + m.matchNo : '', m.matchTitle || '', up ? (m.venue || '') : (m.savedAt ? new Date(m.savedAt).toLocaleDateString() : '')].filter(Boolean);
+    return `<div class="league-match-row${up ? ' lm-upcoming' : ''}" data-view-match="${escapeHtmlPanel(m.matchId)}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:11.5px;cursor:pointer;">
       <div style="min-width:0;flex:1;">
-        ${(m.matchNo || m.matchTitle || m.savedAt) ? `<div style="color:var(--text-dim);font-size:10.5px;">${escapeHtmlPanel([m.matchNo ? 'Match ' + m.matchNo : '', m.matchTitle || '', m.savedAt ? new Date(m.savedAt).toLocaleDateString() : ''].filter(Boolean).join(' · '))}</div>` : ''}
+        ${metaBits.length ? `<div style="color:var(--text-dim);font-size:10.5px;">${escapeHtmlPanel(metaBits.join(' · '))}</div>` : ''}
         <div style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtmlPanel(m.teamA.short || m.teamA.name)} vs ${escapeHtmlPanel(m.teamB.short || m.teamB.name)}</div>
-        <div style="color:var(--text-dim);">${escapeHtmlPanel(resultText)} · ${m.scoreA.runs}-${m.scoreA.wickets} / ${m.scoreB.runs}-${m.scoreB.wickets}</div>
+        <div style="color:var(--text-dim);">${escapeHtmlPanel(resultText)}${up ? '' : ` · ${sA.runs}-${sA.wickets} / ${sB.runs}-${sB.wickets}`}</div>
       </div>
       ${matchResumeHtml(m, (state.leagueName || '').trim())}
       <button type="button" class="small ghost" data-delete-match="${escapeHtmlPanel(m.matchId)}" style="flex:none;">🗑</button>
@@ -7681,16 +7731,17 @@ function renderLeagueMatchesList(matches){
   }).join('');
   listEl.querySelectorAll('.league-match-row').forEach(row => {
     row.addEventListener('click', (e) => {
-      if(e.target.closest('[data-delete-match], [data-resume-match]')) return;
+      if(e.target.closest('[data-delete-match], [data-resume-match], [data-start-upcoming]')) return;
       const rec = matches.find(x => x.matchId === row.getAttribute('data-view-match'));
-      if(rec) openScorecardModal(rec);
+      if(rec && !isUpcomingMatch(rec)) openScorecardModal(rec);
     });
   });
   wireResumeButtons(listEl, matches, (state.leagueName || '').trim());
   listEl.querySelectorAll('[data-delete-match]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      if(confirm('Remove this match from the league?')) deleteMatchFromLeague(btn.getAttribute('data-delete-match'));
+      const rec = matches.find(x => x.matchId === btn.getAttribute('data-delete-match'));
+      if(confirm(isUpcomingMatch(rec) ? 'Remove this upcoming match from the schedule?' : 'Remove this match from the league?')) deleteMatchFromLeague(btn.getAttribute('data-delete-match'));
     });
   });
 }
@@ -7788,7 +7839,7 @@ function renderLeagueHistoryPanel(){
   if(historyPanelView === 'player') renderPlayerHistoryView(matches);
   else if(historyPanelView === 'team') renderTeamHistoryView(matches);
   else if(historyPanelView === 'points') renderPointsTableView(matches);
-  else renderLeagueMatchesList(matches);
+  else renderLeagueMatchesList(currentLeagueMatchesAll());
 }
 
 // Every distinct batter/bowler name that appears in any saved match,
@@ -13331,7 +13382,9 @@ function startFreshMatch(opts){
   // room id per match keeps each match's clips — and its live broadcast —
   // cleanly separated, exactly like each match already gets its own
   // tournamentMatchId above.
-  const newRoomId = genMatchRoomId();
+  // A scheduled match already has its own room id (saved with the fixture,
+  // so the tournament page's card points at it) — use that one.
+  const newRoomId = (opts && opts.roomId) || genMatchRoomId();
   const matchIdField = document.getElementById('match-id');
   matchIdField.value = newRoomId;
   try{ localStorage.setItem('cricket-match-id', newRoomId); }catch(e){}
@@ -13339,7 +13392,7 @@ function startFreshMatch(opts){
   connect(); // reconnect the socket (and this match's live broadcast) under the new room
 
   pushState(true, true);
-  toast('🔄 New match ready — Match ID refreshed. Copy the new Overlay/Scorecard links (and update OBS\'s browser source) before you go live.', 7000);
+  if(!(opts && opts.quiet)) toast('🔄 New match ready — Match ID refreshed. Copy the new Overlay/Scorecard links (and update OBS\'s browser source) before you go live.', 7000);
 }
 document.getElementById('reset-btn').addEventListener('click', () => {
   if(!confirm('Reset the entire match? This cannot be undone.')) return;
@@ -13406,7 +13459,7 @@ function collectTournamentTeams(){
     ((rec.bowlingCard && rec.bowlingCard[side]) || []).forEach(r => add(r.name));
     return names;
   };
-  const matches = currentLeagueMatches().slice().sort((a, b) => String(a.savedAt || '').localeCompare(String(b.savedAt || '')));
+  const matches = currentLeagueMatchesAll().slice().sort((a, b) => String(a.savedAt || '').localeCompare(String(b.savedAt || '')));
   matches.forEach(m => {
     put(m.teamA, m.squadA, cardNamesFor(m, 'A'));
     put(m.teamB, m.squadB, cardNamesFor(m, 'B'));
@@ -13424,10 +13477,21 @@ function fillNewMatchTeamSelect(sel, other){
     newMatchTeams.map(t => `<option value="${escapeHtmlAttr(t.key)}">${escapeHtmlPanel(t.name)}${t.short ? ' (' + escapeHtmlPanel(t.short) + ')' : ''} — ${t.players.length} player${t.players.length === 1 ? '' : 's'}</option>`).join('');
 }
 
-async function openNewMatchModal(){
-  const t = (currentMatchTournament() || state.leagueName || '').trim();
+// 'new' = ➕ Create New Match (starts on the panel now); 'schedule' = 📅 Schedule
+// Upcoming Match (only saves a fixture into this tournament's Matches list).
+let newMatchMode = 'new';
+async function openNewMatchModal(mode){
+  newMatchMode = mode === 'schedule' ? 'schedule' : 'new';
+  const scheduling = newMatchMode === 'schedule';
+  if(scheduling && !(state.leagueName || '').trim()){ toast('Pick or start a tournament first'); return; }
+  const t = scheduling ? (state.leagueName || '').trim() : (currentMatchTournament() || state.leagueName || '').trim();
   const sub = document.getElementById('newmatch-sub');
-  sub.textContent = (t ? `Tournament: ${t}. ` : '') + 'Saved matches stay exactly as they are — nothing is deleted or overwritten. If the match on this panel has scoring, it is saved to its own tournament first (and can be resumed later); then a fresh match starts.';
+  document.querySelector('#newmatch-modal h3').textContent = scheduling ? '📅 Schedule Upcoming Match' : '➕ Create New Match';
+  document.getElementById('newmatch-start').textContent = scheduling ? '📅 Save Upcoming Match' : 'Start New Match';
+  document.querySelectorAll('#newmatch-modal .nm-schedule-only').forEach(el => { el.style.display = scheduling ? '' : 'none'; });
+  sub.textContent = scheduling
+    ? `Tournament: ${t}. Saves the fixture to 📋 Matches — the match on the panel is not touched. Press ▶ Start on it there when it begins.`
+    : (t ? `Tournament: ${t}. ` : '') + 'Saved matches stay exactly as they are — nothing is deleted or overwritten. If the match on this panel has scoring, it is saved to its own tournament first (and can be resumed later); then a fresh match starts.';
   // Teams are read from the tournament the dropdown is showing (state.leagueName),
   // which can differ from the live match's own tournament — sync THAT one.
   const readFrom = (state.leagueName || '').trim();
@@ -13440,6 +13504,12 @@ async function openNewMatchModal(){
     ? 'Pick a team to bring back its name, colours, logo and squad with the same player IDs — or leave "New team" and set it up yourself.'
     : 'No teams saved in this tournament yet — both teams will be new; set them up in the panel.';
   document.getElementById('newmatch-title').value = '';
+  ['newmatch-name-a', 'newmatch-name-b', 'newmatch-venue', 'newmatch-time'].forEach(id => { document.getElementById(id).value = ''; });
+  if(scheduling){
+    const d = new Date();
+    document.getElementById('newmatch-date').value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    document.getElementById('newmatch-venue').value = state.venue || '';
+  }
   renderNewMatchPreview('a'); renderNewMatchPreview('b');
   document.getElementById('newmatch-modal-overlay').classList.add('show');
 }
@@ -13453,6 +13523,8 @@ function renderNewMatchPreview(sideLower){
   const sel = document.getElementById('newmatch-team-' + sideLower);
   const box = document.getElementById('newmatch-preview-' + sideLower);
   if(!sel || !box) return;
+  const nameInput = document.getElementById('newmatch-name-' + sideLower);
+  if(nameInput) nameInput.style.display = (newMatchMode === 'schedule' && !sel.value) ? '' : 'none';
   const t = sel.value ? newMatchTeams.find(x => x.key === sel.value) : null;
   if(!t){ box.innerHTML = ''; return; }
   const names = list => list.map(p => escapeHtmlPanel(p.name)).join(', ') || '—';
@@ -13530,10 +13602,12 @@ function applyPreparedTeam(side, prepared){
   target.wkId = prepared.wkId;
 }
 
-document.getElementById('new-match-btn').addEventListener('click', () => { openNewMatchModal(); });
+document.getElementById('new-match-btn').addEventListener('click', () => { openNewMatchModal('new'); });
+document.getElementById('schedule-match-btn').addEventListener('click', () => { openNewMatchModal('schedule'); });
 document.getElementById('newmatch-cancel').addEventListener('click', closeNewMatchModal);
 document.getElementById('newmatch-modal-overlay').addEventListener('click', e => { if(e.target.id === 'newmatch-modal-overlay') closeNewMatchModal(); });
 document.getElementById('newmatch-start').addEventListener('click', async () => {
+  if(newMatchMode === 'schedule'){ scheduleUpcomingMatch(); return; }
   const keyA = document.getElementById('newmatch-team-a').value;
   const keyB = document.getElementById('newmatch-team-b').value;
   if(keyA && keyA === keyB){ toast('Team A and Team B cannot be the same team'); return; }
@@ -13561,8 +13635,7 @@ document.getElementById('newmatch-start').addEventListener('click', async () => 
     // the reset and the teams landing, so nothing can overwrite them.
     startFreshMatch({ applyToState: () => {
       if(state.matchMode === 'tournament' && (state.leagueName || '').trim()){
-        const existing = currentLeagueMatches();
-        state.matchNo = Math.max(existing.length, ...existing.map(m => Number(m.matchNo) || 0)) + 1;
+        state.matchNo = nextTournamentMatchNo();
         state.matchTitle = titleTyped;
       }
       if(teamA) applyPreparedTeam('A', teamA);
@@ -13585,6 +13658,203 @@ document.getElementById('newmatch-start').addEventListener('click', async () => 
     btn.disabled = false; btn.textContent = 'Start New Match';
   }
 });
+
+/* ============================================================
+   📅 UPCOMING MATCHES — a fixture saved ahead of time into the tournament
+   (teams + squads with their permanent player ids, date, venue, match no.).
+   It is a normal match record with `upcoming: true`, its own permanent
+   matchId and its own live room id, so:
+     • 📋 Matches lists it (with ▶ Start) and the public tournament page
+       shows it under "Upcoming" — it never counts in points/stats;
+     • ▶ Start puts it on the panel exactly like Create New Match, but under
+       THAT matchId and room — so the record, the live room, the clips and
+       the tournament page's card are all the same match from the first ball;
+     • the first save from the panel (sent on connect) flips upcoming → false.
+   ============================================================ */
+function nextTournamentMatchNo(){
+  const existing = currentLeagueMatchesAll();
+  return Math.max(existing.length, ...existing.map(m => Number(m.matchNo) || 0)) + 1;
+}
+function shortNameFor(name){
+  const words = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if(!words.length) return '';
+  return (words.length > 1 ? words.map(w => w[0]).join('') : words[0].slice(0, 3)).slice(0, 4).toUpperCase();
+}
+function buildUpcomingMatchRecord(o){
+  const blank = () => ({ runs: 0, wickets: 0, overs: '0.0' });
+  const meta = t => ({ name: t.name, short: t.short || shortNameFor(t.name), color: t.color || '', logoUrl: t.logoUrl || '' });
+  return {
+    matchId: newTournamentMatchId(),
+    roomId: genMatchRoomId(),
+    upcoming: true,
+    scheduledAt: o.scheduledAt || null,
+    scheduledHasTime: !!o.scheduledHasTime,
+    matchNo: o.matchNo || null,
+    matchTitle: o.matchTitle || '',
+    savedAt: new Date().toISOString(),
+    venue: o.venue || '',
+    streamUrl: '',
+    teamA: meta(o.teamA), teamB: meta(o.teamB),
+    winningTeam: null,
+    scoreA: blank(), scoreB: blank(),
+    battingCard: { A: [], B: [] }, bowlingCard: { A: [], B: [] },
+    squadA: squadSnapshotOf(o.teamA), squadB: squadSnapshotOf(o.teamB),
+    inningsArchive: [],
+    extras: { A: { wd:0, nb:0, b:0, lb:0, pen:0 }, B: { wd:0, nb:0, b:0, lb:0, pen:0 } },
+    fallOfWickets: { A: [], B: [] },
+    partnerships: {}
+  };
+}
+// Same upsert-by-matchId as saveMatchToLeague, for a record that is NOT the
+// match on the panel — so it never touches the live pointer.
+function upsertLeagueRecord(name, rec, onSynced){
+  const key = leagueStorageKey(name);
+  const list = (leagueCache[key] || loadLeagueMatchesLocal(name)).slice();
+  const idx = list.findIndex(m => m.matchId === rec.matchId);
+  if(idx >= 0) list[idx] = rec; else list.push(rec);
+  leagueCache[key] = list;
+  saveLeagueMatchesLocal(name, list);
+  addKnownTournament(name);
+  refreshLeagueUI();
+  if(!currentOwnerUid()){ toast('⚠️ Not logged in — saved on this device only'); return; }
+  fetch(withUid(`${leagueApiPath(name)}/match`), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rec)
+  }).then(res => res.json().then(data => ({ res, data }))).then(({ res, data }) => {
+    if(data && data.success){
+      leagueCache[key] = data.matches;
+      saveLeagueMatchesLocal(name, data.matches);
+      refreshLeagueUI();
+      if(onSynced) onSynced();
+    } else {
+      syncFailureToast(res, '⚠️ Saved locally only — could not sync to server');
+    }
+  }).catch(() => toast('⚠️ Saved locally only — could not sync to server'));
+}
+
+async function scheduleUpcomingMatch(){
+  const name = (state.leagueName || '').trim();
+  if(!name){ toast('Pick or start a tournament first'); return; }
+  const keyA = document.getElementById('newmatch-team-a').value;
+  const keyB = document.getElementById('newmatch-team-b').value;
+  const typedA = (document.getElementById('newmatch-name-a').value || '').trim().slice(0, 40);
+  const typedB = (document.getElementById('newmatch-name-b').value || '').trim().slice(0, 40);
+  if((!keyA && !typedA) || (!keyB && !typedB)){ toast('Choose a team (or type the new team\'s name) for both sides'); return; }
+  // A typed name that is already a team in this tournament IS that team.
+  const pickFor = (key, typed) => key ? newMatchTeams.find(t => t.key === key) : (newMatchTeams.find(t => t.key === teamKeyOf(typed)) || null);
+  const pickA = pickFor(keyA, typedA), pickB = pickFor(keyB, typedB);
+  const nameA = pickA ? pickA.name : typedA, nameB = pickB ? pickB.name : typedB;
+  if(teamKeyOf(nameA) === teamKeyOf(nameB)){ toast('Team A and Team B cannot be the same team'); return; }
+  const dateV = document.getElementById('newmatch-date').value;
+  const timeV = document.getElementById('newmatch-time').value;
+  if(!dateV){ toast('Pick the match date'); return; }
+  const when = new Date(`${dateV}T${timeV || '00:00'}`);
+  if(isNaN(when)){ toast('That date/time is not valid'); return; }
+  const btn = document.getElementById('newmatch-start');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try{
+    const blankTeam = n => ({ name: n, short: shortNameFor(n), color: '', logoUrl: '', players: [], captainId: null, wkId: null });
+    const teamA = pickA ? await prepareTeamForNewMatch(pickA) : blankTeam(nameA);
+    const teamB = pickB ? await prepareTeamForNewMatch(pickB) : blankTeam(nameB);
+    const rec = buildUpcomingMatchRecord({
+      teamA, teamB,
+      matchNo: nextTournamentMatchNo(),
+      matchTitle: (document.getElementById('newmatch-title').value || '').trim().slice(0, 60),
+      venue: (document.getElementById('newmatch-venue').value || '').trim().slice(0, 60),
+      scheduledAt: when.toISOString(), scheduledHasTime: !!timeV
+    });
+    upsertLeagueRecord(name, rec);
+    closeNewMatchModal();
+    setHistoryPanelView('matches');
+    toast(`📅 Match ${rec.matchNo} scheduled — ${teamA.name} vs ${teamB.name}, ${upcomingWhenText(rec)}. It is in 📋 Matches — press ▶ Start there when the match begins.`, 7000);
+  }catch(err){
+    console.error('Schedule Upcoming Match failed', err);
+    toast('⚠️ Could not save the upcoming match — try again.');
+  }finally{
+    btn.disabled = false; btn.textContent = '📅 Save Upcoming Match';
+  }
+}
+
+let upcomingStartInFlight = false;
+async function startUpcomingMatch(rec, btn, listTournament){
+  if(upcomingStartInFlight || resumeInFlight) return;
+  const owner = (listTournament || '').trim();
+  if(!owner || !rec || !rec.roomId) return;
+  if(isMatchOnPanel(rec, owner)){ toast('This match is already on the panel'); return; }
+  const hasCurrent = (state.ballLog || []).length > 0;
+  if(!confirm(`Start ${matchLabelForToast(rec)}${rec.matchNo ? ` (Match ${rec.matchNo})` : ''} on the panel now?${hasCurrent ? `\n\nThe current match (${matchLabelForToast(state)}${currentMatchTournament() ? ` — ${currentMatchTournament()}` : ''}) is saved to its own ${currentMatchTournament() ? 'tournament' : 'history'} first and can be resumed later.` : ''}\n\nThe Match ID changes to this match's own ID (${rec.roomId}) — Overlay/Scorecard links change with it.`)) return;
+  upcomingStartInFlight = true;
+  const oldText = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = 'Loading…'; }
+  try{
+    // Already being scored on another laptop? Then its room holds the match —
+    // never start it again from blank over the top of it.
+    try{
+      const r = await fetch(`/api/cricket/room-state/${encodeURIComponent(rec.roomId)}`, { signal: AbortSignal.timeout(8000) });
+      const d = await r.json().catch(() => null);
+      if(r.ok && d && d.success && d.state && (d.state.ballLog || []).length){
+        toast('⚠️ This match has already been started on another device — refreshing the list; use ▶ Resume on it.', 7000);
+        syncLeagueFromServer(owner);
+        return;
+      }
+    }catch(e){ /* room not created yet / offline — start it fresh */ }
+
+    const teamFrom = (t, squad) => ({
+      name: (t && t.name) || '', short: (t && t.short) || '', color: (t && t.color) || '', logoUrl: (t && t.logoUrl) || '',
+      players: (squad && squad.players) || [], captainId: squad ? squad.captainId : null, wkId: squad ? squad.wkId : null
+    });
+    // 1️⃣ Resolve both squads first — nothing on the panel is touched yet.
+    const teamA = await prepareTeamForNewMatch(teamFrom(rec.teamA, rec.squadA));
+    const teamB = await prepareTeamForNewMatch(teamFrom(rec.teamB, rec.squadB));
+
+    // 2️⃣ Park the match that is on the panel (same as Create New Match / Resume).
+    if(hasCurrent){
+      if(currentMatchTournament()) saveMatchToLeague(true); else saveMatchToSingleHistory(true);
+      clearTimeout(pushTimer);
+      if(socket && socket.connected && !isAwaitingNextInnings()) socket.emit('updateCricketScore', state);
+    }
+
+    // 3️⃣ Fresh match under the fixture's OWN matchId + room, teams on state
+    // before the reconnect.
+    startFreshMatch({ roomId: rec.roomId, quiet: true, applyToState: () => {
+      state.leagueName = owner;
+      state.matchLeague = owner;
+      state.matchMode = 'tournament';
+      state.tournamentMatchId = rec.matchId;
+      state.matchNo = rec.matchNo || null;
+      state.matchTitle = rec.matchTitle || '';
+      if(rec.venue) state.venue = rec.venue;
+      applyPreparedTeam('A', teamA);
+      applyPreparedTeam('B', teamB);
+    }});
+    saveLocal();
+    renderPanel();
+    renderSquadUI();
+    renderRosterControls();
+    pushState(true, true);
+
+    // 4️⃣ The fixture is now the match on the panel — no longer "upcoming".
+    const started = { ...buildMatchRecordForLeague(), scheduledAt: rec.scheduledAt || null, scheduledHasTime: !!rec.scheduledHasTime };
+    const key = leagueStorageKey(owner);
+    const list = (leagueCache[key] || loadLeagueMatchesLocal(owner)).slice();
+    const idx = list.findIndex(m => m.matchId === rec.matchId);
+    if(idx >= 0) list[idx] = { ...list[idx], ...started }; else list.push(started);
+    leagueCache[key] = list;
+    saveLeagueMatchesLocal(owner, list);
+    refreshLeagueUI();
+    sendMatchSnapshot(started);
+    pingTournamentLiveStatus(true);
+
+    const unverified = (teamA.unverified || 0) + (teamB.unverified || 0);
+    toast(`▶️ Started${rec.matchNo ? ' Match ' + rec.matchNo : ''} — ${teamA.name} vs ${teamB.name}. Match ID is now ${rec.roomId} — update the overlay link in vMix/OBS, set the toss/openers and start scoring; it is live on the tournament page.`
+      + (unverified ? ` ⚠️ ${unverified} player(s) could not be matched to a saved Player ID (offline / not signed in) — check them before scoring.` : ''), unverified ? 10000 : 8000);
+  }catch(err){
+    console.error('Start upcoming match failed', err);
+    toast('⚠️ Could not start this match — nothing was changed. Try again.');
+  }finally{
+    upcomingStartInFlight = false;
+    if(btn && btn.isConnected){ btn.disabled = false; btn.textContent = oldText; }
+  }
+}
 
 /* ============================================================
    QUICK NAV — click a pill to jump straight to that card instead of

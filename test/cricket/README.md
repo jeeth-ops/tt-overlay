@@ -20,6 +20,7 @@ node test/cricket/clip-editor-server-test.js     # Advanced Clip Editor, server:
 node test/cricket/clip-editor-ui-test.js         # Advanced Clip Editor, scorecard UI (owner-only ⋯, preview, save)
 node test/cricket/insert-ball-server-test.js     # Add / Insert / Remove a ball: renumbering, strike, clips, undo, 403
 node test/cricket/insert-ball-ui-test.js         # Add / Insert Ball in Edit Scorecard (owner-only ＋, preview, save)
+node test/cricket/upcoming-match-test.js         # 📅 Schedule Upcoming Match: panel fixture, ▶ Start, tournament page
 ```
 
 `server-test.js` is the one that matters most: it feeds the same ball documents

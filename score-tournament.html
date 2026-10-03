@@ -454,6 +454,7 @@
   }
   .mc-status.live{ background:#ef4444; border-color:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.28); }
   .mc-status.progress{ background:#f59e0b; border-color:#f59e0b; color:#1c1305; }
+  .mc-status.upcoming{ background:#3b82f6; border-color:#3b82f6; color:#fff; }
   .mc-status.done{ background:rgba(255,255,255,.92); border-color:transparent; color:#0f5132; }
   .mc-status.off{ background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); }
   .mc-dot{ width:6px; height:6px; border-radius:50%; background:currentColor; flex:none; }
@@ -992,15 +993,27 @@ function matchStatusOf(m){
 }
 const MATCH_STATUS_LABEL = { live:'Live', progress:'In Progress', done:'Completed', abandoned:'Abandoned', upcoming:'Upcoming' };
 const PIN_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-12a7 7 0 0 1 14 0c0 5.8-7 12-7 12z"/><circle cx="12" cy="9" r="2.5"/></svg>';
+// "Starts Sat, 5 Oct · 4:00 PM" — a scheduled fixture's own date/time.
+function upcomingWhen(m){
+  if(!m || !m.scheduledAt) return '';
+  const d = new Date(m.scheduledAt);
+  if(isNaN(d)) return '';
+  try {
+    const day = d.toLocaleDateString(undefined, { weekday:'short', day:'numeric', month:'short' });
+    return m.scheduledHasTime ? `${day} · ${d.toLocaleTimeString(undefined, { hour:'numeric', minute:'2-digit' })}` : day;
+  } catch(e){ return ''; }
+}
 function matchCardHtml(m, { href, status, featured = false }){
   const A = m.teamA || {}, B = m.teamB || {};
+  const isUpcoming = status === 'upcoming';
   const done = !!m.winningTeam;
   const win = winnerSide(m);
   const ca = safeTeamColor(A.color), cb = safeTeamColor(B.color);
   const label = m.matchTitle ? String(m.matchTitle)
     : m.matchNo != null && m.matchNo !== '' ? `Match ${m.matchNo}` : '';
-  const result = resultText(m);
-  const date = matchDate(m.savedAt);
+  const when = isUpcoming ? upcomingWhen(m) : '';
+  const result = isUpcoming ? (when ? `Starts ${when}` : 'Scheduled') : resultText(m);
+  const date = isUpcoming ? '' : matchDate(m.savedAt);
   const meta = [m.venue, date].filter(Boolean).map(escapeHtml).join(' · ');
   const team = (t, sc, side) => {
     const tc = safeTeamColor(t.color);
@@ -1013,7 +1026,7 @@ function matchCardHtml(m, { href, status, featured = false }){
       name: `<span class="mc-tname"><b><span class="nm">${escapeHtml(teamLabel(t) || (side === 'A' ? 'Team A' : 'Team B'))}</span>${win === side ? '<span class="mc-win">Won</span>' : ''}</b>${full ? `<small>${escapeHtml(full)}</small>` : ''}</span>`,
       score: `<span class="mc-tscore${batted ? '' : ' ytb'}">${batted
         ? `${scoreText(sc)}${oversText(sc) ? `<small>${escapeHtml(oversText(sc))}</small>` : ''}`
-        : (done ? '—' : 'Yet to bat')}</span>`,
+        : (done ? '—' : (isUpcoming ? '' : 'Yet to bat'))}</span>`,
     };
   };
   const tA = team(A, m.scoreA || {}, 'A'), tB = team(B, m.scoreB || {}, 'B');
@@ -1031,7 +1044,7 @@ function matchCardHtml(m, { href, status, featured = false }){
     ? `${teamLabel(t)} ${Number(sc.runs) || 0} for ${Number(sc.wickets) || 0}${sc.overs != null ? ` in ${sc.overs} overs` : ''}`
     : `${teamLabel(t)} ${done ? 'did not bat' : 'yet to bat'}`;
   const aria = [label, `${teamLabel(A)} versus ${teamLabel(B)}`, MATCH_STATUS_LABEL[status],
-    scoreSay(A, m.scoreA || {}), scoreSay(B, m.scoreB || {}), done ? result : '', m.venue, date]
+    isUpcoming ? '' : scoreSay(A, m.scoreA || {}), isUpcoming ? '' : scoreSay(B, m.scoreB || {}), (done || isUpcoming) ? result : '', m.venue, date]
     .filter(Boolean).join('. ');
   const go = featured ? 'Watch Live' : (done ? 'Scorecard' : 'Follow');
   const style = [ca && `--ca:${ca}`, cb && `--cb:${cb}`].filter(Boolean).join(';');
@@ -1272,10 +1285,20 @@ function renderPortal(data, token){
   // Stashed so the leaderboard clip icons (wired further below) can look
   // up this tournament's own match list + token without re-fetching the
   // portal payload — buildTournamentPlayerReport() reads these.
+  // 📅 Fixtures scheduled from the panel (upcoming:true) have no cricket in
+  // them yet — they go in the Upcoming group and nowhere else (not in match
+  // counts, awards, form or the player reports). A fixture whose room is
+  // already live has just been started (its record flips on the panel's first
+  // save), so it is treated as a played match straight away.
+  const liveRoomsRaw = new Set([data.live && data.live.roomId, ...(((data.live && data.live.matches) || []).map(x => x && x.roomId))].filter(Boolean));
+  const allMatches = data.matches || [];
+  const upcoming = allMatches.filter(m => m && m.upcoming === true && !(m.roomId && liveRoomsRaw.has(m.roomId)))
+    .sort((a, b) => String(a.scheduledAt || '9').localeCompare(String(b.scheduledAt || '9')));
+  data = { ...data, matches: allMatches.filter(m => !upcoming.includes(m)) };
   tournamentDataCache = data;
   tournamentTokenCache = token;
 
-  const matches = data.matches || [];
+  const matches = data.matches;
   const finished = matches.filter(m => m.winningTeam);
   const inProgress = matches.filter(m => !m.winningTeam);
   // 🐛 FIX: this used to trust `data.live.roomId` alone to decide whether to
@@ -1381,17 +1404,19 @@ function renderPortal(data, token){
         matchCardHtml(m, { href: matchHref(m), status: matchStatusOf(m) })).join(''))
     : group('Completed', null, '<div class="mc-empty">No completed matches yet.</div>', false);
 
-  // Upcoming fixtures aren't part of the current data model (the panel has
-  // no "schedule a future match" feature yet — matches only exist once
-  // they've started being scored) — shown honestly as empty rather than
-  // faked.
-  const upcomingHtml = group('Upcoming', null, '<div class="mc-empty">No fixtures scheduled yet.</div>', false);
+  // Fixtures scheduled from the panel (📅 Schedule Upcoming Match), soonest
+  // first. Each card already points at the match's own live room, so the
+  // same link becomes the live scorecard the moment the panel starts it.
+  const upcomingHtml = upcoming.length
+    ? group('Upcoming', upcoming.length, upcoming.map(m =>
+        matchCardHtml(m, { href: m.roomId ? `/cricket-scorecard?room=${encodeURIComponent(m.roomId)}` : '#', status: 'upcoming' })).join(''))
+    : group('Upcoming', null, '<div class="mc-empty">No fixtures scheduled yet.</div>', false);
 
   const matchesPanel = `<div class="tab-panel active" data-panel="matches">
     <div id="matches-card">
       <div class="mc-head">
         <div class="section-title"><span class="dash"></span>Matches</div>
-        <span class="mc-count">${matches.length} match${matches.length===1?'':'es'}</span>
+        <span class="mc-count">${matches.length} match${matches.length===1?'':'es'}${upcoming.length ? ` · ${upcoming.length} upcoming` : ''}</span>
       </div>
       ${liveHtml}${inProgressHtml}${previousHtml}${upcomingHtml}
     </div>

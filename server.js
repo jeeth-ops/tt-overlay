@@ -2310,7 +2310,14 @@ function fmtOversLike(o, b) { return `${o || 0}.${b || 0}`; }
 // Standard cricket points table: 2 pts win, 1 pt tie, 0 loss/no-result.
 // NRR = (runs scored / overs faced) - (runs conceded / overs bowled),
 // summed across every match saved under this tournament so far.
+// 📅 A fixture scheduled from the panel ("Schedule Upcoming Match") is a
+// normal match record with upcoming:true until the panel starts it. It has
+// no cricket in it yet, so it never counts as a played match.
+function isUpcomingRecord(m) { return !!(m && m.upcoming === true); }
+function playedMatches(matches) { return (matches || []).filter(m => !isUpcomingRecord(m)); }
+
 function computePointsTable(matches) {
+    matches = playedMatches(matches);
     const table = {}; // key: lowercased team name -> row
     const ensure = (name) => {
         // 🩹 FIX: collapse internal whitespace too (same class of bug as
@@ -2356,6 +2363,7 @@ function computePointsTable(matches) {
 // battingCard/bowlingCard — the same full scorecards already persisted
 // per match, just rolled up across the whole tournament.
 function computeLeaderboards(matches) {
+    matches = playedMatches(matches);
     const batters = {};
     const bowlers = {};
     matches.forEach(m => {
@@ -3031,9 +3039,9 @@ app.get('/api/public/tournaments', async (req, res) => {
                     leagueKey: doc.leagueKey,
                     token: doc.publicToken,
                     name: doc.displayName || doc.leagueKey,
-                    status: doc.statusOverride || (isLive ? 'live' : (doc.completed ? 'completed' : (matches.length > 0 ? 'ongoing' : 'upcoming'))),
+                    status: doc.statusOverride || (isLive ? 'live' : (doc.completed ? 'completed' : (playedMatches(matches).length > 0 ? 'ongoing' : 'upcoming'))),
                     statusOverride: doc.statusOverride || null,
-                    matchCount: matches.length,
+                    matchCount: playedMatches(matches).length,
                     updatedAt: doc.updatedAt || 0,
                     sport: doc.sport || detectSportFromName(doc.displayName || doc.leagueKey),
                     // Owner-only fields — never present in the normal (cached,
@@ -3090,8 +3098,8 @@ app.get('/api/public/tournaments', async (req, res) => {
                 // marked the WHOLE tournament finished (doc.completed) — NOT
                 // just "has a saved match", 'ongoing' once matches exist but
                 // it isn't finished yet, else 'upcoming'.
-                status: doc.statusOverride || (isLive ? 'live' : (doc.completed ? 'completed' : (matches.length > 0 ? 'ongoing' : 'upcoming'))),
-                matchCount: matches.length,
+                status: doc.statusOverride || (isLive ? 'live' : (doc.completed ? 'completed' : (playedMatches(matches).length > 0 ? 'ongoing' : 'upcoming'))),
+                matchCount: playedMatches(matches).length,
                 updatedAt: doc.updatedAt || 0,
                 // Legacy docs saved before `sport` existed on the league doc
                 // don't have it stored — fall back to the same name-based
@@ -4824,7 +4832,7 @@ adminRouter.get('/tournaments/search', async (req, res) => {
             .project({ ownerUid: 1, leagueKey: 1, displayName: 1, updatedAt: 1, sport: 1, publicToken: 1, createdBy: 1, completed: 1, statusOverride: 1, visibilityOverride: 1, liveMatches: 1 })
             .sort({ updatedAt: -1 }).limit(200).toArray();
         const tournaments = await Promise.all(leagues.map(async l => {
-            const matchCount = await matchRecordsCollection.countDocuments({ ownerUid: l.ownerUid, leagueKey: l.leagueKey });
+            const matchCount = await matchRecordsCollection.countDocuments({ ownerUid: l.ownerUid, leagueKey: l.leagueKey, upcoming: { $ne: true } });
             const creatorEmail = l.createdBy || await getVerifiedEmailForUid(l.ownerUid);
             // 🩹 FIX: statusOverride/publicStatus were being queried (see the
             // .project() above) but never put on the response object, so the
@@ -8704,6 +8712,7 @@ adminRouter.get('/cricket', async (req, res) => {
         const [leagues, matchCounts, recentMatches, ballCount] = await Promise.all([
             leaguesCollection ? leaguesCollection.find({}).project({ ownerUid: 1, leagueKey: 1, displayName: 1, updatedAt: 1, liveMatches: 1, sport: 1, completed: 1, statusOverride: 1 }).sort({ updatedAt: -1 }).limit(50).toArray() : [],
             matchRecordsCollection ? matchRecordsCollection.aggregate([
+                { $match: { upcoming: { $ne: true } } },
                 { $group: { _id: { ownerUid: '$ownerUid', leagueKey: '$leagueKey' }, count: { $sum: 1 } } }
             ]).toArray() : [],
             matchesCollection ? matchesCollection.find({}).sort({ recordingStartedAt: -1 }).limit(50).toArray() : [],
