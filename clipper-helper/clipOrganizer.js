@@ -95,7 +95,12 @@ function classifyEvent(meta) {
   const et = String((meta && meta.eventType) || '').toUpperCase();
   const has = (n) => new RegExp(`(^|[^0-9])${n}([^0-9]|$)`).test(label);
 
-  if (/wicket/.test(label) || (et === 'WICKET' && !/retired/.test(label))) return { token: 'WICKET', category: 'Wickets', defaultHighlight: true };
+  if (/wicket/.test(label) || (et === 'WICKET' && !/retired/.test(label))) {
+    // "12.6_WICKET-RUNOUT_…" — the dismissal is in the name once it is
+    // known, so a run out can be told from a bowled without opening it.
+    const how = meta && meta.dismissal && meta.dismissal.type ? String(meta.dismissal.type).toUpperCase().replace(/[^A-Z]/g, '') : '';
+    return { token: how ? `WICKET-${how}` : 'WICKET', category: 'Wickets', defaultHighlight: true };
+  }
   if (/wide/.test(label)) {
     if (has(6)) return { token: 'WIDE6', category: 'Wide-6', defaultHighlight: true };
     if (has(4)) return { token: 'WIDE4', category: 'Wide-4', defaultHighlight: true };
@@ -122,14 +127,36 @@ function classifyEvent(meta) {
   return { token: et && et !== 'CLIP' ? sanitizeSegment(et, 'CLIP') : 'CLIP', category: 'Other', defaultHighlight: false };
 }
 
+// 🏏 Whose clip this is on the batting side — from the delivery's own
+// snapshot, never from whoever is at the crease now. A wicket belongs to
+// the batter who was given out: the striker for every dismissal except a
+// Run Out, which can take the non-striker (dismissedPlayer*, frozen by the
+// panel when the operator confirmed the wicket). Every other clip (4, 6,
+// boundary extras, highlights) belongs to the delivery's striker.
+// Mirrors clipOwner() in /clip-attribution.js — kept inline because this
+// file ships on its own inside the Clipper Helper / Stream Engine folders.
+function clipBatsman(meta) {
+  meta = meta || {};
+  const et = String(meta.outcomeType || meta.eventType || '').toUpperCase();
+  const label = String(meta.outcomeLabel || '').toLowerCase();
+  const isWicket = (et === 'WICKET' || /wicket/.test(label)) && !/retired/.test(label);
+  const d = meta.dismissal || null;
+  const dismissedName = meta.dismissedPlayerName || meta.dismissedPlayer || (d && d.batter) || null;
+  const dismissedId = meta.dismissedPlayerId || (d && d.batterId) || null;
+  if (isWicket && (dismissedName || dismissedId)) return { name: dismissedName || meta.strikerName || null, id: dismissedId || null };
+  return { name: meta.strikerName || null, id: meta.strikerId || null };
+}
+
 // OVER.BALL_EVENT_BATSMAN_vs_BOWLER.mp4
 //   08.4_SIX_Rohit-Sharma_vs_Jasprit-Bumrah.mp4
+//   12.6_WICKET-RUNOUT_<batter given out>_vs_<bowler of that ball>.mp4
 // Never clip1.mp4 / highlight.mp4: the ball (or, failing that, the exact
 // clock time), the event and both players are always in the name.
 function buildClipFileName(meta) {
   const { token } = classifyEvent(meta);
   const ball = ballLabel(meta) || timeLabel(meta && meta.t0);
-  const bat = meta && meta.strikerName ? sanitizeSegment(meta.strikerName, '') : '';
+  const owner = clipBatsman(meta);
+  const bat = owner.name ? sanitizeSegment(owner.name, '') : '';
   const bowl = meta && meta.bowlerName ? sanitizeSegment(meta.bowlerName, '') : '';
   const who = bat && bowl ? `_${bat}_vs_${bowl}` : bat ? `_${bat}` : bowl ? `_vs_${bowl}` : '';
   return `${ball}_${token}${who}.mp4`;
@@ -251,8 +278,9 @@ async function placeClip({ clipsRoot, currentPath, meta, previous }) {
   // 2️⃣ Player views of the same bytes.
   const links = [];
   const inn = inningsFolder(meta.innings);
+  const batter = clipBatsman(meta);
   const players = [
-    { role: 'batsman', top: 'Batsmen', name: meta.strikerName, id: meta.strikerId },
+    { role: 'batsman', top: 'Batsmen', name: batter.name, id: batter.id },
     { role: 'bowler', top: 'Bowlers', name: meta.bowlerName, id: meta.bowlerId },
   ];
   for (const p of players) {
@@ -291,6 +319,7 @@ module.exports = {
   ballLabel,
   classifyEvent,
   buildClipFileName,
+  clipBatsman,
   matchFolderSegments,
   matchRootFor,
   ensureMatchTree,

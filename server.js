@@ -24,6 +24,9 @@ let r2Client = null;
 const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME;
 const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL; // e.g. https://clips.yourdomain.com (custom domain on the bucket, no trailing slash)
 const clipMedia = require('./clip-media'); // faststart/poster/cache-header/Range helpers — see clip-media.js
+// 🎯 THE clip-ownership rule (delivery snapshot → players), shared with
+// both cricket panels — see clip-attribution.js.
+const ClipAttribution = require('./clip-attribution');
 if (R2_PUBLIC_URL && /\.r2\.dev(\/|$)/i.test(R2_PUBLIC_URL)) {
     // r2.dev is Cloudflare's rate-limited development URL: it is NOT served through the CDN cache, so
     // every first view of every clip is a cold read from the bucket. Attach a custom domain to the bucket
@@ -212,6 +215,10 @@ async function connectMongo() {
         // below): fast "this player's clips" lookups scoped to one match,
         // one owner's whole account (career), or filtered by clip type.
         await clipsCollection.createIndex({ matchId: 1, strikerKey: 1, eventType: 1 });
+        // Wicket clips belong to the batter who was given out (a non-striker
+        // run out is not the striker's dismissal) — see clipBatterKey().
+        await clipsCollection.createIndex({ matchId: 1, dismissedPlayerKey: 1, eventType: 1 });
+        await clipsCollection.createIndex({ deliveryId: 1 }, { sparse: true });
         await clipsCollection.createIndex({ matchId: 1, bowlerKey: 1, eventType: 1 });
         await clipsCollection.createIndex({ ownerUid: 1, strikerKey: 1, createdAt: -1 });
         await clipsCollection.createIndex({ ownerUid: 1, bowlerKey: 1, createdAt: -1 });
@@ -806,8 +813,8 @@ function insertOnlyDefaults(setDoc, defaults) {
 // panel-supplied ballMeta as fallback. Shared by finalizeClip (at ingest)
 // and /api/clips/classify (HIGHLIGHTS clips, linked once the operator has
 // entered the ball's outcome).
-async function computeClipLinkage(matchId, ballMeta, uid) {
-    const canonicalBall = await findCanonicalBall(matchId, ballMeta);
+async function computeClipLinkage(matchId, ballMeta, uid, eventType) {
+    const canonicalBall = await findCanonicalBall(matchId, ballMeta, eventType);
     const ownerUid = await resolveOwnerUidForMatch(matchId, uid || (canonicalBall && canonicalBall.ownerUid));
     // personName() unwraps any stray {name,...} object (old data, or
     // any future client that sends one) into a clean string — see the
@@ -830,7 +837,34 @@ async function computeClipLinkage(matchId, ballMeta, uid) {
     const strikerPlayerId = (canonicalBall && canonicalBall.strikerPlayerId) || (ownerUid ? await resolvePlayerIdExplicit(ownerUid, ballMeta && ballMeta.strikerId, striker) : (ballMeta && ballMeta.strikerId) || null);
     const nonStrikerPlayerId = (canonicalBall && canonicalBall.nonStrikerPlayerId) || (ownerUid ? await resolvePlayerIdExplicit(ownerUid, ballMeta && ballMeta.nonStrikerId, nonStriker) : (ballMeta && ballMeta.nonStrikerId) || null);
     const bowlerPlayerId = (canonicalBall && canonicalBall.bowlerPlayerId) || (ownerUid ? await resolvePlayerIdExplicit(ownerUid, ballMeta && ballMeta.bowlerId, bowler) : (ballMeta && ballMeta.bowlerId) || null);
-    const fielderPlayerId = (canonicalBall && canonicalBall.dismissalFielderPlayerId) || (ownerUid ? await resolvePlayerId(ownerUid, dismissal && dismissal.fielder) : null);
+    const fielderPlayerId = (canonicalBall && canonicalBall.dismissalFielderPlayerId) || (ownerUid ? await resolvePlayerIdExplicit(ownerUid, dismissal && dismissal.fielderId, dismissal && dismissal.fielder) : null);
+    // 🏏 WHO WAS GIVEN OUT — frozen by the panel when the operator
+    // confirmed the wicket (dismissal.batter/batterId on the ball row,
+    // dismissedPlayer* on the clip's own ballMeta). Never inferred from
+    // whoever is at the crease now. For a row from before this field
+    // existed, every dismissal but a Run Out is the delivery's striker; a
+    // legacy Run Out with no named batter stays the striker, exactly as
+    // every clip was attributed before.
+    const dismissedFromBall = canonicalBall && canonicalBall.dismissal && canonicalBall.dismissal.batter
+        ? { name: personName(canonicalBall.dismissal.batter), id: canonicalBall.dismissedPlayerId || null, rosterId: canonicalBall.dismissal.batterId || null } : null;
+    const metaDismissedName = personName(ballMeta && (ballMeta.dismissedPlayer || (ballMeta.dismissal && ballMeta.dismissal.batter)));
+    const metaDismissedId = (ballMeta && (ballMeta.dismissedPlayerId || (ballMeta.dismissal && ballMeta.dismissal.batterId))) || null;
+    let dismissedName = null, dismissedPlayerId = null;
+    if (dismissal && !/retired/i.test(String(dismissal.type || ''))) {
+        if (dismissedFromBall) {
+            dismissedName = dismissedFromBall.name;
+            dismissedPlayerId = dismissedFromBall.id || (ownerUid ? await resolvePlayerIdExplicit(ownerUid, dismissedFromBall.rosterId, dismissedName) : dismissedFromBall.rosterId);
+        } else if (metaDismissedName || metaDismissedId) {
+            dismissedName = metaDismissedName;
+            dismissedPlayerId = ownerUid ? await resolvePlayerIdExplicit(ownerUid, metaDismissedId, metaDismissedName) : metaDismissedId;
+        } else {
+            dismissedName = striker;
+            dismissedPlayerId = strikerPlayerId;
+        }
+        // The same batter as the striker? Then it is the striker's identity.
+        if (dismissedName && playerKey(dismissedName) === playerKey(striker)) dismissedPlayerId = dismissedPlayerId || strikerPlayerId;
+        if (dismissedName && playerKey(dismissedName) === playerKey(nonStriker)) dismissedPlayerId = dismissedPlayerId || nonStrikerPlayerId;
+    }
     return {
         ownerUid: ownerUid || null,
         linkedToCanonicalBall: !!canonicalBall,
@@ -845,7 +879,19 @@ async function computeClipLinkage(matchId, ballMeta, uid) {
         dismissalType: dismissal && dismissal.type ? dismissal.type : null,
         fielderName: personName(dismissal && dismissal.fielder),
         fielderKey: playerKey(dismissal && dismissal.fielder), fielderPlayerId,
+        dismissedPlayerName: dismissedName || null, dismissedPlayerKey: playerKey(dismissedName), dismissedPlayerId: dismissedPlayerId || null,
+        // The delivery this clip belongs to (the ball row's ballUid).
+        deliveryId: (canonicalBall && canonicalBall.ballUid) || (ballMeta && ballMeta.deliveryId) || null,
     };
+}
+
+// Whose clip is this on the batting side? A wicket belongs to the batter
+// who was given out; everything else to the delivery's striker. Older
+// wicket docs without dismissedPlayerKey fall back to the striker.
+function clipBatterKey(c) {
+    if (!c) return null;
+    if (c.eventType === 'WICKET' && c.dismissedPlayerKey) return c.dismissedPlayerKey;
+    return c.strikerKey || null;
 }
 
 // A clip is shown in the public Highlights sections (match, player,
@@ -860,7 +906,7 @@ const HIGHLIGHT_VISIBLE = { isHighlight: { $ne: false }, status: { $ne: 'AWAITIN
 async function finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMeta, uid, outFile, offsetStartSec, offsetEndSec, clipMeta }) {
     clipId = clipId || buildClipId(matchId, eventType, eventTimestamp);
     if (clipsCollection) {
-        const link = await computeClipLinkage(matchId, ballMeta, uid);
+        const link = await computeClipLinkage(matchId, ballMeta, uid, eventType);
         const { linkedToCanonicalBall, ...linkFields } = link;
         // 🧾 Offline-queue metadata (see /api/clips/attach for the same
         // fields): kept on the doc from the very first ingest, so a clip
@@ -1166,7 +1212,7 @@ app.post('/api/clips/classify', async (req, res) => {
     const isHighlight = body.isHighlight === true;
     const ballMeta = body.ballMeta && typeof body.ballMeta === 'object' ? body.ballMeta : null;
     try {
-        const link = await computeClipLinkage(matchId, ballMeta, null);
+        const link = await computeClipLinkage(matchId, ballMeta, null, eventType);
         const { linkedToCanonicalBall, ...linkFields } = link;
         await clipsCollection.updateOne(
             { clipId },
@@ -1247,7 +1293,8 @@ app.post('/api/clips/attach', async (req, res) => {
 
     const ballMeta = (body.ballMeta && typeof body.ballMeta === 'object') ? body.ballMeta : clipBallMetaFromClipMeta(meta);
     try {
-        const link = await computeClipLinkage(matchId, ballMeta, null);
+        const refinedType = String(meta.outcomeType || meta.eventType || '').toUpperCase();
+        const link = await computeClipLinkage(matchId, ballMeta, null, refinedType);
         const { linkedToCanonicalBall, ...linkFields } = link;
         // Only the fields the offline queue is authoritative about. Upload
         // state, file paths and retry counters are deliberately untouched.
@@ -1340,6 +1387,10 @@ function clipBallMetaFromClipMeta(meta) {
         strikerId: meta.strikerId || null,
         nonStrikerId: meta.nonStrikerId || null,
         bowlerId: meta.bowlerId || null,
+        deliveryId: meta.deliveryId || null,
+        dismissal: meta.dismissal || null,
+        dismissedPlayer: meta.dismissedPlayerName || null,
+        dismissedPlayerId: meta.dismissedPlayerId || null,
     };
 }
 
@@ -2531,17 +2582,34 @@ async function resolveOwnerUidForMatch(matchId, hintUid) {
 // the permanent source of truth) that a requested clip's window is centred
 // on, so the clip can be linked to real player identities/dismissal data
 // instead of trusting only whatever the panel happened to send as ballMeta.
-async function findCanonicalBall(matchId, ballMeta) {
+//
+// 🔒 It must be the SAME delivery, not just one at the same over.ball:
+//   - a clip that carries its deliveryId is matched by the ball's ballUid
+//     (the panel mints one id per delivery for both) — exact, always;
+//   - otherwise (older panels / clips) over.ball alone is ambiguous — a
+//     Wide or No Ball shares its over.ball with the ball before it, so a
+//     wicket clip on 12.5 used to be linked to a Wide bowled to the NEW
+//     batsman straight afterwards and take his name. The candidate must
+//     also agree with the clip's own striker, and a WICKET clip must land
+//     on a delivery that has a dismissal (ClipAttribution.sameDelivery).
+// No consistent match → null, and the clip keeps the identity captured
+// at the delivery (its own ballMeta) instead of borrowing a neighbour's.
+async function findCanonicalBall(matchId, ballMeta, eventType) {
     if (!ballsCollection || !ballMeta) return null;
-    const query = { matchId };
-    if (ballMeta.innings !== undefined) query.innings = ballMeta.innings;
-    if (ballMeta.over !== undefined) query.over = ballMeta.over;
-    if (ballMeta.ballInOver !== undefined) query.ballInOver = ballMeta.ballInOver;
-    if (Object.keys(query).length <= 1) return null; // nothing specific enough to match on
     try {
-        // Most-recent match on (over, ballInOver): guards against the rare
-        // case a correction re-logged the same ball, or innings wasn't sent.
-        return await ballsCollection.find(query).sort({ timestamp: -1 }).limit(1).next();
+        if (ballMeta.deliveryId) {
+            const exact = await ballsCollection.findOne({ matchId, ballUid: String(ballMeta.deliveryId) });
+            if (exact) return exact;
+        }
+        const query = { matchId };
+        if (ballMeta.innings !== undefined && ballMeta.innings !== null) query.innings = ballMeta.innings;
+        if (ballMeta.over !== undefined && ballMeta.over !== null) query.over = ballMeta.over;
+        if (ballMeta.ballInOver !== undefined && ballMeta.ballInOver !== null) query.ballInOver = ballMeta.ballInOver;
+        if (Object.keys(query).length <= 1) return null; // nothing specific enough to match on
+        // Most recent first: a correction may have re-logged the same ball.
+        const candidates = await ballsCollection.find(query).sort({ timestamp: -1 }).limit(10).toArray();
+        const et = String(eventType || '').toUpperCase();
+        return candidates.find(b => ClipAttribution.sameDelivery(b, ballMeta, et)) || null;
     } catch (err) {
         console.log('findCanonicalBall error:', err);
         return null;
@@ -3073,6 +3141,11 @@ function serializeClip(c) {
         runs: c.runs, battingTeam: c.battingTeam,
         striker: c.strikerName || null, bowler: c.bowlerName || null,
         nonStriker: c.nonStrikerName || null, fielder: c.fielderName || null,
+        // Who was given out on a WICKET clip (the non-striker on a
+        // non-striker run out); null on every other clip.
+        dismissedPlayer: c.dismissedPlayerName || null,
+        dismissedPlayerId: c.dismissedPlayerId || null,
+        deliveryId: c.deliveryId || null,
         ready: !!(c.r2Url || c.driveUrl),
         // Coarse job status for the commentary "WATCH REPLAY" UI, which
         // needs to tell "still cutting/uploading" apart from "gave up" —
@@ -3095,6 +3168,8 @@ function serializeClip(c) {
         eventId: c.eventId || null,
         battingTeamId: c.battingTeamId || null,
         strikerPlayerId: c.strikerPlayerId || null,
+        bowlerPlayerId: c.bowlerPlayerId || null,
+        fielderPlayerId: c.fielderPlayerId || null,
         r2Status: c.r2Status || null,
         driveStatus: c.driveStatus || null
     };
@@ -3161,7 +3236,7 @@ app.get('/api/clips/match/:matchId', async (req, res) => {
     if (req.query.team) query.battingTeam = String(req.query.team).toUpperCase();
     if (req.query.playerKey) {
         const pk = playerKey(req.query.playerKey);
-        query.$or = [{ strikerKey: pk }, { bowlerKey: pk }, { fielderKey: pk }];
+        query.$or = [{ strikerKey: pk }, { bowlerKey: pk }, { fielderKey: pk }, { dismissedPlayerKey: pk }];
     }
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
     const skip = Math.max(parseInt(req.query.skip, 10) || 0, 0);
@@ -3236,7 +3311,7 @@ async function runPlayerClipsQuery(pk, req) {
     // until a real season field is added) — no matchId restriction, just
     // ownerUid if we have one, so results stay scoped to one account.
 
-    const base = { $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }, { fielderKey: { $in: pkList } }], ...HIGHLIGHT_VISIBLE };
+    const base = { $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }, { fielderKey: { $in: pkList } }, { dismissedPlayerKey: { $in: pkList } }], ...HIGHLIGHT_VISIBLE };
     if (matchFilter) base.matchId = matchFilter;
     const ownerUid = ownerUidFrom(req);
     if (!matchFilter && ownerUid) base.ownerUid = ownerUid;
@@ -3258,7 +3333,10 @@ async function runPlayerClipsQuery(pk, req) {
     const out = { fours: [], sixes: [], dismissal: [], wickets: [], battingOther: [], bowlingOther: [] };
     clips.forEach(c => {
         const s = serializeClip(c);
-        const isStriker = pkSet.has(c.strikerKey);
+        // Batting side = the delivery's striker, except a wicket, which is
+        // the dismissed batter's (a non-striker run out is not the
+        // striker's dismissal, and IS the non-striker's).
+        const isStriker = pkSet.has(clipBatterKey(c));
         const isBowler = pkSet.has(c.bowlerKey);
         if (isStriker && c.eventType === 'FOUR') out.fours.push(s);
         else if (isStriker && c.eventType === 'SIX') out.sixes.push(s);
@@ -3624,7 +3702,7 @@ async function clipsForCompileRequest(body) {
         const pk = playerKey(body.playerKey);
         if (!pk) return { error: 'playerKey required' };
         const clips = await clipsCollection.find({
-            matchId, $or: [{ strikerKey: pk }, { bowlerKey: pk }, { fielderKey: pk }], ...HIGHLIGHT_VISIBLE
+            matchId, $or: [{ strikerKey: pk }, { bowlerKey: pk }, { fielderKey: pk }, { dismissedPlayerKey: pk }], ...HIGHLIGHT_VISIBLE
         }).toArray();
         return { matchId, clips };
     }
@@ -3796,16 +3874,17 @@ app.get('/api/public/tournament/:token/players', async (req, res) => {
         if (matchIds.length && pkList.length) {
             const clips = await clipsCollection.find({
                 matchId: { $in: matchIds },
-                $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }],
+                $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }, { dismissedPlayerKey: { $in: pkList } }],
                 ...HIGHLIGHT_VISIBLE,
-            }, { projection: { matchId: 1, strikerKey: 1, bowlerKey: 1, eventType: 1 } }).toArray();
+            }, { projection: { matchId: 1, strikerKey: 1, bowlerKey: 1, dismissedPlayerKey: 1, eventType: 1 } }).toArray();
             clips.forEach(c => {
                 // 🩹 FIX: a clip manually attached to an ordinary ball (tagged
                 // plain "CLIP", not a six/four/wicket) used to be counted
                 // nowhere here, so a player with only general clips showed
                 // totalClips:0 and their "Download" button stayed disabled.
-                if (counts.has(c.strikerKey)) {
-                    const row = counts.get(c.strikerKey);
+                const batterKey = clipBatterKey(c);
+                if (counts.has(batterKey)) {
+                    const row = counts.get(batterKey);
                     if (c.eventType === 'SIX') row.sixes++;
                     else if (c.eventType === 'FOUR') row.fours++;
                     else if (c.eventType === 'WICKET') row.dismissals++;
@@ -3857,7 +3936,7 @@ app.get('/api/public/tournament/:token/player-clips', async (req, res) => {
         const matchById = new Map(ctx.matches.map(m => [clipId(m), m]));
 
         const clips = matchIds.length
-            ? await clipsCollection.find({ matchId: { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }], ...HIGHLIGHT_VISIBLE }).toArray()
+            ? await clipsCollection.find({ matchId: { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }, { dismissedPlayerKey: pk }], ...HIGHLIGHT_VISIBLE }).toArray()
             : [];
 
         function decorate(c) {
@@ -3870,10 +3949,11 @@ app.get('/api/public/tournament/:token/player-clips', async (req, res) => {
 
         const sixes = [], fours = [], dismissals = [], wickets = [], others = [];
         clips.forEach(c => {
-            if (c.strikerKey === pk && c.eventType === 'SIX') sixes.push(decorate(c));
-            else if (c.strikerKey === pk && c.eventType === 'FOUR') fours.push(decorate(c));
-            else if (c.strikerKey === pk && c.eventType === 'WICKET') dismissals.push(decorate(c));
-            else if (c.strikerKey === pk) others.push(decorate(c));
+            const isBatter = clipBatterKey(c) === pk;
+            if (isBatter && c.eventType === 'SIX') sixes.push(decorate(c));
+            else if (isBatter && c.eventType === 'FOUR') fours.push(decorate(c));
+            else if (isBatter && c.eventType === 'WICKET') dismissals.push(decorate(c));
+            else if (isBatter) others.push(decorate(c));
             if (c.bowlerKey === pk && c.eventType === 'WICKET') wickets.push(decorate(c));
             else if (c.bowlerKey === pk && c.eventType !== 'SIX' && c.eventType !== 'FOUR') others.push(decorate(c));
         });
@@ -3921,19 +4001,20 @@ app.post('/api/public/tournament/:token/highlights/compile', async (req, res) =>
         const matchIndex = new Map(ctx.matches.map((m, i) => [m.roomId || m.matchId, i]));
         if (!matchIds.length) return res.json({ success: true, empty: true, message: 'No highlights available for this player yet.' });
 
-        const clips = await clipsCollection.find({ matchId: { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }], ...HIGHLIGHT_VISIBLE }).toArray();
+        const clips = await clipsCollection.find({ matchId: { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }, { dismissedPlayerKey: pk }], ...HIGHLIGHT_VISIBLE }).toArray();
+        const isBatter = (c) => clipBatterKey(c) === pk;
         let selected;
-        if (category === 'sixes') selected = clips.filter(c => c.strikerKey === pk && c.eventType === 'SIX');
-        else if (category === 'fours') selected = clips.filter(c => c.strikerKey === pk && c.eventType === 'FOUR');
-        else if (category === 'dismissals') selected = clips.filter(c => c.strikerKey === pk && c.eventType === 'WICKET');
+        if (category === 'sixes') selected = clips.filter(c => isBatter(c) && c.eventType === 'SIX');
+        else if (category === 'fours') selected = clips.filter(c => isBatter(c) && c.eventType === 'FOUR');
+        else if (category === 'dismissals') selected = clips.filter(c => isBatter(c) && c.eventType === 'WICKET');
         else if (category === 'wickets') selected = clips.filter(c => c.bowlerKey === pk && c.eventType === 'WICKET');
         // 🩹 FIX: "other" (a general clip manually attached to a non-
         // boundary/non-wicket ball) is its own download category now, and
         // "all" includes it too — before this it was invisible to every
         // tournament-wide compile, including "Download All Player
         // Highlights" itself.
-        else if (category === 'other') selected = clips.filter(c => (c.strikerKey === pk && !['SIX', 'FOUR', 'WICKET'].includes(c.eventType)) || (c.bowlerKey === pk && !['SIX', 'FOUR', 'WICKET'].includes(c.eventType)));
-        else selected = clips.filter(c => (c.strikerKey === pk) || (c.bowlerKey === pk && c.eventType !== 'SIX' && c.eventType !== 'FOUR'));
+        else if (category === 'other') selected = clips.filter(c => (isBatter(c) && !['SIX', 'FOUR', 'WICKET'].includes(c.eventType)) || (c.bowlerKey === pk && !['SIX', 'FOUR', 'WICKET'].includes(c.eventType)));
+        else selected = clips.filter(c => isBatter(c) || (c.bowlerKey === pk && c.eventType !== 'SIX' && c.eventType !== 'FOUR'));
 
         if (!selected.length) return res.json({ success: true, empty: true, message: 'No highlights available for this player yet.' });
         selected.forEach(c => { c._tourneySeq = matchIndex.get(c.matchId) || 0; });
@@ -4138,15 +4219,16 @@ app.post('/api/public/tournament/:token/highlights/compile-all-players', async (
             // the bowler) — matching the same gap fixed above, so a
             // manually-attached general clip never made it into anyone's
             // ZIP entry either.
-            $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }],
+            $or: [{ strikerKey: { $in: pkList } }, { bowlerKey: { $in: pkList } }, { dismissedPlayerKey: { $in: pkList } }],
             ...HIGHLIGHT_VISIBLE,
         }).toArray();
         clips.forEach(c => { c._tourneySeq = matchIndex.get(c.matchId) || 0; });
 
         const byPlayer = new Map(pkList.map(pk => [pk, []]));
         clips.forEach(c => {
-            if (names.has(c.strikerKey)) byPlayer.get(c.strikerKey).push(c);
-            if (names.has(c.bowlerKey) && c.bowlerKey !== c.strikerKey && c.eventType !== 'SIX' && c.eventType !== 'FOUR') byPlayer.get(c.bowlerKey).push(c);
+            const batterKey = clipBatterKey(c);
+            if (names.has(batterKey)) byPlayer.get(batterKey).push(c);
+            if (names.has(c.bowlerKey) && c.bowlerKey !== batterKey && c.eventType !== 'SIX' && c.eventType !== 'FOUR') byPlayer.get(c.bowlerKey).push(c);
         });
 
         const jobId = newCompileJobId();
@@ -4189,7 +4271,7 @@ async function computeMatchPlayerStats(matchId, pk) {
     // a Set once so every ball only pays for one membership check.
     const pkSet = new Set(Array.isArray(pk) ? pk : [pk]);
     const isPk = (v) => pkSet.has(v);
-    const balls = await ballsCollection.find({ matchId, $or: [{ strikerKey: { $in: [...pkSet] } }, { bowlerKey: { $in: [...pkSet] } }] }).toArray();
+    const balls = await ballsCollection.find({ matchId, $or: [{ strikerKey: { $in: [...pkSet] } }, { bowlerKey: { $in: [...pkSet] } }, { dismissedPlayerKey: { $in: [...pkSet] } }] }).toArray();
     const bat = { runs: 0, balls: 0, fours: 0, sixes: 0, out: false, howOut: null };
     const bowl = { balls: 0, runs: 0, wickets: 0, wides: 0, noballs: 0 };
     const oversBowled = {}; // `${innings}-${over}` -> { legalBalls, runs }
@@ -4200,7 +4282,10 @@ async function computeMatchPlayerStats(matchId, pk) {
             if (b.kind === '4') bat.fours++;
             if (b.kind === '6') bat.sixes++;
         }
-        if (isPk(b.strikerKey) && b.dismissal) {
+        // Out = the batter the delivery names as given out (dismissal.batter,
+        // frozen at the wicket); the striker only for rows that predate it.
+        const outKey = b.dismissal ? (b.dismissedPlayerKey || (b.dismissal.batter ? playerKey(b.dismissal.batter) : b.strikerKey)) : null;
+        if (outKey && isPk(outKey)) {
             bat.out = true;
             bat.howOut = b.dismissal.type || null;
         }
@@ -4887,6 +4972,9 @@ adminRouter.put('/clips/:clipId', async (req, res) => {
     if (body.bowlerName !== undefined) { set.bowlerName = body.bowlerName || null; set.bowlerKey = playerKey(body.bowlerName); }
     if (body.nonStrikerName !== undefined) { set.nonStrikerName = body.nonStrikerName || null; }
     if (body.fielderName !== undefined) { set.fielderName = body.fielderName || null; set.fielderKey = playerKey(body.fielderName); }
+    // Reassigning a wicket clip's dismissed batter (the owner of a WICKET
+    // clip). The old id no longer describes the new name, so it is cleared.
+    if (body.dismissedPlayerName !== undefined) { set.dismissedPlayerName = body.dismissedPlayerName || null; set.dismissedPlayerKey = playerKey(body.dismissedPlayerName); set.dismissedPlayerId = null; }
     if (Object.keys(set).length === 0) return res.status(400).json({ success: false, error: 'No correctable fields provided' });
     try {
         const result = await clipsCollection.findOneAndUpdate({ _id }, { $set: set }, { returnDocument: 'after' });
@@ -5914,7 +6002,7 @@ async function findBallsForPlayerMerge(ownerUid, wrongKey) {
         // who's asking.
         $and: [
             { $or: [{ ownerUid }, { ownerUid: null }, { ownerUid: { $exists: false } }] },
-            { $or: [{ strikerKey: wrongKey }, { nonStrikerKey: wrongKey }, { bowlerKey: wrongKey }, { dismissalFielderKey: wrongKey }] }
+            { $or: [{ strikerKey: wrongKey }, { nonStrikerKey: wrongKey }, { bowlerKey: wrongKey }, { dismissalFielderKey: wrongKey }, { dismissedPlayerKey: wrongKey }] }
         ]
     }).sort({ matchId: 1, innings: 1, over: 1, ballInOver: 1 }).toArray();
 }
@@ -5933,6 +6021,12 @@ function mergedBallDoc(b, wrongKey, correctName, correctKey, correctPlayerId) {
         out.dismissalFielderKey = correctKey;
         out.dismissalFielderPlayerId = correctPlayerId;
         out.dismissal = b.dismissal ? { ...b.dismissal, fielder: correctName } : b.dismissal;
+    }
+    // The batter given out on this delivery (see logBall's dismissal.batter).
+    if (b.dismissedPlayerKey === wrongKey) {
+        out.dismissedPlayerKey = correctKey;
+        out.dismissedPlayerId = correctPlayerId;
+        out.dismissal = { ...(out.dismissal || b.dismissal || {}), batter: correctName };
     }
     // Provenance only (mirrors the correctionOf convention above) — never
     // read by any scoring/validation path, purely for debugging.
@@ -6033,7 +6127,7 @@ async function mergePlayersDeep(ownerUid, actorEmail, wrongPlayerName, correctPl
     // Clip matchId may be stored raw or sanitised — accept both spellings.
     const clipMatchVariants = selectedSet ? [...new Set([...selectedSet, ...[...selectedSet].map(safeMatchId)])] : null;
     const matchClause = clipMatchVariants ? [{ matchId: { $in: clipMatchVariants } }] : [];
-    const wrongInClip = { $or: [{ strikerKey: wrongKey }, { nonStrikerKey: wrongKey }, { bowlerKey: wrongKey }, { fielderKey: wrongKey }] };
+    const wrongInClip = { $or: [{ strikerKey: wrongKey }, { nonStrikerKey: wrongKey }, { bowlerKey: wrongKey }, { fielderKey: wrongKey }, { dismissedPlayerKey: wrongKey }] };
     const clipFilter = { $and: [ownerUidClause, wrongInClip, ...matchClause] };
     const clipCount = clipsCollection ? await clipsCollection.countDocuments(clipFilter) : 0;
     // Per-match clip counts (over ALL of this player's clips) so the
@@ -6083,7 +6177,8 @@ async function mergePlayersDeep(ownerUid, actorEmail, wrongPlayerName, correctPl
             clipsCollection.updateMany({ $and: [ownerUidClause, { strikerKey: wrongKey }, ...matchClause] }, { $set: { strikerName: correctName, strikerKey: correctKey, strikerPlayerId: correctPlayerId } }),
             clipsCollection.updateMany({ $and: [ownerUidClause, { nonStrikerKey: wrongKey }, ...matchClause] }, { $set: { nonStrikerName: correctName, nonStrikerKey: correctKey, nonStrikerPlayerId: correctPlayerId } }),
             clipsCollection.updateMany({ $and: [ownerUidClause, { bowlerKey: wrongKey }, ...matchClause] }, { $set: { bowlerName: correctName, bowlerKey: correctKey, bowlerPlayerId: correctPlayerId } }),
-            clipsCollection.updateMany({ $and: [ownerUidClause, { fielderKey: wrongKey }, ...matchClause] }, { $set: { fielderName: correctName, fielderKey: correctKey, fielderPlayerId: correctPlayerId } })
+            clipsCollection.updateMany({ $and: [ownerUidClause, { fielderKey: wrongKey }, ...matchClause] }, { $set: { fielderName: correctName, fielderKey: correctKey, fielderPlayerId: correctPlayerId } }),
+            clipsCollection.updateMany({ $and: [ownerUidClause, { dismissedPlayerKey: wrongKey }, ...matchClause] }, { $set: { dismissedPlayerName: correctName, dismissedPlayerKey: correctKey, dismissedPlayerId: correctPlayerId } })
         ]).catch(err => console.log('Clip resync after player merge error:', err));
         matchIds.forEach(mid => invalidateClipsCache(mid));
     }
@@ -9362,12 +9457,17 @@ io.on('connection', async (socket) => {
             // nonStrikerId/bowlerId — see cricket-panel TEAM SQUADS) when
             // present, so two players sharing a name never collide into
             // one profile; falls back to name-based resolution otherwise.
-            const [strikerPlayerId, nonStrikerPlayerId, bowlerPlayerId, dismissalFielderPlayerId] = ownerUid ? await Promise.all([
+            const [strikerPlayerId, nonStrikerPlayerId, bowlerPlayerId, dismissalFielderPlayerId, dismissedPlayerId] = ownerUid ? await Promise.all([
                 resolvePlayerIdExplicit(ownerUid, data.strikerId, data.striker),
                 resolvePlayerIdExplicit(ownerUid, data.nonStrikerId, data.nonStriker),
                 resolvePlayerIdExplicit(ownerUid, data.bowlerId, data.bowler),
-                resolvePlayerId(ownerUid, data.dismissal && data.dismissal.fielder)
-            ]) : [null, null, null, null];
+                resolvePlayerIdExplicit(ownerUid, data.dismissal && data.dismissal.fielderId, data.dismissal && data.dismissal.fielder),
+                // The batter actually given out (the non-striker on a
+                // non-striker run out) — frozen by the panel, resolved here
+                // to the same global identity the striker/non-striker get.
+                data.dismissal && (data.dismissal.batterId || data.dismissal.batter)
+                    ? resolvePlayerIdExplicit(ownerUid, data.dismissal.batterId, data.dismissal.batter) : Promise.resolve(null)
+            ]) : [null, null, null, null, null];
             // 🛡️ Normalize through personName() in case a client sends
             // {name,...} objects instead of plain strings (see comment on
             // personName above) — stores the clean name either way.
@@ -9406,7 +9506,21 @@ io.on('connection', async (socket) => {
                 // every dismissal but a Run Out, which can take the
                 // non-striker instead. Without it a scorecard rebuilt from
                 // this log cannot mark anyone out at all.
-                dismissal: data.dismissal ? { type: data.dismissal.type || 'Out', fielder: fielderName, batter: personName(data.dismissal.batter) || null } : null,
+                dismissal: data.dismissal ? {
+                    type: data.dismissal.type || 'Out', fielder: fielderName,
+                    batter: personName(data.dismissal.batter) || null,
+                    batterId: data.dismissal.batterId ? String(data.dismissal.batterId) : null,
+                    fielderId: data.dismissal.fielderId ? String(data.dismissal.fielderId) : null
+                } : null,
+                dismissedPlayerKey: data.dismissal ? (playerKey(personName(data.dismissal.batter)) || null) : null,
+                dismissedPlayerId: dismissedPlayerId || null,
+                // The roster ids exactly as the panel sent them (the
+                // *PlayerId fields above are the resolved global ids) —
+                // what a clip's own ballMeta carries, so a clip can be
+                // matched to this exact delivery by identity.
+                strikerId: data.strikerId ? String(data.strikerId) : null,
+                nonStrikerId: data.nonStrikerId ? String(data.nonStrikerId) : null,
+                bowlerId: data.bowlerId ? String(data.bowlerId) : null,
                 // 🏏 Penalty AWARD detail (kind 'PEN' only) — the reason, the side
                 // it was awarded to and where it was applied, kept with the event so
                 // the award is auditable and reversible rather than being an

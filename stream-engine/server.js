@@ -3765,8 +3765,19 @@ async function organiseClipLocally(job, outFile) {
         strikerId: bm.strikerId || null,
         bowlerName: bm.bowler || bm.bowlerName || null,
         bowlerId: bm.bowlerId || null,
+        // A wicket clip is filed under the batter who was GIVEN OUT (the
+        // non-striker on a non-striker run out), frozen by the panel when
+        // the operator confirmed it — see clipBatsman() in clipOrganizer.
+        dismissal: bm.dismissal || null,
+        dismissedPlayerName: bm.dismissedPlayer || (bm.dismissal && bm.dismissal.batter) || null,
+        dismissedPlayerId: bm.dismissedPlayerId || (bm.dismissal && bm.dismissal.batterId) || null,
+        deliveryId: bm.deliveryId || null,
         battingTeam: bm.battingTeam || null,
         outcome: bm.outcome || bm.ballOutcome || null,
+        // The organiser classifies by outcomeLabel ("Wide 4", "WICKET — Run
+        // Out"); it used to receive only `outcome`, so a Wide 4 was filed
+        // as a plain 4 and every wicket's dismissal was unknown locally.
+        outcomeLabel: bm.outcome || bm.ballOutcome || null,
         // undefined (not false) means "no operator decision yet", which lets
         // the organiser apply its own default for the event type.
         isHighlight: typeof bm.isHighlight === 'boolean' ? bm.isHighlight : undefined,

@@ -5873,16 +5873,18 @@ function hlCardHtml(c, newIdx){
   const cls = t === 'FOUR' ? 'four' : t === 'SIX' ? 'six' : t === 'WICKET' ? 'wicket' : 'other';
   const badge = t === 'FOUR' ? '4' : t === 'SIX' ? '6' : t === 'WICKET' ? 'W' : CLIP_ICON;
   const overLabel = `${c.over ?? '—'}.${c.ballInOver ?? ''}`;
-  const name = t === 'WICKET' ? (c.striker || '') : (c.striker || c.bowler || '');
+  // A wicket clip is the dismissed batter's (the non-striker on a
+  // non-striker run out) — never just "whoever was on strike".
+  const name = t === 'WICKET' ? (c.dismissedPlayer || c.striker || '') : (c.striker || c.bowler || '');
   const sub = t === 'WICKET'
     ? [c.dismissalType, c.bowler ? 'b. ' + c.bowler : null].filter(Boolean).join(' · ')
     : (c.bowler ? 'vs ' + c.bowler : '');
   const runs = t === 'SIX' ? '6 Runs' : t === 'FOUR' ? '4 Runs' : '';
   const label = t === 'WICKET' ? 'Wicket' : t === 'SIX' ? 'Six' : t === 'FOUR' ? 'Four' : 'Highlight';
   const dur = Number(c.duration || c.durationSec) > 0 ? ` · ${Math.round(Number(c.duration || c.durationSec))}s` : '';
-  const ownerName = t === 'WICKET' ? (c.striker || '') : (c.striker || c.bowler || '');
+  const ownerName = t === 'WICKET' ? (c.dismissedPlayer || c.striker || '') : (c.striker || c.bowler || '');
   const reassignBtn = isOwner
-    ? `<button class="clip-reassign-btn" data-reassign-clip="${c.clipId}" data-reassign-name="${escapeHtml(ownerName)}" data-reassign-role="batter" title="Reassign to correct player">✏️</button>` : '';
+    ? `<button class="clip-reassign-btn" data-reassign-clip="${c.clipId}" data-reassign-name="${escapeHtml(ownerName)}" data-reassign-role="${t === 'WICKET' ? 'dismissed' : 'batter'}" title="Reassign to correct player">✏️</button>` : '';
   const deleteBtn = isOwner
     ? `<button class="clip-delete-btn" data-delete-clip="${c.clipId}" data-delete-title="${escapeHtml((c.striker||c.bowler||'') + ' — ' + c.eventType)}" title="Delete this clip">${TRASH_ICON}</button>` : '';
   const ready = !!c.ready;
@@ -5924,8 +5926,8 @@ function clipRowHtml(c){
     ? [c.dismissalType, c.bowler ? 'b. ' + c.bowler : null].filter(Boolean).join(' · ')
     : (c.bowler ? 'off ' + c.bowler : '');
   const disabled = c.ready ? '' : 'disabled';
-  const ownerName = c.eventType === 'WICKET' ? (c.striker || '') : (c.striker || c.bowler || '');
-  const ownerRole = c.eventType === 'WICKET' ? 'batter' : 'batter';
+  const ownerName = c.eventType === 'WICKET' ? (c.dismissedPlayer || c.striker || '') : (c.striker || c.bowler || '');
+  const ownerRole = c.eventType === 'WICKET' ? 'dismissed' : 'batter';
   const reassignBtn = isOwner
     ? `<button class="clip-reassign-btn" data-reassign-clip="${c.clipId}" data-reassign-name="${escapeHtml(ownerName)}" data-reassign-role="${ownerRole}" title="Reassign to correct player">✏️</button>`
     : '';
@@ -8335,7 +8337,7 @@ document.getElementById('owner-chip').addEventListener('click', () => openOwnerP
    and ball/event reference are all preserved; only the player field
    changes). Small pencil icon appended to each clip row, owner-only. ---------- */
 function openClipReassignForm(clipId, currentName, role){
-  const roleField = role === 'bowler' ? 'bowlerName' : role === 'fielder' ? 'fielderName' : 'strikerName';
+  const roleField = role === 'bowler' ? 'bowlerName' : role === 'fielder' ? 'fielderName' : role === 'dismissed' ? 'dismissedPlayerName' : 'strikerName';
   openConfirmModal(`
     <div class="em-title">Reassign Clip</div>
     <div class="em-sub">Moves this clip to the correct player. Same clip, same video, same match — only the player credit changes.</div>

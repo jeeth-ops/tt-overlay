@@ -592,10 +592,17 @@ const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
 // Merges a ballMeta/clipMeta payload into a job, keeping whatever is
 // already known when the new payload is silent about it (a press-time
 // snapshot must never be wiped by a later, partial update).
-function applyEventMeta(job, payload) {
+//
+// opts.authoritative (the scorer's /clip-meta answer): the dismissal and
+// dismissed-player fields it carries REPLACE the job's, null included — a
+// wicket that was undone and re-scored as something else must stop being
+// filed as that batter's dismissal. A re-sent /clip press never is.
+function applyEventMeta(job, payload, opts) {
   const m = payload || {};
   const ball = m.ballMeta && typeof m.ballMeta === 'object' ? m.ballMeta : m;
   const pick = (next, prev) => (next === null || next === undefined ? (prev === undefined ? null : prev) : next);
+  const authoritative = !!(opts && opts.authoritative) && m.ballMeta && typeof m.ballMeta === 'object';
+  const own = (k) => Object.prototype.hasOwnProperty.call(ball, k);
 
   job.tournamentId = pick(str(m.tournamentId || m.tournament), job.tournamentId);
   job.tournamentName = pick(str(m.tournamentName || m.tournament), job.tournamentName);
@@ -616,7 +623,22 @@ function applyEventMeta(job, payload) {
   job.strikerId = pick(str(ball.strikerId), job.strikerId);
   job.nonStrikerId = pick(str(ball.nonStrikerId), job.nonStrikerId);
   job.bowlerId = pick(str(ball.bowlerId), job.bowlerId);
-  job.dismissal = pick(ball.dismissal || null, job.dismissal);
+  // 🆔 The delivery this clip belongs to, and who was given out on it —
+  // frozen by the panel at the delivery, never re-resolved here (this
+  // runs offline, possibly hours before the upload).
+  job.deliveryId = pick(str(ball.deliveryId), job.deliveryId);
+  if (authoritative && own('dismissal')) job.dismissal = ball.dismissal || null;
+  else job.dismissal = pick(ball.dismissal || null, job.dismissal);
+  const d = job.dismissal || {};
+  if (authoritative && (own('dismissedPlayer') || own('dismissedPlayerId') || own('dismissal'))) {
+    job.dismissedPlayerName = str(ball.dismissedPlayer) || str(d.batter) || null;
+    job.dismissedPlayerId = str(ball.dismissedPlayerId) || str(d.batterId) || null;
+  } else {
+    job.dismissedPlayerName = pick(str(ball.dismissedPlayer) || str(d.batter), job.dismissedPlayerName);
+    job.dismissedPlayerId = pick(str(ball.dismissedPlayerId) || str(d.batterId), job.dismissedPlayerId);
+  }
+  job.fielderName = job.dismissal ? (str(job.dismissal.fielder) || null) : null;
+  job.fielderId = job.dismissal ? (str(job.dismissal.fielderId) || null) : null;
   job.outcomeLabel = pick(str(m.outcomeLabel), job.outcomeLabel);
   if (m.isHighlight === true || m.isHighlight === false) job.isHighlight = m.isHighlight;
   if (m.eventType) {
@@ -626,7 +648,7 @@ function applyEventMeta(job, payload) {
     if (et) job.outcomeType = et;
   }
   job.ballLabel = organizer.ballLabel(job) || job.ballLabel || null;
-  job.playerIds = [job.strikerId, job.nonStrikerId, job.bowlerId].filter(Boolean);
+  job.playerIds = [...new Set([job.strikerId, job.nonStrikerId, job.bowlerId, job.dismissedPlayerId, job.fielderId].filter(Boolean))];
   return job;
 }
 
@@ -648,6 +670,9 @@ function ballMetaFor(job) {
     nonStrikerId: job.nonStrikerId || null,
     bowlerId: job.bowlerId || null,
     dismissal: job.dismissal || null,
+    deliveryId: job.deliveryId || null,
+    dismissedPlayer: job.dismissedPlayerName || null,
+    dismissedPlayerId: job.dismissedPlayerId || null,
   };
 }
 
@@ -681,6 +706,12 @@ function clipMetaFor(job) {
     strikerName: job.strikerName || null,
     nonStrikerName: job.nonStrikerName || null,
     bowlerName: job.bowlerName || null,
+    deliveryId: job.deliveryId || null,
+    dismissal: job.dismissal || null,
+    dismissedPlayerName: job.dismissedPlayerName || null,
+    dismissedPlayerId: job.dismissedPlayerId || null,
+    fielderName: job.fielderName || null,
+    fielderId: job.fielderId || null,
     timestamp: job.t0,
     clipStart: job.window && job.window.startWall,
     clipEnd: job.window && job.window.endWall,
@@ -915,6 +946,9 @@ async function organizeClipFiles(job) {
         innings: job.innings, over: job.over, ballInOver: job.ballInOver,
         strikerName: job.strikerName, strikerId: job.strikerId,
         bowlerName: job.bowlerName, bowlerId: job.bowlerId,
+        // A wicket is filed under the batter who was given out.
+        dismissal: job.dismissal || null,
+        dismissedPlayerName: job.dismissedPlayerName || null, dismissedPlayerId: job.dismissedPlayerId || null,
         t0: job.t0,
       },
       previous: { primary: job.localPath, links: job.links || [] },
@@ -1751,6 +1785,7 @@ app.post('/clip', async (req, res) => {
     battingTeam: null, bowlingTeam: null, battingTeamId: null, bowlingTeamId: null,
     strikerName: null, nonStrikerName: null, bowlerName: null,
     strikerId: null, nonStrikerId: null, bowlerId: null, playerIds: [],
+    deliveryId: null, dismissedPlayerName: null, dismissedPlayerId: null, fielderName: null, fielderId: null,
     outcomeLabel: null, outcomeType: eventType, isHighlight: null, dismissal: null,
     // Local + cloud state.
     localPath: null, localFilePath: null, filename: null, links: [],
@@ -1764,7 +1799,7 @@ app.post('/clip', async (req, res) => {
   jobs.set(clipId, job);
   // Any metadata that arrived before this press did (out-of-order outbox).
   const early = orphanMeta.get(clipId);
-  if (early) { orphanMeta.delete(clipId); applyEventMeta(job, early); saveOrphanMeta(); }
+  if (early) { orphanMeta.delete(clipId); applyEventMeta(job, early, { authoritative: true }); saveOrphanMeta(); }
   pruneJobs();
   flushJobsNow(); // a press is written to disk before it's acknowledged — a crash right after can't lose it
   scheduleCut(job);
@@ -1801,7 +1836,7 @@ app.post('/clip-meta', async (req, res) => {
     saveOrphanMeta();
     return res.json({ success: true, clipId, pending: true });
   }
-  await applyLateMeta(job, b);
+  await applyLateMeta(job, b, { authoritative: true });
   res.json({
     success: true, clipId, status: job.status, statusText: STATUS_TEXT[job.status] || job.status,
     filename: job.filename || null, localPath: job.localPath || null,
@@ -1814,11 +1849,12 @@ app.post('/clip-meta', async (req, res) => {
 // clip if it is already cut, and make sure the website eventually hears
 // about the corrected event (a clip already synced is re-attached, never
 // re-uploaded).
-async function applyLateMeta(job, payload) {
-  const before = { ball: job.ballLabel, highlight: job.isHighlight, outcome: job.outcomeLabel, striker: job.strikerName, bowler: job.bowlerName };
-  applyEventMeta(job, payload);
+async function applyLateMeta(job, payload, opts) {
+  const before = { ball: job.ballLabel, highlight: job.isHighlight, outcome: job.outcomeLabel, striker: job.strikerName, bowler: job.bowlerName, dismissed: job.dismissedPlayerId || job.dismissedPlayerName, delivery: job.deliveryId };
+  applyEventMeta(job, payload, opts);
   update(job, destinationsFor(job));
-  const changed = before.ball !== job.ballLabel || before.highlight !== job.isHighlight || before.outcome !== job.outcomeLabel || before.striker !== job.strikerName || before.bowler !== job.bowlerName;
+  const changed = before.ball !== job.ballLabel || before.highlight !== job.isHighlight || before.outcome !== job.outcomeLabel || before.striker !== job.strikerName || before.bowler !== job.bowlerName
+    || before.dismissed !== (job.dismissedPlayerId || job.dismissedPlayerName) || before.delivery !== job.deliveryId;
   if (job.localPath && fs.existsSync(job.localPath)) {
     await organizeClipFiles(job);
     console.log(`🏷️  [${job.eventType}] ${job.clipId}: ${job.ballLabel || 'ball ?'} ${job.outcomeLabel || ''}${job.isHighlight === false ? ' (kept out of Highlights)' : ''} → ${job.filename}`);

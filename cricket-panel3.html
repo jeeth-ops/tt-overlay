@@ -1949,6 +1949,272 @@
 <div id="toast"></div>
 
 <script>
+/* CLIP-ATTRIBUTION:BEGIN — inlined copy of /clip-attribution.js. Do not edit here: edit
+   clip-attribution.js, then run `node test/clip-attribution.test.js --sync`. */
+/* ================================================================
+   🎯 CLIP ATTRIBUTION — the ONE rule for "which delivery, which players
+   does this clip belong to".
+
+   A clip belongs to the delivery that created it, never to whatever the
+   live match state looks like when the clip finishes cutting, uploading
+   or syncing. Everything here is a pure function of an immutable DELIVERY
+   SNAPSHOT taken before the delivery mutated anything (strike rotation,
+   over completion, new batsman, next bowler). Nothing in this file ever
+   reads live state.
+
+   Used, unchanged, by:
+     - server.js (require)            — clip ↔ ball linking, clip ownership
+     - cricket-panel.html  (inlined)  — Clipper Helper panel
+     - cricket-panel3.html (inlined)  — Stream Engine panel
+   The panels carry an inlined copy between the CLIP-ATTRIBUTION markers
+   (a panel must keep scoring even if a separate script failed to load);
+   test/clip-attribution.test.js fails if any copy drifts from this file.
+   Edit THIS file, then run:  node test/clip-attribution.test.js --sync
+   ================================================================ */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.ClipAttribution = factory();
+})(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  // Dismissals credited to the bowler (Laws 32-39). Run Out / Retired /
+  // Obstructing etc. are not.
+  var BOWLER_CREDITED = ['Bowled', 'Caught', 'LBW', 'Stumped', 'Hit Wicket'];
+  // The only dismissal where the NON-striker can be the one given out.
+  var RUN_OUT = 'Run Out';
+
+  function str(v) {
+    if (v == null) return null;
+    if (typeof v === 'object') return typeof v.name === 'string' ? (v.name.trim() || null) : null;
+    var s = String(v).trim();
+    return s || null;
+  }
+  function idOf(v) {
+    if (v == null || v === '') return null;
+    return String(v);
+  }
+  function nameKey(v) {
+    var s = str(v);
+    return s ? s.toLowerCase().replace(/\s+/g, ' ') : null;
+  }
+  function freeze(o) {
+    if (o && typeof o === 'object' && !Object.isFrozen(o)) {
+      Object.keys(o).forEach(function (k) { freeze(o[k]); });
+      Object.freeze(o);
+    }
+    return o;
+  }
+
+  // Same player? Ids decide when both sides have one; names otherwise.
+  function samePlayer(aId, aName, bId, bName) {
+    aId = idOf(aId); bId = idOf(bId);
+    if (aId && bId) return aId === bId;
+    var a = nameKey(aName), b = nameKey(bName);
+    return !!(a && b && a === b);
+  }
+
+  // Where the delivery about to be bowled sits, from the COMPLETED count
+  // the score holds right now. A legal delivery is ball (balls + 1); the
+  // one that reaches ballsPerOver completes the over and is labelled with
+  // the over it was bowled in (12.6), never the next over's 13.0. A Wide /
+  // No Ball is not a legal delivery and keeps the current position.
+  function nextDeliveryPosition(score, ballsPerOver, isLegal) {
+    var bpo = Number(ballsPerOver) > 0 ? Number(ballsPerOver) : 6;
+    var overs = Math.max(0, Number(score && score.overs) || 0);
+    var balls = Math.max(0, Number(score && score.balls) || 0);
+    if (!isLegal) return { over: overs, ballInOver: balls, legal: false, completesOver: false };
+    var n = balls + 1;
+    return { over: overs, ballInOver: n, legal: true, completesOver: n >= bpo };
+  }
+
+  // The position of a delivery AFTER it has been applied to the score:
+  // used where the score has already moved on (addLegalBall rolled
+  // 12.5 → 13.0 for the 6th ball of over 12).
+  function appliedDeliveryPosition(scoreAfter, ballsPerOver, overCompleted) {
+    var bpo = Number(ballsPerOver) > 0 ? Number(ballsPerOver) : 6;
+    var overs = Number(scoreAfter && scoreAfter.overs) || 0;
+    var balls = Number(scoreAfter && scoreAfter.balls) || 0;
+    if (overCompleted) return { over: Math.max(0, overs - 1), ballInOver: bpo };
+    return { over: overs, ballInOver: balls };
+  }
+
+  // 📸 The immutable delivery snapshot. Take it BEFORE the delivery is
+  // applied. Players are copied by value (name + id) — never a reference
+  // to a live batter object that the next state change will reuse.
+  function buildDeliverySnapshot(input) {
+    input = input || {};
+    var p = function (x) { return { id: idOf(x && x.id), name: str(x) || str(x && x.name) }; };
+    var striker = p(input.striker), nonStriker = p(input.nonStriker), bowler = p(input.bowler);
+    var battingTeam = input.battingTeam || null;
+    return freeze({
+      deliveryId: input.deliveryId ? String(input.deliveryId) : null,
+      matchId: input.matchId || null,
+      innings: input.innings == null ? null : Number(input.innings),
+      phase: input.phase || null,
+      over: input.over == null ? null : Number(input.over),
+      ballInOver: input.ballInOver == null ? null : Number(input.ballInOver),
+      legal: input.legal == null ? null : !!input.legal,
+      battingTeam: battingTeam,
+      bowlingTeam: input.bowlingTeam || (battingTeam === 'A' ? 'B' : battingTeam === 'B' ? 'A' : null),
+      strikerId: striker.id, strikerName: striker.name,
+      nonStrikerId: nonStriker.id, nonStrikerName: nonStriker.name,
+      bowlerId: bowler.id, bowlerName: bowler.name,
+      timestamp: input.timestamp == null ? null : Number(input.timestamp)
+    });
+  }
+
+  // Is the crease in `live` still the one the snapshot was taken from?
+  // Used to refuse a wicket whose modal was opened before the state moved
+  // on (another device scored, a delayed sync arrived, an undo ran).
+  function creaseMatches(snapshot, live) {
+    if (!snapshot || !live) return true;
+    var s = live.striker || {}, n = live.nonStriker || {};
+    var strikerOk = !snapshot.strikerName && !snapshot.strikerId ? true : samePlayer(snapshot.strikerId, snapshot.strikerName, s.id, s.name);
+    var nonOk = !snapshot.nonStrikerName && !snapshot.nonStrikerId ? true : samePlayer(snapshot.nonStrikerId, snapshot.nonStrikerName, n.id, n.name);
+    return strikerOk && nonOk;
+  }
+
+  // 🏏 WHO IS OUT. Every dismissal but Run Out is the delivery's striker.
+  // A Run Out names its batter explicitly (frozen at confirmation as an id
+  // and name); the legacy 'striker'/'nonStriker' position is only a
+  // fallback, and is resolved against the SNAPSHOT's crease — never the
+  // live one, which may already have rotated.
+  function resolveDismissedPlayer(snapshot, dismissal) {
+    if (!snapshot || !dismissal) return null;
+    var type = dismissal.type || dismissal.dismissalType || 'Bowled';
+    var atStriker = { id: snapshot.strikerId, name: snapshot.strikerName, end: 'striker' };
+    var atNon = { id: snapshot.nonStrikerId, name: snapshot.nonStrikerName, end: 'nonStriker' };
+    if (type !== RUN_OUT) return atStriker;
+    var pid = idOf(dismissal.dismissedPlayerId || dismissal.batterId);
+    var pname = str(dismissal.dismissedPlayerName || dismissal.batter);
+    if (pid || pname) {
+      if (samePlayer(pid, pname, atStriker.id, atStriker.name)) return atStriker;
+      if (samePlayer(pid, pname, atNon.id, atNon.name)) return atNon;
+      // Named, but not one of the two at the crease for this delivery:
+      // keep exactly what was named rather than substitute anyone.
+      return { id: pid, name: pname, end: null };
+    }
+    if (dismissal.runOutWho === 'nonStriker') return atNon;
+    return atStriker;
+  }
+
+  function eventTypeFor(event) {
+    var et = String((event && (event.clipType || event.eventType)) || '').toUpperCase();
+    if (et) return et;
+    var kind = event && event.kind;
+    if (kind === 'W' || kind === 'WdW' || kind === 'NbW') return 'WICKET';
+    if (kind === '4') return 'FOUR';
+    if (kind === '6') return 'SIX';
+    return 'CLIP';
+  }
+
+  // 🎯 THE resolver. Who owns this clip, from the delivery snapshot only.
+  //   FOUR / SIX / boundary extra / any other clip → batsman = striker
+  //   WICKET → batsman = dismissed player (striker, or the named Run Out
+  //            batter), bowler = delivery bowler, fielder = as entered
+  function resolveClipParticipants(snapshot, event) {
+    snapshot = snapshot || {};
+    event = event || {};
+    var clipType = eventTypeFor(event);
+    var d = event.dismissal || null;
+    var isWicket = clipType === 'WICKET' && !!d && !/retired/i.test(String(d.type || ''));
+    var dismissed = isWicket ? resolveDismissedPlayer(snapshot, d) : null;
+    var type = isWicket ? (d.type || 'Bowled') : null;
+    var batsman = dismissed || { id: snapshot.strikerId, name: snapshot.strikerName };
+    return freeze({
+      deliveryId: snapshot.deliveryId || null,
+      innings: snapshot.innings, over: snapshot.over, ballInOver: snapshot.ballInOver,
+      battingTeam: snapshot.battingTeam || null, bowlingTeam: snapshot.bowlingTeam || null,
+      clipType: clipType,
+      batsmanId: batsman.id || null, batsmanName: batsman.name || null,
+      strikerId: snapshot.strikerId || null, strikerName: snapshot.strikerName || null,
+      nonStrikerId: snapshot.nonStrikerId || null, nonStrikerName: snapshot.nonStrikerName || null,
+      bowlerId: snapshot.bowlerId || null, bowlerName: snapshot.bowlerName || null,
+      dismissalType: type,
+      dismissedPlayerId: dismissed ? (dismissed.id || null) : null,
+      dismissedPlayerName: dismissed ? (dismissed.name || null) : null,
+      dismissedEnd: dismissed ? (dismissed.end || null) : null,
+      fielderId: isWicket ? (idOf(d.fielderId) || null) : null,
+      fielderName: isWicket ? (str(d.fielder || d.fielderName) || null) : null,
+      bowlerCredited: isWicket ? BOWLER_CREDITED.indexOf(type) !== -1 : false
+    });
+  }
+
+  // The ballMeta every clip request / clip-meta / classification carries:
+  // the shape the helper, the Stream Engine and the website already read
+  // (striker/nonStriker/bowler + ids + dismissal), plus the explicit
+  // owner fields (deliveryId, batsman*, dismissedPlayer*).
+  function clipBallMeta(participants, extra) {
+    var c = participants || {};
+    var meta = {
+      deliveryId: c.deliveryId || null,
+      innings: c.innings, over: c.over, ballInOver: c.ballInOver,
+      battingTeam: c.battingTeam || null, bowlingTeam: c.bowlingTeam || null,
+      striker: c.strikerName || null, nonStriker: c.nonStrikerName || null, bowler: c.bowlerName || null,
+      strikerId: c.strikerId || null, nonStrikerId: c.nonStrikerId || null, bowlerId: c.bowlerId || null,
+      batsman: c.batsmanName || null, batsmanId: c.batsmanId || null,
+      dismissedPlayer: c.dismissedPlayerName || null, dismissedPlayerId: c.dismissedPlayerId || null,
+      dismissal: c.dismissalType ? {
+        type: c.dismissalType,
+        fielder: c.fielderName || null, fielderId: c.fielderId || null,
+        batter: c.dismissedPlayerName || null, batterId: c.dismissedPlayerId || null
+      } : null
+    };
+    if (extra) Object.keys(extra).forEach(function (k) { meta[k] = extra[k]; });
+    return meta;
+  }
+
+  // Owner of an already-stored clip / ballMeta / clip doc, for readers
+  // that only have the stored fields. A wicket clip belongs to the batter
+  // who was given out; legacy docs with no dismissed player fall back to
+  // the striker (correct for every dismissal but a non-striker Run Out).
+  function clipOwner(meta) {
+    meta = meta || {};
+    var et = String(meta.eventType || meta.clipType || '').toUpperCase();
+    var d = meta.dismissal || null;
+    var dismissedName = str(meta.dismissedPlayer || meta.dismissedPlayerName || (d && d.batter));
+    var dismissedId = idOf(meta.dismissedPlayerId || (d && d.batterId));
+    var strikerName = str(meta.striker || meta.strikerName);
+    var strikerId = idOf(meta.strikerId);
+    if (et === 'WICKET' && (dismissedName || dismissedId)) return { name: dismissedName || null, id: dismissedId || null, role: 'dismissed' };
+    return { name: strikerName || null, id: strikerId || null, role: 'striker' };
+  }
+
+  // Is a stored ball row the SAME delivery an event's ballMeta describes?
+  // deliveryId decides when both have one. Otherwise over/ball alone is
+  // not enough (a Wide shares its over.ball with the ball before it), so
+  // the striker must agree too, and a wicket event needs a wicket ball.
+  function sameDelivery(ball, ballMeta, eventType) {
+    if (!ball || !ballMeta) return false;
+    var did = ballMeta.deliveryId || ballMeta.ballUid || null;
+    if (did && ball.ballUid) return String(ball.ballUid) === String(did);
+    if (ballMeta.innings != null && ball.innings != null && Number(ballMeta.innings) !== Number(ball.innings)) return false;
+    if (ballMeta.over != null && Number(ballMeta.over) !== Number(ball.over)) return false;
+    if (ballMeta.ballInOver != null && Number(ballMeta.ballInOver) !== Number(ball.ballInOver)) return false;
+    if ((ballMeta.strikerId || str(ballMeta.striker)) && (ball.strikerId || str(ball.striker))) {
+      if (!samePlayer(ballMeta.strikerId, ballMeta.striker, ball.strikerId, ball.striker)) return false;
+    }
+    if (String(eventType || '').toUpperCase() === 'WICKET' && !ball.dismissal) return false;
+    return true;
+  }
+
+  return {
+    BOWLER_CREDITED: BOWLER_CREDITED,
+    samePlayer: samePlayer,
+    nextDeliveryPosition: nextDeliveryPosition,
+    appliedDeliveryPosition: appliedDeliveryPosition,
+    buildDeliverySnapshot: buildDeliverySnapshot,
+    creaseMatches: creaseMatches,
+    resolveDismissedPlayer: resolveDismissedPlayer,
+    resolveClipParticipants: resolveClipParticipants,
+    clipBallMeta: clipBallMeta,
+    clipOwner: clipOwner,
+    sameDelivery: sameDelivery
+  };
+});
+/* CLIP-ATTRIBUTION:END */
+</script>
+<script>
 /* ============================================================
    STATE
    ============================================================ */
@@ -9186,7 +9452,7 @@ function recordBall(kind, meta){
     else if(isChaseWon()) msg = '🏆 Target already reached — match is won, no more balls to record';
     toast(msg);
     updateBallButtonsState();
-    return;
+    return false;
   }
   // 🔒 Play paused for the day (see stumps-btn/resume-day-btn) — this
   // guard is the real enforcement (updateBallButtonsState() only disables
@@ -9194,11 +9460,11 @@ function recordBall(kind, meta){
   // bypass entirely), so it has to live here too, not just in the UI.
   if(state.format === 'Test' && state.dayStatus === 'STUMPS'){
     toast('🌙 Play is paused for Stumps — click "Resume Play" to start the next day first');
-    return;
+    return false;
   }
   if((kind === 'W' || kind === 'WdW' || kind === 'NbW') && state.score.wickets >= 10){
     toast('🚫 All out — cannot take an 11th wicket');
-    return;
+    return false;
   }
   // A Free Hit ball is only ever dismissible by a Run Out under the Laws
   // of Cricket — every other mode of dismissal doesn't count. The modal
@@ -9207,8 +9473,20 @@ function recordBall(kind, meta){
   // unless that rule holds, no matter how the call arrived.
   if((kind === 'W' || kind === 'WdW' || kind === 'NbW') && state.freeHit && (!meta || meta.dismissalType !== 'Run Out')){
     toast('⚠️ Free Hit is in play — only Run Out can dismiss this ball');
-    return;
+    return false;
   }
+  // 🔒 A wicket's players were frozen when WICKET was pressed (see
+  // captureWicketDelivery). If the crease is no longer that crease — a
+  // second device scored, a delayed sync replaced the state, an undo ran
+  // while the modal was open — recording now would credit the dismissal
+  // to whoever happens to be standing there. Refuse; the operator presses
+  // WICKET again and sees the current batters.
+  if((kind === 'W' || kind === 'WdW' || kind === 'NbW') && meta && meta.wicketDelivery && !ClipAttribution.creaseMatches(meta.wicketDelivery, state)){
+    toast('⚠️ The batters at the crease changed while this wicket was being entered (another device, a sync or an undo). Nothing was recorded — press WICKET again.', 7000);
+    pendingWicketDelivery = null;
+    return false;
+  }
+  pendingWicketDelivery = null;
 
   pushHistory();
   let overCompletedThisBall = false;
@@ -9240,7 +9518,15 @@ function recordBall(kind, meta){
   const logBowlerId = state.bowler.id || null;
   const logBattingTeam = state.battingTeam;
   const logInnings = state.inningsNumber;
+  const logPhase = state.phase || 'REGULATION';
+  // 🆔 One id per delivery, minted here and carried by the ball log row
+  // (as its ballUid), the clip requests and every later re-label — the
+  // key every downstream record links back to instead of re-deriving it.
+  const deliveryId = newBallUid();
   let logDismissalText = null;
+  // Who was given out, by id AND name, set by the wicket branch below from
+  // the batter objects as they stood before this delivery moved anyone.
+  let logDismissal = null;
   // 🔒 ROOT-CAUSE FIX (clip mis-attribution on the last ball of an over):
   // addLegalBall() below can roll state.score.overs/balls straight over to
   // the START of the NEXT over (over+1, ball 0) the instant THIS delivery
@@ -9305,9 +9591,11 @@ function recordBall(kind, meta){
       // NON-striker can be the one given out instead.
       const originalStriker = state.striker;
       const originalNonStriker = state.nonStriker;
-      const dismissedIsNonStriker = dismissalType === 'Run Out' && meta && meta.runOutWho === 'nonStriker';
+      const dismissedIsNonStriker = dismissalType === 'Run Out' && runOutTakesNonStriker(meta);
       const dismissedBatter = dismissedIsNonStriker ? originalNonStriker : originalStriker;
     lastDismissedBatter = (dismissedBatter && dismissedBatter.name) || null; // carried into the ball log — see logBallToDb
+      logDismissal = { type: dismissalType, fielder: fielderName || null, fielderId: (meta && meta.fielderId) || null,
+        batter: (dismissedBatter && dismissedBatter.name) || null, batterId: (dismissedBatter && dismissedBatter.id) || null };
       const survivor = dismissedIsNonStriker ? originalStriker : originalNonStriker;
 
       document.getElementById('disp-last-dismissal').textContent = `${dismissedBatter.name || 'Batsman'} — ${dismissalText}`;
@@ -9450,9 +9738,11 @@ function recordBall(kind, meta){
 
       const originalStriker = state.striker;
       const originalNonStriker = state.nonStriker;
-      const dismissedIsNonStriker = dismissalType === 'Run Out' && meta && meta.runOutWho === 'nonStriker';
+      const dismissedIsNonStriker = dismissalType === 'Run Out' && runOutTakesNonStriker(meta);
       const dismissedBatter = dismissedIsNonStriker ? originalNonStriker : originalStriker;
     lastDismissedBatter = (dismissedBatter && dismissedBatter.name) || null; // carried into the ball log — see logBallToDb
+      logDismissal = { type: dismissalType, fielder: fielderName || null, fielderId: (meta && meta.fielderId) || null,
+        batter: (dismissedBatter && dismissedBatter.name) || null, batterId: (dismissedBatter && dismissedBatter.id) || null };
       const survivor = dismissedIsNonStriker ? originalStriker : originalNonStriker;
       document.getElementById('disp-last-dismissal').textContent = `${dismissedBatter.name || 'Batsman'} — ${dismissalText}`;
 
@@ -9548,9 +9838,11 @@ function recordBall(kind, meta){
 
       const originalStriker = state.striker;
       const originalNonStriker = state.nonStriker;
-      const dismissedIsNonStriker = dismissalType === 'Run Out' && meta && meta.runOutWho === 'nonStriker';
+      const dismissedIsNonStriker = dismissalType === 'Run Out' && runOutTakesNonStriker(meta);
       const dismissedBatter = dismissedIsNonStriker ? originalNonStriker : originalStriker;
     lastDismissedBatter = (dismissedBatter && dismissedBatter.name) || null; // carried into the ball log — see logBallToDb
+      logDismissal = { type: dismissalType, fielder: fielderName || null, fielderId: (meta && meta.fielderId) || null,
+        batter: (dismissedBatter && dismissedBatter.name) || null, batterId: (dismissedBatter && dismissedBatter.id) || null };
       const survivor = dismissedIsNonStriker ? originalStriker : originalNonStriker;
       document.getElementById('disp-last-dismissal').textContent = `${dismissedBatter.name || 'Batsman'} — ${dismissalText}`;
 
@@ -9793,11 +10085,33 @@ function recordBall(kind, meta){
   // EXCEPT an over-completing legal delivery (that's the one case
   // addLegalBall() rolls forward to the next over's 0.0 before we get
   // here) — so only that case needs the -1/=6 correction.
-  const logOverForBall = overCompletedThisBall ? (state.score.overs - 1) : state.score.overs;
-  const logBallInOverForBall = overCompletedThisBall ? 6 : state.score.balls;
+  const appliedPos = ClipAttribution.appliedDeliveryPosition(state.score, PANEL_BALLS_PER_OVER, overCompletedThisBall);
+  const logOverForBall = appliedPos.over;
+  const logBallInOverForBall = appliedPos.ballInOver;
 
   // Full match log for the Excel export — one row per ball, never trimmed.
   const kindIsWicket = kind === 'W' || kind === 'WdW' || kind === 'NbW';
+  // 📸 THE DELIVERY SNAPSHOT — this delivery's identity, frozen: players
+  // as they stood BEFORE it (captured at the top of this function), the
+  // over/ball it was actually bowled as, and who was given out. Every
+  // downstream record (ball log, DB row, clip request, clip re-label,
+  // highlight link, Stream Engine folders, website) is built from this
+  // and only this. See /clip-attribution.js for the one ownership rule.
+  const deliverySnapshot = ClipAttribution.buildDeliverySnapshot({
+    deliveryId, matchId: currentMatchId() || null,
+    innings: logInnings, phase: logPhase,
+    over: logOverForBall, ballInOver: logBallInOverForBall,
+    legal: !['Wd', 'Nb', 'WdW', 'NbW'].includes(kind),
+    battingTeam: logBattingTeam,
+    striker: { name: logStrikerName, id: logStrikerId },
+    nonStriker: { name: logNonStrikerName, id: logNonStrikerId },
+    bowler: { name: logBowlerName, id: logBowlerId },
+    timestamp: ballTimestamp
+  });
+  const ballRuns = state.score.runs - runsBefore;
+  const ballParticipants = ClipAttribution.resolveClipParticipants(deliverySnapshot, { kind, dismissal: kindIsWicket ? logDismissal : null });
+  const wicketClipForBall = (kindIsWicket && lastAutoWicketClip && Date.now() - lastAutoWicketClip.t0 < HL_MAX_PRESS_AGE_MS)
+    ? { clipId: lastAutoWicketClip.clipId, t0: lastAutoWicketClip.t0, matchId: lastAutoWicketClip.matchId } : null;
   state.ballLog.push({
     innings: logInnings,
     battingTeam: logBattingTeam,
@@ -9816,6 +10130,15 @@ function recordBall(kind, meta){
     striker: logStrikerName,
     nonStriker: logNonStrikerName,
     bowler: logBowlerName,
+    // Stable identities of this delivery (additive).
+    deliveryId,
+    strikerId: logStrikerId,
+    nonStrikerId: logNonStrikerId,
+    bowlerId: logBowlerId,
+    dismissedPlayer: ballParticipants.dismissedPlayerName,
+    dismissedPlayerId: ballParticipants.dismissedPlayerId,
+    fielderId: ballParticipants.fielderId,
+    wicketClip: wicketClipForBall,
     runs: state.score.runs - runsBefore,
     isWicket: kindIsWicket,
     dismissal: logDismissalText,
@@ -9876,29 +10199,32 @@ function recordBall(kind, meta){
   // over/batsman/bowler the NEXT delivery already put into state.
   // 🎬 Attach any HIGHLIGHTS press since the previous ball to THIS ball,
   // from the same immutable snapshot the DB row uses — never live state.
-  linkPendingHighlightsToBall(kind, meta, {
+  // An automatic WICKET clip from a press whose wicket was cancelled is
+  // the footage of THIS delivery, which turned out not to be a wicket:
+  // linked like a HIGHLIGHTS press, never left standing as a wicket clip.
+  if(!kindIsWicket && lastAutoWicketClip && Date.now() - lastAutoWicketClip.t0 < HL_MAX_PRESS_AGE_MS){
+    pendingHighlights.push({ clipId: lastAutoWicketClip.clipId, t0: lastAutoWicketClip.t0, matchId: lastAutoWicketClip.matchId });
+    lastAutoWicketClip = null;
+  }
+  const ballClipMeta = { ...ClipAttribution.clipBallMeta(ballParticipants), runs: ballRuns };
+  const linkedHighlightClips = linkPendingHighlightsToBall(kind, meta, ballClipMeta);
+  logBallToDb(kind, runsBefore, ballTimestamp, {
+    deliveryId,
     innings: logInnings,
     over: logOverForBall,
     ballInOver: logBallInOverForBall,
-    runs: state.score.runs - runsBefore,
+    runs: ballRuns,
+    striker: logStrikerName,
+    nonStriker: logNonStrikerName,
+    bowler: logBowlerName,
+    strikerId: logStrikerId,
+    nonStrikerId: logNonStrikerId,
+    bowlerId: logBowlerId,
     battingTeam: logBattingTeam,
-    striker: logStrikerName,
-    nonStriker: logNonStrikerName,
-    bowler: logBowlerName,
-    strikerId: logStrikerId,
-    nonStrikerId: logNonStrikerId,
-    bowlerId: logBowlerId
-  });
-  logBallToDb(kind, runsBefore, ballTimestamp, {
-    over: logOverForBall,
-    ballInOver: logBallInOverForBall,
-    striker: logStrikerName,
-    nonStriker: logNonStrikerName,
-    bowler: logBowlerName,
-    strikerId: logStrikerId,
-    nonStrikerId: logNonStrikerId,
-    bowlerId: logBowlerId
-  }, extraBoundaryEventType);
+    dismissal: logDismissal,
+    participants: ballParticipants
+  }, extraBoundaryEventType, linkedHighlightClips > 0,
+  describeBallOutcome(kind, meta, ballRuns));
 }
 let pendingBowlerPrompt = false;
 // Called right after every recordBall() call site has finished whatever
@@ -9962,8 +10288,10 @@ function newBallUid(){
 }
 // Called instead of socket.emit('logBall', …). Never blocks scoring and
 // never throws — the ball is on disk before anything network happens.
-function queueBallForDb(payload){
-  const uid = newBallUid();
+function queueBallForDb(payload, deliveryId){
+  // The delivery's own id when recordBall minted one (the same id its
+  // clips carry), so the ball row and its clips share one key.
+  const uid = deliveryId || newBallUid();
   ballOutbox.push({ uid, payload, queuedAt: Date.now(), sentAt: 0 });
   // Remembered in order so Undo can take this exact row back out again —
   // see unlogLastBall().
@@ -10067,7 +10395,7 @@ function checkBallOutboxHealth(){
 }
 setInterval(() => { flushBallOutbox(); checkBallOutboxHealth(); }, 8000);
 
-function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundaryEventType){
+function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundaryEventType, skipAutoClip, ballOutcome){
   const matchId = currentMatchId();
   if(!matchId) return;
   // 🛟 ROOT CAUSE OF "NO CLIPS WHEN THE INTERNET IS DOWN": this function
@@ -10113,14 +10441,26 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundar
   // 🛟 Always queued, never dropped — see the BALL OUTBOX above.
   // dbConnected is deliberately no longer consulted here: a delivery
   // scored while the line is down is exactly the one that has to survive.
+  // Everything below comes from `id` (the delivery snapshot) — innings,
+  // team, runs and the dismissal included.
+  const innings = id.innings != null ? id.innings : state.inningsNumber;
+  const battingTeam = id.battingTeam || state.battingTeam;
+  const ballRuns = typeof id.runs === 'number' ? id.runs : (state.score.runs - runsBefore);
+  const dismissal = !kindIsWicket ? null : (id.dismissal
+    ? { type: id.dismissal.type || 'Bowled', fielder: id.dismissal.fielder || null, fielderId: id.dismissal.fielderId || null, batter: id.dismissal.batter || null, batterId: id.dismissal.batterId || null }
+    : { type: lastDismissalType || 'Bowled', fielder: lastDismissalFielder || null, batter: lastDismissedBatter || null });
+  const participants = id.participants || ClipAttribution.resolveClipParticipants(ClipAttribution.buildDeliverySnapshot({
+    deliveryId: id.deliveryId, innings, over: id.over, ballInOver: id.ballInOver, battingTeam,
+    striker: { name: id.striker, id: id.strikerId }, nonStriker: { name: id.nonStriker, id: id.nonStrikerId }, bowler: { name: id.bowler, id: id.bowlerId }
+  }), { kind, dismissal });
   queueBallForDb({
     matchId,
-    innings: state.inningsNumber,
+    innings,
     over: id.over,
     ballInOver: id.ballInOver,
     kind: dbKind,
-    runs: state.score.runs - runsBefore,
-    battingTeam: state.battingTeam,
+    runs: ballRuns,
+    battingTeam,
     // 🐛 FIX: server's playerKey()/resolvePlayerId() (used for clip
     // linking, career stats, everything) expect plain name STRINGS here
     // — sending the whole {name, runs, balls,...} object made every
@@ -10140,10 +10480,11 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundar
     strikerId: id.strikerId,
     nonStrikerId: id.nonStrikerId,
     bowlerId: id.bowlerId,
-    dismissal: kindIsWicket ? { type: lastDismissalType || 'Bowled', fielder: lastDismissalFielder || null, batter: lastDismissedBatter || null } : null,
+    // `batter`/`batterId`: who was actually given out, frozen at confirmation.
+    dismissal,
     score: { ...state.score },
     timestamp: ballTimestamp
-  });
+  }, id.deliveryId);
 
   // FOUR/SIX still cut here (recordBall runs immediately on click, no
   // modal in the way, so this timestamp is already the click moment).
@@ -10160,7 +10501,9 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundar
   // recordBall()'s 'Wd'/'Nb' cases when that ball's extra runs amount to
   // a real boundary (see the comments there for the Law 19.7.1 reasoning
   // on why a Wide only ever maxes at FOUR, never SIX).
-  if(kind === '4' || kind === '6' || extraBoundaryEventType){
+  // skipAutoClip: a HIGHLIGHTS press already captured this ball and was
+  // linked to it — no second clip of the same moment.
+  if(!skipAutoClip && (kind === '4' || kind === '6' || extraBoundaryEventType)){
     const eventType = extraBoundaryEventType || (kind === '4' ? 'FOUR' : 'SIX');
     // ballMeta — same shape the socket 'logBall' event above already
     // sends — lets the main server link this clip to the real
@@ -10168,20 +10511,34 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundar
     // so it shows up under the right player in the scorecard. Built from
     // the same immutable `id` snapshot, for the same reason.
     const ballMeta = {
-      innings: state.inningsNumber,
-      over: id.over,
-      ballInOver: id.ballInOver,
-      runs: state.score.runs - runsBefore,
-      battingTeam: state.battingTeam,
-      striker: id.striker,
-      nonStriker: id.nonStriker,
-      bowler: id.bowler,
-      strikerId: id.strikerId,
-      nonStrikerId: id.nonStrikerId,
-      bowlerId: id.bowlerId,
+      ...ClipAttribution.clipBallMeta(ClipAttribution.resolveClipParticipants(participants, { clipType: eventType })),
+      runs: ballRuns,
+      // The outcome in words ("Wide 4", "No Ball 6") so the Stream Engine
+      // files it in the right Highlights bucket with no internet.
+      outcome: (ballOutcome && ballOutcome.label) || null,
       dismissal: null
     };
     triggerClip(eventType, ballTimestamp, matchId, ballMeta); // fire-and-forget — never blocks scoring
+  }
+
+  // 🏷️ The wicket clip was cut the instant WICKET was pressed — before
+  // the dismissal existed. Now that it is recorded, freeze the confirmed
+  // dismissed player (by id), this delivery's over/ball and bowler into
+  // the clip: locally (the Stream Engine re-files it under the batter who
+  // was given out, no internet needed) and on the website (queued).
+  if(kindIsWicket && lastAutoWicketClip && Date.now() - lastAutoWicketClip.t0 < HL_MAX_PRESS_AGE_MS){
+    const wicketClip = lastAutoWicketClip;
+    lastAutoWicketClip = null;
+    const outcomeLabel = (ballOutcome && ballOutcome.label) || 'WICKET';
+    const ballMeta = { ...ClipAttribution.clipBallMeta(participants), runs: ballRuns };
+    sendClipMetaToStreamEngine({
+      clipId: wicketClip.clipId, matchId: wicketClip.matchId || matchId, timestamp: wicketClip.t0,
+      eventType: 'WICKET', isHighlight: true, outcomeLabel, ballMeta
+    });
+    setTimeout(() => sendClipClassification({
+      clipId: wicketClip.clipId, matchId: wicketClip.matchId || matchId, eventTimestamp: wicketClip.t0,
+      isHighlight: true, eventType: 'WICKET', outcomeLabel, ballMeta
+    }), HL_CLASSIFY_DELAY_MS);
   }
 }
 
@@ -10333,7 +10690,8 @@ function linkPendingHighlightsToBall(kind, meta, ball){
   const isWicket = kind === 'W' || kind === 'WdW' || kind === 'NbW';
   const ballMeta = {
     ...ball,
-    dismissal: isWicket ? { type: (meta && meta.dismissalType) || 'Bowled', fielder: (meta && meta.fielderName) || null } : null
+    dismissal: ball && ball.dismissal !== undefined ? ball.dismissal
+      : (isWicket ? { type: (meta && meta.dismissalType) || 'Bowled', fielder: (meta && meta.fielderName) || null } : null)
   };
   const send = (isHighlight) => fresh.forEach(h => {
     clipDecisions[h.clipId] = isHighlight ? 'YES' : 'NO';
@@ -10469,6 +10827,22 @@ document.addEventListener('keydown', (e) => {
   if(k === 'n' && answerOldestHighlightPrompt(false)) { e.preventDefault(); return; }
   if(k === 'h'){ e.preventDefault(); pressHighlight(); }
 });
+
+// 🏏 Is the batter named as run out the one at the NON-striker's end?
+// Decided by identity — the id/name frozen when the operator confirmed
+// "who is out" — matched against the crease as it stands before this
+// delivery moves anyone. The bare 'striker'/'nonStriker' position is only
+// used for a caller that named nobody (it is a position, and positions
+// rotate; a player id doesn't).
+function runOutTakesNonStriker(meta){
+  if(!meta) return false;
+  if(meta.dismissedPlayerId || meta.dismissedPlayerName){
+    const id = meta.dismissedPlayerId || null, name = meta.dismissedPlayerName || null;
+    if(ClipAttribution.samePlayer(id, name, state.nonStriker.id, state.nonStriker.name)) return true;
+    if(ClipAttribution.samePlayer(id, name, state.striker.id, state.striker.name)) return false;
+  }
+  return meta.runOutWho === 'nonStriker';
+}
 
 function swapStrikeSilent(){
   const tmp = state.striker; state.striker = state.nonStriker; state.nonStriker = tmp;
@@ -10649,8 +11023,9 @@ function finalizeExtraWicket(dismissalType, extraMeta){
   const meta = Object.assign({}, extraMeta, { dismissalType, deferAnimation: true });
   if(kind === 'WdW') meta.extraRuns = runsCompleted;
   else meta.runsOffBat = runsCompleted;
-  recordBall(kind, meta);
-  return true;
+  // 'refused' (truthy, so callers still stop) when recordBall declined it —
+  // callers must not then ask for a new batsman.
+  return recordBall(kind, meta) === false ? 'refused' : true;
 }
 
 /* ============================================================
@@ -10675,46 +11050,79 @@ function finalizeExtraWicket(dismissalType, extraMeta){
 // panel exactly as before; logBallToDb() (called once recordBall('W'/
 // 'WdW'/'NbW', ...) finally runs) deliberately does NOT fire a second
 // /clip request for wicket kinds, so this is the only cut per wicket.
-function triggerWicketClip(){
+// This panel's addLegalBall() completes an over at 6 legal balls.
+const PANEL_BALLS_PER_OVER = 6;
+// A HIGHLIGHTS press waiting for this ball already captured the moment —
+// the WICKET press then cuts no second clip (it is linked to the wicket).
+function hasFreshPendingHighlight(){
+  return pendingHighlights.some(h => Date.now() - h.t0 < HL_MAX_PRESS_AGE_MS);
+}
+// 📸 The delivery a WICKET press is about, frozen at the press — BEFORE
+// any modal, any strike rotation, any over completion, any new batsman or
+// next bowler. Every wicket modal (Bowled/Caught/LBW/Stumped/Hit Wicket/
+// Run Out) shows its players from THIS snapshot, and the wicket clip and
+// the recorded delivery are both attributed from it. Never re-read the
+// crease later to work out who was out. See /clip-attribution.js.
+let pendingWicketDelivery = null;
+function captureWicketDelivery(){
+  const isExtraWicket = pendingExtraWicketContext === 'Wd' || pendingExtraWicketContext === 'Nb';
+  // Legal-ball count, not the display ball: a wicket on a Wide/No Ball
+  // keeps the current position; a legal one is ball (balls + 1), and the
+  // ball that completes the over is labelled with ITS over (12.6).
+  const pos = ClipAttribution.nextDeliveryPosition(state.score, PANEL_BALLS_PER_OVER, !isExtraWicket);
+  return ClipAttribution.buildDeliverySnapshot({
+    matchId: currentMatchId() || null,
+    innings: state.inningsNumber, phase: state.phase || 'REGULATION',
+    over: pos.over, ballInOver: pos.ballInOver, legal: pos.legal,
+    battingTeam: state.battingTeam,
+    striker: state.striker, nonStriker: state.nonStriker, bowler: state.bowler,
+    timestamp: Date.now()
+  });
+}
+// A Cancel and a re-press this soon is the operator correcting the
+// dismissal entry for the SAME moment — reuse the clip already being cut
+// (one wicket, one clip). Later than this, the earlier press is treated as
+// a mistake: it is kept as a normal clip and a fresh one is cut.
+const WICKET_REPRESS_REUSE_MS = 60 * 1000;
+function triggerWicketClip(delivery){
   const matchId = currentMatchId();
   if(!matchId) return;
-  const ballTimestamp = Date.now();
-  // 🔒 BUG FIX (wicket clip tagged with the PREVIOUS ball's over/ball
-  // number, e.g. a wicket that is actually 8.2 gets logged as 8.1):
-  // this fires the instant the WICKET button is pressed — before the
-  // dismissal type is chosen and long before recordBall('W'/...) ever
-  // runs — so state.score.overs/balls at this point is still last
-  // ball's FINISHED value, not this delivery's own. A plain legal-
-  // delivery wicket (no Wide/No-Ball extra in play) WILL advance the
-  // ball count by one the moment it's actually recorded, exactly like
-  // addLegalBall() does — so reading state.score.balls live here
-  // undercounts by one ball. Mirror that +1 ourselves. A wicket on a
-  // Wide/No Ball never counts as a legal delivery (addLegalBall never
-  // runs for those), so its over/ball stays exactly what's live now —
-  // no correction needed there.
-  const isExtraWicket = pendingExtraWicketContext === 'Wd' || pendingExtraWicketContext === 'Nb';
-  const clipOver = state.score.overs;
-  const clipBallInOver = isExtraWicket ? state.score.balls : state.score.balls + 1;
-  const ballMeta = {
-    innings: state.inningsNumber,
-    over: clipOver,
-    ballInOver: clipBallInOver,
-    runs: 0,
-    battingTeam: state.battingTeam,
-    striker: state.striker.name,
-    nonStriker: state.nonStriker.name,
-    bowler: state.bowler.name,
-    strikerId: state.striker.id || null,
-    nonStrikerId: state.nonStriker.id || null,
-    bowlerId: state.bowler.id || null,
-    // Dismissal type isn't known yet at click time — the main server
-    // links the clip to the canonical ball (with the real dismissal
-    // type) by matchId/over/ballInOver once that logBall row lands,
-    // same as it already does when ballMeta is only a partial hint.
-    dismissal: null
-  };
+  // A HIGHLIGHTS press already captured this delivery — it becomes the
+  // wicket clip once the dismissal is recorded; don't cut a second one.
+  if(hasFreshPendingHighlight()) return;
+  if(lastAutoWicketClip){
+    const age = Date.now() - lastAutoWicketClip.t0;
+    // Same wicket, re-entered (or re-scored after an Undo) — no duplicate clip.
+    if(age < WICKET_REPRESS_REUSE_MS || lastAutoWicketClip.fromUndo) return;
+    demoteAutoWicketClip(lastAutoWicketClip, 'Wicket press cancelled');
+    lastAutoWicketClip = null;
+  }
+  delivery = delivery || captureWicketDelivery();
+  const ballTimestamp = delivery.timestamp || Date.now();
+  // 🔒 Over/ball and players come from the frozen delivery (see
+  // captureWicketDelivery) — the +1 legal-ball position for a plain
+  // wicket, the unchanged position for a wicket on a Wide/No Ball. The
+  // dismissal itself isn't known yet; the clip is re-labelled with the
+  // confirmed dismissed player the moment the wicket is recorded.
+  const participants = ClipAttribution.resolveClipParticipants(delivery, { clipType: 'WICKET' });
+  const ballMeta = { ...ClipAttribution.clipBallMeta(participants), runs: 0 };
+  // Remembered so that if this turns out to be Retired Hurt (not a
+  // wicket), the clip is re-labelled instead of counting as a wicket clip.
+  const clipId = buildClientClipId(matchId, 'WICKET', ballTimestamp);
+  lastAutoWicketClip = { clipId, t0: ballTimestamp, matchId, delivery };
   triggerClip('WICKET', ballTimestamp, matchId, ballMeta); // fire-and-forget — never blocks scoring
 }
+// An automatic WICKET clip whose wicket never happened (cancelled, undone
+// and re-scored as something else): it stays a normal clip of that moment,
+// never a wicket clip, and never in the Highlights.
+function demoteAutoWicketClip(clip, label){
+  if(!clip || !clip.clipId) return;
+  clipDecisions[clip.clipId] = 'NO';
+  const ballMeta = clip.delivery ? { ...ClipAttribution.clipBallMeta(ClipAttribution.resolveClipParticipants(clip.delivery, { clipType: 'CLIP' })), runs: 0 } : null;
+  sendClipMetaToStreamEngine({ clipId: clip.clipId, matchId: clip.matchId, timestamp: clip.t0, isHighlight: false, eventType: 'CLIP', outcomeLabel: label, ballMeta });
+  sendClipClassification({ clipId: clip.clipId, matchId: clip.matchId, eventTimestamp: clip.t0, isHighlight: false, eventType: 'CLIP', outcomeLabel: label, ballMeta });
+}
+let lastAutoWicketClip = null;
 
 function openWicketModal(){
   if(isInningsOver()){
@@ -10733,8 +11141,12 @@ function openWicketModal(){
   // (e.g. the 'w' shortcut repeats while the operator is still choosing),
   // don't fire another /clip request on top of the first.
   const alreadyOpen = overlay.classList.contains('show');
-  if(!alreadyOpen) triggerWicketClip();
-  document.getElementById('wm-batsman-name').textContent = state.striker.name ? `${state.striker.name} is out —` : 'Select how the batsman was out';
+  if(!alreadyOpen){
+    pendingWicketDelivery = captureWicketDelivery();
+    triggerWicketClip(pendingWicketDelivery);
+  }
+  const wd = pendingWicketDelivery || captureWicketDelivery();
+  document.getElementById('wm-batsman-name').textContent = wd.strikerName ? `${wd.strikerName} is out —` : 'Select how the batsman was out';
 
   // Mirrors WIDE_LEGAL_DISMISSALS/NOBALL_LEGAL_DISMISSALS on the server's
   // correction engine — a batsman can only be Run Out or Stumped off a
@@ -10772,9 +11184,14 @@ document.querySelectorAll('.wm-option').forEach(btn => {
     if(dismissalType === 'Caught'){ openCaughtModal(); return; }
     if(dismissalType === 'Stumped'){ openStumpedModal(); return; }
     if(dismissalType === 'Run Out'){ openRunOutModal(); return; }
-    const dismissedName = state.striker.name || 'Batsman';
-    if(finalizeExtraWicket(dismissalType, {})){ openNewBatsmanModal(dismissedName); return; }
-    recordBall('W', { dismissalType, deferAnimation: true });
+    // Bowled / LBW / Hit Wicket: the delivery's striker, from the snapshot
+    // frozen at the WICKET press — confirmed by id at record time.
+    const wd = pendingWicketDelivery || captureWicketDelivery();
+    const dismissedName = wd.strikerName || 'Batsman';
+    const who = { dismissedPlayerId: wd.strikerId, dismissedPlayerName: wd.strikerName, wicketDelivery: wd };
+    const fx = finalizeExtraWicket(dismissalType, who);
+    if(fx){ if(fx !== 'refused') openNewBatsmanModal(dismissedName); return; }
+    if(recordBall('W', { dismissalType, deferAnimation: true, ...who }) === false) return;
     openNewBatsmanModal(dismissedName);
   });
 });
@@ -10956,8 +11373,9 @@ function fielderDropdownItems(){
 let caughtFielderDD = null;
 function openCaughtModal(){
   const battingHasFielderRoster = fieldingSidePlayers().length > 0;
-  document.getElementById('caught-modal-sub').textContent = `${state.striker.name || 'Batsman'} is out — caught.`;
-  document.getElementById('caught-modal-bowler').textContent = state.bowler.name || '—';
+  const wd = pendingWicketDelivery || captureWicketDelivery();
+  document.getElementById('caught-modal-sub').textContent = `${wd.strikerName || 'Batsman'} is out — caught.`;
+  document.getElementById('caught-modal-bowler').textContent = wd.bowlerName || '—';
   const select = document.getElementById('caught-modal-fielder-select');
   const input = document.getElementById('caught-modal-fielder-input');
   if(!caughtFielderDD){
@@ -10995,8 +11413,10 @@ document.getElementById('caught-modal-submit').addEventListener('click', () => {
   }
   const catchType = document.getElementById('caught-modal-type').value.trim();
   closeCaughtModal();
-  const dismissedName = state.striker.name || 'Batsman';
-  recordBall('W', { dismissalType: 'Caught', deferAnimation: true, fielderName, fielderId, catchType });
+  const wd = pendingWicketDelivery || captureWicketDelivery();
+  const dismissedName = wd.strikerName || 'Batsman';
+  if(recordBall('W', { dismissalType: 'Caught', deferAnimation: true, fielderName, fielderId, catchType,
+    dismissedPlayerId: wd.strikerId, dismissedPlayerName: wd.strikerName, wicketDelivery: wd }) === false) return;
   openNewBatsmanModal(dismissedName);
 });
 
@@ -11007,8 +11427,9 @@ document.getElementById('caught-modal-submit').addEventListener('click', () => {
 let stumpedKeeperDD = null;
 function openStumpedModal(){
   const key = bowlingTeamKey();
-  document.getElementById('stumped-modal-sub').textContent = `${state.striker.name || 'Batsman'} is out — stumped.`;
-  document.getElementById('stumped-modal-bowler').textContent = state.bowler.name || '—';
+  const wd = pendingWicketDelivery || captureWicketDelivery();
+  document.getElementById('stumped-modal-sub').textContent = `${wd.strikerName || 'Batsman'} is out — stumped.`;
+  document.getElementById('stumped-modal-bowler').textContent = wd.bowlerName || '—';
   const hasRoster = fieldingSidePlayers().length > 0;
   const select = document.getElementById('stumped-modal-keeper-select');
   const input = document.getElementById('stumped-modal-keeper-input');
@@ -11043,9 +11464,12 @@ document.getElementById('stumped-modal-submit').addEventListener('click', () => 
     fielderName = input.value.trim();
   }
   closeStumpedModal();
-  const dismissedName = state.striker.name || 'Batsman';
-  if(finalizeExtraWicket('Stumped', { fielderName, fielderId })){ openNewBatsmanModal(dismissedName); return; }
-  recordBall('W', { dismissalType: 'Stumped', deferAnimation: true, fielderName, fielderId });
+  const wd = pendingWicketDelivery || captureWicketDelivery();
+  const dismissedName = wd.strikerName || 'Batsman';
+  const who = { dismissedPlayerId: wd.strikerId, dismissedPlayerName: wd.strikerName, wicketDelivery: wd };
+  const fx = finalizeExtraWicket('Stumped', { fielderName, fielderId, ...who });
+  if(fx){ if(fx !== 'refused') openNewBatsmanModal(dismissedName); return; }
+  if(recordBall('W', { dismissalType: 'Stumped', deferAnimation: true, fielderName, fielderId, ...who }) === false) return;
   openNewBatsmanModal(dismissedName);
 });
 
@@ -11068,19 +11492,25 @@ function updateRunOutSummary(){
     box.textContent = 'Pick runs completed and the batter who was out.';
     return;
   }
-  const whoName = who === 'striker' ? state.striker.name : state.nonStriker.name;
-  box.innerHTML = `Team +<b>${runs}</b> run${runs === 1 ? '' : 's'} · <b>${escapeHtmlPanel(whoName || 'Batsman')}</b> is out · the completed run${runs === 1 ? '' : 's'} count on <b>${escapeHtmlPanel(state.striker.name || 'striker')}</b>'s individual score (whoever faced the ball).`;
+  const wd = pendingWicketDelivery || captureWicketDelivery();
+  const whoName = who === 'striker' ? wd.strikerName : wd.nonStrikerName;
+  box.innerHTML = `Team +<b>${runs}</b> run${runs === 1 ? '' : 's'} · <b>${escapeHtmlPanel(whoName || 'Batsman')}</b> is out · the completed run${runs === 1 ? '' : 's'} count on <b>${escapeHtmlPanel(wd.strikerName || 'striker')}</b>'s individual score (whoever faced the ball).`;
 }
 function openRunOutModal(){
   runOutState = { runs: 0, whoOut: 'striker' };
   document.querySelectorAll('#runout-runs-row .wm-pill').forEach(p => p.classList.toggle('active', p.dataset.runs === '0'));
   const battersRow = document.getElementById('runout-batter-row');
   battersRow.innerHTML = '';
-  [{ key: 'striker', name: state.striker.name || 'Striker' }, { key: 'nonStriker', name: state.nonStriker.name || 'Non-striker' }].forEach((b, idx) => {
+  // Who is OUT? — the two batters of THIS delivery, from the snapshot
+  // frozen at the WICKET press, each pill carrying that player's id.
+  const wd = pendingWicketDelivery || captureWicketDelivery();
+  [{ key: 'striker', name: wd.strikerName || 'Striker', role: 'STRIKER', id: wd.strikerId },
+   { key: 'nonStriker', name: wd.nonStrikerName || 'Non-striker', role: 'NON-STRIKER', id: wd.nonStrikerId }].forEach((b, idx) => {
     const pill = document.createElement('div');
     pill.className = 'wm-pill' + (idx === 0 ? ' active' : '');
     pill.dataset.who = b.key;
-    pill.textContent = b.name;
+    if(b.id) pill.dataset.playerId = b.id;
+    pill.textContent = `${b.role} · ${b.name}`;
     pill.addEventListener('click', () => {
       runOutState.whoOut = b.key;
       battersRow.querySelectorAll('.wm-pill').forEach(p => p.classList.remove('active'));
@@ -11136,10 +11566,19 @@ document.getElementById('runout-modal-submit').addEventListener('click', () => {
   const runOutType = document.getElementById('runout-type-input').value.trim();
   const runsCompleted = runOutState.runs;
   const whoOut = runOutState.whoOut; // 'striker' | 'nonStriker'
-  const dismissedName = (whoOut === 'striker' ? state.striker.name : state.nonStriker.name) || 'Batsman';
+  // 🔒 The dismissed batter is FROZEN here, by id, from the delivery
+  // snapshot — the one moment the operator actually said who it was.
+  // recordBall() matches this id against the crease; nothing downstream
+  // (ball log, clip, folders, scorecard) ever infers it again.
+  const wd = pendingWicketDelivery || captureWicketDelivery();
+  const dismissedPlayerId = whoOut === 'striker' ? wd.strikerId : wd.nonStrikerId;
+  const dismissedPlayerName = whoOut === 'striker' ? wd.strikerName : wd.nonStrikerName;
+  const dismissedName = dismissedPlayerName || 'Batsman';
+  const who = { runOutWho: whoOut, dismissedPlayerId, dismissedPlayerName, wicketDelivery: wd };
   closeRunOutModal();
-  if(finalizeExtraWicket('Run Out', { fielderName, fielderId, runOutType, runsCompleted, runOutWho: whoOut })){ openNewBatsmanModal(dismissedName); return; }
-  recordBall('W', { dismissalType: 'Run Out', deferAnimation: true, fielderName, fielderId, runOutType, runsCompleted, runOutWho: whoOut });
+  const fx = finalizeExtraWicket('Run Out', { fielderName, fielderId, runOutType, runsCompleted, ...who });
+  if(fx){ if(fx !== 'refused') openNewBatsmanModal(dismissedName); return; }
+  if(recordBall('W', { dismissalType: 'Run Out', deferAnimation: true, fielderName, fielderId, runOutType, runsCompleted, ...who }) === false) return;
   openNewBatsmanModal(dismissedName);
 });
 
@@ -11423,9 +11862,19 @@ function applyServerCardsToScore(cards){
 async function deleteLastBall(){
   if(!state.ballLog || state.ballLog.length === 0) return { ok: false, reason: 'empty' };
   if(history.length > 0){
+    const logLenBefore = state.ballLog.length;
+    const undoneBall = state.ballLog[logLenBefore - 1];
     restoreHistorySnapshot(history.pop());
     saveHistoryLocal();
-    unlogLastBall(); // the panel's undo must reach the permanent log too
+    // History also holds non-delivery steps (new batsman, next bowler).
+    // Only an undo that actually took a delivery out of the ball log may
+    // take its row out of the permanent log.
+    if((state.ballLog || []).length < logLenBefore){
+      unlogLastBall(); // the panel's undo must reach the permanent log too
+      // Re-scoring this wicket re-labels the clip already cut for it.
+      const wc = undoneBall && undoneBall.wicketClip;
+      if(wc && Date.now() - wc.t0 < HL_MAX_PRESS_AGE_MS) lastAutoWicketClip = { ...wc, fromUndo: true };
+    }
     return { ok: true, mode: 'exact' };
   }
   // No real snapshot to restore from — the local best-effort arithmetic
