@@ -3,7 +3,7 @@ const path = require('path');
 const { JSDOM, VirtualConsole } = require('jsdom');
 
 function boot(){
-  let html = fs.readFileSync(path.join(__dirname,'..','..','cricket-panel.html'), 'utf8');
+  let html = fs.readFileSync(path.join(__dirname,'..','..',process.env.PANEL || 'cricket-panel.html'), 'utf8');
   // strip external scripts (socket.io / firebase CDNs) — we stub them instead
   html = html.replace(/<script[^>]*\bsrc=[^>]*><\/script>/g, '');
   const vc = new VirtualConsole();
@@ -17,6 +17,7 @@ function boot(){
     beforeParse(w){
       w.io = () => ({ on(){}, emit(){}, connected: false, disconnect(){} });
       w.fetch = () => Promise.resolve({ ok:true, json: () => Promise.resolve({ success:false }) });
+      Object.defineProperty(w.navigator, 'mediaDevices', { value: { enumerateDevices: () => Promise.resolve([]), getUserMedia: () => Promise.reject(new Error('no camera')) } });
       w.firebase = undefined;
       w.alert = () => {};
       w.confirm = () => true;
