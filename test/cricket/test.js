@@ -65,7 +65,7 @@ E('recordBall("Nb",{runsOffBat:0})');
 s = S();
 eq('over still 0.0 after a wide and a no ball', `${s.score.overs}.${s.score.balls}`, '0.0');
 eq('team total 2 (1 wide + 1 no ball)', s.score.runs, 2);
-eq('striker faced no balls', s.striker.balls, 0);
+eq('the no ball is a ball FACED by the striker (a wide is not)', s.striker.balls, 1);
 eq('wide extras', s.extras.A.wd, 1);
 eq('no-ball extras', s.extras.A.nb, 1);
 
@@ -472,6 +472,10 @@ E(`state.battingTeam='B'; state.superOverReady = true; startSuperOver();
    state.nonStriker={name:'N',id:'n',runs:0,balls:0,fours:0,sixes:0};
    state.bowler={name:'B',id:'b',overs:0,balls:0,maidens:0,runs:0,wickets:0,runsThisOver:0,wicketsThisOver:0};
    for(let i=0;i<6;i++) recordBall('1');`);
+// The regulation match's last innings is archived the moment the Super Over
+// starts (its totals must never be lost) — nothing after that may add to it.
+const regArchived = Number(E('state.inningsArchive.length'));
+eq('the regulation last innings was archived as the Super Over began', E('state.inningsArchive.filter(i => i.finalRegulation).length'), 1);
 eq('the Super Over innings is over', E('isInningsOver()'), true);
 eq('"Start Next Innings" is disabled during a Super Over', E('document.getElementById("next-innings-btn").disabled'), true);
 // and even if something clicks it anyway, it must be a no-op
@@ -480,10 +484,10 @@ E('document.getElementById("next-innings-btn").disabled = false; document.getEle
 const soAfter = E('JSON.stringify({inn:state.inningsNumber,phase:state.phase,arch:state.inningsArchive.length,target:state.target,runs:state.score.runs})');
 eq('a forced click changes nothing (no regulation innings invented)', soAfter, soBefore);
 eq('the Super Over innings is still intact', E('state.score.runs'), 6);
-eq('no Super Over innings leaked into the regulation archive', E('state.inningsArchive.length'), 0);
+eq('no Super Over innings leaked into the regulation archive', Number(E('state.inningsArchive.length')), regArchived);
 eq('the proper Super Over transition still works', E('endSuperOverInnings()'), true);
 eq('and it archived to the Super Over, not the regulation innings', E('state.superOver.archive.length'), 1);
-eq('regulation archive still untouched', E('state.inningsArchive.length'), 0);
+eq('regulation archive still untouched', Number(E('state.inningsArchive.length')), regArchived);
 
 head('SUPER OVER — never applied where the conditions do not provide for one');
 newMatch('Test');

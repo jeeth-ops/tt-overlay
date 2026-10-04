@@ -76,7 +76,7 @@ const BOWL = ['Bowler One', 'Bowler Two'];
 const BAT2 = ['Zaid', 'Yash', 'Xavier', 'Wasim', 'Vivek'];
 const BOWL2 = ['Kiran', 'Laxman'];
 
-const NAMES = ['personName', 'playerKey', 'deriveBallFacts', 'buildBallFromCorrection', 'validateCorrectedBalls', 'buildLiveCardsFromBallsArray',
+const NAMES = ['personName', 'playerKey', 'deriveBallFacts', 'buildBallFromCorrection', 'validateCorrectedBalls', 'isSuperOverBall', 'buildLiveCardsFromBallsArray',
   'serializeClip', 'validateRosterPlacement', 'clipLinkFromBall', 'clipBallMetaFromBall', 'correctionInputFromBall', 'panelStateFromMatchRecord',
   'oversStrToBallsCount', 'ballsToOversStr', 'deliveryCorrectionDelta', 'isLegalDelivery', 'deliveryOrderCompare', 'cursorAfterDelivery', 'cursorBeforeDelivery',
   'labelAtCursor', 'advanceCursor', 'renumberDeliveries', 'creaseAfterDelivery', 'restrikeDeliveries', 'ballsDelta', 'mixedBowlerOvers',

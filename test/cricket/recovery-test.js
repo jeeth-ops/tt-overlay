@@ -20,7 +20,7 @@ function grab(name){
 }
 const names = ['oversStrToBallsCount','ballsToOversStr','matchRecordFootprint','footprintTotalBalls',
                'groupsLostBy','guardMatchRecordWrite','matchRecordFromPanelState','ballDocsFromPanelState',
-               'findRescoredDeliveries','findIncompleteOvers','inningsArchiveFromBalls','deriveBallFacts',
+               'findRescoredDeliveries','findIncompleteOvers','isSuperOverBall','inningsArchiveFromBalls','deriveBallFacts',
                'playerKey','personName'];
 const api = new Function([
   'const SHRINK_TOLERANCE_BALLS = 30;',

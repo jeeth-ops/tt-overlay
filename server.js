@@ -9103,7 +9103,14 @@ async function buildLiveCardsFromBalls(matchId) {
 // buildLiveCardsFromBalls(matchId) does after a write. Keep these two
 // functions' scoring rules identical; buildLiveCardsFromBalls is now a
 // thin DB-fetching wrapper around this one so they can never drift apart.
+// 🏆 Super Over deliveries are filed under their own innings (101/102 for
+// Super Over 1, 103/104 for Super Over 2 …) and tagged phase 'SUPER_OVER'.
+// They are a separate phase of the match: the regulation scorecard, team
+// totals, extras, fall of wickets and partnerships are built WITHOUT them.
+function isSuperOverBall(b) { return !!b && (b.phase === 'SUPER_OVER' || Number(b.innings) >= 100); }
+
 function buildLiveCardsFromBallsArray(balls) {
+    balls = (balls || []).filter(b => !isSuperOverBall(b));
     const batting = { A: {}, B: {} };     // battingTeam -> strikerKey -> row
     const bowling = { A: {}, B: {} };     // bowlingTeam (bowler's own team) -> bowlerKey -> row
     const oversBowled = { A: {}, B: {} }; // bowlingTeam -> `${bowlerKey}::${innings}-${over}` -> { legalBalls, runs }
@@ -9752,7 +9759,9 @@ function ballDocsFromPanelState(st, matchId, ownerUid) {
 // is kept — a ball log cannot know a declaration.
 function inningsArchiveFromBalls(balls, existing) {
     const per = {};
-    balls.forEach(b => {
+    // Super Over deliveries (innings 101+) are their own section — never a
+    // regulation innings in the archive the scorecard trusts.
+    balls.filter(b => !isSuperOverBall(b)).forEach(b => {
         const inn = b.innings || 1;
         const team = b.battingTeam === 'B' ? 'B' : 'A';
         if (!per[inn]) per[inn] = { no: inn, team, runs: 0, wickets: 0, legalBalls: 0 };
@@ -10740,6 +10749,10 @@ io.on('connection', async (socket) => {
                 } : null,
                 dismissalFielderKey: playerKey(fielderName),
                 dismissalFielderPlayerId,
+                // 🏆 A Super Over delivery (its innings is 101+, see
+                // isSuperOverBall) — kept out of the regulation scorecard.
+                ...(data.phase === 'SUPER_OVER' || Number(data.innings) >= 100
+                    ? { phase: 'SUPER_OVER', superOverNumber: Number(data.superOverNumber) || null } : {}),
                 score: data.score,        // { runs, wickets, overs, balls } snapshot after this ball
                 timestamp: data.timestamp || Date.now()
             });

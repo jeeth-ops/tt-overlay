@@ -77,7 +77,7 @@ function coll(docs){
 function build(world){
   const names = [
     'personName', 'playerKey', 'deriveBallFacts', 'buildBallFromCorrection', 'findStrikeInconsistencies', 'strikeIssueKey',
-    'validateCorrectedBalls', 'buildLiveCardsFromBallsArray', 'serializeClip', 'serializeClipForEditor',
+    'validateCorrectedBalls', 'isSuperOverBall', 'buildLiveCardsFromBallsArray', 'serializeClip', 'serializeClipForEditor',
     'validateRosterPlacement', 'deliveryCorrectionDelta', 'clipLinkFromBall', 'clipBallMetaFromBall',
     'correctionInputFromBall', 'panelStateFromMatchRecord', 'oversStrToBallsCount', 'ballsToOversStr'
   ];

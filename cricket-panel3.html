@@ -2824,6 +2824,18 @@ function superOverEnabledForMatch(){ return !!matchRules().superOverEnabled; }
    return the regulation containers, so behaviour is unchanged.
    ============================================================ */
 function inSuperOver(){ return state.phase === 'SUPER_OVER'; }
+/* A Super Over innings is its OWN innings, never "more balls of innings 2":
+   101/102 = Super Over 1 (first/second side), 103/104 = Super Over 2, …
+   Every delivery of it — in this panel's ball log AND in the database — is
+   filed under that number, so nothing that adds up an innings (the server's
+   scorecard rebuild, partnerships, over summaries, corrections) can ever
+   fold Super Over balls into the regulation innings. */
+function superOverInningsNo(number, inningsIndex){ return 100 + (Math.max(1, number) - 1) * 2 + (inningsIndex || 0) + 1; }
+function currentLogInnings(){
+  return inSuperOver() ? superOverInningsNo(state.superOver.number, state.superOver.inningsIndex) : state.inningsNumber;
+}
+// The regulation match is still the live one (no Super Over has begun).
+function regulationIsLive(){ return (state.phase || 'REGULATION') !== 'SUPER_OVER'; }
 function activeBattingCard(team){
   if(inSuperOver()){
     state.superOver.battingCard[team] = state.superOver.battingCard[team] || [];
@@ -3012,7 +3024,7 @@ function recordPenaltyRuns({ runs, awardedTo, reasonCode, notes, eventContext })
   // penalty existing only in this browser's state. deriveBallFacts('PEN')
   // on the server treats it as no legal ball, no striker, no bowler.
   state.ballLog.push({
-    innings: state.inningsNumber,
+    innings: currentLogInnings(),
     battingTeam: entry.team,
     over: fmtOvers(state.score.overs, state.score.balls),
     ballType: 'PEN',
@@ -3035,7 +3047,8 @@ function recordPenaltyRuns({ runs, awardedTo, reasonCode, notes, eventContext })
     queueBallForDb({
       matchId: currentMatchId(),
       uid: currentOwnerUid(),
-      innings: state.inningsNumber,
+      innings: currentLogInnings(),
+      ...(inSuperOver() ? { phase: 'SUPER_OVER', superOverNumber: state.superOver.number } : {}),
       over: state.score.overs,
       ballInOver: state.score.balls,
       kind: 'PEN',
@@ -3184,6 +3197,14 @@ function startSuperOver(){
   // including WHICH side batted second, which the Super Over batting order
   // depends on.
   if(state.superOver.number === 0){
+    // 🛡️ The regulation match's LAST innings is still "live" at a tie (only
+    // Start Next Innings archives an innings, and it never runs on the last
+    // one). Archive it now — not-out batters, the bowler on, its total and
+    // extras — exactly as an innings break would, BEFORE the crease and the
+    // score are cleared for the Super Over. Without this the side that
+    // batted second lost its whole regulation total ("0/0") and every record
+    // after the Super Over showed only the Super Over score.
+    archiveFinalRegulationInnings();
     state.superOver.regulation = {
       teamA: teamScoreLine('A'),
       teamB: teamScoreLine('B'),
@@ -3231,10 +3252,37 @@ function startSuperOver(){
   return true;
 }
 
+function archiveFinalRegulationInnings(){
+  if(state.inningsArchive.some(i => i.no === state.inningsNumber)) return; // already archived
+  const batKey = state.battingTeam;
+  const bowlKey = bowlingTeamKey();
+  [state.striker, state.nonStriker].forEach(p => {
+    if(p && p.name && !state.battingCard[batKey].some(b => b.name === p.name && b.inningsNo === state.inningsNumber)){
+      state.battingCard[batKey].push({ name: p.name, id: p.id || null, runs: p.runs, balls: p.balls, fours: p.fours, sixes: p.sixes, out: false, howOut: 'not out', retiredHurtCount: p.retiredHurtCount || 0, inningsNo: state.inningsNumber });
+    }
+  });
+  if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0) && !state.bowlingCard[bowlKey].some(b => b.name === state.bowler.name && b.inningsNo === state.inningsNumber)){
+    state.bowlingCard[bowlKey].push({ ...state.bowler, inningsNo: state.inningsNumber });
+  }
+  state.inningsArchive.push({
+    no: state.inningsNumber, team: batKey,
+    runs: state.score.runs, wickets: state.score.wickets,
+    overs: fmtOvers(state.score.overs, state.score.balls),
+    declared: !!state.declared,
+    extras: { ...EMPTY_EXTRAS(), ...(state.extras[batKey] || {}) },
+    finalRegulation: true
+  });
+}
+
 /* Archives the Super Over innings just completed, then either sets up the
    second side's over or resolves the Super Over. */
 function endSuperOverInnings(){
   if(!inSuperOver()){ toast('Not in a Super Over'); return false; }
+  // Already archived (the chase ended and decided itself) — never twice.
+  if(state.superOver.archive.some(i => i.number === state.superOver.number && i.inningsIndex === state.superOver.inningsIndex)){
+    renderSuperOverPanel();
+    return true;
+  }
   if(!isInningsOver()){ toast('This Super Over innings is not over yet'); return false; }
   pushHistory();
 
@@ -3306,17 +3354,27 @@ function resolveSuperOver(){
     state.matchWinnerKey = 'TIE';
     fireEvent('MATCH_TIED', 'MATCH TIED', `after ${state.superOver.number} Super Over${state.superOver.number === 1 ? '' : 's'}`, 5000);
   } else {
-    const winner = first.runs > second.runs ? first.team : second.team;
-    const margin = Math.abs(first.runs - second.runs);
+    // Chasing side won → by the Super Over wickets it had left; defending
+    // side won → by runs. Either way it is a SUPER OVER win, said so.
+    const chaserWon = second.runs > first.runs;
+    const winner = chaserWon ? second.team : first.team;
+    const wktsLeft = Math.max(0, (rules.superOver.maxWickets || 2) - (second.wickets || 0));
+    const margin = chaserWon ? wktsLeft : (first.runs - second.runs);
+    const unit = chaserWon ? 'WICKET' : 'RUN';
     state.milestonesHit['match-result'] = true;
-    state.matchResultText = `${teamLabel(winner).toUpperCase()} WON THE SUPER OVER BY ${margin} RUN${margin === 1 ? '' : 'S'}`;
+    state.matchResultText = `${teamLabel(winner).toUpperCase()} WON THE SUPER OVER BY ${margin} ${unit}${margin === 1 ? '' : 'S'}`;
     state.matchWinnerKey = winner;
-    fireEvent('VICTORY', `${teamLabel(winner)} WIN`, `Super Over ${state.superOver.number} — by ${margin} run${margin === 1 ? '' : 's'}`, 5000);
+    fireEvent('VICTORY', `${teamLabel(winner)} WIN`, `Super Over ${state.superOver.number} — by ${margin} ${unit.toLowerCase()}${margin === 1 ? '' : 's'}`, 5000);
   }
 
   // Now — and only now — the match has a result worth saving.
   if(currentMatchTournament()) saveMatchToLeague(true);
   else saveMatchToSingleHistory(true);
+  // The full-match result card: regulation totals + every Super Over + winner.
+  if(state.showMatchSummary && socket && socket.connected){
+    const payload = buildMatchSummaryPayload();
+    setTimeout(() => { if(socket && socket.connected) socket.emit('cricketMatchSummary', { data: payload }); }, 8000);
+  }
   updateBallButtonsState();
   renderSuperOverPanel();
   pushState(true, true);
@@ -7554,7 +7612,7 @@ function retireBatsmanHurt(end){
   // if the next over's bowler has already been picked.
   const lastBallOver = state.score.balls > 0 ? state.score.overs : Math.max(0, state.score.overs - 1);
   const lastBallInOver = state.score.balls > 0 ? state.score.balls : (state.score.overs > 0 ? ballsPerOver() : 0);
-  const lastBall = state.ballLog.filter(b => b.innings === state.inningsNumber).slice(-1)[0];
+  const lastBall = state.ballLog.filter(b => b.innings === currentLogInnings()).slice(-1)[0];
   const lastBowler = lastBall ? lastBall.bowler : state.bowler.name;
   const lastBowlerId = lastBall ? (lastBall.bowlerId || (lastBowler === state.bowler.name ? state.bowler.id : null) || null) : (state.bowler.id || null);
   linkPendingHighlightsToBall('RH', {}, {
@@ -8394,6 +8452,17 @@ function checkInningsComplete(){
   }
 }
 function checkMatchResult(){
+  // 🏆 During a Super Over the regulation rules ("won by N wickets") do not
+  // apply: the second side's over ends on reaching the target, on the
+  // wicket limit or on the last legal ball, and the Super Over itself is then
+  // archived and decided (endSuperOverInnings → resolveSuperOver).
+  if(inSuperOver()){
+    if(!state.superOverDecided && state.superOver.inningsIndex === 1 && state.target
+       && (state.score.runs >= state.target || isInningsOver()) && !state.milestonesHit['match-result']){
+      endSuperOverInnings();
+    }
+    return;
+  }
   if(!state.target) return; // only relevant during the run-chase (2nd innings)
   if(state.milestonesHit['match-result']) return;
   const battingTeam = state.battingTeam === 'A' ? state.teamA : state.teamB;
@@ -8483,6 +8552,22 @@ function buildInningsSummaryPayload(){
   const battingTeamObj = battingKey === 'A' ? state.teamA : state.teamB;
   const inn = state.inningsNumber;
 
+  // 🏆 A Super Over innings' summary comes from the Super Over's own cards.
+  if(inSuperOver()){
+    const r = superOverLiveCardRows(battingKey, bowlingKey);
+    return {
+      bowlingTeamName: bowlingTeamObj.name, bowlingTeamShort: bowlingTeamObj.short, bowlingTeamColor: bowlingTeamObj.color, bowlingTeamLogo: bowlingTeamObj.logoUrl,
+      battingTeamName: battingTeamObj.name, battingTeamShort: battingTeamObj.short, battingTeamColor: battingTeamObj.color, battingTeamLogo: battingTeamObj.logoUrl,
+      format: state.format, venue: state.venue, inningsNo: inn, superOver: state.superOver.number,
+      bowlers: r.bowlers.map(b => ({ name: b.name, overs: b.overs, maidens: b.maidens, runs: b.runs, wickets: b.wickets, econ: b.econ })),
+      batsmen: r.batsmen.map(b => ({ name: b.name, runs: b.runs, balls: b.balls, fours: b.fours, sixes: b.sixes, sr: b.sr, howOut: b.howOut })),
+      fallOfWickets: (state.superOver.fallOfWickets[battingKey] || []).map(f => ({ ...f })),
+      extrasTotal: r.extrasTotal,
+      overs: fmtOvers(state.score.overs, state.score.balls),
+      total: `${state.score.runs}-${state.score.wickets}`
+    };
+  }
+
   // Both teams' archive arrays can now hold rows from an EARLIER innings of
   // the same team (Test cricket), so every lookup here is scoped to the
   // innings that just ended, not the whole team's history.
@@ -8533,6 +8618,41 @@ function buildInningsSummaryPayload(){
   };
 }
 
+/* 🏆 Every Super Over of the match as its own record: the tied regulation
+   result, each Super Over innings (team, total, cards) — including one in
+   progress — and how it was decided. The regulation innings are NOT in here;
+   they stay in battingCard / inningsArchive / scoreA-B exactly as played. */
+function superOverSummary(){
+  const so = state.superOver;
+  if(!so || !(so.number > 0)) return null;
+  const card = rows => (rows || []).map(r => ({ ...r }));
+  const innings = (so.archive || []).map(i => ({
+    number: i.number, inningsIndex: i.inningsIndex, innings: superOverInningsNo(i.number, i.inningsIndex), team: i.team,
+    runs: i.runs, wickets: i.wickets, overs: i.overs, extras: { ...EMPTY_EXTRAS(), ...(i.extras || {}) },
+    battingCard: card(i.battingCard), bowlingCard: card(i.bowlingCard), fallOfWickets: card(i.fallOfWickets)
+  }));
+  if(inSuperOver() && !state.superOverDecided && !innings.some(i => i.number === so.number && i.inningsIndex === so.inningsIndex)){
+    const team = state.battingTeam, bowlTeam = bowlingTeamKey();
+    const bat = card(so.battingCard[team]);
+    [state.striker, state.nonStriker].forEach(p => { if(p && p.name && !bat.some(b => b.name === p.name)) bat.push({ name: p.name, id: p.id || null, runs: p.runs, balls: p.balls, fours: p.fours, sixes: p.sixes, out: false, howOut: 'not out' }); });
+    const bowl = card(so.bowlingCard[bowlTeam]);
+    if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0) && !bowl.some(b => b.name === state.bowler.name)) bowl.push({ ...state.bowler });
+    innings.push({ number: so.number, inningsIndex: so.inningsIndex, innings: currentLogInnings(), team, live: true,
+      runs: state.score.runs, wickets: state.score.wickets, overs: fmtOvers(state.score.overs, state.score.balls),
+      extras: { ...EMPTY_EXTRAS(), ...activeExtras(team) }, battingCard: bat, bowlingCard: bowl, fallOfWickets: card(so.fallOfWickets[team]) });
+  }
+  const decided = !!state.milestonesHit['match-result'];
+  return {
+    count: so.number,
+    regulationResult: 'MATCH TIED',
+    secondTeam: (so.regulation && so.regulation.secondTeam) || null,
+    innings,
+    decided,
+    winner: decided ? (state.matchWinnerKey || null) : null,
+    resultText: decided ? (state.matchResultText || null) : null
+  };
+}
+
 function buildMatchSummaryPayload(){
   const battingCardA = [...state.battingCard.A];
   const battingCardB = [...state.battingCard.B];
@@ -8543,14 +8663,17 @@ function buildMatchSummaryPayload(){
   // true for the team that was batting/bowling right when the match ended).
   // Scoped to THIS innings' number: in a Test, the same name can already
   // appear in the array from an earlier innings of the same team/bowler.
+  // (Once a Super Over has begun, the regulation innings is fully archived
+  // and whoever is at the crease belongs to the Super Over — never folded
+  // into the regulation cards.)
   const liveBattingArr = state.battingTeam === 'A' ? battingCardA : battingCardB;
-  [state.striker, state.nonStriker].forEach(p => {
+  if(regulationIsLive()) [state.striker, state.nonStriker].forEach(p => {
     if(p && p.name && !liveBattingArr.some(b => b.name === p.name && b.inningsNo === state.inningsNumber)){
       liveBattingArr.push({ name:p.name, runs:p.runs, balls:p.balls, fours:p.fours, sixes:p.sixes, out:false, howOut:'not out', inningsNo: state.inningsNumber });
     }
   });
   const liveBowlingArr = bowlingTeamKey() === 'A' ? bowlingCardA : bowlingCardB;
-  if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0) && !liveBowlingArr.some(b => b.name === state.bowler.name && b.inningsNo === state.inningsNumber)){
+  if(regulationIsLive() && state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0) && !liveBowlingArr.some(b => b.name === state.bowler.name && b.inningsNo === state.inningsNumber)){
     liveBowlingArr.push({ ...state.bowler, inningsNo: state.inningsNumber });
   }
 
@@ -8582,9 +8705,18 @@ function buildMatchSummaryPayload(){
     winnerText = `${(chasingTeam.short || chasingTeam.name).toUpperCase()} NEED ${runsNeeded} TO WIN`;
   }
 
+  const so = superOverSummary();
   return {
     venue: state.venue,
     winnerText,
+    // With a Super Over: the regulation result line ("MATCH TIED") and every
+    // Super Over innings — shown under the regulation scores, never instead.
+    regulationResult: so ? so.regulationResult : null,
+    superOver: so ? {
+      count: so.count,
+      innings: so.innings.map(i => ({ number: i.number, team: i.team, runs: i.runs, wickets: i.wickets, overs: i.overs })),
+      decided: so.decided, winner: so.winner
+    } : null,
     teamA: {
       name: state.teamA.name, short: state.teamA.short, color: state.teamA.color, logoUrl: state.teamA.logoUrl, score: teamScoreLine('A'),
       batsmen: topBatsmen(battingCardA), bowlers: topBowlers(bowlingCardA)
@@ -8869,14 +9001,17 @@ function buildMatchRecordForLeague(){
   const bowlingCardA = [...state.bowlingCard.A];
   const bowlingCardB = [...state.bowlingCard.B];
 
+  // (Once a Super Over has begun, the regulation innings is fully archived
+  // and whoever is at the crease belongs to the Super Over — never folded
+  // into the regulation cards.)
   const liveBattingArr = state.battingTeam === 'A' ? battingCardA : battingCardB;
-  [state.striker, state.nonStriker].forEach(p => {
+  if(regulationIsLive()) [state.striker, state.nonStriker].forEach(p => {
     if(p && p.name && !liveBattingArr.some(b => b.name === p.name && b.inningsNo === state.inningsNumber)){
       liveBattingArr.push({ name:p.name, runs:p.runs, balls:p.balls, fours:p.fours, sixes:p.sixes, out:false, howOut:'not out', inningsNo: state.inningsNumber });
     }
   });
   const liveBowlingArr = bowlingTeamKey() === 'A' ? bowlingCardA : bowlingCardB;
-  if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0) && !liveBowlingArr.some(b => b.name === state.bowler.name && b.inningsNo === state.inningsNumber)){
+  if(regulationIsLive() && state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0) && !liveBowlingArr.some(b => b.name === state.bowler.name && b.inningsNo === state.inningsNumber)){
     liveBowlingArr.push({ ...state.bowler, inningsNo: state.inningsNumber });
   }
   // Canonical order (crease entry / first bowled) — the saved record is what
@@ -8905,6 +9040,8 @@ function buildMatchRecordForLeague(){
   let winningTeam = null; // 'A' | 'B' | 'TIE' | 'DRAW' | null (no result decided yet)
   if(state.milestonesHit['match-result'] && state.matchWinnerKey){
     winningTeam = state.matchWinnerKey;
+  } else if(!regulationIsLive()){
+    winningTeam = null; // a Super Over is still deciding it
   } else if(state.target){
     if(state.score.runs >= state.target) winningTeam = state.battingTeam;
     else if(isInningsOver()){
@@ -8964,6 +9101,11 @@ function buildMatchRecordForLeague(){
     extras: { A: { ...state.extras.A }, B: { ...state.extras.B } },
     fallOfWickets: { A: [...state.fallOfWickets.A], B: [...state.fallOfWickets.B] },
     partnerships: computeLivePartnerships(),
+    // The decided result in words (e.g. "MI WON THE SUPER OVER BY 1 RUN").
+    resultText: (state.milestonesHit['match-result'] && state.matchResultText) || null,
+    // 🏆 Super Over(s), as their own section — the regulation totals above
+    // are never replaced by them. null when no Super Over was played.
+    superOver: superOverSummary(),
     // Test-only day/session status (see the STUMPS / End of Day buttons) —
     // read by renderLeagueMatchesList()'s Tournament/League Matches list
     // so an ongoing Test correctly shows "Stumps — Day N" instead of a
@@ -9624,10 +9766,33 @@ function renderLeagueMatchesList(matches){
 function scRow(cells){ return `<tr>${cells.map(c => `<td>${c}</td>`).join('')}</tr>`; }
 function renderScorecardHtml(m){
   const teamAName = m.teamA.short || m.teamA.name, teamBName = m.teamB.short || m.teamB.name;
-  const resultText = m.winningTeam === 'TIE' ? 'Match tied'
+  // The panel's own result line wins ("MI WON THE SUPER OVER BY 2 WICKETS").
+  const resultText = m.resultText ? m.resultText
+    : m.winningTeam === 'TIE' ? 'Match tied'
     : m.winningTeam === 'A' ? `${teamAName} won`
     : m.winningTeam === 'B' ? `${teamBName} won`
     : 'Result not decided';
+  // 🏆 Super Over — its OWN section after the main match (record.superOver,
+  // see superOverSummary()); the regulation innings above are never replaced.
+  const so = m.superOver && m.superOver.count > 0 && Array.isArray(m.superOver.innings) && m.superOver.innings.length ? m.superOver : null;
+  const superOverHtml = !so ? '' : `
+    <div class="sc-result" style="color:#f59e0b; margin-top:14px;">MATCH TIED \u00b7 SUPER OVER</div>
+    ${so.innings.map(i => {
+      const label = i.team === 'A' ? teamAName : teamBName;
+      const ex = i.extras || {};
+      return `<div class="sc-innings">
+        <div class="sc-innings-head">
+          <span class="sc-team">Super Over ${i.number} \u00b7 ${escapeHtmlPanel(label)}</span>
+          <span class="sc-score">${i.runs}/${i.wickets} <span class="sc-overs">(${i.overs} ov)</span></span>
+        </div>
+        <table class="sc-table"><thead><tr><th>Batsman</th><th>Runs</th><th>Balls</th><th>4s</th><th>6s</th><th>S/R</th><th>Dismissal</th></tr></thead>
+        <tbody>${(i.battingCard || []).map(b => scRow([escapeHtmlPanel(b.name), b.runs, b.balls, b.fours, b.sixes, b.balls > 0 ? ((b.runs / b.balls) * 100).toFixed(1) : '0.0', escapeHtmlPanel(b.howOut || 'not out')])).join('')}</tbody></table>
+        ${extrasTotalOf(ex) ? `<div class="sc-extras">Extras: Wd ${ex.wd || 0} \u00b7 NB ${ex.nb || 0} \u00b7 B ${ex.b || 0} \u00b7 LB ${ex.lb || 0}${ex.pen ? ` \u00b7 Pen ${ex.pen}` : ''}</div>` : ''}
+        <table class="sc-table" style="margin-top:8px;"><thead><tr><th>Bowler</th><th>Overs</th><th>Maidens</th><th>Runs</th><th>Wkts</th><th>Econ</th></tr></thead>
+        <tbody>${(i.bowlingCard || []).map(b => scRow([escapeHtmlPanel(b.name), `${b.overs}.${b.balls}`, b.maidens, b.runs, b.wickets, (b.overs + b.balls / 6) > 0 ? (b.runs / (b.overs + b.balls / 6)).toFixed(2) : '0.00'])).join('')}</tbody></table>
+      </div>`;
+    }).join('')}
+    ${so.decided && so.resultText ? `<div class="sc-result" style="font-size:14px;">\ud83c\udfc6 ${escapeHtmlPanel(so.resultText)}</div>` : ''}`;
   const savedDate = m.savedAt ? new Date(m.savedAt).toLocaleString() : '';
 
   const inningsBlock = (teamKey, oppKey) => {
@@ -9671,6 +9836,7 @@ function renderScorecardHtml(m){
     ${inningsBlock('A', 'B')}
     ${inningsBlock('B', 'A')}
     ${partnershipsHtml}
+    ${superOverHtml}
   `;
 }
 function openScorecardModal(m){
@@ -10826,6 +10992,7 @@ function buildLiveInningsCardRows(){
   const battingKey = state.battingTeam;
   const bowlingKey = bowlingTeamKey();
   const inn = state.inningsNumber;
+  if(inSuperOver()) return superOverLiveCardRows(battingKey, bowlingKey);
 
   let battingRows = rowsForInnings(state.battingCard[battingKey], inn);
   [state.striker, state.nonStriker].forEach(p => {
@@ -10859,6 +11026,25 @@ function buildLiveInningsCardRows(){
       current: !!state.bowler.name && b.name === state.bowler.name
     })),
     extrasTotal: extrasTotalOf(extras)
+  };
+}
+
+// The same rows for a Super Over innings in progress — read from the Super
+// Over's own cards, never the regulation ones.
+function superOverLiveCardRows(battingKey, bowlingKey){
+  const so = state.superOver;
+  const bat = (so.battingCard[battingKey] || []).map(r => ({ ...r }));
+  [state.striker, state.nonStriker].forEach(p => { if(p && p.name && !bat.some(b => b.name === p.name)) bat.push({ name: p.name, runs: p.runs, balls: p.balls, fours: p.fours, sixes: p.sixes, out: false, howOut: 'not out' }); });
+  const bowl = (so.bowlingCard[bowlingKey] || []).map(r => ({ ...r }));
+  if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0) && !bowl.some(b => b.name === state.bowler.name)) bowl.push({ ...state.bowler });
+  return {
+    batsmen: bat.map(b => ({ name: b.name, runs: b.runs, balls: b.balls, fours: b.fours, sixes: b.sixes,
+      sr: b.balls > 0 ? ((b.runs / b.balls) * 100).toFixed(1) : '0.0',
+      striker: !b.out && b.name === state.striker.name, nonStriker: !b.out && b.name === state.nonStriker.name,
+      out: !!b.out, howOut: b.out ? (b.howOut || 'out') : 'not out' })),
+    bowlers: bowl.map(b => ({ name: b.name, overs: fmtBowlerOvers(b.overs, b.balls), maidens: b.maidens, runs: b.runs, wickets: b.wickets, econ: bowlerEcon(b), current: b.name === state.bowler.name })),
+    extrasTotal: extrasTotalOf(activeExtras(battingKey)),
+    superOver: state.superOver.number
   };
 }
 
@@ -11324,7 +11510,7 @@ function recordBall(kind, meta){
   const logNonStrikerId = state.nonStriker.id || null;
   const logBowlerId = state.bowler.id || null;
   const logBattingTeam = state.battingTeam;
-  const logInnings = state.inningsNumber;
+  const logInnings = currentLogInnings();
   const logPhase = state.phase || 'REGULATION';
   // 🆔 One id per delivery, minted here and carried by the ball log row
   // (as its ballUid), the clip requests and every later re-label — the
@@ -11759,6 +11945,7 @@ function recordBall(kind, meta){
       document.getElementById('disp-last-dismissal').textContent = `${dismissedBatter.name || 'Batsman'} — ${dismissalText}`;
 
       state.score.runs += nbTotal;
+      originalStriker.balls++; // faced it (a No Ball, not a legal ball of the over)
       state.striker.runs += batRuns;
       if(batRuns === 4) state.striker.fours++;
       // 🛠 FIX: the six case was missing here, so a No Ball struck for six
@@ -11875,6 +12062,10 @@ function recordBall(kind, meta){
       const legByeRuns = (meta && typeof meta.legByeRuns === 'number') ? meta.legByeRuns : 0;
       const nbTotal = 1 + batRuns + legByeRuns;
       state.score.runs += nbTotal;
+      // A No Ball is a ball FACED by the striker (unlike a Wide) — but not a
+      // legal ball of the over (no addLegalBall), and its 1-run penalty is
+      // never the batsman's. Same rule as the server's scorecard rebuild.
+      state.striker.balls++;
       if(batRuns > 0){
         state.striker.runs += batRuns;
         if(batRuns === 4) state.striker.fours++;
@@ -12128,7 +12319,9 @@ function recordBall(kind, meta){
     bowlerId: logBowlerId,
     battingTeam: logBattingTeam,
     dismissal: logDismissal,
-    participants: ballParticipants
+    participants: ballParticipants,
+    phase: logPhase,
+    superOverNumber: logPhase === 'SUPER_OVER' ? state.superOver.number : null
   }, extraBoundaryEventType, linkedHighlightClips > 0,
   describeBallOutcome(kind, meta, ballRuns));
 }
@@ -12388,6 +12581,9 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundar
     bowlerId: id.bowlerId,
     // `batter`/`batterId`: who was actually given out, frozen at confirmation.
     dismissal,
+    // A Super Over delivery says so (its innings is already 101+): the
+    // server keeps it out of the regulation scorecard.
+    ...(id.phase === 'SUPER_OVER' ? { phase: 'SUPER_OVER', superOverNumber: id.superOverNumber || null } : {}),
     score: { ...state.score },
     timestamp: ballTimestamp
   }, id.deliveryId);
@@ -13863,7 +14059,7 @@ const ENFORCE_NO_CONSECUTIVE_OVERS = false;
 function getSecondLastOverBowler(){
   try{
     const soId = (typeof inSuperOver === 'function' && inSuperOver()) ? currentSuperOverId() : null;
-    const rows = (state.ballLog || []).filter(e => e && e.innings === state.inningsNumber
+    const rows = (state.ballLog || []).filter(e => e && e.innings === currentLogInnings()
       && e.ballType !== 'PEN' && e.bowler && e.over != null
       && (e.superOverId || null) === (soId || null));
     if(!rows.length) return null;
@@ -14011,6 +14207,13 @@ function reverseLastBallDelta(){
   const kind = entry.ballType;
   const runs = entry.runs; // total runs this ball added to the team score
   state.score.runs = Math.max(0, state.score.runs - runs);
+  // 🩹 The batter who FACED this ball goes back on strike first, so every
+  // figure below comes off the right batsman (after an odd run or the end of
+  // the over the other batter is on strike now).
+  const facedIsNonStriker = !!(state.nonStriker && state.nonStriker.name && (
+    (entry.strikerId && state.nonStriker.id === entry.strikerId) ||
+    (!entry.strikerId && entry.striker && state.nonStriker.name === entry.striker)));
+  if(facedIsNonStriker) swapStrikeSilent();
 
   const isLegalDelivery = ['0','1','2','3','4','5','6','B','LB'].includes(kind);
   let strikeSwapsForward = 0;
@@ -14050,6 +14253,7 @@ function reverseLastBallDelta(){
     if((runs - 1) % 2 === 1) strikeSwapsForward++;
   } else if(kind === 'Nb'){
     activeExtras(state.battingTeam).nb = Math.max(0, activeExtras(state.battingTeam).nb - 1);
+    state.striker.balls = Math.max(0, state.striker.balls - 1);
     // Credited back to the striker as "off the bat" — see the disclosed
     // limitation in the comment block above.
     const nonPenalty = runs - 1;
@@ -14069,7 +14273,8 @@ function reverseLastBallDelta(){
     if(runs % 2 === 1) strikeSwapsForward++;
   }
 
-  if(strikeSwapsForward % 2 === 1) swapStrikeSilent();
+  // (Strike was already put back on the batter who faced it, above.)
+  void strikeSwapsForward;
 
   state.ballLog.pop();
   if(state.ballHistory.length) state.ballHistory.pop();
@@ -14096,7 +14301,7 @@ async function deleteLastBallViaServer(){
     const res = await fetch(withUid(`/api/cricket/match/${encodeURIComponent(matchId)}/delete-last-ball`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ innings: state.inningsNumber })
+      body: JSON.stringify({ innings: currentLogInnings() }) // a Super Over innings is 101+
     });
     const data = await res.json();
     if(!res.ok || !data || !data.success) return { ok: false, reason: 'server-error', error: (data && data.error) };

@@ -16,7 +16,7 @@ function grab(name){
   throw new Error('unbalanced: ' + name);
 }
 const sandbox = {};
-const code = [grab('deriveBallFacts'), grab('personName'), grab('playerKey'), grab('buildLiveCardsFromBallsArray'), 'return { deriveBallFacts, playerKey, buildLiveCardsFromBallsArray };'].join('\n');
+const code = [grab('deriveBallFacts'), grab('personName'), grab('playerKey'), grab('isSuperOverBall'), grab('buildLiveCardsFromBallsArray'), 'return { deriveBallFacts, playerKey, buildLiveCardsFromBallsArray };'].join('\n');
 const api = new Function(code)();
 
 let pass = 0, fail = 0;
