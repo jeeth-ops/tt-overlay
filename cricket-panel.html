@@ -201,6 +201,25 @@
   .lc-player.on-strike{ background:rgba(8,11,20,.7); border-color:color-mix(in srgb, var(--team) 70%, transparent); box-shadow:inset 3px 0 0 var(--team); }
   .lc-bat-ico{ width:22px; text-align:center; font-size:14px; opacity:.35; }
   .lc-player.on-strike .lc-bat-ico{ opacity:1; }
+  /* 🏏 The STRIKER — readable at a glance from across the room: the batting
+     side's colour washed across the row, a thick bar and glow, the bat in a
+     solid team-colour disc and an ON STRIKE tag. The non-striker steps back. */
+  .lc-player.on-strike:not(.lc-bowler){
+    background:linear-gradient(90deg, color-mix(in srgb, var(--team) 34%, rgba(8,11,20,.9)) 0%, rgba(8,11,20,.82) 78%);
+    border:1.5px solid var(--team);
+    box-shadow:inset 5px 0 0 var(--team), 0 0 18px color-mix(in srgb, var(--team) 38%, transparent);
+  }
+  .lc-player.on-strike:not(.lc-bowler) .lc-bat-ico{
+    width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    background:var(--team); box-shadow:0 0 0 3px color-mix(in srgb, var(--team) 30%, transparent); font-size:15px;
+  }
+  .lc-player.on-strike:not(.lc-bowler) .lc-pname{ font-size:16.5px; color:#fff; }
+  .lc-player.on-strike:not(.lc-bowler) .lc-pfig{ color:#fff; text-shadow:0 0 14px color-mix(in srgb, var(--team) 60%, transparent); }
+  .lc-strike-tag{
+    display:inline-block; margin-right:6px; padding:1px 7px; border-radius:99px; vertical-align:1px;
+    font-size:9.5px; font-weight:900; letter-spacing:1px; color:var(--team-ink, #fff); background:var(--team);
+  }
+  .lc-player:not(.on-strike):not(.lc-bowler){ opacity:.72; }
   .lc-pname{ font-weight:800; font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .lc-psub{ font-size:11.5px; color:#aab3c5; margin-top:1px; font-variant-numeric:tabular-nums; }
   .lc-pfig{ text-align:right; font:700 26px/1 var(--lc-num); font-variant-numeric:tabular-nums; white-space:nowrap; }
@@ -14735,7 +14754,7 @@ function lcPaintTeam(cardId, logoId, nameId, key){
 function lcBatterFig(p){ return `${p.runs || 0}<small>(${p.balls || 0})</small>`; }
 function lcBatterSub(p, onStrike){
   const sr = p.balls ? ((p.runs || 0) * 100 / p.balls).toFixed(1) : '0.0';
-  return `${onStrike ? 'On strike · ' : ''}4s ${p.fours || 0} · 6s ${p.sixes || 0} · SR ${sr}`;
+  return `${onStrike ? '<span class="lc-strike-tag">ON STRIKE</span>' : ''}4s ${p.fours || 0} · 6s ${p.sixes || 0} · SR ${sr}`;
 }
 function lcPlayer(rowId, nameId, subId, figId, p, onStrike){
   const name = (p && p.name) || '—';
@@ -14744,7 +14763,7 @@ function lcPlayer(rowId, nameId, subId, figId, p, onStrike){
   if(lcLast[rowId] !== name && lcLast.ready){ row.classList.remove('lc-in'); void row.offsetWidth; row.classList.add('lc-in'); }
   lcLast[rowId] = name;
   lcSet(nameId, name);
-  lcSet(subId, lcBatterSub(p || {}, onStrike));
+  lcSetHtml(subId, lcBatterSub(p || {}, onStrike)); // numbers + a fixed tag only — nothing user-typed
   lcSetHtml(figId, lcBatterFig(p || {}));
 }
 function lcPipClass(t){
