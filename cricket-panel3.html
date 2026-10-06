@@ -3910,6 +3910,43 @@
       for (var i = 1; i < pts.length; i++) segs.push([pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]]);
       doc.lines(segs, pts[0][0], pts[0][1], [1, 1], style || 'F', true);
     };
+    /* A team's banner: its colour on a slanted panel carrying the logo badge,
+       name and a line under it, a gold edge, and the dark side for the
+       numbers (o.score / o.scoreSub on the right, o.chips in the middle,
+       o.right for a short note). Used for every team heading in the report. */
+    var teamBanner = function (k, x, y, w, h, o) {
+      o = o || {};
+      var c = colOf(k), sl = Math.min(o.slant || w * 0.5, w - 10), cut = Math.min(h * 0.45, 10);
+      fill(C.navy); doc.rect(x, y, w, h, 'F');
+      fill(mix(c, C.navy, 0.35)); poly([[x + sl - cut + 5, y], [x + sl + 9, y], [x + sl + 9 - cut, y + h], [x + sl - 2 * cut + 5, y + h]]);
+      fill(c); poly([[x, y], [x + sl, y], [x + sl - cut, y + h], [x, y + h]]);
+      fill(C.gold); poly([[x + sl, y], [x + sl + 1.4, y], [x + sl + 1.4 - cut, y + h], [x + sl - cut, y + h]]);
+      fill(C.gold); doc.rect(x, y + h - 0.7, w, 0.7, 'F');
+      var r = Math.min(h * 0.36, 9), ax = x + r + (h - 2 * r) / 2 + 1.2;
+      avatar(k, ax, y + h / 2 - 0.2, r);
+      var tx = ax + r + 3.6, tw = sl - cut - (tx - x) - 2;
+      var ts = o.titleSize || (h >= 20 ? 13 : h >= 14 ? 10.5 : 9);
+      font(ts, true);
+      while (ts > (o.minTitle || 7.5) && doc.getTextWidth(pdfSafe(m.teams[k].name)) > tw) { ts -= 0.5; font(ts, true); }
+      var ty = o.sub ? y + h / 2 - 0.6 : y + h / 2 + ts * 0.13;
+      T(m.teams[k].name, tx, ty, { size: ts, bold: true, color: C.white, maxW: tw });
+      if (o.sub) T(o.sub, tx, ty + (h >= 20 ? 6 : 4.4), { size: h >= 20 ? 7.6 : 6.6, color: [226, 232, 240], maxW: tw });
+      var rx = x + w - 4;
+      if (o.score) {
+        T(o.score, rx, o.scoreSub ? y + h / 2 + 1.6 : y + h / 2 + 2.6, { size: h >= 20 ? 22 : 12, bold: true, color: o.won ? C.gold : C.white, align: 'right' });
+        if (o.scoreSub) T(o.scoreSub, rx, y + h / 2 + 7.4, { size: 7.4, color: [148, 163, 184], align: 'right' });
+      }
+      if (o.right) T(o.right, rx, y + h / 2 + 1.3, { size: 7.4, bold: true, color: [203, 213, 225], align: 'right' });
+      if (o.chips && o.chips.length) {
+        var cx = x + sl + 6, cw = 15.5;
+        o.chips.forEach(function (ch, i) {
+          var px = cx + i * (cw + 2.2);
+          fill(C.navy2); doc.roundedRect(px, y + h / 2 - 6.2, cw, 12, 1.8, 1.8, 'F');
+          T(String(ch[1]), px + cw / 2, y + h / 2 + 0.4, { size: 11, bold: true, color: ch[2] || C.white, align: 'center' });
+          T(ch[0], px + cw / 2, y + h / 2 + 4, { size: 5.6, bold: true, color: [148, 163, 184], align: 'center' });
+        });
+      }
+    };
     var scoreOf = function (k) {
       var inns = m.innings.filter(function (i) { return i.team === k; });
       if (!inns.length) return { main: 'Yet to bat', overs: '' };
@@ -4132,12 +4169,11 @@
     var hW = 0;
     ['A', 'B'].forEach(function (k, i) {
       var x = MX + i * (ww + 8), w = m.wagon[k];
-      fill(colOf(k)); doc.roundedRect(x, y, ww, 8, 2, 2, 'F');
-      T(m.teams[k].name, x + 4, y + 5.5, { size: 9, bold: true, color: C.white, maxW: ww - 34 });
-      T(w.runs + ' runs mapped', x + ww - 4, y + 5.5, { size: 7.5, bold: true, color: C.white, align: 'right' });
-      hW = Math.max(hW, wheelImg(images[k], x, y + 10, ww));
+      teamBanner(k, x, y, ww, 14, { slant: ww - 26, minTitle: 6.6, sub: w.mapped + ' of ' + w.scoringShots + ' shots placed', score: String(w.runs), scoreSub: '' });
+      T('RUNS', x + ww - 4, y + 11.6, { size: 5.6, bold: true, color: [148, 163, 184], align: 'right' });
+      hW = Math.max(hW, wheelImg(images[k], x + 4.5, y + 16, ww - 9));
     });
-    y += 10 + hW + 6;
+    y += 16 + hW + 6;
     ['A', 'B'].forEach(function (k, i) {
       var x = MX + i * (ww + 8), w = m.wagon[k];
       T('TOP REGIONS', x, y, { size: 7.2, bold: true, color: C.dim });
@@ -4190,12 +4226,14 @@
       doc.addPage();
       y = pageHeader('SCORECARD  ·  ' + inn.label.toUpperCase());
       var c = colOf(inn.team);
-      fill(c); doc.roundedRect(MX, y, CW, 14, 2.5, 2.5, 'F');
-      T(inn.teamName, MX + 5, y + 9.2, { size: 12.5, bold: true, color: C.white, maxW: 108 });
-      T(inn.runs + '/' + inn.wickets + (inn.declared ? 'd' : ''), PW - MX - 26, y + 9.6, { size: 16, bold: true, color: C.white, align: 'right' });
-      T('(' + inn.overs + ' Ov)', PW - MX - 4, y + 9.2, { size: 8.5, color: C.white, align: 'right' });
-      y += 19;
-      var meta = [inn.startText ? 'Start ' + inn.startText : '', inn.endText ? 'End ' + inn.endText : '', inn.minutes != null ? inn.minutes + ' min' : '', 'CRR ' + inn.crr, inn.captain ? 'Captain: ' + inn.captain : ''].filter(Boolean).join('   ·   ');
+      var f4 = inn.batting.reduce(function (s2, b) { return s2 + b.fours; }, 0), f6 = inn.batting.reduce(function (s2, b) { return s2 + b.sixes; }, 0);
+      teamBanner(inn.team, MX, y, CW, 26, {
+        slant: 92, sub: inn.label + (inn.captain ? '  ·  Captain: ' + inn.captain : ''),
+        score: inn.runs + '/' + inn.wickets + (inn.declared ? 'd' : ''), scoreSub: inn.overs + ' Ov  ·  CRR ' + inn.crr,
+        won: m.meta.winner === inn.team, chips: [['FOURS', f4, C.gold], ['SIXES', f6, [255, 99, 132]], ['EXTRAS', inn.extras.total]]
+      });
+      y += 31;
+      var meta = [inn.startText ? 'Start ' + inn.startText : '', inn.endText ? 'End ' + inn.endText : '', inn.minutes != null ? inn.minutes + ' min' : '', inn.toBat.length ? '' : 'All batted'].filter(Boolean).join('   ·   ');
       T(meta, MX, y, { size: 7.8, color: C.dim, maxW: CW });
       y += 4;
       var hiB = [];
@@ -4281,9 +4319,7 @@
       var names = t.players.length ? t.players.map(function (p) { return p.name; })
         : m.innings.filter(function (q) { return q.team === k; }).reduce(function (a, q) { return a.concat(q.batting.map(function (b) { return b.name; })); }, []);
       names = names.filter(function (n, j) { return names.indexOf(n) === j; });
-      fill(C.soft); doc.roundedRect(x, y, colW, 16, 2.5, 2.5, 'F');
-      avatar(k, x + 9, y + 8, 5.6);
-      T(t.name, x + 18, y + 9.8, { size: 10, bold: true, maxW: colW - 22 });
+      teamBanner(k, x, y, colW, 16, { slant: colW - 22, sub: 'Playing XI', right: names.length + ' players' });
       names.forEach(function (n, j) {
         var ry = y + 19 + j * 7.2;
         if (j % 2) { fill(C.soft); doc.rect(x, ry, colW, 7.2, 'F'); }
