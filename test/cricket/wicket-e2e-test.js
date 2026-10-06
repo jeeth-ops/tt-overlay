@@ -179,6 +179,10 @@ async function suite(file, label){
   eq(L('scorecard page shows the panel’s batting card'), byName(rows), byName(panelLive));
   const brows = [...S.w.document.querySelectorAll('#bowling-table-body tr')].map(tr => [tr.children[0].textContent.trim(), tr.children[3].textContent.trim(), tr.children[4].textContent.trim()]);
   eq(L('scorecard page shows the panel’s bowling figures'), byName(brows), byName(panelBowl.map(b => [b[0], String(b[2]), String(b[3])])));
+  const st = P.J('state');
+  eq(L('At the Crease: above the batting card, and the same batters / bowler as the panel'),
+    [!!(S.$('#crease-card').compareDocumentPosition(S.$('#tables-grid')) & 4), S.text('#striker-name'), S.text('#striker-runs'), S.text('#striker-balls'), S.text('#nonstriker-name'), S.text('#bowler-name'), S.text('#bowler-wr'), S.text('#bowler-overs')],
+    [true, st.striker.name || '—', String(st.striker.runs || 0), `(${st.striker.balls || 0})`, st.nonStriker.name || '—', st.bowler.name || '—', `${st.bowler.wickets || 0}-${st.bowler.runs || 0}`, `(${st.bowler.overs || 0}.${st.bowler.balls || 0})`]);
   eq(L('no script errors'), P.errors.concat(S.errors).filter(e => !/Could not parse CSS|Not implemented/.test(e)), []);
 }
 
