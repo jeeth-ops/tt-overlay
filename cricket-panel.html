@@ -9924,6 +9924,21 @@ function refreshLiveStatCards(){
    overlay's BATTING and BOWLING scorecard graphics — the two cards that
    alternate with the over summary between overs — can be painted from a
    frozen snapshot of the over that just ended, never from the live bar. */
+// 🏏 END-OVER LINEUPS — the complete Playing XI of each side, in the order
+// it was entered in Match Setup, minus whoever already has a row (batted /
+// is batting, or has bowled). These are the "yet to bat" / "yet to bowl"
+// players the end-over graphics show beneath the live rows, so the list is
+// the whole team and never shrinks to just the two at the crease.
+function lineupRest(teamKey, rows, exclude){
+  const has = (p) => rows.some(r => (p.id && r.id && String(r.id) === String(p.id)) || (r.name && p.name && r.name.trim().toLowerCase() === p.name.trim().toLowerCase()))
+    || (exclude || []).some(x => x && ((p.id && x.id && String(x.id) === String(p.id)) || (x.name && x.name === p.name)));
+  return rosterPlayers(teamKey).filter(p => p && p.name && p.isXI !== false && !has(p));
+}
+const yetToBatRow = (p) => ({ name: p.name, id: p.id || null, runs: null, balls: null, fours: null, sixes: null, sr: null,
+  striker: false, nonStriker: false, out: false, howOut: 'yet to bat', status: 'yet', yetToBat: true });
+const yetToBowlRow = (p) => ({ name: p.name, id: p.id || null, overs: null, maidens: null, runs: null, wickets: null, econ: null,
+  current: false, status: 'yet', yetToBowl: true });
+const batStatusOf = (b, striker, nonStriker) => b.out ? 'out' : striker ? 'striker' : nonStriker ? 'nonStriker' : b.retiredHurt ? 'retired' : 'notout';
 function buildLiveInningsCardRows(){
   const battingKey = state.battingTeam;
   const bowlingKey = bowlingTeamKey();
@@ -9946,21 +9961,27 @@ function buildLiveInningsCardRows(){
 
   const extras = state.extras[battingKey];
   return {
-    batsmen: battingRows.map(b => ({
-      name: b.name, runs: b.runs, balls: b.balls, fours: b.fours, sixes: b.sixes,
-      sr: b.balls > 0 ? ((b.runs / b.balls) * 100).toFixed(1) : '0.0',
+    batsmen: battingRows.map(b => {
       // "striker"/"nonStriker" drive the * marker and the highlight row on the
       // batting graphic — an archived (out) row is never either of them.
-      striker: !b.out && !!state.striker.name && b.name === state.striker.name,
-      nonStriker: !b.out && !!state.nonStriker.name && b.name === state.nonStriker.name,
-      out: !!b.out,
-      howOut: b.out ? (b.howOut || 'out') : (b.retiredHurt ? (b.howOut || 'retired hurt') : 'not out')
-    })),
-    bowlers: bowlingRows.map(b => ({
-      name: b.name, overs: fmtBowlerOvers(b.overs, b.balls),
-      maidens: b.maidens, runs: b.runs, wickets: b.wickets, econ: bowlerEcon(b),
-      current: !!state.bowler.name && b.name === state.bowler.name
-    })),
+      const striker = !b.out && !!state.striker.name && b.name === state.striker.name;
+      const nonStriker = !b.out && !!state.nonStriker.name && b.name === state.nonStriker.name;
+      return {
+        name: b.name, id: b.id || null, runs: b.runs, balls: b.balls, fours: b.fours, sixes: b.sixes,
+        sr: b.balls > 0 ? ((b.runs / b.balls) * 100).toFixed(1) : '0.0',
+        striker, nonStriker, out: !!b.out,
+        howOut: b.out ? (b.howOut || 'out') : (b.retiredHurt ? (b.howOut || 'retired hurt') : 'not out'),
+        status: batStatusOf(b, striker, nonStriker)
+      };
+    }).concat(lineupRest(battingKey, battingRows, [state.striker, state.nonStriker]).map(yetToBatRow)),
+    bowlers: bowlingRows.map(b => {
+      const current = !!state.bowler.name && b.name === state.bowler.name;
+      return {
+        name: b.name, id: b.id || null, overs: fmtBowlerOvers(b.overs, b.balls),
+        maidens: b.maidens, runs: b.runs, wickets: b.wickets, econ: bowlerEcon(b),
+        current, status: current ? 'current' : 'bowled'
+      };
+    }).concat(lineupRest(bowlingKey, bowlingRows, [state.bowler]).map(yetToBowlRow)),
     extrasTotal: extrasTotalOf(extras)
   };
 }
@@ -9974,11 +9995,17 @@ function superOverLiveCardRows(battingKey, bowlingKey){
   const bowl = (so.bowlingCard[bowlingKey] || []).map(r => ({ ...r }));
   if(state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0) && !bowl.some(b => b.name === state.bowler.name)) bowl.push({ ...state.bowler });
   return {
-    batsmen: bat.map(b => ({ name: b.name, runs: b.runs, balls: b.balls, fours: b.fours, sixes: b.sixes,
-      sr: b.balls > 0 ? ((b.runs / b.balls) * 100).toFixed(1) : '0.0',
-      striker: !b.out && b.name === state.striker.name, nonStriker: !b.out && b.name === state.nonStriker.name,
-      out: !!b.out, howOut: b.out ? (b.howOut || 'out') : 'not out' })),
-    bowlers: bowl.map(b => ({ name: b.name, overs: fmtBowlerOvers(b.overs, b.balls), maidens: b.maidens, runs: b.runs, wickets: b.wickets, econ: bowlerEcon(b), current: b.name === state.bowler.name })),
+    // The Super Over's own rows only — never a regulation figure — then the
+    // rest of the side's XI as yet to bat / yet to bowl in THIS Super Over.
+    batsmen: bat.map(b => {
+      const striker = !b.out && b.name === state.striker.name, nonStriker = !b.out && b.name === state.nonStriker.name;
+      return { name: b.name, id: b.id || null, runs: b.runs, balls: b.balls, fours: b.fours, sixes: b.sixes,
+        sr: b.balls > 0 ? ((b.runs / b.balls) * 100).toFixed(1) : '0.0',
+        striker, nonStriker, out: !!b.out, howOut: b.out ? (b.howOut || 'out') : 'not out', status: batStatusOf(b, striker, nonStriker) };
+    }).concat(lineupRest(battingKey, bat, [state.striker, state.nonStriker]).map(yetToBatRow)),
+    bowlers: bowl.map(b => ({ name: b.name, id: b.id || null, overs: fmtBowlerOvers(b.overs, b.balls), maidens: b.maidens, runs: b.runs, wickets: b.wickets, econ: bowlerEcon(b),
+      current: b.name === state.bowler.name, status: b.name === state.bowler.name ? 'current' : 'bowled' }))
+      .concat(lineupRest(bowlingKey, bowl, [state.bowler]).map(yetToBowlRow)),
     extrasTotal: extrasTotalOf(activeExtras(battingKey)),
     superOver: state.superOver.number
   };

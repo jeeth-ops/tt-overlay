@@ -545,6 +545,8 @@
   /* At-the-crease batters / the bowler mid-spell get the accent rail so the
      eye lands on the live players first. */
   .sc-row.cardg-live{ background:rgba(11,61,145,0.09); box-shadow:inset 3px 0 0 var(--card-ink,#0b3d91); }
+  .sc-row.cardg-yet{ opacity:.55; }
+  .sc-row.cardg-yet .cardg-out.yet{ font-style:italic; letter-spacing:.04em; }
   .cardg-extras{
     display:flex; justify-content:space-between; align-items:center;
     margin:calc(10 * var(--u) * var(--cyc,1)) calc(34 * var(--ux)) 0; padding:calc(12 * var(--u) * var(--cyc,1)) calc(18 * var(--ux)); background:rgba(11,61,145,0.06);
@@ -3662,7 +3664,7 @@ function fitCycleCard(card){
 function buildCardRow(name, sub, subClass, nums, opts){
   opts = opts || {};
   const row = document.createElement('div');
-  row.className = 'sc-row' + (opts.alt ? ' sc-row-alt' : '') + (opts.live ? ' cardg-live' : '');
+  row.className = 'sc-row' + (opts.alt ? ' sc-row-alt' : '') + (opts.live ? ' cardg-live' : '') + (opts.yet ? ' cardg-yet' : '');
   const wrap = document.createElement('div');
   wrap.className = 'sc-c-name cardg-name-wrap';
   const nameEl = document.createElement('div');
@@ -3735,6 +3737,11 @@ function fillBattingCardGraphic(d){
     rows.appendChild(cardEmptyRow('NO BATTING YET'));
   } else {
     batsmen.forEach((b, i) => {
+      // The rest of the XI, in batting-order: still part of the line-up.
+      if(b.yetToBat || b.status === 'yet'){
+        rows.appendChild(buildCardRow(b.name || '—', 'yet to bat', 'yet', ['–', '–', '–', '–', '–'], { alt: i % 2 === 1, yet: true }));
+        return;
+      }
       const live = !!(b.striker || b.nonStriker);
       // Broadcast convention: * marks the batter on strike, and a not-out
       // line is accented rather than the same dim grey as a dismissal.
@@ -3765,6 +3772,10 @@ function fillBowlingCardGraphic(d){
     rows.appendChild(cardEmptyRow('NO BOWLING YET'));
   } else {
     bowlers.forEach((b, i) => {
+      if(b.yetToBowl || b.status === 'yet'){
+        rows.appendChild(buildCardRow(b.name || '—', 'yet to bowl', 'yet', ['–', '–', '–', '–', '–'], { alt: i % 2 === 1, yet: true }));
+        return;
+      }
       // The bowler who has just finished the over gets the accent rail and a
       // "this over" line — the one figure a viewer is looking for here.
       const isCurrent = !!b.current;
