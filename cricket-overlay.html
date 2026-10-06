@@ -598,6 +598,70 @@
     box-shadow:0 26px 60px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.10);
     will-change:height, clip-path, opacity;
   }
+  /* ---------- 🏏 BALL-EVENT card (FOUR / SIX / WICKET / WIDE / NO BALL / FREE HIT) ----------
+     Plays at the scorebar's own height, never taller. Left: an icon tile
+     (the digit, the stumps, or the umpire's signal) and the word; middle:
+     the team, the player's name and one line of detail; right: the
+     player's score or the runs the ball cost. Every size is the bar height
+     × --ec-s and fitBallCard() lowers --ec-s until long names fit (then
+     two lines) — nothing overlaps, nothing spills out. Calm motion: no
+     shake, no particles, one soft shine. */
+  #event-stage.ev-four{ --ec-a:#3b82f6; --ec-t1:#60a5fa; --ec-t2:#1d4ed8; --ec-tink:#ffffff; --ec-wc:#dbeafe; }
+  #event-stage.ev-six{ --ec-a:#f5b524; --ec-t1:#ffd45c; --ec-t2:#d4910a; --ec-tink:#1d1404; --ec-wc:#ffe08a; }
+  #event-stage.ev-wicket{ --ec-a:#e11d48; --ec-t1:#fb5a78; --ec-t2:#9f1239; --ec-tink:#ffffff; --ec-wc:#ffd1da; }
+  #event-stage.ev-wide{ --ec-a:#0ea5e9; --ec-t1:#38bdf8; --ec-t2:#0369a1; --ec-tink:#ffffff; --ec-wc:#d4f0ff; }
+  #event-stage.ev-no-ball{ --ec-a:#f97316; --ec-t1:#fb923c; --ec-t2:#c2410c; --ec-tink:#ffffff; --ec-wc:#ffe0cc; }
+  #event-stage.ev-free-hit{ --ec-a:#eab308; --ec-t1:#fde047; --ec-t2:#ca8a04; --ec-tink:#1d1404; --ec-wc:#fef08a; }
+  #event-stage.ec-on #event-hero{ display:none; }
+  #event-stage.ec-on #event-card{ display:flex; }
+  #event-stage.ec-on #event-bg{
+    background:
+      radial-gradient(90% 190% at 0% 50%, color-mix(in srgb, var(--ec-a) 46%, transparent) 0%, transparent 58%),
+      linear-gradient(100deg, #0e1636 0%, #0a1027 55%, #070b1c 100%);
+  }
+  #event-card{
+    --ph: var(--panel-h, 100px); --ec-s:1; --ec-team:#94a3b8;
+    position:relative; z-index:2; display:none; width:100%; height:100%; box-sizing:border-box;
+    align-items:center; gap:calc(var(--ph) * var(--ec-s) * 0.22);
+    padding:0 2.2% 0 1.5%; overflow:hidden;
+  }
+  .ec-hero{ position:relative; flex:none; display:flex; align-items:center; gap:calc(var(--ph) * var(--ec-s) * 0.16); }
+  .ec-tile{
+    position:relative; flex:none; display:grid; place-items:center; overflow:visible;
+    width:calc(var(--ph) * var(--ec-s) * 0.7); height:calc(var(--ph) * var(--ec-s) * 0.7);
+    border-radius:calc(var(--ph) * var(--ec-s) * 0.18); color:var(--ec-tink);
+    background:linear-gradient(145deg, var(--ec-t1), var(--ec-t2));
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.3), inset 0 calc(var(--ph) * 0.025) calc(var(--ph) * 0.05) rgba(255,255,255,.22),
+      0 calc(var(--ph) * 0.05) calc(var(--ph) * 0.2) color-mix(in srgb, var(--ec-a) 50%, transparent);
+  }
+  .ec-glyph{ position:relative; display:grid; place-items:center; width:100%; height:100%; }
+  .ec-num{ font:400 calc(var(--ph) * var(--ec-s) * 0.6)/1 var(--font-event); letter-spacing:-.02em; transform:translateY(3%); }
+  .ec-ico{ width:70%; height:70%; display:block; overflow:visible; }
+  .ec-arm, .ec-circle{ stroke-dasharray:1 1; }
+  .ec-ring{ position:absolute; inset:0; border-radius:inherit; box-shadow:0 0 0 2px var(--ec-t1); opacity:0; pointer-events:none; }
+  .ec-word{ font:400 calc(var(--ph) * var(--ec-s) * 0.44)/1 var(--font-event); letter-spacing:.03em; color:var(--ec-wc); white-space:nowrap; text-shadow:0 2px 12px rgba(0,0,0,.35); }
+  #event-stage.ev-no-ball .ec-word, #event-stage.ev-free-hit .ec-word{ font-size:calc(var(--ph) * var(--ec-s) * 0.4); }
+  .ec-sep{ flex:none; width:2px; height:calc(var(--ph) * 0.56); background:linear-gradient(180deg, transparent, rgba(255,255,255,.4), transparent); transform-origin:center; }
+  .ec-main{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; justify-content:center; gap:calc(var(--ph) * var(--ec-s) * 0.025); }
+  .ec-kicker{ display:flex; align-items:center; gap:.55em; min-width:0; font:800 calc(var(--ph) * var(--ec-s) * 0.105)/1.15 var(--font-ui); letter-spacing:.18em; text-transform:uppercase; color:rgba(255,255,255,.74); white-space:nowrap; }
+  .ec-kicker i{ flex:none; width:.7em; height:.7em; border-radius:50%; background:var(--ec-team); box-shadow:0 0 0 2px rgba(255,255,255,.22); }
+  .ec-kicker span{ overflow:hidden; text-overflow:ellipsis; min-width:0; }
+  .ec-name{ font:900 calc(var(--ph) * var(--ec-s) * 0.3)/1.1 var(--font-ui); color:#fff; text-transform:uppercase; letter-spacing:.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+  #event-card.wrap .ec-name{ white-space:normal; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; line-height:1.03; text-overflow:clip; }
+  .ec-line{ font:700 calc(var(--ph) * var(--ec-s) * 0.12)/1.2 var(--font-ui); color:rgba(255,255,255,.8); letter-spacing:.03em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+  .ec-kicker.is-empty, .ec-name:empty, .ec-line:empty{ display:none; }
+  .ec-stat{
+    flex:none; display:flex; align-items:baseline; gap:calc(var(--ph) * var(--ec-s) * 0.06);
+    padding:calc(var(--ph) * var(--ec-s) * 0.09) calc(var(--ph) * var(--ec-s) * 0.2);
+    border-radius:calc(var(--ph) * var(--ec-s) * 0.16);
+    background:rgba(255,255,255,.07); box-shadow:inset 0 0 0 1px rgba(255,255,255,.14);
+  }
+  .ec-stat b{ font:900 calc(var(--ph) * var(--ec-s) * 0.36)/1 var(--font-num); color:#fff; font-variant-numeric:tabular-nums; }
+  .ec-stat small{ font:800 calc(var(--ph) * var(--ec-s) * 0.15)/1 var(--font-num); color:rgba(255,255,255,.7); letter-spacing:.04em; }
+  .ec-stat.is-empty{ display:none; }
+  #event-card.solo{ justify-content:center; }
+  #event-card.solo .ec-main{ flex:0 1 auto; }
+  .ec-rule{ position:absolute; left:0; right:0; bottom:0; height:max(3px, calc(var(--ph) * 0.03)); background:linear-gradient(90deg, var(--ec-a), color-mix(in srgb, var(--ec-a) 35%, transparent) 55%, transparent); transform-origin:left center; pointer-events:none; }
   /* ---------- 🔁 IMPACT PLAYER card ----------
      Lives inside #event-bg and replaces the generic hero for this event:
      team badge + title on the left, IN (green) ⇄ OUT (red) on the right.
@@ -1330,6 +1394,22 @@
             <div id="event-number">4</div>
             <div id="event-word">FOUR</div>
             <div id="event-sub"></div>
+          </div>
+          <!-- 🏏 BALL-EVENT card — FOUR / SIX / WICKET / WIDE / NO BALL / FREE HIT
+               at the scorebar's own size (playEventTimeline → addBallCardPhase) -->
+          <div id="event-card">
+            <div class="ec-hero">
+              <div class="ec-tile" id="ec-tile"><div class="ec-ring" id="ec-ring"></div><div class="ec-glyph" id="ec-glyph"></div></div>
+              <div class="ec-word" id="ec-word"></div>
+            </div>
+            <div class="ec-sep" id="ec-sep"></div>
+            <div class="ec-main">
+              <div class="ec-kicker" id="ec-kicker"><i id="ec-dot"></i><span id="ec-kicker-text"></span></div>
+              <div class="ec-name" id="ec-name"></div>
+              <div class="ec-line" id="ec-line"></div>
+            </div>
+            <div class="ec-stat" id="ec-stat"><b id="ec-stat-v"></b><small id="ec-stat-s"></small></div>
+            <div class="ec-rule" id="ec-rule"></div>
           </div>
           <!-- 🔁 IMPACT PLAYER card (playEventTimeline → addImpactCardPhase) -->
           <div id="event-ipcard">
@@ -2522,12 +2602,12 @@ let TRANSITION_OUT  = 700;
 // One place to edit colours, growth (how tall the panel gets relative
 // to the normal bar height) and particle counts for every event kind.
 const EVENT_THEMES = {
-  FOUR:     { label:'FOUR',     number:'4',  showNumber:true,  primary:'#173f9e', secondary:'#3f6fd6', accent:'#ffffff', glow:'rgba(63,111,214,0.55)', growth:1.78, particles:14, particleDist:78,  rays:0,  durationMs:2500 },
-  SIX:      { label:'SIX',      number:'6',  showNumber:true,  primary:'#b8860f', secondary:'#f0b429', accent:'#ffffff', glow:'rgba(240,180,41,0.6)',  growth:1.95, particles:30, particleDist:140, rays:10, durationMs:2700 },
-  WICKET:   { label:'WICKET',   number:null, showNumber:false, primary:'#4a0812', secondary:'#a8102b', accent:'#ffffff', glow:'rgba(210,20,50,0.5)',   growth:1.9,  particles:14, particleDist:80  },
-  NO_BALL:  { label:'NO BALL',  number:null, showNumber:false, primary:'#7a2c0c', secondary:'#e2622f', accent:'#ffffff', glow:'rgba(226,98,47,0.5)',   growth:1.6,  particles:0,  particleDist:0   },
-  FREE_HIT: { label:'FREE HIT', number:null, showNumber:false, primary:'#12356b', secondary:'#f0b429', accent:'#ffffff', glow:'rgba(240,180,41,0.5)',  growth:1.5,  particles:10, particleDist:60  },
-  WIDE:     { label:'WIDE',     number:null, showNumber:false, primary:'#123a66', secondary:'#1c7fd8', accent:'#ffffff', glow:'rgba(28,127,216,0.45)', growth:1.5,  particles:0,  particleDist:0   },
+  FOUR:     { label:'FOUR',     number:'4',  showNumber:true,  primary:'#173f9e', secondary:'#3f6fd6', accent:'#ffffff', glow:'rgba(63,111,214,0.55)', growth:1,    particles:14, particleDist:78,  rays:0,  durationMs:3000 },
+  SIX:      { label:'SIX',      number:'6',  showNumber:true,  primary:'#b8860f', secondary:'#f0b429', accent:'#ffffff', glow:'rgba(240,180,41,0.6)',  growth:1,    particles:30, particleDist:140, rays:10, durationMs:3200 },
+  WICKET:   { label:'WICKET',   number:null, showNumber:false, primary:'#4a0812', secondary:'#a8102b', accent:'#ffffff', glow:'rgba(210,20,50,0.5)',   growth:1,    particles:14, particleDist:80  },
+  NO_BALL:  { label:'NO BALL',  number:null, showNumber:false, primary:'#7a2c0c', secondary:'#e2622f', accent:'#ffffff', glow:'rgba(226,98,47,0.5)',   growth:1,    particles:0,  particleDist:0   },
+  FREE_HIT: { label:'FREE HIT', number:null, showNumber:false, primary:'#12356b', secondary:'#f0b429', accent:'#ffffff', glow:'rgba(240,180,41,0.5)',  growth:1,    particles:10, particleDist:60  },
+  WIDE:     { label:'WIDE',     number:null, showNumber:false, primary:'#123a66', secondary:'#1c7fd8', accent:'#ffffff', glow:'rgba(28,127,216,0.45)', growth:1,    particles:0,  particleDist:0   },
   BYE:      { label:'BYE',      number:null, showNumber:false, primary:'#2c3450', secondary:'#5b6788', accent:'#ffffff', glow:'rgba(91,103,136,0.3)',  growth:1.08, particles:0,  particleDist:0   },
   LEG_BYE:  { label:'LEG BYE',  number:null, showNumber:false, primary:'#2c3450', secondary:'#5b6788', accent:'#ffffff', glow:'rgba(91,103,136,0.3)',  growth:1.08, particles:0,  particleDist:0   },
 
@@ -2720,7 +2800,16 @@ function shakeElement(el, amount, duration){
 }
 
 let shineTl = null;
-function startEventMicroMotion(bg, theme){
+function startEventMicroMotion(bg, theme, calm){
+  if(calm){
+    const sh = document.getElementById('event-shine');
+    gsap.set(sh, { xPercent: 0, x: 0, opacity: 0 });
+    shineTl = gsap.timeline({ repeat: -1, repeatDelay: 2.4 });
+    shineTl.to(sh, { opacity: 0.4, duration: 0.2 }, 0)
+      .to(sh, { xPercent: 520, duration: 1.2, ease: 'power1.inOut' }, 0)
+      .to(sh, { opacity: 0, duration: 0.25 }, 0.95);
+    return;
+  }
   microTl = gsap.timeline({ repeat: -1, yoyo: true, defaults: { ease: 'sine.inOut' } });
   microTl.to(bg, { backgroundPosition: '10% 55%', duration: 2.6 }, 0)
     .to('#event-hero', { scale: 1.012, duration: 2.2 }, 0)
@@ -2862,6 +2951,174 @@ function addEventHeroPhase(tl, kind, theme, chars, startAt){
   }
 }
 
+// 🏏 BALL-EVENT card — what goes in it. The panel sends `data` (batter,
+// bowler, figures, teams); an older panel or a manual trigger sends only
+// `sub`, which then fills the name / detail line, so every event still
+// plays at bar size.
+const BALL_CARD_KINDS = ['FOUR', 'SIX', 'WICKET', 'WIDE', 'NO_BALL', 'FREE_HIT'];
+const BALL_CARD_WORD = { FOUR: 'FOUR', SIX: 'SIX', WICKET: 'WICKET', WIDE: 'WIDE', NO_BALL: 'NO BALL', FREE_HIT: 'FREE HIT' };
+const UMPIRE_FIGURE = '<circle cx="24" cy="9" r="4.2" fill="currentColor" stroke="none"/><path d="M24 15v15M24 30l-5.5 12M24 30l5.5 12"/>';
+const BALL_CARD_GLYPH = {
+  FOUR: '<span class="ec-num">4</span>',
+  SIX: '<span class="ec-num">6</span>',
+  WICKET: '<svg class="ec-ico" viewBox="0 0 48 48" fill="currentColor"><rect x="13" y="16" width="4.2" height="27" rx="1.8"/><rect x="21.9" y="16" width="4.2" height="27" rx="1.8"/><rect x="30.8" y="16" width="4.2" height="27" rx="1.8"/>'
+    + '<rect class="ec-bail ec-bail-l" x="12.4" y="11.2" width="11.4" height="3.2" rx="1.6"/><rect class="ec-bail ec-bail-r" x="24.2" y="11.2" width="11.4" height="3.2" rx="1.6"/></svg>',
+  // The umpire's own signals: both arms out (wide), one arm out (no ball),
+  // one arm up and circling (free hit).
+  WIDE: '<svg class="ec-ico" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round">' + UMPIRE_FIGURE
+    + '<path class="ec-arm" pathLength="1" d="M24 19H5"/><path class="ec-arm" pathLength="1" d="M24 19h19"/></svg>',
+  NO_BALL: '<svg class="ec-ico" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round">' + UMPIRE_FIGURE
+    + '<path d="M24 19l-6.5 10.5"/><path class="ec-arm" pathLength="1" d="M24 19h19"/></svg>',
+  FREE_HIT: '<svg class="ec-ico" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round">' + UMPIRE_FIGURE
+    + '<path d="M24 19l-6.5 10.5"/><path class="ec-arm" pathLength="1" d="M24 19l11-12"/><path class="ec-circle" pathLength="1" d="M36.6 1.6a5.2 5.2 0 1 1-6 2.4" stroke-width="2.6"/></svg>'
+};
+function ecSafeColor(c){ const v = String(c || '').trim(); return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v) ? v : ''; }
+function ballCardContent(kind, opts){
+  const d = (opts && opts.data) || {};
+  const word = BALL_CARD_WORD[kind] || kind;
+  const letters = (t) => String(t || '').toUpperCase().replace(/[^A-Z]/g, '');
+  let sub = String((opts && opts.sub) || '').trim();
+  if(letters(sub) === letters(word)) sub = '';
+  const bat = d.batter && d.batter.name ? d.batter : null;
+  const figures = (p) => (p && p.runs != null && p.runs !== '') ? { v: String(p.runs), s: (p.balls != null && p.balls !== '') ? `(${p.balls})` : '' } : null;
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  let name = '', line = '', stat = null, team = null;
+  if(kind === 'FOUR' || kind === 'SIX'){
+    name = bat ? bat.name : sub; team = d.batTeam;
+    line = d.bowler ? `off ${d.bowler}` : '';
+    stat = figures(bat);
+  } else if(kind === 'WICKET'){
+    name = bat ? bat.name : sub; team = d.batTeam;
+    line = d.howOut || (name && d.bowler ? `off ${d.bowler}` : '');
+    stat = figures(bat);
+  } else if(kind === 'WIDE' || kind === 'NO_BALL'){
+    name = d.bowler || ''; team = d.bowlTeam;
+    const runs = Number(d.runs);
+    const bits = [];
+    if(kind === 'WIDE'){ if(d.boundary) bits.push('to the boundary'); }
+    else {
+      const bt = Number(d.batRuns) || 0, by = Number(d.byes) || 0, lb = Number(d.legByes) || 0;
+      if(bt > 0) bits.push(`${bt} off the bat${d.boundary === false ? ' (run)' : ''}`);
+      else if(by > 0) bits.push(plural(by, 'bye'));
+      else if(lb > 0) bits.push(plural(lb, 'leg bye'));
+      if(d.freeHit) bits.push('free hit next');
+    }
+    line = name ? ['Bowler', ...bits].join(' · ') : (bits.join(' · ') || sub);
+    stat = Number.isFinite(runs) && runs > 0 ? { v: '+' + runs, s: runs === 1 ? 'RUN' : 'RUNS' } : null;
+  } else if(kind === 'FREE_HIT'){
+    name = bat ? bat.name : ''; team = d.batTeam;
+    line = name ? 'On strike · next ball is a free hit' : (sub || 'Next ball is a free hit');
+    stat = figures(bat);
+  }
+  const teamName = team ? (team.name || team.short || '') : '';
+  let kicker = teamName;
+  if(kind === 'WICKET' && d.score) kicker = teamName ? `${teamName} · ${d.score}` : String(d.score);
+  return { word, glyph: BALL_CARD_GLYPH[kind] || '', kicker, teamColor: team ? ecSafeColor(team.color) : '', name, line, stat };
+}
+// Lowers the card's type (--ec-s) until the name and detail line fit with
+// everything else in the bar; very long names then take two lines.
+function fitBallCard(card){
+  const texts = [...card.querySelectorAll('.ec-name, .ec-line')];
+  const over = () => card.scrollWidth > card.clientWidth + 1
+    || texts.some(n => n.offsetParent !== null && (n.scrollWidth > n.clientWidth + 1 || n.scrollHeight > n.clientHeight + 1));
+  const run = (min) => {
+    let s = 1;
+    card.style.setProperty('--ec-s', '1');
+    while(over() && s > min){ s = Math.round((s - 0.03) * 100) / 100; card.style.setProperty('--ec-s', String(s)); }
+    return !over();
+  };
+  card.classList.remove('wrap');
+  if(run(0.74)) return;
+  card.classList.add('wrap');
+  run(0.5);
+}
+function addBallCardPhase(tl, kind, opts, at){
+  const card = document.getElementById('event-card');
+  const tile = document.getElementById('ec-tile');
+  const glyph = document.getElementById('ec-glyph');
+  const ring = document.getElementById('ec-ring');
+  const word = document.getElementById('ec-word');
+  const sep = document.getElementById('ec-sep');
+  const kicker = document.getElementById('ec-kicker');
+  const nameEl = document.getElementById('ec-name');
+  const lineEl = document.getElementById('ec-line');
+  const stat = document.getElementById('ec-stat');
+  const rule = document.getElementById('ec-rule');
+  const flash = document.getElementById('event-flash');
+  const shine = document.getElementById('event-shine');
+  const c = ballCardContent(kind, opts);
+  glyph.innerHTML = c.glyph;
+  word.textContent = c.word;
+  document.getElementById('ec-kicker-text').textContent = c.kicker;
+  kicker.classList.toggle('is-empty', !c.kicker);
+  card.style.setProperty('--ec-team', c.teamColor || '#94a3b8');
+  nameEl.textContent = c.name;
+  lineEl.textContent = c.line;
+  document.getElementById('ec-stat-v').textContent = c.stat ? c.stat.v : '';
+  document.getElementById('ec-stat-s').textContent = c.stat ? c.stat.s : '';
+  stat.classList.toggle('is-empty', !c.stat);
+  card.classList.toggle('solo', !c.name && !c.line && !c.stat);
+  const parts = [tile, word, sep, kicker, nameEl, lineEl, stat, rule, ring];
+  gsap.killTweensOf(parts);
+  gsap.set(parts, { clearProps: 'transform,filter,opacity' });
+  fitBallCard(card);
+  gsap.set(tile, { opacity: 0, scale: 0.45, rotate: -10 });
+  gsap.set(word, { opacity: 0, x: -16, filter: 'blur(6px)' });
+  gsap.set(sep, { scaleY: 0, opacity: 0 });
+  gsap.set([kicker, nameEl, lineEl], { opacity: 0, y: 10, filter: 'blur(6px)' });
+  gsap.set(stat, { opacity: 0, x: 18 });
+  gsap.set(rule, { scaleX: 0 });
+  gsap.set(ring, { opacity: 0, scale: 1 });
+  tl.to(tile, { opacity: 1, scale: 1, rotate: 0, duration: 0.5, ease: 'back.out(1.7)' }, at)
+    .to(rule, { scaleX: 1, duration: 0.8, ease: 'power2.out' }, at + 0.05)
+    .to(word, { opacity: 1, x: 0, filter: 'blur(0px)', duration: 0.4, ease: 'power3.out' }, at + 0.14)
+    .to(sep, { scaleY: 1, opacity: 1, duration: 0.35, ease: 'power2.out' }, at + 0.22)
+    .to([kicker, nameEl, lineEl], { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.42, stagger: 0.07, ease: 'power3.out' }, at + 0.28)
+    .to(stat, { opacity: 1, x: 0, duration: 0.42, ease: 'power3.out' }, at + 0.46)
+    .fromTo(shine, { opacity: 0, xPercent: 0 }, { opacity: 0.55, xPercent: 520, duration: 1.1, ease: 'power2.inOut' }, at + 0.55)
+    .to(shine, { opacity: 0, duration: 0.2 }, at + 1.5);
+  const streaks = document.querySelectorAll('#event-streaks .ev-streak');
+  const svg = glyph.querySelector('svg');
+  switch(kind){
+    case 'FOUR':
+      // a quick, faint streak of pace across the bar as the 4 lands
+      tl.fromTo(streaks, { x: '-140%', opacity: 0 }, { x: '340%', opacity: 0.45, duration: 0.5, stagger: 0.05, ease: 'power1.in' }, at)
+        .to(streaks, { opacity: 0, duration: 0.2 }, at + 0.5)
+        .call(() => flashEvent(flash, 0.22), null, at + 0.3)
+        .fromTo(ring, { opacity: 0.8, scale: 1 }, { opacity: 0, scale: 1.45, duration: 0.6, ease: 'power2.out' }, at + 0.3);
+      break;
+    case 'SIX':
+      tl.fromTo(streaks, { x: '-140%', opacity: 0 }, { x: '340%', opacity: 0.5, duration: 0.55, stagger: 0.05, ease: 'power1.in' }, at)
+        .to(streaks, { opacity: 0, duration: 0.2 }, at + 0.55)
+        .call(() => flashEvent(flash, 0.3), null, at + 0.3)
+        .fromTo(ring, { opacity: 0.9, scale: 1 }, { opacity: 0, scale: 1.6, duration: 0.7, ease: 'power2.out' }, at + 0.3)
+        .fromTo(ring, { opacity: 0.6, scale: 1 }, { opacity: 0, scale: 1.9, duration: 0.8, ease: 'power2.out' }, at + 0.45);
+      break;
+    case 'WICKET': {
+      // the bails jump off the stumps and come to rest dislodged
+      const bails = svg ? [...svg.querySelectorAll('.ec-bail')] : [];
+      if(bails.length === 2){
+        gsap.set(bails, { clearProps: 'all' });
+        tl.fromTo(bails[0], { x: 0, y: 0, rotation: 0 }, { x: -4, y: -9, rotation: -40, transformOrigin: '50% 50%', duration: 0.3, ease: 'power2.out' }, at + 0.32)
+          .to(bails[0], { x: -6, y: -3, rotation: -24, duration: 0.35, ease: 'bounce.out' }, at + 0.62)
+          .fromTo(bails[1], { x: 0, y: 0, rotation: 0 }, { x: 4, y: -10, rotation: 38, transformOrigin: '50% 50%', duration: 0.3, ease: 'power2.out' }, at + 0.34)
+          .to(bails[1], { x: 6, y: -4, rotation: 20, duration: 0.35, ease: 'bounce.out' }, at + 0.64);
+      }
+      tl.call(() => flashEvent(flash, 0.18), null, at + 0.32);
+      break;
+    }
+    case 'WIDE': case 'NO_BALL': case 'FREE_HIT': {
+      // the umpire's signal: the arm(s) go out from the shoulder
+      const arms = svg ? svg.querySelectorAll('.ec-arm') : [];
+      if(arms.length) tl.fromTo(arms, { strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.4, ease: 'power2.out', stagger: 0.03 }, at + 0.28);
+      const circle = svg && svg.querySelector('.ec-circle');
+      if(circle) tl.fromTo(circle, { strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.5, ease: 'power1.inOut' }, at + 0.6)
+        .to(circle, { strokeDashoffset: -1, duration: 0.5, ease: 'power1.inOut' }, at + 1.15)
+        .to(circle, { strokeDashoffset: -2, duration: 0.5, ease: 'power1.inOut' }, at + 1.7);
+      break;
+    }
+  }
+}
 // 🔁 IMPACT PLAYER card: badge spins in, title rises, OUT slides in from the
 // right, IN from the left, the swap icon turns, then OUT dims
 // and IN lights up (flash + shine) for the hold.
@@ -2935,7 +3192,8 @@ function playEventTimeline(kind, opts, onDone){
   const impact = document.querySelectorAll('#event-impact .ev-impact-line');
 
   const ipData = kind === 'IMPACT_PLAYER' && opts.data && opts.data.inName && opts.data.outName ? opts.data : null;
-  stage.className = 'ev-active ev-' + kind.toLowerCase().replace(/_/g, '-') + (ipData ? ' ipc-on' : '');
+  const ballCard = BALL_CARD_KINDS.includes(kind);
+  stage.className = 'ev-active ev-' + kind.toLowerCase().replace(/_/g, '-') + (ipData ? ' ipc-on' : '') + (ballCard ? ' ec-on' : '');
   stage.style.setProperty('--ev-primary', theme.primary);
   stage.style.setProperty('--ev-secondary', theme.secondary);
   stage.style.setProperty('--ev-glow', theme.glow);
@@ -3007,13 +3265,14 @@ function playEventTimeline(kind, opts, onDone){
     .to(bg, { opacity: 1, height: targetH, clipPath: 'inset(0% 0% 0% 0% round 14px)', duration: inSec, ease: 'expo.out' }, 0.02);
 
   // ---- hero takeover ----
-  gsap.set('#event-ipcard', { opacity: 1, y: 0, filter: 'blur(0px)' });
+  gsap.set('#event-ipcard, #event-card', { opacity: 1, y: 0, filter: 'blur(0px)' });
   if(ipData) addImpactCardPhase(master, ipData, inSec * 0.82);
+  else if(ballCard) addBallCardPhase(master, kind, opts, inSec * 0.82);
   else addEventHeroPhase(master, kind, theme, chars, inSec * 0.82);
   master.addLabel('heroSettled');
 
   // ---- hold, with barely-visible micro motion ----
-  master.call(() => startEventMicroMotion(bg, theme), null, 'heroSettled')
+  master.call(() => startEventMicroMotion(bg, theme, ballCard), null, 'heroSettled')
     .to({}, { duration: holdSec }, 'heroSettled')
     .call(() => stopEventMicroMotion(), null, `heroSettled+=${holdSec}`);
 
@@ -3024,7 +3283,7 @@ function playEventTimeline(kind, opts, onDone){
     .to(subEl, { opacity: 0, y: -6, duration: outSec * 0.3 }, '<')
     .to(glow, { opacity: 0, scale: 1.4, duration: outSec * 0.5 }, '<')
     .to(lines, { opacity: 0, duration: outSec * 0.3 }, '<')
-    .to('#event-ipcard', { opacity: 0, y: -6, filter: 'blur(6px)', duration: outSec * 0.4, ease: 'power2.in' }, '<')
+    .to('#event-ipcard, #event-card', { opacity: 0, y: -6, filter: 'blur(6px)', duration: outSec * 0.4, ease: 'power2.in' }, '<')
     .to(bg, { height: baseH * 0.22, opacity: 0, clipPath: 'inset(0% 46% 0% 46% round 14px)', duration: outSec, ease: 'power2.inOut' }, `-=${outSec * 0.1}`)
     .to(SB_CONTENT_SELECTOR, { opacity: 1, scale: 1, y: 0, filter: 'blur(0px)', duration: outSec, stagger: 0.02, ease: 'power2.out' }, `-=${outSec * 0.75}`);
 

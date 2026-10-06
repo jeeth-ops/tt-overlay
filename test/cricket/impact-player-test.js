@@ -109,7 +109,7 @@ async function suite(file, label){
     [false, false]);
   const ipRow = (id) => P.$(`#squadA-list .squad-player-row[data-id="${id}"] .squad-ip`);
   click(P, ipRow('bench'));
-  eq(L('TEST 4: ⬆ IP on a squad row makes that player an impact substitute (and takes him out of the XI)'), P.J(`state.teamA.players.find(p => p.id === 'bench')`).impactSub && P.J(`state.teamA.players.find(p => p.id === 'bench')`).isXI === false, true);
+  eq(L('TEST 4: ⬆ IP on a squad row makes that player an impact substitute (and takes them out of the XI)'), P.J(`state.teamA.players.find(p => p.id === 'bench')`).impactSub && P.J(`state.teamA.players.find(p => p.id === 'bench')`).isXI === false, true);
   P.E(`state.teamA.players.find(p => p.id === 'a10').impactSub = true; state.teamA.players.find(p => p.id === 'a9').impactSub = true; renderSquadUI();`);
   const before = P.J(`state.teamA.players.filter(p => p.impactSub).length`);
   click(P, `#squadA-list .squad-player-row[data-id="a8"] .squad-ip`);
@@ -176,7 +176,7 @@ async function suite(file, label){
   eq(L('over 1 complete'), P.J('[state.score.overs, state.score.balls]'), [1, 0]);
   pick(P, 'B', 'Mukesh', 'Impact Bowl');
   eq(L('TEST 25: at the end of an over it is allowed'), /end of over 1/.test(P.text('#ip-when')), true);
-  eq(L('TEST 26: at the end of the over Raj (who bowled) can be replaced — shows his figures'), [outBtn(P, 'Raj').disabled, /bowled 1\.0-0-\d+-1/.test(outBtn(P, 'Raj').textContent)], [false, true]);
+  eq(L('TEST 26: at the end of the over Raj (who bowled) can be replaced — shows the bowling figures'), [outBtn(P, 'Raj').disabled, /bowled 1\.0-0-\d+-1/.test(outBtn(P, 'Raj').textContent)], [false, true]);
   click(P, '#ip-confirm');
   eq(L('TEST 27: the bowling side substitution — Impact Bowl can bowl, Mukesh cannot'), [names(P, `eligibleBowlersForNext('B')`).includes('Impact Bowl'), names(P, `eligibleBowlersForNext('B')`).includes('Mukesh')], [true, false]);
   eq(L('TEST 28: … and Mukesh is no longer a fielder (catch / run out lists)'), [names(P, 'fieldingSidePlayers()').includes('Mukesh'), names(P, 'fieldingSidePlayers()').includes('Impact Bowl')], [false, true]);
@@ -213,14 +213,14 @@ async function suite(file, label){
   eq(L('TEST 33c2: typing a player who has bowled is refused'), /already batted or bowled/.test(lastToast(P)), true);
   P.$('#ip-new-name').value = 'mukesh';
   click(P, '#ip-body [data-ip-add]'); await sleep(30);
-  eq(L('TEST 33c3: typing a team player who has not played selects him, with a note'), [inBtn(P, 'Mukesh').className.includes(' on'), /ticked in the Playing XI — pick him only if/.test(P.text('#ip-body')), P.J(`state.teamB.players.filter(p => p.name === 'Mukesh').length`)], [true, true, 1]);
+  eq(L('TEST 33c3: typing a team player who has not played selects that player, with a note'), [inBtn(P, 'Mukesh').className.includes(' on'), /ticked in the Playing XI — pick this player only if/.test(P.text('#ip-body')), P.J(`state.teamB.players.filter(p => p.name === 'Mukesh').length`)], [true, true, 1]);
   P.$('#ip-new-name').value = '  Shivam   Mavi ';
   click(P, '#ip-body [data-ip-add]'); await sleep(30);
   const added = P.J(`state.teamB.players.find(p => p.name === 'Shivam Mavi') || null`);
-  eq(L('TEST 33d: + Add puts the new player in the squad (not the XI) and selects him'), [!!added, added && added.isXI, !!(inBtn(P, 'Shivam Mavi') || {}).className && inBtn(P, 'Shivam Mavi').className.includes(' on')], [true, false, true]);
+  eq(L('TEST 33d: + Add puts the new player in the squad (not the XI) and selects them'), [!!added, added && added.isXI, !!(inBtn(P, 'Shivam Mavi') || {}).className && inBtn(P, 'Shivam Mavi').className.includes(' on')], [true, false, true]);
   P.$('#ip-new-name').value = 'shivam mavi';
   P.$('#ip-new-name').dispatchEvent(new P.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await sleep(30);
-  eq(L('TEST 33e: adding the same name again (Enter key) does not duplicate him'), P.J(`state.teamB.players.filter(p => p.name.toLowerCase() === 'shivam mavi').length`), 1);
+  eq(L('TEST 33e: adding the same name again (Enter key) does not duplicate them'), P.J(`state.teamB.players.filter(p => p.name.toLowerCase() === 'shivam mavi').length`), 1);
   click(P, '#ip-confirm');
   const sm = P.J(`state.teamB.players.find(p => p.name === 'Shivam Mavi')`);
   eq(L('TEST 33f: confirmed — he is in the XI as the Impact Player, Jadeja is out'), [sm.isXI, !!sm.impactIn, !!sm.impactSub, P.J(`state.teamB.players.find(p => p.id === 'j8').isXI`), P.J('state.impactLog[0].inName')], [true, true, true, false, 'Shivam Mavi']);

@@ -5197,6 +5197,22 @@ function fireEvent(kind, text, sub, durationMs, data){
   }
   logMilestone(`${kind}${sub ? ' — ' + sub : ''}`);
 }
+// 🏏 Card data for the overlay's ball-event graphics (FOUR / SIX / WICKET /
+// WIDE / NO BALL / FREE HIT): who it was, their figures, and both teams —
+// the overlay lays it out at the scorebar's size and fits long names.
+let lastWicketCard = null; // the wicket just recorded: { batter, howOut, bowler }
+function eventTeamCard(t){ return { name: (t && t.name) || '', short: (t && t.short) || '', color: (t && t.color) || '' }; }
+function eventCardData(extra){
+  const batKey = state.battingTeam === 'B' ? 'B' : 'A';
+  return { batTeam: eventTeamCard(teamObj(batKey)), bowlTeam: eventTeamCard(teamObj(batKey === 'A' ? 'B' : 'A')), ...(extra || {}) };
+}
+function eventBatterCard(p){ return p && p.name ? { name: p.name, runs: p.runs || 0, balls: p.balls || 0 } : null; }
+function wicketEventData(card){ return eventCardData({ ...(card || {}), score: `${state.score.runs}/${state.score.wickets}` }); }
+// The confirmed wicket's card (figures + how out) when it is this batter's.
+function wicketCardFor(name){
+  if(lastWicketCard && lastWicketCard.batter && name && lastWicketCard.batter.name === name) return lastWicketCard;
+  return name ? { batter: { name } } : null;
+}
 
 /* ============================================================
    LOGO UPLOAD — client-side compression so payloads stay in KB,
@@ -10699,8 +10715,8 @@ function recordBall(kind, meta){
       pushBallHistory(String(runs));
       overCompletedThisBall = addLegalBall(runs);
       addBowlerBall(runs);
-      if(runs === 4) fireEvent('FOUR', 'FOUR!', state.striker.name);
-      if(runs === 6) fireEvent('SIX', 'SIX!', state.striker.name);
+      if(runs === 4) fireEvent('FOUR', 'FOUR!', state.striker.name, undefined, eventCardData({ batter: eventBatterCard(state.striker), bowler: state.bowler.name || '' }));
+      if(runs === 6) fireEvent('SIX', 'SIX!', state.striker.name, undefined, eventCardData({ batter: eventBatterCard(state.striker), bowler: state.bowler.name || '' }));
       if(runs % 2 === 1) swapStrikeSilent();
       break;
     }
@@ -10828,8 +10844,9 @@ function recordBall(kind, meta){
       // The WICKET graphic is deferred until the new-batsman name modal
       // is submitted (or skipped) — see the '.wm-option' click handler
       // below, which opens that modal right after this call returns.
+      lastWicketCard = { batter: eventBatterCard(dismissedBatter), howOut: dismissalText || '', bowler: state.bowler.name || '' };
       if(!meta || !meta.deferAnimation){
-        fireEvent('WICKET', 'WICKET!', dismissedBatter.name);
+        fireEvent('WICKET', 'WICKET!', dismissedBatter.name, undefined, wicketEventData(lastWicketCard));
       }
       if(wasFreeHit) toast('⚠️ Free Hit wicket recorded as a Run Out');
 
@@ -10968,8 +10985,9 @@ function recordBall(kind, meta){
       else { state.striker = survivor; state.nonStriker = dismissedBatter; }
       state.newBatsmanEnd = vacantEnd;
 
-      fireEvent('WIDE', 'WIDE', extraRun > 0 ? `+${extraRun} run${extraRun === 1 ? '' : 's'}` : '');
-      if(!meta || !meta.deferAnimation) fireEvent('WICKET', 'WICKET!', dismissedBatter.name);
+      fireEvent('WIDE', 'WIDE', extraRun > 0 ? `+${extraRun} run${extraRun === 1 ? '' : 's'}` : '', undefined, eventCardData({ bowler: state.bowler.name || '', runs: wdTotal }));
+      lastWicketCard = { batter: eventBatterCard(dismissedBatter), howOut: dismissalText || '', bowler: state.bowler.name || '' };
+      if(!meta || !meta.deferAnimation) fireEvent('WICKET', 'WICKET!', dismissedBatter.name, undefined, wicketEventData(lastWicketCard));
       break;
     }
     case 'NbW': {
@@ -11059,13 +11077,15 @@ function recordBall(kind, meta){
       else { state.striker = survivor; state.nonStriker = dismissedBatter; }
       state.newBatsmanEnd = vacantEnd;
 
-      fireEvent('NO_BALL', 'NO BALL', batRuns > 0 ? `+${batRuns} off the bat` : '');
-      if(!meta || !meta.deferAnimation) fireEvent('WICKET', 'WICKET!', dismissedBatter.name);
+      fireEvent('NO_BALL', 'NO BALL', batRuns > 0 ? `+${batRuns} off the bat` : '', undefined,
+        eventCardData({ bowler: state.bowler.name || '', runs: 1 + batRuns, batRuns, freeHit: !!matchRules().freeHitOnNoBall }));
+      lastWicketCard = { batter: eventBatterCard(dismissedBatter), howOut: dismissalText || '', bowler: state.bowler.name || '' };
+      if(!meta || !meta.deferAnimation) fireEvent('WICKET', 'WICKET!', dismissedBatter.name, undefined, wicketEventData(lastWicketCard));
       // A No Ball still sets up the next ball as a Free Hit regardless of
       // the wicket that happened on it — same rule as the plain 'Nb' case.
       if(matchRules().freeHitOnNoBall){
         state.freeHit = true;
-        setTimeout(() => fireEvent('FREE_HIT', 'FREE HIT', 'Next ball is a Free Hit'), 2500);
+        setTimeout(() => fireEvent('FREE_HIT', 'FREE HIT', 'Next ball is a Free Hit', undefined, eventCardData({ batter: eventBatterCard(state.striker) })), 2500);
       }
       break;
     }
@@ -11085,7 +11105,8 @@ function recordBall(kind, meta){
       state.thisOver.push(wdLabel);
       pushBallHistory(wdLabel);
       addBowlerExtra(wdTotal);
-      fireEvent('WIDE', 'WIDE', extraRun > 0 ? `+${wdTotal} run${wdTotal===1?'':'s'}${wdBoundary ? ' · boundary' : ''}` : '');
+      fireEvent('WIDE', 'WIDE', extraRun > 0 ? `+${wdTotal} run${wdTotal===1?'':'s'}${wdBoundary ? ' · boundary' : ''}` : '', undefined,
+        eventCardData({ bowler: state.bowler.name || '', runs: wdTotal, boundary: !!(wdBoundary && extraRun > 0) }));
       // A wide that reached the rope is a highlight boundary (never the
       // batter's — it was never touched by the bat).
       if(wdBoundary && extraRun > 0) extraBoundaryEventType = extraRun >= 6 ? 'SIX' : 'FOUR';
@@ -11135,7 +11156,8 @@ function recordBall(kind, meta){
       addBowlerExtra(1 + batRuns);
       fireEvent('NO_BALL', 'NO BALL', byeRuns > 0 ? `+${byeRuns} bye${byeRuns === 1 ? '' : 's'}`
         : legByeRuns > 0 ? `+${legByeRuns} leg bye${legByeRuns === 1 ? '' : 's'}`
-        : (batRuns > 0 ? `+${batRuns} off the bat${nbBoundary ? '' : ' (run)'}` : ''));
+        : (batRuns > 0 ? `+${batRuns} off the bat${nbBoundary ? '' : ' (run)'}` : ''), undefined,
+        eventCardData({ bowler: state.bowler.name || '', runs: nbTotal, batRuns, byes: byeRuns, legByes: legByeRuns, boundary: nbBoundary, freeHit: !!matchRules().freeHitOnNoBall }));
       if(nbMore % 2 === 1) swapStrikeSilent();
       // Free Hit only exists in limited-overs cricket (ODI/T20/Custom) —
       // Test/first-class cricket has no Free Hit provision under the Laws
@@ -11144,7 +11166,7 @@ function recordBall(kind, meta){
         state.freeHit = true;
         // Let the No Ball graphic finish its full run (~2.5s: intro + hold +
         // exit) before Free Hit appears, so the two never overlap on screen.
-        setTimeout(() => fireEvent('FREE_HIT', 'FREE HIT', 'Next ball is a Free Hit'), 2500);
+        setTimeout(() => fireEvent('FREE_HIT', 'FREE HIT', 'Next ball is a Free Hit', undefined, eventCardData({ batter: eventBatterCard(state.striker) })), 2500);
       }
       break;
     }
@@ -12456,7 +12478,9 @@ function armWicketAnimation(name){
   a.timer = setTimeout(() => {
     a.timer = null;
     a.fired = true;
-    fireEvent('WICKET', 'WICKET!', a.name || '');
+    // Before CONFIRM WICKET nobody knows yet who is out — then the card
+    // shows the team only, never a guessed name.
+    fireEvent('WICKET', 'WICKET!', a.name || '', undefined, a.card ? wicketEventData(a.card) : eventCardData({}));
     if(a.confirmed && wicketAnim === a) wicketAnim = null;
   }, WICKET_ANIMATION_DELAY_MS);
   wicketAnim = a;
@@ -12469,10 +12493,12 @@ function disarmWicketAnimation(){
 // its 3 seconds with the confirmed batter's name — or, with no press timer
 // running at all, right now.
 function fireWicketAnimationOnce(name){
+  const card = wicketCardFor(name);
   const a = wicketAnim;
-  if(!a){ fireEvent('WICKET', 'WICKET!', name || ''); return; }
+  if(!a){ fireEvent('WICKET', 'WICKET!', name || '', undefined, card ? wicketEventData(card) : eventCardData({})); return; }
   if(a.fired){ wicketAnim = null; return; }
   a.name = name || a.name;
+  a.card = card;
   a.confirmed = true;
 }
 let wdState = null, wdFielderDD = null;
@@ -16185,11 +16211,13 @@ function msStartMatch(){
    • Each side may bring on ONE Impact Player, at the start of an innings,
      at the end of an over, at the fall of a wicket or when a batter
      retires — never in the middle of a delivery and never in a Super Over.
-   • He replaces one player of the XI, who takes no further part in the
-     match (out of every batter / bowler / fielder list).
+   • The Impact Player replaces one player of the XI, who takes no further
+     part in the match (out of every batter / bowler / fielder list). The
+     substitute can also be picked from the squad, or added by name, in
+     the Impact Player window.
    • Never a batter at the crease; mid-over, never the bowler of that over.
-   • At most 11 may bat: if the replaced player has already batted, the
-     Impact Player may not bat.
+   • The Impact Player may bat, bowl and field — but once a side has used
+     it, no more than 11 may bat in the innings.
    One Undo puts everything back (same history snapshot as a delivery).
    ============================================================ */
 const IMPACT_MAX_SUBS = 5;
@@ -16267,7 +16295,7 @@ function impactPlayerInfo(team, p){
 // the squad who is not in the Playing XI, then — because squads are often
 // left with everyone ticked — any other player of the team who has not
 // taken part yet (not batted, not bowled, not at the crease / bowling now).
-// Picking one names him as the substitute on Confirm. A brand-new name can
+// Picking one names that player as the substitute on Confirm. A brand-new name can
 // be added from the modal too. `outKey` (the player going off) is never offered.
 function impactHasPlayed(team, p){
   if(impactHasBatted(team, p) || bowlerHasBowled(team, p)) return true;
@@ -16334,10 +16362,10 @@ function renderImpactModal(){
   const inBtns = (g.named.length ? `<div class="ip-g">Named substitutes</div>${g.named.map(p => inBtn(p, '⬆ IP substitute')).join('')}` : '')
     + (g.squad.length ? `<div class="ip-g">From the squad (not in the XI)</div>${g.squad.map(p => inBtn(p, 'squad player')).join('')}` : '')
     + (g.rest.length ? `<div class="ip-g">Rest of the team (ticked in the XI)</div>${g.rest.map(p => inBtn(p, "ticked in the XI · hasn't batted or bowled")).join('')}` : '')
-    + (g.named.length + g.squad.length + g.rest.length ? '' : q ? `<div class="ip-empty">No one matches "${escapeHtmlPanel(q)}" — add him as a new player below.</div>` : `<div class="ip-empty">Nobody is free to come on — type the substitute's name below.</div>`);
+    + (g.named.length + g.squad.length + g.rest.length ? '' : q ? `<div class="ip-empty">No one matches "${escapeHtmlPanel(q)}" — add the name as a new player below.</div>` : `<div class="ip-empty">Nobody is free to come on — type the substitute's name below.</div>`);
   const notes = [];
   if(xi.length !== 11) notes.push(`${t.name || 'This side'} has ${xi.length} players ticked in the Playing XI (should be 11) — fix the ticks in Team Squads when you can.`);
-  if(inP && cand.rest.includes(inP)) notes.push(`${inP.name} is ticked in the Playing XI — pick him only if he was not actually playing.`);
+  if(inP && cand.rest.includes(inP)) notes.push(`${inP.name} is ticked in the Playing XI — pick this player only if they were not actually playing.`);
   if(outP && impactHasBatted(team, outP)) notes.push(`${outP.name} has already batted. ${inP ? inP.name : 'The Impact Player'} can still bat, but only 11 players may bat in the innings.`);
   if(outP && t.wkId === outP.id) notes.push(`${outP.name} is the wicket-keeper — choose a new keeper in Team Squads.`);
   if(outP && t.captainId === outP.id) notes.push(`${outP.name} is the captain — choose who leads in Team Squads.`);
