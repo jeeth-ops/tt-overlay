@@ -729,6 +729,18 @@
   .ip-summary:empty{ display:none; }
   .ip-empty{ font-size:12.5px; color:var(--text-dim); padding:8px 0; line-height:1.5; }
   .ip-actions{ display:flex; gap:10px; justify-content:flex-end; margin-top:14px; }
+  .ip-rules{ display:block; margin-top:3px; font-size:10.5px; font-weight:600; opacity:.75; }
+  .ip-steps{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
+  .ip-step{ display:inline-flex; align-items:center; gap:6px; padding:4px 10px 4px 4px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); font-size:11.5px; font-weight:700; color:var(--text-dim); }
+  .ip-step i{ display:inline-grid; place-items:center; width:18px; height:18px; border-radius:50%; background:var(--border); font-style:normal; font-size:10.5px; color:#fff; }
+  .ip-step.done{ color:#e5e7eb; border-color:rgba(34,197,94,.45); }
+  .ip-step.done i{ background:#22c55e; }
+  .ip-g{ font-size:10px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--text-dim); opacity:.8; margin:4px 2px 0; }
+  .ip-pl em{ font-style:normal; font-size:9px; font-weight:800; padding:0 4px; margin-left:6px; border-radius:4px; background:rgba(240,180,41,.18); color:#f0b429; vertical-align:middle; }
+  .ip-add{ display:flex; gap:6px; margin-top:8px; }
+  .ip-add input{ flex:1; min-width:0; }
+  .ip-summary b.g{ color:#86efac; } .ip-summary b.r{ color:#fca5a5; }
+  @media (max-width:560px){ .ip-cols, .ip-teams{ grid-template-columns:1fr; } }
   .ip-actions button{ min-width:130px; }
   .squad-ip{ padding:3px 8px; font-size:10.5px; font-weight:800; border-radius:99px; background:transparent; border:1px solid var(--border); color:var(--text-dim); white-space:nowrap; }
   .squad-ip.on{ background:rgba(34,197,94,.15); border-color:rgba(34,197,94,.5); color:#86efac; }
@@ -16228,6 +16240,32 @@ function openImpactModal(){
   document.getElementById('ip-overlay').classList.add('show');
 }
 function closeImpactModal(){ document.getElementById('ip-overlay').classList.remove('show'); ipState = null; }
+// Live status of a player, shown under his name in the "goes off" list.
+function impactPlayerInfo(team, p){
+  const parts = [];
+  if(state.battingTeam === team && (impactSamePlayer(state.striker, p) || impactSamePlayer(state.nonStriker, p))){
+    const b = impactSamePlayer(state.striker, p) ? state.striker : state.nonStriker;
+    parts.push(`batting ${b.runs || 0} (${b.balls || 0})`);
+  } else {
+    const row = (state.battingCard[team] || []).slice().reverse().find(r => impactSamePlayer(r, p));
+    if(row) parts.push(`${row.retiredHurt ? 'retired hurt' : row.out ? 'out' : 'batted'} ${row.runs || 0} (${row.balls || 0})`);
+    else if(state.battingTeam === team) parts.push('yet to bat');
+  }
+  const live = state.battingTeam !== team && impactSamePlayer(state.bowler, p) ? state.bowler : null;
+  const bw = live || (state.bowlingCard[team] || []).find(r => impactSamePlayer(r, p));
+  if(bw && ((bw.overs || 0) + (bw.balls || 0)) > 0) parts.push(`bowled ${bw.overs || 0}.${bw.balls || 0}-${bw.maidens || 0}-${bw.runs || 0}-${bw.wickets || 0}`);
+  return parts.join(' · ');
+}
+// Who can come on: the named impact substitutes first, then anyone else in
+// the squad who is not in the Playing XI (picking one names him as the
+// substitute on Confirm). A brand-new name can be added from the modal too.
+function impactCandidates(team){
+  const ps = rosterPlayers(team).filter(p => p && p.name && !p.impactIn && !p.impactOut);
+  return {
+    named: ps.filter(p => p.impactSub),
+    squad: ps.filter(p => !p.impactSub && p.isXI === false)
+  };
+}
 function renderImpactModal(){
   if(!ipState) return;
   const team = ipState.team, t = teamObj(team);
@@ -16237,53 +16275,85 @@ function renderImpactModal(){
   const body = document.getElementById('ip-body');
   const confirm = document.getElementById('ip-confirm');
   confirm.disabled = true;
+  confirm.textContent = 'Confirm Impact Player';
   if(!impactOn()){
     when.className = 'ip-when no';
     when.textContent = 'The Impact Player rule is off for this match.';
     document.getElementById('ip-teams').innerHTML = '';
-    body.innerHTML = `<div class="ip-empty">Switch it on in Match Setup → Match format (or here), then mark each side's substitutes with ⬆ IP in Team Squads.</div>
+    body.innerHTML = `<div class="ip-empty">Turn it on here (or in Match Setup → Match format). Then pick who goes off and who comes on — the substitute can be chosen from the squad or added by name.</div>
       <button type="button" class="small primary" data-ip-enable>Turn the Impact Player rule on</button>`;
     return;
   }
   when.className = 'ip-when ' + (win.ok ? 'ok' : 'no');
-  when.textContent = win.ok ? `✓ Allowed now — at ${win.at}.` : `✕ Not now. ${win.why}`;
+  when.innerHTML = (win.ok ? `✓ Allowed now — at ${escapeHtmlPanel(win.at)}.` : `✕ Not now. ${escapeHtmlPanel(win.why)}`)
+    + `<span class="ip-rules">Allowed: start of an innings · end of an over · fall of a wicket · a batter retiring. One per team.</span>`;
   document.getElementById('ip-teams').innerHTML = ['A', 'B'].map(k => {
     const u = impactUsedBy(k);
     const role = k === state.battingTeam ? 'batting' : 'bowling';
     return `<button type="button" class="ip-team${k === team ? ' on' : ''}${u ? ' used' : ''}" data-ip-team="${k}"><b>${escapeHtmlPanel(teamObj(k).name || 'Team ' + k)}</b>
-      <small>${role} · ${u ? `used: ${escapeHtmlPanel(u.inName)} for ${escapeHtmlPanel(u.outName)} (${escapeHtmlPanel(u.overLabel)})` : 'Impact Player available'}</small></button>`;
+      <small>${role} · ${u ? `used: ⬆ ${escapeHtmlPanel(u.inName)} ⬇ ${escapeHtmlPanel(u.outName)} (${escapeHtmlPanel(u.overLabel)})` : 'Impact Player available'}</small></button>`;
   }).join('');
   if(used){
     body.innerHTML = `<div class="ip-empty">${escapeHtmlPanel(t.name || 'This side')} has already used its Impact Player — ⬆ ${escapeHtmlPanel(used.inName)} came on for ⬇ ${escapeHtmlPanel(used.outName)} at ${escapeHtmlPanel(used.overLabel)}. Only one is allowed per match. (Undo reverses it if it was a mistake.)</div>`;
     return;
   }
-  const subs = rosterPlayers(team).filter(p => p.impactSub && !p.impactIn);
-  if(!subs.length){
-    body.innerHTML = `<div class="ip-empty">No impact substitutes named for ${escapeHtmlPanel(t.name || 'this side')}. Mark up to ${IMPACT_MAX_SUBS} players with ⬆ IP in Team Squads first.</div>
-      <button type="button" class="small" data-ip-goto>Open Team Squads</button>`;
-    return;
-  }
   const xi = impactXiOf(team);
+  const cand = impactCandidates(team);
+  const allIn = [...cand.named, ...cand.squad];
   const outP = xi.find(p => ipKey(p) === ipState.outKey) || null;
-  const inP = subs.find(p => ipKey(p) === ipState.inKey) || null;
-  const outBtns = xi.map(p => {
-    const why = impactOutBlock(team, p, win);
-    const sub = why || (impactHasBatted(team, p) ? 'has batted' : (bowlerHasBowled(team, p) ? 'has bowled' : ''));
-    return `<button type="button" class="ip-pl out${outP === p ? ' on' : ''}" data-ip-out="${escapeHtmlAttr(ipKey(p))}"${why ? ' disabled' : ''}>⬇ ${escapeHtmlPanel(p.name)}${sub ? `<small>${escapeHtmlPanel(sub)}</small>` : ''}</button>`;
-  }).join('');
-  const inBtns = subs.map(p => `<button type="button" class="ip-pl in${inP === p ? ' on' : ''}" data-ip-in="${escapeHtmlAttr(ipKey(p))}">⬆ ${escapeHtmlPanel(p.name)}</button>`).join('');
+  const inP = allIn.find(p => ipKey(p) === ipState.inKey) || null;
+  const tags = (p) => (p.id && p.id === t.captainId ? '<em>C</em>' : '') + (p.id && p.id === t.wkId ? '<em>WK</em>' : '');
+  const outRows = xi.map(p => ({ p, why: impactOutBlock(team, p, win) })).sort((a, b) => (a.why ? 1 : 0) - (b.why ? 1 : 0));
+  const outBtns = outRows.map(({ p, why }) => {
+    const info = impactPlayerInfo(team, p);
+    const sub = [info, why ? `can't go off — ${why}` : ''].filter(Boolean).join(' · ');
+    return `<button type="button" class="ip-pl out${outP === p ? ' on' : ''}" data-ip-out="${escapeHtmlAttr(ipKey(p))}"${why ? ' disabled' : ''}>⬇ ${escapeHtmlPanel(p.name)}${tags(p)}${sub ? `<small>${escapeHtmlPanel(sub)}</small>` : ''}</button>`;
+  }).join('') || `<div class="ip-empty">No Playing XI ticked for ${escapeHtmlPanel(t.name || 'this side')} — tick the XI in Team Squads.</div>`;
+  const inBtn = (p, kind) => `<button type="button" class="ip-pl in${inP === p ? ' on' : ''}" data-ip-in="${escapeHtmlAttr(ipKey(p))}">⬆ ${escapeHtmlPanel(p.name)}<small>${kind}</small></button>`;
+  const inBtns = (cand.named.length ? `<div class="ip-g">Named substitutes</div>${cand.named.map(p => inBtn(p, '⬆ IP substitute')).join('')}` : '')
+    + (cand.squad.length ? `<div class="ip-g">From the squad (not in the XI)</div>${cand.squad.map(p => inBtn(p, 'squad player')).join('')}` : '')
+    + (allIn.length ? '' : `<div class="ip-empty">Nobody outside the XI in the squad — type the substitute's name below.</div>`);
   const notes = [];
   if(outP && impactHasBatted(team, outP)) notes.push(`${outP.name} has already batted. ${inP ? inP.name : 'The Impact Player'} can still bat, but only 11 players may bat in the innings.`);
   if(outP && t.wkId === outP.id) notes.push(`${outP.name} is the wicket-keeper — choose a new keeper in Team Squads.`);
   if(outP && t.captainId === outP.id) notes.push(`${outP.name} is the captain — choose who leads in Team Squads.`);
   if(win.midOver && team !== state.battingTeam) notes.push('Mid-over: the Impact Player cannot bowl the rest of this over.');
-  body.innerHTML = `<div class="ip-cols">
+  const step = (n, done, label) => `<span class="ip-step${done ? ' done' : ''}"><i>${done ? '✓' : n}</i>${label}</span>`;
+  body.innerHTML = `<div class="ip-steps">${step(1, true, escapeHtmlPanel(t.name || 'Team ' + team))}${step(2, !!outP, outP ? '⬇ ' + escapeHtmlPanel(outP.name) : 'Who goes off')}${step(3, !!inP, inP ? '⬆ ' + escapeHtmlPanel(inP.name) : 'Who comes on')}</div>
+    <div class="ip-cols">
       <div><div class="ip-k">⬇ Goes off — from the Playing XI</div><div class="ip-list">${outBtns}</div></div>
-      <div><div class="ip-k">⬆ Comes on — impact substitute</div><div class="ip-list">${inBtns}</div></div>
+      <div><div class="ip-k">⬆ Comes on — the substitute</div><div class="ip-list">${inBtns}</div>
+        <div class="ip-add"><input type="text" id="ip-new-name" placeholder="New player name" autocomplete="off" maxlength="40"><button type="button" class="small" data-ip-add>+ Add</button></div></div>
     </div>
     <div class="ip-note">${notes.map(escapeHtmlPanel).join('<br>')}</div>
-    <div class="ip-summary">${outP && inP ? `${escapeHtmlPanel(t.name || 'Team ' + team)}: ⬆ ${escapeHtmlPanel(inP.name)} comes on for ⬇ ${escapeHtmlPanel(outP.name)} at ${escapeHtmlPanel(win.at || '')}` : ''}</div>`;
+    <div class="ip-summary">${outP && inP ? `${escapeHtmlPanel(t.name || 'Team ' + team)}: ⬆ <b class="g">${escapeHtmlPanel(inP.name)}</b> comes on for ⬇ <b class="r">${escapeHtmlPanel(outP.name)}</b>${win.ok ? ` at ${escapeHtmlPanel(win.at)}` : ''}` : ''}</div>`;
   confirm.disabled = !(win.ok && outP && inP);
+  if(outP && inP) confirm.textContent = `Confirm: ⬆ ${inP.name} ⬇ ${outP.name}`;
+}
+// "+ Add" in the modal: a new squad player who comes straight on as the
+// substitute (same permanent-id lookup as Team Squads' + Add).
+async function impactAddPlayer(){
+  if(!ipState) return;
+  const input = document.getElementById('ip-new-name');
+  const name = ((input && input.value) || '').trim().replace(/\s+/g, ' ');
+  if(!name){ toast('Type the substitute\'s name'); if(input) input.focus(); return; }
+  const team = ipState.team, t = teamObj(team);
+  t.players = t.players || [];
+  const same = t.players.find(p => (p.name || '').trim().toLowerCase() === name.toLowerCase());
+  if(same){
+    if(same.impactOut || same.impactIn){ toast(`⚠️ ${same.name} is already part of the substitution`); return; }
+    if(same.isXI !== false && !same.impactSub){ toast(`⚠️ ${same.name} is already in the Playing XI`); return; }
+    ipState.inKey = ipKey(same); renderImpactModal(); return;
+  }
+  if(input) input.value = '';
+  const id = await resolveOrCreatePlayerId(name);
+  if(!ipState || ipState.team !== team) return;
+  let p = t.players.find(x => x.id === id);
+  if(p && (p.isXI !== false || p.impactIn || p.impactOut) && !p.impactSub){ toast(`⚠️ ${p.name} is already in the Playing XI`); return; }
+  if(!p){ p = { id, name, isXI: false }; t.players.push(p); }
+  ipState.inKey = ipKey(p);
+  renderSquadUI(); renderRosterControls(); pushState(true);
+  renderImpactModal();
 }
 function bowlerHasBowled(team, p){
   if((state.bowlingCard[team] || []).some(r => impactSamePlayer(r, p))) return true;
@@ -16297,7 +16367,8 @@ function confirmImpactPlayer(){
   if(!win.ok){ toast('⚠️ ' + win.why); return; }
   if(impactUsedBy(team)){ toast('⚠️ This side has already used its Impact Player'); return; }
   const outP = impactXiOf(team).find(p => ipKey(p) === ipState.outKey);
-  const inP = rosterPlayers(team).find(p => p.impactSub && !p.impactIn && ipKey(p) === ipState.inKey);
+  const inC = impactCandidates(team);
+  const inP = [...inC.named, ...inC.squad].find(p => ipKey(p) === ipState.inKey);
   if(!outP || !inP){ toast('⚠️ Choose who goes off and who comes on'); return; }
   const block = impactOutBlock(team, outP, win);
   if(block){ toast(`⚠️ ${outP.name} cannot be replaced now — ${block}`); return; }
@@ -16308,6 +16379,7 @@ function confirmImpactPlayer(){
   outP.isXI = false;
   outP.impactOut = { forId: inP.id || null, forName: inP.name, ...at };
   inP.isXI = true;
+  inP.impactSub = true; // a squad player picked here is named as the substitute
   inP.impactIn = { forId: outP.id || null, forName: outP.name, outHadBatted, ...at };
   if(!Array.isArray(state.impactLog)) state.impactLog = [];
   state.impactLog.push({ team, teamName: t.name || '', inId: inP.id || null, inName: inP.name, outId: outP.id || null, outName: outP.name,
@@ -16333,8 +16405,9 @@ function confirmImpactPlayer(){
     if(b.dataset.ipOut){ ipState.outKey = b.dataset.ipOut; renderImpactModal(); return; }
     if(b.dataset.ipIn){ ipState.inKey = b.dataset.ipIn; renderImpactModal(); return; }
     if(b.hasAttribute('data-ip-enable')){ state.impactPlayerEnabled = true; renderSquadUI(); if(typeof renderMatchSetup === 'function') renderMatchSetup(); pushState(true); renderImpactModal(); return; }
-    if(b.hasAttribute('data-ip-goto')){ closeImpactModal(); if(typeof msGoto === 'function') msGoto('card-team-squads'); }
+    if(b.hasAttribute('data-ip-add')){ impactAddPlayer(); return; }
   });
+  ov.addEventListener('keydown', (e) => { if(e.key === 'Enter' && e.target && e.target.id === 'ip-new-name'){ e.preventDefault(); impactAddPlayer(); } });
   const btn = document.getElementById('lc-impact-btn');
   if(btn) btn.addEventListener('click', openImpactModal);
 })();

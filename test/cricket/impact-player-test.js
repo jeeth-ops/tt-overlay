@@ -121,7 +121,10 @@ async function suite(file, label){
   eq(L('TEST 6: at 0.0 (start of the innings) it is allowed'), [/Allowed now/.test(P.text('#ip-when')), /start of the innings/.test(P.text('#ip-when'))], [true, true]);
   eq(L('TEST 7: not-out batters at the crease cannot be chosen to go off'), [outBtn(P, 'Rohit').disabled, outBtn(P, 'Ishan').disabled, outBtn(P, 'Hardik').disabled], [true, true, false]);
   eq(L('TEST 8: a not-yet-on substitute and the bench are not in the "goes off" list'), [!!outBtn(P, 'Impact Bat'), !!outBtn(P, 'Bench Guy')], [false, false]);
-  eq(L('TEST 9: Confirm is enabled only once both players are picked'), P.$('#ip-confirm').disabled, false);
+  eq(L('TEST 9: Confirm is enabled only once both players are picked — and names them'), [P.$('#ip-confirm').disabled, P.$('#ip-confirm').textContent], [false, 'Confirm: ⬆ Impact Bat ⬇ Hardik']);
+  eq(L('TEST 9b: the three steps show ✓ team / ⬇ Hardik / ⬆ Impact Bat'), P.$$('#ip-body .ip-step.done').map(e => e.textContent.replace(/^✓/, '').trim()), ['Mumbai Indians', '⬇ Hardik', '⬆ Impact Bat'].map((x, i) => i === 0 ? P.J('state.teamA.name') : x));
+  eq(L('TEST 9c: live status under each name (batting / yet to bat)'), [/batting 0 \(0\)/.test(outBtn(P, 'Rohit').textContent), /yet to bat/.test(outBtn(P, 'Hardik').textContent)], [true, true]);
+  eq(L('TEST 9d: "comes on" lists the named substitutes AND the squad players outside the XI'), P.$$('#ip-body [data-ip-in]').map(b => b.firstChild.textContent.trim()), ['⬆ Impact Bat', '⬆ Spare Bat', '⬆ Bench Guy']);
   P.E(`closeImpactModal()`);
 
   P.E(`recordBall('1'); recordBall('0');`);
@@ -169,7 +172,7 @@ async function suite(file, label){
   eq(L('over 1 complete'), P.J('[state.score.overs, state.score.balls]'), [1, 0]);
   pick(P, 'B', 'Mukesh', 'Impact Bowl');
   eq(L('TEST 25: at the end of an over it is allowed'), /end of over 1/.test(P.text('#ip-when')), true);
-  eq(L('TEST 26: at the end of the over Raj (who bowled) can be replaced — marked "has bowled"'), [outBtn(P, 'Raj').disabled, /has bowled/.test(outBtn(P, 'Raj').textContent)], [false, true]);
+  eq(L('TEST 26: at the end of the over Raj (who bowled) can be replaced — shows his figures'), [outBtn(P, 'Raj').disabled, /bowled 1\.0-0-\d+-1/.test(outBtn(P, 'Raj').textContent)], [false, true]);
   click(P, '#ip-confirm');
   eq(L('TEST 27: the bowling side substitution — Impact Bowl can bowl, Mukesh cannot'), [names(P, `eligibleBowlersForNext('B')`).includes('Impact Bowl'), names(P, `eligibleBowlersForNext('B')`).includes('Mukesh')], [true, false]);
   eq(L('TEST 28: … and Mukesh is no longer a fielder (catch / run out lists)'), [names(P, 'fieldingSidePlayers()').includes('Mukesh'), names(P, 'fieldingSidePlayers()').includes('Impact Bowl')], [false, true]);
@@ -191,6 +194,30 @@ async function suite(file, label){
   eq(L('TEST 33a: Undo #2 reverses the bowling-side substitution only (no ball removed)'),
     [P.J('state.impactLog.length'), P.J('state.ballLog.length'), P.J(`state.teamB.players.find(p => p.id === 'm1').isXI`), P.J(`!!state.teamB.players.find(p => p.id === 'ipb').impactIn`), /Impact Player substitution undone/.test(lastToast(P))],
     [1, logAll - 1, true, false, true]);
+
+  // ---- pick from the squad / add a new name right in the modal ----
+  setup(P, true);
+  P.E(`state.teamB.players = state.teamB.players.filter(p => p.id !== 'ipb')`); // no named substitute at all
+  pick(P, 'B', 'Jadeja');
+  eq(L('TEST 33b: no substitute named — the modal still offers "+ Add" (no dead end)'), [!!P.$('#ip-new-name'), /type the substitute's name below/.test(P.text('#ip-body'))], [true, true]);
+  P.$('#ip-new-name').value = 'Jadeja';
+  click(P, '#ip-body [data-ip-add]'); await sleep(30);
+  eq(L('TEST 33c: a name already in the Playing XI is refused'), [/already in the Playing XI/.test(lastToast(P)), P.J(`state.teamB.players.filter(p => p.name === 'Jadeja').length`)], [true, 1]);
+  P.$('#ip-new-name').value = '  Shivam   Mavi ';
+  click(P, '#ip-body [data-ip-add]'); await sleep(30);
+  const added = P.J(`state.teamB.players.find(p => p.name === 'Shivam Mavi') || null`);
+  eq(L('TEST 33d: + Add puts the new player in the squad (not the XI) and selects him'), [!!added, added && added.isXI, !!(inBtn(P, 'Shivam Mavi') || {}).className && inBtn(P, 'Shivam Mavi').className.includes(' on')], [true, false, true]);
+  P.$('#ip-new-name').value = 'shivam mavi';
+  P.$('#ip-new-name').dispatchEvent(new P.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await sleep(30);
+  eq(L('TEST 33e: adding the same name again (Enter key) does not duplicate him'), P.J(`state.teamB.players.filter(p => p.name.toLowerCase() === 'shivam mavi').length`), 1);
+  click(P, '#ip-confirm');
+  const sm = P.J(`state.teamB.players.find(p => p.name === 'Shivam Mavi')`);
+  eq(L('TEST 33f: confirmed — he is in the XI as the Impact Player, Jadeja is out'), [sm.isXI, !!sm.impactIn, !!sm.impactSub, P.J(`state.teamB.players.find(p => p.id === 'j8').isXI`), P.J('state.impactLog[0].inName')], [true, true, true, false, 'Shivam Mavi']);
+  // a squad player (not named ⬆ IP) chosen directly
+  pick(P, 'A', 'Hardik', 'Bench Guy');
+  click(P, '#ip-confirm');
+  const bg = P.J(`state.teamA.players.find(p => p.id === 'bench')`);
+  eq(L('TEST 33g: a squad player picked straight from the modal comes on (named as the substitute)'), [bg.isXI, !!bg.impactIn, !!bg.impactSub, P.J('state.impactLog.length')], [true, true, true, 2]);
 
   // ---- before the first ball + Undo with an empty ball log ----
   setup(P, true);
@@ -229,7 +256,7 @@ async function suite(file, label){
   setup(P, true);
   P.E(`recordBall('W', { dismissalType: 'Bowled' }); sendInNewBatsman('Surya', 'a2');`);
   pick(P, 'A', 'Rohit', 'Impact Bat');
-  eq(L('TEST 39: replacing a dismissed batter is allowed and the note explains only 11 may bat'), [outBtn(P, 'Rohit').disabled, /has batted/.test(outBtn(P, 'Rohit').textContent), /only 11 players may bat/.test(P.text('#ip-body'))], [false, true, true]);
+  eq(L('TEST 39: replacing a dismissed batter is allowed and the note explains only 11 may bat'), [outBtn(P, 'Rohit').disabled, /out 0 \(1\)/.test(outBtn(P, 'Rohit').textContent), /only 11 players may bat/.test(P.text('#ip-body'))], [false, true, true]);
   click(P, '#ip-confirm');
   eq(L('TEST 40: … and the Impact Player can still bat'), names(P, `eligibleBatters('A')`).includes('Impact Bat'), true);
 
