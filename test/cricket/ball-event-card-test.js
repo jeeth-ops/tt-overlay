@@ -1,8 +1,9 @@
 // 🏏 BALL-EVENT CARDS — FOUR / SIX / WICKET / WIDE / NO BALL / FREE HIT play
 // on the overlay at the scorebar's own size. Both panels send the card data
 // (who, their figures, how out, both teams); the overlay turns it into the
-// card's word, name, detail line and score — and never repeats the word as
-// a "name" or guesses who is out before CONFIRM WICKET.
+// card's word, name and detail line. Only FOUR / SIX name the batter, and no
+// card shows a score. The panel never guesses who is out before CONFIRM
+// WICKET.
 //
 //   node test/cricket/ball-event-card-test.js
 const fs = require('fs');
@@ -134,29 +135,35 @@ async function overlaySuite(){
   await sleep(150);
   const C = (kind, sub, data) => O.J(`ballCardContent(${JSON.stringify(kind)}, ${JSON.stringify({ sub, data })})`);
   const MI = { name: 'Mumbai Indians', short: 'MI', color: '#17337a' }, CSK = { name: 'Chennai Super Kings', short: 'CSK', color: '#f2c40f' };
+  const ALL = (c) => Object.keys(c).sort();
   let c = C('FOUR', 'Rohit Sharma', { batter: { name: 'Rohit Sharma', runs: 34, balls: 21 }, bowler: 'Deepak Chahar', batTeam: MI, bowlTeam: CSK });
-  eq('OVERLAY: FOUR card — word, team, name, "off <bowler>", runs (balls)', [c.word, c.kicker, c.teamColor, c.name, c.line, c.stat], ['FOUR', 'Mumbai Indians', '#17337a', 'Rohit Sharma', 'off Deepak Chahar', { v: '34', s: '(21)' }]);
-  // WICKET / WIDE / NO BALL / FREE HIT: no player names at all
+  eq('OVERLAY: FOUR card — word, team, batter, "off <bowler>"', [c.word, c.kicker, c.teamColor, c.name, c.line], ['FOUR', 'Mumbai Indians', '#17337a', 'Rohit Sharma', 'off Deepak Chahar']);
+  eq('OVERLAY: no card carries a score at all (no stat field)', ALL(c), ['glyph', 'kicker', 'line', 'name', 'teamColor', 'word']);
+  c = C('SIX', 'Rohit Sharma', { batter: { name: 'Rohit Sharma', runs: 40, balls: 22 }, bowler: 'Deepak Chahar', batTeam: MI });
+  eq('OVERLAY: SIX card — the batter\'s runs never appear', JSON.stringify(c).includes('40') || JSON.stringify(c).includes('22'), false);
+  // WICKET / WIDE / NO BALL / FREE HIT: no player names, no runs
   c = C('WICKET', 'Rohit Sharma', { batter: { name: 'Rohit Sharma', runs: 34, balls: 22 }, howOut: 'c Jadeja b Chahar', score: '87/3', batTeam: MI });
-  eq('OVERLAY: WICKET card — the word and the stumps only, no names (not even in "how out")', [c.word, c.kicker, c.name, c.line, c.stat], ['WICKET', '', '', '', null]);
+  eq('OVERLAY: WICKET card — the word and the stumps only (no name, no how out, no score)', [c.word, c.kicker, c.name, c.line], ['WICKET', '', '', '']);
   c = C('WICKET', 'WICKET!', { batTeam: MI });
-  eq('OVERLAY: WICKET before it is confirmed — same card', [c.name, c.line, c.stat, c.kicker], ['', '', null, '']);
+  eq('OVERLAY: WICKET before it is confirmed — the same card', [c.name, c.line, c.kicker], ['', '', '']);
   c = C('WIDE', '+5 runs · boundary', { bowler: 'Deepak Chahar', runs: 5, boundary: true, batTeam: MI, bowlTeam: CSK });
-  eq('OVERLAY: WIDE card — no bowler name: "BOUNDARY" and "+5 RUNS"', [c.kicker, c.name, c.line, c.stat], ['', '', 'Boundary', { v: '+5', s: 'RUNS' }]);
+  eq('OVERLAY: WIDE to the boundary — just "BOUNDARY" (no bowler, no runs)', [c.kicker, c.name, c.line], ['', '', 'Boundary']);
   c = C('WIDE', '', { bowler: 'Deepak Chahar', runs: 1, boundary: false, bowlTeam: CSK });
-  eq('OVERLAY: a plain WIDE — "+1 RUN" only', [c.name, c.line, c.stat], ['', '', { v: '+1', s: 'RUN' }]);
+  eq('OVERLAY: a plain WIDE — the word only', [c.name, c.line], ['', '']);
+  c = C('WIDE', '', { bowler: 'Deepak Chahar', runs: 3, boundary: false, bowlTeam: CSK });
+  eq('OVERLAY: a WIDE with runs taken — still no runs shown', c.line, '');
   c = C('NO_BALL', '', { bowler: 'Deepak Chahar', runs: 5, batRuns: 4, boundary: true, freeHit: true, bowlTeam: CSK });
-  eq('OVERLAY: NO BALL card — no bowler name: off the bat, free hit next', [c.word, c.name, c.line, c.stat], ['NO BALL', '', '4 off the bat · Free hit next', { v: '+5', s: 'RUNS' }]);
+  eq('OVERLAY: NO BALL hit to the boundary — "BOUNDARY · FREE HIT NEXT" (no bowler, no runs)', [c.word, c.name, c.line], ['NO BALL', '', 'Boundary · Free hit next']);
   c = C('NO_BALL', '', { bowler: 'Deepak Chahar', runs: 3, byes: 2, freeHit: false });
-  eq('OVERLAY: NO BALL with byes', c.line, '2 byes');
+  eq('OVERLAY: NO BALL with byes, no free hit (Test) — the word only', c.line, '');
   c = C('FREE_HIT', 'Next ball is a Free Hit', { batter: { name: 'Suryakumar Yadav', runs: 12, balls: 7 }, batTeam: MI });
-  eq('OVERLAY: FREE HIT card — the word and the signal only, no batter name', [c.word, c.kicker, c.name, c.line, c.stat], ['FREE HIT', '', '', '', null]);
+  eq('OVERLAY: FREE HIT card — the word and the signal only', [c.word, c.kicker, c.name, c.line], ['FREE HIT', '', '', '']);
   c = C('WICKET', 'Rohit Sharma', null);
   eq('OVERLAY: an older panel\'s WICKET (name in "sub") still shows no name', c.name, '');
   c = C('FOUR', 'Rohit Sharma', null);
-  eq('OVERLAY: an older panel (no data) still gets the name from "sub"', [c.name, c.line, c.stat, c.kicker], ['Rohit Sharma', '', null, '']);
+  eq('OVERLAY: an older panel (no data) still gets the FOUR name from "sub"', [c.name, c.line, c.kicker], ['Rohit Sharma', '', '']);
   c = C('WIDE', '+1 run', null);
-  eq('OVERLAY: a WIDE from an older panel (no data) shows its "+1 run" text', [c.name, c.line], ['', '+1 run']);
+  eq('OVERLAY: an older panel\'s WIDE "+1 run" text is not shown (no runs on the cards)', [c.name, c.line], ['', '']);
   eq('OVERLAY: all six ball events use the bar-sized card', O.J('BALL_CARD_KINDS'), ['FOUR', 'SIX', 'WICKET', 'WIDE', 'NO_BALL', 'FREE_HIT']);
   eq('OVERLAY: … and play at the scorebar\'s own height (growth 1)', O.J(`['FOUR','SIX','WICKET','WIDE','NO_BALL','FREE_HIT'].map(k => EVENT_THEMES[k].growth)`), [1, 1, 1, 1, 1, 1]);
   eq('OVERLAY: a team colour that is not a plain hex is ignored', C('FOUR', 'X', { batter: { name: 'X', runs: 4, balls: 1 }, batTeam: { name: 'T', color: 'red;background:url(x)' } }).teamColor, '');
