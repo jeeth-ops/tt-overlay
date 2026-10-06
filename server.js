@@ -9292,7 +9292,7 @@ function buildLiveCardsFromBallsArray(balls) {
         if (t === 'run out') return fielder ? `run out (${fielder})` : 'run out';
         if (t === 'bowled') return bowler ? `b ${bowler}` : 'b';
         if (t === 'lbw') return bowler ? `lbw b ${bowler}` : 'lbw';
-        if (t === 'hit wicket') return bowler ? `hit wicket b ${bowler}` : 'hit wicket';
+        if (t === 'hit wicket') return bowler ? `hit wkt b ${bowler}` : 'hit wkt';  // the panel's own wording
         if (t === 'retired hurt') return 'retired hurt';
         if (t === 'run out (mankaded)') return fielder ? `run out (${fielder}) — mankaded` : 'run out (mankaded)';
         // Never the bowler's: the dismissal stands on its own.
@@ -9321,7 +9321,10 @@ function buildLiveCardsFromBallsArray(balls) {
             // A non-striker run out without facing a ball has no row yet.
             if (!batting[bt][rowKey]) batting[bt][rowKey] = { name: outName, runs: 0, balls: 0, fours: 0, sixes: 0, inningsNo: inn };
             batting[bt][rowKey].out = true;
-            batting[bt][rowKey].howOut = howOutText(type, b.dismissal.fielder, b.bowler, b.dismissal.subtype);
+            // Out off a Wide / No Ball: the panel marks it "(Wd)" / "(Nb)" — the
+            // rebuilt card says the same, so a reload never changes the text.
+            const extraTag = b.kind === 'Wd' ? ' (Wd)' : b.kind === 'Nb' ? ' (Nb)' : '';
+            batting[bt][rowKey].howOut = howOutText(type, b.dismissal.fielder, b.bowler, b.dismissal.subtype) + extraTag;
             batting[bt][rowKey].dismissalType = type;
             batting[bt][rowKey].fielderName = b.dismissal.fielder || null;
             batting[bt][rowKey].bowlerName = BOWLER_UNCREDITED_DISMISSALS.has(String(type).toLowerCase()) ? null : (b.bowler || null);

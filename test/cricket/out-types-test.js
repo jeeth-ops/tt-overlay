@@ -85,6 +85,7 @@ function out(P, o){
 }
 
 const fixtures = {};
+const getComputedStyleSafe = (P, sel) => P.w.getComputedStyle(P.$(sel)).display;
 
 async function panelSuite(file, label){
   console.log(`\n######## ${label} — ${file} ########`);
@@ -186,6 +187,28 @@ async function panelSuite(file, label){
   eq(L('Mankad: its own OUT event — no bowler, never a delivery'), [P.J('state.ballLog[0].ballType'), lastDb(P).kind, lastDb(P).bowler, lastDb(P).dismissal.type], ['OUT', 'OUT', null, 'Run Out (Mankaded)']);
   P.E(`recordBall('1')`);
   eq(L('the next ball is the first ball of the over'), [P.J('state.ballLog[1].over'), legal(P)], ['0.1', 1]);
+
+  console.log('\n=== Mankad: who (non-striker default) and by whom (bowler default) ===');
+  newMatch(P);
+  P.E('openWicketModal()');
+  clickType(P, 'Stumped');
+  clickType(P, 'Run Out (Mankaded)');
+  eq(L('Mankad: both batters offered, the non-striker selected'), [...P.w.document.querySelectorAll('#wd-who [data-wd-who]')].map(b => [b.dataset.wdWho, b.classList.contains('on')]), [['striker', false], ['nonStriker', true]]);
+  eq(L('Mankad: Wicket-keeper or Bowler, the bowler selected; keeper list hidden'), [P.$('#wd-fielder-by').hidden, [...P.w.document.querySelectorAll('#wd-fielder-by [data-wd-stumpby]')].map(b => [b.dataset.wdStumpby, b.classList.contains('on')]), P.text('#wd-fielder-note')],
+    [false, [['keeper', false], ['bowler', true]], 'Run out by the bowler — Mukesh']);
+  click(P, '[data-wd-stumpby="keeper"]');
+  eq(L('Mankad by the keeper: keeper pre-filled, no bowler note'), [P.E('wdFielderChoice().name'), P.$('#wd-fielder-note').hidden], ['Pant', true]);
+  clickType(P, 'Caught');
+  eq(L('the Keeper/Bowler choice only shows for Stumped and Mankad'), [P.$('#wd-fielder-by').hidden, getComputedStyleSafe(P, '#wd-fielder-by')], [true, 'none']);
+  click(P, '#wd-cancel');
+  newMatch(P);
+  out(P, { type: 'Run Out (Mankaded)', stumpBy: 'keeper', newBat: 'a3' });
+  eq(L('Mankad by the keeper: on the card and his run out'), P.J(`[state.battingCard.A[0].name, state.battingCard.A[0].howOut, Object.values(state.fieldingStats.B).filter(f => f.name === 'Pant').map(f => f.runOuts)]`).concat(lastDb(P).dismissal.fielder), ['Ishan', 'run out (Pant) — mankaded', [1], 'Pant']);
+  newMatch(P);
+  out(P, { type: 'Run Out (Mankaded)', who: 'striker', newBat: 'a3' });
+  eq(L('Mankad of the batter shown on strike: he is out, the other faces, the new batter at the non-striker’s end'), P.J(`[state.battingCard.A[0].name, state.battingCard.A[0].howOut, state.striker.name, state.nonStriker.name, state.score.wickets, state.score.balls]`), ['Rohit', 'run out (Mukesh) — mankaded', 'Ishan', 'Surya', 1, 0]);
+  P.E(`document.getElementById('undo-btn').click()`);
+  eq(L('…one Undo restores the wicket and the ends'), P.J('[state.striker.name, state.nonStriker.name, state.score.wickets]'), ['Rohit', 'Ishan', 0]);
 
   console.log('\n=== Timed Out / Retired Out / Retired ===');
   newMatch(P);

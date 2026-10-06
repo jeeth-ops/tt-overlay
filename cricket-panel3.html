@@ -646,6 +646,7 @@
   .wd-body{ padding:12px 16px 4px; }
   .wd-sec{ margin-bottom:14px; }
   .wd-sec[hidden]{ display:none !important; }
+  .wd-chips[hidden], .wd-fixed-note[hidden]{ display:none !important; }
   .wd-label{ font-size:11px; font-weight:800; letter-spacing:.8px; text-transform:uppercase; color:var(--text-dim); margin-bottom:7px; }
   .wd-label .wd-hint{ text-transform:none; letter-spacing:0; font-weight:600; color:var(--text-faint, #8791a3); }
   .wd-chips{ display:grid; grid-template-columns:repeat(auto-fill, minmax(112px, 1fr)); gap:8px; }
@@ -14465,7 +14466,8 @@ function wdOutEnd(){
   if(!d || d.special === 'absent') return null;
   const who = WD_WHO[wdState.type];
   if(who === 'either') return wdState.who || null;
-  if(who === 'nonStriker') return 'nonStriker';
+  // Mankad: the non-striker by default — the scorer may tap the striker (see wdPhysicalEnd).
+  if(who === 'nonStriker') return wdState.who === 'striker' ? 'striker' : 'nonStriker';
   if(who === 'pick') return wdState.pick === 'crease:striker' ? 'striker' : wdState.pick === 'crease:nonStriker' ? 'nonStriker' : null;
   // Striker by default — the scorer may tap the non-striker instead (see wdStrikerOnlyType).
   return wdState.who === 'nonStriker' ? 'nonStriker' : 'striker';
@@ -14476,6 +14478,23 @@ function wdOutEnd(){
 // that batter is then recorded as the one on strike for this ball (the ends
 // are swapped first), so every figure stays true to the Laws.
 function wdStrikerOnlyType(){ return !!wdDef() && !WD_WHO[wdState.type]; }
+// The END left empty — not who is out. A striker-only dismissal always empties
+// the striker's end and a Mankad the non-striker's, even when the scorer
+// tapped the other batter (the panel had the ends the wrong way round).
+function wdPhysicalEnd(){
+  const end = wdOutEnd();
+  if(!end) return end;
+  if(wdStrikerOnlyType()) return 'striker';
+  if(WD_WHO[wdState.type] === 'nonStriker') return 'nonStriker';
+  return end;
+}
+// Tapped the batter the panel has at the "wrong" end for this dismissal?
+function wdEndsSwapped(){
+  if(!wdState) return false;
+  if(wdStrikerOnlyType()) return wdState.who === 'nonStriker';
+  if(WD_WHO[wdState.type] === 'nonStriker') return wdState.who === 'striker';
+  return false;
+}
 // After this event: is the innings over (so no new batsman / next striker)?
 function wdInningsEndsHere(){
   const d = wdDef();
@@ -14496,7 +14515,7 @@ function wdNeedsBat(){ return !!wdDef() && !!wdOutEnd() && !wdInningsEndsHere();
 function wdPredictNewOnStrike(){
   // A striker-only dismissal always empties the striker's end — even when the
   // non-striker was tapped (they were the one actually facing).
-  const end = wdStrikerOnlyType() && wdOutEnd() ? 'striker' : wdOutEnd();
+  const end = wdPhysicalEnd();
   if(!end) return false;
   const d = wdDef();
   if(d.nonDelivery || d.special) return end === 'striker';
@@ -14520,7 +14539,7 @@ function wdNewBatChoice(){
 function wdFielderChoice(){
   const t = wdState && wdState.type;
   const b = state.bowler || {};
-  if(t === 'Caught & Bowled' || t === 'Run Out (Mankaded)' || (t === 'Stumped' && wdState.stumpBy === 'bowler')) return { name: b.name || '', id: b.id || null };
+  if(t === 'Caught & Bowled' || (t === 'Run Out (Mankaded)' && wdState.stumpBy !== 'keeper') || (t === 'Stumped' && wdState.stumpBy === 'bowler')) return { name: b.name || '', id: b.id || null };
   const sel = wdEl('wd-fielder-select');
   if(sel.value){
     const p = findPlayerById(bowlingTeamKey(), sel.value);
@@ -14597,6 +14616,9 @@ function renderWicketDetails(){
   whoChips.style.display = whoKind === 'pick' ? 'none' : '';
   wdEl('wd-who-label').innerHTML = whoKind === 'either' ? 'Who is out? <span class="wd-hint">— choose one</span>'
     : whoKind === 'pick' ? (s.type === 'Absent Hurt' ? 'Who is absent hurt?' : 'Who is timed out? <span class="wd-hint">— the incoming batter</span>')
+    : whoKind === 'nonStriker' ? (s.who === 'striker'
+      ? `Who is out? <span class="wd-hint">— a Mankad is only of the batter backing up, so ${escapeHtmlPanel(snap.strikerName || 'the striker')} is recorded at the non-striker's end</span>`
+      : 'Who is out? <span class="wd-hint">— non-striker selected; tap the striker if it was them</span>')
     : whoKind === 'striker' ? (s.who === 'nonStriker'
       ? `Who is out? <span class="wd-hint">— only the batter facing can be out ${escapeHtmlPanel(s.type)}, so ${escapeHtmlPanel(snap.nonStrikerName || 'the non-striker')} is recorded as on strike for this ball</span>`
       : 'Who is out? <span class="wd-hint">— striker selected; tap the non-striker if it was them</span>')
@@ -14605,7 +14627,8 @@ function renderWicketDetails(){
     whoChips.innerHTML = wdChip(snap.strikerName || 'Striker', 'STRIKER', s.who === 'striker', 'data-wd-who="striker"', 'out')
       + wdChip(snap.nonStrikerName || 'Non-striker', 'NON-STRIKER', s.who === 'nonStriker', 'data-wd-who="nonStriker"', 'out');
   } else if(whoKind === 'nonStriker'){
-    whoChips.innerHTML = wdChip(snap.nonStrikerName || 'Non-striker', 'NON-STRIKER — out of the crease before the ball', true, 'data-wd-fixed="1"', 'out');
+    whoChips.innerHTML = wdChip(snap.strikerName || 'Striker', 'STRIKER', s.who === 'striker', `data-wd-who="striker"${snap.strikerName ? '' : ' disabled'}`, 'out')
+      + wdChip(snap.nonStrikerName || 'Non-striker', 'NON-STRIKER — out of the crease before the ball', s.who !== 'striker', 'data-wd-who="nonStriker"', 'out');
   } else if(whoKind === 'striker'){
     whoChips.innerHTML = wdChip(snap.strikerName || 'Striker', 'STRIKER', s.who !== 'nonStriker', 'data-wd-who="striker"', 'out')
       + wdChip(snap.nonStrikerName || 'Non-striker', 'NON-STRIKER', s.who === 'nonStriker', `data-wd-who="nonStriker"${snap.nonStrikerName ? '' : ' disabled'}`, 'out');
@@ -14625,21 +14648,26 @@ function renderWicketDetails(){
 
   // ---- Fielder ----
   const b = state.bowler || {};
-  const fielderLabel = { 'Caught': 'Catching fielder', 'Caught Behind': 'Wicket-keeper', 'Run Out': 'Fielder (who ran them out)', 'Stumped': 'Stumped by' }[s.type];
+  const isMankad = s.type === 'Run Out (Mankaded)';
+  const fielderLabel = { 'Caught': 'Catching fielder', 'Caught Behind': 'Wicket-keeper', 'Run Out': 'Fielder (who ran them out)', 'Stumped': 'Stumped by', 'Run Out (Mankaded)': 'Run out by' }[s.type];
   const fixedFielder = s.type === 'Caught & Bowled' ? `Caught by the bowler — ${b.name || 'bowler (unassigned)'}`
-    : s.type === 'Run Out (Mankaded)' ? `Run out by the bowler — ${b.name || 'bowler (unassigned)'}` : '';
+    : isMankad && s.stumpBy !== 'keeper' ? `Run out by the bowler — ${b.name || 'bowler (unassigned)'}` : '';
   wdEl('wd-sec-fielder').hidden = !fielderLabel && !fixedFielder;
-  wdEl('wd-fielder-label').innerHTML = fixedFielder ? 'Fielder' : `${fielderLabel || 'Fielder'}${s.type === 'Stumped' ? '' : ' <span class="wd-hint">— optional</span>'}`;
+  wdEl('wd-fielder-label').innerHTML = isMankad ? 'Run out by'
+    : fixedFielder ? 'Fielder' : `${fielderLabel || 'Fielder'}${s.type === 'Stumped' ? '' : ' <span class="wd-hint">— optional</span>'}`;
   wdEl('wd-fielder-note').textContent = fixedFielder;
   wdEl('wd-fielder-note').hidden = !fixedFielder;
   const by = wdEl('wd-fielder-by');
-  by.hidden = s.type !== 'Stumped';
-  if(s.type === 'Stumped'){
+  // Stumped: Wicket-keeper (default) or Bowler. Mankad: Bowler (default) or Wicket-keeper.
+  const byChoice = s.type === 'Stumped' || isMankad;
+  by.hidden = !byChoice;
+  if(byChoice){
     const k = wdKeeper();
-    by.innerHTML = wdChip('Wicket-keeper', k ? k.name : 'choose below', s.stumpBy !== 'bowler', 'data-wd-stumpby="keeper"')
-      + wdChip('Bowler', b.name || 'unassigned', s.stumpBy === 'bowler', 'data-wd-stumpby="bowler"');
-  }
-  const pickFielder = !!fielderLabel && !(s.type === 'Stumped' && s.stumpBy === 'bowler');
+    const keeperOn = isMankad ? s.stumpBy === 'keeper' : s.stumpBy !== 'bowler';
+    by.innerHTML = wdChip('Wicket-keeper', k ? k.name : 'choose below', keeperOn, 'data-wd-stumpby="keeper"')
+      + wdChip('Bowler', b.name || 'unassigned', !keeperOn, 'data-wd-stumpby="bowler"');
+  } else by.innerHTML = '';
+  const pickFielder = !!fielderLabel && !((s.type === 'Stumped' && s.stumpBy === 'bowler') || (isMankad && s.stumpBy !== 'keeper'));
   const hasFielders = fieldingSidePlayers().length > 0;
   if(wdFielderDD) wdFielderDD.wrap.style.display = pickFielder && hasFielders ? 'block' : 'none';
   wdEl('wd-fielder-input').style.display = pickFielder && !hasFielders ? 'block' : 'none';
@@ -14675,6 +14703,7 @@ function renderWicketDetails(){
   else if(WD_WHO[s.type] === 'either' && !s.who) problem = `${s.type} — choose WHO is out.`;
   else if(WD_WHO[s.type] === 'pick' && !s.pick) problem = s.type === 'Absent Hurt' ? 'Choose the batter who is absent hurt.' : 'Choose the batter who is timed out.';
   else if(s.type === 'Stumped' && s.stumpBy !== 'bowler' && !wdFielderChoice().name) problem = 'Stumped — choose the wicket-keeper (or Bowler).';
+  else if(s.type === 'Run Out (Mankaded)' && s.stumpBy === 'keeper' && !wdFielderChoice().name) problem = 'Mankad — choose the wicket-keeper (or Bowler).';
   else if(needsBat && wdEl('wd-newbat-select').style.display !== 'none' && wdEl('wd-newbat-select').options.length > 1 && !nb) problem = 'Choose the new batsman.';
   else if(needsBat && !s.nextStriker) problem = 'Who is on strike for the next ball? — choose one.';
   const prev = wdEl('wd-preview');
@@ -14786,6 +14815,7 @@ function confirmWicketDetails(){
   const pickId = (s.pick || '').startsWith('p:') ? s.pick.slice(2) : null;
   const del = wdDelivery();
   const runsCount = wdRunsAllowed();
+  const swapEnds = wdEndsSwapped();
   wdState = null;
   closeWicketModal();
 
@@ -14808,15 +14838,25 @@ function confirmWicketDetails(){
       ok = true;
     } else if(d.nonDelivery){
       const fielderMeta = s.type === 'Run Out (Mankaded)' ? { fielderName: f.name, fielderId: f.id } : {};
-      const r = recordNonDeliveryWicket({ dismissalType: s.type, who: end, dismissedPlayerId: end ? null : pickId,
-        ...fielderMeta, wicketDelivery: snap });
+      let ndSnap = snap, ndEnd = end;
+      if(swapEnds){
+        // A Mankad of the batter the panel had on strike: they were backing
+        // up at the non-striker's end — put the ends right first.
+        pushHistory();
+        swapStrikeSilent();
+        ndSnap = Object.freeze({ ...snap, strikerId: snap.nonStrikerId, strikerName: snap.nonStrikerName,
+          nonStrikerId: snap.strikerId, nonStrikerName: snap.strikerName });
+        ndEnd = 'nonStriker';
+      }
+      const r = recordNonDeliveryWicket({ dismissalType: s.type, who: ndEnd, dismissedPlayerId: ndEnd ? null : pickId,
+        ...fielderMeta, wicketDelivery: ndSnap });
       ok = !!r;
       dismissedName = r ? r.dismissedName : '';
     } else {
       const engineType = d.engine || s.type;
       const either = WD_WHO[s.type] === 'either';
       let ball = snap;
-      if(!either && s.who === 'nonStriker'){
+      if(swapEnds){
         // Striker-only dismissal of the batter the panel had at the other
         // end: they were the one facing — put them on strike first. The undo
         // step is taken before the swap, so one Undo restores the ends too.
@@ -14866,7 +14906,8 @@ document.getElementById('wd-types').addEventListener('click', (e) => {
   wdState.who = null; wdState.pick = null; wdState.nextStriker = null;
   if(!['Run Out', 'Obstructing the Field'].includes(wdState.type)){ wdState.runs = 0; wdState.custom = false; }
   // Keeper pre-filled for Caught Behind and a stumping.
-  if(['Caught Behind', 'Stumped'].includes(wdState.type)){ const k = wdKeeper(); wdSetFielder(k ? k.id : ''); }
+  wdState.stumpBy = wdState.type === 'Run Out (Mankaded)' ? 'bowler' : 'keeper';
+  if(['Caught Behind', 'Stumped', 'Run Out (Mankaded)'].includes(wdState.type)){ const k = wdKeeper(); wdSetFielder(k ? k.id : ''); }
   else wdSetFielder('');
   renderWicketDetails();
 });
