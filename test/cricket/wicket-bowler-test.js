@@ -282,6 +282,33 @@ async function panelSuite(file, label){
   P.E(`applyRemoteBowlerReassign({ id: 'bwl_1', matchId: 'WBTEST', innings: 1, overs: [0], fromBowler: 'Mukesh', toBowler: 'Raj' })`);
   eq(L('the same correction twice is applied once'), bowlerFig(P, 'Raj'), ['Raj', '0.2', 0, 5, 0]);
 
+  console.log('\n=== WICKET animation: on the overlay 3 seconds after WICKET is pressed ===');
+  const wkAnims = () => P.emits.filter(e => e.ev === 'cricketEvent' && e.payload && e.payload.event && e.payload.event.kind === 'WICKET').map(e => e.payload.event.sub);
+  newMatch(P);
+  let n0 = wkAnims().length;
+  wicket(P, { type: 'Run Out', who: 'nonStriker', newBat: 'a3', confirm: false });
+  await sleep(1500);
+  eq(L('anim: nothing at 1.5s'), wkAnims().length - n0, 0);
+  await sleep(1700);
+  eq(L('anim: WICKET goes up at 3s while the scorer is still filling the details — nothing recorded yet'), [wkAnims().length - n0, P.E('state.ballLog.length'), shown(P, 'wd-overlay')], [1, 0, true]);
+  click(P, '#wd-confirm');
+  await sleep(200);
+  eq(L('anim: Confirm afterwards does not show it a second time'), [wkAnims().length - n0, P.E('state.score.wickets')], [1, 1]);
+  newMatch(P);
+  n0 = wkAnims().length;
+  wicket(P, { type: 'Bowled', newBat: 'a3' });
+  await sleep(300);
+  eq(L('anim: quick Confirm — still waits for the 3 seconds'), wkAnims().length - n0, 0);
+  await sleep(3000);
+  eq(L('anim: then exactly one, with the dismissed batter'), wkAnims().slice(n0), ['Rohit']);
+  newMatch(P);
+  n0 = wkAnims().length;
+  wicket(P, { type: 'Bowled', confirm: false });
+  await sleep(1000);
+  click(P, '#wd-cancel');
+  await sleep(2400);
+  eq(L('anim: Cancel within 3 seconds — never shown'), [wkAnims().length - n0, P.E('state.score.wickets')], [0, 0]);
+
   eq(L('no script errors'), P.errors.filter(e => !/Could not parse CSS|Not implemented/.test(e)), []);
 }
 

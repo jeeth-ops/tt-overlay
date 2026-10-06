@@ -11677,6 +11677,39 @@ const WD_ALLOWED = {
   'Stumped': ['normal', 'wide'], 'Hit Wicket': ['normal', 'noball'],
   'Run Out': ['normal', 'wide', 'noball', 'bye', 'legbye']
 };
+// ⏱ WICKET ANIMATION — goes up on the overlay 3 seconds after WICKET is
+// pressed, without waiting for the scorer to finish the Wicket Details
+// screen (that can take a while; the moment is now). Only the graphic is
+// early — nothing is recorded until CONFIRM WICKET. One animation per
+// wicket: Confirm (or the new-batsman prompt after it) never fires a second
+// one. Cancel within the 3 seconds and it never shows at all.
+const WICKET_ANIMATION_DELAY_MS = 3000;
+let wicketAnim = null; // { timer, fired, confirmed, name }
+function armWicketAnimation(name){
+  disarmWicketAnimation();
+  const a = { timer: null, fired: false, confirmed: false, name: name || '' };
+  a.timer = setTimeout(() => {
+    a.timer = null;
+    a.fired = true;
+    fireEvent('WICKET', 'WICKET!', a.name || '');
+    if(a.confirmed && wicketAnim === a) wicketAnim = null;
+  }, WICKET_ANIMATION_DELAY_MS);
+  wicketAnim = a;
+}
+function disarmWicketAnimation(){
+  if(wicketAnim && wicketAnim.timer) clearTimeout(wicketAnim.timer);
+  wicketAnim = null;
+}
+// The wicket was confirmed: the animation already went up, or goes up at
+// its 3 seconds with the confirmed batter's name — or, with no press timer
+// running at all, right now.
+function fireWicketAnimationOnce(name){
+  const a = wicketAnim;
+  if(!a){ fireEvent('WICKET', 'WICKET!', name || ''); return; }
+  if(a.fired){ wicketAnim = null; return; }
+  a.name = name || a.name;
+  a.confirmed = true;
+}
 let wdState = null, wdFielderDD = null;
 function wdEl(id){ return document.getElementById(id); }
 function wdSnapshot(){ return pendingWicketDelivery || captureWicketDelivery(); }
@@ -11842,6 +11875,7 @@ function openWicketModal(){
   if(!overlay.classList.contains('show')){
     pendingWicketDelivery = captureWicketDelivery();
     triggerWicketClip(pendingWicketDelivery);
+    armWicketAnimation('');
   }
   const ctx = pendingExtraWicketContext; // 'Wd' | 'Nb' | null — from the Wide / No Ball picker
   pendingExtraWicketContext = null;
@@ -11879,6 +11913,7 @@ function cancelWicketDetails(){
   // Nothing was recorded — the score, the batters and the over are exactly as before.
   wdState = null;
   pendingWicketDelivery = null;
+  disarmWicketAnimation();
   closeWicketModal();
 }
 function confirmWicketDetails(){
@@ -11923,7 +11958,7 @@ function confirmWicketDetails(){
   } finally {
     atomicEnd();
   }
-  if(!ok) return;
+  if(!ok){ disarmWicketAnimation(); return; }
   const overlay = document.getElementById('newbat-modal-overlay');
   overlay.dataset.retired = '';
   overlay.dataset.pendingDismissed = dismissedPlayerName || '';
@@ -11932,7 +11967,7 @@ function confirmWicketDetails(){
     openNewBatsmanModal(dismissedPlayerName || 'Batsman');
     return;
   }
-  fireEvent('WICKET', 'WICKET!', dismissedPlayerName || '');
+  fireWicketAnimationOnce(dismissedPlayerName || '');
   maybePromptNewBowler();
 }
 document.getElementById('wd-types').addEventListener('click', (e) => {
@@ -12429,7 +12464,7 @@ function closeNewBatsmanModal(){
 function fireDeferredWicketAnimation(){
   if(document.getElementById('newbat-modal-overlay').dataset.retired === '1') return; // retired hurt is not a wicket
   const dismissedName = document.getElementById('newbat-modal-overlay').dataset.pendingDismissed || '';
-  fireEvent('WICKET', 'WICKET!', dismissedName);
+  fireWicketAnimationOnce(dismissedName);
 }
 document.getElementById('newbat-modal-submit').addEventListener('click', () => {
   const select = document.getElementById('newbat-modal-select');
