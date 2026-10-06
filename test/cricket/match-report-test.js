@@ -171,6 +171,14 @@ async function filesSuite(ctx){
     const buf = Buffer.from(doc.output('arraybuffer'));
     eq('PDF: summary + wagon wheels + one page per innings + squads', doc.getNumberOfPages(), 3 + ctx.m.innings.length);
     eq('PDF: a real PDF file', buf.slice(0, 5).toString(), '%PDF-');
+    const seen = { logos: 0, texts: [] };
+    function Spy(o){ const d = new jspdf.jsPDF(o); const ai = d.addImage.bind(d), tx = d.text.bind(d);
+      d.addImage = function(){ if(arguments[6] === 'brand') seen.logos++; return ai.apply(null, arguments); };
+      d.text = function(t){ seen.texts.push(String(t)); return tx.apply(null, arguments); };
+      return d; }
+    const sd = M.buildPdf(Spy, ctx.m, imgs);
+    eq('PDF: the All Sports Live logo + name on every page', [seen.logos, seen.texts.filter(t => t === 'ALL SPORTS LIVE').length], [sd.getNumberOfPages(), sd.getNumberOfPages()]);
+    eq('PDF: officials are the two captains only', [seen.texts.filter(t => t === 'Captain').length, seen.texts.some(t => /Umpire|Scorer/.test(t))], [2, false]);
     const odd = M.buildModel(Object.assign(makeMatch({ seed: 5 }), {}));
     odd.innings[0].batting[0].name = 'राहुल “Rocket” Sharma';
     let ok = true; try{ M.buildPdf(jspdf.jsPDF, odd, {}).output('arraybuffer'); }catch(e){ ok = false; }
