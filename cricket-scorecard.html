@@ -1210,6 +1210,9 @@
   }
   .role-tag.role-c{ background:var(--accent-soft); color:var(--accent); }
   .role-tag.role-wk{ background:var(--four-soft); color:var(--four); }
+  /* 🔁 Impact Player: ⬆ came on as the substitute, ⬇ was replaced. */
+  .role-tag.role-ipin{ background:rgba(34,166,224,.16); color:#22a6e0; }
+  .role-tag.role-ipout{ background:rgba(148,163,184,.18); color:#94a3b8; }
 
   /* ---------- Partnership / FOW / extras — stacked ---------- */
   #bottom-grid{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
@@ -4350,6 +4353,7 @@ function renderFinalInnings(){
   if(!m) return;
   const team = finalActiveInnings;
   const other = team === 'A' ? 'B' : 'A';
+  scImpactLog = impactListOf(m);
   const teamBalls = (finalBallLog || []).filter(b => b.battingTeam === team && !isSuperOverInnings(b.innings));
   const bat = orderBattingRows((m.battingCard && m.battingCard[team]) || [], teamBalls);
   const bowl = orderBowlingRows((m.bowlingCard && m.bowlingCard[other]) || [], teamBalls);
@@ -5378,6 +5382,23 @@ function setText(id, val){
 // underlying player data actually uses (the panel already carries this —
 // the public scorecard just wasn't rendering it), so this checks every
 // common spelling rather than assuming one.
+// Impact Player substitutions of the match on show — the live state's
+// impactLog, or a finished record's impactPlayers (set by the renderers).
+var scImpactLog = []; // var: safe even if a renderer runs before this line
+function impactListOf(src){
+  const l = src && (src.impactPlayers || src.impactLog);
+  return Array.isArray(l) ? l : [];
+}
+function impactBadgeHtml(p){
+  const name = p && p.name;
+  if(!name || !scImpactLog.length) return '';
+  const same = (id, n) => (p.id && id && p.id === id) || (n && n === name);
+  const e = scImpactLog.find(x => same(x.inId, x.inName));
+  if(e) return `<span class="role-tag role-ipin" title="Impact Player — came on for ${escapeHtml(e.outName || '')}${e.overLabel ? ' at ' + escapeHtml(e.overLabel) : ''}">⬆ IP</span>`;
+  const o = scImpactLog.find(x => same(x.outId, x.outName));
+  if(o) return `<span class="role-tag role-ipout" title="Replaced by Impact Player ${escapeHtml(o.inName || '')}${o.overLabel ? ' at ' + escapeHtml(o.overLabel) : ''}">⬇ SUB</span>`;
+  return '';
+}
 function roleBadgesHtml(p){
   if(!p) return '';
   const isCaptain = !!(p.isCaptain ?? p.captain ?? p.is_captain);
@@ -5385,7 +5406,7 @@ function roleBadgesHtml(p){
   let html = '';
   if(isCaptain) html += '<span class="role-tag role-c" title="Captain">C</span>';
   if(isKeeper) html += '<span class="role-tag role-wk" title="Wicketkeeper">WK</span>';
-  return html;
+  return html + impactBadgeHtml(p);
 }
 // Like setText, but for a name span that should also carry the player's
 // role tags (used for the striker/non-striker/bowler cards).
@@ -6890,7 +6911,8 @@ function renderTables(s){
     const bk = battingTeamForInnings(s, viewingInnings);
     applyScorecardTeams(teamObj(s, bk), teamObj(s, bk === 'A' ? 'B' : 'A'));
   }
-  const key = viewingInnings + '|' + JSON.stringify(bat) + '|' + JSON.stringify(bowl);
+  scImpactLog = impactListOf(s);
+  const key = viewingInnings + '|' + JSON.stringify(bat) + '|' + JSON.stringify(bowl) + '|' + JSON.stringify(scImpactLog);
   if(!changed('tables', key)) return;
 
   const battingBody = document.getElementById('batting-table-body');
