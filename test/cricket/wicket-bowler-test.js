@@ -88,7 +88,10 @@ function wicket(P, o){
   } else if(o.runs != null) click(P, `[data-wd-runs="${o.runs}"]`);
   if(o.fielder) P.E(`(() => { const s = document.getElementById('wd-fielder-select'); if(![...s.options].some(x => x.value === '${o.fielder}')){ const op = document.createElement('option'); op.value = '${o.fielder}'; s.appendChild(op); } s.value = '${o.fielder}'; s.dispatchEvent(new Event('change')); })()`);
   if(o.newBat){ P.$('#wd-newbat-select').value = o.newBat; P.$('#wd-newbat-select').dispatchEvent(new P.w.Event('change', { bubbles: true })); }
+  // "Which batter is on strike for the next ball?" is always asked — answer
+  // it as given, or with what the Laws say (the hint on screen).
   if(o.next) click(P, `[data-wd-strike="${o.next}"]`);
+  else if(!P.$('#wd-sec-strike').hidden) click(P, `[data-wd-strike="${P.E('wdPredictNewOnStrike()') ? 'new' : 'survivor'}"]`);
   if(o.confirm !== false) click(P, '#wd-confirm');
 }
 const legalBalls = (P) => P.E('state.score.overs * 6 + state.score.balls');
@@ -163,6 +166,7 @@ async function panelSuite(file, label){
   const opts = [...P.$('#wd-newbat-select').options].map(o => o.value).filter(Boolean);
   eq(L('17 new batsman list: never someone already out or at the crease'), opts, ['a3', 'a5']);
   P.$('#wd-newbat-select').value = 'a5'; P.$('#wd-newbat-select').dispatchEvent(new P.w.Event('change', { bubbles: true }));
+  click(P, '[data-wd-strike="new"]');
   click(P, '#wd-confirm');
   eq(L('17 new batsman seated at the vacant end'), P.J('[state.striker.name, state.nonStriker.name]'), ['Hardik', 'Ishan']);
   newMatch(P);

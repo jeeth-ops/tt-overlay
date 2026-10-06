@@ -672,6 +672,22 @@
   .wd-foot button{ flex:1; min-height:50px; font-size:14.5px; }
   .wd-foot .wd-confirm{ flex:2; background:#ef4444; border-color:#ef4444; color:#fff; font-weight:900; letter-spacing:.4px; }
   .wd-foot .wd-confirm:disabled{ opacity:.45; }
+  .wd-chips.wd-types{ grid-template-columns:repeat(4, minmax(0, 1fr)); }
+  .wd-chip.wd-type{ display:flex; flex-direction:column; align-items:center; gap:3px; padding:8px 4px 9px; font-size:12.5px; min-height:96px; justify-content:flex-start; }
+  .wd-ico{ width:42px; height:42px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:21px; background:var(--panel); border:1px solid var(--border); margin-bottom:2px; }
+  .wd-chip.wd-type.on .wd-ico{ background:rgba(255,255,255,.25); border-color:transparent; }
+  .wd-chip.wd-type small{ font-size:9.5px; }
+  .wd-check{ display:flex; gap:10px; align-items:flex-start; padding:12px; border:1px solid var(--border); border-radius:10px; background:var(--panel-2); cursor:pointer; font-size:13px; line-height:1.45; }
+  .wd-check input{ width:20px; height:20px; margin-top:1px; flex:none; accent-color:#ef4444; }
+  .wd-fixed-note{ padding:11px 12px; border-radius:9px; background:var(--panel-2); border:1px dashed var(--border); font-size:13px; font-weight:700; margin-bottom:6px; }
+  #wd-fielder-by{ margin-bottom:8px; }
+  @media (max-width:560px){
+    .wd-chips.wd-types{ grid-template-columns:repeat(4, minmax(0, 1fr)); gap:6px; }
+    .wd-chip.wd-type{ font-size:11px; min-height:88px; padding:7px 2px; }
+    .wd-ico{ width:36px; height:36px; font-size:18px; }
+    .wd-chip.wd-type small{ display:none; }
+  }
+
   @media (max-width:560px){
     .wd-chips{ grid-template-columns:repeat(2, minmax(0, 1fr)); }
     .wd-runs{ grid-template-columns:repeat(4, minmax(0, 1fr)); }
@@ -1528,19 +1544,25 @@
       </div>
       <div class="wd-body">
         <section class="wd-sec">
-          <div class="wd-label">Out type</div>
-          <div class="wd-chips" id="wd-types"></div>
+          <div class="wd-label">Select out type</div>
+          <div class="wd-chips wd-types" id="wd-types"></div>
         </section>
         <section class="wd-sec" id="wd-sec-delivery" hidden>
           <div class="wd-label">Which delivery?</div>
           <div class="wd-chips" id="wd-delivery"></div>
         </section>
+        <section class="wd-sec" id="wd-sec-wide" hidden>
+          <label class="wd-check"><input type="checkbox" id="wd-wide-check"><span><b>Wide Ball</b> — the stumping came off a wide: <b>+1 wide</b> to the team (not a legal ball), then the wicket</span></label>
+        </section>
         <section class="wd-sec" id="wd-sec-who" hidden>
-          <div class="wd-label">Who is out? <span class="wd-hint">— choose one</span></div>
+          <div class="wd-label" id="wd-who-label">Who is out?</div>
           <div class="wd-chips two" id="wd-who"></div>
+          <select id="wd-who-select" style="display:none;"><option value="">— choose the batter —</option></select>
         </section>
         <section class="wd-sec" id="wd-sec-fielder" hidden>
           <div class="wd-label" id="wd-fielder-label">Fielder</div>
+          <div class="wd-chips two" id="wd-fielder-by" hidden></div>
+          <div class="wd-fixed-note" id="wd-fielder-note" hidden></div>
           <select id="wd-fielder-select" style="display:none;"><option value="">— choose fielder —</option></select>
           <input type="text" id="wd-fielder-input" placeholder="Fielder name" autocomplete="off">
         </section>
@@ -1555,7 +1577,7 @@
           <input type="text" id="wd-newbat-input" placeholder="Incoming batsman name (or leave for later)" autocomplete="off">
         </section>
         <section class="wd-sec" id="wd-sec-strike" hidden>
-          <div class="wd-label">Who is on strike next? <span class="wd-hint" id="wd-strike-hint"></span></div>
+          <div class="wd-label">Which batter is on strike for the next ball? <span class="wd-hint" id="wd-strike-hint"></span></div>
           <div class="wd-chips two" id="wd-strike"></div>
         </section>
         <div class="wd-preview wait" id="wd-preview">Choose how the batter was out.</div>
@@ -2680,7 +2702,19 @@ function maxWickets(){
   const r = matchRules();
   return inSuperOver() ? (r.superOver.maxWickets || 2) : (r.maxWickets || 10);
 }
-function isAllOut(){ return state.score.wickets >= maxWickets(); }
+// 📜 DISMISSALS UNDER THE LAWS OF CRICKET — which ones are the bowler's,
+// and which can take EITHER batter (with the runs completed before them).
+const NON_BOWLER_DISMISSALS = ['Run Out', 'Run Out (Mankaded)', 'Retired Hurt', 'Retired Out', 'Retired', 'Absent Hurt',
+  'Obstructing the Field', 'Timed Out', 'Hit the Ball Twice'];
+const EITHER_END_DISMISSALS = ['Run Out', 'Obstructing the Field'];
+function isBowlerCreditedDismissal(type){ return !NON_BOWLER_DISMISSALS.includes(type); }
+// Absent hurt (a batter unable to bat at all) is not a wicket, but the side
+// has one batter fewer — so the innings is all out one wicket earlier.
+function absentHurtThisInnings(team){
+  const inn = currentLogInnings();
+  return (state.absentHurt || []).filter(a => a.team === (team || state.battingTeam) && a.inn === inn);
+}
+function isAllOut(){ return state.score.wickets >= maxWickets() - absentHurtThisInnings().length; }
 /* Wickets still standing — the "won by N wickets" margin. */
 function wicketsRemaining(){ return Math.max(0, maxWickets() - state.score.wickets); }
 function superOverEnabledForMatch(){ return !!matchRules().superOverEnabled; }
@@ -3421,7 +3455,8 @@ function eligibleBatters(key, opts){
   opts = opts || {};
   const dismissed = new Set((state.dismissedThisInnings && state.dismissedThisInnings[key]) || []);
   const excludeIds = new Set(opts.excludeIds || []);
-  return rosterPlayers(key).filter(p => !dismissed.has(p.id) && !excludeIds.has(p.id));
+  const absent = absentHurtThisInnings(key);
+  return rosterPlayers(key).filter(p => !dismissed.has(p.id) && !excludeIds.has(p.id) && !absent.some(a => (a.id && a.id === p.id) || a.name === p.name));
 }
 // Bowling-team players selectable for the NEXT over. Per operator's
 // request: EVERY squad member (whether marked Playing XI or not, e.g.
@@ -5950,7 +5985,8 @@ function openRetiredHurtModal(){
 }
 function closeRetiredHurtModal(){ document.getElementById('retired-modal-overlay').classList.remove('show'); }
 
-function retireBatsmanHurt(end){
+function retireBatsmanHurt(end, opts){
+  opts = opts || {};
   const batter = end === 'nonStriker' ? state.nonStriker : state.striker;
   if(!batter || !batter.name) return;
   pushHistory();
@@ -5965,7 +6001,7 @@ function retireBatsmanHurt(end){
   state.battingCard[state.battingTeam].push({
     name: saved.name, id: saved.id, runs: saved.runs, balls: saved.balls, fours: saved.fours, sixes: saved.sixes,
     out: false, retiredHurt: true, retiredHurtCount: count,
-    howOut: count > 1 ? `retired hurt (${count} times)` : 'retired hurt',
+    howOut: opts.label ? opts.label : (count > 1 ? `retired hurt (${count} times)` : 'retired hurt'),
     inningsNo: state.inningsNumber
   });
   // The batter's end is now empty; the partnership ends. No ball, no
@@ -6000,11 +6036,140 @@ function retireBatsmanHurt(end){
     deliveryId: (lastBall && lastBall.deliveryId) || null
   });
 
-  openNewBatsmanModal(saved.name, { retired: true, excludeId: saved.id });
+  if(!opts.noPrompt) openNewBatsmanModal(saved.name, { retired: true, excludeId: saved.id });
 }
 document.getElementById('retired-striker-btn').addEventListener('click', () => { closeRetiredHurtModal(); retireBatsmanHurt('striker'); });
 document.getElementById('retired-nonstriker-btn').addEventListener('click', () => { closeRetiredHurtModal(); retireBatsmanHurt('nonStriker'); });
 document.getElementById('retired-modal-cancel').addEventListener('click', closeRetiredHurtModal);
+
+/* ============================================================
+   🏏 A WICKET THAT IS NOT A DELIVERY
+     • Run Out (Mankaded) — Law 38.3: the non-striker run out by the bowler
+       before the ball is released. No ball is bowled.
+     • Timed Out — Law 40: the incoming batter, not ready in time.
+     • Retired Out — Law 25.4.3: a batter retires without the umpire's consent.
+   A wicket falls and the batter is out, but no ball is bowled: nothing is
+   added to the over, nobody faces, nothing is charged to the bowler, and it
+   is never the bowler's wicket. It goes into the ball log and the database
+   as its own 'OUT' event (like a penalty award), so the server rebuilds the
+   same card the panel shows.
+   ============================================================ */
+function recordNonDeliveryWicket(meta){
+  meta = meta || {};
+  const type = meta.dismissalType;
+  if(isInningsOver()){ toast('🚫 This innings is already over'); return false; }
+  if(isAllOut()){ toast(`🚫 All out — ${maxWickets()} wickets already, cannot take another`); return false; }
+  if(meta.wicketDelivery && (meta.who === 'striker' || meta.who === 'nonStriker') && !ClipAttribution.creaseMatches(meta.wicketDelivery, state)){
+    toast('⚠️ The batters at the crease changed while this wicket was being entered. Nothing was recorded — press WICKET again.', 7000);
+    pendingWicketDelivery = null;
+    return false;
+  }
+  pendingWicketDelivery = null;
+  pushHistory();
+  const team = state.battingTeam;
+  const strikerBefore = { name: state.striker.name, id: state.striker.id || null };
+  const nonStrikerBefore = { name: state.nonStriker.name, id: state.nonStriker.id || null };
+  let dismissed, end = null;
+  if(meta.who === 'striker'){ dismissed = state.striker; end = 'striker'; }
+  else if(meta.who === 'nonStriker'){ dismissed = state.nonStriker; end = 'nonStriker'; }
+  else {
+    // Timed Out: the batter who should have come in — not at the crease yet.
+    const p = meta.dismissedPlayerId ? findPlayerById(team, meta.dismissedPlayerId) : null;
+    dismissed = { name: (p && p.name) || meta.dismissedPlayerName || 'Batter', id: (p && p.id) || meta.dismissedPlayerId || null, runs: 0, balls: 0, fours: 0, sixes: 0 };
+  }
+  const fielderName = meta.fielderName || '';
+  const text = type === 'Run Out (Mankaded)' ? `${fielderName ? `run out (${fielderName})` : 'run out'} — mankaded`
+    : type === 'Timed Out' ? 'timed out' : 'retired out';
+  state.score.wickets++;
+  activeBattingCard(team).push({
+    name: dismissed.name, id: dismissed.id || null, runs: dismissed.runs || 0, balls: dismissed.balls || 0,
+    fours: dismissed.fours || 0, sixes: dismissed.sixes || 0, out: true, howOut: text, retiredHurtCount: dismissed.retiredHurtCount || 0,
+    dismissalType: type, fielderName: fielderName || null, bowlerName: null, inningsNo: state.inningsNumber
+  });
+  if(dismissed.id){
+    state.dismissedThisInnings = state.dismissedThisInnings || { A: [], B: [] };
+    state.dismissedThisInnings[team] = state.dismissedThisInnings[team] || [];
+    if(!state.dismissedThisInnings[team].includes(dismissed.id)) state.dismissedThisInnings[team].push(dismissed.id);
+  }
+  activeFallOfWickets(team).push({ wkt: state.score.wickets, runs: state.score.runs, over: fmtOvers(state.score.overs, state.score.balls), inningsNo: state.inningsNumber });
+  if(fielderName && type === 'Run Out (Mankaded)'){
+    const fKey = bowlingTeamKey();
+    state.fieldingStats = state.fieldingStats || { A: {}, B: {} };
+    state.fieldingStats[fKey] = state.fieldingStats[fKey] || {};
+    const fId = meta.fielderId || `name:${fielderName}`;
+    const rec = state.fieldingStats[fKey][fId] || { name: fielderName, id: meta.fielderId || null, catches: 0, runOuts: 0, stumpings: 0 };
+    rec.runOuts++; rec.name = fielderName;
+    state.fieldingStats[fKey][fId] = rec;
+  }
+  if(end){
+    // That end is now empty — the out batter's line holds it until the new
+    // batsman is sent in (same as any other wicket).
+    state.newBatsmanEnd = end;
+    state.partnershipRuns = 0; state.partnershipBalls = 0;
+  }
+  lastDismissedBatter = dismissed.name || null;
+  const disp = document.getElementById('disp-last-dismissal');
+  if(disp) disp.textContent = `${dismissed.name || 'Batsman'} — ${text}`;
+  const deliveryId = newBallUid();
+  const at = Date.now();
+  state.ballLog.push({
+    innings: currentLogInnings(), battingTeam: team,
+    over: fmtOvers(state.score.overs, state.score.balls),
+    ballType: 'OUT', eventType: 'DISMISSAL',
+    striker: strikerBefore.name, nonStriker: nonStrikerBefore.name, bowler: state.bowler.name || '',
+    deliveryId, strikerId: strikerBefore.id, nonStrikerId: nonStrikerBefore.id, bowlerId: state.bowler.id || null,
+    bowlerFacts: { legal: false, runs: 0, wicket: false },
+    dismissedPlayer: dismissed.name || null, dismissedPlayerId: dismissed.id || null,
+    fielderName: fielderName || null,
+    runs: 0, isWicket: true, dismissal: text, dismissalType: type,
+    phase: state.phase || 'REGULATION',
+    superOverId: inSuperOver() ? currentSuperOverId() : null,
+    superOverInningsId: inSuperOver() ? currentSuperOverInningsId() : null,
+    scoreAfter: `${state.score.runs}-${state.score.wickets}`,
+    timestamp: at
+  });
+  if(currentMatchId()){
+    queueBallForDb({
+      matchId: currentMatchId(), uid: currentOwnerUid(), innings: currentLogInnings(),
+      ...(inSuperOver() ? { phase: 'SUPER_OVER', superOverNumber: state.superOver.number } : {}),
+      over: state.score.overs, ballInOver: state.score.balls,
+      kind: 'OUT', runs: 0, battingTeam: team,
+      striker: strikerBefore.name, nonStriker: nonStrikerBefore.name, strikerId: strikerBefore.id, nonStrikerId: nonStrikerBefore.id,
+      // No bowler: this wicket is never his, and no ball was bowled.
+      bowler: null, bowlerId: null,
+      dismissal: { type, fielder: fielderName || null, fielderId: meta.fielderId || null, batter: dismissed.name || null, batterId: dismissed.id || null,
+        subtype: type === 'Run Out (Mankaded)' ? 'mankaded' : null },
+      score: { runs: state.score.runs, wickets: state.score.wickets, overs: state.score.overs, balls: state.score.balls },
+      timestamp: at
+    }, deliveryId);
+  }
+  checkInningsComplete();
+  checkMatchResult();
+  if(inSuperOver()) checkSuperOverInningsComplete();
+  updateBallButtonsState();
+  pushState(true, true);
+  return { dismissedName: dismissed.name, end };
+}
+// Absent hurt — a batter unable to bat at all. Not out and not a wicket;
+// no ball; the side is simply all out one wicket earlier (see isAllOut).
+function recordAbsentHurt(playerId, name){
+  const team = state.battingTeam;
+  const p = playerId ? findPlayerById(team, playerId) : null;
+  const who = { name: (p && p.name) || name || '', id: (p && p.id) || playerId || null };
+  if(!who.name){ toast('Choose the batter who is absent hurt'); return false; }
+  if(absentHurtThisInnings(team).some(a => (who.id && a.id === who.id) || a.name === who.name)){ toast(`${who.name} is already absent hurt`); return false; }
+  pushHistory();
+  state.absentHurt = state.absentHurt || [];
+  state.absentHurt.push({ team, inn: currentLogInnings(), id: who.id, name: who.name });
+  activeBattingCard(team).push({ name: who.name, id: who.id, runs: 0, balls: 0, fours: 0, sixes: 0, out: false, absentHurt: true,
+    howOut: 'absent hurt', dismissalType: 'Absent Hurt', inningsNo: state.inningsNumber });
+  checkInningsComplete();
+  checkMatchResult();
+  updateBallButtonsState();
+  pushState(true, true);
+  toast(`🚑 ${who.name} — absent hurt (not out). The innings now ends at ${maxWickets() - absentHurtThisInnings(team).length} wickets.`, 5000);
+  return true;
+}
 
 function sendInNewBatsman(name, id){
   if(!name) return;
@@ -6405,19 +6570,36 @@ function sameBowlerPerson(a, b){
 // awards excluded — they are not deliveries and have no bowler.
 function deliveriesOfOver(overIdx, inn){
   inn = inn == null ? currentLogInnings() : inn;
-  return (state.ballLog || []).filter(e => e && e.ballType !== 'PEN' && (e.innings || 1) === inn && overIndexOfEntry(e) === overIdx);
+  return (state.ballLog || []).filter(e => e && e.ballType !== 'PEN' && e.ballType !== 'OUT' && (e.innings || 1) === inn && overIndexOfEntry(e) === overIdx);
 }
 function currentOverIndex(){ return state.score.overs || 0; }
 function currentOverDeliveries(){ return deliveriesOfOver(currentOverIndex()); }
 // What a delivery did to its bowler. Stored on every new row; for an older
 // row it is worked out from the delivery exactly as the panel charged it.
+// Dots (legal balls the bowler conceded nothing off — byes and leg byes
+// included), no-ball and wide DELIVERIES for a bowler in one innings,
+// counted from the ball log. "WD counts wide deliveries, not extra runs."
+function bowlerDeliveryCounts(name, inningsNo){
+  let dots = 0, noBalls = 0, wides = 0;
+  (state.ballLog || []).forEach(e => {
+    if(!e || (e.innings || 1) !== inningsNo || !e.bowler || String(e.bowler).trim().toLowerCase() !== String(name || '').trim().toLowerCase()) return;
+    const t = e.ballType;
+    if(t === 'PEN' || t === 'OUT') return;
+    if(t === 'Wd' || t === 'WdW'){ wides++; return; }
+    if(t === 'Nb' || t === 'NbW'){ noBalls++; return; }
+    const f = bowlerFactsOf(e);
+    if(f.legal && !f.runs) dots++;
+  });
+  return { dots, noBalls, wides };
+}
+function withBowlerDeliveryCounts(row){ return { ...row, ...bowlerDeliveryCounts(row.name, row.inningsNo || 1) }; }
 function bowlerFactsOf(e){
   if(e && e.bowlerFacts) return e.bowlerFacts;
   const t = e && e.ballType;
-  if(t === 'PEN') return { legal: false, runs: 0, wicket: false };
+  if(t === 'PEN' || t === 'OUT') return { legal: false, runs: 0, wicket: false };
   const legal = !['Wd', 'Nb', 'WdW', 'NbW'].includes(t);
   const runs = ['B', 'LB', 'W'].includes(t) ? 0 : (Number(e.runs) || 0);
-  const wicket = !!(e && e.isWicket) && !['Run Out', 'Retired Hurt', 'Retired Out'].includes(e.dismissalType || '');
+  const wicket = !!(e && e.isWicket) && isBowlerCreditedDismissal(e.dismissalType || '');
   return { legal, runs, wicket };
 }
 // The figures object for a bowler in THIS innings: the live tile if they
@@ -6494,9 +6676,11 @@ function dropEmptyBowlingRows(){
 }
 // "b Mukesh" → "b Raj" (and "b" → "b Raj" once an unknown bowler is named)
 // on the delivery and on the dismissed batter's card row.
-function dismissalTextWithBowler(type, fielder, bowler, suffix){
+function dismissalTextWithBowler(type, fielder, bowler, suffix, caughtKind){
   let t;
-  if(type === 'Caught') t = fielder ? `c ${fielder} b ${bowler}` : `c b ${bowler}`;
+  if(type === 'Caught' && caughtKind === 'cab') t = `c & b ${bowler}`;
+  else if(type === 'Caught' && caughtKind === 'behind') t = fielder ? `c †${fielder} b ${bowler}` : `c † b ${bowler}`;
+  else if(type === 'Caught') t = fielder ? `c ${fielder} b ${bowler}` : `c b ${bowler}`;
   else if(type === 'Stumped') t = fielder ? `st ${fielder} b ${bowler}` : `st b ${bowler}`;
   else if(type === 'Bowled') t = `b ${bowler}`;
   else if(type === 'LBW') t = `lbw b ${bowler}`;
@@ -6507,13 +6691,16 @@ function dismissalTextWithBowler(type, fielder, bowler, suffix){
 function retitleDismissalForBowler(e, bowlerName){
   const old = e.dismissal || '';
   const suffix = (/\((Wd|Nb)\)\s*$/.exec(old) || [])[0] || '';
-  const text = dismissalTextWithBowler(e.dismissalType, e.fielderName, bowlerName, suffix);
+  const caughtKind = /^c & b/.test(old) ? 'cab' : /^c †/.test(old) ? 'behind' : null;
+  // Caught & bowled: the catcher IS the bowler, so the catch moves too.
+  if(caughtKind === 'cab') e.fielderName = bowlerName;
+  const text = dismissalTextWithBowler(e.dismissalType, e.fielderName, bowlerName, suffix, caughtKind);
   if(!text) return;
   const team = e.battingTeam || state.battingTeam;
   const out = e.dismissedPlayer || e.striker;
   const card = activeBattingCard(team) || [];
   const row = card.find(r => r && r.out && r.name === out && (r.howOut === old || !old)) || card.find(r => r && r.out && r.name === out);
-  if(row){ row.howOut = text; row.bowlerName = bowlerName; }
+  if(row){ row.howOut = text; row.bowlerName = bowlerName; if(caughtKind === 'cab') row.fielderName = bowlerName; }
   e.dismissal = text;
   if(lastDismissedBatter === out) { const el = document.getElementById('disp-last-dismissal'); if(el) el.textContent = `${out} — ${text}`; }
 }
@@ -6688,7 +6875,7 @@ function openBowlerAssignModal(opts){
   document.getElementById('ba-bowler-field').style.display = fixMode ? '' : 'none';
   if(fixMode){
     const inn = currentLogInnings();
-    const overs = [...new Set((state.ballLog || []).filter(e => e && e.ballType !== 'PEN' && (e.innings || 1) === inn).map(overIndexOfEntry))].filter(Number.isFinite);
+    const overs = [...new Set((state.ballLog || []).filter(e => e && e.ballType !== 'PEN' && e.ballType !== 'OUT' && (e.innings || 1) === inn).map(overIndexOfEntry))].filter(Number.isFinite);
     if(!overs.includes(currentOverIndex())) overs.push(currentOverIndex());
     overs.sort((a, b) => b - a);
     const sel = document.getElementById('ba-over-select');
@@ -7878,7 +8065,8 @@ function buildMatchRecordForLeague(){
     scoreA: scoreForTeam('A'),
     scoreB: scoreForTeam('B'),
     battingCard: { A: orderedBatA, B: orderedBatB },
-    bowlingCard: { A: orderedBowlA, B: orderedBowlB },
+    // 0s / NB / WD per bowler, counted from the deliveries (see bowlerDeliveryCounts).
+    bowlingCard: { A: orderedBowlA.map(withBowlerDeliveryCounts), B: orderedBowlB.map(withBowlerDeliveryCounts) },
     // Squads (same permanent player ids) — lets "Create New Match" bring a
     // team back later with its full squad instead of retyping every player.
     squadA: squadSnapshotOf(state.teamA),
@@ -8583,8 +8771,8 @@ function renderScorecardHtml(m){
         <table class="sc-table"><thead><tr><th>Batsman</th><th>Runs</th><th>Balls</th><th>4s</th><th>6s</th><th>S/R</th><th>Dismissal</th></tr></thead>
         <tbody>${(i.battingCard || []).map(b => scRow([escapeHtmlPanel(b.name), b.runs, b.balls, b.fours, b.sixes, b.balls > 0 ? ((b.runs / b.balls) * 100).toFixed(1) : '0.0', escapeHtmlPanel(b.howOut || 'not out')])).join('')}</tbody></table>
         ${extrasTotalOf(ex) ? `<div class="sc-extras">Extras: Wd ${ex.wd || 0} \u00b7 NB ${ex.nb || 0} \u00b7 B ${ex.b || 0} \u00b7 LB ${ex.lb || 0}${ex.pen ? ` \u00b7 Pen ${ex.pen}` : ''}</div>` : ''}
-        <table class="sc-table" style="margin-top:8px;"><thead><tr><th>Bowler</th><th>Overs</th><th>Maidens</th><th>Runs</th><th>Wkts</th><th>Econ</th></tr></thead>
-        <tbody>${(i.bowlingCard || []).map(b => scRow([escapeHtmlPanel(b.name), `${b.overs}.${b.balls}`, b.maidens, b.runs, b.wickets, (b.overs + b.balls / 6) > 0 ? (b.runs / (b.overs + b.balls / 6)).toFixed(2) : '0.00'])).join('')}</tbody></table>
+        <table class="sc-table" style="margin-top:8px;"><thead><tr><th>Bowler</th><th>Overs</th><th>Maidens</th><th>Runs</th><th>Wkts</th><th>0s</th><th>NB</th><th>WD</th><th>Econ</th></tr></thead>
+        <tbody>${(i.bowlingCard || []).map(b => scRow([escapeHtmlPanel(b.name), `${b.overs}.${b.balls}`, b.maidens, b.runs, b.wickets, b.dots != null ? b.dots : '—', b.noBalls != null ? b.noBalls : '—', b.wides != null ? b.wides : '—', (b.overs + b.balls / 6) > 0 ? (b.runs / (b.overs + b.balls / 6)).toFixed(2) : '0.00'])).join('')}</tbody></table>
       </div>`;
     }).join('')}
     ${so.decided && so.resultText ? `<div class="sc-result" style="font-size:14px;">\ud83c\udfc6 ${escapeHtmlPanel(so.resultText)}</div>` : ''}`;
@@ -8608,8 +8796,8 @@ function renderScorecardHtml(m){
         <tbody>${batting.map(b => scRow([escapeHtmlPanel(b.name), b.runs, b.balls, b.fours, b.sixes, b.balls > 0 ? ((b.runs / b.balls) * 100).toFixed(1) : '0.0', escapeHtmlPanel(b.howOut || 'not out')])).join('')}</tbody></table>
         ${extrasTotalOf(extr) ? `<div class="sc-extras">Extras: Wd ${extr.wd || 0} · NB ${extr.nb || 0} · B ${extr.b || 0} · LB ${extr.lb || 0}${extr.pen ? ` · Pen ${extr.pen}` : ''}</div>` : ''}
         ${fow.length ? `<div class="sc-fow">Fall of wickets: ${fow.map(f => `${f.wkt}-${f.runs} (${f.over})`).join('  ')}</div>` : ''}
-        <table class="sc-table" style="margin-top:8px;"><thead><tr><th>Bowler</th><th>Overs</th><th>Maidens</th><th>Runs</th><th>Wkts</th><th>Econ</th></tr></thead>
-        <tbody>${bowling.map(b => scRow([escapeHtmlPanel(b.name), `${b.overs}.${b.balls}`, b.maidens, b.runs, b.wickets, (b.overs + b.balls / 6) > 0 ? (b.runs / (b.overs + b.balls / 6)).toFixed(2) : '0.00'])).join('')}</tbody></table>
+        <table class="sc-table" style="margin-top:8px;"><thead><tr><th>Bowler</th><th>Overs</th><th>Maidens</th><th>Runs</th><th>Wkts</th><th>0s</th><th>NB</th><th>WD</th><th>Econ</th></tr></thead>
+        <tbody>${bowling.map(b => scRow([escapeHtmlPanel(b.name), `${b.overs}.${b.balls}`, b.maidens, b.runs, b.wickets, b.dots != null ? b.dots : '—', b.noBalls != null ? b.noBalls : '—', b.wides != null ? b.wides : '—', (b.overs + b.balls / 6) > 0 ? (b.runs / (b.overs + b.balls / 6)).toFixed(2) : '0.00'])).join('')}</tbody></table>
       </div>`;
   };
 
@@ -10111,9 +10299,10 @@ function recordBall(kind, meta){
     case 'W': {
       const wasFreeHit = state.freeHit;
       const dismissalType = (meta && meta.dismissalType) || 'Bowled';
-      const isBowlerWicket = !['Run Out', 'Retired Hurt', 'Retired Out'].includes(dismissalType);
+      const isBowlerWicket = isBowlerCreditedDismissal(dismissalType);
       const fielderName = (meta && meta.fielderName) || '';
-      const shortMap = { Bowled:'b', Caught:'c', LBW:'lbw', Stumped:'st', 'Hit Wicket':'hit wkt', 'Run Out':'run out', 'Retired Hurt':'retired hurt', 'Retired Out':'retired out' };
+      const shortMap = { Bowled:'b', Caught:'c', LBW:'lbw', Stumped:'st', 'Hit Wicket':'hit wkt', 'Run Out':'run out', 'Retired Hurt':'retired hurt', 'Retired Out':'retired out',
+        'Obstructing the Field':'obstructing the field', 'Hit the Ball Twice':'hit the ball twice' };
 
       // Build the human-readable dismissal line. Caught/Stumped name the
       // fielder/keeper when one was given ("c Fielder b Bowler",
@@ -10121,12 +10310,18 @@ function recordBall(kind, meta){
       // ("run out (Fielder)") instead of a bowler, since a run-out is
       // never credited to the bowler under the Laws of Cricket.
       let dismissalText;
-      if(dismissalType === 'Caught' && fielderName){
+      if(dismissalType === 'Caught' && meta && meta.caughtKind === 'cab'){
+        dismissalText = `c & b ${state.bowler.name || 'bowler'}`;           // caught & bowled
+      } else if(dismissalType === 'Caught' && meta && meta.caughtKind === 'behind'){
+        dismissalText = fielderName ? `c †${fielderName} b ${state.bowler.name || 'bowler'}` : `c † b ${state.bowler.name || 'bowler'}`; // caught behind (the keeper)
+      } else if(dismissalType === 'Caught' && fielderName){
         dismissalText = `c ${fielderName} b ${state.bowler.name || 'bowler'}`;
       } else if(dismissalType === 'Stumped' && fielderName){
         dismissalText = `st ${fielderName} b ${state.bowler.name || 'bowler'}`;
       } else if(dismissalType === 'Run Out'){
         dismissalText = fielderName ? `run out (${fielderName})` : 'run out';
+      } else if(dismissalType === 'Obstructing the Field' || dismissalType === 'Hit the Ball Twice'){
+        dismissalText = shortMap[dismissalType];                             // never the bowler's
       } else if(dismissalType === 'Bowled'){
         dismissalText = state.bowler.name ? `b ${state.bowler.name}` : 'b'; // was "b b <bowler>"
       } else {
@@ -10142,11 +10337,12 @@ function recordBall(kind, meta){
       // NON-striker can be the one given out instead.
       const originalStriker = state.striker;
       const originalNonStriker = state.nonStriker;
-      const dismissedIsNonStriker = dismissalType === 'Run Out' && runOutTakesNonStriker(meta);
+      const dismissedIsNonStriker = EITHER_END_DISMISSALS.includes(dismissalType) && runOutTakesNonStriker(meta);
       const dismissedBatter = dismissedIsNonStriker ? originalNonStriker : originalStriker;
     lastDismissedBatter = (dismissedBatter && dismissedBatter.name) || null; // carried into the ball log — see logBallToDb
       logDismissal = { type: dismissalType, fielder: fielderName || null, fielderId: (meta && meta.fielderId) || null,
-        batter: (dismissedBatter && dismissedBatter.name) || null, batterId: (dismissedBatter && dismissedBatter.id) || null };
+        batter: (dismissedBatter && dismissedBatter.name) || null, batterId: (dismissedBatter && dismissedBatter.id) || null,
+        subtype: meta && meta.caughtKind === 'cab' ? 'caught and bowled' : meta && meta.caughtKind === 'behind' ? 'caught behind' : null };
       const survivor = dismissedIsNonStriker ? originalStriker : originalNonStriker;
 
       document.getElementById('disp-last-dismissal').textContent = `${dismissedBatter.name || 'Batsman'} — ${dismissalText}`;
@@ -10157,9 +10353,9 @@ function recordBall(kind, meta){
       // BYES or LEG BYES they are team extras only — never the striker's,
       // never charged to the bowler. Worked out before the bowler is
       // charged, so a last-ball run out can never be scored as a maiden.
-      const runOutCompletedRuns = (dismissalType === 'Run Out' && meta && typeof meta.runsCompleted === 'number')
+      const runOutCompletedRuns = (EITHER_END_DISMISSALS.includes(dismissalType) && meta && typeof meta.runsCompleted === 'number')
         ? Math.max(0, Math.floor(meta.runsCompleted)) : 0;
-      const runOutRunsAs = (dismissalType === 'Run Out' && meta && (meta.runsAs === 'bye' || meta.runsAs === 'legbye')) ? meta.runsAs : null;
+      const runOutRunsAs = (EITHER_END_DISMISSALS.includes(dismissalType) && meta && (meta.runsAs === 'bye' || meta.runsAs === 'legbye')) ? meta.runsAs : null;
       state.score.wickets++;
       state.thisOver.push('W');
       pushBallHistory('W');
@@ -10236,7 +10432,7 @@ function recordBall(kind, meta){
       // completed runs means the two batters physically crossed ends
       // before the throw came in, so the vacant end flips accordingly —
       // whichever end the dismissed batter actually ends up standing at.
-      const crossed = dismissalType === 'Run Out' && (runOutCompletedRuns % 2 === 1);
+      const crossed = EITHER_END_DISMISSALS.includes(dismissalType) && (runOutCompletedRuns % 2 === 1);
       const dismissedWasOriginallyStriker = !dismissedIsNonStriker;
       let vacantEnd = crossed
         ? (dismissedWasOriginallyStriker ? 'nonStriker' : 'striker')
@@ -10272,9 +10468,9 @@ function recordBall(kind, meta){
       // keeper breaks the stumps), same "completed runs" idea as a normal
       // Run Out, just reusing the metaKey name the plain Wide case uses.
       const dismissalType = (meta && meta.dismissalType) || 'Run Out';
-      const extraRun = dismissalType === 'Run Out' ? ((meta && typeof meta.extraRuns === 'number') ? meta.extraRuns : 0) : 0;
+      const extraRun = EITHER_END_DISMISSALS.includes(dismissalType) ? ((meta && typeof meta.extraRuns === 'number') ? meta.extraRuns : 0) : 0;
       const wdTotal = 1 + extraRun;
-      const isBowlerWicket = !['Run Out', 'Retired Hurt', 'Retired Out'].includes(dismissalType);
+      const isBowlerWicket = isBowlerCreditedDismissal(dismissalType);
       const fielderName = (meta && meta.fielderName) || '';
       const shortMap = { Stumped: 'st', 'Run Out': 'run out' };
       let dismissalText;
@@ -10286,11 +10482,12 @@ function recordBall(kind, meta){
 
       const originalStriker = state.striker;
       const originalNonStriker = state.nonStriker;
-      const dismissedIsNonStriker = dismissalType === 'Run Out' && runOutTakesNonStriker(meta);
+      const dismissedIsNonStriker = EITHER_END_DISMISSALS.includes(dismissalType) && runOutTakesNonStriker(meta);
       const dismissedBatter = dismissedIsNonStriker ? originalNonStriker : originalStriker;
     lastDismissedBatter = (dismissedBatter && dismissedBatter.name) || null; // carried into the ball log — see logBallToDb
       logDismissal = { type: dismissalType, fielder: fielderName || null, fielderId: (meta && meta.fielderId) || null,
-        batter: (dismissedBatter && dismissedBatter.name) || null, batterId: (dismissedBatter && dismissedBatter.id) || null };
+        batter: (dismissedBatter && dismissedBatter.name) || null, batterId: (dismissedBatter && dismissedBatter.id) || null,
+        subtype: meta && meta.caughtKind === 'cab' ? 'caught and bowled' : meta && meta.caughtKind === 'behind' ? 'caught behind' : null };
       const survivor = dismissedIsNonStriker ? originalStriker : originalNonStriker;
       document.getElementById('disp-last-dismissal').textContent = `${dismissedBatter.name || 'Batsman'} — ${dismissalText}`;
 
@@ -10354,7 +10551,7 @@ function recordBall(kind, meta){
       // called), so — unlike the plain 'W' case — there's no over-complete
       // ends-swap to consider here, only whether the batters crossed
       // before the dismissal.
-      const crossed = dismissalType === 'Run Out' && (extraRun % 2 === 1);
+      const crossed = EITHER_END_DISMISSALS.includes(dismissalType) && (extraRun % 2 === 1);
       const dismissedWasOriginallyStriker = !dismissedIsNonStriker;
       let vacantEnd = crossed
         ? (dismissedWasOriginallyStriker ? 'nonStriker' : 'striker')
@@ -10374,9 +10571,9 @@ function recordBall(kind, meta){
       // the dismissal); Hit Wicket ends the delivery dead, same as a
       // normal legal-ball Hit Wicket.
       const dismissalType = (meta && meta.dismissalType) || 'Run Out';
-      const batRuns = dismissalType === 'Run Out' ? ((meta && typeof meta.runsOffBat === 'number') ? meta.runsOffBat : 0) : 0;
+      const batRuns = EITHER_END_DISMISSALS.includes(dismissalType) ? ((meta && typeof meta.runsOffBat === 'number') ? meta.runsOffBat : 0) : 0;
       const nbTotal = 1 + batRuns;
-      const isBowlerWicket = !['Run Out', 'Retired Hurt', 'Retired Out'].includes(dismissalType);
+      const isBowlerWicket = isBowlerCreditedDismissal(dismissalType);
       const fielderName = (meta && meta.fielderName) || '';
       const shortMap = { 'Hit Wicket': 'hit wkt', 'Run Out': 'run out' };
       let dismissalText;
@@ -10388,11 +10585,12 @@ function recordBall(kind, meta){
 
       const originalStriker = state.striker;
       const originalNonStriker = state.nonStriker;
-      const dismissedIsNonStriker = dismissalType === 'Run Out' && runOutTakesNonStriker(meta);
+      const dismissedIsNonStriker = EITHER_END_DISMISSALS.includes(dismissalType) && runOutTakesNonStriker(meta);
       const dismissedBatter = dismissedIsNonStriker ? originalNonStriker : originalStriker;
     lastDismissedBatter = (dismissedBatter && dismissedBatter.name) || null; // carried into the ball log — see logBallToDb
       logDismissal = { type: dismissalType, fielder: fielderName || null, fielderId: (meta && meta.fielderId) || null,
-        batter: (dismissedBatter && dismissedBatter.name) || null, batterId: (dismissedBatter && dismissedBatter.id) || null };
+        batter: (dismissedBatter && dismissedBatter.name) || null, batterId: (dismissedBatter && dismissedBatter.id) || null,
+        subtype: meta && meta.caughtKind === 'cab' ? 'caught and bowled' : meta && meta.caughtKind === 'behind' ? 'caught behind' : null };
       const survivor = dismissedIsNonStriker ? originalStriker : originalNonStriker;
       document.getElementById('disp-last-dismissal').textContent = `${dismissedBatter.name || 'Batsman'} — ${dismissalText}`;
 
@@ -10444,7 +10642,7 @@ function recordBall(kind, meta){
       });
       state.partnershipRuns = 0; state.partnershipBalls = 0;
 
-      const crossed = dismissalType === 'Run Out' && (batRuns % 2 === 1);
+      const crossed = EITHER_END_DISMISSALS.includes(dismissalType) && (batRuns % 2 === 1);
       const dismissedWasOriginallyStriker = !dismissedIsNonStriker;
       let vacantEnd = crossed
         ? (dismissedWasOriginallyStriker ? 'nonStriker' : 'striker')
@@ -10977,7 +11175,8 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundar
   const battingTeam = id.battingTeam || state.battingTeam;
   const ballRuns = typeof id.runs === 'number' ? id.runs : (state.score.runs - runsBefore);
   const dismissal = !kindIsWicket ? null : (id.dismissal
-    ? { type: id.dismissal.type || 'Bowled', fielder: id.dismissal.fielder || null, fielderId: id.dismissal.fielderId || null, batter: id.dismissal.batter || null, batterId: id.dismissal.batterId || null }
+    ? { type: id.dismissal.type || 'Bowled', fielder: id.dismissal.fielder || null, fielderId: id.dismissal.fielderId || null, batter: id.dismissal.batter || null, batterId: id.dismissal.batterId || null,
+        ...(id.dismissal.subtype ? { subtype: id.dismissal.subtype } : {}) }
     : { type: lastDismissalType || 'Bowled', fielder: lastDismissalFielder || null, batter: lastDismissedBatter || null });
   const participants = id.participants || ClipAttribution.resolveClipParticipants(ClipAttribution.buildDeliverySnapshot({
     deliveryId: id.deliveryId, innings, over: id.over, ballInOver: id.ballInOver, battingTeam,
@@ -11662,10 +11861,24 @@ let lastAutoWicketClip = null;
    over stays on that ball (0.6, never 1.1) and with that bowler.
    ============================================================ */
 const WD_TYPES = [
-  { t: 'Bowled', sub: 'bowler’s wicket' }, { t: 'Caught', sub: 'bowler’s wicket' }, { t: 'LBW', sub: 'bowler’s wicket' },
-  { t: 'Stumped', sub: 'bowler’s wicket' }, { t: 'Hit Wicket', sub: 'bowler’s wicket' }, { t: 'Run Out', sub: 'not the bowler’s' },
-  { t: 'Retired Out', sub: 'not the bowler’s' }, { t: 'Retired Hurt', sub: 'not out · can return' }
+  { t: 'Bowled', icon: '🎯', sub: 'bowler’s wicket' },
+  { t: 'Caught', icon: '🧤', sub: 'bowler’s wicket' },
+  { t: 'Caught Behind', icon: '🧤', sub: 'by the keeper', engine: 'Caught', caught: 'behind' },
+  { t: 'Caught & Bowled', icon: '🤲', sub: 'by the bowler', engine: 'Caught', caught: 'cab' },
+  { t: 'Run Out', icon: '🏃', sub: 'either batter' },
+  { t: 'LBW', icon: '🦵', sub: 'bowler’s wicket' },
+  { t: 'Stumped', icon: '🧤', sub: 'keeper or bowler' },
+  { t: 'Retired Hurt', icon: '🩹', sub: 'not out · can return', special: 'retired-hurt' },
+  { t: 'Run Out (Mankaded)', icon: '✋', sub: 'before the ball', nonDelivery: true },
+  { t: 'Hit Wicket', icon: '💥', sub: 'bowler’s wicket' },
+  { t: 'Absent Hurt', icon: '🚑', sub: 'not out · cannot bat', special: 'absent' },
+  { t: 'Retired Out', icon: '🚶', sub: 'out · no ball', nonDelivery: true },
+  { t: 'Hit the Ball Twice', icon: '✌️', sub: 'not the bowler’s' },
+  { t: 'Obstructing the Field', icon: '🚧', sub: 'either batter' },
+  { t: 'Timed Out', icon: '⏱️', sub: 'incoming batter', nonDelivery: true },
+  { t: 'Retired', icon: '🚪', sub: 'retired not out', special: 'retired' }
 ];
+function wdTypeDef(t){ return WD_TYPES.find(o => o.t === t) || null; }
 const WD_DELIVERIES = [
   { k: 'normal', label: 'Normal', sub: 'legal ball' }, { k: 'wide', label: 'Wide', sub: 'WD · not legal' },
   { k: 'noball', label: 'No Ball', sub: 'NB · not legal' }, { k: 'bye', label: 'Bye', sub: 'legal ball' },
@@ -11673,10 +11886,17 @@ const WD_DELIVERIES = [
 ];
 // Laws of Cricket: what each dismissal can happen on.
 const WD_ALLOWED = {
-  'Bowled': ['normal'], 'Caught': ['normal'], 'LBW': ['normal'], 'Retired Out': ['normal'],
-  'Stumped': ['normal', 'wide'], 'Hit Wicket': ['normal', 'noball'],
-  'Run Out': ['normal', 'wide', 'noball', 'bye', 'legbye']
+  'Bowled': ['normal'], 'Caught': ['normal'], 'Caught Behind': ['normal'], 'Caught & Bowled': ['normal'], 'LBW': ['normal'],
+  'Stumped': ['normal', 'wide'], 'Hit Wicket': ['normal', 'noball'], 'Hit the Ball Twice': ['normal', 'noball'],
+  'Run Out': ['normal', 'wide', 'noball', 'bye', 'legbye'], 'Obstructing the Field': ['normal', 'wide', 'noball', 'bye', 'legbye']
 };
+// Who can be given out: the striker (default), either batter (the scorer
+// must choose), the non-striker (Mankad), or a batter picked from the list
+// (Timed Out — the incoming batter; Absent Hurt — one who cannot bat).
+const WD_WHO = { 'Run Out': 'either', 'Obstructing the Field': 'either', 'Retired Out': 'either', 'Retired': 'either',
+  'Run Out (Mankaded)': 'nonStriker', 'Timed Out': 'pick', 'Absent Hurt': 'pick' };
+// On a Free Hit the striker cannot be out bowled, caught, lbw, stumped or hit wicket.
+const WD_FREE_HIT_BLOCKED = ['Bowled', 'Caught', 'Caught Behind', 'Caught & Bowled', 'LBW', 'Stumped', 'Hit Wicket'];
 // ⏱ WICKET ANIMATION — goes up on the overlay 3 seconds after WICKET is
 // pressed, without waiting for the scorer to finish the Wicket Details
 // screen (that can take a while; the moment is now). Only the graphic is
@@ -11713,32 +11933,54 @@ function fireWicketAnimationOnce(name){
 let wdState = null, wdFielderDD = null;
 function wdEl(id){ return document.getElementById(id); }
 function wdSnapshot(){ return pendingWicketDelivery || captureWicketDelivery(); }
+function wdDef(){ return wdState && wdState.type ? wdTypeDef(wdState.type) : null; }
+function wdRunsAllowed(){ return !!wdState && ['Run Out', 'Obstructing the Field'].includes(wdState.type); }
 function wdRuns(){
-  if(!wdState || wdState.type !== 'Run Out') return 0;
+  if(!wdRunsAllowed()) return 0;
   if(wdState.custom){ const v = parseInt(wdEl('wd-runs-custom').value, 10); return Number.isFinite(v) && v >= 0 ? Math.min(v, 99) : 0; }
   return wdState.runs || 0;
 }
-function wdIsLegal(){ return wdState && !['wide', 'noball'].includes(wdState.delivery); }
-// After this ball: is the innings over (so no new batsman / next striker)?
+function wdDelivery(){
+  if(!wdState) return 'normal';
+  if(wdState.type === 'Stumped') return wdState.wide ? 'wide' : 'normal';
+  return wdState.delivery;
+}
+function wdIsLegal(){ return !['wide', 'noball'].includes(wdDelivery()); }
+function wdIsWicket(){ const d = wdDef(); return !!d && !d.special; }
+// Which end the dismissed batter leaves empty (null = nobody at the crease leaves).
+function wdOutEnd(){
+  const d = wdDef();
+  if(!d || d.special === 'absent') return null;
+  const who = WD_WHO[wdState.type];
+  if(who === 'either') return wdState.who || null;
+  if(who === 'nonStriker') return 'nonStriker';
+  if(who === 'pick') return wdState.pick === 'crease:striker' ? 'striker' : wdState.pick === 'crease:nonStriker' ? 'nonStriker' : null;
+  return 'striker';
+}
+// After this event: is the innings over (so no new batsman / next striker)?
 function wdInningsEndsHere(){
-  if(!wdState || !wdState.type || wdState.type === 'Retired Hurt') return false;
-  if(state.score.wickets + 1 >= maxWickets()) return true;
+  const d = wdDef();
+  if(!d || d.special === 'retired-hurt' || d.special === 'absent') return false;
+  if(wdIsWicket() && state.score.wickets + 1 >= maxWickets() - absentHurtThisInnings().length) return true;
+  if(d.nonDelivery || d.special) return false;
   const per = typeof ballsPerInnings === 'function' ? ballsPerInnings() : null;
   const bowled = (state.score.overs || 0) * ballsPerOver() + (state.score.balls || 0) + (wdIsLegal() ? 1 : 0);
   if(per && bowled >= per) return true;
-  const extra = wdState.delivery === 'wide' || wdState.delivery === 'noball' ? 1 : 0;
+  const extra = wdIsLegal() ? 0 : 1;
   if(state.target && state.score.runs + wdRuns() + extra >= state.target) return true;
   return false;
 }
-// Where the engine will put the incoming batsman (same rules as the 'W' /
-// 'WdW' / 'NbW' cases of recordBall): odd completed runs = the batters
+function wdNeedsBat(){ return !!wdDef() && !!wdOutEnd() && !wdInningsEndsHere(); }
+// The Laws' answer to "who faces next" — shown as the hint; the scorer
+// still has to answer the question. Odd completed runs = the batters
 // crossed; a legal ball that ends the over swaps ends again.
 function wdPredictNewOnStrike(){
-  if(!wdState || !wdState.type) return false;
-  const ro = wdState.type === 'Run Out';
-  const outIsStriker = ro ? wdState.who !== 'nonStriker' : true;
-  const crossed = ro && (wdRuns() % 2 === 1);
-  const vacant = crossed ? (outIsStriker ? 'nonStriker' : 'striker') : (outIsStriker ? 'striker' : 'nonStriker');
+  const end = wdOutEnd();
+  if(!end) return false;
+  const d = wdDef();
+  if(d.nonDelivery || d.special) return end === 'striker';
+  const crossed = wdRunsAllowed() && (wdRuns() % 2 === 1);
+  const vacant = crossed ? (end === 'striker' ? 'nonStriker' : 'striker') : end;
   let newOnStrike = vacant === 'striker';
   if(wdIsLegal() && (state.score.balls || 0) + 1 >= ballsPerOver()) newOnStrike = !newOnStrike;
   return newOnStrike;
@@ -11752,7 +11994,12 @@ function wdNewBatChoice(){
   const name = wdEl('wd-newbat-input').style.display !== 'none' ? wdEl('wd-newbat-input').value.trim() : '';
   return name ? { name, id: null } : null;
 }
+// The fielder recorded with the dismissal — the bowler himself for caught &
+// bowled, a Mankad, or a stumping the bowler made.
 function wdFielderChoice(){
+  const t = wdState && wdState.type;
+  const b = state.bowler || {};
+  if(t === 'Caught & Bowled' || t === 'Run Out (Mankaded)' || (t === 'Stumped' && wdState.stumpBy === 'bowler')) return { name: b.name || '', id: b.id || null };
   const sel = wdEl('wd-fielder-select');
   if(sel.value){
     const p = findPlayerById(bowlingTeamKey(), sel.value);
@@ -11760,13 +12007,26 @@ function wdFielderChoice(){
   }
   return { name: wdEl('wd-fielder-input').value.trim(), id: null };
 }
-function wdEligibleNewBatters(snap){
+function wdEligibleNewBatters(snap, extraExclude){
   const key = state.battingTeam;
-  return eligibleBatters(key, { excludeIds: [snap.strikerId, snap.nonStrikerId].filter(Boolean) })
+  return eligibleBatters(key, { excludeIds: [snap.strikerId, snap.nonStrikerId, extraExclude].filter(Boolean) })
     .filter(p => p.isXI !== false && p.name !== snap.strikerName && p.name !== snap.nonStrikerName);
 }
 function wdChip(label, sub, on, attrs, extraCls){
   return `<button type="button" class="wd-chip${on ? ' on' : ''}${extraCls ? ' ' + extraCls : ''}" ${attrs || ''}>${escapeHtmlPanel(label)}${sub ? `<small>${escapeHtmlPanel(sub)}</small>` : ''}</button>`;
+}
+function wdKeeper(){
+  const t = teamObj(bowlingTeamKey()) || {};
+  return t.wkId ? findPlayerById(bowlingTeamKey(), t.wkId) : null;
+}
+function wdSetFielder(id){
+  const sel = wdEl('wd-fielder-select');
+  if(id && !Array.prototype.some.call(sel.options, o => o.value === String(id))){
+    const p = findPlayerById(bowlingTeamKey(), id);
+    const o = document.createElement('option'); o.value = id; o.textContent = p ? p.name : id; sel.appendChild(o);
+  }
+  sel.value = id || '';
+  if(wdFielderDD) wdFielderDD.refreshLabel();
 }
 function renderWicketDetails(){
   const s = wdState;
@@ -11786,78 +12046,136 @@ function renderWicketDetails(){
   ].join('');
   wdEl('wd-modal').classList.toggle('is-freehit', !!state.freeHit);
 
-  // Out type — a Free Hit only allows a Run Out; a delivery fixed by the
-  // Wide / No Ball picker only allows what can happen on it.
+  // ---- Out type (the Laws decide what is possible right now) ----
   wdEl('wd-types').innerHTML = WD_TYPES.map(o => {
-    const freeHitOk = !state.freeHit || o.t === 'Run Out' || o.t === 'Retired Hurt';
-    const lockOk = !s.lockedDelivery || o.t === 'Retired Hurt' ? true : (WD_ALLOWED[o.t] || []).includes(s.lockedDelivery);
-    return wdChip(o.t, o.sub, s.type === o.t, `data-wd-type="${escapeHtmlAttr(o.t)}"${freeHitOk && lockOk ? '' : ' disabled'}`, 'out');
+    let ok = true;
+    if(state.freeHit && WD_FREE_HIT_BLOCKED.includes(o.t)) ok = false;
+    if(s.lockedDelivery) ok = ok && !o.special && !o.nonDelivery && (WD_ALLOWED[o.t] || []).includes(s.lockedDelivery);
+    return `<button type="button" class="wd-chip wd-type${s.type === o.t ? ' on' : ''}" data-wd-type="${escapeHtmlAttr(o.t)}"${ok ? '' : ' disabled'}>`
+      + `<span class="wd-ico" aria-hidden="true">${o.icon}</span>${escapeHtmlPanel(o.t)}<small>${escapeHtmlPanel(o.sub)}</small></button>`;
   }).join('');
 
-  const typed = !!s.type && s.type !== 'Retired Hurt';
-  const allowed = typed ? (WD_ALLOWED[s.type] || ['normal']) : [];
-  if(typed && !allowed.includes(s.delivery)) s.delivery = allowed[0];
-  wdEl('wd-sec-delivery').hidden = !typed;
-  wdEl('wd-delivery').innerHTML = WD_DELIVERIES.map(d => wdChip(d.label, d.sub, s.delivery === d.k,
-    `data-wd-delivery="${d.k}"${allowed.includes(d.k) && (!s.lockedDelivery || s.lockedDelivery === d.k) ? '' : ' disabled'}`)).join('');
+  const d = wdDef();
+  const isDelivery = !!d && !d.special && !d.nonDelivery;
+  const allowed = isDelivery ? (WD_ALLOWED[s.type] || ['normal']) : [];
+  if(isDelivery && s.type !== 'Stumped' && !allowed.includes(s.delivery)) s.delivery = allowed[0];
+  if(s.type === 'Stumped' && s.lockedDelivery === 'wide') s.wide = true;
+  wdEl('wd-sec-delivery').hidden = !isDelivery || s.type === 'Stumped';
+  wdEl('wd-delivery').innerHTML = WD_DELIVERIES.map(x => wdChip(x.label, x.sub, s.delivery === x.k,
+    `data-wd-delivery="${x.k}"${allowed.includes(x.k) && (!s.lockedDelivery || s.lockedDelivery === x.k) ? '' : ' disabled'}`)).join('');
+  // Stumped: the optional Wide Ball — +1 wide, then the wicket.
+  wdEl('wd-sec-wide').hidden = s.type !== 'Stumped';
+  wdEl('wd-wide-check').checked = !!s.wide;
+  wdEl('wd-wide-check').disabled = s.lockedDelivery === 'wide';
 
-  const ro = s.type === 'Run Out';
-  wdEl('wd-sec-who').hidden = !ro;
-  wdEl('wd-who').innerHTML = [
-    wdChip(snap.strikerName || 'Striker', 'STRIKER', s.who === 'striker', 'data-wd-who="striker"', 'out'),
-    wdChip(snap.nonStrikerName || 'Non-striker', 'NON-STRIKER', s.who === 'nonStriker', 'data-wd-who="nonStriker"', 'out')
-  ].join('');
+  // ---- Who is out ----
+  const whoKind = d ? (WD_WHO[s.type] || 'striker') : null;
+  wdEl('wd-sec-who').hidden = !d || d.special === 'retired-hurt';
+  const whoChips = wdEl('wd-who'), whoSel = wdEl('wd-who-select');
+  whoSel.style.display = whoKind === 'pick' ? 'block' : 'none';
+  whoChips.style.display = whoKind === 'pick' ? 'none' : '';
+  wdEl('wd-who-label').innerHTML = whoKind === 'either' ? 'Who is out? <span class="wd-hint">— choose one</span>'
+    : whoKind === 'pick' ? (s.type === 'Absent Hurt' ? 'Who is absent hurt?' : 'Who is timed out? <span class="wd-hint">— the incoming batter</span>') : 'Who is out?';
+  if(whoKind === 'either'){
+    whoChips.innerHTML = wdChip(snap.strikerName || 'Striker', 'STRIKER', s.who === 'striker', 'data-wd-who="striker"', 'out')
+      + wdChip(snap.nonStrikerName || 'Non-striker', 'NON-STRIKER', s.who === 'nonStriker', 'data-wd-who="nonStriker"', 'out');
+  } else if(whoKind === 'nonStriker'){
+    whoChips.innerHTML = wdChip(snap.nonStrikerName || 'Non-striker', 'NON-STRIKER — out of the crease before the ball', true, 'data-wd-fixed="1"', 'out');
+  } else if(whoKind === 'striker'){
+    whoChips.innerHTML = wdChip(snap.strikerName || 'Striker', 'STRIKER', true, 'data-wd-fixed="1"', 'out');
+  }
+  if(whoKind === 'pick' && whoSel.dataset.forType !== s.type){
+    whoSel.dataset.forType = s.type;
+    const opts = ['<option value="">— choose the batter —</option>'];
+    if(s.type === 'Timed Out'){
+      [['crease:striker', state.striker], ['crease:nonStriker', state.nonStriker]].forEach(([v, b]) => {
+        if(b && b.name && !(b.balls || 0) && !(b.runs || 0)) opts.push(`<option value="${v}">${escapeHtmlPanel(b.name)} — just in, at the crease</option>`);
+      });
+    }
+    wdEligibleNewBatters(snap).forEach(p => opts.push(`<option value="p:${escapeHtmlAttr(p.id)}">${escapeHtmlPanel(p.name)} — yet to bat</option>`));
+    whoSel.innerHTML = opts.join('');
+    whoSel.value = s.pick || '';
+  }
 
-  const fielderFor = { 'Caught': 'Catching fielder', 'Stumped': 'Wicketkeeper', 'Run Out': 'Fielder (who ran them out)' };
-  wdEl('wd-sec-fielder').hidden = !fielderFor[s.type];
-  if(fielderFor[s.type]) wdEl('wd-fielder-label').innerHTML = `${fielderFor[s.type]} <span class="wd-hint">— optional</span>`;
+  // ---- Fielder ----
+  const b = state.bowler || {};
+  const fielderLabel = { 'Caught': 'Catching fielder', 'Caught Behind': 'Wicket-keeper', 'Run Out': 'Fielder (who ran them out)', 'Stumped': 'Stumped by' }[s.type];
+  const fixedFielder = s.type === 'Caught & Bowled' ? `Caught by the bowler — ${b.name || 'bowler (unassigned)'}`
+    : s.type === 'Run Out (Mankaded)' ? `Run out by the bowler — ${b.name || 'bowler (unassigned)'}` : '';
+  wdEl('wd-sec-fielder').hidden = !fielderLabel && !fixedFielder;
+  wdEl('wd-fielder-label').innerHTML = fixedFielder ? 'Fielder' : `${fielderLabel || 'Fielder'}${s.type === 'Stumped' ? '' : ' <span class="wd-hint">— optional</span>'}`;
+  wdEl('wd-fielder-note').textContent = fixedFielder;
+  wdEl('wd-fielder-note').hidden = !fixedFielder;
+  const by = wdEl('wd-fielder-by');
+  by.hidden = s.type !== 'Stumped';
+  if(s.type === 'Stumped'){
+    const k = wdKeeper();
+    by.innerHTML = wdChip('Wicket-keeper', k ? k.name : 'choose below', s.stumpBy !== 'bowler', 'data-wd-stumpby="keeper"')
+      + wdChip('Bowler', b.name || 'unassigned', s.stumpBy === 'bowler', 'data-wd-stumpby="bowler"');
+  }
+  const pickFielder = !!fielderLabel && !(s.type === 'Stumped' && s.stumpBy === 'bowler');
+  const hasFielders = fieldingSidePlayers().length > 0;
+  if(wdFielderDD) wdFielderDD.wrap.style.display = pickFielder && hasFielders ? 'block' : 'none';
+  wdEl('wd-fielder-input').style.display = pickFielder && !hasFielders ? 'block' : 'none';
 
-  wdEl('wd-sec-runs').hidden = !ro;
+  // ---- Runs ----
+  wdEl('wd-sec-runs').hidden = !wdRunsAllowed();
   const runsLabel = { normal: 'Runs completed — off the bat', bye: 'Byes completed', legbye: 'Leg byes completed',
-    wide: 'Runs completed — plus the 1 wide', noball: 'Runs off the bat — plus the 1 no ball' }[s.delivery] || 'Runs completed';
+    wide: 'Runs completed — plus the 1 wide', noball: 'Runs off the bat — plus the 1 no ball' }[wdDelivery()] || 'Runs completed';
   wdEl('wd-runs-label').textContent = runsLabel;
   wdEl('wd-runs').innerHTML = [0, 1, 2, 3, 4, 5, 6].map(r => wdChip(String(r), '', !s.custom && s.runs === r, `data-wd-runs="${r}"`)).join('')
     + wdChip('+', '', !!s.custom, 'data-wd-runs="custom" title="More runs"');
   wdEl('wd-custom').hidden = !s.custom;
 
-  const ends = wdInningsEndsHere();
-  const needsBat = typed && !ends;
+  // ---- New batsman + WHO IS ON STRIKE (always asked) ----
+  const end = wdOutEnd();
+  const needsBat = wdNeedsBat();
   wdEl('wd-sec-newbat').hidden = !needsBat;
-  const strikeSec = wdEl('wd-sec-strike');
-  strikeSec.hidden = !needsBat || (ro && !s.who);
-  const outName = ro ? (s.who === 'nonStriker' ? snap.nonStrikerName : s.who === 'striker' ? snap.strikerName : null) : snap.strikerName;
-  const survivor = ro ? (s.who === 'nonStriker' ? snap.strikerName : s.who === 'striker' ? snap.nonStrikerName : null) : snap.nonStrikerName;
+  wdEl('wd-sec-strike').hidden = !needsBat;
+  const outName = end === 'nonStriker' ? snap.nonStrikerName : end === 'striker' ? snap.strikerName : null;
+  const survivor = end === 'nonStriker' ? snap.strikerName : end === 'striker' ? snap.nonStrikerName : null;
   const nb = wdNewBatChoice();
   const predictedNew = wdPredictNewOnStrike();
-  const nextNew = s.nextStriker ? s.nextStriker === 'new' : predictedNew;
   wdEl('wd-strike').innerHTML = [
-    wdChip(survivor || 'Not-out batter', 'stays in', !nextNew, 'data-wd-strike="survivor"'),
-    wdChip(nb ? nb.name : 'New batsman', 'coming in', nextNew, 'data-wd-strike="new"')
+    wdChip(survivor || 'Not-out batter', 'stays in', s.nextStriker === 'survivor', 'data-wd-strike="survivor"'),
+    wdChip(nb ? nb.name : 'New batsman', 'coming in', s.nextStriker === 'new', 'data-wd-strike="new"')
   ].join('');
-  wdEl('wd-strike-hint').textContent = `— by the runs and the over, ${predictedNew ? (nb ? nb.name : 'the new batsman') : (survivor || 'the not-out batter')} faces next`;
+  wdEl('wd-strike-hint').textContent = `— by the Laws (runs and the over), ${predictedNew ? (nb ? nb.name : 'the new batsman') : (survivor || 'the not-out batter')} should face`;
 
-  // Preview + can it be confirmed?
+  // ---- Preview + can it be confirmed? ----
   const runs = wdRuns();
   let problem = '';
   if(!s.type) problem = 'Choose how the batter was out.';
-  else if(ro && !s.who) problem = 'Run Out — choose WHO is out.';
+  else if(WD_WHO[s.type] === 'either' && !s.who) problem = `${s.type} — choose WHO is out.`;
+  else if(WD_WHO[s.type] === 'pick' && !s.pick) problem = s.type === 'Absent Hurt' ? 'Choose the batter who is absent hurt.' : 'Choose the batter who is timed out.';
+  else if(s.type === 'Stumped' && s.stumpBy !== 'bowler' && !wdFielderChoice().name) problem = 'Stumped — choose the wicket-keeper (or Bowler).';
   else if(needsBat && wdEl('wd-newbat-select').style.display !== 'none' && wdEl('wd-newbat-select').options.length > 1 && !nb) problem = 'Choose the new batsman.';
+  else if(needsBat && !s.nextStriker) problem = 'Who is on strike for the next ball? — choose one.';
   const prev = wdEl('wd-preview');
   if(problem){ prev.className = 'wd-preview wait'; prev.textContent = problem; }
-  else {
-    const f = wdFielderChoice();
-    const del = WD_DELIVERIES.find(d => d.k === s.delivery) || WD_DELIVERIES[0];
-    const extra = s.delivery === 'wide' || s.delivery === 'noball' ? 1 : 0;
-    const team = runs + extra;
-    const ballTxt = wdIsLegal() ? `ball <b>${nextBall}</b>${(state.score.balls || 0) + 1 >= bpo ? ' — ends the over' : ''}` : `<b>${del.label}</b> — not a legal ball, ${state.score.overs || 0}.${state.score.balls || 0} stays`;
-    const runsTxt = ro ? ` · <b>${team}</b> run${team === 1 ? '' : 's'} to the team${s.delivery === 'normal' && runs ? ` (${runs} to ${escapeHtmlPanel(snap.strikerName || 'striker')})` : ''}` : (extra ? ` · <b>1</b> ${del.label.toLowerCase()} extra` : '');
+  else if(d.special === 'absent'){
     prev.className = 'wd-preview';
-    prev.innerHTML = `<b>${escapeHtmlPanel(outName || 'Batter')}</b> out — <b>${escapeHtmlPanel(s.type)}</b>${f.name ? ` (${escapeHtmlPanel(f.name)})` : ''}`
-      + `${['Bowled', 'Caught', 'LBW', 'Stumped', 'Hit Wicket'].includes(s.type) ? ` · bowler <b>${escapeHtmlPanel(snap.bowlerName || 'Unassigned')}</b>` : ''}`
+    const pid = (s.pick || '').replace(/^p:/, '');
+    const p = findPlayerById(state.battingTeam, pid);
+    prev.innerHTML = `<b>${escapeHtmlPanel(p ? p.name : 'Batter')}</b> — <b>absent hurt</b> · not out, not a wicket, no ball · the innings now ends at <b>${maxWickets() - absentHurtThisInnings().length - 1}</b> wickets`;
+  } else {
+    const f = wdFielderChoice();
+    const del = WD_DELIVERIES.find(x => x.k === wdDelivery()) || WD_DELIVERIES[0];
+    const extra = wdIsLegal() ? 0 : 1;
+    const team = runs + extra;
+    const timedName = s.type === 'Timed Out' && !end ? ((findPlayerById(state.battingTeam, (s.pick || '').replace(/^p:/, '')) || {}).name || 'Batter') : null;
+    const ballTxt = (d.nonDelivery || d.special) ? '<b>no ball bowled</b> — the over does not move'
+      : wdIsLegal() ? `ball <b>${nextBall}</b>${(state.score.balls || 0) + 1 >= bpo ? ' — ends the over' : ''}` : `<b>${del.label}</b> — not a legal ball, ${state.score.overs || 0}.${state.score.balls || 0} stays`;
+    const runsTxt = wdRunsAllowed() ? ` · <b>${team}</b> run${team === 1 ? '' : 's'} to the team${wdDelivery() === 'normal' && runs ? ` (${runs} to ${escapeHtmlPanel(snap.strikerName || 'striker')})` : ''}` : (extra ? ` · <b>1</b> ${del.label.toLowerCase()} extra` : '');
+    const nextName = s.nextStriker === 'new' ? (nb ? nb.name : 'new batsman') : (survivor || '—');
+    prev.className = 'wd-preview';
+    prev.innerHTML = `<b>${escapeHtmlPanel(timedName || outName || 'Batter')}</b> ${d.special === 'retired' ? '— <b>retired not out</b>' : `out — <b>${escapeHtmlPanel(s.type)}</b>`}${f.name && s.type !== 'Caught & Bowled' && s.type !== 'Run Out (Mankaded)' && fielderLabel ? ` (${escapeHtmlPanel(f.name)})` : ''}`
+      + `${isBowlerCreditedDismissal(d.engine || s.type) && isDelivery ? ` · bowler <b>${escapeHtmlPanel(snap.bowlerName || 'Unassigned')}</b>` : ''}`
       + ` · ${ballTxt}${runsTxt}`
-      + (needsBat ? ` · new batsman <b>${escapeHtmlPanel(nb ? nb.name : 'to choose later')}</b> · next on strike <b>${escapeHtmlPanel(nextNew ? (nb ? nb.name : 'new batsman') : (survivor || '—'))}</b>` : (typed ? ' · <b>innings ends</b>' : ''));
+      + (needsBat ? ` · new batsman <b>${escapeHtmlPanel(nb ? nb.name : 'to choose later')}</b> · next on strike <b>${escapeHtmlPanel(nextName)}</b>` : (wdInningsEndsHere() ? ' · <b>innings ends</b>' : ''));
   }
   wdEl('wd-confirm').disabled = !!problem;
+  wdEl('wd-confirm').textContent = d && d.special === 'absent' ? 'CONFIRM ABSENT HURT' : d && d.special === 'retired' ? 'CONFIRM RETIRED' : 'CONFIRM WICKET';
 }
 function openWicketModal(){
   if(isInningsOver()){
@@ -11880,17 +12198,16 @@ function openWicketModal(){
   const ctx = pendingExtraWicketContext; // 'Wd' | 'Nb' | null — from the Wide / No Ball picker
   pendingExtraWicketContext = null;
   const locked = ctx === 'Wd' ? 'wide' : ctx === 'Nb' ? 'noball' : null;
-  wdState = { type: null, delivery: locked || 'normal', lockedDelivery: locked, who: null, runs: 0, custom: false, nextStriker: null };
+  wdState = { type: null, delivery: locked || 'normal', lockedDelivery: locked, who: null, pick: null, runs: 0, custom: false,
+    nextStriker: null, stumpBy: 'keeper', wide: locked === 'wide' };
   wdEl('wd-runs-custom').value = '';
-  // Fielder picker (fielding side), keeper pre-filled for a stumping.
-  const fSel = wdEl('wd-fielder-select'), fIn = wdEl('wd-fielder-input');
+  wdEl('wd-who-select').dataset.forType = '';
+  const fSel = wdEl('wd-fielder-select');
   if(!wdFielderDD) wdFielderDD = makeProDropdown(fSel, { placeholder: '— choose fielder —', getItems: fielderDropdownItems });
-  fSel.value = ''; wdFielderDD.refreshLabel(); fIn.value = '';
-  const hasFielders = fieldingSidePlayers().length > 0;
-  wdFielderDD.wrap.style.display = hasFielders ? 'block' : 'none';
-  fIn.style.display = hasFielders ? 'none' : 'block';
+  wdSetFielder('');
+  wdEl('wd-fielder-input').value = '';
   // New batsman: only players who can still bat — never someone already
-  // out, never either batter at the crease.
+  // out, absent hurt, or either batter at the crease.
   const snap = wdSnapshot();
   const nSel = wdEl('wd-newbat-select'), nIn = wdEl('wd-newbat-input');
   const eligible = wdEligibleNewBatters(snap);
@@ -11916,58 +12233,93 @@ function cancelWicketDetails(){
   disarmWicketAnimation();
   closeWicketModal();
 }
+// After the wicket: the new batsman goes in, and the batter the scorer
+// named takes strike — always the scorer's answer, never a guess.
+function wdSeatNewBatsmanAndStrike(survivorName, newBat, nextNew){
+  if(newBat) sendInNewBatsman(newBat.name, newBat.id);
+  const survivorOnStrike = state.striker && state.striker.name === survivorName;
+  if(nextNew === survivorOnStrike){
+    swapStrikeSilent();
+    if(!newBat) state.newBatsmanEnd = state.newBatsmanEnd === 'striker' ? 'nonStriker' : 'striker';
+  }
+}
 function confirmWicketDetails(){
   const s = wdState;
   if(!s || !s.type) return;
   renderWicketDetails();
   if(wdEl('wd-confirm').disabled){ toast(wdEl('wd-preview').textContent); return; }
+  const d = wdDef();
   const snap = wdSnapshot();
-  const ro = s.type === 'Run Out';
-  const who = ro ? s.who : 'striker';
-  const dismissedPlayerId = who === 'nonStriker' ? snap.nonStrikerId : snap.strikerId;
-  const dismissedPlayerName = who === 'nonStriker' ? snap.nonStrikerName : snap.strikerName;
+  const end = wdOutEnd();
   const runs = wdRuns();
   const f = wdFielderChoice();
-  const needsBat = !wdInningsEndsHere();
+  const needsBat = wdNeedsBat();
   const newBat = needsBat ? wdNewBatChoice() : null;
-  const nextNew = s.nextStriker ? s.nextStriker === 'new' : wdPredictNewOnStrike();
-  const meta = { dismissalType: s.type, deferAnimation: true, fielderName: f.name || '', fielderId: f.id || null,
-    runOutWho: who, dismissedPlayerId, dismissedPlayerName, wicketDelivery: snap };
-  let kind = 'W';
-  if(s.delivery === 'wide'){ kind = 'WdW'; meta.extraRuns = ro ? runs : 0; }
-  else if(s.delivery === 'noball'){ kind = 'NbW'; meta.runsOffBat = ro ? runs : 0; }
-  else if(ro){ meta.runsCompleted = runs; if(s.delivery === 'bye' || s.delivery === 'legbye') meta.runsAs = s.delivery; }
+  const nextNew = s.nextStriker === 'new';
+  const survivorName = end === 'nonStriker' ? snap.strikerName : snap.nonStrikerName;
+  const pickId = (s.pick || '').startsWith('p:') ? s.pick.slice(2) : null;
+  const del = wdDelivery();
+  const runsCount = wdRunsAllowed();
   wdState = null;
   closeWicketModal();
-  let ok = false;
+
+  // Absent hurt: not a wicket and nobody leaves the crease.
+  if(d.special === 'absent'){
+    disarmWicketAnimation();
+    pendingWicketDelivery = null;
+    recordAbsentHurt(pickId);
+    return;
+  }
+  let ok = false, dismissedName = '';
   atomicBegin();
   try{
-    ok = recordBall(kind, meta) !== false;
-    if(ok){
-      const survivorName = who === 'nonStriker' ? snap.strikerName : snap.nonStrikerName;
-      if(newBat) sendInNewBatsman(newBat.name, newBat.id);
-      // The scorer's choice of who faces next is final.
-      if(needsBat){
-        const survivorOnStrike = state.striker && state.striker.name === survivorName;
-        if(nextNew === survivorOnStrike){
-          swapStrikeSilent();
-          if(!newBat) state.newBatsmanEnd = state.newBatsmanEnd === 'striker' ? 'nonStriker' : 'striker';
-        }
-      }
+    if(d.special === 'retired'){
+      // Retired not out — the retired-hurt mechanics, its own label. Not a wicket.
+      const out = end === 'nonStriker' ? state.nonStriker : state.striker;
+      dismissedName = out && out.name;
+      retireBatsmanHurt(end, { label: 'retired not out', noPrompt: true });
+      pendingWicketDelivery = null;
+      ok = true;
+    } else if(d.nonDelivery){
+      const fielderMeta = s.type === 'Run Out (Mankaded)' ? { fielderName: f.name, fielderId: f.id } : {};
+      const r = recordNonDeliveryWicket({ dismissalType: s.type, who: end, dismissedPlayerId: end ? null : pickId,
+        ...fielderMeta, wicketDelivery: snap });
+      ok = !!r;
+      dismissedName = r ? r.dismissedName : '';
+    } else {
+      const engineType = d.engine || s.type;
+      const either = WD_WHO[s.type] === 'either';
+      const who = either ? s.who : 'striker';
+      const dismissedPlayerId = who === 'nonStriker' ? snap.nonStrikerId : snap.strikerId;
+      dismissedName = who === 'nonStriker' ? snap.nonStrikerName : snap.strikerName;
+      const meta = { dismissalType: engineType, deferAnimation: true, fielderName: f.name || '', fielderId: f.id || null,
+        runOutWho: who, dismissedPlayerId, dismissedPlayerName: dismissedName, wicketDelivery: snap,
+        ...(d.caught ? { caughtKind: d.caught } : {}) };
+      let kind = 'W';
+      if(del === 'wide'){ kind = 'WdW'; meta.extraRuns = runs; }
+      else if(del === 'noball'){ kind = 'NbW'; meta.runsOffBat = runs; }
+      else if(runsCount){ meta.runsCompleted = runs; if(del === 'bye' || del === 'legbye') meta.runsAs = del; }
+      ok = recordBall(kind, meta) !== false;
     }
+    if(ok && needsBat) wdSeatNewBatsmanAndStrike(survivorName, newBat, nextNew);
   } finally {
     atomicEnd();
   }
   if(!ok){ disarmWicketAnimation(); return; }
-  const overlay = document.getElementById('newbat-modal-overlay');
-  overlay.dataset.retired = '';
-  overlay.dataset.pendingDismissed = dismissedPlayerName || '';
-  if(needsBat && !newBat){
-    // No incoming batsman named yet — ask now; the WICKET graphic follows that answer.
-    openNewBatsmanModal(dismissedPlayerName || 'Batsman');
+  if(d.special === 'retired'){
+    disarmWicketAnimation();
+    if(needsBat && !newBat) openNewBatsmanModal(dismissedName || 'Batsman', { retired: true });
     return;
   }
-  fireWicketAnimationOnce(dismissedPlayerName || '');
+  const overlay = document.getElementById('newbat-modal-overlay');
+  overlay.dataset.retired = '';
+  overlay.dataset.pendingDismissed = dismissedName || '';
+  if(needsBat && !newBat){
+    // No incoming batsman named yet — ask now; the WICKET graphic follows that answer.
+    openNewBatsmanModal(dismissedName || 'Batsman');
+    return;
+  }
+  fireWicketAnimationOnce(dismissedName || '');
   maybePromptNewBowler();
 }
 document.getElementById('wd-types').addEventListener('click', (e) => {
@@ -11975,12 +12327,11 @@ document.getElementById('wd-types').addEventListener('click', (e) => {
   if(!b || b.disabled || !wdState) return;
   if(b.dataset.wdType === 'Retired Hurt'){ cancelWicketDetails(); openRetiredHurtModal(); return; }
   wdState.type = b.dataset.wdType;
-  if(wdState.type !== 'Run Out'){ wdState.who = null; wdState.runs = 0; wdState.custom = false; }
-  if(wdState.type === 'Stumped' && !wdEl('wd-fielder-select').value){
-    const keeper = teamObj(bowlingTeamKey()).wkId;
-    if(keeper && findPlayerById(bowlingTeamKey(), keeper)){ wdEl('wd-fielder-select').value = keeper; if(wdFielderDD) wdFielderDD.refreshLabel(); }
-  }
-  wdState.nextStriker = null;
+  wdState.who = null; wdState.pick = null; wdState.nextStriker = null;
+  if(!['Run Out', 'Obstructing the Field'].includes(wdState.type)){ wdState.runs = 0; wdState.custom = false; }
+  // Keeper pre-filled for Caught Behind and a stumping.
+  if(['Caught Behind', 'Stumped'].includes(wdState.type)){ const k = wdKeeper(); wdSetFielder(k ? k.id : ''); }
+  else wdSetFielder('');
   renderWicketDetails();
 });
 document.getElementById('wd-delivery').addEventListener('click', (e) => {
@@ -11988,10 +12339,17 @@ document.getElementById('wd-delivery').addEventListener('click', (e) => {
   if(!b || b.disabled || !wdState) return;
   wdState.delivery = b.dataset.wdDelivery; wdState.nextStriker = null; renderWicketDetails();
 });
+document.getElementById('wd-wide-check').addEventListener('change', (e) => { if(wdState){ wdState.wide = e.target.checked; wdState.nextStriker = null; renderWicketDetails(); } });
 document.getElementById('wd-who').addEventListener('click', (e) => {
   const b = e.target.closest('[data-wd-who]');
   if(!b || !wdState) return;
   wdState.who = b.dataset.wdWho; wdState.nextStriker = null; renderWicketDetails();
+});
+document.getElementById('wd-who-select').addEventListener('change', (e) => { if(wdState){ wdState.pick = e.target.value || null; wdState.nextStriker = null; renderWicketDetails(); } });
+document.getElementById('wd-fielder-by').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-wd-stumpby]');
+  if(!b || !wdState) return;
+  wdState.stumpBy = b.dataset.wdStumpby; renderWicketDetails();
 });
 document.getElementById('wd-runs').addEventListener('click', (e) => {
   const b = e.target.closest('[data-wd-runs]');

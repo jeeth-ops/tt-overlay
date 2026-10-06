@@ -29,6 +29,7 @@ function matches(doc, q){
     const dv = doc[k];
     if(v && typeof v === 'object' && !(v instanceof ObjectId) && !Array.isArray(v)){
       if('$in' in v) return v.$in.some(x => String(x) === String(dv) || (x === null && dv == null));
+      if('$nin' in v) return !v.$nin.some(x => String(x) === String(dv));
       if('$ne' in v) return String(dv) !== String(v.$ne);
       return JSON.stringify(dv) === JSON.stringify(v);
     }

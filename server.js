@@ -5405,6 +5405,10 @@ function deriveBallFacts(kind, runs) {
         // penalty extras belonging to whichever side the award was made to
         // (which is what battingTeam carries on a 'PEN' document).
         case 'PEN': return { legalBall: false, extraType: 'penalty', runsOffBat: 0, extraRuns: total };
+        // 🏏 A DISMISSAL THAT IS NOT A DELIVERY — Run Out (Mankaded) before
+        // the ball is bowled, Timed Out, Retired Out. A wicket falls; no ball
+        // is bowled, nobody faces anything, nothing is charged to a bowler.
+        case 'OUT': return { legalBall: false, extraType: 'none', runsOffBat: 0, extraRuns: 0 };
         default: return { legalBall: true, extraType: 'none', runsOffBat: total, extraRuns: 0 }; // '0'-'6' and 'W'
     }
 }
@@ -6500,7 +6504,7 @@ async function insertContext(matchId, query) {
     const all = await loadMatchSequence(matchId);
     const bpo = DELIVERY_BALLS_PER_OVER;
     const inn = Math.max(1, parseInt(query.innings, 10) || 1);
-    const seq = all.filter(b => (b.innings || 1) === inn && b.kind !== 'PEN');
+    const seq = all.filter(b => (b.innings || 1) === inn && b.kind !== 'PEN' && b.kind !== 'OUT');
     const pos = resolveInsertPosition(seq, query);
     if (pos.error) return { error: pos.error };
     const prev = seq[pos.idx - 1] || null, next = seq[pos.idx] || null;
@@ -6558,7 +6562,7 @@ async function insertDelivery(matchId, body, actorEmail, dryRun, requestOwnerUid
     const bpo = DELIVERY_BALLS_PER_OVER;
     const all = await loadMatchSequence(matchId);
     const inn = Math.max(1, parseInt(body.innings, 10) || 1);
-    const seqBefore = all.filter(b => (b.innings || 1) === inn && b.kind !== 'PEN');
+    const seqBefore = all.filter(b => (b.innings || 1) === inn && b.kind !== 'PEN' && b.kind !== 'OUT');
     const pos = resolveInsertPosition(seqBefore, body.position);
     if (pos.error) return { errors: [pos.error] };
     const prev = seqBefore[pos.idx - 1] || null, next = seqBefore[pos.idx] || null;
@@ -6598,7 +6602,7 @@ async function insertDelivery(matchId, body, actorEmail, dryRun, requestOwnerUid
     const swaps = body.restrike === false ? [] : restrikeDeliveries(seqAfter, pos.idx, bpo);
     const touched = new Set([...moves.map(m => m.id), ...swaps.map(s => s.id)]);
 
-    const others = all.filter(b => !((b.innings || 1) === inn && b.kind !== 'PEN'));
+    const others = all.filter(b => !((b.innings || 1) === inn && b.kind !== 'PEN' && b.kind !== 'OUT'));
     const simulated = others.concat(seqAfter).sort(deliveryOrderCompare);
     const errors = validateCorrectedBalls(simulated, all);
     const touchedOvers = [...new Set(seqAfter.filter(b => touched.has(String(b._id)) || b === newBall).map(b => Number(b.over)))];
@@ -6654,8 +6658,8 @@ async function insertDelivery(matchId, body, actorEmail, dryRun, requestOwnerUid
         `Match ${matchId} — Innings ${inn}: added ${newBall.over}.${newBall.ballInOver} (${sequenceLabel(newBall)})${moves.length ? `, ${moves.length} later deliveries renumbered` : ''}`,
         { balls: changedBefore, clips: clipOriginals }, { inserted: newBall, balls: changedAfter },
         { matchId, ballId: String(_id) });
-    const innAfter = simulated.filter(b => (b.innings || 1) === inn && b.kind !== 'PEN');
-    const innBefore = all.filter(b => (b.innings || 1) === inn && b.kind !== 'PEN');
+    const innAfter = simulated.filter(b => (b.innings || 1) === inn && b.kind !== 'PEN' && b.kind !== 'OUT');
+    const innBefore = all.filter(b => (b.innings || 1) === inn && b.kind !== 'PEN' && b.kind !== 'OUT');
     result.event = await announceMatchChange(matchId, {
         id: `ins_${String(_id)}`, kind: 'insert', deliveryId: newBall.ballUid, innings: inn, battingTeam,
         overLabel: `${newBall.over}.${newBall.ballInOver}`, legalChanged: false,
@@ -6676,7 +6680,7 @@ async function deleteDelivery(ballId, body, actorEmail, dryRun, requestOwnerUid)
     const matchId = target.matchId;
     const all = await loadMatchSequence(matchId);
     const inn = target.innings || 1;
-    const seqBefore = all.filter(b => (b.innings || 1) === inn && b.kind !== 'PEN');
+    const seqBefore = all.filter(b => (b.innings || 1) === inn && b.kind !== 'PEN' && b.kind !== 'OUT');
     const idx = seqBefore.findIndex(b => String(b._id) === String(_id));
     const liveInn = await liveInningsOf(matchId, all);
     if (isLegalDelivery(target) && liveInn === inn) {
@@ -6687,7 +6691,7 @@ async function deleteDelivery(ballId, body, actorEmail, dryRun, requestOwnerUid)
     const moves = renumberDeliveries(seqAfter, idx, cursorBeforeDelivery(target), bpo);
     const swaps = body && body.restrike && idx > 0 ? restrikeDeliveries(seqAfter, idx - 1, bpo) : [];
     const touched = new Set([...moves.map(m => m.id), ...swaps.map(s => s.id)]);
-    const others = all.filter(b => !((b.innings || 1) === inn && b.kind !== 'PEN'));
+    const others = all.filter(b => !((b.innings || 1) === inn && b.kind !== 'PEN' && b.kind !== 'OUT'));
     const simulated = others.concat(seqAfter).sort(deliveryOrderCompare);
     const errors = validateCorrectedBalls(simulated, all);
     const ownerUid = target.ownerUid || requestOwnerUid || null;
@@ -6767,7 +6771,7 @@ async function undoSequenceChange(entry, actorEmail) {
     await announceMatchChange(matchId, {
         id: `undo_${String(entry._id || Date.now())}`, kind: 'undo', deliveryId: null, innings: inn,
         battingTeam: sample.battingTeam === 'B' ? 'B' : 'A', overLabel: '', legalChanged: false,
-        delta: ballsDelta(all.filter(b => (b.innings || 1) === inn && b.kind !== 'PEN'), after.filter(b => (b.innings || 1) === inn && b.kind !== 'PEN')),
+        delta: ballsDelta(all.filter(b => (b.innings || 1) === inn && b.kind !== 'PEN' && b.kind !== 'OUT'), after.filter(b => (b.innings || 1) === inn && b.kind !== 'PEN' && b.kind !== 'OUT')),
         clips: [], ballMeta: null
     });
     await logAuditAction(actorEmail, entry.action === 'Owner delivery insert' ? 'Undo delivery insert' : 'Undo delivery delete', entry.target, entry.newValue, entry.previousValue, { matchId });
@@ -7747,8 +7751,8 @@ async function deleteLastBallFromDb(matchId, requestedInnings, actorEmail) {
     // ledger claiming an award the database no longer holds. Penalties are
     // removed from that ledger instead (removePenaltyRuns() in the panel).
     const query = requestedInnings
-        ? { matchId, innings: Number(requestedInnings), kind: { $ne: 'PEN' } }
-        : { matchId, kind: { $ne: 'PEN' } };
+        ? { matchId, innings: Number(requestedInnings), kind: { $nin: ['PEN', 'OUT'] } }
+        : { matchId, kind: { $nin: ['PEN', 'OUT'] } };
     // Sort by _id (Mongo's own insertion order, which is monotonically
     // chronological) rather than innings/over/ballInOver — extras (Wide/No
     // Ball) don't advance the ball-in-over counter, so more than one
@@ -7914,7 +7918,7 @@ adminRouter.get('/cricket/recover/scan', async (req, res) => {
                     // is a ball of the over, so counting rows made this card
                     // quote an over count several balls ahead of the
                     // scorecard's own — 42.0 where the innings ended at 41.1.
-                    legal: { $sum: { $cond: [{ $in: ['$kind', ['Wd', 'Nb', 'PEN']] }, 0, 1] } },
+                    legal: { $sum: { $cond: [{ $in: ['$kind', ['Wd', 'Nb', 'PEN', 'OUT']] }, 0, 1] } },
                     runs: { $sum: '$runs' },
                     wickets: { $sum: { $cond: [{ $ifNull: ['$dismissal', false] }, 1, 0] } },
                     firstAt: { $min: '$timestamp' },
@@ -9121,7 +9125,7 @@ function isSuperOverBall(b) { return !!b && (b.phase === 'SUPER_OVER' || Number(
 
 function buildLiveCardsFromBallsArray(balls) {
     // Dismissals that are never the bowler's wicket.
-    const BOWLER_UNCREDITED_DISMISSALS = new Set(['run out', 'retired hurt', 'retired out', 'obstructing the field', 'timed out', 'handled the ball']);
+    const BOWLER_UNCREDITED_DISMISSALS = new Set(['run out', 'run out (mankaded)', 'retired hurt', 'retired out', 'retired', 'absent hurt', 'obstructing the field', 'timed out', 'hit the ball twice', 'handled the ball']);
     balls = (balls || []).filter(b => !isSuperOverBall(b));
     const batting = { A: {}, B: {} };     // battingTeam -> strikerKey -> row
     const bowling = { A: {}, B: {} };     // bowlingTeam (bowler's own team) -> bowlerKey -> row
@@ -9162,7 +9166,7 @@ function buildLiveCardsFromBallsArray(balls) {
     // #3 faced would otherwise land below #3). Keys are per innings, so a
     // player's position in one innings never leaks into another. Stored as
     // battingPosition / bowlingPosition; playerId/name are untouched.
-    const seqBalls = balls.filter(b => b.kind !== 'PEN');
+    const seqBalls = balls.filter(b => b.kind !== 'PEN' && b.kind !== 'OUT');
     const entryOrder = {};   // `${inn}` -> Map(playerKey -> { pos, name })
     const bowlOrder = {};    // `${inn}` -> Map(bowlerKey -> pos)
     seqBalls.forEach(b => {
@@ -9217,7 +9221,7 @@ function buildLiveCardsFromBallsArray(balls) {
         // inningsNo here — and keying the per-player maps by player+innings,
         // not just player — also stops a player's multiple innings (Test
         // format) from being summed into one merged row.
-        if (b.strikerKey && b.kind !== 'Wd' && b.kind !== 'PEN') {
+        if (b.strikerKey && b.kind !== 'Wd' && b.kind !== 'PEN' && b.kind !== 'OUT') {
             const rowKey = `${b.strikerKey}::${inn}`;
             if (!batting[bt][rowKey]) batting[bt][rowKey] = { name: b.striker || b.strikerKey, runs: 0, balls: 0, fours: 0, sixes: 0, inningsNo: inn };
             const row = batting[bt][rowKey];
@@ -9246,14 +9250,20 @@ function buildLiveCardsFromBallsArray(balls) {
         // skipped entirely, so every bye or leg bye left the bowler a ball
         // short. A delivery with no bowler yet (scored before the bowler was
         // known) has no bowlerKey and is credited to nobody until assigned.
-        if (b.bowlerKey && b.kind !== 'PEN') {
+        if (b.bowlerKey && b.kind !== 'PEN' && b.kind !== 'OUT') {
             const rowKey = `${b.bowlerKey}::${inn}`;
-            if (!bowling[bowlTeam][rowKey]) bowling[bowlTeam][rowKey] = { name: b.bowler || b.bowlerKey, balls: 0, runs: 0, wickets: 0, inningsNo: inn, _bowlerKey: b.bowlerKey };
+            if (!bowling[bowlTeam][rowKey]) bowling[bowlTeam][rowKey] = { name: b.bowler || b.bowlerKey, balls: 0, runs: 0, wickets: 0, dots: 0, noBalls: 0, wides: 0, inningsNo: inn, _bowlerKey: b.bowlerKey };
             const row = bowling[bowlTeam][rowKey];
             const isLegal = b.kind !== 'Wd' && b.kind !== 'Nb';
             const charged = (b.kind === 'B' || b.kind === 'LB') ? 0 : (b.runs || 0);
             if (isLegal) row.balls++;
             row.runs += charged;
+            // 0s / NB / WD columns: a dot is a legal ball off which the
+            // bowler conceded nothing (a bye or leg bye is a dot for him);
+            // NB and WD count DELIVERIES, not the runs that came off them.
+            if (isLegal && charged === 0) row.dots++;
+            if (b.kind === 'Nb') row.noBalls++;
+            if (b.kind === 'Wd') row.wides++;
             // Only the dismissals the bowler is credited with.
             if (b.dismissal && b.dismissal.type && !BOWLER_UNCREDITED_DISMISSALS.has(String(b.dismissal.type).toLowerCase())) row.wickets++;
 
@@ -9272,19 +9282,25 @@ function buildLiveCardsFromBallsArray(balls) {
     // is the one out for every dismissal except a Run Out — and a Run Out
     // is settled by looking at the next delivery, where whichever of the
     // two at the crease is no longer there is the one who went.
-    const howOutText = (type, fielder, bowler) => {
+    const howOutText = (type, fielder, bowler, subtype) => {
         const t = String(type || '').toLowerCase();
+        const sub = String(subtype || '').toLowerCase();
+        if (t === 'caught' && (sub === 'caught and bowled' || (fielder && bowler && playerKey(fielder) === playerKey(bowler)))) return `c & b ${bowler || 'bowler'}`;
+        if (t === 'caught' && sub === 'caught behind') return fielder ? `c †${fielder} b ${bowler || 'bowler'}` : `c † b ${bowler || 'bowler'}`;
         if (t === 'caught') return fielder ? `c ${fielder} b ${bowler || 'bowler'}` : `c b ${bowler || 'bowler'}`;
         if (t === 'stumped') return fielder ? `st ${fielder} b ${bowler || 'bowler'}` : `st b ${bowler || 'bowler'}`;
         if (t === 'run out') return fielder ? `run out (${fielder})` : 'run out';
         if (t === 'bowled') return bowler ? `b ${bowler}` : 'b';
         if (t === 'lbw') return bowler ? `lbw b ${bowler}` : 'lbw';
         if (t === 'hit wicket') return bowler ? `hit wicket b ${bowler}` : 'hit wicket';
-        if (t === 'retired hurt' || t === 'retired') return 'retired hurt';
+        if (t === 'retired hurt') return 'retired hurt';
+        if (t === 'run out (mankaded)') return fielder ? `run out (${fielder}) — mankaded` : 'run out (mankaded)';
+        // Never the bowler's: the dismissal stands on its own.
+        if (BOWLER_UNCREDITED_DISMISSALS.has(t)) return t;
         return bowler ? `${type} b ${bowler}` : String(type || 'out');
     };
     [...new Set(balls.map(b => b.innings || 1))].forEach(inn => {
-        const seq = balls.filter(b => (b.innings || 1) === inn && b.kind !== 'PEN');
+        const seq = balls.filter(b => (b.innings || 1) === inn && b.kind !== 'PEN');  // a dismissal that is not a delivery ('OUT') still names who is out
         seq.forEach((b, i) => {
             if (!b.dismissal) return;
             const bt = b.battingTeam === 'B' ? 'B' : 'A';
@@ -9305,10 +9321,10 @@ function buildLiveCardsFromBallsArray(balls) {
             // A non-striker run out without facing a ball has no row yet.
             if (!batting[bt][rowKey]) batting[bt][rowKey] = { name: outName, runs: 0, balls: 0, fours: 0, sixes: 0, inningsNo: inn };
             batting[bt][rowKey].out = true;
-            batting[bt][rowKey].howOut = howOutText(type, b.dismissal.fielder, b.bowler);
+            batting[bt][rowKey].howOut = howOutText(type, b.dismissal.fielder, b.bowler, b.dismissal.subtype);
             batting[bt][rowKey].dismissalType = type;
             batting[bt][rowKey].fielderName = b.dismissal.fielder || null;
-            batting[bt][rowKey].bowlerName = String(type).toLowerCase() === 'run out' ? null : (b.bowler || null);
+            batting[bt][rowKey].bowlerName = BOWLER_UNCREDITED_DISMISSALS.has(String(type).toLowerCase()) ? null : (b.bowler || null);
         });
     });
 
@@ -9344,7 +9360,10 @@ function buildLiveCardsFromBallsArray(balls) {
         runs: row.runs,
         wickets: row.wickets,
         inningsNo: row.inningsNo,
-        maidens: Object.values(oversBowled[team]).filter(o => o.bowlerKey === row._bowlerKey && o.inningsNo === row.inningsNo && o.legalBalls === 6 && o.runs === 0).length
+        maidens: Object.values(oversBowled[team]).filter(o => o.bowlerKey === row._bowlerKey && o.inningsNo === row.inningsNo && o.legalBalls === 6 && o.runs === 0).length,
+        dots: row.dots || 0,
+        noBalls: row.noBalls || 0,
+        wides: row.wides || 0
     })).sort((a, b) => ((a.inningsNo || 1) - (b.inningsNo || 1)) || ((a.bowlingPosition || 1e9) - (b.bowlingPosition || 1e9)));
     const toScore = (team) => {
         const t = teamTotals[team];
@@ -9367,7 +9386,7 @@ function buildLiveCardsFromBallsArray(balls) {
         // count the award itself as a ball faced by that partnership.
         // Penalty runs belong to the team total and to extras, which the
         // pass above already handles.
-        const inningsBalls = balls.filter(b => (b.innings || 1) === inn && b.kind !== 'PEN');
+        const inningsBalls = balls.filter(b => (b.innings || 1) === inn && b.kind !== 'PEN');  // 'OUT' events end a partnership but add no ball (see below)
         if (!inningsBalls.length) return;
         let cur = null, wktSoFar = 0;
         inningsBalls.forEach(b => {
@@ -9377,7 +9396,7 @@ function buildLiveCardsFromBallsArray(balls) {
                 cur = { pairKey, batters: [b.striker, b.nonStriker], runs: 0, balls: 0, forWicket: wktSoFar + 1 };
             }
             cur.runs += b.runs || 0;
-            if (b.kind !== 'Wd' && b.kind !== 'Nb') cur.balls++;
+            if (b.kind !== 'Wd' && b.kind !== 'Nb' && b.kind !== 'OUT') cur.balls++;
             if (b.dismissal) wktSoFar++;
         });
         if (cur) partnerships[inn].push(cur);
@@ -9924,7 +9943,7 @@ function panelStateFromMatchRecord(rec, balls, previous) {
 function findIncompleteOvers(balls) {
     const overs = {};
     balls.forEach(b => {
-        if (b.kind === 'PEN') return;
+        if (b.kind === 'PEN' || b.kind === 'OUT') return;
         const inn = b.innings || 1;
         const key = `${inn}|${b.over}`;
         if (!overs[key]) overs[key] = { innings: inn, over: b.over, legal: 0, rows: 0, bowler: b.bowler || null, strikers: new Set(), wicket: false, lastAt: 0 };
@@ -9957,7 +9976,7 @@ function findRescoredDeliveries(balls) {
     balls.forEach(b => {
         // A wide/no ball shares its slot by the Laws; a penalty is not a
         // delivery at all. Neither can be a re-score of the other.
-        if (b.kind === 'Wd' || b.kind === 'Nb' || b.kind === 'PEN') return;
+        if (b.kind === 'Wd' || b.kind === 'Nb' || b.kind === 'PEN' || b.kind === 'OUT') return;
         const key = `${b.innings || 1}|${b.over}|${b.ballInOver}`;
         (slots[key] = slots[key] || []).push(b);
     });
@@ -10072,7 +10091,7 @@ async function reassignBowlerInDb(matchId, op, hintUid) {
     const ids = Array.isArray(op.deliveryIds) ? op.deliveryIds.map(String).filter(Boolean).slice(0, 60) : [];
     let filter;
     if (ids.length && op.allHaveIds) {
-        filter = { matchId, ballUid: { $in: ids }, kind: { $ne: 'PEN' } };
+        filter = { matchId, ballUid: { $in: ids }, kind: { $nin: ['PEN', 'OUT'] } };
     } else {
         const from = (Array.isArray(op.fromBowlers) ? op.fromBowlers : []).map(personName);
         const keys = from.filter(Boolean).map(playerKey);
@@ -10080,8 +10099,8 @@ async function reassignBowlerInDb(matchId, op, hintUid) {
         if (keys.length) or.push({ bowlerKey: { $in: keys } });
         if (from.some(n => !n)) or.push({ bowler: { $in: ['', null] } }, { bowler: { $exists: false } });
         if (!or.length) return { ok: true, updated: 0 };
-        filter = { matchId, innings, over, kind: { $ne: 'PEN' }, $or: or };
-        if (ids.length) filter = { $or: [filter, { matchId, ballUid: { $in: ids }, kind: { $ne: 'PEN' } }] };
+        filter = { matchId, innings, over, kind: { $nin: ['PEN', 'OUT'] }, $or: or };
+        if (ids.length) filter = { $or: [filter, { matchId, ballUid: { $in: ids }, kind: { $nin: ['PEN', 'OUT'] } }] };
     }
     const docs = await ballsCollection.find(filter).toArray();
     if (!docs.length) return { ok: true, updated: 0 };
@@ -10808,7 +10827,8 @@ io.on('connection', async (socket) => {
                     type: data.dismissal.type || 'Out', fielder: fielderName,
                     batter: personName(data.dismissal.batter) || null,
                     batterId: data.dismissal.batterId ? String(data.dismissal.batterId) : null,
-                    fielderId: data.dismissal.fielderId ? String(data.dismissal.fielderId) : null
+                    fielderId: data.dismissal.fielderId ? String(data.dismissal.fielderId) : null,
+                    ...(data.dismissal.subtype ? { subtype: String(data.dismissal.subtype).slice(0, 40) } : {})
                 } : null,
                 dismissedPlayerKey: data.dismissal ? (playerKey(personName(data.dismissal.batter)) || null) : null,
                 dismissedPlayerId: dismissedPlayerId || null,

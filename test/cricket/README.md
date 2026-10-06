@@ -24,6 +24,7 @@ node test/cricket/upcoming-match-test.js         # 📅 Upcoming Match (date onl
 node test/cricket/cricket-controls-ui-test.js    # Penalty / Retired Hurt / Overthrow / Super Over / mid-over bowler in BOTH panels
 node test/cricket/superover-noball-test.js       # tie -> Super Over -> result, and No-Ball scoring (tests 1-14): both panels, scorecard, overlay
 node test/cricket/wicket-bowler-test.js          # Wicket Details + optional / late / corrected bowler (tests 1-45): both panels, scorecard, overlay, database
+node test/cricket/out-types-test.js              # all 16 out types under the Laws, the strike question, bowling 0s/NB/WD: both panels, scorecard, server
 PANEL=cricket-panel3.html node test/cricket/test.js   # the scoring engine suite against the Stream Engine panel
 ```
 

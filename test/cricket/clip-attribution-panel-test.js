@@ -77,6 +77,8 @@ const metaCalls = (P) => P.calls.filter(c => /\/clip-meta$/.test(c.url));
 const classifyCalls = (P) => P.calls.filter(c => /\/api\/clips\/classify$/.test(c.url));
 const lastLog = (P) => JSON.parse(P.E('JSON.stringify(state.ballLog[state.ballLog.length-1])'));
 const lastDbRow = (P) => JSON.parse(P.E('JSON.stringify(ballOutbox[ballOutbox.length-1])'));
+// The Wicket Details screen always asks who faces next — answer with the Laws' suggestion.
+const answerStrike = (P) => { if(!P.w.document.querySelector('#wd-sec-strike').hidden) click(P, `[data-wd-strike="${P.E('wdPredictNewOnStrike()') ? 'new' : 'survivor'}"]`); };
 const click = (P, sel) => P.w.document.querySelector(sel).dispatchEvent(new P.w.Event('click', { bubbles: true }));
 // "Then the match moves on": new batsman in, next over's bowler named.
 function moveOn(P){
@@ -89,7 +91,7 @@ async function runOutLastBall(P, who, runsCompleted){
   click(P, '[data-wd-type="Run Out"]');
   if(runsCompleted) click(P, `[data-wd-runs="${runsCompleted}"]`);
   click(P, `[data-wd-who="${who}"]`);
-  click(P, '#wd-confirm');
+  answerStrike(P); click(P, '#wd-confirm');
   moveOn(P);
   await sleep(2300); // the website classification is sent HL_CLASSIFY_DELAY_MS after the ball
 }
@@ -145,7 +147,7 @@ async function suite(file, opts){
   console.log('\n=== Test E / F — 12.6 bowled A, caught A by X ===');
   setup(P);
   P.E('openWicketModal()');
-  click(P, '[data-wd-type="Bowled"]'); click(P, '#wd-confirm');
+  click(P, '[data-wd-type="Bowled"]'); answerStrike(P); click(P, '#wd-confirm');
   moveOn(P);
   await sleep(2300);
   {
@@ -158,7 +160,7 @@ async function suite(file, opts){
   P.E('openWicketModal()');
   click(P, '[data-wd-type="Caught"]');
   P.E(`document.getElementById('wd-fielder-input').value = 'Fielder X'`);
-  click(P, '#wd-confirm');
+  answerStrike(P); click(P, '#wd-confirm');
   moveOn(P);
   await sleep(2300);
   {
@@ -195,7 +197,7 @@ async function suite(file, opts){
   const logLen = P.E('state.ballLog.length');
   // Another device's update lands: different batters at the crease.
   P.E(`state.striker = { name:'Player C', id:'pC', runs:0, balls:0, fours:0, sixes:0 }`);
-  click(P, '#wd-confirm');
+  answerStrike(P); click(P, '#wd-confirm');
   eq('nothing recorded against the wrong batter', P.E('state.ballLog.length'), logLen);
 
   console.log('\n=== one wicket, one clip ===');
@@ -203,7 +205,7 @@ async function suite(file, opts){
   P.E('openWicketModal()');
   click(P, '#wd-cancel');
   P.E('openWicketModal()');
-  click(P, '[data-wd-type="Bowled"]'); click(P, '#wd-confirm');
+  click(P, '[data-wd-type="Bowled"]'); answerStrike(P); click(P, '#wd-confirm');
   eq('cancel + re-press cuts ONE wicket clip', clipCalls(P, 'WICKET').length, 1);
   setup(P);
   P.E('openWicketModal()');
@@ -220,7 +222,7 @@ async function suite(file, opts){
     console.log('\n=== Undo → re-score reuses the same wicket clip ===');
     setup(P);
     P.E('openWicketModal()');
-    click(P, '[data-wd-type="Bowled"]'); click(P, '#wd-confirm');
+    click(P, '[data-wd-type="Bowled"]'); answerStrike(P); click(P, '#wd-confirm');
     const firstClip = clipCalls(P, 'WICKET')[0].body.clipId;
     P.E('sendInNewBatsman("Player C", "pC")');
     const lenAfterWicket = P.E('state.ballLog.length');
@@ -231,7 +233,7 @@ async function suite(file, opts){
     P.E('openWicketModal()');
     click(P, '[data-wd-type="Run Out"]');
     click(P, '[data-wd-who="nonStriker"]');
-    click(P, '#wd-confirm');
+    answerStrike(P); click(P, '#wd-confirm');
     eq('no second wicket clip after undo', clipCalls(P, 'WICKET').length, 1);
     const m = metaCalls(P).filter(x => x.body.clipId === firstClip).slice(-1)[0];
     eq('the original clip is re-labelled with the corrected dismissal', m && [m.body.ballMeta.dismissedPlayerId, m.body.ballMeta.dismissal.type], ['pB', 'Run Out']);
