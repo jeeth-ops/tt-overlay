@@ -79,7 +79,8 @@ async function suite(file, label){
   eq(L('TEST 1/2: after over 1 the whole XI is there — 2 at the crease + 9 yet to bat, in Match Setup order (12th man left out)'), bat(d),
     [['Rohit', 'nonStriker'], ['Ishan', 'striker'], ...BAT.slice(2).map(n => [n, 'yet'])].map(r => r));
   eq(L('the two at the crease carry their figures; yet-to-bat rows carry none'), [d.batsmen[0].runs, d.batsmen[0].balls, d.batsmen[1].runs, d.batsmen[1].balls, d.batsmen[2].runs, d.batsmen[2].yetToBat], [1, 2, 5, 4, null, true]);
-  eq(L('bowling after over 1: Raj (just bowled) + the rest of the XI yet to bowl'), [bowl(d)[0], d.bowlers.length, d.bowlers.slice(1).every(b => b.status === 'yet')], [['Raj', 'current', '1.0'], 11, true]);
+  eq(L('bowling after over 1: only the bowlers who have bowled — Raj (just bowled)'), bowl(d), [['Raj', 'current', '1.0']]);
+  eq(L('payload carries partnership / extras breakdown for the graphic'), [d.partnershipRuns, typeof d.extras, d.target], [P.E('state.partnershipRuns'), 'object', null]);
 
   // Over 2 — Mukesh: Rohit out, Surya in
   nextOver(P, 'Mukesh', 'm1');
@@ -89,7 +90,7 @@ async function suite(file, label){
   d = summaries(P).slice(-1)[0];
   eq(L('TEST 3: Rohit OUT, Surya batting, the rest still yet to bat — same order'), bat(d).slice(0, 4), [['Rohit', 'out'], ['Ishan', d.batsmen[1].status], ['Surya', d.batsmen[2].status], ['Tilak', 'yet']]);
   eq(L('Ishan and Surya are the two at the crease'), [d.batsmen[1].status, d.batsmen[2].status].sort(), ['nonStriker', 'striker']);
-  eq(L('bowling order: Raj, Mukesh (current), then yet to bowl'), bowl(d).slice(0, 3), [['Raj', 'bowled', '1.0'], ['Mukesh', 'current', '1.0'], ['Aman', 'yet', null]]);
+  eq(L('bowling order: Raj, Mukesh (current) — nobody who has not bowled'), bowl(d), [['Raj', 'bowled', '1.0'], ['Mukesh', 'current', '1.0']]);
 
   // Over 3 — Aman: Surya and Tilak out
   nextOver(P, 'Aman', 'a9');
@@ -107,9 +108,18 @@ async function suite(file, label){
   nextOver(P, 'Raj', 'r1');
   P.E(`['1','1','1','1','1','1'].forEach(k => recordBall(k));`);
   d = summaries(P).slice(-1)[0];
-  eq(L('TEST 5/6: Raj returns — ONE Raj row (2.0 overs, current), order Raj, Mukesh, Aman, then yet to bowl'), bowl(d).slice(0, 4), [['Raj', 'current', '2.0'], ['Mukesh', 'bowled', '1.0'], ['Aman', 'bowled', '1.0'], ['Kabir', 'yet', null]]);
-  eq(L('no duplicate bowler rows, all 11 of the XI represented'), [d.bowlers.filter(b => b.name === 'Raj').length, d.bowlers.length], [1, 11]);
+  eq(L('TEST 5/6: Raj returns — ONE Raj row (2.0 overs, current), order Raj, Mukesh, Aman'), bowl(d), [['Raj', 'current', '2.0'], ['Mukesh', 'bowled', '1.0'], ['Aman', 'bowled', '1.0']]);
   eq(L('figures come from the scoring state'), [d.bowlers[0].runs, d.bowlers[2].wickets, d.score, d.wickets], [P.E(`(state.bowlingCard.B.find(b => b.name === 'Raj') || state.bowler).runs`) , 2, P.E('state.score.runs'), 3]);
+  // A squad of 17, every one ticked "XI": the batting list still stops at 11.
+  setup(P);
+  P.E(`state.teamA.players = state.teamA.players.concat(['X1','X2','X3','X4','X5','X6'].map((n, i) => ({ id: 'x' + i, name: n, isXI: true })));`);
+  P.E(`['1','0','0','0','0','0'].forEach(k => recordBall(k));`);
+  d = summaries(P).slice(-1)[0];
+  eq(L('a 17-man squad all ticked XI → the batting list is the first 11'), [d.batsmen.length, d.batsmen.slice(-1)[0].name], [11, 'Arjun']);
+  P.E(`state.customMaxWickets = 7; state.format = 'Custom';`);
+  P.E(`['1','0','0','0','0','0'].forEach(k => recordBall(k));`);
+  d = summaries(P).slice(-1)[0];
+  eq(L('a 7-wicket Custom match → 8 batters listed'), d.batsmen.length, 8);
   eq(L('no script errors'), P.errors.filter(e => !/Could not parse CSS|Not implemented/.test(e)), []);
 }
 

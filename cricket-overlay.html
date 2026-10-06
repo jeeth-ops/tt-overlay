@@ -545,8 +545,15 @@
   /* At-the-crease batters / the bowler mid-spell get the accent rail so the
      eye lands on the live players first. */
   .sc-row.cardg-live{ background:rgba(11,61,145,0.09); box-shadow:inset 3px 0 0 var(--card-ink,#0b3d91); }
-  .sc-row.cardg-yet{ opacity:.55; }
-  .sc-row.cardg-yet .cardg-out.yet{ font-style:italic; letter-spacing:.04em; }
+  /* Yet to bat: one compact line — the name, then "YET TO BAT" across the
+     figure columns instead of a row of dashes. */
+  .cycle-card .sc-row.cardg-yet{ padding-top:calc(8 * var(--u) * var(--cyc,1)); padding-bottom:calc(8 * var(--u) * var(--cyc,1)); }
+  .sc-row.cardg-yet .cardg-name{ font-weight:600; color:var(--bc-ink-dim,#5c6c8a); }
+  .cardg-ytb{ grid-column:2 / -1; text-align:right; padding-right:calc(14 * var(--ux));
+    font-family:var(--font-num); font-weight:800; font-size:calc(13 * var(--u) * var(--cyc,1)); letter-spacing:calc(3 * var(--u)); color:rgba(92,108,138,.6); }
+  /* Batting position in front of the name, and the runs column in bold. */
+  .cardg-pos{ display:inline-block; min-width:calc(30 * var(--u) * var(--cyc,1)); font-family:var(--font-num); font-weight:800; color:var(--bc-ink-dim,#5c6c8a); }
+  #batting-card-graphic .sc-row:not(.sc-row-head):not(.cardg-yet) > .sc-c-num:nth-child(2){ font-weight:900; font-size:1.18em; }
   .cardg-extras{
     display:flex; justify-content:space-between; align-items:center;
     margin:calc(10 * var(--u) * var(--cyc,1)) calc(34 * var(--ux)) 0; padding:calc(12 * var(--u) * var(--cyc,1)) calc(18 * var(--ux)); background:rgba(11,61,145,0.06);
@@ -3737,21 +3744,44 @@ function fillBattingCardGraphic(d){
     rows.appendChild(cardEmptyRow('NO BATTING YET'));
   } else {
     batsmen.forEach((b, i) => {
-      // The rest of the XI, in batting-order: still part of the line-up.
+      // The rest of the XI, in batting order: still part of the line-up, one
+      // compact line each.
       if(b.yetToBat || b.status === 'yet'){
-        rows.appendChild(buildCardRow(b.name || '—', 'yet to bat', 'yet', ['–', '–', '–', '–', '–'], { alt: i % 2 === 1, yet: true }));
+        const row = document.createElement('div');
+        row.className = 'sc-row cardg-yet' + (i % 2 === 1 ? ' sc-row-alt' : '');
+        const wrap = document.createElement('div');
+        wrap.className = 'sc-c-name cardg-name-wrap';
+        const nm = document.createElement('div');
+        nm.className = 'cardg-name';
+        const pos = document.createElement('span');
+        pos.className = 'cardg-pos';
+        pos.textContent = String(i + 1);
+        nm.appendChild(pos);
+        nm.appendChild(document.createTextNode(b.name || '—'));
+        wrap.appendChild(nm);
+        row.appendChild(wrap);
+        const ytb = document.createElement('span');
+        ytb.className = 'cardg-ytb';
+        ytb.textContent = 'YET TO BAT';
+        row.appendChild(ytb);
+        rows.appendChild(row);
         return;
       }
       const live = !!(b.striker || b.nonStriker);
       // Broadcast convention: * marks the batter on strike, and a not-out
       // line is accented rather than the same dim grey as a dismissal.
       const name = (b.name || '—') + (b.striker ? ' *' : '');
-      const sub = b.out ? (b.howOut || 'out') : (b.howOut || 'not out');
-      rows.appendChild(buildCardRow(
+      const sub = b.striker ? 'batting · on strike' : b.nonStriker ? 'batting' : b.out ? (b.howOut || 'out') : (b.howOut || 'not out');
+      const row = buildCardRow(
         name, sub, b.out ? '' : 'notout',
         [b.runs ?? 0, b.balls ?? 0, b.fours ?? 0, b.sixes ?? 0, b.sr ?? '0.0'],
         { alt: i % 2 === 1, live }
-      ));
+      );
+      const pos = document.createElement('span');
+      pos.className = 'cardg-pos';
+      pos.textContent = String(i + 1);
+      row.querySelector('.cardg-name').prepend(pos);
+      rows.appendChild(row);
     });
   }
   document.getElementById('bat-card-extras').textContent = d.extrasTotal ?? 0;

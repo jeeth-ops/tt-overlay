@@ -11943,8 +11943,9 @@ document.getElementById('hide-current-card-btn').addEventListener('click', hideA
 // 🏏 END-OVER LINEUPS — the complete Playing XI of each side, in the order
 // it was entered in Match Setup, minus whoever already has a row (batted /
 // is batting, or has bowled). These are the "yet to bat" / "yet to bowl"
-// players the end-over graphics show beneath the live rows, so the list is
-// the whole team and never shrinks to just the two at the crease.
+// players the end-over batting graphic shows beneath the live rows, so the
+// list is the whole XI and never shrinks to just the two at the crease. (The
+// bowling graphic lists only those who have bowled.)
 function lineupRest(teamKey, rows, exclude){
   const has = (p) => rows.some(r => (p.id && r.id && String(r.id) === String(p.id)) || (r.name && p.name && r.name.trim().toLowerCase() === p.name.trim().toLowerCase()))
     || (exclude || []).some(x => x && ((p.id && x.id && String(x.id) === String(p.id)) || (x.name && x.name === p.name)));
@@ -11952,8 +11953,6 @@ function lineupRest(teamKey, rows, exclude){
 }
 const yetToBatRow = (p) => ({ name: p.name, id: p.id || null, runs: null, balls: null, fours: null, sixes: null, sr: null,
   striker: false, nonStriker: false, out: false, howOut: 'yet to bat', status: 'yet', yetToBat: true });
-const yetToBowlRow = (p) => ({ name: p.name, id: p.id || null, overs: null, maidens: null, runs: null, wickets: null, econ: null,
-  current: false, status: 'yet', yetToBowl: true });
 const batStatusOf = (b, striker, nonStriker) => b.out ? 'out' : striker ? 'striker' : nonStriker ? 'nonStriker' : b.retiredHurt ? 'retired' : 'notout';
 function buildLiveInningsCardRows(){
   const battingKey = state.battingTeam;
@@ -11989,7 +11988,7 @@ function buildLiveInningsCardRows(){
         howOut: b.out ? (b.howOut || 'out') : (b.retiredHurt ? (b.howOut || 'retired hurt') : 'not out'),
         status: batStatusOf(b, striker, nonStriker)
       };
-    }).concat(lineupRest(battingKey, battingRows, [state.striker, state.nonStriker]).map(yetToBatRow)),
+    }).concat(lineupRest(battingKey, battingRows, [state.striker, state.nonStriker]).slice(0, Math.max(0, maxWickets() + 1 - battingRows.length)).map(yetToBatRow)),
     bowlers: bowlingRows.map(b => {
       const current = !!state.bowler.name && b.name === state.bowler.name;
       return {
@@ -11997,8 +11996,9 @@ function buildLiveInningsCardRows(){
         maidens: b.maidens, runs: b.runs, wickets: b.wickets, econ: bowlerEcon(b),
         current, status: current ? 'current' : 'bowled'
       };
-    }).concat(lineupRest(bowlingKey, bowlingRows, [state.bowler]).map(yetToBowlRow)),
-    extrasTotal: extrasTotalOf(extras)
+    }),
+    extrasTotal: extrasTotalOf(extras),
+    extras: { ...extras }
   };
 }
 
@@ -12018,11 +12018,11 @@ function superOverLiveCardRows(battingKey, bowlingKey){
       return { name: b.name, id: b.id || null, runs: b.runs, balls: b.balls, fours: b.fours, sixes: b.sixes,
         sr: b.balls > 0 ? ((b.runs / b.balls) * 100).toFixed(1) : '0.0',
         striker, nonStriker, out: !!b.out, howOut: b.out ? (b.howOut || 'out') : 'not out', status: batStatusOf(b, striker, nonStriker) };
-    }).concat(lineupRest(battingKey, bat, [state.striker, state.nonStriker]).map(yetToBatRow)),
+    }).concat(lineupRest(battingKey, bat, [state.striker, state.nonStriker]).slice(0, Math.max(0, maxWickets() + 1 - bat.length)).map(yetToBatRow)),
     bowlers: bowl.map(b => ({ name: b.name, id: b.id || null, overs: fmtBowlerOvers(b.overs, b.balls), maidens: b.maidens, runs: b.runs, wickets: b.wickets, econ: bowlerEcon(b),
-      current: b.name === state.bowler.name, status: b.name === state.bowler.name ? 'current' : 'bowled' }))
-      .concat(lineupRest(bowlingKey, bowl, [state.bowler]).map(yetToBowlRow)),
+      current: b.name === state.bowler.name, status: b.name === state.bowler.name ? 'current' : 'bowled' })),
     extrasTotal: extrasTotalOf(activeExtras(battingKey)),
+    extras: { ...activeExtras(battingKey) },
     superOver: state.superOver.number
   };
 }
@@ -12060,6 +12060,8 @@ function emitOverSummary(overIndexZeroBased, overRuns, overWickets, overBalls){
     score: state.score.runs, wickets: state.score.wickets,
     overs: state.score.overs, ballsIntoOver: state.score.balls,
     crr: crr.toFixed(2),
+    partnershipRuns: state.partnershipRuns || 0, partnershipBalls: state.partnershipBalls || 0,
+    target: state.target || null,
     striker: { name: state.striker.name, runs: state.striker.runs, balls: state.striker.balls, fours: state.striker.fours, sixes: state.striker.sixes, sr: srOf(state.striker) },
     nonStriker: { name: state.nonStriker.name, runs: state.nonStriker.runs, balls: state.nonStriker.balls, fours: state.nonStriker.fours, sixes: state.nonStriker.sixes, sr: srOf(state.nonStriker) },
     bowler: { name: state.bowler.name, overs: state.bowler.overs, balls: state.bowler.balls, maidens: state.bowler.maidens, runs: state.bowler.runs, wickets: state.bowler.wickets },
