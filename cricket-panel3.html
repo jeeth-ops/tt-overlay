@@ -729,6 +729,11 @@
   .ip-summary:empty{ display:none; }
   .ip-empty{ font-size:12.5px; color:var(--text-dim); padding:8px 0; line-height:1.5; }
   .ip-actions{ display:flex; gap:10px; justify-content:flex-end; margin-top:14px; }
+  .ip-search{ width:100%; box-sizing:border-box; margin:0 0 10px; padding:9px 12px; border-radius:10px; background:var(--panel-2); border:1px solid var(--border); color:inherit; font-family:inherit; font-size:13px; font-weight:600; outline:none; }
+  .ip-search:focus{ border-color:var(--accent); }
+  .ip-search[hidden]{ display:none; }
+  .ip-kbd{ font-size:10.5px; color:var(--text-dim); margin-top:8px; text-align:right; }
+  .ip-kbd kbd{ font:700 10px/1 ui-monospace, monospace; padding:2px 5px; border-radius:4px; border:1px solid var(--border); background:var(--panel-2); }
   .ip-rules{ display:block; margin-top:3px; font-size:10.5px; font-weight:600; opacity:.75; }
   .ip-steps{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
   .ip-step{ display:inline-flex; align-items:center; gap:6px; padding:4px 10px 4px 4px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); font-size:11.5px; font-weight:700; color:var(--text-dim); }
@@ -1676,12 +1681,12 @@
       <div class="ev-row">
         <button type="button" class="ev-btn ev-rh" id="lc-retired-btn" title="Batter leaves the field — not out, no ball, can come back later">🩹 Retired Hurt</button>
         <button type="button" class="ev-btn ev-pen" id="lc-penalty-btn" title="Umpire's penalty award (MCC Laws 18.10 / 41 / 42). Not a delivery: no ball is bowled and no batsman is credited.">+ Penalty Runs</button>
-        <button type="button" class="ev-btn ev-imp" id="lc-impact-btn" title="Impact Player substitution — allowed only at the start of an innings, the end of an over, the fall of a wicket or when a batter retires. One per team.">🔁 Impact Player</button>
+        <button type="button" class="ev-btn ev-imp" id="lc-impact-btn" title="Impact Player substitution — allowed only at the start of an innings, the end of an over, the fall of a wicket or when a batter retires. One per team. Shortcut: I">🔁 Impact Player</button>
       </div>
       <button class="full ghost" id="undo-btn" style="margin-top:10px;">Undo Last Ball (U)</button>
       <button class="full ghost" id="edit-scorecard-btn" style="margin-top:8px;display:none;">✏️ Edit Scorecard (Delete a Ball)</button>
       <div class="shortcut-hint">
-        Shortcuts: <kbd>0-6</kbd> runs · <kbd>W</kbd> wicket · <kbd>S</kbd> swap strike · <kbd>U</kbd> undo
+        Shortcuts: <kbd>0-6</kbd> runs · <kbd>W</kbd> wicket · <kbd>S</kbd> swap strike · <kbd>U</kbd> undo · <kbd>I</kbd> impact player
       </div>
     </div>
 
@@ -2158,6 +2163,7 @@
     <div class="wm-sub">One substitute per team. The substitute replaces a player of the Playing XI for the rest of the match — the replaced player cannot bat, bowl or field again.</div>
     <div class="ip-when" id="ip-when"></div>
     <div class="ip-teams" id="ip-teams"></div>
+    <input type="search" id="ip-search" class="ip-search" placeholder="🔍 Search a player…" autocomplete="off">
     <div class="ip-body" id="ip-body"></div>
     <div class="ip-actions">
       <button type="button" class="ghost" id="ip-cancel">Cancel</button>
@@ -6919,9 +6925,9 @@ function pushState(immediate, force){
   clearTimeout(pushTimer);
   pushTimer = setTimeout(() => { send(state); refreshLiveStatCards(); }, 40);
 }
-function fireEvent(kind, text, sub, durationMs){
+function fireEvent(kind, text, sub, durationMs, data){
   if(socket && socket.connected){
-    socket.emit('cricketEvent', { event: { kind, text, sub, durationMs } });
+    socket.emit('cricketEvent', { event: { kind, text, sub, durationMs, ...(data ? { data } : {}) } });
   }
   logMilestone(`${kind}${sub ? ' — ' + sub : ''}`);
 }
@@ -18654,7 +18660,8 @@ let ipState = null; // { team, outKey, inKey }
 const ipKey = (p) => p.id || ('n:' + p.name);
 function openImpactModal(){
   const def = !impactUsedBy(state.battingTeam) ? state.battingTeam : bowlingTeamKey();
-  ipState = { team: def, outKey: null, inKey: null };
+  ipState = { team: def, outKey: null, inKey: null, q: '' };
+  const sb = document.getElementById('ip-search'); if(sb) sb.value = '';
   renderImpactModal();
   document.getElementById('ip-overlay').classList.add('show');
 }
@@ -18703,6 +18710,10 @@ function renderImpactModal(){
   const confirm = document.getElementById('ip-confirm');
   confirm.disabled = true;
   confirm.textContent = 'Confirm Impact Player';
+  const search = document.getElementById('ip-search');
+  const q = String(ipState.q || '').trim().toLowerCase();
+  const hit = (p) => !q || String(p.name || '').toLowerCase().includes(q);
+  if(search) search.hidden = !impactOn() || !!used;
   if(!impactOn()){
     when.className = 'ip-when no';
     when.textContent = 'The Impact Player rule is off for this match.';
@@ -18730,17 +18741,19 @@ function renderImpactModal(){
   const outP = xi.find(p => ipKey(p) === ipState.outKey) || null;
   const inP = allIn.find(p => ipKey(p) === ipState.inKey) || null;
   const tags = (p) => (p.id && p.id === t.captainId ? '<em>C</em>' : '') + (p.id && p.id === t.wkId ? '<em>WK</em>' : '');
-  const outRows = xi.map(p => ({ p, why: impactOutBlock(team, p, win) })).sort((a, b) => (a.why ? 1 : 0) - (b.why ? 1 : 0));
+  const outRows = xi.filter(p => hit(p) || p === outP).map(p => ({ p, why: impactOutBlock(team, p, win) })).sort((a, b) => (a.why ? 1 : 0) - (b.why ? 1 : 0));
   const outBtns = outRows.map(({ p, why }) => {
     const info = impactPlayerInfo(team, p);
     const sub = [info, why ? `can't go off — ${why}` : ''].filter(Boolean).join(' · ');
     return `<button type="button" class="ip-pl out${outP === p ? ' on' : ''}" data-ip-out="${escapeHtmlAttr(ipKey(p))}"${why ? ' disabled' : ''}>⬇ ${escapeHtmlPanel(p.name)}${tags(p)}${sub ? `<small>${escapeHtmlPanel(sub)}</small>` : ''}</button>`;
-  }).join('') || `<div class="ip-empty">No Playing XI ticked for ${escapeHtmlPanel(t.name || 'this side')} — tick the XI in Team Squads.</div>`;
+  }).join('') || (q ? `<div class="ip-empty">No one in the XI matches "${escapeHtmlPanel(q)}".</div>` : `<div class="ip-empty">No Playing XI ticked for ${escapeHtmlPanel(t.name || 'this side')} — tick the XI in Team Squads.</div>`);
   const inBtn = (p, kind) => `<button type="button" class="ip-pl in${inP === p ? ' on' : ''}" data-ip-in="${escapeHtmlAttr(ipKey(p))}">⬆ ${escapeHtmlPanel(p.name)}<small>${kind}</small></button>`;
-  const inBtns = (cand.named.length ? `<div class="ip-g">Named substitutes</div>${cand.named.map(p => inBtn(p, '⬆ IP substitute')).join('')}` : '')
-    + (cand.squad.length ? `<div class="ip-g">From the squad (not in the XI)</div>${cand.squad.map(p => inBtn(p, 'squad player')).join('')}` : '')
-    + (cand.rest.length ? `<div class="ip-g">Rest of the team (ticked in the XI)</div>${cand.rest.map(p => inBtn(p, "ticked in the XI · hasn't batted or bowled")).join('')}` : '')
-    + (allIn.length ? '' : `<div class="ip-empty">Nobody outside the XI in the squad — type the substitute's name below.</div>`);
+  const shown = (list) => list.filter(p => hit(p) || p === inP);
+  const g = { named: shown(cand.named), squad: shown(cand.squad), rest: shown(cand.rest) };
+  const inBtns = (g.named.length ? `<div class="ip-g">Named substitutes</div>${g.named.map(p => inBtn(p, '⬆ IP substitute')).join('')}` : '')
+    + (g.squad.length ? `<div class="ip-g">From the squad (not in the XI)</div>${g.squad.map(p => inBtn(p, 'squad player')).join('')}` : '')
+    + (g.rest.length ? `<div class="ip-g">Rest of the team (ticked in the XI)</div>${g.rest.map(p => inBtn(p, "ticked in the XI · hasn't batted or bowled")).join('')}` : '')
+    + (g.named.length + g.squad.length + g.rest.length ? '' : q ? `<div class="ip-empty">No one matches "${escapeHtmlPanel(q)}" — add him as a new player below.</div>` : `<div class="ip-empty">Nobody is free to come on — type the substitute's name below.</div>`);
   const notes = [];
   if(xi.length !== 11) notes.push(`${t.name || 'This side'} has ${xi.length} players ticked in the Playing XI (should be 11) — fix the ticks in Team Squads when you can.`);
   if(inP && cand.rest.includes(inP)) notes.push(`${inP.name} is ticked in the Playing XI — pick him only if he was not actually playing.`);
@@ -18756,6 +18769,7 @@ function renderImpactModal(){
         <div class="ip-add"><input type="text" id="ip-new-name" placeholder="New player name" autocomplete="off" maxlength="40"><button type="button" class="small" data-ip-add>+ Add</button></div></div>
     </div>
     <div class="ip-note">${notes.map(escapeHtmlPanel).join('<br>')}</div>
+    <div class="ip-kbd"><kbd>Enter</kbd> confirm · <kbd>Esc</kbd> close · <kbd>I</kbd> opens this window</div>
     <div class="ip-summary">${outP && inP ? `${escapeHtmlPanel(t.name || 'Team ' + team)}: ⬆ <b class="g">${escapeHtmlPanel(inP.name)}</b> comes on for ⬇ <b class="r">${escapeHtmlPanel(outP.name)}</b>${win.ok ? ` at ${escapeHtmlPanel(win.at)}` : ''}` : ''}</div>`;
   confirm.disabled = !(win.ok && outP && inP);
   if(outP && inP) confirm.textContent = `Confirm: ⬆ ${inP.name} ⬇ ${outP.name}`;
@@ -18822,7 +18836,11 @@ function confirmImpactPlayer(){
   renderSquadUI();
   renderRosterControls();
   pushState(true, true);
-  fireEvent('IMPACT_PLAYER', 'IMPACT PLAYER', `${(t.short || t.name || '').toUpperCase()}  ⬆ ${inP.name}  ⬇ ${outP.name}`, 5000);
+  const logo = String(t.logoUrl || '');
+  fireEvent('IMPACT_PLAYER', 'IMPACT PLAYER', `${(t.short || t.name || '').toUpperCase()}  ⬆ ${inP.name}  ⬇ ${outP.name}`, 6500, {
+    teamName: t.name || '', teamShort: t.short || '', teamColor: t.color || '', teamLogo: logo.length < 400000 ? logo : '',
+    inName: inP.name, outName: outP.name, overLabel, when: win.at || '', battingSide: team === state.battingTeam
+  });
   toast(`🔁 Impact Player: ${inP.name} on for ${outP.name} (${t.name || 'Team ' + team})${outHadBatted ? ' — still only 11 may bat' : ''}`, 6000);
 }
 (function wireImpactPlayer(){
@@ -18835,13 +18853,43 @@ function confirmImpactPlayer(){
     if(!ipState) return;
     const b = e.target.closest('button');
     if(!b || b.disabled) return;
-    if(b.dataset.ipTeam){ ipState = { team: b.dataset.ipTeam, outKey: null, inKey: null }; renderImpactModal(); return; }
+    if(b.dataset.ipTeam){ ipState = { team: b.dataset.ipTeam, outKey: null, inKey: null, q: ipState.q || '' }; renderImpactModal(); return; }
     if(b.dataset.ipOut){ ipState.outKey = b.dataset.ipOut; renderImpactModal(); return; }
     if(b.dataset.ipIn){ ipState.inKey = b.dataset.ipIn; renderImpactModal(); return; }
     if(b.hasAttribute('data-ip-enable')){ state.impactPlayerEnabled = true; renderSquadUI(); if(typeof renderMatchSetup === 'function') renderMatchSetup(); pushState(true); renderImpactModal(); return; }
     if(b.hasAttribute('data-ip-add')){ impactAddPlayer(); return; }
   });
   ov.addEventListener('keydown', (e) => { if(e.key === 'Enter' && e.target && e.target.id === 'ip-new-name'){ e.preventDefault(); impactAddPlayer(); } });
+  const sb = document.getElementById('ip-search');
+  if(sb) sb.addEventListener('input', () => {
+    if(!ipState) return;
+    ipState.q = sb.value;
+    renderImpactModal();
+    const ni = document.getElementById('ip-new-name');
+    if(ni && !ni.value && sb.value.trim() && !document.querySelector('#ip-body [data-ip-in]')) ni.value = sb.value.trim();
+  });
+  // Keys: while this window is open no scoring shortcut may fire (a "4"
+  // typed by mistake must never score a ball). Enter = Confirm, Esc = close.
+  // "I" opens it from the live console.
+  window.addEventListener('keydown', (e) => {
+    const open = ov.classList.contains('show');
+    const tag = ((e.target && e.target.tagName) || '').toLowerCase();
+    const typing = tag === 'input' || tag === 'select' || tag === 'textarea';
+    if(open){
+      if(e.key === 'Escape'){ e.preventDefault(); e.stopImmediatePropagation(); closeImpactModal(); return; }
+      if(e.key === 'Enter' && !(typing && e.target.id === 'ip-new-name')){
+        e.preventDefault(); e.stopImmediatePropagation();
+        const c = document.getElementById('ip-confirm'); if(c && !c.disabled) confirmImpactPlayer();
+        return;
+      }
+      if(!typing) e.stopImmediatePropagation();
+      return;
+    }
+    if(!typing && !e.ctrlKey && !e.metaKey && !e.altKey && e.key && e.key.toLowerCase() === 'i'
+      && !document.querySelector('.wicket-modal-overlay.show, .modal-overlay.show')){
+      e.preventDefault(); e.stopImmediatePropagation(); openImpactModal();
+    }
+  }, true);
   const btn = document.getElementById('lc-impact-btn');
   if(btn) btn.addEventListener('click', openImpactModal);
 })();

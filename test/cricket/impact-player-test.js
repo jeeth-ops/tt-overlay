@@ -154,6 +154,8 @@ async function suite(file, label){
   eq(L('TEST 16: the log entry'), (() => { const e = P.J('state.impactLog[0]'); return [e.team, e.inName, e.outName, e.overLabel, e.innings, e.battingSide]; })(), ['A', 'Impact Bat', 'Hardik', '0.3', 1, true]);
   eq(L('TEST 17: the Impact Player can bat; the replaced player cannot'), [names(P, `eligibleBatters('A')`).includes('Impact Bat'), names(P, `eligibleBatters('A')`).includes('Hardik')], [true, false]);
   eq(L('TEST 18: the overlay gets an IMPACT_PLAYER event'), P.emits.filter(e => e.ev === 'cricketEvent').map(e => e.payload.event.kind).slice(-1), ['IMPACT_PLAYER']);
+  eq(L('TEST 18b: … carrying the card data (team, IN, OUT, when)'), (() => { const d = P.emits.filter(e => e.ev === 'cricketEvent').slice(-1)[0].payload.event.data || {}; return [d.teamName, d.inName, d.outName, d.overLabel, d.when, d.battingSide]; })(),
+    [P.J('state.teamA.name'), 'Impact Bat', 'Hardik', '0.3', 'the fall of a wicket (0.3)', true]);
   eq(L('TEST 19: one Undo step was recorded'), P.J('history.length'), hist0 + 1);
   eq(L('TEST 20: the squad row shows "⬆ IP · 0.3" / "⬇ replaced" and the XI tick is locked'),
     [P.$('#squadA-list .squad-player-row[data-id="ipa"] .squad-ip').textContent, P.$('#squadA-list .squad-player-row[data-id="a4"] .squad-ip').textContent, P.$('#squadA-list .squad-player-row[data-id="a4"] input[type=checkbox]').disabled],
@@ -227,6 +229,27 @@ async function suite(file, label){
   click(P, '#ip-confirm');
   const bg = P.J(`state.teamA.players.find(p => p.id === 'bench')`);
   eq(L('TEST 33g: a squad player picked straight from the modal comes on (named as the substitute)'), [bg.isXI, !!bg.impactIn, !!bg.impactSub, P.J('state.impactLog.length')], [true, true, true, 2]);
+
+  // ---- keyboard + search ----
+  setup(P, true);
+  const key = (k, target) => (target || P.w.document.body).dispatchEvent(new P.w.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+  P.E(`clearAutoCardFlow(); document.querySelectorAll('.wicket-modal-overlay.show').forEach(o => o.classList.remove('show'));`);
+  key('i');
+  eq(L('TEST 42: the I key opens the Impact Player window'), P.$('#ip-overlay').classList.contains('show'), true);
+  key('4');
+  eq(L('TEST 43: while it is open a scoring key (4) does NOT score a ball'), [P.J('state.ballLog.length'), P.J('state.score.runs')], [0, 0]);
+  const sb = P.$('#ip-search'); sb.value = 'kru'; sb.dispatchEvent(new P.w.Event('input', { bubbles: true }));
+  eq(L('TEST 44: search filters the lists'), P.$$('#ip-body [data-ip-out]').map(b => b.firstChild.textContent.trim()), ['⬇ Krunal']);
+  sb.value = 'zzz'; sb.dispatchEvent(new P.w.Event('input', { bubbles: true }));
+  eq(L('TEST 45: a search with no match pre-fills "+ Add" with that name'), P.$('#ip-new-name').value, 'zzz');
+  sb.value = ''; sb.dispatchEvent(new P.w.Event('input', { bubbles: true }));
+  click(P, outBtn(P, 'Hardik')); click(P, inBtn(P, 'Impact Bat'));
+  key('Enter');
+  eq(L('TEST 46: Enter confirms'), [P.J('state.impactLog.length'), P.$('#ip-overlay').classList.contains('show')], [1, false]);
+  key('i'); key('Escape');
+  eq(L('TEST 47: Esc closes it'), P.$('#ip-overlay').classList.contains('show'), false);
+  key('1');
+  eq(L('TEST 48: scoring keys work again once it is closed'), P.J('state.score.runs'), 1);
 
   // ---- before the first ball + Undo with an empty ball log ----
   setup(P, true);

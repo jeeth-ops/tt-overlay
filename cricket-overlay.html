@@ -598,6 +598,67 @@
     box-shadow:0 26px 60px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.10);
     will-change:height, clip-path, opacity;
   }
+  /* ---------- 🔁 IMPACT PLAYER card ----------
+     Lives inside #event-bg and replaces the generic hero for this event:
+     team badge + title on the left, IN (green) ⇄ OUT (red) on the right.
+     Sized off the panel height like the hero. */
+  #event-ipcard{
+    --ph: var(--panel-h, 100px); --ipc-c:#7c3aed;
+    position:relative; z-index:2; display:none; width:100%; height:100%;
+    align-items:center; justify-content:space-between; gap:calc(var(--ph) * 0.2);
+    padding:0 3.4% 0 2.6%;
+  }
+  #event-stage.ipc-on #event-hero{ display:none; }
+  #event-stage.ipc-on #event-ipcard{ display:flex; }
+  #event-ipcard::before{ /* team colour wash from the left */
+    content:''; position:absolute; inset:0; pointer-events:none;
+    background:linear-gradient(90deg, color-mix(in srgb, var(--ipc-c) 55%, transparent) 0%, transparent 38%);
+  }
+  .ipc-team{ position:relative; display:flex; align-items:center; gap:calc(var(--ph) * 0.16); min-width:0; flex:none; }
+  .ipc-badge{
+    width:calc(var(--ph) * 0.62); height:calc(var(--ph) * 0.62); border-radius:50%; flex:none;
+    display:grid; place-items:center; background:var(--ipc-c) center/cover no-repeat;
+    font:900 calc(var(--ph) * 0.17)/1 var(--font-num); color:#fff; letter-spacing:.5px;
+    box-shadow:0 0 0 calc(var(--ph) * 0.025) rgba(255,255,255,.9), 0 0 calc(var(--ph) * 0.3) var(--ipc-c);
+  }
+  .ipc-badge.has-logo{ background-color:#fff; }
+  .ipc-head{ display:flex; flex-direction:column; min-width:0; }
+  .ipc-kicker{ font:800 calc(var(--ph) * 0.1)/1.1 var(--font-ui); letter-spacing:.24em; color:rgba(255,255,255,.78); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:32vw; }
+  .ipc-word{
+    font:400 calc(var(--ph) * 0.3)/1 'Anton', var(--font-num); letter-spacing:.05em; white-space:nowrap;
+    background:linear-gradient(180deg, #ffffff 30%, #c9b8ff); -webkit-background-clip:text; background-clip:text; color:transparent;
+    filter:drop-shadow(0 2px 10px rgba(124,58,237,.6));
+  }
+  .ipc-meta{ font:700 calc(var(--ph) * 0.085)/1.2 var(--font-ui); letter-spacing:.14em; color:#fde68a; text-transform:uppercase; margin-top:calc(var(--ph) * 0.02); }
+  .ipc-meta:empty{ display:none; }
+  .ipc-swap{ position:relative; flex:1 1 auto; display:flex; align-items:center; justify-content:flex-end; gap:calc(var(--ph) * 0.12); min-width:0; }
+  .ipc-p{
+    display:flex; align-items:center; gap:calc(var(--ph) * 0.09); min-width:0;
+    padding:calc(var(--ph) * 0.07) calc(var(--ph) * 0.15) calc(var(--ph) * 0.07) calc(var(--ph) * 0.07); flex:0 1 auto;
+    border-radius:calc(var(--ph) * 0.14); transition:opacity .45s ease, filter .45s ease, box-shadow .5s ease;
+  }
+  .ipc-tag{
+    flex:none; font:900 calc(var(--ph) * 0.1)/1 var(--font-ui); letter-spacing:.12em; color:#0b0f1a;
+    padding:calc(var(--ph) * 0.045) calc(var(--ph) * 0.07); border-radius:calc(var(--ph) * 0.06);
+  }
+  .ipc-tag::before{ margin-right:.35em; }
+  .ipc-nm{ position:relative; font:900 calc(var(--ph) * 0.2)/1.05 var(--font-ui); color:#fff; text-transform:uppercase; letter-spacing:.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:30vw; min-width:0; }
+  .ipc-in{ background:linear-gradient(90deg, rgba(34,197,94,.34), rgba(34,197,94,.08)); box-shadow:inset 0 0 0 2px rgba(74,222,128,.85); }
+  .ipc-in .ipc-tag{ background:#4ade80; }
+  .ipc-in .ipc-tag::before{ content:'▲'; }
+  .ipc-in.lit{ box-shadow:inset 0 0 0 2px #86efac, 0 0 calc(var(--ph) * 0.34) rgba(74,222,128,.7); animation:ipcPulse 1.6s ease-in-out infinite; }
+  @keyframes ipcPulse{ 50%{ box-shadow:inset 0 0 0 2px #bbf7d0, 0 0 calc(var(--ph) * 0.5) rgba(74,222,128,.9); } }
+  .ipc-out{ background:linear-gradient(90deg, rgba(239,68,68,.26), rgba(239,68,68,.06)); box-shadow:inset 0 0 0 2px rgba(248,113,113,.7); }
+  .ipc-out .ipc-tag{ background:#f87171; }
+  .ipc-out .ipc-tag::before{ content:'▼'; }
+  .ipc-out .ipc-nm::after{
+    content:''; position:absolute; left:-2%; right:-2%; top:50%; height:calc(var(--ph) * 0.028); border-radius:2px;
+    background:#f87171; transform:scaleX(0); transform-origin:left center; transition:transform .5s cubic-bezier(.2,.8,.2,1);
+  }
+  .ipc-out.gone{ opacity:.62; filter:saturate(.55); }
+  .ipc-out.gone .ipc-nm::after{ transform:scaleX(1); }
+  .ipc-icon{ flex:none; width:calc(var(--ph) * 0.36); height:calc(var(--ph) * 0.36); color:#fde68a; filter:drop-shadow(0 0 8px rgba(253,230,138,.7)); }
+  .ipc-icon svg{ width:100%; height:100%; display:block; }
   #event-bg::after{
     content:''; position:absolute; inset:0; pointer-events:none;
     background:linear-gradient(180deg, rgba(255,255,255,0.16), transparent 46%);
@@ -1270,6 +1331,22 @@
             <div id="event-number">4</div>
             <div id="event-word">FOUR</div>
             <div id="event-sub"></div>
+          </div>
+          <!-- 🔁 IMPACT PLAYER card (playEventTimeline → addImpactCardPhase) -->
+          <div id="event-ipcard">
+            <div class="ipc-team">
+              <div class="ipc-badge" id="ipc-badge"></div>
+              <div class="ipc-head">
+                <div class="ipc-kicker" id="ipc-kicker"></div>
+                <div class="ipc-word">IMPACT PLAYER</div>
+                <div class="ipc-meta" id="ipc-meta"></div>
+              </div>
+            </div>
+            <div class="ipc-swap">
+              <div class="ipc-p ipc-in" id="ipc-in"><span class="ipc-tag">IN</span><span class="ipc-nm" id="ipc-in-name"></span></div>
+              <div class="ipc-icon" id="ipc-icon"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21a15.5 15.5 0 0 1 27.5-8.5"/><path d="M37.5 4.5v8.5H29"/><path d="M39 27a15.5 15.5 0 0 1-27.5 8.5"/><path d="M10.5 43.5V35H19"/></svg></div>
+              <div class="ipc-p ipc-out" id="ipc-out"><span class="ipc-tag">OUT</span><span class="ipc-nm" id="ipc-out-name"></span></div>
+            </div>
           </div>
         </div>
       </div>
@@ -2466,7 +2543,7 @@ const EVENT_THEMES = {
   POWERPLAY_END:    { label:'POWERPLAY ENDS',  number:null,  showNumber:false, primary:'#12356b', secondary:'#3f6fd6', accent:'#ffffff', glow:'rgba(63,111,214,0.5)',  growth:1.4,  particles:6,  particleDist:50 },
   // 🔁 Impact Player substitution (panel: confirmImpactPlayer) — sub chip
   // reads "TEAM  ⬆ IN-PLAYER  ⬇ OUT-PLAYER".
-  IMPACT_PLAYER:    { label:'IMPACT PLAYER',   number:null,  showNumber:false, primary:'#0b3b5c', secondary:'#22a6e0', accent:'#ffffff', glow:'rgba(34,166,224,0.5)',  growth:1.5,  particles:10, particleDist:70, durationMs:5000 },
+  IMPACT_PLAYER:    { label:'IMPACT PLAYER',   number:null,  showNumber:false, primary:'#140b3a', secondary:'#4c22c4', accent:'#ffffff', glow:'rgba(124,58,237,0.55)', growth:1.75, particles:10, particleDist:70, durationMs:6500 },
   DRINKS:           { label:'DRINKS BREAK',    number:null,  showNumber:false, primary:'#0e4a4a', secondary:'#2fb6b6', accent:'#ffffff', glow:'rgba(47,182,182,0.45)', growth:1.3,  particles:0,  particleDist:0  },
   STRATEGIC_TIMEOUT:{ label:'STRATEGIC TIMEOUT',number:null, showNumber:false, primary:'#0e4a4a', secondary:'#2fb6b6', accent:'#ffffff', glow:'rgba(47,182,182,0.45)', growth:1.3,  particles:0,  particleDist:0  },
   LAST_OVER:        { label:'FINAL OVER',      number:null,  showNumber:false, primary:'#7a2c0c', secondary:'#e2622f', accent:'#ffffff', glow:'rgba(226,98,47,0.5)',   growth:1.45, particles:8,  particleDist:60 },
@@ -2540,7 +2617,7 @@ function cancelRunningEvent(){
 // Adapter for the existing socket protocol — 'cricketEvent' payloads
 // keep working exactly as before ({kind, sub, durationMs}).
 function playEvent(evt){
-  triggerEvent(evt && evt.kind, { sub: (evt && (evt.sub || evt.text)) || '', durationMs: evt && evt.durationMs });
+  triggerEvent(evt && evt.kind, { sub: (evt && (evt.sub || evt.text)) || '', durationMs: evt && evt.durationMs, data: (evt && evt.data) || null });
 }
 
 function splitEventWord(el){
@@ -2786,6 +2863,46 @@ function addEventHeroPhase(tl, kind, theme, chars, startAt){
   }
 }
 
+// 🔁 IMPACT PLAYER card: badge spins in, title rises, OUT slides in from the
+// right, IN from the left, the swap icon turns, then OUT is struck through
+// and IN lights up (flash + shine) for the hold.
+function ipcSafeColor(c){ const v = String(c || '').trim(); return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v) ? v : '#7c3aed'; }
+function ipcSafeLogo(u){ const v = String(u || '').trim(); return (/^data:image\/(png|jpe?g|webp|gif|svg\+xml);base64,/i.test(v) || /^https?:\/\//i.test(v)) ? v : ''; }
+function addImpactCardPhase(tl, d, at){
+  const card = document.getElementById('event-ipcard');
+  const badge = document.getElementById('ipc-badge');
+  const kicker = document.getElementById('ipc-kicker');
+  const word = card.querySelector('.ipc-word');
+  const meta = document.getElementById('ipc-meta');
+  const inEl = document.getElementById('ipc-in');
+  const outEl = document.getElementById('ipc-out');
+  const icon = document.getElementById('ipc-icon');
+  const flash = document.getElementById('event-flash');
+  const shine = document.getElementById('event-shine');
+  card.style.setProperty('--ipc-c', ipcSafeColor(d.teamColor));
+  setBadge(badge, ipcSafeLogo(d.teamLogo), badgeText(d.teamShort, d.teamName));
+  kicker.textContent = d.teamName || d.teamShort || '';
+  meta.textContent = d.when ? 'at ' + d.when : (d.overLabel ? 'over ' + d.overLabel : '');
+  document.getElementById('ipc-in-name').textContent = d.inName;
+  document.getElementById('ipc-out-name').textContent = d.outName;
+  inEl.classList.remove('lit'); outEl.classList.remove('gone');
+  gsap.killTweensOf([badge, kicker, word, meta, inEl, outEl, icon]);
+  gsap.set(badge, { opacity: 0, scale: 0.2, rotate: -140 });
+  gsap.set([kicker, word, meta], { opacity: 0, x: -26, filter: 'blur(6px)' });
+  gsap.set(outEl, { opacity: 0, x: 90, filter: 'blur(8px)' });
+  gsap.set(inEl, { opacity: 0, x: -90, filter: 'blur(8px)' });
+  gsap.set(icon, { opacity: 0, scale: 0.3, rotate: -180 });
+  tl.to(badge, { opacity: 1, scale: 1, rotate: 0, duration: 0.6, ease: 'back.out(1.8)' }, at)
+    .to([kicker, word, meta], { opacity: 1, x: 0, filter: 'blur(0px)', duration: 0.45, stagger: 0.09, ease: 'power3.out' }, at + 0.1)
+    .to(outEl, { opacity: 1, x: 0, filter: 'blur(0px)', duration: 0.45, ease: 'power3.out' }, at + 0.35)
+    .to(icon, { opacity: 1, scale: 1, rotate: 0, duration: 0.6, ease: 'back.out(2)' }, at + 0.5)
+    .to(inEl, { opacity: 1, x: 0, filter: 'blur(0px)', duration: 0.55, ease: 'expo.out' }, at + 0.62)
+    .to(icon, { rotate: 360, duration: 0.8, ease: 'power2.inOut' }, at + 1.1)
+    .call(() => { outEl.classList.add('gone'); inEl.classList.add('lit'); }, null, at + 1.3)
+    .fromTo(flash, { opacity: 0 }, { opacity: 0.35, duration: 0.08, yoyo: true, repeat: 1 }, at + 1.3)
+    .fromTo(shine, { opacity: 0, xPercent: 0 }, { opacity: 0.9, xPercent: 560, duration: 1.1, ease: 'power2.inOut' }, at + 1.2)
+    .to(shine, { opacity: 0, duration: 0.2 }, at + 2.2);
+}
 function playEventTimeline(kind, opts, onDone){
   const theme = EVENT_THEMES[kind];
   const stage = document.getElementById('event-stage');
@@ -2798,7 +2915,8 @@ function playEventTimeline(kind, opts, onDone){
   const lines = document.querySelectorAll('#event-lines .ev-line');
   const impact = document.querySelectorAll('#event-impact .ev-impact-line');
 
-  stage.className = 'ev-active ev-' + kind.toLowerCase().replace(/_/g, '-');
+  const ipData = kind === 'IMPACT_PLAYER' && opts.data && opts.data.inName && opts.data.outName ? opts.data : null;
+  stage.className = 'ev-active ev-' + kind.toLowerCase().replace(/_/g, '-') + (ipData ? ' ipc-on' : '');
   stage.style.setProperty('--ev-primary', theme.primary);
   stage.style.setProperty('--ev-secondary', theme.secondary);
   stage.style.setProperty('--ev-glow', theme.glow);
@@ -2870,7 +2988,9 @@ function playEventTimeline(kind, opts, onDone){
     .to(bg, { opacity: 1, height: targetH, clipPath: 'inset(0% 0% 0% 0% round 14px)', duration: inSec, ease: 'expo.out' }, 0.02);
 
   // ---- hero takeover ----
-  addEventHeroPhase(master, kind, theme, chars, inSec * 0.82);
+  gsap.set('#event-ipcard', { opacity: 1, y: 0, filter: 'blur(0px)' });
+  if(ipData) addImpactCardPhase(master, ipData, inSec * 0.82);
+  else addEventHeroPhase(master, kind, theme, chars, inSec * 0.82);
   master.addLabel('heroSettled');
 
   // ---- hold, with barely-visible micro motion ----
@@ -2885,6 +3005,7 @@ function playEventTimeline(kind, opts, onDone){
     .to(subEl, { opacity: 0, y: -6, duration: outSec * 0.3 }, '<')
     .to(glow, { opacity: 0, scale: 1.4, duration: outSec * 0.5 }, '<')
     .to(lines, { opacity: 0, duration: outSec * 0.3 }, '<')
+    .to('#event-ipcard', { opacity: 0, y: -6, filter: 'blur(6px)', duration: outSec * 0.4, ease: 'power2.in' }, '<')
     .to(bg, { height: baseH * 0.22, opacity: 0, clipPath: 'inset(0% 46% 0% 46% round 14px)', duration: outSec, ease: 'power2.inOut' }, `-=${outSec * 0.1}`)
     .to(SB_CONTENT_SELECTOR, { opacity: 1, scale: 1, y: 0, filter: 'blur(0px)', duration: outSec, stagger: 0.02, ease: 'power2.out' }, `-=${outSec * 0.75}`);
 
