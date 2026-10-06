@@ -5434,6 +5434,14 @@ function normalizeKindForPublic(kind) {
     if (kind === 'PEN') return 'PEN'; // a penalty AWARD, not a delivery — see deriveBallFacts
     return kind;
 }
+// 🎯 WAGON WHEEL — where the scorer said the ball went. Only a known region
+// is ever stored (the label is derived from it, never sent as free text).
+const SHOT_ZONES = new Set(['fineleg', 'squareleg', 'midwicket', 'midon', 'midoff', 'cover', 'point', 'thirdman']);
+function sanitizeShot(s) {
+    if (!s || typeof s !== 'object' || !SHOT_ZONES.has(String(s.zone))) return null;
+    const num = (v) => (typeof v === 'number' && isFinite(v)) ? Math.max(-1.2, Math.min(1.2, Math.round(v * 1000) / 1000)) : null;
+    return { zone: String(s.zone), depth: s.depth === 'deep' ? 'deep' : 'inner', hand: s.hand === 'L' ? 'L' : 'R', x: num(s.x), y: num(s.y) };
+}
 function mapBallForPublic(b) {
     return {
         innings: b.innings || 1,
@@ -5448,7 +5456,8 @@ function mapBallForPublic(b) {
         isWicket: !!b.dismissal,
         dismissal: b.dismissal || null,
         ...(typeof b.boundary === 'boolean' ? { boundary: b.boundary } : {}),
-        ...(b.nbRunsAs ? { nbRunsAs: b.nbRunsAs } : {})
+        ...(b.nbRunsAs ? { nbRunsAs: b.nbRunsAs } : {}),
+        ...(sanitizeShot(b.shot) ? { shot: sanitizeShot(b.shot) } : {})
     };
 }
 
@@ -10874,6 +10883,7 @@ io.on('connection', async (socket) => {
                 // or as leg byes. Absent on every other delivery.
                 ...((data.kind === 'Wd' || data.kind === 'Nb') && typeof data.boundary === 'boolean' ? { boundary: data.boundary } : {}),
                 ...(data.kind === 'Nb' && (data.nbRunsAs === 'bye' || data.nbRunsAs === 'legbye' || data.nbRunsAs === 'bat') ? { nbRunsAs: data.nbRunsAs } : {}),
+                ...(sanitizeShot(data.shot) ? { shot: sanitizeShot(data.shot) } : {}),
                 dismissedPlayerId: dismissedPlayerId || null,
                 // The roster ids exactly as the panel sent them (the
                 // *PlayerId fields above are the resolved global ids) —
@@ -10946,6 +10956,28 @@ io.on('connection', async (socket) => {
             reply(await reassignBowlerInDb(matchId, data || {}, data && data.uid));
         } catch (err) {
             console.log('reassignBowler error:', err);
+            reply({ ok: false, retry: true });
+        }
+    });
+
+    // 🎯 WAGON WHEEL — the region is picked just after the ball was logged,
+    // so it is attached to that delivery's row afterwards. Never touches the
+    // score: only the `shot` field. Not found yet (the ball itself is still
+    // on its way) → retry.
+    socket.on('setBallShot', async (data, ack) => {
+        const reply = (payload) => { if (typeof ack === 'function') { try { ack(payload); } catch (e) {} } };
+        if (!ballsCollection) return reply({ ok: false, retry: true });
+        const matchId = safeMatchId((data && data.matchId) || matchIdForClient);
+        const ballUid = String((data && data.ballUid) || '');
+        if (!matchId || !ballUid) return reply({ ok: false, retry: false, error: 'no-ball' });
+        const shot = sanitizeShot(data && data.shot);
+        if (data && data.shot && !shot) return reply({ ok: false, retry: false, error: 'bad-shot' });
+        try {
+            const r = await ballsCollection.updateOne({ matchId, ballUid }, shot ? { $set: { shot } } : { $unset: { shot: '' } });
+            if (!r || !r.matchedCount) return reply({ ok: false, retry: true, error: 'not-found' });
+            reply({ ok: true });
+        } catch (err) {
+            console.log('setBallShot error:', err);
             reply({ ok: false, retry: true });
         }
     });

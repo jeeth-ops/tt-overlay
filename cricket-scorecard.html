@@ -4699,8 +4699,20 @@ function renderMVP(s){
    Auto-generated, newest-first text commentary built entirely from the
    existing ball log — no separate commentary data source. Purely
    descriptive; never affects the real score/stats. */
+// 🎯 WAGON WHEEL — where the scorer said the ball went (b.shot, set from the
+// panel's wagon wheel) turned into a few natural words. Balls nobody marked
+// read exactly as before.
+const SHOT_PLACE = { fineleg: ['short fine leg', 'fine leg'], squareleg: ['square leg', 'deep square leg'], midwicket: ['mid-wicket', 'deep mid-wicket'],
+  midon: ['mid-on', 'long-on'], midoff: ['mid-off', 'long-off'], cover: ['cover', 'deep cover'], point: ['point', 'deep point'], thirdman: ['gully', 'third man'] };
+const SHOT_FOUR = { fineleg: 'fine down the leg side', squareleg: 'behind square on the leg side', midwicket: 'through mid-wicket', midon: 'past mid-on',
+  midoff: 'past mid-off', cover: 'through the covers', point: 'square through point', thirdman: 'down to third man' };
+const SHOT_SIX = { fineleg: 'over fine leg', squareleg: 'over square leg', midwicket: 'over deep mid-wicket', midon: 'over long-on',
+  midoff: 'over long-off', cover: 'over extra cover', point: 'over point', thirdman: 'over third man' };
+function shotZone(b){ const z = b && b.shot && b.shot.zone; return SHOT_PLACE[z] ? z : ''; }
+function shotPlace(b){ const z = shotZone(b); return z ? SHOT_PLACE[z][b.shot.depth === 'deep' ? 1 : 0] : ''; }
 function commentaryLine(b){
   const striker = b.striker || 'Batter', bowler = b.bowler || 'Bowler';
+  const zone = shotZone(b), place = shotPlace(b);
   if(b.isWicket){
     const type = ((b.dismissal && b.dismissal.type) || b.dismissalType || 'Out').toLowerCase();
     const who = b.dismissedPlayer || (b.dismissal && b.dismissal.batter) || striker;
@@ -4711,16 +4723,20 @@ function commentaryLine(b){
     }
     return { cls:'cm-wicket', text:`OUT! ${escapeHtml(who)} ${escapeHtml(type)} — ${escapeHtml(bowler)} strikes` };
   }
-  if(b.ballType === '6') return { cls:'cm-six', text:`SIX! ${escapeHtml(striker)} sends ${escapeHtml(bowler)} over the ropes` };
-  if(b.ballType === '4') return { cls:'cm-four', text:`FOUR! ${escapeHtml(striker)} finds the gap off ${escapeHtml(bowler)}` };
+  if(b.ballType === '6') return { cls:'cm-six', text: zone
+    ? `SIX! ${escapeHtml(striker)} sends ${escapeHtml(bowler)} ${SHOT_SIX[zone]}`
+    : `SIX! ${escapeHtml(striker)} sends ${escapeHtml(bowler)} over the ropes` };
+  if(b.ballType === '4') return { cls:'cm-four', text: zone
+    ? `FOUR! ${escapeHtml(striker)} finds the boundary ${SHOT_FOUR[zone]} off ${escapeHtml(bowler)}`
+    : `FOUR! ${escapeHtml(striker)} finds the gap off ${escapeHtml(bowler)}` };
   // 🏏 A PENALTY AWARD, not a delivery — it has no striker and no bowler,
   // so it must never be described as one bowling to the other.
   if(b.ballType === 'PEN'){
     const why = (b.penalty && b.penalty.reasonLabel) ? ` — ${escapeHtml(b.penalty.reasonLabel)}` : '';
     return { cls:'', text:`${b.runs||0} PENALTY RUN${(b.runs||0)===1?'':'S'} awarded${why}` };
   }
-  if(b.ballType === 'B') return { cls:'', text:`${b.runs||0} run${b.runs===1?'':'s'} (Bye)` };
-  if(b.ballType === 'LB') return { cls:'', text:`${b.runs||0} run${b.runs===1?'':'s'} (Leg Bye)` };
+  if(b.ballType === 'B') return { cls:'', text:`${b.runs||0} run${b.runs===1?'':'s'} (Bye)${place ? ` — runs away to ${place}` : ''}` };
+  if(b.ballType === 'LB') return { cls:'', text:`${b.runs||0} run${b.runs===1?'':'s'} (Leg Bye)${place ? ` — off the pad to ${place}` : ''}` };
   // OVERTHROW — a legal, off-the-bat delivery (see the 'OT' case in
   // cricket-panel.html's recordBall()); runs belong to the striker same
   // as any other shot, so this stays out of the generic "extra" branch
@@ -4735,12 +4751,20 @@ function commentaryLine(b){
     // Note the wording: the ALLOWANCE runs away to the boundary — the striker
     // is credited the runs (Law 18.10) but it is not a boundary off the bat,
     // which is why it is not counted in their 4s/6s either.
-    if(ot && ot.boundary) return { cls:'cm-four', text:`OVERTHROW TO THE BOUNDARY! ${b.runs||0} to ${escapeHtml(striker)} off ${escapeHtml(bowler)}${detail}` };
-    if((b.runs || 0) >= 4) return { cls:'cm-four', text:`OVERTHROW! ${b.runs||0} runs — ${escapeHtml(striker)} off ${escapeHtml(bowler)}${detail}` };
-    return { cls:'', text:`${b.runs||0} run${b.runs===1?'':'s'} (Overthrow). ${escapeHtml(striker)} off ${escapeHtml(bowler)}${detail}` };
+    const hit = place ? `, hit to ${place}` : '';
+    if(ot && ot.boundary) return { cls:'cm-four', text:`OVERTHROW TO THE BOUNDARY! ${b.runs||0} to ${escapeHtml(striker)} off ${escapeHtml(bowler)}${hit}${detail}` };
+    if((b.runs || 0) >= 4) return { cls:'cm-four', text:`OVERTHROW! ${b.runs||0} runs — ${escapeHtml(striker)} off ${escapeHtml(bowler)}${hit}${detail}` };
+    return { cls:'', text:`${b.runs||0} run${b.runs===1?'':'s'} (Overthrow). ${escapeHtml(striker)} off ${escapeHtml(bowler)}${hit}${detail}` };
   }
-  if(!LEGAL_KINDS.has(b.ballType)) return { cls:'', text:`${b.runs||0} run${b.runs===1?'':'s'} — extra, ${escapeHtml(bowler)} to ${escapeHtml(striker)}` };
+  if(!LEGAL_KINDS.has(b.ballType)) return { cls:'', text:`${b.runs||0} run${b.runs===1?'':'s'} — extra, ${escapeHtml(bowler)} to ${escapeHtml(striker)}${place ? `, played to ${place}` : ''}` };
   if((b.runs || 0) === 0) return { cls:'', text:`Dot ball. ${escapeHtml(bowler)} to ${escapeHtml(striker)}` };
+  if(place){
+    const n = b.runs, who = escapeHtml(striker), off = escapeHtml(bowler);
+    if(n === 1) return { cls:'', text:`1 run. ${who} pushes it to ${place} for a single, off ${off}` };
+    if(n === 2) return { cls:'', text:`2 runs. ${who} works it to ${place} and they come back for two, off ${off}` };
+    if(n === 3) return { cls:'', text:`3 runs. ${who} finds ${place} and they run three, off ${off}` };
+    return { cls:'', text:`${n} runs. ${who} plays it to ${place}, off ${off}` };
+  }
   return { cls:'', text:`${b.runs} run${b.runs===1?'':'s'}. ${escapeHtml(striker)} off ${escapeHtml(bowler)}` };
 }
 // Replays a chronological ball log to snapshot, at the instant each over is
