@@ -259,7 +259,7 @@ async function scorecardSuite(){
   eq('the bowling table has the columns', [...S.w.document.querySelectorAll('#bowling-card thead th')].map(t => t.textContent.trim()).filter(Boolean), ['Bowler', 'O', 'M', 'R', 'W', '0s', 'NB', 'WD', 'Eco']);
   const cells = [...S.w.document.querySelectorAll('#bowling-table-body tr:first-child td')].map(t => t.textContent.trim()).slice(0, 9);
   eq('live: Mukesh 0.5-0-8-1 (wides + no ball + bat runs, no byes), 0s 4, NB 1, WD 1, Eco 9.60', cells.map((c, i) => i === 0 ? c.replace(/\s+.*/, '') : c), ['Mukesh', '0.5', '0', '8', '1', '4', '1', '1', '9.60']);
-  eq('the footnote', S.text('.bowl-note'), '*Counts wide deliveries, not extra runs.');
+  eq('no footnote under the bowling table', S.$('.bowl-note'), null);
   // A completed match read from the website: its record + its ball-by-ball.
   const rec = { matchId: 'X', teamA: st.teamA, teamB: st.teamB, format: 'T20', winningTeam: 'A', scoreA: { runs: 11, wickets: 1, overs: '1.0' }, scoreB: { runs: 0, wickets: 0, overs: '0.0' },
     battingCard: { A: [{ name: 'Rohit', runs: 1, balls: 3, out: true, howOut: 'b Mukesh', inningsNo: 1 }], B: [] },
