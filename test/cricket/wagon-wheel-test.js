@@ -160,6 +160,37 @@ async function panelSuite(file, label){
   P.E(`socket.connected = true; flushShotQueue();`);
   eq(L('… then goes once the line is back'), [P.emits.filter(e => e.ev === 'setBallShot').length, P.J(`JSON.parse(localStorage.getItem('cricket-ball-shot-queue') || '[]').length`)], [1, 0]);
 
+  // ---- batting hand: asked with the batters, used by the wheel ----
+  setup(P);
+  const handOn = (id) => { const b = P.$(`#${id} .on`); return b ? b.dataset.bh : null; };
+  eq(L('HAND 1: the Players card asks both batters (right-hand by default)'), [handOn('bh-striker'), handOn('bh-nonstriker')], ['R', 'R']);
+  click(P, '#bh-striker [data-bh="L"]');
+  eq(L('HAND 2: striker marked left-handed — kept for the match and on the squad player'), [P.J(`state.batHand['a0']`), P.J(`state.teamA.players.find(p => p.id === 'a0').hand`), handOn('bh-striker')], ['L', 'L', 'L']);
+  P.E(`recordBall('1')`); await sleep(10);
+  eq(L('HAND 3: the wheel opens the left-hander\'s way round by itself'), [P.J('ww.hand'), P.$('#ww-hand .on').dataset.wwHand], ['L', 'L']);
+  P.E('closeWagonWheel()');
+  P.E(`recordBall('2')`); await sleep(10);
+  eq(L('HAND 4: the right-handed partner (now on strike) gets the right-hander\'s field'), P.J('ww.hand'), 'R');
+  click(P, '#ww-hand [data-ww-hand="L"]');
+  eq(L('HAND 5: flipping it in the wheel updates that batter too'), [P.J(`state.batHand['a1']`), handOn('bh-striker')], ['L', 'L']);
+  P.E('closeWagonWheel()');
+  // a new batter through the New Batsman popup
+  P.E(`openNewBatsmanModal('Ishan')`);
+  eq(L('HAND 6: the New Batsman popup asks too (right-hand by default)'), [!!P.$('#newbat-modal-hand'), handOn('newbat-modal-hand')], [true, 'R']);
+  const sel = P.$('#newbat-modal-select'); sel.value = 'a5'; sel.dispatchEvent(new P.w.Event('change', { bubbles: true }));
+  click(P, '#newbat-modal-hand [data-bh="L"]');
+  click(P, '#newbat-modal-submit');
+  eq(L('HAND 7: sent in as a left-hander'), [P.J(`state.batHand['a5']`), P.J(`state.teamA.players.find(p => p.id === 'a5').hand`)], ['L', 'L']);
+  P.E(`state.teamA.players.find(p => p.id === 'a6').hand = 'L'; openNewBatsmanModal('Tim');`);
+  const sel2 = P.$('#newbat-modal-select'); sel2.value = 'a6'; sel2.dispatchEvent(new P.w.Event('change', { bubbles: true }));
+  eq(L('HAND 8: a batter already known as a left-hander is pre-selected Left'), handOn('newbat-modal-hand'), 'L');
+  P.E('closeNewBatsmanModal()');
+  // the Wicket Details screen
+  eq(L('HAND 9: Wicket Details asks the incoming batter\'s hand'), !!P.$('#wd-sec-newbat #wd-newbat-hand'), true);
+  P.E(`wdState = { newHand: 'L' }; wdSeatNewBatsmanAndStrike('Ishan', { name: 'Piyush', id: 'a7' }, false); wdState = null;`);
+  eq(L('HAND 10: confirming the wicket stores the new batter\'s hand'), P.J(`state.batHand['a7']`), 'L');
+  eq(L('HAND 11: the squad carries it to the next match'), P.J(`squadSnapshotOf(state.teamA).players.filter(p => p.hand === 'L').map(p => p.id).sort()`), ['a0', 'a1', 'a5', 'a6', 'a7']);
+
   eq(L('no script errors'), P.errors, []);
   P.w.close();
 }

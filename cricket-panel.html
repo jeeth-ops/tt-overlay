@@ -704,6 +704,11 @@
   .xm-go{ height:44px; font-size:14px; font-weight:800; }
   @media (max-width:420px){ .xm-chip{ font-size:12px; height:40px; } .xm-segb{ padding:8px 10px; } }
   .pen-chips{ grid-template-columns:repeat(6, minmax(0,1fr)); margin:4px 0 6px; }
+  /* 🏏 batting hand (right / left) — used by the wagon wheel */
+  .bh-pick{ display:flex; align-items:center; gap:6px; margin:6px 0 4px; flex-wrap:wrap; }
+  .bh-pick > span{ font-size:11px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:var(--text-dim); margin-right:2px; }
+  .bh-pick button{ padding:5px 12px; border-radius:99px; font-size:12px; font-weight:800; background:var(--panel-2); border:1px solid var(--border); color:var(--text-dim); }
+  .bh-pick button.on{ background:#16a34a; border-color:#16a34a; color:#fff; }
   /* 🎯 Wagon wheel */
   .ww-overlay{ display:none; position:fixed; inset:0; z-index:10050; align-items:center; justify-content:center; padding:12px;
     background:radial-gradient(circle at 50% 45%, rgba(10,30,14,.55), rgba(3,6,12,.86)); }
@@ -1790,8 +1795,10 @@
       </div>
       <label>Striker name</label>
       <input type="text" id="striker-name" value="S. Yadav" list="global-player-suggestions" data-global-suggest="1">
+      <div class="bh-pick" id="bh-striker"><span>Bats</span><button type="button" data-bh="R">Right-hand</button><button type="button" data-bh="L">Left-hand</button></div>
       <label>Non-striker name</label>
       <input type="text" id="nonstriker-name" value="V. Kohli" list="global-player-suggestions" data-global-suggest="1">
+      <div class="bh-pick" id="bh-nonstriker"><span>Bats</span><button type="button" data-bh="R">Right-hand</button><button type="button" data-bh="L">Left-hand</button></div>
       <button class="full small" id="swap-strike" style="margin-top:8px;">Swap Strike (S)</button>
     </div>
 
@@ -1926,6 +1933,7 @@
           <div class="wd-label">New batsman</div>
           <select id="wd-newbat-select"><option value="">— choose the incoming batsman —</option></select>
           <input type="text" id="wd-newbat-input" placeholder="Incoming batsman name (or leave for later)" autocomplete="off">
+          <div class="bh-pick" id="wd-newbat-hand"><span>Bats</span><button type="button" data-bh="R">Right-hand</button><button type="button" data-bh="L">Left-hand</button></div>
         </section>
         <section class="wd-sec" id="wd-sec-strike" hidden>
           <div class="wd-label">Which batter is on strike for the next ball? <span class="wd-hint" id="wd-strike-hint"></span></div>
@@ -2099,6 +2107,7 @@
       <select id="newbat-modal-select" style="width:100%;padding:9px 10px;border-radius:7px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);font-size:13px;margin-bottom:10px; display:none;"><option value="">— choose player —</option></select>
       <input type="text" id="newbat-modal-input" placeholder="Incoming batsman name"
         style="width:100%;padding:9px 10px;border-radius:7px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);font-size:13px;margin-bottom:10px;">
+      <div class="bh-pick" id="newbat-modal-hand"><span>Bats</span><button type="button" data-bh="R">Right-hand</button><button type="button" data-bh="L">Left-hand</button></div>
       <button type="button" class="full primary" id="newbat-modal-submit">Send In</button>
       <button type="button" class="full ghost wm-cancel" id="newbat-modal-cancel" style="margin-top:8px;">Skip for now</button>
     </div>
@@ -5444,6 +5453,7 @@ function calcBallsLeft(){
 }
 
 function renderPanel(){
+  if(typeof renderBatHandPickers === 'function') renderBatHandPickers();
   // 🏆 Phase controls are part of every render — the operator must never
   // be left looking at a stale Super Over bar (or a missing one) after a
   // reload, an undo or a restored snapshot.
@@ -8576,7 +8586,7 @@ function syncFailureToast(res, fallbackMsg){
 function squadSnapshotOf(t){
   t = t || {};
   return {
-    players: (t.players || []).map(pl => ({ id: pl.id, name: pl.name, isXI: pl.isXI !== false,
+    players: (t.players || []).map(pl => ({ id: pl.id, name: pl.name, isXI: pl.isXI !== false, ...(pl.hand === 'L' ? { hand: 'L' } : {}),
       ...(pl.impactSub ? { impactSub: true } : {}), ...(pl.impactIn ? { impactIn: true } : {}), ...(pl.impactOut ? { impactOut: true } : {}) })),
     captainId: t.captainId || null,
     wkId: t.wkId || null
@@ -12886,6 +12896,7 @@ function openWicketModal(){
   const ctx = pendingExtraWicketContext; // 'Wd' | 'Nb' | null — from the Wide / No Ball picker
   pendingExtraWicketContext = null;
   const locked = ctx === 'Wd' ? 'wide' : ctx === 'Nb' ? 'noball' : null;
+  bhShow('wd-newbat-hand', 'R');
   wdState = { type: null, delivery: locked || 'normal', lockedDelivery: locked, who: null, pick: null, runs: 0, custom: false,
     nextStriker: null, stumpBy: 'keeper', wide: locked === 'wide' };
   wdEl('wd-runs-custom').value = '';
@@ -12924,7 +12935,10 @@ function cancelWicketDetails(){
 // After the wicket: the new batsman goes in, and the batter the scorer
 // named takes strike — always the scorer's answer, never a guess.
 function wdSeatNewBatsmanAndStrike(survivorName, newBat, nextNew){
-  if(newBat) sendInNewBatsman(newBat.name, newBat.id);
+  if(newBat){
+    sendInNewBatsman(newBat.name, newBat.id);
+    setBatHand(newBat, (wdState && wdState.newHand) || bhChosen('wd-newbat-hand'));
+  }
   const survivorOnStrike = state.striker && state.striker.name === survivorName;
   if(nextNew === survivorOnStrike){
     swapStrikeSilent();
@@ -13503,6 +13517,7 @@ document.getElementById('runout-modal-submit').addEventListener('click', () => {
    ============================================================ */
 function openNewBatsmanModal(dismissedName, opts){
   opts = opts || {};
+  bhShow('newbat-modal-hand', 'R');
   const overlay = document.getElementById('newbat-modal-overlay');
   document.getElementById('newbat-modal-sub').textContent = opts.retired
     ? `${dismissedName} retired hurt — who's coming in?`
@@ -13538,11 +13553,12 @@ document.getElementById('newbat-modal-submit').addEventListener('click', () => {
   const select = document.getElementById('newbat-modal-select');
   if(select.style.display !== 'none' && select.value){
     const p = findPlayerById(state.battingTeam, select.value);
-    if(p) sendInNewBatsman(p.name, p.id);
+    if(p){ sendInNewBatsman(p.name, p.id); setBatHand(p, bhChosen('newbat-modal-hand')); }
   } else {
     const name = document.getElementById('newbat-modal-input').value.trim();
-    if(name) sendInNewBatsman(name, null);
+    if(name){ sendInNewBatsman(name, null); setBatHand({ name, id: (state.striker && state.striker.name === name ? state.striker.id : state.nonStriker && state.nonStriker.name === name ? state.nonStriker.id : null) }, bhChosen('newbat-modal-hand')); }
   }
+  renderBatHandPickers();
   closeNewBatsmanModal();
   fireDeferredWicketAnimation();
   maybePromptNewBowler();
@@ -15729,7 +15745,7 @@ function collectTournamentTeams(){
     const prev = byKey.get(key);
     let players = null;
     if(squad && Array.isArray(squad.players) && squad.players.length){
-      players = squad.players.map(pl => ({ id: pl.id, name: pl.name, isXI: pl.impactIn ? false : pl.impactOut ? true : pl.isXI !== false }));
+      players = squad.players.map(pl => ({ id: pl.id, name: pl.name, isXI: pl.impactIn ? false : pl.impactOut ? true : pl.isXI !== false, ...(pl.hand === 'L' ? { hand: 'L' } : {}) }));
     } else if(cardNames && cardNames.length){
       // Older match (no saved squad): only names. If this team already has a
       // player with that name from a newer/older squad, keep THAT player's saved
@@ -16284,6 +16300,62 @@ function msStartMatch(){
   document.getElementById('format').addEventListener('change', () => setTimeout(renderMatchSetup, 0));
   renderMatchSetup();
 })();
+// 🏏 BATTING HAND — right- or left-handed, asked when the openers are
+// picked and when a new batter comes in; the wagon wheel opens the right way
+// round from it (and can still be flipped there). Kept per player in this
+// match (state.batHand) and on the squad player, so the next match knows.
+function bhKey(p){ return p && p.id ? String(p.id) : ('n:' + ((p && p.name) || '')); }
+function bhRosterPlayer(p){
+  if(!p) return null;
+  for(const k of ['A', 'B']){
+    const hit = rosterPlayers(k).find(q => (p.id && q.id === p.id) || (!p.id && p.name && q.name === p.name));
+    if(hit) return hit;
+  }
+  return null;
+}
+function batHandOf(p){
+  if(!p || !(p.id || p.name)) return 'R';
+  const m = state.batHand || {};
+  const h = m[bhKey(p)] || (p.name ? m['n:' + p.name] : null) || ((bhRosterPlayer(p) || {}).hand);
+  return h === 'L' ? 'L' : 'R';
+}
+function setBatHand(p, hand){
+  if(!p || !(p.id || p.name)) return;
+  const h = hand === 'L' ? 'L' : 'R';
+  state.batHand = state.batHand || {};
+  state.batHand[bhKey(p)] = h;
+  if(p.name) state.batHand['n:' + p.name] = h;
+  const rp = bhRosterPlayer(p);
+  if(rp){ if(h === 'L') rp.hand = 'L'; else delete rp.hand; }
+}
+function bhShow(id, hand){
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.dataset.hand = hand === 'L' ? 'L' : 'R';
+  el.querySelectorAll('[data-bh]').forEach(b => b.classList.toggle('on', b.dataset.bh === el.dataset.hand));
+}
+function bhChosen(id){ const el = document.getElementById(id); return el && el.dataset.hand === 'L' ? 'L' : 'R'; }
+// Players card: the two batters at the crease.
+function renderBatHandPickers(){
+  bhShow('bh-striker', batHandOf(state.striker));
+  bhShow('bh-nonstriker', batHandOf(state.nonStriker));
+}
+// The incoming batter's hand, shown for whoever is chosen in a picker.
+function bhPresetFor(id, player){ bhShow(id, batHandOf(player)); }
+(function wireBatHand(){
+  const on = (id, fn) => { const el = document.getElementById(id); if(el) el.addEventListener('click', (e) => { const b = e.target.closest('[data-bh]'); if(b) fn(b.dataset.bh === 'L' ? 'L' : 'R'); }); };
+  on('bh-striker', (h) => { setBatHand(state.striker, h); renderBatHandPickers(); pushState(true); });
+  on('bh-nonstriker', (h) => { setBatHand(state.nonStriker, h); renderBatHandPickers(); pushState(true); });
+  on('wd-newbat-hand', (h) => { bhShow('wd-newbat-hand', h); if(typeof wdState !== 'undefined' && wdState) wdState.newHand = h; });
+  on('newbat-modal-hand', (h) => bhShow('newbat-modal-hand', h));
+  const wdSel = document.getElementById('wd-newbat-select'), wdIn = document.getElementById('wd-newbat-input');
+  const wdPreset = () => { if(typeof wdState !== 'undefined' && wdState) wdState.newHand = null; bhPresetFor('wd-newbat-hand', typeof wdNewBatChoice === 'function' ? wdNewBatChoice() : null); };
+  if(wdSel) wdSel.addEventListener('change', wdPreset);
+  if(wdIn) wdIn.addEventListener('input', wdPreset);
+  const nbSel = document.getElementById('newbat-modal-select'), nbIn = document.getElementById('newbat-modal-input');
+  if(nbSel) nbSel.addEventListener('change', () => bhPresetFor('newbat-modal-hand', findPlayerById(state.battingTeam, nbSel.value)));
+  if(nbIn) nbIn.addEventListener('input', () => bhPresetFor('newbat-modal-hand', { name: nbIn.value.trim() }));
+})();
 /* ============================================================
    🎯 WAGON WHEEL — where did the runs go?
    After a scoring shot (1-6, a bye / leg bye, a no ball with runs, an
@@ -16323,11 +16395,10 @@ function scheduleWagonWheel(entry, meta){
   setTimeout(() => openWagonWheel(id), 0);
 }
 function wwEntry(id){ const log = state.ballLog || []; for(let i = log.length - 1; i >= 0; i--){ if(log[i] && log[i].deliveryId === id) return log[i]; } return null; }
-function wwHandKey(e){ return e.strikerId || ('n:' + (e.striker || '')); }
 function openWagonWheel(id){
   const e = wwEntry(id);
   if(!e || !wwOn()) return;
-  ww = { id, hand: ((state.batHand || {})[wwHandKey(e)] === 'L') ? 'L' : 'R', picked: false };
+  ww = { id, hand: batHandOf({ id: e.strikerId, name: e.striker }), picked: false };
   renderWagonWheel();
   const ov = document.getElementById('ww-overlay');
   ov.classList.remove('show'); void ov.offsetWidth; ov.classList.add('show');
@@ -16496,7 +16567,7 @@ function flushShotQueue(){
     if(!b || !ww || ww.picked) return;
     ww.hand = b.dataset.wwHand === 'L' ? 'L' : 'R';
     const e = wwEntry(ww.id);
-    if(e){ state.batHand = state.batHand || {}; state.batHand[wwHandKey(e)] = ww.hand; }
+    if(e){ setBatHand({ id: e.strikerId, name: e.striker }, ww.hand); renderBatHandPickers(); }
     renderWagonWheel();
   });
   ov.addEventListener('click', (ev) => { if(ev.target === ov) closeWagonWheel(); });
