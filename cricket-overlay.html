@@ -600,9 +600,10 @@
   }
   /* ---------- 🏏 BALL-EVENT card (FOUR / SIX / WICKET / WIDE / NO BALL / FREE HIT) ----------
      Plays at the scorebar's own height, never taller. Left: an icon tile
-     (the digit, the stumps, or the umpire's signal) and the word; middle:
-     the team, the player's name and one line of detail; right: the
-     player's score or the runs the ball cost. Every size is the bar height
+     (the digit, the stumps, or the umpire's signal) and the word. FOUR /
+     SIX add the team, the batter's name, "off <bowler>" and the batter's
+     score; WICKET / WIDE / NO BALL / FREE HIT carry no names — one centred
+     graphic, with the runs the ball cost on WIDE / NO BALL. Every size is the bar height
      × --ec-s and fitBallCard() lowers --ec-s until long names fit (then
      two lines) — nothing overlaps, nothing spills out. Calm motion: no
      shake, no particles, one soft shine. */
@@ -661,6 +662,16 @@
   .ec-stat.is-empty{ display:none; }
   #event-card.solo{ justify-content:center; }
   #event-card.solo .ec-main{ flex:0 1 auto; }
+  #event-card.solo .ec-word{ font-size:calc(var(--ph) * var(--ec-s) * 0.5); }
+  #event-stage.ev-no-ball #event-card.solo .ec-word, #event-stage.ev-free-hit #event-card.solo .ec-word{ font-size:calc(var(--ph) * var(--ec-s) * 0.46); }
+  #event-card.solo .ec-line{ font-size:calc(var(--ph) * var(--ec-s) * 0.15); font-weight:800; letter-spacing:.12em; text-transform:uppercase; color:var(--ec-wc); }
+  #event-card.bare .ec-sep{ display:none; }
+  #event-card.solo .ec-rule{ background:linear-gradient(90deg, transparent, var(--ec-a) 50%, transparent); transform-origin:center; }
+  #event-stage.ec-on.ec-solo #event-bg{
+    background:
+      radial-gradient(50% 200% at 50% 50%, color-mix(in srgb, var(--ec-a) 40%, transparent) 0%, transparent 72%),
+      linear-gradient(100deg, #0b1230 0%, #0a1027 50%, #0b1230 100%);
+  }
   .ec-rule{ position:absolute; left:0; right:0; bottom:0; height:max(3px, calc(var(--ph) * 0.03)); background:linear-gradient(90deg, var(--ec-a), color-mix(in srgb, var(--ec-a) 35%, transparent) 55%, transparent); transform-origin:left center; pointer-events:none; }
   /* ---------- 🔁 IMPACT PLAYER card ----------
      Lives inside #event-bg and replaces the generic hero for this event:
@@ -2953,8 +2964,9 @@ function addEventHeroPhase(tl, kind, theme, chars, startAt){
 
 // 🏏 BALL-EVENT card — what goes in it. The panel sends `data` (batter,
 // bowler, figures, teams); an older panel or a manual trigger sends only
-// `sub`, which then fills the name / detail line, so every event still
-// plays at bar size.
+// `sub`, which then fills the FOUR / SIX name or the WIDE / NO BALL detail
+// line, so every event still plays at bar size. Only FOUR / SIX name a
+// player.
 const BALL_CARD_KINDS = ['FOUR', 'SIX', 'WICKET', 'WIDE', 'NO_BALL', 'FREE_HIT'];
 const BALL_CARD_WORD = { FOUR: 'FOUR', SIX: 'SIX', WICKET: 'WICKET', WIDE: 'WIDE', NO_BALL: 'NO BALL', FREE_HIT: 'FREE HIT' };
 const UMPIRE_FIGURE = '<circle cx="24" cy="9" r="4.2" fill="currentColor" stroke="none"/><path d="M24 15v15M24 30l-5.5 12M24 30l5.5 12"/>';
@@ -2987,32 +2999,23 @@ function ballCardContent(kind, opts){
     name = bat ? bat.name : sub; team = d.batTeam;
     line = d.bowler ? `off ${d.bowler}` : '';
     stat = figures(bat);
-  } else if(kind === 'WICKET'){
-    name = bat ? bat.name : sub; team = d.batTeam;
-    line = d.howOut || (name && d.bowler ? `off ${d.bowler}` : '');
-    stat = figures(bat);
   } else if(kind === 'WIDE' || kind === 'NO_BALL'){
-    name = d.bowler || ''; team = d.bowlTeam;
+    // No player names on WICKET / WIDE / NO BALL / FREE HIT — only what the
+    // ball itself was worth.
     const runs = Number(d.runs);
     const bits = [];
-    if(kind === 'WIDE'){ if(d.boundary) bits.push('to the boundary'); }
+    if(kind === 'WIDE'){ if(d.boundary) bits.push('Boundary'); }
     else {
       const bt = Number(d.batRuns) || 0, by = Number(d.byes) || 0, lb = Number(d.legByes) || 0;
       if(bt > 0) bits.push(`${bt} off the bat${d.boundary === false ? ' (run)' : ''}`);
       else if(by > 0) bits.push(plural(by, 'bye'));
       else if(lb > 0) bits.push(plural(lb, 'leg bye'));
-      if(d.freeHit) bits.push('free hit next');
+      if(d.freeHit) bits.push('Free hit next');
     }
-    line = name ? ['Bowler', ...bits].join(' · ') : (bits.join(' · ') || sub);
+    line = bits.join(' · ') || (opts && opts.data ? '' : sub);
     stat = Number.isFinite(runs) && runs > 0 ? { v: '+' + runs, s: runs === 1 ? 'RUN' : 'RUNS' } : null;
-  } else if(kind === 'FREE_HIT'){
-    name = bat ? bat.name : ''; team = d.batTeam;
-    line = name ? 'On strike · next ball is a free hit' : (sub || 'Next ball is a free hit');
-    stat = figures(bat);
   }
-  const teamName = team ? (team.name || team.short || '') : '';
-  let kicker = teamName;
-  if(kind === 'WICKET' && d.score) kicker = teamName ? `${teamName} · ${d.score}` : String(d.score);
+  const kicker = team ? (team.name || team.short || '') : '';
   return { word, glyph: BALL_CARD_GLYPH[kind] || '', kicker, teamColor: team ? ecSafeColor(team.color) : '', name, line, stat };
 }
 // Lowers the card's type (--ec-s) until the name and detail line fit with
@@ -3057,7 +3060,10 @@ function addBallCardPhase(tl, kind, opts, at){
   document.getElementById('ec-stat-v').textContent = c.stat ? c.stat.v : '';
   document.getElementById('ec-stat-s').textContent = c.stat ? c.stat.s : '';
   stat.classList.toggle('is-empty', !c.stat);
-  card.classList.toggle('solo', !c.name && !c.line && !c.stat);
+  // No name (WICKET / WIDE / NO BALL / FREE HIT): one centred graphic.
+  card.classList.toggle('solo', !c.name);
+  card.classList.toggle('bare', !c.name && !c.line && !c.stat);
+  document.getElementById('event-stage').classList.toggle('ec-solo', !c.name);
   const parts = [tile, word, sep, kicker, nameEl, lineEl, stat, rule, ring];
   gsap.killTweensOf(parts);
   gsap.set(parts, { clearProps: 'transform,filter,opacity' });
