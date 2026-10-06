@@ -12001,8 +12001,15 @@ function wdOutEnd(){
   if(who === 'either') return wdState.who || null;
   if(who === 'nonStriker') return 'nonStriker';
   if(who === 'pick') return wdState.pick === 'crease:striker' ? 'striker' : wdState.pick === 'crease:nonStriker' ? 'nonStriker' : null;
-  return 'striker';
+  // Striker by default — the scorer may tap the non-striker instead (see wdStrikerOnlyType).
+  return wdState.who === 'nonStriker' ? 'nonStriker' : 'striker';
 }
+// Bowled, Caught, LBW, Stumped, Hit Wicket, Hit the Ball Twice: only the
+// batter FACING can be out this way. The striker is pre-selected; the scorer
+// can tap the non-striker when the panel had the ends the wrong way round —
+// that batter is then recorded as the one on strike for this ball (the ends
+// are swapped first), so every figure stays true to the Laws.
+function wdStrikerOnlyType(){ return !!wdDef() && !WD_WHO[wdState.type]; }
 // After this event: is the innings over (so no new batsman / next striker)?
 function wdInningsEndsHere(){
   const d = wdDef();
@@ -12021,7 +12028,9 @@ function wdNeedsBat(){ return !!wdDef() && !!wdOutEnd() && !wdInningsEndsHere();
 // still has to answer the question. Odd completed runs = the batters
 // crossed; a legal ball that ends the over swaps ends again.
 function wdPredictNewOnStrike(){
-  const end = wdOutEnd();
+  // A striker-only dismissal always empties the striker's end — even when the
+  // non-striker was tapped (they were the one actually facing).
+  const end = wdStrikerOnlyType() && wdOutEnd() ? 'striker' : wdOutEnd();
   if(!end) return false;
   const d = wdDef();
   if(d.nonDelivery || d.special) return end === 'striker';
@@ -12121,14 +12130,19 @@ function renderWicketDetails(){
   whoSel.style.display = whoKind === 'pick' ? 'block' : 'none';
   whoChips.style.display = whoKind === 'pick' ? 'none' : '';
   wdEl('wd-who-label').innerHTML = whoKind === 'either' ? 'Who is out? <span class="wd-hint">— choose one</span>'
-    : whoKind === 'pick' ? (s.type === 'Absent Hurt' ? 'Who is absent hurt?' : 'Who is timed out? <span class="wd-hint">— the incoming batter</span>') : 'Who is out?';
+    : whoKind === 'pick' ? (s.type === 'Absent Hurt' ? 'Who is absent hurt?' : 'Who is timed out? <span class="wd-hint">— the incoming batter</span>')
+    : whoKind === 'striker' ? (s.who === 'nonStriker'
+      ? `Who is out? <span class="wd-hint">— only the batter facing can be out ${escapeHtmlPanel(s.type)}, so ${escapeHtmlPanel(snap.nonStrikerName || 'the non-striker')} is recorded as on strike for this ball</span>`
+      : 'Who is out? <span class="wd-hint">— striker selected; tap the non-striker if it was them</span>')
+    : 'Who is out?';
   if(whoKind === 'either'){
     whoChips.innerHTML = wdChip(snap.strikerName || 'Striker', 'STRIKER', s.who === 'striker', 'data-wd-who="striker"', 'out')
       + wdChip(snap.nonStrikerName || 'Non-striker', 'NON-STRIKER', s.who === 'nonStriker', 'data-wd-who="nonStriker"', 'out');
   } else if(whoKind === 'nonStriker'){
     whoChips.innerHTML = wdChip(snap.nonStrikerName || 'Non-striker', 'NON-STRIKER — out of the crease before the ball', true, 'data-wd-fixed="1"', 'out');
   } else if(whoKind === 'striker'){
-    whoChips.innerHTML = wdChip(snap.strikerName || 'Striker', 'STRIKER', true, 'data-wd-fixed="1"', 'out');
+    whoChips.innerHTML = wdChip(snap.strikerName || 'Striker', 'STRIKER', s.who !== 'nonStriker', 'data-wd-who="striker"', 'out')
+      + wdChip(snap.nonStrikerName || 'Non-striker', 'NON-STRIKER', s.who === 'nonStriker', `data-wd-who="nonStriker"${snap.nonStrikerName ? '' : ' disabled'}`, 'out');
   }
   if(whoKind === 'pick' && whoSel.dataset.forType !== s.type){
     whoSel.dataset.forType = s.type;
@@ -12335,11 +12349,21 @@ function confirmWicketDetails(){
     } else {
       const engineType = d.engine || s.type;
       const either = WD_WHO[s.type] === 'either';
+      let ball = snap;
+      if(!either && s.who === 'nonStriker'){
+        // Striker-only dismissal of the batter the panel had at the other
+        // end: they were the one facing — put them on strike first. The undo
+        // step is taken before the swap, so one Undo restores the ends too.
+        pushHistory();
+        swapStrikeSilent();
+        ball = Object.freeze({ ...snap, strikerId: snap.nonStrikerId, strikerName: snap.nonStrikerName,
+          nonStrikerId: snap.strikerId, nonStrikerName: snap.strikerName });
+      }
       const who = either ? s.who : 'striker';
-      const dismissedPlayerId = who === 'nonStriker' ? snap.nonStrikerId : snap.strikerId;
-      dismissedName = who === 'nonStriker' ? snap.nonStrikerName : snap.strikerName;
+      const dismissedPlayerId = who === 'nonStriker' ? ball.nonStrikerId : ball.strikerId;
+      dismissedName = who === 'nonStriker' ? ball.nonStrikerName : ball.strikerName;
       const meta = { dismissalType: engineType, deferAnimation: true, fielderName: f.name || '', fielderId: f.id || null,
-        runOutWho: who, dismissedPlayerId, dismissedPlayerName: dismissedName, wicketDelivery: snap,
+        runOutWho: who, dismissedPlayerId, dismissedPlayerName: dismissedName, wicketDelivery: ball,
         ...(d.caught ? { caughtKind: d.caught } : {}) };
       let kind = 'W';
       if(del === 'wide'){ kind = 'WdW'; meta.extraRuns = runs; }

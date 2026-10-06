@@ -114,6 +114,36 @@ async function panelSuite(file, label){
   click(P, '#wd-confirm');
   eq(L('the answer is what happens: Ishan faces, Surya at the other end'), P.J('[state.striker.name, state.nonStriker.name, state.score.wickets]'), ['Ishan', 'Surya', 1]);
 
+  console.log('\n=== Who is out: striker by default, non-striker on a tap ===');
+  newMatch(P);
+  P.E('openWicketModal()');
+  clickType(P, 'Bowled');
+  eq(L('Bowled offers both batters, the striker pre-selected'), [...P.w.document.querySelectorAll('#wd-who [data-wd-who]')].map(b => [b.dataset.wdWho, b.classList.contains('on')]),
+    [['striker', true], ['nonStriker', false]]);
+  click(P, '#wd-cancel');
+  newMatch(P);
+  out(P, { type: 'Bowled', newBat: 'a3' });
+  eq(L('no tap = the striker is out'), P.J(`[state.battingCard.A.find(b => b.name === 'Rohit').howOut, state.striker.name === 'Rohit' || state.nonStriker.name === 'Rohit']`), ['b Mukesh', false]);
+  for(const type of ['Bowled', 'Caught', 'LBW', 'Stumped', 'Hit Wicket']){
+    newMatch(P);
+    out(P, { type, who: 'nonStriker', newBat: 'a3', confirm: false });
+    if(type === 'Caught') P.E(`wdSetFielder('f1'); renderWicketDetails();`);
+    eq(L(`${type}: the non-striker can be chosen — hint says they were facing`), [P.$('[data-wd-who="nonStriker"]').classList.contains('on'), /recorded as on strike/.test(P.text('#wd-who-label'))], [true, true]);
+    eq(L(`${type}: the strike question predicts the new batter faces (the striker's end is the empty one)`), P.E('wdPredictNewOnStrike()'), true);
+    if(!P.$('#wd-sec-strike').hidden) click(P, '[data-wd-strike="new"]');
+    click(P, '#wd-confirm');
+    const r = P.J(`(() => { const c = state.battingCard.A; const g = n => c.find(b => b.name === n) || {};
+      return [g('Ishan').howOut || '', g('Ishan').balls, g('Rohit').howOut || 'not out', state.nonStriker.name === 'Rohit' ? state.nonStriker.balls : -1, state.striker.name, state.nonStriker.name, state.score.wickets, state.bowler.wickets, state.ballLog.slice(-1)[0].strikerId || state.ballLog.slice(-1)[0].striker]; })()`);
+    eq(L(`${type}: Ishan (the non-striker) is out, his ball faced; Rohit not out, Surya in and facing`), [r[0] !== '' && r[0] !== 'not out', r[1], r[2], r[3], r[4], r[5], r[6], r[7]],
+      [true, 7, 'not out', 8, 'Surya', 'Rohit', 1, type === 'Stumped' || type === 'Hit Wicket' || type === 'Bowled' || type === 'LBW' || type === 'Caught' ? 1 : 0]);
+    const db = lastDb(P);
+    eq(L(`${type}: the database names Ishan as out and as the striker of that ball`), [db.dismissal && (db.dismissal.batterId || db.dismissal.batter), db.striker], [db.dismissal.batterId ? 'a2' : 'Ishan', 'Ishan']);
+  }
+  newMatch(P);
+  out(P, { type: 'Bowled', who: 'nonStriker', newBat: 'a3' });
+  P.E(`document.getElementById('undo-btn').click()`);
+  eq(L('one Undo puts it all back — wicket and the ends'), P.J('[state.striker.name, state.nonStriker.name, state.score.wickets, state.ballLog.length]'), ['Rohit', 'Ishan', 0, 0]);
+
   console.log('\n=== Caught Behind / Caught & Bowled ===');
   newMatch(P);
   out(P, { type: 'Caught Behind', newBat: 'a3' });
@@ -126,7 +156,7 @@ async function panelSuite(file, label){
   console.log('\n=== Stumped — wicket-keeper or bowler, optional Wide Ball ===');
   newMatch(P);
   P.E('openWicketModal()'); clickType(P, 'Stumped');
-  eq(L('Stumped: who = the striker; by Wicket-keeper (pre-filled) or Bowler; a Wide Ball tick-box'), [P.text('#wd-who'), P.text('#wd-fielder-by'), P.$('#wd-sec-wide').hidden, P.$('#wd-sec-delivery').hidden], ['RohitSTRIKER', 'Wicket-keeperPantBowlerMukesh', false, true]);
+  eq(L('Stumped: who = the striker (non-striker on a tap); by Wicket-keeper (pre-filled) or Bowler; a Wide Ball tick-box'), [P.text('#wd-who'), P.text('#wd-fielder-by'), P.$('#wd-sec-wide').hidden, P.$('#wd-sec-delivery').hidden], ['RohitSTRIKERIshanNON-STRIKER', 'Wicket-keeperPantBowlerMukesh', false, true]);
   click(P, '#wd-cancel');
   newMatch(P);
   out(P, { type: 'Stumped', newBat: 'a3' });
