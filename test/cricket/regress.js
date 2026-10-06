@@ -47,11 +47,9 @@ noThrow('buildMatchSummaryPayload()', 'JSON.stringify(buildMatchSummaryPayload()
 noThrow('buildMatchRecordForLeague()', 'JSON.stringify(buildMatchRecordForLeague()).length > 0');
 noThrow('buildPlayerStatPayload()', 'typeof buildPlayerStatPayload === "function" ? !!buildPlayerStatPayload() : true');
 noThrow('buildBowlerStatPayload()', 'typeof buildBowlerStatPayload === "function" ? !!buildBowlerStatPayload() : true');
-noThrow('computeOverSummary()', 'typeof computeOverSummary === "function" ? (computeOverSummary(), true) : true');
 noThrow('computeLivePartnerships()', 'typeof computeLivePartnerships === "function" ? (computeLivePartnerships(), true) : true');
 noThrow('renderScorecardHtml()', 'renderScorecardHtml(buildMatchRecordForLeague()).length > 0');
-noThrow('battingRowsForExcel()', 'typeof battingRowsForExcel === "function" ? (battingRowsForExcel("A",1), true) : true');
-noThrow('bowlingRowsForExcel()', 'typeof bowlingRowsForExcel === "function" ? (bowlingRowsForExcel("B",1), true) : true');
+noThrow('mrSnapshot() → MatchReport.buildModel()', 'MatchReport.buildModel(mrSnapshot()).innings.length >= 1');
 noThrow('renderBallEditList()', 'renderBallEditList(); true');
 noThrow('reconcileInnings()', 'reconcileInnings().issues.length >= 0');
 noThrow('renderPenaltyLedger()', 'renderPenaltyLedger(); true');
