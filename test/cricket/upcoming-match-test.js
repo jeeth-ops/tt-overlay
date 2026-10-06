@@ -266,6 +266,108 @@ async function panelSuite(file, label){
   await sleep(900);
   const ping = srv.live.slice(-1)[0];
   eq(`${label}: goes live on the tournament page`, ping && [ping.active, ping.roomId, ping.matchId], [true, up.roomId, up.matchId]);
+
+  console.log('\n=== ⚙️ Match format + advanced fixture details ===');
+  eq(`${label}: the first fixture carried the format it was saved with`, [up.format, up.customOvers, up.maxWickets, up.superOverEnabled, up.matchStage, up.notes], ['T20', null, null, true, 'league', '']);
+  eq(`${label}: started fixture: T20 on the panel and in the Format control`, [P.E('state.format'), P.$('#format').value, P.E('state.customSuperOverEnabled')], ['T20', 'T20', true]);
+  click(P, P.$('#schedule-match-btn'));
+  await sleep(120);
+  eq(`${label}: four format choices, the panel's format pre-selected, next match no. filled in`,
+    [P.$$('#um-formats [data-um-format]').map(b => b.getAttribute('data-um-format')), P.$('#um-formats .on').getAttribute('data-um-format'), P.$('#um-custom').hidden, P.$('#um-matchno').value, P.$('#um-stage').value],
+    [['T20', 'ODI', 'Test', 'Custom'], 'T20', true, '3', 'league']);
+  eq(`${label}: T20 rules shown`, P.$$('#um-rules .um-rule').map(r => r.textContent), ['20 overs a side', '6-ball overs', '10 wickets', 'Powerplay: overs 1–6', 'Free hit after a no ball']);
+  click(P, P.$('[data-um-format="Test"]'));
+  eq(`${label}: Test: no Super Over, its own rules`, [P.$('#um-so-row').hidden, P.$$('#um-rules .um-rule').map(r => r.textContent)], [true, ['2 innings each', 'No over limit', 'Follow-on: 200 runs', 'No free hit', 'Unfinished = Draw']]);
+  click(P, P.$('[data-um-format="Custom"]'));
+  click(P, P.$('[data-um-overs="12"]'));
+  const wk = P.$('#um-wickets'); wk.value = '8'; wk.dispatchEvent(new P.w.Event('change', { bubbles: true }));
+  const so = P.$('#um-superover'); so.checked = false; so.dispatchEvent(new P.w.Event('change', { bubbles: true }));
+  const st = P.$('#um-stage'); st.value = 'semi'; st.dispatchEvent(new P.w.Event('change', { bubbles: true }));
+  typeIn(P, P.$('#um-notes'), 'Umpires: Rao and Iyer');
+  click(P, P.$('[data-um-pick="A"]')); click(P, P.$('[data-um-select="lions"]'));
+  click(P, P.$('[data-um-pick="B"]')); click(P, P.$('[data-um-select="tigers"]'));
+  typeIn(P, P.$('#um-date'), '2026-11-15');
+  eq(`${label}: Custom: overs, wickets, rules follow`, [P.$('#um-custom').hidden, P.$('#um-overs').value, P.$('#um-custom-sub').textContent, P.$$('#um-rules .um-rule').map(r => r.textContent).slice(0, 3), P.$('#um-so-row').hidden], [false, '12', '12 overs a side', ['12 overs a side', '6-ball overs', '8 wickets'], false]);
+  eq(`${label}: stage → title hint`, P.$('#um-title-input').placeholder, 'Semi Final');
+  const sum = P.$('#um-summary').textContent.replace(/\s+/g, ' ');
+  eq(`${label}: live preview`, [/Lions ?vs ?tigers/i.test(sum), /Match 3/.test(sum), /Semi Final/.test(sum), /12 overs · 8 wkts/.test(sum), /Super Over: Off/.test(sum), /15.*Nov.*2026|Nov.*15.*2026/.test(sum), /Umpires: Rao and Iyer/.test(sum)], [true, true, true, true, true, true, true]);
+  // a match number already in use → asked before saving
+  typeIn(P, P.$('#um-matchno'), '2');
+  let before = srv.posts.length;
+  click(P, P.$('#um-save'));
+  await sleep(60);
+  eq(`${label}: match no. already used → warning + Save anyway, nothing saved`, [/Match 2 is already used/.test(P.$('#um-msg').textContent), !!P.$('#um-msg [data-um-force]'), srv.posts.length - before], [true, true, 0]);
+  typeIn(P, P.$('#um-matchno'), '3');
+  click(P, P.$('#um-save'));
+  await sleep(200);
+  const fx = srv.posts.slice(before).find(r => r.upcoming === true);
+  eq(`${label}: fixture saved with format, overs, wickets, Super Over, stage, notes`, fx && [fx.format, fx.customOvers, fx.maxWickets, fx.superOverEnabled, fx.matchStage, fx.notes, fx.matchNo, fx.scheduledDate, 'scheduledAt' in fx],
+    ['Custom', 12, 8, false, 'semi', 'Umpires: Rao and Iyer', 3, '2026-11-15', false]);
+  P.E(`setHistoryPanelView('matches')`);
+  const fxRow = P.$(`#league-matches-list [data-view-match="${fx.matchId}"]`);
+  eq(`${label}: Matches list: stage + format tags, notes, ✏️ Edit`, fxRow && [[...fxRow.querySelectorAll('.lm-tag')].map(t => t.textContent), /Umpires: Rao and Iyer/.test(fxRow.textContent), !!fxRow.querySelector('[data-edit-upcoming]')], [['Semi Final', '12 overs · 8 wkts'], true, true]);
+
+  // same two teams on the same date → asked; Save anyway saves it
+  click(P, P.$('#schedule-match-btn'));
+  await sleep(120);
+  click(P, P.$('[data-um-pick="A"]')); click(P, P.$('[data-um-select="tigers"]'));
+  click(P, P.$('[data-um-pick="B"]')); click(P, P.$('[data-um-select="lions"]'));
+  typeIn(P, P.$('#um-date'), '2026-11-15');
+  eq(`${label}: duplicate fixture shown in the preview`, /already scheduled on this date \(Match 3\)/.test(P.$('#um-summary').textContent), true);
+  before = srv.posts.length;
+  click(P, P.$('#um-save'));
+  await sleep(60);
+  eq(`${label}: duplicate fixture → asked first`, [/already scheduled/.test(P.$('#um-msg').textContent), srv.posts.length - before], [true, 0]);
+  click(P, P.$('#um-msg [data-um-force]'));
+  await sleep(200);
+  const dupFx = srv.posts.slice(before).find(r => r.upcoming === true);
+  eq(`${label}: Save anyway → saved as its own fixture`, dupFx && [dupFx.matchNo, dupFx.matchId !== fx.matchId, dupFx.format], [4, true, 'T20']);
+
+  // ✏️ Edit — reschedule + change the rules; same match id and room
+  P.E(`setHistoryPanelView('matches')`);
+  click(P, P.$(`#league-matches-list [data-edit-upcoming="${fx.matchId}"]`));
+  await sleep(120);
+  eq(`${label}: Edit opens the fixture as saved`, [P.$('#um-title').textContent, P.$('#um-save').textContent, P.$('#um-formats .on').getAttribute('data-um-format'), P.$('#um-overs').value, P.$('#um-wickets').value, P.$('#um-superover').checked, P.$('#um-stage').value, P.$('#um-matchno').value, P.$('#um-notes').value, P.$('#um-date').value,
+    P.$('#um-overlay .um-side[data-side="A"] .um-team-name').textContent, P.$('#um-overlay .um-side[data-side="B"] .um-team-name').textContent],
+    ['Edit Upcoming Match', 'Save Changes', 'Custom', '12', '8', false, 'semi', '3', 'Umpires: Rao and Iyer', '2026-11-15', 'Lions', 'tigers']);
+  typeIn(P, P.$('#um-date'), '2026-11-22');
+  typeIn(P, P.$('#um-overs'), '15');
+  before = srv.posts.length;
+  click(P, P.$('#um-save'));
+  await sleep(200);
+  const ed = srv.posts.slice(before).find(r => r.matchId === fx.matchId);
+  eq(`${label}: edited in place — same match id + room, new date and overs`, ed && [ed.roomId === fx.roomId, ed.upcoming, ed.scheduledDate, ed.customOvers, ed.maxWickets, ed.superOverEnabled, ed.matchNo, srv.records.filter(r => r.matchId === fx.matchId).length],
+    [true, true, '2026-11-22', 15, 8, false, 3, 1]);
+  const edBad = P.$('#um-overs');
+  click(P, P.$(`#league-matches-list [data-edit-upcoming="${fx.matchId}"]`));
+  await sleep(120);
+  typeIn(P, edBad, '0');
+  click(P, P.$('#um-save'));
+  await sleep(30);
+  eq(`${label}: Custom overs must be 1-200`, P.$('#um-msg').textContent, 'Custom format — overs per innings must be a whole number from 1 to 200');
+  click(P, P.$('#um-cancel'));
+
+  // ▶ Start puts the rules on the panel
+  click(P, P.$(`[data-start-upcoming="${fx.matchId}"]`));
+  await sleep(250);
+  eq(`${label}: Start: Custom 15 overs, 8 wickets, no Super Over, Semi Final — on state and in Match Setup`,
+    P.E(`[state.format, state.customOvers, state.oversPerInnings, maxWickets(), matchRules().superOverEnabled, state.matchStage, document.getElementById('format').value, document.getElementById('custom-overs').value, document.getElementById('custom-overs-wrap').style.display]`),
+    ['Custom', 15, 15, 8, false, 'semi', 'Custom', '15', 'block']);
+  const fxFlip = srv.posts.filter(r => r.matchId === fx.matchId).slice(-1)[0];
+  eq(`${label}: the started record keeps format, overs and stage`, fxFlip && [fxFlip.upcoming, fxFlip.format, fxFlip.customOvers, fxFlip.matchStage], [false, 'Custom', 15, 'semi']);
+  eq(`${label}: start toast names the format`, /\(15 overs · 8 wkts\)/.test(P.E('window.__toasts.slice(-1)[0]')), true);
+  // a started fixture can no longer be edited from an old copy
+  P.E(`openUpcomingModal(${JSON.stringify(dupFx)})`);
+  await sleep(120);
+  P.E(`(currentLeagueMatchesAll().find(m => m.matchId === ${JSON.stringify(dupFx.matchId)}) || {}).upcoming = false`);
+  before = srv.posts.length;
+  click(P, P.$('#um-save'));
+  await sleep(60);
+  eq(`${label}: editing a fixture that has since started is refused`, [/already started/.test(P.$('#um-msg').textContent), srv.posts.length - before], [true, 0]);
+  click(P, P.$('#um-cancel'));
+  // Reset → Format controls follow the fresh default again
+  P.E('startFreshMatch({ quiet: true })');
+  eq(`${label}: Reset brings Format back to T20 in Match Setup too`, [P.E('state.format'), P.$('#format').value, P.$('#custom-overs-wrap').style.display, P.E('state.customMaxWickets')], ['T20', 'T20', 'none', null]);
   eq(`${label}: no script errors`, P.errors, []);
 }
 
@@ -332,7 +434,7 @@ async function panelSuite(file, label){
       matches: [
         { matchId: 'm-old', roomId: 'room-old', matchNo: 1, savedAt: '2026-10-01T10:00:00.000Z', winningTeam: 'A', teamA: { name: 'Lions', short: 'LIO' }, teamB: { name: 'Tigers', short: 'TIG' },
           scoreA: { runs: 150, wickets: 6, overs: '20.0' }, scoreB: { runs: 120, wickets: 9, overs: '20.0' }, battingCard: { A: [], B: [] }, bowlingCard: { A: [], B: [] } },
-        { matchId: 'm-up-late', roomId: 'room-late', upcoming: true, matchNo: 3, scheduledDate: '2026-10-20', venue: 'Wankhede', teamA: { name: 'Tigers', short: 'TIG' }, teamB: { name: 'Golden Eagles', short: 'GE' },
+        { matchId: 'm-up-late', roomId: 'room-late', upcoming: true, matchNo: 3, scheduledDate: '2026-10-20', venue: 'Wankhede', format: 'Custom', customOvers: 12, matchStage: 'final', teamA: { name: 'Tigers', short: 'TIG' }, teamB: { name: 'Golden Eagles', short: 'GE' },
           scoreA: { runs: 0, wickets: 0, overs: '0.0' }, scoreB: { runs: 0, wickets: 0, overs: '0.0' }, battingCard: { A: [], B: [] }, bowlingCard: { A: [], B: [] } },
         { matchId: 'm-up-soon', roomId: 'room-soon', upcoming: true, matchNo: 2, matchTitle: 'Semi Final', scheduledDate: '2026-10-04', teamA: { name: 'Lions', short: 'LIO', teamId: 't1' }, teamB: { name: 'Golden Eagles', short: 'GE' },
           scoreA: { runs: 0, wickets: 0, overs: '0.0' }, scoreB: { runs: 0, wickets: 0, overs: '0.0' }, battingCard: { A: [], B: [] }, bowlingCard: { A: [], B: [] } },
@@ -366,6 +468,8 @@ async function panelSuite(file, label){
     const startsLine = soon && soon.querySelector('.mc-result').textContent;
     eq('upcoming card: badge + "Starts <date>" (no time), no "Yet to bat"', soon && [soon.querySelector('.mc-status').textContent.trim(), /^Starts .*2026$/.test(startsLine), /\d{1,2}:\d{2}/.test(startsLine), /Yet to bat/.test(soon.textContent)], ['Upcoming', true, false, false]);
     eq('date is the fixture date in any time zone (4 Oct)', /\b4\b/.test(startsLine) && /Oct/.test(startsLine), true);
+    const late = tdoc.querySelector('[data-goto-match="m-up-late"]');
+    eq('upcoming card: stage in the label, Custom format as overs', late && [late.querySelector('.mc-label-t').textContent, late.querySelector('.mc-fmt').textContent], ['Match 3 · Final', '12 OV']);
     eq('upcoming card links to its own live room', soon && soon.getAttribute('href'), '/cricket-scorecard?room=room-soon');
     eq('hero counts played matches only', /^2 matches played/.test((tdoc.getElementById('tourney-meta') || {}).textContent || ''), true);
     eq('match count shows the fixtures separately', (tdoc.querySelector('.mc-count') || {}).textContent, '2 matches · 2 upcoming');

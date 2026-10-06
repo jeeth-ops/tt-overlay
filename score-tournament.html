@@ -1013,14 +1013,24 @@ function upcomingWhen(m){
   try { return new Date(y, mo - 1, d).toLocaleDateString(undefined, { weekday:'short', day:'numeric', month:'short', year:'numeric' }); }
   catch(e){ return iso; }
 }
+// The fixture's stage (set when it was scheduled on the panel) and a short
+// format label — "T20", "ODI", "Test", or "12 OV" for a Custom match.
+const STAGE_LABEL = { qualifier1:'Qualifier 1', eliminator:'Eliminator', qualifier2:'Qualifier 2', quarter:'Quarter Final', semi:'Semi Final', final:'Final', friendly:'Friendly' };
+function formatLabel(m){
+  if(!m || !m.format) return '';
+  if(m.format === 'Custom'){ const ov = Math.floor(Number(m.customOvers)); return ov > 0 ? `${ov} OV` : 'Custom'; }
+  return String(m.format);
+}
 function matchCardHtml(m, { href, status, featured = false }){
   const A = m.teamA || {}, B = m.teamB || {};
   const isUpcoming = status === 'upcoming';
   const done = !!m.winningTeam;
   const win = winnerSide(m);
   const ca = safeTeamColor(A.color), cb = safeTeamColor(B.color);
+  const stage = STAGE_LABEL[m.matchStage] || '';
   const label = m.matchTitle ? String(m.matchTitle)
-    : m.matchNo != null && m.matchNo !== '' ? `Match ${m.matchNo}` : '';
+    : [m.matchNo != null && m.matchNo !== '' ? `Match ${m.matchNo}` : '', stage].filter(Boolean).join(' · ');
+  const fmt = formatLabel(m);
   const when = isUpcoming ? upcomingWhen(m) : '';
   const result = isUpcoming ? (when ? `Starts ${when}` : 'Scheduled') : resultText(m);
   const date = isUpcoming ? '' : matchDate(m.savedAt);
@@ -1062,7 +1072,7 @@ function matchCardHtml(m, { href, status, featured = false }){
       data-goto-match="${escapeHtml(m.matchId)}"${!done && m.roomId ? ` data-goto-room="${escapeHtml(m.roomId)}"` : ''}
       ${style ? `style="${style}"` : ''} aria-label="${escapeHtml(aria)}">
     <div class="mc-top">
-      <span class="mc-label">${label ? `<span class="mc-label-t">${escapeHtml(label)}</span>` : ''}${m.format ? `<span class="mc-fmt">${escapeHtml(m.format)}</span>` : ''}</span>
+      <span class="mc-label">${label ? `<span class="mc-label-t">${escapeHtml(label)}</span>` : ''}${fmt ? `<span class="mc-fmt">${escapeHtml(fmt)}</span>` : ''}</span>
       <span class="mc-status ${status === 'abandoned' ? 'off' : status}"><span class="mc-dot"></span>${MATCH_STATUS_LABEL[status]}</span>
     </div>
     <div class="mc-body">
