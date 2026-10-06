@@ -360,6 +360,22 @@ async function serverSuite(){
   r = await api.reassignBowlerInDb('M1', { innings: 1, over: 0, bowler: '', deliveryIds: ['d1'], allHaveIds: true });
   eq('DB: an empty bowler name is refused', r.ok, false);
   eq('DB: every change is in the audit log', world.audits.length, 2);
+
+  // Clips follow their delivery — including an over that was partly Unassigned.
+  const w2 = { balls: H.coll([]), clips: H.coll([]), records: H.coll([]), rooms: {}, emits: [], audits: [] };
+  const api2 = H.build(w2, ['personName', 'playerKey', 'deriveBallFacts', 'isSuperOverBall', 'buildLiveCardsFromBallsArray'], ['reassignBowlerInDb']);
+  const mk2 = (i, bowler) => ({ _id: new H.ObjectId(), matchId: 'M2', ballUid: 'e' + i, innings: 1, over: 0, ballInOver: i, kind: i === 2 ? '4' : '1', runs: i === 2 ? 4 : 1, battingTeam: 'A',
+    striker: 'Rohit', strikerKey: 'rohit', nonStriker: 'Ishan', bowler, bowlerKey: bowler ? bowler.toLowerCase() : '', dismissal: null });
+  w2.balls.docs.push(mk2(1, ''), mk2(2, ''), mk2(3, 'Mukesh'), mk2(4, 'Mukesh'));
+  w2.clips.docs.push(
+    { clipId: 'c-four', matchId: 'M2', innings: 1, over: 0, deliveryId: 'e2', eventType: 'FOUR', bowlerName: null, bowlerKey: null },
+    { clipId: 'c-old', matchId: 'M2', innings: 1, over: 0, eventType: 'CLIP', bowlerName: 'Mukesh', bowlerKey: 'mukesh' },
+    { clipId: 'c-next-over', matchId: 'M2', innings: 1, over: 1, deliveryId: 'x9', eventType: 'SIX', bowlerName: 'Someone', bowlerKey: 'someone' });
+  w2.records.docs.push({ matchId: 'M2' });
+  await api2.reassignBowlerInDb('M2', { innings: 1, over: 0, bowler: 'Raj', bowlerId: 'r1', deliveryIds: ['e1', 'e2', 'e3', 'e4'], allHaveIds: true, fromBowlers: ['', 'Mukesh'] });
+  await new Promise(r => setTimeout(r, 10));
+  eq('clips 55: a mixed over (Unassigned + Mukesh) → Raj — the FOUR clip (by delivery) and the old clip move, the next over is untouched',
+    w2.clips.docs.map(c => [c.clipId, c.bowlerName]), [['c-four', 'Raj'], ['c-old', 'Raj'], ['c-next-over', 'Someone']]);
 }
 
 (async () => {

@@ -10147,10 +10147,21 @@ async function reassignBowlerInDb(matchId, op, hintUid) {
     // Clips follow their delivery onto the right bowler (same as the
     // website's own bowler correction).
     if (clipsCollection) {
+        // A clip is matched to its delivery by id first; clips from before
+        // delivery ids are matched by over + the bowler they were filed
+        // under — including "no bowler yet" when some of these deliveries
+        // were Unassigned (they used to be left behind in a mixed over).
         const fromKeys = [...new Set(docs.map(d => d.bowlerKey).filter(Boolean))];
+        const uids = docs.map(d => d.ballUid).filter(Boolean).map(String);
+        const anyUnassigned = docs.some(d => !d.bowlerKey);
+        const or = [
+            ...(uids.length ? [{ deliveryId: { $in: uids } }] : []),
+            ...(fromKeys.length ? [{ bowlerKey: { $in: fromKeys }, deliveryId: { $nin: uids } }] : []),
+            ...(anyUnassigned ? [{ bowlerKey: { $in: [null, ''] }, deliveryId: { $nin: uids } }] : [])
+        ];
         clipsCollection.updateMany(
-            { matchId, innings, over, ...(fromKeys.length ? { bowlerKey: { $in: fromKeys } } : {}) },
-            { $set: { bowlerName: bowler, bowlerKey: playerKey(bowler) } }
+            { matchId, innings, over, ...(or.length ? { $or: or } : {}) },
+            { $set: { bowlerName: bowler, bowlerKey: playerKey(bowler), ...(bowlerPlayerId ? { bowlerPlayerId } : {}) } }
         ).then(() => invalidateClipsCache(matchId)).catch(err => console.log('Clip resync after bowler assignment error:', err));
     }
     if (ownerUid) scheduleMatchRecordSync(ownerUid, matchId, { force: true, reason: 'panel bowler assignment' });

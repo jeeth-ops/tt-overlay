@@ -27,6 +27,7 @@ function matches(doc, q){
     const v = q[k];
     if(k === '$or') return v.some(sub => matches(doc, sub));
     const dv = doc[k];
+    if(v === null) return dv == null;
     if(v && typeof v === 'object' && !(v instanceof ObjectId) && !Array.isArray(v)){
       if('$in' in v) return v.$in.some(x => String(x) === String(dv) || (x === null && dv == null));
       if('$nin' in v) return !v.$nin.some(x => String(x) === String(dv));
