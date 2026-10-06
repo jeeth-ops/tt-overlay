@@ -1385,6 +1385,7 @@
             padding: 5px 12px; border-radius: 999px;
         }
         .tournament-meta-chip.host { color: var(--text-main); }
+        .tournament-card-sub { margin: -4px 0 10px; font-size: 12.5px; font-weight: 600; color: var(--text-muted, #94a3b8); letter-spacing: .02em; }
         .tournament-meta-chip.private { color: var(--brand-orange); background: rgba(var(--brand-orange-rgb), 0.1); border-color: rgba(var(--brand-orange-rgb), 0.25); }
         .tournament-meta-chip.public { color: var(--success); background: rgba(34, 197, 94, 0.1); border-color: rgba(34, 197, 94, 0.25); }
         .tournament-card-cta {
@@ -3857,7 +3858,11 @@
         let allTournaments = [];
         let tournamentFilter = 'all';
 
-        async function loadTournaments() {
+        // Signature of the last list drawn, so the quiet auto-refresh below
+        // only re-draws the cards when something actually changed.
+        let tournamentsSig = null;
+        async function loadTournaments(quiet) {
+            let next = allTournaments;
             try {
                 const headers = {};
                 // Send the Firebase ID token when we have one — the server
@@ -3868,13 +3873,18 @@
                 if (auth.currentUser) {
                     try { headers['Authorization'] = `Bearer ${await auth.currentUser.getIdToken()}`; } catch (e) { /* ignore */ }
                 }
-                const res = await fetch('/api/public/tournaments', { headers });
+                const res = await fetch('/api/public/tournaments', { headers, cache: 'no-store' });
                 const data = await res.json();
-                allTournaments = (data && data.tournaments) || [];
+                next = (data && data.tournaments) || [];
             } catch (err) {
                 console.error('Could not load tournaments:', err);
-                allTournaments = [];
+                if (quiet) return; // keep what is on screen; try again next tick
+                next = [];
             }
+            const sig = JSON.stringify(next);
+            if (quiet && sig === tournamentsSig) return;
+            tournamentsSig = sig;
+            allTournaments = next;
             renderTournaments();
             renderTicker();
             renderStatsBar();
@@ -4057,7 +4067,8 @@
                     statusHtml = '<span class="tournament-status-badge upcoming">Upcoming</span>';
                 }
 
-                const hostChip = t.createdBy ? `<span class="tournament-meta-chip host">👤 ${t.createdBy}</span>` : '';
+                const hostChip = t.createdBy ? `<span class="tournament-meta-chip host">👤 ${tkEscape(t.createdBy)}</span>` : '';
+                const infoChips = tournamentInfoChips(t);
                 const visibilityChip = t.createdBy
                     ? (t.isPrivate
                         ? `<span class="tournament-meta-chip private">🔒 Private</span>`
@@ -4082,9 +4093,11 @@
                         ${statusHtml}
                     </div>
                     <div class="tournament-card-body">
-                        <h3>${t.name}</h3>
+                        <h3>${tkEscape(t.name)}</h3>
+                        ${t.info && (t.info.season || t.info.shortName) ? `<div class="tournament-card-sub">${tkEscape([t.info.shortName, t.info.season].filter(Boolean).join(' · '))}</div>` : ''}
                         <div class="tournament-meta-row">
                             <span class="tournament-meta-chip">🏟️ ${t.matchCount} match${t.matchCount === 1 ? '' : 'es'}</span>
+                            ${infoChips}
                             ${hostChip}
                             ${visibilityChip}
                         </div>
@@ -4110,6 +4123,26 @@
 
                 grid.appendChild(card);
             });
+        }
+
+        // 📅 dates, 📍 venue, teams and upcoming fixtures — from the details
+        // the operator filled in when the tournament was created.
+        function tournamentInfoChips(t) {
+            const info = t.info || {};
+            const chips = [];
+            const fmt = (d) => {
+                const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || '');
+                if (!m) return '';
+                return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+            };
+            const s = fmt(info.startDate), e = fmt(info.endDate);
+            if (s || e) chips.push(`📅 ${s && e && s !== e ? `${s} – ${e}` : (s || e)}`);
+            const place = [info.venue, info.city].filter(Boolean).join(', ');
+            if (place) chips.push(`📍 ${place}`);
+            if (info.teamCount) chips.push(`👥 ${info.teamCount} team${info.teamCount === 1 ? '' : 's'}`);
+            if (info.format) chips.push(`🏏 ${info.format}${info.overs ? ` · ${info.overs} ov` : ''}`);
+            if (t.upcomingCount) chips.push(`⏳ ${t.upcomingCount} upcoming`);
+            return chips.map(c => `<span class="tournament-meta-chip">${tkEscape(c)}</span>`).join('');
         }
 
         function setTournamentFilter(filter, btnEl) {
@@ -4236,6 +4269,12 @@
         }
 
         loadTournaments();
+
+        // New tournaments, fixtures and results show up on their own while
+        // the page is open — a quiet re-check every 20s (only while the tab
+        // is visible) plus one the moment the visitor comes back to the tab.
+        setInterval(() => { if (!document.hidden) loadTournaments(true); }, 20000);
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) loadTournaments(true); });
     </script>
 
     <script>

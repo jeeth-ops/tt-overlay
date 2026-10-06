@@ -67,8 +67,9 @@ async function suite(file, label){
   P.E(`state.teamA.players = ['Rohit','Ishan','Surya','Tilak','Hardik','Tim','Krunal','Piyush','Jasprit','Akash','Arjun','Naman'].map((n, i) => ({ id: 'a' + i, name: n, isXI: i < 11 }));
        state.teamA.name = 'Mumbai Warriors'; state.teamB.name = 'DY Patil XI'; renderSquadUI(); renderPanel();`);
 
-  eq(L('the six sections, in order'), P.$$('#card-match-setup .ms-sec-t').map(e => e.textContent.replace(/^\d/, '').replace('Manage squads', '').trim()),
-    ['Match information', 'Match format', 'Teams', 'Playing XI', 'Innings', 'Match review']);
+  eq(L('the five sections, in order (no Playing XI step — Team Squads has it)'), P.$$('#card-match-setup .ms-sec-t').map(e => e.textContent.replace(/^\d/, '').replace('Manage squads', '').trim()),
+    ['Match information', 'Match format', 'Teams', 'Innings', 'Match review']);
+  eq(L('the steps are numbered 1-5'), P.$$('#card-match-setup .ms-sec-t > b').map(e => e.textContent), ['1', '2', '3', '4', '5']);
   eq(L('every old input is still there (same ids)'), ['format', 'custom-overs', 'custom-overs-wrap', 'venue', 'stream-url', 'teamA-name', 'teamA-short', 'teamA-color', 'teamA-logo-file', 'teamA-logo-remove', 'teamA-logo-preview', 'teamB-name', 'batting-team', 'target', 'visible-toggle'].filter(id => !P.$('#' + id)), []);
 
   eq(L('format chips show the format'), P.$('#ms-formats .on').dataset.msFormat, 'T20');
@@ -83,11 +84,7 @@ async function suite(file, label){
   click(P, '[data-ms-format="T20"]');
 
   eq(L('team cards: name, players, XI'), [P.text('#ms-team-A-name'), P.text('#ms-team-A-meta')], ['Mumbai Warriors', '12 players · XI 11/11 · MI']);
-  eq(L('Playing XI: 11 in, 1 available'), [P.$$('#ms-xi-A .ms-pl.in').length, P.$$('#ms-xi-A .ms-pl:not(.in)').map(b => b.textContent), P.text('#ms-xi-A .ms-xi-n')], [11, ['Naman'], '11 / 11']);
-  click(P, P.$$('#ms-xi-A .ms-pl:not(.in)')[0]);
-  eq(L('tap a squad player → in the XI (squad list follows)'), [P.E(`state.teamA.players.find(p => p.name === 'Naman').isXI`), P.text('#ms-xi-A .ms-xi-n'), P.$$('#squadA-list input[type=checkbox]').filter(c => c.checked).length], [true, '12 / 11', 12]);
-  click(P, P.$$('#ms-xi-A .ms-pl.in').find(b => /Naman/.test(b.textContent)));
-  eq(L('tap again → benched'), P.E(`state.teamA.players.find(p => p.name === 'Naman').isXI`), false);
+  eq(L('Match Setup no longer shows a Playing XI picker'), [!!P.$('#ms-xi-A'), !!P.$('#ms-xi-B')], [false, false]);
 
   const d = P.$('#match-date'); d.value = '2026-10-18'; d.dispatchEvent(new P.w.Event('change', { bubbles: true }));
   eq(L('match date → state and the saved record'), [P.E('state.matchDate'), P.J('buildMatchRecordForLeague()').matchDate], ['2026-10-18', '2026-10-18']);

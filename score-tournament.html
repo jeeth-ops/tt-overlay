@@ -251,6 +251,19 @@
   }
   #tourney-name{ position:relative; font-family:var(--font-display); font-weight:800; font-size:clamp(22px,3.4vw,36px); letter-spacing:-.5px; line-height:1.12; }
   #tourney-meta{ position:relative; color:var(--text-dim); font-size:12.5px; font-weight:600; margin-top:4px; }
+  .th-head.has-logo{ display:flex; align-items:center; gap:14px; }
+  .th-head-txt{ min-width:0; }
+  .th-logo{ position:relative; flex:none; width:58px; height:58px; border-radius:16px; object-fit:cover; background:var(--panel-2); border:1px solid var(--border); box-shadow:var(--shadow); }
+  .th-logo-txt{ display:grid; place-items:center; background:var(--accent); color:var(--accent-contrast); font-family:var(--font-display); font-weight:800; font-size:17px; letter-spacing:.5px; }
+  .th-sub{ position:relative; color:var(--accent); font-size:12px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; margin-top:3px; }
+  .th-info{ position:relative; padding:0 24px 18px; display:flex; flex-direction:column; gap:10px; }
+  .th-facts{ display:flex; flex-wrap:wrap; gap:6px; }
+  .th-fact{ padding:5px 10px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); font-size:12px; font-weight:600; color:var(--text); max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .th-about{ color:var(--text-dim); font-size:13px; line-height:1.55; max-width:760px; white-space:pre-line; overflow-wrap:anywhere; }
+  .th-teams{ display:flex; flex-wrap:wrap; gap:6px; }
+  .th-team{ display:inline-flex; align-items:center; gap:6px; padding:4px 10px 4px 5px; border-radius:99px; border:1px solid var(--border-soft); background:var(--bg-soft); font-size:12px; font-weight:700; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .th-team img, .th-team-dot{ flex:none; width:18px; height:18px; border-radius:50%; object-fit:cover; background:var(--text-faint); }
+  @media (max-width:640px){ .th-info{ padding:0 16px 14px; } .th-logo{ width:48px; height:48px; border-radius:13px; } }
   .chip{ padding:3px 9px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); font-size:11px; font-weight:700; }
   .chip.live{ background:rgba(239,68,68,.12); color:var(--live); border-color:transparent; display:inline-flex; align-items:center; gap:5px; }
   .chip.live .lv-dot{ width:6px; height:6px; border-radius:50%; background:var(--live); animation:pulseDot 1.4s infinite; }
@@ -1277,7 +1290,7 @@ async function init(){
     } else {
       const res = await apiFetch(`/api/public/tournament/${encodeURIComponent(token)}`);
       const data = await res.json();
-      if(data && data.success){ renderPortal(data, token); }
+      if(data && data.success){ portalSig = portalSignature(data); renderPortal(data, token); startPortalRefresh(token); }
       else {
         // DIAGNOSTIC: check this in the console — if signedInAs is empty
         // while you know you're logged in, the Firebase session did not
@@ -1290,6 +1303,74 @@ async function init(){
     }
   }catch(e){ showEmpty('Could not load this tournament right now — please try again shortly.'); }
 }
+// 🔄 New fixtures, scores and results show up on their own while the page is
+// open: a quiet re-check every 20s (only while the tab is visible) and one
+// the moment the visitor comes back. The page is only re-drawn when the data
+// actually changed, keeping the open tab, searches and scroll position.
+let portalSig = '';
+let portalRefreshTimer = null;
+function portalSignature(data){
+  try{ return JSON.stringify([data.displayName, data.info, data.matches, data.live, data.leaderboards, data.pointsTable]); }catch(e){ return String(Date.now()); }
+}
+async function refreshPortal(token){
+  if(document.hidden || refreshPortal.busy) return;
+  refreshPortal.busy = true;
+  try{
+    const res = await apiFetch(`/api/public/tournament/${encodeURIComponent(token)}`, { cache: 'no-store' });
+    const data = await res.json();
+    if(!(data && data.success)) return;
+    const sig = portalSignature(data);
+    if(sig === portalSig) return;
+    portalSig = sig;
+    const c = document.getElementById('content');
+    const activeTab = (c.querySelector('.tab-btn.active') || {}).dataset;
+    const searches = [...c.querySelectorAll('.lb-search-input')].map(i => i.value);
+    const y = window.scrollY;
+    renderPortal(data, token, { quiet: true });
+    if(activeTab && activeTab.tab){ const b = c.querySelector(`.tab-btn[data-tab="${activeTab.tab}"]`); if(b && !b.classList.contains('active')) b.click(); }
+    c.querySelectorAll('.lb-search-input').forEach((inp, i) => { if(searches[i]){ inp.value = searches[i]; inp.dispatchEvent(new Event('input')); } });
+    window.scrollTo(0, y);
+  }catch(e){ /* keep what is on screen; try again next tick */ }
+  finally{ refreshPortal.busy = false; }
+}
+function startPortalRefresh(token){
+  if(portalRefreshTimer) return;
+  portalRefreshTimer = setInterval(() => refreshPortal(token), 20000);
+  document.addEventListener('visibilitychange', () => { if(!document.hidden) refreshPortal(token); });
+}
+
+/* Details the operator gave when creating the tournament: logo, season,
+   dates, venue, organiser, about and the teams taking part. */
+function safeLogo(u){
+  const s = String(u || '');
+  return (/^https:\/\/[^\s"'<>]+$/i.test(s) || /^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/i.test(s)) ? s : '';
+}
+function infoDate(d){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || '');
+  return m ? new Date(Date.UTC(+m[1], +m[2]-1, +m[3])).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric', timeZone:'UTC' }) : '';
+}
+function tourneyInfoHtml(info){
+  if(!info) return { logo:'', sub:'', facts:'', about:'', teams:'' };
+  const logoUrl = safeLogo(info.logoUrl);
+  const initials = String(info.shortName || '').slice(0, 4);
+  const logo = logoUrl ? `<img class="th-logo" src="${escapeHtml(logoUrl)}" alt="">`
+    : (initials ? `<div class="th-logo th-logo-txt"${/^#[0-9a-f]{3,6}$/i.test(info.color||'') ? ` style="background:${info.color}"` : ''}>${escapeHtml(initials)}</div>` : '');
+  const sub = [info.shortName, info.season].filter(Boolean).join(' · ');
+  const s = infoDate(info.startDate), e = infoDate(info.endDate);
+  const facts = [
+    (s || e) ? `📅 ${s && e && s !== e ? `${s} – ${e}` : (s || e)}` : '',
+    [info.venue, info.city].filter(Boolean).length ? `📍 ${[info.venue, info.city].filter(Boolean).join(', ')}` : '',
+    info.format ? `🏏 ${info.format}${info.overs ? ` · ${info.overs} overs` : ''}` : '',
+    info.organizer ? `🏆 ${info.organizer}` : ''
+  ].filter(Boolean).map(f => `<span class="th-fact">${escapeHtml(f)}</span>`).join('');
+  const about = info.description ? `<div class="th-about">${escapeHtml(info.description)}</div>` : '';
+  const teams = (info.teams || []).length ? `<div class="th-teams">${info.teams.map(t => {
+    const tl = safeLogo(t.logoUrl);
+    const dot = tl ? `<img src="${escapeHtml(tl)}" alt="">` : `<span class="th-team-dot"${/^#[0-9a-f]{3,6}$/i.test(t.color||'') ? ` style="background:${t.color}"` : ''}></span>`;
+    return `<span class="th-team">${dot}${escapeHtml(t.name)}</span>`;
+  }).join('')}</div>` : '';
+  return { logo, sub: sub ? `<div class="th-sub">${escapeHtml(sub)}</div>` : '', facts: facts ? `<div class="th-facts">${facts}</div>` : '', about, teams };
+}
 function showEmpty(msg){
   document.getElementById('loading-state').style.display='none';
   const c = document.getElementById('content'); c.style.display='';
@@ -1298,7 +1379,8 @@ function showEmpty(msg){
 }
 
 /* ---- Tournament portal (live + previous + points table + leaderboards) ---- */
-function renderPortal(data, token){
+function renderPortal(data, token, opts){
+  const quiet = !!(opts && opts.quiet);
   document.getElementById('loading-state').style.display='none';
   const c = document.getElementById('content'); c.style.display='';
   document.title = `${data.displayName} — All Sports Live`;
@@ -1344,15 +1426,21 @@ function renderPortal(data, token){
   const lb = data.leaderboards || { topRuns: [], topWickets: [] };
   const awards = computeAwards(lb);
 
+  const tinfo = tourneyInfoHtml(data.info);
   const heroCard = `
   <div class="card" id="tourney-hero">
     <div class="th-top">
-      <div class="th-head">
+      <div class="th-head${tinfo.logo ? ' has-logo' : ''}">
+        ${tinfo.logo}
+        <div class="th-head-txt">
         <div id="tourney-name">${escapeHtml(data.displayName)}</div>
-        <div id="tourney-meta">${matches.length} match${matches.length===1?'':'es'} played${isLive ? ' · <span class="chip live"><span class="lv-dot"></span>Live now</span>' : ''}</div>
+        ${tinfo.sub}
+        <div id="tourney-meta">${matches.length} match${matches.length===1?'':'es'} played${upcoming.length ? ` · ${upcoming.length} upcoming` : ''}${isLive ? ' · <span class="chip live"><span class="lv-dot"></span>Live now</span>' : ''}</div>
+        </div>
       </div>
       ${matches.length ? heroStatsHtml(glance) : ''}
     </div>
+    ${tinfo.facts || tinfo.about || tinfo.teams ? `<div class="th-info">${tinfo.facts}${tinfo.about}${tinfo.teams}</div>` : ''}
     ${awards.length ? `
     <div class="th-awards">
       <div class="mc-group-label">Tournament Awards<span class="mc-group-n">${awards.length}</span></div>
@@ -1497,7 +1585,7 @@ function renderPortal(data, token){
     moveTabIndicator(btn);
   }));
   requestAnimationFrame(() => moveTabIndicator(c.querySelector('.tab-btn.active')));
-  c.classList.remove('in'); void c.offsetWidth; c.classList.add('in');
+  if(!quiet){ c.classList.remove('in'); void c.offsetWidth; c.classList.add('in'); }
   // Each card is a real <a href> (see matchCardHtml), so keyboard Enter,
   // middle-click, Ctrl/⌘-click and long-press "open in new tab" all behave
   // natively. A plain click is taken over only to play the press-down and
@@ -1513,7 +1601,7 @@ function renderPortal(data, token){
     ptNavigate(card.getAttribute('href'), { x, y });
   }));
   // Back/forward cache restores the page as it was left — mid-press.
-  window.addEventListener('pageshow', () => c.querySelectorAll('.mcard.is-opening').forEach(el => el.classList.remove('is-opening')));
+  if(!quiet) window.addEventListener('pageshow', () => c.querySelectorAll('.mcard.is-opening').forEach(el => el.classList.remove('is-opening')));
 }
 
 /* ============================================================

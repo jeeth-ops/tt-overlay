@@ -668,6 +668,9 @@ app.use(express.static(__dirname, {
         }
     }
 }));
+// A tournament carries its logo + the teams' small logos — more than the
+// default 100kb body. Parsed here first; the global parser then skips it.
+app.use('/api/league/:name/info', express.json({ limit: '3mb' }));
 app.use(express.json());
 
 // 👥 Player Helper — phone picks player names for the operator (see player-helper.js).
@@ -2074,15 +2077,55 @@ app.get('/api/league/:name', requireAuthorizedCreator, async (req, res) => {
         // (see POST /api/league/:name/complete below), so the panel can show
         // the real current state of the "Mark Tournament as Completed"
         // button instead of guessing/always defaulting to "not completed".
-        let completed = false;
+        let completed = false, info = null, token = null;
         if (leaguesCollection) {
-            const doc = await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { completed: 1 } });
+            const doc = await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { completed: 1, info: 1, publicToken: 1 } });
             completed = !!(doc && doc.completed);
+            info = (doc && doc.info) || null;
+            token = (doc && doc.publicToken) || null;
         }
-        res.json({ success: true, matches, completed });
+        res.json({ success: true, matches, completed, info, token });
     } catch (err) {
         console.log('League fetch error:', err);
         res.status(500).json({ success: false, error: 'Could not load league data' });
+    }
+});
+
+// 🏆 Create / edit a tournament from the panel's Create Tournament form.
+// create:true refuses a name that already exists (409) so two tournaments can
+// never silently merge; otherwise it updates the details. Either way the
+// tournament gets its public token now and shows on the public pages at once.
+app.post('/api/league/:name/info', requireAuthorizedCreator, async (req, res) => {
+    const leagueKey = leagueKeyFor(req.params.name);
+    const ownerUid = ownerUidFrom(req);
+    const displayName = String(req.params.name || '').trim().slice(0, 80);
+    if (!leagueKey || !displayName) return res.status(400).json({ success: false, error: 'Tournament name required' });
+    if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
+    if (leagueKey === SINGLE_MATCHES_LEAGUE_KEY) return res.status(400).json({ success: false, error: 'That name is reserved' });
+    if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const create = !!(req.body && req.body.create);
+        const info = sanitizeTournamentInfo(req.body && req.body.info);
+        const existing = await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { _id: 1, publicToken: 1, displayName: 1 } });
+        if (create && existing) {
+            return res.status(409).json({ success: false, code: 'TOURNAMENT_EXISTS', token: existing.publicToken || null,
+                error: `"${existing.displayName || displayName}" already exists — pick it from the list` });
+        }
+        const now = Date.now();
+        await leaguesCollection.updateOne(
+            { ownerUid, leagueKey },
+            {
+                $set: { ownerUid, leagueKey, displayName, info, sport: 'cricket', updatedAt: now },
+                $setOnInsert: { createdBy: req.creatorEmail || null, createdAt: now }
+            },
+            { upsert: true }
+        );
+        const token = await ensureLeaguePublicToken(ownerUid, leagueKey);
+        invalidateTournamentCaches(token);
+        res.json({ success: true, created: !existing, token, url: token ? `/score/tournament/${token}` : null, displayName, info });
+    } catch (err) {
+        console.log('Tournament info save error:', err);
+        res.status(500).json({ success: false, error: 'Could not save the tournament' });
     }
 });
 
@@ -2200,6 +2243,9 @@ app.post('/api/league/:name/match', requireAuthorizedCreator, async (req, res) =
             },
             { upsert: true }
         );
+        // 🏆 on the public pages at once — the tournament gets its public
+        // token with its first save, and the short caches are dropped.
+        try { invalidateTournamentCaches(await ensureLeaguePublicToken(ownerUid, leagueKey)); } catch (e) { console.log('Tournament publish error:', e); }
         const matches = await getLeagueMatches(ownerUid, leagueKey);
         res.json({
             success: true,
@@ -2224,6 +2270,10 @@ app.delete('/api/league/:name/match/:matchId', requireAuthorizedCreator, async (
     if (!matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     try {
         await matchRecordsCollection.deleteOne({ ownerUid, leagueKey, matchId: req.params.matchId });
+        try {
+            const lg = leaguesCollection && await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { publicToken: 1 } });
+            invalidateTournamentCaches(lg && lg.publicToken);
+        } catch (e) { /* the short cache runs out by itself */ }
         const matches = await getLeagueMatches(ownerUid, leagueKey);
         res.json({ success: true, matches });
     } catch (err) {
@@ -2303,6 +2353,76 @@ app.post('/api/league/:name/complete', requireAuthorizedCreator, async (req, res
 // ================================================================
 function generatePublicToken() {
     return crypto.randomBytes(9).toString('base64url'); // ~12 chars, URL-safe
+}
+
+// 🏆 TOURNAMENT INFO — what the panel's Create / Edit Tournament form saves on
+// the league doc: dates, venue, organiser, logo, default match format and
+// the participating teams. Every field is checked and capped; anything else
+// is dropped, so nothing unvetted ever reaches the public pages.
+const TOURNAMENT_FORMATS = new Set(['T20', 'ODI', 'Test', 'Custom']);
+function sanitizeTournamentInfo(raw) {
+    const r = (raw && typeof raw === 'object') ? raw : {};
+    const str = (v, n) => String(v == null ? '' : v).replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, n);
+    const date = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : '';
+    const color = (v) => /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(String(v || '')) ? String(v) : '';
+    const logo = (v, max) => {
+        const s = String(v || '').trim();
+        if (/^https:\/\/[^\s"'<>]+$/i.test(s) && s.length <= 600) return s;
+        if (/^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/i.test(s) && s.length <= max) return s;
+        return '';
+    };
+    const overs = Math.floor(Number(r.overs));
+    const startDate = date(r.startDate);
+    let endDate = date(r.endDate);
+    if (startDate && endDate && endDate < startDate) endDate = startDate;
+    const seen = new Set();
+    const teams = (Array.isArray(r.teams) ? r.teams : []).map(t => ({
+        name: str(t && t.name, 60), short: str(t && t.short, 8).toUpperCase(), color: color(t && t.color),
+        teamId: str(t && t.teamId, 64) || null, logoUrl: logo(t && t.logoUrl, 40000)
+    })).filter(t => t.name && !seen.has(t.name.toLowerCase()) && seen.add(t.name.toLowerCase())).slice(0, 40);
+    return {
+        shortName: str(r.shortName, 16), season: str(r.season, 24), startDate, endDate,
+        venue: str(r.venue, 80), city: str(r.city, 60), organizer: str(r.organizer, 80),
+        description: str(r.description, 500),
+        format: TOURNAMENT_FORMATS.has(r.format) ? r.format : 'T20',
+        overs: overs >= 1 && overs <= 100 ? overs : null,
+        logoUrl: logo(r.logoUrl, 300000),
+        color: color(r.color),
+        teams
+    };
+}
+// The bits a public LIST shows (no logo / description — kept light).
+function tournamentInfoSummary(info) {
+    if (!info) return null;
+    return { shortName: info.shortName || '', season: info.season || '', startDate: info.startDate || '', endDate: info.endDate || '',
+        venue: info.venue || '', city: info.city || '', format: info.format || '', overs: info.overs || null, teamCount: (info.teams || []).length };
+}
+// Every tournament gets its permanent public token the moment it exists (not
+// only when someone presses "Copy Public Link"), so it shows on the
+// Tournaments page straight away. Race-safe: only a doc still without a
+// token is given one.
+async function ensureLeaguePublicToken(ownerUid, leagueKey) {
+    if (!leaguesCollection || !leagueKey || leagueKey === SINGLE_MATCHES_LEAGUE_KEY) return null;
+    for (let i = 0; i < 3; i++) {
+        const doc = await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { publicToken: 1 } });
+        if (!doc) return null;
+        if (doc.publicToken) return doc.publicToken;
+        const token = generatePublicToken();
+        try {
+            const r = await leaguesCollection.updateOne({ ownerUid, leagueKey, publicToken: null }, { $set: { publicToken: token } });
+            if (r && r.matchedCount) return token;
+        } catch (e) {
+            if (!(e && e.code === 11000)) throw e; // a token clash: try another
+        }
+    }
+    const again = await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { publicToken: 1 } });
+    return (again && again.publicToken) || null;
+}
+// A save / create shows on the Tournaments list and the tournament page at
+// once instead of after the short caches run out.
+function invalidateTournamentCaches(token) {
+    publicTournamentsListCache = null;
+    if (token) publicTournamentCache.delete(token);
 }
 
 // Real overs string ("12.4" = 12 overs + 4 balls) -> float overs, for NRR.
@@ -2810,6 +2930,7 @@ app.get('/api/public/tournament/:token', async (req, res) => {
         const payload = {
             success: true,
             displayName: doc.displayName || '',
+            info: doc.info ? { ...doc.info, teams: (doc.info.teams || []).map(t => ({ name: t.name, short: t.short, color: t.color, logoUrl: t.logoUrl })) } : null,
             matches,
             // roomId/matchId: most-recently-active match, for older
             // frontends. matches: every match currently live under this
@@ -3031,7 +3152,7 @@ app.get('/api/public/tournaments', async (req, res) => {
                 ownerUid: { $in: validUids },
                 leagueKey: { $ne: SINGLE_MATCHES_LEAGUE_KEY },
                 publicToken: { $exists: true, $ne: null }
-            }).project({ ownerUid: 1, leagueKey: 1, displayName: 1, publicToken: 1, updatedAt: 1, liveMatches: 1, sport: 1, completed: 1, statusOverride: 1, visibilityOverride: 1, createdBy: 1 }).toArray();
+            }).project({ ownerUid: 1, leagueKey: 1, displayName: 1, publicToken: 1, updatedAt: 1, liveMatches: 1, sport: 1, completed: 1, statusOverride: 1, visibilityOverride: 1, createdBy: 1, info: 1 }).toArray();
 
             const allTournaments = await Promise.all(leagues.map(async doc => {
                 const matches = await getLeagueMatches(doc.ownerUid, doc.leagueKey);
@@ -3049,6 +3170,8 @@ app.get('/api/public/tournaments', async (req, res) => {
                     status: doc.statusOverride || (isLive ? 'live' : (doc.completed ? 'completed' : (playedMatches(matches).length > 0 ? 'ongoing' : 'upcoming'))),
                     statusOverride: doc.statusOverride || null,
                     matchCount: playedMatches(matches).length,
+                    upcomingCount: matches.filter(m => m && m.upcoming === true).length,
+                    info: tournamentInfoSummary(doc.info),
                     updatedAt: doc.updatedAt || 0,
                     sport: doc.sport || detectSportFromName(doc.displayName || doc.leagueKey),
                     // Owner-only fields — never present in the normal (cached,
@@ -3085,7 +3208,7 @@ app.get('/api/public/tournaments', async (req, res) => {
             ownerUid: { $in: validUids },
             leagueKey: { $ne: SINGLE_MATCHES_LEAGUE_KEY },
             publicToken: { $exists: true, $ne: null }
-        }).project({ ownerUid: 1, leagueKey: 1, displayName: 1, publicToken: 1, updatedAt: 1, liveMatches: 1, sport: 1, completed: 1, statusOverride: 1, visibilityOverride: 1, createdBy: 1 }).toArray();
+        }).project({ ownerUid: 1, leagueKey: 1, displayName: 1, publicToken: 1, updatedAt: 1, liveMatches: 1, sport: 1, completed: 1, statusOverride: 1, visibilityOverride: 1, createdBy: 1, info: 1 }).toArray();
 
         const allTournaments = (await Promise.all(leagues.map(async doc => {
             const creatorEmail = doc.createdBy || await getVerifiedEmailForUid(doc.ownerUid);
@@ -3107,6 +3230,8 @@ app.get('/api/public/tournaments', async (req, res) => {
                 // it isn't finished yet, else 'upcoming'.
                 status: doc.statusOverride || (isLive ? 'live' : (doc.completed ? 'completed' : (playedMatches(matches).length > 0 ? 'ongoing' : 'upcoming'))),
                 matchCount: playedMatches(matches).length,
+                upcomingCount: matches.filter(m => m && m.upcoming === true).length,
+                info: tournamentInfoSummary(doc.info),
                 updatedAt: doc.updatedAt || 0,
                 // Legacy docs saved before `sport` existed on the league doc
                 // don't have it stored — fall back to the same name-based
