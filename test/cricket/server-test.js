@@ -59,7 +59,10 @@ cards = api.buildLiveCardsFromBallsArray([ ball({ kind:'Wd', runs:3, ballInOver:
 eq('all wide runs are extras', cards.extras.A.wd, 3);
 eq('team total', cards.scoreA.runs, 3);
 eq('no legal ball', cards.scoreA.overs, '0.0');
-eq('no batting row at all for a wide', cards.battingCard.A.length, 0);
+// Both batters at the crease are listed (0* off 0) — the server names
+// everyone who walked out, so the card's numbering has no gaps — but a
+// wide credits neither of them a run or a ball faced (Law 22).
+eq('a wide: no runs, no ball faced for either batter', JSON.stringify(cards.battingCard.A.map(b => [b.name, b.runs, b.balls, b.out])), JSON.stringify([['Striker', 0, 0, false], ['NonStriker', 0, 0, false]]));
 eq('bowler charged the wide', cards.bowlingCard.B[0].runs, 3);
 
 console.log('\n=== SERVER DERIVATION — overthrow ===');
