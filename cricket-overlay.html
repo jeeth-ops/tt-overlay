@@ -601,12 +601,14 @@
   /* ---------- 🔁 IMPACT PLAYER card ----------
      Lives inside #event-bg and replaces the generic hero for this event:
      team badge + title on the left, IN (green) ⇄ OUT (red) on the right.
-     Sized off the panel height like the hero. */
+     Same height as the scorebar (growth 1). Everything is sized off the
+     bar height × --ipc-s; fitImpactCard() lowers --ipc-s step by step
+     until long names fit, so nothing ever overlaps or spills out. */
   #event-ipcard{
-    --ph: var(--panel-h, 100px); --ipc-c:#7c3aed;
+    --ph: var(--panel-h, 100px); --ipc-c:#7c3aed; --ipc-s:1;
     position:relative; z-index:2; display:none; width:100%; height:100%;
-    align-items:center; justify-content:space-between; gap:calc(var(--ph) * 0.2);
-    padding:0 3.4% 0 2.6%;
+    align-items:center; justify-content:space-between; gap:calc(var(--ph) * var(--ipc-s) * 0.2);
+    padding:0 2.4% 0 1.6%; overflow:hidden;
   }
   #event-stage.ipc-on #event-hero{ display:none; }
   #event-stage.ipc-on #event-ipcard{ display:flex; }
@@ -614,45 +616,47 @@
     content:''; position:absolute; inset:0; pointer-events:none;
     background:linear-gradient(90deg, color-mix(in srgb, var(--ipc-c) 55%, transparent) 0%, transparent 38%);
   }
-  .ipc-team{ position:relative; display:flex; align-items:center; gap:calc(var(--ph) * 0.16); min-width:0; flex:none; }
+  .ipc-team{ position:relative; display:flex; align-items:center; gap:calc(var(--ph) * var(--ipc-s) * 0.14); min-width:0; flex:none; }
   .ipc-badge{
-    width:calc(var(--ph) * 0.62); height:calc(var(--ph) * 0.62); border-radius:50%; flex:none;
+    width:calc(var(--ph) * var(--ipc-s) * 0.7); height:calc(var(--ph) * var(--ipc-s) * 0.7); border-radius:50%; flex:none;
     display:grid; place-items:center; background:var(--ipc-c) center/cover no-repeat;
-    font:900 calc(var(--ph) * 0.17)/1 var(--font-num); color:#fff; letter-spacing:.5px;
-    box-shadow:0 0 0 calc(var(--ph) * 0.025) rgba(255,255,255,.9), 0 0 calc(var(--ph) * 0.3) var(--ipc-c);
+    font:900 calc(var(--ph) * var(--ipc-s) * 0.2)/1 var(--font-num); color:#fff; letter-spacing:.5px;
+    box-shadow:0 0 0 calc(var(--ph) * var(--ipc-s) * 0.03) rgba(255,255,255,.9), 0 0 calc(var(--ph) * var(--ipc-s) * 0.3) var(--ipc-c);
   }
   .ipc-badge.has-logo{ background-color:#fff; }
   .ipc-head{ display:flex; flex-direction:column; min-width:0; }
-  .ipc-kicker{ font:800 calc(var(--ph) * 0.1)/1.1 var(--font-ui); letter-spacing:.24em; color:rgba(255,255,255,.78); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:32vw; }
+  .ipc-kicker{ font:800 calc(var(--ph) * var(--ipc-s) * 0.12)/1.1 var(--font-ui); letter-spacing:.2em; color:rgba(255,255,255,.78); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; width:0; min-width:100%; }
   .ipc-word{
-    font:400 calc(var(--ph) * 0.3)/1 'Anton', var(--font-num); letter-spacing:.05em; white-space:nowrap;
+    font:400 calc(var(--ph) * var(--ipc-s) * 0.36)/1 'Anton', var(--font-num); letter-spacing:.05em; white-space:nowrap;
     background:linear-gradient(180deg, #ffffff 30%, #c9b8ff); -webkit-background-clip:text; background-clip:text; color:transparent;
     filter:drop-shadow(0 2px 10px rgba(124,58,237,.6));
   }
-  .ipc-meta{ font:700 calc(var(--ph) * 0.085)/1.2 var(--font-ui); letter-spacing:.14em; color:#fde68a; text-transform:uppercase; margin-top:calc(var(--ph) * 0.02); }
+  .ipc-meta{ font:700 calc(var(--ph) * var(--ipc-s) * 0.1)/1.2 var(--font-ui); letter-spacing:.12em; color:#fde68a; text-transform:uppercase; margin-top:calc(var(--ph) * var(--ipc-s) * 0.02); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; width:0; min-width:100%; }
   .ipc-meta:empty{ display:none; }
-  .ipc-swap{ position:relative; flex:1 1 auto; display:flex; align-items:center; justify-content:flex-end; gap:calc(var(--ph) * 0.12); min-width:0; }
+  .ipc-swap{ position:relative; flex:1 1 auto; display:flex; align-items:center; justify-content:center; gap:calc(var(--ph) * var(--ipc-s) * 0.14); min-width:0; }
   .ipc-p{
-    display:flex; align-items:center; gap:calc(var(--ph) * 0.09); min-width:0;
-    padding:calc(var(--ph) * 0.07) calc(var(--ph) * 0.15) calc(var(--ph) * 0.07) calc(var(--ph) * 0.07); flex:0 1 auto;
-    border-radius:calc(var(--ph) * 0.14); transition:opacity .45s ease, filter .45s ease, box-shadow .5s ease;
+    display:flex; align-items:center; gap:calc(var(--ph) * var(--ipc-s) * 0.09); min-width:0;
+    padding:calc(var(--ph) * var(--ipc-s) * 0.08) calc(var(--ph) * var(--ipc-s) * 0.18) calc(var(--ph) * var(--ipc-s) * 0.08) calc(var(--ph) * var(--ipc-s) * 0.08); flex:0 1 auto;
+    border-radius:calc(var(--ph) * var(--ipc-s) * 0.14); transition:opacity .45s ease, filter .45s ease, box-shadow .5s ease;
   }
   .ipc-tag{
-    flex:none; font:900 calc(var(--ph) * 0.1)/1 var(--font-ui); letter-spacing:.12em; color:#0b0f1a;
-    padding:calc(var(--ph) * 0.045) calc(var(--ph) * 0.07); border-radius:calc(var(--ph) * 0.06);
+    flex:none; font:900 calc(var(--ph) * var(--ipc-s) * 0.12)/1 var(--font-ui); letter-spacing:.1em; color:#0b0f1a;
+    padding:calc(var(--ph) * var(--ipc-s) * 0.045) calc(var(--ph) * var(--ipc-s) * 0.07); border-radius:calc(var(--ph) * var(--ipc-s) * 0.06);
   }
   .ipc-tag::before{ margin-right:.35em; }
-  .ipc-nm{ position:relative; font:900 calc(var(--ph) * 0.2)/1.05 var(--font-ui); color:#fff; text-transform:uppercase; letter-spacing:.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:30vw; min-width:0; }
+  .ipc-nm{ position:relative; font:900 calc(var(--ph) * var(--ipc-s) * 0.28)/1.1 var(--font-ui); color:#fff; text-transform:uppercase; letter-spacing:.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+  /* Very long names on a narrow bar: two lines instead of "…" */
+  #event-ipcard.wrap .ipc-nm{ white-space:normal; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; line-height:1.04; text-overflow:clip; }
   .ipc-in{ background:linear-gradient(90deg, rgba(34,197,94,.34), rgba(34,197,94,.08)); box-shadow:inset 0 0 0 2px rgba(74,222,128,.85); }
   .ipc-in .ipc-tag{ background:#4ade80; }
   .ipc-in .ipc-tag::before{ content:'▲'; }
-  .ipc-in.lit{ box-shadow:inset 0 0 0 2px #86efac, 0 0 calc(var(--ph) * 0.34) rgba(74,222,128,.7); animation:ipcPulse 1.6s ease-in-out infinite; }
-  @keyframes ipcPulse{ 50%{ box-shadow:inset 0 0 0 2px #bbf7d0, 0 0 calc(var(--ph) * 0.5) rgba(74,222,128,.9); } }
+  .ipc-in.lit{ box-shadow:inset 0 0 0 2px #86efac, 0 0 calc(var(--ph) * var(--ipc-s) * 0.34) rgba(74,222,128,.7); animation:ipcPulse 1.6s ease-in-out infinite; }
+  @keyframes ipcPulse{ 50%{ box-shadow:inset 0 0 0 2px #bbf7d0, 0 0 calc(var(--ph) * var(--ipc-s) * 0.5) rgba(74,222,128,.9); } }
   .ipc-out{ background:linear-gradient(90deg, rgba(239,68,68,.26), rgba(239,68,68,.06)); box-shadow:inset 0 0 0 2px rgba(248,113,113,.7); }
   .ipc-out .ipc-tag{ background:#f87171; }
   .ipc-out .ipc-tag::before{ content:'▼'; }
   .ipc-out.gone{ opacity:.62; filter:saturate(.55); }
-  .ipc-icon{ flex:none; width:calc(var(--ph) * 0.36); height:calc(var(--ph) * 0.36); color:#fde68a; filter:drop-shadow(0 0 8px rgba(253,230,138,.7)); }
+  .ipc-icon{ flex:none; width:calc(var(--ph) * var(--ipc-s) * 0.42); height:calc(var(--ph) * var(--ipc-s) * 0.42); color:#fde68a; filter:drop-shadow(0 0 8px rgba(253,230,138,.7)); }
   .ipc-icon svg{ width:100%; height:100%; display:block; }
   #event-bg::after{
     content:''; position:absolute; inset:0; pointer-events:none;
@@ -2538,7 +2542,7 @@ const EVENT_THEMES = {
   POWERPLAY_END:    { label:'POWERPLAY ENDS',  number:null,  showNumber:false, primary:'#12356b', secondary:'#3f6fd6', accent:'#ffffff', glow:'rgba(63,111,214,0.5)',  growth:1.4,  particles:6,  particleDist:50 },
   // 🔁 Impact Player substitution (panel: confirmImpactPlayer) — sub chip
   // reads "TEAM  ⬆ IN-PLAYER  ⬇ OUT-PLAYER".
-  IMPACT_PLAYER:    { label:'IMPACT PLAYER',   number:null,  showNumber:false, primary:'#140b3a', secondary:'#4c22c4', accent:'#ffffff', glow:'rgba(124,58,237,0.55)', growth:1.75, particles:10, particleDist:70, durationMs:6500 },
+  IMPACT_PLAYER:    { label:'IMPACT PLAYER',   number:null,  showNumber:false, primary:'#140b3a', secondary:'#4c22c4', accent:'#ffffff', glow:'rgba(124,58,237,0.55)', growth:1,    particles:10, particleDist:70, durationMs:6500 },
   DRINKS:           { label:'DRINKS BREAK',    number:null,  showNumber:false, primary:'#0e4a4a', secondary:'#2fb6b6', accent:'#ffffff', glow:'rgba(47,182,182,0.45)', growth:1.3,  particles:0,  particleDist:0  },
   STRATEGIC_TIMEOUT:{ label:'STRATEGIC TIMEOUT',number:null, showNumber:false, primary:'#0e4a4a', secondary:'#2fb6b6', accent:'#ffffff', glow:'rgba(47,182,182,0.45)', growth:1.3,  particles:0,  particleDist:0  },
   LAST_OVER:        { label:'FINAL OVER',      number:null,  showNumber:false, primary:'#7a2c0c', secondary:'#e2622f', accent:'#ffffff', glow:'rgba(226,98,47,0.5)',   growth:1.45, particles:8,  particleDist:60 },
@@ -2863,6 +2867,24 @@ function addEventHeroPhase(tl, kind, theme, chars, startAt){
 // and IN lights up (flash + shine) for the hold.
 function ipcSafeColor(c){ const v = String(c || '').trim(); return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v) ? v : '#7c3aed'; }
 function ipcSafeLogo(u){ const v = String(u || '').trim(); return (/^data:image\/(png|jpe?g|webp|gif|svg\+xml);base64,/i.test(v) || /^https?:\/\//i.test(v)) ? v : ''; }
+// Shrinks the card's type (--ipc-s) until both names — and the whole row —
+// fit inside the bar. If one line would need tiny type, names go onto two
+// lines and the fit runs again; "…" is only the very last resort.
+function fitImpactCard(card){
+  const names = [...card.querySelectorAll('.ipc-nm')];
+  const over = () => card.scrollWidth > card.clientWidth + 1
+    || names.some(n => n.scrollWidth > n.clientWidth + 1 || n.scrollHeight > n.clientHeight + 1);
+  const run = (min) => {
+    let s = 1;
+    card.style.setProperty('--ipc-s', '1');
+    while(over() && s > min){ s = Math.round((s - 0.03) * 100) / 100; card.style.setProperty('--ipc-s', String(s)); }
+    return !over();
+  };
+  card.classList.remove('wrap');
+  if(run(0.72)) return;
+  card.classList.add('wrap');
+  run(0.5);
+}
 function addImpactCardPhase(tl, d, at){
   const card = document.getElementById('event-ipcard');
   const badge = document.getElementById('ipc-badge');
@@ -2882,6 +2904,8 @@ function addImpactCardPhase(tl, d, at){
   document.getElementById('ipc-out-name').textContent = d.outName;
   inEl.classList.remove('lit'); outEl.classList.remove('gone');
   gsap.killTweensOf([badge, kicker, word, meta, inEl, outEl, icon]);
+  gsap.set([badge, kicker, word, meta, inEl, outEl, icon], { clearProps: 'transform,filter,opacity' });
+  fitImpactCard(card);
   gsap.set(badge, { opacity: 0, scale: 0.2, rotate: -140 });
   gsap.set([kicker, word, meta], { opacity: 0, x: -26, filter: 'blur(6px)' });
   gsap.set(outEl, { opacity: 0, x: 90, filter: 'blur(8px)' });
