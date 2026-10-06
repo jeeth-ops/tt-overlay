@@ -178,6 +178,10 @@ async function filesSuite(ctx){
       return d; }
     const sd = M.buildPdf(Spy, ctx.m, imgs);
     eq('PDF: the All Sports Live logo + name on every page', [seen.logos, seen.texts.filter(t => t === 'ALL SPORTS LIVE').length], [sd.getNumberOfPages(), sd.getNumberOfPages()]);
+    const al = [];
+    function Spy2(o){ const d = new jspdf.jsPDF(o); const ai = d.addImage.bind(d); d.addImage = function(){ al.push(arguments[6]); return ai.apply(null, arguments); }; return d; }
+    M.buildPdf(Spy2, ctx.m, Object.assign({}, imgs, { logos: { A: png, B: png } }));
+    eq('PDF: both team logos go in the team badges', [al.includes('logoA'), al.includes('logoB')], [true, true]);
     eq('PDF: officials are the two captains only', [seen.texts.filter(t => t === 'Captain').length, seen.texts.some(t => /Umpire|Scorer/.test(t))], [2, false]);
     const odd = M.buildModel(Object.assign(makeMatch({ seed: 5 }), {}));
     odd.innings[0].batting[0].name = 'राहुल “Rocket” Sharma';
@@ -276,6 +280,10 @@ async function panelSuite(file, label){
   const snap = P.J('mrSnapshot()');
   eq(L('snapshot: the innings on the panel, live batters and bowler included'), [snap.innings.length, snap.innings[0].batting.map(b => [b.name, b.runs, b.out]), snap.innings[0].bowling.map(b => [b.name, b.overs, b.runs])],
     [1, [['Rohit Sharma', 5, false], ['Ishan', 2, false]], [['Raj', '0.4', 7]]]);
+  P.E(`state.teamA.logoUrl = 'data:image/png;base64,AAAA';`);
+  eq(L('snapshot carries each team\'s logo for the PDF badge'), [P.J('mrSnapshot().teams.A.logo'), P.J('MatchReport.buildModel(mrSnapshot()).teams.A.logo')], ['data:image/png;base64,AAAA', 'data:image/png;base64,AAAA']);
+  P.E(`state.teamA.logoUrl = '';`);
+  eq(L('no logo → no badge picture (initials instead)'), await P.w.eval('mrLogoBadge("")'), null);
   eq(L('snapshot: teams, captain, hands, date, venue'), [snap.teams.A.name, snap.teams.A.captain, snap.teams.A.players.length, snap.hands['Ishan'], snap.date, snap.venue], ['Mumbai Indians', 'Rohit Sharma', 11, 'L', '2026-10-05', 'Wankhede']);
   const model = P.J('MatchReport.buildModel(mrSnapshot())');
   eq(L('model: the wheel has both placed shots, the left-hander mirrored'), [model.wagon.A.mapped, model.wagon.A.runs, model.wagon.A.scoringShots, model.wagon.A.shots.map(s => s.hand)], [2, 6, 3, ['R', 'L']]);

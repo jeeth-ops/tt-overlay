@@ -318,7 +318,7 @@
     ['A', 'B'].forEach(function (k) {
       var t = teams[k];
       teams[k] = {
-        key: k, name: str(t.name || ('Team ' + k)), short: str(t.short || t.name || k), color: t.color || '',
+        key: k, name: str(t.name || ('Team ' + k)), short: str(t.short || t.name || k), color: t.color || '', logo: str(t.logo || ''),
         captain: str(t.captain || ''), keeper: str(t.keeper || ''),
         players: (t.players || []).filter(function (p) { return p && p.name; }).map(function (p) { return { name: str(p.name), role: p.role || '' }; })
       };
@@ -842,11 +842,25 @@
       var w = str(t.name).trim().split(/\s+/).filter(Boolean);
       return (w.length > 1 ? w.slice(0, 3).map(function (x) { return x[0]; }).join('') : (w[0] || '?').slice(0, 3)).toUpperCase();
     };
+    // a team's badge: its logo in a white disc ringed in the team colour
+    // (images.logos[k], already cut to a circle), else its initials
     var avatar = function (k, x, y, r) {
+      var lg = images.logos && images.logos[k];
+      if (lg) {
+        fill(colOf(k)); doc.circle(x, y, r + r * 0.12, 'F');
+        fill(C.white); doc.circle(x, y, r, 'F');
+        try { doc.addImage(lg, 'PNG', x - r, y - r, 2 * r, 2 * r, 'logo' + k, 'FAST'); return; } catch (e) { /* fall back to initials */ }
+      }
       fill(colOf(k)); doc.circle(x, y, r, 'F');
       draw(C.white); doc.setLineWidth(0.6); doc.circle(x, y, r, 'S');
       var ini = initials(m.teams[k]);
       T(ini, x, y + r * 0.32, { size: r * (ini.length > 3 ? 1.35 : 1.7), bold: true, color: C.white, align: 'center' });
+    };
+    var mix = function (c, base, t) { return [0, 1, 2].map(function (i) { return Math.round(base[i] + (c[i] - base[i]) * t); }); };
+    var poly = function (pts, style) {
+      var segs = [];
+      for (var i = 1; i < pts.length; i++) segs.push([pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]]);
+      doc.lines(segs, pts[0][0], pts[0][1], [1, 1], style || 'F', true);
     };
     var scoreOf = function (k) {
       var inns = m.innings.filter(function (i) { return i.team === k; });
@@ -905,40 +919,53 @@
 
     doc.setProperties({ title: pdfSafe(m.meta.title + ' - Match Report'), subject: pdfSafe(hdrTitle), author: 'All Sports Live', creator: 'All Sports Live' });
 
-    /* ---- page 1 — the match at a glance ---- */
-    fill(C.navy); doc.rect(0, 0, PW, 104, 'F');
-    // a faint ground in the corner — the boundary, the 30-yard circle, the pitch
-    draw([30, 44, 68]); doc.setLineWidth(0.7);
-    [26, 40, 54].forEach(function (r) { doc.circle(PW - 18, 18, r, 'S'); });
-    fill([30, 44, 68]); doc.rect(PW - 20, 6, 4, 24, 'F');
-    fill(C.gold); doc.rect(0, 104, PW, 1.2, 'F');
-    // the brand, top left
-    logo(MX, 5, 15);
-    T(BRAND.name, MX + 19, 11.4, { size: 12.5, bold: true, color: C.white });
-    T('Live scores  ·  highlights  ·  match reports', MX + 19, 16.6, { size: 7.2, color: [148, 163, 184] });
-    T('MATCH REPORT', PW - MX, 11.4, { size: 8.5, bold: true, color: [148, 163, 184], align: 'right' });
-    T((m.meta.tournament || 'MATCH REPORT').toUpperCase(), MX, 28, { size: 9.5, bold: true, color: C.gold, maxW: 130 });
-    T([m.meta.matchTitle, m.meta.format, m.meta.oversLimit ? m.meta.oversLimit + ' overs' : ''].filter(Boolean).join('  ·  '), MX, 33.6, { size: 8.5, color: [203, 213, 225], maxW: 130 });
-    var sideX = { A: 50, B: 160 };
+    /* ---- page 1 — the match at a glance ----
+       Brand strip, the tournament, then the two sides on slanted panels in
+       their own colours, meeting at the VS badge. */
+    var HH = 112, deep = [6, 10, 20];
+    fill(C.navy); doc.rect(0, 0, PW, HH, 'F');
+    fill(mix(cA, C.navy, 0.30)); poly([[0, 42], [112, 42], [98, HH], [0, HH]]);
+    fill(mix(cB, C.navy, 0.30)); poly([[112, 42], [PW, 42], [PW, HH], [98, HH]]);
+    fill(mix(cA, C.navy, 0.55)); poly([[0, 42], [26, 42], [12, HH], [0, HH]]);
+    fill(mix(cB, C.navy, 0.55)); poly([[PW - 12, 42], [PW, 42], [PW, HH], [PW - 26, HH]]);
+    fill(C.gold); poly([[110.6, 42], [113.4, 42], [99.4, HH], [96.6, HH]]);
+    fill(deep); doc.rect(0, 0, PW, 24, 'F');
+    fill(C.gold); doc.rect(0, 24, PW, 0.7, 'F'); doc.rect(0, HH, PW, 1.2, 'F');
+    // the brand, top left; the report and its date, top right
+    logo(MX, 4.5, 15);
+    T(BRAND.name, MX + 19, 11, { size: 12.5, bold: true, color: C.white });
+    T('Live scores  ·  highlights  ·  match reports', MX + 19, 16.4, { size: 7.2, color: [148, 163, 184] });
+    draw(C.gold); doc.setLineWidth(0.4); doc.roundedRect(PW - MX - 34, 6.6, 34, 7, 3.5, 3.5, 'S');
+    T('MATCH REPORT', PW - MX - 17, 11.2, { size: 7.8, bold: true, color: C.gold, align: 'center' });
+    T([m.meta.dateText, m.meta.dayPart ? m.meta.dayPart + ' match' : ''].filter(Boolean).join('  ·  '), PW - MX, 19, { size: 7.4, color: [148, 163, 184], align: 'right' });
+    // the tournament
+    T((m.meta.tournament || 'MATCH REPORT').toUpperCase(), PW / 2, 32.5, { size: 10.5, bold: true, color: C.gold, align: 'center', maxW: CW });
+    T([m.meta.matchTitle, m.meta.format, m.meta.oversLimit ? m.meta.oversLimit + ' overs' : ''].filter(Boolean).join('  ·  '), PW / 2, 38, { size: 8.2, color: [203, 213, 225], align: 'center', maxW: CW });
+    var sideX = { A: 54, B: 156 };
     ['A', 'B'].forEach(function (k) {
       var x = sideX[k], t = m.teams[k], sc = scoreOf(k), won = m.meta.winner === k;
-      avatar(k, x, 50, 11);
+      avatar(k, x, 61, 12.5);
+      if (won) { fill(C.gold); doc.roundedRect(x - 11, 45.2, 22, 5, 2.5, 2.5, 'F'); T('WINNER', x, 48.8, { size: 6.8, bold: true, color: C.navy, align: 'center' }); }
       font(10.5, true);
-      var lines = doc.splitTextToSize(pdfSafe(t.name), 74).slice(0, 2);
-      lines.forEach(function (ln, i) { T(ln, x, 68 + i * 4.6, { size: 10.5, bold: true, color: C.white, align: 'center' }); });
-      var sy = 68 + lines.length * 4.6 + 7;
-      T(sc.main, x, sy, { size: sc.main.length > 9 ? 17 : 22, bold: true, color: won ? C.gold : C.white, align: 'center' });
-      if (sc.overs) T('(' + sc.overs + ')', x, sy + 6, { size: 8.5, color: [148, 163, 184], align: 'center' });
-      if (won) { fill(C.gold); doc.roundedRect(x - 10, 36.4, 20, 4.6, 2.3, 2.3, 'F'); T('WINNER', x, 39.7, { size: 6.5, bold: true, color: C.navy, align: 'center' }); }
+      var lines = doc.splitTextToSize(pdfSafe(t.name), 76).slice(0, 2);
+      lines.forEach(function (ln, i) { T(ln, x, 81 + i * 4.4, { size: 10.5, bold: true, color: C.white, align: 'center' }); });
+      var sy = 81 + (lines.length - 1) * 4.4 + 12;
+      T(sc.main, x, sy, { size: sc.main.length > 9 ? 17 : 23, bold: true, color: won ? C.gold : C.white, align: 'center' });
+      if (sc.overs) T(sc.overs, x, sy + 6, { size: 8.2, color: [203, 213, 225], align: 'center' });
     });
-    fill(C.gold); doc.circle(105, 50, 6.2, 'F');
-    T('VS', 105, 52, { size: 9, bold: true, color: C.navy, align: 'center' });
-    var when = [m.meta.dateText, m.meta.dayPart ? m.meta.dayPart + ' match' : ''].filter(Boolean).join('  ·  ');
-    T(when, 105, 66, { size: 8, color: [203, 213, 225], align: 'center', maxW: 52 });
-    font(7.6, false);
-    doc.splitTextToSize(pdfSafe(m.meta.venue || ''), 50).slice(0, 3).forEach(function (ln, i) { T(ln, 105, 71 + i * 3.8, { size: 7.6, color: [148, 163, 184], align: 'center' }); });
+    // VS, the ground
+    fill(deep); doc.circle(105, 66, 9, 'F');
+    fill(C.gold); doc.circle(105, 66, 7.4, 'F');
+    T('VS', 105, 68.3, { size: 10, bold: true, color: C.navy, align: 'center' });
+    font(7.4, false);
+    var ven = doc.splitTextToSize(pdfSafe(m.meta.venue || ''), 40).slice(0, 3);
+    if (ven.length) {
+      var vh = ven.length * 3.6 + 3.4;
+      fill(deep); doc.roundedRect(105 - 23, 79, 46, vh, 2, 2, 'F');
+      ven.forEach(function (ln, i) { T(ln, 105, 83.2 + i * 3.6, { size: 7.4, color: [203, 213, 225], align: 'center' }); });
+    }
 
-    var y = 111;
+    var y = HH + 7;
     fill(C.goldSoft); doc.roundedRect(MX, y, CW, 12, 2, 2, 'F');
     fill(C.gold); doc.roundedRect(MX, y, 3, 12, 1.5, 1.5, 'F');
     T('RESULT', MX + 7, y + 7.6, { size: 7.5, bold: true, color: C.gold });
