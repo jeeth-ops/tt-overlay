@@ -16257,13 +16257,21 @@ function impactPlayerInfo(team, p){
   return parts.join(' · ');
 }
 // Who can come on: the named impact substitutes first, then anyone else in
-// the squad who is not in the Playing XI (picking one names him as the
-// substitute on Confirm). A brand-new name can be added from the modal too.
-function impactCandidates(team){
-  const ps = rosterPlayers(team).filter(p => p && p.name && !p.impactIn && !p.impactOut);
+// the squad who is not in the Playing XI, then — because squads are often
+// left with everyone ticked — any other player of the team who has not
+// taken part yet (not batted, not bowled, not at the crease / bowling now).
+// Picking one names him as the substitute on Confirm. A brand-new name can
+// be added from the modal too. `outKey` (the player going off) is never offered.
+function impactHasPlayed(team, p){
+  if(impactHasBatted(team, p) || bowlerHasBowled(team, p)) return true;
+  return state.battingTeam !== team && impactSamePlayer(state.bowler, p);
+}
+function impactCandidates(team, outKey){
+  const ps = rosterPlayers(team).filter(p => p && p.name && !p.impactIn && !p.impactOut && ipKey(p) !== outKey);
   return {
     named: ps.filter(p => p.impactSub),
-    squad: ps.filter(p => !p.impactSub && p.isXI === false)
+    squad: ps.filter(p => !p.impactSub && p.isXI === false),
+    rest: ps.filter(p => !p.impactSub && p.isXI !== false && !impactHasPlayed(team, p))
   };
 }
 function renderImpactModal(){
@@ -16298,8 +16306,8 @@ function renderImpactModal(){
     return;
   }
   const xi = impactXiOf(team);
-  const cand = impactCandidates(team);
-  const allIn = [...cand.named, ...cand.squad];
+  const cand = impactCandidates(team, ipState.outKey);
+  const allIn = [...cand.named, ...cand.squad, ...cand.rest];
   const outP = xi.find(p => ipKey(p) === ipState.outKey) || null;
   const inP = allIn.find(p => ipKey(p) === ipState.inKey) || null;
   const tags = (p) => (p.id && p.id === t.captainId ? '<em>C</em>' : '') + (p.id && p.id === t.wkId ? '<em>WK</em>' : '');
@@ -16312,8 +16320,11 @@ function renderImpactModal(){
   const inBtn = (p, kind) => `<button type="button" class="ip-pl in${inP === p ? ' on' : ''}" data-ip-in="${escapeHtmlAttr(ipKey(p))}">⬆ ${escapeHtmlPanel(p.name)}<small>${kind}</small></button>`;
   const inBtns = (cand.named.length ? `<div class="ip-g">Named substitutes</div>${cand.named.map(p => inBtn(p, '⬆ IP substitute')).join('')}` : '')
     + (cand.squad.length ? `<div class="ip-g">From the squad (not in the XI)</div>${cand.squad.map(p => inBtn(p, 'squad player')).join('')}` : '')
+    + (cand.rest.length ? `<div class="ip-g">Rest of the team (ticked in the XI)</div>${cand.rest.map(p => inBtn(p, "ticked in the XI · hasn't batted or bowled")).join('')}` : '')
     + (allIn.length ? '' : `<div class="ip-empty">Nobody outside the XI in the squad — type the substitute's name below.</div>`);
   const notes = [];
+  if(xi.length !== 11) notes.push(`${t.name || 'This side'} has ${xi.length} players ticked in the Playing XI (should be 11) — fix the ticks in Team Squads when you can.`);
+  if(inP && cand.rest.includes(inP)) notes.push(`${inP.name} is ticked in the Playing XI — pick him only if he was not actually playing.`);
   if(outP && impactHasBatted(team, outP)) notes.push(`${outP.name} has already batted. ${inP ? inP.name : 'The Impact Player'} can still bat, but only 11 players may bat in the innings.`);
   if(outP && t.wkId === outP.id) notes.push(`${outP.name} is the wicket-keeper — choose a new keeper in Team Squads.`);
   if(outP && t.captainId === outP.id) notes.push(`${outP.name} is the captain — choose who leads in Team Squads.`);
@@ -16340,17 +16351,21 @@ async function impactAddPlayer(){
   const team = ipState.team, t = teamObj(team);
   t.players = t.players || [];
   const same = t.players.find(p => (p.name || '').trim().toLowerCase() === name.toLowerCase());
-  if(same){
-    if(same.impactOut || same.impactIn){ toast(`⚠️ ${same.name} is already part of the substitution`); return; }
-    if(same.isXI !== false && !same.impactSub){ toast(`⚠️ ${same.name} is already in the Playing XI`); return; }
-    ipState.inKey = ipKey(same); renderImpactModal(); return;
-  }
+  const pickExisting = (p) => {
+    if(p.impactOut || p.impactIn){ toast(`⚠️ ${p.name} is already part of a substitution`); return; }
+    if(ipKey(p) === ipState.outKey){ toast(`⚠️ ${p.name} is the player going off`); return; }
+    const c = impactCandidates(team, ipState.outKey);
+    if(![...c.named, ...c.squad, ...c.rest].includes(p)){ toast(`⚠️ ${p.name} has already batted or bowled in this match`); return; }
+    if(input) input.value = '';
+    ipState.inKey = ipKey(p); renderImpactModal();
+  };
+  if(same){ pickExisting(same); return; }
   if(input) input.value = '';
   const id = await resolveOrCreatePlayerId(name);
   if(!ipState || ipState.team !== team) return;
   let p = t.players.find(x => x.id === id);
-  if(p && (p.isXI !== false || p.impactIn || p.impactOut) && !p.impactSub){ toast(`⚠️ ${p.name} is already in the Playing XI`); return; }
-  if(!p){ p = { id, name, isXI: false }; t.players.push(p); }
+  if(p){ pickExisting(p); return; }
+  p = { id, name, isXI: false }; t.players.push(p);
   ipState.inKey = ipKey(p);
   renderSquadUI(); renderRosterControls(); pushState(true);
   renderImpactModal();
@@ -16367,8 +16382,8 @@ function confirmImpactPlayer(){
   if(!win.ok){ toast('⚠️ ' + win.why); return; }
   if(impactUsedBy(team)){ toast('⚠️ This side has already used its Impact Player'); return; }
   const outP = impactXiOf(team).find(p => ipKey(p) === ipState.outKey);
-  const inC = impactCandidates(team);
-  const inP = [...inC.named, ...inC.squad].find(p => ipKey(p) === ipState.inKey);
+  const inC = impactCandidates(team, ipState.outKey);
+  const inP = [...inC.named, ...inC.squad, ...inC.rest].find(p => ipKey(p) === ipState.inKey);
   if(!outP || !inP){ toast('⚠️ Choose who goes off and who comes on'); return; }
   const block = impactOutBlock(team, outP, win);
   if(block){ toast(`⚠️ ${outP.name} cannot be replaced now — ${block}`); return; }

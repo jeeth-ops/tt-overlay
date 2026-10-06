@@ -124,7 +124,9 @@ async function suite(file, label){
   eq(L('TEST 9: Confirm is enabled only once both players are picked — and names them'), [P.$('#ip-confirm').disabled, P.$('#ip-confirm').textContent], [false, 'Confirm: ⬆ Impact Bat ⬇ Hardik']);
   eq(L('TEST 9b: the three steps show ✓ team / ⬇ Hardik / ⬆ Impact Bat'), P.$$('#ip-body .ip-step.done').map(e => e.textContent.replace(/^✓/, '').trim()), ['Mumbai Indians', '⬇ Hardik', '⬆ Impact Bat'].map((x, i) => i === 0 ? P.J('state.teamA.name') : x));
   eq(L('TEST 9c: live status under each name (batting / yet to bat)'), [/batting 0 \(0\)/.test(outBtn(P, 'Rohit').textContent), /yet to bat/.test(outBtn(P, 'Hardik').textContent)], [true, true]);
-  eq(L('TEST 9d: "comes on" lists the named substitutes AND the squad players outside the XI'), P.$$('#ip-body [data-ip-in]').map(b => b.firstChild.textContent.trim()), ['⬆ Impact Bat', '⬆ Spare Bat', '⬆ Bench Guy']);
+  eq(L('TEST 9d: "comes on" lists the named substitutes, the squad outside the XI, then every other team player who has not played yet (not the one going off, not the batters at the crease)'),
+    P.$$('#ip-body [data-ip-in]').map(b => b.firstChild.textContent.trim()), ['⬆ Impact Bat', '⬆ Spare Bat', '⬆ Bench Guy', ...['Surya','Tilak','Tim','Krunal','Piyush','Jasprit','Akash','Arjun'].map(n => '⬆ ' + n)]);
+  eq(L('TEST 9e: the three groups are labelled'), P.$$('#ip-body .ip-g').map(e => e.textContent), ['Named substitutes', 'From the squad (not in the XI)', 'Rest of the team (ticked in the XI)']);
   P.E(`closeImpactModal()`);
 
   P.E(`recordBall('1'); recordBall('0');`);
@@ -199,10 +201,17 @@ async function suite(file, label){
   setup(P, true);
   P.E(`state.teamB.players = state.teamB.players.filter(p => p.id !== 'ipb')`); // no named substitute at all
   pick(P, 'B', 'Jadeja');
-  eq(L('TEST 33b: no substitute named — the modal still offers "+ Add" (no dead end)'), [!!P.$('#ip-new-name'), /type the substitute's name below/.test(P.text('#ip-body'))], [true, true]);
+  eq(L('TEST 33b: no substitute named — the rest of the team is offered (not Jadeja going off, not Raj bowling) and "+ Add" is there'),
+    [!!P.$('#ip-new-name'), !!inBtn(P, 'Mukesh'), !!inBtn(P, 'Jadeja'), !!inBtn(P, 'Raj')], [true, true, false, false]);
   P.$('#ip-new-name').value = 'Jadeja';
   click(P, '#ip-body [data-ip-add]'); await sleep(30);
-  eq(L('TEST 33c: a name already in the Playing XI is refused'), [/already in the Playing XI/.test(lastToast(P)), P.J(`state.teamB.players.filter(p => p.name === 'Jadeja').length`)], [true, 1]);
+  eq(L('TEST 33c: typing the player going off is refused'), [/is the player going off/.test(lastToast(P)), P.J(`state.teamB.players.filter(p => p.name === 'Jadeja').length`)], [true, 1]);
+  P.$('#ip-new-name').value = 'raj';
+  click(P, '#ip-body [data-ip-add]'); await sleep(30);
+  eq(L('TEST 33c2: typing a player who has bowled is refused'), /already batted or bowled/.test(lastToast(P)), true);
+  P.$('#ip-new-name').value = 'mukesh';
+  click(P, '#ip-body [data-ip-add]'); await sleep(30);
+  eq(L('TEST 33c3: typing a team player who has not played selects him, with a note'), [inBtn(P, 'Mukesh').className.includes(' on'), /ticked in the Playing XI — pick him only if/.test(P.text('#ip-body')), P.J(`state.teamB.players.filter(p => p.name === 'Mukesh').length`)], [true, true, 1]);
   P.$('#ip-new-name').value = '  Shivam   Mavi ';
   click(P, '#ip-body [data-ip-add]'); await sleep(30);
   const added = P.J(`state.teamB.players.find(p => p.name === 'Shivam Mavi') || null`);
