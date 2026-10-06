@@ -3,7 +3,8 @@
 // (who, their figures, how out, both teams); the overlay turns it into the
 // card's word, name and detail line. Only FOUR / SIX name the batter, and no
 // card shows a score. The panel never guesses who is out before CONFIRM
-// WICKET.
+// WICKET. The milestones (FIFTY … MATCH WON, STUMPS) use the same card,
+// built from what the panels already send; FREE HIT has no logo.
 //
 //   node test/cricket/ball-event-card-test.js
 const fs = require('fs');
@@ -138,7 +139,7 @@ async function overlaySuite(){
   const ALL = (c) => Object.keys(c).sort();
   let c = C('FOUR', 'Rohit Sharma', { batter: { name: 'Rohit Sharma', runs: 34, balls: 21 }, bowler: 'Deepak Chahar', batTeam: MI, bowlTeam: CSK });
   eq('OVERLAY: FOUR card — word, team, batter, "off <bowler>"', [c.word, c.kicker, c.teamColor, c.name, c.line], ['FOUR', 'Mumbai Indians', '#17337a', 'Rohit Sharma', 'off Deepak Chahar']);
-  eq('OVERLAY: no card carries a score at all (no stat field)', ALL(c), ['glyph', 'kicker', 'line', 'name', 'teamColor', 'word']);
+  eq('OVERLAY: no card carries a score at all (no stat field)', ALL(c), ['glyph', 'kicker', 'line', 'name', 'teamColor', 'wide', 'word']);
   c = C('SIX', 'Rohit Sharma', { batter: { name: 'Rohit Sharma', runs: 40, balls: 22 }, bowler: 'Deepak Chahar', batTeam: MI });
   eq('OVERLAY: SIX card — the batter\'s runs never appear', JSON.stringify(c).includes('40') || JSON.stringify(c).includes('22'), false);
   // WICKET / WIDE / NO BALL / FREE HIT: no player names, no runs
@@ -166,6 +167,47 @@ async function overlaySuite(){
   eq('OVERLAY: an older panel\'s WIDE "+1 run" text is not shown (no runs on the cards)', [c.name, c.line], ['', '']);
   eq('OVERLAY: all six ball events use the bar-sized card', O.J('BALL_CARD_KINDS'), ['FOUR', 'SIX', 'WICKET', 'WIDE', 'NO_BALL', 'FREE_HIT']);
   eq('OVERLAY: … and play at the scorebar\'s own height (growth 1)', O.J(`['FOUR','SIX','WICKET','WIDE','NO_BALL','FREE_HIT'].map(k => EVENT_THEMES[k].growth)`), [1, 1, 1, 1, 1, 1]);
+  // ---- MILESTONES: same bar-sized card, built from kind + text + sub + the live teams ----
+  O.E(`lastState = { battingTeam: 'A', teamA: { name: 'Mumbai Indians', short: 'MI', color: '#17337a' }, teamB: { name: 'Chennai Super Kings', short: 'CSK', color: '#f2c40f' } }`);
+  const M = (kind, text, sub) => O.J(`ballCardContent(${JSON.stringify(kind)}, ${JSON.stringify({ text, subRaw: sub, sub: sub || text })})`);
+  let m = M('FIFTY', 'Rohit Sharma 50', 'off 32 balls');
+  eq('MILESTONE: FIFTY — "50" tile, the batter, the batting team (no "off 32 balls")', [m.word, /<span class="ec-num[^"]*">50</.test(m.glyph), m.name, m.kicker, m.teamColor, m.line], ['FIFTY', true, 'Rohit Sharma', 'Mumbai Indians', '#17337a', '']);
+  m = M('HUNDRED', 'Rohit Sharma 100', 'off 58 balls');
+  eq('MILESTONE: HUNDRED', [m.word, />100</.test(m.glyph), m.wide, m.name], ['HUNDRED', true, true, 'Rohit Sharma']);
+  m = M('HUNDRED', 'Rohit Sharma 200', '');
+  eq('MILESTONE: 200 → DOUBLE HUNDRED', [m.word, />200</.test(m.glyph)], ['DOUBLE HUNDRED', true]);
+  m = M('TEAM_MILESTONE', '150 UP', 'MI');
+  eq('MILESTONE: TEAM 150 UP — the full team name from the live match', [m.word, />150</.test(m.glyph), m.name, m.kicker], ['UP', true, 'Mumbai Indians', '']);
+  m = M('PARTNERSHIP', '50 PARTNERSHIP', 'Rohit Sharma & Ishan Kishan');
+  eq('MILESTONE: PARTNERSHIP — both batters', [m.word, />50</.test(m.glyph), m.name, m.kicker], ['PARTNERSHIP', true, 'Rohit Sharma & Ishan Kishan', 'Mumbai Indians']);
+  m = M('NEED', 'NEED 14 OFF 6', '');
+  eq('MILESTONE: NEED — "14 runs off 6 balls"', [m.word, m.name, m.kicker], ['NEED', '14 runs off 6 balls', 'Mumbai Indians']);
+  eq('MILESTONE: NEED 1 OFF 1 — singular', M('NEED', 'NEED 1 OFF 1', '').name, '1 run off 1 ball');
+  m = M('POWERPLAY_END', 'POWERPLAY ENDS', '54-1');
+  eq('MILESTONE: POWERPLAY ENDS — the word only (its score is left out)', [m.word, m.name, m.line, JSON.stringify(m).includes('54')], ['POWERPLAY ENDS', '', '', false]);
+  for(const [k, w] of [['POWERPLAY', 'POWERPLAY'], ['DRINKS', 'DRINKS BREAK'], ['STRATEGIC_TIMEOUT', 'STRATEGIC TIMEOUT'], ['LAST_OVER', 'FINAL OVER'], ['MATCH_DRAWN', 'MATCH DRAWN']]){
+    m = M(k, w, '');
+    eq(`MILESTONE: ${k} — icon + "${w}"`, [m.word, /<svg/.test(m.glyph), m.name, m.line], [w, true, '', '']);
+  }
+  m = M('INNINGS_BREAK', 'INNINGS BREAK', 'Target: 181');
+  eq('MILESTONE: INNINGS BREAK — the target', [m.word, m.line], ['INNINGS BREAK', 'Target: 181']);
+  m = M('INNINGS_BREAK', 'SUPER OVER 1', 'MI to bat — 6 balls, 2 wickets');
+  eq('MILESTONE: a Super Over break says so', [m.word, m.line], ['SUPER OVER 1', 'MI to bat — 6 balls, 2 wickets']);
+  m = M('INNINGS_COMPLETE', 'ALL OUT', '142-10 in 18.3 overs');
+  eq('MILESTONE: ALL OUT — the team, never the score', [m.word, m.name, m.line, JSON.stringify(m).includes('142')], ['ALL OUT', 'Mumbai Indians', '', false]);
+  eq('MILESTONE: OVERS COMPLETE → INNINGS COMPLETE', M('INNINGS_COMPLETE', 'OVERS COMPLETE', '180-5 in 20 overs').word, 'INNINGS COMPLETE');
+  m = M('VICTORY', 'CSK WIN', 'by 12 runs');
+  eq('MILESTONE: MATCH WON — the winner\'s full name and the margin', [m.word, m.name, m.line], ['MATCH WON', 'Chennai Super Kings', 'by 12 runs']);
+  m = M('MATCH_TIED', 'SUPER OVER 1 TIED', 'Another Super Over to follow');
+  eq('MILESTONE: a tied Super Over', [m.word, m.line], ['SUPER OVER 1 TIED', 'Another Super Over to follow']);
+  m = M('STUMPS', 'STUMPS — DAY 2', 'MI 245-6');
+  eq('MILESTONE: STUMPS (Test) — the day, not the score', [m.word, m.line, JSON.stringify(m).includes('245')], ['STUMPS', 'Day 2', false]);
+  m = M('PLAY_RESUMED', 'DAY 3', 'Play resumes');
+  eq('MILESTONE: PLAY RESUMES (Test)', [m.word, m.line], ['PLAY RESUMES', 'Day 3']);
+  eq('FREE HIT: no logo — the word alone', [C('FREE_HIT', '', {}).glyph, C('FREE_HIT', '', {}).word], ['', 'FREE HIT']);
+  eq('MILESTONE: every milestone has a theme and plays at bar height', O.J(`MILESTONE_CARD_KINDS.map(k => EVENT_THEMES[k] && EVENT_THEMES[k].growth)`), O.J('MILESTONE_CARD_KINDS.map(() => 1)'));
+  O.E(`window.__calls = []; triggerEvent = (k, o) => window.__calls.push([k, o]); playEvent({ kind: 'FIFTY', text: 'Rohit Sharma 50', sub: 'off 32 balls' });`);
+  eq('OVERLAY: the socket event keeps both the text and the sub for the cards', O.J(`[__calls[0][1].text, __calls[0][1].subRaw, __calls[0][1].sub]`), ['Rohit Sharma 50', 'off 32 balls', 'off 32 balls']);
   eq('OVERLAY: a team colour that is not a plain hex is ignored', C('FOUR', 'X', { batter: { name: 'X', runs: 4, balls: 1 }, batTeam: { name: 'T', color: 'red;background:url(x)' } }).teamColor, '');
   eq('OVERLAY: no script errors', O.errors, []);
   O.w.close();
