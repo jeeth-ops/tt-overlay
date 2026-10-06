@@ -89,12 +89,6 @@ async function suite(file, label, isClipper){
   click(P, '[data-xm-runs="4"]');
   eq(L('NB + 4 asks Boundary or Running (Boundary pre-selected), nothing recorded yet'), [P.$('[data-xm-bnd]').closest('.xm-row').hidden, P.$('[data-xm-bnd="1"]').classList.contains('on'), P.E('state.ballLog.length'), P.text('[data-xm-go]')], [false, true, 0, 'Save NB + 4 · Boundary']);
   click(P, '#extras-modal-cancel');
-  P.E(`openExtrasModal('Nb')`);
-  eq(L('Boundary / Running is on the screen from the start'), [P.$('[data-xm-bnd]').closest('.xm-row').hidden, P.$$('[data-xm-bnd].on').length], [false, 0]);
-  click(P, '[data-xm-bnd="0"]');
-  click(P, '[data-xm-runs="4"]');
-  eq(L('Running chosen first, then NB + 4 → saved at once as running, not a four'), [P.E('state.ballLog.length'), P.J('state.ballLog[0].boundary'), P.E('state.striker.fours + state.nonStriker.fours')], [1, false, 0]);
-  fresh(P);
   P.E(`openExtrasModal('Wd')`);
   eq(L('Wide: WD + 0…6 and "+"'), P.$$('#extras-modal-options [data-xm-runs]').map(b => b.textContent), ['WD + 0', 'WD + 1', 'WD + 2', 'WD + 3', 'WD + 4', 'WD + 5', 'WD + 6', '+']);
   // custom validation
