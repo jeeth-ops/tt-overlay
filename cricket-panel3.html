@@ -603,6 +603,31 @@
   .wicket-modal.wm-extracontext .wm-extra-note{ display:flex; }
   .wm-extra-wicket-link{ margin-top:10px; color:#f87171; border-color:#f87171; }
   .wm-options{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  /* 🏏 Extras picker (NB / WD / B / LB) */
+  .wm-options.xm{ display:flex; flex-direction:column; gap:12px; }
+  .xm-eq{ font-size:12px; font-weight:600; color:var(--text-dim); margin-left:4px; }
+  .xm-grid{ display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:8px; }
+  .xm-chip{ height:42px; padding:0 6px; border-radius:10px; font-size:13.5px; font-weight:700; white-space:nowrap;
+    background:transparent; border:1.5px solid color-mix(in srgb, var(--accent) 55%, var(--border)); color:var(--text); }
+  .xm-chip:hover{ background:color-mix(in srgb, var(--accent) 12%, transparent); }
+  .xm-chip.on{ background:var(--accent); border-color:var(--accent); color:#12100c; }
+  .xm-plus{ font-size:18px; }
+  .xm-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+  .xm-row[hidden], .xm-custom[hidden]{ display:none; }
+  .xm-k{ font-size:11px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--text-dim); }
+  .xm-seg{ display:inline-flex; border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .xm-segb{ border:0; border-radius:0; padding:8px 14px; font-weight:700; font-size:12.5px; background:transparent; color:var(--text-dim); }
+  .xm-segb + .xm-segb{ border-left:1px solid var(--border); }
+  .xm-segb.on{ background:color-mix(in srgb, var(--accent) 20%, transparent); color:var(--text); box-shadow:inset 0 -2px 0 var(--accent); }
+  .xm-custom{ display:flex; flex-direction:column; gap:6px; padding:10px; border-radius:10px; background:var(--panel-2); border:1px solid var(--border); }
+  .xm-custom-row{ display:flex; gap:8px; }
+  .xm-custom-row input{ flex:1; min-width:0; height:38px; font-size:15px; font-weight:700; }
+  .xm-err{ min-height:0; font-size:12px; font-weight:600; color:#fca5a5; }
+  .xm-err:empty{ display:none; }
+  .xm-preview{ font-size:11.5px; color:var(--text-dim); line-height:1.45; padding:8px 10px; border-radius:8px; background:rgba(255,255,255,.03); border:1px dashed var(--border); }
+  .xm-go{ height:44px; font-size:14px; font-weight:800; }
+  @media (max-width:420px){ .xm-chip{ font-size:12px; height:40px; } .xm-segb{ padding:8px 10px; } }
+  .pen-chips{ grid-template-columns:repeat(6, minmax(0,1fr)); margin:4px 0 6px; }
   .wm-option{
     padding:11px 8px; font-size:12.5px; text-align:center; background:var(--panel-2);
   }
@@ -1955,13 +1980,14 @@
       <h3>🏏 Penalty Runs</h3>
       <div class="wm-sub" id="penalty-modal-sub">Awarded by the umpire — not a delivery. No ball is bowled, no batsman is credited.</div>
       <label class="pen-label" for="penalty-runs">Penalty runs</label>
-      <select id="penalty-runs" class="pen-field">
-        <option value="5" selected>5 (the standard award)</option>
-        <option value="1">1</option>
-        <option value="2">2</option>
-        <option value="3">3</option>
-        <option value="4">4</option>
-      </select>
+      <input type="hidden" id="penalty-runs" value="5">
+      <div class="xm-grid pen-chips" id="penalty-runs-chips" role="radiogroup" aria-label="Penalty runs"></div>
+      <div class="xm-custom" id="penalty-custom" hidden>
+        <label class="xm-k" for="penalty-custom-input">Custom runs</label>
+        <div class="xm-custom-row"><input type="number" id="penalty-custom-input" inputmode="numeric" min="1" step="1" placeholder="Enter number">
+          <button type="button" class="ghost" id="penalty-custom-cancel">Cancel</button><button type="button" class="primary" id="penalty-custom-apply">Apply</button></div>
+        <div class="xm-err" id="penalty-custom-err" role="alert"></div>
+      </div>
       <label class="pen-label" for="penalty-awarded-to">Awarded to</label>
       <select id="penalty-awarded-to" class="pen-field">
         <option value="BATTING">Batting side</option>
@@ -2827,17 +2853,28 @@
       case '4': return { eventType: 'FOUR', outcomeLabel: 'FOUR', defaultHighlight: true };
       case '6': return { eventType: 'SIX', outcomeLabel: 'SIX', defaultHighlight: true };
       case '0': return { eventType: 'CLIP', outcomeLabel: 'Dot ball', defaultHighlight: false };
+      // 🏏 BOUNDARY vs RUNNING — the scorer says which (ball.boundary, stored
+      // with the delivery). Only a row from before that question existed
+      // (boundary null/absent) is still inferred from the run count.
       case 'Wd': {
         var x = Math.max(0, runs - 1);
-        if (x >= 6) return { eventType: 'SIX', outcomeLabel: 'Wide 6', defaultHighlight: true };
-        if (x === 4) return { eventType: 'FOUR', outcomeLabel: 'Wide 4', defaultHighlight: true };
+        var wdB = ball.boundary === true || (ball.boundary == null && x === 4);
+        if (wdB && x >= 6) return { eventType: 'SIX', outcomeLabel: 'Wide 6', defaultHighlight: true };
+        if (wdB) return { eventType: 'FOUR', outcomeLabel: 'Wide ' + x, defaultHighlight: true };
         return { eventType: 'CLIP', outcomeLabel: x ? 'Wide +' + x : 'Wide', defaultHighlight: false };
       }
       case 'Nb': {
-        var bat = Math.max(0, runs - 1);
-        if (bat === 6) return { eventType: 'SIX', outcomeLabel: 'No Ball 6', defaultHighlight: true };
-        if (bat === 4) return { eventType: 'FOUR', outcomeLabel: 'No Ball 4', defaultHighlight: true };
-        return { eventType: 'CLIP', outcomeLabel: bat ? 'No Ball +' + bat : 'No Ball', defaultHighlight: false };
+        var as = ball.nbRunsAs === 'bye' || ball.nbRunsAs === 'legbye' ? ball.nbRunsAs : 'bat';
+        var more = Math.max(0, runs - 1);
+        var nbB = ball.boundary === true || (ball.boundary == null && as === 'bat' && (more === 4 || more === 6));
+        if (as !== 'bat') {
+          var nm = as === 'bye' ? ' bye' : ' leg bye';
+          if (nbB) return { eventType: 'FOUR', outcomeLabel: 'No Ball + ' + more + nm + 's (boundary)', defaultHighlight: true };
+          return { eventType: 'CLIP', outcomeLabel: more ? 'No Ball + ' + more + nm + plural(more) : 'No Ball', defaultHighlight: false };
+        }
+        if (nbB && more === 6) return { eventType: 'SIX', outcomeLabel: 'No Ball 6', defaultHighlight: true };
+        if (nbB) return { eventType: 'FOUR', outcomeLabel: 'No Ball ' + more, defaultHighlight: true };
+        return { eventType: 'CLIP', outcomeLabel: more ? 'No Ball +' + more : 'No Ball', defaultHighlight: false };
       }
       case 'B': return { eventType: 'CLIP', outcomeLabel: 'Bye ' + runs, defaultHighlight: runs === 4 };
       case 'LB': return { eventType: 'CLIP', outcomeLabel: 'Leg Bye ' + runs, defaultHighlight: runs === 4 };
@@ -3235,7 +3272,7 @@ function recomputeTarget(){
 function recordPenaltyRuns({ runs, awardedTo, reasonCode, notes, eventContext }){
   const n = parseInt(runs, 10);
   if(!Number.isFinite(n) || n <= 0){ toast('⚠️ Penalty runs must be a positive number'); return null; }
-  if(n > 25){ toast('⚠️ That is not a penalty award the Laws provide for — check the number'); return null; }
+  if(!/^\d+$/.test(String(runs).trim())){ toast('⚠️ Penalty runs must be a whole number'); return null; }
   const reason = penaltyReason(reasonCode);
   if(!reason){ toast('⚠️ Pick a penalty reason — an award has to say which Law it is under'); return null; }
   if(awardedTo !== 'BATTING' && awardedTo !== 'FIELDING'){ toast('⚠️ Choose which side the penalty is awarded to'); return null; }
@@ -12300,6 +12337,7 @@ function recordBall(kind, meta){
   // flag on an otherwise-normal delivery and already goes through here)
   // gets clipped too, not just a plain-kind '4'/'6' ball.
   let extraBoundaryEventType = null;
+  let extraDetail = null; // { boundary, nbRunsAs } of a Wide / No Ball — stored with the delivery
   const ballTimestamp = Date.now();
   const runsBefore = state.score.runs;
   // Captured BEFORE the switch below mutates state — the log entry should
@@ -12839,14 +12877,13 @@ function recordBall(kind, meta){
       break;
     }
     case 'Wd': {
-      // Extra runs actually run (beyond the automatic 1) come from the
-      // extras picker modal, defaulting to 0. A Wide is never touched by
-      // the bat, so Law 19.7.1's boundary-6 rule can't apply to the
-      // ORIGINAL delivery — but Law 19.8 (Overthrow) is a separate rule
-      // that can still credit a wide with more than the usual 4-run
-      // boundary if a misfield lets it run away further (see the note on
-      // renderExtrasModalButtons()), so this is deliberately uncapped.
-      const extraRun = (meta && typeof meta.extraRuns === 'number') ? meta.extraRuns : 0;
+      // Runs beyond the automatic 1 come from the extras picker: 0-6 or "+"
+      // for ANY number (an overthrow can take a wide well past 4 — there is
+      // no ceiling). BOUNDARY vs RUNNING is the scorer's own answer
+      // (meta.boundary), stored with the delivery and used for the clip;
+      // only a caller that never asked falls back to "4 = boundary".
+      const extraRun = (meta && Number.isInteger(meta.extraRuns) && meta.extraRuns > 0) ? meta.extraRuns : 0;
+      const wdBoundary = (meta && typeof meta.boundary === 'boolean') ? meta.boundary : extraRun === 4;
       const wdTotal = 1 + extraRun;
       state.score.runs += wdTotal;
       state.partnershipRuns += wdTotal;
@@ -12855,30 +12892,32 @@ function recordBall(kind, meta){
       state.thisOver.push(wdLabel);
       pushBallHistory(wdLabel);
       addBowlerExtra(wdTotal);
-      fireEvent('WIDE', 'WIDE', extraRun > 0 ? `+${wdTotal} run${wdTotal===1?'':'s'}` : '');
-      // 🔒 A Wide reaching the boundary is still a highlight-worthy
-      // boundary even though it never touches the bat — mark it so
-      // logBallToDb() cuts a clip for it just like a plain FOUR/SIX does.
-      if(extraRun === 6) extraBoundaryEventType = 'SIX';
-      else if(extraRun === 4) extraBoundaryEventType = 'FOUR';
+      fireEvent('WIDE', 'WIDE', extraRun > 0 ? `+${wdTotal} run${wdTotal===1?'':'s'}${wdBoundary ? ' · boundary' : ''}` : '');
+      // A wide that reached the rope is a highlight boundary (never the
+      // batter's — it was never touched by the bat).
+      if(wdBoundary && extraRun > 0) extraBoundaryEventType = extraRun >= 6 ? 'SIX' : 'FOUR';
+      extraDetail = { boundary: wdBoundary, nbRunsAs: null };
       // Runs actually run between the wickets rotate the strike, same as
       // any other delivery — the automatic penalty run itself doesn't.
       if(extraRun % 2 === 1) swapStrikeSilent();
       break;
     }
     case 'Nb': {
-      // Runs off the bat OR leg-bye runs come from the extras picker
-      // modal (only one or the other on any single ball — a batsman
-      // either hits the ball or misses it) — 0 to 6, defaults to 0.
-      // The 1-run no-ball penalty is always added on top regardless.
-      const batRuns = (meta && typeof meta.runsOffBat === 'number') ? meta.runsOffBat : 0;
-      // 🏏 Leg Bye off a No Ball — same rule as a leg bye off a normal
-      // delivery: credited to team EXTRAS (state.extras[...].lb), never
-      // to the striker's individual score, and never charged against the
-      // bowler's figures. Only the automatic 1-run no-ball penalty itself
-      // is charged to the bowler — see addBowlerExtra() call below.
-      const legByeRuns = (meta && typeof meta.legByeRuns === 'number') ? meta.legByeRuns : 0;
-      const nbTotal = 1 + batRuns + legByeRuns;
+      // How the runs came (From bat / Bye / Leg bye) and how many — 0-6 or
+      // "+" for ANY number — come from the extras picker. The 1-run no-ball
+      // penalty is always added on top and is never the batter's.
+      //   From bat → the striker's runs (and the bowler's)
+      //   Bye      → team extras (byes), never the batter's or the bowler's
+      //   Leg bye  → team extras (leg byes), never the batter's or the bowler's
+      // BOUNDARY vs RUNNING (meta.boundary) is the scorer's answer: an NB + 4
+      // that was RUN is not a four for the batter and not a FOUR clip. Only a
+      // caller that never asked falls back to "4 or 6 off the bat = boundary".
+      const nbNum = k => (meta && Number.isInteger(meta[k]) && meta[k] > 0) ? meta[k] : 0;
+      const batRuns = nbNum('runsOffBat'), legByeRuns = nbNum('legByeRuns'), byeRuns = nbNum('byeRuns');
+      const nbRunsAs = byeRuns > 0 ? 'bye' : legByeRuns > 0 ? 'legbye' : 'bat';
+      const nbMore = batRuns + legByeRuns + byeRuns;
+      const nbBoundary = (meta && typeof meta.boundary === 'boolean') ? meta.boundary : (batRuns === 4 || batRuns === 6);
+      const nbTotal = 1 + nbMore;
       state.score.runs += nbTotal;
       // A No Ball is a ball FACED by the striker (unlike a Wide) — but not a
       // legal ball of the over (no addLegalBall), and its 1-run penalty is
@@ -12886,39 +12925,25 @@ function recordBall(kind, meta){
       state.striker.balls++;
       if(batRuns > 0){
         state.striker.runs += batRuns;
-        if(batRuns === 4) state.striker.fours++;
-        // 🔒 FIX: a No Ball can legally be struck for six same as any other
-        // delivery — the run-count picker used to cap at 4, so this branch
-        // never existed and a six off a No Ball silently went untallied in
-        // the striker's boundary count. Now that the picker goes to 6, tally
-        // it exactly like a six off a normal ball.
-        if(batRuns === 6) state.striker.sixes++;
-        // 🔒 Runs off the bat off a No Ball DO count as a real boundary
-        // (Law 19.7.1 — the bat touched it) — mark it so logBallToDb()
-        // cuts a FOUR/SIX clip for it, same as a plain-kind '4'/'6' ball.
-        if(batRuns === 4) extraBoundaryEventType = 'FOUR';
-        else if(batRuns === 6) extraBoundaryEventType = 'SIX';
+        if(nbBoundary && batRuns === 4) state.striker.fours++;
+        if(nbBoundary && batRuns === 6) state.striker.sixes++;
       }
-      // 🔒 A Leg Bye off a No Ball reaching the boundary never touches the
-      // bat, but (same as a plain Leg Bye or Bye above) it's still a
-      // highlight-worthy boundary — this branch used to have no clip
-      // trigger at all, so a "No Ball + Leg Bye to the fence" silently
-      // never got an automatic clip even though its plain-delivery
-      // equivalent (LB case above) always did.
-      if(legByeRuns === 6) extraBoundaryEventType = 'SIX';
-      else if(legByeRuns === 4) extraBoundaryEventType = 'FOUR';
+      if(nbBoundary && nbMore > 0) extraBoundaryEventType = (batRuns === 6) ? 'SIX' : 'FOUR';
+      extraDetail = { boundary: nbBoundary, nbRunsAs };
       state.partnershipRuns += nbTotal;
       activeExtras(state.battingTeam).nb += 1;
       if(legByeRuns > 0) activeExtras(state.battingTeam).lb += legByeRuns;
-      const nbLabel = legByeRuns > 0 ? `Nb+${legByeRuns}lb` : (batRuns > 0 ? `Nb+${batRuns}` : 'Nb');
+      if(byeRuns > 0) activeExtras(state.battingTeam).b += byeRuns;
+      const nbLabel = byeRuns > 0 ? `Nb+${byeRuns}b` : legByeRuns > 0 ? `Nb+${legByeRuns}lb` : (batRuns > 0 ? `Nb+${batRuns}` : 'Nb');
       state.thisOver.push(nbLabel);
       pushBallHistory(nbLabel);
       // Bowler is charged the no-ball penalty + any runs off the bat —
-      // NEVER the leg-bye runs (those are extras, exactly like a leg bye
-      // off a legal delivery never counts against the bowler either).
+      // NEVER byes or leg byes (those are extras, exactly as off a legal ball).
       addBowlerExtra(1 + batRuns);
-      fireEvent('NO_BALL', 'NO BALL', legByeRuns > 0 ? `+${legByeRuns} leg bye${legByeRuns === 1 ? '' : 's'}` : (batRuns > 0 ? `+${batRuns} off the bat` : ''));
-      if((batRuns + legByeRuns) % 2 === 1) swapStrikeSilent();
+      fireEvent('NO_BALL', 'NO BALL', byeRuns > 0 ? `+${byeRuns} bye${byeRuns === 1 ? '' : 's'}`
+        : legByeRuns > 0 ? `+${legByeRuns} leg bye${legByeRuns === 1 ? '' : 's'}`
+        : (batRuns > 0 ? `+${batRuns} off the bat${nbBoundary ? '' : ' (run)'}` : ''));
+      if(nbMore % 2 === 1) swapStrikeSilent();
       // Free Hit only exists in limited-overs cricket (ODI/T20/Custom) —
       // Test/first-class cricket has no Free Hit provision under the Laws
       // of Cricket or ICC playing conditions, so skip it for that format.
@@ -13054,6 +13079,9 @@ function recordBall(kind, meta){
     // boundary allowance) — stored with the delivery so the total can always
     // be re-derived and audited, never just the total. null on every other kind.
     overthrow: kind === 'OT' ? lastOverthrowDetail : null,
+    // 🏏 Wide / No Ball: BOUNDARY vs RUNNING as the scorer answered it, and
+    // (No Ball) whether the runs came off the bat, as byes or as leg byes.
+    ...(extraDetail ? { boundary: extraDetail.boundary, nbRunsAs: extraDetail.nbRunsAs } : {}),
     // Which match phase this delivery belongs to. A Super Over delivery is
     // tagged here (with the Super Over's own id) so it can never be read back
     // as part of the regulation innings.
@@ -13146,6 +13174,7 @@ function recordBall(kind, meta){
     participants: ballParticipants,
     phase: logPhase,
     superOverNumber: logPhase === 'SUPER_OVER' ? state.superOver.number : null,
+    extra: extraDetail,
     dbKind: (kind === 'W' && meta && meta.runsCompleted > 0 && meta.runsAs === 'bye') ? 'B'
       : (kind === 'W' && meta && meta.runsCompleted > 0 && meta.runsAs === 'legbye') ? 'LB' : null
   }, extraBoundaryEventType, linkedHighlightClips > 0,
@@ -13411,6 +13440,9 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundar
     bowlerId: id.bowlerId,
     // `batter`/`batterId`: who was actually given out, frozen at confirmation.
     dismissal,
+    // 🏏 Wide / No Ball: the scorer's BOUNDARY vs RUNNING answer and (No
+    // Ball) how the runs came — the server scores and classifies by these.
+    ...(id.extra ? { boundary: id.extra.boundary, ...(id.extra.nbRunsAs ? { nbRunsAs: id.extra.nbRunsAs } : {}) } : {}),
     // A Super Over delivery says so (its innings is already 101+): the
     // server keeps it out of the regulation scorecard.
     ...(id.phase === 'SUPER_OVER' ? { phase: 'SUPER_OVER', superOverNumber: id.superOverNumber || null } : {}),
@@ -13570,16 +13602,18 @@ function describeBallOutcome(kind, meta, runs){
     case '0': return { label: 'Dot ball', eventType: 'CLIP', isDefault: false };
     case 'Wd': {
       const x = meta.extraRuns || 0;
-      if(x >= 6) return { label: 'Wide 6', eventType: 'SIX', isDefault: true };
-      if(x === 4) return { label: 'Wide 4', eventType: 'FOUR', isDefault: true };
+      const bnd = typeof meta.boundary === 'boolean' ? meta.boundary : x === 4;
+      if(bnd && x >= 6) return { label: 'Wide 6', eventType: 'SIX', isDefault: true };
+      if(bnd && x > 0) return { label: `Wide ${x}`, eventType: 'FOUR', isDefault: true };
       return { label: x ? `Wide +${x}` : 'Wide', eventType: 'CLIP', isDefault: false };
     }
     case 'Nb': {
-      const bat = meta.runsOffBat || 0, lb = meta.legByeRuns || 0;
-      if(bat === 6) return { label: 'No Ball 6', eventType: 'SIX', isDefault: true };
-      if(bat === 4) return { label: 'No Ball 4', eventType: 'FOUR', isDefault: true };
-      if(lb === 4) return { label: 'No Ball + Leg Bye 4', eventType: 'CLIP', isDefault: true };
-      return { label: bat ? `No Ball +${bat}` : lb ? `No Ball + ${lb} leg bye${lb === 1 ? '' : 's'}` : 'No Ball', eventType: 'CLIP', isDefault: false };
+      const bat = meta.runsOffBat || 0, lb = meta.legByeRuns || 0, by = meta.byeRuns || 0;
+      const bnd = typeof meta.boundary === 'boolean' ? meta.boundary : (bat === 4 || bat === 6);
+      if(bnd && bat === 6) return { label: 'No Ball 6', eventType: 'SIX', isDefault: true };
+      if(bnd && bat > 0) return { label: `No Ball ${bat}`, eventType: 'FOUR', isDefault: true };
+      if(bnd && (lb || by)) return { label: `No Ball + ${lb || by} ${lb ? 'leg byes' : 'byes'} (boundary)`, eventType: 'FOUR', isDefault: true };
+      return { label: bat ? `No Ball +${bat}` : lb ? `No Ball + ${lb} leg bye${lb === 1 ? '' : 's'}` : by ? `No Ball + ${by} bye${by === 1 ? '' : 's'}` : 'No Ball', eventType: 'CLIP', isDefault: false };
     }
     case 'B': {
       const r = typeof meta.runs === 'number' ? meta.runs : 1;
@@ -13867,6 +13901,18 @@ let pendingExtraWicketContext = null;
 // fresh. Read by renderExtrasModalButtons() below and by the button
 // click handler, which tags the recorded meta accordingly.
 let nbLegByeMode = false;
+/* 🏏 EXTRAS PICKER — No Ball / Wide / Bye / Leg Bye.
+   One screen, in the order a scorer thinks:
+     • (No Ball) how the runs came: From bat / Bye / Leg bye;
+     • the runs: 0-6, or "+" for ANY positive number (an overthrow can take
+       an extra far past 6 — there is no ceiling);
+     • a 4 (or a 6 off the bat) asks BOUNDARY or RUNNING. The answer is
+       stored on the delivery and is what the batter's 4s/6s and the
+       FOUR/SIX clip go by — a run count alone never decides it.
+   Any other value records on the tap, as before. */
+const XM_PREFIX = { Nb: 'NB', Wd: 'WD', B: 'B', LB: 'LB' };
+const XM_TITLE = { Nb: 'No ball', Wd: 'Wide ball', B: 'Byes', LB: 'Leg byes' };
+let xm = null; // { kind, runs, custom, customOpen, nbAs, boundary, err }
 function openExtrasModal(kind){
   if(isInningsOver()){
     let msg = '🚫 Overs complete for this innings';
@@ -13875,33 +13921,15 @@ function openExtrasModal(kind){
     toast(msg);
     return;
   }
-  const cfg = EXTRAS_MODAL_CONFIG[kind];
-  if(!cfg) return;
+  if(!XM_TITLE[kind]) return;
+  xm = { kind, runs: null, custom: false, customOpen: false, nbAs: 'bat', boundary: null, err: '' };
   nbLegByeMode = false;
   document.getElementById('extras-modal-sub').textContent =
     `${state.bowler.name || 'Bowler'} to ${state.striker.name || 'Striker'}`;
-  renderExtrasModalButtons(kind);
-
-  // Leg Bye toggle — only makes sense on a No Ball: under the Laws of
-  // Cricket, a leg bye off a no ball is scored the same as a leg bye off
-  // a normal delivery (credited to team extras as "lb", NOT to the
-  // striker, and NOT charged against the bowler) — only the automatic
-  // 1-run no-ball penalty itself is charged to the bowler. See the 'Nb'
-  // case in recordBall() for how this actually gets split and credited.
+  // From bat / Bye / Leg bye is now part of the No Ball screen itself.
   const legByeLink = document.getElementById('extras-modal-legbye-link');
-  if(kind === 'Nb'){
-    legByeLink.style.display = 'block';
-    legByeLink.textContent = '🦵 Leg Bye (missed the bat)?';
-    legByeLink.onclick = () => {
-      nbLegByeMode = !nbLegByeMode;
-      renderExtrasModalButtons(kind);
-      legByeLink.textContent = nbLegByeMode ? '🏏 Actually runs off the bat?' : '🦵 Leg Bye (missed the bat)?';
-    };
-  } else {
-    legByeLink.style.display = 'none';
-    legByeLink.onclick = null;
-  }
-
+  legByeLink.style.display = 'none';
+  legByeLink.onclick = null;
   // Only a Wide or No Ball can ever carry a wicket alongside it — Bye/Leg
   // Bye never do (any dismissal on those balls is recorded as a plain
   // legal-delivery wicket instead, exactly as before).
@@ -13917,63 +13945,161 @@ function openExtrasModal(kind){
     wicketLink.style.display = 'none';
     wicketLink.onclick = null;
   }
+  renderExtrasModalButtons(kind);
   document.getElementById('extras-modal-overlay').classList.add('show');
 }
-// (re)draws the run-count buttons for the extras picker. Split out from
-// openExtrasModal so the No-Ball Leg-Bye toggle can re-render just the
-// title + buttons (with the metaKey flipped between 'runsOffBat' and
-// 'legByeRuns') without re-running the whole modal-open setup.
-// 🔒 As per the actual Laws of Cricket (Law 19.7.1): a boundary 6 can
-// ONLY be scored if the ball was struck by the bat — a Wide/Bye/Leg Bye
-// never touches the bat, so on an ORDINARY delivery those cap at 4.
-// 🔒 Law 19.8 (Overthrow or wilful act of a fielder) is a SEPARATE rule
-// layered on top: if a boundary results from an overthrow following the
-// original delivery, the runs already run PLUS the boundary allowance
-// are credited to whichever category the original delivery belongs to —
-// so a Bye/Leg Bye/Wide/No-Ball extra CAN legitimately total more than 4
-// once an overthrow is involved (Law 19.7.1's "never touched the bat"
-// cap only bounds the ORIGINAL stroke, not a subsequent misfield). The
-// picker below is raised to 6 to cover the realistic range (including
-// the rare full-toss overthrow that clears the rope for a 6), with a
-// "Custom…" option for anything beyond that this project's scoring
-// architecture doesn't hardcode a ceiling on.
-function renderExtrasModalButtons(kind){
-  const cfg = EXTRAS_MODAL_CONFIG[kind];
-  const isNbLegBye = kind === 'Nb' && nbLegByeMode;
-  document.getElementById('extras-modal-title').textContent = isNbLegBye
-    ? 'No Ball — Leg Bye runs (missed the bat)?'
-    : cfg.title;
-  const wrap = document.getElementById('extras-modal-options');
-  wrap.innerHTML = '';
-  const maxRuns = 6;
-  const commit = (runs) => {
-    closeExtrasModal();
-    const meta = {};
-    meta[isNbLegBye ? 'legByeRuns' : cfg.metaKey] = runs;
-    recordBall(kind, meta);
-    maybePromptNewBowler();
-  };
-  for(let i = 0; i <= maxRuns; i++){
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'wm-option';
-    b.textContent = String(i);
-    b.addEventListener('click', () => commit(i));
-    wrap.appendChild(b);
-  }
-  const customBtn = document.createElement('button');
-  customBtn.type = 'button';
-  customBtn.className = 'wm-option';
-  customBtn.textContent = 'Custom…';
-  customBtn.addEventListener('click', () => {
-    const raw = prompt('Total runs for this delivery (an overthrow that ran further than the options above)?');
-    if(raw === null) return; // cancelled — leave the modal open
-    const n = parseInt(raw, 10);
-    if(!Number.isFinite(n) || n < 0){ toast('⚠️ Enter a whole number of runs, 0 or more'); return; }
-    commit(n);
-  });
-  wrap.appendChild(customBtn);
+// A 4 — or a 6 struck off the bat on a No Ball — could have been a boundary
+// or all run: the scorer is asked.
+function xmNeedsBoundary(){
+  if(!xm || xm.runs == null || (xm.kind !== 'Wd' && xm.kind !== 'Nb')) return false;
+  return xm.runs === 4 || (xm.runs === 6 && xm.kind === 'Nb' && xm.nbAs === 'bat');
 }
+function xmMeta(){
+  const r = xm.runs || 0;
+  const meta = {};
+  if(xm.kind === 'Wd') meta.extraRuns = r;
+  else if(xm.kind === 'Nb') meta[xm.nbAs === 'bye' ? 'byeRuns' : xm.nbAs === 'legbye' ? 'legByeRuns' : 'runsOffBat'] = r;
+  else meta.runs = r;
+  if(xm.kind === 'Wd' || xm.kind === 'Nb') meta.boundary = xmNeedsBoundary() ? xm.boundary === true : false;
+  return meta;
+}
+// What this entry does, in numbers — so a big custom value is checked
+// before it is saved.
+function xmPreviewText(){
+  if(!xm || xm.runs == null) return xm && xm.kind === 'Nb' ? 'No ball = 1 run to the team (never the batter’s) + the runs below. Not a legal ball.'
+    : xm && xm.kind === 'Wd' ? 'Wide = 1 run to the team + any runs below. Not a legal ball, nobody faces it.'
+    : 'A legal ball — the runs are extras, not the batter’s or the bowler’s.';
+  const r = xm.runs;
+  if(xm.kind === 'Wd') return `Team +${1 + r} · Wides +${1 + r} · Bowler +${1 + r} · Batter 0 · not a legal ball`;
+  if(xm.kind === 'Nb'){
+    if(xm.nbAs === 'bat') return `Team +${1 + r} · Batter +${r} (1 ball faced) · No ball +1 · Bowler +${1 + r} · not a legal ball`;
+    const what = xm.nbAs === 'bye' ? 'Byes' : 'Leg byes';
+    return `Team +${1 + r} · No ball +1 · ${what} +${r} · Bowler +1 · Batter 0 (1 ball faced) · not a legal ball`;
+  }
+  return `Team +${r} · ${xm.kind === 'B' ? 'Byes' : 'Leg byes'} +${r} · Batter 0 · Bowler 0 · legal ball`;
+}
+function xmCommit(){
+  if(!xm || xm.runs == null) return;
+  if(xmNeedsBoundary() && typeof xm.boundary !== 'boolean'){ xm.err = 'Choose Boundary or Running'; renderExtrasModalButtons(xm.kind); return; }
+  const kind = xm.kind, meta = xmMeta();
+  closeExtrasModal();
+  recordBall(kind, meta);
+  maybePromptNewBowler();
+}
+// Picks a run value: records at once unless the boundary question applies.
+function xmPick(runs, custom){
+  xm.runs = runs; xm.custom = !!custom; xm.err = ''; xm.customOpen = false;
+  if(xmNeedsBoundary()){ xm.boundary = true; renderExtrasModalButtons(xm.kind); return; }
+  xmCommit();
+}
+// "+" → any positive whole number. Letters, signs, decimals and blanks are refused.
+function xmApplyCustom(){
+  const input = document.getElementById('xm-custom-input');
+  const raw = String(input ? input.value : '').trim();
+  if(!raw){ xm.err = 'Enter the number of runs'; renderExtrasModalButtons(xm.kind); return; }
+  if(!/^\d+$/.test(raw)){ xm.err = 'Runs must be a whole number — no letters, signs or decimals'; xm.customDraft = raw; renderExtrasModalButtons(xm.kind); return; }
+  const n = Number(raw);
+  if(!Number.isSafeInteger(n) || n < 1){ xm.err = 'Runs must be 1 or more'; xm.customDraft = raw; renderExtrasModalButtons(xm.kind); return; }
+  xm.customDraft = '';
+  xmPick(n, true);
+}
+function renderExtrasModalButtons(kind){
+  if(!xm || xm.kind !== kind) xm = { kind, runs: null, custom: false, customOpen: false, nbAs: 'bat', boundary: null, err: '' };
+  const P = XM_PREFIX[kind];
+  const legal = kind === 'B' || kind === 'LB';
+  document.getElementById('extras-modal-title').innerHTML =
+    `${escapeHtmlPanel(XM_TITLE[kind])} <small class="xm-eq">${legal ? '(legal ball)' : `(${P} = 1)`}</small>`;
+  const wrap = document.getElementById('extras-modal-options');
+  wrap.className = 'wm-options xm';
+  const chip = (i) => `<button type="button" class="xm-chip${!xm.custom && xm.runs === i ? ' on' : ''}" data-xm-runs="${i}">${P} + ${i}</button>`;
+  const asRow = kind === 'Nb' ? `<div class="xm-row"><span class="xm-k">Runs came</span><div class="xm-seg" role="radiogroup">${
+    [['bat', 'From bat'], ['bye', 'Bye'], ['legbye', 'Leg bye']].map(([v, l]) => `<button type="button" role="radio" aria-checked="${xm.nbAs === v}" class="xm-segb${xm.nbAs === v ? ' on' : ''}" data-xm-as="${v}">${l}</button>`).join('')}</div></div>` : '';
+  const need = xmNeedsBoundary();
+  const label = xm.runs == null ? '' : `${P} + ${xm.runs}${need ? (xm.boundary === true ? ' · Boundary' : xm.boundary === false ? ' · Running' : '') : ''}`;
+  wrap.innerHTML = `${asRow}
+    <div class="xm-grid">${[0, 1, 2, 3, 4, 5, 6].map(chip).join('')}<button type="button" class="xm-chip xm-plus${xm.custom ? ' on' : ''}" data-xm-runs="custom" title="Any number of runs">${xm.custom && xm.runs != null ? `${P} + ${xm.runs}` : '+'}</button></div>
+    <div class="xm-custom"${xm.customOpen ? '' : ' hidden'}>
+      <label class="xm-k" for="xm-custom-input">Custom runs</label>
+      <div class="xm-custom-row"><input type="number" id="xm-custom-input" inputmode="numeric" min="1" step="1" placeholder="Enter number" value="${escapeHtmlAttr(xm.customDraft || '')}">
+        <button type="button" class="ghost" data-xm-cancel>Cancel</button><button type="button" class="primary" data-xm-apply>Apply</button></div>
+    </div>
+    <div class="xm-row"${need ? '' : ' hidden'}><span class="xm-k">How were the runs completed?</span><div class="xm-seg" role="radiogroup">
+      <button type="button" role="radio" aria-checked="${xm.boundary === true}" class="xm-segb${xm.boundary === true ? ' on' : ''}" data-xm-bnd="1">Boundary</button>
+      <button type="button" role="radio" aria-checked="${xm.boundary === false}" class="xm-segb${xm.boundary === false ? ' on' : ''}" data-xm-bnd="0">Running</button></div></div>
+    <div class="xm-err" role="alert">${escapeHtmlPanel(xm.err || '')}</div>
+    <div class="xm-preview">${escapeHtmlPanel(xmPreviewText())}</div>
+    ${need ? `<button type="button" class="primary full xm-go" data-xm-go>Save ${escapeHtmlPanel(label)}</button>` : ''}`;
+  if(xm.customOpen) setTimeout(() => { const i = document.getElementById('xm-custom-input'); if(i){ i.focus(); i.select && i.select(); } }, 0);
+}
+(function wireExtrasPicker(){
+  const wrap = document.getElementById('extras-modal-options');
+  if(!wrap) return;
+  wrap.addEventListener('click', (e) => {
+    if(!xm) return;
+    const t = e.target.closest('button');
+    if(!t || !wrap.contains(t)) return;
+    if(t.dataset.xmAs){ xm.nbAs = t.dataset.xmAs; xm.runs = null; xm.custom = false; xm.boundary = null; xm.err = ''; renderExtrasModalButtons(xm.kind); return; }
+    if(t.dataset.xmRuns === 'custom'){ xm.customOpen = !xm.customOpen; xm.err = ''; renderExtrasModalButtons(xm.kind); return; }
+    if(t.dataset.xmRuns != null){ xmPick(Number(t.dataset.xmRuns), false); return; }
+    if(t.hasAttribute('data-xm-cancel')){ xm.customOpen = false; xm.err = ''; xm.customDraft = ''; renderExtrasModalButtons(xm.kind); return; }
+    if(t.hasAttribute('data-xm-apply')){ xmApplyCustom(); return; }
+    if(t.dataset.xmBnd != null){ xm.boundary = t.dataset.xmBnd === '1'; xm.err = ''; renderExtrasModalButtons(xm.kind); return; }
+    if(t.hasAttribute('data-xm-go')) xmCommit();
+  });
+  wrap.addEventListener('keydown', (e) => {
+    if(e.key === 'Enter' && e.target && e.target.id === 'xm-custom-input'){ e.preventDefault(); xmApplyCustom(); }
+  });
+})();
+// Penalty runs: 1-5 (5 is the standard award) or "+" for any positive number.
+function renderPenaltyRunChips(){
+  const box = document.getElementById('penalty-runs-chips');
+  const hid = document.getElementById('penalty-runs');
+  if(!box || !hid) return;
+  const cur = Number(hid.value) || 5;
+  const std = [1, 2, 3, 4, 5];
+  box.innerHTML = std.map(n => `<button type="button" role="radio" aria-checked="${cur === n}" class="xm-chip${cur === n ? ' on' : ''}" data-pen-runs="${n}">${n}</button>`).join('')
+    + `<button type="button" class="xm-chip xm-plus${std.includes(cur) ? '' : ' on'}" data-pen-runs="custom" title="Any number of penalty runs">${std.includes(cur) ? '+' : cur}</button>`;
+}
+function setPenaltyRuns(n){
+  const hid = document.getElementById('penalty-runs');
+  if(hid) hid.value = String(n);
+  renderPenaltyRunChips();
+  try{ penaltyModalRefresh(); }catch(e){ console.error('[PenaltyDropdown] invalid penalty state', e); }
+}
+function applyPenaltyCustom(){
+  const input = document.getElementById('penalty-custom-input');
+  const err = document.getElementById('penalty-custom-err');
+  const raw = String(input ? input.value : '').trim();
+  let msg = '';
+  if(!raw) msg = 'Enter the number of penalty runs';
+  else if(!/^\d+$/.test(raw)) msg = 'Runs must be a whole number — no letters, signs or decimals';
+  else if(!Number.isSafeInteger(Number(raw)) || Number(raw) < 1) msg = 'Runs must be 1 or more';
+  if(err) err.textContent = msg;
+  if(msg) return;
+  document.getElementById('penalty-custom').hidden = true;
+  setPenaltyRuns(Number(raw));
+}
+(function wirePenaltyRuns(){
+  const box = document.getElementById('penalty-runs-chips');
+  if(!box) return;
+  box.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-pen-runs]');
+    if(!b) return;
+    if(b.dataset.penRuns === 'custom'){
+      const c = document.getElementById('penalty-custom');
+      c.hidden = !c.hidden;
+      document.getElementById('penalty-custom-err').textContent = '';
+      if(!c.hidden) setTimeout(() => { try{ document.getElementById('penalty-custom-input').focus(); }catch(err){} }, 0);
+      return;
+    }
+    document.getElementById('penalty-custom').hidden = true;
+    setPenaltyRuns(Number(b.dataset.penRuns));
+  });
+  document.getElementById('penalty-custom-apply').addEventListener('click', applyPenaltyCustom);
+  document.getElementById('penalty-custom-cancel').addEventListener('click', () => { document.getElementById('penalty-custom').hidden = true; document.getElementById('penalty-custom-err').textContent = ''; });
+  document.getElementById('penalty-custom-input').addEventListener('keydown', (e) => { if(e.key === 'Enter'){ e.preventDefault(); applyPenaltyCustom(); } });
+  renderPenaltyRunChips();
+})();
 function closeExtrasModal(){
   document.getElementById('extras-modal-overlay').classList.remove('show');
 }
@@ -14028,6 +14154,11 @@ function openPenaltyModal(){
       : 'Awarded by the umpire — not a delivery. No ball is bowled, no batsman is credited.';
     const notes = document.getElementById('penalty-notes');
     if(notes) notes.value = '';
+    // Every award starts from the standard 5.
+    const pc = document.getElementById('penalty-custom'); if(pc) pc.hidden = true;
+    const pci = document.getElementById('penalty-custom-input'); if(pci) pci.value = '';
+    const pr = document.getElementById('penalty-runs'); if(pr) pr.value = '5';
+    renderPenaltyRunChips();
     penaltyModalRefresh();
     if(errBox) errBox.classList.remove('show');
     const submit = document.getElementById('penalty-modal-submit');

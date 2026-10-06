@@ -263,17 +263,28 @@
       case '4': return { eventType: 'FOUR', outcomeLabel: 'FOUR', defaultHighlight: true };
       case '6': return { eventType: 'SIX', outcomeLabel: 'SIX', defaultHighlight: true };
       case '0': return { eventType: 'CLIP', outcomeLabel: 'Dot ball', defaultHighlight: false };
+      // 🏏 BOUNDARY vs RUNNING — the scorer says which (ball.boundary, stored
+      // with the delivery). Only a row from before that question existed
+      // (boundary null/absent) is still inferred from the run count.
       case 'Wd': {
         var x = Math.max(0, runs - 1);
-        if (x >= 6) return { eventType: 'SIX', outcomeLabel: 'Wide 6', defaultHighlight: true };
-        if (x === 4) return { eventType: 'FOUR', outcomeLabel: 'Wide 4', defaultHighlight: true };
+        var wdB = ball.boundary === true || (ball.boundary == null && x === 4);
+        if (wdB && x >= 6) return { eventType: 'SIX', outcomeLabel: 'Wide 6', defaultHighlight: true };
+        if (wdB) return { eventType: 'FOUR', outcomeLabel: 'Wide ' + x, defaultHighlight: true };
         return { eventType: 'CLIP', outcomeLabel: x ? 'Wide +' + x : 'Wide', defaultHighlight: false };
       }
       case 'Nb': {
-        var bat = Math.max(0, runs - 1);
-        if (bat === 6) return { eventType: 'SIX', outcomeLabel: 'No Ball 6', defaultHighlight: true };
-        if (bat === 4) return { eventType: 'FOUR', outcomeLabel: 'No Ball 4', defaultHighlight: true };
-        return { eventType: 'CLIP', outcomeLabel: bat ? 'No Ball +' + bat : 'No Ball', defaultHighlight: false };
+        var as = ball.nbRunsAs === 'bye' || ball.nbRunsAs === 'legbye' ? ball.nbRunsAs : 'bat';
+        var more = Math.max(0, runs - 1);
+        var nbB = ball.boundary === true || (ball.boundary == null && as === 'bat' && (more === 4 || more === 6));
+        if (as !== 'bat') {
+          var nm = as === 'bye' ? ' bye' : ' leg bye';
+          if (nbB) return { eventType: 'FOUR', outcomeLabel: 'No Ball + ' + more + nm + 's (boundary)', defaultHighlight: true };
+          return { eventType: 'CLIP', outcomeLabel: more ? 'No Ball + ' + more + nm + plural(more) : 'No Ball', defaultHighlight: false };
+        }
+        if (nbB && more === 6) return { eventType: 'SIX', outcomeLabel: 'No Ball 6', defaultHighlight: true };
+        if (nbB) return { eventType: 'FOUR', outcomeLabel: 'No Ball ' + more, defaultHighlight: true };
+        return { eventType: 'CLIP', outcomeLabel: more ? 'No Ball +' + more : 'No Ball', defaultHighlight: false };
       }
       case 'B': return { eventType: 'CLIP', outcomeLabel: 'Bye ' + runs, defaultHighlight: runs === 4 };
       case 'LB': return { eventType: 'CLIP', outcomeLabel: 'Leg Bye ' + runs, defaultHighlight: runs === 4 };

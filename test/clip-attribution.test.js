@@ -232,6 +232,15 @@ t('4/6/W/extras map to the same buckets the panel uses', () => {
   assert.strictEqual(ev({ kind: 'Wd', runs: 5 }), 'FOUR|Wide 4');
   assert.strictEqual(ev({ kind: 'Nb', runs: 7 }), 'SIX|No Ball 6');
   assert.strictEqual(ev({ kind: 'LB', runs: 4 }), 'CLIP|Leg Bye 4');
+  // BOUNDARY vs RUNNING is the scorer's stored answer, never the run count.
+  assert.strictEqual(ev({ kind: 'Nb', runs: 5, boundary: true }), 'FOUR|No Ball 4');
+  assert.strictEqual(ev({ kind: 'Nb', runs: 5, boundary: false }), 'CLIP|No Ball +4');
+  assert.strictEqual(ev({ kind: 'Nb', runs: 7, boundary: false }), 'CLIP|No Ball +6');
+  assert.strictEqual(ev({ kind: 'Wd', runs: 5, boundary: false }), 'CLIP|Wide +4');
+  assert.strictEqual(ev({ kind: 'Wd', runs: 5, boundary: true }), 'FOUR|Wide 4');
+  assert.strictEqual(ev({ kind: 'Nb', runs: 5, nbRunsAs: 'legbye', boundary: true }), 'FOUR|No Ball + 4 leg byes (boundary)');
+  assert.strictEqual(ev({ kind: 'Nb', runs: 3, nbRunsAs: 'bye' }), 'CLIP|No Ball + 2 bye' + 's');
+  assert.strictEqual(ev({ kind: 'Wd', runs: 26 }), 'CLIP|Wide +25');
   assert.strictEqual(ev({ kind: 'W', runs: 0, dismissal: { type: 'Retired Hurt' } }), 'CLIP|0 runs');
 });
 

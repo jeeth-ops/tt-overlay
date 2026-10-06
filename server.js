@@ -5393,11 +5393,19 @@ const VALID_EXTRA_TYPES = new Set(['none', 'wide', 'noball', 'bye', 'legbye', 'o
 // Laws of Cricket — No ball, Wide, Bye, Leg bye) from the existing single
 // `kind` + team-run-delta `runs` a ball document already stores. Purely
 // read-only/derived — never changes how kind/runs are written elsewhere.
-function deriveBallFacts(kind, runs) {
+// `ball` (optional) is the stored delivery: on a No Ball its nbRunsAs says
+// whether the runs beyond the 1-run penalty came off the bat ('bat', also the
+// meaning of a row from before the field existed), as byes or as leg byes.
+function deriveBallFacts(kind, runs, ball) {
     const total = Number(runs) || 0;
     switch (kind) {
         case 'Wd': return { legalBall: false, extraType: 'wide', runsOffBat: 0, extraRuns: total };
-        case 'Nb': { const bat = Math.max(0, total - 1); return { legalBall: false, extraType: 'noball', runsOffBat: bat, extraRuns: total - bat }; }
+        case 'Nb': {
+            const as = ball && (ball.nbRunsAs === 'bye' || ball.nbRunsAs === 'legbye') ? ball.nbRunsAs : 'bat';
+            const more = Math.max(0, total - 1);
+            const bat = as === 'bat' ? more : 0;
+            return { legalBall: false, extraType: 'noball', runsOffBat: bat, extraRuns: total - bat, nbRunsAs: as, nbExtraRuns: as === 'bat' ? 0 : more };
+        }
         case 'B': return { legalBall: true, extraType: 'bye', runsOffBat: 0, extraRuns: total };
         case 'LB': return { legalBall: true, extraType: 'legbye', runsOffBat: 0, extraRuns: total };
         // 🏏 A PENALTY AWARD, not a delivery: it consumes no legal ball, is
@@ -5438,7 +5446,9 @@ function mapBallForPublic(b) {
         bowler: b.bowler || '',
         battingTeam: b.battingTeam === 'B' ? 'B' : 'A',
         isWicket: !!b.dismissal,
-        dismissal: b.dismissal || null
+        dismissal: b.dismissal || null,
+        ...(typeof b.boundary === 'boolean' ? { boundary: b.boundary } : {}),
+        ...(b.nbRunsAs ? { nbRunsAs: b.nbRunsAs } : {})
     };
 }
 
@@ -5520,12 +5530,11 @@ function findStrikeInconsistencies(inningsBalls) {
             });
             striker = b.striker; nonStriker = b.nonStriker; // self-heal from the recorded value so this doesn't cascade
         }
-        const facts = deriveBallFacts(b.kind, b.runs);
+        const facts = deriveBallFacts(b.kind, b.runs, b);
         // Runs actually RUN between the wickets (as opposed to runs credited
         // to the team): a Wide's first run is the automatic penalty, not run;
         // a No Ball's bat runs (if any) are run, its 1-run penalty is not.
-        const runsRun = facts.extraType === 'wide' ? Math.max(0, (b.runs || 0) - 1)
-            : facts.extraType === 'noball' ? facts.runsOffBat
+        const runsRun = (facts.extraType === 'wide' || facts.extraType === 'noball') ? Math.max(0, (b.runs || 0) - 1)
             : (b.runs || 0);
         let swap = (runsRun % 2) === 1;
         if (facts.legalBall) { legalInOver++; if (legalInOver === 6) { swap = !swap; legalInOver = 0; } }
@@ -5566,7 +5575,7 @@ function validateCorrectedBalls(balls, beforeBalls) {
         list.forEach(b => {
             const ik = b.innings || 1;
             wicketsByInnings[ik] = (wicketsByInnings[ik] || 0) + (b.dismissal ? 1 : 0);
-            if (deriveBallFacts(b.kind, b.runs).legalBall) {
+            if (deriveBallFacts(b.kind, b.runs, b).legalBall) {
                 const ok = `${ik}-${b.over}`;
                 legalByOver[ok] = (legalByOver[ok] || 0) + 1;
             }
@@ -5692,7 +5701,7 @@ function deliveryCorrectionDelta(before, after) {
     const extras = {};
     ['wd', 'nb', 'b', 'lb'].forEach(x => { const d = n(ca.extras[bt][x]) - n(cb.extras[bt][x]); if (d) extras[x] = d; });
     return {
-        legalChanged: deriveBallFacts(before.kind, before.runs).legalBall !== deriveBallFacts(after.kind, after.runs).legalBall,
+        legalChanged: deriveBallFacts(before.kind, before.runs, before).legalBall !== deriveBallFacts(after.kind, after.runs, after).legalBall,
         team: { runs: n(after.runs) - n(before.runs), wickets: (after.dismissal ? 1 : 0) - (before.dismissal ? 1 : 0), extras },
         batting, bowling
     };
@@ -6234,7 +6243,7 @@ adminRouter.get('/clips/:clipId/editor', async (req, res) => {
                 ballId: String(ball._id), deliveryId: ball.ballUid || null,
                 matchId: ball.matchId, innings: ball.innings || 1, over: ball.over, ballInOver: ball.ballInOver,
                 battingTeam: ball.battingTeam === 'B' ? 'B' : 'A',
-                kind: ball.kind, runs: ball.runs, legalBall: deriveBallFacts(ball.kind, ball.runs).legalBall,
+                kind: ball.kind, runs: ball.runs, legalBall: deriveBallFacts(ball.kind, ball.runs, ball).legalBall,
                 correctedAt: ball.correctedAt || null,
                 input: correctionInputFromBall(ball)
             } : null,
@@ -6319,7 +6328,7 @@ adminRouter.put('/clips/:clipId/edit', async (req, res) => {
 // ================================================================
 const DELIVERY_BALLS_PER_OVER = 6; // every format the panel scores (FORMAT_RULES) bowls 6-ball overs
 
-function isLegalDelivery(b) { return !!b && b.kind !== 'PEN' && deriveBallFacts(b.kind, b.runs).legalBall; }
+function isLegalDelivery(b) { return !!b && b.kind !== 'PEN' && deriveBallFacts(b.kind, b.runs, b).legalBall; }
 
 function deliveryOrderCompare(a, b) {
     return ((a.innings || 1) - (b.innings || 1))
@@ -6371,9 +6380,8 @@ function renumberDeliveries(seq, startIdx, cursor, bpo) {
 // derived from the log.
 function creaseAfterDelivery(ball, bpo) {
     if (!ball || ball.dismissal) return null;
-    const facts = deriveBallFacts(ball.kind, ball.runs);
-    const runsRun = facts.extraType === 'wide' ? Math.max(0, (ball.runs || 0) - 1)
-        : facts.extraType === 'noball' ? facts.runsOffBat : (ball.runs || 0);
+    const facts = deriveBallFacts(ball.kind, ball.runs, ball);
+    const runsRun = (facts.extraType === 'wide' || facts.extraType === 'noball') ? Math.max(0, (ball.runs || 0) - 1) : (ball.runs || 0);
     let s = { name: ball.striker, id: ball.strikerId || null, pid: ball.strikerPlayerId || null };
     let n = { name: ball.nonStriker, id: ball.nonStrikerId || null, pid: ball.nonStrikerPlayerId || null };
     let swap = runsRun % 2 === 1;
@@ -9183,7 +9191,7 @@ function buildLiveCardsFromBallsArray(balls) {
         const bt = b.battingTeam === 'B' ? 'B' : 'A';
         const bowlTeam = bt === 'A' ? 'B' : 'A';
         const inn = b.innings || 1;
-        const facts = deriveBallFacts(b.kind, b.runs);
+        const facts = deriveBallFacts(b.kind, b.runs, b);
         teamTotals[bt].runs += b.runs || 0;
         if (b.dismissal) teamTotals[bt].wickets++;
         if (facts.legalBall) teamTotals[bt].legalBalls++;
@@ -9196,7 +9204,12 @@ function buildLiveCardsFromBallsArray(balls) {
         // Overthrow ('OT') is a legal delivery credited entirely to the
         // striker, so it never touches extras here, same as a plain '0'-'6'.
         if (b.kind === 'Wd') extras[bt].wd += b.runs || 0;
-        else if (b.kind === 'Nb') extras[bt].nb += 1;
+        else if (b.kind === 'Nb') {
+            extras[bt].nb += 1;
+            // Byes / leg byes off a No Ball are byes / leg byes, never the batter's.
+            if (facts.nbRunsAs === 'bye') extras[bt].b += facts.nbExtraRuns;
+            else if (facts.nbRunsAs === 'legbye') extras[bt].lb += facts.nbExtraRuns;
+        }
         else if (b.kind === 'B') extras[bt].b += b.runs || 0;
         else if (b.kind === 'LB') extras[bt].lb += b.runs || 0;
         else if (b.kind === 'PEN') extras[bt].pen += b.runs || 0;
@@ -9243,6 +9256,13 @@ function buildLiveCardsFromBallsArray(balls) {
             row.runs += facts.runsOffBat || 0;
             if (b.kind === '4') row.fours++;
             if (b.kind === '6') row.sixes++;
+            // A 4 / 6 off the bat on a No Ball is the batter's boundary only
+            // when the scorer said BOUNDARY (b.boundary) — an NB + 4 that was
+            // all run is four runs, not a four. A row from before that
+            // question existed (boundary absent) keeps the old reading.
+            if (b.kind === 'Nb' && (facts.runsOffBat === 4 || facts.runsOffBat === 6) && b.boundary !== false) {
+                if (facts.runsOffBat === 4) row.fours++; else row.sixes++;
+            }
         }
 
         // 🎯 A Bye / Leg Bye is still a ball BOWLED by the bowler (it counts
@@ -9255,7 +9275,11 @@ function buildLiveCardsFromBallsArray(balls) {
             if (!bowling[bowlTeam][rowKey]) bowling[bowlTeam][rowKey] = { name: b.bowler || b.bowlerKey, balls: 0, runs: 0, wickets: 0, dots: 0, noBalls: 0, wides: 0, inningsNo: inn, _bowlerKey: b.bowlerKey };
             const row = bowling[bowlTeam][rowKey];
             const isLegal = b.kind !== 'Wd' && b.kind !== 'Nb';
-            const charged = (b.kind === 'B' || b.kind === 'LB') ? 0 : (b.runs || 0);
+            // Byes / leg byes are never the bowler's — off a No Ball he is
+            // charged its penalty plus any runs off the bat only.
+            const charged = (b.kind === 'B' || b.kind === 'LB') ? 0
+                : b.kind === 'Nb' ? 1 + (facts.runsOffBat || 0)
+                : (b.runs || 0);
             if (isLegal) row.balls++;
             row.runs += charged;
             // 0s / NB / WD columns: a dot is a legal ball off which the
@@ -9813,7 +9837,7 @@ function inningsArchiveFromBalls(balls, existing) {
         const e = per[inn];
         e.runs += b.runs || 0;
         if (b.dismissal) e.wickets++;
-        if (deriveBallFacts(b.kind, b.runs).legalBall) e.legalBalls++;
+        if (deriveBallFacts(b.kind, b.runs, b).legalBall) e.legalBalls++;
     });
     const wasDeclared = {};
     (existing || []).forEach(x => { if (x && x.declared) wasDeclared[Number(x.no)] = true; });
@@ -10834,6 +10858,11 @@ io.on('connection', async (socket) => {
                     ...(data.dismissal.subtype ? { subtype: String(data.dismissal.subtype).slice(0, 40) } : {})
                 } : null,
                 dismissedPlayerKey: data.dismissal ? (playerKey(personName(data.dismissal.batter)) || null) : null,
+                // 🏏 Wide / No Ball: BOUNDARY vs RUNNING as the scorer answered
+                // it, and (No Ball) whether the runs came off the bat, as byes
+                // or as leg byes. Absent on every other delivery.
+                ...((data.kind === 'Wd' || data.kind === 'Nb') && typeof data.boundary === 'boolean' ? { boundary: data.boundary } : {}),
+                ...(data.kind === 'Nb' && (data.nbRunsAs === 'bye' || data.nbRunsAs === 'legbye' || data.nbRunsAs === 'bat') ? { nbRunsAs: data.nbRunsAs } : {}),
                 dismissedPlayerId: dismissedPlayerId || null,
                 // The roster ids exactly as the panel sent them (the
                 // *PlayerId fields above are the resolved global ids) —
