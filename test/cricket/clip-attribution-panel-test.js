@@ -86,10 +86,10 @@ function moveOn(P){
 async function runOutLastBall(P, who, runsCompleted){
   setup(P);
   P.E('openWicketModal()');
-  click(P, '.wm-option[data-dismissal="Run Out"]');
-  if(runsCompleted) click(P, `#runout-runs-row .wm-pill[data-runs="${runsCompleted}"]`);
-  click(P, `#runout-batter-row .wm-pill[data-who="${who}"]`);
-  click(P, '#runout-modal-submit');
+  click(P, '[data-wd-type="Run Out"]');
+  if(runsCompleted) click(P, `[data-wd-runs="${runsCompleted}"]`);
+  click(P, `[data-wd-who="${who}"]`);
+  click(P, '#wd-confirm');
   moveOn(P);
   await sleep(2300); // the website classification is sent HL_CLASSIFY_DELAY_MS after the ball
 }
@@ -145,7 +145,7 @@ async function suite(file, opts){
   console.log('\n=== Test E / F — 12.6 bowled A, caught A by X ===');
   setup(P);
   P.E('openWicketModal()');
-  click(P, '.wm-option[data-dismissal="Bowled"]');
+  click(P, '[data-wd-type="Bowled"]'); click(P, '#wd-confirm');
   moveOn(P);
   await sleep(2300);
   {
@@ -156,9 +156,9 @@ async function suite(file, opts){
   }
   setup(P);
   P.E('openWicketModal()');
-  click(P, '.wm-option[data-dismissal="Caught"]');
-  P.E(`document.getElementById('caught-modal-fielder-input').value = 'Fielder X'`);
-  click(P, '#caught-modal-submit');
+  click(P, '[data-wd-type="Caught"]');
+  P.E(`document.getElementById('wd-fielder-input').value = 'Fielder X'`);
+  click(P, '#wd-confirm');
   moveOn(P);
   await sleep(2300);
   {
@@ -190,24 +190,24 @@ async function suite(file, opts){
   console.log('\n=== Test I — multi-device: crease changes while the wicket modal is open ===');
   setup(P);
   P.E('openWicketModal()');
-  click(P, '.wm-option[data-dismissal="Run Out"]');
-  click(P, '#runout-batter-row .wm-pill[data-who="striker"]');
+  click(P, '[data-wd-type="Run Out"]');
+  click(P, '[data-wd-who="striker"]');
   const logLen = P.E('state.ballLog.length');
   // Another device's update lands: different batters at the crease.
   P.E(`state.striker = { name:'Player C', id:'pC', runs:0, balls:0, fours:0, sixes:0 }`);
-  click(P, '#runout-modal-submit');
+  click(P, '#wd-confirm');
   eq('nothing recorded against the wrong batter', P.E('state.ballLog.length'), logLen);
 
   console.log('\n=== one wicket, one clip ===');
   setup(P);
   P.E('openWicketModal()');
-  click(P, '#wicket-modal-cancel');
+  click(P, '#wd-cancel');
   P.E('openWicketModal()');
-  click(P, '.wm-option[data-dismissal="Bowled"]');
+  click(P, '[data-wd-type="Bowled"]'); click(P, '#wd-confirm');
   eq('cancel + re-press cuts ONE wicket clip', clipCalls(P, 'WICKET').length, 1);
   setup(P);
   P.E('openWicketModal()');
-  click(P, '#wicket-modal-cancel');
+  click(P, '#wd-cancel');
   P.E(`recordBall('1')`);
   P.E('answerOldestHighlightPrompt(false)'); // "Add this clip to Highlights?" → NO
   await sleep(2300);
@@ -220,7 +220,7 @@ async function suite(file, opts){
     console.log('\n=== Undo → re-score reuses the same wicket clip ===');
     setup(P);
     P.E('openWicketModal()');
-    click(P, '.wm-option[data-dismissal="Bowled"]');
+    click(P, '[data-wd-type="Bowled"]'); click(P, '#wd-confirm');
     const firstClip = clipCalls(P, 'WICKET')[0].body.clipId;
     P.E('sendInNewBatsman("Player C", "pC")');
     const lenAfterWicket = P.E('state.ballLog.length');
@@ -229,9 +229,9 @@ async function suite(file, opts){
     await P.E('deleteLastBall()'); // undoes the wicket
     eq('undoing the wicket removes it', P.E('state.ballLog.length'), lenAfterWicket - 1);
     P.E('openWicketModal()');
-    click(P, '.wm-option[data-dismissal="Run Out"]');
-    click(P, '#runout-batter-row .wm-pill[data-who="nonStriker"]');
-    click(P, '#runout-modal-submit');
+    click(P, '[data-wd-type="Run Out"]');
+    click(P, '[data-wd-who="nonStriker"]');
+    click(P, '#wd-confirm');
     eq('no second wicket clip after undo', clipCalls(P, 'WICKET').length, 1);
     const m = metaCalls(P).filter(x => x.body.clipId === firstClip).slice(-1)[0];
     eq('the original clip is re-labelled with the corrected dismissal', m && [m.body.ballMeta.dismissedPlayerId, m.body.ballMeta.dismissal.type], ['pB', 'Run Out']);

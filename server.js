@@ -6926,6 +6926,16 @@ async function correctBowlerForOvers(matchId, actorEmail, input, dryRun, request
     await ballsCollection.bulkWrite(bulkOps);
 
     if (ownerUid) await syncMatchRecordFromBalls(ownerUid, matchId, { force: true, reason: 'owner correction' });
+    // 📣 The scoring panel applies the same correction to its own deliveries
+    // and figures (applyRemoteBowlerReassign) — otherwise its next save
+    // would carry the old bowler straight back.
+    try {
+        io.to(`room-${matchId}`).emit('cricketBowlerReassigned', {
+            id: `bwl_${Date.now()}`, matchId, innings, overs,
+            fromBowler: wrongBowlerName, toBowler: correctBowlerName, toBowlerId: null,
+            deliveryIds: targets.map(b => b.ballUid).filter(Boolean), source: 'scorecard'
+        });
+    } catch (e) { /* the record itself is already corrected */ }
 
     // Clips keep their identity (same Cloudflare video/clip id, same
     // match/over/ball) and simply follow onto the corrected bowler — never
@@ -9110,6 +9120,8 @@ async function buildLiveCardsFromBalls(matchId) {
 function isSuperOverBall(b) { return !!b && (b.phase === 'SUPER_OVER' || Number(b.innings) >= 100); }
 
 function buildLiveCardsFromBallsArray(balls) {
+    // Dismissals that are never the bowler's wicket.
+    const BOWLER_UNCREDITED_DISMISSALS = new Set(['run out', 'retired hurt', 'retired out', 'obstructing the field', 'timed out', 'handled the ball']);
     balls = (balls || []).filter(b => !isSuperOverBall(b));
     const batting = { A: {}, B: {} };     // battingTeam -> strikerKey -> row
     const bowling = { A: {}, B: {} };     // bowlingTeam (bowler's own team) -> bowlerKey -> row
@@ -9229,19 +9241,26 @@ function buildLiveCardsFromBallsArray(balls) {
             if (b.kind === '6') row.sixes++;
         }
 
-        if (b.bowlerKey && b.kind !== 'B' && b.kind !== 'LB' && b.kind !== 'PEN') {
+        // 🎯 A Bye / Leg Bye is still a ball BOWLED by the bowler (it counts
+        // in his overs) — only its runs are not charged to him. It used to be
+        // skipped entirely, so every bye or leg bye left the bowler a ball
+        // short. A delivery with no bowler yet (scored before the bowler was
+        // known) has no bowlerKey and is credited to nobody until assigned.
+        if (b.bowlerKey && b.kind !== 'PEN') {
             const rowKey = `${b.bowlerKey}::${inn}`;
             if (!bowling[bowlTeam][rowKey]) bowling[bowlTeam][rowKey] = { name: b.bowler || b.bowlerKey, balls: 0, runs: 0, wickets: 0, inningsNo: inn, _bowlerKey: b.bowlerKey };
             const row = bowling[bowlTeam][rowKey];
             const isLegal = b.kind !== 'Wd' && b.kind !== 'Nb';
+            const charged = (b.kind === 'B' || b.kind === 'LB') ? 0 : (b.runs || 0);
             if (isLegal) row.balls++;
-            row.runs += b.runs || 0;
-            if (b.dismissal && b.dismissal.type && b.dismissal.type.toLowerCase() !== 'run out') row.wickets++;
+            row.runs += charged;
+            // Only the dismissals the bowler is credited with.
+            if (b.dismissal && b.dismissal.type && !BOWLER_UNCREDITED_DISMISSALS.has(String(b.dismissal.type).toLowerCase())) row.wickets++;
 
             const overKey = `${b.bowlerKey}::${inn}-${b.over}`;
             if (!oversBowled[bowlTeam][overKey]) oversBowled[bowlTeam][overKey] = { bowlerKey: b.bowlerKey, inningsNo: inn, legalBalls: 0, runs: 0 };
             if (isLegal) oversBowled[bowlTeam][overKey].legalBalls++;
-            oversBowled[bowlTeam][overKey].runs += b.runs || 0;
+            oversBowled[bowlTeam][overKey].runs += charged;
         }
     });
 
@@ -9702,7 +9721,11 @@ function ballDocsFromPanelState(st, matchId, ownerUid) {
     return log.map(b => {
         const kind = b.ballType;
         const isWicket = kind === 'W' || kind === 'WdW' || kind === 'NbW' || !!b.isWicket;
-        const dbKind = kind === 'WdW' ? 'Wd' : kind === 'NbW' ? 'Nb' : kind;
+        // A Run Out whose completed runs were byes / leg byes (see runsAs in
+        // the panel) is that delivery with a dismissal, exactly as logBall stores it.
+        const dbKind = (kind === 'W' && (b.runs || 0) > 0 && b.runsAs === 'bye') ? 'B'
+            : (kind === 'W' && (b.runs || 0) > 0 && b.runsAs === 'legbye') ? 'LB'
+            : kind === 'WdW' ? 'Wd' : kind === 'NbW' ? 'Nb' : kind;
         const parts = String(b.over || '0.0').split('.');
         return {
             matchId,
@@ -10027,6 +10050,69 @@ async function syncMatchRecordFromBalls(ownerUid, matchId, opts) {
         console.log('syncMatchRecordFromBalls error:', err);
         return { synced: false, reason: 'error' };
     }
+}
+
+// 🎯 BOWLER ASSIGNMENT / CORRECTION FROM THE SCORING PANEL — changes WHO
+// BOWLED the given deliveries in the permanent log, nothing else (score,
+// runs, extras, wickets, striker and ball count are untouched; no delivery
+// is created or removed). Then the saved scorecard is rebuilt from the
+// balls, so the website shows exactly what the panel shows.
+//   op = { innings, over, bowler, bowlerId, deliveryIds[], allHaveIds, fromBowlers[] }
+// Deliveries are matched by their own ids (ballUid) when every one has one;
+// otherwise by innings + over, limited to the bowler(s) they were moved from
+// (an empty name = scored without a bowler) — never a whole match.
+async function reassignBowlerInDb(matchId, op, hintUid) {
+    if (!ballsCollection) return { ok: false, retry: true, error: 'db-unavailable' };
+    const bowler = personName(op && op.bowler);
+    const innings = Number(op && op.innings);
+    const over = Number(op && op.over);
+    if (!matchId || !bowler || bowler.length > 80 || !Number.isFinite(innings) || !Number.isFinite(over) || over < 0) {
+        return { ok: false, retry: false, error: 'bad-request' };
+    }
+    const ids = Array.isArray(op.deliveryIds) ? op.deliveryIds.map(String).filter(Boolean).slice(0, 60) : [];
+    let filter;
+    if (ids.length && op.allHaveIds) {
+        filter = { matchId, ballUid: { $in: ids }, kind: { $ne: 'PEN' } };
+    } else {
+        const from = (Array.isArray(op.fromBowlers) ? op.fromBowlers : []).map(personName);
+        const keys = from.filter(Boolean).map(playerKey);
+        const or = [];
+        if (keys.length) or.push({ bowlerKey: { $in: keys } });
+        if (from.some(n => !n)) or.push({ bowler: { $in: ['', null] } }, { bowler: { $exists: false } });
+        if (!or.length) return { ok: true, updated: 0 };
+        filter = { matchId, innings, over, kind: { $ne: 'PEN' }, $or: or };
+        if (ids.length) filter = { $or: [filter, { matchId, ballUid: { $in: ids }, kind: { $ne: 'PEN' } }] };
+    }
+    const docs = await ballsCollection.find(filter).toArray();
+    if (!docs.length) return { ok: true, updated: 0 };
+    const ownerUid = docs[0].ownerUid || await resolveOwnerUidForMatch(matchId, hintUid);
+    const bowlerPlayerId = ownerUid ? await resolvePlayerIdExplicit(ownerUid, op.bowlerId, bowler) : null;
+    const now = Date.now();
+    await ballsCollection.bulkWrite(docs.map(d => ({
+        updateOne: {
+            filter: { _id: d._id },
+            update: { $set: {
+                bowler, bowlerKey: playerKey(bowler), bowlerId: op.bowlerId ? String(op.bowlerId) : null,
+                bowlerPlayerId: bowlerPlayerId || null, bowlerAssignedAt: now,
+                bowlerAssignedFrom: d.bowler || null
+            } }
+        }
+    })));
+    // Clips follow their delivery onto the right bowler (same as the
+    // website's own bowler correction).
+    if (clipsCollection) {
+        const fromKeys = [...new Set(docs.map(d => d.bowlerKey).filter(Boolean))];
+        clipsCollection.updateMany(
+            { matchId, innings, over, ...(fromKeys.length ? { bowlerKey: { $in: fromKeys } } : {}) },
+            { $set: { bowlerName: bowler, bowlerKey: playerKey(bowler) } }
+        ).then(() => invalidateClipsCache(matchId)).catch(err => console.log('Clip resync after bowler assignment error:', err));
+    }
+    if (ownerUid) scheduleMatchRecordSync(ownerUid, matchId, { force: true, reason: 'panel bowler assignment' });
+    await logAuditAction('panel scorer', 'Panel bowler assignment',
+        `Match ${matchId} — Innings ${innings} Over ${over + 1}: ${[...new Set(docs.map(d => d.bowler || 'Unassigned'))].join(', ')} → ${bowler}`,
+        { balls: docs.map(d => ({ _id: d._id, bowler: d.bowler || null })) }, { bowler },
+        { matchId, ballIds: docs.map(d => String(d._id)) });
+    return { ok: true, updated: docs.length };
 }
 
 function scheduleMatchRecordSync(ownerUid, matchId, opts) {
@@ -10787,6 +10873,20 @@ io.on('connection', async (socket) => {
     // might belong to another device. Same trust level as logBall itself:
     // whoever can write a delivery into this room can take their own one
     // back out. The row is archived, not destroyed.
+    // 🎯 The panel assigned / corrected the bowler of an over — see
+    // reassignBowlerInDb(). Same trust as logBall/undoBall (the match
+    // room's own scoring panel), and only ever changes WHO BOWLED.
+    socket.on('reassignBowler', async (data, ack) => {
+        const reply = (payload) => { if (typeof ack === 'function') { try { ack(payload); } catch (e) {} } };
+        try {
+            const matchId = safeMatchId((data && data.matchId) || matchIdForClient);
+            reply(await reassignBowlerInDb(matchId, data || {}, data && data.uid));
+        } catch (err) {
+            console.log('reassignBowler error:', err);
+            reply({ ok: false, retry: true });
+        }
+    });
+
     socket.on('undoBall', async (data, ack) => {
         const reply = (payload) => { if (typeof ack === 'function') { try { ack(payload); } catch (e) {} } };
         if (!ballsCollection) return reply({ ok: false });

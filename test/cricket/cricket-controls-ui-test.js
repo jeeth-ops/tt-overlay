@@ -98,9 +98,9 @@ async function suite(file, label){
   newMatch(P);
   P.E(`recordBall('0'); recordBall('1'); recordBall('0');`);
   P.E(`applyBowlerChange('Second Bowler', 'p8')`);
-  eq(`${label}: mid-over change asks: bowler change or wrong name?`, shown(P, 'midover-bowler-overlay'), true);
-  click(P, P.$('#midover-replace-btn'));
-  eq(`${label}: replacement — the first bowler keeps their 3 balls`, P.E(`[state.bowler.name, state.bowler.balls, (state.bowlingCard.B.find(b => b.name === 'Bowler') || {}).balls]`), ['Second Bowler', 0, 3]);
+  eq(`${label}: mid-over change asks: this over from its start, or future deliveries only?`, [shown(P, 'ba-overlay'), /3 deliveries are currently assigned to Bowler/.test(P.$('#ba-note').textContent)], [true, true]);
+  click(P, P.$('#ba-future'));
+  eq(`${label}: future only — the first bowler keeps their 3 balls`, P.E(`[state.bowler.name, state.bowler.balls, (state.bowlingCard.B.find(b => b.name === 'Bowler') || {}).balls]`), ['Second Bowler', 0, 3]);
 
   console.log('\n=== Super Over ===');
   newMatch(P);

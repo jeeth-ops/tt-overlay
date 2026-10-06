@@ -57,7 +57,7 @@ function coll(docs, world){
     replaceOne: async (q, doc) => { const i = docs.findIndex(d => matches(d, q)); if(i >= 0) docs[i] = clone(doc); return { matchedCount: i >= 0 ? 1 : 0 }; },
     updateOne: async (q, u) => { fail('updateOne'); const d = docs.find(x => matches(x, q)); if(d && u.$set) Object.assign(d, clone(u.$set)); return { matchedCount: d ? 1 : 0 }; },
     updateMany: async (q, u) => { docs.filter(x => matches(x, q)).forEach(d => Object.assign(d, clone(u.$set))); return {}; },
-    bulkWrite: async (ops) => { fail('bulkWrite'); for(const op of ops){ if(op.replaceOne){ const i = docs.findIndex(d => matches(d, op.replaceOne.filter)); if(i >= 0) docs[i] = clone(op.replaceOne.replacement); } } return {}; },
+    bulkWrite: async (ops) => { fail('bulkWrite'); for(const op of ops){ if(op.replaceOne){ const i = docs.findIndex(d => matches(d, op.replaceOne.filter)); if(i >= 0) docs[i] = clone(op.replaceOne.replacement); } if(op.updateOne){ const d = docs.find(x => matches(x, op.updateOne.filter)); if(d && op.updateOne.update.$set) Object.assign(d, clone(op.updateOne.update.$set)); } } return {}; },
   };
 }
 
@@ -88,6 +88,8 @@ function build(world, fnNames, asyncNames, constNames){
     io: { to: (room) => ({ emit: (ev, payload) => world.emits.push({ room, ev, payload }) }) },
     db: { collection: () => ({ doc: () => ({ set: async () => {} }) }) },
     invalidateClipsCache: () => {},
+    scheduleMatchRecordSync: (uid, matchId, opts) => { world.scheduledSyncs = (world.scheduledSyncs || 0) + 1; return deps.syncMatchRecordFromBalls(uid, matchId, opts); },
+    resolveOwnerUidForMatch: async (matchId, hint) => hint || null,
     logAuditAction: async (...a) => world.audits.push(a),
     verifyIdTokenFull: async (t) => t === 'owner-token' ? { email: 'chhayajeeth@gmail.com', uid: 'owner' } : t === 'other-token' ? { email: 'someone@gmail.com', uid: 'x' } : null,
     require: (m) => m === 'mongodb' ? { ObjectId } : require(m),
