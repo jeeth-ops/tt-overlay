@@ -138,6 +138,8 @@ let matchRecordsCollection = null;
 // tournamentMatchId) — so "Resume" never depends on whatever match currently
 // happens to occupy that match's live room. See /api/cricket/match-resume-state.
 let matchPanelStatesCollection = null;
+let matchLocksCollection = null;   // 🔒 match lock codes — see MATCH LOCK CODES
+let matchLockSecret = null;
 let playersCollection = null;
 let teamsCollection = null;
 // 🛟 Append-only version history of every match record (see
@@ -185,6 +187,17 @@ async function connectMongo() {
         } catch (e) {
             console.log('matchPanelStates init error (Resume fallback disabled):', e.message || e);
             matchPanelStatesCollection = null;
+        }
+        try {
+            matchLocksCollection = mongoDb.collection('matchLocks');
+            await matchLocksCollection.createIndex({ roomId: 1 }, { unique: true });
+            await matchLocksCollection.createIndex({ codeHmac: 1 }, { unique: true });
+            await matchLocksCollection.createIndex({ matchId: 1 });
+            matchLockSecret = await loadMatchLockSecret(mongoDb);
+            if (!matchLockSecret) throw new Error('no secret');
+        } catch (e) {
+            console.log('matchLocks init error (match codes disabled):', e.message || e);
+            matchLocksCollection = null;
         }
         // 🌟 GLOBAL PLAYER PROFILES — one permanent playerId per real person,
         // per owner account, instead of every ball/clip/stats query matching
@@ -2091,6 +2104,250 @@ app.get('/api/league/:name', requireAuthorizedCreator, async (req, res) => {
     }
 });
 
+// ================================================================
+// 🔒 MATCH LOCK CODES — an operator may lock a match with a short code
+// (7 letters + digits) when scheduling or creating it. Only a laptop that
+// has entered that code can score it, and only ONE laptop at a time: the
+// laptop that enters the code becomes the holder (it gets a random key,
+// kept in that browser), and any laptop that held it before is told it
+// moved. Every scoring write for a locked room — the live state, each
+// ball, undo, bowler fixes, wagon-wheel shots, the overlay graphics, the
+// match record and the live-status ping — is checked against the
+// holder's key here, on the server; the panel only asks for the code.
+// Matches without a lock work exactly as before. Viewers (overlay,
+// scorecard, website) never need a code.
+// The code itself is stored only as an HMAC (to find a lock by code and
+// keep codes unique) and as an encrypted copy the owner can read in the
+// admin portal (Firebase-verified owner only). Keys are stored hashed.
+// ================================================================
+const MATCH_LOCK_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no 0/O, 1/I/L
+const MATCH_LOCK_LEN = 7;
+async function loadMatchLockSecret(dbh) {
+    if (process.env.MATCH_LOCK_SECRET && process.env.MATCH_LOCK_SECRET.length >= 16) return process.env.MATCH_LOCK_SECRET;
+    const col = dbh.collection('serverSecrets');
+    await col.updateOne({ _id: 'matchLock' }, { $setOnInsert: { secret: crypto.randomBytes(32).toString('hex'), createdAt: Date.now() } }, { upsert: true });
+    const doc = await col.findOne({ _id: 'matchLock' });
+    return doc && doc.secret;
+}
+function genMatchLockCode() {
+    for (;;) {
+        let s = '';
+        for (let i = 0; i < MATCH_LOCK_LEN; i++) s += MATCH_LOCK_ALPHABET[crypto.randomInt(MATCH_LOCK_ALPHABET.length)];
+        if (/[0-9]/.test(s) && /[A-Z]/.test(s)) return s; // always letters AND numbers
+    }
+}
+function normMatchLockCode(v) { return String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12); }
+function matchLockHmac(code) { return crypto.createHmac('sha256', matchLockSecret).update('code:' + code).digest('hex'); }
+function matchLockEncKey() { return crypto.createHash('sha256').update('enc:' + matchLockSecret).digest(); }
+function encryptLockCode(code) {
+    const iv = crypto.randomBytes(12);
+    const c = crypto.createCipheriv('aes-256-gcm', matchLockEncKey(), iv);
+    const enc = Buffer.concat([c.update(code, 'utf8'), c.final()]);
+    return [iv, c.getAuthTag(), enc].map(b => b.toString('base64')).join('.');
+}
+function decryptLockCode(s) {
+    try {
+        const [iv, tag, enc] = String(s).split('.').map(x => Buffer.from(x, 'base64'));
+        const d = crypto.createDecipheriv('aes-256-gcm', matchLockEncKey(), iv);
+        d.setAuthTag(tag);
+        return Buffer.concat([d.update(enc), d.final()]).toString('utf8');
+    } catch (e) { return null; }
+}
+function hashLockToken(t) { return crypto.createHash('sha256').update(String(t || '')).digest('hex'); }
+function sameHex(a, b) {
+    const x = Buffer.from(String(a || '')), y = Buffer.from(String(b || ''));
+    return x.length === y.length && x.length > 0 && crypto.timingSafeEqual(x, y);
+}
+function lockTokenMatches(lock, token) {
+    return !!(lock && lock.holder && lock.holder.tokenHash && token && sameHex(hashLockToken(token), lock.holder.tokenHash));
+}
+// Every room asks this on every scoring write, so it is cached (locked and
+// unlocked alike) and refreshed the moment a lock changes. A database
+// hiccup never stops scoring: the last known answer is used.
+const matchLockCache = new Map(); // roomId -> { lock, at }
+const MATCH_LOCK_CACHE_MS = 15000;
+function cacheMatchLock(roomId, lock) {
+    if (matchLockCache.size > 5000) matchLockCache.clear();
+    matchLockCache.set(roomId, { lock: lock || null, at: Date.now() });
+}
+async function getMatchLock(roomId) {
+    if (!matchLocksCollection || !roomId) return null;
+    const c = matchLockCache.get(roomId);
+    if (c && Date.now() - c.at < MATCH_LOCK_CACHE_MS) return c.lock;
+    try {
+        const lock = await matchLocksCollection.findOne({ roomId });
+        cacheMatchLock(roomId, lock);
+        return lock || null;
+    } catch (e) {
+        return c ? c.lock : null;
+    }
+}
+async function matchLockForRecord(roomId, matchId) {
+    if (!matchLocksCollection) return null;
+    const room = safeMatchId(roomId);
+    if (room) { const l = await getMatchLock(room); if (l) return l; }
+    if (matchId) { try { return await matchLocksCollection.findOne({ matchId: String(matchId) }); } catch (e) { return null; } }
+    return null;
+}
+// Which room a scoring socket event writes to — the same rule each handler
+// uses for itself.
+const MATCH_LOCKED_EVENTS = new Set(['updateCricketScore', 'liveCricketScore', 'cricketEvent', 'cricketToss', 'cricketHideToss',
+    'cricketInningsSummary', 'cricketMatchSummary', 'cricketHideInningsSummary', 'cricketHideMatchSummary',
+    'cricketPlayerStat', 'cricketHidePlayerStat', 'cricketBowlerStat', 'cricketHideBowlerStat', 'cricketTeamStat', 'cricketHideTeamStat',
+    'cricketPointsTable', 'cricketHidePointsTable', 'cricketPlayerHistory', 'cricketHidePlayerHistory', 'cricketTeamHistory', 'cricketHideTeamHistory',
+    'cricketOverSummary', 'logBall', 'reassignBowler', 'setBallShot', 'undoBall']);
+const MATCH_ID_EVENTS = new Set(['logBall', 'reassignBowler', 'setBallShot', 'undoBall']);
+function lockTargetRoomId(ev, data, fallback) {
+    const d = data && typeof data === 'object' ? data : {};
+    const strip = (v) => safeMatchId(String(v || '').replace(/^room-/, ''));
+    if (MATCH_ID_EVENTS.has(ev)) return strip(d.matchId || d.room || fallback);
+    return strip(d.room || d.id || d.uid || fallback);
+}
+// Wrong codes: 6 tries per room per 15 minutes from one address, then a
+// 10-minute pause (and 30 tries in all from one address) — a 7-character
+// code cannot be guessed at that rate.
+const matchLockTries = new Map();
+function lockTryKey(req, roomId) {
+    const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim() || 'ip?';
+    return [ip + '|' + roomId, ip + '|*'];
+}
+function lockTriesBlocked(keys) {
+    return keys.some(k => { const e = matchLockTries.get(k); return e && e.until && e.until > Date.now(); });
+}
+function lockTryFailed(keys) {
+    keys.forEach((k, i) => {
+        const limit = i === 0 ? 6 : 30;
+        let e = matchLockTries.get(k);
+        if (!e || Date.now() - e.first > 15 * 60000) e = { n: 0, first: Date.now(), until: 0 };
+        e.n++;
+        if (e.n >= limit) { e.until = Date.now() + 10 * 60000; e.n = 0; e.first = Date.now(); }
+        matchLockTries.set(k, e);
+    });
+    if (matchLockTries.size > 20000) matchLockTries.clear();
+}
+function lockPublicView(lock, req) {
+    return { locked: !!lock, held: !!(lock && lock.holder), you: lockTokenMatches(lock, req.get('x-match-key')) };
+}
+
+// Lock a match (operator's choice). claim:true = this laptop is scoring it now.
+app.post('/api/match-lock', requireAuthorizedCreator, async (req, res) => {
+    if (!matchLocksCollection || !matchLockSecret) return res.status(503).json({ success: false, error: 'Match codes are not available right now' });
+    const ownerUid = ownerUidFrom(req);
+    const roomId = safeMatchId((req.body && req.body.roomId) || '');
+    const matchId = String((req.body && req.body.matchId) || '').slice(0, 100) || null;
+    const deviceId = String((req.body && req.body.deviceId) || '').slice(0, 64);
+    if (!roomId) return res.status(400).json({ success: false, error: 'Match ID required' });
+    try {
+        const existing = await matchLocksCollection.findOne({ roomId });
+        if (existing) return res.status(409).json({ success: false, code: 'ALREADY_LOCKED', error: 'This match already has a code' });
+        for (let i = 0; i < 8; i++) {
+            const code = genMatchLockCode();
+            const token = req.body && req.body.claim ? crypto.randomBytes(24).toString('hex') : null;
+            const doc = {
+                roomId, matchId, ownerUid, codeHmac: matchLockHmac(code), codeEnc: encryptLockCode(code),
+                createdBy: req.creatorEmail || null, createdAt: Date.now(),
+                holder: token ? { tokenHash: hashLockToken(token), deviceId, since: Date.now() } : null
+            };
+            try {
+                await matchLocksCollection.insertOne(doc);
+                cacheMatchLock(roomId, doc);
+                return res.json({ success: true, roomId, code, token });
+            } catch (e) {
+                if (!(e && e.code === 11000)) throw e;
+                if (await matchLocksCollection.findOne({ roomId })) return res.status(409).json({ success: false, code: 'ALREADY_LOCKED', error: 'This match already has a code' });
+                // the code was already taken by another match — draw a new one
+            }
+        }
+        res.status(500).json({ success: false, error: 'Could not make a unique code — try again' });
+    } catch (err) {
+        console.log('Match lock create error:', err);
+        res.status(500).json({ success: false, error: 'Could not lock the match' });
+    }
+});
+// Is this room locked, and is the caller (X-Match-Key) its scoring laptop?
+app.get('/api/match-lock/:roomId', async (req, res) => {
+    const roomId = safeMatchId(req.params.roomId);
+    if (!roomId) return res.status(400).json({ success: false });
+    if (!matchLocksCollection) return res.json({ success: true, locked: false, held: false, you: false });
+    try {
+        const lock = await matchLocksCollection.findOne({ roomId });
+        cacheMatchLock(roomId, lock);
+        res.json({ success: true, ...lockPublicView(lock, req) });
+    } catch (e) { res.status(500).json({ success: false }); }
+});
+// Enter the code: this laptop becomes the one scoring the match; the one
+// before it is told (matchLockTaken) and can no longer write.
+app.post('/api/match-lock/:roomId/claim', async (req, res) => {
+    const roomId = safeMatchId(req.params.roomId);
+    if (!roomId) return res.status(400).json({ success: false, error: 'Match ID required' });
+    if (!matchLocksCollection || !matchLockSecret) return res.status(503).json({ success: false, error: 'Match codes are not available right now' });
+    const keys = lockTryKey(req, roomId);
+    if (lockTriesBlocked(keys)) return res.status(429).json({ success: false, code: 'TOO_MANY', error: 'Too many wrong codes — wait 10 minutes and try again' });
+    try {
+        const lock = await matchLocksCollection.findOne({ roomId });
+        if (!lock) return res.json({ success: true, locked: false, token: null });
+        const code = normMatchLockCode(req.body && req.body.code);
+        if (code.length !== MATCH_LOCK_LEN || !sameHex(matchLockHmac(code), lock.codeHmac)) {
+            lockTryFailed(keys);
+            return res.status(403).json({ success: false, code: 'WRONG_CODE', error: 'Wrong code for this match' });
+        }
+        const deviceId = String((req.body && req.body.deviceId) || '').slice(0, 64);
+        const token = crypto.randomBytes(24).toString('hex');
+        const holder = { tokenHash: hashLockToken(token), deviceId, since: Date.now() };
+        await matchLocksCollection.updateOne({ roomId }, { $set: { holder } });
+        cacheMatchLock(roomId, { ...lock, holder });
+        io.to(`room-${roomId}`).emit('matchLockTaken', { roomId, deviceId });
+        res.json({ success: true, locked: true, token });
+    } catch (err) {
+        console.log('Match lock claim error:', err);
+        res.status(500).json({ success: false, error: 'Could not check the code — try again' });
+    }
+});
+// Remove the lock — the laptop scoring it (its key) can.
+app.delete('/api/match-lock/:roomId', async (req, res) => {
+    const roomId = safeMatchId(req.params.roomId);
+    if (!matchLocksCollection || !roomId) return res.status(400).json({ success: false });
+    try {
+        const lock = await matchLocksCollection.findOne({ roomId });
+        if (!lock) return res.json({ success: true });
+        if (!lockTokenMatches(lock, req.get('x-match-key'))) return res.status(403).json({ success: false, error: 'Only the laptop scoring this match can remove its code' });
+        await matchLocksCollection.deleteOne({ roomId });
+        cacheMatchLock(roomId, null);
+        io.to(`room-${roomId}`).emit('matchLockRemoved', { roomId });
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ success: false }); }
+});
+// 🛡️ Owner (Firebase-verified, admin portal): every locked match with its
+// code, and removing a lock (a forgotten code).
+app.get('/api/admin/match-locks', requireOwner, async (req, res) => {
+    if (!matchLocksCollection) return res.json({ success: true, locks: [] });
+    try {
+        const locks = await matchLocksCollection.find({}).sort({ createdAt: -1 }).limit(300).toArray();
+        const ids = locks.map(l => l.matchId).filter(Boolean);
+        const recs = ids.length && matchRecordsCollection
+            ? await matchRecordsCollection.find({ matchId: { $in: ids } }, { projection: { matchId: 1, leagueKey: 1, matchNo: 1, 'teamA.name': 1, 'teamB.name': 1, upcoming: 1, winningTeam: 1 } }).toArray() : [];
+        const byId = new Map(recs.map(r => [r.matchId, r]));
+        res.json({ success: true, locks: locks.map(l => {
+            const r = byId.get(l.matchId) || {};
+            return { roomId: l.roomId, matchId: l.matchId || null, code: decryptLockCode(l.codeEnc), createdBy: l.createdBy || null, createdAt: l.createdAt,
+                held: !!l.holder, heldSince: l.holder ? l.holder.since : null,
+                match: r.teamA || r.teamB ? `${(r.teamA && r.teamA.name) || 'Team A'} vs ${(r.teamB && r.teamB.name) || 'Team B'}` : null,
+                tournament: r.leagueKey || null, matchNo: r.matchNo || null, status: r.winningTeam ? 'finished' : r.upcoming ? 'upcoming' : (r.matchId ? 'live' : null) };
+        }) });
+    } catch (e) { res.status(500).json({ success: false, error: 'Could not load locked matches' }); }
+});
+app.delete('/api/admin/match-locks/:roomId', requireOwner, async (req, res) => {
+    const roomId = safeMatchId(req.params.roomId);
+    if (!matchLocksCollection || !roomId) return res.status(400).json({ success: false });
+    try {
+        await matchLocksCollection.deleteOne({ roomId });
+        cacheMatchLock(roomId, null);
+        io.to(`room-${roomId}`).emit('matchLockRemoved', { roomId });
+        if (typeof logAuditAction === 'function') logAuditAction(req.ownerEmail, 'match-lock-remove', { roomId }).catch(() => {});
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ success: false }); }
+});
+
 // 🏆 Create / edit a tournament from the panel's Create Tournament form.
 // create:true refuses a name that already exists (409) so two tournaments can
 // never silently merge; otherwise it updates the details. Either way the
@@ -2146,6 +2403,16 @@ app.post('/api/league/:name/match', requireAuthorizedCreator, async (req, res) =
     if (!record || !record.matchId) return res.status(400).json({ success: false, error: 'Match record with matchId required' });
     if (!matchRecordsCollection || !leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     try {
+        // 🔒 A locked match is saved only by the laptop scoring it (its key).
+        // A fixture can still be edited before anyone has started it.
+        const lock = await matchLockForRecord(record.roomId, record.matchId);
+        if (lock && !lockTokenMatches(lock, req.get('x-match-key'))) {
+            const stored = await matchRecordsCollection.findOne({ ownerUid, leagueKey, matchId: record.matchId }, { projection: { upcoming: 1 } });
+            // (same room only — a fixture edit can never move the match out of its lock)
+            if (!(record.upcoming === true && (!stored || stored.upcoming === true) && safeMatchId(record.roomId || '') === lock.roomId)) {
+                return res.status(423).json({ success: false, code: 'MATCH_LOCKED', error: 'This match is locked — enter its code on the panel to score it' });
+            }
+        }
         // 🩹 CLIPS FIX: clips are cut and tagged with the live *roomId*
         // (see cutClip()/io.on('connection') above), never with this
         // record's matchId — a tournament match's matchId is a separate
@@ -2269,6 +2536,10 @@ app.delete('/api/league/:name/match/:matchId', requireAuthorizedCreator, async (
     if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
     if (!matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     try {
+        const lock = await matchLockForRecord(null, req.params.matchId);
+        if (lock && !lockTokenMatches(lock, req.get('x-match-key'))) {
+            return res.status(423).json({ success: false, code: 'MATCH_LOCKED', error: 'This match is locked — only the laptop scoring it (with its code) can delete it' });
+        }
         await matchRecordsCollection.deleteOne({ ownerUid, leagueKey, matchId: req.params.matchId });
         try {
             const lg = leaguesCollection && await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { publicToken: 1 } });
@@ -2793,6 +3064,8 @@ app.post('/api/league/:name/live-status', requireAuthorizedCreator, async (req, 
     if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     const { roomId, matchId, active } = req.body || {};
     try {
+        const lock = await matchLockForRecord(roomId, matchId);
+        if (lock && !lockTokenMatches(lock, req.get('x-match-key'))) return res.status(423).json({ success: false, code: 'MATCH_LOCKED' });
         // 🩹 liveMatches is an ARRAY, not a single field — the same
         // tournament can have MULTIPLE matches being scored at once, each
         // on its own device/room (Laptop 1 → Match A, Laptop 2 → Match B,
@@ -10557,8 +10830,40 @@ io.on('connection', async (socket) => {
         socket.activeRoom = currentRoom;
     }
 
+    // 🔒 MATCH LOCK — a locked room takes scoring writes only from the laptop
+    // holding its key (see MATCH LOCK CODES). Set up before anything awaits,
+    // so not one event slips past. Checks run one after another per socket,
+    // so the order of a panel's updates never changes.
+    const lockRoomFallback = cleanQueryRoom || cleanQueryUid || clientId || 'default';
+    socket.data.lockTokens = {};
+    if (typeof query.lockToken === 'string' && query.lockToken) socket.data.lockTokens[safeMatchId(lockRoomFallback)] = query.lockToken.slice(0, 128);
+    socket.on('matchLockAuth', (d) => {
+        if (d && typeof d.roomId === 'string' && typeof d.token === 'string') socket.data.lockTokens[safeMatchId(d.roomId.replace(/^room-/, ''))] = d.token.slice(0, 128);
+    });
+    socket.use((packet, next) => {
+        const ev = packet[0];
+        if (!MATCH_LOCKED_EVENTS.has(ev) || !matchLocksCollection) return next();
+        const target = lockTargetRoomId(ev, packet[1], lockRoomFallback);
+        socket.data.lockChain = (socket.data.lockChain || Promise.resolve()).then(async () => {
+            const lock = await getMatchLock(target);
+            return !lock || lockTokenMatches(lock, socket.data.lockTokens[target]);
+        }).catch(() => true).then((allowed) => {
+            if (allowed) { try { next(); } catch (e) { console.log('Match lock dispatch error:', e); } return; }
+            const ack = packet[packet.length - 1];
+            if (typeof ack === 'function') { try { ack({ ok: false, retry: false, locked: true, error: 'match-locked' }); } catch (e) {} }
+            if (!socket.data.lockDeniedAt || Date.now() - socket.data.lockDeniedAt > 3000) {
+                socket.data.lockDeniedAt = Date.now();
+                socket.emit('matchLockDenied', { roomId: target });
+            }
+        });
+    });
+
     const roomState = await getRoomState(currentRoom);
     const matchIdForClient = cleanQueryRoom || cleanQueryUid || clientId || 'default';
+    // a panel opening a locked match without its key is told straight away
+    getMatchLock(safeMatchId(matchIdForClient)).then(lock => {
+        if (lock) socket.emit('matchLockStatus', { roomId: safeMatchId(matchIdForClient), locked: true, you: lockTokenMatches(lock, socket.data.lockTokens[safeMatchId(matchIdForClient)]) });
+    }).catch(() => {});
 
     const connectSyncResult = reconcileTeamNames(roomState);
     if (roomState.matchIntroState) {

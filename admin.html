@@ -445,6 +445,13 @@ label{font-size:.78rem;color:var(--text-muted);display:block;margin:12px 0 6px;f
           <div id="tExpGrid" class="tourn-grid"></div>
         </div>
         <div class="card">
+          <h3><span class="t">🔒 Locked Matches</span></h3>
+          <p class="card-hint">Matches an operator locked with a code. Only a laptop that enters the code can score them. Forgotten code? Show it here, or remove the lock so the match opens without a code.</p>
+          <div class="table-wrap">
+            <table><thead><tr><th>Match</th><th>Code</th><th>Status</th><th>Locked by</th><th></th></tr></thead><tbody id="locksBody"></tbody></table>
+          </div>
+        </div>
+        <div class="card">
           <h3><span class="t">🎥 Live Recording Sessions</span></h3>
           <p class="card-hint">Matches currently being recorded for broadcast — separate from tournament scorecards above.</p>
           <div class="table-wrap">
@@ -1062,6 +1069,38 @@ async function loadCricketExplorer(){
 
   wireExplorerToolbar();
   renderExplorerGrid();
+  loadMatchLocks();
+}
+
+// 🔒 LOCKED MATCHES — codes operators put on matches (see MATCH LOCK CODES in server.js)
+async function loadMatchLocks(){
+  const body = document.getElementById('locksBody');
+  if (!body) return;
+  let locks = [];
+  try { locks = (await api('/match-locks')).locks || []; }
+  catch(e){ body.innerHTML = `<tr><td colspan="5"><div class="empty-state">Could not load locked matches.</div></td></tr>`; return; }
+  body.innerHTML = locks.length ? locks.map(l=>{
+    const rid = encodeURIComponent(l.roomId);
+    const what = l.match ? `${escHtml(l.match)}${l.matchNo?` · Match ${escHtml(l.matchNo)}`:''}` : escHtml(l.roomId);
+    const status = l.status ? `<span class="badge badge-info" style="text-transform:capitalize;">${escHtml(l.status)}</span>` : '—';
+    return `<tr>
+      <td data-label="Match">${what}<div style="color:var(--text-muted);font-size:.74rem;">${escHtml(l.tournament||'')} ${escHtml(l.roomId)}</div></td>
+      <td data-label="Code"><code data-lock-code="${rid}" style="letter-spacing:2px;font-weight:700;">•••••••</code> <button class="btn btn-ghost btn-sm" data-lock-show="${rid}" data-code="${escHtml(l.code||'')}">Show</button></td>
+      <td data-label="Status">${status}${l.held?'<div style="color:var(--text-muted);font-size:.74rem;">being scored</div>':''}</td>
+      <td data-label="Locked by" style="color:var(--text-muted);font-size:.8rem;">${escHtml(l.createdBy||'—')}<br>${l.createdAt?fmtDate(new Date(l.createdAt).toISOString()):''}</td>
+      <td><button class="btn btn-danger btn-sm" data-lock-remove="${rid}">Remove lock</button></td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="5"><div class="empty-state"><div class="ic">🔓</div>No locked matches.</div></td></tr>`;
+  body.querySelectorAll('[data-lock-show]').forEach(b=> b.onclick = ()=>{
+    const c = body.querySelector(`[data-lock-code="${b.dataset.lockShow}"]`);
+    if (c) c.textContent = b.dataset.code || '—';
+  });
+  body.querySelectorAll('[data-lock-remove]').forEach(b=> b.onclick = async ()=>{
+    if (!confirm('Remove the lock from this match? Anyone signed in can then open and score it.')) return;
+    b.disabled = true;
+    try { await api('/match-locks/'+b.dataset.lockRemove, { method:'DELETE' }); toast('Lock removed'); loadMatchLocks(); }
+    catch(e){ b.disabled = false; toast(e.message, 'err'); }
+  });
 }
 
 function wireExplorerToolbar(){

@@ -302,8 +302,8 @@ async function serverSuite(){
   const bigParser = src.indexOf("app.use('/api/league/:name/info', express.json({ limit: '3mb' }));");
   eq('SERVER: a tournament with logos fits (own 3mb body limit, parsed before the global one)', bigParser > 0 && bigParser < src.indexOf('app.use(express.json());'), true);
   eq('SERVER: an oversized team logo is dropped', sanitize({ teams: [{ name: 'Big', logoUrl: 'data:image/png;base64,' + 'A'.repeat(50000) }] }).teams[0].logoUrl, '');
-  const getRoute = src.slice(src.indexOf("app.get('/api/league/:name'"), src.indexOf("app.get('/api/league/:name'") + 3000);
-  eq('SERVER: GET league returns info + token for the panel', /info:/.test(getRoute) && /token:/.test(getRoute), true);
+  const getRoute = routeBody(src, "app.get('/api/league/:name'");
+  eq('SERVER: GET league returns info + token for the panel', /res\.json\(\{[^}]*\binfo\b[^}]*\btoken\b/.test(getRoute), true);
   const list = src.slice(src.indexOf("app.get('/api/public/tournaments'"), src.indexOf("app.get('/api/public/tournaments'") + 9000);
   eq('SERVER: public list carries info summary + upcoming count', [/upcomingCount:/.test(list), /tournamentInfoSummary\(doc\.info\)/.test(list)], [true, true]);
 }

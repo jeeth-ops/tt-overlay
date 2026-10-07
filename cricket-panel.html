@@ -1203,6 +1203,29 @@
   .um-quick button.on{ border-color:var(--accent); color:var(--accent); }
   .um-rules{ display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
   .um-rule{ font-size:11px; padding:3px 9px; border-radius:99px; background:rgba(255,255,255,.05); border:1px solid var(--border); color:var(--text-dim); }
+  /* 🔒 MATCH CODE dialog + the lock toggles */
+  .wicket-modal-overlay.ml-overlay{ z-index:10050; }
+  .wicket-modal.ml-modal{ max-width:380px; text-align:center; padding:22px 20px 16px; }
+  .ml-modal h3{ justify-content:center; font-size:16px; }
+  .ml-ic{ font-size:34px; line-height:1; margin-bottom:8px; }
+  .ml-modal .wm-sub{ font-size:12px; line-height:1.45; }
+  .ml-input{ width:100%; box-sizing:border-box; height:48px; text-align:center; font-size:24px; font-weight:800; letter-spacing:6px; text-transform:uppercase; font-family:ui-monospace, Menlo, Consolas, monospace; }
+  .ml-err{ min-height:16px; margin:6px 0 4px; font-size:11.5px; font-weight:700; color:#f87171; }
+  .ml-go{ width:100%; height:40px; font-weight:800; }
+  .ml-code{ margin:6px 0 12px; padding:14px 10px; border-radius:12px; border:1px dashed var(--accent); background:rgba(255,122,0,.08); font:800 30px/1 ui-monospace, Menlo, Consolas, monospace; letter-spacing:5px; color:var(--accent); user-select:all; }
+  .ml-btns{ display:flex; gap:8px; margin-top:8px; }
+  .ml-btns button{ flex:1; }
+  .ml-btns button[hidden]{ display:none; }
+  .ml-note{ margin-top:10px; font-size:11.5px; color:var(--text-dim); line-height:1.45; }
+  .ml-alt{ margin-top:10px; width:100%; }
+  .ml-alt[hidden], #ml-entry[hidden], #ml-show[hidden]{ display:none; }
+  .ml-lockrow{ display:flex; align-items:center; gap:10px; font-size:12.5px; font-weight:600; padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:rgba(255,255,255,.02); }
+  .ml-lockrow .switch{ flex:none; }
+  .ml-lockrow small{ display:block; color:var(--text-dim); font-weight:500; margin-top:2px; }
+  #um-overlay .ml-lockrow{ margin:12px 20px 0; }
+  #newmatch-modal .ml-lockrow{ margin-top:12px; }
+  .lm-lock{ flex:none; font-size:12px; }
+  .lm-code{ flex:none; padding:2px 7px !important; }
   .um-toggle{ display:flex; align-items:center; gap:10px; margin-top:10px; font-size:12.5px; font-weight:600; }
   .um-toggle[hidden]{ display:none; }
   .um-toggle small{ color:var(--text-dim); font-weight:500; }
@@ -1555,6 +1578,34 @@
 <!-- ➕ CREATE NEW MATCH — pick each side from this tournament's existing
      teams (name, colours, logo, full squad with the SAME permanent player
      ids) or choose "New team" and type it in the panel as usual. -->
+<!-- 🔒 MATCH CODE — asks for a locked match's code, or shows a new one.
+     See the MATCH CODE section in the script. -->
+<div class="wicket-modal-overlay ml-overlay" id="ml-overlay" role="dialog" aria-modal="true" aria-labelledby="ml-title">
+  <div class="wicket-modal ml-modal">
+    <div class="ml-ic" id="ml-ic" aria-hidden="true">🔒</div>
+    <h3 id="ml-title">Enter the match code</h3>
+    <div class="wm-sub" id="ml-sub"></div>
+    <div id="ml-entry">
+      <input type="text" id="ml-input" class="ml-input" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="K7QM4XP" aria-label="Match code">
+      <div class="ml-err" id="ml-err" role="alert"></div>
+      <button type="button" class="primary ml-go" id="ml-go">🔓 Unlock &amp; Score</button>
+    </div>
+    <div id="ml-show" hidden>
+      <div class="ml-code" id="ml-code"></div>
+      <div class="ml-btns">
+        <button type="button" class="small" id="ml-copy">📋 Copy</button>
+        <button type="button" class="small" id="ml-share">💬 WhatsApp</button>
+      </div>
+      <div class="ml-note" id="ml-note"></div>
+      <div class="ml-btns">
+        <button type="button" class="small ghost" id="ml-remove">Remove code</button>
+        <button type="button" class="small primary" id="ml-done">Done</button>
+      </div>
+    </div>
+    <button type="button" class="small ghost ml-alt" id="ml-alt">Cancel</button>
+  </div>
+</div>
+
 <div class="wicket-modal-overlay" id="newmatch-modal-overlay">
   <div class="wicket-modal wide" id="newmatch-modal">
     <h3>➕ Create New Match</h3>
@@ -1568,6 +1619,10 @@
     <label style="margin-top:10px;">Match title (optional)</label>
     <input type="text" id="newmatch-title" maxlength="60" placeholder="e.g. Semi Final, League Match 5" style="width:100%;">
     <div class="shortcut-hint" id="newmatch-hint" style="margin-top:8px;"></div>
+    <label class="ml-lockrow" for="newmatch-lock">
+      <span class="switch"><input type="checkbox" id="newmatch-lock"><span class="slider"></span></span>
+      <span>🔒 Lock with a code <i style="font-style:normal;color:var(--text-dim);font-weight:500;">(optional)</i><small>Only a laptop that enters the 7-character code can open and score this match.</small></span>
+    </label>
     <div class="wm-actions" style="display:flex; gap:8px; margin-top:14px;">
       <button type="button" class="small ghost" id="newmatch-cancel" style="flex:1;">Cancel</button>
       <button type="button" class="small primary" id="newmatch-start" style="flex:1;">Start New Match</button>
@@ -1626,6 +1681,10 @@
       <section class="um-side" data-side="B" aria-label="Team B"></section>
     </div>
     <div class="um-summary" id="um-summary" aria-live="polite"></div>
+    <label class="ml-lockrow" for="um-lock">
+      <span class="switch"><input type="checkbox" id="um-lock"><span class="slider"></span></span>
+      <span>🔒 Lock with a code <i style="font-style:normal;color:var(--text-dim);font-weight:500;">(optional)</i><small id="um-lock-note">Only a laptop that enters the 7-character code can start and score this match.</small></span>
+    </label>
     <div class="um-msg" id="um-msg" role="alert"></div>
     <div class="um-actions">
       <button type="button" class="ghost" id="um-cancel">Cancel</button>
@@ -5671,6 +5730,7 @@ function defaultState(){
     matchNo: null,
     matchTitle: '',
     matchStage: '',      // fixture stage key — see UM_STAGES ('semi', 'final', …)
+    matchLocked: false,  // 🔒 locked with a code (see MATCH CODE) — the server holds the real lock
     matchDate: '',       // 'YYYY-MM-DD' — the day the match is played (date only)
     impactPlayerEnabled: false, // 🔁 Impact Player rule for this match
     impactLog: [],       // [{ team, inId, inName, outId, outName, outHadBatted, innings, over, ball, overLabel }]
@@ -5841,6 +5901,252 @@ function updateShareLinks(matchId){
   }
 }
 
+/* ============================================================
+   🔒 MATCH CODE — an operator may lock a match with a 7-character code
+   (letters + numbers) when scheduling it or creating it (their choice).
+   Only a laptop that has entered the code can open and score that match,
+   and only one at a time: entering the code moves scoring to this laptop
+   and the laptop that had it is told. The server checks every scoring
+   write (see MATCH LOCK CODES in server.js); this panel asks for the
+   code, keeps this laptop's key, and steps aside when the match moves.
+   Matches without a code work exactly as before.
+   ============================================================ */
+const ML_DEVICE_KEY = 'asl-device-id', ML_KEYS = 'asl-match-keys', ML_CODES = 'asl-match-codes';
+const mlLockedOut = new Set(); // rooms whose queued balls wait for this laptop to get the match back
+let ml = null;                 // the open code dialog: { mode, roomId, label, reason, code, resolve }
+let mlBusy = false;
+let mlLast = null;             // the last lock check before opening a match: { roomId, locked }
+function mlRead(k){ try{ const o = JSON.parse(localStorage.getItem(k) || '{}'); return o && typeof o === 'object' ? o : {}; }catch(e){ return {}; } }
+function mlWrite(k, o){ try{ localStorage.setItem(k, JSON.stringify(o)); }catch(e){} }
+function mlDevice(){
+  try{
+    let d = localStorage.getItem(ML_DEVICE_KEY);
+    if(!d){ d = 'dv-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10); localStorage.setItem(ML_DEVICE_KEY, d); }
+    return d;
+  }catch(e){ return 'dv-anon'; }
+}
+function mlToken(roomId){ return roomId ? (mlRead(ML_KEYS)[roomId] || '') : ''; }
+function mlSetToken(roomId, token){ const m = mlRead(ML_KEYS); if(token) m[roomId] = token; else delete m[roomId]; mlWrite(ML_KEYS, m); }
+function mlKnownCode(roomId){ return roomId ? (mlRead(ML_CODES)[roomId] || '') : ''; }
+function mlRememberCode(roomId, code){ const m = mlRead(ML_CODES); if(code) m[roomId] = code; else delete m[roomId]; mlWrite(ML_CODES, m); }
+function mlHeaders(roomId){ const t = mlToken(roomId); return t ? { 'X-Match-Key': t } : {}; }
+// a saved match's key, found by its matchId (for deleting it)
+function mlHeadersForMatchId(matchId){
+  for(const list of Object.values(leagueCache || {})){
+    const r = (list || []).find(m => m && m.matchId === matchId);
+    if(r && r.roomId) return mlHeaders(r.roomId);
+  }
+  return {};
+}
+function mlNorm(v){ return String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7); }
+function mlPretty(code){ return code ? `${code.slice(0, 4)} ${code.slice(4)}` : ''; }
+// This laptop's key goes with the live connection — now and on every reconnect.
+function mlAuthSocket(roomId){
+  if(!socket || !roomId || roomId !== currentMatchId()) return;
+  const token = mlToken(roomId);
+  try{ if(socket.io && socket.io.opts) socket.io.opts.query = { ...(socket.io.opts.query || {}), lockToken: token }; }catch(e){}
+  if(token && socket.connected) socket.emit('matchLockAuth', { roomId, token });
+}
+async function mlCreate(roomId, matchId, claim){
+  const res = await fetch(withUid('/api/match-lock'), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ roomId, matchId, deviceId: mlDevice(), claim: !!claim }), signal: AbortSignal.timeout(12000)
+  });
+  const d = await res.json().catch(() => null);
+  if(!res.ok || !d || !d.success || !d.code) throw new Error((d && d.error) || 'Could not lock the match');
+  mlRememberCode(roomId, d.code);
+  if(d.token){ mlSetToken(roomId, d.token); mlAuthSocket(roomId); }
+  return d.code;
+}
+async function mlStatus(roomId){
+  const r = await fetch(`/api/match-lock/${encodeURIComponent(roomId)}`, { headers: mlHeaders(roomId), cache: 'no-store', signal: AbortSignal.timeout(8000) });
+  const d = await r.json().catch(() => null);
+  if(!r.ok || !d || !d.success) throw new Error('status');
+  return d;
+}
+async function mlClaim(roomId, code){
+  try{
+    const r = await fetch(`/api/match-lock/${encodeURIComponent(roomId)}/claim`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: mlNorm(code), deviceId: mlDevice() }), signal: AbortSignal.timeout(10000)
+    });
+    const d = await r.json().catch(() => null);
+    if(r.ok && d && d.success){
+      if(d.token){ mlSetToken(roomId, d.token); mlRememberCode(roomId, mlNorm(code)); }
+      mlLockedOut.delete(roomId);
+      mlAuthSocket(roomId);
+      return { ok: true };
+    }
+    return { ok: false, error: (d && d.error) || 'Could not check the code — try again', code: d && d.code };
+  }catch(e){ return { ok: false, error: 'No connection — the code is checked online. Try again.' }; }
+}
+// Before a match goes on this panel (▶ Start / ▶ Resume): unlocked, or this
+// laptop already has it → go ahead; locked → the code (remembered here if
+// this laptop made it or entered it before), else ask for it.
+async function mlEnsureAccess(roomId, label, rec){
+  if(!roomId || mlBusy) return !mlBusy;
+  mlBusy = true;
+  try{
+    let st = null;
+    try{ st = await mlStatus(roomId); }catch(e){ st = null; }
+    mlLast = { roomId, locked: st ? !!st.locked : !!(rec && rec.locked) };
+    if(!st){
+      if(rec && rec.locked){ toast('🔒 This match is locked — the panel needs the internet to check its code', 6000); return false; }
+      return true;
+    }
+    if(!st.locked || st.you) return true;
+    if(st.held && !confirm(`🔒 ${label} is being scored on another laptop right now.\n\nMove scoring to THIS laptop? The other laptop stops scoring it.`)) return false;
+    const known = mlKnownCode(roomId);
+    if(known){ const r = await mlClaim(roomId, known); if(r.ok) return true; }
+    return await mlAsk(roomId, label);
+  } finally { mlBusy = false; }
+}
+// Is the match being opened locked? (shown as 🔒 in the lists)
+function mlLockedFor(roomId, rec){ return mlLast && mlLast.roomId === roomId ? mlLast.locked : !!(rec && rec.locked); }
+// ➕ Create New Match with "Lock with a code" on: this laptop is the one scoring it.
+async function mlLockCurrentMatch(){
+  const roomId = currentMatchId(), matchId = ensureTournamentMatchId();
+  try{
+    const code = await mlCreate(roomId, matchId, true);
+    if(roomId !== currentMatchId()) return;
+    state.matchLocked = true;
+    saveLocal();
+    pushState(true);
+    mlShowCode(roomId, code, matchLabelForToast(state), 'This laptop is scoring it. Any other laptop needs this code to open or score this match — share it only with the person who should.');
+  }catch(e){ toast(`⚠️ The new match is ready but NOT locked — ${e.message}`, 8000); }
+}
+/* ---- the code dialog: ask (before opening), gate (on a locked match
+   without its key), show (a new code) ---- */
+function mlEl(id){ return document.getElementById(id); }
+function mlOpen(o){
+  ml = o;
+  mlRender();
+  mlEl('ml-overlay').classList.add('show');
+  if(o.mode !== 'show') setTimeout(() => { try{ mlEl('ml-input').focus(); }catch(e){} }, 30);
+}
+function mlClose(result){
+  const done = ml && ml.resolve;
+  ml = null;
+  const ov = mlEl('ml-overlay');
+  if(ov) ov.classList.remove('show');
+  if(done) done(result);
+}
+function mlAsk(roomId, label){ return new Promise(resolve => mlOpen({ mode: 'ask', roomId, label, resolve })); }
+function mlGate(roomId, reason){
+  if(!roomId || roomId !== currentMatchId()) return;
+  if(ml && ml.mode !== 'gate') return; // a dialog the operator is using comes first
+  if(ml && ml.roomId === roomId){ ml.reason = reason; mlRender(); return; }
+  mlOpen({ mode: 'gate', roomId, reason, label: matchLabelForToast(state) });
+}
+function mlShowCode(roomId, code, label, note){ mlOpen({ mode: 'show', roomId, code, label, note }); }
+function mlRender(){
+  if(!ml) return;
+  const show = ml.mode === 'show', taken = ml.mode === 'gate' && ml.reason === 'taken';
+  const pending = (typeof ballOutbox !== 'undefined' ? ballOutbox : []).filter(b => b && b.payload && b.payload.matchId === ml.roomId).length;
+  mlEl('ml-ic').textContent = show ? '🔑' : taken ? '🔁' : '🔒';
+  mlEl('ml-title').textContent = show ? 'Match code' : taken ? 'This match moved to another laptop' : ml.mode === 'ask' ? 'Enter the match code' : 'This match is locked';
+  mlEl('ml-sub').textContent = show ? (ml.label || '')
+    : taken ? `${ml.label} — its code was entered on another laptop, so scoring moved there.${pending ? ` ${pending} ball${pending === 1 ? '' : 's'} scored here ${pending === 1 ? 'has' : 'have'} not reached the website — enter the code to send ${pending === 1 ? 'it' : 'them'} and score here again.` : ' Enter the code to bring it back to this laptop.'}`
+    : ml.mode === 'ask' ? `${ml.label} is locked. Type its 7-character code (letters and numbers) — ask the person who made the match.`
+    : `${ml.label} — only a laptop with its code can score it. Enter the code to score it here.`;
+  mlEl('ml-entry').hidden = show;
+  mlEl('ml-show').hidden = !show;
+  if(show){
+    mlEl('ml-code').textContent = mlPretty(ml.code);
+    mlEl('ml-note').textContent = ml.note || 'Share it only with the person who will score this match.';
+    mlEl('ml-remove').hidden = !mlToken(ml.roomId);
+  } else {
+    mlEl('ml-input').value = '';
+    mlEl('ml-err').textContent = '';
+  }
+  const alt = mlEl('ml-alt');
+  alt.hidden = show;
+  alt.textContent = ml.mode === 'gate' ? 'Leave this match' : 'Cancel';
+}
+async function mlSubmit(){
+  if(!ml || ml.mode === 'show') return;
+  const code = mlNorm(mlEl('ml-input').value);
+  if(code.length !== 7){ mlEl('ml-err').textContent = 'The code has 7 letters and numbers'; return; }
+  const go = mlEl('ml-go');
+  go.disabled = true; go.textContent = 'Checking…';
+  const r = await mlClaim(ml.roomId, code);
+  go.disabled = false; go.textContent = '🔓 Unlock & Score';
+  if(!ml) return;
+  if(!r.ok){ mlEl('ml-err').textContent = r.error; mlEl('ml-input').select(); return; }
+  const wasGate = ml.mode === 'gate';
+  mlClose(true);
+  toast('🔓 Unlocked — this laptop is now scoring the match');
+  if(wasGate){ state.matchLocked = true; pushState(true, true); flushBallOutbox(); }
+}
+async function mlRemoveCode(){
+  if(!ml || !ml.roomId) return;
+  const roomId = ml.roomId;
+  if(!confirm('Remove the code from this match? Anyone signed in can then open and score it.')) return;
+  try{
+    const r = await fetch(`/api/match-lock/${encodeURIComponent(roomId)}`, { method: 'DELETE', headers: mlHeaders(roomId) });
+    const d = await r.json().catch(() => null);
+    if(!r.ok || !d || !d.success) throw new Error((d && d.error) || 'Could not remove the code');
+    mlRememberCode(roomId, ''); mlSetToken(roomId, '');
+    if(roomId === currentMatchId()){ state.matchLocked = false; saveLocal(); pushState(true); if(typeof saveMatchToLeague === 'function' && currentMatchTournament()) saveMatchToLeague(true); }
+    mlClose(true);
+    toast('🔓 Code removed — this match is open again');
+  }catch(e){ toast('⚠️ ' + e.message); }
+}
+// the server's word on the match this panel is on
+function mlWireSocket(sock){
+  sock.on('matchLockStatus', (d) => { if(d && d.locked && !d.you) mlGate(d.roomId, mlToken(d.roomId) ? 'taken' : 'locked'); });
+  sock.on('matchLockDenied', (d) => {
+    if(!d || !d.roomId) return;
+    mlLockedOut.add(d.roomId);
+    mlGate(d.roomId, mlToken(d.roomId) ? 'taken' : 'locked');
+  });
+  sock.on('matchLockTaken', (d) => {
+    if(!d || !d.roomId || d.deviceId === mlDevice()) return;
+    const had = !!mlToken(d.roomId);
+    mlSetToken(d.roomId, '');
+    if(had) mlGate(d.roomId, 'taken');
+  });
+  sock.on('matchLockRemoved', (d) => {
+    if(!d || !d.roomId) return;
+    mlLockedOut.delete(d.roomId);
+    if(d.roomId === currentMatchId()) state.matchLocked = false;
+    if(ml && ml.mode === 'gate' && ml.roomId === d.roomId){ mlClose(true); pushState(true, true); flushBallOutbox(); }
+  });
+}
+(function wireMatchCode(){
+  const ov = mlEl('ml-overlay');
+  if(!ov) return;
+  mlEl('ml-go').addEventListener('click', mlSubmit);
+  mlEl('ml-input').addEventListener('input', (e) => { const v = mlNorm(e.target.value); if(e.target.value !== v) e.target.value = v; mlEl('ml-err').textContent = ''; });
+  mlEl('ml-input').addEventListener('keydown', (e) => { if(e.key === 'Enter'){ e.preventDefault(); mlSubmit(); } e.stopPropagation(); });
+  mlEl('ml-done').addEventListener('click', () => mlClose(true));
+  mlEl('ml-remove').addEventListener('click', mlRemoveCode);
+  mlEl('ml-copy').addEventListener('click', () => {
+    if(!ml) return;
+    try{ navigator.clipboard.writeText(ml.code); toast('📋 Code copied'); }catch(e){ toast('Code: ' + ml.code); }
+  });
+  mlEl('ml-share').addEventListener('click', () => {
+    if(!ml) return;
+    window.open('https://wa.me/?text=' + encodeURIComponent(`Match code for ${ml.label}: ${ml.code}\nOpen the match on the scoring panel (▶ Start / ▶ Resume) and type this code.`), '_blank', 'noopener');
+  });
+  mlEl('ml-alt').addEventListener('click', () => {
+    if(!ml) return;
+    if(ml.mode === 'gate'){
+      if(!confirm('Leave this locked match? The panel opens a fresh, blank match — the locked match is not changed.')) return;
+      mlClose(false);
+      startFreshMatch();
+      return;
+    }
+    mlClose(false);
+  });
+  // the code dialog keeps its keys to itself (no scoring shortcuts behind it)
+  window.addEventListener('keydown', (e) => {
+    if(!ov.classList.contains('show')) return;
+    if(e.key === 'Escape' && ml && ml.mode !== 'gate'){ e.preventDefault(); mlClose(ml.mode === 'show'); }
+    if(e.target !== mlEl('ml-input')) e.stopImmediatePropagation();
+  }, true);
+})();
+
 function connect(){
   const matchId = document.getElementById('match-id').value.trim();
   if(!matchId){ toast('Enter a Match ID first'); return; }
@@ -5848,9 +6154,13 @@ function connect(){
 
   updateShareLinks(matchId);
 
-  socket = io({ query: { uid: matchId } });
+  if(ml && ml.mode === 'gate' && ml.roomId !== matchId) mlClose(false);
+  // 🔒 this laptop's key for a locked match goes with the connection
+  socket = io({ query: { uid: matchId, lockToken: mlToken(matchId) } });
+  mlWireSocket(socket);
 
   socket.on('connect', () => {
+    mlAuthSocket(matchId);
     dot.classList.add('on'); toast('Connected');
     checkOwnerAccess(); // re-check now uid/login may have settled since initial page load
     // 🩹 Ping the live-room mapping the MOMENT we connect — not just after
@@ -10239,6 +10549,7 @@ function buildMatchRecordForLeague(){
     matchNo: state.matchNo || null,
     matchTitle: state.matchTitle || '',
     matchDate: state.matchDate || null,
+    locked: !!state.matchLocked,
     impactPlayers: impactLogOf().map(e => ({ ...e })),
     // A match on the panel is being played — never a scheduled fixture any
     // more (the server merges saves, so this must be sent explicitly).
@@ -10349,7 +10660,7 @@ function saveMatchToLeague(silent){
 
   fetch(withUid(`${leagueApiPath(name)}/match`), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...mlHeaders(rec.roomId) },
     body: JSON.stringify(rec)
   }).then(res => res.json().then(data => ({ res, data }))).then(({ res, data }) => {
     if(data && data.success){
@@ -10408,7 +10719,7 @@ function saveMatchToSingleHistory(silent){
   if(!currentOwnerUid()){ if(!silent) toast('⚠️ Not logged in — saved on this device only'); return; }
   fetch(withUid(`${leagueApiPath(SINGLE_MATCHES_NAME)}/match`), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...mlHeaders(rec.roomId) },
     body: JSON.stringify(rec)
   }).then(res => res.json().then(data => ({ res, data }))).then(({ res, data }) => {
     if(data && data.success){
@@ -10421,6 +10732,7 @@ function saveMatchToSingleHistory(silent){
   }).catch(() => toast('⚠️ Saved locally only — could not sync to server'));
 }
 function deleteMatchFromSingleHistory(matchId){
+  const mlh = mlHeadersForMatchId(matchId); // 🔒 found before the record leaves the list
   const key = leagueStorageKey(SINGLE_MATCHES_NAME);
   const matches = currentSingleMatches().filter(m => m.matchId !== matchId);
   leagueCache[key] = matches;
@@ -10428,7 +10740,7 @@ function deleteMatchFromSingleHistory(matchId){
   refreshSingleHistoryUI();
 
   if(!currentOwnerUid()) return;
-  fetch(withUid(`${leagueApiPath(SINGLE_MATCHES_NAME)}/match/${encodeURIComponent(matchId)}`), { method: 'DELETE' })
+  fetch(withUid(`${leagueApiPath(SINGLE_MATCHES_NAME)}/match/${encodeURIComponent(matchId)}`), { method: 'DELETE', headers: mlh })
     .then(res => res.json()).then(data => {
       if(data && data.success){
         leagueCache[key] = data.matches;
@@ -10510,7 +10822,7 @@ function pingTournamentLiveStatus(active){
   liveStatusPingTimer = setTimeout(() => {
     fetch(withUid(`${leagueApiPath(name)}/live-status`), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...mlHeaders(currentMatchId()) },
       // Always include matchId, even when clearing (active:false) — the
       // server's $pull needs it to remove the right entry from liveMatches.
       // Previously this was omitted on the false branch, so old live
@@ -10582,13 +10894,24 @@ function isMatchOnPanel(m, listTournament){
   return sameTournament(listTournament, currentMatchTournament());
 }
 function matchResumeHtml(m, listTournament){
-  if(isMatchOnPanel(m, listTournament)) return `<span class="lm-onpanel">● On panel</span>`;
-  if(isUpcomingMatch(m) && m.roomId) return `<button type="button" class="small primary lm-resume" data-start-upcoming="${escapeHtmlPanel(m.matchId)}">▶ Start</button>`;
-  if(!m.roomId) return '';
+  // 🔒 locked with a code; 🔑 = this laptop knows the code (tap to see / share it)
+  const lock = (m.locked ? `<span class="lm-lock" title="Locked — opens only with its code">🔒</span>` : '')
+    + (m.roomId && mlKnownCode(m.roomId) ? `<button type="button" class="small ghost lm-code" data-ml-code="${escapeHtmlPanel(m.roomId)}" title="Show this match's code">🔑</button>` : '');
+  if(isMatchOnPanel(m, listTournament)) return lock + `<span class="lm-onpanel">● On panel</span>`;
+  if(isUpcomingMatch(m) && m.roomId) return lock + `<button type="button" class="small primary lm-resume" data-start-upcoming="${escapeHtmlPanel(m.matchId)}">▶ Start</button>`;
+  if(!m.roomId) return lock;
   const label = m.winningTeam ? '📂 Open' : '▶ Resume';
-  return `<button type="button" class="small primary lm-resume" data-resume-match="${escapeHtmlPanel(m.matchId)}">${label}</button>`;
+  return lock + `<button type="button" class="small primary lm-resume" data-resume-match="${escapeHtmlPanel(m.matchId)}">${label}</button>`;
 }
 function wireResumeButtons(listEl, matches, listTournament){
+  listEl.querySelectorAll('[data-ml-code]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const roomId = btn.getAttribute('data-ml-code');
+      const rec = matches.find(x => x.roomId === roomId);
+      mlShowCode(roomId, mlKnownCode(roomId), rec ? matchLabelForToast(rec) : '', '');
+    });
+  });
   listEl.querySelectorAll('[data-resume-match]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -10623,6 +10946,8 @@ async function resumeSavedMatch(rec, btn, listTournament){
   const hasCurrent = (state.ballLog || []).length > 0;
   if(!confirm(`Switch the panel to ${target}?${hasCurrent ? `\n\nThe current match (${matchLabelForToast(state)}${currentMatchTournament() ? ` — ${currentMatchTournament()}` : ''}) is saved to its own ${currentMatchTournament() ? 'tournament' : 'history'} first and can be resumed later.` : ''}\n\nThe Match ID changes to this match's own ID — Overlay/Scorecard links change with it.`)) return;
 
+  // 🔒 a locked match opens only with its code
+  if(!(await mlEnsureAccess(rec.roomId, matchLabelForToast(rec), rec))) return;
   resumeInFlight = true;
   const oldText = btn ? btn.textContent : '';
   if(btn){ btn.disabled = true; btn.textContent = 'Loading…'; }
@@ -10682,6 +11007,7 @@ async function resumeSavedMatch(rec, btn, listTournament){
   const keepLeague = (state.leagueName || '').trim();
   state = mergeWithDefaults(loaded);
   state.tournamentMatchId = rec.matchId;
+  state.matchLocked = mlLockedFor(rec.roomId, rec);
   resumeGuardMatchId = fallbackInfo ? rec.matchId : null;
   if(fallbackInfo) state.localRev = Math.max(Number(state.localRev) || 0, 100000);
   // The list it was opened from decides its tournament — and the panel
@@ -10721,6 +11047,7 @@ async function resumeSavedMatch(rec, btn, listTournament){
 }
 
 function deleteMatchFromLeague(matchId){
+  const mlh = mlHeadersForMatchId(matchId); // 🔒 found before the record leaves the list
   const name = (state.leagueName || '').trim();
   if(!name) return;
   const key = leagueStorageKey(name);
@@ -10733,7 +11060,7 @@ function deleteMatchFromLeague(matchId){
 
   if(!currentOwnerUid()) return; // local-only, nothing to sync
 
-  fetch(withUid(`${leagueApiPath(name)}/match/${encodeURIComponent(matchId)}`), { method: 'DELETE' })
+  fetch(withUid(`${leagueApiPath(name)}/match/${encodeURIComponent(matchId)}`), { method: 'DELETE', headers: mlh })
     .then(res => res.json()).then(data => {
       if(data && data.success){
         leagueCache[key] = data.matches;
@@ -12288,7 +12615,7 @@ function sendMatchSnapshot(rec){
   const name = currentMatchTournament() || SINGLE_MATCHES_NAME;
   fetch(withUid(`${leagueApiPath(name)}/match`), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...mlHeaders(rec.roomId) },
     body: JSON.stringify(rec)
   }).then(res => res.json()).then(data => {
     if(!data || data.success === false) throw new Error('rejected');
@@ -13280,12 +13607,18 @@ function flushBallOutbox(){
   if(!socket || !socket.connected) return;
   ballOutbox.slice().forEach(item => {
     if(item.sentAt && (now - item.sentAt) < BALL_ACK_TIMEOUT_MS) return; // still waiting on its receipt
+    if(mlLockedOut.has(item.payload.matchId)) return; // 🔒 waits for this laptop to get the match back
     item.sentAt = now;
     socket.emit('logBall', { ...item.payload, ballUid: item.uid }, (ack) => {
       // ok:true covers "stored" and "already stored" (a duplicate uid) —
       // both mean this delivery is safely in the permanent log.
       if(ack && ack.ok){
         ballOutbox = ballOutbox.filter(b => b.uid !== item.uid);
+        saveBallOutbox();
+      } else if(ack && ack.locked){
+        // 🔒 the match moved to another laptop — keep the ball, send it once the code is entered here
+        item.sentAt = 0;
+        mlLockedOut.add(item.payload.matchId);
         saveBallOutbox();
       }
     });
@@ -17255,6 +17588,7 @@ async function openNewMatchModal(){
     ? 'Pick a team to bring back its name, colours, logo and squad with the same player IDs — or leave "New team" and set it up yourself.'
     : 'No teams saved in this tournament yet — both teams will be new; set them up in the panel.';
   document.getElementById('newmatch-title').value = '';
+  document.getElementById('newmatch-lock').checked = false; // 🔒 the operator's choice, every time
   renderNewMatchPreview('a'); renderNewMatchPreview('b');
   document.getElementById('newmatch-modal-overlay').classList.add('show');
 }
@@ -17395,7 +17729,9 @@ document.getElementById('newmatch-start').addEventListener('click', async () => 
       toast(`✅ New match ready${state.matchNo ? ' (Match ' + state.matchNo + ')' : ''}${teamA ? ' — ' + teamA.name : ''}${teamA && teamB ? ' vs ' : (teamB ? ' — ' : '')}${teamB ? teamB.name : ''}. Squads loaded with their existing player IDs.`
         + (unverified ? ` ⚠️ ${unverified} older player(s) could not be matched to a saved Player ID (offline / not signed in) — check them before scoring.` : ''), unverified ? 10000 : 6000);
     }
+    const lockIt = document.getElementById('newmatch-lock').checked;
     closeNewMatchModal();
+    if(lockIt) mlLockCurrentMatch(); // 🔒 this laptop scores it; the code is shown
   }catch(err){
     console.error('Create New Match failed', err);
     toast('⚠️ Could not load the chosen team(s) — nothing was changed. Try again.');
@@ -17474,7 +17810,7 @@ function upsertLeagueRecord(name, rec, onSynced){
   refreshLeagueUI();
   if(!currentOwnerUid()){ toast('⚠️ Not logged in — saved on this device only'); return; }
   fetch(withUid(`${leagueApiPath(name)}/match`), {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rec)
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...mlHeaders(rec.roomId) }, body: JSON.stringify(rec)
   }).then(res => res.json().then(data => ({ res, data }))).then(({ res, data }) => {
     if(data && data.success){
       leagueCache[key] = data.matches;
@@ -18257,7 +18593,7 @@ function flushShotQueue(){
   const q = wwLoadQ().filter(x => now - (x.at || now) < 12 * 3600 * 1000);
   wwSaveQ(q);
   q.forEach(x => socket.emit('setBallShot', { matchId: x.matchId, ballUid: x.uid, shot: x.shot }, (ack) => {
-    if(ack && (ack.ok || ack.retry === false)) wwSaveQ(wwLoadQ().filter(y => !(y.uid === x.uid && y.at === x.at)));
+    if(ack && (ack.ok || (ack.retry === false && !ack.locked))) wwSaveQ(wwLoadQ().filter(y => !(y.uid === x.uid && y.at === x.at)));
   }));
 }
 (function wireWagonWheel(){
@@ -18716,6 +19052,13 @@ async function openUpcomingModal(rec){
     umEl('um-title').textContent = 'Upcoming Match';
     umEl('um-save').textContent = 'Save Upcoming Match';
   }
+  // 🔒 lock with a code — the operator's choice for each fixture; a locked one stays locked
+  const umLockEl = umEl('um-lock');
+  umLockEl.checked = !!(umEditing && umEditing.locked);
+  umLockEl.disabled = !!(umEditing && umEditing.locked);
+  umEl('um-lock-note').textContent = umEditing && umEditing.locked
+    ? 'This match is locked — its code stays the same (🔑 in 📋 Matches shows it on the laptop that made it).'
+    : 'Only a laptop that enters the 7-character code can start and score this match.';
   umSetMsg('');
   renderUmFormat();
   renderUmSides();
@@ -18956,6 +19299,15 @@ async function saveUpcomingMatch(){
       matchStage: umEl('um-stage').value,
       notes: umEl('um-notes').value
     });
+    // 🔒 lock with a code (operator's choice) — made on the server before the fixture is saved
+    let newCode = null;
+    if(editing && editing.locked) rec.locked = true;
+    else if(umEl('um-lock').checked){
+      try{ newCode = await mlCreate(rec.roomId, rec.matchId, false); rec.locked = true; }
+      catch(e){
+        if(!confirm(`🔒 Could not make a code for this match (${e.message}).\n\nSave it WITHOUT a code?`)){ umSetMsg('⚠️ Not saved — try again, or turn off "Lock with a code".'); return; }
+      }
+    }
     upsertLeagueRecord(tournament, rec);
     closeUpcomingModal();
     setHistoryPanelView('matches');
@@ -18963,6 +19315,7 @@ async function saveUpcomingMatch(){
     toast(editing
       ? `✏️ Match ${rec.matchNo} updated — ${teamA.name} vs ${teamB.name}, ${upcomingWhenText(rec)} (${what}).`
       : `📅 Match ${rec.matchNo} scheduled — ${teamA.name} vs ${teamB.name}, ${upcomingWhenText(rec)} (${what}). It is in 📋 Matches — press ▶ Start there when the match begins.`, 7000);
+    if(newCode) mlShowCode(rec.roomId, newCode, `Match ${rec.matchNo} — ${teamA.name} vs ${teamB.name}`, 'Give this code to the person who will score this match. Without it the match cannot be started or scored. It is also under 🔑 in 📋 Matches on this laptop.');
   }catch(err){
     console.error('Save Upcoming Match failed', err);
     umSetMsg('⚠️ Could not save the upcoming match — nothing was changed. Try again.');
@@ -19264,6 +19617,8 @@ async function startUpcomingMatch(rec, btn, listTournament){
   if(isMatchOnPanel(rec, owner)){ toast('This match is already on the panel'); return; }
   const hasCurrent = (state.ballLog || []).length > 0;
   if(!confirm(`Start ${matchLabelForToast(rec)}${rec.matchNo ? ` (Match ${rec.matchNo})` : ''} on the panel now?${hasCurrent ? `\n\nThe current match (${matchLabelForToast(state)}${currentMatchTournament() ? ` — ${currentMatchTournament()}` : ''}) is saved to its own ${currentMatchTournament() ? 'tournament' : 'history'} first and can be resumed later.` : ''}\n\nThe Match ID changes to this match's own ID (${rec.roomId}) — Overlay/Scorecard links change with it.`)) return;
+  // 🔒 a locked match starts only with its code
+  if(!(await mlEnsureAccess(rec.roomId, matchLabelForToast(rec), rec))) return;
   upcomingStartInFlight = true;
   const oldText = btn ? btn.textContent : '';
   if(btn){ btn.disabled = true; btn.textContent = 'Loading…'; }
@@ -19303,6 +19658,7 @@ async function startUpcomingMatch(rec, btn, listTournament){
       state.matchLeague = owner;
       state.matchMode = 'tournament';
       state.tournamentMatchId = rec.matchId;
+      state.matchLocked = mlLockedFor(rec.roomId, rec);
       state.matchNo = rec.matchNo || null;
       state.matchTitle = rec.matchTitle || '';
       if(rec.venue) state.venue = rec.venue;
