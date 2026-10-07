@@ -13098,7 +13098,10 @@ function getPlayerHistoryRows(name, matches){
       label: `Match ${i + 1}`, team: teamLabel,
       runs: bat ? bat.runs : '—', balls: bat ? bat.balls : '—',
       fours: bat ? bat.fours : '—', sixes: bat ? bat.sixes : '—', sr,
-      wkts: bowl ? bowl.wickets : (bat ? 0 : '—')
+      wkts: bowl ? bowl.wickets : (bat ? 0 : '—'),
+      notOut: bat ? !bat.out : null,
+      bowlFig: bowl ? `${bowl.wickets || 0}-${bowl.runs || 0}` : '',
+      bowlOvers: bowl ? fmtBowlerOvers(bowl.overs || 0, bowl.balls || 0) : ''
     });
   });
   return { rows, lastTeamName };
@@ -13380,12 +13383,15 @@ async function buildPlayerHistoryPayload(name){
     ? excludeCurrentTournament(await fetchPlayerTournamentHistoryPanel(name))
     : [];
 
+  // the team's look, also when it is not one of the two loaded on the panel
+  const id = lastTeamName ? overlayTeamIdentity(lastTeamName, matches) : { short: '', color: '', logoUrl: '' };
   return {
     playerName: name,
+    tournamentName: state.leagueName || '',
     teamName: teamObj ? teamObj.name : lastTeamName,
-    teamShort: teamObj ? teamObj.short : '',
-    teamColor: teamObj ? teamObj.color : '',
-    teamLogo: teamObj ? teamObj.logoUrl : '',
+    teamShort: teamObj ? teamObj.short : id.short,
+    teamColor: teamObj ? teamObj.color : id.color,
+    teamLogo: teamObj ? teamObj.logoUrl : (String(id.logoUrl || '').length <= 250000 ? id.logoUrl : ''),
     // Which sections the operator actually wants on screen — the overlay
     // only renders the ones flagged true here, independent of each other.
     sections: { ...state.playerHistorySections },
@@ -13446,14 +13452,14 @@ function getTeamHistoryRows(name, matches){
     const own = side === 'A' ? m.scoreA : m.scoreB;
     const opp = side === 'A' ? m.scoreB : m.scoreA;
     const oppTeam = side === 'A' ? m.teamB : m.teamA;
-    const resultText = m.winningTeam === 'TIE' ? 'Tied'
-      : m.winningTeam === side ? 'Won'
-      : m.winningTeam ? 'Lost' : 'In progress';
+    const resultKey = resultKeyForSide(m, side);
+    const resultText = { W: 'Won', L: 'Lost', T: 'Tied', D: 'Drawn', NR: 'No result' }[resultKey] || 'In progress';
     rows.push({
       label: `Match ${i + 1}`, opponent: oppTeam ? (oppTeam.short || oppTeam.name) : '—',
+      opponentName: oppTeam ? (oppTeam.name || oppTeam.short || '') : '',
       own: own ? `${own.runs}-${own.wickets} (${own.overs})` : '—',
       opp: opp ? `${opp.runs}-${opp.wickets} (${opp.overs})` : '—',
-      result: resultText
+      result: resultText, resultKey
     });
   });
   return rows;
@@ -13523,12 +13529,32 @@ function buildTeamHistoryPayload(name){
   const stats = computeTeamTournamentStats(name);
   const nrr = computeTeamNRR(name, matches);
   const points = stats ? (stats.won * 2 + stats.tied) : 0;
+  // the team's look (also when it is not one of the two loaded on the panel),
+  // each opponent's look, and where the team stands in the table
+  const id = overlayTeamIdentity(name, matches);
+  const enriched = rows.map(r => {
+    const o = overlayTeamIdentity(r.opponentName || r.opponent, matches);
+    return { ...r, opponentShort: o.short, opponentColor: o.color, opponentLogo: o.logoUrl };
+  });
+  // opponents' logos ride along only up to a budget (see overlayLogoBudget)
+  let logoBytes = String(id.logoUrl || '').length;
+  enriched.forEach(r => {
+    const n = String(r.opponentLogo || '').length;
+    if(!n) return;
+    if(logoBytes + n > 450000) r.opponentLogo = ''; else logoBytes += n;
+  });
+  const table = computeStandings(matches);
+  const rank = table.findIndex(t => teamKeyOf(t.name) === teamKeyOf(name));
   return {
     teamName: teamObj ? teamObj.name : name,
-    teamShort: teamObj ? teamObj.short : '',
-    teamColor: teamObj ? teamObj.color : '',
-    teamLogo: teamObj ? teamObj.logoUrl : '',
-    rows,
+    teamShort: teamObj ? teamObj.short : id.short,
+    teamColor: teamObj ? teamObj.color : id.color,
+    teamLogo: teamObj ? teamObj.logoUrl : id.logoUrl,
+    tournamentName: state.leagueName || '',
+    rows: enriched,
+    stats: stats ? { played: stats.matches, won: stats.won, lost: stats.lost, tied: stats.tied, points, nrr: nrr === null ? null : nrr,
+      highest: stats.highest, avgScore: stats.avgScore, winPct: stats.winPct } : null,
+    rank: rank >= 0 ? rank + 1 : null, teams: table.length,
     totalsLine: stats ? `P ${stats.matches}  ·  W ${stats.won}  ·  L ${stats.lost}  ·  T ${stats.tied}  ·  PTS ${points}  ·  NRR ${nrr === null ? '—' : nrr}` : ''
   };
 }
@@ -13584,13 +13610,83 @@ function renderPointsTableView(matches){
   });
 }
 
+// 🎨 How a team looks on the overlay's tournament cards (short name, colour,
+// logo): the teams loaded on the panel first, then the tournament's own team
+// list (Create Tournament), then that team's latest match record.
+function overlayTeamIdentity(name, matches){
+  const key = teamKeyOf(name);
+  const out = { name: name || '', short: '', color: '', logoUrl: '' };
+  if(!key) return out;
+  const take = (t) => {
+    if(!t) return;
+    if(!out.short && t.short) out.short = t.short;
+    if(!out.color && t.color) out.color = t.color;
+    if(!out.logoUrl && t.logoUrl) out.logoUrl = t.logoUrl;
+  };
+  take(findLoadedTeamByName(name));
+  const info = (tournamentInfoCache[(state.leagueName || '').trim().toLowerCase()] || {}).info;
+  take(((info && info.teams) || []).find(t => teamKeyOf(t.name) === key));
+  for(let i = (matches || []).length - 1; i >= 0 && !(out.short && out.color && out.logoUrl); i--){
+    const m = matches[i];
+    if(teamKeyOf(m.teamA && m.teamA.name) === key) take(m.teamA);
+    else if(teamKeyOf(m.teamB && m.teamB.name) === key) take(m.teamB);
+  }
+  if(!out.short) out.short = shortNameFor(name);
+  return out;
+}
+// One match's result for a side: W / L / T (tied) / D (drawn) / NR, '' while undecided.
+function resultKeyForSide(m, side){
+  const w = m && m.winningTeam;
+  if(!w) return '';
+  if(w === side) return 'W';
+  if(w === 'TIE') return 'T';
+  if(w === 'DRAW') return 'D';
+  return (w === 'A' || w === 'B') ? 'L' : 'NR';
+}
+// A team's results in match order (newest last) — the "form" guide.
+function teamFormOf(name, matches){
+  const key = teamKeyOf(name);
+  const form = [];
+  (matches || []).forEach(m => {
+    const side = teamKeyOf(m.teamA && m.teamA.name) === key ? 'A' : teamKeyOf(m.teamB && m.teamB.name) === key ? 'B' : null;
+    const r = side ? resultKeyForSide(m, side) : '';
+    if(r) form.push(r);
+  });
+  return form;
+}
+// Logos ride along with these cards only up to a budget, so one message
+// never outgrows the live connection's limit — past it a team shows its
+// short-name badge instead.
+function overlayLogoBudget(items, budget){
+  let used = 0;
+  (items || []).forEach(it => {
+    const n = String((it && it.logoUrl) || '').length;
+    if(!n) return;
+    if(used + n > budget) it.logoUrl = ''; else used += n;
+  });
+  return items;
+}
+function overlayTournamentInfo(){
+  const info = (tournamentInfoCache[(state.leagueName || '').trim().toLowerCase()] || {}).info || {};
+  const logo = String(info.logoUrl || '');
+  return { logoUrl: logo.length <= 250000 ? logo : '', color: info.color || '', season: info.season || '', shortName: info.shortName || '' };
+}
+
 // Payload sent to the overlay for the Points Table card — same standings
-// array as the Excel export, plus a small status line for the footer.
+// array as the Excel export (each team with its look and last-5 form for
+// the graphic), plus a small status line for the footer.
 function buildPointsTablePayload(){
   const matches = currentLeagueMatches();
-  const standings = computeStandings(matches);
+  const standings = computeStandings(matches).map(t => {
+    const id = overlayTeamIdentity(t.name, matches);
+    return { ...t, short: id.short, color: id.color, logoUrl: id.logoUrl, form: teamFormOf(t.name, matches).slice(-5) };
+  });
+  overlayLogoBudget(standings, 450000);
+  const ti = overlayTournamentInfo();
   return {
     tournamentName: state.leagueName || '',
+    tournamentLogo: ti.logoUrl, tournamentColor: ti.color, season: ti.season,
+    matchesPlayed: matches.length,
     standings,
     updatedLine: `Updated after ${matches.length} match${matches.length === 1 ? '' : 'es'}`
   };

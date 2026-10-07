@@ -87,3 +87,14 @@ Match), ▶ Start / ▶ Resume asking for the code, wrong code refused, one lapt
 at a time (the laptop that lost the match is stopped by the server and its
 balls wait until the code is entered again), the wrong-code limit, the owner's
 admin list / remove, and matches without a code unchanged.
+
+`history-cards-test.js` covers the POINTS TABLE, TEAM HISTORY and PLAYER
+HISTORY cards. In both panels it checks the payloads: each team's short name,
+colour, logo (within the size budget) and last-5 form; a DRAWN match reads
+"Drawn", not "Lost"; a team's rank and record, with each opponent's look; and
+a player's runs, not-out and bowling figures match by match. On the overlay it
+checks the full-size cards (the rows, chips, tiles and the runs/wickets chart)
+and the score bar going off air while a card is up and coming back when the
+last card is hidden. It also checks that a re-send with nothing new changes
+nothing, and that two cards never pile up: the newer card goes on top, and the
+older one steps back and returns once the newer one leaves.
