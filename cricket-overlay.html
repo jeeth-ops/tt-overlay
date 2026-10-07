@@ -20,7 +20,26 @@
   // sits at frame 0 forever. Forcing the ticker onto a plain interval
   // instead makes animations run and complete regardless of whether the
   // page is "visible" in that sense. Harmless in a normal browser tab.
-  if (window.gsap && gsap.ticker && typeof gsap.ticker.useRAF === 'function') {
+  //
+  // 🎞 SMOOTHNESS: a plain interval is NOT in step with the screen's frames,
+  // so in vMix / OBS / a browser every animation stuttered a little (frames
+  // land unevenly between refreshes). So: requestAnimationFrame — frames in
+  // step with the display — whenever the page is really being painted, and
+  // the interval ONLY while no frame has come for half a second (the
+  // offscreen window above, or a hidden tab). It switches back by itself the
+  // moment frames come again. Same animations, same timings.
+  if (window.gsap && gsap.ticker && typeof gsap.ticker.useRAF === 'function' && typeof requestAnimationFrame === 'function') {
+    let onRaf = true, lastFrame = performance.now();
+    const ping = () => {
+      lastFrame = performance.now();
+      if (!onRaf) { onRaf = true; gsap.ticker.useRAF(true); }
+      requestAnimationFrame(ping);
+    };
+    requestAnimationFrame(ping);
+    setInterval(() => {
+      if (onRaf && performance.now() - lastFrame > 500) { onRaf = false; gsap.ticker.useRAF(false); }
+    }, 250);
+  } else if (window.gsap && gsap.ticker && typeof gsap.ticker.useRAF === 'function') {
     gsap.ticker.useRAF(false);
   }
 </script>
@@ -84,7 +103,16 @@
     display:flex; flex-direction:column;
     filter:drop-shadow(0 16px 34px rgba(0,0,0,0.45));
     opacity:0;
+    /* its own GPU layer: the drop shadow is drawn by the compositor instead
+       of being repainted on every animation frame inside the bar */
+    will-change:opacity, transform;
   }
+  /* the parts of the bar that blur / scale out and back in around every
+     ball event — kept on the GPU so those frames never wait on a repaint
+     (GSAP leaves a transform/filter on them after the first event anyway,
+     so this changes nothing on screen) */
+  #cap-left .cap-logo, #cap-left .cap-text, #cap-right .cap-logo, #cap-right .cap-text,
+  #score-value, #overs-badge .ov-num, #overs-badge .ov-lbl, #live-segs, #break-seg{ will-change:transform, opacity, filter; }
 
   /* ---- Top row ---- */
   #top-row{ display:flex; align-items:stretch; height:min(9.8vw,118px); position:relative; }
