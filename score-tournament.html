@@ -548,6 +548,10 @@
   }
   .mcard.featured .mc-go{ padding:10px 18px; background:#ef4444; border-color:#ef4444; color:#fff; font-size:13px; box-shadow:0 8px 18px -8px rgba(239,68,68,.8); }
   .mcard.is-off{ opacity:.82; }
+  /* 🔒 a locked match's code — shown to the owner only (see showOwnerLockCodes) */
+  .mc-lockcode{ display:inline-flex; align-items:center; gap:8px; margin-top:8px; padding:5px 10px; border-radius:10px; border:1px dashed #f59e0b; background:rgba(245,158,11,.10); font-size:11.5px; font-weight:700; color:var(--text-dim); cursor:copy; white-space:nowrap; max-width:100%; }
+  .mc-lockcode b{ font-family:ui-monospace, Menlo, Consolas, monospace; font-size:14px; letter-spacing:2px; color:#d97706; white-space:nowrap; }
+  .mc-lockcode i{ font-style:normal; font-weight:600; font-size:10.5px; color:var(--text-dim); }
 
   @media (max-width:520px){
     .mc-grid{ gap:12px; }
@@ -1082,7 +1086,7 @@ function matchCardHtml(m, { href, status, featured = false }){
   const go = featured ? 'Watch Live' : (done ? 'Scorecard' : 'Follow');
   const style = [ca && `--ca:${ca}`, cb && `--cb:${cb}`].filter(Boolean).join(';');
   return `<a class="mcard${featured ? ' featured' : ''}${status === 'abandoned' ? ' is-off' : ''}" href="${escapeHtml(href)}"
-      data-goto-match="${escapeHtml(m.matchId)}"${!done && m.roomId ? ` data-goto-room="${escapeHtml(m.roomId)}"` : ''}
+      data-goto-match="${escapeHtml(m.matchId)}"${!done && m.roomId ? ` data-goto-room="${escapeHtml(m.roomId)}"` : ''}${m.roomId ? ` data-room="${escapeHtml(m.roomId)}"` : ''}
       ${style ? `style="${style}"` : ''} aria-label="${escapeHtml(aria)}">
     <div class="mc-top">
       <span class="mc-label">${label ? `<span class="mc-label-t">${escapeHtml(label)}</span>` : ''}${fmt ? `<span class="mc-fmt">${escapeHtml(fmt)}</span>` : ''}</span>
@@ -1102,8 +1106,44 @@ function matchCardHtml(m, { href, status, featured = false }){
 }
 // A live room whose match record hasn't been saved yet — there is no team
 // or score data to show, so it says only what is true.
+// 🔒 MATCH CODES — a locked match's code is shown on its card ONLY to the
+// owner (chhayajeeth@gmail.com). The codes come from /api/admin/match-locks,
+// which the server answers only for the owner's verified Firebase sign-in
+// (requireOwner) — nobody else's page ever receives a code, whatever it shows.
+let ownerLocks = null, ownerLocksAt = 0;
+async function showOwnerLockCodes(){
+  await authReady;
+  if(!isOwner) return;
+  try{
+    if(!ownerLocks || Date.now() - ownerLocksAt > 20000){
+      const res = await apiFetch('/api/admin/match-locks', { cache: 'no-store' });
+      const d = await res.json().catch(() => null);
+      if(!res.ok || !d || !d.success) return;
+      ownerLocks = new Map((d.locks || []).filter(l => l && l.roomId && l.code).map(l => [l.roomId, l]));
+      ownerLocksAt = Date.now();
+    }
+    document.querySelectorAll('.mcard[data-room]').forEach(card => {
+      const l = ownerLocks.get(card.getAttribute('data-room'));
+      let el = card.querySelector('.mc-lockcode');
+      if(!l){ if(el) el.remove(); return; }
+      if(!el){
+        el = document.createElement('div');
+        el.className = 'mc-lockcode';
+        el.title = 'Match code — only you (owner) can see this. Click to copy.';
+        el.addEventListener('click', (e) => {
+          e.preventDefault(); e.stopPropagation();
+          try{ navigator.clipboard.writeText(el.dataset.code); el.querySelector('i').textContent = 'copied ✓'; }catch(err){}
+        });
+        (card.querySelector('.mc-foot-text') || card).appendChild(el);
+      }
+      const c = String(l.code), k = c.length === 6 ? 3 : 4;
+      el.dataset.code = c;
+      el.innerHTML = `<span>🔒 Code</span><b>${escapeHtml(c.slice(0, k) + ' ' + c.slice(k))}</b><i>${l.held ? 'being scored' : 'not started'}</i>`;
+    });
+  }catch(e){ /* the page works without it */ }
+}
 function liveRoomCardHtml(roomId){
-  return `<a class="mcard featured" href="/cricket-scorecard?room=${encodeURIComponent(roomId)}" aria-label="Live match in progress. Watch live">
+  return `<a class="mcard featured" href="/cricket-scorecard?room=${encodeURIComponent(roomId)}" data-room="${escapeHtml(roomId)}" aria-label="Live match in progress. Watch live">
     <div class="mc-top"><span class="mc-label"><span class="mc-label-t">Match in progress</span></span><span class="mc-status live"><span class="mc-dot"></span>Live</span></div>
     <div class="mc-body"><div class="mc-foot"><div class="mc-foot-text"><div class="mc-result pending">Follow ball-by-ball updates</div></div>
       <span class="mc-go" aria-hidden="true"><span class="mc-go-label">Watch Live</span><span class="mc-go-arrow">→</span></span></div></div>
@@ -1290,7 +1330,7 @@ async function init(){
     } else {
       const res = await apiFetch(`/api/public/tournament/${encodeURIComponent(token)}`);
       const data = await res.json();
-      if(data && data.success){ portalSig = portalSignature(data); renderPortal(data, token); startPortalRefresh(token); }
+      if(data && data.success){ portalSig = portalSignature(data); renderPortal(data, token); showOwnerLockCodes(); startPortalRefresh(token); }
       else {
         // DIAGNOSTIC: check this in the console — if signedInAs is empty
         // while you know you're logged in, the Firebase session did not
@@ -1320,13 +1360,14 @@ async function refreshPortal(token){
     const data = await res.json();
     if(!(data && data.success)) return;
     const sig = portalSignature(data);
-    if(sig === portalSig) return;
+    if(sig === portalSig){ showOwnerLockCodes(); return; }
     portalSig = sig;
     const c = document.getElementById('content');
     const activeTab = (c.querySelector('.tab-btn.active') || {}).dataset;
     const searches = [...c.querySelectorAll('.lb-search-input')].map(i => i.value);
     const y = window.scrollY;
     renderPortal(data, token, { quiet: true });
+    showOwnerLockCodes();
     if(activeTab && activeTab.tab){ const b = c.querySelector(`.tab-btn[data-tab="${activeTab.tab}"]`); if(b && !b.classList.contains('active')) b.click(); }
     c.querySelectorAll('.lb-search-input').forEach((inp, i) => { if(searches[i]){ inp.value = searches[i]; inp.dispatchEvent(new Event('input')); } });
     window.scrollTo(0, y);

@@ -12,6 +12,8 @@
 //     code is entered again
 //   • wrong-code limit; owner (admin) can read / remove a lock
 //   • matches without a code are unchanged
+//   • the tournament page shows the codes to the owner (chhayajeeth@gmail.com)
+//     and to nobody else
 //
 //   node test/cricket/match-lock-test.js
 const fs = require('fs');
@@ -517,8 +519,72 @@ async function panelSuite(file){
   for(const P of [A, B, C, D]) eq(L('no script errors'), P.errors.filter(e => !/getContext|Not implemented/.test(e)), []);
 }
 
+/* ------------------------------------------------------------------ */
+/* Tournament page: the owner (and only the owner) sees the codes      */
+/* ------------------------------------------------------------------ */
+async function tournamentPageSuite(){
+  console.log('\n######## TOURNAMENT PAGE — codes for the owner only ########');
+  const S = makeServer();
+  const live = await S.call('POST', '/api/match-lock?uid=U1', { body: { roomId: 'room-live', matchId: 'm-live', claim: true, code: 'MI24WIN' } });
+  await S.call('POST', '/api/match-lock?uid=U1', { body: { roomId: 'room-up', matchId: 'm-up', code: 'ABC123' } });
+  const blank = { scoreA: { runs: 0, wickets: 0, overs: '0.0' }, scoreB: { runs: 0, wickets: 0, overs: '0.0' }, battingCard: { A: [], B: [] }, bowlingCard: { A: [], B: [] } };
+  const payload = { success: true, tournament: { name: 'Test Cup' }, pointsTable: [], leaderboards: { topRuns: [], topWickets: [] },
+    matches: [
+      { ...blank, matchId: 'm-live', roomId: 'room-live', matchNo: 1, teamA: { name: 'Mumbai', short: 'MUM' }, teamB: { name: 'Pune', short: 'PUN' }, scoreA: { runs: 40, wickets: 1, overs: '5.0' } },
+      { ...blank, matchId: 'm-up', roomId: 'room-up', upcoming: true, matchNo: 2, scheduledDate: '2026-10-20', teamA: { name: 'Thane', short: 'THA' }, teamB: { name: 'Nashik', short: 'NAS' } },
+      { ...blank, matchId: 'm-open', roomId: 'room-open', upcoming: true, matchNo: 3, scheduledDate: '2026-10-21', teamA: { name: 'Goa', short: 'GOA' }, teamB: { name: 'Surat', short: 'SUR' } }
+    ],
+    live: { roomId: 'room-live', matchId: 'm-live', matches: [{ roomId: 'room-live', matchId: 'm-live' }] } };
+  async function open(email){
+    let html = fs.readFileSync(path.join(__dirname, '..', '..', 'score-tournament.html'), 'utf8').replace(/<script[^>]*\bsrc=[^>]*><\/script>/g, '');
+    const vc = new VirtualConsole(); const errors = []; const lockCalls = [];
+    vc.on('jsdomError', e => errors.push(e.message));
+    const user = email ? { email, getIdToken: async () => email === 'chhayajeeth@gmail.com' ? 'OWNER' : 'SOMEONE' } : null;
+    const dom = new JSDOM(html, {
+      runScripts: 'dangerously', pretendToBeVisual: true, url: 'https://example.test/score/tournament/TOK', virtualConsole: vc,
+      beforeParse(w){
+        w.firebase = { initializeApp(){}, auth: () => ({ currentUser: user, onAuthStateChanged(cb){ setTimeout(() => cb(user), 0); } }) };
+        w.fetch = async (url, opts) => {
+          url = String(url);
+          const json = (o, st) => ({ ok: (st || 200) < 400, status: st || 200, json: async () => JSON.parse(JSON.stringify(o)) });
+          if(/\/api\/admin\/match-locks/.test(url)){
+            const hdr = (opts && opts.headers) || {};
+            lockCalls.push(hdr.Authorization || null);
+            const r = await S.call('GET', '/api/admin/match-locks', { headers: hdr });
+            return json(r.body, r.status);
+          }
+          if(/\/api\/public\/tournament\//.test(url)) return json(payload);
+          return json({ success: false }, 404);
+        };
+        w.matchMedia = w.matchMedia || (() => ({ matches: false, addListener(){}, removeListener(){}, addEventListener(){}, removeEventListener(){} }));
+        w.IntersectionObserver = w.IntersectionObserver || class { observe(){} unobserve(){} disconnect(){} };
+        w.ResizeObserver = w.ResizeObserver || class { observe(){} unobserve(){} disconnect(){} };
+        w.scrollTo = () => {};
+      }
+    });
+    dom.window.document.dispatchEvent(new dom.window.Event('DOMContentLoaded'));
+    await sleep(350);
+    const doc = dom.window.document;
+    const codeOf = (id) => { const c = doc.querySelector(`[data-goto-match="${id}"] .mc-lockcode b`); return c ? c.textContent : null; };
+    return { doc, errors, lockCalls, codeOf, html: doc.body.innerHTML };
+  }
+  const O = await open('chhayajeeth@gmail.com');
+  eq('PAGE: owner sees each locked match\'s code on its card', [O.codeOf('m-live'), O.codeOf('m-up'), O.codeOf('m-open')], ['MI24 WIN', 'ABC 123', null]);
+  eq('PAGE: …with whether it is being scored', [...O.doc.querySelectorAll('.mc-lockcode i')].map(i => i.textContent).sort(), ['being scored', 'not started']);
+  for(const [who, email] of [['another Gmail (a creator)', 'workallsportslive@gmail.com'], ['a visitor, signed out', null]]){
+    const V = await open(email);
+    eq(`PAGE: ${who} — no codes on the page`, [V.doc.querySelectorAll('.mc-lockcode').length, /MI24|ABC 123|ABC123/.test(V.html), V.doc.querySelectorAll('[data-goto-match]').length], [0, false, 3]);
+    eq(`PAGE: ${who} — the page does not even ask for codes`, V.lockCalls.length, 0);
+    eq(`PAGE: ${who} — no script errors`, V.errors, []);
+  }
+  const forged = await S.call('GET', '/api/admin/match-locks', { headers: { Authorization: 'Bearer SOMEONE' } });
+  eq('PAGE: a forged request without the owner\'s sign-in → 403, no codes', [forged.status, JSON.stringify(forged.body).includes('MI24WIN')], [403, false]);
+  eq('PAGE: no script errors (owner)', O.errors, []);
+}
+
 (async () => {
   await serverSuite();
+  await tournamentPageSuite();
   for(const f of ['cricket-panel.html', 'cricket-panel3.html']) await panelSuite(f);
   console.log(`\n================  ${pass} passed, ${fail} failed  ================`);
   process.exit(fail ? 1 : 0);
