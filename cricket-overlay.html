@@ -562,6 +562,88 @@
   }
   .cardg-extras .lbl{ font-size:calc(14 * var(--u)); letter-spacing:1.2px; color:var(--bc-ink-dim,#5c6c8a); text-transform:uppercase; }
   .cardg-empty{ padding:34px; text-align:center; font-size:20px; font-weight:700; color:var(--bc-ink-dim,#5c6c8a); }
+
+  /* ---- 🏏 SCORECARD FACES, broadcast edition ----
+     The whole card takes the team's colour: the header is the team colour
+     running into a deeper shade of itself (white text always readable — the
+     wash darkens light colours), and the same hue is reused, quietly, for the
+     table head, the batting-position chips, the at-the-crease rail and the
+     TOTAL tile. The tones come from cardgTones() (JS) as plain rgb/rgba so
+     older CEF builds in OBS/vMix render them too (no color-mix). */
+  .summary-card.cycle-card.cardg{ background:#f6f8fc; }
+  /* header and tiles keep their size; fitCycleCard() scales the whole card */
+  .cardg > *{ flex-shrink:0; }
+  .cardg .sc-header.cardg-head{
+    position:relative; border-bottom:0; overflow:hidden;
+    background:
+      radial-gradient(120% 140% at 0% 0%, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0) 46%),
+      repeating-linear-gradient(115deg, rgba(255,255,255,0.035) 0 2px, rgba(255,255,255,0) 2px 14px),
+      linear-gradient(110deg, var(--card-accent,#0b3d91) 0%, var(--card-deep,#06204d) 100%);
+    padding:calc(20 * var(--u) * var(--cyc,1)) calc(34 * var(--ux)); gap:calc(24 * var(--ux));
+  }
+  /* a fine light edge under the header, in the team's own hue */
+  .cardg .cardg-head::after{ content:''; position:absolute; left:0; right:0; bottom:0; height:calc(4 * var(--u));
+    background:linear-gradient(90deg, var(--card-glow,rgba(255,255,255,.7)), rgba(255,255,255,0.15) 70%, rgba(255,255,255,0)); }
+  .cardg .sc-badge{ width:calc(86 * var(--u) * var(--cyc,1)); height:calc(86 * var(--u) * var(--cyc,1)); font-size:calc(22 * var(--u) * var(--cyc,1));
+    border:calc(3 * var(--u)) solid rgba(255,255,255,0.92); box-shadow:0 calc(6 * var(--u)) calc(18 * var(--u)) rgba(0,0,0,0.35), 0 0 0 calc(6 * var(--u)) rgba(255,255,255,0.12);
+    color:var(--card-ink,#0b3d91); }
+  .cardg-kicker{ display:flex; align-items:center; gap:calc(12 * var(--u)); }
+  .cardg-pill{ font-family:var(--font-num); font-weight:900; font-size:calc(13 * var(--u)); letter-spacing:calc(2.2 * var(--u));
+    padding:calc(4 * var(--u)) calc(11 * var(--u)); border-radius:99px; background:rgba(255,255,255,0.95); color:var(--card-ink,#0b3d91); }
+  .cardg-subtxt{ font-family:var(--font-num); font-weight:800; font-size:calc(14 * var(--u)); letter-spacing:calc(1.8 * var(--u)); color:rgba(255,255,255,0.86); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .cardg .sc-title{ font-size:calc(38 * var(--u)); line-height:1.08; margin-top:calc(6 * var(--u)); letter-spacing:calc(.6 * var(--u)); }
+  .cardg-venue{ display:flex; align-items:center; gap:calc(7 * var(--u)); margin-top:calc(7 * var(--u)); font-weight:600; font-size:calc(14.5 * var(--u)); color:rgba(255,255,255,0.84); letter-spacing:calc(.3 * var(--u)); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .cardg-venue[hidden]{ display:none; }
+  .cardg-venue svg{ flex:none; width:calc(15 * var(--u)); height:calc(15 * var(--u)); fill:rgba(255,255,255,0.84); }
+  .cardg-venue span{ overflow:hidden; text-overflow:ellipsis; }
+  /* the score, in a frosted panel on the right of the header */
+  .cardg .cardg-score{ padding:calc(12 * var(--u) * var(--cyc,1)) calc(22 * var(--u)); border-radius:calc(16 * var(--u));
+    background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.24); box-shadow:inset 0 1px 0 rgba(255,255,255,0.18); min-width:calc(170 * var(--u)); }
+  .cardg .cardg-score .big{ font-size:calc(50 * var(--u)); line-height:1; letter-spacing:calc(.5 * var(--u)); }
+  .cardg .cardg-score .sml{ font-size:calc(14 * var(--u)); margin-top:calc(6 * var(--u)); letter-spacing:calc(2 * var(--u)); }
+  .cardg-rr{ margin-top:calc(7 * var(--u)); font-family:var(--font-num); font-weight:800; font-size:calc(13 * var(--u)); letter-spacing:calc(1.2 * var(--u)); color:var(--card-ink,#0b3d91);
+    background:rgba(255,255,255,0.95); border-radius:99px; padding:calc(3 * var(--u)) calc(10 * var(--u)); display:inline-block; }
+  .cardg-rr[hidden]{ display:none; }
+  /* table */
+  .cardg .sc-rows{ padding-top:calc(16 * var(--u) * var(--cyc,1)); }
+  .cardg .sc-row{ border-radius:calc(9 * var(--u)); }
+  .cardg .sc-row-head{ background:var(--card-tint2,rgba(11,61,145,0.12)); color:var(--card-ink,#0b3d91); letter-spacing:calc(1.6 * var(--u)); }
+  .cardg .sc-row-alt{ background:var(--card-tint,rgba(11,61,145,0.06)); }
+  .cardg .cardg-pos{ min-width:0; width:calc(30 * var(--u) * var(--cyc,1)); height:calc(30 * var(--u) * var(--cyc,1)); margin-right:calc(12 * var(--u));
+    display:inline-flex; align-items:center; justify-content:center; vertical-align:middle; border-radius:calc(8 * var(--u));
+    background:var(--card-tint2,rgba(11,61,145,0.12)); color:var(--card-ink,#0b3d91); font-size:.72em; }
+  .cardg .cardg-out{ padding-left:calc(42 * var(--u) * var(--cyc,1)); }
+  .cardg .sc-row.cardg-live{ background:linear-gradient(90deg, var(--card-tint2,rgba(11,61,145,0.14)) 0%, var(--card-tint,rgba(11,61,145,0.05)) 100%);
+    box-shadow:inset calc(5 * var(--u)) 0 0 var(--card-accent-ink,#0b3d91); }
+  .cardg .sc-row.cardg-live .cardg-pos{ background:var(--card-accent-ink,#0b3d91); color:#fff; }
+  .cardg-strike{ display:inline-block; width:calc(9 * var(--u)); height:calc(9 * var(--u)); border-radius:50%; margin-left:calc(10 * var(--u)); vertical-align:middle;
+    background:var(--card-accent-ink,#0b3d91); box-shadow:0 0 0 calc(3 * var(--u)) var(--card-tint2,rgba(11,61,145,0.14)); }
+  #batting-card-graphic .sc-row:not(.sc-row-head):not(.cardg-yet) > .sc-c-num:nth-child(2){ font-size:1.3em; color:var(--bc-ink,#12213f); }
+  /* yet to bat: one quiet section — a label, then the names in batting order */
+  .cardg-yet-head{ display:flex; align-items:center; gap:calc(12 * var(--u)); margin:calc(10 * var(--u) * var(--cyc,1)) calc(10 * var(--ux)) calc(4 * var(--u) * var(--cyc,1));
+    font-family:var(--font-num); font-weight:900; font-size:calc(12.5 * var(--u) * var(--cyc,1)); letter-spacing:calc(2.6 * var(--u)); color:var(--card-ink,#0b3d91); }
+  .cardg-yet-head::after{ content:''; flex:1; height:1px; background:linear-gradient(90deg, var(--card-tint2,rgba(11,61,145,0.2)), rgba(0,0,0,0)); }
+  /* the names run down two columns, in batting order */
+  .cardg-yet-grid{ display:grid; grid-template-columns:1fr 1fr; grid-auto-flow:column; column-gap:calc(24 * var(--ux)); padding:0 calc(10 * var(--ux)); }
+  .cardg .cardg-yet-grid .sc-row.cardg-yet{ display:block; padding:calc(6 * var(--u) * var(--cyc,1)) 0; border-bottom:1px solid rgba(16,25,58,0.06); border-radius:0; font-size:calc(19 * var(--u) * var(--cyc,1)); }
+  .cardg .sc-row.cardg-yet .cardg-name{ font-weight:600; color:#4f5d78; }
+  .cardg .sc-row.cardg-yet .cardg-pos{ width:calc(26 * var(--u) * var(--cyc,1)); height:calc(26 * var(--u) * var(--cyc,1)); background:rgba(92,108,138,0.1); color:#7d8aa5; }
+  /* footer: three tiles — extras (with the breakdown), overs, and the total */
+  .cardg-foot{ display:grid; grid-template-columns:1fr 1fr 1.35fr; gap:calc(12 * var(--ux)); padding:calc(14 * var(--u) * var(--cyc,1)) calc(34 * var(--ux)) calc(20 * var(--u) * var(--cyc,1)); margin-top:calc(8 * var(--u) * var(--cyc,1)); }
+  .cardg-tile{ display:grid; grid-template-columns:auto 1fr; grid-template-rows:auto auto; align-items:center; column-gap:calc(14 * var(--u));
+    padding:calc(12 * var(--u) * var(--cyc,1)) calc(20 * var(--u)); border-radius:calc(14 * var(--u)); background:#fff;
+    border:1px solid rgba(16,25,58,0.09); box-shadow:0 calc(4 * var(--u)) calc(14 * var(--u)) rgba(16,25,58,0.06); }
+  .cardg-tile .k{ grid-row:1 / span 2; font-family:var(--font-num); font-weight:900; font-size:calc(14 * var(--u) * var(--cyc,1)); letter-spacing:calc(2 * var(--u)); color:#5c6c8a; }
+  .cardg-tile .v{ justify-self:end; font-family:var(--font-num); font-weight:900; font-size:calc(30 * var(--u) * var(--cyc,1)); line-height:1.05; color:var(--bc-ink,#12213f); font-variant-numeric:tabular-nums; }
+  .cardg-tile .x{ justify-self:end; font-family:var(--font-num); font-weight:700; font-size:calc(12 * var(--u) * var(--cyc,1)); letter-spacing:calc(.8 * var(--u)); color:#7d8aa5; white-space:nowrap; }
+  .cardg-tile .x:empty{ display:none; }
+  .cardg-tile.total{ border:0; background:
+      radial-gradient(120% 160% at 100% 0%, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0) 50%),
+      linear-gradient(110deg, var(--card-accent,#0b3d91) 0%, var(--card-deep,#06204d) 100%);
+    box-shadow:0 calc(8 * var(--u)) calc(22 * var(--u)) var(--card-shadow,rgba(11,61,145,0.35)); }
+  .cardg-tile.total .k{ color:rgba(255,255,255,0.86); }
+  .cardg-tile.total .v{ color:#fff; font-size:calc(36 * var(--u) * var(--cyc,1)); text-shadow:0 2px 6px rgba(0,0,0,0.3); }
+  .cardg-tile.total .x{ color:rgba(255,255,255,0.84); }
   /* How tall a card wants to be depends on BOTH how many rows it has (an
      all-out innings is 11 batters) and how tall the browser/canvas is — and
      the metrics above are in px while the box is capped in vh, so the two
@@ -1654,48 +1736,53 @@
        therefore the exact same box as the over summary; headed by the
        BATTING team's logo / name / colour. Rows are built in JS from the
        frozen over-summary payload's `batsmen` array. -->
-  <div id="batting-card-graphic" class="summary-card cycle-card">
-    <div class="sc-header">
+  <div id="batting-card-graphic" class="summary-card cycle-card cardg">
+    <div class="sc-header cardg-head">
       <div class="sc-badge" id="bat-card-badge">TM</div>
       <div class="sc-header-text">
+        <div class="cardg-kicker"><span class="cardg-pill" id="bat-card-kicker">BATTING</span><span class="cardg-subtxt" id="bat-card-sub">BATTING</span></div>
         <div class="sc-title" id="bat-card-team">TEAM</div>
-        <div class="sc-sub" id="bat-card-sub">BATTING</div>
+        <div class="cardg-venue" id="bat-card-venue" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7Zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5Z"/></svg><span id="bat-card-venue-t"></span></div>
       </div>
       <div class="cardg-score">
         <div class="big" id="bat-card-total">0-0</div>
         <div class="sml" id="bat-card-overs">0.0 OVERS</div>
+        <div class="cardg-rr" id="bat-card-rr" hidden></div>
       </div>
     </div>
     <div class="sc-rows" id="bat-card-rows"></div>
-    <div class="cardg-extras">
-      <span class="lbl">EXTRAS</span><span id="bat-card-extras">0</span>
+    <div class="cardg-foot">
+      <div class="cardg-tile"><span class="k">EXTRAS</span><span class="v" id="bat-card-extras">0</span><span class="x" id="bat-card-extras-x"></span></div>
+      <div class="cardg-tile"><span class="k">OVERS</span><span class="v" id="bat-card-foot-l">0.0</span><span class="x" id="bat-card-foot-x"></span></div>
+      <div class="cardg-tile total"><span class="k">TOTAL</span><span class="v" id="bat-card-foot-r">0-0</span><span class="x" id="bat-card-foot-t"></span></div>
     </div>
-    <div class="sc-footer">
-      <div id="bat-card-foot-l">TOTAL</div>
-      <div id="bat-card-foot-r" style="text-align:right;">0-0</div>
-    </div>
+  </div>
   </div>
 
   <!-- 🏏 BOWLING SCORECARD GRAPHIC — third face of the same cycle, headed by
        the BOWLING team's logo / name / colour, rows built from the frozen
        payload's `bowlers` array. -->
-  <div id="bowling-card-graphic" class="summary-card cycle-card">
-    <div class="sc-header">
+  <div id="bowling-card-graphic" class="summary-card cycle-card cardg">
+    <div class="sc-header cardg-head">
       <div class="sc-badge" id="bowl-card-badge">TM</div>
       <div class="sc-header-text">
+        <div class="cardg-kicker"><span class="cardg-pill" id="bowl-card-kicker">BOWLING</span><span class="cardg-subtxt" id="bowl-card-sub">BOWLING</span></div>
         <div class="sc-title" id="bowl-card-team">TEAM</div>
-        <div class="sc-sub" id="bowl-card-sub">BOWLING</div>
+        <div class="cardg-venue" id="bowl-card-venue" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7Zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5Z"/></svg><span id="bowl-card-venue-t"></span></div>
       </div>
       <div class="cardg-score">
         <div class="big" id="bowl-card-total">0-0</div>
         <div class="sml" id="bowl-card-overs">0.0 OVERS</div>
+        <div class="cardg-rr" id="bowl-card-rr" hidden></div>
       </div>
     </div>
     <div class="sc-rows" id="bowl-card-rows"></div>
-    <div class="sc-footer">
-      <div id="bowl-card-foot-l">OVERS 0.0</div>
-      <div id="bowl-card-foot-r" style="text-align:right;">TOTAL 0-0</div>
+    <div class="cardg-foot">
+      <div class="cardg-tile"><span class="k">EXTRAS</span><span class="v" id="bowl-card-extras">0</span><span class="x" id="bowl-card-extras-x"></span></div>
+      <div class="cardg-tile"><span class="k">OVERS</span><span class="v" id="bowl-card-foot-l">0.0</span><span class="x" id="bowl-card-foot-x"></span></div>
+      <div class="cardg-tile total"><span class="k">TOTAL</span><span class="v" id="bowl-card-foot-r">0-0</span><span class="x" id="bowl-card-foot-t"></span></div>
     </div>
+  </div>
   </div>
 
   <div id="conn-status">Connecting…</div>
@@ -4235,20 +4322,74 @@ function cardEmptyRow(text){
 // name, a label line, and the innings score on the right. `teamColor` becomes
 // --card-accent, which the header gradient, the not-out text and the
 // at-the-crease rail all read from.
+// 🎨 Every tone the scorecard faces need, from ONE team colour: the header
+// runs from the colour into a deeper shade of itself (light colours are
+// pulled down so white text always reads), tints for the table, an ink for
+// text on the light body, and a soft shadow for the TOTAL tile. Plain
+// rgb()/rgba() strings so older CEF builds (OBS/vMix) render them.
+function cardgTones(hex){
+  let h = String(hex || '').replace('#', '');
+  if(h.length === 3) h = h.split('').map(c => c + c).join('');
+  if(!/^[0-9a-fA-F]{6}$/.test(h)) h = '0b3d91';
+  let r = parseInt(h.substr(0, 2), 16), g = parseInt(h.substr(2, 2), 16), b = parseInt(h.substr(4, 2), 16);
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  // a very light team colour (yellow, white, pastel) becomes a rich mid tone
+  // for the header so white text stays readable — the hue is kept
+  const k = lum > 0.58 ? 0.58 / lum : 1;
+  const ar = Math.round(r * k), ag = Math.round(g * k), ab = Math.round(b * k);
+  const deep = `rgb(${Math.round(ar * 0.42)},${Math.round(ag * 0.42)},${Math.round(ab * 0.42)})`;
+  const ink = inkTeamColor('#' + h);
+  return {
+    accent: `rgb(${ar},${ag},${ab})`, deep, ink, accentInk: ink,
+    tint: `rgba(${r},${g},${b},${lum > 0.58 ? 0.12 : 0.07})`,
+    tint2: `rgba(${r},${g},${b},${lum > 0.58 ? 0.24 : 0.14})`,
+    glow: `rgba(${Math.min(255, r + 90)},${Math.min(255, g + 90)},${Math.min(255, b + 90)},0.9)`,
+    shadow: `rgba(${ar},${ag},${ab},0.38)`
+  };
+}
+function cardgOrdinal(n){ n = Number(n) || 1; return n + (n === 1 ? 'ST' : n === 2 ? 'ND' : n === 3 ? 'RD' : 'TH'); }
 function paintCardHeader(cardId, prefix, d, team, label){
   const card = document.getElementById(cardId);
-  const accent = team.color || 'var(--bc-blue,#0b3d91)';
-  // --card-accent fills the header (white text over a dark wash, so any
-  // colour works there); --card-ink is the same colour pulled dark enough to
-  // be read as text/rules on the light card body underneath.
-  card.style.setProperty('--card-accent', accent);
-  card.style.setProperty('--card-ink', team.color ? inkTeamColor(team.color) : 'var(--bc-blue,#0b3d91)');
+  // The whole card follows the team colour (see cardgTones / the .cardg CSS).
+  const t = cardgTones(team.color);
+  card.style.setProperty('--card-accent', t.accent);
+  card.style.setProperty('--card-deep', t.deep);
+  card.style.setProperty('--card-ink', t.ink);
+  card.style.setProperty('--card-accent-ink', t.accentInk);
+  card.style.setProperty('--card-tint', t.tint);
+  card.style.setProperty('--card-tint2', t.tint2);
+  card.style.setProperty('--card-glow', t.glow);
+  card.style.setProperty('--card-shadow', t.shadow);
   setBadge(document.getElementById(prefix + '-badge'), team.logo, badgeText(team.short, team.name));
   document.getElementById(prefix + '-team').textContent = (team.name || team.short || '—').toUpperCase();
+  const st = lastState || {};
+  document.getElementById(prefix + '-kicker').textContent = d.superOver ? `SUPER OVER${d.superOver > 1 ? ' ' + d.superOver : ''}` : `${cardgOrdinal(d.inningsNo)} INNINGS`;
   const over = d.overNumber != null ? ` · AFTER OVER ${d.overNumber}` : '';
   document.getElementById(prefix + '-sub').textContent = `${label}${d.format ? ' · ' + String(d.format).toUpperCase() : ''}${over}`;
+  // where and what: the ground, the tournament, the match number
+  const venue = d.venue || st.venue || '';
+  const tourn = d.tournament || st.matchLeague || st.leagueName || '';
+  const matchNo = d.matchNo || st.matchNo;
+  const where = [venue, tourn, d.matchTitle || st.matchTitle || (matchNo ? 'Match ' + matchNo : '')].filter(Boolean).join('  ·  ');
+  document.getElementById(prefix + '-venue').hidden = !where;
+  document.getElementById(prefix + '-venue-t').textContent = where;
   document.getElementById(prefix + '-total').textContent = `${d.score ?? 0}-${d.wickets ?? 0}`;
   document.getElementById(prefix + '-overs').textContent = `${d.overs ?? 0}.${d.ballsIntoOver ?? 0} OVERS`;
+  // run rate, or the chase: target and what is still needed
+  const rr = document.getElementById(prefix + '-rr');
+  const target = Number(d.target) || 0;
+  const need = target ? Math.max(0, target - (Number(d.score) || 0)) : 0;
+  rr.textContent = target ? (need ? `NEED ${need} · TARGET ${target}` : `TARGET ${target}`) : (d.crr != null ? `CRR ${d.crr}` : '');
+  rr.hidden = !rr.textContent;
+  // footer tiles: extras with their breakdown, overs with the run rate, total
+  const ex = d.extras || {};
+  const exParts = [['WD', ex.wd], ['NB', ex.nb], ['B', ex.b], ['LB', ex.lb], ['PEN', ex.pen]].filter(p => Number(p[1]) > 0).map(p => `${p[0]} ${p[1]}`);
+  document.getElementById(prefix + '-extras').textContent = d.extrasTotal ?? 0;
+  document.getElementById(prefix + '-extras-x').textContent = exParts.join(' · ');
+  document.getElementById(prefix + '-foot-l').textContent = `${d.overs ?? 0}.${d.ballsIntoOver ?? 0}`;
+  document.getElementById(prefix + '-foot-x').textContent = d.crr != null ? `RUN RATE ${d.crr}` : '';
+  document.getElementById(prefix + '-foot-r').textContent = `${d.score ?? 0}-${d.wickets ?? 0}`;
+  document.getElementById(prefix + '-foot-t').textContent = target ? `TARGET ${target}` : '';
   return card;
 }
 
@@ -4264,12 +4405,24 @@ function fillBattingCardGraphic(d){
   if(!batsmen.length){
     rows.appendChild(cardEmptyRow('NO BATTING YET'));
   } else {
+    let yetGrid = null;
+    const yetCount = batsmen.filter(b => b.yetToBat || b.status === 'yet').length;
     batsmen.forEach((b, i) => {
-      // The rest of the XI, in batting order: still part of the line-up, one
-      // compact line each.
+      // The rest of the XI, in batting order, under one quiet "YET TO BAT"
+      // label — names only, down two columns, no empty figures.
       if(b.yetToBat || b.status === 'yet'){
+        if(!yetGrid){
+          const hd = document.createElement('div');
+          hd.className = 'cardg-yet-head';
+          hd.textContent = 'YET TO BAT';
+          rows.appendChild(hd);
+          yetGrid = document.createElement('div');
+          yetGrid.className = 'cardg-yet-grid';
+          yetGrid.style.gridTemplateRows = `repeat(${Math.ceil(yetCount / 2)}, auto)`;
+          rows.appendChild(yetGrid);
+        }
         const row = document.createElement('div');
-        row.className = 'sc-row cardg-yet' + (i % 2 === 1 ? ' sc-row-alt' : '');
+        row.className = 'sc-row cardg-yet';
         const wrap = document.createElement('div');
         wrap.className = 'sc-c-name cardg-name-wrap';
         const nm = document.createElement('div');
@@ -4281,18 +4434,14 @@ function fillBattingCardGraphic(d){
         nm.appendChild(document.createTextNode(b.name || '—'));
         wrap.appendChild(nm);
         row.appendChild(wrap);
-        const ytb = document.createElement('span');
-        ytb.className = 'cardg-ytb';
-        ytb.textContent = 'YET TO BAT';
-        row.appendChild(ytb);
-        rows.appendChild(row);
+        yetGrid.appendChild(row);
         return;
       }
       const live = !!(b.striker || b.nonStriker);
       // Broadcast convention: * marks the batter on strike, and a not-out
       // line is accented rather than the same dim grey as a dismissal.
-      const name = (b.name || '—') + (b.striker ? ' *' : '');
-      const sub = b.striker ? 'batting · on strike' : b.nonStriker ? 'batting' : b.out ? (b.howOut || 'out') : (b.howOut || 'not out');
+      const name = b.name || '—';
+      const sub = b.striker ? 'on strike' : b.nonStriker ? 'batting' : b.out ? (b.howOut || 'out') : (b.howOut || 'not out');
       const row = buildCardRow(
         name, sub, b.out ? '' : 'notout',
         [b.runs ?? 0, b.balls ?? 0, b.fours ?? 0, b.sixes ?? 0, b.sr ?? '0.0'],
@@ -4302,12 +4451,10 @@ function fillBattingCardGraphic(d){
       pos.className = 'cardg-pos';
       pos.textContent = String(i + 1);
       row.querySelector('.cardg-name').prepend(pos);
+      if(b.striker){ const dot = document.createElement('span'); dot.className = 'cardg-strike'; dot.title = 'on strike'; row.querySelector('.cardg-name').appendChild(dot); }
       rows.appendChild(row);
     });
   }
-  document.getElementById('bat-card-extras').textContent = d.extrasTotal ?? 0;
-  document.getElementById('bat-card-foot-l').textContent = `OVERS ${d.overs ?? 0}.${d.ballsIntoOver ?? 0}`;
-  document.getElementById('bat-card-foot-r').textContent = `TOTAL ${d.score ?? 0}-${d.wickets ?? 0}`;
 }
 
 function fillBowlingCardGraphic(d){
@@ -4329,15 +4476,18 @@ function fillBowlingCardGraphic(d){
       const sub = isCurrent && d.overRuns != null
         ? `THIS OVER  ${d.overRuns} RUN${d.overRuns === 1 ? '' : 'S'}${d.overWickets ? ` · ${d.overWickets} WKT${d.overWickets === 1 ? '' : 'S'}` : ''}`
         : '';
-      rows.appendChild(buildCardRow(
+      const row = buildCardRow(
         b.name || '—', sub, 'notout',
         [b.overs ?? '0.0', b.maidens ?? 0, b.runs ?? 0, b.wickets ?? 0, b.econ ?? '0.00'],
         { alt: i % 2 === 1, live: isCurrent }
-      ));
+      );
+      const pos = document.createElement('span');
+      pos.className = 'cardg-pos';
+      pos.textContent = String(i + 1);
+      row.querySelector('.cardg-name').prepend(pos);
+      rows.appendChild(row);
     });
   }
-  document.getElementById('bowl-card-foot-l').textContent = `OVERS ${d.overs ?? 0}.${d.ballsIntoOver ?? 0}`;
-  document.getElementById('bowl-card-foot-r').textContent = `TOTAL ${d.score ?? 0}-${d.wickets ?? 0}`;
 }
 
 /* ============================================================
