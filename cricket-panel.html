@@ -10089,6 +10089,11 @@ function checkMatchResult(){
    bowlingCard / fallOfWickets / extras, folding in whatever the CURRENT
    (not-yet-archived) striker/non-striker/bowler are at the moment of firing.
    ============================================================ */
+// Run rate of the innings on the panel, for the innings summary graphic.
+function inningsSummaryCrr(){
+  const b = (state.score.overs || 0) * 6 + (state.score.balls || 0);
+  return b > 0 ? (state.score.runs / (b / 6)).toFixed(2) : '0.00';
+}
 function buildInningsSummaryPayload(){
   const battingKey = state.battingTeam;
   const bowlingKey = bowlingTeamKey();
@@ -10103,10 +10108,11 @@ function buildInningsSummaryPayload(){
       bowlingTeamName: bowlingTeamObj.name, bowlingTeamShort: bowlingTeamObj.short, bowlingTeamColor: bowlingTeamObj.color, bowlingTeamLogo: bowlingTeamObj.logoUrl,
       battingTeamName: battingTeamObj.name, battingTeamShort: battingTeamObj.short, battingTeamColor: battingTeamObj.color, battingTeamLogo: battingTeamObj.logoUrl,
       format: state.format, venue: state.venue, inningsNo: inn, superOver: state.superOver.number,
-      bowlers: r.bowlers.map(b => ({ name: b.name, overs: b.overs, maidens: b.maidens, runs: b.runs, wickets: b.wickets, econ: b.econ })),
+      bowlers: r.bowlers.map(b => ({ name: b.name, overs: b.overs, maidens: b.maidens, runs: b.runs, wickets: b.wickets, econ: b.econ, dots: b.dots, noBalls: b.noBalls, wides: b.wides })),
       batsmen: r.batsmen.map(b => ({ name: b.name, runs: b.runs, balls: b.balls, fours: b.fours, sixes: b.sixes, sr: b.sr, howOut: b.howOut })),
       fallOfWickets: (state.superOver.fallOfWickets[battingKey] || []).map(f => ({ ...f })),
-      extrasTotal: r.extrasTotal,
+      extrasTotal: r.extrasTotal, extras: { ...(r.extras || {}) },
+      crr: inningsSummaryCrr(), target: state.target || null,
       overs: fmtOvers(state.score.overs, state.score.balls),
       total: `${state.score.runs}-${state.score.wickets}`
     };
@@ -10148,7 +10154,9 @@ function buildInningsSummaryPayload(){
     inningsNo: inn,
     bowlers: rows.map(b => ({
       name: b.name, overs: fmtBowlerOvers(b.overs, b.balls),
-      maidens: b.maidens, runs: b.runs, wickets: b.wickets, econ: bowlerEcon(b)
+      maidens: b.maidens, runs: b.runs, wickets: b.wickets, econ: bowlerEcon(b),
+      // dot balls, no-ball and wide deliveries — the scorecard's own analysis
+      ...bowlerDeliveryCounts(b.name, inn)
     })),
     batsmen: battingRows.map(b => ({
       name: b.name, runs: b.runs, balls: b.balls, fours: b.fours, sixes: b.sixes,
@@ -10156,7 +10164,12 @@ function buildInningsSummaryPayload(){
       howOut: b.out ? (b.howOut || 'out') : (b.retiredHurt ? (b.howOut || 'retired hurt') : 'not out')
     })),
     fallOfWickets: rowsForInnings(state.fallOfWickets[battingKey], inn),
+    // the rest of the XI who never came in, in batting order
+    didNotBat: lineupRest(battingKey, battingRows, []).slice(0, Math.max(0, maxWickets() + 1 - battingRows.length)).map(p => p.name),
     extrasTotal: extrasTotalOf(extras),
+    extras: { ...extras },
+    crr: inningsSummaryCrr(),
+    target: state.target || null,
     overs: fmtOvers(state.score.overs, state.score.balls),
     total: `${state.score.runs}-${state.score.wickets}`
   };
