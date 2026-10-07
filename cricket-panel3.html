@@ -3858,6 +3858,15 @@
         xCell(ws, first + i, 8, b.fours, st);
         xCell(ws, first + i, 9, b.sixes, st);
       });
+      // who has not batted — right under the batting table, for every innings
+      // (both teams), like the PDF's "To bat:" line
+      var tbRow = first + nBat;
+      if (inn.toBat.length) {
+        var tbText = inn.toBat.map(function (n) { return str(n).toUpperCase(); }).join(', ');
+        xCell(ws, tbRow, 1, 'To bat:', { bold: true, size: 9.5, color: XC.dim, fill: XC.zebra });
+        xMerge(ws, tbRow, 2, tbRow, 9, tbText, { size: 10, color: XC.ink, fill: XC.white, wrap: true, indent: 1 });
+        ws.getRow(tbRow).height = Math.max(20, 15 * Math.ceil(tbText.length / 105));
+      }
       inn.bowling.forEach(function (w, i) {
         var top = inn.topBowl === w.name;
         var st = { fill: top ? XC.goldFill : (i % 2 ? XC.zebra : XC.white), bold: top };
@@ -3876,7 +3885,7 @@
       var est = { italic: true, color: XC.dim, fill: XC.zebra, size: 9.5 };
       xCell(ws, er, 11, '', est); xCell(ws, er, 12, 'LB, B, R/O Etc', est); xCell(ws, er, 13, '', est); xCell(ws, er, 14, '', est); xCell(ws, er, 15, '', est);
       xCell(ws, er, 16, other, Object.assign({}, est, { italic: false, color: XC.ink })); xCell(ws, er, 17, '', est); xCell(ws, er, 18, '', est); xCell(ws, er, 19, '', est);
-      var dataEnd = Math.max(first + nBat - 1, first + nBowl - 1);
+      var dataEnd = Math.max(first + nBat - 1 + (inn.toBat.length ? 1 : 0), first + nBowl - 1);
       var tr = first + nBowl;
       var T = { bold: true, fill: XC.goldFill, borderColor: XC.gold };
       var sumRow = function (col, result) { var L2 = String.fromCharCode(64 + col); return { formula: 'SUM(' + L2 + first + ':' + L2 + er + ')', result: result }; };
@@ -3903,6 +3912,7 @@
         xCell(ws, xr + i, 5, t[1], { bold: true, fill: hi ? XC.goldFill : XC.white, borderColor: hi ? XC.gold : undefined, numFmt: t[0] === 'Overs' ? '0.0' : undefined, align: 'center' });
       });
       row = xr + Math.max(exList.length, tot.length) + 1;
+
 
       // fall of wickets
       xMerge(ws, row, 1, row, 5, 'FALL OF WICKET', { bold: true, color: XC.green, fill: XC.soft, border: false });

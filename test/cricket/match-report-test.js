@@ -150,6 +150,28 @@ async function filesSuite(ctx){
     eq('XLSX: Total = batters + extras', tot.map(r => r.v[4].r), ctx.m.innings.map(i => i.runs));
     eq('XLSX: extras block (B, LB, Wd, Nb) and Wickets / Total Min', [rows.some(r => /^LB - \d+$/.test(r.v[1] || '')), rows.filter(r => r.v[3] === 'Wickets').map(r => r.v[4]), rows.some(r => r.v[3] === 'Total Min')],
       [true, ctx.m.innings.map(i => i.wickets), true]);
+    // "To bat:" — who has not batted, under every innings (both teams), as in the PDF
+    const tbModel = JSON.parse(JSON.stringify(ctx.m));
+    tbModel.innings[0].toBat = ['Yogesh Shinde', 'Amol Tanpure', 'Chintamani Kamble'];
+    tbModel.innings[1].toBat = ['Rohit Bhere', 'Nimish Jambhulkar'];
+    const wbT = M.buildExcel(ExcelJS, tbModel, imgs);
+    const backT = new ExcelJS.Workbook();
+    await backT.xlsx.load(await wbT.xlsx.writeBuffer());
+    const tbRows = [];
+    backT.getWorksheet('Scorecard').eachRow(r => { if(r.values[1] === 'To bat:') tbRows.push(r.values[2]); });
+    eq('XLSX: "To bat:" under each innings — both teams, names in order', tbRows, ['YOGESH SHINDE, AMOL TANPURE, CHINTAMANI KAMBLE', 'ROHIT BHERE, NIMISH JAMBHULKAR']);
+    const allBat = JSON.parse(JSON.stringify(ctx.m)); allBat.innings.forEach(i => { i.toBat = []; });
+    const wbA = M.buildExcel(ExcelJS, allBat, imgs); const backA = new ExcelJS.Workbook();
+    await backA.xlsx.load(await wbA.xlsx.writeBuffer());
+    let anyTb = false; backA.getWorksheet('Scorecard').eachRow(r => { if(r.values[1] === 'To bat:') anyTb = true; });
+    eq('XLSX: everyone batted → no "To bat:" line', anyTb, false);
+    const tbAt = []; const lastBat = [];
+    backT.getWorksheet('Scorecard').eachRow((r, n) => { if(r.values[1] === 'To bat:') tbAt.push(n); });
+    let hdr = []; backT.getWorksheet('Scorecard').eachRow((r, n) => { if(r.values[2] === 'Batsmen') hdr.push(n); });
+    tbModel.innings.forEach((inn, i) => lastBat.push(hdr[i] + inn.batting.length + 1));
+    eq('XLSX: …placed right under the last batsman of each innings', tbAt, lastBat);
+    eq('XLSX: the real match lists exactly the players who did not bat', rows.filter(r => r.v[0] === 'To bat:').map(r => r.v[1]),
+      ctx.m.innings.filter(i => i.toBat.length).map(i => i.toBat.map(n => n.toUpperCase()).join(', ')));
     const fowH = rows.filter(r => r.v[3] === 'Name of Batsmen Out');
     eq('XLSX: fall of wicket table', fowH.map(r => r.v.slice(0, 5)), ctx.m.innings.map(() => ['No', 'Runs', 'Over No', 'Name of Batsmen Out', 'Partnership']));
     eq('XLSX: header — teams, date, ground, toss, result', [rows[0].v[0], rows.some(r => r.v.includes('27 Sep 2026')), rows.some(r => r.v.includes(ctx.m.meta.venue)), rows.some(r => r.v.includes(ctx.m.meta.result))],
@@ -182,6 +204,12 @@ async function filesSuite(ctx){
     function Spy2(o){ const d = new jspdf.jsPDF(o); const ai = d.addImage.bind(d); d.addImage = function(){ al.push(arguments[6]); return ai.apply(null, arguments); }; return d; }
     M.buildPdf(Spy2, ctx.m, Object.assign({}, imgs, { logos: { A: png, B: png } }));
     eq('PDF: both team logos go in the team badges', [al.includes('logoA'), al.includes('logoB')], [true, true]);
+    seen.texts.length = 0;
+    const tbPdf = JSON.parse(JSON.stringify(ctx.m));
+    tbPdf.innings[0].toBat = ['Yogesh Shinde']; tbPdf.innings[1].toBat = ['Rohit Bhere'];
+    M.buildPdf(Spy, tbPdf, imgs);
+    eq('PDF: "To bat:" under each innings — both teams', [seen.texts.filter(t => t === 'To bat:').length, seen.texts.some(t => /Yogesh Shinde/.test(t)), seen.texts.some(t => /Rohit Bhere/.test(t))], [2, true, true]);
+    seen.texts.length = 0; M.buildPdf(Spy, ctx.m, imgs);
     eq('PDF: officials are the two captains only', [seen.texts.filter(t => t === 'Captain').length, seen.texts.some(t => /Umpire|Scorer/.test(t))], [2, false]);
     const odd = M.buildModel(Object.assign(makeMatch({ seed: 5 }), {}));
     odd.innings[0].batting[0].name = 'राहुल “Rocket” Sharma';
