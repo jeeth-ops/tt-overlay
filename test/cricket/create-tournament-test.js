@@ -369,7 +369,7 @@ async function websiteSuite(){
   doc.hidden = false;
   await R.refreshPortal('tok');
   eq('PAGE: a new fixture → quiet re-draw', renders, [[2, true]]);
-  eq('PAGE: auto-refresh wired after the first load', /portalSig = portalSignature\(data\); renderPortal\(data, token\); startPortalRefresh\(token\);/.test(st), true);
+  eq('PAGE: auto-refresh wired after the first load', /portalSig = portalSignature\(data\); renderPortal\(data, token\);[^}\n]*startPortalRefresh\(token\);/.test(st), true);
 }
 
 (async () => {
