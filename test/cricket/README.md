@@ -80,8 +80,9 @@ Bowled / Caught / Run Out (striker, non-striker, with runs), both innings and a
 
 `match-lock-test.js` runs the real MATCH LOCK CODES block, the socket gate and
 the match-save check from `server.js` on an in-memory lock store, and both
-panels against those real routes: 7-character codes (letters and numbers,
-unique), locking left to the operator (Schedule Upcoming Match / Create New
+panels against those real routes: the operator's own code typed twice
+(6-7 letters and numbers, unique; refused when letters-only, too short, the two
+don't match, or already used), locking left to the operator (Schedule Upcoming Match / Create New
 Match), ▶ Start / ▶ Resume asking for the code, wrong code refused, one laptop
 at a time (the laptop that lost the match is stopped by the server and its
 balls wait until the code is entered again), the wrong-code limit, the owner's

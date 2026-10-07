@@ -2,7 +2,8 @@
 // server.js, the socket gate and the REST checks, extracted by text, never
 // copied) and BOTH real panels (cricket-panel.html = Clipper,
 // cricket-panel3.html = Stream Engine) in jsdom, talking to it:
-//   • codes: 7 characters, letters AND numbers, unique, no look-alikes
+//   • the operator picks the code (6-7 letters AND numbers, typed twice);
+//     codes are unique; without one the server makes a 7-character code
 //   • lock is the operator's choice (Schedule Upcoming Match / Create New Match)
 //   • ▶ Start / ▶ Resume on a locked match asks for the code; wrong → refused
 //   • one laptop at a time: entering the code moves scoring, the other laptop
@@ -59,7 +60,7 @@ function makeServer(){
   const store = lockStore();
   const api = new Function('app', 'io', 'crypto', 'safeMatchId', 'requireAuthorizedCreator', 'requireOwner', 'ownerUidFrom', 'matchRecordsCollection', 'logAuditAction', 'STORE',
     'let matchLocksCollection = STORE; let matchLockSecret = "test-secret-for-match-locks-0123456789";\n' + LOCK_BLOCK +
-    '\nreturn { genMatchLockCode, normMatchLockCode, matchLockHmac, getMatchLock, matchLockForRecord, lockTokenMatches, lockTargetRoomId, MATCH_LOCKED_EVENTS, matchLockCache, decryptLockCode, matchLockTries,' +
+    '\nreturn { cacheMatchLock, genMatchLockCode, normMatchLockCode, matchLockHmac, getMatchLock, matchLockForRecord, lockTokenMatches, lockTargetRoomId, MATCH_LOCKED_EVENTS, matchLockCache, decryptLockCode, matchLockTries,' +
     ' dbDown: (on) => { matchLocksCollection = on ? { findOne: async () => { throw new Error("db down"); } } : STORE; } };')(
     app, io, crypto, new Function('return ' + H.grab('safeMatchId'))(), requireAuthorizedCreator, requireOwner, ownerUidFrom, records,
     async (...a) => audits.push(a), store);
@@ -104,8 +105,8 @@ function makeServer(){
     const req = { get: (h) => h === 'x-match-key' ? key : undefined };
     let out = null;
     const res = { status(s){ out = { status: s }; return res; }, json(o){ out.body = o; return res; } };
-    await new Function('req', 'res', 'record', 'ownerUid', 'leagueKey', 'matchRecordsCollection', 'matchLockForRecord', 'lockTokenMatches', 'safeMatchId',
-      'return (async () => {\n' + SAVE_CHECK + '\n})();')(req, res, record, 'U1', 'cup', records, api.matchLockForRecord, api.lockTokenMatches, new Function('return ' + H.grab('safeMatchId'))());
+    await new Function('req', 'res', 'record', 'ownerUid', 'leagueKey', 'matchRecordsCollection', 'matchLockForRecord', 'lockTokenMatches', 'safeMatchId', 'matchLocksCollection', 'cacheMatchLock',
+      'return (async () => {\n' + SAVE_CHECK + '\n})();')(req, res, record, 'U1', 'cup', records, api.matchLockForRecord, api.lockTokenMatches, new Function('return ' + H.grab('safeMatchId'))(), store, api.cacheMatchLock);
     return out ? out.status : 'saved';
   }
   return { api, call, connectSocket, saveCheck, emitted, store, records, audits };
@@ -128,6 +129,23 @@ async function serverSuite(){
   eq('SERVER: locking the same match again → 409, code unchanged', [(await S.call('POST', '/api/match-lock?uid=U1', { body: { roomId: 'R1' } })).status, S.store.docs.length], [409, 1]);
   const c2 = await S.call('POST', '/api/match-lock?uid=U1', { body: { roomId: 'R2', matchId: 'M2', claim: false } });
   eq('SERVER: a fixture lock has a code and no laptop yet', [c2.status, c2.body.token, S.store.docs[1].holder], [200, null, null]);
+
+  console.log('\n=== The operator\'s own code ===');
+  const own = await S.call('POST', '/api/match-lock?uid=U1', { body: { roomId: 'R3', matchId: 'M3', claim: true, code: 'mi24 win' } });
+  eq('SERVER: own code (any case, spaces dropped) is used as typed', [own.status, own.body.code], [200, 'MI24WIN']);
+  const own6 = await S.call('POST', '/api/match-lock?uid=U1', { body: { roomId: 'R4', code: 'ABC123' } });
+  eq('SERVER: 6 characters is fine too', [own6.status, own6.body.code], [200, 'ABC123']);
+  const badCodes = [];
+  for(const c of ['ABCDEFG', '1234567', 'AB12', 'ABCD12345']) badCodes.push((await S.call('POST', '/api/match-lock?uid=U1', { body: { roomId: 'R5', code: c } })).body.code);
+  eq('SERVER: letters only / numbers only / too short / too long → refused', badCodes, ['BAD_CODE', 'BAD_CODE', 'BAD_CODE', 'BAD_CODE']);
+  const taken = await S.call('POST', '/api/match-lock?uid=U1', { body: { roomId: 'R5', code: 'MI24WIN' } });
+  eq('SERVER: a code another match uses → 409 CODE_TAKEN, nothing locked', [taken.status, taken.body.code, S.store.docs.some(d => d.roomId === 'R5')], [409, 'CODE_TAKEN', false]);
+  const c6 = await S.call('POST', '/api/match-lock/R4/claim', { body: { code: 'abc 123', deviceId: 'dvZ' }, ip: '9.9.9.9' });
+  eq('SERVER: a 6-character code opens its match', c6.status, 200);
+  const late = S.store.docs.find(d => d.roomId === 'R4');
+  eq('SERVER: a match locked before its record learns its matchId on the first save', [late.matchId, await S.saveCheck({ matchId: 'M4', roomId: 'R4' }, c6.body.token), await sleep(5), S.store.docs.find(d => d.roomId === 'R4').matchId], [null, 'saved', undefined, 'M4']);
+  S.store.docs.splice(S.store.docs.findIndex(d => d.roomId === 'R3'), 1); S.store.docs.splice(S.store.docs.findIndex(d => d.roomId === 'R4'), 1);
+  S.api.matchLockCache.clear();
 
   console.log('\n=== Status + claim ===');
   const st = async (room, key) => (await S.call('GET', `/api/match-lock/${room}`, { headers: key ? { 'X-Match-Key': key } : {} })).body;
@@ -294,13 +312,28 @@ async function panelSuite(file){
   console.log('\n=== Schedule an Upcoming Match WITH a code ===');
   click(A, A.$('[data-um-pick="A"]')); click(A, A.$('[data-um-select="d y patil"]'));
   click(A, A.$('[data-um-pick="B"]')); click(A, A.$('[data-um-select="lions"]'));
-  A.$('#um-lock').checked = true;
+  eq(L('code boxes hidden while the switch is off'), A.$('#um-lock-fields').hidden, true);
+  A.$('#um-lock').checked = true; A.$('#um-lock').dispatchEvent(new A.w.Event('change'));
+  eq(L('switch on → two code boxes appear'), [A.$('#um-lock-fields').hidden, !!A.$('#um-lock-code'), !!A.$('#um-lock-code2')], [false, true, true]);
+  click(A, A.$('#um-save')); await sleep(30);
+  eq(L('no code typed → not saved, asks for it'), [A.$('#um-msg').textContent, W.records.some(r => r.upcoming)], ['🔒 Type the code you want for this match', false]);
+  typeIn(A, A.$('#um-lock-code'), 'finals');
+  click(A, A.$('#um-save')); await sleep(30);
+  eq(L('letters only → refused'), A.$('#um-msg').textContent, '🔒 Use letters AND numbers in the code (e.g. MI24WIN)');
+  typeIn(A, A.$('#um-lock-code'), 'final-26');
+  typeIn(A, A.$('#um-lock-code2'), 'FINAL27');
+  eq(L('typing: upper case, letters/numbers only; mismatch shown live'), [A.$('#um-lock-code').value, A.$('#um-lock-hint').textContent, A.$('#um-lock-hint').className], ['FINAL26', 'The two codes are not the same — type the same code twice', 'ml-cf-hint bad']);
+  click(A, A.$('#um-save')); await sleep(30);
+  eq(L('two different codes → not saved'), [A.$('#um-msg').textContent, W.records.some(r => r.upcoming)], ['🔒 The two codes are not the same — type the same code twice', false]);
+  typeIn(A, A.$('#um-lock-code2'), 'final26');
+  eq(L('same code twice → ✓ Codes match'), [A.$('#um-lock-hint').textContent, A.$('#um-lock-hint').className], ['✓ Codes match — FINA L26', 'ml-cf-hint ok']);
   click(A, A.$('#um-save'));
   await until(() => dlg(A).open);
   const fx = W.records.find(r => r.upcoming);
   const fxLock = S.store.docs.find(d => fx && d.roomId === fx.roomId);
   eq(L('fixture saved, marked locked, lock made on the server first'), [!!fx, fx && fx.locked, !!fxLock, fxLock && fxLock.matchId === fx.matchId, fxLock && fxLock.holder], [true, true, true, true, null]);
   const fxCode = S.api.decryptLockCode(fxLock.codeEnc);
+  eq(L('the server holds the operator\'s own code'), fxCode, 'FINAL26');
   eq(L('the code is shown, easy to read (XXXX XXX), with Copy / WhatsApp'), [dlg(A), A.$('#ml-code').textContent, A.$('#ml-show').hidden, A.$('#ml-entry').hidden],
     [{ open: true, title: 'Match code' }, fxCode.slice(0, 4) + ' ' + fxCode.slice(4), false, true]);
   eq(L('a fixture code has no "Remove" here (no laptop scores it yet)'), A.$('#ml-remove').hidden, true);
@@ -315,10 +348,21 @@ async function panelSuite(file){
   click(A, A.$('#ml-done'));
   click(A, A.$('#schedule-match-btn'));
   await until(() => A.$('#um-overlay').classList.contains('show'));
-  eq(L('the next new fixture starts with the lock OFF again'), A.$('#um-lock').checked, false);
+  eq(L('the next new fixture starts with the lock OFF again, boxes empty'), [A.$('#um-lock').checked, A.$('#um-lock-fields').hidden, A.$('#um-lock-code').value], [false, true, '']);
+  // the same code for another match → refused, nothing saved
+  click(A, A.$('[data-um-pick="A"]')); click(A, A.$('[data-um-select="d y patil"]'));
+  click(A, A.$('[data-um-pick="B"]')); click(A, A.$('[data-um-select="lions"]'));
+  A.$('#um-lock').checked = true; A.$('#um-lock').dispatchEvent(new A.w.Event('change'));
+  typeIn(A, A.$('#um-lock-code'), 'FINAL26'); typeIn(A, A.$('#um-lock-code2'), 'FINAL26');
+  const nFx = W.records.length;
+  click(A, A.$('#um-save'));
+  await until(() => A.$('[data-um-force]'));
+  click(A, A.$('[data-um-force]')); // same teams, same day — "Save anyway"
+  await until(() => /already used/.test(A.$('#um-msg').textContent));
+  eq(L('a code already used by another match → "choose a different code", not saved'), [A.$('#um-msg').textContent, W.records.length, A.$('#um-overlay').classList.contains('show')], ['🔒 This code is already used by another match — choose a different code', nFx, true]);
   A.E(`closeUpcomingModal()`);
   A.E(`openUpcomingModal(${JSON.stringify(fx)})`); await until(() => A.$('#um-overlay').classList.contains('show'));
-  eq(L('editing a locked fixture: shown ON and cannot be turned off'), [A.$('#um-lock').checked, A.$('#um-lock').disabled], [true, true]);
+  eq(L('editing a locked fixture: shown ON, cannot be turned off, code not asked again'), [A.$('#um-lock').checked, A.$('#um-lock').disabled, A.$('#um-lock-fields').hidden], [true, true, true]);
   A.E(`closeUpcomingModal()`);
 
   console.log('\n=== Another laptop (or the same Gmail elsewhere) ===');
@@ -332,7 +376,7 @@ async function panelSuite(file){
   typeIn(B, B.$('#ml-input'), 'abc-12');
   eq(L('typing: letters/numbers only, upper case'), B.$('#ml-input').value, 'ABC12');
   click(B, B.$('#ml-go'));
-  eq(L('too short → says so'), B.$('#ml-err').textContent, 'The code has 7 letters and numbers');
+  eq(L('too short → says so'), B.$('#ml-err').textContent, 'The code has 6 or 7 letters and numbers');
   typeIn(B, B.$('#ml-input'), fxCode === 'ZZZZ999' ? 'ZZZZ998' : 'ZZZZ999');
   click(B, B.$('#ml-go'));
   await until(() => B.$('#ml-err').textContent);
@@ -414,27 +458,33 @@ async function panelSuite(file){
   await sleep(60);
   eq(L('left off → no code, no dialog, nothing locked (as before)'), [dlg(D).open, S.store.docs.some(d => d.roomId === D.E('currentMatchId()')), D.E('state.matchLocked')], [false, false, false]);
   await D.E('openNewMatchModal()');
-  D.$('#newmatch-lock').checked = true;
+  D.$('#newmatch-lock').checked = true; D.$('#newmatch-lock').dispatchEvent(new D.w.Event('change'));
+  const roomBefore = D.E('currentMatchId()');
+  typeIn(D, D.$('#newmatch-lock-code'), 'MI24WIN'); typeIn(D, D.$('#newmatch-lock-code2'), 'MI24WIM');
+  click(D, D.$('#newmatch-start')); await sleep(40);
+  eq(L('Create New Match: codes differ → stays open, nothing changed'), [D.$('#newmatch-modal-overlay').classList.contains('show'), D.$('#newmatch-lock-hint').textContent, D.E('currentMatchId()') === roomBefore], [true, 'The two codes are not the same — type the same code twice', true]);
+  typeIn(D, D.$('#newmatch-lock-code2'), 'MI24WIN');
   click(D, D.$('#newmatch-start'));
   await until(() => dlg(D).open);
   const room = D.E('currentMatchId()');
   const dLock = S.store.docs.find(d => d.roomId === room);
   eq(L('turned on → new match locked, THIS laptop scores it'), [!!dLock, dLock && dLock.holder.deviceId, D.E('state.matchLocked'), D.E(`mlToken(${JSON.stringify(room)})`).length], [true, 'dv-laptopD', true, 48]);
-  eq(L('its code is shown (with Remove code)'), [dlg(D), D.$('#ml-code').textContent.replace(' ', ''), D.$('#ml-remove').hidden], [{ open: true, title: 'Match code' }, S.api.decryptLockCode(dLock.codeEnc), false]);
-  eq(L('the key went to the live connection at once'), D.sock().sent.filter(x => x.ev === 'matchLockAuth').slice(-1)[0].p, { roomId: room, token: D.E(`mlToken(${JSON.stringify(room)})`) });
+  eq(L('its code (the one typed) is shown (with Remove code)'), [dlg(D), D.$('#ml-code').textContent.replace(' ', ''), S.api.decryptLockCode(dLock.codeEnc), D.$('#ml-remove').hidden], [{ open: true, title: 'Match code' }, 'MI24WIN', 'MI24WIN', false]);
+  eq(L('the new match runs in the locked room from its first message'), [D.sock().opts.query.uid, D.sock().opts.query.lockToken === D.E(`mlToken(${JSON.stringify(room)})`)], [room, true]);
+  D.sock().h.connect();
+  eq(L('the key goes with the live connection'), D.sock().sent.filter(x => x.ev === 'matchLockAuth').slice(-1)[0].p, { roomId: room, token: D.E(`mlToken(${JSON.stringify(room)})`) });
   click(D, D.$('#ml-remove'));
   await until(() => !dlg(D).open);
   eq(L('Remove code → unlocked everywhere'), [S.store.docs.some(d => d.roomId === room), D.E('state.matchLocked')], [false, false]);
-  // server down while locking → the match is still made, operator told it is NOT locked
+  // the code cannot be set (server down / taken) → nothing on the panel changes
   await D.E('openNewMatchModal()');
-  D.$('#newmatch-lock').checked = true;
-  W.lockDown = true;
-  const realCall = S.call;
-  S.call = async (m, u, o) => /match-lock/.test(u) ? { status: 503, body: { success: false, error: 'Match codes are not available right now' } } : realCall(m, u, o);
+  D.$('#newmatch-lock').checked = true; D.$('#newmatch-lock').dispatchEvent(new D.w.Event('change'));
+  typeIn(D, D.$('#newmatch-lock-code'), 'FINAL26'); typeIn(D, D.$('#newmatch-lock-code2'), 'FINAL26');
+  const roomNow = D.E('currentMatchId()');
   click(D, D.$('#newmatch-start'));
-  await until(() => D.w.__toasts.some(t => /NOT locked/.test(t)));
-  eq(L('lock could not be made → told plainly, match not locked'), [D.w.__toasts.some(t => /NOT locked/.test(t)), D.E('state.matchLocked')], [true, false]);
-  S.call = realCall;
+  await until(() => D.w.__toasts.some(t => /nothing was changed/.test(t)));
+  eq(L('code already used → said so, the panel did not change'), [D.$('#newmatch-lock-hint').textContent, D.E('currentMatchId()') === roomNow, D.$('#newmatch-modal-overlay').classList.contains('show')], ['This code is already used by another match — choose a different code', true, true]);
+  D.E('closeNewMatchModal()');
 
   console.log('\n=== Unlocked matches unchanged ===');
   const open = { matchId: 'm-open', roomId: 'room-open', upcoming: true, scheduledDate: '2026-10-10', matchNo: 9, teamA: { name: 'D Y Patil' }, teamB: { name: 'Lions' }, squadA: { players: [] }, squadB: { players: [] } };

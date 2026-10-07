@@ -2106,7 +2106,8 @@ app.get('/api/league/:name', requireAuthorizedCreator, async (req, res) => {
 
 // ================================================================
 // 🔒 MATCH LOCK CODES — an operator may lock a match with a short code
-// (7 letters + digits) when scheduling or creating it. Only a laptop that
+// (6-7 letters + digits, typed by the operator twice, or made here when none
+// is given) when scheduling or creating it. Only a laptop that
 // has entered that code can score it, and only ONE laptop at a time: the
 // laptop that enters the code becomes the holder (it gets a random key,
 // kept in that browser), and any laptop that held it before is told it
@@ -2136,6 +2137,8 @@ function genMatchLockCode() {
         if (/[0-9]/.test(s) && /[A-Z]/.test(s)) return s; // always letters AND numbers
     }
 }
+// an operator's own code: 6 or 7 characters, letters AND numbers
+function matchLockCodeOk(c) { return /^[A-Z0-9]{6,7}$/.test(c) && /[A-Z]/.test(c) && /[0-9]/.test(c); }
 function normMatchLockCode(v) { return String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12); }
 function matchLockHmac(code) { return crypto.createHmac('sha256', matchLockSecret).update('code:' + code).digest('hex'); }
 function matchLockEncKey() { return crypto.createHash('sha256').update('enc:' + matchLockSecret).digest(); }
@@ -2237,11 +2240,17 @@ app.post('/api/match-lock', requireAuthorizedCreator, async (req, res) => {
     const matchId = String((req.body && req.body.matchId) || '').slice(0, 100) || null;
     const deviceId = String((req.body && req.body.deviceId) || '').slice(0, 64);
     if (!roomId) return res.status(400).json({ success: false, error: 'Match ID required' });
+    // the operator's own code (typed twice on the panel) — or one made here
+    const wanted = req.body && req.body.code != null && req.body.code !== '' ? normMatchLockCode(req.body.code) : null;
+    if (wanted !== null && !matchLockCodeOk(wanted)) return res.status(400).json({ success: false, code: 'BAD_CODE', error: 'The code needs 6 or 7 characters with letters AND numbers' });
+    // "already used" answers are limited like wrong codes, so codes cannot be probed
+    const tryKeys = lockTryKey(req, 'create');
+    if (wanted && lockTriesBlocked(tryKeys)) return res.status(429).json({ success: false, code: 'TOO_MANY', error: 'Too many tries — wait 10 minutes and try again' });
     try {
         const existing = await matchLocksCollection.findOne({ roomId });
         if (existing) return res.status(409).json({ success: false, code: 'ALREADY_LOCKED', error: 'This match already has a code' });
-        for (let i = 0; i < 8; i++) {
-            const code = genMatchLockCode();
+        for (let i = 0; i < (wanted ? 1 : 8); i++) {
+            const code = wanted || genMatchLockCode();
             const token = req.body && req.body.claim ? crypto.randomBytes(24).toString('hex') : null;
             const doc = {
                 roomId, matchId, ownerUid, codeHmac: matchLockHmac(code), codeEnc: encryptLockCode(code),
@@ -2255,6 +2264,10 @@ app.post('/api/match-lock', requireAuthorizedCreator, async (req, res) => {
             } catch (e) {
                 if (!(e && e.code === 11000)) throw e;
                 if (await matchLocksCollection.findOne({ roomId })) return res.status(409).json({ success: false, code: 'ALREADY_LOCKED', error: 'This match already has a code' });
+                if (wanted) {
+                    lockTryFailed(tryKeys);
+                    return res.status(409).json({ success: false, code: 'CODE_TAKEN', error: 'This code is already used by another match — choose a different code' });
+                }
                 // the code was already taken by another match — draw a new one
             }
         }
@@ -2287,7 +2300,7 @@ app.post('/api/match-lock/:roomId/claim', async (req, res) => {
         const lock = await matchLocksCollection.findOne({ roomId });
         if (!lock) return res.json({ success: true, locked: false, token: null });
         const code = normMatchLockCode(req.body && req.body.code);
-        if (code.length !== MATCH_LOCK_LEN || !sameHex(matchLockHmac(code), lock.codeHmac)) {
+        if (!matchLockCodeOk(code) || !sameHex(matchLockHmac(code), lock.codeHmac)) {
             lockTryFailed(keys);
             return res.status(403).json({ success: false, code: 'WRONG_CODE', error: 'Wrong code for this match' });
         }
@@ -2412,6 +2425,11 @@ app.post('/api/league/:name/match', requireAuthorizedCreator, async (req, res) =
             if (!(record.upcoming === true && (!stored || stored.upcoming === true) && safeMatchId(record.roomId || '') === lock.roomId)) {
                 return res.status(423).json({ success: false, code: 'MATCH_LOCKED', error: 'This match is locked — enter its code on the panel to score it' });
             }
+        }
+        // a match locked before its record existed (Create New Match) learns its matchId here
+        if (lock && !lock.matchId && record.matchId && lockTokenMatches(lock, req.get('x-match-key'))) {
+            const mid = String(record.matchId).slice(0, 100);
+            matchLocksCollection.updateOne({ roomId: lock.roomId }, { $set: { matchId: mid } }).then(() => cacheMatchLock(lock.roomId, { ...lock, matchId: mid })).catch(() => {});
         }
         // 🩹 CLIPS FIX: clips are cut and tagged with the live *roomId*
         // (see cutClip()/io.on('connection') above), never with this

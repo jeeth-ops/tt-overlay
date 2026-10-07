@@ -1224,6 +1224,14 @@
   .ml-lockrow small{ display:block; color:var(--text-dim); font-weight:500; margin-top:2px; }
   #um-overlay .ml-lockrow{ margin:12px 20px 0; }
   #newmatch-modal .ml-lockrow{ margin-top:12px; }
+  .ml-codefields{ display:grid; grid-template-columns:1fr 1fr; gap:8px 10px; margin-top:8px; padding:10px 12px; border-radius:12px; border:1px dashed var(--accent); background:rgba(255,122,0,.05); }
+  .ml-codefields[hidden]{ display:none; }
+  #um-overlay .ml-codefields{ margin:8px 20px 0; }
+  .ml-cf{ display:flex; flex-direction:column; gap:4px; font-size:11px; font-weight:700; color:var(--text-dim); margin:0; }
+  .ml-cf input{ width:100%; box-sizing:border-box; height:38px; text-align:center; font:800 17px/1 ui-monospace, Menlo, Consolas, monospace; letter-spacing:4px; text-transform:uppercase; }
+  .ml-cf-hint{ grid-column:1 / -1; font-size:11.5px; font-weight:600; color:var(--text-dim); min-height:15px; }
+  .ml-cf-hint.bad{ color:#f87171; }
+  .ml-cf-hint.ok{ color:#4ade80; }
   .lm-lock{ flex:none; font-size:12px; }
   .lm-code{ flex:none; padding:2px 7px !important; }
   .um-toggle{ display:flex; align-items:center; gap:10px; margin-top:10px; font-size:12.5px; font-weight:600; }
@@ -1621,8 +1629,13 @@
     <div class="shortcut-hint" id="newmatch-hint" style="margin-top:8px;"></div>
     <label class="ml-lockrow" for="newmatch-lock">
       <span class="switch"><input type="checkbox" id="newmatch-lock"><span class="slider"></span></span>
-      <span>🔒 Lock with a code <i style="font-style:normal;color:var(--text-dim);font-weight:500;">(optional)</i><small>Only a laptop that enters the 7-character code can open and score this match.</small></span>
+      <span>🔒 Lock with a code <i style="font-style:normal;color:var(--text-dim);font-weight:500;">(optional)</i><small>Only a laptop that types this code can open and score this match.</small></span>
     </label>
+    <div class="ml-codefields" id="newmatch-lock-fields" hidden>
+      <label class="ml-cf"><span>Match code</span><input type="text" id="newmatch-lock-code" maxlength="9" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="e.g. MI24WIN"></label>
+      <label class="ml-cf"><span>Type it again</span><input type="text" id="newmatch-lock-code2" maxlength="9" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="same code"></label>
+      <div class="ml-cf-hint" id="newmatch-lock-hint"></div>
+    </div>
     <div class="wm-actions" style="display:flex; gap:8px; margin-top:14px;">
       <button type="button" class="small ghost" id="newmatch-cancel" style="flex:1;">Cancel</button>
       <button type="button" class="small primary" id="newmatch-start" style="flex:1;">Start New Match</button>
@@ -1683,8 +1696,13 @@
     <div class="um-summary" id="um-summary" aria-live="polite"></div>
     <label class="ml-lockrow" for="um-lock">
       <span class="switch"><input type="checkbox" id="um-lock"><span class="slider"></span></span>
-      <span>🔒 Lock with a code <i style="font-style:normal;color:var(--text-dim);font-weight:500;">(optional)</i><small id="um-lock-note">Only a laptop that enters the 7-character code can start and score this match.</small></span>
+      <span>🔒 Lock with a code <i style="font-style:normal;color:var(--text-dim);font-weight:500;">(optional)</i><small id="um-lock-note">You choose the code. Only a laptop that types it can start and score this match.</small></span>
     </label>
+    <div class="ml-codefields" id="um-lock-fields" hidden>
+      <label class="ml-cf"><span>Match code</span><input type="text" id="um-lock-code" maxlength="9" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="e.g. FINAL26"></label>
+      <label class="ml-cf"><span>Type it again</span><input type="text" id="um-lock-code2" maxlength="9" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="same code"></label>
+      <div class="ml-cf-hint" id="um-lock-hint"></div>
+    </div>
     <div class="um-msg" id="um-msg" role="alert"></div>
     <div class="um-actions">
       <button type="button" class="ghost" id="um-cancel">Cancel</button>
@@ -5902,8 +5920,9 @@ function updateShareLinks(matchId){
 }
 
 /* ============================================================
-   🔒 MATCH CODE — an operator may lock a match with a 7-character code
-   (letters + numbers) when scheduling it or creating it (their choice).
+   🔒 MATCH CODE — an operator may lock a match with a code they choose
+   (6-7 letters + numbers, typed twice) when scheduling it or creating it
+   (their choice).
    Only a laptop that has entered the code can open and score that match,
    and only one at a time: entering the code moves scoring to this laptop
    and the laptop that had it is told. The server checks every scoring
@@ -5939,7 +5958,34 @@ function mlHeadersForMatchId(matchId){
   return {};
 }
 function mlNorm(v){ return String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7); }
-function mlPretty(code){ return code ? `${code.slice(0, 4)} ${code.slice(4)}` : ''; }
+function mlPretty(code){ const k = code && code.length === 6 ? 3 : 4; return code ? `${code.slice(0, k)} ${code.slice(k)}` : ''; }
+/* ---- the operator's own code, typed twice (Schedule / Create New Match);
+   p = 'um-lock' | 'newmatch-lock' ---- */
+function mlCodeFrom(p){ return mlNorm(mlEl(p + '-code').value); }
+function mlCodeProblem(p){
+  const a = mlCodeFrom(p), b = mlNorm(mlEl(p + '-code2').value);
+  if(!a) return 'Type the code you want for this match';
+  if(a.length < 6) return 'The code needs 6 or 7 letters and numbers';
+  if(!/[A-Z]/.test(a) || !/[0-9]/.test(a)) return 'Use letters AND numbers in the code (e.g. MI24WIN)';
+  if(!b) return 'Type the same code again to confirm it';
+  if(a !== b) return 'The two codes are not the same — type the same code twice';
+  return '';
+}
+function mlCodeHint(p, text, bad){ const h = mlEl(p + '-hint'); if(!h) return; h.textContent = text; h.className = 'ml-cf-hint' + (bad ? ' bad' : text && text[0] === '✓' ? ' ok' : ''); }
+function mlCodeLive(p){
+  const a = mlCodeFrom(p), b = mlNorm(mlEl(p + '-code2').value);
+  if(!a && !b) return mlCodeHint(p, '6 or 7 letters and numbers. Remember it — the same code is typed on ▶ Start / ▶ Resume.');
+  const problem = mlCodeProblem(p);
+  if(!problem) return mlCodeHint(p, `✓ Codes match — ${mlPretty(a)}`);
+  // only nag about the 2nd box once something is in it
+  mlCodeHint(p, problem, !!b || (a.length >= 6 && !/^(?=.*[A-Z])(?=.*[0-9])/.test(a)));
+}
+function mlResetCodeFields(p){
+  const on = mlEl(p).checked && !mlEl(p).disabled;
+  mlEl(p + '-fields').hidden = !on;
+  mlEl(p + '-code').value = ''; mlEl(p + '-code2').value = '';
+  mlCodeLive(p);
+}
 // This laptop's key goes with the live connection — now and on every reconnect.
 function mlAuthSocket(roomId){
   if(!socket || !roomId || roomId !== currentMatchId()) return;
@@ -5947,13 +5993,20 @@ function mlAuthSocket(roomId){
   try{ if(socket.io && socket.io.opts) socket.io.opts.query = { ...(socket.io.opts.query || {}), lockToken: token }; }catch(e){}
   if(token && socket.connected) socket.emit('matchLockAuth', { roomId, token });
 }
-async function mlCreate(roomId, matchId, claim){
-  const res = await fetch(withUid('/api/match-lock'), {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ roomId, matchId, deviceId: mlDevice(), claim: !!claim }), signal: AbortSignal.timeout(12000)
-  });
+async function mlCreate(roomId, matchId, claim, code){
+  let res;
+  try{
+    res = await fetch(withUid('/api/match-lock'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId, matchId, deviceId: mlDevice(), claim: !!claim, code: code || null }), signal: AbortSignal.timeout(12000)
+    });
+  }catch(e){ throw new Error('No connection — the code is set online. Try again.'); }
   const d = await res.json().catch(() => null);
-  if(!res.ok || !d || !d.success || !d.code) throw new Error((d && d.error) || 'Could not lock the match');
+  if(!res.ok || !d || !d.success || !d.code){
+    const err = new Error((d && d.error) || (currentOwnerUid() ? 'Could not lock the match' : 'Sign in first — a code can only be set when logged in'));
+    err.code = d && d.code;
+    throw err;
+  }
   mlRememberCode(roomId, d.code);
   if(d.token){ mlSetToken(roomId, d.token); mlAuthSocket(roomId); }
   return d.code;
@@ -6003,18 +6056,6 @@ async function mlEnsureAccess(roomId, label, rec){
 }
 // Is the match being opened locked? (shown as 🔒 in the lists)
 function mlLockedFor(roomId, rec){ return mlLast && mlLast.roomId === roomId ? mlLast.locked : !!(rec && rec.locked); }
-// ➕ Create New Match with "Lock with a code" on: this laptop is the one scoring it.
-async function mlLockCurrentMatch(){
-  const roomId = currentMatchId(), matchId = ensureTournamentMatchId();
-  try{
-    const code = await mlCreate(roomId, matchId, true);
-    if(roomId !== currentMatchId()) return;
-    state.matchLocked = true;
-    saveLocal();
-    pushState(true);
-    mlShowCode(roomId, code, matchLabelForToast(state), 'This laptop is scoring it. Any other laptop needs this code to open or score this match — share it only with the person who should.');
-  }catch(e){ toast(`⚠️ The new match is ready but NOT locked — ${e.message}`, 8000); }
-}
 /* ---- the code dialog: ask (before opening), gate (on a locked match
    without its key), show (a new code) ---- */
 function mlEl(id){ return document.getElementById(id); }
@@ -6047,7 +6088,7 @@ function mlRender(){
   mlEl('ml-title').textContent = show ? 'Match code' : taken ? 'This match moved to another laptop' : ml.mode === 'ask' ? 'Enter the match code' : 'This match is locked';
   mlEl('ml-sub').textContent = show ? (ml.label || '')
     : taken ? `${ml.label} — its code was entered on another laptop, so scoring moved there.${pending ? ` ${pending} ball${pending === 1 ? '' : 's'} scored here ${pending === 1 ? 'has' : 'have'} not reached the website — enter the code to send ${pending === 1 ? 'it' : 'them'} and score here again.` : ' Enter the code to bring it back to this laptop.'}`
-    : ml.mode === 'ask' ? `${ml.label} is locked. Type its 7-character code (letters and numbers) — ask the person who made the match.`
+    : ml.mode === 'ask' ? `${ml.label} is locked. Type its code (6 or 7 letters and numbers) — the one set when the match was made.`
     : `${ml.label} — only a laptop with its code can score it. Enter the code to score it here.`;
   mlEl('ml-entry').hidden = show;
   mlEl('ml-show').hidden = !show;
@@ -6066,7 +6107,7 @@ function mlRender(){
 async function mlSubmit(){
   if(!ml || ml.mode === 'show') return;
   const code = mlNorm(mlEl('ml-input').value);
-  if(code.length !== 7){ mlEl('ml-err').textContent = 'The code has 7 letters and numbers'; return; }
+  if(code.length < 6){ mlEl('ml-err').textContent = 'The code has 6 or 7 letters and numbers'; return; }
   const go = mlEl('ml-go');
   go.disabled = true; go.textContent = 'Checking…';
   const r = await mlClaim(ml.roomId, code);
@@ -6138,6 +6179,15 @@ function mlWireSocket(sock){
       return;
     }
     mlClose(false);
+  });
+  // the two code boxes under "Lock with a code"
+  ['um-lock', 'newmatch-lock'].forEach(p => {
+    if(!mlEl(p)) return;
+    mlEl(p).addEventListener('change', () => { mlResetCodeFields(p); if(mlEl(p).checked) setTimeout(() => { try{ mlEl(p + '-code').focus(); }catch(e){} }, 0); });
+    [p + '-code', p + '-code2'].forEach(id => {
+      mlEl(id).addEventListener('input', (e) => { const v = mlNorm(e.target.value); if(e.target.value !== v) e.target.value = v; mlCodeLive(p); });
+      mlEl(id).addEventListener('keydown', (e) => e.stopPropagation());
+    });
   });
   // the code dialog keeps its keys to itself (no scoring shortcuts behind it)
   window.addEventListener('keydown', (e) => {
@@ -17589,6 +17639,7 @@ async function openNewMatchModal(){
     : 'No teams saved in this tournament yet — both teams will be new; set them up in the panel.';
   document.getElementById('newmatch-title').value = '';
   document.getElementById('newmatch-lock').checked = false; // 🔒 the operator's choice, every time
+  mlResetCodeFields('newmatch-lock');
   renderNewMatchPreview('a'); renderNewMatchPreview('b');
   document.getElementById('newmatch-modal-overlay').classList.add('show');
 }
@@ -17690,6 +17741,13 @@ document.getElementById('newmatch-start').addEventListener('click', async () => 
   const keyA = document.getElementById('newmatch-team-a').value;
   const keyB = document.getElementById('newmatch-team-b').value;
   if(keyA && keyA === keyB){ toast('Team A and Team B cannot be the same team'); return; }
+  // 🔒 the operator's own code, typed twice
+  const lockIt = document.getElementById('newmatch-lock').checked;
+  const lockCode = lockIt ? mlCodeFrom('newmatch-lock') : null;
+  if(lockIt){
+    const problem = mlCodeProblem('newmatch-lock');
+    if(problem){ mlCodeHint('newmatch-lock', problem, true); document.getElementById(lockCode ? 'newmatch-lock-code2' : 'newmatch-lock-code').focus(); return; }
+  }
   const btn = document.getElementById('newmatch-start');
   btn.disabled = true; btn.textContent = 'Loading Team…';
   try{
@@ -17699,6 +17757,16 @@ document.getElementById('newmatch-start').addEventListener('click', async () => 
     // nothing has been parked, reset or reconnected — the current match is safe.
     const teamA = pickA ? await prepareTeamForNewMatch(pickA) : null;
     const teamB = pickB ? await prepareTeamForNewMatch(pickB) : null;
+
+    // 🔒 Lock first, under the new match's own room — if the code cannot be
+    // set, nothing on the panel has changed. This laptop is the one scoring it.
+    let lockRoom = null;
+    if(lockIt){
+      btn.textContent = 'Locking…';
+      const room = genMatchRoomId();
+      try{ await mlCreate(room, null, true, lockCode); lockRoom = room; }
+      catch(e){ mlCodeHint('newmatch-lock', e.message, true); toast('🔒 ' + e.message + ' — nothing was changed.', 6000); return; }
+    }
 
     // 🛟 2️⃣ Park the match that is on the panel (same as Resume does) — a
     // match with scoring is never thrown away just because a new one starts.
@@ -17712,7 +17780,8 @@ document.getElementById('newmatch-start').addEventListener('click', async () => 
     // 3️⃣ Fresh match (new Match ID / room / score) with the loaded teams put on
     // state BEFORE the reconnect, in one synchronous step — no awaits between
     // the reset and the teams landing, so nothing can overwrite them.
-    startFreshMatch({ applyToState: () => {
+    startFreshMatch({ ...(lockRoom ? { roomId: lockRoom } : {}), applyToState: () => {
+      state.matchLocked = !!lockRoom;
       if(state.matchMode === 'tournament' && (state.leagueName || '').trim()){
         state.matchNo = nextTournamentMatchNo();
         state.matchTitle = titleTyped;
@@ -17729,9 +17798,8 @@ document.getElementById('newmatch-start').addEventListener('click', async () => 
       toast(`✅ New match ready${state.matchNo ? ' (Match ' + state.matchNo + ')' : ''}${teamA ? ' — ' + teamA.name : ''}${teamA && teamB ? ' vs ' : (teamB ? ' — ' : '')}${teamB ? teamB.name : ''}. Squads loaded with their existing player IDs.`
         + (unverified ? ` ⚠️ ${unverified} older player(s) could not be matched to a saved Player ID (offline / not signed in) — check them before scoring.` : ''), unverified ? 10000 : 6000);
     }
-    const lockIt = document.getElementById('newmatch-lock').checked;
     closeNewMatchModal();
-    if(lockIt) mlLockCurrentMatch(); // 🔒 this laptop scores it; the code is shown
+    if(lockRoom) mlShowCode(lockRoom, lockCode, matchLabelForToast(state), '✅ Code set — this laptop is scoring the match. Any other laptop must type this same code to open or score it.');
   }catch(err){
     console.error('Create New Match failed', err);
     toast('⚠️ Could not load the chosen team(s) — nothing was changed. Try again.');
@@ -19058,7 +19126,8 @@ async function openUpcomingModal(rec){
   umLockEl.disabled = !!(umEditing && umEditing.locked);
   umEl('um-lock-note').textContent = umEditing && umEditing.locked
     ? 'This match is locked — its code stays the same (🔑 in 📋 Matches shows it on the laptop that made it).'
-    : 'Only a laptop that enters the 7-character code can start and score this match.';
+    : 'You choose the code. Only a laptop that types it can start and score this match.';
+  mlResetCodeFields('um-lock');
   umSetMsg('');
   renderUmFormat();
   renderUmSides();
@@ -19273,6 +19342,13 @@ async function saveUpcomingMatch(){
     const live = currentLeagueMatchesAll().find(m => m.matchId === editing.matchId);
     if(!live || !isUpcomingMatch(live)){ umSetMsg('⚠️ This match has already started (or was removed) — it can no longer be edited here.'); return; }
   }
+  // 🔒 the operator's own code, typed twice
+  const umWantLock = umEl('um-lock').checked && !(editing && editing.locked);
+  const umCode = umWantLock ? mlCodeFrom('um-lock') : null;
+  if(umWantLock){
+    const problem = mlCodeProblem('um-lock');
+    if(problem){ umSetMsg('🔒 ' + problem); mlCodeHint('um-lock', problem, true); umEl(mlCodeFrom('um-lock') ? 'um-lock-code2' : 'um-lock-code').focus(); return; }
+  }
   const blocking = umWarnings().filter(w => w.blocking);
   if(blocking.length && !umForce){
     umSetMsg('', `⚠️ ${blocking.map(w => escapeHtmlPanel(w.text)).join(' ')}<button type="button" class="small" data-um-force="1">Save anyway</button>`);
@@ -19302,9 +19378,10 @@ async function saveUpcomingMatch(){
     // 🔒 lock with a code (operator's choice) — made on the server before the fixture is saved
     let newCode = null;
     if(editing && editing.locked) rec.locked = true;
-    else if(umEl('um-lock').checked){
-      try{ newCode = await mlCreate(rec.roomId, rec.matchId, false); rec.locked = true; }
+    else if(umWantLock){
+      try{ newCode = await mlCreate(rec.roomId, rec.matchId, false, umCode); rec.locked = true; }
       catch(e){
+        if(e.code === 'CODE_TAKEN' || e.code === 'BAD_CODE' || e.code === 'TOO_MANY'){ umSetMsg('🔒 ' + e.message); mlCodeHint('um-lock', e.message, true); return; }
         if(!confirm(`🔒 Could not make a code for this match (${e.message}).\n\nSave it WITHOUT a code?`)){ umSetMsg('⚠️ Not saved — try again, or turn off "Lock with a code".'); return; }
       }
     }
@@ -19315,7 +19392,7 @@ async function saveUpcomingMatch(){
     toast(editing
       ? `✏️ Match ${rec.matchNo} updated — ${teamA.name} vs ${teamB.name}, ${upcomingWhenText(rec)} (${what}).`
       : `📅 Match ${rec.matchNo} scheduled — ${teamA.name} vs ${teamB.name}, ${upcomingWhenText(rec)} (${what}). It is in 📋 Matches — press ▶ Start there when the match begins.`, 7000);
-    if(newCode) mlShowCode(rec.roomId, newCode, `Match ${rec.matchNo} — ${teamA.name} vs ${teamB.name}`, 'Give this code to the person who will score this match. Without it the match cannot be started or scored. It is also under 🔑 in 📋 Matches on this laptop.');
+    if(newCode) mlShowCode(rec.roomId, newCode, `Match ${rec.matchNo} — ${teamA.name} vs ${teamB.name}`, '✅ Code set. On match day press ▶ Start and type this same code. Without it the match cannot be started or scored. It is also under 🔑 in 📋 Matches on this laptop.');
   }catch(err){
     console.error('Save Upcoming Match failed', err);
     umSetMsg('⚠️ Could not save the upcoming match — nothing was changed. Try again.');
