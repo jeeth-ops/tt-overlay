@@ -110,6 +110,9 @@ async function suite(file, label){
   d = summaries(P).slice(-1)[0];
   eq(L('TEST 5/6: Raj returns — ONE Raj row (2.0 overs, current), order Raj, Mukesh, Aman'), bowl(d), [['Raj', 'current', '2.0'], ['Mukesh', 'bowled', '1.0'], ['Aman', 'bowled', '1.0']]);
   eq(L('figures come from the scoring state'), [d.bowlers[0].runs, d.bowlers[2].wickets, d.score, d.wickets], [P.E(`(state.bowlingCard.B.find(b => b.name === 'Raj') || state.bowler).runs`) , 2, P.E('state.score.runs'), 3]);
+  eq(L('each bowler carries 0s / NB / WD — the same counts as the scorecard'), d.bowlers.map(b => [b.name, b.dots, b.noBalls, b.wides]),
+    d.bowlers.map(b => { const c = P.E(`bowlerDeliveryCounts(${JSON.stringify(b.name)}, currentLogInnings())`); return [b.name, c.dots, c.noBalls, c.wides]; }));
+  eq(L('…as numbers, and Raj\'s six singles this over add no dots'), [d.bowlers.every(b => [b.dots, b.noBalls, b.wides].every(v => typeof v === 'number')), d.bowlers[0].dots === P.E(`bowlerDeliveryCounts('Raj', currentLogInnings()).dots`)], [true, true]);
   // A squad of 17, every one ticked "XI": the batting list still stops at 11.
   setup(P);
   P.E(`state.teamA.players = state.teamA.players.concat(['X1','X2','X3','X4','X5','X6'].map((n, i) => ({ id: 'x' + i, name: n, isXI: true })));`);

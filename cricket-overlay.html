@@ -608,6 +608,9 @@
   .cardg-vs[hidden]{ display:none; }
   /* bowling face: wickets carry the weight, the best spell gets a tag */
   #bowling-card-graphic .sc-row:not(.sc-row-head) > .sc-c-num:nth-child(5){ font-weight:900; font-size:1.3em; color:var(--card-ink,#0b3d91); }
+  /* O M R W 0s NB WD ECON — the scorecard's own bowling analysis */
+  #bowling-card-graphic .sc-row{ grid-template-columns:1.7fr repeat(7, 0.5fr) 0.62fr; }
+  #bowling-card-graphic .sc-row:not(.sc-row-head) > .sc-c-num:nth-child(n+6):nth-child(-n+8){ color:#4f5d78; }
   .cardg-best{ display:inline-block; margin-left:calc(10 * var(--u)); vertical-align:middle; font-family:var(--font-num); font-weight:900; font-size:calc(11 * var(--u) * var(--cyc,1));
     letter-spacing:calc(1.6 * var(--u)); padding:calc(3 * var(--u)) calc(8 * var(--u)); border-radius:99px; background:var(--card-accent-ink,#0b3d91); color:#fff; }
   /* table */
@@ -4491,7 +4494,9 @@ function fillBowlingCardGraphic(d){
     const w = Number(b.wickets) || 0, r = Number(b.runs) || 0;
     if(w > 0 && (!best || w > best.w || (w === best.w && r < best.r))) best = { name: b.name, w, r };
   });
-  rows.appendChild(buildCardHeadRow(['BOWLER', 'O', 'M', 'R', 'W', 'ECON']));
+  rows.appendChild(buildCardHeadRow(['BOWLER', 'O', 'M', 'R', 'W', '0S', 'NB', 'WD', 'ECON']));
+  // an older panel build sends no dot / no-ball / wide counts: show a dash, never a made-up 0
+  const cnt = (v) => (v == null ? '—' : v);
   if(!bowlers.length){
     rows.appendChild(cardEmptyRow('NO BOWLING YET'));
   } else {
@@ -4504,7 +4509,7 @@ function fillBowlingCardGraphic(d){
         : '';
       const row = buildCardRow(
         b.name || '—', sub, 'notout',
-        [b.overs ?? '0.0', b.maidens ?? 0, b.runs ?? 0, b.wickets ?? 0, b.econ ?? '0.00'],
+        [b.overs ?? '0.0', b.maidens ?? 0, b.runs ?? 0, b.wickets ?? 0, cnt(b.dots), cnt(b.noBalls), cnt(b.wides), b.econ ?? '0.00'],
         { alt: i % 2 === 1, live: isCurrent }
       );
       const pos = document.createElement('span');
