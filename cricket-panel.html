@@ -492,6 +492,18 @@
   kbd{ background:var(--panel-2); border:1px solid var(--border); border-radius:4px; padding:1px 5px; font-size:10px; }
 
   .toggle-row{ display:flex; align-items:center; justify-content:space-between; margin-top:8px; }
+  /* 🎥 Clipper start / stop */
+  .clp-ctl{ display:grid; grid-template-columns:1.4fr 1fr .8fr; gap:6px; margin-bottom:8px; }
+  .clp-ctl button{ margin:0; }
+  .clp-ctl button:disabled{ opacity:.55; cursor:default; }
+  .clp-msg{ margin-bottom:8px; padding:7px 10px; border-radius:8px; font-size:12px; line-height:1.45; background:rgba(255,255,255,.05); color:var(--text); }
+  .clp-msg.ok{ background:rgba(22,163,74,.14); color:#86efac; }
+  .clp-msg.bad{ background:rgba(239,68,68,.12); color:#fca5a5; }
+  .clp-msg[hidden]{ display:none; }
+  .clp-first{ margin-bottom:10px; padding:10px; border-radius:10px; border:1px dashed rgba(255,122,0,.55); background:rgba(255,122,0,.07); font-size:12px; line-height:1.5; }
+  .clp-first.done{ display:none; }
+  .clp-first ol{ margin:6px 0 0 18px; padding:0; }
+  .clp-dl{ display:block; margin:8px 0 2px; padding:8px; border-radius:8px; text-align:center; font-weight:800; text-decoration:none; color:#fff; background:#ff7a00; }
   /* 📑 Match Reports (Session card) */
   .mr-card{ border:1px solid rgba(255,122,0,.35); border-radius:14px; padding:12px; margin-bottom:10px;
     background:linear-gradient(135deg, rgba(255,122,0,.12), rgba(56,189,248,.05)); }
@@ -2650,11 +2662,30 @@
     </div>
 
     <div class="card" id="card-clipper-helper">
-      <h2>⬇️ Clipper Helper (install once on this PC)</h2>
+      <h2>🎥 Clipper Helper</h2>
 
       <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px; padding:8px 10px; background:rgba(255,255,255,.04); border-radius:8px;">
         <div class="dot" id="clipper-status-dot"></div>
         <span id="clipper-status-text" style="font-size:13px; opacity:.85;">Checking…</span>
+      </div>
+      <!-- ▶ One click starts the Clipper in the background (no black window,
+           nothing on the taskbar) and opens its tab; ⏹ stops it. Works through
+           the asl-clipper:// link that the Clipper Launcher sets up once on
+           this PC — everything stays on this laptop, nothing goes to the website. -->
+      <div class="clp-ctl">
+        <button type="button" class="small primary" id="clipper-start-btn">▶ Start Clipper</button>
+        <button type="button" class="small" id="clipper-open-btn">🗂 Open Clipper</button>
+        <button type="button" class="small ghost" id="clipper-stop-btn">⏹ Stop</button>
+      </div>
+      <div class="clp-msg" id="clipper-launch-msg" hidden></div>
+      <div class="clp-first" id="clipper-first">
+        <b>First time on this PC?</b> Put the Clipper Launcher in the ClipperHelper folder and run its setup once — then ▶ Start Clipper does everything.
+        <a class="clp-dl" href="/clipper-launcher.zip" download>⬇️ Download Clipper Launcher</a>
+        <ol>
+          <li>Unzip it <b>into the same folder as ClipperHelper.exe</b>.</li>
+          <li>Double-click <code>install-clipper-launcher.bat</code> once — it says <b>DONE</b>.</li>
+          <li>Click <b>▶ Start Clipper</b>. The first time Chrome asks to open a program: tick <b>Always allow</b> → <b>Open</b>.</li>
+        </ol>
       </div>
       <div style="font-size:11px; opacity:.6;">Clips (newest first) — ⏳ wait → ✂️ cutting locally → 💾 saved locally → R2 → Drive → website. No internet? The clip is still cut and saved; it syncs by itself when the connection is back.</div>
       <div id="clip-jobs-list"></div>
@@ -2676,9 +2707,9 @@
         <ol style="font-size:12px; opacity:.8; line-height:1.8; margin:8px 0 0 18px; padding:0;">
           <li>Right-click the downloaded zip → <b>Extract All</b> → choose any folder (e.g. Desktop). Keep <code>ClipperHelper.exe</code>, <code>ffmpeg.exe</code> and <code>config.json</code> together in that same folder.</li>
           <li>In vMix: click <b>Settings → Web Controller</b> and tick <b>Enable Web Controller</b> (keep the default port, 8088).</li>
-          <li>Double-click <code>ClipperHelper.exe</code>. A black window opens (<code>Clipper Helper running at http://localhost:5005</code>) and, the first time, a <b>Setup page</b> automatically opens in your browser.</li>
-          <li>On that Setup page, fill in the vMix recording file path and your website URL, then click <b>💾 Save</b>.</li>
-          <li>Keep that black window open for the whole match (minimize it, don't close it). You'll need to double-click <code>ClipperHelper.exe</code> again next match day.</li>
+          <li>Put the <b>Clipper Launcher</b> (button above) in that same folder and double-click <code>install-clipper-launcher.bat</code> once.</li>
+          <li>Click <b>▶ Start Clipper</b> — the Clipper runs in the background (no window) and its <b>Setup page</b> opens in a tab.</li>
+          <li>On that Setup page, fill in the vMix recording file path and your website URL, then click <b>💾 Save</b>. Next match day: just ▶ Start Clipper. (Double-clicking <code>ClipperHelper.exe</code> still works too.)</li>
         </ol>
 
         <div style="font-size:12px; opacity:.85; font-weight:600; margin-top:14px;">🏏 Every match day (just 2 clicks):</div>
@@ -5999,9 +6030,128 @@ async function checkClipperHelperStatus(){
     }
   } catch(e) {
     dot.classList.remove('on');
-    text.textContent = '🔴 Not running — double-click ClipperHelper.exe on this PC once';
+    text.textContent = '🔴 Not running — click ▶ Start Clipper';
   }
+  renderClipperButtons(dot.classList.contains('on'));
 }
+/* ▶ START / ⏹ STOP CLIPPER — through the asl-clipper:// link the Clipper
+   Launcher registers once on this PC (clipper-helper/install-clipper-
+   launcher.bat). Windows hands the link to clipper-launch.vbs, which runs
+   ClipperHelper.exe hidden — no window, nothing on the taskbar — or ends it.
+   Everything here talks to this laptop only (localhost); the website sees
+   nothing more than the clip uploads it always got. */
+const CLIPPER_LINK = 'asl-clipper://';
+const CLIPPER_TAB = 'asl-clipper-tab';
+const CLIPPER_OK_KEY = 'asl-clipper-launch-ok';
+let clipperBusy = false;
+let clipperTab = null;
+function clipperWorkedHere(){ try{ return localStorage.getItem(CLIPPER_OK_KEY) === '1'; }catch(e){ return false; } }
+async function clipperAlive(){
+  try{ const r = await fetch(`${CLIPPER_HELPER_URL}/status`, { signal: AbortSignal.timeout(1500), cache: 'no-store' }); return r.ok; }
+  catch(e){ return false; }
+}
+// An external link: Windows passes it to the launcher; this page stays put.
+function clipperLaunch(action){
+  const a = document.createElement('a');
+  a.href = CLIPPER_LINK + action;
+  a.style.display = 'none';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+function clipperMsg(text, kind){
+  const el = document.getElementById('clipper-launch-msg');
+  if(!el) return;
+  el.hidden = !text;
+  el.className = 'clp-msg' + (kind ? ' ' + kind : '');
+  el.innerHTML = text || '';
+}
+function renderClipperButtons(on){
+  const s = document.getElementById('clipper-start-btn'), o = document.getElementById('clipper-open-btn'), x = document.getElementById('clipper-stop-btn');
+  if(!s) return;
+  s.disabled = clipperBusy || on;
+  s.textContent = on ? '🟢 Clipper running' : (clipperBusy ? '⏳ Starting…' : '▶ Start Clipper');
+  o.disabled = !on;
+  x.disabled = clipperBusy || !on;
+  const first = document.getElementById('clipper-first');
+  if(first) first.classList.toggle('done', on || clipperWorkedHere());
+}
+// The Clipper's Setup page needs the vMix recording path and this website's
+// link. The link is filled in here — once, only while the Clipper has none —
+// so the operator only types the vMix path. (Saving just the link never
+// touches the recording path.)
+async function clipperFillWebsite(){
+  try{
+    const s = await fetch(`${CLIPPER_HELPER_URL}/status`, { signal: AbortSignal.timeout(2000), cache: 'no-store' }).then(r => r.json());
+    if(s && s.mainServerUrl) return false;
+    if(!/^https?:$/.test(location.protocol)) return false;
+    await fetch(`${CLIPPER_HELPER_URL}/setup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ websiteUrl: location.origin }), signal: AbortSignal.timeout(3000) });
+    return true;
+  }catch(e){ return false; }
+}
+function openClipperTab(){
+  clipperTab = window.open(`${CLIPPER_HELPER_URL}/setup`, CLIPPER_TAB);
+  return clipperTab;
+}
+async function startClipper(){
+  if(clipperBusy) return;
+  clipperBusy = true;
+  clipperLaunch('start'); // first, while this click still counts as the operator's
+  // once it has worked on this PC, the Clipper tab opens straight away
+  let tab = null;
+  if(clipperWorkedHere()){
+    tab = window.open('', CLIPPER_TAB);
+    try{ if(tab && tab.location.href === 'about:blank') tab.document.write('<title>Clipper — starting…</title><body style="margin:0;height:100vh;display:grid;place-items:center;background:#0b1220;color:#e2e8f0;font:600 18px system-ui">🎥 Starting Clipper…</body>'); }catch(e){}
+  }
+  renderClipperButtons(false);
+  clipperMsg('⏳ Starting the Clipper in the background… (first time: Chrome asks to open a program — tick <b>Always allow</b> → <b>Open</b>)');
+  const until = Date.now() + 45000;
+  let up = false;
+  while(Date.now() < until){
+    if(await clipperAlive()){ up = true; break; }
+    await new Promise(r => setTimeout(r, 700));
+  }
+  clipperBusy = false;
+  renderClipperButtons(up);
+  if(up){
+    try{ localStorage.setItem(CLIPPER_OK_KEY, '1'); }catch(e){}
+    const filled = await clipperFillWebsite();
+    if(tab && !tab.closed){ tab.location.href = `${CLIPPER_HELPER_URL}/setup`; clipperTab = tab; }
+    else openClipperTab();
+    clipperMsg((clipperTab && !clipperTab.closed ? '✅ Clipper is running in the background — its tab is open.' : '✅ Clipper is running — click <b>🗂 Open Clipper</b> for its tab (Chrome blocked the pop-up).')
+      + (filled ? ' This website\'s link is already filled in there — just add the vMix recording path and Save.' : ' First match on this PC? In that tab add the vMix recording path, then Save.'), 'ok');
+    toast('🎥 Clipper running');
+  } else {
+    if(tab && !tab.closed) tab.close();
+    clipperMsg('⚠️ The Clipper did not start. First time on this PC? Set up the <b>Clipper Launcher</b> below (2 minutes, once). Already did? Check <code>clipper-log.txt</code> in the ClipperHelper folder.', 'bad');
+    const first = document.getElementById('clipper-first');
+    if(first) first.classList.remove('done');
+  }
+  checkClipperHelperStatus();
+}
+async function stopClipper(){
+  if(clipperBusy) return;
+  if(!confirm('Stop the Clipper? No new clips will be cut until you start it again.')) return;
+  clipperBusy = true;
+  clipperLaunch('stop');
+  renderClipperButtons(true);
+  clipperMsg('⏳ Stopping the Clipper…');
+  const until = Date.now() + 15000;
+  let down = false;
+  while(Date.now() < until){
+    if(!(await clipperAlive())){ down = true; break; }
+    await new Promise(r => setTimeout(r, 700));
+  }
+  clipperBusy = false;
+  renderClipperButtons(!down);
+  if(clipperTab && !clipperTab.closed){ try{ clipperTab.close(); }catch(e){} }
+  clipperMsg(down ? '⏹ Clipper stopped. Clips already cut are saved; unfinished ones carry on next start.' : '⚠️ The Clipper is still running — try ⏹ Stop again.', down ? '' : 'bad');
+  checkClipperHelperStatus();
+}
+(function wireClipperLauncher(){
+  const on = (id, fn) => { const el = document.getElementById(id); if(el) el.addEventListener('click', fn); };
+  on('clipper-start-btn', startClipper);
+  on('clipper-stop-btn', stopClipper);
+  on('clipper-open-btn', () => { if(!openClipperTab()) toast('Allow pop-ups for this site to open the Clipper tab'); });
+})();
 checkClipperHelperStatus();
 setInterval(checkClipperHelperStatus, 8000);
 

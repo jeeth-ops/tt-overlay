@@ -1,5 +1,28 @@
 # Clipper Helper v5.2 — Setup (one-time, operator ka apna PC)
 
+## 🆕 Panel se Start / Stop (koi kaali window nahi)
+
+Ab `ClipperHelper.exe` ko double-click karke kaali window khuli rakhne ki
+zaroorat nahi. Panel ke **🎥 Clipper Helper** card me **▶ Start Clipper**
+dabao — Clipper peeche chalta hai: na window, na taskbar me kuch. Uska
+Setup tab apne aap khulta hai (vMix recording path + website link; website
+link panel khud bhar deta hai). **⏹ Stop** se band.
+
+Ek baar har PC pe: panel se **Clipper Launcher** download karo
+(`/clipper-launcher.zip`), unzip karke `ClipperHelper.exe` wale folder me
+daalo, `install-clipper-launcher.bat` double-click karo (admin nahi chahiye).
+Pehli baar Chrome program kholne ka poochega — **Always allow** → **Open**.
+
+- `clipper-launch.vbs` — Clipper ko hidden chalata / band karta hai; jo
+  Clipper likhta hai sab `clipper-log.txt` me (5 MB ke baad
+  `clipper-log-old.txt`).
+- `install-clipper-launcher.bat` — `asl-clipper://` link sirf is Windows
+  user ke liye register karta hai. Folder badla to dobara chalao.
+- `uninstall-clipper-launcher.bat` — launcher hatao (exe, settings, clips
+  safe rehte hain).
+- Sab kuch isi laptop pe (localhost) — website / Render pe koi extra load nahi.
+- Task Manager me `ClipperHelper.exe` background process ki tarah dikhega.
+
 Ye chhota program (`ClipperHelper.exe`) vMix ke saath usi PC par chalta hai
 jahan match record ho raha hai. Isi ke wajah se panel me FOUR/SIX/WICKET
 (aur Wide 4/6, No-ball 4/6, Leg-bye 4, manual trigger) dabane par clip
