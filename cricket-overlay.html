@@ -604,6 +604,12 @@
   .cardg-rr{ margin-top:calc(7 * var(--u)); font-family:var(--font-num); font-weight:800; font-size:calc(13 * var(--u)); letter-spacing:calc(1.2 * var(--u)); color:var(--card-ink,#0b3d91);
     background:rgba(255,255,255,0.95); border-radius:99px; padding:calc(3 * var(--u)) calc(10 * var(--u)); display:inline-block; }
   .cardg-rr[hidden]{ display:none; }
+  .cardg-vs{ font-family:var(--font-num); font-weight:800; font-size:calc(12.5 * var(--u)); letter-spacing:calc(1.8 * var(--u)); color:rgba(255,255,255,0.8); margin-bottom:calc(5 * var(--u)); white-space:nowrap; }
+  .cardg-vs[hidden]{ display:none; }
+  /* bowling face: wickets carry the weight, the best spell gets a tag */
+  #bowling-card-graphic .sc-row:not(.sc-row-head) > .sc-c-num:nth-child(5){ font-weight:900; font-size:1.3em; color:var(--card-ink,#0b3d91); }
+  .cardg-best{ display:inline-block; margin-left:calc(10 * var(--u)); vertical-align:middle; font-family:var(--font-num); font-weight:900; font-size:calc(11 * var(--u) * var(--cyc,1));
+    letter-spacing:calc(1.6 * var(--u)); padding:calc(3 * var(--u)) calc(8 * var(--u)); border-radius:99px; background:var(--card-accent-ink,#0b3d91); color:#fff; }
   /* table */
   .cardg .sc-rows{ padding-top:calc(16 * var(--u) * var(--cyc,1)); }
   .cardg .sc-row{ border-radius:calc(9 * var(--u)); }
@@ -1745,6 +1751,7 @@
         <div class="cardg-venue" id="bat-card-venue" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7Zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5Z"/></svg><span id="bat-card-venue-t"></span></div>
       </div>
       <div class="cardg-score">
+        <div class="cardg-vs" id="bat-card-vs" hidden></div>
         <div class="big" id="bat-card-total">0-0</div>
         <div class="sml" id="bat-card-overs">0.0 OVERS</div>
         <div class="cardg-rr" id="bat-card-rr" hidden></div>
@@ -1771,6 +1778,7 @@
         <div class="cardg-venue" id="bowl-card-venue" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7Zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5Z"/></svg><span id="bowl-card-venue-t"></span></div>
       </div>
       <div class="cardg-score">
+        <div class="cardg-vs" id="bowl-card-vs" hidden></div>
         <div class="big" id="bowl-card-total">0-0</div>
         <div class="sml" id="bowl-card-overs">0.0 OVERS</div>
         <div class="cardg-rr" id="bowl-card-rr" hidden></div>
@@ -4457,14 +4465,32 @@ function fillBattingCardGraphic(d){
   }
 }
 
+// Only the bowlers who have actually bowled in this innings — a name picked
+// but never used (0 balls, nothing conceded) is not part of the figures.
+function bowledRows(d){
+  return (d.bowlers || []).filter(b => b && b.name && (b.current
+    || (parseFloat(b.overs) || 0) > 0 || (Number(b.runs) || 0) > 0 || (Number(b.wickets) || 0) > 0));
+}
 function fillBowlingCardGraphic(d){
+  // The BOWLING side's own identity: its colour, its logo, its name.
   const card = paintCardHeader('bowling-card-graphic', 'bowl-card', d, {
     name: d.oppTeamName, short: d.oppTeamShort, color: d.oppTeamColor, logo: d.oppTeamLogo
   }, 'BOWLING');
+  // whose innings these figures are against
+  const vs = document.getElementById('bowl-card-vs');
+  const batSide = d.teamShort || d.teamName || '';
+  vs.textContent = batSide ? `VS ${String(batSide).toUpperCase()}` : '';
+  vs.hidden = !batSide;
 
   const rows = document.getElementById('bowl-card-rows');
   rows.innerHTML = '';
-  const bowlers = d.bowlers || [];
+  const bowlers = bowledRows(d);
+  // the best spell so far: most wickets, then fewest runs (only once a wicket has fallen)
+  let best = null;
+  bowlers.forEach(b => {
+    const w = Number(b.wickets) || 0, r = Number(b.runs) || 0;
+    if(w > 0 && (!best || w > best.w || (w === best.w && r < best.r))) best = { name: b.name, w, r };
+  });
   rows.appendChild(buildCardHeadRow(['BOWLER', 'O', 'M', 'R', 'W', 'ECON']));
   if(!bowlers.length){
     rows.appendChild(cardEmptyRow('NO BOWLING YET'));
@@ -4485,6 +4511,7 @@ function fillBowlingCardGraphic(d){
       pos.className = 'cardg-pos';
       pos.textContent = String(i + 1);
       row.querySelector('.cardg-name').prepend(pos);
+      if(best && b.name === best.name){ const tag = document.createElement('span'); tag.className = 'cardg-best'; tag.textContent = 'BEST'; row.querySelector('.cardg-name').appendChild(tag); }
       rows.appendChild(row);
     });
   }
@@ -4550,7 +4577,7 @@ const overFlow = (() => {
   const CYCLE = [
     { id: 'over-summary-card',    fill: fillOverSummaryCard,    has: () => true },
     { id: 'batting-card-graphic', fill: fillBattingCardGraphic, has: (d) => Array.isArray(d.batsmen) && d.batsmen.length > 0 },
-    { id: 'bowling-card-graphic', fill: fillBowlingCardGraphic, has: (d) => Array.isArray(d.bowlers) && d.bowlers.length > 0 }
+    { id: 'bowling-card-graphic', fill: fillBowlingCardGraphic, has: (d) => Array.isArray(d.bowlers) && bowledRows(d).length > 0 }
   ];
   let cycleIdx = 0;         // which face the NEXT accepted over gets
   let face = CYCLE[0];      // the face this sequence is showing
