@@ -107,12 +107,9 @@
        of being repainted on every animation frame inside the bar */
     will-change:opacity, transform;
   }
-  /* the parts of the bar that blur / scale out and back in around every
-     ball event — kept on the GPU so those frames never wait on a repaint
-     (GSAP leaves a transform/filter on them after the first event anyway,
-     so this changes nothing on screen) */
-  #cap-left .cap-logo, #cap-left .cap-text, #cap-right .cap-logo, #cap-right .cap-text,
-  #score-value, #overs-badge .ov-num, #overs-badge .ov-lbl, #live-segs, #break-seg{ will-change:transform, opacity, filter; }
+  /* (the parts of the bar that blur / scale out around a ball event are put
+     on the GPU only for the length of that animation — see playEventTimeline
+     — so their small text stays pixel-sharp the rest of the time) */
 
   /* ---- Top row ---- */
   #top-row{ display:flex; align-items:stretch; height:min(9.8vw,118px); position:relative; }
@@ -490,6 +487,18 @@
     font-family:var(--font-ui); color:var(--bc-ink,#12213f);
     z-index:32; will-change:transform, opacity;
   }
+  /* 🎞 SMOOTHNESS — these cards are always shown through a clip-path that
+     ends at their own edge (see the over-summary sequencer), so the big
+     glow shadows above are never on screen — but a 180px blur was still
+     being drawn, and drawn again on every frame of every row animation.
+     Not drawing what is never seen changes nothing on screen. */
+  .summary-card.cycle-card{ box-shadow:none; }
+  /* Every band that fades / slides / un-blurs in or out on its own gets its
+     own GPU layer, so animating one row never repaints the whole card
+     (GSAP leaves a transform/opacity on them after the first show anyway,
+     so this changes nothing on screen). */
+  .summary-card .sc-header, .summary-card .sc-row, .summary-card .sc-footer, .summary-card .stat-cell, .summary-card .ph-section,
+  .osc-overband, #osc-bowler-line, .osc-momentum, .cardg-extras, .cardg-empty{ will-change:transform, opacity, filter; }
   /* Header blends BOTH teams' colours (never a single team's identity
      alone) — this card is never "India's" or "Australia's" card, it's
      the match's. */
@@ -2824,7 +2833,7 @@ function cancelRunningEvent(){
     stopEventMicroMotion();
     const stage = document.getElementById('event-stage');
     if(stage) stage.classList.remove('ev-active');
-    gsap.set(SB_CONTENT_SELECTOR, { opacity: 1, scale: 1, y: 0, filter: 'blur(0px)' });
+    gsap.set(SB_CONTENT_SELECTOR, { opacity: 1, scale: 1, y: 0, filter: 'blur(0px)', willChange: 'auto' });
   }
   eventState = 'idle';
 }
@@ -3498,8 +3507,12 @@ function playEventTimeline(kind, opts, onDone){
   gsap.set(bails, { opacity: 0, x: 0, y: 0, rotate: 0 });
   rays.innerHTML = '';
 
+  // 🎞 the bar's text goes onto the GPU for this animation only (smooth
+  // frames), and back to normal rendering afterwards (sharp small text)
+  gsap.set(SB_CONTENT_SELECTOR, { willChange: 'transform, opacity, filter' });
   const master = gsap.timeline({
     onComplete: () => {
+      gsap.set(SB_CONTENT_SELECTOR, { willChange: 'auto' });
       stage.classList.remove('ev-active');
       if(onDone) onDone();
     }
