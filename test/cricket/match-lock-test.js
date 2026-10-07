@@ -342,10 +342,8 @@ async function panelSuite(file){
   click(A, A.$('#ml-done'));
   eq(L('Done closes it'), dlg(A).open, false);
   A.E(`refreshLeagueUI()`); await sleep(30);
-  eq(L('📋 Matches: 🔒 on the fixture + 🔑 (this laptop knows the code)'), [A.$$('.lm-lock').length >= 1, !!A.$(`[data-ml-code="${fx.roomId}"]`)], [true, true]);
-  click(A, A.$(`[data-ml-code="${fx.roomId}"]`));
-  eq(L('🔑 shows the code again'), [dlg(A).open, A.$('#ml-code').textContent.replace(' ', '')], [true, fxCode]);
-  click(A, A.$('#ml-done'));
+  eq(L('📋 Matches: 🔒 on the fixture, and NO way to see the code again on this laptop'), [A.$$('.lm-lock').length >= 1, A.$$('[data-ml-code]').length], [true, 0]);
+  eq(L('the code is not kept anywhere on the laptop'), Object.keys(A.w.localStorage).some(k => (A.w.localStorage.getItem(k) || '').includes(fxCode)), false);
   click(A, A.$('#schedule-match-btn'));
   await until(() => A.$('#um-overlay').classList.contains('show'));
   eq(L('the next new fixture starts with the lock OFF again, boxes empty'), [A.$('#um-lock').checked, A.$('#um-lock-fields').hidden, A.$('#um-lock-code').value], [false, true, '']);
@@ -405,12 +403,16 @@ async function panelSuite(file){
   eq(L('on (re)connect the key is sent again'), B.sock().sent.filter(x => x.ev === 'matchLockAuth').slice(-1)[0].p, { roomId: fx.roomId, token: keyB });
 
   console.log('\n=== One laptop at a time ===');
-  // laptop A now opens the same match with the code it remembers
+  // laptop A — the one that MADE the fixture — opens it: the code is asked all the same
   W.roomStates[fx.roomId] = JSON.parse(B.E('JSON.stringify(state)'));
   A.E(`window.__res = resumeSavedMatch(${JSON.stringify({ ...fx, upcoming: false })}, null, 'Test Cup')`);
+  await until(() => dlg(A).open);
+  eq(L('the laptop that made the match is asked for the code too'), [dlg(A), A.E('currentMatchId()') !== fx.roomId], [{ open: true, title: 'Enter the match code' }, true]);
+  typeIn(A, A.$('#ml-input'), fxCode);
+  click(A, A.$('#ml-go'));
   await until(() => A.E('currentMatchId()') === fx.roomId, 2500);
   await sleep(60);
-  eq(L('laptop A (knows the code) moves scoring to itself'), [S.store.docs.find(d => d.roomId === fx.roomId).holder.deviceId, A.E('state.matchLocked')], ['dv-laptopA', true]);
+  eq(L('laptop A (typed the code) moves scoring to itself'), [S.store.docs.find(d => d.roomId === fx.roomId).holder.deviceId, A.E('state.matchLocked')], ['dv-laptopA', true]);
   // the server tells B; B steps aside
   B.sock().h.matchLockTaken({ roomId: fx.roomId, deviceId: 'dv-laptopA' });
   eq(L('laptop B is told: match moved, its key is dropped'), [dlg(B), B.E(`mlToken(${JSON.stringify(fx.roomId)})`), B.$('#ml-alt').textContent], [{ open: true, title: 'This match moved to another laptop' }, '', 'Leave this match']);
@@ -436,6 +438,20 @@ async function panelSuite(file){
   await sleep(30);
   eq(L('code entered again → laptop B scores again, the waiting ball is sent'), [S.store.docs.find(d => d.roomId === fx.roomId).holder.deviceId, B.E('ballOutbox.length'), B.E(`mlLockedOut.has(${JSON.stringify(fx.roomId)})`)], ['dv-laptopB', 0, false]);
   eq(L('…with its new key on the connection'), B.sock().sent.filter(x => x.ev === 'matchLockAuth').slice(-1)[0].p.token === B.E(`mlToken(${JSON.stringify(fx.roomId)})`), true);
+  // B is scoring it (holds the key), switches away, then comes back: asked again
+  W.roomStates[fx.roomId] = JSON.parse(B.E('JSON.stringify(state)'));
+  B.E(`startFreshMatch()`);
+  B.E(`window.__back = resumeSavedMatch(${JSON.stringify({ ...fx, upcoming: false })}, null, 'Test Cup')`);
+  await until(() => dlg(B).open);
+  eq(L('same laptop, same Gmail, even holding the match → code asked again on ▶ Resume'), [dlg(B), B.E('currentMatchId()') !== fx.roomId], [{ open: true, title: 'Enter the match code' }, true]);
+  click(B, B.$('#ml-alt'));
+  await sleep(40);
+  eq(L('…Cancel → not opened'), [dlg(B).open, B.E('currentMatchId()') !== fx.roomId], [false, true]);
+  B.E(`window.__back = resumeSavedMatch(${JSON.stringify({ ...fx, upcoming: false })}, null, 'Test Cup')`);
+  await until(() => dlg(B).open);
+  typeIn(B, B.$('#ml-input'), fxCode); click(B, B.$('#ml-go'));
+  await until(() => B.E('currentMatchId()') === fx.roomId, 2500);
+  eq(L('…right code → opened'), B.E('currentMatchId()'), fx.roomId);
 
   console.log('\n=== Server says locked on connect (page reload without a key) ===');
   const C = bootPanel(file, W, { device: 'dv-laptopC' });

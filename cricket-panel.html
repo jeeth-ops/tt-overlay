@@ -1233,7 +1233,6 @@
   .ml-cf-hint.bad{ color:#f87171; }
   .ml-cf-hint.ok{ color:#4ade80; }
   .lm-lock{ flex:none; font-size:12px; }
-  .lm-code{ flex:none; padding:2px 7px !important; }
   .um-toggle{ display:flex; align-items:center; gap:10px; margin-top:10px; font-size:12.5px; font-weight:600; }
   .um-toggle[hidden]{ display:none; }
   .um-toggle small{ color:var(--text-dim); font-weight:500; }
@@ -5946,8 +5945,10 @@ function mlDevice(){
 }
 function mlToken(roomId){ return roomId ? (mlRead(ML_KEYS)[roomId] || '') : ''; }
 function mlSetToken(roomId, token){ const m = mlRead(ML_KEYS); if(token) m[roomId] = token; else delete m[roomId]; mlWrite(ML_KEYS, m); }
-function mlKnownCode(roomId){ return roomId ? (mlRead(ML_CODES)[roomId] || '') : ''; }
-function mlRememberCode(roomId, code){ const m = mlRead(ML_CODES); if(code) m[roomId] = code; else delete m[roomId]; mlWrite(ML_CODES, m); }
+// The code itself is NEVER kept on the laptop — it is asked every time a
+// locked match is started or resumed, on any laptop, even the one that made
+// it. (Older panels kept codes here; they are wiped.)
+try{ localStorage.removeItem(ML_CODES); }catch(e){}
 function mlHeaders(roomId){ const t = mlToken(roomId); return t ? { 'X-Match-Key': t } : {}; }
 // a saved match's key, found by its matchId (for deleting it)
 function mlHeadersForMatchId(matchId){
@@ -6007,7 +6008,6 @@ async function mlCreate(roomId, matchId, claim, code){
     err.code = d && d.code;
     throw err;
   }
-  mlRememberCode(roomId, d.code);
   if(d.token){ mlSetToken(roomId, d.token); mlAuthSocket(roomId); }
   return d.code;
 }
@@ -6025,7 +6025,7 @@ async function mlClaim(roomId, code){
     });
     const d = await r.json().catch(() => null);
     if(r.ok && d && d.success){
-      if(d.token){ mlSetToken(roomId, d.token); mlRememberCode(roomId, mlNorm(code)); }
+      if(d.token) mlSetToken(roomId, d.token);
       mlLockedOut.delete(roomId);
       mlAuthSocket(roomId);
       return { ok: true };
@@ -6047,10 +6047,9 @@ async function mlEnsureAccess(roomId, label, rec){
       if(rec && rec.locked){ toast('🔒 This match is locked — the panel needs the internet to check its code', 6000); return false; }
       return true;
     }
-    if(!st.locked || st.you) return true;
-    if(st.held && !confirm(`🔒 ${label} is being scored on another laptop right now.\n\nMove scoring to THIS laptop? The other laptop stops scoring it.`)) return false;
-    const known = mlKnownCode(roomId);
-    if(known){ const r = await mlClaim(roomId, known); if(r.ok) return true; }
+    if(!st.locked) return true;
+    // 🔒 Locked: the code is typed EVERY time — same laptop, same Gmail, no exceptions.
+    if(st.held && !st.you && !confirm(`🔒 ${label} is being scored on another laptop right now.\n\nMove scoring to THIS laptop? The other laptop stops scoring it.`)) return false;
     return await mlAsk(roomId, label);
   } finally { mlBusy = false; }
 }
@@ -6127,7 +6126,7 @@ async function mlRemoveCode(){
     const r = await fetch(`/api/match-lock/${encodeURIComponent(roomId)}`, { method: 'DELETE', headers: mlHeaders(roomId) });
     const d = await r.json().catch(() => null);
     if(!r.ok || !d || !d.success) throw new Error((d && d.error) || 'Could not remove the code');
-    mlRememberCode(roomId, ''); mlSetToken(roomId, '');
+    mlSetToken(roomId, '');
     if(roomId === currentMatchId()){ state.matchLocked = false; saveLocal(); pushState(true); if(typeof saveMatchToLeague === 'function' && currentMatchTournament()) saveMatchToLeague(true); }
     mlClose(true);
     toast('🔓 Code removed — this match is open again');
@@ -10944,9 +10943,8 @@ function isMatchOnPanel(m, listTournament){
   return sameTournament(listTournament, currentMatchTournament());
 }
 function matchResumeHtml(m, listTournament){
-  // 🔒 locked with a code; 🔑 = this laptop knows the code (tap to see / share it)
-  const lock = (m.locked ? `<span class="lm-lock" title="Locked — opens only with its code">🔒</span>` : '')
-    + (m.roomId && mlKnownCode(m.roomId) ? `<button type="button" class="small ghost lm-code" data-ml-code="${escapeHtmlPanel(m.roomId)}" title="Show this match's code">🔑</button>` : '');
+  // 🔒 locked with a code — ▶ Start / ▶ Resume asks for it every time
+  const lock = m.locked ? `<span class="lm-lock" title="Locked — opens only with its code">🔒</span>` : '';
   if(isMatchOnPanel(m, listTournament)) return lock + `<span class="lm-onpanel">● On panel</span>`;
   if(isUpcomingMatch(m) && m.roomId) return lock + `<button type="button" class="small primary lm-resume" data-start-upcoming="${escapeHtmlPanel(m.matchId)}">▶ Start</button>`;
   if(!m.roomId) return lock;
@@ -10954,14 +10952,6 @@ function matchResumeHtml(m, listTournament){
   return lock + `<button type="button" class="small primary lm-resume" data-resume-match="${escapeHtmlPanel(m.matchId)}">${label}</button>`;
 }
 function wireResumeButtons(listEl, matches, listTournament){
-  listEl.querySelectorAll('[data-ml-code]').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const roomId = btn.getAttribute('data-ml-code');
-      const rec = matches.find(x => x.roomId === roomId);
-      mlShowCode(roomId, mlKnownCode(roomId), rec ? matchLabelForToast(rec) : '', '');
-    });
-  });
   listEl.querySelectorAll('[data-resume-match]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -17799,7 +17789,7 @@ document.getElementById('newmatch-start').addEventListener('click', async () => 
         + (unverified ? ` ⚠️ ${unverified} older player(s) could not be matched to a saved Player ID (offline / not signed in) — check them before scoring.` : ''), unverified ? 10000 : 6000);
     }
     closeNewMatchModal();
-    if(lockRoom) mlShowCode(lockRoom, lockCode, matchLabelForToast(state), '✅ Code set — this laptop is scoring the match. Any other laptop must type this same code to open or score it.');
+    if(lockRoom) mlShowCode(lockRoom, lockCode, matchLabelForToast(state), '✅ Code set — this laptop is scoring the match now. To open it again later (▶ Resume, here or on any laptop) this same code is asked. Note it down: the panel does not show it again.');
   }catch(err){
     console.error('Create New Match failed', err);
     toast('⚠️ Could not load the chosen team(s) — nothing was changed. Try again.');
@@ -19125,7 +19115,7 @@ async function openUpcomingModal(rec){
   umLockEl.checked = !!(umEditing && umEditing.locked);
   umLockEl.disabled = !!(umEditing && umEditing.locked);
   umEl('um-lock-note').textContent = umEditing && umEditing.locked
-    ? 'This match is locked — its code stays the same (🔑 in 📋 Matches shows it on the laptop that made it).'
+    ? 'This match is locked — its code stays the same and is asked on ▶ Start.'
     : 'You choose the code. Only a laptop that types it can start and score this match.';
   mlResetCodeFields('um-lock');
   umSetMsg('');
@@ -19392,7 +19382,7 @@ async function saveUpcomingMatch(){
     toast(editing
       ? `✏️ Match ${rec.matchNo} updated — ${teamA.name} vs ${teamB.name}, ${upcomingWhenText(rec)} (${what}).`
       : `📅 Match ${rec.matchNo} scheduled — ${teamA.name} vs ${teamB.name}, ${upcomingWhenText(rec)} (${what}). It is in 📋 Matches — press ▶ Start there when the match begins.`, 7000);
-    if(newCode) mlShowCode(rec.roomId, newCode, `Match ${rec.matchNo} — ${teamA.name} vs ${teamB.name}`, '✅ Code set. On match day press ▶ Start and type this same code. Without it the match cannot be started or scored. It is also under 🔑 in 📋 Matches on this laptop.');
+    if(newCode) mlShowCode(rec.roomId, newCode, `Match ${rec.matchNo} — ${teamA.name} vs ${teamB.name}`, '✅ Code set. On match day press ▶ Start and type this same code. Without it the match cannot be started or scored — not even on this laptop. Note it down: the panel does not show it again.');
   }catch(err){
     console.error('Save Upcoming Match failed', err);
     umSetMsg('⚠️ Could not save the upcoming match — nothing was changed. Try again.');
