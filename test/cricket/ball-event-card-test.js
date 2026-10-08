@@ -126,6 +126,14 @@ async function panelSuite(file, label){
   P.E(`recordBall('W', { dismissalType: 'Bowled', deferAnimation: true }); fireWicketAnimationOnce('Rohit Sharma');`);
   eq(L('… and confirming afterwards never fires a second WICKET graphic'), events(P, 'WICKET').length, 1);
 
+  // the Manual Milestone Trigger buttons
+  setup(P);
+  P.E(`document.querySelector('[data-milestone="POWERPLAY_END"]').click()`);
+  ev = last(P, 'POWERPLAY_END');
+  eq(L('"Powerplay Over" sends POWERPLAY ENDS (the same card as the automatic one)'), [ev && ev.text, events(P, 'POWERPLAY').length], ['POWERPLAY ENDS', 0]);
+  P.E(`document.querySelector('[data-milestone="VICTORY"]').click()`);
+  eq(L('"Match Won" sends VICTORY'), !!last(P, 'VICTORY'), true);
+
   eq(L('no script errors'), P.errors, []);
   P.w.close();
 }
@@ -185,7 +193,8 @@ async function overlaySuite(){
   eq('MILESTONE: NEED 1 OFF 1 — singular', M('NEED', 'NEED 1 OFF 1', '').name, '1 run off 1 ball');
   m = M('POWERPLAY_END', 'POWERPLAY ENDS', '54-1');
   eq('MILESTONE: POWERPLAY ENDS — the word only (its score is left out)', [m.word, m.name, m.line, JSON.stringify(m).includes('54')], ['POWERPLAY ENDS', '', '', false]);
-  for(const [k, w] of [['POWERPLAY', 'POWERPLAY'], ['DRINKS', 'DRINKS BREAK'], ['STRATEGIC_TIMEOUT', 'STRATEGIC TIMEOUT'], ['LAST_OVER', 'FINAL OVER'], ['MATCH_DRAWN', 'MATCH DRAWN']]){
+  // POWERPLAY: an older panel's "Powerplay Over" button — it ends the powerplay too
+  for(const [k, w] of [['POWERPLAY', 'POWERPLAY ENDS'], ['DRINKS', 'DRINKS BREAK'], ['STRATEGIC_TIMEOUT', 'STRATEGIC TIMEOUT'], ['LAST_OVER', 'FINAL OVER'], ['MATCH_DRAWN', 'MATCH DRAWN']]){
     m = M(k, w, '');
     eq(`MILESTONE: ${k} — icon + "${w}"`, [m.word, /<svg/.test(m.glyph), m.name, m.line], [w, true, '', '']);
   }
@@ -197,7 +206,7 @@ async function overlaySuite(){
   eq('MILESTONE: ALL OUT — the team, never the score', [m.word, m.name, m.line, JSON.stringify(m).includes('142')], ['ALL OUT', 'Mumbai Indians', '', false]);
   eq('MILESTONE: OVERS COMPLETE → INNINGS COMPLETE', M('INNINGS_COMPLETE', 'OVERS COMPLETE', '180-5 in 20 overs').word, 'INNINGS COMPLETE');
   m = M('VICTORY', 'CSK WIN', 'by 12 runs');
-  eq('MILESTONE: MATCH WON — the winner\'s full name and the margin', [m.word, m.name, m.line], ['MATCH WON', 'Chennai Super Kings', 'by 12 runs']);
+  eq('MILESTONE: MATCH WON — the words only (no team name, no margin)', [m.word, /<svg/.test(m.glyph), m.kicker, m.name, m.line], ['MATCH WON', true, '', '', '']);
   m = M('MATCH_TIED', 'SUPER OVER 1 TIED', 'Another Super Over to follow');
   eq('MILESTONE: a tied Super Over', [m.word, m.line], ['SUPER OVER 1 TIED', 'Another Super Over to follow']);
   m = M('STUMPS', 'STUMPS — DAY 2', 'MI 245-6');
