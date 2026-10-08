@@ -101,12 +101,16 @@
     position:absolute;
     left:0.4vw; right:0.4vw; bottom:2.2vh;
     display:flex; flex-direction:column;
-    filter:drop-shadow(0 16px 34px rgba(0,0,0,0.45));
     opacity:0;
-    /* its own GPU layer: the drop shadow is drawn by the compositor instead
-       of being repainted on every animation frame inside the bar */
+    /* its own layer: fading / shaking the whole bar never repaints it */
     will-change:opacity, transform;
   }
+  /* 🎞 The bar's soft shadow — 16px down, 34px blur, 45% black, cast by the
+     bar's own outline — painted into this canvas by barShadow (script),
+     not a filter:drop-shadow on #scorecard: a filter is blurred again on
+     every frame that anything inside the bar moves, and without a GPU
+     (vMix's browser input) that one blur cost more than the whole page. */
+  #sb-shadow{ position:absolute; left:0; top:0; pointer-events:none; }
   /* (the parts of the bar that blur / scale out around a ball event are put
      on the GPU only for the length of that animation — see playEventTimeline
      — so their small text stays pixel-sharp the rest of the time) */
@@ -493,14 +497,13 @@
      being drawn, and drawn again on every frame of every row animation.
      Not drawing what is never seen changes nothing on screen. */
   .summary-card.cycle-card{ box-shadow:none; }
-  /* Every band that fades / slides / un-blurs in or out on its own gets its
-     own GPU layer, so animating one row never repaints the whole card
-     (GSAP leaves a transform/opacity on them after the first show anyway,
-     so this changes nothing on screen). */
-  .summary-card .sc-header, .summary-card .sc-row, .summary-card .sc-footer, .summary-card .stat-cell, .summary-card .ph-section,
-  .osc-overband, #osc-bowler-line, .osc-momentum, .cardg-extras, .cardg-empty,
-  .cardg-yet-head, .cardg-fow, .cardg-tile, .ms-header, .ms-team-bar, .ms-row, .ms-so-row, .ms-so-head, .ms-footer,
-  .phx-sec, .ptx-foot, .fx-more{ will-change:transform, opacity, filter; }
+  /* The bands that rise in one by one are NOT put on layers of their own —
+     not even while they move: they rise, blur and fade inside the card's
+     own layer, and carry their blur only while their own tween runs (see
+     ROWS_IN / ROWS_OUT). Twenty bands on standing layers — each with a
+     blur filter, even while still invisible — made every frame of the
+     card's zoom recompose the whole card, which without a GPU (vMix) was
+     most of the frame. */
 
   /* ---- 🏁 INNINGS / MATCH SUMMARY, full size ----
      Same box as the between-overs scorecard (.cycle-card geometry, scaled by
@@ -1204,6 +1207,20 @@
     font-family:var(--font-ui); color:var(--bc-ink, #12213f);
   }
   .summary-card.wide{ width:min(78vw,1180px); }
+  /* 🎞 CARD WINDOW — the cards still open and close through the clip-path
+     GSAP animates on them (it is still written on the card, unchanged), but
+     the browser no longer cuts that clip out of the card on every frame: on
+     a full-screen card, without a GPU (vMix's browser input), that mask took
+     most of each frame. The same rounded window is .sc-win — the card's
+     shape when it is open, the clip's rectangle (round corners) while it
+     opens or closes — over the card's content (.sc-in), which never moves:
+     one plain rounded clip, which the compositor draws for almost nothing
+     (cardWindow, script). The card's shadow was never on screen — the clip
+     always ended at the card's edge — so it is simply not drawn. */
+  .summary-card{ clip-path:none !important; box-shadow:none !important; overflow:visible !important; }
+  .summary-card > .sc-win{ flex:1 1 auto; align-self:stretch; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
+  .summary-card > .sc-win > .sc-in{ flex:1 1 auto; min-height:0; display:flex; flex-direction:column; will-change:transform; }
+  .msx > .sc-win > .sc-in > *, .cardg > .sc-win > .sc-in > *{ flex-shrink:0; }
 
   .sc-header{
     display:flex; align-items:center; gap:18px;
@@ -1509,7 +1526,7 @@
   .phx-bar{ flex:1 1 0; min-width:0; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; }
   .phx-bar .val{ font-family:var(--font-num); font-weight:900; font-size:calc(15 * var(--u) * var(--cyc,1)); color:var(--bc-ink,#12213f); margin-bottom:calc(4 * var(--u)); white-space:nowrap; }
   .phx-bar .col{ width:100%; max-width:calc(52 * var(--u)); height:calc(var(--h, 0.05) * 80%); min-height:calc(4 * var(--u));
-    border-radius:calc(8 * var(--u)) calc(8 * var(--u)) calc(2 * var(--u)) calc(2 * var(--u)); transform-origin:50% 100%; will-change:transform;
+    border-radius:calc(8 * var(--u)) calc(8 * var(--u)) calc(2 * var(--u)) calc(2 * var(--u)); transform-origin:50% 100%;
     background:linear-gradient(180deg, var(--card-accent,#0b3d91) 0%, var(--card-deep,#06204d) 100%); box-shadow:0 calc(3 * var(--u)) calc(8 * var(--u)) var(--card-shadow,rgba(11,61,145,0.3)); }
   .phx-bar.best .col{ background:linear-gradient(180deg, #ffd75a 0%, #e9a514 100%); box-shadow:0 calc(3 * var(--u)) calc(10 * var(--u)) rgba(240,180,41,0.5); }
   .phx-bar.dnb .col{ background:rgba(92,108,138,0.18); box-shadow:none; }
@@ -1532,6 +1549,7 @@
 <div id="stage">
 
   <div id="scorecard">
+    <canvas id="sb-shadow" aria-hidden="true"></canvas>
     <div id="top-row">
       <div class="cap" id="cap-left">
         <div class="cap-logo" id="logo-left"><svg viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="12" r="10"/></svg></div>
@@ -2813,6 +2831,171 @@ function swapSides(s){
 }
 
 /* ============================================================
+   🎞 SCORE BAR SHADOW
+   The bar casts the shadow it always has — 16px down, 34px blur, 45%
+   black, in the exact outline of what is on the bar: both caps with
+   their slanted ends (and the accent wedge in their top corner), the
+   middle band, a ball-event panel while it is up, the FREE HIT chip
+   and its glow — painted into a canvas behind the bar. It used to be a
+   filter:drop-shadow on #scorecard, which the browser blurs again on
+   every frame that anything inside the bar moves (every ball event,
+   score roll, entrance); without a GPU — vMix's Web Browser input —
+   that one blur cost more than the rest of the page together. The
+   canvas is redrawn only on a frame where the outline itself changes,
+   at a quarter of the resolution (a 34px blur holds no detail finer
+   than that), so whatever moves inside the bar costs no shadow at all.
+   ============================================================ */
+const barShadow = (() => {
+  const DY = 16, SIGMA = 34, ALPHA = 0.45;       // drop-shadow(0 16px 34px rgba(0,0,0,.45)) — in a filter the 34px is σ itself
+  const K = 4;                                    // CSS px per canvas px
+  const PAD = { l: 112, r: 112, t: 168, b: 136 }; // room for the blur (3σ), and above the bar for the FREE HIT chip
+  const card = document.getElementById('scorecard');
+  const canvas = document.getElementById('sb-shadow');
+  const mask = document.createElement('canvas');
+  // no 2D canvas / DOMMatrix (a test DOM, never a real browser): no shadow, and nothing else is held up
+  if(typeof CanvasRenderingContext2D === 'undefined' || typeof DOMMatrix !== 'function') return { update(){} };
+  const ctx = canvas.getContext('2d'), mctx = mask.getContext('2d');
+  if(!ctx || !mctx) return { update(){} };
+  const [capL, capR, mid, stage, bg, chip] = ['cap-left', 'cap-right', 'mid-row', 'event-stage', 'event-bg', 'freehit-chip'].map(id => document.getElementById(id));
+  const num = (v) => parseFloat(v) || 0;
+  const len = (v, ref) => /%$/.test(v) ? num(v) / 100 * ref : num(v);
+  // A rounded rectangle as a polygon, corners [tl, tr, br, bl] (radii already
+  // reduced the way CSS reduces radii that do not fit).
+  function roundedRect(x0, y0, x1, y1, r){
+    const f = Math.min(1, (x1 - x0) / ((r[0] + r[1]) || 1), (x1 - x0) / ((r[3] + r[2]) || 1), (y1 - y0) / ((r[0] + r[3]) || 1), (y1 - y0) / ((r[1] + r[2]) || 1));
+    const pts = [];
+    [[x0, y0, 180], [x1, y0, 270], [x1, y1, 0], [x0, y1, 90]].forEach(([x, y, a0], i) => {
+      const rad = r[i] * f;
+      if(rad < 0.01){ pts.push([x, y]); return; }
+      const cx = x + (i === 0 || i === 3 ? rad : -rad), cy = y + (i < 2 ? rad : -rad);
+      for(let s = 0; s <= 6; s++){ const a = (a0 + s * 15) * Math.PI / 180; pts.push([cx + Math.cos(a) * rad, cy + Math.sin(a) * rad]); }
+    });
+    return pts;
+  }
+  // The element's clip-path in its own coordinates (polygon / inset only — all this bar uses).
+  function clipShape(cs, w, h){
+    const v = cs.clipPath || 'none';
+    let m = /^polygon\((.*)\)$/.exec(v);
+    if(m) return m[1].split(',').map(p => { const [x, y] = p.trim().split(/\s+/); return [len(x, w), len(y, h)]; });
+    m = /^inset\((.*)\)$/.exec(v);
+    if(!m) return null;
+    const [box, round] = m[1].split(/\s+round\s+/);
+    const t = box.trim().split(/\s+/);
+    const T = t[0], R = t[1] || T, B = t[2] || T, L = t[3] || R;
+    const x0 = len(L, w), y0 = len(T, h), x1 = w - len(R, w), y1 = h - len(B, h);
+    if(x1 - x0 <= 0 || y1 - y0 <= 0) return [];
+    const rr = round ? round.split('/')[0].trim().split(/\s+/).map(x => len(x, w)) : [0];
+    return roundedRect(x0, y0, x1, y1, [rr[0], rr[1] ?? rr[0], rr[2] ?? rr[0], rr[3] ?? rr[1] ?? rr[0]]);
+  }
+  // Clips one convex polygon by another (Sutherland–Hodgman).
+  function clipPoly(subject, clipper){
+    if(!clipper) return subject;
+    const area = clipper.reduce((s, a, i) => { const b = clipper[(i + 1) % clipper.length]; return s + a[0] * b[1] - b[0] * a[1]; }, 0);
+    if(Math.abs(area) < 1e-6) return [];
+    const sg = area > 0 ? 1 : -1;
+    let out = subject;
+    for(let i = 0; i < clipper.length && out.length; i++){
+      const A = clipper[i], B = clipper[(i + 1) % clipper.length];
+      if(A[0] === B[0] && A[1] === B[1]) continue;
+      const side = (p) => sg * ((B[0] - A[0]) * (p[1] - A[1]) - (B[1] - A[1]) * (p[0] - A[0]));
+      const input = out; out = [];
+      input.forEach((p, j) => {
+        const q = input[(j + 1) % input.length], sp = side(p), sq = side(q);
+        if(sp >= 0) out.push(p);
+        if((sp >= 0) !== (sq >= 0)){ const k = sp / (sp - sq); out.push([p[0] + (q[0] - p[0]) * k, p[1] + (q[1] - p[1]) * k]); }
+      });
+    }
+    return out;
+  }
+  // Maps the element's own coordinates onto the bar's (offsets, transforms —
+  // perspective included — up to #scorecard), and the opacity it is drawn at.
+  function placement(el){
+    let m = new DOMMatrix(), alpha = 1;
+    for(let e = el; e && e !== card; e = e.offsetParent){
+      const cs = getComputedStyle(e);
+      alpha *= cs.opacity === '' ? 1 : num(cs.opacity);
+      let em = new DOMMatrix().translate(e.offsetLeft, e.offsetTop);
+      if(cs.transform && cs.transform !== 'none'){
+        const o = cs.transformOrigin.split(' ').map(num);
+        em = em.translate(o[0], o[1], o[2] || 0).multiply(new DOMMatrix(cs.transform)).translate(-o[0], -o[1], -(o[2] || 0));
+      }
+      m = em.multiply(m);
+    }
+    return { alpha, map: (p) => { const q = m.transformPoint(new DOMPoint(p[0], p[1], 0, 1)); return [q.x / q.w, q.y / q.w]; } };
+  }
+  function fill(pts, alpha){
+    if(pts.length < 3 || alpha <= 0) return;
+    mctx.fillStyle = `rgba(0,0,0,${alpha})`;
+    mctx.beginPath();
+    pts.forEach((p, i) => i ? mctx.lineTo(p[0], p[1]) : mctx.moveTo(p[0], p[1]));
+    mctx.closePath();
+    mctx.fill();
+  }
+  // One element's outline: its box (with its own border radii) cut by its
+  // clip-path, plus any extra parts that are painted outside its radii.
+  function outline(el, extras){
+    if(!el || !el.offsetParent) return;
+    const w = el.offsetWidth, h = el.offsetHeight;
+    if(!w || !h) return;
+    const cs = getComputedStyle(el);
+    const { alpha, map } = placement(el);
+    if(alpha < 0.002) return;
+    const clip = clipShape(cs, w, h);
+    const box = roundedRect(0, 0, w, h, [cs.borderTopLeftRadius, cs.borderTopRightRadius, cs.borderBottomRightRadius, cs.borderBottomLeftRadius].map(num));
+    fill(clipPoly(box, clip).map(map), alpha);
+    (extras ? extras(w, h) : []).forEach(([pts, a]) => fill(clipPoly(pts, clip).map(map), alpha * a));
+  }
+  function draw(){
+    const W = card.offsetWidth, H = card.offsetHeight;
+    const cw = Math.ceil((W + PAD.l + PAD.r) / K), ch = Math.ceil((H + PAD.t + PAD.b) / K);
+    if(canvas.width !== cw || canvas.height !== ch){
+      canvas.width = mask.width = cw; canvas.height = mask.height = ch;
+      Object.assign(canvas.style, { left: -PAD.l + 'px', top: -PAD.t + 'px', width: cw * K + 'px', height: ch * K + 'px' });
+    }
+    mctx.setTransform(1, 0, 0, 1, 0, 0);
+    mctx.clearRect(0, 0, cw, ch);
+    mctx.setTransform(1 / K, 0, 0, 1 / K, PAD.l / K, PAD.t / K);
+    // each cap's accent wedge (::before, 90%) fills its outer top corner past the radius
+    outline(capL, (w, h) => [[[[0, 0], [w * 0.38, 0], [0, h * 0.46]], 0.9]]);
+    outline(capR, (w, h) => [[[[w, 0], [w, h * 0.46], [w * 0.62, 0]], 0.9]]);
+    outline(mid);
+    outline(bg);
+    if(chip.offsetParent){
+      // the chip's own glow (box-shadow 0 8px 20px, 40%) casts shadow too
+      const cs = getComputedStyle(chip), w = chip.offsetWidth, h = chip.offsetHeight;
+      const { alpha, map } = placement(chip);
+      if(alpha >= 0.002 && w && h){
+        const pill = (dy) => roundedRect(0, dy, w, h + dy, Array(4).fill(num(cs.borderTopLeftRadius))).map(map);
+        mctx.filter = `blur(${10 / K}px)`;
+        fill(pill(8), alpha * 0.4);
+        mctx.filter = 'none';
+        fill(pill(0), alpha);
+      }
+    }
+    ctx.clearRect(0, 0, cw, ch);
+    ctx.filter = `blur(${SIGMA / K}px)`;
+    ctx.globalAlpha = ALPHA;
+    ctx.drawImage(mask, 0, DY / K);
+    ctx.filter = 'none';
+    ctx.globalAlpha = 1;
+  }
+  // Redraw only when something that shapes the outline changed — GSAP writes
+  // inline styles, the event stage toggles a class, the window resizes.
+  let lastKey = '';
+  function update(){
+    const key = [innerWidth, innerHeight, capL.style.cssText, capR.style.cssText, mid.style.cssText, stage.className, bg.style.cssText, chip.style.cssText].join('|');
+    if(key === lastKey) return;
+    lastKey = key;
+    draw();
+  }
+  const mo = new MutationObserver(update);
+  [capL, capR, mid, stage, bg, chip].forEach(el => mo.observe(el, { attributes: true, attributeFilter: ['style', 'class'] }));
+  window.addEventListener('resize', update);
+  update();
+  return { update };
+})();
+
+/* ============================================================
    ENTRY / EXIT
    Deliberately choreographed in two beats, per the brief:
    beat 1 — the coloured shapes build themselves (clip-path
@@ -3017,7 +3200,7 @@ function cancelRunningEvent(){
     stopEventMicroMotion();
     const stage = document.getElementById('event-stage');
     if(stage) stage.classList.remove('ev-active');
-    gsap.set(SB_CONTENT_SELECTOR, { opacity: 1, scale: 1, y: 0, filter: 'blur(0px)', willChange: 'auto' });
+    gsap.set(SB_CONTENT_SELECTOR, { opacity: 1, scale: 1, y: 0, willChange: 'auto', clearProps: 'filter' });
   }
   eventState = 'idle';
 }
@@ -3688,11 +3871,12 @@ function playEventTimeline(kind, opts, onDone){
   rays.innerHTML = '';
 
   // 🎞 the bar's text goes onto the GPU for this animation only (smooth
-  // frames), and back to normal rendering afterwards (sharp small text)
+  // frames), and back to normal rendering afterwards (sharp small text) —
+  // its blur(0px) too, so no blur layer is left standing in the bar
   gsap.set(SB_CONTENT_SELECTOR, { willChange: 'transform, opacity, filter' });
   const master = gsap.timeline({
     onComplete: () => {
-      gsap.set(SB_CONTENT_SELECTOR, { willChange: 'auto' });
+      gsap.set(SB_CONTENT_SELECTOR, { willChange: 'auto', clearProps: 'filter' });
       stage.classList.remove('ev-active');
       if(onDone) onDone();
     }
@@ -3772,6 +3956,109 @@ function setBadge(el, logoUrl, shortText){
   }
 }
 
+/* ============================================================
+   🎞 CARD WINDOW
+   Every summary card opens and closes through the clip-path GSAP
+   animates on it — those tweens are unchanged and still write it on
+   the card — but the browser no longer cuts that clip out of the card
+   on every frame (clip-path:none !important in the stylesheet): on a
+   full-screen card, without a GPU (vMix's browser input), that mask
+   alone took most of every frame. The clip is drawn as a window
+   instead: .sc-win, placed and sized to exactly the clip's rectangle
+   with its round corners, over the card's content (.sc-in), which is
+   held where it is. A rounded rectangle is the one clip the compositor
+   draws for almost nothing, so the window is also what gives the open
+   card its own round corners (one clip, never two nested ones).
+   Same shape on every frame as the clip-path drew.
+   ============================================================ */
+const cardWindow = (() => {
+  const num = (v) => parseFloat(v) || 0;
+  const len = (v, ref) => /%$/.test(v) ? num(v) / 100 * ref : num(v);
+  const POS = ['position', 'left', 'top', 'width', 'height'];
+  // back to the card's own layout: the window is the whole (rounded) card
+  function open(card){
+    const win = card._win, inner = card._in;
+    card._frozen = null;
+    card.style.height = '';
+    POS.forEach(p => { win.style[p] = ''; inner.style[p] = ''; });
+    win.style.visibility = '';
+    win.style.borderRadius = card._radius;
+  }
+  function apply(card){
+    if(card.style.display === 'none'){ if(card._frozen) open(card); card._clipKey = ''; return; }
+    const v = card.style.clipPath || 'none';
+    if(v === card._clipKey) return;
+    card._clipKey = v;
+    const m = /^inset\((.*)\)$/.exec(v);
+    const box = m && m[1].split(/\s+round\s+/);
+    const t = box ? box[0].trim().split(/\s+/) : ['0'];
+    if(t.every(x => !num(x))){ if(card._frozen) open(card); return; }
+    // opening / closing: the card keeps the size it has open, the content
+    // stays put, and only the window moves
+    if(!card._frozen){
+      open(card);
+      card._frozen = { W: card.offsetWidth, H: card.offsetHeight };
+      const { W, H } = card._frozen;
+      card.style.height = H + 'px';
+      Object.assign(card._in.style, { position: 'absolute', width: W + 'px', height: H + 'px' });
+      card._win.style.position = 'absolute';
+    }
+    const { W, H } = card._frozen, win = card._win, inner = card._in;
+    const T = len(t[0], H), R = len(t[1] || t[0], W), B = len(t[2] || t[0], H), L = len(t[3] || t[1] || t[0], W);
+    const w = W - L - R, h = H - T - B;
+    win.style.visibility = w > 0.5 && h > 0.5 ? '' : 'hidden';
+    Object.assign(win.style, { left: L + 'px', top: T + 'px', width: Math.max(0, w) + 'px', height: Math.max(0, h) + 'px' });
+    Object.assign(inner.style, { left: -L + 'px', top: -T + 'px' });
+    // the clip's round corners — and where a corner of the window sits in
+    // the card's own corner, the card's (rounder) corner, as the clip and
+    // the card's rounded edge together drew it
+    const r = box && box[1] ? len(box[1].trim().split(/\s+/)[0], W) : 0;
+    const cr = num(card._radius);
+    const corner = (dx, dy) => (dx <= 6 && dy <= 6 ? Math.max(r, cr) : r) + 'px';
+    win.style.borderRadius = [corner(L, T), corner(R, T), corner(R, B), corner(L, B)].join(' ');
+  }
+  const mo = new MutationObserver(recs => recs.forEach(r => apply(r.target)));
+  document.querySelectorAll('.summary-card').forEach(card => {
+    const cs = getComputedStyle(card);
+    const win = document.createElement('div'), inner = document.createElement('div');
+    win.className = 'sc-win'; inner.className = 'sc-in';
+    while(card.firstChild) inner.appendChild(card.firstChild);
+    win.appendChild(inner);
+    card.appendChild(win);
+    // the card's paper, round corners, padding and alignment move inside
+    card._radius = cs.borderTopLeftRadius;
+    inner.style.backgroundColor = cs.backgroundColor;
+    inner.style.borderRadius = card._radius;
+    win.style.borderRadius = card._radius;
+    ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'alignItems', 'rowGap', 'columnGap'].forEach(p => { inner.style[p] = cs[p]; });
+    card.style.background = 'none';
+    card.style.padding = '0';
+    card._win = win; card._in = inner;
+    mo.observe(card, { attributes: true, attributeFilter: ['style'] });
+  });
+  // a card measured for its fit must be in its own layout, not a frozen one
+  return { open: (card) => { if(card && card._frozen){ open(card); card._clipKey = ''; } } };
+})();
+
+// 🎞 A band's blur-in: it carries its blur only while its own tween runs —
+// set as that band starts, cleared as it lands (blur 0px and no blur are the
+// same picture). A blur keeps a band on a layer of its own, and a card full of
+// blurred layers that are still waiting their turn made every frame of the
+// card's zoom recompose the whole card — most of a frame without a GPU (vMix).
+// And a band is not lifted onto a layer of its own while it moves either
+// (force3D:false — a 2D transform, drawn inside the card's layer): a moving,
+// blurred band on its own layer needs an offscreen pass of its own on every
+// frame, and makes the fading card need one more for all of it; without a
+// GPU those passes were most of each frame. Drawn in place, a band costs a
+// redraw of its own strip, which the browser spreads over its raster threads.
+// Same values, same stagger, same timing as before. Use as .fromTo(rows, ...ROWS_IN(px, vars), at).
+function ROWS_IN(blur, vars){
+  return [{ filter: `blur(${blur}px)` }, { opacity: 1, y: 0, filter: 'blur(0px)', ...vars, force3D: false, immediateRender: false, clearProps: 'filter' }];
+}
+// …and its way out, the same way: .to(rows, ROWS_OUT({ y, filter, duration, stagger, ease }), at)
+function ROWS_OUT(vars){
+  return { opacity: 0, ...vars, force3D: false, clearProps: 'filter' };
+}
 // 🏁 Full-size card: the bar steps off as it zooms in, the bands rise in one
 // by one, it holds, then leaves — and the bar starts its entrance just as
 // the card goes (same beat as the between-overs cards).
@@ -3814,7 +4101,7 @@ function fullStepForward(cardId){
   fitCycleCard(card);
   fullCardTl[cardId] = gsap.timeline()
     .fromTo(card, { opacity: 0, scale: 0.97 }, { opacity: 1, scale: 1, clipPath: 'inset(0% 0% 0% 0% round 18px)', duration: 0.45, ease: 'power3.out' })
-    .fromTo(rows, { opacity: 0, y: 10 }, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.35, stagger: Math.min(0.04, 0.6 / Math.max(rows.length, 1)), ease: 'power2.out' }, 0.1);
+    .fromTo(rows, { opacity: 0, y: 10 }, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.35, stagger: Math.min(0.04, 0.6 / Math.max(rows.length, 1)), ease: 'power2.out', force3D: false, clearProps: 'filter' }, 0.1);
 }
 function playFullCard(cardId, holdMs, opts){
   opts = opts || {};
@@ -3833,19 +4120,19 @@ function playFullCard(cardId, holdMs, opts){
   const done = () => { (opts.alsoRelease || []).forEach(fullBar.release); fullBar.release(cardId); fullStackRemove(cardId); };
   if(reduceMotion()){
     gsap.set(card, { scale: 1, clipPath: 'inset(0% 0% 0% 0% round 18px)' });
-    gsap.set(rows, { opacity: 1, y: 0, filter: 'blur(0px)' });
+    gsap.set(rows, { opacity: 1, y: 0, clearProps: 'filter' });
     fullCardTl[cardId] = gsap.timeline()
       .fromTo(card, { opacity: 0 }, { opacity: 1, duration: 0.25 })
       .to(card, { opacity: 0, duration: 0.25, delay: Math.max(holdMs, 0) / 1000, onStart: done, onComplete: () => { card.style.display = 'none'; } });
     return;
   }
   gsap.set(card, { opacity: 0, scale: 0.94, clipPath: 'inset(50% 50% 50% 50% round 18px)' });
-  gsap.set(rows, { opacity: 0, y: 18, filter: 'blur(6px)' });
+  gsap.set(rows, { opacity: 0, y: 18, clearProps: 'filter' });
   fullCardTl[cardId] = gsap.timeline()
     // the bar has just started its exit — the card arrives as it goes
     .to(card, { opacity: 1, scale: 1, clipPath: 'inset(0% 0% 0% 0% round 18px)', duration: 0.65, ease: 'expo.out' }, 0.25)
-    .to(rows, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.42, stagger, ease: 'power3.out' }, 0.5)
-    .to(rows, { opacity: 0, y: -10, filter: 'blur(4px)', duration: 0.26, stagger: Math.min(0.03, stagger), ease: 'power2.in' }, `+=${Math.max(holdMs, 0) / 1000}`)
+    .fromTo(rows, ...ROWS_IN(6, { duration: 0.42, stagger, ease: 'power3.out' }), 0.5)
+    .to(rows, ROWS_OUT({ y: -10, filter: 'blur(4px)', duration: 0.26, stagger: Math.min(0.03, stagger), ease: 'power2.in' }), `+=${Math.max(holdMs, 0) / 1000}`)
     .to(card, { opacity: 0, scale: 0.95, clipPath: 'inset(50% 50% 50% 50% round 18px)', duration: 0.4, ease: 'power2.in',
       onComplete: () => { card.style.display = 'none'; } }, '-=0.12')
     // the bar comes back as the card closes
@@ -3862,7 +4149,7 @@ function hideFullCard(cardId, alsoRelease){
   delete card.dataset.sig;
   // kept, so a Show that lands mid-exit can cancel it (bar release included)
   fullCardTl[cardId] = gsap.timeline()
-    .to(rows, { opacity: 0, y: -10, filter: 'blur(4px)', duration: 0.22, stagger: 0.02, ease: 'power2.in' })
+    .to(rows, ROWS_OUT({ y: -10, filter: 'blur(4px)', duration: 0.22, stagger: 0.02, ease: 'power2.in' }))
     .to(card, { opacity: 0, scale: 0.95, clipPath: 'inset(50% 50% 50% 50% round 18px)', duration: 0.35, ease: 'power2.in',
       onComplete: () => { card.style.display = 'none'; card.dataset.closing = ''; } }, '-=0.1')
     .call(release, null, '-=0.2');
@@ -3894,23 +4181,23 @@ function showFullPersistent(cardId, sig, after){
   if(up){
     // already on air: a soft refresh, never a second entrance
     gsap.set(card, { opacity: 1, scale: 1, clipPath: 'inset(0% 0% 0% 0% round 18px)' });
-    gsap.fromTo(rows, { opacity: 0.4, y: -3 }, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.35, stagger: 0.012, ease: 'power2.out' });
+    gsap.fromTo(rows, { opacity: 0.4, y: -3 }, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.35, stagger: 0.012, ease: 'power2.out', force3D: false, clearProps: 'filter' });
     return true;
   }
   if(reduceMotion()){
     gsap.set(card, { scale: 1, clipPath: 'inset(0% 0% 0% 0% round 18px)' });
-    gsap.set(rows, { opacity: 1, y: 0, filter: 'blur(0px)' });
+    gsap.set(rows, { opacity: 1, y: 0, clearProps: 'filter' });
     fullCardTl[cardId] = gsap.fromTo(card, { opacity: 0 }, { opacity: 1, duration: 0.25 });
     if(after) after(0.25);
     return true;
   }
   const stagger = Math.min(0.06, 0.9 / Math.max(rows.length, 1));
   gsap.set(card, { opacity: 0, scale: 0.94, clipPath: 'inset(50% 50% 50% 50% round 18px)' });
-  gsap.set(rows, { opacity: 0, y: 18, filter: 'blur(6px)' });
+  gsap.set(rows, { opacity: 0, y: 18, clearProps: 'filter' });
   fullCardTl[cardId] = gsap.timeline()
     // the bar has just started its exit — the card arrives as it goes
     .to(card, { opacity: 1, scale: 1, clipPath: 'inset(0% 0% 0% 0% round 18px)', duration: 0.65, ease: 'expo.out' }, 0.25)
-    .to(rows, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.42, stagger, ease: 'power3.out' }, 0.5);
+    .fromTo(rows, ...ROWS_IN(6, { duration: 0.42, stagger, ease: 'power3.out' }), 0.5);
   if(after) after(0.75);
   return true;
 }
@@ -3948,13 +4235,13 @@ function playSummaryCard(cardId, rowsSelector, holdMs){
   gsap.killTweensOf(rows);
   card.style.display = 'flex';
   gsap.set(card, { opacity: 0, scale: 0.94, clipPath: 'inset(50% 50% 50% 50% round 16px)' });
-  gsap.set(rows, { opacity: 0, y: 22, filter: 'blur(6px)' });
+  gsap.set(rows, { opacity: 0, y: 22, clearProps: 'filter' });
 
   gsap.timeline()
     .to(card, { opacity: 1, scale: 1, clipPath: 'inset(0% 0% 0% 0% round 16px)', duration: 0.6, ease: 'expo.out' })
-    .to(rows, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.45, stagger: 0.12, ease: 'power3.out' }, 0.3)
+    .fromTo(rows, ...ROWS_IN(6, { duration: 0.45, stagger: 0.12, ease: 'power3.out' }), 0.3)
     .to(card, { duration: Math.max(holdMs, 0) / 1000 })
-    .to(rows, { opacity: 0, y: -14, filter: 'blur(4px)', duration: 0.32, stagger: 0.06, ease: 'power2.in' })
+    .to(rows, ROWS_OUT({ y: -14, filter: 'blur(4px)', duration: 0.32, stagger: 0.06, ease: 'power2.in' }))
     .to(card, {
       opacity: 0, scale: 0.95, clipPath: 'inset(50% 50% 50% 50% round 16px)', duration: 0.5, ease: 'power2.in',
       onComplete: () => { card.style.display = 'none'; }
@@ -3973,10 +4260,10 @@ function playStatSummaryIn(cardId, rowsSelector){
   gsap.killTweensOf(rows);
   card.style.display = 'flex';
   gsap.set(card, { opacity: 0, scale: 0.94, clipPath: 'inset(50% 50% 50% 50% round 16px)' });
-  gsap.set(rows, { opacity: 0, y: 22, filter: 'blur(6px)' });
+  gsap.set(rows, { opacity: 0, y: 22, clearProps: 'filter' });
   gsap.timeline()
     .to(card, { opacity: 1, scale: 1, clipPath: 'inset(0% 0% 0% 0% round 16px)', duration: 0.6, ease: 'expo.out' })
-    .to(rows, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.45, stagger: 0.12, ease: 'power3.out' }, 0.3);
+    .fromTo(rows, ...ROWS_IN(6, { duration: 0.45, stagger: 0.12, ease: 'power3.out' }), 0.3);
 }
 // Manual dismiss — used by the panel's "Hide Now" buttons to pull a summary
 // card off screen immediately, regardless of where it is in its normal
@@ -3988,7 +4275,7 @@ function hideSummaryCard(cardId, rowsSelector){
   gsap.killTweensOf(card);
   gsap.killTweensOf(rows);
   gsap.timeline()
-    .to(rows, { opacity: 0, y: -14, filter: 'blur(4px)', duration: 0.25, stagger: 0.04, ease: 'power2.in' })
+    .to(rows, ROWS_OUT({ y: -14, filter: 'blur(4px)', duration: 0.25, stagger: 0.04, ease: 'power2.in' }))
     .to(card, {
       opacity: 0, scale: 0.95, clipPath: 'inset(50% 50% 50% 50% round 16px)', duration: 0.35, ease: 'power2.in',
       onComplete: () => { card.style.display = 'none'; }
@@ -4315,8 +4602,11 @@ function renderPlayerHistoryCard(d){
   showFullPersistent('player-history-card', JSON.stringify(d), (at) => {
     // the bars grow, the values land, the big numbers count up
     const cols = card.querySelectorAll('.phx-bar .col');
-    gsap.fromTo(cols, { scaleY: 0 }, { scaleY: 1, duration: 0.75, stagger: 0.06, ease: 'power3.out', delay: at });
-    gsap.fromTo(card.querySelectorAll('.phx-bar .val'), { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.3, stagger: 0.06, delay: at + 0.3, ease: 'power2.out' });
+    // (drawn in the card's own layer, like the bands — see ROWS_IN: a bar on a
+    // layer of its own made its whole section, still blurring in, an extra
+    // offscreen pass on every frame)
+    gsap.fromTo(cols, { scaleY: 0 }, { scaleY: 1, duration: 0.75, stagger: 0.06, ease: 'power3.out', delay: at, force3D: false });
+    gsap.fromTo(card.querySelectorAll('.phx-bar .val'), { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.3, stagger: 0.06, delay: at + 0.3, ease: 'power2.out', force3D: false });
     card.querySelectorAll('[data-count]').forEach(el => countUp(el, at));
   });
 }
@@ -4759,15 +5049,21 @@ function fillOverSummaryCard(d){
 // settle — hence the loop rather than a single division.
 const CYC_MIN = 0.5;   // floor: past this the type stops being broadcast-legible
 function fitCycleCard(card){
+  cardWindow.open(card);
+  // the card's content, inside its window (cardWindow) — measured as a clipping
+  // box, like the card itself used to be, so its last band's margin counts
+  const box = card._in || card;
+  box.style.overflow = 'hidden';
   card.style.setProperty('--cyc', '1');
   let cyc = 1;
   for(let pass = 0; pass < 8; pass++){
-    const need = card.scrollHeight, have = card.clientHeight;
+    const need = box.scrollHeight, have = box.clientHeight;
     if(need <= have || !need) break;
     cyc = Math.max(CYC_MIN, cyc * (have / need) * 0.99);
     card.style.setProperty('--cyc', cyc.toFixed(4));
     if(cyc <= CYC_MIN) break;
   }
+  if(box !== card) box.style.overflow = '';
 }
 
 // One scorecard row: a name cell (with an optional dim second line) followed
@@ -5141,7 +5437,8 @@ const overFlow = (() => {
     const stagger = Math.min(0.045, 0.32 / Math.max(rows.length, 1));
     tl = gsap.timeline()
       .to(card, { opacity: 1, scale: 1, clipPath: 'inset(0% 0% 0% 0% round 18px)', duration: 0.5, ease: 'expo.out' }, 0)
-      .to(rows, { opacity: 1, y: 0, duration: 0.28, stagger, ease: 'power3.out' }, 0.1);
+      // the bands move inside the card's own layer (as ROWS_IN / ROWS_OUT)
+      .to(rows, { opacity: 1, y: 0, duration: 0.28, stagger, ease: 'power3.out', force3D: false }, 0.1);
   }
   function playOut(){
     const { card, rows } = cardEls();
@@ -5152,7 +5449,7 @@ const overFlow = (() => {
       return;
     }
     tl = gsap.timeline()
-      .to(rows, { opacity: 0, y: -8, duration: 0.2, stagger: 0.02, ease: 'power2.in' }, 0)
+      .to(rows, { opacity: 0, y: -8, duration: 0.2, stagger: 0.02, ease: 'power2.in', force3D: false }, 0)
       .to(card, { opacity: 0, scale: 0.95, clipPath: 'inset(50% 50% 50% 50% round 18px)', duration: 0.35, ease: 'power2.in' }, 0.1);
   }
 
