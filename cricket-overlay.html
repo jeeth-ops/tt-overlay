@@ -1221,6 +1221,20 @@
   .summary-card > .sc-win{ flex:1 1 auto; align-self:stretch; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
   .summary-card > .sc-win > .sc-in{ flex:1 1 auto; min-height:0; display:flex; flex-direction:column; will-change:transform; }
   .msx > .sc-win > .sc-in > *, .cardg > .sc-win > .sc-in > *{ flex-shrink:0; }
+  /* 🔄 THE INNINGS SUMMARY'S TURN — the batting scorecard becomes the
+     bowling figures in place (turnFullCard): a slanted band in the incoming
+     team's colours — the "/" of the bar's caps and the headers' stripes,
+     gold on its leading edge — sweeps across the card. Laid over the cards'
+     frame by script; one moving layer. */
+  #card-sweep{ position:absolute; display:none; overflow:hidden; pointer-events:none; --u:min(0.1111vh, 1.2px); }
+  #card-sweep i{ position:absolute; left:0; top:0; height:100%; will-change:transform;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0) 38%),
+      repeating-linear-gradient(90deg, rgba(255,255,255,0.035) 0 2px, rgba(255,255,255,0) 2px 14px),
+      linear-gradient(90deg, var(--card-accent,#0b3d91) 0%, var(--card-deep,#06204d) 100%);
+    border-left:calc(10 * var(--u)) solid var(--bc-gold,#f5c518);
+    border-right:calc(3 * var(--u)) solid var(--card-glow,rgba(255,255,255,0.7));
+    box-shadow:calc(-16 * var(--u)) 0 calc(36 * var(--u)) rgba(0,0,0,0.3); }
 
   .sc-header{
     display:flex; align-items:center; gap:18px;
@@ -2000,6 +2014,9 @@
     </div>
   </div>
 
+  <!-- 🔄 the band that turns one full card into the next (turnFullCard) -->
+  <div id="card-sweep" aria-hidden="true"><i></i></div>
+
   <div id="conn-status">Connecting…</div>
 
 </div>
@@ -2031,25 +2048,26 @@ socket.on('liveCricketScore', (data) => {
   else { renderState(data); }
 });
 socket.on('cricketEvent', (event) => playEvent(event));
-// Innings-complete graphic is TWO cards, sequenced: batting scorecard
-// first (15s hold), then bowling figures (15s hold) — 17300ms covers the
-// batting card's full enter+hold+exit lifecycle before the bowling card
-// starts. Stored so a manual re-trigger (Show Now on the panel) cancels
-// any chain already in flight instead of stacking two.
-let inningsSummaryChainTimer = null;
+// Innings-complete graphic is TWO cards: the batting scorecard (15s hold),
+// which then turns into the bowling figures in place (15s hold — see
+// turnFullCard). The cue for the turn runs on GSAP's own clock, so it lands
+// exactly as the batting card's hold ends; it is kept so a manual re-trigger
+// (Show Now on the panel) or Hide cancels a chain already in flight instead
+// of stacking two.
+let inningsChain = null;
 socket.on('cricketInningsSummary', (data) => {
-  clearTimeout(inningsSummaryChainTimer);
-  renderInningsBattingSummary(data);
+  if(inningsChain) inningsChain.kill();
+  const turnAt = renderInningsBattingSummary(data);
   // the bar stays off air from the batting card right through the bowling card
   fullBar.take('innings-chain', 45000);
-  inningsSummaryChainTimer = setTimeout(() => renderInningsSummary(data), 17300);
+  inningsChain = gsap.delayedCall(turnAt, () => { inningsChain = null; renderInningsSummary(data); });
 });
 socket.on('cricketMatchSummary', (data) => renderMatchSummary(data));
 socket.on('cricketToss', (data) => renderToss(data));
 // Manual "Hide Now" from the panel — dismiss whatever summary card(s) are
 // currently up without waiting for their normal hold/exit timing.
 socket.on('cricketHideInningsSummary', () => {
-  clearTimeout(inningsSummaryChainTimer);
+  if(inningsChain){ inningsChain.kill(); inningsChain = null; }
   hideFullCard('innings-batting-summary-card');
   hideFullCard('innings-summary-card', ['innings-chain']);
 });
@@ -4103,10 +4121,12 @@ function fullStepForward(cardId){
     .fromTo(card, { opacity: 0, scale: 0.97 }, { opacity: 1, scale: 1, clipPath: 'inset(0% 0% 0% 0% round 18px)', duration: 0.45, ease: 'power3.out' })
     .fromTo(rows, { opacity: 0, y: 10 }, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.35, stagger: Math.min(0.04, 0.6 / Math.max(rows.length, 1)), ease: 'power2.out', force3D: false, clearProps: 'filter' }, 0.1);
 }
+// Returns when (s into its timeline) the card's hold begins.
 function playFullCard(cardId, holdMs, opts){
   opts = opts || {};
   const card = document.getElementById(cardId);
-  if(!card) return;
+  if(!card) return 0;
+  settleTurn(card);
   const rows = card.querySelectorAll(FULL_BANDS);
   if(fullCardTl[cardId]) fullCardTl[cardId].kill();
   gsap.killTweensOf(card); gsap.killTweensOf(rows);
@@ -4124,22 +4144,124 @@ function playFullCard(cardId, holdMs, opts){
     fullCardTl[cardId] = gsap.timeline()
       .fromTo(card, { opacity: 0 }, { opacity: 1, duration: 0.25 })
       .to(card, { opacity: 0, duration: 0.25, delay: Math.max(holdMs, 0) / 1000, onStart: done, onComplete: () => { card.style.display = 'none'; } });
-    return;
+    return 0.25;
   }
   gsap.set(card, { opacity: 0, scale: 0.94, clipPath: 'inset(50% 50% 50% 50% round 18px)' });
   gsap.set(rows, { opacity: 0, y: 18, clearProps: 'filter' });
-  fullCardTl[cardId] = gsap.timeline()
+  const tl = fullCardTl[cardId] = gsap.timeline()
     // the bar has just started its exit — the card arrives as it goes
     .to(card, { opacity: 1, scale: 1, clipPath: 'inset(0% 0% 0% 0% round 18px)', duration: 0.65, ease: 'expo.out' }, 0.25)
-    .fromTo(rows, ...ROWS_IN(6, { duration: 0.42, stagger, ease: 'power3.out' }), 0.5)
-    .to(rows, ROWS_OUT({ y: -10, filter: 'blur(4px)', duration: 0.26, stagger: Math.min(0.03, stagger), ease: 'power2.in' }), `+=${Math.max(holdMs, 0) / 1000}`)
+    .fromTo(rows, ...ROWS_IN(6, { duration: 0.42, stagger, ease: 'power3.out' }), 0.5);
+  const holdAt = tl.duration();
+  addFullExit(tl, card, rows, stagger, done, `+=${Math.max(holdMs, 0) / 1000}`);
+  return holdAt;
+}
+// A timed full card's way out, at `at` on its timeline: the bands leave, it
+// closes to the centre, and the bar starts back as it goes.
+function addFullExit(tl, card, rows, stagger, done, at){
+  return tl
+    .to(rows, ROWS_OUT({ y: -10, filter: 'blur(4px)', duration: 0.26, stagger: Math.min(0.03, stagger), ease: 'power2.in' }), at)
     .to(card, { opacity: 0, scale: 0.95, clipPath: 'inset(50% 50% 50% 50% round 18px)', duration: 0.4, ease: 'power2.in',
       onComplete: () => { card.style.display = 'none'; } }, '-=0.12')
     // the bar comes back as the card closes
     .call(done, null, '-=0.25');
 }
+// 🔄 One full-size card turns into the next IN PLACE — the innings summary's
+// batting scorecard into its bowling figures. Not closing to the centre and
+// opening again (with a blank sheet in between): the frame stays where it
+// is, and a slanted band in the incoming team's colours, gold on its leading
+// edge, sweeps across it from right to left, the old card ahead of it and
+// the new one behind it. Each card is cut at the band by its own window
+// (cardWindow), both stand still, and the band is one moving layer: only the
+// band's own strip is redrawn on each frame — no blur, no fading of a whole
+// card — so it runs as smoothly without a GPU (vMix) as with one. Then the
+// new card holds and leaves like any other timed card.
+const SWEEP = { dur: 1.2, ease: 'power2.inOut', slant: 22 };
+const sweepEl = document.getElementById('card-sweep');
+const sweepBand = sweepEl.firstElementChild;
+function turnFullCard(fromId, toId, holdMs, opts){
+  opts = opts || {};
+  const from = document.getElementById(fromId), to = document.getElementById(toId);
+  if(!to) return;
+  // only a card that is on air, on top and not on its way out can turn —
+  // otherwise the next card simply comes in on its own
+  if(!from || from === to || from.style.display !== 'flex' || from.dataset.closing === '1' || fullStack[fullStack.length - 1] !== fromId){
+    playFullCard(toId, holdMs, opts);
+    return;
+  }
+  settleTurn(from); settleTurn(to);
+  const rows = to.querySelectorAll(FULL_BANDS), fromRows = from.querySelectorAll(FULL_BANDS);
+  if(fullCardTl[fromId]){ fullCardTl[fromId].kill(); delete fullCardTl[fromId]; }
+  if(fullCardTl[toId]) fullCardTl[toId].kill();
+  gsap.killTweensOf([from, to]); gsap.killTweensOf(fromRows); gsap.killTweensOf(rows);
+  fullBar.take(toId, holdMs + 8000);
+  to.dataset.closing = '';
+  to._alsoRelease = opts.alsoRelease || [];
+  // the new card takes the old one's place on the stack, just above it
+  const j = fullStack.indexOf(toId);
+  if(j >= 0) fullStack.splice(j, 1);
+  fullStack[fullStack.length - 1] = toId;
+  to.style.zIndex = String(fullZ++);
+  to.style.display = 'flex';
+  fitCycleCard(to);
+  gsap.set([from, to], { opacity: 1, scale: 1 });
+  gsap.set(fromRows, { opacity: 1, y: 0, clearProps: 'filter' });
+  gsap.set(rows, { opacity: 1, y: 0, clearProps: 'filter' });
+  to._turnOut = from; from._turnIn = to;
+  const stagger = Math.min(0.07, 0.9 / Math.max(rows.length, 1));
+  const hold = Math.max(holdMs, 0) / 1000;
+  const done = () => { (opts.alsoRelease || []).forEach(fullBar.release); fullBar.release(toId); fullStackRemove(toId); };
+  if(reduceMotion()){
+    gsap.set(to, { clipPath: 'inset(0% 0% 0% 0% round 18px)' });
+    fullCardTl[toId] = gsap.timeline()
+      .fromTo(to, { opacity: 0 }, { opacity: 1, duration: 0.25 })
+      .call(() => settleTurn(to))
+      .to(to, { opacity: 0, duration: 0.25, delay: hold, onStart: done, onComplete: () => { to.style.display = 'none'; } });
+    return;
+  }
+  // the band spans the frame of both cards (they share it — unless one is
+  // shorter, and then the taller one's), in the new card's own colours
+  const a = from.getBoundingClientRect(), b = to.getBoundingClientRect(), o = to.offsetParent.getBoundingClientRect();
+  const top = Math.min(a.top, b.top), W = b.width, H = Math.max(a.bottom, b.bottom) - top;
+  const u = Math.min(innerHeight * 0.001111, 1.2);     // the cards' --u: one design pixel
+  // wide enough that, slanted, it still covers the straight cut between the two cards top to bottom
+  const B = Math.round(H * Math.tan(SWEEP.slant * Math.PI / 180) + 70 * u);
+  ['--card-accent', '--card-deep', '--card-glow'].forEach(k => sweepEl.style.setProperty(k, to.style.getPropertyValue(k)));
+  Object.assign(sweepEl.style, { left: (b.left - o.left) + 'px', top: (top - o.top) + 'px', width: W + 'px', height: H + 'px',
+    borderRadius: to._radius || '20px', zIndex: String(fullZ++), display: 'block' });
+  sweepBand.style.width = B + 'px';
+  const place = (p) => {
+    if(to._turnOut !== from) return;                    // settled early: nothing more to draw
+    const c = (W + B) - p * (W + 2 * B);                // the band's middle, across the frame
+    sweepBand.style.transform = `translate3d(${(c - B / 2).toFixed(2)}px,0,0) skewX(${-SWEEP.slant}deg)`;
+    const L = Math.min(100, Math.max(0, c / W * 100));
+    to.style.clipPath = `inset(0% 0% 0% ${L.toFixed(3)}% round 18px)`;
+    from.style.clipPath = `inset(0% ${(100 - L).toFixed(3)}% 0% 0% round 18px)`;
+  };
+  place(0);
+  const st = { p: 0 };
+  const tl = fullCardTl[toId] = gsap.timeline()
+    .to(st, { p: 1, duration: SWEEP.dur, ease: SWEEP.ease, onUpdate: () => place(st.p) })
+    .call(() => settleTurn(to));
+  addFullExit(tl, to, rows, stagger, done, `+=${hold}`);
+}
+// Ends a turn in progress at once — when its sweep is over, or the moment
+// either of its cards is shown or hidden again mid-sweep: the old card
+// goes, the new one stands whole (and holds and leaves on its own timeline).
+function settleTurn(card){
+  const to = card && (card._turnOut ? card : card._turnIn);
+  const from = to && to._turnOut;
+  if(!from) return;
+  to._turnOut = null; from._turnIn = null;
+  sweepEl.style.display = 'none';
+  to.style.clipPath = 'inset(0% 0% 0% 0% round 18px)';
+  from.style.display = 'none';
+  from.dataset.closing = '';
+  fullBar.release(from.id);
+}
 function hideFullCard(cardId, alsoRelease){
   const card = document.getElementById(cardId);
+  settleTurn(card);
   if(fullCardTl[cardId]){ fullCardTl[cardId].kill(); delete fullCardTl[cardId]; }
   const release = () => { (alsoRelease || []).forEach(fullBar.release); fullBar.release(cardId); fullStackRemove(cardId); };
   if(!card || card.style.display === 'none'){ release(); return; }
@@ -4756,13 +4878,19 @@ function renderInningsSummary(d){
     list.appendChild(chip);
   });
   document.getElementById('is-fow').hidden = !fow.length;
-  playFullCard('innings-summary-card', 15000, { alsoRelease: ['innings-chain'] });
+  // the batting card on air turns into this one (or, if it has gone, this one comes in on its own)
+  turnFullCard('innings-batting-summary-card', 'innings-summary-card', INNINGS_HOLD * 1000, { alsoRelease: ['innings-chain'] });
 }
 
+// Each innings card holds this long (s). The batting card turns into the
+// bowling card when its hold ends (the chain in the socket handler); its own
+// exit, a few seconds later, is only there in case the turn never comes.
+// Returns when the turn is due (s from now).
+const INNINGS_HOLD = 15;
 function renderInningsBattingSummary(d){
-  if(!d) return;
+  if(!d) return 0;
   fillBattingCardGraphic(inningsCardData(d), 'innings-batting-summary-card', 'ibs', 'BATTING SCORECARD');
-  playFullCard('innings-batting-summary-card', 15000);
+  return playFullCard('innings-batting-summary-card', (INNINGS_HOLD + 4) * 1000) + INNINGS_HOLD;
 }
 
 function fillMsRows(containerId, teamData){
