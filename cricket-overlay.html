@@ -1368,57 +1368,80 @@
   }
 
   /* ============================================================
-     LEFT-SLIDE PLAYER / BOWLER STAT CARDS
-     Team-branded broadcast cards that emerge from the left edge of
-     the screen — driven by an operator on/off toggle in the panel,
-     not a timed popup: they stay up until switched off (or replaced
-     by the next player), and refresh their numbers live while shown
-     ("This Match" scope) without re-playing the whole entrance.
-     Motion uses GSAP's expo.out — the same "fast start, silky
-     deceleration, no bounce" curve as the rest of this overlay
-     (mid-row build, digit rolls, summary cards) — so it
-     reads as one consistent design language, not a bolted-on widget.
+     PLAYER / BOWLER STAT CARDS (left side)
+     Team-branded broadcast cards driven by an operator on/off toggle in
+     the panel: they open on the left, refresh their numbers live while
+     shown ("This Match" scope) without replaying the entrance, and go.
+     The look: a header in the team's own colour (the same treatment as
+     the full-size cards' headers — gradient, fine stripes, a light edge
+     in the team's hue), a hero figure (runs and balls; a bowler's
+     wickets-runs) and the rest in a row of three, on a dark panel; a
+     gold flag down the left edge.
+     The motion, without a GPU in mind (vMix): the flag draws first and
+     the card opens out of it — its window (.st-win) widening while the
+     content (.st-in, one layer) glides a few px — then the words and
+     numbers settle in one after another. Nothing is blurred and nothing
+     big travels fast, so there is next to nothing to redraw per frame
+     and no frame rate makes it judder (see statCardIn / statCardOut).
      ============================================================ */
   .stat-card{
-    --stat-accent: var(--bc-gold,#f5c518);
+    --st-a:#0b3d91; --st-d:#06204d; --st-g:rgba(255,255,255,0.7); --st-ink:#0b3d91;
     position:absolute; left:1.6vw; top:15vh;
     width:min(32vw,440px); max-width:78vw;
-    /* Team-colour identity, same idea as the tournament card's header:
-       the accent colour sits under a diagonal dark wash that deepens
-       toward the bottom, so the badge/name area up top reads clearly
-       as "this team's colour" while the stat grid underneath always
-       has enough dark backing for the white numbers to stay legible,
-       whatever the team colour is. */
-    background:
-      linear-gradient(165deg, rgba(0,0,0,0.14) 0%, rgba(0,0,0,0.74) 60%, rgba(0,0,0,0.9) 100%),
-      linear-gradient(165deg, var(--stat-accent), var(--stat-accent));
-    border-radius:14px; overflow:hidden;
-    box-shadow:0 24px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.16);
     display:none; flex-direction:column;
     font-family:var(--font-ui); color:#fff;
-    border-left:5px solid var(--stat-accent);
-    will-change:transform, opacity, filter;
   }
   #bowler-stat-card{ top:calc(15vh + 245px); }
+  .stat-card .st-bar{ position:absolute; left:0; top:0; bottom:0; width:6px; z-index:2; border-radius:6px 0 0 6px;
+    background:linear-gradient(180deg, #ffe48a 0%, #f5c518 42%, #d9960b 100%);
+    box-shadow:0 0 14px rgba(245,197,24,0.42); transform-origin:50% 50%; }
+  .stat-card .st-win{ position:relative; width:calc(100% - 6px); margin-left:6px; overflow:hidden; border-radius:0 14px 14px 0;
+    background:linear-gradient(180deg, var(--st-d) 0%, #0b0f18 58%, #07090f 100%);
+    box-shadow:0 18px 44px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.1); }
+  .stat-card .st-in{ width:calc(min(32vw,440px) - 6px); will-change:transform; }
 
-  .stat-head{ display:flex; align-items:flex-start; gap:17px; padding:21px 21px 17px; }
+  .stat-head{ position:relative; display:flex; align-items:center; gap:16px; padding:20px 20px 19px 18px;
+    background:
+      radial-gradient(120% 140% at 0% 0%, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0) 46%),
+      repeating-linear-gradient(115deg, rgba(255,255,255,0.04) 0 2px, rgba(255,255,255,0) 2px 14px),
+      linear-gradient(110deg, var(--st-a) 0%, var(--st-d) 100%); }
+  /* a fine light edge under the header, in the team's own hue */
+  .stat-head::after{ content:''; position:absolute; left:0; right:0; bottom:0; height:3px;
+    background:linear-gradient(90deg, var(--st-g), rgba(255,255,255,0.15) 70%, rgba(255,255,255,0)); }
   .stat-badge{
-    flex:none; width:64px; height:64px; border-radius:50%; margin-top:1px;
+    flex:none; width:62px; height:62px; border-radius:50%;
     background:radial-gradient(circle at 35% 30%, #ffffff, #dbe6fb 55%, #aec0ea);
-    border:3px solid var(--stat-accent);
+    border:3px solid rgba(255,255,255,0.92);
+    box-shadow:0 5px 14px rgba(0,0,0,0.35), 0 0 0 5px rgba(255,255,255,0.12);
     display:flex; align-items:center; justify-content:center;
-    font-family:var(--font-num); font-weight:900; font-size:17px; color:var(--bc-blue,#0b3d91);
-    box-shadow:0 2px 10px rgba(0,0,0,0.4);
+    font-family:var(--font-num); font-weight:900; font-size:17px; color:var(--st-ink);
   }
   .stat-badge.has-logo{ background-color:#fff; background-size:cover; background-position:center; }
   .stat-head-text{ min-width:0; flex:1 1 auto; }
-  .stat-team{ font-size:14px; font-weight:800; letter-spacing:1.6px; color:rgba(255,255,255,0.82); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .stat-name{ font-family:var(--font-num); font-weight:900; font-size:min(2.4vw,28px); line-height:1.16; color:#fff; margin-top:5px; white-space:normal; overflow-wrap:break-word; text-shadow:0 2px 6px rgba(0,0,0,0.4); }
+  .stat-team{ font-size:13px; font-weight:800; letter-spacing:1.8px; color:rgba(255,255,255,0.84); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .stat-name{ font-family:var(--font-num); font-weight:900; font-size:min(2.4vw,28px); line-height:1.1; color:#fff; margin-top:4px; overflow-wrap:break-word; text-shadow:0 2px 8px rgba(0,0,0,0.35); }
+  /* the hero figure, and the scope tag beside it */
+  .stat-card .st-hero{ display:flex; align-items:center; gap:14px; padding:15px 20px 14px 18px; border-bottom:1px solid rgba(255,255,255,0.09); }
+  .stat-card .st-hero-l{ flex:1 1 auto; min-width:0; }
+  .stat-card .st-hero .k{ font-size:11.5px; font-weight:800; letter-spacing:1.6px; color:rgba(255,255,255,0.6); text-transform:uppercase; white-space:nowrap; }
+  .stat-card .st-hero .v{ display:flex; align-items:baseline; gap:9px; margin-top:4px; min-width:0; white-space:nowrap; }
+  .stat-card .st-hero .v b{ font-family:var(--font-num); font-weight:900; font-size:min(3.6vw,46px); line-height:1; letter-spacing:.5px; color:#fff; font-variant-numeric:tabular-nums; text-shadow:0 2px 10px rgba(0,0,0,0.3); }
+  .stat-card .st-hero .x{ font-family:var(--font-num); font-weight:800; font-size:min(1.7vw,21px); color:rgba(255,255,255,0.6); overflow:hidden; text-overflow:ellipsis; }
+  .stat-card .st-hero .x.t{ font-size:12.5px; letter-spacing:1.4px; text-transform:uppercase; }
   .stat-scope{
-    flex:none; font-size:12.5px; font-weight:800; letter-spacing:1.1px; color:#1a1408;
-    background:linear-gradient(160deg, var(--stat-accent), #c99a12); padding:6px 12px; border-radius:20px;
-    text-transform:uppercase; margin-top:2px;
+    flex:none; font-family:var(--font-num); font-size:11.5px; font-weight:900; letter-spacing:1.6px; color:var(--st-ink);
+    background:rgba(255,255,255,0.95); padding:5px 11px; border-radius:99px; text-transform:uppercase;
+    box-shadow:0 2px 8px rgba(0,0,0,0.25);
   }
+  /* the rest, in rows of three */
+  .stat-card .st-grid{ display:grid; grid-template-columns:repeat(3,1fr); }
+  .stat-card .st-cell{ min-width:0; padding:13px 12px 14px 14px; border-left:1px solid rgba(255,255,255,0.08); }
+  .stat-card .st-cell:nth-child(3n+1){ padding-left:18px; border-left:0; }
+  .stat-card .st-cell:nth-child(n+4){ border-top:1px solid rgba(255,255,255,0.08); }
+  .stat-card .st-cell:nth-last-child(-n+3){ padding-bottom:17px; }
+  .stat-card .st-cell .k{ font-size:11.5px; font-weight:800; letter-spacing:1.2px; color:rgba(255,255,255,0.6); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .stat-card .st-cell .v{ font-family:var(--font-num); font-weight:900; font-size:min(2.1vw,25px); color:#fff; margin-top:4px; font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  /* (the generic stat grid below is the team-stat card's) */
   .stat-grid{ display:grid; grid-template-columns:repeat(3,1fr); }
   .stat-cell{ padding:13px 10px 15px; border-top:1px solid rgba(255,255,255,0.16); }
   .stat-cell:nth-last-child(-n+3){ padding-bottom:19px; }
@@ -1792,27 +1815,45 @@
   </div>
 
   <div id="player-stat-card" class="stat-card">
-    <div class="stat-head">
-      <div class="stat-badge" id="ps-badge">TM</div>
-      <div class="stat-head-text">
-        <div class="stat-team" id="ps-team">TEAM</div>
-        <div class="stat-name" id="ps-name">PLAYER</div>
+    <i class="st-bar" aria-hidden="true"></i>
+    <div class="st-win"><div class="st-in">
+      <div class="stat-head">
+        <div class="stat-badge" id="ps-badge">TM</div>
+        <div class="stat-head-text">
+          <div class="stat-team" id="ps-team">TEAM</div>
+          <div class="stat-name" id="ps-name">PLAYER</div>
+        </div>
       </div>
-      <div class="stat-scope" id="ps-scope">THIS MATCH</div>
-    </div>
-    <div class="stat-grid" id="ps-grid"></div>
+      <div class="st-hero">
+        <div class="st-hero-l">
+          <div class="k" id="ps-hero-k"></div>
+          <div class="v"><b id="ps-hero-v">0</b><span class="x" id="ps-hero-x"></span></div>
+        </div>
+        <div class="stat-scope" id="ps-scope">THIS MATCH</div>
+      </div>
+      <div class="st-grid" id="ps-grid"></div>
+    </div></div>
   </div>
 
   <div id="bowler-stat-card" class="stat-card">
-    <div class="stat-head">
-      <div class="stat-badge" id="bs-badge">TM</div>
-      <div class="stat-head-text">
-        <div class="stat-team" id="bs-team">TEAM</div>
-        <div class="stat-name" id="bs-name">BOWLER</div>
+    <i class="st-bar" aria-hidden="true"></i>
+    <div class="st-win"><div class="st-in">
+      <div class="stat-head">
+        <div class="stat-badge" id="bs-badge">TM</div>
+        <div class="stat-head-text">
+          <div class="stat-team" id="bs-team">TEAM</div>
+          <div class="stat-name" id="bs-name">BOWLER</div>
+        </div>
       </div>
-      <div class="stat-scope" id="bs-scope">THIS MATCH</div>
-    </div>
-    <div class="stat-grid" id="bs-grid"></div>
+      <div class="st-hero">
+        <div class="st-hero-l">
+          <div class="k" id="bs-hero-k"></div>
+          <div class="v"><b id="bs-hero-v">0</b><span class="x" id="bs-hero-x"></span></div>
+        </div>
+        <div class="stat-scope" id="bs-scope">THIS MATCH</div>
+      </div>
+      <div class="st-grid" id="bs-grid"></div>
+    </div></div>
   </div>
 
   <div id="team-stat-card" class="summary-card">
@@ -4405,33 +4446,96 @@ function hideSummaryCard(cardId, rowsSelector){
 }
 
 /* ============================================================
-   LEFT-SLIDE PLAYER / BOWLER STAT CARDS
+   PLAYER / BOWLER STAT CARDS (left side) — the look and the motion are
+   described with their CSS ("PLAYER / BOWLER STAT CARDS")
    ============================================================ */
-// Entrance: slides + fades + un-blurs in from off-screen left, on the
-// same expo.out deceleration curve as the rest of the overlay's builds.
-function playStatCardIn(cardId, durationOverride){
+const STAT_DRIFT = 36;     // px the card's content glides as it opens / closes
+function statCardParts(card){
+  return {
+    bar: card.querySelector('.st-bar'), win: card.querySelector('.st-win'), inner: card.querySelector('.st-in'),
+    badge: card.querySelector('.stat-badge'),
+    // what settles in one after another: the words, the hero figure, the scope tag, each cell
+    items: [...card.querySelectorAll('.stat-team, .stat-name, .st-hero .k, .st-hero .v, .stat-scope, .st-cell')]
+  };
+}
+// Stops whatever the card is doing (entrance, exit) and returns its parts.
+function statCardStop(card){
+  if(card._tl){ card._tl.kill(); card._tl = null; }
+  const p = statCardParts(card);
+  gsap.killTweensOf([card, p.bar, p.win, p.inner, p.badge, ...p.items]);
+  return p;
+}
+// Every part where it rests on air.
+function statCardRest(p){
+  gsap.set(p.bar, { scaleY: 1, opacity: 1 });
+  gsap.set(p.win, { clearProps: 'width' });
+  gsap.set(p.inner, { x: 0 });
+  gsap.set(p.badge, { scale: 1, opacity: 1, x: 0 });
+  gsap.set(p.items, { opacity: 1, x: 0 });
+}
+// With both cards up, the bowler card sits just under the batter card. Each
+// card is as tall as its content (a long name, a tournament's extra row), so
+// the bowler card's fixed spot could leave it over the batter card's figures;
+// it moves down only as far as needed — straight away as it enters, with a
+// short glide if it is already up when the batter card arrives.
+function stackStatCards(glide){
+  const ps = document.getElementById('player-stat-card'), bs = document.getElementById('bowler-stat-card');
+  if(!ps || !bs || bs.style.display !== 'flex') return;
+  const need = ps.style.display === 'flex' ? Math.max(0, ps.offsetTop + ps.offsetHeight + 12 - bs.offsetTop) : 0;
+  if(glide) gsap.to(bs, { y: need, duration: 0.4, ease: 'power3.out', overwrite: 'auto' });
+  else gsap.set(bs, { y: need });
+}
+// Entrance (0.85s, as before): the gold flag draws down the left edge, the
+// card opens out of it — its window widening, the content gliding the last
+// few px — and the words and numbers settle in one after another.
+function statCardIn(cardId){
   const card = document.getElementById(cardId);
   if(!card) return;
-  gsap.killTweensOf(card);
+  const p = statCardStop(card);
   card.style.display = 'flex';
-  gsap.fromTo(card,
-    { xPercent: -135, opacity: 0, scale: 0.95, filter: 'blur(8px)' },
-    { xPercent: 0, opacity: 1, scale: 1, filter: 'blur(0px)', duration: reduceMotion() ? 0.2 : (durationOverride || 0.85), ease: 'expo.out' }
-  );
+  stackStatCards(cardId === 'player-stat-card');
+  if(reduceMotion()){
+    statCardRest(p);
+    card._tl = gsap.fromTo(card, { opacity: 0 }, { opacity: 1, duration: 0.2 });
+    return;
+  }
+  gsap.set(card, { opacity: 1 });
+  gsap.set(p.win, { clearProps: 'width' });
+  const full = p.win.offsetWidth;
+  gsap.set(p.bar, { scaleY: 0, opacity: 0 });
+  gsap.set(p.win, { width: 0 });
+  gsap.set(p.inner, { x: -STAT_DRIFT });
+  gsap.set(p.badge, { scale: 0.6, opacity: 0, x: 0 });
+  gsap.set(p.items, { opacity: 0, x: -14 });
+  const stagger = Math.min(0.05, 0.33 / Math.max(p.items.length - 1, 1));
+  card._tl = gsap.timeline()
+    .to(p.bar, { scaleY: 1, opacity: 1, duration: 0.22, ease: 'power3.out' }, 0)
+    .to(p.win, { width: full, duration: 0.54, ease: 'power4.out', clearProps: 'width' }, 0.06)
+    .to(p.inner, { x: 0, duration: 0.54, ease: 'power4.out' }, 0.06)
+    .to(p.badge, { scale: 1, opacity: 1, duration: 0.4, ease: 'back.out(1.6)' }, 0.12)
+    .to(p.items, { opacity: 1, x: 0, duration: 0.36, stagger, ease: 'power3.out', force3D: false }, 0.16);
 }
-// Exit: mirrors the entrance back out to the left — same distance, a
-// touch quicker, so on/off feels like one continuous gesture rather than
-// two unrelated animations.
-function playStatCardOut(cardId){
+// Exit (`dur` s): the card closes back into the flag, its content gliding
+// back with it, and the flag goes last.
+function statCardOut(cardId, dur, onDone){
   const card = document.getElementById(cardId);
-  if(!card || card.style.display === 'none') return;
-  gsap.killTweensOf(card);
-  gsap.to(card, {
-    xPercent: -135, opacity: 0, scale: 0.95, filter: 'blur(8px)', duration: 0.55, ease: 'expo.in',
-    onComplete: () => { card.style.display = 'none'; }
-  });
+  const p = statCardStop(card);
+  if(reduceMotion()){
+    card._tl = gsap.to(card, { opacity: 0, duration: dur, onComplete: onDone });
+    return;
+  }
+  card._tl = gsap.timeline({ onComplete: onDone })
+    .to(p.win, { width: 0, duration: 0.8 * dur, ease: 'power3.in' }, 0)
+    .to(p.inner, { x: -STAT_DRIFT, duration: 0.8 * dur, ease: 'power3.in' }, 0)
+    .to(p.bar, { scaleY: 0, opacity: 0, duration: 0.3 * dur, ease: 'power2.in' }, 0.7 * dur);
 }
-// Card is already on screen and new numbers arrive (e.g. a run scored) —
+// New numbers for the card already up: a soft up-fade of its figures, not a replay.
+function pulseStatCard(cardId){
+  const vals = document.querySelectorAll(`#${cardId} .st-hero .v, #${cardId} .st-cell .v`);
+  gsap.killTweensOf(vals);
+  gsap.fromTo(vals, { opacity: 0.35, y: -5 }, { opacity: 1, x: 0, y: 0, duration: 0.4, stagger: 0.02, ease: 'power2.out', force3D: false });
+}
+// (the team-stat card) Card is already on screen and new numbers arrive (e.g. a run scored) —
 // don't replay the whole slide, just give the values a soft up-fade so
 // the update still reads as intentional motion, not a hard jump-cut.
 function pulseStatGrid(gridId){
@@ -4449,34 +4553,62 @@ function fillStatGrid(gridId, pairs){
     wrap.appendChild(cell);
   });
 }
-// Paints a player-stat card from a payload (no animation, no timers).
-function fillPlayerStatCard(d){
-  const card = document.getElementById('player-stat-card');
-  card.style.setProperty('--stat-accent', d.teamColor || '#f5c518');
-  setBadge(document.getElementById('ps-badge'), d.teamLogo, badgeText(d.teamShort, d.teamName));
-  document.getElementById('ps-team').textContent = (d.teamName || d.teamShort || '').toUpperCase();
-  document.getElementById('ps-name').textContent = (d.playerName || 'BATTER').toUpperCase();
-  document.getElementById('ps-scope').textContent = d.scope === 'tournament' ? 'TOURNAMENT' : 'THIS MATCH';
-
-  const cells = d.scope === 'tournament'
-    ? [['Matches', d.matches], ['Runs', d.runs], ['Average', d.average], ['S/R', d.sr],
-       ['High', d.highScore], ['4s', d.fours], ['6s', d.sixes], ['50s', d.fifties], ['100s', d.hundreds]]
-    : [['Runs', d.runs], ['Balls', d.balls], ['S/R', d.sr], ['4s', d.fours], ['6s', d.sixes]];
-  fillStatGrid('ps-grid', cells);
+const statPresent = (v) => v !== undefined && v !== null && v !== '';
+const statVal = (v) => statPresent(v) ? String(v) : '—';
+const statMatches = (n) => statPresent(n) ? `${n} match${Number(n) === 1 ? '' : 'es'}` : '';
+// Paints a player / bowler card (no animation, no timers): its team's
+// tones, the head, the hero figure (and what goes beside it) and the rest,
+// three to a row.
+function fillStatCard(p, d, fallbackName, hero, cells){
+  const card = document.getElementById(p === 'ps' ? 'player-stat-card' : 'bowler-stat-card');
+  const t = cardgTones(d.teamColor || '#f5c518');
+  card.style.setProperty('--st-a', t.accent);
+  card.style.setProperty('--st-d', t.deep);
+  card.style.setProperty('--st-g', t.glow);
+  card.style.setProperty('--st-ink', t.ink);
+  setBadge(document.getElementById(p + '-badge'), d.teamLogo, badgeText(d.teamShort, d.teamName));
+  document.getElementById(p + '-team').textContent = (d.teamName || d.teamShort || '').toUpperCase();
+  document.getElementById(p + '-name').textContent = (d.playerName || fallbackName).toUpperCase();
+  document.getElementById(p + '-scope').textContent = d.scope === 'tournament' ? 'TOURNAMENT' : 'THIS MATCH';
+  document.getElementById(p + '-hero-k').textContent = hero.k;
+  document.getElementById(p + '-hero-v').textContent = hero.v;
+  const x = document.getElementById(p + '-hero-x');
+  x.textContent = hero.x || '';
+  x.classList.toggle('t', !!hero.text);
+  const grid = document.getElementById(p + '-grid');
+  grid.textContent = '';
+  cells.forEach(([k, v]) => {
+    const c = document.createElement('div'), kk = document.createElement('div'), vv = document.createElement('div');
+    c.className = 'st-cell'; kk.className = 'k'; vv.className = 'v';
+    kk.textContent = k; vv.textContent = statVal(v);
+    c.append(kk, vv);
+    grid.appendChild(c);
+  });
 }
+// Batter: runs (balls) as the hero, then S/R, 4s, 6s. Tournament: runs, with
+// the matches and the high score beside it, then six more.
+function fillPlayerStatCard(d){
+  if(d.scope === 'tournament'){
+    const x = [statMatches(d.matches), statPresent(d.highScore) ? `HS ${d.highScore}` : ''].filter(Boolean).join(' · ');
+    fillStatCard('ps', d, 'BATTER', { k: 'Runs', v: statVal(d.runs), x, text: true },
+      [['Average', d.average], ['S/R', d.sr], ['4s', d.fours], ['6s', d.sixes], ['50s', d.fifties], ['100s', d.hundreds]]);
+  } else {
+    fillStatCard('ps', d, 'BATTER', { k: 'Runs (Balls)', v: statVal(d.runs), x: statPresent(d.balls) ? `(${d.balls})` : '' },
+      [['S/R', d.sr], ['4s', d.fours], ['6s', d.sixes]]);
+  }
+}
+// Bowler: wickets-runs as the hero, then overs, maidens, economy.
+// Tournament: wickets, with the matches and the best figures beside it, then six more.
 function fillBowlerStatCard(d){
-  const card = document.getElementById('bowler-stat-card');
-  card.style.setProperty('--stat-accent', d.teamColor || '#f5c518');
-  setBadge(document.getElementById('bs-badge'), d.teamLogo, badgeText(d.teamShort, d.teamName));
-  document.getElementById('bs-team').textContent = (d.teamName || d.teamShort || '').toUpperCase();
-  document.getElementById('bs-name').textContent = (d.playerName || 'BOWLER').toUpperCase();
-  document.getElementById('bs-scope').textContent = d.scope === 'tournament' ? 'TOURNAMENT' : 'THIS MATCH';
-
-  const cells = d.scope === 'tournament'
-    ? [['Matches', d.matches], ['Overs', d.overs], ['Wickets', d.wickets], ['Runs', d.runs],
-       ['Economy', d.economy], ['Average', d.average], ['Best', d.best], ['Maidens', d.maidens], ['Dots', d.dots]]
-    : [['Overs', d.overs], ['Maidens', d.maidens], ['Runs', d.runs], ['Wickets', d.wickets], ['Economy', d.economy]];
-  fillStatGrid('bs-grid', cells);
+  if(d.scope === 'tournament'){
+    const x = [statMatches(d.matches), statPresent(d.best) ? `Best ${d.best}` : ''].filter(Boolean).join(' · ');
+    fillStatCard('bs', d, 'BOWLER', { k: 'Wickets', v: statVal(d.wickets), x, text: true },
+      [['Overs', d.overs], ['Runs', d.runs], ['Economy', d.economy], ['Average', d.average], ['Maidens', d.maidens], ['Dots', d.dots]]);
+  } else {
+    const fig = statPresent(d.wickets) || statPresent(d.runs) ? `${statVal(d.wickets)}-${statVal(d.runs)}` : '—';
+    fillStatCard('bs', d, 'BOWLER', { k: 'Figures', v: fig },
+      [['Overs', d.overs], ['Maidens', d.maidens], ['Economy', d.economy]]);
+  }
 }
 
 /* ============================================================
@@ -4503,7 +4635,7 @@ function fillBowlerStatCard(d){
 const STAT_CARD_MAX_MS = 4000;
 const STAT_CARD_EXIT_S = 0.5;
 const STAT_CARD_SWAP_EXIT_S = 0.28;
-function createStatCardController(cardId, gridId, fill){
+function createStatCardController(cardId, fill){
   let state = 'hidden';            // hidden | showing | leaving
   let identity = null;
   let run = 0;
@@ -4519,7 +4651,7 @@ function createStatCardController(cardId, gridId, fill){
     fill(d);
     identity = idOf(d);
     state = 'showing';
-    playStatCardIn(cardId);
+    statCardIn(cardId);
     // Exit begins early enough that the LAST frame of the exit lands at 4000 ms.
     exitTimer = setTimeout(() => leave(STAT_CARD_EXIT_S, myRun), STAT_CARD_MAX_MS - STAT_CARD_EXIT_S * 1000);
     killTimer = setTimeout(() => hardHide(myRun), STAT_CARD_MAX_MS);
@@ -4530,16 +4662,14 @@ function createStatCardController(cardId, gridId, fill){
     clearTimers();
     state = 'leaving';
     const myRun = ++run;
-    const el = cardEl();
-    gsap.killTweensOf(el);
     const dur = reduceMotion() ? 0.15 : seconds;
-    gsap.to(el, { xPercent: -135, opacity: 0, scale: 0.95, filter: 'blur(8px)', duration: dur, ease: 'expo.in', onComplete: () => done(myRun) });
+    statCardOut(cardId, dur, () => done(myRun));
     killTimer = setTimeout(() => done(myRun), dur * 1000 + 60); // failsafe
   }
   function done(myRun){
     if(myRun !== run || state !== 'leaving') return;
     clearTimers();
-    gsap.killTweensOf(cardEl());
+    statCardStop(cardEl());
     cardEl().style.display = 'none';
     state = 'hidden'; identity = null;
     if(pending){ const d = pending; pending = null; enter(d); }
@@ -4547,7 +4677,7 @@ function createStatCardController(cardId, gridId, fill){
   function hardHide(myRun){
     if(myRun !== run || state !== 'showing') return;
     clearTimers();
-    gsap.killTweensOf(cardEl());
+    statCardStop(cardEl());
     cardEl().style.display = 'none';
     state = 'hidden'; identity = null; pending = null;
   }
@@ -4557,10 +4687,10 @@ function createStatCardController(cardId, gridId, fill){
       if(!d) return;
       const same = state === 'showing' && identity === idOf(d);
       if(d.refresh === true){
-        if(same){ fill(d); pulseStatGrid(gridId); }   // numbers only, clock untouched
+        if(same){ fill(d); pulseStatCard(cardId); }   // numbers only, clock untouched
         return;                                        // a refresh can never start/resurrect a card
       }
-      if(same){ fill(d); pulseStatGrid(gridId); return; } // repeat SHOW of the card already up
+      if(same){ fill(d); pulseStatCard(cardId); return; } // repeat SHOW of the card already up
       if(state === 'hidden'){ enter(d); return; }
       pending = d;                                     // new selection: latest wins
       if(state === 'showing') leave(STAT_CARD_SWAP_EXIT_S);
@@ -4573,8 +4703,8 @@ function createStatCardController(cardId, gridId, fill){
   };
 }
 const statCards = {
-  player: createStatCardController('player-stat-card', 'ps-grid', fillPlayerStatCard),
-  bowler: createStatCardController('bowler-stat-card', 'bs-grid', fillBowlerStatCard)
+  player: createStatCardController('player-stat-card', fillPlayerStatCard),
+  bowler: createStatCardController('bowler-stat-card', fillBowlerStatCard)
 };
 function renderPlayerStatCard(d){ statCards.player.show(d); }
 function renderBowlerStatCard(d){ statCards.bowler.show(d); }
