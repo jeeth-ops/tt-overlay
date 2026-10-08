@@ -10,38 +10,119 @@
 <script src="/socket.io/socket.io.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 <script>
-  // This overlay is meant to also run inside an Electron OFFSCREEN
-  // BrowserWindow (BroadcastHelper), which is never actually composited
-  // to a real screen. GSAP's ticker normally drives every animation off
-  // requestAnimationFrame, which browsers only fire for content that's
-  // really being painted to a display — in an offscreen window that
-  // signal may never come, so every gsap.to()/from() tween (which is
-  // how every panel goes from its initial opacity:0 to visible) just
-  // sits at frame 0 forever. Forcing the ticker onto a plain interval
-  // instead makes animations run and complete regardless of whether the
-  // page is "visible" in that sense. Harmless in a normal browser tab.
-  //
-  // 🎞 SMOOTHNESS: a plain interval is NOT in step with the screen's frames,
-  // so in vMix / OBS / a browser every animation stuttered a little (frames
-  // land unevenly between refreshes). So: requestAnimationFrame — frames in
-  // step with the display — whenever the page is really being painted, and
-  // the interval ONLY while no frame has come for half a second (the
-  // offscreen window above, or a hidden tab). It switches back by itself the
-  // moment frames come again. Same animations, same timings.
-  if (window.gsap && gsap.ticker && typeof gsap.ticker.useRAF === 'function' && typeof requestAnimationFrame === 'function') {
-    let onRaf = true, lastFrame = performance.now();
-    const ping = () => {
-      lastFrame = performance.now();
-      if (!onRaf) { onRaf = true; gsap.ticker.useRAF(true); }
-      requestAnimationFrame(ping);
-    };
-    requestAnimationFrame(ping);
-    setInterval(() => {
-      if (onRaf && performance.now() - lastFrame > 500) { onRaf = false; gsap.ticker.useRAF(false); }
-    }, 250);
-  } else if (window.gsap && gsap.ticker && typeof gsap.ticker.useRAF === 'function') {
-    gsap.ticker.useRAF(false);
-  }
+  // 🎞 FRAME CLOCK — every animation is timed by the frame it is drawn in.
+  // GSAP times its animations by reading the wall clock (Date.now(), to the
+  // millisecond) whenever its frame callback happens to run, and skips a
+  // frame whose callback comes within 4 ms of the last one. In a normal
+  // Chrome window that callback sits tightly on the screen's refresh, so the
+  // steps come out even. vMix's Web Browser input is an offscreen Chromium
+  // that draws on a timer of its own, and on a busy vMix machine the page's
+  // frame callback runs a few ms early or late from one frame to the next;
+  // each wobble went straight into the motion (frames shown at an even rate,
+  // uneven distances moved between them — judder), and two callbacks that
+  // bunched up cost a frame.
+  // So the animations are moved on by each frame's own timestamp (the time
+  // the frame is for, which requestAnimationFrame hands over, evenly spaced
+  // however late the callback runs), through GSAP's documented manual mode:
+  // the root timeline is taken off GSAP's ticker and updated (updateRoot)
+  // from a ticker listener in its place, so everything happens at the same
+  // point of each frame as before; a small frame loop of its own, which runs
+  // only while GSAP's ticker does, moves on a frame GSAP skipped. Same
+  // animations, same timings, same handling of a stall (over half a second
+  // counts as 33 ms).
+  (function(){
+    var g = window.gsap;
+    if (!g || !g.ticker || typeof g.updateRoot !== 'function' || typeof requestAnimationFrame !== 'function') return;
+    var time = g.ticker.time, clock = performance.now(), running = false, quiet = 0;
+    function advanceTo(now){
+      var ms = now - clock;
+      if (ms <= 0) return;                       // (already there: once per frame, never backwards)
+      clock = now;
+      time += (ms > 500 ? 33 : ms) / 1000;
+      g.updateRoot(time);
+    }
+    function frame(ts){
+      advanceTo(ts);
+      if (++quiet > 10) { running = false; return; }   // GSAP's ticker has gone to sleep: so does this
+      requestAnimationFrame(frame);
+    }
+    g.ticker.remove(g.updateRoot);
+    // A tick driven by a frame gets that frame's timestamp as its 4th
+    // argument; GSAP's wake-up tick (2) and manual ticks (true) use now.
+    g.ticker.add(function(t, dt, f, ts){
+      quiet = 0;
+      advanceTo(typeof ts === 'number' && ts > 2 ? ts : performance.now());
+      if (!running) { running = true; requestAnimationFrame(frame); }
+    });
+  })();
+</script>
+<script>
+  // 🩺 PERFORMANCE READOUT — only with &perf=1 in the overlay URL (nothing of
+  // it exists otherwise). A small box, top left, for checking the overlay
+  // where it actually runs (vMix's Web Browser input): the browser engine, the
+  // GPU it draws with ("SwiftShader" means none), the real frame rate and
+  // frame timing, frames that came late, how far each animation step strays
+  // from its frame (should read 0), and long main-thread tasks.
+  (function(){
+    if (new URLSearchParams(location.search).get('perf') !== '1') return;
+    var gpu = 'unknown';
+    try {
+      var gl = document.createElement('canvas').getContext('webgl');
+      if (!gl) gpu = 'no WebGL (GPU acceleration off?)';
+      else {
+        var info = gl.getExtension('WEBGL_debug_renderer_info');
+        gpu = info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+        var lose = gl.getExtension('WEBGL_lose_context'); if (lose) lose.loseContext();
+      }
+    } catch (e) { gpu = 'error: ' + e.message; }
+    var engine = (navigator.userAgent.match(/Chrome\/[\d.]+/) || ['?'])[0];
+    var gaps = [], steps = [], longs = [], lastTs = null, lastRoot = null;
+    try {
+      new PerformanceObserver(function(list){ list.getEntries().forEach(function(e){ longs.push([performance.now(), e.duration]); }); })
+        .observe({ entryTypes: ['longtask'] });
+    } catch (e) {}
+    // every frame (after the animations have been moved on for it): how far
+    // apart the frames really are, and how far the animations moved. (A
+    // listener of its own keeps GSAP's ticker awake while the readout is up,
+    // so that order stays put.)
+    if (window.gsap && gsap.ticker) gsap.ticker.add(function(){});
+    function frame(ts){
+      var root = window.gsap ? gsap.globalTimeline.time() * 1000 : null;
+      if (lastTs !== null) {
+        var gap = ts - lastTs;
+        gaps.push(gap); if (gaps.length > 240) gaps.shift();
+        if (root !== null && lastRoot !== null) { steps.push(Math.abs(root - lastRoot - gap)); if (steps.length > 240) steps.shift(); }
+      }
+      lastTs = ts; lastRoot = root;
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+    function sorted(a){ return a.slice().sort(function(x, y){ return x - y; }); }
+    function show(box){
+      var g = sorted(gaps), n = g.length, med = n ? g[n >> 1] : 0, sum = 0;
+      g.forEach(function(v){ sum += v; });
+      var late = gaps.filter(function(v){ return v > med * 1.5; }).length;
+      var st = sorted(steps), now = performance.now();
+      longs = longs.filter(function(l){ return now - l[0] < 10000; });
+      var lmax = 0; longs.forEach(function(l){ lmax = Math.max(lmax, l[1]); });
+      box.textContent =
+        'PERF  (remove &perf=1 to hide)\n' +
+        engine + '   ' + innerWidth + 'x' + innerHeight + ' @' + devicePixelRatio + '\n' +
+        'GPU: ' + gpu + '\n' +
+        (n ? 'frames: ' + (1000 / (sum / n)).toFixed(1) + ' fps   gap avg ' + (sum / n).toFixed(1) + '  p95 ' + g[Math.floor(n * 0.95)].toFixed(1) + '  max ' + g[n - 1].toFixed(1) + ' ms   late ' + late + '/' + n : 'frames: none yet') + '\n' +
+        'animation step vs frame: ' + (st.length ? 'p95 ' + st[Math.floor(st.length * 0.95)].toFixed(1) + '  max ' + st[st.length - 1].toFixed(1) + ' ms' : '(no animation running)') + '\n' +
+        'long tasks (10 s): ' + longs.length + (longs.length ? '  max ' + lmax.toFixed(0) + ' ms' : '');
+    }
+    document.addEventListener('DOMContentLoaded', function(){
+      var box = document.createElement('div');
+      box.id = 'perf-hud';
+      box.style.cssText = 'position:fixed;left:8px;top:8px;z-index:2147483647;pointer-events:none;white-space:pre;' +
+        'font:12px/1.4 ui-monospace,Consolas,monospace;color:#7CFC8A;background:rgba(0,0,0,0.78);padding:6px 9px;border-radius:4px';
+      document.body.appendChild(box);
+      show(box);
+      setInterval(function(){ show(box); }, 500);
+    });
+  })();
 </script>
 <style>
   /* ============================================================
