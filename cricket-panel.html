@@ -1598,6 +1598,13 @@
   @media (prefers-reduced-motion: reduce){ .theme-toggle .tt-knob, .theme-toggle .tt-ico{ transition:none; } }
   /* the swap itself: the new theme opens out of the switch (script drives the circle) */
   ::view-transition-old(root), ::view-transition-new(root){ animation:none; mix-blend-mode:normal; }
+  /* while it swaps, nothing else transitions: every colour is the new
+     theme's at once and the circle opens over a still picture of it
+     (otherwise hundreds of buttons and cards fading together repaint the
+     whole panel on every frame of the circle). The switch's own knob still slides. */
+  html.theme-switching *:not(.theme-toggle, .theme-toggle *),
+  html.theme-switching *:not(.theme-toggle, .theme-toggle *)::before,
+  html.theme-switching *:not(.theme-toggle, .theme-toggle *)::after{ transition:none !important; }
 
   /* ===== LIGHT THEME — html[data-theme="light"] (set by the switch in the
      header; without it the panel is exactly the dark theme above).
@@ -2276,7 +2283,7 @@
   (function(){
     var btn = document.getElementById('panel-theme-toggle');
     if (!btn) return;
-    var root = document.documentElement;
+    var root = document.documentElement, lastSwitch = null;
     function isLight(){ return root.getAttribute('data-theme') === 'light'; }
     function sync(){
       var light = isLight();
@@ -2296,7 +2303,10 @@
       if (!document.startViewTransition || calm) { apply(next); return; }
       var r = btn.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
       var end = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
-      var vt = document.startViewTransition(function(){ apply(next); });
+      root.classList.add('theme-switching');
+      var vt = lastSwitch = document.startViewTransition(function(){ apply(next); });
+      var done = function(){ if (lastSwitch === vt) root.classList.remove('theme-switching'); };
+      vt.finished.then(done, done);
       vt.ready.then(function(){
         root.animate({ clipPath: ['circle(0px at ' + x + 'px ' + y + 'px)', 'circle(' + end + 'px at ' + x + 'px ' + y + 'px)'] },
           { duration: 650, easing: 'cubic-bezier(.65,0,.35,1)', pseudoElement: '::view-transition-new(root)' });
