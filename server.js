@@ -4063,11 +4063,102 @@ function concatClipsToFile(localPaths, outFile, workDir) {
     });
 }
 
+// ================================================================
+// 🎬 PRO EDIT — a downloaded highlights video is edited like a broadcast
+// package (see highlight-edit.js): a title card, every clip tagged with its
+// event, player, over and bowler, a branded band wipe with a whoosh between
+// clips, and an end card. Each clip's edited segment is cached (by clip and
+// what its tag says), so a clip that was in an earlier video costs nothing the
+// next time; ffmpeg runs one at a time at low priority, so live scoring on
+// this server never waits behind an edit. Anything that goes wrong falls back
+// to the plain joined video — a download never fails because of the edit.
+// HIGHLIGHT_PRO=0 turns it off; HIGHLIGHT_PRO_MAX_CLIPS caps how many clips
+// get the full edit (a whole match of clips is joined plain, quickly).
+// ================================================================
+const { createHighlightEditor, cardForClip } = require('./highlight-edit');
+const HIGHLIGHT_PRO_ON = process.env.HIGHLIGHT_PRO !== '0';
+const HIGHLIGHT_PRO_MAX_CLIPS = Number(process.env.HIGHLIGHT_PRO_MAX_CLIPS) || 30;
+let highlightEditor = null;
+function getHighlightEditor() {
+    if (!highlightEditor) {
+        highlightEditor = createHighlightEditor({
+            ffmpegPath: ffmpegInstallerPath,
+            cacheDir: path.join(HIGHLIGHTS_TMP_DIR, 'pro-cache'),
+            maxHeight: Number(process.env.HIGHLIGHT_MAX_HEIGHT) || undefined,
+            log: (m) => console.log('[HIGHLIGHT-EDIT]', m)
+        });
+    }
+    return highlightEditor;
+}
+// Which version of a clip's video this is: a re-cut clip (same id, new file)
+// must never reuse the old clip's edited segment.
+function proClipKey(c) {
+    return [String(c._id), c.r2Key || c.driveFileId || '', c.r2UploadedAt || c.driveUploadedAt || '', c.clipSeconds || ''].join('|');
+}
+const PRO_PILL = { all: 'ALL HIGHLIGHTS', sixes: 'ALL SIXES', fours: 'ALL FOURS', boundaries: 'FOURS & SIXES', dismissals: 'DISMISSALS', wickets: 'WICKETS', other: 'MORE HIGHLIGHTS' };
+const PRO_KIND = { sixes: 'SIX', fours: 'FOUR', boundaries: 'SIX', dismissals: 'WICKET', wickets: 'WICKET' };
+// "4 SIXES · 2 FOURS · 1 WICKET" — what is in the video.
+function proCountsLine(clips) {
+    const n = { SIX: 0, FOUR: 0, WICKET: 0, CLIP: 0 };
+    clips.forEach(c => { const e = String(c.eventType || '').toUpperCase(); n[e in n ? e : 'CLIP']++; });
+    const part = (k, one, many) => n[k] ? `${n[k]} ${n[k] === 1 ? one : many}` : '';
+    return [part('SIX', 'SIX', 'SIXES'), part('FOUR', 'FOUR', 'FOURS'), part('WICKET', 'WICKET', 'WICKETS'), part('CLIP', 'HIGHLIGHT', 'HIGHLIGHTS')].filter(Boolean).join('  ·  ');
+}
+// A player's name as the clips spell it (the request only carries a key).
+function proPlayerName(clips, pk) {
+    for (const c of clips) {
+        if (c.strikerKey === pk && c.strikerName) return c.strikerName;
+        if (c.bowlerKey === pk && c.bowlerName) return c.bowlerName;
+        if (c.dismissedPlayerKey === pk && c.dismissedPlayerName) return c.dismissedPlayerName;
+    }
+    return '';
+}
+// The saved match a clip key (roomId or matchId) belongs to, and its tournament's name.
+async function proMatchContext(matchKey) {
+    if (!matchRecordsCollection || !matchKey) return {};
+    try {
+        const m = await matchRecordsCollection.findOne({ $or: [{ roomId: matchKey }, { matchId: matchKey }] },
+            { projection: { teamA: 1, teamB: 1, matchTitle: 1, ownerUid: 1, leagueKey: 1 } });
+        if (!m) return {};
+        let tournament = '';
+        if (leaguesCollection && m.leagueKey && m.leagueKey !== SINGLE_MATCHES_LEAGUE_KEY) {
+            const lg = await leaguesCollection.findOne({ ownerUid: m.ownerUid, leagueKey: m.leagueKey }, { projection: { displayName: 1 } });
+            tournament = (lg && lg.displayName) || '';
+        }
+        const nm = (t) => (t && (t.name || t.short)) || '';
+        const sh = (t) => (t && (t.short || t.name)) || '';
+        return { teamA: nm(m.teamA), teamB: nm(m.teamB), shortA: sh(m.teamA), shortB: sh(m.teamB), title: m.matchTitle || '', tournament };
+    } catch (e) { return {}; }
+}
+const proVs = (a, b) => (a && b ? `${a} vs ${b}` : (a || b || ''));
+// The title card of a scorecard (one match) download.
+async function proTitleForMatchCompile(body, matchId, clips) {
+    const ctx = await proMatchContext(matchId);
+    const type = String(body.type || '').toLowerCase();
+    const category = String(body.category || '').toLowerCase();
+    const team = String(body.team || '').toUpperCase();
+    const teamName = team === 'A' ? ctx.teamA : team === 'B' ? ctx.teamB : '';
+    const kicker = [ctx.tournament, ctx.title].filter(Boolean).join('  ·  ') || 'MATCH HIGHLIGHTS';
+    const meta = [proCountsLine(clips), proVs(ctx.shortA, ctx.shortB)].filter(Boolean).join('  ·  ');
+    if (type === 'player') {
+        const who = proPlayerName(clips, playerKey(body.playerKey)) || 'PLAYER';
+        return { kicker, title: who, pill: category ? PRO_PILL[category] || 'HIGHLIGHTS' : 'MATCH HIGHLIGHTS', meta, kind: PRO_KIND[category] || 'BRAND' };
+    }
+    if (type === 'sixes' || type === 'fours' || type === 'wickets') {
+        return { kicker, title: teamName || proVs(ctx.teamA, ctx.teamB) || 'MATCH HIGHLIGHTS', pill: type === 'wickets' ? 'ALL WICKETS' : PRO_PILL[type], meta, kind: PRO_KIND[type] };
+    }
+    if (type === 'team') return { kicker, title: teamName || 'TEAM HIGHLIGHTS', pill: 'TEAM HIGHLIGHTS', meta, kind: 'BRAND' };
+    return { kicker, title: proVs(ctx.teamA, ctx.teamB) || 'MATCH HIGHLIGHTS', pill: 'FULL MATCH HIGHLIGHTS', meta, kind: 'BRAND' };
+}
+
 // Runs one compilation job end-to-end: order -> dedupe -> download each
 // locally -> concat -> mark ready. Updates job.progress throughout so the
 // frontend's polling UI (spec section 12: "Collecting clips... / Combining
 // videos... 35%") reflects real work, not a fake bar.
-async function runCompileJob(jobId, clipDocs) {
+// pro: { title } or { makeTitle(clips) } — edit it like a broadcast package (see PRO EDIT above);
+// without it (or past HIGHLIGHT_PRO_MAX_CLIPS, or if the edit fails) the clips
+// are joined plain, exactly as before.
+async function runCompileJob(jobId, clipDocs, pro) {
     const job = compileJobs.get(jobId);
     if (!job) return;
     const ordered = dedupeClipsById(chronologicalClipOrder(clipDocs));
@@ -4080,22 +4171,50 @@ async function runCompileJob(jobId, clipDocs) {
     fs.mkdirSync(workDir, { recursive: true });
     setCompileJob(jobId, { workDir, status: 'collecting', progress: 0, message: 'Collecting clips...' });
 
-    const localPaths = [];
-    let skipped = 0;
-    for (let i = 0; i < ordered.length; i++) {
-        const local = await downloadClipToTemp(ordered[i], workDir, i);
-        if (local) localPaths.push(local);
-        else skipped++;
-        setCompileJob(jobId, {
-            progress: Math.round(((i + 1) / ordered.length) * 50), // collecting = first half of the bar
-            message: `Collecting clips... (${i + 1}/${ordered.length})`
-        });
-    }
+    // ⚡ Three clips at a time (they used to come one after another), kept in
+    // match order.
+    const editing = !!(pro && HIGHLIGHT_PRO_ON && ordered.length <= HIGHLIGHT_PRO_MAX_CLIPS);
+    const collectShare = editing ? 22 : 50; // the edit gets most of the bar
+    const local = new Array(ordered.length).fill(null);
+    let nextIdx = 0, fetched = 0;
+    const fetchWorker = async () => {
+        while (nextIdx < ordered.length) {
+            const i = nextIdx++;
+            local[i] = await downloadClipToTemp(ordered[i], workDir, i);
+            fetched++;
+            setCompileJob(jobId, { progress: Math.round((fetched / ordered.length) * collectShare), message: `Collecting clips... (${fetched}/${ordered.length})` });
+        }
+    };
+    await Promise.all([fetchWorker(), fetchWorker(), fetchWorker()]);
+    const kept = ordered.map((clip, i) => ({ clip, file: local[i] })).filter(x => x.file);
+    const localPaths = kept.map(x => x.file);
+    const skipped = ordered.length - kept.length;
 
     if (!localPaths.length) {
         setCompileJob(jobId, { status: 'error', error: 'None of the clips for this selection could be loaded.' });
         fs.rm(workDir, { recursive: true, force: true }, () => {});
         return;
+    }
+
+    if (editing) {
+        const outFile = path.join(HIGHLIGHTS_TMP_DIR, `${jobId}.mp4`);
+        const editor = getHighlightEditor();
+        setCompileJob(jobId, { status: 'editing', progress: collectShare + 1,
+            message: editor.queueLength() > 0 ? 'Waiting for another highlight video to finish…' : 'Editing your highlights…' });
+        try {
+            const title = typeof pro.makeTitle === 'function' ? await pro.makeTitle(kept.map(x => x.clip)) : (pro.title || {});
+            await editor.renderHighlight({
+                clips: kept.map(x => ({ file: x.file, clipKey: proClipKey(x.clip), card: cardForClip(x.clip) })),
+                title, out: outFile, workDir,
+                onProgress: (f, msg) => setCompileJob(jobId, { progress: Math.min(99, collectShare + 1 + Math.round(f * (98 - collectShare))), message: msg })
+            });
+            setCompileJob(jobId, { status: 'ready', progress: 100, message: 'Download Ready', outFile, included: localPaths.length, skipped, edited: true });
+            fs.rm(workDir, { recursive: true, force: true }, () => {});
+            return;
+        } catch (err) {
+            console.log(`Compile job ${jobId}: pro edit failed, joining the clips plain instead:`, err.message || err);
+            fs.unlink(outFile, () => {});
+        }
     }
 
     setCompileJob(jobId, { status: 'combining', progress: 55, message: 'Combining videos...' });
@@ -4182,7 +4301,8 @@ app.post('/api/highlights/compile', async (req, res) => {
             status: 'queued', progress: 0, message: 'Preparing highlights...',
             matchId: resolved.matchId, createdAt: Date.now(), included: 0, skipped: 0
         });
-        runCompileJob(jobId, resolved.clips).catch(err => {
+        const body = req.body || {};
+        runCompileJob(jobId, resolved.clips, { makeTitle: (clips) => proTitleForMatchCompile(body, resolved.matchId, clips) }).catch(err => {
             console.log(`Compile job ${jobId} crashed:`, err.message || err);
             setCompileJob(jobId, { status: 'error', error: 'Something went wrong combining these clips.' });
         });
@@ -4199,7 +4319,8 @@ app.get('/api/highlights/compile/:jobId/status', (req, res) => {
     if (!job) return res.status(404).json({ success: false, error: 'Job not found or expired' });
     res.json({
         success: true, status: job.status, progress: job.progress, message: job.message,
-        error: job.error || null, included: job.included, skipped: job.skipped
+        error: job.error || null, included: job.included, skipped: job.skipped,
+        edited: !!job.edited // titles & transitions were added (the pro edit)
     });
 });
 
@@ -4475,7 +4596,16 @@ app.post('/api/public/tournament/:token/highlights/compile', async (req, res) =>
             status: 'queued', progress: 0, message: 'Preparing highlights...',
             matchId: `tournament:${req.params.token}`, createdAt: Date.now(), included: 0, skipped: 0
         });
-        runCompileJob(jobId, selected).catch(err => {
+        // Title card: the tournament, the player, what the video holds.
+        const oneMatch = matchKey ? ctx.matches.find(m => (m.roomId || m.matchId) === matchKey) : null;
+        const short = (t) => (t && (t.short || t.name)) || '';
+        const makeTitle = (clips) => {
+            const nMatches = new Set(clips.map(c => c.matchId)).size;
+            const where = oneMatch ? proVs(short(oneMatch.teamA), short(oneMatch.teamB)) : `${nMatches} MATCH${nMatches === 1 ? '' : 'ES'}`;
+            return { kicker: ctx.displayName || 'TOURNAMENT HIGHLIGHTS', title: name, pill: PRO_PILL[category] || 'HIGHLIGHTS',
+                meta: [proCountsLine(clips), where].filter(Boolean).join('  ·  '), kind: PRO_KIND[category] || 'BRAND' };
+        };
+        runCompileJob(jobId, selected, { makeTitle }).catch(err => {
             console.log(`Tournament compile job ${jobId} crashed:`, err.message || err);
             setCompileJob(jobId, { status: 'error', error: 'Something went wrong combining these clips.' });
         });
