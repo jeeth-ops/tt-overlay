@@ -1,7 +1,9 @@
 // score-tournament.html — the Player Highlights modal (leaderboard video icon).
 //
-// Server: the compile's clip selection (selectTournamentHighlightClips, taken
-// out of server.js by name) — every category, and one match only.
+// Server (functions taken out of server.js by name): which clips a player
+// compile includes (selectPlayerHighlightClips) — every category, 4s + 6s,
+// one match only — and the scorecard's match compile with a category
+// (clipsForCompileRequest).
 //
 // Page: the REAL page through Playwright, tournament API stubbed with a
 // six-match fixture, and checks that
@@ -35,8 +37,8 @@ const check = (ok, msg) => { console.log(`  ${ok ? '✓' : '✗'} ${msg}`); if (
 /* ---------------- server: what one compile includes ---------------- */
 {
   const H = require('./cricket/server-harness');
-  const api = new Function([H.grab('personName'), H.grab('playerKey'), H.grab('clipBatterKey'), H.grab('selectTournamentHighlightClips'),
-    'return { selectTournamentHighlightClips };'].join('\n'))();
+  const api = new Function([H.grab('personName'), H.grab('playerKey'), H.grab('clipBatterKey'), H.grab('selectPlayerHighlightClips'),
+    'return { selectPlayerHighlightClips };'].join('\n'))();
   const pk = 'harsh rane';
   const C = (id, matchId, eventType, o) => Object.assign({ id, matchId, eventType, strikerKey: null, bowlerKey: null, dismissedPlayerKey: null }, o);
   const clips = [
@@ -48,7 +50,7 @@ const check = (ok, msg) => { console.log(`  ${ok ? '✓' : '✗'} ${msg}`); if (
     C('c1', 'R2', 'SIX', { strikerKey: 'opp', bowlerKey: pk }),                      // a six he conceded
     C('o1', 'R1', 'CLIP', { strikerKey: pk }), C('o2', 'R2', 'CLIP', { strikerKey: 'opp', bowlerKey: pk }),
   ];
-  const ids = (cat, m) => api.selectTournamentHighlightClips(clips, pk, cat, m).map((c) => c.id).join(',');
+  const ids = (cat, m) => api.selectPlayerHighlightClips(clips, pk, cat, m).map((c) => c.id).join(',');
   console.log('\n=== server: compile selection ===');
   check(ids('sixes') === 's1,s2' && ids('fours') === 'f1,f2', `sixes / fours are his own (${ids('sixes')} | ${ids('fours')})`);
   check(ids('dismissals') === 'd1', `dismissals: only when HE was out (${ids('dismissals')})`);
@@ -57,6 +59,30 @@ const check = (ok, msg) => { console.log(`  ${ok ? '✓' : '✗'} ${msg}`); if (
   check(ids('all') === 's1,s2,f1,f2,d1,w1,o1,o2', `all: everything of his, never a six he conceded (${ids('all')})`);
   check(ids('sixes', 'R2') === 's2' && ids('all', 'R1') === 's1,f1,w1,o1', `one match only (${ids('sixes', 'R2')} | ${ids('all', 'R1')})`);
   check(ids('all', 'R9') === '', 'a match with nothing of his: nothing');
+  check(ids('boundaries') === 's1,s2,f1,f2' && ids('boundaries', 'R1') === 's1,f1', `4s + 6s: his fours and sixes, nothing else (${ids('boundaries')})`);
+}
+{
+  // the scorecard's match compile: { matchId, type:'player', playerKey, category? }
+  const H = require('./cricket/server-harness');
+  const pk = 'harsh rane';
+  const docs = [
+    { _id: 'a1', clipId: 's1', matchId: 'R1', eventType: 'SIX', strikerKey: pk }, { _id: 'a2', clipId: 'f1', matchId: 'R1', eventType: 'FOUR', strikerKey: pk },
+    { _id: 'a3', clipId: 'f2', matchId: 'R1', eventType: 'FOUR', strikerKey: pk }, { _id: 'a4', clipId: 'w1', matchId: 'R1', eventType: 'WICKET', strikerKey: 'opp', bowlerKey: pk, dismissedPlayerKey: 'opp' },
+    { _id: 'a5', clipId: 'c1', matchId: 'R1', eventType: 'SIX', strikerKey: 'opp', bowlerKey: pk },          // a six he conceded
+    { _id: 'a6', clipId: 'k1', matchId: 'R1', eventType: 'WICKET', strikerKey: 'opp2', bowlerKey: 'x', fielderKey: pk, dismissedPlayerKey: 'opp2' }, // his catch
+    { _id: 'a7', clipId: 's9', matchId: 'R2', eventType: 'SIX', strikerKey: pk },                              // another match
+  ];
+  const api = H.build({ clips: H.coll(docs) }, ['personName', 'playerKey', 'clipBatterKey', 'safeMatchId', 'selectPlayerHighlightClips'], ['clipsForCompileRequest'], ['HIGHLIGHT_VISIBLE', 'PLAYER_HIGHLIGHT_CATEGORIES']);
+  var run = async (category) => { const r = await api.clipsForCompileRequest({ matchId: 'R1', type: 'player', playerKey: 'HARSH RANE', category }); return r.error ? 'error: ' + r.error : r.clips.map((c) => c.clipId).sort().join(','); };
+  var serverChecks = (async () => {
+    console.log('\n=== server: scorecard match compile ===');
+    check(await run(undefined) === 'c1,f1,f2,k1,s1,w1', `no category: every clip he is part of, as before (${await run(undefined)})`);
+    check(await run('fours') === 'f1,f2' && await run('sixes') === 's1', `fours / sixes: only his own (${await run('fours')} | ${await run('sixes')})`);
+    check(await run('boundaries') === 'f1,f2,s1', `4s + 6s: his fours and sixes only (${await run('boundaries')})`);
+    check(await run('wickets') === 'w1', `wickets: only the ones he took (${await run('wickets')})`);
+    check(await run('all') === 'f1,f2,s1,w1', `all: what his clip list shows, no conceded six, no catch (${await run('all')})`);
+    check(await run('nonsense') === 'error: Unknown category', 'an unknown category is refused');
+  })().catch((e) => check(false, 'scorecard compile: ' + e.message));
 }
 
 /* ---------------- page fixture ---------------- */
@@ -176,6 +202,7 @@ const openPlayer = async (page, name) => {
 const visible = (page) => page.$$eval('#pp-grid .pp-clip', (els) => els.filter((e) => !e.hidden).map((e) => e.dataset.t + '@' + e.dataset.m));
 
 (async () => {
+  await serverChecks;
   const browser = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
 
   // ---- desktop, dark: numbers, charts, filters, downloads ----
@@ -216,12 +243,18 @@ const visible = (page) => page.$$eval('#pp-grid .pp-clip', (els) => els.filter((
 
     // filters
     const types = await page.$$eval('[data-pp-type]', (b) => b.map((x) => x.dataset.ppType + '=' + x.querySelector('.n').textContent));
-    check(types.join(' ') === `all=${COUNT} six=8 four=14 wkt=5 out=3 other=2`, `type chips with counts (${types.join(' ')})`);
+    check(types.join(' ') === `all=${COUNT} six=8 four=14 bnd=22 wkt=5 out=3 other=2`, `type chips with counts (${types.join(' ')})`);
     const matchChips = await page.$$eval('[data-pp-match]', (b) => b.map((x) => x.textContent.trim()));
     check(matchChips[0].startsWith('Whole tournament') && matchChips.length === 7 && /^M2 · NHSC/.test(matchChips[2]), `match chips (${matchChips.join(' | ')})`);
     check((await visible(page)).length === COUNT && (await page.textContent('#pp-dl-t')) === `Download ${COUNT} clips`, 'everything shown, bar: download all');
-    await page.click('[data-pp-type="six"]');
+    await page.click('[data-pp-type="bnd"]');
     let v = await visible(page);
+    check(v.length === 22 && v.every((x) => /^(six|four)@/.test(x)) && (await page.textContent('#pp-dl-t')) === 'Download 22 fours & sixes', `4s + 6s → his 22 fours and sixes, nothing else (${v.length})`);
+    await page.click('#pp-dl-btn');
+    await page.waitForTimeout(600);
+    check(JSON.stringify(compiles.shift()) === JSON.stringify({ name: HR, category: 'boundaries' }) && downloads.shift() === 'HARSH_RANE_Tournament_Fours_and_Sixes', '4s + 6s download → category boundaries');
+    await page.click('[data-pp-type="six"]');
+    v = await visible(page);
     check(v.length === 8 && v.every((x) => x.startsWith('six@')), `Sixes → only the 8 sixes (${v.length})`);
     check((await page.textContent('#pp-dl-t')) === 'Download 8 sixes' && (await page.textContent('#pp-dl-s')).startsWith('Whole tournament'), 'bar follows: 8 sixes, whole tournament');
     await page.click('[data-pp-match="ROOM-2"]');

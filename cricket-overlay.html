@@ -524,9 +524,14 @@
        --cyc is the second, independent knob: fitCycleCard() turns it down
        when a card has more ROWS than fit (an all-out innings is 11 batters),
        whatever the canvas size. Keeping the two separate is what makes the
-       fit hold at every size — see fitCycleCard(). */
-    --u: min(0.0925926vh, 1px);
-    --ux: min(0.0520833vw, 1px);
+       fit hold at every size — see fitCycleCard().
+
+       📱 One design pixel is 1.2px at 1080p (was 1px): most viewers watch on
+       a phone, where a 1080p frame is shrunk to a fifth of its size, and the
+       old cards' type ended up a few phone pixels tall. Same scale as the
+       full-size innings / match summaries (.fullcard). */
+    --u: min(0.1111vh, 1.2px);
+    --ux: min(0.0625vw, 1.2px);
     --cyc: 1;
     --osc-accent: var(--bc-blue,#0b3d91);
     --osc-accent-b: var(--bc-red,#7a1620);
@@ -539,10 +544,12 @@
        low on screen while a tall 11-man batting card reached up to the
        middle: the graphic visibly jumped between overs.
 
-       The band stops short of the bottom scoreboard bar (which sits within
-       ~2.2vh + a ~118px-capped top row, i.e. well under 15vh at any
-       realistic viewport size), so even a card at the full max-height below
-       still clears it.
+       The band runs nearly the whole height (2.5vh top and bottom): the
+       score bar is off air for the whole sequence — it leaves as the card
+       comes in and only returns once the card has started shrinking away to
+       its centre (see the over-summary sequencer) — so the card can take the
+       space. A 9- or 11-batter card needs it: squeezed into the old 76vh it
+       had to shrink its rows to ~15px.
 
        The centring is done with top + bottom + height:fit-content +
        margin-block:auto rather than a translateY: for an absolutely
@@ -557,12 +564,14 @@
        set and height:auto, the browser would stretch the box to the gap
        between them instead of shrinking to its content — the squashing bug
        this block used to carry a warning about. */
-    position:absolute; left:50%; top:5vh; bottom:14vh; transform:translateX(-50%);
+    position:absolute; left:50%; top:2.5vh; bottom:2.5vh; transform:translateX(-50%);
     height:fit-content; margin-block:auto;
-    max-height:76vh; overflow:hidden;
+    max-height:95vh; overflow:hidden;
     /* Big rectangular broadcast card — wide, not the near-square shape of
-       the other summary cards. */
-    width:min(84vw,1400px); max-width:96vw;
+       the other summary cards. Capped at 80vw so its right edge (where the
+       score box sits) stays clear of a channel logo in the top-right corner
+       of the production. */
+    width:min(80vw,1536px); max-width:96vw;
     background:var(--bc-paper, #f3f6fc);
     border-radius:20px; overflow:hidden;
     box-shadow:
@@ -658,7 +667,7 @@
   .osc-overband .runs{ font-family:var(--font-num); font-weight:900; font-size:calc(19 * var(--u)); letter-spacing:.4px; color:var(--osc-accent); }
   .osc-balls{ display:flex; gap:7px; align-items:center; justify-content:center; flex-wrap:wrap; }
   .osc-balls .pip{ width:calc(32 * var(--u) * var(--cyc,1)); height:calc(32 * var(--u) * var(--cyc,1)); font-size:calc(13 * var(--u) * var(--cyc,1)); opacity:1; transform:scale(1); }
-  .osc-balls .pip.zero{ font-size:15px; }
+  .osc-balls .pip.zero{ font-size:calc(15 * var(--u) * var(--cyc,1)); }
   /* This card is much wider than the other .summary-card members — scale
      the shared table/footer text up to fill it instead of leaving the
      extra width as bare space. */
@@ -669,18 +678,18 @@
   .osc-footer{ display:flex; }
   .osc-footer > div{ flex:1; }
   #osc-bowler-line{
-    padding:calc(11 * var(--u) * var(--cyc,1)) calc(34 * var(--ux)); text-align:center; font-size:calc(15 * var(--u) * var(--cyc,1)); font-weight:600;
+    padding:calc(11 * var(--u) * var(--cyc,1)) calc(34 * var(--ux)); text-align:center; font-size:calc(18 * var(--u) * var(--cyc,1)); font-weight:600;
     color:var(--bc-ink-dim,#5c6c8a); border-top:1px solid var(--hairline,rgba(16,25,58,.1));
   }
   .osc-momentum{ padding:calc(14 * var(--u) * var(--cyc,1)) calc(34 * var(--ux)) calc(18 * var(--u) * var(--cyc,1)); border-top:1px solid var(--hairline,rgba(16,25,58,.1)); }
-  .osc-momentum-label{ font-size:12px; font-weight:800; letter-spacing:1.4px; color:var(--bc-ink-dim,#5c6c8a); text-transform:uppercase; margin-bottom:10px; }
+  .osc-momentum-label{ font-size:calc(13 * var(--u)); font-weight:800; letter-spacing:1.4px; color:var(--bc-ink-dim,#5c6c8a); text-transform:uppercase; margin-bottom:calc(10 * var(--u)); }
   .osc-momentum-row{ display:flex; gap:9px; align-items:stretch; }
   .osc-mom-pill{
     flex:1 1 0; min-width:0; display:flex; flex-direction:column; align-items:center; gap:3px;
     background:rgba(11,61,145,0.06); border:1px solid var(--hairline,rgba(16,25,58,.1)); border-radius:9px;
     padding:calc(9 * var(--u) * var(--cyc,1)) 4px; font-family:var(--font-num); font-weight:800; font-size:calc(17 * var(--u) * var(--cyc,1)); color:var(--bc-ink,#12213f);
   }
-  .osc-mom-pill .ov{ font-size:calc(10.5 * var(--u)); font-weight:700; color:var(--bc-ink-dim,#5c6c8a); letter-spacing:.4px; }
+  .osc-mom-pill .ov{ font-size:calc(12 * var(--u)); font-weight:700; color:var(--bc-ink-dim,#5c6c8a); letter-spacing:.4px; }
   .osc-mom-pill.current{ background:var(--osc-accent); border-color:var(--osc-accent); color:#fff; }
   .osc-mom-pill.current .ov{ color:rgba(255,255,255,0.75); }
 
@@ -731,6 +740,10 @@
   /* Batting position in front of the name, and the runs column in bold. */
   .cardg-pos{ display:inline-block; min-width:calc(30 * var(--u) * var(--cyc,1)); font-family:var(--font-num); font-weight:800; color:var(--bc-ink-dim,#5c6c8a); }
   #batting-card-graphic .sc-row:not(.sc-row-head):not(.cardg-yet) > .sc-c-num:nth-child(2){ font-weight:900; font-size:1.18em; }
+  /* Batter rows carry two lines (name + how out), so their own padding is
+     the slack: tighter rows leave fitCycleCard() less to shrink, and the
+     names stay bigger (9 batters + 2 yet to bat: ~21px, was ~15px). */
+  #batting-card-graphic .sc-row:not(.sc-row-head):not(.cardg-yet){ padding-top:calc(9 * var(--u) * var(--cyc,1)); padding-bottom:calc(9 * var(--u) * var(--cyc,1)); }
   .cardg-extras{
     display:flex; justify-content:space-between; align-items:center;
     margin:calc(10 * var(--u) * var(--cyc,1)) calc(34 * var(--ux)) 0; padding:calc(12 * var(--u) * var(--cyc,1)) calc(18 * var(--ux)); background:rgba(11,61,145,0.06);

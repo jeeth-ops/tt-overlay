@@ -2033,7 +2033,7 @@ async function startPlayerCompile(name, category, triggerEl, progressWrap){
        the match records this page already holds — no request per match.
      • The clips come from ONE call: /api/public/tournament/:token/player-clips.
      • A download is the whole tournament or one match × all / sixes /
-       fours / wickets / dismissals / other — POST …/highlights/compile
+       fours / 4s + 6s / wickets / dismissals / other — POST …/highlights/compile
        { name, category, match? } — with the same progress + download as
        before (pollCompileJob). The bar at the bottom always cuts exactly
        what the filters are showing.
@@ -2042,6 +2042,7 @@ const PP_TYPES = {
   all:   { chip: 'All',        one: 'clip',       many: 'clips',       cat: 'all',        file: 'All_Highlights', title: 'Highlight' },
   six:   { chip: 'Sixes',      one: 'six',        many: 'sixes',       cat: 'sixes',      file: 'Sixes',          title: 'Six',       badge: '6' },
   four:  { chip: 'Fours',      one: 'four',       many: 'fours',       cat: 'fours',      file: 'Fours',          title: 'Four',      badge: '4' },
+  bnd:   { chip: '4s + 6s',    one: 'four / six', many: 'fours & sixes', cat: 'boundaries', file: 'Fours_and_Sixes' },  // his 4s and 6s together, nothing else
   wkt:   { chip: 'Wickets',    one: 'wicket',     many: 'wickets',     cat: 'wickets',    file: 'Wickets',        title: 'Wicket',    badge: 'W' },
   out:   { chip: 'Dismissals', one: 'dismissal',  many: 'dismissals',  cat: 'dismissals', file: 'Dismissals',     title: 'Out',       badge: 'OUT' },
   other: { chip: 'Other',      one: 'other clip', many: 'other clips', cat: 'other',      file: 'Other_Clips',    title: 'Highlight', badge: '★' },
@@ -2328,8 +2329,10 @@ function ppTakeClips(data){
   const at = (c) => { const e = pp.byKey.get(c.matchKey); return e ? e.n : 1e4 + (c.matchIndex || 0); };
   return list.sort((a, b) => at(a) - at(b) || (a.innings || 1) - (b.innings || 1) || (a.over || 0) - (b.over || 0) || (a.ballInOver || 0) - (b.ballInOver || 0));
 }
+// Does a clip of type t belong under the type filter? ("4s + 6s" holds both.)
+function ppIsType(t, type){ return type === 'all' || t === type || (type === 'bnd' && (t === 'six' || t === 'four')); }
 function ppCount(match, type){
-  return (pp.clips || []).filter(c => (match === 'all' || c.matchKey === match) && (type === 'all' || c.type === type)).length;
+  return (pp.clips || []).filter(c => (match === 'all' || c.matchKey === match) && ppIsType(c.type, type)).length;
 }
 async function ppLoadClips(tok){
   const startedAt = performance.now();
@@ -2353,7 +2356,7 @@ function ppRenderClips(){
     box.innerHTML = `<div class="pp-empty">No video clips for ${escapeHtml(pp.name)} in this tournament yet — they show up here once they finish processing.</div>`;
   } else {
     const keys = [...new Set(clips.map(c => c.matchKey))];
-    const types = Object.keys(PP_TYPES).filter(t => t === 'all' || clips.some(c => c.type === t));
+    const types = Object.keys(PP_TYPES).filter(t => t === 'bnd' ? clips.some(c => c.type === 'six') && clips.some(c => c.type === 'four') : t === 'all' || clips.some(c => c.type === t));
     const matchChip = (key) => {
       const e = pp.byKey.get(key), c = clips.find(x => x.matchKey === key);
       const opp = e ? teamLabel(e.opp) : (c.opponent || '');
@@ -2394,7 +2397,7 @@ function ppApplyFilter(){
   if(!ppCount(pp.match, pp.type)) pp.type = 'all';
   const grid = document.getElementById('pp-grid');
   if(grid) grid.querySelectorAll('.pp-clip').forEach(el => {
-    el.hidden = !((pp.match === 'all' || el.dataset.m === pp.match) && (pp.type === 'all' || el.dataset.t === pp.type));
+    el.hidden = !((pp.match === 'all' || el.dataset.m === pp.match) && ppIsType(el.dataset.t, pp.type));
   });
   document.querySelectorAll('#clip-modal-body [data-pp-match]').forEach(b => {
     const n = ppCount(b.dataset.ppMatch, pp.type), on = b.dataset.ppMatch === pp.match;

@@ -4132,10 +4132,15 @@ async function clipsForCompileRequest(body) {
     if (type === 'player') {
         const pk = playerKey(body.playerKey);
         if (!pk) return { error: 'playerKey required' };
+        // category (optional): just one kind of his clips — his fours, his
+        // sixes, both, the wickets he took... (see selectPlayerHighlightClips).
+        // Without one, every clip he is part of, as before.
+        const category = body.category == null ? '' : String(body.category).toLowerCase();
+        if (category && !PLAYER_HIGHLIGHT_CATEGORIES.includes(category)) return { error: 'Unknown category' };
         const clips = await clipsCollection.find({
             matchId, $or: [{ strikerKey: pk }, { bowlerKey: pk }, { fielderKey: pk }, { dismissedPlayerKey: pk }], ...HIGHLIGHT_VISIBLE
         }).toArray();
-        return { matchId, clips };
+        return { matchId, clips: category ? selectPlayerHighlightClips(clips, pk, category) : clips };
     }
     if (type === 'team') {
         const team = String(body.team || '').toUpperCase();
@@ -4158,7 +4163,7 @@ async function clipsForCompileRequest(body) {
     return { error: 'Unknown compile type' };
 }
 
-// POST /api/highlights/compile  { matchId, type, playerKey?, team? }
+// POST /api/highlights/compile  { matchId, type, playerKey?, category?, team? }
 // Clips are strictly matchId-scoped (section 19) — the query shapes above
 // never let a request for one matchId pull in another match's clips, and
 // the jobId returned here is random/unguessable and tied 1:1 to the
@@ -4411,15 +4416,19 @@ app.get('/api/public/tournament/:token/player-clips', async (req, res) => {
     }
 });
 
-// The clips one player-highlights compile includes. category: 'all' |
-// 'sixes' | 'fours' | 'dismissals' | 'wickets' | 'other'; matchKey (optional)
-// keeps only that one match's clips — the clips' own matchId, i.e. the
-// room id they were captured under (see /player-clips above).
-function selectTournamentHighlightClips(clips, pk, category, matchKey) {
+// The clips one player-highlights compile includes — the tournament one
+// below and the scorecard's match one (clipsForCompileRequest). category:
+// 'all' | 'sixes' | 'fours' | 'boundaries' (his 4s and 6s, nothing else) |
+// 'dismissals' | 'wickets' | 'other'; matchKey (optional) keeps only that
+// one match's clips — the clips' own matchId, i.e. the room id they were
+// captured under (see /player-clips above).
+const PLAYER_HIGHLIGHT_CATEGORIES = ['all', 'sixes', 'fours', 'boundaries', 'dismissals', 'wickets', 'other'];
+function selectPlayerHighlightClips(clips, pk, category, matchKey) {
     const isBatter = (c) => clipBatterKey(c) === pk;
     if (matchKey) clips = clips.filter(c => c.matchId === matchKey);
     if (category === 'sixes') return clips.filter(c => isBatter(c) && c.eventType === 'SIX');
     if (category === 'fours') return clips.filter(c => isBatter(c) && c.eventType === 'FOUR');
+    if (category === 'boundaries') return clips.filter(c => isBatter(c) && (c.eventType === 'FOUR' || c.eventType === 'SIX'));
     if (category === 'dismissals') return clips.filter(c => isBatter(c) && c.eventType === 'WICKET');
     if (category === 'wickets') return clips.filter(c => c.bowlerKey === pk && c.eventType === 'WICKET');
     // 🩹 FIX: "other" (a general clip manually attached to a non-
@@ -4432,7 +4441,7 @@ function selectTournamentHighlightClips(clips, pk, category, matchKey) {
 }
 
 // POST /api/public/tournament/:token/highlights/compile  { name, category, match? }
-// category: 'all' | 'sixes' | 'fours' | 'dismissals' | 'wickets' | 'other';
+// category: one of PLAYER_HIGHLIGHT_CATEGORIES (above);
 // match: one match's clip key (roomId || matchId) to cut only that match.
 // Same background-job pipeline as POST /api/highlights/compile above, just
 // resolving its clip list tournament-wide. Clips are ordered
@@ -4456,7 +4465,7 @@ app.post('/api/public/tournament/:token/highlights/compile', async (req, res) =>
         if (matchKey && !matchIds.includes(matchKey)) return res.status(400).json({ success: false, error: 'That match is not part of this tournament' });
 
         const clips = await clipsCollection.find({ matchId: matchKey || { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }, { dismissedPlayerKey: pk }], ...HIGHLIGHT_VISIBLE }).toArray();
-        const selected = selectTournamentHighlightClips(clips, pk, category, matchKey);
+        const selected = selectPlayerHighlightClips(clips, pk, category, matchKey);
 
         if (!selected.length) return res.json({ success: true, empty: true, message: matchKey ? 'No highlights for this player in that match yet.' : 'No highlights available for this player yet.' });
         selected.forEach(c => { c._tourneySeq = matchIndex.get(c.matchId) || 0; });
