@@ -4411,8 +4411,29 @@ app.get('/api/public/tournament/:token/player-clips', async (req, res) => {
     }
 });
 
-// POST /api/public/tournament/:token/highlights/compile  { name, category }
-// category: 'all' | 'sixes' | 'fours' | 'dismissals' | 'wickets' | 'other'.
+// The clips one player-highlights compile includes. category: 'all' |
+// 'sixes' | 'fours' | 'dismissals' | 'wickets' | 'other'; matchKey (optional)
+// keeps only that one match's clips — the clips' own matchId, i.e. the
+// room id they were captured under (see /player-clips above).
+function selectTournamentHighlightClips(clips, pk, category, matchKey) {
+    const isBatter = (c) => clipBatterKey(c) === pk;
+    if (matchKey) clips = clips.filter(c => c.matchId === matchKey);
+    if (category === 'sixes') return clips.filter(c => isBatter(c) && c.eventType === 'SIX');
+    if (category === 'fours') return clips.filter(c => isBatter(c) && c.eventType === 'FOUR');
+    if (category === 'dismissals') return clips.filter(c => isBatter(c) && c.eventType === 'WICKET');
+    if (category === 'wickets') return clips.filter(c => c.bowlerKey === pk && c.eventType === 'WICKET');
+    // 🩹 FIX: "other" (a general clip manually attached to a non-
+    // boundary/non-wicket ball) is its own download category now, and
+    // "all" includes it too — before this it was invisible to every
+    // tournament-wide compile, including "Download All Player
+    // Highlights" itself.
+    if (category === 'other') return clips.filter(c => (isBatter(c) && !['SIX', 'FOUR', 'WICKET'].includes(c.eventType)) || (c.bowlerKey === pk && !['SIX', 'FOUR', 'WICKET'].includes(c.eventType)));
+    return clips.filter(c => isBatter(c) || (c.bowlerKey === pk && c.eventType !== 'SIX' && c.eventType !== 'FOUR'));
+}
+
+// POST /api/public/tournament/:token/highlights/compile  { name, category, match? }
+// category: 'all' | 'sixes' | 'fours' | 'dismissals' | 'wickets' | 'other';
+// match: one match's clip key (roomId || matchId) to cut only that match.
 // Same background-job pipeline as POST /api/highlights/compile above, just
 // resolving its clip list tournament-wide. Clips are ordered
 // Tournament -> Match -> Innings -> Over -> Ball (section 6) via
@@ -4431,23 +4452,13 @@ app.post('/api/public/tournament/:token/highlights/compile', async (req, res) =>
         const matchIds = ctx.matches.map(m => m.roomId || m.matchId);
         const matchIndex = new Map(ctx.matches.map((m, i) => [m.roomId || m.matchId, i]));
         if (!matchIds.length) return res.json({ success: true, empty: true, message: 'No highlights available for this player yet.' });
+        const matchKey = String((req.body && req.body.match) || '').trim();
+        if (matchKey && !matchIds.includes(matchKey)) return res.status(400).json({ success: false, error: 'That match is not part of this tournament' });
 
-        const clips = await clipsCollection.find({ matchId: { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }, { dismissedPlayerKey: pk }], ...HIGHLIGHT_VISIBLE }).toArray();
-        const isBatter = (c) => clipBatterKey(c) === pk;
-        let selected;
-        if (category === 'sixes') selected = clips.filter(c => isBatter(c) && c.eventType === 'SIX');
-        else if (category === 'fours') selected = clips.filter(c => isBatter(c) && c.eventType === 'FOUR');
-        else if (category === 'dismissals') selected = clips.filter(c => isBatter(c) && c.eventType === 'WICKET');
-        else if (category === 'wickets') selected = clips.filter(c => c.bowlerKey === pk && c.eventType === 'WICKET');
-        // 🩹 FIX: "other" (a general clip manually attached to a non-
-        // boundary/non-wicket ball) is its own download category now, and
-        // "all" includes it too — before this it was invisible to every
-        // tournament-wide compile, including "Download All Player
-        // Highlights" itself.
-        else if (category === 'other') selected = clips.filter(c => (isBatter(c) && !['SIX', 'FOUR', 'WICKET'].includes(c.eventType)) || (c.bowlerKey === pk && !['SIX', 'FOUR', 'WICKET'].includes(c.eventType)));
-        else selected = clips.filter(c => isBatter(c) || (c.bowlerKey === pk && c.eventType !== 'SIX' && c.eventType !== 'FOUR'));
+        const clips = await clipsCollection.find({ matchId: matchKey || { $in: matchIds }, $or: [{ strikerKey: pk }, { bowlerKey: pk }, { dismissedPlayerKey: pk }], ...HIGHLIGHT_VISIBLE }).toArray();
+        const selected = selectTournamentHighlightClips(clips, pk, category, matchKey);
 
-        if (!selected.length) return res.json({ success: true, empty: true, message: 'No highlights available for this player yet.' });
+        if (!selected.length) return res.json({ success: true, empty: true, message: matchKey ? 'No highlights for this player in that match yet.' : 'No highlights available for this player yet.' });
         selected.forEach(c => { c._tourneySeq = matchIndex.get(c.matchId) || 0; });
 
         const jobId = newCompileJobId();

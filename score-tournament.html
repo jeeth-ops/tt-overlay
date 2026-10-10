@@ -114,14 +114,13 @@
      as alive/responsive rather than static, matching the scorecard page.
      The bezier is iOS's own release curve — a hair of overshoot so it
      feels springy instead of linear. */
-  button, .icon-btn, .tab-btn, .clip-btn, .clip-watch-btn, .watch-btn,
-  .award-card, .clip-row, #clip-modal-close, #video-modal-close{
+  button, .icon-btn, .tab-btn, .clip-btn, .watch-btn,
+  .award-card, #clip-modal-close, #video-modal-close{
     transition:background .15s ease, color .15s ease, border-color .15s ease,
       transform .16s cubic-bezier(.34,1.56,.64,1), box-shadow .15s ease, opacity .15s ease;
   }
   button:active, .icon-btn:active, .tab-btn:active, .clip-btn:active:not(:disabled),
-  .clip-watch-btn:active:not(:disabled), .watch-btn:active,
-  .award-card:active, .clip-row:active,
+  .watch-btn:active, .award-card:active,
   #clip-modal-close:active, #video-modal-close:active{
     transform:scale(.94);
   }
@@ -278,7 +277,6 @@
   .tab-panel.active{ display:flex; animation:panelIn .3s cubic-bezier(.22,1,.36,1); }
   @keyframes panelIn{ from{ opacity:0; transform:translateY(8px); } to{ opacity:1; transform:translateY(0); } }
   @keyframes rowIn{ from{ opacity:0; transform:translateY(7px); } to{ opacity:1; transform:translateY(0); } }
-  .clip-row, .tpm-match{ animation:rowIn .32s cubic-bezier(.22,1,.36,1) both; }
   @media (prefers-reduced-motion:reduce){
     *{ animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important; scroll-behavior:auto !important; }
   }
@@ -583,11 +581,8 @@
   @media (max-width:700px){ .leaderboard-grid{ grid-template-columns:1fr; } }
 
   /* ============================================================
-     LEADERBOARD PLAYER CLIPS — same clip icon/list/video-modal
-     pattern as cricket-scorecard.html and score-match.html, but the
-     modal body here is organised MATCH BY MATCH across the whole
-     tournament (opponent + that match's runs/wickets line, then that
-     match's own Four/Six/Dismissal clips) rather than one flat list.
+     LEADERBOARD PLAYER CLIPS — the video icon on every leaderboard row.
+     It opens the Player Highlights modal (🎬 below).
      ============================================================ */
   th.clip-col, td.clip-col{ width:34px; text-align:center; padding-left:0; padding-right:6px; }
   .clip-btn{ width:26px; height:26px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); color:var(--text-dim); display:inline-flex; align-items:center; justify-content:center; cursor:pointer; }
@@ -608,26 +603,346 @@
     opacity:0; pointer-events:none; visibility:hidden; transition:opacity .22s ease, visibility 0s linear .24s;
   }
   #clip-modal-backdrop.open{ opacity:1; pointer-events:auto; visibility:visible; transition:opacity .22s ease, visibility 0s; }
-  /* ENLARGED premium panel (section 18): a big centered modal on desktop,
-     nearly full-screen on mobile — the same #clip-modal shell, just given
-     much more room so Sixes/Fours/Dismissals/Bowling Wickets each get
-     their own breathing space instead of one cramped flat list. */
-  #clip-modal{
-    width:min(880px, 96vw); max-height:90vh; overflow-y:auto; -webkit-overflow-scrolling:touch;
-    overscroll-behavior:contain; border-radius:var(--radius-lg); box-shadow:0 20px 60px rgba(0,0,0,.5);
-    transform:scale(.94) translateY(10px); transition:transform .28s cubic-bezier(.34,1.56,.64,1);
-  }
-  #clip-modal-backdrop.open #clip-modal{ transform:scale(1) translateY(0); }
+  /* 🚀 While Player Highlights is open the page under it is hidden (once
+     the scrim has faded in — see openTournamentPlayerModal) and the scrim
+     is a plain dim, no blur. Every frame of scrolling the clips otherwise
+     re-blurred the frosted cards under the modal: measured on a 1440px
+     laptop with the GPU off, scrolling went from ~100ms a frame to a flat
+     16.7ms; with a GPU it only gets cheaper. */
+  html.pp-open #wrap, html.pp-open footer{ visibility:hidden; }
+  /* Same look for the All Players panel's own head (it reuses this id). */
   #clip-modal-head{ display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--border); position:sticky; top:0; background:var(--panel); z-index:1; }
   #clip-modal-head h3{ margin:0; font-family:var(--font-display); font-size:14.5px; font-weight:700; }
-  #clip-modal-close{ width:28px; height:28px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); color:var(--text-dim); display:flex; align-items:center; justify-content:center; cursor:pointer; }
-  #clip-modal-body{ padding:12px 14px 18px; }
+
+  /* ============================================================
+     🎬 PLAYER HIGHLIGHTS — the modal a leaderboard video icon (or an
+     award card) opens: the player's tournament at a glance, their form
+     match by match, every clip as a thumbnail, and a download bar that
+     cuts exactly what the filters show. See openTournamentPlayerModal().
+
+     🚀 Built to stay smooth on a laptop without a GPU too: no blur
+     anywhere (an opaque panel on a plain scrim, the page under it hidden
+     — see html.pp-open above), only the body scrolls, every animation is
+     transform / opacity, thumbnails load lazily, and off-screen clips and
+     match rows skip rendering (content-visibility).
+     ============================================================ */
+  #clip-modal{
+    --pc:var(--accent); --pci:#fff;                         /* the player's team colour + its ink (set per player) */
+    --pp-card:color-mix(in srgb, var(--panel-2) 72%, var(--panel));
+    --pp-line:var(--border-soft);
+    --pp-runs:#f97316; --pp-wkts:var(--wicket);             /* chart marks: runs = Orange Cap, wickets = the wicket red */
+    --pp-six:#9333ea; --pp-four:#2563eb; --pp-out:#dc2626; --pp-other:#475569; /* clip badges (white text on them) */
+    --pp-grid:rgba(148,163,184,.10); --pp-axis:rgba(148,163,184,.30);
+    --pp-wash:24%; --pp-wash-top:12%; --pp-wm:15%;
+    position:relative; display:flex; flex-direction:column; min-height:0;
+    width:min(1080px, 100%); max-height:min(92vh, 1040px);
+    background:var(--panel); border:1px solid var(--border); border-radius:22px; overflow:hidden;
+    box-shadow:0 40px 90px -30px rgba(0,0,0,.65), 0 2px 10px rgba(0,0,0,.2);
+    transform:translateY(16px) scale(.965); opacity:.5;
+    transition:transform .34s cubic-bezier(.2,.9,.25,1), opacity .22s ease;
+  }
+  :root[data-theme="light"] #clip-modal{
+    --pp-runs:#ea580c;
+    --pp-grid:rgba(15,23,42,.07); --pp-axis:rgba(15,23,42,.18);
+    --pp-wash:13%; --pp-wash-top:7%; --pp-wm:8%;
+    box-shadow:0 40px 90px -30px rgba(15,23,42,.38), 0 2px 10px rgba(15,23,42,.08);
+  }
+  #clip-modal-backdrop.open #clip-modal{ transform:none; opacity:1; }
+
+  /* Head: tournament on top, "Player highlights" — swapped for the
+     player's name once the hero has scrolled away. */
+  .pp-head{
+    flex:none; display:flex; align-items:center; gap:12px; min-width:0; padding:12px 14px 12px 22px;
+    background:color-mix(in srgb, var(--pc) var(--pp-wash-top), var(--panel));
+    border-bottom:1px solid color-mix(in srgb, var(--pc) 16%, var(--border));
+  }
+  .pp-head-txt{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:1px; }
+  .pp-head-k{ display:flex; align-items:center; gap:6px; min-width:0; font-size:11px; font-weight:700; letter-spacing:.6px; text-transform:uppercase; color:var(--text-dim); }
+  .pp-head-k span{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .pp-head-t{ display:grid; min-width:0; font:800 15px/1.3 var(--font-display); letter-spacing:-.1px; }
+  .pp-head-t > span{ grid-area:1/1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; transition:opacity .2s ease, transform .25s cubic-bezier(.2,.9,.25,1); }
+  .pp-head-t .b{ opacity:0; transform:translateY(7px); }
+  .pp-head.named .pp-head-t .a{ opacity:0; transform:translateY(-7px); }
+  .pp-head.named .pp-head-t .b{ opacity:1; transform:none; }
+  #clip-modal-close{ flex:none; width:36px; height:36px; border-radius:99px; background:var(--panel); border:1px solid var(--border); color:var(--text-dim); display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0; }
+  #clip-modal-close:hover{ color:var(--text); border-color:var(--text-faint); }
+  #clip-modal-close svg{ width:15px; height:15px; }
+  #clip-modal-body{ position:relative; flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; }
+
+  /* ---- Hero: who, for which team, the honours, the numbers ---- */
+  .pp-hero{
+    position:relative; overflow:hidden; padding:24px 26px 22px;
+    background:
+      radial-gradient(60% 130% at 100% 0%, color-mix(in srgb, var(--pc) var(--pp-wash), transparent), transparent 72%),
+      linear-gradient(180deg, color-mix(in srgb, var(--pc) var(--pp-wash-top), var(--panel)) 0%, var(--panel) 100%);
+  }
+  .pp-hero::after{ /* the player's initials, huge and faint, as a backdrop */
+    content:attr(data-ini); position:absolute; right:-6px; top:-38px; pointer-events:none;
+    font:800 180px/1 var(--font-display); letter-spacing:-10px; color:color-mix(in srgb, var(--pc) var(--pp-wm), transparent);
+  }
+  .pp-hero > *{ position:relative; z-index:1; }
+  .pp-id{ display:flex; align-items:center; gap:16px; min-width:0; }
+  .pp-avatar{
+    flex:none; width:72px; height:72px; border-radius:50%; display:grid; place-items:center;
+    font:800 24px/1 var(--font-display); letter-spacing:.5px; color:var(--pci); background:var(--pc);
+    box-shadow:0 0 0 3px var(--panel), 0 0 0 5px color-mix(in srgb, var(--pc) 55%, var(--border)), 0 16px 30px -14px color-mix(in srgb, var(--pc) 85%, transparent);
+  }
+  .pp-id-txt{ min-width:0; }
+  .pp-name{ font:800 clamp(21px, 2.5vw, 28px)/1.12 var(--font-display); letter-spacing:-.5px; overflow-wrap:anywhere; }
+  .pp-tags{ display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; }
+  .pp-tag{
+    display:inline-flex; align-items:center; gap:7px; max-width:100%; padding:4px 10px; border-radius:99px;
+    font-size:11.5px; font-weight:700; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    background:color-mix(in srgb, var(--panel) 72%, transparent); border:1px solid var(--border);
+  }
+  .pp-tag .pp-dot{ width:9px; height:9px; }
+  .pp-dot{ flex:none; display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--dc, var(--pc)); box-shadow:0 0 0 2px color-mix(in srgb, var(--dc, var(--pc)) 25%, transparent); }
+  .pp-honours{ display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; }
+  .pp-honour{
+    display:inline-flex; align-items:center; gap:8px; padding:5px 12px 5px 6px; border-radius:12px;
+    font-size:12px; font-weight:700; color:var(--text);
+    background:color-mix(in srgb, var(--hc) 13%, var(--panel)); border:1px solid color-mix(in srgb, var(--hc) 34%, var(--border));
+  }
+  .pp-honour i{ font-style:normal; width:24px; height:24px; border-radius:8px; display:grid; place-items:center; font-size:13px; background:color-mix(in srgb, var(--hc) 26%, var(--panel)); }
+  .pp-honour em{ font-style:normal; font-weight:600; color:var(--text-dim); }
+  .pp-kpis{ display:flex; flex-wrap:wrap; gap:12px; margin-top:20px; }
+  .pp-kgroup{ flex:1 1 340px; min-width:0; padding:13px 16px 15px; border-radius:16px; background:color-mix(in srgb, var(--panel) 74%, transparent); border:1px solid var(--border); }
+  .pp-kgroup-h{ display:flex; align-items:center; gap:7px; min-height:22px; margin-bottom:10px; font-size:10.5px; font-weight:800; letter-spacing:.9px; text-transform:uppercase; color:var(--text-dim); }
+  .pp-kgroup-h::before{ content:''; width:8px; height:8px; border-radius:2px; background:var(--kc); }
+  .pp-kbody{ display:flex; align-items:flex-end; gap:20px; min-width:0; min-height:66px; } /* the two groups' numbers sit on one line */
+  .pp-klead{ flex:none; }
+  .pp-klead b{ display:block; font:800 32px/1 var(--font-display); letter-spacing:-1px; }
+  .pp-klead.hero b{ font-size:48px; letter-spacing:-1.8px; }
+  .pp-klead span, .pp-k span{ display:block; margin-top:5px; font-size:11px; font-weight:600; color:var(--text-dim); white-space:nowrap; }
+  .pp-kgroup-h em{ margin-left:auto; padding:3px 9px; border-radius:99px; font-style:normal; font-size:10.5px; font-weight:800; letter-spacing:.2px; text-transform:none; white-space:nowrap; color:var(--text); background:color-mix(in srgb, var(--kc) 16%, transparent); }
+  .pp-kgrid{ flex:1 1 auto; min-width:0; max-width:560px; display:grid; grid-template-columns:repeat(auto-fit, minmax(62px, 1fr)); gap:12px 14px; }
+  .pp-k b{ display:block; font:800 19px/1.05 var(--font-display); letter-spacing:-.3px; white-space:nowrap; }
+
+  /* ---- Sections ---- */
+  .pp-main{ display:flex; flex-direction:column; gap:26px; padding:6px 26px 28px; }
+  .pp-sec{ scroll-margin-top:12px; }
+  .pp-sec-h, .pp-card-h{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:12px; min-width:0; }
+  .pp-sec-h h4, .pp-card-h h4{ margin:0; font:800 15px/1.25 var(--font-display); letter-spacing:-.1px; }
+  .pp-card-h h4{ font-size:13.5px; }
+  .pp-sec-n, .pp-card-h span{ font-size:12px; font-weight:600; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .pp-charts{ display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap:14px; }
+  .pp-charts > .pp-card:only-child{ max-width:520px; }
+  .pp-card{ min-width:0; padding:16px 18px 14px; border-radius:18px; background:var(--pp-card); border:1px solid var(--pp-line); }
+
+  /* ---- Column chart: one value per match (runs, or wickets) ----
+     ≤24px columns with a 4px rounded top, hairline grid, one value label
+     (the best), every value on hover / focus and in Match by match. */
+  .pp-chart{ display:grid; grid-template-columns:auto minmax(0,1fr); column-gap:10px; }
+  .pp-yaxis{ position:relative; height:150px; min-width:18px; }
+  .pp-yaxis span{ position:absolute; right:0; bottom:calc(var(--t) * 100%); transform:translateY(50%); font-size:10.5px; font-weight:600; color:var(--text-faint); font-variant-numeric:tabular-nums; }
+  .pp-plot{ position:relative; height:150px; display:grid; grid-template-columns:repeat(var(--n), minmax(0,1fr)); box-shadow:inset 0 -1px 0 var(--pp-axis); }
+  .pp-gl{ position:absolute; left:0; right:0; bottom:calc(var(--t) * 100%); height:1px; background:var(--pp-grid); pointer-events:none; }
+  .pp-col{ position:relative; display:flex; justify-content:center; align-items:flex-end; min-width:0; height:100%; border-radius:10px 10px 0 0; cursor:pointer; outline:none; -webkit-tap-highlight-color:transparent; }
+  .pp-col:hover, .pp-col:focus-visible, .pp-col.on{ background:color-mix(in srgb, var(--text) 5%, transparent); }
+  .pp-col:focus-visible{ box-shadow:inset 0 0 0 2px var(--accent); }
+  .pp-bar{ width:min(24px, 64%); height:max(3px, calc(var(--v) * 100%)); border-radius:4px 4px 0 0; background:var(--bc); transform-origin:50% 100%; animation:ppGrow .65s cubic-bezier(.2,.9,.25,1) both; animation-delay:calc(var(--i) * 45ms + 140ms); }
+  .pp-cap{ position:absolute; left:50%; bottom:calc(var(--v) * 100% + 6px); transform:translateX(-50%); font:800 12.5px/1 var(--font-display); color:var(--text); white-space:nowrap; animation:ppFade .3s ease both; animation-delay:calc(var(--i) * 45ms + 560ms); }
+  .pp-none{ margin-bottom:6px; font-size:10px; font-weight:700; letter-spacing:.3px; color:var(--text-faint); }
+  .pp-xaxis{ grid-column:2; display:grid; grid-template-columns:repeat(var(--n), minmax(0,1fr)); margin-top:7px; }
+  .pp-xaxis span{ min-width:0; text-align:center; font-size:11px; font-weight:800; line-height:1.25; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .pp-xaxis small{ display:block; font-size:10px; font-weight:600; color:var(--text-faint); overflow:hidden; text-overflow:ellipsis; }
+  .pp-chart.dense .pp-xaxis small{ display:none; }
+  .pp-cols-runs{ --bc:var(--pp-runs); }
+  .pp-cols-wkts{ --bc:var(--pp-wkts); }
+  @keyframes ppGrow{ from{ transform:scaleY(0); } }
+  @keyframes ppFade{ from{ opacity:0; } }
+  .pp-tip{
+    position:absolute; left:0; top:0; z-index:5; pointer-events:none; min-width:150px; max-width:250px;
+    padding:9px 12px 10px; border-radius:12px; background:var(--panel); border:1px solid var(--border);
+    box-shadow:0 16px 36px -12px rgba(0,0,0,.45); font-size:11.5px; line-height:1.45; color:var(--text-dim);
+    opacity:0; transform:translate(calc(var(--x) - 50%), calc(var(--y) - 100% + 4px)); transition:opacity .12s ease, transform .14s ease;
+  }
+  .pp-tip.show{ opacity:1; transform:translate(calc(var(--x) - 50%), calc(var(--y) - 100%)); }
+  .pp-tip b{ display:block; font:800 15px/1.25 var(--font-display); color:var(--text); }
+  .pp-tip span{ display:block; }
+
+  /* ---- How the runs came ---- */
+  .pp-mix-big{ display:flex; align-items:baseline; gap:8px; }
+  .pp-mix-big b{ font:800 34px/1 var(--font-display); letter-spacing:-1px; }
+  .pp-mix-big span{ font-size:12.5px; font-weight:600; color:var(--text-dim); }
+  .pp-meter{ height:10px; margin:12px 0 14px; border-radius:99px; overflow:hidden; background:color-mix(in srgb, var(--accent) 20%, transparent); }
+  .pp-meter i{ display:block; height:100%; width:calc(var(--p) * 100%); border-radius:99px; background:var(--accent); transform-origin:0 50%; animation:ppGrowX .8s cubic-bezier(.2,.9,.25,1) .2s both; }
+  @keyframes ppGrowX{ from{ transform:scaleX(0); } }
+  .pp-mix-rows{ display:flex; flex-direction:column; gap:9px; }
+  .pp-mix-rows > div{ display:grid; grid-template-columns:auto minmax(0,1fr) auto auto; align-items:center; gap:10px; font-size:12.5px; font-weight:600; }
+  .pp-mix-rows b{ font:800 14px/1 var(--font-display); text-align:right; }
+  .pp-mix-rows em{ font-style:normal; min-width:62px; text-align:right; font-size:12px; color:var(--text-dim); }
+
+  /* ---- Badges: 6 / 4 / W / OUT / ★ (white text — the darker steps) ---- */
+  .pp-badge{ display:inline-grid; place-items:center; flex:none; min-width:24px; height:24px; padding:0 6px; border-radius:8px; font:800 11.5px/1 var(--font-display); letter-spacing:.2px; color:#fff; background:var(--k); }
+  .k-six{ --k:var(--pp-six); } .k-four{ --k:var(--pp-four); } .k-wkt, .k-out{ --k:var(--pp-out); } .k-other{ --k:var(--pp-other); } .k-run{ --k:#64748b; }
+
+  /* ---- Highlights: filters + thumbnail grid ---- */
+  .pp-filters{ display:flex; flex-direction:column; gap:8px; }
+  .pp-chips{ display:flex; flex-wrap:wrap; gap:8px; overflow-x:auto; padding:2px; margin:-2px; scrollbar-width:none; overscroll-behavior-x:contain; }
+  .pp-chips::-webkit-scrollbar{ display:none; }
+  .pp-chip{
+    flex:none; display:inline-flex; align-items:center; gap:7px; height:36px; padding:0 12px 0 10px; border-radius:99px; cursor:pointer;
+    border:1px solid var(--border); background:var(--panel); color:var(--text); font:700 12.5px/1 var(--font-body); white-space:nowrap;
+  }
+  .pp-chip:hover:not(:disabled){ border-color:var(--text-faint); }
+  .pp-chip .pp-badge{ min-width:20px; height:20px; padding:0 5px; border-radius:6px; font-size:10px; }
+  .pp-chip .n{ min-width:22px; padding:3px 6px; border-radius:99px; text-align:center; font-size:11px; font-weight:800; color:var(--text-dim); background:var(--panel-2); font-variant-numeric:tabular-nums; }
+  .pp-chip.on{ background:var(--text); border-color:var(--text); color:var(--panel); }
+  .pp-chip.on .n{ background:color-mix(in srgb, var(--panel) 20%, transparent); color:var(--panel); }
+  .pp-chip.zero:not(.on){ opacity:.5; }
+  .pp-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 200px), 1fr)); gap:18px 14px; margin-top:16px; animation:ppFade .3s ease both; }
+  .pp-clip{ position:relative; min-width:0; border-radius:14px; cursor:pointer; outline:none; content-visibility:auto; contain-intrinsic-size:auto 200px; -webkit-tap-highlight-color:transparent; }
+  .pp-clip[hidden]{ display:none; }
+  .pp-thumb{
+    position:relative; aspect-ratio:16/9; overflow:hidden; isolation:isolate; border-radius:14px; transform:translateZ(0);
+    background:radial-gradient(120% 130% at 0% 0%, color-mix(in srgb, var(--k) 78%, #0b1020) 0%, color-mix(in srgb, var(--k) 22%, #0b1020) 75%);
+    box-shadow:0 1px 2px rgba(0,0,0,.14), 0 12px 26px -18px rgba(0,0,0,.6);
+    transition:transform .3s cubic-bezier(.2,.9,.25,1);
+  }
+  .pp-thumb img{ position:absolute; inset:0; z-index:1; width:100%; height:100%; object-fit:cover; transition:transform .5s cubic-bezier(.2,.9,.25,1); }
+  .pp-thumb::after{ content:''; position:absolute; inset:0; z-index:2; pointer-events:none; background:linear-gradient(180deg, rgba(0,0,0,.30) 0%, transparent 34%, transparent 52%, rgba(0,0,0,.66) 100%); }
+  .pp-wm{ position:absolute; right:12px; bottom:-16px; font:800 88px/1 var(--font-display); letter-spacing:-3px; color:rgba(255,255,255,.16); }
+  .pp-thumb .pp-badge{ position:absolute; left:10px; top:10px; z-index:3; box-shadow:0 2px 8px rgba(0,0,0,.35); }
+  .pp-over{ position:absolute; left:11px; bottom:9px; z-index:3; color:#fff; font:800 12.5px/1 var(--font-display); text-shadow:0 1px 3px rgba(0,0,0,.6); }
+  .pp-dur{ position:absolute; right:10px; bottom:8px; z-index:3; padding:3px 6px; border-radius:6px; background:rgba(0,0,0,.6); color:#fff; font-size:11px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .pp-play{
+    position:absolute; left:50%; top:50%; z-index:3; width:46px; height:46px; margin:-23px 0 0 -23px; border-radius:50%;
+    display:grid; place-items:center; background:rgba(255,255,255,.94); color:#0b1020; box-shadow:0 8px 22px rgba(0,0,0,.4);
+    opacity:0; transform:scale(.8); transition:opacity .2s ease, transform .28s cubic-bezier(.2,.9,.25,1);
+  }
+  .pp-play svg{ width:18px; height:18px; margin-left:2px; }
+  .pp-cdl, .pp-del{
+    position:absolute; right:8px; top:8px; z-index:4; width:34px; height:34px; border-radius:50%; display:grid; place-items:center;
+    background:rgba(8,12,20,.6); color:#fff; border:1px solid rgba(255,255,255,.2); cursor:pointer; padding:0;
+  }
+  .pp-cdl:hover{ background:rgba(8,12,20,.85); }
+  .pp-cdl svg, .pp-del svg{ width:15px; height:15px; }
+  .pp-del{ right:48px; background:rgba(185,28,28,.75); }
+  .pp-proc{ position:absolute; inset:0; z-index:3; display:grid; place-items:center; color:#fff; font-size:12px; font-weight:700; background:rgba(8,12,20,.45); }
+  .pp-meta{ padding:9px 2px 0; min-width:0; }
+  .pp-meta b{ display:block; font:700 13px/1.3 var(--font-display); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .pp-meta span{ display:block; margin-top:2px; font-size:11.5px; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  @media (hover:hover) and (pointer:fine){
+    .pp-clip:hover .pp-thumb{ transform:translateY(-3px); }
+    .pp-clip:hover .pp-thumb img{ transform:scale(1.06); }
+    .pp-clip:hover .pp-play{ opacity:1; transform:none; }
+  }
+  @media (hover:none){ .pp-play{ opacity:.92; transform:scale(.85); } }
+  .pp-clip:focus-visible .pp-thumb{ box-shadow:0 0 0 3px var(--accent); }
+  .pp-clip:focus-visible .pp-play{ opacity:1; transform:none; }
+  .pp-clip:active .pp-thumb{ transform:scale(.97); transition-duration:.12s; }
+  .pp-clip.is-proc{ cursor:default; }
+  .pp-skel{ display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 200px), 1fr)); gap:18px 14px; animation:ppPulse 1.1s ease-in-out infinite alternate; }
+  .pp-skel i{ aspect-ratio:16/9; border-radius:14px; background:var(--panel-2); border:1px solid var(--pp-line); }
+  @keyframes ppPulse{ from{ opacity:.5; } to{ opacity:1; } }
+  .pp-empty{ padding:22px 18px; border-radius:16px; border:1px dashed var(--border); text-align:center; font-size:13px; font-weight:600; color:var(--text-dim); }
+  .pp-empty button{ margin-left:6px; padding:6px 12px; border-radius:99px; border:1px solid var(--border); background:var(--panel); color:var(--text); font-weight:700; cursor:pointer; }
+
+  /* ---- Match by match ---- */
+  .pp-matches{ display:flex; flex-direction:column; gap:10px; }
+  .pp-match{
+    display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.25fr) auto; align-items:center; gap:10px 18px;
+    padding:13px 14px 13px 16px; border-radius:16px; background:var(--pp-card); border:1px solid var(--pp-line);
+    content-visibility:auto; contain-intrinsic-size:auto 76px;
+  }
+  .pp-m-id{ display:flex; align-items:center; gap:11px; min-width:0; }
+  .pp-m-logo{
+    flex:none; position:relative; width:38px; height:38px; border-radius:11px; overflow:hidden; display:grid; place-items:center;
+    background:var(--oc); color:var(--oci); font:800 11.5px/1 var(--font-display); letter-spacing:.3px;
+  }
+  .pp-m-logo img{ position:absolute; inset:0; width:100%; height:100%; object-fit:contain; padding:3px; background:#fff; }
+  .pp-m-txt{ min-width:0; }
+  .pp-m-txt b{ display:block; font:800 14px/1.25 var(--font-display); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .pp-m-txt span{ display:block; margin-top:2px; font-size:11.5px; font-weight:600; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .pp-res{ flex:none; margin-left:auto; padding:3px 8px; border-radius:99px; font-size:10.5px; font-weight:800; letter-spacing:.4px; text-transform:uppercase; }
+  .pp-res.won{ background:var(--accent-soft); color:var(--accent); }
+  .pp-res.lost{ background:var(--wicket-soft); color:var(--wicket); }
+  .pp-res.tie, .pp-res.nr{ background:var(--panel-2); color:var(--text-dim); }
+  .pp-m-lines{ display:flex; flex-direction:column; gap:6px; min-width:0; }
+  .pp-line{ display:flex; align-items:center; gap:8px; min-width:0; font-size:12px; color:var(--text-dim); }
+  .pp-line b{ flex:none; font:800 15px/1 var(--font-display); color:var(--text); }
+  .pp-line span{ min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .pp-li{ flex:none; width:22px; height:22px; border-radius:50%; display:grid; place-items:center; }
+  .pp-li svg{ width:11px; height:11px; }
+  .pp-li.bat{ background:color-mix(in srgb, var(--pp-runs) 16%, transparent); color:var(--pp-runs); }
+  .pp-li.bowl{ background:color-mix(in srgb, var(--pp-wkts) 16%, transparent); color:var(--pp-wkts); }
+  .pp-m-act{ display:flex; align-items:center; gap:8px; justify-self:end; }
+  .pp-m-btn{
+    display:inline-flex; align-items:center; gap:7px; height:36px; padding:0 13px; border-radius:99px; cursor:pointer;
+    border:1px solid var(--border); background:var(--panel); color:var(--text); font:700 12px/1 var(--font-body); white-space:nowrap;
+  }
+  .pp-m-btn:hover:not(:disabled){ border-color:var(--accent); color:var(--accent); }
+  .pp-m-btn svg{ width:13px; height:13px; }
+  .pp-m-btn.icon{ width:36px; padding:0; justify-content:center; }
+  .pp-m-btn:disabled{ opacity:.4; cursor:default; }
+  .pp-m-none{ font-size:11.5px; font-weight:600; color:var(--text-faint); }
+
+  /* ---- Download bar: always cuts what the filters show ---- */
+  .pp-dlbar{
+    flex:none; display:flex; align-items:center; gap:14px; min-width:0; padding:12px 16px 12px 20px;
+    background:var(--panel); border-top:1px solid var(--border); box-shadow:0 -12px 28px -20px rgba(0,0,0,.5);
+  }
+  .pp-dl-ico{ flex:none; width:42px; height:42px; border-radius:13px; display:grid; place-items:center; background:var(--accent-soft); color:var(--accent); }
+  .pp-dl-ico svg{ width:19px; height:19px; }
+  .pp-dl-txt{ flex:1 1 auto; min-width:0; }
+  .pp-dl-t{ font:800 14px/1.3 var(--font-display); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .pp-dl-s{ margin-top:2px; font-size:12px; font-weight:600; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .pp-dlbar .ph-progress-wrap{ margin:5px 0 0; padding:0; background:none; border:none; }
+  .pp-dl-txt:has(.ph-progress-wrap.show) .pp-dl-s{ display:none; }
+  .pp-dl-btn{
+    flex:none; display:inline-flex; align-items:center; gap:8px; height:46px; padding:0 22px; border:none; border-radius:99px; cursor:pointer;
+    background:linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 72%, #0ea5e9)); color:var(--accent-contrast);
+    font:800 14px/1 var(--font-display); letter-spacing:.1px; box-shadow:0 12px 24px -12px color-mix(in srgb, var(--accent) 85%, transparent);
+  }
+  .pp-dl-btn svg{ width:17px; height:17px; }
+  .pp-dl-btn:disabled{ opacity:.45; cursor:default; box-shadow:none; }
+
+  /* Sections settle in one after another (transform / opacity only). */
+  .pp-rise{ animation:ppRise .5s cubic-bezier(.2,.9,.25,1) both; animation-delay:var(--d, 0s); }
+  @keyframes ppRise{ from{ opacity:0; transform:translateY(12px); } }
+
   @media (max-width:700px){
     #clip-modal-backdrop{ padding:0; align-items:stretch; }
-    #clip-modal{ width:100%; max-width:100%; max-height:100vh; height:100vh; border-radius:0; }
+    #clip-modal{ width:100%; max-height:none; height:100vh; height:100dvh; border-radius:0; border:none; }
+    .pp-head{ padding:10px 10px 10px 16px; }
+    .pp-hero{ padding:18px 16px 16px; }
+    .pp-hero::after{ font-size:120px; top:-22px; letter-spacing:-6px; }
+    .pp-avatar{ width:58px; height:58px; font-size:19px; }
+    .pp-id{ gap:13px; }
+    .pp-honours, .pp-chips{ flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; overscroll-behavior-x:contain; }
+    .pp-honours{ margin:13px -16px 0; padding:0 16px; }
+    .pp-honours::-webkit-scrollbar{ display:none; }
+    .pp-honour{ flex:none; }
+    .pp-kpis{ margin-top:16px; gap:10px; }
+    .pp-kgroup{ flex-basis:100%; padding:12px 13px 13px; }
+    .pp-kbody{ flex-wrap:wrap; gap:12px 16px; }
+    .pp-klead.hero b{ font-size:40px; }
+    .pp-kgrid{ flex-basis:100%; max-width:none; grid-template-columns:repeat(5, minmax(0,1fr)); gap:12px 8px; }
+    .pp-k b{ font-size:17px; }
+    .pp-main{ padding:4px 16px 22px; gap:22px; }
+    .pp-card{ padding:14px 14px 12px; }
+    .pp-grid, .pp-skel{ grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px 10px; }
+    .pp-play{ width:34px; height:34px; margin:-17px 0 0 -17px; background:rgba(255,255,255,.86); }
+    .pp-play svg{ width:14px; height:14px; }
+    .pp-over{ font-size:11.5px; }
+    .pp-match{ grid-template-columns:minmax(0,1fr) auto; padding:12px; }
+    .pp-m-lines{ grid-column:1 / -1; grid-row:2; }
+    .pp-dlbar{ gap:10px; padding:10px 12px calc(10px + env(safe-area-inset-bottom)) 14px; }
+    .pp-dl-ico{ display:none; }
+    .pp-dl-btn{ height:44px; padding:0 18px; }
+  }
+  @media (max-width:380px){
+    .pp-m-btn .lbl{ display:none; }
+    .pp-dl-btn span{ display:none; }
+    .pp-dl-btn{ width:46px; padding:0; justify-content:center; }
+  }
+  @media (prefers-reduced-motion:reduce){
+    #clip-modal, #clip-modal-backdrop.open #clip-modal{ transform:none; }
+    .pp-bar, .pp-meter i, .pp-rise{ animation:none !important; }
   }
 
-  /* Player Highlights panel additions (sections 1-8, 18-19) */
+  /* The All Players Highlights panel; .ph-progress-* is the compile progress bar both panels use. */
   .ph-download-all{
     display:flex; align-items:center; justify-content:center; gap:8px; width:100%;
     padding:12px 16px; margin:2px 0 14px; border-radius:99px; border:none; cursor:pointer;
@@ -637,45 +952,6 @@
   }
   .ph-download-all svg{ width:15px; height:15px; }
   .ph-download-all:disabled{ opacity:.55; cursor:default; }
-  .ph-category{ margin-top:16px; }
-  .ph-category-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
-  .ph-category-title{
-    font-size:11.5px; font-weight:800; text-transform:uppercase; letter-spacing:.5px;
-    color:var(--text-dim); display:inline-flex; align-items:center; gap:6px;
-  }
-  .ph-category-title .ph-count{
-    background:var(--panel-2); border:1px solid var(--border-soft); border-radius:99px;
-    padding:1px 8px; font-size:10.5px; color:var(--text);
-  }
-  .ph-cat-download{
-    display:inline-flex; align-items:center; gap:5px; background:var(--panel-2); border:1px solid var(--border);
-    color:var(--text); font-size:10.5px; font-weight:700; padding:5px 10px; border-radius:99px; cursor:pointer;
-  }
-  .ph-cat-download:hover{ border-color:var(--accent); color:var(--accent); }
-  .ph-cat-download:disabled{ opacity:.4; cursor:default; }
-  .ph-cat-download svg{ width:11px; height:11px; }
-  .ph-clip-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(220px,1fr)); gap:8px; }
-  .ph-clip-card{
-    display:flex; align-items:center; gap:8px; padding:9px 10px; border-radius:var(--radius-sm);
-    border:1px solid var(--border-soft); background:var(--panel-2); cursor:pointer;
-  }
-  .ph-clip-card:hover{ border-color:var(--accent); }
-  .ph-clip-thumb{
-    width:30px; height:30px; border-radius:8px; flex:none; display:flex; align-items:center; justify-content:center;
-    color:#fff; font-weight:800; font-size:11.5px; box-shadow:0 2px 6px rgba(0,0,0,.15);
-  }
-  .ph-clip-thumb.four{ background:#3b82f6; } .ph-clip-thumb.six{ background:#a855f7; } .ph-clip-thumb.wicket{ background:var(--wicket); } .ph-clip-thumb.other{ background:var(--text-dim); }
-  .ph-clip-thumb.other svg{ width:14px; height:14px; }
-  .ph-clip-meta{ flex:1; min-width:0; }
-  .ph-clip-match{ font-size:11px; font-weight:700; font-family:var(--font-display); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .ph-clip-sub{ font-size:10px; color:var(--text-dim); margin-top:1px; }
-  .ph-clip-actions{ display:flex; align-items:center; gap:4px; flex:none; }
-  .ph-clip-dl{
-    width:24px; height:24px; border-radius:99px; background:var(--accent-soft); color:var(--accent); border:none;
-    display:flex; align-items:center; justify-content:center; cursor:pointer; flex:none;
-  }
-  .ph-clip-dl svg{ width:10px; height:10px; }
-  .ph-empty-cat{ font-size:11.5px; color:var(--text-faint); padding:6px 2px; }
   .ph-progress-wrap{
     margin:10px 0 4px; padding:10px 12px; border-radius:var(--radius-sm); background:var(--panel-2);
     border:1px solid var(--border-soft); display:none; align-items:center; gap:10px;
@@ -684,13 +960,6 @@
   .ph-progress-track{ flex:1; height:6px; border-radius:99px; background:var(--border-soft); overflow:hidden; }
   .ph-progress-bar{ height:100%; width:0%; background:var(--accent); transition:width .3s ease; }
   .ph-progress-msg{ font-size:11px; color:var(--text-dim); white-space:nowrap; font-weight:600; }
-  .ph-matches-toggle{
-    margin-top:18px; width:100%; text-align:left; background:none; border:none; cursor:pointer;
-    font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.5px; color:var(--text-dim);
-    padding:8px 0; border-top:1px solid var(--border-soft); display:flex; align-items:center; justify-content:space-between;
-  }
-  .ph-matches-body{ display:none; }
-  .ph-matches-body.open{ display:block; }
   /* Tournament-level "Download All Players Highlights" panel */
   #players-modal-backdrop{
     display:flex; position:fixed; inset:0; background:rgba(4,6,10,.7); z-index:101;
@@ -717,39 +986,6 @@
   }
   #all-players-highlights-btn:hover{ border-color:var(--accent); color:var(--accent); }
   #all-players-highlights-btn svg{ width:13px; height:13px; }
-  .cd-stat-row{ display:flex; gap:8px; }
-  .cd-stat-box{ flex:1; background:var(--panel-2); border:1px solid var(--border); border-top:2.5px solid var(--border); border-radius:var(--radius-sm); padding:8px 10px; text-align:center; }
-  .cd-stat-box .k{ font-size:9.5px; text-transform:uppercase; letter-spacing:.4px; color:var(--text-faint); font-weight:700; }
-  .cd-stat-box .v{ font-family:var(--font-display); font-weight:800; font-size:15.5px; margin-top:2px; }
-  /* Tone accents — a quiet color cue per stat's role, borrowed from the
-     clip badges (four/six/wicket) so the same colors mean the same thing
-     everywhere in this modal, not just decoration. */
-  .cd-stat-box[data-tone="runs"]{ border-top-color:var(--accent); }
-  .cd-stat-box[data-tone="boundary"]{ border-top-color:#3b82f6; }
-  .cd-stat-box[data-tone="rate"]{ border-top-color:#a855f7; }
-  .cd-stat-box[data-tone="wicket"]{ border-top-color:var(--wicket); }
-  .clip-group-label{
-    font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.4px;
-    color:var(--text-dim); margin:12px 0 6px; display:inline-flex; align-items:center;
-    padding:3px 9px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border-soft);
-  }
-  .clip-row{ display:flex; align-items:center; gap:10px; padding:10px; border-radius:var(--radius-sm); border:1px solid var(--border-soft); margin-bottom:8px; cursor:pointer; background:var(--panel-2); transition:border-color .15s ease, transform .15s ease; }
-  .clip-row:hover{ border-color:var(--accent); transform:translateX(2px); }
-  .clip-row.clip-row--four{ background:linear-gradient(90deg, rgba(59,130,246,.08), transparent 60%); }
-  .clip-row.clip-row--six{ background:linear-gradient(90deg, rgba(168,85,247,.08), transparent 60%); }
-  .clip-row.clip-row--wicket{ background:linear-gradient(90deg, color-mix(in srgb, var(--wicket) 10%, transparent), transparent 60%); }
-  .clip-row .cr-badge{ width:28px; height:28px; border-radius:8px; flex:none; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:12px; color:#fff; box-shadow:0 2px 6px rgba(0,0,0,.15); }
-  .clip-row .cr-badge.four{ background:#3b82f6; } .clip-row .cr-badge.six{ background:#a855f7; } .clip-row .cr-badge.wicket{ background:var(--wicket); }
-  .clip-row .cr-info{ flex:1; min-width:0; }
-  .clip-row .cr-over{ font-weight:700; font-size:12.5px; font-family:var(--font-display); }
-  .clip-row .cr-sub{ font-size:11px; color:var(--text-dim); margin-top:1px; }
-  .clip-watch-btn{ width:28px; height:28px; border-radius:99px; background:var(--accent-soft); color:var(--accent); border:none; display:flex; align-items:center; justify-content:center; cursor:pointer; flex:none; }
-  .clip-watch-btn svg{ width:12px; height:12px; }
-  .clip-watch-btn:disabled{ opacity:.35; cursor:default; }
-  .cr-actions{ display:flex; align-items:center; gap:6px; flex:none; }
-  .clip-delete-btn{ width:26px; height:26px; border-radius:8px; background:var(--wicket-soft); color:var(--wicket); border:none; display:flex; align-items:center; justify-content:center; cursor:pointer; flex:none; }
-  .clip-delete-btn svg{ width:13px; height:13px; }
-  .clip-delete-btn:active{ transform:scale(.9); }
   #tv-toast{
     position:fixed; left:50%; bottom:28px; transform:translateX(-50%) translateY(10px);
     background:var(--panel); border:1px solid var(--border); color:var(--text); padding:11px 18px; border-radius:99px;
@@ -757,21 +993,6 @@
     transition:opacity .25s ease, transform .25s ease; z-index:9999;
   }
   #tv-toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
-  /* One block per match inside the "Tournament Report" modal — a small
-     card so a player's clips read as an organised, professional
-     match-by-match breakdown rather than one undifferentiated list. */
-  .tpm-match{ border:1px solid var(--border-soft); border-radius:var(--radius-md); padding:14px; margin-top:12px; background:var(--panel-2); }
-  .tpm-match-head{ display:flex; align-items:center; gap:10px; }
-  .tpm-vs-info{ flex:1; min-width:0; }
-  .tpm-vs{ font-family:var(--font-display); font-weight:700; font-size:13.5px; }
-  .tpm-date{ font-size:11px; color:var(--text-dim); font-weight:600; margin-top:1px; }
-  .tpm-stats{ display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
-  .tpm-stat-chip{ display:flex; align-items:center; gap:7px; background:var(--panel); border:1px solid var(--border-soft); border-radius:99px; padding:5px 10px 5px 6px; }
-  .tpm-stat-chip .tpm-chip-icon{ width:20px; height:20px; border-radius:50%; flex:none; display:flex; align-items:center; justify-content:center; font-size:10.5px; }
-  .tpm-stat-chip.bat .tpm-chip-icon{ background:var(--accent-soft); color:var(--accent); }
-  .tpm-stat-chip.bowl .tpm-chip-icon{ background:color-mix(in srgb, var(--wicket) 18%, transparent); color:var(--wicket); }
-  .tpm-stat-chip .tpm-chip-text{ font-size:11.5px; font-weight:700; font-family:var(--font-display); white-space:nowrap; }
-  .tpm-stat-chip .tpm-chip-text .dim{ color:var(--text-dim); font-weight:600; font-family:var(--font-body); }
 </style>
 </head>
 <body>
@@ -798,14 +1019,26 @@
 </footer>
 <script>document.getElementById('copyright-year').textContent = new Date().getFullYear();</script>
 
-<!-- Leaderboard player clips — tournament-wide, match-by-match -->
-<div id="clip-modal-backdrop" class="glass-scrim">
-  <div id="clip-modal" class="glass">
-    <div id="clip-modal-head">
-      <h3 id="clip-modal-title">Clips</h3>
-      <button id="clip-modal-close" aria-label="Close">✕</button>
+<!-- Player Highlights — a leaderboard video icon or an award card opens it (openTournamentPlayerModal) -->
+<div id="clip-modal-backdrop">
+  <div id="clip-modal" role="dialog" aria-modal="true" aria-labelledby="clip-modal-title">
+    <div class="pp-head" id="pp-head">
+      <div class="pp-head-txt">
+        <span class="pp-head-k"><span aria-hidden="true">🏆</span><span id="pp-head-k">Tournament</span></span>
+        <span class="pp-head-t"><span class="a" aria-hidden="true">Player highlights</span><span class="b" id="clip-modal-title">Player</span></span>
+      </div>
+      <button type="button" id="clip-modal-close" aria-label="Close"></button>
     </div>
     <div id="clip-modal-body"></div>
+    <div class="pp-dlbar" id="pp-dlbar">
+      <span class="pp-dl-ico" aria-hidden="true"></span>
+      <div class="pp-dl-txt" aria-live="polite">
+        <div class="pp-dl-t" id="pp-dl-t">Loading clips…</div>
+        <div class="pp-dl-s" id="pp-dl-s"></div>
+        <div class="ph-progress-wrap" id="pp-progress"><div class="ph-progress-track"><div class="ph-progress-bar"></div></div><div class="ph-progress-msg">Preparing…</div></div>
+      </div>
+      <button type="button" class="pp-dl-btn" id="pp-dl-btn" disabled><span>Download</span></button>
+    </div>
   </div>
 </div>
 
@@ -1427,7 +1660,7 @@ function renderPortal(data, token, opts){
   document.title = `${data.displayName} — All Sports Live`;
   // Stashed so the leaderboard clip icons (wired further below) can look
   // up this tournament's own match list + token without re-fetching the
-  // portal payload — buildTournamentPlayerReport() reads these.
+  // portal payload — ppProfile() (Player Highlights) reads these.
   // 📅 Fixtures scheduled from the panel (upcoming:true) have no cricket in
   // them yet — they go in the Upcoming group and nowhere else (not in match
   // counts, awards, form or the player reports). A fixture whose room is
@@ -1646,26 +1879,12 @@ function renderPortal(data, token, opts){
 }
 
 /* ============================================================
-   LEADERBOARD PLAYER CLIPS — tournament-wide, organised match by
-   match. Reuses the exact endpoints the rest of the app already
-   relies on for a public (token-scoped) link, so no new backend
-   surface is needed:
-     - /api/public/tournament/:token/match/:matchId  → that ONE
-       match's full saved scorecard (battingCard/bowlingCard), same
-       endpoint cricket-scorecard.html's loadMatchSnapshot() uses.
-     - /api/clips/player/:playerKey?scope=match&matchId=…  → that
-       player's clips for that one match, same endpoint
-       score-match.html's clip modal uses.
-   For every match in this tournament we check whether the tapped
-   player actually appears in that match's card, pull their line for
-   it, and fetch that match's clips for them — then render one
-   compact "match card" per appearance instead of one flat list, so a
-   viewer can see exactly how the player did IN EACH match along with
-   that match's own 4s/6s/dismissal clips.
+   LEADERBOARD PLAYER CLIPS — the video icon on every leaderboard row,
+   and what the two panels it leads to share: the Player Highlights
+   modal (🎬 below) and the All Players Highlights panel.
    ============================================================ */
 let tournamentDataCache = null;
 let tournamentTokenCache = '';
-const matchSnapshotCache = {}; // matchId -> saved match record | null (cached across every player's modal)
 
 const CLIP_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>';
 const PLAY_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
@@ -1686,145 +1905,12 @@ function clipBtnHtml(name, role){
   return `<button class="clip-btn" data-player="${escapeHtml(name)}" data-role="${role}" aria-label="Clips for ${escapeHtml(name)}">${CLIP_ICON}</button>`;
 }
 
-async function fetchMatchSnapshot(matchId){
-  if(Object.prototype.hasOwnProperty.call(matchSnapshotCache, matchId)) return matchSnapshotCache[matchId];
-  try{
-    const res = await apiFetch(`${clipApiBase()}/api/public/tournament/${encodeURIComponent(tournamentTokenCache)}/match/${encodeURIComponent(matchId)}`);
-    const data = await res.json();
-    const match = (data && data.success && data.match) || null;
-    matchSnapshotCache[matchId] = match;
-    return match;
-  } catch(err){ console.warn('Match snapshot fetch failed', err); matchSnapshotCache[matchId] = null; return null; }
-}
-
-async function fetchClipsForMatch(name, matchId){
-  const pk = playerKeyOf(name);
-  if(!pk) return null;
-  try{
-    const res = await apiFetch(`${clipApiBase()}/api/clips/player/${encodeURIComponent(pk)}?scope=match&matchId=${encodeURIComponent(matchId)}`);
-    if(!res.ok) return null;
-    return await res.json();
-  } catch(err){ console.warn('Clip fetch failed', err); return null; }
-}
-
-function findPlayerRow(card, name){
-  const pk = playerKeyOf(name);
-  return (card || []).find(r => playerKeyOf(r.name) === pk) || null;
-}
-
-// For one match: figure out whether/where this player appears (which
-// team's card, so we can label the opponent correctly), pull BOTH their
-// batting and bowling lines for that match (a player can bat in one
-// match and only bowl in another, or do both in the same one), and
-// fetch every clip category for them in this match — fours, sixes,
-// dismissal AND wickets together, not just whichever discipline the
-// leaderboard button happened to be clicked from. Returns null only if
-// the player didn't feature in this match at all.
-async function buildMatchEntry(matchSummary, name){
-  const snap = await fetchMatchSnapshot(matchSummary.matchId);
-  if(!snap) return null;
-
-  let teamKey = null, battingRow = null, bowlingRow = null;
-  if(snap.battingCard){
-    if(findPlayerRow(snap.battingCard.A, name)){ teamKey = 'A'; battingRow = findPlayerRow(snap.battingCard.A, name); }
-    else if(findPlayerRow(snap.battingCard.B, name)){ teamKey = 'B'; battingRow = findPlayerRow(snap.battingCard.B, name); }
-  }
-  if(snap.bowlingCard){
-    if(findPlayerRow(snap.bowlingCard.A, name)){ teamKey = teamKey || 'A'; bowlingRow = findPlayerRow(snap.bowlingCard.A, name); }
-    else if(findPlayerRow(snap.bowlingCard.B, name)){ teamKey = teamKey || 'B'; bowlingRow = findPlayerRow(snap.bowlingCard.B, name); }
-  }
-  if(!teamKey) return null; // didn't feature in this match
-
-  const oppTeamObj = (teamKey === 'A' ? snap.teamB : snap.teamA) || (teamKey === 'A' ? matchSummary.teamB : matchSummary.teamA);
-  const opponent = (oppTeamObj && (oppTeamObj.short || oppTeamObj.name)) || 'Opponent';
-
-  // CLIPS SCOPE FIX: clips are tagged with the live room id at capture
-  // time, not with the tournament match's own database matchId — same
-  // fix as cricket-scorecard.html's getClipMatchId(). Use the room id
-  // the snapshot carries (once the backend sends it) and only fall back
-  // to matchSummary.matchId when it's missing.
-  const clipMatchId = snap.roomId || matchSummary.matchId;
-  const clipsData = await fetchClipsForMatch(name, clipMatchId);
-  return {
-    matchId: matchSummary.matchId, opponent,
-    venue: matchSummary.venue || '', savedAt: matchSummary.savedAt || null,
-    battingRow, bowlingRow, clipsData
-  };
-}
-
-async function buildTournamentPlayerReport(name){
-  const matches = (tournamentDataCache && tournamentDataCache.matches) || [];
-  const entries = await Promise.all(matches.map(m => buildMatchEntry(m, name)));
-  return entries.filter(Boolean).sort((a, b) => new Date(b.savedAt || 0) - new Date(a.savedAt || 0));
-}
-
 const BAT_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M4 20L14 10"/><path d="M13 5l6 6-3 3-6-6z"/></svg>';
 const BOWL_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="8"/><path d="M8 12h8M12 8v8" stroke-width="1.5"/></svg>';
-function battingStatLine(statRow){
-  const notOutTag = statRow.out === false ? '*' : '';
-  const runs = `${statRow.runs||0}${notOutTag} (${statRow.balls||0}b)`;
-  const sr = strikeRate(statRow.runs||0, statRow.balls||0);
-  return `<div class="tpm-stat-chip bat"><div class="tpm-chip-icon">${BAT_ICON}</div><div class="tpm-chip-text">${escapeHtml(runs)} <span class="dim">· 4s ${statRow.fours||0} · 6s ${statRow.sixes||0} · SR ${escapeHtml(String(sr))}</span></div></div>`;
-}
-function bowlingStatLine(statRow){
-  const figures = `${statRow.wickets||0}-${statRow.runs||0}`;
-  const overs = fmtOvers(statRow.overs, statRow.balls);
-  const econ = economy(statRow.runs||0, statRow.overs, statRow.balls);
-  return `<div class="tpm-stat-chip bowl"><div class="tpm-chip-icon">${BOWL_ICON}</div><div class="tpm-chip-text">${escapeHtml(figures)} <span class="dim">(${escapeHtml(String(overs))} ov) · Econ ${escapeHtml(String(econ))}</span></div></div>`;
-}
-
-function clipGroupHtml(label, clips){
-  if(!clips || !clips.length) return '';
-  return `<div class="clip-group-label">${escapeHtml(label)} (${clips.length})</div>` + clips.map(clipRowHtml).join('');
-}
-
-function clipRowHtml(c){
-  // 🩹 FIX: a manually-attached "OTHER / GENERAL CLIP" isn't a four, six
-  // or wicket — it used to fall into the wicket badge by default here,
-  // making a plain highlight look like a dismissal. Give it its own
-  // neutral badge instead.
-  const badgeCls = c.eventType === 'FOUR' ? 'four' : c.eventType === 'SIX' ? 'six' : c.eventType === 'WICKET' ? 'wicket' : 'other';
-  const badgeLabel = c.eventType === 'FOUR' ? '4' : c.eventType === 'SIX' ? '6' : c.eventType === 'WICKET' ? 'W' : CLIP_ICON;
-  const overLabel = `${c.over ?? '—'}.${c.ballInOver ?? ''}`;
-  const sub = c.eventType === 'WICKET'
-    ? [c.dismissalType, c.bowler ? 'b. ' + c.bowler : null].filter(Boolean).join(' · ')
-    : (c.bowler ? 'off ' + c.bowler : '');
-  const disabled = c.ready ? '' : 'disabled';
-  const deleteBtn = isOwner
-    ? `<button class="clip-delete-btn" data-delete-clip="${c.clipId}" title="Delete this clip">${TRASH_ICON}</button>`
-    : '';
-  return `<div class="clip-row clip-row--${badgeCls}" data-clip-id="${c.clipId}" data-title="${escapeHtml((c.striker||c.bowler||'') + ' — ' + c.eventType)}" data-playback-url="${escapeHtml(c.playbackUrl || '')}" data-poster-url="${escapeHtml(c.posterUrl || '')}">
-    <div class="cr-badge ${badgeCls}">${badgeLabel}</div>
-    <div class="cr-info"><div class="cr-over tabnum">Over ${overLabel}</div><div class="cr-sub">${escapeHtml(sub || (c.ready ? 'Tap to watch' : 'Processing…'))}</div></div>
-    <div class="cr-actions">
-      <button class="clip-watch-btn" ${disabled} aria-label="Watch">${PLAY_ICON}</button>
-      ${deleteBtn}
-    </div>
-  </div>`;
-}
-
-function wireClipRows(root){
-  root.querySelectorAll('.clip-row').forEach(row => {
-    const id = row.dataset.clipId, title = row.dataset.title;
-    const watchBtn = row.querySelector('.clip-watch-btn');
-    if(watchBtn && !watchBtn.disabled) watchBtn.addEventListener('click', (e) => { e.stopPropagation(); openVideoModal(id, title, row.dataset.playbackUrl, row.dataset.posterUrl); });
-    const deleteBtn = row.querySelector('[data-delete-clip]');
-    if(deleteBtn){
-      deleteBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        deleteClip(deleteBtn.dataset.deleteClip, title);
-      });
-    }
-    row.addEventListener('click', () => { if(watchBtn && !watchBtn.disabled) openVideoModal(id, title, row.dataset.playbackUrl, row.dataset.posterUrl); });
-  });
-}
-
 // Owner-only clip deletion (same DELETE /api/admin/clips/:clipId the
 // scorecard page's delete button calls — requireOwner enforces this
 // server-side regardless of what the client renders). On success the
-// clip row is removed from every place it's currently shown on this
-// page — the report modal's match-by-match list — since it's the same
-// clip everywhere a player's clips get rendered.
+// clip leaves the open Player Highlights (its grid, counts and download bar).
 async function deleteClip(clipId, title){
   if(!confirm(`Delete this clip (${title || 'clip'})? This can't be undone.`)) return;
   try{
@@ -1836,7 +1922,7 @@ async function deleteClip(clipId, title){
     // A 404 here means the clip is already gone from the database (e.g.
     // deleted a moment ago, or this list was a little stale) — the end
     // state we want is already true, so it isn't treated as an error.
-    document.querySelectorAll(`.clip-row[data-clip-id="${clipId}"]`).forEach(row => row.remove());
+    if(pp && pp.clips){ pp.clips = pp.clips.filter(c => c.clipId !== clipId); ppRenderClips(); }
     showToast('Clip deleted');
   }catch(err){
     showToast(err.message || 'Could not delete clip');
@@ -1856,78 +1942,13 @@ function showToast(msg){
   showToast._t = setTimeout(() => el.classList.remove('show'), 2200);
 }
 
-function matchEntryHtml(entry){
-  const dateStr = entry.savedAt ? new Date(entry.savedAt).toLocaleDateString() : '';
-  const statLines = [];
-  if(entry.battingRow) statLines.push(battingStatLine(entry.battingRow));
-  if(entry.bowlingRow) statLines.push(bowlingStatLine(entry.bowlingRow));
-
-  // All clip categories for this match, together, regardless of which
-  // leaderboard (batting or bowling) the modal was opened from — a
-  // six and the wicket that dismissed the same player both belong to
-  // the same match card.
-  let clipsHtml = '';
-  if(entry.clipsData && entry.clipsData.success){
-    // 🩹 FIX: a clip manually attached to an ordinary ball (tagged plain
-    // "CLIP", not a four/six/wicket) used to be silently dropped from
-    // this leaderboard drawer even though it showed up fine in that
-    // match's own Match Highlights — the server now returns it as
-    // batting.other/bowling.other (see runPlayerClipsQuery in server.js).
-    clipsHtml = clipGroupHtml('Sixes', entry.clipsData.batting.sixes)
-      + clipGroupHtml('Fours', entry.clipsData.batting.fours)
-      + clipGroupHtml('Wickets', entry.clipsData.bowling.wickets)
-      + clipGroupHtml('Dismissal', entry.clipsData.batting.dismissal)
-      + clipGroupHtml('Other Clips', [...(entry.clipsData.batting.other||[]), ...(entry.clipsData.bowling.other||[])]);
-  }
-  if(!clipsHtml) clipsHtml = '<div class="empty-state" style="padding:8px 0;">No clips recorded for this match.</div>';
-  return `<div class="tpm-match">
-    <div class="tpm-match-head">
-      <div class="lb-avatar" style="background:${avatarColor(entry.opponent)}">${initials(entry.opponent)}</div>
-      <div class="tpm-vs-info">
-        <div class="tpm-vs">vs ${escapeHtml(entry.opponent)}</div>
-        <div class="tpm-date">${escapeHtml(dateStr)}${entry.venue ? ' · ' + escapeHtml(entry.venue) : ''}</div>
-      </div>
-    </div>
-    ${statLines.length ? `<div class="tpm-stats">${statLines.join('')}</div>` : ''}
-    ${clipsHtml}
-  </div>`;
-}
-
-// Aggregate line across every match shown, so the modal opens on a
-// tournament-wide total before drilling into the match-by-match cards.
-// Shows whichever discipline(s) the player actually has entries for —
-// an all-rounder gets both a batting line and a bowling line here.
-function summaryLineHtml(entries){
-  let runs = 0, balls = 0, battingMatches = 0;
-  let wkts = 0, bowlRuns = 0, bowlBalls = 0, bowlingMatches = 0;
-  entries.forEach(e => {
-    if(e.battingRow){ battingMatches++; runs += e.battingRow.runs || 0; balls += e.battingRow.balls || 0; }
-    if(e.bowlingRow){ bowlingMatches++; wkts += e.bowlingRow.wickets || 0; bowlRuns += e.bowlingRow.runs || 0; bowlBalls += (e.bowlingRow.overs || 0) * 6 + (e.bowlingRow.balls || 0); }
-  });
-  const boxes = [`<div class="cd-stat-box"><div class="k">Matches</div><div class="v tabnum">${entries.length}</div></div>`];
-  if(battingMatches){
-    boxes.push(`<div class="cd-stat-box" data-tone="runs"><div class="k">Runs</div><div class="v tabnum">${runs}</div></div>`);
-    boxes.push(`<div class="cd-stat-box" data-tone="rate"><div class="k">SR</div><div class="v tabnum">${strikeRate(runs, balls)}</div></div>`);
-  }
-  if(bowlingMatches){
-    const econ = bowlBalls ? (bowlRuns / (bowlBalls / 6)).toFixed(2) : '0.00';
-    boxes.push(`<div class="cd-stat-box" data-tone="wicket"><div class="k">Wkts</div><div class="v tabnum">${wkts}</div></div>`);
-    boxes.push(`<div class="cd-stat-box" data-tone="rate"><div class="k">Econ</div><div class="v tabnum">${econ}</div></div>`);
-  }
-  return `<div class="cd-stat-row" style="flex-wrap:wrap;">${boxes.join('')}</div>`;
-}
-
 /* ============================================================
-   TOURNAMENT PLAYER HIGHLIGHTS PANEL (sections 1-8, 18-20) — the
-   video icon's upgraded destination. Pulls tournament-wide Sixes/
-   Fours/Dismissals/Bowling Wickets from the new
-   /api/public/tournament/:token/player-clips endpoint and offers
-   individual, per-category and complete-tournament MP4 downloads
-   via /api/public/tournament/:token/highlights/compile (background
-   job, same polling contract as the match-scoped compiler). The
-   existing match-by-match report (buildTournamentPlayerReport,
-   above) is kept underneath as a collapsible "Tournament Matches"
-   section — nothing that worked before stops working.
+   TOURNAMENT-WIDE PLAYER CLIPS + MP4 COMPILES — every clip a player
+   is linked to (/api/public/tournament/:token/player-clips) and the
+   background compile job behind every "download as one video" button
+   (/api/public/tournament/:token/highlights/compile, polled to the end
+   by pollCompileJob). Used by the Player Highlights modal and the All
+   Players panel.
    ============================================================ */
 async function fetchTournamentPlayerClips(name){
   try{
@@ -1935,35 +1956,6 @@ async function fetchTournamentPlayerClips(name){
     if(!res.ok) return null;
     return await res.json();
   } catch(err){ console.warn('Tournament player-clips fetch failed', err); return null; }
-}
-
-function phClipCardHtml(c){
-  const cls = c.eventType === 'FOUR' ? 'four' : c.eventType === 'SIX' ? 'six' : c.eventType === 'WICKET' ? 'wicket' : 'other';
-  const label = c.eventType === 'FOUR' ? '4' : c.eventType === 'SIX' ? '6' : c.eventType === 'WICKET' ? 'W' : CLIP_ICON;
-  const matchLabel = `Match ${c.matchIndex || '?'}${c.opponent ? ' vs ' + c.opponent : ''}`;
-  const overLabel = `Over ${c.over ?? '—'}.${c.ballInOver ?? ''}`;
-  const sub = c.eventType === 'WICKET'
-    ? ([c.dismissalType, c.bowler ? 'b. ' + c.bowler : null].filter(Boolean).join(' · ') || overLabel)
-    : overLabel;
-  return `<div class="ph-clip-card" data-clip-id="${c.clipId}" data-title="${escapeHtml((c.striker||c.bowler||'') + ' — ' + c.eventType)}" data-playback-url="${escapeHtml(c.playbackUrl || '')}" data-poster-url="${escapeHtml(c.posterUrl || '')}">
-    <div class="ph-clip-thumb ${cls}">${label}</div>
-    <div class="ph-clip-meta"><div class="ph-clip-match">${escapeHtml(matchLabel)}</div><div class="ph-clip-sub">${escapeHtml(sub)}</div></div>
-    <div class="ph-clip-actions"><a class="ph-clip-dl" href="${c.downloadUrl}" title="Download clip" aria-label="Download clip" onclick="event.stopPropagation()">${DOWNLOAD_ICON}</a></div>
-  </div>`;
-}
-
-function phCategorySectionHtml(title, clips, category){
-  const count = clips ? clips.length : 0;
-  const bodyHtml = count
-    ? `<div class="ph-clip-grid">${clips.map(phClipCardHtml).join('')}</div>`
-    : `<div class="ph-empty-cat">No ${title.toLowerCase()} recorded yet.</div>`;
-  return `<div class="ph-category" data-category="${category}">
-    <div class="ph-category-head">
-      <div class="ph-category-title">${escapeHtml(title)} <span class="ph-count">${count}</span></div>
-      <button class="ph-cat-download" data-compile-category="${category}" ${count ? '' : 'disabled'}>${DOWNLOAD_ICON}Download All ${escapeHtml(title)}</button>
-    </div>
-    ${bodyHtml}
-  </div>`;
 }
 
 function phProgressHtml(){
@@ -2033,62 +2025,533 @@ async function startPlayerCompile(name, category, triggerEl, progressWrap){
   }
 }
 
-async function openTournamentPlayerModal(name){
-  document.getElementById('clip-modal-title').textContent = `${name} — Player Highlights`;
-  const body = document.getElementById('clip-modal-body');
-  body.innerHTML = '<div class="empty-state">Loading…</div>';
-  document.getElementById('clip-modal-backdrop').classList.add('open');
+/* ============================================================
+   🎬 PLAYER HIGHLIGHTS — what a leaderboard row's video icon (or an
+   award card) opens: how the player did in THIS tournament, every clip
+   of theirs, and downloads cut any way the viewer wants.
+     • The performance (numbers, form chart, match by match) comes from
+       the match records this page already holds — no request per match.
+     • The clips come from ONE call: /api/public/tournament/:token/player-clips.
+     • A download is the whole tournament or one match × all / sixes /
+       fours / wickets / dismissals / other — POST …/highlights/compile
+       { name, category, match? } — with the same progress + download as
+       before (pollCompileJob). The bar at the bottom always cuts exactly
+       what the filters are showing.
+   ============================================================ */
+const PP_TYPES = {
+  all:   { chip: 'All',        one: 'clip',       many: 'clips',       cat: 'all',        file: 'All_Highlights', title: 'Highlight' },
+  six:   { chip: 'Sixes',      one: 'six',        many: 'sixes',       cat: 'sixes',      file: 'Sixes',          title: 'Six',       badge: '6' },
+  four:  { chip: 'Fours',      one: 'four',       many: 'fours',       cat: 'fours',      file: 'Fours',          title: 'Four',      badge: '4' },
+  wkt:   { chip: 'Wickets',    one: 'wicket',     many: 'wickets',     cat: 'wickets',    file: 'Wickets',        title: 'Wicket',    badge: 'W' },
+  out:   { chip: 'Dismissals', one: 'dismissal',  many: 'dismissals',  cat: 'dismissals', file: 'Dismissals',     title: 'Out',       badge: 'OUT' },
+  other: { chip: 'Other',      one: 'other clip', many: 'other clips', cat: 'other',      file: 'Other_Clips',    title: 'Highlight', badge: '★' },
+};
+// /player-clips category -> the type above
+const PP_TYPE_OF_CATEGORY = { sixes: 'six', fours: 'four', wickets: 'wkt', dismissals: 'out', other: 'other' };
+// Honour colours: the leaderboard's own Orange / Purple Cap hues, gold for the rest.
+const PP_HONOUR_COLOR = { 'Orange Cap': '#f97316', 'Purple Cap': '#a855f7' };
+const CLOSE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+let pp = null;          // the open player (see ppProfile) + { clips, match, type, busy }
+let ppToken = 0;        // bumped on every open/close — a late /player-clips answer for someone else is dropped
+let ppNameObserver = null;
+let ppReturnFocus = null;
+let ppPageTimer = null; // hides the page under the modal once the scrim has faded in (html.pp-open)
 
-  const [phData, entries] = await Promise.all([fetchTournamentPlayerClips(name), buildTournamentPlayerReport(name)]);
+// "M3" — or the organiser's own title ("Final") / the stage — short enough for a chip.
+function ppMatchLabel(m, n){
+  const t = String(m.matchTitle || STAGE_LABEL[m.matchStage] || '').trim();
+  if(t) return t.length > 14 ? t.slice(0, 13) + '…' : t;
+  return `M${m.matchNo != null && m.matchNo !== '' ? m.matchNo : n}`;
+}
+// The match result from the player's side.
+function ppResultFor(m, side){
+  const w = m.winningTeam;
+  if(!w) return null;
+  if(w === 'TIE') return { cls: 'tie', text: 'Tied' };
+  if(w === 'DRAW') return { cls: 'tie', text: 'Drawn' };
+  if(w === 'ABANDONED' || w === 'NR' || w === 'NO_RESULT') return { cls: 'nr', text: 'No result' };
+  const ws = winnerSide(m);
+  return ws ? (ws === side ? { cls: 'won', text: 'Won' } : { cls: 'lost', text: 'Lost' }) : null;
+}
+function ppShortDate(ts){
+  try { const d = new Date(ts); return isNaN(d) ? '' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); }
+  catch(e){ return ''; }
+}
+function ppOvers(balls){ return `${Math.floor(balls / 6)}${balls % 6 ? '.' + (balls % 6) : ''}`; }
+// The chart's x-axis has little room: "Semi Final" → "SF", "Qualifier 1" → "Q1".
+function ppAxisLabel(label){
+  if(label.length <= 6) return label;
+  const words = label.replace('…', '').split(/\s+/).filter(Boolean);
+  return words.length > 1 ? words.map(w => /^\d+$/.test(w) ? w : w[0].toUpperCase()).join('') : label.slice(0, 5) + '…';
+}
+function ppScore(bat){ return bat.inns.map(x => `${x.runs}${x.notOut ? '*' : ''}`).join(' & '); }
+function ppDuration(sec){ sec = Math.round(Number(sec) || 0); return sec > 0 ? `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}` : ''; }
 
-  if((!phData || !phData.success) && !entries.length){
-    body.innerHTML = '<div class="empty-state">No match data found for this player yet.</div>';
-    return;
-  }
-
-  const cats = (phData && phData.categories) || { sixes:[], fours:[], dismissals:[], wickets:[], other:[] };
-  const totalClips = (phData && phData.totalClips) || 0;
-
-  const parts = [];
-  parts.push(phProgressHtml());
-  parts.push(`<button class="ph-download-all" data-compile-category="all" ${totalClips ? '' : 'disabled'}>${DOWNLOAD_ICON}Download All Player Highlights</button>`);
-  if(entries.length) parts.push(summaryLineHtml(entries));
-  // Played matches but no clips at all — say so plainly rather than
-  // showing four silent zeros that look like a bug.
-  if(!totalClips && entries.length){
-    parts.push(`<div class="ph-empty-cat" style="padding:10px 2px 0;">No video clips were recorded for this player in this tournament yet. Clips appear here once they finish processing.</div>`);
-  }
-  parts.push(phCategorySectionHtml('Sixes', cats.sixes, 'sixes'));
-  parts.push(phCategorySectionHtml('Fours', cats.fours, 'fours'));
-  parts.push(phCategorySectionHtml('Dismissals', cats.dismissals, 'dismissals'));
-  parts.push(phCategorySectionHtml('Bowling Wickets', cats.wickets, 'wickets'));
-  // 🩹 FIX: general clips manually attached to an ordinary ball (not a
-  // six/four/wicket) now get their own section instead of being invisible
-  // here — see runPlayerClipsQuery / player-clips endpoint in server.js.
-  parts.push(phCategorySectionHtml('Other Clips', cats.other, 'other'));
-  if(entries.length){
-    parts.push(`<button class="ph-matches-toggle" id="ph-matches-toggle">Tournament Matches (${entries.length}) <span>▾</span></button>`);
-    parts.push(`<div class="ph-matches-body" id="ph-matches-body">${entries.map(matchEntryHtml).join('')}</div>`);
-  }
-  body.innerHTML = parts.join('');
-
-  wireClipRows(body); // per-match clip rows inside the "Tournament Matches" section
-  body.querySelectorAll('.ph-clip-card').forEach(card => {
-    card.addEventListener('click', (e) => {
-      if(e.target.closest('.ph-clip-dl')) return;
-      openVideoModal(card.dataset.clipId, card.dataset.title, card.dataset.playbackUrl, card.dataset.posterUrl);
+// Everything about one player in this tournament, from the saved match
+// records (battingCard / bowlingCard of each side) — the same rows the
+// leaderboard itself is built from, so the numbers agree with it.
+function ppProfile(name){
+  const pk = playerKeyOf(name);
+  const num = (v) => Number(v) || 0;
+  const entries = [];
+  ((tournamentDataCache && tournamentDataCache.matches) || []).forEach((m, i) => {
+    const rows = (card, s) => ((card && card[s]) || []).filter(r => r && playerKeyOf(r.name) === pk);
+    const side = ['A', 'B'].find(s => rows(m.battingCard, s).length || rows(m.bowlingCard, s).length);
+    if(!side) return;
+    const bat = rows(m.battingCard, side), bowl = rows(m.bowlingCard, side);
+    entries.push({
+      m, n: i + 1, key: String(m.roomId || m.matchId || ''), label: ppMatchLabel(m, i + 1),
+      team: (side === 'A' ? m.teamA : m.teamB) || {}, opp: (side === 'A' ? m.teamB : m.teamA) || {},
+      date: m.savedAt ? ppShortDate(m.savedAt) : '', result: ppResultFor(m, side),
+      bat: bat.length ? {
+        inns: bat.map(r => ({ runs: num(r.runs), balls: num(r.balls), notOut: r.out === false })),
+        runs: bat.reduce((s, r) => s + num(r.runs), 0), balls: bat.reduce((s, r) => s + num(r.balls), 0),
+        fours: bat.reduce((s, r) => s + num(r.fours), 0), sixes: bat.reduce((s, r) => s + num(r.sixes), 0)
+      } : null,
+      bowl: bowl.length ? {
+        spells: bowl.map(r => ({ w: num(r.wickets), r: num(r.runs) })),
+        balls: bowl.reduce((s, r) => s + num(r.overs) * 6 + num(r.balls), 0),
+        runs: bowl.reduce((s, r) => s + num(r.runs), 0), wkts: bowl.reduce((s, r) => s + num(r.wickets), 0),
+        maidens: bowl.reduce((s, r) => s + num(r.maidens), 0)
+      } : null
     });
   });
-  const progressWrap = document.getElementById('ph-progress');
-  body.querySelectorAll('[data-compile-category]').forEach(btn => {
-    btn.addEventListener('click', () => startPlayerCompile(name, btn.dataset.compileCategory, btn, progressWrap));
+
+  const bat = { inns: 0, runs: 0, balls: 0, fours: 0, sixes: 0, hs: -1, hsNotOut: false, fifties: 0, hundreds: 0 };
+  const bowl = { inns: 0, balls: 0, runs: 0, wkts: 0, maidens: 0, best: null };
+  entries.forEach(e => {
+    if(e.bat){
+      bat.runs += e.bat.runs; bat.balls += e.bat.balls; bat.fours += e.bat.fours; bat.sixes += e.bat.sixes;
+      e.bat.inns.forEach(x => {
+        bat.inns++;
+        if(x.runs > bat.hs || (x.runs === bat.hs && x.notOut)){ bat.hs = x.runs; bat.hsNotOut = x.notOut; }
+        if(x.runs >= 100) bat.hundreds++; else if(x.runs >= 50) bat.fifties++;
+      });
+    }
+    if(e.bowl){
+      bowl.inns += e.bowl.spells.length; bowl.balls += e.bowl.balls; bowl.runs += e.bowl.runs; bowl.wkts += e.bowl.wkts; bowl.maidens += e.bowl.maidens;
+      e.bowl.spells.forEach(s => { if(!bowl.best || s.w > bowl.best.w || (s.w === bowl.best.w && s.r < bowl.best.r)) bowl.best = s; });
+    }
   });
-  const toggle = document.getElementById('ph-matches-toggle');
-  if(toggle) toggle.addEventListener('click', () => document.getElementById('ph-matches-body').classList.toggle('open'));
+
+  // The team they played for (their latest match), its colour for the hero.
+  const team = entries.length ? entries[entries.length - 1].team : {};
+  const color = safeTeamColor(team.color) || avatarColor(name);
+  // A wicket is worth ~20 runs when deciding which side of the game leads.
+  const primary = bowl.inns && (!bat.inns || bowl.wkts * 20 >= bat.runs) ? 'bowl' : 'bat';
+  const role = bat.inns && bowl.inns && bat.runs >= 30 && (bowl.wkts >= 2 || bowl.balls >= 36) ? 'All-rounder'
+    : primary === 'bowl' ? 'Bowler' : 'Batter';
+
+  const lb = (tournamentDataCache && tournamentDataCache.leaderboards) || {};
+  const rank = (rows) => (rows || []).findIndex(r => playerKeyOf(r.name) === pk) + 1;
+  const honours = computeAwards({ topRuns: lb.topRuns || [], topWickets: lb.topWickets || [] })
+    .filter(a => playerKeyOf(a.name) === pk)
+    .map(a => ({ icon: a.icon, text: a.label, sub: a.value, color: PP_HONOUR_COLOR[a.label] || '#eab308' }));
+  const runsRank = rank(lb.topRuns), wktsRank = rank(lb.topWickets);
+  if(runsRank > 1 && bat.runs > 0) honours.push({ icon: '🏏', text: `#${runsRank} run-scorer`, sub: '', color: '#f97316' });
+  if(wktsRank > 1 && bowl.wkts > 0) honours.push({ icon: '🎯', text: `#${wktsRank} wicket-taker`, sub: '', color: '#a855f7' });
+
+  return { name, pk, entries, byKey: new Map(entries.map(e => [e.key, e])), bat, bowl, team, color, primary, role, honours,
+    clips: undefined, match: 'all', type: 'all', busy: false };
 }
 
-document.getElementById('clip-modal-close').addEventListener('click', () => document.getElementById('clip-modal-backdrop').classList.remove('open'));
-document.getElementById('clip-modal-backdrop').addEventListener('click', (e) => { if(e.target.id === 'clip-modal-backdrop') document.getElementById('clip-modal-backdrop').classList.remove('open'); });
+/* ---- Markup ---- */
+function ppHtml(P){
+  const ini = initials(P.name);
+  const teamName = P.team.name || P.team.short || '';
+  const tags = [
+    teamName ? `<span class="pp-tag"><i class="pp-dot"></i>${escapeHtml(teamName)}</span>` : '',
+    P.entries.length ? `<span class="pp-tag">${P.role}</span>` : '',
+    `<span class="pp-tag">${P.entries.length ? `${P.entries.length} match${P.entries.length === 1 ? '' : 'es'}` : 'Not in a saved scorecard yet'}</span>`
+  ].join('');
+  return `
+  <section class="pp-hero" data-ini="${escapeHtml(ini)}">
+    <div class="pp-id pp-rise">
+      <div class="pp-avatar" aria-hidden="true">${escapeHtml(ini)}</div>
+      <div class="pp-id-txt"><div class="pp-name" id="pp-name">${escapeHtml(P.name)}</div><div class="pp-tags">${tags}</div></div>
+    </div>
+    ${P.honours.length ? `<div class="pp-honours pp-rise" style="--d:.05s">${P.honours.map(h =>
+      `<span class="pp-honour" style="--hc:${h.color}"><i aria-hidden="true">${h.icon}</i>${escapeHtml(h.text)}${h.sub ? ` <em>· ${escapeHtml(h.sub)}</em>` : ''}</span>`).join('')}</div>` : ''}
+    ${P.bat.inns || P.bowl.inns ? `<div class="pp-kpis pp-rise" style="--d:.09s">${ppKpisHtml(P)}</div>` : ''}
+  </section>
+  <div class="pp-main">
+    ${ppChartsHtml(P)}
+    <section class="pp-sec pp-rise" id="pp-hl" style="--d:.17s" aria-label="Highlights">
+      <div class="pp-sec-h"><h4>Highlights</h4><span class="pp-sec-n" id="pp-hl-n"></span></div>
+      <div id="pp-hl-body"><div class="pp-skel" aria-label="Loading clips"><i></i><i></i><i></i><i></i></div></div>
+    </section>
+    ${P.entries.length ? `<section class="pp-sec pp-rise" style="--d:.21s" aria-label="Match by match">
+      <div class="pp-sec-h"><h4>Match by match</h4><span class="pp-sec-n">${P.entries.length} match${P.entries.length === 1 ? '' : 'es'}</span></div>
+      <div class="pp-matches">${P.entries.map(ppMatchHtml).join('')}</div>
+    </section>` : ''}
+  </div>
+  <div class="pp-tip" id="pp-tip" role="tooltip"></div>`;
+}
+
+function ppKpisHtml(P){
+  const k = (v, label) => `<div class="pp-k"><b>${escapeHtml(String(v))}</b><span>${label}</span></div>`;
+  const lead = (v, label, hero) => `<div class="pp-klead${hero ? ' hero' : ''}"><b>${escapeHtml(String(v))}</b><span>${label}</span></div>`;
+  const B = P.bat, W = P.bowl, groups = [];
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const milestones = [B.hundreds ? plural(B.hundreds, 'hundred', 'hundreds') : '', B.fifties ? plural(B.fifties, 'fifty', 'fifties') : ''].filter(Boolean).join(' · ');
+  const batHtml = B.inns ? `<div class="pp-kgroup" style="--kc:var(--pp-runs)"><div class="pp-kgroup-h">Batting${milestones ? `<em>${milestones}</em>` : ''}</div><div class="pp-kbody">
+      ${lead(B.runs, 'Runs', P.primary === 'bat')}
+      <div class="pp-kgrid">${k(strikeRate(B.runs, B.balls), 'Strike rate')}${k(`${B.hs}${B.hsNotOut ? '*' : ''}`, 'Highest')}${k(B.fours, 'Fours')}${k(B.sixes, 'Sixes')}${k(B.inns, 'Innings')}</div>
+    </div></div>` : '';
+  const bowlHtml = W.inns ? `<div class="pp-kgroup" style="--kc:var(--pp-wkts)"><div class="pp-kgroup-h">Bowling</div><div class="pp-kbody">
+      ${lead(W.wkts, W.wkts === 1 ? 'Wicket' : 'Wickets', P.primary === 'bowl')}
+      <div class="pp-kgrid">${k(economy(W.runs, 0, W.balls), 'Economy')}${k(ppOvers(W.balls), 'Overs')}${k(W.best ? `${W.best.w}/${W.best.r}` : '—', 'Best')}${k(W.runs, 'Runs given')}${W.maidens ? k(W.maidens, W.maidens === 1 ? 'Maiden' : 'Maidens') : ''}</div>
+    </div></div>` : '';
+  if(P.primary === 'bowl'){ groups.push(bowlHtml, batHtml); } else { groups.push(batHtml, bowlHtml); }
+  return groups.join('');
+}
+
+// "Nice" y-axis: ≤4 steps, with headroom over the best for its label.
+function ppTicks(max){
+  const step = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500].find(s => (max * 1.12) / s <= 4) || 1000;
+  const top = Math.max(step, Math.ceil((max * 1.12) / step) * step);
+  const ticks = [];
+  for(let t = 0; t <= top; t += step) ticks.push(t);
+  return { top, ticks };
+}
+// One value per match, as columns. cols: [{ key, v (null = didn't bat/bowl), none, cap, x, xs, tip:[…], aria }]
+function ppColumnsHtml(title, sub, cls, cols){
+  const vals = cols.map(c => c.v).filter(v => v != null);
+  const { top, ticks } = ppTicks(Math.max(1, ...vals));
+  const best = Math.max(...vals);
+  const bestAt = best > 0 ? cols.findIndex(c => c.v === best) : -1; // label the best one only
+  return `<div class="pp-card ${cls}">
+    <div class="pp-card-h"><h4>${title}</h4><span>${sub}</span></div>
+    <div class="pp-chart${cols.length > 8 ? ' dense' : ''}" style="--n:${cols.length}">
+      <div class="pp-yaxis" aria-hidden="true">${ticks.map(t => `<span style="--t:${t / top}">${t}</span>`).join('')}</div>
+      <div class="pp-plot">
+        ${ticks.slice(1).map(t => `<i class="pp-gl" style="--t:${t / top}"></i>`).join('')}
+        ${cols.map((c, i) => `<div class="pp-col" role="button" tabindex="0" data-pp-col="${escapeHtml(c.key)}" data-tip="${escapeHtml(JSON.stringify(c.tip))}" aria-label="${escapeHtml(c.aria)}" style="--v:${c.v == null ? 0 : c.v / top};--i:${i}">${
+          c.v == null ? `<span class="pp-none">${c.none}</span>` : '<span class="pp-bar"></span>'}${i === bestAt ? `<span class="pp-cap">${escapeHtml(c.cap)}</span>` : ''}</div>`).join('')}
+      </div>
+      <div class="pp-xaxis" aria-hidden="true">${cols.map(c => `<span>${escapeHtml(c.x)}<small>${escapeHtml(c.xs)}</small></span>`).join('')}</div>
+    </div>
+  </div>`;
+}
+function ppChartsHtml(P){
+  const cards = [];
+  const many = P.entries.length >= 2; // one match is a number, not a chart
+  const vs = (e) => `${e.label} vs ${teamLabel(e.opp) || 'Opponent'}${e.date ? ' · ' + e.date : ''}`;
+  if(many && P.bat.inns){
+    cards.push(ppColumnsHtml('Runs in each match', 'Tap a bar for its clips', 'pp-cols-runs', P.entries.map(e => e.bat ? {
+      key: e.key, v: e.bat.runs, cap: ppScore(e.bat), x: ppAxisLabel(e.label), xs: teamLabel(e.opp),
+      tip: [`${ppScore(e.bat)} ${e.bat.runs === 1 ? 'run' : 'runs'}`, `${e.bat.balls} balls · 4s ${e.bat.fours} · 6s ${e.bat.sixes} · SR ${strikeRate(e.bat.runs, e.bat.balls)}`, vs(e)],
+      aria: `${vs(e)}: ${ppScore(e.bat)} off ${e.bat.balls} balls`
+    } : { key: e.key, v: null, none: 'DNB', x: ppAxisLabel(e.label), xs: teamLabel(e.opp), tip: ['Did not bat', vs(e)], aria: `${vs(e)}: did not bat` })));
+  }
+  if(P.bat.runs > 0) cards.push(ppMixHtml(P.bat));
+  if(many && P.bowl.inns){
+    cards.push(ppColumnsHtml('Wickets in each match', 'Tap a bar for its clips', 'pp-cols-wkts', P.entries.map(e => e.bowl ? {
+      key: e.key, v: e.bowl.wkts, cap: `${e.bowl.wkts}/${e.bowl.runs}`, x: ppAxisLabel(e.label), xs: teamLabel(e.opp),
+      tip: [`${e.bowl.wkts} ${e.bowl.wkts === 1 ? 'wicket' : 'wickets'}`, `${e.bowl.wkts}/${e.bowl.runs} in ${ppOvers(e.bowl.balls)} ov · Econ ${economy(e.bowl.runs, 0, e.bowl.balls)}`, vs(e)],
+      aria: `${vs(e)}: ${e.bowl.wkts} for ${e.bowl.runs} in ${ppOvers(e.bowl.balls)} overs`
+    } : { key: e.key, v: null, none: '—', x: ppAxisLabel(e.label), xs: teamLabel(e.opp), tip: ['Did not bowl', vs(e)], aria: `${vs(e)}: did not bowl` })));
+  }
+  return cards.length ? `<div class="pp-charts pp-rise" style="--d:.13s">${cards.join('')}</div>` : '';
+}
+function ppMixHtml(B){
+  const r6 = B.sixes * 6, r4 = B.fours * 4, ran = Math.max(0, B.runs - r4 - r6);
+  const share = Math.min(1, (r4 + r6) / B.runs);
+  return `<div class="pp-card pp-mix">
+    <div class="pp-card-h"><h4>How the runs came</h4><span>${B.runs} runs · ${B.balls} balls</span></div>
+    <div class="pp-mix-big"><b>${Math.round(share * 100)}%</b><span>in boundaries</span></div>
+    <div class="pp-meter" role="img" aria-label="${Math.round(share * 100)} percent of the runs came in boundaries"><i style="--p:${share}"></i></div>
+    <div class="pp-mix-rows">
+      <div><span class="pp-badge k-six">6</span><span>Sixes</span><b>${B.sixes}</b><em>${r6} runs</em></div>
+      <div><span class="pp-badge k-four">4</span><span>Fours</span><b>${B.fours}</b><em>${r4} runs</em></div>
+      <div><span class="pp-badge k-run">1·2·3</span><span>Running</span><b></b><em>${ran} runs</em></div>
+    </div>
+  </div>`;
+}
+function ppMatchHtml(e){
+  const oc = safeTeamColor(e.opp.color) || '#64748b';
+  const logo = safeLogoUrl(e.opp.logoUrl);
+  const lines = [];
+  if(e.bat) lines.push(`<div class="pp-line"><i class="pp-li bat" aria-hidden="true">${BAT_ICON}</i><b>${ppScore(e.bat)}</b><span>(${e.bat.balls}) · 4s ${e.bat.fours} · 6s ${e.bat.sixes} · SR ${strikeRate(e.bat.runs, e.bat.balls)}</span></div>`);
+  if(e.bowl) lines.push(`<div class="pp-line"><i class="pp-li bowl" aria-hidden="true">${BOWL_ICON}</i><b>${e.bowl.wkts}/${e.bowl.runs}</b><span>(${ppOvers(e.bowl.balls)} ov) · Econ ${economy(e.bowl.runs, 0, e.bowl.balls)}${e.bowl.maidens ? ` · ${e.bowl.maidens}M` : ''}</span></div>`);
+  return `<article class="pp-match" style="--oc:${oc};--oci:${inkOn(oc)}">
+    <div class="pp-m-id">
+      <span class="pp-m-logo" aria-hidden="true">${escapeHtml(teamInitials(e.opp))}${logo ? `<img src="${escapeHtml(logo)}" alt="" loading="lazy" decoding="async" onerror="this.remove()">` : ''}</span>
+      <div class="pp-m-txt"><b>vs ${escapeHtml(teamLabel(e.opp) || 'Opponent')}</b><span>${escapeHtml([e.label, e.date].filter(Boolean).join(' · '))}</span></div>
+      ${e.result ? `<span class="pp-res ${e.result.cls}">${e.result.text}</span>` : ''}
+    </div>
+    <div class="pp-m-lines">${lines.join('')}</div>
+    <div class="pp-m-act" data-pp-act="${escapeHtml(e.key)}"></div>
+  </article>`;
+}
+function ppClipHtml(c){
+  const T = PP_TYPES[c.type];
+  const e = pp.byKey.get(c.matchKey);
+  const opp = e ? teamLabel(e.opp) : (c.opponent || '');
+  const where = [opp ? `vs ${opp}` : '', e ? e.label : (c.matchIndex ? `M${c.matchIndex}` : '')].filter(Boolean).join(' · ');
+  const over = `${c.over ?? '—'}.${c.ballInOver ?? ''}`;
+  const bowling = playerKeyOf(c.bowler) === pp.pk; // one of HIS deliveries (a wicket, or an "other" clip)
+  const sub = c.type === 'out' ? [c.dismissalType || 'Out', c.bowler ? 'b ' + c.bowler : ''].filter(Boolean).join(' · ')
+    : c.type === 'wkt' ? [c.dismissedPlayer || c.striker, c.dismissalType].filter(Boolean).join(' · ')
+    : c.type === 'other' ? [c.outcome, bowling ? (c.striker ? `bowling to ${c.striker}` : 'bowling') : (c.bowler ? `off ${c.bowler}` : '')].filter(Boolean).join(' · ')
+    : c.bowler ? `off ${c.bowler}` : '';
+  const poster = safeLogoUrl(c.posterUrl);
+  const title = `${pp.name} — ${T.title} · Over ${over}${opp ? ' vs ' + opp : ''}`;
+  const ready = c.ready !== false;
+  const dur = ppDuration(c.duration);
+  return `<div class="pp-clip k-${c.type}${ready ? '' : ' is-proc'}" role="button" tabindex="${ready ? 0 : -1}" aria-label="${escapeHtml(`${T.title}, over ${over}${where ? ', ' + where : ''}${ready ? '. Play' : '. Still processing'}`)}"
+      data-clip-id="${escapeHtml(c.clipId)}" data-m="${escapeHtml(c.matchKey)}" data-t="${c.type}" data-title="${escapeHtml(title)}"
+      data-playback-url="${escapeHtml(c.playbackUrl || '')}" data-poster-url="${escapeHtml(poster)}">
+    <div class="pp-thumb">
+      <span class="pp-wm" aria-hidden="true">${T.badge}</span>
+      ${poster ? `<img src="${escapeHtml(poster)}" alt="" loading="lazy" decoding="async" onerror="this.remove()">` : ''}
+      <span class="pp-badge">${T.badge}</span>
+      ${ready ? `<span class="pp-play" aria-hidden="true">${PLAY_ICON}</span>` : '<span class="pp-proc">Processing…</span>'}
+      <span class="pp-over">Over ${escapeHtml(over)}</span>
+      ${dur ? `<span class="pp-dur">${dur}</span>` : ''}
+      ${ready && c.downloadUrl ? `<a class="pp-cdl" href="${escapeHtml(c.downloadUrl)}" title="Download this clip" aria-label="Download this clip">${DOWNLOAD_ICON}</a>` : ''}
+      ${isOwner ? `<button class="pp-del" data-pp-del="${escapeHtml(c.clipId)}" title="Delete this clip" aria-label="Delete this clip">${TRASH_ICON}</button>` : ''}
+    </div>
+    <div class="pp-meta"><b>${escapeHtml(where || 'This tournament')}</b><span>${escapeHtml(sub || ' ')}</span></div>
+  </div>`;
+}
+
+/* ---- Clips: load, filter, download ---- */
+function ppTakeClips(data){
+  if(!data || !data.success) return null;
+  const cats = data.categories || {}, seen = new Set(), list = [];
+  Object.keys(PP_TYPE_OF_CATEGORY).forEach(cat => (cats[cat] || []).forEach(c => {
+    if(!c || !c.clipId || seen.has(c.clipId)) return;
+    seen.add(c.clipId);
+    list.push({ ...c, type: PP_TYPE_OF_CATEGORY[cat], matchKey: String(c.matchId || '') });
+  }));
+  const at = (c) => { const e = pp.byKey.get(c.matchKey); return e ? e.n : 1e4 + (c.matchIndex || 0); };
+  return list.sort((a, b) => at(a) - at(b) || (a.innings || 1) - (b.innings || 1) || (a.over || 0) - (b.over || 0) || (a.ballInOver || 0) - (b.ballInOver || 0));
+}
+function ppCount(match, type){
+  return (pp.clips || []).filter(c => (match === 'all' || c.matchKey === match) && (type === 'all' || c.type === type)).length;
+}
+async function ppLoadClips(tok){
+  const startedAt = performance.now();
+  const data = await fetchTournamentPlayerClips(pp.name);
+  // Let the open animation finish before the grid lays out.
+  const wait = 360 - (performance.now() - startedAt);
+  if(wait > 0) await new Promise(r => setTimeout(r, wait));
+  if(tok !== ppToken) return;
+  pp.clips = ppTakeClips(data);
+  ppRenderClips();
+}
+function ppRenderClips(){
+  const box = document.getElementById('pp-hl-body');
+  const n = document.getElementById('pp-hl-n');
+  if(!box) return;
+  const clips = pp.clips;
+  n.textContent = clips && clips.length ? `${clips.length} clip${clips.length === 1 ? '' : 's'}` : '';
+  if(!clips){
+    box.innerHTML = '<div class="pp-empty">Couldn’t load the clips right now.<button type="button" data-pp-retry>Try again</button></div>';
+  } else if(!clips.length){
+    box.innerHTML = `<div class="pp-empty">No video clips for ${escapeHtml(pp.name)} in this tournament yet — they show up here once they finish processing.</div>`;
+  } else {
+    const keys = [...new Set(clips.map(c => c.matchKey))];
+    const types = Object.keys(PP_TYPES).filter(t => t === 'all' || clips.some(c => c.type === t));
+    const matchChip = (key) => {
+      const e = pp.byKey.get(key), c = clips.find(x => x.matchKey === key);
+      const opp = e ? teamLabel(e.opp) : (c.opponent || '');
+      const label = e ? e.label : (c.matchIndex ? `M${c.matchIndex}` : 'Match');
+      const dc = e ? safeTeamColor(e.opp.color) : '';
+      return `<button type="button" class="pp-chip" data-pp-match="${escapeHtml(key)}"><i class="pp-dot"${dc ? ` style="--dc:${dc}"` : ''}></i>${escapeHtml(label)}${opp ? ` · ${escapeHtml(opp)}` : ''}<span class="n"></span></button>`;
+    };
+    box.innerHTML = `<div class="pp-filters">
+        <div class="pp-chips" role="group" aria-label="Which matches">
+          <button type="button" class="pp-chip" data-pp-match="all">Whole tournament<span class="n"></span></button>${keys.map(matchChip).join('')}
+        </div>
+        <div class="pp-chips" role="group" aria-label="Which clips">${types.map(t => `<button type="button" class="pp-chip" data-pp-type="${t}"${t === 'other' ? ' title="Clips that aren’t a 4, a 6 or a wicket"' : ''}>${
+          PP_TYPES[t].badge ? `<span class="pp-badge k-${t}">${PP_TYPES[t].badge}</span>` : ''}${PP_TYPES[t].chip}<span class="n"></span></button>`).join('')}</div>
+      </div>
+      <div class="pp-grid" id="pp-grid">${clips.map(ppClipHtml).join('')}</div>`;
+  }
+  // Match by match: watch / download each match's own clips.
+  document.querySelectorAll('#clip-modal-body [data-pp-act]').forEach(el => {
+    const k = el.dataset.ppAct, cnt = (clips || []).filter(c => c.matchKey === k).length;
+    el.innerHTML = cnt
+      ? `<button type="button" class="pp-m-btn" data-pp-watch="${escapeHtml(k)}">${PLAY_ICON}<span class="lbl">${cnt} clip${cnt === 1 ? '' : 's'}</span></button><button type="button" class="pp-m-btn icon" data-pp-dl-match="${escapeHtml(k)}" title="Download this match’s clips (one MP4)" aria-label="Download this match’s clips">${DOWNLOAD_ICON}</button>`
+      : (clips ? '<span class="pp-m-none">No clips</span>' : '');
+  });
+  ppApplyFilter();
+}
+// Pick a match or a clip type. A pick that leaves nothing to show widens
+// the OTHER filter (Sixes + a match without a six → that match, all clips),
+// so no chip is ever a dead end.
+function ppSetFilter(kind, value){
+  pp[kind] = value;
+  if(!ppCount(pp.match, pp.type)){ if(kind === 'match') pp.type = 'all'; else pp.match = 'all'; }
+  ppApplyFilter();
+}
+function ppApplyFilter(){
+  const clips = pp.clips || [];
+  // After a delete, a filter can point at clips that are gone.
+  if(pp.match !== 'all' && !clips.some(c => c.matchKey === pp.match)) pp.match = 'all';
+  if(!ppCount(pp.match, pp.type)) pp.type = 'all';
+  const grid = document.getElementById('pp-grid');
+  if(grid) grid.querySelectorAll('.pp-clip').forEach(el => {
+    el.hidden = !((pp.match === 'all' || el.dataset.m === pp.match) && (pp.type === 'all' || el.dataset.t === pp.type));
+  });
+  document.querySelectorAll('#clip-modal-body [data-pp-match]').forEach(b => {
+    const n = ppCount(b.dataset.ppMatch, pp.type), on = b.dataset.ppMatch === pp.match;
+    b.querySelector('.n').textContent = n;
+    b.classList.toggle('on', on); b.classList.toggle('zero', !n); b.setAttribute('aria-pressed', on);
+  });
+  document.querySelectorAll('#clip-modal-body [data-pp-type]').forEach(b => {
+    const n = ppCount(pp.match, b.dataset.ppType), on = b.dataset.ppType === pp.type;
+    b.querySelector('.n').textContent = n;
+    b.classList.toggle('on', on); b.classList.toggle('zero', !n); b.setAttribute('aria-pressed', on);
+  });
+  document.querySelectorAll('#clip-modal-body .pp-col').forEach(c => c.classList.toggle('on', c.dataset.ppCol === pp.match));
+  ppUpdateBar();
+}
+function ppUpdateBar(){
+  const t = document.getElementById('pp-dl-t'), s = document.getElementById('pp-dl-s'), btn = document.getElementById('pp-dl-btn');
+  const T = PP_TYPES[pp.type];
+  const e = pp.match !== 'all' ? pp.byKey.get(pp.match) : null;
+  const n = pp.clips ? ppCount(pp.match, pp.type) : 0;
+  t.textContent = pp.clips === undefined ? 'Loading clips…' : pp.clips === null ? 'Clips couldn’t load' : n ? `Download ${n} ${n === 1 ? T.one : T.many}` : 'No clips to download yet';
+  s.textContent = n ? `${e ? `${e.label} vs ${teamLabel(e.opp) || 'Opponent'}` : 'Whole tournament'} · one MP4 video` : '';
+  btn.disabled = !n || pp.busy;
+  document.querySelectorAll('#clip-modal-body [data-pp-dl-match]').forEach(b => { b.disabled = pp.busy; });
+}
+async function ppDownload(type, matchKey){
+  if(!pp || pp.busy) return;
+  const T = PP_TYPES[type] || PP_TYPES.all;
+  if(!ppCount(matchKey || 'all', type)) return;
+  const e = matchKey ? pp.byKey.get(matchKey) : null;
+  const scope = e ? safeFilePart(`${e.label} vs ${teamLabel(e.opp) || 'Opponent'}`) : 'Tournament';
+  const filename = `${safeFilePart(pp.name)}_${scope}_${T.file}`;
+  const mine = pp;
+  mine.busy = true; ppUpdateBar();
+  try{
+    const res = await apiFetch(`${clipApiBase()}/api/public/tournament/${encodeURIComponent(tournamentTokenCache)}/highlights/compile`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: mine.name, category: T.cat, ...(matchKey ? { match: matchKey } : {}) })
+    });
+    const data = await res.json();
+    if(!data.success) throw new Error(data.error || 'Could not start the download');
+    if(data.empty){ showToast(data.message || 'No clips to download yet.'); return; }
+    await pollCompileJob(data.jobId, filename, document.getElementById('pp-progress'), []);
+  } catch(err){
+    showToast(err.message || 'Could not start the download');
+  } finally {
+    mine.busy = false;
+    if(pp === mine) ppUpdateBar();
+  }
+}
+// Show one match's clips (from a chart bar or a match row).
+function ppShowMatch(key){
+  if(!pp.clips) return;
+  if(!pp.clips.some(c => c.matchKey === key)){ showToast('No clips from this match yet'); return; }
+  ppSetFilter('match', key);
+  document.getElementById('pp-hl').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+}
+
+/* ---- Chart tooltip (values from data → textContent, never markup) ---- */
+function ppShowTip(col){
+  const tip = document.getElementById('pp-tip'), body = document.getElementById('clip-modal-body');
+  if(!tip || !col) return;
+  let lines = [];
+  try { lines = JSON.parse(col.dataset.tip || '[]'); } catch(e){}
+  tip.replaceChildren(...lines.map((text, i) => { const el = document.createElement(i ? 'span' : 'b'); el.textContent = text; return el; }));
+  const br = body.getBoundingClientRect(), cr = col.getBoundingClientRect();
+  const mark = col.querySelector('.pp-cap, .pp-bar, .pp-none');
+  const top = mark ? mark.getBoundingClientRect().top : cr.bottom - 20;
+  const half = Math.min(125, tip.offsetWidth / 2 || 90);
+  tip.style.setProperty('--x', `${Math.min(Math.max(cr.left + cr.width / 2 - br.left, half + 8), br.width - half - 8)}px`);
+  tip.style.setProperty('--y', `${top - br.top + body.scrollTop - 8}px`);
+  tip.classList.add('show');
+}
+function ppHideTip(){ const tip = document.getElementById('pp-tip'); if(tip) tip.classList.remove('show'); }
+
+/* ---- Open / close ---- */
+function openTournamentPlayerModal(name){
+  const backdrop = document.getElementById('clip-modal-backdrop');
+  const modal = document.getElementById('clip-modal');
+  const body = document.getElementById('clip-modal-body');
+  const tok = ++ppToken;
+  pp = ppProfile(name);
+  if(!backdrop.classList.contains('open')) ppReturnFocus = document.activeElement;
+  modal.style.setProperty('--pc', pp.color);
+  modal.style.setProperty('--pci', inkOn(pp.color));
+  document.getElementById('pp-head-k').textContent = (tournamentDataCache && tournamentDataCache.displayName) || 'Tournament';
+  document.getElementById('clip-modal-title').textContent = pp.name;
+  const head = document.getElementById('pp-head');
+  head.classList.remove('named');
+  body.innerHTML = ppHtml(pp);
+  body.scrollTop = 0;
+  ppUpdateBar();
+  backdrop.classList.add('open');
+  clearTimeout(ppPageTimer);
+  ppPageTimer = setTimeout(() => document.documentElement.classList.add('pp-open'), 260);
+  try { document.getElementById('clip-modal-close').focus({ preventScroll: true }); } catch(e){}
+  // The head shows the player's name once their big name scrolls away.
+  if(ppNameObserver) ppNameObserver.disconnect();
+  ppNameObserver = 'IntersectionObserver' in window ? new IntersectionObserver(([en]) => head.classList.toggle('named', !en.isIntersecting), { root: body }) : null;
+  if(ppNameObserver) ppNameObserver.observe(document.getElementById('pp-name'));
+  ppLoadClips(tok);
+}
+function closePlayerModal(){
+  const backdrop = document.getElementById('clip-modal-backdrop');
+  if(!backdrop.classList.contains('open')) return;
+  backdrop.classList.remove('open');
+  clearTimeout(ppPageTimer);
+  document.documentElement.classList.remove('pp-open');
+  ppToken++;
+  ppHideTip();
+  if(ppNameObserver){ ppNameObserver.disconnect(); ppNameObserver = null; }
+  if(ppReturnFocus && document.contains(ppReturnFocus)){ try { ppReturnFocus.focus({ preventScroll: true }); } catch(e){} }
+  ppReturnFocus = null;
+}
+
+(function wirePlayerModal(){
+  const body = document.getElementById('clip-modal-body');
+  document.getElementById('clip-modal-close').innerHTML = CLOSE_ICON;
+  document.querySelector('#pp-dlbar .pp-dl-ico').innerHTML = DOWNLOAD_ICON;
+  document.getElementById('pp-dl-btn').insertAdjacentHTML('afterbegin', DOWNLOAD_ICON);
+  document.getElementById('pp-dl-btn').addEventListener('click', () => ppDownload(pp.type, pp.match === 'all' ? '' : pp.match));
+  document.getElementById('clip-modal-close').addEventListener('click', closePlayerModal);
+  document.getElementById('clip-modal-backdrop').addEventListener('click', (e) => { if(e.target.id === 'clip-modal-backdrop') closePlayerModal(); });
+  document.addEventListener('keydown', (e) => {
+    if(e.key !== 'Escape' || !document.getElementById('clip-modal-backdrop').classList.contains('open')) return;
+    const video = document.getElementById('video-modal-backdrop');
+    if(video && video.classList.contains('open')) return; // the clip player closes first
+    closePlayerModal();
+  });
+  body.addEventListener('click', (e) => {
+    const t = e.target;
+    if(!pp) return;
+    let el;
+    if((el = t.closest('[data-pp-match]'))){ ppSetFilter('match', el.dataset.ppMatch); return; }
+    if((el = t.closest('[data-pp-type]'))){ ppSetFilter('type', el.dataset.ppType); return; }
+    if((el = t.closest('[data-pp-watch]'))){ ppShowMatch(el.dataset.ppWatch); return; }
+    if((el = t.closest('[data-pp-dl-match]'))){ ppDownload('all', el.dataset.ppDlMatch); return; }
+    if((el = t.closest('[data-pp-retry]'))){ pp.clips = undefined; document.getElementById('pp-hl-body').innerHTML = '<div class="pp-skel"><i></i><i></i><i></i><i></i></div>'; ppUpdateBar(); ppLoadClips(ppToken); return; }
+    if((el = t.closest('[data-pp-del]'))){ const card = el.closest('.pp-clip'); deleteClip(el.dataset.ppDel, card && card.dataset.title); return; }
+    if(t.closest('.pp-cdl')) return; // the clip's own download link
+    if((el = t.closest('.pp-col'))){ ppShowMatch(el.dataset.ppCol); return; }
+    if((el = t.closest('.pp-clip')) && !el.classList.contains('is-proc')){
+      openVideoModal(el.dataset.clipId, el.dataset.title, el.dataset.playbackUrl, el.dataset.posterUrl);
+    }
+  });
+  body.addEventListener('keydown', (e) => {
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    const el = e.target.closest && e.target.closest('.pp-clip, .pp-col');
+    if(!el || e.target !== el) return;
+    e.preventDefault();
+    el.click();
+  });
+  body.addEventListener('pointerover', (e) => { if(e.pointerType === 'touch') return; const col = e.target.closest && e.target.closest('.pp-col'); if(col) ppShowTip(col); });
+  body.addEventListener('pointerout', (e) => { const col = e.target.closest && e.target.closest('.pp-col'); if(col && !col.contains(e.relatedTarget)) ppHideTip(); });
+  body.addEventListener('focusin', (e) => { if(e.target.classList && e.target.classList.contains('pp-col')) ppShowTip(e.target); });
+  body.addEventListener('focusout', (e) => { if(e.target.classList && e.target.classList.contains('pp-col')) ppHideTip(); });
+  body.addEventListener('scroll', ppHideTip, { passive: true });
+})();
 
 /* ============================================================
    TOURNAMENT-LEVEL "DOWNLOAD ALL PLAYERS HIGHLIGHTS" (section 8) —
