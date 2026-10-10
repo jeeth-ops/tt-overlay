@@ -4065,9 +4065,10 @@ function concatClipsToFile(localPaths, outFile, workDir) {
 
 // ================================================================
 // 🎬 PRO EDIT — a downloaded highlights video is edited like a broadcast
-// package (see highlight-edit.js): a title card, every clip tagged with its
-// event, player, over and bowler, a branded band wipe with a whoosh between
-// clips, and an end card. Each clip's edited segment is cached (by clip and
+// package (see highlight-edit.js): a title card with the player (or team),
+// their team's badge and their figures, every clip briefly tagged with its
+// event, player, over and bowler, a silent branded band wipe between clips
+// (the clips' own sound is the only sound), and an end card. Each clip's edited segment is cached (by clip and
 // what its tag says), so a clip that was in an earlier video costs nothing the
 // next time; ffmpeg runs one at a time at low priority, so live scoring on
 // this server never waits behind an edit. Anything that goes wrong falls back
@@ -4113,12 +4114,73 @@ function proPlayerName(clips, pk) {
     }
     return '';
 }
+// The title card's name: the first name(s) small above, the surname big.
+function proSplitName(name) {
+    const w = String(name || '').trim().split(/\s+/).filter(Boolean);
+    if (w.length < 2) return { first: '', title: w[0] || '' };
+    const cut = w.length > 2 && /^(jr|sr|ii|iii|iv)\.?$/i.test(w[w.length - 1]) ? w.length - 2 : w.length - 1;
+    return { first: w.slice(0, cut).join(' '), title: w.slice(cut).join(' ') };
+}
+// A team as the title card shows it. Its badge only when it is an embedded
+// image: a link is never fetched by the server.
+function proTeam(t) {
+    if (!t || !(t.name || t.short)) return null;
+    const logo = /^data:image\/(png|jpe?g|webp|gif);base64,/i.test(String(t.logoUrl || '')) ? t.logoUrl : '';
+    return { name: t.name || t.short, short: t.short || '', color: t.color || '', logo };
+}
+// A player's figures over saved matches (one match, or a tournament's), from
+// their scorecards — and the team they played for (in the latest of them).
+function proPlayerFigures(matches, pk) {
+    const f = { matches: 0, bat: { runs: 0, balls: 0, fours: 0, sixes: 0 }, bowl: { balls: 0, runs: 0, wickets: 0 }, team: null };
+    (matches || []).forEach(m => {
+        let side = null;
+        ['A', 'B'].forEach(k => {
+            ((m.battingCard && m.battingCard[k]) || []).forEach(b => {
+                if (!b || playerKey(b.name) !== pk) return;
+                side = k;
+                f.bat.runs += b.runs || 0; f.bat.balls += b.balls || 0; f.bat.fours += b.fours || 0; f.bat.sixes += b.sixes || 0;
+            });
+            ((m.bowlingCard && m.bowlingCard[k]) || []).forEach(b => {
+                if (!b || playerKey(b.name) !== pk) return;
+                side = side || k;
+                f.bowl.balls += (parseInt(b.overs, 10) || 0) * 6 + (b.balls || 0); f.bowl.runs += b.runs || 0; f.bowl.wickets += b.wickets || 0;
+            });
+        });
+        if (side) { f.matches++; f.team = m['team' + side] || f.team; }
+    });
+    return f;
+}
+const proPlural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+// The figures under the name (at most four): batting for a batter's video,
+// bowling for a bowler's, some of both for "all" when they did both.
+function proStatCells(f, category) {
+    const bat = f.bat, bowl = f.bowl;
+    const batted = bat.balls > 0 || bat.runs > 0, bowled = bowl.balls > 0;
+    const batCells = () => [{ value: String(bat.runs), label: 'RUNS', sub: proPlural(bat.balls, 'BALL', 'BALLS') },
+        { value: String(bat.sixes), label: bat.sixes === 1 ? 'SIX' : 'SIXES' }, { value: String(bat.fours), label: bat.fours === 1 ? 'FOUR' : 'FOURS' },
+        ...(bat.balls > 0 ? [{ value: (bat.runs * 100 / bat.balls).toFixed(1), label: 'STRIKE RATE' }] : [])];
+    const bowlCells = () => [{ value: String(bowl.wickets), label: bowl.wickets === 1 ? 'WICKET' : 'WICKETS', sub: proPlural(bowl.runs, 'RUN', 'RUNS') },
+        { value: `${Math.floor(bowl.balls / 6)}.${bowl.balls % 6}`, label: 'OVERS' }, { value: (bowl.runs * 6 / bowl.balls).toFixed(2), label: 'ECONOMY' }];
+    if (category === 'wickets') return bowled ? bowlCells() : [];
+    if (['sixes', 'fours', 'boundaries', 'dismissals'].includes(category)) return batted ? batCells() : [];
+    if (batted && bowled) return [...batCells().slice(0, 2), ...bowlCells().slice(0, 2)];
+    return batted ? batCells() : bowled ? bowlCells() : [];
+}
+// A team's innings (side 'A' / 'B') as figures: the score, its sixes and fours.
+function proTeamCells(m, side) {
+    const s = m && m['score' + side];
+    if (!s || s.runs == null) return [];
+    const rows = (m.battingCard && m.battingCard[side]) || [];
+    const sum = (key) => rows.reduce((n, b) => n + ((b && b[key]) || 0), 0);
+    return [{ value: `${s.runs || 0}/${s.wickets || 0}`, label: 'SCORE', sub: s.overs ? `${s.overs} OVERS` : '' },
+        { value: String(sum('sixes')), label: 'SIXES' }, { value: String(sum('fours')), label: 'FOURS' }];
+}
 // The saved match a clip key (roomId or matchId) belongs to, and its tournament's name.
 async function proMatchContext(matchKey) {
     if (!matchRecordsCollection || !matchKey) return {};
     try {
         const m = await matchRecordsCollection.findOne({ $or: [{ roomId: matchKey }, { matchId: matchKey }] },
-            { projection: { teamA: 1, teamB: 1, matchTitle: 1, ownerUid: 1, leagueKey: 1 } });
+            { projection: { teamA: 1, teamB: 1, matchTitle: 1, ownerUid: 1, leagueKey: 1, battingCard: 1, bowlingCard: 1, scoreA: 1, scoreB: 1, matchResultText: 1 } });
         if (!m) return {};
         let tournament = '';
         if (leaguesCollection && m.leagueKey && m.leagueKey !== SINGLE_MATCHES_LEAGUE_KEY) {
@@ -4127,28 +4189,39 @@ async function proMatchContext(matchKey) {
         }
         const nm = (t) => (t && (t.name || t.short)) || '';
         const sh = (t) => (t && (t.short || t.name)) || '';
-        return { teamA: nm(m.teamA), teamB: nm(m.teamB), shortA: sh(m.teamA), shortB: sh(m.teamB), title: m.matchTitle || '', tournament };
+        return { teamA: nm(m.teamA), teamB: nm(m.teamB), shortA: sh(m.teamA), shortB: sh(m.teamB), title: m.matchTitle || '', tournament, result: m.matchResultText || '', rec: m };
     } catch (e) { return {}; }
 }
 const proVs = (a, b) => (a && b ? `${a} vs ${b}` : (a || b || ''));
-// The title card of a scorecard (one match) download.
+// The title card of a scorecard (one match) download: who or what, the match,
+// what the video holds, and the figures behind it.
 async function proTitleForMatchCompile(body, matchId, clips) {
     const ctx = await proMatchContext(matchId);
     const type = String(body.type || '').toLowerCase();
     const category = String(body.category || '').toLowerCase();
     const team = String(body.team || '').toUpperCase();
-    const teamName = team === 'A' ? ctx.teamA : team === 'B' ? ctx.teamB : '';
-    const kicker = [ctx.tournament, ctx.title].filter(Boolean).join('  ·  ') || 'MATCH HIGHLIGHTS';
-    const meta = [proCountsLine(clips), proVs(ctx.shortA, ctx.shortB)].filter(Boolean).join('  ·  ');
+    const side = team === 'A' || team === 'B' ? team : '';
+    const teamName = side ? ctx['team' + side] : '';
+    const kicker = ctx.tournament || 'MATCH HIGHLIGHTS';
+    const vs = proVs(ctx.shortA, ctx.shortB);
+    const line = [vs, ctx.title].filter(Boolean).join('  ·  ');
+    const meta = proCountsLine(clips);
     if (type === 'player') {
-        const who = proPlayerName(clips, playerKey(body.playerKey)) || 'PLAYER';
-        return { kicker, title: who, pill: category ? PRO_PILL[category] || 'HIGHLIGHTS' : 'MATCH HIGHLIGHTS', meta, kind: PRO_KIND[category] || 'BRAND' };
+        const pk = playerKey(body.playerKey);
+        const fig = ctx.rec ? proPlayerFigures([ctx.rec], pk) : null;
+        return { kicker, line, ...proSplitName(proPlayerName(clips, pk) || 'PLAYER'), pill: category ? PRO_PILL[category] || 'HIGHLIGHTS' : 'MATCH HIGHLIGHTS', meta,
+            stats: fig ? proStatCells(fig, category) : [], team: proTeam(fig && fig.team), kind: PRO_KIND[category] || 'BRAND' };
     }
+    const teamStats = side ? proTeamCells(ctx.rec, side) : [];
+    const teamCard = side && ctx.rec ? proTeam(ctx.rec['team' + side]) : null;
     if (type === 'sixes' || type === 'fours' || type === 'wickets') {
-        return { kicker, title: teamName || proVs(ctx.teamA, ctx.teamB) || 'MATCH HIGHLIGHTS', pill: type === 'wickets' ? 'ALL WICKETS' : PRO_PILL[type], meta, kind: PRO_KIND[type] };
+        return { kicker, line, title: teamName || proVs(ctx.teamA, ctx.teamB) || 'MATCH HIGHLIGHTS', pill: type === 'wickets' ? 'ALL WICKETS' : PRO_PILL[type], meta,
+            stats: teamStats, team: teamCard, kind: PRO_KIND[type] };
     }
-    if (type === 'team') return { kicker, title: teamName || 'TEAM HIGHLIGHTS', pill: 'TEAM HIGHLIGHTS', meta, kind: 'BRAND' };
-    return { kicker, title: proVs(ctx.teamA, ctx.teamB) || 'MATCH HIGHLIGHTS', pill: 'FULL MATCH HIGHLIGHTS', meta, kind: 'BRAND' };
+    if (type === 'team') return { kicker, line, title: teamName || 'TEAM HIGHLIGHTS', pill: 'TEAM HIGHLIGHTS', meta, stats: teamStats, team: teamCard, kind: 'BRAND' };
+    const both = ['A', 'B'].map(k => { const c = proTeamCells(ctx.rec, k)[0]; return c && { ...c, label: ctx['short' + k] || `TEAM ${k}` }; }).filter(Boolean);
+    return { kicker, line: [ctx.title, ctx.result].filter(Boolean).join('  ·  '), title: vs || 'MATCH HIGHLIGHTS', pill: 'FULL MATCH HIGHLIGHTS', meta, stats: both,
+        teams: ctx.rec ? [proTeam(ctx.rec.teamA), proTeam(ctx.rec.teamB)].filter(Boolean) : [], kind: 'BRAND' };
 }
 
 // Runs one compilation job end-to-end: order -> dedupe -> download each
@@ -4596,14 +4669,16 @@ app.post('/api/public/tournament/:token/highlights/compile', async (req, res) =>
             status: 'queued', progress: 0, message: 'Preparing highlights...',
             matchId: `tournament:${req.params.token}`, createdAt: Date.now(), included: 0, skipped: 0
         });
-        // Title card: the tournament, the player, what the video holds.
+        // Title card: the tournament, the player and their team, the match (or
+        // how many), what the video holds and their figures over those matches.
         const oneMatch = matchKey ? ctx.matches.find(m => (m.roomId || m.matchId) === matchKey) : null;
         const short = (t) => (t && (t.short || t.name)) || '';
         const makeTitle = (clips) => {
-            const nMatches = new Set(clips.map(c => c.matchId)).size;
-            const where = oneMatch ? proVs(short(oneMatch.teamA), short(oneMatch.teamB)) : `${nMatches} MATCH${nMatches === 1 ? '' : 'ES'}`;
-            return { kicker: ctx.displayName || 'TOURNAMENT HIGHLIGHTS', title: name, pill: PRO_PILL[category] || 'HIGHLIGHTS',
-                meta: [proCountsLine(clips), where].filter(Boolean).join('  ·  '), kind: PRO_KIND[category] || 'BRAND' };
+            const fig = proPlayerFigures(oneMatch ? [oneMatch] : ctx.matches, pk);
+            const nMatches = fig.matches || new Set(clips.map(c => c.matchId)).size;
+            const line = oneMatch ? [proVs(short(oneMatch.teamA), short(oneMatch.teamB)), oneMatch.matchTitle].filter(Boolean).join('  ·  ') : `${nMatches} MATCH${nMatches === 1 ? '' : 'ES'}`;
+            return { kicker: ctx.displayName || 'TOURNAMENT HIGHLIGHTS', line, ...proSplitName(name), pill: PRO_PILL[category] || 'HIGHLIGHTS',
+                meta: proCountsLine(clips), stats: proStatCells(fig, category), team: proTeam(fig.team), kind: PRO_KIND[category] || 'BRAND' };
         };
         runCompileJob(jobId, selected, { makeTitle }).catch(err => {
             console.log(`Tournament compile job ${jobId} crashed:`, err.message || err);

@@ -7,17 +7,22 @@
  *
  *   title card ─▶ clip ─▶ band wipe ─▶ clip ─▶ band wipe ─▶ … ─▶ end card
  *
- * - The title card: the clip's own picture, blurred, slowly zooming, under the
- *   tournament, the player (or the teams) and what the video holds.
- * - Every clip carries a stacked event tag at the top left — the event (SIX /
- *   FOUR / WICKET / …), the player, then the over and the bowler. Top left on
- *   purpose: the broadcast score bar (bottom) and the channel logo (top right)
- *   are already in the picture.
- * - Between clips a branded band, the logo in the middle, sweeps across with a
- *   whoosh. It covers the whole frame at the cut, so a cut is never seen; its
- *   leading edge is the brand colour, its trailing edge the colour of the event
- *   it reveals.
- * - The end card: logo and website, then a fade to black.
+ * - The title card (~2.6 s) opens on the brand band, which whips away onto the
+ *   player: the name, the team's badge, the tournament and the match, what the
+ *   video holds and the player's figures (runs and balls, fours, sixes /
+ *   wickets, overs…) — over a blurred, slowly pushing still of the first clip.
+ * - Each clip carries a small event tag at the top left for its first few
+ *   seconds (SIX / FOUR / WICKET …, the player, the over and the bowler), gone
+ *   long before the ball is bowled: the shot itself is never covered. Top left
+ *   on purpose: the broadcast score bar (bottom) and the channel logo (top
+ *   right) are already in the picture.
+ * - Between clips a branded band sweeps across: a slab in the colour of what
+ *   comes next, then the navy panel with the logo. It is motion-blurred while
+ *   it rushes in and out, all but stops while it covers the cut (so a cut is
+ *   never seen), and a glint of light crosses the logo. It is silent: the only
+ *   sound in the video is the clips' own.
+ * - The end card (1.6 s): the band clears onto the logo, which springs into
+ *   place under a sweep of light, then the website and a fade to black.
  * - One H.264 / AAC MP4 (faststart): 1080p or 720p, 25 or 30 fps.
  *
  * Fast, and kind to the live server:
@@ -25,13 +30,20 @@
  *   half of the wipe on either side. The band's path is ONE function of time,
  *   split at the cut, so two segments rendered apart meet without a seam —
  *   and a segment can be cached and reused by any later video with that clip.
+ * - The band's frames for either side of a cut — in place, motion-blurred
+ *   for their speed (a handful of pre-blurred copies of the band, each frame
+ *   taking the one it needs), glint and all — are drawn ONCE per format and
+ *   colour, as a short clip with alpha. A segment only lays that clip over
+ *   its first and last few frames; the rest of it streams straight through.
  * - Every segment is encoded with the same "stitchable" x264 settings, so the
  *   finished picture is a stream copy of the segments (no second encode); the
  *   sound rides in each segment losslessly and is encoded once, as one track.
  * - One ffmpeg at a time, at low priority (nice), so live scoring on the same
  *   machine never waits behind an edit.
- * - Built for the server's ffmpeg 4.1 static build (no xfade): the wipe is a
- *   pre-drawn band moved by an expression, the text is drawtext.
+ * - Built for the server's ffmpeg 4.1 static build (no xfade, no animated
+ *   scale): the wipe's frames are cut from the band picture (crop + pad),
+ *   names rise through a mask (drawtext into alphamerge), the logo's spring is
+ *   zoompan.
  *
  * Node core only.
  */
@@ -40,19 +52,22 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
 
-const STYLE = 'v1';             // bump when the look changes: old cached segments are left alone
+const STYLE = 'v2';             // bump when the look changes: old cached segments are left alone
 const STING = 0.6;              // the whole wipe, seconds
 const HALF = STING / 2;         // each segment's half of it
-const EASE_K = 0.75;            // the band rushes in, lingers while it covers, rushes out
-const INTRO_SEC = 2.8;
-const OUTRO_SEC = 2.6;
-const TAG_IN = 0.45;            // the event tag arrives just after the band has gone
-const TAG_HOLD = 3.3;
+const EASE_K = 0.85;            // the band rushes in, all but stops over the cut, rushes out
+const SHUTTER = 0.5;            // motion blur: the band smears over half a frame's travel (a 180° shutter)
+const BLUR = [0, 12, 30, 64, 128]; // the band's pre-blurred copies: box radius along the motion, px at 1080p
+const GLINT = [0.16, 0.44];     // stinger time the glint crosses the logo (the cut is at HALF)
+const INTRO_SEC = 2.6;
+const OUTRO_SEC = 1.6;
+const TAG_IN = 0.5;             // the event tag arrives just after the band has gone…
+const TAG_HOLD = 3.0;           // …and is gone long before the ball is bowled
 
 const ACCENT = { SIX: 'a855f7', FOUR: '3b82f6', WICKET: 'ef4444', HIGHLIGHT: '22c55e', BRAND: 'f59e0b' };
 const FONT_DIR = path.join(__dirname, 'assets', 'highlights', 'fonts');
 const FONTS = {
-  display: path.join(FONT_DIR, 'BigShoulders-Bold.ttf'),       // names, titles
+  display: path.join(FONT_DIR, 'BigShoulders-Bold.ttf'),       // names, titles, figures
   event: path.join(FONT_DIR, 'InterDisplay-BlackItalic.otf'),  // SIX / FOUR / WICKET
   body: path.join(FONT_DIR, 'Inter-SemiBold.otf')              // over, bowler, website
 };
@@ -60,6 +75,8 @@ const LOGO = path.join(__dirname, 'logo.png');
 
 /* ------------------------------------------------------------- small helpers */
 const r2 = (n) => Math.round(n * 100) / 100;
+const f6 = (n) => Number(n).toFixed(6);
+const even = (n) => Math.max(2, Math.round(n / 2) * 2);
 // Segment lengths are whole multiples of a span that is BOTH whole video frames
 // and whole AAC frames (1024 samples at 48 kHz): 16 frames at 30 fps (0.533 s,
 // 25 AAC frames), 8 at 25 fps (0.32 s, 15). Picture and sound of every segment
@@ -74,11 +91,18 @@ const clipFrames = (info, p) => Math.max(gridLength(1.5, p.fps), gridLength(info
 // A path inside a filtergraph option (Windows drive colons, quotes).
 const fpath = (p) => String(p).replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
 const clampExpr = (e) => `min(max(${e},0),1)`;
+// 0 → 1 while `v` (t, or zoompan's frame number) runs from a to a + d.
+const prog = (a, d, v = 't') => clampExpr(`(${v}-${r2(a)})/${r2(d)}`);
+const easeOut = (u) => `(1-pow(1-${u},3))`;                                  // decelerates into place
+const easeIn = (u) => `pow(${u},3)`;                                         // accelerates away
+const easeOutBack = (u) => `(1+2.70158*pow(${u}-1,3)+1.70158*pow(${u}-1,2))`; // overshoots a touch, settles
 // Text shown on the video: one line, plain printable characters, upper case.
 function cleanText(s, max = 64) {
   return String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase().slice(0, max);
 }
 function sha1(o) { return crypto.createHash('sha1').update(typeof o === 'string' ? o : JSON.stringify(o)).digest('hex'); }
+const hexOf = (c) => { const m = /^#?([0-9a-f]{6}|[0-9a-f]{3})$/i.exec(String(c || '').trim()); if (!m) return null; const h = m[1].length === 3 ? m[1].replace(/./g, '$&$&') : m[1]; return h.toLowerCase(); };
+const rgbOf = (hex) => [0, 2, 4].map(i => parseInt(hex.slice(i, i + 2), 16));
 // CPUs this process may really use: a container's cgroup quota when it has one
 // (a hosted server reports the host's cores, not the slice it was given).
 function cpuBudget() {
@@ -135,6 +159,26 @@ function cardForClip(clip) {
   return { kind: 'HIGHLIGHT', label, title: striker || 'HIGHLIGHT', sub: join(at, bowler && `BOWLER ${bowler}`) };
 }
 
+/* ---------------------------------------------------------- filtergraphs */
+// Collects a command's inputs and filter chains, handing out input numbers and
+// unique labels as it goes.
+function graph() {
+  const inputs = [], chains = [];
+  let n = 0;
+  return {
+    input(args) { inputs.push(args); return inputs.length - 1; },
+    file(f) { return this.input(['-i', f]); },
+    add(s) { chains.push(s); },
+    label(prefix) { n++; return `${prefix}${n}`; },
+    args() { return [].concat(...inputs); },
+    script() { return chains.join(';\n'); }
+  };
+}
+// A still image repeated for the length of a segment: decoded and converted
+// to the blend format once (not once per frame), and timed in whole frames of
+// the video (a still's own time base is 1/25).
+const loopImg = (inp, fps, label, pre = '') => `[${inp}:v]${pre}format=yuva420p,loop=loop=-1:size=1:start=0,settb=1/${fps},setpts=N[${label}]`;
+
 /* ------------------------------------------------------------------ ffmpeg */
 function createHighlightEditor(opts = {}) {
   const ffmpegPath = opts.ffmpegPath;
@@ -188,6 +232,13 @@ function createHighlightEditor(opts = {}) {
       p.on('close', (code) => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}: ${err.trim().slice(-1500)}`)); });
     });
   }
+  // A long filtergraph goes in a script file (no command-line length limit,
+  // no shell quoting).
+  function withScript(dir, G, outArgs) {
+    const f = path.join(dir, `graph-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
+    fs.writeFileSync(f, G.script(), 'utf8');
+    return [...G.args(), '-filter_complex_script', f, ...outArgs];
+  }
   // ffmpeg -i with no output: the stream lines on stderr are the probe.
   function probe(file) {
     return new Promise((resolve) => {
@@ -203,7 +254,8 @@ function createHighlightEditor(opts = {}) {
         resolve({
           duration: Number(d[1]) * 3600 + Number(d[2]) * 60 + Number(d[3]),
           width: Number(v[1]), height: Number(v[2]), fps: f ? Number(f[1]) : 30,
-          hasAudio: /Stream #\d+:\d+[^\n]*Audio:/.test(err)
+          hasAudio: /Stream #\d+:\d+[^\n]*Audio:/.test(err),
+          mono: /Stream #\d+:\d+[^\n]*Audio:[^\n]*\bmono\b/.test(err)
         });
       });
     });
@@ -235,65 +287,209 @@ function createHighlightEditor(opts = {}) {
       // finished video gets ONE AAC encode of the whole soundtrack.
       '-c:a', 'flac', '-ar', '48000', '-ac', '2', '-threads', String(threads), '-f', 'matroska'];
   }
+  // Silence of exactly a segment's length (the title and end cards).
+  const silence = (G, T) => G.input(['-f', 'lavfi', '-t', String(r2(T + 0.5)), '-i', 'anullsrc=r=48000:cl=stereo']);
+  const cutAudio = (T) => `aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,atrim=0:${f6(T)},asetpts=PTS-STARTPTS,apad,atrim=end_sample=${Math.round(T * 48000)}`;
 
   /* ------------------------------------------------------------ the art */
-  // The band: a slanted navy slab (logo in the middle), an accent stripe and a
-  // thin detached line on both edges. Drawn once per format and accent.
+  // The band, from its leading edge in: a white hairline, a slab in the
+  // accent colour (deepening towards the panel), a second hairline, then the
+  // navy panel with the logo on a soft light — and the same again on the
+  // trailing edge. Slanted; wider than the frame by m, so for a moment it
+  // covers all of it.
   function bandGeom(p) {
-    const k = p.k, s = Math.round(350 * k), m = Math.round(320 * k), L = Math.round(30 * k);
-    const Bw = p.w + s + m, IW = L + s + Bw + L;
-    return { s, m, L, Bw, IW, xs: -IW, xe: p.w };
+    const k = p.k;
+    const s = Math.round(350 * k), m = Math.round(320 * k);
+    const hl = Math.max(2, Math.round(6 * k)), gap = Math.round(14 * k), aw = Math.round(250 * k), hl2 = Math.max(2, Math.round(4 * k));
+    const side = hl2 + aw + gap + hl, L = side + Math.round(30 * k);
+    const Bw = p.w + s + m, IW = even(L + s + Bw + L);
+    // the picture has an empty margin on each side wider than the biggest
+    // blur, so a blurred copy is never cut off by its own edge
+    const pad = Math.round((BLUR[BLUR.length - 1] + 24) * k), PW = IW + 2 * pad;
+    return { s, m, hl, gap, aw, hl2, side, L, Bw, IW, pad, PW, xs: -IW, xe: p.w, span: p.w + IW };
   }
+  // x of the band's picture (its margin included) at stinger time tau
+  // (0 … STING) — the same function on both sides of a cut, which is what
+  // makes two separately rendered halves meet.
+  function bandLeft(g, tau) {
+    const U = tau / STING;
+    return g.xs + g.span * (U + EASE_K * Math.sin(2 * Math.PI * U) / (2 * Math.PI)) - g.pad;
+  }
+  // The frames of a segment the band is on, as stinger time: the head (its
+  // first frames, the band leaving) and the tail (its last frames, the band
+  // arriving). The same for every segment of a format.
+  function windowSpan(p, side) {
+    if (side === 'head') return { tau0: HALF, n: Math.ceil(HALF * p.fps - 1e-6) };
+    const n = Math.floor(HALF * p.fps + 1e-6);
+    return { tau0: HALF - n / p.fps, n };
+  }
+  // Which blurred copy a frame at stinger time tau takes: the band's travel
+  // during the shutter, as a box radius in 1080p pixels.
+  function blurLevel(p, g, tau) {
+    const v = 1 + EASE_K * Math.cos(2 * Math.PI * tau / STING);
+    const want = (g.span / STING / p.fps) * v * SHUTTER / 2 / p.k;
+    let best = 0;
+    BLUR.forEach((r, i) => { if (Math.abs(Math.log((r + 4) / (want + 4))) < Math.abs(Math.log((BLUR[best] + 4) / (want + 4)))) best = i; });
+    return best;
+  }
+
   const assetsMemo = new Map();
   function ensureAssets(p) {
     const key = `${STYLE}-${p.key}`;
     if (!assetsMemo.has(key)) assetsMemo.set(key, buildAssets(p, path.join(cacheDir, 'assets', key)).catch((e) => { assetsMemo.delete(key); throw e; }));
     return assetsMemo.get(key);
   }
-  // An asset is written under a temporary name and moved into place, so a
-  // crash half-way never leaves a broken file that a later render would trust.
-  async function makeOnce(file, args) {
-    if (fs.existsSync(file)) return;
-    const ext = path.extname(file), tmp = `${file.slice(0, -ext.length)}.${process.pid}.tmp${ext}`;
-    try { await run([...args, tmp]); fs.renameSync(tmp, file); } catch (e) { fs.unlink(tmp, () => {}); throw e; }
+  // Assets are written under temporary names and moved into place, so a crash
+  // half-way never leaves a broken file that a later render would trust.
+  async function makeAll(files, argsFor) {
+    if (files.every(f => fs.existsSync(f))) return;
+    const tmps = files.map(f => { const ext = path.extname(f); return `${f.slice(0, -ext.length)}.${process.pid}.tmp${ext}`; });
+    try {
+      await run(argsFor(tmps));
+      tmps.forEach((t, i) => fs.renameSync(t, files[i]));
+    } catch (e) { tmps.forEach(t => fs.unlink(t, () => {})); throw e; }
   }
+  const makeOnce = (file, args) => makeAll([file], ([tmp]) => [...args, tmp]);
+
   async function buildAssets(p, dir) {
     fs.mkdirSync(dir, { recursive: true });
-    const g = bandGeom(p), k = p.k, H = p.h;
-    const out = { dir, band: {}, shade: path.join(dir, 'shade.png'), whoosh: path.join(dir, 'whoosh.wav'), logo: path.join(dir, 'logo.png') };
-    const logoH = Math.round(H * 0.22 / 2) * 2;
-    await makeOnce(out.logo, ['-i', LOGO, '-vf', `scale=-2:${logoH}:flags=lanczos,format=rgba`, '-frames:v', '1']);
-    const strip = Math.round(34 * k), lineW = Math.round(12 * k), gap = Math.round(18 * k);
-    for (const [name, hex] of Object.entries(ACCENT)) {
-      const file = path.join(dir, `band-${name}.png`);
-      out.band[name] = file;
-      const R = parseInt(hex.slice(0, 2), 16), G = parseInt(hex.slice(2, 4), 16), B = parseInt(hex.slice(4, 6), 16);
-      // u: distance along the slab from its slanted left edge.
-      const u = `(X-${g.L}-${g.s}*(${H}-Y)/${H})`;
-      const inBody = `between(${u},0,${g.Bw - 1})`;
-      const inStrip = `(between(${u},0,${strip - 1})+between(${u},${g.Bw - strip},${g.Bw - 1}))`;
-      const inLine = `(between(${u},${-gap - lineW},${-gap - 1})+between(${u},${g.Bw + gap},${g.Bw + gap + lineW - 1}))`;
-      const ch = (acc, navyTop, navyBot) => `if(${inStrip}+${inLine},${acc},${navyTop}+(${navyBot - navyTop})*Y/${H})`;
-      await makeOnce(file, ['-f', 'lavfi', '-i', `color=c=black@0:s=${g.IW}x${H},format=rgba`, '-i', out.logo,
-        '-filter_complex',
-        `[0:v]geq=r='${ch(R, 11, 22)}':g='${ch(G, 18, 34)}':b='${ch(B, 32, 58)}':a='if(${inBody},255,if(${inLine},200,0))'[b];` +
-        `[b][1:v]overlay=x=${g.L + Math.round(g.s / 2 + g.Bw / 2)}-w/2:y=(H-h)/2:format=rgb[o]`,
-        '-map', '[o]', '-frames:v', '1']);
-    }
-    // Darkens the left of a title card for the text, and the bottom a little.
-    await makeOnce(out.shade, ['-f', 'lavfi', '-i', `color=c=black:s=${p.w}x${H},format=rgba`, '-vf',
-      `geq=r=6:g=10:b=20:a='min(255,215*pow(1-X/W,1.15)+90*pow(Y/H,2.5)+40)'`, '-frames:v', '1']);
-    // A whoosh: filtered pink noise, swelling to the cut and away again.
-    await makeOnce(out.whoosh, ['-f', 'lavfi', '-i', `anoisesrc=d=${STING}:c=pink:r=48000:a=0.6:s=11`, '-af',
-      `highpass=f=320,lowpass=f=7000,afade=t=in:d=${HALF}:curve=exp,afade=t=out:st=${HALF}:d=${HALF}:curve=exp,volume=1.4,aformat=channel_layouts=stereo`]);
+    const g = bandGeom(p), k = p.k, W = p.w, H = p.h;
+    const C = even(H * 0.48);                      // the end card's logo box
+    const out = {
+      dir, C,
+      glint: path.join(dir, 'glint.png'), glintW: Math.round(380 * k),
+      logoSmall: path.join(dir, 'logo-small.png'),
+      logoSpring: path.join(dir, 'logo-spring.png'), springZ: 1 / 0.86,
+      shine: path.join(dir, 'shine.png'),
+      endBg: path.join(dir, 'end-bg.png')
+    };
+    await makeOnce(out.logoSmall, ['-i', LOGO, '-vf', `scale=-2:${even(H * 0.075)}:flags=lanczos,format=rgba`, '-frames:v', '1']);
+    // The end card's logo, on a box twice the size it is shown at: zoompan
+    // then only ever scales it down, so the spring stays sharp.
+    const springLogo = even(2 * H * 0.30 / out.springZ);
+    await makeOnce(out.logoSpring, ['-i', LOGO, '-vf', `scale=-2:${springLogo}:flags=lanczos,format=rgba,pad=${2 * C}:${2 * C}:(ow-iw)/2:(oh-ih)/2:color=black@0`, '-frames:v', '1']);
+    // A soft slanted streak of light (rides along the band, across the logo).
+    const gw = out.glintW;
+    await makeOnce(out.glint, ['-f', 'lavfi', '-i', `color=c=white@0:s=${even(gw + g.s)}x${H},format=rgba`, '-vf',
+      `geq=r=255:g=255:b=255:a='50*exp(-pow((X-${g.s}*(${H}-Y)/${H}-${gw / 2})/${r2(gw / 5)},2))'`, '-frames:v', '1']);
+    // The sweep of light across the end card's logo: a streak in the middle of
+    // a strip three logo-boxes wide, cropped through a moving window.
+    await makeOnce(out.shine, ['-f', 'lavfi', '-i', `color=c=white@0:s=${3 * C}x${C},format=rgba`, '-vf',
+      `geq=r=255:g=255:b=255:a='200*exp(-pow((X-${1.5 * C}-0.45*(Y-${C / 2}))/${r2(C * 0.09)},2))'`, '-frames:v', '1']);
+    // The end card's background: deep navy, lighter behind the logo (drawn
+    // small, it is all soft light).
+    const ew = even(W / 4), eh = even(H / 4);
+    const glow = `exp(-(pow((X-${ew / 2})/${r2(ew * 0.42)},2)+pow((Y-${eh * 0.44})/${r2(eh * 0.5)},2)))`;
+    await makeOnce(out.endBg, ['-f', 'lavfi', '-i', `color=c=black:s=${ew}x${eh},format=rgb24`, '-vf',
+      `geq=r='6+20*${glow}':g='10+30*${glow}':b='22+50*${glow}'`, '-frames:v', '1']);
+
+    // The band in each accent colour, lazily: sharp, plus its blurred copies;
+    // and from them the band's frames for either side of a cut.
+    const bands = new Map(), stings = new Map();
+    out.band = (kind) => {
+      const kd = ACCENT[kind] ? kind : 'HIGHLIGHT';
+      if (!bands.has(kd)) bands.set(kd, buildBand(p, g, dir, kd).catch((e) => { bands.delete(kd); throw e; }));
+      return bands.get(kd);
+    };
+    out.sting = (kind, side) => {
+      const kd = ACCENT[kind] ? kind : 'HIGHLIGHT', key = `${kd}-${side}`;
+      if (!stings.has(key)) stings.set(key, buildSting(p, g, dir, out, kd, side).catch((e) => { stings.delete(key); throw e; }));
+      return stings.get(key);
+    };
     return out;
   }
+  // One ffmpeg for a colour: the art drawn at half size (it is only ever seen
+  // rushing past, or for a few frames behind the sharp logo), scaled up for
+  // the sharp copy with a full-size logo; the blurred copies stay half size
+  // (blur hides it) and are scaled up when used.
+  async function buildBand(p, g, dir, kind) {
+    const files = BLUR.map((_, i) => path.join(dir, `band-${kind}-${i}.png`));
+    const [R, G, B] = rgbOf(ACCENT[kind]);
+    const H = p.h, k = p.k, q = 0.5, hw = even(g.PW * q), hh = even(H * q);
+    const s = g.s * q, L = (g.pad + g.L) * q, Bw = g.Bw * q, aw = g.aw * q, gap = g.gap * q, hl = Math.max(1, g.hl * q), hl2 = Math.max(1, g.hl2 * q);
+    const u = `(X-${L}-${s}*(${hh}-Y)/${hh})`;                       // along the band, from the panel's left edge
+    const out = `if(lt(${u},${Bw / 2}),-${u},${u}-${Bw})`;            // how far outside the panel (< 0 inside)
+    const inBody = `lt(${out},0)`, inHair2 = `between(${out},0,${hl2})`;
+    const inSlab = `gt(${out},${hl2})*lte(${out},${hl2 + aw})`, inHair = `gt(${out},${hl2 + aw + gap})*lte(${out},${hl2 + aw + gap + hl})`;
+    const cx = L + s / 2 + Bw / 2, cy = hh / 2;
+    const halo = `22*exp(-(pow((X-${cx})/${r2(560 * k * q)},2)+pow((Y-${cy})/${r2(360 * k * q)},2)))`;
+    const ch = (c, top, bot) => `if(${inHair}+${inHair2},245,if(${inSlab},${c}*(0.62+0.38*(${out}-${hl2})/${aw}),${top}+${bot - top}*Y/${hh}+${halo}))`;
+    const alpha = `if(${inBody}+${inHair2}+${inSlab},255,if(${inHair},230,0))`;
+    const LH = even(H * 0.25), shPad = Math.round(60 * k), shR = Math.max(2, Math.round(22 * k));
+    const cxF = Math.round(g.pad + g.L + g.s / 2 + g.Bw / 2);
+    const shadow = (h, pad, r) => `scale=-2:${h}:flags=lanczos,format=rgba,pad=iw+${2 * pad}:ih+${2 * pad}:${pad}:${pad}:color=black@0,lutrgb=r=0:g=0:b=0:a=val*0.55,boxblur=luma_radius=${r}:luma_power=2:alpha_radius=${r}:alpha_power=2`;
+    const fc = [
+      `[0:v]geq=r='${ch(R, 8, 18)}':g='${ch(G, 14, 30)}':b='${ch(B, 27, 54)}':a='${alpha}',split[ha][hb]`,
+      `[1:v]format=rgba,split=4[l1][l2][l3][l4]`,
+      `[l1]${shadow(LH, shPad, shR)}[sf]`, `[l2]scale=-2:${LH}:flags=lanczos[lf]`,
+      `[l3]${shadow(LH / 2, Math.round(shPad / 2), Math.max(1, Math.round(shR / 2)))}[sh]`, `[l4]scale=-2:${LH / 2}:flags=lanczos[lh]`,
+      `[ha]scale=${g.PW}:${H}:flags=bicubic[up]`,
+      `[up][sf]overlay=x=${cxF}-w/2:y=(H-h)/2+${Math.round(10 * k)}:format=rgb[u1]`,
+      `[u1][lf]overlay=x=${cxF}-w/2:y=(H-h)/2:format=rgb[o0]`,
+      `[hb][sh]overlay=x=${Math.round(cx)}-w/2:y=(H-h)/2+${Math.round(5 * k)}:format=rgb[h1]`,
+      `[h1][lh]overlay=x=${Math.round(cx)}-w/2:y=(H-h)/2:format=rgb,split=${BLUR.length - 1}${BLUR.slice(1).map((_, i) => `[b${i + 1}]`).join('')}`,
+      ...BLUR.slice(1).map((r, i) => `[b${i + 1}]format=gbrap,avgblur=sizeX=${Math.max(1, Math.round(r * k * q))}:sizeY=1,format=rgba[o${i + 1}]`)
+    ].join(';');
+    await makeAll(files, (tmps) => ['-f', 'lavfi', '-i', `color=c=black@0:s=${hw}x${hh},format=rgba`, '-i', LOGO, '-filter_complex', fc,
+      ...tmps.flatMap((t, i) => ['-map', `[o${i}]`, '-frames:v', '1', t])]);
+    return files;
+  }
 
-  // x of the band at stinger time tau (0 … STING) — the same function on both
-  // sides of a cut, which is what makes two separately rendered halves meet.
-  function bandX(g, tauExpr) {
-    const U = `(${tauExpr})/${STING}`;
-    return `${g.xs}+${g.xe - g.xs}*((${U})+${EASE_K}*sin(2*PI*(${U}))/(2*PI))`;
+  // The band's frames for one side of a cut, drawn once per format and colour:
+  // each frame with the band already in place, blurred for its speed and with
+  // its glint, on a transparent picture the size of the video — a short
+  // lossless clip with alpha. A segment then only lays it over its first or
+  // last few frames: one small decode, no per-frame work, little memory.
+  // (Built a frame per ffmpeg: one band picture in memory at a time.)
+  async function buildSting(p, g, dir, a, kind, side) {
+    const file = path.join(dir, `sting-${kind}-${side}.mov`);
+    if (fs.existsSync(file)) return file;
+    const levels = await a.band(kind);
+    const { tau0, n } = windowSpan(p, side), W = p.w, H = p.h;
+    const tmp = fs.mkdtempSync(path.join(dir, 'sting-'));
+    try {
+      // one frame per ffmpeg (a band picture at a time: little memory) …
+      for (let j = 0; j < n; j++) {
+        const tau = tau0 + j / p.fps, bx = Math.round(bandLeft(g, tau));
+        const x0 = Math.max(0, bx), x1 = Math.min(W, bx + g.PW), f = path.join(tmp, `f${String(j).padStart(3, '0')}.png`);
+        if (x1 <= x0) { await run(['-f', 'lavfi', '-i', `color=c=black@0:s=${W}x${H},format=rgba`, '-frames:v', '1', f]); continue; }
+        const args = ['-i', levels[blurLevel(p, g, tau)]];
+        let fc = `[0:v]scale=${g.PW}:${H}:flags=bicubic,format=rgba,crop=${x1 - x0}:${H}:${x0 - bx}:0,pad=${W}:${H}:${x0}:0:color=black@0[f]`;
+        // the glint: inside the panel, crossing the logo at the cut
+        if (tau >= GLINT[0] - 1e-6 && tau <= GLINT[1] + 1e-6) {
+          const u = Math.min(1, Math.max(0, (tau - GLINT[0]) / (GLINT[1] - GLINT[0])));
+          const gx = Math.round(bandLeft(g, tau) + g.pad + g.L + g.Bw * (0.28 + 0.44 * u) - a.glintW / 2);
+          args.push('-i', a.glint);
+          fc += `;[f][1:v]overlay=x=${gx}:y=0:format=rgb[f]`.replace(/\[f\]$/, '[g]');
+        }
+        await run([...args, '-filter_complex', fc, '-map', /\[g\]$/.test(fc) ? '[g]' : '[f]', '-frames:v', '1', f]);
+      }
+      // … then the frames, in order, as one short lossless clip with alpha
+      // (QuickTime Animation: run-length, so mostly-empty frames are small and
+      // decode in a few MB)
+      await makeOnce(file, ['-framerate', String(p.fps), '-i', path.join(tmp, 'f%03d.png'), '-c:v', 'qtrle', '-pix_fmt', 'argb', '-frames:v', String(n), '-f', 'mov']);
+      return file;
+    } finally {
+      fs.rm(tmp, { recursive: true, force: true }, () => {});
+    }
+  }
+  // [inLabel] (n frames, whole frames of the video for time base) → its head
+  // (the band leaving, over its first frames) and / or tail (the band
+  // arriving, over its last frames) laid on → [outLabel]. Each stinger clip
+  // is timed to its own frames: before it the overlay passes the picture
+  // through untouched, after it likewise (eof_action=pass). Nothing is split
+  // or held back, so the clip streams through in a few frames of memory.
+  async function withWipes(G, p, a, inLabel, outLabel, n, { head, tail }) {
+    let cur = inLabel;
+    const lay = async (kind, side, at) => {
+      const ly = G.label('ly'), o = G.label('w');
+      G.add(`[${G.file(await a.sting(kind, side))}:v]settb=1/${p.fps},setpts=N+${at}[${ly}]`);
+      G.add(`[${cur}][${ly}]overlay=0:0:eof_action=pass[${o}]`);
+      cur = o;
+    };
+    if (head) await lay(head, 'head', 0);
+    if (tail) await lay(tail, 'tail', n - windowSpan(p, 'tail').n);
+    G.add(`[${cur}]null[${outLabel}]`);
   }
 
   /* -------------------------------------------------------- the text bits */
@@ -305,11 +501,10 @@ function createHighlightEditor(opts = {}) {
   // A line that slides in from the left (ease-out) after `inAt`, holds, and
   // slides back out (ease-in) at `outAt`.
   function slideX(x0, dist, inAt, outAt) {
-    const uin = clampExpr(`(t-${r2(inAt)})/0.38`), uout = clampExpr(`(t-${r2(outAt)})/0.30`);
-    return `${x0}-${dist}*(1-(1-pow(1-${uin},3)))-${dist}*pow(${uout},3)`;
+    return `${x0}-${dist}*(1-${easeOut(prog(inAt, 0.38))})-${dist}*${easeIn(prog(outAt, 0.30))}`;
   }
   function fadeAlpha(inAt, outAt) {
-    return `min(${clampExpr(`(t-${r2(inAt)})/0.22`)},1-${clampExpr(`(t-${r2(outAt + 0.08)})/0.22`)})`;
+    return `min(${prog(inAt, 0.22)},1-${prog(outAt + 0.08, 0.22)})`;
   }
   function drawtext({ font, file, size, color, box, boxBorder, x, y, alpha, from, to }) {
     return `drawtext=fontfile='${fpath(font)}':textfile='${fpath(file)}':expansion=none:fontsize=${size}:fontcolor=${color}` +
@@ -318,172 +513,296 @@ function createHighlightEditor(opts = {}) {
   }
   // Big names shrink to fit: a 26-letter name still sits on one line.
   const fitSize = (text, base, width) => Math.max(Math.round(base * 0.55), Math.min(base, Math.floor(width / Math.max(1, text.length))));
+  // A line of white text that rises into place through the line it sits on
+  // (masked), starting at `at`: one small canvas, its mask drawn by drawtext.
+  function risingText(G, dir, name, { text, font, size, at, dur = 0.42, T, p, color = 'white' }) {
+    const bw = even(Math.max(16, Math.ceil(size * 0.62 * text.length + size))), bh = even(size * 1.32), pad = Math.round(size * 0.1);
+    const m = G.label('mask'), f = G.label('fill'), o = G.label('txt');
+    G.add(`color=c=black:s=${bw}x${bh}:r=${p.fps}:d=${f6(T)},format=gray,drawtext=fontfile='${fpath(font)}':textfile='${fpath(textFile(dir, name, text))}':expansion=none:fontsize=${size}:fontcolor=white:x=0:y='${pad}+${bh}*(1-${easeOut(prog(at, dur))})',lut=c0='clip((val-16)*255/219,0,255)'[${m}]`);
+    G.add(`color=c=${color}:s=${bw}x${bh}:r=${p.fps}:d=${f6(T)},format=yuva420p[${f}]`);
+    G.add(`[${f}][${m}]alphamerge[${o}]`);
+    return { label: o, w: bw, h: bh, pad };
+  }
 
   // The stacked event tag at the top left: event pill / name / over · bowler.
+  // Small: it says what is coming and gets out of the way of the shot.
   function tagFilters(p, card, dir, T) {
-    const k = p.k, x0 = Math.round(64 * k), y0 = Math.round(54 * k);
+    const k = p.k, x0 = Math.round(46 * k), y0 = Math.round(40 * k);
     const accent = `0x${ACCENT[card.kind] || ACCENT.HIGHLIGHT}`;
-    const outAt = Math.max(TAG_IN + 1.2, Math.min(TAG_IN + TAG_HOLD, T - HALF - 0.5));
-    const dist = Math.round(820 * k);
+    const outAt = Math.max(TAG_IN + 1.2, Math.min(TAG_IN + TAG_HOLD, T - HALF - 0.6));
+    const dist = Math.round(560 * k);
     const label = cleanText(card.label, 18), title = cleanText(card.title, 40), sub = cleanText(card.sub, 72);
-    const pillSize = Math.round(42 * k), nameSize = fitSize(title, Math.round(88 * k), Math.round(1100 * k) / 0.42), subSize = Math.round(30 * k);
-    const nameY = y0 + Math.round(pillSize * 1.2 + 2 * 13 * k + 6 * k);
-    const subY = nameY + Math.round(nameSize * 0.98 + 2 * 15 * k + 6 * k);
+    const pillSize = Math.round(28 * k), nameSize = fitSize(title, Math.round(56 * k), Math.round(760 * k) / 0.42), subSize = Math.round(22 * k);
+    const pb = Math.round(9 * k), nb = Math.round(11 * k), sb = Math.round(8 * k);
+    const nameY = y0 + Math.round(pillSize * 1.2 + 2 * pb + 5 * k);
+    const subY = nameY + Math.round(nameSize * 0.98 + 2 * nb + 5 * k);
     const f = [];
-    f.push(drawtext({ font: FONTS.event, file: textFile(dir, 'tag-label', label), size: pillSize, color: 'white', box: `${accent}@1.0`, boxBorder: Math.round(13 * k),
-      x: slideX(x0 + Math.round(13 * k), dist, TAG_IN, outAt + 0.10), y: y0 + Math.round(13 * k), alpha: fadeAlpha(TAG_IN, outAt + 0.10), from: TAG_IN, to: outAt + 0.45 }));
-    f.push(drawtext({ font: FONTS.display, file: textFile(dir, 'tag-title', title), size: nameSize, color: 'white', box: '0x0b1220@0.92', boxBorder: Math.round(15 * k),
-      x: slideX(x0 + Math.round(15 * k), dist, TAG_IN + 0.07, outAt + 0.05), y: nameY, alpha: fadeAlpha(TAG_IN + 0.07, outAt + 0.05), from: TAG_IN + 0.07, to: outAt + 0.4 }));
+    f.push(drawtext({ font: FONTS.event, file: textFile(dir, 'tag-label', label), size: pillSize, color: 'white', box: `${accent}@1.0`, boxBorder: pb,
+      x: slideX(x0 + pb, dist, TAG_IN, outAt + 0.10), y: y0 + pb, alpha: fadeAlpha(TAG_IN, outAt + 0.10), from: TAG_IN, to: outAt + 0.45 }));
+    f.push(drawtext({ font: FONTS.display, file: textFile(dir, 'tag-title', title), size: nameSize, color: 'white', box: '0x0b1220@0.88', boxBorder: nb,
+      x: slideX(x0 + nb, dist, TAG_IN + 0.06, outAt + 0.05), y: nameY, alpha: fadeAlpha(TAG_IN + 0.06, outAt + 0.05), from: TAG_IN + 0.06, to: outAt + 0.4 }));
     if (sub) {
-      f.push(drawtext({ font: FONTS.body, file: textFile(dir, 'tag-sub', sub), size: subSize, color: '0xdbe4f0', box: '0x131c30@0.92', boxBorder: Math.round(12 * k),
-        x: slideX(x0 + Math.round(12 * k), dist, TAG_IN + 0.14, outAt), y: subY, alpha: fadeAlpha(TAG_IN + 0.14, outAt), from: TAG_IN + 0.14, to: outAt + 0.35 }));
+      f.push(drawtext({ font: FONTS.body, file: textFile(dir, 'tag-sub', sub), size: subSize, color: '0xdbe4f0', box: '0x131c30@0.88', boxBorder: sb,
+        x: slideX(x0 + sb, dist, TAG_IN + 0.12, outAt), y: subY, alpha: fadeAlpha(TAG_IN + 0.12, outAt), from: TAG_IN + 0.12, to: outAt + 0.35 }));
     }
     return f.join(',');
   }
 
   /* ----------------------------------------------------------- segments */
-  // [base][head band][tail band] → the picture with both halves of the wipe.
-  function wipeFilters(g, T, headIn, tailIn, baseIn, outLabel, { head = true, tail = true } = {}) {
-    const parts = [];
-    let cur = baseIn;
-    if (head) {
-      parts.push(`[${cur}][${headIn}]overlay=x='${bandX(g, `t+${HALF}`)}':y=0:eval=frame:enable='lt(t,${HALF})'[wh]`);
-      cur = 'wh';
-    }
-    if (tail) {
-      parts.push(`[${cur}][${tailIn}]overlay=x='${bandX(g, `t-${r2(T - HALF)}`)}':y=0:eval=frame:enable='gte(t,${r2(T - HALF)})'[wt]`);
-      cur = 'wt';
-    }
-    parts.push(`[${cur}]null[${outLabel}]`);
-    return parts.join(';');
-  }
-  // A still image repeated for the length of a segment: decoded and converted
-  // to the blend format once (not once per frame — the band is 3000 px wide).
-  const loopImg = (inp, fps, label) => `[${inp}]format=yuva420p,loop=loop=-1:size=1:start=0,setpts=N/${fps}/TB[${label}]`;
-
   // One clip → one segment: scaled to the format, its tag, both wipe halves,
-  // the whoosh halves, its own audio faded in and out.
+  // its own sound (nothing added: a touch of fade at each end, against clicks).
   async function renderClip({ src, info, card, profile: p, assets, out, workDir, onProgress }) {
     const dir = fs.mkdtempSync(path.join(workDir, 'seg-'));
     try {
-      const g = bandGeom(p);
-      const frames = clipFrames(info, p);
-      const T = frames / p.fps;
-      const headBand = assets.band[card.kind] || assets.band.HIGHLIGHT;
-      const args = ['-threads', String(threads), '-i', src, '-i', headBand, '-i', assets.band.BRAND, '-i', assets.whoosh];
-      if (!info.hasAudio) args.push('-f', 'lavfi', '-t', String(r2(T + 0.5)), '-i', 'anullsrc=r=48000:cl=stereo');
-      const aIn = info.hasAudio ? '0:a' : '4:a';
+      const n = clipFrames(info, p), T = n / p.fps;
+      const G = graph();
+      G.input(['-threads', String(threads), '-i', src]);
+      const aIn = info.hasAudio ? '0:a' : `${silence(G, T)}:a`;
       const fit = (info.width === p.w && info.height === p.h) ? 'setsar=1'
         : `scale=${p.w}:${p.h}:force_original_aspect_ratio=decrease:flags=bicubic,pad=${p.w}:${p.h}:(ow-iw)/2:(oh-ih)/2,setsar=1`;
-      const fc = [
-        `[0:v]fps=${p.fps},${fit},format=yuv420p,trim=end_frame=${frames},setpts=PTS-STARTPTS[v0]`,
-        loopImg('1:v', p.fps, 'bh'), loopImg('2:v', p.fps, 'bt'),
-        `[v0]${tagFilters(p, card, dir, T)}[vt]`,
-        wipeFilters(g, T, 'bh', 'bt', 'vt', 'vout'),
-        `[${aIn}]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,atrim=0:${r2(T)},asetpts=PTS-STARTPTS,afade=t=in:d=0.25,afade=t=out:st=${r2(T - 0.32)}:d=0.32,apad[ca]`,
-        `[3:a]asplit=2[w1][w2]`,
-        `[w1]atrim=${HALF}:${STING},asetpts=PTS-STARTPTS,apad[wh]`,
-        `[w2]atrim=0:${HALF},asetpts=PTS-STARTPTS,adelay=${Math.round((T - HALF) * 1000)}|${Math.round((T - HALF) * 1000)},apad[wt]`,
-        `[ca][wh][wt]amix=inputs=3:duration=first:dropout_transition=0,volume=3,atrim=end_sample=${Math.round(T * 48000)}[aout]`
-      ].join(';');
-      args.push('-filter_complex', fc, '-map', '[vout]', '-map', '[aout]', ...encodeArgs(p), '-frames:v', String(frames), out);
-      await run(args, { totalSec: T, onProgress });
+      G.add(`[0:v]fps=${p.fps},${fit},format=yuv420p,trim=end_frame=${n},setpts=PTS-STARTPTS,${tagFilters(p, card, dir, T)}[v0]`);
+      await withWipes(G, p, assets, 'v0', 'vout', n, { head: card.kind in ACCENT ? card.kind : 'HIGHLIGHT', tail: 'BRAND' });
+      // mono goes to both ears at its own level (the default upmix would lower it 3 dB)
+      const up = info.hasAudio && info.mono ? 'pan=stereo|c0=c0|c1=c0,' : '';
+      G.add(`[${aIn}]${up}${cutAudio(T)},afade=t=in:d=0.05,afade=t=out:st=${f6(T - 0.12)}:d=0.12[aout]`);
+      await run(withScript(dir, G, ['-map', '[vout]', '-map', '[aout]', ...encodeArgs(p), '-frames:v', String(n), out]), { totalSec: T, onProgress });
       return { duration: T };
     } finally {
       fs.rm(dir, { recursive: true, force: true }, () => {});
     }
   }
 
-  // The blurred picture behind a title / end card.
+  // The blurred picture behind a title card, small (it is all soft light):
+  // darkened from the left for the text.
   async function stillFrom(src, info, p, out, atSec) {
     const at = Math.max(0, Math.min((info && info.duration ? info.duration - 0.2 : 1), atSec));
-    await run(['-ss', String(r2(at)), '-i', src, '-frames:v', '1', '-vf',
-      `scale=${Math.round(p.w / 4)}:${Math.round(p.h / 4)}:force_original_aspect_ratio=increase,crop=${Math.round(p.w / 4)}:${Math.round(p.h / 4)},boxblur=6:2,scale=${p.w}:${p.h}:flags=bicubic,setsar=1,eq=saturation=0.85`,
-      out]);
+    const w = even(p.w / 4), h = even(p.h / 4);
+    await run(['-ss', String(r2(at)), '-i', src, '-f', 'lavfi', '-i', `color=c=black:s=${w}x${h},format=rgba`, '-filter_complex',
+      `[0:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},boxblur=7:2,eq=saturation=0.8:brightness=-0.05,format=rgba[s];` +
+      `[1:v]geq=r=4:g=8:b=18:a='min(255,225*pow(1-X/W,1.3)+100*pow(Y/H,2.4)+55)'[d];[s][d]overlay=format=rgb[o]`,
+      '-map', '[o]', '-frames:v', '1', out]);
     return out;
   }
+  // A team badge given as a data: URL → a file ffmpeg can read, or null.
+  async function badgeFile(dataUrl, dir, name = 'badge') {
+    const m = /^data:image\/(png|jpe?g|webp|gif);base64,([a-z0-9+/=\s]+)$/i.exec(String(dataUrl || ''));
+    if (!m) return null;
+    const buf = Buffer.from(m[2].replace(/\s+/g, ''), 'base64');
+    if (buf.length < 64 || buf.length > 2 * 1048576) return null;
+    const f = path.join(dir, `${name}.${m[1].toLowerCase().replace('jpeg', 'jpg')}`);
+    fs.writeFileSync(f, buf);
+    // an image has no duration: only ask that ffmpeg reads a picture from it
+    const ok = await new Promise((resolve) => {
+      const pr = spawn(ffmpegPath, ['-hide_banner', '-i', f, '-frames:v', '1', '-f', 'null', '-'], { stdio: ['ignore', 'ignore', 'pipe'] });
+      let err = '';
+      pr.stderr.on('data', (d) => { err += d; });
+      pr.on('error', () => resolve(false));
+      pr.on('close', (code) => { const v = /Video:[^\n]*?\b(\d{2,5})x(\d{2,5})\b/.exec(err); resolve(code === 0 && !!v && Number(v[1]) > 8 && Number(v[2]) > 8); });
+    });
+    return ok ? f : null;
+  }
+  // The panel at the right of the title card, as one picture: a slanted navy
+  // slab edged in the team's colour, the team's badge on a white disc (its
+  // initials when it has no badge) and its name — both teams side by side for
+  // a whole match, our logo when there is no team.
+  async function buildHero(p, title, dir) {
+    const k = p.k, W = p.w, H = p.h;
+    const ok = (t) => !!(t && (t.name || t.short));
+    const both = (Array.isArray(title.teams) ? title.teams.filter(ok) : []).slice(0, 2);
+    const list = both.length === 2 ? both : ok(title.team) ? [title.team] : [];
+    const twin = list.length === 2;
+    const brand = ACCENT[title.kind] || ACCENT.BRAND;
+    const [er, eg, eb] = rgbOf((list.length === 1 && hexOf(list[0].color)) || brand);
+    const sp = Math.round(H * 0.17), X0 = Math.round(W * 0.665) - sp, PW = even(W - X0 + 10 * k);
+    const edge = `(X-${sp}*(${H}-Y)/${H})`;                          // from the slanted left edge
+    const hair = Math.max(2, Math.round(3 * k)), gap = Math.round(8 * k), strip = Math.round(12 * k);
+    const inStrip = `between(${edge},${hair + gap},${hair + gap + strip})`, inHair = `between(${edge},0,${hair})`, inPanel = `gt(${edge},${hair + gap + strip})`;
+    const ch = (t, top, bot) => `if(${inStrip},${t},if(${inHair},235,${top}+${bot - top}*Y/${H}))`;
+    const G = graph();
+    G.add(`[${G.input(['-f', 'lavfi', '-i', `color=c=black@0:s=${PW}x${H},format=rgba`])}:v]geq=r='${ch(er, 15, 7)}':g='${ch(eg, 23, 12)}':b='${ch(eb, 42, 25)}':a='if(${inPanel}+${inStrip},242,if(${inHair},220,0))'[pan]`);
+    const D = even(H * (twin ? 0.2 : 0.3)), ring = Math.max(3, Math.round((twin ? 6 : 7) * k)), DD = D + 2 * ring;
+    const midX = Math.round((sp / 2 + PW - 10 * k) / 2), cy = Math.round(H * (twin ? 0.43 : 0.42)), half = twin ? Math.round(D * 0.82) : 0;
+    // a disc: a ring in the team's colour round a white face, edges smoothed
+    const disc = async (team, i) => {
+      const [r, g, b] = rgbOf((team && hexOf(team.color)) || brand);
+      const rr = `hypot(X-${DD / 2},Y-${DD / 2})`, inner = `lt(${rr},${D / 2 - 1})`;
+      const d = G.label('disc'), face = G.label('face');
+      G.add(`[${G.input(['-f', 'lavfi', '-i', `color=c=black@0:s=${DD}x${DD},format=rgba`])}:v]geq=r='if(${inner},255,${r})':g='if(${inner},255,${g})':b='if(${inner},255,${b})':a='255*${clampExpr(`${DD / 2}-${rr}`)}'[${d}]`);
+      const badge = team ? await badgeFile(team.logo, dir, `badge${i}`) : null;
+      if (badge || !team) {
+        const lg = G.label('lg'), box = Math.round(D * (badge ? 0.66 : 0.72));
+        G.add(`[${G.file(badge || LOGO)}:v]scale=${box}:${box}:force_original_aspect_ratio=decrease:flags=lanczos,format=rgba[${lg}]`);
+        G.add(`[${d}][${lg}]overlay=x=(W-w)/2:y=(H-h)/2:format=rgb[${face}]`);
+      } else {
+        const initials = cleanText(team.short || String(team.name).split(/\s+/).map(w => w[0]).join(''), 4);
+        const light = 0.2126 * r + 0.7152 * g + 0.0722 * b > 150;   // too light to read on white: navy instead
+        G.add(`[${d}]${drawtext({ font: FONTS.display, file: textFile(dir, `initials${i}`, initials), size: Math.round(D * (initials.length > 3 ? 0.34 : 0.42)),
+          color: light ? '0x0b1220' : `0x${hexOf(team.color) || brand}`, x: '(w-text_w)/2', y: '(h-text_h)/2' })}[${face}]`);
+      }
+      return face;
+    };
+    let cur = 'pan';
+    const slots = twin ? [{ team: list[0], cx: midX - half }, { team: list[1], cx: midX + half }] : [{ team: list[0] || null, cx: midX }];
+    for (let i = 0; i < slots.length; i++) {
+      const s = slots[i], face = await disc(s.team, i), o = G.label('p');
+      G.add(`[${cur}][${face}]overlay=x=${s.cx - DD / 2}:y=${cy - DD / 2}:format=rgb[${o}]`);
+      cur = o;
+      if (s.team) {
+        const name = cleanText(s.team.name || s.team.short, 32), room = twin ? half * 1.84 : (PW - sp - 60 * k) * 0.9;
+        const size = fitSize(name, Math.round((twin ? 40 : 60) * k), Math.round(room) / 0.44), t = G.label('p');
+        G.add(`[${cur}]${drawtext({ font: FONTS.display, file: textFile(dir, `team${i}`, name), size, color: 'white', x: `${s.cx}-text_w/2`, y: `${cy + DD / 2 + Math.round((twin ? 24 : 30) * k)}` })}[${t}]`);
+        cur = t;
+      }
+    }
+    if (twin) {
+      const t = G.label('p');
+      G.add(`[${cur}]${drawtext({ font: FONTS.display, file: textFile(dir, 'vs', 'VS'), size: Math.round(D * 0.3), color: `0x${brand}`, x: `${midX}-text_w/2`, y: `${cy}-text_h/2` })}[${t}]`);
+      cur = t;
+    }
+    const file = path.join(dir, 'hero.png');
+    await run(withScript(dir, G, ['-map', `[${cur}]`, '-frames:v', '1', file]));
+    return { file, x: X0, w: PW };
+  }
 
-  // Title card: kicker / title / accent bar / pill / meta over the first clip.
+  // Title card: the band clears onto the player — kicker, match, name, what
+  // the video holds and their figures, the team panel at the right.
+  // title: { kicker, line, first, title, pill, meta, stats: [{ value, label, sub }], team: { name, short, color, logo }, kind }
   async function renderIntro({ title, bgSrc, bgInfo, profile: p, assets, out, workDir }) {
     const dir = fs.mkdtempSync(path.join(workDir, 'intro-'));
     try {
-      const g = bandGeom(p), k = p.k, frames = gridLength(INTRO_SEC, p.fps), T = frames / p.fps;
+      const k = p.k, W = p.w, H = p.h, n = gridLength(INTRO_SEC, p.fps), T = n / p.fps;
+      const kind = ACCENT[title.kind] ? title.kind : 'BRAND';
+      const accent = `0x${ACCENT[kind]}`;
       const bg = bgSrc ? await stillFrom(bgSrc, bgInfo, p, path.join(dir, 'bg.png'), 1.2) : null;
-      const accent = `0x${ACCENT[title.kind] || ACCENT.BRAND}`;
-      const x0 = Math.round(110 * k);
-      const kicker = cleanText(title.kicker, 60), main = cleanText(title.title, 32), pill = cleanText(title.pill, 28), meta = cleanText(title.meta, 70);
-      const mainSize = fitSize(main, Math.round(150 * k), Math.round(1600 * k) / 0.42);
-      const yKick = Math.round(p.h * 0.36), yMain = yKick + Math.round(52 * k), yBar = yMain + Math.round(mainSize * 1.02 + 14 * k);
-      const yPill = yBar + Math.round(34 * k), yMeta = yPill + Math.round(46 * k + 2 * 14 * k + 18 * k);
-      const args = [];
-      if (bg) args.push('-i', bg);
-      else args.push('-f', 'lavfi', '-i', `color=c=0x0d1526:s=${p.w}x${p.h}`, '-frames:v', '1');
-      args.push('-i', assets.shade, '-i', assets.logo, '-i', assets.band.BRAND, '-i', assets.whoosh,
-        '-f', 'lavfi', '-t', String(r2(T)), '-i', `color=c=${accent}:s=${Math.round(460 * k)}x${Math.max(4, Math.round(8 * k))}:r=${p.fps}`,
-        '-f', 'lavfi', '-t', String(r2(T + 0.5)), '-i', 'anullsrc=r=48000:cl=stereo');
-      const logoH = Math.round(104 * k);
-      const fc = [
-        // a slow push-in on the blurred picture (zoompan on a 2x copy: no stepping)
-        `[0:v]scale=${p.w * 2}:${p.h * 2}:flags=bicubic,zoompan=z='1.02+${r2(0.07 / frames * 1000) / 1000}*on':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${p.w}x${p.h}:fps=${p.fps},setsar=1,format=yuv420p,trim=end_frame=${frames},setpts=PTS-STARTPTS[bg0]`,
-        loopImg('1:v', p.fps, 'sh'), `[bg0][sh]overlay=0:0:format=yuv420[bg1]`,
-        `[2:v]scale=-2:${logoH},format=rgba,loop=loop=-1:size=1:start=0,setpts=N/${p.fps}/TB,fade=t=in:st=0.15:d=0.4:alpha=1[lg]`,
-        `[bg1][lg]overlay=x=${x0}:y=${Math.round(64 * k)}:format=yuv420[bg2]`,
-        `[5:v]format=rgba[bar]`,
-        `[bg2][bar]overlay=x='${x0}-w+w*(1-pow(1-${clampExpr(`(t-0.55)/0.45`)},3))':y=${yBar}:eval=frame:format=yuv420[bg3]`,
-        loopImg('3:v', p.fps, 'bt'),
-        `[bg3]` + [
-          kicker && drawtext({ font: FONTS.body, file: textFile(dir, 'kicker', kicker), size: Math.round(30 * k), color: accent,
-            x: `${x0}`, y: `${yKick}+${Math.round(18 * k)}*(1-${clampExpr('(t-0.2)/0.45')})`, alpha: clampExpr('(t-0.2)/0.35') }),
-          drawtext({ font: FONTS.display, file: textFile(dir, 'title', main || 'HIGHLIGHTS'), size: mainSize, color: 'white',
-            x: `${x0}-${Math.round(70 * k)}*(1-(1-pow(1-${clampExpr('(t-0.32)/0.5')},3)))`, y: `${yMain}`, alpha: clampExpr('(t-0.32)/0.3') }),
-          pill && drawtext({ font: FONTS.event, file: textFile(dir, 'pill', pill), size: Math.round(40 * k), color: 'white', box: `${accent}@1.0`, boxBorder: Math.round(14 * k),
-            x: `${x0 + Math.round(14 * k)}-${Math.round(40 * k)}*(1-(1-pow(1-${clampExpr('(t-0.7)/0.4')},3)))`, y: `${yPill + Math.round(14 * k)}`, alpha: clampExpr('(t-0.7)/0.25') }),
-          meta && drawtext({ font: FONTS.body, file: textFile(dir, 'meta', meta), size: Math.round(30 * k), color: '0xdbe4f0',
-            x: `${x0}`, y: `${yMeta}`, alpha: clampExpr('(t-0.9)/0.35') })
-        ].filter(Boolean).join(',') + `[txt]`,
-        wipeFilters(g, T, null, 'bt', 'txt', 'vout', { head: false, tail: true }),
-        `[6:a]atrim=0:${r2(T)},asetpts=PTS-STARTPTS[sil]`,
-        `[4:a]atrim=0:${HALF},asetpts=PTS-STARTPTS,adelay=${Math.round((T - HALF) * 1000)}|${Math.round((T - HALF) * 1000)},apad[wt]`,
-        `[sil][wt]amix=inputs=2:duration=first:dropout_transition=0,volume=2,atrim=end_sample=${Math.round(T * 48000)}[aout]`
-      ].join(';');
-      args.push('-filter_complex', fc, '-map', '[vout]', '-map', '[aout]', ...encodeArgs(p), '-frames:v', String(frames), out);
-      await run(args, { totalSec: T });
+      const hero = await buildHero(p, title, dir);
+      const kicker = cleanText(title.kicker, 60), line = cleanText(title.line, 70), first = cleanText(title.first, 40);
+      const main = cleanText(title.title, 40) || 'HIGHLIGHTS', pill = cleanText(title.pill, 28), meta = cleanText(title.meta, 70);
+      const stats = (Array.isArray(title.stats) ? title.stats : []).map(s => ({ value: cleanText(s && s.value, 9), label: cleanText(s && s.label, 14), sub: cleanText(s && s.sub, 16) }))
+        .filter(s => s.value).slice(0, 4);
+
+      const x0 = Math.round(110 * k), maxW = Math.round(W * 0.5);
+      const firstSize = fitSize(first, Math.round(84 * k), maxW / 0.5), mainSize = fitSize(main, Math.round(176 * k), maxW / 0.46);
+      const lineSize = Math.round(32 * k), pillSize = Math.round(36 * k), pb = Math.round(13 * k);
+      const vSize = Math.round(92 * k), lSize = Math.round(25 * k), sSize = Math.round(22 * k);
+      // top to bottom, each group with room round it, the block centred in
+      // the space under the logo: match line / first name / NAME / pill / figures
+      const hLine = line ? lineSize + Math.round(46 * k) : 0, hFirst = first ? Math.round(firstSize * 1.06) : 0, hMain = mainSize;
+      const hRow = Math.round(pillSize * 1.22 + 2 * pb), gMain = Math.round(40 * k), gStats = Math.round(64 * k);
+      const hStats = stats.length ? Math.round(vSize * 1.04 + lSize * 1.3 + (stats.some(s => s.sub) ? sSize * 1.5 : 0)) : (meta ? Math.round(40 * k) : 0);
+      const total = hLine + hFirst + hMain + gMain + hRow + (hStats ? gStats + hStats : 0);
+      const yLine = Math.max(Math.round(205 * k), Math.round((H - total) / 2 + 40 * k));
+      const yFirst = yLine + hLine, yMain = yFirst + hFirst, yRow = yMain + hMain + gMain, yStats = yRow + hRow + gStats;
+      const G = graph();
+      const bgIdx = bg ? G.file(bg) : G.input(['-f', 'lavfi', '-i', `color=c=0x0d1526:s=${even(W / 4)}x${even(H / 4)}`]);
+      // a slow push-in on the blurred picture (done small: it is all soft)
+      G.add(`[${bgIdx}:v]scale=${W}:${H}:flags=bicubic,zoompan=z='1.0+${r2(0.07 / n * 10000) / 10000}*on':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${n}:s=${even(W / 2)}x${even(H / 2)}:fps=${p.fps},` +
+        `scale=${W}:${H}:flags=bicubic,setsar=1,format=yuv420p,trim=end_frame=${n},setpts=PTS-STARTPTS[bg0]`);
+      // the team panel slides in from the right
+      const hi = G.file(hero.file), hp = G.label('hero');
+      G.add(loopImg(hi, p.fps, hp));
+      G.add(`[bg0][${hp}]overlay=x='${hero.x}+${W - hero.x}*(1-${easeOut(prog(0.05, 0.55))})':y=0:eval=frame:shortest=1[bg2]`);
+      // our logo and the kicker, top left
+      const li = G.file(assets.logoSmall), lg = G.label('logo');
+      G.add(loopImg(li, p.fps, lg, 'format=rgba,'));
+      G.add(`[${lg}]fade=t=in:st=0.15:d=0.3:alpha=1[${lg}f]`);
+      const logoY = Math.round(70 * k), logoH = even(H * 0.075);
+      G.add(`[bg2][${lg}f]overlay=x=${x0}:y=${logoY}:shortest=1[bg3]`);
+      let cur = 'bg3';
+      const text = [];
+      if (kicker) text.push(drawtext({ font: FONTS.body, file: textFile(dir, 'kicker', kicker), size: Math.round(30 * k), color: '0xe2e8f0',
+        x: `${x0 + logoH + Math.round(22 * k)}-${Math.round(20 * k)}*(1-${easeOut(prog(0.2, 0.4))})`, y: `${logoY + Math.round(logoH / 2 - 18 * k)}`, alpha: prog(0.2, 0.3) }));
+      if (line) {
+        text.push(`drawbox=x=${x0}:y=${yLine + Math.round(3 * k)}:w=${Math.max(3, Math.round(6 * k))}:h=${lineSize}:color=${accent}@1:t=fill:enable='gte(t,0.24)'`);
+        text.push(drawtext({ font: FONTS.body, file: textFile(dir, 'line', line), size: lineSize, color: '0xf1f5f9',
+          x: `${x0 + Math.round(20 * k)}-${Math.round(26 * k)}*(1-${easeOut(prog(0.24, 0.4))})`, y: `${yLine}`, alpha: prog(0.24, 0.3) }));
+      }
+      if (text.length) { G.add(`[${cur}]${text.join(',')}[t1]`); cur = 't1'; }
+      // the name rises into place: first name, then the big surname
+      const rise = (name, opt, y) => {
+        const r = risingText(G, dir, name, { ...opt, T, p });
+        const o = G.label('c');
+        G.add(`[${cur}][${r.label}]overlay=x=${x0 - Math.round(opt.size * 0.04)}:y=${y - r.pad}:shortest=1[${o}]`);
+        cur = o;
+      };
+      if (first) rise('first', { text: first, font: FONTS.display, size: firstSize, at: 0.26, color: '0xdbe4f0' }, yFirst);
+      rise('main', { text: main, font: FONTS.display, size: mainSize, at: first ? 0.34 : 0.28 }, yMain);
+      // accent bar, the pill, then what the video holds or the figures
+      const barW = Math.round(84 * k), barH = Math.max(4, Math.round(8 * k));
+      const bar = G.label('bar');
+      G.add(`[${G.input(['-f', 'lavfi', '-i', `color=c=${accent}:s=${barW}x${barH}:r=${p.fps}:d=${f6(T)}`])}:v]format=yuva420p[${bar}]`);
+      const yPillText = yRow + pb;
+      const barY = yPillText + Math.round(pillSize * 0.62) - Math.round(barH / 2);
+      G.add(`[${cur}][${bar}]overlay=x='${x0}-${barW}*(1-${easeOut(prog(0.46, 0.4))})':y=${barY}:eval=frame:shortest=1[c_bar]`);
+      cur = 'c_bar';
+      const rest = [];
+      if (pill) rest.push(drawtext({ font: FONTS.event, file: textFile(dir, 'pill', pill), size: pillSize, color: 'white', box: `${accent}@1.0`, boxBorder: pb,
+        x: `${x0 + barW + Math.round(22 * k) + pb}-${Math.round(36 * k)}*(1-${easeOut(prog(0.52, 0.4))})`, y: `${yPillText}`, alpha: prog(0.52, 0.25) }));
+      if (stats.length) {
+        // each figure as wide as its widest line (font widths measured), then
+        // a gap with a hairline in it
+        const gapW = Math.round(64 * k);
+        const widths = stats.map(s => Math.max(s.value.length * 0.48 * vSize, s.label.length * 0.74 * lSize, s.sub.length * 0.6 * sSize));
+        let cx = x0;
+        const xs = widths.map(w => { const x = cx; cx += Math.round(w) + gapW; return x; });
+        stats.forEach((s, i) => {
+          const at = 0.64 + 0.08 * i, cx = xs[i];
+          const up = (dy) => `${dy}+${Math.round(26 * k)}*(1-${easeOut(prog(at, 0.36))})`;
+          if (i) rest.push(`drawbox=x=${cx - Math.round(gapW / 2)}:y=${yStats + Math.round(14 * k)}:w=${Math.max(1, Math.round(2 * k))}:h=${hStats - Math.round(14 * k)}:color=white@0.2:t=fill:enable='gte(t,${r2(at)})'`);
+          rest.push(drawtext({ font: FONTS.display, file: textFile(dir, `sv${i}`, s.value), size: vSize, color: 'white', x: `${cx}`, y: up(yStats), alpha: prog(at, 0.25) }));
+          rest.push(drawtext({ font: FONTS.body, file: textFile(dir, `sl${i}`, s.label.split('').join('\u2009')), size: lSize, color: accent, x: `${cx + Math.round(3 * k)}`,
+            y: up(yStats + Math.round(vSize * 1.04)), alpha: prog(at + 0.04, 0.25) }));
+          if (s.sub) rest.push(drawtext({ font: FONTS.body, file: textFile(dir, `ss${i}`, s.sub), size: sSize, color: '0xa9b6c8', x: `${cx + Math.round(3 * k)}`,
+            y: up(yStats + Math.round(vSize * 1.04 + lSize * 1.5)), alpha: prog(at + 0.08, 0.25) }));
+        });
+      } else if (meta) {
+        rest.push(drawtext({ font: FONTS.body, file: textFile(dir, 'meta', meta), size: Math.round(30 * k), color: '0xdbe4f0',
+          x: `${x0}`, y: `${yStats}`, alpha: prog(0.66, 0.3) }));
+      }
+      if (rest.length) { G.add(`[${cur}]${rest.join(',')}[c_rest]`); cur = 'c_rest'; }
+      // opens on the band leaving (in the video's colour), ends on it arriving
+      await withWipes(G, p, assets, cur, 'vout', n, { head: kind, tail: 'BRAND' });
+      G.add(`[${silence(G, T)}:a]${cutAudio(T)}[aout]`);
+      await run(withScript(dir, G, ['-map', '[vout]', '-map', '[aout]', ...encodeArgs(p), '-frames:v', String(n), out]), { totalSec: T });
       return { duration: T };
     } finally {
       fs.rm(dir, { recursive: true, force: true }, () => {});
     }
   }
 
-  // End card: the band clears onto the logo and the website, then black.
-  async function renderOutro({ bgSrc, bgInfo, kind, profile: p, assets, out, workDir, site }) {
+  // End card: the band clears onto our logo, which springs into place under a
+  // sweep of light; the website rises under it; then black.
+  async function renderOutro({ kind = 'BRAND', profile: p, assets, out, workDir, site }) {
     const dir = fs.mkdtempSync(path.join(workDir, 'outro-'));
     try {
-      const g = bandGeom(p), k = p.k, frames = gridLength(OUTRO_SEC, p.fps), T = frames / p.fps;
-      const bg = bgSrc ? await stillFrom(bgSrc, bgInfo, p, path.join(dir, 'bg.png'), Math.max(0, (bgInfo && bgInfo.duration || 2) - 1.5)) : null;
-      const args = [];
-      if (bg) args.push('-i', bg);
-      else args.push('-f', 'lavfi', '-i', `color=c=0x0d1526:s=${p.w}x${p.h}`, '-frames:v', '1');
-      args.push('-i', assets.logo, '-i', assets.band[kind] || assets.band.BRAND, '-i', assets.whoosh,
-        '-f', 'lavfi', '-t', String(r2(T + 0.5)), '-i', 'anullsrc=r=48000:cl=stereo');
+      const k = p.k, W = p.w, H = p.h, n = gridLength(OUTRO_SEC, p.fps), T = n / p.fps, C = assets.C, fps = p.fps;
       const siteText = cleanText(site || 'allsportslivestreams.com', 48).toLowerCase();
-      const logoMax = Math.round(p.h * 0.30 / 2) * 2;
-      const yText = Math.round(p.h / 2 + logoMax / 2 + 40 * k);
-      const fc = [
-        `[0:v]scale=${p.w}:${p.h},setsar=1,format=yuv420p,eq=brightness=-0.22:saturation=0.6,loop=loop=-1:size=1:start=0,setpts=N/${p.fps}/TB,trim=end_frame=${frames}[bg0]`,
-        // the logo rises into place as it fades in
-        `[1:v]scale=-2:${logoMax},format=rgba,loop=loop=-1:size=1:start=0,setpts=N/${p.fps}/TB,fade=t=in:st=0.3:d=0.35:alpha=1[lg]`,
-        `[bg0][lg]overlay=x='(W-w)/2':y='(H-h)/2-${Math.round(30 * k)}+${Math.round(36 * k)}*pow(1-${clampExpr('(t-0.3)/0.5')},3)':eval=frame:format=yuv420[bg1]`,
-        loopImg('2:v', p.fps, 'bh'),
-        `[bg1]` + drawtext({ font: FONTS.body, file: textFile(dir, 'site', siteText), size: Math.round(40 * k), color: 'white',
-          x: '(w-text_w)/2', y: `${yText}`, alpha: clampExpr('(t-0.55)/0.35') }) + `[txt]`,
-        wipeFilters(g, T, 'bh', null, 'txt', 'bw', { head: true, tail: false }),
-        `[bw]fade=t=out:st=${r2(T - 0.45)}:d=0.45[vout]`,
-        `[4:a]atrim=0:${r2(T)},asetpts=PTS-STARTPTS[sil]`,
-        `[3:a]atrim=${HALF}:${STING},asetpts=PTS-STARTPTS,apad[wh]`,
-        `[sil][wh]amix=inputs=2:duration=first:dropout_transition=0,volume=2,atrim=end_sample=${Math.round(T * 48000)}[aout]`
-      ].join(';');
-      args.push('-filter_complex', fc, '-map', '[vout]', '-map', '[aout]', ...encodeArgs(p), '-frames:v', String(frames), out);
-      await run(args, { totalSec: T });
+      const G = graph();
+      const bgi = G.file(assets.endBg);
+      G.add(`[${bgi}:v]scale=${W}:${H}:flags=bicubic,setsar=1,format=yuv420p,loop=loop=-1:size=1:start=0,settb=1/${fps},setpts=N,trim=end_frame=${n}[bg]`);
+      // the spring: zoompan from 0.86 of the size to a touch past it, settling
+      const li = G.file(assets.logoSpring);
+      const u = clampExpr(`(on-${r2(0.24 * fps)})/${r2(0.5 * fps)}`);
+      G.add(`[${li}:v]format=rgba,zoompan=z='1+${r2(assets.springZ - 1)}*${easeOutBack(u)}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${n}:s=${C}x${C}:fps=${fps},format=rgba,split[lg][lgm]`);
+      // the sweep of light, only where the logo is
+      const si = G.file(assets.shine);
+      G.add(`[lgm]alphaextract[la]`);
+      G.add(`[${si}:v]format=rgba,loop=loop=-1:size=1:start=0,settb=1/${fps},setpts=N,crop=w=${C}:h=${C}:x='${2 * C}-${2 * C}*${prog(0.68, 0.46)}':y=0,alphaextract[sa]`);
+      G.add(`[sa][la]blend=all_mode=multiply:shortest=1[ma]`);
+      G.add(`color=c=white:s=${C}x${C}:r=${fps}:d=${f6(T)},format=yuva420p[wh]`);
+      G.add(`[wh][ma]alphamerge[shn]`);
+      G.add(`[lg][shn]overlay=0:0:format=auto:shortest=1,fade=t=in:st=0.22:d=0.24:alpha=1[lgf]`);
+      const yLogo = Math.round(H * 0.44 - C / 2);
+      G.add(`[bg][lgf]overlay=x=${Math.round((W - C) / 2)}:y=${yLogo}:shortest=1[b1]`);
+      const ySite = yLogo + Math.round(C / 2 + H * 0.15 + 26 * k);
+      const ul = G.label('ul');
+      G.add(`[${G.input(['-f', 'lavfi', '-i', `color=c=0x${ACCENT.BRAND}:s=${Math.round(120 * k)}x${Math.max(3, Math.round(5 * k))}:r=${fps}:d=${f6(T)}`])}:v]format=yuva420p,fade=t=in:st=0.55:d=0.2:alpha=1[${ul}]`);
+      G.add(`[b1]${drawtext({ font: FONTS.body, file: textFile(dir, 'site', siteText), size: Math.round(36 * k), color: 'white',
+        x: '(w-text_w)/2', y: `${ySite}+${Math.round(22 * k)}*(1-${easeOut(prog(0.42, 0.4))})`, alpha: prog(0.42, 0.3) })}[b2]`);
+      G.add(`[b2][${ul}]overlay=x=${Math.round(W / 2 - 60 * k)}:y=${ySite + Math.round(60 * k)}:shortest=1[b3]`);
+      await withWipes(G, p, assets, 'b3', 'bw', n, { head: kind, tail: null });
+      G.add(`[bw]fade=t=out:st=${f6(T - 0.32)}:d=0.32[vout]`);
+      G.add(`[${silence(G, T)}:a]${cutAudio(T)}[aout]`);
+      await run(withScript(dir, G, ['-map', '[vout]', '-map', '[aout]', ...encodeArgs(p), '-frames:v', String(n), out]), { totalSec: T });
       return { duration: T };
     } finally {
       fs.rm(dir, { recursive: true, force: true }, () => {});
@@ -535,7 +854,7 @@ function createHighlightEditor(opts = {}) {
 
   /* ---------------------------------------------------------- the whole */
   // clips: [{ file, clipKey, card }] in play order (files already local).
-  // title: { kicker, title, pill, meta, kind }. onProgress(0…1, message).
+  // title: see renderIntro. onProgress(0…1, message).
   async function renderHighlight({ clips, title, out, workDir, site, onProgress = () => {} }) {
     const started = Date.now();
     let reused = 0;
@@ -551,7 +870,7 @@ function createHighlightEditor(opts = {}) {
     const step = (sec, msg) => (f) => onProgress(Math.min(0.97, 0.04 + 0.92 * (done + sec * f) / total), msg);
 
     const intro = path.join(workDir, 'intro.mkv');
-    const introLen = await renderIntro({ title, bgSrc: usable[0].file, bgInfo: usable[0].info, profile: p, assets, out: intro, workDir });
+    const introLen = await renderIntro({ title: title || {}, bgSrc: usable[0].file, bgInfo: usable[0].info, profile: p, assets, out: intro, workDir });
     done += INTRO_SEC; step(0, 'Title card done')(0);
     segs.push({ file: intro, dur: introLen.duration });
 
@@ -582,8 +901,7 @@ function createHighlightEditor(opts = {}) {
     }
 
     const outro = path.join(workDir, 'outro.mkv');
-    const last = usable[usable.length - 1];
-    const outroLen = await renderOutro({ bgSrc: last.file, bgInfo: last.info, kind: 'BRAND', profile: p, assets, out: outro, workDir, site });
+    const outroLen = await renderOutro({ kind: 'BRAND', profile: p, assets, out: outro, workDir, site });
     segs.push({ file: outro, dur: outroLen.duration });
     onProgress(0.97, 'Putting the video together…');
     await concat(segs, out, workDir);

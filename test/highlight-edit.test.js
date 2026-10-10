@@ -3,10 +3,13 @@
 // small generated clips.
 //
 // - each clip's tag says the right thing (SIX / FOUR / WICKET / a HIGHLIGHT);
-// - the title card says who and what (scorecard and tournament downloads);
+// - the title card says who and what, with the player's team and figures
+//   (runs, balls, fours, sixes / wickets, overs) — scorecard and tournament;
 // - the finished video: title card + clips + end card, every frame on time
 //   (no gap or jolt at any join), one continuous soundtrack, 720p / 1080p;
-// - the transition: the band covers the whole frame at every cut;
+// - the transition: the band covers the whole frame at every cut, and it is
+//   silent — the title and end cards have no sound, and at a cut there is
+//   nothing but the clips' own sound, kept at its own level to its ends;
 // - an edited clip is cached and reused by the next video;
 // - the server job: collecting → editing → ready (edited), and when the edit
 //   fails, the plain joined video instead — a download never fails over it.
@@ -45,6 +48,13 @@ function audioRuns(file){
   for(let i = 1; i < r.length; i++){ if(Math.abs(r[i].t - (r[i - 1].t + r[i - 1].n / 48000)) > 0.0006) gaps++; }
   return { end: r.length ? r[r.length - 1].t + r[r.length - 1].n / 48000 : 0, gaps };
 }
+// Mean and peak loudness (dB) of a stretch of a file's sound.
+function level(file, t, d){
+  const e = ff(['-ss', String(t), '-t', String(d), '-i', file, '-map', '0:a', '-af', 'volumedetect', '-f', 'null', '-']);
+  const mean = /mean_volume: (-?[\d.]+|-inf) dB/.exec(e), max = /max_volume: (-?[\d.]+|-inf) dB/.exec(e);
+  const n = (m) => (!m || m[1] === '-inf') ? -120 : Number(m[1]);
+  return { mean: n(mean), max: n(max) };
+}
 // Mean brightness of the frame at time t (the band is dark navy, the test
 // pattern is bright): proof the band covers the frame at a cut.
 function lumaAt(file, t){
@@ -67,23 +77,46 @@ function lumaAt(file, t){
   eq('text is one clean line (no control characters), never empty', cardForClip({ eventType: 'SIX', strikerName: 'A\nB\u0007C' }).title, 'A B C');
 
   console.log('\n=== The title card (server.js) ===');
-  const titleCode = [H.grabConst('PRO_PILL'), H.grabConst('PRO_KIND'), H.grabConst('proVs'), H.grabConst('SINGLE_MATCHES_LEAGUE_KEY'), H.grab('personName'), H.grab('playerKey'),
-    H.grab('proCountsLine'), H.grab('proPlayerName'), H.grab('proMatchContext', 'async function '), H.grab('proTitleForMatchCompile', 'async function '),
-    'return { proCountsLine, proPlayerName, proTitleForMatchCompile };'].join('\n');
-  const records = H.coll([{ matchId: 'm-1', roomId: 'room-1', ownerUid: 'u1', leagueKey: 'mca', matchTitle: 'League Match',
-    teamA: { name: 'Parel Sporting Club', short: 'PSC' }, teamB: { name: 'MIG Cricket Club', short: 'MIG' } }]);
+  const titleCode = [H.grabConst('PRO_PILL'), H.grabConst('PRO_KIND'), H.grabConst('proVs'), H.grabConst('proPlural'), H.grabConst('SINGLE_MATCHES_LEAGUE_KEY'), H.grab('personName'), H.grab('playerKey'),
+    H.grab('proCountsLine'), H.grab('proPlayerName'), H.grab('proSplitName'), H.grab('proTeam'), H.grab('proPlayerFigures'), H.grab('proStatCells'), H.grab('proTeamCells'),
+    H.grab('proMatchContext', 'async function '), H.grab('proTitleForMatchCompile', 'async function '),
+    'return { proCountsLine, proPlayerName, proSplitName, proPlayerFigures, proStatCells, proTitleForMatchCompile };'].join('\n');
+  const badgeA = 'data:image/png;base64,iVBORw0KGgo=';
+  const match1 = { matchId: 'm-1', roomId: 'room-1', ownerUid: 'u1', leagueKey: 'mca', matchTitle: 'League Match', matchResultText: 'PSC won by 16 runs',
+    teamA: { name: 'Parel Sporting Club', short: 'PSC', color: '#1d4ed8', logoUrl: badgeA }, teamB: { name: 'MIG Cricket Club', short: 'MIG', logoUrl: 'https://example.com/mig.png' },
+    battingCard: { A: [{ name: 'Harsh Rane', runs: 45, balls: 23, fours: 2, sixes: 3 }], B: [{ name: 'Alim', runs: 4, balls: 6, fours: 1, sixes: 0 }] },
+    bowlingCard: { A: [{ name: 'Harsh Rane', overs: 1, balls: 0, runs: 12, wickets: 0 }], B: [{ name: 'Alim', overs: 4, balls: 0, runs: 22, wickets: 3 }] },
+    scoreA: { runs: 156, wickets: 7, overs: '20.0' }, scoreB: { runs: 140, wickets: 9, overs: '19.4' } };
+  const records = H.coll([match1]);
   const leagues = H.coll([{ ownerUid: 'u1', leagueKey: 'mca', displayName: 'MCA President Cup 2026' }]);
   const T = new Function('matchRecordsCollection', 'leaguesCollection', titleCode)(records, leagues);
   const clipsX = [{ eventType: 'SIX', strikerKey: 'harsh rane', strikerName: 'Harsh Rane' }, { eventType: 'SIX' }, { eventType: 'FOUR' }, { eventType: 'WICKET', bowlerKey: 'alim', bowlerName: 'Alim' }];
   eq('what is in the video, counted', T.proCountsLine(clipsX), '2 SIXES  ·  1 FOUR  ·  1 WICKET');
   eq('a player\'s name as the clips spell it', [T.proPlayerName(clipsX, 'harsh rane'), T.proPlayerName(clipsX, 'alim')], ['Harsh Rane', 'Alim']);
-  eq('a player\'s sixes in one match: tournament · match / name / ALL SIXES / counts · teams',
+  eq('the name on the card: first name small, surname big (one word: just big)', [T.proSplitName('Aadit Bahutule'), T.proSplitName('M S Dhoni'), T.proSplitName('Sai'), T.proSplitName('Rohit Sharma Jr')],
+    [{ first: 'Aadit', title: 'Bahutule' }, { first: 'M S', title: 'Dhoni' }, { first: '', title: 'Sai' }, { first: 'Rohit', title: 'Sharma Jr' }]);
+  eq('a player\'s sixes in one match: tournament / match / name / ALL SIXES / their batting figures / their team with its badge',
     await T.proTitleForMatchCompile({ type: 'player', playerKey: 'Harsh Rane', category: 'sixes' }, 'room-1', clipsX.slice(0, 2)),
-    { kicker: 'MCA President Cup 2026  ·  League Match', title: 'Harsh Rane', pill: 'ALL SIXES', meta: '2 SIXES  ·  PSC vs MIG', kind: 'SIX' });
-  eq('a team\'s fours', (await T.proTitleForMatchCompile({ type: 'fours', team: 'B' }, 'room-1', [{ eventType: 'FOUR' }])).title, 'MIG Cricket Club');
-  eq('the whole match', await T.proTitleForMatchCompile({ type: 'full' }, 'room-1', clipsX),
-    { kicker: 'MCA President Cup 2026  ·  League Match', title: 'Parel Sporting Club vs MIG Cricket Club', pill: 'FULL MATCH HIGHLIGHTS', meta: '2 SIXES  ·  1 FOUR  ·  1 WICKET  ·  PSC vs MIG', kind: 'BRAND' });
-  eq('a match the database does not know: still a title', (await T.proTitleForMatchCompile({ type: 'wickets' }, 'nope', [{ eventType: 'WICKET' }])).pill, 'ALL WICKETS');
+    { kicker: 'MCA President Cup 2026', line: 'PSC vs MIG  ·  League Match', first: 'Harsh', title: 'Rane', pill: 'ALL SIXES', meta: '2 SIXES',
+      stats: [{ value: '45', label: 'RUNS', sub: '23 BALLS' }, { value: '3', label: 'SIXES' }, { value: '2', label: 'FOURS' }, { value: '195.7', label: 'STRIKE RATE' }],
+      team: { name: 'Parel Sporting Club', short: 'PSC', color: '#1d4ed8', logo: badgeA }, kind: 'SIX' });
+  const wk = await T.proTitleForMatchCompile({ type: 'player', playerKey: 'Alim', category: 'wickets' }, 'room-1', clipsX.slice(3));
+  eq('a bowler\'s wickets: their bowling figures, their team (a badge given as a link is never fetched)', [wk.title, wk.pill, wk.stats, wk.team],
+    ['Alim', 'WICKETS', [{ value: '3', label: 'WICKETS', sub: '22 RUNS' }, { value: '4.0', label: 'OVERS' }, { value: '5.50', label: 'ECONOMY' }], { name: 'MIG Cricket Club', short: 'MIG', color: '', logo: '' }]);
+  eq('all of an all-rounder\'s clips: some of both', (await T.proTitleForMatchCompile({ type: 'player', playerKey: 'Alim', category: 'all' }, 'room-1', clipsX.slice(3))).stats,
+    [{ value: '4', label: 'RUNS', sub: '6 BALLS' }, { value: '0', label: 'SIXES' }, { value: '3', label: 'WICKETS', sub: '22 RUNS' }, { value: '4.0', label: 'OVERS' }]);
+  const fours = await T.proTitleForMatchCompile({ type: 'fours', team: 'B' }, 'room-1', [{ eventType: 'FOUR' }]);
+  eq('a team\'s fours: the team, its innings, its badge', [fours.title, fours.stats[0], fours.team && fours.team.name], ['MIG Cricket Club', { value: '140/9', label: 'SCORE', sub: '19.4 OVERS' }, 'MIG Cricket Club']);
+  eq('the whole match: both teams (and their badges), the result, both scores', await T.proTitleForMatchCompile({ type: 'full' }, 'room-1', clipsX),
+    { kicker: 'MCA President Cup 2026', line: 'League Match  ·  PSC won by 16 runs', title: 'PSC vs MIG', pill: 'FULL MATCH HIGHLIGHTS',
+      meta: '2 SIXES  ·  1 FOUR  ·  1 WICKET', stats: [{ value: '156/7', label: 'PSC', sub: '20.0 OVERS' }, { value: '140/9', label: 'MIG', sub: '19.4 OVERS' }],
+      teams: [{ name: 'Parel Sporting Club', short: 'PSC', color: '#1d4ed8', logo: badgeA }, { name: 'MIG Cricket Club', short: 'MIG', color: '', logo: '' }], kind: 'BRAND' });
+  const lost = await T.proTitleForMatchCompile({ type: 'wickets' }, 'nope', [{ eventType: 'WICKET' }]);
+  eq('a match the database does not know: still a title, just no figures', [lost.pill, lost.stats, lost.team], ['ALL WICKETS', [], null]);
+  const match2 = { teamA: { name: 'Thane Tigers' }, teamB: { name: 'Parel Sporting Club', short: 'PSC' }, battingCard: { B: [{ name: 'harsh  rane', runs: 12, balls: 10, fours: 1, sixes: 1 }] } };
+  const tf = T.proPlayerFigures([match1, match2], 'harsh rane');
+  eq('a tournament: the figures add up over the matches the player played, the team is the latest',
+    [tf.matches, tf.bat, tf.team.name, T.proStatCells(tf, 'boundaries')[0]], [2, { runs: 57, balls: 33, fours: 3, sixes: 4 }, 'Parel Sporting Club', { value: '57', label: 'RUNS', sub: '33 BALLS' }]);
 
   console.log('\n=== The finished video ===');
   const clipA = makeClip('a.mp4', { tone: 330 }), clipB = makeClip('b.mp4', { tone: 440, sec: 2.9 }), clipC = makeClip('c.mp4', { audio: false, fps: 25, sec: 2.7 });
@@ -95,7 +128,11 @@ function lumaAt(file, t){
     { file: clipB, clipKey: 'b|1', card: cardForClip({ eventType: 'FOUR', strikerName: 'Sai', bowlerName: 'Om', over: 2, ballInOver: 3 }) },
     { file: clipC, clipKey: 'c|1', card: cardForClip({ eventType: 'WICKET', dismissedPlayerName: 'Dev', bowlerName: 'Om', dismissalType: 'Bowled', over: 4, ballInOver: 1 }) }
   ];
-  const title = { kicker: 'MCA President Cup 2026', title: 'Harsh Rane', pill: 'All highlights', meta: '1 six · 1 four · 1 wicket', kind: 'SIX' };
+  const badgeFile = path.join(tmp, 'badge.png');
+  ff(['-y', '-f', 'lavfi', '-i', 'testsrc2=s=96x96', '-frames:v', '1', badgeFile]);
+  const title = { kicker: 'MCA President Cup 2026', line: 'PSC vs MIG  ·  League Match', first: 'Harsh', title: 'Rane', pill: 'All highlights', meta: '1 six · 1 four · 1 wicket',
+    stats: [{ value: '45', label: 'Runs', sub: '23 balls' }, { value: '3', label: 'Sixes' }, { value: '2', label: 'Fours' }, { value: '195.7', label: 'Strike rate' }],
+    team: { name: 'Parel Sporting Club', short: 'PSC', color: '#1d4ed8', logo: 'data:image/png;base64,' + fs.readFileSync(badgeFile).toString('base64') }, kind: 'SIX' };
   const out = path.join(tmp, 'out.mp4');
   const steps = [];
   let t0 = Date.now();
@@ -119,8 +156,16 @@ function lumaAt(file, t){
   cuts.push(at / 30);
   clipF.forEach(f => { at += f; cuts.push(at / 30); });
   const lumas = cuts.map(t => lumaAt(out, t - 0.017));
-  eq('at every cut the band covers the frame (dark navy, not the bright picture)', lumas.every(l => l < 45), true);
+  eq('at every cut the band covers the frame (dark navy, not the bright picture)', lumas.every(l => l < 50), true);
   eq('… and between cuts the clip itself shows', lumaAt(out, cuts[0] + 1.5) > 60, true);
+  // The sound: the clips' own, nothing added (no whoosh), kept to their ends.
+  const src = level(clipA, 1.0, 1.0);
+  const lv = { intro: level(out, 0.1, cuts[0] - 0.2), mid: level(out, cuts[0] + 1.0, 1.0), cut: level(out, cuts[1] - 0.3, 0.6), end: level(out, cuts[1] - 0.3, 0.15),
+    silentClip: level(out, cuts[2] + 0.4, (clipF[2] / 30) - 0.8), outro: level(out, cuts[3] + 0.05, cardF.outro / 30 - 0.1) };
+  eq('the title card, the clip with no sound and the end card are silent', [lv.intro.mean < -70, lv.silentClip.mean < -70, lv.outro.mean < -70], [true, true, true]);
+  eq('a clip\'s sound is its own, at its own level', Math.abs(lv.mid.mean - src.mean) < 1, true);
+  eq('across a cut: nothing louder than the clips themselves (no transition sound)', lv.cut.max <= Math.max(src.max, level(clipB, 1.0, 1.0).max) + 1, true);
+  eq('… and a clip keeps its full sound right up to the cut (only a click-guard fade)', Math.abs(lv.end.mean - src.mean) < 1.5, true);
   eq('progress runs forwards to the end, with words', [steps.every((s, i) => i === 0 || s[0] >= steps[i - 1][0]), steps[steps.length - 1][0], /Editing clip 1 of 3/.test(steps.map(s => s[1]).join('|'))], [true, 1, true]);
 
   console.log('\n=== Cached clips ===');
