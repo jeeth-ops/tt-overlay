@@ -23,6 +23,15 @@
  *   sound in the video is the clips' own.
  * - The end card (1.6 s): the band clears onto the logo, which springs into
  *   place under a sweep of light, then the website and a fade to black.
+ * - Two shapes: 16:9 (YouTube) or 9:16 (Reels / Shorts / status). In 9:16 the
+ *   whole 16:9 picture sits in the middle over a blurred copy of itself (the
+ *   action is never cropped) and the tag lives in the space above it.
+ * - Optionally an animated wagon wheel (highlight-wheel.js): where the shot
+ *   went, or the stumps flashing for a bowled. In 16:9 it comes in at the top
+ *   left only after the shot, when the tag has long gone; in 9:16 it has the
+ *   space under the picture. Either way, never over the batter, the bowler or
+ *   the ball.
+ * - The footage is sharpened a touch (luma only), for phones.
  * - One H.264 / AAC MP4 (faststart): 1080p or 720p, 25 or 30 fps.
  *
  * Fast, and kind to the live server:
@@ -52,7 +61,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
 
-const STYLE = 'v2';             // bump when the look changes: old cached segments are left alone
+const STYLE = 'v3';             // bump when the look changes: old cached segments are left alone
 const STING = 0.6;              // the whole wipe, seconds
 const HALF = STING / 2;         // each segment's half of it
 const EASE_K = 0.85;            // the band rushes in, all but stops over the cut, rushes out
@@ -63,6 +72,9 @@ const INTRO_SEC = 2.6;
 const OUTRO_SEC = 1.6;
 const TAG_IN = 0.5;             // the event tag arrives just after the band has gone…
 const TAG_HOLD = 3.0;           // …and is gone long before the ball is bowled
+const WHEEL_LEAD = 4.0;         // the wheel's shot draws this long before a clip ends: after the shot (the
+                                // clip ends POST-ROLL seconds after the scorer's press, made once it is over)
+const SHARPEN = { same: 0.5, down: 0.35 }; // luma unsharp (5x5): footage kept or upscaled / scaled down
 
 const ACCENT = { SIX: 'a855f7', FOUR: '3b82f6', WICKET: 'ef4444', HIGHLIGHT: '22c55e', BRAND: 'f59e0b' };
 const FONT_DIR = path.join(__dirname, 'assets', 'highlights', 'fonts');
@@ -72,6 +84,7 @@ const FONTS = {
   body: path.join(FONT_DIR, 'Inter-SemiBold.otf')              // over, bowler, website
 };
 const LOGO = path.join(__dirname, 'logo.png');
+const Wheel = require('./highlight-wheel');
 
 /* ------------------------------------------------------------- small helpers */
 const r2 = (n) => Math.round(n * 100) / 100;
@@ -157,6 +170,33 @@ function cardForClip(clip) {
   }
   const label = cleanText(c.outcomeLabel, 18) || 'HIGHLIGHT';
   return { kind: 'HIGHLIGHT', label, title: striker || 'HIGHLIGHT', sub: join(at, bowler && `BOWLER ${bowler}`) };
+}
+
+/* --------------------------------------------------------- the wagon wheel */
+const WHEEL_PLACE = { fineleg: ['SHORT FINE LEG', 'FINE LEG'], squareleg: ['SQUARE LEG', 'DEEP SQUARE LEG'], midwicket: ['MID-WICKET', 'DEEP MID-WICKET'],
+  midon: ['MID-ON', 'LONG-ON'], midoff: ['MID-OFF', 'LONG-OFF'], cover: ['COVER', 'DEEP COVER'], point: ['POINT', 'DEEP POINT'], thirdman: ['GULLY', 'THIRD MAN'] };
+// What a clip's wheel shows. w: { event: SIX / FOUR / WICKET / …, runs, how
+// (dismissal type), shot: { zone, depth, hand, x, y } } — the delivery's own
+// data. A boundary reaches the rope; a bowled / lbw / stumped / hit wicket
+// (or a wicket with no shot) flashes the stumps; anything else with no shot
+// has no wheel. → { kind, end, label, mark } or null.
+function wheelFor(w) {
+  if (!w) return null;
+  const ev = String(w.event || '').toUpperCase();
+  const kind = ev === 'SIX' || ev === 'FOUR' || ev === 'WICKET' ? ev : 'RUN';
+  const how = String(w.how || '').toLowerCase();
+  const atStumps = kind === 'WICKET' && (/bowled|lbw|stump|hit wicket/.test(how) || !w.shot);
+  let end = null;
+  if (!atStumps) {
+    end = w.shot ? Wheel.shotPoint(w.shot, kind === 'SIX' || kind === 'FOUR') : null;
+    if (!end) return null;
+    end = end.map(v => Math.round(v * 10) / 10);
+  }
+  const zone = w.shot && WHEEL_PLACE[w.shot.zone];
+  const place = !atStumps && zone ? zone[w.shot.depth === 'deep' ? 1 : 0] : '';
+  const runs = Math.max(0, Math.round(Number(w.runs) || 0));
+  const head = kind === 'WICKET' ? (cleanText(w.how, 18) || 'WICKET') : kind === 'RUN' ? `${runs} RUN${runs === 1 ? '' : 'S'}` : kind;
+  return { kind, end, label: [head, place].filter(Boolean).join('  ·  '), mark: kind === 'SIX' ? '6' : kind === 'FOUR' ? '4' : kind === 'WICKET' ? 'W' : String(runs) };
 }
 
 /* ---------------------------------------------------------- filtergraphs */
@@ -267,15 +307,18 @@ function createHighlightEditor(opts = {}) {
   // A small server (one CPU, or under ~1 GB of memory) renders 720p: a 1080p
   // encode takes ~220 MB next to the live server, and ~1.6x the time.
   const maxHeight = opts.maxHeight || (memBudgetMB() < 1000 || cpuBudget() < 2 ? 720 : 1080);
-  function pickProfile(probes) {
+  // format '9:16' stands the same picture on end: 1080 x 1920 or 720 x 1280.
+  // k scales the design (drawn for 1080 on the short side).
+  function pickProfile(probes, format) {
     const ok = probes.filter(Boolean);
     const maxH = Math.max(0, ...ok.map(p => p.height));
-    const h = maxH >= 1000 && maxHeight >= 1080 ? 1080 : 720;
-    const w = h === 1080 ? 1920 : 1280;
+    const short = maxH >= 1000 && maxHeight >= 1080 ? 1080 : 720, long = short === 1080 ? 1920 : 1280;
+    const portrait = format === '9:16';
+    const w = portrait ? short : long, h = portrait ? long : short;
     const fpss = ok.map(p => p.fps).filter(f => f > 0);
     const pal = fpss.length > 0 && fpss.every(f => Math.abs(f - 25) < 1.5 || Math.abs(f - 50) < 1.5);
     const fps = pal ? 25 : 30;
-    return { w, h, fps, k: h / 1080, key: `${w}x${h}p${fps}` };
+    return { w, h, fps, k: short / 1080, portrait, key: `${w}x${h}p${fps}` };
   }
   function encodeArgs(p) {
     const big = p.h >= 1080;
@@ -299,7 +342,7 @@ function createHighlightEditor(opts = {}) {
   // covers all of it.
   function bandGeom(p) {
     const k = p.k;
-    const s = Math.round(350 * k), m = Math.round(320 * k);
+    const s = Math.round(0.324 * p.h), m = Math.round(320 * k);
     const hl = Math.max(2, Math.round(6 * k)), gap = Math.round(14 * k), aw = Math.round(250 * k), hl2 = Math.max(2, Math.round(4 * k));
     const side = hl2 + aw + gap + hl, L = side + Math.round(30 * k);
     const Bw = p.w + s + m, IW = even(L + s + Bw + L);
@@ -354,7 +397,7 @@ function createHighlightEditor(opts = {}) {
   async function buildAssets(p, dir) {
     fs.mkdirSync(dir, { recursive: true });
     const g = bandGeom(p), k = p.k, W = p.w, H = p.h;
-    const C = even(H * 0.48);                      // the end card's logo box
+    const S = Math.min(W, H), C = even(S * 0.48);  // the end card's logo box
     const out = {
       dir, C,
       glint: path.join(dir, 'glint.png'), glintW: Math.round(380 * k),
@@ -363,10 +406,10 @@ function createHighlightEditor(opts = {}) {
       shine: path.join(dir, 'shine.png'),
       endBg: path.join(dir, 'end-bg.png')
     };
-    await makeOnce(out.logoSmall, ['-i', LOGO, '-vf', `scale=-2:${even(H * 0.075)}:flags=lanczos,format=rgba`, '-frames:v', '1']);
+    await makeOnce(out.logoSmall, ['-i', LOGO, '-vf', `scale=-2:${even(S * 0.075)}:flags=lanczos,format=rgba`, '-frames:v', '1']);
     // The end card's logo, on a box twice the size it is shown at: zoompan
     // then only ever scales it down, so the spring stays sharp.
-    const springLogo = even(2 * H * 0.30 / out.springZ);
+    const springLogo = even(2 * S * 0.30 / out.springZ);
     await makeOnce(out.logoSpring, ['-i', LOGO, '-vf', `scale=-2:${springLogo}:flags=lanczos,format=rgba,pad=${2 * C}:${2 * C}:(ow-iw)/2:(oh-ih)/2:color=black@0`, '-frames:v', '1']);
     // A soft slanted streak of light (rides along the band, across the logo).
     const gw = out.glintW;
@@ -376,6 +419,14 @@ function createHighlightEditor(opts = {}) {
     // a strip three logo-boxes wide, cropped through a moving window.
     await makeOnce(out.shine, ['-f', 'lavfi', '-i', `color=c=white@0:s=${3 * C}x${C},format=rgba`, '-vf',
       `geq=r=255:g=255:b=255:a='200*exp(-pow((X-${1.5 * C}-0.45*(Y-${C / 2}))/${r2(C * 0.09)},2))'`, '-frames:v', '1']);
+    // 9:16: the picture's rounded corners, as a mask (white inside).
+    if (p.portrait) {
+      const cw = W, ch = even(W * 9 / 16), R = Math.round(30 * k);
+      out.corner = path.join(dir, 'corner.png');
+      const dx = `max(${R - 0.5}-X,X-${cw - 0.5 - R})`, dy = `max(${R - 0.5}-Y,Y-${ch - 0.5 - R})`;
+      await makeOnce(out.corner, ['-f', 'lavfi', '-i', `color=c=black:s=${cw}x${ch},format=gray`, '-vf',
+        `geq=lum='255*${clampExpr(`${R}+0.5-hypot(max(${dx},0),max(${dy},0))`)}'`, '-frames:v', '1']);
+    }
     // The end card's background: deep navy, lighter behind the logo (drawn
     // small, it is all soft light).
     const ew = even(W / 4), eh = even(H / 4);
@@ -415,7 +466,7 @@ function createHighlightEditor(opts = {}) {
     const halo = `22*exp(-(pow((X-${cx})/${r2(560 * k * q)},2)+pow((Y-${cy})/${r2(360 * k * q)},2)))`;
     const ch = (c, top, bot) => `if(${inHair}+${inHair2},245,if(${inSlab},${c}*(0.62+0.38*(${out}-${hl2})/${aw}),${top}+${bot - top}*Y/${hh}+${halo}))`;
     const alpha = `if(${inBody}+${inHair2}+${inSlab},255,if(${inHair},230,0))`;
-    const LH = even(H * 0.25), shPad = Math.round(60 * k), shR = Math.max(2, Math.round(22 * k));
+    const LH = even(Math.min(p.w, H) * 0.25), shPad = Math.round(60 * k), shR = Math.max(2, Math.round(22 * k));
     const cxF = Math.round(g.pad + g.L + g.s / 2 + g.Bw / 2);
     const shadow = (h, pad, r) => `scale=-2:${h}:flags=lanczos,format=rgba,pad=iw+${2 * pad}:ih+${2 * pad}:${pad}:${pad}:color=black@0,lutrgb=r=0:g=0:b=0:a=val*0.55,boxblur=luma_radius=${r}:luma_power=2:alpha_radius=${r}:alpha_power=2`;
     const fc = [
@@ -548,25 +599,121 @@ function createHighlightEditor(opts = {}) {
     return f.join(',');
   }
 
+  // 9:16: where the 16:9 picture sits — the full width, a little above the
+  // middle when the wheel needs the space under it (the same for every clip
+  // of a video, so the picture never jumps).
+  function portraitBox(p, wheelOn) {
+    const ch = even(p.w * 9 / 16);
+    return { cw: p.w, ch, y: wheelOn ? even(p.h * 0.29) : even((p.h - ch) / 2) };
+  }
+  // 9:16: the event tag in the space above the picture, centred, there for
+  // the whole clip (it covers nothing): event pill / NAME / over · bowler.
+  function tagPortrait(p, card, dir, T, box) {
+    const k = p.k, W = p.w;
+    const accent = `0x${ACCENT[card.kind] || ACCENT.HIGHLIGHT}`;
+    const label = cleanText(card.label, 18), title = cleanText(card.title, 40), sub = cleanText(card.sub, 72);
+    const pillSize = Math.round(40 * k), pb = Math.round(13 * k), nameSize = fitSize(title, Math.round(104 * k), Math.round(W * 0.88) / 0.45);
+    const subSize = fitSize(sub, Math.round(30 * k), Math.round(W * 0.9) / 0.6);
+    const hPill = Math.round(pillSize * 1.22 + 2 * pb), gap1 = Math.round(26 * k), gap2 = Math.round(16 * k);
+    const hBlock = hPill + gap1 + nameSize + (sub ? gap2 + Math.round(subSize * 1.2) : 0);
+    const top = Math.max(Math.round(150 * k), Math.round((box.y - hBlock) / 2 + 36 * k));
+    const rise = (y, at) => `${y}+${Math.round(30 * k)}*(1-${easeOut(prog(at, 0.42))})`;
+    const f = [];
+    f.push(drawtext({ font: FONTS.event, file: textFile(dir, 'tag-label', label), size: pillSize, color: 'white', box: `${accent}@1.0`, boxBorder: pb,
+      x: '(w-text_w)/2', y: rise(top + pb, TAG_IN), alpha: prog(TAG_IN, 0.3) }));
+    f.push(drawtext({ font: FONTS.display, file: textFile(dir, 'tag-title', title), size: nameSize, color: 'white',
+      x: '(w-text_w)/2', y: rise(top + hPill + gap1, TAG_IN + 0.08), alpha: prog(TAG_IN + 0.08, 0.3) }));
+    if (sub) f.push(drawtext({ font: FONTS.body, file: textFile(dir, 'tag-sub', sub), size: subSize, color: '0xdbe4f0',
+      x: '(w-text_w)/2', y: rise(top + hPill + gap1 + nameSize + gap2, TAG_IN + 0.16), alpha: prog(TAG_IN + 0.16, 0.3) }));
+    return f.join(',');
+  }
+
+  // The clip's wagon wheel (spec: wheelFor): the field pops in, then the shot
+  // draws, its marker springs in with the number on it and what happened
+  // under the wheel. 16:9: top left, only at the end of the clip, after the
+  // shot and long after the tag; 9:16: in the space under the picture for the
+  // whole clip, the shot drawing at the same moment. Laid on [inLabel] →
+  // [outLabel]; false when the clip is too short to hold it.
+  // Where a clip's wheel goes: { D (size), x, y, labelSize, lb } — 16:9 the
+  // top left corner; 9:16 centred in the space under the picture (box).
+  function wheelPlace(p, box) {
+    const k = p.k;
+    const D = even(p.portrait ? p.w * 0.5 : 300 * k);
+    const labelSize = Math.round((p.portrait ? 32 : 22) * k), lb = Math.round((p.portrait ? 12 : 8) * k);
+    const x = p.portrait ? Math.round((p.w - D) / 2) : Math.round(46 * k);
+    const below = box.y + box.ch, room = p.h - below;
+    const y = p.portrait ? Math.round(below + (room - D - labelSize * 1.3 - 2 * lb - 18 * k) / 2) : Math.round(40 * k);
+    return { D, x, y, labelSize, lb };
+  }
+  function addWheel(G, p, dir, spec, T, inLabel, outLabel, box) {
+    const k = p.k, fps = p.fps, tm = Wheel.timings;
+    const { D, x, y, labelSize, lb } = wheelPlace(p, box);
+    const shotAt = p.portrait ? Math.max(1.0, T - WHEEL_LEAD) : Math.max(TAG_IN + TAG_HOLD + 0.75, T - WHEEL_LEAD);
+    const plateAt = p.portrait ? HALF + 0.05 : shotAt - tm.PLATE_SEC - 0.05;
+    if (shotAt + tm.DRAW_SEC + tm.POP_SEC > T - HALF) return false;
+    const plate = Wheel.plateFrames({ size: D, fps }), shot = Wheel.shotFrames({ size: D, fps, spec });
+    const pf = path.join(dir, 'wheel-plate.rgba'), sf = path.join(dir, 'wheel-shot.rgba');
+    fs.writeFileSync(pf, plate.data);
+    fs.writeFileSync(sf, shot.data);
+    const raw = (f) => G.input(['-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${D}x${D}`, '-framerate', String(fps), '-i', f]);
+    const wp = G.label('wp'), ws = G.label('ws'), wa = G.label('wa'), wb = G.label('wb');
+    G.add(`[${raw(pf)}:v]settb=1/${fps},setpts=N+${Math.round(plateAt * fps)}[${wp}]`);
+    G.add(`[${raw(sf)}:v]settb=1/${fps},setpts=N+${Math.round(shotAt * fps)}[${ws}]`);
+    // both hold their last frame to the end of the clip (eof_action=repeat)
+    G.add(`[${inLabel}][${wp}]overlay=x=${x}:y=${y}:eof_action=repeat[${wa}]`);
+    G.add(`[${wa}][${ws}]overlay=x=${x}:y=${y}:eof_action=repeat[${wb}]`);
+    const m = Wheel.markerPx(D, spec), markAt = shotAt + (spec.end ? tm.DRAW_SEC - 0.06 : 0.12) + tm.POP_SEC * 0.6;
+    const text = [
+      drawtext({ font: FONTS.display, file: textFile(dir, 'wheel-mark', spec.mark), size: Math.max(10, Math.round(m.r * 1.55)), color: spec.kind === 'RUN' ? '0x0b1220' : 'white',
+        x: `${Math.round(x + m.x)}-text_w/2`, y: `${Math.round(y + m.y)}-text_h/2`, alpha: prog(markAt, 0.12), from: markAt }),
+      drawtext({ font: FONTS.body, file: textFile(dir, 'wheel-label', spec.label), size: labelSize, color: 'white', box: '0x0b1220@0.85', boxBorder: lb,
+        x: `${x + Math.round(D / 2)}-text_w/2`, y: `${y + D + Math.round(10 * k) + lb}+${Math.round(14 * k)}*(1-${easeOut(prog(markAt, 0.35))})`, alpha: prog(markAt, 0.3), from: markAt })
+    ];
+    G.add(`[${wb}]${text.join(',')}[${outLabel}]`);
+    return true;
+  }
+
   /* ----------------------------------------------------------- segments */
-  // One clip → one segment: scaled to the format, its tag, both wipe halves,
-  // its own sound (nothing added: a touch of fade at each end, against clicks).
-  async function renderClip({ src, info, card, profile: p, assets, out, workDir, onProgress }) {
+  // One clip → one segment: fitted to the format (16:9, or 9:16 with the
+  // picture in the middle), sharpened a touch, its tag, its wagon wheel
+  // (wheelOn: the video has wheels; wheel: this clip's delivery), both wipe
+  // halves, and its own sound (nothing added: a touch of fade at each end,
+  // against clicks).
+  async function renderClip({ src, info, card, wheel, wheelOn, profile: p, assets, out, workDir, onProgress }) {
     const dir = fs.mkdtempSync(path.join(workDir, 'seg-'));
     try {
-      const n = clipFrames(info, p), T = n / p.fps;
+      const n = clipFrames(info, p), T = n / p.fps, k = p.k;
       const G = graph();
       G.input(['-threads', String(threads), '-i', src]);
       const aIn = info.hasAudio ? '0:a' : `${silence(G, T)}:a`;
-      const fit = (info.width === p.w && info.height === p.h) ? 'setsar=1'
-        : `scale=${p.w}:${p.h}:force_original_aspect_ratio=decrease:flags=bicubic,pad=${p.w}:${p.h}:(ow-iw)/2:(oh-ih)/2,setsar=1`;
-      G.add(`[0:v]fps=${p.fps},${fit},format=yuv420p,trim=end_frame=${n},setpts=PTS-STARTPTS,${tagFilters(p, card, dir, T)}[v0]`);
-      await withWipes(G, p, assets, 'v0', 'vout', n, { head: card.kind in ACCENT ? card.kind : 'HIGHLIGHT', tail: 'BRAND' });
+      const box = p.portrait ? portraitBox(p, !!wheelOn) : { cw: p.w, ch: p.h, y: 0 };
+      const fit = (info.width === box.cw && info.height === box.ch) ? 'setsar=1'
+        : `scale=${box.cw}:${box.ch}:force_original_aspect_ratio=decrease:flags=bicubic,pad=${box.cw}:${box.ch}:(ow-iw)/2:(oh-ih)/2,setsar=1`;
+      // a touch of sharpening (luma only): a little less when the picture is
+      // being scaled down, which sharpens it already
+      const sharp = `unsharp=5:5:${info.height > box.ch + 8 ? SHARPEN.down : SHARPEN.same}:5:5:0`;
+      if (!p.portrait) {
+        G.add(`[0:v]fps=${p.fps},${fit},format=yuv420p,${sharp},trim=end_frame=${n},setpts=PTS-STARTPTS,${tagFilters(p, card, dir, T)}[v0]`);
+      } else {
+        // the picture, corners rounded, over a blurred, darkened copy of itself
+        const bw = even(p.w / 4), bh = even(p.h / 4), lg = G.label('logo');
+        G.add(`[0:v]fps=${p.fps},format=yuv420p,trim=end_frame=${n},setpts=PTS-STARTPTS,split[s1][s2]`);
+        G.add(`[s1]${fit},${sharp},format=yuva420p[pic]`);
+        G.add(`[${G.file(assets.corner)}:v]format=gray,loop=loop=-1:size=1:start=0,settb=1/${p.fps},setpts=N[cm]`);
+        G.add(`[pic][cm]alphamerge[picr]`);
+        G.add(`[s2]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},boxblur=8:2,eq=brightness=-0.16:saturation=0.85,scale=${p.w}:${p.h}:flags=bicubic,setsar=1[bg]`);
+        G.add(`[bg][picr]overlay=x=0:y=${box.y}:format=yuv420[v1]`);
+        G.add(loopImg(G.file(assets.logoSmall), p.fps, lg, 'format=rgba,'));
+        G.add(`[v1][${lg}]overlay=x=${Math.round(46 * k)}:y=${Math.round(56 * k)}:shortest=1,${tagPortrait(p, card, dir, T, box)}[v0]`);
+      }
+      const spec = wheelOn ? wheelFor(wheel) : null;
+      const cur = spec && addWheel(G, p, dir, spec, T, 'v0', 'vw', box) ? 'vw' : 'v0';
+      await withWipes(G, p, assets, cur, 'vout', n, { head: card.kind in ACCENT ? card.kind : 'HIGHLIGHT', tail: 'BRAND' });
       // mono goes to both ears at its own level (the default upmix would lower it 3 dB)
       const up = info.hasAudio && info.mono ? 'pan=stereo|c0=c0|c1=c0,' : '';
       G.add(`[${aIn}]${up}${cutAudio(T)},afade=t=in:d=0.05,afade=t=out:st=${f6(T - 0.12)}:d=0.12[aout]`);
       await run(withScript(dir, G, ['-map', '[vout]', '-map', '[aout]', ...encodeArgs(p), '-frames:v', String(n), out]), { totalSec: T, onProgress });
-      return { duration: T };
+      return { duration: T, wheel: cur === 'vw' };
     } finally {
       fs.rm(dir, { recursive: true, force: true }, () => {});
     }
@@ -601,10 +748,11 @@ function createHighlightEditor(opts = {}) {
     });
     return ok ? f : null;
   }
-  // The panel at the right of the title card, as one picture: a slanted navy
-  // slab edged in the team's colour, the team's badge on a white disc (its
-  // initials when it has no badge) and its name — both teams side by side for
-  // a whole match, our logo when there is no team.
+  // The team panel of the title card, as one picture: a slanted navy slab
+  // edged in the team's colour — at the right in 16:9, across the top in 9:16
+  // — the team's badge on a white disc (its initials when it has no badge)
+  // and its name; both teams side by side for a whole match, our logo when
+  // there is no team. → { file, x, y, w, h }
   async function buildHero(p, title, dir) {
     const k = p.k, W = p.w, H = p.h;
     const ok = (t) => !!(t && (t.name || t.short));
@@ -613,15 +761,27 @@ function createHighlightEditor(opts = {}) {
     const twin = list.length === 2;
     const brand = ACCENT[title.kind] || ACCENT.BRAND;
     const [er, eg, eb] = rgbOf((list.length === 1 && hexOf(list[0].color)) || brand);
-    const sp = Math.round(H * 0.17), X0 = Math.round(W * 0.665) - sp, PW = even(W - X0 + 10 * k);
-    const edge = `(X-${sp}*(${H}-Y)/${H})`;                          // from the slanted left edge
+    // the slab: its slanted inner edge (16:9 the left, 9:16 the bottom), then
+    // a hairline, a gap and a strip in the team's colour along it
+    let PW, PH, X0 = 0, edge, D, midX, cy, half;
+    if (!p.portrait) {
+      const sp = Math.round(H * 0.17);
+      X0 = Math.round(W * 0.665) - sp; PW = even(W - X0 + 10 * k); PH = H;
+      edge = `(X-${sp}*(${H}-Y)/${H})`;
+      D = even(H * (twin ? 0.2 : 0.3)); midX = Math.round((sp / 2 + PW - 10 * k) / 2); cy = Math.round(H * (twin ? 0.43 : 0.42));
+    } else {
+      const sp = Math.round(H * 0.09);
+      PW = W; PH = even(H * 0.4);
+      edge = `(${PH}-${sp}*X/${W}-Y)`;
+      D = even(W * (twin ? 0.25 : 0.34)); midX = Math.round(W / 2); cy = Math.round(PH * 0.47);
+    }
+    half = twin ? Math.round(D * (p.portrait ? 1.06 : 0.82)) : 0;
     const hair = Math.max(2, Math.round(3 * k)), gap = Math.round(8 * k), strip = Math.round(12 * k);
     const inStrip = `between(${edge},${hair + gap},${hair + gap + strip})`, inHair = `between(${edge},0,${hair})`, inPanel = `gt(${edge},${hair + gap + strip})`;
-    const ch = (t, top, bot) => `if(${inStrip},${t},if(${inHair},235,${top}+${bot - top}*Y/${H}))`;
+    const ch = (t, top, bot) => `if(${inStrip},${t},if(${inHair},235,${top}+${bot - top}*Y/${PH}))`;
     const G = graph();
-    G.add(`[${G.input(['-f', 'lavfi', '-i', `color=c=black@0:s=${PW}x${H},format=rgba`])}:v]geq=r='${ch(er, 15, 7)}':g='${ch(eg, 23, 12)}':b='${ch(eb, 42, 25)}':a='if(${inPanel}+${inStrip},242,if(${inHair},220,0))'[pan]`);
-    const D = even(H * (twin ? 0.2 : 0.3)), ring = Math.max(3, Math.round((twin ? 6 : 7) * k)), DD = D + 2 * ring;
-    const midX = Math.round((sp / 2 + PW - 10 * k) / 2), cy = Math.round(H * (twin ? 0.43 : 0.42)), half = twin ? Math.round(D * 0.82) : 0;
+    G.add(`[${G.input(['-f', 'lavfi', '-i', `color=c=black@0:s=${PW}x${PH},format=rgba`])}:v]geq=r='${ch(er, 15, 7)}':g='${ch(eg, 23, 12)}':b='${ch(eb, 42, 25)}':a='if(${inPanel}+${inStrip},242,if(${inHair},220,0))'[pan]`);
+    const ring = Math.max(3, Math.round((twin ? 6 : 7) * k)), DD = D + 2 * ring;
     // a disc: a ring in the team's colour round a white face, edges smoothed
     const disc = async (team, i) => {
       const [r, g, b] = rgbOf((team && hexOf(team.color)) || brand);
@@ -648,7 +808,7 @@ function createHighlightEditor(opts = {}) {
       G.add(`[${cur}][${face}]overlay=x=${s.cx - DD / 2}:y=${cy - DD / 2}:format=rgb[${o}]`);
       cur = o;
       if (s.team) {
-        const name = cleanText(s.team.name || s.team.short, 32), room = twin ? half * 1.84 : (PW - sp - 60 * k) * 0.9;
+        const name = cleanText(s.team.name || s.team.short, 32), room = twin ? half * 1.84 : p.portrait ? W * 0.8 : (PW - H * 0.17 - 60 * k) * 0.9;
         const size = fitSize(name, Math.round((twin ? 40 : 60) * k), Math.round(room) / 0.44), t = G.label('p');
         G.add(`[${cur}]${drawtext({ font: FONTS.display, file: textFile(dir, `team${i}`, name), size, color: 'white', x: `${s.cx}-text_w/2`, y: `${cy + DD / 2 + Math.round((twin ? 24 : 30) * k)}` })}[${t}]`);
         cur = t;
@@ -661,7 +821,7 @@ function createHighlightEditor(opts = {}) {
     }
     const file = path.join(dir, 'hero.png');
     await run(withScript(dir, G, ['-map', `[${cur}]`, '-frames:v', '1', file]));
-    return { file, x: X0, w: PW };
+    return { file, x: X0, y: 0, w: PW, h: PH };
   }
 
   // Title card: the band clears onto the player — kicker, match, name, what
@@ -680,32 +840,41 @@ function createHighlightEditor(opts = {}) {
       const stats = (Array.isArray(title.stats) ? title.stats : []).map(s => ({ value: cleanText(s && s.value, 9), label: cleanText(s && s.label, 14), sub: cleanText(s && s.sub, 16) }))
         .filter(s => s.value).slice(0, 4);
 
-      const x0 = Math.round(110 * k), maxW = Math.round(W * 0.5);
+      // 16:9: the text at the left of the team panel; 9:16: under it, across
+      const x0 = Math.round((p.portrait ? 72 : 110) * k), maxW = p.portrait ? W - 2 * x0 : Math.round(W * 0.5);
       const firstSize = fitSize(first, Math.round(84 * k), maxW / 0.5), mainSize = fitSize(main, Math.round(176 * k), maxW / 0.46);
       const lineSize = Math.round(32 * k), pillSize = Math.round(36 * k), pb = Math.round(13 * k);
-      const vSize = Math.round(92 * k), lSize = Math.round(25 * k), sSize = Math.round(22 * k);
+      // the figures: each as wide as its widest line (font widths measured),
+      // with a gap and a hairline between — shrunk together if they would
+      // not fit the width
+      const gapW = Math.round(64 * k);
+      const cellWidths = (v, l, sb) => stats.map(s => Math.max(s.value.length * 0.48 * v, s.label.length * 0.74 * l, s.sub.length * 0.6 * sb));
+      let fz = 1;
+      if (stats.length) { const tw = cellWidths(92 * k, 25 * k, 22 * k).reduce((a, b) => a + b + gapW, -gapW); if (tw > maxW) fz = Math.max(0.6, maxW / tw); }
+      const vSize = Math.round(92 * k * fz), lSize = Math.round(25 * k * fz), sSize = Math.round(22 * k * fz);
       // top to bottom, each group with room round it, the block centred in
       // the space under the logo: match line / first name / NAME / pill / figures
       const hLine = line ? lineSize + Math.round(46 * k) : 0, hFirst = first ? Math.round(firstSize * 1.06) : 0, hMain = mainSize;
       const hRow = Math.round(pillSize * 1.22 + 2 * pb), gMain = Math.round(40 * k), gStats = Math.round(64 * k);
       const hStats = stats.length ? Math.round(vSize * 1.04 + lSize * 1.3 + (stats.some(s => s.sub) ? sSize * 1.5 : 0)) : (meta ? Math.round(40 * k) : 0);
       const total = hLine + hFirst + hMain + gMain + hRow + (hStats ? gStats + hStats : 0);
-      const yLine = Math.max(Math.round(205 * k), Math.round((H - total) / 2 + 40 * k));
+      const yLine = p.portrait ? Math.max(hero.h + Math.round(70 * k), Math.round(hero.h + (H - hero.h - total) / 2))
+        : Math.max(Math.round(205 * k), Math.round((H - total) / 2 + 40 * k));
       const yFirst = yLine + hLine, yMain = yFirst + hFirst, yRow = yMain + hMain + gMain, yStats = yRow + hRow + gStats;
       const G = graph();
       const bgIdx = bg ? G.file(bg) : G.input(['-f', 'lavfi', '-i', `color=c=0x0d1526:s=${even(W / 4)}x${even(H / 4)}`]);
       // a slow push-in on the blurred picture (done small: it is all soft)
       G.add(`[${bgIdx}:v]scale=${W}:${H}:flags=bicubic,zoompan=z='1.0+${r2(0.07 / n * 10000) / 10000}*on':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${n}:s=${even(W / 2)}x${even(H / 2)}:fps=${p.fps},` +
         `scale=${W}:${H}:flags=bicubic,setsar=1,format=yuv420p,trim=end_frame=${n},setpts=PTS-STARTPTS[bg0]`);
-      // the team panel slides in from the right
-      const hi = G.file(hero.file), hp = G.label('hero');
+      // the team panel slides in: from the right (16:9), down from the top (9:16)
+      const hi = G.file(hero.file), hp = G.label('hero'), into = `(1-${easeOut(prog(0.05, 0.55))})`;
       G.add(loopImg(hi, p.fps, hp));
-      G.add(`[bg0][${hp}]overlay=x='${hero.x}+${W - hero.x}*(1-${easeOut(prog(0.05, 0.55))})':y=0:eval=frame:shortest=1[bg2]`);
+      G.add(`[bg0][${hp}]overlay=` + (p.portrait ? `x=0:y='-${hero.h}*${into}'` : `x='${hero.x}+${W - hero.x}*${into}':y=0`) + `:eval=frame:shortest=1[bg2]`);
       // our logo and the kicker, top left
       const li = G.file(assets.logoSmall), lg = G.label('logo');
       G.add(loopImg(li, p.fps, lg, 'format=rgba,'));
       G.add(`[${lg}]fade=t=in:st=0.15:d=0.3:alpha=1[${lg}f]`);
-      const logoY = Math.round(70 * k), logoH = even(H * 0.075);
+      const logoY = Math.round((p.portrait ? 56 : 70) * k), logoH = even(Math.min(W, H) * 0.075);
       G.add(`[bg2][${lg}f]overlay=x=${x0}:y=${logoY}:shortest=1[bg3]`);
       let cur = 'bg3';
       const text = [];
@@ -738,10 +907,7 @@ function createHighlightEditor(opts = {}) {
       if (pill) rest.push(drawtext({ font: FONTS.event, file: textFile(dir, 'pill', pill), size: pillSize, color: 'white', box: `${accent}@1.0`, boxBorder: pb,
         x: `${x0 + barW + Math.round(22 * k) + pb}-${Math.round(36 * k)}*(1-${easeOut(prog(0.52, 0.4))})`, y: `${yPillText}`, alpha: prog(0.52, 0.25) }));
       if (stats.length) {
-        // each figure as wide as its widest line (font widths measured), then
-        // a gap with a hairline in it
-        const gapW = Math.round(64 * k);
-        const widths = stats.map(s => Math.max(s.value.length * 0.48 * vSize, s.label.length * 0.74 * lSize, s.sub.length * 0.6 * sSize));
+        const widths = cellWidths(vSize, lSize, sSize);
         let cx = x0;
         const xs = widths.map(w => { const x = cx; cx += Math.round(w) + gapW; return x; });
         stats.forEach((s, i) => {
@@ -793,7 +959,7 @@ function createHighlightEditor(opts = {}) {
       G.add(`[lg][shn]overlay=0:0:format=auto:shortest=1,fade=t=in:st=0.22:d=0.24:alpha=1[lgf]`);
       const yLogo = Math.round(H * 0.44 - C / 2);
       G.add(`[bg][lgf]overlay=x=${Math.round((W - C) / 2)}:y=${yLogo}:shortest=1[b1]`);
-      const ySite = yLogo + Math.round(C / 2 + H * 0.15 + 26 * k);
+      const ySite = yLogo + Math.round(C / 2 + Math.min(W, H) * 0.15 + 26 * k);
       const ul = G.label('ul');
       G.add(`[${G.input(['-f', 'lavfi', '-i', `color=c=0x${ACCENT.BRAND}:s=${Math.round(120 * k)}x${Math.max(3, Math.round(5 * k))}:r=${fps}:d=${f6(T)}`])}:v]format=yuva420p,fade=t=in:st=0.55:d=0.2:alpha=1[${ul}]`);
       G.add(`[b1]${drawtext({ font: FONTS.body, file: textFile(dir, 'site', siteText), size: Math.round(36 * k), color: 'white',
@@ -828,7 +994,7 @@ function createHighlightEditor(opts = {}) {
   /* ------------------------------------------------------------- cache */
   const segDir = path.join(cacheDir, 'segments');
   fs.mkdirSync(segDir, { recursive: true });
-  function segmentKey(clipKey, card, p) { return sha1({ STYLE, clipKey, card, p: p.key }); }
+  function segmentKey(clipKey, card, p, wheelOn, spec) { return sha1({ STYLE, clipKey, card, p: p.key, wheelOn: !!wheelOn, spec: spec || null }); }
   const inflight = new Map(); // segment key → the render making it
   function cached(key) {
     const f = path.join(segDir, `${key}.mkv`);
@@ -853,15 +1019,17 @@ function createHighlightEditor(opts = {}) {
   }
 
   /* ---------------------------------------------------------- the whole */
-  // clips: [{ file, clipKey, card }] in play order (files already local).
-  // title: see renderIntro. onProgress(0…1, message).
-  async function renderHighlight({ clips, title, out, workDir, site, onProgress = () => {} }) {
+  // clips: [{ file, clipKey, card, wheel? }] in play order (files already
+  // local; wheel: the delivery's data, see wheelFor). title: see renderIntro.
+  // format: '16:9' (default) or '9:16'; wheel: lay each clip's wagon wheel on.
+  // onProgress(0…1, message).
+  async function renderHighlight({ clips, title, out, workDir, site, format, wheel: wheelOn, onProgress = () => {} }) {
     const started = Date.now();
     let reused = 0;
     const infos = await Promise.all(clips.map(c => probe(c.file)));
     const usable = clips.map((c, i) => ({ ...c, info: infos[i] })).filter(c => c.info && c.info.duration > 0.8);
     if (!usable.length) throw new Error('no playable clips');
-    const p = pickProfile(usable.map(c => c.info));
+    const p = pickProfile(usable.map(c => c.info), format);
     onProgress(0.02, 'Getting the graphics ready…');
     const assets = await ensureAssets(p);
     const segs = [];
@@ -877,7 +1045,7 @@ function createHighlightEditor(opts = {}) {
     for (let i = 0; i < usable.length; i++) {
       const c = usable[i];
       const msg = `Editing clip ${i + 1} of ${usable.length} — titles & transitions…`;
-      const key = c.clipKey ? segmentKey(c.clipKey, c.card, p) : null;
+      const key = c.clipKey ? segmentKey(c.clipKey, c.card, p, wheelOn, wheelOn ? wheelFor(c.wheel) : null) : null;
       let seg = key ? cached(key) : null;
       if (!seg && key && inflight.has(key)) seg = await inflight.get(key).catch(() => null); // another video is making it right now
       if (seg) reused++;
@@ -886,7 +1054,7 @@ function createHighlightEditor(opts = {}) {
         const make = (async () => {
           const target = key ? path.join(segDir, `${key}.${process.pid}-${Date.now()}.part.mkv`) : path.join(workDir, `seg-${i}.mkv`);
           try {
-            await renderClip({ src: c.file, info: c.info, card: c.card, profile: p, assets, out: target, workDir, onProgress: step(c.info.duration, msg) });
+            await renderClip({ src: c.file, info: c.info, card: c.card, wheel: c.wheel, wheelOn, profile: p, assets, out: target, workDir, onProgress: step(c.info.duration, msg) });
           } catch (e) { fs.unlink(target, () => {}); throw e; }
           if (!key) return target;
           const final = path.join(segDir, `${key}.mkv`);
@@ -906,14 +1074,16 @@ function createHighlightEditor(opts = {}) {
     onProgress(0.97, 'Putting the video together…');
     await concat(segs, out, workDir);
     trimCache();
-    log(`${usable.length} clip(s) at ${p.key} in ${((Date.now() - started) / 1000).toFixed(1)} s (${reused} from the cache)`);
+    log(`${usable.length} clip(s) at ${p.key}${wheelOn ? ' with wheels' : ''} in ${((Date.now() - started) / 1000).toFixed(1)} s (${reused} from the cache)`);
     onProgress(1, 'Done');
-    return { profile: p, included: usable.length, skipped: clips.length - usable.length };
+    return { profile: p, included: usable.length, skipped: clips.length - usable.length, format: p.portrait ? '9:16' : '16:9' };
   }
 
-  return { renderHighlight, renderClip, renderIntro, renderOutro, concat, probe, pickProfile, ensureAssets, cardForClip, queueLength: () => queued, STYLE,
+  return { renderHighlight, renderClip, renderIntro, renderOutro, concat, probe, pickProfile, ensureAssets, cardForClip, wheelFor, queueLength: () => queued, STYLE,
     // the frame counts it will use (tests): a clip, and the title / end cards
-    framesOf: (info, p) => clipFrames(info, p), cardFrames: (p) => ({ intro: gridLength(INTRO_SEC, p.fps), outro: gridLength(OUTRO_SEC, p.fps) }) };
+    framesOf: (info, p) => clipFrames(info, p), cardFrames: (p) => ({ intro: gridLength(INTRO_SEC, p.fps), outro: gridLength(OUTRO_SEC, p.fps) }),
+    // where things go (tests): the 9:16 picture, a clip's wheel, when its shot draws
+    layout: { portraitBox, wheelPlace, wheelLead: WHEEL_LEAD } };
 }
 
-module.exports = { createHighlightEditor, cardForClip, STYLE };
+module.exports = { createHighlightEditor, cardForClip, wheelFor, STYLE };

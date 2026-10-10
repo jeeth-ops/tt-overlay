@@ -3,6 +3,8 @@
 // (his 4s, his 6s, 4s + 6s, the wickets he took) — offers only what exists,
 // says how many clips each option holds, and sends that category to the
 // match compile (POST /api/highlights/compile { type:'player', category }).
+// Before it starts, the viewer picks the video's shape (16:9 / 9:16 Reels) and
+// the wagon wheel (highlight-options.js) — both go with the request.
 //
 //   node test/cricket/scorecard-clip-download-test.js
 const fs = require('fs');
@@ -97,11 +99,36 @@ async function openFor(P, name){
     q(P, `#cd-download [data-dl-cat="${cat}"]`).click();
     await sleep(60);
   }
-  eq('each option asks the server for exactly that category of THIS match', compiles(),
-    ['boundaries', 'fours', 'sixes', 'wickets', 'all'].map(category => ({ matchId: 'M1', type: 'player', playerKey: 'amit', category })));
+  eq('each option asks the server for exactly that category of THIS match (16:9, no wheel, when the options script is not there)', compiles(),
+    ['boundaries', 'fours', 'sixes', 'wickets', 'all'].map(category => ({ matchId: 'M1', type: 'player', playerKey: 'amit', category, format: '16:9', wheel: false })));
   eq('the progress / download window opens', q(P, '#compile-modal-backdrop').classList.contains('open'), true);
   eq('each file is named for the player and what is in it', P.E('window.__names'),
     ['Amit_Match_4s_and_6s', 'Amit_Match_Fours', 'Amit_Match_Sixes', 'Amit_Match_Wickets', 'Amit_Match_Highlights']);
+
+  console.log('\n=== Shape and wagon wheel, asked first ===');
+  P.E(fs.readFileSync(path.join(__dirname, '..', '..', 'highlight-options.js'), 'utf8'));
+  const before = compiles().length;
+  q(P, '#cd-download [data-dl-cat="sixes"]').click();
+  await sleep(80);
+  eq('a download first asks how the video should look (and starts nothing yet)', [!!q(P, '#hlo-back.open'), compiles().length], [true, before]);
+  eq('first time: 16:9 and no wheel picked', [q(P, '.hlo-shape[data-format="16:9"]').getAttribute('aria-checked'), q(P, '#hlo-wheel').checked], ['true', false]);
+  q(P, '[data-act="cancel"]').click();
+  await sleep(80);
+  eq('Cancel: nothing is made', [!!q(P, '#hlo-back.open'), compiles().length], [false, before]);
+  q(P, '#cd-download [data-dl-cat="sixes"]').click();
+  await sleep(80);
+  q(P, '.hlo-shape[data-format="9:16"]').click();
+  q(P, '#hlo-wheel').click();
+  q(P, '[data-act="go"]').click();
+  await sleep(120);
+  eq('9:16 with the wagon wheel: sent with the request, the file named for Reels', [compiles()[compiles().length - 1], P.E('window.__names[window.__names.length - 1]')],
+    [{ matchId: 'M1', type: 'player', playerKey: 'amit', category: 'sixes', format: '9:16', wheel: true }, 'Amit_Match_Sixes_Reels']);
+  q(P, '#cd-download [data-dl-cat="fours"]').click();
+  await sleep(80);
+  eq('the next download remembers the last choice', [q(P, '.hlo-shape[data-format="9:16"]').getAttribute('aria-checked'), q(P, '#hlo-wheel').checked], ['true', true]);
+  P.w.document.querySelector('#hlo-back').dispatchEvent(new P.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await sleep(80);
+  eq('Escape closes it, nothing made', [!!q(P, '#hlo-back.open'), compiles().filter(b => b.category === 'fours').length], [false, 1]);
 
   console.log('\n=== Other tabs ===');
   P.E(`loadClipDrawerScope('tournament')`);

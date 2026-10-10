@@ -10,6 +10,10 @@
 // - the transition: the band covers the whole frame at every cut, and it is
 //   silent — the title and end cards have no sound, and at a cut there is
 //   nothing but the clips' own sound, kept at its own level to its ends;
+// - the viewer's options: 9:16 (Reels) — every frame on time, the wheel only
+//   ever under the picture — and the animated wagon wheel — from the
+//   delivery's own shot, and in 16:9 never over the middle of the picture
+//   (where the batter, the bowler and the ball are);
 // - an edited clip is cached and reused by the next video;
 // - the server job: collecting → editing → ready (edited), and when the edit
 //   fails, the plain joined video instead — a download never fails over it.
@@ -20,7 +24,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const H = require('./cricket/server-harness.js');
-const { createHighlightEditor, cardForClip } = require('../highlight-edit.js');
+const { createHighlightEditor, cardForClip, wheelFor } = require('../highlight-edit.js');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 
 let pass = 0, fail = 0;
@@ -54,6 +58,14 @@ function level(file, t, d){
   const mean = /mean_volume: (-?[\d.]+|-inf) dB/.exec(e), max = /max_volume: (-?[\d.]+|-inf) dB/.exec(e);
   const n = (m) => (!m || m[1] === '-inf') ? -120 : Number(m[1]);
   return { mean: n(mean), max: n(max) };
+}
+// How different two videos are in one region at time t (mean |difference|
+// of the luma, 0-255). crop: 'w:h:x:y' (expressions of iw / ih allowed).
+function regionDiff(a, b, t, crop){
+  const e = ff(['-ss', String(t), '-i', a, '-ss', String(t), '-i', b, '-filter_complex',
+    `[0:v]crop=${crop},format=yuv420p[x];[1:v]crop=${crop},format=yuv420p[y];[x][y]blend=all_mode=difference,signalstats,metadata=print:key=lavfi.signalstats.YAVG`, '-frames:v', '1', '-f', 'null', '-']);
+  const m = /YAVG=([\d.]+)/.exec(e);
+  return m ? Number(m[1]) : NaN;
 }
 // Mean brightness of the frame at time t (the band is dark navy, the test
 // pattern is bright): proof the band covers the frame at a cut.
@@ -118,6 +130,28 @@ function lumaAt(file, t){
   eq('a tournament: the figures add up over the matches the player played, the team is the latest',
     [tf.matches, tf.bat, tf.team.name, T.proStatCells(tf, 'boundaries')[0]], [2, { runs: 57, balls: 33, fours: 3, sixes: 4 }, 'Parel Sporting Club', { value: '57', label: 'RUNS', sub: '33 BALLS' }]);
 
+  console.log('\n=== The download options and the wheel data (server.js) ===');
+  const optCode = [H.grabConst('SHOT_ZONES'), H.grab('sanitizeShot'), H.grab('proOptionsFrom'), H.grab('proWheelData', 'async function '), 'return { proOptionsFrom, proWheelData };'].join('\n');
+  const balls = H.coll([
+    { matchId: 'm-1', ballUid: 'u1', innings: 1, over: 12, ballInOver: 4, kind: '6', runs: 6, shot: { zone: 'midwicket', depth: 'deep', hand: 'R', x: 0.62, y: 0.55 } },
+    { matchId: 'm-1', ballUid: 'u2', innings: 1, over: 14, ballInOver: 1, kind: '4', runs: 4 },
+    { matchId: 'm-1', innings: 1, over: 17, ballInOver: 3, kind: 'W', runs: 0, dismissal: { type: 'Caught' }, shot: { zone: 'midon', depth: 'deep', hand: 'R', x: 0.25, y: 0.78 }, timestamp: 2 },
+    { matchId: 'm-1', innings: 1, over: 17, ballInOver: 3, kind: 'Wd', runs: 1, timestamp: 3 }
+  ]);
+  const O = new Function('ballsCollection', optCode)(balls);
+  eq('options: 9:16 and the wheel when asked; 16:9 and no wheel otherwise', [O.proOptionsFrom({ format: '9:16', wheel: true }), O.proOptionsFrom({}), O.proOptionsFrom({ format: 'square', wheel: 'yes' }), O.proOptionsFrom({ wheel: 'true' })],
+    [{ format: '9:16', wheel: true }, { format: '16:9', wheel: false }, { format: '16:9', wheel: false }, { format: '16:9', wheel: true }]);
+  const wd = await O.proWheelData([{ _id: 'c1', matchId: 'm-1', deliveryId: 'u1', eventType: 'SIX' }, { _id: 'c2', matchId: 'm-1', deliveryId: 'u2', eventType: 'FOUR' },
+    { _id: 'c3', matchId: 'm-1', innings: 1, over: 17, ballInOver: 3, eventType: 'WICKET' }, { _id: 'c4', matchId: 'm-1', deliveryId: 'gone', eventType: 'SIX' }]);
+  eq('each clip gets ITS delivery\'s shot: by its delivery id; an older clip by over.ball and only a delivery of its kind (never the wide after the wicket)',
+    [wd.get('c1'), wd.get('c2'), wd.get('c3'), wd.has('c4')],
+    [{ event: 'SIX', runs: 6, how: '', shot: { zone: 'midwicket', depth: 'deep', hand: 'R', x: 0.62, y: 0.55 } }, { event: 'FOUR', runs: 4, how: '', shot: null },
+      { event: 'WICKET', runs: 0, how: 'Caught', shot: { zone: 'midon', depth: 'deep', hand: 'R', x: 0.25, y: 0.78 } }, false]);
+  eq('what the wheel draws: a six to the rope, a catch where it was taken, a bowled at the stumps, a four with no shot marked — none',
+    [wheelFor(wd.get('c1')), wheelFor(wd.get('c3')), wheelFor({ event: 'WICKET', how: 'Bowled' }), wheelFor(wd.get('c2')), wheelFor({ event: 'CLIP', runs: 2, shot: { zone: 'cover', depth: 'inner', hand: 'R', x: -0.3, y: 0.1 } }).label],
+    [{ kind: 'SIX', end: [74.8, 66.4], label: 'SIX  ·  DEEP MID-WICKET', mark: '6' }, { kind: 'WICKET', end: [25, 78], label: 'CAUGHT  ·  LONG-ON', mark: 'W' },
+      { kind: 'WICKET', end: null, label: 'BOWLED', mark: 'W' }, null, '2 RUNS  ·  COVER']);
+
   console.log('\n=== The finished video ===');
   const clipA = makeClip('a.mp4', { tone: 330 }), clipB = makeClip('b.mp4', { tone: 440, sec: 2.9 }), clipC = makeClip('c.mp4', { audio: false, fps: 25, sec: 2.7 });
   const cacheDir = path.join(tmp, 'cache'), workDir = path.join(tmp, 'work');
@@ -180,9 +214,43 @@ function lumaAt(file, t){
   await ed.renderHighlight({ clips: changed, title, out: path.join(tmp, 'out3.mp4'), workDir, onProgress: () => {} });
   eq('a clip re-labelled (another player) is edited again, never shown with the old tag', fs.readdirSync(path.join(cacheDir, 'segments')).filter(n => /\.mkv$/.test(n)).length, 4);
 
+  console.log('\n=== With the wagon wheel (16:9) ===');
+  // clips as long as a real one's tail: the wheel draws WHEEL_LEAD s before the end
+  const longA = makeClip('la.mp4', { sec: 9, tone: 330 }), longB = makeClip('lb.mp4', { sec: 9, tone: 440 });
+  const wheelClips = [
+    { file: longA, clipKey: 'la|1', card: cardForClip({ eventType: 'SIX', strikerName: 'Harsh Rane', bowlerName: 'Alim', over: 1, ballInOver: 2 }), wheel: wd.get('c1') },
+    { file: longB, clipKey: 'lb|1', card: cardForClip({ eventType: 'WICKET', dismissedPlayerName: 'Dev', bowlerName: 'Om', dismissalType: 'Caught', over: 4, ballInOver: 1 }), wheel: wd.get('c3') }
+  ];
+  const plain = path.join(tmp, 'plain.mp4'), wheeled = path.join(tmp, 'wheeled.mp4');
+  await ed.renderHighlight({ clips: wheelClips, title, out: plain, workDir, onProgress: () => {} });
+  const rw = await ed.renderHighlight({ clips: wheelClips, title, out: wheeled, workDir, wheel: true, onProgress: () => {} });
+  const p16 = rw.profile, nA = ed.framesOf(await ed.probe(longA), p16), introEnd = ed.cardFrames(p16).intro / 30, endA = introEnd + nA / 30;
+  const shotAt = endA - ed.layout.wheelLead, late = endA - 0.6, early = introEnd + 1.0;
+  const wp = ed.layout.wheelPlace(p16, { cw: p16.w, ch: p16.h, y: 0 });
+  const corner = `${wp.D}:${wp.D}:${wp.x}:${wp.y}`;
+  eq('the wheel is in the top left corner, there only once the shot is over (not while the tag shows, not before)',
+    [regionDiff(plain, wheeled, early, corner) < 1.5, regionDiff(plain, wheeled, shotAt - 0.8, corner) < 1.5, regionDiff(plain, wheeled, late, corner) > 8], [true, true, true]);
+  eq('… and never over the middle of the picture, where the batter, the bowler and the ball are',
+    regionDiff(plain, wheeled, late, 'iw*0.6:ih*0.6:iw*0.2:ih*0.2') < 1.5, true);
+  const tw = frameTimes(wheeled);
+  eq('every frame there and on time, as without the wheel', [tw.length, tw.slice(1).every((t, i) => Math.abs(t - tw[i] - 1 / 30) < 0.002)], [frameTimes(plain).length, true]);
+
+  console.log('\n=== 9:16 (Reels) ===');
+  const reel = path.join(tmp, 'reel.mp4');
+  const rr = await ed.renderHighlight({ clips: wheelClips, title, out: reel, workDir, format: '9:16', wheel: true, onProgress: () => {} });
+  const pr = rr.profile, rinfo = ff(['-i', reel]);
+  eq('stood on end: 720 x 1280, 30 fps, H.264 + AAC', [pr.key, rr.format, /720x1280/.test(rinfo), /Audio: aac/.test(rinfo)], ['720x1280p30', '9:16', true, true]);
+  const tr = frameTimes(reel), ar = audioRuns(reel);
+  const expR = ed.cardFrames(pr).intro + (await Promise.all(wheelClips.map(async c => ed.framesOf(await ed.probe(c.file), pr)))).reduce((n, f) => n + f, 0) + ed.cardFrames(pr).outro;
+  eq('every frame there and on time, one unbroken soundtrack', [tr.length, tr.slice(1).every((t, i) => Math.abs(t - tr[i] - 1 / 30) < 0.002), ar.gaps, Math.abs(ar.end - expR / 30) < 0.03], [expR, true, 0, true]);
+  const box = ed.layout.portraitBox(pr, true), wr = ed.layout.wheelPlace(pr, box);
+  eq('the whole 16:9 picture across the width, the wheel wholly under it, inside the frame',
+    [box.cw, box.ch, wr.y >= box.y + box.ch, wr.y + wr.D + wr.labelSize * 1.3 + 2 * wr.lb <= pr.h], [720, 406, true, true]);
+  eq('without the wheel the picture sits in the middle (to the even pixel)', Math.abs(ed.layout.portraitBox(pr, false).y - (1280 - 406) / 2) <= 1, true);
+
   console.log('\n=== The server job ===');
-  const jobCode = [H.grabConst('HIGHLIGHT_PRO_ON'), H.grabConst('HIGHLIGHT_PRO_MAX_CLIPS'), H.grab('setCompileJob'), H.grab('chronologicalClipOrder'), H.grab('dedupeClipsById'),
-    H.grab('concatClipsToFile'), H.grab('getHighlightEditor'), H.grab('proClipKey'), H.grab('runCompileJob', 'async function '),
+  const jobCode = [H.grabConst('HIGHLIGHT_PRO_ON'), H.grabConst('HIGHLIGHT_PRO_MAX_CLIPS'), H.grabConst('SHOT_ZONES'), H.grab('setCompileJob'), H.grab('chronologicalClipOrder'), H.grab('dedupeClipsById'),
+    H.grab('concatClipsToFile'), H.grab('getHighlightEditor'), H.grab('proClipKey'), H.grab('sanitizeShot'), H.grab('proWheelData', 'async function '), H.grab('runCompileJob', 'async function '),
     'return { runCompileJob };'].join('\n');
   const fluent = require('fluent-ffmpeg'); fluent.setFfmpegPath(ffmpegPath);
   const files = { c1: clipA, c2: clipB };
@@ -190,7 +258,7 @@ function lumaAt(file, t){
     const compileJobs = new Map();
     const deps = {
       process: { env: {} }, fs, path, ffmpeg: fluent, ffmpegInstallerPath: ffmpegPath, HIGHLIGHTS_TMP_DIR: path.join(tmp, 'jobs'),
-      createHighlightEditor: () => editor, cardForClip, compileJobs, highlightEditor: null, console: { log: () => {} },
+      createHighlightEditor: () => editor, cardForClip, compileJobs, highlightEditor: null, console: { log: () => {} }, ballsCollection: balls,
       downloadClipToTemp: async (clip, dir, i) => { await new Promise(r => setTimeout(r, 60)); const f = path.join(dir, `clip_${i}.mp4`); fs.copyFileSync(files[clip.clipId], f); return f; }
     };
     fs.mkdirSync(deps.HIGHLIGHTS_TMP_DIR, { recursive: true });
@@ -221,6 +289,15 @@ function lumaAt(file, t){
   await J.run('job3', docs);
   job = J.compileJobs.get('job3');
   eq('the zip / no-edit path is untouched: joined plain', [job.status, !!job.edited], ['ready', false]);
+
+  let asked = null;
+  const spy = { queueLength: () => 0, renderHighlight: async (a) => { asked = a; fs.copyFileSync(clipA, a.out); return {}; } };
+  J = makeJob(spy);
+  J.compileJobs.set('job4', { status: 'queued', progress: 0, createdAt: Date.now() });
+  await J.run('job4', [{ ...docs[1], matchId: 'm-1', deliveryId: 'u1' }, { ...docs[0], matchId: 'm-1', deliveryId: 'u2' }], { title: { title: 'X' }, format: '9:16', wheel: true });
+  job = J.compileJobs.get('job4');
+  eq('9:16 + wheel asked: the editor gets them, each clip with its delivery\'s shot; the job says what it made',
+    [asked.format, asked.wheel, asked.clips.map(c => c.wheel && c.wheel.event), asked.clips[0].wheel.shot.zone, job.format, job.wheel], ['9:16', true, ['SIX', 'FOUR'], 'midwicket', '9:16', true]);
 
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log(`\n================  ${pass} passed, ${fail} failed  ================`);

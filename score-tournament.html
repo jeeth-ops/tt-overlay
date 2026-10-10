@@ -40,6 +40,7 @@
 <link rel="stylesheet" href="/page-transitions.css">
 <link rel="stylesheet" href="/fluid-ui.css">
 <script src="/page-transitions.js" defer></script>
+<script src="/highlight-options.js?v=20261010" defer></script>
 <!-- ===== Content Protection (deterrent only, not foolproof) ===== -->
 <style>
   body {
@@ -1981,7 +1982,7 @@ async function pollCompileJob(jobId, filename, progressWrap, disableEls){
       bar.style.width = `${data.progress || 0}%`;
       msg.textContent = data.message || 'Working…';
       if(data.status === 'ready'){
-        msg.textContent = data.skipped ? `${data.included} included • ${data.skipped} skipped` : data.edited ? `${data.included} clips edited into one video — titles & transitions added` : `${data.included} clips combined successfully`;
+        msg.textContent = data.skipped ? `${data.included} included • ${data.skipped} skipped` : data.edited ? `${data.included} clips edited into one ${data.format === '9:16' ? '9:16 Reels' : '16:9'} video${data.wheel ? ' with wagon wheels' : ''} — titles & transitions added` : `${data.included} clips combined successfully`;
         const dl = document.createElement('a');
         dl.href = `${clipApiBase()}/api/highlights/compile/${encodeURIComponent(jobId)}/download?name=${encodeURIComponent(filename)}`;
         dl.style.display = 'none';
@@ -2003,17 +2004,24 @@ async function pollCompileJob(jobId, filename, progressWrap, disableEls){
 }
 
 function safeFilePart(s){ return String(s||'').trim().replace(/[^a-zA-Z0-9]+/g, '_'); }
+// The viewer's shape (16:9 / 9:16) and wagon wheel for an edited download
+// (highlight-options.js); null when they closed it.
+async function askVideoOptions(){
+  return window.HighlightOptions ? window.HighlightOptions.ask({ title: 'One video of these clips, with titles and transitions.' }) : { format: '16:9', wheel: false };
+}
 
 // Starts a tournament-wide compile for one player. category is
 // 'all'|'sixes'|'fours'|'dismissals'|'wickets' — every "Download All ___"
 // button in the panel funnels through here (sections 2-7).
 async function startPlayerCompile(name, category, triggerEl, progressWrap){
   const suffixes = { all:'Complete_Tournament_Highlights', sixes:'All_Sixes_Tournament', fours:'All_Fours_Tournament', dismissals:'All_Dismissals_Tournament', wickets:'All_Bowling_Wickets_Tournament', other:'All_Other_Clips_Tournament' };
-  const filename = `${safeFilePart(name)}_${suffixes[category] || 'Highlights'}`;
+  const choice = await askVideoOptions();
+  if(!choice) return;
+  const filename = `${safeFilePart(name)}_${suffixes[category] || 'Highlights'}${choice.format === '9:16' ? '_Reels' : ''}`;
   triggerEl.disabled = true;
   try{
     const res = await apiFetch(`${clipApiBase()}/api/public/tournament/${encodeURIComponent(tournamentTokenCache)}/highlights/compile`, {
-      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name, category })
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name, category, format: choice.format, wheel: choice.wheel })
     });
     const data = await res.json();
     if(!data.success) throw new Error(data.error || 'Could not start compilation');
@@ -2428,13 +2436,15 @@ async function ppDownload(type, matchKey){
   if(!ppCount(matchKey || 'all', type)) return;
   const e = matchKey ? pp.byKey.get(matchKey) : null;
   const scope = e ? safeFilePart(`${e.label} vs ${teamLabel(e.opp) || 'Opponent'}`) : 'Tournament';
-  const filename = `${safeFilePart(pp.name)}_${scope}_${T.file}`;
   const mine = pp;
+  const choice = await askVideoOptions();
+  if(!choice || pp !== mine || mine.busy) return;
+  const filename = `${safeFilePart(mine.name)}_${scope}_${T.file}${choice.format === '9:16' ? '_Reels' : ''}`;
   mine.busy = true; ppUpdateBar();
   try{
     const res = await apiFetch(`${clipApiBase()}/api/public/tournament/${encodeURIComponent(tournamentTokenCache)}/highlights/compile`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: mine.name, category: T.cat, ...(matchKey ? { match: matchKey } : {}) })
+      body: JSON.stringify({ name: mine.name, category: T.cat, ...(matchKey ? { match: matchKey } : {}), format: choice.format, wheel: choice.wheel })
     });
     const data = await res.json();
     if(!data.success) throw new Error(data.error || 'Could not start the download');
