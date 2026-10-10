@@ -40,6 +40,7 @@
 <link rel="stylesheet" href="/page-transitions.css">
 <link rel="stylesheet" href="/fluid-ui.css">
 <script src="/page-transitions.js" defer></script>
+<script src="/highlight-options.js?v=20261010" defer></script>
 <!-- ===== Content Protection (deterrent only, not foolproof) ===== -->
 <style>
   body {
@@ -3245,8 +3246,13 @@ document.getElementById('compile-modal-backdrop').addEventListener('click', (e) 
 
 // body: { matchId, type, playerKey?, category?, team? } — same shape clipsForCompileRequest()
 // on the server understands. filename becomes the downloaded file's name
-// (without .mp4 — the server appends it).
+// (without .mp4 — the server appends it). First the viewer picks the shape
+// (16:9 / 9:16) and the wagon wheel (highlight-options.js).
 async function startCompile(body, filename){
+  const choice = window.HighlightOptions ? await window.HighlightOptions.ask({ title: 'One video of these clips, with titles and transitions.' }) : { format: '16:9', wheel: false };
+  if(!choice) return;
+  body = { ...body, format: choice.format, wheel: choice.wheel };
+  if(choice.format === '9:16') filename += '_Reels';
   openCompileModal();
   try{
     const res = await apiFetch(`${clipApiBase()}/api/highlights/compile`, {
@@ -3295,7 +3301,7 @@ async function pollCompileJob(jobId, filename){
     if(data.status === 'ready'){
       const sub = ((data.skipped > 0)
         ? `${data.included} clip${data.included===1?'':'s'} included • ${data.skipped} unavailable clip${data.skipped===1?'':'s'} skipped`
-        : `${data.included} clip${data.included===1?'':'s'} included`) + (data.edited ? ' • titles & transitions added' : '');
+        : `${data.included} clip${data.included===1?'':'s'} included`) + (data.edited ? ` • ${data.format === '9:16' ? '9:16 Reels' : '16:9'}${data.wheel ? ' • wagon wheel' : ''} • titles & transitions added` : '');
       document.getElementById('cm-sub').textContent = sub;
       const dlBtn = document.getElementById('cm-download');
       dlBtn.style.display = '';

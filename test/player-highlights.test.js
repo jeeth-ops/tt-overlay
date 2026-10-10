@@ -11,7 +11,9 @@
 //     bowling) and agree with them — with ONE clip request, none per match
 //   • the form charts: a column per match, DNB / did-not-bowl, the best labelled
 //   • the filters (match × type) show the right clips and the download bar
-//     cuts exactly that: { category, match } reach the compile endpoint
+//     cuts exactly that: { category, match } reach the compile endpoint —
+//     after the viewer picks the shape (16:9 / 9:16 Reels) and the wagon
+//     wheel (highlight-options.js), which go with it
 //   • a match row downloads / shows that match; a chart bar shows its clips
 //   • a clip opens the player; Escape closes the player, then the modal
 //   • data from the database is text, never markup
@@ -33,6 +35,13 @@ const ASSETS = process.env.PP_ASSETS || '';
 
 const fails = [];
 const check = (ok, msg) => { console.log(`  ${ok ? '✓' : '✗'} ${msg}`); if (!ok) fails.push(msg); };
+// A download first asks how the video should look: pick, then "Make video".
+async function videoOptions(page, { format = '16:9', wheel = false } = {}) {
+  await page.waitForSelector('#hlo-back.open .hlo-btn.go');
+  await page.click(`#hlo .hlo-shape[data-format="${format}"]`);
+  if ((await page.isChecked('#hlo-wheel')) !== wheel) await page.click('#hlo .hlo-toggle');
+  await page.click('#hlo [data-act="go"]');
+}
 
 /* ---------------- server: what one compile includes ---------------- */
 {
@@ -251,8 +260,11 @@ const visible = (page) => page.$$eval('#pp-grid .pp-clip', (els) => els.filter((
     let v = await visible(page);
     check(v.length === 22 && v.every((x) => /^(six|four)@/.test(x)) && (await page.textContent('#pp-dl-t')) === 'Download 22 fours & sixes', `4s + 6s → his 22 fours and sixes, nothing else (${v.length})`);
     await page.click('#pp-dl-btn');
+    await page.waitForTimeout(300);
+    check(compiles.length === 0 && await page.isVisible('#hlo-back.open'), 'a download first asks how the video should look — nothing starts yet');
+    await videoOptions(page);
     await page.waitForTimeout(600);
-    check(JSON.stringify(compiles.shift()) === JSON.stringify({ name: HR, category: 'boundaries' }) && downloads.shift() === 'HARSH_RANE_Tournament_Fours_and_Sixes', '4s + 6s download → category boundaries');
+    check(JSON.stringify(compiles.shift()) === JSON.stringify({ name: HR, category: 'boundaries', format: '16:9', wheel: false }) && downloads.shift() === 'HARSH_RANE_Tournament_Fours_and_Sixes', '4s + 6s download → category boundaries, 16:9, no wheel');
     await page.click('[data-pp-type="six"]');
     v = await visible(page);
     check(v.length === 8 && v.every((x) => x.startsWith('six@')), `Sixes → only the 8 sixes (${v.length})`);
@@ -263,9 +275,10 @@ const visible = (page) => page.$$eval('#pp-grid .pp-clip', (els) => els.filter((
     check((await page.textContent('#pp-dl-s')).startsWith('M2 vs NHSC'), `bar scope: ${await page.textContent('#pp-dl-s')}`);
     check(await page.$eval('[data-pp-type="out"]', (b) => b.classList.contains('zero') && b.querySelector('.n').textContent === '0'), 'a type with none in this match shows 0, dimmed');
     await page.click('#pp-dl-btn');
+    await videoOptions(page, { format: '9:16', wheel: true });
     await page.waitForTimeout(600);
-    check(JSON.stringify(compiles[0]) === JSON.stringify({ name: HR, category: 'sixes', match: 'ROOM-2' }), `bar download → ${JSON.stringify(compiles[0])}`);
-    check(downloads[0] === 'HARSH_RANE_M2_vs_NHSC_Sixes', `file name: ${downloads[0]}`);
+    check(JSON.stringify(compiles[0]) === JSON.stringify({ name: HR, category: 'sixes', match: 'ROOM-2', format: '9:16', wheel: true }), `bar download, 9:16 with the wheel → ${JSON.stringify(compiles[0])}`);
+    check(downloads[0] === 'HARSH_RANE_M2_vs_NHSC_Sixes_Reels', `file name: ${downloads[0]}`);
     await page.click('[data-pp-match="ROOM-3"]'); // no sixes there → type widens to all
     v = await visible(page);
     check(v.length === 2 && (await page.$eval('[data-pp-type="all"]', (b) => b.classList.contains('on'))), `M3 has no sixes → shows all of M3 (${v.join(',')})`);
@@ -278,16 +291,20 @@ const visible = (page) => page.$$eval('#pp-grid .pp-clip', (els) => els.filter((
     await page.click('[data-pp-match="all"]');
     await page.click('[data-pp-type="all"]');
     await page.click('#pp-dl-btn');
+    await page.waitForSelector('#hlo-back.open .hlo-btn.go');
+    check(await page.$eval('#hlo .hlo-shape[data-format="9:16"]', (b) => b.getAttribute('aria-checked') === 'true') && await page.isChecked('#hlo-wheel'), 'the next download remembers 9:16 + wheel');
+    await videoOptions(page);
     await page.waitForTimeout(600);
-    check(JSON.stringify(compiles[1]) === JSON.stringify({ name: HR, category: 'all', match: undefined }) || JSON.stringify(compiles[1]) === JSON.stringify({ name: HR, category: 'all' }), `whole tournament, all → ${JSON.stringify(compiles[1])}`);
+    check(JSON.stringify(compiles[1]) === JSON.stringify({ name: HR, category: 'all', format: '16:9', wheel: false }), `whole tournament, all → ${JSON.stringify(compiles[1])}`);
     check(downloads[1] === 'HARSH_RANE_Tournament_All_Highlights', `file name: ${downloads[1]}`);
 
     // match rows: per-match download + "show clips"
     const rows = await page.$$eval('.pp-match', (r) => r.map((x) => x.querySelector('.pp-m-txt b').textContent + ' ' + (x.querySelector('.pp-res') || {}).textContent + ' ' + [...x.querySelectorAll('.pp-line b')].map((b) => b.textContent).join('/') + ' ' + x.querySelector('.pp-m-act').textContent.trim()));
     check(rows[1] === 'vs NHSC Won 116*/2/21 15 clips' && rows[2] === 'vs SPY Lost 8/0/35 2 clips' && rows[5] === 'vs NHSC Lost 1/30 1 clip', `match rows (${rows.join(' | ')})`);
     await page.click('[data-pp-dl-match="ROOM-5"]');
+    await videoOptions(page);
     await page.waitForTimeout(600);
-    check(JSON.stringify(compiles[2]) === JSON.stringify({ name: HR, category: 'all', match: 'ROOM-5' }) && downloads[2] === 'HARSH_RANE_Semi_Final_vs_PSC_All_Highlights', `match row ⬇ → ${JSON.stringify(compiles[2])} → ${downloads[2]}`);
+    check(JSON.stringify(compiles[2]) === JSON.stringify({ name: HR, category: 'all', match: 'ROOM-5', format: '16:9', wheel: false }) && downloads[2] === 'HARSH_RANE_Semi_Final_vs_PSC_All_Highlights', `match row ⬇ → ${JSON.stringify(compiles[2])} → ${downloads[2]}`);
     await page.click('.pp-cols-runs .pp-col[data-pp-col="ROOM-4"]');
     await page.waitForTimeout(700);
     v = await visible(page);

@@ -4068,7 +4068,9 @@ function concatClipsToFile(localPaths, outFile, workDir) {
 // package (see highlight-edit.js): a title card with the player (or team),
 // their team's badge and their figures, every clip briefly tagged with its
 // event, player, over and bowler, a silent branded band wipe between clips
-// (the clips' own sound is the only sound), and an end card. Each clip's edited segment is cached (by clip and
+// (the clips' own sound is the only sound), and an end card. The viewer picks
+// the shape — 16:9 (YouTube) or 9:16 (Reels / Shorts / status) — and whether
+// each clip gets its animated wagon wheel (from its delivery's own shot). Each clip's edited segment is cached (by clip and
 // what its tag says), so a clip that was in an earlier video costs nothing the
 // next time; ffmpeg runs one at a time at low priority, so live scoring on
 // this server never waits behind an edit. Anything that goes wrong falls back
@@ -4166,6 +4168,44 @@ function proStatCells(f, category) {
     if (batted && bowled) return [...batCells().slice(0, 2), ...bowlCells().slice(0, 2)];
     return batted ? batCells() : bowled ? bowlCells() : [];
 }
+// The viewer's choices for an edited download: its shape (16:9 for YouTube,
+// 9:16 for Reels / Shorts / status) and whether each clip gets its wagon wheel.
+function proOptionsFrom(body) {
+    const b = body || {};
+    return { format: String(b.format || '') === '9:16' ? '9:16' : '16:9', wheel: b.wheel === true || b.wheel === 'true' || b.wheel === 1 || b.wheel === '1' };
+}
+// What each clip's wagon wheel needs from its delivery: the shot the scorer
+// tapped, the runs, how a wicket fell. A clip names its delivery (deliveryId =
+// the ball's ballUid); an older clip is matched on its innings, over and ball,
+// and only to a delivery of its own kind. → Map clip _id → wheel data.
+async function proWheelData(clips) {
+    const out = new Map();
+    if (!ballsCollection) return out;
+    const byMatch = new Map();
+    clips.forEach(c => { if (c && c.matchId) { if (!byMatch.has(c.matchId)) byMatch.set(c.matchId, []); byMatch.get(c.matchId).push(c); } });
+    for (const [matchId, list] of byMatch) {
+        try {
+            const uids = [...new Set(list.map(c => c.deliveryId).filter(Boolean).map(String))];
+            const overs = [...new Set(list.filter(c => !c.deliveryId && c.over != null).map(c => c.over))];
+            const ors = [...(uids.length ? [{ ballUid: { $in: uids } }] : []), ...(overs.length ? [{ over: { $in: overs } }] : [])];
+            if (!ors.length) continue;
+            const balls = await ballsCollection.find({ matchId, $or: ors },
+                { projection: { ballUid: 1, innings: 1, over: 1, ballInOver: 1, kind: 1, runs: 1, dismissal: 1, shot: 1, timestamp: 1 } }).toArray();
+            const byUid = new Map(balls.filter(b => b.ballUid).map(b => [String(b.ballUid), b]));
+            list.forEach(c => {
+                const ev = String(c.eventType || '').toUpperCase();
+                let b = c.deliveryId ? byUid.get(String(c.deliveryId)) : null;
+                if (!b && !c.deliveryId) {
+                    b = balls.filter(x => x.over === c.over && x.ballInOver === c.ballInOver && (x.innings || 1) === (c.innings || 1))
+                        .filter(x => ev === 'WICKET' ? !!x.dismissal : ev === 'SIX' ? String(x.kind) === '6' : ev === 'FOUR' ? String(x.kind) === '4' : true)
+                        .sort((a, z) => (z.timestamp || 0) - (a.timestamp || 0))[0] || null;
+                }
+                if (b) out.set(String(c._id), { event: ev, runs: b.runs || 0, how: (b.dismissal && b.dismissal.type) || c.dismissalType || '', shot: sanitizeShot(b.shot) });
+            });
+        } catch (e) { /* this match's clips go without a wheel */ }
+    }
+    return out;
+}
 // A team's innings (side 'A' / 'B') as figures: the score, its sixes and fours.
 function proTeamCells(m, side) {
     const s = m && m['score' + side];
@@ -4228,7 +4268,8 @@ async function proTitleForMatchCompile(body, matchId, clips) {
 // locally -> concat -> mark ready. Updates job.progress throughout so the
 // frontend's polling UI (spec section 12: "Collecting clips... / Combining
 // videos... 35%") reflects real work, not a fake bar.
-// pro: { title } or { makeTitle(clips) } — edit it like a broadcast package (see PRO EDIT above);
+// pro: { title } or { makeTitle(clips) }, and the viewer's { format, wheel } (proOptionsFrom) —
+// edit it like a broadcast package (see PRO EDIT above);
 // without it (or past HIGHLIGHT_PRO_MAX_CLIPS, or if the edit fails) the clips
 // are joined plain, exactly as before.
 async function runCompileJob(jobId, clipDocs, pro) {
@@ -4276,12 +4317,13 @@ async function runCompileJob(jobId, clipDocs, pro) {
             message: editor.queueLength() > 0 ? 'Waiting for another highlight video to finish…' : 'Editing your highlights…' });
         try {
             const title = typeof pro.makeTitle === 'function' ? await pro.makeTitle(kept.map(x => x.clip)) : (pro.title || {});
+            const wheels = pro.wheel ? await proWheelData(kept.map(x => x.clip)) : null;
             await editor.renderHighlight({
-                clips: kept.map(x => ({ file: x.file, clipKey: proClipKey(x.clip), card: cardForClip(x.clip) })),
-                title, out: outFile, workDir,
+                clips: kept.map(x => ({ file: x.file, clipKey: proClipKey(x.clip), card: cardForClip(x.clip), wheel: (wheels && wheels.get(String(x.clip._id))) || null })),
+                title, out: outFile, workDir, format: pro.format, wheel: !!pro.wheel,
                 onProgress: (f, msg) => setCompileJob(jobId, { progress: Math.min(99, collectShare + 1 + Math.round(f * (98 - collectShare))), message: msg })
             });
-            setCompileJob(jobId, { status: 'ready', progress: 100, message: 'Download Ready', outFile, included: localPaths.length, skipped, edited: true });
+            setCompileJob(jobId, { status: 'ready', progress: 100, message: 'Download Ready', outFile, included: localPaths.length, skipped, edited: true, format: pro.format === '9:16' ? '9:16' : '16:9', wheel: !!pro.wheel });
             fs.rm(workDir, { recursive: true, force: true }, () => {});
             return;
         } catch (err) {
@@ -4355,7 +4397,8 @@ async function clipsForCompileRequest(body) {
     return { error: 'Unknown compile type' };
 }
 
-// POST /api/highlights/compile  { matchId, type, playerKey?, category?, team? }
+// POST /api/highlights/compile  { matchId, type, playerKey?, category?, team?, format?, wheel? }
+// format '9:16' | '16:9' and wheel (bool): the viewer's choices for the edited video.
 // Clips are strictly matchId-scoped (section 19) — the query shapes above
 // never let a request for one matchId pull in another match's clips, and
 // the jobId returned here is random/unguessable and tied 1:1 to the
@@ -4375,7 +4418,7 @@ app.post('/api/highlights/compile', async (req, res) => {
             matchId: resolved.matchId, createdAt: Date.now(), included: 0, skipped: 0
         });
         const body = req.body || {};
-        runCompileJob(jobId, resolved.clips, { makeTitle: (clips) => proTitleForMatchCompile(body, resolved.matchId, clips) }).catch(err => {
+        runCompileJob(jobId, resolved.clips, { makeTitle: (clips) => proTitleForMatchCompile(body, resolved.matchId, clips), ...proOptionsFrom(body) }).catch(err => {
             console.log(`Compile job ${jobId} crashed:`, err.message || err);
             setCompileJob(jobId, { status: 'error', error: 'Something went wrong combining these clips.' });
         });
@@ -4393,7 +4436,8 @@ app.get('/api/highlights/compile/:jobId/status', (req, res) => {
     res.json({
         success: true, status: job.status, progress: job.progress, message: job.message,
         error: job.error || null, included: job.included, skipped: job.skipped,
-        edited: !!job.edited // titles & transitions were added (the pro edit)
+        edited: !!job.edited, // titles & transitions were added (the pro edit)
+        format: job.edited ? job.format || '16:9' : null, wheel: !!(job.edited && job.wheel)
     });
 });
 
@@ -4634,7 +4678,7 @@ function selectPlayerHighlightClips(clips, pk, category, matchKey) {
     return clips.filter(c => isBatter(c) || (c.bowlerKey === pk && c.eventType !== 'SIX' && c.eventType !== 'FOUR'));
 }
 
-// POST /api/public/tournament/:token/highlights/compile  { name, category, match? }
+// POST /api/public/tournament/:token/highlights/compile  { name, category, match?, format?, wheel? }
 // category: one of PLAYER_HIGHLIGHT_CATEGORIES (above);
 // match: one match's clip key (roomId || matchId) to cut only that match.
 // Same background-job pipeline as POST /api/highlights/compile above, just
@@ -4680,7 +4724,7 @@ app.post('/api/public/tournament/:token/highlights/compile', async (req, res) =>
             return { kicker: ctx.displayName || 'TOURNAMENT HIGHLIGHTS', line, ...proSplitName(name), pill: PRO_PILL[category] || 'HIGHLIGHTS',
                 meta: proCountsLine(clips), stats: proStatCells(fig, category), team: proTeam(fig.team), kind: PRO_KIND[category] || 'BRAND' };
         };
-        runCompileJob(jobId, selected, { makeTitle }).catch(err => {
+        runCompileJob(jobId, selected, { makeTitle, ...proOptionsFrom(req.body) }).catch(err => {
             console.log(`Tournament compile job ${jobId} crashed:`, err.message || err);
             setCompileJob(jobId, { status: 'error', error: 'Something went wrong combining these clips.' });
         });

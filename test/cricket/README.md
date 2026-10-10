@@ -18,9 +18,9 @@ node test/cricket/clip-linkage-server-test.js    # the website links a clip to t
 node test/clip-attribution.test.js               # the shared ownership rule + clip organiser folders/names
 node test/cricket/clip-editor-server-test.js     # Advanced Clip Editor, server: owner cases 1-9, 403, rollback
 node test/cricket/clip-editor-ui-test.js         # Advanced Clip Editor, scorecard UI (owner-only ⋯, preview, save)
-node test/cricket/scorecard-clip-download-test.js # scorecard player drawer: download all / 4s / 6s / 4s + 6s / wickets as one video
+node test/cricket/scorecard-clip-download-test.js # scorecard player drawer: download all / 4s / 6s / 4s + 6s / wickets as one video, after picking 16:9 / 9:16 + wagon wheel
 node test/cricket/commentary-wagon-wheel-test.js # Full Commentary: a wagon wheel per over (MCA President Cup 2026 + matches from 10 Oct 2026 on), over pips, Fours / Sixes wheel, only changed overs rebuilt
-node test/highlight-edit.test.js                 # 🎬 pro edit of downloaded highlights: clip tags, title card with the player's team + figures, the band at every cut, no transition sound (clips' own sound kept), no gap at any join, segment cache, plain video if the edit fails
+node test/highlight-edit.test.js                 # 🎬 pro edit of downloaded highlights: clip tags, title card with the player's team + figures, the band at every cut, no transition sound (clips' own sound kept), no gap at any join, 9:16 Reels, the wagon wheel (each clip's own shot, never over the middle of the picture), segment cache, plain video if the edit fails
 node test/cricket/insert-ball-server-test.js     # Add / Insert / Remove a ball: renumbering, strike, clips, undo, 403
 node test/cricket/insert-ball-ui-test.js         # Add / Insert Ball in Edit Scorecard (owner-only ＋, preview, save)
 node test/cricket/upcoming-match-test.js         # 📅 Upcoming Match (date only) + saved teams, both panels, server registry, tournament page
