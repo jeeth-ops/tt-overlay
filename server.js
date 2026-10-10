@@ -5893,7 +5893,10 @@ function mapBallForPublic(b) {
         dismissal: b.dismissal || null,
         ...(typeof b.boundary === 'boolean' ? { boundary: b.boundary } : {}),
         ...(b.nbRunsAs ? { nbRunsAs: b.nbRunsAs } : {}),
-        ...(sanitizeShot(b.shot) ? { shot: sanitizeShot(b.shot) } : {})
+        ...(sanitizeShot(b.shot) ? { shot: sanitizeShot(b.shot) } : {}),
+        // When it was bowled: the scorecard tells a new match from an old one by
+        // its first ball (per-over wagon wheels show only on new ones).
+        ...(Number(b.timestamp) > 0 ? { timestamp: Number(b.timestamp) } : {})
     };
 }
 

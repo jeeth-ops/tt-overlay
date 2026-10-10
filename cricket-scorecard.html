@@ -1558,6 +1558,10 @@
     will-change:transform; backface-visibility:hidden;
   }
   #commentary-page.open{ transform:translateY(0); }
+  /* Up and covering everything: the scorecard underneath (and its blurred,
+     drifting team-colour wash, the costliest thing on the page) stops being
+     painted. Back the moment the page starts to slide down. */
+  html.cm-open #ambient-wash, html.cm-open #logo-wash, html.cm-open #brandbar, html.cm-open #wrap, html.cm-open body > footer{ visibility:hidden; }
   #commentary-page-head{
     flex:none; display:flex; align-items:center; gap:12px; padding:14px 16px;
     padding-top:calc(14px + env(safe-area-inset-top)); border-bottom:1px solid var(--border); background:var(--panel);
@@ -1692,6 +1696,137 @@
     font-size:10px; font-weight:800; letter-spacing:.2px; white-space:nowrap; flex:none;
   }
   .cm2-row.cm2-row-newbat{ background:var(--extra-soft); border-radius:var(--radius-sm); margin:0 -8px; padding:7px 8px; }
+
+  /* The over ball by ball (oldest first) and the run rate after it — in the
+     END OF OVER card and the head of the over still being bowled. */
+  .cm-eoo-crr{ color:var(--text-faint); font-weight:600; }
+  .cm-eoo-pips{ display:flex; flex-wrap:wrap; gap:5px; margin:2px 0 8px; }
+  .cm-pip{
+    min-width:22px; height:22px; padding:0 5px; border-radius:99px; display:inline-flex; align-items:center; justify-content:center;
+    font-family:var(--font-display); font-weight:800; font-size:10.5px; white-space:nowrap;
+    background:var(--panel); color:var(--text-dim); border:1px solid var(--border);
+  }
+  .cm-pip.bb-four{ background:var(--four); color:#fff; border-color:transparent; }
+  .cm-pip.bb-six{ background:var(--six); color:#fff; border-color:transparent; }
+  .cm-pip.bb-wicket{ background:var(--wicket); color:#fff; border-color:transparent; }
+  .cm-pip.bb-extra{ background:var(--extra-soft); color:var(--extra); border-color:transparent; }
+  .cm2-over-head{ flex-wrap:wrap; }
+  .cm2-over-head .cm-eoo-pips{ flex-basis:100%; margin:6px 0 0; }
+
+  /* ---- 🎯 Per-over wagon wheels (#commentary-page.ow-on) ----
+     Phone / tablet: a strip under the over's card (one card, two parts) —
+     the field on the left, each shot and the off/leg split on the right; an
+     over with nothing marked gets no strip. Laptop: the page widens and each
+     over's wheel stands beside it on the right, held in view while that over
+     scrolls past. The over still being bowled keeps the strip there too: a
+     two-ball over beside a full-height wheel would leave a hole. The grass is
+     the field's own CSS background (no SVG gradient ids shared by dozens of
+     wheels); lines are white for 1-3, blue for a four, purple for a six (a
+     six also flies — a curve — and every end is labelled on a laptop). */
+  .cm3-block{ display:grid; grid-template-columns:minmax(0,1fr); grid-template-areas:"tag" "head" "wheel" "rows"; margin-top:18px; }
+  .cm2-innings-head + .cm3-block{ margin-top:6px; }
+  .cm3-block > .cm2-new-bowl{ grid-area:tag; }
+  .cm3-block > .cm2-eoo, .cm3-block > .cm2-over-head{ grid-area:head; margin-top:0; }
+  .cm3-rows{ grid-area:rows; min-width:0; }
+  .cm3-wheel{
+    grid-area:wheel; display:flex; align-items:center; gap:14px; min-width:0; margin:0 0 10px; padding:10px 12px;
+    background:var(--panel-2); border:1px solid var(--border-soft); border-radius:var(--radius-md, 12px);
+  }
+  .cm3-block.ow-none > .cm3-wheel{ display:none; }
+  .cm3-block:not(.ow-none) > .cm2-eoo{ margin-bottom:0; border-bottom-left-radius:0; border-bottom-right-radius:0; }
+  .cm3-block > .cm2-eoo + .cm3-wheel{ border-top:1px dashed var(--border); border-top-left-radius:0; border-top-right-radius:0; }
+  .cm3-block > .cm2-over-head + .cm3-wheel{ margin-top:2px; }
+  .ow-field{
+    flex:none; width:122px; aspect-ratio:1; border-radius:50%;
+    background:radial-gradient(circle closest-side, #46a337 0%, #318a29 58%, #24711f 89.3%, #17491a 89.3%, #17491a 96.4%, transparent 96.6%);
+  }
+  .ow-svg{ display:block; width:100%; height:100%; overflow:visible; }
+  .ow-stripe{ fill:rgba(255,255,255,.05); }
+  .ow-ring{ fill:none; stroke:rgba(255,255,255,.5); stroke-width:1; stroke-dasharray:3 2.6; }
+  .ow-rope{ fill:none; stroke:rgba(255,255,255,.92); stroke-width:2; }
+  .ow-pitch{ fill:#d8b57a; }
+  .ow-crease{ fill:none; stroke:#fff; stroke-width:.7; }
+  .ow-halo{ fill:none; stroke:rgba(5,30,10,.5); stroke-width:6; stroke-linecap:round; }
+  .ow-line{ fill:none; stroke-linecap:round; }
+  .ow-line.ow-s1{ stroke:rgba(255,255,255,.95); stroke-width:2.4; }
+  .ow-line.ow-s4{ stroke:#6cb2ff; stroke-width:3.4; }
+  .ow-line.ow-s6{ stroke:#d39bff; stroke-width:3.6; }
+  .ow-end circle{ fill:#fff; stroke:rgba(5,30,10,.6); stroke-width:1; transform:scale(.62); }
+  .ow-end.ow-s4 circle{ fill:#2f7ff0; stroke:#fff; }
+  .ow-end.ow-s6 circle{ fill:#9b4cf0; stroke:#fff; }
+  .ow-end text{ display:none; font:800 8px var(--font-display); fill:#0b1a0d; text-anchor:middle; }
+  .ow-end.ow-s4 text, .ow-end.ow-s6 text{ fill:#fff; }
+  .ow-bat{ fill:#fff; stroke:#15803d; stroke-width:.9; }
+  .ow-side{ display:none; font:800 8.5px var(--font-display); letter-spacing:.6px; fill:var(--text-faint); }
+  /* the shot of the ball being pointed at (laptop), and a live over's newest
+     shot drawing itself in from the bat */
+  .ow-line, .ow-halo, .ow-end{ transition:opacity .15s ease; }
+  .ow-svg.ow-focus .ow-line:not(.ow-hit), .ow-svg.ow-focus .ow-halo:not(.ow-hit), .ow-svg.ow-focus .ow-end:not(.ow-hit){ opacity:.16; }
+  .ow-chip.ow-hit{ border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft); }
+  .cm3-rows .cm2-row.ow-hit{ background:var(--panel-2); border-radius:var(--radius-sm); margin:0 -8px; padding:7px 8px; }
+  .ow-line.ow-fresh, .ow-halo.ow-fresh{ stroke-dasharray:1; animation:owDraw .7s cubic-bezier(.3,.7,.3,1) .15s both; }
+  .ow-end.ow-fresh{ animation:owFade .3s ease .75s both; }
+  @keyframes owDraw{ from{ stroke-dashoffset:1; } to{ stroke-dashoffset:0; } }
+  @keyframes owFade{ from{ opacity:0; } }
+  @media (prefers-reduced-motion: reduce){ .ow-fresh{ animation:none !important; } }
+  .ow-pill{ fill:rgba(6,20,10,.74); }
+  .ow-pilltx{ font:700 9px var(--font-body); fill:#fff; text-anchor:middle; }
+  .ow-meta{ flex:1; min-width:0; max-width:420px; display:flex; flex-direction:column; gap:8px; }
+  .ow-kick{ font-size:10px; font-weight:800; letter-spacing:.9px; text-transform:uppercase; color:var(--text-faint); }
+  .ow-kick b{ color:var(--text-dim); margin-left:3px; }
+  .ow-chips{ display:flex; flex-wrap:wrap; gap:5px; }
+  .ow-chip{
+    display:inline-flex; align-items:center; gap:5px; max-width:100%; padding:2px 9px 2px 2px; border-radius:99px;
+    background:var(--panel); border:1px solid var(--border-soft); font-size:11px; font-weight:700; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .ow-chip b{
+    flex:none; min-width:18px; height:18px; padding:0 4px; border-radius:99px; display:inline-flex; align-items:center; justify-content:center;
+    font-family:var(--font-display); font-weight:800; font-size:10px; background:color-mix(in srgb, var(--text) 12%, transparent); color:var(--text);
+  }
+  .ow-chip.ow-c4 b{ background:var(--four); color:#fff; }
+  .ow-chip.ow-c6 b{ background:var(--six); color:#fff; }
+  .ow-chip.ow-more{ padding:2px 9px; color:var(--text-dim); }
+  .ow-split{ display:flex; flex-direction:column; gap:4px; }
+  .ow-bar{ display:flex; height:6px; border-radius:99px; overflow:hidden; background:var(--border); }
+  .ow-bar i{ display:block; min-width:0; }
+  .ow-bar i.off{ background:var(--accent); }
+  .ow-bar i.leg{ background:color-mix(in srgb, var(--accent) 40%, var(--border)); }
+  .ow-sides{ display:flex; justify-content:space-between; gap:8px; font-size:10.5px; font-weight:700; color:var(--text-dim); }
+  .ow-sides b{ color:var(--text); font-family:var(--font-display); margin-left:3px; }
+  @media (max-width:380px){
+    .ow-field{ width:104px; }
+    .cm3-wheel{ gap:11px; padding:10px; }
+  }
+  @media (min-width:600px) and (max-width:899px){
+    .ow-field{ width:150px; }
+  }
+  @media (min-width:900px){
+    #commentary-page.ow-on #cm-filterbar, #commentary-page.ow-on #commentary-page-body{ max-width:1060px; }
+    #commentary-page.ow-on .cm3-block{
+      grid-template-columns:minmax(0,1fr) 268px; column-gap:32px;
+      grid-template-areas:"tag wheel" "head wheel" "rows wheel" ". wheel"; grid-template-rows:auto auto auto 1fr;
+    }
+    #commentary-page.ow-on .cm3-block:not(.is-live) > .cm3-wheel{
+      display:flex; position:sticky; top:12px; align-self:start; flex-direction:column; align-items:stretch; gap:12px;
+      margin:0; padding:14px 14px 16px; border:1px solid var(--border-soft); border-radius:16px; background:var(--panel); box-shadow:var(--shadow);
+    }
+    #commentary-page.ow-on .cm3-block:not(.is-live) > .cm2-eoo{ margin-bottom:10px; border-radius:var(--radius-md, 12px); }
+    #commentary-page.ow-on .cm3-block:not(.is-live) .ow-field{ width:100%; }
+    #commentary-page.ow-on .cm3-block:not(.is-live) .ow-chip{ background:var(--panel-2); }
+    /* the caption's parts become the card's own rows, so the kicker can head it */
+    #commentary-page.ow-on .cm3-block:not(.is-live) .ow-meta{ display:contents; }
+    #commentary-page.ow-on .cm3-block:not(.is-live) .ow-kick{ order:-1; }
+    .cm3-block:not(.is-live) .ow-end text, .cm3-block:not(.is-live) .ow-side{ display:inline; }
+    .cm3-block:not(.is-live) .ow-end circle{ transform:none; }
+    .cm3-block:not(.is-live) .ow-halo{ stroke-width:4.4; }
+    .cm3-block:not(.is-live) .ow-line.ow-s1{ stroke-width:1.7; }
+    .cm3-block:not(.is-live) .ow-line.ow-s4{ stroke-width:2.6; }
+    .cm3-block:not(.is-live) .ow-line.ow-s6{ stroke-width:2.8; }
+    .cm3-block:not(.is-live) .ow-rope{ stroke-width:1.5; }
+    .cm3-block:not(.is-live) .ow-ring{ stroke-width:.8; }
+    #commentary-page.ow-on .cm3-block.is-live{ grid-template-areas:"tag ." "head ." "wheel ." "rows ."; }
+    #commentary-page.ow-on .cm3-block.is-live .ow-field{ width:140px; }
+  }
 
   /* ---------- Video modal ---------- */
   /* Always laid out (display:flex, never display:none) so opacity/transform
@@ -2351,6 +2486,19 @@
     .cm2-row, .cm2-over-head{ content-visibility:auto; contain-intrinsic-size:auto 46px; }
     .hl-btn.hl-primary::after, .hl-btn.hl-full::after{ animation:none; }
     .conn-dot.on, .chip.live .lv-dot, #commentary-page-head .cp-live::before{ animation:none; }
+  }
+  /* …and with per-over wagon wheels, whole overs (card + wheel + balls): only
+     the overs on screen get styled and laid out. Only where the browser
+     anchors scrolling — an over above the reader growing from its estimate
+     to its real height must not move what they are reading — and not on a
+     laptop, whose wheels are sticky. */
+  @supports (overflow-anchor: auto){
+    @media (max-width: 899px){
+      /* (containment clips painting at the over's edge: 8px of room each
+         side, so a highlighted row — new batsman, replay ready — keeps the
+         rounded ends it has always reached out to) */
+      .cm3-block{ content-visibility:auto; contain-intrinsic-size:auto 820px; margin-left:-8px; margin-right:-8px; padding-left:8px; padding-right:8px; }
+    }
   }
   /* Never animate what can't be seen: the commentary page's live dot while
      that page is closed, and the clip loader while the player is closed or
@@ -3745,7 +3893,14 @@ function publicBallToLogEntry(b){
     bowler: b.bowler || '',
     battingTeam: b.battingTeam || 'A',
     isWicket: !!b.isWicket,
-    dismissal: b.dismissal || null
+    dismissal: b.dismissal || null,
+    // Where the ball went (the panel's wagon wheel) and when it was bowled —
+    // the server already sends both; without them a finished match lost its
+    // "through the covers" lines and its per-over wagon wheels.
+    ...(b.shot ? { shot: b.shot } : {}),
+    ...(typeof b.boundary === 'boolean' ? { boundary: b.boundary } : {}),
+    ...(b.nbRunsAs ? { nbRunsAs: b.nbRunsAs } : {}),
+    ...(Number(b.timestamp) > 0 ? { timestamp: Number(b.timestamp) } : {})
   };
 }
 
@@ -3855,6 +4010,8 @@ async function loadMatchSnapshot(matchId){
    extras/fallOfWickets/partnerships keyed the same way.
    ============================================================ */
 let finalMatchData = null;
+// Its tournament's name — per-over wagon wheels are on for some tournaments (overWheelsOn).
+let finalTournamentName = '';
 let finalActiveInnings = 'A';
 
 // Which team's card is genuinely the 1st innings. The toggle used to
@@ -4217,6 +4374,7 @@ function renderFinalSnapshot(match, displayName){
   // wants for a match that's already finished.
   const isFirstLoadOfThisMatch = finalMatchData === null;
   finalMatchData = match;
+  finalTournamentName = displayName || '';
   if(isFirstLoadOfThisMatch) finalActiveInnings = firstBattingTeamOf(match);
   document.title = `${(match.teamA&&(match.teamA.short||match.teamA.name))||'Team A'} vs ${(match.teamB&&(match.teamB.short||match.teamB.name))||'Team B'} — All Sports Live`;
 
@@ -4454,8 +4612,12 @@ function changed(section, key){
 // but still need to record what they drew, or the very next live tick
 // would see a "changed" key that was never actually recorded and
 // trigger one redundant extra rebuild right after opening.
+// + how many balls have a wagon wheel shot: the scorer marks it a few
+// seconds AFTER the ball, and the line ("through the covers") and the over's
+// wheel should not wait for the next ball to show it.
+function markedShotCount(log){ let n = 0; for(const b of (log || [])) if(b && b.shot && b.shot.zone) n++; return n; }
 function commentaryPageKey(s){
-  return `${(s.ballLog||[]).length}-${s.isFinished||s.status==='completed'?1:0}`;
+  return `${(s.ballLog||[]).length}-${markedShotCount(s.ballLog)}-${s.isFinished||s.status==='completed'?1:0}`;
 }
 function markCommentaryPageRendered(s){ _lastKey['commentaryPage'] = commentaryPageKey(s); }
 
@@ -4859,19 +5021,31 @@ function computeOverEndSummaries(log){
   return { list, byLastBall };
 }
 
-function overEndSummaryHtml(sum, extraClass){
+// The over ball by ball, oldest first: 1 · 0 · 4 · W · wd · 2 …
+function overPipsHtml(balls){
+  return `<div class="cm-eoo-pips" aria-label="This over, ball by ball">${balls.map(b => {
+    const badge = ballBadgeInfo(b);
+    return `<span class="cm-pip ${badge.cls}">${badge.label}</span>`;
+  }).join('')}</div>`;
+}
+// opts.balls (the full commentary page): the over's balls as pips, and the
+// run rate after it.
+function overEndSummaryHtml(sum, extraClass, opts){
   const battersHtml = sum.batters.map(b =>
     `<div class="cm-eoo-bat-row"><span class="cm-eoo-bat-name">${escapeHtml(b.name)}*</span><span class="cm-eoo-bat-figs">${b.runs} (${b.balls})</span></div>`
   ).join('');
   const bowlerHtml = sum.bowler
     ? `<div class="cm-eoo-bowler-row"><span class="cm-eoo-bowler-name">${escapeHtml(sum.bowler.name)}</span><span class="cm-eoo-bowler-figs">${sum.bowler.overs}-${sum.bowler.maidens}-${sum.bowler.runs}-${sum.bowler.wickets}</span></div>`
     : '';
+  const balls = opts && opts.balls;
+  const crr = balls ? ` <span class="cm-eoo-crr">· CRR ${(sum.cumRuns / (sum.overIdx + 1)).toFixed(2)}</span>` : '';
   return `<div class="cm-eoo${extraClass ? ' ' + extraClass : ''}">
     <div class="cm-eoo-head">
       <div class="cm-eoo-title">END OF OVER ${sum.overIdx + 1}</div>
       <div class="cm-eoo-score">${sum.cumRuns}/${sum.cumWkts}</div>
     </div>
-    <div class="cm-eoo-sub">${sum.overRuns} Run${sum.overRuns===1?'':'s'} ${sum.overWkts} Wkt${sum.overWkts===1?'':'s'}</div>
+    <div class="cm-eoo-sub">${sum.overRuns} Run${sum.overRuns===1?'':'s'} ${sum.overWkts} Wkt${sum.overWkts===1?'':'s'}${crr}</div>
+    ${balls ? overPipsHtml(balls) : ''}
     <div class="cm-eoo-body">
       <div class="cm-eoo-batters">${battersHtml}</div>
       <div class="cm-eoo-divider"></div>
@@ -4886,7 +5060,7 @@ function renderCommentary(s){
   const log = currentInningsLog(s);
   if(!log.length){ card.style.display = 'none'; return; }
   card.style.display = '';
-  if(!changed('commentary', log.length)) return;
+  if(!changed('commentary', `${log.length}-${markedShotCount(log)}`)) return;
   const { byLastBall } = computeOverEndSummaries(log);
   const recent = log.slice(-25).slice().reverse();
   const isLive = !(s.isFinished || s.status === 'completed');
@@ -5102,10 +5276,15 @@ function commentaryState(){ return latestState || finalCommentaryState; }
 // clips appearing on their own instead of needing to close and reopen.
 let commentaryClipPollTimer = null;
 function clipMapFingerprint(){ return Object.keys(commentaryClipMap).sort().join(','); }
+// Once the page has slid all the way up it covers the scorecard completely:
+// html.cm-open stops painting what is underneath (see the CSS).
+let commentaryCoverTimer = null;
 function openCommentaryPage(){
   commentaryPageOpen = true;
   document.getElementById('commentary-page').classList.add('open');
   document.getElementById('commentary-page-backdrop').classList.add('open');
+  clearTimeout(commentaryCoverTimer);
+  commentaryCoverTimer = setTimeout(() => { if(commentaryPageOpen) document.documentElement.classList.add('cm-open'); }, 320);
   // Build the (potentially large) commentary DOM AFTER the slide-up
   // transition has started, not before — doing it synchronously in the
   // same tick as adding .open blocked the main thread right as the CSS
@@ -5141,11 +5320,46 @@ function openCommentaryPage(){
 }
 function closeCommentaryPage(){
   commentaryPageOpen = false;
+  clearTimeout(commentaryCoverTimer);
+  document.documentElement.classList.remove('cm-open');
   document.getElementById('commentary-page').classList.remove('open');
   document.getElementById('commentary-page-backdrop').classList.remove('open');
   if(commentaryClipPollTimer){ clearInterval(commentaryClipPollTimer); commentaryClipPollTimer = null; }
 }
 document.getElementById('commentary-open-btn').addEventListener('click', openCommentaryPage);
+// WATCH REPLAY on any row of the page — one listener for the page's life:
+// rows survive across renders now (patchCommentaryBody), so wiring each
+// button on every render would open the clip once per render.
+document.getElementById('commentary-page-body').addEventListener('click', (e) => {
+  const btn = e.target.closest('.cm-replay-btn');
+  if(!btn) return;
+  e.stopPropagation();
+  openVideoModal(btn.dataset.clipId, btn.dataset.title, btn.dataset.playbackUrl, btn.dataset.posterUrl);
+});
+// 🎯 On a laptop: point at a ball — its row, its chip, or its line — and that
+// shot lights up on its over's wagon wheel (the rest steps back), with its
+// row and its chip.
+(function wireWheelHover(){
+  if(!window.matchMedia || !matchMedia('(hover: hover)').matches) return;
+  const body = document.getElementById('commentary-page-body');
+  let lit = null;
+  const clear = () => { if(!lit) return; lit.svg.classList.remove('ow-focus'); lit.els.forEach(el => el.classList.remove('ow-hit')); lit = null; };
+  body.addEventListener('mouseover', (e) => {
+    const src = e.target.closest('[data-ball]');
+    const block = src && src.closest('.cm3-block');
+    const svg = block && block.querySelector('.ow-svg');
+    const key = svg ? src.dataset.ball : null;
+    if(lit && lit.svg === svg && lit.key === key) return;
+    clear();
+    if(!key) return;
+    const els = Array.from(block.querySelectorAll(`[data-ball="${CSS.escape(key)}"]`));
+    if(!els.some(el => svg.contains(el))) return; // no shot marked for this ball
+    svg.classList.add('ow-focus');
+    els.forEach(el => el.classList.add('ow-hit'));
+    lit = { svg, key, els };
+  });
+  body.addEventListener('mouseleave', clear);
+})();
 document.getElementById('commentary-page-back').addEventListener('click', closeCommentaryPage);
 document.getElementById('commentary-page-backdrop').addEventListener('click', closeCommentaryPage);
 document.addEventListener('keydown', (e) => { if(e.key === 'Escape' && commentaryPageOpen) closeCommentaryPage(); });
@@ -5239,13 +5453,179 @@ function renderCommentaryRow(b, inn, newBatsmanAt, isLive){
   const isNewBat = newBatsmanAt.has(b);
   const newBatTag = isNewBat ? `<span class="cm2-new-bat">🆕 ${escapeHtml(b.striker || 'New batsman')}</span>` : '';
   const isReady = replayInfo && replayInfo.state === 'ready';
-  return `<div class="cm2-row ${badge.cls} ${isReady ? 'cm2-row-clip' : ''} ${isNewBat ? 'cm2-row-newbat' : ''}">
+  return `<div class="cm2-row ${badge.cls} ${isReady ? 'cm2-row-clip' : ''} ${isNewBat ? 'cm2-row-newbat' : ''}" data-ball="${ovNum}.${ballNum}">
     <div class="cm2-badge ${badge.cls}">${badge.label}</div>
     <div class="cm2-body">
       <div class="cm2-text">${ovNum}.${ballNum} — ${text}${newBatTag}</div>
       ${clipReplayHtml(replayInfo, text)}
     </div>
   </div>`;
+}
+
+/* ---------- 🎯 Per-over wagon wheels (Full Commentary) ----------
+   Where the runs of each over went, drawn from b.shot — the spot the scorer
+   tapped on the panel's wagon wheel. Laptop: beside its over on the right,
+   held in view while that over scrolls past. Phone / tablet, and the over
+   still being bowled: a strip under the over's card. Fours / Sixes filter:
+   one wheel for the innings. Old matches never show one — see overWheelsOn(). */
+// The MCA President Cup 2026 (every match of it — its first came before this
+// date) and every match whose first ball was bowled on or after this date.
+const OVER_WHEEL_SINCE = Date.parse('2026-10-10T00:00:00+05:30');
+const OVER_WHEEL_TOURNAMENTS = [/\bmca\b.*\bpresident.*\bcup\b.*\b2026\b/i];
+function overWheelsOn(s, balls){
+  if(!balls.some(b => shotZone(b))) return false; // the wagon wheel was never used in this match
+  const name = String((s && (s.matchLeague || s.leagueName)) || finalTournamentName || '');
+  if(OVER_WHEEL_TOURNAMENTS.some(re => re.test(name))) return true;
+  let first = 0;
+  balls.forEach(b => { const t = Number(b.timestamp); if(t > 0 && (!first || t < first)) first = t; });
+  return first >= OVER_WHEEL_SINCE;
+}
+// The panel picker's field: boundary radius 100, 30-yard circle 55, the batter
+// at the top end, a right-hander's off side on the left (mirrored for a
+// left-hander, so a tapped x/y is simply where the ball went).
+const OW_FROM = { fineleg:0, squareleg:45, midwicket:90, midon:135, midoff:180, cover:225, point:270, thirdman:315 };
+const OW_SIDE = { fineleg:'leg', squareleg:'leg', midwicket:'leg', midon:'leg', midoff:'off', cover:'off', point:'off', thirdman:'off' };
+const owF = (n) => Math.round(n * 10) / 10;
+// Runs off the bat — what a wagon wheel shows (byes and wides have no shot).
+function owBatRuns(b){
+  const k = String(b.ballType || ''), r = Number(b.runs) || 0;
+  if(/^[1-6]$/.test(k) || k === 'OT') return r;
+  if(k === 'Nb' || k === 'NB') return (b.nbRunsAs && b.nbRunsAs !== 'bat') ? 0 : Math.max(0, r - 1);
+  return 0;
+}
+function owBoundary(b, runs){
+  const k = String(b.ballType || '');
+  if(k === '4' || k === '6') return k;
+  if((k === 'Nb' || k === 'NB') && b.boundary === true && (runs === 4 || runs === 6)) return String(runs);
+  return '';
+}
+// Where the ball ended, in field units. A boundary always reaches the rope;
+// an old shot with only a region gets the middle of it.
+function owPoint(shot, edge){
+  const x = Number(shot.x), y = Number(shot.y);
+  if(isFinite(x) && isFinite(y) && (x || y)){
+    const px = x * 100, py = y * 100, r = Math.hypot(px, py);
+    return edge && r ? [px * 100 / r, py * 100 / r] : [px, py];
+  }
+  const mid = (OW_FROM[shot.zone] || 0) + 22.5, deg = (shot.hand === 'L' ? 360 - mid : mid) * Math.PI / 180;
+  const r = edge ? 100 : shot.depth === 'deep' ? 82 : 40;
+  return [r * Math.sin(deg), -r * Math.cos(deg)];
+}
+// freshBall: the newest delivery of a live match — its shot draws itself in.
+function overWheelOf(balls, freshBall){
+  const w = { shots: [], runs: 0, off: 0, leg: 0, scoring: 0, hands: new Set() };
+  balls.forEach(b => {
+    const runs = owBatRuns(b);
+    if(runs <= 0) return;
+    w.scoring++;
+    const zone = shotZone(b);
+    if(!zone) return;
+    const bnd = owBoundary(b, runs);
+    const [x, y] = owPoint(b.shot, !!bnd);
+    const place = shotPlace(b);
+    w.shots.push({ x, y, runs, bnd, place: place.charAt(0).toUpperCase() + place.slice(1), who: b.striker || '', at: overBallLabel(b.over, b.ballType), fresh: !!freshBall && b === freshBall });
+    w.runs += runs;
+    w[OW_SIDE[zone]] += runs;
+    w.hands.add(b.shot.hand === 'L' ? 'L' : 'R');
+  });
+  return w;
+}
+function owWedge(r, a0, a1){
+  const p = (a) => { const t = a * Math.PI / 180; return `${owF(r * Math.sin(t))} ${owF(-r * Math.cos(t))}`; };
+  return `M0 0L${p(a0)}A${r} ${r} 0 0 1 ${p(a1)}Z`;
+}
+// The field as SVG: grass is the element's own CSS background, so no
+// gradient ids are shared between the dozens of wheels on one page.
+function overWheelSvg(w, emptyText, label){
+  const p = [];
+  for(let i = 0; i < 16; i += 2) p.push(`<path class="ow-stripe" d="${owWedge(100, i * 22.5, (i + 1) * 22.5)}"/>`);
+  p.push('<circle class="ow-ring" r="55"/><circle class="ow-rope" r="100"/>');
+  p.push('<rect class="ow-pitch" x="-4.2" y="-15" width="8.4" height="30" rx="1"/><path class="ow-crease" d="M-5.5 -11.5h11M-5.5 11.5h11"/>');
+  // singles first, sixes on top; a six flies (a curve), the rest run along the ground
+  const rank = (s) => s.bnd === '6' ? 2 : s.bnd === '4' ? 1 : 0;
+  const shots = w.shots.slice().sort((a, b) => rank(a) - rank(b));
+  const kind = (s) => s.bnd === '6' ? 's6' : s.bnd === '4' ? 's4' : 's1';
+  shots.forEach(s => {
+    const bx = 0, by = -11.5, ex = owF(s.x), ey = owF(s.y);
+    const d = s.bnd === '6'
+      ? `M${bx} ${by}Q${owF((bx + ex) / 2 + (ey - by) * 0.18)} ${owF((by + ey) / 2 - (ex - bx) * 0.18)} ${ex} ${ey}`
+      : `M${bx} ${by}L${ex} ${ey}`;
+    const fresh = s.fresh ? ' ow-fresh' : '', len = s.fresh ? ' pathLength="1"' : '';
+    p.push(`<path class="ow-halo${fresh}"${len} d="${d}" data-ball="${s.at}"/><path class="ow-line ow-${kind(s)}${fresh}"${len} d="${d}" data-ball="${s.at}"/>`);
+  });
+  shots.forEach(s => p.push(`<g class="ow-end ow-${kind(s)}${s.fresh ? ' ow-fresh' : ''}" transform="translate(${owF(s.x)} ${owF(s.y)})" data-ball="${s.at}"><circle r="6.2"/><text y="2.9">${s.runs}</text></g>`));
+  p.push('<circle class="ow-bat" cx="0" cy="-11.5" r="2.4"/>');
+  // Off / leg only when every shot here was by one kind of batter.
+  if(w.hands.size === 1){
+    const lefty = w.hands.has('L');
+    p.push(`<text class="ow-side" x="-110" y="-101" text-anchor="start">${lefty ? 'LEG' : 'OFF'}</text><text class="ow-side" x="110" y="-101" text-anchor="end">${lefty ? 'OFF' : 'LEG'}</text>`);
+  }
+  if(emptyText) p.push(`<rect class="ow-pill" x="-56" y="-10" width="112" height="20" rx="10"/><text class="ow-pilltx" y="3.4">${escapeHtml(emptyText)}</text>`);
+  return `<div class="ow-field"><svg class="ow-svg" viewBox="-112 -112 224 224" role="img" aria-label="${escapeHtml(label)}">${p.join('')}</svg></div>`;
+}
+// The wheel with its caption: a chip per shot (runs + where) — or, for a whole
+// innings (byPlace), how many went to each place, busiest first — and how
+// the runs split between the off and the leg side.
+function overWheelHtml(w, kicker, totalRuns, byPlace){
+  const emptyText = w.shots.length ? '' : w.scoring ? 'Shots not marked' : totalRuns ? 'No runs off the bat' : 'Maiden over';
+  const label = w.shots.length
+    ? `${kicker} wagon wheel: ` + w.shots.map(s => `${s.runs} to ${s.place.toLowerCase()}`).join(', ')
+    : `${kicker} wagon wheel: ${emptyText.toLowerCase()}`;
+  let chips;
+  if(byPlace){
+    const by = new Map();
+    w.shots.forEach(s => { const g = by.get(s.place) || { place: s.place, n: 0, bnd: s.bnd }; g.n++; by.set(s.place, g); });
+    const all = [...by.values()].sort((a, b) => b.n - a.n || a.place.localeCompare(b.place));
+    chips = all.slice(0, 5).map(g => `<span class="ow-chip${g.bnd ? ' ow-c' + g.bnd : ''}"><b>${g.n}×</b>${escapeHtml(g.place)}</span>`).join('')
+      + (all.length > 5 ? `<span class="ow-chip ow-more">+${all.length - 5} more</span>` : '');
+  } else {
+    chips = w.shots.map(s =>
+      `<span class="ow-chip${s.bnd ? ' ow-c' + s.bnd : ''}" title="${escapeHtml(`${s.at} · ${s.who}`)}" data-ball="${s.at}"><b>${s.runs}</b>${escapeHtml(s.place)}</span>`).join('');
+  }
+  const split = w.runs ? `<div class="ow-split">
+      <div class="ow-bar" aria-hidden="true"><i class="off" style="flex:${w.off}"></i><i class="leg" style="flex:${w.leg}"></i></div>
+      <div class="ow-sides"><span>Off side <b>${w.off}</b></span><span>Leg side <b>${w.leg}</b></span></div>
+    </div>` : '';
+  return `${overWheelSvg(w, emptyText, label)}
+    <div class="ow-meta">
+      <div class="ow-kick">Wagon wheel <b>${escapeHtml(kicker)}</b></div>
+      ${chips ? `<div class="ow-chips">${chips}</div>` : ''}${split}
+    </div>`;
+}
+// One over (or one filtered innings) with its wheel. The grid in CSS puts the
+// wheel on the right on a laptop and under the card on a phone.
+// ⚡ A new ball used to rebuild the whole commentary page (every over, every
+// row — and now every wheel). items is one HTML string per element of the
+// page; an element whose string has not changed stays exactly where it is,
+// and only new or changed ones are built (all of them in one parse). Returns
+// false when it had to fall back to a full rebuild.
+const CM_SCROLL_ANCHORING = typeof CSS !== 'undefined' && !!CSS.supports && CSS.supports('overflow-anchor', 'auto');
+function patchCommentaryBody(body, items){
+  const prev = body._cmItems, kids = body.children;
+  const full = () => { body.innerHTML = items.join(''); body._cmItems = body.children.length === items.length ? items : null; return false; };
+  if(!prev || prev.length !== kids.length) return full();
+  const pool = new Map();
+  for(let i = 0; i < prev.length; i++){ const l = pool.get(prev[i]); if(l) l.push(kids[i]); else pool.set(prev[i], [kids[i]]); }
+  const els = items.map(h => { const l = pool.get(h); return l && l.length ? l.shift() : null; });
+  const missing = items.filter((h, i) => !els[i]);
+  if(missing.length){
+    const tpl = document.createElement('template');
+    tpl.innerHTML = missing.join('');
+    const made = tpl.content.children;
+    if(made.length !== missing.length) return full(); // a string that is not exactly one element — never patch blind
+    const fresh = Array.from(made);
+    let k = 0;
+    for(let i = 0; i < els.length; i++) if(!els[i]) els[i] = fresh[k++];
+  }
+  pool.forEach(l => l.forEach(el => el.remove()));
+  let cur = body.firstElementChild;
+  els.forEach(el => { if(el === cur) cur = cur.nextElementSibling; else body.insertBefore(el, cur); });
+  while(cur){ const next = cur.nextElementSibling; cur.remove(); cur = next; }
+  body._cmItems = items;
+  return true;
+}
+function wheelBlockHtml(tag, head, rows, w, opts){
+  return `<section class="cm3-block${opts.live ? ' is-live' : ''}${w.shots.length ? '' : ' ow-none'}">${tag}${head}<aside class="cm3-wheel">${overWheelHtml(w, opts.kicker, opts.totalRuns, opts.byPlace)}</aside><div class="cm3-rows">${rows}</div></section>`;
 }
 
 function renderCommentaryPage(s){
@@ -5269,10 +5649,16 @@ function renderCommentaryPage(s){
   // keeps working once the match is over, so a viewer can still open
   // Full commentary afterwards and scroll back through every innings.
   const allBalls = s.ballLog || [];
+  // 🎯 Per-over wagon wheels: wider page with a wheel column (see .ow-on).
+  const wheelsOn = allBalls.length > 0 && overWheelsOn(s, allBalls);
+  const page = document.getElementById('commentary-page');
+  if(page) page.classList.toggle('ow-on', wheelsOn && commentaryTypeFilter !== 'wickets'); // wickets: no wheels, no wide page
+  const freshBall = isLive ? allBalls[allBalls.length - 1] : null;
   if(!allBalls.length){
     renderCommentaryInningsMenu(s, []);
     renderCommentaryTypeMenu();
     body.innerHTML = '<div class="empty-state">Commentary will appear here once the innings begins.</div>';
+    body._cmItems = null;
     return;
   }
   const inningsNos = Array.from(new Set(allBalls.map(b => b.innings || 1))).sort((a,b) => a - b);
@@ -5283,9 +5669,12 @@ function renderCommentaryPage(s){
     ? inningsNos
     : inningsNos.filter(n => String(n) === commentaryInningsFilter);
 
-  body.innerHTML = activeInningsNos.slice().reverse().map(inn => {
+  // One string per element on the page, newest innings first — patched in
+  // below (only what changed is rebuilt).
+  const items = [];
+  activeInningsNos.slice().reverse().forEach(inn => {
     const log = allBalls.filter(b => (b.innings || 1) === inn);
-    const inningsHead = `<div class="cm2-innings-head">${escapeHtml(inningsHeadLabel(s, inn))}</div>`;
+    items.push(`<div class="cm2-innings-head">${escapeHtml(inningsHeadLabel(s, inn))}</div>`);
 
     // Which ball each new batsman first walks out to face (their first
     // legal delivery on strike, chronologically) — computed once, forward
@@ -5306,10 +5695,18 @@ function renderCommentaryPage(s){
       const matched = log.filter(commentaryBallMatchesTypeFilter);
       if(!matched.length){
         const filterLabel = (COMMENTARY_TYPE_FILTERS.find(f => f.key === commentaryTypeFilter) || {}).label || 'matching deliveries';
-        return inningsHead + `<div class="cm2-empty-filter">No ${filterLabel.toLowerCase()} in this innings.</div>`;
+        items.push(`<div class="cm2-empty-filter">No ${filterLabel.toLowerCase()} in this innings.</div>`);
+        return;
       }
-      const rowsHtml = matched.slice().reverse().map(b => renderCommentaryRow(b, inn, newBatsmanAt, isLive)).join('');
-      return inningsHead + rowsHtml;
+      const rowItems = matched.slice().reverse().map(b => renderCommentaryRow(b, inn, newBatsmanAt, isLive));
+      // Fours / Sixes: one wheel for the whole innings — where they all went.
+      if(wheelsOn && (commentaryTypeFilter === 'fours' || commentaryTypeFilter === 'sixes')){
+        const total = matched.reduce((n, b) => n + (b.runs || 0), 0);
+        items.push(wheelBlockHtml('', '', rowItems.join(''), overWheelOf(matched, freshBall), { kicker: commentaryTypeFilter === 'fours' ? 'All fours' : 'All sixes', totalRuns: total, byPlace: true }));
+        return;
+      }
+      items.push(...rowItems);
+      return;
     }
 
     // Which over each new bowler's spell begins — also computed forward.
@@ -5333,35 +5730,35 @@ function renderCommentaryPage(s){
       if(bowlerName) prevBowler = bowlerName;
     });
 
-    const oversHtml = overs.slice().reverse().map(o => {
-      const rows = o.balls.slice().reverse().map(b => renderCommentaryRow(b, inn, newBatsmanAt, isLive)).join('');
+    overs.slice().reverse().forEach(o => {
+      const rowItems = o.balls.slice().reverse().map(b => renderCommentaryRow(b, inn, newBatsmanAt, isLive));
       const lastBall = o.balls[o.balls.length - 1];
       const sum = byLastBall.get(lastBall);
       const head = sum
-        ? overEndSummaryHtml(sum, 'cm2-eoo')
+        ? overEndSummaryHtml(sum, 'cm2-eoo', { balls: o.balls })
         : `<div class="cm2-over-head">
             <div class="cp-ov-title">Over ${o.overIdx + 1} (in progress)</div>
             <div class="cp-ov-sub">${o.runs} run${o.runs===1?'':'s'}${o.wickets ? `, ${o.wickets} wkt${o.wickets===1?'':'s'}` : ''} · ${o.cumScore}</div>
+            ${overPipsHtml(o.balls)}
           </div>`;
       const newBowlerTag = o.newBowler
         ? `<div class="cm2-new-bowl">🎯 ${escapeHtml(o.bowlerName)} comes into the attack</div>`
         : '';
-      return newBowlerTag + head + rows;
-    }).join('');
-
-    return inningsHead + oversHtml;
-  }).join('');
-
-  body.querySelectorAll('.cm-replay-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openVideoModal(btn.dataset.clipId, btn.dataset.title, btn.dataset.playbackUrl, btn.dataset.posterUrl);
+      if(!wheelsOn){
+        if(newBowlerTag) items.push(newBowlerTag);
+        items.push(head, ...rowItems);
+        return;
+      }
+      items.push(wheelBlockHtml(newBowlerTag, head, rowItems.join(''), overWheelOf(o.balls, freshBall), { live: !sum, kicker: `Over ${o.overIdx + 1}`, totalRuns: o.runs }));
     });
   });
+  const patched = patchCommentaryBody(body, items);
 
   if(wasAtTop){
     body.scrollTop = 0;
-  } else {
+  } else if(!(patched && CM_SCROLL_ANCHORING)){
+    // (A patched page keeps every unchanged element, so where the browser
+    // anchors scrolling it already held the reader's place.)
     body.scrollTop = prevScrollTop + (body.scrollHeight - prevScrollHeight);
   }
 }
