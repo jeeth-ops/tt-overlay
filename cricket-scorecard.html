@@ -2478,12 +2478,24 @@
   .cm-btn.cancel{ background:var(--panel-2); color:var(--text); border:1px solid var(--border); }
   .cm-btn.download{ background:var(--accent); color:var(--accent-contrast); }
   .cm-btn:active{ transform:scale(.97); }
-  .hl-player-download{
-    margin-top:14px; width:100%; padding:12px; border-radius:var(--radius-md); border:none;
-    background:var(--accent); color:var(--accent-contrast); font-weight:700; font-size:12.5px; cursor:pointer;
-    display:flex; align-items:center; justify-content:center; gap:7px;
+  /* ⬇ A player's clips of this match as ONE video — all of them, or just
+     one kind (his 4s, his 6s, both, the wickets he took). Sits above the
+     clip list so it is found without scrolling past every clip. */
+  .hl-dl{ margin:0 0 14px; padding:12px; border-radius:var(--radius-md); background:var(--panel-2); border:1px solid var(--border-soft); }
+  .hl-dl-head{ display:flex; align-items:center; gap:7px; margin-bottom:10px; font-size:10.5px; font-weight:800; letter-spacing:.4px; text-transform:uppercase; color:var(--text-dim); }
+  .hl-dl-head svg{ width:13px; height:13px; color:var(--accent); flex:none; }
+  .hl-dl-opts{ display:flex; flex-wrap:wrap; gap:8px; }
+  .hl-dl-opt{
+    flex:1 1 auto; display:inline-flex; align-items:center; justify-content:center; gap:6px; min-height:40px; padding:0 12px;
+    border-radius:99px; border:1px solid var(--border); background:var(--panel); color:var(--text);
+    font-weight:700; font-size:12.5px; cursor:pointer; white-space:nowrap;
   }
-  .hl-player-download:active{ transform:scale(.97); }
+  .hl-dl-opt:hover{ border-color:var(--accent); }
+  .hl-dl-opt .n{ font-size:11px; font-weight:800; color:var(--text-dim); font-variant-numeric:tabular-nums; }
+  .hl-dl-opt.all{ background:var(--accent); color:var(--accent-contrast); border-color:transparent; }
+  .hl-dl-opt.all .n{ color:inherit; opacity:.8; }
+  .hl-dl-b{ display:inline-grid; place-items:center; min-width:19px; height:19px; padding:0 4px; border-radius:6px; font-size:10.5px; font-weight:800; color:#fff; }
+  .hl-dl-b.four{ background:var(--four); } .hl-dl-b.six{ background:var(--six); } .hl-dl-b.wicket{ background:var(--wicket); }
 </style>
 </head>
 <body>
@@ -3083,7 +3095,7 @@ function closeCompileModal(){
 document.getElementById('cm-cancel').addEventListener('click', closeCompileModal);
 document.getElementById('compile-modal-backdrop').addEventListener('click', (e) => { if(e.target.id === 'compile-modal-backdrop') closeCompileModal(); });
 
-// body: { matchId, type, playerKey?, team? } — same shape clipsForCompileRequest()
+// body: { matchId, type, playerKey?, category?, team? } — same shape clipsForCompileRequest()
 // on the server understands. filename becomes the downloaded file's name
 // (without .mp4 — the server appends it).
 async function startCompile(body, filename){
@@ -6625,27 +6637,38 @@ async function loadClipDrawerScope(scope){
   // (see runPlayerClipsQuery) — show them in their own group so they're
   // no longer invisible on this player's card.
   html += clipGroupHtml('Other Clips', [...(clipsData.batting.other||[]), ...(clipsData.bowling.other||[])]);
-  const hasAnyClip = ['sixes','fours','dismissal','other'].some(k => (clipsData.batting[k]||[]).length)
-    || (clipsData.bowling.wickets||[]).length || (clipsData.bowling.other||[]).length;
-  // "Download All Player Highlights" — server-side MP4 compile (see
-  // startCompile above). Match-scoped only for now, same as the compile
-  // job itself, so this only appears on the This Match tab.
-  if(scope === 'match' && hasAnyClip){
-    const safeName = String(name || 'Player').replace(/\s+/g, '_');
-    html += `<button class="hl-player-download" id="cd-download-all">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>
-        Download All Player Highlights
-      </button>`;
+  const count = (list) => (list || []).length;
+  const n4 = count(clipsData.batting.fours), n6 = count(clipsData.batting.sixes), nW = count(clipsData.bowling.wickets);
+  const nAll = n4 + n6 + nW + count(clipsData.batting.dismissal) + count(clipsData.batting.other) + count(clipsData.bowling.other);
+  // ⬇ Download as ONE video — server-side MP4 compile (startCompile above),
+  // match-scoped like the compile job itself, so only on the This Match tab.
+  // Every clip shown here, or just one kind of them (category: see
+  // selectPlayerHighlightClips in server.js); each option says how many
+  // clips it holds, and an option with none isn't offered.
+  if(scope === 'match' && nAll){
+    const opts = [
+      ['all', 'All clips', nAll, ''],
+      ['fours', 'Fours', n4, '<span class="hl-dl-b four">4</span>'],
+      ['sixes', 'Sixes', n6, '<span class="hl-dl-b six">6</span>'],
+      ['boundaries', '4s + 6s', n4 && n6 ? n4 + n6 : 0, '<span class="hl-dl-b four">4</span><span class="hl-dl-b six">6</span>'],
+      ['wickets', 'Wickets', nW, '<span class="hl-dl-b wicket">W</span>'],
+    ].filter(o => o[2] > 0);
+    html = `<div class="hl-dl" id="cd-download">
+        <div class="hl-dl-head">${DOWNLOAD_ICON}Download as one video</div>
+        <div class="hl-dl-opts">${opts.map(([cat, label, n, badge]) =>
+          `<button type="button" class="hl-dl-opt${cat === 'all' ? ' all' : ''}" data-dl-cat="${cat}">${badge}${label}<span class="n">${n}</span></button>`).join('')}</div>
+      </div>` + html;
   }
   body.innerHTML = html || `<div class="empty-state">No clips yet ${scope === 'match' ? 'this match' : scope === 'tournament' ? 'this tournament' : 'in career'}.</div>`;
-  if(scope === 'match' && hasAnyClip){
-    const safeName = String(name || 'Player').replace(/\s+/g, '_');
-    const dlBtn = document.getElementById('cd-download-all');
-    if(dlBtn) dlBtn.addEventListener('click', () => {
-      const matchId = getClipMatchId();
-      startCompile({ matchId, type: 'player', playerKey: playerKeyOf(name) }, `${safeName}_Match_Highlights`);
-    });
-  }
+  const dl = document.getElementById('cd-download');
+  if(dl) dl.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-dl-cat]');
+    if(!b) return;
+    const cat = b.dataset.dlCat;
+    const suffix = { all: 'Match_Highlights', fours: 'Match_Fours', sixes: 'Match_Sixes', boundaries: 'Match_4s_and_6s', wickets: 'Match_Wickets' }[cat];
+    startCompile({ matchId: getClipMatchId(), type: 'player', playerKey: playerKeyOf(name), category: cat },
+      `${String(name || 'Player').replace(/\s+/g, '_')}_${suffix}`);
+  });
 
   // CAREER tab: append the tournament-by-tournament breakdown below the
   // clips, so a viewer scrolls straight from "career totals" into
