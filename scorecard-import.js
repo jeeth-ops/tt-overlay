@@ -44,18 +44,7 @@ const topOf = (m) => { let best = null, n = -1; for (const [k, v] of m) if (v > 
 // and when two different players of one team would end up with the same
 // short name, both keep their full names instead.
 // ------------------------------------------------------------------
-const SURNAME_PARTICLES = new Set(['de', 'da', 'di', 'du', 'del', 'della', 'der', 'den', 'van', 'von', 'la', 'le', 'st', 'st.', 'ul', 'ud', 'al', 'el', 'bin', 'ibn', 'abu', 'dos', 'do']);
-function normalizePlayerName(raw) {
-    const original = M.playerName(raw);
-    const cleaned = original.replace(/^[\s,.;:\-–—]+/, '').replace(/[\s,;:\-–—]+$/, '');
-    const tokens = cleaned.split(' ').filter(Boolean);
-    if (tokens.length <= 2) return { display: tokens.join(' '), original, dropped: [], changed: tokens.join(' ') !== original };
-    let s = tokens.length - 1;
-    while (s - 1 >= 1 && SURNAME_PARTICLES.has(tokens[s - 1].toLowerCase())) s--;
-    const dropped = tokens.slice(1, s);
-    const display = [tokens[0], ...tokens.slice(s)].join(' ');
-    return { display, original, dropped, changed: dropped.length > 0 };
-}
+const normalizePlayerName = M.normalizePlayerName;
 // Every spelling a player could already be known by (for finding him).
 function nameVariants(name) {
     const out = new Set();
@@ -747,6 +736,7 @@ function createScorecardImport(deps) {
     }
 
     // ---- everything the page shows before saving ----
+    const lightPlan = (p) => Object.assign({}, p, { similar: (p.similar || []).map(s => Object.assign({}, s, { logoUrl: null, hasLogo: !!s.logoUrl })) });
     async function analyze(viewer, draftId, opts) {
         const draft = await draftFor(draftId);
         const ctx = await loadContext(draft.target.ownerUid, draft.target.leagueKey, opts && opts.fresh);
@@ -836,7 +826,13 @@ function createScorecardImport(deps) {
             draftId: draft._id, status: draft.status,
             target: draft.target,
             issues, blocking: blocking.length, pendingWarnings: pendingWarnings.length,
-            teams: teamPlan, players: playerPlan.players,
+            // the options' logos can be large images: the page has them from
+            // GET /tournaments/:ownerUid/:leagueKey, here only whether there is one
+            teams: Object.assign({}, teamPlan, {
+                options: teamPlan.options.map(o => Object.assign({}, o, { logoUrl: null, hasLogo: !!o.logoUrl })),
+                plan: { A: lightPlan(teamPlan.plan.A), B: lightPlan(teamPlan.plan.B) }
+            }),
+            players: playerPlan.players,
             result: res, commentary, preview,
             canSave: !blocking.length && !!preview && draft.status !== 'completed'
         };
@@ -997,7 +993,7 @@ function createScorecardImport(deps) {
         const hash = crypto.createHash('sha256').update(buf).digest('hex');
         if ((d.photos || []).some(p => p.sha256 === hash && p.kind === kind)) throw httpError(409, 'This photo is already added.', { code: 'DUPLICATE_PHOTO' });
         const photo = {
-            id: newId('ph_'), kind, innings, order: (d.photos || []).filter(p => p.kind === kind && p.innings === innings).length,
+            id: newId('ph_'), kind, innings, order: (d.photos || []).reduce((n, p) => Math.max(n, typeof p.order === 'number' ? p.order : -1), -1) + 1,
             mediaType: type, bytes: buf.length, sha256: hash, name: strCap(q.name, 80) || '', ...imageSize(buf, type)
         };
         // stored as base64 text: the same on every driver / test store

@@ -29,6 +29,24 @@
     const playerName = (s) => cleanName(String(s == null ? '' : s).replace(ROLE_RE, ' '));
     const hasRole = (s, role) => role === 'wk' ? /\(\s*(?:wk|c\s*&\s*wk|wk\s*&\s*c)\s*\)|†/i.test(String(s || '')) : /\(\s*(?:c|c\s*&\s*wk|wk\s*&\s*c|capt|captain)\s*\)|\*/i.test(String(s || ''));
     const nameKey = (s) => cleanName(s).toLowerCase() || null;
+    // Player names are saved as FIRST + LAST name: "Jeeth Kumar Suvarna" (MCA
+    // website) becomes "Jeeth Suvarna", the name the site already knows him by.
+    // A surname keeps its particles ("Quinton de Kock", "Inzamam ul Haq").
+    // original: the printed name without role markers; dropped: the middle names.
+    const SURNAME_PARTICLES = new Set(['de', 'da', 'di', 'du', 'del', 'della', 'der', 'den', 'van', 'von', 'la', 'le', 'st', 'st.', 'ul', 'ud', 'al', 'el', 'bin', 'ibn', 'abu', 'dos', 'do']);
+    function normalizePlayerName(raw) {
+        const original = playerName(raw);
+        const cleaned = original.replace(/^[\s,.;:\-\u2013\u2014]+/, '').replace(/[\s,;:\-\u2013\u2014]+$/, '');
+        const tokens = cleaned.split(' ').filter(Boolean);
+        if (tokens.length <= 2) return { display: tokens.join(' '), original, dropped: [], changed: tokens.join(' ') !== original };
+        let s = tokens.length - 1;
+        while (s - 1 >= 1 && SURNAME_PARTICLES.has(tokens[s - 1].toLowerCase())) s--;
+        // "M S Dhoni", "S K Yadav": initials are already short — keep them all
+        if (tokens.slice(0, s).every(t => /^[A-Za-z]\.?$/.test(t))) return { display: tokens.join(' '), original, dropped: [], changed: tokens.join(' ') !== original };
+        const dropped = tokens.slice(1, s);
+        const display = [tokens[0], ...tokens.slice(s)].join(' ');
+        return { display, original, dropped, changed: dropped.length > 0 };
+    }
     const other = (side) => (side === 'A' ? 'B' : 'A');
 
     // "19.4" → 118 legal balls; null when unreadable; NaN when impossible ("3.6")
@@ -399,7 +417,7 @@
 
     const api = {
         BALLS_PER_OVER, oversToBalls, ballsToOvers, oversText, parseDismissal, extrasSum, extrasTotal,
-        inningsFacts, computeResult, resultText, validateMatch, cleanName, playerName, nameKey, intOrNull,
+        inningsFacts, computeResult, resultText, validateMatch, cleanName, playerName, nameKey, intOrNull, normalizePlayerName,
         levenshtein, teamLikeness, sideForTeam, fromExtraction
     };
     if (typeof module === 'object' && module.exports) module.exports = api;
