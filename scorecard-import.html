@@ -97,6 +97,9 @@
   .v-back{ animation:vback .38s var(--ease) both; }
   @keyframes vin{ from{ opacity:0; transform:translateX(18px); } to{ opacity:1; transform:none; } }
   @keyframes vback{ from{ opacity:0; transform:translateX(-18px); } to{ opacity:1; transform:none; } }
+  /* phones: steps rise into place (a sideways slide would poke past the screen edge) */
+  @keyframes vrise{ from{ opacity:0; transform:translateY(10px); } to{ opacity:1; transform:none; } }
+  @media (max-width:640px){ .v-enter, .v-back{ animation-name:vrise; } }
   @media (prefers-reduced-motion:reduce){ *{ animation-duration:.01ms !important; transition-duration:.01ms !important; } }
 
   /* ---------- cards, chips, buttons ---------- */
@@ -297,6 +300,8 @@
 
   /* ---------- scorecard editor ---------- */
   .sc-layout{ display:grid; grid-template-columns:minmax(0, 1fr); gap:16px; align-items:start; }
+  /* a grid item would otherwise grow to its tables' full width (the tables scroll inside .sc-wrap) */
+  .sc-layout > *{ min-width:0; }
   @media (min-width:1180px){ .sc-layout.with-photos{ grid-template-columns:minmax(0, 1fr) 380px; } }
   .ph-panel{ display:none; }
   @media (min-width:1180px){ .sc-layout.with-photos .ph-panel{ display:block; position:sticky; top:68px; max-height:calc(100vh - 160px); overflow:auto; padding:12px; } }
@@ -323,10 +328,11 @@
   .inn-issues:empty{ display:none; }
   .tbl-h{ display:flex; align-items:center; gap:10px; padding:16px 16px 6px; font:700 12px var(--font-display); letter-spacing:.07em; text-transform:uppercase; color:var(--text-dim); }
   .tbl-h .muted{ text-transform:none; letter-spacing:0; font:500 12.5px var(--font-body); }
-  .sc-wrap{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  /* position:relative keeps absolutely placed bits (screen-reader labels) inside the scroller */
+  .sc-wrap{ position:relative; overflow-x:auto; -webkit-overflow-scrolling:touch; }
   table.sc{ width:100%; border-collapse:separate; border-spacing:0; font-variant-numeric:tabular-nums; }
   table.sc th{ font:700 10.5px var(--font-display); letter-spacing:.07em; text-transform:uppercase; color:var(--text-faint); text-align:center; padding:8px 3px; white-space:nowrap; }
-  table.sc th.l{ text-align:left; padding-left:16px; }
+  table.sc th.l{ text-align:left; padding-left:16px; position:sticky; left:0; z-index:2; background:var(--panel); }
   table.sc td{ padding:5px 3px; border-top:1px solid var(--border-soft); vertical-align:top; text-align:center; }
   table.sc tr.ghost td{ opacity:.6; }
   table.sc tr.ghost:focus-within td{ opacity:1; }
@@ -357,6 +363,17 @@
   input.cell.warn{ border-color:color-mix(in srgb, var(--warn) 75%, transparent); }
   input.cell.bad{ border-color:var(--danger); background:var(--danger-soft); }
   td.calc{ color:var(--text-dim); font-size:13px; padding-top:13px !important; min-width:48px; }
+  @media (max-width:520px){
+    table.sc td.who{ min-width:150px; padding-left:8px; }
+    table.sc th.l{ padding-left:10px; }
+    input.cell{ width:40px; }
+    input.cell.w{ width:48px; }
+    .who-top .pos{ width:16px; }
+    .rolebtn{ min-width:22px; padding:0 4px; }
+    input.dis{ margin-left:20px; width:calc(100% - 20px); }
+    .src{ margin-left:22px; }
+    td.calc{ min-width:40px; }
+  }
   td.act{ padding-right:10px !important; }
   .more{ width:30px; height:34px; border:0; border-radius:9px; background:transparent; color:var(--text-faint); display:grid; place-items:center; }
   .more:hover{ background:var(--panel-2); color:var(--text); }
@@ -750,7 +767,10 @@ const teamOf = (side) => {
   const plan = S.analysis && S.analysis.teams && S.analysis.teams.plan && S.analysis.teams.plan[side];
   if (plan && plan.team) return plan.team;
   const t = S.draft && S.draft.teams && S.draft.teams[side];
-  const name = (t && t.choice && t.choice.name) || (t && t.printed) || (side === 'A' ? 'Team batting first' : 'Team batting second');
+  const ch = t && t.choice;
+  // before the server's check is back: the chosen team from the team list
+  if (ch && ch.mode === 'existing' && ch.ref && S.teamOptions) { const o = S.teamOptions.find(x => x.ref === ch.ref); if (o) return o; }
+  const name = (ch && ch.name) || (t && t.printed) || (side === 'A' ? 'Team batting first' : 'Team batting second');
   return { name, short: '', color: '', logoUrl: '' };
 };
 const teamName = (side) => teamOf(side).name;
@@ -987,6 +1007,7 @@ async function loadTeamOptions() {
     if (r.tournament) { S.target.token = S.target.token || r.tournament.token; S.target.info = r.tournament.info || {}; }
     setCrumb();
     if (S.step === 'teams') paintTeams();
+    if (S.step === 'scorecard') paintTeamLabels();
   } catch (e) { /* the picker shows the error when opened */ }
 }
 
@@ -2004,6 +2025,21 @@ function renderScorecard(back) {
   paintCommentary();
   wireEditor();
   validateNow();
+  // opened straight on this step (a reload): the teams' names come with the check
+  if (!S.analysis) analyze(true).then(() => { if (S.step === 'scorecard') { paintTeamLabels(); validateNow(); } }).catch(() => {});
+}
+// the team names on the editor, without re-drawing it (keeps the typing)
+function paintTeamLabels() {
+  const inn = curInn();
+  if (!inn || !$('innBox')) return;
+  const bt = teamOf(inn.battingSide), wt = teamOf(other(inn.battingSide));
+  const head = document.querySelector('#innBox .inn-head');
+  if (head) { const lg = head.querySelector('.logo'); if (lg) lg.outerHTML = logoHtml(bt, 'sm'); const h3 = head.querySelector('h3'); if (h3) h3.textContent = bt.name; }
+  const hs = document.querySelectorAll('#innBox .tbl-h .muted');
+  if (hs[0]) hs[0].textContent = bt.name;
+  if (hs[1]) hs[1].textContent = wt.name;
+  paintInnTabs();
+  paintResultAuto();
 }
 function paintInnTabs() {
   const box = $('innTabs');
