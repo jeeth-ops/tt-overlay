@@ -17,6 +17,10 @@
 //   typed    phone width, light theme, no reader on the server: the figures
 //            typed into the empty rows, the page reloaded half-way (nothing
 //            lost), saved; nothing ever wider than the screen
+//   browser  no reader on the server: the photos read in this browser (a
+//            Tesseract stand-in): one reader set to a table row a line, each
+//            photo enlarged on a canvas first; a 2nd screenshot without a
+//            header carries the table on; did not bat, fall of wickets
 //   screenshots in test/out/scorecard-import-*.png
 //
 // Run:  NODE_PATH=$(npm root -g) node test/scorecard-import-ui.test.js
@@ -415,27 +419,38 @@ const file = (name, seed) => ({ name, mimeType: 'image/png', buffer: FX.png(seed
     // ------------------------------------------------------------------
     section('read in the browser (no reader on the server; Tesseract stand-in)');
     page = await newPage(browser, 'owner');
+    // the 1st innings over two screenshots: the second has no table header,
+    // only the bowling rows that carry on after the total
     const OCR = [
         ['DY Patil SA 110/1 (10.0 Ov)', 'Batters R B 4s 6s SR', 'Jeeth Kumar Suvarna (c) 40 34 4 1 117.65', 'c Rohit Shukla b Garv Jain', 'Harsh Rajesh Rane not out 70 26 6 2 269.23',
-            'Extras 0 (wd 0, nb 0, b 0, lb 0)', 'Total 110/1 (10.0 Ov)', 'Bowlers O M R W NB WD ECO', 'Garv Jain 5 0 50 1 0 0 10.00', 'Rohit Shukla 5 0 60 0 0 0 12.00'].join('\n'),
+            'Did not bat: Atharva Kale, Suraj Shinde', 'Extras 0 (wd 0, nb 0, b 0, lb 0)', 'Total 110/1 (10.0 Ov)', 'Fall of wickets: 1-52 (Jeeth Kumar Suvarna, 5.4 ov)'].join('\n'),
+        ['Garv Jain 5 0 50 1 0 0 10.00', 'Rohit Shukla 5 0 60 0 0 0 12.00'].join('\n'),
         ['Parel SC 85/2 (10.0 Ov)', 'Batters R B 4s 6s SR', 'Rohit Shukla b Alim Shaikh 50 30 5 2 166.67', 'Garv Jain run out (Harsh Rane) 35 30 2 1 116.67',
             'Extras 0 (wd 0, nb 0, b 0, lb 0)', 'Total 85/2 (10.0 Ov)', 'Bowlers O M R W NB WD ECO', 'Alim Shaikh 5 0 45 1 0 0 9.00', 'Jeeth Suvarna 5 0 40 0 0 0 8.00'].join('\n')
     ];
+    // a stand-in for Tesseract.js 4: one worker, its settings and the images it is given recorded
     await page.route('https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/**', (r) => r.fulfill({ contentType: 'application/javascript',
-        body: `window.__ocrCalls = 0; window.Tesseract = { recognize: function(img, lang, o){ var t = ${JSON.stringify(OCR)}[window.__ocrCalls++] || ''; if (o && o.logger) o.logger({ status: 'recognizing text', progress: 1 }); return Promise.resolve({ data: { text: t } }); } };` }));
+        body: `window.__ocr = { calls: 0, workers: 0, params: null, sizes: [], ended: false }; window.Tesseract = { createWorker: function(o){ window.__ocr.workers++; return Promise.resolve({
+            loadLanguage: function(){ return Promise.resolve(); }, initialize: function(){ return Promise.resolve(); },
+            setParameters: function(p){ window.__ocr.params = p; return Promise.resolve(); },
+            recognize: function(img){ var t = ${JSON.stringify(OCR)}[window.__ocr.calls++] || ''; window.__ocr.sizes.push([img.tagName, img.width, img.height]); if (o && o.logger) o.logger({ status: 'recognizing text', progress: 1 }); return Promise.resolve({ data: { text: t } }); },
+            terminate: function(){ window.__ocr.ended = true; return Promise.resolve(); } }); } };` }));
     await page.goto(base + '/import-scorecard?token=tokM', { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#tSlot .tsel h3', { timeout: 15000 });
     await page.fill('#mDate', '2026-10-11');
     await page.check('#mConfirm');
     await page.click('#abNext');
     await page.waitForSelector('#readerBox [data-read="browser"]', { timeout: 10000 });
-    await pick(page, '[data-add="scorecard"][data-inn="1"]', [file('ocr1.png', 31)]);
-    await page.waitForFunction(() => document.querySelectorAll('#grid-scorecard-1 .ph[data-id]').length === 1, null, { timeout: 15000 });
+    await pick(page, '[data-add="scorecard"][data-inn="1"]', [file('ocr1.png', 31), file('ocr1b.png', 33)]);
+    await page.waitForFunction(() => document.querySelectorAll('#grid-scorecard-1 .ph[data-id]').length === 2, null, { timeout: 15000 });
     await pick(page, '[data-add="scorecard"][data-inn="2"]', [file('ocr2.png', 32)]);
     await page.waitForFunction(() => document.querySelectorAll('#grid-scorecard-2 .ph[data-id]').length === 1, null, { timeout: 15000 });
     await page.click('[data-read="browser"]');
     await page.waitForSelector('#teamCards .tcard[data-side] [data-choose]', { timeout: 20000 });
-    check(await page.evaluate(() => window.__ocrCalls) === 2, 'each photo read in the browser');
+    const ocr = await page.evaluate(() => window.__ocr);
+    check(ocr.calls === 3 && ocr.workers === 1 && ocr.ended, 'each photo read in the browser, by one reader, closed afterwards');
+    check(ocr.params && ocr.params.tessedit_pageseg_mode === '4', 'read a table row to a line (page segmentation mode 4)');
+    check(ocr.sizes.every(([tag, w, h]) => tag === 'CANVAS' && w === 60 && h === 80), 'each photo enlarged (2x here) and prepared on a canvas before it is read');
     await page.click('.tcard[data-side="A"] [data-choose]');
     await page.waitForSelector('#sheet.open .pick');
     await page.locator('#sheetBody .pick', { hasText: 'DY PATIL SA' }).first().click();
@@ -465,6 +480,10 @@ const file = (name, seed) => ({ name, mimeType: 'image/png', buffer: FX.png(seed
     check(ocrNames.join() === 'Jeeth Suvarna,Harsh Rane' && await page.inputValue('#batTable tbody tr:first-child [data-f="dismissal"]') === 'c Rohit Shukla b Garv Jain', 'rows read from the OCR text, names first + last, dismissal kept');
     check(await page.$$eval('#batTable tbody tr.lowc, #bowlTable tbody tr.lowc', x => x.length) === 4 && /Read in this browser/.test(await txt(page, '#scTop')), 'every row read this way is marked "hard to read — check it"');
     check(await page.inputValue('[data-path="total.runs"]') === '110' && await page.inputValue('[data-path="total.overs"]') === '10.0' && /✓ matches the total/.test(await txt(page, '#sumBat')), 'the total and extras read too');
+    check(await page.$$eval('#bowlTable tbody tr:not([data-ghost]) input.nm', x => x.map(i => i.value).join()) === 'Garv Jain,Rohit Shukla', 'the second screenshot, no header: its rows go on as bowling, after the total');
+    check(/Atharva Kale/.test(await txt(page, '#dnbBox')) && /Suraj Shinde/.test(await txt(page, '#dnbBox')) && /1 wicket/.test(await txt(page, '#fowBox summary')), 'did not bat and the fall of wickets read too');
+    await page.click('#fowBox summary');
+    check(await page.inputValue('#fowTable [data-fw="batter"]') === 'Jeeth Suvarna', 'the fall-of-wickets batter, first + last like the rest');
     await page.click('#allChecked');
     await page.waitForTimeout(300);
     check(!(await page.$('#batTable tbody tr.lowc, #bowlTable tbody tr.lowc')), '"I have checked every row" clears the marks');
