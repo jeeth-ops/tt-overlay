@@ -390,6 +390,12 @@
   .mc-head{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:2px 2px 0; }
   .mc-head .section-title{ margin-bottom:0; }
   .mc-count{ font-size:11.5px; font-weight:700; color:var(--text-faint); font-variant-numeric:tabular-nums; }
+  /* 📷 owner only: import a finished match from scorecard photos */
+  .mc-head .mc-count{ margin-left:auto; }
+  .mc-import{ display:inline-flex; align-items:center; gap:6px; height:30px; padding:0 12px; border-radius:999px; border:1px solid var(--border); background:var(--panel); color:var(--text); font:700 12px var(--font-display); white-space:nowrap; box-shadow:var(--shadow); }
+  .mc-import svg{ width:15px; height:15px; color:var(--accent); flex:none; }
+  .mc-import:hover{ border-color:var(--accent); }
+  @media (max-width:420px){ .mc-import .lbl-long{ display:none; } }
   .mc-group-label{
     display:flex; align-items:center; gap:8px;
     padding:13px 18px 9px; font-family:var(--font-display); font-weight:700;
@@ -1338,6 +1344,18 @@ function matchCardHtml(m, { href, status, featured = false }){
     </div>
   </a>`;
 }
+// 📷 IMPORT SCORECARD — the owner's way in to /import-scorecard for this
+// tournament. The page and every call it makes are owner-only on the server
+// (chhayajeeth@gmail.com); this link only saves finding the tournament there.
+function showOwnerImportLink(){
+  const head = document.querySelector('#matches-card .mc-head');
+  if(!head || head.querySelector('.mc-import') || !tournamentTokenCache) return;
+  const a = document.createElement('a');
+  a.className = 'mc-import';
+  a.href = `/import-scorecard?token=${encodeURIComponent(tournamentTokenCache)}`;
+  a.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.5"/></svg><span>Import<span class="lbl-long"> scorecard</span></span>';
+  head.appendChild(a);
+}
 // A live room whose match record hasn't been saved yet — there is no team
 // or score data to show, so it says only what is true.
 // 🔒 MATCH CODES — a locked match's code is shown on its card ONLY to the
@@ -1348,6 +1366,7 @@ let ownerLocks = null, ownerLocksAt = 0;
 async function showOwnerLockCodes(){
   await authReady;
   if(!isOwner) return;
+  showOwnerImportLink();
   try{
     if(!ownerLocks || Date.now() - ownerLocksAt > 20000){
       const res = await apiFetch('/api/admin/match-locks', { cache: 'no-store' });
@@ -2119,6 +2138,10 @@ function ppProfile(name){
       bat: bat.length ? {
         inns: bat.map(r => ({ runs: num(r.runs), balls: num(r.balls), notOut: r.out === false })),
         runs: bat.reduce((s, r) => s + num(r.runs), 0), balls: bat.reduce((s, r) => s + num(r.balls), 0),
+        // 📷 an imported scorecard can leave balls faced unknown (null): that
+        // innings stays out of the strike rate rather than counting as 0 balls
+        srRuns: bat.reduce((s, r) => s + (r.balls === null || r.balls === undefined ? 0 : num(r.runs)), 0),
+        ballsKnown: bat.every(r => r.balls !== null && r.balls !== undefined),
         fours: bat.reduce((s, r) => s + num(r.fours), 0), sixes: bat.reduce((s, r) => s + num(r.sixes), 0)
       } : null,
       bowl: bowl.length ? {
@@ -2130,11 +2153,11 @@ function ppProfile(name){
     });
   });
 
-  const bat = { inns: 0, runs: 0, balls: 0, fours: 0, sixes: 0, hs: -1, hsNotOut: false, fifties: 0, hundreds: 0 };
+  const bat = { inns: 0, runs: 0, balls: 0, srRuns: 0, fours: 0, sixes: 0, hs: -1, hsNotOut: false, fifties: 0, hundreds: 0 };
   const bowl = { inns: 0, balls: 0, runs: 0, wkts: 0, maidens: 0, best: null };
   entries.forEach(e => {
     if(e.bat){
-      bat.runs += e.bat.runs; bat.balls += e.bat.balls; bat.fours += e.bat.fours; bat.sixes += e.bat.sixes;
+      bat.runs += e.bat.runs; bat.balls += e.bat.balls; bat.srRuns += e.bat.srRuns; bat.fours += e.bat.fours; bat.sixes += e.bat.sixes;
       e.bat.inns.forEach(x => {
         bat.inns++;
         if(x.runs > bat.hs || (x.runs === bat.hs && x.notOut)){ bat.hs = x.runs; bat.hsNotOut = x.notOut; }
@@ -2209,7 +2232,7 @@ function ppKpisHtml(P){
   const milestones = [B.hundreds ? plural(B.hundreds, 'hundred', 'hundreds') : '', B.fifties ? plural(B.fifties, 'fifty', 'fifties') : ''].filter(Boolean).join(' · ');
   const batHtml = B.inns ? `<div class="pp-kgroup" style="--kc:var(--pp-runs)"><div class="pp-kgroup-h">Batting${milestones ? `<em>${milestones}</em>` : ''}</div><div class="pp-kbody">
       ${lead(B.runs, 'Runs', P.primary === 'bat')}
-      <div class="pp-kgrid">${k(strikeRate(B.runs, B.balls), 'Strike rate')}${k(`${B.hs}${B.hsNotOut ? '*' : ''}`, 'Highest')}${k(B.fours, 'Fours')}${k(B.sixes, 'Sixes')}${k(B.inns, 'Innings')}</div>
+      <div class="pp-kgrid">${k(strikeRate(B.srRuns, B.balls), 'Strike rate')}${k(`${B.hs}${B.hsNotOut ? '*' : ''}`, 'Highest')}${k(B.fours, 'Fours')}${k(B.sixes, 'Sixes')}${k(B.inns, 'Innings')}</div>
     </div></div>` : '';
   const bowlHtml = W.inns ? `<div class="pp-kgroup" style="--kc:var(--pp-wkts)"><div class="pp-kgroup-h">Bowling</div><div class="pp-kbody">
       ${lead(W.wkts, W.wkts === 1 ? 'Wicket' : 'Wickets', P.primary === 'bowl')}
@@ -2253,8 +2276,8 @@ function ppChartsHtml(P){
   if(many && P.bat.inns){
     cards.push(ppColumnsHtml('Runs in each match', 'Tap a bar for its clips', 'pp-cols-runs', P.entries.map(e => e.bat ? {
       key: e.key, v: e.bat.runs, cap: ppScore(e.bat), x: ppAxisLabel(e.label), xs: teamLabel(e.opp),
-      tip: [`${ppScore(e.bat)} ${e.bat.runs === 1 ? 'run' : 'runs'}`, `${e.bat.balls} balls · 4s ${e.bat.fours} · 6s ${e.bat.sixes} · SR ${strikeRate(e.bat.runs, e.bat.balls)}`, vs(e)],
-      aria: `${vs(e)}: ${ppScore(e.bat)} off ${e.bat.balls} balls`
+      tip: [`${ppScore(e.bat)} ${e.bat.runs === 1 ? 'run' : 'runs'}`, e.bat.ballsKnown ? `${e.bat.balls} balls · 4s ${e.bat.fours} · 6s ${e.bat.sixes} · SR ${strikeRate(e.bat.runs, e.bat.balls)}` : `4s ${e.bat.fours} · 6s ${e.bat.sixes}`, vs(e)],
+      aria: e.bat.ballsKnown ? `${vs(e)}: ${ppScore(e.bat)} off ${e.bat.balls} balls` : `${vs(e)}: ${ppScore(e.bat)}`
     } : { key: e.key, v: null, none: 'DNB', x: ppAxisLabel(e.label), xs: teamLabel(e.opp), tip: ['Did not bat', vs(e)], aria: `${vs(e)}: did not bat` })));
   }
   if(P.bat.runs > 0) cards.push(ppMixHtml(P.bat));
@@ -2285,7 +2308,7 @@ function ppMatchHtml(e){
   const oc = safeTeamColor(e.opp.color) || '#64748b';
   const logo = safeLogoUrl(e.opp.logoUrl);
   const lines = [];
-  if(e.bat) lines.push(`<div class="pp-line"><i class="pp-li bat" aria-hidden="true">${BAT_ICON}</i><b>${ppScore(e.bat)}</b><span>(${e.bat.balls}) · 4s ${e.bat.fours} · 6s ${e.bat.sixes} · SR ${strikeRate(e.bat.runs, e.bat.balls)}</span></div>`);
+  if(e.bat) lines.push(`<div class="pp-line"><i class="pp-li bat" aria-hidden="true">${BAT_ICON}</i><b>${ppScore(e.bat)}</b><span>${e.bat.ballsKnown ? `(${e.bat.balls}) · ` : ''}4s ${e.bat.fours} · 6s ${e.bat.sixes}${e.bat.ballsKnown ? ` · SR ${strikeRate(e.bat.runs, e.bat.balls)}` : ''}</span></div>`);
   if(e.bowl) lines.push(`<div class="pp-line"><i class="pp-li bowl" aria-hidden="true">${BOWL_ICON}</i><b>${e.bowl.wkts}/${e.bowl.runs}</b><span>(${ppOvers(e.bowl.balls)} ov) · Econ ${economy(e.bowl.runs, 0, e.bowl.balls)}${e.bowl.maidens ? ` · ${e.bowl.maidens}M` : ''}</span></div>`);
   return `<article class="pp-match" style="--oc:${oc};--oci:${inkOn(oc)}">
     <div class="pp-m-id">
