@@ -1565,6 +1565,10 @@ async function init(){
       const res = await apiFetch(`/api/public/tournament/${encodeURIComponent(token)}`);
       const data = await res.json();
       if(data && data.success){ portalSig = portalSignature(data); renderPortal(data, token); showOwnerLockCodes(); startPortalRefresh(token); }
+      else if(data && data.movedTo){
+        // 🔀 this tournament was merged into another — its link leads there
+        location.replace(`/score/tournament/${encodeURIComponent(data.movedTo)}${location.search}${location.hash}`);
+      }
       else {
         // DIAGNOSTIC: check this in the console — if signedInAs is empty
         // while you know you're logged in, the Firebase session did not

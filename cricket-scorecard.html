@@ -3949,7 +3949,21 @@ async function loadMatchSnapshot(matchId){
       ? `${clipApiBase()}/api/public/tournament/${encodeURIComponent(token)}/match/${encodeURIComponent(matchId)}`
       : `${clipApiBase()}/api/public/match/${encodeURIComponent(matchId)}`;
     const res = await apiFetch(url);
-    if(!res.ok) throw new Error('bad response');
+    if(!res.ok){
+      // 🔀 a tournament merged into another: its old match link opens the
+      // same match in the tournament it was merged into
+      if(token && res.status === 404){
+        const moved = await res.json().catch(() => null);
+        if(moved && moved.movedTo){
+          const qs = new URLSearchParams(location.search);
+          qs.set('token', moved.movedTo);
+          if(moved.matchId) qs.set('match', moved.matchId);
+          location.replace(`${location.pathname}?${qs.toString()}${location.hash}`);
+          return;
+        }
+      }
+      throw new Error('bad response');
+    }
     const data = await res.json();
 
     if(data && data.success && data.match === null){
