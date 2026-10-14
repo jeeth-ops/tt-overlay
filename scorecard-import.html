@@ -102,6 +102,7 @@
   /* ---------- cards, chips, buttons ---------- */
   .card{ background:var(--panel); border:1px solid var(--border-soft); border-radius:var(--radius-xl); box-shadow:var(--shadow); }
   .card + .card{ margin-top:14px; }
+  .ph-cols > .card + .card, .teams > .card + .card{ margin-top:0; }
   .pad{ padding:18px; }
   .sec-title{ display:flex; align-items:center; gap:10px; margin:26px 4px 10px; font:700 13px var(--font-display); letter-spacing:.06em; text-transform:uppercase; color:var(--text-dim); }
   .sec-title .count{ margin-left:auto; text-transform:none; letter-spacing:0; font:600 12px var(--font-body); color:var(--text-faint); }
@@ -216,13 +217,14 @@
   .ph-group{ margin-top:14px; }
   .ph-group > .gh{ display:flex; align-items:center; gap:8px; font:650 13.5px var(--font-body); margin-bottom:8px; }
   .ph-group > .gh span{ color:var(--text-faint); font-weight:500; font-size:12.5px; }
-  .ph-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(104px, 1fr)); gap:10px; border-radius:16px; transition:background .2s, box-shadow .2s; }
+  .ph-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(124px, 1fr)); gap:10px; border-radius:16px; transition:background .2s, box-shadow .2s; }
   .ph-grid.drop{ background:var(--accent-soft); box-shadow:0 0 0 2px var(--accent); }
   .ph{ position:relative; aspect-ratio:3/4; border-radius:14px; overflow:hidden; background:var(--panel-3); border:1px solid var(--border-soft); }
   .ph img{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; object-position:top; cursor:zoom-in; display:block; }
   .ph .no{ position:absolute; left:6px; top:6px; z-index:1; height:22px; min-width:22px; padding:0 7px; border-radius:999px; display:grid; place-items:center; background:rgba(0,0,0,.66); color:#fff; font:700 11.5px var(--font-display); }
-  .ph .tools{ position:absolute; left:0; right:0; bottom:0; z-index:1; display:flex; justify-content:space-between; gap:2px; padding:5px; background:linear-gradient(transparent, rgba(0,0,0,.7)); }
-  .ph .tools button{ width:28px; height:28px; border-radius:9px; border:0; background:rgba(255,255,255,.16); color:#fff; display:grid; place-items:center; -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px); }
+  .ph .tools{ position:absolute; left:0; right:0; bottom:0; z-index:1; display:flex; gap:3px; padding:5px; background:linear-gradient(transparent, rgba(0,0,0,.72)); }
+  .ph .tools .gap{ flex:1; }
+  .ph .tools button{ width:26px; height:26px; border-radius:8px; border:0; background:rgba(255,255,255,.16); color:#fff; display:grid; place-items:center; -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px); }
   .ph .tools button:hover{ background:rgba(255,255,255,.3); }
   .ph .tools button[disabled]{ opacity:.35; cursor:default; }
   .ph .tools svg{ width:15px; height:15px; }
@@ -441,8 +443,8 @@
   .sum-hero .t{ display:flex; align-items:center; gap:12px; min-width:0; }
   .sum-hero .t.r{ flex-direction:row-reverse; text-align:right; }
   .sum-hero .t b{ display:block; font:750 17px/1.25 var(--font-display); word-break:break-word; }
-  .sum-hero .t span{ display:block; font:800 24px var(--font-display); font-variant-numeric:tabular-nums; letter-spacing:-.02em; }
-  .sum-hero .t span small{ font:600 12.5px var(--font-body); color:var(--text-dim); margin-left:4px; }
+  .sum-hero .t .sc{ display:block; font:800 24px var(--font-display); font-variant-numeric:tabular-nums; letter-spacing:-.02em; }
+  .sum-hero .t .sc small{ font:600 12.5px var(--font-body); color:var(--text-dim); margin-left:4px; }
   .sum-hero .vs{ font:800 13px var(--font-display); color:var(--text-faint); }
   @media (max-width:640px){ .sum-hero{ grid-template-columns:1fr; } .sum-hero .t.r{ flex-direction:row; text-align:left; } .sum-hero .vs{ display:none; } }
   .sum-result{ margin:0 20px; padding:12px 14px; border-radius:14px; background:var(--accent-soft); color:var(--accent); font:750 15px var(--font-display); text-align:center; }
@@ -1464,6 +1466,7 @@ function paintGrid(kind, n) {
       <div class="tools">
         <button type="button" data-ph="left" ${i === 0 ? 'disabled' : ''} aria-label="Move earlier">${IC.left}</button>
         <button type="button" data-ph="right" ${i === list.length - 1 ? 'disabled' : ''} aria-label="Move later">${IC.right}</button>
+        <span class="gap"></span>
         <button type="button" data-ph="replace" aria-label="Replace this photo">${IC.replace}</button>
         <button type="button" data-ph="remove" aria-label="Remove this photo">${IC.trash}</button>
       </div></div>`).join('')
@@ -2620,7 +2623,7 @@ function playerCard(p, idx) {
   })();
   const choice = (val, inner) => `<label class="choice ${sel === val ? 'on' : ''}"><input type="radio" name="pl-${idx}" value="${esc(val)}" ${sel === val ? 'checked' : ''}><span class="radio"></span><span class="ct">${inner}</span></label>`;
   const cand = (c, kind) => choice('id:' + c.id, `<b>${esc(c.name || '—')} <code>${esc(c.id)}</code>${c.sameTeam ? '<span class="chip green">Plays for this team</span>' : kind === 'similar' ? '<span class="chip amber">Similar name</span>' : '<span class="chip">Another team</span>'}</b>
-    <span>${esc([c.teams && c.teams.length ? c.teams.join(', ') : null, c.leagueMatches ? `${plural(c.leagueMatches, 'match', 'matches')} in this tournament` : null, c.matches && c.matches !== c.leagueMatches ? `${c.matches} in all` : null, (c.names || []).filter(n => norm(n) !== norm(c.name)).length ? `also “${(c.names || []).filter(n => norm(n) !== norm(c.name)).slice(0, 2).join('”, “')}”` : null].filter(Boolean).join(' · ') || 'No matches yet')}</span>
+    <span>${esc([c.teams && c.teams.length ? c.teams.join(', ') : null, c.leagueMatches ? `${plural(c.leagueMatches, 'match', 'matches')} in this tournament` : (c.matches ? 'none in this tournament' : null), c.matches && c.matches !== c.leagueMatches ? `${plural(c.matches, 'match', 'matches')} in all` : null, (c.names || []).filter(n => norm(n) !== norm(c.name)).length ? `also “${(c.names || []).filter(n => norm(n) !== norm(c.name)).slice(0, 2).join('”, “')}”` : null].filter(Boolean).join(' · ') || 'No matches yet')}</span>
     ${c.middleNameDiffers ? `<span class="warnline">Different middle name: “${esc(c.middleNameDiffers)}”</span>` : ''}`);
   const choices = [];
   (p.candidates || []).forEach(c => choices.push(cand(c, 'cand')));
@@ -2628,7 +2631,8 @@ function playerCard(p, idx) {
   if (fin && fin.mode === 'existing' && !fin.id && !choices.some(x => x.includes(`value="${esc('name:' + fin.name)}"`))) choices.push(choice('name:' + fin.name, `<b>${esc(fin.name)} <span class="chip green">Same name in this team</span></b><span>From this team's earlier scorecards</span>`));
   const newName = d && d.mode === 'new' ? (d.name || p.normalized) : (fin && fin.mode === 'new' ? fin.name : p.normalized);
   choices.push(choice('new', `<b>A new player</b><span>Gets his own player ID.${p.nameClash ? '' : ' Saved as:'}</span><input type="text" data-new-name maxlength="60" value="${esc(newName)}" aria-label="Name for the new player">`));
-  const why = iss.length ? iss.map(i => esc(i.message)).join('<br>') : (!fin ? esc(p.reason) : null);
+  const own = (m) => { const pre = p.name + ': '; return m.startsWith(pre) ? m.slice(pre.length) : m; };
+  const why = iss.length ? iss.map(i => esc(own(i.message))).join('<br>') : (!fin ? esc(p.reason) : null);
   return `<article class="card pl ${iss.length ? 'bad' : need ? 'need' : ''}" data-key="${esc(p.key)}">
     <div class="pl-head"><span class="mono" aria-hidden="true">${esc(initials(name))}</span>
       <div class="grow"><b>${esc(name)}</b><span>${sub.join(' · ')}</span></div>${chip}
@@ -2729,7 +2733,7 @@ function paintReview() {
     const first = battedFirst(), second = other(first);
     const T = { A: tA, B: tB };
     html.push(`<div class="card" ${blocking.length ? 'style="margin-top:14px"' : ''}>
-      <div class="sum-hero"><div class="t">${logoHtml(T[first], '')}<div><b>${esc(T[first].name)}</b><span>${esc(scoreText(rec['score' + first]))}<small>(${esc(rec['score' + first].overs)} ov)</small></span></div></div><div class="vs">VS</div><div class="t r">${logoHtml(T[second], '')}<div><b>${esc(T[second].name)}</b><span>${esc(scoreText(rec['score' + second]))}<small>(${esc(rec['score' + second].overs)} ov)</small></span></div></div></div>
+      <div class="sum-hero"><div class="t">${logoHtml(T[first], '')}<div><b>${esc(T[first].name)}</b><span class="sc">${esc(scoreText(rec['score' + first]))}<small>(${esc(rec['score' + first].overs)} ov)</small></span></div></div><div class="vs">VS</div><div class="t r">${logoHtml(T[second], '')}<div><b>${esc(T[second].name)}</b><span class="sc">${esc(scoreText(rec['score' + second]))}<small>(${esc(rec['score' + second].overs)} ov)</small></span></div></div></div>
       <div class="sum-result">${esc(rec.resultText || 'Result not decided')}</div>
       <dl class="kv"><dt>Tournament</dt><dd>${esc(S.target ? S.target.displayName : '')}</dd>
         <dt>Date</dt><dd>${esc(fmtDay(m.date))}${printed.date ? ` <span class="faint small">· photos say “${esc(printed.date)}”</span>` : ''}</dd>

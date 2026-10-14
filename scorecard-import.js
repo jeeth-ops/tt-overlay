@@ -244,6 +244,7 @@ function createScorecardImport(deps) {
         const idTeams = new Map(), idNames = new Map(), nameIds = new Map(), idMatches = new Map(), exactIds = new Map();
         const teamPlayers = new Map(); // teamKey → Map(nameKey → { names, ids, matches })
         const teamInfo = new Map();    // teamKey → { name, short, color, logoUrl, teamId, matches, sources }
+        const teamNames = new Map();   // teamKey → names as written (every tournament of the account)
         const noteTeam = (t, source, leagueOnly) => {
             const key = nk(t && t.name);
             if (!key) return null;
@@ -286,6 +287,8 @@ function createScorecardImport(deps) {
                 const team = r['team' + side];
                 const tk = nk(team && team.name);
                 if (!tk) return;
+                if (!teamNames.has(tk)) teamNames.set(tk, new Map());
+                bump(teamNames.get(tk), clean(team.name));
                 if (inLeague) {
                     const e = noteTeam(team, 'matches', true);
                     if (e && !r.upcoming) e.matches++;
@@ -322,7 +325,8 @@ function createScorecardImport(deps) {
                 nameVariants(p.name).forEach(v => { if (!nameIds.has(v)) nameIds.set(v, new Set()); nameIds.get(v).add(c); });
             });
         });
-        const ctx = { ownerUid, leagueKey, league, leagueRecs, accountRecs, profiles, keyOwner, canon, savedTeams, idTeams, idNames, nameIds, exactIds, idMatches, teamPlayers, teamInfo };
+        savedTeams.forEach(st => { const tk = nk(st.name); if (tk && !teamNames.has(tk)) teamNames.set(tk, new Map([[clean(st.name), 1]])); });
+        const ctx = { ownerUid, leagueKey, league, leagueRecs, accountRecs, profiles, keyOwner, canon, savedTeams, idTeams, idNames, nameIds, exactIds, idMatches, teamPlayers, teamInfo, teamNames };
         ctxCache.set(ck, { at: now(), ctx });
         return ctx;
     }
@@ -424,7 +428,7 @@ function createScorecardImport(deps) {
     }
     function candidateInfo(ctx, id, teamKey) {
         const teams = [...(ctx.idTeams.get(id) || [])];
-        const teamNames = teams.map(k => { const e = ctx.teamInfo.get(k); return e ? (topOf(e.names) || k) : k; });
+        const teamNames = teams.map(k => { const e = ctx.teamInfo.get(k); return (e && topOf(e.names)) || (ctx.teamNames.get(k) && topOf(ctx.teamNames.get(k))) || k; });
         const names = ctx.idNames.get(id) || new Map();
         const prof = ctx.profiles.get(id);
         const leagueMatches = [...(ctx.idMatches.get(id) || [])].filter(m => m.startsWith(ctx.leagueKey + '|')).length;
@@ -441,14 +445,25 @@ function createScorecardImport(deps) {
         const issues = [];
         // the team each side really is (for "played for this team")
         const teamKeyOf = (side) => nk(teamPlan.plan[side] && teamPlan.plan[side].team && teamPlan.plan[side].team.name);
+        // The short name is the row's (the person may have corrected it); the
+        // full name is the printed one when it still shortens to that name.
+        const namesOf = (p) => {
+            const short = normalizePlayerName(p.name);
+            const src = p.sourceName ? normalizePlayerName(p.sourceName) : null;
+            const printed = src && nk(src.display) === nk(short.display) ? src : short;
+            return { display: short.display, full: printed.original, dropped: printed.dropped };
+        };
         // a short name two players of the same team would share → both keep their full names
         const shortCount = new Map();
-        people.forEach(p => { const k = `${p.side}|${nk(normalizePlayerName(p.name).display)}`; shortCount.set(k, (shortCount.get(k) || 0) + 1); });
+        people.forEach(p => { const k = `${p.side}|${nk(namesOf(p).display)}`; shortCount.set(k, (shortCount.get(k) || 0) + 1); });
         people.forEach(p => {
             const tk = teamKeyOf(p.side);
-            const norm = normalizePlayerName(p.name);
+            const norm = namesOf(p);
             const clash = (shortCount.get(`${p.side}|${nk(norm.display)}`) || 0) > 1;
-            const proposed = clash ? norm.original : norm.display;
+            // someone in the account is already known by this short name (his
+            // full name shortens to it): a new player keeps his full name
+            const shortTaken = norm.dropped.length > 0 && (ctx.nameIds.get(nk(norm.display)) || new Set()).size > 0;
+            const proposed = clash || shortTaken ? norm.full : norm.display;
             const keys = new Set([...nameVariants(p.name), ...nameVariants(p.sourceName)]);
             const ids = new Set();
             keys.forEach(k => {
@@ -1194,7 +1209,8 @@ function createScorecardImport(deps) {
             if (!tp.team.existing && tp.team.saveTeam && deps.saveTeamRecord) {
                 const players = playerPlan.players.filter(p => p.side === side).map(p => ({ id: p.final.id || ids[p.key], name: p.final.name, isXI: true }));
                 const r = await deps.saveTeamRecord(ownerUid, { name: t.name, short: t.short, color: t.color, logoUrl: tp.logo.mode === 'none' ? '' : tp.logo.url, players }, { mode: 'ensure', creatorEmail: viewerEmail(viewer) });
-                if (r && r.status === 200 && r.body && r.body.team) {
+                // 201: made now; 200: one with this name already existed (reused)
+                if (r && (r.status === 200 || r.status === 201) && r.body && r.body.team) {
                     t.teamId = r.body.team.teamId;
                     if (!r.body.reused) await noteCreated(d._id, 'teams', t.teamId);
                 } else {

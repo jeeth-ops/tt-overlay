@@ -1476,6 +1476,11 @@
         .manage-option input { accent-color: var(--accent); width: 16px; height: 16px; flex-shrink: 0; cursor: pointer; }
         .manage-option span { font-size: 0.9rem; font-weight: 600; }
         .manage-option.checked { border-color: var(--accent); background: rgba(var(--accent-rgb), 0.08); }
+        /* 📷 a link row in the modal (Import scorecard) — looks like an option */
+        .manage-link { text-decoration: none; color: inherit; }
+        .manage-link .manage-link-ico { font-size: 1rem; line-height: 1; }
+        .manage-link .manage-link-arrow { margin-left: auto; color: var(--text-muted); font-weight: 800; transition: transform 0.2s var(--ease); }
+        .manage-link:hover .manage-link-arrow { transform: translateX(3px); color: var(--accent); }
         .manage-modal-actions { display: flex; gap: 10px; margin-top: 24px; }
         .manage-btn {
             flex: 1; border: none; border-radius: 12px; padding: 12px 14px;
@@ -2783,6 +2788,16 @@
                     <label class="manage-option"><input type="radio" name="manage-visibility" value="public"><span>Public</span></label>
                     <label class="manage-option"><input type="radio" name="manage-visibility" value="private"><span>Private</span></label>
                 </div>
+            </div>
+
+            <!-- 📷 Import a finished match from scorecard photos. The page and
+                 every call it makes are owner-only on the server
+                 (requireScorecardImportAccess); this link is a convenience. -->
+            <div class="manage-modal-section" id="manage-import-section">
+                <span class="manage-modal-section-label">Matches</span>
+                <a class="manage-option manage-link" id="manage-import-link" href="/import-scorecard">
+                    <span class="manage-link-ico" aria-hidden="true">📷</span><span>Import scorecard from photos</span><span class="manage-link-arrow" aria-hidden="true">→</span>
+                </a>
             </div>
 
             <p class="manage-modal-status" id="manage-modal-status"></p>
@@ -4214,6 +4229,12 @@
             const saveBtn = document.getElementById('manage-save-btn');
             saveBtn.disabled = false;
             saveBtn.innerHTML = 'Save Changes';
+
+            // 📷 Import scorecard — cricket tournaments only
+            const importSection = document.getElementById('manage-import-section');
+            const canImport = !t.sport || t.sport === 'cricket';
+            importSection.hidden = !canImport;
+            if (canImport) document.getElementById('manage-import-link').href = `/import-scorecard?owner=${encodeURIComponent(t.ownerUid)}&league=${encodeURIComponent(t.leagueKey)}`;
 
             modal.classList.add('open');
         }
