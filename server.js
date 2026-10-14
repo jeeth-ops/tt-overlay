@@ -2898,6 +2898,12 @@ function repointPlayerIdCache(fromPlayerId, intoPlayerId) {
     if (!fromPlayerId || !intoPlayerId) return;
     for (const [k, v] of playerIdCache) if (v === fromPlayerId) playerIdCache.set(k, intoPlayerId);
 }
+// Names whose owning profile changed (a tournament merge's player changes
+// undone) — the next lookup reads the profile again.
+function forgetPlayerIdCache(ownerUid, nameKeys) {
+    if (!ownerUid || !Array.isArray(nameKeys)) return;
+    nameKeys.forEach(k => playerIdCache.delete(`${ownerUid}::${k}`));
+}
 // Follows mergedInto links (max 5 hops) so a squad that still remembers an id
 // that was later merged resolves to the surviving profile.
 async function canonicalPlayerId(ownerUid, playerId) {
@@ -9750,7 +9756,7 @@ async function initTournamentMerge() {
             playerKey, computePointsTable, computeLeaderboards, playedMatches, footprintTotalBalls, versionMatchRecord,
             effectiveIsPrivate, getVerifiedEmailForUid, getUidForEmail, detectSportFromName,
             ownerEmail: OWNER_EMAIL, authorizedCreatorEmails: AUTHORIZED_CREATOR_EMAILS, singleMatchesLeagueKey: SINGLE_MATCHES_LEAGUE_KEY,
-            invalidateTournamentCaches, invalidateClipsCache, repointPlayerIdCache, logAuditAction,
+            invalidateTournamentCaches, invalidateClipsCache, repointPlayerIdCache, forgetPlayerIdCache, logAuditAction,
             toObjectId: (s) => (/^[0-9a-f]{24}$/i.test(String(s)) ? new ObjectId(String(s)) : s),
             log: (...a) => console.log(...a)
         });
@@ -9869,6 +9875,11 @@ mergeRouter.post('/ops/:opId/rollback', async (req, res) => {
     if (!mergeReady(res)) return;
     try { res.json({ success: true, op: await tournamentMerge.rollback(req.mergeViewer, req.params.opId) }); }
     catch (err) { mergeFail(res, err, 'roll the merge back'); }
+});
+mergeRouter.post('/ops/:opId/undo-players', async (req, res) => {
+    if (!mergeReady(res)) return;
+    try { res.json({ success: true, op: await tournamentMerge.undoPlayers(req.mergeViewer, req.params.opId) }); }
+    catch (err) { mergeFail(res, err, 'undo the player changes'); }
 });
 mergeRouter.post('/ops/:opId/cleanup', async (req, res) => {
     if (!mergeReady(res)) return;

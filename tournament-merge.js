@@ -309,15 +309,23 @@ function hydrate(map) {
         names: { A: (map.names && map.names.A) || [], B: (map.names && map.names.B) || [] }
     };
 }
-// A reference resolves through an id the map knows; a reference with no id
-// at all is matched on its name, within its own team; a reference carrying
-// some OTHER id is never touched.
+// A reference resolves through an id the map knows — and, when it carries a
+// name, only if that name is one of the same player's (a scorer can leave
+// one id on two different people); a reference with no id at all is matched
+// on its name, within its own team; a reference carrying some OTHER id is
+// never touched.
 function resolveRef(mm, side, name, ids, pk) {
     if (!mm) return null;
     const idl = (ids || []).filter(isStr);
-    for (const id of idl) if (mm.ids.has(id)) return mm.canon[mm.ids.get(id)];
-    if (idl.length) return null;
     const k = isStr(name) ? pk(name) : null;
+    for (const id of idl) {
+        if (!mm.ids.has(id)) continue;
+        const i = mm.ids.get(id);
+        const c = mm.canon[i];
+        if (k && c && c.name && !(side ? [side] : SIDES).some(s => mm[s].get(k) === i)) return null;
+        return c;
+    }
+    if (idl.length) return null;
     if (k && side && mm[side].has(k)) return mm.canon[mm[side].get(k)];
     return null;
 }
@@ -529,6 +537,30 @@ function scoringFingerprint(rec) {
     });
 }
 
+// Two rows of one card that were two different names before the merge and
+// share one name after it — allowed only when the user made those names one
+// player (both spellings in the same identity of the rename map).
+function collapsedNames(orig, cur, mm, pk) {
+    for (const side of SIDES) {
+        for (const card of ['battingCard', 'bowlingCard']) {
+            const a = (orig[card] && orig[card][side]) || [], b = (cur[card] && cur[card][side]) || [];
+            const into = new Map();
+            a.forEach((row, i) => {
+                const was = row && isStr(row.name) ? pk(row.name) : null, now = b[i] && isStr(b[i].name) ? pk(b[i].name) : null;
+                if (!was || !now) return;
+                if (!into.has(now)) into.set(now, new Set());
+                into.get(now).add(was);
+            });
+            for (const keys of into.values()) {
+                if (keys.size < 2) continue;
+                const idx = new Set([...keys].map(k => (mm && mm[side].has(k)) ? mm[side].get(k) : '#' + k));
+                if (idx.size > 1) return true;
+            }
+        }
+    }
+    return false;
+}
+
 function matchStatus(rec) {
     if (rec.upcoming === true) return 'upcoming';
     if (rec.winningTeam) return 'completed';
@@ -548,31 +580,42 @@ function sameMatch(a, b) {
 // Player identities inside one tournament
 // ---------------------------------------------------------------
 // A "unit" is one player as this tournament knows him: every reference on
-// the same team that shares a name key or an id (canonical, after earlier
-// player merges) is the same unit.
+// the same team with the same name key. An id (canonical, after earlier
+// player merges) only joins a unit when, in this tournament, it belongs to
+// that one name — a scorer can leave one id on two different people (a
+// player renamed mid-match keeps the id), and an id alone never makes two
+// names one person. Such a shared id is "contested": it is left out of every
+// unit, so nothing is ever renamed or relinked through it.
 function buildUnits(entries, role, ctx, pk) {
     const dsu = new DSU();
     const teamOf = (rec, side) => norm(rec['team' + side] && rec['team' + side].name) || `?${rec.matchId}:${side}`;
     const node = (tk, kind, v) => `${tk}\u0001${kind}\u0001${v}`;
     const work = [];
+    const idNames = new Map(); // canonical id -> name keys it was written with
     for (const rec of entries) {
         const att = ctx.att.get(String(rec._id)) || { balls: [], clips: [] };
         const refs = recordRefs(rec, pk);
         att.balls.forEach(b => ballSlots(b).forEach(s => { const r = refOf(s.side, s.name, s.ids, 'ball', null, pk); if (r) refs.push(r); }));
         att.clips.forEach(c => clipSlots(c).forEach(s => { const r = refOf(s.side, s.name, s.ids, 'clip', null, pk); if (r) refs.push(r); }));
+        refs.forEach(r => { if (r.key) r.ids.forEach(id => { const c = ctx.canon(id); if (!idNames.has(c)) idNames.set(c, new Set()); idNames.get(c).add(r.key); }); });
+        work.push({ rec, refs });
+    }
+    const contested = new Set([...idNames.entries()].filter(([, keys]) => keys.size > 1).map(([id]) => id));
+    const ownerKey = (id) => { const keys = idNames.get(id); return keys && keys.size === 1 ? [...keys][0] : null; };
+    for (const { rec, refs } of work) {
         for (const r of refs) {
             if (!r.side) continue;
+            r.ids = r.ids.filter(id => !contested.has(ctx.canon(id)));
             const tk = teamOf(rec, r.side);
             const nodes = [];
             if (r.key) nodes.push(node(tk, 'k', r.key));
-            r.ids.forEach(id => nodes.push(node(tk, 'i', ctx.canon(id))));
+            else r.ids.forEach(id => { const k = ownerKey(ctx.canon(id)); nodes.push(k ? node(tk, 'k', k) : node(tk, 'i', ctx.canon(id))); });
             if (!nodes.length) continue;
             nodes.forEach(x => dsu.find(x));
             for (let i = 1; i < nodes.length; i++) dsu.union(nodes[0], nodes[i]);
             r._node = nodes[0];
             r._tk = tk;
         }
-        work.push({ rec, refs });
     }
     const byRoot = new Map();
     for (const { rec, refs } of work) {
@@ -777,7 +820,7 @@ function planMerge(ctx, decisions, pk, opts) {
             let type = null, reason = '';
             if (shared.length) {
                 const extraIds = s.ids.size > shared.length || d.ids.size > shared.length;
-                if (!sameKeys) { type = 'linked'; reason = 'Same player ID, spelled differently'; }
+                if (!sameKeys) { type = 'linked'; reason = 'Same player ID, different names'; }
                 else if (extraIds) { type = 'exact'; reason = 'Same player, more than one ID'; }
             } else if (keyOverlap) {
                 if (s.ids.size && d.ids.size) {
@@ -829,7 +872,9 @@ function planMerge(ctx, decisions, pk, opts) {
     candidates.forEach(c => {
         const o = { dest: optionCheck(c.d, c.s), source: optionCheck(c.s, c.d) };
         c.options = o;
-        c.requiresManual = c.type === 'ambiguous' || c.type === 'similar';
+        // two different names are never made one player on their own — an id
+        // alone is not proof (a scorer can leave one id on two people)
+        c.requiresManual = c.type === 'ambiguous' || c.type === 'similar' || c.type === 'linked';
         c.recommended = c.requiresManual ? null : (o.dest.ok ? 'dest' : (o.source.ok ? 'source' : null));
         const d = pDec[c.pairId];
         c.decision = d ? (d.same === true ? ((d.keep === 'source') ? 'source' : 'dest') : 'different') : null;
@@ -1928,6 +1973,16 @@ function createTournamentMerge(deps) {
             if (clips.some(c => attributableClip(e, c) && transformClip(c, e.map, pk))) refBad.push(e.matchId + ' (clips)');
         }
         add('references-updated', 'Every player reference points at the kept ID', !refBad.length, refBad.length ? refBad.slice(0, 5).join(', ') : null);
+        // different players keep their own names (two batters never end up
+        // under one name unless the user made them one player)
+        const apartBad = [];
+        for (const e of [...plan.entries, ...plan.destEntries]) {
+            if (!e.map || !['move', 'remap', 'replace-dest', 'rewrite'].includes(e.action)) continue;
+            const orig = await backupDoc(opId, 'records', e.recId);
+            const cur = byMatchId.get(e.newMatchId || e.matchId);
+            if (orig && cur && collapsedNames(orig, cur, hydrate(e.map), pk)) apartBad.push(e.matchId);
+        }
+        add('players-apart', 'Different players keep their own names', !apartBad.length, apartBad.length ? `Two players under one name in: ${apartBad.slice(0, 5).join(', ')}` : null);
         // clips: same count per match, media fields untouched
         let clipBad = [];
         for (const e of plan.entries) {
@@ -2162,7 +2217,9 @@ function createTournamentMerge(deps) {
             matches: op.plan ? op.plan.entries.map(e => ({ matchId: e.matchId, newMatchId: e.newMatchId, title: e.title, action: e.action, status: e.status })) : [],
             canResume: !terminal && (op.status === 'interrupted' || (op.status === 'failed' && op.rollback && op.rollback.state === 'failed')),
             canRollback: !terminal && (op.status === 'interrupted' || op.status === 'failed' || op.status === 'pending_cleanup'),
-            canRetryCleanup: op.status === 'pending_cleanup'
+            canRetryCleanup: op.status === 'pending_cleanup',
+            playersUndo: op.playersUndo || null,
+            canUndoPlayers: op.status === 'completed' && hasPlayerChanges(op) && !(op.playersUndo && op.playersUndo.state === 'done')
         };
     }
     async function opFor(viewer, opId) {
@@ -2184,7 +2241,9 @@ function createTournamentMerge(deps) {
             return { opId: v.opId, status: v.status, stage: v.stage, source: v.source, dest: v.dest, initiatedBy: v.initiatedBy,
                 createdAt: v.createdAt, finishedAt: v.finishedAt, counters: v.counters,
                 verification: v.verification ? { passed: v.verification.passed } : null, cleanup: v.cleanup, error: v.error,
-                canResume: v.canResume, canRollback: v.canRollback, canRetryCleanup: v.canRetryCleanup };
+                canResume: v.canResume, canRollback: v.canRollback, canRetryCleanup: v.canRetryCleanup,
+                playersUndo: v.playersUndo ? { state: v.playersUndo.state, at: v.playersUndo.at, restored: v.playersUndo.restored || null } : null,
+                canUndoPlayers: v.canUndoPlayers, decisions: v.decisions ? { players: (v.decisions.players || []).filter(p => p.decision === 'dest' || p.decision === 'source').map(p => ({ dest: p.dest.name, source: p.source.name, keptName: p.keptName, keptId: p.keptId })) } : null };
         });
     }
     async function resume(viewer, opId) {
@@ -2217,6 +2276,178 @@ function createTournamentMerge(deps) {
         const done = await db.merges.findOne({ _id: op._id });
         await audit(done, 'Tournament merge');
         return opView(done);
+    }
+
+    // ---- undo the player changes of a finished merge ----
+    // The matches stay merged. Every player name / id the merge rewrote (in
+    // scorecards, ball logs and clips) goes back to what the backups hold,
+    // and the profiles it linked stand on their own again. A field is only
+    // put back while it is still exactly as the merge left it — anything
+    // edited since is reported and left alone. Safe to run again.
+    const PLAYER_ACTIONS = ['move', 'remap', 'replace-dest', 'rewrite'];
+    function playerEntries(op) {
+        const plan = op.plan || {};
+        return [...(plan.entries || []), ...(plan.destEntries || [])].filter(e => e.map && PLAYER_ACTIONS.includes(e.action));
+    }
+    function hasPlayerChanges(op) {
+        return !!op.plan && (playerEntries(op).length > 0 || (op.plan.profiles || []).length > 0);
+    }
+    async function undoPlayers(viewer, opId) {
+        const op = await opFor(viewer, opId);
+        if (op.status !== 'completed') throw httpError(409, 'Only a finished merge can have its player changes undone');
+        if (op.playersUndo && op.playersUndo.state === 'done') return opView(op);
+        if (!hasPlayerChanges(op)) throw httpError(409, 'This merge changed no players');
+        if (running.has(op._id)) throw httpError(409, 'This merge is busy — try again in a moment');
+        running.add(op._id);
+        try {
+            try {
+                await acquireLocks(op._id, op.ownerUid, op.source.leagueKey, op.dest.leagueKey, playerEntries(op).map(e => e.newMatchId || e.matchId));
+            } catch (err) {
+                if (err.code === 'LOCKED') throw httpError(423, 'Another merge is running on this tournament — try again when it finishes', { code: 'LOCKED' });
+                throw err;
+            }
+            await patchOp(op._id, { playersUndo: { state: 'running', at: now(), by: norm(viewer.email) } });
+            const out = await undoPlayersOp(op);
+            const state = { state: 'done', at: now(), by: norm(viewer.email), restored: out.restored, conflicts: out.conflicts.slice(0, 50), checks: out.checks };
+            await patchOp(op._id, { playersUndo: state });
+            const done = await db.merges.findOne({ _id: op._id });
+            await audit(done, 'Tournament merge player changes undone');
+            return opView(done);
+        } catch (err) {
+            if (!err.status) await patchOp(op._id, { playersUndo: { state: 'failed', at: now(), by: norm(viewer.email), error: String(err.message || err) } });
+            throw err;
+        } finally {
+            await releaseLocks(op._id);
+            running.delete(op._id);
+        }
+    }
+    async function undoPlayersOp(op) {
+        const opId = op._id, kd = op.dest.leagueKey;
+        const restored = { records: 0, balls: 0, clips: 0, profiles: 0 };
+        const conflicts = [];
+        const scoreBad = [], apartBad = [];
+        const rooms = new Set();
+        for (const e of playerEntries(op)) {
+            const label = e.title || e.matchId;
+            const orig = await backupDoc(opId, 'records', e.recId);
+            if (!orig) { conflicts.push(`${label}: no backup`); continue; }
+            // the record: as the merge wrote it, and as it would be without
+            // the player changes (same move, same team renames)
+            const shape = (doc) => {
+                const d = Object.assign({}, doc);
+                if (e.role === 'source') d.leagueKey = kd;
+                if (e.action === 'remap') d.matchId = e.newMatchId;
+                delete d._id;
+                return d;
+            };
+            const after = shape(transformRecord(orig, e.map, e.teamRename || null, pk).doc);
+            const before = shape(transformRecord(orig, null, e.teamRename || null, pk).doc);
+            const cur = e.action === 'remap'
+                ? await db.records.findOne({ ownerUid: op.ownerUid, leagueKey: kd, matchId: e.newMatchId })
+                : await db.records.findOne({ _id: await idOf(e.action === 'replace-dest' ? e.destRecId : e.recId) });
+            if (!cur) { conflicts.push(`${label}: match not found`); continue; }
+            // all or nothing per document: one edited since → left as it is
+            const set = {}, unset = {}, edited = [];
+            new Set([...Object.keys(after), ...Object.keys(before)]).forEach(k => {
+                const a = stable(after[k]), b = stable(before[k]), c = stable(cur[k]);
+                if (a === b || c === b) return;
+                if (c !== a) { edited.push(k); return; }
+                if (before[k] === undefined) unset[k] = ''; else set[k] = deepClone(before[k]);
+            });
+            if (edited.length) conflicts.push(`${label}: the match (${edited.slice(0, 3).join(', ')}) was edited after the merge`);
+            else if (Object.keys(set).length || Object.keys(unset).length) {
+                const next = Object.assign({}, cur, set);
+                Object.keys(unset).forEach(k => { delete next[k]; });
+                if (scoringFingerprint(next) !== scoringFingerprint(cur)) { scoreBad.push(label); continue; }
+                if (deps.versionMatchRecord) {
+                    try { await deps.versionMatchRecord(cur, 'tournament merge: player changes undone', { forced: true, mergeOpId: opId }); } catch (err) { /* history is a nicety */ }
+                }
+                const update = {};
+                if (Object.keys(set).length) update.$set = set;
+                if (Object.keys(unset).length) update.$unset = unset;
+                await db.records.updateOne({ _id: cur._id }, update);
+                restored.records++;
+            }
+            const now2 = await db.records.findOne({ _id: cur._id });
+            if (now2 && collapsedNames(orig, now2, null, pk) && !collapsedNames(orig, before, null, pk)) apartBad.push(label);
+            // ball log and clips: field by field
+            const revert = async (coll, store, transform) => {
+                const rows = await backupsOf(opId, coll, { recId: e.recId });
+                const ops = [];
+                for (const row of rows) {
+                    const merged = transform(row.doc, e.map, pk);
+                    if (!merged) continue;
+                    const c = await store.findOne({ _id: row.doc._id });
+                    if (!c) { conflicts.push(`${label}: a ${coll === 'balls' ? 'delivery' : 'clip'} is missing`); continue; }
+                    const s = {}, u = {};
+                    let edited = false;
+                    Object.keys(merged).forEach(f => {
+                        if (stable(c[f]) === stable(row.doc[f])) return;
+                        if (stable(c[f]) !== stable(merged[f])) { edited = true; return; }
+                        if (row.doc[f] === undefined) u[f] = ''; else s[f] = deepClone(row.doc[f]);
+                    });
+                    if (edited) { conflicts.push(`${label}: a ${coll === 'balls' ? 'delivery' : 'clip'} was edited after the merge`); continue; }
+                    if (!Object.keys(s).length && !Object.keys(u).length) continue;
+                    const update = {};
+                    if (Object.keys(s).length) update.$set = s;
+                    if (Object.keys(u).length) update.$unset = u;
+                    ops.push({ updateOne: { filter: { _id: row.doc._id }, update } });
+                    if (coll === 'clips') rooms.add(row.doc.matchId);
+                }
+                if (ops.length) await store.bulkWrite(ops, { ordered: false });
+                return ops.length;
+            };
+            restored.balls += await revert('balls', db.balls, transformBall);
+            restored.clips += await revert('clips', db.clips, transformClip);
+        }
+        // profiles: the kept profile gives back the spellings it took; the
+        // linked ones stand on their own again
+        const forget = new Set();
+        for (const p of [...((op.plan && op.plan.profiles) || [])].reverse()) {
+            const intoRow = await db.backups.findOne({ opId, coll: 'players', playerId: p.intoId });
+            const intoOrig = intoRow ? intoRow.doc : null;
+            const fromOrigs = [];
+            for (const f of p.fromIds) {
+                const row = await db.backups.findOne({ opId, coll: 'players', playerId: f });
+                if (row) fromOrigs.push(row.doc);
+            }
+            const origKeys = new Set(((intoOrig && intoOrig.nameKeys) || []));
+            const taken = new Set();
+            fromOrigs.forEach(d => (d.nameKeys || []).forEach(k => { if (!origKeys.has(k)) taken.add(k); }));
+            if (p.intoKey && !origKeys.has(p.intoKey)) taken.add(p.intoKey);
+            const into = await db.players.findOne({ ownerUid: op.ownerUid, playerId: p.intoId });
+            if (into) {
+                const keep = (into.nameKeys || []).filter(k => !taken.has(k));
+                if (keep.length !== (into.nameKeys || []).length) {
+                    taken.forEach(k => forget.add(k));
+                    if (!keep.length && into.createdByMergeOp === opId) await db.players.deleteOne({ _id: into._id });
+                    else await db.players.updateOne({ _id: into._id }, { $set: { nameKeys: keep.length ? keep : (intoOrig && intoOrig.nameKeys && intoOrig.nameKeys.length ? intoOrig.nameKeys : [retiredKey(p.intoId).replace('#merged:', '#profile:')]), updatedAt: now() } });
+                    restored.profiles++;
+                }
+            }
+            for (const orig of fromOrigs) {
+                const cur = await db.players.findOne({ _id: orig._id });
+                if (!cur) { conflicts.push(`Player ${orig.playerId}: profile missing`); continue; }
+                if (!cur.mergedInto && stable(cur.nameKeys) === stable(orig.nameKeys)) continue;
+                if (cur.mergedInto !== p.intoId || cur.mergedByMergeOp !== opId) { conflicts.push(`Player ${orig.playerId}: profile changed after the merge`); continue; }
+                try {
+                    await db.players.updateOne({ _id: orig._id }, { $set: { nameKeys: orig.nameKeys || [], updatedAt: now() }, $unset: { mergedInto: '', mergedByMergeOp: '' } });
+                    (orig.nameKeys || []).forEach(k => forget.add(k));
+                    restored.profiles++;
+                } catch (err) {
+                    conflicts.push(`Player ${orig.playerId}: its name is now used by another profile`);
+                }
+            }
+        }
+        try { deps.forgetPlayerIdCache && deps.forgetPlayerIdCache(op.ownerUid, [...forget]); } catch (err) { /* cache */ }
+        rooms.forEach(m => { try { deps.invalidateClipsCache && deps.invalidateClipsCache(m); } catch (err) { /* cache */ } });
+        try { deps.invalidateTournamentCaches && deps.invalidateTournamentCaches(op.dest.publicToken); } catch (err) { /* cache */ }
+        const checks = [
+            { id: 'scores-intact', label: 'Scores, results and figures unchanged', ok: !scoreBad.length, detail: scoreBad.length ? `Left alone: ${scoreBad.slice(0, 5).join(', ')}` : null },
+            { id: 'players-apart', label: 'Different players keep their own names', ok: !apartBad.length, detail: apartBad.length ? apartBad.slice(0, 5).join(', ') : null },
+            { id: 'nothing-overwritten', label: 'Nothing edited after the merge was overwritten', ok: true, detail: conflicts.length ? `${conflicts.length} item${conflicts.length === 1 ? '' : 's'} left as edited` : null }
+        ];
+        return { restored, conflicts, checks };
     }
 
     // A merge still marked "running" when the server starts was cut off by
@@ -2260,7 +2491,7 @@ function createTournamentMerge(deps) {
 
     return {
         listTournaments, tournamentSummary, analyze, execute, getOp, history, resume, rollback, retryCleanup,
-        recoverInterrupted, loadState, lockFor, aliasForToken, redirectLeagueKey,
+        recoverInterrupted, loadState, lockFor, aliasForToken, redirectLeagueKey, undoPlayers,
         // for tests
         _runOp: runOp, _rollbackOp: rollbackOp, _verifyOp: verifyOp
     };
@@ -2271,6 +2502,6 @@ module.exports = {
     // pure helpers (unit tests)
     _internals: {
         similarNames, similarTeams, replaceNames, recordRefs, ballSlots, clipSlots, transformRecord, transformBall, transformClip,
-        scoringFingerprint, planMerge, buildUnits, teamCatalog, levenshtein, hydrate, stable, sameMatch
+        scoringFingerprint, planMerge, buildUnits, teamCatalog, levenshtein, hydrate, stable, sameMatch, resolveRef, collapsedNames
     }
 };

@@ -549,6 +549,111 @@ const jeethRuns = (recs, key) => recs.reduce((n, r) => n + ['A', 'B'].reduce((m,
     }
 
     // ---------------------------------------------------------------
+    section('Shared ID: two different players are never made one');
+    {
+        // a scorer left Harsh Rane's ID on Atharva Kale's innings in one
+        // destination match (renamed mid-match) — the production case
+        const mem = new MemoryDb();
+        const c = F.collections(mem);
+        await F.indexes(c);
+        const harsh = P('HARSH RANE', 'p-harsh');
+        const dyp = (athId) => team('DY PATIL SA', 'DYP', 'team-dyp', [harsh, P('ATHARVA KALE', athId), P('SHASHANK SINGH', 'p-shash'), P('SURAJ SHINDE', 'p-suraj'), P('ALIM SHAIKH', 'p-alim')]);
+        const parel = team('PAREL SPORTING CLUB', 'PSC', 'team-psc', [P('ROHIT SHUKLA', 'p-rohit'), P('GARV JAIN', 'p-garv'), P('JAI CHOUGULE', 'p-jai'), P('VEER M', 'p-veer'), P('OM K', 'p-omk')]);
+        const apollo = team('APOLLO CRICKET CLUB', 'ACC', 'team-acc', [P('YASH SINGH', 'p-yashs'), P('RAJ P', 'p-rajp'), P('KIRAN D', 'p-kiran'), P('AMOL T', 'p-amol'), P('NEEL S', 'p-neel')]);
+        for (const t of [dyp('p-ath'), parel, apollo]) for (const pl of t.players) await F.addProfile(c, W, pl.id, pl.name);
+        await F.addLeague(c, { ownerUid: W, leagueKey: DKEY, name: 'Summer Cup 2026', token: 'tokD', teams: [] });
+        await F.addLeague(c, { ownerUid: W, leagueKey: SKEY, name: 'Summer Cup 2026 B', token: 'tokS', teams: [] });
+        const d1 = await F.addMatch(c, { ownerUid: W, leagueKey: DKEY, matchId: 'm-d1', roomId: 'room-d1', teamA: dyp('p-harsh'), teamB: parel, seed: 0, date: '2026-10-10', overs: 4 });
+        await F.addMatch(c, { ownerUid: W, leagueKey: DKEY, matchId: 'm-d2', roomId: 'room-d2', teamA: parel, teamB: dyp('p-ath'), seed: 5, date: '2026-10-12', overs: 4 });
+        const s1 = await F.addMatch(c, { ownerUid: W, leagueKey: SKEY, matchId: 'm-s1', roomId: 'room-s1', teamA: dyp('p-ath'), teamB: apollo, seed: 9, date: '2026-10-11', overs: 4 });
+        const w = { mem, c };
+        const d1Before = JSON.stringify(d1.rec);
+        const ballsBefore = JSON.stringify(await c.balls.find({ matchId: 'room-d1' }).toArray());
+        const playersBefore = JSON.stringify(await c.players.find({}).toArray());
+        const E = engine(w);
+        const a = await E.analyze(viewer, { source: sRef, dest: dRef });
+        check(!a.players.candidates.some(x => !x.requiresManual && [x.dest.name, x.source.name].includes('HARSH RANE') && [x.dest.name, x.source.name].includes('ATHARVA KALE')), 'Harsh Rane / Atharva Kale are never offered as one player by default');
+        const { op } = await merge(E, viewer);
+        check(op.status === 'completed' && op.verification.passed, 'merge completed and verified (' + op.status + ')');
+        check(op.verification.checks.some(x => x.id === 'players-apart' && x.ok), 'verification includes "different players keep their own names"');
+        check(JSON.stringify(await c.records.findOne({ matchId: 'm-d1' })) === d1Before, 'the destination match with the shared ID is untouched (Atharva Kale keeps his 93)');
+        check(JSON.stringify(await c.balls.find({ matchId: 'room-d1' }).toArray()) === ballsBefore, '… and so is its ball-by-ball');
+        const ms1 = await c.records.findOne({ matchId: 'm-s1' });
+        const names = (rec) => ['A', 'B'].flatMap(sd => rec.battingCard[sd].map(r => r.name)).join('|');
+        check(ms1.leagueKey === DKEY && names(ms1) === names(s1.rec), 'the moved match keeps every batter\'s own name');
+        check(JSON.stringify(await c.players.find({}).toArray()) === playersBefore, 'no player profile linked to another');
+        const lb = S.computeLeaderboards(await c.records.find({ ownerUid: W, leagueKey: DKEY }).toArray()).topRuns;
+        check(lb.filter(r => r.name === 'ATHARVA KALE').length === 1 && lb.filter(r => r.name === 'HARSH RANE').length === 1, 'leaderboard: Atharva Kale and Harsh Rane are separate rows');
+    }
+    {
+        // same ID, different names → a manual review with no default
+        const w = await world({ sourceJeeth: P('Jeeth C', 'PLAYER_A') });
+        const E = engine(w);
+        const a = await E.analyze(viewer, { source: sRef, dest: dRef });
+        const jc = a.players.candidates.find(x => x.dest.name === 'Jeeth');
+        check(jc && jc.type === 'linked' && jc.requiresManual && jc.recommended === null, '"Jeeth" / "Jeeth C" on one ID: needs review, nothing pre-selected');
+        const { op } = await merge(E, viewer);
+        check(op.status === 'completed' && (await w.c.records.findOne({ matchId: 'm-s1' })).battingCard.B.concat((await w.c.records.findOne({ matchId: 'm-s1' })).bowlingCard.B).some(r => r.name === 'Jeeth C'), 'left as different players, "Jeeth C" keeps its name');
+    }
+    {
+        const I = TM._internals;
+        const mm = I.hydrate({ canon: [{ id: 'X', name: 'Jeeth', key: 'jeeth' }], ids: [['X', 0], ['Y', 0]], A: [['jeeth', 0], ['jeeth c', 0]], B: [], names: { A: [], B: [] } });
+        check(I.resolveRef(mm, 'A', 'Jeeth C', ['Y'], pk) && I.resolveRef(mm, 'A', null, ['Y'], pk), 'an id resolves for the player\'s own names (or no name)');
+        check(I.resolveRef(mm, 'A', 'Harsh Rane', ['X'], pk) === null, 'an id carried by a different name is never followed');
+        const rec = { battingCard: { A: [{ name: 'Harsh Rane' }, { name: 'Atharva Kale' }], B: [] }, bowlingCard: { A: [], B: [] } };
+        const bad = { battingCard: { A: [{ name: 'Harsh Rane' }, { name: 'Harsh Rane' }], B: [] }, bowlingCard: { A: [], B: [] } };
+        check(I.collapsedNames(rec, bad, null, pk) && !I.collapsedNames(rec, rec, null, pk), 'two batters under one name is caught');
+    }
+
+    // ---------------------------------------------------------------
+    section('Undo the player changes of a finished merge');
+    {
+        const w = await world({ panelState: true });
+        const before = {
+            d1: JSON.stringify(await w.c.records.findOne({ matchId: 'm-d1' })), d2: JSON.stringify(await w.c.records.findOne({ matchId: 'm-d2' })),
+            s1: await w.c.records.findOne({ matchId: 'm-s1' }),
+            balls: JSON.stringify(await w.c.balls.find({}).toArray()), clips: JSON.stringify(await w.c.clips.find({}).toArray()),
+            players: JSON.stringify(await w.c.players.find({}).toArray())
+        };
+        const E = engine(w);
+        const { op } = await merge(E, viewer);
+        check(op.status === 'completed' && op.counters.playersUnified === 1 && op.canUndoPlayers, 'merged with Jeeth made one player → undo offered');
+        const h = await E.history(viewer);
+        check(h[0].canUndoPlayers && h[0].decisions.players.some(x => x.dest === 'Jeeth' && x.keptId === 'PLAYER_A'), 'history shows which players were made one');
+        check((await expectReject(E.undoPlayers(USERS.other, op.opId), 403)).ok, 'another account cannot undo');
+        // an edit after the merge is never overwritten
+        const edited = await w.c.balls.findOne({ matchId: 'room-s1', strikerPlayerId: 'PLAYER_A' });
+        await w.c.balls.updateOne({ _id: edited._id }, { $set: { strikerPlayerId: 'PLAYER_EDIT' } });
+        const res = await E.undoPlayers(viewer, op.opId);
+        const u = res.playersUndo;
+        check(u && u.state === 'done' && u.restored.records >= 1 && u.restored.balls > 0 && u.restored.clips > 0, `undone (${JSON.stringify(u && u.restored)})`);
+        check(u.conflicts.length === 1 && /edited after the merge/.test(u.conflicts[0]), 'the delivery edited after the merge is reported…');
+        check(JSON.stringify(await w.c.balls.findOne({ _id: edited._id })) === JSON.stringify(Object.assign({}, edited, { strikerPlayerId: 'PLAYER_EDIT' })), '… and left exactly as edited (not half undone)');
+        check(JSON.stringify(await w.c.records.findOne({ matchId: 'm-d1' })) === before.d1 && JSON.stringify(await w.c.records.findOne({ matchId: 'm-d2' })) === before.d2, 'destination matches exactly as before the merge');
+        const s1 = await w.c.records.findOne({ matchId: 'm-s1' });
+        check(JSON.stringify(s1) === JSON.stringify(Object.assign({}, before.s1, { leagueKey: DKEY })), 'the moved match: its own players back, still in the destination');
+        const ballsNow = (await w.c.balls.find({}).toArray()).filter(b => String(b._id) !== String(edited._id));
+        const ballsWas = JSON.parse(before.balls).filter(b => String(b._id) !== String(edited._id));
+        check(JSON.stringify(ballsNow) === JSON.stringify(ballsWas), 'every other delivery exactly as before');
+        check(JSON.stringify(await w.c.clips.find({}).toArray()) === before.clips, 'every clip exactly as before (media untouched)');
+        check(JSON.stringify(await w.c.players.find({}).toArray()).replace(/"updatedAt":\d+/g, '') === before.players.replace(/"updatedAt":\d+/g, ''), 'player profiles separated again');
+        check((await w.c.records.countDocuments({ ownerUid: W, leagueKey: DKEY })) === 3 && !(await w.c.leagues.findOne({ ownerUid: W, leagueKey: SKEY })), 'the merge itself stays: 3 matches, source still gone');
+        check((await w.c.locks.countDocuments({})) === 0, 'no lock left behind');
+        check((await w.c.audits.find({}).toArray()).some(x => x.action === 'Tournament merge player changes undone'), 'audit log entry written');
+        const again = await E.undoPlayers(viewer, op.opId);
+        check(again.playersUndo.state === 'done' && !again.canUndoPlayers && JSON.stringify(again.playersUndo.restored) === JSON.stringify(u.restored), 'running it again changes nothing');
+    }
+    {
+        const w = await world();
+        const E = engine(w, { autoRun: false, failAfterStage: 'transferring' });
+        const a = await E.analyze(viewer, { source: sRef, dest: dRef });
+        const decisions = defaults(a);
+        const a2 = await E.analyze(viewer, { source: sRef, dest: dRef, decisions });
+        const r = await E.execute(viewer, { source: sRef, dest: dRef, decisions, fingerprint: a2.fingerprint, idempotencyKey: 'u1', confirm: { deleteSource: true, typedName: a2.source.name } });
+        check((await expectReject(E.undoPlayers(viewer, r.opId), 409)).ok, 'an unfinished merge is rolled back, not "undone players"');
+    }
+
+    // ---------------------------------------------------------------
     section('History, op view');
     {
         const w = await world();

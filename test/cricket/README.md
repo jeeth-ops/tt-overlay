@@ -37,11 +37,15 @@ node test/cricket/match-report-test.js           # 📑 scorecard Excel + PDF re
 PANEL=cricket-panel3.html node test/cricket/test.js   # the scoring engine suite against the Stream Engine panel
 node test/tournament-merge.test.js               # 🔀 Merge Tournaments engine on an in-memory MongoDB (production unique indexes): Jeeth's two IDs (keep either),
                                                   # every match once, points table / leaderboards, similar names never auto-merged, id clash, invalid refs,
-                                                  # failure mid-transfer + resume / rollback, idempotent submit, access, media untouched
+                                                  # failure mid-transfer + resume / rollback, idempotent submit, access, media untouched,
+                                                  # one ID left on two different players (renamed mid-match) never makes them one,
+                                                  # "Undo player changes" of a finished merge (matches stay merged, later edits left alone)
 node test/tournament-merge-server.test.js        # the REAL server.js over HTTP: only the two accounts (401/403 on every route), the full flow,
-                                                  # old source links → destination, private stays private, live pings after a merge, merge locks (423)
+                                                  # old source links → destination, private stays private, live pings after a merge, merge locks (423),
+                                                  # undo the player changes (401/403, once, audit)
 NODE_PATH=$(npm root -g) node test/tournament-merge-ui.test.js  # the wizard in Chromium against the real server: sign-in / access denied, homepage button,
-                                                  # select → preview → player IDs → confirm → progress → done, phone + light theme, keyboard
+                                                  # select → preview → player IDs → confirm → progress → done → history → undo player changes,
+                                                  # phone + light theme, keyboard
 ```
 
 `server-test.js` is the one that matters most: it feeds the same ball documents

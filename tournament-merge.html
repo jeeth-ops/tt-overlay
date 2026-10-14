@@ -920,7 +920,7 @@ function whoCard(u, label, kept) {
 function pairCard(c) {
   const d = S.decisions.players[c.pairId];
   const val = d ? (d.same ? d.keep : 'different') : '';
-  const typeChip = c.type === 'exact' ? '<span class="chip blue">Same player · two IDs</span>' : c.type === 'linked' ? '<span class="chip blue">Same ID · two spellings</span>'
+  const typeChip = c.type === 'exact' ? '<span class="chip blue">Same player · two IDs</span>' : c.type === 'linked' ? '<span class="chip amber">Same ID, different names — review</span>'
     : c.type === 'similar' ? '<span class="chip amber">Similar name — review</span>' : '<span class="chip amber">Same name, different team — review</span>';
   const opt = (v, title, sub, ok, reason, rec) => `<label class="choice${val === v ? ' on' : ''}${ok ? '' : ' off'}">
       <input type="radio" name="p-${esc(c.pairId)}" value="${v}" ${val === v ? 'checked' : ''} ${ok ? '' : 'disabled'} data-pair="${esc(c.pairId)}">
@@ -1207,7 +1207,7 @@ function showResult(op) {
   const destLink = op.dest.publicToken ? `/score/tournament/${encodeURIComponent(op.dest.publicToken)}` : '/';
   let html;
   if (op.status === 'completed') {
-    html = `<div class="card result"><div class="big">${IC.check}</div><h2>Merged</h2><p>“${esc(op.source.displayName)}” is now part of “${esc(op.dest.displayName)}”. Every check passed and the source was removed.</p>${facts}${stagesHtml(op)}<div class="btnrow"><a class="btn primary" href="${destLink}">Open ${esc(op.dest.displayName)}</a><button class="btn secondary" type="button" id="againBtn">Merge another</button></div></div>`;
+    html = `<div class="card result"><div class="big">${IC.check}</div><h2>Merged</h2><p>“${esc(op.source.displayName)}” is now part of “${esc(op.dest.displayName)}”. Every check passed and the source was removed.</p>${facts}${playersUndoHtml(op)}${stagesHtml(op)}<div class="btnrow"><a class="btn primary" href="${destLink}">Open ${esc(op.dest.displayName)}</a><button class="btn secondary" type="button" id="againBtn">Merge another</button></div></div>`;
   } else if (op.status === 'pending_cleanup') {
     html = `<div class="card result"><div class="big amber">${IC.warn}</div><h2>Merged — source still there</h2><p>The matches were merged and verified, but the old tournament could not be removed yet${op.cleanup && op.cleanup.error ? ` (${esc(op.cleanup.error)})` : ''}. Nothing is lost.</p>${facts}<div class="btnrow"><button class="btn primary" type="button" data-act="cleanup">Remove the source now</button><a class="btn secondary" href="${destLink}">Open ${esc(op.dest.displayName)}</a></div></div>`;
   } else if (op.status === 'rolled_back') {
@@ -1221,15 +1221,41 @@ function showResult(op) {
   if (again) again.onclick = () => { S.dest = S.source = S.analysis = null; S.typed = ''; S.understood = false; S.idem = null; S.attention = null; go('select', true); loadTournaments(); loadAttention(); };
   document.querySelectorAll('[data-act]').forEach(b => b.onclick = () => opAction(op.opId, b.dataset.act));
 }
+// A finished merge whose player choices were wrong: put every player name
+// and ID it changed back (the matches stay merged).
+function playersUndoHtml(op) {
+  const u = op.playersUndo;
+  if (u && u.state === 'done') {
+    const r = u.restored || {};
+    const left = (u.conflicts || []).length;
+    return `<div class="notice green" style="text-align:left;margin:14px 0">${IC.check}<div><b>Player changes undone</b> · ${esc(fmtDate(u.at))}<br>Every player name and ID this merge changed is back as it was — ${plural(r.records || 0, 'match', 'matches')}, ${plural(r.balls || 0, 'delivery', 'deliveries')}, ${plural(r.clips || 0, 'clip')}, ${plural(r.profiles || 0, 'profile')}. The matches stay in “${esc(op.dest.displayName)}”.${left ? `<br><span class="faint">${plural(left, 'item')} edited after the merge ${left === 1 ? 'was' : 'were'} left as edited: ${esc(u.conflicts.slice(0, 3).join('; '))}${left > 3 ? '…' : ''}</span>` : ''}</div></div>`;
+  }
+  if (!op.canUndoPlayers) return '';
+  const pairs = ((op.decisions && op.decisions.players) || []).filter(p => p.decision === 'dest' || p.decision === 'source');
+  const list = pairs.length ? `<ul class="list" style="margin:10px 0 0">${pairs.slice(0, 6).map(p => `<li><div class="grow"><b>${esc(p.dest.name)}${p.source.name !== p.dest.name ? ' + ' + esc(p.source.name) : ''}</b><span>made one player: “${esc(p.keptName || p.dest.name)}”${p.keptId ? ' · ' + esc(p.keptId) : ''}</span></div></li>`).join('')}</ul>` : '';
+  const failed = u && u.state === 'failed' ? `<br><span class="faint">The last try stopped: ${esc(u.error || 'error')} — try again.</span>` : '';
+  return `<div class="notice amber" id="undoPlayersBox" style="text-align:left;margin:14px 0">${IC.warn}<div><b>Wrong player made one?</b><br>Undo puts back every player name and ID this merge changed — scorecards, ball-by-ball and clips — exactly as they were before it, from the backups. Linked player profiles are separated again. The matches stay merged in “${esc(op.dest.displayName)}”.${failed}${list}<div class="btnrow" style="justify-content:flex-start;margin-top:12px"><button class="btn danger" type="button" data-act="undo-players">Undo player changes</button></div></div></div>`;
+}
 async function opAction(opId, act) {
   if (act === 'rollback' && !confirm('Roll this merge back? Every changed document is restored from the backups.')) return;
+  if (act === 'undo-players' && !confirm('Undo the player changes of this merge?\n\nEvery player name and ID it changed goes back to how it was before the merge. The matches stay merged.')) return;
+  const btns = [...document.querySelectorAll('[data-act]')];
+  btns.forEach(b => { b.disabled = true; });
+  const busy = btns.find(b => b.dataset.act === act);
+  const label = busy ? busy.innerHTML : '';
+  if (busy) busy.innerHTML = '<span class="spinner"></span>' + (act === 'undo-players' ? 'Undoing…' : 'Working…');
   try {
     const r = await api('POST', `/ops/${encodeURIComponent(opId)}/${act}`, {});
     S.op = r.op;
     closeSheet();
     if (S.op.status === 'running') { try { sessionStorage.setItem('merge-op', opId); } catch (e) {} return showProgress(); }
     showResult(S.op);
-  } catch (e) { toast(e.message, 'err'); }
+    if (act === 'undo-players') toast('Player changes undone — scorecards and leaderboards are back as they were.', 'ok');
+  } catch (e) {
+    toast(e.message, 'err');
+    btns.forEach(b => { b.disabled = false; });
+    if (busy) busy.innerHTML = label;
+  }
 }
 async function openOp(opId) {
   try {
@@ -1249,7 +1275,7 @@ $('historyBtn').onclick = async () => {
     const list = r.merges || [];
     $('sheetBody').innerHTML = list.length ? list.map(m => {
       const chip = m.status === 'completed' ? 'green' : m.status === 'rolled_back' ? '' : 'amber';
-      return `<button class="history-item" type="button" data-op="${esc(m.opId)}"><div class="dir">${esc(m.source.displayName)} ${IC.arrow.replace('<svg', '<svg width="15" height="15"')} ${esc(m.dest.displayName)} <span class="chip ${chip}">${esc(statusText(m.status))}</span></div><div class="meta">${esc(fmtDate(m.createdAt))} · ${esc(m.initiatedBy || '')} · ${plural((m.counters && m.counters.matchesMoved) || 0, 'match', 'matches')} moved${m.verification ? (m.verification.passed ? ' · verified' : ' · check failed') : ''}</div></button>`;
+      return `<button class="history-item" type="button" data-op="${esc(m.opId)}"><div class="dir">${esc(m.source.displayName)} ${IC.arrow.replace('<svg', '<svg width="15" height="15"')} ${esc(m.dest.displayName)} <span class="chip ${chip}">${esc(statusText(m.status))}</span></div><div class="meta">${esc(fmtDate(m.createdAt))} · ${esc(m.initiatedBy || '')} · ${plural((m.counters && m.counters.matchesMoved) || 0, 'match', 'matches')} moved${m.counters && m.counters.playersUnified ? ` · ${plural(m.counters.playersUnified, 'player')} made one` : ''}${m.verification ? (m.verification.passed ? ' · verified' : ' · check failed') : ''}${m.playersUndo && m.playersUndo.state === 'done' ? ' · player changes undone' : (m.canUndoPlayers ? ' · tap to undo player changes' : '')}</div></button>`;
     }).join('') : `<div class="empty">No merges yet.</div>`;
     $('sheetBody').querySelectorAll('[data-op]').forEach(b => b.onclick = () => openOp(b.dataset.op));
   } catch (e) { $('sheetBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
