@@ -220,6 +220,7 @@
   .ph-group{ margin-top:14px; }
   .ph-group > .gh{ display:flex; align-items:center; gap:8px; font:650 13.5px var(--font-body); margin-bottom:8px; }
   .ph-group > .gh span{ color:var(--text-faint); font-weight:500; font-size:12.5px; }
+  .ph-hint{ margin:-2px 0 10px; color:var(--text-faint); font-size:12.5px; line-height:1.45; }
   .ph-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(124px, 1fr)); gap:10px; border-radius:16px; transition:background .2s, box-shadow .2s; }
   .ph-grid.drop{ background:var(--accent-soft); box-shadow:0 0 0 2px var(--accent); }
   .ph{ position:relative; aspect-ratio:3/4; border-radius:14px; overflow:hidden; background:var(--panel-3); border:1px solid var(--border-soft); }
@@ -1543,7 +1544,9 @@ function renderPhotos(back) {
   const col = (n) => `<section class="card ph-col">
       <div class="lbl">${ord(n)} innings</div>
       <h3>${n === 1 ? 'Team batting first' : 'Team batting second'}</h3>
-      <div class="ph-group"><div class="gh">Scorecard <span>batting + bowling tables</span></div><div class="ph-grid" id="grid-scorecard-${n}" data-drop="scorecard" data-inn="${n}"></div></div>
+      <div class="ph-group"><div class="gh">Scorecard <span>batting + bowling tables</span></div>
+        <p class="ph-hint">This innings' batting table, then the bowling table of the side that bowled in it — every screenshot, top to bottom.</p>
+        <div class="ph-grid" id="grid-scorecard-${n}" data-drop="scorecard" data-inn="${n}"></div></div>
       <details class="opt" ${photosOf('commentary', n).length ? 'open' : ''}>
         <summary>${IC.chev} Ball-by-ball commentary <span class="faint">optional</span></summary>
         <div class="ph-group"><div class="ph-grid" id="grid-commentary-${n}" data-drop="commentary" data-inn="${n}"></div></div>
@@ -1663,6 +1666,7 @@ function paintReading() {
 }
 
 /* ---- reading in the browser (Tesseract.js) ---- */
+const OCR_SRC = 'https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.1.1/tesseract.min.js';
 function loadScript(src) {
   return new Promise((resolve, reject) => {
     if ([...document.scripts].some(s => s.src === src)) return resolve();
@@ -1671,6 +1675,86 @@ function loadScript(src) {
     s.onload = () => resolve(); s.onerror = () => reject(new Error('The reader could not load — check the connection.'));
     document.head.appendChild(s);
   });
+}
+function openImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('A photo could not be opened for reading.'));
+    img.src = url;
+  });
+}
+// The usual height (px) of the letters and digits in an image: its dark
+// shapes about as tall as they are wide (lines, bars, dots and joined-up
+// words are left out). Light text on a dark page is measured the other way
+// round. null when too few shapes look like letters.
+function letterHeight(px, w, h) {
+  const n = w * h, ink = new Uint8Array(n);
+  let darkCount = 0;
+  for (let i = 0, j = 0; i < n; i++, j += 4) if (px[j] * 299 + px[j + 1] * 587 + px[j + 2] * 114 < 128000) { ink[i] = 1; darkCount++; }
+  if (darkCount > n / 2) for (let i = 0; i < n; i++) ink[i] ^= 1;
+  const stack = new Int32Array(n), heights = [];
+  for (let s = 0; s < n; s++) {
+    if (ink[s] !== 1) continue;
+    let top = 0, size = 0, x0 = w, x1 = 0, y0 = h, y1 = 0;
+    stack[top++] = s; ink[s] = 2;
+    while (top) {
+      const p = stack[--top], x = p % w, y = (p - x) / w;
+      size++;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+      if (x > 0 && ink[p - 1] === 1) { ink[p - 1] = 2; stack[top++] = p - 1; }
+      if (x < w - 1 && ink[p + 1] === 1) { ink[p + 1] = 2; stack[top++] = p + 1; }
+      if (y > 0 && ink[p - w] === 1) { ink[p - w] = 2; stack[top++] = p - w; }
+      if (y < h - 1 && ink[p + w] === 1) { ink[p + w] = 2; stack[top++] = p + w; }
+    }
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+    if (bh >= 4 && bh <= 160 && bw <= bh * 1.2 && size >= bh) heights.push(bh);
+  }
+  if (heights.length < 20) return null;
+  heights.sort((a, b) => a - b);
+  // the smaller of the usual sizes: a table's figures, not its headings
+  return heights[Math.floor(heights.length * 0.4)];
+}
+// A website screenshot prints the scorecard in letters 7–9 px tall, too small
+// for the reader: the photo is enlarged until they are about 20 px (at most
+// 2.5x, 4096 px a side, 16 million pixels — larger reads worse, and slower),
+// turned grey and given more contrast, dark text on white.
+async function photoForReading(url) {
+  const img = await openImage(url);
+  const w = img.naturalWidth, h = img.naturalHeight;
+  if (!w || !h) throw new Error('A photo is empty.');
+  // measured on a copy at most 1600 px a side (quick, and enough for 4 px letters)
+  const m = Math.min(1, 1600 / Math.max(w, h));
+  const mc = document.createElement('canvas');
+  mc.width = Math.max(1, Math.round(w * m)); mc.height = Math.max(1, Math.round(h * m));
+  const mg = mc.getContext('2d', { willReadFrequently: true });
+  mg.fillStyle = '#fff'; mg.fillRect(0, 0, mc.width, mc.height);
+  mg.drawImage(img, 0, 0, mc.width, mc.height);
+  const lh = letterHeight(mg.getImageData(0, 0, mc.width, mc.height).data, mc.width, mc.height);
+  mc.width = mc.height = 0;
+  let scale = lh ? 20 / (lh / m) : Math.min(2, 3000 / w);
+  scale = Math.max(1, Math.min(2.5, scale, 4096 / w, 4096 / h, Math.sqrt(16e6 / (w * h))));
+  const c = document.createElement('canvas');
+  c.width = Math.round(w * scale); c.height = Math.round(h * scale);
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+  g.drawImage(img, 0, 0, c.width, c.height);
+  const d = g.getImageData(0, 0, c.width, c.height), px = d.data;
+  let sum = 0;
+  for (let j = 0; j < px.length; j += 4) sum += px[j] = (px[j] * 299 + px[j + 1] * 587 + px[j + 2] * 114) / 1000;
+  // contrast pushed away from the page's own average: on a white page even
+  // light-grey text turns nearly black
+  const mean = sum / (px.length / 4), dark = mean < 110;
+  for (let j = 0; j < px.length; j += 4) {
+    const v = Math.max(0, Math.min(255, mean + (px[j] - mean) * 1.6));
+    px[j] = px[j + 1] = px[j + 2] = dark ? 255 - v : v;   // a dark page turned round
+  }
+  g.putImageData(d, 0, 0);
+  return { canvas: c, scale };
 }
 function rowsFromParts(parts, key, list, sig) {
   const out = [], seen = new Map();
@@ -1684,6 +1768,7 @@ function rowsFromParts(parts, key, list, sig) {
   }));
   return out;
 }
+const shortName = (s) => { const n = M.normalizePlayerName(s); return n.display || n.original; };
 function inningsFromParts(parts, side) {
   const bat = rowsFromParts(parts, 'b', 'batting', r => [r.runs, r.balls].join('|')).map(r => ({
     key: r.key, name: r.name, sourceName: r.sourceName, dismissal: r.dismissal || null, runs: r.runs, balls: r.balls, fours: r.fours, sixes: r.sixes,
@@ -1695,10 +1780,17 @@ function inningsFromParts(parts, side) {
   }));
   const ex = parts.map(p => p.extras).find(Boolean) || {};
   const tot = parts.map(p => p.total).find(Boolean) || {};
+  // fall of wickets: one entry a wicket, in order (a photo may repeat some)
+  const fow = new Map();
+  parts.forEach(p => (p.fallOfWickets || []).forEach(w => { if (w.wicket != null && w.wicket >= 1 && w.wicket <= 10 && !fow.has(w.wicket)) fow.set(w.wicket, w); }));
+  const dnb = [];
+  parts.forEach(p => (p.didNotBat || []).forEach(x => { const s = shortName(x); if (s && !dnb.some(y => norm(y) === norm(s)) && !bat.some(r => norm(r.name) === norm(s))) dnb.push(s); }));
   const inn = blankInnings(side);
-  inn.batting = bat; inn.bowling = bowl;
+  inn.batting = bat; inn.bowling = bowl; inn.didNotBat = dnb;
   inn.extras = { total: ex.total ?? null, wides: ex.wides ?? null, noBalls: ex.noBalls ?? null, byes: ex.byes ?? null, legByes: ex.legByes ?? null, penalty: ex.penalty ?? null };
   inn.total = { runs: tot.runs ?? null, wickets: tot.wickets ?? null, overs: tot.overs ?? null, declared: !!tot.declared, allOut: !!tot.allOut };
+  inn.fallOfWickets = [...fow.values()].sort((a, b) => a.wicket - b.wicket)
+    .map(w => ({ wicket: w.wicket, runs: w.runs ?? null, overs: w.overs ?? null, batter: w.batter ? shortName(w.batter) : null }));
   return inn;
 }
 async function readInBrowser() {
@@ -1707,17 +1799,27 @@ async function readInBrowser() {
   if ((S.draft.innings || []).length && !await confirmSheet('Read the photos again?', 'Every figure and correction on the scorecard is replaced by a fresh reading of the photos.', 'Read again', true)) return;
   S.ocr = { done: 0, total: all.length, status: 'Loading the reader…', progress: 0 };
   renderReading();
+  let worker = null;
   try {
-    await loadScript('https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.1.1/tesseract.min.js');
-    if (!window.Tesseract || !Tesseract.recognize) throw new Error('The reader could not start.');
+    await loadScript(OCR_SRC);
+    if (!window.Tesseract || !Tesseract.createWorker) throw new Error('The reader could not start.');
+    worker = await Tesseract.createWorker({ logger: (m) => { if (m && m.status === 'recognizing text' && S.ocr) { S.ocr.progress = m.progress || 0; paintReading(); } } });
+    await worker.loadLanguage('eng');
+    await worker.initialize('eng');
+    // one line of text per table row, across the whole width
+    await worker.setParameters({ tessedit_pageseg_mode: '4', preserve_interword_spaces: '1' });
     const innings = [];
     for (const n of [1, 2]) {
       const parts = [];
+      let state = null;   // a table carried on from the previous photo
       for (const p of photosOf('scorecard', n)) {
         S.ocr.status = `Reading photo ${photoNo(p.id)} (${ord(n)} innings)`; S.ocr.progress = 0; paintReading();
-        const url = await photoUrl(p.id);
-        const out = await Tesseract.recognize(url, 'eng', { logger: (m) => { if (m && m.status === 'recognizing text' && S.ocr) { S.ocr.progress = m.progress || 0; paintReading(); } } });
-        parts.push(ScorecardTextParse.parseScorecardText(out && out.data ? out.data.text : '', photoNo(p.id)));
+        const { canvas } = await photoForReading(await photoUrl(p.id));
+        const out = await worker.recognize(canvas);
+        canvas.width = canvas.height = 0;
+        const part = ScorecardTextParse.parseScorecardText(out && out.data ? out.data.text : '', photoNo(p.id), state);
+        state = part.state;
+        parts.push(part);
         S.ocr.done++; S.ocr.progress = 0; paintReading();
       }
       innings.push(inningsFromParts(parts, n === 1 ? 'A' : 'B'));
@@ -1735,6 +1837,8 @@ async function readInBrowser() {
     S.ocr = null;
     toast(e.message || 'The photos could not be read here.', 'err');
     S.step = null; go('photos');
+  } finally {
+    if (worker) worker.terminate().catch(() => {});
   }
 }
 function blankInnings(side) {
