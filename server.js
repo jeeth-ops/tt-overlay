@@ -30,6 +30,8 @@ const ClipAttribution = require('./clip-attribution');
 // 🔀 Merge Tournaments engine — see tournament-merge.js and the MERGE
 // TOURNAMENTS section further down.
 const TournamentMerge = require('./tournament-merge');
+const ScorecardImport = require('./scorecard-import');
+const ScorecardExtract = require('./scorecard-extract');
 if (R2_PUBLIC_URL && /\.r2\.dev(\/|$)/i.test(R2_PUBLIC_URL)) {
     // r2.dev is Cloudflare's rate-limited development URL: it is NOT served through the CDN cache, so
     // every first view of every clip is a cold read from the bucket. Attach a custom domain to the bucket
@@ -159,6 +161,10 @@ let tournamentMergesCollection = null;
 let tournamentMergeBackupsCollection = null;
 let tournamentMergeLocksCollection = null;
 let tournamentMerge = null;
+let scorecardImportsCollection = null;
+let scorecardImportPhotosCollection = null;
+let importedCommentaryCollection = null;
+let scorecardImport = null;
 
 async function connectMongo() {
     const uri = process.env.MONGODB_URI;
@@ -284,6 +290,7 @@ async function connectMongo() {
         // existed has none.
         await ballsCollection.createIndex({ ballUid: 1 }, { unique: true, sparse: true });
         await initTournamentMerge();
+        await initScorecardImport();
         console.log('🍃 MongoDB connected —', mongoDb.databaseName);
         dedupeCrossTournamentMatches(); // background, never blocks startup
 
@@ -695,6 +702,10 @@ app.use(express.static(__dirname, {
 // A tournament carries its logo + the teams' small logos — more than the
 // default 100kb body. Parsed here first; the global parser then skips it.
 app.use('/api/league/:name/info', express.json({ limit: '3mb' }));
+// 📷 Scorecard import: a corrected scorecard with two team logos is larger
+// than the default 100kb (the photos themselves go up one by one as raw
+// images, see the import router).
+app.use('/api/scorecard-import', express.json({ limit: '2mb' }));
 app.use(express.json());
 
 // 👥 Player Helper — phone picks player names for the operator (see player-helper.js).
@@ -2815,9 +2826,13 @@ function computeLeaderboards(matches) {
                 // defines what a player name-key is, so this can't drift
                 // out of sync again.
                 const key = playerKey(b.name);
-                if (!batters[key]) batters[key] = { name: b.name.trim(), innings: 0, runs: 0, balls: 0, fours: 0, sixes: 0, fifties: 0, hundreds: 0, highScore: 0 };
+                if (!batters[key]) batters[key] = { name: b.name.trim(), innings: 0, runs: 0, balls: 0, fours: 0, sixes: 0, fifties: 0, hundreds: 0, highScore: 0, srRuns: 0 };
                 const row = batters[key];
-                row.innings++; row.runs += b.runs || 0; row.balls += b.balls || 0;
+                row.innings++; row.runs += b.runs || 0;
+                // 📷 A scorecard imported from photos can leave balls faced
+                // unknown (null): that innings stays out of the strike rate
+                // instead of counting as runs off zero balls.
+                if (typeof b.balls === 'number' && isFinite(b.balls)) { row.balls += b.balls; row.srRuns += b.runs || 0; }
                 row.fours += b.fours || 0; row.sixes += b.sixes || 0;
                 if ((b.runs || 0) > row.highScore) row.highScore = b.runs || 0;
                 if ((b.runs || 0) >= 100) row.hundreds++;
@@ -2834,7 +2849,7 @@ function computeLeaderboards(matches) {
             });
         });
     });
-    const topRuns = Object.values(batters).map(r => ({ ...r, average: r.innings ? (r.runs / r.innings).toFixed(2) : '0.00', strikeRate: r.balls ? ((r.runs / r.balls) * 100).toFixed(2) : '0.00' }))
+    const topRuns = Object.values(batters).map(({ srRuns, ...r }) => ({ ...r, average: r.innings ? (r.runs / r.innings).toFixed(2) : '0.00', strikeRate: r.balls ? ((srRuns / r.balls) * 100).toFixed(2) : '0.00' }))
         .sort((a, b) => b.runs - a.runs).slice(0, 15);
     const topWickets = Object.values(bowlers).map(r => ({ ...r, overs: Number(r.overs.toFixed(1)), economy: r.overs ? (r.runs / r.overs).toFixed(2) : '0.00' }))
         .sort((a, b) => (b.wickets - a.wickets) || (a.runs - b.runs)).slice(0, 15);
@@ -3344,6 +3359,12 @@ app.get('/api/public/tournament/:token/match/:matchId/balls', async (req, res) =
 
         const match = await matchRecordsCollection.findOne({ ownerUid: doc.ownerUid, leagueKey: doc.leagueKey, matchId: req.params.matchId });
         if (!match) return res.json({ success: true, balls: [] });
+        // 📷 A match imported from scorecard photos has no deliveries. Its
+        // commentary, when photos of it were imported, is display text only.
+        if (match.importSource) {
+            const ic = importedCommentaryCollection ? await importedCommentaryCollection.findOne({ _id: `${match.ownerUid}|${match.leagueKey}|${match.matchId}` }) : null;
+            return res.json({ success: true, balls: [], imported: true, importedCommentary: ic ? { source: ic.source || 'scorecard-photos', innings: ic.innings || [] } : null });
+        }
 
         // Try both possible ids balls could be filed under (roomId is the
         // live-recording id, matchId is the permanent tournament id — see
@@ -7524,6 +7545,7 @@ async function undoSequenceChange(entry, actorEmail) {
 
 adminRouter.get('/cricket/match/:matchId/insert-context', async (req, res) => {
     if (!ballsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    if (await importedScorecardResponse(res, req.params.matchId)) return;
     try {
         const matchId = safeMatchId(req.params.matchId);
         const ctx = await insertContext(matchId, req.query || {});
@@ -7533,6 +7555,7 @@ adminRouter.get('/cricket/match/:matchId/insert-context', async (req, res) => {
     } catch (err) { console.log('Insert context error:', err); res.status(500).json({ success: false, error: 'Could not prepare the new ball' }); }
 });
 adminRouter.post('/cricket/match/:matchId/insert/preview', async (req, res) => {
+    if (await importedScorecardResponse(res, req.params.matchId)) return;
     try {
         const r = await insertDelivery(safeMatchId(req.params.matchId), req.body || {}, req.ownerEmail, true, req.ownerUid);
         if (!r.before) return res.status(400).json({ success: false, error: (r.errors && r.errors[0]) || 'Could not add this ball' });
@@ -7540,6 +7563,7 @@ adminRouter.post('/cricket/match/:matchId/insert/preview', async (req, res) => {
     } catch (err) { console.log('Insert preview error:', err); res.status(500).json({ success: false, error: 'Could not preview this ball' }); }
 });
 adminRouter.post('/cricket/match/:matchId/insert', async (req, res) => {
+    if (await importedScorecardResponse(res, req.params.matchId)) return;
     try {
         const r = await insertDelivery(safeMatchId(req.params.matchId), req.body || {}, req.ownerEmail, false, req.ownerUid);
         if (!r.before) return res.status(400).json({ success: false, error: (r.errors && r.errors[0]) || 'Could not add this ball' });
@@ -8602,8 +8626,9 @@ adminRouter.put('/cricket/match/:matchId/apply-result', async (req, res) => {
     if (!ballsCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     try {
         const matchId = safeMatchId(req.params.matchId);
-        const existing = await matchRecordsCollection.findOne({ matchId }, { projection: { ownerUid: 1, leagueKey: 1, winningTeam: 1 } });
+        const existing = await matchRecordsCollection.findOne({ matchId }, { projection: { ownerUid: 1, leagueKey: 1, winningTeam: 1, importSource: 1 } });
         if (!existing) return res.status(404).json({ success: false, error: 'Match not found' });
+        if (existing.importSource) return res.status(409).json({ success: false, code: 'IMPORTED_SCORECARD', error: 'This match was imported from a scorecard — it has no ball-by-ball log to work the result out from.' });
         const cards = await buildLiveCardsFromBalls(matchId);
         const newResult = cards.scoreA.runs === cards.scoreB.runs ? 'TIE' : (cards.scoreA.runs > cards.scoreB.runs ? 'A' : 'B');
         const previousResult = existing.winningTeam;
@@ -8736,6 +8761,8 @@ adminRouter.get('/cricket/recover/scan', async (req, res) => {
         });
         let savedGroups = savedRecent
             .filter(r => !ids.some(id => r.matchId === id || r.roomId === id))
+            // 📷 an imported scorecard has no ball log by design — nothing to recover
+            .filter(r => !r.importSource)
             .map(r => ({ ...describe(r), noBallLog: true }));
 
         if (q) {
@@ -9282,6 +9309,7 @@ adminRouter.post('/cricket/recover/add-ball', async (req, res) => {
         const ids = [...new Set([safeMatchId(b.matchId || ''), safeMatchId(b.roomId || '')].filter(Boolean))];
         const saved = await matchRecordsCollection.findOne({ $or: [{ matchId: { $in: ids } }, { roomId: { $in: ids } }] });
         if (!saved) return res.status(404).json({ success: false, error: 'Match not found' });
+        if (saved.importSource) return res.status(409).json({ success: false, code: 'IMPORTED_SCORECARD', error: 'This match was imported from a scorecard — it has no ball-by-ball log to add to.' });
         const target = safeMatchId(saved.roomId || saved.matchId);
 
         const innings = Math.max(1, parseInt(b.innings, 10) || 1);
@@ -9893,6 +9921,122 @@ mergeRouter.get('/history', async (req, res) => {
 });
 app.use('/api/tournament-merge', mergeRouter);
 
+// ================================================================
+// 📷 IMPORT SCORECARD FROM PHOTOS — chhayajeeth@gmail.com only.
+// Photos of a finished match's scorecard (CricHeroes, MCA website…) are
+// read (Claude, when ANTHROPIC_API_KEY is set), corrected by the owner and
+// saved into a tournament as an ordinary completed match record. See
+// scorecard-import.js. Imported matches carry `importSource` and have no
+// ball-by-ball log: the rebuild-from-balls paths above leave them alone.
+// ================================================================
+async function initScorecardImport() {
+    try {
+        scorecardImportsCollection = mongoDb.collection('scorecardImports');
+        scorecardImportPhotosCollection = mongoDb.collection('scorecardImportPhotos');
+        importedCommentaryCollection = mongoDb.collection('importedCommentary');
+        await scorecardImportsCollection.createIndex({ status: 1, updatedAt: -1 });
+        // unfinished drafts and their photos clean themselves up after 30 days
+        await scorecardImportsCollection.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+        await scorecardImportPhotosCollection.createIndex({ draftId: 1 });
+        await scorecardImportPhotosCollection.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+        scorecardImport = ScorecardImport.createScorecardImport({
+            db: {
+                leagues: leaguesCollection, records: matchRecordsCollection, players: playersCollection, teams: teamsCollection,
+                imports: scorecardImportsCollection, photos: scorecardImportPhotosCollection, commentary: importedCommentaryCollection
+            },
+            playerKey, computePointsTable, computeLeaderboards, playedMatches,
+            resolvePlayerId, resolvePlayerIdExplicit, saveTeamRecord, forgetPlayerIdCache,
+            writeMatchRecord: (filter, rec) => writeMatchRecordSafely(filter, rec, { upsert: true, reason: 'scorecard import' }),
+            ensureLeaguePublicToken, invalidateTournamentCaches, logAuditAction,
+            mergeLocked: (ownerUid, leagueKey) => !!(tournamentMerge && tournamentMerge.lockFor(ownerUid, leagueKey)),
+            singleMatchesLeagueKey: SINGLE_MATCHES_LEAGUE_KEY,
+            extractor: {
+                available: () => !!process.env.ANTHROPIC_API_KEY,
+                scorecard: (photos, hints) => ScorecardExtract.extractScorecard(photos, hints, { apiKey: process.env.ANTHROPIC_API_KEY }),
+                commentary: (photos, hints) => ScorecardExtract.extractCommentary(photos, hints, { apiKey: process.env.ANTHROPIC_API_KEY })
+            },
+            log: (...a) => console.log(...a)
+        });
+        const cut = await scorecardImport.recoverInterrupted();
+        if (cut) console.log(`📷 ${cut} scorecard import step(s) were cut off by a restart`);
+    } catch (e) {
+        console.log('Scorecard import init error (import disabled):', e.message || e);
+        scorecardImport = null;
+    }
+}
+// 401 = no / unverifiable sign-in, 403 = signed in as anyone but the owner.
+async function requireScorecardImportAccess(req, res, next) {
+    const idToken = extractIdToken(req);
+    if (!idToken) return res.status(401).json({ success: false, error: 'Sign in required' });
+    const decoded = await verifyIdTokenFull(idToken);
+    if (!decoded || !decoded.uid) return res.status(401).json({ success: false, error: 'Your sign-in could not be verified — sign in again' });
+    if (decoded.email_verified === false || String(decoded.email || '').trim().toLowerCase() !== String(OWNER_EMAIL).trim().toLowerCase()) {
+        return res.status(403).json({ success: false, error: 'Access Denied' });
+    }
+    req.importViewer = { email: String(decoded.email).trim().toLowerCase(), uid: decoded.uid };
+    next();
+}
+// Ball-by-ball tools refuse a match that has no ball log by design.
+async function importedScorecardResponse(res, matchId) {
+    if (!matchRecordsCollection) return false;
+    const id = safeMatchId(matchId);
+    if (!id) return false;
+    const rec = await matchRecordsCollection.findOne({ $or: [{ matchId: id }, { roomId: id }] }, { projection: { importSource: 1 } });
+    if (!rec || !rec.importSource) return false;
+    res.status(409).json({ success: false, code: 'IMPORTED_SCORECARD', error: 'This match was imported from a scorecard — it has no ball-by-ball log to edit.' });
+    return true;
+}
+const importRouter = express.Router();
+importRouter.use(requireScorecardImportAccess);
+function importReady(res) {
+    if (scorecardImport) return true;
+    res.status(503).json({ success: false, error: 'Database not configured' });
+    return false;
+}
+function importFail(res, err, what) {
+    const status = (err && err.status) || 500;
+    if (status >= 500) console.log(`Scorecard import (${what}) error:`, err);
+    const body = { success: false, error: status >= 500 && !(err && err.code) ? `Could not ${what}` : (err && err.message) || `Could not ${what}` };
+    ['code', 'issues', 'verification'].forEach(k => { if (err && err[k] !== undefined) body[k] = err[k]; });
+    res.status(status).json(body);
+}
+const importRoute = (what, fn) => async (req, res) => {
+    if (!importReady(res)) return;
+    try { await fn(req, res); } catch (err) { importFail(res, err, what); }
+};
+importRouter.get('/access', (req, res) => res.json({ success: true, allowed: true, email: req.importViewer.email }));
+importRouter.get('/config', (req, res) => res.json({ success: true, reader: !!(scorecardImport && scorecardImport.readerAvailable()), model: ScorecardExtract.MODEL }));
+importRouter.get('/tournaments', importRoute('load tournaments', async (req, res) => res.json({ success: true, tournaments: await scorecardImport.listTournaments(req.importViewer) })));
+importRouter.get('/tournaments/:ownerUid/:leagueKey', importRoute('load the tournament', async (req, res) => res.json(Object.assign({ success: true }, await scorecardImport.tournamentContext(req.importViewer, req.params.ownerUid, req.params.leagueKey)))));
+importRouter.get('/drafts', importRoute('load imports', async (req, res) => res.json({ success: true, drafts: await scorecardImport.listDrafts(req.importViewer) })));
+importRouter.post('/drafts', importRoute('start the import', async (req, res) => res.status(201).json({ success: true, draft: await scorecardImport.createDraft(req.importViewer, req.body || {}) })));
+importRouter.get('/drafts/:id', importRoute('load the import', async (req, res) => res.json({ success: true, draft: await scorecardImport.getDraft(req.importViewer, req.params.id) })));
+importRouter.patch('/drafts/:id', importRoute('save the changes', async (req, res) => res.json({ success: true, draft: await scorecardImport.updateDraft(req.importViewer, req.params.id, req.body || {}) })));
+importRouter.delete('/drafts/:id', importRoute('discard the import', async (req, res) => res.json(Object.assign({ success: true }, await scorecardImport.deleteDraft(req.importViewer, req.params.id)))));
+importRouter.post('/drafts/:id/photos', express.raw({ type: ['image/jpeg', 'image/png', 'image/webp'], limit: '7mb' }), importRoute('add the photo', async (req, res) => {
+    res.status(201).json({ success: true, draft: await scorecardImport.addPhoto(req.importViewer, req.params.id, req.query || {}, Buffer.isBuffer(req.body) ? req.body : null) });
+}));
+importRouter.put('/drafts/:id/photos', importRoute('arrange the photos', async (req, res) => res.json({ success: true, draft: await scorecardImport.updatePhotos(req.importViewer, req.params.id, (req.body || {}).photos) })));
+importRouter.get('/drafts/:id/photos/:photoId', importRoute('load the photo', async (req, res) => {
+    const ph = await scorecardImport.getPhoto(req.importViewer, req.params.id, req.params.photoId);
+    res.set('Content-Type', ph.mediaType);
+    res.set('Cache-Control', 'private, no-store');
+    res.send(ph.data);
+}));
+importRouter.post('/drafts/:id/read', importRoute('read the photos', async (req, res) => res.status(202).json({ success: true, draft: await scorecardImport.startRead(req.importViewer, req.params.id, req.body || {}) })));
+importRouter.post('/drafts/:id/analyze', importRoute('check the scorecard', async (req, res) => res.json(Object.assign({ success: true }, await scorecardImport.analyze(req.importViewer, req.params.id)))));
+importRouter.post('/drafts/:id/commit', importRoute('save the match', async (req, res) => {
+    const out = await scorecardImport.commit(req.importViewer, req.params.id, req.body || {});
+    res.status(out.duplicate ? 200 : 201).json(Object.assign({ success: true }, out));
+}));
+importRouter.get('/history', importRoute('load import history', async (req, res) => res.json({ success: true, imports: await scorecardImport.history(req.importViewer) })));
+importRouter.use((err, req, res, next) => {
+    if (err && err.type === 'entity.too.large') return res.status(413).json({ success: false, error: 'That is too large to upload.' });
+    if (err && err.type === 'entity.parse.failed') return res.status(400).json({ success: false, error: 'Bad request' });
+    next(err);
+});
+app.use('/api/scorecard-import', importRouter);
+
 
 // These pages get redeployed often (every panel/overlay update), but browsers
 // and any CDN in front of Render will otherwise cache an HTML response and
@@ -9920,6 +10064,9 @@ app.get('/recover', (req, res) => sendHtmlNoCache(res, __dirname + '/match-recov
 // 🔀 Merge Tournaments wizard. The page shell is public; every call inside it
 // goes to /api/tournament-merge/*, which requireMergeAccess guards.
 app.get('/merge-tournaments', (req, res) => sendHtmlNoCache(res, __dirname + '/tournament-merge.html'));
+// 📷 Import Scorecard from Photos. The page shell is public; every call inside
+// it goes to /api/scorecard-import/*, which only chhayajeeth@gmail.com passes.
+app.get('/import-scorecard', (req, res) => sendHtmlNoCache(res, __dirname + '/scorecard-import.html'));
 app.get('/overlay', (req, res) => sendHtmlNoCache(res, __dirname + '/overlay.html'));
 app.get('/tt-templates', (req, res) => sendHtmlNoCache(res, __dirname + '/tt-templates.html'));
 app.get('/tt-panel', (req, res) => sendHtmlNoCache(res, __dirname + '/tt-panel.html'));
@@ -10968,7 +11115,7 @@ async function syncMatchRecordFromBalls(ownerUid, matchId, opts) {
         // that the same way the public-match lookup already does.
         let existing = ownerUid ? await matchRecordsCollection.findOne(
             { ownerUid, $or: [{ matchId }, { roomId: matchId }] },
-            { projection: { leagueKey: 1, matchId: 1, roomId: 1, ownerUid: 1 } }
+            { projection: { leagueKey: 1, matchId: 1, roomId: 1, ownerUid: 1, importSource: 1 } }
         ) : null;
         // 🩹 FIX (scorecard not reflecting merges/edits): the saved record's
         // ownerUid can differ from the uid we were called with (record saved
@@ -10981,7 +11128,7 @@ async function syncMatchRecordFromBalls(ownerUid, matchId, opts) {
         if (!existing) {
             existing = await matchRecordsCollection.findOne(
                 { $or: [{ matchId }, { roomId: matchId }] },
-                { projection: { leagueKey: 1, matchId: 1, roomId: 1, ownerUid: 1 } }
+                { projection: { leagueKey: 1, matchId: 1, roomId: 1, ownerUid: 1, importSource: 1 } }
             );
             if (existing) console.log('[syncDebug] record matched by id only (ownerUid differed)', { matchId, calledWith: ownerUid, recordOwner: existing.ownerUid });
         }
@@ -10992,6 +11139,9 @@ async function syncMatchRecordFromBalls(ownerUid, matchId, opts) {
         console.log('[syncDebug] called with', { ownerUid, matchId });
         console.log('[syncDebug] existing doc found:', existing ? { leagueKey: existing.leagueKey, matchId: existing.matchId, roomId: existing.roomId } : null);
         if (!existing) { console.log('[syncDebug] NO MATCHING matchRecords DOC — aborting sync', { matchId }); return { synced: false, reason: 'no-match-record' }; }
+        // 📷 A scorecard imported from photos has no ball log: rebuilding it
+        // from (stray) deliveries would replace its real figures.
+        if (existing.importSource) return { synced: false, reason: 'imported-scorecard' };
         const cards = await buildLiveCardsFromBalls(matchId);
         console.log('[syncDebug] recomputed bowlingCard A:', JSON.stringify((cards.bowlingCard && cards.bowlingCard.A) || []));
         console.log('[syncDebug] recomputed bowlingCard B:', JSON.stringify((cards.bowlingCard && cards.bowlingCard.B) || []));
