@@ -267,10 +267,11 @@ async function serverSuite(){
   const world = { leagues: leaguesColl([]), invalidated: [], tokenN: 0 };
   const ensure = new Function('leaguesCollection', 'SINGLE_MATCHES_LEAGUE_KEY', 'generatePublicToken', H.grab('ensureLeaguePublicToken', 'async function ') + '; return ensureLeaguePublicToken;')(world.leagues, '__single__', () => 'T' + (++world.tokenN));
   const body = routeBody(src, "app.post('/api/league/:name/info'");
-  const route = new Function('leagueKeyFor', 'ownerUidFrom', 'SINGLE_MATCHES_LEAGUE_KEY', 'leaguesCollection', 'sanitizeTournamentInfo', 'ensureLeaguePublicToken', 'invalidateTournamentCaches', 'console',
+  // mergeLockResponse: no tournament merge is running in this test (see tournament-merge tests for that)
+  const route = new Function('leagueKeyFor', 'ownerUidFrom', 'SINGLE_MATCHES_LEAGUE_KEY', 'leaguesCollection', 'sanitizeTournamentInfo', 'ensureLeaguePublicToken', 'invalidateTournamentCaches', 'console', 'mergeLockResponse',
     'return async (req, res) => ' + body)(
     (n) => String(n || '').trim().toLowerCase().replace(/\s+/g, ' ') || null, (req) => req.uid || null, '__single__', world.leagues, sanitize, ensure,
-    (t) => world.invalidated.push(t), { log(){} });
+    (t) => world.invalidated.push(t), { log(){} }, () => false);
   const call = async (req) => { const out = { status: 200 }; await route(req, { status(c){ out.status = c; return this; }, json(o){ out.body = o; return this; } }); return out; };
 
   const r1 = await call({ params: { name: 'Premier League' }, uid: 'U1', creatorEmail: 'chhayajeeth@gmail.com', body: { create: true, info: { venue: 'Wankhede', format: 'ODI', teams: [{ name: 'Lions' }] } } });

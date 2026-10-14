@@ -27,6 +27,9 @@ const clipMedia = require('./clip-media'); // faststart/poster/cache-header/Rang
 // 🎯 THE clip-ownership rule (delivery snapshot → players), shared with
 // both cricket panels — see clip-attribution.js.
 const ClipAttribution = require('./clip-attribution');
+// 🔀 Merge Tournaments engine — see tournament-merge.js and the MERGE
+// TOURNAMENTS section further down.
+const TournamentMerge = require('./tournament-merge');
 if (R2_PUBLIC_URL && /\.r2\.dev(\/|$)/i.test(R2_PUBLIC_URL)) {
     // r2.dev is Cloudflare's rate-limited development URL: it is NOT served through the CDN cache, so
     // every first view of every clip is a cold read from the bucket. Attach a custom domain to the bucket
@@ -149,6 +152,13 @@ let matchVersionsCollection = null;
 // 🛟 Deliveries the Recovery Centre's clean-up takes out of the ball log are
 // moved here, never deleted outright, so a wrong call can always be undone.
 let ballsArchiveCollection = null;
+// 🔀 MERGE TOURNAMENTS — one doc per merge (its plan, progress, checks and
+// outcome), a copy of every document a merge changes (for resume /
+// rollback), and one lock per tournament while a merge runs.
+let tournamentMergesCollection = null;
+let tournamentMergeBackupsCollection = null;
+let tournamentMergeLocksCollection = null;
+let tournamentMerge = null;
 
 async function connectMongo() {
     const uri = process.env.MONGODB_URI;
@@ -273,6 +283,7 @@ async function connectMongo() {
         // land twice; sparse because every ball logged before the outbox
         // existed has none.
         await ballsCollection.createIndex({ ballUid: 1 }, { unique: true, sparse: true });
+        await initTournamentMerge();
         console.log('🍃 MongoDB connected —', mongoDb.databaseName);
         dedupeCrossTournamentMatches(); // background, never blocks startup
 
@@ -2373,6 +2384,7 @@ app.post('/api/league/:name/info', requireAuthorizedCreator, async (req, res) =>
     if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
     if (leagueKey === SINGLE_MATCHES_LEAGUE_KEY) return res.status(400).json({ success: false, error: 'That name is reserved' });
     if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    if (mergeLockResponse(res, ownerUid, leagueKey)) return;
     try {
         const create = !!(req.body && req.body.create);
         const info = sanitizeTournamentInfo(req.body && req.body.info);
@@ -2415,6 +2427,7 @@ app.post('/api/league/:name/match', requireAuthorizedCreator, async (req, res) =
     if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
     if (!record || !record.matchId) return res.status(400).json({ success: false, error: 'Match record with matchId required' });
     if (!matchRecordsCollection || !leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    if (mergeLockResponse(res, ownerUid, leagueKey, record.matchId)) return;
     try {
         // 🔒 A locked match is saved only by the laptop scoring it (its key).
         // A fixture can still be edited before anyone has started it.
@@ -2553,6 +2566,7 @@ app.delete('/api/league/:name/match/:matchId', requireAuthorizedCreator, async (
     if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
     if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
     if (!matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    if (mergeLockResponse(res, ownerUid, leagueKey, req.params.matchId)) return;
     try {
         const lock = await matchLockForRecord(null, req.params.matchId);
         if (lock && !lockTokenMatches(lock, req.get('x-match-key'))) {
@@ -2584,6 +2598,7 @@ app.delete('/api/league/:name', requireAuthorizedCreator, async (req, res) => {
     if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
     if (leagueKey === SINGLE_MATCHES_LEAGUE_KEY) return res.status(400).json({ success: false, error: 'Cannot delete the single-matches bucket' });
     if (!leaguesCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    if (mergeLockResponse(res, ownerUid, leagueKey)) return;
     try {
         await matchRecordsCollection.deleteMany({ ownerUid, leagueKey });
         await leaguesCollection.deleteOne({ ownerUid, leagueKey });
@@ -2609,6 +2624,7 @@ app.post('/api/league/:name/complete', requireAuthorizedCreator, async (req, res
     if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
     if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
     if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    if (mergeLockResponse(res, ownerUid, leagueKey)) return;
     try {
         await leaguesCollection.updateOne(
             { ownerUid, leagueKey },
@@ -3075,15 +3091,22 @@ app.post('/api/league/:name/public-link', requireAuthorizedCreator, async (req, 
 // never touches the permanent matches[] array, so it can never corrupt
 // or overwrite saved match data even if it fails or races.
 app.post('/api/league/:name/live-status', requireAuthorizedCreator, async (req, res) => {
-    const leagueKey = leagueKeyFor(req.params.name);
+    let leagueKey = leagueKeyFor(req.params.name);
     const ownerUid = ownerUidFrom(req);
     if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
     if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
     if (!leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     const { roomId, matchId, active } = req.body || {};
+    if (mergeLockResponse(res, ownerUid, leagueKey, matchId || '')) return;
     try {
         const lock = await matchLockForRecord(roomId, matchId);
         if (lock && !lockTokenMatches(lock, req.get('x-match-key'))) return res.status(423).json({ success: false, code: 'MATCH_LOCKED' });
+        // 🔀 A laptop still on a tournament that was merged away keeps
+        // pinging under the old name — the match now lives in the
+        // destination, so its "Live now" pointer goes there (instead of
+        // re-creating the deleted tournament as an empty shell).
+        const mergedHome = (tournamentMerge && matchId) ? await tournamentMerge.redirectLeagueKey(ownerUid, leagueKey, matchId) : null;
+        if (mergedHome) leagueKey = mergedHome;
         // 🩹 liveMatches is an ARRAY, not a single field — the same
         // tournament can have MULTIPLE matches being scored at once, each
         // on its own device/room (Laptop 1 → Match A, Laptop 2 → Match B,
@@ -3157,7 +3180,10 @@ app.get('/api/public/tournament/:token', async (req, res) => {
     if (!leaguesCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     try {
         const doc = await leaguesCollection.findOne({ publicToken: req.params.token });
-        if (!doc) return res.status(404).json({ success: false, error: 'Tournament not found' });
+        if (!doc) {
+            const moved = await mergedTournamentRedirect(req, req.params.token);
+            return res.status(404).json(moved ? { success: false, error: 'Tournament not found', movedTo: moved.token } : { success: false, error: 'Tournament not found' });
+        }
 
         // 🔒 PRIVACY: chhayajeeth@gmail.com's tournaments are private. Even
         // with a valid/guessed token, nobody but a verified chhayajeeth
@@ -3243,7 +3269,12 @@ app.get('/api/public/tournament/:token/match/:matchId', async (req, res) => {
     if (!leaguesCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     try {
         const doc = await leaguesCollection.findOne({ publicToken: req.params.token });
-        if (!doc) return res.status(404).json({ success: false, error: 'Tournament not found' });
+        if (!doc) {
+            const moved = await mergedTournamentRedirect(req, req.params.token);
+            return res.status(404).json(moved
+                ? { success: false, error: 'Tournament not found', movedTo: moved.token, matchId: moved.matchIdMap[req.params.matchId] || req.params.matchId }
+                : { success: false, error: 'Tournament not found' });
+        }
 
         // 🔒 Same private-tournament rule as /api/public/tournament/:token above.
         if (await isPrivateLeagueDoc(doc)) {
@@ -5520,6 +5551,7 @@ adminRouter.post('/tournaments/:leagueKey/status', async (req, res) => {
         // req.ownerUid comes straight from requireOwner's verified ID token
         // (this whole router is chhayajeeth-only) — no extra lookup needed.
         const ownerUid = req.ownerUid;
+        if (mergeLockResponse(res, ownerUid, leagueKey)) return;
         const before = await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { statusOverride: 1, displayName: 1 } });
         if (!before) return res.status(404).json({ success: false, error: 'Tournament not found' });
         await leaguesCollection.updateOne(
@@ -5572,6 +5604,7 @@ adminRouter.post('/tournaments/:ownerUid/:leagueKey/manage', async (req, res) =>
     const visibility = hasVisibility ? (body.visibility ? String(body.visibility) : null) : undefined;
     if (hasStatus && !allowedStatus.includes(status)) return res.status(400).json({ success: false, error: 'status must be live, ongoing, completed, upcoming, or null' });
     if (hasVisibility && !allowedVisibility.includes(visibility)) return res.status(400).json({ success: false, error: 'visibility must be public, private, or null' });
+    if (mergeLockResponse(res, ownerUid, leagueKey)) return;
 
     try {
         const before = await leaguesCollection.findOne(
@@ -5742,6 +5775,7 @@ adminRouter.delete('/tournament/:ownerUid/:leagueKey', async (req, res) => {
     try {
         const league = await leaguesCollection.findOne({ ownerUid, leagueKey });
         if (!league) return res.status(404).json({ success: false, error: 'Tournament not found' });
+        if (mergeLockResponse(res, ownerUid, leagueKey)) return;
 
         const matches = await matchRecordsCollection.find({ ownerUid, leagueKey }, { projection: { matchId: 1 } }).toArray();
         const matchIds = matches.map(m => m.matchId).filter(Boolean);
@@ -9683,6 +9717,172 @@ adminRouter.post('/settings', async (req, res) => {
 
 app.use('/api/admin', adminRouter);
 
+// ================================================================
+// 🔀 MERGE TOURNAMENTS (/merge-tournaments) — folds one tournament (the
+// source) into another of the same account (the destination), reconciles
+// player IDs the user confirms, checks the result and only then deletes the
+// source. The engine is tournament-merge.js; this section is its door.
+//
+// WHO: exactly chhayajeeth@gmail.com and workallsportslive@gmail.com (the
+// list is fixed in tournament-merge.js), checked on EVERY call against a
+// verified Firebase ID token — never a client-supplied email or uid. Merge
+// rights are separate from viewing rights: a merged destination stays as
+// public or private as it was, and everyone who could see it sees the
+// merged matches; nobody gains any other permission from this.
+// ================================================================
+async function initTournamentMerge() {
+    try {
+        tournamentMergesCollection = mongoDb.collection('tournamentMerges');
+        tournamentMergeBackupsCollection = mongoDb.collection('tournamentMergeBackups');
+        tournamentMergeLocksCollection = mongoDb.collection('tournamentMergeLocks');
+        await tournamentMergesCollection.createIndex({ idempotencyKey: 1 }, { unique: true, sparse: true });
+        await tournamentMergesCollection.createIndex({ ownerUid: 1, createdAt: -1 });
+        await tournamentMergesCollection.createIndex({ 'source.publicToken': 1, status: 1 });
+        await tournamentMergesCollection.createIndex({ status: 1 });
+        await tournamentMergeBackupsCollection.createIndex({ opId: 1, coll: 1 });
+        const { ObjectId } = require('mongodb');
+        tournamentMerge = TournamentMerge.createTournamentMerge({
+            db: {
+                leagues: leaguesCollection, records: matchRecordsCollection, balls: ballsCollection, clips: clipsCollection,
+                players: playersCollection, panelStates: matchPanelStatesCollection,
+                merges: tournamentMergesCollection, backups: tournamentMergeBackupsCollection, locks: tournamentMergeLocksCollection
+            },
+            playerKey, computePointsTable, computeLeaderboards, playedMatches, footprintTotalBalls, versionMatchRecord,
+            effectiveIsPrivate, getVerifiedEmailForUid, getUidForEmail, detectSportFromName,
+            ownerEmail: OWNER_EMAIL, authorizedCreatorEmails: AUTHORIZED_CREATOR_EMAILS, singleMatchesLeagueKey: SINGLE_MATCHES_LEAGUE_KEY,
+            invalidateTournamentCaches, invalidateClipsCache, repointPlayerIdCache, logAuditAction,
+            toObjectId: (s) => (/^[0-9a-f]{24}$/i.test(String(s)) ? new ObjectId(String(s)) : s),
+            log: (...a) => console.log(...a)
+        });
+        const cut = await tournamentMerge.recoverInterrupted();
+        if (cut) console.log(`🔀 ${cut} tournament merge(s) were cut off by a restart — resume or roll back from /merge-tournaments`);
+    } catch (e) {
+        console.log('Tournament merge init error (merging disabled):', e.message || e);
+        tournamentMerge = null;
+    }
+}
+
+// Every /api/tournament-merge/* call. 401 = no / unverifiable sign-in,
+// 403 = signed in, but not one of the two merge accounts.
+async function requireMergeAccess(req, res, next) {
+    const idToken = extractIdToken(req);
+    if (!idToken) return res.status(401).json({ success: false, error: 'Sign in required' });
+    const decoded = await verifyIdTokenFull(idToken);
+    if (!decoded || !decoded.uid) return res.status(401).json({ success: false, error: 'Your sign-in could not be verified — sign in again' });
+    if (decoded.email_verified === false || !TournamentMerge.isMergeAdminEmail(decoded.email)) {
+        return res.status(403).json({ success: false, error: 'Access Denied' });
+    }
+    req.mergeViewer = { email: String(decoded.email).trim().toLowerCase(), uid: decoded.uid };
+    next();
+}
+
+// While a merge holds a tournament, writes that would race it are refused
+// for the few seconds it takes: anything on the source, and on the
+// destination its tournament-wide settings and the matches the merge
+// rewrites. Everything else — a live destination match included — goes on.
+function mergeLockResponse(res, ownerUid, leagueKey, matchId) {
+    const lock = tournamentMerge ? tournamentMerge.lockFor(ownerUid, leagueKey) : null;
+    if (!lock) return false;
+    if (lock.role === 'dest' && matchId !== undefined && !(lock.matchIds && lock.matchIds.has(String(matchId)))) return false;
+    res.status(423).json({ success: false, code: 'TOURNAMENT_MERGE_IN_PROGRESS', error: 'This tournament is being merged right now — try again in a minute' });
+    return true;
+}
+
+// An old public link of a tournament that was merged into another points at
+// the destination — but only for someone allowed to see the destination (a
+// private destination stays exactly as invisible as before).
+async function mergedTournamentRedirect(req, token) {
+    if (!tournamentMerge) return null;
+    try {
+        const hop = await tournamentMerge.aliasForToken(token);
+        if (!hop || !hop.doc || !hop.doc.publicToken) return null;
+        const isPrivate = await isPrivateLeagueDoc(hop.doc);
+        if (isPrivate) {
+            const requesterEmail = await verifiedRequesterEmail(req);
+            if (!isPrivateCreatorEmail(requesterEmail)) return null;
+        }
+        return { token: hop.doc.publicToken, matchIdMap: hop.matchIdMap || {}, isPrivate };
+    } catch (e) {
+        return null;
+    }
+}
+// The page routes can't see a signed-in viewer (no ID token on a page
+// load), so they only redirect to a PUBLIC destination; the page's own API
+// call handles the private case.
+async function mergedTournamentPageRedirect(req, token) {
+    if (!tournamentMerge || !leaguesCollection) return null;
+    try {
+        if (await leaguesCollection.findOne({ publicToken: token }, { projection: { _id: 1 } })) return null;
+        const moved = await mergedTournamentRedirect(req, token);
+        return moved && !moved.isPrivate ? moved : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+const mergeRouter = express.Router();
+mergeRouter.use(requireMergeAccess);
+function mergeReady(res) {
+    if (tournamentMerge) return true;
+    res.status(503).json({ success: false, error: 'Database not configured' });
+    return false;
+}
+function mergeFail(res, err, what) {
+    const status = (err && err.status) || 500;
+    if (status >= 500) console.log(`Tournament merge (${what}) error:`, err);
+    const body = { success: false, error: status >= 500 ? `Could not ${what}` : err.message };
+    ['code', 'opId', 'blockers', 'errors'].forEach(k => { if (err && err[k] !== undefined) body[k] = err[k]; });
+    res.status(status).json(body);
+}
+mergeRouter.get('/access', (req, res) => res.json({ success: true, allowed: true, email: req.mergeViewer.email }));
+mergeRouter.get('/tournaments', async (req, res) => {
+    if (!mergeReady(res)) return;
+    try { res.json({ success: true, tournaments: await tournamentMerge.listTournaments(req.mergeViewer) }); }
+    catch (err) { mergeFail(res, err, 'load tournaments'); }
+});
+mergeRouter.get('/tournaments/:ownerUid/:leagueKey', async (req, res) => {
+    if (!mergeReady(res)) return;
+    try { res.json({ success: true, tournament: await tournamentMerge.tournamentSummary(req.mergeViewer, { ownerUid: req.params.ownerUid, leagueKey: req.params.leagueKey }) }); }
+    catch (err) { mergeFail(res, err, 'load the tournament'); }
+});
+mergeRouter.post('/analyze', async (req, res) => {
+    if (!mergeReady(res)) return;
+    try { res.json(Object.assign({ success: true }, await tournamentMerge.analyze(req.mergeViewer, req.body || {}))); }
+    catch (err) { mergeFail(res, err, 'analyze the merge'); }
+});
+mergeRouter.post('/execute', async (req, res) => {
+    if (!mergeReady(res)) return;
+    try { res.status(202).json(Object.assign({ success: true }, await tournamentMerge.execute(req.mergeViewer, req.body || {}))); }
+    catch (err) { mergeFail(res, err, 'start the merge'); }
+});
+mergeRouter.get('/ops/:opId', async (req, res) => {
+    if (!mergeReady(res)) return;
+    try { res.json({ success: true, op: await tournamentMerge.getOp(req.mergeViewer, req.params.opId) }); }
+    catch (err) { mergeFail(res, err, 'load the merge'); }
+});
+mergeRouter.post('/ops/:opId/resume', async (req, res) => {
+    if (!mergeReady(res)) return;
+    try { res.json({ success: true, op: await tournamentMerge.resume(req.mergeViewer, req.params.opId) }); }
+    catch (err) { mergeFail(res, err, 'resume the merge'); }
+});
+mergeRouter.post('/ops/:opId/rollback', async (req, res) => {
+    if (!mergeReady(res)) return;
+    try { res.json({ success: true, op: await tournamentMerge.rollback(req.mergeViewer, req.params.opId) }); }
+    catch (err) { mergeFail(res, err, 'roll the merge back'); }
+});
+mergeRouter.post('/ops/:opId/cleanup', async (req, res) => {
+    if (!mergeReady(res)) return;
+    try { res.json({ success: true, op: await tournamentMerge.retryCleanup(req.mergeViewer, req.params.opId) }); }
+    catch (err) { mergeFail(res, err, 'finish the clean-up'); }
+});
+mergeRouter.get('/history', async (req, res) => {
+    if (!mergeReady(res)) return;
+    try { res.json({ success: true, merges: await tournamentMerge.history(req.mergeViewer) }); }
+    catch (err) { mergeFail(res, err, 'load merge history'); }
+});
+app.use('/api/tournament-merge', mergeRouter);
+
+
 // These pages get redeployed often (every panel/overlay update), but browsers
 // and any CDN in front of Render will otherwise cache an HTML response and
 // keep serving it after a fresh deploy — looking exactly like "the update
@@ -9706,6 +9906,9 @@ app.get('/admin', (req, res) => sendHtmlNoCache(res, __dirname + '/admin.html'))
 // last live state, earlier saved versions) and puts it back together.
 // The page shell is public; every server call inside it is owner-only.
 app.get('/recover', (req, res) => sendHtmlNoCache(res, __dirname + '/match-recovery.html'));
+// 🔀 Merge Tournaments wizard. The page shell is public; every call inside it
+// goes to /api/tournament-merge/*, which requireMergeAccess guards.
+app.get('/merge-tournaments', (req, res) => sendHtmlNoCache(res, __dirname + '/tournament-merge.html'));
 app.get('/overlay', (req, res) => sendHtmlNoCache(res, __dirname + '/overlay.html'));
 app.get('/tt-templates', (req, res) => sendHtmlNoCache(res, __dirname + '/tt-templates.html'));
 app.get('/tt-panel', (req, res) => sendHtmlNoCache(res, __dirname + '/tt-panel.html'));
@@ -9754,14 +9957,22 @@ app.get('/t/:slug/overlay/:overlayId', async (req, res) => {
 // 🌐 Public scorecard system — see the "PUBLIC SCORECARD SYSTEM" section
 // above for the /api/public/* + /api/league/:name/public-link routes
 // these pages call. Both are static shells; all data loads client-side.
-app.get('/score/tournament/:token', (req, res) => sendHtmlNoCache(res, __dirname + '/score-tournament.html'));
+app.get('/score/tournament/:token', async (req, res) => {
+    // 🔀 an old link of a tournament that was merged into another
+    const moved = await mergedTournamentPageRedirect(req, req.params.token);
+    if (moved) return res.redirect(302, `/score/tournament/${encodeURIComponent(moved.token)}`);
+    sendHtmlNoCache(res, __dirname + '/score-tournament.html');
+});
 // A specific completed match inside a tournament now reuses the full
 // cricket-scorecard.html viewer (same batting/bowling clip icons, Match
 // Highlights, comparison charts as a live match) instead of the plainer
 // score-tournament.html per-match view — see loadMatchSnapshot()/
 // history=1 mode in cricket-scorecard.html.
-app.get('/score/tournament/:token/match/:matchId', (req, res) => {
-    const qs = new URLSearchParams({ token: req.params.token, match: req.params.matchId, history: '1' });
+app.get('/score/tournament/:token/match/:matchId', async (req, res) => {
+    const moved = await mergedTournamentPageRedirect(req, req.params.token);
+    const qs = moved
+        ? new URLSearchParams({ token: moved.token, match: moved.matchIdMap[req.params.matchId] || req.params.matchId, history: '1' })
+        : new URLSearchParams({ token: req.params.token, match: req.params.matchId, history: '1' });
     res.redirect(302, `/cricket-scorecard?${qs.toString()}`);
 });
 // A specific standalone (non-tournament) match now also reuses

@@ -35,6 +35,13 @@ node test/cricket/match-report-test.js           # 📑 scorecard Excel + PDF re
                                                   # (MR_LIBS=<dir with node_modules/exceljs + jspdf> also builds and checks the real files;
                                                   #  --sync re-inlines match-report.js into both panels)
 PANEL=cricket-panel3.html node test/cricket/test.js   # the scoring engine suite against the Stream Engine panel
+node test/tournament-merge.test.js               # 🔀 Merge Tournaments engine on an in-memory MongoDB (production unique indexes): Jeeth's two IDs (keep either),
+                                                  # every match once, points table / leaderboards, similar names never auto-merged, id clash, invalid refs,
+                                                  # failure mid-transfer + resume / rollback, idempotent submit, access, media untouched
+node test/tournament-merge-server.test.js        # the REAL server.js over HTTP: only the two accounts (401/403 on every route), the full flow,
+                                                  # old source links → destination, private stays private, live pings after a merge, merge locks (423)
+NODE_PATH=$(npm root -g) node test/tournament-merge-ui.test.js  # the wizard in Chromium against the real server: sign-in / access denied, homepage button,
+                                                  # select → preview → player IDs → confirm → progress → done, phone + light theme, keyboard
 ```
 
 `server-test.js` is the one that matters most: it feeds the same ball documents

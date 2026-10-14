@@ -804,6 +804,19 @@
         #owner-admin-btn:hover .gear-icon { transform: rotate(45deg); }
         #owner-admin-btn:active { transform: scale(0.97); }
         #owner-admin-btn.visible { display: inline-flex; }
+        /* 🔀 Merge Tournaments — shown only to the two accounts allowed to
+           merge (UX hint only: /api/tournament-merge/* checks the verified
+           Firebase ID token on the server for every call). */
+        #merge-tournaments-btn {
+            display: none; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 50px;
+            background: rgba(var(--accent-rgb), 0.08); color: var(--text-main); border: 1px solid rgba(var(--accent-rgb), 0.35);
+            font-weight: 600; font-size: 0.88rem; text-decoration: none;
+            transition: background 0.25s var(--ease), border-color 0.25s var(--ease), transform 0.2s var(--ease);
+        }
+        #merge-tournaments-btn:hover { background: rgba(var(--accent-rgb), 0.16); border-color: rgba(var(--accent-rgb), 0.6); transform: scale(1.02); }
+        #merge-tournaments-btn:active { transform: scale(0.97); }
+        #merge-tournaments-btn.visible { display: inline-flex; }
+        #merge-tournaments-btn svg { width: 16px; height: 16px; }
 
         /* ===== Network status banner =====
            Hidden/collapsed by default (max-height: 0) and expanded only
@@ -3175,6 +3188,7 @@
             <span class="tournaments-live-count reveal-on-scroll" id="tournamentsLiveCount" hidden>
                 <span class="dot"></span><span id="tournamentsLiveCountText">0 live right now</span>
             </span>
+            <a href="/merge-tournaments" id="merge-tournaments-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v6a6 6 0 0 0 6 6h6M18 21v-6M6 21v-4"/><path d="M15 12l3 3-3 3"/></svg>Merge Tournaments</a>
         </div>
         <p class="section-sub reveal-on-scroll delay-1">Live scores, completed tournaments, scorecards, player stats and clips</p>
 
@@ -3317,6 +3331,9 @@
         const authGate = document.getElementById('auth-gate');
         const userDisplay = document.getElementById('user-display');
         const ownerAdminBtn = document.getElementById('owner-admin-btn');
+        // 🔀 The two accounts that may merge tournaments — display/UX hint
+        // only; the real list is enforced server-side (tournament-merge.js).
+        const MERGE_TOURNAMENT_EMAILS = ["chhayajeeth@gmail.com", "workallsportslive@gmail.com"];
         const OWNER_EMAIL = "chhayajeeth@gmail.com"; // display/UX hint only — real enforcement is server-side (see server.js requireOwner). Gates the full Owner Admin Portal button only.
 
         // 🔐 Cricket "Select Sport" / tournament create+manage access — 3
@@ -3805,6 +3822,10 @@
                 // against a signed Firebase ID token (see requireOwner in
                 // server.js), so this toggle can't be used to bypass anything.
                 if (ownerAdminBtn) ownerAdminBtn.classList.toggle('visible', isOwner);
+                // 🔀 Merge Tournaments — the two merge accounts only (UX hint;
+                // the server checks every merge call itself).
+                const mergeBtn = document.getElementById('merge-tournaments-btn');
+                if (mergeBtn) mergeBtn.classList.toggle('visible', MERGE_TOURNAMENT_EMAILS.includes((user.email || '').toLowerCase()));
 
                 // "Select Sport" / tournament create+manage — the 3
                 // authorized creator accounts, not just the single owner.
@@ -3835,6 +3856,8 @@
                 if (navSigninBtn) navSigninBtn.classList.add('visible');
                 if (logoutBtn) logoutBtn.classList.remove('visible');
                 if (ownerAdminBtn) ownerAdminBtn.classList.remove('visible');
+                const mergeBtnOut = document.getElementById('merge-tournaments-btn');
+                if (mergeBtnOut) mergeBtnOut.classList.remove('visible');
                 applyOwnerGating(false);
 
                 // Signing out (e.g. owner logging out) must drop back to the
