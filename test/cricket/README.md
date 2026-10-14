@@ -46,6 +46,17 @@ node test/tournament-merge-server.test.js        # the REAL server.js over HTTP:
 NODE_PATH=$(npm root -g) node test/tournament-merge-ui.test.js  # the wizard in Chromium against the real server: sign-in / access denied, homepage button,
                                                   # select → preview → player IDs → confirm → progress → done → history → undo player changes,
                                                   # phone + light theme, keyboard
+node test/scorecard-model.test.js                # 📷 Import Scorecard: the cricket rules (overs, dismissal lines, FIRST + LAST names, the result,
+                                                  # every check on an innings) and the browser's OCR text reader
+node test/scorecard-import.test.js               # the import engine with the real server.js player / team functions: Jeeth Kumar Suvarna →
+                                                  # Jeeth Suvarna on his own ID, same / similar names always asked, teams + logos, checks,
+                                                  # saving once (twice, at once, after a failure, after a restart), commentary display-only
+node test/scorecard-extract.test.js              # the photo reader: the real @anthropic-ai/sdk against a stand-in Messages API (request,
+                                                  # retries, failures in plain words, strict schemas)
+node test/scorecard-import-server.test.js        # the REAL server.js: chhayajeeth@gmail.com only (401/403 on every route), raw photo uploads,
+                                                  # background reading, saving, the public tournament page, ball-by-ball tools refuse imports
+NODE_PATH=$(npm root -g) node test/scorecard-import-ui.test.js   # the wizard in Chromium: access, entry points, Claude flow (desktop),
+                                                  # typed flow with a reload (phone, light), browser reader, the public scorecard page
 ```
 
 `server-test.js` is the one that matters most: it feeds the same ball documents

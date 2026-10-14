@@ -217,6 +217,48 @@ const file = (name, seed) => ({ name, mimeType: 'image/png', buffer: FX.png(seed
     await page.fill('#batTable tbody tr:nth-child(2) [data-f="runs"]', '60');
     await page.waitForTimeout(350);
     check(!(await page.$('#innBox input.bad')) && /adds up/.test(await txt(page, '#scTop')), 'fixed: nothing flagged');
+    // a difference the scorecard itself has: confirmed as printed, with a reason on record
+    await page.fill('#batTable tbody tr:nth-child(2) [data-f="runs"]', '66');
+    await page.waitForSelector('#innIssues [data-ack="inn0-runs-sum"]', { timeout: 5000 });
+    await page.click('#innIssues [data-ack="inn0-runs-sum"]');
+    await page.waitForSelector('#sheet.open #askIn');
+    await page.fill('#askIn', 'The MCA scorecard prints 66');
+    await page.click('#sheetBody [data-yes]');
+    await page.waitForTimeout(450);
+    check(/Confirmed as printed: “The MCA scorecard prints 66”/.test(await txt(page, '#innIssues')) && /adds up/.test(await txt(page, '#scTop')), 'a difference on the scorecard itself: confirmed as printed, with the reason shown');
+    await page.fill('#batTable tbody tr:nth-child(2) [data-f="runs"]', '67');
+    await page.waitForTimeout(350);
+    check(/1 thing to fix/.test(await txt(page, '#scTop')), '…a different figure needs its own confirmation');
+    await page.fill('#batTable tbody tr:nth-child(2) [data-f="runs"]', '66');
+    await page.waitForTimeout(350);
+    await page.click('#innIssues [data-unack="inn0-runs-sum"]');
+    await page.waitForTimeout(300);
+    check(/1 thing to fix/.test(await txt(page, '#scTop')), '"Undo" takes the confirmation back');
+    await page.fill('#batTable tbody tr:nth-child(2) [data-f="runs"]', '60');
+    await page.waitForTimeout(350);
+    // the result chosen by hand needs a reason; back to the scores
+    await page.click('#resSet');
+    await page.waitForSelector('#resWinner');
+    await page.click('#resWinner [data-w="NR"]');
+    await page.waitForTimeout(300);
+    check(/No result/.test(await txt(page, '#resAuto')) && /say why/i.test(await txt(page, '#resAuto')), 'a result chosen by hand asks why');
+    await page.fill('#resReason', 'Abandoned — floodlights failed');
+    await page.waitForTimeout(300);
+    check(!/say why/i.test(await txt(page, '#resAuto')) && /adds up/.test(await txt(page, '#scTop')), '…given a reason, accepted');
+    await page.click('#resAutoBtn');
+    await page.waitForTimeout(300);
+    check(/DY PATIL SA won by 25 runs/i.test(await txt(page, '#resAuto')) && /Worked out from the two totals/.test(await txt(page, '#resAuto')), '"Use the result from the scores" goes back');
+    // the other team batted first — and back
+    await page.click('#swapOrder');
+    await page.waitForSelector('#sheet.open [data-yes]');
+    await page.click('#sheetBody [data-yes]');
+    await page.waitForTimeout(400);
+    check(/PSC/.test(await txt(page, '#innTabs [data-inn="0"]')) && /PAREL/.test(await txt(page, '.inn-head')), 'swapped: PAREL batted first');
+    await page.click('#swapOrder');
+    await page.waitForSelector('#sheet.open [data-yes]');
+    await page.click('#sheetBody [data-yes]');
+    await page.waitForTimeout(400);
+    check(/DYP/.test(await txt(page, '#innTabs [data-inn="0"]')), 'and swapped back');
     await page.fill('#batTable tbody tr[data-ghost] input.nm', 'Extra Batter');
     await page.waitForTimeout(250);
     check(await page.$$eval('#batTable tbody tr[data-key]:not([data-ghost])', x => x.length) === 4 && await page.$$eval('#batTable tbody tr[data-ghost]', x => x.length) === 1 && await page.evaluate(() => document.activeElement && document.activeElement.value === 'Extra Batter'), 'typing in the empty row adds a batter (and keeps typing there)');
@@ -230,6 +272,10 @@ const file = (name, seed) => ({ name, mimeType: 'image/png', buffer: FX.png(seed
     await page.waitForTimeout(250);
     check(/PAREL SPORTING CLUB/.test(await txt(page, '.inn-head')) && /85\/2/.test(await txt(page, '#innScore')), '2nd innings tab');
     check(/1st innings · 4 balls/.test(await txt(page, '#cmBox')) && /partial/.test(await txt(page, '#cmBox')), 'commentary: 4 balls, shown as partial');
+    await page.click('#cmBox details summary');
+    await page.click('#cmBox [data-cm-del="0"]');
+    await page.waitForTimeout(300);
+    check(/1st innings · 3 balls/.test(await txt(page, '#cmBox')), 'a commentary ball can be left out');
     await shot(page, '06-scorecard-2nd');
     await page.click('#abNext');
 
@@ -268,7 +314,9 @@ const file = (name, seed) => ({ name, mimeType: 'image/png', buffer: FX.png(seed
 
     const rec = await c.records.findOne({ 'importSource.kind': 'scorecard' });
     check(rec && rec.battingCard.A[0].id === 'PLAYER_A' && rec.battingCard.A[2].name === 'Suraj A. Patil' && rec.matchTitle === 'Match 2' && rec.importSource.reader === 'claude', 'the database: Jeeth on PLAYER_A, the new Suraj, the title, read by Claude');
-    check(await mem.collection('importedCommentary').countDocuments({}) === 1 && await c.balls.countDocuments({ matchId: rec.matchId }) === 0, 'commentary stored for display; no deliveries');
+    const icDoc = await mem.collection('importedCommentary').findOne({});
+    check(icDoc && icDoc.innings[0].entries.length === 3 && await c.balls.countDocuments({ matchId: rec.matchId }) === 0, 'commentary stored for display (the 3 balls kept); no deliveries');
+    check(rec.winningTeam === 'A' && rec.battingCard.A[1].runs === 60, 'the figures and result as finally checked');
 
     const sp = await newPage(browser, null);
     await sp.goto(base + matchUrl, { waitUntil: 'domcontentloaded' });
@@ -361,6 +409,69 @@ const file = (name, seed) => ({ name, mimeType: 'image/png', buffer: FX.png(seed
     const typed = await c.records.findOne({ matchDate: '2026-10-13' });
     check(typed && typed.importSource.reader === 'manual' && typed.battingCard.A[0].id === 'PLAYER_A' && typed.resultText === 'DYP WON BY 23 RUNS', 'the database: typed in, Jeeth on PLAYER_A, DYP won by 23 runs');
     check(await c.records.countDocuments({ leagueKey: FX.LEAGUE }) === 3, 'the tournament has three matches');
+    allErrors.push(...page.__errors);
+    await page.context().close();
+
+    // ------------------------------------------------------------------
+    section('read in the browser (no reader on the server; Tesseract stand-in)');
+    page = await newPage(browser, 'owner');
+    const OCR = [
+        ['DY Patil SA 110/1 (10.0 Ov)', 'Batters R B 4s 6s SR', 'Jeeth Kumar Suvarna (c) 40 34 4 1 117.65', 'c Rohit Shukla b Garv Jain', 'Harsh Rajesh Rane not out 70 26 6 2 269.23',
+            'Extras 0 (wd 0, nb 0, b 0, lb 0)', 'Total 110/1 (10.0 Ov)', 'Bowlers O M R W NB WD ECO', 'Garv Jain 5 0 50 1 0 0 10.00', 'Rohit Shukla 5 0 60 0 0 0 12.00'].join('\n'),
+        ['Parel SC 85/2 (10.0 Ov)', 'Batters R B 4s 6s SR', 'Rohit Shukla b Alim Shaikh 50 30 5 2 166.67', 'Garv Jain run out (Harsh Rane) 35 30 2 1 116.67',
+            'Extras 0 (wd 0, nb 0, b 0, lb 0)', 'Total 85/2 (10.0 Ov)', 'Bowlers O M R W NB WD ECO', 'Alim Shaikh 5 0 45 1 0 0 9.00', 'Jeeth Suvarna 5 0 40 0 0 0 8.00'].join('\n')
+    ];
+    await page.route('https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/**', (r) => r.fulfill({ contentType: 'application/javascript',
+        body: `window.__ocrCalls = 0; window.Tesseract = { recognize: function(img, lang, o){ var t = ${JSON.stringify(OCR)}[window.__ocrCalls++] || ''; if (o && o.logger) o.logger({ status: 'recognizing text', progress: 1 }); return Promise.resolve({ data: { text: t } }); } };` }));
+    await page.goto(base + '/import-scorecard?token=tokM', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#tSlot .tsel h3', { timeout: 15000 });
+    await page.fill('#mDate', '2026-10-11');
+    await page.check('#mConfirm');
+    await page.click('#abNext');
+    await page.waitForSelector('#readerBox [data-read="browser"]', { timeout: 10000 });
+    await pick(page, '[data-add="scorecard"][data-inn="1"]', [file('ocr1.png', 31)]);
+    await page.waitForFunction(() => document.querySelectorAll('#grid-scorecard-1 .ph[data-id]').length === 1, null, { timeout: 15000 });
+    await pick(page, '[data-add="scorecard"][data-inn="2"]', [file('ocr2.png', 32)]);
+    await page.waitForFunction(() => document.querySelectorAll('#grid-scorecard-2 .ph[data-id]').length === 1, null, { timeout: 15000 });
+    await page.click('[data-read="browser"]');
+    await page.waitForSelector('#teamCards .tcard[data-side] [data-choose]', { timeout: 20000 });
+    check(await page.evaluate(() => window.__ocrCalls) === 2, 'each photo read in the browser');
+    await page.click('.tcard[data-side="A"] [data-choose]');
+    await page.waitForSelector('#sheet.open .pick');
+    await page.locator('#sheetBody .pick', { hasText: 'DY PATIL SA' }).first().click();
+    await page.waitForSelector('.tcard[data-side="A"] [data-confirm]:not([disabled])', { timeout: 8000 });
+    await page.click('.tcard[data-side="A"] [data-confirm]');
+    // side B: a brand-new team, with a logo
+    await page.click('.tcard[data-side="B"] [data-new]');
+    await page.waitForSelector('.tcard[data-side="B"] [data-new-f="name"]', { timeout: 8000 });
+    await page.fill('.tcard[data-side="B"] [data-new-f="name"]', 'Parel Sporting Club');
+    await page.press('.tcard[data-side="B"] [data-new-f="name"]', 'Tab');
+    await page.waitForFunction(() => /already exists/.test((document.querySelector('.tcard[data-side="B"]') || {}).textContent || ''), null, { timeout: 8000 });
+    check(true, 'a new team with an existing team\'s name is refused');
+    await page.fill('.tcard[data-side="B"] [data-new-f="name"]', 'Navi Mumbai Lions');
+    await page.press('.tcard[data-side="B"] [data-new-f="name"]', 'Tab');
+    await page.waitForFunction(() => !/already exists/.test((document.querySelector('.tcard[data-side="B"]') || {}).textContent || ''), null, { timeout: 8000 });
+    const [lfc] = await Promise.all([page.waitForEvent('filechooser'), page.click('.tcard[data-side="B"] [data-logo="upload"]')]);
+    await lfc.setFiles([{ name: 'lions.png', mimeType: 'image/png', buffer: FX.png(41, 64, 64) }]);
+    await page.waitForFunction(() => { const i = document.querySelector('.tcard[data-side="B"] .tmain .logo img'); return i && /^data:image\//.test(i.getAttribute('src')); }, null, { timeout: 8000 });
+    check(/New team/.test(await txt(page, '.tcard[data-side="B"]')) && /Team ID made when saved/.test(await txt(page, '.tcard[data-side="B"]')), 'a new team: shown as new, with its logo, a team ID when saved');
+    check(await page.inputValue('.tcard[data-side="B"] [data-new-f="short"]') === 'NM', 'its short name follows the name (NM)');
+    await page.click('.tcard[data-side="B"] [data-confirm]');
+    await page.waitForFunction(() => { const b = document.querySelector('.tcard[data-side="B"] [data-confirm]'); return b && b.classList.contains('on'); }, null, { timeout: 8000 });
+    await page.click('#abNext');
+    await page.waitForSelector('#batTable tbody tr[data-key]:not([data-ghost])', { timeout: 10000 });
+    await page.waitForTimeout(300);
+    const ocrNames = await page.$$eval('#batTable tbody tr:not([data-ghost]) input.nm', x => x.map(i => i.value));
+    check(ocrNames.join() === 'Jeeth Suvarna,Harsh Rane' && await page.inputValue('#batTable tbody tr:first-child [data-f="dismissal"]') === 'c Rohit Shukla b Garv Jain', 'rows read from the OCR text, names first + last, dismissal kept');
+    check(await page.$$eval('#batTable tbody tr.lowc, #bowlTable tbody tr.lowc', x => x.length) === 4 && /Read in this browser/.test(await txt(page, '#scTop')), 'every row read this way is marked "hard to read — check it"');
+    check(await page.inputValue('[data-path="total.runs"]') === '110' && await page.inputValue('[data-path="total.overs"]') === '10.0' && /✓ matches the total/.test(await txt(page, '#sumBat')), 'the total and extras read too');
+    await page.click('#allChecked');
+    await page.waitForTimeout(300);
+    check(!(await page.$('#batTable tbody tr.lowc, #bowlTable tbody tr.lowc')), '"I have checked every row" clears the marks');
+    await shot(page, '12-browser-reader');
+    await page.waitForTimeout(1200);
+    const ocrDraft = await mem.collection('scorecardImports').findOne({ 'meta.date': '2026-10-11' });
+    check(ocrDraft && ocrDraft.read.scorecard.by === 'browser' && ocrDraft.innings[0].batting[0].confidence === 'high', 'the import remembers how it was read; checked rows saved as checked');
     allErrors.push(...page.__errors);
     await page.context().close();
 

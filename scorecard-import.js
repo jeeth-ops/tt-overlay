@@ -751,6 +751,9 @@ function createScorecardImport(deps) {
     }
 
     // ---- everything the page shows before saving ----
+    // a discrepancy without its "<team> innings: " label (the page may name the
+    // team differently for a moment)
+    const ackText = (m) => strCap(String(m || '').replace(/^[^:]{0,90}:\s*/, ''), 400);
     const lightPlan = (p) => Object.assign({}, p, { similar: (p.similar || []).map(s => Object.assign({}, s, { logoUrl: null, hasLogo: !!s.logoUrl })) });
     async function analyze(viewer, draftId, opts) {
         const draft = await draftFor(draftId);
@@ -808,7 +811,7 @@ function createScorecardImport(deps) {
 
         // acknowledgements
         const acks = (draft.decisions && draft.decisions.acknowledged) || {};
-        issues.forEach(i => { if (i.ack && acks[i.id]) i.acknowledged = acks[i.id]; });
+        issues.forEach(i => { const a = acks[i.id]; if (i.ack && a && (!a.message || ackText(a.message) === ackText(i.message))) i.acknowledged = a; });
         const blocking = issues.filter(i => i.level === 'error' && !(i.ack && i.acknowledged));
         const pendingWarnings = issues.filter(i => i.level === 'warning' && !i.acknowledged);
 
@@ -943,7 +946,9 @@ function createScorecardImport(deps) {
             const acknowledged = {};
             Object.keys(dz.acknowledged || {}).slice(0, 80).forEach(k => {
                 const a = dz.acknowledged[k] || {};
-                acknowledged[strCap(k, 120)] = { reason: strCap(a.reason, 200) || '', at: (d.decisions.acknowledged[k] && d.decisions.acknowledged[k].at) || now(), by: viewerEmail(viewer) };
+                // message: the discrepancy as it read when confirmed — a different
+                // one later (the figures changed) needs its own confirmation
+                acknowledged[strCap(k, 120)] = { reason: strCap(a.reason, 200) || '', message: strCap(a.message, 400) || null, at: (d.decisions.acknowledged[k] && d.decisions.acknowledged[k].at) || now(), by: viewerEmail(viewer) };
             });
             const r = dz.result;
             set.decisions = {

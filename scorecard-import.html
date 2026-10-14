@@ -89,7 +89,7 @@
   .stepper li[aria-current="step"] .dot{ background:var(--accent); color:var(--accent-contrast); transform:scale(1.06); }
   .stepper li.done{ color:var(--text-dim); }
   .stepper li.done .dot{ background:var(--accent); color:var(--accent-contrast); }
-  @media (max-width:760px){ .stepper li span.lbl{ display:none; } .stepper li[aria-current="step"] span.lbl{ display:inline; } .stepper{ grid-template-columns:repeat(6,auto); justify-content:space-between; } }
+  @media (max-width:760px){ .stepper li span.lbl{ display:none; } .stepper li[aria-current="step"] span.lbl{ display:inline; } .stepper{ grid-template-columns:repeat(6,auto); justify-content:space-between; gap:2px; } .stepper li{ padding:7px 6px; } .stepper li[aria-current="step"]{ padding-right:10px; } }
 
   /* ---------- view transitions ---------- */
   #view{ position:relative; }
@@ -370,6 +370,8 @@
     input.cell.w{ width:48px; }
     .who-top .pos{ width:16px; }
     .rolebtn{ min-width:22px; padding:0 4px; }
+    /* room for the name: captain / keeper are set from the row's ⋯ menu here */
+    .rolebtn:not(.on){ display:none; }
     input.dis{ margin-left:20px; width:calc(100% - 20px); }
     .src{ margin-left:22px; }
     td.calc{ min-width:40px; }
@@ -1793,10 +1795,12 @@ function teamCard(side) {
   const plan = S.analysis.teams.plan[side];
   const t = S.draft.teams[side] || {};
   const ch = t.choice || {};
-  const team = plan.team;
+  // a new team still without its name: the form, waiting for one
+  const naming = !plan.team && ch.mode === 'new';
+  const team = plan.team || (naming ? { name: ch.name || '', short: ch.short || '', color: ch.color || '', logoUrl: '', existing: false, saveTeam: ch.saveTeam !== false } : null);
   const err = plan.status === 'error';
   const confirmed = !!t.confirmed && !!team && !err;
-  const chip = confirmed ? `<span class="chip green">${IC.check} Confirmed</span>` : err ? `<span class="chip red">${IC.warn} Needs a fix</span>` : team ? `<span class="chip amber">Check and confirm</span>` : `<span class="chip amber">Choose the team</span>`;
+  const chip = confirmed ? `<span class="chip green">${IC.check} Confirmed</span>` : err ? `<span class="chip red">${IC.warn} Needs a fix</span>` : naming ? `<span class="chip amber">Name the new team</span>` : team ? `<span class="chip amber">Check and confirm</span>` : `<span class="chip amber">Choose the team</span>`;
   const opt = team && team.ref && S.teamOptions ? S.teamOptions.find(o => o.ref === team.ref) : null;
   const currentLogo = team && team.existing ? ((opt && opt.logoUrl) || '') : '';
   const lg = ch.logo || {};
@@ -1839,12 +1843,12 @@ function teamCard(side) {
     </div>
     ${logoMode === 'upload' && currentLogo ? `<label class="check ${lg.replaceConfirmed ? 'on' : ''}" style="margin-top:10px;padding:11px 12px"><input type="checkbox" data-replace-ok ${lg.replaceConfirmed ? 'checked' : ''}><span><b>Replace the current logo</b> in this tournament's team list.</span></label>` : ''}`;
   return `<article class="card tcard ${confirmed ? 'ok' : 'need'}" data-side="${side}" style="${/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(team.color || '') ? `--team:${team.color}` : ''}">${head}
-    <div class="tmain">${logoHtml(showTeam, '')}<div class="grow"><h3>${esc(team.name)}</h3><div class="ids">${team.short ? `<span class="chip">${esc(team.short)}</span>` : ''}${ids.join('')}</div></div></div>
+    <div class="tmain">${logoHtml(showTeam, '')}<div class="grow"><h3>${esc(team.name || 'New team')}</h3><div class="ids">${team.short ? `<span class="chip">${esc(team.short)}</span>` : ''}${ids.join('')}</div></div></div>
     ${err && plan.message ? `<div class="notice red">${IC.warn}<div>${esc(plan.message)}</div></div>` : ''}
     <div class="tactions"><button class="btn secondary tiny" type="button" data-choose>${team.existing ? 'Choose another team' : 'Use an existing team'}</button>${ch.mode !== 'new' ? `<button class="btn ghost tiny" type="button" data-new>Create a new team instead</button>` : ''}</div>
     ${newForm}
     ${logoBlock}
-    <button class="btn ${confirmed ? 'primary on' : 'primary'} confirm-btn" type="button" data-confirm ${err ? 'disabled' : ''}>${confirmed ? `${IC.check} Confirmed — tap to undo` : `Confirm ${esc(team.name)}`}</button>
+    <button class="btn ${confirmed ? 'primary on' : 'primary'} confirm-btn" type="button" data-confirm ${err || naming ? 'disabled' : ''}>${confirmed ? `${IC.check} Confirmed — tap to undo` : naming ? 'Enter the team\'s name' : `Confirm ${esc(team.name)}`}</button>
   </article>`;
 }
 function teamChoice(side) {
@@ -1868,12 +1872,16 @@ function wireTeams() {
     q('[data-new]').forEach(b => b.onclick = () => {
       const plan = S.analysis.teams.plan[side];
       const name = plan.printed || '';
-      setTeam(side, { mode: 'new', ref: null, name, short: initials(name).slice(0, 4), color: '#22c55e', saveTeam: true, logo: { mode: 'none', dataUrl: null, replaceConfirmed: false } });
+      setTeam(side, { mode: 'new', ref: null, name, short: name ? initials(name).slice(0, 4) : '', color: '#22c55e', saveTeam: true, logo: { mode: 'none', dataUrl: null, replaceConfirmed: false } });
     });
     q('[data-pick-ref]').forEach(b => b.onclick = () => setTeam(side, { mode: 'existing', ref: b.dataset.pickRef, name: null, logo: { mode: 'keep', dataUrl: null, replaceConfirmed: false } }));
     q('[data-new-f]').forEach(inp => inp.onchange = () => {
       const f = inp.dataset.newF;
-      setTeam(side, { [f]: f === 'saveTeam' ? inp.checked : (f === 'short' ? inp.value.toUpperCase().slice(0, 6) : inp.value) });
+      const patch = { [f]: f === 'saveTeam' ? inp.checked : (f === 'short' ? inp.value.toUpperCase().slice(0, 6) : inp.value) };
+      // the short name follows the name until it is typed in itself
+      const ch = teamChoice(side).choice;
+      if (f === 'name' && (!ch.short || ch.short === initials(ch.name || '').slice(0, 4))) patch.short = initials(inp.value).slice(0, 4);
+      setTeam(side, patch);
     });
     q('[data-logo]').forEach(b => b.onclick = () => {
       const k = b.dataset.logo;
@@ -1985,7 +1993,10 @@ function matchModel() {
     result: { override: !!(S.draft.decisions.result && S.draft.decisions.result.winner) }
   };
 }
-const acked = (x) => !!(x.ack && S.draft.decisions.acknowledged[x.id]);
+// a confirmation counts for the discrepancy it was given for (same figures)
+const ackText = (m) => String(m || '').replace(/^[^:]{0,90}:\s*/, '').replace(/\s+/g, ' ').trim();
+const ackFor = (x) => { const a = x && x.ack ? S.draft.decisions.acknowledged[x.id] : null; return a && (!a.message || ackText(a.message) === ackText(x.message)) ? a : null; };
+const acked = (x) => !!ackFor(x);
 // the page's own result checks (the server checks the same before saving)
 function resultIssues(auto) {
   const ov = S.draft.decisions.result;
@@ -2240,8 +2251,8 @@ function applyHighlights() {
   });
 }
 function issueHtml(x) {
-  const ack = S.draft.decisions.acknowledged[x.id];
-  const isAck = x.ack && !!ack && x.level === 'error';
+  const ack = ackFor(x);
+  const isAck = !!ack && x.level === 'error';
   const cls = isAck ? 'acked' : x.level;
   const icon = isAck ? IC.check : x.level === 'error' ? IC.warn : IC.info;
   const acts = [];
@@ -2431,7 +2442,7 @@ async function acknowledge(id) {
   if (!x) return;
   const reason = await askText('The scorecard itself says this', `“${x.message}” — it is saved exactly as on the scorecard, with your reason on record.`, 'Reason', 'As printed on the scorecard', 'Confirm');
   if (!reason) return;
-  S.draft.decisions.acknowledged[id] = { reason };
+  S.draft.decisions.acknowledged[id] = { reason, message: x.message };
   markDirty('decisions', 0);
   validateNow();
 }
@@ -2444,7 +2455,7 @@ function rowMenu(kind, key) {
     <button type="button" data-m="up" ${i === 0 ? 'disabled' : ''}>${IC.up} Move up</button>
     <button type="button" data-m="down" ${i === rows.length - 1 ? 'disabled' : ''}>${IC.down} Move down</button>
     ${lowRow(r) || (r.unclear || []).length ? `<button type="button" data-m="checked">${IC.check} Checked — it matches the photo</button>` : ''}
-    ${kind === 'bat' ? `<button type="button" data-m="dnb">${IC.person} Did not bat — move to that list</button>` : ''}
+    ${kind === 'bat' ? `<button type="button" data-m="captain">${IC.person} ${r.captain ? 'Not the captain' : 'Captain'}</button><button type="button" data-m="wk">${IC.person} ${r.wk ? 'Not the wicket-keeper' : 'Wicket-keeper'}</button><button type="button" data-m="dnb">${IC.person} Did not bat — move to that list</button>` : ''}
     <button type="button" data-m="delete" class="danger">${IC.trash} Delete this row</button>
   </div>`);
   $('sheetBody').querySelectorAll('[data-m]').forEach(b => b.onclick = () => {
@@ -2452,6 +2463,7 @@ function rowMenu(kind, key) {
     closeSheet();
     if (m === 'up' || m === 'down') { const j = m === 'up' ? i - 1 : i + 1; [rows[i], rows[j]] = [rows[j], rows[i]]; }
     else if (m === 'checked') { r.confidence = 'high'; r.unclear = []; }
+    else if (m === 'captain' || m === 'wk') { const on = !r[m]; if (on) rows.forEach(x => { x[m] = false; }); r[m] = on; }
     else if (m === 'dnb') { rows.splice(i, 1); if (r.name && !curInn().didNotBat.some(n => norm(n) === norm(r.name))) curInn().didNotBat.push(r.name); }
     else if (m === 'delete') rows.splice(i, 1);
     markDirty('innings');
@@ -2812,7 +2824,7 @@ function paintReview() {
     const i = a.issues.find(x => x.id === b.dataset.ackReview);
     const reason = await askText(i.id === 'duplicate-match' ? 'A different match?' : 'The scorecard says this', i.message, 'Reason (kept on record)', i.id === 'duplicate-match' ? 'Different match — the two teams played twice that day' : 'As printed on the scorecard', 'Confirm');
     if (!reason) return;
-    S.draft.decisions.acknowledged[i.id] = { reason };
+    S.draft.decisions.acknowledged[i.id] = { reason, message: i.message };
     markDirty('decisions', 0);
     refreshReview();
   });
