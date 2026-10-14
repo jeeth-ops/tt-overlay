@@ -169,6 +169,25 @@ async function seed(c) {
     }
 
     // ---------------------------------------------------------------
+    section('Undo the player changes of the finished merge (over HTTP)');
+    {
+        const url = '/api/tournament-merge/ops/' + opId + '/undo-players';
+        check((await req('POST', url, {}, null)).status === 401 && (await req('POST', url, {}, 'tok-other')).status === 403 && (await req('POST', url, {}, 'tok-vinit')).status === 403, 'no sign-in → 401; any other account → 403');
+        const h = await req('GET', '/api/tournament-merge/history', null, 'tok-work');
+        check(h.json.merges.find(m => m.opId === opId).canUndoPlayers === true, 'history offers it (Jeeth was made one player)');
+        const u = await req('POST', url, {}, 'tok-work');
+        check(u.status === 200 && u.json.op.playersUndo.state === 'done' && u.json.op.canUndoPlayers === false, 'undone → 200');
+        const m = await req('GET', '/api/public/tournament/tokD/match/m-s1');
+        check(m.status === 200 && JSON.stringify(m.json.match).includes('PLAYER_B'), 'the moved match has its own player ID back, still under the destination');
+        const pub = await req('GET', '/api/public/tournament/tokD');
+        check(pub.status === 200 && pub.json.matches.length === 4, 'the destination keeps every match');
+        const again = await req('POST', url, {}, 'tok-work');
+        check(again.status === 200 && again.json.op.playersUndo.state === 'done', 'a second press changes nothing');
+        const audit = await c.audits.find({ action: 'Tournament merge player changes undone' }).toArray();
+        check(audit.length === 1 && audit[0].performedBy === 'workallsportslive@gmail.com', 'one audit-log entry');
+    }
+
+    // ---------------------------------------------------------------
     section('A private destination stays private');
     {
         const body = { source: { ownerUid: O, leagueKey: 'private b' }, dest: { ownerUid: O, leagueKey: 'private a' } };

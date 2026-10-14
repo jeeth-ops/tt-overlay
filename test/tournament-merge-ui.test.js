@@ -254,6 +254,22 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
         const hist = await page.textContent('#sheet .history-item');
         check(/Summer Cup 2026 B/.test(hist) && /completed/.test(hist), 'history sheet lists the merge');
         await page.screenshot({ path: path.join(OUT, 'merge-6-history.png') });
+        check(/undo player changes/.test(hist), 'history: the merge offers to undo its player changes');
+
+        // a wrong "same player" choice: undo the player changes from history
+        await page.click('#sheet .history-item');
+        await page.waitForSelector('#undoPlayersBox [data-act="undo-players"]');
+        check(/Jeeth/.test(await page.textContent('#undoPlayersBox')), 'the result screen lists the players that were made one');
+        await page.screenshot({ path: path.join(OUT, 'merge-7-undo-offer.png'), fullPage: true });
+        let asked = '';
+        page.once('dialog', (d) => { asked = d.message(); d.accept(); });
+        await page.click('#undoPlayersBox [data-act="undo-players"]');
+        await page.waitForSelector('.result .notice.green', { timeout: 8000 });
+        check(/matches stay merged/.test(asked), 'asks first (the matches stay merged)');
+        check(/Player changes undone/.test(await page.textContent('.result .notice.green')) && !(await page.$('#undoPlayersBox')), 'result: "Player changes undone", button gone');
+        const s1b = await c.records.findOne({ matchId: 'm-s1' });
+        check(s1b.leagueKey === 'summer cup 2026' && JSON.stringify(s1b).includes('PLAYER_B'), 'database: the moved match has its own player ID back, still in Summer Cup 2026');
+        await page.screenshot({ path: path.join(OUT, 'merge-8-undone.png'), fullPage: true });
         check(!errors.length, 'no script errors (' + errors.join('; ') + ')');
         await ctx.close();
     }
