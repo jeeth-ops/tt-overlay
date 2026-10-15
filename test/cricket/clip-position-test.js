@@ -79,9 +79,9 @@ function wicket(P, o){
   if(o.who) click(P, `[data-wd-who="${o.who}"]`);
   if(o.fielder) P.E(`wdSetFielder(${JSON.stringify(o.fielder)}); renderWicketDetails();`);
   if(o.runs != null) click(P, `[data-wd-runs="${o.runs}"]`);
-  if(!P.w.document.querySelector('#wd-sec-newbat').hidden) change(P, '#wd-newbat-select', 'pC');
-  if(!P.w.document.querySelector('#wd-sec-strike').hidden) click(P, `[data-wd-strike="${P.E('wdPredictNewOnStrike()') ? 'new' : 'survivor'}"]`);
   click(P, '#wd-confirm');
+  // recorded — then the New Batsman screen (who faces next: the Laws' answer)
+  if(P.w.document.querySelector('#newbat-modal-overlay').classList.contains('show')){ change(P, '#newbat-modal-select', 'pC'); click(P, '#newbat-modal-submit'); }
 }
 // what happens after the ball: the over ends → next bowler; strike changes
 function moveOn(P){ P.E(`try{ closeNewOverModal(); }catch(e){} if(state.score.balls === 0){ setLiveBowler('Bowler Two', 'b2'); } renderPanel();`); }

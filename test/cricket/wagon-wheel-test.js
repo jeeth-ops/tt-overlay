@@ -185,10 +185,15 @@ async function panelSuite(file, label){
   const sel2 = P.$('#newbat-modal-select'); sel2.value = 'a6'; sel2.dispatchEvent(new P.w.Event('change', { bubbles: true }));
   eq(L('HAND 8: a batter already known as a left-hander is pre-selected Left'), handOn('newbat-modal-hand'), 'L');
   P.E('closeNewBatsmanModal()');
-  // the Wicket Details screen
-  eq(L('HAND 9: Wicket Details asks the incoming batter\'s hand'), !!P.$('#wd-sec-newbat #wd-newbat-hand'), true);
-  P.E(`wdState = { newHand: 'L' }; wdSeatNewBatsmanAndStrike('Ishan', { name: 'Piyush', id: 'a7' }, false); wdState = null;`);
-  eq(L('HAND 10: confirming the wicket stores the new batter\'s hand'), P.J(`state.batHand['a7']`), 'L');
+  // a real wicket: CONFIRM WICKET, then the New Batsman screen
+  P.E('openWicketModal()');
+  click(P, '#wd-types [data-wd-type="Bowled"]');
+  click(P, '#wd-confirm');
+  eq(L('HAND 9: after CONFIRM WICKET the New Batsman screen asks the incoming batter\'s hand'), [P.$('#newbat-modal-overlay').classList.contains('show'), !!P.$('#newbat-modal-hand'), handOn('newbat-modal-hand')], [true, true, 'R']);
+  const sel3 = P.$('#newbat-modal-select'); sel3.value = 'a7'; sel3.dispatchEvent(new P.w.Event('change', { bubbles: true }));
+  click(P, '#newbat-modal-hand [data-bh="L"]');
+  click(P, '#newbat-modal-submit');
+  eq(L('HAND 10: sent in after the wicket, the new batter\'s hand is stored'), P.J(`state.batHand['a7']`), 'L');
   eq(L('HAND 11: the squad carries it to the next match'), P.J(`squadSnapshotOf(state.teamA).players.filter(p => p.hand === 'L').map(p => p.id).sort()`), ['a0', 'a1', 'a5', 'a6', 'a7']);
 
   eq(L('no script errors'), P.errors, []);
