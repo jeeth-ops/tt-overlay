@@ -87,12 +87,16 @@ function wicket(P, o){
     P.$('#wd-runs-custom').dispatchEvent(new P.w.Event('input', { bubbles: true }));
   } else if(o.runs != null) click(P, `[data-wd-runs="${o.runs}"]`);
   if(o.fielder) P.E(`(() => { const s = document.getElementById('wd-fielder-select'); if(![...s.options].some(x => x.value === '${o.fielder}')){ const op = document.createElement('option'); op.value = '${o.fielder}'; s.appendChild(op); } s.value = '${o.fielder}'; s.dispatchEvent(new Event('change')); })()`);
-  if(o.newBat){ P.$('#wd-newbat-select').value = o.newBat; P.$('#wd-newbat-select').dispatchEvent(new P.w.Event('change', { bubbles: true })); }
-  // "Which batter is on strike for the next ball?" is always asked — answer
-  // it as given, or with what the Laws say (the hint on screen).
-  if(o.next) click(P, `[data-wd-strike="${o.next}"]`);
-  else if(!P.$('#wd-sec-strike').hidden) click(P, `[data-wd-strike="${P.E('wdPredictNewOnStrike()') ? 'new' : 'survivor'}"]`);
-  if(o.confirm !== false) click(P, '#wd-confirm');
+  if(o.confirm !== false){
+    click(P, '#wd-confirm');
+    // Recorded — then the New Batsman screen: o.newBat in, and who faces the
+    // next ball as given (else the Laws' pre-selected answer).
+    if(P.$('#newbat-modal-overlay').classList.contains('show')){
+      if(o.next) click(P, `[data-nb-strike="${o.next}"]`);
+      if(o.newBat){ P.$('#newbat-modal-select').value = o.newBat; P.$('#newbat-modal-select').dispatchEvent(new P.w.Event('change', { bubbles: true })); }
+      click(P, '#newbat-modal-submit');
+    }
+  }
 }
 const legalBalls = (P) => P.E('state.score.overs * 6 + state.score.balls');
 const lastLog = (P) => P.J('state.ballLog[state.ballLog.length - 1]');
@@ -163,11 +167,12 @@ async function panelSuite(file, label){
   P.E(`state.dismissedThisInnings = { A: ['a4'], B: [] }`);
   P.E('openWicketModal()');
   click(P, '[data-wd-type="Bowled"]');
-  const opts = [...P.$('#wd-newbat-select').options].map(o => o.value).filter(Boolean);
-  eq(L('17 new batsman list: never someone already out or at the crease'), opts, ['a3', 'a5']);
-  P.$('#wd-newbat-select').value = 'a5'; P.$('#wd-newbat-select').dispatchEvent(new P.w.Event('change', { bubbles: true }));
-  click(P, '[data-wd-strike="new"]');
   click(P, '#wd-confirm');
+  const opts = [...P.$('#newbat-modal-select').options].map(o => o.value).filter(Boolean);
+  eq(L('17 new batsman list: never someone already out or at the crease'), opts, ['a3', 'a5']);
+  P.$('#newbat-modal-select').value = 'a5'; P.$('#newbat-modal-select').dispatchEvent(new P.w.Event('change', { bubbles: true }));
+  click(P, '[data-nb-strike="new"]');
+  click(P, '#newbat-modal-submit');
   eq(L('17 new batsman seated at the vacant end'), P.J('[state.striker.name, state.nonStriker.name]'), ['Hardik', 'Ishan']);
   newMatch(P);
   wicket(P, { type: 'Bowled', newBat: 'a3', next: 'survivor' });

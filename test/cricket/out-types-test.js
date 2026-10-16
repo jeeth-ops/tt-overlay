@@ -69,7 +69,15 @@ function newMatch(P, opts){
 }
 const lastDb = (P) => { const e = P.emits.filter(x => x.ev === 'logBall').slice(-1)[0]; return e ? e.payload : null; };
 const legal = (P) => P.E('state.score.overs * 6 + state.score.balls');
-// Pick an out type and, if asked, the rest — always answering the strike question.
+// Pick an out type and, if asked, the rest; CONFIRM WICKET; then the New
+// Batsman screen (o.newBat in; o.next = the scorer's own answer to "who faces
+// the next ball?", else the Laws' pre-selected one).
+function newBatsman(P, o){
+  if(!P.$('#newbat-modal-overlay').classList.contains('show')) return;
+  if(o.next) click(P, `[data-nb-strike="${o.next}"]`);
+  if(o.newBat) change(P, '#newbat-modal-select', o.newBat);
+  click(P, '#newbat-modal-submit');
+}
 function out(P, o){
   P.E('openWicketModal()');
   clickType(P, o.type);
@@ -79,9 +87,7 @@ function out(P, o){
   if(o.who) click(P, `[data-wd-who="${o.who}"]`);
   if(o.pick) change(P, '#wd-who-select', o.pick);
   if(o.runs != null) click(P, `[data-wd-runs="${o.runs}"]`);
-  if(o.newBat && !P.$('#wd-sec-newbat').hidden) change(P, '#wd-newbat-select', o.newBat);
-  if(!P.$('#wd-sec-strike').hidden) click(P, `[data-wd-strike="${o.next || (P.E('wdPredictNewOnStrike()') ? 'new' : 'survivor')}"]`);
-  if(o.confirm !== false) click(P, '#wd-confirm');
+  if(o.confirm !== false){ click(P, '#wd-confirm'); newBatsman(P, o); }
 }
 
 const fixtures = {};
@@ -105,15 +111,15 @@ async function panelSuite(file, label){
     ['Run Out', 'Retired Hurt', 'Run Out (Mankaded)', 'Absent Hurt', 'Retired Out', 'Hit the Ball Twice', 'Obstructing the Field', 'Timed Out', 'Retired']);
   click(P, '#wd-cancel');
 
-  console.log('\n=== Strike question after every wicket ===');
+  console.log('\n=== Who faces next: asked after the wicket is recorded, pre-selected by the Laws ===');
   newMatch(P);
-  out(P, { type: 'Bowled', newBat: 'a3', confirm: false });
-  P.E(`wdState.nextStriker = null; renderWicketDetails();`);
-  eq(L('Confirm stays blocked until "who is on strike?" is answered'), [P.$('#wd-confirm').disabled, P.text('#wd-preview'), P.$('#wd-sec-strike').hidden], [true, 'Who is on strike for the next ball? — choose one.', false]);
-  eq(L('nothing is chosen for the scorer — both answers offered'), [...P.w.document.querySelectorAll('#wd-strike .wd-chip.on')].length, 0);
-  click(P, '[data-wd-strike="survivor"]');
+  out(P, { type: 'Bowled', confirm: false });
+  eq(L('Wicket Details asks nothing about the next batter — Confirm is open'), [P.$('#wd-confirm').disabled, !!P.$('#wd-sec-strike'), !!P.$('#wd-sec-newbat')], [false, false, false]);
   click(P, '#wd-confirm');
-  eq(L('the answer is what happens: Ishan faces, Surya at the other end'), P.J('[state.striker.name, state.nonStriker.name, state.score.wickets]'), ['Ishan', 'Surya', 1]);
+  eq(L('the wicket is recorded first, then the New Batsman screen'), [P.J('state.score.wickets'), P.$('#newbat-modal-overlay').classList.contains('show')], [1, true]);
+  eq(L('who faces: the new batter pre-selected (the striker\'s end is the empty one), both answers offered'), [[...P.w.document.querySelectorAll('#newbat-strike .wd-chip.on')].map(b => b.dataset.nbStrike), P.w.document.querySelectorAll('#newbat-strike [data-nb-strike]').length], [['new'], 2]);
+  newBatsman(P, { newBat: 'a3', next: 'survivor' });
+  eq(L('the scorer\'s answer is what happens: Ishan faces, Surya at the other end'), P.J('[state.striker.name, state.nonStriker.name, state.score.wickets]'), ['Ishan', 'Surya', 1]);
 
   console.log('\n=== Who is out: striker by default, non-striker on a tap ===');
   newMatch(P);
@@ -131,8 +137,8 @@ async function panelSuite(file, label){
     if(type === 'Caught') P.E(`wdSetFielder('f1'); renderWicketDetails();`);
     eq(L(`${type}: the non-striker can be chosen — hint says they were facing`), [P.$('[data-wd-who="nonStriker"]').classList.contains('on'), /recorded as on strike/.test(P.text('#wd-who-label'))], [true, true]);
     eq(L(`${type}: the strike question predicts the new batter faces (the striker's end is the empty one)`), P.E('wdPredictNewOnStrike()'), true);
-    if(!P.$('#wd-sec-strike').hidden) click(P, '[data-wd-strike="new"]');
     click(P, '#wd-confirm');
+    newBatsman(P, { newBat: 'a3' });
     const r = P.J(`(() => { const c = state.battingCard.A; const g = n => c.find(b => b.name === n) || {};
       return [g('Ishan').howOut || '', g('Ishan').balls, g('Rohit').howOut || 'not out', state.nonStriker.name === 'Rohit' ? state.nonStriker.balls : -1, state.striker.name, state.nonStriker.name, state.score.wickets, state.bowler.wickets, state.ballLog.slice(-1)[0].strikerId || state.ballLog.slice(-1)[0].striker]; })()`);
     eq(L(`${type}: Ishan (the non-striker) is out, his ball faced; Rohit not out, Surya in and facing`), [r[0] !== '' && r[0] !== 'not out', r[1], r[2], r[3], r[4], r[5], r[6], r[7]],
@@ -215,12 +221,12 @@ async function panelSuite(file, label){
   P.E('openWicketModal()'); clickType(P, 'Timed Out');
   eq(L('Timed Out: the incoming batter is picked from the list'), [...P.$('#wd-who-select').options].map(o => o.value).filter(Boolean), ['p:a3', 'p:a4', 'p:a5']);
   change(P, '#wd-who-select', 'p:a4');
-  eq(L('Timed Out of a batter not yet in: nobody at the crease changes — no new batsman, no strike question'), [P.$('#wd-sec-newbat').hidden, P.$('#wd-sec-strike').hidden], [true, true]);
   click(P, '#wd-confirm');
+  eq(L('Timed Out of a batter not yet in: nobody at the crease changes — no New Batsman screen'), P.$('#newbat-modal-overlay').classList.contains('show'), false);
   eq(L('Timed Out: a wicket, no ball, crease unchanged'), P.J(`[state.score.wickets, state.score.balls, state.battingCard.A.map(b => [b.name, b.howOut]), state.striker.name, state.nonStriker.name]`), [1, 0, [['Tilak', 'timed out']], 'Rohit', 'Ishan']);
-  P.E('openWicketModal()'); clickType(P, 'Bowled');
-  eq(L('a timed-out batter can no longer come in'), [...P.$('#wd-newbat-select').options].map(o => o.value).filter(Boolean), ['a3', 'a5']);
-  click(P, '#wd-cancel');
+  out(P, { type: 'Bowled', confirm: false }); click(P, '#wd-confirm');
+  eq(L('a timed-out batter can no longer come in'), [...P.$('#newbat-modal-select').options].map(o => o.value).filter(Boolean), ['a3', 'a5']);
+  click(P, '#newbat-modal-cancel');
   newMatch(P, { fresh: true });
   out(P, { type: 'Timed Out', pick: 'crease:striker', newBat: 'a3', next: 'new' });
   eq(L('Timed Out of the batter just in: that end is filled again'), P.J(`[state.score.wickets, state.battingCard.A[0].name, state.striker.name, state.nonStriker.name]`), [1, 'Rohit', 'Surya', 'Ishan']);

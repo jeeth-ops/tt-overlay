@@ -77,12 +77,13 @@ const metaCalls = (P) => P.calls.filter(c => /\/clip-meta$/.test(c.url));
 const classifyCalls = (P) => P.calls.filter(c => /\/api\/clips\/classify$/.test(c.url));
 const lastLog = (P) => JSON.parse(P.E('JSON.stringify(state.ballLog[state.ballLog.length-1])'));
 const lastDbRow = (P) => JSON.parse(P.E('JSON.stringify(ballOutbox[ballOutbox.length-1])'));
-// The Wicket Details screen always asks who faces next — answer with the Laws' suggestion.
-const answerStrike = (P) => { if(!P.w.document.querySelector('#wd-sec-strike').hidden) click(P, `[data-wd-strike="${P.E('wdPredictNewOnStrike()') ? 'new' : 'survivor'}"]`); };
+// Who faces next is asked on the New Batsman screen after CONFIRM WICKET,
+// pre-selected by the Laws — nothing to answer on Wicket Details any more.
+const answerStrike = () => {};
 const click = (P, sel) => P.w.document.querySelector(sel).dispatchEvent(new P.w.Event('click', { bubbles: true }));
 // "Then the match moves on": new batsman in, next over's bowler named.
 function moveOn(P){
-  P.E(`sendInNewBatsman('Player C', 'pC'); state.bowler = { name:'Bowler Two', id:'b2', overs:0, balls:0, maidens:0, runs:0, wickets:0, runsThisOver:0, wicketsThisOver:0 };`);
+  P.E(`closeNewBatsmanModal(); sendInNewBatsman('Player C', 'pC'); state.bowler = { name:'Bowler Two', id:'b2', overs:0, balls:0, maidens:0, runs:0, wickets:0, runsThisOver:0, wicketsThisOver:0 };`);
 }
 
 async function runOutLastBall(P, who, runsCompleted){

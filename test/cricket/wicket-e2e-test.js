@@ -71,13 +71,15 @@ function out(P, o){
   if(o.who) click(P, `[data-wd-who="${o.who}"]`);
   if(o.fielder) P.E(`wdSetFielder(${JSON.stringify(o.fielder)}); renderWicketDetails();`);
   if(o.runs != null) click(P, `[data-wd-runs="${o.runs}"]`);
-  if(!P.$('#wd-sec-newbat').hidden){
-    const next = [...P.$('#wd-newbat-select').options].map(x => x.value).filter(Boolean)[0];
-    change(P, '#wd-newbat-select', next);
-  }
-  if(!P.$('#wd-sec-strike').hidden) click(P, `[data-wd-strike="${P.E('wdPredictNewOnStrike()') ? 'new' : 'survivor'}"]`);
   const blocked = P.$('#wd-confirm').disabled ? P.text('#wd-preview') : '';
   click(P, '#wd-confirm');
+  // Recorded — then the New Batsman screen: the next batter in, who faces
+  // next left at the Laws' pre-selected answer.
+  if(P.$('#newbat-modal-overlay').classList.contains('show')){
+    const next = [...P.$('#newbat-modal-select').options].map(x => x.value).filter(Boolean)[0];
+    if(next) change(P, '#newbat-modal-select', next);
+    click(P, '#newbat-modal-submit');
+  }
   nextOverIfDue(P);
   return blocked;
 }

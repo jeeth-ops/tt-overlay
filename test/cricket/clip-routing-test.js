@@ -90,9 +90,9 @@ function wicket(P, o){
   if(o.who) click(P, `[data-wd-who="${o.who}"]`);
   if(o.fielder) P.E(`wdSetFielder(${JSON.stringify(o.fielder)}); renderWicketDetails();`);
   if(o.runs != null) click(P, `[data-wd-runs="${o.runs}"]`);
-  if(!P.w.document.querySelector('#wd-sec-newbat').hidden) change(P, '#wd-newbat-select', o.newBat || 'pC');
-  if(!P.w.document.querySelector('#wd-sec-strike').hidden) click(P, `[data-wd-strike="${P.E('wdPredictNewOnStrike()') ? 'new' : 'survivor'}"]`);
   click(P, '#wd-confirm');
+  // recorded — then the New Batsman screen (who faces next: the Laws' answer)
+  if(P.w.document.querySelector('#newbat-modal-overlay').classList.contains('show')){ change(P, '#newbat-modal-select', o.newBat || 'pC'); click(P, '#newbat-modal-submit'); }
 }
 function extra(P, o){
   P.E(`openExtrasModal(${JSON.stringify(o.kind)})`);

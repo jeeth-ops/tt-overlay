@@ -61,7 +61,7 @@ function makeServer(){
   const ownerUidFrom = (req) => req.query.uid || null;
   const store = lockStore();
   const api = new Function('app', 'io', 'crypto', 'safeMatchId', 'requireAuthorizedCreator', 'requireOwner', 'ownerUidFrom', 'matchRecordsCollection', 'logAuditAction', 'STORE',
-    'let matchLocksCollection = STORE; let matchLockSecret = "test-secret-for-match-locks-0123456789";\n' + LOCK_BLOCK +
+    'let matchLocksCollection = STORE; let matchLockSecret = "test-secret-for-match-locks-0123456789"; const whenMongoReady = async () => {};\n' + LOCK_BLOCK +
     '\nreturn { cacheMatchLock, genMatchLockCode, normMatchLockCode, matchLockHmac, getMatchLock, matchLockForRecord, lockTokenMatches, lockTargetRoomId, MATCH_LOCKED_EVENTS, matchLockCache, decryptLockCode, matchLockTries,' +
     ' dbDown: (on) => { matchLocksCollection = on ? { findOne: async () => { throw new Error("db down"); } } : STORE; } };')(
     app, io, crypto, new Function('return ' + H.grab('safeMatchId'))(), requireAuthorizedCreator, requireOwner, ownerUidFrom, records,
@@ -89,8 +89,8 @@ function makeServer(){
     const sock = { data: {}, h: {}, mw: [], out: [], delivered: [],
       on(ev, fn){ this.h[ev] = fn; }, use(fn){ this.mw.push(fn); }, emit(ev, d){ this.out.push({ ev, d }); } };
     const query = { room, lockToken };
-    new Function('socket', 'query', 'cleanQueryRoom', 'cleanQueryUid', 'clientId', 'safeMatchId', 'getMatchLock', 'lockTokenMatches', 'lockTargetRoomId', 'MATCH_LOCKED_EVENTS', 'matchLocksCollection', SOCKET_GATE)(
-      sock, query, room, '', 'cid', new Function('return ' + H.grab('safeMatchId'))(), api.getMatchLock, api.lockTokenMatches, api.lockTargetRoomId, api.MATCH_LOCKED_EVENTS, store);
+    new Function('socket', 'query', 'cleanQueryRoom', 'cleanQueryUid', 'clientId', 'safeMatchId', 'getMatchLock', 'lockTokenMatches', 'lockTargetRoomId', 'MATCH_LOCKED_EVENTS', 'matchLocksCollection', 'mongoInitDone', 'whenMongoReady', SOCKET_GATE)(
+      sock, query, room, '', 'cid', new Function('return ' + H.grab('safeMatchId'))(), api.getMatchLock, api.lockTokenMatches, api.lockTargetRoomId, api.MATCH_LOCKED_EVENTS, store, true, async () => {});
     // a client event: through the middleware, then "the handler" (recorded)
     sock.send = (ev, data) => new Promise((resolve) => {
       let acked = null;

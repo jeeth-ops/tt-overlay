@@ -342,18 +342,65 @@
     background:linear-gradient(135deg,#ffd75a,#f0b429); box-shadow:0 0 0 2px rgba(240,180,41,.35), 0 0 14px rgba(240,180,41,.45);
   }
   /* 🏁 Final result — shown in place of the live segments once the match is
-     decided. With a Super Over, the main line is the decision and the line
-     under it keeps the regulation totals and the Super Over scores. */
-  #result-seg{ flex:1 1 auto; display:none; flex-direction:column; align-items:center; justify-content:center; gap:5px; padding:0 24px; text-align:center; min-width:0; }
-  #result-seg .res-main{ font-family:var(--font-num); font-weight:900; font-size:min(2.15vw,25px); letter-spacing:.6px; color:#0b3d91; line-height:1.1; text-transform:uppercase; }
-  #result-seg .res-sub{ font-size:min(1.15vw,13.5px); font-weight:700; color:var(--ink-dim); letter-spacing:.2px; line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+     decided (and, for a tie a Super Over will settle, "MATCH TIED · SUPER
+     OVER TO FOLLOW", which is not a result). A badge in the winner's colour,
+     a small kicker, the result itself in the event font as the biggest thing
+     in the white panel, a rule in the winner's colour and the totals under
+     it. With a Super Over, the main line is the decision and the line under
+     it keeps the regulation totals and the Super Over scores. Every size is
+     multiplied by --es, which fitEndStrip (script) lowers just enough for a
+     long team name to fit the panel instead of clipping. */
+  #result-seg{
+    flex:1 1 auto; display:none; flex-direction:row; align-items:center; justify-content:center;
+    gap:calc(18px * var(--es, 1)); padding:7px calc(26px * var(--es, 1)); min-width:0;
+    --res-accent:#0b3d91; --res-accent-ink:#ffffff; --res-accent-text:#0b3d91; --res-tint:rgba(11,61,145,.07);
+  }
+  #result-seg::after{
+    content:''; position:absolute; inset:0; pointer-events:none;
+    background:linear-gradient(90deg, var(--res-tint), rgba(255,255,255,0) 62%);
+  }
+  #result-seg .res-badge{
+    flex:none; position:relative; z-index:1;
+    width:calc(min(4.4vw,58px) * var(--es, 1)); height:calc(min(4.4vw,58px) * var(--es, 1)); border-radius:50%;
+    display:flex; align-items:center; justify-content:center; color:var(--res-accent-ink);
+    background:radial-gradient(circle at 34% 28%, rgba(255,255,255,.38), rgba(255,255,255,0) 58%), var(--res-accent);
+    box-shadow:0 0 0 3px #fff, 0 0 0 5px var(--res-accent), 0 6px 14px rgba(16,25,58,.22);
+  }
+  #result-seg .res-badge svg{ width:54%; height:54%; display:block; }
+  #result-seg .res-body{
+    position:relative; z-index:1; min-width:0; max-width:100%;
+    display:flex; flex-direction:column; align-items:flex-start; justify-content:center; gap:calc(4px * var(--es, 1));
+  }
+  #result-seg .res-kicker{
+    font-family:var(--font-ui); font-weight:800; font-size:calc(min(1.1vw,14px) * var(--es, 1)); line-height:1.1;
+    letter-spacing:1.8px; color:var(--res-accent-text); text-transform:uppercase; white-space:nowrap;
+  }
+  #result-seg .res-main{
+    position:relative; max-width:100%;
+    font-family:var(--font-event); font-weight:400; font-size:calc(min(3.2vw,44px) * var(--es, 1)); line-height:1.04;
+    letter-spacing:.6px; color:var(--ink); text-transform:uppercase; white-space:nowrap;
+  }
+  #result-seg.wrap .res-main{ white-space:normal; }
+  /* one pass of light across the result as it lands (see revealEndStrip) */
+  #result-seg .res-shine{
+    position:absolute; top:0; bottom:0; left:0; width:24%; pointer-events:none; opacity:0;
+    background:linear-gradient(100deg, rgba(255,255,255,0), rgba(255,255,255,.85) 50%, rgba(255,255,255,0));
+  }
+  #result-seg .res-rule{ height:3px; width:100%; border-radius:2px; transform-origin:left center; background:linear-gradient(90deg, var(--res-accent), rgba(255,255,255,0)); }
+  #result-seg .res-sub{ font-size:calc(min(1.2vw,15.5px) * var(--es, 1)); font-weight:700; color:var(--ink-dim); letter-spacing:.2px; line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
   #result-seg .res-sub b{ color:var(--ink, #12213f); font-weight:900; font-family:var(--font-num); }
   #result-seg .res-sub .so{ color:#a46b00; }
+  #result-seg .res-sub:empty, #result-seg .res-kicker:empty{ display:none; }
 
   #white-panel{
     flex:1 1 auto; background:var(--white); display:flex; align-items:stretch;
     clip-path:polygon(0 0,100% 0,100% 100%,0 100%);
   }
+  /* An end strip never widens the bar: the panel takes the space that is
+     left (width 0, then grows), and fitEndStrip sizes the strip's type to
+     it — a long result would otherwise push the right-hand cap off the
+     screen. */
+  #white-panel.end-mode{ min-width:0; width:0; }
   .wseg{ display:flex; flex-direction:column; justify-content:center; padding:0 20px; position:relative; overflow:hidden; }
   .wseg + .wseg::before{
     content:''; position:absolute; left:0; top:14%; bottom:14%; width:1px; background:var(--hairline);
@@ -451,20 +498,56 @@
      ball" (zero), which is a solid filled pip with a bullet mark. */
   #thisover-row .pip.empty{ background:transparent; border-style:dashed; border-color:var(--hairline); opacity:.55; transform:scale(1); }
 
-  /* ---- Innings-break summary (Prev Score / Target / Req. Run Rate) ----
+  /* ---- Innings-break summary (headline / Target / Req. Run Rate) ----
      Shown in place of #live-segs only during the gap between innings —
      i.e. current innings is over but "Start Next Innings" hasn't been
-     clicked yet, so no real target exists on the server yet either. */
+     clicked yet, so no real target exists on the server yet either.
+     The headline ("END OF 1ST INNINGS · ALL OUT" over "INNINGS BREAK") is
+     the event font at bar scale, the figures are as big as the score —
+     the innings' own score is NOT repeated here (it is right next to it
+     in the score block). Sizes are multiplied by --es (see fitEndStrip). */
   #live-segs{ display:flex; flex:1 1 auto; align-items:stretch; }
   /* NOTE: .wseg (the shared base class) sets flex-direction:column — without
      an explicit row override here this whole block inherits that and stacks
-     Score / Target / Req. Run Rate on top of each other instead of spreading
+     the headline and the figures on top of each other instead of spreading
      across the white panel, so it's stated explicitly below. */
-  #break-seg{ flex:1 1 auto; display:none; flex-direction:row; align-items:stretch; justify-content:space-evenly; }
-  #break-seg .brk-item{ flex:1 1 0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; padding:0 22px; position:relative; }
-  #break-seg .brk-item + .brk-item::before{ content:''; position:absolute; left:0; top:14%; bottom:14%; width:1px; background:var(--hairline); }
-  #break-seg .lbl{ font-size:10.5px; font-weight:800; letter-spacing:.8px; color:var(--ink-dim); text-transform:uppercase; }
-  #break-seg .val{ font-family:var(--font-num); font-weight:900; font-size:min(2.2vw,26px); color:#1c4fd8; font-variant-numeric:tabular-nums; }
+  #break-seg{ flex:1 1 auto; display:none; flex-direction:row; align-items:stretch; justify-content:space-evenly; padding:7px 0; min-width:0; }
+  #break-seg::before{ display:none; }
+  #break-seg .brk-head{
+    flex:0 1 auto; min-width:0; position:relative;
+    display:flex; flex-direction:column; justify-content:center; gap:calc(5px * var(--es, 1));
+    padding:0 calc(26px * var(--es, 1)) 0 calc(30px * var(--es, 1));
+  }
+  /* accent tick in the bar's own badge colour, as on the caps */
+  #break-seg .brk-head::before{
+    content:''; position:absolute; left:calc(14px * var(--es, 1)); top:26%; bottom:26%; width:5px; border-radius:3px;
+    background:linear-gradient(180deg, var(--badge-2), var(--badge)); transform-origin:center bottom;
+  }
+  #break-seg .brk-kicker{
+    font-family:var(--font-ui); font-weight:800; font-size:calc(min(1.1vw,14px) * var(--es, 1)); line-height:1.1;
+    letter-spacing:1.6px; color:var(--ink-dim); text-transform:uppercase; white-space:nowrap;
+  }
+  #break-seg .brk-title{
+    font-family:var(--font-event); font-weight:400; font-size:calc(min(3.4vw,46px) * var(--es, 1)); line-height:1;
+    letter-spacing:.8px; color:var(--ink); text-transform:uppercase; white-space:nowrap;
+  }
+  #break-seg .brk-item{
+    flex:1 1 auto; min-width:0; position:relative; text-align:center;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:calc(3px * var(--es, 1));
+    padding:0 calc(16px * var(--es, 1));
+  }
+  #break-seg .brk-item[hidden]{ display:none; }
+  #break-seg .brk-head + .brk-item::before, #break-seg .brk-item + .brk-item::before{ content:''; position:absolute; left:0; top:16%; bottom:16%; width:1px; background:var(--hairline); }
+  #break-seg .lbl{ font-family:var(--font-ui); font-size:calc(min(1.1vw,14px) * var(--es, 1)); line-height:1.15; font-weight:800; letter-spacing:1.4px; color:var(--ink-dim); text-transform:uppercase; white-space:nowrap; }
+  #break-seg .val{ font-family:var(--font-num); font-weight:900; font-size:calc(min(3.9vw,52px) * var(--es, 1)); line-height:1; color:#1c4fd8; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  /* a word in the figure's place (a team, "LEVEL") — the event font reads better than a heavy sans */
+  #break-seg .val.word{ font-family:var(--font-event); font-weight:400; font-size:calc(min(3.3vw,44px) * var(--es, 1)); letter-spacing:.6px; text-transform:uppercase; }
+  #break-seg .unit{ font-family:var(--font-ui); font-weight:700; font-size:calc(min(1.05vw,13.5px) * var(--es, 1)); line-height:1.15; color:var(--ink-dim); letter-spacing:.6px; text-transform:uppercase; white-space:nowrap; }
+  #break-seg .unit:empty{ display:none; }
+  /* a narrow output: the unit lines go before the figures shrink further,
+     then the second figure (the rate, which follows from the target) */
+  #break-seg.compact .unit{ display:none; }
+  #break-seg.narrow #break-item-b{ display:none; }
   .pip{
     width:26px; height:26px; border-radius:50%; flex:none;
     display:flex; align-items:center; justify-content:center;
@@ -1814,21 +1897,29 @@
             </div>
           </div>
           <div class="wseg" id="result-seg">
-            <div class="res-main" id="res-main"></div>
-            <div class="res-sub" id="res-sub"></div>
+            <div class="res-badge" id="res-badge" aria-hidden="true"></div>
+            <div class="res-body">
+              <div class="res-kicker" id="res-kicker"></div>
+              <div class="res-main" id="res-main"></div>
+              <div class="res-rule" id="res-rule"></div>
+              <div class="res-sub" id="res-sub"></div>
+              <div class="res-shine" aria-hidden="true"></div>
+            </div>
           </div>
           <div class="wseg" id="break-seg">
-            <div class="brk-item">
-              <div class="lbl">Score</div>
-              <div class="val" id="break-score">0-0</div>
+            <div class="brk-head">
+              <div class="brk-kicker" id="break-kicker"></div>
+              <div class="brk-title" id="break-title">INNINGS BREAK</div>
             </div>
-            <div class="brk-item">
-              <div class="lbl">Target</div>
+            <div class="brk-item" id="break-item-a">
+              <div class="lbl" id="break-a-lbl">Target</div>
               <div class="val" id="break-target">—</div>
+              <div class="unit" id="break-a-unit"></div>
             </div>
-            <div class="brk-item">
-              <div class="lbl">Req. Run Rate</div>
+            <div class="brk-item" id="break-item-b">
+              <div class="lbl" id="break-b-lbl">Req. Run Rate</div>
               <div class="val" id="break-rrr">—</div>
+              <div class="unit" id="break-b-unit"></div>
             </div>
           </div>
         </div>
@@ -2692,12 +2783,22 @@ function renderState(s){
     }
   }
 
-  setNameText('striker-name', s.striker?.name);
-  document.getElementById('striker-runs').firstChild.textContent = s.striker?.runs ?? 0;
-  document.getElementById('striker-balls').textContent = s.striker?.balls ?? 0;
-  setNameText('nonstriker-name', s.nonStriker?.name);
-  document.getElementById('nonstriker-runs').textContent = s.nonStriker?.runs ?? 0;
-  document.getElementById('nonstriker-balls').textContent = s.nonStriker?.balls ?? 0;
+  // A batter who has been given out stays in the panel's crease slot until
+  // the scorer sends the next batter in (the panel asks for the new batter
+  // only once the wicket is recorded). That end is empty on the field, so
+  // it is empty here too — no name, no score, no strike star — rather than
+  // showing the dismissed batter as if still in.
+  // Decided by player id (dismissedThisInnings), never by name.
+  const dismissedIds = new Set(((s.dismissedThisInnings || {})[s.battingTeam === 'B' ? 'B' : 'A']) || []);
+  const vacant = (p) => !!(p && p.id && dismissedIds.has(p.id));
+  const strikerGone = vacant(s.striker), nonStrikerGone = vacant(s.nonStriker);
+  setNameText('striker-name', strikerGone ? '' : s.striker?.name);
+  document.getElementById('striker-runs').firstChild.textContent = strikerGone ? '' : (s.striker?.runs ?? 0);
+  document.getElementById('striker-star').style.display = strikerGone ? 'none' : '';
+  document.getElementById('striker-balls').textContent = strikerGone ? '' : (s.striker?.balls ?? 0);
+  setNameText('nonstriker-name', nonStrikerGone ? '' : s.nonStriker?.name);
+  document.getElementById('nonstriker-runs').textContent = nonStrikerGone ? '' : (s.nonStriker?.runs ?? 0);
+  document.getElementById('nonstriker-balls').textContent = nonStrikerGone ? '' : (s.nonStriker?.balls ?? 0);
 
   const totalBalls = (s.score?.overs ?? 0) * 6 + (s.score?.balls ?? 0);
   const crr = totalBalls > 0 ? ((s.score?.runs ?? 0) / (totalBalls / 6)) : 0;
@@ -2707,59 +2808,38 @@ function renderState(s){
   // A Super Over innings is its own length (6 legal balls) and ends on its
   // own wicket limit (2) — never the regulation 20 overs / 10 wickets.
   const inningsBallsLimit = inSO ? soRules.balls : (oversLimit ? oversLimit * 6 : null);
-  const wicketLimit = inSO ? soRules.wickets : ((s.format === 'Custom' && s.customMaxWickets) || 10);
+  // The panel's own all-out rule (isAllOut): the match's wicket limit — a
+  // custom limit applies in any format — less any batter absent hurt in
+  // this innings (a side two short is all out two wickets earlier).
+  const absentHurt = inSO ? 0 : (s.absentHurt || []).filter(a => a && a.team === (s.battingTeam === 'B' ? 'B' : 'A') && a.inn === s.inningsNumber).length;
+  const wicketLimit = inSO ? soRules.wickets : Math.max(1, (s.customMaxWickets || 10) - absentHurt);
 
   const wicketsAllOut = (s.score?.wickets ?? 0) >= wicketLimit;
   const oversAllBowled = inningsBallsLimit !== null && totalBalls >= inningsBallsLimit;
   // Innings-break gap: the current innings has ended (all out / overs
   // complete / declared) but the panel hasn't sent a target yet — it's
   // holding the overlay on the finished innings until "Start Next Innings"
-  // is clicked. Swap the white panel to a plain summary for that gap.
-  // Test cricket has 3 different "no target yet" situations here, so the
-  // summary itself branches: right after the very 1st innings there's
-  // nothing to compare yet (2nd side hasn't batted); after the 2nd/3rd
-  // innings, show the actual Lead/Trail instead of a fabricated target
-  // (the "runs+1 predicted target" formula only genuinely applies to
-  // limited-overs, where the very next innings IS always the run-chase).
+  // is clicked. The white panel shows the innings-break strip for that gap
+  // (renderBreakSeg — it branches for Test cricket and the Super Over).
   const matchOver = matchDecided;
   const breakMode = (wicketsAllOut || oversAllBowled || s.declared) && !s.target && !matchOver;
-  // 🏁 Decided: the result takes the white panel (live batters/bowler would be stale).
-  const resultMode = matchOver && !!s.matchResultText;
+  // A tie that a Super Over will settle is NOT a result: the panel clears
+  // the result and waits for the operator to start the Super Over
+  // (superOverReady) — the strip says exactly that, and the finished
+  // chase's "need 1 off 0" goes with the live segments.
+  const tiePending = !!s.superOverReady && !matchOver;
+  // 🏁 Decided (the panel's match-result flag — never guessed from the
+  // score): the result takes the white panel (live batters/bowler would be
+  // stale). Decided with no result line → MATCH COMPLETE.
+  const resultMode = matchOver || tiePending;
   document.getElementById('live-segs').style.display = (breakMode || resultMode) ? 'none' : 'flex';
   document.getElementById('break-seg').style.display = (breakMode && !resultMode) ? 'flex' : 'none';
   document.getElementById('result-seg').style.display = resultMode ? 'flex' : 'none';
-  if(resultMode) renderResultSeg(s);
-  if(breakMode){
-    document.getElementById('break-score').textContent = scoreStr;
-    const breakTargetLbl = document.getElementById('break-target').parentElement.querySelector('.lbl');
-    const breakRrrLbl = document.getElementById('break-rrr').parentElement.querySelector('.lbl');
-    if(s.format === 'Test' && (s.inningsNumber || 1) > 1){
-      const lt = currentLeadTrail(s);
-      breakTargetLbl.textContent = lt && lt.team ? (lt.team === s.battingTeam ? 'Lead' : 'Trail') : 'Lead/Trail';
-      document.getElementById('break-target').textContent = (!lt || lt.tied) ? 'Level' : lt.amount;
-      breakRrrLbl.textContent = 'Innings';
-      document.getElementById('break-rrr').textContent = (s.inningsNumber || 1);
-    } else if(s.format === 'Test'){
-      // Just finished the very 1st innings — nothing to compare against yet.
-      breakTargetLbl.textContent = 'Status';
-      document.getElementById('break-target').textContent = 'Opponent to bat';
-      breakRrrLbl.textContent = 'Innings';
-      document.getElementById('break-rrr').textContent = '1';
-    } else if(inSO){
-      // First Super Over innings done — the other side needs one more, off 6.
-      const predictedTarget = (s.score?.runs ?? 0) + 1;
-      breakTargetLbl.textContent = 'Target';
-      document.getElementById('break-target').textContent = predictedTarget;
-      breakRrrLbl.textContent = 'Super Over';
-      document.getElementById('break-rrr').textContent = `${soRules.balls} balls`;
-    } else {
-      const predictedTarget = (s.score?.runs ?? 0) + 1;
-      breakTargetLbl.textContent = 'Target';
-      document.getElementById('break-target').textContent = predictedTarget;
-      breakRrrLbl.textContent = 'Req. Run Rate';
-      document.getElementById('break-rrr').textContent = oversLimit ? (predictedTarget / oversLimit).toFixed(2) : '—';
-    }
-  }
+  document.getElementById('white-panel').classList.toggle('end-mode', breakMode || resultMode);
+  let endStrip = null;
+  if(resultMode) endStrip = renderResultSeg(s, { tiePending });
+  else if(breakMode) endStrip = renderBreakSeg(s, { inSO, soRules, oversLimit, allOut: wicketsAllOut, oversDone: oversAllBowled });
+  showEndStrip(endStrip);
 
   // ---- CRR/RRR toggle + Target/Balls Remaining ----
   // "Chase mode" = a real target AND a real overs limit — i.e. an
@@ -2770,7 +2850,7 @@ function renderState(s){
   // rate slot just shows plain CRR, same as before.
   const totalInningsBalls = inningsBallsLimit;
   const ballsLeft = totalInningsBalls ? Math.max(totalInningsBalls - totalBalls, 0) : null;
-  const chaseMode = !!(s.target && totalInningsBalls) && !matchOver;
+  const chaseMode = !!(s.target && totalInningsBalls) && !matchOver && !tiePending;
 
   if(chaseMode){
     const runsNeeded = Math.max(s.target - (s.score?.runs ?? 0), 0);
@@ -3060,6 +3140,7 @@ window.addEventListener('resize', () => {
     fitCapName(document.getElementById('name-left'));
     fitCapName(document.getElementById('name-right'));
     syncPlayerNameSizes();
+    refitEndStrip();
   }, 120);
 });
 
@@ -3368,7 +3449,7 @@ const EVENT_THEMES = {
 // underlying score data stays intact underneath (see the
 // liveCricketScore buffering further down).
 const SB_CONTENT_SELECTOR = '#cap-left .cap-logo, #cap-left .cap-text, #cap-right .cap-logo, #cap-right .cap-text, ' +
-  '#score-value, #overs-badge .ov-num, #overs-badge .ov-lbl, #live-segs, #break-seg';
+  '#score-value, #overs-badge .ov-num, #overs-badge .ov-lbl, #live-segs, #break-seg, #result-seg';
 
 let eventState = 'idle';       // 'idle' | 'running'
 const eventQueue = [];
@@ -5440,19 +5521,286 @@ function teamShortOf(s, key){
   const t = (key === 'B' ? s.teamB : s.teamA) || {};
   return String(t.short || t.name || (key === 'B' ? 'TEAM B' : 'TEAM A')).toUpperCase();
 }
-function renderResultSeg(s){
-  document.getElementById('res-main').textContent = s.matchResultText || '';
-  const sub = document.getElementById('res-sub');
-  const line = key => { const t = regulationTotalOf(s, key); return t ? `${escapeHtml(teamShortOf(s, key))} <b>${t.runs}/${t.wickets}</b> (${escapeHtml(t.overs)})` : ''; };
-  const regulation = [line('A'), line('B')].filter(Boolean).join(' &nbsp;·&nbsp; ');
-  const so = s.superOver;
-  if(s.phase === 'SUPER_OVER' && so && Array.isArray(so.archive) && so.archive.length){
-    const last = so.archive.filter(i => i.number === so.number);
-    const soLine = last.map(i => `${escapeHtml(teamShortOf(s, i.team))} <b>${i.runs}/${i.wickets}</b>`).join(' · ');
-    sub.innerHTML = `Tied ${regulation} &nbsp;|&nbsp; <span class="so">Super Over${so.number > 1 ? ' ' + so.number : ''}:</span> ${soLine}`;
+/* ============================================================
+   🏁 END-OF-INNINGS / END-OF-MATCH STRIP
+   The white panel's two end states, read from the state the panel
+   sends — never guessed from the score:
+   - the innings break (the innings is over, the next one not started):
+     a headline and the figures that matter for what comes next;
+   - the result (the panel's match-result flag), or a tie that a Super
+     Over will settle (superOverReady), which is said as exactly that.
+   Each strip is fitted to the panel's width (fitEndStrip) and revealed
+   once (revealEndStrip) — not again on a later state update, a
+   reconnect or a browser-source refresh of the same match.
+   ============================================================ */
+function inningsOrdinal(n){
+  const v = Number(n) || 1;
+  const tail = (v % 100 >= 11 && v % 100 <= 13) ? 'TH' : ({ 1: 'ST', 2: 'ND', 3: 'RD' }[v % 10] || 'TH');
+  return `${v}${tail}`;
+}
+function setEndText(id, text){
+  const el = document.getElementById(id);
+  if(el && el.textContent !== text) el.textContent = text;
+}
+// One figure of the break strip: label, value, unit line (null hides it).
+function setBreakItem(slot, item){
+  const box = document.getElementById(`break-item-${slot}`);
+  box.hidden = !item;
+  if(!item) return;
+  setEndText(`break-${slot}-lbl`, item.lbl || '');
+  const val = document.getElementById(slot === 'a' ? 'break-target' : 'break-rrr');
+  setEndText(val.id, String(item.val));
+  val.classList.toggle('word', !!item.word);
+  setEndText(`break-${slot}-unit`, item.unit || '');
+}
+// The innings-break strip. Test cricket has 3 different "no target yet"
+// situations, so it branches: right after the very 1st innings there's
+// nothing to compare yet (the other side hasn't batted) — just who bats
+// next; after the 2nd innings, the actual lead; after the 3rd, the panel's
+// own 4th-innings target (the lead + 1) when there is one to chase, or
+// the lead still standing (an innings defeat is the panel's to call, at
+// "Start Next Innings" — never claimed here). The "runs + 1" target only
+// genuinely applies to limited overs, where the very next innings IS
+// always the run chase.
+function renderBreakSeg(s, o){
+  const batKey = s.battingTeam === 'B' ? 'B' : 'A', nextKey = batKey === 'A' ? 'B' : 'A';
+  const inn = s.inningsNumber || 1, runs = s.score?.runs ?? 0;
+  // (the overs simply running out is what the overs badge beside it says)
+  const how = s.declared ? 'DECLARED' : o.allOut ? 'ALL OUT' : '';
+  const next = teamShortOf(s, nextKey);
+  let kicker = `END OF ${inningsOrdinal(inn)} INNINGS${how ? ' · ' + how : ''}`, a = null, b = null;
+  if(o.inSO){
+    // First Super Over innings done — the other side needs one more, off 6.
+    const n = (s.superOver && s.superOver.number) || 1;
+    kicker = `SUPER OVER${n > 1 ? ' ' + n : ''}${how ? ' · ' + how : ''}`;
+    a = { lbl: 'Target', val: runs + 1, unit: `${next} to win` };
+    b = { lbl: 'Super Over', val: o.soRules.balls, unit: `balls · ${o.soRules.wickets} wickets` };
+  } else if(s.format === 'Test'){
+    const lt = currentLeadTrail(s);
+    if(inn <= 1) a = { lbl: 'Next to bat', val: next, word: true, unit: '2nd innings' };
+    else if(inn === 3 && lt && (lt.tied || lt.team === batKey)) a = { lbl: 'Target', val: lt.tied ? 1 : lt.amount + 1, unit: `${next} to win` };
+    else if(lt && !lt.tied) a = { lbl: `${teamShortOf(s, lt.team)} lead by`, val: lt.amount, unit: `run${lt.amount === 1 ? '' : 's'}` };
+    else a = { lbl: 'Scores', val: 'LEVEL', word: true, unit: '' };
   } else {
-    sub.innerHTML = regulation;
+    const target = runs + 1;
+    a = { lbl: 'Target', val: target, unit: o.oversLimit ? `${next} · ${o.oversLimit} over${o.oversLimit === 1 ? '' : 's'}` : `${next} to win` };
+    b = o.oversLimit ? { lbl: 'Req. Run Rate', val: (target / o.oversLimit).toFixed(2), unit: 'per over' } : null;
   }
+  setEndText('break-kicker', kicker);
+  setEndText('break-title', 'INNINGS BREAK');
+  setBreakItem('a', a);
+  setBreakItem('b', b);
+  return { seg: document.getElementById('break-seg'), key: ['break', matchId, s.tournamentMatchId || '', s.phase || '', (s.superOver && s.superOver.number) || 0, inn, batKey].join('|') };
+}
+// A team colour darkened until it reads on the white panel (3:1).
+function inkOnWhite(hex){
+  const c = ecSafeColor(hex);
+  if(!c) return '';
+  let h = c.slice(1);
+  if(h.length === 3) h = h.split('').map(x => x + x).join('');
+  let [r, g, b] = [0, 2, 4].map(i => parseInt(h.substr(i, 2), 16));
+  const lin = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  for(let i = 0; i < 16 && 1.05 / (0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b) + 0.05) < 3; i++){
+    r = Math.round(r * 0.86); g = Math.round(g * 0.86); b = Math.round(b * 0.86);
+  }
+  return `rgb(${r},${g},${b})`;
+}
+function rgbaOf(hex, alpha){
+  let h = ecSafeColor(hex).slice(1);
+  if(h.length === 3) h = h.split('').map(x => x + x).join('');
+  if(h.length !== 6) return '';
+  return `rgba(${parseInt(h.substr(0, 2), 16)},${parseInt(h.substr(2, 2), 16)},${parseInt(h.substr(4, 2), 16)},${alpha})`;
+}
+const END_ICON = {
+  trophy: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6h18v9.5a9 9 0 0 1-18 0V6z"/><path d="M15 10H9.5a5.5 5.5 0 0 0 6.2 8.5M33 10h5.5a5.5 5.5 0 0 1-6.2 8.5"/><path d="M24 24.5V33M17 42h14M19 33h10l1.5 9h-13z"/></svg>',
+  level: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M12 18.5h24M12 29.5h24"/></svg>',
+  flag: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13 43V5"/><path d="M13 7h21l-5 7.5 5 7.5H13"/></svg>'
+};
+// A Test side's innings, scorecard style: "350 & 120/3", "412/7d".
+function testInningsLine(s, key){
+  const inns = (s.inningsArchive || []).filter(i => i.team === key).map(i => ({ runs: i.runs, wickets: i.wickets, declared: i.declared }));
+  if(s.phase !== 'SUPER_OVER' && s.battingTeam === key && !(s.inningsArchive || []).some(i => i.no === s.inningsNumber)){
+    inns.push({ runs: s.score?.runs ?? 0, wickets: s.score?.wickets ?? 0, declared: !!s.declared });
+  }
+  if(!inns.length) return '';
+  const one = (i) => (i.wickets >= 10 ? `${i.runs}` : `${i.runs}/${i.wickets}${i.declared ? 'd' : ''}`);
+  return `${escapeHtml(teamShortOf(s, key))} <b>${inns.map(one).join(' &amp; ')}</b>`;
+}
+// The result strip. The line is the panel's own result text; the winner
+// (matchWinnerKey, or the team the line names) only picks the colours.
+function renderResultSeg(s, o){
+  o = o || {};
+  const seg = document.getElementById('result-seg');
+  const text = String(s.matchResultText || '').trim();
+  const so = s.superOver;
+  const soNo = (so && so.number) || 1;
+  const soArchive = so && Array.isArray(so.archive) ? so.archive : [];
+  let wk = s.matchWinnerKey;
+  if(!o.tiePending && wk !== 'A' && wk !== 'B' && wk !== 'TIE' && wk !== 'DRAW' && text) wk = winnerKeyFromText(text, s);
+  const line = key => { const t = regulationTotalOf(s, key); return t ? `${escapeHtml(teamShortOf(s, key))} <b>${t.runs}/${t.wickets}</b> (${escapeHtml(t.overs)})` : ''; };
+  const regulation = s.format === 'Test'
+    ? [testInningsLine(s, 'A'), testInningsLine(s, 'B')].filter(Boolean).join(' &nbsp;·&nbsp; ')
+    : [line('A'), line('B')].filter(Boolean).join(' &nbsp;·&nbsp; ');
+  const soLineOf = (n) => soArchive.filter(i => i.number === n).map(i => `${escapeHtml(teamShortOf(s, i.team))} <b>${i.runs}/${i.wickets}</b>`).join(' · ');
+  let main, kicker, icon, team = null, sub;
+  if(o.tiePending){
+    const soTied = s.phase === 'SUPER_OVER';
+    main = soTied ? `SUPER OVER${soNo > 1 ? ' ' + soNo : ''} TIED` : 'MATCH TIED';
+    kicker = 'Scores level';
+    icon = 'level';
+    sub = soTied
+      ? `<span class="so">Super Over ${soNo + 1} to follow</span> &nbsp;|&nbsp; ${soLineOf(soNo)}`
+      : `<span class="so">Super Over to follow</span> &nbsp;|&nbsp; ${regulation}`;
+  } else {
+    if(wk === 'A' || wk === 'B'){
+      team = wk === 'B' ? s.teamB : s.teamA;
+      main = text || `${teamShortOf(s, wk)} WON`;
+      icon = 'trophy';
+      const full = String((team && team.name) || '').trim().toUpperCase();
+      kicker = full && !main.toUpperCase().startsWith(full) ? `Result · ${full}` : 'Result';
+    } else if(text || wk === 'TIE' || wk === 'DRAW'){
+      main = text || (wk === 'DRAW' ? 'MATCH DRAWN' : 'MATCH TIED');
+      icon = (wk === 'TIE' || wk === 'DRAW') ? 'level' : 'flag';
+      kicker = 'Result';
+    } else {
+      main = 'MATCH COMPLETE';
+      icon = 'flag';
+      kicker = '';
+    }
+    if(s.phase === 'SUPER_OVER' && soArchive.length){
+      sub = `Tied ${regulation} &nbsp;|&nbsp; <span class="so">Super Over${soNo > 1 ? ' ' + soNo : ''}:</span> ${soLineOf(soNo)}`;
+      if(team) kicker = 'Result · Super Over';
+    } else {
+      sub = regulation;
+    }
+  }
+  setEndText('res-kicker', kicker.toUpperCase());
+  setEndText('res-main', main.toUpperCase());
+  const subEl = document.getElementById('res-sub');
+  if(subEl.innerHTML !== sub) subEl.innerHTML = sub;
+  const badge = document.getElementById('res-badge');
+  if(badge.dataset.icon !== icon){ badge.dataset.icon = icon; badge.innerHTML = END_ICON[icon]; }
+  seg.dataset.outcome = o.tiePending ? 'tie-pending' : team ? 'win' : icon === 'level' ? 'level' : 'complete';
+  const accent = team ? ecSafeColor(team.color) : '';
+  const tone = accent ? { accent, ink: idealTextColor(accent), text: inkOnWhite(accent), tint: rgbaOf(accent, 0.09) }
+    : icon === 'level' ? { accent: '#e0a100', ink: '#1a1300', text: '#8a5a00', tint: 'rgba(240,180,41,.10)' }
+    : null;
+  [['--res-accent', 'accent'], ['--res-accent-ink', 'ink'], ['--res-accent-text', 'text'], ['--res-tint', 'tint']].forEach(([prop, k]) => {
+    if(tone && tone[k]) seg.style.setProperty(prop, tone[k]); else seg.style.removeProperty(prop);
+  });
+  return { seg, key: ['result', matchId, s.tournamentMatchId || '', o.tiePending ? 'pending' : 'final', main.toUpperCase(), wk || ''].join('|') };
+}
+
+// Which strip is up (its key), and its words when it was last fitted.
+let endStripKey = null, endStripText = null, endStripTl = null, endStripRevealCount = 0;
+const END_STRIP_SEEN = 'cricket-overlay:end-strips-seen';
+const endStripSeenMem = new Set();
+function endStripSeen(key){
+  if(endStripSeenMem.has(key)) return true;
+  try{ const list = JSON.parse(sessionStorage.getItem(END_STRIP_SEEN) || '[]'); return Array.isArray(list) && list.includes(key); }catch(e){ return false; }
+}
+function markEndStripSeen(key){
+  endStripSeenMem.add(key);
+  try{
+    const list = JSON.parse(sessionStorage.getItem(END_STRIP_SEEN) || '[]');
+    sessionStorage.setItem(END_STRIP_SEEN, JSON.stringify((Array.isArray(list) ? list : []).filter(k => k !== key).concat(key).slice(-24)));
+  }catch(e){}
+}
+function finishEndStripReveal(){
+  if(endStripTl){ endStripTl.progress(1).kill(); endStripTl = null; }
+}
+// Called on every render: does nothing while the same strip shows the same
+// words; fits a strip whose words changed; reveals a strip not seen before.
+function showEndStrip(strip){
+  if(!strip){
+    if(endStripKey !== null){ endStripKey = null; endStripText = null; finishEndStripReveal(); }
+    return;
+  }
+  const text = strip.seg.textContent;
+  if(strip.key === endStripKey && text === endStripText) return;
+  const fresh = strip.key !== endStripKey;
+  endStripKey = strip.key; endStripText = text;
+  if(fresh) finishEndStripReveal();
+  fitEndStrip(strip.seg);
+  if(fresh && !endStripSeen(strip.key)){
+    markEndStripSeen(strip.key);
+    revealEndStrip(strip.seg);
+  }
+}
+// Lowers the strip's type (--es) until everything fits the white panel;
+// then the break strip drops its unit lines (and then the rate), and a
+// long result takes two lines, before going smaller still. (The totals line under a result is
+// not waited for: it ends in "…" rather than shrink the result itself.)
+// Runs only when the words change or the browser source is resized —
+// never per frame.
+function fitEndStrip(seg){
+  if(!seg || seg.style.display === 'none') return;
+  const isBreak = seg.id === 'break-seg';
+  const texts = [...seg.querySelectorAll(isBreak ? '.brk-head, .brk-item, .brk-kicker, .brk-title, .lbl, .val, .unit' : '.res-body, .res-kicker, .res-main')];
+  const over = () => seg.scrollWidth > seg.clientWidth + 1 || seg.scrollHeight > seg.clientHeight + 1
+    || texts.some(n => n.offsetParent !== null && n.scrollWidth > n.clientWidth + 1);
+  const run = (min) => {
+    let k = 1;
+    seg.style.setProperty('--es', '1');
+    while(over() && k > min){ k = Math.round((k - 0.04) * 100) / 100; seg.style.setProperty('--es', String(k)); }
+    return !over();
+  };
+  seg.classList.remove('compact', 'narrow', 'wrap');
+  if(run(isBreak ? 0.8 : 0.7)) return;
+  if(isBreak){
+    seg.classList.add('compact');
+    if(run(0.7)) return;
+    seg.classList.add('narrow');
+  } else {
+    seg.classList.add('wrap');
+  }
+  run(0.5);
+}
+function refitEndStrip(){
+  ['break-seg', 'result-seg'].forEach(id => { const seg = document.getElementById(id); if(seg && seg.style.display !== 'none') fitEndStrip(seg); });
+}
+if(document.fonts && typeof document.fonts.addEventListener === 'function'){
+  document.fonts.addEventListener('loadingdone', refitEndStrip);   // Anton arriving after the first fit
+}
+// The strip's entrance, once: transforms and opacity only (no filters, no
+// layout), on the strip's own parts — the bar-wide event fades work on the
+// strip boxes themselves, so the two never fight. Plain fade with reduced
+// motion.
+// A strip that arrives under a ball-event card (the state is applied as the
+// card starts to leave) or with the bar's own entrance waits, hidden, until
+// the bar is back on screen — so the reveal is seen, not played underneath.
+function endStripRevealDelay(){
+  let d = 0;
+  if(eventState !== 'idle' && activeEventTl) d = Math.max(d, activeEventTl.duration() - activeEventTl.time() - 0.3);
+  if(barEntryTl && barEntryTl.isActive()) d = Math.max(d, barEntryTl.duration() - barEntryTl.time() - 0.4);
+  return Math.min(3, Math.max(0, Number(d) || 0));
+}
+function revealEndStrip(seg){
+  finishEndStripReveal();
+  endStripRevealCount++;
+  const q = (sel) => [...seg.querySelectorAll(sel)];
+  const parts = seg.id === 'break-seg' ? q('.brk-head, .brk-item:not([hidden])') : q('.res-badge, .res-body');
+  const delay = endStripRevealDelay();
+  if(reduceMotion()){
+    endStripTl = gsap.fromTo(parts, { opacity: 0 }, { opacity: 1, duration: 0.3, delay, ease: 'power1.out', clearProps: 'opacity', onComplete: () => { endStripTl = null; } });
+    return;
+  }
+  const tl = endStripTl = gsap.timeline({ delay, defaults: { ease: 'power3.out' } });
+  if(seg.id === 'break-seg'){
+    tl.fromTo(q('.brk-head'), { opacity: 0, x: -18 }, { opacity: 1, x: 0, duration: 0.5 }, 0)
+      .fromTo(q('.brk-item:not([hidden])'), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.45, stagger: 0.1 }, 0.16);
+  } else {
+    tl.fromTo(q('.res-badge'), { opacity: 0, scale: 0.4, rotation: -24 }, { opacity: 1, scale: 1, rotation: 0, duration: 0.6, ease: 'back.out(1.8)' }, 0)
+      .fromTo(q('.res-kicker'), { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.35 }, 0.1)
+      .fromTo(q('.res-main'), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5 }, 0.16)
+      .fromTo(q('.res-rule'), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: 'power2.inOut' }, 0.32)
+      .fromTo(q('.res-sub'), { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.4 }, 0.4)
+      .fromTo(q('.res-shine'), { opacity: 1, xPercent: -110 }, { xPercent: 440, duration: 0.95, ease: 'power2.inOut', immediateRender: false }, 0.62);
+  }
+  tl.eventCallback('onComplete', () => {
+    gsap.set(q('.brk-head, .brk-item, .res-badge, .res-kicker, .res-main, .res-rule, .res-sub, .res-shine'), { clearProps: 'transform,opacity' });
+    endStripTl = null;
+  });
 }
 
 // Which side the result line names as the winner ("MI WON BY 5 RUNS"), if any.

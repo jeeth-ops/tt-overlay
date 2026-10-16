@@ -1258,6 +1258,8 @@
   .wd-chip.out.on{ background:#ef4444; border-color:#ef4444; color:#fff; }
   .wd-chip.out.on small{ color:#fff; }
   .wd-chip:disabled{ opacity:.32; cursor:not-allowed; }
+  .nb-strike{ margin:12px 0 14px; }
+  .nb-strike[hidden]{ display:none !important; }
   .wd-runs{ grid-template-columns:repeat(8, minmax(0, 1fr)); }
   .wd-runs .wd-chip{ font-size:16px; }
   .wd-custom{ margin-top:8px; display:flex; gap:8px; align-items:center; }
@@ -3127,9 +3129,10 @@
 
   <!-- 🏏 WICKET DETAILS — opens on WICKET (button, 'w' key, or "also a
        wicket?" on a Wide / No Ball). Nothing is recorded until CONFIRM
-       WICKET: out type, delivery type, who is out, fielder, runs, new
-       batsman and next striker are all set first, then saved as ONE
-       delivery in one step. See openWicketModal()/confirmWicketDetails(). -->
+       WICKET: out type, delivery type, who is out, fielder and runs are
+       set first, then saved as ONE delivery in one step. Only then does
+       the New Batsman screen ask who comes in and who faces the next ball.
+       See openWicketModal()/confirmWicketDetails()/openNewBatsmanModal(). -->
   <div class="wicket-modal-overlay" id="wd-overlay">
     <div class="wicket-modal wd-modal" id="wd-modal" role="dialog" aria-labelledby="wd-title">
       <div class="wd-top">
@@ -3165,16 +3168,6 @@
           <div class="wd-label" id="wd-runs-label">Runs completed</div>
           <div class="wd-chips wd-runs" id="wd-runs"></div>
           <div class="wd-custom" id="wd-custom" hidden><input type="number" id="wd-runs-custom" min="0" max="99" inputmode="numeric" placeholder="7"><span class="wd-hint">runs completed</span></div>
-        </section>
-        <section class="wd-sec" id="wd-sec-newbat" hidden>
-          <div class="wd-label">New batsman</div>
-          <select id="wd-newbat-select"><option value="">— choose the incoming batsman —</option></select>
-          <input type="text" id="wd-newbat-input" placeholder="Incoming batsman name (or leave for later)" autocomplete="off">
-          <div class="bh-pick" id="wd-newbat-hand"><span>Bats</span><button type="button" data-bh="R">Right-hand</button><button type="button" data-bh="L">Left-hand</button></div>
-        </section>
-        <section class="wd-sec" id="wd-sec-strike" hidden>
-          <div class="wd-label">Which batter is on strike for the next ball? <span class="wd-hint" id="wd-strike-hint"></span></div>
-          <div class="wd-chips two" id="wd-strike"></div>
         </section>
         <div class="wd-preview wait" id="wd-preview">Choose how the batter was out.</div>
       </div>
@@ -3345,6 +3338,10 @@
       <input type="text" id="newbat-modal-input" placeholder="Incoming batsman name"
         style="width:100%;padding:9px 10px;border-radius:7px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);font-size:13px;margin-bottom:10px;">
       <div class="bh-pick" id="newbat-modal-hand"><span>Bats</span><button type="button" data-bh="R">Right-hand</button><button type="button" data-bh="L">Left-hand</button></div>
+      <div class="nb-strike" id="newbat-strike-wrap" hidden>
+        <div class="wd-label">Who faces the next ball? <span class="wd-hint" id="newbat-strike-hint"></span></div>
+        <div class="wd-chips two" id="newbat-strike"></div>
+      </div>
       <button type="button" class="full primary" id="newbat-modal-submit">Send In</button>
       <button type="button" class="full ghost wm-cancel" id="newbat-modal-cancel" style="margin-top:8px;">Skip for now</button>
     </div>
@@ -7020,7 +7017,7 @@ async function mlEnsureAccess(roomId, label, rec){
     try{ st = await mlStatus(roomId); }catch(e){ st = null; }
     mlLast = { roomId, locked: st ? !!st.locked : !!(rec && rec.locked) };
     if(!st){
-      if(rec && rec.locked){ toast('🔒 This match is locked — the panel needs the internet to check its code', 6000); return false; }
+      if(rec && rec.locked){ toast('🔒 This match is locked — its code cannot be checked right now (no internet, or the server is starting up). Try again in a moment.', 7000); return false; }
       return true;
     }
     if(!st.locked) return true;
@@ -7269,8 +7266,10 @@ function connect(){
       return;
     }
 
-    state = mergeWithDefaults({ ...state, ...serverState });
+    const lookingAt = [state.leagueName, state.matchMode].join('|');
+    state = mergeWithDefaults({ ...state, ...roomStateForThisPanel(serverState) });
     lastBroadcastState = snapshot();
+    if([state.leagueName, state.matchMode].join('|') !== lookingAt) syncBrowsingControls();
     renderPanel();
   });
 
@@ -9784,9 +9783,11 @@ function recordAbsentHurt(playerId, name){
   return true;
 }
 
-function sendInNewBatsman(name, id){
+// joinUndo: seated straight after the wicket that emptied the end (the New
+// Batsman screen that follows CONFIRM WICKET) — one Undo takes back both.
+function sendInNewBatsman(name, id, opts){
   if(!name) return;
-  pushHistory();
+  if(!(opts && opts.joinUndo)) pushHistory();
   const incoming = incomingBatter(name, id);
   // Seat them at whichever end the last wicket left vacant — the striker's
   // end normally, or the non-striker's end if that wicket fell on the last
@@ -10796,6 +10797,39 @@ document.getElementById('league-name').addEventListener('blur', (e) => {
   document.getElementById('new-tournament-wrap').style.display = 'none';
 });
 
+// 📋 WHICH TOURNAMENT THIS LAPTOP IS LOOKING AT — the dropdown and the
+// Single/Tournament switch — is this laptop's own choice. It travels in the
+// match state (a match not started yet takes its tournament from it), so the
+// room keeps whatever the last laptop to push had chosen, and adopting that
+// on every (re)connect threw this laptop's choice away: the dropdown still
+// showed the tournament, but its 📋 Matches list went empty — and an Upcoming
+// Match made on another laptop lost its ▶ Start. So the room's choice is
+// taken only when this laptop has none yet, or when the room hands over a
+// DIFFERENT match that is not started yet and belongs to a tournament (it
+// has no matchLeague of its own until play starts, so its tournament must
+// come with it). A started match keeps its own tournament (matchLeague)
+// whatever is being looked at.
+function roomStateForThisPanel(serverState){
+  if(!(state.leagueName || '').trim()) return serverState;
+  const handover = serverState.tournamentMatchId && serverState.tournamentMatchId !== state.tournamentMatchId
+    && !String(serverState.matchLeague || '').trim() && serverState.matchMode === 'tournament' && String(serverState.leagueName || '').trim();
+  if(handover) return serverState;
+  const { leagueName, matchMode, ...rest } = serverState;
+  return rest;
+}
+// The tournament controls redrawn from state (after a room hands this
+// laptop a different tournament's match).
+function syncBrowsingControls(){
+  document.getElementById('league-name').value = state.leagueName || '';
+  populateTournamentDropdown();
+  const name = (state.leagueName || '').trim();
+  if(name){ addKnownTournament(name); document.getElementById('tournament-select').value = name; }
+  else document.getElementById('tournament-select').value = '';
+  applyMatchModeUI(state.matchMode);
+  refreshLeagueUI();
+  if(name) syncLeagueFromServer(name);
+}
+
 /* ---- Single Match vs Tournament mode ---- */
 // Pure UI switch — does not touch state.leagueName. Used both by the
 // click handlers below (which DO decide whether to clear the name) and
@@ -10877,6 +10911,7 @@ document.getElementById('view-league-matches-btn').addEventListener('click', () 
   const showing = listEl.style.display !== 'none' && historyPanelView === 'matches';
   if(showing){ listEl.style.display = 'none'; return; }
   setHistoryPanelView('matches');
+  refreshLeagueListFromServer();
 });
 document.getElementById('view-player-history-btn').addEventListener('click', () => {
   const listEl = document.getElementById('league-matches-list');
@@ -11578,24 +11613,52 @@ function currentLeagueMatchesLive(){
 // tournament name, refreshed every time syncLeagueFromServer runs.
 const tournamentCompletedCache = {};
 
+// Why the list may not be the server's (shown at the top of 📋 Matches).
+const leagueSyncNote = {};
+const leagueSyncRetry = {};
 async function syncLeagueFromServer(name){
   const trimmed = (name || '').trim();
   if(!trimmed || !currentOwnerUid()) return;
   const key = leagueStorageKey(trimmed);
   try{
     const res = await fetch(withUid(leagueApiPath(trimmed)));
-    const data = await res.json();
+    const data = await res.json().catch(() => null);
     if(data && data.success){
       leagueCache[key] = data.matches || [];
       tournamentCompletedCache[trimmed.toLowerCase()] = !!data.completed;
       if(data.info || data.token) tournamentInfoCache[trimmed.toLowerCase()] = { info: data.info || null, token: data.token || null };
       saveLeagueMatchesLocal(trimmed, leagueCache[key]);
+      leagueSyncNote[key] = '';
+      if(leagueSyncRetry[key]){ clearTimeout(leagueSyncRetry[key].timer); delete leagueSyncRetry[key]; }
       refreshLeagueUI();
       refreshTournamentCardsIfShown();
+      return true;
+    } else if(res.status === 503 || (data && data.retry)){
+      // The server is up but its database is not yet (a cold start): keep
+      // this laptop's list — never take that as "no matches" — and look
+      // again shortly, by itself.
+      const r = leagueSyncRetry[key] = leagueSyncRetry[key] || { tries: 0, timer: null };
+      leagueSyncNote[key] = '⏳ The server is starting up — showing this laptop\'s saved list; it refreshes by itself.';
+      if(r.tries < 4 && !r.timer){
+        r.timer = setTimeout(() => { r.timer = null; r.tries++; syncLeagueFromServer(trimmed); }, [3000, 6000, 12000, 20000][r.tries]);
+      }
+      refreshLeagueUI();
     }
   }catch(e){
     // Offline / server unreachable — keep using whatever's cached locally.
+    leagueSyncNote[key] = '📴 Could not reach the server — showing this laptop\'s saved list.';
+    refreshLeagueUI();
   }
+  return false;
+}
+// 📋 Matches opened: fixtures made — or started — on another laptop since
+// this page loaded come in (at most every few seconds).
+let leagueListRefreshAt = 0;
+function refreshLeagueListFromServer(){
+  const name = (state.leagueName || '').trim();
+  if(!name || Date.now() - leagueListRefreshAt < 3000) return;
+  leagueListRefreshAt = Date.now();
+  syncLeagueFromServer(name);
 }
 let leagueSyncDebounce = null;
 function debouncedSyncLeagueFromServer(name){
@@ -12338,11 +12401,17 @@ function upcomingWhenText(m){
 }
 function renderLeagueMatchesList(matches){
   const listEl = document.getElementById('league-matches-list');
-  if(!matches.length){ listEl.innerHTML = '<div class="shortcut-hint">No matches saved yet.</div>'; return; }
+  // Why this laptop may not see a match saved on another one — said here,
+  // where the operator is looking for it.
+  const note = !currentOwnerUid()
+    ? '🔑 Not signed in on this laptop — matches saved from your other laptops cannot load. Sign in on the home page, then reopen this panel.'
+    : (leagueSyncNote[leagueStorageKey((state.leagueName || '').trim())] || '');
+  const noteHtml = note ? `<div class="shortcut-hint" data-league-sync-note style="margin-bottom:6px;">${escapeHtmlPanel(note)}</div>` : '';
+  if(!matches.length){ listEl.innerHTML = noteHtml + '<div class="shortcut-hint">No matches saved yet.</div>'; return; }
   // Upcoming fixtures first (soonest at the top), then the played matches newest first.
   const upcoming = matches.filter(isUpcomingMatch).sort((a, b) => (upcomingDateOf(a) || '9').localeCompare(upcomingDateOf(b) || '9'));
   const played = matches.filter(m => !isUpcomingMatch(m)).reverse();
-  listEl.innerHTML = [...upcoming, ...played].map(m => {
+  listEl.innerHTML = noteHtml + [...upcoming, ...played].map(m => {
     const up = isUpcomingMatch(m);
     const resultText = up ? `📅 Upcoming · ${upcomingWhenText(m)}`
       : m.winningTeam === 'TIE' ? 'Tied'
@@ -15932,9 +16001,10 @@ function wdInningsEndsHere(){
   return false;
 }
 function wdNeedsBat(){ return !!wdDef() && !!wdOutEnd() && !wdInningsEndsHere(); }
-// The Laws' answer to "who faces next" — shown as the hint; the scorer
-// still has to answer the question. Odd completed runs = the batters
-// crossed; a legal ball that ends the over swaps ends again.
+// The Laws' answer to "who faces next" — recordBall() seats the batters the
+// same way, and the New Batsman screen pre-selects it (changeable there).
+// Odd completed runs = the batters crossed; a legal ball that ends the over
+// swaps ends again.
 function wdPredictNewOnStrike(){
   // A striker-only dismissal always empties the striker's end — even when the
   // non-striker was tapped (they were the one actually facing).
@@ -15947,15 +16017,6 @@ function wdPredictNewOnStrike(){
   let newOnStrike = vacant === 'striker';
   if(wdIsLegal() && (state.score.balls || 0) + 1 >= ballsPerOver()) newOnStrike = !newOnStrike;
   return newOnStrike;
-}
-function wdNewBatChoice(){
-  const sel = wdEl('wd-newbat-select');
-  if(sel.style.display !== 'none' && sel.value){
-    const p = findPlayerById(state.battingTeam, sel.value);
-    if(p) return { name: p.name, id: p.id };
-  }
-  const name = wdEl('wd-newbat-input').style.display !== 'none' ? wdEl('wd-newbat-input').value.trim() : '';
-  return name ? { name, id: null } : null;
 }
 // The fielder recorded with the dismissal — the bowler himself for caught &
 // bowled, a Mankad, or a stumping the bowler made.
@@ -15972,8 +16033,10 @@ function wdFielderChoice(){
 }
 function wdEligibleNewBatters(snap, extraExclude){
   const key = state.battingTeam;
+  // By id: a name only stands in for a batter at the crease who has none
+  // (two players called "Rahul" are two players).
   return eligibleBatters(key, { excludeIds: [snap.strikerId, snap.nonStrikerId, extraExclude].filter(Boolean) })
-    .filter(p => p.isXI !== false && p.name !== snap.strikerName && p.name !== snap.nonStrikerName);
+    .filter(p => p.isXI !== false && !(!snap.strikerId && p.name === snap.strikerName) && !(!snap.nonStrikerId && p.name === snap.nonStrikerName));
 }
 function wdChip(label, sub, on, attrs, extraCls){
   return `<button type="button" class="wd-chip${on ? ' on' : ''}${extraCls ? ' ' + extraCls : ''}" ${attrs || ''}>${escapeHtmlPanel(label)}${sub ? `<small>${escapeHtmlPanel(sub)}</small>` : ''}</button>`;
@@ -16104,20 +16167,11 @@ function renderWicketDetails(){
     + wdChip('+', '', !!s.custom, 'data-wd-runs="custom" title="More runs"');
   wdEl('wd-custom').hidden = !s.custom;
 
-  // ---- New batsman + WHO IS ON STRIKE (always asked) ----
+  // ---- The new batsman, and who faces next, are asked AFTER this wicket
+  // is recorded (the New Batsman screen) — never before it. ----
   const end = wdOutEnd();
   const needsBat = wdNeedsBat();
-  wdEl('wd-sec-newbat').hidden = !needsBat;
-  wdEl('wd-sec-strike').hidden = !needsBat;
   const outName = end === 'nonStriker' ? snap.nonStrikerName : end === 'striker' ? snap.strikerName : null;
-  const survivor = end === 'nonStriker' ? snap.strikerName : end === 'striker' ? snap.nonStrikerName : null;
-  const nb = wdNewBatChoice();
-  const predictedNew = wdPredictNewOnStrike();
-  wdEl('wd-strike').innerHTML = [
-    wdChip(survivor || 'Not-out batter', 'stays in', s.nextStriker === 'survivor', 'data-wd-strike="survivor"'),
-    wdChip(nb ? nb.name : 'New batsman', 'coming in', s.nextStriker === 'new', 'data-wd-strike="new"')
-  ].join('');
-  wdEl('wd-strike-hint').textContent = `— by the Laws (runs and the over), ${predictedNew ? (nb ? nb.name : 'the new batsman') : (survivor || 'the not-out batter')} should face`;
 
   // ---- Preview + can it be confirmed? ----
   const runs = wdRuns();
@@ -16127,8 +16181,6 @@ function renderWicketDetails(){
   else if(WD_WHO[s.type] === 'pick' && !s.pick) problem = s.type === 'Absent Hurt' ? 'Choose the batter who is absent hurt.' : 'Choose the batter who is timed out.';
   else if(s.type === 'Stumped' && s.stumpBy !== 'bowler' && !wdFielderChoice().name) problem = 'Stumped — choose the wicket-keeper (or Bowler).';
   else if(s.type === 'Run Out (Mankaded)' && s.stumpBy === 'keeper' && !wdFielderChoice().name) problem = 'Mankad — choose the wicket-keeper (or Bowler).';
-  else if(needsBat && wdEl('wd-newbat-select').style.display !== 'none' && wdEl('wd-newbat-select').options.length > 1 && !nb) problem = 'Choose the new batsman.';
-  else if(needsBat && !s.nextStriker) problem = 'Who is on strike for the next ball? — choose one.';
   const prev = wdEl('wd-preview');
   if(problem){ prev.className = 'wd-preview wait'; prev.textContent = problem; }
   else if(d.special === 'absent'){
@@ -16145,12 +16197,11 @@ function renderWicketDetails(){
     const ballTxt = (d.nonDelivery || d.special) ? '<b>no ball bowled</b> — the over does not move'
       : wdIsLegal() ? `ball <b>${nextBall}</b>${(state.score.balls || 0) + 1 >= bpo ? ' — ends the over' : ''}` : `<b>${del.label}</b> — not a legal ball, ${state.score.overs || 0}.${state.score.balls || 0} stays`;
     const runsTxt = wdRunsAllowed() ? ` · <b>${team}</b> run${team === 1 ? '' : 's'} to the team${wdDelivery() === 'normal' && runs ? ` (${runs} to ${escapeHtmlPanel(snap.strikerName || 'striker')})` : ''}` : (extra ? ` · <b>1</b> ${del.label.toLowerCase()} extra` : '');
-    const nextName = s.nextStriker === 'new' ? (nb ? nb.name : 'new batsman') : (survivor || '—');
     prev.className = 'wd-preview';
     prev.innerHTML = `<b>${escapeHtmlPanel(timedName || outName || 'Batter')}</b> ${d.special === 'retired' ? '— <b>retired not out</b>' : `out — <b>${escapeHtmlPanel(s.type)}</b>`}${f.name && s.type !== 'Caught & Bowled' && s.type !== 'Run Out (Mankaded)' && fielderLabel ? ` (${escapeHtmlPanel(f.name)})` : ''}`
       + `${isBowlerCreditedDismissal(d.engine || s.type) && isDelivery ? ` · bowler <b>${escapeHtmlPanel(snap.bowlerName || 'Unassigned')}</b>` : ''}`
       + ` · ${ballTxt}${runsTxt}`
-      + (needsBat ? ` · new batsman <b>${escapeHtmlPanel(nb ? nb.name : 'to choose later')}</b> · next on strike <b>${escapeHtmlPanel(nextName)}</b>` : (wdInningsEndsHere() ? ' · <b>innings ends</b>' : ''));
+      + (needsBat ? ' · then: <b>the new batsman</b>, and who faces next' : (wdInningsEndsHere() ? ' · <b>innings ends</b>' : ''));
   }
   wdEl('wd-confirm').disabled = !!problem;
   wdEl('wd-confirm').textContent = d && d.special === 'absent' ? 'CONFIRM ABSENT HURT' : d && d.special === 'retired' ? 'CONFIRM RETIRED' : 'CONFIRM WICKET';
@@ -16176,27 +16227,14 @@ function openWicketModal(){
   const ctx = pendingExtraWicketContext; // 'Wd' | 'Nb' | null — from the Wide / No Ball picker
   pendingExtraWicketContext = null;
   const locked = ctx === 'Wd' ? 'wide' : ctx === 'Nb' ? 'noball' : null;
-  bhShow('wd-newbat-hand', 'R');
   wdState = { type: null, delivery: locked || 'normal', lockedDelivery: locked, who: null, pick: null, runs: 0, custom: false,
-    nextStriker: null, stumpBy: 'keeper', wide: locked === 'wide' };
+    stumpBy: 'keeper', wide: locked === 'wide' };
   wdEl('wd-runs-custom').value = '';
   wdEl('wd-who-select').dataset.forType = '';
   const fSel = wdEl('wd-fielder-select');
   if(!wdFielderDD) wdFielderDD = makeProDropdown(fSel, { placeholder: '— choose fielder —', getItems: fielderDropdownItems });
   wdSetFielder('');
   wdEl('wd-fielder-input').value = '';
-  // New batsman: only players who can still bat — never someone already
-  // out, absent hurt, or either batter at the crease.
-  const snap = wdSnapshot();
-  const nSel = wdEl('wd-newbat-select'), nIn = wdEl('wd-newbat-input');
-  const eligible = wdEligibleNewBatters(snap);
-  if(rosterPlayers(state.battingTeam).length){
-    nSel.innerHTML = '<option value="">— choose the incoming batsman —</option>' + eligible.map(p => `<option value="${escapeHtmlAttr(p.id)}">${escapeHtmlPanel(p.name + playerBadge(state.battingTeam, p.id))}</option>`).join('');
-    nSel.style.display = 'block'; nIn.style.display = eligible.length ? 'none' : 'block';
-  } else {
-    nSel.style.display = 'none'; nIn.style.display = 'block';
-  }
-  nSel.value = ''; nIn.value = '';
   renderWicketDetails();
   overlay.classList.add('show');
 }
@@ -16212,19 +16250,6 @@ function cancelWicketDetails(){
   disarmWicketAnimation();
   closeWicketModal();
 }
-// After the wicket: the new batsman goes in, and the batter the scorer
-// named takes strike — always the scorer's answer, never a guess.
-function wdSeatNewBatsmanAndStrike(survivorName, newBat, nextNew){
-  if(newBat){
-    sendInNewBatsman(newBat.name, newBat.id);
-    setBatHand(newBat, (wdState && wdState.newHand) || bhChosen('wd-newbat-hand'));
-  }
-  const survivorOnStrike = state.striker && state.striker.name === survivorName;
-  if(nextNew === survivorOnStrike){
-    swapStrikeSilent();
-    if(!newBat) state.newBatsmanEnd = state.newBatsmanEnd === 'striker' ? 'nonStriker' : 'striker';
-  }
-}
 function confirmWicketDetails(){
   const s = wdState;
   if(!s || !s.type) return;
@@ -16236,9 +16261,12 @@ function confirmWicketDetails(){
   const runs = wdRuns();
   const f = wdFielderChoice();
   const needsBat = wdNeedsBat();
-  const newBat = needsBat ? wdNewBatChoice() : null;
-  const nextNew = s.nextStriker === 'new';
-  const survivorName = end === 'nonStriker' ? snap.strikerName : snap.nonStrikerName;
+  // Why the batters stand where the Laws put them after this ball — shown
+  // with the pre-selected answer on the New Batsman screen.
+  const crossedOnRun = wdRunsAllowed() && runs % 2 === 1;
+  const overEndsHere = !d.special && !d.nonDelivery && wdIsLegal() && (state.score.balls || 0) + 1 >= ballsPerOver();
+  const strikeReason = [crossedOnRun ? `the batters crossed (${runs} run${runs === 1 ? '' : 's'})` : '',
+    overEndsHere ? 'last ball of the over, so the ends change' : ''].filter(Boolean).join(' · ');
   const pickId = (s.pick || '').startsWith('p:') ? s.pick.slice(2) : null;
   const del = wdDelivery();
   const runsCount = wdRunsAllowed();
@@ -16304,25 +16332,24 @@ function confirmWicketDetails(){
       else if(runsCount){ meta.runsCompleted = runs; if(del === 'bye' || del === 'legbye') meta.runsAs = del; }
       ok = recordBall(kind, meta) !== false;
     }
-    if(ok && needsBat) wdSeatNewBatsmanAndStrike(survivorName, newBat, nextNew);
   } finally {
     atomicEnd();
   }
   if(!ok){ disarmWicketAnimation(); return; }
   if(d.special === 'retired'){
     disarmWicketAnimation();
-    if(needsBat && !newBat) openNewBatsmanModal(dismissedName || 'Batsman', { retired: true });
+    if(needsBat) openNewBatsmanModal(dismissedName || 'Batsman', { retired: true, strikeReason, joinUndo: true });
     return;
   }
-  const overlay = document.getElementById('newbat-modal-overlay');
-  overlay.dataset.retired = '';
-  overlay.dataset.pendingDismissed = dismissedName || '';
-  if(needsBat && !newBat){
-    // No incoming batsman named yet — ask now; the WICKET graphic follows that answer.
-    openNewBatsmanModal(dismissedName || 'Batsman');
-    return;
-  }
+  // The dismissal is recorded: the WICKET graphic names the batter now (or
+  // at its 3 seconds) — it never waits for the next batter to be chosen.
   fireWicketAnimationOnce(dismissedName || '');
+  if(needsBat){
+    // Only now: who comes in, and who faces the next ball (pre-selected by
+    // the Laws, changeable) — see openNewBatsmanModal().
+    openNewBatsmanModal(dismissedName || 'Batsman', { strikeReason, animationDone: true, joinUndo: true });
+    return;
+  }
   maybePromptNewBowler();
 }
 document.getElementById('wd-types').addEventListener('click', (e) => {
@@ -16330,7 +16357,7 @@ document.getElementById('wd-types').addEventListener('click', (e) => {
   if(!b || b.disabled || !wdState) return;
   if(b.dataset.wdType === 'Retired Hurt'){ cancelWicketDetails(); openRetiredHurtModal(); return; }
   wdState.type = b.dataset.wdType;
-  wdState.who = null; wdState.pick = null; wdState.nextStriker = null;
+  wdState.who = null; wdState.pick = null;
   if(!['Run Out', 'Obstructing the Field'].includes(wdState.type)){ wdState.runs = 0; wdState.custom = false; }
   // Keeper pre-filled for Caught Behind and a stumping.
   wdState.stumpBy = wdState.type === 'Run Out (Mankaded)' ? 'bowler' : 'keeper';
@@ -16341,15 +16368,15 @@ document.getElementById('wd-types').addEventListener('click', (e) => {
 document.getElementById('wd-delivery').addEventListener('click', (e) => {
   const b = e.target.closest('[data-wd-delivery]');
   if(!b || b.disabled || !wdState) return;
-  wdState.delivery = b.dataset.wdDelivery; wdState.nextStriker = null; renderWicketDetails();
+  wdState.delivery = b.dataset.wdDelivery; renderWicketDetails();
 });
-document.getElementById('wd-wide-check').addEventListener('change', (e) => { if(wdState){ wdState.wide = e.target.checked; wdState.nextStriker = null; renderWicketDetails(); } });
+document.getElementById('wd-wide-check').addEventListener('change', (e) => { if(wdState){ wdState.wide = e.target.checked; renderWicketDetails(); } });
 document.getElementById('wd-who').addEventListener('click', (e) => {
   const b = e.target.closest('[data-wd-who]');
   if(!b || !wdState) return;
-  wdState.who = b.dataset.wdWho; wdState.nextStriker = null; renderWicketDetails();
+  wdState.who = b.dataset.wdWho; renderWicketDetails();
 });
-document.getElementById('wd-who-select').addEventListener('change', (e) => { if(wdState){ wdState.pick = e.target.value || null; wdState.nextStriker = null; renderWicketDetails(); } });
+document.getElementById('wd-who-select').addEventListener('change', (e) => { if(wdState){ wdState.pick = e.target.value || null; renderWicketDetails(); } });
 document.getElementById('wd-fielder-by').addEventListener('click', (e) => {
   const b = e.target.closest('[data-wd-stumpby]');
   if(!b || !wdState) return;
@@ -16360,15 +16387,10 @@ document.getElementById('wd-runs').addEventListener('click', (e) => {
   if(!b || !wdState) return;
   if(b.dataset.wdRuns === 'custom'){ wdState.custom = true; setTimeout(() => wdEl('wd-runs-custom').focus(), 30); }
   else { wdState.custom = false; wdState.runs = Number(b.dataset.wdRuns); }
-  wdState.nextStriker = null; renderWicketDetails();
+  renderWicketDetails();
 });
-document.getElementById('wd-strike').addEventListener('click', (e) => {
-  const b = e.target.closest('[data-wd-strike]');
-  if(!b || !wdState) return;
-  wdState.nextStriker = b.dataset.wdStrike; renderWicketDetails();
-});
-['wd-runs-custom', 'wd-fielder-input', 'wd-newbat-input'].forEach(id => document.getElementById(id).addEventListener('input', () => { if(wdState){ if(id === 'wd-runs-custom') wdState.nextStriker = null; renderWicketDetails(); } }));
-['wd-fielder-select', 'wd-newbat-select'].forEach(id => document.getElementById(id).addEventListener('change', () => { if(wdState) renderWicketDetails(); }));
+['wd-runs-custom', 'wd-fielder-input'].forEach(id => document.getElementById(id).addEventListener('input', () => { if(wdState) renderWicketDetails(); }));
+['wd-fielder-select'].forEach(id => document.getElementById(id).addEventListener('change', () => { if(wdState) renderWicketDetails(); }));
 document.getElementById('wd-cancel').addEventListener('click', cancelWicketDetails);
 document.getElementById('wd-confirm').addEventListener('click', confirmWicketDetails);
 document.getElementById('wd-overlay').addEventListener('click', (e) => { if(e.target.id === 'wd-overlay') cancelWicketDetails(); });
@@ -16795,6 +16817,53 @@ document.getElementById('runout-modal-submit').addEventListener('click', () => {
    locked in here (or explicitly skipped) BEFORE the WICKET graphic
    fires, so the animation always follows the name entry, not before.
    ============================================================ */
+// 🏏 WHO FACES NEXT — asked with the incoming batsman, AFTER the wicket is
+// recorded. recordBall() has already put the not-out batter and the empty
+// end where the Laws put them (a run out's crossing, the over's last ball):
+// that is the pre-selected answer, and the scorer can change it before
+// Send In. Decided by ENDS, never by names — two players can share a name.
+let nbStrike = null; // { seatEnd, def, choice, survivorId, survivorName, reason }
+let nbJoinUndo = false; // this screen follows CONFIRM WICKET: no Undo step of its own
+function nbIncomingName(){
+  const select = document.getElementById('newbat-modal-select');
+  if(select.style.display !== 'none' && select.value){
+    const p = findPlayerById(state.battingTeam, select.value);
+    if(p) return p.name;
+  }
+  const input = document.getElementById('newbat-modal-input');
+  return input.style.display !== 'none' ? input.value.trim() : '';
+}
+function renderNbStrike(){
+  const wrap = document.getElementById('newbat-strike-wrap');
+  if(!wrap) return;
+  if(!nbStrike){ wrap.hidden = true; return; }
+  wrap.hidden = false;
+  const incoming = nbIncomingName() || 'New batsman';
+  const lawName = nbStrike.def === 'new' ? incoming : nbStrike.survivorName;
+  document.getElementById('newbat-strike-hint').textContent = `— by the Laws: ${lawName}${nbStrike.reason ? ` (${nbStrike.reason})` : ''}`;
+  document.getElementById('newbat-strike').innerHTML =
+    wdChip(nbStrike.survivorName, nbStrike.def === 'survivor' ? 'stays in · by the Laws' : 'stays in', nbStrike.choice === 'survivor', 'data-nb-strike="survivor"')
+    + wdChip(incoming, nbStrike.def === 'new' ? 'coming in · by the Laws' : 'coming in', nbStrike.choice === 'new', 'data-nb-strike="new"');
+}
+// The scorer's answer, applied once the incoming batter is seated at the
+// empty end (seated) — or, skipped for now, to the empty end itself.
+function nbApplyStrikeChoice(seated){
+  const ns = nbStrike;
+  nbStrike = null;
+  if(!ns) return;
+  if((ns.choice === 'new') === (ns.seatEnd === 'striker')) return; // already so
+  // Still the same not-out batter at the other end? A sync or an undo while
+  // this screen was open would have moved them — then nothing is guessed.
+  const other = ns.seatEnd === 'striker' ? state.nonStriker : state.striker;
+  if(!other || !ClipAttribution.samePlayer(ns.survivorId, ns.survivorName, other.id, other.name)){
+    toast('⚠️ The batters changed while this screen was open — strike was left as it is. Check it before the next ball.', 7000);
+    return;
+  }
+  if(!seated && !nbJoinUndo) pushHistory();
+  swapStrikeSilent();
+  if(!seated) state.newBatsmanEnd = state.newBatsmanEnd === 'striker' ? 'nonStriker' : 'striker';
+  pushState(true);
+}
 function openNewBatsmanModal(dismissedName, opts){
   opts = opts || {};
   bhShow('newbat-modal-hand', 'R');
@@ -16818,6 +16887,16 @@ function openNewBatsmanModal(dismissedName, opts){
   }
   input.value = '';
   overlay.dataset.pendingDismissed = dismissedName;
+  overlay.dataset.animDone = opts.animationDone ? '1' : '';
+  nbJoinUndo = !!opts.joinUndo;
+  // The end the batter comes in at decides the pre-selected answer.
+  const seatEnd = state.newBatsmanEnd === 'nonStriker' ? 'nonStriker' : 'striker';
+  const survivor = seatEnd === 'striker' ? state.nonStriker : state.striker;
+  const def = seatEnd === 'striker' ? 'new' : 'survivor';
+  nbStrike = survivor && survivor.name
+    ? { seatEnd, def, choice: def, survivorId: survivor.id || null, survivorName: survivor.name, reason: opts.strikeReason || '' }
+    : null;
+  renderNbStrike();
   overlay.classList.add('show');
   setTimeout(() => (hasRoster ? select : input).focus(), 50);
 }
@@ -16826,26 +16905,36 @@ function closeNewBatsmanModal(){
 }
 function fireDeferredWicketAnimation(){
   if(document.getElementById('newbat-modal-overlay').dataset.retired === '1') return; // retired hurt is not a wicket
+  if(document.getElementById('newbat-modal-overlay').dataset.animDone === '1') return; // went up when the wicket was confirmed
   const dismissedName = document.getElementById('newbat-modal-overlay').dataset.pendingDismissed || '';
   fireWicketAnimationOnce(dismissedName);
 }
 document.getElementById('newbat-modal-submit').addEventListener('click', () => {
+  // Closed already — a second tap, or Enter held down: one batter, once.
+  if(!document.getElementById('newbat-modal-overlay').classList.contains('show')) return;
   const select = document.getElementById('newbat-modal-select');
+  let seated = false;
   if(select.style.display !== 'none' && select.value){
     const p = findPlayerById(state.battingTeam, select.value);
-    if(p){ sendInNewBatsman(p.name, p.id); setBatHand(p, bhChosen('newbat-modal-hand')); }
+    if(p){ sendInNewBatsman(p.name, p.id, { joinUndo: nbJoinUndo }); setBatHand(p, bhChosen('newbat-modal-hand')); seated = true; }
   } else {
     const name = document.getElementById('newbat-modal-input').value.trim();
-    if(name){ sendInNewBatsman(name, null); setBatHand({ name, id: (state.striker && state.striker.name === name ? state.striker.id : state.nonStriker && state.nonStriker.name === name ? state.nonStriker.id : null) }, bhChosen('newbat-modal-hand')); }
+    if(name){ sendInNewBatsman(name, null, { joinUndo: nbJoinUndo }); setBatHand({ name, id: (state.striker && state.striker.name === name ? state.striker.id : state.nonStriker && state.nonStriker.name === name ? state.nonStriker.id : null) }, bhChosen('newbat-modal-hand')); seated = true; }
   }
+  nbApplyStrikeChoice(seated);
+  nbJoinUndo = false;
   renderBatHandPickers();
   closeNewBatsmanModal();
   fireDeferredWicketAnimation();
   maybePromptNewBowler();
 });
 document.getElementById('newbat-modal-cancel').addEventListener('click', () => {
+  if(!document.getElementById('newbat-modal-overlay').classList.contains('show')) return;
   // Skipping doesn't block the animation — the name can still be entered
-  // later via the sidebar "Send In New Batsman" control.
+  // later via the sidebar "Send In New Batsman" control. Who faces next is
+  // still the scorer's answer (the empty end moves with it).
+  nbApplyStrikeChoice(false);
+  nbJoinUndo = false;
 
   closeNewBatsmanModal();
   fireDeferredWicketAnimation();
@@ -16854,6 +16943,14 @@ document.getElementById('newbat-modal-cancel').addEventListener('click', () => {
 document.getElementById('newbat-modal-input').addEventListener('keydown', (e) => {
   if(e.key === 'Enter') document.getElementById('newbat-modal-submit').click();
 });
+document.getElementById('newbat-strike').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-nb-strike]');
+  if(!b || !nbStrike) return;
+  nbStrike.choice = b.dataset.nbStrike === 'new' ? 'new' : 'survivor';
+  renderNbStrike();
+});
+document.getElementById('newbat-modal-select').addEventListener('change', () => renderNbStrike());
+document.getElementById('newbat-modal-input').addEventListener('input', () => renderNbStrike());
 
 /* ============================================================
    NEW OVER — BOWLER PROMPT. Opens automatically the instant an over
@@ -19034,7 +19131,10 @@ function buildUpcomingMatchRecord(o){
 }
 // Same upsert-by-matchId as saveMatchToLeague, for a record that is NOT the
 // match on the panel — so it never touches the live pointer.
-function upsertLeagueRecord(name, rec, onSynced){
+// Resolves to what the SERVER said: { ok } — or { ok:false, code, message }
+// (opts.quiet: the caller shows the message itself).
+function upsertLeagueRecord(name, rec, onSynced, opts){
+  const quiet = !!(opts && opts.quiet);
   const key = leagueStorageKey(name);
   const list = (leagueCache[key] || loadLeagueMatchesLocal(name)).slice();
   const idx = list.findIndex(m => m.matchId === rec.matchId);
@@ -19043,19 +19143,35 @@ function upsertLeagueRecord(name, rec, onSynced){
   saveLeagueMatchesLocal(name, list);
   addKnownTournament(name);
   refreshLeagueUI();
-  if(!currentOwnerUid()){ toast('⚠️ Not logged in — saved on this device only'); return; }
-  fetch(withUid(`${leagueApiPath(name)}/match`), {
+  if(!currentOwnerUid()){
+    if(!quiet) toast('⚠️ Not logged in — saved on this device only');
+    return Promise.resolve({ ok: false, code: 'NOT_SIGNED_IN', message: '🔑 Not signed in on this laptop — it cannot be saved to your account, so your other laptops would not see it. Sign in on the home page, then save again.' });
+  }
+  return fetch(withUid(`${leagueApiPath(name)}/match`), {
     method: 'POST', headers: { 'Content-Type': 'application/json', ...mlHeaders(rec.roomId) }, body: JSON.stringify(rec)
-  }).then(res => res.json().then(data => ({ res, data }))).then(({ res, data }) => {
+  }).then(res => res.json().catch(() => null).then(data => ({ res, data }))).then(({ res, data }) => {
     if(data && data.success){
       leagueCache[key] = data.matches;
       saveLeagueMatchesLocal(name, data.matches);
       refreshLeagueUI();
       if(onSynced) onSynced();
-    } else {
-      syncFailureToast(res, '⚠️ Saved locally only — could not sync to server');
+      return { ok: true };
     }
-  }).catch(() => toast('⚠️ Saved locally only — could not sync to server'));
+    if(!quiet) syncFailureToast(res, '⚠️ Saved locally only — could not sync to server');
+    return { ok: false, code: (data && data.code) || null, message: leagueSaveProblem(res, data) };
+  }).catch(() => {
+    if(!quiet) toast('⚠️ Saved locally only — could not sync to server');
+    return { ok: false, code: 'OFFLINE', message: '📴 No connection to the server — not saved. Check the internet and save again.' };
+  });
+}
+function leagueSaveProblem(res, data){
+  const status = res ? res.status : 0, err = data && data.error;
+  if(data && data.code === 'ALREADY_STARTED') return '⚠️ This match has already been started (on this or another laptop) — the fixture can no longer be changed. The list has been refreshed.';
+  if(status === 401 || status === 403) return '🚫 This account cannot save tournament matches — sign in (home page) with the account that runs this tournament, then save again.';
+  if(status === 413) return '⚠️ Too large to save — use smaller team logos, then save again.';
+  if(status === 423) return '🔒 ' + (err || 'This match is locked');
+  if(status === 503) return '⏳ The server is starting up — not saved yet. Save again in a moment.';
+  return '⚠️ Not saved to the server' + (err ? ' — ' + err : '') + '. Save again.';
 }
 
 /* ============================================================
@@ -19633,12 +19749,7 @@ function bhPresetFor(id, player){ bhShow(id, batHandOf(player)); }
   const on = (id, fn) => { const el = document.getElementById(id); if(el) el.addEventListener('click', (e) => { const b = e.target.closest('[data-bh]'); if(b) fn(b.dataset.bh === 'L' ? 'L' : 'R'); }); };
   on('bh-striker', (h) => { setBatHand(state.striker, h); renderBatHandPickers(); pushState(true); });
   on('bh-nonstriker', (h) => { setBatHand(state.nonStriker, h); renderBatHandPickers(); pushState(true); });
-  on('wd-newbat-hand', (h) => { bhShow('wd-newbat-hand', h); if(typeof wdState !== 'undefined' && wdState) wdState.newHand = h; });
   on('newbat-modal-hand', (h) => bhShow('newbat-modal-hand', h));
-  const wdSel = document.getElementById('wd-newbat-select'), wdIn = document.getElementById('wd-newbat-input');
-  const wdPreset = () => { if(typeof wdState !== 'undefined' && wdState) wdState.newHand = null; bhPresetFor('wd-newbat-hand', typeof wdNewBatChoice === 'function' ? wdNewBatChoice() : null); };
-  if(wdSel) wdSel.addEventListener('change', wdPreset);
-  if(wdIn) wdIn.addEventListener('input', wdPreset);
   const nbSel = document.getElementById('newbat-modal-select'), nbIn = document.getElementById('newbat-modal-input');
   if(nbSel) nbSel.addEventListener('change', () => bhPresetFor('newbat-modal-hand', findPlayerById(state.battingTeam, nbSel.value)));
   if(nbIn) nbIn.addEventListener('input', () => bhPresetFor('newbat-modal-hand', { name: nbIn.value.trim() }));
@@ -20182,6 +20293,7 @@ let umPicking = null;              // 'A' | 'B' while that side shows the team l
 let umSaving = false;
 let umFmt = { format: 'T20', customOvers: 10, maxWickets: 10, superOver: true };
 let umEditing = null;              // the upcoming record being edited (null = a new fixture)
+let umDraft = null;                // a NEW fixture's ids (and its code once made), kept when a save fails so saving again saves the SAME match
 let umForce = false;               // "Save anyway" pressed after a duplicate warning
 
 function umEl(id){ return document.getElementById(id); }
@@ -20243,6 +20355,7 @@ async function openUpcomingModal(rec){
   await syncLeagueFromServer(tournament); // other laptops' matches + fixtures too
   umTeams = await loadPickableTeams();
   umEditing = rec && isUpcomingMatch(rec) ? rec : null;
+  umDraft = null;
   umPicking = null;
   umForce = false;
   umEl('um-kicker').textContent = tournament;
@@ -20527,7 +20640,7 @@ async function saveUpcomingMatch(){
     const teamA = await umPrepareSide(A);
     const teamB = await umPrepareSide(B);
     const rec = buildUpcomingMatchRecord({
-      ...(editing ? { matchId: editing.matchId, roomId: editing.roomId, streamUrl: editing.streamUrl } : {}),
+      ...(editing ? { matchId: editing.matchId, roomId: editing.roomId, streamUrl: editing.streamUrl } : umDraft ? { matchId: umDraft.matchId, roomId: umDraft.roomId } : {}),
       teamA, teamB,
       matchNo: matchNo || nextTournamentMatchNo(),
       matchTitle: (umEl('um-title-input').value || '').trim().slice(0, 60),
@@ -20542,15 +20655,31 @@ async function saveUpcomingMatch(){
     });
     // 🔒 lock with a code (operator's choice) — made on the server before the fixture is saved
     let newCode = null;
+    if(!editing) umDraft = { ...(umDraft || {}), matchId: rec.matchId, roomId: rec.roomId };
     if(editing && editing.locked) rec.locked = true;
+    else if(!editing && umDraft.code){ newCode = umDraft.code; rec.locked = true; } // made on the try that did not save
     else if(umWantLock){
-      try{ newCode = await mlCreate(rec.roomId, rec.matchId, false, umCode); rec.locked = true; }
+      try{ newCode = await mlCreate(rec.roomId, rec.matchId, false, umCode); rec.locked = true; umDraft.code = newCode; }
       catch(e){
         if(e.code === 'CODE_TAKEN' || e.code === 'BAD_CODE' || e.code === 'TOO_MANY'){ umSetMsg('🔒 ' + e.message); mlCodeHint('um-lock', e.message, true); return; }
         if(!confirm(`🔒 Could not make a code for this match (${e.message}).\n\nSave it WITHOUT a code?`)){ umSetMsg('⚠️ Not saved — try again, or turn off "Lock with a code".'); return; }
       }
     }
-    upsertLeagueRecord(tournament, rec);
+    // Scheduled = saved on the SERVER (that is what the account's other
+    // laptops read). Until it says so nothing is announced; if it does not,
+    // the list goes back as it was — no fixture that only this laptop can
+    // see — the form stays filled in, and saving again saves the same match.
+    const before = (leagueCache[leagueStorageKey(tournament)] || loadLeagueMatchesLocal(tournament)).slice();
+    const saved = await upsertLeagueRecord(tournament, rec, null, { quiet: true });
+    if(!saved.ok){
+      leagueCache[leagueStorageKey(tournament)] = before;
+      saveLeagueMatchesLocal(tournament, before);
+      refreshLeagueUI();
+      umSetMsg(saved.message);
+      if(saved.code === 'ALREADY_STARTED') syncLeagueFromServer(tournament);
+      return;
+    }
+    umDraft = null;
     closeUpcomingModal();
     setHistoryPanelView('matches');
     const what = [umStageLabel(rec.matchStage) && rec.matchStage !== 'league' ? umStageLabel(rec.matchStage) : '', fixtureFormatText(rec)].filter(Boolean).join(', ');
@@ -20852,6 +20981,32 @@ async function saveTeamEditor(){
   });
 })();
 
+// ▶ Start, on the server: the fixture (this account, this tournament, this
+// matchId) flips from upcoming to started in one step, so two laptops
+// pressing ▶ Start together cannot both start it, and a locked one needs
+// its key (asked for just before). No answer at all (offline / the server
+// starting up): the operator decides.
+async function claimUpcomingStart(owner, rec, opts){
+  let res = null, data = null;
+  if(currentOwnerUid()){
+    try{
+      res = await fetch(withUid(`${leagueApiPath(owner)}/match/${encodeURIComponent(rec.matchId)}/start`), {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...mlHeaders(rec.roomId) },
+        body: JSON.stringify({ deviceId: mlDevice() }), signal: AbortSignal.timeout(10000)
+      });
+      data = await res.json().catch(() => null);
+    }catch(e){ res = null; }
+  }
+  if(res && data && data.success) return { go: true };
+  const code = data && data.code;
+  if(code === 'ALREADY_STARTED') return { go: false, resync: true, message: '⚠️ This match has already been started on another laptop — the list is refreshed; open it there, or here with ▶ Resume.' };
+  if(code === 'NOT_FOUND') return opts && opts.offServer ? { go: true } // (the operator chose to start it — see above)
+    : { go: false, resync: true, message: '⚠️ This match is no longer in this tournament (removed on another laptop?) — the list is refreshed.' };
+  if(code === 'MATCH_LOCKED' || (res && res.status === 423)) return { go: false, message: '🔒 This match is locked — enter its code on this laptop to start it (press ▶ Start again).' };
+  if(res && (res.status === 401 || res.status === 403)) return { go: false, message: '🚫 This account cannot start tournament matches — sign in (home page) with the account that runs this tournament.' };
+  const go = confirm('⚠️ The server could not confirm that this match has not already been started on another laptop (no internet, or the server is starting up).\n\nStart it on THIS laptop anyway?');
+  return { go, message: go ? '' : 'Not started — press ▶ Start again when the connection is back.' };
+}
 let upcomingStartInFlight = false;
 async function startUpcomingMatch(rec, btn, listTournament){
   if(upcomingStartInFlight || resumeInFlight) return;
@@ -20860,12 +21015,26 @@ async function startUpcomingMatch(rec, btn, listTournament){
   if(isMatchOnPanel(rec, owner)){ toast('This match is already on the panel'); return; }
   const hasCurrent = (state.ballLog || []).length > 0;
   if(!confirm(`Start ${matchLabelForToast(rec)}${rec.matchNo ? ` (Match ${rec.matchNo})` : ''} on the panel now?${hasCurrent ? `\n\nThe current match (${matchLabelForToast(state)}${currentMatchTournament() ? ` — ${currentMatchTournament()}` : ''}) is saved to its own ${currentMatchTournament() ? 'tournament' : 'history'} first and can be resumed later.` : ''}\n\nThe Match ID changes to this match's own ID (${rec.roomId}) — Overlay/Scorecard links change with it.`)) return;
-  // 🔒 a locked match starts only with its code
-  if(!(await mlEnsureAccess(rec.roomId, matchLabelForToast(rec), rec))) return;
-  upcomingStartInFlight = true;
+  upcomingStartInFlight = true; // (a second press while this one is still asking the server does nothing)
   const oldText = btn ? btn.textContent : '';
   if(btn){ btn.disabled = true; btn.textContent = 'Loading…'; }
   try{
+    // The server's word first: a list made before another laptop started (or
+    // removed) this match must not ask for its code — let alone take a locked
+    // match's key from the laptop scoring it.
+    let offServer = false;
+    if(await syncLeagueFromServer(owner)){
+      const now = (leagueCache[leagueStorageKey(owner)] || []).find(m => m.matchId === rec.matchId);
+      if(!now){
+        // Not on the server: removed on another laptop — or a fixture this
+        // laptop never managed to save. The operator decides; started, it is
+        // saved to this tournament under the same ids.
+        if(!confirm('⚠️ This match is not on the server — it was removed on another laptop, or this laptop never managed to save it.\n\nStart it here anyway? It is saved to this tournament as it starts.')) return;
+        offServer = true;
+      } else if(!isUpcomingMatch(now)){ toast('⚠️ This match has already been started on another laptop — the list is refreshed; open it there, or here with ▶ Resume.', 8000); return; }
+    }
+    // 🔒 a locked match starts only with its code
+    if(!(await mlEnsureAccess(rec.roomId, matchLabelForToast(rec), rec))) return;
     // Already being scored on another laptop? Then its room holds the match —
     // never start it again from blank over the top of it.
     try{
@@ -20886,6 +21055,15 @@ async function startUpcomingMatch(rec, btn, listTournament){
     // 1️⃣ Resolve both squads first — nothing on the panel is touched yet.
     const teamA = await prepareTeamForNewMatch(teamFrom(rec.teamA, rec.squadA));
     const teamB = await prepareTeamForNewMatch(teamFrom(rec.teamB, rec.squadB));
+
+    // 🔐 The SERVER starts it — once (see claimUpcomingStart). Still nothing
+    // on the panel has changed if it says no.
+    const claim = await claimUpcomingStart(owner, rec, { offServer });
+    if(!claim.go){
+      if(claim.message) toast(claim.message, 8000);
+      if(claim.resync) syncLeagueFromServer(owner);
+      return;
+    }
 
     // 2️⃣ Park the match that is on the panel (same as Create New Match / Resume).
     if(hasCurrent){
@@ -21171,6 +21349,19 @@ document.querySelectorAll('#live-console .lc-key').forEach(k => {
 document.addEventListener('keydown', (e) => {
   const tag = (e.target.tagName || '').toLowerCase();
   if(tag === 'input' || tag === 'select' || tag === 'textarea') return;
+  // 🔒 A popup is open (Wicket Details, New Batsman, New Over…): no scoring
+  // shortcut may reach the match behind it. A "1" there would score a ball
+  // with the out batter still at the crease; an "s" would swap the ends
+  // under a batter about to be seated at the empty one. Esc still closes.
+  // (The 7-second "SHOW CARD?" prompt is only a suggestion, not a question
+  // about the match — scoring carries on under it.)
+  if(document.querySelector('.wicket-modal-overlay.show:not(#auto-card-modal-overlay), .tc-overlay.show')){
+    if(e.key === 'Escape'){
+      if(document.getElementById('wd-overlay').classList.contains('show')) cancelWicketDetails();
+      else closeNewOverModal();
+    }
+    return;
+  }
 
   if(/^[0-6]$/.test(e.key)){ recordBall(e.key); maybePromptNewBowler(); }
   else if(e.key.toLowerCase() === 'h' && !e.repeat) pressHighlight();

@@ -166,7 +166,24 @@ let scorecardImportPhotosCollection = null;
 let importedCommentaryCollection = null;
 let scorecardImport = null;
 
+// 🛟 STARTUP — connectMongo() runs in the background while the server is
+// already answering requests (a cold start on the host takes a few
+// seconds). Whatever depends on the database being there — a tournament's
+// match list, whether a match is locked, starting a fixture — waits for it
+// (whenMongoReady, a few seconds at most) instead of answering "no
+// matches" / "not locked" in those first moments.
+let mongoInitDone = false;
+let mongoInitResolve = null;
+const mongoInit = new Promise(resolve => { mongoInitResolve = resolve; });
+function whenMongoReady(ms) {
+    if (mongoInitDone) return Promise.resolve();
+    return Promise.race([mongoInit, new Promise(resolve => setTimeout(resolve, ms || 8000))]);
+}
 async function connectMongo() {
+    try { await connectMongoOnce(); }
+    finally { mongoInitDone = true; mongoInitResolve(); }
+}
+async function connectMongoOnce() {
     const uri = process.env.MONGODB_URI;
     if (!uri) {
         console.log('⚠️  MONGODB_URI not set — ball-by-ball logging & clips are disabled until it is.');
@@ -2105,7 +2122,11 @@ app.get('/api/league/:name', requireAuthorizedCreator, async (req, res) => {
     const ownerUid = ownerUidFrom(req);
     if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
     if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
-    if (!matchRecordsCollection) return res.json({ success: true, matches: [] }); // Mongo not configured — panel falls back to its local cache
+    await whenMongoReady();
+    // No database (not configured, or not connected yet): say so. An empty
+    // "success" here made the panel replace its saved list with nothing — a
+    // fixture made on another laptop vanished, and its ▶ Start with it.
+    if (!matchRecordsCollection) return res.status(503).json({ success: false, retry: true, error: 'The match database is not available right now' });
     try {
         const matches = await getLeagueMatches(ownerUid, leagueKey);
         // Also hand back whether the tournament has been marked completed
@@ -2303,7 +2324,11 @@ app.post('/api/match-lock', requireAuthorizedCreator, async (req, res) => {
 app.get('/api/match-lock/:roomId', async (req, res) => {
     const roomId = safeMatchId(req.params.roomId);
     if (!roomId) return res.status(400).json({ success: false });
-    if (!matchLocksCollection) return res.json({ success: true, locked: false, held: false, you: false });
+    await whenMongoReady();
+    // The lock store not being there (yet) is not "not locked": a locked
+    // match must not open without its code in the first seconds after a
+    // restart. The panel reads this as "the code cannot be checked".
+    if (!matchLocksCollection) return res.status(503).json({ success: false, error: 'Match codes are not available right now' });
     try {
         const lock = await matchLocksCollection.findOne({ roomId });
         cacheMatchLock(roomId, lock);
@@ -2437,9 +2462,17 @@ app.post('/api/league/:name/match', requireAuthorizedCreator, async (req, res) =
     if (!leagueKey) return res.status(400).json({ success: false, error: 'League name required' });
     if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
     if (!record || !record.matchId) return res.status(400).json({ success: false, error: 'Match record with matchId required' });
+    await whenMongoReady();
     if (!matchRecordsCollection || !leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     if (mergeLockResponse(res, ownerUid, leagueKey, record.matchId)) return;
     try {
+        // ▶ A fixture is never written over a match that has started: a
+        // laptop still showing the old fixture (with its blank scorecard)
+        // would otherwise wipe the live — or finished — scores.
+        if (record.upcoming === true) {
+            const started = await matchRecordsCollection.findOne({ ownerUid, leagueKey, matchId: record.matchId, upcoming: { $ne: true } }, { projection: { _id: 1 } });
+            if (started) return res.status(409).json({ success: false, code: 'ALREADY_STARTED', error: 'This match has already started — the fixture can no longer be changed' });
+        }
         // 🔒 A locked match is saved only by the laptop scoring it (its key).
         // A fixture can still be edited before anyone has started it.
         const lock = await matchLockForRecord(record.roomId, record.matchId);
@@ -2567,6 +2600,51 @@ app.post('/api/league/:name/match', requireAuthorizedCreator, async (req, res) =
     } catch (err) {
         console.log('League save error:', err);
         res.status(500).json({ success: false, error: 'Could not save match' });
+    }
+});
+
+// ▶ START AN UPCOMING MATCH — the moment a fixture becomes the match being
+// scored, on whichever of the account's laptops presses ▶ Start. ONE
+// conditional update (this owner, this tournament, this matchId, still
+// upcoming) flips it, so two laptops pressing ▶ Start together cannot both
+// start it: the second is told it has started. A locked fixture needs its
+// key (its code, entered on the laptop starting it). The laptop that started
+// it asking again (a retry after a lost answer) is told it started. Nothing
+// else in the record changes here — the panel then saves the started match
+// the usual way, under the same matchId.
+app.post('/api/league/:name/match/:matchId/start', requireAuthorizedCreator, async (req, res) => {
+    const leagueKey = leagueKeyFor(req.params.name);
+    const ownerUid = ownerUidFrom(req);
+    const matchId = String(req.params.matchId || '').slice(0, 100);
+    const deviceId = String((req.body && req.body.deviceId) || '').slice(0, 64) || null;
+    if (!leagueKey || !matchId) return res.status(400).json({ success: false, error: 'Tournament and match required' });
+    if (!ownerUid) return res.status(401).json({ success: false, error: 'Login required (missing uid)' });
+    await whenMongoReady();
+    if (!matchRecordsCollection) return res.status(503).json({ success: false, retry: true, error: 'The match database is not available right now' });
+    if (mergeLockResponse(res, ownerUid, leagueKey, matchId)) return;
+    try {
+        const rec = await matchRecordsCollection.findOne({ ownerUid, leagueKey, matchId }, { projection: { upcoming: 1, roomId: 1, locked: 1, startedBy: 1, startedAt: 1 } });
+        if (!rec) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'This match is not in this tournament any more' });
+        // (that it has started is said before any key is asked for — a laptop
+        // with an old list must not take a locked match's key for nothing)
+        const startedHere = !!(deviceId && rec.startedBy && rec.startedBy.deviceId === deviceId);
+        if (rec.upcoming !== true && !startedHere) return res.status(409).json({ success: false, code: 'ALREADY_STARTED', startedAt: rec.startedAt || null, error: 'This match has already been started on another laptop' });
+        if (rec.locked && !matchLocksCollection) return res.status(503).json({ success: false, error: 'Match codes are not available right now — try again' });
+        const lock = await matchLockForRecord(rec.roomId, matchId);
+        if (lock && !lockTokenMatches(lock, req.get('x-match-key'))) {
+            return res.status(423).json({ success: false, code: 'MATCH_LOCKED', error: 'This match is locked — enter its code to start it' });
+        }
+        if (rec.upcoming !== true) return res.json({ success: true, code: 'STARTED', startedAt: rec.startedAt || null, again: true });
+        const startedAt = Date.now();
+        const r = await matchRecordsCollection.updateOne(
+            { ownerUid, leagueKey, matchId, upcoming: true },
+            { $set: { upcoming: false, startedAt, startedBy: { deviceId, email: req.creatorEmail || null } } }
+        );
+        if (!r || !r.matchedCount) return res.status(409).json({ success: false, code: 'ALREADY_STARTED', error: 'This match has just been started on another laptop' });
+        res.json({ success: true, code: 'STARTED', startedAt });
+    } catch (err) {
+        console.log('Match start error:', err);
+        res.status(500).json({ success: false, error: 'Could not start the match — try again' });
     }
 });
 
@@ -11504,9 +11582,13 @@ io.on('connection', async (socket) => {
     });
     socket.use((packet, next) => {
         const ev = packet[0];
-        if (!MATCH_LOCKED_EVENTS.has(ev) || !matchLocksCollection) return next();
+        if (!MATCH_LOCKED_EVENTS.has(ev) || (mongoInitDone && !matchLocksCollection)) return next();
         const target = lockTargetRoomId(ev, packet[1], lockRoomFallback);
         socket.data.lockChain = (socket.data.lockChain || Promise.resolve()).then(async () => {
+            // (just after a restart: wait for the lock store rather than let a
+            // locked match be scored without its key)
+            await whenMongoReady();
+            if (!matchLocksCollection) return true;
             const lock = await getMatchLock(target);
             return !lock || lockTokenMatches(lock, socket.data.lockTokens[target]);
         }).catch(() => true).then((allowed) => {
