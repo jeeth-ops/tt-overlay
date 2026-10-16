@@ -7017,7 +7017,7 @@ async function mlEnsureAccess(roomId, label, rec){
     try{ st = await mlStatus(roomId); }catch(e){ st = null; }
     mlLast = { roomId, locked: st ? !!st.locked : !!(rec && rec.locked) };
     if(!st){
-      if(rec && rec.locked){ toast('🔒 This match is locked — the panel needs the internet to check its code', 6000); return false; }
+      if(rec && rec.locked){ toast('🔒 This match is locked — its code cannot be checked right now (no internet, or the server is starting up). Try again in a moment.', 7000); return false; }
       return true;
     }
     if(!st.locked) return true;
@@ -7266,8 +7266,10 @@ function connect(){
       return;
     }
 
-    state = mergeWithDefaults({ ...state, ...serverState });
+    const lookingAt = [state.leagueName, state.matchMode].join('|');
+    state = mergeWithDefaults({ ...state, ...roomStateForThisPanel(serverState) });
     lastBroadcastState = snapshot();
+    if([state.leagueName, state.matchMode].join('|') !== lookingAt) syncBrowsingControls();
     renderPanel();
   });
 
@@ -10795,6 +10797,39 @@ document.getElementById('league-name').addEventListener('blur', (e) => {
   document.getElementById('new-tournament-wrap').style.display = 'none';
 });
 
+// 📋 WHICH TOURNAMENT THIS LAPTOP IS LOOKING AT — the dropdown and the
+// Single/Tournament switch — is this laptop's own choice. It travels in the
+// match state (a match not started yet takes its tournament from it), so the
+// room keeps whatever the last laptop to push had chosen, and adopting that
+// on every (re)connect threw this laptop's choice away: the dropdown still
+// showed the tournament, but its 📋 Matches list went empty — and an Upcoming
+// Match made on another laptop lost its ▶ Start. So the room's choice is
+// taken only when this laptop has none yet, or when the room hands over a
+// DIFFERENT match that is not started yet and belongs to a tournament (it
+// has no matchLeague of its own until play starts, so its tournament must
+// come with it). A started match keeps its own tournament (matchLeague)
+// whatever is being looked at.
+function roomStateForThisPanel(serverState){
+  if(!(state.leagueName || '').trim()) return serverState;
+  const handover = serverState.tournamentMatchId && serverState.tournamentMatchId !== state.tournamentMatchId
+    && !String(serverState.matchLeague || '').trim() && serverState.matchMode === 'tournament' && String(serverState.leagueName || '').trim();
+  if(handover) return serverState;
+  const { leagueName, matchMode, ...rest } = serverState;
+  return rest;
+}
+// The tournament controls redrawn from state (after a room hands this
+// laptop a different tournament's match).
+function syncBrowsingControls(){
+  document.getElementById('league-name').value = state.leagueName || '';
+  populateTournamentDropdown();
+  const name = (state.leagueName || '').trim();
+  if(name){ addKnownTournament(name); document.getElementById('tournament-select').value = name; }
+  else document.getElementById('tournament-select').value = '';
+  applyMatchModeUI(state.matchMode);
+  refreshLeagueUI();
+  if(name) syncLeagueFromServer(name);
+}
+
 /* ---- Single Match vs Tournament mode ---- */
 // Pure UI switch — does not touch state.leagueName. Used both by the
 // click handlers below (which DO decide whether to clear the name) and
@@ -10876,6 +10911,7 @@ document.getElementById('view-league-matches-btn').addEventListener('click', () 
   const showing = listEl.style.display !== 'none' && historyPanelView === 'matches';
   if(showing){ listEl.style.display = 'none'; return; }
   setHistoryPanelView('matches');
+  refreshLeagueListFromServer();
 });
 document.getElementById('view-player-history-btn').addEventListener('click', () => {
   const listEl = document.getElementById('league-matches-list');
@@ -11577,24 +11613,52 @@ function currentLeagueMatchesLive(){
 // tournament name, refreshed every time syncLeagueFromServer runs.
 const tournamentCompletedCache = {};
 
+// Why the list may not be the server's (shown at the top of 📋 Matches).
+const leagueSyncNote = {};
+const leagueSyncRetry = {};
 async function syncLeagueFromServer(name){
   const trimmed = (name || '').trim();
   if(!trimmed || !currentOwnerUid()) return;
   const key = leagueStorageKey(trimmed);
   try{
     const res = await fetch(withUid(leagueApiPath(trimmed)));
-    const data = await res.json();
+    const data = await res.json().catch(() => null);
     if(data && data.success){
       leagueCache[key] = data.matches || [];
       tournamentCompletedCache[trimmed.toLowerCase()] = !!data.completed;
       if(data.info || data.token) tournamentInfoCache[trimmed.toLowerCase()] = { info: data.info || null, token: data.token || null };
       saveLeagueMatchesLocal(trimmed, leagueCache[key]);
+      leagueSyncNote[key] = '';
+      if(leagueSyncRetry[key]){ clearTimeout(leagueSyncRetry[key].timer); delete leagueSyncRetry[key]; }
       refreshLeagueUI();
       refreshTournamentCardsIfShown();
+      return true;
+    } else if(res.status === 503 || (data && data.retry)){
+      // The server is up but its database is not yet (a cold start): keep
+      // this laptop's list — never take that as "no matches" — and look
+      // again shortly, by itself.
+      const r = leagueSyncRetry[key] = leagueSyncRetry[key] || { tries: 0, timer: null };
+      leagueSyncNote[key] = '⏳ The server is starting up — showing this laptop\'s saved list; it refreshes by itself.';
+      if(r.tries < 4 && !r.timer){
+        r.timer = setTimeout(() => { r.timer = null; r.tries++; syncLeagueFromServer(trimmed); }, [3000, 6000, 12000, 20000][r.tries]);
+      }
+      refreshLeagueUI();
     }
   }catch(e){
     // Offline / server unreachable — keep using whatever's cached locally.
+    leagueSyncNote[key] = '📴 Could not reach the server — showing this laptop\'s saved list.';
+    refreshLeagueUI();
   }
+  return false;
+}
+// 📋 Matches opened: fixtures made — or started — on another laptop since
+// this page loaded come in (at most every few seconds).
+let leagueListRefreshAt = 0;
+function refreshLeagueListFromServer(){
+  const name = (state.leagueName || '').trim();
+  if(!name || Date.now() - leagueListRefreshAt < 3000) return;
+  leagueListRefreshAt = Date.now();
+  syncLeagueFromServer(name);
 }
 let leagueSyncDebounce = null;
 function debouncedSyncLeagueFromServer(name){
@@ -12337,11 +12401,17 @@ function upcomingWhenText(m){
 }
 function renderLeagueMatchesList(matches){
   const listEl = document.getElementById('league-matches-list');
-  if(!matches.length){ listEl.innerHTML = '<div class="shortcut-hint">No matches saved yet.</div>'; return; }
+  // Why this laptop may not see a match saved on another one — said here,
+  // where the operator is looking for it.
+  const note = !currentOwnerUid()
+    ? '🔑 Not signed in on this laptop — matches saved from your other laptops cannot load. Sign in on the home page, then reopen this panel.'
+    : (leagueSyncNote[leagueStorageKey((state.leagueName || '').trim())] || '');
+  const noteHtml = note ? `<div class="shortcut-hint" data-league-sync-note style="margin-bottom:6px;">${escapeHtmlPanel(note)}</div>` : '';
+  if(!matches.length){ listEl.innerHTML = noteHtml + '<div class="shortcut-hint">No matches saved yet.</div>'; return; }
   // Upcoming fixtures first (soonest at the top), then the played matches newest first.
   const upcoming = matches.filter(isUpcomingMatch).sort((a, b) => (upcomingDateOf(a) || '9').localeCompare(upcomingDateOf(b) || '9'));
   const played = matches.filter(m => !isUpcomingMatch(m)).reverse();
-  listEl.innerHTML = [...upcoming, ...played].map(m => {
+  listEl.innerHTML = noteHtml + [...upcoming, ...played].map(m => {
     const up = isUpcomingMatch(m);
     const resultText = up ? `📅 Upcoming · ${upcomingWhenText(m)}`
       : m.winningTeam === 'TIE' ? 'Tied'
@@ -19061,7 +19131,10 @@ function buildUpcomingMatchRecord(o){
 }
 // Same upsert-by-matchId as saveMatchToLeague, for a record that is NOT the
 // match on the panel — so it never touches the live pointer.
-function upsertLeagueRecord(name, rec, onSynced){
+// Resolves to what the SERVER said: { ok } — or { ok:false, code, message }
+// (opts.quiet: the caller shows the message itself).
+function upsertLeagueRecord(name, rec, onSynced, opts){
+  const quiet = !!(opts && opts.quiet);
   const key = leagueStorageKey(name);
   const list = (leagueCache[key] || loadLeagueMatchesLocal(name)).slice();
   const idx = list.findIndex(m => m.matchId === rec.matchId);
@@ -19070,19 +19143,35 @@ function upsertLeagueRecord(name, rec, onSynced){
   saveLeagueMatchesLocal(name, list);
   addKnownTournament(name);
   refreshLeagueUI();
-  if(!currentOwnerUid()){ toast('⚠️ Not logged in — saved on this device only'); return; }
-  fetch(withUid(`${leagueApiPath(name)}/match`), {
+  if(!currentOwnerUid()){
+    if(!quiet) toast('⚠️ Not logged in — saved on this device only');
+    return Promise.resolve({ ok: false, code: 'NOT_SIGNED_IN', message: '🔑 Not signed in on this laptop — it cannot be saved to your account, so your other laptops would not see it. Sign in on the home page, then save again.' });
+  }
+  return fetch(withUid(`${leagueApiPath(name)}/match`), {
     method: 'POST', headers: { 'Content-Type': 'application/json', ...mlHeaders(rec.roomId) }, body: JSON.stringify(rec)
-  }).then(res => res.json().then(data => ({ res, data }))).then(({ res, data }) => {
+  }).then(res => res.json().catch(() => null).then(data => ({ res, data }))).then(({ res, data }) => {
     if(data && data.success){
       leagueCache[key] = data.matches;
       saveLeagueMatchesLocal(name, data.matches);
       refreshLeagueUI();
       if(onSynced) onSynced();
-    } else {
-      syncFailureToast(res, '⚠️ Saved locally only — could not sync to server');
+      return { ok: true };
     }
-  }).catch(() => toast('⚠️ Saved locally only — could not sync to server'));
+    if(!quiet) syncFailureToast(res, '⚠️ Saved locally only — could not sync to server');
+    return { ok: false, code: (data && data.code) || null, message: leagueSaveProblem(res, data) };
+  }).catch(() => {
+    if(!quiet) toast('⚠️ Saved locally only — could not sync to server');
+    return { ok: false, code: 'OFFLINE', message: '📴 No connection to the server — not saved. Check the internet and save again.' };
+  });
+}
+function leagueSaveProblem(res, data){
+  const status = res ? res.status : 0, err = data && data.error;
+  if(data && data.code === 'ALREADY_STARTED') return '⚠️ This match has already been started (on this or another laptop) — the fixture can no longer be changed. The list has been refreshed.';
+  if(status === 401 || status === 403) return '🚫 This account cannot save tournament matches — sign in (home page) with the account that runs this tournament, then save again.';
+  if(status === 413) return '⚠️ Too large to save — use smaller team logos, then save again.';
+  if(status === 423) return '🔒 ' + (err || 'This match is locked');
+  if(status === 503) return '⏳ The server is starting up — not saved yet. Save again in a moment.';
+  return '⚠️ Not saved to the server' + (err ? ' — ' + err : '') + '. Save again.';
 }
 
 /* ============================================================
@@ -20204,6 +20293,7 @@ let umPicking = null;              // 'A' | 'B' while that side shows the team l
 let umSaving = false;
 let umFmt = { format: 'T20', customOvers: 10, maxWickets: 10, superOver: true };
 let umEditing = null;              // the upcoming record being edited (null = a new fixture)
+let umDraft = null;                // a NEW fixture's ids (and its code once made), kept when a save fails so saving again saves the SAME match
 let umForce = false;               // "Save anyway" pressed after a duplicate warning
 
 function umEl(id){ return document.getElementById(id); }
@@ -20265,6 +20355,7 @@ async function openUpcomingModal(rec){
   await syncLeagueFromServer(tournament); // other laptops' matches + fixtures too
   umTeams = await loadPickableTeams();
   umEditing = rec && isUpcomingMatch(rec) ? rec : null;
+  umDraft = null;
   umPicking = null;
   umForce = false;
   umEl('um-kicker').textContent = tournament;
@@ -20549,7 +20640,7 @@ async function saveUpcomingMatch(){
     const teamA = await umPrepareSide(A);
     const teamB = await umPrepareSide(B);
     const rec = buildUpcomingMatchRecord({
-      ...(editing ? { matchId: editing.matchId, roomId: editing.roomId, streamUrl: editing.streamUrl } : {}),
+      ...(editing ? { matchId: editing.matchId, roomId: editing.roomId, streamUrl: editing.streamUrl } : umDraft ? { matchId: umDraft.matchId, roomId: umDraft.roomId } : {}),
       teamA, teamB,
       matchNo: matchNo || nextTournamentMatchNo(),
       matchTitle: (umEl('um-title-input').value || '').trim().slice(0, 60),
@@ -20564,15 +20655,31 @@ async function saveUpcomingMatch(){
     });
     // 🔒 lock with a code (operator's choice) — made on the server before the fixture is saved
     let newCode = null;
+    if(!editing) umDraft = { ...(umDraft || {}), matchId: rec.matchId, roomId: rec.roomId };
     if(editing && editing.locked) rec.locked = true;
+    else if(!editing && umDraft.code){ newCode = umDraft.code; rec.locked = true; } // made on the try that did not save
     else if(umWantLock){
-      try{ newCode = await mlCreate(rec.roomId, rec.matchId, false, umCode); rec.locked = true; }
+      try{ newCode = await mlCreate(rec.roomId, rec.matchId, false, umCode); rec.locked = true; umDraft.code = newCode; }
       catch(e){
         if(e.code === 'CODE_TAKEN' || e.code === 'BAD_CODE' || e.code === 'TOO_MANY'){ umSetMsg('🔒 ' + e.message); mlCodeHint('um-lock', e.message, true); return; }
         if(!confirm(`🔒 Could not make a code for this match (${e.message}).\n\nSave it WITHOUT a code?`)){ umSetMsg('⚠️ Not saved — try again, or turn off "Lock with a code".'); return; }
       }
     }
-    upsertLeagueRecord(tournament, rec);
+    // Scheduled = saved on the SERVER (that is what the account's other
+    // laptops read). Until it says so nothing is announced; if it does not,
+    // the list goes back as it was — no fixture that only this laptop can
+    // see — the form stays filled in, and saving again saves the same match.
+    const before = (leagueCache[leagueStorageKey(tournament)] || loadLeagueMatchesLocal(tournament)).slice();
+    const saved = await upsertLeagueRecord(tournament, rec, null, { quiet: true });
+    if(!saved.ok){
+      leagueCache[leagueStorageKey(tournament)] = before;
+      saveLeagueMatchesLocal(tournament, before);
+      refreshLeagueUI();
+      umSetMsg(saved.message);
+      if(saved.code === 'ALREADY_STARTED') syncLeagueFromServer(tournament);
+      return;
+    }
+    umDraft = null;
     closeUpcomingModal();
     setHistoryPanelView('matches');
     const what = [umStageLabel(rec.matchStage) && rec.matchStage !== 'league' ? umStageLabel(rec.matchStage) : '', fixtureFormatText(rec)].filter(Boolean).join(', ');
@@ -20874,6 +20981,31 @@ async function saveTeamEditor(){
   });
 })();
 
+// ▶ Start, on the server: the fixture (this account, this tournament, this
+// matchId) flips from upcoming to started in one step, so two laptops
+// pressing ▶ Start together cannot both start it, and a locked one needs
+// its key (asked for just before). No answer at all (offline / the server
+// starting up): the operator decides.
+async function claimUpcomingStart(owner, rec){
+  let res = null, data = null;
+  if(currentOwnerUid()){
+    try{
+      res = await fetch(withUid(`${leagueApiPath(owner)}/match/${encodeURIComponent(rec.matchId)}/start`), {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...mlHeaders(rec.roomId) },
+        body: JSON.stringify({ deviceId: mlDevice() }), signal: AbortSignal.timeout(10000)
+      });
+      data = await res.json().catch(() => null);
+    }catch(e){ res = null; }
+  }
+  if(res && data && data.success) return { go: true };
+  const code = data && data.code;
+  if(code === 'ALREADY_STARTED') return { go: false, resync: true, message: '⚠️ This match has already been started on another laptop — the list is refreshed; open it there, or here with ▶ Resume.' };
+  if(code === 'NOT_FOUND') return { go: false, resync: true, message: '⚠️ This match is no longer in this tournament (removed on another laptop?) — the list is refreshed.' };
+  if(code === 'MATCH_LOCKED' || (res && res.status === 423)) return { go: false, message: '🔒 This match is locked — enter its code on this laptop to start it (press ▶ Start again).' };
+  if(res && (res.status === 401 || res.status === 403)) return { go: false, message: '🚫 This account cannot start tournament matches — sign in (home page) with the account that runs this tournament.' };
+  const go = confirm('⚠️ The server could not confirm that this match has not already been started on another laptop (no internet, or the server is starting up).\n\nStart it on THIS laptop anyway?');
+  return { go, message: go ? '' : 'Not started — press ▶ Start again when the connection is back.' };
+}
 let upcomingStartInFlight = false;
 async function startUpcomingMatch(rec, btn, listTournament){
   if(upcomingStartInFlight || resumeInFlight) return;
@@ -20882,12 +21014,20 @@ async function startUpcomingMatch(rec, btn, listTournament){
   if(isMatchOnPanel(rec, owner)){ toast('This match is already on the panel'); return; }
   const hasCurrent = (state.ballLog || []).length > 0;
   if(!confirm(`Start ${matchLabelForToast(rec)}${rec.matchNo ? ` (Match ${rec.matchNo})` : ''} on the panel now?${hasCurrent ? `\n\nThe current match (${matchLabelForToast(state)}${currentMatchTournament() ? ` — ${currentMatchTournament()}` : ''}) is saved to its own ${currentMatchTournament() ? 'tournament' : 'history'} first and can be resumed later.` : ''}\n\nThe Match ID changes to this match's own ID (${rec.roomId}) — Overlay/Scorecard links change with it.`)) return;
-  // 🔒 a locked match starts only with its code
-  if(!(await mlEnsureAccess(rec.roomId, matchLabelForToast(rec), rec))) return;
-  upcomingStartInFlight = true;
+  upcomingStartInFlight = true; // (a second press while this one is still asking the server does nothing)
   const oldText = btn ? btn.textContent : '';
   if(btn){ btn.disabled = true; btn.textContent = 'Loading…'; }
   try{
+    // The server's word first: a list made before another laptop started (or
+    // removed) this match must not ask for its code — let alone take a locked
+    // match's key from the laptop scoring it.
+    if(await syncLeagueFromServer(owner)){
+      const now = (leagueCache[leagueStorageKey(owner)] || []).find(m => m.matchId === rec.matchId);
+      if(!now){ toast('⚠️ This match is no longer in this tournament (removed on another laptop?) — the list is refreshed.', 8000); return; }
+      if(!isUpcomingMatch(now)){ toast('⚠️ This match has already been started on another laptop — the list is refreshed; open it there, or here with ▶ Resume.', 8000); return; }
+    }
+    // 🔒 a locked match starts only with its code
+    if(!(await mlEnsureAccess(rec.roomId, matchLabelForToast(rec), rec))) return;
     // Already being scored on another laptop? Then its room holds the match —
     // never start it again from blank over the top of it.
     try{
@@ -20908,6 +21048,15 @@ async function startUpcomingMatch(rec, btn, listTournament){
     // 1️⃣ Resolve both squads first — nothing on the panel is touched yet.
     const teamA = await prepareTeamForNewMatch(teamFrom(rec.teamA, rec.squadA));
     const teamB = await prepareTeamForNewMatch(teamFrom(rec.teamB, rec.squadB));
+
+    // 🔐 The SERVER starts it — once (see claimUpcomingStart). Still nothing
+    // on the panel has changed if it says no.
+    const claim = await claimUpcomingStart(owner, rec);
+    if(!claim.go){
+      if(claim.message) toast(claim.message, 8000);
+      if(claim.resync) syncLeagueFromServer(owner);
+      return;
+    }
 
     // 2️⃣ Park the match that is on the panel (same as Create New Match / Resume).
     if(hasCurrent){
