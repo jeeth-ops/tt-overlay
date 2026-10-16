@@ -20679,13 +20679,35 @@ function renderMatchReportsCard(){
 /* ============================================================
    2. TOURNAMENT EXCEL REPORT
    ============================================================ */
+// Every team in the tournament ONCE. Teams are matched by teamKeyOf() — the
+// same key every per-team figure (computeTeamTournamentStats,
+// computeTeamNRR, teamFormOf) is counted by — so "United Cricketers" and
+// "UNITED CRICKETERS " saved on different matches are one team, never two
+// rows showing the same numbers. The name shown: the tournament's own team
+// list spelling (Create Tournament) when it has the team, otherwise the
+// spelling used on the most matches (the latest one on a tie), extra spaces
+// tidied.
 function tournamentTeamNames(matches){
-  const names = new Set();
-  matches.forEach(m => {
-    if(m.teamA && m.teamA.name) names.add(m.teamA.name);
-    if(m.teamB && m.teamB.name) names.add(m.teamB.name);
+  const byKey = new Map(); // key -> Map(spelling -> { count, last })
+  (matches || []).forEach((m, i) => {
+    [m && m.teamA, m && m.teamB].forEach(t => {
+      const raw = t && typeof t.name === 'string' ? t.name.trim().replace(/\s+/g, ' ') : '';
+      const key = teamKeyOf(raw);
+      if(!key) return;
+      if(!byKey.has(key)) byKey.set(key, new Map());
+      const spellings = byKey.get(key);
+      const s = spellings.get(raw) || { count: 0, last: -1 };
+      s.count++; s.last = i;
+      spellings.set(raw, s);
+    });
   });
-  return [...names];
+  const info = (tournamentInfoCache[(state.leagueName || '').trim().toLowerCase()] || {}).info;
+  const listed = ((info && info.teams) || []).filter(t => t && typeof t.name === 'string' && t.name.trim());
+  return [...byKey.entries()].map(([key, spellings]) => {
+    const own = listed.find(t => teamKeyOf(t.name) === key);
+    if(own) return own.name.trim().replace(/\s+/g, ' ');
+    return [...spellings.entries()].sort((a, b) => (b[1].count - a[1].count) || (b[1].last - a[1].last))[0][0];
+  });
 }
 function computeTeamNRR(teamName, matches){
   const target = teamKeyOf(teamName);

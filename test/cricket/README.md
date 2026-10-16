@@ -42,6 +42,9 @@ node test/cricket/run-out-crossing-server-test.js # the REAL server.js keeps the
                                                   # once), Edit Delivery keeps it while it is still a Run Out, the scorecard is unchanged by it
 node test/scorecard-viewers.test.js              # 👁 "watching now" beside Visit Website: the REAL server's count (one per browser, check-out, 50 s
                                                   # timeout, per match, made-up ids refused) and the real page in Chromium — both themes, phone
+node test/cricket/points-table-teams-test.js     # 🏆 Points Table lists each team ONCE when its name was typed differently on different matches
+                                                  # ("United Cricketers" / "UNITED CRICKETERS "): rows, P/W/L/PTS/NRR, form, overlay card, Team History
+                                                  # list, the name shown; both panels
 PANEL=cricket-panel3.html node test/cricket/test.js   # the scoring engine suite against the Stream Engine panel
 node test/tournament-merge.test.js               # 🔀 Merge Tournaments engine on an in-memory MongoDB (production unique indexes): Jeeth's two IDs (keep either),
                                                   # every match once, points table / leaderboards, similar names never auto-merged, id clash, invalid refs,
