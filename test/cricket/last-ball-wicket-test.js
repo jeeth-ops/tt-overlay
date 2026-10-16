@@ -85,6 +85,8 @@ function wicket(P, o){
   if(o.who) click(P, `[data-wd-who="${o.who}"]`);
   if(o.fielder) P.E(`wdSetFielder(${JSON.stringify(o.fielder)}); renderWicketDetails();`);
   if(o.runs != null) click(P, `[data-wd-runs="${o.runs}"]`);
+  // Run Out: had the batters crossed when the wicket was put down? (Law 18.12.1 — asked every time)
+  if(o.type === 'Run Out') click(P, `[data-wd-crossed="${o.crossed ? 'yes' : 'no'}"]`);
   const blocked = P.$('#wd-confirm').disabled ? P.text('#wd-preview') : '';
   click(P, '#wd-confirm');
   return blocked;
@@ -160,7 +162,7 @@ async function suite(file){
   setup(P); dots(P, 5);
   wicket(P, { type: 'Run Out', who: 'striker', runs: 1 });
   ui = strikeUi(P);
-  eq(L('striker run out going for the 2nd: 1 run to Rohit and the team; the new batter faces'), [lastBall(P).out, crease(P).r, P.J(`activeBattingCard('A').find(b => b.id === 'a1').runs`), ui.on, /crossed \(1 run\)/.test(ui.hint)], ['a1', 1, 1, ['new'], true]);
+  eq(L('striker run out going for the 2nd: 1 run to Rohit and the team; the new batter faces'), [lastBall(P).out, crease(P).r, P.J(`activeBattingCard('A').find(b => b.id === 'a1').runs`), ui.on, /1 run completed/.test(ui.hint) && /had not crossed/.test(ui.hint)], ['a1', 1, 1, ['new'], true]);
   sendIn(P, 'a3');
   c = crease(P);
   eq(L('…Surya on strike, Ishan at the other end'), [c.s, c.n], ['a3', 'a2']);

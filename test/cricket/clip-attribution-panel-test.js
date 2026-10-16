@@ -92,6 +92,7 @@ async function runOutLastBall(P, who, runsCompleted){
   click(P, '[data-wd-type="Run Out"]');
   if(runsCompleted) click(P, `[data-wd-runs="${runsCompleted}"]`);
   click(P, `[data-wd-who="${who}"]`);
+  click(P, '[data-wd-crossed="no"]'); // Law 18.12.1 — asked on every Run Out
   answerStrike(P); click(P, '#wd-confirm');
   moveOn(P);
   await sleep(2300); // the website classification is sent HL_CLASSIFY_DELAY_MS after the ball
@@ -195,6 +196,7 @@ async function suite(file, opts){
   P.E('openWicketModal()');
   click(P, '[data-wd-type="Run Out"]');
   click(P, '[data-wd-who="striker"]');
+  click(P, '[data-wd-crossed="no"]'); // (answered, so only the crease change can stop it)
   const logLen = P.E('state.ballLog.length');
   // Another device's update lands: different batters at the crease.
   P.E(`state.striker = { name:'Player C', id:'pC', runs:0, balls:0, fours:0, sixes:0 }`);
@@ -234,6 +236,7 @@ async function suite(file, opts){
     P.E('openWicketModal()');
     click(P, '[data-wd-type="Run Out"]');
     click(P, '[data-wd-who="nonStriker"]');
+    click(P, '[data-wd-crossed="no"]');
     answerStrike(P); click(P, '#wd-confirm');
     eq('no second wicket clip after undo', clipCalls(P, 'WICKET').length, 1);
     const m = metaCalls(P).filter(x => x.body.clipId === firstClip).slice(-1)[0];

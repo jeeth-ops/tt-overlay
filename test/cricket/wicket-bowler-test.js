@@ -86,6 +86,8 @@ function wicket(P, o){
     P.$('#wd-runs-custom').value = String(o.custom);
     P.$('#wd-runs-custom').dispatchEvent(new P.w.Event('input', { bubbles: true }));
   } else if(o.runs != null) click(P, `[data-wd-runs="${o.runs}"]`);
+  // Run Out: had the batters crossed when the wicket was put down? (Law 18.12.1 — asked every time)
+  if(o.type === 'Run Out') click(P, `[data-wd-crossed="${o.crossed ? 'yes' : 'no'}"]`);
   if(o.fielder) P.E(`(() => { const s = document.getElementById('wd-fielder-select'); if(![...s.options].some(x => x.value === '${o.fielder}')){ const op = document.createElement('option'); op.value = '${o.fielder}'; s.appendChild(op); } s.value = '${o.fielder}'; s.dispatchEvent(new Event('change')); })()`);
   if(o.confirm !== false){
     click(P, '#wd-confirm');
@@ -138,8 +140,8 @@ async function panelSuite(file, label){
   for(const r of [1, 2, 3, 4, 5, 6]){
     newMatch(P);
     wicket(P, { type: 'Run Out', who: 'nonStriker', runs: r, newBat: 'a3' });
-    const crossed = r % 2 === 1;
-    eq(L(`${5 + r} Run Out + ${r}: team +${r}, striker +${r}, bowler concedes ${r}, ${crossed ? 'crossed' : 'not crossed'}`),
+    const crossed = r % 2 === 1; // (the completed runs left the batters at swapped ends; not crossed on the next run)
+    eq(L(`${5 + r} Run Out + ${r}: team +${r}, striker +${r}, bowler concedes ${r}, ${crossed ? 'ends swapped by the runs' : 'ends as they started'}`),
       P.J(`[state.score.runs, (state.striker.name === 'Rohit' ? state.striker : state.nonStriker).runs, state.bowler.runs, state.bowler.wickets, state.extras.A.b + state.extras.A.lb, state.striker.name]`),
       [r, r, r, 0, 0, crossed ? 'Surya' : 'Rohit']);
   }

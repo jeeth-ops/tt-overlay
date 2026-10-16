@@ -3459,6 +3459,49 @@ app.get('/api/public/tournament/:token/match/:matchId/balls', async (req, res) =
     }
 });
 
+// 👁 WATCHING NOW — how many people have a match's scorecard open. Each open
+// scorecard page checks in every 20 s with its own random viewer id (one per
+// browser, so two tabs are one person) and checks out when it is closed; one
+// not heard from for 50 s has gone. In memory only: a count of who has the
+// page open right now — nothing about who they are, nothing stored. Bounded
+// (matches, viewers per match) so a flood of made-up ids cannot grow it.
+const scorecardViewers = new Map(); // match id -> Map(viewer id -> last check-in ms)
+const SCORECARD_VIEWER_TTL_MS = 50000;
+const SCORECARD_VIEWER_MATCH_CAP = 5000;
+const SCORECARD_VIEWERS_PER_MATCH_CAP = 100000;
+function sweepScorecardViewers(now) {
+    for (const [key, viewers] of scorecardViewers) {
+        for (const [id, seen] of viewers) if (now - seen > SCORECARD_VIEWER_TTL_MS) viewers.delete(id);
+        if (!viewers.size) scorecardViewers.delete(key);
+    }
+}
+function scorecardWatching(key, now) {
+    const viewers = scorecardViewers.get(key);
+    if (!viewers) return 0;
+    for (const [id, seen] of viewers) if (now - seen > SCORECARD_VIEWER_TTL_MS) viewers.delete(id);
+    if (!viewers.size) { scorecardViewers.delete(key); return 0; }
+    return viewers.size;
+}
+setInterval(() => sweepScorecardViewers(Date.now()), 60000).unref();
+app.post('/api/scorecard-viewers/:matchId', (req, res) => {
+    const key = safeMatchId(req.params.matchId).slice(0, 80);
+    const viewer = String(req.query.viewer || '');
+    if (!key || key === 'default' || !/^[A-Za-z0-9_-]{8,64}$/.test(viewer)) return res.status(400).json({ success: false, error: 'bad request' });
+    const now = Date.now();
+    let viewers = scorecardViewers.get(key);
+    if (req.query.leave === '1') {
+        if (viewers) viewers.delete(viewer);
+    } else {
+        if (!viewers) {
+            if (scorecardViewers.size >= SCORECARD_VIEWER_MATCH_CAP) sweepScorecardViewers(now);
+            if (scorecardViewers.size < SCORECARD_VIEWER_MATCH_CAP) { viewers = new Map(); scorecardViewers.set(key, viewers); }
+        }
+        if (viewers && (viewers.has(viewer) || viewers.size < SCORECARD_VIEWERS_PER_MATCH_CAP)) viewers.set(viewer, now);
+    }
+    res.set('Cache-Control', 'no-store');
+    res.json({ success: true, watching: scorecardWatching(key, now) });
+});
+
 // A standalone match's public page, addressed by its own permanent
 // matchId (or the live "connection id"/roomId it was broadcast under
 // before it was ever saved). Deliberately searches across ALL owners'
@@ -6806,7 +6849,9 @@ async function assembleDelivery(original, input, opts, ownerUid, actorEmail) {
         striker: strikerName, strikerKey: playerKey(strikerName), strikerId,
         nonStriker: nonStrikerName, nonStrikerKey: playerKey(nonStrikerName), nonStrikerId,
         bowler: bowlerName, bowlerKey: playerKey(bowlerName), bowlerId,
-        dismissal: isWicket ? { type: dismissalType, fielder: fielderName, fielderId, batter: dismissedName, batterId: dismissedRosterId } : null,
+        dismissal: isWicket ? { type: dismissalType, fielder: fielderName, fielderId, batter: dismissedName, batterId: dismissedRosterId,
+            // a Run Out's crossing answer stays with the delivery (Law 18.12.1)
+            ...(dismissalType === 'Run Out' && typeof origDis.crossed === 'boolean' ? { crossed: origDis.crossed } : {}) } : null,
         dismissalFielderKey: playerKey(fielderName),
         dismissedPlayerKey: isWicket && dismissedName ? playerKey(dismissedName) : null,
         correctionOf: original.correctionOf || original._id, // keeps the ORIGINAL id traceable across repeat corrections
@@ -11983,11 +12028,15 @@ io.on('connection', async (socket) => {
         if (!ballsCollection) return reply({ ok: false, retry: true, error: 'db-unavailable' }); // Mongo not configured yet
         const matchId = safeMatchId(data.matchId || (data.room ? data.room.replace('room-', '') : null) || matchIdForClient);
         if (!matchId || matchId === 'default') return reply({ ok: false, retry: false, error: 'no-match-id' });
+        // Declared out here: the duplicate-delivery path in `catch` below
+        // uses it too (inside the try it was out of scope there — a re-sent
+        // delivery threw a ReferenceError and the panel never got its receipt).
+        let ownerUid = null;
         try {
             // Best-effort owner resolution (see resolveOwnerUidForMatch above)
             // so this ball — and any clip cut around it — can be found again
             // in career-wide player queries, not just within this one match.
-            const ownerUid = await resolveOwnerUidForMatch(matchId, data.uid);
+            ownerUid = await resolveOwnerUidForMatch(matchId, data.uid);
             // 🌟 Stamp global playerIds alongside the existing name-string
             // keys (see resolvePlayerId) — additive only, every existing
             // *Key field and query in this file still works unchanged.
@@ -12049,7 +12098,11 @@ io.on('connection', async (socket) => {
                     batter: personName(data.dismissal.batter) || null,
                     batterId: data.dismissal.batterId ? String(data.dismissal.batterId) : null,
                     fielderId: data.dismissal.fielderId ? String(data.dismissal.fielderId) : null,
-                    ...(data.dismissal.subtype ? { subtype: String(data.dismissal.subtype).slice(0, 40) } : {})
+                    ...(data.dismissal.subtype ? { subtype: String(data.dismissal.subtype).slice(0, 40) } : {}),
+                    // 🏏 Run Out: had the batters crossed when the wicket was
+                    // put down? The scorer's answer (Law 18.12.1) — it decided
+                    // which end the not-out batter and the incoming batter took.
+                    ...(data.dismissal.type === 'Run Out' && typeof data.dismissal.crossed === 'boolean' ? { crossed: data.dismissal.crossed } : {})
                 } : null,
                 dismissedPlayerKey: data.dismissal ? (playerKey(personName(data.dismissal.batter)) || null) : null,
                 // 🏏 Wide / No Ball: BOUNDARY vs RUNNING as the scorer answered
