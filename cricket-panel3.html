@@ -3139,6 +3139,12 @@
           <div class="wd-chips wd-runs" id="wd-runs"></div>
           <div class="wd-custom" id="wd-custom" hidden><input type="number" id="wd-runs-custom" min="0" max="99" inputmode="numeric" placeholder="7"><span class="wd-hint">runs completed</span></div>
         </section>
+        <!-- 🏏 Run Out: had the batters crossed when the wicket was put down?
+             (Law 18.12.1) — decides where the not-out batter ends up. -->
+        <section class="wd-sec" id="wd-sec-crossed" hidden>
+          <div class="wd-label">Had the batters crossed when the wicket was put down? <span class="wd-hint">— on the run they were attempting (no run = No)</span></div>
+          <div class="wd-chips two" id="wd-crossed"></div>
+        </section>
         <div class="wd-preview wait" id="wd-preview">Choose how the batter was out.</div>
       </div>
       <div class="wd-foot">
@@ -5965,6 +5971,35 @@ const NON_BOWLER_DISMISSALS = ['Run Out', 'Run Out (Mankaded)', 'Retired Hurt', 
   'Obstructing the Field', 'Timed Out', 'Hit the Ball Twice'];
 const EITHER_END_DISMISSALS = ['Run Out', 'Obstructing the Field'];
 function isBowlerCreditedDismissal(type){ return !NON_BOWLER_DISMISSALS.includes(type); }
+// 🏏 WHERE THE BATTERS STAND AFTER A WICKET — Laws 18.8.2 and 18.12.1.
+// Worked out in the two physical ends of THIS over (the striker's end and the
+// bowler's end), and only then turned into striker / non-striker, so the
+// over's change of ends is applied once, here, and nowhere else:
+//   1. before the ball: the striker at the striker's end, the non-striker at
+//      the bowler's end;
+//   2. each run COMPLETED before the wicket was put down took both batters to
+//      the other end (which runs are scored is Law 18.8.2's business);
+//   3. a Run Out on a run in progress (Law 18.12.1 / 18.12.1.2): the not-out
+//      batter returns to the wicket he/she has left only if the batters had
+//      NOT already crossed when the wicket was put down — if they had, he/she
+//      goes on to the end he/she was running to. `crossed` is the scorer's own
+//      answer, never guessed from the runs. Any other dismissal: the not-out
+//      batter is where the completed runs left him/her;
+//   4. the incoming batter takes guard at the other end — the one the
+//      dismissed batter's ground was at;
+//   5. on the over's last legal ball the next over is bowled from the other
+//      end, so the batter at THIS over's bowler's end faces it.
+// dismissedIsNonStriker: as the two batters stood when the ball was bowled.
+// newBatsmanEnd: the empty end's place for the next ball ('striker' = the
+// incoming batter faces it).
+function wicketSeating({ dismissedIsNonStriker, completedRuns, crossed, overComplete }){
+  const moves = Math.max(0, Math.floor(Number(completedRuns) || 0)) + (crossed === true ? 1 : 0);
+  const startEnd = dismissedIsNonStriker ? 'striker' : 'bowler';   // the not-out batter, before the ball
+  const notOutEnd = moves % 2 ? (startEnd === 'striker' ? 'bowler' : 'striker') : startEnd;
+  const emptyEnd = notOutEnd === 'striker' ? 'bowler' : 'striker';
+  const facingEnd = overComplete ? 'bowler' : 'striker';            // the end that faces the next ball
+  return { notOutEnd, emptyEnd, newBatsmanEnd: emptyEnd === facingEnd ? 'striker' : 'nonStriker' };
+}
 // Absent hurt (a batter unable to bat at all) is not a wicket, but the side
 // has one batter fewer — so the innings is all out one wicket earlier.
 function absentHurtThisInnings(team){
@@ -16051,7 +16086,8 @@ function recordBall(kind, meta){
     lastDismissedBatter = (dismissedBatter && dismissedBatter.name) || null; // carried into the ball log — see logBallToDb
       logDismissal = { type: dismissalType, fielder: fielderName || null, fielderId: (meta && meta.fielderId) || null,
         batter: (dismissedBatter && dismissedBatter.name) || null, batterId: (dismissedBatter && dismissedBatter.id) || null,
-        subtype: meta && meta.caughtKind === 'cab' ? 'caught and bowled' : meta && meta.caughtKind === 'behind' ? 'caught behind' : null };
+        subtype: meta && meta.caughtKind === 'cab' ? 'caught and bowled' : meta && meta.caughtKind === 'behind' ? 'caught behind' : null,
+        ...(dismissalType === 'Run Out' && meta && typeof meta.crossed === 'boolean' ? { crossed: meta.crossed } : {}) };
       const survivor = dismissedIsNonStriker ? originalStriker : originalNonStriker;
 
       document.getElementById('disp-last-dismissal').textContent = `${dismissedBatter.name || 'Batsman'} — ${dismissalText}`;
@@ -16144,38 +16180,19 @@ function recordBall(kind, meta){
       }
       if(wasFreeHit) toast('⚠️ Free Hit wicket recorded as a Run Out');
 
-      // Work out which END is now vacant and needs a new batsman. On a
-      // normal dismissal the striker's end is always vacant (dismissed ===
-      // striker, crossed === false ⇒ vacantEnd 'striker', unchanged from
-      // the pre-run-out behaviour). On a RUN OUT, an ODD number of
-      // completed runs means the two batters physically crossed ends
-      // before the throw came in, so the vacant end flips accordingly —
-      // whichever end the dismissed batter actually ends up standing at.
-      const crossed = EITHER_END_DISMISSALS.includes(dismissalType) && (runOutCompletedRuns % 2 === 1);
-      const dismissedWasOriginallyStriker = !dismissedIsNonStriker;
-      let vacantEnd = crossed
-        ? (dismissedWasOriginallyStriker ? 'nonStriker' : 'striker')
-        : (dismissedWasOriginallyStriker ? 'striker' : 'nonStriker');
-      if(vacantEnd === 'striker'){
-        state.nonStriker = survivor;
-        state.striker = dismissedBatter; // holds the OUT batsman's line until "Send In New Batsman" overwrites it
-      } else {
-        state.striker = survivor;
-        state.nonStriker = dismissedBatter;
-      }
-      state.newBatsmanEnd = vacantEnd;
-
-      // Cricket's ends-swap rule doesn't stop applying just because the
-      // wicket ball happened to be the over's last: the survivor still
-      // takes strike for the new over, and the incoming batsman fills
-      // whichever end is now vacant.
-      if(overCompletedThisBall){
-        const placeholder = state.striker;
-        state.striker = state.nonStriker;
-        state.nonStriker = placeholder;
-        state.newBatsmanEnd = state.newBatsmanEnd === 'striker' ? 'nonStriker' : 'striker';
-        toast('ℹ️ Over complete on this wicket — strike has rotated automatically; new batsman comes in at the correct end.');
-      }
+      // Where the two batters now stand, and so which end the incoming batter
+      // takes — wicketSeating() (Laws 18.8.2, 18.12.1): the runs completed,
+      // for a Run Out the scorer's answer to "had they crossed when the
+      // wicket was put down?", and the over's change of ends when this was
+      // its last legal ball (applied there, once — never swapped again
+      // after). The empty end holds the OUT batter's line until "Send In New
+      // Batsman" overwrites it.
+      const seat = wicketSeating({ dismissedIsNonStriker, completedRuns: runOutCompletedRuns,
+        crossed: dismissalType === 'Run Out' && !!meta && meta.crossed === true, overComplete: overCompletedThisBall });
+      if(seat.newBatsmanEnd === 'striker'){ state.nonStriker = survivor; state.striker = dismissedBatter; }
+      else { state.striker = survivor; state.nonStriker = dismissedBatter; }
+      state.newBatsmanEnd = seat.newBatsmanEnd;
+      if(overCompletedThisBall) toast('ℹ️ Over complete on this wicket — strike has rotated automatically; new batsman comes in at the correct end.');
       break;
     }
     case 'WdW': {
@@ -16206,7 +16223,8 @@ function recordBall(kind, meta){
     lastDismissedBatter = (dismissedBatter && dismissedBatter.name) || null; // carried into the ball log — see logBallToDb
       logDismissal = { type: dismissalType, fielder: fielderName || null, fielderId: (meta && meta.fielderId) || null,
         batter: (dismissedBatter && dismissedBatter.name) || null, batterId: (dismissedBatter && dismissedBatter.id) || null,
-        subtype: meta && meta.caughtKind === 'cab' ? 'caught and bowled' : meta && meta.caughtKind === 'behind' ? 'caught behind' : null };
+        subtype: meta && meta.caughtKind === 'cab' ? 'caught and bowled' : meta && meta.caughtKind === 'behind' ? 'caught behind' : null,
+        ...(dismissalType === 'Run Out' && meta && typeof meta.crossed === 'boolean' ? { crossed: meta.crossed } : {}) };
       const survivor = dismissedIsNonStriker ? originalStriker : originalNonStriker;
       document.getElementById('disp-last-dismissal').textContent = `${dismissedBatter.name || 'Batsman'} — ${dismissalText}`;
 
@@ -16275,18 +16293,15 @@ function recordBall(kind, meta){
       });
       state.partnershipRuns = 0; state.partnershipBalls = 0;
 
-      // A Wide never completes an over on its own (addLegalBall isn't
-      // called), so — unlike the plain 'W' case — there's no over-complete
-      // ends-swap to consider here, only whether the batters crossed
-      // before the dismissal.
-      const crossed = EITHER_END_DISMISSALS.includes(dismissalType) && (extraRun % 2 === 1);
-      const dismissedWasOriginallyStriker = !dismissedIsNonStriker;
-      let vacantEnd = crossed
-        ? (dismissedWasOriginallyStriker ? 'nonStriker' : 'striker')
-        : (dismissedWasOriginallyStriker ? 'striker' : 'nonStriker');
-      if(vacantEnd === 'striker'){ state.nonStriker = survivor; state.striker = dismissedBatter; }
+      // A Wide never completes an over (addLegalBall isn't called) — another
+      // legal ball is still to come, so no change of ends: only the runs
+      // completed and, for a Run Out, whether the batters had crossed when
+      // the wicket was put down (wicketSeating, Law 18.12.1).
+      const seat = wicketSeating({ dismissedIsNonStriker, completedRuns: extraRun,
+        crossed: dismissalType === 'Run Out' && !!meta && meta.crossed === true, overComplete: false });
+      if(seat.newBatsmanEnd === 'striker'){ state.nonStriker = survivor; state.striker = dismissedBatter; }
       else { state.striker = survivor; state.nonStriker = dismissedBatter; }
-      state.newBatsmanEnd = vacantEnd;
+      state.newBatsmanEnd = seat.newBatsmanEnd;
 
       fireEvent('WIDE', 'WIDE', extraRun > 0 ? `+${extraRun} run${extraRun === 1 ? '' : 's'}` : '', undefined, eventCardData({ bowler: state.bowler.name || '', runs: wdTotal }));
       lastWicketCard = { batter: eventBatterCard(dismissedBatter), howOut: dismissalText || '', bowler: state.bowler.name || '' };
@@ -16319,7 +16334,8 @@ function recordBall(kind, meta){
     lastDismissedBatter = (dismissedBatter && dismissedBatter.name) || null; // carried into the ball log — see logBallToDb
       logDismissal = { type: dismissalType, fielder: fielderName || null, fielderId: (meta && meta.fielderId) || null,
         batter: (dismissedBatter && dismissedBatter.name) || null, batterId: (dismissedBatter && dismissedBatter.id) || null,
-        subtype: meta && meta.caughtKind === 'cab' ? 'caught and bowled' : meta && meta.caughtKind === 'behind' ? 'caught behind' : null };
+        subtype: meta && meta.caughtKind === 'cab' ? 'caught and bowled' : meta && meta.caughtKind === 'behind' ? 'caught behind' : null,
+        ...(dismissalType === 'Run Out' && meta && typeof meta.crossed === 'boolean' ? { crossed: meta.crossed } : {}) };
       const survivor = dismissedIsNonStriker ? originalStriker : originalNonStriker;
       document.getElementById('disp-last-dismissal').textContent = `${dismissedBatter.name || 'Batsman'} — ${dismissalText}`;
 
@@ -16380,14 +16396,13 @@ function recordBall(kind, meta){
       });
       state.partnershipRuns = 0; state.partnershipBalls = 0;
 
-      const crossed = EITHER_END_DISMISSALS.includes(dismissalType) && (batRuns % 2 === 1);
-      const dismissedWasOriginallyStriker = !dismissedIsNonStriker;
-      let vacantEnd = crossed
-        ? (dismissedWasOriginallyStriker ? 'nonStriker' : 'striker')
-        : (dismissedWasOriginallyStriker ? 'striker' : 'nonStriker');
-      if(vacantEnd === 'striker'){ state.nonStriker = survivor; state.striker = dismissedBatter; }
+      // A No Ball is not a legal ball either: no change of ends — the runs
+      // completed and, for a Run Out, the crossing (wicketSeating).
+      const seat = wicketSeating({ dismissedIsNonStriker, completedRuns: batRuns,
+        crossed: dismissalType === 'Run Out' && !!meta && meta.crossed === true, overComplete: false });
+      if(seat.newBatsmanEnd === 'striker'){ state.nonStriker = survivor; state.striker = dismissedBatter; }
       else { state.striker = survivor; state.nonStriker = dismissedBatter; }
-      state.newBatsmanEnd = vacantEnd;
+      state.newBatsmanEnd = seat.newBatsmanEnd;
 
       fireEvent('NO_BALL', 'NO BALL', batRuns > 0 ? `+${batRuns} off the bat` : '', undefined,
         eventCardData({ bowler: state.bowler.name || '', runs: 1 + batRuns, batRuns, freeHit: !!matchRules().freeHitOnNoBall }));
@@ -16602,6 +16617,10 @@ function recordBall(kind, meta){
     dismissalType: kindIsWicket ? ((meta && meta.dismissalType) || 'Bowled') : null,
     fielderName: kindIsWicket ? ((meta && meta.fielderName) || null) : null,
     runOutRunsCompleted: (kindIsWicket && meta && meta.dismissalType === 'Run Out') ? (meta.runsCompleted || 0) : null,
+    // 🏏 Had the batters crossed when the wicket was put down? (Run Out, the
+    // scorer's answer — Law 18.12.1). Kept with the delivery so the ends it
+    // decided can always be explained; null when it was never asked.
+    runOutCrossed: (kindIsWicket && meta && meta.dismissalType === 'Run Out' && typeof meta.crossed === 'boolean') ? meta.crossed : null,
     // 🏏 Law 19.8 components of an overthrow (completed runs / crossed /
     // boundary allowance) — stored with the delivery so the total can always
     // be re-derived and audited, never just the total. null on every other kind.
@@ -16940,7 +16959,9 @@ function logBallToDb(kind, runsBefore, ballTimestamp, ballIdentity, extraBoundar
   const ballRuns = typeof id.runs === 'number' ? id.runs : (state.score.runs - runsBefore);
   const dismissal = !kindIsWicket ? null : (id.dismissal
     ? { type: id.dismissal.type || 'Bowled', fielder: id.dismissal.fielder || null, fielderId: id.dismissal.fielderId || null, batter: id.dismissal.batter || null, batterId: id.dismissal.batterId || null,
-        ...(id.dismissal.subtype ? { subtype: id.dismissal.subtype } : {}) }
+        ...(id.dismissal.subtype ? { subtype: id.dismissal.subtype } : {}),
+        // a Run Out's "had they crossed?" answer travels with the delivery (Law 18.12.1)
+        ...(typeof id.dismissal.crossed === 'boolean' ? { crossed: id.dismissal.crossed } : {}) }
     : { type: lastDismissalType || 'Bowled', fielder: lastDismissalFielder || null, batter: lastDismissedBatter || null });
   const participants = id.participants || ClipAttribution.resolveClipParticipants(ClipAttribution.buildDeliverySnapshot({
     deliveryId: id.deliveryId, innings, over: id.over, ballInOver: id.ballInOver, battingTeam,
@@ -18179,10 +18200,16 @@ function wdInningsEndsHere(){
   return false;
 }
 function wdNeedsBat(){ return !!wdDef() && !!wdOutEnd() && !wdInningsEndsHere(); }
-// The Laws' answer to "who faces next" — recordBall() seats the batters the
-// same way, and the New Batsman screen pre-selects it (changeable there).
-// Odd completed runs = the batters crossed; a legal ball that ends the over
-// swaps ends again.
+// The Laws' answer to "who faces next" — the very same wicketSeating() that
+// recordBall() seats the batters with; the New Batsman screen pre-selects it
+// (changeable there).
+function wdOverEndsHere(){ return wdIsLegal() && (state.score.balls || 0) + 1 >= ballsPerOver(); }
+function wdSeating(){
+  const end = wdPhysicalEnd();
+  if(!end) return null;
+  return wicketSeating({ dismissedIsNonStriker: end === 'nonStriker', completedRuns: wdRunsAllowed() ? wdRuns() : 0,
+    crossed: wdState.type === 'Run Out' && wdState.crossed === true, overComplete: wdOverEndsHere() });
+}
 function wdPredictNewOnStrike(){
   // A striker-only dismissal always empties the striker's end — even when the
   // non-striker was tapped (they were the one actually facing).
@@ -18190,11 +18217,18 @@ function wdPredictNewOnStrike(){
   if(!end) return false;
   const d = wdDef();
   if(d.nonDelivery || d.special) return end === 'striker';
-  const crossed = wdRunsAllowed() && (wdRuns() % 2 === 1);
-  const vacant = crossed ? (end === 'striker' ? 'nonStriker' : 'striker') : end;
-  let newOnStrike = vacant === 'striker';
-  if(wdIsLegal() && (state.score.balls || 0) + 1 >= ballsPerOver()) newOnStrike = !newOnStrike;
-  return newOnStrike;
+  return wdSeating().newBatsmanEnd === 'striker';
+}
+// A Run Out's outcome in words: where the not-out batter ends up, where the
+// incoming batter takes guard, and who faces the next ball.
+function wdRunOutEndsText(snap, end){
+  const seat = wdSeating();
+  if(!seat) return '';
+  const notOut = escapeHtmlPanel((end === 'nonStriker' ? snap.strikerName : snap.nonStrikerName) || 'the not-out batter');
+  const endName = (e) => e === 'striker' ? "the striker's end" : "the bowler's end";
+  const nextFaces = seat.newBatsmanEnd === 'striker' ? 'the new batsman' : notOut;
+  return `<br>${notOut} ends at <b>${endName(seat.notOutEnd)}</b> · the new batsman comes in at <b>${endName(seat.emptyEnd)}</b>`
+    + ` · next ball${wdOverEndsHere() ? ' (new over)' : ''}: <b>${nextFaces}</b> faces`;
 }
 // The fielder recorded with the dismissal — the bowler himself for caught &
 // bowled, a Mankad, or a stumping the bowler made.
@@ -18336,6 +18370,16 @@ function renderWicketDetails(){
   if(wdFielderDD) wdFielderDD.wrap.style.display = pickFielder && hasFielders ? 'block' : 'none';
   wdEl('wd-fielder-input').style.display = pickFielder && !hasFielders ? 'block' : 'none';
 
+  // ---- Had they crossed? (Run Out — Law 18.12.1) ----
+  // Where the not-out batter ends up turns on it, and nothing the panel
+  // knows can tell — so the scorer is asked, every Run Out, nothing assumed.
+  const askCrossed = s.type === 'Run Out';
+  wdEl('wd-sec-crossed').hidden = !askCrossed;
+  if(askCrossed){
+    wdEl('wd-crossed').innerHTML = wdChip('Yes — they had crossed', 'the not-out batter goes on to the end they were running to', s.crossed === true, 'data-wd-crossed="yes"')
+      + wdChip('No — they had not crossed', 'the not-out batter goes back to the end they left', s.crossed === false, 'data-wd-crossed="no"');
+  }
+
   // ---- Runs ----
   wdEl('wd-sec-runs').hidden = !wdRunsAllowed();
   const runsLabel = { normal: 'Runs completed — off the bat', bye: 'Byes completed', legbye: 'Leg byes completed',
@@ -18356,6 +18400,7 @@ function renderWicketDetails(){
   let problem = '';
   if(!s.type) problem = 'Choose how the batter was out.';
   else if(WD_WHO[s.type] === 'either' && !s.who) problem = `${s.type} — choose WHO is out.`;
+  else if(s.type === 'Run Out' && typeof s.crossed !== 'boolean') problem = 'Run Out — had the batters crossed when the wicket was put down? Choose Yes or No.';
   else if(WD_WHO[s.type] === 'pick' && !s.pick) problem = s.type === 'Absent Hurt' ? 'Choose the batter who is absent hurt.' : 'Choose the batter who is timed out.';
   else if(s.type === 'Stumped' && s.stumpBy !== 'bowler' && !wdFielderChoice().name) problem = 'Stumped — choose the wicket-keeper (or Bowler).';
   else if(s.type === 'Run Out (Mankaded)' && s.stumpBy === 'keeper' && !wdFielderChoice().name) problem = 'Mankad — choose the wicket-keeper (or Bowler).';
@@ -18379,7 +18424,8 @@ function renderWicketDetails(){
     prev.innerHTML = `<b>${escapeHtmlPanel(timedName || outName || 'Batter')}</b> ${d.special === 'retired' ? '— <b>retired not out</b>' : `out — <b>${escapeHtmlPanel(s.type)}</b>`}${f.name && s.type !== 'Caught & Bowled' && s.type !== 'Run Out (Mankaded)' && fielderLabel ? ` (${escapeHtmlPanel(f.name)})` : ''}`
       + `${isBowlerCreditedDismissal(d.engine || s.type) && isDelivery ? ` · bowler <b>${escapeHtmlPanel(snap.bowlerName || 'Unassigned')}</b>` : ''}`
       + ` · ${ballTxt}${runsTxt}`
-      + (needsBat ? ' · then: <b>the new batsman</b>, and who faces next' : (wdInningsEndsHere() ? ' · <b>innings ends</b>' : ''));
+      + (needsBat ? ' · then: <b>the new batsman</b>, and who faces next' : (wdInningsEndsHere() ? ' · <b>innings ends</b>' : ''))
+      + (s.type === 'Run Out' && end && needsBat ? wdRunOutEndsText(snap, end) : '');
   }
   wdEl('wd-confirm').disabled = !!problem;
   wdEl('wd-confirm').textContent = d && d.special === 'absent' ? 'CONFIRM ABSENT HURT' : d && d.special === 'retired' ? 'CONFIRM RETIRED' : 'CONFIRM WICKET';
@@ -18406,7 +18452,7 @@ function openWicketModal(){
   pendingExtraWicketContext = null;
   const locked = ctx === 'Wd' ? 'wide' : ctx === 'Nb' ? 'noball' : null;
   wdState = { type: null, delivery: locked || 'normal', lockedDelivery: locked, who: null, pick: null, runs: 0, custom: false,
-    stumpBy: 'keeper', wide: locked === 'wide' };
+    crossed: null, stumpBy: 'keeper', wide: locked === 'wide' };
   wdEl('wd-runs-custom').value = '';
   wdEl('wd-who-select').dataset.forType = '';
   const fSel = wdEl('wd-fielder-select');
@@ -18441,9 +18487,9 @@ function confirmWicketDetails(){
   const needsBat = wdNeedsBat();
   // Why the batters stand where the Laws put them after this ball — shown
   // with the pre-selected answer on the New Batsman screen.
-  const crossedOnRun = wdRunsAllowed() && runs % 2 === 1;
   const overEndsHere = !d.special && !d.nonDelivery && wdIsLegal() && (state.score.balls || 0) + 1 >= ballsPerOver();
-  const strikeReason = [crossedOnRun ? `the batters crossed (${runs} run${runs === 1 ? '' : 's'})` : '',
+  const strikeReason = [wdRunsAllowed() && runs ? `${runs} run${runs === 1 ? '' : 's'} completed` : '',
+    s.type === 'Run Out' ? (s.crossed === true ? 'they had crossed when the wicket was put down' : 'they had not crossed when the wicket was put down') : '',
     overEndsHere ? 'last ball of the over, so the ends change' : ''].filter(Boolean).join(' · ');
   const pickId = (s.pick || '').startsWith('p:') ? s.pick.slice(2) : null;
   const del = wdDelivery();
@@ -18508,6 +18554,7 @@ function confirmWicketDetails(){
       if(del === 'wide'){ kind = 'WdW'; meta.extraRuns = runs; }
       else if(del === 'noball'){ kind = 'NbW'; meta.runsOffBat = runs; }
       else if(runsCount){ meta.runsCompleted = runs; if(del === 'bye' || del === 'legbye') meta.runsAs = del; }
+      if(s.type === 'Run Out') meta.crossed = s.crossed === true; // the scorer's answer — Law 18.12.1
       ok = recordBall(kind, meta) !== false;
     }
   } finally {
@@ -18535,7 +18582,7 @@ document.getElementById('wd-types').addEventListener('click', (e) => {
   if(!b || b.disabled || !wdState) return;
   if(b.dataset.wdType === 'Retired Hurt'){ cancelWicketDetails(); openRetiredHurtModal(); return; }
   wdState.type = b.dataset.wdType;
-  wdState.who = null; wdState.pick = null;
+  wdState.who = null; wdState.pick = null; wdState.crossed = null;
   if(!['Run Out', 'Obstructing the Field'].includes(wdState.type)){ wdState.runs = 0; wdState.custom = false; }
   // Keeper pre-filled for Caught Behind and a stumping.
   wdState.stumpBy = wdState.type === 'Run Out (Mankaded)' ? 'bowler' : 'keeper';
@@ -18559,6 +18606,11 @@ document.getElementById('wd-fielder-by').addEventListener('click', (e) => {
   const b = e.target.closest('[data-wd-stumpby]');
   if(!b || !wdState) return;
   wdState.stumpBy = b.dataset.wdStumpby; renderWicketDetails();
+});
+document.getElementById('wd-crossed').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-wd-crossed]');
+  if(!b || !wdState) return;
+  wdState.crossed = b.dataset.wdCrossed === 'yes'; renderWicketDetails();
 });
 document.getElementById('wd-runs').addEventListener('click', (e) => {
   const b = e.target.closest('[data-wd-runs]');

@@ -79,6 +79,8 @@ function wicket(P, o){
   if(o.who) click(P, `[data-wd-who="${o.who}"]`);
   if(o.fielder) P.E(`wdSetFielder(${JSON.stringify(o.fielder)}); renderWicketDetails();`);
   if(o.runs != null) click(P, `[data-wd-runs="${o.runs}"]`);
+  // Run Out: had the batters crossed when the wicket was put down? (Law 18.12.1 — asked every time)
+  if(o.type === 'Run Out') click(P, `[data-wd-crossed="${o.crossed ? 'yes' : 'no'}"]`);
   click(P, '#wd-confirm');
   // recorded — then the New Batsman screen (who faces next: the Laws' answer)
   if(P.w.document.querySelector('#newbat-modal-overlay').classList.contains('show')){ change(P, '#newbat-modal-select', 'pC'); click(P, '#newbat-modal-submit'); }

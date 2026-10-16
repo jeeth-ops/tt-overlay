@@ -34,6 +34,14 @@ node test/cricket/toss-stream-test.js            # toss lists teams by name; You
 node test/cricket/match-report-test.js           # 📑 scorecard Excel + PDF report with wagon wheels, auto-download at match end: both panels
                                                   # (MR_LIBS=<dir with node_modules/exceljs + jspdf> also builds and checks the real files;
                                                   #  --sync re-inlines match-report.js into both panels)
+node test/cricket/run-out-crossing-test.js       # 🏏 Run Out ends (Laws 18.8.2, 18.12.1): "had they crossed?" asked every time; last-ball crossed
+                                                  # → the original striker faces the next over; not crossed, striker out, mid-over, a run then a
+                                                  # run out, wide / no ball on the 6th ball, the incoming batter, reload + another device, both panels
+                                                  # identical, retries, already-scored matches unchanged
+node test/cricket/run-out-crossing-server-test.js # the REAL server.js keeps the crossing answer with the delivery (socket logBall, a retry receipted
+                                                  # once), Edit Delivery keeps it while it is still a Run Out, the scorecard is unchanged by it
+node test/scorecard-viewers.test.js              # 👁 "watching now" beside Visit Website: the REAL server's count (one per browser, check-out, 50 s
+                                                  # timeout, per match, made-up ids refused) and the real page in Chromium — both themes, phone
 PANEL=cricket-panel3.html node test/cricket/test.js   # the scoring engine suite against the Stream Engine panel
 node test/tournament-merge.test.js               # 🔀 Merge Tournaments engine on an in-memory MongoDB (production unique indexes): Jeeth's two IDs (keep either),
                                                   # every match once, points table / leaderboards, similar names never auto-merged, id clash, invalid refs,

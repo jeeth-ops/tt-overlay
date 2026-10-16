@@ -410,6 +410,18 @@
     white-space:nowrap;
   }
   .visit-btn:hover{ transform:translateY(-1px); background:var(--accent); color:var(--accent-contrast); }
+  /* 👁 WATCHING NOW — how many people have this scorecard open (startWatching). */
+  .watch-pill{
+    display:inline-flex; align-items:center; gap:6px; padding:6px 12px 6px 10px; border-radius:99px;
+    background:var(--panel-2); border:1px solid var(--border); color:var(--text); font-size:12px; font-weight:700;
+    white-space:nowrap; flex:none; cursor:default;
+  }
+  .watch-pill[hidden]{ display:none; }
+  .watch-eye{ width:15px; height:15px; color:var(--accent); flex:none; }
+  .watch-pill b{ font-family:var(--font-display); font-size:13.5px; font-weight:800; font-variant-numeric:tabular-nums; display:inline-block; }
+  .watch-pill b.bump{ animation:watchBump .45s ease; }
+  .watch-lbl{ color:var(--text-dim); font-weight:600; }
+  @keyframes watchBump{ 0%{ transform:scale(1); } 35%{ transform:scale(1.22); color:var(--accent); } 100%{ transform:scale(1); } }
   .icon-btn{
     display:flex; align-items:center; justify-content:center; width:34px; height:34px;
     border-radius:99px; background:var(--panel-2); border:1px solid var(--border); cursor:pointer;
@@ -1363,6 +1375,8 @@
     #brand-text .name-prefix{ display:none; }
     #brand-actions{ gap:6px; }
     .visit-btn{ display:none; }
+    .watch-pill{ padding:5px 9px 5px 8px; gap:5px; }
+    .watch-pill .watch-lbl{ display:none; }
     /* 🚀 PERF FIX (mobile scroll/clip-open jank): #ambient-wash is a
        fixed, permanently-animating, heavily blurred (90px) layer behind
        everything. Android Chrome has to re-composite that blur on every
@@ -2675,6 +2689,10 @@
     <span id="conn-pill"><span class="conn-dot" id="conn-dot"></span><span id="conn-text">Connecting</span></span>
     <button id="owner-chip" title="Owner-only scorecard corrections">🔒 Edit Scorecard</button>
     <a class="visit-btn" href="https://allsportslivestreams.com" target="_blank" rel="noopener">Visit Website ↗</a>
+    <span id="watch-pill" class="watch-pill" role="status" hidden>
+      <svg class="watch-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+      <b id="watch-count">0</b><span class="watch-lbl">watching</span>
+    </span>
     <button class="icon-btn" id="theme-toggle" title="Toggle theme" aria-label="Toggle theme">
       <svg id="theme-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>
     </button>
@@ -3750,6 +3768,64 @@ function getLeagueCtx(){
 function hasLeagueCtx(){
   const c = getLeagueCtx();
   return !!(c.leagueName && c.ownerUid);
+}
+
+/* 👁 WATCHING NOW — how many people have this match's scorecard open, live,
+   beside Visit Website. The page checks in every 20 s with its own random
+   viewer id (kept in this browser, so two tabs count once) and the answer is
+   the count; it checks out the moment the page is closed. A count only —
+   nothing about the viewer is sent. Offline, the last number simply stays. */
+const WATCH_EVERY_MS = 20000;
+const WATCH_ID_KEY = 'scorecardViewerId';
+let watchTimer = null;
+function watchViewerId(){
+  let id = null;
+  try{ id = localStorage.getItem(WATCH_ID_KEY); }catch(e){}
+  if(!id || !/^[A-Za-z0-9_-]{8,64}$/.test(id)){
+    id = 'v' + Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+    try{ localStorage.setItem(WATCH_ID_KEY, id); }catch(e){}
+  }
+  return id;
+}
+function watchUrl(leave){
+  return `/api/scorecard-viewers/${encodeURIComponent(getMatchId())}?viewer=${encodeURIComponent(watchViewerId())}${leave ? '&leave=1' : ''}`;
+}
+function showWatching(n){
+  const pill = document.getElementById('watch-pill');
+  const count = document.getElementById('watch-count');
+  if(!pill || !count) return;
+  n = Math.max(0, Math.floor(Number(n) || 0));
+  pill.hidden = n < 1;
+  const txt = n.toLocaleString('en-IN');
+  if(count.textContent !== txt){
+    count.textContent = txt;
+    count.classList.remove('bump'); void count.offsetWidth; count.classList.add('bump');
+  }
+  const words = `${txt} ${n === 1 ? 'person is' : 'people are'} watching this scorecard right now`;
+  pill.title = words;
+  pill.setAttribute('aria-label', words);
+}
+async function watchCheckIn(){
+  try{
+    const res = await fetch(watchUrl(false), { method: 'POST', cache: 'no-store' });
+    const data = await res.json().catch(() => null);
+    if(res.ok && data && data.success) showWatching(data.watching);
+  }catch(e){ /* offline — keep the last number */ }
+}
+function watchCheckOut(){
+  try{
+    if(navigator.sendBeacon && navigator.sendBeacon(watchUrl(true))) return;
+    fetch(watchUrl(true), { method: 'POST', keepalive: true }).catch(() => {});
+  }catch(e){}
+}
+function startWatching(){
+  if(!getMatchId() || watchTimer) return;
+  watchCheckIn();
+  watchTimer = setInterval(watchCheckIn, WATCH_EVERY_MS);
+  document.addEventListener('visibilitychange', () => { if(!document.hidden) watchCheckIn(); });
+  window.addEventListener('pagehide', watchCheckOut);
+  // back from the browser's back/forward cache: counted again at once
+  window.addEventListener('pageshow', (e) => { if(e.persisted) watchCheckIn(); });
 }
 
 function setConn(status){
@@ -9904,6 +9980,7 @@ async function performAttach(file, driveLink, meta){
 }
 
 connect();
+startWatching();
 
 /* 🔋 Marks the document while the tab is in the background so the CSS above
    can pause every decorative animation. Registered once, passive, and it
