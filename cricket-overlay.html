@@ -1103,6 +1103,19 @@
     background:linear-gradient(180deg, rgba(255,255,255,0.16), transparent 46%);
   }
 
+  /* ✨ THE WAY OUT — the event panel is wiped away left to right behind a
+     slanted edge of light in the event's own colour, and each part of the
+     scoreboard lands as the edge passes it (addEventExit). The edge moves by
+     transform only; its long faint tail runs over the scoreboard as a sheen.
+     Clipped to the bar, so it never shows outside it. */
+  #event-wipe-clip{ position:absolute; inset:0; overflow:hidden; border-radius:14px; pointer-events:none; z-index:3; }
+  #event-wipe{
+    position:absolute; left:0; top:-2%; bottom:-2%; width:24%; opacity:0; pointer-events:none;
+    will-change:transform, opacity;
+    --wipe-c: var(--ec-a, var(--ev-secondary));
+    background:linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,.06) 46%, rgba(255,255,255,.22) 80%,
+      var(--wipe-c) 89%, #ffffff 93.5%, var(--wipe-c) 96.5%, rgba(255,255,255,0) 100%);
+  }
   /* Broadcast-style diagonal shine that sweeps through the panel on a
      loop while the graphic holds — the classic "TV graphic is alive"
      tell that a flat gradient alone can't give. */
@@ -1998,6 +2011,8 @@
             </div>
           </div>
         </div>
+        <!-- the light edge the panel is wiped away behind (addEventExit) -->
+        <div id="event-wipe-clip" aria-hidden="true"><div id="event-wipe"></div></div>
       </div>
     </div>
 
@@ -3181,9 +3196,9 @@ const barShadow = (() => {
   const canvas = document.getElementById('sb-shadow');
   const mask = document.createElement('canvas');
   // no 2D canvas / DOMMatrix (a test DOM, never a real browser): no shadow, and nothing else is held up
-  if(typeof CanvasRenderingContext2D === 'undefined' || typeof DOMMatrix !== 'function') return { update(){} };
+  if(typeof CanvasRenderingContext2D === 'undefined' || typeof DOMMatrix !== 'function') return { update(){}, markPanel(){}, holdPanel(){} };
   const ctx = canvas.getContext('2d'), mctx = mask.getContext('2d');
-  if(!ctx || !mctx) return { update(){} };
+  if(!ctx || !mctx) return { update(){}, markPanel(){}, holdPanel(){} };
   const [capL, capR, mid, stage, bg, chip] = ['cap-left', 'cap-right', 'mid-row', 'event-stage', 'event-bg', 'freehit-chip'].map(id => document.getElementById(id));
   const num = (v) => parseFloat(v) || 0;
   const len = (v, ref) => /%$/.test(v) ? num(v) / 100 * ref : num(v);
@@ -3261,19 +3276,22 @@ const barShadow = (() => {
   }
   // One element's outline: its box (with its own border radii) cut by its
   // clip-path, plus any extra parts that are painted outside its radii.
-  function outline(el, extras){
+  function outline(el, extras, clipPath){
     if(!el || !el.offsetParent) return;
     const w = el.offsetWidth, h = el.offsetHeight;
     if(!w || !h) return;
     const cs = getComputedStyle(el);
     const { alpha, map } = placement(el);
     if(alpha < 0.002) return;
-    const clip = clipShape(cs, w, h);
+    const clip = clipShape(clipPath ? { clipPath } : cs, w, h);
     const box = roundedRect(0, 0, w, h, [cs.borderTopLeftRadius, cs.borderTopRightRadius, cs.borderBottomRightRadius, cs.borderBottomLeftRadius].map(num));
     fill(clipPoly(box, clip).map(map), alpha);
     (extras ? extras(w, h) : []).forEach(([pts, a]) => fill(clipPoly(pts, clip).map(map), alpha * a));
   }
-  function draw(){
+  // The outline of what is on the bar, into the mask (the event panel's only
+  // when asked, cut by another clip-path if given); the canvases are sized
+  // to the bar first.
+  function drawMask(withPanel, panelClip){
     const W = card.offsetWidth, H = card.offsetHeight;
     const cw = Math.ceil((W + PAD.l + PAD.r) / K), ch = Math.ceil((H + PAD.t + PAD.b) / K);
     if(canvas.width !== cw || canvas.height !== ch){
@@ -3287,7 +3305,7 @@ const barShadow = (() => {
     outline(capL, (w, h) => [[[[0, 0], [w * 0.38, 0], [0, h * 0.46]], 0.9]]);
     outline(capR, (w, h) => [[[[w, 0], [w, h * 0.46], [w * 0.62, 0]], 0.9]]);
     outline(mid);
-    outline(bg);
+    if(withPanel) outline(bg, null, panelClip);
     if(chip.offsetParent){
       // the chip's own glow (box-shadow 0 8px 20px, 40%) casts shadow too
       const cs = getComputedStyle(chip), w = chip.offsetWidth, h = chip.offsetHeight;
@@ -3300,27 +3318,124 @@ const barShadow = (() => {
         fill(pill(0), alpha);
       }
     }
-    ctx.clearRect(0, 0, cw, ch);
-    ctx.filter = `blur(${SIGMA / K}px)`;
-    ctx.globalAlpha = ALPHA;
-    ctx.drawImage(mask, 0, DY / K);
-    ctx.filter = 'none';
-    ctx.globalAlpha = 1;
+    return [cw, ch];
   }
+  // The shadow: the mask, blurred, into the bar's canvas (or another one).
+  function shade(into, panelClip){
+    const [cw, ch] = drawMask(true, panelClip);
+    if(into.width !== cw || into.height !== ch){ into.width = cw; into.height = ch; }
+    const g = into === canvas ? ctx : into.getContext('2d');
+    g.clearRect(0, 0, cw, ch);
+    g.filter = `blur(${SIGMA / K}px)`;
+    g.globalAlpha = ALPHA;
+    g.drawImage(mask, 0, DY / K);
+    g.filter = 'none';
+    g.globalAlpha = 1;
+  }
+  function draw(){ shade(canvas); }
   // Redraw only when something that shapes the outline changed — GSAP writes
   // inline styles, the event stage toggles a class, the window resizes.
-  let lastKey = '';
+  let lastKey = '', held = null;
+  const others = () => [innerWidth, innerHeight, capL.style.cssText, capR.style.cssText, mid.style.cssText, stage.className, chip.style.cssText].join('|');
   function update(){
-    const key = [innerWidth, innerHeight, capL.style.cssText, capR.style.cssText, mid.style.cssText, stage.className, bg.style.cssText, chip.style.cssText].join('|');
+    const rest = others();
+    let panel = bg.style.cssText, ready = null;
+    if(held){
+      const gap = wipeCrossedGap();
+      if(gap >= 0){
+        held.css = panel;
+        if(held.m.states && held.m.statesFor === rest) ready = held.m.states[gap];
+      }
+      panel = held.css;
+    }
+    const key = rest + '|' + panel;
     if(key === lastKey) return;
     lastKey = key;
-    draw();
+    if(ready){ ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.drawImage(ready, 0, 0); }
+    else draw();
+  }
+  // 🚪 The event panel's way out (addEventExit) wipes it away left to right,
+  // and a redraw on every frame of that was the costliest part of it — for
+  // nothing on most frames: under a panel of its own size the bar has the
+  // same outline, except where the panel covers a gap in it (beside the
+  // slanted cap ends). markPanel(), with the panel whole (while it holds —
+  // a quiet moment), finds those gaps: runs of mask columns the panel fills
+  // and the bar leaves empty (kept until the bar's or the panel's geometry
+  // changes), and when there are only a few small ones, already draws the
+  // shadow as it will be once the edge has passed each of them.
+  // holdPanel(true) at the start of the wipe: from then on the panel's own
+  // changes touch the shadow only on a frame whose wipe edge moves over a
+  // gap — the drawing made for it is put up (or, if anything else on the
+  // bar has changed since, the shadow is redrawn) — so each gap still clears
+  // the moment the edge passes it. holdPanel(false) ends it. (A taller panel
+  // differs all along: redrawn on every frame, as before.)
+  let marks = null;
+  function markPanel(drawings = true){
+    const w = bg.offsetWidth, h = bg.offsetHeight;
+    if(!w || !h) return null;
+    const key = [innerWidth, innerHeight, card.offsetWidth, card.offsetHeight, w, h,
+      ...[capL, capR, mid].map(e => [e.offsetLeft, e.offsetWidth, e.offsetHeight, e.style.clipPath].join())].join('|');
+    if(!marks || marks.key !== key){
+      const size = canvas.width + 'x' + canvas.height;
+      const [cw, ch] = drawMask(false);
+      const bare = mctx.getImageData(0, 0, cw, ch).data;
+      drawMask(true);
+      const full = mctx.getImageData(0, 0, cw, ch).data;
+      const runs = [];
+      for(let x = 0; x < cw; x++){
+        let gap = false;
+        for(let y = 0; y < ch && !gap; y++){ const i = (y * cw + x) * 4 + 3; gap = full[i] - bare[i] > 128; }
+        if(!gap) continue;
+        const last = runs[runs.length - 1];
+        if(last && last[1] === x - 1) last[1] = x; else runs.push([x, x]);
+      }
+      const { map } = placement(bg);
+      const x0 = map([0, 0])[0], x1 = map([w, 0])[0];
+      marks = { key, runs, w, h, col0: (x0 + PAD.l) / K, k: (x1 - x0) / w / K, states: null, statesFor: null };
+      if(size !== canvas.width + 'x' + canvas.height){ lastKey = ''; update(); } // (resized: that cleared the shadow)
+    }
+    // the shadow once the edge has passed each gap — for a few small gaps
+    const rest = others();
+    const cut = /^inset\((.*)\)$/.exec(bg.style.clipPath || '');
+    if(drawings && marks.statesFor !== rest){
+      marks.states = null; marks.statesFor = null;
+      if(cut && marks.runs.length <= 3 && marks.runs.every(([a, b]) => b - a < 48)){
+        const [box, round] = cut[1].split(/\s+round\s+/);
+        const t = box.trim().split(/\s+/), T = t[0], R = t[1] || T, B = t[2] || T;
+        marks.states = marks.runs.map(([, b]) => {
+          const x = Math.min(w, Math.max(0, (b + 1 - marks.col0) / marks.k));
+          const c = document.createElement('canvas');
+          shade(c, `inset(${T} ${R} ${B} ${x}px${round ? ' round ' + round : ''})`);
+          return c;
+        });
+        marks.statesFor = rest;
+      }
+    }
+    return marks;
+  }
+  function holdPanel(on){
+    if(!on){ if(held){ held = null; update(); } return; }
+    if(held) return;
+    const m = markPanel(false); // (made while the panel held; anything changed since: redrawn as it goes)
+    if(m) held = { css: bg.style.cssText, m, at: m.col0 };
+  }
+  // The furthest gap the panel's left edge (its clip-path) has moved over
+  // since the last look (-1: none).
+  function wipeCrossedGap(){
+    const m = held.m;
+    const poly = clipShape({ clipPath: bg.style.clipPath }, m.w, m.h);
+    const left = !poly ? 0 : poly.length ? Math.min(...poly.map(p => p[0])) : m.w;
+    const from = held.at, to = m.col0 + left * m.k;
+    held.at = to;
+    let gap = -1;
+    m.runs.forEach(([a, b], i) => { if(b + 1 > Math.min(from, to) && a < Math.max(from, to)) gap = i; });
+    return gap;
   }
   const mo = new MutationObserver(update);
   [capL, capR, mid, stage, bg, chip].forEach(el => mo.observe(el, { attributes: true, attributeFilter: ['style', 'class'] }));
   window.addEventListener('resize', update);
   update();
-  return { update };
+  return { update, markPanel, holdPanel };
 })();
 
 /* ============================================================
@@ -3398,7 +3513,7 @@ function animateExit(){
    Config (edit freely):
      EVENT_DURATION — how long the event graphic holds, in ms
      TRANSITION_IN  — scoreboard -> event, in ms
-     TRANSITION_OUT — event -> scoreboard, in ms
+     TRANSITION_OUT — event -> scoreboard: the panel's wipe, in ms (addEventExit)
    ============================================================ */
 let EVENT_DURATION = 4000;
 let TRANSITION_IN   = 600;
@@ -3528,7 +3643,9 @@ function cancelRunningEvent(){
     stopEventMicroMotion();
     const stage = document.getElementById('event-stage');
     if(stage) stage.classList.remove('ev-active');
-    gsap.set(SB_CONTENT_SELECTOR, { opacity: 1, scale: 1, y: 0, willChange: 'auto', clearProps: 'filter' });
+    gsap.set(SB_CONTENT_SELECTOR, { opacity: 1, scale: 1, x: 0, y: 0, willChange: 'auto', clearProps: 'filter' });
+    gsap.killTweensOf('#event-wipe'); gsap.set('#event-wipe', { opacity: 0 });
+    barShadow.holdPanel(false);
   }
   eventState = 'idle';
 }
@@ -4013,7 +4130,7 @@ function addBallCardPhase(tl, kind, opts, at){
   gsap.set(word, { opacity: 0, x: -16, filter: 'blur(6px)' });
   gsap.set(sep, { scaleY: 0, opacity: 0 });
   gsap.set([kicker, nameEl, lineEl], { opacity: 0, y: 10, filter: 'blur(6px)' });
-  gsap.set(rule, { scaleX: 0 });
+  gsap.set(rule, { scaleX: 0, transformOrigin: '50% 50%' });
   gsap.set(ring, { opacity: 0, scale: 1 });
   tl.to(tile, { opacity: 1, scale: 1, rotate: 0, duration: 0.5, ease: 'back.out(1.7)' }, at)
     .to(rule, { scaleX: 1, duration: 0.8, ease: 'power2.out' }, at + 0.05)
@@ -4176,7 +4293,6 @@ function playEventTimeline(kind, opts, onDone){
   stage.style.setProperty('--panel-h', targetH + 'px');
   const holdSec = Math.max((opts.durationMs || theme.durationMs || EVENT_DURATION) / 1000, 0.6);
   const inSec = TRANSITION_IN / 1000;
-  const outSec = TRANSITION_OUT / 1000;
 
   gsap.killTweensOf([stage, bg, glow, numEl, subEl, chars, lines, impact, shock, shock2, streaks, shine, flash, ball, crack, bails, '#event-hero']);
   if(microTl){ microTl.kill(); microTl = null; }
@@ -4215,7 +4331,7 @@ function playEventTimeline(kind, opts, onDone){
     .to(bg, { opacity: 1, height: targetH, clipPath: 'inset(0% 0% 0% 0% round 14px)', duration: inSec, ease: 'expo.out' }, 0.02);
 
   // ---- hero takeover ----
-  gsap.set('#event-ipcard, #event-card', { opacity: 1, y: 0, filter: 'blur(0px)' });
+  gsap.set('#event-ipcard, #event-card', { opacity: 1, x: 0, y: 0, filter: 'blur(0px)' });
   if(ipData) addImpactCardPhase(master, ipData, inSec * 0.82);
   else if(ballCard) addBallCardPhase(master, kind, opts, inSec * 0.82);
   else addEventHeroPhase(master, kind, theme, chars, inSec * 0.82);
@@ -4223,21 +4339,77 @@ function playEventTimeline(kind, opts, onDone){
 
   // ---- hold, with barely-visible micro motion ----
   master.call(() => startEventMicroMotion(bg, theme, ballCard), null, 'heroSettled')
+    .call(() => barShadow.markPanel(), null, `heroSettled+=${Math.min(0.3, holdSec / 2)}`) // (for the way out, worked out while nothing much moves)
+    .set(SB_CONTENT_SELECTOR, { filter: 'blur(0px)' }, `heroSettled+=${Math.min(0.15, holdSec / 4)}`) // (the bar's blur from the way in, dropped while it is hidden)
     .to({}, { duration: holdSec }, 'heroSettled')
     .call(() => stopEventMicroMotion(), null, `heroSettled+=${holdSec}`);
 
   // ---- transition back into the live scoreboard ----
-  master.call(() => { if(pendingStateUpdate && !fullBar.holds()){ renderState(pendingStateUpdate); pendingStateUpdate = null; } }, null, `heroSettled+=${holdSec}`)
-    .to(chars, { opacity: 0, y: -8, filter: 'blur(6px)', duration: outSec * 0.4, stagger: 0.008, ease: 'power2.in' }, `heroSettled+=${holdSec}`)
-    .to(numEl, { opacity: 0, scale: 0.7, filter: 'blur(8px)', duration: outSec * 0.4, ease: 'power2.in' }, '<')
-    .to(subEl, { opacity: 0, y: -6, duration: outSec * 0.3 }, '<')
-    .to(glow, { opacity: 0, scale: 1.4, duration: outSec * 0.5 }, '<')
-    .to(lines, { opacity: 0, duration: outSec * 0.3 }, '<')
-    .to('#event-ipcard, #event-card', { opacity: 0, y: -6, filter: 'blur(6px)', duration: outSec * 0.4, ease: 'power2.in' }, '<')
-    .to(bg, { height: baseH * 0.22, opacity: 0, clipPath: 'inset(0% 46% 0% 46% round 14px)', duration: outSec, ease: 'power2.inOut' }, `-=${outSec * 0.1}`)
-    .to(SB_CONTENT_SELECTOR, { opacity: 1, scale: 1, y: 0, filter: 'blur(0px)', duration: outSec, stagger: 0.02, ease: 'power2.out' }, `-=${outSec * 0.75}`);
+  const exitAt = master.labels.heroSettled + holdSec;
+  master.call(() => { if(pendingStateUpdate && !fullBar.holds()){ renderState(pendingStateUpdate); pendingStateUpdate = null; } }, null, exitAt);
+  addEventExit(master, exitAt, { stage, bg, glow, lines, chars, numEl, subEl, ballCard, ipCard: !!ipData });
 
   return master;
+}
+
+// ✨ THE WAY OUT of an event graphic — the entrance played backwards would
+// be dull, so it has three beats of its own:
+//   1. the card's parts leave one after another (the tile tips away, the
+//      word slips on, the names float up, the rule draws back);
+//   2. the panel is wiped away left to right behind a slanted edge of light
+//      in the event's colour (#event-wipe);
+//   3. each part of the scoreboard lands just as that edge passes over it.
+// Transforms, opacity and the panel's clip only — no blur anywhere (the
+// bar's blur from the way in is dropped while the panel holds) — the
+// edge sweeps at an even pace (sine), never in a whip, and the bar's shadow
+// is redrawn only where the wipe changes it (barShadow.holdPanel), so it
+// stays smooth in vMix's GPU-less browser.
+const EXIT_WIPE_AT = 0.2, EXIT_WIPE_EASE = 'sine.inOut';
+function addEventExit(tl, t0, o){
+  const EXIT_WIPE_SEC = TRANSITION_OUT / 1000;
+  const wipe = document.getElementById('event-wipe');
+  const sr = o.stage.getBoundingClientRect();
+  const W = sr.width || innerWidth, wipeW = W * 0.24, core = 0.935; // (the bright line's place in #event-wipe)
+  // 1 — what is on the card leaves
+  if(o.ballCard) addBallCardExit(tl, t0);
+  else if(o.ipCard) tl.to('#event-ipcard', { opacity: 0, x: 26, duration: 0.3, ease: 'power2.in' }, t0);
+  else tl.to(o.chars, { opacity: 0, y: -8, duration: 0.26, stagger: 0.008, ease: 'power2.in' }, t0)
+    .to(o.numEl, { opacity: 0, scale: 0.7, duration: 0.26, ease: 'power2.in' }, t0)
+    .to(o.subEl, { opacity: 0, y: -6, duration: 0.2 }, t0);
+  tl.to(o.glow, { opacity: 0, duration: 0.3 }, t0)
+    .to(o.lines, { opacity: 0, duration: 0.2 }, t0);
+  // 2 — the panel goes, left to right, behind the edge of light
+  const at = t0 + EXIT_WIPE_AT;
+  tl.call(() => barShadow.holdPanel(true), null, at);
+  tl.set(wipe, { opacity: 1, skewX: -16 }, at)
+    .fromTo(wipe, { x: -wipeW * core }, { x: W - wipeW * core, duration: EXIT_WIPE_SEC, ease: EXIT_WIPE_EASE, immediateRender: false }, at)
+    .fromTo(o.bg, { clipPath: 'inset(0% 0% 0% 0% round 14px)' }, { clipPath: 'inset(0% 0% 0% 100% round 14px)', duration: EXIT_WIPE_SEC, ease: EXIT_WIPE_EASE, immediateRender: false }, at)
+    .to(wipe, { opacity: 0, duration: 0.16, ease: 'power1.in' }, at + Math.max(0, EXIT_WIPE_SEC - 0.12));
+  // 3 — the scoreboard lands where the edge has passed: the moment the
+  // eased edge reaches each part (found once, from the part's place)
+  const ease = gsap.parseEase(EXIT_WIPE_EASE);
+  const whenEdgeAt = (p) => { let lo = 0, hi = 1; for(let i = 0; i < 16; i++){ const m = (lo + hi) / 2; if(ease(m) < p) lo = m; else hi = m; } return hi; };
+  const parts = [...document.querySelectorAll(SB_CONTENT_SELECTOR)];
+  tl.set(parts, { y: 0, x: -16, scale: 0.97 }, t0); // still invisible here
+  parts.forEach(el => {
+    const r = el.getBoundingClientRect();
+    const p = r.width ? Math.min(1, Math.max(0, (r.left + r.width * 0.3 - sr.left) / W)) : 0;
+    tl.to(el, { opacity: 1, x: 0, scale: 1, duration: 0.46, ease: 'power3.out' }, at + EXIT_WIPE_SEC * whenEdgeAt(p) - 0.03);
+  });
+  // the shadow goes back to redrawing on any change once all of it is still
+  tl.call(() => barShadow.holdPanel(false));
+}
+// The ball card's parts, out one after another (the reverse order of their
+// way in, each with a motion of its own).
+function addBallCardExit(tl, t0){
+  const q = (id) => document.getElementById(id);
+  const texts = [q('ec-kicker'), q('ec-name'), q('ec-line')];
+  tl.fromTo(q('ec-ring'), { opacity: 0.75, scale: 1 }, { opacity: 0, scale: 1.55, duration: 0.5, ease: 'power2.out', immediateRender: false }, t0)
+    .to(texts, { opacity: 0, y: -12, duration: 0.28, stagger: 0.05, ease: 'power2.in' }, t0)
+    .to(q('ec-rule'), { scaleX: 0, transformOrigin: '100% 50%', duration: 0.4, ease: 'power2.in' }, t0)
+    .to(q('ec-sep'), { scaleY: 0, opacity: 0, duration: 0.22, ease: 'power2.in' }, t0 + 0.06)
+    .to(q('ec-tile'), { opacity: 0, scale: 0.5, rotate: 16, duration: 0.36, ease: 'back.in(1.8)' }, t0 + 0.04)
+    .to(q('ec-word'), { opacity: 0, x: 30, duration: 0.3, ease: 'power2.in' }, t0 + 0.08);
 }
 
 /* ============================================================
