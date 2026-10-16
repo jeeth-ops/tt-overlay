@@ -20986,7 +20986,7 @@ async function saveTeamEditor(){
 // pressing ▶ Start together cannot both start it, and a locked one needs
 // its key (asked for just before). No answer at all (offline / the server
 // starting up): the operator decides.
-async function claimUpcomingStart(owner, rec){
+async function claimUpcomingStart(owner, rec, opts){
   let res = null, data = null;
   if(currentOwnerUid()){
     try{
@@ -21000,7 +21000,8 @@ async function claimUpcomingStart(owner, rec){
   if(res && data && data.success) return { go: true };
   const code = data && data.code;
   if(code === 'ALREADY_STARTED') return { go: false, resync: true, message: '⚠️ This match has already been started on another laptop — the list is refreshed; open it there, or here with ▶ Resume.' };
-  if(code === 'NOT_FOUND') return { go: false, resync: true, message: '⚠️ This match is no longer in this tournament (removed on another laptop?) — the list is refreshed.' };
+  if(code === 'NOT_FOUND') return opts && opts.offServer ? { go: true } // (the operator chose to start it — see above)
+    : { go: false, resync: true, message: '⚠️ This match is no longer in this tournament (removed on another laptop?) — the list is refreshed.' };
   if(code === 'MATCH_LOCKED' || (res && res.status === 423)) return { go: false, message: '🔒 This match is locked — enter its code on this laptop to start it (press ▶ Start again).' };
   if(res && (res.status === 401 || res.status === 403)) return { go: false, message: '🚫 This account cannot start tournament matches — sign in (home page) with the account that runs this tournament.' };
   const go = confirm('⚠️ The server could not confirm that this match has not already been started on another laptop (no internet, or the server is starting up).\n\nStart it on THIS laptop anyway?');
@@ -21021,10 +21022,16 @@ async function startUpcomingMatch(rec, btn, listTournament){
     // The server's word first: a list made before another laptop started (or
     // removed) this match must not ask for its code — let alone take a locked
     // match's key from the laptop scoring it.
+    let offServer = false;
     if(await syncLeagueFromServer(owner)){
       const now = (leagueCache[leagueStorageKey(owner)] || []).find(m => m.matchId === rec.matchId);
-      if(!now){ toast('⚠️ This match is no longer in this tournament (removed on another laptop?) — the list is refreshed.', 8000); return; }
-      if(!isUpcomingMatch(now)){ toast('⚠️ This match has already been started on another laptop — the list is refreshed; open it there, or here with ▶ Resume.', 8000); return; }
+      if(!now){
+        // Not on the server: removed on another laptop — or a fixture this
+        // laptop never managed to save. The operator decides; started, it is
+        // saved to this tournament under the same ids.
+        if(!confirm('⚠️ This match is not on the server — it was removed on another laptop, or this laptop never managed to save it.\n\nStart it here anyway? It is saved to this tournament as it starts.')) return;
+        offServer = true;
+      } else if(!isUpcomingMatch(now)){ toast('⚠️ This match has already been started on another laptop — the list is refreshed; open it there, or here with ▶ Resume.', 8000); return; }
     }
     // 🔒 a locked match starts only with its code
     if(!(await mlEnsureAccess(rec.roomId, matchLabelForToast(rec), rec))) return;
@@ -21051,7 +21058,7 @@ async function startUpcomingMatch(rec, btn, listTournament){
 
     // 🔐 The SERVER starts it — once (see claimUpcomingStart). Still nothing
     // on the panel has changed if it says no.
-    const claim = await claimUpcomingStart(owner, rec);
+    const claim = await claimUpcomingStart(owner, rec, { offServer });
     if(!claim.go){
       if(claim.message) toast(claim.message, 8000);
       if(claim.resync) syncLeagueFromServer(owner);

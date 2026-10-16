@@ -348,6 +348,16 @@ async function suite(fileA, fileB){
   eq(L('the other one was told, and its panel did not change'), [/already been started/.test(loser.lastToast()), loser.E('currentMatchId()') === (onA ? roomB0 : roomA0)], [true, true]);
   eq(L('one record, no copies'), [W.S.records.docs.length, W.S.records.docs.filter(r => r.matchId === fy.matchId).length], [n2, 1]);
 
+  console.log('\n=== A fixture removed on another laptop ===');
+  await schedule(A);
+  const fr = JSON.parse(JSON.stringify(upcoming(W).find(r => r.matchId !== fx.matchId && r.matchId !== fy.matchId)));
+  W.S.records.docs.splice(W.S.records.docs.findIndex(r => r.matchId === fr.matchId), 1); // 🗑 on Laptop A
+  const bRoomNow = B2.E('currentMatchId()');
+  B2.w.confirm = (m) => { B2.w.__asked = String(m); return !/not on the server/.test(m); };
+  await B2.E(`startUpcomingMatch(${JSON.stringify(fr)}, null, 'Test Cup')`);
+  eq(L('▶ Start on it from an old list: asked first; "no" → nothing started, nothing re-created'), [/not on the server/.test(B2.w.__asked || ''), B2.E('currentMatchId()') === bRoomNow, !!recOf(W, fr.matchId)], [true, true, false]);
+  B2.w.confirm = () => true;
+
   console.log('\n=== A LOCKED Upcoming Match ===');
   await schedule(A, { lock: 'FINAL26' });
   const fz = upcoming(W).find(r => r.locked);
